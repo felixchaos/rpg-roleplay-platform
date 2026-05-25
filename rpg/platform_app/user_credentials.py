@@ -69,8 +69,12 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
         raise ValueError("api_id 不能为空")
     if not plaintext_key:
         return delete_credential(user_id, api_id)
+    # P1 #7：之前非 admin 传 base_url_override 直接静默 = ""，UI 以为已设置。
+    # 改成显式 raise ValueError，让 /api/me/credentials 回 400，前端能感知。
+    if base_url_override and not allow_base_url:
+        raise ValueError("base_url_override 仅管理员可设置 · 普通用户必须使用 catalog 中的 base_url")
     if not allow_base_url:
-        base_url_override = ""  # 静默丢弃，不让用户绕开 catalog
+        base_url_override = ""
     elif base_url_override:
         _validate_base_url(base_url_override)
     encrypted = encrypt_api_key(plaintext_key, user_id, api_id)

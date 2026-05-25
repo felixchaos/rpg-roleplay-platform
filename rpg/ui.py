@@ -1648,15 +1648,26 @@ async def api_mcp_server_stop(request: Request) -> JSONResponse:
 
 @app.get("/api/mcp/runtime")
 async def api_mcp_runtime(request: Request) -> JSONResponse:
-    """MCP 运行时状态。普通用户拿不到 stderr（可能含 token/路径）。"""
+    """MCP 运行时状态 + per-user 调用审计。
+    - 普通用户：拿不到 stderr（可能含 token/路径），audit_log 只看自己的
+    - admin：full stderr + 全部用户的 audit_log
+    """
     api_user = _require_api_user(request)
     is_admin = bool(api_user and api_user.get("role") == "admin")
     import mcp_broker
     payload = mcp_broker.status()
     if not is_admin:
-        # 脱 last_stderr 字段
         for entry in payload.get("running") or []:
             entry.pop("last_stderr", None)
+    # P0 #3：附 audit_log，让管理员能查跨用户 MCP 调用
+    try:
+        audit = mcp_broker.get_audit_log(
+            user_id=None if is_admin else (api_user["id"] if api_user else None),
+            limit=200,
+        )
+        payload["audit_log"] = audit
+    except Exception:
+        payload["audit_log"] = []
     return JSONResponse(payload)
 
 
@@ -1678,6 +1689,7 @@ async def api_mcp_tool_call(request: Request) -> JSONResponse:
         body.get("tool", ""),
         body.get("arguments", {}) or {},
         timeout=int(body.get("timeout", 30)),
+        user_id=api_user["id"] if api_user else None,
     ))
 
 

@@ -379,20 +379,61 @@ def stop_health_loop():
     _HEALTH_STOP.set()
 
 
-def call_tool(server_id: str, tool_name: str, arguments: dict[str, Any], timeout: int = DEFAULT_CALL_TIMEOUT) -> dict[str, Any]:
-    """从主 GM 路由调用 MCP server 的工具。"""
+_AUDIT_LOG: list[dict[str, Any]] = []
+_AUDIT_LIMIT = 500
+
+
+def _audit_call(server_id: str, tool_name: str, user_id: int | None, ok: bool, error: str = "") -> None:
+    """P0 #3：MCP server 进程跨用户共享（架构选择，保留性能）。
+    用每次调用的审计 trail 让管理员事后能查到"哪个用户在何时调了哪个工具"。
+    """
+    try:
+        _AUDIT_LOG.append({
+            "ts": time.time(),
+            "user_id": user_id,
+            "server_id": server_id,
+            "tool": tool_name,
+            "ok": bool(ok),
+            "error": (error or "")[:200],
+        })
+        if len(_AUDIT_LOG) > _AUDIT_LIMIT:
+            del _AUDIT_LOG[:len(_AUDIT_LOG) - _AUDIT_LIMIT]
+    except Exception:
+        pass
+
+
+def get_audit_log(user_id: int | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    """返回最近 N 条调用记录。admin 看全部；其他用户只看自己的。"""
+    with _LOCK:
+        rows = list(_AUDIT_LOG)
+    if user_id is not None:
+        rows = [r for r in rows if r.get("user_id") == user_id]
+    return rows[-max(1, limit):]
+
+
+def call_tool(server_id: str, tool_name: str, arguments: dict[str, Any], timeout: int = DEFAULT_CALL_TIMEOUT, user_id: int | None = None) -> dict[str, Any]:
+    """从主 GM 路由调用 MCP server 的工具。
+
+    P0 #3：增加 user_id 参数：
+    - 不会让 MCP server 进程隔离（成本太高），但会写入 _AUDIT_LOG
+    - 后续可以审计"用户 X 通过 MCP 调用了什么"
+    - 调用方（gm.py / context_agent.py）需要往下透传 user_id；老调用站点
+      没传 user_id 不会报错（兼容），只是 audit 里看到 user_id=None
+    """
     with _LOCK:
         conn = _RUNNING.get(server_id)
         if not conn or not conn.is_alive():
-            # 尝试自动启动
             start_result = start_server(server_id)
             if not start_result["ok"]:
+                _audit_call(server_id, tool_name, user_id, False, start_result.get("error", "start failed"))
                 return {"ok": False, "error": start_result.get("error", "无法启动 server")}
             conn = _RUNNING[server_id]
     try:
         result = conn.call_tool(tool_name, arguments or {}, timeout=timeout)
+        _audit_call(server_id, tool_name, user_id, True)
         return {"ok": True, "result": result}
     except Exception as e:
+        _audit_call(server_id, tool_name, user_id, False, str(e))
         return {"ok": False, "error": str(e), "stderr_tail": conn.last_stderr[-5:]}
 
 
