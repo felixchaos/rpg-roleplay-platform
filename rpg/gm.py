@@ -645,7 +645,29 @@ class GameMaster:
                 if tool_invoked:
                     break
             if not tool_invoked:
-                # 这轮没工具调用：尾部 buffer 直接吐出，循环结束
+                # task 61：在 fall-through 前先检查"开了 TOOL_CALL 但没收到 END"
+                # 这是 LLM 输出 <<TOOL_CALL>>{...} 但忘 <<END_TOOL_CALL>> 的常见错误。
+                # 之前的 buffer（含未闭合的 JSON 片段）会被当成 text 吐给用户，
+                # LLM 完全不知道工具没真调用 → 以为"成功"继续叙事 → 状态彻底乱。
+                if in_tool:
+                    yield {
+                        "type": "tool_error",
+                        "error": "工具调用未闭合：找到 <<TOOL_CALL>> 但流结束前没有 <<END_TOOL_CALL>>。重新生成时请把 marker 写完整。",
+                        "raw": buffer[:200],
+                    }
+                    # 把不完整片段塞回 messages，告诉模型重试
+                    messages.append({"role": "assistant", "content": accumulated_text + START + buffer})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "【系统】上一条工具调用未闭合（缺 <<END_TOOL_CALL>> 结束 marker）。"
+                            "请重新输出完整的 <<TOOL_CALL>>{\"server_id\":\"...\",\"tool\":\"...\",\"arguments\":{...}}<<END_TOOL_CALL>>，"
+                            "或放弃工具调用直接续写叙事。"
+                        ),
+                    })
+                    accumulated_text = ""
+                    continue  # 进下一轮 iteration 让 LLM 重试
+                # 正常 fall-through：buffer 直接吐出（无任何 marker）
                 if buffer:
                     yield {"type": "text", "text": buffer}
                 return
