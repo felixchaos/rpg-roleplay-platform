@@ -481,6 +481,9 @@ def _worldline_layer(state) -> dict[str, Any]:
     }
     norm_mode = _normalize_permission_mode(mode)
     lines = [
+        # task 58: 去重 — "你不得修改 permissions.mode" 之前重复 3 次
+        # （gm.py 主提示 + 此层 + write_results 层）。强模型不需要，
+        # 中等模型重复反而暗示"或许可以试试"。只在 gm.py 主提示保留权威说明。
         f"LLM 写入权限：{_permission_label(norm_mode)}",
         mode_behavior.get(norm_mode, mode_behavior["full_access"]),
         "用户变量与世界线推演规则：",
@@ -489,8 +492,6 @@ def _worldline_layer(state) -> dict[str, Any]:
         "/set 生成的用户变量是最高优先级硬约束；如果它改变时间线、地点、世界观或人设，主 GM 必须按新设定写回结构化标签，而不是维护旧设定。",
         "如果推演满足全部用户变量，输出【设定校验：通过】；如果存在矛盾，输出【设定冲突：原因】，并不要把冲突推演写成事实。",
         "可输出【世界线推演：简要推演结果】供 UI 记录。",
-        "在权限允许时，可用【状态写入：path=value】修改 UI/存档变量；常用 path：player.name、player.role、player.background、player.current_location、world.time、world.timeline.current_phase、world.known_events、memory.main_quest、memory.current_objective、memory.resources、memory.abilities、memory.facts、memory.pinned、memory.notes、relationships.角色名、worldline.user_variables.变量名、ui.自定义变量。",
-        "列表字段可用【状态追加：memory.resources=资源A、资源B】追加；权限模式由用户在 UI 选择，GM 永远不要尝试写 permissions.* 或 history.* —— 这是硬黑名单，会被拒绝并写入 audit_log。",
         "当需要玩家决定下一步计划、分支方向或设定取舍时，输出【询问玩家：问题｜选项：选项A、选项B、选项C】；这类问题永远不因完全访问权限而自动跳过。",
     ]
     debug = {
