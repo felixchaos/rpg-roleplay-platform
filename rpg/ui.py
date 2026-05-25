@@ -92,6 +92,89 @@ def _deployment_mode() -> str:
     return mode
 
 
+def _verify_acceptance(acceptance: list[str], response_text: str, updates: list[str]) -> list[str]:
+    """task 81：cheap 规则验证。返回未通过的 acceptance 条款列表。
+
+    Chinese 用 bigram (2-char 连续片段) 匹配，避免长串 greedy token 匹配
+    导致永远查不到。例 "回应了去灯塔意图" → bigrams 含 '灯塔'，response
+    含 '灯塔' 即认为关联词命中。
+
+    策略：
+    1. 否定条款（含 不要/不应/禁止 等关键词）→ 提目标主体 bigram 出现在
+       response 就算 unmet
+    2. 肯定条款 → 至少 30% 的 ≥2-char 关键 bigram 出现在 response 算通过
+
+    未来 task 可以替换成小 LLM 验证（更准但更贵）；目前规则版能抓最明显的
+    "GM 完全没回应玩家请求" 类失败。
+    """
+    if not acceptance or not response_text:
+        return []
+    haystack = (response_text + "\n" + "\n".join(str(u) for u in (updates or []))).lower()
+    unmet: list[str] = []
+    import re as _re
+    _STOPWORDS = {
+        "回应", "玩家", "本轮", "保留", "正文", "GM", "gm", "应该", "需要",
+        "如果", "或者", "包括", "其它", "其他", "可以", "应当", "必须", "条件",
+        "这个", "那个", "我们", "他们", "她们", "你们",
+    }
+    _NEG_KEYWORDS = ("不要", "不应", "禁止", "不能", "不得", "没把", "不可", "杜绝")
+
+    def _key_bigrams(text: str) -> list[str]:
+        """从中文条款里取所有 2-3 字 bigram/trigram，过掉 stopword。"""
+        # 单独把 stopword 删掉再切 bigram，避免 '玩家' 之类被切到名词里
+        cleaned = text
+        for sw in _STOPWORDS:
+            cleaned = cleaned.replace(sw, " ")
+        # 同时去掉否定关键词本身（不希望把"不要"也当成匹配标的）
+        for nk in _NEG_KEYWORDS:
+            cleaned = cleaned.replace(nk, " ")
+        # 切连续中文段
+        segs = _re.findall(r"[一-鿿]+", cleaned)
+        # 每段做 bigram + trigram
+        out: list[str] = []
+        for seg in segs:
+            if len(seg) >= 2:
+                for i in range(len(seg) - 1):
+                    out.append(seg[i:i + 2])
+                for i in range(len(seg) - 2):
+                    out.append(seg[i:i + 3])
+        # 字母 token（如英文名词）也加入
+        for tok in _re.findall(r"[A-Za-z][A-Za-z0-9_-]{1,}", cleaned):
+            if tok not in _STOPWORDS:
+                out.append(tok.lower())
+        # dedup 保持顺序
+        seen: set[str] = set()
+        dedup = []
+        for x in out:
+            if x not in seen:
+                seen.add(x)
+                dedup.append(x)
+        return dedup[:30]
+
+    for cond in acceptance[:8]:
+        cond_str = str(cond).strip()
+        if not cond_str:
+            continue
+        cond_low = cond_str.lower()
+        bigrams = _key_bigrams(cond_str)
+        if not bigrams:
+            continue
+        is_negative = any(k in cond_low for k in _NEG_KEYWORDS)
+        # 任意核心 bigram/trigram 命中即视为关联词出现。规则版能抓的最
+        # 简单信号：response 有/无包含 acceptance 提到的具体名词。
+        # 更精细的语义判断留给后续小 LLM 验证。
+        hit = any(b.lower() in haystack for b in bigrams)
+        if is_negative:
+            # 否定条款：禁词主体的 bigram 在 response 出现 → unmet
+            if hit:
+                unmet.append(cond_str)
+        else:
+            # 肯定条款：至少 1 个核心 bigram 命中算通过；全没命中 → unmet
+            if not hit:
+                unmet.append(cond_str)
+    return unmet
+
+
 def _is_set_parser_enabled(api_user: dict | None) -> bool:
     """task 77：用户偏好 set_parser.enabled = true 时开启 /set 自然语言解析子代理。
     默认 false（向后兼容：detect_set_directive 简单 path=value 仍工作）。
@@ -1457,6 +1540,36 @@ async def api_chat(request: Request) -> StreamingResponse:
             updates = directive_updates + state.apply_structured_updates(
                 response_with_ops, skip_regex_fallback=extractor_active,
             )
+            # task 81：acceptance 自动验证。curator 在 demand_ledger 里列了
+            # 本轮成功的验收条件，跑一个 cheap 字面检查看 GM 输出（response
+            # + updates）是否满足。未满足 → audit_log kind=acceptance_unmet。
+            try:
+                _curator_plan_for_check = (agent_result or {}).get("curator_plan", {}) or {}
+                _acceptance = _curator_plan_for_check.get("acceptance") or []
+                if _acceptance and response.strip():
+                    unmet = _verify_acceptance(_acceptance, response, updates)
+                    if unmet:
+                        from datetime import datetime as _dt
+                        audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                        for item in unmet[:5]:
+                            audit.append({
+                                "ts": _dt.now().isoformat(timespec="seconds"),
+                                "kind": "acceptance_unmet",
+                                "source": "curator:acceptance",
+                                "hint": f"未通过验收：{item[:160]}",
+                                "turn": state.data.get("turn", 0),
+                            })
+                        if len(audit) > 200:
+                            state.data["permissions"]["audit_log"] = audit[-200:]
+                        yield _sse("agent", {
+                            "phase": "acceptance_check",
+                            "message": f"本轮 GM 输出有 {len(unmet)} 条 acceptance 未通过；已记 audit_log",
+                            "status": "warning",
+                            "elapsed_ms": 0,
+                            "unmet": unmet[:5],
+                        })
+            except Exception as _acc_exc:
+                print(f"[acceptance] check failed: {_acc_exc}")
             _persist_chat_turn(
                 api_user, state, message_for_model, response,  # 存档时存"纯叙事"不含 extractor JSON
                 persist_user_id=persist_user_id, active_save_id=active_save_id,
