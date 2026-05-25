@@ -134,6 +134,19 @@ def _write_results_layer(state) -> str:
         for a in blocked[-5:]:
             lines.append(f"- {a.get('path')} = {str(a.get('value',''))[:50]}")
 
+    # task 60: 解析失败反馈 — 让 LLM 看到自己写的标签为什么没生效
+    parse_errors = [a for a in audit_log[-20:] if a.get("kind") == "parse_error"]
+    if parse_errors:
+        lines.append("")
+        lines.append("⚠️ 上轮你输出的标签**解析失败**（被静默丢弃前已记录，请改格式重试）：")
+        for a in parse_errors[-5:]:
+            lines.append(f"- {a.get('raw_spec', '?')[:60]}")
+            if a.get("hint"):
+                lines.append(f"  · 原因：{a['hint']}")
+        lines.append("正确格式参考：")
+        lines.append("- JSON：`{\"op\":\"set\",\"path\":\"player.role\",\"value\":\"史官\"}`")
+        lines.append("- 【】：`【状态写入：player.role=史官】`（半角 = 号；path 不要含空格）")
+
     rejected = [a for a in audit_log[-15:] if "rejected" in str(a.get("source", "")) or a.get("kind") == "rejected"]
     if rejected:
         lines.append("")

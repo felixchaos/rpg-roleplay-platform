@@ -619,6 +619,22 @@ class GameState:
                 updates.append("资源：特殊小队建制")
 
         # task 55：JSON 协议处理。op = "set"/"append"/"overwrite"/"question"
+        def _log_op_parse_error(reason: str, op_dump):
+            try:
+                audit = self.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                audit.append({
+                    "ts": datetime.now().isoformat(timespec="seconds"),
+                    "kind": "parse_error",
+                    "raw_spec": str(op_dump)[:160],
+                    "source": "gm:json",
+                    "hint": reason,
+                    "turn": self.data.get("turn", 0),
+                })
+                if len(audit) > 200:
+                    self.data["permissions"]["audit_log"] = audit[-200:]
+            except Exception:
+                pass
+
         for op in json_ops:
             try:
                 kind = (op.get("op") or "set").lower()
@@ -629,11 +645,17 @@ class GameState:
                         joined = q + ("｜选项：" + "、".join(map(str, options)) if options else "")
                         if self.add_pending_question(joined, source="gm:json"):
                             updates.append("等待玩家回答")
+                    else:
+                        # task 60：缺 question 文本时不静默
+                        _log_op_parse_error("question op 缺 'question' 或 'text' 字段", op)
+                        updates.append(f"JSON op 忽略（询问缺文本）：{op}")
                     continue
                 path = (op.get("path") or "").strip()
                 value = op.get("value", "")
                 if not path:
-                    updates.append(f"JSON op 忽略：缺 path · {op}")
+                    # task 60：写 audit，让下轮 LLM 看见
+                    _log_op_parse_error("set/append op 缺 'path' 字段", op)
+                    updates.append(f"JSON op 忽略（缺 path）：{op}")
                     continue
                 _gm_write_via_gate(
                     path, value,
@@ -642,6 +664,7 @@ class GameState:
                     label_for_update=f"{kind}: {path}",
                 )
             except Exception as e:
+                _log_op_parse_error(f"运行时异常：{e}", op)
                 updates.append(f"JSON op 失败：{e}")
 
         memory["last_structured_updates"] = updates[-12:]
@@ -661,7 +684,24 @@ class GameState:
     def apply_state_write(self, spec: str, source: str = "gm", append: bool = False, overwrite: bool = False, force: bool = False) -> str:
         path, value = _parse_assignment(spec)
         if not path:
-            return f"状态写入忽略：{spec}"
+            # task 60：原来解析失败直接 return，LLM 下一轮不知道这条丢了，
+            # 还会继续输出同样格式重复失败。现在写 audit_log kind=parse_error，
+            # context_engine.write_results 层下轮会把它告诉 LLM 让自纠。
+            try:
+                audit = self.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                audit.append({
+                    "ts": datetime.now().isoformat(timespec="seconds"),
+                    "kind": "parse_error",
+                    "raw_spec": str(spec)[:160],
+                    "source": source,
+                    "hint": "无法解析 path=value；检查冒号是否是半角 `:` 或 `=`，path 不要含空格",
+                    "turn": self.data.get("turn", 0),
+                })
+                if len(audit) > 200:
+                    self.data["permissions"]["audit_log"] = audit[-200:]
+            except Exception:
+                pass
+            return f"状态写入忽略（解析失败）：{spec[:60]}"
         # P0 #1：硬黑名单（permissions.* / history.* / schema_version / created_at /
         # is_new）任何 force 都不能突破。原代码 `if not allowed and not force` 让
         # /set permissions.mode=full_access （force=True）直接落地，玩家可一句话
