@@ -92,7 +92,7 @@ def _deployment_mode() -> str:
     return mode
 
 
-def _verify_acceptance(acceptance: list[str], response_text: str, updates: list[str]) -> list[str]:
+def _verify_acceptance_rule(acceptance: list[str], response_text: str, updates: list[str]) -> list[str]:
     """task 81：cheap 规则验证。返回未通过的 acceptance 条款列表。
 
     Chinese 用 bigram (2-char 连续片段) 匹配，避免长串 greedy token 匹配
@@ -104,8 +104,8 @@ def _verify_acceptance(acceptance: list[str], response_text: str, updates: list[
        response 就算 unmet
     2. 肯定条款 → 至少 30% 的 ≥2-char 关键 bigram 出现在 response 算通过
 
-    未来 task 可以替换成小 LLM 验证（更准但更贵）；目前规则版能抓最明显的
-    "GM 完全没回应玩家请求" 类失败。
+    task 84 把这个函数拆出来作为 rule 模式的实现；llm / hybrid 模式见
+    acceptance_verifier.py。
     """
     if not acceptance or not response_text:
         return []
@@ -173,6 +173,68 @@ def _verify_acceptance(acceptance: list[str], response_text: str, updates: list[
             if not hit:
                 unmet.append(cond_str)
     return unmet
+
+
+def _verify_acceptance(
+    acceptance: list[str],
+    response_text: str,
+    updates: list[str],
+    *,
+    mode: str = "rule",
+    user_id: int | None = None,
+) -> list[str]:
+    """task 84：acceptance 验证三模式 dispatcher。
+
+    - mode="rule"   纯规则（task 81 实现），便宜，召回好假阳性多
+    - mode="llm"    便宜 LLM 整批判定；调用失败 → 降级到 rule
+    - mode="hybrid" 先 rule 跑，rule 判定 unmet 的条款再让 LLM 二次确认；
+                    rule 全通过就直接 [] 不浪费 LLM 调用
+
+    返回 unmet 条款列表。调用方负责回填 audit_log。
+    """
+    mode_norm = (mode or "rule").strip().lower()
+    if mode_norm not in ("rule", "llm", "hybrid"):
+        mode_norm = "rule"
+
+    if mode_norm == "rule":
+        return _verify_acceptance_rule(acceptance, response_text, updates)
+
+    if mode_norm == "llm":
+        try:
+            from acceptance_verifier import verify_acceptance_llm
+            out = verify_acceptance_llm(
+                acceptance=acceptance,
+                response_text=response_text,
+                updates=updates or [],
+                user_id=user_id,
+            )
+        except Exception as exc:
+            print(f"[acceptance] llm mode raised; falling back to rule: {exc}")
+            return _verify_acceptance_rule(acceptance, response_text, updates)
+        if out is None:
+            return _verify_acceptance_rule(acceptance, response_text, updates)
+        return out
+
+    # hybrid
+    rule_unmet = _verify_acceptance_rule(acceptance, response_text, updates)
+    if not rule_unmet:
+        # 规则都通过：不浪费 LLM 调用
+        return []
+    try:
+        from acceptance_verifier import verify_acceptance_llm
+        llm_unmet = verify_acceptance_llm(
+            acceptance=rule_unmet,
+            response_text=response_text,
+            updates=updates or [],
+            user_id=user_id,
+        )
+    except Exception as exc:
+        print(f"[acceptance] hybrid llm step raised; keeping rule verdict: {exc}")
+        return rule_unmet
+    if llm_unmet is None:
+        # LLM 不可用 → 保留 rule 判定（保守）
+        return rule_unmet
+    return llm_unmet
 
 
 def _is_set_parser_enabled(api_user: dict | None) -> bool:
@@ -257,6 +319,37 @@ def _clarify_threshold(api_user: dict | None) -> float:
             if val > 1.0:
                 return 1.0
             return val
+    except Exception:
+        return default
+    return default
+
+
+def _acceptance_verifier_mode(api_user: dict | None) -> str:
+    """task 84：读 preferences.acceptance_verifier.mode；返回 'rule'|'llm'|'hybrid'。
+
+    缺省 'rule'（task 81 行为不变）。值校验在 _verify_acceptance 里也会再做
+    一道，未知值都会落到 'rule'。
+    """
+    default = "rule"
+    if not api_user:
+        return default
+    uid = api_user.get("id")
+    if not uid:
+        return default
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select preferences from user_preferences where user_id = %s",
+                (int(uid),),
+            ).fetchone()
+        if row and isinstance(row.get("preferences"), dict):
+            val = row["preferences"].get("acceptance_verifier.mode")
+            if isinstance(val, str):
+                v = val.strip().lower()
+                if v in ("rule", "llm", "hybrid"):
+                    return v
     except Exception:
         return default
     return default
@@ -1582,11 +1675,17 @@ async def api_chat(request: Request) -> StreamingResponse:
             # task 81：acceptance 自动验证。curator 在 demand_ledger 里列了
             # 本轮成功的验收条件，跑一个 cheap 字面检查看 GM 输出（response
             # + updates）是否满足。未满足 → audit_log kind=acceptance_unmet。
+            # task 84：模式可选 rule / llm / hybrid（preferences 配置）。
             try:
                 _curator_plan_for_check = (agent_result or {}).get("curator_plan", {}) or {}
                 _acceptance = _curator_plan_for_check.get("acceptance") or []
                 if _acceptance and response.strip():
-                    unmet = _verify_acceptance(_acceptance, response, updates)
+                    _acc_mode = _acceptance_verifier_mode(api_user)
+                    _acc_user_id = int(api_user.get("id")) if api_user and api_user.get("id") else None
+                    unmet = _verify_acceptance(
+                        _acceptance, response, updates,
+                        mode=_acc_mode, user_id=_acc_user_id,
+                    )
                     if unmet:
                         from datetime import datetime as _dt
                         audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
