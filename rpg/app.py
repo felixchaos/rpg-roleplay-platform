@@ -38,7 +38,7 @@ from context_engine import build_context_bundle
 from context_agent import run_context_agent
 from model_registry import delete_model, load_model_catalog, selected_model, select_model, upsert_api, upsert_model
 from retrieval import retrieve_context
-from state import GameState, SAVE_FILE
+from state import GameState, SAVE_FILE, strip_json_state_ops
 from tool_registry import (
     delete_mcp_server,
     import_skill_bundle,
@@ -1483,6 +1483,36 @@ async def api_chat(request: Request) -> StreamingResponse:
                 return
             ctx = agent_result["retrieved_context"]
             bundle = agent_result["bundle"]
+            rule_results = _apply_chat_rule_candidates(
+                state,
+                _chat_rule_candidates(
+                    state,
+                    message_for_model,
+                    (agent_result.get("curator_plan") or {}).get("rule_candidate_actions") or [],
+                ),
+            )
+            if rule_results:
+                state.save()
+                _persist_runtime_checkpoint(state, api_user)
+                rule_prompt = _rule_results_prompt(rule_results, state)
+                if rule_prompt:
+                    bundle["prompt"] = f"{bundle.get('prompt', '')}\n\n{rule_prompt}"
+                bundle.setdefault("debug", {})["rule_results"] = rule_results
+                yield _sse("agent", {
+                    "phase": "rules_engine",
+                    "message": "RulesEngine 已完成本轮规则裁定。",
+                    "status": "done",
+                    "elapsed_ms": 0,
+                    "rule_results": rule_results,
+                })
+                yield _sse("status", _payload(api_user))
+                yield _sse("updates", {
+                    "stage": "rules_engine",
+                    "items": [
+                        f"RulesEngine: {(r.get('action') or {}).get('kind')} 已裁定"
+                        for r in rule_results
+                    ],
+                })
             state.set_last_retrieval(ctx)
             state.set_last_context(bundle["debug"])
             # B4: 子代理 usage 单独记账（metadata.kind='sub_agent'）
@@ -1716,8 +1746,9 @@ async def api_chat(request: Request) -> StreamingResponse:
                         })
             except Exception as _acc_exc:
                 print(f"[acceptance] check failed: {_acc_exc}")
+            visible_response = strip_json_state_ops(response)
             _persist_chat_turn(
-                api_user, state, message_for_model, response,  # 存档时存"纯叙事"不含 extractor JSON
+                api_user, state, message_for_model, visible_response,  # 存档时存玩家可见叙事，不含 JSON 状态协议
                 persist_user_id=persist_user_id, active_save_id=active_save_id,
             )
             usage_payload = _build_usage_payload(
@@ -2276,6 +2307,212 @@ from rules_bridge import (
 import modules as _rules_module_registry
 
 
+def _coerce_rule_seed(seed: Any) -> int | None:
+    return int(seed) if isinstance(seed, (int, float, str)) and str(seed).lstrip("-").isdigit() else None
+
+
+def _execute_rules_action(state: GameState, body: dict[str, Any]) -> dict[str, Any]:
+    """Execute one deterministic RulesEngine action against state.
+
+    Used by both /api/rules/action and the chat pipeline so free-form player
+    input can trigger dice before the GM narrates the outcome.
+    """
+    body = dict(body or {})
+    kind = str(body.get("kind") or "").strip()
+    seed = _coerce_rule_seed(body.get("seed"))
+    prelude: list[dict[str, Any]] = []
+
+    move_to = str(body.get("move_to") or "").strip()
+    if move_to and kind in {"skill_check", "saving_throw", "trap_check"}:
+        cur = (state.data.get("scene") or {}).get("location_id")
+        if move_to != cur:
+            moved = _rb_enter_room(state, move_to)
+            if not moved.get("ok"):
+                return {"ok": False, "error": moved.get("error") or f"无法前往 {move_to}"}
+            prelude.append({"kind": "move", "to": move_to, "room": moved.get("room")})
+
+    if kind == "skill_check":
+        skill = str(body.get("skill") or "")
+        if not skill:
+            return {"ok": False, "error": "缺少 skill"}
+        dc = int(body.get("dc", body.get("dc_hint", 12)))
+        result = _rb_skill_check(
+            state, skill=skill, dc=dc,
+            advantage=bool(body.get("advantage")),
+            disadvantage=bool(body.get("disadvantage")),
+            seed=seed,
+            reason=str(body.get("reason") or body.get("fact") or ""),
+            sets_flag=body.get("sets_flag") or body.get("reveals"),
+        )
+        out: dict[str, Any] = {"ok": True, "result": result}
+    elif kind == "saving_throw":
+        ability = str(body.get("ability") or "")
+        if not ability:
+            return {"ok": False, "error": "缺少 ability"}
+        dc = int(body.get("dc", body.get("dc_hint", 12)))
+        result = _rb_saving_throw(
+            state, ability=ability, dc=dc,
+            advantage=bool(body.get("advantage")),
+            disadvantage=bool(body.get("disadvantage")),
+            seed=seed,
+            reason=str(body.get("reason") or body.get("fact") or ""),
+            fail_damage_expr=body.get("fail_damage_expr") or body.get("fail_damage"),
+            fail_condition=body.get("fail_condition"),
+        )
+        out = {"ok": True, "result": result}
+    elif kind == "trap_check":
+        room_id = str(body.get("room_id") or state.data.get("scene", {}).get("location_id") or "")
+        trap_id = str(body.get("trap_id") or "")
+        if not room_id or not trap_id:
+            return {"ok": False, "error": "缺少 room_id 或 trap_id"}
+        out = _rb_trap_check(state, room_id=room_id, trap_id=trap_id, seed=seed)
+    elif kind == "attack":
+        target_id = str(body.get("target") or body.get("target_id") or "")
+        weapon_id = str(body.get("weapon") or body.get("weapon_id") or "shortsword")
+        enc = state.data.get("encounter") or {}
+        encounter_id = str(body.get("encounter_id") or "").strip()
+        if not enc.get("active") and encounter_id:
+            started = _rb_start_encounter(state, encounter_id=encounter_id, seed=seed)
+            if not started.get("ok"):
+                return {"ok": False, "error": started.get("error") or f"无法启动遭遇 {encounter_id}"}
+            prelude.append({"kind": "start_encounter", "encounter": started.get("encounter")})
+            enc = state.data.get("encounter") or {}
+        if not target_id and enc.get("active"):
+            enemy = next(
+                (c for c in enc.get("combatants", []) if c.get("side") == "enemy" and not c.get("defeated")),
+                None,
+            )
+            if enemy:
+                target_id = str(enemy.get("id") or "")
+        out = _rb_player_attack(
+            state, target_id=target_id, weapon_id=weapon_id,
+            advantage=bool(body.get("advantage")),
+            disadvantage=bool(body.get("disadvantage")),
+            seed=seed,
+        )
+    elif kind == "short_rest":
+        out = _rb_short_rest(state, seed=seed)
+    elif kind == "move":
+        loc = str(body.get("to") or body.get("target") or body.get("move_to") or "")
+        out = _rb_enter_room(state, loc)
+    else:
+        return {"ok": False, "error": f"未支持的 kind: {kind}"}
+
+    if prelude:
+        out.setdefault("prelude", prelude)
+    return out
+
+
+def _chat_rule_candidates(
+    state: GameState,
+    user_input: str,
+    curator_actions: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Merge local module rules with LLM-inferred rule candidates.
+
+    Module rules are deterministic and tied to the active room graph, so they
+    must win over generic LLM candidates such as a loose "stealth DC 12".
+    """
+    scene = state.data.get("scene") or {}
+    if not scene.get("module_id"):
+        return list(curator_actions or [])
+
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+
+    def add(raw: dict[str, Any] | None) -> None:
+        if not isinstance(raw, dict):
+            return
+        action = dict(raw)
+        key = (
+            action.get("kind"),
+            action.get("skill") or action.get("ability"),
+            action.get("target") or action.get("target_id"),
+            action.get("move_to") or action.get("to"),
+            action.get("trap_id"),
+        )
+        if key in seen:
+            return
+        seen.add(key)
+        merged.append(action)
+
+    for action in _rb_suggest_rule_actions(user_input, state):
+        add(action)
+    for action in curator_actions or []:
+        add(action)
+    return merged
+
+
+def _apply_chat_rule_candidates(state: GameState, actions: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Apply at most one direct rule action inferred from the player's text."""
+    scene = state.data.get("scene") or {}
+    if not scene.get("module_id"):
+        return []
+
+    allowed = {"skill_check", "saving_throw", "trap_check", "attack", "short_rest", "move"}
+    results: list[dict[str, Any]] = []
+    for raw in actions or []:
+        if not isinstance(raw, dict):
+            continue
+        action = dict(raw)
+        if action.get("kind") not in allowed:
+            continue
+        out = _execute_rules_action(state, action)
+        if not out.get("ok"):
+            continue
+        results.append({"action": action, "out": out})
+        break
+    return results
+
+
+def _rule_results_prompt(rule_results: list[dict[str, Any]], state: GameState | None = None) -> str:
+    if not rule_results:
+        return ""
+    lines = [
+        "【RulesEngine 本轮裁定】",
+        "以下结果已经由 deterministic RulesEngine 写入状态。GM 必须基于这些结果叙事，不能重新掷骰、改写 HP/AC/先攻/dice_log。",
+    ]
+    if isinstance(state, GameState):
+        scene = state.data.get("scene") or {}
+        room = scene.get("current_room") or {}
+        room_name = room.get("name") or scene.get("location_id") or ""
+        room_id = scene.get("location_id") or room.get("id") or ""
+        if room_name or room_id:
+            lines.append(f"当前规则场景：{room_name} ({room_id})。GM 输出中的当前位置必须以此为准，不要写成其他房间。")
+        enc = state.data.get("encounter") or {}
+        if enc.get("active"):
+            live = [
+                f"{c.get('name') or c.get('id')} HP {c.get('hp')}/{c.get('max_hp')}"
+                for c in enc.get("combatants", [])
+                if c.get("side") == "enemy" and not c.get("defeated")
+            ]
+            if live:
+                lines.append("当前仍在战斗的敌人：" + "；".join(live))
+    for item in rule_results:
+        action = item.get("action") or {}
+        out = item.get("out") or {}
+        result = out.get("result") or {}
+        if out.get("prelude"):
+            for pre in out["prelude"]:
+                room = pre.get("room") or {}
+                lines.append(f"- 先移动到：{room.get('name') or pre.get('to')}")
+        roll = result.get("roll") or {}
+        total = roll.get("total")
+        dc = result.get("dc")
+        success = result.get("success")
+        skill = action.get("skill") or action.get("ability") or action.get("target") or action.get("kind")
+        verdict = "成功" if success is True else "失败" if success is False else "已执行"
+        bit = f"- {action.get('kind')} {skill}: {verdict}"
+        if total is not None:
+            bit += f"，骰点总计 {total}"
+        if dc is not None:
+            bit += f" vs DC {dc}"
+        lines.append(bit)
+        for fact in result.get("gm_facts") or []:
+            lines.append(f"  · GM fact: {fact}")
+    return "\n".join(lines)
+
+
 def _rules_payload(state: GameState) -> dict:
     """前端 UI 需要的精简切片：角色卡 + 场景 + 战斗 + 骰子日志 + 模组元信息。"""
     return {
@@ -2285,6 +2522,121 @@ def _rules_payload(state: GameState) -> dict:
         "encounter": state.data.get("encounter", {}),
         "dice_log": list(state.data.get("dice_log", []))[-30:],
     }
+
+
+def _append_rules_receipt(state: GameState, text: str) -> None:
+    text = str(text or "").strip()
+    if not text:
+        return
+    state.data.setdefault("history", []).append({
+        "role": "assistant",
+        "content": text,
+        "source": "rules_engine",
+    })
+
+
+def _clear_pending_questions_after_rule_action(state: GameState, choice: str) -> None:
+    questions = state.data.setdefault("permissions", {}).setdefault("pending_questions", [])
+    cleared = 0
+    while questions:
+        state.clear_pending_question(index=0, choice=choice or "rules_action")
+        cleared += 1
+        questions = state.data.setdefault("permissions", {}).setdefault("pending_questions", [])
+    if cleared:
+        memory = state.data.setdefault("memory", {})
+        updates = memory.get("last_structured_updates") or []
+        memory["last_structured_updates"] = [
+            item for item in updates
+            if "等待玩家回答" not in str(item)
+        ][:12]
+
+
+def _room_receipt(room: dict[str, Any] | None) -> str:
+    room = room or {}
+    name = room.get("name") or room.get("id") or "未知房间"
+    room_id = room.get("id") or ""
+    lines = [f"【RulesEngine：移动】你来到「{name}」{f'（{room_id}）' if room_id else ''}。"]
+    desc = str(room.get("description") or "").strip()
+    if desc:
+        lines.append(desc)
+    clues = [c.get("text") if isinstance(c, dict) else str(c) for c in (room.get("visible_clues") or [])]
+    clues = [c for c in clues if c]
+    if clues:
+        lines.append("可见线索：" + "；".join(clues[:4]) + "。")
+    exits = [e.get("label") or e.get("to") for e in (room.get("exits") or []) if isinstance(e, dict)]
+    exits = [e for e in exits if e]
+    if exits:
+        lines.append("可用出口：" + "、".join(exits[:5]) + "。")
+    return "\n\n".join(lines)
+
+
+def _roll_line(result: dict[str, Any]) -> str:
+    roll = result.get("roll") or {}
+    expr = roll.get("expression") or ""
+    rolls = ",".join(str(x) for x in (roll.get("rolls") or []))
+    mod = roll.get("modifier")
+    total = roll.get("total")
+    dc = result.get("dc")
+    parts = []
+    if expr or rolls:
+        bit = expr or "roll"
+        if rolls:
+            bit += f"=[{rolls}]"
+        if isinstance(mod, (int, float)) and mod:
+            bit += f"{mod:+g}"
+        if total is not None:
+            bit += f" → {total}"
+        if dc is not None:
+            bit += f" vs DC {dc}"
+        parts.append(bit)
+    return "；".join(parts)
+
+
+def _action_receipt(action: dict[str, Any], out: dict[str, Any]) -> str:
+    result = out.get("result") or {}
+    kind = action.get("kind") or "action"
+    verdict = "成功" if result.get("success") is True else "失败" if result.get("success") is False else "已执行"
+    label = action.get("skill") or action.get("ability") or action.get("target") or action.get("target_id") or kind
+    lines = [f"【RulesEngine：{kind}】{label}：{verdict}。"]
+    roll = _roll_line(result)
+    if roll:
+        lines.append(f"掷骰：{roll}。")
+    damage = result.get("damage") or {}
+    if damage.get("total") is not None:
+        lines.append(f"伤害：{damage.get('total')}。")
+    for fact in result.get("gm_facts") or []:
+        if fact:
+            lines.append(str(fact))
+    if out.get("prelude"):
+        for pre in out["prelude"]:
+            if pre.get("kind") == "move":
+                room = pre.get("room") or {}
+                moved_to = room.get("name") or pre.get("to")
+                if moved_to:
+                    lines.insert(1, f"先移动到：{moved_to}。")
+            elif pre.get("kind") == "start_encounter":
+                enc = pre.get("encounter") or {}
+                name = (enc.get("definition") or {}).get("name") or enc.get("encounter_id")
+                lines.insert(1, f"遭遇开始：{name}。")
+    return "\n\n".join(lines)
+
+
+def _encounter_receipt(prefix: str, res: dict[str, Any]) -> str:
+    enc = res.get("encounter") or {}
+    if not enc:
+        return f"【RulesEngine：{prefix}】已执行。"
+    if prefix == "先攻":
+        order = enc.get("initiative_order") or []
+        order_line = " → ".join(f"{o.get('name')}({o.get('init')})" for o in order if o)
+        return f"【RulesEngine：先攻】遭遇开始。\n\n先攻顺序：{order_line}。"
+    if prefix == "下一回合":
+        order = enc.get("initiative_order") or []
+        idx = int(enc.get("turn_index") or 0)
+        current = order[idx] if 0 <= idx < len(order) else {}
+        return f"【RulesEngine：下一回合】现在轮到 {current.get('name') or '未知'}。"
+    result = res.get("result") or {}
+    action = {"kind": prefix, "target": result.get("target_name") or "player"}
+    return _action_receipt(action, {"result": result})
 
 
 @app.get("/api/rules/modules")
@@ -2331,6 +2683,8 @@ async def api_rules_move(request: Request) -> JSONResponse:
     res = _rb_enter_room(state, location_id)
     if not res.get("ok"):
         return JSONResponse({"ok": False, "error": res.get("error")}, status_code=400)
+    _clear_pending_questions_after_rule_action(state, f"move:{location_id}")
+    _append_rules_receipt(state, _room_receipt(res.get("room")))
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "rules": _rules_payload(state), "room": res.get("room")})
@@ -2341,68 +2695,14 @@ async def api_rules_action(request: Request) -> JSONResponse:
     """通用规则动作执行入口。根据 body.kind 路由到具体规则函数。"""
     api_user = _require_api_user(request)
     body = await request.json()
-    kind = str(body.get("kind") or "").strip()
     state = _ensure_loaded(api_user)
 
-    seed = body.get("seed")
-    seed = int(seed) if isinstance(seed, (int, float, str)) and str(seed).lstrip("-").isdigit() else None
+    out = _execute_rules_action(state, body)
+    if not out.get("ok"):
+        return JSONResponse(out, status_code=400)
 
-    if kind == "skill_check":
-        skill = str(body.get("skill") or "")
-        dc = int(body.get("dc", body.get("dc_hint", 12)))
-        result = _rb_skill_check(
-            state, skill=skill, dc=dc,
-            advantage=bool(body.get("advantage")),
-            disadvantage=bool(body.get("disadvantage")),
-            seed=seed,
-            reason=str(body.get("reason") or ""),
-            sets_flag=body.get("sets_flag"),
-        )
-        out: dict = {"ok": True, "result": result}
-    elif kind == "saving_throw":
-        ability = str(body.get("ability") or "")
-        dc = int(body.get("dc", body.get("dc_hint", 12)))
-        result = _rb_saving_throw(
-            state, ability=ability, dc=dc,
-            advantage=bool(body.get("advantage")),
-            disadvantage=bool(body.get("disadvantage")),
-            seed=seed,
-            reason=str(body.get("reason") or ""),
-            fail_damage_expr=body.get("fail_damage_expr") or body.get("fail_damage"),
-            fail_condition=body.get("fail_condition"),
-        )
-        out = {"ok": True, "result": result}
-    elif kind == "trap_check":
-        room_id = str(body.get("room_id") or state.data.get("scene", {}).get("location_id") or "")
-        trap_id = str(body.get("trap_id") or "")
-        if not room_id or not trap_id:
-            raise HTTPException(status_code=400, detail="缺少 room_id 或 trap_id")
-        out = _rb_trap_check(state, room_id=room_id, trap_id=trap_id, seed=seed)
-        if not out.get("ok"):
-            return JSONResponse(out, status_code=400)
-    elif kind == "attack":
-        target_id = str(body.get("target") or body.get("target_id") or "")
-        weapon_id = str(body.get("weapon") or body.get("weapon_id") or "shortsword")
-        out = _rb_player_attack(
-            state, target_id=target_id, weapon_id=weapon_id,
-            advantage=bool(body.get("advantage")),
-            disadvantage=bool(body.get("disadvantage")),
-            seed=seed,
-        )
-        if not out.get("ok"):
-            return JSONResponse(out, status_code=400)
-    elif kind == "short_rest":
-        out = _rb_short_rest(state, seed=seed)
-        if not out.get("ok"):
-            return JSONResponse(out, status_code=400)
-    elif kind == "move":
-        loc = str(body.get("to") or body.get("target") or "")
-        out = _rb_enter_room(state, loc)
-        if not out.get("ok"):
-            return JSONResponse(out, status_code=400)
-    else:
-        raise HTTPException(status_code=400, detail=f"未支持的 kind: {kind}")
-
+    _clear_pending_questions_after_rule_action(state, f"rules:{body.get('kind') or 'action'}")
+    _append_rules_receipt(state, _action_receipt(body, out))
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     out["rules"] = _rules_payload(state)
@@ -2422,6 +2722,8 @@ async def api_rules_encounter_start(request: Request) -> JSONResponse:
     res = _rb_start_encounter(state, encounter_id, seed=seed)
     if not res.get("ok"):
         return JSONResponse(res, status_code=400)
+    _clear_pending_questions_after_rule_action(state, f"encounter:start:{encounter_id}")
+    _append_rules_receipt(state, _encounter_receipt("先攻", res))
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "rules": _rules_payload(state), "encounter": res.get("encounter")})
@@ -2434,6 +2736,8 @@ async def api_rules_encounter_next(request: Request) -> JSONResponse:
     res = _rb_advance_turn(state)
     if not res.get("ok"):
         return JSONResponse(res, status_code=400)
+    _clear_pending_questions_after_rule_action(state, "encounter:next")
+    _append_rules_receipt(state, _encounter_receipt("下一回合", res))
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "rules": _rules_payload(state), "encounter": res.get("encounter")})
@@ -2452,6 +2756,8 @@ async def api_rules_encounter_enemy(request: Request) -> JSONResponse:
     res = _rb_enemy_attack(state, attacker_id=attacker_id, target_id=target_id, seed=seed)
     if not res.get("ok"):
         return JSONResponse(res, status_code=400)
+    _clear_pending_questions_after_rule_action(state, f"enemy:{attacker_id}")
+    _append_rules_receipt(state, _encounter_receipt("敌方攻击", res))
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "rules": _rules_payload(state), "result": res.get("result"), "encounter": res.get("encounter")})

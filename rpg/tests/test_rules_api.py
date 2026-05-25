@@ -72,6 +72,51 @@ class RulesApiSmoke(unittest.TestCase):
         stealth = next(a for a in body["actions"] if a.get("skill") == "stealth")
         self.assertEqual(stealth["dc"], 13)
 
+    def test_suggest_stealth_can_target_adjacent_minecart_room(self):
+        self.client.post("/api/rules/module/start", json={"module_id": "ash_mine"}, cookies=self.cookies)
+        r = self.client.post("/api/rules/suggest", json={"text": "我悄悄靠近矿车"}, cookies=self.cookies)
+        self.assertEqual(r.status_code, 200)
+        actions = r.json()["actions"]
+        stealth = next(a for a in actions if a.get("skill") == "stealth")
+        self.assertEqual(stealth["move_to"], "minecart_track")
+        self.assertEqual(stealth["target"], "minecart_track")
+        self.assertEqual(stealth["dc"], 13)
+
+    def test_rules_action_clears_stale_gm_question(self):
+        import app as ui_mod
+
+        user = register_user(self.client)
+        cookies = user["cookies"]
+        api_user = user["body"]["user"]
+        self.client.post("/api/rules/module/start", json={"module_id": "ash_mine"}, cookies=cookies)
+        self.client.post("/api/rules/move", json={"to": "minecart_track"}, cookies=cookies)
+
+        state = ui_mod._ensure_loaded(api_user)
+        state.add_pending_question(
+            "你的下一个动作是？",
+            source="gm:json",
+            options=["继续射击已经倒下的敌人", "转向另一个敌人"],
+        )
+        state.data.setdefault("memory", {})["last_structured_updates"] = [
+            "append: world.known_events",
+            "等待玩家回答",
+        ]
+        state.save()
+
+        r = self.client.post("/api/rules/action", json={
+            "kind": "skill_check",
+            "skill": "investigation",
+            "dc": 12,
+            "seed": 9,
+            "reason": "检查矿车把手的油污",
+        }, cookies=cookies)
+        self.assertEqual(r.status_code, 200, r.text)
+
+        state_body = self.client.get("/api/state", cookies=cookies).json()
+        self.assertEqual(state_body["permissions"]["pending_questions"], [])
+        self.assertNotIn("等待玩家回答", state_body["memory"]["last_structured_updates"])
+        self.assertIn("append: world.known_events", state_body["memory"]["last_structured_updates"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

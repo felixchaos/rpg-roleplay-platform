@@ -119,5 +119,56 @@ class TimeJumpPendingNotLocked(unittest.TestCase):
                          "无 pending 时 GM 标签应正常锁定")
 
 
+class PendingQuestionOptions(unittest.TestCase):
+    def test_json_question_keeps_option_text_with_commas(self):
+        s = GameState(copy.deepcopy(DEFAULT_STATE))
+        updates = s.apply_structured_updates(
+            """```json
+[
+  {
+    "op": "question",
+    "question": "接下来你打算怎么做？",
+    "options": [
+      "躲在矿车后，仔细观察周围并倾听声音（察觉）",
+      "伸手搜寻矿车内部，看看里面留下了什么（调查）",
+      "顺着铁轨继续向东面探索"
+    ]
+  }
+]
+```"""
+        )
+
+        self.assertIn("等待玩家回答", updates)
+        pending = s.data["permissions"]["pending_questions"]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["options"], [
+            "躲在矿车后，仔细观察周围并倾听声音（察觉）",
+            "伸手搜寻矿车内部，看看里面留下了什么（调查）",
+            "顺着铁轨继续向东面探索",
+        ])
+
+    def test_markdown_option_labels_do_not_become_facts(self):
+        s = GameState(copy.deepcopy(DEFAULT_STATE))
+        updates = s.apply_structured_updates(
+            """你可以： - **【借助掩体】** 躲在矿车后，仔细聆听风中传来的低语
+- **【搜寻车厢】** 拨开风化的碎石
+```json
+[
+  {
+    "op": "question",
+    "question": "接下来你打算怎么做？",
+    "options": ["借助掩体聆听（察觉）", "搜寻车厢异物（调查）"]
+  }
+]
+```"""
+        )
+
+        self.assertIn("等待玩家回答", updates)
+        self.assertNotIn("事实：借助掩体", updates)
+        self.assertNotIn("事实：搜寻车厢", updates)
+        self.assertNotIn("借助掩体", s.data["memory"]["facts"])
+        self.assertNotIn("搜寻车厢", s.data["memory"]["facts"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -103,6 +103,34 @@ class StartModuleTests(unittest.TestCase):
         opening_count = sum(1 for m in g.data["history"] if m.get("content") == opening)
         self.assertLessEqual(opening_count, 2, "opening 至多注入两次（每次 start_module 一次）")
 
+    def test_start_module_clears_previous_pending_turn_and_history(self):
+        g = GameState.new()
+        g.data["history"] = [
+            {"role": "assistant", "content": "旧开场"},
+            {"role": "user", "content": "旧行动"},
+        ]
+        g.data["turn"] = 7
+        g.data["memory"]["last_retrieval"] = "旧检索"
+        g.data["memory"]["last_context"] = {"old": True}
+        g.data["memory"]["last_context_agent"] = {"status": "old"}
+        g.data["memory"]["last_structured_updates"] = ["旧更新"]
+        g.data["permissions"]["pending_writes"] = [{"op": "set", "path": "player.status", "value": "old"}]
+        g.data["permissions"]["pending_questions"] = [{"question": "旧问题", "options": ["A"]}]
+
+        res = start_module(g, "ash_mine")
+
+        self.assertTrue(res["ok"])
+        self.assertEqual(g.data["turn"], 0)
+        self.assertEqual(g.data["permissions"]["pending_writes"], [])
+        self.assertEqual(g.data["permissions"]["pending_questions"], [])
+        self.assertEqual(len(g.data["history"]), 1)
+        self.assertEqual(g.data["history"][0]["role"], "assistant")
+        self.assertEqual(g.data["history"][0]["content"], res["opening"])
+        self.assertEqual(g.data["memory"]["last_retrieval"], "")
+        self.assertEqual(g.data["memory"]["last_context"], {})
+        self.assertEqual(g.data["memory"]["last_context_agent"], {})
+        self.assertEqual(g.data["memory"]["last_structured_updates"], [])
+
 
 class RoomMovementTests(unittest.TestCase):
     def setUp(self):
@@ -113,6 +141,7 @@ class RoomMovementTests(unittest.TestCase):
         res = enter_room(self.g, "minecart_track")
         self.assertTrue(res["ok"])
         self.assertEqual(self.g.data["scene"]["location_id"], "minecart_track")
+        self.assertEqual(self.g.data["player"]["current_location"], "矿车轨道")
 
     def test_invalid_move_blocked(self):
         # 从 mine_entrance 直接跳到非邻接的 mine_heart_altar 应失败
@@ -155,6 +184,20 @@ class SkillCheckIntegrationTests(unittest.TestCase):
         )
         self.assertFalse(result["success"])
         self.assertFalse(self.g.data["scene"]["flags"].get("sneak_pass", False))
+        self.assertTrue(self.g.data["scene"]["flags"].get("camp_alert"))
+
+    def test_attack_intent_after_alert_starts_triggered_encounter(self):
+        perform_skill_check(
+            self.g, "stealth", dc=99, seed=1,
+            reason="悄悄翻越矿车", sets_flag="sneak_pass",
+        )
+
+        actions = suggest_rule_actions("使用短弓进行远程攻击", self.g)
+        attack = next((a for a in actions if a.get("kind") == "attack"), None)
+
+        self.assertIsNotNone(attack)
+        self.assertEqual(attack.get("weapon"), "shortbow")
+        self.assertEqual(attack.get("encounter_id"), "ash_camp_combat")
 
     def test_dice_log_capped(self):
         # 触发 60 次检定，确保 dice_log 限定在 50 内
@@ -229,6 +272,35 @@ class CombatIntegrationTests(unittest.TestCase):
         defeated = next(c for c in self.g.data["encounter"]["combatants"] if c["id"] == target["id"])
         self.assertTrue(defeated["defeated"])
 
+    def test_enemy_attack_syncs_player_combatant_hp(self):
+        start_encounter_by_id(self.g, "deep_hall_combat", seed=11)
+        attacker = next(c for c in self.g.data["encounter"]["combatants"] if c.get("side") == "enemy")
+        hp_before = self.g.data["player_character"]["hp"]
+        for seed in range(30):
+            self.g.data["player_character"]["hp"] = hp_before
+            for c in self.g.data["encounter"]["combatants"]:
+                if c.get("id") == "player":
+                    c["hp"] = hp_before
+            res = enemy_attack(self.g, attacker_id=attacker["id"], seed=seed)
+            if res["ok"] and res["result"]["success"]:
+                pc_hp = self.g.data["player_character"]["hp"]
+                comb_hp = next(c["hp"] for c in self.g.data["encounter"]["combatants"] if c["id"] == "player")
+                self.assertLess(pc_hp, hp_before)
+                self.assertEqual(comb_hp, pc_hp)
+                break
+        else:
+            self.fail("没有任何 seed 命中玩家（统计上不太可能）")
+
+    def test_advance_turn_repairs_player_combatant_hp(self):
+        start_encounter_by_id(self.g, "deep_hall_combat", seed=11)
+        self.g.data["player_character"]["hp"] = 4
+        for c in self.g.data["encounter"]["combatants"]:
+            if c.get("id") == "player":
+                c["hp"] = 9
+        advance_turn(self.g)
+        comb_hp = next(c["hp"] for c in self.g.data["encounter"]["combatants"] if c["id"] == "player")
+        self.assertEqual(comb_hp, 4)
+
 
 class TrapTests(unittest.TestCase):
     def test_fissure_save_failure_damages_player(self):
@@ -292,6 +364,13 @@ class StateGateRulesTests(unittest.TestCase):
     def test_gm_cannot_append_dice_log(self):
         result = self.g.apply_state_write("dice_log=fake_entry", source="gm")
         self.assertIn("rules_managed", result)
+
+    def test_gm_cannot_overwrite_module_location(self):
+        start_module(self.g, "ash_mine")
+        enter_room(self.g, "minecart_track")
+        result = self.g.apply_state_write("player.current_location=废弃矿道入口", source="gm")
+        self.assertIn("module_managed", result)
+        self.assertEqual(self.g.data["player"]["current_location"], "矿车轨道")
 
     def test_rules_engine_source_can_write_hp(self):
         # apply_state_write 的 spec 路径会按字符串落地（与历史行为一致）。

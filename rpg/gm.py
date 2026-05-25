@@ -1170,9 +1170,13 @@ class GameMaster:
             f"风险等级：{berlin['risk_level']}\n"
             f"在场势力：\n" + "\n".join(f"  · {p}" for p in berlin["power_presence"])
         )
-        return _SYSTEM_BASE.format(
-            world_brief=world_brief,
-            berlin_brief=berlin_brief,
+        # _SYSTEM_BASE intentionally contains literal JSON examples such as
+        # {"op": "set", ...}.  Do not run the whole prompt through str.format(),
+        # because those braces are prompt text, not Python placeholders.
+        return (
+            _SYSTEM_BASE
+            .replace("{world_brief}", world_brief)
+            .replace("{berlin_brief}", berlin_brief)
         )
 
     def _dynamic_context(self, player_summary: str, retrieved_context: str) -> str:

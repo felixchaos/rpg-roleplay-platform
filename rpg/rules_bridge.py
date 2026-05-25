@@ -74,6 +74,11 @@ def start_module(state, module_id: str, character_overrides: Optional[dict] = No
     state.set_scene(scene)
     state.clear_encounter()
     state.data["dice_log"] = []
+    state.data["history"] = []
+    state.data["turn"] = 0
+    permissions = state.data.setdefault("permissions", {})
+    permissions["pending_writes"] = []
+    permissions["pending_questions"] = []
 
     # 把 player / world / memory 的非 5E 默认值替换成模组上下文，避免右侧『状态』
     # 面板继续显示 DEFAULT_STATE 里的柏林剧情默认值（图卢兹失守 / 调令伪造 等）。
@@ -112,6 +117,10 @@ def start_module(state, module_id: str, character_overrides: Optional[dict] = No
         f"{it.get('name')} ×{it.get('qty', 1)}" for it in (pc_now.get("inventory") or [])
     ]
     memory_block["items"] = []
+    memory_block["last_retrieval"] = ""
+    memory_block["last_context"] = {}
+    memory_block["last_context_agent"] = {}
+    memory_block["last_structured_updates"] = []
     # 注入开场作为 assistant 消息（不调 record_turn 避免 turn 计数 +1）
     opening = bundle.get("opening") or ""
     if opening:
@@ -174,6 +183,7 @@ def enter_room(state, location_id: str) -> dict:
     scene["exits"] = list(room.get("exits") or [])
     scene["visible_clues"] = list(room.get("visible_clues") or [])
     scene["current_room"] = _room_snapshot(room)
+    state.data.setdefault("player", {})["current_location"] = room.get("name") or location_id
     state.mark_scene_visit(location_id)
     return {"ok": True, "room": scene["current_room"], "scene": scene}
 
@@ -199,6 +209,15 @@ def perform_skill_check(
     state.append_dice_log(RulesEngine.make_dice_log_entry(result, reason=reason))
     if result.success and sets_flag:
         state.set_scene_flag(sets_flag, True)
+    if not result.success:
+        scene = state.data.get("scene") or {}
+        for hazard in (scene.get("current_room") or {}).get("hazards", []) or []:
+            trigger = hazard.get("trigger_flag")
+            if trigger:
+                state.set_scene_flag(str(trigger), True)
+                result.gm_facts.append(
+                    f"检定失败触发场景风险：{hazard.get('description') or trigger}"
+                )
     return result.to_dict()
 
 
@@ -225,6 +244,7 @@ def perform_saving_throw(
             damage = engine.damage_roll(fail_damage_expr, seed=(seed + 1) if isinstance(seed, int) else None)
             dmg_amount = int(damage.get("total", 0))
             actual = state.damage_player(dmg_amount, reason=reason or "saving_throw_fail")
+            _sync_player_combatant(state)
             out["damage"] = damage
             out["damage_applied"] = actual
             out["gm_facts"].append(
@@ -240,6 +260,21 @@ def perform_saving_throw(
 
 
 # ── 战斗 ────────────────────────────────────────────────────────
+
+def _sync_player_combatant(state) -> None:
+    pc = state.data.get("player_character") or {}
+    encounter = state.data.get("encounter") or {}
+    if not encounter.get("combatants"):
+        return
+    for combatant in encounter.get("combatants", []):
+        if combatant.get("id") == "player":
+            combatant["hp"] = int(pc.get("hp", combatant.get("hp", 0)) or 0)
+            combatant["max_hp"] = int(pc.get("max_hp", combatant.get("max_hp", 0)) or 0)
+            combatant["ac"] = int(pc.get("ac", combatant.get("ac", 10)) or 10)
+            combatant["conditions"] = list(pc.get("conditions") or [])
+            combatant["defeated"] = combatant["hp"] <= 0
+            break
+
 
 def start_encounter_by_id(state, encounter_id: str, seed: Optional[int] = None) -> dict:
     """根据当前模组 encounters.json 中的 id 启动战斗。"""
@@ -368,6 +403,7 @@ def enemy_attack(state, attacker_id: str, target_id: str = "player",
     if result.success and target_id == "player":
         amount = int((result.damage or {}).get("total", 0))
         actual = state.damage_player(amount, reason=f"enemy_attack {attacker_id}")
+        _sync_player_combatant(state)
         result.gm_facts.append(
             f"玩家受到 {actual} 点伤害（HP {state.data['player_character'].get('hp')}/"
             f"{state.data['player_character'].get('max_hp')}）。"
@@ -390,6 +426,7 @@ def advance_turn(state) -> dict:
     encounter = state.data.get("encounter") or {}
     if not encounter.get("active"):
         return {"ok": False, "error": "没有进行中的战斗"}
+    _sync_player_combatant(state)
     engine.next_turn(encounter)
     return {"ok": True, "encounter": encounter}
 
@@ -403,6 +440,7 @@ def short_rest(state, seed: Optional[int] = None) -> dict:
         return {"ok": False, "error": "当前房间不适合短休"}
     pc = state.data.setdefault("player_character", {})
     result = engine.short_rest(pc, hit_die="1d8", seed=seed)
+    _sync_player_combatant(state)
     state.append_dice_log(RulesEngine.make_dice_log_entry(result, reason="short_rest"))
     return {"ok": True, "result": result.to_dict(), "player_character": pc}
 
@@ -454,10 +492,41 @@ INTENT_KEYWORDS: list[tuple[str, dict]] = [
     # 威胁 / 恐吓
     (r"(威胁|恐吓|逼问)", {"kind": "skill_check", "skill": "intimidation", "dc_hint": 13}),
     # 攻击
-    (r"(攻击|砍|射|刺|杀|开战|战斗)", {"kind": "attack", "weapon_hint": "shortsword"}),
+    (r"(攻击|砍|射|刺|杀|出手|短弓|短剑|远程攻击|近战攻击)", {"kind": "attack", "weapon_hint": "shortsword"}),
     # 短休
     (r"(短休|休息|歇一下)", {"kind": "short_rest"}),
 ]
+
+
+def _triggered_encounter_id(state) -> str:
+    scene = state.data.get("scene") or {}
+    module_id = scene.get("module_id")
+    if not module_id:
+        return ""
+    try:
+        bundle = module_registry.load_module(module_id)
+    except Exception:
+        return ""
+    flags = scene.get("flags") or {}
+    active_flags = {k for k, v in flags.items() if v}
+    location_id = scene.get("location_id")
+    encounters = bundle.get("encounters") or []
+    for enc in encounters:
+        trigger = enc.get("trigger")
+        if trigger and trigger in active_flags:
+            return enc.get("id") or ""
+    for enc in encounters:
+        if enc.get("location_id") == location_id:
+            return enc.get("id") or ""
+    return ""
+
+
+def _weapon_from_text(text: str) -> str:
+    if any(token in text for token in ("短弓", "弓", "远程", "射", "箭")):
+        return "shortbow"
+    if any(token in text for token in ("短剑", "剑", "近战", "刺", "砍")):
+        return "shortsword"
+    return "shortsword"
 
 
 def suggest_rule_actions(user_input: str, state) -> list[dict]:
@@ -474,6 +543,17 @@ def suggest_rule_actions(user_input: str, state) -> list[dict]:
     scene = state.data.get("scene") or {}
     current_room = scene.get("current_room") or {}
     location_id = scene.get("location_id")
+    rooms_by_id: dict[str, dict] = {}
+    module_id = scene.get("module_id")
+    if module_id:
+        try:
+            rooms_by_id = {
+                r.get("id"): r
+                for r in (module_registry.load_module(module_id).get("rooms") or [])
+                if r.get("id")
+            }
+        except Exception:
+            rooms_by_id = {}
     for pattern, template in INTENT_KEYWORDS:
         if _re.search(pattern, text):
             action = dict(template)
@@ -482,22 +562,46 @@ def suggest_rule_actions(user_input: str, state) -> list[dict]:
             # 如果当前房间有该 skill 的 check，借用 DC
             if action.get("kind") == "skill_check":
                 target_skill = action["skill"]
+                matched_check = False
                 for chk in current_room.get("checks", []):
                     if chk.get("kind") == "skill_check" and chk.get("skill") == target_skill:
                         action["dc"] = chk.get("dc", action.get("dc_hint", 12))
                         action["target"] = location_id
                         action["sets_flag"] = chk.get("sets_flag")
                         action["fact"] = chk.get("fact")
+                        matched_check = True
                         break
+                if not matched_check and rooms_by_id:
+                    for ex in current_room.get("exits", []) or []:
+                        room = rooms_by_id.get(ex.get("to"))
+                        if not room:
+                            continue
+                        for chk in room.get("checks", []) or []:
+                            if chk.get("kind") == "skill_check" and chk.get("skill") == target_skill:
+                                action["dc"] = chk.get("dc", action.get("dc_hint", 12))
+                                action["target"] = room.get("id")
+                                action["move_to"] = room.get("id")
+                                action["sets_flag"] = chk.get("sets_flag")
+                                action["fact"] = chk.get("fact")
+                                action["reason"] = f"{action['reason']}；目标在相邻房间「{room.get('name') or room.get('id')}」"
+                                matched_check = True
+                                break
+                        if matched_check:
+                            break
                 action.setdefault("dc", action.get("dc_hint", 12))
             elif action.get("kind") == "attack":
                 # 当前房间有敌人或战斗激活时才是合法的
+                action["weapon"] = _weapon_from_text(text)
                 enc = state.data.get("encounter") or {}
                 if enc.get("active"):
                     enemies = [c for c in enc.get("combatants", []) if c.get("side") == "enemy" and not c.get("defeated")]
                     if enemies:
                         action["target"] = enemies[0].get("id")
                         action["target_name"] = enemies[0].get("name")
+                else:
+                    encounter_id = _triggered_encounter_id(state)
+                    if encounter_id:
+                        action["encounter_id"] = encounter_id
             out.append(action)
     # 去重（按 kind+skill）
     seen = set()

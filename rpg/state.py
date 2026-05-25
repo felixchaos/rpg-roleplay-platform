@@ -686,7 +686,20 @@ class GameState:
         text = gm_response or ""
         json_ops, text_stripped = _extract_json_state_ops(text)
         # 用剥离过 json 块的文本再做 【】 抽取，避免双重计算
-        tags = [_clean_item(raw) for raw in re.findall(r"【([^】]+)】", text_stripped) if _clean_item(raw)]
+        tags: list[str] = []
+        for match in re.finditer(r"【([^】]+)】", text_stripped):
+            line_start = text_stripped.rfind("\n", 0, match.start()) + 1
+            line_end = text_stripped.find("\n", match.end())
+            if line_end < 0:
+                line_end = len(text_stripped)
+            line = text_stripped[line_start:line_end]
+            # Markdown option labels such as "- **【搜寻车厢】** ..." are UI copy,
+            # not durable facts. JSON/state-ops still carry the real question.
+            if "**【" in line and "】**" in line and (" - " in line or line.lstrip().startswith("-")):
+                continue
+            item = _clean_item(match.group(1))
+            if item:
+                tags.append(item)
         validation = self._scan_worldline_validation(tags)
         if validation["status"] != "none":
             self._set_worldline_validation(validation["status"], validation["message"])
@@ -871,8 +884,7 @@ class GameState:
                     q = op.get("question") or op.get("text") or ""
                     options = op.get("options") or []
                     if q:
-                        joined = q + ("｜选项：" + "、".join(map(str, options)) if options else "")
-                        if self.add_pending_question(joined, source="gm:json"):
+                        if self.add_pending_question(q, source="gm:json", options=options if isinstance(options, list) else None):
                             updates.append("等待玩家回答")
                     else:
                         # task 60：缺 question 文本时不静默
@@ -1000,6 +1012,25 @@ class GameState:
             except Exception:
                 pass
             return f"状态写入拒绝（rules_managed）：{path}"
+        # 规则模组运行时，玩家所在房间由 RulesEngine / rules_bridge 的移动结果维护。
+        # GM 只能叙事，不能把自然语言里的“当前位置”反写成另一套状态。
+        if _write_path_module_managed(path) and _module_scene_active(self.data) and str(source or "").startswith("gm"):
+            try:
+                audit = self.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                audit.append({
+                    "ts": datetime.now().isoformat(timespec="seconds"),
+                    "source": source,
+                    "path": path,
+                    "value": str(value)[:120],
+                    "blocked": "module_managed",
+                    "hint": "规则模组运行时当前位置由 RulesEngine 房间状态维护，GM 不得写入",
+                    "turn": self.data.get("turn", 0),
+                })
+                if len(audit) > 200:
+                    self.data["permissions"]["audit_log"] = audit[-200:]
+            except Exception:
+                pass
+            return f"状态写入拒绝（module_managed）：{path}"
         permissions = self.data.setdefault("permissions", {})
         mode = _normalize_permission_mode(permissions.get("mode", "full_access"))
         allowed = _write_path_allowed(path, mode)
@@ -1240,8 +1271,12 @@ class GameState:
         permissions["audit_log"] = permissions["audit_log"][-200:]
         return f"状态写入拒绝：{item.get('path', '')}"
 
-    def add_pending_question(self, text: str, source: str = "gm") -> bool:
-        question, options = _parse_question(text)
+    def add_pending_question(self, text: str, source: str = "gm", options: list | None = None) -> bool:
+        if options is None:
+            question, parsed_options = _parse_question(text)
+        else:
+            question = _clean_item(text)
+            parsed_options = [_clean_item(str(x)) for x in options if _clean_item(str(x))]
         if not question:
             return False
         permissions = self.data.setdefault("permissions", {})
@@ -1250,7 +1285,7 @@ class GameState:
         item = {
             "id": _secrets.token_urlsafe(8),
             "question": question,
-            "options": options,
+            "options": parsed_options[:4],
             "source": source,
             "turn": self.data.get("turn", 0),
         }
@@ -1767,6 +1802,11 @@ def _extract_json_state_ops(text: str) -> tuple[list[dict], str]:
     return ops, "".join(stripped_parts)
 
 
+def strip_json_state_ops(text: str) -> str:
+    """Return player-facing narrative text without JSON state-op fences."""
+    return _extract_json_state_ops(text or "")[1].strip()
+
+
 def _risk_label(path: str) -> str:
     """给路径派一个风险等级，前端按颜色分组显示。"""
     if path in _HIGH_RISK_EXACT or path.startswith(_HIGH_RISK_PREFIXES):
@@ -1862,6 +1902,10 @@ _RULES_MANAGED_PREFIXES = (
     "player_character.conditions",  # 条件由 rules 触发（中毒等）
 )
 
+_MODULE_MANAGED_PATHS = {
+    "player.current_location",
+}
+
 
 def _write_path_hard_forbidden(path: str) -> bool:
     """绝对不能写的路径，无论权限模式或 force 标志。
@@ -1878,6 +1922,17 @@ def _write_path_rules_managed(path: str) -> bool:
     if path in _RULES_MANAGED_PATHS:
         return True
     return any(path == prefix.rstrip(".") or path.startswith(prefix) for prefix in _RULES_MANAGED_PREFIXES)
+
+
+def _write_path_module_managed(path: str) -> bool:
+    return path in _MODULE_MANAGED_PATHS
+
+
+def _module_scene_active(data: dict) -> bool:
+    try:
+        return bool((data.get("scene") or {}).get("module_id"))
+    except Exception:
+        return False
 
 
 def _write_path_allowed(path: str, mode: str) -> bool:
