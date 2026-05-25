@@ -92,6 +92,30 @@ def _deployment_mode() -> str:
     return mode
 
 
+def _is_set_parser_enabled(api_user: dict | None) -> bool:
+    """task 77：用户偏好 set_parser.enabled = true 时开启 /set 自然语言解析子代理。
+    默认 false（向后兼容：detect_set_directive 简单 path=value 仍工作）。
+    """
+    if not api_user:
+        return False
+    uid = api_user.get("id")
+    if not uid:
+        return False
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select preferences from user_preferences where user_id = %s",
+                (int(uid),),
+            ).fetchone()
+        if row and isinstance(row.get("preferences"), dict):
+            return bool(row["preferences"].get("set_parser.enabled"))
+    except Exception:
+        return False
+    return False
+
+
 def _is_extractor_enabled(api_user: dict | None) -> bool:
     """task 62：用户偏好 extractor.enabled = true 时开启 GM-extractor 第二步。
     默认 false（保持向后兼容，单步 GM 流程不变）。
@@ -1156,6 +1180,59 @@ async def api_chat(request: Request) -> StreamingResponse:
             # 把 directive_updates 应用 → 立刻持久化一个 runtime checkpoint → 发 `updates`
             # SSE 事件让 UI 也立刻反映；后续 GM 失败也保留这批硬改动。
             directive_updates = state.apply_player_directives(message_for_model)
+            # task 77：如果是 /set + 用户开启 set_parser，让 LLM 子代理把自然语言
+            # 拆成额外 ops（detect_set_directive 简单 path=value 之外的复杂关系/事实/变量）
+            if (message_for_model.strip().startswith("/set") and
+                    _is_set_parser_enabled(api_user)):
+                try:
+                    import set_parser as _set_parser
+                    parser_ops = _set_parser.parse_set_directive(
+                        set_text=message_for_model,
+                        state_data=state.data,
+                        user_id=int(api_user.get("id")) if api_user else None,
+                        timeout_sec=15,
+                    )
+                    for op in parser_ops:
+                        kind = (op.get("op") or "set").lower()
+                        try:
+                            if kind == "hypothesis":
+                                txt = op.get("text") or op.get("value") or ""
+                                if txt:
+                                    mid = state.add_hypothesis(
+                                        text=txt, source="user:/set:parser",
+                                        time_label=op.get("time_label"),
+                                        characters=op.get("characters"),
+                                    )
+                                    directive_updates.append(f"推测登记（/set 解析）：{mid}")
+                            elif kind in ("set", "append", "overwrite"):
+                                path = (op.get("path") or "").strip()
+                                if path:
+                                    spec = f"{path}={op.get('value', '')}"
+                                    res = state.apply_state_write(
+                                        spec, source="user:/set:parser",
+                                        force=True,
+                                        append=(kind == "append"),
+                                        overwrite=(kind == "overwrite"),
+                                    )
+                                    directive_updates.append(f"/set 解析: {res}")
+                        except Exception as op_exc:
+                            print(f"[set_parser] op apply failed: {op_exc} for {op}")
+                except Exception as exc:
+                    print(f"[chat] set_parser failed: {exc}; 继续走简单 /set 路径")
+                    try:
+                        from datetime import datetime as _dt
+                        audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                        audit.append({
+                            "ts": _dt.now().isoformat(timespec="seconds"),
+                            "kind": "set_parser_error",
+                            "source": "set_parser",
+                            "hint": f"/set 自然语言解析失败：{type(exc).__name__}: {str(exc)[:200]}",
+                            "turn": state.data.get("turn", 0),
+                        })
+                        if len(audit) > 200:
+                            state.data["permissions"]["audit_log"] = audit[-200:]
+                    except Exception:
+                        pass
             if directive_updates:
                 _persist_runtime_checkpoint(state, api_user)
                 yield _sse("status", _payload(api_user))

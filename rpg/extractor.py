@@ -265,11 +265,15 @@ def _call_anthropic_tool_use(
                     "items": {
                         "type": "object",
                         "properties": {
-                            "op": {"type": "string", "enum": ["set", "append", "overwrite", "question"]},
-                            "path": {"type": "string", "description": "state 路径（如 player.role / relationships.阿衡）；op=question 时可省"},
+                            "op": {"type": "string", "enum": ["set", "append", "overwrite", "question", "hypothesis", "confirm_hypothesis", "reject_hypothesis"]},
+                            "path": {"type": "string", "description": "state 路径（如 player.role / relationships.阿衡）；op=question/hypothesis/confirm_hypothesis/reject_hypothesis 时可省"},
                             "value": {"description": "要写入的值，字符串"},
                             "question": {"type": "string", "description": "op=question 时用"},
                             "options": {"type": "array", "items": {"type": "string"}, "description": "op=question 时用"},
+                            "text": {"type": "string", "description": "op=hypothesis 时用（推测内容）"},
+                            "id": {"type": "string", "description": "op=confirm_hypothesis/reject_hypothesis 时用（mem_ 前缀的 hypothesis id）"},
+                            "characters": {"type": "array", "items": {"type": "string"}, "description": "op=hypothesis 时用，涉及角色名"},
+                            "time_label": {"type": "string", "description": "op=hypothesis 时可选，叙事时间标签"},
                         },
                         "required": ["op"],
                     },
