@@ -2298,13 +2298,10 @@ async def api_rules_module_start(request: Request) -> JSONResponse:
     res = _rb_start_module(state, module_id, character_overrides=character_overrides)
     if not res.get("ok"):
         raise HTTPException(status_code=400, detail=res.get("error", "start_module 失败"))
-    # 模组开场作为 assistant 消息进入 history（不占用对话回合数）
-    opening = res.get("opening") or ""
-    if opening and (not state.data["history"] or state.data["history"][-1].get("content") != opening):
-        state.data["history"].append({"role": "assistant", "content": opening})
+    # opening 已由 rules_bridge.start_module 注入到 history（避免重复 append）
     state.save()
     _persist_runtime_checkpoint(state, api_user)
-    return JSONResponse({"ok": True, "rules": _rules_payload(state), "opening": opening, "state": _payload(api_user)})
+    return JSONResponse({"ok": True, "rules": _rules_payload(state), "opening": res.get("opening") or "", "state": _payload(api_user)})
 
 
 @app.get("/api/rules/scene")

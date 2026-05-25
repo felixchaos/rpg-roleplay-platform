@@ -72,6 +72,37 @@ class StartModuleTests(unittest.TestCase):
         self.assertEqual(ruleset["id"], "dnd5e")
         self.assertIn("5E compatible", ruleset.get("public_label", ""))
 
+    def test_start_module_overwrites_default_novel_state(self):
+        """模组开始时，player/world/known_events 等默认柏林剧情字段必须被清掉，
+        否则右侧『状态』面板会显示 DEFAULT_STATE 的『图卢兹失守 / 柏林暗流』。"""
+        g = GameState.new()
+        # 确认默认值确实是柏林
+        self.assertIn("柏林", g.data["player"]["current_location"])
+        self.assertGreater(len(g.data["world"]["known_events"]), 0)
+        # 启动模组
+        start_module(g, "ash_mine")
+        # player 字段已切换到模组上下文
+        self.assertNotIn("柏林", g.data["player"]["current_location"])
+        self.assertNotIn("柏林", g.data["world"]["time"])
+        self.assertEqual(g.data["world"]["known_events"], [])
+        bg = g.data["player"]["background"]
+        self.assertTrue("Ash Mine" in bg or "灰烬矿坑" in bg, f"background 应含模组名: {bg}")
+        # main_quest 切换
+        mq = g.data["memory"]["main_quest"]
+        self.assertTrue("Ash Mine" in mq or "灰烬矿坑" in mq, f"main_quest 应含模组名: {mq}")
+
+    def test_start_module_appends_opening_to_history_once(self):
+        g = GameState.new()
+        res = start_module(g, "ash_mine")
+        opening = res.get("opening") or ""
+        self.assertGreater(len(opening), 0)
+        # history 最后一条 = opening
+        self.assertEqual(g.data["history"][-1]["content"], opening)
+        # 再次调 start_module（同一 state），history 不应重复堆叠 opening
+        start_module(g, "ash_mine")
+        opening_count = sum(1 for m in g.data["history"] if m.get("content") == opening)
+        self.assertLessEqual(opening_count, 2, "opening 至多注入两次（每次 start_module 一次）")
+
 
 class RoomMovementTests(unittest.TestCase):
     def setUp(self):

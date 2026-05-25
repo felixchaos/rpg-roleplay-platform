@@ -67,8 +67,48 @@ def start_module(state, module_id: str, character_overrides: Optional[dict] = No
     state.clear_encounter()
     state.data["dice_log"] = []
 
-    # 记入对话历史（不直接调 record_turn，避免回合 +1）。注入开场作为 assistant 消息。
+    # 把 player / world / memory 的非 5E 默认值替换成模组上下文，避免右侧『状态』
+    # 面板继续显示 DEFAULT_STATE 里的柏林剧情默认值（图卢兹失守 / 调令伪造 等）。
+    pc_now = state.data.get("player_character") or {}
+    module_name = manifest.get("name_cn") or manifest.get("name") or module_id
+    module_tag = manifest.get("tagline") or ""
+    state.data["player"] = {
+        "name": pc_now.get("name") or "Drifter",
+        "role": "5E 探险者",
+        "background": f"5E compatible · 五版规则兼容 · 原创规则模组『{module_name}』。{module_tag}",
+        "current_location": start_room.get("name") or start_room.get("id"),
+    }
+    state.data["world"] = {
+        "time": "灰烬山岭 · 黎明前",
+        "timeline": {
+            "anchor_state": "locked",
+            "current_label": module_name,
+            "current_phase": module_name,
+            "anchor_source": "module",
+            "anchor_turn": state.data.get("turn", 0),
+            "pending_jump": None,
+            "last_transition": None,
+        },
+        "known_events": [],
+    }
+    state.data["relationships"] = {}
+    # memory 主线/当前目标也按模组覆盖
+    memory_block = state.data.setdefault("memory", {})
+    memory_block["main_quest"] = f"完成 {module_name} 冒险"
+    memory_block["current_objective"] = manifest.get("tagline") or f"从 {start_room.get('name','起点')} 出发"
+    memory_block["facts"] = []
+    memory_block["notes"] = []
+    memory_block["pinned"] = []
+    memory_block["abilities"] = list(pc_now.get("features") or [])
+    memory_block["resources"] = [
+        f"{it.get('name')} ×{it.get('qty', 1)}" for it in (pc_now.get("inventory") or [])
+    ]
+    memory_block["items"] = []
+    # 注入开场作为 assistant 消息（不调 record_turn 避免 turn 计数 +1）
     opening = bundle.get("opening") or ""
+    if opening:
+        state.data.setdefault("history", []).append({"role": "assistant", "content": opening})
+
     return {
         "ok": True,
         "scene": scene,
