@@ -34,6 +34,21 @@ MAX_LAYER_CHARS = {
 }
 
 
+def _neutralize_state_write_tags(text: str) -> str:
+    """P0 #2：从检索内容里中和 `【状态写入：…】` / `【询问：…】` /
+    `【时间推进：…】` 等会被 apply_structured_updates 当作 GM 写状态指令
+    的标签。原文如果包含这类装饰括号，主 GM 在转述时会原样复述，
+    apply_structured_updates 在 GM 输出上跑 re.findall(r"【([^】]+)】")
+    就会把章节里的"假指令"当成真状态写入执行。
+
+    修法：把检索内容里的 `【` `】` 替换成视觉上接近但 GM 解析时不会
+    被识别的全形括号（U+FF3B / U+FF3D），保持人类可读的同时切断指令链路。
+    """
+    if not text:
+        return text
+    return text.replace("【", "［").replace("】", "］")
+
+
 def build_context_bundle(
     state,
     user_input: str,
@@ -108,7 +123,7 @@ def build_context_bundle(
             _context_agent_decision(curator_plan),
             items=[_context_agent_debug(curator_plan)],
         ),
-        _layer("rag", "检索参考", retrieved_context or "（本轮无额外检索资料）"),
+        _layer("rag", "检索参考", _neutralize_state_write_tags(retrieved_context) or "（本轮无额外检索资料）"),
         _layer("recent_chat", "最近对话", _format_history(history)),
         _layer("user_input", "玩家本轮输入", user_input or "（空）"),
     ]
