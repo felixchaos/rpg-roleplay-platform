@@ -153,6 +153,42 @@ class GameState:
         # 在确定迁移策略后做。这里只是让新写入能落地）。
         memory_block = migrated.setdefault("memory", {})
         memory_block.setdefault("items", [])
+        # task 83（codex §7.1 phase B）：MemoryItem 旧数据 backfill 迁移。
+        # task 74 只做 dual-write，新写入同时落 legacy facts/notes/pinned/abilities/
+        # resources 和 items；旧存档里 memory.items 还是空。这里补一次迁移：
+        # 当 items 为空且任一 legacy bucket 有内容，就把 legacy 数组转成 MemoryItem
+        # 注入 items（kind=runtime_fact, source=legacy_migration_v1, turn=0——
+        # 旧数据无 turn 可考，用 0 标记"档前"）。
+        # 保留 legacy 字段不动：codex 哲学是 6 月观察期 dual-read 兼容，迁移阶段
+        # 不删旧字段，等 phase C 才决定是否移除。
+        # _migrate 是 staticmethod，调不到 self.add_memory_item，所以内联生成 item。
+        if not memory_block.get("items"):
+            import secrets as _secrets
+            legacy_buckets = ("facts", "notes", "pinned", "abilities", "resources")
+            has_legacy = any(memory_block.get(b) for b in legacy_buckets)
+            if has_legacy:
+                backfilled: list[dict] = []
+                now_ts = datetime.now().isoformat(timespec="seconds")
+                for bucket in legacy_buckets:
+                    legacy_arr = memory_block.get(bucket) or []
+                    if not isinstance(legacy_arr, list):
+                        continue
+                    for raw in legacy_arr:
+                        text = _clean_item(raw if isinstance(raw, str) else str(raw))
+                        if not text:
+                            continue
+                        backfilled.append({
+                            "id": f"mem_{_secrets.token_urlsafe(6)}",
+                            "kind": "runtime_fact",
+                            "text": text,
+                            "source": "legacy_migration_v1",
+                            "turn": 0,
+                            "ts": now_ts,
+                            "status": "active",
+                            "legacy_bucket": bucket,
+                        })
+                if backfilled:
+                    memory_block["items"] = backfilled
         return migrated
 
     # ── 存档 ──────────────────────────────────────────────────────

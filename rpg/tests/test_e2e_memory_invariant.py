@@ -234,5 +234,69 @@ class MemoryInvariantE2E(unittest.TestCase):
             f"reload 后 hard_forbidden 丢失: {audit_api}")
 
 
+class MemoryItemBackfillMigration(unittest.TestCase):
+    """task 83（codex §7.1 phase B）：旧存档 backfill 迁移单元测试。
+
+    task 74 只做 dual-write：新写入同时落 legacy facts/notes/pinned/abilities/
+    resources 和结构化 items。但**旧存档**里 memory.items 还是空（迁移没回填）。
+    task 83 在 GameState._migrate 里加一段 backfill：items 为空 + legacy 任一
+    字段有内容 → 把 legacy 数组转成 MemoryItem 注入 items（kind=runtime_fact,
+    source=legacy_migration_v1, turn=0），同时保留 legacy 字段不动（dual-read
+    兼容期）。
+
+    这测纯粹走 _migrate 静态方法，不需要 API client / DB。
+    """
+
+    def test_legacy_facts_backfill_into_items(self):
+        """旧 shape state（memory.items=[], memory.facts=[...]）过 _migrate 后：
+        - items 长度 == 2
+        - 每条 kind=='runtime_fact', source=='legacy_migration_v1',
+          legacy_bucket=='facts', status=='active', turn==0
+        - 原 facts 数组仍是 ['事实A','事实B']（未删，dual-read 兼容）
+        """
+        # 延迟 import 避免依赖 RPG_REQUIRE_AUTH 等环境（这测不走 API）
+        from state import GameState  # noqa: E402
+
+        old_shape = {
+            "memory": {
+                "items": [],
+                "facts": ["事实A", "事实B"],
+            },
+        }
+        state = GameState(old_shape)
+        memory = state.data.get("memory", {})
+        items = memory.get("items", [])
+
+        # 长度断言
+        self.assertEqual(len(items), 2,
+            f"backfill 后 items 应有 2 条: {items}")
+
+        # 每条字段断言
+        for item in items:
+            self.assertEqual(item.get("kind"), "runtime_fact",
+                f"kind 应为 runtime_fact: {item}")
+            self.assertEqual(item.get("source"), "legacy_migration_v1",
+                f"source 应为 legacy_migration_v1: {item}")
+            self.assertEqual(item.get("legacy_bucket"), "facts",
+                f"legacy_bucket 应为 facts: {item}")
+            self.assertEqual(item.get("status"), "active",
+                f"status 应为 active: {item}")
+            self.assertEqual(item.get("turn"), 0,
+                f"turn 应为 0（旧数据无 turn 可考）: {item}")
+            self.assertTrue(item.get("id", "").startswith("mem_"),
+                f"id 应以 mem_ 前缀: {item}")
+            self.assertTrue(item.get("ts"),
+                f"ts 不应为空: {item}")
+
+        # text 内容应匹配原 facts（按顺序）
+        texts = [i.get("text") for i in items]
+        self.assertEqual(texts, ["事实A", "事实B"],
+            f"items text 应按 facts 顺序: {texts}")
+
+        # 原 facts 数组未删（dual-read 兼容）
+        self.assertEqual(memory.get("facts"), ["事实A", "事实B"],
+            f"legacy facts 数组不应被删: {memory.get('facts')}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
