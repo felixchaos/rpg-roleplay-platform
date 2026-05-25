@@ -74,6 +74,12 @@ DEFAULT_STATE = {
         "facts": [],
         "pinned": [],
         "notes": [],
+        # task 74：结构化记忆 dual-write 槽位。MemoryItem schema:
+        # {id, kind, text, source, turn, time_label?, characters?, status, ts}
+        # 其中 kind ∈ {canon_fact, runtime_fact, hypothesis, user_constraint}。
+        # 旧 facts/notes/pinned/resources/abilities 数组继续工作（向后兼容），
+        # 新 items 数组是 task 75/76/77/78 的结构化基础。
+        "items": [],
         "last_retrieval": "",
         "last_context": {},
         "last_context_agent": {},
@@ -143,6 +149,10 @@ class GameState:
         timeline.setdefault("anchor_turn", migrated.get("turn", 0))
         timeline.setdefault("pending_jump", None)
         timeline.setdefault("last_transition", None)
+        # task 74：旧存档没有 memory.items，补一个空数组（不回填旧 facts，让 task 78
+        # 在确定迁移策略后做。这里只是让新写入能落地）。
+        memory_block = migrated.setdefault("memory", {})
+        memory_block.setdefault("items", [])
         return migrated
 
     # ── 存档 ──────────────────────────────────────────────────────
@@ -378,8 +388,65 @@ class GameState:
         items = self.data["memory"].setdefault(bucket, [])
         if text not in items:
             items.append(text)
+            # task 74：dual-write 到结构化 memory.items（旧调用方完全无感知）
+            # bucket → kind 映射：当前所有旧 bucket 都标 runtime_fact（本局事实）。
+            # 后续 task 76/77/78 会按更细粒度区分 canon_fact / hypothesis 等。
+            self.add_memory_item(
+                text=text,
+                kind="runtime_fact",
+                source="legacy_add_memory",
+                legacy_bucket=bucket,
+            )
             return True
         return False
+
+    # task 74：结构化记忆写入入口。callers (extractor / curator / GM JSON op /
+    # 玩家手动 add) 可以直接用这个，带上 kind + source + meta，避免被 bucket
+    # 字符串语义局限。返回新建条目的 id（用于后续引用/supersede）。
+    def add_memory_item(
+        self,
+        text: str,
+        *,
+        kind: str = "runtime_fact",
+        source: str = "gm",
+        time_label: str | None = None,
+        characters: list[str] | None = None,
+        status: str = "active",
+        supersedes: list[str] | None = None,
+        legacy_bucket: str | None = None,
+    ) -> str:
+        text = _clean_item(text)
+        if not text:
+            return ""
+        # 已知 kind 白名单（task 74 起步只支持 4 种核心，task 76 可扩展）
+        valid_kinds = {"canon_fact", "runtime_fact", "hypothesis", "user_constraint"}
+        if kind not in valid_kinds:
+            kind = "runtime_fact"
+        import secrets as _secrets
+        item = {
+            "id": f"mem_{_secrets.token_urlsafe(6)}",
+            "kind": kind,
+            "text": text,
+            "source": source,
+            "turn": int(self.data.get("turn", 0)),
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "status": status,
+        }
+        if time_label:
+            item["time_label"] = time_label
+        if characters:
+            item["characters"] = list(characters)
+        if supersedes:
+            item["supersedes"] = list(supersedes)
+        if legacy_bucket:
+            item["legacy_bucket"] = legacy_bucket
+        items = self.data.setdefault("memory", {}).setdefault("items", [])
+        items.append(item)
+        # 软上限：避免无限增长（保留最新 500 条；老 item 不删除元数据，由
+        # task 78 migration 阶段决定永久策略）
+        if len(items) > 500:
+            self.data["memory"]["items"] = items[-500:]
+        return item["id"]
 
     def remove_memory(self, bucket: str, index: int):
         items = self.data["memory"].get(bucket, [])
