@@ -29,10 +29,71 @@ MAX_LAYER_CHARS = {
     "worldbook": 2200,
     "rag": 2200,
     "state": 2200,
+    "state_schema": 1600,   # task 59：字段 schema + 已知 NPC enum，前 20 个
     "write_results": 800,   # task 54：上轮标签结果反馈，简洁即可
     "recent_chat": 2200,
     "user_input": 900,
 }
+
+
+def _state_schema_layer(state, chars: dict[str, Any]) -> str:
+    """task 59：把 state 字段的真实 schema + 当前 enum 候选喂给 LLM。
+
+    痛点：之前 LLM 不知道
+    - player.role 值是单字符串还是 {name, tier} 结构 → 瞎试
+    - relationships.角色名 中"角色名"应是已存 NPC 还是任意新名字 → 不一致
+    - memory.resources 是 list 但能写单值 / 多值 → 反复尝试
+
+    本层给出明确 schema + 当前已知值，让 LLM 输出强类型。
+    """
+    p = state.data.get("player", {}) or {}
+    w = state.data.get("world", {}) or {}
+    m = state.data.get("memory", {}) or {}
+    rels = state.data.get("relationships", {}) or {}
+    worldline = state.data.get("worldline", {}) or {}
+
+    # 已知人物列表（玩家 + 当前 relationships + 角色卡库）
+    known_npcs = sorted(set(list(rels.keys()) + [name for name in chars.keys() if name != p.get("name")]))
+    known_npcs_str = "、".join(known_npcs[:20]) if known_npcs else "（尚未识别任何 NPC）"
+
+    # 用户变量当前值
+    user_vars = (worldline.get("user_variables") or {})
+    var_names = list(user_vars.keys())[:10]
+
+    lines = [
+        "## 状态字段 schema（写入时严格遵循）",
+        "",
+        "**player.\\*** — 单字符串类型字段：",
+        f"- `player.name`: 字符串。当前 = {p.get('name', '') or '(空)'}",
+        f"- `player.role`: 字符串。简短角色定位（如「史官」「侦探」「医师」），不是结构体。当前 = {p.get('role', '') or '(空)'}",
+        f"- `player.background`: 字符串。一两句话背景。当前长度 = {len(p.get('background', ''))} 字符",
+        f"- `player.current_location`: 字符串。简短地名（如「北港·灯塔下」「柏林·街头」）。当前 = {p.get('current_location', '') or '(空)'}",
+        "",
+        "**world.\\*** — 时间 / 已知事件：",
+        f"- `world.time`: 字符串。中式（如「申时三刻」）或西式（如「1937年4月12日傍晚」）均可，本档要一致。当前 = {w.get('time', '') or '(空)'}",
+        f"- `world.weather`: 字符串可选。当前 = {w.get('weather', '') or '(空)'}",
+        "- `world.known_events`: 字符串数组。append 用【状态追加】或 JSON op=append。",
+        "- `world.timeline.current_phase`: 字符串。剧情阶段名。",
+        "",
+        "**relationships.<角色名>** — 字符串值（关系状态：信任/戒备/敌意/亲近/中立 等）：",
+        f"- 当前已识别角色：{known_npcs_str}",
+        "- **优先使用已存在角色名**；新角色必须先在 GM 叙事里引入，再写 relationships。",
+        "- 错误写法：`relationships = {name: 张三, tier: 5}` （不是对象，是 path）",
+        "- 正确写法：`relationships.张三 = 信任` （path 含角色名，值是字符串）",
+        "",
+        "**memory.\\*** — 列表 vs 标量：",
+        "- 列表字段（append 用【状态追加】或 JSON op=append）：`memory.resources` / `memory.abilities` / `memory.facts` / `memory.pinned` / `memory.notes`",
+        "- 标量字段（直接覆盖）：`memory.main_quest` / `memory.current_objective` / `memory.mode`",
+        "- 列表内每项是字符串。",
+        "",
+        "**worldline.user_variables.<变量名>** — 玩家用 /set 创建的硬约束变量。",
+        f"- 当前已定义变量：{('、'.join(var_names) if var_names else '（无）')}",
+        "- 你可以读，但禁止主动新建（属于玩家硬约束领域）。",
+        "",
+        "**禁止写入（硬黑名单）**：`permissions.*` / `history.*` / `schema_version` / `created_at`",
+        "- 写入会被拒并写 audit_log。",
+    ]
+    return "\n".join(lines)
 
 
 def _write_results_layer(state) -> str:
@@ -168,6 +229,9 @@ def build_context_bundle(
             items=[worldline_layer["debug"]],
         ),
         _layer("state", "当前状态", state.short_summary(), sticky=True),
+        # task 59：状态字段 schema 层 —— 让 LLM 知道每个 path 的值类型、当前 enum
+        # 候选（已知 NPC 名）、列表 vs 标量区别，减少盲试导致的 pending 队列爆炸。
+        _layer("state_schema", "状态字段 schema", _state_schema_layer(state, chars), sticky=True),
         # task 54：结果回灌层 —— 把上轮 GM 输出的【...】标签处理结果告诉模型，
         # 闭合 codex 流水线最后一环（"执行结果返回给模型"）。
         # 之前 apply_structured_updates 的 updates 只写到 last_structured_updates，
