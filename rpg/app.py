@@ -223,6 +223,45 @@ def _is_extractor_enabled(api_user: dict | None) -> bool:
     return False
 
 
+def _clarify_threshold(api_user: dict | None) -> float:
+    """task 85：用户偏好 curator.confidence_threshold —— curator confidence 低于
+    此值时跳过主 GM 直接询问玩家（task 80 routing）。默认 0.5；非法 / 越界值
+    一律 clamp 到 [0.0, 1.0]，读不到偏好（匿名 / 数据库异常）也回退 0.5。
+    """
+    default = 0.5
+    if not api_user:
+        return default
+    uid = api_user.get("id")
+    if not uid:
+        return default
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select preferences from user_preferences where user_id = %s",
+                (int(uid),),
+            ).fetchone()
+        if row and isinstance(row.get("preferences"), dict):
+            raw = row["preferences"].get("curator.confidence_threshold")
+            if raw is None:
+                return default
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                return default
+            if val != val:  # NaN
+                return default
+            if val < 0.0:
+                return 0.0
+            if val > 1.0:
+                return 1.0
+            return val
+    except Exception:
+        return default
+    return default
+
+
 def _api_auth_required() -> bool:
     """鉴权规则（优先级从高到低）：
       1. RPG_REQUIRE_AUTH=1     → 强制鉴权
@@ -1396,7 +1435,7 @@ async def api_chat(request: Request) -> StreamingResponse:
             _curator_plan = agent_result.get("curator_plan", {}) or {}
             _confidence = float(_curator_plan.get("confidence") or 1.0)
             _clarify = (_curator_plan.get("clarifying_question") or "").strip()
-            _confidence_threshold = 0.5
+            _confidence_threshold = _clarify_threshold(api_user)
             _route_to_clarify = bool(_clarify) or _confidence < _confidence_threshold
             if _route_to_clarify and _clarify:
                 # 写 pending_question + audit_log，让玩家看到问题
