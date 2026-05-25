@@ -31,6 +31,7 @@ MAX_LAYER_CHARS = {
     "state": 2200,
     "state_schema": 1600,   # task 59：字段 schema + 已知 NPC enum，前 20 个
     "write_results": 800,   # task 54：上轮标签结果反馈，简洁即可
+    "hypotheses": 700,      # task 75：未确认推测，最多 8 条 short label
     "recent_chat": 2200,
     "user_input": 900,
 }
@@ -93,6 +94,33 @@ def _state_schema_layer(state, chars: dict[str, Any]) -> str:
         "**禁止写入（硬黑名单）**：`permissions.*` / `history.*` / `schema_version` / `created_at`",
         "- 写入会被拒并写 audit_log。",
     ]
+    return "\n".join(lines)
+
+
+def _active_hypotheses_layer(state) -> str:
+    """task 75：暴露 active hypothesis 给 LLM，让模型知道自己已经登记过哪些推测，
+    避免重复推测同一件事或把推测当事实复述。
+    """
+    try:
+        hypos = state.list_active_hypotheses() if hasattr(state, "list_active_hypotheses") else []
+    except Exception:
+        hypos = []
+    if not hypos:
+        return ""
+    lines = [
+        "以下是本档**尚未确认的推测**（仅你/子代理的猜想，**绝不当作已发生事实复述**）：",
+    ]
+    for h in hypos[:8]:
+        chars = "、".join(h.get("characters", []) or [])
+        time_label = h.get("time_label") or ""
+        meta = " · ".join(x for x in [time_label, chars] if x)
+        meta_str = f"（{meta}）" if meta else ""
+        lines.append(f"- [{h.get('id', '?')}] {h.get('text', '?')[:60]} {meta_str}")
+    lines.append(
+        "如有新信息验证了某条推测，输出 "
+        "`{\"op\":\"confirm_hypothesis\",\"id\":\"...\"}` 升级为事实；"
+        "若被推翻输出 `{\"op\":\"reject_hypothesis\",\"id\":\"...\"}`。"
+    )
     return "\n".join(lines)
 
 
@@ -251,6 +279,9 @@ def build_context_bundle(
         # state.short_summary 又不展开 → LLM 完全不知道自己上轮写的东西落没落、
         # 哪些入了 pending → 下一轮还会重写同样字段重新被挡，浪费 token + 玩家审批队列爆炸。
         _layer("write_results", "上轮标签处理结果", _write_results_layer(state), sticky=False),
+        # task 75：active hypotheses（推测）单独一层，让 LLM 看到自己已登记
+        # 的推测，避免重复猜或把推测复述成事实。
+        _layer("hypotheses", "未确认推测", _active_hypotheses_layer(state), sticky=False),
         _layer(
             "context_agent",
             "子代理上下文决议",

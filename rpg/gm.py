@@ -59,10 +59,15 @@ _SYSTEM_BASE = """\
 ]
 ```
 
-- op 可选：`set` / `append` / `overwrite` / `question`
+- op 可选：`set` / `append` / `overwrite` / `question` / `hypothesis` / `confirm_hypothesis` / `reject_hypothesis`
 - path 是字符串；value 是字符串（list 字段用 append 逐项追加）
 - 没变化的字段不要编造条目
 - 仅 ```json fence 内的数组会被当作指令；纯叙事里的【...】不会触发写入
+- **推测专用** `hypothesis`：你想假设/推测的内容用这个，不要写进 `memory.facts`。例：
+  `{"op":"hypothesis","text":"斯雷因可能仍在监视宴会出口","characters":["斯雷因"]}`
+  推测会单独存放，玩家或 GM 后续可用 `confirm_hypothesis`/`reject_hypothesis` 升级或弃用：
+  `{"op":"confirm_hypothesis","id":"mem_xxxxxx"}` → 转 runtime_fact
+  `{"op":"reject_hypothesis","id":"mem_xxxxxx"}` → 标 rejected
 
 # 兼容协议（向后兼容 · JSON 失败时备用，新模型请优先用 JSON）
 - `【状态写入：path=value】`、`【状态追加：path=value】`、`【询问玩家：问题｜选项：A、B、C】`

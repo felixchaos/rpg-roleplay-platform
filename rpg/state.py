@@ -453,6 +453,65 @@ class GameState:
         if 0 <= index < len(items):
             items.pop(index)
 
+    # task 75：hypothesis 独立 namespace。codex §1 强调"推测不能混进事实"——
+    # 这里给 hypothesis 提供专门的写/查/确认/拒绝 API，让 context_engine
+    # 渲染层能明显区分"推测"和"事实"。
+    def add_hypothesis(
+        self,
+        text: str,
+        *,
+        source: str = "gm",
+        time_label: str | None = None,
+        characters: list[str] | None = None,
+    ) -> str:
+        """添加一条推测/计划/草稿。返回 item id 供后续 confirm/reject 引用。"""
+        return self.add_memory_item(
+            text=text,
+            kind="hypothesis",
+            source=source,
+            time_label=time_label,
+            characters=characters,
+        )
+
+    def list_active_hypotheses(self) -> list[dict]:
+        """列出当前 active 的推测（按 turn 倒序，最多 20 条）。"""
+        items = self.data.get("memory", {}).get("items", []) or []
+        out = [
+            i for i in items
+            if i.get("kind") == "hypothesis" and i.get("status") == "active"
+        ]
+        out.sort(key=lambda x: x.get("turn", 0), reverse=True)
+        return out[:20]
+
+    def confirm_hypothesis(self, item_id: str, *, source: str = "user") -> bool:
+        """把推测升级成 runtime_fact。原 hypothesis status='superseded'，
+        新建一条 kind=runtime_fact 引用它的 id（supersedes 链）。"""
+        items = self.data.get("memory", {}).get("items", []) or []
+        target = next((i for i in items if i.get("id") == item_id), None)
+        if not target or target.get("kind") != "hypothesis":
+            return False
+        if target.get("status") != "active":
+            return False
+        target["status"] = "superseded"
+        self.add_memory_item(
+            text=target.get("text", ""),
+            kind="runtime_fact",
+            source=source,
+            time_label=target.get("time_label"),
+            characters=target.get("characters"),
+            supersedes=[item_id],
+        )
+        return True
+
+    def reject_hypothesis(self, item_id: str) -> bool:
+        """把推测标记为 rejected，不再出现在 active 列表。"""
+        items = self.data.get("memory", {}).get("items", []) or []
+        target = next((i for i in items if i.get("id") == item_id), None)
+        if not target or target.get("kind") != "hypothesis":
+            return False
+        target["status"] = "rejected"
+        return True
+
     def set_permission_mode(self, mode: str):
         mode = _normalize_permission_mode(mode)
         self.data.setdefault("permissions", {})["mode"] = mode
@@ -720,6 +779,36 @@ class GameState:
                         # task 60：缺 question 文本时不静默
                         _log_op_parse_error("question op 缺 'question' 或 'text' 字段", op)
                         updates.append(f"JSON op 忽略（询问缺文本）：{op}")
+                    continue
+                # task 75：hypothesis op 路由到独立 namespace，不污染 facts
+                if kind == "hypothesis":
+                    text = op.get("text") or op.get("value") or ""
+                    if not text:
+                        _log_op_parse_error("hypothesis op 缺 'text' 或 'value' 字段", op)
+                        updates.append(f"JSON op 忽略（推测缺文本）：{op}")
+                        continue
+                    mid = self.add_hypothesis(
+                        text=text,
+                        source="gm:json",
+                        time_label=op.get("time_label"),
+                        characters=op.get("characters"),
+                    )
+                    updates.append(f"推测登记：{mid} {text[:40]}")
+                    continue
+                # task 75：confirm/reject hypothesis（玩家或 GM 后续轮可触发）
+                if kind == "confirm_hypothesis":
+                    hid = op.get("id") or ""
+                    if hid and self.confirm_hypothesis(hid, source="gm:json"):
+                        updates.append(f"推测确认：{hid}")
+                    else:
+                        updates.append(f"推测确认失败（id 不存在或非 active）：{hid}")
+                    continue
+                if kind == "reject_hypothesis":
+                    hid = op.get("id") or ""
+                    if hid and self.reject_hypothesis(hid):
+                        updates.append(f"推测拒绝：{hid}")
+                    else:
+                        updates.append(f"推测拒绝失败（id 不存在）：{hid}")
                     continue
                 path = (op.get("path") or "").strip()
                 value = op.get("value", "")
