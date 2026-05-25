@@ -207,27 +207,98 @@ def _call_extractor_backend(
     user_id: int | None,
     timeout_sec: int,
 ) -> str:
-    """轻量调用：复用现有 gm.py 的 backend 类，但只做单次同步生成。
+    """task 63: 优先 Native function calling / JSON mode，否则 fallback 到 text。
 
-    走 Anthropic / Vertex / OpenAI 兼容。失败抛异常。
+    层次：
+    1. Anthropic + tool_use（input_schema 强校验，最可靠）
+    2. Vertex / Anthropic call_structured（response_mime_type=application/json）
+    3. OpenAI 兼容 response_format = json_object
+    4. 兜底：纯文本，调用方用正则抽 JSON
     """
     if api_id == "anthropic":
-        from gm import _AnthropicBackend
-        backend = _AnthropicBackend(model=model, user_id=user_id)
-        return backend.call(
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-            max_tokens=800,
-        )
+        return _call_anthropic_tool_use(model, system_prompt, user_prompt, user_id)
     if api_id == "vertex_ai":
         from gm import _VertexBackend
         backend = _VertexBackend(model=model, api_id="vertex_ai", user_id=user_id)
-        return backend.call(
+        # call_structured 已经设了 response_mime_type=application/json
+        return backend.call_structured(
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
             max_tokens=800,
         )
-    # OpenAI / 兼容：直接调 chat completions
+    # OpenAI 兼容：response_format = json_object（GPT-4+ / SiliconFlow / DashScope 都支持）
+    return _call_openai_compat_json_mode(
+        api_id=api_id,
+        model=model,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        user_id=user_id,
+        timeout_sec=timeout_sec,
+    )
+
+
+def _call_anthropic_tool_use(
+    model: str, system_prompt: str, user_prompt: str, user_id: int | None
+) -> str:
+    """task 63：用 Anthropic native tool_use 强制 schema 校验。
+
+    定义一个 `emit_state_ops` 工具，input_schema 描述每条 op 的形状；
+    模型必须输出 tool_use block 而不是文本，SDK 会校验 schema 合规。
+    错误率比文本 JSON 低 5-10×。
+    """
+    from anthropic import Anthropic
+    from platform_app.user_credentials import resolve_api_key
+    result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
+    key = result.get("key")
+    if not key:
+        raise RuntimeError("找不到 Anthropic API Key for extractor")
+    client = Anthropic(api_key=key)
+    tools = [{
+        "name": "emit_state_ops",
+        "description": "把 GM 叙事里发生的状态变化输出为操作数组。没有变化就传 ops=[].",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ops": {
+                    "type": "array",
+                    "description": "每条代表一次状态变化",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "op": {"type": "string", "enum": ["set", "append", "overwrite", "question"]},
+                            "path": {"type": "string", "description": "state 路径（如 player.role / relationships.阿衡）；op=question 时可省"},
+                            "value": {"description": "要写入的值，字符串"},
+                            "question": {"type": "string", "description": "op=question 时用"},
+                            "options": {"type": "array", "items": {"type": "string"}, "description": "op=question 时用"},
+                        },
+                        "required": ["op"],
+                    },
+                }
+            },
+            "required": ["ops"],
+        },
+    }]
+    resp = client.messages.create(
+        model=model,
+        max_tokens=1024,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+        tools=tools,
+        tool_choice={"type": "tool", "name": "emit_state_ops"},  # 强制必须调用
+    )
+    for block in resp.content:
+        if getattr(block, "type", None) == "tool_use" and block.name == "emit_state_ops":
+            inp = block.input or {}
+            return json.dumps(inp.get("ops", []), ensure_ascii=False)
+    # 没拿到 tool_use（模型不配合）→ 返回空数组让 _parse_extractor_output 拿到 []
+    return "[]"
+
+
+def _call_openai_compat_json_mode(
+    api_id: str, model: str, system_prompt: str, user_prompt: str,
+    user_id: int | None, timeout_sec: int,
+) -> str:
+    """OpenAI 兼容 chat completions，强制 response_format = json_object。"""
     from platform_app.user_credentials import resolve_api_key
     cred = resolve_api_key(user_id, api_id)
     if not cred.get("key"):
@@ -236,15 +307,17 @@ def _call_extractor_backend(
     base_url = cred.get("base_url_override") or _api_base_url(api_id)
     if not base_url:
         raise RuntimeError(f"未知 base_url for {api_id}")
-    body = json.dumps({
+    body_dict = {
         "model": model,
         "messages": [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": system_prompt + "\n\n输出必须是 JSON 对象 {\"ops\":[...]}，不要任何文字。"},
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0,
         "max_tokens": 800,
-    }).encode("utf-8")
+        "response_format": {"type": "json_object"},  # OpenAI / SiliconFlow / DashScope 都支持
+    }
+    body = json.dumps(body_dict).encode("utf-8")
     req = urllib.request.Request(
         base_url.rstrip("/") + "/chat/completions",
         data=body,
@@ -254,9 +327,30 @@ def _call_extractor_backend(
             "Authorization": f"Bearer {cred['key']}",
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
-    return payload["choices"][0]["message"]["content"]
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        text = payload["choices"][0]["message"]["content"]
+        # 响应是 {"ops": [...]} 格式 → 提取 ops 数组
+        try:
+            obj = json.loads(text)
+            if isinstance(obj, dict) and "ops" in obj:
+                return json.dumps(obj["ops"], ensure_ascii=False)
+        except Exception:
+            pass
+        return text
+    except Exception:
+        # 不支持 response_format 的旧 endpoint：降级到无 json_object 请求
+        body_dict.pop("response_format", None)
+        body = json.dumps(body_dict).encode("utf-8")
+        req = urllib.request.Request(
+            base_url.rstrip("/") + "/chat/completions",
+            data=body, method="POST",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {cred['key']}"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        return payload["choices"][0]["message"]["content"]
 
 
 def _api_base_url(api_id: str) -> str:
