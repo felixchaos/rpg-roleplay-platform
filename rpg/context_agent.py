@@ -1,9 +1,15 @@
 """
-context_agent.py - visible context-curation sub-agent.
+context_agent.py — Demand Resolver + ContextProvider 调度器。
 
-The main GM should not receive the whole novel. This small agent runs before
-the GM call, resolves timeline targets, retrieves only the relevant modules, and
-emits inspectable steps for the UI.
+重构后职责仅两条：
+  1. Demand Resolver — 把玩家自然语言翻成结构化 Demand（intent / constraints /
+     rule_candidate_actions / retrieval_query / clarifying_question 等）。
+  2. 按当前 session 的 ContentPack manifest，调度 ContextProvider 收集
+     ContextContribution，再交给 build_context_bundle 组装 prompt。
+
+context_agent 本身不再硬编码"小说时间线锚点 / ChapterFact 检索 / 模组房间
+等"任何具体数据源。换 ContentPack 不需要改 context_agent，只要在 manifest 里
+声明 context_providers 列表。
 """
 from __future__ import annotations
 
@@ -18,6 +24,9 @@ from context_engine import build_context_bundle
 from retrieval import retrieve_context
 from timeline_index import timeline_filter_for_label
 from timeline_state import detect_time_directives
+from context_providers import (
+    Demand, ProviderServices, resolve_content_pack, run_providers,
+)
 
 
 AGENT_PROMPT = """\
@@ -208,54 +217,87 @@ def run_context_agent(
                     seen.add(key)
             curator_plan["rule_candidate_actions"] = existing[:8]
 
-    world = state.data.get("world", {})
-    timeline = world.get("timeline", {})
-    pending = timeline.get("pending_jump") or {}
-    label = pending.get("to") or world.get("time", "")
-    anchor = timeline_filter_for_label(label)
+    # ── ContentPack manifest 解析 ───────────────────────────────
+    manifest = resolve_content_pack(state, script_id=script_id)
     yield step(
-        "timeline",
-        _timeline_message(label, anchor),
+        "manifest",
+        f"已解析 ContentPack：kind={manifest.get('kind')} · id={manifest.get('id')}",
         "done",
-        label=label,
-        anchor=anchor,
-        pending_jump=pending,
+        manifest_kind=manifest.get("kind"),
+        manifest_id=manifest.get("id"),
+        context_providers=list(manifest.get("context_providers") or []),
+        retrieval_policy=manifest.get("retrieval_policy"),
+        gm_policy=manifest.get("gm_policy"),
     )
     if stopped():
         yield {"type": "stopped", "steps": steps}
         return
 
-    retrieval_query = _retrieval_query(user_input, curator_plan)
-    # task 42：把 script_id 透传给 retrieve_context，让导入剧本不再读 MuMu 默认
-    # .webnovel/* SQLite 和 indexes/*.json，只走 postgres script-scoped 检索。
-    retrieved_context = retrieve_context(
-        retrieval_query, state=state, user_id=user_id, script_id=script_id,
+    # ── Demand：把 curator_plan 包成结构化 Demand ──────────────
+    demand = _demand_from_curator_plan(curator_plan, user_input)
+
+    # ── ContextProvider 调度 ────────────────────────────────────
+    services = ProviderServices(
+        user_id=user_id,
+        script_id=script_id,
+        book_id=book_id,
+        retrieve_fn=retrieve_context,
+        timeline_filter_fn=timeline_filter_for_label,
     )
-    yield step(
-        "retrieval",
-        "已按时间线窗口裁剪 ChapterFact、原文片段和摘要。",
-        "done",
-        query=retrieval_query,
-        chars=len(retrieved_context),
-        estimated_tokens=max(1, len(retrieved_context) // 2),
-        preview=_preview(retrieved_context),
-    )
+    contributions, used_ids = run_providers(state, manifest, demand, services)
+
+    # 每个 provider 一个 step
+    for contrib in contributions:
+        if contrib.applied:
+            yield step(
+                f"provider:{contrib.provider_id}",
+                f"{contrib.provider_id} 贡献 {len(contrib.layers)} 层、{len(contrib.facts)} 条事实",
+                "done",
+                provider_id=contrib.provider_id,
+                kind=contrib.kind,
+                priority=contrib.priority,
+                facts=contrib.facts[:6],
+                tokens_estimate=contrib.tokens_estimate,
+                debug=contrib.debug,
+                warnings=contrib.warnings,
+            )
+        else:
+            sk_msg = contrib.debug.get("skipped") or contrib.debug.get("error") or "skipped"
+            yield step(
+                f"provider:{contrib.provider_id}",
+                f"{contrib.provider_id} 跳过（{sk_msg}）",
+                "skipped",
+                provider_id=contrib.provider_id,
+                warnings=contrib.warnings,
+                debug=contrib.debug,
+            )
     if stopped():
         yield {"type": "stopped", "steps": steps}
         return
 
+    # ── 组装 GM prompt ─────────────────────────────────────────
+    # 把 contributions 透传给 build_context_bundle；同时保留旧 curator_plan
+    # 字段做向后兼容（GM prompt 渲染层暂时还在读 curator_plan.candidate_actions）。
+    # Novel retrieval contribution 的 layers 里有 retrieval text；如果存在，取出
+    # 作为 retrieved_context 兼容 build_context_bundle 旧签名。
+    retrieved_context = _pick_retrieval_text(contributions)
     bundle = build_context_bundle(
         state, user_input, retrieved_context,
-        curator_plan=curator_plan, script_id=script_id, book_id=book_id,
+        curator_plan=curator_plan,
+        script_id=script_id, book_id=book_id,
+        contributions=contributions,
+        manifest=manifest,
     )
     cache = bundle["debug"].get("cache_plan", {})
     yield step(
         "assembly",
-        "已生成主 GM 上下文清单；主模型只会收到裁剪后的层级。",
+        "已生成主 GM 上下文清单；按 manifest+contributions 拼层。",
         "done",
         estimated_tokens=bundle["debug"].get("estimated_tokens", 0),
         layer_count=len(bundle["debug"].get("layers", [])),
         cache_plan=cache,
+        active_content_pack=manifest.get("id"),
+        providers_used=used_ids,
     )
 
     yield {
@@ -265,7 +307,50 @@ def run_context_agent(
         "steps": steps,
         "agent_prompt": AGENT_PROMPT,
         "curator_plan": curator_plan,
+        "active_content_pack": manifest,
+        "providers_used": used_ids,
+        "contributions": [c.to_dict() for c in contributions],
     }
+
+
+def _demand_from_curator_plan(curator_plan: dict[str, Any], user_input: str) -> Demand:
+    """把 LLM/本地 curator_plan dict 包成 Demand 结构体，供 providers 使用。"""
+    plan = curator_plan or {}
+    return Demand(
+        player_intent=str(plan.get("intent") or "").strip() or (user_input or "")[:200],
+        active_goal=str(plan.get("active_goal") or ""),
+        hard_constraints=list(plan.get("hard_constraints") or []),
+        soft_preferences=list(plan.get("soft_preferences") or []),
+        target_entities=list(plan.get("target_entities") or []),
+        target_location=str(plan.get("target_location") or ""),
+        target_time=str(plan.get("target_time") or ""),
+        timeline_target=str(plan.get("timeline_target") or ""),
+        retrieval_query=_retrieval_query(user_input, plan),
+        retrieval_needs={
+            "must_include": list((plan.get("retrieval_plan") or {}).get("must_include")
+                                  or plan.get("must_include") or []),
+            "should_include": list((plan.get("retrieval_plan") or {}).get("should_include") or []),
+        },
+        rule_candidate_actions=list(plan.get("rule_candidate_actions") or []),
+        risk_flags=list(plan.get("risk_flags") or []),
+        confidence=float(plan.get("confidence", 1.0) or 1.0),
+        clarifying_question=str(plan.get("clarifying_question") or ""),
+        reason=str(plan.get("reason") or ""),
+        raw_curator_plan=plan,
+    )
+
+
+def _pick_retrieval_text(contributions) -> str:
+    """从 contributions 提取小说检索文本，向后兼容旧 build_context_bundle 签名。
+    模组场景没有 novel_retrieval，返回空串。"""
+    for c in contributions:
+        if c.provider_id == "novel_retrieval" and c.applied:
+            for layer in c.layers:
+                if layer.get("id") == "novel_retrieval":
+                    return layer.get("content", "") or ""
+            if c.retrieval_items:
+                return c.retrieval_items[0].get("text", "") or ""
+    return ""
 
 
 def _timeline_message(label: str, anchor: dict[str, Any]) -> str:

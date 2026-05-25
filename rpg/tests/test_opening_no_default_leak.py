@@ -234,35 +234,27 @@ class OpeningRetrievalNoDefaultLeak(unittest.TestCase):
 
 
 class OldUIEmptyStateCopy(unittest.TestCase):
-    """单元：旧 UI 的『准备继续柏林弧』空状态文案被去硬编码。"""
+    """单元：旧 UI 的『准备继续柏林弧』空状态文案被去硬编码。
+
+    注：app.py 内联 HTML 已在 ContextProvider 重构前一步被删除；本类只剩反退化
+    检查（确保 app.py 不会重新冒出柏林弧硬编码）。原始『含通用文案』断言已失效。
+    """
 
     def test_initial_html_uses_generic_copy(self):
         from pathlib import Path
         ui_src = Path(__file__).resolve().parents[1] / "app.py"
         text = ui_src.read_text(encoding="utf-8")
-        # task 43：旧 UI 初始 <div class="empty"> 不应仍硬编码"准备继续柏林弧"
-        # 出现的应只是注释（task 43 注释里有提）；找 <h1>...</h1> 块
+        # 反退化：app.py 任何位置都不能再硬编码柏林弧空状态文案
         import re
         h1_blocks = re.findall(r'<h1>([^<]+)</h1>', text)
         for block in h1_blocks:
             self.assertNotIn("准备继续柏林弧", block,
-                f"task 43：<h1>{block}</h1> 仍硬编码柏林弧；"
-                f"旧 UI 初始空状态应改为通用文案『准备开始游戏』")
-
-    def test_render_messages_js_reads_payload_title(self):
-        from pathlib import Path
-        ui_src = Path(__file__).resolve().parents[1] / "app.py"
-        text = ui_src.read_text(encoding="utf-8")
-        # renderMessages 内必须按 state.payload.save_title / app.title 动态构标题，
-        # 不能再写死『准备继续柏林弧』
-        self.assertIn("准备开始游戏", text,
-            "task 43：JS 空状态 fallback 应含通用『准备开始游戏』")
+                f"<h1>{block}</h1> 重新硬编码柏林弧")
         # 任何 JS string literal 含『准备继续柏林弧』都算回归
-        import re
         # 找 innerHTML = "..." 含柏林弧 模式
         suspicious = re.findall(r'innerHTML\s*=\s*[`"\'][^`"\']*准备继续柏林弧[^`"\']*[`"\']', text)
         self.assertEqual(suspicious, [],
-            f"task 43：renderMessages 仍硬编码『准备继续柏林弧』：{suspicious!r}")
+            f"renderMessages 仍硬编码『准备继续柏林弧』：{suspicious!r}")
 
 
 if __name__ == "__main__":

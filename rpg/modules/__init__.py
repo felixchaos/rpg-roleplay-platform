@@ -20,12 +20,20 @@ def list_modules() -> list[dict]:
             data = json.loads(manifest.read_text(encoding="utf-8"))
         except Exception:
             continue
+        # ruleset：兼容旧 dict 格式与新 string 格式
+        rs = data.get("ruleset_meta") or data.get("ruleset")
+        if isinstance(rs, str):
+            rs = {"id": rs, "mode": rs, "public_label": rs}
         out.append({
             "id": data.get("id") or sub.name,
+            "kind": data.get("kind", "module_adventure"),
             "name": data.get("name"),
             "name_cn": data.get("name_cn"),
             "tagline": data.get("tagline"),
-            "ruleset": data.get("ruleset"),
+            "ruleset": rs,
+            "context_providers": list(data.get("context_providers") or []),
+            "level_range": data.get("level_range"),
+            "estimated_minutes": data.get("estimated_minutes"),
             "path": str(sub),
         })
     return out

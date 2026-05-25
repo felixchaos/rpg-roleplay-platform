@@ -1,13 +1,35 @@
 {
   "id": "ash_mine",
+  "kind": "module_adventure",
   "name": "Ash Mine",
   "name_cn": "灰烬矿坑",
+  "title": "灰烬矿坑 / Ash Mine",
   "tagline": "废弃矿道下传来低语，矿心深处的祭坛仍在燃烧。",
   "tagline_en": "A whisper rises from the abandoned shafts; deep below, the altar still burns.",
-  "ruleset": {
+  "ruleset": "5e_compatible",
+  "ruleset_meta": {
     "id": "dnd5e",
     "mode": "5e_compatible",
     "public_label": "5E compatible / 五版规则兼容"
+  },
+  "context_providers": [
+    "module_scene",
+    "module_encounter",
+    "module_worldbook",
+    "rules",
+    "memory",
+    "worldline",
+    "recent_chat"
+  ],
+  "retrieval_policy": {
+    "allow_script_retrieval": false,
+    "allow_chapter_facts": false
+  },
+  "gm_policy": {
+    "mode": "adventure_gm",
+    "must_obey_rules_result": true,
+    "no_unverified_hard_state_write": true,
+    "narrate_only_facts": true
   },
   "level_range": [1, 3],
   "party_size": 1,

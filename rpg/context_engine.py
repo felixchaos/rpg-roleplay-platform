@@ -70,7 +70,7 @@ def _state_schema_layer(state, chars: dict[str, Any]) -> str:
         f"- `player.name`: 字符串。当前 = {p.get('name', '') or '(空)'}",
         f"- `player.role`: 字符串。简短角色定位（如「史官」「侦探」「医师」），不是结构体。当前 = {p.get('role', '') or '(空)'}",
         f"- `player.background`: 字符串。一两句话背景。当前长度 = {len(p.get('background', ''))} 字符",
-        f"- `player.current_location`: 字符串。简短地名（如「北港·灯塔下」「柏林·街头」）。当前 = {p.get('current_location', '') or '(空)'}",
+        f"- `player.current_location`: 字符串。简短地名（如「北港·灯塔下」「废弃矿道入口」「酒馆楼上」）。当前 = {p.get('current_location', '') or '(空)'}",
         "",
         "**world.\\*** — 时间 / 已知事件：",
         f"- `world.time`: 字符串。中式（如「申时三刻」）或西式（如「1937年4月12日傍晚」）均可，本档要一致。当前 = {w.get('time', '') or '(空)'}",
@@ -294,105 +294,109 @@ def build_context_bundle(
     curator_plan: dict[str, Any] | None = None,
     script_id: int | None = None,
     book_id: int | None = None,
+    contributions: list | None = None,
+    manifest: dict | None = None,
 ) -> dict[str, Any]:
     """组装单轮 prompt 上下文。
 
-    B3：当传入 script_id/book_id 时，优先从 DB (character_cards / worldbook_entries
-    / chapter_facts) 取数据；DB 为空时退化到 indexes/*.json 静态数据。
+    新架构：所有数据源（小说时间线/章节检索/角色卡/世界书/模组房间/规则状态等）
+    都由 ContextProvider 贡献 ContextContribution，本函数只负责合并 contribution.layers
+    与通用 GM 层（rules / agent_runtime / state schema / candidate_actions / user_input
+    等 — 不属于任何具体数据源，是 GM 运行契约）。
+
+    调用方式：
+    - 新路径（推荐）：context_agent 跑完 providers 后传 contributions + manifest。
+    - 旧路径（兼容）：caller 不传 contributions/manifest，本函数自动 resolve_content_pack
+      + run_providers，以保证 /api/opening 等直接调用方继续工作。
     """
-    chars = _load_characters(script_id=script_id, book_id=book_id)
-    world = _load_world()
-    history = state.history_messages()
-    recent_text = _recent_text(history)
-    scan_text = "\n".join([
-        user_input or "",
-        recent_text,
-        state.data["player"].get("current_location", ""),
-        state.data["world"].get("time", ""),
-        "\n".join(state.data["world"].get("known_events", [])),
-        state.data["memory"].get("current_objective", ""),
-    ])
+    # 自动 resolve manifest + run providers（旧 caller 兼容）
+    if contributions is None or manifest is None:
+        from context_providers import (
+            resolve_content_pack, run_providers, ProviderServices,
+        )
+        if manifest is None:
+            manifest = resolve_content_pack(state, script_id=script_id)
+        if contributions is None:
+            # 用空 Demand 跑（caller 未提供 curator_plan 时只是降级路径）
+            from context_providers import Demand
+            from retrieval import retrieve_context as _retrieve_fn
+            services = ProviderServices(
+                user_id=None, script_id=script_id, book_id=book_id,
+                retrieve_fn=_retrieve_fn,
+                timeline_filter_fn=timeline_filter_for_label,
+            )
+            demand = Demand(player_intent=user_input or "",
+                            retrieval_query=user_input or "")
+            contributions, _used = run_providers(state, manifest, demand, services)
 
-    player_card = _player_card(state, chars)
-    npc_cards = _active_character_cards(scan_text, chars, player_card.get("name", ""))
-    worldbook = _active_worldbook(scan_text, world, state, script_id=script_id, book_id=book_id)
-    timeline_layer = _timeline_layer(state)
-    worldline_layer = _worldline_layer(state)
+    # 把 retrieved_context 当 fallback：仅在 contributions 没贡献 novel_retrieval 时用。
+    has_retrieval_layer = any(
+        c.applied and c.provider_id == "novel_retrieval"
+        for c in (contributions or [])
+    )
 
-    # 顺序按"稳定→半稳定→每轮变化"分组，让 prompt cache 能命中尽可能长的前缀。
-    # 缓存关键：前缀任何字节变化就 miss。所以稳定层必须连续无缝放最前。
-    layers = [
-        # ─── 稳定前缀（每轮基本不变，可缓存）────────────────
-        _layer("rules", "剧情规则", _story_rules(), sticky=True),
-        _layer("agent_runtime", "主GM代理运行契约", _agent_runtime_rules(), sticky=True),
-        _layer("player_card", "玩家角色卡", player_card["text"], sticky=True, source=player_card["name"]),
-        # ─── 半稳定（玩家不切角色就同一份；切了就 miss）───
-        _layer(
-            "npc_cards",
-            "当前角色卡",
-            "\n\n".join(card["text"] for card in npc_cards),
-            items=[_strip_card_text(card) for card in npc_cards],
-        ),
-        _layer(
-            "worldbook",
-            "激活世界书",
-            "\n\n".join(entry["text"] for entry in worldbook),
-            items=[_strip_worldbook_text(entry) for entry in worldbook],
-        ),
-        # ─── 动态尾部（每轮变化，缓存边界）──────────────────
-        _layer(
-            "timeline",
-            "时间线事务",
-            timeline_layer["text"],
-            sticky=True,
-            items=[timeline_layer["debug"]],
-        ),
-        _layer(
-            "worldline",
-            "世界线推演权限",
-            worldline_layer["text"],
-            sticky=True,
-            items=[worldline_layer["debug"]],
-        ),
-        _layer("state", "当前状态", state.short_summary(), sticky=True),
-        # task 76：按 kind 分组的事实层（canon vs runtime vs user_constraint）。
-        # 让 LLM 视觉上明确区分"原著背景" vs "本局亲历"，避免把原著事件
-        # 当成本局发生过的事来叙事。回退兼容旧 memory.facts。
-        _layer("fact_groups", "事实分组（按 kind）", _fact_groups_layer(state), sticky=False),
-        # task 59：状态字段 schema 层 —— 让 LLM 知道每个 path 的值类型、当前 enum
-        # 候选（已知 NPC 名）、列表 vs 标量区别，减少盲试导致的 pending 队列爆炸。
-        _layer("state_schema", "状态字段 schema", _state_schema_layer(state, chars), sticky=True),
-        # task 54：结果回灌层 —— 把上轮 GM 输出的【...】标签处理结果告诉模型，
-        # 闭合 codex 流水线最后一环（"执行结果返回给模型"）。
-        # 之前 apply_structured_updates 的 updates 只写到 last_structured_updates，
-        # state.short_summary 又不展开 → LLM 完全不知道自己上轮写的东西落没落、
-        # 哪些入了 pending → 下一轮还会重写同样字段重新被挡，浪费 token + 玩家审批队列爆炸。
-        _layer("write_results", "上轮标签处理结果", _write_results_layer(state), sticky=False),
-        # task 75：active hypotheses（推测）单独一层，让 LLM 看到自己已登记
-        # 的推测，避免重复猜或把推测复述成事实。
-        _layer("hypotheses", "未确认推测", _active_hypotheses_layer(state), sticky=False),
-        _layer(
-            "context_agent",
-            "子代理上下文决议",
-            _context_agent_decision(curator_plan),
-            items=[_context_agent_debug(curator_plan)],
-        ),
-        # task 82：candidate_actions 作为单独的 anchor 层，强调"GM 优先从候选选"
-        # 而不是融在 context_agent 大段文本里被忽略。
-        _layer(
-            "candidate_actions",
-            "本轮候选动作",
-            _candidate_actions_layer(curator_plan),
-            sticky=False,
-        ),
-        _layer("rag", "检索参考", _neutralize_state_write_tags(retrieved_context) or "（本轮无额外检索资料）"),
-        _layer("recent_chat", "最近对话", _format_history(history)),
-        _layer("user_input", "玩家本轮输入", user_input or "（空）"),
+    # 通用 GM 层（不依赖具体 ContentPack；GM 运行契约）
+    universal_layers = [
+        _layer("rules", "剧情规则", _story_rules(), sticky=True, priority=100),
+        _layer("agent_runtime", "主GM代理运行契约", _agent_runtime_rules(), sticky=True, priority=99),
+        # pending_jump 警告是通用 GM 约束，任何 ContentPack 都得遵守
+        _layer("timeline_pending", "时间跳跃待确认", _pending_jump_warning_text(state),
+               sticky=False, priority=86),
+        _layer("state", "当前状态", state.short_summary(), sticky=True, priority=55),
+        _layer("fact_groups", "事实分组（按 kind）", _fact_groups_layer(state), sticky=False, priority=50),
+        _layer("state_schema", "状态字段 schema",
+               _state_schema_layer(state, _safe_load_chars(script_id, book_id, manifest)),
+               sticky=True, priority=45),
+        _layer("write_results", "上轮标签处理结果", _write_results_layer(state), sticky=False, priority=35),
+        _layer("hypotheses", "未确认推测", _active_hypotheses_layer(state), sticky=False, priority=32),
+        _layer("context_agent", "子代理上下文决议",
+               _context_agent_decision(curator_plan),
+               priority=30, items=[_context_agent_debug(curator_plan)]),
+        _layer("candidate_actions", "本轮候选动作",
+               _candidate_actions_layer(curator_plan), sticky=False, priority=28),
     ]
+
+    # Provider contribution 层
+    provider_layers: list[dict] = []
+    contribution_meta: list[dict] = []
+    for contrib in (contributions or []):
+        if not contrib.applied:
+            continue
+        contribution_meta.append({
+            "provider_id": contrib.provider_id,
+            "kind": contrib.kind,
+            "priority": contrib.priority,
+            "facts": list(contrib.facts),
+            "warnings": list(contrib.warnings),
+            "tokens_estimate": contrib.tokens_estimate,
+            "debug": dict(contrib.debug),
+        })
+        for layer in contrib.layers:
+            l = dict(layer)
+            l.setdefault("priority", contrib.priority)
+            l.setdefault("source", contrib.provider_id)
+            provider_layers.append(l)
+
+    # 兜底 rag 层：若 contributions 没注入 retrieval，但 caller 传了 retrieved_context（旧 caller）
+    if not has_retrieval_layer and retrieved_context:
+        provider_layers.append(_layer(
+            "rag", "检索参考",
+            _neutralize_state_write_tags(retrieved_context),
+            sticky=False, priority=40,
+        ))
+
+    # user_input 永远最后
+    tail_layers = [
+        _layer("user_input", "玩家本轮输入", user_input or "（空）", priority=0),
+    ]
+
+    # 合并 + 按 priority 降序排序（高优先级在前 = 稳定前缀，利于 prompt cache）
+    all_layers = universal_layers + provider_layers + tail_layers
+    all_layers.sort(key=lambda l: -int(l.get("priority", 50)))
 
     prompt_parts = []
     debug_layers = []
-    for layer in layers:
+    for layer in all_layers:
         trimmed = _trim(layer["content"], MAX_LAYER_CHARS.get(layer["id"], 1800))
         if not trimmed:
             continue
@@ -403,6 +407,7 @@ def build_context_bundle(
             "chars": len(trimmed),
             "estimated_tokens": _estimate_tokens(trimmed),
             "sticky": layer.get("sticky", False),
+            "priority": layer.get("priority", 50),
             "source": layer.get("source", ""),
             "preview": _preview(trimmed),
             "items": layer.get("items", []),
@@ -415,13 +420,62 @@ def build_context_bundle(
         "estimated_tokens": _estimate_tokens(prompt),
         "layers": debug_layers,
         "cache_plan": cache_plan,
-        "active_character_cards": [_strip_card_text(card) for card in npc_cards],
-        "active_worldbook": [_strip_worldbook_text(entry) for entry in worldbook],
-        "timeline": timeline_layer["debug"],
-        "worldline": worldline_layer["debug"],
         "curator_plan": curator_plan or {},
+        "manifest": {
+            "id": (manifest or {}).get("id"),
+            "kind": (manifest or {}).get("kind"),
+            "context_providers": list((manifest or {}).get("context_providers") or []),
+            "retrieval_policy": (manifest or {}).get("retrieval_policy"),
+            "gm_policy": (manifest or {}).get("gm_policy"),
+        },
+        "contributions": contribution_meta,
     }
     return {"prompt": prompt, "debug": debug}
+
+
+def _safe_load_chars(script_id, book_id, manifest) -> dict[str, Any]:
+    """state_schema 层需要 chars dict 来列出已知 NPC enum。
+    模组场景没有小说角色卡 → 返回空 dict，不再误读 .webnovel/indexes。"""
+    if not manifest:
+        return _load_characters(script_id=script_id, book_id=book_id)
+    if manifest.get("kind") == "novel_adaptation":
+        return _load_characters(script_id=script_id, book_id=book_id)
+    return {}
+
+
+def _pending_jump_warning_text(state) -> str:
+    """通用 pending_jump 警告：state 含 pending_confirmation 时，GM 必须遵守。
+    这是 GM 运行契约的一部分，与 ContentPack 类型无关。
+    novel-specific 的 anchor 信息由 NovelTimelineProvider 负责。"""
+    data = getattr(state, "data", state) or {}
+    timeline = (data.get("world") or {}).get("timeline") or {}
+    pending = timeline.get("pending_jump") or {}
+    if not pending:
+        return ""
+    pending_status = str(pending.get("status") or "")
+    is_awaiting = pending_status in ("awaiting_gm_confirmation", "awaiting", "pending_confirmation")
+    lines = [
+        f"玩家请求时间跳跃：{pending.get('from', '')} -> {pending.get('to', '')}",
+        f"pending 状态：{pending_status or '未知'}",
+    ]
+    if is_awaiting:
+        lines.extend([
+            "⚠ 本轮 anchor_state=pending_confirmation：禁止把玩家请求的未来时间/地点当作已发生的事实。",
+            "禁止输出『翌日…』『次日…』『转眼已是…』等任何把场景叙事推进到目标时间的措辞；",
+            "禁止输出标签【时间跳跃确认：…】【当前时间线：目标时间】【当前位置：新地点】【时间：目标时间】；",
+            "禁止给出『新时间/新地点』场景里的对话、动作、选项；",
+            "本轮只允许：① 给出冲突检查；② 列出风险/代价/前置条件；"
+            "③ 输出【询问玩家：是否确认跳跃到 <目标时间>？】+ 1-3 个明确选项（确认 / 取消 / 修改目标）；",
+            "下一轮若玩家明确回复『确认』或 /confirm，再正式推进时间线和场景。",
+        ])
+    else:
+        lines.extend([
+            "本轮必须先处理时间跳跃事务：默认尊重玩家的跳转/改线意图，",
+            "接受则写出过渡/落点并输出【时间跳跃确认：目标时间】和【当前时间线：目标时间】；",
+            "只有目标完全不可解析时才输出【询问玩家：...】。",
+            "在确认前，不要把玩家请求的未来时间当作已经发生；确认后才允许推进场景与更新位置/目标。",
+        ])
+    return "\n".join(lines)
 
 
 def _load_characters(script_id: int | None = None, book_id: int | None = None) -> dict[str, Any]:

@@ -46,7 +46,11 @@ def start_module(state, module_id: str, character_overrides: Optional[dict] = No
                     char[k] = v
         state.set_player_character(char)
 
-    # 设置 scene
+    # 设置 scene。ruleset 字段优先用 ruleset_meta（dict）便于前端展示；
+    # 若 manifest 用新格式（ruleset 为 string "5e_compatible"），就归一化包成 dict。
+    ruleset_field = manifest.get("ruleset_meta") or manifest.get("ruleset")
+    if isinstance(ruleset_field, str):
+        ruleset_field = {"id": ruleset_field, "mode": ruleset_field, "public_label": ruleset_field}
     scene = {
         "module_id": module_id,
         "location_id": start_room["id"],
@@ -60,7 +64,11 @@ def start_module(state, module_id: str, character_overrides: Optional[dict] = No
             "name": manifest.get("name"),
             "name_cn": manifest.get("name_cn"),
             "tagline": manifest.get("tagline"),
-            "ruleset": manifest.get("ruleset"),
+            "kind": manifest.get("kind", "module_adventure"),
+            "ruleset": ruleset_field,
+            "context_providers": list(manifest.get("context_providers") or []),
+            "retrieval_policy": dict(manifest.get("retrieval_policy") or {}),
+            "gm_policy": dict(manifest.get("gm_policy") or {}),
         },
     }
     state.set_scene(scene)
