@@ -92,6 +92,30 @@ def _deployment_mode() -> str:
     return mode
 
 
+def _is_extractor_enabled(api_user: dict | None) -> bool:
+    """task 62：用户偏好 extractor.enabled = true 时开启 GM-extractor 第二步。
+    默认 false（保持向后兼容，单步 GM 流程不变）。
+    """
+    if not api_user:
+        return False
+    uid = api_user.get("id")
+    if not uid:
+        return False
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select preferences from user_preferences where user_id = %s",
+                (int(uid),),
+            ).fetchone()
+        if row and isinstance(row.get("preferences"), dict):
+            return bool(row["preferences"].get("extractor.enabled"))
+    except Exception:
+        return False
+    return False
+
+
 def _api_auth_required() -> bool:
     """鉴权规则（优先级从高到低）：
       1. RPG_REQUIRE_AUTH=1     → 强制鉴权
@@ -1261,9 +1285,35 @@ async def api_chat(request: Request) -> StreamingResponse:
                     })
                 await asyncio.sleep(0)
 
-            updates = directive_updates + state.apply_structured_updates(response)
+            # task 62：可选 GM-extractor 第二步。
+            # 用户在偏好里开 extractor.enabled = true 时，把 GM 叙事 + 当前 state 喂给
+            # 便宜模型（默认 gemini-3.5-flash）抽出 JSON ops 追加到 response 末尾，
+            # 让 apply_structured_updates 统一处理。错误回灌（task 60）+ 闸门 (task 54)
+            # 都自动覆盖到 extractor ops。
+            try:
+                if _is_extractor_enabled(api_user) and response.strip():
+                    import extractor as _extractor
+                    extractor_ops = _extractor.extract_state_ops(
+                        narrative_text=response,
+                        state_data=state.data,
+                        user_id=int(api_user.get("id")) if api_user else None,
+                        timeout_sec=15,
+                    )
+                    if extractor_ops:
+                        # 拼成 ```json fence 让 apply_structured_updates 走 JSON 路径
+                        # （和 LLM 自己写的【】协议结果合并）
+                        response_with_ops = response + "\n\n```json\n" + json.dumps(extractor_ops, ensure_ascii=False) + "\n```"
+                    else:
+                        response_with_ops = response
+                else:
+                    response_with_ops = response
+            except Exception as exc:
+                print(f"[chat] extractor pipeline failed: {exc}; falling back to single-step")
+                response_with_ops = response
+
+            updates = directive_updates + state.apply_structured_updates(response_with_ops)
             _persist_chat_turn(
-                api_user, state, message_for_model, response,
+                api_user, state, message_for_model, response,  # 存档时存"纯叙事"不含 extractor JSON
                 persist_user_id=persist_user_id, active_save_id=active_save_id,
             )
             usage_payload = _build_usage_payload(
