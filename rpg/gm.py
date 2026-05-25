@@ -255,7 +255,9 @@ class _VertexBackend:
 #  后端：Anthropic (备用)
 # ══════════════════════════════════════════════════════════════════════════════
 class _AnthropicBackend:
-    def __init__(self, model: str = "claude-opus-4-5", user_id: int | None = None):
+    # task 57 (2026-05-25): 默认改为当前 Sonnet（最新平衡型）；
+    # Opus 4.7 是 frontier 但成本 5×，留给用户显式选。
+    def __init__(self, model: str = "claude-sonnet-4-6", user_id: int | None = None):
         from anthropic import Anthropic
         from platform_app.user_credentials import resolve_api_key
         result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")

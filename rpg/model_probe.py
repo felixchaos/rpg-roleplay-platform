@@ -32,49 +32,79 @@ BASE = Path(__file__).parent
 # ══════════════════════════════════════════════════════════════════════
 #  价格表（USD per million tokens）
 # ══════════════════════════════════════════════════════════════════════
-# 来源：各家官方公开定价（2026-05 校准）。准确性责任在调用方，可被 catalog 覆盖。
+# 来源：各家官方公开定价（2026-05-25 校准 · task 57）。准确性责任在调用方，可被 catalog 覆盖。
 # 结构：{api_kind: {model_real_name: {"input": X, "output": Y, "context": Z, "notes": ""}}}
+#
+# 主要变更（vs 旧表 2026-05 早期校准）：
+# - Anthropic: 已是 4.x 体系，Opus 4.7 (Apr 16, 2026) 为当前 frontier
+# - OpenAI: GPT-5.5 (May 5, 2026) 替代 5.3 成为 default；保留 5.0/4.1/4o 兜底
+# - Gemini: 3.5 Flash (May 19, 2026) 实际价 $1.50/$9.00（之前表里 $0.3/$2.5 是估算误差）；3.1 Pro 是 prev flagship
+# - Qwen: 3.7-Max (May 21, 2026) 新 flagship $2.50/$7.50；3.6 Flash $0.19/$1.13
+# - DeepSeek: V4-Pro (Apr 24, 2026) 1M context $1.74/$3.48
 _STATIC_PRICING: dict[str, dict[str, dict[str, Any]]] = {
     "anthropic": {
-        "claude-opus-4-5":    {"input": 15.0, "output": 75.0, "context": 200000, "notes": "Opus 4.5"},
-        "claude-opus-4-7":    {"input": 15.0, "output": 75.0, "context": 200000},
-        "claude-sonnet-4-5":  {"input": 3.0,  "output": 15.0, "context": 200000},
-        "claude-sonnet-4-6":  {"input": 3.0,  "output": 15.0, "context": 200000},
-        "claude-haiku-4-5":   {"input": 1.0,  "output": 5.0,  "context": 200000},
-        "claude-3-5-sonnet":  {"input": 3.0,  "output": 15.0, "context": 200000},
-        "claude-3-5-haiku":   {"input": 0.8,  "output": 4.0,  "context": 200000},
+        # task 57: 2026-05-25 校准
+        "claude-opus-4-7":     {"input": 15.0, "output": 75.0, "context": 200000, "notes": "Opus 4.7 · 2026-04-16 当前 frontier"},
+        "claude-opus-4-6":     {"input": 15.0, "output": 75.0, "context": 200000, "notes": "Opus 4.6"},
+        "claude-opus-4-5":     {"input": 15.0, "output": 75.0, "context": 200000, "notes": "Opus 4.5"},
+        "claude-sonnet-4-6":   {"input": 3.0,  "output": 15.0, "context": 200000, "notes": "Sonnet 4.6 · 2026-02"},
+        "claude-sonnet-4-5":   {"input": 3.0,  "output": 15.0, "context": 200000},
+        "claude-haiku-4-5":    {"input": 1.0,  "output": 5.0,  "context": 200000, "notes": "Haiku 4.5 · 2025-10"},
+        "claude-3-5-sonnet":   {"input": 3.0,  "output": 15.0, "context": 200000},
+        "claude-3-5-haiku":    {"input": 0.8,  "output": 4.0,  "context": 200000},
     },
     "vertex_ai": {
-        "gemini-3.5-flash":   {"input": 0.3,   "output": 2.5,  "context": 1000000, "notes": "Flash 价格估算"},
-        "gemini-3-flash":     {"input": 0.3,   "output": 2.5,  "context": 1000000},
-        "gemini-3-pro":       {"input": 1.25,  "output": 10.0, "context": 2000000},
-        "gemini-2.5-flash":   {"input": 0.075, "output": 0.3,  "context": 1000000},
-        "gemini-2.5-pro":     {"input": 1.25,  "output": 5.0,  "context": 2000000},
-        "gemini-2.0-flash":   {"input": 0.075, "output": 0.3,  "context": 1000000},
+        # task 57: 2026-05-25 校准 - Gemini 3.5 Flash 是 2026-05-19 当前默认/最便宜旗舰
+        "gemini-3.5-flash":    {"input": 1.50,  "output": 9.00,  "context": 1000000, "notes": "Flash · 2026-05-19 当前默认"},
+        "gemini-3.1-pro":      {"input": 2.00,  "output": 12.00, "context": 1000000, "notes": "3.1 Pro · prev flagship; >200K 时 $4/$18"},
+        "gemini-3-flash":      {"input": 1.50,  "output": 9.00,  "context": 1000000, "notes": "别名指向 3.5 Flash"},
+        "gemini-3-pro":        {"input": 1.25,  "output": 10.0,  "context": 2000000, "notes": "3 Pro · 旧 flagship"},
+        "gemini-2.5-flash":    {"input": 0.075, "output": 0.3,   "context": 1000000},
+        "gemini-2.5-pro":      {"input": 1.25,  "output": 5.0,   "context": 2000000},
+        "gemini-2.0-flash":    {"input": 0.075, "output": 0.3,   "context": 1000000},
     },
     "openai": {
-        "gpt-4o":             {"input": 2.5,  "output": 10.0, "context": 128000},
-        "gpt-4o-mini":        {"input": 0.15, "output": 0.6,  "context": 128000},
-        "gpt-4-turbo":        {"input": 10.0, "output": 30.0, "context": 128000},
-        "gpt-4.1":            {"input": 2.0,  "output": 8.0,  "context": 1000000},
-        "o1-mini":            {"input": 1.1,  "output": 4.4,  "context": 128000},
+        # task 57: GPT-5.5 (2026-05-05) 替代 5.3-instant 成为 ChatGPT 默认
+        # 定价未官方公开，按 GPT-5.5 Instant 略高于 5.x 估算（待官方 API 价更新）
+        "gpt-5.5":             {"input": 2.5,  "output": 10.0, "context": 400000, "notes": "GPT-5.5 · 2026-05-05 默认"},
+        "gpt-5.5-instant":     {"input": 1.25, "output": 5.0,  "context": 400000, "notes": "GPT-5.5 Instant · 低延迟"},
+        "gpt-5.5-pro":         {"input": 5.0,  "output": 20.0, "context": 400000, "notes": "GPT-5.5 Pro · 付费"},
+        "gpt-5.5-thinking":    {"input": 5.0,  "output": 20.0, "context": 400000, "notes": "GPT-5.5 Thinking · 推理"},
+        "gpt-5":               {"input": 2.0,  "output": 8.0,  "context": 400000, "notes": "GPT-5 · 上一代"},
+        "gpt-4.1":             {"input": 2.0,  "output": 8.0,  "context": 1000000},
+        "gpt-4o":              {"input": 2.5,  "output": 10.0, "context": 128000},
+        "gpt-4o-mini":         {"input": 0.15, "output": 0.6,  "context": 128000},
+        "gpt-4-turbo":         {"input": 10.0, "output": 30.0, "context": 128000},
+        "o1-mini":             {"input": 1.1,  "output": 4.4,  "context": 128000},
     },
     "openrouter": {
-        # OpenRouter 是聚合，价格 = 上游 + 5% 平台费，下面给常见路由的参考价
-        "anthropic/claude-sonnet-4.5": {"input": 3.15,  "output": 15.75, "context": 200000, "notes": "上游 Claude 4.5"},
-        "openai/gpt-4o":               {"input": 2.625, "output": 10.5,  "context": 128000, "notes": "上游 GPT-4o"},
-        "google/gemini-2.5-pro":       {"input": 1.31,  "output": 5.25,  "context": 2000000},
+        # OpenRouter 聚合，价格 = 上游 + 5% 平台费。task 57 同步刷新代表项。
+        "anthropic/claude-opus-4-7":     {"input": 15.75, "output": 78.75, "context": 200000},
+        "anthropic/claude-sonnet-4-6":   {"input": 3.15,  "output": 15.75, "context": 200000},
+        "openai/gpt-5.5":                {"input": 2.625, "output": 10.5,  "context": 400000},
+        "openai/gpt-4o":                 {"input": 2.625, "output": 10.5,  "context": 128000},
+        "google/gemini-3.5-flash":       {"input": 1.575, "output": 9.45,  "context": 1000000},
+        "google/gemini-3.1-pro":         {"input": 2.10,  "output": 12.60, "context": 1000000},
+        "google/gemini-2.5-pro":         {"input": 1.31,  "output": 5.25,  "context": 2000000},
     },
     "siliconflow": {
-        "deepseek-ai/DeepSeek-V3":     {"input": 0.27, "output": 1.10, "context": 64000, "notes": "约合 RMB ¥2/¥8 → USD 估算"},
-        "Qwen/Qwen2.5-72B-Instruct":   {"input": 0.55, "output": 1.65, "context": 128000},
+        # task 57: DeepSeek V4 系列（2026-04-24 发布）
+        "deepseek-ai/DeepSeek-V4-Pro":   {"input": 1.74, "output": 3.48, "context": 1000000, "notes": "DeepSeek V4-Pro · 2026-04-24 · 1.6T 参数"},
+        "deepseek-ai/DeepSeek-V4-Flash": {"input": 0.30, "output": 1.20, "context": 1000000, "notes": "DeepSeek V4-Flash · 廉价版"},
+        "deepseek-ai/DeepSeek-V3":       {"input": 0.27, "output": 1.10, "context": 64000, "notes": "V3 · 旧版"},
+        "Qwen/Qwen3.7-Max":              {"input": 2.50, "output": 7.50, "context": 1000000, "notes": "Qwen 3.7-Max · 2026-05-21"},
+        "Qwen/Qwen3.6-Flash":            {"input": 0.19, "output": 1.13, "context": 131072, "notes": "Qwen 3.6 Flash"},
+        "Qwen/Qwen2.5-72B-Instruct":     {"input": 0.55, "output": 1.65, "context": 128000},
     },
     "minimax": {
         "MiniMax-M1":      {"input": 0.55,  "output": 2.20, "context": 1000000, "notes": "约合 RMB ¥4/¥16"},
         "abab6.5s-chat":   {"input": 0.14,  "output": 0.14, "context": 245760},
     },
     "dashscope": {
-        "qwen-max":        {"input": 1.40,  "output": 5.6,  "context": 32000,  "notes": "约合 RMB ¥10/¥40"},
+        # task 57: 阿里云 Model Studio 直供 Qwen 3.7 / 3.6 系列
+        "qwen3.7-max":     {"input": 2.50,  "output": 7.50, "context": 1000000, "notes": "Qwen 3.7-Max · 2026-05-21 旗舰"},
+        "qwen3.6-flash":   {"input": 0.19,  "output": 1.13, "context": 131072, "notes": "Qwen 3.6 Flash"},
+        "qwen-max":        {"input": 1.40,  "output": 5.6,  "context": 32000,  "notes": "旧 Qwen Max · 约合 RMB ¥10/¥40"},
         "qwen-plus":       {"input": 0.11,  "output": 0.28, "context": 131072},
         "qwen-turbo":      {"input": 0.04,  "output": 0.08, "context": 1000000},
     },
@@ -434,38 +464,60 @@ CAPABILITY_LABELS = {
     "web_search":   "联网搜索",
 }
 
-# 模型默认能力（按 real_name 前缀匹配，精确名优先）
+# 模型默认能力（按 real_name 前缀匹配，精确名优先）。task 57 校准。
 _CAPABILITY_DEFAULTS: dict[str, dict[str, list[str]]] = {
     "anthropic": {
-        "claude-opus-4-7":   ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "computer_use"],
+        # task 57: 4.x 系列都支持 computer_use（agentic capability）
+        "claude-opus-4-7":   ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "computer_use", "code_exec"],
+        "claude-opus-4-6":   ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "computer_use"],
         "claude-opus-4-5":   ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning"],
-        "claude-sonnet-4-6": ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning"],
+        "claude-sonnet-4-6": ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "computer_use"],
         "claude-sonnet-4-5": ["text", "streaming", "image_input", "file_input", "tools", "json_mode"],
-        "claude-haiku-4-5":  ["text", "streaming", "tools", "json_mode"],
+        "claude-haiku-4-5":  ["text", "streaming", "image_input", "tools", "json_mode"],
         "claude-3-5":        ["text", "streaming", "image_input", "file_input", "tools", "json_mode"],
     },
     "vertex_ai": {
+        # task 57: 3.5 Flash + 3.1 Pro 是新主力
+        "gemini-3.5-flash": ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode", "reasoning"],
+        "gemini-3.1-pro":   ["text", "streaming", "image_input", "audio_input", "video_input", "file_input", "tools", "json_mode", "reasoning", "code_exec"],
         "gemini-3-pro":     ["text", "streaming", "image_input", "audio_input", "video_input", "file_input", "tools", "json_mode", "reasoning"],
-        "gemini-3.5-flash": ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode"],
+        "gemini-3-flash":   ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode"],
         "gemini-2.5-pro":   ["text", "streaming", "image_input", "audio_input", "video_input", "file_input", "tools", "json_mode", "reasoning"],
         "gemini-2.5-flash": ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode"],
         "gemini-2.0-flash": ["text", "streaming", "image_input", "tools", "json_mode"],
     },
     "openai": {
-        "gpt-4o":      ["text", "streaming", "image_input", "audio_input", "tools", "json_mode"],
-        "gpt-4o-mini": ["text", "streaming", "image_input", "tools", "json_mode"],
-        "gpt-4-turbo": ["text", "streaming", "image_input", "tools", "json_mode"],
-        "gpt-4.1":     ["text", "streaming", "image_input", "tools", "json_mode"],
-        "o1":          ["text", "streaming", "reasoning"],
-        "o1-mini":     ["text", "streaming", "reasoning"],
+        # task 57: GPT-5.5 family
+        "gpt-5.5-pro":      ["text", "streaming", "image_input", "audio_input", "tools", "json_mode", "reasoning", "code_exec", "web_search"],
+        "gpt-5.5-thinking": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"],
+        "gpt-5.5-instant": ["text", "streaming", "image_input", "tools", "json_mode"],
+        "gpt-5.5":          ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"],
+        "gpt-5":            ["text", "streaming", "image_input", "tools", "json_mode"],
+        "gpt-4o":           ["text", "streaming", "image_input", "audio_input", "tools", "json_mode"],
+        "gpt-4o-mini":      ["text", "streaming", "image_input", "tools", "json_mode"],
+        "gpt-4-turbo":      ["text", "streaming", "image_input", "tools", "json_mode"],
+        "gpt-4.1":          ["text", "streaming", "image_input", "tools", "json_mode"],
+        "o1":               ["text", "streaming", "reasoning"],
+        "o1-mini":          ["text", "streaming", "reasoning"],
     },
     "openrouter": {},  # 透传上游能力，调用方需自行查 catalog
     "siliconflow": {
-        "deepseek-ai/DeepSeek-V3":    ["text", "streaming", "tools", "json_mode"],
-        "Qwen/Qwen2.5-72B-Instruct":  ["text", "streaming", "tools"],
+        # task 57: DeepSeek V4 / Qwen 3.7
+        "deepseek-ai/DeepSeek-V4-Pro":   ["text", "streaming", "tools", "json_mode", "reasoning", "code_exec"],
+        "deepseek-ai/DeepSeek-V4-Flash": ["text", "streaming", "tools", "json_mode"],
+        "deepseek-ai/DeepSeek-V3":       ["text", "streaming", "tools", "json_mode"],
+        "Qwen/Qwen3.7-Max":              ["text", "streaming", "image_input", "tools", "json_mode", "reasoning", "code_exec"],
+        "Qwen/Qwen3.6-Flash":            ["text", "streaming", "tools", "json_mode"],
+        "Qwen/Qwen2.5-72B-Instruct":     ["text", "streaming", "tools"],
     },
     "minimax":   {"MiniMax-M1": ["text", "streaming", "tools", "json_mode"]},
-    "dashscope": {"qwen-max": ["text", "streaming", "tools", "json_mode"], "qwen-plus": ["text", "streaming", "tools"], "qwen-turbo": ["text", "streaming"]},
+    "dashscope": {
+        "qwen3.7-max":   ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"],
+        "qwen3.6-flash": ["text", "streaming", "tools", "json_mode"],
+        "qwen-max":      ["text", "streaming", "tools", "json_mode"],
+        "qwen-plus":     ["text", "streaming", "tools"],
+        "qwen-turbo":    ["text", "streaming"],
+    },
     "hunyuan":   {"hunyuan-turbos-latest": ["text", "streaming", "tools"], "hunyuan-large": ["text", "streaming", "tools"]},
     "doubao":    {"doubao-1-5-pro-32k-250115": ["text", "streaming", "image_input", "tools"], "doubao-1-5-lite-32k-250115": ["text", "streaming"]},
 }
