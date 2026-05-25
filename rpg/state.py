@@ -12,11 +12,58 @@ from timeline_state import detect_time_directives, is_time_key, clean_time_value
 
 BASE = Path(__file__).parent
 SAVE_FILE = BASE / "saves" / "game_state.json"
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 # 剧情开始时的初始状态
 DEFAULT_STATE = {
     "schema_version": CURRENT_SCHEMA_VERSION,
+    # 规则集元信息。RulesEngine 据此选择规则集（dnd5e 为内部命名，对外文案统一使用
+    # "5E compatible / 五版规则兼容"）。不引入官方 D&D 品牌内容。
+    "ruleset": {
+        "id": "dnd5e",
+        "mode": "5e_compatible",
+        "public_label": "5E compatible / 五版规则兼容"
+    },
+    # 5E 角色卡。HP/AC/conditions 等硬数值受 State Gate 保护，只能由 RulesEngine 写。
+    "player_character": {
+        "name": "",
+        "level": 1,
+        "class_name": "scout",
+        "species": "human",
+        "background": "miner",
+        "abilities": {"str": 10, "dex": 14, "con": 12, "int": 11, "wis": 13, "cha": 10},
+        "proficiency_bonus": 2,
+        "skills": {"stealth": "proficient", "investigation": "proficient", "perception": "proficient"},
+        "saves": {},
+        "max_hp": 9,
+        "hp": 9,
+        "ac": 13,
+        "inventory": [],
+        "conditions": [],
+        "features": [],
+        "weapons": {}
+    },
+    # 当前场景（房间）。模组开启后由 RulesEngine/模组加载器填入。
+    "scene": {
+        "module_id": "",
+        "location_id": "",
+        "visited_rooms": [],
+        "exits": [],
+        "visible_clues": [],
+        "flags": {}
+    },
+    # 战斗遭遇状态。所有 hp/initiative 修改必须经 RulesEngine。
+    "encounter": {
+        "active": False,
+        "round": 0,
+        "turn_index": 0,
+        "initiative_order": [],
+        "combatants": [],
+        "encounter_id": "",
+        "log": []
+    },
+    # 最近骰子日志（最多保留 50 条）。append-only by RulesEngine。
+    "dice_log": [],
     "player": {
         "name": "",
         "role": "",          # 玩家选择的角色定位
@@ -149,6 +196,15 @@ class GameState:
         timeline.setdefault("anchor_turn", migrated.get("turn", 0))
         timeline.setdefault("pending_jump", None)
         timeline.setdefault("last_transition", None)
+        # schema v5：5E-compatible 规则相关字段补全。旧存档没有 ruleset / player_character /
+        # scene / encounter / dice_log 时，补上 DEFAULT_STATE 的默认值；保持已有字段不变。
+        for rules_key in ("ruleset", "player_character", "scene", "encounter", "dice_log"):
+            if rules_key not in migrated:
+                migrated[rules_key] = copy.deepcopy(DEFAULT_STATE[rules_key])
+        # 兼容旧存档：如果 player_character.hp 为空但 max_hp 有值，回填 hp=max_hp。
+        pc = migrated.get("player_character") or {}
+        if pc and pc.get("max_hp") and not pc.get("hp"):
+            pc["hp"] = pc["max_hp"]
         # task 74：旧存档没有 memory.items，补一个空数组（不回填旧 facts，让 task 78
         # 在确定迁移策略后做。这里只是让新写入能落地）。
         memory_block = migrated.setdefault("memory", {})
@@ -316,7 +372,14 @@ class GameState:
         p = self.data["player"]
         w = self.data["world"]
         m = self.data["memory"]
-        return {
+        rules_block = {
+            "ruleset": copy.deepcopy(self.data.get("ruleset") or {}),
+            "player_character": copy.deepcopy(self.data.get("player_character") or {}),
+            "scene": copy.deepcopy(self.data.get("scene") or {}),
+            "encounter": copy.deepcopy(self.data.get("encounter") or {}),
+            "dice_log": list(self.data.get("dice_log") or [])[-30:],
+        }
+        return {**rules_block, **{
             "player": dict(p),
             "world": dict(w),
             "relationships": dict(self.data["relationships"]),
@@ -330,7 +393,7 @@ class GameState:
             "summary": self.short_summary(),
             "history": self.chat_history(),
             "suggestions": self.suggestions(),
-        }
+        }}
 
     def suggestions(self) -> list[str]:
         latest = _latest_assistant_text(self.data["history"])
@@ -918,6 +981,25 @@ class GameState:
             except Exception:
                 pass
             return f"状态写入拒绝（硬黑名单）：{path}"
+        # 5E-compatible：受规则引擎管理的硬数值（HP/AC/initiative/dice_log）只能由
+        # RulesEngine 修改。LLM/GM 自由写入或用户 /set 都拒绝并记入 audit。
+        if _write_path_rules_managed(path) and not str(source or "").startswith("rules_engine"):
+            try:
+                audit = self.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                audit.append({
+                    "ts": datetime.now().isoformat(timespec="seconds"),
+                    "source": source,
+                    "path": path,
+                    "value": str(value)[:120],
+                    "blocked": "rules_managed",
+                    "hint": "受规则引擎管理的硬数值（HP/AC/initiative/dice_log）只能由 RulesEngine 写入",
+                    "turn": self.data.get("turn", 0),
+                })
+                if len(audit) > 200:
+                    self.data["permissions"]["audit_log"] = audit[-200:]
+            except Exception:
+                pass
+            return f"状态写入拒绝（rules_managed）：{path}"
         permissions = self.data.setdefault("permissions", {})
         mode = _normalize_permission_mode(permissions.get("mode", "full_access"))
         allowed = _write_path_allowed(path, mode)
@@ -994,6 +1076,127 @@ class GameState:
         permissions.setdefault("audit_log", []).append(audit)
         permissions["audit_log"] = permissions["audit_log"][-30:]
         return f"状态写入：{path}"
+
+    # ── 规则引擎专用入口 ────────────────────────────────────────
+    # 这些方法走 source="rules_engine"，因此能通过 State Gate 写入受保护字段。
+    # 任何对 HP/AC/initiative/dice_log 的修改都必须经此入口或下方专用 helper。
+
+    def apply_rules_state_ops(self, ops: list[dict], reason: str = "") -> list[str]:
+        """应用 RulesEngine 返回的 state_ops 列表。
+
+        op 字典格式：{"op": "set"|"add"|"subtract"|"append", "path": "...", "value": ...}
+        path 支持特殊前缀 "_combatant.<id>.<field>" → 解析为 encounter.combatants 中
+        对应 id 的字段。其它 path 直接写到 self.data。
+        """
+        applied: list[str] = []
+        encounter = self.data.setdefault("encounter", {})
+        combatants = encounter.setdefault("combatants", [])
+        comb_by_id = {c.get("id"): c for c in combatants}
+        for op in ops or []:
+            kind = op.get("op", "set")
+            path = str(op.get("path", "") or "")
+            value = op.get("value")
+            if not path:
+                continue
+            if path.startswith("_combatant."):
+                parts = path.split(".", 2)
+                if len(parts) < 3:
+                    continue
+                _, cid, field = parts
+                target = comb_by_id.get(cid)
+                if not target:
+                    continue
+                if kind == "subtract":
+                    target[field] = max(0, int(target.get(field, 0) or 0) - int(value or 0))
+                elif kind == "add":
+                    target[field] = int(target.get(field, 0) or 0) + int(value or 0)
+                else:
+                    target[field] = value
+                # HP 落 0 自动 defeated
+                if field == "hp" and int(target.get("hp", 0) or 0) <= 0:
+                    target["defeated"] = True
+                applied.append(f"combatant {cid}.{field}={target.get(field)}")
+                continue
+            # 通用 path：rules_engine 直写。规则路径走专用 set，绕过字符串解析。
+            try:
+                if kind == "subtract":
+                    cur = int(_get_path(self.data, path) or 0)
+                    _set_path(self.data, path, max(0, cur - int(value or 0)))
+                elif kind == "add":
+                    cur = int(_get_path(self.data, path) or 0)
+                    _set_path(self.data, path, cur + int(value or 0))
+                elif kind == "append":
+                    cur = _get_path(self.data, path)
+                    if not isinstance(cur, list):
+                        _set_path(self.data, path, [])
+                        cur = _get_path(self.data, path)
+                    cur.append(value)
+                else:
+                    _set_path(self.data, path, value)
+                applied.append(f"set {path}={_get_path(self.data, path)}")
+            except Exception as e:
+                applied.append(f"failed {path}: {e}")
+        # audit
+        try:
+            audit = self.data.setdefault("permissions", {}).setdefault("audit_log", [])
+            audit.append({
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "source": "rules_engine",
+                "ops": len(ops or []),
+                "reason": reason,
+                "turn": self.data.get("turn", 0),
+            })
+            self.data["permissions"]["audit_log"] = audit[-200:]
+        except Exception:
+            pass
+        return applied
+
+    def append_dice_log(self, entry: dict, cap: int = 50) -> None:
+        """RulesEngine 唯一允许的 dice_log 写入入口。"""
+        log = self.data.setdefault("dice_log", [])
+        log.append(entry)
+        if len(log) > cap:
+            del log[: len(log) - cap]
+
+    def set_player_character(self, character: dict) -> None:
+        """初始化或替换 player_character。仅在模组开局 / 新游戏使用。"""
+        self.data["player_character"] = copy.deepcopy(character or {})
+
+    def update_player_hp(self, new_hp: int, reason: str = "") -> int:
+        """RulesEngine 专用：直接设定玩家 HP，不超过 max_hp。"""
+        pc = self.data.setdefault("player_character", {})
+        max_hp = int(pc.get("max_hp", 0) or 0)
+        new_hp = max(0, min(int(new_hp), max_hp if max_hp > 0 else int(new_hp)))
+        pc["hp"] = new_hp
+        return new_hp
+
+    def damage_player(self, amount: int, reason: str = "") -> int:
+        pc = self.data.setdefault("player_character", {})
+        cur = int(pc.get("hp", 0) or 0)
+        actual = max(0, int(amount))
+        pc["hp"] = max(0, cur - actual)
+        return cur - pc["hp"]
+
+    def set_encounter(self, encounter: dict) -> None:
+        """初始化或替换 encounter 状态。RulesEngine 专用。"""
+        self.data["encounter"] = copy.deepcopy(encounter or {})
+
+    def clear_encounter(self) -> None:
+        self.data["encounter"] = copy.deepcopy(DEFAULT_STATE["encounter"])
+
+    def set_scene(self, scene: dict) -> None:
+        self.data["scene"] = copy.deepcopy(scene or {})
+
+    def mark_scene_visit(self, location_id: str) -> None:
+        scene = self.data.setdefault("scene", {})
+        visited = scene.setdefault("visited_rooms", [])
+        if location_id and location_id not in visited:
+            visited.append(location_id)
+
+    def set_scene_flag(self, flag: str, value=True) -> None:
+        scene = self.data.setdefault("scene", {})
+        flags = scene.setdefault("flags", {})
+        flags[flag] = value
 
     def _pop_pending_write(self, *, id: str | None = None, index: int | None = None) -> dict | None:
         """按 id 优先 / index fallback 弹出 pending_write。两者都不命中返回 None。"""
@@ -1636,6 +1839,30 @@ _HARD_FORBIDDEN_PATHS = {"schema_version", "history", "created_at", "is_new"}
 _HARD_FORBIDDEN_PREFIXES = ("history.", "permissions.")
 
 
+# 5E-compatible 规则受控字段。这些路径只能由 RulesEngine（source="rules_engine"
+# 或 source 以 "rules_engine" 开头）改写。GM 自由写入 / 用户 /set 都被拒绝并 audit，
+# 防止 LLM 自行编造 HP/AC/initiative 等硬数值。
+_RULES_MANAGED_PATHS = {
+    "player_character.hp",
+    "player_character.max_hp",
+    "player_character.ac",
+    "encounter.active",
+    "encounter.round",
+    "encounter.turn_index",
+    "encounter.initiative_order",
+    "encounter.combatants",
+    "encounter.encounter_id",
+    "encounter.log",
+    "dice_log",
+}
+_RULES_MANAGED_PREFIXES = (
+    "encounter.combatants.",
+    "encounter.initiative_order.",
+    "dice_log.",
+    "player_character.conditions",  # 条件由 rules 触发（中毒等）
+)
+
+
 def _write_path_hard_forbidden(path: str) -> bool:
     """绝对不能写的路径，无论权限模式或 force 标志。
 
@@ -1644,6 +1871,13 @@ def _write_path_hard_forbidden(path: str) -> bool:
     schema_version / created_at / is_new — 元数据，破坏会让 state 反序列化崩
     """
     return path in _HARD_FORBIDDEN_PATHS or path.startswith(_HARD_FORBIDDEN_PREFIXES)
+
+
+def _write_path_rules_managed(path: str) -> bool:
+    """5E 规则受控路径。任何非 rules_engine 来源写入都会被 State Gate 拒绝。"""
+    if path in _RULES_MANAGED_PATHS:
+        return True
+    return any(path == prefix.rstrip(".") or path.startswith(prefix) for prefix in _RULES_MANAGED_PREFIXES)
 
 
 def _write_path_allowed(path: str, mode: str) -> bool:

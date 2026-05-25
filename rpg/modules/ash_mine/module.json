@@ -1,0 +1,19 @@
+{
+  "id": "ash_mine",
+  "name": "Ash Mine",
+  "name_cn": "灰烬矿坑",
+  "tagline": "废弃矿道下传来低语，矿心深处的祭坛仍在燃烧。",
+  "tagline_en": "A whisper rises from the abandoned shafts; deep below, the altar still burns.",
+  "ruleset": {
+    "id": "dnd5e",
+    "mode": "5e_compatible",
+    "public_label": "5E compatible / 五版规则兼容"
+  },
+  "level_range": [1, 3],
+  "party_size": 1,
+  "starting_location": "mine_entrance",
+  "victory_locations": ["mine_heart_altar"],
+  "estimated_minutes": 45,
+  "tags": ["original", "exploration", "stealth", "single-player"],
+  "notice": "本模组使用原创地名、角色、怪物与剧情，未引用任何官方品牌世界或非 SRD IP。"
+}

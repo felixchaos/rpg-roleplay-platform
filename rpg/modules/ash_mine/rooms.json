@@ -1,0 +1,257 @@
+[
+  {
+    "id": "mine_entrance",
+    "name": "废弃矿道入口",
+    "name_en": "Abandoned Adit",
+    "description": "潮湿的山坡崖壁上挖着一个被木桩封住的坑道入口。腐烂的木板上钉着歪斜的告示牌，地面泥土里还能看到杂乱的脚印——大小两种，刚刚出现不久。",
+    "exits": [
+      {"to": "shaft_lift", "label": "推开木桩，进入主井", "requires": null},
+      {"to": "minecart_track", "label": "沿外侧锈轨往东", "requires": null}
+    ],
+    "visible_clues": [
+      {"id": "warning_sign", "text": "告示牌：『矿坑封闭，闯入者后果自负』"},
+      {"id": "footprints", "text": "新鲜脚印，至少两人，可能更多"}
+    ],
+    "checks": [
+      {"kind": "skill_check", "skill": "investigation", "dc": 10, "reveals": "footprints_detail", "fact": "脚印来自三人，一组朝主井，一组朝东侧轨道。"},
+      {"kind": "skill_check", "skill": "perception", "dc": 12, "reveals": "lantern", "fact": "灌木丛后藏着一盏熄灭的油灯，灯油还温。"}
+    ],
+    "hazards": [],
+    "npcs": [],
+    "enemies": [],
+    "loot": [],
+    "flags": {}
+  },
+  {
+    "id": "shaft_lift",
+    "name": "旧升降井",
+    "name_en": "Rust Shaft",
+    "description": "巨大的木质升降井架斜插在岩壁上。绳索粗如儿臂，但磨损严重；下方是望不到底的黑暗。一阵冷风从下方持续吹上来。",
+    "exits": [
+      {"to": "minecart_track", "label": "绕回轨道侧", "requires": null},
+      {"to": "rest_cavern", "label": "搭着绳索往下溜（危险）", "requires": null},
+      {"to": "mine_entrance", "label": "退出矿道", "requires": null}
+    ],
+    "visible_clues": [
+      {"id": "frayed_rope", "text": "绳索的尼龙层已散开，钢芯外露"},
+      {"id": "fresh_oil", "text": "井架轴承处有新涂的机油"}
+    ],
+    "checks": [
+      {"kind": "skill_check", "skill": "perception", "dc": 12, "reveals": "frayed_rope", "fact": "你看清绳索的钢芯只剩三股完整，断裂只是时间问题。"},
+      {"kind": "saving_throw", "ability": "dex", "dc": 13, "trigger": "use_rope_unaware", "fail_damage": "2d6", "fact": "如果直接顺绳下井，需要 DEX 豁免 DC 13，失败摔落受 2d6 钝伤。"}
+    ],
+    "hazards": [
+      {"id": "rope_break", "description": "未察觉就强行使用磨损绳索，会触发坠落。", "save": {"ability": "dex", "dc": 13}, "damage": "2d6"}
+    ],
+    "npcs": [],
+    "enemies": [],
+    "loot": [],
+    "flags": {}
+  },
+  {
+    "id": "minecart_track",
+    "name": "矿车轨道",
+    "name_en": "Minecart Track",
+    "description": "锈迹斑斑的双轨从墙边延伸进黑暗。一节倾倒的矿车堵住了三分之二的通道。轨道上结着新的金属碎屑——有人最近推过矿车。",
+    "exits": [
+      {"to": "mine_entrance", "label": "回到入口", "requires": null},
+      {"to": "shaft_lift", "label": "回升降井", "requires": null},
+      {"to": "rest_cavern", "label": "翻过矿车深入", "requires": null}
+    ],
+    "visible_clues": [
+      {"id": "fresh_scrape", "text": "金属碎屑明显是几小时内才刮出的"},
+      {"id": "ash_smear", "text": "矿车把手有一道灰色油污"}
+    ],
+    "checks": [
+      {"kind": "skill_check", "skill": "stealth", "dc": 13, "reveals": "stealth_pass", "fact": "悄悄翻越矿车，不让车体碰撞声暴露行踪。"},
+      {"kind": "skill_check", "skill": "investigation", "dc": 12, "reveals": "ash_smear_lead", "fact": "灰色油污是某种含碳灰烬的混合物，与教派遗物相符。"}
+    ],
+    "hazards": [
+      {"id": "loud_traverse", "description": "翻越矿车失败会发出巨响，惊动下方营地。", "trigger_flag": "camp_alert"}
+    ],
+    "npcs": [],
+    "enemies": [],
+    "loot": [],
+    "flags": {}
+  },
+  {
+    "id": "rest_cavern",
+    "name": "矿工休憩洞",
+    "name_en": "Hewn Rest",
+    "description": "一处被早年矿工拓宽的小型休息洞窟。墙边堆着腐朽的木床、锈蚀的矿灯和几个生霉的食物罐。角落里有一具早已干枯的矿工遗骸，怀里抱着一本沾灰的日志。",
+    "exits": [
+      {"to": "minecart_track", "label": "回轨道", "requires": null},
+      {"to": "fissure", "label": "沿裂缝深入", "requires": null}
+    ],
+    "visible_clues": [
+      {"id": "miner_journal", "text": "矿工日志，最后一篇写于五十年前，提到祭坛的『低语』"},
+      {"id": "old_bedroll", "text": "破烂被褥，可短暂歇息"}
+    ],
+    "checks": [
+      {"kind": "skill_check", "skill": "investigation", "dc": 11, "reveals": "journal_secret", "fact": "日志最后一页夹着一张矿坑深处的草图。"}
+    ],
+    "hazards": [],
+    "npcs": [],
+    "enemies": [],
+    "loot": [
+      {"item_id": "miner_journal", "name": "矿工日志", "description": "记录祭坛低语线索"},
+      {"item_id": "healing_draught", "name": "Healing Draught", "qty": 1, "description": "矿工急救药剂"}
+    ],
+    "flags": {"can_short_rest": true}
+  },
+  {
+    "id": "fissure",
+    "name": "毒雾裂隙",
+    "name_en": "Smolder Fissure",
+    "description": "通道在此被一道裂缝割开，缝里不断渗出淡黄色的雾气，刺鼻的硫磺味令人窒息。要么憋住气穿过，要么寻找绕路。",
+    "exits": [
+      {"to": "rest_cavern", "label": "退回休息洞", "requires": null},
+      {"to": "ash_camp", "label": "穿过裂缝", "requires": null},
+      {"to": "deep_hall", "label": "找小径绕过裂缝", "requires": "flag:bypass_fissure"}
+    ],
+    "visible_clues": [
+      {"id": "yellow_vapor", "text": "黄色雾气从裂缝深处持续涌出"}
+    ],
+    "checks": [
+      {"kind": "saving_throw", "ability": "con", "dc": 12, "trigger": "cross_fissure", "fail_damage": "1d6", "fact": "直接穿过需 CON 豁免 DC 12，失败吸入毒雾受 1d6 毒伤并 1 轮咳嗽（不利潜行）。"},
+      {"kind": "skill_check", "skill": "survival", "dc": 13, "reveals": "bypass_route", "sets_flag": "bypass_fissure", "fact": "你找到一条紧贴顶板的窄道，可绕过裂缝避免吸入毒雾。"}
+    ],
+    "hazards": [
+      {"id": "poison_fog", "description": "毒雾刺激呼吸道，未通过 CON 豁免会受伤+短时间咳嗽。", "save": {"ability": "con", "dc": 12}, "damage": "1d6", "condition": "coughing"}
+    ],
+    "npcs": [],
+    "enemies": [],
+    "loot": [],
+    "flags": {}
+  },
+  {
+    "id": "ash_camp",
+    "name": "灰烬营地",
+    "name_en": "Ash Encampment",
+    "description": "一处临时搭建的营地，几顶煤灰染色的帐篷围着昏黄的提灯。两名穿着灰布兜帽的人正在低声交谈，另有一名典狱模样的高壮汉子背对着你巡视。",
+    "exits": [
+      {"to": "fissure", "label": "退回毒雾裂隙方向", "requires": null},
+      {"to": "deep_hall", "label": "沿营地后侧矿道深入", "requires": null}
+    ],
+    "visible_clues": [
+      {"id": "camp_map", "text": "桌上摊着一张手绘的矿坑地图，标注了祭坛位置"},
+      {"id": "torch_glyph", "text": "帐篷外侧用煤灰画着环形符号"}
+    ],
+    "checks": [
+      {"kind": "skill_check", "skill": "stealth", "dc": 14, "reveals": "sneak_around", "sets_flag": "ash_camp_bypassed", "fact": "你贴着阴影绕开营地，没有暴露。"},
+      {"kind": "skill_check", "skill": "persuasion", "dc": 13, "reveals": "parley", "sets_flag": "ash_camp_parley", "fact": "你假装迷路矿工，骗过两名教徒；典狱仍存疑。"},
+      {"kind": "skill_check", "skill": "deception", "dc": 14, "reveals": "deception_pass", "sets_flag": "ash_camp_parley", "fact": "你编造一段口音，骗过教徒看守。"}
+    ],
+    "hazards": [],
+    "npcs": [
+      {"id": "ash_acolyte_1", "name": "灰布教徒（甲）"},
+      {"id": "ash_acolyte_2", "name": "灰布教徒（乙）"},
+      {"id": "ash_warden", "name": "灰烬教典狱"}
+    ],
+    "enemies": [
+      {"stat_block_id": "ash_skulker", "instance_id": "ash_skulker_1", "name": "灰布教徒·甲"},
+      {"stat_block_id": "ash_skulker", "instance_id": "ash_skulker_2", "name": "灰布教徒·乙"},
+      {"stat_block_id": "ash_cult_warden", "instance_id": "ash_warden_1", "name": "灰烬教典狱"}
+    ],
+    "loot": [
+      {"item_id": "camp_map", "name": "矿坑手绘图", "description": "标注祭坛位置"}
+    ],
+    "flags": {}
+  },
+  {
+    "id": "deep_hall",
+    "name": "深层矿厅",
+    "name_en": "Deep Hall",
+    "description": "一处被天然崩塌扩大的矿厅，残留的支撑柱布满刮痕。几只灰黑色的大鼠从角落涌出，吱吱声夹杂金属摩擦——还有一头熔渣猎犬潜伏在阴影里。",
+    "exits": [
+      {"to": "ash_camp", "label": "回营地", "requires": null},
+      {"to": "altar_approach", "label": "推开石门，前往祭坛", "requires": null}
+    ],
+    "visible_clues": [
+      {"id": "scratched_pillar", "text": "支撑柱布满刮痕，像是猛兽长年磨爪"},
+      {"id": "ember_tracks", "text": "地面散落细小焦痕，指向石门"}
+    ],
+    "checks": [
+      {"kind": "skill_check", "skill": "perception", "dc": 13, "reveals": "ambush_warning", "fact": "你提前注意到熔渣猎犬埋伏的位置，获得先攻优势。"},
+      {"kind": "skill_check", "skill": "investigation", "dc": 12, "reveals": "ember_clue", "fact": "焦痕指向石门，说明祭坛的热源就在那一侧。"}
+    ],
+    "hazards": [
+      {"id": "collapsing_pillar", "description": "战斗中如靠近支撑柱失败 STR 豁免 DC 12 会被坠石砸中 1d6。", "save": {"ability": "str", "dc": 12}, "damage": "1d6"}
+    ],
+    "npcs": [],
+    "enemies": [
+      {"stat_block_id": "soot_rat_swarm", "instance_id": "soot_rat_swarm_1", "name": "煤灰鼠群"},
+      {"stat_block_id": "slag_hound", "instance_id": "slag_hound_1", "name": "熔渣猎犬"}
+    ],
+    "loot": [],
+    "flags": {}
+  },
+  {
+    "id": "altar_approach",
+    "name": "祭坛前廊",
+    "name_en": "Altar Approach",
+    "description": "通向祭坛的狭长走廊，地面布满细密的铜线和铁针。前方一道暗红色光从拱门后透出。",
+    "exits": [
+      {"to": "deep_hall", "label": "回深层矿厅", "requires": null},
+      {"to": "mine_heart_altar", "label": "穿过陷阱进入祭坛", "requires": null}
+    ],
+    "visible_clues": [
+      {"id": "needle_trap", "text": "地面密布机关针，未察觉踏入会触发"},
+      {"id": "altar_glow", "text": "拱门内不断脉动的暗红色光"}
+    ],
+    "checks": [
+      {"kind": "skill_check", "skill": "perception", "dc": 13, "reveals": "trap_seen", "fact": "你发现陷阱机关的金属铰链位置。"},
+      {"kind": "skill_check", "skill": "sleight_of_hand", "dc": 14, "reveals": "trap_disabled", "sets_flag": "needle_trap_disabled", "requires_flag": "trap_seen", "fact": "你拆解了铜线触发器，针阵被永久禁用。"}
+    ],
+    "hazards": [
+      {"id": "needle_trap", "description": "未识破的针阵会触发，DEX 豁免 DC 13；失败受 1d8 穿刺。", "save": {"ability": "dex", "dc": 13}, "damage": "1d8"}
+    ],
+    "npcs": [],
+    "enemies": [],
+    "loot": [],
+    "flags": {}
+  },
+  {
+    "id": "mine_heart_altar",
+    "name": "矿心祭坛",
+    "name_en": "Mineheart Altar",
+    "description": "矿心是个穹顶高阔的天然空腔，正中是一座由黑色玄武岩雕成的祭坛，上面悬浮着一颗仍在燃烧的暗红色矿核。一名披着焦痕长袍的祭司正诵念低语。",
+    "exits": [
+      {"to": "altar_approach", "label": "退回前廊", "requires": null},
+      {"to": "module_complete", "label": "[ 结束模组 ]", "requires": "flag:boss_defeated"}
+    ],
+    "visible_clues": [
+      {"id": "mine_core", "text": "祭坛上漂浮的暗红色矿核——所有低语的来源"},
+      {"id": "ritual_circle", "text": "祭坛周围画着一圈灰烬咒文"}
+    ],
+    "checks": [
+      {"kind": "skill_check", "skill": "arcana", "dc": 14, "reveals": "core_weakness", "fact": "矿核与祭司的低语共鸣绑定，击溃祭司可直接关闭核能。"}
+    ],
+    "hazards": [],
+    "npcs": [
+      {"id": "char_acolyte", "name": "焦痕祭司"}
+    ],
+    "enemies": [
+      {"stat_block_id": "char_acolyte_boss", "instance_id": "char_acolyte_boss", "name": "焦痕祭司（首领）"}
+    ],
+    "loot": [
+      {"item_id": "mine_core", "name": "暗红矿核", "description": "被封印的灰烬之心"},
+      {"item_id": "ash_relic", "name": "灰烬遗物", "description": "教派核心信物"}
+    ],
+    "flags": {}
+  },
+  {
+    "id": "module_complete",
+    "name": "矿坑外·黎明",
+    "name_en": "Mine Mouth at Dawn",
+    "description": "你从矿坑爬回地面时，天边已泛起灰白。身后矿口不再传出低语，玄武岩祭坛已经塌陷。怀里揣着暗红矿核和你刚写下的简短报告。",
+    "exits": [],
+    "visible_clues": [],
+    "checks": [],
+    "hazards": [],
+    "npcs": [],
+    "enemies": [],
+    "loot": [],
+    "flags": {"module_complete": true}
+  }
+]

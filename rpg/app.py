@@ -2249,6 +2249,219 @@ async def api_worldline_variable_remove(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "state": _payload(api_user)})
 
 
+# ── 5E-compatible 规则模组 / RulesEngine 接口 ─────────────────────
+# 内部 ruleset id "dnd5e"，对外文案使用 "5E compatible / 五版规则兼容"。
+# 不引入任何官方 Dungeons & Dragons 商标、Forgotten Realms 设定或非 SRD IP。
+from rules_bridge import (
+    start_module as _rb_start_module,
+    enter_room as _rb_enter_room,
+    perform_skill_check as _rb_skill_check,
+    perform_saving_throw as _rb_saving_throw,
+    trap_check as _rb_trap_check,
+    start_encounter_by_id as _rb_start_encounter,
+    player_attack as _rb_player_attack,
+    enemy_attack as _rb_enemy_attack,
+    advance_turn as _rb_advance_turn,
+    short_rest as _rb_short_rest,
+    suggest_rule_actions as _rb_suggest_rule_actions,
+)
+import modules as _rules_module_registry
+
+
+def _rules_payload(state: GameState) -> dict:
+    """前端 UI 需要的精简切片：角色卡 + 场景 + 战斗 + 骰子日志 + 模组元信息。"""
+    return {
+        "ruleset": state.data.get("ruleset", {}),
+        "player_character": state.data.get("player_character", {}),
+        "scene": state.data.get("scene", {}),
+        "encounter": state.data.get("encounter", {}),
+        "dice_log": list(state.data.get("dice_log", []))[-30:],
+    }
+
+
+@app.get("/api/rules/modules")
+async def api_rules_modules(request: Request) -> JSONResponse:
+    """列出可用的 5E-compatible 冒险模组。"""
+    _require_api_user(request)
+    return JSONResponse({"ok": True, "modules": _rules_module_registry.list_modules()})
+
+
+@app.post("/api/rules/module/start")
+async def api_rules_module_start(request: Request) -> JSONResponse:
+    """开启一个原创冒险模组（e.g. ash_mine）。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    module_id = str(body.get("module_id") or "ash_mine").strip()
+    character_overrides = body.get("character") or None
+
+    state = _ensure_loaded(api_user)
+    res = _rb_start_module(state, module_id, character_overrides=character_overrides)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error", "start_module 失败"))
+    # 模组开场作为 assistant 消息进入 history（不占用对话回合数）
+    opening = res.get("opening") or ""
+    if opening and (not state.data["history"] or state.data["history"][-1].get("content") != opening):
+        state.data["history"].append({"role": "assistant", "content": opening})
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "rules": _rules_payload(state), "opening": opening, "state": _payload(api_user)})
+
+
+@app.get("/api/rules/scene")
+async def api_rules_scene(request: Request) -> JSONResponse:
+    """返回当前 scene / player_character / encounter / dice_log 快照。"""
+    api_user = _require_api_user(request)
+    state = _ensure_loaded(api_user)
+    return JSONResponse({"ok": True, "rules": _rules_payload(state)})
+
+
+@app.post("/api/rules/move")
+async def api_rules_move(request: Request) -> JSONResponse:
+    api_user = _require_api_user(request)
+    body = await request.json()
+    location_id = str(body.get("to") or "").strip()
+    if not location_id:
+        raise HTTPException(status_code=400, detail="缺少 to")
+    state = _ensure_loaded(api_user)
+    res = _rb_enter_room(state, location_id)
+    if not res.get("ok"):
+        return JSONResponse({"ok": False, "error": res.get("error")}, status_code=400)
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "rules": _rules_payload(state), "room": res.get("room")})
+
+
+@app.post("/api/rules/action")
+async def api_rules_action(request: Request) -> JSONResponse:
+    """通用规则动作执行入口。根据 body.kind 路由到具体规则函数。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    kind = str(body.get("kind") or "").strip()
+    state = _ensure_loaded(api_user)
+
+    seed = body.get("seed")
+    seed = int(seed) if isinstance(seed, (int, float, str)) and str(seed).lstrip("-").isdigit() else None
+
+    if kind == "skill_check":
+        skill = str(body.get("skill") or "")
+        dc = int(body.get("dc", body.get("dc_hint", 12)))
+        result = _rb_skill_check(
+            state, skill=skill, dc=dc,
+            advantage=bool(body.get("advantage")),
+            disadvantage=bool(body.get("disadvantage")),
+            seed=seed,
+            reason=str(body.get("reason") or ""),
+            sets_flag=body.get("sets_flag"),
+        )
+        out: dict = {"ok": True, "result": result}
+    elif kind == "saving_throw":
+        ability = str(body.get("ability") or "")
+        dc = int(body.get("dc", body.get("dc_hint", 12)))
+        result = _rb_saving_throw(
+            state, ability=ability, dc=dc,
+            advantage=bool(body.get("advantage")),
+            disadvantage=bool(body.get("disadvantage")),
+            seed=seed,
+            reason=str(body.get("reason") or ""),
+            fail_damage_expr=body.get("fail_damage_expr") or body.get("fail_damage"),
+            fail_condition=body.get("fail_condition"),
+        )
+        out = {"ok": True, "result": result}
+    elif kind == "trap_check":
+        room_id = str(body.get("room_id") or state.data.get("scene", {}).get("location_id") or "")
+        trap_id = str(body.get("trap_id") or "")
+        if not room_id or not trap_id:
+            raise HTTPException(status_code=400, detail="缺少 room_id 或 trap_id")
+        out = _rb_trap_check(state, room_id=room_id, trap_id=trap_id, seed=seed)
+        if not out.get("ok"):
+            return JSONResponse(out, status_code=400)
+    elif kind == "attack":
+        target_id = str(body.get("target") or body.get("target_id") or "")
+        weapon_id = str(body.get("weapon") or body.get("weapon_id") or "shortsword")
+        out = _rb_player_attack(
+            state, target_id=target_id, weapon_id=weapon_id,
+            advantage=bool(body.get("advantage")),
+            disadvantage=bool(body.get("disadvantage")),
+            seed=seed,
+        )
+        if not out.get("ok"):
+            return JSONResponse(out, status_code=400)
+    elif kind == "short_rest":
+        out = _rb_short_rest(state, seed=seed)
+        if not out.get("ok"):
+            return JSONResponse(out, status_code=400)
+    elif kind == "move":
+        loc = str(body.get("to") or body.get("target") or "")
+        out = _rb_enter_room(state, loc)
+        if not out.get("ok"):
+            return JSONResponse(out, status_code=400)
+    else:
+        raise HTTPException(status_code=400, detail=f"未支持的 kind: {kind}")
+
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    out["rules"] = _rules_payload(state)
+    return JSONResponse(out)
+
+
+@app.post("/api/rules/encounter/start")
+async def api_rules_encounter_start(request: Request) -> JSONResponse:
+    api_user = _require_api_user(request)
+    body = await request.json()
+    encounter_id = str(body.get("encounter_id") or "").strip()
+    if not encounter_id:
+        raise HTTPException(status_code=400, detail="缺少 encounter_id")
+    seed = body.get("seed")
+    seed = int(seed) if isinstance(seed, (int, float, str)) and str(seed).lstrip("-").isdigit() else None
+    state = _ensure_loaded(api_user)
+    res = _rb_start_encounter(state, encounter_id, seed=seed)
+    if not res.get("ok"):
+        return JSONResponse(res, status_code=400)
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "rules": _rules_payload(state), "encounter": res.get("encounter")})
+
+
+@app.post("/api/rules/encounter/next")
+async def api_rules_encounter_next(request: Request) -> JSONResponse:
+    api_user = _require_api_user(request)
+    state = _ensure_loaded(api_user)
+    res = _rb_advance_turn(state)
+    if not res.get("ok"):
+        return JSONResponse(res, status_code=400)
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "rules": _rules_payload(state), "encounter": res.get("encounter")})
+
+
+@app.post("/api/rules/encounter/enemy")
+async def api_rules_encounter_enemy(request: Request) -> JSONResponse:
+    """敌方回合：让指定敌人对玩家发动一次攻击（用于回合制 demo）。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    attacker_id = str(body.get("attacker_id") or "").strip()
+    target_id = str(body.get("target_id") or "player").strip()
+    seed = body.get("seed")
+    seed = int(seed) if isinstance(seed, (int, float, str)) and str(seed).lstrip("-").isdigit() else None
+    state = _ensure_loaded(api_user)
+    res = _rb_enemy_attack(state, attacker_id=attacker_id, target_id=target_id, seed=seed)
+    if not res.get("ok"):
+        return JSONResponse(res, status_code=400)
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "rules": _rules_payload(state), "result": res.get("result"), "encounter": res.get("encounter")})
+
+
+@app.post("/api/rules/suggest")
+async def api_rules_suggest(request: Request) -> JSONResponse:
+    """从玩家自由文本输入推断候选规则动作（轻量本地匹配，用于前端候选按钮）。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    text = str(body.get("text") or "")
+    state = _ensure_loaded(api_user)
+    return JSONResponse({"ok": True, "actions": _rb_suggest_rule_actions(text, state)})
+
+
 HTML = r"""
 <!doctype html>
 <html lang="zh-CN">
@@ -3066,6 +3279,46 @@ HTML = r"""
             <div class="tiny">暂无新结构化更新。</div>
           </div>
         </section>
+        <section class="side-section" id="rulesSection" style="display:none">
+          <div class="section-title">5E 兼容规则 · Ash Mine</div>
+          <div class="session-card" id="rulesCharCard">
+            <div class="session-top">
+              <div>
+                <div class="session-name" id="ruleCharName">—</div>
+                <div class="tiny" id="ruleCharClass">Lv. — · scout</div>
+              </div>
+              <span class="pill" id="ruleHpPill">HP —/—</span>
+            </div>
+            <div class="meter"><span id="ruleHpMeter"></span></div>
+            <div class="tiny" id="ruleAcLine">AC — · 熟练 +—</div>
+          </div>
+          <div class="tiny" style="margin-top:6px;" id="ruleSceneLine">未加载模组</div>
+          <div class="stack" style="margin-top:6px;">
+            <button class="primary" id="startAshMineBtn">开始：灰烬矿坑 / Ash Mine</button>
+            <button id="refreshRulesBtn">刷新规则数据</button>
+          </div>
+          <div id="ruleRoomBlock" style="display:none;margin-top:8px;">
+            <div class="section-title" style="font-size:11px;">当前房间</div>
+            <div class="tiny" id="ruleRoomName"></div>
+            <p class="tiny" id="ruleRoomDesc" style="white-space:pre-wrap"></p>
+            <div class="tiny">出口：</div>
+            <div class="stack" id="ruleExits"></div>
+            <div class="tiny" style="margin-top:6px;">检定：</div>
+            <div class="stack" id="ruleChecks"></div>
+          </div>
+          <div id="ruleEncounterBlock" style="display:none;margin-top:8px;">
+            <div class="section-title" style="font-size:11px;">战斗中</div>
+            <div class="tiny" id="ruleEncRound">—</div>
+            <div class="list" id="ruleCombatants"></div>
+            <div class="stack" id="ruleCombatActions"></div>
+          </div>
+          <div style="margin-top:8px;">
+            <div class="section-title" style="font-size:11px;">骰子日志</div>
+            <div class="list" id="ruleDiceLog">
+              <div class="tiny">尚未掷骰。</div>
+            </div>
+          </div>
+        </section>
       </div>
     </aside>
 
@@ -3693,6 +3946,7 @@ HTML = r"""
       renderContext(payload);
       renderGuide(payload.suggestions || []);
       renderAskPopover(payload);
+      renderRulesPanel(payload);
       $("retrievalText").textContent = memory.last_retrieval || "暂无。";
 
       const updates = memory.last_structured_updates || [];
@@ -3728,6 +3982,148 @@ HTML = r"""
         <div class="kv"><h3>已知事件</h3><ul>${(world.known_events || []).map(x => `<li>${mdEscape(x)}</li>`).join("")}</ul></div>
         <div class="kv"><h3>关系状态</h3>${relHtml}</div>
       `;
+    }
+
+    // ── 5E-compatible 规则面板渲染（Ash Mine 等原创模组） ──
+    function renderRulesPanel(payload) {
+      const section = $("rulesSection");
+      if (!section) return;
+      const pc = payload.player_character || {};
+      const scene = payload.scene || {};
+      const encounter = payload.encounter || {};
+      const diceLog = Array.isArray(payload.dice_log) ? payload.dice_log : [];
+      const hasModule = !!scene.module_id;
+      // 即便没加载模组，也显示这块（允许玩家点开始按钮）
+      section.style.display = "";
+
+      $("ruleCharName").textContent = pc.name || "—";
+      $("ruleCharClass").textContent = `Lv. ${pc.level || "—"} · ${pc.class_name || "scout"}`;
+      const hp = pc.hp || 0, maxHp = pc.max_hp || 0;
+      $("ruleHpPill").textContent = `HP ${hp}/${maxHp}`;
+      const pct = maxHp > 0 ? Math.max(0, Math.min(100, Math.round(100 * hp / maxHp))) : 0;
+      $("ruleHpMeter").style.width = pct + "%";
+      $("ruleAcLine").textContent = `AC ${pc.ac || "—"} · 熟练 +${pc.proficiency_bonus || 0}`;
+
+      const ruleScene = $("ruleSceneLine");
+      if (hasModule) {
+        const manifest = scene.module_manifest || {};
+        ruleScene.textContent = `模组：${manifest.name_cn || manifest.name || scene.module_id} · 位置：${scene.location_id || "—"}`;
+      } else {
+        ruleScene.textContent = "未加载模组";
+      }
+
+      // 当前房间
+      const roomBlock = $("ruleRoomBlock");
+      const cur = scene.current_room || {};
+      if (hasModule && cur.id) {
+        roomBlock.style.display = "";
+        $("ruleRoomName").textContent = cur.name || cur.id;
+        $("ruleRoomDesc").textContent = cur.description || "";
+        const exits = Array.isArray(cur.exits) ? cur.exits : [];
+        $("ruleExits").innerHTML = exits.length
+          ? exits.map(e => `<button data-rule-move="${mdEscape(e.to)}">${mdEscape(e.label || e.to)}</button>`).join("")
+          : `<div class="tiny">无可见出口</div>`;
+        const checks = Array.isArray(cur.checks) ? cur.checks : [];
+        $("ruleChecks").innerHTML = checks.length
+          ? checks.map(c => {
+              const label = c.kind === "saving_throw"
+                ? `${(c.ability||"").toUpperCase()} 豁免 DC ${c.dc}`
+                : `${c.skill || c.ability} DC ${c.dc}`;
+              const params = JSON.stringify({
+                kind: c.kind || "skill_check",
+                skill: c.skill, ability: c.ability, dc: c.dc,
+                reason: c.fact || c.reveals, sets_flag: c.sets_flag,
+              });
+              return `<button data-rule-check='${mdEscape(params)}'>${mdEscape(label)}</button>`;
+            }).join("")
+          : `<div class="tiny">本房间无固定检定</div>`;
+      } else {
+        roomBlock.style.display = "none";
+      }
+
+      // 战斗
+      const encBlock = $("ruleEncounterBlock");
+      if (encounter.active) {
+        encBlock.style.display = "";
+        $("ruleEncRound").textContent = `第 ${encounter.round} 回合 · 当前 ${encounter.turn_index + 1}/${(encounter.initiative_order||[]).length}`;
+        const combs = encounter.combatants || [];
+        $("ruleCombatants").innerHTML = combs.map(c => {
+          const isCurrent = (encounter.initiative_order||[])[encounter.turn_index]?.id === c.id;
+          const opacity = c.defeated ? "opacity:0.5;" : "";
+          return `<div class="mem-item" style="${opacity}"><span>${isCurrent ? "▶ " : ""}<strong>${mdEscape(c.name || c.id)}</strong> (${c.side}) · HP ${c.hp}/${c.max_hp}${c.defeated ? " ✖" : ""}</span></div>`;
+        }).join("");
+        const enemies = combs.filter(c => c.side === "enemy" && !c.defeated);
+        $("ruleCombatActions").innerHTML = [
+          ...enemies.map(e => `<button class="primary" data-rule-attack="${mdEscape(e.id)}">攻击 ${mdEscape(e.name || e.id)}</button>`),
+          ...enemies.map(e => `<button data-rule-enemy="${mdEscape(e.id)}">让 ${mdEscape(e.name || e.id)} 出招</button>`),
+          `<button data-rule-next="1">下一回合</button>`,
+        ].join("");
+      } else {
+        encBlock.style.display = "none";
+      }
+
+      // 骰子日志
+      const logEl = $("ruleDiceLog");
+      logEl.innerHTML = diceLog.length
+        ? diceLog.slice().reverse().map(d => {
+            const okPill = d.success === true ? '<span class="pill" style="background:#2d6a4f;color:#fff;">成功</span>'
+                          : d.success === false ? '<span class="pill" style="background:#7a2d2d;color:#fff;">失败</span>'
+                          : "";
+            const expr = d.expression || "";
+            const rolls = Array.isArray(d.rolls) ? `[${d.rolls.join(",")}]` : "";
+            const total = (typeof d.total === "number") ? `→ ${d.total}` : "";
+            const dc = (typeof d.dc === "number") ? `vs DC ${d.dc}` : "";
+            const dmg = d.damage ? `· 伤害 ${d.damage.total}` : "";
+            return `<div class="mem-item"><span><strong>${mdEscape(d.kind || "?")}</strong> ${mdEscape(d.actor || "")} ${okPill}<br><span class="tiny">${mdEscape(expr)} ${mdEscape(rolls)} ${mdEscape(total)} ${mdEscape(dc)} ${mdEscape(dmg)} ${mdEscape(d.reason || "")}</span></span></div>`;
+          }).join("")
+        : `<div class="tiny">尚未掷骰。开始模组并执行检定后将在此显示。</div>`;
+    }
+
+    async function rulesApiCall(path, body) {
+      try {
+        const opts = body ? { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) } : { method: "GET" };
+        const r = await fetch(path, opts);
+        const data = await r.json();
+        if (!data.ok) { toast(data.error || data.detail || ("请求失败：" + path)); return null; }
+        return data;
+      } catch (e) {
+        toast("规则请求失败：" + e.message);
+        return null;
+      }
+    }
+
+    async function startAshMine() {
+      const data = await rulesApiCall("/api/rules/module/start", { module_id: "ash_mine" });
+      if (data) { toast("已开始：灰烬矿坑"); await refresh(false); }
+    }
+
+    function bindRulesPanel() {
+      const btn = $("startAshMineBtn"); if (btn) btn.addEventListener("click", startAshMine);
+      const refreshBtn = $("refreshRulesBtn"); if (refreshBtn) refreshBtn.addEventListener("click", () => refresh(false));
+      document.addEventListener("click", async (ev) => {
+        const t = ev.target;
+        if (!t || !t.dataset) return;
+        if (t.dataset.ruleMove) {
+          await rulesApiCall("/api/rules/move", { to: t.dataset.ruleMove });
+          await refresh(false);
+        } else if (t.dataset.ruleCheck) {
+          let payload = null;
+          try { payload = JSON.parse(t.dataset.ruleCheck); } catch (e) {}
+          if (payload) {
+            await rulesApiCall("/api/rules/action", payload);
+            await refresh(false);
+          }
+        } else if (t.dataset.ruleAttack) {
+          await rulesApiCall("/api/rules/action", { kind: "attack", target: t.dataset.ruleAttack });
+          await refresh(false);
+        } else if (t.dataset.ruleEnemy) {
+          await rulesApiCall("/api/rules/encounter/enemy", { attacker_id: t.dataset.ruleEnemy });
+          await refresh(false);
+        } else if (t.dataset.ruleNext) {
+          await rulesApiCall("/api/rules/encounter/next", {});
+          await refresh(false);
+        }
+      });
     }
 
     function renderMemory(payload) {
@@ -4264,6 +4660,7 @@ HTML = r"""
       toast("已存档。");
     });
     $("continueBtn").addEventListener("click", () => refresh(true));
+    bindRulesPanel();
     $("openingBtn").addEventListener("click", generateOpening);
     $("statusBtn").addEventListener("click", () => sendMessage("/status"));
     $("debugBtn").addEventListener("click", () => sendMessage("/debug"));

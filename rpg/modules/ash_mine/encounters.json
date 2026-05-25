@@ -1,0 +1,38 @@
+[
+  {
+    "id": "ash_camp_combat",
+    "location_id": "ash_camp",
+    "name": "灰烬营地暴露遭遇",
+    "trigger": "ash_camp_combat_trigger",
+    "description": "玩家被发现后，三名灰烬教派成员合围。",
+    "enemies": [
+      {"stat_block_id": "ash_skulker", "instance_id": "ash_skulker_1", "name": "灰布教徒·甲"},
+      {"stat_block_id": "ash_skulker", "instance_id": "ash_skulker_2", "name": "灰布教徒·乙"},
+      {"stat_block_id": "ash_cult_warden", "instance_id": "ash_warden_1", "name": "灰烬教典狱"}
+    ],
+    "victory_flag": "ash_camp_cleared",
+    "loot_on_victory": ["camp_map"]
+  },
+  {
+    "id": "deep_hall_combat",
+    "location_id": "deep_hall",
+    "name": "深层矿厅伏击",
+    "description": "煤灰鼠群与熔渣猎犬同时出现。",
+    "enemies": [
+      {"stat_block_id": "soot_rat_swarm", "instance_id": "soot_rat_swarm_1", "name": "煤灰鼠群"},
+      {"stat_block_id": "slag_hound", "instance_id": "slag_hound_1", "name": "熔渣猎犬"}
+    ],
+    "victory_flag": "deep_hall_cleared"
+  },
+  {
+    "id": "boss_altar_combat",
+    "location_id": "mine_heart_altar",
+    "name": "焦痕祭司决战",
+    "description": "焦痕祭司召唤暗红色火焰，矿核脉动加剧。",
+    "enemies": [
+      {"stat_block_id": "char_acolyte_boss", "instance_id": "char_acolyte_boss", "name": "焦痕祭司（首领）"}
+    ],
+    "victory_flag": "boss_defeated",
+    "loot_on_victory": ["mine_core", "ash_relic"]
+  }
+]

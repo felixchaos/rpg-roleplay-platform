@@ -54,6 +54,15 @@ AGENT_PROMPT = """\
   "candidate_actions": [
     "本轮 GM 可以做的 2-5 个具体动作（如 '叙事：阿衡推开灯塔门，描写室内' / '询问：是否要先观察再进入' / '写状态：player.current_location=灯塔'）"
   ],
+  "rule_candidate_actions": [
+    "（仅当当前为 5E-compatible 规则模组时）触发系统规则的候选动作。每条至少含 kind 字段，例：",
+    "  {\"kind\":\"skill_check\",\"skill\":\"stealth\",\"target\":\"minecart_track\",\"dc_hint\":13,\"reason\":\"玩家表示悄悄靠近\"}",
+    "  {\"kind\":\"attack\",\"target\":\"ash_skulker_1\",\"weapon\":\"shortsword\"}",
+    "  {\"kind\":\"saving_throw\",\"ability\":\"con\",\"dc_hint\":12,\"reason\":\"poison_fog\"}",
+    "  {\"kind\":\"investigate\",\"target\":\"collapsed_shaft\",\"skill\":\"investigation\",\"dc_hint\":12}",
+    "  {\"kind\":\"move\",\"target\":\"rest_cavern\"}",
+    "GM **不能自己掷骰**；如果意图含糊，把动作留空并让 GM 追问或给选项。"
+  ],
   "acceptance": [
     "本轮 GM 输出满足以下条件即算成功，每条要可验证（如 '正文里 GM 回应了玩家想去灯塔的请求' / '没把 1937 原著事件当本局已发生'）"
   ],
@@ -174,7 +183,30 @@ def run_context_agent(
             "must_include": [],
             "risk_flags": ["未启用大模型子代理，仅使用确定性规则。"],
             "reason": "没有传入 llm_curator。",
+            "rule_candidate_actions": [],
         }
+
+    # 5E-compatible：当前为模组场景时，补一份本地关键词回退的 rule_candidate_actions。
+    # LLM 已返回 rule_candidate_actions 时优先用它，否则用本地匹配确保规则层不会缺动作。
+    scene = state.data.get("scene") or {}
+    if scene.get("module_id"):
+        try:
+            from rules_bridge import suggest_rule_actions as _suggest_rule_actions
+            local_actions = _suggest_rule_actions(user_input, state)
+        except Exception:
+            local_actions = []
+        existing = curator_plan.get("rule_candidate_actions") or []
+        if not existing:
+            curator_plan["rule_candidate_actions"] = local_actions
+        else:
+            # 合并：以 (kind, skill, target) 为主键去重，LLM 优先
+            seen = {(a.get("kind"), a.get("skill"), a.get("target")) for a in existing}
+            for a in local_actions:
+                key = (a.get("kind"), a.get("skill"), a.get("target"))
+                if key not in seen:
+                    existing.append(a)
+                    seen.add(key)
+            curator_plan["rule_candidate_actions"] = existing[:8]
 
     world = state.data.get("world", {})
     timeline = world.get("timeline", {})
@@ -372,6 +404,8 @@ def _parse_curator_json(text: str) -> dict[str, Any]:
         # 向后兼容：保留顶层 must_include 让旧 _context_agent_decision 渲染不破
         "must_include": must_include,
         "candidate_actions": _string_list(data.get("candidate_actions")),
+        # 5E-compatible 规则动作候选。LLM 返回 dict 列表；解析时只接受 dict（容错过滤）。
+        "rule_candidate_actions": _rule_actions_list(data.get("rule_candidate_actions")),
         "acceptance": _string_list(data.get("acceptance")),
         "risk_flags": _string_list(data.get("risk_flags")),
         "confidence": conf,
@@ -386,6 +420,45 @@ def _string_list(value: Any) -> list[str]:
     if isinstance(value, str) and value.strip():
         return [value.strip()]
     return []
+
+
+_VALID_RULE_KINDS = {
+    "skill_check", "investigate", "attack", "saving_throw", "move", "short_rest",
+    "trap_check", "use_item", "speak", "wait",
+}
+
+
+def _rule_actions_list(value: Any) -> list[dict]:
+    """规则候选动作。只接受 dict 列表；过滤无效项。"""
+    if not isinstance(value, list):
+        return []
+    out: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip()
+        if not kind or kind not in _VALID_RULE_KINDS:
+            continue
+        # 浅复制，限制字段长度
+        clean: dict = {"kind": kind}
+        for key in ("skill", "ability", "target", "target_name", "weapon", "reason"):
+            v = item.get(key)
+            if isinstance(v, str) and v.strip():
+                clean[key] = v.strip()[:120]
+        for key in ("dc", "dc_hint"):
+            try:
+                if item.get(key) is not None:
+                    clean[key] = int(item[key])
+            except (TypeError, ValueError):
+                continue
+        if "advantage" in item:
+            clean["advantage"] = bool(item.get("advantage"))
+        if "disadvantage" in item:
+            clean["disadvantage"] = bool(item.get("disadvantage"))
+        out.append(clean)
+        if len(out) >= 8:
+            break
+    return out
 
 
 def _normalize_timeline_target(value: str) -> str:
