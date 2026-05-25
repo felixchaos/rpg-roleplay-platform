@@ -1167,6 +1167,13 @@ def _phase_for_time(time_desc: str) -> str:
 def _normalize_permission_mode(mode: str) -> str:
     text = str(mode or "").strip().lower()
     mapping = {
+        # task 53：新增 read_only（对齐 codex 的 suggest 模式）
+        "只读": "read_only",
+        "只读模式": "read_only",
+        "suggest": "read_only",
+        "read": "read_only",
+        "read_only": "read_only",
+        "plan": "read_only",
         "默认权限": "default",
         "default": "default",
         "auto": "auto_review",
@@ -1182,6 +1189,7 @@ def _normalize_permission_mode(mode: str) -> str:
 
 def _permission_label(mode: str) -> str:
     return {
+        "read_only": "只读模式（仅叙事）",
         "default": "默认权限",
         "auto_review": "自动审查",
         "full_access": "完全访问权限",
@@ -1293,6 +1301,11 @@ def _write_path_hard_forbidden(path: str) -> bool:
 def _write_path_allowed(path: str, mode: str) -> bool:
     mode = _normalize_permission_mode(mode)
     if _write_path_hard_forbidden(path):
+        return False
+    # task 53：新增 read_only 模式 — 对齐 codex 的 suggest 模式。
+    # 任何 LLM 自动写入都入 pending，不立即应用；玩家完全掌控。
+    # /set（force=True）仍能通过，让玩家维护自己的状态。
+    if mode == "read_only":
         return False
     if mode == "full_access":
         return True

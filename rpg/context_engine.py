@@ -395,8 +395,37 @@ def _worldline_layer(state) -> dict[str, Any]:
     if not variable_lines:
         variable_lines.append("- 暂无用户变量。")
 
+    # task 53：把当前模式的具体行为讲清楚，让 LLM 在 read_only / default
+    # 模式下减少无意义的【状态写入】（反正都会入 pending），改为多用
+    # 【询问玩家】或在叙事中暗示。也防止 LLM 试图改 permissions.mode 自我提权
+    # （已被硬黑名单挡，但 LLM 浪费 token 重试也烦）。
+    mode_behavior = {
+        "read_only": (
+            "当前是【只读模式】：你的任何【状态写入】/【状态追加】都不会立即生效，"
+            "全部进入玩家审批队列。所以这一轮请专注于讲叙事 + 用【询问玩家】把"
+            "需要变更的地方做成选项让玩家决定，不要写多余的结构化标签。"
+        ),
+        "default": (
+            "当前是【默认权限】：白名单内的字段（player.current_location / "
+            "world.time / memory.main_quest / memory.current_objective / "
+            "memory.resources / memory.abilities / memory.facts / "
+            "world.known_events / relationships.*）会自动生效；其他字段进入审批队列。"
+            "尽量只写白名单内的字段，少做需要审批的写入。"
+        ),
+        "auto_review": (
+            "当前是【自动审查】：上面白名单字段 + worldline.user_variables.* "
+            "+ relationships.* 自动生效；其他需要审批。"
+        ),
+        "full_access": (
+            "当前是【完全访问】：除硬黑名单（permissions.* / history.* / "
+            "schema_version）外，所有写入立即生效。你仍不能也不应该写"
+            "permissions.* —— 那是用户权限边界，由 UI 切换。"
+        ),
+    }
+    norm_mode = _normalize_permission_mode(mode)
     lines = [
-        f"LLM 写入权限：{_permission_label(mode)}",
+        f"LLM 写入权限：{_permission_label(norm_mode)}",
+        mode_behavior.get(norm_mode, mode_behavior["full_access"]),
         "用户变量与世界线推演规则：",
         *variable_lines,
         "推演机制：先把用户变量视作不可违背的硬条件，再结合当前时间线、世界书、角色卡和原著召回推演下一步局势。",
@@ -404,7 +433,7 @@ def _worldline_layer(state) -> dict[str, Any]:
         "如果推演满足全部用户变量，输出【设定校验：通过】；如果存在矛盾，输出【设定冲突：原因】，并不要把冲突推演写成事实。",
         "可输出【世界线推演：简要推演结果】供 UI 记录。",
         "在权限允许时，可用【状态写入：path=value】修改 UI/存档变量；常用 path：player.name、player.role、player.background、player.current_location、world.time、world.timeline.current_phase、world.known_events、memory.main_quest、memory.current_objective、memory.resources、memory.abilities、memory.facts、memory.pinned、memory.notes、relationships.角色名、worldline.user_variables.变量名、ui.自定义变量。",
-        "列表字段可用【状态追加：memory.resources=资源A、资源B】追加；权限模式由用户在 UI 选择，GM 不应主动修改权限模式。",
+        "列表字段可用【状态追加：memory.resources=资源A、资源B】追加；权限模式由用户在 UI 选择，GM 永远不要尝试写 permissions.* 或 history.* —— 这是硬黑名单，会被拒绝并写入 audit_log。",
         "当需要玩家决定下一步计划、分支方向或设定取舍时，输出【询问玩家：问题｜选项：选项A、选项B、选项C】；这类问题永远不因完全访问权限而自动跳过。",
     ]
     debug = {
