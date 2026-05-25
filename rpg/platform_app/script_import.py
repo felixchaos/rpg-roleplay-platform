@@ -19,6 +19,46 @@ MAX_SCRIPT_UPLOAD_BYTES = int(os.environ.get("RPG_SCRIPT_UPLOAD_MAX_BYTES", str(
 MAX_UPLOAD_CHUNK_BYTES = int(os.environ.get("RPG_UPLOAD_CHUNK_MAX_BYTES", str(8 * 1024 * 1024)))  # 8MB / 块
 
 
+# task 23：knowledge.sync_script_knowledge 的返回结果里常常嵌套 backend Row（dict-like）+ datetime
+# 字段（created_at/updated_at）+ Decimal/UUID/bytes 等 jsonb 直接不能吃的类型。
+# psycopg 的 Jsonb 默认走 json.dumps，遇到这些类型抛 TypeError，让整个 _run_sync_job 静默失败，
+# 用户看到 import 200 OK 却没建知识库。这里统一兜底：递归走一遍替换为 JSON-safe 原语。
+def _jsonify(value):
+    """递归把不能直接 json.dumps 的类型转成 JSON-safe 原语。"""
+    import datetime as _dt
+    import decimal as _dec
+    import uuid as _uuid
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, (_dt.datetime, _dt.date, _dt.time)):
+        return value.isoformat()
+    if isinstance(value, _dt.timedelta):
+        return value.total_seconds()
+    if isinstance(value, _dec.Decimal):
+        # float 失真但 jsonb 不区分；如果要精确，改成 str(value)
+        return float(value)
+    if isinstance(value, _uuid.UUID):
+        return str(value)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        try:
+            return bytes(value).decode("utf-8")
+        except UnicodeDecodeError:
+            import base64 as _b64
+            return {"__bytes_b64__": _b64.b64encode(bytes(value)).decode("ascii")}
+    if isinstance(value, dict):
+        return {str(k): _jsonify(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_jsonify(v) for v in value]
+    # psycopg Row / 其他 dict-like
+    if hasattr(value, "keys") and callable(value.keys):
+        try:
+            return {str(k): _jsonify(value[k]) for k in value.keys()}
+        except Exception:
+            pass
+    # 兜底：repr 而不是 raise，让 jsonb 至少能写
+    return repr(value)
+
+
 def import_script(
     user_id: int,
     file_item: dict[str, Any] | None = None,
@@ -313,7 +353,11 @@ def _run_sync_job(job_id: str) -> None:
                     usage_actual = %s
                 where job_id = %s
                 """,
-                (Jsonb({"result": result}), job_id),
+                # task 23：result 里可能含 datetime/date/Decimal/UUID/Row 等 jsonb 不能直接吃的对象
+                # （如 sync_script_knowledge 把 book row 整个塞进结果时，含 created_at: datetime）。
+                # 用 _jsonify 走一遍把它们转成 JSON-safe 字符串/原语，再喂 Jsonb。
+                # 否则 psycopg 序列化时抛 TypeError，import 主路径已 200 但 sync 静默 failed → 用户以为知识库 OK 实际没建。
+                (Jsonb(_jsonify({"result": result})), job_id),
             )
     except Exception as exc:
         logger.exception("sync job %s failed", job_id)

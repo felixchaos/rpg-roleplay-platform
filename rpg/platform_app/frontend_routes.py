@@ -460,18 +460,27 @@ async def api_save_rename(save_id: int, request: Request):
 
 @router.post("/api/saves/{save_id}/activate")
 async def api_save_activate(save_id: int, request: Request):
+    """task 30：之前只 select 1 验证归属就返 ok=True，既不写 user_runtime，
+    也不清 ui._state_by_user 缓存 → 用户点完「继续」跳到 Game Console，
+    GET /api/state 拿到的是上一个 active save 的 player/world。
+
+    现在：调用 branches.activate_save → runtime.activate_state_snapshot
+    把 user_runtime 切到目标 save 的 active commit；并清掉 ui 进程内 state 缓存，
+    下一次 _ensure_loaded 会从 user_runtime 重新加载新 save 的 state。"""
     user = require_user(request)
-    init_db()
-    with connect() as db:
-        owned = db.execute(
-            "select id from game_saves where id = %s and user_id = %s",
-            (save_id, user["id"]),
-        ).fetchone()
-        if not owned:
-            return _bad("无权操作该存档", 403)
-        # Mark active for the user (best-effort; schema has no per-user flag,
-        # but we expose this so the front-end can switch contexts.)
-    return json_response({"ok": True, "active_save_id": save_id})
+    from . import branches as _branches
+    try:
+        result = _branches.activate_save(user["id"], save_id)
+    except ValueError as exc:
+        return _bad(str(exc), 403)
+    # 清 ui 模块内的 per-user state 缓存（跨模块耦合：ui 在主进程内长期持有 cache，
+    # activate 必须告诉它丢掉旧 save 的 state，否则 GET /api/state 仍读旧档）。
+    try:
+        import ui as _ui
+        _ui._invalidate_user_cache(user)
+    except Exception:
+        pass
+    return json_response(result)
 
 
 @router.get("/api/saves/{save_id}/export")

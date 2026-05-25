@@ -66,3 +66,11 @@ frontend/dist/
 frontend/.next/
 # 截图素材（体积变化大）
 frontend/screenshots/
+
+# ──────────────────────────────────────────────────────────────────
+#  UI 审计 / E2E 产物（每次 audit 会写大量 png/json/log，不入库）
+# ──────────────────────────────────────────────────────────────────
+# Playwright e2e audit 输出（截图、SSE 转录、覆盖 JSON、剧本素材）
+output/
+# Playwright CLI 安装的浏览器缓存
+.playwright-cli/

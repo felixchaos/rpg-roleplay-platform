@@ -114,9 +114,20 @@ def seed_tree(save_id: int, state_path: str) -> None:
             _ensure_active_ref(db, save_id)
             return
 
+        # task 25：之前如果该 save 的 state_snapshot 是空（新建 save 的正常状态），
+        # 会 fallback 到读 state_path 指向的共享 game_state.json —— 这是上一个激活的
+        # save 的运行态，里面有别的玩家身份 / pending question / user_variables，
+        # 直接污染新 save 的根 snapshot，用户进新游戏看到旧会话状态。
+        # 修法：只信任 game_saves.state_snapshot 字段，它在 create_save() 里就已经写入
+        # （新存档为 turn=0/history=[] 的种子）。如果 snapshot 完全为 None/空 dict 才允许
+        # fallback —— 仅供历史数据（pre-snapshot 时代）兼容。
         save_row = db.execute("select state_snapshot from game_saves where id = %s", (save_id,)).fetchone()
-        data = commit_state(save_row or {})
-        if not data.get("history") and not data.get("turn"):
+        raw_snapshot = (save_row or {}).get("state_snapshot") if isinstance(save_row, dict) else None
+        if isinstance(raw_snapshot, dict) and raw_snapshot:
+            # snapshot 已存在（即便 history=[] turn=0 也算"权威的初始态"），不读共享文件
+            data = json.loads(json.dumps(raw_snapshot, ensure_ascii=False))
+        else:
+            # 仅当 snapshot 完全缺失时才回退到 state_path（兼容历史数据）
             data = load_state(Path(state_path))
         root_snapshot = snapshot_for_history(data, 0)
         root_state = write_snapshot(save_id, 0, root_snapshot)
@@ -272,6 +283,51 @@ def continue_from(user_id: int, node_id: int) -> dict[str, Any]:
     return result
 
 
+def resolve_commit_id_by_message(user_id: int, save_id: int, message_index: int) -> int | None:
+    """task 38：把 frontend 的 chat history message index 映射到 branch_commits.id。
+
+    history 数组里 user/assistant 成对出现：msg=0 是 turn 0 的 player，msg=1 是 turn 0 的 gm，
+    msg=2 是 turn 1 的 player ... → turn_index = message_index // 2，kind 取决于奇偶。
+    优先返回该 turn_index 的 gm commit（fork 自然继承到 gm 输出之后），没有 gm 就退到 player。
+    """
+    init_db()
+    try:
+        turn_index = int(message_index) // 2
+    except (TypeError, ValueError):
+        return None
+    is_player = (int(message_index) % 2 == 0) if message_index is not None else False
+    with connect() as db:
+        # 校验 save 归属
+        owned = db.execute(
+            "select 1 from game_saves where id = %s and user_id = %s",
+            (save_id, user_id),
+        ).fetchone()
+        if not owned:
+            return None
+        # 优先 gm commit；如果点的是玩家自己的消息且 gm 还没回（最后一条 player）就用 player commit
+        preferred_kind = "player" if is_player else "gm"
+        row = db.execute(
+            """
+            select id, kind from branch_commits
+            where save_id = %s and turn_index = %s and kind = %s
+            order by id desc limit 1
+            """,
+            (save_id, turn_index, preferred_kind),
+        ).fetchone()
+        if row:
+            return int(row["id"])
+        # 兜底：任一 kind
+        row = db.execute(
+            """
+            select id from branch_commits
+            where save_id = %s and turn_index = %s
+            order by id desc limit 1
+            """,
+            (save_id, turn_index),
+        ).fetchone()
+        return int(row["id"]) if row else None
+
+
 def activate_node(user_id: int, node_id: int) -> dict[str, Any]:
     init_db()
     with connect() as db:
@@ -294,6 +350,67 @@ def activate_node(user_id: int, node_id: int) -> dict[str, Any]:
     result["active_branch_node_id"] = node_id
     result["active_commit_id"] = node_id
     return result
+
+
+def activate_save(user_id: int, save_id: int) -> dict[str, Any]:
+    """task 30：切到目标 save 的当前激活分支（或没有就 root），并真的切换 user_runtime。
+
+    原 frontend_routes.api_save_activate 只 select 1 ownership 就返回 ok=True，
+    既不写 user_runtime，也不清 ui 内存缓存 → GET /api/state 仍读旧 save 的 state，
+    用户看到的是上一份存档的 player/world。
+
+    这里：
+      1. 找 save 的 active_branch_node_id（无则取最早的 root commit）
+      2. 加载/创建对应 ref，写 _set_save_active + _write_checkout
+      3. runtime.activate_state_snapshot 把 user_runtime 写成该 save_id + commit
+      4. 调用方（frontend_routes / ui）负责清 ui._state_by_user 缓存
+    """
+    init_db()
+    with connect() as db:
+        save = db.execute(
+            "select * from game_saves where id = %s and user_id = %s",
+            (save_id, user_id),
+        ).fetchone()
+        if not save:
+            raise ValueError("无权访问该存档")
+        node_id = save.get("active_branch_node_id")
+        commit_row = None
+        if node_id:
+            commit_row = db.execute(
+                "select * from branch_commits where id = %s and save_id = %s",
+                (int(node_id), save_id),
+            ).fetchone()
+        if not commit_row:
+            commit_row = db.execute(
+                "select * from branch_commits where save_id = %s order by turn_index asc, id asc limit 1",
+                (save_id,),
+            ).fetchone()
+        if not commit_row:
+            # 没有任何 commit：先 seed_tree 把 root 建出来再取
+            seed_tree(save_id, save.get("state_path") or "")
+            commit_row = db.execute(
+                "select * from branch_commits where save_id = %s order by turn_index asc, id asc limit 1",
+                (save_id,),
+            ).fetchone()
+        if not commit_row:
+            raise ValueError("save 没有任何 commit，无法激活")
+        ref = _find_or_create_ref_for_commit(db, user_id, commit_row)
+        _set_save_active(db, save_id, commit_row["id"], ref["id"])
+        _write_checkout(db, user_id, save_id, ref["id"], commit_row["id"])
+        state_snapshot = commit_state(commit_row)
+        state_path = commit_row.get("state_path") or save.get("state_path") or ""
+        active_ref_id = ref["id"]
+        active_commit_id = commit_row["id"]
+    runtime_info = runtime.activate_state_snapshot(
+        user_id, save_id, active_commit_id, state_snapshot, state_path, ref_id=active_ref_id,
+    )
+    return {
+        "ok": True,
+        "active_save_id": save_id,
+        "active_commit_id": active_commit_id,
+        "active_branch_node_id": active_commit_id,
+        "runtime": runtime_info,
+    }
 
 
 def record_runtime_turn(

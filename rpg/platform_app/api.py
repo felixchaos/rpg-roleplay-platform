@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
@@ -207,6 +208,8 @@ async def api_import_script(request: Request):
     user = require_user(request)
     body = await request.json()
     try:
+        # task 17: 之前漏传 upload_id，分片上传走完后端拿不到 raw → "请提供 file 或 upload_id"。
+        # 现在透传 body.upload_id，单次 POST + 分片两条路径都能工作。
         return json_response({
             "ok": True,
             **script_import.import_script(
@@ -215,6 +218,7 @@ async def api_import_script(request: Request):
                 split_rule=body.get("split_rule", "auto"),
                 custom_pattern=body.get("custom_pattern", ""),
                 title=body.get("title", ""),
+                upload_id=str(body.get("upload_id") or ""),
             ),
         })
     except ValueError as exc:
@@ -687,7 +691,18 @@ async def api_create_save(request: Request):
         owned = db.execute("select 1 from scripts where id = %s and owner_id = %s", (script_id, user["id"])).fetchone()
     if not owned:
         return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
-    return json_response({"ok": True, "save": workspace.create_save(user["id"], script_id, body.get("title", ""))})
+    # task 29：把 UI 填的 new_card / character 传到 create_save，让初始 state_snapshot
+    # 真的反映用户输入的姓名/身份/设定，否则 NewGameModal 的角色卡字段就被丢了。
+    new_card = body.get("new_card") if isinstance(body.get("new_card"), dict) else None
+    character: dict[str, Any] | None = None
+    cid = body.get("character_id")
+    ckind = body.get("character_kind")
+    if cid is not None and ckind:
+        character = {"id": cid, "kind": str(ckind)}
+    return json_response({"ok": True, "save": workspace.create_save(
+        user["id"], script_id, body.get("title", ""),
+        new_card=new_card, character=character,
+    )})
 
 
 @router.get("/api/branches/{save_id}")
@@ -703,10 +718,44 @@ async def api_branches(request: Request, save_id: int, limit: int | None = None,
 
 @router.post("/api/branches/continue")
 async def api_continue_branch(request: Request):
+    """task 38：接受两种 body 形态：
+       A) {node_id: <int>}              —— 老路径，前端拿得到 commit id 时直接传
+       B) {save_id, message_index, ...} —— Game Console 「从这里新建分支」用，
+          后端把 message_index → turn_index → commit_id。
+       缺字段或解析失败一律 400（不再因 int(None) 抛 TypeError 成 500）。"""
     user = require_user(request)
-    body = await request.json()
+    body = await request.json() if (await request.body()) else {}
+    node_id_raw = body.get("node_id")
+    save_id_raw = body.get("save_id")
+    msg_idx_raw = body.get("message_index")
+
+    node_id: int | None = None
+    if node_id_raw is not None and str(node_id_raw) != "":
+        try:
+            node_id = int(node_id_raw)
+        except (TypeError, ValueError):
+            return json_response({"ok": False, "error": "node_id 不是整数"}, status_code=400)
+
+    if node_id is None and save_id_raw is not None and msg_idx_raw is not None:
+        try:
+            save_id = int(save_id_raw)
+            message_index = int(msg_idx_raw)
+        except (TypeError, ValueError):
+            return json_response({"ok": False, "error": "save_id/message_index 不是整数"}, status_code=400)
+        node_id = branches.resolve_commit_id_by_message(user["id"], save_id, message_index)
+        if node_id is None:
+            return json_response(
+                {"ok": False, "error": f"无法在 save={save_id} 找到 message_index={message_index} 对应的提交"},
+                status_code=400,
+            )
+
+    if node_id is None:
+        return json_response(
+            {"ok": False, "error": "缺字段：需要 node_id 或 (save_id + message_index)"},
+            status_code=400,
+        )
     try:
-        return json_response(branches.continue_from(user["id"], int(body.get("node_id"))))
+        return json_response(branches.continue_from(user["id"], node_id))
     except ValueError as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 

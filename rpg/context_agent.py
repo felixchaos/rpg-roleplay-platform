@@ -161,7 +161,11 @@ def run_context_agent(
         return
 
     retrieval_query = _retrieval_query(user_input, curator_plan)
-    retrieved_context = retrieve_context(retrieval_query, state=state, user_id=user_id)
+    # task 42：把 script_id 透传给 retrieve_context，让导入剧本不再读 MuMu 默认
+    # .webnovel/* SQLite 和 indexes/*.json，只走 postgres script-scoped 检索。
+    retrieved_context = retrieve_context(
+        retrieval_query, state=state, user_id=user_id, script_id=script_id,
+    )
     yield step(
         "retrieval",
         "已按时间线窗口裁剪 ChapterFact、原文片段和摘要。",

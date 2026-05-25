@@ -205,13 +205,78 @@ def load_chapter_facts(chapter_min: int | None, chapter_max: int | None, limit: 
         conn.close()
 
 
-def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id: int | None = None) -> str:
+def _is_default_mumu_script(script_id: int | None) -> bool:
+    """task 42：判断 script_id 是不是 MuMuAINovel 默认剧本。
+    .webnovel/*.db + indexes/*.json + indexes/characters.json 这些 SQLite/JSON 文件都是
+    给默认柏林剧本用的；新导入剧本不应该读它们。
+
+    判定：scripts 行的 source_path 以 'rpg/indexes' 开头（workspace.ensure_default 写死的）
+    或 title == BASE_TITLE《我蕾穆丽娜不爱你》。任何 DB/查询异常一律保守返回 False
+    （宁可丢一点默认上下文也不能让导入剧本被污染）。
+    """
+    if not script_id:
+        return False
+    try:
+        from platform_app.db import connect as _connect
+        with _connect() as db:
+            row = db.execute(
+                "select title, source_path from scripts where id = %s",
+                (int(script_id),),
+            ).fetchone()
+        if not row:
+            return False
+        src = str(row.get("source_path") or "")
+        title = str(row.get("title") or "")
+        if src.startswith("rpg/indexes"):
+            return True
+        if title == "《我蕾穆丽娜不爱你》":
+            return True
+        return False
+    except Exception:
+        return False
+
+
+# task 42：postgres chapter_facts.story_time_label 在过去的索引器跑里被错误地
+# 复制了默认柏林剧情的 label（如"图卢兹失守后次日，柏林内城"）到导入剧本的行上。
+# 数据迁移修不掉所有历史脏数据，retrieve 时再防一道——非默认 script 读到的 fact
+# 如果 story_time_label 含柏林 token，就抹掉这个字段，避免泄漏到 GM 上下文。
+_DEFAULT_NOVEL_LEAK_TOKENS = (
+    "柏林", "图卢兹", "哈布斯堡", "蛇信", "薇瑟", "扎兹巴鲁姆",
+    "蕾穆丽娜", "斯雷因", "伊奈帆", "甲胄骑士", "Kataphrakt",
+    "调令伪造", "娅赛兰", "韵子", "黎骨月", "迪卡亚",
+    "赫克勒斯", "特洛耶德", "薛克",
+)
+
+
+def _strip_default_novel_leakage(text: str) -> str:
+    """对一段已生成的检索文本做后处理：把含『默认柏林剧情』token 的行删掉。
+    用于 retrieve_runtime_context 返回的 postgres 检索（如果 chapter_facts 行
+    的 story_time_label 或 chunk content 残留默认柏林内容）。"""
+    if not text:
+        return text
+    lines = text.splitlines()
+    cleaned: list[str] = []
+    for line in lines:
+        if any(tok in line for tok in _DEFAULT_NOVEL_LEAK_TOKENS):
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned)
+
+
+def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id: int | None = None,
+                     script_id: int | None = None) -> str:
     """
     组合召回，返回注入 GM system prompt 的上下文字符串。
     预算约 800 token：角色卡 ~400 + 章节片段 ~300 + 摘要 ~100
+
+    task 42：传入 script_id 后会判断是否是 MuMuAINovel 默认剧本。
+    不是默认剧本（用户导入的剧本）→ 跳过所有 .webnovel SQLite + indexes JSON 来源
+    （那些都是默认剧本的原文/角色卡/摘要/ChapterFact，混入会污染导入剧本的 GM 上下文）。
+    只保留 postgres 来源（已按 script_id 严格 scope）+ 时间线锚点说明。
     """
     parts: list[str] = []
     _ensure_timeline_ready()
+    is_default = _is_default_mumu_script(script_id) if script_id else True  # 兼容老 caller 不传 script_id 时按默认走
     timeline_filter = None
     if state is not None:
         world = state.data.get("world", {})
@@ -223,57 +288,78 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
             previous = (timeline.get("last_transition") or {}).get("from")
             if previous:
                 timeline_filter = timeline_filter_for_label(previous)
-        parts.append(
-            "=== 时间线检索锚点 ===\n"
-            f"当前时间：{world.get('time', '')}\n"
-            f"待确认跳跃：{pending.get('to', '无')}\n"
-            f"本轮检索标签：{label}\n"
-            f"原著锚点：第{timeline_filter.get('anchor_chapter')}章 · {timeline_filter.get('anchor_event')}\n"
-            f"检索章节窗口：{timeline_filter.get('chapter_min')} - {timeline_filter.get('chapter_max')}"
-        )
-        facts_text = load_chapter_facts(timeline_filter.get("chapter_min"), timeline_filter.get("chapter_max"))
-        if facts_text:
-            parts.append("=== ChapterFact时间线 ===\n" + facts_text)
+        if is_default:
+            # 默认 MuMu 剧本才显示『原著锚点』和章节窗口；非默认剧本这些字段都是 None/无意义。
+            parts.append(
+                "=== 时间线检索锚点 ===\n"
+                f"当前时间：{world.get('time', '')}\n"
+                f"待确认跳跃：{pending.get('to', '无')}\n"
+                f"本轮检索标签：{label}\n"
+                f"原著锚点：第{timeline_filter.get('anchor_chapter')}章 · {timeline_filter.get('anchor_event')}\n"
+                f"检索章节窗口：{timeline_filter.get('chapter_min')} - {timeline_filter.get('chapter_max')}"
+            )
+        else:
+            parts.append(
+                "=== 时间线检索锚点 ===\n"
+                f"当前时间：{world.get('time', '')}\n"
+                f"待确认跳跃：{pending.get('to', '无')}\n"
+                f"本轮检索标签：{label}\n"
+                "来源：当前导入剧本（不读默认 MuMu 原著时间线）"
+            )
+
+        # SQLite ChapterFact 只给默认剧本（.webnovel/chapter_facts.db 是 MuMu 原著）
+        if is_default:
+            facts_text = load_chapter_facts(timeline_filter.get("chapter_min"), timeline_filter.get("chapter_max"))
+            if facts_text:
+                parts.append("=== ChapterFact时间线 ===\n" + facts_text)
         try:
             from platform_app.knowledge import retrieve_runtime_context
 
             pg_context = retrieve_runtime_context(
                 user_input,
-                chapter_min=timeline_filter.get("chapter_min"),
-                chapter_max=timeline_filter.get("chapter_max"),
+                chapter_min=timeline_filter.get("chapter_min") if is_default else None,
+                chapter_max=timeline_filter.get("chapter_max") if is_default else None,
                 top_k=3,
                 user_id=user_id,
             )
             if pg_context:
-                parts.append(pg_context)
+                # 非默认剧本：抹掉历史脏数据里残留的默认柏林 token 行（防御性）
+                if not is_default:
+                    pg_context = _strip_default_novel_leakage(pg_context)
+                if pg_context.strip():
+                    parts.append(pg_context)
         except Exception:
             pass
 
-    # 1. 角色卡
-    char_names = detect_mentioned_characters(user_input)
-    char_text  = load_character_cards(char_names)
-    if char_text:
-        parts.append("=== 相关角色 ===\n" + char_text)
+    # 1. 角色卡（默认 indexes/characters.json 是 MuMu 角色；非默认剧本跳过，避免泄漏）
+    snippets: list[str] = []
+    if is_default:
+        char_names = detect_mentioned_characters(user_input)
+        char_text  = load_character_cards(char_names)
+        if char_text:
+            parts.append("=== 相关角色 ===\n" + char_text)
 
-    # 2. BM25 章节片段
-    snippets = bm25_search(
-        user_input,
-        top_k=3,
-        chapter_min=timeline_filter.get("chapter_min") if timeline_filter else None,
-        chapter_max=timeline_filter.get("chapter_max") if timeline_filter else None,
-    )
-    if snippets:
-        parts.append("=== 相关原文片段 ===\n" + "\n\n".join(snippets))
+        # 2. BM25 章节片段（.webnovel/vectors.db 是 MuMu 原著 chunks，仅默认走）
+        snippets = bm25_search(
+            user_input,
+            top_k=3,
+            chapter_min=timeline_filter.get("chapter_min") if timeline_filter else None,
+            chapter_max=timeline_filter.get("chapter_max") if timeline_filter else None,
+        )
+        if snippets:
+            parts.append("=== 相关原文片段 ===\n" + "\n\n".join(snippets))
 
-    # 3. 章节摘要只取时间线窗口；未命中锚点时才回退到最近章节。
-    recent = load_summaries_window(
-        timeline_filter.get("chapter_min") if timeline_filter else None,
-        timeline_filter.get("chapter_max") if timeline_filter else None,
-    )
-    if recent:
-        parts.append("=== 最近剧情摘要 ===\n" + recent)
+        # 3. 章节摘要（indexes/summaries.json 是 MuMu，仅默认走）
+        recent = load_summaries_window(
+            timeline_filter.get("chapter_min") if timeline_filter else None,
+            timeline_filter.get("chapter_max") if timeline_filter else None,
+        )
+        if recent:
+            parts.append("=== 最近剧情摘要 ===\n" + recent)
+    else:
+        char_names = []  # 留作 verbose 日志兼容
 
     if verbose:
-        print(f"[召回] 角色：{char_names}  BM25片段：{len(snippets)}条")
+        print(f"[召回] 默认剧本：{is_default} 角色：{char_names if is_default else '(跳过)'}  BM25片段：{len(snippets)}条")
 
     return "\n\n".join(parts)

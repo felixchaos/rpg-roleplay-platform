@@ -302,6 +302,14 @@ class GameState:
             "\n".join(memory.get("abilities", [])),
             "\n".join(memory.get("facts", [])),
         ])
+        # task 41：判断当前 state 是不是 MuMuAINovel 默认柏林剧情上下文。
+        # 导入剧本（task 34/40 已 scrub 柏林默认）context 不应再出现 柏林/图卢兹/哈布斯堡/蛇信
+        # 等 token —— 这时不能把"要求一份柏林当前势力图..." fallback 推给用户。
+        is_default_novel = any(
+            tok in context for tok in
+            ("柏林", "图卢兹", "哈布斯堡", "蛇信", "薇瑟帝国", "扎兹巴鲁姆", "蕾穆丽娜",
+             "斯雷因", "伊奈帆", "甲胄骑士", "Kataphrakt", "调令伪造")
+        )
 
         candidates: list[tuple[int, str]] = []
 
@@ -310,6 +318,7 @@ class GameState:
                 return
             candidates.append((score + _hit_score(context, needles), _player_action_text(text)))
 
+        # 命名 needle 的候选保留——它们本身就要求 context 含对应 token 才会被加入。
         add(120, "追问斯雷因：界冢伊奈帆一行的位置、人数和目的。", "斯雷因", "伊奈帆", "新动作")
         add(112, "确认蕾穆丽娜的安置、护卫和通讯权限。", "蕾穆丽娜", "内宅", "安置")
         add(106, "要求扎兹巴鲁姆交出柏林战役情报图和权限边界。", "扎兹巴鲁姆", "伯爵")
@@ -325,13 +334,23 @@ class GameState:
         if latest and re.search(r"[？?]\s*$", latest):
             add(125, "直接回应当前抉择，并要求列出风险与代价。")
 
-        fallback = [
+        # task 41：fallback 拆成『通用』+『默认柏林剧情专属』两组。
+        # 通用 fallback 跨剧本都安全；柏林专属的『要求一份柏林当前势力图...』只在
+        # is_default_novel=True 时才推。导入剧本的 UI 不再泄漏。
+        fallback_generic = [
             "观察当前场景的可见人物、出口和风险点。",
             "整理当下已知情报，标出最危险变量。",
-            "要求一份柏林当前势力图和行动时限。",
             "确认下一步目标、可用资源和不可触碰底线。",
             "先和关键人物单独谈话，判断真实立场。",
+            "回顾当前剧本开场设定，校准核心动机。",
         ]
+        fallback_default_novel = [
+            "要求一份柏林当前势力图和行动时限。",
+        ]
+        fallback = (
+            fallback_generic + fallback_default_novel
+            if is_default_novel else fallback_generic
+        )
         for index, text in enumerate(fallback):
             add(20 - index, text)
 
@@ -399,19 +418,25 @@ class GameState:
         if self.add_memory("pinned", f"玩家强制设定：{directive}"):
             updates.append("固定记忆：玩家强制设定")
 
-        for spec in _extract_set_assignments(directive):
-            result = self.apply_state_write(spec, source="user:/set", force=True, overwrite=True)
-            updates.append(result)
+        # task 28：调整应用顺序——时间/位置等自动派生的更新先做，
+        # 显式 path=value 最后兜底覆盖。
+        # 原顺序是先 _extract_set_assignments → 写 world.timeline.current_phase=X，
+        # 然后 _extract_set_time_targets → update_time() → _phase_for_time() 又把
+        # current_phase 推回『玩家分支』/『柏林暗流篇』，把用户的显式值冲掉。
+        # 用户显式 path=value 是硬约束，必须最后跑、最后赢。
+        for target in _extract_set_time_targets(directive):
+            if target and target != self.data["world"]["time"]:
+                self.update_time(target, source="user_set")
+                updates.append(f"时间线强制设定：{target}")
 
         location = _extract_location_override(directive)
         if location:
             self.update_location(location)
             updates.append(f"位置强制设定：{location}")
 
-        for target in _extract_set_time_targets(directive):
-            if target and target != self.data["world"]["time"]:
-                self.update_time(target, source="user_set")
-                updates.append(f"时间线强制设定：{target}")
+        for spec in _extract_set_assignments(directive):
+            result = self.apply_state_write(spec, source="user:/set", force=True, overwrite=True)
+            updates.append(result)
 
         return updates
 
@@ -437,6 +462,29 @@ class GameState:
             self._set_worldline_validation(validation["status"], validation["message"])
             updates.append(f"设定校验：{_validation_label(validation['status'])}")
 
+        # task 22：先看一眼有没有 pending_jump + 询问/待确认语境。
+        #   - 玩家用自然语言发起的时间跳跃会调 request_time_jump → 设 pending_jump=awaiting_gm_confirmation。
+        #   - GM 这一轮如果只是「请确认是否推进到 X？」，正文/结构化标签里都会出现目标时间 X。
+        #   - 原代码不分意图，看到 X 就 update_time 锁定，把待确认状态冲掉。
+        # 用 _gm_is_asking_for_time_confirm 兜底：发现「待确认 / 请确认 / 是否 / 询问玩家 / awaiting / pending」
+        # 等语境，时间写回（不论结构化还是 prose 抽取）都跳过，保持 pending_jump。
+        timeline_now = (self.data.get("world", {}) or {}).get("timeline", {}) or {}
+        pending_jump = timeline_now.get("pending_jump") or None
+        asking_for_confirm = _gm_is_asking_for_time_confirm(gm_response or "", tags)
+        # task 35：玩家本轮自然语言触发的 pending_jump（pending.turn == 当前 turn）
+        # → GM 同一轮不准锁，无论 GM 文本是否含 pending 信号。
+        # request_time_jump 是 apply_player_directives 在本轮入口调的；turn 还没递增。
+        # /set 不走 pending（直接 update_time），所以不受这条规则影响。
+        try:
+            _player_pending_this_turn = bool(
+                pending_jump
+                and int(pending_jump.get("turn", -1)) == int(self.data.get("turn", 0))
+            )
+        except Exception:
+            _player_pending_this_turn = False
+        if _player_pending_this_turn:
+            asking_for_confirm = True
+
         for item in tags:
             if not item:
                 continue
@@ -445,9 +493,25 @@ class GameState:
                 self.update_location(value)
                 updates.append(f"位置：{value}")
             elif is_time_key(key):
+                # 待确认中 + GM 正文在询问 → 不要锁；目标如果和 pending 一致就视为复述
+                if pending_jump and asking_for_confirm:
+                    updates.append(f"时间提案保留待确认：{value}")
+                    continue
                 self.update_time(value, source="gm")
                 updates.append(f"时间线锁定：{value}")
             elif "时间跳跃确认" in key:
+                # task 32：GM 真实输出会出现【时间跳跃确认：待确认（当前处于 pending_confirmation 状态）】
+                # 这种"标签 key 是确认，但 value 在说还在等"的混合形态。直接 confirm_time_jump
+                # 会把 world.time 锁成"待确认"或 pending 的目标，把 pending_jump 清空。
+                # 双重防御：
+                #   1. value 含『待确认/未确认/暂不/pending/awaiting』→ 视为询问，不要 confirm
+                #   2. asking_for_confirm 已识别为询问语境（含其它"等待玩家""设定冲突"等信号）→ 不 confirm
+                _val_low = (value or "").lower()
+                _value_pending = any(m in (value or "") for m in ("待确认", "未确认", "暂不", "暂缓")) \
+                                 or any(m in _val_low for m in ("pending", "awaiting"))
+                if pending_jump and (asking_for_confirm or _value_pending):
+                    updates.append(f"时间跳跃确认保留待确认：{value or key}")
+                    continue
                 self.confirm_time_jump(value or key)
                 updates.append(f"时间跳跃确认：{self.data['world']['time']}")
             elif "时间跳跃拒绝" in key:
@@ -505,9 +569,14 @@ class GameState:
                     updates.append(f"事实：{item}")
 
         for value in _extract_explicit_time_updates(gm_response or ""):
-            if value != self.data["world"]["time"]:
-                self.update_time(value, source="gm")
-                updates.append(f"时间线锁定：{value}")
+            if value == self.data["world"]["time"]:
+                continue
+            # task 22 兜底：待确认 + 询问语境时，不要把询问句里出现的目标时间当成确认
+            if pending_jump and asking_for_confirm:
+                updates.append(f"时间提案保留待确认：{value}")
+                continue
+            self.update_time(value, source="gm")
+            updates.append(f"时间线锁定：{value}")
 
         # 兼容 GM 没有按结构化标签输出、但文本里出现明确状态变化的情况。
         if re.search(r"重力控制|肉身飞行|双脚.*离开|悬浮", gm_response or ""):
@@ -582,6 +651,15 @@ class GameState:
             self.data.setdefault("worldline", {}).setdefault("custom_ui", {})[key] = value
         else:
             _set_path(self.data, path, value)
+
+        # task 36：用户显式写入（/set / 任何 force=True 或 source=user* 调用）
+        # 要登记到 user_locked_fields，使后续 update_time / _phase_for_time 等自动
+        # 派生不能覆盖。GM 自己的写入不登记，仍允许自动派生。
+        try:
+            if force or str(source or "").startswith("user"):
+                self.mark_user_locked(path)
+        except Exception:
+            pass
 
         audit = {
             "path": path,
@@ -711,7 +789,11 @@ class GameState:
             timeline = self._timeline()
             old = timeline.get("current_label")
             timeline["current_label"] = time_desc
-            timeline["current_phase"] = _phase_for_time(time_desc)
+            # task 36：用户曾用 /set 显式 world.timeline.current_phase=X 时（被记入 user_locked_fields），
+            # update_time 不要再用 _phase_for_time(time_desc) 推断覆盖。
+            # 这条规则同时覆盖 GM 任何【时间：Y】tag 触发的二次 update_time。
+            if not self._is_user_locked("world.timeline.current_phase"):
+                timeline["current_phase"] = _phase_for_time(time_desc)
             timeline["anchor_state"] = "locked"
             timeline["anchor_source"] = source
             timeline["anchor_turn"] = self.data["turn"]
@@ -722,6 +804,31 @@ class GameState:
                 "turn": self.data["turn"],
             }
             timeline["pending_jump"] = None
+
+    # ── task 36：用户显式写入字段保护注册表 ─────────────────────────
+    def _user_locked_fields(self) -> list[str]:
+        wl = self.data.setdefault("worldline", {})
+        locked = wl.setdefault("user_locked_fields", [])
+        if not isinstance(locked, list):
+            wl["user_locked_fields"] = []
+            locked = wl["user_locked_fields"]
+        return locked
+
+    def _is_user_locked(self, path: str) -> bool:
+        try:
+            return str(path) in self._user_locked_fields()
+        except Exception:
+            return False
+
+    def mark_user_locked(self, path: str) -> None:
+        """记录某个 state path 是用户显式写入的，后续自动派生（如 _phase_for_time）
+        不得覆盖。/set / apply_state_write 在 source=user* 或 force=True 时调。"""
+        path = str(path or "").strip()
+        if not path:
+            return
+        locked = self._user_locked_fields()
+        if path not in locked:
+            locked.append(path)
 
     def request_time_jump(self, target: str, raw: str):
         target = clean_time_value(target)
@@ -872,6 +979,84 @@ def _extract_set_time_targets(text: str) -> list[str]:
         if value not in values:
             values.append(value)
     return values
+
+
+_ASKING_FOR_CONFIRM_PATTERNS = (
+    r"是否(?:要|要不要|确认|继续|推进|跳到|跳转)",
+    r"请(?:玩家|你)?(?:确认|选择|决定|回答)",
+    r"等(?:待|待玩家)?(?:玩家|你)?(?:确认|选择|决定|回答|回应)",
+    r"待确认",
+    r"awaiting[_ ]?(?:gm|player)?[_ ]?confirm",
+    r"pending[_ ]?confirm",
+    r"询问玩家",
+    r"向玩家提问",
+    r"先(?:让|请)?(?:子代理|GM|你)?(?:检查|确认|核对)",
+    r"不要(?:直接|立即)?(?:跳过|改写|锁定)",
+)
+
+
+def _gm_is_asking_for_time_confirm(gm_response: str, tags: list[str]) -> bool:
+    """task 22 + task 32：判断 GM 这一轮是在询问/标 pending，而不是在锁定时间。
+
+    task 32 真实案例：GM 同时输出了 `【时间跳跃确认：待确认（当前处于 pending_confirmation 状态）】`
+    和 `【询问玩家：...】`/`【设定校验：冲突】`。原 task 22 实现一旦看到任何含
+    "时间跳跃确认" 的标签就立刻 return False，把后面所有"等待玩家回答""冲突"信号全无视，
+    导致主 GM 锁定时间线。
+
+    新规则（更保守）：
+      1. 先扫一遍 tags 把信号分类：
+         - has_explicit_confirm  ← "时间跳跃确认" 且 value 里没有 pending/待确认 等回退措辞
+         - has_pending_signal    ← 任一意图标 OR "时间跳跃确认" 的 value 含 pending/待确认 OR "等待玩家"等
+      2. 正文里如果命中 _ASKING_FOR_CONFIRM_PATTERNS → 也算 pending 信号
+      3. has_pending_signal 优先于 has_explicit_confirm（user 报告里两者会同时出现）
+    """
+    blob = gm_response or ""
+    has_explicit_confirm = False
+    has_pending_signal = False
+
+    pending_value_markers = ("待确认", "未确认", "暂不", "暂缓", "pending", "awaiting")
+    pending_tag_keywords = (
+        "询问玩家", "向玩家提问", "澄清问题",
+        "时间跳跃待确认", "时间提案", "时间冲突",
+        "设定冲突", "设定校验",  # 冲突/校验通常表示"先不要写入"
+        "等待玩家回答", "等待玩家",
+    )
+
+    for tag in tags or []:
+        if not tag:
+            continue
+        # 把 "key：value" 拆开看 value
+        if "：" in tag:
+            _key, _val = tag.split("：", 1)
+        elif ":" in tag:
+            _key, _val = tag.split(":", 1)
+        else:
+            _key, _val = tag, ""
+        if "时间跳跃确认" in _key or "时间跳跃确认" in tag:
+            val_low = _val.lower()
+            # value 里出现"待确认/pending/awaiting"=不是真的同意确认
+            if any(m in _val for m in pending_value_markers) or any(m in val_low for m in pending_value_markers):
+                has_pending_signal = True
+            else:
+                has_explicit_confirm = True
+            continue
+        if any(kw in tag for kw in pending_tag_keywords):
+            has_pending_signal = True
+
+    if not has_pending_signal:
+        for pat in _ASKING_FOR_CONFIRM_PATTERNS:
+            if re.search(pat, blob, flags=re.IGNORECASE):
+                has_pending_signal = True
+                break
+
+    # 关键决定：pending 信号优先；只有完全没有 pending 信号且有显式 confirm 才视为真确认
+    if has_pending_signal:
+        return True
+    if has_explicit_confirm:
+        return False
+    # 兼容老返回值：纯正文询问也算 asking
+    return False
+    return False
 
 
 def _extract_explicit_time_updates(text: str) -> list[str]:

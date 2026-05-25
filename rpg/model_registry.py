@@ -227,20 +227,33 @@ def select_model(api_id: str, model_id: str) -> dict[str, Any]:
 
 def upsert_api(api_data: dict[str, Any]) -> dict[str, Any]:
     catalog = load_model_catalog()
-    api_id = str(api_data.get("id") or "").strip()
+    api_id = str(api_data.get("api_id") or api_data.get("id") or "").strip()
     if not api_id:
         raise ValueError("API id 不能为空")
     api = find_api(catalog, api_id)
-    normalized = {
-        "id": api_id,
-        "display_name": str(api_data.get("display_name") or api_id).strip(),
-        "kind": str(api_data.get("kind") or api_id).strip(),
-        "enabled": bool(api_data.get("enabled", True)),
-        "credential_ref": api_data.get("credential_ref", ""),
-        "credential_env": api_data.get("credential_env", ""),
-        "base_url": api_data.get("base_url", ""),
-        "models": list(api_data.get("models") or (api or {}).get("models") or []),
-    }
+    normalized = copy.deepcopy(api) if api else {"id": api_id, "models": []}
+    normalized["id"] = api_id
+    if not api:
+        normalized.update({
+            "display_name": str(api_data.get("display_name") or api_data.get("name") or api_id).strip(),
+            "kind": str(api_data.get("kind") or api_id).strip(),
+            "enabled": bool(api_data.get("enabled", True)),
+            "credential_ref": api_data.get("credential_ref", ""),
+            "credential_env": api_data.get("credential_env", ""),
+            "base_url": api_data.get("base_url", ""),
+        })
+    else:
+        if "display_name" in api_data or "name" in api_data:
+            normalized["display_name"] = str(api_data.get("display_name") or api_data.get("name") or api_id).strip()
+        if "kind" in api_data:
+            normalized["kind"] = str(api_data.get("kind") or api_id).strip()
+        if "enabled" in api_data:
+            normalized["enabled"] = bool(api_data.get("enabled"))
+        for key in ("credential_ref", "credential_env", "base_url"):
+            if key in api_data:
+                normalized[key] = api_data.get(key, "")
+    if "models" in api_data:
+        normalized["models"] = list(api_data.get("models") or [])
     if api:
         api.clear()
         api.update(normalized)
@@ -271,6 +284,38 @@ def upsert_model(api_id: str, model_data: dict[str, Any]) -> dict[str, Any]:
         model.update(normalized)
     else:
         api.setdefault("models", []).append(normalized)
+    save_model_catalog(catalog)
+    return load_model_catalog()
+
+
+def delete_model(api_id: str, model_id: str) -> dict[str, Any]:
+    catalog = load_model_catalog()
+    api = find_api(catalog, api_id)
+    if not api:
+        raise ValueError(f"未知 API：{api_id}")
+    model_id = str(model_id or "").strip()
+    if not model_id:
+        raise ValueError("模型 id 不能为空")
+    models = list(api.get("models") or [])
+    remaining = [
+        model for model in models
+        if model.get("id") != model_id and model.get("real_name") != model_id
+    ]
+    if len(remaining) == len(models):
+        raise ValueError(f"模型不存在：{model_id}")
+    if not remaining:
+        raise ValueError("每个 API 至少保留一个模型")
+    api["models"] = remaining
+    selected = catalog.get("selected") or {}
+    if selected.get("api_id") == api_id:
+        deleted_ids = {
+            model.get("id")
+            for model in models
+            if model.get("id") == model_id or model.get("real_name") == model_id
+        }
+        if selected.get("model_id") in deleted_ids:
+            fallback = first_enabled_model(api)
+            catalog["selected"] = {"api_id": api_id, "model_id": fallback["id"]}
     save_model_catalog(catalog)
     return load_model_catalog()
 
@@ -446,4 +491,14 @@ def _write_model_catalog_rows(db, catalog: dict[str, Any]) -> None:
                     bool(model.get("enabled", True)),
                     Jsonb(list(model.get("capabilities") or ["text", "streaming"])),
                 ),
+            )
+        keep_model_ids = [
+            model.get("id") or model.get("real_name")
+            for model in api.get("models", [])
+            if model.get("id") or model.get("real_name")
+        ]
+        if keep_model_ids:
+            db.execute(
+                "delete from model_entries where api_id = %s and model_id <> all(%s)",
+                (api["id"], keep_model_ids),
             )

@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from gm import GameMaster
 from context_engine import build_context_bundle
 from context_agent import run_context_agent
-from model_registry import load_model_catalog, selected_model, select_model, upsert_api, upsert_model
+from model_registry import delete_model, load_model_catalog, selected_model, select_model, upsert_api, upsert_model
 from retrieval import retrieve_context
 from state import GameState, SAVE_FILE
 from tool_registry import (
@@ -522,6 +522,28 @@ def _payload(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
     # catalog 按角色脱敏（普通用户拿不到 credential_ref/credential_env/base_url）
     payload["models"] = _redact_catalog(model_catalog, is_admin)
     payload["tools"] = _redact_tools(tool_payload(), is_admin)
+    # task 10：把当前激活存档的 id/title 直接挂在 /api/state 顶层 + state 字段里，
+    # Game Console 左侧栏拿来显示「当前存档」，避免回退到 hard-coded mock id=11。
+    try:
+        if api_user and api_user.get("id"):
+            from platform_app.runtime import read_runtime
+            from platform_app.db import connect
+            rmeta = read_runtime(user_id=api_user["id"]) or {}
+            sid = int(rmeta.get("save_id") or 0) or None
+            if sid:
+                with connect() as db:
+                    row = db.execute(
+                        "select id, title, updated_at from game_saves where id = %s and user_id = %s",
+                        (sid, int(api_user["id"])),
+                    ).fetchone()
+                if row:
+                    payload["save_id"] = int(row["id"])
+                    payload["save_title"] = str(row["title"] or "")
+                    if row.get("updated_at"):
+                        payload["save_updated_at"] = row["updated_at"].isoformat() if hasattr(row["updated_at"], "isoformat") else str(row["updated_at"])
+    except Exception:
+        # 任何 DB 异常都不能让 /api/state 整个 500，缺字段前端有兜底
+        pass
     return payload
 
 
@@ -960,10 +982,36 @@ async def api_opening(request: Request) -> StreamingResponse:
     gm = _get_gm(api_user)
 
     async def stream():
-        query = "柏林 图卢兹 娅赛兰 蛇信 蕾穆丽娜"
-        ctx = retrieve_context(query, state=state, user_id=api_user["id"] if api_user else None)
+        # task 43：原 query 硬编码『柏林 图卢兹 娅赛兰 蛇信 蕾穆丽娜』+ retrieve_context
+        # 没传 script_id → retrieval.py 退化到 is_default=True → 拉 MuMu .webnovel SQLite/
+        # indexes JSON（角色卡/原文/摘要），让导入剧本的 /api/opening 也被柏林污染。
+        # 修：query 按当前 state 动态构（player 位置 + world 时间 + 当前目标 + 首章 known_events），
+        # retrieve_context 收 script_id —— 非默认剧本走 task 42 的 script-scoped 路径，
+        # 不读任何 MuMu 私有源；默认剧本保留原硬编码 query 兼容性。
+        script_id = _active_script_id(api_user)
+        if script_id:
+            world = state.data.get("world", {}) or {}
+            player = state.data.get("player", {}) or {}
+            memory = state.data.get("memory", {}) or {}
+            events = world.get("known_events") or []
+            query_parts = [
+                str(player.get("current_location") or ""),
+                str(world.get("time") or ""),
+                str(memory.get("current_objective") or ""),
+                *[str(e) for e in events[:2]],
+            ]
+            query = " ".join(p for p in query_parts if p).strip() or "开场"
+        else:
+            # 兼容旧无 script_id 路径（匿名/未绑定 save）：保留原 MuMu hint
+            query = "柏林 图卢兹 娅赛兰 蛇信 蕾穆丽娜"
+        ctx = retrieve_context(
+            query,
+            state=state,
+            user_id=api_user["id"] if api_user else None,
+            script_id=script_id,
+        )
         state.set_last_retrieval(ctx)
-        bundle = _build_turn_context(state, query, ctx, script_id=_active_script_id(api_user))
+        bundle = _build_turn_context(state, query, ctx, script_id=script_id)
         yield _sse("status", _payload(api_user))
         text = ""
         try:
@@ -1051,7 +1099,10 @@ async def api_chat_estimate(request: Request) -> JSONResponse:
 async def api_chat(request: Request) -> StreamingResponse:
     api_user = _require_api_user(request)
     body = await request.json()
-    message = (body.get("message") or "").strip()
+    # task 31：前端历史上同时存在 {message:...} 和 {text:...} 两套契约。
+    # 老的 Game Console.html 发 text，新的 game-app.jsx 也偶尔走 message。
+    # 后端必须两边兼容，否则用户输入直接被 "空消息" error 吞掉。
+    message = (body.get("message") or body.get("text") or "").strip()
     attachments = _save_attachments(body.get("attachments") or [], user_id=api_user["id"] if api_user else None)
     message_for_model = _message_with_attachments(message, attachments)
     if not message_for_model.strip():
@@ -1076,7 +1127,15 @@ async def api_chat(request: Request) -> StreamingResponse:
             return
 
         try:
+            # task 27：/set / 时间跳跃等玩家指令必须先持久化，否则一旦上游 GM 504 / context_agent
+            # 抛异常，整轮 try 跳到 except，_persist_chat_turn 永远跑不到 → /set 的状态修改丢失。
+            # 把 directive_updates 应用 → 立刻持久化一个 runtime checkpoint → 发 `updates`
+            # SSE 事件让 UI 也立刻反映；后续 GM 失败也保留这批硬改动。
             directive_updates = state.apply_player_directives(message_for_model)
+            if directive_updates:
+                _persist_runtime_checkpoint(state, api_user)
+                yield _sse("status", _payload(api_user))
+                yield _sse("updates", {"items": directive_updates, "stage": "pre_llm"})
             agent_result = None
             sub_gm = _get_sub_gm(api_user)
             for item in run_context_agent(
@@ -1364,7 +1423,18 @@ async def api_models_upsert_api(request: Request) -> JSONResponse:
 async def api_models_upsert_model(request: Request) -> JSONResponse:
     _require_api_user(request, admin=True)
     body = await request.json()
-    catalog = upsert_model(body.get("api_id", ""), body.get("model", {}))
+    model_payload = body.get("model") if isinstance(body.get("model"), dict) else {
+        k: v for k, v in body.items() if k != "api_id"
+    }
+    catalog = upsert_model(body.get("api_id", ""), model_payload)
+    return JSONResponse({"ok": True, "models": catalog, "selected": selected_model(catalog)})
+
+
+@app.post("/api/models/model/delete")
+async def api_models_delete_model(request: Request) -> JSONResponse:
+    _require_api_user(request, admin=True)
+    body = await request.json()
+    catalog = delete_model(body.get("api_id", ""), body.get("model_id") or body.get("real_name", ""))
     return JSONResponse({"ok": True, "models": catalog, "selected": selected_model(catalog)})
 
 
@@ -2542,8 +2612,10 @@ HTML = r"""
       </header>
 
       <section class="chat" id="chat">
+        <!-- task 43：旧 UI 初始空状态默认通用文案。具体剧本标题由 JS 在 renderMessages
+             里按当前 state.app.title / state.save_title 替换；导入剧本不再误显示『柏林弧』。 -->
         <div class="empty" id="emptyState">
-          <h1>准备继续柏林弧</h1>
+          <h1>准备开始游戏</h1>
           <p>读档后可以直接行动。右侧状态和记忆会随着 GM 输出里的结构化标签自动更新。</p>
         </div>
       </section>
@@ -3094,7 +3166,14 @@ HTML = r"""
         const empty = document.createElement("div");
         empty.className = "empty";
         empty.id = "emptyState";
-        empty.innerHTML = "<h1>准备继续柏林弧</h1><p>读档后可以直接行动。右侧状态和记忆会随着 GM 输出里的结构化标签自动更新。</p>";
+        // task 43：旧 UI 空状态原写死『准备继续柏林弧』。导入剧本下显得错位。
+        // 优先用当前 save_title / app.title 显示『准备继续：<剧本>』；都不在就用通用文案。
+        const sp = (state && state.payload) || {};
+        const titleHint = sp.save_title || (sp.app && sp.app.title) || "";
+        const header = titleHint ? `准备继续：${titleHint}` : "准备开始游戏";
+        const headerEsc = String(header)
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        empty.innerHTML = `<h1>${headerEsc}</h1><p>读档后可以直接行动。右侧状态和记忆会随着 GM 输出里的结构化标签自动更新。</p>`;
         chat.append(empty);
         return;
       }
