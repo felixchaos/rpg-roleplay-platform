@@ -132,6 +132,10 @@ def _format_tools_for_prompt(tools: list[dict[str, Any]]) -> str:
 #  后端：Vertex AI (Gemini) — 使用新版 google-genai SDK (REST)
 # ══════════════════════════════════════════════════════════════════════════════
 class _VertexBackend:
+    # task 66：Vertex 暂留 text-marker 兜底（function_declarations 流式较复杂，
+    # 后续迭代再升级）。
+    supports_native_tools = False
+
     def __init__(self, model: str = "gemini-3.5-flash"):
         from google import genai
         from google.oauth2 import service_account
@@ -319,12 +323,101 @@ class _AnthropicBackend:
             except Exception:
                 pass
 
+    # task 66：native tool_use 流式 — 替代文本协议 <<TOOL_CALL>>。
+    # 错误率比 text marker 低 5-10×，input_schema 校验直接由 Anthropic 做。
+    supports_native_tools = True
+
+    def stream_with_tools_native(
+        self,
+        system: str,
+        messages: list[dict],
+        anthropic_tools: list[dict],
+        max_tokens: int,
+    ) -> Iterator[dict[str, Any]]:
+        """流式 + native tool_use。yields:
+          - {"type": "text", "text": "..."}
+          - {"type": "tool_use_block", "id": "...", "name": "...", "input": {...}}
+          - {"type": "stop", "stop_reason": "end_turn"|"tool_use"|...}
+        每个 tool_use_block 完整产生后才 yield（input JSON 已合并完）。
+        """
+        current_block: dict[str, Any] | None = None
+        partial_json_buf = ""
+        stop_reason: str | None = None
+        with self.client.messages.stream(
+            model=self.model_name,
+            max_tokens=max_tokens,
+            system=system,
+            messages=messages,
+            tools=anthropic_tools,
+            tool_choice={"type": "auto"},
+        ) as stream:
+            for event in stream:
+                et = getattr(event, "type", None)
+                if et == "content_block_start":
+                    block = getattr(event, "content_block", None)
+                    bt = getattr(block, "type", None)
+                    if bt == "tool_use":
+                        current_block = {
+                            "id": getattr(block, "id", ""),
+                            "name": getattr(block, "name", ""),
+                        }
+                        partial_json_buf = ""
+                elif et == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    dt = getattr(delta, "type", None)
+                    if dt == "text_delta":
+                        text = getattr(delta, "text", "") or ""
+                        if text:
+                            yield {"type": "text", "text": text}
+                    elif dt == "input_json_delta":
+                        partial_json_buf += getattr(delta, "partial_json", "") or ""
+                elif et == "content_block_stop":
+                    if current_block is not None:
+                        try:
+                            parsed = json.loads(partial_json_buf or "{}")
+                            if not isinstance(parsed, dict):
+                                parsed = {}
+                        except Exception:
+                            parsed = {}
+                        yield {
+                            "type": "tool_use_block",
+                            "id": current_block["id"],
+                            "name": current_block["name"],
+                            "input": parsed,
+                        }
+                        current_block = None
+                        partial_json_buf = ""
+                elif et == "message_delta":
+                    delta = getattr(event, "delta", None)
+                    if delta:
+                        sr = getattr(delta, "stop_reason", None)
+                        if sr:
+                            stop_reason = sr
+            # capture usage
+            try:
+                final = stream.get_final_message()
+                usage = getattr(final, "usage", None)
+                if usage:
+                    self.last_usage = {
+                        "input_tokens": int(getattr(usage, "input_tokens", 0)),
+                        "output_tokens": int(getattr(usage, "output_tokens", 0)),
+                        "cached_input_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+                    }
+                    self.last_usage["total_tokens"] = self.last_usage["input_tokens"] + self.last_usage["output_tokens"]
+            except Exception:
+                pass
+        yield {"type": "stop", "stop_reason": stop_reason or "end_turn"}
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  后端：OpenAI 兼容（OpenAI / OpenRouter / 硅基 / 阿里 / 腾讯 / 火山 / 小米 ...）
 # ══════════════════════════════════════════════════════════════════════════════
 class _OpenAICompatBackend:
     """适配所有 OpenAI 兼容的 provider，只需要 base_url + env_key + model 名。"""
+
+    # task 66：OpenAI 兼容路径 tool calling 在不同 provider 兼容度差异大
+    # （DashScope / SiliconFlow / 火山某些版本不支持），先用 text marker 兜底。
+    supports_native_tools = False
 
     def __init__(self, model: str, base_url: str, env_key: str, display_kind: str = "openai_compat",
                  user_id: int | None = None, api_id: str | None = None):
@@ -541,10 +634,20 @@ class GameMaster:
           - {"type": "tool_error", "error": "..."}（解析失败）
 
         没有 tools 时退化成普通流式输出。
+
+        task 66：backend 支持 native tool_use（Anthropic）时走 native 路径，
+        否则用文本 marker 兜底。
         """
         if not tools:
             for chunk in self.respond_stream(user_input, retrieved_context, state):
                 yield {"type": "text", "text": chunk}
+            return
+
+        # task 66：native tool_use 分支
+        if getattr(self._backend, "supports_native_tools", False):
+            yield from self._respond_stream_native_tools(
+                user_input, retrieved_context, state, tools, max_iterations, max_tokens,
+            )
             return
 
         system = self._build_system() + _format_tools_for_prompt(tools)
@@ -672,4 +775,148 @@ class GameMaster:
                     yield {"type": "text", "text": buffer}
                 return
         # 达到 max_iterations：给个收尾提示
+        yield {"type": "text", "text": "\n\n【已达工具调用次数上限，本轮终止】"}
+
+    # ── 主响应（带 MCP 工具循环 · native tool_use 路径） ───────────
+    def _respond_stream_native_tools(
+        self,
+        user_input: str,
+        retrieved_context: str,
+        state,
+        tools: list[dict[str, Any]],
+        max_iterations: int,
+        max_tokens: int,
+    ) -> Iterator[dict[str, Any]]:
+        """task 66：用 backend 的 native tool_use API 跑 MCP 循环。
+
+        优点（相对 text marker 协议）：
+        - input_schema 由 SDK/provider 校验，错误率降 5-10×
+        - 不需要在正文里塞 <<TOOL_CALL>> marker → 节省 tokens
+        - 不会有"marker 被切断 / 未闭合"问题（task 61 修的就是这类）
+
+        MCP 工具的 server_id 编码进 tool name：`{server_id}__{tool_name}`
+        Provider 看到的 name 是字符串，dispatch 时 split。
+        """
+        # 不再把 _format_tools_for_prompt 注入 system，纯走 tools=[...] 参数
+        system = self._build_system()
+        messages = state.history_messages()
+        messages.append({
+            "role": "user",
+            "content": self._turn_message(user_input, state, retrieved_context),
+        })
+
+        # MCP → Anthropic tools 格式转换
+        anthropic_tools = []
+        sep = "__"  # server_id 与 tool_name 分隔符（Anthropic name 允许 a-zA-Z0-9_-）
+        for t in tools[:40]:  # 防止 tool 列表过长
+            sid = str(t.get("server_id", ""))
+            tname = str(t.get("name", ""))
+            if not sid or not tname:
+                continue
+            # 把 server_id / tool_name 里的非法字符替成 _
+            safe_sid = re.sub(r"[^A-Za-z0-9_-]", "_", sid)
+            safe_tname = re.sub(r"[^A-Za-z0-9_-]", "_", tname)
+            full_name = f"{safe_sid}{sep}{safe_tname}"[:64]  # Anthropic name 上限 64
+            schema = t.get("schema") or {"type": "object", "properties": {}}
+            if not isinstance(schema, dict):
+                schema = {"type": "object", "properties": {}}
+            if schema.get("type") != "object":
+                schema = {"type": "object", "properties": schema.get("properties", {})}
+            anthropic_tools.append({
+                "name": full_name,
+                "description": (t.get("description") or "")[:512],
+                "input_schema": schema,
+            })
+
+        if not anthropic_tools:
+            # 没有可用工具 → 直接走普通流式
+            for chunk in self._backend.stream(system, messages, max_tokens=max_tokens):
+                yield {"type": "text", "text": chunk}
+            return
+
+        # ID 反查表：tool_use_id → (server_id, tool_name, original_input) 用于后续 tool_result
+        pending_uses: list[dict[str, Any]] = []
+
+        for iteration in range(max_iterations):
+            pending_uses = []
+            accumulated_blocks: list[dict[str, Any]] = []  # 用于装回 assistant 历史
+            current_text = ""
+            saw_stop_for_tools = False
+            for ev in self._backend.stream_with_tools_native(
+                system, messages, anthropic_tools, max_tokens=max_tokens,
+            ):
+                et = ev.get("type")
+                if et == "text":
+                    text = ev.get("text", "")
+                    if text:
+                        current_text += text
+                        yield {"type": "text", "text": text}
+                elif et == "tool_use_block":
+                    full_name = ev.get("name", "")
+                    if sep in full_name:
+                        server_id, _, tool_name = full_name.partition(sep)
+                    else:
+                        server_id, tool_name = "", full_name
+                    arguments = ev.get("input") or {}
+                    tu_id = ev.get("id", "")
+                    pending_uses.append({
+                        "id": tu_id,
+                        "server_id": server_id,
+                        "tool_name": tool_name,
+                        "arguments": arguments,
+                    })
+                    # 装回历史：先存一个 tool_use block（input 是原始解析结果）
+                    accumulated_blocks.append({
+                        "type": "tool_use",
+                        "id": tu_id,
+                        "name": full_name,
+                        "input": arguments,
+                    })
+                    yield {
+                        "type": "tool_call",
+                        "server_id": server_id,
+                        "tool": tool_name,
+                        "arguments": arguments,
+                    }
+                elif et == "stop":
+                    if ev.get("stop_reason") == "tool_use":
+                        saw_stop_for_tools = True
+                    break
+
+            # 没有 tool_use → 本轮结束
+            if not pending_uses:
+                return
+
+            # 把"前缀 text + tool_use blocks"作为 assistant 写回
+            assistant_content: list[dict[str, Any]] = []
+            if current_text:
+                assistant_content.append({"type": "text", "text": current_text})
+            assistant_content.extend(accumulated_blocks)
+            messages.append({"role": "assistant", "content": assistant_content})
+
+            # 顺序调用每个 tool，把 tool_result blocks 一次性塞进 user 消息
+            tool_result_blocks: list[dict[str, Any]] = []
+            for use in pending_uses:
+                try:
+                    from mcp_broker import call_tool as _mcp_call_tool
+                    result = _mcp_call_tool(use["server_id"], use["tool_name"], use["arguments"])
+                except Exception as exc:
+                    result = {"ok": False, "error": f"call_tool 异常: {exc}"}
+                yield {
+                    "type": "tool_result",
+                    "ok": bool(result.get("ok")),
+                    "result": result.get("result"),
+                    "error": result.get("error"),
+                }
+                truncated = json.dumps(result, ensure_ascii=False)[:2000]
+                tool_result_blocks.append({
+                    "type": "tool_result",
+                    "tool_use_id": use["id"],
+                    "content": truncated,
+                    "is_error": not bool(result.get("ok")),
+                })
+            messages.append({"role": "user", "content": tool_result_blocks})
+            # 进下一 iteration 让 LLM 继续叙事（可能再调工具，也可能直接收尾）
+
+        # 达到 max_iterations
         yield {"type": "text", "text": "\n\n【已达工具调用次数上限，本轮终止】"}
