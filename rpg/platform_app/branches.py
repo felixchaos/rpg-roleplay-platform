@@ -450,6 +450,17 @@ def record_runtime_turn(
     init_db()
     missing_parent = False
     with connect() as db:
+        # P1 #5：抢 per-(user, save) advisory lock，防止两个并发 /api/chat
+        # 读到同一个 parent_id → 各自 insert → 第二个 upsert 把第一个变孤儿。
+        # pg_advisory_xact_lock 在事务结束时自动释放。key 用 hashtext 避免溢出。
+        try:
+            uid_for_lock = int(user_id or (save_id * 7919))
+            db.execute(
+                "select pg_advisory_xact_lock(hashtext(%s)::int, hashtext(%s)::int)",
+                (f"rpg_turn_{uid_for_lock}", f"save_{save_id}"),
+            )
+        except Exception:
+            pass
         parent = db.execute("select * from branch_commits where id = %s and save_id = %s", (parent_id, save_id)).fetchone()
         if not parent:
             missing_parent = True
@@ -460,6 +471,16 @@ def record_runtime_turn(
             if not ref_id:
                 ref = _find_or_create_ref_for_commit(db, int(save["user_id"]), parent)
                 ref_id = ref["id"]
+            # 关键：拿锁之后重新读一次 active_commit_id（meta 是锁之前读的，
+            # 此刻另一个 turn 已经 commit 完释放锁了，meta.parent_id 已过时）
+            fresh_save = db.execute("select active_commit_id, active_branch_node_id from game_saves where id = %s", (save_id,)).fetchone()
+            fresh_active = int(fresh_save.get("active_commit_id") or fresh_save.get("active_branch_node_id") or 0)
+            if fresh_active and fresh_active != parent_id:
+                # 用最新的 active commit 当 parent，避免孤儿
+                fresh_parent = db.execute("select * from branch_commits where id = %s and save_id = %s", (fresh_active, save_id)).fetchone()
+                if fresh_parent:
+                    parent = fresh_parent
+                    parent_id = fresh_active
             row = _insert_commit(
                 db,
                 save_id=save_id,
