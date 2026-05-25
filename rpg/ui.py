@@ -1307,6 +1307,53 @@ async def api_chat(request: Request) -> StreamingResponse:
             yield _sse("context", {"debug": bundle["debug"]})
             yield _sse("status", _payload(api_user))
 
+            # task 80：clarifying_question routing —— curator 自评意图模糊时
+            # 跳过主 GM，直接把封闭式问题 yield 给玩家。让 LLM 在不确定时主动
+            # yield 而不是硬编。
+            _curator_plan = agent_result.get("curator_plan", {}) or {}
+            _confidence = float(_curator_plan.get("confidence") or 1.0)
+            _clarify = (_curator_plan.get("clarifying_question") or "").strip()
+            _confidence_threshold = 0.5
+            _route_to_clarify = bool(_clarify) or _confidence < _confidence_threshold
+            if _route_to_clarify and _clarify:
+                # 写 pending_question + audit_log，让玩家看到问题
+                try:
+                    state.add_pending_question(_clarify, source="curator:clarify")
+                except Exception:
+                    pass
+                try:
+                    from datetime import datetime as _dt
+                    audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                    audit.append({
+                        "ts": _dt.now().isoformat(timespec="seconds"),
+                        "kind": "clarify_yield",
+                        "source": "curator",
+                        "hint": f"confidence={_confidence:.2f}；curator 主动询问：{_clarify[:160]}",
+                        "turn": state.data.get("turn", 0),
+                    })
+                    if len(audit) > 200:
+                        state.data["permissions"]["audit_log"] = audit[-200:]
+                except Exception:
+                    pass
+                # 把问题作为 GM 正文输出，让前端 token 流照常显示
+                _q_text = f"【需要先确认】{_clarify}"
+                yield _sse("token", {"text": _q_text})
+                # 持久化（让 chat 历史里也有这条 yield）
+                try:
+                    _persist_chat_turn(
+                        api_user, state, message_for_model, _q_text,
+                        persist_user_id=persist_user_id, active_save_id=active_save_id,
+                    )
+                except Exception:
+                    pass
+                _mark_context_run(
+                    context_run_id, "done",
+                    duration_ms=int((time.time() - _chat_start_time) * 1000),
+                )
+                yield _sse("status", _payload(api_user))
+                yield _sse("done", {"status": _payload(api_user), "interrupted": False, "clarify": True})
+                return
+
             yield _sse("agent", {
                 "phase": "main_gm",
                 "message": "主 GM 正在读取上下文并生成正文。",
