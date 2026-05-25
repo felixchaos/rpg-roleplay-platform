@@ -1,0 +1,620 @@
+"""
+context_engine.py - SillyTavern-style context assembly for the RPG.
+
+The current app is still a local single-save game, but this module keeps
+character cards, worldbook entries, RAG snippets, state, and recent chat as
+separate layers so the same pipeline can later be backed by Postgres/pgvector.
+"""
+from __future__ import annotations
+
+import json
+import re
+import hashlib
+from pathlib import Path
+from typing import Any
+from timeline_index import timeline_filter_for_label
+
+BASE = Path(__file__).parent
+CHAR_IDX = BASE / "indexes" / "characters.json"
+WORLD_IDX = BASE / "indexes" / "world.json"
+
+MAX_LAYER_CHARS = {
+    "rules": 1800,
+    "agent_runtime": 1200,
+    "timeline": 1400,
+    "worldline": 1800,
+    "context_agent": 1200,
+    "player_card": 1300,
+    "npc_cards": 1800,
+    "worldbook": 2200,
+    "rag": 2200,
+    "state": 2200,
+    "recent_chat": 2200,
+    "user_input": 900,
+}
+
+
+def build_context_bundle(
+    state,
+    user_input: str,
+    retrieved_context: str = "",
+    curator_plan: dict[str, Any] | None = None,
+    script_id: int | None = None,
+    book_id: int | None = None,
+) -> dict[str, Any]:
+    """组装单轮 prompt 上下文。
+
+    B3：当传入 script_id/book_id 时，优先从 DB (character_cards / worldbook_entries
+    / chapter_facts) 取数据；DB 为空时退化到 indexes/*.json 静态数据。
+    """
+    chars = _load_characters(script_id=script_id, book_id=book_id)
+    world = _load_world()
+    history = state.history_messages()
+    recent_text = _recent_text(history)
+    scan_text = "\n".join([
+        user_input or "",
+        recent_text,
+        state.data["player"].get("current_location", ""),
+        state.data["world"].get("time", ""),
+        "\n".join(state.data["world"].get("known_events", [])),
+        state.data["memory"].get("current_objective", ""),
+    ])
+
+    player_card = _player_card(state, chars)
+    npc_cards = _active_character_cards(scan_text, chars, player_card.get("name", ""))
+    worldbook = _active_worldbook(scan_text, world, state, script_id=script_id, book_id=book_id)
+    timeline_layer = _timeline_layer(state)
+    worldline_layer = _worldline_layer(state)
+
+    # 顺序按"稳定→半稳定→每轮变化"分组，让 prompt cache 能命中尽可能长的前缀。
+    # 缓存关键：前缀任何字节变化就 miss。所以稳定层必须连续无缝放最前。
+    layers = [
+        # ─── 稳定前缀（每轮基本不变，可缓存）────────────────
+        _layer("rules", "剧情规则", _story_rules(), sticky=True),
+        _layer("agent_runtime", "主GM代理运行契约", _agent_runtime_rules(), sticky=True),
+        _layer("player_card", "玩家角色卡", player_card["text"], sticky=True, source=player_card["name"]),
+        # ─── 半稳定（玩家不切角色就同一份；切了就 miss）───
+        _layer(
+            "npc_cards",
+            "当前角色卡",
+            "\n\n".join(card["text"] for card in npc_cards),
+            items=[_strip_card_text(card) for card in npc_cards],
+        ),
+        _layer(
+            "worldbook",
+            "激活世界书",
+            "\n\n".join(entry["text"] for entry in worldbook),
+            items=[_strip_worldbook_text(entry) for entry in worldbook],
+        ),
+        # ─── 动态尾部（每轮变化，缓存边界）──────────────────
+        _layer(
+            "timeline",
+            "时间线事务",
+            timeline_layer["text"],
+            sticky=True,
+            items=[timeline_layer["debug"]],
+        ),
+        _layer(
+            "worldline",
+            "世界线推演权限",
+            worldline_layer["text"],
+            sticky=True,
+            items=[worldline_layer["debug"]],
+        ),
+        _layer("state", "当前状态", state.short_summary(), sticky=True),
+        _layer(
+            "context_agent",
+            "子代理上下文决议",
+            _context_agent_decision(curator_plan),
+            items=[_context_agent_debug(curator_plan)],
+        ),
+        _layer("rag", "检索参考", retrieved_context or "（本轮无额外检索资料）"),
+        _layer("recent_chat", "最近对话", _format_history(history)),
+        _layer("user_input", "玩家本轮输入", user_input or "（空）"),
+    ]
+
+    prompt_parts = []
+    debug_layers = []
+    for layer in layers:
+        trimmed = _trim(layer["content"], MAX_LAYER_CHARS.get(layer["id"], 1800))
+        if not trimmed:
+            continue
+        prompt_parts.append(f"【{layer['title']}】\n{trimmed}")
+        debug_layers.append({
+            "id": layer["id"],
+            "title": layer["title"],
+            "chars": len(trimmed),
+            "estimated_tokens": _estimate_tokens(trimmed),
+            "sticky": layer.get("sticky", False),
+            "source": layer.get("source", ""),
+            "preview": _preview(trimmed),
+            "items": layer.get("items", []),
+        })
+
+    prompt = "\n\n".join(prompt_parts)
+    cache_plan = _cache_plan(debug_layers, prompt_parts)
+    debug = {
+        "total_chars": len(prompt),
+        "estimated_tokens": _estimate_tokens(prompt),
+        "layers": debug_layers,
+        "cache_plan": cache_plan,
+        "active_character_cards": [_strip_card_text(card) for card in npc_cards],
+        "active_worldbook": [_strip_worldbook_text(entry) for entry in worldbook],
+        "timeline": timeline_layer["debug"],
+        "worldline": worldline_layer["debug"],
+        "curator_plan": curator_plan or {},
+    }
+    return {"prompt": prompt, "debug": debug}
+
+
+def _load_characters(script_id: int | None = None, book_id: int | None = None) -> dict[str, Any]:
+    """优先从 DB character_cards 取，失败/为空时回退 JSON。"""
+    if script_id or book_id:
+        try:
+            db_chars = _load_characters_db(script_id=script_id, book_id=book_id)
+            if db_chars:
+                return db_chars
+        except Exception:
+            pass
+    try:
+        with open(CHAR_IDX, "r", encoding="utf-8") as f:
+            return json.load(f).get("characters", {})
+    except Exception:
+        return {}
+
+
+def _load_characters_db(script_id: int | None, book_id: int | None) -> dict[str, Any]:
+    """从 character_cards 表读取该 script/book 启用的角色卡，转成 JSON 风格 dict。"""
+    from platform_app.db import connect
+    where_clauses = ["enabled = true"]
+    params: list[Any] = []
+    if script_id:
+        where_clauses.append("script_id = %s")
+        params.append(int(script_id))
+    elif book_id:
+        where_clauses.append("book_id = %s")
+        params.append(int(book_id))
+    sql = (
+        "select name, aliases, identity, appearance, personality, speech_style, "
+        "current_status, secrets, sample_dialogue, token_budget, priority "
+        "from character_cards where " + " and ".join(where_clauses) +
+        " order by priority desc, id asc"
+    )
+    with connect() as db:
+        rows = db.execute(sql, params).fetchall()
+    out: dict[str, Any] = {}
+    for r in rows:
+        out[r["name"]] = {
+            "aliases": r["aliases"] or [],
+            "identity": r["identity"] or "",
+            "appearance": r["appearance"] or "",
+            "personality": r["personality"] or "",
+            "speech_style": r["speech_style"] or "",
+            "current_status": r["current_status"] or "",
+            "secrets": r["secrets"] or "",
+            "sample_dialogue": r["sample_dialogue"] or [],
+            "priority": int(r["priority"] or 100),
+            "token_budget": int(r["token_budget"] or 450),
+        }
+    return out
+
+
+def _load_worldbook_db(script_id: int | None, book_id: int | None) -> list[dict[str, Any]]:
+    """从 worldbook_entries 取启用条目；返回 _worldbook_entries 风格的 list。"""
+    from platform_app.db import connect
+    where_clauses = ["enabled = true"]
+    params: list[Any] = []
+    if script_id:
+        where_clauses.append("script_id = %s")
+        params.append(int(script_id))
+    elif book_id:
+        where_clauses.append("book_id = %s")
+        params.append(int(book_id))
+    sql = (
+        "select id, title, content, keys, regex_keys, priority, token_budget "
+        "from worldbook_entries where " + " and ".join(where_clauses) +
+        " order by priority desc, id asc"
+    )
+    with connect() as db:
+        rows = db.execute(sql, params).fetchall()
+    out = []
+    for r in rows:
+        out.append({
+            "id": f"db_{r['id']}",
+            "title": r["title"] or "",
+            "keys": r["keys"] or [],
+            "regex": r["regex_keys"] or [],
+            "priority": int(r["priority"] or 50),
+            "text": r["content"] or "",
+            "token_budget": int(r["token_budget"] or 250),
+        })
+    return out
+
+
+def _load_world() -> dict[str, Any]:
+    with open(WORLD_IDX, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _story_rules() -> str:
+    return "\n".join([
+        "这是沉浸式文字 RPG。GM 只描写玩家角色能感知或通过合理渠道获知的信息。",
+        "保持原著风格：克制、精确、信息密度高，不把 NPC 写成答题机器。",
+        "不要替玩家决定行动。结尾可以给压力、线索或抉择，但不代替玩家选择。",
+        "玩家行动可能改变原著分支，世界书和角色卡优先维持人物逻辑与势力边界。",
+        "本轮发生状态变化时，在正文末尾追加结构化标签，方便系统写回存档。",
+    ])
+
+
+def _agent_runtime_rules() -> str:
+    return "\n".join([
+        "主 GM 不是单纯聊天回复，而是一轮受约束的剧情代理：先读取子代理决议和上下文包，再裁定本轮世界反应，最后输出正文与结构化写回标签。",
+        "不得绕过子代理给出的时间线锚点、必含事实和风险标记；如果上下文不足，正文中先说明可感知的不确定性，并用【记忆：需要补充的上下文】或【设定冲突：原因】标记。",
+        "所有会改变页面状态的内容必须通过结构化标签表达，由系统写回；不要只在自然语言里悄悄改变时间、地点、资源、关系或世界线变量。",
+        "玩家输入是最高优先级的行动意图；不要替玩家做未授权选择，只裁定行动后果、NPC反应和可见线索。",
+        "玩家使用 /set 开头时，这是强制设定写入请求；可改时间线、地点、世界观、人设、设定集和支持写回的变量，不得用旧时间线 locked 状态拒绝。",
+    ])
+
+
+def _context_agent_decision(plan: dict[str, Any] | None) -> str:
+    if not plan:
+        return "本轮没有大模型子代理决议；主 GM 必须按时间线层和检索参考保守生成。"
+    must_include = plan.get("must_include") or []
+    risk_flags = plan.get("risk_flags") or []
+    lines = [
+        f"子代理意图：{plan.get('intent') or '未说明'}",
+        f"目标时间线：{plan.get('timeline_target') or '未请求跳转'}",
+        f"检索查询：{plan.get('retrieval_query') or '未提供'}",
+        "必含事实：" + ("；".join(str(x) for x in must_include) if must_include else "无"),
+        "风险标记：" + ("；".join(str(x) for x in risk_flags) if risk_flags else "无"),
+        f"选择理由：{plan.get('reason') or '未说明'}",
+        "主 GM 只能把这些作为上下文选择结果使用，不得把子代理理由写成玩家可见事实。",
+    ]
+    return "\n".join(lines)
+
+
+def _context_agent_debug(plan: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "intent": (plan or {}).get("intent", ""),
+        "timeline_target": (plan or {}).get("timeline_target", ""),
+        "retrieval_query": (plan or {}).get("retrieval_query", ""),
+        "must_include": (plan or {}).get("must_include", []),
+        "risk_flags": (plan or {}).get("risk_flags", []),
+    }
+
+
+def _timeline_layer(state) -> dict[str, Any]:
+    world = state.data.get("world", {})
+    timeline = world.get("timeline", {})
+    pending = timeline.get("pending_jump") or {}
+    locked_label = world.get("time") or timeline.get("current_label") or ""
+    retrieval_label = locked_label
+    anchor = _safe_timeline_filter(retrieval_label)
+    if not anchor.get("anchor_chapter"):
+        previous = (timeline.get("last_transition") or {}).get("from")
+        if previous:
+            anchor = _safe_timeline_filter(previous)
+            retrieval_label = previous
+    target_anchor = _safe_timeline_filter(pending.get("to", "")) if pending else {}
+
+    lines = [
+        f"当前锁定时间线：{locked_label}",
+        f"当前阶段：{timeline.get('current_phase') or '未知'}",
+        f"锚定状态：{timeline.get('anchor_state') or 'locked'}",
+        f"原著检索锚点：第{anchor.get('anchor_chapter') or '?'}章 · {anchor.get('anchor_event') or '未命中'}",
+        f"允许检索章节窗口：{anchor.get('chapter_min') or '?'} - {anchor.get('chapter_max') or '?'}",
+    ]
+    if pending:
+        lines.extend([
+            f"玩家请求时间跳跃：{pending.get('from', '')} -> {pending.get('to', '')}",
+            f"目标原著匹配：第{target_anchor.get('anchor_chapter') or '?'}章 · {target_anchor.get('anchor_event') or '未能精确匹配'}",
+            "本轮必须先处理时间跳跃事务：默认尊重玩家的跳转/改线意图，接受则写出过渡/落点并输出【时间跳跃确认：目标时间】和【当前时间线：目标时间】；只有目标完全不可解析时才输出【询问玩家：...】。",
+            "在确认前，不要把玩家请求的未来时间当作已经发生；确认后才允许推进场景与更新位置/目标。",
+        ])
+    else:
+        lines.append("没有待确认时间跳跃；生成时必须保持当前时间线锚点，除非玩家本轮提出新跳跃。")
+
+    debug = {
+        "anchor_state": timeline.get("anchor_state") or "locked",
+        "current_label": locked_label,
+        "current_phase": timeline.get("current_phase") or "",
+        "pending_jump": pending,
+        "retrieval_label": retrieval_label,
+        "chapter_min": anchor.get("chapter_min"),
+        "chapter_max": anchor.get("chapter_max"),
+        "anchor_chapter": anchor.get("anchor_chapter"),
+        "anchor_event": anchor.get("anchor_event"),
+        "story_time_label": anchor.get("story_time_label"),
+        "confidence": anchor.get("confidence", 0.0),
+        "target_anchor": target_anchor,
+    }
+    return {"text": "\n".join(lines), "debug": debug}
+
+
+def _safe_timeline_filter(label: str) -> dict[str, Any]:
+    try:
+        return timeline_filter_for_label(label)
+    except Exception:
+        return {
+            "chapter_min": None,
+            "chapter_max": None,
+            "anchor_chapter": None,
+            "anchor_event": "",
+            "story_time_label": "",
+            "confidence": 0.0,
+        }
+
+
+def _worldline_layer(state) -> dict[str, Any]:
+    permissions = state.data.get("permissions", {})
+    worldline = state.data.get("worldline", {})
+    variables = worldline.get("user_variables", {})
+    mode = permissions.get("mode", "full_access")
+    variable_lines = []
+    for name, info in variables.items():
+        variable_lines.append(f"- {name} = {info.get('value', '')}（硬约束）")
+    if not variable_lines:
+        variable_lines.append("- 暂无用户变量。")
+
+    lines = [
+        f"LLM 写入权限：{_permission_label(mode)}",
+        "用户变量与世界线推演规则：",
+        *variable_lines,
+        "推演机制：先把用户变量视作不可违背的硬条件，再结合当前时间线、世界书、角色卡和原著召回推演下一步局势。",
+        "/set 生成的用户变量是最高优先级硬约束；如果它改变时间线、地点、世界观或人设，主 GM 必须按新设定写回结构化标签，而不是维护旧设定。",
+        "如果推演满足全部用户变量，输出【设定校验：通过】；如果存在矛盾，输出【设定冲突：原因】，并不要把冲突推演写成事实。",
+        "可输出【世界线推演：简要推演结果】供 UI 记录。",
+        "在权限允许时，可用【状态写入：path=value】修改 UI/存档变量；常用 path：player.name、player.role、player.background、player.current_location、world.time、world.timeline.current_phase、world.known_events、memory.main_quest、memory.current_objective、memory.resources、memory.abilities、memory.facts、memory.pinned、memory.notes、relationships.角色名、worldline.user_variables.变量名、ui.自定义变量。",
+        "列表字段可用【状态追加：memory.resources=资源A、资源B】追加；权限模式由用户在 UI 选择，GM 不应主动修改权限模式。",
+        "当需要玩家决定下一步计划、分支方向或设定取舍时，输出【询问玩家：问题｜选项：选项A、选项B、选项C】；这类问题永远不因完全访问权限而自动跳过。",
+    ]
+    debug = {
+        "permission_mode": mode,
+        "permission_label": _permission_label(mode),
+        "user_variables": variables,
+        "last_validation": worldline.get("last_validation"),
+        "last_projection": worldline.get("last_projection"),
+        "pending_projection": worldline.get("pending_projection"),
+        "custom_ui": worldline.get("custom_ui", {}),
+        "pending_writes": permissions.get("pending_writes", [])[-5:],
+    }
+    return {"text": "\n".join(lines), "debug": debug}
+
+
+def _permission_label(mode: str) -> str:
+    return {
+        "default": "默认权限",
+        "auto_review": "自动审查",
+        "full_access": "完全访问权限",
+    }.get(mode, "完全访问权限")
+
+
+def _player_card(state, chars: dict[str, Any]) -> dict[str, str]:
+    player = state.data["player"]
+    name = player.get("name") or "玩家"
+    card = chars.get(name) or chars.get("杭雁菱") or {}
+    text = _format_card(name, {
+        "identity": player.get("role") or card.get("identity", ""),
+        "appearance": card.get("appearance", ""),
+        "personality": card.get("personality", ""),
+        "speech_style": card.get("speech_style", ""),
+        "current_status": player.get("background") or card.get("current_status", ""),
+        "secrets": card.get("secrets", ""),
+        "sample_dialogue": card.get("sample_dialogue", []),
+    })
+    return {"name": name, "text": text}
+
+
+def _active_character_cards(scan_text: str, chars: dict[str, Any], player_name: str) -> list[dict[str, Any]]:
+    active = []
+    for name, card in chars.items():
+        if name == player_name:
+            continue
+        aliases = [name, *(card.get("aliases") or [])]
+        matched = [alias for alias in aliases if alias and alias in scan_text]
+        if not matched:
+            continue
+        active.append({
+            "name": name,
+            "matched": matched[:4],
+            "priority": 100 + len(matched) * 8,
+            "text": _format_card(name, card),
+        })
+    active.sort(key=lambda x: x["priority"], reverse=True)
+    return active[:4]
+
+
+def _active_worldbook(
+    scan_text: str,
+    world: dict[str, Any],
+    state,
+    script_id: int | None = None,
+    book_id: int | None = None,
+) -> list[dict[str, Any]]:
+    # 先取 DB worldbook 条目；为空时回退 JSON 内置条目
+    entries: list[dict[str, Any]] = []
+    if script_id or book_id:
+        try:
+            entries = _load_worldbook_db(script_id=script_id, book_id=book_id)
+        except Exception:
+            entries = []
+    if not entries:
+        entries = _worldbook_entries(world, state)
+    active = []
+    for entry in entries:
+        matched = [key for key in entry["keys"] if key and key in scan_text]
+        if entry.get("regex"):
+            matched.extend(pattern for pattern in entry["regex"] if re.search(pattern, scan_text))
+        if not matched:
+            continue
+        entry = dict(entry)
+        entry["matched"] = matched[:5]
+        entry["score"] = entry.get("priority", 50) + len(matched) * 6
+        active.append(entry)
+    active.sort(key=lambda x: (x["score"], x.get("priority", 0)), reverse=True)
+    return active[:6]
+
+
+def _worldbook_entries(world: dict[str, Any], state) -> list[dict[str, Any]]:
+    concepts = world.get("key_concepts", {})
+    factions = world.get("key_factions", {})
+    power = world.get("power_system", {})
+    current_berlin = world.get("current_berlin", {})
+    return [
+        _wb("berlin_pressure", "柏林战时暗流", ["柏林", "战役", "大西洋", "军事顾问"], 96,
+            f"柏林处于战时前夕：{current_berlin.get('atmosphere', '')} 风险等级：{current_berlin.get('risk_level', '')}。在场势力包括："
+            + "；".join(current_berlin.get("power_presence", []))),
+        _wb("toulouse", "图卢兹失守", ["图卢兹", "失守", "地联溃败", "反扑"], 88,
+            world.get("current_situation", "")),
+        _wb("visar", "薇瑟帝国与 Aldnoal", ["薇瑟", "帝国", "aldnoal", "Aldnoah", "烈锋"], 86,
+            f"{factions.get('薇瑟帝国', '')}。aldnoal：{concepts.get('aldnoal', '')}。烈锋实验：{concepts.get('烈锋实验', '')}"),
+        _wb("earth_federation", "地联势力差异", ["地联", "太平洋方面", "大西洋方面", "伊奈帆"], 82,
+            f"大西洋方面：{factions.get('地联大西洋方面', '')}。太平洋方面：{factions.get('地联太平洋方面', '')}。"),
+        _wb("snake_network", "蛇信情报网", ["蛇信", "薛克", "监视"], 80,
+            factions.get("蛇信", "")),
+        _wb("troyard_branch", "特洛耶德欧洲分支", ["特洛耶德", "赫克勒斯", "旧楼", "烈锋实验"], 78,
+            factions.get("特洛耶德家族欧洲分支", "")),
+        _wb("power_scale", "战力体系", ["魔力", "渊戮", "顶王", "烈锋", "甲胄骑士"], 76,
+            f"薇瑟战力：{'、'.join(power.get('visar_empire', {}).get('levels', []))}。"
+            f"地联战力：{'、'.join(power.get('earth_federation', {}).get('levels', []))}。"
+            "玩家的魔力∞是世界规则之外变量，但仍需要通过剧情摸索控制方式。"),
+        _wb("player_resources", "玩家当前资源", ["资源", "特殊小队", "整备班", "甲胄骑士", "权限"], 90,
+            "；".join(state.data.get("memory", {}).get("resources", [])) or "暂无明确可支配资源。"),
+    ]
+
+
+def _wb(entry_id: str, title: str, keys: list[str], priority: int, text: str) -> dict[str, Any]:
+    return {
+        "id": entry_id,
+        "title": title,
+        "keys": keys,
+        "regex": [],
+        "priority": priority,
+        "text": text,
+    }
+
+
+def _format_card(name: str, card: dict[str, Any]) -> str:
+    sample = "；".join((card.get("sample_dialogue") or [])[:3])
+    lines = [
+        f"【{name}】",
+        f"身份：{card.get('identity') or '未知'}",
+        f"外貌：{card.get('appearance') or '未记录'}",
+        f"性格：{card.get('personality') or '未记录'}",
+        f"说话风格：{card.get('speech_style') or '未记录'}",
+        f"当前状态：{card.get('current_status') or '未记录'}",
+    ]
+    if card.get("secrets"):
+        lines.append(f"隐藏信息：{card.get('secrets')}")
+    if sample:
+        lines.append(f"台词示例：{sample}")
+    return "\n".join(lines)
+
+
+def _format_history(history: list[dict]) -> str:
+    if not history:
+        return "（暂无最近对话）"
+    lines = []
+    for msg in history:
+        role = "玩家" if msg.get("role") == "user" else "GM"
+        lines.append(f"{role}：{msg.get('content', '')}")
+    return "\n\n".join(lines)
+
+
+def _recent_text(history: list[dict]) -> str:
+    return "\n".join(str(msg.get("content", "")) for msg in history)
+
+
+def _layer(layer_id: str, title: str, content: str, **extra) -> dict[str, Any]:
+    return {"id": layer_id, "title": title, "content": content or "", **extra}
+
+
+def _trim(text: str, max_chars: int) -> str:
+    text = (text or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 20].rstrip() + "\n……（已按预算截断）"
+
+
+def _preview(text: str, limit: int = 140) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    return text[:limit] + ("..." if len(text) > limit else "")
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, len(text or "") // 2)
+
+
+def _cache_plan(debug_layers: list[dict[str, Any]], prompt_parts: list[str]) -> dict[str, Any]:
+    # 与 build_context_bundle 的 layer 顺序对齐：rules → agent_runtime → player_card
+    # 是真正的稳定前缀，每轮不变；后面接 npc_cards/worldbook 算半稳定（可选纳入）。
+    strict_stable_ids = ["rules", "agent_runtime", "player_card"]
+    semi_stable_ids = ["npc_cards", "worldbook"]
+
+    stable_chars = 0
+    stable_tokens = 0
+    stable_titles: list[str] = []
+    semi_chars = 0
+    semi_tokens = 0
+    semi_titles: list[str] = []
+    # 严格按 layer 顺序累加，遇到第一个不属于"已知稳定前缀"的就 break
+    i = 0
+    for layer in debug_layers:
+        lid = layer["id"]
+        if lid == strict_stable_ids[i] if i < len(strict_stable_ids) else False:
+            stable_chars += int(layer.get("chars", 0))
+            stable_tokens += int(layer.get("estimated_tokens", 0))
+            stable_titles.append(layer.get("title", ""))
+            i += 1
+            continue
+        # 严格稳定结束后，紧接着如果是 semi-stable 也算缓存候选
+        if lid in semi_stable_ids and i >= len(strict_stable_ids):
+            semi_chars += int(layer.get("chars", 0))
+            semi_tokens += int(layer.get("estimated_tokens", 0))
+            semi_titles.append(layer.get("title", ""))
+            continue
+        break
+    total_tokens = sum(int(layer.get("estimated_tokens", 0)) for layer in debug_layers)
+    joined_stable = "\n\n".join(prompt_parts[:len(stable_titles)])
+    extended_titles = stable_titles + semi_titles
+    extended_chars = stable_chars + semi_chars
+    extended_tokens = stable_tokens + semi_tokens
+    joined_extended = "\n\n".join(prompt_parts[:len(extended_titles)])
+    return {
+        "strategy": "stable-prefix-first",
+        "request_shape": "rules -> agent_runtime -> player_card -> (npc/world) -> dynamic -> user_input",
+        # 严格稳定（rules/agent_runtime/player_card）
+        "stable_prefix_layers": stable_titles,
+        "stable_prefix_chars": stable_chars,
+        "stable_prefix_tokens": stable_tokens,
+        # 扩展候选（包含 npc_cards/worldbook，玩家不换角色时也稳定）
+        "cacheable_prefix_layers": extended_titles,
+        "cacheable_prefix_chars": extended_chars,
+        "cacheable_prefix_tokens": extended_tokens,
+        "volatile_tail_tokens": max(0, total_tokens - extended_tokens),
+        "estimated_cacheable_ratio": round(extended_tokens / max(total_tokens, 1), 3),
+        "strict_stable_ratio": round(stable_tokens / max(total_tokens, 1), 3),
+        "stable_prefix_hash": hashlib.sha256(joined_stable.encode("utf-8")).hexdigest()[:16] if joined_stable else "",
+        "cacheable_prefix_hash": hashlib.sha256(joined_extended.encode("utf-8")).hexdigest()[:16] if joined_extended else "",
+        "note": "真实缓存命中率由模型厂商返回的用量字段确认；当前请求形状把动态 RAG/context_agent/recent_chat 都放到末尾。",
+    }
+
+
+def _strip_card_text(card: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": card["name"],
+        "matched": card.get("matched", []),
+        "priority": card.get("priority", 0),
+        "preview": _preview(card.get("text", "")),
+    }
+
+
+def _strip_worldbook_text(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": entry["id"],
+        "title": entry["title"],
+        "matched": entry.get("matched", []),
+        "priority": entry.get("priority", 0),
+        "score": entry.get("score", 0),
+        "preview": _preview(entry.get("text", "")),
+    }

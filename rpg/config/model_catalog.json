@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "selected": {
+    "api_id": "vertex_ai",
+    "model_id": "gemini-3.5-flash"
+  },
+  "apis": [
+    {
+      "id": "vertex_ai",
+      "display_name": "Vertex AI",
+      "kind": "vertex_ai",
+      "enabled": true,
+      "credential_ref": "rpg/vertex_sa.json",
+      "models": [
+        {
+          "id": "gemini-3.5-flash",
+          "real_name": "gemini-3.5-flash",
+          "display_name": "Gemini 3.5",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "file_input"
+          ]
+        },
+        {
+          "id": "gemini-2.5-flash",
+          "real_name": "gemini-2.5-flash",
+          "display_name": "Gemini 2.5 Flash",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "file_input"
+          ]
+        },
+        {
+          "id": "gemini-2.5-pro",
+          "real_name": "gemini-2.5-pro",
+          "display_name": "Gemini 2.5 Pro",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "file_input"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "display_name": "Anthropic",
+      "kind": "anthropic",
+      "enabled": false,
+      "credential_env": "ANTHROPIC_API_KEY",
+      "models": [
+        {
+          "id": "claude-opus-4-5",
+          "real_name": "claude-opus-4-5",
+          "display_name": "Claude Opus 4.5",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "file_input"
+          ]
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "real_name": "claude-sonnet-4-6",
+          "display_name": "Claude Sonnet 4.6",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "file_input"
+          ]
+        }
+      ]
+    }
+  ]
+}

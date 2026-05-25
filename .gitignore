@@ -1,19 +1,68 @@
-# 向量索引数据库（体积大、可重建，不纳入版本控制）
-.webnovel/vectors.db
-.webnovel/vectors.db.*.bak
-
-# 备份目录
-.webnovel/backups/
-
-# 性能日志（不需要版本化）
-.webnovel/perf_*.jsonl
-
-# Python 缓存
+# ──────────────────────────────────────────────────────────────────
+#  Python / 运行时缓存
+# ──────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
+*.pyo
 
-# macOS
+# ──────────────────────────────────────────────────────────────────
+#  macOS / 编辑器临时
+# ──────────────────────────────────────────────────────────────────
 .DS_Store
 
-# 环境变量（含 API key，绝不入库）
+# ──────────────────────────────────────────────────────────────────
+#  secrets — 任何泄露会导致 RCE / 凭证泄露 / 用户数据被解的
+# ──────────────────────────────────────────────────────────────────
 .env
+rpg/vertex_sa.json
+# AES-GCM 主密钥，泄露 = 所有用户存的 API key 可解
+rpg/platform_data/master.key
+# 用户上传文件 / 分片暂存 / 已导入剧本（私人正文）
+rpg/platform_data/library/
+rpg/platform_data/upload_chunks/
+rpg/platform_data/scripts/
+
+# ──────────────────────────────────────────────────────────────────
+#  本地虚拟环境
+# ──────────────────────────────────────────────────────────────────
+rpg_env/
+
+# ──────────────────────────────────────────────────────────────────
+#  小说工作区数据库（体积大且可重建，不入库）
+# ──────────────────────────────────────────────────────────────────
+.webnovel/vectors.db
+.webnovel/vectors.db.*.bak
+.webnovel/backups/
+.webnovel/perf_*.jsonl
+.webnovel/chapter_facts.db
+.webnovel/index.db
+.webnovel/observability/*.jsonl
+
+# ──────────────────────────────────────────────────────────────────
+#  RPG 后端运行时产物（重启可重建 / 玩家私有）
+# ──────────────────────────────────────────────────────────────────
+# 分支状态快照（大量 JSON）
+rpg/platform_data/branch_states/
+# 旧版 JSON runtime 备份（B2 后只在迁移时用）
+rpg/platform_data/runtime/
+# 运行时快照
+rpg/platform_data/runtime_states/
+# 单用户本地存档
+rpg/saves/
+# 老版本检索 fallback JSON
+rpg/indexes/
+# 老 sqlite db（B0/B1 已 fade out）
+rpg/db/
+# Claude Design 拖入静态资源（可重建）
+rpg/claude_design_upload/
+
+# ──────────────────────────────────────────────────────────────────
+#  前端构建产物 / 用户上传图
+# ──────────────────────────────────────────────────────────────────
+# 用户上传图片（私人 / 体积大）
+frontend/uploads/
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+# 截图素材（体积变化大）
+frontend/screenshots/

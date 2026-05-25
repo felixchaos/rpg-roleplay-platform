@@ -1,0 +1,1154 @@
+from __future__ import annotations
+
+import atexit
+import os
+from contextlib import contextmanager
+from typing import Any, Iterator
+
+import psycopg
+from psycopg_pool import ConnectionPool
+from psycopg.rows import dict_row
+
+
+DEFAULT_DATABASE_URL = "postgresql:///rpg_platform"
+DEFAULT_LIMIT = 50
+MAX_LIMIT = 200
+_pool: ConnectionPool | None = None
+
+
+def database_url() -> str:
+    return (
+        os.environ.get("DATABASE_URL")
+        or os.environ.get("POSTGRES_URL")
+        or os.environ.get("RPG_DATABASE_URL")
+        or DEFAULT_DATABASE_URL
+    )
+
+
+@contextmanager
+def connect() -> Iterator[psycopg.Connection]:
+    with get_pool().connection() as db:
+        yield db
+
+
+def get_pool() -> ConnectionPool:
+    global _pool
+    if _pool is None:
+        _pool = ConnectionPool(
+            conninfo=database_url(),
+            min_size=int(os.environ.get("RPG_DB_POOL_MIN", "1")),
+            max_size=int(os.environ.get("RPG_DB_POOL_MAX", "10")),
+            timeout=float(os.environ.get("RPG_DB_POOL_TIMEOUT", "8")),
+            kwargs={"row_factory": dict_row},
+        )
+    return _pool
+
+
+def close_pool() -> None:
+    global _pool
+    if _pool is not None:
+        _pool.close()
+        _pool = None
+
+
+_DB_INITED = False
+_DB_INIT_LOCK = __import__("threading").Lock()
+
+# Postgres advisory lock 唯一 ID（任意 int64 即可，固定即可）
+# 'rpg_platform_migrate' 的 hash → 一个稳定的常量
+MIGRATION_ADVISORY_LOCK_ID = 0x52504D49475254AB  # "RPMIGRT" + ab
+MIGRATION_LOCK_TIMEOUT_MS = int(os.environ.get("RPG_MIGRATION_LOCK_TIMEOUT_MS", "30000"))
+
+
+def init_db(force: bool = False) -> None:
+    """启动时执行一次 schema 创建 + migration；请求路径调用直接 short-circuit。
+
+    历史上每个 endpoint 都调 init_db() 触发 DDL，会与并发 login/register 的
+    schema lock 撞死锁。现在请求路径只读 _DB_INITED flag 立即返回，DDL 只在
+    module load / 显式 reset 时跑一次。force=True 用于运维强制重新跑 migration。
+
+    生产部署：设置 RPG_SKIP_AUTO_MIGRATE=1，由 CI/deploy 脚本提前运行
+    `python -m platform_app.migrate up`，让 worker 进程永远不碰 DDL（更快、更安全）。
+    若 schema 落后于代码里登记的 MIGRATIONS 列表，init_db 会 fail-fast。
+    """
+    global _DB_INITED
+    if _DB_INITED and not force:
+        return
+    with _DB_INIT_LOCK:
+        if _DB_INITED and not force:
+            return
+        if os.environ.get("RPG_SKIP_AUTO_MIGRATE") == "1":
+            # 仅做版本检查：schema 落后就 raise
+            _assert_schema_up_to_date()
+        else:
+            # 取 advisory lock，串行化 DDL，防止多 worker / 多进程同时建表撞锁
+            with _migration_advisory_lock():
+                _do_init_db()
+                _apply_versioned_migrations()
+                try_enable_pgvector()
+        _DB_INITED = True
+
+
+def reset_db_init_flag() -> None:
+    """单元测试用：强制下次 init_db 重新跑"""
+    global _DB_INITED
+    _DB_INITED = False
+
+
+# ── 迁移锁 + 版本检查 ─────────────────────────────────────────────────
+@contextmanager
+def _migration_advisory_lock():
+    """Postgres advisory lock 串行化 DDL 阶段。
+
+    - 用独立短连接避免污染 pool
+    - 设置 lock_timeout，等不到锁直接 raise 而不是无限等
+    - 出现异常也会释放（连接关闭自动释放）
+    """
+    conn = psycopg.connect(database_url())
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"set lock_timeout = {MIGRATION_LOCK_TIMEOUT_MS}")
+            cur.execute("select pg_advisory_lock(%s)", (MIGRATION_ADVISORY_LOCK_ID,))
+        conn.commit()
+        try:
+            yield conn
+        finally:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("select pg_advisory_unlock(%s)", (MIGRATION_ADVISORY_LOCK_ID,))
+                conn.commit()
+            except Exception:
+                pass
+    finally:
+        conn.close()
+
+
+def _assert_schema_up_to_date() -> None:
+    """生产模式下的 fail-fast 检查：DB 已应用版本必须 >= 代码登记的最高版本。"""
+    expected_versions = {v for v, _, _ in MIGRATIONS}
+    if not expected_versions:
+        return
+    try:
+        with connect() as db:
+            row = db.execute(
+                "select to_regclass('schema_migrations') as exists_"
+            ).fetchone()
+            if not row or not row.get("exists_"):
+                raise RuntimeError(
+                    "schema_migrations 表不存在；请先运行 `python -m platform_app.migrate up`"
+                )
+            applied = {int(r["version"]) for r in db.execute(
+                "select version from schema_migrations"
+            ).fetchall()}
+    except psycopg.OperationalError as exc:
+        raise RuntimeError(f"无法连接数据库做版本检查: {exc}") from exc
+    missing = sorted(expected_versions - applied)
+    if missing:
+        raise RuntimeError(
+            f"schema 落后于代码：缺少 migration {missing}。"
+            f"请运行 `python -m platform_app.migrate up` 后再启动服务。"
+        )
+
+
+def _do_init_db() -> None:
+    """实际的 DDL 跑批，不要直接调，走 init_db()"""
+    with connect() as db:
+        db.execute("create extension if not exists pgcrypto")
+        db.execute("create extension if not exists pg_trgm")
+        db.execute(
+            """
+            create table if not exists users (
+              id bigint generated by default as identity primary key,
+              username text unique not null,
+              password_hash text not null,
+              display_name text not null,
+              bio text not null default '',
+              role text not null default 'user',
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now()
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists sessions (
+              token text primary key,
+              user_id bigint not null references users(id) on delete cascade,
+              created_at timestamptz not null default now(),
+              expires_at timestamptz not null
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists scripts (
+              id bigint generated by default as identity primary key,
+              owner_id bigint not null references users(id) on delete cascade,
+              title text not null,
+              description text not null default '',
+              source_path text not null default '',
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now()
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists game_saves (
+              id bigint generated by default as identity primary key,
+              user_id bigint not null references users(id) on delete cascade,
+              script_id bigint not null references scripts(id) on delete cascade,
+              title text not null,
+              state_path text not null,
+              active_branch_node_id bigint,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now()
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists branch_nodes (
+              id bigint generated by default as identity primary key,
+              save_id bigint not null references game_saves(id) on delete cascade,
+              parent_id bigint references branch_nodes(id) on delete cascade,
+              turn_index integer not null,
+              role text not null,
+              title text not null,
+              summary text not null default '',
+              content_preview text not null default '',
+              state_path text not null default '',
+              created_at timestamptz not null default now()
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists branch_commits (
+              id bigint generated by default as identity primary key,
+              save_id bigint not null references game_saves(id) on delete cascade,
+              parent_id bigint references branch_commits(id) on delete cascade,
+              object_hash text not null,
+              tree_hash text not null default '',
+              turn_index integer not null,
+              kind text not null,
+              title text not null,
+              message text not null default '',
+              summary text not null default '',
+              content_preview text not null default '',
+              state_path text not null default '',
+              player_input text not null default '',
+              gm_output text not null default '',
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now(),
+              unique(save_id, object_hash)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists branch_refs (
+              id bigint generated by default as identity primary key,
+              save_id bigint not null references game_saves(id) on delete cascade,
+              name text not null,
+              kind text not null default 'head',
+              target_commit_id bigint references branch_commits(id) on delete set null,
+              is_active boolean not null default false,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now(),
+              unique(save_id, name)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists runtime_checkouts (
+              id bigint generated by default as identity primary key,
+              user_id bigint not null references users(id) on delete cascade,
+              save_id bigint not null references game_saves(id) on delete cascade,
+              ref_id bigint references branch_refs(id) on delete set null,
+              commit_id bigint references branch_commits(id) on delete set null,
+              runtime_state_path text not null default '',
+              updated_at timestamptz not null default now(),
+              unique(user_id, save_id)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists settings (
+              user_id bigint not null references users(id) on delete cascade,
+              key text not null,
+              value jsonb not null,
+              updated_at timestamptz not null default now(),
+              primary key (user_id, key)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists assets (
+              id bigint generated by default as identity primary key,
+              user_id bigint not null references users(id) on delete cascade,
+              name text not null,
+              rel_path text not null,
+              mime text not null,
+              kind text not null,
+              size bigint not null,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now()
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists script_chapters (
+              id bigint generated by default as identity primary key,
+              script_id bigint not null references scripts(id) on delete cascade,
+              chapter_index integer not null,
+              title text not null,
+              content text not null,
+              word_count integer not null default 0,
+              volume_title text not null default '',
+              source_marker text not null default '',
+              confidence real not null default 0,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now(),
+              unique(script_id, chapter_index)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists books (
+              id bigint generated by default as identity primary key,
+              owner_id bigint not null references users(id) on delete cascade,
+              script_id bigint unique references scripts(id) on delete cascade,
+              title text not null,
+              slug text not null,
+              description text not null default '',
+              default_language text not null default 'zh-CN',
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now(),
+              unique(owner_id, slug)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists documents (
+              id bigint generated by default as identity primary key,
+              book_id bigint not null references books(id) on delete cascade,
+              script_id bigint not null references scripts(id) on delete cascade,
+              chapter_id bigint references script_chapters(id) on delete cascade,
+              source_kind text not null default 'chapter',
+              source_ref text not null,
+              title text not null default '',
+              content text not null,
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now(),
+              unique(book_id, source_kind, source_ref)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists document_chunks (
+              id bigint generated by default as identity primary key,
+              document_id bigint not null references documents(id) on delete cascade,
+              book_id bigint not null references books(id) on delete cascade,
+              script_id bigint not null references scripts(id) on delete cascade,
+              chapter_id bigint references script_chapters(id) on delete cascade,
+              chapter_index integer not null default 0,
+              chunk_index integer not null,
+              content text not null,
+              token_count integer not null default 0,
+              embedding jsonb,
+              embedding_model text not null default '',
+              search_tsv tsvector generated always as (to_tsvector('simple', content)) stored,
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now(),
+              unique(document_id, chunk_index)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists chapter_facts (
+              id bigint generated by default as identity primary key,
+              book_id bigint not null references books(id) on delete cascade,
+              script_id bigint not null references scripts(id) on delete cascade,
+              document_id bigint references documents(id) on delete cascade,
+              chapter_id bigint references script_chapters(id) on delete cascade,
+              chapter integer not null,
+              title text not null default '',
+              viewpoint text not null default '',
+              summary text not null default '',
+              story_phase text not null default '',
+              story_time_label text not null default '',
+              scene_count integer not null default 0,
+              token_estimate integer not null default 0,
+              characters jsonb not null default '[]'::jsonb,
+              locations jsonb not null default '[]'::jsonb,
+              factions jsonb not null default '[]'::jsonb,
+              concepts jsonb not null default '[]'::jsonb,
+              items jsonb not null default '[]'::jsonb,
+              relationships jsonb not null default '[]'::jsonb,
+              events jsonb not null default '[]'::jsonb,
+              confidence numeric(4,3) not null default 0.500,
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now(),
+              unique(script_id, chapter)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists character_cards (
+              id bigint generated by default as identity primary key,
+              book_id bigint not null references books(id) on delete cascade,
+              script_id bigint not null references scripts(id) on delete cascade,
+              name text not null,
+              aliases jsonb not null default '[]'::jsonb,
+              identity text not null default '',
+              appearance text not null default '',
+              personality text not null default '',
+              speech_style text not null default '',
+              current_status text not null default '',
+              secrets text not null default '',
+              sample_dialogue jsonb not null default '[]'::jsonb,
+              token_budget integer not null default 450,
+              priority integer not null default 100,
+              enabled boolean not null default true,
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now(),
+              unique(script_id, name)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists worldbook_entries (
+              id bigint generated by default as identity primary key,
+              book_id bigint not null references books(id) on delete cascade,
+              script_id bigint not null references scripts(id) on delete cascade,
+              title text not null,
+              content text not null,
+              keys jsonb not null default '[]'::jsonb,
+              regex_keys jsonb not null default '[]'::jsonb,
+              priority integer not null default 50,
+              token_budget integer not null default 600,
+              insertion_position text not null default 'worldbook',
+              sticky_turns integer not null default 0,
+              cooldown_turns integer not null default 0,
+              probability numeric(5,2) not null default 100.00,
+              character_filter jsonb not null default '[]'::jsonb,
+              scene_filter jsonb not null default '[]'::jsonb,
+              enabled boolean not null default true,
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now(),
+              unique(script_id, title)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists game_sessions (
+              id bigint generated by default as identity primary key,
+              save_id bigint unique references game_saves(id) on delete cascade,
+              book_id bigint references books(id) on delete set null,
+              script_id bigint references scripts(id) on delete cascade,
+              user_id bigint not null references users(id) on delete cascade,
+              title text not null default '未命名会话',
+              model_name text not null default '',
+              state jsonb not null default '{}'::jsonb,
+              memory_mode text not null default 'normal',
+              permission_mode text not null default 'full_access',
+              worldline jsonb not null default '{}'::jsonb,
+              turn integer not null default 0,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now()
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists messages (
+              id bigint generated by default as identity primary key,
+              session_id bigint not null references game_sessions(id) on delete cascade,
+              save_id bigint references game_saves(id) on delete cascade,
+              turn integer not null,
+              role text not null check (role in ('system', 'user', 'assistant', 'tool')),
+              content text not null,
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now()
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists memories (
+              id bigint generated by default as identity primary key,
+              session_id bigint references game_sessions(id) on delete cascade,
+              book_id bigint references books(id) on delete cascade,
+              user_id bigint references users(id) on delete cascade,
+              bucket text not null check (bucket in ('pinned', 'facts', 'abilities', 'resources', 'notes', 'summary')),
+              content text not null,
+              importance integer not null default 50,
+              source_message_id bigint references messages(id) on delete set null,
+              embedding jsonb,
+              embedding_model text not null default '',
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now()
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists worldline_variables (
+              id bigint generated by default as identity primary key,
+              session_id bigint not null references game_sessions(id) on delete cascade,
+              key text not null,
+              value text not null,
+              locked boolean not null default true,
+              source text not null default 'user',
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now(),
+              unique(session_id, key)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists worldline_projections (
+              id bigint generated by default as identity primary key,
+              session_id bigint not null references game_sessions(id) on delete cascade,
+              turn integer not null,
+              projection text not null,
+              validated boolean not null default false,
+              validation_status text not null default 'none',
+              variables_snapshot jsonb not null default '{}'::jsonb,
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now()
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists context_runs (
+              id bigint generated by default as identity primary key,
+              session_id bigint references game_sessions(id) on delete cascade,
+              save_id bigint references game_saves(id) on delete cascade,
+              user_id bigint references users(id) on delete cascade,
+              turn integer not null default 0,
+              user_input text not null,
+              agent_steps jsonb not null default '[]'::jsonb,
+              curator_plan jsonb not null default '{}'::jsonb,
+              layers jsonb not null default '[]'::jsonb,
+              active_character_cards jsonb not null default '[]'::jsonb,
+              active_worldbook jsonb not null default '[]'::jsonb,
+              retrieved_chunks jsonb not null default '[]'::jsonb,
+              estimated_tokens integer not null default 0,
+              cache_plan jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now()
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists app_config (
+              key text primary key,
+              value jsonb not null,
+              updated_at timestamptz not null default now()
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists model_apis (
+              api_id text primary key,
+              display_name text not null,
+              kind text not null,
+              enabled boolean not null default true,
+              credential_ref text not null default '',
+              credential_env text not null default '',
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now()
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists model_entries (
+              id bigint generated by default as identity primary key,
+              api_id text not null references model_apis(api_id) on delete cascade,
+              model_id text not null,
+              real_name text not null,
+              display_name text not null,
+              enabled boolean not null default true,
+              capabilities jsonb not null default '[]'::jsonb,
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now(),
+              unique(api_id, model_id)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists mcp_servers (
+              server_id text primary key,
+              display_name text not null,
+              transport text not null default 'stdio',
+              command text not null default '',
+              args jsonb not null default '[]'::jsonb,
+              env jsonb not null default '{}'::jsonb,
+              enabled boolean not null default false,
+              scope text not null default 'local',
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now()
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists imported_skills (
+              skill_id text primary key,
+              name text not null,
+              path text not null,
+              enabled boolean not null default true,
+              metadata jsonb not null default '{}'::jsonb,
+              created_at timestamptz not null default now(),
+              updated_at timestamptz not null default now()
+            )
+            """
+        )
+        for table in (
+            "users",
+            "scripts",
+            "game_saves",
+            "branch_nodes",
+            "branch_commits",
+            "branch_refs",
+            "runtime_checkouts",
+            "assets",
+            "script_chapters",
+            "books",
+            "documents",
+            "document_chunks",
+            "chapter_facts",
+            "character_cards",
+            "worldbook_entries",
+            "game_sessions",
+            "messages",
+            "memories",
+            "worldline_variables",
+            "worldline_projections",
+            "context_runs",
+            "model_entries",
+        ):
+            db.execute(f"alter table {table} add column if not exists public_id uuid not null default gen_random_uuid()")
+            db.execute(f"alter table {table} add column if not exists row_version bigint not null default 1")
+            db.execute(f"create unique index if not exists idx_{table}_public_id on {table}(public_id)")
+        db.execute("alter table users add column if not exists updated_at timestamptz not null default now()")
+        db.execute("alter table scripts add column if not exists chapter_count integer not null default 0")
+        db.execute("alter table scripts add column if not exists word_count integer not null default 0")
+        db.execute("alter table scripts add column if not exists import_report jsonb not null default '{}'::jsonb")
+        db.execute("alter table branch_nodes add column if not exists summary text not null default ''")
+        db.execute("alter table branch_commits add column if not exists state_snapshot jsonb not null default '{}'::jsonb")
+        db.execute("alter table game_saves add column if not exists active_branch_ref_id bigint")
+        db.execute("alter table game_saves add column if not exists active_commit_id bigint")
+        db.execute("alter table game_saves add column if not exists state_snapshot jsonb not null default '{}'::jsonb")
+        db.execute("alter table runtime_checkouts add column if not exists state_snapshot jsonb not null default '{}'::jsonb")
+        db.execute("alter table runtime_checkouts add column if not exists snapshot_hash text not null default ''")
+        db.execute("alter table runtime_checkouts add column if not exists dirty boolean not null default false")
+        db.execute("alter table runtime_checkouts add column if not exists turn_at_commit integer not null default 0")
+        db.execute("alter table runtime_checkouts add column if not exists turn_runtime integer not null default 0")
+        db.execute("alter table context_runs add column if not exists status text not null default 'done'")
+        db.execute("alter table context_runs add column if not exists error text not null default ''")
+        db.execute("alter table context_runs add column if not exists duration_ms integer not null default 0")
+        db.execute("alter table context_runs add column if not exists started_at timestamptz not null default now()")
+        db.execute("alter table assets add column if not exists updated_at timestamptz not null default now()")
+        db.execute("create index if not exists idx_sessions_user_expires on sessions(user_id, expires_at desc)")
+        db.execute("create index if not exists idx_scripts_owner_updated on scripts(owner_id, updated_at desc, id desc)")
+        db.execute("create index if not exists idx_scripts_owner_title on scripts(owner_id, lower(title))")
+        db.execute("create index if not exists idx_saves_user on game_saves(user_id, updated_at desc, id desc)")
+        db.execute("create index if not exists idx_saves_user_script on game_saves(user_id, script_id, id desc)")
+        db.execute("create index if not exists idx_branch_save on branch_nodes(save_id, id)")
+        db.execute("create index if not exists idx_branch_parent on branch_nodes(parent_id)")
+        db.execute("create index if not exists idx_branch_save_turn on branch_nodes(save_id, turn_index, id)")
+        db.execute("create index if not exists idx_branch_commits_save on branch_commits(save_id, id)")
+        db.execute("create index if not exists idx_branch_commits_parent on branch_commits(parent_id)")
+        db.execute("create index if not exists idx_branch_commits_save_turn on branch_commits(save_id, turn_index, id)")
+        db.execute("create index if not exists idx_branch_refs_save on branch_refs(save_id, id)")
+        db.execute("create index if not exists idx_branch_refs_target on branch_refs(target_commit_id)")
+        db.execute("create index if not exists idx_runtime_checkouts_user_save on runtime_checkouts(user_id, save_id)")
+        db.execute("create index if not exists idx_settings_user_updated on settings(user_id, updated_at desc)")
+        db.execute("create index if not exists idx_assets_user on assets(user_id, id desc)")
+        db.execute("create index if not exists idx_assets_user_kind_created on assets(user_id, kind, created_at desc)")
+        db.execute("create index if not exists idx_assets_user_path on assets(user_id, rel_path)")
+        db.execute("create index if not exists idx_script_chapters_script_order on script_chapters(script_id, chapter_index)")
+        db.execute("create index if not exists idx_script_chapters_title on script_chapters(script_id, lower(title))")
+        db.execute("create index if not exists idx_books_owner_updated on books(owner_id, updated_at desc, id desc)")
+        db.execute("create index if not exists idx_documents_book_ref on documents(book_id, source_kind, source_ref)")
+        db.execute("create index if not exists idx_document_chunks_book_chapter on document_chunks(book_id, chapter_index, chunk_index)")
+        db.execute("create index if not exists idx_document_chunks_script_chapter on document_chunks(script_id, chapter_index, chunk_index)")
+        db.execute("create index if not exists idx_document_chunks_search on document_chunks using gin(search_tsv)")
+        db.execute("create index if not exists idx_document_chunks_trgm on document_chunks using gin(content gin_trgm_ops)")
+        db.execute("create index if not exists idx_chapter_facts_book_chapter on chapter_facts(book_id, chapter)")
+        db.execute("create index if not exists idx_chapter_facts_script_time on chapter_facts(script_id, story_phase, story_time_label)")
+        db.execute("create index if not exists idx_chapter_facts_events on chapter_facts using gin(events)")
+        db.execute("create index if not exists idx_character_cards_script on character_cards(script_id, enabled, priority desc)")
+        db.execute("create index if not exists idx_worldbook_script_enabled on worldbook_entries(script_id, enabled, priority desc)")
+        db.execute("create index if not exists idx_game_sessions_user_book on game_sessions(user_id, book_id)")
+        db.execute("create index if not exists idx_messages_session_turn on messages(session_id, turn, created_at)")
+        db.execute("create index if not exists idx_memories_session_bucket on memories(session_id, bucket, importance desc)")
+        db.execute("create index if not exists idx_worldline_variables_session on worldline_variables(session_id)")
+        db.execute("create index if not exists idx_worldline_projections_session_turn on worldline_projections(session_id, turn desc)")
+        db.execute("create index if not exists idx_context_runs_session_turn on context_runs(session_id, turn desc)")
+        db.execute("create index if not exists idx_model_entries_api on model_entries(api_id, enabled, id)")
+        db.execute("create index if not exists idx_mcp_servers_enabled on mcp_servers(enabled, server_id)")
+        db.execute("create index if not exists idx_imported_skills_enabled on imported_skills(enabled, skill_id)")
+
+    # 注：版本化 migration 和 pgvector 扩展由 init_db()/migrate.py 统一在
+    # advisory lock 内调用，这里不重复触发。
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  版本化 migration 框架
+# ══════════════════════════════════════════════════════════════════════
+# 每个 migration 是 (version: int, name: str, statements: list[str])。
+# version 必须单调递增；statements 按顺序执行。每次 init_db 完成后调用，
+# 已应用的 version 不会重复执行。
+#
+# 新增 schema 变更请添加新条目，不要修改已发布的旧条目。
+MIGRATIONS: list[tuple[int, str, list[str]]] = [
+    (1, "ensure_runtime_dirty_columns", [
+        # 与 init_db 里已有的兼容；这里只是声明被 versioned 接管
+        "alter table runtime_checkouts add column if not exists snapshot_hash text not null default ''",
+        "alter table runtime_checkouts add column if not exists dirty boolean not null default false",
+        "alter table runtime_checkouts add column if not exists turn_at_commit integer not null default 0",
+        "alter table runtime_checkouts add column if not exists turn_runtime integer not null default 0",
+    ]),
+    (2, "ensure_context_runs_status", [
+        "alter table context_runs add column if not exists status text not null default 'done'",
+        "alter table context_runs add column if not exists error text not null default ''",
+        "alter table context_runs add column if not exists duration_ms integer not null default 0",
+        "alter table context_runs add column if not exists started_at timestamptz not null default now()",
+    ]),
+    (3, "ensure_model_apis_base_url", [
+        # OpenAI 兼容 provider 需要可配置 base_url
+        "alter table model_apis add column if not exists base_url text not null default ''",
+    ]),
+    (4, "user_api_credentials", [
+        # 用户级 API key 加密存储；nonce || ciphertext || tag 全部塞进 encrypted_key
+        """
+        create table if not exists user_api_credentials (
+          id bigint generated by default as identity primary key,
+          user_id bigint not null references users(id) on delete cascade,
+          api_id text not null,
+          encrypted_key bytea not null default ''::bytea,
+          base_url_override text not null default '',
+          enabled boolean not null default true,
+          metadata jsonb not null default '{}'::jsonb,
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now(),
+          unique(user_id, api_id)
+        )
+        """,
+        "create index if not exists idx_user_api_creds_user on user_api_credentials(user_id, api_id)",
+    ]),
+    (5, "token_usage", [
+        """
+        create table if not exists token_usage (
+          id bigint generated by default as identity primary key,
+          user_id bigint not null references users(id) on delete cascade,
+          save_id bigint references game_saves(id) on delete set null,
+          context_run_id bigint references context_runs(id) on delete set null,
+          api_id text not null default '',
+          model_real_name text not null default '',
+          input_tokens integer not null default 0,
+          output_tokens integer not null default 0,
+          cached_input_tokens integer not null default 0,
+          reasoning_tokens integer not null default 0,
+          total_tokens integer not null default 0,
+          cost_usd numeric(12,6) not null default 0,
+          context_used integer not null default 0,
+          context_max integer not null default 0,
+          metadata jsonb not null default '{}'::jsonb,
+          created_at timestamptz not null default now()
+        )
+        """,
+        "create index if not exists idx_token_usage_user_time on token_usage(user_id, created_at desc)",
+        "create index if not exists idx_token_usage_save_time on token_usage(save_id, created_at desc)",
+        "create index if not exists idx_token_usage_model on token_usage(user_id, api_id, model_real_name)",
+    ]),
+    (6, "user_preferences", [
+        """
+        create table if not exists user_preferences (
+          user_id bigint primary key references users(id) on delete cascade,
+          preferences jsonb not null default '{}'::jsonb,
+          updated_at timestamptz not null default now()
+        )
+        """,
+    ]),
+    (7, "login_audit", [
+        # auth.py 之前用 create-if-not-exists 临时建表；这里正式化到 migration
+        """
+        create table if not exists login_audit (
+          id bigint generated by default as identity primary key,
+          username text,
+          ip text,
+          event text not null,
+          meta jsonb not null default '{}'::jsonb,
+          created_at timestamptz not null default now()
+        )
+        """,
+        "create index if not exists idx_login_audit_user_time on login_audit(username, created_at desc)",
+        "create index if not exists idx_login_audit_event on login_audit(event, created_at desc)",
+    ]),
+    (8, "user_personas_and_character_cards", [
+        # 用户级 player 身份卡（杭雁菱穿越者 / 林知意信使 / ...），可跨剧本/存档复用
+        """
+        create table if not exists user_personas (
+          id bigint generated by default as identity primary key,
+          user_id bigint not null references users(id) on delete cascade,
+          slug text not null,
+          name text not null,
+          role text not null default '',
+          background text not null default '',
+          appearance text not null default '',
+          personality text not null default '',
+          avatar_path text not null default '',
+          tags jsonb not null default '[]'::jsonb,
+          metadata jsonb not null default '{}'::jsonb,
+          is_default boolean not null default false,
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now(),
+          public_id uuid not null default gen_random_uuid(),
+          row_version bigint not null default 1,
+          unique(user_id, slug)
+        )
+        """,
+        "create index if not exists idx_user_personas_user on user_personas(user_id, updated_at desc, id desc)",
+        # 用户自创的 NPC 卡，可挂任何剧本/存档；scope 区分私有/公开
+        """
+        create table if not exists user_character_cards (
+          id bigint generated by default as identity primary key,
+          user_id bigint not null references users(id) on delete cascade,
+          slug text not null,
+          name text not null,
+          aliases jsonb not null default '[]'::jsonb,
+          identity text not null default '',
+          appearance text not null default '',
+          personality text not null default '',
+          speech_style text not null default '',
+          current_status text not null default '',
+          secrets text not null default '',
+          sample_dialogue jsonb not null default '[]'::jsonb,
+          tags jsonb not null default '[]'::jsonb,
+          metadata jsonb not null default '{}'::jsonb,
+          token_budget integer not null default 450,
+          priority integer not null default 100,
+          enabled boolean not null default true,
+          scope text not null default 'private',
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now(),
+          public_id uuid not null default gen_random_uuid(),
+          row_version bigint not null default 1,
+          unique(user_id, slug)
+        )
+        """,
+        "create index if not exists idx_user_cards_user on user_character_cards(user_id, enabled, priority desc)",
+        "create index if not exists idx_user_cards_name on user_character_cards(user_id, lower(name))",
+    ]),
+    (9, "import_jobs", [
+        # 拆书流水线状态持久化，页面刷新可继续看进度，可取消
+        """
+        create table if not exists import_jobs (
+          id bigint generated by default as identity primary key,
+          job_id text unique not null,
+          user_id bigint not null references users(id) on delete cascade,
+          script_id bigint references scripts(id) on delete set null,
+          status text not null default 'pending',
+          stage text not null default 'pending',
+          stage_progress integer not null default 0,
+          stage_total integer not null default 0,
+          overall_progress integer not null default 0,
+          overall_total integer not null default 5,
+          cancel_requested boolean not null default false,
+          budget_estimate jsonb not null default '{}'::jsonb,
+          usage_actual jsonb not null default '{}'::jsonb,
+          stages jsonb not null default '[]'::jsonb,
+          error text not null default '',
+          started_at timestamptz,
+          finished_at timestamptz,
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now()
+        )
+        """,
+        "create index if not exists idx_import_jobs_user on import_jobs(user_id, created_at desc)",
+        "create index if not exists idx_import_jobs_script on import_jobs(script_id, created_at desc)",
+    ]),
+    (10, "pgvector_columns_and_hnsw", [
+        # 仅当 vector 扩展已启用时建 vector 列 + HNSW；否则保持 jsonb fallback
+        # 用 DO 块按运行时条件执行
+        """
+        do $$
+        begin
+          if exists (select 1 from pg_extension where extname = 'vector') then
+            -- 加 vector 列（768 维，gemini embedding 标准；可后续调整）
+            execute 'alter table document_chunks add column if not exists embedding_vec vector(768)';
+            execute 'alter table memories add column if not exists embedding_vec vector(768)';
+            -- HNSW 索引（cosine）
+            execute 'create index if not exists idx_doc_chunks_embedding_hnsw on document_chunks using hnsw (embedding_vec vector_cosine_ops)';
+            execute 'create index if not exists idx_memories_embedding_hnsw on memories using hnsw (embedding_vec vector_cosine_ops)';
+          end if;
+        end $$;
+        """,
+    ]),
+    (11, "user_runtime_db_backed", [
+        # B2: runtime 元数据 DB 化。原 platform_data/runtime/user_{id}.json 的内容搬到这里。
+        # 状态快照（state_snapshot）继续放在 runtime_checkouts；这里只放 user→当前激活 save 的指针。
+        """
+        create table if not exists user_runtime (
+          user_id bigint primary key references users(id) on delete cascade,
+          save_id bigint references game_saves(id) on delete set null,
+          active_commit_id bigint,
+          active_branch_node_id bigint,
+          active_ref_id bigint,
+          source_state_path text not null default '',
+          runtime_state_path text not null default '',
+          game_url text not null default '/',
+          metadata jsonb not null default '{}'::jsonb,
+          updated_at timestamptz not null default now()
+        )
+        """,
+        "create index if not exists idx_user_runtime_save on user_runtime(save_id)",
+    ]),
+    (12, "import_jobs_kind_for_durable_sync", [
+        # B5: 让 import_jobs 同时承载 full_pipeline 和 knowledge_sync 两类任务
+        "alter table import_jobs add column if not exists kind text not null default 'full_pipeline'",
+        "create index if not exists idx_import_jobs_kind_user on import_jobs(kind, user_id, status, created_at desc)",
+    ]),
+    (13, "import_jobs_single_active_per_script", [
+        # B5 加固：同 (user_id, script_id, kind) 在 pending/running 状态下只能有一行。
+        # 配合 _schedule_knowledge_sync 的 INSERT ... ON CONFLICT DO NOTHING 做原子去重 +
+        # _run_sync_job 的 UPDATE ... RETURNING 做原子领取，避免多进程重复跑同一任务。
+        """
+        create unique index if not exists uq_import_jobs_active_per_script
+        on import_jobs(user_id, script_id, kind)
+        where status in ('pending', 'running')
+        """,
+        # heartbeat 用于回收死掉的 worker 占用的任务（守护进程巡检超时 running 用）
+        "alter table import_jobs add column if not exists heartbeat_at timestamptz",
+        "create index if not exists idx_import_jobs_heartbeat on import_jobs(status, heartbeat_at) where status = 'running'",
+    ]),
+]
+
+
+def _assert_migrations_monotonic() -> None:
+    """启动时自检：MIGRATIONS 列表必须按 version 升序且无重复。
+    否则 _apply_versioned_migrations 会按列表顺序乱跑，产生难调试的 bug。
+    """
+    seen: set[int] = set()
+    last = 0
+    for version, name, _ in MIGRATIONS:
+        if version in seen:
+            raise RuntimeError(f"migration v{version} 重复（{name}）")
+        if version <= last:
+            raise RuntimeError(
+                f"migration v{version}（{name}）顺序错乱：必须严格递增，前一个是 v{last}"
+            )
+        seen.add(version)
+        last = version
+
+
+# 模块加载时立即自检，部署前就能发现列表写错
+_assert_migrations_monotonic()
+
+
+# pgvector 扩展启用尝试（独立函数，因为可能失败，不能放进版本化 migration 否则一次失败永远跳过）
+def try_enable_pgvector() -> dict[str, Any]:
+    """尝试启用 vector 扩展。pgvector 未安装时返回 {ok: False}，不抛异常。
+
+    生产部署运维步骤：
+      brew install pgvector  # macOS
+      apt install postgresql-NN-pgvector  # debian
+    然后下次 init_db 调用此函数会自动启用。
+    """
+    try:
+        with connect() as db:
+            row = db.execute(
+                "select * from pg_available_extensions where name = 'vector'"
+            ).fetchone()
+            if not row:
+                return {"ok": False, "reason": "pgvector 未在 server 端安装"}
+            db.execute("create extension if not exists vector")
+            # 检查是否已启用
+            installed = db.execute(
+                "select extversion from pg_extension where extname = 'vector'"
+            ).fetchone()
+            return {"ok": True, "version": installed["extversion"] if installed else None}
+    except Exception as exc:
+        return {"ok": False, "reason": str(exc)}
+
+
+def has_pgvector() -> bool:
+    try:
+        with connect() as db:
+            row = db.execute(
+                "select 1 from pg_extension where extname = 'vector'"
+            ).fetchone()
+        return bool(row)
+    except Exception:
+        return False
+
+
+def _apply_versioned_migrations() -> None:
+    with connect() as db:
+        db.execute(
+            """
+            create table if not exists schema_migrations (
+              version integer primary key,
+              name text not null,
+              applied_at timestamptz not null default now()
+            )
+            """
+        )
+        applied = {int(r["version"]) for r in db.execute("select version from schema_migrations").fetchall()}
+        for version, name, statements in MIGRATIONS:
+            if version in applied:
+                continue
+            for stmt in statements:
+                db.execute(stmt)
+            db.execute(
+                "insert into schema_migrations(version, name) values (%s, %s) on conflict do nothing",
+                (version, name),
+            )
+
+
+def list_migrations() -> dict[str, Any]:
+    """诊断接口：列出所有已知 migration 和应用状态。
+
+    fresh DB（schema_migrations 表都还没建）也必须返回 ok，标记所有项 applied=False。
+    `python -m platform_app.migrate status` 是部署前第一道诊断，不能因为表没建就炸。
+    """
+    try:
+        with connect() as db:
+            row = db.execute(
+                "select to_regclass('schema_migrations') as exists_"
+            ).fetchone()
+            schema_table_exists = bool(row and row.get("exists_"))
+            if schema_table_exists:
+                applied = {int(r["version"]): r for r in db.execute(
+                    "select version, name, applied_at from schema_migrations"
+                ).fetchall()}
+            else:
+                applied = {}
+        items = []
+        for version, name, _ in MIGRATIONS:
+            row = applied.get(version)
+            items.append({
+                "version": version,
+                "name": name,
+                "applied": row is not None,
+                "applied_at": str(row["applied_at"]) if row else None,
+            })
+        return {
+            "ok": True,
+            "migrations": items,
+            "total_known": len(MIGRATIONS),
+            "total_applied": len(applied),
+            "schema_table_exists": schema_table_exists,
+            "fresh_database": not schema_table_exists,
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def status(reveal_details: bool = False) -> dict:
+    """数据库健康状态。
+
+    安全：默认只返回 {driver, ok}。仅 admin 接口才传 reveal_details=True，
+    返回 url/database/user/version 等部署信息。
+    """
+    try:
+        with connect() as db:
+            row = db.execute("select 1 as ok").fetchone()
+        out: dict = {"driver": "postgresql", "ok": bool(row), "pgvector": has_pgvector()}
+        if reveal_details:
+            with connect() as db:
+                meta = db.execute("select current_database() as database, current_user as user, version() as version").fetchone()
+            out["url"] = redacted_url(database_url())
+            out.update(dict(meta))
+        return out
+    except Exception as exc:
+        out = {"driver": "postgresql", "ok": False}
+        if reveal_details:
+            out["url"] = redacted_url(database_url())
+            out["error"] = str(exc)
+        return out
+
+
+def redacted_url(url: str) -> str:
+    if "@" not in url or "://" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    if "@" not in rest:
+        return url
+    return f"{scheme}://***@{rest.split('@', 1)[1]}"
+
+
+def expose(row: dict | None) -> dict | None:
+    if row is None:
+        return None
+    data = dict(row)
+    if data.get("public_id") is not None:
+        data["uid"] = str(data["public_id"])
+    return data
+
+
+def limit_value(value: int | str | None, default: int = DEFAULT_LIMIT, maximum: int = MAX_LIMIT) -> int:
+    try:
+        parsed = int(value) if value is not None else default
+    except (TypeError, ValueError):
+        parsed = default
+    return max(1, min(parsed, maximum))
+
+
+def cursor_id(value: str | int | None) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def page_payload(rows: list[dict], limit: int) -> dict:
+    has_more = len(rows) > limit
+    visible = rows[:limit]
+    next_cursor = str(visible[-1]["id"]) if has_more and visible else None
+    return {
+        "items": [expose(row) for row in visible],
+        "page": {
+            "limit": limit,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        },
+    }
+
+
+atexit.register(close_pool)
