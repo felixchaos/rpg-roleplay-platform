@@ -604,6 +604,26 @@ class GameState:
         path, value = _parse_assignment(spec)
         if not path:
             return f"状态写入忽略：{spec}"
+        # P0 #1：硬黑名单（permissions.* / history.* / schema_version / created_at /
+        # is_new）任何 force 都不能突破。原代码 `if not allowed and not force` 让
+        # /set permissions.mode=full_access （force=True）直接落地，玩家可一句话
+        # 关闭整套权限审批 + 篡改 audit_log + 改 history。
+        if _write_path_hard_forbidden(path):
+            try:
+                audit = self.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                audit.append({
+                    "ts": datetime.now().isoformat(timespec="seconds"),
+                    "source": source,
+                    "path": path,
+                    "value": str(value)[:120],
+                    "blocked": "hard_forbidden",
+                    "turn": self.data.get("turn", 0),
+                })
+                if len(audit) > 200:
+                    self.data["permissions"]["audit_log"] = audit[-200:]
+            except Exception:
+                pass
+            return f"状态写入拒绝（硬黑名单）：{path}"
         permissions = self.data.setdefault("permissions", {})
         mode = _normalize_permission_mode(permissions.get("mode", "full_access"))
         allowed = _write_path_allowed(path, mode)
@@ -1180,9 +1200,23 @@ def _clean_path(path: str) -> str:
     return aliases.get(path, path)
 
 
+_HARD_FORBIDDEN_PATHS = {"schema_version", "history", "created_at", "is_new"}
+_HARD_FORBIDDEN_PREFIXES = ("history.", "permissions.")
+
+
+def _write_path_hard_forbidden(path: str) -> bool:
+    """绝对不能写的路径，无论权限模式或 force 标志。
+
+    permissions.* — 用户/GM 自己改权限模式 = 整套审批失效（自我提权）
+    history.*     — 改对话历史 = 篡改可见证据
+    schema_version / created_at / is_new — 元数据，破坏会让 state 反序列化崩
+    """
+    return path in _HARD_FORBIDDEN_PATHS or path.startswith(_HARD_FORBIDDEN_PREFIXES)
+
+
 def _write_path_allowed(path: str, mode: str) -> bool:
     mode = _normalize_permission_mode(mode)
-    if path in {"schema_version", "history", "created_at", "is_new"} or path.startswith("history.") or path.startswith("permissions."):
+    if _write_path_hard_forbidden(path):
         return False
     if mode == "full_access":
         return True
