@@ -105,6 +105,61 @@ _OPENING_PROMPT = """\
 # ══════════════════════════════════════════════════════════════════════════════
 #  MCP 工具循环辅助
 # ══════════════════════════════════════════════════════════════════════════════
+def _anthropic_curator_tool_use(
+    backend, agent_prompt: str, messages: list[dict], max_tokens: int,
+) -> str:
+    """task 68：用 native tool_use 跑 context curator，input_schema 强校验。
+
+    定义一个 `select_context` 工具，input_schema 描述 curator 的 6 字段输出；
+    模型必须以 tool_use block 返回（tool_choice 强制），SDK 校验合规。
+    错误率比 re.search(r'\\{.*\\}') 抠 text JSON 低 5-10×。
+    返回 dumped JSON 字符串（保持 curate_context 既有 -> str 契约）。
+    """
+    tool = {
+        "name": "select_context",
+        "description": "选择本轮主 GM 需要的上下文清单（时间线/检索/必含事实/风险）。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "intent": {"type": "string", "description": "玩家意图一句话总结"},
+                "timeline_target": {"type": "string", "description": "玩家请求的目标时间线（章节/年份/日期/阶段）；没有请求填空字符串"},
+                "retrieval_query": {"type": "string", "description": "检索短查询，包含人物/地点/章节/事件关键词"},
+                "must_include": {"type": "array", "items": {"type": "string"}, "description": "本轮主 GM 必含的事实"},
+                "risk_flags": {"type": "array", "items": {"type": "string"}, "description": "可能造成错位的风险标记"},
+                "reason": {"type": "string", "description": "为什么这样选上下文（不会写给玩家）"},
+            },
+            "required": ["intent", "timeline_target", "retrieval_query", "must_include", "risk_flags", "reason"],
+        },
+    }
+    resp = backend.client.messages.create(
+        model=backend.model_name,
+        max_tokens=max_tokens,
+        temperature=0.1,
+        system=agent_prompt,
+        messages=messages,
+        tools=[tool],
+        tool_choice={"type": "tool", "name": "select_context"},
+    )
+    # capture usage 同 backend.call
+    usage = getattr(resp, "usage", None)
+    if usage:
+        backend.last_usage = {
+            "input_tokens": int(getattr(usage, "input_tokens", 0)),
+            "output_tokens": int(getattr(usage, "output_tokens", 0)),
+            "cached_input_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+        }
+        backend.last_usage["total_tokens"] = backend.last_usage["input_tokens"] + backend.last_usage["output_tokens"]
+    for block in resp.content:
+        if getattr(block, "type", None) == "tool_use" and block.name == "select_context":
+            inp = block.input or {}
+            return json.dumps(inp, ensure_ascii=False)
+    # 没拿到 tool_use 块 → 返回最小合法 JSON 让 _parse_curator_json 不崩
+    return json.dumps({
+        "intent": "", "timeline_target": "", "retrieval_query": "",
+        "must_include": [], "risk_flags": ["curator 未返回 tool_use"], "reason": "fallback",
+    }, ensure_ascii=False)
+
+
 def _format_tools_for_prompt(tools: list[dict[str, Any]]) -> str:
     """把 MCP 工具清单格式化成附加 system prompt 片段（text-marker fallback 路径用）。
 
@@ -595,9 +650,25 @@ class GameMaster:
         )
 
     def curate_context(self, agent_prompt: str, task_prompt: str) -> str:
-        """Run the model-backed context sub-agent before the main GM call."""
+        """Run the model-backed context sub-agent before the main GM call.
+
+        task 68：Anthropic 用 native tool_use（input_schema 强校验），
+        消除原 _parse_curator_json 的 re.search(r'\\{.*\\}') 兜底脆性。
+        Vertex / OpenAI compat 继续走各自的 JSON mode（response_mime_type /
+        response_format=json_object），那两条路径已经够稳。
+        """
         messages = [{"role": "user", "content": task_prompt}]
-        return self._backend.call_structured(agent_prompt, messages, max_tokens=900)
+        backend = self._backend
+        # Anthropic backend 走 native tool_use
+        if isinstance(backend, _AnthropicBackend):
+            try:
+                return _anthropic_curator_tool_use(
+                    backend, agent_prompt, messages, max_tokens=900,
+                )
+            except Exception as exc:
+                print(f"[curator] native tool_use 失败，降级到文本 JSON：{exc}")
+                # fallback to text JSON
+        return backend.call_structured(agent_prompt, messages, max_tokens=900)
 
     # ── 生成开场白 ────────────────────────────────────────────────
     def generate_opening(self, state, retrieved_context: str = "") -> str:
