@@ -190,10 +190,6 @@ def _format_tools_for_prompt(tools: list[dict[str, Any]]) -> str:
 #  后端：Vertex AI (Gemini) — 使用新版 google-genai SDK (REST)
 # ══════════════════════════════════════════════════════════════════════════════
 class _VertexBackend:
-    # task 66：Vertex 暂留 text-marker 兜底（function_declarations 流式较复杂，
-    # 后续迭代再升级）。
-    supports_native_tools = False
-
     def __init__(self, model: str = "gemini-3.5-flash"):
         from google import genai
         from google.oauth2 import service_account
@@ -298,6 +294,154 @@ class _VertexBackend:
             text = getattr(chunk, "text", None)
             if text:
                 yield text
+
+    # task 70：Vertex 支持 native function_declarations
+    supports_native_tools = True
+
+    def stream_with_mcp_loop(
+        self,
+        system: str,
+        messages: list[dict],
+        mcp_tools: list[dict[str, Any]],
+        max_iterations: int,
+        max_tokens: int,
+        mcp_call,
+    ) -> Iterator[dict[str, Any]]:
+        """Vertex (Gemini) native function calling MCP 循环。
+
+        Gemini 的工具调用模型：
+        - tools=[Tool(function_declarations=[FunctionDeclaration(...)])]
+        - 流式时 chunk.candidates[0].content.parts[] 里可能有 text 或 function_call
+        - 工具结果通过 types.Part.from_function_response(name=..., response=...)
+          作为 user role 的 part 注回
+        """
+        from google.genai import types
+
+        sep = "__"  # server_id 与 tool_name 分隔符
+        fn_decls = []
+        for t in mcp_tools[:40]:
+            sid = str(t.get("server_id", ""))
+            tname = str(t.get("name", ""))
+            if not sid or not tname:
+                continue
+            safe_sid = re.sub(r"[^A-Za-z0-9_-]", "_", sid)
+            safe_tname = re.sub(r"[^A-Za-z0-9_-]", "_", tname)
+            full_name = f"{safe_sid}{sep}{safe_tname}"[:64]
+            schema_raw = t.get("schema") or {"type": "object", "properties": {}}
+            if not isinstance(schema_raw, dict):
+                schema_raw = {"type": "object", "properties": {}}
+            try:
+                # Gemini 接受 OpenAPI 风格 schema dict 作为 parameters
+                fn_decls.append(types.FunctionDeclaration(
+                    name=full_name,
+                    description=(t.get("description") or "")[:512],
+                    parameters=schema_raw if schema_raw.get("type") == "object" else {"type": "object", "properties": {}},
+                ))
+            except Exception:
+                # 个别字段不兼容时降级到无 schema 的工具
+                fn_decls.append(types.FunctionDeclaration(
+                    name=full_name,
+                    description=(t.get("description") or "")[:512],
+                ))
+
+        if not fn_decls:
+            for chunk in self.stream(system, messages, max_tokens=max_tokens):
+                yield {"type": "text", "text": chunk}
+            return
+
+        tools_param = [types.Tool(function_declarations=fn_decls)]
+        contents = self._to_contents(messages, types)
+
+        for iteration in range(max_iterations):
+            pending_calls: list[dict[str, Any]] = []
+            current_text_parts: list[Any] = []
+            current_text_str = ""
+
+            config = types.GenerateContentConfig(
+                system_instruction=system,
+                max_output_tokens=max(max_tokens, 2048),
+                temperature=0.9,
+                tools=tools_param,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            )
+            for chunk in self.client.models.generate_content_stream(
+                model=self.model_name, contents=contents, config=config,
+            ):
+                if getattr(chunk, "usage_metadata", None):
+                    self._capture_usage(chunk)
+                # parts 走候选[0]
+                cands = getattr(chunk, "candidates", None) or []
+                if not cands:
+                    continue
+                content = getattr(cands[0], "content", None)
+                if not content:
+                    continue
+                for part in (getattr(content, "parts", None) or []):
+                    ptext = getattr(part, "text", None)
+                    if ptext:
+                        current_text_str += ptext
+                        current_text_parts.append(types.Part.from_text(text=ptext))
+                        yield {"type": "text", "text": ptext}
+                    fc = getattr(part, "function_call", None)
+                    if fc:
+                        full_name = getattr(fc, "name", "") or ""
+                        args_raw = getattr(fc, "args", None) or {}
+                        try:
+                            args = dict(args_raw)
+                        except Exception:
+                            args = {}
+                        if sep in full_name:
+                            server_id, _, tool_name = full_name.partition(sep)
+                        else:
+                            server_id, tool_name = "", full_name
+                        pending_calls.append({
+                            "name": full_name, "server_id": server_id,
+                            "tool_name": tool_name, "arguments": args,
+                        })
+                        yield {
+                            "type": "tool_call", "server_id": server_id,
+                            "tool": tool_name, "arguments": args,
+                        }
+
+            if not pending_calls:
+                return
+            # 把 model 回合（文本 + function_call parts）作为 model role 装回 contents
+            model_parts: list[Any] = []
+            if current_text_str:
+                model_parts.append(types.Part.from_text(text=current_text_str))
+            for pc in pending_calls:
+                # 重建 function_call part
+                try:
+                    fc_part = types.Part.from_function_call(name=pc["name"], args=pc["arguments"])
+                except Exception:
+                    # 老 SDK 没有 from_function_call helper：用 dict 构造
+                    fc_part = types.Part(function_call=types.FunctionCall(name=pc["name"], args=pc["arguments"]))
+                model_parts.append(fc_part)
+            contents.append(types.Content(role="model", parts=model_parts))
+
+            # 顺序 dispatch，把每个 function_response part 收成 user role 一次性 append
+            result_parts: list[Any] = []
+            for pc in pending_calls:
+                try:
+                    result = mcp_call(pc["server_id"], pc["tool_name"], pc["arguments"])
+                except Exception as exc:
+                    result = {"ok": False, "error": f"call_tool 异常: {exc}"}
+                yield {
+                    "type": "tool_result", "ok": bool(result.get("ok")),
+                    "result": result.get("result"), "error": result.get("error"),
+                }
+                # Gemini 要求 response 是 dict
+                response_dict = result if isinstance(result, dict) else {"result": str(result)[:2000]}
+                # 截断防爆
+                try:
+                    response_dict = json.loads(json.dumps(response_dict, ensure_ascii=False)[:2000])
+                except Exception:
+                    response_dict = {"result_truncated": str(response_dict)[:2000]}
+                result_parts.append(types.Part.from_function_response(
+                    name=pc["name"], response=response_dict,
+                ))
+            contents.append(types.Content(role="user", parts=result_parts))
+        yield {"type": "text", "text": "\n\n【已达工具调用次数上限，本轮终止】"}
 
     @staticmethod
     def _to_contents(messages: list[dict], types):
@@ -465,6 +609,108 @@ class _AnthropicBackend:
             except Exception:
                 pass
         yield {"type": "stop", "stop_reason": stop_reason or "end_turn"}
+
+    def stream_with_mcp_loop(
+        self,
+        system: str,
+        messages: list[dict],
+        mcp_tools: list[dict[str, Any]],
+        max_iterations: int,
+        max_tokens: int,
+        mcp_call,
+    ) -> Iterator[dict[str, Any]]:
+        """task 66：完整的 native tool_use MCP 循环（Anthropic 路径）。
+
+        每个 backend 拥有自己的 loop，封装该 provider 的：
+        - 工具列表 → 原生格式
+        - 流式 event → 统一事件
+        - assistant + tool_result 消息装回历史的具体形态
+        """
+        sep = "__"  # server_id 与 tool_name 分隔符
+        # MCP → Anthropic tools
+        anthropic_tools = []
+        for t in mcp_tools[:40]:
+            sid = str(t.get("server_id", ""))
+            tname = str(t.get("name", ""))
+            if not sid or not tname:
+                continue
+            safe_sid = re.sub(r"[^A-Za-z0-9_-]", "_", sid)
+            safe_tname = re.sub(r"[^A-Za-z0-9_-]", "_", tname)
+            full_name = f"{safe_sid}{sep}{safe_tname}"[:64]
+            schema = t.get("schema") or {"type": "object", "properties": {}}
+            if not isinstance(schema, dict):
+                schema = {"type": "object", "properties": {}}
+            if schema.get("type") != "object":
+                schema = {"type": "object", "properties": schema.get("properties", {})}
+            anthropic_tools.append({
+                "name": full_name,
+                "description": (t.get("description") or "")[:512],
+                "input_schema": schema,
+            })
+        if not anthropic_tools:
+            for chunk in self.stream(system, messages, max_tokens=max_tokens):
+                yield {"type": "text", "text": chunk}
+            return
+
+        for iteration in range(max_iterations):
+            pending_uses: list[dict[str, Any]] = []
+            accumulated_blocks: list[dict[str, Any]] = []
+            current_text = ""
+            for ev in self.stream_with_tools_native(
+                system, messages, anthropic_tools, max_tokens=max_tokens,
+            ):
+                et = ev.get("type")
+                if et == "text":
+                    text = ev.get("text", "")
+                    if text:
+                        current_text += text
+                        yield {"type": "text", "text": text}
+                elif et == "tool_use_block":
+                    full_name = ev.get("name", "")
+                    if sep in full_name:
+                        server_id, _, tool_name = full_name.partition(sep)
+                    else:
+                        server_id, tool_name = "", full_name
+                    arguments = ev.get("input") or {}
+                    tu_id = ev.get("id", "")
+                    pending_uses.append({
+                        "id": tu_id, "server_id": server_id,
+                        "tool_name": tool_name, "arguments": arguments,
+                    })
+                    accumulated_blocks.append({
+                        "type": "tool_use", "id": tu_id,
+                        "name": full_name, "input": arguments,
+                    })
+                    yield {
+                        "type": "tool_call", "server_id": server_id,
+                        "tool": tool_name, "arguments": arguments,
+                    }
+                elif et == "stop":
+                    break
+            if not pending_uses:
+                return
+            assistant_content: list[dict[str, Any]] = []
+            if current_text:
+                assistant_content.append({"type": "text", "text": current_text})
+            assistant_content.extend(accumulated_blocks)
+            messages.append({"role": "assistant", "content": assistant_content})
+            tool_result_blocks: list[dict[str, Any]] = []
+            for use in pending_uses:
+                try:
+                    result = mcp_call(use["server_id"], use["tool_name"], use["arguments"])
+                except Exception as exc:
+                    result = {"ok": False, "error": f"call_tool 异常: {exc}"}
+                yield {
+                    "type": "tool_result", "ok": bool(result.get("ok")),
+                    "result": result.get("result"), "error": result.get("error"),
+                }
+                truncated = json.dumps(result, ensure_ascii=False)[:2000]
+                tool_result_blocks.append({
+                    "type": "tool_result", "tool_use_id": use["id"],
+                    "content": truncated, "is_error": not bool(result.get("ok")),
+                })
+            messages.append({"role": "user", "content": tool_result_blocks})
+        yield {"type": "text", "text": "\n\n【已达工具调用次数上限，本轮终止】"}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -861,136 +1107,32 @@ class GameMaster:
         max_iterations: int,
         max_tokens: int,
     ) -> Iterator[dict[str, Any]]:
-        """task 66：用 backend 的 native tool_use API 跑 MCP 循环。
+        """task 66/70/71：用 backend 的 native tool_use / function calling API
+        跑 MCP 循环。
 
         优点（相对 text marker 协议）：
         - input_schema 由 SDK/provider 校验，错误率降 5-10×
         - 不需要在正文里塞 <<TOOL_CALL>> marker → 节省 tokens
         - 不会有"marker 被切断 / 未闭合"问题（task 61 修的就是这类）
 
-        MCP 工具的 server_id 编码进 tool name：`{server_id}__{tool_name}`
-        Provider 看到的 name 是字符串，dispatch 时 split。
+        每个 backend 拥有自己的 stream_with_mcp_loop()，封装：
+        - MCP tool 列表 → 该 provider 原生格式
+        - 流式 event 解析（content blocks / parts / delta.tool_calls 各家不同）
+        - assistant + tool_result 消息装回历史的 provider-specific 格式
+        本方法只是 dispatcher。
         """
-        # 不再把 _format_tools_for_prompt 注入 system，纯走 tools=[...] 参数
         system = self._build_system()
         messages = state.history_messages()
         messages.append({
             "role": "user",
             "content": self._turn_message(user_input, state, retrieved_context),
         })
-
-        # MCP → Anthropic tools 格式转换
-        anthropic_tools = []
-        sep = "__"  # server_id 与 tool_name 分隔符（Anthropic name 允许 a-zA-Z0-9_-）
-        for t in tools[:40]:  # 防止 tool 列表过长
-            sid = str(t.get("server_id", ""))
-            tname = str(t.get("name", ""))
-            if not sid or not tname:
-                continue
-            # 把 server_id / tool_name 里的非法字符替成 _
-            safe_sid = re.sub(r"[^A-Za-z0-9_-]", "_", sid)
-            safe_tname = re.sub(r"[^A-Za-z0-9_-]", "_", tname)
-            full_name = f"{safe_sid}{sep}{safe_tname}"[:64]  # Anthropic name 上限 64
-            schema = t.get("schema") or {"type": "object", "properties": {}}
-            if not isinstance(schema, dict):
-                schema = {"type": "object", "properties": {}}
-            if schema.get("type") != "object":
-                schema = {"type": "object", "properties": schema.get("properties", {})}
-            anthropic_tools.append({
-                "name": full_name,
-                "description": (t.get("description") or "")[:512],
-                "input_schema": schema,
-            })
-
-        if not anthropic_tools:
-            # 没有可用工具 → 直接走普通流式
+        # 没有 tools 时退化
+        if not tools:
             for chunk in self._backend.stream(system, messages, max_tokens=max_tokens):
                 yield {"type": "text", "text": chunk}
             return
-
-        # ID 反查表：tool_use_id → (server_id, tool_name, original_input) 用于后续 tool_result
-        pending_uses: list[dict[str, Any]] = []
-
-        for iteration in range(max_iterations):
-            pending_uses = []
-            accumulated_blocks: list[dict[str, Any]] = []  # 用于装回 assistant 历史
-            current_text = ""
-            saw_stop_for_tools = False
-            for ev in self._backend.stream_with_tools_native(
-                system, messages, anthropic_tools, max_tokens=max_tokens,
-            ):
-                et = ev.get("type")
-                if et == "text":
-                    text = ev.get("text", "")
-                    if text:
-                        current_text += text
-                        yield {"type": "text", "text": text}
-                elif et == "tool_use_block":
-                    full_name = ev.get("name", "")
-                    if sep in full_name:
-                        server_id, _, tool_name = full_name.partition(sep)
-                    else:
-                        server_id, tool_name = "", full_name
-                    arguments = ev.get("input") or {}
-                    tu_id = ev.get("id", "")
-                    pending_uses.append({
-                        "id": tu_id,
-                        "server_id": server_id,
-                        "tool_name": tool_name,
-                        "arguments": arguments,
-                    })
-                    # 装回历史：先存一个 tool_use block（input 是原始解析结果）
-                    accumulated_blocks.append({
-                        "type": "tool_use",
-                        "id": tu_id,
-                        "name": full_name,
-                        "input": arguments,
-                    })
-                    yield {
-                        "type": "tool_call",
-                        "server_id": server_id,
-                        "tool": tool_name,
-                        "arguments": arguments,
-                    }
-                elif et == "stop":
-                    if ev.get("stop_reason") == "tool_use":
-                        saw_stop_for_tools = True
-                    break
-
-            # 没有 tool_use → 本轮结束
-            if not pending_uses:
-                return
-
-            # 把"前缀 text + tool_use blocks"作为 assistant 写回
-            assistant_content: list[dict[str, Any]] = []
-            if current_text:
-                assistant_content.append({"type": "text", "text": current_text})
-            assistant_content.extend(accumulated_blocks)
-            messages.append({"role": "assistant", "content": assistant_content})
-
-            # 顺序调用每个 tool，把 tool_result blocks 一次性塞进 user 消息
-            tool_result_blocks: list[dict[str, Any]] = []
-            for use in pending_uses:
-                try:
-                    from mcp_broker import call_tool as _mcp_call_tool
-                    result = _mcp_call_tool(use["server_id"], use["tool_name"], use["arguments"])
-                except Exception as exc:
-                    result = {"ok": False, "error": f"call_tool 异常: {exc}"}
-                yield {
-                    "type": "tool_result",
-                    "ok": bool(result.get("ok")),
-                    "result": result.get("result"),
-                    "error": result.get("error"),
-                }
-                truncated = json.dumps(result, ensure_ascii=False)[:2000]
-                tool_result_blocks.append({
-                    "type": "tool_result",
-                    "tool_use_id": use["id"],
-                    "content": truncated,
-                    "is_error": not bool(result.get("ok")),
-                })
-            messages.append({"role": "user", "content": tool_result_blocks})
-            # 进下一 iteration 让 LLM 继续叙事（可能再调工具，也可能直接收尾）
-
-        # 达到 max_iterations
-        yield {"type": "text", "text": "\n\n【已达工具调用次数上限，本轮终止】"}
+        from mcp_broker import call_tool as _mcp_call_tool
+        yield from self._backend.stream_with_mcp_loop(
+            system, messages, tools, max_iterations, max_tokens, mcp_call=_mcp_call_tool,
+        )
