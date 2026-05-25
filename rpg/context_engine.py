@@ -305,12 +305,36 @@ def _timeline_layer(state) -> dict[str, Any]:
         f"允许检索章节窗口：{anchor.get('chapter_min') or '?'} - {anchor.get('chapter_max') or '?'}",
     ]
     if pending:
+        pending_status = str(pending.get("status") or "")
+        # task 44：之前 prompt 鼓励 GM "默认接受、输出【时间跳跃确认】+【当前时间线：目标】"
+        # —— 这让 state 处于 pending_confirmation 时 GM 正文还在叙事到目标时间。
+        # 玩家用『先让子代理检查冲突，不要直接跳过确认』这类措辞触发的 pending，
+        # 强制 GM 这一轮只输出冲突检查 + 风险清单 + 询问玩家确认，禁止：
+        #   - 叙事推进到目标时间（不能写"翌日上午""转眼已是次日"等过去式时间过渡）
+        #   - 输出【时间跳跃确认：目标】tag（state 端已 task 32/35 防御，但 prompt 也要主动禁）
+        #   - 输出【当前时间线：目标】或【当前位置：新地点】tag（把未发生的事写进 state）
+        #   - 声明在新地点新时间发生的具体场景/选项
+        is_awaiting = pending_status in ("awaiting_gm_confirmation", "awaiting", "pending_confirmation")
         lines.extend([
             f"玩家请求时间跳跃：{pending.get('from', '')} -> {pending.get('to', '')}",
             f"目标原著匹配：第{target_anchor.get('anchor_chapter') or '?'}章 · {target_anchor.get('anchor_event') or '未能精确匹配'}",
-            "本轮必须先处理时间跳跃事务：默认尊重玩家的跳转/改线意图，接受则写出过渡/落点并输出【时间跳跃确认：目标时间】和【当前时间线：目标时间】；只有目标完全不可解析时才输出【询问玩家：...】。",
-            "在确认前，不要把玩家请求的未来时间当作已经发生；确认后才允许推进场景与更新位置/目标。",
+            f"pending 状态：{pending_status or '未知'}",
         ])
+        if is_awaiting:
+            lines.extend([
+                "⚠ 本轮 anchor_state=pending_confirmation：禁止把玩家请求的未来时间/地点当作已发生的事实。",
+                "禁止输出『翌日…』『次日…』『转眼已是…』等任何把场景叙事推进到目标时间的措辞；",
+                "禁止输出标签【时间跳跃确认：…】【当前时间线：目标时间】【当前位置：新地点】【时间：目标时间】；",
+                "禁止给出『新时间/新地点』场景里的对话、动作、选项；",
+                "本轮只允许：① 给出冲突检查（与世界书/时间线锚点是否一致）；② 列出风险/代价/前置条件；"
+                "③ 输出【询问玩家：是否确认跳跃到 <目标时间>？】+ 1-3 个明确选项（确认 / 取消 / 修改目标）；",
+                "下一轮若玩家明确回复『确认』或 /confirm，再正式推进时间线和场景。",
+            ])
+        else:
+            lines.extend([
+                "本轮必须先处理时间跳跃事务：默认尊重玩家的跳转/改线意图，接受则写出过渡/落点并输出【时间跳跃确认：目标时间】和【当前时间线：目标时间】；只有目标完全不可解析时才输出【询问玩家：...】。",
+                "在确认前，不要把玩家请求的未来时间当作已经发生；确认后才允许推进场景与更新位置/目标。",
+            ])
     else:
         lines.append("没有待确认时间跳跃；生成时必须保持当前时间线锚点，除非玩家本轮提出新跳跃。")
 
