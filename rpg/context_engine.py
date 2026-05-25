@@ -33,6 +33,7 @@ MAX_LAYER_CHARS = {
     "write_results": 800,   # task 54：上轮标签结果反馈，简洁即可
     "fact_groups": 1600,    # task 76：canon / runtime / user_constraint 分组渲染
     "hypotheses": 700,      # task 75：未确认推测，最多 8 条 short label
+    "candidate_actions": 800,  # task 82：curator 列的 2-5 个候选动作 anchor
     "recent_chat": 2200,
     "user_input": 900,
 }
@@ -160,6 +161,25 @@ def _fact_groups_layer(state) -> str:
     if not lines:
         return ""
     return "\n".join(lines).rstrip()
+
+
+def _candidate_actions_layer(plan: dict[str, Any] | None) -> str:
+    """task 82：把 curator 的 candidate_actions 显式作为 anchor 喂给主 GM。
+    不是强制约束，是优先级提示——让 GM 优先在候选范围内选，减少自由发挥越界。
+    """
+    if not plan:
+        return ""
+    candidates = plan.get("candidate_actions") or []
+    if not candidates:
+        return ""
+    lines = [
+        "Curator 为本轮列出了以下候选动作；**优先在候选范围内**叙事或写状态，",
+        "如果候选都不合适，可以选「其它」（在正文里说明你为什么偏离候选）：",
+    ]
+    for i, c in enumerate(candidates[:5], 1):
+        lines.append(f"{i}. {str(c)[:120]}")
+    lines.append("（候选是建议不是强制；最终输出仍由你判断。）")
+    return "\n".join(lines)
 
 
 def _active_hypotheses_layer(state) -> str:
@@ -356,6 +376,14 @@ def build_context_bundle(
             "子代理上下文决议",
             _context_agent_decision(curator_plan),
             items=[_context_agent_debug(curator_plan)],
+        ),
+        # task 82：candidate_actions 作为单独的 anchor 层，强调"GM 优先从候选选"
+        # 而不是融在 context_agent 大段文本里被忽略。
+        _layer(
+            "candidate_actions",
+            "本轮候选动作",
+            _candidate_actions_layer(curator_plan),
+            sticky=False,
         ),
         _layer("rag", "检索参考", _neutralize_state_write_tags(retrieved_context) or "（本轮无额外检索资料）"),
         _layer("recent_chat", "最近对话", _format_history(history)),
