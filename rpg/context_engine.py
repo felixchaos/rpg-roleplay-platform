@@ -29,9 +29,60 @@ MAX_LAYER_CHARS = {
     "worldbook": 2200,
     "rag": 2200,
     "state": 2200,
+    "write_results": 800,   # task 54：上轮标签结果反馈，简洁即可
     "recent_chat": 2200,
     "user_input": 900,
 }
+
+
+def _write_results_layer(state) -> str:
+    """task 54：把上轮 GM 标签的处理结果反馈给模型，闭合 codex 流水线最后一环。
+
+    构造一段简短的"上轮发生了什么"叙述：
+    - 真生效的写入
+    - 入 pending 的（玩家审批中）
+    - 被硬黑名单拒的
+    告诉 LLM 不必重写已 pending 的同一路径；让它知道 read_only/default
+    模式下哪些标签起不到作用。
+    """
+    memory = (state.data.get("memory") or {})
+    permissions = (state.data.get("permissions") or {})
+    last_updates = memory.get("last_structured_updates") or []
+    pending = permissions.get("pending_writes") or []
+    audit_log = permissions.get("audit_log") or []
+
+    lines = []
+    if last_updates:
+        lines.append("上轮你输出的标签实际结果：")
+        for u in last_updates[:12]:
+            lines.append(f"- {u}")
+
+    if pending:
+        lines.append("")
+        lines.append(f"当前待玩家审批的写入（共 {len(pending)} 条 · 已入队，不要重写同一路径）：")
+        for p in pending[-8:]:  # 最近 8 条
+            risk = p.get("risk", "?")
+            field = p.get("path") or p.get("field", "?")
+            val = str(p.get("value", p.get("to", "")))[:50]
+            lines.append(f"- [{risk}] {field} = {val}")
+
+    blocked = [a for a in audit_log[-15:] if a.get("blocked") == "hard_forbidden"]
+    if blocked:
+        lines.append("")
+        lines.append("上轮被硬黑名单拒绝（permissions.* / history.* 任何形式都禁止，不要再写）：")
+        for a in blocked[-5:]:
+            lines.append(f"- {a.get('path')} = {str(a.get('value',''))[:50]}")
+
+    rejected = [a for a in audit_log[-15:] if "rejected" in str(a.get("source", "")) or a.get("kind") == "rejected"]
+    if rejected:
+        lines.append("")
+        lines.append("玩家拒绝过的最近写入（不要立即重写，先在叙事里铺垫或改用询问）：")
+        for a in rejected[-5:]:
+            lines.append(f"- {a.get('path')} = {str(a.get('value',''))[:50]}")
+
+    if not lines:
+        return "（这是本档第一轮，或上轮没有任何标签输出）"
+    return "\n".join(lines)
 
 
 def _neutralize_state_write_tags(text: str) -> str:
@@ -117,6 +168,12 @@ def build_context_bundle(
             items=[worldline_layer["debug"]],
         ),
         _layer("state", "当前状态", state.short_summary(), sticky=True),
+        # task 54：结果回灌层 —— 把上轮 GM 输出的【...】标签处理结果告诉模型，
+        # 闭合 codex 流水线最后一环（"执行结果返回给模型"）。
+        # 之前 apply_structured_updates 的 updates 只写到 last_structured_updates，
+        # state.short_summary 又不展开 → LLM 完全不知道自己上轮写的东西落没落、
+        # 哪些入了 pending → 下一轮还会重写同样字段重新被挡，浪费 token + 玩家审批队列爆炸。
+        _layer("write_results", "上轮标签处理结果", _write_results_layer(state), sticky=False),
         _layer(
             "context_agent",
             "子代理上下文决议",

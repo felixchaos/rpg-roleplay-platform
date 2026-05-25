@@ -485,20 +485,51 @@ class GameState:
         if _player_pending_this_turn:
             asking_for_confirm = True
 
+        # task 54：审批层统一化。原来每个 GM 标签按自己的 if 分支直接调
+        # update_location / update_time / update_relationship / add_memory 等
+        # 专用方法，绕过 _write_path_allowed 权限闸门 —— read_only / default 模式
+        # 形同虚设（只有显式【状态写入：】走 apply_state_write 受管）。
+        #
+        # 现在所有"实质改 state"的标签都通过 _gm_write_via_gate(path, value, ...) 走，
+        # 让 apply_state_write 统一做：
+        #   1. 硬黑名单（permissions.* / history.*）拒绝
+        #   2. 权限模式（read_only 全挡 / default 白名单 / ...）入 pending
+        #   3. 路由到具体的 update_* 方法（apply_state_write 内部 kind dispatch）
+        #
+        # 例外：时间跳跃 pending_jump 状态机（confirm/reject）+ 询问玩家 +
+        # 设定校验 + 世界线推演 这些没有 path 的"控制流"标签保持原路径，
+        # 因为它们不是字段写入而是流程信号。
+        def _gm_write_via_gate(path: str, value, *, append=False, overwrite=False, label_for_update: str = "") -> None:
+            """统一权限闸门。所有"写状态字段"的 GM 标签都走这里。
+
+            返回的 updates 文案策略：
+            - 真生效（apply 返回"状态写入：..."）→ 用 label_for_update（友好文案，
+              如 "位置：北港码头"）
+            - 入 pending / 被拒 → 用 apply 的原始返回（"状态写入待审：..." / 拒绝），
+              让前端 LeftRail 能清楚显示"哪些写入被挡了"，避免假成功 UI
+            """
+            spec = f"{path}={value}"
+            applied = self.apply_state_write(spec, source="gm", append=append, overwrite=overwrite)
+            if applied.startswith("状态写入：") and label_for_update:
+                updates.append(label_for_update)
+            else:
+                updates.append(applied)
+
         for item in tags:
             if not item:
                 continue
             key, value = _split_label(item)
             if "当前位置" in key or key in {"地点", "位置"}:
-                self.update_location(value)
-                updates.append(f"位置：{value}")
+                # update_location 内部还会写 worldline.location_history，
+                # apply_state_write kind=="location" 也会路由到 update_location，
+                # 所以走 gate 行为一致。
+                _gm_write_via_gate("player.current_location", value, label_for_update=f"位置：{value}")
             elif is_time_key(key):
                 # 待确认中 + GM 正文在询问 → 不要锁；目标如果和 pending 一致就视为复述
                 if pending_jump and asking_for_confirm:
                     updates.append(f"时间提案保留待确认：{value}")
                     continue
-                self.update_time(value, source="gm")
-                updates.append(f"时间线锁定：{value}")
+                _gm_write_via_gate("world.time", value, label_for_update=f"时间线锁定：{value}")
             elif "时间跳跃确认" in key:
                 # task 32：GM 真实输出会出现【时间跳跃确认：待确认（当前处于 pending_confirmation 状态）】
                 # 这种"标签 key 是确认，但 value 在说还在等"的混合形态。直接 confirm_time_jump
@@ -541,32 +572,28 @@ class GameState:
                 applied = self.apply_state_write(value, source="gm", overwrite=True)
                 updates.append(applied)
             elif "当前目标" in key or key == "目标":
-                memory["current_objective"] = value
-                updates.append(f"目标：{value}")
+                _gm_write_via_gate("memory.current_objective", value, label_for_update=f"目标：{value}")
             elif "主线任务更新" in key or "主线" in key:
-                memory["main_quest"] = value
-                memory["current_objective"] = value
-                updates.append(f"主线：{value}")
+                # 主线同时写两个 path，按白名单都允许（在 default 模式下都自动）
+                _gm_write_via_gate("memory.main_quest", value, label_for_update=f"主线：{value}")
+                _gm_write_via_gate("memory.current_objective", value)
             elif "当前可支配资源" in key or "资源" in key:
+                # 列表追加，apply_state_write kind="list" + append=False（不 overwrite）会去重追加
                 for part in _split_items(value):
-                    if self.add_memory("resources", part):
-                        updates.append(f"资源：{part}")
+                    _gm_write_via_gate("memory.resources", part, append=True, label_for_update=f"资源：{part}")
             elif "能力" in key or "技能" in key or "掌握" in key:
-                if self.add_memory("abilities", value):
-                    updates.append(f"能力：{value}")
+                _gm_write_via_gate("memory.abilities", value, append=True, label_for_update=f"能力：{value}")
             elif "关系" in key:
                 rel_name, rel_status = _split_relation(value)
                 if rel_name and rel_status:
-                    self.update_relationship(rel_name, rel_status)
-                    updates.append(f"关系：{rel_name} -> {rel_status}")
+                    _gm_write_via_gate(f"relationships.{rel_name}", rel_status, label_for_update=f"关系：{rel_name} -> {rel_status}")
                 elif self.add_memory("facts", item):
+                    # facts 是低风险积累，仍走 add_memory 但记到 updates
                     updates.append(f"事实：{item}")
             elif "获得新身份" in key or "身份" in key or item.startswith("你已获得"):
-                if self.add_memory("facts", item):
-                    updates.append(f"事实：{item}")
+                _gm_write_via_gate("memory.facts", item, append=True, label_for_update=f"事实：{item}")
             else:
-                if self.add_memory("facts", item):
-                    updates.append(f"事实：{item}")
+                _gm_write_via_gate("memory.facts", item, append=True, label_for_update=f"事实：{item}")
 
         for value in _extract_explicit_time_updates(gm_response or ""):
             if value == self.data["world"]["time"]:
@@ -575,8 +602,8 @@ class GameState:
             if pending_jump and asking_for_confirm:
                 updates.append(f"时间提案保留待确认：{value}")
                 continue
-            self.update_time(value, source="gm")
-            updates.append(f"时间线锁定：{value}")
+            # task 54：走 gate（之前直接 update_time 绕过 read_only 权限）
+            _gm_write_via_gate("world.time", value, label_for_update=f"时间线锁定：{value}")
 
         # 兼容 GM 没有按结构化标签输出、但文本里出现明确状态变化的情况。
         if re.search(r"重力控制|肉身飞行|双脚.*离开|悬浮", gm_response or ""):
