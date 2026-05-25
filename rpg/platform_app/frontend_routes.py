@@ -645,3 +645,25 @@ async def api_skills_list(request: Request):
     from tool_registry import tool_payload
     payload = tool_payload()
     return json_response({"ok": True, "skills": payload.get("skills", [])})
+
+
+# ------------------------------------------------------------
+#  Admin: SMTP test (button in DeploySection)
+# ------------------------------------------------------------
+@router.post("/api/admin/smtp/test")
+async def api_admin_smtp_test(request: Request):
+    """task 51：FE DeploySection 有「发送测试邮件」按钮但后端从未实现。
+    返回明确的"未配置"错误，让 UI 显示真实失败而不是 404 黑洞。
+
+    真正实现需要：读 user_preferences (SMTP host/port/user/pass/from) →
+    smtplib.SMTP(host, port).login(user, pass).sendmail(from, to, msg)。
+    现在 SMTP 配置还存在 user_preferences 待规范化阶段，先给清晰的占位错误。
+    """
+    user = require_user(request)
+    if user.get("role") != "admin":
+        return json_response({"ok": False, "error": "需要管理员权限"}, status_code=403)
+    return json_response({
+        "ok": False,
+        "error": "SMTP 尚未在 user_preferences 中规范化存储 · 请先在「部署 → 邮件 SMTP」配置并保存",
+        "configured": False,
+    }, status_code=503)
