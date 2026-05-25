@@ -35,8 +35,8 @@ def integtest_username() -> str:
 def make_client():
     """构造一个 FastAPI TestClient（lazy import 防止 conftest 阶段就加载 ui）"""
     from fastapi.testclient import TestClient
-    import ui  # noqa: F401 触发路由注册
-    return TestClient(ui.app)
+    import app  # noqa: F401 触发路由注册
+    return TestClient(app.app)
 
 
 def cleanup_test_users() -> int:

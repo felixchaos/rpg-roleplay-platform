@@ -230,7 +230,7 @@ bash /tmp/rpg_audit_final.sh
 
 # 启动服务
 cd rpg/
-../rpg_env/bin/python -m uvicorn ui:app --host 127.0.0.1 --port 7860
+../rpg_env/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7860
 
 # 手动跑一轮 chat
 curl -N -X POST http://127.0.0.1:7860/api/chat \

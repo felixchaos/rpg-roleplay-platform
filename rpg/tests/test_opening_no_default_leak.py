@@ -100,7 +100,7 @@ class OpeningRetrievalNoDefaultLeak(unittest.TestCase):
 
     def _patch_gm_to_canned_opening(self):
         """让 /api/opening 不真打 LLM —— 直接返回固定的开场文本。"""
-        import ui as ui_mod
+        import app as ui_mod
 
         class _Stub:
             api_id = "stub"
@@ -238,7 +238,7 @@ class OldUIEmptyStateCopy(unittest.TestCase):
 
     def test_initial_html_uses_generic_copy(self):
         from pathlib import Path
-        ui_src = Path(__file__).resolve().parents[1] / "ui.py"
+        ui_src = Path(__file__).resolve().parents[1] / "app.py"
         text = ui_src.read_text(encoding="utf-8")
         # task 43：旧 UI 初始 <div class="empty"> 不应仍硬编码"准备继续柏林弧"
         # 出现的应只是注释（task 43 注释里有提）；找 <h1>...</h1> 块
@@ -251,7 +251,7 @@ class OldUIEmptyStateCopy(unittest.TestCase):
 
     def test_render_messages_js_reads_payload_title(self):
         from pathlib import Path
-        ui_src = Path(__file__).resolve().parents[1] / "ui.py"
+        ui_src = Path(__file__).resolve().parents[1] / "app.py"
         text = ui_src.read_text(encoding="utf-8")
         # renderMessages 内必须按 state.payload.save_title / app.title 动态构标题，
         # 不能再写死『准备继续柏林弧』

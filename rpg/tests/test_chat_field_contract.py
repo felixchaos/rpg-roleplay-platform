@@ -53,7 +53,7 @@ class ChatAcceptsBothMessageAndText(unittest.TestCase):
 
     def _patch_no_llm(self):
         """让 chat 不真打 LLM；只测 /set 写入 + SSE 序列"""
-        import ui as ui_mod
+        import app as ui_mod
 
         def _fake_ctx(*a, **kw):
             yield {

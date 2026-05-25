@@ -47,7 +47,7 @@ def _get_user_id(client, cookies) -> int:
 
 def _runtime_state(user_id: int):
     """直接拿 ui._state_by_user 里这个用户的 GameState（绕过 LLM 改 state）"""
-    import ui as _ui
+    import app as _ui
     state = _ui._state_by_user.get(user_id)
     assert state is not None, f"user {user_id} 没有活跃 runtime（API 没初始化？）"
     return state
@@ -55,7 +55,7 @@ def _runtime_state(user_id: int):
 
 def _invalidate_runtime(user_id: int) -> None:
     """模拟"用户重新打开页面"——清掉 runtime 缓存，下次 /api/state 会从 DB 重读"""
-    import ui as _ui
+    import app as _ui
     fake_user = {"id": user_id}
     _ui._invalidate_user_cache(fake_user)
 

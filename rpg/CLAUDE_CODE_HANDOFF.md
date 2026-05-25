@@ -13,7 +13,7 @@
 ```text
 http://127.0.0.1:7860
 当前监听进程：Python PID 34131
-启动命令：../rpg_env/bin/python -m uvicorn ui:app --host 127.0.0.1 --port 7860
+启动命令：../rpg_env/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7860
 ```
 
 ## 用户核心要求
@@ -357,7 +357,7 @@ curl -sS -i -X POST http://127.0.0.1:7860/api/stop -H 'Origin: https://evil.exam
 
 ```bash
 cd /Volumes/我的电脑/我穆蕾莉娅不爱你/我蕾穆丽娜不爱你/rpg
-../rpg_env/bin/python -m uvicorn ui:app --host 127.0.0.1 --port 7860
+../rpg_env/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7860
 ```
 
 如果存档又被小 JSON 覆盖：

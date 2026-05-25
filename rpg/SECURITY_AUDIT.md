@@ -210,7 +210,7 @@ A2 ──GET /api/saves/{id}/context-runs (其他用户的 save_id)
 
 ```bash
 # 无需额外配置
-../rpg_env/bin/python -m uvicorn ui:app --host 127.0.0.1 --port 7860
+../rpg_env/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7860
 ```
 
 ### 6.2 自托管（家人/小团队）
@@ -219,7 +219,7 @@ A2 ──GET /api/saves/{id}/context-runs (其他用户的 save_id)
 export RPG_DEPLOYMENT_MODE=self_hosted
 export RPG_REQUIRE_AUTH=1
 export RPG_CORS_ORIGINS="https://your.domain"
-../rpg_env/bin/python -m uvicorn ui:app --host 0.0.0.0 --port 7860
+../rpg_env/bin/python -m uvicorn app:app --host 0.0.0.0 --port 7860
 ```
 
 外加：

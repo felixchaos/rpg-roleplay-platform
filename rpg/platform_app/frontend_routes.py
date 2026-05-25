@@ -476,7 +476,7 @@ async def api_save_activate(save_id: int, request: Request):
     # 清 ui 模块内的 per-user state 缓存（跨模块耦合：ui 在主进程内长期持有 cache，
     # activate 必须告诉它丢掉旧 save 的 state，否则 GET /api/state 仍读旧档）。
     try:
-        import ui as _ui
+        import app as _ui
         _ui._invalidate_user_cache(user)
     except Exception:
         pass

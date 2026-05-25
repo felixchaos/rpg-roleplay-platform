@@ -35,7 +35,7 @@ class SubAgentInstanceSeparation(unittest.TestCase):
 
     def _inject_fake_main(self):
         """绕开真实 GameMaster 构造（要连 Vertex/Anthropic 太慢）"""
-        import ui
+        import app as ui
         ui._invalidate_user_cache(self.api_user)
         fake_main = MagicMock()
         fake_main.api_id = "vertex_ai"
@@ -75,7 +75,7 @@ class SubAgentInstanceSeparation(unittest.TestCase):
                 ),
             )
         # patch GameMaster 防止真的实例化
-        with patch("ui.GameMaster") as MockGM:
+        with patch("app.GameMaster") as MockGM:
             mock_instance = MagicMock()
             mock_instance.api_id = "anthropic"
             mock_instance._backend = MagicMock()
@@ -86,7 +86,7 @@ class SubAgentInstanceSeparation(unittest.TestCase):
             self.assertEqual(sub.api_id, "anthropic")
 
     def test_invalidate_clears_sub_gm(self):
-        import ui
+        import app as ui
         ui._gm_by_user[ui._user_key(self.api_user)] = MagicMock()
         ui._sub_gm_by_user[ui._user_key(self.api_user)] = MagicMock()
         ui._state_by_user[ui._user_key(self.api_user)] = MagicMock()

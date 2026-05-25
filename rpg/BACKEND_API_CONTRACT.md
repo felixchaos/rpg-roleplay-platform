@@ -187,7 +187,7 @@ python -m platform_app.migrate up     # 后续：只跑待应用 migration
 python -m platform_app.migrate check  # 健康检查：schema 落后 exit(1)
 
 # 生产 worker（让 app 永不碰 DDL，更快更安全）
-RPG_SKIP_AUTO_MIGRATE=1 RPG_REQUIRE_AUTH=1 uvicorn ui:app --workers 4
+RPG_SKIP_AUTO_MIGRATE=1 RPG_REQUIRE_AUTH=1 uvicorn app:app --workers 4
 ```
 
 ## 测试

@@ -79,7 +79,7 @@ class SetPersistsBeforeGMCall(unittest.TestCase):
         original_vars = ((s0.get("worldline") or {}).get("user_variables")) or {}
 
         # 1) monkeypatch ui.run_context_agent 让它 raise（模拟上游崩溃 / 504）
-        import ui as ui_mod
+        import app as ui_mod
 
         def _boom(*args, **kwargs):
             raise RuntimeError("simulated upstream 504 / context_agent crash")
@@ -182,7 +182,7 @@ class SetPersistsBeforeGMCall(unittest.TestCase):
         u = register_user(self.client)
         cookies = u["cookies"]
 
-        import ui as ui_mod
+        import app as ui_mod
 
         # context_agent 返回一个最小可用的 result
         def _fake_ctx(*args, **kwargs):
