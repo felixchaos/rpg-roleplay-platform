@@ -31,6 +31,7 @@ MAX_LAYER_CHARS = {
     "state": 2200,
     "state_schema": 1600,   # task 59：字段 schema + 已知 NPC enum，前 20 个
     "write_results": 800,   # task 54：上轮标签结果反馈，简洁即可
+    "fact_groups": 1600,    # task 76：canon / runtime / user_constraint 分组渲染
     "hypotheses": 700,      # task 75：未确认推测，最多 8 条 short label
     "recent_chat": 2200,
     "user_input": 900,
@@ -95,6 +96,70 @@ def _state_schema_layer(state, chars: dict[str, Any]) -> str:
         "- 写入会被拒并写 audit_log。",
     ]
     return "\n".join(lines)
+
+
+def _fact_groups_layer(state) -> str:
+    """task 76：把记忆按 kind 分组渲染，让 LLM 视觉上明确区分
+    "原著事实" vs "本局已发生" vs "玩家硬约束"——codex §1+2 强调。
+
+    数据源：state.memory.items（task 74 引入的结构化数组）。
+    回退：如果 items 为空（旧存档没积累新写入）就读 legacy memory.facts
+    作为 runtime_fact 显示，保证向后兼容。
+    """
+    memory = state.data.get("memory", {}) or {}
+    items = memory.get("items", []) or []
+    # 按 kind 分桶（只取 active 状态）
+    groups: dict[str, list[dict]] = {
+        "canon_fact": [],
+        "runtime_fact": [],
+        "user_constraint": [],
+    }
+    for it in items:
+        if it.get("status") and it.get("status") != "active":
+            continue
+        k = it.get("kind")
+        if k in groups:
+            groups[k].append(it)
+    # 各取最近 N 条（按 turn 倒序，便于聚焦"新鲜"信息）
+    for k in groups:
+        groups[k].sort(key=lambda x: x.get("turn", 0), reverse=True)
+    canon = groups["canon_fact"][:8]
+    runtime = groups["runtime_fact"][:12]
+    constraints = groups["user_constraint"][:6]
+    # 回退：items 没积累 runtime_fact，但旧 memory.facts 有 → 显示 facts
+    legacy_facts = []
+    if not runtime:
+        legacy_facts = [f for f in (memory.get("facts") or []) if f][:10]
+
+    lines = []
+    if canon:
+        lines.append("## 原著事实 (canon) —— 设定边界，不是本局发生过的")
+        for it in canon:
+            lines.append(f"- {it.get('text', '?')[:80]}")
+        lines.append("")
+    if runtime:
+        lines.append("## 本局已发生 (runtime) —— 玩家亲历，可叙事复述")
+        for it in runtime:
+            meta = []
+            if it.get("time_label"):
+                meta.append(it["time_label"])
+            if it.get("characters"):
+                meta.append("、".join(it["characters"][:3]))
+            meta_str = f"（{' · '.join(meta)}）" if meta else ""
+            lines.append(f"- {it.get('text', '?')[:80]} {meta_str}")
+        lines.append("")
+    elif legacy_facts:
+        lines.append("## 本局已发生 (runtime, legacy) —— 旧存档迁移前数据")
+        for f in legacy_facts:
+            lines.append(f"- {f[:80]}")
+        lines.append("")
+    if constraints:
+        lines.append("## 玩家硬约束 (user_constraint) —— 最高优先级，覆盖一切")
+        for it in constraints:
+            lines.append(f"- {it.get('text', '?')[:80]}")
+    if not lines:
+        return ""
+    return "\n".join(lines).rstrip()
 
 
 def _active_hypotheses_layer(state) -> str:
@@ -270,6 +335,10 @@ def build_context_bundle(
             items=[worldline_layer["debug"]],
         ),
         _layer("state", "当前状态", state.short_summary(), sticky=True),
+        # task 76：按 kind 分组的事实层（canon vs runtime vs user_constraint）。
+        # 让 LLM 视觉上明确区分"原著背景" vs "本局亲历"，避免把原著事件
+        # 当成本局发生过的事来叙事。回退兼容旧 memory.facts。
+        _layer("fact_groups", "事实分组（按 kind）", _fact_groups_layer(state), sticky=False),
         # task 59：状态字段 schema 层 —— 让 LLM 知道每个 path 的值类型、当前 enum
         # 候选（已知 NPC 名）、列表 vs 标量区别，减少盲试导致的 pending 队列爆炸。
         _layer("state_schema", "状态字段 schema", _state_schema_layer(state, chars), sticky=True),
