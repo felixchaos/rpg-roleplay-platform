@@ -131,20 +131,38 @@ def _anthropic_curator_tool_use(
     错误率比 re.search(r'\\{.*\\}') 抠 text JSON 低 5-10×。
     返回 dumped JSON 字符串（保持 curate_context 既有 -> str 契约）。
     """
+    # task 79：Demand Ledger schema 替换原 6 字段 curator_plan。让 Anthropic
+    # native tool_use 强校验所有字段，配合 context_agent.AGENT_PROMPT 同步升级。
     tool = {
         "name": "select_context",
-        "description": "选择本轮主 GM 需要的上下文清单（时间线/检索/必含事实/风险）。",
+        "description": "生成本轮 Demand Ledger：玩家意图、硬/软约束、候选动作、acceptance 验收标准、confidence 自评。",
         "input_schema": {
             "type": "object",
             "properties": {
-                "intent": {"type": "string", "description": "玩家意图一句话总结"},
-                "timeline_target": {"type": "string", "description": "玩家请求的目标时间线（章节/年份/日期/阶段）；没有请求填空字符串"},
-                "retrieval_query": {"type": "string", "description": "检索短查询，包含人物/地点/章节/事件关键词"},
-                "must_include": {"type": "array", "items": {"type": "string"}, "description": "本轮主 GM 必含的事实"},
-                "risk_flags": {"type": "array", "items": {"type": "string"}, "description": "可能造成错位的风险标记"},
-                "reason": {"type": "string", "description": "为什么这样选上下文（不会写给玩家）"},
+                "intent": {"type": "string", "description": "玩家意图一句话"},
+                "active_goal": {"type": "string", "description": "底层真实目标（不是字面）"},
+                "hard_constraints": {"type": "array", "items": {"type": "string"}, "description": "必须满足的硬约束"},
+                "soft_preferences": {"type": "array", "items": {"type": "string"}, "description": "希望满足的软偏好"},
+                "target_entities": {"type": "array", "items": {"type": "string"}, "description": "涉及角色/势力名"},
+                "target_location": {"type": "string", "description": "目标地点，无则空"},
+                "target_time": {"type": "string", "description": "目标时间，无则空"},
+                "timeline_target": {"type": "string", "description": "若请求跳时间的目标 label，无则空"},
+                "retrieval_query": {"type": "string", "description": "检索短查询"},
+                "retrieval_plan": {
+                    "type": "object",
+                    "properties": {
+                        "must_include": {"type": "array", "items": {"type": "string"}, "description": "本轮必含事实"},
+                        "should_include": {"type": "array", "items": {"type": "string"}, "description": "有助非必须的素材"},
+                    },
+                },
+                "candidate_actions": {"type": "array", "items": {"type": "string"}, "description": "本轮 GM 可执行的 2-5 个候选动作"},
+                "acceptance": {"type": "array", "items": {"type": "string"}, "description": "本轮成功的验收条件，每条可程序验证"},
+                "risk_flags": {"type": "array", "items": {"type": "string"}, "description": "风险标记"},
+                "confidence": {"type": "number", "description": "自评信心 0.0-1.0；<0.5 触发 clarifying_question"},
+                "clarifying_question": {"type": "string", "description": "confidence 低时填封闭式问题 + 候选答案；否则空"},
+                "reason": {"type": "string", "description": "为什么这样规划（不写给玩家）"},
             },
-            "required": ["intent", "timeline_target", "retrieval_query", "must_include", "risk_flags", "reason"],
+            "required": ["intent", "timeline_target", "retrieval_query", "risk_flags", "confidence", "reason"],
         },
     }
     resp = backend.client.messages.create(
