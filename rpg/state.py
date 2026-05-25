@@ -628,13 +628,22 @@ class GameState:
         mode = _normalize_permission_mode(permissions.get("mode", "full_access"))
         allowed = _write_path_allowed(path, mode)
         if not allowed and not force:
+            # 给每条 pending 加稳定 id（前端按 id 审批）。本来用 list index
+            # 但 index 在 pop 之后会全部前移，导致前端"先点第一条→服务端处理
+            # 完后 index 0 变成原 index 1"这种 race。
+            import secrets as _secrets
             pending = {
+                "id": _secrets.token_urlsafe(8),
                 "path": path,
                 "value": value,
                 "source": source,
                 "turn": self.data.get("turn", 0),
                 "append": append,
                 "overwrite": overwrite,
+                "risk": _risk_label(path),
+                "field": path,
+                "from": _get_path(self.data, path),
+                "to": value,
                 "reason": f"{_permission_label(mode)}未授权此字段自动写入",
             }
             permissions.setdefault("pending_writes", []).append(pending)
@@ -692,12 +701,23 @@ class GameState:
         permissions["audit_log"] = permissions["audit_log"][-30:]
         return f"状态写入：{path}"
 
-    def approve_pending_write(self, index: int) -> str:
+    def _pop_pending_write(self, *, id: str | None = None, index: int | None = None) -> dict | None:
+        """按 id 优先 / index fallback 弹出 pending_write。两者都不命中返回 None。"""
         permissions = self.data.setdefault("permissions", {})
         pending = permissions.setdefault("pending_writes", [])
-        if not (0 <= index < len(pending)):
+        if id:
+            for i, item in enumerate(pending):
+                if str(item.get("id", "")) == str(id):
+                    return pending.pop(i)
+            return None
+        if index is not None and 0 <= int(index) < len(pending):
+            return pending.pop(int(index))
+        return None
+
+    def approve_pending_write(self, index: int | None = None, *, id: str | None = None) -> str:
+        item = self._pop_pending_write(id=id, index=index)
+        if item is None:
             return "待审写入不存在"
-        item = pending.pop(index)
         spec = f"{item.get('path', '')}={item.get('value', '')}"
         return self.apply_state_write(
             spec,
@@ -707,20 +727,20 @@ class GameState:
             force=True,
         )
 
-    def reject_pending_write(self, index: int) -> str:
-        permissions = self.data.setdefault("permissions", {})
-        pending = permissions.setdefault("pending_writes", [])
-        if not (0 <= index < len(pending)):
+    def reject_pending_write(self, index: int | None = None, *, id: str | None = None) -> str:
+        item = self._pop_pending_write(id=id, index=index)
+        if item is None:
             return "待审写入不存在"
-        item = pending.pop(index)
+        permissions = self.data.setdefault("permissions", {})
         permissions.setdefault("audit_log", []).append({
+            "ts": datetime.now().isoformat(timespec="seconds"),
             "path": item.get("path", ""),
             "value": item.get("value", ""),
             "source": f"{item.get('source', 'gm')}:rejected",
             "mode": _normalize_permission_mode(permissions.get("mode", "full_access")),
             "turn": self.data.get("turn", 0),
         })
-        permissions["audit_log"] = permissions["audit_log"][-30:]
+        permissions["audit_log"] = permissions["audit_log"][-200:]
         return f"状态写入拒绝：{item.get('path', '')}"
 
     def add_pending_question(self, text: str, source: str = "gm") -> bool:
@@ -729,22 +749,49 @@ class GameState:
             return False
         permissions = self.data.setdefault("permissions", {})
         questions = permissions.setdefault("pending_questions", [])
+        import secrets as _secrets
         item = {
+            "id": _secrets.token_urlsafe(8),
             "question": question,
             "options": options,
             "source": source,
             "turn": self.data.get("turn", 0),
         }
-        if item not in questions:
+        # 比较时忽略 id（防止"同样的问题"被重复 push）
+        def _same(a, b):
+            return (a.get("question") == b.get("question")
+                    and a.get("options") == b.get("options"))
+        if not any(_same(item, q) for q in questions):
             questions.append(item)
             permissions["pending_questions"] = questions[-8:]
             return True
         return False
 
-    def clear_pending_question(self, index: int):
-        questions = self.data.setdefault("permissions", {}).setdefault("pending_questions", [])
-        if 0 <= index < len(questions):
-            questions.pop(index)
+    def clear_pending_question(self, index: int | None = None, *, id: str | None = None, choice: str | None = None) -> dict | None:
+        """同 _pop_pending_write：按 id 优先，index fallback。
+        choice：玩家选择的答案，写进 audit_log 留痕（默认 None = 强制跳过）。
+        """
+        permissions = self.data.setdefault("permissions", {})
+        questions = permissions.setdefault("pending_questions", [])
+        popped = None
+        if id:
+            for i, q in enumerate(questions):
+                if str(q.get("id", "")) == str(id):
+                    popped = questions.pop(i)
+                    break
+        elif index is not None and 0 <= int(index) < len(questions):
+            popped = questions.pop(int(index))
+        if popped is not None:
+            permissions.setdefault("audit_log", []).append({
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "kind": "question_answered",
+                "question": popped.get("question", ""),
+                "choice": choice or "(skipped)",
+                "source": popped.get("source", "gm"),
+                "turn": self.data.get("turn", 0),
+            })
+            permissions["audit_log"] = permissions["audit_log"][-200:]
+        return popped
 
     def _scan_worldline_validation(self, tags: list[str]) -> dict[str, str]:
         status = "none"
@@ -1139,6 +1186,35 @@ def _permission_label(mode: str) -> str:
         "auto_review": "自动审查",
         "full_access": "完全访问权限",
     }.get(_normalize_permission_mode(mode), "完全访问权限")
+
+
+# 风险评级。前端 ConfirmStrip 根据 risk 染色（low/medium/high）显示给玩家，
+# 让玩家在批量待审时快速看到"高风险动作"先决策。
+_HIGH_RISK_PREFIXES = (
+    "world.timeline.",       # 改时间线 = 改剧情走向
+    "worldline.",            # 世界线变量 = 全局推演规则
+    "memory.pinned",         # 固定记忆 = 长期影响
+)
+_HIGH_RISK_EXACT = {
+    "player.name", "player.role", "player.background",
+    "world.time",
+    "memory.main_quest",
+}
+_MEDIUM_RISK_PREFIXES = (
+    "relationships.",
+    "memory.facts",
+    "memory.abilities",
+    "memory.resources",
+)
+
+
+def _risk_label(path: str) -> str:
+    """给路径派一个风险等级，前端按颜色分组显示。"""
+    if path in _HIGH_RISK_EXACT or path.startswith(_HIGH_RISK_PREFIXES):
+        return "high"
+    if path.startswith(_MEDIUM_RISK_PREFIXES):
+        return "medium"
+    return "low"
 
 
 def _validation_label(status: str) -> str:

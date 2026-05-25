@@ -1349,17 +1349,25 @@ async def api_permissions(request: Request) -> JSONResponse:
 
 @app.post("/api/permissions/pending-write")
 async def api_pending_write(request: Request) -> JSONResponse:
+    """审批一条待写入。前端发 {id, action} 或 {index, decision}（兼容老 contract）。
+
+    P0 修复（task #53）：之前后端只读 index+decision，前端发 id+action →
+    /set 后端 body.get("index", -1) = -1 → "待审写入不存在" → 整个审批流死。
+    现在按 id 优先（稳定），index/decision 作 fallback。
+    """
     api_user = _require_api_user(request)
     body = await request.json()
     state = _ensure_loaded(api_user)
-    index = int(body.get("index", -1))
-    decision = str(body.get("decision", "")).lower()
+    item_id = body.get("id")
+    raw_index = body.get("index")
+    index = int(raw_index) if raw_index is not None else None
+    decision = str(body.get("action") or body.get("decision") or "").lower()
     if decision == "approve":
-        result = state.approve_pending_write(index)
+        result = state.approve_pending_write(index=index, id=item_id)
     elif decision == "reject":
-        result = state.reject_pending_write(index)
+        result = state.reject_pending_write(index=index, id=item_id)
     else:
-        return JSONResponse({"ok": False, "error": "unknown decision"}, status_code=400)
+        return JSONResponse({"ok": False, "error": "缺少 action/decision（approve|reject）"}, status_code=400)
     state.data["memory"]["last_structured_updates"] = [result] + state.data["memory"].get("last_structured_updates", [])[:11]
     state.save()
     _persist_runtime_checkpoint(state, api_user)
@@ -1368,13 +1376,18 @@ async def api_pending_write(request: Request) -> JSONResponse:
 
 @app.post("/api/questions/clear")
 async def api_question_clear(request: Request) -> JSONResponse:
+    """回答（或跳过）一条 GM 询问。{id, choice?} 或 {index, choice?}。"""
     api_user = _require_api_user(request)
     body = await request.json()
     state = _ensure_loaded(api_user)
-    state.clear_pending_question(int(body.get("index", -1)))
+    item_id = body.get("id")
+    raw_index = body.get("index")
+    index = int(raw_index) if raw_index is not None else None
+    choice = body.get("choice")
+    popped = state.clear_pending_question(index=index, id=item_id, choice=choice)
     state.save()
     _persist_runtime_checkpoint(state, api_user)
-    return JSONResponse({"ok": True, "state": _payload(api_user)})
+    return JSONResponse({"ok": True, "cleared": bool(popped), "state": _payload(api_user)})
 
 
 @app.post("/api/debug/pending-question")
