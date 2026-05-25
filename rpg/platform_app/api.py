@@ -876,6 +876,148 @@ async def api_my_usage(request: Request):
     return json_response(usage_mod.aggregate_usage(user["id"], days=days))
 
 
+@router.get("/api/me/stats")
+async def api_my_stats(request: Request):
+    """玩家档案统计：回合数 / 分支 / 字数 / 连续登录。
+
+    task 49（mock 清扫第二轮）：之前 MeOverview 用 totalRounds = saves.reduce(× 7)、
+    playHours = totalRounds × 1.2 / 60，以及 "本周 +6.4h / 最深 6 层 / 共 418 万字 /
+    7 天连续登录 / 最长 14 天" 全部硬编码。这里给出全部真实派生值；没有真实
+    来源的字段（如累计游玩分钟数）返回 null，由前端显示「—」而不是假数字。
+    """
+    user = require_user(request)
+    cur_token = request.cookies.get(SESSION_COOKIE) or ""
+    with connect() as db:
+        # 剧本汇总
+        sc_row = db.execute(
+            "select coalesce(count(*), 0) as n, "
+            "coalesce(sum(word_count), 0) as words, "
+            "coalesce(sum(chapter_count), 0) as chapters "
+            "from scripts where owner_id = %s",
+            (user["id"],),
+        ).fetchone()
+        # 存档数
+        sv_row = db.execute(
+            "select count(*) as n from game_saves where user_id = %s", (user["id"],)
+        ).fetchone()
+        # 回合数：每个 save 取最大 turn_index 后求和
+        rounds_row = db.execute(
+            """
+            select coalesce(sum(per_save_max), 0) as n from (
+              select max(b.turn_index) as per_save_max
+              from branch_nodes b join game_saves s on s.id = b.save_id
+              where s.user_id = %s
+              group by b.save_id
+            ) t
+            """,
+            (user["id"],),
+        ).fetchone()
+        # 分支节点总数（含主线节点）
+        nodes_row = db.execute(
+            """
+            select count(*) as n
+            from branch_nodes b join game_saves s on s.id = b.save_id
+            where s.user_id = %s
+            """,
+            (user["id"],),
+        ).fetchone()
+        # 分支条数 = 同一父节点下"额外的"子节点（fork 出来的兄弟）
+        # 主线一路接龙时 parent_id 唯一 child 不算分支；
+        # 真正的 fork 是 parent 有 ≥2 个 child，分支数 = sum(siblings - 1)
+        branches_row = db.execute(
+            """
+            select coalesce(sum(extra), 0) as n from (
+              select count(*) - 1 as extra
+              from branch_nodes b join game_saves s on s.id = b.save_id
+              where s.user_id = %s and b.parent_id is not null
+              group by b.parent_id
+              having count(*) > 1
+            ) t
+            """,
+            (user["id"],),
+        ).fetchone()
+        # 最深分支层数：用递归 CTE 算每个 save 的最大深度
+        depth_row = db.execute(
+            """
+            with recursive bn as (
+              select b.id, b.save_id, b.parent_id, 1 as depth
+              from branch_nodes b join game_saves s on s.id = b.save_id
+              where s.user_id = %s and b.parent_id is null
+              union all
+              select c.id, c.save_id, c.parent_id, bn.depth + 1
+              from branch_nodes c join bn on c.parent_id = bn.id
+            )
+            select coalesce(max(depth), 0) as n from bn
+            """,
+            (user["id"],),
+        ).fetchone()
+        # 上次登录：当前 session 之外，最近一次 login_ok
+        last_login_row = db.execute(
+            """
+            select created_at from login_audit
+            where username = %s and event = 'login_ok'
+            order by created_at desc
+            offset 1 limit 1
+            """,
+            (user.get("username"),),
+        ).fetchone()
+        # 取最近 365 天的登录日期集合
+        days_rows = db.execute(
+            """
+            select distinct date_trunc('day', created_at at time zone 'UTC')::date as d
+            from login_audit
+            where username = %s and event = 'login_ok'
+              and created_at >= now() - interval '365 days'
+            order by d desc
+            """,
+            (user.get("username"),),
+        ).fetchall()
+    # 用 Python 算连续登录天数
+    from datetime import date, timedelta
+    login_days = [r["d"] for r in days_rows]
+    today = date.today()
+    streak = 0
+    if login_days and login_days[0] in (today, today - timedelta(days=1)):
+        cur = login_days[0]
+        for d in login_days:
+            if d == cur:
+                streak += 1
+                cur = cur - timedelta(days=1)
+            elif d < cur:
+                break
+    longest = 0
+    if login_days:
+        prev = None
+        run = 0
+        for d in login_days:  # desc 排序
+            if prev is None or (prev - d).days == 1:
+                run += 1
+            else:
+                longest = max(longest, run)
+                run = 1
+            prev = d
+        longest = max(longest, run)
+    return json_response({
+        "ok": True,
+        "imported": {
+            "scripts": int(sc_row["n"] or 0),
+            "words": int(sc_row["words"] or 0),
+            "chapters": int(sc_row["chapters"] or 0),
+        },
+        "saves_count": int(sv_row["n"] or 0),
+        "total_rounds": int(rounds_row["n"] or 0),
+        "branch_nodes": int(nodes_row["n"] or 0),
+        "branches": int(branches_row["n"] or 0),
+        "max_branch_depth": int(depth_row["n"] or 0),
+        "last_login_at": last_login_row["created_at"].isoformat() if last_login_row and last_login_row["created_at"] else None,
+        "login_streak": int(streak),
+        "longest_login_streak": int(longest),
+        # 没有真实数据源的字段：显式 null，由 UI 显示 "—"，禁止编造
+        "play_minutes_total": None,
+        "play_minutes_week": None,
+    })
+
+
 @router.post("/api/me/preference")
 async def api_set_preference(request: Request):
     """更新或合并界面偏好（主题/字号/默认模型...）"""
