@@ -1308,7 +1308,23 @@ async def api_chat(request: Request) -> StreamingResponse:
                 else:
                     response_with_ops = response
             except Exception as exc:
+                # task 65：失败不再只 console.print。写 audit_log kind=extractor_error
+                # 让前端 Audit Log 面板能告诉用户「第二步挂了，state ops 这轮没抽到」。
                 print(f"[chat] extractor pipeline failed: {exc}; falling back to single-step")
+                try:
+                    from datetime import datetime as _dt
+                    audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                    audit.append({
+                        "ts": _dt.now().isoformat(timespec="seconds"),
+                        "kind": "extractor_error",
+                        "source": "extractor",
+                        "hint": f"GM 第二步失败：{type(exc).__name__}: {str(exc)[:200]}",
+                        "turn": state.data.get("turn", 0),
+                    })
+                    if len(audit) > 200:
+                        state.data["permissions"]["audit_log"] = audit[-200:]
+                except Exception:
+                    pass
                 response_with_ops = response
 
             updates = directive_updates + state.apply_structured_updates(response_with_ops)
