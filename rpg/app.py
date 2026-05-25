@@ -4711,5 +4711,7 @@ if __name__ == "__main__":
 
     url = f"http://{HOST}:{PORT}"
     print(f"[UI] {APP_TITLE} RPG workspace: {url}")
-    webbrowser.open(url)
+    # RPG_NO_BROWSER=1 时跳过自动开浏览器（开发/CI/手动重启场景用）
+    if not os.environ.get("RPG_NO_BROWSER"):
+        webbrowser.open(url)
     uvicorn.run(app, host=HOST, port=PORT, log_level="info")
