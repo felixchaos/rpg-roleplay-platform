@@ -453,7 +453,7 @@ class GameState:
     def set_last_context_agent(self, agent: dict):
         self.data["memory"]["last_context_agent"] = agent or {}
 
-    def apply_structured_updates(self, gm_response: str) -> list[str]:
+    def apply_structured_updates(self, gm_response: str, *, skip_regex_fallback: bool = False) -> list[str]:
         updates: list[str] = []
         memory = self.data["memory"]
         # task 55：双协议。先剥离 ```json state-ops``` 代码块（更可靠的协议）
@@ -611,12 +611,16 @@ class GameState:
             _gm_write_via_gate("world.time", value, label_for_update=f"时间线锁定：{value}")
 
         # 兼容 GM 没有按结构化标签输出、但文本里出现明确状态变化的情况。
-        if re.search(r"重力控制|肉身飞行|双脚.*离开|悬浮", gm_response or ""):
-            if self.add_memory("abilities", "重力控制/肉身飞行（初步掌握）"):
-                updates.append("能力：重力控制/肉身飞行（初步掌握）")
-        if "特殊小队" in (gm_response or ""):
-            if self.add_memory("resources", "特殊小队建制"):
-                updates.append("资源：特殊小队建制")
+        # task 69：extractor 开启时（task 62 的两步式 GM），第二步会从叙事完整
+        # 抽 JSON ops，这里的「作者写死 regex 兜底」会和 extractor 双写同一字段。
+        # extractor enabled → 跳过 regex；关闭时保留兜底向后兼容（单步 GM 走旧路径）。
+        if not skip_regex_fallback:
+            if re.search(r"重力控制|肉身飞行|双脚.*离开|悬浮", gm_response or ""):
+                if self.add_memory("abilities", "重力控制/肉身飞行（初步掌握）"):
+                    updates.append("能力：重力控制/肉身飞行（初步掌握）")
+            if "特殊小队" in (gm_response or ""):
+                if self.add_memory("resources", "特殊小队建制"):
+                    updates.append("资源：特殊小队建制")
 
         # task 55：JSON 协议处理。op = "set"/"append"/"overwrite"/"question"
         def _log_op_parse_error(reason: str, op_dump):

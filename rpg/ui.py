@@ -1290,8 +1290,10 @@ async def api_chat(request: Request) -> StreamingResponse:
             # 便宜模型（默认 gemini-3.5-flash）抽出 JSON ops 追加到 response 末尾，
             # 让 apply_structured_updates 统一处理。错误回灌（task 60）+ 闸门 (task 54)
             # 都自动覆盖到 extractor ops。
+            extractor_active = False  # task 69：决定是否跳过 state.py 隐式 regex 兜底
             try:
                 if _is_extractor_enabled(api_user) and response.strip():
+                    extractor_active = True
                     import extractor as _extractor
                     extractor_ops = _extractor.extract_state_ops(
                         narrative_text=response,
@@ -1327,7 +1329,10 @@ async def api_chat(request: Request) -> StreamingResponse:
                     pass
                 response_with_ops = response
 
-            updates = directive_updates + state.apply_structured_updates(response_with_ops)
+            # task 69：extractor 开启时让 state.py 跳过 regex 兜底，避免和 extractor 双写
+            updates = directive_updates + state.apply_structured_updates(
+                response_with_ops, skip_regex_fallback=extractor_active,
+            )
             _persist_chat_turn(
                 api_user, state, message_for_model, response,  # 存档时存"纯叙事"不含 extractor JSON
                 persist_user_id=persist_user_id, active_save_id=active_save_id,
