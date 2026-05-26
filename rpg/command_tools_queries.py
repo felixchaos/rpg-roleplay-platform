@@ -162,7 +162,9 @@ def _t_list_my_character_cards(user_id: int, args: dict) -> str:
         init_db()
         with connect() as db:
             rows = db.execute(
-                "select id, name, summary from user_character_cards where user_id = %s order by updated_at desc limit 50",
+                "select id, name, identity, personality, enabled "
+                "from user_character_cards where user_id = %s "
+                "order by updated_at desc limit 50",
                 (user_id,),
             ).fetchall() or []
         return json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=2) if rows else "(无 card)"
@@ -197,12 +199,12 @@ def _t_list_scripts(user_id: int, args: dict) -> str:
         init_db()
         with connect() as db:
             rows = db.execute(
-                "select id, title, chapter_count from scripts "
-                "where (user_id = %s or visibility = 'public') "
+                "select id, title, chapter_count, word_count from scripts "
+                "where owner_id = %s "
                 "order by updated_at desc limit 50",
                 (user_id,),
             ).fetchall() or []
-        return json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=2)
+        return json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=2) if rows else "(无 script)"
     except Exception as exc:
         return f"失败: {type(exc).__name__}: {exc}"
 

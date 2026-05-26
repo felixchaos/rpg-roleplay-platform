@@ -140,16 +140,18 @@ def _t_create_persona(user_id: int, args: dict) -> str:
     summary = (args.get("summary") or "").strip()
     if not name:
         return "失败: name 为空"
+    payload = {
+        "name": name,
+        "personality": summary,
+        "role": (args.get("role") or "").strip(),
+        "background": (args.get("background") or "").strip(),
+        "appearance": (args.get("appearance") or "").strip(),
+        "tags": args.get("tags") or [],
+    }
     try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "insert into user_personas (user_id, name, summary) "
-                "values (%s, %s, %s) returning id",
-                (user_id, name, summary),
-            ).fetchone()
-        return f"persona 创建: id={row['id']} name={name}"
+        from platform_app.user_cards import upsert_persona
+        row = upsert_persona(user_id, payload)
+        return f"persona 创建: id={row.get('id')} name={name} slug={row.get('slug')}"
     except Exception as exc:
         return f"失败: {type(exc).__name__}: {exc}"
 
@@ -178,16 +180,22 @@ def _t_create_character_card(user_id: int, args: dict) -> str:
     summary = (args.get("summary") or "").strip()
     if not name:
         return "失败: name 为空"
+    payload = {
+        "name": name,
+        "personality": summary,
+        "identity": (args.get("identity") or "").strip(),
+        "appearance": (args.get("appearance") or "").strip(),
+        "speech_style": (args.get("speech_style") or "").strip(),
+        "current_status": (args.get("current_status") or "").strip(),
+        "secrets": (args.get("secrets") or "").strip(),
+        "aliases": args.get("aliases") or [],
+        "sample_dialogue": args.get("sample_dialogue") or [],
+        "tags": args.get("tags") or [],
+    }
     try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "insert into user_character_cards (user_id, name, summary) "
-                "values (%s, %s, %s) returning id",
-                (user_id, name, summary),
-            ).fetchone()
-        return f"角色卡创建: id={row['id']} name={name}"
+        from platform_app.user_cards import upsert_user_card
+        row = upsert_user_card(user_id, payload)
+        return f"角色卡创建: id={row.get('id')} name={name} slug={row.get('slug')}"
     except Exception as exc:
         return f"失败: {type(exc).__name__}: {exc}"
 
@@ -493,7 +501,7 @@ def _t_get_my_stats(user_id: int, args: dict) -> str:
             row = db.execute(
                 "select "
                 "(select count(*) from game_saves where user_id = %s) as save_count, "
-                "(select count(*) from scripts where user_id = %s) as script_count, "
+                "(select count(*) from scripts where owner_id = %s) as script_count, "
                 "(select count(*) from user_personas where user_id = %s) as persona_count, "
                 "(select count(*) from user_character_cards where user_id = %s) as card_count",
                 (user_id, user_id, user_id, user_id),
@@ -560,17 +568,35 @@ def register_misc_tools() -> None:
           "properties": {"key": {"type": "string"}, "value": {}},
           "required": ["key", "value"]},
          _t_set_preference, _USER_MUTATE, False),  # 跨 save,LLM 禁
-        ("create_persona", "新建一个用户 persona",
+        ("create_persona", "新建一个用户 persona (玩家身份模板)。summary 写入 personality 字段。",
          {"type": "object",
-          "properties": {"name": {"type": "string"}, "summary": {"type": "string"}},
+          "properties": {
+              "name": {"type": "string"},
+              "summary": {"type": "string", "description": "性格简介,写入 personality 字段"},
+              "role": {"type": "string"},
+              "background": {"type": "string"},
+              "appearance": {"type": "string"},
+              "tags": {"type": "array", "items": {"type": "string"}},
+          },
           "required": ["name"]},
          _t_create_persona, _USER_MUTATE, False),  # 跨 save 持久资源,LLM 禁
         ("delete_persona", "永久删除 persona",
          {"type": "object", "properties": {"persona_id": {"type": "integer"}}, "required": ["persona_id"]},
          _t_delete_persona, _USER_DEST, True),
-        ("create_character_card", "新建一张角色卡",
+        ("create_character_card", "新建一张角色卡 (可复用人设)。summary 写入 personality 字段。",
          {"type": "object",
-          "properties": {"name": {"type": "string"}, "summary": {"type": "string"}},
+          "properties": {
+              "name": {"type": "string"},
+              "summary": {"type": "string", "description": "性格简介,写入 personality 字段"},
+              "identity": {"type": "string", "description": "身份背景 (1 句)"},
+              "appearance": {"type": "string", "description": "外貌特征"},
+              "speech_style": {"type": "string", "description": "说话方式"},
+              "current_status": {"type": "string", "description": "当前状态"},
+              "secrets": {"type": "string", "description": "未公开秘密"},
+              "aliases": {"type": "array", "items": {"type": "string"}},
+              "sample_dialogue": {"type": "array", "items": {"type": "string"}},
+              "tags": {"type": "array", "items": {"type": "string"}},
+          },
           "required": ["name"]},
          _t_create_character_card, _USER_MUTATE, False),  # 跨 save,LLM 禁
         ("delete_character_card", "永久删除角色卡",
@@ -811,6 +837,86 @@ def register_misc_tools() -> None:
     )
     if not registry.has(nav_spec.name):
         registry.register(nav_spec)
+
+    # ────────────────────────────────────────────────────────────
+    # task 61: ask_user_choice — 助手结构化选择题工具
+    # 当助手需要用户在有限选项里做选择(性格/路线/类型/分支),
+    # 调此工具让 UI 渲染按钮组,而不是裸文本列 1/2/3 让用户打字。
+    # 类似 navigate_to_setting,返回 USER_CHOICE:<json> 哨兵,
+    # console_assistant SSE 流识别后转成 user_choice_required 事件 yield,
+    # 并中断当前 LLM loop 等用户在 UI 上选完。
+    # 仅 console_assistant 可用(LLM 自由叙事不应弹 UI 选择题)。
+    # ────────────────────────────────────────────────────────────
+    _CHOICE_ORIGINS = frozenset({"console_assistant"})
+
+    def _t_ask_user_choice(user_id: int, args: dict) -> str:
+        question = (args.get("question") or "").strip()
+        if not question:
+            return "失败: question 为空"
+        options = args.get("options") or []
+        if not isinstance(options, list):
+            return "失败: options 必须是数组"
+        # 清理为纯字符串列表
+        clean_options = [str(o).strip() for o in options if str(o).strip()]
+        if len(clean_options) < 2:
+            return "失败: options 至少 2 项"
+        if len(clean_options) > 6:
+            return "失败: options 最多 6 项"
+        allow_free_text = args.get("allow_free_text")
+        if allow_free_text is None:
+            allow_free_text = True
+        allow_free_text = bool(allow_free_text)
+        context = (args.get("context") or "").strip()
+        payload = {
+            "question": question,
+            "options": clean_options,
+            "allow_free_text": allow_free_text,
+            "context": context,
+        }
+        return f"USER_CHOICE:{json.dumps(payload, ensure_ascii=False)}"
+
+    choice_spec = ToolSpec(
+        name="ask_user_choice",
+        description=(
+            "向用户提一个有限选项的问题, 用户在 UI 上点按钮选答案。"
+            "比让用户打字快。当你需要确认偏好/路线/分支选择时调它, "
+            "而不是裸文本列 1/2/3。options 数组每项是一个候选答案字符串, "
+            "allow_free_text=true 时 UI 会额外显示一个自由输入按钮, "
+            "让用户也能描述自己的想法。context 可选, 解释为什么问这个。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "问题文本",
+                },
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "可选答案列表 (2-6 项), 纯字符串",
+                    "minItems": 2,
+                    "maxItems": 6,
+                },
+                "allow_free_text": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "是否允许用户自由输入(默认 true)",
+                },
+                "context": {
+                    "type": "string",
+                    "description": "可选, 解释为什么问这个",
+                },
+            },
+            "required": ["question", "options"],
+        },
+        executor=_t_ask_user_choice,
+        scope="user",
+        origins=_CHOICE_ORIGINS,
+        destructive=False,
+    )
+    if not registry.has(choice_spec.name):
+        registry.register(choice_spec)
 
 
 __all__ = ["register_misc_tools"]

@@ -77,17 +77,32 @@ class DispatcherOriginsHaveConsoleAssistant(unittest.TestCase):
             self.assertIn(expected, names)
 
     def test_destructive_tools_visible_but_marked(self):
-        """destructive 工具加入 console_assistant origin, 但 spec.destructive=True
-        端点层会做二次确认。"""
+        """跨 save 资源管理类的 destructive 工具加入 console_assistant origin,
+        但 spec.destructive=True 端点层会做二次确认。
+
+        task 62: save 内剧情字段 (set_player_name / set_player_role) 改为对
+        console_assistant 不可见 — 它们是「剧情内 GM 改名」, 与「人设资产管理」
+        混在一起会让 LLM 误判用户「建角色卡」请求。
+        """
         reg = get_registry()
         names = {s.name for s in reg.list_for_origin("console_assistant")}
+        # 跨 save 资源管理的 destructive 工具 — 应可见
         for dest in [
             "delete_save", "delete_persona", "delete_character_card",
             "delete_script", "delete_branch", "resplit_script",
-            "set_player_name",
         ]:
             self.assertIn(dest, names, f"console_assistant 应能看到 destructive {dest}")
             self.assertTrue(reg.get(dest).destructive)
+        # save 内剧情字段 — 不应可见 (task 62)
+        for save_internal in [
+            "set_player_name", "set_player_role", "set_player_background",
+            "set_player_location", "set_world_time", "add_world_event",
+        ]:
+            self.assertNotIn(
+                save_internal, names,
+                f"{save_internal} 是 save 内剧情字段, 不应对 console_assistant 开放 "
+                "(task 62 — 避免 LLM 把「建角色卡」误判为「改剧情内玩家名」)",
+            )
 
     def test_ui_only_tools_not_visible(self):
         """inject_pending_question / set_permission_mode / approve_pending_write
@@ -584,6 +599,122 @@ class ConfirmationApplyStream(unittest.TestCase):
 
 
 # ────────────────────────────────────────────────────────────
+# task 61: ask_user_choice — 结构化选择题哨兵 → SSE 事件
+# ────────────────────────────────────────────────────────────
+
+
+class AskUserChoiceTool(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        force_reset_for_tests()
+
+    def setUp(self):
+        from console_assistant import reset_all_conversations
+        reset_all_conversations()
+
+    def test_tool_registered_only_for_console_assistant(self):
+        reg = get_registry()
+        self.assertTrue(reg.has("ask_user_choice"))
+        spec = reg.get("ask_user_choice")
+        self.assertEqual(spec.scope, "user")
+        self.assertFalse(spec.destructive)
+        self.assertIn("console_assistant", spec.origins)
+        # 严格只 console_assistant — 不允许 LLM 自由叙事、不允许 UI 直调
+        self.assertNotIn("llm_chat", spec.origins)
+        self.assertNotIn("llm_set", spec.origins)
+        self.assertNotIn("ui_button", spec.origins)
+        self.assertNotIn("api_direct", spec.origins)
+
+    def test_executor_returns_user_choice_sentinel(self):
+        d = ToolDispatcher(registry=get_registry())
+        r = d.dispatch_sync(ToolCallEnvelope(
+            user_id=1, save_id=None, tool="ask_user_choice",
+            args={
+                "question": "性格?",
+                "options": ["开朗", "腹黑", "傲娇"],
+                "allow_free_text": True,
+                "context": "for card",
+            },
+            origin="console_assistant", trace_id="t-choice-1",
+        ))
+        self.assertTrue(r.ok, r.error)
+        self.assertTrue(r.result.startswith("USER_CHOICE:"))
+        payload = json.loads(r.result[len("USER_CHOICE:"):])
+        self.assertEqual(payload["question"], "性格?")
+        self.assertEqual(payload["options"], ["开朗", "腹黑", "傲娇"])
+        self.assertTrue(payload["allow_free_text"])
+        self.assertEqual(payload["context"], "for card")
+
+    def test_rejects_too_few_options(self):
+        """schema minItems:2 + executor 内 fallback 双保险 — 至少 2 项。
+        无论是 dispatcher schema 层先拒还是 executor 内拒, 总之不会产生有效 USER_CHOICE 哨兵。"""
+        d = ToolDispatcher(registry=get_registry())
+        r = d.dispatch_sync(ToolCallEnvelope(
+            user_id=1, save_id=None, tool="ask_user_choice",
+            args={"question": "?", "options": ["仅一项"]},
+            origin="console_assistant", trace_id="t-choice-2",
+        ))
+        # 关键: 不会落地为合法 USER_CHOICE: 哨兵
+        if r.ok:
+            self.assertFalse((r.result or "").startswith("USER_CHOICE:"),
+                             "1 项 options 不应产生合法 USER_CHOICE 哨兵")
+        # r.ok=False 也算正确行为(schema 层挡掉)
+
+    def test_llm_chat_origin_blocked(self):
+        """ask_user_choice 仅 console_assistant 可调 — llm_chat / api_direct 都拒绝。"""
+        d = ToolDispatcher(registry=get_registry())
+        for origin in ("llm_chat", "llm_set", "ui_button", "api_direct"):
+            r = d.dispatch_sync(ToolCallEnvelope(
+                user_id=1, save_id=None, tool="ask_user_choice",
+                args={"question": "?", "options": ["a", "b"]},
+                origin=origin, trace_id=f"t-block-{origin}",
+            ))
+            self.assertFalse(r.ok, f"{origin} 不应能调 ask_user_choice")
+            self.assertIn("origin_forbidden", (r.error or ""))
+
+    def test_stream_chat_yields_user_choice_required_and_breaks_loop(self):
+        """LLM 调 ask_user_choice → SSE 流应 yield user_choice_required 事件,
+        并 *不* yield 后续 token (loop 已 break)。"""
+        from console_assistant import stream_chat
+        backend = FakeBackend([
+            {"type": "text", "text": "先确认性格。"},
+            {"type": "tool_call", "server_id": "dispatcher",
+             "tool": "ask_user_choice", "arguments": {
+                 "question": "晓卡性格?",
+                 "options": ["开朗", "腹黑", "傲娇", "温柔"],
+                 "allow_free_text": True,
+                 "context": "影响后续生成",
+             }},
+            # 这句不该被 yield — break 后 backend 不再被消费
+            {"type": "text", "text": "(本句不该出现)"},
+        ])
+        events = _consume_sse(stream_chat(
+            user_id=42, message="创建晓卡", conversation_id=None,
+            page_context=None, backend=backend,
+        ))
+        types = [e["event"] for e in events]
+        self.assertIn("user_choice_required", types,
+                      "应 yield user_choice_required 事件")
+        # 该事件的 payload
+        choice = next(e["data"] for e in events if e["event"] == "user_choice_required")
+        self.assertEqual(choice["question"], "晓卡性格?")
+        self.assertEqual(choice["options"], ["开朗", "腹黑", "傲娇", "温柔"])
+        self.assertTrue(choice["allow_free_text"])
+        self.assertEqual(choice["context"], "影响后续生成")
+        self.assertEqual(choice["tool"], "ask_user_choice")
+        self.assertIn("call_id", choice)
+        # 中断验证: 不该有 "(本句不该出现)" 的 token
+        tokens = [e["data"]["text"] for e in events if e["event"] == "token"]
+        self.assertNotIn("(本句不该出现)", tokens)
+        # 也不该再 yield 标准 tool_result (UI 卡片是工具的直接替代)
+        tool_results = [e["data"] for e in events if e["event"] == "tool_result"]
+        self.assertEqual(tool_results, [],
+                         "ask_user_choice 触发后不应再 yield 标准 tool_result")
+        # done 仍正常 yield
+        self.assertEqual(types[-1], "done")
+
+
+# ────────────────────────────────────────────────────────────
 # Layer F: origin 隔离 - llm_chat 仍不能调 console_assistant 专属工具
 # ────────────────────────────────────────────────────────────
 
@@ -719,6 +850,8 @@ class ConsoleAssistantModuleBasics(unittest.TestCase):
         self.assertIn("delete_save", names)
         self.assertIn("create_persona", names)
         self.assertIn("get_game_state", names)
+        # task 61: ask_user_choice 应在 console_assistant 工具集里
+        self.assertIn("ask_user_choice", names)
         # 不应含 UI-only
         self.assertNotIn("inject_pending_question", names)
         self.assertNotIn("set_permission_mode", names)
