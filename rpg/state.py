@@ -68,6 +68,20 @@ DEFAULT_STATE = {
     },
     # 最近骰子日志（最多保留 50 条）。append-only by RulesEngine。
     "dice_log": [],
+    # 当前在场轻量实体索引(NPC / 敌人 / 临时角色)。NOT 完整角色卡 —
+    # 完整角色卡是长期资产,在 user_cards db 表里;active_entities 是运行时索引,
+    # 当 GM 在场景里遇到 / 引入角色,先进这里;真正重要才手动 promote 成 user_card
+    # (只在平台『角色卡』页操作,游戏内不创建)。
+    # 来源 (source 字段):
+    #   "room_data"       — module 当前房间 npcs/enemies (自动同步)
+    #   "encounter"       — RulesEngine 启动的合法遭遇里 combatants
+    #   "gm_provisional"  — GM 正文提及的新角色 (待玩家确认 / 规则验证)
+    # 字段:
+    #   id, name, kind ("npc"|"enemy"|"ally"|"unknown"),
+    #   role, disposition ("friendly"|"hostile"|"neutral"|"unknown"),
+    #   source, first_seen_turn, last_seen_turn, location, status,
+    #   confidence (0..1), card_id?, stat_block_id?
+    "active_entities": [],
     "player": {
         "name": "",
         "role": "",          # 玩家选择的角色定位
@@ -389,6 +403,9 @@ class GameState:
             "scene": copy.deepcopy(self.data.get("scene") or {}),
             "encounter": copy.deepcopy(self.data.get("encounter") or {}),
             "dice_log": list(self.data.get("dice_log") or [])[-30:],
+            # 三层人物系统:轻量在场实体索引 (NPC / 敌人 / 临时角色)。
+            # 前端 PanelCharacters 读这个,不再依赖 GM 写 relationships。
+            "active_entities": list(self.data.get("active_entities") or []),
             "content_pack": {
                 "id": content_pack.get("id"),
                 "kind": content_pack.get("kind"),
@@ -1319,6 +1336,75 @@ class GameState:
         scene = self.data.setdefault("scene", {})
         flags = scene.setdefault("flags", {})
         flags[flag] = value
+
+    # ── active_entities: 轻量在场实体索引 ────────────────────────
+    # 设计要求 (Codex 评审):
+    # - 不是完整角色卡;角色卡是长期资产 (在 user_cards 表)。
+    # - 这是运行时索引:当 GM 在场景里遇到 / 引入角色,先进这里。
+    # - 真正重要才手动 promote 成 user_card (只在平台『角色卡』页操作)。
+    # - 来源 source ∈ {"room_data", "encounter", "gm_provisional"}。
+    # - 5E 模组:敌人必须来自 scene.current_room.enemies 或合法 encounter.combatants,
+    #   不允许 GM 正文凭空进 active_entities (combat gate 已经拦了 GM,这里也守一道)。
+
+    def _active_entities(self) -> list:
+        return self.data.setdefault("active_entities", [])
+
+    def set_active_entities(self, entities: list) -> None:
+        """覆盖整个 active_entities 列表。RulesEngine / rules_bridge 专用。"""
+        self.data["active_entities"] = [copy.deepcopy(e or {}) for e in (entities or [])]
+
+    def upsert_active_entity(self, entity: dict) -> None:
+        """按 id upsert。已有 id 命中就更新 last_seen_turn + 合并字段;否则追加。"""
+        if not isinstance(entity, dict):
+            return
+        ent_id = str(entity.get("id") or "").strip()
+        if not ent_id:
+            return
+        turn = int(self.data.get("turn", 0) or 0)
+        active = self._active_entities()
+        for i, e in enumerate(active):
+            if str(e.get("id") or "") == ent_id:
+                merged = dict(e)
+                # 来源 / first_seen 不被覆盖
+                preserved_source = e.get("source") or entity.get("source") or "unknown"
+                preserved_first_seen = e.get("first_seen_turn") if e.get("first_seen_turn") is not None else turn
+                for k, v in entity.items():
+                    if v is not None:
+                        merged[k] = v
+                merged["source"] = preserved_source
+                merged["first_seen_turn"] = preserved_first_seen
+                merged["last_seen_turn"] = turn
+                active[i] = merged
+                return
+        # 新增
+        new_entity = dict(entity)
+        new_entity.setdefault("source", "unknown")
+        new_entity.setdefault("first_seen_turn", turn)
+        new_entity["last_seen_turn"] = turn
+        new_entity.setdefault("kind", "unknown")
+        new_entity.setdefault("disposition", "unknown")
+        new_entity.setdefault("confidence", 1.0)
+        active.append(new_entity)
+
+    def prune_active_entities(self, keep_ids: list[str] | set[str]) -> int:
+        """删除不在 keep_ids 里的 active_entities。返回删了几个。"""
+        keep = set(str(x) for x in (keep_ids or []))
+        active = self._active_entities()
+        before = len(active)
+        self.data["active_entities"] = [e for e in active if str(e.get("id") or "") in keep]
+        return before - len(self.data["active_entities"])
+
+    def replace_active_entities_with_source(self, source: str, entities: list) -> None:
+        """删除指定 source 的所有条目,然后追加新的。
+        典型用法:enter_room 时把 source='room_data' 的旧实体清掉,从新房间重新填。
+        不影响其他 source 的实体 (如 encounter / gm_provisional)。"""
+        if not source:
+            return
+        active = self._active_entities()
+        keep_other = [e for e in active if e.get("source") != source]
+        self.data["active_entities"] = keep_other
+        for e in (entities or []):
+            self.upsert_active_entity(e)
 
     def _pop_pending_write(self, *, id: str | None = None, index: int | None = None) -> dict | None:
         """按 id 优先 / index fallback 弹出 pending_write。两者都不命中返回 None。"""

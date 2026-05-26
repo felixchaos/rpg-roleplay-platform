@@ -259,13 +259,24 @@ class RulesChatPipeline(unittest.TestCase):
         self.assertIn("location.hash", text)
         self.assertIn("if (nextAction) startRun(nextAction)", text)
 
-    def test_game_panel_can_promote_relationship_to_user_card(self):
+    def test_game_panel_does_NOT_promote_relationship_to_user_card(self):
+        """三层人物系统重构(test_active_entities_three_tier 落地)后,
+        游戏面板**不应**再有"转为用户角色卡"按钮 / saveAsUserCard 函数。
+        创建 / 提升用户角色卡只能在平台『角色卡』页操作。
+        此测试反过来确认旧 promote 路径已彻底从 game-panels.jsx 移除。"""
         panel = Path(__file__).resolve().parents[2] / "frontend" / "src" / "game-panels.jsx"
         text = panel.read_text(encoding="utf-8")
-        self.assertIn("转为用户角色卡", text)
-        self.assertIn("saveAsUserCard", text)
-        self.assertIn("window.api.cards.myUpsert", text)
-        self.assertIn("game_console_relationship", text)
+        self.assertNotIn('data-tip="转为用户角色卡"', text,
+            "game-panels.jsx 不应再有 data-tip='转为用户角色卡' 按钮")
+        self.assertNotIn("saveAsUserCard", text,
+            "saveAsUserCard 函数应已删除 — 游戏内不创建用户卡")
+        self.assertNotIn("window.api.cards.myUpsert", text,
+            "game-panels.jsx 不应再调 cards.myUpsert — 那是平台职责")
+        # 平台一侧应仍保留 promote 路径(合法关注点)
+        platform = Path(__file__).resolve().parents[2] / "frontend" / "src" / "platform-app.jsx"
+        platform_text = platform.read_text(encoding="utf-8")
+        self.assertIn("promoteNpcToUserCard", platform_text,
+            "平台『角色卡』页应保留 promoteNpcToUserCard")
 
     def test_game_ui_strips_state_ops_from_gm_messages(self):
         app_js = Path(__file__).resolve().parents[2] / "frontend" / "src" / "game-app.jsx"
