@@ -1572,6 +1572,71 @@ async def api_chat(request: Request) -> StreamingResponse:
                 return
             ctx = agent_result["retrieved_context"]
             bundle = agent_result["bundle"]
+            # task XX (combat hard gate):5E module_adventure 里在 GM 被调用前用
+            # deterministic 规则拦截战斗意图。命中两种情况之一就直接 yield
+            # pending_question 给玩家,跳过 GM 调用本身。
+            # 这彻底杜绝"GM 把坏结果(被卡住 / 借机攻击命中 / 短弓不可用 / 凭空生敌)写正文"。
+            _combat_gate = _rb_classify_combat_intent(message_for_model, state)
+            if _combat_gate:
+                _q_text = _combat_gate.get("question") or ""
+                _q_opts = list(_combat_gate.get("options") or [])
+                try:
+                    state.add_pending_question(
+                        _q_text,
+                        source=_combat_gate.get("source") or "rules_engine",
+                        options=_q_opts,
+                    )
+                except Exception:
+                    pass
+                # audit
+                try:
+                    from datetime import datetime as _dt
+                    audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                    audit.append({
+                        "ts": _dt.now().isoformat(timespec="seconds"),
+                        "kind": "combat_gated",
+                        "source": "rules_engine",
+                        "hint": f"{_combat_gate.get('kind')}: {_combat_gate.get('reason') or ''}",
+                        "turn": state.data.get("turn", 0),
+                    })
+                    if len(audit) > 200:
+                        state.data["permissions"]["audit_log"] = audit[-200:]
+                except Exception:
+                    pass
+                state.save()
+                _persist_runtime_checkpoint(state, api_user)
+                yield _sse("agent", {
+                    "phase": "rules_gate",
+                    "message": _combat_gate.get("reason") or "RulesEngine 要求玩家先明确动作",
+                    "status": "done",
+                    "elapsed_ms": 0,
+                    "gate_kind": _combat_gate.get("kind"),
+                })
+                yield _sse("status", _payload(api_user))
+                # 把规则裁定的问询当 GM 正文流出去,前端 chat history 才有记录
+                _gate_msg_lines = [f"【规则要求先确认】{_q_text}"]
+                if _q_opts:
+                    _gate_msg_lines.append("可选:")
+                    _gate_msg_lines.extend(f"  · {opt}" for opt in _q_opts)
+                _gate_msg = "\n".join(_gate_msg_lines)
+                yield _sse("token", {"text": _gate_msg})
+                try:
+                    _persist_chat_turn(
+                        api_user, state, message_for_model, _gate_msg,
+                        persist_user_id=persist_user_id, active_save_id=active_save_id,
+                    )
+                except Exception:
+                    pass
+                # 注:这里 context_run_id 还没初始化(那是后面 task 80 路径才做的)。
+                # gate 直接走 done,无需 mark_context_run。
+                yield _sse("status", _payload(api_user))
+                yield _sse("done", {
+                    "status": _payload(api_user),
+                    "interrupted": False,
+                    "rules_gated": True,
+                    "gate_kind": _combat_gate.get("kind"),
+                })
+                return
             rule_results = _apply_chat_rule_candidates(
                 state,
                 _chat_rule_candidates(
@@ -2394,6 +2459,7 @@ from rules_bridge import (
     suggest_rule_actions as _rb_suggest_rule_actions,
     parse_consume_intent as _rb_parse_consume_intent,
     consume_item_action as _rb_consume_item_action,
+    classify_combat_intent as _rb_classify_combat_intent,
 )
 import modules as _rules_module_registry
 
