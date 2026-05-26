@@ -304,6 +304,13 @@ def ensure_registered() -> None:
         register_misc_tools()
     except Exception as exc:
         print(f"[command_tools_register] misc 工具注册失败: {exc}")
+    # task 68/72 — 给已注册工具打 intent_keywords + side_effect_topics 标签,
+    # 供 ui_describe 模糊匹配 + dispatcher 状态变更广播。
+    try:
+        from ui_manifest import apply_tags
+        apply_tags()
+    except Exception as exc:
+        print(f"[command_tools_register] ui_manifest.apply_tags 失败: {exc}")
     _REGISTERED = True
 
 

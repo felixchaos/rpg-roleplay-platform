@@ -66,6 +66,11 @@ class ToolSpec:
     scope: Scope = "save"
     origins: frozenset[str] = frozenset({"ui_button", "api_direct", "llm_set"})
     destructive: bool = False  # delete_* / 重置类操作,LLM 不能调
+    # task 74: 统一 UI 机制 — 用于 ui_describe 工具的意图匹配 + 状态变更广播。
+    # intent_keywords: 用户口语意图关键词 (供 ui_describe 模糊匹配,不必穷举,几个核心词即可)。
+    # side_effect_topics: 工具成功后要广播的 state-event topic (用于 SSE → 前端订阅 → 各页面自动刷新)。
+    intent_keywords: tuple[str, ...] = ()
+    side_effect_topics: tuple[str, ...] = ()
 
     def to_anthropic_tool(self) -> dict[str, Any]:
         """转换为 Anthropic tool_use schema。"""
@@ -341,6 +346,20 @@ class ToolDispatcher:
                     permissions["audit_log"] = state_audit[-AUDIT_LOG_LIMIT:]
         except Exception:
             pass  # 审计写入不阻塞主流程
+        # task 69: 工具成功后向 state-event 总线广播 — 前端 SSE 订阅者收到后
+        # 把它转为现有 rpg-{topic}-updated CustomEvent,各页面已有的 listener
+        # 自动 reload,无需手动 F5。
+        if ok and spec.side_effect_topics:
+            try:
+                from state_event_bus import emit as _emit_event
+                for topic in spec.side_effect_topics:
+                    _emit_event(env.user_id, topic, _topic_op_from_tool(env.tool), {
+                        "tool": env.tool,
+                        "args": env.args,
+                        "call_id": env.call_id,
+                    })
+            except Exception:
+                pass  # 广播失败不阻塞主流程
         return ToolResult(ok=ok, result=result, error=error, audit=audit)
 
     def _reject(self, env: ToolCallEnvelope, exc: DispatchError) -> ToolResult:
@@ -387,6 +406,23 @@ class ToolDispatcher:
 def _stable_json(obj: Any) -> str:
     import json
     return json.dumps(obj, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _topic_op_from_tool(tool_name: str) -> str:
+    """根据工具名前缀推断动作 (created/updated/deleted/activated/renamed)。
+    用于 state-event payload,前端可以按 op 类型决定是否需要全量刷或局部刷。"""
+    n = tool_name.lower()
+    if n.startswith(("create_", "import_", "start_", "add_")):
+        return "created"
+    if n.startswith(("delete_", "remove_", "cancel_", "stop_")):
+        return "deleted"
+    if n.startswith("activate_"):
+        return "activated"
+    if n.startswith("rename_"):
+        return "renamed"
+    if n.startswith(("approve_", "reject_", "dismiss_")):
+        return "resolved"
+    return "updated"
 
 
 __all__ = [

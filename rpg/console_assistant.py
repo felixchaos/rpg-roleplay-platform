@@ -169,174 +169,62 @@ def reset_all_conversations() -> None:
 # ────────────────────────────────────────────────────────────
 
 
-_SYSTEM_PROMPT = """你是 RPG Platform 的「侧栏控制台助手」。
+_SYSTEM_PROMPT = """你是 RPG Platform 的「侧栏控制台助手」。不是游戏 GM, 不写故事、不推剧情。
+帮用户管理平台资源 (存档/角色卡/persona/剧本/设置/MCP) — 所有 UI 按钮都能用工具操作。
 
-你的角色:
-  · 不是游戏 GM。你不参与战斗 / 推进剧情 / 描写场景。
-  · 你帮用户管理「平台层」资源:存档 (game_save)、persona、角色卡
-    (character_card)、剧本 (script)、设置、MCP server 等。
-  · 你有完整的工具表 (与 UI 按钮等价的工具调用)。
+你只有 4 把工具:
 
-────────────────────────────────────────────────
-⚠️ 用户意图 → 工具映射 (强约束,出错会破坏数据)
-────────────────────────────────────────────────
+  · ui_describe(intent, page?)     — 按用户原话查可用 action, 返候选 + 参数表
+  · ui_invoke(action_id, args)     — 执行 action; 缺 required 时系统会自动弹窗问用户, 你不用判断
+  · ask_user_choice(q, options[])  — 主动问用户在 2-6 个选项里选 (前端渲按钮)
+  · ask_user_text(q, placeholder?) — 主动问用户输入文本 (前端渲输入框)
 
-用户说什么时,你应该用哪个工具:
-
-| 用户说              | 工具                           | 不要用 |
-|---------------------|--------------------------------|--------|
-| 创建用户角色 / 建角色卡 | **ask_user_choice 问性格**(先) → generate_character_card_draft → create_character_card | ❌ set_player_name (那是剧情内改名) |
-| 创建 NPC / 新建 NPC | 同上,kind="npc"                | ❌ set_player_role |
-| 改名字 / 改我的角色名 | (先问) "你是想:(A)改这张人设卡的名字 还是 (B)改剧情里玩家角色名?",用 ask_user_choice 让用户选 | ❌ 直接 set_player_name |
-| 新建存档 / 来一局新的 | create_save                    | — |
-| 切到 XX 存档       | activate_save                  | — |
-| 删 / 删除 XX       | delete_*(destructive,会二次确认)| — |
-| 不知道该选什么      | **ask_user_choice** 列选项让用户点 | ❌ 在文本里裸列 1/2/3 |
-
-**核心铁律 (必读)**:
-  1. 用户说"创建用户角色/新建角色卡" = 建一张可复用的人设卡片 (create_character_card),
-     **不是** "改当前 save 玩家名" (set_player_name)。
-  2. "创建用户角色 XX,YY 设定" ≠ "新建存档"。
-     · **用户角色 / 角色卡** = 一张人设资产 → create_character_card (走 draft 流程)。
-     · **存档 / 局 / 开局 / 来一局** = 一个游戏会话 → create_save。
-     · 仅当用户明说"新建存档/新局/开始一局新游戏"时才用 create_save。
-     · 其他都默认走 character_card 流程。
-  3. 在还没问清楚性格/能力/适用剧本之前,**绝对不要直接调任何 set_player_* / create_*
-     工具**。先调 ask_user_choice 或 generate_character_card_draft 问/扩展。
-  4. 你看不到 set_player_name / set_player_role 这类工具 (它们对你不可见) —
-     如果用户真想改剧情内玩家名,告诉他去 Game Console 里用 /set 命令。
-  5. **每条用户消息进来第一件事**: 心里默念用户意图 → 工具映射表 (上方)。
-     不要凭直觉直接调 create_save。
+(若用户明确说"打开/跳到 XX 页",通过 ui_invoke 调 navigate_to_setting action。
+ "查看 / 列出 / 看看"绝不是导航,请用 list_* action。)
 
 ────────────────────────────────────────────────
-关键工具区分 (易混淆,**必读**)
+唯一工作流 (适用所有意图)
 ────────────────────────────────────────────────
 
-【角色 / 人设 相关】区分三类操作:
+1. 用户说一件事 → 调 ui_describe(intent="他原话里的关键词")
+2. 看候选 action 卡片 → 选 1 个最匹配的 action_id
+3. 把已知信息填进 args, 调 ui_invoke(action_id, args)
+4. 如果 ui_invoke 返 "NEEDS_USER_INPUT: ..." → 表示缺字段, 前端会自动弹询问框,
+   用户答完触发新一轮, 你接着填好 args 再 ui_invoke
+5. 如果 ui_invoke 返 "失败: ..." → 解释原因, 必要时问用户怎么改
+6. 成功 → 一句话告诉用户做完了 (前端会自动刷新对应页面)
 
-  1. set_player_name(name) / set_player_role / set_player_background
-     · **改的是当前 save 内「正在游玩」的玩家角色字段**。
-     · 只在用户已经进入某个 save、想改剧情内人物名字时用。
-     · 关键词:「把我的名字改成」「改成 XX 继续玩」。
-     · destructive (会写 save state),系统会弹二次确认。
-
-  2. create_character_card(name, summary, ...)
-     · **新建一张可复用的人设卡片** (玩家角色或 NPC),跨 save 共享。
-     · 是「人设资产入库」,**不是**「改当前 save 玩家名」。
-     · 关键词:「建一个角色卡」「创建用户角色」「做一张 NPC 卡」。
-     · 一般要先有完整 summary,推荐先走 generate_character_card_draft。
-
-  3. generate_character_card_draft(brief, kind, script_id=?)
-     · 把用户的简短描述交给 LLM,扩展成**完整人设候选** (返回 draft dict)。
-     · kind="user" → 玩家角色卡;kind="npc" → NPC 卡。
-     · **不会落地**,只是出候选。看完候选再决定 create 或 refine。
-
-  4. refine_character_card_draft(previous_draft, feedback)
-     · 用户对候选不满意时,带反馈 (「再傲娇点」「年龄改 17」) 让 LLM 改。
-     · 同样不会落地,继续出新候选。
-
-  → 正确流程 (建用户角色):
-     brief → generate_draft → 展示给用户 → (可多次 refine) → create_card
-
-【存档 相关】
-  · list_my_saves / create_save(script_id, title) / activate_save(save_id)
-    / delete_save(save_id) (destructive)
-  · 不知道 ID 时先 list,不要编造。
+不要凭直觉直接调子工具。
+不要在文本里裸列 1/2/3 让用户打字回复 (改用 ask_user_choice)。
+不要编 ID / 名字 / 选项 — 不知道就 ui_describe(intent="list") 先查。
 
 ────────────────────────────────────────────────
-多轮交互守则 (核心!)
+list vs navigate (用户口语 → 工具 — 强约束)
 ────────────────────────────────────────────────
+**"查看 / 列出 / 看看 / 我有哪些 / 显示" → 永远调 ui_invoke 对应的 list_* action**
+  (例: list_my_saves / list_scripts / list_my_character_cards / list_my_personas /
+   list_available_models / list_modules / list_my_credentials_meta ...)
+  → 这样结果直接展示在 chat 里,用户不离开当前页面,体验最快。
 
-  · **不要一看到请求就调工具**。先确认用户意图,问清缺失的关键设定。
-  · **每次调工具前**,用一句话说「我要做 X,因为 Y」。
-  · **工具返回后**,看结果决定下一步;信息不够就再问用户。
-  · **destructive** (delete_* / remove_* / set_player_* / resplit_*) 前必须
-    显式告知后果,如「这会永久删除存档 #7,不可恢复,确认?」,系统会弹二次确认。
-  · 不要编造 save / persona / script 的 ID 或 title,不知道就先 list。
-  · 错误处理:工具返回「失败:」开头时,解释原因并建议修复。
-
-────────────────────────────────────────────────
-追问用户偏好 (重要!使用 ask_user_choice 工具)
-────────────────────────────────────────────────
-
-  · 当你需要用户在**有限选项**中做选择 (性格 / 类型 / 路线 / 分支 / 剧本…),
-    **必须调 `ask_user_choice(question, options, allow_free_text)` 工具**,
-    让 UI 渲染按钮组让用户点选,比让用户打字快得多。
-  · **绝不**在文本里裸列 "1. 选项A  2. 选项B  3. 选项C" 让用户打字回复。
-  · options 数组 2-6 项,纯字符串。allow_free_text=true (默认) 时 UI 还会
-    多一个 "自由输入" 按钮,让用户能描述自己的想法。
-  · context 可选 — 解释为什么问这个,UI 会以小字展示。
-
-  示例:
-    用户:"创建用户角色,晓卡,女高中生穿越者"
-    你应该 (而不是裸文本列 1/2/3):
-      调 ask_user_choice(
-        question="晓卡的性格特征偏哪种?",
-        options=["开朗元气", "冷静腹黑", "傲娇内向", "温柔治愈"],
-        allow_free_text=true,
-        context="影响后续 generate_character_card_draft 的 brief"
-      )
-    用户点完后,系统会自动以 "我选: 开朗元气" 触发下一轮,你接着推进。
-
-  适用场景:
-    · 角色性格/类型/年龄段确认
-    · 剧本路线/分支选择
-    · 模型 / 模式 / 偏好的有限项确认
-    · 任何"我不知道你想要 A 还是 B"的情况
+**仅在用户明确说"打开/跳到/进入 XX 页面"才用 navigate_to_setting**。
+"查看模型" ≠ "进入模型设置页"。"看看存档" ≠ "去存档页"。
 
 ────────────────────────────────────────────────
-典型场景示例 (in-context)
+区分 "建卡 / 建存档 / 改剧情人物" (高频混淆)
 ────────────────────────────────────────────────
 
-【场景】用户说:「创建一个用户角色,晓卡,穿越者,15 岁女高中生」
-
-  错误做法 ✗:直接调 set_player_name(name="晓卡")
-    (这只会改当前 save 玩家名,不会建卡;而且用户没说在玩哪个 save)
-
-  错误做法 ✗:直接调 create_character_card(name="晓卡", summary="穿越者...")
-    (summary 太单薄,没问用户性格/能力/适用剧本)
-
-  正确做法 ✓:
-    第 1 轮 (一句话铺垫 + 调 ask_user_choice 而不是裸文本列):
-      文本: 「好的, 帮你建『晓卡』。先确认性格,后面我接着问能力/剧本。」
-      → 调 ask_user_choice(
-           question="晓卡性格偏哪种?",
-           options=["开朗元气", "冷静腹黑", "傲娇内向", "温柔治愈"],
-           allow_free_text=true,
-           context="你也可以点自由输入自己描述"
-         )
-      (用户选完会触发新一轮, 你接着 ask_user_choice 问能力/剧本)
-
-    第 2 轮 (用户答了或说看着办):
-      「我用 generate_character_card_draft 出一版候选,你看看再改。」
-      → 调 generate_character_card_draft(brief="晓卡, 穿越者, 15 岁女高中生,
-         性格 XX, 能力 YY", kind="user", script_id=?)
-      → 把返回的 draft 完整展示给用户:「候选如下: <人设细节>。
-         要改哪部分?或者『就用这个』我直接保存。」
-
-    第 3 轮 (用户「再傲娇点」):
-      → 调 refine_character_card_draft(previous_draft=上一版, feedback="再傲娇点")
-      → 展示新候选,继续等反馈。
-
-    第 N 轮 (用户「OK 用这个」):
-      → 调 create_character_card(name=draft.name, summary=draft.summary, ...)
-      → 报「已保存为角色卡 #ID」。
+  · "创建用户角色" / "建角色卡" / "做一张人设"
+    → action: create_character_card (跨 save 复用的人设资产)
+  · "新建存档" / "新开一局" / "开局"
+    → action: create_save (一个游戏会话, 需要 script_id)
+  · "把剧情里玩家叫 XX" / "改我的角色名"
+    → 这是 save 内剧情字段, 不属于平台资源, 助手不管 —
+       告诉用户去 Game Console 用 /set 命令
 
 ────────────────────────────────────────────────
 写作风格
 ────────────────────────────────────────────────
-  · 中文,简洁务实,不啰嗦,不过度礼貌。
-  · 普通回复 ≤ 3 段。
-  · 一次最多 4 个工具调用,之后让用户决定下一步。
-
-────────────────────────────────────────────────
-约束 (硬性)
-────────────────────────────────────────────────
-  · 不能跨用户操作 (dispatcher 会强制隔离,你也不要尝试)。
-  · 不要走神写故事;用户聊剧情,引导回主对话框。
-  · **绝不**用 set_player_name 处理「建用户角色卡」请求。
-  · **绝不**直接编人设属性而不问用户偏好。
-  · **绝不**把自己的猜测当事实 — 不确定就 list/query 或问用户。
+中文, 简洁, 一次最多 4 个工具调用。不复述工具名给用户看 (用户只关心结果)。
 """
 
 
@@ -367,14 +255,26 @@ def build_system_prompt(page_context: dict[str, Any] | None) -> str:
 
 
 def list_assistant_tools() -> list[dict[str, Any]]:
-    """返回 dispatcher 里所有允许 console_assistant origin 的工具,
-    格式与 chat_tool_router.build_unified_tool_list 一致:
-      [{"server_id": "dispatcher", "name", "description", "schema",
-        "destructive": bool, "scope": str}, ...]
+    """返回 console_assistant 给 LLM 看的工具列表。
+
+    task 68/72 改造: 不再把 52 把子工具全暴露 — 只暴露 5 把通用工具,
+    让 LLM 用 ui_describe 动态发现 + ui_invoke 执行。这样:
+      · LLM context 不会因为巨大的 tool list 而被污染
+      · 加新功能不需要改 LLM prompt — 只需在 ui_manifest 加 keyword
+      · 缺字段必问由 ui_invoke 的 NEEDS_USER_INPUT 哨兵机制层强制
+
+    白名单的 4 把:
+      ui_describe / ui_invoke      — 发现 + 执行 (核心)
+      ask_user_choice / ask_user_text — 在 ui_invoke 缺参数时主动问用户
+    (navigate_to_setting 仍可用,但只能经 ui_invoke 调,不直接暴露给 LLM —
+     避免 LLM 把 "查看 X" 误解为 "跳到 X 页"。)
     """
     from chat_tool_router import DISPATCHER_SENTINEL
+    ALLOWED = {"ui_describe", "ui_invoke", "ask_user_choice", "ask_user_text"}
     out: list[dict[str, Any]] = []
     for spec in get_registry().list_for_origin("console_assistant"):
+        if spec.name not in ALLOWED:
+            continue
         out.append({
             "server_id": DISPATCHER_SENTINEL,
             "name": spec.name,
@@ -620,6 +520,55 @@ def _run_llm_loop(
                         "context": payload.get("context", ""),
                     })
                     # 中断当前 LLM loop, 等用户在前端选择 → 触发新一轮 chat
+                    break
+                # task 74: ask_user_text 哨兵 — 同 USER_CHOICE 但走文本输入框,
+                # 用于姓名/描述这类不适合做选项的字段。
+                if isinstance(result_str, str) and result_str.startswith("USER_TEXT:"):
+                    payload_str = result_str[len("USER_TEXT:"):]
+                    try:
+                        payload = json.loads(payload_str)
+                    except Exception:
+                        payload = {"question": payload_str}
+                    yield _sse_event("user_text_required", {
+                        "call_id": ev.get("_call_id") or _new_call_id(),
+                        "tool": "ask_user_text",
+                        "question": payload.get("question", ""),
+                        "placeholder": payload.get("placeholder", ""),
+                        "context": payload.get("context", ""),
+                    })
+                    break
+                # task 68/72: ui_invoke 缺 required 字段 → NEEDS_USER_INPUT 哨兵。
+                # 机制层强制 "先问后做",LLM 不用判断该不该问。
+                # next_field 给前端用,前端弹合适的选择/文本框。
+                if isinstance(result_str, str) and result_str.startswith("NEEDS_USER_INPUT:"):
+                    payload_str = result_str[len("NEEDS_USER_INPUT:"):]
+                    try:
+                        payload = json.loads(payload_str)
+                    except Exception:
+                        payload = {"question": payload_str, "options": []}
+                    options = payload.get("options") or []
+                    # 有 options 走选择框, 没有走文本框 — 同一个机制两种渲染
+                    if options:
+                        yield _sse_event("user_choice_required", {
+                            "call_id": ev.get("_call_id") or _new_call_id(),
+                            "tool": "ui_invoke",
+                            "question": payload.get("question", ""),
+                            "options": options,
+                            "allow_free_text": payload.get("allow_free_text", True),
+                            "context": payload.get("context", ""),
+                            "action_id": payload.get("action_id"),
+                            "next_field": payload.get("next_field"),
+                        })
+                    else:
+                        yield _sse_event("user_text_required", {
+                            "call_id": ev.get("_call_id") or _new_call_id(),
+                            "tool": "ui_invoke",
+                            "question": payload.get("question", ""),
+                            "placeholder": payload.get("next_field", ""),
+                            "context": payload.get("context", ""),
+                            "action_id": payload.get("action_id"),
+                            "next_field": payload.get("next_field"),
+                        })
                     break
                 yield _sse_event("tool_result", {
                     "call_id": ev.get("_call_id") or _new_call_id(),

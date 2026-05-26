@@ -148,7 +148,9 @@ def _t_list_my_personas(user_id: int, args: dict) -> str:
         init_db()
         with connect() as db:
             rows = db.execute(
-                "select id, name, summary from user_personas where user_id = %s order by updated_at desc limit 30",
+                "select id, name, role, personality, is_default "
+                "from user_personas where user_id = %s "
+                "order by updated_at desc limit 30",
                 (user_id,),
             ).fetchall() or []
         return json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=2) if rows else "(无 persona)"

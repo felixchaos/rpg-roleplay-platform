@@ -918,5 +918,103 @@ def register_misc_tools() -> None:
     if not registry.has(choice_spec.name):
         registry.register(choice_spec)
 
+    # task 74 — ask_user_text: 自由文本输入 (用户需要打字而不是点选项时)。
+    def _t_ask_user_text(user_id: int, args: dict) -> str:
+        question = (args.get("question") or "").strip()
+        if not question:
+            return "失败: question 为空"
+        placeholder = (args.get("placeholder") or "").strip()
+        context = (args.get("context") or "").strip()
+        payload = {
+            "question": question,
+            "placeholder": placeholder,
+            "context": context,
+        }
+        return f"USER_TEXT:{json.dumps(payload, ensure_ascii=False)}"
+
+    text_spec = ToolSpec(
+        name="ask_user_text",
+        description=(
+            "向用户提一个自由文本输入问题。当字段是名字/描述/长文本而不适合做选项时调它。"
+            "UI 会弹一个输入框,placeholder 是占位提示,context 解释为什么问。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "问题文本"},
+                "placeholder": {"type": "string", "description": "输入框 placeholder"},
+                "context": {"type": "string", "description": "可选, 解释为什么问这个"},
+            },
+            "required": ["question"],
+        },
+        executor=_t_ask_user_text,
+        scope="user",
+        origins=_CHOICE_ORIGINS,
+        destructive=False,
+    )
+    if not registry.has(text_spec.name):
+        registry.register(text_spec)
+
+    # task 68/72 — ui_describe / ui_invoke: 助手统一 UI 机制的两把通用工具。
+    # 它们替代了"把 52 个子工具全塞 LLM tool list"的旧做法,
+    # 让 LLM 只见 5 把工具:ui_describe / ui_invoke / ask_user_choice
+    # / ask_user_text / navigate_to_setting。
+    from ui_manifest import ui_describe as _ui_describe, ui_invoke as _ui_invoke
+
+    describe_spec = ToolSpec(
+        name="ui_describe",
+        description=(
+            "按意图关键词查找当前可用的 UI action (角色卡/存档/剧本/设置等)。"
+            "返回一组 action 卡片, 含 id / 描述 / 参数表 / 是否 destructive。"
+            "用户每说一个想做的事, 先调 ui_describe(intent='用户原话关键词') 看选项, "
+            "再决定是 ui_invoke 还是 ask_user_choice 继续问。"
+            "page 可选, 限定页面范围 (saves/scripts/cards/settings)。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "intent": {"type": "string",
+                           "description": "用户原话或关键词, 用于模糊匹配。空则返通用 top-N"},
+                "page": {"type": "string",
+                         "enum": ["saves", "scripts", "cards", "settings"],
+                         "description": "限定页面范围 (可选)"},
+                "limit": {"type": "integer", "default": 8, "minimum": 1, "maximum": 20},
+            },
+            "required": [],
+        },
+        executor=_ui_describe,
+        scope="user",
+        origins=_CHOICE_ORIGINS,
+        destructive=False,
+    )
+    if not registry.has(describe_spec.name):
+        registry.register(describe_spec)
+
+    invoke_spec = ToolSpec(
+        name="ui_invoke",
+        description=(
+            "执行某个 UI action (角色卡创建/存档操作/剧本导入 等)。"
+            "args.action_id 从 ui_describe 拿;args.args 是该 action 的参数字典。"
+            "如果缺 required 字段, 会自动返回 NEEDS_USER_INPUT 让前端弹询问框 — "
+            "你不需要事先判断, 大胆调即可, 缺字段时系统会提示用户。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "action_id": {"type": "string",
+                              "description": "ui_describe 返回的 action id"},
+                "args": {"type": "object",
+                         "description": "该 action 的参数 (key-value)。能填多少填多少, 缺的系统会问。"},
+            },
+            "required": ["action_id"],
+        },
+        executor=_ui_invoke,
+        scope="user",
+        origins=_CHOICE_ORIGINS,
+        destructive=False,  # 子工具的 destructive 已在 dispatch 时检查
+    )
+    if not registry.has(invoke_spec.name):
+        registry.register(invoke_spec)
+
 
 __all__ = ["register_misc_tools"]
