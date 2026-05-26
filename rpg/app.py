@@ -565,11 +565,13 @@ async def api_contract_middleware(request: Request, call_next):
     return response
 
 _state_by_user: dict[int, GameState] = {}     # key = api_user["id"] 或 0 (anonymous local)
-# 记录每个 cached state 对应的 user_runtime.save_id。
-# 用户在别处切了存档(/api/branches/activate / continue / /api/saves/{id}/activate)
-# 之后,_ensure_loaded 会拿当前 runtime.save_id 跟这里的值比对;不一致 → 缓存失效
-# 重新加载。这是修"runtime 没切换"bug 的核心机制 (Codex 三连 P0)。
+# 记录每个 cached state 对应的 (save_id, commit_id) tuple。
+# 真相源 = branch_commits[user_runtime.active_commit_id].state_snapshot。
+# 用户在别处切了 save / commit 之后,_ensure_loaded 拿当前 user_runtime
+# (save_id, commit_id) 跟这里的值比对;**任一不同** → 缓存失效重新加载。
+# 之前只比 save_id 导致"同 save 内换 commit 缓存命中读旧 state"。
 _state_save_id_by_user: dict[int, int] = {}
+_state_commit_id_by_user: dict[int, int] = {}
 _gm_by_user: dict[int, GameMaster] = {}
 # B4: 子代理使用独立 GameMaster 实例，独立模型 / 独立 usage / 独立日志
 _sub_gm_by_user: dict[int, GameMaster] = {}
@@ -733,34 +735,49 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
             current_mtime = SAVE_FILE.stat().st_mtime_ns if SAVE_FILE.exists() else 0
             if cached is None or current_mtime != _state_mtime_by_user.get(uid, 0):
                 cached = None
-        # Codex P0 三连修复:每次读 state 前,先核对 cached state 对应的 save_id
-        # 是否还跟当前 user_runtime.save_id 一致。不一致(用户在 /api/branches/activate
-        # / continue / /api/saves/{id}/activate 切了存档)→ 缓存失效,重新加载。
-        # 这是修"分叉 / 切分支 / 从节点继续 都 runtime 没切换"的核心防线。
+        # 缓存一致性自检:cached state 对应的 (save_id, commit_id) 必须等于
+        # 当前 user_runtime 的 (save_id, active_commit_id)。任一不同就失效。
+        # 之前只比 save_id → 同 save 内换 commit 时缓存命中读旧 state。
         if cached is not None and api_user and api_user.get("id"):
             try:
                 from platform_app.runtime import read_runtime
                 _rt = read_runtime(user_id=int(api_user["id"])) or {}
                 _rt_save = int(_rt.get("save_id") or 0)
+                _rt_commit = int(
+                    _rt.get("active_commit_id")
+                    or _rt.get("active_branch_node_id")
+                    or 0
+                )
                 _cached_save = int(_state_save_id_by_user.get(uid) or 0)
-                if _rt_save and _cached_save and _rt_save != _cached_save:
-                    # user_runtime 已经被切到新 save,但内存里 cached state 还是旧 save
+                _cached_commit = int(_state_commit_id_by_user.get(uid) or 0)
+                save_drift = _rt_save and _cached_save and _rt_save != _cached_save
+                commit_drift = _rt_commit and _cached_commit and _rt_commit != _cached_commit
+                if save_drift or commit_drift:
                     cached = None
             except Exception:
-                pass  # DB 异常不阻塞读 state
+                pass
         if cached is None:
             try:
                 from state_repository import load_active_state
                 state, _runtime_meta = load_active_state(user_id=api_user["id"] if api_user else None)
-                # 记录此 cached state 对应的 save_id,后续校验用
                 _new_save_id = int((_runtime_meta or {}).get("save_id") or 0)
+                _new_commit_id = int(
+                    (_runtime_meta or {}).get("active_commit_id")
+                    or (_runtime_meta or {}).get("active_branch_node_id")
+                    or 0
+                )
                 if _new_save_id:
                     _state_save_id_by_user[uid] = _new_save_id
                 else:
                     _state_save_id_by_user.pop(uid, None)
+                if _new_commit_id:
+                    _state_commit_id_by_user[uid] = _new_commit_id
+                else:
+                    _state_commit_id_by_user.pop(uid, None)
             except Exception:
                 state = GameState.new() if api_user else GameState.load_or_new()
                 _state_save_id_by_user.pop(uid, None)
+                _state_commit_id_by_user.pop(uid, None)
             # Self-heal (Bug 1 click retest)：若 runtime 加载到的 state.player 为空
             # 但 game_saves.state_snapshot 有 player 数据，说明 runtime_checkouts
             # 没拿到完整 snapshot（可能在 activate 时序窗口里出问题）。
@@ -792,6 +809,7 @@ def _invalidate_user_cache(api_user: dict[str, Any] | None) -> None:
         _sub_gm_by_user.pop(uid, None)
         _state_mtime_by_user.pop(uid, None)
         _state_save_id_by_user.pop(uid, None)
+        _state_commit_id_by_user.pop(uid, None)
 
 
 def _get_gm(api_user: dict[str, Any] | None) -> GameMaster:

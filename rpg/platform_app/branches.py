@@ -223,7 +223,22 @@ def tree(user_id: int, save_id: int, limit: int | str | None = None, cursor: str
                 active_ref_by_commit.add(ref["target_commit_id"])
     has_more = len(rows) > page_limit
     visible = display_nodes(visible_raw)
+    # 真相源:user_runtime.active_commit_id (per-user)。
+    # 不再用 game_saves.active_commit_id — 那个字段被 chat / persist 频繁写,
+    # 跟用户最后激活的 commit 可能脱钩。
     active_commit_id = save.get("active_commit_id") or save.get("active_branch_node_id")
+    try:
+        from . import runtime as _runtime_pkg
+        _rt = _runtime_pkg.read_runtime(user_id=int(user_id)) or {}
+        if int(_rt.get("save_id") or 0) == int(save_id):
+            rt_commit = (
+                _rt.get("active_commit_id")
+                or _rt.get("active_branch_node_id")
+            )
+            if rt_commit:
+                active_commit_id = int(rt_commit)
+    except Exception:
+        pass
     for row in visible:
         row["commit_id"] = row["id"]
         row["node_id"] = row["id"]
@@ -235,6 +250,10 @@ def tree(user_id: int, save_id: int, limit: int | str | None = None, cursor: str
         "save": expose(save),
         "nodes": [expose(row) for row in visible],
         "refs": [expose(row) for row in ref_rows],
+        # 顶层 active_commit_id / active_branch_node_id 也从 user_runtime 真相源走,
+        # 前端 (BranchGraph / ContinuePicker) 用这个标 HEAD / 沿祖先溯源。
+        "active_commit_id": active_commit_id,
+        "active_branch_node_id": active_commit_id,
         "page": {
             "limit": page_limit,
             "next_cursor": str(visible_raw[-1]["id"]) if has_more and visible_raw else None,

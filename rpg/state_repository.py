@@ -1,16 +1,41 @@
 """
 state_repository.py — 统一的 GameState 读写仓库
 
-设计目标（来自 CLAUDE_CODE_HANDOFF.md TODO #1）：
-- DB 是权威源；JSON 文件只是本地兼容镜像
-- 优先从 runtime_checkouts.state_snapshot / game_saves.state_snapshot 加载
-- 保存时同时写 DB + 本地 JSON 镜像
-- 提供降级路径：DB 不可用时回退到 SAVE_FILE
+## 重构后的设计 (v2,2026-05-26)
 
-调用者：
-- ui.py 的 _ensure_loaded()
-- ui.py 的 /api/save、/api/new
-- 任何需要持久化 state 的 endpoint
+**单一真相源 (SSOT):**
+  state(save_id) = branch_commits[user_runtime.active_commit_id].state_snapshot
+
+也就是说,给定 save_id 和 active_commit_id,state 是不可变的。
+
+## 读取优先级 (新)
+
+1. **commit snapshot (真相源)** —
+   读 user_runtime.active_commit_id → branch_commits[commit_id].state_snapshot
+   这是稳定的、不可变的、跟激活 commit 严格绑定的快照。
+
+2. **runtime_checkouts dirty buffer** (仅当 dirty=True 时) —
+   chat 过程中、commit 还没落地之前的临时 state。一旦 record_runtime_turn
+   写了新 commit,这个 buffer 就被 cleaned。
+
+3. **bootstrap** — 没绑 runtime 时,从 active_save 的 main ref 重新绑定
+
+4. **新空白 state** — 真没存档时用。
+
+## 不再使用的退化路径 (v1 → v2 退役)
+
+- ❌ `game_saves.state_snapshot` (不指定 save_id) — 这是 bug 现场:
+  上次玩的 save 的 updated_at 最新,会被错误返回。即便指定 save_id,
+  这个字段也是 chat 路径粗暴覆盖的,跟当前 active commit 可能脱钩。
+  作为兼容仅保留 _legacy_load_save_snapshot,不在主路径调用。
+
+- ❌ source_state_path / runtime_state_path JSON 文件 —
+  本地兼容用,不在 server 模式读。
+
+调用者:
+  - app.py 的 _ensure_loaded()
+  - app.py 的 /api/save / /api/new
+  - 任何需要持久化 state 的 endpoint
 """
 from __future__ import annotations
 
@@ -26,58 +51,137 @@ from platform_app.db import connect, init_db
 
 # ── 读取 ──────────────────────────────────────────────────────────
 def load_active_state(user_id: int | None = None) -> tuple[GameState, dict[str, Any] | None]:
-    """
-    加载当前激活的 GameState，DB 优先 + JSON 镜像兜底。
+    """加载当前激活的 GameState。
 
-    返回 (state, runtime_meta)，runtime_meta 包含 save_id / commit_id 等信息。
-
-    多用户安全：必须按 user_id 隔离。匿名 (user_id=None) 才允许走全局 legacy 文件。
+    返回 (state, runtime_meta),runtime_meta 包含 save_id / commit_id 等信息。
     """
     runtime_meta = _runtime.read_runtime(user_id=user_id)
 
-    # 安全检查：如果 runtime_meta 不属于当前 user，作废重新 bootstrap
+    # 安全检查:runtime_meta 不属于当前 user → 作废
     if user_id and runtime_meta and int(runtime_meta.get("user_id") or 0) != int(user_id):
         runtime_meta = None
 
-    # 1. 尝试从 runtime checkout 读取（DB 权威快照）
-    if runtime_meta:
-        snapshot = _load_runtime_snapshot(runtime_meta, expected_user_id=user_id)
-        if snapshot:
-            return GameState(snapshot), runtime_meta
-
-    # 2. 尝试从 game_saves.state_snapshot 读取
-    if user_id:
-        snapshot = _load_save_snapshot(user_id)
-        if snapshot:
-            return GameState(snapshot), runtime_meta
-
-    # 3. 兜底：bootstrap binding（找当前 active save 自动恢复）
-    if not runtime_meta:
+    # 没绑 runtime → 先 bootstrap 找当前 active save
+    if user_id and not runtime_meta:
         runtime_meta = _branches.bootstrap_runtime_binding(user_id=user_id)
-        if runtime_meta:
-            snapshot = _load_runtime_snapshot(runtime_meta, expected_user_id=user_id)
+
+    if runtime_meta:
+        save_id = int(runtime_meta.get("save_id") or 0)
+        commit_id = int(
+            runtime_meta.get("active_commit_id")
+            or runtime_meta.get("active_branch_node_id")
+            or 0
+        )
+
+        # 类 git working-tree 语义:
+        # - runtime_checkouts.state_snapshot = working tree (可能有未 commit 的修改)
+        # - branch_commits[commit_id].state_snapshot = HEAD commit 快照
+        # 激活 commit 时 _write_checkout 会把 commit 的 state_snapshot 写入
+        # runtime_checkouts;之后 /set / chat 修改也实时写 runtime_checkouts。
+        # 所以 runtime_checkouts 始终是"最新 working state",优先读它。
+        # 只有读不到 (新 save 还没 checkout) 才退化到 commit snapshot。
+
+        # ── 优先级 1:runtime_checkouts.state_snapshot (working tree, per-user, 带 save_id 限制) ──
+        if save_id:
+            snapshot = _load_runtime_checkout_snapshot(save_id, user_id)
             if snapshot:
                 return GameState(snapshot), runtime_meta
 
-    # 4. 用户已登录但没存档：返回空白新状态（避免读到 SAVE_FILE 里别人的内容）
+        # ── 优先级 2:branch_commits[active_commit_id].state_snapshot (commit 不可变快照) ──
+        # 用于 runtime_checkouts 还没建立的极初始状态 (e.g. 刚导入 save 还没 chat 过)。
+        if save_id and commit_id:
+            snapshot = _load_commit_snapshot(commit_id, save_id, user_id)
+            if snapshot:
+                return GameState(snapshot), runtime_meta
+
+        # ── 优先级 3:retry bootstrap(可能 user_runtime 已 stale)──
+        rebound = _branches.bootstrap_runtime_binding(user_id=user_id)
+        if rebound:
+            new_save_id = int(rebound.get("save_id") or 0)
+            new_commit_id = int(
+                rebound.get("active_commit_id")
+                or rebound.get("active_branch_node_id")
+                or 0
+            )
+            if new_save_id:
+                # 同样先 runtime_checkouts 后 commit
+                snapshot = _load_runtime_checkout_snapshot(new_save_id, user_id)
+                if snapshot:
+                    return GameState(snapshot), rebound
+                if new_commit_id:
+                    snapshot = _load_commit_snapshot(new_commit_id, new_save_id, user_id)
+                    if snapshot:
+                        return GameState(snapshot), rebound
+
+    # ── 最后兜底:真没存档,返回空白新状态 ──
     if user_id:
         return GameState.new(), runtime_meta
 
-    # 5. 最终兜底：本地匿名才允许 fallback 到 JSON
+    # 匿名/本地:允许 fallback 到 JSON 镜像
     return GameState.load_or_new(), runtime_meta
 
 
-def _load_runtime_snapshot(runtime_meta: dict[str, Any], expected_user_id: int | None = None) -> dict[str, Any] | None:
-    """优先从 runtime_checkouts 拿快照。
+def _load_commit_snapshot(commit_id: int, save_id: int, user_id: int | None) -> dict[str, Any] | None:
+    """从 branch_commits[commit_id].state_snapshot 读真相源。
 
-    expected_user_id 给定时强制校验 user_id 匹配，防止读到别人存档。
+    严格 user_id + save_id 校验,防止跨 save / 跨 user 读错快照。
     """
+    if not commit_id or not save_id:
+        return None
     try:
-        save_id = int(runtime_meta.get("save_id") or 0)
-        if not save_id:
-            return None
+        init_db()
         with connect() as db:
-            if expected_user_id:
+            # 先校验 save 归属
+            if user_id is not None:
+                save = db.execute(
+                    "select id from game_saves where id = %s and user_id = %s",
+                    (int(save_id), int(user_id)),
+                ).fetchone()
+                if not save:
+                    return None
+            row = db.execute(
+                """
+                select state_snapshot, state_path
+                from branch_commits
+                where id = %s and save_id = %s
+                """,
+                (int(commit_id), int(save_id)),
+            ).fetchone()
+            if not row:
+                return None
+            snapshot = row.get("state_snapshot")
+            if isinstance(snapshot, dict) and snapshot:
+                return _ensure_dict(snapshot)
+            if isinstance(snapshot, str) and snapshot:
+                try:
+                    parsed = json.loads(snapshot)
+                    if isinstance(parsed, dict) and parsed:
+                        return parsed
+                except Exception:
+                    pass
+            # 退化:branch_commits.state_path JSON 文件 (legacy 模组数据)
+            path = row.get("state_path")
+            if path:
+                try:
+                    return json.loads(Path(path).read_text(encoding="utf-8"))
+                except Exception:
+                    return None
+    except Exception:
+        return None
+    return None
+
+
+def _load_runtime_checkout_snapshot(save_id: int, user_id: int | None) -> dict[str, Any] | None:
+    """从 runtime_checkouts.state_snapshot 拿 dirty buffer。
+
+    严格 user_id + save_id 校验。
+    """
+    if not save_id:
+        return None
+    try:
+        init_db()
+        with connect() as db:
+            if user_id is not None:
                 row = db.execute(
                     """
                     select state_snapshot
@@ -86,7 +190,7 @@ def _load_runtime_snapshot(runtime_meta: dict[str, Any], expected_user_id: int |
                     order by updated_at desc
                     limit 1
                     """,
-                    (save_id, int(expected_user_id)),
+                    (int(save_id), int(user_id)),
                 ).fetchone()
             else:
                 row = db.execute(
@@ -97,37 +201,39 @@ def _load_runtime_snapshot(runtime_meta: dict[str, Any], expected_user_id: int |
                     order by updated_at desc
                     limit 1
                     """,
-                    (save_id,),
+                    (int(save_id),),
                 ).fetchone()
             if row and row.get("state_snapshot"):
                 return _ensure_dict(row["state_snapshot"])
     except Exception:
         pass
-
-    # 退化到 source_state_path
-    source = runtime_meta.get("source_state_path") or runtime_meta.get("runtime_state_path")
-    if source:
-        try:
-            return json.loads(Path(source).read_text(encoding="utf-8"))
-        except Exception:
-            return None
     return None
 
 
-def _load_save_snapshot(user_id: int) -> dict[str, Any] | None:
-    """从 game_saves.state_snapshot 拿最新快照"""
+def _legacy_load_save_snapshot(user_id: int, save_id: int | None = None) -> dict[str, Any] | None:
+    """**仅诊断 / migration 工具用**。
+
+    从 game_saves.state_snapshot 拿快照。**不再作为主读路径** —
+    这是历史 bug 现场:用户切到 save A 但 _ensure_loaded 退化到这里时
+    会被 save B (updated_at 更新) 的 snapshot 污染。
+    新代码不要调这个函数;读 state 必须经 _load_commit_snapshot。
+    """
     try:
+        init_db()
         with connect() as db:
-            row = db.execute(
-                """
-                select state_snapshot
-                from game_saves
-                where user_id = %s
-                order by updated_at desc
-                limit 1
-                """,
-                (user_id,),
-            ).fetchone()
+            if save_id:
+                row = db.execute(
+                    "select state_snapshot from game_saves where id = %s and user_id = %s",
+                    (int(save_id), int(user_id)),
+                ).fetchone()
+            else:
+                row = db.execute(
+                    """
+                    select state_snapshot from game_saves
+                    where user_id = %s order by updated_at desc limit 1
+                    """,
+                    (int(user_id),),
+                ).fetchone()
             if row and row.get("state_snapshot"):
                 return _ensure_dict(row["state_snapshot"])
     except Exception:
@@ -137,15 +243,14 @@ def _load_save_snapshot(user_id: int) -> dict[str, Any] | None:
 
 # ── 保存 ──────────────────────────────────────────────────────────
 def save_active_state(state: GameState, user_id: int | None = None) -> dict[str, Any]:
-    """
-    保存 state：DB 是权威源；server 模式不再写本地 JSON 镜像。
+    """保存 state:DB 是权威源;server 模式不再写本地 JSON 镜像。
 
     返回 {"ok": True, "commit_id": ..., "mirror_path": ...}
-    本地模式 mirror_path 是实际写盘路径；server 模式为 "db://..." 占位。
+    本地模式 mirror_path 是实际写盘路径;server 模式为 "db://..." 占位。
     """
     result: dict[str, Any] = {"ok": False, "commit_id": None, "mirror_path": ""}
 
-    # 1. 本地模式才写 JSON 镜像；server 模式 state.save() 会返回空串
+    # 1. 本地模式才写 JSON 镜像;server 模式 state.save() 会返回空串
     try:
         written = state.save()
         result["mirror_path"] = written or "db://runtime_checkouts"
@@ -153,26 +258,22 @@ def save_active_state(state: GameState, user_id: int | None = None) -> dict[str,
         result["mirror_error"] = str(e)
         result["mirror_path"] = "db://runtime_checkouts"
 
-    # 2. 同步到 DB（权威源）
+    # 2. 同步到 DB(权威源)
     try:
         init_db()
-        # 优先使用 user_runtime/legacy runtime 里的 runtime_state_path；
-        # server 模式 runtime_state_path 为空字符串，branches 会兜底用 DB snapshot
         persist = _branches.persist_runtime_state(
-            runtime_state_path=None,  # 让 branches 自己从 runtime 元数据找
+            runtime_state_path=None,
             user_id=user_id,
             state_data=state.data,
         )
         result["ok"] = bool(persist.get("ok"))
         result["commit_id"] = persist.get("commit_id")
         if not result["ok"] and not result.get("mirror_path", "").startswith("db://"):
-            # 本地模式 DB 写失败：fallback 也算 ok
             result["ok"] = True
         elif not result["ok"]:
             result["db_error"] = persist.get("reason", "DB persist 失败")
     except Exception as e:
         result["db_error"] = str(e)
-        # 本地模式 DB 失败仍算 ok（mirror 还在），server 模式则必须报错
         if not result.get("mirror_path", "").startswith("db://"):
             result["ok"] = True
 
@@ -181,7 +282,7 @@ def save_active_state(state: GameState, user_id: int | None = None) -> dict[str,
 
 # ── 健康检查 ──────────────────────────────────────────────────────
 def repository_status() -> dict[str, Any]:
-    """诊断信息：当前 runtime / DB 是否健康"""
+    """诊断信息:当前 runtime / DB 是否健康"""
     status: dict[str, Any] = {
         "save_file_exists": SAVE_FILE.exists(),
         "save_file_path": str(SAVE_FILE),
