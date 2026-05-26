@@ -39,6 +39,7 @@ JS_SOURCES = [
     "design-canvas.jsx",
     "tweaks-panel.jsx",
     "game-icons.jsx",
+    "branch-graph.jsx",
     "api-client.js",
     "data-loader.js",
     "mock-data.js",
