@@ -447,9 +447,25 @@ def _anthropic_emit_card(backend, system: str, user_msg: str) -> dict | None:
         return None
 
 
-def _select_backend(user_id: int | None):
-    """复用 gm.py 已有 backend 选择逻辑。"""
-    # 直接构造 Anthropic backend (默认),失败则降级到 Vertex
+def _select_backend(user_id: int | None, role: str = "generator"):
+    """复用 gm.py 已有 backend 选择逻辑。
+
+    task 56:
+      尊重 user_preferences:
+        · role="generator" 读 character_card_generator.api_id /
+          character_card_generator.model_real_name
+        · role="critic"    读 critic.api_id / critic.model_real_name
+      未配置时回退到 Anthropic → Vertex 老路径。
+    """
+    api_id = _resolve_preferred_api(user_id, role)
+    model = _resolve_preferred_model(user_id, role)
+    if api_id and model:
+        try:
+            from gm import GameMaster
+            return GameMaster(api_id=api_id, model=model, user_id=user_id)._backend
+        except Exception as exc:
+            print(f"[card-gen] 偏好 backend 构建失败 ({api_id}/{model}: {exc})，回退默认")
+    # 默认: 直接构造 Anthropic backend, 失败则降级到 Vertex
     try:
         from gm import _AnthropicBackend
         return _AnthropicBackend(user_id=user_id)
@@ -460,6 +476,46 @@ def _select_backend(user_id: int | None):
         return _VertexBackend()
     except Exception as exc:
         raise RuntimeError(f"无可用 LLM backend: {exc}") from exc
+
+
+def _resolve_preferred_model(user_id: int | None, role: str) -> str | None:
+    """role = 'generator' → character_card_generator.model_real_name;
+    role = 'critic'   → critic.model_real_name。"""
+    if not user_id:
+        return None
+    key = "critic.model_real_name" if role == "critic" else "character_card_generator.model_real_name"
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select preferences from user_preferences where user_id = %s",
+                (int(user_id),),
+            ).fetchone()
+        if row and isinstance(row.get("preferences"), dict):
+            return row["preferences"].get(key) or None
+    except Exception:
+        return None
+    return None
+
+
+def _resolve_preferred_api(user_id: int | None, role: str) -> str | None:
+    if not user_id:
+        return None
+    key = "critic.api_id" if role == "critic" else "character_card_generator.api_id"
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select preferences from user_preferences where user_id = %s",
+                (int(user_id),),
+            ).fetchone()
+        if row and isinstance(row.get("preferences"), dict):
+            return row["preferences"].get(key) or None
+    except Exception:
+        return None
+    return None
 
 
 def _parse_json_safely(text: str) -> dict | None:
@@ -580,7 +636,7 @@ def _v_critic_score(draft: dict, slice_: dict, user_id: int) -> dict:
         return {"layer": "critic_score", "ok": True,
                 "reason": "skipped: 缺数据 (无 phase 或 reference)"}
     try:
-        backend = _select_backend(user_id)
+        backend = _select_backend(user_id, role="critic")
         sys = (
             "你是 RPG 角色卡一致性评审。给候选卡和 phase reference 打分 0.0-1.0,"
             "<0.6 视为不通过。只返回 JSON {\"score\": float, \"reason\": str},不写解释。"

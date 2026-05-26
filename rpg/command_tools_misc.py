@@ -733,5 +733,84 @@ def register_misc_tools() -> None:
                 executor=exec_, scope="user", origins=_CREATIVE_ORIGINS, destructive=False,
             ))
 
+    # ────────────────────────────────────────────────────────────
+    # task 57: navigate_to_setting — 助手页面导航工具
+    # 用户问"XX 功能在哪里设置",助手调此工具直接引导到具体页面 + 高亮元素。
+    # 不修改任何 state,只返回 NAVIGATE:<target>|<reason> 哨兵字符串,
+    # 由 console_assistant SSE 流识别并转成 navigation_required 事件 yield 出去。
+    # 仅 console_assistant + api_direct 可用(纯 UI 导航,LLM 自由叙事不该调)。
+    # ────────────────────────────────────────────────────────────
+    _NAV_ORIGINS = frozenset({"console_assistant", "api_direct"})
+    _NAV_TARGETS = [
+        # settings 子页
+        "settings.preferences",
+        "settings.models",
+        "settings.models.gm",
+        "settings.models.console_assistant",
+        "settings.modelparams",
+        "settings.memory",
+        "settings.permissions",
+        "settings.deploy",
+        "settings.danger",
+        "settings.profile",
+        "settings.api",
+        # scripts
+        "scripts.list",
+        "scripts.import",
+        # saves
+        "saves.list",
+        "saves.branches",
+        # cards
+        "cards.user",
+        "cards.npc",
+        # 其它平台页
+        "personas",
+        "library",
+        "usage",
+        "modules",
+        "me",
+        "me.edit",
+        "me.settings",
+    ]
+
+    def _t_navigate_to_setting(user_id: int, args: dict) -> str:
+        target = (args.get("target") or "").strip()
+        reason = (args.get("reason") or "").strip()
+        if not target:
+            return "失败: target 为空"
+        # 不强校验枚举(允许未来扩展),只提示一下
+        return f"NAVIGATE:{target}|{reason}"
+
+    nav_targets_enum = ", ".join(_NAV_TARGETS)
+    nav_spec = ToolSpec(
+        name="navigate_to_setting",
+        description=(
+            "当用户问 'XX 功能在哪里' / '怎么去 XX 页' / 想跳转到某设置项时,"
+            "调此工具引导用户到指定页面位置。会触发前端跳转 + 高亮目标元素。"
+            f"target 推荐取下列枚举: {nav_targets_enum}。"
+            "也支持未列出的 pageId.anchor 自由扩展。reason 简短说明为什么跳。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "页面锚点 id,推荐枚举或 pageId.anchor",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "简短说明跳转原因,前端可能展示给用户",
+                },
+            },
+            "required": ["target"],
+        },
+        executor=_t_navigate_to_setting,
+        scope="user",
+        origins=_NAV_ORIGINS,
+        destructive=False,
+    )
+    if not registry.has(nav_spec.name):
+        registry.register(nav_spec)
+
 
 __all__ = ["register_misc_tools"]

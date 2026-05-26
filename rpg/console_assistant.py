@@ -455,6 +455,24 @@ def stream_chat(
                         })
                     # 中断 backend loop (不再让 LLM 接着叙事)
                     break
+                # task 57: navigate_to_setting 工具返回 NAVIGATE:target|reason
+                # 哨兵字符串 — 这里识别并转成 navigation_required SSE 事件 yield 给前端。
+                # tool_result 仍正常 yield 一遍 (LLM 也能从 history 看到自己调过)。
+                result_str = ev.get("result") or ""
+                if isinstance(result_str, str) and result_str.startswith("NAVIGATE:"):
+                    payload = result_str[len("NAVIGATE:"):]
+                    try:
+                        target, _, reason = payload.partition("|")
+                        target = (target or "").strip()
+                        reason = (reason or "").strip()
+                    except Exception:
+                        target, reason = payload.strip(), ""
+                    if target:
+                        yield _sse_event("navigation_required", {
+                            "target": target,
+                            "reason": reason,
+                            "dirty_check": True,
+                        })
                 yield _sse_event("tool_result", {
                     "call_id": ev.get("_call_id") or _new_call_id(),
                     "ok": bool(ev.get("ok")),
