@@ -24,20 +24,24 @@ DEFAULT_STATE = {
         "mode": "5e_compatible",
         "public_label": "5E compatible / 五版规则兼容"
     },
-    # 5E 角色卡。HP/AC/conditions 等硬数值受 State Gate 保护，只能由 RulesEngine 写。
+    # 5E 角色卡。空骨架——只在 rules_bridge.start_module 加载模组时由
+    # make_default_character 填入具体 5E 数值。小说 / freeform 存档不应预填 5E
+    # 默认值（hp=9/ac=13/属性等），否则前端 5E 面板会在非模组剧本里误显示一套
+    # 用不上的角色卡。HP/AC/conditions 等硬数值受 State Gate 保护，仍只能由
+    # RulesEngine 写。
     "player_character": {
         "name": "",
-        "level": 1,
-        "class_name": "scout",
-        "species": "human",
-        "background": "miner",
-        "abilities": {"str": 10, "dex": 14, "con": 12, "int": 11, "wis": 13, "cha": 10},
-        "proficiency_bonus": 2,
-        "skills": {"stealth": "proficient", "investigation": "proficient", "perception": "proficient"},
+        "level": 0,
+        "class_name": "",
+        "species": "",
+        "background": "",
+        "abilities": {},
+        "proficiency_bonus": 0,
+        "skills": {},
         "saves": {},
-        "max_hp": 9,
-        "hp": 9,
-        "ac": 13,
+        "max_hp": 0,
+        "hp": 0,
+        "ac": 0,
         "inventory": [],
         "conditions": [],
         "features": [],
@@ -372,12 +376,28 @@ class GameState:
         p = self.data["player"]
         w = self.data["world"]
         m = self.data["memory"]
+        # ContentPack manifest 解析（小说 / 模组 / freeform）。让前端按 manifest.kind
+        # 选择性渲染 5E 规则面板，避免在小说存档里显示模组 UI。
+        try:
+            from context_providers import resolve_content_pack
+            content_pack = resolve_content_pack(self)
+        except Exception:
+            content_pack = {"kind": "freeform", "context_providers": [], "ruleset": "none"}
         rules_block = {
             "ruleset": copy.deepcopy(self.data.get("ruleset") or {}),
             "player_character": copy.deepcopy(self.data.get("player_character") or {}),
             "scene": copy.deepcopy(self.data.get("scene") or {}),
             "encounter": copy.deepcopy(self.data.get("encounter") or {}),
             "dice_log": list(self.data.get("dice_log") or [])[-30:],
+            "content_pack": {
+                "id": content_pack.get("id"),
+                "kind": content_pack.get("kind"),
+                "ruleset": content_pack.get("ruleset"),
+                "context_providers": list(content_pack.get("context_providers") or []),
+                "retrieval_policy": dict(content_pack.get("retrieval_policy") or {}),
+                "gm_policy": dict(content_pack.get("gm_policy") or {}),
+                "title": content_pack.get("title"),
+            },
         }
         return {**rules_block, **{
             "player": dict(p),

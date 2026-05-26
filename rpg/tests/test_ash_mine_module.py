@@ -333,10 +333,17 @@ class TrapTests(unittest.TestCase):
 
 
 class StateGateRulesTests(unittest.TestCase):
-    """验证 GM/用户不能直接覆盖 HP/AC/initiative 等规则受控字段。"""
+    """验证 GM/用户不能直接覆盖 HP/AC/initiative 等规则受控字段。
+
+    DEFAULT_STATE.player_character 现在是空骨架（hp=0/ac=0/级 0），所以
+    要先 start_module 让 rules_bridge 填入默认 5E 角色（hp=9/ac=13/lv 1）才
+    能验证 gate 真的阻止覆盖。"""
 
     def setUp(self):
         self.g = GameState.new()
+        start_module(self.g, "ash_mine")  # 填入默认 5E 角色：hp=9, ac=13
+        # 清空 start_module 留下的 audit_log，避免下面 audit 断言被污染
+        self.g.data["permissions"]["audit_log"] = []
 
     def test_gm_cannot_overwrite_player_hp(self):
         result = self.g.apply_state_write("player_character.hp=1", source="gm")
