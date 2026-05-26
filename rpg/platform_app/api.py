@@ -755,9 +755,16 @@ async def api_continue_branch(request: Request):
             status_code=400,
         )
     try:
-        return json_response(branches.continue_from(user["id"], node_id))
+        result = branches.continue_from(user["id"], node_id)
     except ValueError as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
+    # 同 activate:fork 后必须清缓存,否则 Game Console /api/state 仍读旧 runtime
+    try:
+        import app as _ui
+        _ui._invalidate_user_cache(user)
+    except Exception:
+        pass
+    return json_response(result)
 
 
 @router.post("/api/branches/activate")
@@ -765,9 +772,19 @@ async def api_activate_branch(request: Request):
     user = require_user(request)
     body = await request.json()
     try:
-        return json_response(branches.activate_node(user["id"], int(body.get("node_id"))))
+        result = branches.activate_node(user["id"], int(body.get("node_id")))
     except ValueError as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
+    # commit 级 activate 后必须清 app.py 进程内 state 缓存。
+    # 之前 _ensure_loaded 自检只比较 save_id,同 save 内换 commit 缓存不会失效
+    # → 用户在 ContinuePicker 选 #13 节点继续,进 Game Console 看到的还是上次
+    # 末尾 commit 的 runtime(可能是另一个剧情的内容)。
+    try:
+        import app as _ui
+        _ui._invalidate_user_cache(user)
+    except Exception:
+        pass
+    return json_response(result)
 
 
 @router.post("/api/branches/delete")
