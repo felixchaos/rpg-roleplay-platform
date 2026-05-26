@@ -770,9 +770,13 @@ class GameState:
               如 "位置：北港码头"）
             - 入 pending / 被拒 → 用 apply 的原始返回（"状态写入待审：..." / 拒绝），
               让前端 LeftRail 能清楚显示"哪些写入被挡了"，避免假成功 UI
+
+            Bug 5：直接传 typed value 给 apply_state_write_typed，不再走
+            `spec = f"{path}={value}"` 把 list 序列化成 "['a','b']"。
             """
-            spec = f"{path}={value}"
-            applied = self.apply_state_write(spec, source="gm", append=append, overwrite=overwrite)
+            applied = self.apply_state_write_typed(
+                path, value, source="gm", append=append, overwrite=overwrite,
+            )
             if applied.startswith("状态写入：") and label_for_update:
                 updates.append(label_for_update)
             else:
@@ -993,6 +997,16 @@ class GameState:
             except Exception:
                 pass
             return f"状态写入忽略（解析失败）：{spec[:60]}"
+        return self.apply_state_write_typed(path, value, source=source, append=append, overwrite=overwrite, force=force)
+
+    def apply_state_write_typed(self, path: str, value, source: str = "gm",
+                                append: bool = False, overwrite: bool = False, force: bool = False) -> str:
+        """Bug 5：与 apply_state_write 等价，但接受已解析的 typed value（list/dict/...
+        不再走 f"{path}={value}" 字符串往返）。
+
+        修复路径：GM op `{"value": ["a","b","c"]}` → _gm_write_via_gate / approve_pending_write
+        之前都走 `spec = f"{path}={value}"` 把 list 变成字符串 "['a', 'b', 'c']"，
+        审批落地时按逗号拆成 ["['a'", "'b'", "'c']"] 污染数组。"""
         # P0 #1：硬黑名单（permissions.* / history.* / schema_version / created_at /
         # is_new）任何 force 都不能突破。原代码 `if not allowed and not force` 让
         # /set permissions.mode=full_access （force=True）直接落地，玩家可一句话
@@ -1266,9 +1280,10 @@ class GameState:
         item = self._pop_pending_write(id=id, index=index)
         if item is None:
             return "待审写入不存在"
-        spec = f"{item.get('path', '')}={item.get('value', '')}"
-        return self.apply_state_write(
-            spec,
+        # Bug 5：直接传 typed value，不走 spec 字符串往返；防止 list/dict 被 str() 污染。
+        return self.apply_state_write_typed(
+            path=str(item.get("path", "")),
+            value=item.get("value"),
             source=f"{item.get('source', 'gm')}:approved",
             append=bool(item.get("append")),
             overwrite=bool(item.get("overwrite")),
@@ -1532,8 +1547,14 @@ def _split_label(text: str) -> tuple[str, str]:
     return text, text
 
 
-def _split_items(text: str) -> list[str]:
-    return [_clean_item(x) for x in re.split(r"[、,，;；]\s*", text) if _clean_item(x)]
+def _split_items(text) -> list[str]:
+    """Bug 5：value 可能已经是 list（来自 GM JSON op / 审批 typed value）。
+    若已是 list / tuple，直接清洗每项；否则按分隔符切。"""
+    if isinstance(text, (list, tuple)):
+        return [_clean_item(str(x)) for x in text if _clean_item(str(x))]
+    if text is None:
+        return []
+    return [_clean_item(x) for x in re.split(r"[、,，;；]\s*", str(text)) if _clean_item(x)]
 
 
 def _split_relation(text: str) -> tuple[str, str]:

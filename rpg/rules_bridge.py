@@ -9,6 +9,7 @@ rules_bridge.py — 规则引擎与 GameState 的接入层。
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Optional
 
@@ -495,7 +496,43 @@ INTENT_KEYWORDS: list[tuple[str, dict]] = [
     (r"(攻击|砍|射|刺|杀|出手|短弓|短剑|远程攻击|近战攻击)", {"kind": "attack", "weapon_hint": "shortsword"}),
     # 短休
     (r"(短休|休息|歇一下)", {"kind": "short_rest"}),
+    # Bug 4：移动意图。匹配「沿/往/向 ... 探索/前进/走/去」等，落到当前房间的某个 exit。
+    # 真实 exit 由 suggest_rule_actions 内的 _direction_to_exit() 解析；这里只是触发器。
+    (r"(沿|往|向|去|前往|走向|前进|探索|进入)", {"kind": "move", "_direction_hint": True}),
 ]
+
+
+def _direction_to_exit(text: str, current_room: dict) -> str | None:
+    """Bug 4：把玩家自然语言移动意图（如「沿外侧锈轨往东」「进入主井」）
+    解析为当前房间真实 exit id。优先全词匹配 exit.label / id，再做 token 模糊匹配。"""
+    exits = current_room.get("exits") or []
+    if not exits:
+        return None
+    text_lower = text.lower()
+    best_id = None
+    best_score = 0
+    for ex in exits:
+        to_id = str(ex.get("to") or "")
+        label = str(ex.get("label") or "")
+        score = 0
+        # 玩家说的字串里包含 label 主干（如"外侧锈轨"、"主井"）→ 强匹配
+        for token in re.findall(r"[一-鿿]{2,}", label):
+            if token in text:
+                score += 3
+        # 中文方向词
+        for direction, exit_keywords in (
+            ("东", ["东"]), ("西", ["西"]), ("北", ["北"]), ("南", ["南"]),
+            ("下", ["下", "降"]), ("上", ["上", "升"]),
+        ):
+            if direction in text and any(kw in label for kw in exit_keywords):
+                score += 2
+        # 英文 fallback
+        if to_id and to_id.lower() in text_lower:
+            score += 5
+        if score > best_score:
+            best_score = score
+            best_id = to_id
+    return best_id if (best_id and best_score >= 2) else None
 
 
 def _triggered_encounter_id(state) -> str:
@@ -602,6 +639,19 @@ def suggest_rule_actions(user_input: str, state) -> list[dict]:
                     encounter_id = _triggered_encounter_id(state)
                     if encounter_id:
                         action["encounter_id"] = encounter_id
+            elif action.get("kind") == "move":
+                # Bug 4：把方向词解析到当前房间真实 exit id；无法解析就跳过。
+                exit_id = _direction_to_exit(text, current_room)
+                action.pop("_direction_hint", None)
+                if not exit_id:
+                    continue
+                action["to"] = exit_id
+                action["target"] = exit_id
+                # 给 exit 名作为 reason 让 GM 知道这是规范化后的结果
+                for ex in current_room.get("exits") or []:
+                    if ex.get("to") == exit_id:
+                        action["reason"] = f"方向词→出口『{ex.get('label') or exit_id}』"
+                        break
             out.append(action)
     # 去重（按 kind+skill）
     seen = set()

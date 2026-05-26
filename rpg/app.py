@@ -2311,6 +2311,57 @@ def _coerce_rule_seed(seed: Any) -> int | None:
     return int(seed) if isinstance(seed, (int, float, str)) and str(seed).lstrip("-").isdigit() else None
 
 
+def _canonicalize_exit_target(state: GameState, target: str) -> tuple[str, str]:
+    """Bug 4：LLM 经常虚构 exit id（如 "east_rust_track" 而非真正的
+    "minecart_track"）。本函数把任意字符串归到当前房间真实出口 id：
+      1. 完全匹配 `to` 或 `id` → 直接返回
+      2. 否则按 label 和 to 做子串/前缀模糊匹配（中文标签如「沿外侧锈轨往东」也能
+         匹配到 "east"/"east_rust_track" 这类 LLM 编造的英文 id）
+      3. 找不到返回 ("", reason)。
+
+    返回 (canonical_id, debug_reason)。canonical_id 为空时说明无法规范化。"""
+    target = (target or "").strip()
+    if not target:
+        return "", "empty target"
+    scene = state.data.get("scene") or {}
+    current_room = scene.get("current_room") or {}
+    exits = list(current_room.get("exits") or [])
+    if not exits:
+        return target, "no exits to validate"
+    # 1. 直接命中
+    for ex in exits:
+        if str(ex.get("to") or "") == target:
+            return target, "exact match"
+    # 2. 模糊匹配 — 拆 target 成关键词 token，与 exit.to 或 label 做对应。
+    tokens = [t for t in re.split(r"[_\-\s]+", target.lower()) if t]
+    best_id = ""
+    best_score = 0
+    for ex in exits:
+        to_id = str(ex.get("to") or "").lower()
+        label = str(ex.get("label") or "")
+        score = 0
+        for tok in tokens:
+            if tok and tok in to_id:
+                score += 2
+            if tok and tok in label.lower():
+                score += 1
+        # 中文方向关键词映射
+        direction_map = {
+            "east": ["东", "外侧"], "west": ["西"], "north": ["北"],
+            "south": ["南"], "down": ["下", "降"], "up": ["上", "升"],
+        }
+        for tok in tokens:
+            for cn in direction_map.get(tok, []):
+                if cn in label:
+                    score += 1
+        if score > best_score:
+            best_score = score
+            best_id = str(ex.get("to") or "")
+    if best_id and best_score >= 1:
+        return best_id, f"fuzzy match score={best_score} from tokens={tokens}"
+    return "", f"no exit matches target={target!r} (exits={[e.get('to') for e in exits]})"
+
+
 def _execute_rules_action(state: GameState, body: dict[str, Any]) -> dict[str, Any]:
     """Execute one deterministic RulesEngine action against state.
 
@@ -2326,10 +2377,16 @@ def _execute_rules_action(state: GameState, body: dict[str, Any]) -> dict[str, A
     if move_to and kind in {"skill_check", "saving_throw", "trap_check"}:
         cur = (state.data.get("scene") or {}).get("location_id")
         if move_to != cur:
-            moved = _rb_enter_room(state, move_to)
+            canonical, reason = _canonicalize_exit_target(state, move_to)
+            if not canonical:
+                return {"ok": False, "error": f"无法前往 {move_to}：{reason}",
+                        "canonicalize": {"requested": move_to, "reason": reason}}
+            moved = _rb_enter_room(state, canonical)
             if not moved.get("ok"):
-                return {"ok": False, "error": moved.get("error") or f"无法前往 {move_to}"}
-            prelude.append({"kind": "move", "to": move_to, "room": moved.get("room")})
+                return {"ok": False, "error": moved.get("error") or f"无法前往 {canonical}",
+                        "canonicalize": {"requested": move_to, "resolved": canonical}}
+            prelude.append({"kind": "move", "to": canonical, "requested": move_to,
+                            "room": moved.get("room")})
 
     if kind == "skill_check":
         skill = str(body.get("skill") or "")
@@ -2394,7 +2451,13 @@ def _execute_rules_action(state: GameState, body: dict[str, Any]) -> dict[str, A
         out = _rb_short_rest(state, seed=seed)
     elif kind == "move":
         loc = str(body.get("to") or body.get("target") or body.get("move_to") or "")
-        out = _rb_enter_room(state, loc)
+        canonical, reason = _canonicalize_exit_target(state, loc)
+        if not canonical:
+            return {"ok": False, "error": f"无法前往 {loc}：{reason}",
+                    "canonicalize": {"requested": loc, "reason": reason}}
+        out = _rb_enter_room(state, canonical)
+        if isinstance(out, dict) and out.get("ok"):
+            out.setdefault("canonicalize", {"requested": loc, "resolved": canonical})
     else:
         return {"ok": False, "error": f"未支持的 kind: {kind}"}
 
@@ -2444,24 +2507,38 @@ def _chat_rule_candidates(
 
 
 def _apply_chat_rule_candidates(state: GameState, actions: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    """Apply at most one direct rule action inferred from the player's text."""
+    """Apply rule actions inferred from the player's text.
+
+    Bug 4：之前只跑第一条成功动作，玩家说「我调查脚印然后沿东侧锈轨探索」时
+    Investigation 成功就 break，move 永不触发，GM 又自己叙事成已经移动。
+    现在按 kind 去重，每种 kind 至多跑一次，但不同 kind 可以同回合都跑
+    （e.g. 一次 investigation + 一次 move）。
+
+    失败的动作（含 exit 规范化失败）也保留在 results 里，让
+    _rule_results_prompt 把失败原因传给 GM 防止幻觉。
+    """
     scene = state.data.get("scene") or {}
     if not scene.get("module_id"):
         return []
 
     allowed = {"skill_check", "saving_throw", "trap_check", "attack", "short_rest", "move"}
+    # 一种 kind 最多跑一次 — 同一回合不允许双重 attack / 双重 skill_check 等。
+    # 但 skill_check + move 可以同回合跑（玩家描述含调查 + 移动）。
+    consumed_kinds: set[str] = set()
     results: list[dict[str, Any]] = []
     for raw in actions or []:
         if not isinstance(raw, dict):
             continue
         action = dict(raw)
-        if action.get("kind") not in allowed:
+        kind = action.get("kind")
+        if kind not in allowed or kind in consumed_kinds:
             continue
         out = _execute_rules_action(state, action)
-        if not out.get("ok"):
-            continue
+        # 不管 ok / not ok 都记录：失败的也要传给 GM 让它明白发生了什么
         results.append({"action": action, "out": out})
-        break
+        if out.get("ok"):
+            consumed_kinds.add(kind)
+        # 允许继续找下一种 kind 的候选；只对成功的 kind 占位
     return results
 
 
@@ -2491,11 +2568,32 @@ def _rule_results_prompt(rule_results: list[dict[str, Any]], state: GameState | 
     for item in rule_results:
         action = item.get("action") or {}
         out = item.get("out") or {}
+        # Bug 4：失败 action（含 exit 规范化失败 / 不可达房间）也要写进 prompt，
+        # 否则 GM 不知道移动没真发生还会接着叙事「沿轨道向东摸索过去」。
+        if not out.get("ok"):
+            err = out.get("error") or "（未知）"
+            canon = out.get("canonicalize") or {}
+            req = canon.get("requested") or action.get("move_to") or action.get("to") or ""
+            lines.append(
+                f"- ❌ {action.get('kind')} 未执行：{err}"
+                + (f"（玩家文本似乎想去 {req!r}，但当前房间没有这个出口）" if req else "")
+            )
+            lines.append(f"  · GM 必须在叙事里反映这条失败：不要把玩家描述成已经移动/已经完成；"
+                         f"可让玩家明确选择真正可用的出口或重述意图。")
+            continue
         result = out.get("result") or {}
         if out.get("prelude"):
             for pre in out["prelude"]:
                 room = pre.get("room") or {}
-                lines.append(f"- 先移动到：{room.get('name') or pre.get('to')}")
+                requested = pre.get("requested")
+                resolved = pre.get("to")
+                if requested and requested != resolved:
+                    lines.append(
+                        f"- 先移动到：{room.get('name') or resolved}"
+                        f"（玩家文本写的是 {requested!r}，系统规范化到真实出口 {resolved!r}）"
+                    )
+                else:
+                    lines.append(f"- 先移动到：{room.get('name') or resolved}")
         roll = result.get("roll") or {}
         total = roll.get("total")
         dc = result.get("dc")
@@ -2648,7 +2746,9 @@ async def api_rules_modules(request: Request) -> JSONResponse:
 
 @app.post("/api/rules/module/start")
 async def api_rules_module_start(request: Request) -> JSONResponse:
-    """开启一个原创冒险模组（e.g. ash_mine）。"""
+    """低层原语：把模组加载到当前激活的 save，会直接 mutate 该 save state。
+    日常使用（Platform 冒险模组按钮）请用 /api/rules/module/launch — 它会先建独立 save。
+    """
     api_user = _require_api_user(request)
     body = await request.json()
     module_id = str(body.get("module_id") or "ash_mine").strip()
@@ -2662,6 +2762,93 @@ async def api_rules_module_start(request: Request) -> JSONResponse:
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "rules": _rules_payload(state), "opening": res.get("opening") or "", "state": _payload(api_user)})
+
+
+@app.post("/api/rules/module/launch")
+async def api_rules_module_launch(request: Request) -> JSONResponse:
+    """Bug 2：模组启动的标准入口。
+
+    流程：
+      1. 后端真正建立一个**独立 game_save**（kind=module_adventure 标题=模组名）
+      2. 用模组开局状态填 state_snapshot（Cinder + 灰烬矿坑 scene 等）
+      3. 激活该 save（切 runtime_checkout / user_runtime / 缓存）
+      4. 返回新 save_id + 状态 → FE 跳 Game Console 看到的就是新存档
+
+    绝不 mutate 当前小说/普通 save。已注册用户必填（匿名不允许，避免污染本地默认 save）。
+    """
+    api_user = _require_api_user(request)
+    if not api_user or not api_user.get("id"):
+        raise HTTPException(status_code=401, detail="启动模组需要登录")
+    body = await request.json()
+    module_id = str(body.get("module_id") or "ash_mine").strip()
+    if not module_id:
+        raise HTTPException(status_code=400, detail="缺少 module_id")
+    character_overrides = body.get("character") or None
+    custom_title = str(body.get("title") or "").strip()
+
+    # 加载模组 manifest 取标题
+    try:
+        bundle = _rules_module_registry.load_module(module_id)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"未知模组 {module_id}：{exc}")
+    manifest = bundle.get("manifest") or {}
+    title = custom_title or manifest.get("name_cn") or manifest.get("name") or module_id
+
+    # 找到（或创建）一个属于本用户的 ad-hoc script，作为模组 save 的 owner script。
+    # 模组不依赖小说章节，但 game_saves.script_id 是 NOT NULL 外键 → 必须给个 script。
+    # 复用 ad-hoc"模组容器"剧本，避免每次都建新 script row。
+    from platform_app.db import connect as _db_connect
+    user_id = int(api_user["id"])
+    with _db_connect() as db:
+        scr = db.execute(
+            "select id from scripts where owner_id = %s and title = %s",
+            (user_id, "[内部] 5E 模组容器"),
+        ).fetchone()
+        if scr:
+            container_script_id = int(scr["id"])
+        else:
+            scr = db.execute(
+                "insert into scripts(owner_id, title) values (%s, %s) returning id",
+                (user_id, "[内部] 5E 模组容器"),
+            ).fetchone()
+            container_script_id = int(scr["id"])
+
+    # 用一个空的临时 GameState 跑 rules_bridge.start_module 拿到完整初始 snapshot
+    tmp_state = GameState.new()
+    res = _rb_start_module(tmp_state, module_id, character_overrides=character_overrides)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error", "start_module 失败"))
+
+    # 把初始 snapshot 写入新 save
+    from platform_app import workspace as _workspace
+    from platform_app import branches as _branches
+    from psycopg.types.json import Jsonb as _Jsonb
+    with _db_connect() as db:
+        save_row = db.execute(
+            """
+            insert into game_saves(user_id, script_id, title, state_path, state_snapshot)
+            values (%s, %s, %s, %s, %s)
+            returning *
+            """,
+            (user_id, container_script_id, title, str(SAVE_FILE), _Jsonb(tmp_state.data)),
+        ).fetchone()
+    save_id = int(save_row["id"])
+    _branches.seed_tree(save_id, str(SAVE_FILE))
+    # 激活
+    _branches.activate_save(user_id, save_id)
+    # 清缓存让 _ensure_loaded 重读
+    _invalidate_user_cache(api_user)
+
+    # 重新拉 state
+    state = _ensure_loaded(api_user)
+    return JSONResponse({
+        "ok": True,
+        "save_id": save_id,
+        "save_title": title,
+        "rules": _rules_payload(state),
+        "opening": res.get("opening") or "",
+        "state": _payload(api_user),
+    })
 
 
 @app.get("/api/rules/scene")
