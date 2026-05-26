@@ -502,6 +502,23 @@ INTENT_KEYWORDS: list[tuple[str, dict]] = [
 ]
 
 
+# Bug 2 (retest)：哪些中文动词算"移动意图"。
+# "观察 / 留意 / 倾听 / 检查"等是原地行为，不应触发跨房候选。
+# "靠近 / 沿 / 往 / 向 / 去 / 前往 / 走向 / 进入 / 穿过"等才是真正的移动。
+_MOVEMENT_VERBS = (
+    "靠近", "前往", "走向", "走到", "走过", "穿过", "翻过", "回到", "进入", "退回",
+    "去", "沿", "往", "向", "通过", "潜入", "溜过去", "钻进", "上到", "下到",
+)
+
+
+def _has_movement_intent(text: str) -> bool:
+    """玩家文本是否明确包含移动到另一处的动词。
+    用于决定是否做跨房间 skill check 推断（如 stealth 到相邻房间）。"""
+    if not text:
+        return False
+    return any(v in text for v in _MOVEMENT_VERBS)
+
+
 def _direction_to_exit(text: str, current_room: dict) -> str | None:
     """Bug 4：把玩家自然语言移动意图（如「沿外侧锈轨往东」「进入主井」）
     解析为当前房间真实 exit id。优先全词匹配 exit.label / id，再做 token 模糊匹配。"""
@@ -608,7 +625,11 @@ def suggest_rule_actions(user_input: str, state) -> list[dict]:
                         action["fact"] = chk.get("fact")
                         matched_check = True
                         break
-                if not matched_check and rooms_by_id:
+                # Bug 2 (retest)：只在玩家文本明确含『移动意图』时才跨房间扫描。
+                # 之前"观察灌木"在 minecart_track（无 perception check）也触发跨房 fallback
+                # → 错误地把玩家移回 mine_entrance 找 perception。
+                # 现在原地无 check 时就让 GM 用默认 dc_hint 在当前房间做检定。
+                if not matched_check and rooms_by_id and _has_movement_intent(text):
                     for ex in current_room.get("exits", []) or []:
                         room = rooms_by_id.get(ex.get("to"))
                         if not room:
@@ -626,6 +647,9 @@ def suggest_rule_actions(user_input: str, state) -> list[dict]:
                         if matched_check:
                             break
                 action.setdefault("dc", action.get("dc_hint", 12))
+                if not action.get("target"):
+                    # 原地无 check 也要落地：target 设为当前房间，用 dc_hint 默认
+                    action["target"] = location_id
             elif action.get("kind") == "attack":
                 # 当前房间有敌人或战斗激活时才是合法的
                 action["weapon"] = _weapon_from_text(text)

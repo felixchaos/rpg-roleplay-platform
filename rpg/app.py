@@ -116,7 +116,12 @@ def _verify_acceptance_rule(acceptance: list[str], response_text: str, updates: 
         "如果", "或者", "包括", "其它", "其他", "可以", "应当", "必须", "条件",
         "这个", "那个", "我们", "他们", "她们", "你们",
     }
-    _NEG_KEYWORDS = ("不要", "不应", "禁止", "不能", "不得", "没把", "不可", "杜绝")
+    # 否定关键词：retest 加入"没有 / 未" — 之前 "没有直接修改玩家的 HP 或 AC"
+    # 这种正向 success state 写法（"X 没发生"）被错当成肯定条款，规则要求
+    # bigram 命中才算通过，narration 里没出现"HP/AC"就被误报 unmet。
+    # 把"没有"列为否定标记后：response 不含 HP/AC → 不命中 → 否定条款 met。
+    _NEG_KEYWORDS = ("不要", "不应", "禁止", "不能", "不得", "没把", "没有", "未曾",
+                     "不可", "杜绝", "勿", "切勿", "无", "未")
 
     def _key_bigrams(text: str) -> list[str]:
         """从中文条款里取所有 2-3 字 bigram/trigram，过掉 stopword。"""

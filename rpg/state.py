@@ -1100,7 +1100,12 @@ class GameState:
             _set_path(self.data, path, value)
         elif kind == "list":
             items = _split_items(value)
-            if overwrite:
+            # Bug 5 (retest)：value 是 list 且 op=set（既非 append 也非 overwrite）→
+            # 视为完整替换。GM 给的「资源完整列表」语义就是"现在背包只剩这些"。
+            # 之前 set 走 dedupe-append 路径会把新 Torch ×1 追加到老 Torch ×2 旁边，
+            # 列表里同时出现矛盾的两条。
+            is_full_list_replacement = isinstance(value, (list, tuple)) and not append
+            if overwrite or is_full_list_replacement:
                 _set_path(self.data, path, items)
             else:
                 target = _get_path(self.data, path)
@@ -1548,13 +1553,38 @@ def _split_label(text: str) -> tuple[str, str]:
 
 
 def _split_items(text) -> list[str]:
-    """Bug 5：value 可能已经是 list（来自 GM JSON op / 审批 typed value）。
-    若已是 list / tuple，直接清洗每项；否则按分隔符切。"""
+    """Bug 5 / retest #5：
+    - value 已是 list / tuple → 直接清洗（不再切）
+    - 字符串切分策略：
+      * 顿号「、」、分号「; ；」、换行 → 总是切（明确列表分隔）
+      * 中英文逗号「, ，」→ 只在结果都是『短词』（每段 ≤ 12 字、不含其他标点）时才切，
+        避免完整事件句『Cinder 在东侧轨道触发巨响，惊动了不明生物』被劈成两条。
+    """
     if isinstance(text, (list, tuple)):
         return [_clean_item(str(x)) for x in text if _clean_item(str(x))]
     if text is None:
         return []
-    return [_clean_item(x) for x in re.split(r"[、,，;；]\s*", str(text)) if _clean_item(x)]
+    raw = str(text).strip()
+    if not raw:
+        return []
+    # 1. 先用强分隔符切：顿号/分号/换行
+    strong_parts = [p for p in re.split(r"[、;；\n]\s*", raw) if p.strip()]
+    # 2. 在 strong parts 上做逗号细切，但仅当每一片都"短词样"
+    out: list[str] = []
+    for part in strong_parts:
+        sub_parts = [p for p in re.split(r"[,，]\s*", part) if p.strip()]
+        if len(sub_parts) > 1 and all(
+            len(_clean_item(s)) <= 12 and not re.search(r"[。！？!?]", s)
+            for s in sub_parts
+        ):
+            # 短词列表：例 "Torch ×1, Shortsword, Shortbow ×1"
+            out.extend(_clean_item(s) for s in sub_parts if _clean_item(s))
+        else:
+            # 含完整句号/问号/感叹号，或片段超长 → 当作整句保留
+            cleaned = _clean_item(part)
+            if cleaned:
+                out.append(cleaned)
+    return out
 
 
 def _split_relation(text: str) -> tuple[str, str]:
