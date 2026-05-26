@@ -1247,6 +1247,58 @@ class GameState:
         pc["hp"] = max(0, cur - actual)
         return cur - pc["hp"]
 
+    # ── Inventory (canonical) ──────────────────────────────────
+    # Bug 5：player_character.inventory 是物品的唯一真相源；
+    # memory.resources 是派生展示层，consume 之后必须同步。
+
+    def consume_inventory_item(self, alias: str, qty: int = 1) -> dict:
+        """Canonical inventory 消耗。返回 RulesEngine 标准 result dict。
+
+        副作用：
+          1. player_character.inventory[item].qty -= consumed（qty=0 时移除条目）
+          2. memory.resources 派生重写为当前 inventory 列表
+          3. audit_log 记一条 source=rules_engine 的同步记录
+        """
+        from rules.dnd5e.character import (
+            consume_inventory_item as _consume,
+            resources_from_inventory as _derive,
+        )
+        pc = self.data.setdefault("player_character", {})
+        result = _consume(pc, alias, qty)
+        if result.get("ok"):
+            # 同步派生层
+            self.data.setdefault("memory", {})["resources"] = _derive(pc)
+            self._audit_rules_inventory(
+                action="consume",
+                alias=alias,
+                detail=result,
+            )
+        return result
+
+    def sync_resources_from_inventory(self) -> list[str]:
+        """重写 memory.resources 派生层，保持与 player_character.inventory 一致。"""
+        from rules.dnd5e.character import resources_from_inventory as _derive
+        pc = self.data.get("player_character") or {}
+        derived = _derive(pc)
+        self.data.setdefault("memory", {})["resources"] = derived
+        return derived
+
+    def _audit_rules_inventory(self, *, action: str, alias: str, detail: dict) -> None:
+        try:
+            audit = self.data.setdefault("permissions", {}).setdefault("audit_log", [])
+            audit.append({
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "source": "rules_engine",
+                "kind": "inventory",
+                "action": action,
+                "alias": alias,
+                "detail": detail,
+                "turn": self.data.get("turn", 0),
+            })
+            self.data["permissions"]["audit_log"] = audit[-200:]
+        except Exception:
+            pass
+
     def set_encounter(self, encounter: dict) -> None:
         """初始化或替换 encounter 状态。RulesEngine 专用。"""
         self.data["encounter"] = copy.deepcopy(encounter or {})
@@ -1285,15 +1337,26 @@ class GameState:
         item = self._pop_pending_write(id=id, index=index)
         if item is None:
             return "待审写入不存在"
+        path = str(item.get("path", ""))
         # Bug 5：直接传 typed value，不走 spec 字符串往返；防止 list/dict 被 str() 污染。
-        return self.apply_state_write_typed(
-            path=str(item.get("path", "")),
+        result = self.apply_state_write_typed(
+            path=path,
             value=item.get("value"),
             source=f"{item.get('source', 'gm')}:approved",
             append=bool(item.get("append")),
             overwrite=bool(item.get("overwrite")),
             force=True,
         )
+        # Bug 5 (retest硬要求 #3/#4)：memory.resources 是 inventory 的派生层。
+        # 任何对 memory.resources 的审批写入完成后，立刻从 canonical
+        # player_character.inventory 重写一遍 —— 防止 GM 的待审值与 canonical
+        # 不一致时产生"两条 Torch"这种数据病。
+        if path == "memory.resources" and (self.data.get("player_character") or {}).get("inventory"):
+            try:
+                self.sync_resources_from_inventory()
+            except Exception:
+                pass
+        return result
 
     def reject_pending_write(self, index: int | None = None, *, id: str | None = None) -> str:
         item = self._pop_pending_write(id=id, index=index)
@@ -1957,6 +2020,7 @@ _RULES_MANAGED_PATHS = {
     "player_character.hp",
     "player_character.max_hp",
     "player_character.ac",
+    "player_character.inventory",  # Bug 5：canonical inventory，只允许 RulesEngine 写
     "encounter.active",
     "encounter.round",
     "encounter.turn_index",
@@ -1971,6 +2035,7 @@ _RULES_MANAGED_PREFIXES = (
     "encounter.initiative_order.",
     "dice_log.",
     "player_character.conditions",  # 条件由 rules 触发（中毒等）
+    "player_character.inventory.",  # Bug 5：inventory 子路径也锁住
 )
 
 _MODULE_MANAGED_PATHS = {

@@ -2308,6 +2308,8 @@ from rules_bridge import (
     advance_turn as _rb_advance_turn,
     short_rest as _rb_short_rest,
     suggest_rule_actions as _rb_suggest_rule_actions,
+    parse_consume_intent as _rb_parse_consume_intent,
+    consume_item_action as _rb_consume_item_action,
 )
 import modules as _rules_module_registry
 
@@ -2454,6 +2456,14 @@ def _execute_rules_action(state: GameState, body: dict[str, Any]) -> dict[str, A
         )
     elif kind == "short_rest":
         out = _rb_short_rest(state, seed=seed)
+    elif kind == "consume_item":
+        item_id = str(body.get("item_id") or body.get("item") or body.get("alias") or "")
+        try:
+            qty = int(body.get("qty") or 1)
+        except (TypeError, ValueError):
+            qty = 1
+        out = _rb_consume_item_action(state, item_id=item_id, qty=qty,
+                                       reason=str(body.get("reason") or ""))
     elif kind == "move":
         loc = str(body.get("to") or body.get("target") or body.get("move_to") or "")
         canonical, reason = _canonicalize_exit_target(state, loc)
@@ -2506,6 +2516,16 @@ def _chat_rule_candidates(
 
     for action in _rb_suggest_rule_actions(user_input, state):
         add(action)
+    # Bug 5：从玩家文本里 deterministic 解析 inventory 消耗意图。
+    # 不依赖 LLM —— "点燃 1 支 Torch" / "use 2 Healing Draught" 等都从这里入。
+    pc = state.data.get("player_character") or {}
+    for intent in _rb_parse_consume_intent(user_input, pc):
+        add({
+            "kind": "consume_item",
+            "item_id": intent["item_id"],
+            "qty": intent["qty"],
+            "reason": f"backend parser: {intent['matched']!r}",
+        })
     for action in curator_actions or []:
         add(action)
     return merged
@@ -2526,7 +2546,7 @@ def _apply_chat_rule_candidates(state: GameState, actions: list[dict[str, Any]] 
     if not scene.get("module_id"):
         return []
 
-    allowed = {"skill_check", "saving_throw", "trap_check", "attack", "short_rest", "move"}
+    allowed = {"skill_check", "saving_throw", "trap_check", "attack", "short_rest", "move", "consume_item"}
     # 一种 kind 最多跑一次 — 同一回合不允许双重 attack / 双重 skill_check 等。
     # 但 skill_check + move 可以同回合跑（玩家描述含调查 + 移动）。
     consumed_kinds: set[str] = set()

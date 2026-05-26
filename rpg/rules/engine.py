@@ -11,7 +11,13 @@ from typing import Optional
 from .dice import roll as _roll, RollResult
 from .base import RuleResult, StateOp
 from .dnd5e import ability_modifier, proficiency_bonus
-from .dnd5e.character import make_default_character, take_damage, heal, add_condition, remove_condition
+from .dnd5e.character import (
+    make_default_character, take_damage, heal, add_condition, remove_condition,
+    consume_inventory_item as _consume_inventory_item,
+    find_inventory_item as _find_inventory_item,
+    normalize_item_alias as _normalize_item_alias,
+    resources_from_inventory as _resources_from_inventory,
+)
 from .dnd5e.checks import skill_check as _skill_check, saving_throw as _saving_throw
 from .dnd5e.actions import (
     attack_roll as _attack_roll,
@@ -75,6 +81,19 @@ class RulesEngine:
     # ── 角色 ────────────────────────────────────────────────────
     def make_default_character(self, name: str = "Drifter", level: int = 1) -> dict:
         return make_default_character(name=name, level=level)
+
+    # ── Inventory (canonical) ───────────────────────────────────
+    def consume_inventory_item(self, character: dict, alias: str, qty: int = 1) -> dict:
+        return _consume_inventory_item(character, alias, qty)
+
+    def find_inventory_item(self, character: dict, alias: str) -> dict | None:
+        return _find_inventory_item(character, alias)
+
+    def normalize_item_alias(self, alias: str) -> str:
+        return _normalize_item_alias(alias)
+
+    def resources_from_inventory(self, character: dict) -> list[str]:
+        return _resources_from_inventory(character)
 
     # ── 检定 ────────────────────────────────────────────────────
     def skill_check(
