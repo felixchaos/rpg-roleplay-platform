@@ -744,6 +744,10 @@ def _timeline_layer(state) -> dict[str, Any]:
         # 这是**覆盖式跳跃**,不是叙事过渡:state.world.time 已经直接变了,GM 必须
         # 把新时间视作既定事实,从新时间点的场景开始叙事,不能写"穿越/醒来/拨回时钟"
         # 等过渡剧情。
+        # task 86：除了 last_transition.source 判定,还检查 user_set_jump_turn —
+        # 因为 GM 在响应中可能再调 update_time(source="gm") 把 last_transition
+        # 改写,但 user_set_jump_turn 只会被新的 user_set 跳跃覆盖,可靠地表示
+        # 本回合是否有过用户硬覆盖。
         last_t = timeline.get("last_transition") or {}
         try:
             _last_turn = int(last_t.get("turn") or -1)
@@ -751,7 +755,15 @@ def _timeline_layer(state) -> dict[str, Any]:
         except (TypeError, ValueError):
             _last_turn = -1
             _cur_turn = 0
-        if last_t.get("source") == "user_set" and _last_turn == _cur_turn:
+        try:
+            _user_jump_turn = int(timeline.get("user_set_jump_turn")) if timeline.get("user_set_jump_turn") is not None else None
+        except (TypeError, ValueError):
+            _user_jump_turn = None
+        _is_user_set_now = (
+            (last_t.get("source") == "user_set" and _last_turn == _cur_turn)
+            or (_user_jump_turn == _cur_turn)
+        )
+        if _is_user_set_now:
             _from = last_t.get("from") or "(未知)"
             _to = last_t.get("to") or locked_label or "(未知)"
             lines.extend([

@@ -17,15 +17,12 @@ with open(BASE / "indexes" / "world.json", "r", encoding="utf-8") as _f:
     _WORLD = json.load(_f)
 
 # ── System Prompt 模板 ────────────────────────────────────────────────────────
+# 通用 RPG 底座：不再硬编码《我蕾穆丽娜不爱你》故事背景。世界简介由
+# `_build_system()` 根据当前 state 的 content_pack 选择性注入（小说改编、模组、freeform）。
 _SYSTEM_BASE = """\
 你是一个沉浸式文字 RPG 的 GM（游戏主持人）。
-故事背景取自长篇小说《我蕾穆丽娜不爱你》。
-
-# 世界背景
-{world_brief}
-
-# 当前柏林局势
-{berlin_brief}
+你的职责是基于玩家当前激活的剧本 / 冒险模组 / freeform 设定，做沉浸式叙事与状态裁定。
+{world_section}
 
 # 写作准则
 - 用小说笔法描写场景、人物动作和对话，不要游戏系统提示风格。
@@ -109,9 +106,8 @@ _OPENING_PROMPT = """\
 请为这位刚进入游戏的玩家生成一段开场描写。
 
 描写要素：
-- 时间：图卢兹失守后翌日，柏林的傍晚
-- 地点与氛围：柏林街头，战报传来后的压抑气氛，有人在悄悄收拾行李离开
-- 让玩家感受到这座城市的状态，以及他们角色的处境
+- 时间与地点由当前剧本/模组的世界书或 state.world.time + player.current_location 决定，不要捏造与之冲突的场景
+- 让玩家感受到当前世界的氛围，以及他们角色的处境
 - 结尾留一个可以行动的悬念或选择，不要替玩家做决定
 
 字数：150-250字
@@ -1160,24 +1156,66 @@ class GameMaster:
 
     # ── 构建 system prompt ────────────────────────────────────────
     def _build_system(self) -> str:
-        world_brief = (
-            f"{_WORLD['setting']}\n"
-            f"当前局势：{_WORLD['current_situation']}"
-        )
-        berlin = _WORLD["current_berlin"]
-        berlin_brief = (
-            f"氛围：{berlin['atmosphere']}\n"
-            f"风险等级：{berlin['risk_level']}\n"
-            f"在场势力：\n" + "\n".join(f"  · {p}" for p in berlin["power_presence"])
-        )
+        """组装通用 system prompt。
+
+        world_section 来源：
+        - 如果绑定了《我蕾穆丽娜不爱你》兼容老存档（is_default_novel=True），注入 _WORLD（柏林宇宙）
+        - 模组 / 其它剧本 / freeform：不在 system prompt 注入特定世界硬编码；
+          世界 / 房间 / 时间线由 context_providers / world book / 模组 manifest 在动态上下文层提供。
+        """
+        world_section = self._world_section_for_active_content()
         # _SYSTEM_BASE intentionally contains literal JSON examples such as
         # {"op": "set", ...}.  Do not run the whole prompt through str.format(),
         # because those braces are prompt text, not Python placeholders.
-        return (
-            _SYSTEM_BASE
-            .replace("{world_brief}", world_brief)
-            .replace("{berlin_brief}", berlin_brief)
-        )
+        return _SYSTEM_BASE.replace("{world_section}", world_section)
+
+    def _world_section_for_active_content(self) -> str:
+        """根据当前 state 的 content_pack 返回一段『世界 / 模组背景』。
+        默认 Berlin 老存档仍读 indexes/world.json；新剧本 / 模组 / freeform 不注入硬编码。
+        """
+        state = getattr(self, "_active_state", None)
+        is_default_novel = False
+        try:
+            if state is not None:
+                from context_providers import resolve_content_pack
+                manifest = resolve_content_pack(state) or {}
+                kind = manifest.get("kind") or ""
+                mid = str(manifest.get("id") or "")
+                # 默认 Berlin novel 标识：legacy save 或 __legacy_novel__
+                if kind == "novel_adaptation" and (
+                    mid in ("__legacy_novel__", "__legacy_save__") or mid.startswith("script:")
+                ):
+                    # 仅当 state 含柏林 token（防止误注入到其他剧本）
+                    data = getattr(state, "data", {}) or {}
+                    world_time = str((data.get("world") or {}).get("time") or "")
+                    location = str((data.get("player") or {}).get("current_location") or "")
+                    if any(tok in (world_time + location) for tok in (
+                        "柏林", "图卢兹", "哈布斯堡", "蛇信", "薇瑟", "扎兹巴鲁姆", "蕾穆丽娜",
+                    )):
+                        is_default_novel = True
+        except Exception:
+            is_default_novel = False
+        if not is_default_novel:
+            return ""  # 通用底座：world 信息走 context_providers / dynamic context
+        try:
+            world_brief = (
+                f"{_WORLD['setting']}\n"
+                f"当前局势：{_WORLD['current_situation']}"
+            )
+            berlin = _WORLD.get("current_berlin") or {}
+            parts: list[str] = []
+            if world_brief.strip():
+                parts.append("# 世界背景\n" + world_brief)
+            if berlin:
+                berlin_brief = (
+                    f"氛围：{berlin.get('atmosphere','')}\n"
+                    f"风险等级：{berlin.get('risk_level','')}\n"
+                    f"在场势力：\n" + "\n".join(f"  · {p}" for p in (berlin.get('power_presence') or []))
+                )
+                parts.append("# 当前柏林局势\n" + berlin_brief)
+            return "\n\n".join(parts)
+        except Exception:
+            return ""
 
     def _dynamic_context(self, player_summary: str, retrieved_context: str) -> str:
         # 穿越者专属附注
@@ -1229,18 +1267,21 @@ class GameMaster:
 
     # ── 生成开场白 ────────────────────────────────────────────────
     def generate_opening(self, state, retrieved_context: str = "") -> str:
+        self._active_state = state
         system   = self._build_system()
         messages = [{"role": "user", "content": self._turn_message(_OPENING_PROMPT, state, retrieved_context)}]
         return self._backend.call(system, messages, max_tokens=600)
 
     # ── 主响应 ────────────────────────────────────────────────────
     def respond(self, user_input: str, retrieved_context: str, state) -> str:
+        self._active_state = state
         system   = self._build_system()
         messages = state.history_messages()
         messages.append({"role": "user", "content": self._turn_message(user_input, state, retrieved_context)})
         return self._backend.call(system, messages, max_tokens=800)
 
     def respond_stream(self, user_input: str, retrieved_context: str, state) -> Iterator[str]:
+        self._active_state = state
         system   = self._build_system()
         messages = state.history_messages()
         messages.append({"role": "user", "content": self._turn_message(user_input, state, retrieved_context)})
@@ -1255,6 +1296,7 @@ class GameMaster:
         tools: list[dict[str, Any]] | None = None,
         max_iterations: int = 3,
         max_tokens: int = 800,
+        tool_call_router: Any = None,
     ) -> Iterator[dict[str, Any]]:
         """带 MCP 工具循环的流式响应。
 
@@ -1277,10 +1319,12 @@ class GameMaster:
         # task 66：native tool_use 分支
         if getattr(self._backend, "supports_native_tools", False):
             yield from self._respond_stream_native_tools(
-                user_input, retrieved_context, state, tools, max_iterations, max_tokens,
+                user_input, retrieved_context, state, tools,
+                max_iterations, max_tokens, tool_call_router=tool_call_router,
             )
             return
 
+        self._active_state = state
         system = self._build_system() + _format_tools_for_prompt(tools)
         messages = state.history_messages()
         messages.append({
@@ -1417,6 +1461,7 @@ class GameMaster:
         tools: list[dict[str, Any]],
         max_iterations: int,
         max_tokens: int,
+        tool_call_router: Any = None,
     ) -> Iterator[dict[str, Any]]:
         """task 66/70/71：用 backend 的 native tool_use / function calling API
         跑 MCP 循环。
@@ -1432,6 +1477,7 @@ class GameMaster:
         - assistant + tool_result 消息装回历史的 provider-specific 格式
         本方法只是 dispatcher。
         """
+        self._active_state = state
         system = self._build_system()
         messages = state.history_messages()
         messages.append({
@@ -1443,7 +1489,11 @@ class GameMaster:
             for chunk in self._backend.stream(system, messages, max_tokens=max_tokens):
                 yield {"type": "text", "text": chunk}
             return
-        from mcp_broker import call_tool as _mcp_call_tool
+        # task 87 Phase 5: tool_call_router 默认是 mcp_broker.call_tool,
+        # 但 chat handler 可以传入 unified router (识别 dispatcher 工具 + MCP 工具)
+        if tool_call_router is None:
+            from mcp_broker import call_tool as _mcp_call_tool
+            tool_call_router = _mcp_call_tool
         yield from self._backend.stream_with_mcp_loop(
-            system, messages, tools, max_iterations, max_tokens, mcp_call=_mcp_call_tool,
+            system, messages, tools, max_iterations, max_tokens, mcp_call=tool_call_router,
         )

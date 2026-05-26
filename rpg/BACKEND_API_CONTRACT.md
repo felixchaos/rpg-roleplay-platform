@@ -4,7 +4,7 @@
 
 ## 通用约定
 
-- **认证**：Cookie `rpg_session_v1`（HttpOnly + SameSite=Lax + Secure 在 https 下自动启）。`/api/auth/login` 写入，`/api/auth/logout` 删除。其他接口缺 cookie 多数返回 401/400。
+- **认证**：Cookie `rpg_session`（HttpOnly + SameSite=Lax + Secure 在 https 下自动启）。`/api/auth/login` 写入，`/api/auth/logout` 删除。其他接口缺 cookie 多数返回 401/400。
 - **Content-Type**：JSON 请求体；SSE 端点用 `text/event-stream`。
 - **错误形态**：`{ok: false, error: "..."}`。极少使用 HTTP 500；输入校验失败返回 400/422。
 - **多用户隔离**：所有 `/api/me/*`、`/api/saves`、`/api/scripts` 都按当前用户隔离。匿名/未登录访问受保护接口会被拒。
@@ -175,7 +175,7 @@
 | GET `/api/memories` | 当前 state 的 memory 列表（按 bucket 分） |
 | POST `/api/memory/add` / `/api/memory/remove` / `/api/memory/mode` | memory 编辑 |
 | GET `/api/worldline/variables` + add/remove | 玩家自定义世界线变量 |
-| GET `/api/me/preference` | 用户偏好（含 `sub_agent_model_override`） |
+| POST `/api/me/preference` | 用户偏好（含 `sub_agent_model_override`），body 形如 `{key, value}` 增量更新 |
 | GET/POST | `/api/library*` | 文件库（图床 / 附件） |
 
 ## 部署相关

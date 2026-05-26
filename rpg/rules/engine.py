@@ -181,10 +181,15 @@ class RulesEngine:
     # ── dice_log 辅助 ──────────────────────────────────────────
     @staticmethod
     def make_dice_log_entry(result: RuleResult, reason: str = "") -> dict:
-        """把 RuleResult 压扁成 dice_log 条目（前端 UI 显示用）。"""
+        """把 RuleResult 压扁成 dice_log 条目（前端 UI 显示用）。
+
+        把 extra 里的 skill / ability / weapon 抬到顶层 — dice_log 是
+        deterministic 审计源,应当自描述,不要让后续读者再从 reason 字符串
+        里去猜"这是哪种检定"。
+        """
         import secrets as _secrets
         roll_data = result.roll or {}
-        return {
+        entry = {
             "id": f"dl_{_secrets.token_urlsafe(6)}",
             "kind": result.kind,
             "actor": result.actor,
@@ -201,6 +206,12 @@ class RulesEngine:
             "reason": reason or result.extra.get("reason", ""),
             "ts": datetime.now().isoformat(timespec="seconds"),
         }
+        # 抬升 extra 的关键标识字段,方便审计 / 测试 / 前端展示
+        for key in ("skill", "ability", "weapon"):
+            v = result.extra.get(key) if result.extra else None
+            if v:
+                entry[key] = v
+        return entry
 
 
 _DEFAULT_ENGINE: Optional[RulesEngine] = None

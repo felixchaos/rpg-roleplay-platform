@@ -724,10 +724,15 @@ INTENT_KEYWORDS: list[tuple[str, dict]] = [
     (r"(察觉|留意|倾听|听一下|发现|观察)", {"kind": "skill_check", "skill": "perception", "dc_hint": 12}),
     # 攀爬 / 跳跃 / 强力
     (r"(攀爬|爬上|跳过|破门|撞开|蛮力)", {"kind": "skill_check", "skill": "athletics", "dc_hint": 12}),
-    # 说服 / 谈判
-    (r"(说服|谈判|交涉|劝说)", {"kind": "skill_check", "skill": "persuasion", "dc_hint": 13}),
+    # 说服 / 谈判 / 投降 / 求饶 — 都走 Persuasion 检定 vs NPC disposition。
+    # 投降不是"自动接受",而是要看敌人愿不愿放过 (敌对教派可能直接处决)。
+    (r"(说服|谈判|交涉|劝说|投降|求饶|放下武器|举起?双?手|跪下投降|请降|求和)",
+        {"kind": "skill_check", "skill": "persuasion", "dc_hint": 14}),
     # 欺骗
     (r"(欺骗|撒谎|装作|伪装|装成)", {"kind": "skill_check", "skill": "deception", "dc_hint": 13}),
+    # 挣脱 / 反抗约束 / 摆脱抓握 — Athletics 检定 (escape grapple)
+    (r"(挣脱|挣开|挣扎|甩开|摆脱抓握|脱困|逃脱束缚)",
+        {"kind": "skill_check", "skill": "athletics", "dc_hint": 13}),
     # 威胁 / 恐吓
     (r"(威胁|恐吓|逼问)", {"kind": "skill_check", "skill": "intimidation", "dc_hint": 13}),
     # 攻击

@@ -124,55 +124,50 @@ class ModuleAdventurePolicy(GamePolicy):
         return None
 
     def gm_prompt_constraints(self, state: Any) -> list[str]:
+        """只输出**事实数据快照**+**数据来源指南**。
+
+        架构原则 (用户 2026-05 评审定调):
+        - DnD 规则裁定 = deterministic 自动化规则 (preflight gate + RulesEngine)。
+        - LLM agent 不参与规则判断,也不应该用 prompt "教" 它不要乱裁定。
+        - 任何 5E 规则约束 (攻击命中 / HP / 借机攻击 / 武器可用性 / 卡住 / 投降是否被接受...)
+          应该通过 `classify_combat_intent` 等 deterministic preflight 在 GM 被调用前
+          就挡掉,或通过 `_apply_chat_rule_candidates` 跑出 dice_log + verdict,
+          再以**事实**形式喂给 GM —— 不在这个 prompt 段里用 "不得 X" 教条堵 LLM。
+
+        所以本方法只输出:
+        1. 当前 encounter 状态 / 房间 enemies 名单 = 场景事实快照
+        2. "state 是真相源,检索是参考" = 数据来源路由 (告诉 GM 用哪份数据)
+
+        不输出任何 "GM 不得 X / 必须由 Y / 不能 Z" 的行为约束。
+        """
         data = getattr(state, "data", state) or {}
         scene = data.get("scene") or {}
         enc = data.get("encounter") or {}
         current_room = scene.get("current_room") or {}
 
-        # 硬约束(belt-and-suspenders;preflight 是主防线,prompt 是兜底)
         lines: list[str] = []
-        lines.append("【硬约束 — GM 不得自行裁定】")
-        lines.append(
-            "下列事项是 RulesEngine / 玩家选择 的专属裁定权。"
-            "GM 在正文中**一律不得**宣称这些发生:"
-        )
-        lines.append("  · 攻击命中 / miss / 暴击 / 伤害数字 (必须 attack_roll 结果)")
-        lines.append("  · HP / AC / 先攻 / 状态 / 死亡 变化 (必须 RulesEngine 写)")
-        lines.append("  · 借机攻击是否触发 / 命中 (必须玩家选 Disengage / 承受)")
-        lines.append("  · 武器是否可用 / disadvantage (e.g. 不得叙述「短弓施展不了」)")
-        lines.append("  · 玩家是否被卡住 / 是否能后退 (必须先走 Disengage 流程)")
-        # 当前房间 enemies 摘要 — 给 GM 明确"合法敌人清单"
+
+        # 1) 场景事实快照 — 客观陈述,不带"不得 X"
+        lines.append("【场景事实快照】")
         room_enemies = current_room.get("enemies") or []
         if room_enemies:
             names = "、".join(
                 (e.get("name") or e.get("id") or "?") for e in room_enemies
             )
-            lines.append(f"  · 当前房间 enemies = [{names}];GM 不得引入这之外的敌人。")
+            lines.append(f"- 当前房间 enemies = [{names}]")
         else:
-            lines.append(
-                "  · 当前房间 enemies = 空;encounter.active = "
-                + ("是" if enc.get("active") else "否") + "。"
-            )
-        if not enc.get("active") and not room_enemies:
-            lines.append(
-                "  ⚠️ 当前 encounter 未激活、本房间无 enemies。"
-                "**GM 不得在本轮正文中引入任何敌方 NPC 或战斗事件**。"
-                "若需要遭遇,必须由 hazard / flag / 玩家明确触发,再由 RulesEngine 启动。"
-            )
+            lines.append("- 当前房间 enemies = 空")
         lines.append(
-            "原则:**RulesEngine 没返回的事实,GM 不能叙述成已发生**。"
-            "玩家意图模糊或战斗细节未定时,GM 只能写"
-            "「你准备这么做」或「你看见敌人压上」(等敌人 attack 真发生再叙)"
-            ",绝不写已经成功/失败/被卡住/失去优势。"
+            "- encounter.active = " + ("是" if enc.get("active") else "否")
         )
 
-        # Codex #4 + #7: Knowledge 仅作参考,不是真相源
+        # 2) 数据层级 — 数据来源指南 (Codex #4 + #7)
         ref_block = [
             "【数据层级 — 真相源 vs 参考】",
             "- state / scene / encounter / dice_log / player_character / active_entities = **当前事实真相源**",
             "  这些是 RulesEngine / 模组数据写入的硬事实,GM 必须以此为准。",
             "- 知识检索 (retrieved_context / 章节摘要 / 角色卡库 / 世界书) = **风格与背景参考**",
-            "  仅用于补叙事色彩,**不能覆盖 state 当前位置 / 当前 HP / 当前敌人**。",
+            "  仅用于补叙事色彩,不能覆盖 state 当前位置 / 当前 HP / 当前敌人。",
             "  例:retrieval 提到玩家曾在矿坑深处遇敌,但 state.scene.location_id=mine_entrance —",
             "  GM 应按 state 写『在矿道入口』,retrieval 信息可作『你想起之前那次...』的回忆,",
             "  不可作『你正身处矿坑深处』的当前事实。",

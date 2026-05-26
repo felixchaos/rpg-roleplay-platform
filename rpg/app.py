@@ -53,7 +53,8 @@ from platform_app import runtime as platform_runtime
 from platform_app.api import current_user as platform_current_user
 from platform_app.api import router as platform_router
 
-APP_TITLE = "我蕾穆丽娜不爱你"
+# 通用 RPG 底座：APP_TITLE 是平台名称，不绑定特定剧本。可由 RPG_APP_TITLE env 覆写。
+APP_TITLE = os.environ.get("RPG_APP_TITLE", "RPG Roplay")
 MODEL_LABEL = "Gemini 3.5 Flash"
 HOST = "127.0.0.1"
 PORT = 7860
@@ -504,6 +505,23 @@ async def _start_mcp_health() -> None:
         mcp_broker.start_health_loop()
     except Exception:
         pass
+
+
+@app.on_event("startup")
+async def _register_command_tools_startup() -> None:
+    """task 87: 启动时把 command_tools + Phase 2 工具注册到全局 dispatcher。
+    幂等,多次调用安全 (内部 _REGISTERED 标志)。"""
+    try:
+        from command_tools_register import ensure_registered
+        ensure_registered()
+        from command_dispatcher import get_registry
+        print(f"[startup] command_dispatcher: 已注册 {len(get_registry().list_all())} 个工具")
+    except Exception as exc:
+        # 注册失败不阻塞启动;chat handler 内部 ensure_registered 兜底
+        import logging
+        logging.getLogger("rpg.startup").exception(
+            "command tools registration failed: %s", exc,
+        )
 
 
 @app.on_event("startup")
@@ -1358,10 +1376,12 @@ async def api_new(request: Request) -> JSONResponse:
             role = source_meta.get("identity") or "未指定"
             background = source_meta.get("appearance") or source_meta.get("personality") or "（来自角色卡）"
     else:
-        role_label = body.get("role") or list(ROLES.keys())[0]
+        # 通用 RPG 底座：默认 role 不再 fallback 到《我蕾穆丽娜不爱你》的『穿越者·魔女』。
+        # ROLES 字典里有该剧本的 role label，作为兼容映射保留，但不再当默认值。
+        role_label = (body.get("role") or "").strip() or "未指定"
         role = ROLES.get(role_label, role_label)
         name = (body.get("name") or "无名者").strip()
-        background = (body.get("background") or "原因不明，只是来了。").strip()
+        background = (body.get("background") or "").strip()
 
     state = GameState.new()
     state.setup_player(name, role, background)
@@ -1522,6 +1542,20 @@ async def api_chat(request: Request) -> StreamingResponse:
     gm = _get_gm(api_user)
 
     async def stream():
+        # task #51: chat 主流程拆到 chat_pipeline.py 5 个 phase。
+        # 这里只剩:
+        #   - /命令短路 (本 endpoint 自己处理,不进 pipeline)
+        #   - 构造 PipelineContext + 依次跑 phase + SSE 透传
+        #   - 兜底 except 包到 error 事件
+        from chat_pipeline import (
+            PipelineContext,
+            apply_player_directives_phase,
+            run_context_phase,
+            run_rules_phase,
+            run_gm_phase,
+            persist_turn_phase,
+        )
+
         response = ""
         command_text, changed = ("", False) if attachments else _command_response(message, state)
         if command_text:
@@ -1532,525 +1566,164 @@ async def api_chat(request: Request) -> StreamingResponse:
             yield _sse("done", {"status": _payload(api_user), "interrupted": False})
             return
 
+        sub_gm = _get_sub_gm(api_user)
+        pipeline_ctx = PipelineContext(
+            api_user=api_user,
+            state=state,
+            gm=gm,
+            sub_gm=sub_gm,
+            message_for_model=message_for_model,
+            run_id=run_id,
+            stop_event=stop_event,
+            chat_start_time=_chat_start_time,
+        )
+
         try:
-            # task 27：/set / 时间跳跃等玩家指令必须先持久化，否则一旦上游 GM 504 / context_agent
-            # 抛异常，整轮 try 跳到 except，_persist_chat_turn 永远跑不到 → /set 的状态修改丢失。
-            # 把 directive_updates 应用 → 立刻持久化一个 runtime checkpoint → 发 `updates`
-            # SSE 事件让 UI 也立刻反映；后续 GM 失败也保留这批硬改动。
-            directive_updates = state.apply_player_directives(message_for_model)
-            # task 77：如果是 /set + 用户开启 set_parser，让 LLM 子代理把自然语言
-            # 拆成额外 ops（detect_set_directive 简单 path=value 之外的复杂关系/事实/变量）
-            if (message_for_model.strip().startswith("/set") and
-                    _is_set_parser_enabled(api_user)):
-                try:
-                    import set_parser as _set_parser
-                    parser_ops = _set_parser.parse_set_directive(
-                        set_text=message_for_model,
-                        state_data=state.data,
-                        user_id=int(api_user.get("id")) if api_user else None,
-                        timeout_sec=15,
-                    )
-                    for op in parser_ops:
-                        kind = (op.get("op") or "set").lower()
-                        try:
-                            if kind == "hypothesis":
-                                txt = op.get("text") or op.get("value") or ""
-                                if txt:
-                                    mid = state.add_hypothesis(
-                                        text=txt, source="user:/set:parser",
-                                        time_label=op.get("time_label"),
-                                        characters=op.get("characters"),
-                                    )
-                                    directive_updates.append(f"推测登记（/set 解析）：{mid}")
-                            elif kind in ("set", "append", "overwrite"):
-                                path = (op.get("path") or "").strip()
-                                if path:
-                                    spec = f"{path}={op.get('value', '')}"
-                                    res = state.apply_state_write(
-                                        spec, source="user:/set:parser",
-                                        force=True,
-                                        append=(kind == "append"),
-                                        overwrite=(kind == "overwrite"),
-                                    )
-                                    directive_updates.append(f"/set 解析: {res}")
-                        except Exception as op_exc:
-                            print(f"[set_parser] op apply failed: {op_exc} for {op}")
-                except Exception as exc:
-                    print(f"[chat] set_parser failed: {exc}; 继续走简单 /set 路径")
-                    try:
-                        from datetime import datetime as _dt
-                        audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
-                        audit.append({
-                            "ts": _dt.now().isoformat(timespec="seconds"),
-                            "kind": "set_parser_error",
-                            "source": "set_parser",
-                            "hint": f"/set 自然语言解析失败：{type(exc).__name__}: {str(exc)[:200]}",
-                            "turn": state.data.get("turn", 0),
-                        })
-                        if len(audit) > 200:
-                            state.data["permissions"]["audit_log"] = audit[-200:]
-                    except Exception:
-                        pass
-            # 时间线锚点接入:directive 改动里若含 world.time / world.timeline.current_label,
-            # 用 script_timeline.resolve_timeline_anchor 把"火星·扬陆城内"这种用户标签
-            # 映射到剧本真实章节范围 (chapter_min/max + story_phase + 样本摘要),
-            # 写回 state.world.timeline.{anchor_chapter, chapter_min, chapter_max,
-            # anchor_phase, anchor_event}。这样 GM prompt 和 retrieval 都能拿到。
-            try:
-                _timeline_label = (state.data.get("world") or {}).get("timeline", {}).get("current_label", "")
-                if directive_updates and _timeline_label:
-                    _script_id = _active_script_id(api_user)
-                    if _script_id:
-                        from script_timeline import resolve_timeline_anchor as _resolve_anchor
-                        _anchor = _resolve_anchor(int(_script_id), _timeline_label)
-                        if _anchor:
-                            _tl = state.data["world"]["timeline"]
-                            _tl["anchor_chapter"] = _anchor["chapter_min"]
-                            _tl["chapter_min"] = _anchor["chapter_min"]
-                            _tl["chapter_max"] = _anchor["chapter_max"]
-                            _tl["anchor_phase"] = _anchor["story_phase"]
-                            _tl["anchor_event"] = (_anchor.get("sample_summary") or "")[:120]
-                            _tl["anchor_confidence"] = _anchor.get("score", 0.0)
-                            # 同步 current_phase 到匹配到的 phase (避免显示过时的旧 phase)
-                            if _anchor.get("story_phase"):
-                                _tl["current_phase"] = _anchor["story_phase"]
-                            directive_updates.append(
-                                f"时间线锚点 → 第{_anchor['chapter_min']}-{_anchor['chapter_max']}章 · "
-                                f"{_anchor['story_phase']}"
-                            )
-            except Exception as _anchor_err:
-                print(f"[chat] timeline anchor resolve failed: {_anchor_err}")
-
-            if directive_updates:
-                _persist_runtime_checkpoint(state, api_user)
-                yield _sse("status", _payload(api_user))
-                yield _sse("updates", {"items": directive_updates, "stage": "pre_llm"})
-            agent_result = None
-            sub_gm = _get_sub_gm(api_user)
-            for item in run_context_agent(
-                state, message_for_model,
-                stop_requested=stop_event.is_set,
-                llm_curator=sub_gm.curate_context,
-                user_id=api_user["id"] if api_user else None,
-                script_id=_active_script_id(api_user),
+            # Phase 1: 玩家 directive (过期问题 + /set 工具化 + 正则 fallback + set_parser + timeline anchor)
+            async for evt, data in apply_player_directives_phase(
+                pipeline_ctx,
+                resolve_persist_target=_resolve_persist_target,
+                persist_runtime_checkpoint=_persist_runtime_checkpoint,
+                payload_fn=_payload,
+                is_set_parser_enabled=_is_set_parser_enabled,
+                active_script_id=_active_script_id,
             ):
-                if item["type"] == "step":
-                    yield _sse("agent", item["step"])
-                    await asyncio.sleep(0)
-                elif item["type"] == "stopped":
-                    state.set_last_context_agent({"status": "stopped", "steps": item.get("steps", [])})
-                    yield _sse("done", {"status": _payload(api_user), "interrupted": True})
-                    return
-                elif item["type"] == "result":
-                    agent_result = item
-            if agent_result is None:
-                yield _sse("error", {"message": "上下文子代理未返回结果", "partial": response})
-                return
-            ctx = agent_result["retrieved_context"]
-            bundle = agent_result["bundle"]
-            # task XX (GamePolicy preflight):统一在 GM 被调用前做 policy 检查。
-            # Codex 评审定调:不分两套 Agent,改成"Base GM + GamePolicy + ContextProviders + RulesEngine"。
-            # 5E 模组的 combat gate 现在是 ModuleAdventurePolicy.preflight 的一部分;
-            # 以后扩展新约束(检定意图 / 资源耗尽 / 死亡豁免 等)只动 policy,不动 chat handler。
-            from game_policy import get_game_policy as _get_game_policy
-            _policy = _get_game_policy(state)
-            _combat_gate = _policy.preflight(message_for_model, state)
-            if _combat_gate:
-                _q_text = _combat_gate.get("question") or ""
-                _q_opts = list(_combat_gate.get("options") or [])
-                try:
-                    state.add_pending_question(
-                        _q_text,
-                        source=_combat_gate.get("source") or "rules_engine",
-                        options=_q_opts,
-                    )
-                except Exception:
-                    pass
-                # audit
-                try:
-                    from datetime import datetime as _dt
-                    audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
-                    audit.append({
-                        "ts": _dt.now().isoformat(timespec="seconds"),
-                        "kind": "combat_gated",
-                        "source": "rules_engine",
-                        "hint": f"{_combat_gate.get('kind')}: {_combat_gate.get('reason') or ''}",
-                        "turn": state.data.get("turn", 0),
-                    })
-                    if len(audit) > 200:
-                        state.data["permissions"]["audit_log"] = audit[-200:]
-                except Exception:
-                    pass
-                state.save()
-                _persist_runtime_checkpoint(state, api_user)
-                yield _sse("agent", {
-                    "phase": "rules_gate",
-                    "message": _combat_gate.get("reason") or "RulesEngine 要求玩家先明确动作",
-                    "status": "done",
-                    "elapsed_ms": 0,
-                    "gate_kind": _combat_gate.get("kind"),
-                })
-                yield _sse("status", _payload(api_user))
-                # 把规则裁定的问询当 GM 正文流出去,前端 chat history 才有记录
-                _gate_msg_lines = [f"【规则要求先确认】{_q_text}"]
-                if _q_opts:
-                    _gate_msg_lines.append("可选:")
-                    _gate_msg_lines.extend(f"  · {opt}" for opt in _q_opts)
-                _gate_msg = "\n".join(_gate_msg_lines)
-                yield _sse("token", {"text": _gate_msg})
-                try:
-                    _persist_chat_turn(
-                        api_user, state, message_for_model, _gate_msg,
-                        persist_user_id=persist_user_id, active_save_id=active_save_id,
-                    )
-                except Exception:
-                    pass
-                # 注:这里 context_run_id 还没初始化(那是后面 task 80 路径才做的)。
-                # gate 直接走 done,无需 mark_context_run。
-                yield _sse("status", _payload(api_user))
-                yield _sse("done", {
-                    "status": _payload(api_user),
-                    "interrupted": False,
-                    "rules_gated": True,
-                    "gate_kind": _combat_gate.get("kind"),
-                })
-                return
-            rule_results = _apply_chat_rule_candidates(
-                state,
-                _chat_rule_candidates(
-                    state,
-                    message_for_model,
-                    (agent_result.get("curator_plan") or {}).get("rule_candidate_actions") or [],
-                ),
-            )
-            if rule_results:
-                state.save()
-                _persist_runtime_checkpoint(state, api_user)
-                rule_prompt = _rule_results_prompt(rule_results, state)
-                if rule_prompt:
-                    bundle["prompt"] = f"{bundle.get('prompt', '')}\n\n{rule_prompt}"
-                bundle.setdefault("debug", {})["rule_results"] = rule_results
-                yield _sse("agent", {
-                    "phase": "rules_engine",
-                    "message": "RulesEngine 已完成本轮规则裁定。",
-                    "status": "done",
-                    "elapsed_ms": 0,
-                    "rule_results": rule_results,
-                })
-                yield _sse("status", _payload(api_user))
-                yield _sse("updates", {
-                    "stage": "rules_engine",
-                    "items": [
-                        f"RulesEngine: {(r.get('action') or {}).get('kind')} 已裁定"
-                        for r in rule_results
-                    ],
-                })
-            state.set_last_retrieval(ctx)
-            state.set_last_context(bundle["debug"])
-            # B4: 子代理 usage 单独记账（metadata.kind='sub_agent'）
-            try:
-                sub_usage = getattr(sub_gm._backend, "last_usage", {}) or {}
-                if sub_usage and api_user:
-                    from platform_app.usage import record_usage as _rec
-                    _rec(
-                        user_id=api_user["id"],
-                        save_id=None,
-                        context_run_id=None,
-                        api_id=sub_gm.api_id,
-                        model_real_name=sub_gm._backend.model_name,
-                        usage=sub_usage,
-                        metadata={"kind": "sub_agent", "phase": "context_curator"},
-                    )
-            except Exception:
-                pass
-            state.set_last_context_agent({
-                "status": "done",
-                "steps": agent_result["steps"],
-                "prompt": agent_result.get("agent_prompt", ""),
-                "curator_plan": agent_result.get("curator_plan", {}),
-                "cache_plan": bundle["debug"].get("cache_plan", {}),
-            })
-            persist_user_id, active_save_id = _resolve_persist_target(api_user)
-            context_run_id = None
-            if persist_user_id and active_save_id:
-                try:
-                    run_row = platform_knowledge.record_context_run(
-                        persist_user_id,
-                        active_save_id,
-                        state.data,
-                        message_for_model,
-                        agent_result,
-                        bundle,
-                        ctx,
-                        status="done",
-                        duration_ms=int((time.time() - _chat_start_time) * 1000),
-                    )
-                    context_run_id = (run_row or {}).get("id")
-                except Exception:
-                    pass
-            yield _sse("retrieval", {"text": ctx})
-            yield _sse("context", {"debug": bundle["debug"]})
-            yield _sse("status", _payload(api_user))
-
-            # task 80：clarifying_question routing —— curator 自评意图模糊时
-            # 跳过主 GM，直接把封闭式问题 yield 给玩家。让 LLM 在不确定时主动
-            # yield 而不是硬编。
-            _curator_plan = agent_result.get("curator_plan", {}) or {}
-            _confidence = float(_curator_plan.get("confidence") or 1.0)
-            _clarify = (_curator_plan.get("clarifying_question") or "").strip()
-            _confidence_threshold = _clarify_threshold(api_user)
-            _route_to_clarify = bool(_clarify) or _confidence < _confidence_threshold
-            if _route_to_clarify and _clarify:
-                # 写 pending_question + audit_log，让玩家看到问题
-                try:
-                    state.add_pending_question(_clarify, source="curator:clarify")
-                except Exception:
-                    pass
-                try:
-                    from datetime import datetime as _dt
-                    audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
-                    audit.append({
-                        "ts": _dt.now().isoformat(timespec="seconds"),
-                        "kind": "clarify_yield",
-                        "source": "curator",
-                        "hint": f"confidence={_confidence:.2f}；curator 主动询问：{_clarify[:160]}",
-                        "turn": state.data.get("turn", 0),
-                    })
-                    if len(audit) > 200:
-                        state.data["permissions"]["audit_log"] = audit[-200:]
-                except Exception:
-                    pass
-                # 把问题作为 GM 正文输出，让前端 token 流照常显示
-                _q_text = f"【需要先确认】{_clarify}"
-                yield _sse("token", {"text": _q_text})
-                # 持久化（让 chat 历史里也有这条 yield）
-                try:
-                    _persist_chat_turn(
-                        api_user, state, message_for_model, _q_text,
-                        persist_user_id=persist_user_id, active_save_id=active_save_id,
-                    )
-                except Exception:
-                    pass
-                _mark_context_run(
-                    context_run_id, "done",
-                    duration_ms=int((time.time() - _chat_start_time) * 1000),
-                )
-                yield _sse("status", _payload(api_user))
-                yield _sse("done", {"status": _payload(api_user), "interrupted": False, "clarify": True})
+                yield _sse(evt, data)
+            if pipeline_ctx.early_return:
                 return
 
-            yield _sse("agent", {
-                "phase": "main_gm",
-                "message": "主 GM 正在读取上下文并生成正文。",
-                "status": "running",
-                "elapsed_ms": 0,
-            })
-            # 收集当前已启动的 MCP 工具，注入 GM
-            mcp_tools: list[dict[str, Any]] = []
-            try:
-                import mcp_broker
-                mcp_tools = mcp_broker.discover_all_tools() or []
-            except Exception:
-                mcp_tools = []
-            for event in gm.respond_stream_with_tools(
-                message_for_model, bundle["prompt"], state,
-                tools=mcp_tools, max_iterations=3,
+            # Phase 2: context agent (子 GM curator)
+            # 注入 run_context_agent 让测试 monkeypatch (app.run_context_agent = ...) 能透到 pipeline。
+            import app as _self_mod
+            async for evt, data in run_context_phase(
+                pipeline_ctx,
+                resolve_persist_target=_resolve_persist_target,
+                payload_fn=_payload,
+                active_script_id=_active_script_id,
+                clarify_threshold=_clarify_threshold,
+                persist_chat_turn=_persist_chat_turn,
+                mark_context_run=_mark_context_run,
+                apply_chat_rule_candidates=_apply_chat_rule_candidates,
+                chat_rule_candidates=_chat_rule_candidates,
+                rule_results_prompt=_rule_results_prompt,
+                persist_runtime_checkpoint=_persist_runtime_checkpoint,
+                platform_knowledge_mod=platform_knowledge,
+                run_context_agent_fn=getattr(_self_mod, "run_context_agent", None),
             ):
-                if stop_event.is_set() or run_id != _current_run_id(api_user) or _is_stop_requested_global(api_user, run_id):
-                    if response.strip():
-                        response += "\n\n【本轮已被玩家打断】"
-                        _persist_chat_turn(
-                            api_user, state, message_for_model, response,
-                            persist_user_id=persist_user_id, active_save_id=active_save_id,
-                            interrupted=True,
-                        )
-                    _mark_context_run(
-                        context_run_id, "stopped",
-                        duration_ms=int((time.time() - _chat_start_time) * 1000),
-                    )
-                    yield _sse("done", {"status": _payload(api_user), "interrupted": True})
-                    return
-                etype = event.get("type")
-                if etype == "text":
-                    chunk = event.get("text", "")
-                    response += chunk
-                    yield _sse("token", {"text": chunk})
-                elif etype == "tool_call":
-                    yield _sse("tool_call", {
-                        "server_id": event.get("server_id", ""),
-                        "tool": event.get("tool", ""),
-                        "arguments": event.get("arguments", {}),
-                    })
-                elif etype == "tool_result":
-                    yield _sse("tool_result", {
-                        "ok": event.get("ok", False),
-                        "result": event.get("result"),
-                        "error": event.get("error"),
-                    })
-                elif etype == "tool_error":
-                    yield _sse("tool_error", {
-                        "error": event.get("error", ""),
-                        "raw": event.get("raw", ""),
-                    })
-                await asyncio.sleep(0)
+                yield _sse(evt, data)
+            if pipeline_ctx.early_return:
+                return
 
-            # 时间线 user_set 跳跃当回合的"穿越/醒来/拨回"叙事检测。
-            # 主防线是 _timeline_layer prompt 明示禁止;这里 belt-and-suspenders:
-            # 检测 GM 文本中的禁词,违规写到 audit_log,让前端可展示警告引导 /retry。
-            try:
-                from timeline_narrative_guard import (
-                    detect_time_jump_violations, record_violations_to_audit,
-                )
-                if response.strip():
-                    _tj_violations = detect_time_jump_violations(response, state)
-                    if _tj_violations:
-                        record_violations_to_audit(state, _tj_violations)
-                        yield _sse("agent", {
-                            "phase": "timeline_guard",
-                            "message": f"GM 时间跳跃叙事检测到 {len(_tj_violations)} 处禁词(穿越/醒来/拨回 等过渡叙事)",
-                            "status": "warning",
-                            "elapsed_ms": 0,
-                            "violations": [
-                                {"label": v.get("pattern_label"), "match": v.get("match")}
-                                for v in _tj_violations
-                            ],
-                        })
-            except Exception as _tj_err:
-                # 检测失败不阻塞主流程
-                print(f"[chat] timeline_narrative_guard 检测失败: {_tj_err}")
+            # Phase 3: 5E rules preflight + rule candidates + clarify 短路
+            async for evt, data in run_rules_phase(
+                pipeline_ctx,
+                payload_fn=_payload,
+                persist_chat_turn=_persist_chat_turn,
+                persist_runtime_checkpoint=_persist_runtime_checkpoint,
+                resolve_persist_target=_resolve_persist_target,
+                mark_context_run=_mark_context_run,
+                clarify_threshold=_clarify_threshold,
+                apply_chat_rule_candidates=_apply_chat_rule_candidates,
+                chat_rule_candidates=_chat_rule_candidates,
+                rule_results_prompt=_rule_results_prompt,
+                platform_knowledge_mod=platform_knowledge,
+            ):
+                yield _sse(evt, data)
+            if pipeline_ctx.early_return:
+                return
 
-            # task 62：可选 GM-extractor 第二步。
-            # 用户在偏好里开 extractor.enabled = true 时，把 GM 叙事 + 当前 state 喂给
-            # 便宜模型（默认 gemini-3.5-flash）抽出 JSON ops 追加到 response 末尾，
-            # 让 apply_structured_updates 统一处理。错误回灌（task 60）+ 闸门 (task 54)
-            # 都自动覆盖到 extractor ops。
-            extractor_active = False  # task 69：决定是否跳过 state.py 隐式 regex 兜底
-            try:
-                if _is_extractor_enabled(api_user) and response.strip():
-                    extractor_active = True
-                    import extractor as _extractor
-                    extractor_ops = _extractor.extract_state_ops(
-                        narrative_text=response,
-                        state_data=state.data,
-                        user_id=int(api_user.get("id")) if api_user else None,
-                        timeout_sec=15,
-                    )
-                    if extractor_ops:
-                        # 拼成 ```json fence 让 apply_structured_updates 走 JSON 路径
-                        # （和 LLM 自己写的【】协议结果合并）
-                        response_with_ops = response + "\n\n```json\n" + json.dumps(extractor_ops, ensure_ascii=False) + "\n```"
-                    else:
-                        response_with_ops = response
-                else:
-                    response_with_ops = response
-            except Exception as exc:
-                # task 65：失败不再只 console.print。写 audit_log kind=extractor_error
-                # 让前端 Audit Log 面板能告诉用户「第二步挂了，state ops 这轮没抽到」。
-                print(f"[chat] extractor pipeline failed: {exc}; falling back to single-step")
-                try:
-                    from datetime import datetime as _dt
-                    audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
-                    audit.append({
-                        "ts": _dt.now().isoformat(timespec="seconds"),
-                        "kind": "extractor_error",
-                        "source": "extractor",
-                        "hint": f"GM 第二步失败：{type(exc).__name__}: {str(exc)[:200]}",
-                        "turn": state.data.get("turn", 0),
-                    })
-                    if len(audit) > 200:
-                        state.data["permissions"]["audit_log"] = audit[-200:]
-                except Exception:
-                    pass
-                response_with_ops = response
+            # Phase 4: GM 主响应 (token + tool_call + extractor + acceptance)
+            async for evt, data in run_gm_phase(
+                pipeline_ctx,
+                payload_fn=_payload,
+                persist_chat_turn=_persist_chat_turn,
+                mark_context_run=_mark_context_run,
+                current_run_id_fn=_current_run_id,
+                is_stop_requested_global=_is_stop_requested_global,
+                is_extractor_enabled=_is_extractor_enabled,
+                acceptance_verifier_mode=_acceptance_verifier_mode,
+                verify_acceptance=_verify_acceptance,
+                active_script_id=_active_script_id,
+            ):
+                yield _sse(evt, data)
+            if pipeline_ctx.early_return:
+                return
 
-            # task 69：extractor 开启时让 state.py 跳过 regex 兜底，避免和 extractor 双写
-            updates = directive_updates + state.apply_structured_updates(
-                response_with_ops, skip_regex_fallback=extractor_active,
-            )
-            # task 81：acceptance 自动验证。curator 在 demand_ledger 里列了
-            # 本轮成功的验收条件，跑一个 cheap 字面检查看 GM 输出（response
-            # + updates）是否满足。未满足 → audit_log kind=acceptance_unmet。
-            # task 84：模式可选 rule / llm / hybrid（preferences 配置）。
-            try:
-                _curator_plan_for_check = (agent_result or {}).get("curator_plan", {}) or {}
-                _acceptance = _curator_plan_for_check.get("acceptance") or []
-                if _acceptance and response.strip():
-                    _acc_mode = _acceptance_verifier_mode(api_user)
-                    _acc_user_id = int(api_user.get("id")) if api_user and api_user.get("id") else None
-                    unmet = _verify_acceptance(
-                        _acceptance, response, updates,
-                        mode=_acc_mode, user_id=_acc_user_id,
-                    )
-                    if unmet:
-                        from datetime import datetime as _dt
-                        audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
-                        for item in unmet[:5]:
-                            audit.append({
-                                "ts": _dt.now().isoformat(timespec="seconds"),
-                                "kind": "acceptance_unmet",
-                                "source": "curator:acceptance",
-                                "hint": f"未通过验收：{item[:160]}",
-                                "turn": state.data.get("turn", 0),
-                            })
-                        if len(audit) > 200:
-                            state.data["permissions"]["audit_log"] = audit[-200:]
-                        yield _sse("agent", {
-                            "phase": "acceptance_check",
-                            "message": f"本轮 GM 输出有 {len(unmet)} 条 acceptance 未通过；已记 audit_log",
-                            "status": "warning",
-                            "elapsed_ms": 0,
-                            "unmet": unmet[:5],
-                        })
-            except Exception as _acc_exc:
-                print(f"[acceptance] check failed: {_acc_exc}")
-            visible_response = strip_json_state_ops(response)
-            _persist_chat_turn(
-                api_user, state, message_for_model, visible_response,  # 存档时存玩家可见叙事，不含 JSON 状态协议
-                persist_user_id=persist_user_id, active_save_id=active_save_id,
-            )
-            usage_payload = _build_usage_payload(
-                api_user, gm, bundle, message_for_model,
-                persist_user_id, active_save_id, context_run_id,
-            )
-            if usage_payload:
-                yield _sse("usage", usage_payload)
-            yield _sse("updates", {"items": updates})
-            yield _sse("done", {"status": _payload(api_user), "interrupted": False, "usage": usage_payload})
+            # Phase 5: 持久化 + done
+            async for evt, data in persist_turn_phase(
+                pipeline_ctx,
+                payload_fn=_payload,
+                persist_chat_turn=_persist_chat_turn,
+                build_usage_payload=_build_usage_payload,
+            ):
+                yield _sse(evt, data)
         except Exception as exc:
             _mark_context_run(
-                locals().get("context_run_id"),
+                pipeline_ctx.context_run_id,
                 "failed",
                 error=str(exc),
                 duration_ms=int((time.time() - _chat_start_time) * 1000),
             )
-            yield _sse("error", {"message": str(exc), "partial": response})
+            yield _sse("error", {"message": str(exc), "partial": pipeline_ctx.response or response})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 @app.post("/api/stop")
 async def api_stop(request: Request) -> JSONResponse:
-    """打断当前用户正在跑的 chat。其他用户的 chat 不受影响。"""
+    """打断当前用户正在跑的 chat。其他用户的 chat 不受影响。
+    task 87 Phase 6: 同时调 dispatcher stop_current_chat 工具,把 stop_signal 写到 state.permissions。"""
     api_user = _require_api_user(request)
-    _stop_user(api_user)
+    _stop_user(api_user)  # 真正的 stop_event 仍由 _stop_user 处理 (跨 chat handler 协程)
+    # 同时通过 dispatcher 记录 audit 与 state.permissions.stop_signal
+    try:
+        state = _ensure_loaded(api_user)
+        from ui_dispatch_helper import dispatch_ui_tool
+        dispatch_ui_tool(
+            tool_name="stop_current_chat", args={},
+            user_id=int(api_user.get("id")) if api_user else 0,
+            save_id=_resolve_persist_target(api_user)[1] or 0,
+            state=state,
+        )
+    except Exception:
+        pass
     return JSONResponse({"ok": True})
 
 
 @app.post("/api/save")
 async def api_save(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 走 dispatcher save_runtime。"""
     api_user = _require_api_user(request)
     state = _ensure_loaded(api_user)
-    state.save()
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name="save_runtime", args={},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "state": _payload(api_user)})
 
 
 @app.post("/api/memory/mode")
 async def api_memory_mode(request: Request) -> JSONResponse:
+    """task 87 Phase 6: UI 按钮也走 dispatcher,获得统一审计 + destructive 检查。"""
     api_user = _require_api_user(request)
     body = await request.json()
     state = _ensure_loaded(api_user)
-    state.set_memory_mode(body.get("mode", "normal"))
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name="set_memory_mode",
+        args={"mode": body.get("mode", "normal")},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "state": _payload(api_user)})
@@ -2058,10 +1731,30 @@ async def api_memory_mode(request: Request) -> JSONResponse:
 
 @app.post("/api/memory/add")
 async def api_memory_add(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 走 dispatcher 的 add_memory_* 工具系列。"""
     api_user = _require_api_user(request)
     body = await request.json()
     state = _ensure_loaded(api_user)
-    state.add_memory(body.get("bucket", "notes"), body.get("text", ""))
+    bucket = body.get("bucket", "notes")
+    text = body.get("text", "")
+    # bucket → 对应工具名
+    bucket_tool = {
+        "facts": "add_memory_fact",
+        "resources": "add_memory_resource",
+        "abilities": "add_memory_ability",
+        "pinned": "pin_memory",
+        "notes": "add_memory_note",
+    }.get(bucket, "add_memory_note")
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name=bucket_tool,
+        args={"text": text},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "state": _payload(api_user)})
@@ -2069,10 +1762,23 @@ async def api_memory_add(request: Request) -> JSONResponse:
 
 @app.post("/api/memory/remove")
 async def api_memory_remove(request: Request) -> JSONResponse:
+    """task 87 Phase 6: destructive 走 dispatcher remove_memory_item 工具。"""
     api_user = _require_api_user(request)
     body = await request.json()
     state = _ensure_loaded(api_user)
-    state.remove_memory(body.get("bucket", "notes"), int(body.get("index", -1)))
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name="remove_memory_item",
+        args={
+            "bucket": body.get("bucket", "notes"),
+            "index": int(body.get("index", -1)),
+        },
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "state": _payload(api_user)})
@@ -2080,10 +1786,20 @@ async def api_memory_remove(request: Request) -> JSONResponse:
 
 @app.post("/api/permissions")
 async def api_permissions(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 敏感权限切换走 dispatcher (origin=ui_button)。"""
     api_user = _require_api_user(request)
     body = await request.json()
     state = _ensure_loaded(api_user)
-    state.set_permission_mode(body.get("mode", "full_access"))
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name="set_permission_mode",
+        args={"mode": body.get("mode", "full_access")},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "state": _payload(api_user)})
@@ -2104,12 +1820,36 @@ async def api_pending_write(request: Request) -> JSONResponse:
     raw_index = body.get("index")
     index = int(raw_index) if raw_index is not None else None
     decision = str(body.get("action") or body.get("decision") or "").lower()
+    # task 87 Phase 6: 走 dispatcher 的 approve/reject_pending_write 工具。
+    # 老路径 (state.approve_pending_write/reject_pending_write) 接受 index 旧契约,
+    # 工具只用 id; index 仅 fallback。
     if decision == "approve":
-        result = state.approve_pending_write(index=index, id=item_id)
+        tool_name = "approve_pending_write"
     elif decision == "reject":
-        result = state.reject_pending_write(index=index, id=item_id)
+        tool_name = "reject_pending_write"
     else:
         return JSONResponse({"ok": False, "error": "缺少 action/decision（approve|reject）"}, status_code=400)
+    if not item_id and index is not None:
+        # 旧契约 index → 在 pending_writes 里找 id 兜底
+        pws = (state.data.get("permissions") or {}).get("pending_writes") or []
+        if 0 <= index < len(pws):
+            item_id = pws[index].get("id")
+    from ui_dispatch_helper import dispatch_ui_tool
+    d_result = dispatch_ui_tool(
+        tool_name=tool_name,
+        args={"id": item_id or ""},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        # dispatcher 失败 → fallback 到老路径(向后兼容,例如老存档无 id 时)
+        if decision == "approve":
+            result = state.approve_pending_write(index=index, id=item_id)
+        else:
+            result = state.reject_pending_write(index=index, id=item_id)
+    else:
+        result = d_result.result
     state.data["memory"]["last_structured_updates"] = [result] + state.data["memory"].get("last_structured_updates", [])[:11]
     state.save()
     _persist_runtime_checkpoint(state, api_user)
@@ -2118,7 +1858,9 @@ async def api_pending_write(request: Request) -> JSONResponse:
 
 @app.post("/api/questions/clear")
 async def api_question_clear(request: Request) -> JSONResponse:
-    """回答（或跳过）一条 GM 询问。{id, choice?} 或 {index, choice?}。"""
+    """回答(或跳过)一条 GM 询问。{id, choice?} 或 {index, choice?}。
+    task 87 Phase 6: 走 dispatcher dismiss_pending_question。choice 走老路径
+    (clear_pending_question 支持记录玩家选择,工具暂不支持 choice)。"""
     api_user = _require_api_user(request)
     body = await request.json()
     state = _ensure_loaded(api_user)
@@ -2126,7 +1868,19 @@ async def api_question_clear(request: Request) -> JSONResponse:
     raw_index = body.get("index")
     index = int(raw_index) if raw_index is not None else None
     choice = body.get("choice")
-    popped = state.clear_pending_question(index=index, id=item_id, choice=choice)
+    # 若有 choice (玩家选了选项),走老路径以保留 choice 记录;若仅 dismiss → dispatcher
+    if choice or not item_id:
+        popped = state.clear_pending_question(index=index, id=item_id, choice=choice)
+    else:
+        from ui_dispatch_helper import dispatch_ui_tool
+        d_result = dispatch_ui_tool(
+            tool_name="dismiss_pending_question",
+            args={"id": item_id},
+            user_id=int(api_user.get("id")) if api_user else 0,
+            save_id=_resolve_persist_target(api_user)[1] or 0,
+            state=state,
+        )
+        popped = d_result.ok
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "cleared": bool(popped), "state": _payload(api_user)})
@@ -2134,12 +1888,29 @@ async def api_question_clear(request: Request) -> JSONResponse:
 
 @app.post("/api/debug/pending-question")
 async def api_debug_pending_question(request: Request) -> JSONResponse:
+    """task 87 Phase 6: debug 注入也走 dispatcher 的 inject_pending_question 工具。"""
     api_user = _require_api_user(request, admin=True)
     if not os.getenv("RPG_DEBUG_UI"):
         return JSONResponse({"ok": False, "error": "debug disabled"}, status_code=404)
     body = await request.json()
     state = _ensure_loaded(api_user)
-    state.add_pending_question(body.get("text", "下一步怎么做？｜选项：继续调查、返回基地、询问同伴"), source="debug")
+    # 把老 text+| 分隔 options 拆成 question + options 列表
+    raw_text = body.get("text") or "下一步怎么做？｜选项：继续调查、返回基地、询问同伴"
+    if "｜选项：" in raw_text:
+        question, _, opt_str = raw_text.partition("｜选项：")
+        options = [s.strip() for s in opt_str.split("、") if s.strip()]
+    else:
+        question, options = raw_text, []
+    from ui_dispatch_helper import dispatch_ui_tool
+    d_result = dispatch_ui_tool(
+        tool_name="inject_pending_question",
+        args={"question": question, "options": options, "source": "debug"},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        return JSONResponse({"ok": False, "error": d_result.error}, status_code=400)
     state.save()
     return JSONResponse({"ok": True, "state": _payload(api_user)})
 
@@ -2509,16 +2280,26 @@ async def api_skill_run(request: Request, skill_id: str) -> JSONResponse:
 
 @app.post("/api/worldline/variable")
 async def api_worldline_variable(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 走 dispatcher 的 set_user_variable 工具。"""
     api_user = _require_api_user(request)
     body = await request.json()
     key = body.get("key", "")
     value = body.get("value", "")
     state = _ensure_loaded(api_user)
-    state.set_user_variable(key, value, source="user")
+    persist_user_id, active_save_id = _resolve_persist_target(api_user)
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name="set_user_variable",
+        args={"key": key, "value": value},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=active_save_id or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
     state.save()
     _persist_runtime_checkpoint(state, api_user)
-    # 同步写入 DB（保证前端管理面板可见）
-    persist_user_id, active_save_id = _resolve_persist_target(api_user)
+    # 同步写入 DB(保证前端管理面板可见)
     if persist_user_id and active_save_id:
         try:
             platform_knowledge.set_worldline_variable(persist_user_id, active_save_id, key, value, source="user")
@@ -2529,14 +2310,24 @@ async def api_worldline_variable(request: Request) -> JSONResponse:
 
 @app.post("/api/worldline/variable/remove")
 async def api_worldline_variable_remove(request: Request) -> JSONResponse:
+    """task 87 Phase 6: destructive,走 dispatcher remove_user_variable 工具。"""
     api_user = _require_api_user(request)
     body = await request.json()
     key = body.get("key", "")
     state = _ensure_loaded(api_user)
-    state.remove_user_variable(key)
+    persist_user_id, active_save_id = _resolve_persist_target(api_user)
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name="remove_user_variable",
+        args={"key": key},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=active_save_id or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
     state.save()
     _persist_runtime_checkpoint(state, api_user)
-    persist_user_id, active_save_id = _resolve_persist_target(api_user)
     if persist_user_id and active_save_id:
         try:
             platform_knowledge.remove_worldline_variable(persist_user_id, active_save_id, key)
@@ -3025,21 +2816,27 @@ async def api_rules_modules(request: Request) -> JSONResponse:
 @app.post("/api/rules/module/start")
 async def api_rules_module_start(request: Request) -> JSONResponse:
     """低层原语：把模组加载到当前激活的 save，会直接 mutate 该 save state。
-    日常使用（Platform 冒险模组按钮）请用 /api/rules/module/launch — 它会先建独立 save。
-    """
+    task 87 Phase 6: 走 dispatcher module_load 工具(destructive,UI 直触发)。"""
     api_user = _require_api_user(request)
     body = await request.json()
     module_id = str(body.get("module_id") or "ash_mine").strip()
     character_overrides = body.get("character") or None
 
     state = _ensure_loaded(api_user)
-    res = _rb_start_module(state, module_id, character_overrides=character_overrides)
-    if not res.get("ok"):
-        raise HTTPException(status_code=400, detail=res.get("error", "start_module 失败"))
-    # opening 已由 rules_bridge.start_module 注入到 history（避免重复 append）
+    from ui_dispatch_helper import dispatch_ui_tool
+    d_result = dispatch_ui_tool(
+        tool_name="module_load",
+        args={"module_id": module_id, "character_overrides": character_overrides},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        raise HTTPException(status_code=400, detail=d_result.error or "module_load 失败")
     state.save()
     _persist_runtime_checkpoint(state, api_user)
-    return JSONResponse({"ok": True, "rules": _rules_payload(state), "opening": res.get("opening") or "", "state": _payload(api_user)})
+    return JSONResponse({"ok": True, "rules": _rules_payload(state),
+                         "opening": "", "state": _payload(api_user)})
 
 
 @app.post("/api/rules/module/launch")
@@ -3139,20 +2936,30 @@ async def api_rules_scene(request: Request) -> JSONResponse:
 
 @app.post("/api/rules/move")
 async def api_rules_move(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 走 dispatcher module_enter_room 工具。"""
     api_user = _require_api_user(request)
     body = await request.json()
     location_id = str(body.get("to") or "").strip()
     if not location_id:
         raise HTTPException(status_code=400, detail="缺少 to")
     state = _ensure_loaded(api_user)
-    res = _rb_enter_room(state, location_id)
-    if not res.get("ok"):
-        return JSONResponse({"ok": False, "error": res.get("error")}, status_code=400)
+    from ui_dispatch_helper import dispatch_ui_tool
+    d_result = dispatch_ui_tool(
+        tool_name="module_enter_room",
+        args={"location_id": location_id},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        return JSONResponse({"ok": False, "error": d_result.error}, status_code=400)
     _clear_pending_questions_after_rule_action(state, f"move:{location_id}")
-    _append_rules_receipt(state, _room_receipt(res.get("room")))
+    # 从 state.scene 重新读 current_room 做 receipt
+    room = (state.data.get("scene") or {}).get("current_room") or {}
+    _append_rules_receipt(state, _room_receipt(room))
     state.save()
     _persist_runtime_checkpoint(state, api_user)
-    return JSONResponse({"ok": True, "rules": _rules_payload(state), "room": res.get("room")})
+    return JSONResponse({"ok": True, "rules": _rules_payload(state), "room": room})
 
 
 @app.post("/api/rules/action")
@@ -3176,56 +2983,87 @@ async def api_rules_action(request: Request) -> JSONResponse:
 
 @app.post("/api/rules/encounter/start")
 async def api_rules_encounter_start(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 走 dispatcher combat_start 工具。"""
     api_user = _require_api_user(request)
     body = await request.json()
     encounter_id = str(body.get("encounter_id") or "").strip()
     if not encounter_id:
         raise HTTPException(status_code=400, detail="缺少 encounter_id")
     seed = body.get("seed")
-    seed = int(seed) if isinstance(seed, (int, float, str)) and str(seed).lstrip("-").isdigit() else None
     state = _ensure_loaded(api_user)
-    res = _rb_start_encounter(state, encounter_id, seed=seed)
-    if not res.get("ok"):
-        return JSONResponse(res, status_code=400)
+    from ui_dispatch_helper import dispatch_ui_tool
+    args: dict = {"encounter_id": encounter_id}
+    if seed is not None and str(seed).lstrip("-").isdigit():
+        args["seed"] = int(seed)
+    d_result = dispatch_ui_tool(
+        tool_name="combat_start", args=args,
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        return JSONResponse({"ok": False, "error": d_result.error}, status_code=400)
+    encounter = state.data.get("encounter") or {}
     _clear_pending_questions_after_rule_action(state, f"encounter:start:{encounter_id}")
-    _append_rules_receipt(state, _encounter_receipt("先攻", res))
+    _append_rules_receipt(state, _encounter_receipt("先攻", {"encounter": encounter}))
     state.save()
     _persist_runtime_checkpoint(state, api_user)
-    return JSONResponse({"ok": True, "rules": _rules_payload(state), "encounter": res.get("encounter")})
+    return JSONResponse({"ok": True, "rules": _rules_payload(state), "encounter": encounter})
 
 
 @app.post("/api/rules/encounter/next")
 async def api_rules_encounter_next(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 走 dispatcher combat_next_turn 工具。"""
     api_user = _require_api_user(request)
     state = _ensure_loaded(api_user)
-    res = _rb_advance_turn(state)
-    if not res.get("ok"):
-        return JSONResponse(res, status_code=400)
+    from ui_dispatch_helper import dispatch_ui_tool
+    d_result = dispatch_ui_tool(
+        tool_name="combat_next_turn", args={},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        return JSONResponse({"ok": False, "error": d_result.error}, status_code=400)
+    encounter = state.data.get("encounter") or {}
     _clear_pending_questions_after_rule_action(state, "encounter:next")
-    _append_rules_receipt(state, _encounter_receipt("下一回合", res))
+    _append_rules_receipt(state, _encounter_receipt("下一回合", {"encounter": encounter}))
     state.save()
     _persist_runtime_checkpoint(state, api_user)
-    return JSONResponse({"ok": True, "rules": _rules_payload(state), "encounter": res.get("encounter")})
+    return JSONResponse({"ok": True, "rules": _rules_payload(state), "encounter": encounter})
 
 
 @app.post("/api/rules/encounter/enemy")
 async def api_rules_encounter_enemy(request: Request) -> JSONResponse:
-    """敌方回合：让指定敌人对玩家发动一次攻击（用于回合制 demo）。"""
+    """敌方回合：task 87 Phase 6 走 dispatcher combat_enemy_attack。"""
     api_user = _require_api_user(request)
     body = await request.json()
     attacker_id = str(body.get("attacker_id") or "").strip()
     target_id = str(body.get("target_id") or "player").strip()
     seed = body.get("seed")
-    seed = int(seed) if isinstance(seed, (int, float, str)) and str(seed).lstrip("-").isdigit() else None
     state = _ensure_loaded(api_user)
-    res = _rb_enemy_attack(state, attacker_id=attacker_id, target_id=target_id, seed=seed)
-    if not res.get("ok"):
-        return JSONResponse(res, status_code=400)
+    from ui_dispatch_helper import dispatch_ui_tool
+    args: dict = {"attacker_id": attacker_id, "target_id": target_id}
+    if seed is not None and str(seed).lstrip("-").isdigit():
+        args["seed"] = int(seed)
+    d_result = dispatch_ui_tool(
+        tool_name="combat_enemy_attack", args=args,
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        return JSONResponse({"ok": False, "error": d_result.error}, status_code=400)
+    encounter = state.data.get("encounter") or {}
     _clear_pending_questions_after_rule_action(state, f"enemy:{attacker_id}")
-    _append_rules_receipt(state, _encounter_receipt("敌方攻击", res))
+    _append_rules_receipt(state, _encounter_receipt(
+        "敌方攻击", {"result": {"target_name": target_id, "summary": d_result.result}}
+    ))
     state.save()
     _persist_runtime_checkpoint(state, api_user)
-    return JSONResponse({"ok": True, "rules": _rules_payload(state), "result": res.get("result"), "encounter": res.get("encounter")})
+    return JSONResponse({"ok": True, "rules": _rules_payload(state),
+                         "result": {"summary": d_result.result},
+                         "encounter": encounter})
 
 
 @app.post("/api/rules/suggest")

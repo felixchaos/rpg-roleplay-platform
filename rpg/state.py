@@ -82,29 +82,28 @@ DEFAULT_STATE = {
     #   source, first_seen_turn, last_seen_turn, location, status,
     #   confidence (0..1), card_id?, stat_block_id?
     "active_entities": [],
+    # 通用 RPG 底座：DEFAULT_STATE 不再写入任何具体剧本（如《我蕾穆丽娜不爱你》的柏林开场）
+    # 的人名/地名/事件。剧本/模组 opening 由 workspace._apply_script_opening、
+    # rules_bridge.start_module、context_providers/module_adventure 等加载器填入。
+    # 默认仅保留结构骨架与中性默认值。
     "player": {
         "name": "",
         "role": "",          # 玩家选择的角色定位
         "background": "",    # 玩家自定义背景
-        "current_location": "柏林，哈布斯堡庄园附近"
+        "current_location": ""
     },
     "world": {
-        "time": "图卢兹失守后翌日，柏林",
+        "time": "",
         "timeline": {
             "anchor_state": "locked",
-            "current_label": "图卢兹失守后翌日，柏林",
-            "current_phase": "柏林暗流篇",
+            "current_label": "",
+            "current_phase": "",
             "anchor_source": "initial",
             "anchor_turn": 0,
             "pending_jump": None,
             "last_transition": None,
         },
-        "known_events": [
-            "宴会上调令伪造事件已曝光",
-            "图卢兹战役：薇瑟帝国八位渊戮大胜，地联溃败",
-            "娅赛兰决定暂留柏林",
-            "蛇信在外围全程监视"
-        ]
+        "known_events": []
     },
     "relationships": {},    # {角色名: "信任/警惕/未知"...}
     "history": [],           # 完整对话 [{"role":"user","content":...}, ...]
@@ -133,7 +132,8 @@ DEFAULT_STATE = {
     "memory": {
         "mode": "normal",    # concise / normal / deep
         "main_quest": "",
-        "current_objective": "观察柏林局势，保护蕾穆丽娜",
+        # 通用 RPG 底座：current_objective 默认空，由剧本/模组 opening 写入。
+        "current_objective": "",
         "resources": [],
         "abilities": [],
         "facts": [],
@@ -210,7 +210,10 @@ class GameState:
             timeline["current_label"] = migrated["world"].get("time", "")
             timeline["anchor_source"] = "migrated"
         timeline.setdefault("anchor_state", "locked")
-        timeline.setdefault("current_phase", "柏林暗流篇")
+        # 通用 RPG 底座：旧存档默认 phase 不再硬编码《我蕾穆丽娜不爱你》的『柏林暗流篇』。
+        # 真实剧本/模组 opening 会在 _apply_script_opening 写入对应阶段；遗留 Berlin 存档
+        # 已经把『柏林暗流篇』写在自己的 state_snapshot 里，不依赖 setdefault。
+        timeline.setdefault("current_phase", "")
         timeline.setdefault("anchor_turn", migrated.get("turn", 0))
         timeline.setdefault("pending_jump", None)
         timeline.setdefault("last_transition", None)
@@ -457,10 +460,35 @@ class GameState:
              "斯雷因", "伊奈帆", "甲胄骑士", "Kataphrakt", "调令伪造")
         )
 
+        # task 86：剧情位置一致性检查。
+        # 历史 memory.facts / pinned / known_events 可能积累了之前柏林剧情的事实
+        # （比如"扎兹巴鲁姆"、"特殊小队"），跨剧情跳跃到月球/火星后这些 needle 仍
+        # 会命中,但建议内容含"柏林城内/柏林战役"等当前位置已不再适用的地理词,
+        # 让玩家困惑。这里检查**当前剧情位置**是否仍在柏林,决定是否允许含柏林
+        # 地理词的建议出现。当前位置以 player.current_location / world.time /
+        # timeline.current_phase / timeline.current_label 为准（这些是"此时此刻"，
+        # 不受过往记忆污染）。
+        _setting_blob = " ".join([
+            str(player.get("current_location") or ""),
+            str(world.get("time") or ""),
+            str((world.get("timeline") or {}).get("current_phase") or ""),
+            str((world.get("timeline") or {}).get("current_label") or ""),
+        ])
+        _setting_is_berlin = any(
+            tok in _setting_blob for tok in ("柏林", "扎府", "暗流")
+        )
+        # 含明确"柏林"地理位置的建议文本,只在当前剧情仍在柏林时才允许出现。
+        _berlin_locked_text_tokens = ("柏林", "扎府")
+
         candidates: list[tuple[int, str]] = []
 
         def add(score: int, text: str, *needles: str):
             if needles and not any(n in context for n in needles):
+                return
+            # task 86: 含柏林地理词的建议,当前不在柏林剧情时跳过。
+            if not _setting_is_berlin and any(
+                tok in text for tok in _berlin_locked_text_tokens
+            ):
                 return
             candidates.append((score + _hit_score(context, needles), _player_action_text(text)))
 
@@ -1023,7 +1051,55 @@ class GameState:
 
         修复路径：GM op `{"value": ["a","b","c"]}` → _gm_write_via_gate / approve_pending_write
         之前都走 `spec = f"{path}={value}"` 把 list 变成字符串 "['a', 'b', 'c']"，
-        审批落地时按逗号拆成 ["['a'", "'b'", "'c']"] 污染数组。"""
+        审批落地时按逗号拆成 ["['a'", "'b'", "'c']"] 污染数组。
+
+        task 87 Phase 6: 如果 source 以 "gm" 开头且 chat write context 在场,
+        尝试通过 dispatcher 路由 (path → tool 映射)。成功就走 dispatcher,
+        获得统一审计 + destructive 检查;无对应工具就 fall through 老路径。"""
+        # task 87 Phase 6: dispatcher 路由
+        if str(source or "").startswith("gm") and not force:
+            try:
+                from state_write_context import get_context as _get_chat_ctx
+                from state_op_tool_map import map_op_to_tool
+                from command_dispatcher import (
+                    ToolCallEnvelope, ToolDispatcher, get_registry,
+                )
+                _ctx = _get_chat_ctx()
+                if _ctx is not None:
+                    mapped = map_op_to_tool(
+                        path, value,
+                        op_kind="append" if append else "set",
+                        append=append,
+                    )
+                    if mapped is not None:
+                        tool_name, tool_args = mapped
+                        # 用 chat handler 当前的 context 构造 envelope
+                        _disp = ToolDispatcher(
+                            registry=get_registry(),
+                            state_provider=lambda env, _s=self: _s,
+                        )
+                        env = ToolCallEnvelope(
+                            user_id=_ctx.user_id,
+                            save_id=_ctx.save_id,
+                            script_id=_ctx.script_id,
+                            tool=tool_name,
+                            args=tool_args,
+                            origin=_ctx.origin,
+                            trace_id=_ctx.trace_id,
+                            depth=2,  # 在 GM 路径内,depth=1 已是 GM,这里 depth=2
+                        )
+                        result = _disp.dispatch_sync(env)
+                        if result.ok:
+                            return f"状态写入: {tool_name} → {(result.result or '')[:60]}"
+                        # dispatcher 拒了 (destructive / origin / rate) — 不走老路径,
+                        # 直接返回错误,让 audit_log 留下 rejected 记录
+                        if "destructive_blocked" in (result.error or "") or "origin_forbidden" in (result.error or ""):
+                            return f"状态写入拒绝（dispatcher）: {result.error}"
+                        # 其它错误 (rate_limited / depth_exceeded) → fall through 到老路径
+            except Exception as _exc:
+                # dispatcher 路由失败不阻塞,fall through 老路径
+                pass
+
         # P0 #1：硬黑名单（permissions.* / history.* / schema_version / created_at /
         # is_new）任何 force 都不能突破。原代码 `if not allowed and not force` 让
         # /set permissions.mode=full_access （force=True）直接落地，玩家可一句话
@@ -1488,6 +1564,61 @@ class GameState:
             return True
         return False
 
+    def expire_stale_gm_questions(self, current_turn: int | None = None, reason: str = "next_turn") -> int:
+        """玩家进入新一轮(发新 chat 消息)时,把**未回答的旧 GM 询问**过期掉。
+
+        旧版 bug:GM 在 turn N 发询问 ("如何利用井口脱险?"),玩家不点选项直接打字
+        "投降" 推进到 turn N+1;GM 在 N+1 再发新询问 → UI "2 项待确认" 同时挂两个,
+        玩家很困扰。
+
+        新行为:每次新 chat 处理前,把 turn < current_turn 且 source.startswith("gm")
+        / source=="rules_engine" 等系统询问标记过期,从 pending_questions 移除,
+        转到 audit_log 留痕。玩家显式回答 / clear 的不受影响(已经从列表 pop 掉)。
+
+        玩家自己 add 的 (source 不含 gm/rules_engine) 不动 (玩家发的笔记 / 提问)。
+
+        返回:过期了几条。
+        """
+        permissions = self.data.setdefault("permissions", {})
+        questions = permissions.setdefault("pending_questions", [])
+        if not questions:
+            return 0
+        cur = int(current_turn if current_turn is not None else self.data.get("turn", 0) or 0)
+        keep: list[dict] = []
+        expired: list[dict] = []
+        # 哪些 source 算系统询问 → 新一轮自动过期
+        system_sources = ("gm", "rules_engine", "curator", "curator:clarify", "extractor", "set_parser")
+        for q in questions:
+            q_turn = int(q.get("turn") or 0)
+            q_source = str(q.get("source") or "")
+            is_system = any(q_source == s or q_source.startswith(s + ":") for s in system_sources)
+            if is_system and q_turn < cur:
+                expired.append(q)
+            else:
+                keep.append(q)
+        if not expired:
+            return 0
+        permissions["pending_questions"] = keep
+        # audit
+        audit = permissions.setdefault("audit_log", [])
+        from datetime import datetime as _dt
+        audit.append({
+            "ts": _dt.now().isoformat(timespec="seconds"),
+            "kind": "pending_questions_expired",
+            "source": "expire_stale_gm_questions",
+            "reason": reason,
+            "current_turn": cur,
+            "expired_count": len(expired),
+            "expired": [
+                {"id": q.get("id"), "turn": q.get("turn"), "source": q.get("source"),
+                 "question": (q.get("question") or "")[:80]}
+                for q in expired
+            ],
+        })
+        if len(audit) > 200:
+            permissions["audit_log"] = audit[-200:]
+        return len(expired)
+
     def clear_pending_question(self, index: int | None = None, *, id: str | None = None, choice: str | None = None) -> dict | None:
         """同 _pop_pending_write：按 id 优先，index fallback。
         choice：玩家选择的答案，写进 audit_log 留痕（默认 None = 强制跳过）。
@@ -1592,6 +1723,13 @@ class GameState:
                 "turn": self.data["turn"],
             }
             timeline["pending_jump"] = None
+            # task 86：guard 独立标志。GM 在响应中可能调 update_time(source="gm")
+            # 把 last_transition.source 改为 "gm"，让 detect_time_jump_violations
+            # 错过本回合的 user_set 跳跃检测。这里只在 source=="user_set" 时记录
+            # 跳跃回合号，**不**让后续非 user_set 的 update_time 清掉它——
+            # 这样 guard 可以可靠判断"本回合是否发生过用户硬跳跃"。
+            if source == "user_set":
+                timeline["user_set_jump_turn"] = self.data["turn"]
 
     # ── task 36：用户显式写入字段保护注册表 ─────────────────────────
     def _user_locked_fields(self) -> list[str]:
@@ -1655,7 +1793,9 @@ class GameState:
         timeline = world.setdefault("timeline", {})
         timeline.setdefault("anchor_state", "locked")
         timeline.setdefault("current_label", world.get("time", ""))
-        timeline.setdefault("current_phase", "柏林暗流篇")
+        # 通用 RPG 底座：不再硬编码《我蕾穆丽娜不爱你》的『柏林暗流篇』；阶段由
+        # 剧本/模组 opening、/set、time_directive 等显式来源写入。
+        timeline.setdefault("current_phase", "")
         timeline.setdefault("anchor_source", "legacy")
         timeline.setdefault("anchor_turn", self.data.get("turn", 0))
         timeline.setdefault("pending_jump", None)
@@ -1787,16 +1927,37 @@ def _extract_location_override(text: str) -> str:
 
 
 def _extract_set_time_targets(text: str) -> list[str]:
+    """从 /set 自然语言里抽时间目标。
+
+    task 86 (修复):
+    用户在 /set 命令里**已经明示**是时间设置意图(写了"时间"/"时间线"/"时点"
+    等关键词 + 设置动词),所以不再用 looks_like_time_value 启发式过滤目标值
+    —— RPG 是通用底座,不应硬编码"日/天/夜/柏林/图卢兹/基地"才算时间值。
+    用户写"火星·扬陆城内"/"剧情月球时期"/"魔王城地下三层"这些都应被接受。
+
+    覆盖两类句法:
+      · 时间(线)+动词+值:  "时间改为X" / "时间线=X" / "时点设为X"
+      · 动词+时间(线)+介词+值: "设置时间为X" / "设时间到X" / "切换时间线到X"
+    """
     values: list[str] = []
+    # 1) detect_time_directives 路径 — 自然语言"跳到X/快进到X/进入X章"
+    # 这类隐含意图,仍保留 looks_like_time_value 启发式过滤(避免误抓)。
     for value in _extract_player_time_directives(text):
         if value not in values:
             values.append(value)
+    # 2) 显式 /set 路径 — 用户已明示"时间"+"设置动词",直接信任用户给的值。
     patterns = [
-        r"(?:当前时间线|时间线|当前时间|时间|时点)\s*(?:改为|设为|设置为|锁定为|=|：|:)\s*([^，。！？\n；;]{2,80})",
+        r"(?:当前时间线|时间线|当前时间|时间|时点)\s*(?:改为|设为|设置为|锁定为|=|：|:)\s*([^，,。！？\n；;]{2,80})",
+        # 动词在前: 设置/设定/设/锁定/改/更改/更新/切换/跳转/切 + 时间(线/点) + 为/到/至/=/:
+        r"(?:设置|设定|设|锁定|改|更改|更新|切换|切换到|跳转到|切到)\s*"
+        r"(?:当前时间线|时间线|当前时间|时间|时点)\s*"
+        r"(?:为|到|至|改为|设为|=|：|:)\s*([^，,。！？\n；;]{2,80})",
     ]
-    for value in _extract_time_matches(text, patterns):
-        if value not in values:
-            values.append(value)
+    for pattern in patterns:
+        for match in re.findall(pattern, text or ""):
+            value = clean_time_value(match)
+            if value and 2 <= len(value) <= 80 and value not in values:
+                values.append(value)
     return values
 
 

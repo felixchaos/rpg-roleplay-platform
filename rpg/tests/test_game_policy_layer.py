@@ -107,33 +107,61 @@ class GamePolicyClassUnit(unittest.TestCase):
         self.assertIsNone(policy.preflight("我用短弓射敌人", g))
         self.assertIsNone(policy.preflight("观察四周", g))
 
-    def test_module_constraints_include_no_hallucination_lines(self):
+    def test_module_constraints_are_data_only_no_behavior_directives(self):
+        """架构原则 (2026-05 用户评审):DnD 规则裁定 = deterministic 自动化,
+        agent 不参与。gm_prompt_constraints **不得**用 "GM 不得 X / 必须 Y" 这种
+        prompt 教条堵 LLM。任何 5E 规则约束都靠 preflight + RulesEngine + State Gate
+        在系统层挡掉,不靠 prompt。
+
+        本测试断言 ModuleAdventurePolicy.gm_prompt_constraints 只输出:
+        1. 场景事实快照 (enemies / encounter.active) — 客观陈述
+        2. 数据来源指南 (state 是真相源 / retrieval 是参考) — 上下文路由
+        不输出任何 "GM 不得攻击命中 / HP / 借机攻击 / 武器可用性 / 卡住..." 行为指令。
+        """
         from game_policy import get_game_policy
         g = self._state(module_id="ash_mine")
         policy = get_game_policy(g)
-        constraints = policy.gm_prompt_constraints(g)
-        text = "\n".join(constraints)
-        # 硬约束清单
-        self.assertIn("硬约束", text)
-        self.assertIn("GM 不得自行裁定", text)
-        self.assertIn("攻击命中", text)
-        self.assertIn("HP", text)
-        self.assertIn("借机攻击", text)
-        # Codex #4 + #7:state=真相源,retrieval=参考
+        text = "\n".join(policy.gm_prompt_constraints(g))
+
+        # 应当含事实快照 + 数据来源
+        self.assertIn("场景事实快照", text)
+        self.assertIn("enemies", text)
+        self.assertIn("encounter.active", text)
+        self.assertIn("数据层级", text)
         self.assertIn("真相源", text)
         self.assertIn("参考", text)
-        self.assertTrue(
-            "知识检索" in text or "retrieval" in text.lower(),
-            "硬约束应明确知识检索只是参考,不是真相源",
-        )
 
-    def test_module_warns_when_no_enemies_no_encounter(self):
+        # 不得含 5E 规则行为指令 — 这些都改由 deterministic 后端管
+        forbidden_directives = (
+            "GM 不得自行裁定",
+            "GM 在正文中**一律不得**",
+            "攻击命中 / miss / 暴击 / 伤害数字",
+            "HP / AC / 先攻 / 状态 / 死亡 变化",
+            "借机攻击是否触发",
+            "武器是否可用 / disadvantage",
+            "玩家是否被卡住",
+            "不得引入这之外的敌人",
+            "不得在本轮正文中引入任何敌方 NPC",
+            "RulesEngine 没返回的事实",
+            "绝不写已经成功",
+        )
+        for token in forbidden_directives:
+            self.assertNotIn(token, text,
+                f"gm_prompt_constraints 不应再有 prompt 行为指令: {token!r}")
+
+    def test_module_constraints_show_enemy_snapshot_as_fact_not_directive(self):
+        """无敌人 + 无 encounter 时,只该陈述"enemies = 空 / encounter.active = 否",
+        不该再写"GM 不得在本轮引入敌人"这种行为约束 — 后者属于 prompt 教条。"""
         from game_policy import get_game_policy
         g = self._state(module_id="ash_mine",
                         encounter_active=False, live_enemies=[])
-        policy = get_game_policy(g)
-        text = "\n".join(policy.gm_prompt_constraints(g))
-        self.assertIn("不得在本轮正文中引入任何敌方 NPC", text)
+        text = "\n".join(get_game_policy(g).gm_prompt_constraints(g))
+        # 事实数据应在
+        self.assertIn("enemies", text)
+        self.assertIn("encounter.active", text)
+        # 行为指令不该再出现
+        self.assertNotIn("不得引入", text)
+        self.assertNotIn("**GM 不得在本轮正文中引入任何敌方 NPC**", text)
 
     def test_novel_constraints_include_knowledge_reference_disclaimer(self):
         # 即使是小说模式也要明示 state=真相源 / retrieval=参考

@@ -54,24 +54,43 @@ def detect_time_jump_violations(text: str, state: Any) -> list[dict[str, Any]]:
     若不在 user_set 当回合,或没命中禁词,返回空列表。
 
     用法:chat 主流程 GM 文本完成后调一次,把结果记到 audit_log。
+
+    判定优先级 (task 86 修):
+      1. 优先看 timeline.user_set_jump_turn —— update_time(source="user_set")
+         设过且不会被后续非 user_set 的 update_time 清掉。
+      2. 回退看 last_transition.source == "user_set" —— 兼容旧存档(没有
+         user_set_jump_turn 字段)或修复前已落地的状态。
     """
     if not text or not isinstance(text, str):
         return []
     data = getattr(state, "data", state) or {}
     timeline = (data.get("world") or {}).get("timeline") or {}
-    last_t = timeline.get("last_transition") or {}
-    if not isinstance(last_t, dict):
-        return []
-    if last_t.get("source") != "user_set":
-        return []
     try:
-        last_turn = int(last_t.get("turn") or -1)
         cur_turn = int(data.get("turn") or 0)
     except (TypeError, ValueError):
         return []
-    # 仅当回合刚发生 user_set 跳跃时启用检测
-    if last_turn != cur_turn:
-        return []
+
+    # 路径 1: 新字段 user_set_jump_turn (主路径,GM 改写 last_transition 也不影响)
+    user_jump_turn = timeline.get("user_set_jump_turn")
+    try:
+        user_jump_turn_int = int(user_jump_turn) if user_jump_turn is not None else None
+    except (TypeError, ValueError):
+        user_jump_turn_int = None
+    user_set_now = user_jump_turn_int == cur_turn
+
+    # 路径 2: 兼容旧字段 last_transition.source (向后兼容,不依赖于其它修复)
+    if not user_set_now:
+        last_t = timeline.get("last_transition") or {}
+        if not isinstance(last_t, dict):
+            return []
+        if last_t.get("source") != "user_set":
+            return []
+        try:
+            last_turn = int(last_t.get("turn") or -1)
+        except (TypeError, ValueError):
+            return []
+        if last_turn != cur_turn:
+            return []
 
     violations: list[dict[str, Any]] = []
     for pattern, label in _FORBIDDEN_PATTERNS:

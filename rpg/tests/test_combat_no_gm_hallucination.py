@@ -293,17 +293,26 @@ class CombatGateIntegration(unittest.TestCase):
 
 
 # ────────────────────────────────────────────────────────────────────
-# Layer C: RulesProvider prompt 包含硬约束块
+# Layer C: RulesProvider prompt 只含事实数据,不含行为指令
 # ────────────────────────────────────────────────────────────────────
 
 
-class RulesProviderHardConstraintPrompt(unittest.TestCase):
-    """module_adventure 场景下 RulesProvider 注入"硬约束 — GM 不得自行裁定"块。"""
+class RulesProviderInjectsFactsNotDirectives(unittest.TestCase):
+    """架构原则 (2026-05 用户评审):
 
-    def test_prompt_contains_no_hallucination_clause(self):
-        from context_providers.rules import RulesProvider
-        from context_providers.base import Demand, ProviderServices
+    DnD 规则裁定 = deterministic 自动化规则 (preflight + RulesEngine + State Gate)。
+    Agent 不参与规则判断,也不应该被 prompt 教 "你不许 X / 必须 Y"。
 
+    所以 RulesProvider (经 ModuleAdventurePolicy.gm_prompt_constraints) 注入的
+    prompt 段只该有:
+    - 场景事实快照 (enemies / encounter.active 当前状态)
+    - 数据来源说明 (state 是真相源 / retrieval 是参考)
+
+    不该有 "GM 不得攻击命中 / HP / 借机攻击 / disadvantage / 不得引入敌人" 这类
+    行为指令 — 那是 prompt 教条,违反 deterministic backend 原则。
+    """
+
+    def _state(self, *, enemies=None, encounter_active=False):
         class _S:
             data = {
                 "ruleset": {"id": "dnd5e", "public_label": "5E compatible"},
@@ -312,50 +321,69 @@ class RulesProviderHardConstraintPrompt(unittest.TestCase):
                 "scene": {
                     "module_id": "ash_mine",
                     "location_id": "minecart_track",
-                    "current_room": {"id": "minecart_track", "enemies": []},
+                    "current_room": {"id": "minecart_track", "enemies": enemies or []},
                 },
-                "encounter": {"active": False, "combatants": []},
+                "encounter": {"active": encounter_active, "combatants": []},
                 "dice_log": [],
             }
-        manifest = {"kind": "module_adventure", "ruleset": "dnd5e"}
-        demand = Demand(player_intent="explore")
-        services = ProviderServices()
-        prov = RulesProvider()
-        contrib = prov.collect(_S(), manifest, demand, services)
-        text = "\n".join(layer["content"] for layer in contrib.layers)
-        # 硬约束块的标志短语
-        self.assertIn("硬约束", text)
-        self.assertIn("GM 不得自行裁定", text)
-        self.assertIn("攻击命中", text)
-        self.assertIn("HP", text)
-        self.assertIn("借机攻击", text)
-        self.assertIn("Disengage", text)
-        self.assertIn("disadvantage", text)
-        self.assertIn("RulesEngine 没返回的事实", text)
+        return _S()
 
-    def test_prompt_warns_when_no_enemies_and_no_encounter(self):
-        """房间无 enemies + encounter 未激活 → 必须有额外警告"不得引入敌方 NPC"。"""
+    def _collect_text(self, state) -> str:
         from context_providers.rules import RulesProvider
         from context_providers.base import Demand, ProviderServices
-
-        class _S:
-            data = {
-                "ruleset": {"id": "dnd5e", "public_label": "5E compatible"},
-                "player_character": {"name": "X", "level": 1, "hp": 10, "max_hp": 10, "ac": 12,
-                                     "proficiency_bonus": 2, "abilities": {}},
-                "scene": {
-                    "module_id": "ash_mine",
-                    "location_id": "minecart_track",
-                    "current_room": {"id": "minecart_track", "enemies": []},
-                },
-                "encounter": {"active": False, "combatants": []},
-                "dice_log": [],
-            }
         manifest = {"kind": "module_adventure", "ruleset": "dnd5e"}
         prov = RulesProvider()
-        contrib = prov.collect(_S(), manifest, Demand(player_intent="explore"), ProviderServices())
-        text = "\n".join(layer["content"] for layer in contrib.layers)
-        self.assertIn("不得在本轮正文中引入任何敌方 NPC", text)
+        contrib = prov.collect(state, manifest, Demand(player_intent="explore"), ProviderServices())
+        return "\n".join(layer["content"] for layer in contrib.layers)
+
+    def test_prompt_contains_scene_fact_snapshot(self):
+        """场景快照应在 — 客观陈述,不带指令。"""
+        text = self._collect_text(self._state(enemies=[], encounter_active=False))
+        self.assertIn("场景事实快照", text)
+        self.assertIn("enemies", text)
+        self.assertIn("encounter.active", text)
+
+    def test_prompt_contains_data_layering_block(self):
+        """数据来源 (state vs retrieval) 应在 — 路由说明,不是行为约束。"""
+        text = self._collect_text(self._state())
+        self.assertIn("数据层级", text)
+        self.assertIn("真相源", text)
+        self.assertIn("参考", text)
+
+    def test_prompt_does_not_contain_5e_behavior_directives(self):
+        """5E 规则行为指令一律不在 prompt 里出现。
+
+        所有规则裁定走 deterministic 后端:
+        - classify_combat_intent 在 preflight 挡掉幻觉战斗
+        - INTENT_KEYWORDS → perform_skill_check / attack_roll 写 dice_log
+        - State Gate (_RULES_MANAGED_PATHS) 物理拒绝 GM 改 HP/AC/dice_log
+        所以不需要 prompt 教 LLM "不许做这些"。
+        """
+        text = self._collect_text(self._state(enemies=[], encounter_active=False))
+        forbidden_directives = (
+            "硬约束",
+            "GM 不得自行裁定",
+            "攻击命中 / miss",
+            "HP / AC / 先攻 / 状态 / 死亡 变化",
+            "借机攻击是否触发",
+            "武器是否可用 / disadvantage",
+            "玩家是否被卡住",
+            "不得引入这之外的敌人",
+            "不得在本轮正文中引入任何敌方 NPC",
+            "RulesEngine 没返回的事实",
+            "绝不写已经成功",
+        )
+        for token in forbidden_directives:
+            self.assertNotIn(token, text,
+                f"RulesProvider 不应再注入 prompt 行为指令: {token!r}")
+
+    def test_prompt_enemy_list_when_present(self):
+        """有敌人时,enemies 列表应在场景快照里 — 这是事实数据,不是指令。"""
+        text = self._collect_text(self._state(
+            enemies=[{"id": "g1", "name": "地精弓手"}],
+            encounter_active=True,
+        ))
+        self.assertIn("地精弓手", text)
 
 
 # ────────────────────────────────────────────────────────────────────

@@ -247,6 +247,12 @@ def _apply_script_opening(state: Any, user_id: int, script_id: int) -> None:
     （word_count=0、content=""），第 2 章才是 `## 第一章 雾港入夜` 含正文+inline meta。
     所以这里不能只 limit 1，要扫前 N 章选第一个『有 inline meta 或显著正文』的章节。
     """
+    # 任何 save（不论 script 有无导入章节）都先 scrub DEFAULT_STATE 的柏林硬编码：
+    # 用户选择了某个 script（不论是 5E 模组容器还是空白容器），就不该再继承《我蕾穆丽娜不爱你》
+    # 的开场地点/事件/目标。原代码把 scrub 放在 `if not rows: return` 之后，导致 chapter_count=0
+    # 的 script（例如 5E 模组容器）创建的新存档全部带柏林污染。
+    _scrub_berlin_default(state)
+
     with connect() as db:
         rows = db.execute(
             """
@@ -260,9 +266,6 @@ def _apply_script_opening(state: Any, user_id: int, script_id: int) -> None:
         ).fetchall()
     if not rows:
         return
-
-    # 不论是否找到有效首章，都先 scrub 柏林默认（用户已经选了这部 script 创 save）
-    _scrub_berlin_default(state)
 
     # task 40：选第一个『有 inline meta』的章节；没有 meta 时退到第一个『显著正文』章节
     chosen = None

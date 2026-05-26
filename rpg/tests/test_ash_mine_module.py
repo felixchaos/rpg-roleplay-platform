@@ -73,17 +73,20 @@ class StartModuleTests(unittest.TestCase):
         self.assertIn("5E compatible", ruleset.get("public_label", ""))
 
     def test_start_module_overwrites_default_novel_state(self):
-        """模组开始时，player/world/known_events 等默认柏林剧情字段必须被清掉，
-        否则右侧『状态』面板会显示 DEFAULT_STATE 的『图卢兹失守 / 柏林暗流』。"""
+        """模组开始时，player/world/known_events 字段必须被切换为模组开局。
+
+        历史背景：DEFAULT_STATE 之前硬编码《我蕾穆丽娜不爱你》柏林剧情（图卢兹失守、柏林暗流
+        篇等）。通用 RPG 底座修复后 DEFAULT_STATE 中性，start_module 仍需保证模组开局
+        覆盖玩家可见字段，避免遗留状态泄漏。"""
         g = GameState.new()
-        # 确认默认值确实是柏林
-        self.assertIn("柏林", g.data["player"]["current_location"])
-        self.assertGreater(len(g.data["world"]["known_events"]), 0)
+        # 模拟『某个旧剧本残留的 location/event』，确认 start_module 会清掉
+        g.data["player"]["current_location"] = "旧剧本·遗留地点"
+        g.data["world"]["known_events"] = ["旧剧本事件"]
         # 启动模组
         start_module(g, "ash_mine")
         # player 字段已切换到模组上下文
-        self.assertNotIn("柏林", g.data["player"]["current_location"])
-        self.assertNotIn("柏林", g.data["world"]["time"])
+        self.assertNotIn("旧剧本", g.data["player"]["current_location"])
+        self.assertNotIn("旧剧本", g.data["world"]["time"])
         self.assertEqual(g.data["world"]["known_events"], [])
         bg = g.data["player"]["background"]
         self.assertTrue("Ash Mine" in bg or "灰烬矿坑" in bg, f"background 应含模组名: {bg}")

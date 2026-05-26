@@ -62,16 +62,36 @@ class SuggestionsDoNotLeakBerlinOnImportedScript(unittest.TestCase):
         self.assertTrue(any(m in blob for m in generic_markers),
             f"task 41：导入剧本上下文下应至少出现一条通用 fallback；suggestions={sugs!r}")
 
-    def test_default_berlin_state_still_gets_berlin_fallback(self):
-        """对照：MuMuAINovel 默认柏林 state（DEFAULT_STATE 未 scrub）→ 仍允许出现『柏林势力图』fallback"""
-        s = GameState(copy.deepcopy(DEFAULT_STATE))  # 完整默认，含柏林 known_events / time / location
+    def test_default_state_no_longer_leaks_berlin(self):
+        """通用 RPG 底座：DEFAULT_STATE 不再含《我蕾穆丽娜不爱你》柏林剧情硬编码。
+        新建空白 state 的 suggestions 应仅出现通用 fallback，不含任何柏林 token。"""
+        s = GameState(copy.deepcopy(DEFAULT_STATE))
         sugs = s.suggestions()
         blob = " | ".join(sugs)
-        # 不强制柏林 fallback 必须出现（它在 fallback 列表尾部），只要 context 含柏林 token，
-        # 它就有资格被推入。这里至少校验：要么出现，要么 context 里的命名候选有出现，证明柏林上下文识别正确。
+        for tok in BERLIN_TOKENS:
+            self.assertNotIn(tok, blob,
+                f"通用底座修复后：DEFAULT_STATE-based suggestions 不应含柏林 token『{tok}』；"
+                f"all={sugs!r}")
+
+    def test_explicit_berlin_state_still_gets_berlin_fallback(self):
+        """对照：玩家显式选《我蕾穆丽娜不爱你》存档（state 含柏林 known_events / time / location）→
+        suggestions 仍允许出现『柏林势力图』fallback。"""
+        s = GameState(copy.deepcopy(DEFAULT_STATE))
+        # 显式注入柏林剧情上下文（模拟玩家选择默认《我蕾穆丽娜不爱你》存档）
+        s.data["world"]["time"] = "图卢兹失守后翌日，柏林"
+        s.data["player"]["current_location"] = "柏林，哈布斯堡庄园附近"
+        s.data["world"]["known_events"] = [
+            "宴会上调令伪造事件已曝光",
+            "图卢兹战役：薇瑟帝国八位渊戮大胜，地联溃败",
+            "娅赛兰决定暂留柏林",
+            "蛇信在外围全程监视",
+        ]
+        s.data["memory"]["current_objective"] = "观察柏林局势，保护蕾穆丽娜"
+        sugs = s.suggestions()
+        blob = " | ".join(sugs)
         is_default_berlin = any(tok in blob for tok in BERLIN_TOKENS + ("柏林势力图",))
         self.assertTrue(is_default_berlin,
-            f"对照：DEFAULT_STATE 应可生成柏林相关建议（命名 fallback 或势力图 fallback）；实际 {sugs!r}")
+            f"对照：显式柏林 state 应可生成柏林相关建议；实际 {sugs!r}")
 
     def test_partial_scrub_with_pinned_memory_still_no_berlin(self):
         """边角：用户在 scrub 后的 state 上又往 memory.pinned 加入一些不含柏林的笔记，

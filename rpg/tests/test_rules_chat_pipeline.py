@@ -286,6 +286,9 @@ class RulesChatPipeline(unittest.TestCase):
         self.assertIn("const displayText = stripStateOpsForDisplay(text)", text)
 
     def test_gm_system_prompt_keeps_literal_json_examples(self):
+        """通用 RPG 底座：system prompt 任何状态下都必须保留 JSON 写回示例（"op": "set" ...）
+        不被 str.format 误解析；只有绑定到《我蕾穆丽娜不爱你》兼容老存档的 session 才注入
+        柏林世界简介（world.json）。"""
         import gm as gm_mod
 
         old_world = gm_mod._WORLD
@@ -299,13 +302,26 @@ class RulesChatPipeline(unittest.TestCase):
             },
         }
         try:
-            built = gm_mod.GameMaster.__new__(gm_mod.GameMaster)._build_system()
+            # 1) 不绑定 state：world_section 必须为空（freeform / 通用底座）
+            built_empty = gm_mod.GameMaster.__new__(gm_mod.GameMaster)._build_system()
+            self.assertIn('"op": "set"', built_empty)
+            self.assertNotIn("测试世界", built_empty)
+            self.assertNotIn("测试局势", built_empty)
+
+            # 2) 绑定默认柏林兼容 state：world_section 应注入 _WORLD 的设置
+            from state import GameState
+            g = GameState.new()
+            g.data["world"]["time"] = "图卢兹失守后翌日，柏林"
+            g.data["player"]["current_location"] = "柏林街头"
+            g.data["history"] = [{"role": "assistant", "content": "前情提要"}]
+            gm = gm_mod.GameMaster.__new__(gm_mod.GameMaster)
+            gm._active_state = g
+            built_berlin = gm._build_system()
+            self.assertIn('"op": "set"', built_berlin)
+            self.assertIn("测试世界", built_berlin)
+            self.assertIn("测试局势", built_berlin)
         finally:
             gm_mod._WORLD = old_world
-
-        self.assertIn('"op": "set"', built)
-        self.assertIn("测试世界", built)
-        self.assertIn("测试局势", built)
 
 
 if __name__ == "__main__":
