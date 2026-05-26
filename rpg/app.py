@@ -1591,6 +1591,36 @@ async def api_chat(request: Request) -> StreamingResponse:
                             state.data["permissions"]["audit_log"] = audit[-200:]
                     except Exception:
                         pass
+            # 时间线锚点接入:directive 改动里若含 world.time / world.timeline.current_label,
+            # 用 script_timeline.resolve_timeline_anchor 把"火星·扬陆城内"这种用户标签
+            # 映射到剧本真实章节范围 (chapter_min/max + story_phase + 样本摘要),
+            # 写回 state.world.timeline.{anchor_chapter, chapter_min, chapter_max,
+            # anchor_phase, anchor_event}。这样 GM prompt 和 retrieval 都能拿到。
+            try:
+                _timeline_label = (state.data.get("world") or {}).get("timeline", {}).get("current_label", "")
+                if directive_updates and _timeline_label:
+                    _script_id = _active_script_id(api_user)
+                    if _script_id:
+                        from script_timeline import resolve_timeline_anchor as _resolve_anchor
+                        _anchor = _resolve_anchor(int(_script_id), _timeline_label)
+                        if _anchor:
+                            _tl = state.data["world"]["timeline"]
+                            _tl["anchor_chapter"] = _anchor["chapter_min"]
+                            _tl["chapter_min"] = _anchor["chapter_min"]
+                            _tl["chapter_max"] = _anchor["chapter_max"]
+                            _tl["anchor_phase"] = _anchor["story_phase"]
+                            _tl["anchor_event"] = (_anchor.get("sample_summary") or "")[:120]
+                            _tl["anchor_confidence"] = _anchor.get("score", 0.0)
+                            # 同步 current_phase 到匹配到的 phase (避免显示过时的旧 phase)
+                            if _anchor.get("story_phase"):
+                                _tl["current_phase"] = _anchor["story_phase"]
+                            directive_updates.append(
+                                f"时间线锚点 → 第{_anchor['chapter_min']}-{_anchor['chapter_max']}章 · "
+                                f"{_anchor['story_phase']}"
+                            )
+            except Exception as _anchor_err:
+                print(f"[chat] timeline anchor resolve failed: {_anchor_err}")
+
             if directive_updates:
                 _persist_runtime_checkpoint(state, api_user)
                 yield _sse("status", _payload(api_user))

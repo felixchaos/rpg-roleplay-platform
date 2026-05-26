@@ -666,19 +666,46 @@ def _timeline_layer(state) -> dict[str, Any]:
     pending = timeline.get("pending_jump") or {}
     locked_label = world.get("time") or timeline.get("current_label") or ""
     retrieval_label = locked_label
-    anchor = _safe_timeline_filter(retrieval_label)
-    if not anchor.get("anchor_chapter"):
-        previous = (timeline.get("last_transition") or {}).get("from")
-        if previous:
-            anchor = _safe_timeline_filter(previous)
-            retrieval_label = previous
+
+    # 真相源:state.world.timeline.{anchor_chapter, chapter_min, chapter_max, anchor_phase}
+    # 由 chat handler 在 /set 后调 script_timeline.resolve_timeline_anchor 写入。
+    # 没写入时退化到 SQLite vectors.db 索引 (旧 _safe_timeline_filter)。
+    real_anchor_chapter = timeline.get("anchor_chapter")
+    real_chapter_min = timeline.get("chapter_min")
+    real_chapter_max = timeline.get("chapter_max")
+    real_anchor_phase = timeline.get("anchor_phase")
+    real_anchor_event = timeline.get("anchor_event")
+    if real_anchor_chapter and real_chapter_min and real_chapter_max:
+        anchor = {
+            "anchor_chapter": real_anchor_chapter,
+            "chapter_min": real_chapter_min,
+            "chapter_max": real_chapter_max,
+            "anchor_event": real_anchor_event or "",
+            "story_time_label": locked_label,
+            "story_phase": real_anchor_phase or "",
+            "confidence": timeline.get("anchor_confidence") or 0.0,
+        }
+    else:
+        anchor = _safe_timeline_filter(retrieval_label)
+        if not anchor.get("anchor_chapter"):
+            previous = (timeline.get("last_transition") or {}).get("from")
+            if previous:
+                anchor = _safe_timeline_filter(previous)
+                retrieval_label = previous
     target_anchor = _safe_timeline_filter(pending.get("to", "")) if pending else {}
 
+    # 阶段显示:anchor_phase (用户 /set 后查锚点拿到) 优先于 current_phase (可能过时)
+    effective_phase = (
+        timeline.get("anchor_phase")
+        or timeline.get("current_phase")
+        or anchor.get("story_phase")
+        or "未知"
+    )
     lines = [
         f"当前锁定时间线：{locked_label}",
-        f"当前阶段：{timeline.get('current_phase') or '未知'}",
+        f"当前阶段：{effective_phase}",
         f"锚定状态：{timeline.get('anchor_state') or 'locked'}",
-        f"原著检索锚点：第{anchor.get('anchor_chapter') or '?'}章 · {anchor.get('anchor_event') or '未命中'}",
+        f"原著检索锚点：第{anchor.get('anchor_chapter') or '?'}章 · {anchor.get('anchor_event') or anchor.get('story_phase') or '未命中'}",
         f"允许检索章节窗口：{anchor.get('chapter_min') or '?'} - {anchor.get('chapter_max') or '?'}",
     ]
     if pending:
