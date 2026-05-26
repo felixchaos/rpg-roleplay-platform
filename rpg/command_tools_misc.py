@@ -44,18 +44,21 @@ from command_dispatcher import ToolSpec, get_registry
 
 
 # task 87 Phase 7 安全审查:
-#   _USER_READ      : 任意 origin (含 LLM) — read-only,不修改任何 user/save 资源
-#   _USER_MUTATE    : 仅 UI/API — LLM 不能修改跨 save 的 user 级资源 (持久 persona/卡片/偏好等)
-#   _USER_DEST      : 仅 UI/API — destructive
-#   _SAVE_OK        : 含 LLM — save 级安全 mutate (当前 save 上下文,LLM 自然有权改)
-#   _SAVE_SENSITIVE : 仅 UI/API — set_permission_mode 等敏感开关
-#   _ADMIN          : 仅 UI/API — MCP server 管理
-_USER_READ = frozenset({"ui_button", "api_direct", "llm_set", "llm_chat"})
-_USER_MUTATE = frozenset({"ui_button", "api_direct"})
-_USER_DEST = frozenset({"ui_button", "api_direct"})
-_SAVE_OK = frozenset({"ui_button", "api_direct", "llm_set", "llm_chat"})
+#   _USER_READ      : 任意 origin (含 LLM 与 console_assistant) — read-only
+#   _USER_MUTATE    : UI/API + console_assistant — LLM 仍禁;console_assistant 是「带方向盘的 agent」,
+#                     语义上等同 UI 按按钮(由用户驱动),允许 mutate
+#   _USER_DEST      : UI/API + console_assistant — destructive (console_assistant 走二次确认)
+#   _SAVE_OK        : UI/API + LLM + console_assistant — save 级安全 mutate
+#   _SAVE_SENSITIVE : 仅 UI/API — set_permission_mode 等敏感开关(console_assistant 也禁,
+#                     这些是 UI 显式审批工具,助手不该自调)
+#   _ADMIN          : UI/API + console_assistant — MCP server 管理 (用户用助手帮自己开/关)
+# task 48 新增 console_assistant origin。
+_USER_READ = frozenset({"ui_button", "api_direct", "llm_set", "llm_chat", "console_assistant"})
+_USER_MUTATE = frozenset({"ui_button", "api_direct", "console_assistant"})
+_USER_DEST = frozenset({"ui_button", "api_direct", "console_assistant"})
+_SAVE_OK = frozenset({"ui_button", "api_direct", "llm_set", "llm_chat", "console_assistant"})
 _SAVE_SENSITIVE = frozenset({"ui_button", "api_direct"})
-_ADMIN = frozenset({"ui_button", "api_direct"})
+_ADMIN = frozenset({"ui_button", "api_direct", "console_assistant"})
 # 旧别名,保持向后兼容(misc 文件 user_specs 表里用)
 _USER_OK = _USER_READ
 
@@ -532,14 +535,16 @@ def register_misc_tools() -> None:
           "required": ["mode"]},
          _t_set_permission_mode, "save", _SAVE_SENSITIVE, False),
         ("inject_pending_question",
-         "向当前 save 注入一个待回答问题 (debug 用,UI/API 显式调)",
+         "向当前 save 注入一个待回答问题 (debug 用,只允许 UI/API)",
          {"type": "object",
           "properties": {
               "question": {"type": "string"},
               "options": {"type": "array", "items": {"type": "string"}},
               "source": {"type": "string", "default": "gm:json"},
           }, "required": ["question"]},
-         _t_inject_pending_question, "save", _ADMIN, False),
+         _t_inject_pending_question, "save",
+         # task 48: inject_pending_question 是 debug 用工具,助手不应自调
+         frozenset({"ui_button", "api_direct"}), False),
     ]
     for name, desc, schema, exec_, scope, origins, destructive in save_specs:
         if not registry.has(name):
@@ -655,6 +660,77 @@ def register_misc_tools() -> None:
             registry.register(ToolSpec(
                 name=name, description=desc, input_schema=schema,
                 executor=exec_, scope="script", origins=_USER_OK, destructive=False,
+            ))
+
+    # ────────────────────────────────────────────────────────────
+    # task 49: 创意工具 — generate/refine_character_card_draft
+    # 仅 console_assistant + api_direct 可调; LLM 自由叙事 (llm_chat) 不允许
+    # 自创角色卡 (该走 gm_provisional active_entity 路径)。
+    # ────────────────────────────────────────────────────────────
+    _CREATIVE_ORIGINS = frozenset({"console_assistant", "api_direct"})
+
+    def _t_generate_card_draft(user_id: int, args: dict) -> str:
+        try:
+            import character_card_generator as ccg
+            result = ccg.generate_character_card_draft(
+                brief=str(args.get("brief") or ""),
+                user_id=user_id,
+                script_id=args.get("script_id"),
+                kind=str(args.get("kind") or "user"),
+                phase=args.get("phase"),
+                timeout_sec=int(args.get("timeout_sec") or 30),
+            )
+            return json.dumps(result, ensure_ascii=False, default=str)
+        except Exception as exc:
+            return f"失败: {type(exc).__name__}: {exc}"
+
+    def _t_refine_card_draft(user_id: int, args: dict) -> str:
+        try:
+            import character_card_generator as ccg
+            prev = args.get("previous_draft")
+            if not isinstance(prev, dict):
+                return "失败: previous_draft 必须是对象"
+            result = ccg.refine_character_card_draft(
+                previous_draft=prev,
+                feedback=str(args.get("feedback") or ""),
+                user_id=user_id,
+                script_id=args.get("script_id"),
+                timeout_sec=int(args.get("timeout_sec") or 30),
+            )
+            return json.dumps(result, ensure_ascii=False, default=str)
+        except Exception as exc:
+            return f"失败: {type(exc).__name__}: {exc}"
+
+    creative_specs = [
+        ("generate_character_card_draft",
+         "把简短人设描述扩展为符合当前剧本规范的角色卡 candidate (不写 DB,只返回 draft+validations)",
+         {"type": "object",
+          "properties": {
+              "brief": {"type": "string", "description": "用户简短描述,如 '20 岁女法师,流亡贵族'"},
+              "script_id": {"type": "integer", "description": "目标剧本 id (用于查重/phase/风格)"},
+              "kind": {"type": "string", "enum": ["user", "script"], "default": "user"},
+              "phase": {"type": "string", "description": "目标 phase 标签,空则由 DB 推断"},
+              "timeout_sec": {"type": "integer", "default": 30},
+          },
+          "required": ["brief"]},
+         _t_generate_card_draft),
+        ("refine_character_card_draft",
+         "用 previous_draft + 用户反馈重新生成卡片 candidate (走同一 5 层 validator)",
+         {"type": "object",
+          "properties": {
+              "previous_draft": {"type": "object", "description": "上一版 draft (generate 返回的 draft 字段)"},
+              "feedback": {"type": "string", "description": "用户反馈,如 '把性格改得更内向'"},
+              "script_id": {"type": "integer"},
+              "timeout_sec": {"type": "integer", "default": 30},
+          },
+          "required": ["previous_draft", "feedback"]},
+         _t_refine_card_draft),
+    ]
+    for name, desc, schema, exec_ in creative_specs:
+        if not registry.has(name):
+            registry.register(ToolSpec(
+                name=name, description=desc, input_schema=schema,
+                executor=exec_, scope="user", origins=_CREATIVE_ORIGINS, destructive=False,
             ))
 
 

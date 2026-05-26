@@ -27,14 +27,66 @@ from command_dispatcher import ToolSpec, get_registry
 
 
 # task 87 Phase 7 安全审查:跨"世界泡"隔离
-# user 级 read 工具:列存档/列分支/查存档详情等 → 任意 origin (含 LLM)
-_USER_ORIGINS_READ = frozenset({"ui_button", "api_direct", "llm_set", "llm_chat"})
+# task 48 新增 console_assistant:控制台助手是「用户带方向盘的 agent」,
+# 它的工具调用语义上等同于「用户在 UI 上点了相应按钮」(read 自由,mutate 直接执行,
+# destructive 由 endpoint 层做二次确认)。
+# user 级 read 工具:列存档/列分支/查存档详情等 → 任意 origin (含 LLM 与 console_assistant)
+_USER_ORIGINS_READ = frozenset({
+    "ui_button", "api_direct", "llm_set", "llm_chat", "console_assistant",
+})
 # user 级 mutate 工具:激活/改名/切分支等会**影响后续 chat 路由的另一个 save** →
 # LLM 任何 origin 都不允许 (即使玩家 /set 也不允许跨 save 操作)。
-# 玩家想动别的 save 必须 UI 显式按按钮。
-_USER_ORIGINS_MUTATE = frozenset({"ui_button", "api_direct"})
-# Destructive 同上,即使删自己当前 save 也是破坏性,只 UI/API。
-_USER_ORIGINS_DESTRUCTIVE = frozenset({"ui_button", "api_direct"})
+# console_assistant 允许 (它就是用来帮用户管 save 的)。
+_USER_ORIGINS_MUTATE = frozenset({"ui_button", "api_direct", "console_assistant"})
+# Destructive 同上,即使删自己当前 save 也是破坏性。console_assistant 允许,
+# 但 /api/console_assistant/chat 在调度前会先 yield confirmation_required 等用户确认。
+_USER_ORIGINS_DESTRUCTIVE = frozenset({"ui_button", "api_direct", "console_assistant"})
+
+
+def _t_create_save(user_id: int, args: dict) -> str:
+    """task 48: 基于 script_id 创建一个新存档。
+
+    复用 platform_app.workspace.create_save (与 POST /api/saves 同源)。
+    args:
+      script_id    : 必填,基于哪个剧本建档
+      title        : 可选,存档标题(空字符串则 workspace 自动给 "新存档")
+      script_card_id : 可选,选用该剧本里的某张角色卡 (映射 character_kind="script_card")
+      persona_id   : 可选,选用该用户某个 persona (映射 character_kind="persona")
+    返回字符串 "save 创建: id=X title='...' script=Y"。
+    """
+    script_id = args.get("script_id")
+    if not isinstance(script_id, (int, float, str)) or not str(script_id).lstrip("-").isdigit():
+        return "失败: script_id 必填且必须是整数"
+    title = (args.get("title") or "").strip()
+    character: dict[str, Any] | None = None
+    if args.get("script_card_id") is not None:
+        character = {"kind": "script_card", "id": args.get("script_card_id")}
+    elif args.get("persona_id") is not None:
+        character = {"kind": "persona", "id": args.get("persona_id")}
+    elif args.get("user_card_id") is not None:
+        character = {"kind": "user_card", "id": args.get("user_card_id")}
+    try:
+        from platform_app import workspace as _ws
+        save = _ws.create_save(
+            user_id=int(user_id),
+            script_id=int(script_id),
+            title=title,
+            new_card=None,
+            character=character,
+        )
+        # 失效缓存,UI 切档时能拿到新 save
+        try:
+            import app as _ui
+            _ui._invalidate_user_cache({"id": int(user_id)})
+        except Exception:
+            pass
+        sid = (save or {}).get("id") or "?"
+        stitle = (save or {}).get("title") or title or "新存档"
+        return f"save 创建: id={sid} title={stitle!r} script={script_id}"
+    except ValueError as exc:
+        return f"失败 (权限): {exc}"
+    except Exception as exc:
+        return f"失败: {type(exc).__name__}: {exc}"
 
 
 def _t_list_my_saves(user_id: int, args: dict) -> str:
@@ -252,6 +304,31 @@ def _t_continue_branch(user_id: int, args: dict) -> str:
 def register_saves_tools() -> None:
     registry = get_registry()
     specs: list[ToolSpec] = [
+        ToolSpec(
+            name="create_save",
+            description=(
+                "基于 script_id 创建一个新存档。可选传入 title / script_card_id / "
+                "persona_id 在初始 state 应用角色卡。不会改动其它已有存档。"
+                "等价于 UI 上的「新建存档」操作。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "script_id": {"type": "integer"},
+                    "title": {"type": "string"},
+                    "script_card_id": {"type": "integer"},
+                    "persona_id": {"type": "integer"},
+                    "user_card_id": {"type": "integer"},
+                },
+                "required": ["script_id"],
+            },
+            executor=_t_create_save,
+            scope="user",
+            # task 48: console_assistant 可调,UI 与 api_direct 也可调。
+            # LLM chat / llm_set 不可调:即使玩家在 chat 里 /set,也不该跨 save 操作。
+            origins=frozenset({"ui_button", "api_direct", "console_assistant"}),
+            destructive=False,
+        ),
         ToolSpec(
             name="list_my_saves",
             description="列出当前用户的存档 (可选按 script_id 过滤)。",

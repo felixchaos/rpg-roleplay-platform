@@ -3078,6 +3078,166 @@ async def api_rules_suggest(request: Request) -> JSONResponse:
 
 
 
+# ────────────────────────────────────────────────────────────
+# task 48: 侧栏控制台助手 (/api/console_assistant/*)
+# ────────────────────────────────────────────────────────────
+
+
+def _resolve_console_assistant_backend(api_user: dict[str, Any] | None):
+    """按用户偏好取 backend (复用 GM 的 backend 抽象)。
+
+    优先级:
+      1. user_preferences.console_assistant_model_override = {api_id, model}
+         (前端可单独切助手模型, 与 GM 模型解耦)
+      2. user_preferences.gm.api_id + gm.model_real_name (跟随 GM)
+      3. 系统 selected_model() 默认值
+    """
+    api_id = None
+    model_real = None
+    if api_user and api_user.get("id"):
+        try:
+            from platform_app.db import connect, init_db
+            init_db()
+            with connect() as db:
+                row = db.execute(
+                    "select preferences from user_preferences where user_id = %s",
+                    (int(api_user["id"]),),
+                ).fetchone()
+                prefs = (row and row.get("preferences")) or {}
+                if isinstance(prefs, dict):
+                    override = prefs.get("console_assistant_model_override") or {}
+                    if isinstance(override, dict):
+                        api_id = override.get("api_id") or api_id
+                        model_real = override.get("model") or model_real
+                    if not api_id:
+                        api_id = prefs.get("gm.api_id") or None
+                    if not model_real:
+                        model_real = prefs.get("gm.model_real_name") or None
+        except Exception:
+            pass
+    if not api_id or not model_real:
+        model = selected_model()
+        api_id = api_id or model.get("api_id")
+        model_real = model_real or model.get("real_name")
+    # 用 GameMaster 构造 backend, 再借用其 ._backend
+    gm = GameMaster(
+        api_id=api_id, model=model_real,
+        user_id=int(api_user["id"]) if api_user and api_user.get("id") else None,
+    )
+    return gm._backend
+
+
+@app.get("/api/console_assistant/ping")
+async def api_console_assistant_ping(request: Request) -> JSONResponse:
+    """task 48: 给前端探测后端是否就绪,200 = 真后端可用 (前端切走 mock)。"""
+    return JSONResponse({"ok": True, "service": "console_assistant", "version": "1"})
+
+
+@app.post("/api/console_assistant/chat")
+async def api_console_assistant_chat(request: Request) -> StreamingResponse:
+    """task 48: 侧栏助手主聊天 SSE endpoint。
+
+    body: { message: str, conversation_id?: str, page_context?: dict }
+    SSE: meta / token / tool_call / tool_result / confirmation_required / error / done
+    """
+    api_user = _require_api_user(request)
+    body = await request.json()
+    message = str(body.get("message") or "").strip()
+    conversation_id = body.get("conversation_id")
+    if isinstance(conversation_id, str):
+        conversation_id = conversation_id.strip() or None
+    else:
+        conversation_id = None
+    page_context = body.get("page_context") if isinstance(body.get("page_context"), dict) else None
+
+    if not message:
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message':'空消息'}, ensure_ascii=False)}\n\n"]),
+            media_type="text/event-stream",
+        )
+
+    user_id = int((api_user or {}).get("id") or 0)
+    if not user_id:
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message':'需要登录'}, ensure_ascii=False)}\n\n"]),
+            media_type="text/event-stream",
+        )
+
+    # 注意:这里 state_provider 用 _ensure_loaded — 只有 save scope 工具用得到。
+    def _sp(env):
+        try:
+            if env.save_id is None:
+                return None
+            return _ensure_loaded(api_user)
+        except Exception:
+            return None
+
+    # 解析 backend
+    try:
+        backend = _resolve_console_assistant_backend(api_user)
+    except Exception as exc:
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message':f'backend 初始化失败: {exc}'}, ensure_ascii=False)}\n\n"]),
+            media_type="text/event-stream",
+        )
+
+    from console_assistant import stream_chat as _stream_chat
+
+    def _gen():
+        yield from _stream_chat(
+            user_id=user_id,
+            message=message,
+            conversation_id=conversation_id,
+            page_context=page_context,
+            backend=backend,
+            state_provider=_sp,
+        )
+
+    return StreamingResponse(_gen(), media_type="text/event-stream")
+
+
+@app.post("/api/console_assistant/confirm")
+async def api_console_assistant_confirm(request: Request) -> JSONResponse:
+    """task 48: 对一个 pending destructive 工具调用做决策。
+
+    body: { conversation_id: str, call_id: str, decision: 'approve'|'reject' }
+    resp: { ok, decision, tool?, result?, error? }
+    """
+    api_user = _require_api_user(request)
+    body = await request.json()
+    conversation_id = str(body.get("conversation_id") or "").strip()
+    call_id = str(body.get("call_id") or "").strip()
+    decision = str(body.get("decision") or "").strip().lower()
+    if not conversation_id or not call_id or decision not in {"approve", "reject"}:
+        return JSONResponse(
+            {"ok": False, "error": "conversation_id / call_id / decision 必填; decision ∈ {approve,reject}"},
+            status_code=400,
+        )
+
+    user_id = int((api_user or {}).get("id") or 0)
+    if not user_id:
+        return JSONResponse({"ok": False, "error": "需要登录"}, status_code=401)
+
+    def _sp(env):
+        try:
+            if env.save_id is None:
+                return None
+            return _ensure_loaded(api_user)
+        except Exception:
+            return None
+
+    from console_assistant import apply_confirmation
+    result = apply_confirmation(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        call_id=call_id,
+        decision=decision,
+        state_provider=_sp,
+    )
+    status = 200 if result.get("ok") else 400
+    return JSONResponse(result, status_code=status)
+
+
 if __name__ == "__main__":
     import uvicorn
 

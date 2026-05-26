@@ -48,7 +48,13 @@ from typing import Any, Callable, Literal
 
 
 Scope = Literal["global", "user", "script", "save"]
-Origin = Literal["llm_chat", "llm_set", "ui_button", "mcp_call", "api_direct"]
+Origin = Literal[
+    "llm_chat", "llm_set", "ui_button", "mcp_call", "api_direct",
+    # task 48: 侧栏控制台助手 — 独立 origin，子集介于 ui_button 与 llm_chat 之间。
+    # 拥有 user 级 mutate 工具(activate/rename/create_*)和 destructive 工具(需二次确认),
+    # 但不能 inject_pending_question / set_permission_mode / approve_pending_write 这些 UI-only 工具。
+    "console_assistant",
+]
 
 
 @dataclass

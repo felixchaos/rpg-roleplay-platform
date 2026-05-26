@@ -15,13 +15,16 @@ from command_tools import COMMAND_TOOLS, execute_tool as _execute_legacy
 
 
 # 这些 origin 默认允许从 LLM (llm_set / llm_chat) 和 UI 调用 (save 级游戏指令)
+# task 48: console_assistant 加入 save 级 — 助手能在当前 save 上做事 (set_world_time 等)
 _DEFAULT_SAVE_ORIGINS = frozenset({
-    "llm_set", "llm_chat", "ui_button", "api_direct",
+    "llm_set", "llm_chat", "ui_button", "api_direct", "console_assistant",
 })
 # Destructive 工具不允许 llm_chat (LLM 自由叙事时不该调它们);
 # 仍允许 llm_set (用户通过 /set 明确意图) 和 ui_button (UI 显式按按钮).
+# task 48: console_assistant 也允许,但 endpoint 层 (POST /api/console_assistant/chat)
+# 会先 yield confirmation_required 等用户在 UI 上批准后才真正 dispatch。
 _DESTRUCTIVE_SAVE_ORIGINS = frozenset({
-    "llm_set", "ui_button", "api_direct",
+    "llm_set", "ui_button", "api_direct", "console_assistant",
 })
 
 

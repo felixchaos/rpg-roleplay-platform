@@ -29,8 +29,12 @@ from command_dispatcher import ToolSpec, get_registry
 
 # 5E 模组工具默认 origin: UI / API / LLM 都可调,但战斗具体动作禁止 llm_chat
 # (LLM 必须明确通过 /set 或 UI 显式按按钮才能动 HP/initiative)。
-_RULES_FULL_ORIGINS = frozenset({"ui_button", "api_direct", "llm_set"})
-_RULES_LLM_CHAT_ALLOWED_ORIGINS = frozenset({"ui_button", "api_direct", "llm_set", "llm_chat"})
+# task 48: console_assistant 允许触发模组加载 / 房间切换等 (用户通过侧栏助手开始模组),
+# 但 destructive 动作仍需 endpoint 二次确认。
+_RULES_FULL_ORIGINS = frozenset({"ui_button", "api_direct", "llm_set", "console_assistant"})
+_RULES_LLM_CHAT_ALLOWED_ORIGINS = frozenset({
+    "ui_button", "api_direct", "llm_set", "llm_chat", "console_assistant",
+})
 
 
 # ── 工具执行器 ───────────────────────────────────────────
