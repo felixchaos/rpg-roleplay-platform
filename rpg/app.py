@@ -848,11 +848,20 @@ def _payload(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
     model = selected_model(model_catalog)
     is_admin = bool(api_user and api_user.get("role") == "admin")
     payload = state.status_payload()
+    # 当前模型的 context window（tokens），由 platform_app.usage.context_window_for
+    # 按 api_id+real_name 查映射表。FE Composer 里 ContextUsage 圆环需要这个值
+    # 作为分母，从悬空 hard-coded 1.05M 变成真实当前模型上限。
+    try:
+        from platform_app.usage import context_window_for as _ctx_for
+        ctx_window = int(_ctx_for(model["api_id"], model["real_name"]) or 0)
+    except Exception:
+        ctx_window = 0
     payload["app"] = {
         "title": APP_TITLE,
         "model": model["display_name"],
         "model_real_name": model["real_name"],
         "model_capabilities": model.get("capabilities", []),
+        "context_window": ctx_window,
         "api": model["api_display_name"],
         "api_id": model["api_id"],
         "roles": list(ROLES.keys()),
