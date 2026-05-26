@@ -1572,11 +1572,13 @@ async def api_chat(request: Request) -> StreamingResponse:
                 return
             ctx = agent_result["retrieved_context"]
             bundle = agent_result["bundle"]
-            # task XX (combat hard gate):5E module_adventure 里在 GM 被调用前用
-            # deterministic 规则拦截战斗意图。命中两种情况之一就直接 yield
-            # pending_question 给玩家,跳过 GM 调用本身。
-            # 这彻底杜绝"GM 把坏结果(被卡住 / 借机攻击命中 / 短弓不可用 / 凭空生敌)写正文"。
-            _combat_gate = _rb_classify_combat_intent(message_for_model, state)
+            # task XX (GamePolicy preflight):统一在 GM 被调用前做 policy 检查。
+            # Codex 评审定调:不分两套 Agent,改成"Base GM + GamePolicy + ContextProviders + RulesEngine"。
+            # 5E 模组的 combat gate 现在是 ModuleAdventurePolicy.preflight 的一部分;
+            # 以后扩展新约束(检定意图 / 资源耗尽 / 死亡豁免 等)只动 policy,不动 chat handler。
+            from game_policy import get_game_policy as _get_game_policy
+            _policy = _get_game_policy(state)
+            _combat_gate = _policy.preflight(message_for_model, state)
             if _combat_gate:
                 _q_text = _combat_gate.get("question") or ""
                 _q_opts = list(_combat_gate.get("options") or [])
