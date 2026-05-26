@@ -173,23 +173,107 @@ _SYSTEM_PROMPT = """你是 RPG Platform 的「侧栏控制台助手」。
 
 你的角色:
   · 不是游戏 GM。你不参与战斗 / 推进剧情 / 描写场景。
-  · 你帮用户管理「平台层」事务:列/建/删 存档 (game_save), 管理 persona,
-    管理角色卡 (character_card), 切 GM 模型, 启动剧本导入, 启停 MCP server,
-    查 user_variables / world_state / 当前 scene 等。
+  · 你帮用户管理「平台层」资源:存档 (game_save)、persona、角色卡
+    (character_card)、剧本 (script)、设置、MCP server 等。
   · 你有完整的工具表 (与 UI 按钮等价的工具调用)。
 
-回复风格:
-  · 中文回复, 简洁直接 (≤ 3 段)。
-  · 调用工具前用一句话告诉用户你要做什么。
-  · destructive 操作 (delete_*, resplit_script 等) 必须先告知用户后果,
-    系统会自动弹出二次确认。
-  · 不要编造 save/persona 的 ID 或 title — 不知道就先 list 再操作。
-  · 错误处理: 工具返回「失败:」开头时, 解释原因并建议修复。
+────────────────────────────────────────────────
+关键工具区分 (易混淆,**必读**)
+────────────────────────────────────────────────
 
-约束:
-  · 不能跨用户操作 (dispatcher 会强制隔离, 你也不要尝试)。
-  · 不要走神写故事。如果用户聊到剧情, 引导 ta 回主对话框。
-  · 一次最多 4 个工具调用, 之后让用户决定下一步。
+【角色 / 人设 相关】区分三类操作:
+
+  1. set_player_name(name) / set_player_role / set_player_background
+     · **改的是当前 save 内「正在游玩」的玩家角色字段**。
+     · 只在用户已经进入某个 save、想改剧情内人物名字时用。
+     · 关键词:「把我的名字改成」「改成 XX 继续玩」。
+     · destructive (会写 save state),系统会弹二次确认。
+
+  2. create_character_card(name, summary, ...)
+     · **新建一张可复用的人设卡片** (玩家角色或 NPC),跨 save 共享。
+     · 是「人设资产入库」,**不是**「改当前 save 玩家名」。
+     · 关键词:「建一个角色卡」「创建用户角色」「做一张 NPC 卡」。
+     · 一般要先有完整 summary,推荐先走 generate_character_card_draft。
+
+  3. generate_character_card_draft(brief, kind, script_id=?)
+     · 把用户的简短描述交给 LLM,扩展成**完整人设候选** (返回 draft dict)。
+     · kind="user" → 玩家角色卡;kind="npc" → NPC 卡。
+     · **不会落地**,只是出候选。看完候选再决定 create 或 refine。
+
+  4. refine_character_card_draft(previous_draft, feedback)
+     · 用户对候选不满意时,带反馈 (「再傲娇点」「年龄改 17」) 让 LLM 改。
+     · 同样不会落地,继续出新候选。
+
+  → 正确流程 (建用户角色):
+     brief → generate_draft → 展示给用户 → (可多次 refine) → create_card
+
+【存档 相关】
+  · list_my_saves / create_save(script_id, title) / activate_save(save_id)
+    / delete_save(save_id) (destructive)
+  · 不知道 ID 时先 list,不要编造。
+
+────────────────────────────────────────────────
+多轮交互守则 (核心!)
+────────────────────────────────────────────────
+
+  · **不要一看到请求就调工具**。先确认用户意图,问清缺失的关键设定。
+  · **每次调工具前**,用一句话说「我要做 X,因为 Y」。
+  · **工具返回后**,看结果决定下一步;信息不够就再问用户。
+  · **destructive** (delete_* / remove_* / set_player_* / resplit_*) 前必须
+    显式告知后果,如「这会永久删除存档 #7,不可恢复,确认?」,系统会弹二次确认。
+  · 不要编造 save / persona / script 的 ID 或 title,不知道就先 list。
+  · 错误处理:工具返回「失败:」开头时,解释原因并建议修复。
+
+────────────────────────────────────────────────
+典型场景示例 (in-context)
+────────────────────────────────────────────────
+
+【场景】用户说:「创建一个用户角色,晓卡,穿越者,15 岁女高中生」
+
+  错误做法 ✗:直接调 set_player_name(name="晓卡")
+    (这只会改当前 save 玩家名,不会建卡;而且用户没说在玩哪个 save)
+
+  错误做法 ✗:直接调 create_character_card(name="晓卡", summary="穿越者...")
+    (summary 太单薄,没问用户性格/能力/适用剧本)
+
+  正确做法 ✓:
+    第 1 轮 (只回文本,不调工具):
+      「好的,我帮你建一张『晓卡』人设卡。再补几个设定:
+       1) 性格特征 (内向/外向/傲娇/腹黑…)?
+       2) 穿越后有什么特别能力或羁绊?
+       3) 想用在哪个剧本?(可选: <如果知道现有 script 列表就列出>)
+       不想细想的话直接说『你看着办』,我先出个候选你再改。」
+
+    第 2 轮 (用户答了或说看着办):
+      「我用 generate_character_card_draft 出一版候选,你看看再改。」
+      → 调 generate_character_card_draft(brief="晓卡, 穿越者, 15 岁女高中生,
+         性格 XX, 能力 YY", kind="user", script_id=?)
+      → 把返回的 draft 完整展示给用户:「候选如下: <人设细节>。
+         要改哪部分?或者『就用这个』我直接保存。」
+
+    第 3 轮 (用户「再傲娇点」):
+      → 调 refine_character_card_draft(previous_draft=上一版, feedback="再傲娇点")
+      → 展示新候选,继续等反馈。
+
+    第 N 轮 (用户「OK 用这个」):
+      → 调 create_character_card(name=draft.name, summary=draft.summary, ...)
+      → 报「已保存为角色卡 #ID」。
+
+────────────────────────────────────────────────
+写作风格
+────────────────────────────────────────────────
+  · 中文,简洁务实,不啰嗦,不过度礼貌。
+  · 普通回复 ≤ 3 段。
+  · 一次最多 4 个工具调用,之后让用户决定下一步。
+
+────────────────────────────────────────────────
+约束 (硬性)
+────────────────────────────────────────────────
+  · 不能跨用户操作 (dispatcher 会强制隔离,你也不要尝试)。
+  · 不要走神写故事;用户聊剧情,引导回主对话框。
+  · **绝不**用 set_player_name 处理「建用户角色卡」请求。
+  · **绝不**直接编人设属性而不问用户偏好。
+  · **绝不**把自己的猜测当事实 — 不确定就 list/query 或问用户。
 """
 
 
@@ -301,61 +385,37 @@ def _format_tool_result_for_llm(call_id: str, result: ToolResult) -> str:
     return f"[tool {call_id} {head}]\n{body[:1500]}"
 
 
-def stream_chat(
+def _run_llm_loop(
     *,
     user_id: int,
-    message: str,
-    conversation_id: str | None,
+    conv: dict[str, Any],
     page_context: dict[str, Any] | None,
     backend: Any,
-    state_provider: Callable[[ToolCallEnvelope], Any] | None = None,
-    max_iterations: int = 4,
-    max_tokens: int = 1200,
+    state_provider: Callable[[ToolCallEnvelope], Any] | None,
+    trace_id: str,
+    max_iterations: int,
+    max_tokens: int,
 ) -> Iterator[str]:
-    """主循环 — yield SSE 文本块。
+    """task 58: 共享内核 — 跑 backend.stream_with_mcp_loop, yield SSE 字符串。
 
-    backend 是 gm._VertexBackend / _AnthropicBackend / _OpenAICompatBackend 任一,
-    必须实现 .stream_with_mcp_loop(system, messages, mcp_tools, max_iterations,
-    max_tokens, mcp_call) -> Iterator[dict]。
+    入口约定 conv["messages"] 已包含「该轮 LLM 应当看到的最新对话历史」
+    (含 user 最新消息 / 上一轮工具结果 / 拒绝记录…), 调用方负责 push。
+    本函数不再 push user message, 只跑 LLM loop, 并把这轮的 assistant 文本
+    写回 conv history。
 
-    流程:
-      1. 取/建 conversation, append user message
-      2. yield meta
-      3. 跑 backend.stream_with_mcp_loop:
-         · 普通文本 chunk → yield token
-         · 工具调用 → 判 destructive:
-             destructive → yield confirmation_required, 把待执行调用挂到
-                            conv.pending_confirmations, **中止本轮 backend loop**
-             非 destructive → dispatch, yield tool_call+tool_result, 把结果送回
-                              backend (由 stream_with_mcp_loop 内部完成)
-      4. yield done
+    stream_chat 与 apply_confirmation_stream 都借这个生成器跑 LLM 续写。
     """
-    conv_id, conv = _get_or_create_conversation(user_id, conversation_id)
-    trace_id = _new_trace_id()
-
-    yield _sse_event("meta", {
-        "conversation_id": conv_id,
-        "trace_id": trace_id,
-    })
-
-    if not isinstance(message, str) or not message.strip():
-        yield _sse_event("error", {"message": "message 不能为空"})
-        yield _sse_event("done", {})
-        return
-
-    # 推入新一轮用户消息
-    conv["messages"].append({"role": "user", "content": message.strip()})
-    _trim_messages(conv)
-
     system_prompt = build_system_prompt(page_context)
     tools = list_assistant_tools()
 
     # 等待二次确认时, 把 pending 信息塞给 LLM 让它知道还在等
+    # (这里只是临时塞进发给 backend 的 messages, 不持久化到 conv["messages"])
+    extra_pending_note: list[dict[str, Any]] = []
     if conv.get("pending_confirmations"):
         pending_summary = "(等待用户对以下调用做出 approve/reject 决定:\n" + json.dumps(
             list(conv["pending_confirmations"].values())[:3], ensure_ascii=False, indent=2,
         ) + "\n)"
-        conv["messages"].append({"role": "system", "content": pending_summary})
+        extra_pending_note.append({"role": "system", "content": pending_summary})
 
     # confirmation 中断标志
     pending_for_this_turn: list[dict[str, Any]] = []
@@ -417,7 +477,10 @@ def stream_chat(
 
     # 流式跑 backend
     try:
-        messages_for_backend = _to_backend_messages(conv["messages"])
+        messages_for_backend = _to_backend_messages(conv["messages"]) + [
+            {"role": m["role"], "content": m["content"]} for m in extra_pending_note
+            if m["role"] in ("user", "assistant")  # backend 不一定吃 system role
+        ]
         assistant_text_acc = ""
         for ev in backend.stream_with_mcp_loop(
             system=system_prompt,
@@ -488,6 +551,64 @@ def stream_chat(
     except Exception as exc:
         yield _sse_event("error", {"message": f"{type(exc).__name__}: {exc}"})
 
+
+def stream_chat(
+    *,
+    user_id: int,
+    message: str,
+    conversation_id: str | None,
+    page_context: dict[str, Any] | None,
+    backend: Any,
+    state_provider: Callable[[ToolCallEnvelope], Any] | None = None,
+    max_iterations: int = 4,
+    max_tokens: int = 1200,
+) -> Iterator[str]:
+    """主循环 — yield SSE 文本块。
+
+    backend 是 gm._VertexBackend / _AnthropicBackend / _OpenAICompatBackend 任一,
+    必须实现 .stream_with_mcp_loop(system, messages, mcp_tools, max_iterations,
+    max_tokens, mcp_call) -> Iterator[dict]。
+
+    流程:
+      1. 取/建 conversation, append user message
+      2. yield meta
+      3. 跑 backend.stream_with_mcp_loop (via _run_llm_loop):
+         · 普通文本 chunk → yield token
+         · 工具调用 → 判 destructive:
+             destructive → yield confirmation_required, 把待执行调用挂到
+                            conv.pending_confirmations, **中止本轮 backend loop**
+             非 destructive → dispatch, yield tool_call+tool_result, 把结果送回
+                              backend (由 stream_with_mcp_loop 内部完成)
+      4. yield done
+    """
+    conv_id, conv = _get_or_create_conversation(user_id, conversation_id)
+    trace_id = _new_trace_id()
+
+    yield _sse_event("meta", {
+        "conversation_id": conv_id,
+        "trace_id": trace_id,
+    })
+
+    if not isinstance(message, str) or not message.strip():
+        yield _sse_event("error", {"message": "message 不能为空"})
+        yield _sse_event("done", {})
+        return
+
+    # 推入新一轮用户消息
+    conv["messages"].append({"role": "user", "content": message.strip()})
+    _trim_messages(conv)
+
+    yield from _run_llm_loop(
+        user_id=user_id,
+        conv=conv,
+        page_context=page_context,
+        backend=backend,
+        state_provider=state_provider,
+        trace_id=trace_id,
+        max_iterations=max_iterations,
+        max_tokens=max_tokens,
+    )
+
     yield _sse_event("done", {
         "pending_confirmations": list(conv["pending_confirmations"].keys()),
     })
@@ -519,6 +640,24 @@ def _to_backend_messages(messages: list[dict[str, Any]]) -> list[dict]:
 # ────────────────────────────────────────────────────────────
 
 
+def _resolve_pending(
+    *, user_id: int, conversation_id: str, call_id: str, decision: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
+    """共享步骤:校验 + pop pending。返回 (conv, pending, error_msg)。"""
+    decision_norm = (decision or "").strip().lower()
+    if decision_norm not in {"approve", "reject"}:
+        return None, None, f"decision 非法: {decision!r} (允许 approve/reject)"
+    with _lock:
+        user_bucket = _conversations.get(user_id) or {}
+        conv = user_bucket.get(conversation_id)
+        if not conv:
+            return None, None, f"conversation {conversation_id} 不存在或不属于当前用户"
+        pending = conv.get("pending_confirmations", {}).pop(call_id, None)
+    if not pending:
+        return conv, None, f"call_id={call_id} 没有 pending 记录"
+    return conv, pending, None
+
+
 def apply_confirmation(
     *,
     user_id: int,
@@ -527,26 +666,20 @@ def apply_confirmation(
     decision: str,
     state_provider: Callable[[ToolCallEnvelope], Any] | None = None,
 ) -> dict[str, Any]:
-    """对一个 pending destructive 工具调用做最终决策。
+    """[legacy] 对一个 pending destructive 工具调用做最终决策, 同步返回 dict。
 
-    返回 {ok, result?, error?, decision}。
-    approve  → 真正 dispatch, 把 tool_result 加到 conversation 历史
-    reject   → 不执行, 只记录 reject 到历史
+    task 58 后端 endpoint 已切到 apply_confirmation_stream;此函数仅供测试 /
+    其它工具复用 — 它不跑 LLM 续轮, 只把 tool_result 写进 history。
     """
-    with _lock:
-        user_bucket = _conversations.get(user_id) or {}
-        conv = user_bucket.get(conversation_id)
-        if not conv:
-            return {"ok": False, "error": f"conversation {conversation_id} 不存在或不属于当前用户"}
-        pending = conv.get("pending_confirmations", {}).pop(call_id, None)
-    if not pending:
-        return {"ok": False, "error": f"call_id={call_id} 没有 pending 记录"}
+    conv, pending, err = _resolve_pending(
+        user_id=user_id, conversation_id=conversation_id,
+        call_id=call_id, decision=decision,
+    )
+    if err:
+        return {"ok": False, "error": err}
+    decision_norm = decision.strip().lower()
 
-    decision = (decision or "").strip().lower()
-    if decision not in {"approve", "reject"}:
-        return {"ok": False, "error": f"decision 非法: {decision!r} (允许 approve/reject)"}
-
-    if decision == "reject":
+    if decision_norm == "reject":
         conv["messages"].append({
             "role": "assistant",
             "content": f"[确认拒绝] 工具 {pending['tool']} (call_id={call_id}) 已被用户拒绝, 未执行。",
@@ -579,9 +712,139 @@ def apply_confirmation(
     }
 
 
+def apply_confirmation_stream(
+    *,
+    user_id: int,
+    conversation_id: str,
+    call_id: str,
+    decision: str,
+    page_context: dict[str, Any] | None,
+    backend: Any,
+    state_provider: Callable[[ToolCallEnvelope], Any] | None = None,
+    max_iterations: int = 4,
+    max_tokens: int = 1200,
+) -> Iterator[str]:
+    """task 58: SSE 版 confirm — 执行/拒绝 destructive 工具, 然后让 LLM 续写。
+
+    流程:
+      1. 校验 + pop pending (出错 → yield error/done 退出)
+      2. yield meta (conversation_id / trace_id)
+      3. approve: yield tool_call + 真正 dispatch + yield tool_result + 把
+         tool_result 写进 history
+         reject: yield 一条 "reject" tool_result + 把 reject 备注写进 history
+      4. 跑 _run_llm_loop(让 LLM 基于新 history 续写 — 可能再 token, 也可能再
+         触发 destructive → 又 yield confirmation_required 等下一次 confirm)
+      5. yield done
+
+    协议与 /chat endpoint 完全一致, 前端可直接复用 buildHandlers。
+    """
+    trace_id = _new_trace_id()
+
+    # 第 1 步:校验
+    conv, pending, err = _resolve_pending(
+        user_id=user_id, conversation_id=conversation_id,
+        call_id=call_id, decision=decision,
+    )
+    if err:
+        yield _sse_event("meta", {
+            "conversation_id": conversation_id, "trace_id": trace_id,
+        })
+        yield _sse_event("error", {"message": err})
+        yield _sse_event("done", {})
+        return
+
+    decision_norm = decision.strip().lower()
+
+    yield _sse_event("meta", {
+        "conversation_id": conversation_id, "trace_id": trace_id,
+    })
+
+    # 第 2 步:执行 or 拒绝
+    if decision_norm == "reject":
+        reject_note = (
+            f"[确认拒绝] 工具 {pending['tool']} (call_id={call_id}) "
+            f"已被用户拒绝, 未执行。"
+        )
+        conv["messages"].append({"role": "assistant", "content": reject_note})
+        _trim_messages(conv)
+        # 把这条信号也作为 tool_result 推给前端 (用 ok=False + error 字段)
+        yield _sse_event("tool_result", {
+            "call_id": call_id,
+            "ok": False,
+            "result": None,
+            "error": "用户拒绝执行",
+            "decision": "reject",
+            "tool": pending["tool"],
+        })
+    else:
+        # approve → yield tool_call (让前端 UI 把卡片状态从 confirm 切到 running),
+        # 再真正 dispatch
+        yield _sse_event("tool_call", {
+            "tool": pending["tool"],
+            "args": pending["args"] or {},
+            "server_id": "dispatcher",
+            "call_id": call_id,
+        })
+        result = dispatch_assistant_tool(
+            user_id=user_id,
+            tool=pending["tool"],
+            args=pending["args"] or {},
+            save_id=pending.get("save_id"),
+            script_id=pending.get("script_id"),
+            trace_id=trace_id,
+            call_id=call_id,
+            state_provider=state_provider,
+        )
+        # task 57 navigate 哨兵识别 (与 _run_llm_loop 一致)
+        result_str = result.result or ""
+        if isinstance(result_str, str) and result_str.startswith("NAVIGATE:"):
+            payload = result_str[len("NAVIGATE:"):]
+            try:
+                target, _, reason = payload.partition("|")
+                target = (target or "").strip()
+                reason = (reason or "").strip()
+            except Exception:
+                target, reason = payload.strip(), ""
+            if target:
+                yield _sse_event("navigation_required", {
+                    "target": target, "reason": reason, "dirty_check": True,
+                })
+        yield _sse_event("tool_result", {
+            "call_id": call_id,
+            "ok": bool(result.ok),
+            "result": result.result,
+            "error": result.error,
+            "decision": "approve",
+            "tool": pending["tool"],
+        })
+        # 写回 history 让 LLM 续轮能看见
+        conv["messages"].append({
+            "role": "assistant",
+            "content": _format_tool_result_for_llm(call_id, result),
+        })
+        _trim_messages(conv)
+
+    # 第 3 步:LLM 续写
+    yield from _run_llm_loop(
+        user_id=user_id,
+        conv=conv,
+        page_context=page_context,
+        backend=backend,
+        state_provider=state_provider,
+        trace_id=trace_id,
+        max_iterations=max_iterations,
+        max_tokens=max_tokens,
+    )
+
+    yield _sse_event("done", {
+        "pending_confirmations": list(conv["pending_confirmations"].keys()),
+    })
+
+
 __all__ = [
     "stream_chat",
     "apply_confirmation",
+    "apply_confirmation_stream",
     "build_system_prompt",
     "list_assistant_tools",
     "dispatch_assistant_tool",

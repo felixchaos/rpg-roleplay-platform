@@ -3197,26 +3197,39 @@ async def api_console_assistant_chat(request: Request) -> StreamingResponse:
 
 
 @app.post("/api/console_assistant/confirm")
-async def api_console_assistant_confirm(request: Request) -> JSONResponse:
-    """task 48: 对一个 pending destructive 工具调用做决策。
+async def api_console_assistant_confirm(request: Request) -> StreamingResponse:
+    """task 58: 对一个 pending destructive 工具调用做决策, 返 SSE 流。
 
-    body: { conversation_id: str, call_id: str, decision: 'approve'|'reject' }
-    resp: { ok, decision, tool?, result?, error? }
+    body: { conversation_id: str, call_id: str, decision: 'approve'|'reject',
+            page_context?: dict }
+    SSE: 与 /chat endpoint 同款 (meta / tool_call / tool_result / token /
+         confirmation_required / navigation_required / error / done)
+
+    旧 JSON 协议已弃用 — 修复:用户点确认后 LLM 必须基于工具结果续写,
+    否则对话直接断在工具结果。
     """
     api_user = _require_api_user(request)
     body = await request.json()
     conversation_id = str(body.get("conversation_id") or "").strip()
     call_id = str(body.get("call_id") or "").strip()
     decision = str(body.get("decision") or "").strip().lower()
+    page_context = body.get("page_context") if isinstance(body.get("page_context"), dict) else None
     if not conversation_id or not call_id or decision not in {"approve", "reject"}:
-        return JSONResponse(
-            {"ok": False, "error": "conversation_id / call_id / decision 必填; decision ∈ {approve,reject}"},
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message':'conversation_id / call_id / decision 必填; decision ∈ {approve,reject}'}, ensure_ascii=False)}\n\n",
+                  f"event: done\ndata: {{}}\n\n"]),
+            media_type="text/event-stream",
             status_code=400,
         )
 
     user_id = int((api_user or {}).get("id") or 0)
     if not user_id:
-        return JSONResponse({"ok": False, "error": "需要登录"}, status_code=401)
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message':'需要登录'}, ensure_ascii=False)}\n\n",
+                  f"event: done\ndata: {{}}\n\n"]),
+            media_type="text/event-stream",
+            status_code=401,
+        )
 
     def _sp(env):
         try:
@@ -3226,16 +3239,29 @@ async def api_console_assistant_confirm(request: Request) -> JSONResponse:
         except Exception:
             return None
 
-    from console_assistant import apply_confirmation
-    result = apply_confirmation(
-        user_id=user_id,
-        conversation_id=conversation_id,
-        call_id=call_id,
-        decision=decision,
-        state_provider=_sp,
-    )
-    status = 200 if result.get("ok") else 400
-    return JSONResponse(result, status_code=status)
+    try:
+        backend = _resolve_console_assistant_backend(api_user)
+    except Exception as exc:
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message':f'backend 初始化失败: {exc}'}, ensure_ascii=False)}\n\n",
+                  f"event: done\ndata: {{}}\n\n"]),
+            media_type="text/event-stream",
+        )
+
+    from console_assistant import apply_confirmation_stream as _apply_stream
+
+    def _gen():
+        yield from _apply_stream(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            call_id=call_id,
+            decision=decision,
+            page_context=page_context,
+            backend=backend,
+            state_provider=_sp,
+        )
+
+    return StreamingResponse(_gen(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":

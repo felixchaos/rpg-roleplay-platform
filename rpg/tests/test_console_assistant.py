@@ -417,6 +417,173 @@ class ConfirmationApply(unittest.TestCase):
 
 
 # ────────────────────────────────────────────────────────────
+# task 58: apply_confirmation_stream — confirm endpoint 返 SSE,
+# LLM 看着工具结果续写。修复"对话断在工具结果"bug。
+# ────────────────────────────────────────────────────────────
+
+
+class ConfirmationApplyStream(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        force_reset_for_tests()
+
+    def setUp(self):
+        from console_assistant import reset_all_conversations
+        reset_all_conversations()
+
+    def _create_pending(self, user_id=1, tool="delete_save", args=None):
+        from console_assistant import stream_chat
+        backend = FakeBackend([
+            {"type": "tool_call", "server_id": "dispatcher",
+             "tool": tool, "arguments": args or {"save_id": 7}},
+        ])
+        events = _consume_sse(stream_chat(
+            user_id=user_id, message="x", conversation_id=None,
+            page_context={"save_id": 7}, backend=backend,
+        ))
+        meta = next(e["data"] for e in events if e["event"] == "meta")
+        confirm = next(e["data"] for e in events if e["event"] == "confirmation_required")
+        return meta["conversation_id"], confirm["call_id"]
+
+    def test_approve_yields_tool_result_then_llm_continues(self):
+        """approve → SSE 含 tool_call+tool_result, LLM 续写 token, 最终 done。"""
+        from console_assistant import apply_confirmation_stream
+        cid, call_id = self._create_pending(user_id=30)
+
+        # FakeBackend 在 LLM 续轮里 yield 两段 token, 模拟"角色已创建,要不要补特征?"
+        followup_backend = FakeBackend([
+            {"type": "text", "text": "好的, "},
+            {"type": "text", "text": "存档已删除。"},
+        ])
+
+        class FakeDB:
+            def __enter__(self_inner): return self_inner
+            def __exit__(self_inner, *a): return False
+            def execute(self_inner, sql, params=None):
+                m = mock.MagicMock()
+                m.fetchone.return_value = {"1": 1} if "select 1" in sql.lower() else None
+                m.fetchall.return_value = []
+                return m
+
+        with mock.patch("platform_app.db.connect", return_value=FakeDB()):
+            with mock.patch("platform_app.db.init_db"):
+                events = _consume_sse(apply_confirmation_stream(
+                    user_id=30, conversation_id=cid, call_id=call_id,
+                    decision="approve", page_context={"save_id": 7},
+                    backend=followup_backend,
+                ))
+        types = [e["event"] for e in events]
+        self.assertEqual(types[0], "meta")
+        self.assertIn("tool_call", types)
+        self.assertIn("tool_result", types)
+        self.assertIn("token", types, "LLM 必须续写, 否则对话断在工具结果")
+        self.assertEqual(types[-1], "done")
+        # 续写内容
+        tokens = [e["data"]["text"] for e in events if e["event"] == "token"]
+        self.assertIn("好的, ", tokens)
+        self.assertIn("存档已删除。", tokens)
+        # tool_result 携带 decision/tool, 方便前端关联
+        tool_results = [e["data"] for e in events if e["event"] == "tool_result"]
+        self.assertEqual(tool_results[0]["decision"], "approve")
+        self.assertEqual(tool_results[0]["tool"], "delete_save")
+
+    def test_reject_skips_dispatch_but_llm_still_continues(self):
+        """reject → 不真删, 但 LLM 仍续写 (例: '好的, 我不删了')。"""
+        from console_assistant import apply_confirmation_stream
+        cid, call_id = self._create_pending(user_id=31)
+
+        followup_backend = FakeBackend([
+            {"type": "text", "text": "好, 我不删了, "},
+            {"type": "text", "text": "需要别的吗?"},
+        ])
+
+        # 如果 dispatch 被调到说明 reject 没生效
+        with mock.patch("platform_app.db.connect",
+                         side_effect=AssertionError("reject 不应触发 DB 删档")):
+            events = _consume_sse(apply_confirmation_stream(
+                user_id=31, conversation_id=cid, call_id=call_id,
+                decision="reject", page_context={"save_id": 7},
+                backend=followup_backend,
+            ))
+        types = [e["event"] for e in events]
+        self.assertEqual(types[0], "meta")
+        # tool_result 仍 yield 一条 (decision=reject)
+        tool_results = [e["data"] for e in events if e["event"] == "tool_result"]
+        self.assertEqual(len(tool_results), 1)
+        self.assertEqual(tool_results[0]["decision"], "reject")
+        self.assertFalse(tool_results[0]["ok"])
+        # LLM 续写仍发生
+        self.assertIn("token", types, "reject 也要让 LLM 续写, 否则用户不知道发生了什么")
+        tokens = [e["data"]["text"] for e in events if e["event"] == "token"]
+        self.assertIn("好, 我不删了, ", tokens)
+        self.assertEqual(types[-1], "done")
+
+    def test_approve_then_followup_destructive_yields_new_confirmation(self):
+        """连续两个 destructive: approve#1 → LLM 又想调 #2 → yield confirmation_required for #2。"""
+        from console_assistant import apply_confirmation_stream, get_conversation_state
+        cid, call_id_1 = self._create_pending(user_id=32, tool="delete_save",
+                                              args={"save_id": 7})
+
+        # 第二个 destructive 工具调用紧接在 approve 后的 LLM 续轮里发生
+        followup_backend = FakeBackend([
+            {"type": "text", "text": "存档删了。再删一个? "},
+            {"type": "tool_call", "server_id": "dispatcher",
+             "tool": "delete_save", "arguments": {"save_id": 8}},
+            {"type": "text", "text": "(本句不该出现, 因为 confirm 中断)"},
+        ])
+
+        class FakeDB:
+            def __enter__(self_inner): return self_inner
+            def __exit__(self_inner, *a): return False
+            def execute(self_inner, sql, params=None):
+                m = mock.MagicMock()
+                m.fetchone.return_value = {"1": 1} if "select 1" in sql.lower() else None
+                m.fetchall.return_value = []
+                return m
+
+        with mock.patch("platform_app.db.connect", return_value=FakeDB()):
+            with mock.patch("platform_app.db.init_db"):
+                events = _consume_sse(apply_confirmation_stream(
+                    user_id=32, conversation_id=cid, call_id=call_id_1,
+                    decision="approve", page_context={"save_id": 7},
+                    backend=followup_backend,
+                ))
+        types = [e["event"] for e in events]
+        # 第一个 approve 的 tool_result + LLM 续写 token + 第二个 destructive
+        # 的 confirmation_required + done
+        self.assertIn("tool_result", types)
+        self.assertIn("token", types)
+        self.assertIn("confirmation_required", types,
+                      "LLM 续轮里又调 destructive 应再 yield confirmation_required")
+        self.assertEqual(types[-1], "done")
+        # 那条被中断的 token 不该出现
+        tokens = [e["data"]["text"] for e in events if e["event"] == "token"]
+        self.assertNotIn("(本句不该出现, 因为 confirm 中断)", tokens)
+        # 新 pending 已写入 conv
+        conv = get_conversation_state(32)[cid]
+        self.assertEqual(len(conv["pending_confirmations"]), 1)
+        new_pending = list(conv["pending_confirmations"].values())[0]
+        self.assertEqual(new_pending["tool"], "delete_save")
+        self.assertEqual(new_pending["args"], {"save_id": 8})
+
+    def test_invalid_call_id_yields_error_and_done(self):
+        """call_id 不存在 → SSE 含 error + done, 不崩。"""
+        from console_assistant import apply_confirmation_stream
+        cid, _ = self._create_pending(user_id=33)
+        # 不需要 backend 被调到, 但 generator 接口要传
+        events = _consume_sse(apply_confirmation_stream(
+            user_id=33, conversation_id=cid, call_id="cc-bogus",
+            decision="approve", page_context=None,
+            backend=FakeBackend([]),
+        ))
+        types = [e["event"] for e in events]
+        self.assertIn("error", types)
+        self.assertEqual(types[-1], "done")
+        errs = [e["data"]["message"] for e in events if e["event"] == "error"]
+        self.assertTrue(any("没有 pending" in m for m in errs))
+
+
+# ────────────────────────────────────────────────────────────
 # Layer F: origin 隔离 - llm_chat 仍不能调 console_assistant 专属工具
 # ────────────────────────────────────────────────────────────
 
