@@ -249,5 +249,141 @@ class ChatHandlerWritesAnchorAfterSet(unittest.TestCase):
         self.assertIn("时间线锚点", self.app_text)
 
 
+class GenericAlgorithmNoHardcoding(unittest.TestCase):
+    """关键回归:解析算法不能依赖任何"火星/柏林/图卢兹"等柏林剧本专有词。
+    本测试给三个完全不同剧本(三国/魔法学院/科幻基地)的 phase 名做匹配,
+    验证通用 substring + token overlap 算法在跨剧本场景都 work。"""
+
+    def _seed_anchors(self, script_id: int, phases: list[tuple[str, str, int, int]]):
+        """直接往 script_timeline_anchors 注 anchors,跳过 ETL (test 工具)。"""
+        from platform_app.db import connect, init_db
+        from script_timeline import _extract_keywords
+        init_db()
+        with connect() as db:
+            # 删旧
+            db.execute("delete from script_timeline_anchors where script_id = %s", (script_id,))
+            # 确保 scripts 行存在 (避免 FK 错)
+            row = db.execute("select id from scripts where id = %s", (script_id,)).fetchone()
+            if not row:
+                # 找个真实 user
+                u = db.execute("select id from users limit 1").fetchone()
+                if not u:
+                    self.skipTest("no users in DB")
+                    return
+                db.execute(
+                    "insert into scripts (id, owner_id, title) values (%s, %s, %s) on conflict do nothing",
+                    (script_id, u["id"], f"test-generic-{script_id}"),
+                )
+            for phase, time_label, ch_min, ch_max in phases:
+                keywords = sorted(set(_extract_keywords(phase) + _extract_keywords(time_label)))[:20]
+                db.execute(
+                    """insert into script_timeline_anchors
+                       (script_id, story_phase, story_time_label, chapter_min, chapter_max,
+                        chapter_count, sample_title, sample_summary, keywords, confidence)
+                       values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                       on conflict (script_id, story_phase, story_time_label) do update
+                         set chapter_min = excluded.chapter_min,
+                             chapter_max = excluded.chapter_max,
+                             keywords = excluded.keywords""",
+                    (script_id, phase, time_label, ch_min, ch_max,
+                     ch_max - ch_min + 1, "", "", keywords, 1.0),
+                )
+
+    def test_three_kingdoms_script(self):
+        """三国演义风格:黄巾 / 董卓 / 官渡 / 赤壁 / 三分天下。"""
+        from script_timeline import resolve_timeline_anchor
+        sid = 9990001
+        self._seed_anchors(sid, [
+            ("黄巾起义篇", "中平元年", 1, 30),
+            ("董卓乱政篇", "中平六年", 31, 80),
+            ("官渡之战篇", "建安五年", 81, 130),
+            ("赤壁之战篇", "建安十三年", 131, 180),
+            ("三分天下篇", "建安末年", 181, 240),
+        ])
+        # 完整 phase 名匹配
+        a = resolve_timeline_anchor(sid, "黄巾起义")
+        self.assertIsNotNone(a, "三国'黄巾起义'应匹配")
+        self.assertIn("黄巾", a["story_phase"])
+        # 短词匹配
+        a = resolve_timeline_anchor(sid, "赤壁")
+        self.assertIsNotNone(a, "三国'赤壁'应匹配")
+        self.assertEqual(a["chapter_min"], 131)
+        # 时间标签匹配
+        a = resolve_timeline_anchor(sid, "建安五年")
+        self.assertIsNotNone(a)
+        self.assertEqual(a["story_phase"], "官渡之战篇")
+        # 章节号
+        a = resolve_timeline_anchor(sid, "原著第100章")
+        self.assertIsNotNone(a)
+        self.assertTrue(a["chapter_min"] <= 100 <= a["chapter_max"])
+
+    def test_magic_academy_script(self):
+        """魔法学院风格:一年级到七年级。"""
+        from script_timeline import resolve_timeline_anchor
+        sid = 9990002
+        self._seed_anchors(sid, [
+            ("魔法学校一年级篇", "新生入学", 1, 50),
+            ("魔法学校二年级篇", "密室之谜", 51, 100),
+            ("魔法学校三年级篇", "时光转换器", 101, 150),
+            ("终极对决篇", "黑魔王陨落", 301, 360),
+        ])
+        a = resolve_timeline_anchor(sid, "一年级")
+        self.assertIsNotNone(a, "'一年级'应能匹配到一年级 phase")
+        self.assertEqual(a["chapter_min"], 1)
+        a = resolve_timeline_anchor(sid, "密室之谜")
+        self.assertIsNotNone(a, "时间标签匹配")
+        self.assertEqual(a["story_phase"], "魔法学校二年级篇")
+        a = resolve_timeline_anchor(sid, "终极对决")
+        self.assertIsNotNone(a)
+        self.assertEqual(a["chapter_min"], 301)
+
+    def test_scifi_foundation_script(self):
+        """科幻基地风格:全英文 phase 名,验证算法不假定中文。"""
+        from script_timeline import resolve_timeline_anchor
+        sid = 9990003
+        self._seed_anchors(sid, [
+            ("Foundation Era", "Year 0 FE", 1, 100),
+            ("Mule Crisis", "Year 310 FE", 101, 200),
+            ("Second Foundation Search", "Year 376 FE", 201, 280),
+        ])
+        a = resolve_timeline_anchor(sid, "Mule")
+        self.assertIsNotNone(a, "英文 phase 名应能匹配")
+        self.assertEqual(a["story_phase"], "Mule Crisis")
+        a = resolve_timeline_anchor(sid, "Year 376 FE")
+        self.assertIsNotNone(a)
+        self.assertEqual(a["story_phase"], "Second Foundation Search")
+        # 章节号在英文剧本里仍然 work
+        a = resolve_timeline_anchor(sid, "原著第 150 章")
+        self.assertIsNotNone(a)
+        self.assertEqual(a["story_phase"], "Mule Crisis")
+
+    def test_no_match_safety(self):
+        """完全无关 label 在所有剧本类型下都返回 None。"""
+        from script_timeline import resolve_timeline_anchor
+        # 用上面 test 已 seed 的 sid
+        for sid in (9990001, 9990002, 9990003):
+            for noise in ("ZZZZZ", "随便瞎写的字串 123", "abc def ghi"):
+                self.assertIsNone(
+                    resolve_timeline_anchor(sid, noise),
+                    f"sid={sid} label={noise!r} 不该误匹配",
+                )
+
+    def test_no_berlin_specific_keywords_in_source(self):
+        """硬约束:script_timeline.py 源代码里不应再有柏林剧本专有词的硬编码列表。"""
+        from pathlib import Path
+        src = (Path(__file__).resolve().parents[1] / "script_timeline.py").read_text(encoding="utf-8")
+        # 检查那段硬编码模式是否还在 — 不应该有 "for keyword in (\"火星\", \"柏林\", ...)" 这种
+        forbidden_combo = (
+            '("火星", "柏林"',  # 旧硬编码起始
+            '"图卢兹", "扬陆"',  # 旧硬编码中段
+            '"薇瑟"',           # 柏林剧本特有
+        )
+        # 注释里出现一次是允许的(写说明用),但代码 logic 里不应该有
+        for token in forbidden_combo:
+            # 简化:整文件不应包含 (注释里说"删了硬编码"也不应触发,因为注释里只引用"火星 / 柏林"这种)
+            self.assertNotIn(token, src,
+                f"script_timeline.py 不应硬编码柏林剧本特有词组 {token!r}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

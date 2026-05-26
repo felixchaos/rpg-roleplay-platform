@@ -191,26 +191,47 @@ def resolve_timeline_anchor(script_id: int, label: str) -> dict[str, Any] | None
         ch_max = int(r.get("chapter_max") or 0)
         sample = r.get("sample_summary") or ""
         score = 0.0
-        # 章节号显式匹配 → 强信号
+        # ── 全部信号通用化,不依赖任何特定剧本的词汇 ──
+
+        # 1. 章节号显式 hint (用户输入"第 X 章") → 强信号
         if chapter_hint and ch_min <= chapter_hint <= ch_max:
             score += 10.0
-        # 关键词 overlap
+
+        # 2. 关键词 overlap (label token ∩ anchor.keywords)
+        #    ETL 阶段对 phase / time_label / sample_title 提取的 2-gram + 完整词
         kw_set = set(kws)
         overlap = kw_set & label_tokens
         score += 2.0 * len(overlap)
-        # phase / time_label 子串匹配
+
+        # 3. label 整体子串 vs phase / time_label / sample (强通用匹配)
+        #    用户输入 "火星" → 'X' in "初期穿越与火星线" → 命中
+        #    用户输入 "Hogwarts" → 'X' in "Hogwarts 一年级" → 命中
+        #    用户输入 "建安五年" → 'X' in "建安五年·官渡" → 命中
+        #    这是真正通用的 substring 匹配,不需要词典。
+        label_norm = label.strip()
+        if label_norm:
+            # 直接 substring (完整 label 出现在 phase 或 time_label)
+            if label_norm in phase:
+                score += 6.0  # 强信号:用户输入整段命中 phase
+            if label_norm in time_label:
+                score += 4.0
+            if label_norm in sample:
+                score += 1.0
+
+        # 4. label 各 token (n-gram 子串) 命中 phase / time_label
+        #    e.g. label="火星·扬陆城内" → tokens=['火星', '扬陆', '城内', ...]
+        #    每个 token 在 phase / time_label 子串里 → 加分
         for token in label_tokens:
-            if token and token in phase:
+            if not token or len(token) < 2:
+                continue
+            if token in phase:
                 score += 3.0
-            if token and token in time_label:
+            if token in time_label:
                 score += 2.0
-            if token and len(token) >= 2 and token in sample:
+            if token in sample:
                 score += 0.5
-        # phase 整体 substring (用户可能直接输入"柏林" / "火星" 之类的 phase 关键词)
-        for keyword in ("火星", "柏林", "图卢兹", "扬陆", "薇瑟", "战争", "穿越"):
-            if keyword in label and keyword in phase:
-                score += 5.0
-        # 锚点置信度加成
+
+        # 5. 锚点置信度加成 (大锚点更稳)
         score += float(r.get("confidence") or 0.5) * 0.5
         if score > best_score:
             best_score = score

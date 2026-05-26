@@ -1911,8 +1911,16 @@ def _format_pending_timeline(pending: dict | None) -> str:
 
 
 def _phase_for_time(time_desc: str) -> str:
-    if any(key in time_desc for key in ("柏林", "图卢兹", "哈布斯堡", "北城", "内城", "基地")):
-        return "柏林暗流篇"
+    """从时间描述推断 phase 标签。
+
+    通用 fallback:任何剧本都用 "玩家分支" 这个中性标签。
+    真实的 phase 解析走 rpg/script_timeline.py 的 resolve_timeline_anchor —
+    在 chat handler 里把 anchor.story_phase 写到 state.world.timeline.current_phase,
+    覆盖本函数的 fallback。
+
+    之前这里 hardcoded 柏林剧本专有词("柏林/图卢兹/哈布斯堡/北城/内城/基地"
+    → "柏林暗流篇"),完全无法泛化到别的剧本。已删。
+    """
     return "玩家分支"
 
 
