@@ -713,7 +713,37 @@ def _timeline_layer(state) -> dict[str, Any]:
                 "在确认前，不要把玩家请求的未来时间当作已经发生；确认后才允许推进场景与更新位置/目标。",
             ])
     else:
-        lines.append("没有待确认时间跳跃；生成时必须保持当前时间线锚点，除非玩家本轮提出新跳跃。")
+        # 新增分支:用户当回合刚用 /set 硬覆盖时间线 (last_transition.source="user_set")。
+        # 这是**覆盖式跳跃**,不是叙事过渡:state.world.time 已经直接变了,GM 必须
+        # 把新时间视作既定事实,从新时间点的场景开始叙事,不能写"穿越/醒来/拨回时钟"
+        # 等过渡剧情。
+        last_t = timeline.get("last_transition") or {}
+        try:
+            _last_turn = int(last_t.get("turn") or -1)
+            _cur_turn = int(state.data.get("turn") or 0)
+        except (TypeError, ValueError):
+            _last_turn = -1
+            _cur_turn = 0
+        if last_t.get("source") == "user_set" and _last_turn == _cur_turn:
+            _from = last_t.get("from") or "(未知)"
+            _to = last_t.get("to") or locked_label or "(未知)"
+            lines.extend([
+                "",
+                f"⚠ 本轮玩家用 /set 硬覆盖时间线:from『{_from}』→ to『{_to}』",
+                "这是**覆盖式跳跃**,不是叙事过渡。GM 的任务是直接在新时间点开场,不要叙事时间过渡过程。",
+                "**禁止**输出以下措辞或剧情(违反会被 strip / warn):",
+                "  · 『穿越』『时空错位/穿梭』『回到过去』『时空裂缝』『时间倒流』",
+                "  · 『醒来』『再次睁开眼睛/眼眸』『从昏迷/沉睡中』",
+                "  · 『拨回时钟』『时钟被拨回』『时间被(一双)?手?[拉拨]回』",
+                "  · 『重启世界』『重置场景/时间』『世界被重写』",
+                "  · 『刺骨的冷』『冷得发抖』等惊厥/失忆/无意识开场",
+                "  · 『当你再次X』『睁开X时,X已经不在了』等模板化过渡",
+                "**应该**:把 state.world.time + state.player.current_location 当成既定事实,"
+                "从『此时此刻』玩家角色正在做什么、看到什么、跟谁在一起开始叙述。"
+                "玩家是有意识地推进游戏,**时间线标签的切换 = 镜头切到新时间点**,角色没有失忆/穿越感。",
+            ])
+        else:
+            lines.append("没有待确认时间跳跃；生成时必须保持当前时间线锚点，除非玩家本轮提出新跳跃。")
 
     debug = {
         "anchor_state": timeline.get("anchor_state") or "locked",

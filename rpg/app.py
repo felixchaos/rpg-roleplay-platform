@@ -1864,6 +1864,31 @@ async def api_chat(request: Request) -> StreamingResponse:
                     })
                 await asyncio.sleep(0)
 
+            # 时间线 user_set 跳跃当回合的"穿越/醒来/拨回"叙事检测。
+            # 主防线是 _timeline_layer prompt 明示禁止;这里 belt-and-suspenders:
+            # 检测 GM 文本中的禁词,违规写到 audit_log,让前端可展示警告引导 /retry。
+            try:
+                from timeline_narrative_guard import (
+                    detect_time_jump_violations, record_violations_to_audit,
+                )
+                if response.strip():
+                    _tj_violations = detect_time_jump_violations(response, state)
+                    if _tj_violations:
+                        record_violations_to_audit(state, _tj_violations)
+                        yield _sse("agent", {
+                            "phase": "timeline_guard",
+                            "message": f"GM 时间跳跃叙事检测到 {len(_tj_violations)} 处禁词(穿越/醒来/拨回 等过渡叙事)",
+                            "status": "warning",
+                            "elapsed_ms": 0,
+                            "violations": [
+                                {"label": v.get("pattern_label"), "match": v.get("match")}
+                                for v in _tj_violations
+                            ],
+                        })
+            except Exception as _tj_err:
+                # 检测失败不阻塞主流程
+                print(f"[chat] timeline_narrative_guard 检测失败: {_tj_err}")
+
             # task 62：可选 GM-extractor 第二步。
             # 用户在偏好里开 extractor.enabled = true 时，把 GM 叙事 + 当前 state 喂给
             # 便宜模型（默认 gemini-3.5-flash）抽出 JSON ops 追加到 response 末尾，
