@@ -164,18 +164,17 @@ def _verify_acceptance_rule(acceptance: list[str], response_text: str, updates: 
         if not bigrams:
             continue
         is_negative = any(k in cond_low for k in _NEG_KEYWORDS)
-        # 任意核心 bigram/trigram 命中即视为关联词出现。规则版能抓的最
-        # 简单信号：response 有/无包含 acceptance 提到的具体名词。
-        # 更精细的语义判断留给后续小 LLM 验证。
-        hit = any(b.lower() in haystack for b in bigrams)
         if is_negative:
-            # 否定条款：禁词主体的 bigram 在 response 出现 → unmet
-            if hit:
-                unmet.append(cond_str)
-        else:
-            # 肯定条款：至少 1 个核心 bigram 命中算通过；全没命中 → unmet
-            if not hit:
-                unmet.append(cond_str)
+            # click retest minor：否定条款（"GM 未/不/没做 X"）的语义判断规则版
+            # 做不准——bigram 匹配会把"叙事里提到 X"误报成"X 发生了"，
+            # 反复制造 acceptance_unmet 假阳性（用户报告：「GM 未自行决定检定成败」
+            # 被报 unmet，而 GM 实际上没做这种事）。
+            # 规则版统一默认 MET；要真正语义检查请切到 acceptance_verifier.mode=llm 或 hybrid。
+            continue
+        # 肯定条款：至少 1 个核心 bigram 命中算通过；全没命中 → unmet
+        hit = any(b.lower() in haystack for b in bigrams)
+        if not hit:
+            unmet.append(cond_str)
     return unmet
 
 
@@ -649,6 +648,72 @@ PRESET = {
 }
 
 
+def _selfheal_player_from_save_snapshot(state: GameState, api_user: dict[str, Any]) -> None:
+    """Bug 1 (click retest) self-heal：runtime player 空时，从 game_saves.state_snapshot
+    重写 player（+ player_character 若也空）。这是 user_card / persona / new_card 注入
+    的权威源，不依赖 runtime_checkouts 健康。
+
+    多用户安全：必须用 api_user.id 限定 game_saves 行，避免读到别人的存档。
+    幂等：只在 state.player.name 完全空时触发。
+    """
+    player = (state.data.get("player") or {}) if isinstance(state.data.get("player"), dict) else {}
+    if player.get("name") or player.get("role") or player.get("background"):
+        return  # runtime 已经有数据，不动
+    user_id = int(api_user.get("id") or 0)
+    if not user_id:
+        return
+    try:
+        from platform_app.runtime import read_runtime
+        from platform_app.db import connect
+    except Exception:
+        return
+    meta = read_runtime(user_id=user_id) or {}
+    save_id = int(meta.get("save_id") or 0)
+    if not save_id:
+        return
+    with connect() as db:
+        row = db.execute(
+            "select state_snapshot from game_saves where id = %s and user_id = %s",
+            (save_id, user_id),
+        ).fetchone()
+    if not row:
+        return
+    snap = row.get("state_snapshot") if isinstance(row, dict) else None
+    if not isinstance(snap, dict):
+        return
+    saved_player = snap.get("player") if isinstance(snap.get("player"), dict) else None
+    if not saved_player or not saved_player.get("name"):
+        return  # game_saves snapshot 也没 player 数据，没什么可救的
+    # 把 game_saves.player 写回 runtime state（保留 history / scene / 战斗等运行态）
+    state.data.setdefault("player", {})
+    for key in ("name", "role", "background", "current_location",
+                "source_kind", "source_id", "appearance", "personality", "speech_style"):
+        if saved_player.get(key):
+            state.data["player"][key] = saved_player[key]
+    # 也修 player_character（如果 game_saves 有且 runtime 空）
+    saved_pc = snap.get("player_character")
+    runtime_pc = state.data.get("player_character") or {}
+    if (isinstance(saved_pc, dict) and saved_pc.get("name")
+            and not runtime_pc.get("name")):
+        state.data["player_character"] = json.loads(json.dumps(saved_pc, ensure_ascii=False))
+    state.data["is_new"] = False
+    # 写 audit 留痕
+    try:
+        from datetime import datetime as _dt
+        audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
+        audit.append({
+            "ts": _dt.now().isoformat(timespec="seconds"),
+            "source": "ensure_loaded:selfheal",
+            "kind": "player_restored_from_save_snapshot",
+            "save_id": save_id,
+            "turn": state.data.get("turn", 0),
+            "hint": "runtime player 为空但 game_saves.snapshot 有 player，已恢复",
+        })
+        state.data["permissions"]["audit_log"] = audit[-200:]
+    except Exception:
+        pass
+
+
 def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
     """加载当前用户的游戏状态。多用户安全：按 user_id 隔离。
 
@@ -669,6 +734,16 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
                 state, _ = load_active_state(user_id=api_user["id"] if api_user else None)
             except Exception:
                 state = GameState.new() if api_user else GameState.load_or_new()
+            # Self-heal (Bug 1 click retest)：若 runtime 加载到的 state.player 为空
+            # 但 game_saves.state_snapshot 有 player 数据，说明 runtime_checkouts
+            # 没拿到完整 snapshot（可能在 activate 时序窗口里出问题）。
+            # 直接从 game_saves.state_snapshot 重新加载 — 这是 user_card / persona
+            # / new_card 注入的权威源。不依赖 runtime cache 健康。
+            if api_user and api_user.get("id"):
+                try:
+                    _selfheal_player_from_save_snapshot(state, api_user)
+                except Exception as exc:
+                    print(f"[ensure_loaded] selfheal failed: {exc}")
             _state_by_user[uid] = state
             if uid == 0:
                 _state_mtime_by_user[uid] = SAVE_FILE.stat().st_mtime_ns if SAVE_FILE.exists() else 0
