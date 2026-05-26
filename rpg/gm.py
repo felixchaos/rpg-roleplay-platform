@@ -424,9 +424,15 @@ class _VertexBackend:
                             server_id, _, tool_name = full_name.partition(sep)
                         else:
                             server_id, tool_name = "", full_name
+                        # task 48 fix: Gemini 2.5 多轮 tool_use 需要把模型上一轮产生的
+                        # thought_signature 跟 function_call 一起传回去,否则第 2 轮 API
+                        # 返 400 "Function call is missing a thought_signature in functionCall parts"。
+                        # 解决: 把整个 part 对象存下来 (含 thought_signature),装回 contents
+                        # 时直接 append 原 part,而不是用 name+args 重建。
                         pending_calls.append({
                             "name": full_name, "server_id": server_id,
                             "tool_name": tool_name, "arguments": args,
+                            "raw_part": part,  # 保留原 part,含 thought_signature
                         })
                         yield {
                             "type": "tool_call", "server_id": server_id,
@@ -440,13 +446,17 @@ class _VertexBackend:
             if current_text_str:
                 model_parts.append(types.Part.from_text(text=current_text_str))
             for pc in pending_calls:
-                # 重建 function_call part
-                try:
-                    fc_part = types.Part.from_function_call(name=pc["name"], args=pc["arguments"])
-                except Exception:
-                    # 老 SDK 没有 from_function_call helper：用 dict 构造
-                    fc_part = types.Part(function_call=types.FunctionCall(name=pc["name"], args=pc["arguments"]))
-                model_parts.append(fc_part)
+                # task 48 fix: 优先直接用 SDK 返回的原 part (它含 thought_signature)。
+                # raw_part 不可用时降级到重建 (老 SDK / 离线测试场景)。
+                raw_part = pc.get("raw_part")
+                if raw_part is not None:
+                    model_parts.append(raw_part)
+                else:
+                    try:
+                        fc_part = types.Part.from_function_call(name=pc["name"], args=pc["arguments"])
+                    except Exception:
+                        fc_part = types.Part(function_call=types.FunctionCall(name=pc["name"], args=pc["arguments"]))
+                    model_parts.append(fc_part)
             contents.append(types.Content(role="model", parts=model_parts))
 
             # 顺序 dispatch，把每个 function_response part 收成 user role 一次性 append
