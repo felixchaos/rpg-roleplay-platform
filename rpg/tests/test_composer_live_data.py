@@ -111,6 +111,54 @@ class FrontendComposerWiresLiveData(unittest.TestCase):
         self.assertIn("gameState.app.model", self.composer,
             "_currentModelLabel 必须读 gameState.app.model 才反映真实切换结果")
 
+    def test_no_mock_model_options_constant(self):
+        # task 39 收尾：完全删掉 MODEL_OPTIONS 常量，不让任何 fallback 路径还能命中 mock 标签。
+        # 现场 bug：用户截图显示 "GPT-4o · RPG / 主流 · 较快" 5 项 — 那是 MODEL_OPTIONS literal。
+        # 注释里出现 MODEL_OPTIONS 这个词没事（写解释/历史），只要不再有真正的 const 声明 + 业务读它。
+        import re
+        # 找 `const MODEL_OPTIONS` / `let MODEL_OPTIONS` / `var MODEL_OPTIONS` —— 任何形式的真正声明
+        decl = re.search(r"^\s*(?:const|let|var)\s+MODEL_OPTIONS\b", self.composer, re.MULTILINE)
+        self.assertIsNone(decl,
+            "MODEL_OPTIONS 常量应已删除；仍存在会作为 mock fallback 把用户带回 mock 列表")
+        # 业务代码不应再读取这个标识符（注释/字符串里出现没问题，避免误判）
+        # 思路：把所有单行注释和块注释剥掉后再 grep。
+        nocmt = re.sub(r"/\*[\s\S]*?\*/", "", self.composer)
+        nocmt = re.sub(r"^\s*//.*$", "", nocmt, flags=re.MULTILINE)
+        # 字串里 MODEL_OPTIONS 仍可能出现（不影响），但既然没声明，任何"读 MODEL_OPTIONS.find/.map"
+        # 都会让 JS runtime 直接 ReferenceError。grep 所有这类访问。
+        for pat in (r"\bMODEL_OPTIONS\.find\b", r"\bMODEL_OPTIONS\.map\b",
+                    r"\bMODEL_OPTIONS\.forEach\b", r"\bMODEL_OPTIONS\.filter\b",
+                    r"\bMODEL_OPTIONS\s*\["):
+            self.assertIsNone(re.search(pat, nocmt),
+                f"代码（剥注释后）不应再访问 {pat}，会 ReferenceError")
+
+    def test_no_hardcoded_mock_model_labels_in_composer(self):
+        # 截图取证里出现的 5 个 mock 字串绝不应作为代码常量留在 jsx 里
+        # （注释里写一次说明历史可以；这里只查"真正还在被渲染的 5 项 literal 整块"）。
+        mock_strings = [
+            '"GPT-4o · RPG"',
+            '"Claude Opus 4.1"',
+            '"Gemini 3 Flash"',
+            '"通义千问 Max"',
+            '"DeepSeek R1"',
+        ]
+        # 用 dict 文字面声明特征 — `id: "...", label: "..."` 这种 — 来定位 literal 数据。
+        for s in mock_strings:
+            # 业务代码不应出现这种 `label: "GPT-4o · RPG"` 的对象 literal 写法。
+            # 注释里出现整个字串没事；只要不是 `label: "..."` 这种 prop 赋值。
+            import re
+            pat = r'label\s*:\s*' + re.escape(s)
+            m = re.search(pat, self.composer)
+            self.assertIsNone(m,
+                f"composer 还有 `label: {s}` 对象字面量 — 这就是 MODEL_OPTIONS mock 残留")
+
+    def test_game_console_initial_model_not_mock_id(self):
+        # Game Console.html 之前 useState("gpt-4o-mini-rpg") — 用户截图底部
+        # "+ GPT-4o · RPG" 标签就是这个 id 走 MODEL_OPTIONS.find 得到的。
+        # 现在应改成 useState(null) 之类，让真值完全由 gameState.app.model 决定。
+        self.assertNotIn('useState("gpt-4o-mini-rpg")', self.html,
+            "Game Console 初始 model state 不应再用 mock id 'gpt-4o-mini-rpg'")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
