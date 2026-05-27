@@ -1614,6 +1614,55 @@ async def api_chat(request: Request) -> StreamingResponse:
             if pipeline_ctx.early_return:
                 return
 
+            # Phase 2.5 — task 86/87: 世界书子代理 (确定性, 不调 LLM, ~20ms)
+            # 翻阅 phase_digests + chapter_facts + worldbook → 注入 ctx_text。
+            # SSE 广播 worldbook_consulting/ready, 前端显示"翻阅设定中"。
+            try:
+                import worldbook_agent
+                script_id_for_wb = _active_script_id(api_user)
+                world = state.data.get("world", {}) or {}
+                memory = state.data.get("memory", {}) or {}
+                cur_phase = str((world.get("timeline") or {}).get("current_phase") or "")
+                cur_time = str(world.get("time") or "")
+                yield _sse("worldbook_consulting", {
+                    "query": message_for_model[:80],
+                    "phase": cur_phase,
+                    "time": cur_time,
+                })
+                wb_query = " ".join(filter(None, [
+                    message_for_model,
+                    str(memory.get("current_objective") or ""),
+                ]))[:300]
+                wb_result = worldbook_agent.consult(
+                    script_id=int(script_id_for_wb or 0),
+                    query=wb_query,
+                    current_phase=cur_phase,
+                    current_time=cur_time,
+                )
+                yield _sse("worldbook_ready", {
+                    "confidence": round(wb_result.confidence, 2),
+                    "sources": wb_result.sources,
+                    "phase": (wb_result.timeline_anchor or {}).get("phase"),
+                    "elapsed_ms": wb_result.elapsed_ms,
+                })
+                if wb_result.confidence > 0:
+                    wb_text = wb_result.to_context_text()
+                    if wb_text:
+                        pipeline_ctx.ctx_text = (pipeline_ctx.ctx_text or "") + "\n\n" + wb_text
+                # 把 confidence + progress_note 也塞 bundle 让 GM prompt 知道是否"翻阅未果"
+                if pipeline_ctx.bundle is None:
+                    pipeline_ctx.bundle = {}
+                pipeline_ctx.bundle.setdefault("worldbook", {})
+                pipeline_ctx.bundle["worldbook"].update({
+                    "confidence": wb_result.confidence,
+                    "progress_note": wb_result.progress_note,
+                    "sources": wb_result.sources,
+                })
+            except Exception as wb_exc:
+                yield _sse("worldbook_ready", {
+                    "confidence": 0.0, "error": f"{type(wb_exc).__name__}: {wb_exc}",
+                })
+
             # Phase 3: 5E rules preflight + rule candidates + clarify 短路
             async for evt, data in run_rules_phase(
                 pipeline_ctx,
