@@ -172,8 +172,13 @@ def load_summaries_window(chapter_min: int | None, chapter_max: int | None, fall
 
 
 def load_chapter_facts(chapter_min: int | None, chapter_max: int | None, limit: int = 5) -> str:
+    # task 79: 新存档 world.time 为空 → timeline_filter 没有 anchor → chapter_min/max=None。
+    # 之前直接返 "" 导致 GM 收不到任何原著 ChapterFact,凭训练数据瞎编开局
+    # (柏林 1914 / Aldnoah / 界冢伊奈帆 等都属于这种幻觉)。
+    # 修: 至少回退到原著前 5 章,让新开局的 GM 拿到真正的开局事实。
     if chapter_min is None or chapter_max is None:
-        return ""
+        chapter_min = 1
+        chapter_max = 5
     if not _sqlite_available(FACT_DB):
         return ""
     try:
