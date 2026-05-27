@@ -90,3 +90,6 @@ output/
 rpg/.venv/
 # tool 工具生成的契约漂移报告(可重新生成,不入库)
 rpg/docs/api_contract_drift.md
+
+# dev-server logs (scripts/dev.sh)
+.dev-logs/
