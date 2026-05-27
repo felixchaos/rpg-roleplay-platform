@@ -116,9 +116,64 @@ def _get_or_create_conversation(
             "pending_confirmations": {},
             "created_at": _now_iso(),
             "last_used": _now_iso(),
+            "cum_input_tokens": 0,   # task 111: 累积 input tokens (每轮 chat 加)
+            "cum_output_tokens": 0,  # 累积 output
+            "context_limit": 0,      # 当前 backend 的 context window (gemini-flash=1M 等)
+            "last_user_message": "", # 给对话列表 sidebar 显示 preview
         }
         user_bucket[new_id] = conv
         return new_id, conv
+
+
+def new_conversation(user_id: int) -> str:
+    """task 111: 显式开新对话 (用户点 '新建对话' 按钮)。"""
+    with _lock:
+        user_bucket = _conversations.setdefault(user_id, {})
+        _gc_user_bucket(user_bucket)
+        new_id = _new_conversation_id()
+        user_bucket[new_id] = {
+            "messages": [],
+            "pending_confirmations": {},
+            "created_at": _now_iso(),
+            "last_used": _now_iso(),
+            "cum_input_tokens": 0,
+            "cum_output_tokens": 0,
+            "context_limit": 0,
+            "last_user_message": "",
+        }
+        return new_id
+
+
+def list_conversations(user_id: int) -> list[dict[str, Any]]:
+    """task 111: 列当前用户所有对话,按 last_used 倒序。
+
+    返回字段: id, created_at, last_used, message_count, cum_input_tokens,
+            cum_output_tokens, context_limit, last_user_message (50 字 preview)
+    """
+    with _lock:
+        bucket = _conversations.get(user_id, {})
+        _gc_user_bucket(bucket)
+        out = []
+        for cid, conv in bucket.items():
+            out.append({
+                "id": cid,
+                "created_at": conv.get("created_at", ""),
+                "last_used": conv.get("last_used", ""),
+                "message_count": len(conv.get("messages") or []),
+                "cum_input_tokens": int(conv.get("cum_input_tokens", 0)),
+                "cum_output_tokens": int(conv.get("cum_output_tokens", 0)),
+                "context_limit": int(conv.get("context_limit", 0)),
+                "last_user_message": (conv.get("last_user_message", "") or "")[:50],
+            })
+        out.sort(key=lambda r: r.get("last_used", ""), reverse=True)
+        return out
+
+
+def delete_conversation(user_id: int, conversation_id: str) -> bool:
+    """task 111: 删某个对话。"""
+    with _lock:
+        bucket = _conversations.get(user_id, {})
+        return bucket.pop(conversation_id, None) is not None
 
 
 def _gc_user_bucket(user_bucket: dict[str, dict[str, Any]]) -> None:
@@ -660,6 +715,36 @@ def _run_llm_loop(
         if assistant_text_acc:
             conv["messages"].append({"role": "assistant", "content": assistant_text_acc})
             _trim_messages(conv)
+        # task 111: 累积 token 计数 + yield context_usage SSE 让前端 ring 更新
+        try:
+            usage = getattr(backend, "last_usage", None) or {}
+            in_tk = int(usage.get("input_tokens", 0) or 0)
+            out_tk = int(usage.get("output_tokens", 0) or 0)
+            conv["cum_input_tokens"] = int(conv.get("cum_input_tokens", 0)) + in_tk
+            conv["cum_output_tokens"] = int(conv.get("cum_output_tokens", 0)) + out_tk
+            # backend.context_window 是这次 chat 用的模型的 context 大小 (兜底 200k)
+            limit = int(getattr(backend, "context_window", 0) or 0)
+            if not limit:
+                # 按 backend 类型 / 模型名兜底
+                m = (getattr(backend, "model_name", "") or "").lower()
+                if "gemini" in m and ("3" in m or "2.5" in m or "flash" in m):
+                    limit = 1_048_576  # Gemini 1M
+                elif "claude" in m or "opus" in m or "sonnet" in m or "haiku" in m:
+                    limit = 200_000
+                elif "gpt-5" in m or "gpt5" in m or "gpt-4" in m:
+                    limit = 128_000
+                else:
+                    limit = 128_000
+            conv["context_limit"] = limit
+            yield _sse_event("context_usage", {
+                "input_tokens": in_tk,
+                "output_tokens": out_tk,
+                "cum_input_tokens": conv["cum_input_tokens"],
+                "cum_output_tokens": conv["cum_output_tokens"],
+                "context_limit": limit,
+            })
+        except Exception:
+            pass  # 计数失败不阻塞 chat
     except Exception as exc:
         yield _sse_event("error", {"message": f"{type(exc).__name__}: {exc}"})
 
@@ -708,6 +793,7 @@ def stream_chat(
 
     # 推入新一轮用户消息
     conv["messages"].append({"role": "user", "content": message.strip()})
+    conv["last_user_message"] = message.strip()  # task 111: 列表显示用
     _trim_messages(conv)
 
     yield from _run_llm_loop(
@@ -962,6 +1048,10 @@ __all__ = [
     "dispatch_assistant_tool",
     "get_conversation_state",
     "reset_all_conversations",
+    # task 111: 对话管理
+    "new_conversation",
+    "list_conversations",
+    "delete_conversation",
     "_new_call_id",
     "_new_trace_id",
     "_new_conversation_id",

@@ -3341,6 +3341,46 @@ async def api_console_assistant_ping(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "service": "console_assistant", "version": "1"})
 
 
+@app.get("/api/console_assistant/conversations")
+async def api_console_assistant_conversations(request: Request) -> JSONResponse:
+    """task 111: 列当前用户所有对话。"""
+    api_user = _require_api_user(request)
+    user_id = int((api_user or {}).get("id") or 0)
+    if not user_id:
+        return JSONResponse({"items": []})
+    from console_assistant import list_conversations
+    items = list_conversations(user_id)
+    return JSONResponse({"items": items})
+
+
+@app.post("/api/console_assistant/new_conversation")
+async def api_console_assistant_new_conversation(request: Request) -> JSONResponse:
+    """task 111: 开新对话, 返新 conversation_id。"""
+    api_user = _require_api_user(request)
+    user_id = int((api_user or {}).get("id") or 0)
+    if not user_id:
+        return JSONResponse({"ok": False, "error": "需要登录"}, status_code=401)
+    from console_assistant import new_conversation
+    new_id = new_conversation(user_id)
+    return JSONResponse({"ok": True, "conversation_id": new_id})
+
+
+@app.post("/api/console_assistant/delete_conversation")
+async def api_console_assistant_delete_conversation(request: Request) -> JSONResponse:
+    """task 111: 删除某对话。"""
+    api_user = _require_api_user(request)
+    user_id = int((api_user or {}).get("id") or 0)
+    if not user_id:
+        return JSONResponse({"ok": False, "error": "需要登录"}, status_code=401)
+    body = await request.json()
+    cid = str(body.get("conversation_id") or "").strip()
+    if not cid:
+        return JSONResponse({"ok": False, "error": "conversation_id 必填"}, status_code=400)
+    from console_assistant import delete_conversation
+    ok = delete_conversation(user_id, cid)
+    return JSONResponse({"ok": ok})
+
+
 @app.post("/api/console_assistant/chat")
 async def api_console_assistant_chat(request: Request) -> StreamingResponse:
     """task 48: 侧栏助手主聊天 SSE endpoint。
