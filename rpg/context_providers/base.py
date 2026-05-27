@@ -92,6 +92,7 @@ class ProviderServices:
     user_id: Optional[int] = None
     script_id: Optional[int] = None
     book_id: Optional[int] = None
+    save_id: Optional[int] = None  # task 107E: 给 RuntimePhaseDigestProvider 用
     # 检索引擎（可选）。给 NovelRetrievalProvider 用。
     retrieve_fn: Optional[Callable[..., str]] = None
     # 时间线锚点查询（可选）。给 NovelTimelineProvider 用。

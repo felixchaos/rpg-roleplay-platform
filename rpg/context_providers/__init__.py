@@ -33,6 +33,9 @@ from . import recent_chat as _recent_chat  # noqa: F401
 from . import module as _module  # noqa: F401
 from . import novel as _novel  # noqa: F401
 from . import rules as _rules  # noqa: F401
+# task 107E: 双时间线 provider
+from . import runtime_phase_digests as _rpd  # noqa: F401
+from . import script_phase_anticipation as _spa  # noqa: F401
 
 __all__ = [
     "ContextProvider", "ContextContribution", "Demand", "ProviderServices",

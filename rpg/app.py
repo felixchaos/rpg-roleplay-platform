@@ -1035,6 +1035,47 @@ def _persist_chat_turn(
             )
         except Exception:
             pass
+    # task 107B/107C: 每 turn 写 save_timeline_anchors + phase boundary 检测
+    if active_save_id:
+        try:
+            from save_phase_manager import (
+                upsert_timeline_anchor,
+                ensure_initial_phase,
+                detect_phase_boundary,
+                open_new_phase,
+                update_phase_turn_end,
+            )
+            _turn = int(state.data.get("turn") or 0)
+            _world = state.data.get("world") or {}
+            _tl = _world.get("timeline") or {}
+            _story_time = (
+                _tl.get("current_label")
+                or _world.get("time")
+                or ""
+            )
+            _phase_label = _tl.get("current_phase") or ""
+            # 107B: write timeline anchor
+            upsert_timeline_anchor(
+                save_id=active_save_id,
+                turn_index=_turn,
+                story_time_label=_story_time,
+                phase_label=_phase_label,
+                source="gm",
+            )
+            # 107C: ensure phase 0 on first turn
+            ensure_initial_phase(active_save_id, _turn, _phase_label, _story_time)
+            # 107C: update turn_end of open phase
+            update_phase_turn_end(active_save_id, _turn)
+            # 107C: detect boundary and open new phase if needed
+            if detect_phase_boundary(active_save_id, state):
+                open_new_phase(
+                    save_id=active_save_id,
+                    turn_index=_turn,
+                    phase_label=_phase_label,
+                    story_time_label=_story_time,
+                )
+        except Exception as _pm_err:
+            print(f"[chat] save_phase_manager hook failed: {_pm_err}")
 
 
 def _build_usage_payload(
@@ -1118,10 +1159,11 @@ def _build_turn_context(
     retrieved_context: str,
     script_id: int | None = None,
     book_id: int | None = None,
+    save_id: int | None = None,  # task 107E: 给 runtime_phase_digests provider
 ) -> dict[str, Any]:
     bundle = build_context_bundle(
         state, message, retrieved_context,
-        script_id=script_id, book_id=book_id,
+        script_id=script_id, book_id=book_id, save_id=save_id,
     )
     state.set_last_context(bundle["debug"])
     return bundle
@@ -1437,7 +1479,9 @@ async def api_opening(request: Request) -> StreamingResponse:
             script_id=script_id,
         )
         state.set_last_retrieval(ctx)
-        bundle = _build_turn_context(state, query, ctx, script_id=script_id)
+        # task 107E: 把 save_id 透传给 context_engine, 让 runtime_phase_digests provider 工作
+        _, _save_id_for_ctx = _resolve_persist_target(api_user)
+        bundle = _build_turn_context(state, query, ctx, script_id=script_id, save_id=_save_id_for_ctx)
         yield _sse("status", _payload(api_user))
         text = ""
         try:
@@ -3174,6 +3218,121 @@ def _resolve_console_assistant_backend(api_user: dict[str, Any] | None):
         user_id=int(api_user["id"]) if api_user and api_user.get("id") else None,
     )
     return gm._backend
+
+
+# ────────────────────────────────────────────────────────────
+# task 107G: 双时间线 panel — GET /api/saves/:save_id/timeline
+# ────────────────────────────────────────────────────────────
+
+
+@app.get("/api/saves/{save_id}/timeline")
+async def api_saves_timeline(save_id: int, request: Request) -> JSONResponse:
+    """返回指定存档的双时间线数据:剧本期望线 + 实际足迹线。
+
+    权限: 必须是该 save 的所有者,否则 403。
+    """
+    api_user = _require_api_user(request)
+    # 本地无鉴权时 api_user 可能为 None，回退到 runtime.json 的 user_id
+    if api_user:
+        user_id = int(api_user["id"])
+    else:
+        _rt_user_id, _ = _resolve_persist_target(None)  # returns (user_id, save_id)
+        user_id = int(_rt_user_id or 0)
+
+    from platform_app.db import connect, init_db
+    init_db()
+
+    with connect() as db:
+        # 1. 验证 ownership — 同时拿 script_id 和 active_phase_index
+        # 本地无鉴权时 user_id 可能为 0（runtime.json 还没有），允许宽松查询
+        if user_id:
+            save_row = db.execute(
+                """
+                select id, script_id, active_phase_index
+                  from game_saves
+                 where id = %s and user_id = %s
+                """,
+                (save_id, user_id),
+            ).fetchone()
+        else:
+            save_row = db.execute(
+                "select id, script_id, active_phase_index from game_saves where id = %s",
+                (save_id,),
+            ).fetchone()
+        if not save_row:
+            raise HTTPException(status_code=403, detail="存档不存在或无权访问")
+
+        script_id = save_row["script_id"]
+        active_phase_index = save_row.get("active_phase_index") or 0
+
+        # 2. 剧本期望线 — script_timeline_anchors 按 chapter_min 排序
+        # 字段名: story_phase → 对应任务描述里的 phase_label
+        anchor_rows = db.execute(
+            """
+            select chapter_min, chapter_max,
+                   story_phase   as phase_label,
+                   story_time_label
+              from script_timeline_anchors
+             where script_id = %s
+             order by chapter_min
+            """,
+            (script_id,),
+        ).fetchall()
+
+        script_anchors = [
+            {
+                "chapter_min": r["chapter_min"],
+                "chapter_max": r["chapter_max"],
+                "phase_label": r["phase_label"] or "",
+                "story_time_label": r["story_time_label"] or "",
+            }
+            for r in anchor_rows
+        ]
+
+        # 3. 实际足迹线 — save_phase_digests 按 phase_index 排序
+        phase_rows = db.execute(
+            """
+            select phase_index, phase_label, turn_start, turn_end,
+                   story_time_label, summary, key_events, status
+              from save_phase_digests
+             where save_id = %s
+             order by phase_index
+            """,
+            (save_id,),
+        ).fetchall()
+
+        import json as _json
+
+        def _parse_jsonb(v):
+            if v is None:
+                return []
+            if isinstance(v, (list, dict)):
+                return v
+            try:
+                return _json.loads(v)
+            except Exception:
+                return []
+
+        save_phases = [
+            {
+                "phase_index": r["phase_index"],
+                "phase_label": r["phase_label"] or "",
+                "turn_start": r["turn_start"],
+                "turn_end": r["turn_end"],
+                "story_time_label": r["story_time_label"] or "",
+                "summary": r["summary"] or "",
+                "key_events": _parse_jsonb(r["key_events"]),
+                "status": r["status"] or "open",
+            }
+            for r in phase_rows
+        ]
+
+    return JSONResponse({
+        "ok": True,
+        "script_anchors": script_anchors,
+        "save_phases": save_phases,
+        "current_phase_index": active_phase_index,
+    })
 
 
 @app.get("/api/console_assistant/ping")

@@ -99,6 +99,7 @@ def run_context_agent(
     user_id: int | None = None,
     script_id: int | None = None,
     book_id: int | None = None,
+    save_id: int | None = None,  # task 107E: 给 RuntimePhaseDigestProvider 用
 ) -> Generator[dict[str, Any], None, None]:
     stop_requested = stop_requested or (lambda: False)
     started = time.time()
@@ -241,6 +242,7 @@ def run_context_agent(
         user_id=user_id,
         script_id=script_id,
         book_id=book_id,
+        save_id=save_id,  # task 107E
         retrieve_fn=retrieve_context,
         timeline_filter_fn=timeline_filter_for_label,
     )

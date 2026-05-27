@@ -55,6 +55,9 @@ DEFAULT_NOVEL_MANIFEST: dict = {
         "memory",
         "worldline",
         "recent_chat",
+        # task 107E: 双时间线 — 历史摘要 + 剧本未来
+        "runtime_phase_digests",
+        "script_phase_anticipation",
     ],
     "retrieval_policy": {
         "allow_script_retrieval": True,
@@ -80,6 +83,8 @@ DEFAULT_MODULE_MANIFEST: dict = {
         "memory",
         "worldline",
         "recent_chat",
+        # task 107E: 长游戏历史摘要 (剧本预期 module 没有, 不加)
+        "runtime_phase_digests",
     ],
     "retrieval_policy": {
         "allow_script_retrieval": False,
@@ -101,6 +106,8 @@ DEFAULT_FREEFORM_MANIFEST: dict = {
         "memory",
         "worldline",
         "recent_chat",
+        # task 107E: 自由模式也启用历史摘要
+        "runtime_phase_digests",
     ],
     "retrieval_policy": {
         "allow_script_retrieval": False,

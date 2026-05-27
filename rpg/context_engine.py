@@ -36,6 +36,9 @@ MAX_LAYER_CHARS = {
     "candidate_actions": 800,  # task 82：curator 列的 2-5 个候选动作 anchor
     "recent_chat": 2200,
     "user_input": 900,
+    # task 107E: 双时间线 — 存档级历史摘要 + 剧本未来预期
+    "runtime_phase_digests": 1800,        # GM 思考历史 (本存档)
+    "script_phase_anticipation": 1200,    # GM 思考未来 (剧本预期)
 }
 
 
@@ -296,6 +299,7 @@ def build_context_bundle(
     book_id: int | None = None,
     contributions: list | None = None,
     manifest: dict | None = None,
+    save_id: int | None = None,  # task 107E
 ) -> dict[str, Any]:
     """组装单轮 prompt 上下文。
 
@@ -322,6 +326,7 @@ def build_context_bundle(
             from retrieval import retrieve_context as _retrieve_fn
             services = ProviderServices(
                 user_id=None, script_id=script_id, book_id=book_id,
+                save_id=save_id,  # task 107E
                 retrieve_fn=_retrieve_fn,
                 timeline_filter_fn=timeline_filter_for_label,
             )
