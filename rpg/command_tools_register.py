@@ -19,13 +19,17 @@ from command_tools import COMMAND_TOOLS, execute_tool as _execute_legacy
 # 不该调当前 save 的剧情内编辑工具 (set_player_*/set_world_time 等).
 # 否则 LLM 看到 "创建角色 晓卡" 容易误判为 set_player_name 而不是 create_character_card.
 _DEFAULT_SAVE_ORIGINS = frozenset({
-    "llm_set", "llm_chat", "ui_button", "api_direct",
+    "llm_set", "llm_chat", "llm_chat_json_op", "ui_button", "api_direct",
 })
-# Destructive 工具不允许 llm_chat (LLM 自由叙事时不该调它们);
+# Destructive 工具不允许 llm_chat (LLM 自由叙事流式输出时不该调它们);
+# 但 llm_chat_json_op (GM 通过结构化 JSON op 协议写状态) 是 GM 正常工作流,允许。
 # 仍允许 llm_set (用户通过 /set 明确意图) 和 ui_button (UI 显式按按钮).
 # task 62: 同上,移除 console_assistant.
+# task 91 (Bug fix): 加入 llm_chat_json_op — 之前 GM 叙事里说"我叫晓星"输出
+# {"op":"set","path":"player.name","value":"晓星"} 被 dispatcher 拦,玩家不知道
+# 静默失败,叙事和状态脱节。GM JSON op 是合法的有意状态变更,应允许。
 _DESTRUCTIVE_SAVE_ORIGINS = frozenset({
-    "llm_set", "ui_button", "api_direct",
+    "llm_set", "llm_chat_json_op", "ui_button", "api_direct",
 })
 
 

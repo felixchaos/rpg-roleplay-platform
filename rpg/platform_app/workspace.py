@@ -145,6 +145,21 @@ def _build_initial_snapshot(
         return {"history": [], "turn": 0}
 
     name = role = background = ""
+    # task 91: 没传 new_card/character 时,默认拿用户的"默认 persona",
+    # 没有就回退到最近的 user_character_card。避免新建存档总是空玩家。
+    if not isinstance(new_card, dict) and not isinstance(character, dict):
+        try:
+            from . import user_cards as _ucards
+            personas = _ucards.list_personas(user_id).get("items", [])
+            default_p = next((p for p in personas if p.get("is_default")), None) or (personas[0] if personas else None)
+            if default_p:
+                character = {"kind": "persona", "id": default_p.get("id")}
+            else:
+                cards = _ucards.list_user_cards(user_id).get("items", [])
+                if cards:
+                    character = {"kind": "user_card", "id": cards[0].get("id")}
+        except Exception:
+            pass
     if isinstance(new_card, dict):
         name = str(new_card.get("name") or "").strip()
         role = str(new_card.get("role") or "").strip()

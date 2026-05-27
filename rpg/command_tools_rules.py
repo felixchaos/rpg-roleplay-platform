@@ -32,9 +32,9 @@ from command_dispatcher import ToolSpec, get_registry
 # task 62: 移除 console_assistant — 模组装载/战斗都是 save 内行为,
 # 控制台助手是跨 save 资源管理,不该越界触发战斗 / move 房间。
 # 用户想玩模组就去 Game Console 走 GM。
-_RULES_FULL_ORIGINS = frozenset({"ui_button", "api_direct", "llm_set"})
+_RULES_FULL_ORIGINS = frozenset({"ui_button", "api_direct", "llm_set", "llm_chat_json_op"})
 _RULES_LLM_CHAT_ALLOWED_ORIGINS = frozenset({
-    "ui_button", "api_direct", "llm_set", "llm_chat",
+    "ui_button", "api_direct", "llm_set", "llm_chat", "llm_chat_json_op",
 })
 
 
