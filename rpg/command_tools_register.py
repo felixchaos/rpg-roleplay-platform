@@ -320,6 +320,12 @@ def ensure_registered() -> None:
         register_worldbook_tools()
     except Exception as exc:
         print(f"[command_tools_register] worldbook 工具注册失败: {exc}")
+    # task 109b: ui action tools (set_field/click via SSE to frontend)
+    try:
+        from command_tools_ui_action import register_ui_action_tools
+        register_ui_action_tools()
+    except Exception as exc:
+        print(f"[command_tools_register] ui_action 工具注册失败: {exc}")
     # task 68/72 — 给已注册工具打 intent_keywords + side_effect_topics 标签,
     # 供 ui_describe 模糊匹配 + dispatcher 状态变更广播。
     try:

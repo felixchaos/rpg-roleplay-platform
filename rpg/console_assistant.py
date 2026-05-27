@@ -195,6 +195,42 @@ _SYSTEM_PROMPT = """你是 RPG Platform 的侧栏控制台助手。不是游戏 
 
 5. 长尾工具 (rules / MCP / 罕用 query) 在 tools 里看不到 → 用 ui_describe(intent) 查。
 
+6. **当用户在 modal/form 里时, 优先帮他填字段, 不要绕弯重新创建资源。**
+   page_context 里有 ui_atlas 字段, 描述当前页面 + 已打开的 modal/form + 字段 + 按钮。
+   atlas 结构:
+     {
+       page: "platform.saves",          // 当前路由
+       open_modals: ["newgame"],         // 已打开弹窗 id 列表
+       forms: [{                          // 每个 form (modal 或页面级)
+         id: "newgame",
+         title: "基于剧本创建一个新存档",
+         fields: [
+           {key: "存档名称", type: "text", value: "", required: true},
+           {key: "剧本", type: "select", value: "5E 模组容器",
+            options: [{value: "1", label: "我蕾穆丽娜不爱你"}, ...]},
+           ...
+         ],
+         top_actions: [{label: "创建并进入", disabled: false}, ...]
+       }],
+       top_actions: [...]               // 页面级按钮 (form_id="global")
+     }
+
+   操作工具:
+   · ui_set_field(form_id, field_key, value) — 代用户在 input/select/textarea 里输入
+   · ui_click(form_id, action_label) — 代用户点按钮 (destructive, 用户权限模式决定是否要确认)
+   · field_key 用 atlas 里看到的 label 文本 (如 "存档名称"); form_id 用 atlas 里 forms[].id
+
+   典型场景:
+   · 用户开了"新游戏" modal, 说"帮我填存档名 雾港调查, 选我蕾穆丽娜剧本" →
+     先调 ui_set_field("newgame", "存档名称", "雾港调查")
+     再调 ui_set_field("newgame", "剧本", "我蕾穆丽娜不爱你")
+     **不要**调 create_save (这会绕开 modal 流程, 用户填的其他字段全丢)
+   · 用户说"创建并提交" → 调 ui_click("newgame", "创建并进入")
+
+   反例 (别这么干):
+   · modal 开着, 用户说"帮我建一个新存档" → 别直接 create_save, 应该填 modal 字段然后 ui_click
+   · modal 关着, 用户说"帮我建一个新存档" → 才用 create_save 工具
+
 中文, 简洁。"""
 
 
@@ -216,7 +252,63 @@ def build_system_prompt(page_context: dict[str, Any] | None) -> str:
     extra = page_context.get("note")
     if extra:
         pieces.append(f"  · note = {extra}")
+    # task 109b: 注入 ui_atlas — 让 LLM 看到当前页面的结构化 DOM
+    atlas = page_context.get("ui_atlas")
+    if isinstance(atlas, dict) and (atlas.get("forms") or atlas.get("open_modals")):
+        pieces.append(_render_ui_atlas_for_llm(atlas))
     return base + "\n\n" + "\n".join(pieces)
+
+
+def _render_ui_atlas_for_llm(atlas: dict[str, Any]) -> str:
+    """把前端推上来的 ui_atlas snapshot 渲染成 LLM 友好的紧凑文本.
+
+    保留: page / open_modals / forms (id+title+fields+top_actions) / top_actions.
+    去掉: 重复的 selector / 大段 options (truncate 到 10 个).
+    """
+    import json as _json
+    lines: list[str] = ["", "ui_atlas (当前页面结构):"]
+    page = atlas.get("page")
+    page_label = atlas.get("page_label")
+    if page or page_label:
+        lines.append(f"  page = {page or '?'}" + (f" ({page_label})" if page_label else ""))
+    open_modals = atlas.get("open_modals") or []
+    if open_modals:
+        lines.append(f"  open_modals = {open_modals}")
+    forms = atlas.get("forms") or []
+    for f in forms[:5]:  # 最多渲 5 个 form 防 token 爆炸
+        fid = f.get("id") or "?"
+        title = f.get("title") or ""
+        lines.append(f"  form '{fid}' ({title}):")
+        for fld in (f.get("fields") or [])[:20]:
+            key = fld.get("key") or fld.get("label") or "?"
+            ftype = fld.get("type") or "text"
+            val = fld.get("value")
+            req = " *" if fld.get("required") else ""
+            opts = fld.get("options")
+            opt_brief = ""
+            if isinstance(opts, list) and opts:
+                # 仅渲前 10 个 option
+                sample = []
+                for o in opts[:10]:
+                    if isinstance(o, dict):
+                        sample.append(o.get("label") or o.get("value") or "")
+                    else:
+                        sample.append(str(o))
+                more = "" if len(opts) <= 10 else f" …(+{len(opts) - 10})"
+                opt_brief = f" options=[{', '.join(sample)}{more}]"
+            val_str = "" if val in (None, "") else f" = {val!r}"
+            lines.append(f"    · {key}{req} ({ftype}){val_str}{opt_brief}")
+        for act in (f.get("top_actions") or [])[:6]:
+            lbl = act.get("label") or "?"
+            dis = " [disabled]" if act.get("disabled") else ""
+            lines.append(f"    → 按钮 '{lbl}'{dis}")
+    global_actions = atlas.get("top_actions") or []
+    if global_actions:
+        lines.append("  全局可点按钮 (form_id='global'):")
+        for a in global_actions[:10]:
+            lbl = a.get("label") or "?"
+            lines.append(f"    → '{lbl}'")
+    return "\n".join(lines)
 
 
 # ────────────────────────────────────────────────────────────
@@ -258,6 +350,10 @@ def list_assistant_tools() -> list[dict[str, Any]]:
         "ask_user_choice",  # 等同 AskUserQuestion
         "ui_describe",      # 长尾工具发现
         "navigate_to_setting",
+        # task 109b: UI Action — 代用户填表/点按钮 (零代码自动适配新页面)
+        "ui_describe_page",  # 主动看页面结构 (实际 atlas 已在 system prompt)
+        "ui_set_field",      # 填表单字段
+        "ui_click",          # 点按钮 (destructive, default 模式会要求 confirm)
     }
     out: list[dict[str, Any]] = []
     for spec in get_registry().list_for_origin("console_assistant"):
@@ -523,6 +619,26 @@ def _run_llm_loop(
                     })
                     # 中断当前 LLM loop, 等用户在前端选择 → 触发新一轮 chat
                     break
+                # task 109b: ui_set_field / ui_click 工具返回 dict 含
+                # __ui_action__ — 转 SSE event ui_action 推到前端, 前端调
+                # window.__UI_ATLAS.setField / click 真的操作 DOM。
+                _raw = ev.get("result")
+                if isinstance(_raw, dict) and _raw.get("__ui_action__"):
+                    yield _sse_event("ui_action", {
+                        "kind": _raw.get("__ui_action__"),
+                        "form_id": _raw.get("form_id"),
+                        "field_key": _raw.get("field_key"),
+                        "value": _raw.get("value"),
+                        "action_label": _raw.get("action_label"),
+                    })
+                    # 仍 yield 一个 tool_result 给 LLM 看 (ack 字符串),
+                    # 不然 LLM 不知道工具调用结束。
+                    yield _sse_event("tool_result", {
+                        "call_id": ev.get("_call_id") or _new_call_id(),
+                        "ok": True,
+                        "result": _raw.get("ack") or "ui action 已转发前端",
+                    })
+                    continue
                 # task 96/97: USER_TEXT / NEEDS_USER_INPUT 哨兵已废弃 — LLM 现在
                 # 直接调具体工具, 缺 required 字段时 dispatcher 返普通"失败: 缺..."
                 # 错误, LLM 读错误自己调 ask_user_choice 问用户 (Anthropic 2025-11
