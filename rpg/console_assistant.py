@@ -511,6 +511,13 @@ def _run_llm_loop(
                         payload = json.loads(payload_str)
                     except Exception:
                         payload = {"question": payload_str, "options": []}
+                    # task 92: 如果本轮 LLM 一句话都还没说就直接弹问题, 注入一句
+                    # 简短引言告诉用户"助手正在询问",否则用户看到的是空白 + 突然
+                    # 出现一张选择卡, 容易当成"静默失败"。
+                    if not assistant_text_acc.strip():
+                        intro = "好的,先确认一下:"
+                        assistant_text_acc += intro
+                        yield _sse_event("token", {"text": intro})
                     yield _sse_event("user_choice_required", {
                         "call_id": ev.get("_call_id") or _new_call_id(),
                         "tool": "ask_user_choice",
@@ -529,6 +536,11 @@ def _run_llm_loop(
                         payload = json.loads(payload_str)
                     except Exception:
                         payload = {"question": payload_str}
+                    # task 92: 同 USER_CHOICE,空白 + 突然弹输入框 = 用户感觉静默失败
+                    if not assistant_text_acc.strip():
+                        intro = "好的,我需要先问你:"
+                        assistant_text_acc += intro
+                        yield _sse_event("token", {"text": intro})
                     yield _sse_event("user_text_required", {
                         "call_id": ev.get("_call_id") or _new_call_id(),
                         "tool": "ask_user_text",
@@ -547,6 +559,16 @@ def _run_llm_loop(
                     except Exception:
                         payload = {"question": payload_str, "options": []}
                     options = payload.get("options") or []
+                    # task 92: 空白回应 + 突然弹卡 = 用户感觉助手没反应。注入一句开场。
+                    if not assistant_text_acc.strip():
+                        action_id = payload.get("action_id") or ""
+                        intro = (
+                            f"好的,要执行 {action_id} 还差几项信息,先确认一下:"
+                            if action_id else
+                            "好的,我需要先确认几个细节:"
+                        )
+                        assistant_text_acc += intro
+                        yield _sse_event("token", {"text": intro})
                     # 有 options 走选择框, 没有走文本框 — 同一个机制两种渲染
                     if options:
                         yield _sse_event("user_choice_required", {
