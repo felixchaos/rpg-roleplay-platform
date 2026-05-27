@@ -82,7 +82,13 @@ def _t_create_save(user_id: int, args: dict) -> str:
             pass
         sid = (save or {}).get("id") or "?"
         stitle = (save or {}).get("title") or title or "新存档"
-        return f"save 创建: id={sid} title={stitle!r} script={script_id}"
+        # task 112: 工具结果带强 hint, 让 LLM 不要在用户说"最新/刚才创建的"时
+        # 还问选择 — 答案就是这个 sid。
+        return (
+            f"save 创建: id={sid} title={stitle!r} script={script_id}. "
+            f"提示: 这是用户当前会话里最新创建的存档, 用户说"
+            f"'最新的'/'刚才创建的'/'上面这个'都指 id={sid}, 不要再让用户选。"
+        )
     except ValueError as exc:
         return f"失败 (权限): {exc}"
     except Exception as exc:
@@ -97,28 +103,37 @@ def _t_list_my_saves(user_id: int, args: dict) -> str:
         with connect() as db:
             if script_id:
                 rows = db.execute(
-                    "select id, title, script_id, updated_at "
+                    "select id, title, script_id, updated_at, created_at "
                     "from game_saves where user_id = %s and script_id = %s "
                     "order by updated_at desc limit 50",
                     (user_id, int(script_id)),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "select id, title, script_id, updated_at "
+                    "select id, title, script_id, updated_at, created_at "
                     "from game_saves where user_id = %s "
                     "order by updated_at desc limit 50",
                     (user_id,),
                 ).fetchall()
         if not rows:
             return "(无存档)"
-        lines = [f"共 {len(rows)} 个存档:"]
-        for r in rows[:20]:
+        # task 112: 排序明示 + 时间 + "最新"标记, 让 LLM 不需再问"哪个最新"
+        lines = [
+            f"共 {len(rows)} 个存档 (按 updated_at desc 倒序排, **第 1 个就是最新的**):"
+        ]
+        for i, r in enumerate(rows[:20]):
+            ts = r.get("updated_at") or r.get("created_at")
+            ts_str = ts.isoformat() if hasattr(ts, "isoformat") else (str(ts) if ts else "")
+            tag = " **[最新]**" if i == 0 else ""
             lines.append(
                 f"  · id={r['id']} title={r.get('title') or '(无标题)'} "
-                f"script={r.get('script_id')}"
+                f"script={r.get('script_id')} updated_at={ts_str}{tag}"
             )
         if len(rows) > 20:
             lines.append(f"  ...(还有 {len(rows) - 20} 个)")
+        lines.append(
+            "提示: 用户说'最新的'/'刚才创建的'/'上面那个' → 用第 1 行的 id, 不要让用户选。"
+        )
         return "\n".join(lines)
     except Exception as exc:
         return f"失败: {type(exc).__name__}: {exc}"
