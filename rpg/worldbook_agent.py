@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Optional
 
 
 @dataclass
@@ -80,6 +80,7 @@ def consult(
     script_id: int,
     query: str,
     *,
+    save_id: int | None = None,
     current_phase: str = "",
     current_time: str = "",
     jump_to_phase: str = "",
@@ -90,6 +91,9 @@ def consult(
     参数:
       script_id      — 当前剧本 id
       query          — 玩家原话 + GM 内部检索关键词
+      save_id        — 当前 save id (可选)。提供时启用 overlay merge view:
+                       从剧本 worldbook_entries 中排除被 retirement 覆盖的条目,
+                       并把 save 级 addition overlay 也加入候选。
       current_phase  — state.world.timeline.current_phase 当前故事阶段
       current_time   — state.world.time
       jump_to_phase  — 用户大幅时间跳跃的目标 phase
@@ -147,21 +151,26 @@ def consult(
                 result.sources.append("chapter_facts")
 
             # 4) Worldbook entries: 高 priority + key 命中
+            # 如果提供了 save_id，使用 merge view（剔除 retirement、加入 addition overlay）
             scan_blob = " ".join([query or "", current_phase or "", current_time or "",
                                   (anchor.get("time_label") if anchor else "") or ""])
-            wb_rows = db.execute(
-                """select title, content, keys, priority from worldbook_entries
-                   where script_id=%s and enabled=true
-                   order by priority desc, id asc limit 30""",
-                (script_id,),
-            ).fetchall()
+            if save_id:
+                candidates = load_effective_worldbook_for_save(script_id, save_id, db=db)
+            else:
+                wb_rows = db.execute(
+                    """select id, title, content, keys, priority from worldbook_entries
+                       where script_id=%s and enabled=true
+                       order by priority desc, id asc limit 30""",
+                    (script_id,),
+                ).fetchall()
+                candidates = [dict(r) for r in wb_rows or []]
             picks = []
-            for r in wb_rows or []:
+            for r in candidates:
                 pri = int(r.get("priority") or 50)
                 keys = r.get("keys") or []
                 hit = pri >= 90 or any(isinstance(k, str) and k and k in scan_blob for k in keys)
                 if hit:
-                    picks.append(dict(r))
+                    picks.append(r)
                 if len(picks) >= 5:
                     break
             result.worldbook_entries = picks
@@ -281,4 +290,81 @@ def _anchor_from_row(r: dict) -> dict[str, Any]:
     }
 
 
-__all__ = ["consult", "WorldbookResult"]
+def load_effective_worldbook_for_save(
+    script_id: int,
+    save_id: int,
+    *,
+    db=None,
+) -> list[dict[str, Any]]:
+    """返回 save 级"有效世界书"候选列表（最多 30 条，用于 consult 的 picks 筛选）。
+
+    Merge 逻辑:
+      1. 拉 worldbook_entries (script 级，enabled=true)
+      2. 拉 save_worldbook_overlays (本 save 的 retirement 和 addition)
+      3. 从 script entries 中排除掉被 retirement 覆盖的条目
+      4. 把 addition overlay 追加到候选（same priority/keys 字段结构）
+      5. 按 priority desc 排序，返回前 30 条
+
+    db 参数：如果已有 DB 连接（consult 内部调用）就复用；否则自己建连接。
+    """
+    def _run(db_) -> list[dict[str, Any]]:
+        # 1) script 级基础 entries
+        script_rows = db_.execute(
+            """select id, title, content, keys, priority from worldbook_entries
+               where script_id = %s and enabled = true
+               order by priority desc, id asc limit 50""",
+            (script_id,),
+        ).fetchall() or []
+
+        # 2) overlay rows for this save
+        overlay_rows = db_.execute(
+            """select id, kind, title, content, keys, priority,
+                      retired_entry_id, introduced_turn
+               from save_worldbook_overlays
+               where save_id = %s
+               order by id asc""",
+            (save_id,),
+        ).fetchall() or []
+
+        # 3) 收集 retired_entry_id 集合
+        retired_ids: set[int] = set()
+        additions: list[dict[str, Any]] = []
+        for ov in overlay_rows:
+            ov = dict(ov)
+            if ov["kind"] == "retirement" and ov.get("retired_entry_id"):
+                retired_ids.add(int(ov["retired_entry_id"]))
+            elif ov["kind"] == "addition":
+                additions.append({
+                    "id": None,          # addition 没有 worldbook_entries.id
+                    "overlay_id": ov["id"],
+                    "title": ov.get("title") or "",
+                    "content": ov.get("content") or "",
+                    "keys": ov.get("keys") or [],
+                    "priority": int(ov.get("priority") or 50),
+                    "_source": "addition",
+                })
+
+        # 4) 过滤掉 retired 的 script entries
+        filtered = []
+        for r in script_rows:
+            r = dict(r)
+            if int(r["id"]) not in retired_ids:
+                r["_source"] = "script"
+                filtered.append(r)
+
+        # 5) 合并 addition overlay
+        candidates = filtered + additions
+        # 按 priority desc 重排，保留前 30
+        candidates.sort(key=lambda x: int(x.get("priority") or 50), reverse=True)
+        return candidates[:30]
+
+    if db is not None:
+        return _run(db)
+
+    from platform_app.db import connect, init_db
+    init_db()
+    with connect() as conn:
+        return _run(conn)
+
+
+__all__ = ["consult", "WorldbookResult", "load_effective_worldbook_for_save"]
