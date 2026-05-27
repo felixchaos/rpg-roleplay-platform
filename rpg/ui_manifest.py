@@ -118,7 +118,7 @@ _TAG_TABLE: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 
 
 def apply_tags() -> None:
-    """对已注册的 ToolSpec 注入 intent_keywords / side_effect_topics。
+    """对已注册的 ToolSpec 注入 intent_keywords / side_effect_topics / input_examples。
     没有标签的工具不变 (仍可见,但 ui_describe 不会主动推它)。"""
     reg = get_registry()
     for name, (kw, topics) in _TAG_TABLE.items():
@@ -127,6 +127,60 @@ def apply_tags() -> None:
             continue
         if not spec.intent_keywords and not spec.side_effect_topics:
             reg.replace(dc_replace(spec, intent_keywords=kw, side_effect_topics=topics))
+    # task 98: 给关键工具加 input_examples (Anthropic 2025-11 advanced tool use)
+    # 实验数据: 72% → 90% 复杂参数准确率。
+    for name, examples in _INPUT_EXAMPLES.items():
+        spec = reg.get(name)
+        if spec is None or spec.input_examples:
+            continue
+        reg.replace(dc_replace(spec, input_examples=tuple(examples)))
+
+
+# task 98: 给最常用工具配 2-3 个具体调用样本。
+_INPUT_EXAMPLES: dict[str, list[dict[str, Any]]] = {
+    "create_character_card": [
+        {"name": "晓星", "summary": "开朗元气、自来熟", "identity": "女高中生穿越者"},
+        {"name": "蓝魅", "summary": "冷静腹黑、谋略型", "identity": "流亡贵族"},
+        {"name": "测试角色", "summary": "傲娇内向", "identity": "失忆剑士"},
+    ],
+    "create_persona": [
+        {"name": "晓卡", "summary": "穿越者视角玩家", "role": "现代穿越来的高中生"},
+    ],
+    "create_save": [
+        {"script_id": 9803, "title": "主线第一周目"},
+        {"script_id": 9803, "title": "重温柏林段", "persona_id": 46},
+    ],
+    "generate_character_card_draft": [
+        {"brief": "20 岁女法师, 流亡贵族", "kind": "user"},
+        {"brief": "薇瑟帝国郡主, 源血脉者, 前世记忆", "kind": "user", "script_id": 9803},
+    ],
+    "refine_character_card_draft": [
+        {"previous_draft": {"name": "晓星", "personality": "开朗"},
+         "feedback": "再傲娇一点, 增加冷淡气质"},
+    ],
+    "ask_user_choice": [
+        {"question": "给新角色取个什么名字?",
+         "options": ["晓星", "阿狸", "凌儿", "蓝魅"],
+         "allow_free_text": True},
+        {"question": "性格偏哪种?",
+         "options": ["开朗元气", "冷静腹黑", "傲娇内向", "温柔治愈"],
+         "allow_free_text": True,
+         "context": "影响后续 generate_character_card_draft 的 brief"},
+    ],
+    "select_model": [
+        {"api_id": "vertex_ai", "model": "gemini-3.5-flash"},
+        {"api_id": "anthropic", "model": "claude-opus-4-7"},
+    ],
+    "set_preference": [
+        {"key": "ui.theme", "value": "dark"},
+        {"key": "chat.default_model_kind", "value": "vertex_ai"},
+    ],
+    "activate_save": [{"save_id": 13735}],
+    "delete_save": [{"save_id": 13744}],
+    "rename_save": [{"save_id": 13735, "title": "周目二存档"}],
+    "delete_character_card": [{"card_id": 306}],
+    "delete_persona": [{"persona_id": 46}],
+}
 
 
 # ────────────────────────────────────────────────────────────

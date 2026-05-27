@@ -71,14 +71,31 @@ class ToolSpec:
     # side_effect_topics: 工具成功后要广播的 state-event topic (用于 SSE → 前端订阅 → 各页面自动刷新)。
     intent_keywords: tuple[str, ...] = ()
     side_effect_topics: tuple[str, ...] = ()
+    # task 98: Anthropic 2025-11 advanced tool use — input_examples 给 LLM 看几个
+    # 具体调用样本,72% → 90% 准确率 (官方实验). 每个 example 是 args dict。
+    input_examples: tuple[dict[str, Any], ...] = ()
 
     def to_anthropic_tool(self) -> dict[str, Any]:
-        """转换为 Anthropic tool_use schema。"""
-        return {
+        """转换为 Anthropic tool_use schema。
+        examples 注入到 description 末尾, 兼容所有 backend (Anthropic 原生支持
+        input_examples 字段;Gemini/OpenAI 没有但能从 description 学。
+        )"""
+        desc = self.description
+        if self.input_examples:
+            import json as _json
+            lines = ["", "示例调用:"]
+            for ex in self.input_examples[:3]:
+                lines.append(f"  {_json.dumps(ex, ensure_ascii=False)}")
+            desc = desc + "\n" + "\n".join(lines)
+        out: dict[str, Any] = {
             "name": self.name,
-            "description": self.description,
+            "description": desc,
             "input_schema": self.input_schema,
         }
+        # Anthropic 原生 input_examples 字段也带上 (其他 backend 会忽略不报错)
+        if self.input_examples:
+            out["input_examples"] = list(self.input_examples)
+        return out
 
 
 @dataclass
@@ -274,7 +291,22 @@ class ToolDispatcher:
                 "rate_limited",
                 f"user_id={env.user_id} 每秒工具调用数超 {MAX_CALLS_PER_USER_PER_SECOND}",
             )
-        # 8) trace 内去重 (同 trace 同 tool+args 只执行一次)
+        # task 97: 8) required 字段检查 — 缺字段返友好错误,LLM 读了自己调 ask_user_choice。
+        # 之前用 NEEDS_USER_INPUT 字符串哨兵 + ui_invoke 包装,现在 native tool_use 直接
+        # 返错误。注意"友好": 列出具体哪些字段缺,LLM 才能针对性问。
+        required = (spec.input_schema or {}).get("required") or []
+        missing = []
+        for fld in required:
+            v = env.args.get(fld)
+            if v is None or (isinstance(v, str) and not v.strip()) or (isinstance(v, (list, dict)) and len(v) == 0):
+                missing.append(fld)
+        if missing:
+            raise DispatchError(
+                "missing_required",
+                f"工具 {env.tool} 缺必填字段: {', '.join(missing)}. "
+                f"请用 ask_user_choice 让用户选 (给 3-4 个候选 + allow_free_text=true)。",
+            )
+        # 9) trace 内去重 (同 trace 同 tool+args 只执行一次)
         if env.trace_id:
             sig = (env.tool, _stable_json(env.args))
             seen = self._trace_seen.setdefault(env.trace_id, set())

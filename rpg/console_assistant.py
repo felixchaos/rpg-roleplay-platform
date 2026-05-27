@@ -169,99 +169,33 @@ def reset_all_conversations() -> None:
 # ────────────────────────────────────────────────────────────
 
 
-_SYSTEM_PROMPT = """你是 RPG Platform 的「侧栏控制台助手」。不是游戏 GM, 不写故事、不推剧情。
-帮用户管理平台资源 (存档/角色卡/persona/剧本/设置/MCP) — 所有 UI 按钮都能用工具操作。
+_SYSTEM_PROMPT = """你是 RPG Platform 的侧栏控制台助手。不是游戏 GM, 不写故事、不推剧情。
+帮用户管理平台资源 (存档/角色卡/persona/剧本/设置/MCP)。
 
-你只有 4 把工具:
+工具都在 tools 列表里, description 写满了细节和示例 — 直接用。
+看到用户意图就调对应的工具, 不要绕弯。
 
-  · ui_describe(intent, page?)     — 按用户原话查可用 action, 返候选 + 参数表
-  · ui_invoke(action_id, args)     — 执行 action; 缺 required 时系统会自动弹窗问用户, 你不用判断
-  · ask_user_choice(q, options[])  — 主动问用户在 2-6 个选项里选 (前端渲按钮)
-  · ask_user_text(q, placeholder?) — 主动问用户输入文本 (前端渲输入框)
+几条硬规则:
 
-(若用户明确说"打开/跳到 XX 页",通过 ui_invoke 调 navigate_to_setting action。
- "查看 / 列出 / 看看"绝不是导航,请用 list_* action。)
+1. 需要用户在 2-6 个选项里做选择, 用 ask_user_choice (options + allow_free_text=true)。
+   不要在文本里裸列 "1. xxx 2. yyy" 让用户打字回复 — 用结构化选项卡。
 
-────────────────────────────────────────────────
-唯一工作流 (适用所有意图)
-────────────────────────────────────────────────
+2. **禁止自己编造 required 字段的值**。用户没说就先问,不要"代用户决定"。
+   比如用户说"创建一个角色 测试-轻量",你只知道 name,不知道 summary 和 identity →
+   **必须先调 ask_user_choice** 给候选 + 自由输入,而不是自己脑补 "summary=测试用"
+   "identity=测试角色" 这种垃圾数据直接 create_character_card。
+   如果你真的调了缺字段的工具, dispatcher 会返 "失败: 缺必填字段 X",
+   读到后立刻 ask_user_choice。
 
-1. 用户说一件事 → 调 ui_describe(intent="他原话里的关键词")
-2. 看候选 action 卡片 → 选 1 个最匹配的 action_id
-3. 把已知信息填进 args, 调 ui_invoke(action_id, args)
-4. 如果 ui_invoke 返 "NEEDS_USER_INPUT: ..." → 表示缺字段, 前端会自动弹询问框,
-   用户答完触发新一轮, 你接着填好 args 再 ui_invoke
-5. 如果 ui_invoke 返 "失败: ..." → 解释原因, 必要时问用户怎么改
-6. 成功 → 一句话告诉用户做完了 (前端会自动刷新对应页面)
+3. "查看 / 列出 / 看看" → 直接调 list_* 工具把结果展在对话里, 不要 navigate。
+   navigate_to_setting 只在用户明说"打开/跳到 XX 页"时用。
 
-不要凭直觉直接调子工具。
-不要在文本里裸列 1/2/3 让用户打字回复 (改用 ask_user_choice)。
-不要编 ID / 名字 / 选项 — 不知道就 ui_describe(intent="list") 先查。
+4. "建角色卡" 是平台资产 (create_character_card), 跟"改剧情里玩家名"完全不同 —
+   后者是 save 内字段, 助手不管, 告诉用户去 Game Console 用 /set。
 
-────────────────────────────────────────────────
-效率铁律: 一次 ui_describe + 一次 ui_invoke + 一句话总结 (硬要求)
-────────────────────────────────────────────────
-**ui_describe 一轮只调一次,用用户原话当 intent**。如果第一次返回了候选,
-就**直接挑最匹配的 action_id 调 ui_invoke**,不要反复改 intent 再 describe。
-如果 ui_describe 返回 0 个匹配, **直接告诉用户找不到对应 action 让他换个说法**,
-不要重新猜词再 describe。
+5. 长尾工具 (rules / MCP / 罕用 query) 在 tools 里看不到 → 用 ui_describe(intent) 查。
 
-完整工作流 (每条用户消息最多 3 个工具调用):
-  1. ui_describe(intent=用户原话)      ← 最多 1 次
-  2. ui_invoke(action_id, args)        ← 最多 1 次
-  3. (可选) ask_user_choice 或最终文本回复
-工具调用预算只有 ~10 步, 别浪费在反复查询同一件事上。
-
-────────────────────────────────────────────────
-关键规则: 缺字段时先 ask_user_choice, 不要让系统弹空白输入框
-────────────────────────────────────────────────
-对于 name / title / brief 这种自由文本必填字段, **你应该在调 ui_invoke 之前**
-先用 ask_user_choice 给出 3-4 个**你 LLM 想象生成的具体候选** + allow_free_text=true,
-不要直接调 ui_invoke 让系统返 NEEDS_USER_INPUT 弹空输入框。
-例:
-  · 缺 name (建角色卡) → ask_user_choice(
-      question="给这位新角色取个名字?",
-      options=["晓星", "阿狸", "凌儿", "蓝魅"],
-      allow_free_text=true,
-      context="点一个或自由输入"
-    )
-  · 缺 title (新存档) → ask_user_choice(
-      question="给这个存档起个标题?",
-      options=["主线第一周目", "支线探索", "重温柏林段", "自由实验"],
-      allow_free_text=true
-    )
-  · 缺 brief (生成角色草稿) → ask_user_choice 给 4 个角色概念候选
-
-只有当你确实没法想出合理选项 (例如要求精确数字 ID) 时, 才让 ui_invoke 走系统兜底。
-
-────────────────────────────────────────────────
-list vs navigate (用户口语 → 工具 — 强约束)
-────────────────────────────────────────────────
-**"查看 / 列出 / 看看 / 我有哪些 / 显示" → 永远调 ui_invoke 对应的 list_* action**
-  (例: list_my_saves / list_scripts / list_my_character_cards / list_my_personas /
-   list_available_models / list_modules / list_my_credentials_meta ...)
-  → 这样结果直接展示在 chat 里,用户不离开当前页面,体验最快。
-
-**仅在用户明确说"打开/跳到/进入 XX 页面"才用 navigate_to_setting**。
-"查看模型" ≠ "进入模型设置页"。"看看存档" ≠ "去存档页"。
-
-────────────────────────────────────────────────
-区分 "建卡 / 建存档 / 改剧情人物" (高频混淆)
-────────────────────────────────────────────────
-
-  · "创建用户角色" / "建角色卡" / "做一张人设"
-    → action: create_character_card (跨 save 复用的人设资产)
-  · "新建存档" / "新开一局" / "开局"
-    → action: create_save (一个游戏会话, 需要 script_id)
-  · "把剧情里玩家叫 XX" / "改我的角色名"
-    → 这是 save 内剧情字段, 不属于平台资源, 助手不管 —
-       告诉用户去 Game Console 用 /set 命令
-
-────────────────────────────────────────────────
-写作风格
-────────────────────────────────────────────────
-中文, 简洁, 一次最多 4 个工具调用。不复述工具名给用户看 (用户只关心结果)。
-"""
+中文, 简洁。"""
 
 
 def build_system_prompt(page_context: dict[str, Any] | None) -> str:
@@ -293,28 +227,53 @@ def build_system_prompt(page_context: dict[str, Any] | None) -> str:
 def list_assistant_tools() -> list[dict[str, Any]]:
     """返回 console_assistant 给 LLM 看的工具列表。
 
-    task 68/72 改造: 不再把 52 把子工具全暴露 — 只暴露 5 把通用工具,
-    让 LLM 用 ui_describe 动态发现 + ui_invoke 执行。这样:
-      · LLM context 不会因为巨大的 tool list 而被污染
-      · 加新功能不需要改 LLM prompt — 只需在 ui_manifest 加 keyword
-      · 缺字段必问由 ui_invoke 的 NEEDS_USER_INPUT 哨兵机制层强制
+    task 96 重构: 对齐 Anthropic 2025-11 advanced tool use 模式。
+    之前 ui_invoke 是个 polyfill 包装层 (LLM 调 ui_invoke(action_id, args) 而非直调),
+    多嵌套一次。Anthropic 的 Tool Search Tool 是把命中工具直接展开成 first-class,
+    LLM 用 native tool_use 直接调。Gemini/GPT 也是 native function-calling, 同款。
 
-    白名单的 4 把:
-      ui_describe / ui_invoke      — 发现 + 执行 (核心)
-      ask_user_choice / ask_user_text — 在 ui_invoke 缺参数时主动问用户
-    (navigate_to_setting 仍可用,但只能经 ui_invoke 调,不直接暴露给 LLM —
-     避免 LLM 把 "查看 X" 误解为 "跳到 X 页"。)
+    新策略:
+      · 直接暴露 ~14 个 PRIMARY 工具 给 LLM (description 写满细节 + input_examples)
+      · 保留 ui_describe (改名 ui_search) 作为长尾工具发现 (rules / MCP / 罕用 query)
+      · ask_user_question (原 ask_user_choice 改名对齐 Anthropic AskUserQuestion)
+      · 删 ui_invoke / ask_user_text / NEEDS_USER_INPUT 哨兵
+
+    LLM 直接 tool_use create_character_card({name, summary, identity}) — 缺 required
+    schema 自然报错 → LLM 读 error → 调 ask_user_question 问用户。无哨兵无嵌套。
     """
     from chat_tool_router import DISPATCHER_SENTINEL
-    ALLOWED = {"ui_describe", "ui_invoke", "ask_user_choice", "ask_user_text"}
+    PRIMARY = {
+        # 角色卡
+        "create_character_card", "list_my_character_cards", "delete_character_card",
+        "generate_character_card_draft", "refine_character_card_draft",
+        # persona
+        "create_persona", "list_my_personas", "delete_persona",
+        # 存档
+        "create_save", "list_my_saves", "activate_save", "delete_save", "rename_save",
+        # 剧本
+        "list_scripts",
+        # 设置
+        "select_model", "set_preference", "list_available_models",
+        # 询问 + 长尾发现 + 导航
+        "ask_user_choice",  # 等同 AskUserQuestion
+        "ui_describe",      # 长尾工具发现
+        "navigate_to_setting",
+    }
     out: list[dict[str, Any]] = []
     for spec in get_registry().list_for_origin("console_assistant"):
-        if spec.name not in ALLOWED:
+        if spec.name not in PRIMARY:
             continue
         out.append({
             "server_id": DISPATCHER_SENTINEL,
             "name": spec.name,
-            "description": spec.description,
+            "description": spec.description + (
+                "\n示例:\n" + "\n".join(
+                    f"  调用 {spec.name}(" + ", ".join(
+                        f"{k}={repr(v)}" for k, v in ex.items()
+                    ) + ")"
+                    for ex in (spec.input_examples or ())[:2]
+                ) if spec.input_examples else ""
+            ),
             "schema": spec.input_schema,
             "destructive": spec.destructive,
             "scope": spec.scope,
@@ -564,63 +523,10 @@ def _run_llm_loop(
                     })
                     # 中断当前 LLM loop, 等用户在前端选择 → 触发新一轮 chat
                     break
-                # task 74: ask_user_text 哨兵 — 同 USER_CHOICE 但走文本输入框,
-                # 用于姓名/描述这类不适合做选项的字段。
-                if isinstance(result_str, str) and result_str.startswith("USER_TEXT:"):
-                    payload_str = result_str[len("USER_TEXT:"):]
-                    try:
-                        payload = json.loads(payload_str)
-                    except Exception:
-                        payload = {"question": payload_str}
-                    # task 92: 同 USER_CHOICE,空白 + 突然弹输入框 = 用户感觉静默失败
-                    if not assistant_text_acc.strip():
-                        intro = "好的,我需要先问你:"
-                        assistant_text_acc += intro
-                        yield _sse_event("token", {"text": intro})
-                    yield _sse_event("user_text_required", {
-                        "call_id": ev.get("_call_id") or _new_call_id(),
-                        "tool": "ask_user_text",
-                        "question": payload.get("question", ""),
-                        "placeholder": payload.get("placeholder", ""),
-                        "context": payload.get("context", ""),
-                    })
-                    break
-                # task 68/72: ui_invoke 缺 required 字段 → NEEDS_USER_INPUT 哨兵。
-                # 机制层强制 "先问后做",LLM 不用判断该不该问。
-                # next_field 给前端用,前端弹合适的选择/文本框。
-                if isinstance(result_str, str) and result_str.startswith("NEEDS_USER_INPUT:"):
-                    payload_str = result_str[len("NEEDS_USER_INPUT:"):]
-                    try:
-                        payload = json.loads(payload_str)
-                    except Exception:
-                        payload = {"question": payload_str, "options": []}
-                    options = payload.get("options") or []
-                    # task 92: 空白回应 + 突然弹卡 = 用户感觉助手没反应。注入一句开场。
-                    if not assistant_text_acc.strip():
-                        action_id = payload.get("action_id") or ""
-                        intro = (
-                            f"好的,要执行 {action_id} 还差几项信息,先确认一下:"
-                            if action_id else
-                            "好的,我需要先确认几个细节:"
-                        )
-                        assistant_text_acc += intro
-                        yield _sse_event("token", {"text": intro})
-                    # task 94: 统一渲染成 choice 卡 (即使 options 为空) —
-                    # 用户始终看到"自由输入"按钮 + 可能的预填选项,UX 一致。
-                    # 之前没 options 时走 user_text_required 渲一个孤零零的输入提示,
-                    # 用户问:"为什么强制补全而不是给选择框???"
-                    yield _sse_event("user_choice_required", {
-                        "call_id": ev.get("_call_id") or _new_call_id(),
-                        "tool": "ui_invoke",
-                        "question": payload.get("question", ""),
-                        "options": options,  # 可空数组,前端会只显示"自由输入"
-                        "allow_free_text": True,  # 永远允许
-                        "context": payload.get("context", ""),
-                        "action_id": payload.get("action_id"),
-                        "next_field": payload.get("next_field"),
-                        "placeholder": payload.get("placeholder", ""),
-                    })
-                    break
+                # task 96/97: USER_TEXT / NEEDS_USER_INPUT 哨兵已废弃 — LLM 现在
+                # 直接调具体工具, 缺 required 字段时 dispatcher 返普通"失败: 缺..."
+                # 错误, LLM 读错误自己调 ask_user_choice 问用户 (Anthropic 2025-11
+                # advanced tool use 原生模式)。
                 yield _sse_event("tool_result", {
                     "call_id": ev.get("_call_id") or _new_call_id(),
                     "ok": bool(ev.get("ok")),

@@ -153,28 +153,37 @@ CASES: list[dict[str, Any]] = [
 
 
 def evaluate(events: list[dict]) -> dict[str, Any]:
-    """invoked_action 只算"真正执行的" — NEEDS_USER_INPUT 不算执行 (是机制层退回)。
-    把每个 ui_invoke 的 tool_call 配对 tool_result, 看 result 是否 NEEDS_USER_INPUT。"""
-    pending_action: str | None = None  # 最近一次 ui_invoke call_id 的 action_id
-    pending_call_id: str | None = None
+    """task 96: LLM 现在直调具体工具 (create_character_card / list_my_saves ...),
+    不再嵌套 ui_invoke。本评估读 native tool_call 事件,捕获"最后一次成功调的
+    业务工具"作为 invoked_action。失败 (dispatcher 报 missing_required 等) 不算。
+    ask_user_choice / user_choice_required → asked=True。
+    """
+    pending_action: str | None = None
     invoked_action: str | None = None
     asked = False
     error: str | None = None
     text_acc = ""
+    META = {"ui_describe", "ask_user_choice", "ask_user_text", "navigate_to_setting"}
     for ev in events:
         e = ev.get("event")
         d = ev.get("data") or {}
-        if e == "tool_call" and isinstance(d, dict) and d.get("tool") == "ui_invoke":
-            pending_action = (d.get("args") or {}).get("action_id")
-            pending_call_id = d.get("call_id")
+        if e == "tool_call" and isinstance(d, dict):
+            tool = d.get("tool") or ""
+            if tool in META:
+                if tool == "ask_user_choice":
+                    asked = True
+                pending_action = None  # meta tools 不算 invoked
+            elif tool:
+                pending_action = tool
         elif e == "tool_result" and isinstance(d, dict) and pending_action:
             res = d.get("result") or ""
-            if isinstance(res, str) and "NEEDS_USER_INPUT" not in res \
-                    and not res.startswith("失败"):
-                # 真正执行成功的 action
+            ok_flag = d.get("ok")
+            success = (ok_flag is True) or (
+                isinstance(res, str) and not res.startswith("失败")
+            )
+            if success:
                 invoked_action = pending_action
             pending_action = None
-            pending_call_id = None
         elif e in ("user_choice_required", "user_text_required"):
             asked = True
         elif e == "error":

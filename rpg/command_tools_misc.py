@@ -583,12 +583,14 @@ def register_misc_tools() -> None:
         ("delete_persona", "永久删除 persona",
          {"type": "object", "properties": {"persona_id": {"type": "integer"}}, "required": ["persona_id"]},
          _t_delete_persona, _USER_DEST, True),
-        ("create_character_card", "新建一张角色卡 (可复用人设)。summary 写入 personality 字段。",
+        ("create_character_card",
+         "新建一张可复用角色卡片 (跨 save 共享)。summary 写入 personality 字段。\n"
+         "**不是** 改剧情内玩家名 (那是 set_player_name, 助手不管)。",
          {"type": "object",
           "properties": {
-              "name": {"type": "string"},
-              "summary": {"type": "string", "description": "性格简介,写入 personality 字段"},
-              "identity": {"type": "string", "description": "身份背景 (1 句)"},
+              "name": {"type": "string", "description": "角色名 (例: 晓星 / 阿狸)"},
+              "summary": {"type": "string", "description": "性格简介 (例: 开朗元气 / 冷静腹黑)"},
+              "identity": {"type": "string", "description": "身份背景 1 句话 (例: 女高中生穿越者)"},
               "appearance": {"type": "string", "description": "外貌特征"},
               "speech_style": {"type": "string", "description": "说话方式"},
               "current_status": {"type": "string", "description": "当前状态"},
@@ -597,7 +599,9 @@ def register_misc_tools() -> None:
               "sample_dialogue": {"type": "array", "items": {"type": "string"}},
               "tags": {"type": "array", "items": {"type": "string"}},
           },
-          "required": ["name"]},
+          # task 97: required 升级 — name/summary/identity 是语义必须,不只是 DB 不空。
+          # 之前用 _HUMAN_REQUIRED 在 ui_invoke 检, 现在 schema-level 由 dispatcher 检。
+          "required": ["name", "summary", "identity"]},
          _t_create_character_card, _USER_MUTATE, False),  # 跨 save,LLM 禁
         ("delete_character_card", "永久删除角色卡",
          {"type": "object", "properties": {"card_id": {"type": "integer"}}, "required": ["card_id"]},
@@ -990,31 +994,9 @@ def register_misc_tools() -> None:
     if not registry.has(describe_spec.name):
         registry.register(describe_spec)
 
-    invoke_spec = ToolSpec(
-        name="ui_invoke",
-        description=(
-            "执行某个 UI action (角色卡创建/存档操作/剧本导入 等)。"
-            "args.action_id 从 ui_describe 拿;args.args 是该 action 的参数字典。"
-            "如果缺 required 字段, 会自动返回 NEEDS_USER_INPUT 让前端弹询问框 — "
-            "你不需要事先判断, 大胆调即可, 缺字段时系统会提示用户。"
-        ),
-        input_schema={
-            "type": "object",
-            "properties": {
-                "action_id": {"type": "string",
-                              "description": "ui_describe 返回的 action id"},
-                "args": {"type": "object",
-                         "description": "该 action 的参数 (key-value)。能填多少填多少, 缺的系统会问。"},
-            },
-            "required": ["action_id"],
-        },
-        executor=_ui_invoke,
-        scope="user",
-        origins=_CHOICE_ORIGINS,
-        destructive=False,  # 子工具的 destructive 已在 dispatch 时检查
-    )
-    if not registry.has(invoke_spec.name):
-        registry.register(invoke_spec)
+    # task 96: ui_invoke 已删除。LLM 直接调具体工具 (create_character_card etc.)
+    # 通过 native tool_use,缺 required 字段时 dispatcher 返普通错误,
+    # LLM 读错误自己调 ask_user_choice。与 Anthropic Tool Search Tool 模式一致。
 
 
 __all__ = ["register_misc_tools"]
