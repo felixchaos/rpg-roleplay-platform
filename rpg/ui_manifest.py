@@ -163,27 +163,50 @@ def human_required(action_id: str) -> list[str]:
 
 
 # Field-level 友好提示 + 候选值 (供 NEEDS_USER_INPUT 渲染选择/输入框)
+# task 94: 所有 free-text 字段都给一些建议选项,允许"自由输入"兜底。
+# 这样用户永远看到的是"选 + 自由输入"的双轨卡片,而不是孤零零的文本框。
 _FIELD_HINTS: dict[str, dict[str, Any]] = {
     "summary": {
-        "question": "请提供角色的性格概述",
+        "question": "角色性格是什么样?",
         "options": ["开朗元气", "冷静腹黑", "傲娇内向", "温柔治愈"],
         "free_text_ok": True,
     },
     "identity": {
-        "question": "请提供角色的身份背景 (1 句话即可)",
-        "placeholder": "如:女高中生穿越者 / 流亡贵族 / 失忆的剑士",
+        "question": "角色的身份背景?",
+        "options": ["女高中生穿越者", "流亡贵族", "失忆剑士", "落魄世家继承人"],
+        "free_text_ok": True,
+        "placeholder": "或自由描述",
+    },
+    "name": {
+        "question": "给角色取个名字?",
+        "options": ["晓星", "阿狸", "凌儿", "蓝魅"],
+        "free_text_ok": True,
+        "placeholder": "或自定义",
     },
     "title": {
-        "question": "起个名字 / 标题",
-        "placeholder": "例:存档名 或 角色名",
+        "question": "起个标题?",
+        "options": ["主线第一周目", "支线探索", "重温段落", "自由实验"],
+        "free_text_ok": True,
+        "placeholder": "或自定义",
     },
     "script_id": {
         "question": "选哪个剧本?",
         "placeholder": "剧本 ID (先调 list_scripts 看选项)",
     },
     "feedback": {
-        "question": "你想怎么改?",
-        "placeholder": "如: 再傲娇点 / 把年龄改成 17 / 加一段过往秘密",
+        "question": "想怎么改?",
+        "options": ["再傲娇一点", "年龄改小一些", "加一段秘密往事", "性格更冷淡"],
+        "free_text_ok": True,
+        "placeholder": "或自由描述",
+    },
+    "brief": {
+        "question": "用一句话描述这个新角色?",
+        "options": ["20 岁女法师,流亡贵族",
+                    "15 岁少年剑士,失忆穿越者",
+                    "中性向魔女,无限魔力",
+                    "薇瑟帝国郡主,源血脉者"],
+        "free_text_ok": True,
+        "placeholder": "或自由描述",
     },
 }
 
