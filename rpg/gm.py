@@ -12,9 +12,9 @@ from typing import Any
 BASE = Path(__file__).parent
 SA_FILE = BASE / "vertex_sa.json"          # 服务账户 JSON（gitignored）
 
-# world.json 在初始化时加载一次
-with open(BASE / "indexes" / "world.json", "r", encoding="utf-8") as _f:
-    _WORLD = json.load(_f)
+# task 80: 通用底座 — 不再 eager 加载 indexes/world.json (那是柏林书的固化设定)。
+# world 信息通过 _world_section_for_active_content() 从当前 script 的
+# worldbook_entries 动态拉取。任何书都走同一条路径。
 
 # ── System Prompt 模板 ────────────────────────────────────────────────────────
 # 通用 RPG 底座：不再硬编码《我蕾穆丽娜不爱你》故事背景。世界简介由
@@ -1180,49 +1180,36 @@ class GameMaster:
         return _SYSTEM_BASE.replace("{world_section}", world_section)
 
     def _world_section_for_active_content(self) -> str:
-        """根据当前 state 的 content_pack 返回一段『世界 / 模组背景』。
-        默认 Berlin 老存档仍读 indexes/world.json；新剧本 / 模组 / freeform 不注入硬编码。
+        """task 80: 通用 RPG 底座 — 从当前 script 的 worldbook_entries 拉高优先级
+        条目作为世界背景注入,不再硬编码柏林宇宙。
+
+        retrieve_context 已经在动态上下文层注入 worldbook,这里 system prompt
+        只需把 priority>=90 的"基础设定"短文本固化一次,让 GM 整轮对话都有
+        稳定的世界观参考(不依赖 RAG 命中)。
         """
         state = getattr(self, "_active_state", None)
-        is_default_novel = False
+        if state is None:
+            return ""
         try:
-            if state is not None:
-                from context_providers import resolve_content_pack
-                manifest = resolve_content_pack(state) or {}
-                kind = manifest.get("kind") or ""
-                mid = str(manifest.get("id") or "")
-                # 默认 Berlin novel 标识：legacy save 或 __legacy_novel__
-                if kind == "novel_adaptation" and (
-                    mid in ("__legacy_novel__", "__legacy_save__") or mid.startswith("script:")
-                ):
-                    # 仅当 state 含柏林 token（防止误注入到其他剧本）
-                    data = getattr(state, "data", {}) or {}
-                    world_time = str((data.get("world") or {}).get("time") or "")
-                    location = str((data.get("player") or {}).get("current_location") or "")
-                    if any(tok in (world_time + location) for tok in (
-                        "柏林", "图卢兹", "哈布斯堡", "蛇信", "薇瑟", "扎兹巴鲁姆", "蕾穆丽娜",
-                    )):
-                        is_default_novel = True
-        except Exception:
-            is_default_novel = False
-        if not is_default_novel:
-            return ""  # 通用底座：world 信息走 context_providers / dynamic context
-        try:
-            world_brief = (
-                f"{_WORLD['setting']}\n"
-                f"当前局势：{_WORLD['current_situation']}"
-            )
-            berlin = _WORLD.get("current_berlin") or {}
-            parts: list[str] = []
-            if world_brief.strip():
-                parts.append("# 世界背景\n" + world_brief)
-            if berlin:
-                berlin_brief = (
-                    f"氛围：{berlin.get('atmosphere','')}\n"
-                    f"风险等级：{berlin.get('risk_level','')}\n"
-                    f"在场势力：\n" + "\n".join(f"  · {p}" for p in (berlin.get('power_presence') or []))
-                )
-                parts.append("# 当前柏林局势\n" + berlin_brief)
+            from context_providers import resolve_content_pack
+            from platform_app.db import connect as _connect
+            manifest = resolve_content_pack(state) or {}
+            mid = str(manifest.get("id") or "")
+            if not mid.startswith("script:"):
+                return ""
+            script_id = int(mid.split(":", 1)[1])
+            with _connect() as db:
+                rows = db.execute(
+                    "select title, content from worldbook_entries "
+                    "where script_id=%s and enabled=true and priority>=90 "
+                    "order by priority desc, id asc limit 3",
+                    (script_id,),
+                ).fetchall() or []
+            if not rows:
+                return ""
+            parts = []
+            for r in rows:
+                parts.append(f"# {r['title']}\n{(r['content'] or '')[:1200]}")
             return "\n\n".join(parts)
         except Exception:
             return ""

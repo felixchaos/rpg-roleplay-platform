@@ -211,34 +211,17 @@ def load_chapter_facts(chapter_min: int | None, chapter_max: int | None, limit: 
 
 
 def _is_default_mumu_script(script_id: int | None) -> bool:
-    """task 42：判断 script_id 是不是 MuMuAINovel 默认剧本。
-    .webnovel/*.db + indexes/*.json + indexes/characters.json 这些 SQLite/JSON 文件都是
-    给默认柏林剧本用的；新导入剧本不应该读它们。
+    """task 80: 通用底座 — 不再区分"默认 MuMu 剧本"。
 
-    判定：scripts 行的 source_path 以 'rpg/indexes' 开头（workspace.ensure_default 写死的）
-    或 title == BASE_TITLE《我蕾穆丽娜不爱你》。任何 DB/查询异常一律保守返回 False
-    （宁可丢一点默认上下文也不能让导入剧本被污染）。
+    历史: 早期 .webnovel/*.db + indexes/*.json 是为单一柏林剧本预生成的本地数据,
+    现在所有剧本数据都该在 postgres (chapter_facts + document_chunks +
+    worldbook_entries + character_cards),按 script_id scope 严格隔离。
+    特殊化"默认剧本"会让任何巧合命中 title 的脚本走到本地 sqlite 路径,
+    引入污染。统一返 False = 永远走 postgres 路径。
+
+    保留函数签名是为了下游 callers 兼容。
     """
-    if not script_id:
-        return False
-    try:
-        from platform_app.db import connect as _connect
-        with _connect() as db:
-            row = db.execute(
-                "select title, source_path from scripts where id = %s",
-                (int(script_id),),
-            ).fetchone()
-        if not row:
-            return False
-        src = str(row.get("source_path") or "")
-        title = str(row.get("title") or "")
-        if src.startswith("rpg/indexes"):
-            return True
-        if title == "《我蕾穆丽娜不爱你》":
-            return True
-        return False
-    except Exception:
-        return False
+    return False
 
 
 # task 42：postgres chapter_facts.story_time_label 在过去的索引器跑里被错误地
@@ -364,7 +347,102 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
     else:
         char_names = []  # 留作 verbose 日志兼容
 
+    # task 80/82: 通用底座 — 任何剧本都从 postgres 拉 worldbook + 角色卡, 不再依赖
+    # indexes/*.json (那是单一书的固化资源)。
+    if script_id:
+        try:
+            wb_text = _load_worldbook_for_retrieval(script_id, user_input, top_k=3)
+            if wb_text:
+                parts.append("=== 世界设定 (worldbook) ===\n" + wb_text)
+        except Exception:
+            pass
+        try:
+            cc_text = _load_script_character_cards(script_id, user_input, top_k=5)
+            if cc_text:
+                parts.append("=== 相关角色 ===\n" + cc_text)
+        except Exception:
+            pass
+
     if verbose:
-        print(f"[召回] 默认剧本：{is_default} 角色：{char_names if is_default else '(跳过)'}  BM25片段：{len(snippets)}条")
+        print(f"[召回] script_id={script_id}  BM25片段：{len(snippets)}条")
 
     return "\n\n".join(parts)
+
+
+def _load_worldbook_for_retrieval(script_id: int, query: str, top_k: int = 3) -> str:
+    """通用 worldbook 注入:
+    - 高优先级 entries (priority>=80) 永远进 (世界观 / 设定集类)
+    - 其它按 key 匹配命中 + priority 排序拿 top_k
+    """
+    from platform_app.db import connect as _connect
+    try:
+        with _connect() as db:
+            high = db.execute(
+                "select title, content from worldbook_entries "
+                "where script_id=%s and enabled=true and priority>=80 "
+                "order by priority desc, id asc limit 5",
+                (script_id,),
+            ).fetchall() or []
+            # 按 key 匹配
+            matched = []
+            if query and query.strip() and query != "开场":
+                matched = db.execute(
+                    "select title, content, keys, priority from worldbook_entries "
+                    "where script_id=%s and enabled=true and priority<80 "
+                    "order by priority desc, id asc limit 20",
+                    (script_id,),
+                ).fetchall() or []
+            picks: list[dict] = list(high)
+            seen_titles = {r["title"] for r in picks}
+            for r in matched:
+                if r["title"] in seen_titles:
+                    continue
+                keys = r.get("keys") or []
+                hit = any(isinstance(k, str) and k and k in query for k in keys)
+                if hit:
+                    picks.append(r)
+                    seen_titles.add(r["title"])
+                if len(picks) >= top_k + len(high):
+                    break
+        if not picks:
+            return ""
+        lines = []
+        for r in picks:
+            lines.append(f"【{r['title']}】\n{(r['content'] or '')[:500]}")
+        return "\n\n".join(lines)
+    except Exception:
+        return ""
+
+
+def _load_script_character_cards(script_id: int, query: str, top_k: int = 5) -> str:
+    """通用角色卡注入: 取该剧本的 character_cards, 命中 query 的优先, 否则取前 N。"""
+    from platform_app.db import connect as _connect
+    try:
+        with _connect() as db:
+            rows = db.execute(
+                "select name, identity, personality, appearance "
+                "from character_cards where script_id=%s and enabled=true "
+                "order by priority desc, id asc limit 20",
+                (script_id,),
+            ).fetchall() or []
+        if not rows:
+            return ""
+        # 命中 query 的优先
+        scored = []
+        for r in rows:
+            name = (r.get("name") or "")
+            score = 5 if (name and name in (query or "")) else 0
+            scored.append((score, r))
+        scored.sort(key=lambda x: -x[0])
+        picks = [r for _, r in scored[:top_k]]
+        lines = []
+        for r in picks:
+            bits = [r.get("name", "")]
+            if r.get("identity"):
+                bits.append(r["identity"])
+            if r.get("personality"):
+                bits.append(r["personality"][:120])
+            lines.append("· " + " | ".join(b for b in bits if b))
+        return "\n".join(lines)
+    except Exception:
+        return ""

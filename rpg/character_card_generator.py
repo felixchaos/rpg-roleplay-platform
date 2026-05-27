@@ -300,11 +300,9 @@ def _layer1_reality_slice(
 
 
 _BASELINE_PHASE_TOKENS: dict[str, list[str]] = {
-    # 简单的 baseline 互斥词表,实际 phase 标签会因剧本不同而变化,
-    # 但保留这几条对当前 demo 剧本 (我蕾穆丽娜) 有用。
-    "柏林": ["月球", "穆蕾莉娅", "Reverie"],
-    "月球": ["柏林", "纳粹", "盖世太保"],
-    "火星": ["柏林", "月球", "Reverie"],
+    # task 80: 通用底座 — 不再硬编码特定剧本的 phase 互斥词。
+    # 后续可改成: 从 worldbook_entries (priority>=80) 抽取每条 entry 的 title 作为
+    # phase 候选, entry 之间作为互斥关系 — 这样任何剧本导入后都能动态拿到 phase 词表。
 }
 
 

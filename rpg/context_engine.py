@@ -479,14 +479,17 @@ def _pending_jump_warning_text(state) -> str:
 
 
 def _load_characters(script_id: int | None = None, book_id: int | None = None) -> dict[str, Any]:
-    """优先从 DB character_cards 取，失败/为空时回退 JSON。"""
-    if script_id or book_id:
+    """task 80: 通用底座 — 优先从 DB character_cards 取。
+    传了 script_id/book_id 表示指定剧本: DB 空就返 {} (不要回退 JSON,
+    那是单一书的固化数据,会污染其它剧本)。
+    完全没传 (legacy 兼容): 才允许 JSON 回退。
+    """
+    scoped = bool(script_id or book_id)
+    if scoped:
         try:
-            db_chars = _load_characters_db(script_id=script_id, book_id=book_id)
-            if db_chars:
-                return db_chars
+            return _load_characters_db(script_id=script_id, book_id=book_id) or {}
         except Exception:
-            pass
+            return {}
     try:
         with open(CHAR_IDX, "r", encoding="utf-8") as f:
             return json.load(f).get("characters", {})
@@ -562,9 +565,27 @@ def _load_worldbook_db(script_id: int | None, book_id: int | None) -> list[dict[
     return out
 
 
-def _load_world() -> dict[str, Any]:
-    with open(WORLD_IDX, "r", encoding="utf-8") as f:
-        return json.load(f)
+def _load_world(script_id: int | None = None) -> dict[str, Any]:
+    """task 80: 传 script_id → 从 worldbook_entries 取该剧本设定; 不传 → 老的 JSON 兼容。"""
+    if script_id:
+        try:
+            from platform_app.db import connect as _connect
+            with _connect() as db:
+                rows = db.execute(
+                    "select title, content from worldbook_entries "
+                    "where script_id=%s and enabled=true order by priority desc, id asc",
+                    (int(script_id),),
+                ).fetchall()
+            if rows:
+                return {"entries": [{"title": r["title"], "content": r["content"]} for r in rows]}
+        except Exception:
+            pass
+        return {}
+    try:
+        with open(WORLD_IDX, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 def _story_rules() -> str:

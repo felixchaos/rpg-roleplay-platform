@@ -35,8 +35,9 @@ def sync_script_knowledge(user_id: int, script_id: int, *, rebuild: bool = False
     LLM pass. A later refinement pass can overwrite the same rows.
     """
     init_db()
-    chars = _load_characters()
-    world = _load_world()
+    # task 80: 优先按 script_id scope 拉,新书 DB 空则 chars/world 为 {} (不再回退柏林 JSON 污染)
+    chars = _load_characters(script_id=script_id) or {}
+    world = _load_world(script_id=script_id) or {}
     summaries = _load_summaries()
     known_names = _known_names(chars)
     known_locations = _known_locations(world)
@@ -1077,24 +1078,80 @@ def _fact_from_chapter(
 
 
 def _worldbook_seed_entries(world: dict[str, Any]) -> list[dict[str, Any]]:
+    """task 80: 通用底座 — 支持两种 world 形态:
+    1) 新格式 (script_id scoped): {"entries": [{title, content}, ...]} — 直接落库,
+       keys 由 _auto_extract_keys 通用提取(命名实体/高频专名)。
+    2) 老格式 (柏林书 indexes/world.json): {setting, current_situation, key_factions,
+       key_concepts, current_berlin} — 保留兼容路径,但不再硬编码 keys。
+    """
     entries: list[dict[str, Any]] = []
+    # 路径 1: 新格式 (worldbook_entries 已经存在的剧本)
+    if isinstance(world.get("entries"), list):
+        for i, ent in enumerate(world["entries"]):
+            title = (ent.get("title") or "").strip() or f"设定条目 {i+1}"
+            content = (ent.get("content") or "").strip()
+            if not content:
+                continue
+            # 通用 keys: title 拆词 + content 抽专名
+            keys = _auto_extract_keys(title, content)
+            entries.append(_wb(title, keys, 90, content))
+        return entries
+    # 路径 2: 老格式 兼容 (柏林 indexes/world.json)
     if world.get("setting"):
-        entries.append(_wb("世界基础设定", ["世界", "设定", "薇瑟", "地球"], 100, world["setting"]))
+        entries.append(_wb("世界基础设定", _auto_extract_keys("世界基础设定", world["setting"]),
+                           100, world["setting"]))
     if world.get("current_situation"):
-        entries.append(_wb("当前局势", ["局势", "图卢兹", "柏林", "战报"], 96, world["current_situation"]))
+        entries.append(_wb("当前局势", _auto_extract_keys("当前局势", world["current_situation"]),
+                           96, world["current_situation"]))
     for title, content in (world.get("key_factions") or {}).items():
         entries.append(_wb(title, _keys_for(title, content), 82, content))
     for title, content in (world.get("key_concepts") or {}).items():
         entries.append(_wb(title, _keys_for(title, content), 78, content))
-    current_berlin = world.get("current_berlin") or {}
-    if current_berlin:
-        content = "\n".join([
-            f"氛围：{current_berlin.get('atmosphere', '')}",
-            f"风险等级：{current_berlin.get('risk_level', '')}",
-            "在场势力：" + "；".join(current_berlin.get("power_presence") or []),
-        ])
-        entries.append(_wb("柏林战时暗流", ["柏林", "战役", "大西洋", "特洛耶德"], 92, content))
     return entries
+
+
+def _auto_extract_keys(title: str, content: str, max_keys: int = 20) -> list[str]:
+    """task 80: 通用命名实体/关键词提取 — 不依赖任何特定书的词表。
+
+    简单启发式:
+    - 提取所有 markdown **加粗** 内容
+    - 提取所有 3-8 个汉字 (或 2-4 个英文词) 的"专名样本": 出现 >=2 次,
+      非常见动词/形容词,看起来像专名 (大写首字母 / 中间无标点)
+    - 加上 title 本身作为 key
+    """
+    keys: list[str] = []
+    if title:
+        keys.append(title)
+    # 加粗词
+    for m in re.findall(r"\*\*([^*\n]{2,12})\*\*", content):
+        if m and m not in keys:
+            keys.append(m)
+    # 中文专名: 连续 2-6 个汉字, 出现 >=2 次
+    from collections import Counter
+    cn_terms = re.findall(r"[一-鿿]{2,6}", content)
+    counter = Counter(cn_terms)
+    # 过滤一些极常见的非专名 (通用,任何书都适用)
+    stop_words = {"的", "了", "和", "是", "在", "就是", "我们", "他们", "这个", "那个",
+                  "什么", "怎么", "可以", "因为", "所以", "但是", "不过", "如果", "已经",
+                  "应该", "需要", "可能", "或者", "甚至", "于是", "其中"}
+    for term, freq in counter.most_common(60):
+        if freq < 2 or term in stop_words:
+            continue
+        if len(term) >= 2 and term not in keys:
+            keys.append(term)
+        if len(keys) >= max_keys:
+            break
+    # 英文专名 (大写开头, 长度 >=3, 出现 >=2)
+    en_terms = re.findall(r"\b[A-Z][A-Za-z]{2,}\b", content)
+    en_counter = Counter(en_terms)
+    for term, freq in en_counter.most_common(20):
+        if freq < 2:
+            continue
+        if term not in keys:
+            keys.append(term)
+        if len(keys) >= max_keys:
+            break
+    return keys[:max_keys]
 
 
 def _wb(title: str, keys: list[str], priority: int, content: str) -> dict[str, Any]:
