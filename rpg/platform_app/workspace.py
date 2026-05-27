@@ -192,6 +192,16 @@ def _build_initial_snapshot(
                     name = str(c.get("name") or "").strip()
                     role = str(c.get("identity") or "").strip()
                     background = str(c.get("appearance") or c.get("personality") or "").strip()
+                    # task 114: LLM 经常用 script_card_id 传了 user_card_id (混淆),
+                    # 找不到时自动兜底到 user_card 表 — 因为 user_card 跨 script 共享,
+                    # 给空白 player 强过让用户开局看到 "—"。
+                    if not name:
+                        from . import user_cards as _ucards
+                        uc = _ucards.get_user_card(user_id, cid_int) or {}
+                        if uc:
+                            name = str(uc.get("name") or "").strip()
+                            role = str(uc.get("identity") or "").strip()
+                            background = str(uc.get("appearance") or uc.get("personality") or "").strip()
             except Exception:
                 pass
 

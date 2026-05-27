@@ -328,18 +328,33 @@ def register_saves_tools() -> None:
         ToolSpec(
             name="create_save",
             description=(
-                "基于 script_id 创建一个新存档。可选传入 title / script_card_id / "
-                "persona_id 在初始 state 应用角色卡。不会改动其它已有存档。"
-                "等价于 UI 上的「新建存档」操作。"
+                "基于 script_id 创建一个新存档。等价于 UI 的「新建存档」。"
+                "\n\n**角色卡 id 三选一 (重要,不要混淆):**"
+                "\n  · `user_card_id`: 用户自创跨剧本通用角色卡 (来自 list_my_character_cards),"
+                "比如玩家自己捏的「杭雁菱」「晓卡」。**推荐优先用这个**, 因为它跨 script 共享。"
+                "\n  · `persona_id`: 用户的玩家 persona (来自 list_my_personas)。"
+                "\n  · `script_card_id`: 剧本内 NPC 卡 (剧本作者预设的, e.g. 伊奈帆/娅赛兰)。"
+                "玩家把某 NPC 当主角时才用。**不是**用户自创的角色卡。"
+                "\n\n如果不确定, **先调 list_my_character_cards 看 user_card_id 列表**, 然后用 user_card_id。"
+                "如果 3 个都不传, 系统会自动用用户的默认 persona 兜底。"
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "script_id": {"type": "integer"},
                     "title": {"type": "string"},
-                    "script_card_id": {"type": "integer"},
-                    "persona_id": {"type": "integer"},
-                    "user_card_id": {"type": "integer"},
+                    "user_card_id": {
+                        "type": "integer",
+                        "description": "用户自创角色卡 id (推荐, 来自 list_my_character_cards)",
+                    },
+                    "persona_id": {
+                        "type": "integer",
+                        "description": "用户的玩家 persona id (来自 list_my_personas)",
+                    },
+                    "script_card_id": {
+                        "type": "integer",
+                        "description": "剧本内 NPC 卡 id (剧本作者预设的, 不是用户自创的)",
+                    },
                 },
                 "required": ["script_id"],
             },
