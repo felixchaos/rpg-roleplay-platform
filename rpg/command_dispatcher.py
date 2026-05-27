@@ -115,7 +115,9 @@ class ToolCallEnvelope:
 @dataclass
 class ToolResult:
     ok: bool
-    result: str = ""
+    # task 109b: result 现在可以是 str (正常工具) 或 dict (UI action 工具, 含
+    # __ui_action__ 字段, 由 console_assistant 主循环识别后转 SSE event)
+    result: Any = ""
     error: str | None = None
     audit: dict[str, Any] | None = None
 
@@ -337,7 +339,13 @@ class ToolDispatcher:
                 text = spec.executor(env.user_id, env.script_id, env.args, state)
             else:  # save
                 text = spec.executor(state, env.args)
-            ok = not text.startswith(("失败", "ERROR", "拒绝"))
+            # task 109b: 工具可以返 dict (e.g. ui_set_field 返 __ui_action__ payload);
+            # dict 默认 ok=True, 由上层 console_assistant 解释 __ui_action__ 转 SSE
+            if isinstance(text, dict):
+                ok = True
+            else:
+                # str 走老路径: "失败/ERROR/拒绝" 前缀判失败
+                ok = not str(text).startswith(("失败", "ERROR", "拒绝"))
             return self._record(env, spec, ok=ok, result=text)
         except Exception as exc:
             return self._record(
@@ -346,7 +354,17 @@ class ToolDispatcher:
             )
 
     def _record(self, env: ToolCallEnvelope, spec: ToolSpec,
-                *, ok: bool, result: str = "", error: str | None = None) -> ToolResult:
+                *, ok: bool, result: Any = "", error: str | None = None) -> ToolResult:
+        # task 109b: result 可以是 dict (UI action) 或 str (普通工具); audit 字段只存
+        # 字符串版本以防 jsonb / log 长度问题
+        if isinstance(result, dict):
+            import json as _json
+            try:
+                audit_result = _json.dumps(result, ensure_ascii=False)[:240]
+            except Exception:
+                audit_result = str(result)[:240]
+        else:
+            audit_result = (str(result) if result is not None else "")[:240]
         audit = {
             "ts": env.ts,
             "kind": "tool_call",
@@ -359,7 +377,7 @@ class ToolDispatcher:
             "call_id": env.call_id,
             "depth": env.depth,
             "args": env.args,
-            "result": (result or "")[:240],
+            "result": audit_result,
             "error": error,
             "ok": ok,
         }
