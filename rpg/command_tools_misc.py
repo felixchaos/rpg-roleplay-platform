@@ -772,6 +772,8 @@ def register_misc_tools() -> None:
     # ────────────────────────────────────────────────────────────
     _NAV_ORIGINS = frozenset({"console_assistant", "api_direct"})
     _NAV_TARGETS = [
+        # task 110: 跨 SPA 跳到独立游戏 Console — 用户激活存档后想"进入游戏"用这个
+        "game_console",
         # settings 子页
         "settings.preferences",
         "settings.models",

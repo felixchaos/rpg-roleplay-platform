@@ -137,7 +137,13 @@ def _t_activate_save(user_id: int, args: dict) -> str:
             _ui._invalidate_user_cache({"id": int(user_id)})
         except Exception:
             pass
-        return f"激活存档 {save_id} ✓ (active_commit={result.get('active_commit_id', '?')})"
+        # task 110: 激活成功后, 在工具返回里强提示 LLM 必须接着 navigate_to_setting
+        # 跳到 game_console (否则用户停在 Platform 看不到剧本)。
+        return (
+            f"激活存档 {save_id} ✓ (active_commit={result.get('active_commit_id', '?')}). "
+            f"下一步: 如果用户想'进入游戏/开始玩', 必须调 "
+            f"navigate_to_setting(target='game_console', reason='进入游戏') 跳转。"
+        )
     except ValueError as exc:
         return f"失败 (权限): {exc}"
     except Exception as exc:

@@ -189,6 +189,11 @@ _SYSTEM_PROMPT = """你是 RPG Platform 的侧栏控制台助手。不是游戏 
 
 3. "查看 / 列出 / 看看" → 直接调 list_* 工具把结果展在对话里, 不要 navigate。
    navigate_to_setting 只在用户明说"打开/跳到 XX 页"时用。
+   **特例**: 当用户意图是"开始游戏 / 进入游戏 / 玩起来",且你已经成功调
+   activate_save 激活了某存档 → **必须**接着调
+   navigate_to_setting(target="game_console", reason="进入游戏")
+   让前端跳转到 Game Console。否则用户停在 Platform 页看不到剧本开始。
+   不要嘴上说"已进入游戏"但实际只激活了 save 不跳转 — 那是骗用户。
 
 4. "建角色卡" 是平台资产 (create_character_card), 跟"改剧情里玩家名"完全不同 —
    后者是 save 内字段, 助手不管, 告诉用户去 Game Console 用 /set。
