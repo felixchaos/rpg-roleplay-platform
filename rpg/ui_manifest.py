@@ -312,6 +312,10 @@ def ui_describe(user_id: int, args: dict) -> str:
         scored = [(sc, s) for sc, s in scored if sc > 0]
         scored.sort(key=lambda x: (-x[0], x[1].name))
         picks = [s for _, s in scored[:limit]]
+        # task 95: 0 命中也兜底返前 N 个 (按字母序),让 LLM 一次就拿到候选,
+        # 不会因为 matched=0 就反复 retry 不同 intent 浪费 iteration。
+        if not picks:
+            picks = sorted(visible, key=lambda s: s.name)[:limit]
     elif page:
         page_kw = {
             "saves": ["save", "branch"],
