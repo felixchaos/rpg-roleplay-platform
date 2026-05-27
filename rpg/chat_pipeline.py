@@ -653,6 +653,23 @@ async def run_gm_phase(
         etype = event.get("type")
         if etype == "text":
             chunk = event.get("text", "")
+            # task 113 防御: Gemini 3.5 Flash 偶发把 tools schema 当 text echo —
+            # 一旦看到 "default_api:dispatcher__" / 工具 JSON 特征 → 立即放弃本轮
+            # 输出 + 抛 error, 不写回 history 避免污染存档。
+            _accumulated_probe = response + chunk
+            if "default_api:dispatcher__" in _accumulated_probe and \
+               '"name":' in _accumulated_probe and '"description":' in _accumulated_probe:
+                yield ("agent", {
+                    "phase": "gm_schema_echo_detected",
+                    "message": "GM 输出包含工具 schema dump (LLM 故障), 已截停本轮; 请重试。",
+                    "status": "error",
+                    "elapsed_ms": 0,
+                })
+                yield ("token", {"text": "\n\n[助手输出异常,本轮已截停。请重试或换个说法。]"})
+                response = ""  # 清空避免被 persist 写入 history
+                ctx.response = ""
+                ctx.early_return = True
+                return
             response += chunk
             yield ("token", {"text": chunk})
         elif etype == "tool_call":
