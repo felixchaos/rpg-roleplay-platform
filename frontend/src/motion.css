@@ -1,0 +1,397 @@
+/* ============================================================
+   Motion system — Claude-inspired easing & timing
+   ============================================================
+   - entry: 160ms cubic-bezier(0.16, 1, 0.3, 1) (gentle overshoot)
+   - exit:  120ms cubic-bezier(0.4, 0, 1, 1)    (faster in)
+   - hover: 120ms ease
+   - micro: 80ms ease (small state flips)
+
+   Conventions:
+   - All entries have `forwards` so they don't snap back
+   - All transforms are GPU-friendly (transform/opacity only)
+   - Respect prefers-reduced-motion: animations become instant
+============================================================ */
+
+:root {
+  --m-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --m-in:  cubic-bezier(0.4, 0, 1, 1);
+  --m-inout: cubic-bezier(0.4, 0, 0.2, 1);
+  --m-fast: 100ms;
+  --m-base: 160ms;
+  --m-slow: 240ms;
+}
+
+/* ---------------- Keyframes ---------------- */
+@keyframes m-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes m-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes m-pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes m-slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes m-slide-down {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes m-pop-menu {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes m-shimmer {
+  from { background-position: -200px 0; }
+  to   { background-position: 200px 0; }
+}
+@keyframes m-stream-cursor {
+  50% { opacity: 0.2; }
+}
+@keyframes m-stagger {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ---------------- Buttons / micro interactions ---------------- */
+.btn, .iconbtn, .gc-pop-trigger, .gp-tab, .pl-nav-item, .pl-rule-chip,
+.pl-cap-tag.clickable, .gc-attach-item, .gc-cmd-item, .gc-pop-list button,
+.pl-modal-branch, .pl-modal-hero, .seg button {
+  transition:
+    background-color var(--m-fast) var(--m-inout),
+    border-color     var(--m-fast) var(--m-inout),
+    color            var(--m-fast) var(--m-inout),
+    transform        var(--m-fast) var(--m-inout),
+    box-shadow       var(--m-fast) var(--m-inout);
+}
+
+/* gentle hover lift on cards */
+.gc-suggestion, .pl-save-card, .pl-cap, .pl-api-card, .ovr-card, .pl-lib-tile {
+  transition:
+    background-color var(--m-base) var(--m-inout),
+    border-color     var(--m-base) var(--m-inout),
+    transform        var(--m-base) var(--m-out),
+    box-shadow       var(--m-base) var(--m-out);
+}
+.gc-suggestion:hover { transform: translateY(-1px); }
+/* No transform on cards that may contain modals — `position: fixed` becomes
+   `absolute` under a transformed ancestor, causing modals to flicker when the
+   card hover toggles. Use background/shadow feedback instead. */
+.pl-save-card:hover, .pl-cap:hover, .pl-api-card:hover {
+  background-color: var(--panel-2);
+  box-shadow: 0 4px 12px -6px rgba(0, 0, 0, 0.4);
+}
+.pl-lib-tile:hover { transform: translateY(-1px); }
+
+/* primary button press feedback */
+.btn:active:not(:disabled), .gc-chip-btn:active { transform: translateY(1px); }
+
+/* ---------------- Modals (entry transitions) ---------------- */
+/* Modals appear instantly to avoid being stuck in hidden iframes. The inner pop
+   transition is handled via CSS transition + class for graceful entry. */
+.pl-modal-backdrop {
+  opacity: 1;
+  transition: backdrop-filter var(--m-fast) ease;
+}
+.pl-modal {
+  opacity: 1;
+}
+
+/* ---------------- Composer popovers (slash / attach / model / perm) ---------------- */
+.gc-menu {
+  transform-origin: bottom left;
+  animation: m-pop-menu var(--m-fast) var(--m-out) forwards;
+}
+
+/* ---------------- Confirm strip items ---------------- */
+.gc-confirm { animation: m-slide-up var(--m-base) var(--m-out) forwards; }
+.gc-confirm:nth-child(2) { animation-delay: 30ms; }
+.gc-confirm:nth-child(3) { animation-delay: 60ms; }
+.gc-confirm:nth-child(4) { animation-delay: 90ms; }
+
+/* ---------------- Chat messages ---------------- */
+.gc-msg { animation: m-stagger var(--m-base) var(--m-out) forwards; }
+
+/* Run-state steps progressively fade in */
+.gc-run-line-row, .gc-run-card, .gc-run-tl-row {
+  animation: m-slide-up 140ms var(--m-out) forwards;
+}
+.gc-run-line-row:nth-child(2) { animation-delay: 40ms; }
+.gc-run-line-row:nth-child(3) { animation-delay: 80ms; }
+.gc-run-line-row:nth-child(4) { animation-delay: 120ms; }
+.gc-run-line-row:nth-child(5) { animation-delay: 160ms; }
+
+/* ---------------- Right-panel tab swap ---------------- */
+.gp-panel-body { animation: m-fade-in 200ms var(--m-out) forwards; }
+.gp-panel-body > .gp-stack > .gp-section { animation: m-stagger 200ms var(--m-out) forwards; }
+.gp-panel-body > .gp-stack > .gp-section:nth-child(2) { animation-delay: 40ms; }
+.gp-panel-body > .gp-stack > .gp-section:nth-child(3) { animation-delay: 80ms; }
+.gp-panel-body > .gp-stack > .gp-section:nth-child(4) { animation-delay: 120ms; }
+.gp-panel-body > .gp-stack > .gp-section:nth-child(5) { animation-delay: 160ms; }
+
+/* ---------------- Active tab indicator (Claude-style sliding pill) ---------------- */
+.gp-tab.active, .seg button.active, .pl-set-nav button.active {
+  transition:
+    background-color var(--m-base) var(--m-out),
+    color            var(--m-base) var(--m-out);
+}
+
+/* ---------------- Streaming cursor ---------------- */
+.gc-cursor { animation: m-stream-cursor 1.05s steps(2) infinite; }
+
+/* ---------------- Pulsing dot ---------------- */
+.dot.pulse {
+  animation: m-pulse 1.6s ease-out infinite;
+}
+@keyframes m-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(201, 100, 66, 0.5); }
+  70% { box-shadow: 0 0 0 6px rgba(201, 100, 66, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(201, 100, 66, 0); }
+}
+
+/* ---------------- Toggle switch easing (override starter) ---------------- */
+.pl-cap-toggle::after {
+  transition: transform var(--m-base) var(--m-out), background-color var(--m-fast) ease;
+}
+.pl-cap-toggle {
+  transition: background-color var(--m-fast) ease;
+}
+
+/* ---------------- Suggestions stagger ---------------- */
+.gc-suggestion {
+  animation: m-stagger var(--m-base) var(--m-out) forwards;
+  animation-delay: calc(var(--si, 0) * 30ms);
+}
+
+/* ---------------- Sidebar collapse smoothness ---------------- */
+.gc-rail { transition: width var(--m-base) var(--m-inout); }
+
+/* ---------------- Spinner ---------------- */
+.spin { animation: m-spin 1s linear infinite; }
+@keyframes m-spin { to { transform: rotate(360deg); } }
+
+/* ---------------- Branch nodes drag feedback ---------------- */
+.pl-branch-node-bg.dragging {
+  transition: stroke 80ms ease;
+}
+
+/* ---------------- Confidence bar grow ---------------- */
+.pl-confidence-bar { animation: m-bar-grow 360ms var(--m-out) forwards; transform-origin: left center; }
+@keyframes m-bar-grow {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+/* ---------------- Tooltip system (instant, for icon-only buttons) ---------------- */
+[data-tip] {
+  position: relative;
+}
+[data-tip]::before,
+[data-tip]::after {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-2px) scale(0.96);
+  transition: opacity 80ms ease, transform 80ms var(--m-out);
+  transition-delay: 0ms;
+  z-index: 1000;
+}
+[data-tip]::after {
+  content: attr(data-tip);
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-2px) scale(0.96);
+  background: #0e0d0c;
+  color: var(--text);
+  font-size: 11.5px;
+  font-family: var(--font-sans);
+  padding: 4px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.6);
+}
+[data-tip]::before {
+  content: "";
+  width: 6px; height: 6px;
+  bottom: 100%;
+  left: 50%;
+  margin-bottom: 3px;
+  background: #0e0d0c;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  transform: translateX(-50%) translateY(-2px) rotate(45deg) scale(0.96);
+}
+[data-tip]:hover::before,
+[data-tip]:focus-visible::before {
+  transform: translateX(-50%) translateY(0) rotate(45deg) scale(1);
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0) scale(1);
+  transition-delay: 380ms;
+}
+[data-tip]:hover::before,
+[data-tip]:focus-visible::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0) rotate(45deg) scale(1);
+  transition-delay: 380ms;
+}
+/* tip-below: anchor below the trigger (for top-row controls) */
+[data-tip][data-tip-pos="below"]::after {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+[data-tip][data-tip-pos="below"]::before {
+  bottom: auto;
+  top: 100%;
+  margin-top: 3px;
+  margin-bottom: 0;
+  border-right: 0; border-bottom: 0;
+  border-left: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+}
+/* tip-right: for sidebar nav etc */
+[data-tip][data-tip-pos="right"]::after {
+  bottom: 50%;
+  left: calc(100% + 8px);
+  margin-left: 0;
+  transform: translateY(50%) translateX(-2px) scale(0.96);
+}
+[data-tip][data-tip-pos="right"]:hover::after {
+  transform: translateY(50%) translateX(0) scale(1);
+}
+[data-tip][data-tip-pos="right"]::before { display: none; }
+
+/* ---------------- Stronger button hover (visual feedback) ---------------- */
+.iconbtn:hover {
+  background-color: var(--panel-2);
+  color: var(--text);
+  border-color: var(--line-soft);
+}
+.iconbtn:active { transform: scale(0.94); }
+
+.btn:not(.primary):not(.danger):hover {
+  background-color: var(--panel-3);
+}
+.btn.primary:hover {
+  background-color: #b85838;
+  box-shadow: 0 4px 12px -4px rgba(201, 100, 66, 0.5);
+}
+.btn:active:not(:disabled) { transform: scale(0.98); }
+
+/* gentle ripple-ish background fade for menu items */
+.gc-cmd-item, .gc-attach-item, .gc-pop-list button, .pl-nav-item {
+  position: relative;
+}
+
+/* ---------------- Animated segmented control ---------------- */
+.seg {
+  position: relative;
+  display: inline-flex;
+  padding: 2px;
+  background: var(--bg-deep);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+}
+.seg::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: var(--seg-left, 2px);
+  width: var(--seg-width, 0);
+  background: var(--panel-3);
+  border-radius: 4px;
+  transition: left var(--m-base) var(--m-out), width var(--m-base) var(--m-out);
+  z-index: 0;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset;
+}
+.seg button {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 0;
+  white-space: nowrap;
+}
+.seg button.active { background: transparent; }
+
+/* auto-detect button count via :has */
+.seg:has(> button:nth-child(2):last-child) { --seg-count: 2; }
+.seg:has(> button:nth-child(3):last-child) { --seg-count: 3; }
+.seg:has(> button:nth-child(4):last-child) { --seg-count: 4; }
+.seg:has(> button:nth-child(5):last-child) { --seg-count: 5; }
+
+/* 3-item seg sliding indicator via :has */
+.seg:has(button:nth-child(1).active)::before {
+  left: 2px;
+  width: calc((100% - 4px) / var(--seg-count, 3));
+}
+.seg:has(button:nth-child(2).active)::before {
+  left: calc(2px + (100% - 4px) / var(--seg-count, 3));
+  width: calc((100% - 4px) / var(--seg-count, 3));
+}
+.seg:has(button:nth-child(3).active)::before {
+  left: calc(2px + 2 * (100% - 4px) / var(--seg-count, 3));
+  width: calc((100% - 4px) / var(--seg-count, 3));
+}
+.seg:has(button:nth-child(4).active)::before {
+  left: calc(2px + 3 * (100% - 4px) / var(--seg-count, 3));
+  width: calc((100% - 4px) / var(--seg-count, 3));
+}
+.seg:has(button:nth-child(5).active)::before {
+  left: calc(2px + 4 * (100% - 4px) / var(--seg-count, 3));
+  width: calc((100% - 4px) / var(--seg-count, 3));
+}
+
+/* ---------------- Memory mode segment with icons ---------------- */
+.gc-mem-seg button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  justify-content: center;
+}
+.gc-mem-seg button svg {
+  width: 12px; height: 12px;
+  opacity: 0.7;
+}
+.gc-mem-seg button.active svg { opacity: 1; color: var(--accent); }
+.gc-mem-desc {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.5;
+  min-height: 32px;
+}
+.gc-mem-desc strong { color: var(--text-quiet); font-weight: 500; }
+
+/* ---------------- Sidebar nav (Platform) hover with bar ---------------- */
+.pl-nav-item::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 50%;
+  width: 2px; height: 0;
+  background: var(--accent);
+  border-radius: 2px;
+  transform: translateY(-50%);
+  transition: height var(--m-base) var(--m-out);
+}
+.pl-nav-item.active::before { height: 16px; }
+.pl-nav-item { position: relative; }
+
+/* ---------------- Toggle smoother ---------------- */
+.pl-cap-toggle {
+  transition: background-color var(--m-fast) ease;
+}
+.pl-cap-toggle::after {
+  transition: transform var(--m-base) var(--m-out), background-color var(--m-fast) ease;
+}
+
+/* ---------------- Reduced motion ---------------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

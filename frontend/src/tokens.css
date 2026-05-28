@@ -1,0 +1,280 @@
+/* === RPG Roplay design tokens — Claude-inspired warm dark + serif narrative === */
+
+:root {
+  color-scheme: dark;
+
+  /* surfaces */
+  --bg: #1a1817;
+  --bg-deep: #131211;
+  --panel: #211f1d;
+  --panel-2: #282623;
+  --panel-3: #2f2c28;
+  --rail: #1d1b19;
+
+  /* lines */
+  --line: #36322d;
+  --line-soft: #2a2724;
+  --line-strong: #4a4540;
+
+  /* text */
+  --text: #ebe7df;
+  --text-quiet: #c8c2b7;
+  --muted: #968f85;
+  --muted-2: #6b655e;
+  --muted-3: #4d4842;
+
+  /* accents (use SPARINGLY) */
+  --accent: #c96442;
+  --accent-soft: rgba(201, 100, 66, 0.14);
+  --accent-edge: rgba(201, 100, 66, 0.42);
+
+  /* status */
+  --ok: #7eb88e;
+  --ok-soft: rgba(126, 184, 142, 0.12);
+  --warn: #d4b366;
+  --warn-soft: rgba(212, 179, 102, 0.12);
+  --danger: #c8675d;
+  --danger-soft: rgba(200, 103, 93, 0.12);
+  --info: #7aa6c2;
+  --info-soft: rgba(122, 166, 194, 0.12);
+
+  /* type */
+  --font-sans: "Noto Sans SC", ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* density (overridden by Tweaks) */
+  --density: 1;
+  --ui-size: 13.5px;
+  --body-size: 15px;
+  --narrative-size: 16.5px;
+
+  /* spacing scale */
+  --s-1: 4px;
+  --s-2: 6px;
+  --s-3: 8px;
+  --s-4: 12px;
+  --s-5: 16px;
+  --s-6: 20px;
+  --s-7: 24px;
+  --s-8: 32px;
+  --s-9: 48px;
+
+  /* radii */
+  --r-1: 4px;
+  --r-2: 6px;
+  --r-3: 8px;
+
+  /* shadow (very restrained) */
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 1px 1px rgba(0, 0, 0, 0.18);
+  --shadow-2: 0 18px 48px -18px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.25);
+  --shadow-3: 0 24px 72px -24px rgba(0, 0, 0, 0.72), 0 4px 12px rgba(0, 0, 0, 0.32);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: var(--ui-size)/1.55 var(--font-sans);
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* form resets */
+button, input, textarea, select {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+button {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+}
+input, textarea, select {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: 8px 10px;
+  outline: 0;
+}
+input:focus, textarea:focus, select:focus {
+  border-color: var(--line-strong);
+  background: var(--panel-2);
+}
+textarea { resize: vertical; }
+
+/* link */
+a { color: var(--text-quiet); text-decoration: none; border-bottom: 1px solid var(--line); padding-bottom: 1px; }
+a:hover { color: var(--text); border-bottom-color: var(--line-strong); }
+
+/* scrollbars */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-soft); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--line); background-clip: padding-box; }
+* { scrollbar-color: var(--line-soft) transparent; scrollbar-width: thin; }
+
+/* utility classes */
+.mono { font-family: var(--font-mono); font-feature-settings: "ss01", "tnum"; }
+.serif { font-family: var(--font-serif); }
+.muted { color: var(--muted); }
+.muted-2 { color: var(--muted-2); }
+.ok { color: var(--ok); }
+.warn { color: var(--warn); }
+.danger { color: var(--danger); }
+.accent { color: var(--accent); }
+.nowrap { white-space: nowrap; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* pill / tag */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11.5px;
+  background: transparent;
+}
+.pill.solid { background: var(--panel-2); }
+.pill.ok { color: var(--ok); border-color: rgba(126, 184, 142, 0.32); background: var(--ok-soft); }
+.pill.warn { color: var(--warn); border-color: rgba(212, 179, 102, 0.32); background: var(--warn-soft); }
+.pill.danger { color: var(--danger); border-color: rgba(200, 103, 93, 0.32); background: var(--danger-soft); }
+.pill.info { color: var(--info); border-color: rgba(122, 166, 194, 0.32); background: var(--info-soft); }
+.pill.accent { color: var(--accent); border-color: var(--accent-edge); background: var(--accent-soft); }
+
+/* dot indicator */
+.dot { display: inline-block; width: 6px; height: 6px; border-radius: 999px; background: var(--muted-2); }
+.dot.ok { background: var(--ok); }
+.dot.warn { background: var(--warn); }
+.dot.danger { background: var(--danger); }
+.dot.accent { background: var(--accent); }
+.dot.pulse { box-shadow: 0 0 0 0 currentColor; animation: pulse 1.6s infinite; }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(201, 100, 66, 0.5); }
+  100% { box-shadow: 0 0 0 8px rgba(201, 100, 66, 0); }
+}
+
+/* iconbtn — icon-only button */
+.iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: var(--r-2);
+  color: var(--muted);
+  border: 1px solid transparent;
+  vertical-align: middle;
+}
+.iconbtn:hover { color: var(--text); background: var(--panel-2); border-color: var(--line-soft); }
+.iconbtn.active { color: var(--text); background: var(--panel-3); border-color: var(--line); }
+.iconbtn svg { width: 16px; height: 16px; }
+
+/* btn */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--r-2);
+  color: var(--text-quiet);
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  font-size: 12.5px;
+  /* task 101: 防止按钮在挤压式 flex 容器里被压成 1 字宽 → 文字竖排。
+     白底真相: nowrap + flex-shrink:0 是按钮在任何 flex 容器里的基本要求。 */
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.btn:hover { color: var(--text); border-color: var(--line-strong); background: var(--panel-3); }
+.btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+.btn.ghost { background: transparent; border-color: transparent; }
+.btn.ghost:hover { background: var(--panel-2); border-color: var(--line-soft); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff8f3; }
+.btn.primary:hover { background: #b85838; border-color: #b85838; }
+.btn.danger { color: var(--danger); border-color: rgba(200, 103, 93, 0.32); background: var(--danger-soft); }
+
+/* segmented */
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  background: var(--bg-deep);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+}
+.seg button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: nowrap;
+}
+.seg button:hover { color: var(--text); }
+.seg button.active { background: var(--panel-2); color: var(--text); }
+
+/* kbd */
+.kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--muted);
+  background: var(--bg-deep);
+}
+
+/* empty-state line (no card) */
+.empty-line {
+  padding: 14px 0;
+  color: var(--muted-2);
+  font-size: 12.5px;
+  border-top: 1px dashed var(--line-soft);
+  border-bottom: 1px dashed var(--line-soft);
+  text-align: center;
+}
+
+/* section header */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: 12px;
+}
+.section-head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+/* focus ring */
+:focus-visible { outline: 1px solid var(--accent-edge); outline-offset: 2px; }

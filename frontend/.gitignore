@@ -1,0 +1,13 @@
+node_modules/
+.DS_Store
+*.log
+.tmp/
+.cache/
+dist/
+.thumbnail
+screenshots/
+uploads/
+
+# Playwright CLI 缓存 + audit output
+.playwright-cli/
+output/
