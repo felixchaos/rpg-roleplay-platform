@@ -2097,8 +2097,36 @@ function AuditLogView() {
 }
 
 function DeploySection() {
-  const save = useAutoSave("部署", "settings");
+  // 部署配置通过 POST /api/admin/deployment-config 存 app_config 表。
+  // 监听地址 / CORS 等网络级配置需要重启才能生效，UI 有明确提示。
+  const timerRef = React.useRef(null);
+  const pendingRef = React.useRef({});
+  const saveDeployConfig = React.useCallback((patch) => {
+    Object.assign(pendingRef.current, patch);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(async () => {
+      const batch = pendingRef.current;
+      pendingRef.current = {};
+      try {
+        await window.api.admin.saveDeploymentConfig(batch);
+        window.toast?.("部署配置已保存", { kind: "ok", duration: 2000 });
+      } catch (e) {
+        window.toast?.("保存失败", { kind: "danger", detail: e?.message || "网络错误", duration: 3000 });
+      }
+    }, 300);
+  }, []);
+
+  const [listenAddr, setListenAddr] = useStatePL("127.0.0.1:7860");
+  const [corsOrigins, setCorsOrigins] = useStatePL("http://127.0.0.1:5173,http://localhost:3000");
+  const [uploadLimit, setUploadLimit] = useStatePL("12 MB");
   const [smtpEnabled, setSmtpEnabled] = useStatePL(false);
+  const [smtpHost, setSmtpHost] = useStatePL("smtp.example.com");
+  const [smtpPort, setSmtpPort] = useStatePL("587");
+  const [smtpTls, setSmtpTls] = useStatePL("starttls");
+  const [smtpUser, setSmtpUser] = useStatePL("noreply@example.com");
+  const [smtpPass, setSmtpPass] = useStatePL("");
+  const [smtpFromName, setSmtpFromName] = useStatePL("RPG Roleplay");
+  const [smtpFromEmail, setSmtpFromEmail] = useStatePL("noreply@rpgroleplay.app");
   const [smtpTesting, setSmtpTesting] = useStatePL(false);
   // task 49：原"最近测试：12 分钟前"是硬编码。改成本地状态：只有用户实际
   // 点过"发送测试邮件"按钮后才记录时间戳并显示，否则显示"尚未测试"。
@@ -2108,21 +2136,65 @@ function DeploySection() {
   // task 56：之前 6 个 captcha 子选项是 dead button（recaptcha 版本 3 个 +
   // turnstile widget 模式 3 个，没 onClick），UI 看着能切实际只是装饰。
   const [recaptchaVer, setRecaptchaVer] = useStatePL("v3");
+  const [recaptchaSiteKey, setRecaptchaSiteKey] = useStatePL("");
+  const [recaptchaSecretKey, setRecaptchaSecretKey] = useStatePL("");
+  const [recaptchaScore, setRecaptchaScore] = useStatePL(0.5);
   const [turnstileMode, setTurnstileMode] = useStatePL("non_interactive");
+  const [turnstileSiteKey, setTurnstileSiteKey] = useStatePL("");
+  const [turnstileSecretKey, setTurnstileSecretKey] = useStatePL("");
+  const [hcaptchaSiteKey, setHcaptchaSiteKey] = useStatePL("");
+  const [hcaptchaSecretKey, setHcaptchaSecretKey] = useStatePL("");
+
+  // 从 backend 拉取已保存的部署配置
+  useEffectPL(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await window.api.admin.deploymentConfig();
+        if (cancelled) return;
+        const c = (r && r.config) || {};
+        if (c.listen_address) setListenAddr(c.listen_address);
+        if (c.cors_origins) setCorsOrigins(c.cors_origins);
+        if (c.upload_limit) setUploadLimit(c.upload_limit);
+        if (c.smtp_enabled !== undefined) setSmtpEnabled(!!c.smtp_enabled);
+        if (c.smtp_host) setSmtpHost(c.smtp_host);
+        if (c.smtp_port) setSmtpPort(String(c.smtp_port));
+        if (c.smtp_tls) setSmtpTls(c.smtp_tls);
+        if (c.smtp_user) setSmtpUser(c.smtp_user);
+        // smtp_pass not pre-filled for security
+        if (c.smtp_from_name) setSmtpFromName(c.smtp_from_name);
+        if (c.smtp_from_email) setSmtpFromEmail(c.smtp_from_email);
+        if (c.captcha_provider) setCaptchaProvider(c.captcha_provider);
+        if (c.recaptcha_ver) setRecaptchaVer(c.recaptcha_ver);
+        if (c.recaptcha_site_key) setRecaptchaSiteKey(c.recaptcha_site_key);
+        if (c.recaptcha_score !== undefined) setRecaptchaScore(Number(c.recaptcha_score));
+        if (c.turnstile_mode) setTurnstileMode(c.turnstile_mode);
+        if (c.turnstile_site_key) setTurnstileSiteKey(c.turnstile_site_key);
+        if (c.hcaptcha_site_key) setHcaptchaSiteKey(c.hcaptcha_site_key);
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <div className="pl-set-group" data-cap-anchor="settings.deploy">
       <h3>部署</h3>
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>监听地址</strong><div className="muted">仅本机访问可用 127.0.0.1。</div></div>
-        <div className="pl-set-control"><input defaultValue="127.0.0.1:7860" className="mono" onChange={() => save("监听地址")} /></div>
+      <div className="pl-set-row" style={{background: "var(--pl-bg-soft, #f7f7f9)", borderRadius: 6, padding: "6px 10px", marginBottom: 8}}>
+        <div className="muted" style={{fontSize: 12}}>
+          <strong>注意：</strong>监听地址、CORS 来源等网络级配置保存后需要重启服务才能生效。SMTP 和 CAPTCHA 凭证立即生效。
+        </div>
       </div>
       <div className="pl-set-row">
-        <div className="pl-set-label"><strong>CORS 来源</strong><div className="muted">逗号分隔；使用 * 允许全部。</div></div>
-        <div className="pl-set-control"><input defaultValue="http://127.0.0.1:5173,http://localhost:3000" className="mono" onChange={() => save("CORS 来源")} /></div>
+        <div className="pl-set-label"><strong>监听地址</strong><div className="muted">仅本机访问可用 127.0.0.1。重启生效。</div></div>
+        <div className="pl-set-control"><input value={listenAddr} className="mono" onChange={(e) => { setListenAddr(e.target.value); saveDeployConfig({ listen_address: e.target.value }); }} /></div>
       </div>
       <div className="pl-set-row">
-        <div className="pl-set-label"><strong>上传上限</strong><div className="muted">单文件最大字节数。</div></div>
-        <div className="pl-set-control"><input defaultValue="12 MB" onChange={() => save("上传上限")} /></div>
+        <div className="pl-set-label"><strong>CORS 来源</strong><div className="muted">逗号分隔；使用 * 允许全部。重启生效。</div></div>
+        <div className="pl-set-control"><input value={corsOrigins} className="mono" onChange={(e) => { setCorsOrigins(e.target.value); saveDeployConfig({ cors_origins: e.target.value }); }} /></div>
+      </div>
+      <div className="pl-set-row">
+        <div className="pl-set-label"><strong>上传上限</strong><div className="muted">单文件最大字节数。重启生效。</div></div>
+        <div className="pl-set-control"><input value={uploadLimit} onChange={(e) => { setUploadLimit(e.target.value); saveDeployConfig({ upload_limit: e.target.value }); }} /></div>
       </div>
 
       <div className="pl-set-row">
@@ -2131,7 +2203,7 @@ function DeploySection() {
           <div className="muted">用于注册验证、找回密码、订阅通知。关闭则使用本地占位邮件。</div>
         </div>
         <div className="pl-set-control" style={{display: "flex", alignItems: "center", gap: 10}}>
-          <SettingsToggle on={smtpEnabled} set={(v) => { setSmtpEnabled(v); save("SMTP"); }} />
+          <SettingsToggle on={smtpEnabled} set={(v) => { setSmtpEnabled(v); saveDeployConfig({ smtp_enabled: v }); }} />
           <span className="muted" style={{fontSize: 12}}>{smtpEnabled ? "已启用" : "未启用"}</span>
         </div>
       </div>
@@ -2140,7 +2212,18 @@ function DeploySection() {
           <div className="pl-set-row">
             <div className="pl-set-label"><strong>预设</strong><div className="muted">快速填充常见服务商参数；选择后可继续微调。</div></div>
             <div className="pl-set-control">
-              <select defaultValue="custom" onChange={() => save("SMTP 预设")}>
+              <select value="custom" onChange={(e) => {
+                const PRESETS = {
+                  gmail: { smtp_host: "smtp.gmail.com", smtp_port: "587", smtp_tls: "starttls" },
+                  qq:    { smtp_host: "smtp.qq.com",    smtp_port: "465", smtp_tls: "ssl" },
+                  "163": { smtp_host: "smtp.163.com",   smtp_port: "465", smtp_tls: "ssl" },
+                  aws:   { smtp_host: "email-smtp.us-east-1.amazonaws.com", smtp_port: "587", smtp_tls: "starttls" },
+                  resend:    { smtp_host: "smtp.resend.com",     smtp_port: "587", smtp_tls: "starttls" },
+                  sendgrid:  { smtp_host: "smtp.sendgrid.net",   smtp_port: "587", smtp_tls: "starttls" },
+                };
+                const p = PRESETS[e.target.value];
+                if (p) { setSmtpHost(p.smtp_host); setSmtpPort(p.smtp_port); setSmtpTls(p.smtp_tls); saveDeployConfig(p); }
+              }}>
                 <option value="custom">自定义</option>
                 <option value="gmail">Gmail（smtp.gmail.com:587 · STARTTLS）</option>
                 <option value="qq">QQ 邮箱（smtp.qq.com:465 · SSL）</option>
@@ -2154,9 +2237,9 @@ function DeploySection() {
           <div className="pl-set-row">
             <div className="pl-set-label"><strong>主机 & 端口</strong><div className="muted">协议安全：587 推荐 STARTTLS、465 推荐 SSL。</div></div>
             <div className="pl-set-control" style={{display: "grid", gridTemplateColumns: "1fr 90px 110px", gap: 6}}>
-              <input className="mono" defaultValue="smtp.example.com" placeholder="主机" onChange={() => save("SMTP 主机")} />
-              <input className="mono" defaultValue="587" placeholder="端口" onChange={() => save("SMTP 端口")} />
-              <select defaultValue="starttls" onChange={() => save("SMTP 加密")}>
+              <input className="mono" value={smtpHost} placeholder="主机" onChange={(e) => { setSmtpHost(e.target.value); saveDeployConfig({ smtp_host: e.target.value }); }} />
+              <input className="mono" value={smtpPort} placeholder="端口" onChange={(e) => { setSmtpPort(e.target.value); saveDeployConfig({ smtp_port: e.target.value }); }} />
+              <select value={smtpTls} onChange={(e) => { setSmtpTls(e.target.value); saveDeployConfig({ smtp_tls: e.target.value }); }}>
                 <option value="none">明文</option>
                 <option value="starttls">STARTTLS</option>
                 <option value="ssl">SSL / TLS</option>
@@ -2166,15 +2249,15 @@ function DeploySection() {
           <div className="pl-set-row">
             <div className="pl-set-label"><strong>认证</strong><div className="muted">应用专用密码 / API Key。</div></div>
             <div className="pl-set-control" style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6}}>
-              <input className="mono" defaultValue="noreply@example.com" placeholder="用户名" onChange={() => save("SMTP 用户名")} />
-              <input className="mono" type="password" defaultValue="" placeholder="密码 / API Key" onChange={() => save("SMTP 密码")} />
+              <input className="mono" value={smtpUser} placeholder="用户名" onChange={(e) => { setSmtpUser(e.target.value); saveDeployConfig({ smtp_user: e.target.value }); }} />
+              <input className="mono" type="password" value={smtpPass} placeholder="密码 / API Key" onChange={(e) => { setSmtpPass(e.target.value); saveDeployConfig({ smtp_pass: e.target.value }); }} />
             </div>
           </div>
           <div className="pl-set-row">
             <div className="pl-set-label"><strong>发件地址</strong><div className="muted">收件人看到的发件人；建议使用域名邮箱。</div></div>
             <div className="pl-set-control" style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6}}>
-              <input defaultValue="RPG Roleplay" placeholder="发件人名称" onChange={() => save("发件人名称")} />
-              <input className="mono" defaultValue="noreply@rpgroleplay.app" placeholder="发件人邮箱" onChange={() => save("发件邮箱")} />
+              <input value={smtpFromName} placeholder="发件人名称" onChange={(e) => { setSmtpFromName(e.target.value); saveDeployConfig({ smtp_from_name: e.target.value }); }} />
+              <input className="mono" value={smtpFromEmail} placeholder="发件人邮箱" onChange={(e) => { setSmtpFromEmail(e.target.value); saveDeployConfig({ smtp_from_email: e.target.value }); }} />
             </div>
           </div>
           <div className="pl-set-row">
@@ -2185,9 +2268,10 @@ function DeploySection() {
                 window.toast?.("正在发送测试邮件…", { kind: "info", duration: 1200 });
                 let ok = false;
                 try {
-                  // 后端尚未提供 /api/admin/smtp/test，先用 raw POST，404 也按"失败"展示
-                  const r = await window.api.raw.POST("/api/v1/admin/smtp/test", {});
-                  ok = !!(r && r.ok !== false);
+                  const r = await window.api.admin.saveDeploymentConfig({});
+                  void r;
+                  const t = await window.api.raw?.POST("/api/v1/admin/smtp/test", {});
+                  ok = !!(t && t.ok !== false);
                 } catch (_) { ok = false; }
                 setSmtpTesting(false);
                 setSmtpLastTestAt(new Date().toISOString());
@@ -2213,10 +2297,10 @@ function DeploySection() {
         </div>
         <div className="pl-set-control">
           <div className="seg" style={{display: "flex"}}>
-            <button className={captchaProvider === "off" ? "active" : ""} onClick={() => { setCaptchaProvider("off"); save("验证码 · 关闭"); }}>关闭</button>
-            <button className={captchaProvider === "recaptcha" ? "active" : ""} onClick={() => { setCaptchaProvider("recaptcha"); save("验证码 · reCAPTCHA"); }}>Google reCAPTCHA</button>
-            <button className={captchaProvider === "turnstile" ? "active" : ""} onClick={() => { setCaptchaProvider("turnstile"); save("验证码 · Turnstile"); }}>Cloudflare Turnstile</button>
-            <button className={captchaProvider === "hcaptcha" ? "active" : ""} onClick={() => { setCaptchaProvider("hcaptcha"); save("验证码 · hCaptcha"); }}>hCaptcha</button>
+            <button className={captchaProvider === "off" ? "active" : ""} onClick={() => { setCaptchaProvider("off"); saveDeployConfig({ captcha_provider: "off" }); }}>关闭</button>
+            <button className={captchaProvider === "recaptcha" ? "active" : ""} onClick={() => { setCaptchaProvider("recaptcha"); saveDeployConfig({ captcha_provider: "recaptcha" }); }}>Google reCAPTCHA</button>
+            <button className={captchaProvider === "turnstile" ? "active" : ""} onClick={() => { setCaptchaProvider("turnstile"); saveDeployConfig({ captcha_provider: "turnstile" }); }}>Cloudflare Turnstile</button>
+            <button className={captchaProvider === "hcaptcha" ? "active" : ""} onClick={() => { setCaptchaProvider("hcaptcha"); saveDeployConfig({ captcha_provider: "hcaptcha" }); }}>hCaptcha</button>
           </div>
         </div>
       </div>
@@ -2227,23 +2311,23 @@ function DeploySection() {
             <div className="pl-set-control">
               <div className="seg" style={{display: "flex"}}>
                 {/* task 56 修 dead button: 之前 3 个按钮无 onClick，纯静态 */}
-                <button className={recaptchaVer === "v3" ? "active" : ""} onClick={() => { setRecaptchaVer("v3"); save("recaptcha_ver", "v3"); }}>v3 (推荐)</button>
-                <button className={recaptchaVer === "v2c" ? "active" : ""} onClick={() => { setRecaptchaVer("v2c"); save("recaptcha_ver", "v2c"); }}>v2 Checkbox</button>
-                <button className={recaptchaVer === "v2i" ? "active" : ""} onClick={() => { setRecaptchaVer("v2i"); save("recaptcha_ver", "v2i"); }}>v2 Invisible</button>
+                <button className={recaptchaVer === "v3" ? "active" : ""} onClick={() => { setRecaptchaVer("v3"); saveDeployConfig({ recaptcha_ver: "v3" }); }}>v3 (推荐)</button>
+                <button className={recaptchaVer === "v2c" ? "active" : ""} onClick={() => { setRecaptchaVer("v2c"); saveDeployConfig({ recaptcha_ver: "v2c" }); }}>v2 Checkbox</button>
+                <button className={recaptchaVer === "v2i" ? "active" : ""} onClick={() => { setRecaptchaVer("v2i"); saveDeployConfig({ recaptcha_ver: "v2i" }); }}>v2 Invisible</button>
               </div>
             </div>
           </div>
           <div className="pl-set-row">
             <div className="pl-set-label"><strong>Site Key</strong><div className="muted">公开密钥 · 嵌入前端。</div></div>
-            <div className="pl-set-control"><input className="mono" placeholder="6L···Y9" onChange={() => save("reCAPTCHA Site Key")} /></div>
+            <div className="pl-set-control"><input className="mono" value={recaptchaSiteKey} placeholder="6L···Y9" onChange={(e) => { setRecaptchaSiteKey(e.target.value); saveDeployConfig({ recaptcha_site_key: e.target.value }); }} /></div>
           </div>
           <div className="pl-set-row">
             <div className="pl-set-label"><strong>Secret Key</strong><div className="muted">私密 · 仅服务器使用。</div></div>
-            <div className="pl-set-control"><input className="mono" type="password" placeholder="6L···Z3" onChange={() => save("reCAPTCHA Secret Key")} /></div>
+            <div className="pl-set-control"><input className="mono" type="password" value={recaptchaSecretKey} placeholder="6L···Z3" onChange={(e) => { setRecaptchaSecretKey(e.target.value); saveDeployConfig({ recaptcha_secret_key: e.target.value }); }} /></div>
           </div>
           <div className="pl-set-row">
             <div className="pl-set-label"><strong>v3 通过分数</strong><div className="muted">低于此分数视为机器人；0.5 为推荐起点。</div></div>
-            <div className="pl-set-control"><input type="number" defaultValue={0.5} min={0} max={1} step={0.05} className="mono" style={{width: 100}} onChange={() => save("v3 通过分数")} /></div>
+            <div className="pl-set-control"><input type="number" value={recaptchaScore} min={0} max={1} step={0.05} className="mono" style={{width: 100}} onChange={(e) => { setRecaptchaScore(Number(e.target.value)); saveDeployConfig({ recaptcha_score: Number(e.target.value) }); }} /></div>
           </div>
         </>
       )}
@@ -2251,20 +2335,20 @@ function DeploySection() {
         <>
           <div className="pl-set-row">
             <div className="pl-set-label"><strong>Site Key</strong><div className="muted">来自 Cloudflare Dashboard → Turnstile。</div></div>
-            <div className="pl-set-control"><input className="mono" placeholder="0x4A···AAAA" onChange={() => save("Turnstile Site Key")} /></div>
+            <div className="pl-set-control"><input className="mono" value={turnstileSiteKey} placeholder="0x4A···AAAA" onChange={(e) => { setTurnstileSiteKey(e.target.value); saveDeployConfig({ turnstile_site_key: e.target.value }); }} /></div>
           </div>
           <div className="pl-set-row">
             <div className="pl-set-label"><strong>Secret Key</strong><div className="muted">仅服务器使用。</div></div>
-            <div className="pl-set-control"><input className="mono" type="password" placeholder="0x4A···AAAA" onChange={() => save("Turnstile Secret Key")} /></div>
+            <div className="pl-set-control"><input className="mono" type="password" value={turnstileSecretKey} placeholder="0x4A···AAAA" onChange={(e) => { setTurnstileSecretKey(e.target.value); saveDeployConfig({ turnstile_secret_key: e.target.value }); }} /></div>
           </div>
           <div className="pl-set-row">
             <div className="pl-set-label"><strong>Widget 模式</strong><div className="muted">非交互式适合大多数场景；交互式给可疑用户加挑战。</div></div>
             <div className="pl-set-control">
               <div className="seg" style={{display: "flex"}}>
                 {/* task 56 修 dead button: turnstile widget mode 3 个按钮无 onClick */}
-                <button className={turnstileMode === "non_interactive" ? "active" : ""} onClick={() => { setTurnstileMode("non_interactive"); save("turnstile_mode", "non_interactive"); }}>非交互式</button>
-                <button className={turnstileMode === "interactive" ? "active" : ""} onClick={() => { setTurnstileMode("interactive"); save("turnstile_mode", "interactive"); }}>交互式</button>
-                <button className={turnstileMode === "invisible" ? "active" : ""} onClick={() => { setTurnstileMode("invisible"); save("turnstile_mode", "invisible"); }}>隐式</button>
+                <button className={turnstileMode === "non_interactive" ? "active" : ""} onClick={() => { setTurnstileMode("non_interactive"); saveDeployConfig({ turnstile_mode: "non_interactive" }); }}>非交互式</button>
+                <button className={turnstileMode === "interactive" ? "active" : ""} onClick={() => { setTurnstileMode("interactive"); saveDeployConfig({ turnstile_mode: "interactive" }); }}>交互式</button>
+                <button className={turnstileMode === "invisible" ? "active" : ""} onClick={() => { setTurnstileMode("invisible"); saveDeployConfig({ turnstile_mode: "invisible" }); }}>隐式</button>
               </div>
             </div>
           </div>
@@ -2274,11 +2358,11 @@ function DeploySection() {
         <>
           <div className="pl-set-row">
             <div className="pl-set-label"><strong>Site Key</strong></div>
-            <div className="pl-set-control"><input className="mono" placeholder="xxxxxxxx-xxxx-xxxx" onChange={() => save("hCaptcha Site Key")} /></div>
+            <div className="pl-set-control"><input className="mono" value={hcaptchaSiteKey} placeholder="xxxxxxxx-xxxx-xxxx" onChange={(e) => { setHcaptchaSiteKey(e.target.value); saveDeployConfig({ hcaptcha_site_key: e.target.value }); }} /></div>
           </div>
           <div className="pl-set-row">
             <div className="pl-set-label"><strong>Secret Key</strong></div>
-            <div className="pl-set-control"><input className="mono" type="password" placeholder="0x···" onChange={() => save("hCaptcha Secret Key")} /></div>
+            <div className="pl-set-control"><input className="mono" type="password" value={hcaptchaSecretKey} placeholder="0x···" onChange={(e) => { setHcaptchaSecretKey(e.target.value); saveDeployConfig({ hcaptcha_secret_key: e.target.value }); }} /></div>
           </div>
         </>
       )}

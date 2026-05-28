@@ -673,3 +673,58 @@ async def api_admin_smtp_test(request: Request):
         "error": "SMTP 尚未在 user_preferences 中规范化存储 · 请先在「部署 → 邮件 SMTP」配置并保存",
         "configured": False,
     }, status_code=503)
+
+
+# ------------------------------------------------------------
+#  Admin: Deployment config (SMTP, CORS, listen addr, CAPTCHA…)
+# ------------------------------------------------------------
+_DEPLOY_CFG_KEY = "admin.deployment_config"
+
+
+@router.get("/api/admin/deployment-config")
+async def api_admin_deployment_config_get(request: Request):
+    """读取管理员部署配置（存于 app_config 表）。需要重启才能生效。"""
+    user = require_user(request)
+    if user.get("role") != "admin":
+        return json_response({"ok": False, "error": "需要管理员权限"}, status_code=403)
+    init_db()
+    with connect() as db:
+        row = db.execute(
+            "select value from app_config where key = %s", (_DEPLOY_CFG_KEY,)
+        ).fetchone()
+    cfg = dict(row["value"]) if row else {}
+    return json_response({"ok": True, "config": cfg})
+
+
+@router.post("/api/admin/deployment-config")
+async def api_admin_deployment_config_set(request: Request):
+    """保存管理员部署配置（SMTP / CORS / 监听地址 / CAPTCHA）到 app_config。
+
+    采用 patch 合并语义：只更新 body 中出现的键，不影响其他键。
+    注意：listen_address / cors_origins 等网络级配置需要重启服务才能生效。
+    """
+    from psycopg.types.json import Jsonb
+
+    user = require_user(request)
+    if user.get("role") != "admin":
+        return json_response({"ok": False, "error": "需要管理员权限"}, status_code=403)
+    body = await request.json() or {}
+    if not isinstance(body, dict):
+        return _bad("请求体必须是对象")
+    init_db()
+    with connect() as db:
+        row = db.execute(
+            "select value from app_config where key = %s", (_DEPLOY_CFG_KEY,)
+        ).fetchone()
+        existing = dict(row["value"]) if row else {}
+        merged = {**existing, **body}
+        db.execute(
+            """
+            insert into app_config(key, value)
+            values (%s, %s)
+            on conflict(key) do update set value = excluded.value, updated_at = now()
+            """,
+            (_DEPLOY_CFG_KEY, Jsonb(merged)),
+        )
+    return json_response({"ok": True, "config": merged,
+                          "note": "listen_address / cors_origins 等网络配置需重启服务才能生效"})

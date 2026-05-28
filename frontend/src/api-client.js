@@ -239,6 +239,12 @@
       search: (q, scope) => GET("/api/v1/search", { q, scope }),
     },
 
+    // ---------- Admin ----------
+    admin: {
+      deploymentConfig: () => GET("/api/v1/admin/deployment-config"),
+      saveDeploymentConfig: (body) => POST("/api/v1/admin/deployment-config", body),
+    },
+
     // ---------- Scripts ----------
     scripts: {
       list: () => GET("/api/v1/scripts"),
