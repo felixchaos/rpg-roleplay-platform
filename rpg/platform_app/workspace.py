@@ -401,6 +401,24 @@ def _build_initial_snapshot(
         except Exception:
             pass
 
+    # Bug 5 fix: 新建存档时把用户偏好里的 perm.default_mode 注入 state.permissions.mode。
+    # 偏好由 settings.jsx PermSection 通过 save("default_mode", val) 写入
+    # user_preferences 表，key="perm.default_mode"。
+    # 若无偏好或读取失败，保留 GameState.new() 的默认值（"review"）。
+    try:
+        with connect() as _pdb:
+            _pref_row = _pdb.execute(
+                "select preferences from user_preferences where user_id = %s",
+                (user_id,),
+            ).fetchone()
+        _prefs = dict(_pref_row["preferences"]) if _pref_row else {}
+        _default_mode = _prefs.get("perm.default_mode") or _prefs.get("default_perm_mode")
+        _VALID_MODES = {"default", "review", "full_access"}
+        if _default_mode and _default_mode in _VALID_MODES:
+            state.data.setdefault("permissions", {})["mode"] = _default_mode
+    except Exception:
+        pass
+
     return state.data
 
 
