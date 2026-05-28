@@ -127,7 +127,8 @@ async def api_opening(request: Request) -> StreamingResponse:
             ]
             query = " ".join(p for p in query_parts if p).strip() or "开场"
         else:
-            query = "柏林 图卢兹 娅赛兰 蛇信 蕾穆丽娜"
+            # 无 script_id 时的通用 fallback — 避免硬编码特定剧本关键词污染检索结果
+            query = "开场"
         ctx = retrieve_context(
             query,
             state=state,

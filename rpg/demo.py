@@ -43,12 +43,11 @@ def setup_character(state: GameState) -> None:
     """首次进入时，引导玩家创建角色"""
     print()
     print("=" * 52)
-    print("  《我蕾穆丽娜不爱你》— 柏林弧 RPG Demo")
+    print("  通用 RPG Demo")
     print("=" * 52)
     print()
-    print("图卢兹刚刚失守。")
-    print("薇瑟帝国的前线距柏林越来越近。")
-    print("你即将进入这座城市，卷入其中。")
+    print("剧情即将展开。")
+    print("你即将进入这个世界，卷入其中。")
     print()
     print(THIN_DIV)
     print()
@@ -61,7 +60,7 @@ def setup_character(state: GameState) -> None:
     print("你在这个故事里扮演什么角色？")
     print("  1. 欧洲世家的信使，在各方势力间传递消息")
     print("  2. 地联太平洋方面的情报协力人员")
-    print("  3. 在柏林流亡的薇瑟帝国边缘贵族")
+    print("  3. 流亡中的薇瑟帝国边缘贵族")
     print("  4. 自定义...")
     print()
     choice = input("选择（1-4）：\n> ").strip()
@@ -77,7 +76,7 @@ def setup_character(state: GameState) -> None:
         role = input("请描述你的角色定位：\n> ").strip() or "过客"
 
     print()
-    background = input(f"用一两句话描述 {name} 来柏林的原因（可留空）：\n> ").strip()
+    background = input(f"用一两句话描述 {name} 来到这里的原因（可留空）：\n> ").strip()
     if not background:
         background = "原因不明，只是来了。"
 
@@ -92,7 +91,7 @@ def game_loop(state: GameState, gm: GameMaster) -> None:
 
     # 开场白
     print("\n正在生成开场……")
-    opening_ctx = retrieve_context("柏林 图卢兹 娅赛兰 蛇信", verbose=False)
+    opening_ctx = retrieve_context("开场", verbose=False)
     opening     = gm.generate_opening(state, retrieved_context=opening_ctx)
     _print_gm(opening)
 
