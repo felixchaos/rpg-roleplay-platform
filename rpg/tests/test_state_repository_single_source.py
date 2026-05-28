@@ -26,7 +26,13 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parents[2]
 REPO_PY = (PROJECT / "rpg" / "state_repository.py").read_text(encoding="utf-8")
 APP_PY = (PROJECT / "rpg" / "app.py").read_text(encoding="utf-8")
-BRANCHES_PY = (PROJECT / "rpg" / "platform_app" / "branches.py").read_text(encoding="utf-8")
+_branches_pkg = PROJECT / "rpg" / "platform_app" / "branches"
+_branches_py_path = _branches_pkg if _branches_pkg.is_dir() else (PROJECT / "rpg" / "platform_app" / "branches.py")
+if _branches_pkg.is_dir():
+    # Phase 5.7: branches 已拆成子包，tree() 在 tree_ops.py
+    BRANCHES_PY = (_branches_pkg / "tree_ops.py").read_text(encoding="utf-8")
+else:
+    BRANCHES_PY = _branches_py_path.read_text(encoding="utf-8")
 PLATFORM_JSX = (PROJECT / "frontend" / "src" / "platform-app.jsx").read_text(encoding="utf-8")
 
 
