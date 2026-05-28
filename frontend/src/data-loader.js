@@ -1,5 +1,5 @@
 /* ============================================================
- *  RPG Roplay · Data Loader
+ *  RPG Roleplay · Data Loader
  *  -----------------------------------------------------------
  *  Bridges the real backend (window.api) with the Claude Design
  *  mock globals (window.MOCK_*). On first load it tries to fill

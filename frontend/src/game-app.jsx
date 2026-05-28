@@ -18,8 +18,8 @@ function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitc
           <div className="gc-brand-text">
             {/* task 45：剧本名/阶段从真实 state 派生。优先 state._raw.save_title（task 21 写入），
                 兜底 state.app.title，最后才走 MOCK_NOVEL（仅 designer offline 还会保留）。 */}
-            <strong>{(state && (state._raw?.save_title || state.app?.title)) || (window.MOCK_NOVEL && window.MOCK_NOVEL.script_title) || "RPG Roplay"}</strong>
-            <span className="muted-2" style={{ fontSize: 11 }}>RPG Roplay · {(state && state.world && state.world.timeline && state.world.timeline.current_phase) || "—"}</span>
+            <strong>{(state && (state._raw?.save_title || state.app?.title)) || (window.MOCK_NOVEL && window.MOCK_NOVEL.script_title) || "RPG Roleplay"}</strong>
+            <span className="muted-2" style={{ fontSize: 11 }}>RPG Roleplay · {(state && state.world && state.world.timeline && state.world.timeline.current_phase) || "—"}</span>
           </div>
         </div>
         <button className="iconbtn" onClick={onToggle} data-tip="折叠侧栏" data-tip-pos="below">

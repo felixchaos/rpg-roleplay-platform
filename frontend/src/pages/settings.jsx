@@ -2073,8 +2073,8 @@ function DeploySection() {
           <div className="pl-set-row">
             <div className="pl-set-label"><strong>发件地址</strong><div className="muted">收件人看到的发件人；建议使用域名邮箱。</div></div>
             <div className="pl-set-control" style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6}}>
-              <input defaultValue="RPG Roplay" placeholder="发件人名称" onChange={() => save("发件人名称")} />
-              <input className="mono" defaultValue="noreply@rpgroplay.app" placeholder="发件人邮箱" onChange={() => save("发件邮箱")} />
+              <input defaultValue="RPG Roleplay" placeholder="发件人名称" onChange={() => save("发件人名称")} />
+              <input className="mono" defaultValue="noreply@rpgroleplay.app" placeholder="发件人邮箱" onChange={() => save("发件邮箱")} />
             </div>
           </div>
           <div className="pl-set-row">

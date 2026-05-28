@@ -402,7 +402,7 @@ function PlatformShell({ page, setPage, children, assistant, assistantOpen, onOp
         <div className="pl-side-head">
           <div className="pl-mark"><Icon name="logo" size={14} /></div>
           <div>
-            <strong>RPG Roplay</strong>
+            <strong>RPG Roleplay</strong>
             <div className="muted-2 mono">v0.4 · {platform.database.driver}</div>
           </div>
         </div>
@@ -3088,7 +3088,7 @@ function AuthPage() {
         <div style={{display: "flex", alignItems: "center", gap: 12}}>
           <div className="pl-auth-mark"><Icon name="logo" size={16} /></div>
           <div>
-            <h1>RPG Roplay</h1>
+            <h1>RPG Roleplay</h1>
             <div className="pl-auth-sub">长篇小说拆书 · RPG 续写 · 多用户创作平台</div>
           </div>
         </div>
