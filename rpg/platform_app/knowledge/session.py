@@ -4,10 +4,13 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from core.logging import get_logger
 from platform_app.db import connect, expose, init_db
 from platform_app.knowledge._session_repo import _db_upsert_game_session
 from platform_app.knowledge._sync import _ensure_book
 from platform_app.knowledge._utils import _clean_text
+
+log = get_logger(__name__)
 
 
 def _state_from_save(user_id: int, save_id: int) -> dict[str, Any]:
@@ -151,6 +154,56 @@ def ensure_game_session(user_id: int, save_id: int, state: dict[str, Any] | None
     return expose(session)  # type: ignore[return-value]
 
 
+def _aggregate_characters_from_facts(script_id: int) -> dict[str, Any]:
+    """从 chapter_facts.characters 纯聚合角色卡候选,不调 LLM。
+
+    返回与 _load_characters() 兼容的 chars dict:
+    {name: {name, identity, appearance, personality, speech_style,
+            secrets, sample_dialogue, priority, aliases}}
+    过滤 count < 2 的路人,取 top 50 by priority(总出场次数)。
+    """
+    out: dict[str, Any] = {}
+    with connect() as db:
+        rows = db.execute(
+            "select characters from chapter_facts where script_id=%s and characters is not null",
+            (script_id,),
+        ).fetchall()
+
+    for row in rows:
+        characters = row.get("characters") if isinstance(row, dict) else row[0]
+        if not characters or not isinstance(characters, list):
+            continue
+        for ch in characters:
+            if not isinstance(ch, dict):
+                continue
+            name = (ch.get("name") or "").strip()
+            if not name or len(name) < 2:
+                continue
+            count = int(ch.get("count") or 1)
+            if name not in out:
+                out[name] = {
+                    "name": name,
+                    "identity": "",
+                    "appearance": "",
+                    "personality": "",
+                    "speech_style": "",
+                    "current_status": "",
+                    "secrets": "",
+                    "sample_dialogue": [],
+                    "priority": count,
+                    "aliases": [],
+                }
+            else:
+                out[name]["priority"] += count
+
+    # 过滤路人(total count < 2)
+    filtered = {name: card for name, card in out.items() if card["priority"] >= 2}
+
+    # 取 top 50 by priority
+    top = sorted(filtered.items(), key=lambda kv: -kv[1]["priority"])[:50]
+    return dict(top)
+
+
 def sync_script_knowledge(user_id: int, script_id: int, *, rebuild: bool = False) -> dict[str, Any]:
     """Build the Postgres knowledge layer for one imported script.
 
@@ -221,6 +274,18 @@ def sync_script_knowledge(user_id: int, script_id: int, *, rebuild: bool = False
                 """,
                 (script_id,),
             ).fetchall()
+        # P0 fix #3: 新书 chars 为空时,从 chapter_facts 纯聚合写 character_cards (不调 LLM)
+        if not chars:
+            try:
+                chars = _aggregate_characters_from_facts(script_id)
+                log.info(
+                    "[sync] 从 chapter_facts 聚合 %d 个角色 for script %s",
+                    len(chars),
+                    script_id,
+                )
+            except Exception as e:
+                log.warning("[sync] 聚合 characters from facts failed: %s", e)
+                chars = {}
         card_count = _sync_character_cards(db, book, script, chars)
         worldbook_count = _sync_worldbook_entries(db, book, script, world)
 
@@ -238,6 +303,21 @@ def sync_script_knowledge(user_id: int, script_id: int, *, rebuild: bool = False
             _upsert_chapter_fact(db, book, script, chapter, document, fact)
             fact_count += 1
 
+    # P0 fix #2: chapter_facts 完成后,聚合 script_timeline_anchors
+    try:
+        from script_timeline import rebuild_timeline_anchors
+        rebuild_timeline_anchors(script_id)
+    except Exception as e:
+        log.warning("[sync_script_knowledge] rebuild_timeline_anchors failed: %s", e)
+
+    # P0 fix #1: chapter_facts 完成后,聚合 phase_digests
+    try:
+        from scripts.aggregate_phase_digests import aggregate_for_script
+        aggregate_for_script(script_id)
+    except Exception as e:
+        log.warning("[sync_script_knowledge] aggregate_for_script failed: %s", e)
+
+    with connect() as db:
         db.execute(
             """
             update scripts
