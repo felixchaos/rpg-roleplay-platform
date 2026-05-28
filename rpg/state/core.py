@@ -455,10 +455,25 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             )
         else:
             variable_text = "  （暂无用户变量）"
+        # task 137: 注入详细角色卡字段（appearance/personality/speech_style/secrets/identity_role_desc）
+        _card_detail_lines = []
+        if p.get("appearance"):
+            _card_detail_lines.append(f"外貌：{p['appearance']}")
+        if p.get("personality"):
+            _card_detail_lines.append(f"性格/详细设定：{p['personality']}")
+        if p.get("speech_style"):
+            _card_detail_lines.append(f"语气/说话方式：{p['speech_style']}")
+        if p.get("secrets"):
+            _card_detail_lines.append(f"秘密：{p['secrets']}")
+        if p.get("aliases"):
+            _card_detail_lines.append(f"别名：{p['aliases']}")
+        if p.get("identity_role_desc"):
+            _card_detail_lines.append(f"入场定位：{p['identity_role_desc']}")
+        _card_detail = ("\n" + "\n".join(_card_detail_lines)) if _card_detail_lines else ""
         return f"""【玩家档案】
 姓名：{p['name']}
 定位：{p['role']}
-背景：{p['background']}
+背景：{p['background']}{_card_detail}
 当前位置：{p['current_location']}
 
 【当前时间线】{w['time']}
