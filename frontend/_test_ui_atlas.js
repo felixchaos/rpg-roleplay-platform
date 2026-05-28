@@ -107,7 +107,7 @@ test("fuzzyMatchOption: 空 query 返回 null", () => {
 // ---- 4. snapshot 结构验证（mock snapshot） ----
 const mockSnapshot = {
   page: "platform.saves",
-  page_label: "RPG Roplay · 平台 #saves",
+  page_label: "RPG Roleplay · 平台 #saves",
   open_modals: [{ form_id: "基于剧本创建一个新存档", title: "基于剧本创建一个新存档", selector: ".pl-modal" }],
   forms: [
     {

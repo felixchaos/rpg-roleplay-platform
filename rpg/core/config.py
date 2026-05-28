@@ -68,7 +68,7 @@ def admin_password() -> str | None:
 
 # ── 应用标题 ─────────────────────────────────────────────────────────────
 def app_title() -> str:
-    return os.getenv("RPG_APP_TITLE", "RPG Roplay")
+    return os.getenv("RPG_APP_TITLE", "RPG Roleplay")
 
 # ── 运行时 backend ───────────────────────────────────────────────────────
 def runtime_backend() -> str:
