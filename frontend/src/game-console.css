@@ -332,7 +332,12 @@
   overflow: hidden;
 }
 .gc-topbar {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  /* Bug 1 fix: !important 防止任何 sonnet G 留下的 media query 误把 topbar
+     整段 display:none。topbar 是核心导航，永远要可见。 */
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 0 18px;
   height: 64px;
   border-bottom: 1px solid var(--line-soft);
@@ -341,6 +346,8 @@
   position: relative;
   z-index: 2;
   flex-shrink: 0;
+  /* 防御：内容 overflow 时仍可见 (iconbtn 不被裁掉) */
+  min-height: 64px;
 }
 .gc-topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; overflow: hidden; }
 .gc-topbar-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
@@ -1378,9 +1385,18 @@
 .tweaks-panel { border-radius: 10px !important; border-color: var(--line) !important; background: var(--panel) !important; }
 
 /* ============================ RESPONSIVE ========================== */
+/* Bug 1 fix：1100px 下保留 topbar 4 段可见性。
+ * 原来 `.gc-topbar-left > .pill { display: none }` 直接隐藏"已存档"pill；
+ * 截图反馈这一刀过狠，加上窄屏右侧 iconbtn 视觉空洞，用户感觉整条 topbar
+ * 全空。这里改成把 pill 压缩 + 文字截断，保证至少标志可见。 */
 @media (max-width: 1100px) {
   .gp-panel { width: 320px !important; }
-  .gc-topbar-left > .pill { display: none; }
+  .gc-topbar-left > .pill {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .gc-topbar-right > .btn.ghost > span { display: none; }
   .gc-topbar-right > .btn.ghost { padding: 0 8px; }
   .gc-model-label { max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
