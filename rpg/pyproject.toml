@@ -1,0 +1,62 @@
+[project]
+name = "rpg"
+version = "0.0.0"
+description = "RPG roleplay backend — FastAPI + Postgres + Anthropic/Vertex AI"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.72",
+    "fastapi>=0.124",
+    "fsspec>=2025.12",
+    "google-auth>=2.43",
+    "google-genai>=1.55",
+    "psycopg[binary]>=3.3",
+    "psycopg-pool>=3.3",
+    "python-dotenv>=1.2",
+    "uvicorn>=0.38",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.7",
+    "mypy>=1.13",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    ".venv",
+    "claude_design_upload",
+    "user_skills",
+    "saves",
+    "platform_data",
+    "indexes",
+    "modules",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort (import order)
+    "W",   # pycodestyle warnings
+    "UP",  # pyupgrade
+    "B",   # bugbear
+]
+ignore = [
+    "E501",  # line too long
+    "B008",  # function call in default arg (FastAPI Depends pattern)
+    "E402",  # module level import not at top (我们有合理用例)
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true
+exclude = [
+    "claude_design_upload",
+    "user_skills",
+    ".venv",
+]
