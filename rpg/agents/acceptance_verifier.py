@@ -192,7 +192,7 @@ def verify_acceptance_llm(
     user_prompt = _build_user_prompt(acceptance, response_text, updates or [])
 
     try:
-        text = _call_verifier_backend(
+        text, verifier_backend_ref = _call_verifier_backend(
             api_id=api_id,
             model=model,
             system_prompt=_VERIFIER_SYSTEM,
@@ -204,6 +204,24 @@ def verify_acceptance_llm(
     except Exception as exc:
         log.warning(f"[acceptance_verifier] call failed: {exc}")
         return None
+
+    # 记 usage（不影响主流程，异常静默）
+    try:
+        if user_id and verifier_backend_ref is not None:
+            v_usage = getattr(verifier_backend_ref, "last_usage", None) or {}
+            if v_usage and (v_usage.get("input_tokens") or v_usage.get("output_tokens")):
+                from platform_app.usage import record_usage as _rec
+                _rec(
+                    user_id=user_id,
+                    save_id=None,
+                    context_run_id=None,
+                    api_id=api_id,
+                    model_real_name=model,
+                    usage=v_usage,
+                    metadata={"kind": "verifier"},
+                )
+    except Exception:
+        pass
 
     parsed = _parse_verifier_output(text, acceptance)
     if parsed is not None:
@@ -219,29 +237,36 @@ def _call_verifier_backend(
     user_id: int | None,
     timeout_sec: int,
     acceptance: list[str],
-) -> str:
+) -> tuple[str, object]:
     """task 84：和 extractor._call_extractor_backend 同结构，
     但 schema 是 emit_acceptance_verdict({"unmet":[...]}) 而不是 emit_state_ops。
 
     复用 extractor 模块的 Vertex / OpenAI-compat 两条通道（它们不带 schema，
     完全靠 system prompt 控制输出格式），只有 Anthropic 那条需要单独写
     tool_use schema。
+
+    返回 (text, backend_ref)。backend_ref 若有 last_usage 则可记账；
+    无法提供 backend 时返回 None。
     """
     if api_id == "anthropic":
-        return _call_anthropic_tool_use_for_acceptance(
+        text, anth_usage = _call_anthropic_tool_use_for_acceptance(
             model, system_prompt, user_prompt, user_id, acceptance,
         )
+        class _UsageHolder:
+            last_usage = anth_usage
+        return text, _UsageHolder()
     # 其它通道直接复用 extractor 已经有的便宜实现。
     import agents.extractor as _extractor
     if api_id == "vertex_ai":
         from agents.gm import _VertexBackend
         backend = _VertexBackend(model=model)
-        return backend.call_structured(
+        text = backend.call_structured(
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
             max_tokens=800,
         )
-    return _extractor._call_openai_compat_json_mode(
+        return text, backend
+    text = _extractor._call_openai_compat_json_mode(
         api_id=api_id,
         model=model,
         system_prompt=system_prompt,
@@ -249,6 +274,7 @@ def _call_verifier_backend(
         user_id=user_id,
         timeout_sec=timeout_sec,
     )
+    return text, None
 
 
 def _call_anthropic_tool_use_for_acceptance(
@@ -257,11 +283,13 @@ def _call_anthropic_tool_use_for_acceptance(
     user_prompt: str,
     user_id: int | None,
     acceptance: list[str],
-) -> str:
+) -> tuple[str, dict]:
     """task 84：Anthropic native tool_use，schema = emit_acceptance_verdict。
 
     模型必须输出 tool_use block 而不是文本。unmet 字段 enum 锁定到当前传入
     的 acceptance 原文，避免 LLM 改写。
+
+    返回 (text, usage_dict)。
     """
     from anthropic import Anthropic
 
@@ -299,12 +327,22 @@ def _call_anthropic_tool_use_for_acceptance(
         tools=tools,
         tool_choice={"type": "tool", "name": "emit_acceptance_verdict"},
     )
+    usage_obj = getattr(resp, "usage", None)
+    anth_usage: dict = {}
+    if usage_obj is not None:
+        anth_usage = {
+            "input_tokens": int(getattr(usage_obj, "input_tokens", 0) or 0),
+            "output_tokens": int(getattr(usage_obj, "output_tokens", 0) or 0),
+            "cached_input_tokens": int(getattr(usage_obj, "cache_read_input_tokens", 0) or 0),
+            "reasoning_tokens": 0,
+        }
+        anth_usage["total_tokens"] = anth_usage["input_tokens"] + anth_usage["output_tokens"]
     for block in resp.content:
         if getattr(block, "type", None) == "tool_use" and block.name == "emit_acceptance_verdict":
             inp = block.input or {}
-            return json.dumps({"unmet": list(inp.get("unmet", []))}, ensure_ascii=False)
+            return json.dumps({"unmet": list(inp.get("unmet", []))}, ensure_ascii=False), anth_usage
     # 没拿到 tool_use → 当成"全通过"安全降级
-    return '{"unmet": []}'
+    return '{"unmet": []}', anth_usage
 
 
 def _resolve_preferred_verifier_model(user_id: int | None) -> str | None:

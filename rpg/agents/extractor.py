@@ -155,7 +155,7 @@ def extract_state_ops(
     model = model_override or _resolve_preferred_extractor_model(user_id) or "gemini-3.5-flash"
 
     try:
-        text = _call_extractor_backend(
+        text, backend_ref = _call_extractor_backend(
             api_id=api_id,
             model=model,
             system_prompt=_EXTRACTOR_SYSTEM,
@@ -166,6 +166,25 @@ def extract_state_ops(
     except Exception as exc:
         log.warning(f"[extractor] call failed: {exc}")
         return []
+
+    # 记 usage（不影响主流程，异常静默）
+    try:
+        if user_id and backend_ref is not None:
+            last_usage = getattr(backend_ref, "last_usage", None) or {}
+            if last_usage and (last_usage.get("input_tokens") or last_usage.get("output_tokens")):
+                from platform_app.usage import record_usage as _rec
+                _rec(
+                    user_id=user_id,
+                    save_id=None,
+                    context_run_id=None,
+                    api_id=api_id,
+                    model_real_name=model,
+                    usage=last_usage,
+                    metadata={"kind": "extractor"},
+                )
+    except Exception:
+        pass
+
     return _parse_extractor_output(text)
 
 
@@ -186,7 +205,7 @@ def _call_extractor_backend(
     user_prompt: str,
     user_id: int | None,
     timeout_sec: int,
-) -> str:
+) -> tuple[str, object]:
     """task 63: 优先 Native function calling / JSON mode，否则 fallback 到 text。
 
     层次：
@@ -194,20 +213,28 @@ def _call_extractor_backend(
     2. Vertex / Anthropic call_structured（response_mime_type=application/json）
     3. OpenAI 兼容 response_format = json_object
     4. 兜底：纯文本，调用方用正则抽 JSON
+
+    返回 (text, backend_ref)。backend_ref 若有 last_usage 属性则可记账；
+    Anthropic tool_use 路径无 backend 对象，返回 None。
     """
     if api_id == "anthropic":
-        return _call_anthropic_tool_use(model, system_prompt, user_prompt, user_id)
+        text, anth_usage = _call_anthropic_tool_use(model, system_prompt, user_prompt, user_id)
+        # 包装一个轻量 usage holder，让上层可以统一读 last_usage
+        class _UsageHolder:
+            last_usage = anth_usage
+        return text, _UsageHolder()
     if api_id == "vertex_ai":
         from agents.gm import _VertexBackend
         backend = _VertexBackend(model=model)
         # call_structured 已经设了 response_mime_type=application/json
-        return backend.call_structured(
+        text = backend.call_structured(
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
             max_tokens=800,
         )
+        return text, backend
     # OpenAI 兼容：response_format = json_object（GPT-4+ / SiliconFlow / DashScope 都支持）
-    return _call_openai_compat_json_mode(
+    text = _call_openai_compat_json_mode(
         api_id=api_id,
         model=model,
         system_prompt=system_prompt,
@@ -215,16 +242,19 @@ def _call_extractor_backend(
         user_id=user_id,
         timeout_sec=timeout_sec,
     )
+    return text, None
 
 
 def _call_anthropic_tool_use(
     model: str, system_prompt: str, user_prompt: str, user_id: int | None
-) -> str:
+) -> tuple[str, dict]:
     """task 63：用 Anthropic native tool_use 强制 schema 校验。
 
     定义一个 `emit_state_ops` 工具，input_schema 描述每条 op 的形状；
     模型必须输出 tool_use block 而不是文本，SDK 会校验 schema 合规。
     错误率比文本 JSON 低 5-10×。
+
+    返回 (text, usage_dict)。
     """
     from anthropic import Anthropic
 
@@ -271,12 +301,22 @@ def _call_anthropic_tool_use(
         tools=tools,
         tool_choice={"type": "tool", "name": "emit_state_ops"},  # 强制必须调用
     )
+    usage_obj = getattr(resp, "usage", None)
+    anth_usage: dict = {}
+    if usage_obj is not None:
+        anth_usage = {
+            "input_tokens": int(getattr(usage_obj, "input_tokens", 0) or 0),
+            "output_tokens": int(getattr(usage_obj, "output_tokens", 0) or 0),
+            "cached_input_tokens": int(getattr(usage_obj, "cache_read_input_tokens", 0) or 0),
+            "reasoning_tokens": 0,
+        }
+        anth_usage["total_tokens"] = anth_usage["input_tokens"] + anth_usage["output_tokens"]
     for block in resp.content:
         if getattr(block, "type", None) == "tool_use" and block.name == "emit_state_ops":
             inp = block.input or {}
-            return json.dumps(inp.get("ops", []), ensure_ascii=False)
+            return json.dumps(inp.get("ops", []), ensure_ascii=False), anth_usage
     # 没拿到 tool_use（模型不配合）→ 返回空数组让 _parse_extractor_output 拿到 []
-    return "[]"
+    return "[]", anth_usage
 
 
 def _call_openai_compat_json_mode(
