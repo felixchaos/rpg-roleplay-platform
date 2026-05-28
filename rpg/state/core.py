@@ -464,12 +464,14 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         if p.get("speech_style"):
             _card_detail_lines.append(f"语气/说话方式：{p['speech_style']}")
         if p.get("secrets"):
-            _card_detail_lines.append(f"秘密：{p['secrets']}")
+            _card_detail_lines.append(f"【玩家隐藏知识（NPC 不知道，叙事不主动揭示）】{p['secrets']}")
         if p.get("aliases"):
             _card_detail_lines.append(f"别名：{p['aliases']}")
         if p.get("identity_role_desc"):
             _card_detail_lines.append(f"入场定位：{p['identity_role_desc']}")
         _card_detail = ("\n" + "\n".join(_card_detail_lines)) if _card_detail_lines else ""
+        _story_intent = variables.get("story_intent", {}).get("value", "") if isinstance(variables.get("story_intent"), dict) else str(variables.get("story_intent", "") or "")
+        _story_intent_block = f"\n\n【玩家剧情期望】\n{_story_intent}" if _story_intent else ""
         return f"""【玩家档案】
 姓名：{p['name']}
 定位：{p['role']}
@@ -496,7 +498,7 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
   · 用户变量：
 {variable_text}
 
-【当前回合】第 {self.data['turn']} 回合"""
+【当前回合】第 {self.data['turn']} 回合{_story_intent_block}"""
 
     def status_payload(self) -> dict:
         p = self.data["player"]

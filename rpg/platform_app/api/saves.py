@@ -73,10 +73,11 @@ async def api_create_save(request: Request, user=Depends(require_user)):
         character = {"id": cid, "kind": str(ckind)}
     birthpoint = body.get("birthpoint") if isinstance(body.get("birthpoint"), dict) else None
     identity = body.get("identity") if isinstance(body.get("identity"), dict) else None
+    story_intent = str(body.get("story_intent") or "").strip() or None
     return json_response({"ok": True, "save": workspace.create_save(
         user["id"], script_id, body.get("title", ""),
         new_card=new_card, character=character,
-        birthpoint=birthpoint, identity=identity,
+        birthpoint=birthpoint, identity=identity, story_intent=story_intent,
     )})
 
 
