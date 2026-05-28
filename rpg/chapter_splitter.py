@@ -96,11 +96,47 @@ class ChapterSplitter:
                 continue
         return content.decode("utf-8", errors="ignore"), "utf-8(ignore)"
 
+    # task 43/47: \u76d7\u7248\u7f51\u7ad9\u5e38\u89c1\u7684\u7248\u6743\u5ba3\u4f20/\u6c34\u5370\u884c,\u62c6\u4e66\u65f6\u6bb5\u843d\u7ea7\u79fb\u9664\u3002
+    # \u8fd9\u4e9b\u6587\u672c\u88ab\u8bc6\u522b\u6210"\u4e8b\u4ef6" / \u5199\u8fdb character_cards.name / \u51fa\u73b0\u5728 chapter_facts.events,
+    # \u4e25\u91cd\u6c61\u67d3 GM \u4e0a\u4e0b\u6587 + \u72b6\u6001\u9762\u677f"\u672c\u8f6e\u5df2\u77e5\u4e8b\u4ef6"\u3002
+    PIRATE_PROMO_PATTERNS = [
+        re.compile(r"\u5543\u4e66\u5c0f\u8bf4[\u7f51\u7ad9]?|KenShu\.?CC?|kenshu\.cc", re.IGNORECASE),
+        re.compile(r"\u4ee5\u4e0b\u662f.{0,12}\u5c0f\u8bf4[\u7f51\u7ad9].{0,30}(\u6536\u96c6|\u6574\u7406|\u91c7\u96c6)"),
+        re.compile(r"\u7248\u6743\u5f52.{0,30}(\u4f5c\u8005|\u51fa\u7248\u793e|\u6240\u6709)"),
+        re.compile(r"\u672c\u4e66.{0,12}(\u8f6c\u8f7d|\u642c\u8fd0|\u76d7\u7248|\u9996\u53d1|\u8fde\u8f7d)\u4e8e"),
+        re.compile(r"(\u66f4\u591a|\u6700\u65b0)\u7ae0\u8282.{0,20}(\u8bf7|\u5c3d\u5728|\u8bbf\u95ee|\u767b\u9646|\u767b\u5f55)"),
+        re.compile(r"^[ \t]*(www|http|https?:)[\w./:%?=&-]+", re.IGNORECASE | re.MULTILINE),
+        re.compile(r"(\u6536\u85cf\u672c\u7ad9|\u672c\u7ad9|\u7b14\u8da3|UU \u770b\u4e66|UC \u6d4f\u89c8\u5668|\u5fae\u4fe1\u516c\u4f17\u53f7).{0,40}(\u83b7\u53d6|\u8ffd\u4e66|\u66f4\u65b0|\u9605\u8bfb)"),
+        re.compile(r"PS[:\uff1a].{0,80}(\u63a8\u8350|\u6708\u7968|\u8ba2\u9605|\u6253\u8d4f)"),
+    ]
+
+    def _strip_pirate_promo(self, text: str) -> str:
+        """\u9010\u884c\u8fc7\u6ee4\u76d7\u7248\u7f51\u7ad9\u5ba3\u4f20 / \u6c34\u5370 / \u63a8\u5e7f\u6587\u672c,\u4fdd\u7559\u6b63\u6587\u3002
+
+        \u7b56\u7565:\u6bcf\u4e00\u884c\u5355\u72ec\u68c0\u67e5,\u547d\u4e2d PIRATE_PROMO_PATTERNS \u4efb\u4e00\u6761\u5219\u4e22\u5f03,\u5176\u5b83\u884c\u4fdd\u7559\u3002
+        \u7136\u540e\u538b\u7f29\u591a\u4f59\u7a7a\u884c,\u907f\u514d\u5220\u9664\u540e\u7559\u4e0b\u5927\u6bb5\u7a7a\u767d\u3002
+        """
+        if not text:
+            return text
+        lines = text.split("\n")
+        kept: list[str] = []
+        for line in lines:
+            if any(p.search(line) for p in self.PIRATE_PROMO_PATTERNS):
+                continue
+            kept.append(line)
+        # \u538b\u7f29\u8fde\u7eed 3 \u4e2a\u4ee5\u4e0a\u7a7a\u884c\u4e3a 2 \u4e2a,\u4fdd\u7559\u6bb5\u843d\u5206\u9694
+        result = "\n".join(kept)
+        result = re.sub(r"\n{3,}", "\n\n", result)
+        return result
+
     def clean_text(self, text: str) -> str:
         normalized = text.replace("\r\n", "\n").replace("\r", "\n").replace("\ufeff", "")
         normalized = normalized.replace("\u3000", "  ")
         normalized = re.sub(r"[ \t]+\n", "\n", normalized)
         normalized = re.sub(r"\n{4,}", "\n\n\n", normalized)
+        # task 43/47: \u5728\u5207\u7ae0\u524d\u8fc7\u6ee4\u76d7\u7248\u7f51\u7ad9\u5ba3\u4f20,\u6240\u6709\u4e0b\u6e38 (chapter_facts /
+        # character_cards / worldbook / chunks) \u90fd\u62ff\u5230\u5e72\u51c0\u6587\u672c
+        normalized = self._strip_pirate_promo(normalized)
         return normalized.strip()
 
     def split_chapters(

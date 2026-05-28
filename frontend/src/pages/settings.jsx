@@ -322,6 +322,63 @@ function ModelsSection() {
   const [visibilityApi, setVisibilityApi] = useStatePL(null);
   const [validateApi, setValidateApi] = useStatePL(null);
 
+  // task 42: 用 health cache 把所有 model 的 health 字段刷新成最新状态。
+  // 不重新 probe,只读 backend 内存 cache。轻量,可频繁 poll。
+  const refreshHealthFromCache = React.useCallback(async () => {
+    try {
+      const base = (typeof window !== "undefined" && window.__API_BASE) || "";
+      const r = await fetch(`${base}/api/models/health`, { credentials: "include" });
+      const j = await r.json();
+      const hmap = (j && j.health) || {};
+      setApis(arr => arr.map(api => ({
+        ...api,
+        models: api.models.map(m => {
+          const h = hmap[`${api.id}::${m.real_name || m.id}`];
+          if (!h) return m;
+          return {
+            ...m,
+            health: h.status || "untested",
+            health_error: h.error || "",
+            health_latency_ms: h.latency_ms,
+            health_checked_at: h.checked_at,
+          };
+        }),
+      })));
+    } catch (_) {}
+  }, []);
+
+  // 进入 settings 触发后台 probe sweep,刷一次所有 enabled API 的 health,
+  // probe 是 fire-and-forget,UI 不阻塞;然后定期 poll cache 拉结果。
+  const triggerHealthSweep = React.useCallback(async (apiId) => {
+    try {
+      const base = (typeof window !== "undefined" && window.__API_BASE) || "";
+      const body = apiId ? { api_id: apiId } : {};
+      await fetch(`${base}/api/models/health/refresh-all`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (_) {}
+  }, []);
+
+  // 自动 probe + 定期 poll health cache,UI 总能看到最新可达状态。
+  useEffectPL(() => {
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      await refreshHealthFromCache();
+    };
+    // 进入页面立即 fire 一次 sweep + poll;之后每 8s poll cache 拿最新结果
+    (async () => {
+      await triggerHealthSweep();
+      // 等 1s 让 sweep 至少推一两条结果,然后第一次拉
+      await new Promise(r => setTimeout(r, 1500));
+      await tick();
+    })();
+    const iv = setInterval(tick, 8000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [refreshHealthFromCache, triggerHealthSweep]);
+
   // Hydrate from backend /api/models + 并行拉 /api/me/credentials 合并 key_set/key_hint
   useEffectPL(() => {
     (async () => {
@@ -365,6 +422,12 @@ function ModelsSection() {
                 enabled: m.enabled !== false,
                 visible: m.hidden !== true,
                 capabilities: m.capabilities || {},
+                // task 42: 把 backend /api/models 注入的 health 状态透传到 UI,
+                // HealthDot 显示 ok/err/untested 圆点,picker 灰掉 err 项
+                health: m.health || "untested",
+                health_error: m.health_error || "",
+                health_latency_ms: m.health_latency_ms,
+                health_checked_at: m.health_checked_at,
               })),
             };
           }));

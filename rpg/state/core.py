@@ -82,22 +82,81 @@ _SECRET_SECTION_RE = re.compile(
     r"(?ms)^##+\s*(秘密|隐藏|内心|元知识|真实身份|来历|背景秘密|未公开)\s*$.*?(?=^##+\s|\Z)"
 )
 
+# task 45: 句子级元知识关键词 — 含这些词的整句从 GM 视野的角色卡字段里剥除,
+# 移到 player_private.secrets。覆盖玩家在 background/personality 散文段里
+# 直接写"穿越者 / 2024 年 / 原著剧情"这类元知识(没用 ## 秘密 markdown 包装)。
+# 包括穿越/重生/转生/重活/记忆穿越;具体年份(20xx)+"年中国/学生/某中学";
+# 提到"原著/原书/原作"+"剧情/情节/未来";常见网络穿越术语。
+_META_KEYWORDS_RE = re.compile(
+    r"穿越者?|"
+    r"重生(回|至|到|成)|"
+    r"转生|"
+    r"(原著|原书|原作)(剧情|情节|设定|世界|故事|主线|未来|结局|走向)|"
+    r"(知道|记得|预知)(原著|原书|剧情|未来|历史|结局|走向)|"
+    r"(20[0-9][0-9])\s*年.{0,12}(中国|大学|高中|学生|某|普通|地球|现代)|"
+    r"(21\s*世纪|22\s*世纪)|"
+    r"(穿越前|穿越以前|穿越之前|来到这|来这之前)|"
+    r"(老乡|同乡)(穿越|意识|默契|关系)|"
+    r"前世|今生.{0,10}穿越"
+)
+
+
+def _strip_meta_knowledge_sentences(text: str) -> tuple[str, list[str]]:
+    """从散文里逐句扫描,含元知识关键词的整句移除并返回。
+
+    返回 (clean_text, removed_sentences)。中文分句按 。!?;\n 切分。
+    被移除的句子由调用方写入 player_private.secrets,GM 物理上看不到。
+    """
+    if not text or not isinstance(text, str):
+        return ("", [])
+    # 按 。!?;\n 分句,保留分隔符以便重组
+    parts = re.split(r"([。!?;；\n])", text)
+    kept: list[str] = []
+    removed: list[str] = []
+    buf = ""
+    for piece in parts:
+        if piece in "。!?;；\n":
+            sentence = buf + piece
+            if _META_KEYWORDS_RE.search(sentence):
+                removed.append(sentence.strip())
+            else:
+                kept.append(sentence)
+            buf = ""
+        else:
+            buf += piece
+    if buf:
+        if _META_KEYWORDS_RE.search(buf):
+            removed.append(buf.strip())
+        else:
+            kept.append(buf)
+    cleaned = "".join(kept)
+    # 压缩多余空行
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned, [r for r in removed if r]
+
 
 def _strip_secret_sections(text: str) -> str:
-    """从 markdown 文本里剥离常见秘密段(## 秘密 / ## 隐藏 / ## 元知识 等),
-    返回 NPC 可见的剩余部分。空 / 非字符串输入返回空串。"""
+    """从 markdown 文本里剥离常见秘密段(## 秘密 / ## 隐藏 / ## 元知识 等)
+    + task 45 句子级元知识关键词,返回 NPC 可见的剩余部分。
+    空 / 非字符串输入返回空串。"""
     if not text or not isinstance(text, str):
         return ""
-    return _SECRET_SECTION_RE.sub("", text).strip()
+    no_sections = _SECRET_SECTION_RE.sub("", text).strip()
+    cleaned, _removed = _strip_meta_knowledge_sentences(no_sections)
+    return cleaned
 
 
 def _extract_secret_sections(text: str) -> list[str]:
-    """从 markdown 文本里抽出常见秘密段(## 秘密 / ## 隐藏 / ## 元知识 等)原文,
-    用于 workspace 入档时把秘密段迁移到 player_private.secrets。
-    返回每段(含头)的列表。空 / 非字符串输入返回空列表。"""
+    """从 markdown 文本里抽出常见秘密段(## 秘密 / ## 隐藏 / ## 元知识 等)原文
+    + task 45 句子级元知识(含穿越/原著等关键词),用于 workspace 入档时
+    把秘密段 + 元知识句迁移到 player_private.secrets。
+    返回每段/每句的列表。空 / 非字符串输入返回空列表。"""
     if not text or not isinstance(text, str):
         return []
-    return [m.group(0).strip() for m in _SECRET_SECTION_RE.finditer(text) if m.group(0).strip()]
+    sections = [m.group(0).strip() for m in _SECRET_SECTION_RE.finditer(text) if m.group(0).strip()]
+    no_sections = _SECRET_SECTION_RE.sub("", text)
+    _cleaned, meta_sentences = _strip_meta_knowledge_sentences(no_sections)
+    return sections + meta_sentences
 
 # 剧情开始时的初始状态
 DEFAULT_STATE = {

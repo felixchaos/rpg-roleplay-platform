@@ -251,6 +251,40 @@ class GenericAlgorithmNoHardcoding(unittest.TestCase):
     本测试给三个完全不同剧本(三国/魔法学院/科幻基地)的 phase 名做匹配,
     验证通用 substring + token overlap 算法在跨剧本场景都 work。"""
 
+    # 测试用的固定 sid，必须在 setUp/tearDown 前后清理，避免污染生产 DB 的 admin 账户。
+    _TEST_SIDS = (9990001, 9990002, 9990003)
+
+    @classmethod
+    def _cleanup_test_data(cls):
+        """删除测试 fake scripts + 关联的 timeline_anchors。"""
+        try:
+            from platform_app.db import connect, init_db
+            init_db()
+            with connect() as db:
+                db.execute(
+                    "delete from script_timeline_anchors where script_id = any(%s)",
+                    (list(cls._TEST_SIDS),),
+                )
+                # 仅删 title 是 test-generic- 开头的，防止误删真实剧本
+                db.execute(
+                    "delete from scripts where id = any(%s) and title like 'test-generic-%%'",
+                    (list(cls._TEST_SIDS),),
+                )
+        except Exception:
+            # tearDown 不应该让测试 fail，但记录到 stderr 方便排查
+            import traceback, sys
+            traceback.print_exc(file=sys.stderr)
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._cleanup_test_data()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._cleanup_test_data()
+        super().tearDownClass()
+
     def _seed_anchors(self, script_id: int, phases: list[tuple[str, str, int, int]]):
         """直接往 script_timeline_anchors 注 anchors,跳过 ETL (test 工具)。"""
         from platform_app.db import connect, init_db

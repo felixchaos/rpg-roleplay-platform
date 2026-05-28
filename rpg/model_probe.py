@@ -141,6 +141,21 @@ def get_pricing(api_id_or_kind: str, model_real_name: str, catalog_override: dic
 #  远端模型列表嗅探
 # ══════════════════════════════════════════════════════════════════════
 _LIST_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}  # api_id -> (ts, models)
+
+# task 42: 每个 (api_id, real_name) 最后一次 probe_availability 的结果。
+# 让 GET /api/models 能 inject health 字段,UI 显示模型可达性。
+# value: {"status": "ok|err", "latency_ms": int, "checked_at": float, "error": str}
+_HEALTH_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+
+
+def get_health(api_id: str, real_name: str) -> dict[str, Any] | None:
+    """读最近一次 probe 结果。前端 /api/models 用它注入 health 字段。"""
+    return _HEALTH_CACHE.get((api_id, real_name))
+
+
+def all_health() -> dict[str, dict[str, Any]]:
+    """全量返回当前 cache 状态,UI 调试用。"""
+    return {f"{a}::{m}": v for (a, m), v in _HEALTH_CACHE.items()}
 _CACHE_TTL = 60.0
 
 
@@ -377,18 +392,30 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
             max_tokens=8,
         )
         latency = int((time.monotonic() - start) * 1000)
-        return {
+        result = {
             "ok": True,
             "latency_ms": latency,
             "response_text": (text or "")[:80],
             "model_used": model_real_name,
             "api_id": api_id,
         }
+        # task 42: 写 health cache 让 /api/models 能 surface 状态
+        _HEALTH_CACHE[(api_id, model_real_name)] = {
+            "status": "ok", "latency_ms": latency,
+            "checked_at": time.time(), "error": "",
+        }
+        return result
     except Exception as exc:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        err = str(exc)[:200]
+        _HEALTH_CACHE[(api_id, model_real_name)] = {
+            "status": "err", "latency_ms": latency_ms,
+            "checked_at": time.time(), "error": err,
+        }
         return {
             "ok": False,
-            "error": str(exc)[:200],
-            "latency_ms": int((time.monotonic() - start) * 1000),
+            "error": err,
+            "latency_ms": latency_ms,
             "model_used": model_real_name,
             "api_id": api_id,
         }

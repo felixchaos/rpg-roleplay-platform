@@ -19,6 +19,25 @@ from schemas.models import (
 router = APIRouter()
 
 
+def _inject_health(catalog: dict[str, Any]) -> dict[str, Any]:
+    """task 42: 把 model_probe._HEALTH_CACHE 的状态合并到每个 model.health 字段。
+    UI 据此显示可用/不可达/未校验,picker 灰掉 err 项。"""
+    import model_probe
+    for api in catalog.get("apis", []):
+        api_id = api.get("id", "")
+        for m in api.get("models", []):
+            real = m.get("real_name") or m.get("id")
+            health = model_probe.get_health(api_id, real) if real else None
+            if health:
+                m["health"] = health.get("status") or "untested"
+                m["health_latency_ms"] = health.get("latency_ms")
+                m["health_checked_at"] = health.get("checked_at")
+                m["health_error"] = health.get("error") or ""
+            else:
+                m["health"] = "untested"
+    return catalog
+
+
 @router.get("/api/models")
 async def api_models(
     api_user: dict[str, Any] | None = Depends(get_current_user),
@@ -26,11 +45,76 @@ async def api_models(
     from app import _redact_catalog, load_model_catalog, selected_model
     catalog = load_model_catalog()
     is_admin = bool(api_user and api_user.get("role") == "admin")
+    redacted = _redact_catalog(catalog, is_admin)
     return JSONResponse({
         "ok": True,
-        "models": _redact_catalog(catalog, is_admin),
+        "models": _inject_health(redacted),
         "selected": selected_model(catalog),
     })
+
+
+@router.post("/api/models/health/refresh-all")
+async def api_models_health_refresh_all(
+    request: Request,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
+    """触发后台 probe 所有 enabled API 的 enabled model,fire-and-forget。
+    UI 调用后定期轮询 GET /api/models 读 health 字段更新显示。
+    安全:跟 /api/models/probe 同策略,user 只能 probe 自己配过 key 的 provider。
+    """
+    import threading
+
+    from app import _check_probe_permission, load_model_catalog
+    import model_probe
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    only_api_id = (body or {}).get("api_id") if isinstance(body, dict) else None
+
+    catalog = load_model_catalog()
+    targets: list[tuple[str, str]] = []
+    for api in catalog.get("apis", []):
+        if not api.get("enabled"):
+            continue
+        api_id = api.get("id", "")
+        if only_api_id and api_id != only_api_id:
+            continue
+        # 权限检查:user 无凭证的 API 跳过(避免烧 server 凭证)
+        if _check_probe_permission(api_user, api_id):
+            continue
+        for m in api.get("models", []):
+            if not m.get("enabled"):
+                continue
+            real = m.get("real_name") or m.get("id")
+            if real:
+                targets.append((api_id, real))
+
+    user_id = api_user["id"] if api_user else None
+
+    def _sweep() -> None:
+        for api_id, real in targets:
+            try:
+                model_probe.probe_availability(
+                    api_id, real, timeout_sec=10, user_id=user_id,
+                )
+            except Exception:
+                pass
+
+    threading.Thread(target=_sweep, daemon=True).start()
+    return JSONResponse({"ok": True, "scheduled": len(targets)})
+
+
+@router.get("/api/models/health")
+async def api_models_health(
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
+    """读全部 health cache 的快照,前端可定期 poll 这个轻量 endpoint
+    替代 reload /api/models 整树。"""
+    import model_probe
+    return JSONResponse({"ok": True, "health": model_probe.all_health()})
 
 
 @router.post("/api/models/select", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)

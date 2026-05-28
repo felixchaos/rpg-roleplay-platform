@@ -1240,8 +1240,12 @@ def _command_response(message: str, state: GameState) -> tuple[str, bool]:
 
 # ── API 探测：模型列表 / 可用性 / 定价 / 综合报告 ──────────────────
 def _check_probe_permission(api_user: dict[str, Any] | None, api_id: str) -> JSONResponse | None:
-    """同 /api/models/probe 的权限策略：admin 或用户已配置该 provider key。
-    返回 None 表示允许，否则返回 403。
+    """同 /api/models/probe 的权限策略:admin / 用户已配置该 provider key /
+    local 单用户模式 + server 端已配凭证 → 允许。返回 None 表示允许,否则返回 403。
+
+    task 42: local 部署模式下,凭证(SA key / env var)是 server 级共享的,
+    单用户本机自己用,放宽 probe 权限。否则跨域 cookie + vertex SA key 场景下
+    user 永远没法 probe,health 永远 untested。
     """
     if not api_user or api_user.get("role") == "admin":
         return None
@@ -1249,6 +1253,17 @@ def _check_probe_permission(api_user: dict[str, Any] | None, api_id: str) -> JSO
     cred = _ucreds.get_credential(api_user["id"], api_id)
     if cred:
         return None
+    # task 42: local 模式 + server 已配该 provider 凭证 → 允许
+    try:
+        from core.config import deployment_mode as _deployment_mode
+        if _deployment_mode() == "local":
+            from model_registry import find_api, load_model_catalog
+            api = find_api(load_model_catalog(), api_id)
+            if api and api.get("enabled"):
+                # API 在 catalog 里 enabled 意味着 server 启动时凭证检查过了
+                return None
+    except Exception:
+        pass
     return JSONResponse(
         {"ok": False, "error": "需要先在「个人主页 → API 凭证」中配置该 provider 才能调用探测接口"},
         status_code=403,

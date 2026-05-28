@@ -276,24 +276,18 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
     };
   }, [onClose, triggerRef]);
 
-  // 真实模型目录走后端：优先 gameState.models（来自 /api/state 同步），
-  // fallback 到独立拉 /api/models（首次打开还没有同步 state 的场景）。
+  // 真实模型目录走后端 /api/models 拉新鲜数据(包含 _inject_health 的 health 字段)。
+  // 不再用 gameState.models 缓存 — 那来自 /api/state 不带 health,UI 会全显 untested。
+  // task 42: picker 必须知道每个模型的 health 状态才能灰掉不可达项。
   const [catalog, setCatalog] = useStateC(null);
   const [busy, setBusy] = useStateC(false);
   const [err, setErr] = useStateC("");
   React.useEffect(() => {
-    if (gameState && gameState.models && Array.isArray(gameState.models.apis)) {
-      setCatalog(gameState.models);
-      return;
-    }
     if (!window.api || !window.api.models || !window.api.models.list) return;
     let cancelled = false;
     (async () => {
       try {
         const r = await window.api.models.list();
-        // /api/models 真实 shape：{ok, models: {apis:[...], selected, ...}, selected}
-        // 旧代码直接 setCatalog(r) 后用 r.apis → undefined → flat 为空。
-        // 提取真正的 catalog 子对象。
         const realCatalog = (r && r.models && Array.isArray(r.models.apis)) ? r.models : r;
         if (!cancelled && realCatalog) setCatalog(realCatalog);
       } catch (e) {
@@ -301,9 +295,10 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
       }
     })();
     return () => { cancelled = true; };
-  }, [gameState && gameState.models]);
+  }, []);
 
   // 把 catalog 扁平化为可选模型列表（只显示 enabled 的）
+  // task 42: 注入 health 状态(ok/err/untested),picker 灰掉 err 项防止用户选 404 模型
   const flat = [];
   const apis = (catalog && Array.isArray(catalog.apis)) ? catalog.apis : [];
   apis.forEach((api) => {
@@ -318,9 +313,17 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
           api_id: api.id,
           api_label: api.display_name || api.id,
           desc: (m.capabilities || []).slice(0, 3).join(" · "),
+          health: m.health || "untested",
+          health_error: m.health_error || "",
+          health_latency_ms: m.health_latency_ms,
         });
       }
     });
+  });
+  // 排序:可用优先,err 沉底
+  flat.sort((a, b) => {
+    const order = { ok: 0, untested: 1, degraded: 2, err: 3 };
+    return (order[a.health] ?? 4) - (order[b.health] ?? 4);
   });
 
   // 当前选中：优先 catalog.selected.{api_id,model_id}，回退 gameState.app
@@ -367,12 +370,33 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
         {flat.map((m) => {
           const key = `${m.api_id}::${m.real_name}`;
           const active = key === selectedKey;
+          const unavailable = m.health === "err";
+          const dotColor = m.health === "ok" ? "var(--ok)"
+            : m.health === "err" ? "var(--danger)"
+            : "var(--muted)";
+          const dotTip = m.health === "ok" ? `可用 · ${m.health_latency_ms}ms`
+            : m.health === "err" ? `不可达 · ${(m.health_error || "").slice(0, 80)}`
+            : "尚未探活";
           return (
             <li key={key}>
-              <button onClick={() => !busy && pickModel(m)} className={active ? "active" : ""} disabled={busy}>
+              <button
+                onClick={() => !busy && !unavailable && pickModel(m)}
+                className={active ? "active" : ""}
+                disabled={busy || unavailable}
+                title={unavailable ? `不可达:${(m.health_error || "").slice(0, 120)}` : undefined}
+                style={unavailable ? { opacity: 0.45 } : undefined}
+              >
                 <div>
+                  <span
+                    className="dot"
+                    style={{display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: dotColor, marginRight: 6, verticalAlign: "middle"}}
+                    title={dotTip}
+                  />
                   <strong>{m.label}</strong>
                   <span className="muted-2 mono" style={{marginLeft: 6, fontSize: 11}}>{m.api_label}</span>
+                  {unavailable && (
+                    <span className="muted-2" style={{marginLeft: 6, fontSize: 10.5, color: "var(--danger)"}}>不可达</span>
+                  )}
                 </div>
                 {m.desc ? <span className="muted" style={{fontSize: 12}}>{m.desc}</span> : null}
                 {active && <Icon name="check" size={14} style={{color: "var(--accent)"}} />}

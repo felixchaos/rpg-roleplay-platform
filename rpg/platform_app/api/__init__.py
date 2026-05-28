@@ -34,6 +34,7 @@ from ._deps import (
     SESSION_COOKIE,
     _auth_required,
     _client_ip,
+    _delete_session_cookie,
     _redact_mcp_in_tools,
     _resolve_save_id,
     _set_session_cookie,

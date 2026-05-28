@@ -571,8 +571,10 @@ def _stage_entities(ctl: JobController, script_id: int, user_id: int) -> list[di
     full_text = "\n".join(c["content"] for c in chapters)
     # 候选：2-3 字中文连续词，且不在常见停用词里
     candidates = re.findall(r"[一-鿿]{2,3}", full_text)
-    stop = {"什么", "怎么", "这个", "那个", "时候", "可以", "已经", "如何",
-            "为什么", "因为", "所以", "只是", "就是", "还是", "但是"}
+    # task 47: 复用 session.py 的统一 blacklist,避免维护两份。包含 40+ 高频副词/
+    # 连词/语气词("不知道/起来/有德的/不过/这时候/看起来"等)+ 盗版宣传残留。
+    from platform_app.knowledge.session import _CHINESE_NON_NAME_BLACKLIST
+    stop = set(_CHINESE_NON_NAME_BLACKLIST)
     counter = Counter(c for c in candidates if c not in stop)
     ctl.update(stage_progress=1, stage_total=1)
 
@@ -652,28 +654,38 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
                 continue
             context = "文本片段：\n" + "\n---\n".join(snippets)
 
+        # task 47: 显式让 LLM 判断"这是真人名吗",false 时直接跳过不写卡。
+        # 2-3 字中文 ngram 候选有大量副词/连词/动词性短语(为什么/的声音/紧接着/有德的)
+        # 维护硬编码 blacklist 永远跟不上内容,LLM 一个布尔判断成本极低且精度高。
         prompt = (
-            f"从下面内容里提取角色「{name}」的设定，返回严格 JSON：\n"
-            "{ \"identity\": \"身份/职业/势力\", \"appearance\": \"外貌描述\", "
-            "\"personality\": \"性格特点\", \"speech_style\": \"说话风格\", "
-            "\"secrets\": \"秘密或重要伏笔（如无则空字符串）\", "
-            "\"aliases\": [\"别名1\"] }\n\n"
+            f"分析「{name}」是否是真实的角色人名(不是副词/连词/动词/地名/物品/碎片),返回严格 JSON:\n"
+            "如果不是真人名,返回 {\"is_character\": false}\n"
+            "如果是真人名,返回 {\n"
+            "  \"is_character\": true,\n"
+            "  \"identity\": \"身份/职业/势力\",\n"
+            "  \"appearance\": \"外貌描述\",\n"
+            "  \"personality\": \"性格特点\",\n"
+            "  \"speech_style\": \"说话风格\",\n"
+            "  \"secrets\": \"秘密或重要伏笔(如无则空字符串)\",\n"
+            "  \"aliases\": [\"别名1\"]\n"
+            "}\n\n"
             + context
         )
         try:
             raw = gm._backend.call_structured(
-                system="你是角色卡提取器，只输出 JSON。",
+                system="你是角色卡提取器,严格判断 name 是否为真实角色人名。只输出 JSON。",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=700,
             )
             data = _parse_json(raw)
-            if data:
-                # 累 usage
-                last = getattr(gm._backend, "last_usage", {}) or {}
-                from .usage import compute_cost
-                cost = float(compute_cost(gm.api_id, gm._backend.model_name, last))
-                ctl.add_usage(int(last.get("input_tokens", 0)), int(last.get("output_tokens", 0)), cost)
-                # 写入 character_cards（含 secrets 字段）
+            # 累 usage(无论是否写卡,LLM 都跑了)
+            last = getattr(gm._backend, "last_usage", {}) or {}
+            from .usage import compute_cost
+            cost = float(compute_cost(gm.api_id, gm._backend.model_name, last))
+            ctl.add_usage(int(last.get("input_tokens", 0)), int(last.get("output_tokens", 0)), cost)
+            # task 47: LLM 明确说不是人名 → 跳过;identity 为空也判定为假名(双保险)
+            if data and data.get("is_character") is not False and (data.get("identity") or "").strip():
+                # 写入 character_cards(含 secrets 字段)
                 knowledge.upsert_character_card(user_id, script_id, {
                     "name": name,
                     "aliases": data.get("aliases") or [],

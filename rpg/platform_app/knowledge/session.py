@@ -154,6 +154,40 @@ def ensure_game_session(user_id: int, save_id: int, state: dict[str, Any] | None
     return expose(session)  # type: ignore[return-value]
 
 
+_CHINESE_NON_NAME_BLACKLIST: frozenset[str] = frozenset({
+    # 高频副词/连词/语气词,_rank_entities 误识别的"假人名"
+    "不知道", "知道", "起来", "不过", "这时候", "看起来", "实际上",
+    "自己的", "你们的", "我们的", "他们的", "我们", "你们", "他们",
+    "的时候", "的话", "之前", "之后", "现在", "刚刚", "突然", "终于",
+    "继续", "已经", "可能", "或者", "如果", "因为", "所以", "但是",
+    "然后", "为了", "对于", "关于", "通过", "根据", "比如",
+    # 章节常见副词
+    "整理", "感觉", "样子", "时候", "事情", "东西", "地方", "问题",
+    "情况", "样式", "做法", "想法", "意思", "结果", "原因", "办法",
+    # 数量/方位
+    "一下", "一直", "一边", "一切", "一种", "一些", "上面", "下面",
+    # 盗版网站宣传残留(防止 task 43 sanitizer 漏过的)
+    "出版社", "作者或", "收集并", "版权归", "啃书", "KenShu",
+    # 常见动词性短语
+    "决定", "看看", "想想", "走过", "看着", "知道了",
+    # 称呼通用词(不该单独成角色)
+    "先生", "小姐", "夫人", "女士", "同志", "朋友", "敌人", "对方",
+    # 数字
+    "第一", "第二", "第三", "第四", "第五",
+    # task 47 ext: 国籍/种族 — 不该单独成角色卡
+    "中国人", "美国人", "德国人", "英国人", "法国人", "日本人", "韩国人",
+    "俄国人", "苏联人", "意大利人", "西班牙人", "印度人", "犹太人",
+    "中国", "美国", "德国", "英国", "法国", "日本", "苏联", "俄罗斯",
+    # task 47 ext: 设定词 / 装备词被切碎的 ngram(应入 worldbook 不是 character)
+    "魔导装", "导装甲", "战姬装", "机甲装", "动力装", "魔法装",
+    # task 47 ext: 称呼后缀 / 人称后缀切碎
+    "有德的", "晓芸的", "林有", "林晓", "晓芸",
+    # 太通用的 2 字职业/身份
+    "学生", "老师", "军官", "士兵", "警察", "医生", "护士", "工人",
+    "农民", "商人", "记者", "演员", "歌手", "作家",
+})
+
+
 def _aggregate_characters_from_facts(script_id: int) -> dict[str, Any]:
     """从 chapter_facts.characters 纯聚合角色卡候选,不调 LLM。
 
@@ -161,6 +195,9 @@ def _aggregate_characters_from_facts(script_id: int) -> dict[str, Any]:
     {name: {name, identity, appearance, personality, speech_style,
             secrets, sample_dialogue, priority, aliases}}
     过滤 count < 2 的路人,取 top 50 by priority(总出场次数)。
+
+    task 47: 加 _CHINESE_NON_NAME_BLACKLIST 过滤副词/连词/语气词等
+    被 _rank_entities 误识别的"假人名"(如"不知道/起来/不过/这时候")。
     """
     out: dict[str, Any] = {}
     with connect() as db:
@@ -179,6 +216,12 @@ def _aggregate_characters_from_facts(script_id: int) -> dict[str, Any]:
             name = (ch.get("name") or "").strip()
             if not name or len(name) < 2:
                 continue
+            # task 47: 黑名单过滤(必须放在 priority 累加之前)
+            if name in _CHINESE_NON_NAME_BLACKLIST:
+                continue
+            # task 47: 含数字 / 纯数字 / 含 URL 字符的不是人名
+            if any(c.isdigit() for c in name) or "/" in name or "." in name:
+                continue
             count = int(ch.get("count") or 1)
             if name not in out:
                 out[name] = {
@@ -196,8 +239,8 @@ def _aggregate_characters_from_facts(script_id: int) -> dict[str, Any]:
             else:
                 out[name]["priority"] += count
 
-    # 过滤路人(total count < 2)
-    filtered = {name: card for name, card in out.items() if card["priority"] >= 2}
+    # task 47: 提高路人过滤门槛 — count<5 不要(原 <2 太宽松,2-3 字假名词容易达到)
+    filtered = {name: card for name, card in out.items() if card["priority"] >= 5}
 
     # 取 top 50 by priority
     top = sorted(filtered.items(), key=lambda kv: -kv[1]["priority"])[:50]
@@ -236,9 +279,13 @@ def sync_script_knowledge(user_id: int, script_id: int, *, rebuild: bool = False
     from platform_app.knowledge._utils import _chunk_text
 
     _init_db()
-    # task 80: 优先按 script_id scope 拉,新书 DB 空则 chars/world 为 {} (不再回退柏林 JSON 污染)
-    chars = _load_characters(script_id=script_id) or {}
-    world = _load_world(script_id=script_id) or {}
+    # task 47: rebuild=True 时不读旧 character_cards,避免 feedback loop:
+    # 旧 character_cards 有"不知道/出版社"等垃圾 → known_names 包含它们 →
+    # _rank_entities 在新章节里 count 这些词 → 写回 chapter_facts.characters →
+    # _aggregate_characters_from_facts 又把它们当 character → 又写回 character_cards。
+    # rebuild 应该从 0 开始,只让 chapter_facts 文本本身决定角色。
+    chars = {} if rebuild else (_load_characters(script_id=script_id) or {})
+    world = {} if rebuild else (_load_world(script_id=script_id) or {})
     summaries = _load_summaries()
     known_names = _known_names(chars)
     known_locations = _known_locations(world)
@@ -253,8 +300,12 @@ def sync_script_knowledge(user_id: int, script_id: int, *, rebuild: bool = False
             raise ValueError("无权访问该剧本")
         book = _ensure_book(db, script)
         if rebuild:
+            # task 43/47: rebuild 必须连 character_cards + worldbook 一起清,
+            # 否则旧的(污染版)残留,UPSERT 只更新同名行,新角色加进来但旧垃圾还在。
             db.execute("delete from documents where script_id = %s", (script_id,))
             db.execute("delete from chapter_facts where script_id = %s", (script_id,))
+            db.execute("delete from character_cards where script_id = %s", (script_id,))
+            db.execute("delete from worldbook_entries where script_id = %s", (script_id,))
 
         chapters = db.execute(
             """
@@ -274,20 +325,9 @@ def sync_script_knowledge(user_id: int, script_id: int, *, rebuild: bool = False
                 """,
                 (script_id,),
             ).fetchall()
-        # P0 fix #3: 新书 chars 为空时,从 chapter_facts 纯聚合写 character_cards (不调 LLM)
-        if not chars:
-            try:
-                chars = _aggregate_characters_from_facts(script_id)
-                log.info(
-                    "[sync] 从 chapter_facts 聚合 %d 个角色 for script %s",
-                    len(chars),
-                    script_id,
-                )
-            except Exception as e:
-                log.warning("[sync] 聚合 characters from facts failed: %s", e)
-                chars = {}
-        card_count = _sync_character_cards(db, book, script, chars)
-        worldbook_count = _sync_worldbook_entries(db, book, script, world)
+        # task 40 bug fix: 之前这段(character/worldbook 提取)在 chapter_facts 循环之前,
+        # 所以新书首次 import 时 _aggregate_characters_from_facts 读到 0 个 fact → 0 个角色 →
+        # 0 张卡。必须先把 chapter_facts 全部插入,然后再从 facts 聚合角色 + 生成 cards。
 
         chunk_count = 0
         fact_count = 0
@@ -302,6 +342,22 @@ def sync_script_knowledge(user_id: int, script_id: int, *, rebuild: bool = False
             fact = _fact_from_chapter(chapter, summaries, known_names, known_locations, known_concepts)
             _upsert_chapter_fact(db, book, script, chapter, document, fact)
             fact_count += 1
+
+        # P0 fix #3: 新书 chars 为空时,从 chapter_facts 纯聚合写 character_cards (不调 LLM)
+        # 必须在 chapter_facts 循环之后调,否则聚合到 0 个角色
+        if not chars:
+            try:
+                chars = _aggregate_characters_from_facts(script_id)
+                log.info(
+                    "[sync] 从 chapter_facts 聚合 %d 个角色 for script %s",
+                    len(chars),
+                    script_id,
+                )
+            except Exception as e:
+                log.warning("[sync] 聚合 characters from facts failed: %s", e)
+                chars = {}
+        card_count = _sync_character_cards(db, book, script, chars)
+        worldbook_count = _sync_worldbook_entries(db, book, script, world)
 
     # P0 fix #2: chapter_facts 完成后,聚合 script_timeline_anchors
     try:

@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from . import auth as _auth
 from .api import (
     SESSION_COOKIE,
+    _delete_session_cookie,
     json_response,
     require_user,
 )
@@ -409,7 +410,8 @@ async def api_account_delete(request: Request):
         db.execute("delete from sessions where user_id = %s", (user["id"],))
         db.execute("delete from users where id = %s", (user["id"],))
     resp = json_response({"ok": True})
-    resp.delete_cookie(SESSION_COOKIE, path="/")
+    # 跟 _set_session_cookie 一致的 samesite/secure,否则跨域场景下浏览器不认 delete
+    _delete_session_cookie(resp, request)
     return resp
 
 

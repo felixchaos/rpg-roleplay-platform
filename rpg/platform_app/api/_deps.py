@@ -83,20 +83,47 @@ def json_response(content, status_code: int = 200, **kwargs):
     return BaseJSONResponse(jsonable_encoder(content), status_code=status_code, **kwargs)
 
 
-def _set_session_cookie(response: BaseJSONResponse, request: Request, token: str) -> None:
+def _cookie_security_kwargs(request: Request) -> dict:
+    """统一的 cookie 安全参数,set 和 delete 必须用同一组,
+    否则跨域 reload 不发 cookie(SameSite=None 的 cookie 被 SameSite=Lax 的 delete 覆盖)。
+
+    samesite=none 时,浏览器规范要求必须配 Secure(包括 localhost / 127.0.0.1 也要)。
+    Chrome 100+ 会直接拒绝 `SameSite=None; !Secure` 的 cookie,所以即使 env 写
+    `RPG_COOKIE_SECURE=0`,这里也强制 secure=True,否则浏览器拒收 → 登录失败。
+    127.0.0.1 在 Chrome 是 secure context,HTTP 也能发送 Secure-flag cookie。
+    """
     from core.config import cookie_samesite as _cookie_samesite
     from core.config import cookie_secure as _cookie_secure
     secure_env = _cookie_secure()
-    secure = request.url.scheme == "https" if secure_env is None else secure_env == "1"
+    samesite = _cookie_samesite()
+    if secure_env is None:
+        secure = request.url.scheme == "https"
+    else:
+        secure = secure_env == "1"
+    if samesite == "none":
+        # 浏览器规范硬要求,不能让 env 错配把 cookie 配废
+        secure = True
+    return {
+        "httponly": True,
+        "secure": secure,
+        "samesite": samesite,
+        "path": "/",
+    }
+
+
+def _set_session_cookie(response: BaseJSONResponse, request: Request, token: str) -> None:
     response.set_cookie(
         SESSION_COOKIE,
         token,
-        httponly=True,
-        secure=secure,
-        samesite=_cookie_samesite(),
         max_age=auth.SESSION_DAYS * 24 * 60 * 60,
-        path="/",
+        **_cookie_security_kwargs(request),
     )
+
+
+def _delete_session_cookie(response: BaseJSONResponse, request: Request) -> None:
+    """删 cookie 必须传跟 set 一致的 samesite/secure,否则浏览器收到的 Set-Cookie
+    属性不匹配,会被当成"另一个 cookie"残留,反而留下原 cookie。"""
+    response.delete_cookie(SESSION_COOKIE, **_cookie_security_kwargs(request))
 
 
 def _auth_required() -> bool:

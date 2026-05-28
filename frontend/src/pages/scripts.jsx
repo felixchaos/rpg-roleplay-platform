@@ -601,6 +601,39 @@ function ScriptsImportView() {
     else localStorage.removeItem("rpg.import.job");
   }, [job]);
 
+  // task 39: real job 必须轮询后端拿真实进度。之前 job.real=true 直接 return 没轮询,
+  // 所以 UI 永远卡 0%/0s,直到用户手动刷新页面才能看到剧本已 import 完。
+  // backend ks_<sid>_<hex> job kind=knowledge_sync,目前是 1-stage(done/error),
+  // 简化映射:status==done → 全部 stages 标 done; status==error → 标 error。
+  React.useEffect(() => {
+    if (!job || !job.real || job.status !== "running") return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const resp = await window.api.scripts.jobStatus(job.id);
+        if (cancelled) return;
+        const jb = resp && (resp.job || resp);
+        if (!jb || !jb.status) return;
+        if (jb.status === "done") {
+          setJob(j => j ? { ...j,
+            status: "done",
+            finished_at: Date.now(),
+            stages: j.stages.map(s => ({ ...s, status: "done", progress: 1, tokens_used: s.tokens_est, done_at: Date.now() })),
+            knowledge_result: jb.usage_actual?.result || null,
+          } : j);
+          window.toast?.("剧本导入完成", { kind: "ok", detail: `script #${jb.script_id}`, duration: 2400 });
+          try { window.dispatchEvent(new CustomEvent("rpg-scripts-updated")); } catch (_) {}
+        } else if (jb.status === "error" || jb.status === "failed") {
+          setJob(j => j ? { ...j, status: "cancelled", finished_at: Date.now(), error: jb.error || "导入失败" } : j);
+          window.__apiToast?.("导入失败", { kind: "danger", detail: jb.error || "未知错误", duration: 4000 });
+        }
+      } catch (_) { /* 单次失败不影响下一次轮询 */ }
+    };
+    poll();
+    const iv = setInterval(poll, 2000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [job?.id, job?.real, job?.status]);
+
   // task 17/18/19: 之前这个 setInterval 是「假任务模拟器」：
   //   - 进度条 ticks 是 Math.random，假的
   //   - 完成时直接把假行塞进 window.MOCK_PLATFORM.scripts → 这是 task 19 真后端只有 1 条
@@ -773,6 +806,23 @@ function ScriptsImportView() {
           throw new Error((importResp && (importResp.error || importResp.detail)) || "导入接口返回失败");
         }
         const sc = importResp.script || {};
+        // task 41: importScript 只跑简化 sync (facts/chunks),没跑 LLM cards/worldbook。
+        // 必须额外调 import-pipeline 启动完整 5-stage LLM 流水线,否则角色卡 + 世界书全是 0,
+        // 后面 chat 上下文严重缺失。优先用 imp_ job_id 跟踪进度(完整 5-stage),
+        // ks_ job_id 是降级 fallback。
+        let pipelineJobId = null;
+        try {
+          const pipelineResp = await window.api.scripts.importPipeline(sc.id, {
+            enable_cards: true,
+            enable_worldbook: true,
+          });
+          if (pipelineResp && pipelineResp.ok !== false) {
+            pipelineJobId = pipelineResp.job_id;
+          }
+        } catch (e) {
+          // pipeline 启动失败不致命,fallback 用 ks_ job_id 至少能看到 facts/chunks 进度
+          console.warn("import-pipeline failed to start:", e);
+        }
         const stages = estimate.stages.map((s, i) => ({
           ...s,
           status: i === 0 ? "running" : "pending",
@@ -780,7 +830,9 @@ function ScriptsImportView() {
           started_at: i === 0 ? Date.now() : null, done_at: null,
         }));
         const j = {
-          id: (importResp.knowledge && importResp.knowledge.job_id) || ("script_" + (sc.id || "?")),
+          id: pipelineJobId
+            || (importResp.knowledge && importResp.knowledge.job_id)
+            || ("script_" + (sc.id || "?")),
           file: estimate.file,
           title: sc.title || title || estimate.file.name,
           script_id: sc.id,

@@ -716,13 +716,15 @@ function ChatArea({ history, runState, runStyle, narrativeFont, narrativeSize, h
           </div>
         }
       </div>
-      {/* task 133: Claude 风格"回到底部"浮按钮 — 用户上滚时显示 */}
+      {/* task 133: Claude 风格"回到底部"浮按钮 — 用户上滚时显示。
+          task 46: 位置贴右侧而不是 center,bottom 拉到 90px 避开 composer 输入框,
+          否则按钮浮在输入区上方挤压用户视觉。 */}
       {showJumpBtn && (
         <button
           onClick={jumpToBottom}
           className="btn"
           style={{
-            position: "absolute", right: "calc(50% - 70px)", bottom: 24,
+            position: "absolute", right: 20, bottom: 90,
             background: "var(--panel)", border: "1px solid var(--line)",
             borderRadius: 999, padding: "6px 14px", fontSize: 12.5,
             boxShadow: "var(--shadow-3, 0 6px 18px -6px rgba(0,0,0,0.5))",

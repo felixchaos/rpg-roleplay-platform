@@ -9,6 +9,7 @@ from ..security import public_user
 from ._deps import (
     SESSION_COOKIE,
     _client_ip,
+    _delete_session_cookie,
     _set_session_cookie,
     current_user,
     json_response,
@@ -59,7 +60,9 @@ async def api_login(request: Request):
 async def api_logout(request: Request):
     _auth.logout(request.cookies.get(SESSION_COOKIE))
     response = json_response({"ok": True})
-    response.delete_cookie(SESSION_COOKIE, path="/")
+    # 必须用跟 set 一致的 samesite/secure,否则跨域场景下浏览器会把 delete 当
+    # "另一个 cookie" 残留,导致 SameSite=None 的 session cookie 还在(或反之)。
+    _delete_session_cookie(response, request)
     return response
 
 
