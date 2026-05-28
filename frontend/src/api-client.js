@@ -264,6 +264,9 @@
         const url = BASE + "/api/v1/scripts/import-jobs/" + jobId + "/stream";
         return openEventSource(url, handlers);
       },
+      // B3: script overrides CRUD (JSONB)
+      getOverrides: (sid) => GET("/api/v1/scripts/" + sid + "/overrides"),
+      saveOverrides: (sid, data) => POST("/api/v1/scripts/" + sid + "/overrides", { data }),
       // B2: upload script pack zip — POST /api/v1/scripts/import-pack multipart
       importPack: (file) => {
         const fd = new FormData();
