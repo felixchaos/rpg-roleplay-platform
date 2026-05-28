@@ -95,6 +95,51 @@ def _t_create_save(user_id: int, args: dict) -> str:
         return f"失败: {type(exc).__name__}: {exc}"
 
 
+def _t_list_my_usage(user_id: int, args: dict) -> str:
+    """task 119: 查当前用户的 token 用量/成本/请求数(按天/周/月窗口)。
+
+    page=Usage 时用户说"统计/给我看/汇总一下用量"应直接调本工具,而不是 ui_set_field。
+    """
+    days = int(args.get("days") or 30)
+    if days <= 0 or days > 365:
+        days = 30
+    try:
+        from platform_app import usage as _usage
+        data = _usage.aggregate_usage(int(user_id), days=days)
+    except Exception as exc:
+        return f"失败: {type(exc).__name__}: {exc}"
+    if not data:
+        return f"过去 {days} 天没有任何用量记录。"
+    requests = int(data.get("requests", 0) or 0)
+    in_tk = int(data.get("input_tokens", 0) or 0)
+    out_tk = int(data.get("output_tokens", 0) or 0)
+    cost = float(data.get("cost_usd", 0) or 0)
+    avg_lat = data.get("avg_latency_ms")
+    err_rate = data.get("error_rate")
+    by_api = data.get("by_api") or []
+    by_model = data.get("by_model") or []
+    daily_avg = (requests / max(days, 1))
+    lines = [
+        f"过去 {days} 天用量汇总:",
+        f"- 请求数: {requests} (日均 {daily_avg:.1f})",
+        f"- Token: 输入 {in_tk:,} / 输出 {out_tk:,} (比 {in_tk / max(out_tk, 1):.1f}:1)",
+        f"- 成本: ${cost:.4f}",
+    ]
+    if avg_lat is not None:
+        lines.append(f"- 平均延迟: {avg_lat} ms")
+    if err_rate is not None:
+        lines.append(f"- 错误率: {err_rate}%")
+    if by_api:
+        lines.append("按 API:")
+        for r in by_api[:5]:
+            lines.append(f"  · {r.get('api','-')}: {r.get('requests',0)} 请求 · ${float(r.get('cost_usd', 0) or 0):.4f}")
+    if by_model:
+        lines.append("按模型 (TOP 5):")
+        for r in by_model[:5]:
+            lines.append(f"  · {r.get('model','-')} (via {r.get('api','-')}): {r.get('requests',0)} 请求 · ${float(r.get('cost_usd', 0) or 0):.4f}")
+    return "\n".join(lines)
+
+
 def _t_list_my_saves(user_id: int, args: dict) -> str:
     script_id = args.get("script_id")
     try:
@@ -199,12 +244,18 @@ def _t_delete_save(user_id: int, args: dict) -> str:
         from platform_app.db import connect, init_db
         init_db()
         with connect() as db:
+            # task 120: 先查 save 详情, 包括 turn (有进度的不该让 LLM 轻易删)
             owned = db.execute(
-                "select 1 from game_saves where id = %s and user_id = %s",
+                "select id, title, "
+                "  (state_snapshot->>'turn')::int as turn, "
+                "  coalesce(jsonb_array_length(state_snapshot->'history'), 0) as msg_count "
+                "from game_saves where id = %s and user_id = %s",
                 (int(save_id), user_id),
             ).fetchone()
             if not owned:
-                return "失败 (权限): 该存档不属于当前用户"
+                return f"失败 (权限/不存在): save_id={save_id} 不属于当前用户或已不存在。**禁止编造 '已删除'**: 这个 ID 根本没操作过。"
+            turn = int(owned.get("turn") or 0)
+            title = str(owned.get("title") or "")
             db.execute(
                 "delete from game_saves where id = %s and user_id = %s",
                 (int(save_id), user_id),
@@ -215,9 +266,101 @@ def _t_delete_save(user_id: int, args: dict) -> str:
             _ui._invalidate_user_cache({"id": int(user_id)})
         except Exception:
             pass
-        return f"删除存档 {save_id} ✓"
+        # task 120: 结果带 turn 信息, LLM 续叙时也只能引用这一次返回的具体 save_id, 不能 generalize
+        warn = ""
+        if turn >= 5:
+            warn = f" ⚠️ 该存档已玩 {turn} 回合, 有重要进度被永久删除!"
+        return f"已删除 save_id={save_id} ({title!r}, turn={turn}) ✓{warn}"
     except Exception as exc:
         return f"失败: {type(exc).__name__}: {exc}"
+
+
+def _t_delete_saves(user_id: int, args: dict) -> str:
+    """task 120: 批量删除 - 解决"删多个存档"场景下 LLM 只调 1 次然后编造其他被删的幻觉。
+    LLM 必须给出完整 save_ids 列表(先 list_my_saves 拿真实 ID),
+    backend 逐个验证 + 删除, 返回 JSON 列出 deleted/not_found/protected 三个桶,
+    LLM 续叙时只能基于这个真实结果, 无法编造。
+    """
+    import json as _json
+    save_ids = args.get("save_ids")
+    if not isinstance(save_ids, list) or not save_ids:
+        return "失败: save_ids 必须是非空整数数组"
+    try:
+        ids = [int(x) for x in save_ids]
+    except (TypeError, ValueError):
+        return "失败: save_ids 必须是整数列表"
+    if len(ids) > 50:
+        return "失败: 单次最多删 50 个 save (避免误操作)"
+
+    deleted: list[dict] = []
+    not_found: list[int] = []
+    protected: list[dict] = []  # turn>=10 的高价值存档,需要单独 delete_save 确认
+    errors: list[dict] = []
+
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            for sid in ids:
+                try:
+                    row = db.execute(
+                        "select id, title, "
+                        "  (state_snapshot->>'turn')::int as turn, "
+                        "  coalesce(jsonb_array_length(state_snapshot->'history'), 0) as msg_count "
+                        "from game_saves where id = %s and user_id = %s",
+                        (sid, user_id),
+                    ).fetchone()
+                    if not row:
+                        not_found.append(sid)
+                        continue
+                    turn = int(row.get("turn") or 0)
+                    title = str(row.get("title") or "")
+                    # 保护高价值存档:turn >= 10 必须单独 delete_save 走 destructive 确认
+                    if turn >= 10:
+                        protected.append({"id": sid, "title": title, "turn": turn})
+                        continue
+                    db.execute(
+                        "delete from game_saves where id = %s and user_id = %s",
+                        (sid, user_id),
+                    )
+                    deleted.append({"id": sid, "title": title, "turn": turn})
+                except Exception as exc:
+                    errors.append({"id": sid, "error": f"{type(exc).__name__}: {exc}"})
+        try:
+            import app as _ui
+            _ui._invalidate_user_cache({"id": int(user_id)})
+        except Exception:
+            pass
+    except Exception as exc:
+        return f"失败: {type(exc).__name__}: {exc}"
+
+    # 详细 JSON 结果, LLM 必须基于这个 narrate, 不能编
+    result = {
+        "requested": len(ids),
+        "deleted_count": len(deleted),
+        "deleted": deleted,
+        "not_found": not_found,
+        "protected": protected,
+        "errors": errors,
+    }
+    summary_lines = [f"批量删除结果 (请求 {len(ids)} 个):"]
+    if deleted:
+        summary_lines.append(f"  ✓ 成功删除 {len(deleted)} 个: " + ", ".join(
+            f"{d['id']}({d['title']!r},turn={d['turn']})" for d in deleted
+        ))
+    if not_found:
+        summary_lines.append(f"  ✗ 不存在/无权 {len(not_found)} 个: {not_found}")
+    if protected:
+        prot_strs = [f"{p['id']}({p['title']!r},turn={p['turn']})" for p in protected]
+        summary_lines.append(
+            f"  ⚠️ 高价值存档需单独删除 (turn>=10, 自动跳过) {len(protected)} 个: " +
+            ", ".join(prot_strs) + " — 用 delete_save 走二次确认逐个删"
+        )
+    if errors:
+        summary_lines.append(f"  ❌ 错误 {len(errors)} 个: {errors}")
+    summary_lines.append("--- raw JSON ---")
+    summary_lines.append(_json.dumps(result, ensure_ascii=False))
+    return "\n".join(summary_lines)
 
 
 def _t_list_branches(user_id: int, args: dict) -> str:
@@ -380,6 +523,28 @@ def register_saves_tools() -> None:
             scope="user",
             origins=_USER_ORIGINS_READ,
         ),
+        # task 119: 助手在用量页 (Usage) 时,看到用户问"统计/汇总/给我看一下用量",
+        # 必须直接调这个工具,而不是 ui_set_field 把字符串塞回自己的输入框。
+        ToolSpec(
+            name="list_my_usage",
+            description=(
+                "查询当前用户在过去 N 天的 token 用量/成本/请求数/错误率,"
+                "按 API 与模型拆分。用户在 #usage 页问\"统计/汇总/看看用量/算算花了多少\" "
+                "时直接用本工具,不要 ui_set_field。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer",
+                             "description": "回溯天数 (默认 30, 范围 1-365)",
+                             "default": 30},
+                },
+                "required": [],
+            },
+            executor=_t_list_my_usage,
+            scope="user",
+            origins=_USER_ORIGINS_READ,
+        ),
         ToolSpec(
             name="activate_save",
             description=(
@@ -412,13 +577,46 @@ def register_saves_tools() -> None:
         ),
         ToolSpec(
             name="delete_save",
-            description="**永久删除**存档及其所有分支/上下文链。不可恢复。",
+            description="**永久删除**单个存档及其所有分支/上下文链。不可恢复。一次只删一个; 用户说删多个时改用 delete_saves。",
             input_schema={
                 "type": "object",
                 "properties": {"save_id": {"type": "integer"}},
                 "required": ["save_id"],
             },
             executor=_t_delete_save,
+            scope="user",
+            origins=_USER_ORIGINS_DESTRUCTIVE,
+            destructive=True,
+        ),
+        # task 120: 批量删除 - 防止 LLM 只调 1 次 delete_save 然后编造其他被删的幻觉。
+        # 用法:用户说"删除多个/批量/除了 X 以外的"时,先 list_my_saves 拿全部 ID,
+        # 然后**一次性**调 delete_saves(save_ids=[...]),走 1 次 destructive 确认,
+        # 工具返回真实成败列表;turn>=10 的高价值档自动跳过,需要单独 delete_save。
+        ToolSpec(
+            name="delete_saves",
+            description=(
+                "**批量永久删除**多个存档。一次调用搞定,走一次 destructive 确认。"
+                "用户说'删除全部/除了 X 以外/这几个'时用本工具,不要循环调 delete_save。"
+                "turn>=10 的存档会被自动跳过(防止误删长期进度),返回的 protected 列表需要后续单独 delete_save 确认。"
+                "你必须先 list_my_saves 拿真实 ID 列表填进来,不要凭印象填。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "save_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "要删的 save_id 数组 (必须从 list_my_saves 真实拿到, 不能编)",
+                        "minItems": 1,
+                        "maxItems": 50,
+                    },
+                },
+                "required": ["save_ids"],
+            },
+            input_examples=(
+                {"save_ids": [10144, 13787, 13788, 13789]},
+            ),
+            executor=_t_delete_saves,
             scope="user",
             origins=_USER_ORIGINS_DESTRUCTIVE,
             destructive=True,

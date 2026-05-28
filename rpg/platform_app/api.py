@@ -55,6 +55,7 @@ COMMANDS = [
     ("GET", "/api/scripts/{script_id}/chapters", "读取剧本章节目录与预览"),
     ("POST", "/api/scripts/{script_id}/knowledge/sync", "重建剧本 ChapterFact、世界书、人设卡和检索块"),
     ("GET", "/api/scripts/{script_id}/chapter-facts", "读取剧本 ChapterFact 时间线"),
+    ("GET", "/api/scripts/{script_id}/birthpoints", "入场选出生点：按 phase 聚合 + 每 phase 均匀采样 anchor"),
     ("GET", "/api/scripts/{script_id}/character-cards", "读取剧本人设卡"),
     ("GET", "/api/scripts/{script_id}/worldbook", "读取剧本世界书条目"),
     ("GET", "/api/saves", "游戏存档目录"),
@@ -64,6 +65,8 @@ COMMANDS = [
     ("POST", "/api/branches/activate", "直接激活某个分支节点为当前游戏 runtime"),
     ("POST", "/api/branches/delete", "删除某条连线下的整条分支"),
     ("GET", "/api/saves/{save_id}/context-runs", "读取某个存档的上下文子代理运行记录"),
+    ("GET", "/api/saves/{save_id}/anchors", "task 136: 读取存档世界线收束锚点状态"),
+    ("POST", "/api/saves/{save_id}/anchors/reseed", "task 136: 重 seed 锚点 (调试用)"),
     ("GET", "/api/settings", "读取设置"),
     ("POST", "/api/settings", "写入设置"),
     ("GET", "/api/library", "文件库列表"),
@@ -571,6 +574,134 @@ async def api_script_chapter_facts(request: Request, script_id: int, limit: int 
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 
 
+@router.get("/api/scripts/{script_id}/birthpoints")
+async def api_script_birthpoints(request: Request, script_id: int):
+    """入场选出生点：按 phase 聚合 + 每 phase 均匀采样代表性 anchor。
+
+    返回 phase_digests 的各阶段，以及每阶段从 script_timeline_anchors 均匀采样的
+    5-15 个 anchor（≤15 全取，否则步长 round(N/12) 采样）。
+    """
+    user = require_user(request)
+    with connect() as db:
+        owned = db.execute(
+            "select 1 from scripts where id = %s and owner_id = %s",
+            (script_id, user["id"]),
+        ).fetchone()
+        if not owned:
+            return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+
+        phase_rows = db.execute(
+            """
+            select phase_label, chapter_min, chapter_max, chapter_count, summary
+            from phase_digests
+            where script_id = %s
+            order by chapter_min asc
+            """,
+            (script_id,),
+        ).fetchall()
+
+        phases = []
+        for pr in phase_rows:
+            anchor_rows = db.execute(
+                """
+                select id, story_time_label, chapter_min, chapter_max, chapter_count, sample_summary
+                from script_timeline_anchors
+                where script_id = %s
+                  and chapter_min >= %s
+                  and chapter_max <= %s
+                order by chapter_min asc
+                """,
+                (script_id, int(pr["chapter_min"]), int(pr["chapter_max"])),
+            ).fetchall()
+
+            # 均匀采样：≤15 全取，否则步长 round(N/12)
+            n = len(anchor_rows)
+            if n <= 15:
+                sampled = anchor_rows
+            else:
+                step = max(1, round(n / 12))
+                sampled = anchor_rows[::step]
+                # 确保末尾 anchor 也包含（代表 phase 尾部）
+                if anchor_rows[-1] not in sampled:
+                    sampled = list(sampled) + [anchor_rows[-1]]
+
+            phases.append({
+                "phase_label": pr["phase_label"],
+                "chapter_min": int(pr["chapter_min"]),
+                "chapter_max": int(pr["chapter_max"]),
+                "chapter_count": int(pr["chapter_count"]),
+                "summary": pr["summary"] or "",
+                "anchors": [
+                    {
+                        "anchor_id": int(ar["id"]),
+                        "story_time_label": ar["story_time_label"],
+                        "chapter_min": int(ar["chapter_min"]),
+                        "chapter_max": int(ar["chapter_max"]),
+                        "chapter_count": int(ar["chapter_count"]),
+                        "sample_summary": ar["sample_summary"] or "",
+                    }
+                    for ar in sampled
+                ],
+            })
+
+    return json_response({"ok": True, "phases": phases})
+
+
+@router.post("/api/scripts/{script_id}/recommend-identity")
+async def api_script_recommend_identity(request: Request, script_id: int):
+    """task 123: 入场 wizard Step 4 — LLM 推荐玩家初始身份。
+    入参 body: {birthpoint_phase, birthpoint_label, character_card_id?, character_card_kind?, n?}
+    返回: {ok, recommendations: [{name, role, background}, ...]}
+    """
+    user = require_user(request)
+    body = await request.json()
+    # 校验 script 归属
+    with connect() as db:
+        owned = db.execute(
+            "select 1 from scripts where id = %s and owner_id = %s",
+            (script_id, user["id"]),
+        ).fetchone()
+        if not owned:
+            return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+    # 调 recommend_player_identity 工具
+    try:
+        from console_assistant import dispatch_assistant_tool
+        import secrets as _sec
+        args = {
+            "script_id": int(script_id),
+            "birthpoint_phase": str(body.get("birthpoint_phase") or ""),
+            "birthpoint_label": str(body.get("birthpoint_label") or ""),
+            "n": int(body.get("n") or 4),
+        }
+        if body.get("character_card_id") is not None:
+            args["character_card_id"] = int(body["character_card_id"])
+        if body.get("character_card_kind"):
+            args["character_card_kind"] = str(body["character_card_kind"])
+        result = dispatch_assistant_tool(
+            user_id=int(user["id"]),
+            tool="recommend_player_identity",
+            args=args,
+            save_id=None,
+            script_id=int(script_id),
+            trace_id=f"wizard-{_sec.token_urlsafe(6)}",
+            call_id=f"wiz-{_sec.token_urlsafe(6)}",
+        )
+        # 工具 return JSON 字符串, parse 一下
+        import json as _j
+        try:
+            payload = _j.loads(result.result) if isinstance(result.result, str) else result.result
+        except Exception:
+            payload = {"ok": False, "error": "无法解析推荐结果", "raw": str(result.result)[:200]}
+        if not result.ok:
+            return json_response({"ok": False, "error": result.error or "工具执行失败"}, status_code=500)
+        return json_response(payload)
+    except Exception as exc:
+        return json_response(
+            {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
+
+
 @router.get("/api/scripts/{script_id}/character-cards")
 async def api_script_character_cards(request: Request, script_id: int, limit: int | None = None, cursor: str | None = None):
     user = require_user(request)
@@ -699,9 +830,12 @@ async def api_create_save(request: Request):
     ckind = body.get("character_kind")
     if cid is not None and ckind:
         character = {"id": cid, "kind": str(ckind)}
+    birthpoint = body.get("birthpoint") if isinstance(body.get("birthpoint"), dict) else None
+    identity = body.get("identity") if isinstance(body.get("identity"), dict) else None
     return json_response({"ok": True, "save": workspace.create_save(
         user["id"], script_id, body.get("title", ""),
         new_card=new_card, character=character,
+        birthpoint=birthpoint, identity=identity,
     )})
 
 
@@ -797,6 +931,36 @@ async def api_delete_branch(request: Request):
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 
 
+@router.post("/api/branches/rollback")
+async def api_rollback_to_message(request: Request):
+    """task 116c — 删除消息 N 及之后所有 (git-style 软回滚)。
+
+    入参: { save_id, message_index }
+    出参: { ok, restored_turn, dropped_turn_count, deleted: {...}, trash_ref, runtime }
+    """
+    user = require_user(request)
+    body = await request.json()
+    try:
+        save_id = int(body.get("save_id"))
+        message_index = int(body.get("message_index"))
+    except (TypeError, ValueError):
+        return json_response(
+            {"ok": False, "error": "save_id 和 message_index 都必须是整数"},
+            status_code=400,
+        )
+    try:
+        result = branches.rollback_to_message(user["id"], save_id, message_index)
+    except ValueError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=400)
+    # 同 activate:回滚 commit 后必须清 app.py 进程内 state 缓存
+    try:
+        import app as _ui
+        _ui._invalidate_user_cache(user)
+    except Exception:
+        pass
+    return json_response(result)
+
+
 @router.get("/api/saves/{save_id}/context-runs")
 async def api_save_context_runs(request: Request, save_id: int, limit: int | None = None, cursor: str | None = None):
     user = require_user(request)
@@ -804,6 +968,108 @@ async def api_save_context_runs(request: Request, save_id: int, limit: int | Non
         return json_response({"ok": True, **knowledge.list_context_runs(user["id"], save_id, limit, cursor)})
     except ValueError as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@router.get("/api/saves/{save_id}/anchors")
+async def api_save_anchors(request: Request, save_id: int):
+    """task 136h: 世界线收束 — 存档锚点状态.
+
+    返回:
+      {
+        ok: true,
+        summary: {pending, occurred, variant, superseded, fatal_pending, avg_drift, total},
+        by_phase: [{phase_label, pending, occurred, variant, ..., avg_drift, convergence_pressure}, ...],
+        recent_pending: [...up to 12 most important pending anchors...],
+        recent_occurred: [...up to 8 most recently occurred...]
+      }
+    """
+    user = require_user(request)
+    with connect() as db:
+        owned = db.execute(
+            "select 1 from game_saves where id = %s and user_id = %s",
+            (save_id, user["id"]),
+        ).fetchone()
+        if not owned:
+            return json_response({"ok": False, "error": "无权访问该存档"}, status_code=403)
+    try:
+        from anchor_seed_agent import (
+            summarize_save_anchor_state,
+            drift_by_phase,
+            list_pending_for_phase,
+        )
+        summary = summarize_save_anchor_state(save_id)
+        by_phase = drift_by_phase(save_id)
+        recent_pending = list_pending_for_phase(save_id, None, limit=12)
+        with connect() as db:
+            occ_rows = db.execute(
+                """
+                select anchor_key, source_chapter, summary, phase_label,
+                       status, variant_description, occurred_at_turn,
+                       drift_score, is_fatal, updated_at
+                from save_anchor_states
+                where save_id = %s and status in ('occurred', 'variant')
+                order by occurred_at_turn desc nulls last, updated_at desc
+                limit 8
+                """,
+                (save_id,),
+            ).fetchall() or []
+        recent_occurred = [
+            {
+                "anchor_key": r["anchor_key"],
+                "chapter": r["source_chapter"],
+                "summary": r["summary"],
+                "phase_label": r.get("phase_label") or "",
+                "status": r["status"],
+                "how_it_happened": r.get("variant_description") or "",
+                "occurred_at_turn": r.get("occurred_at_turn"),
+                "drift_score": float(r.get("drift_score") or 0),
+                "is_fatal": bool(r.get("is_fatal")),
+            }
+            for r in occ_rows
+        ]
+        return json_response({
+            "ok": True,
+            "save_id": save_id,
+            "summary": summary,
+            "by_phase": by_phase,
+            "recent_pending": recent_pending,
+            "recent_occurred": recent_occurred,
+        })
+    except Exception as exc:
+        return json_response(
+            {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
+
+
+@router.post("/api/saves/{save_id}/anchors/reseed")
+async def api_save_anchors_reseed(request: Request, save_id: int):
+    """task 136h: 强制重 seed 锚点 (调试用)。
+    body 可选: {"keep_satisfied": true|false} 默认 true (保留已发生)。
+    """
+    user = require_user(request)
+    with connect() as db:
+        owned = db.execute(
+            "select 1 from game_saves where id = %s and user_id = %s",
+            (save_id, user["id"]),
+        ).fetchone()
+        if not owned:
+            return json_response({"ok": False, "error": "无权访问该存档"}, status_code=403)
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    keep = bool(body.get("keep_satisfied", True))
+    try:
+        from anchor_seed_agent import reseed_anchors_for_save
+        res = reseed_anchors_for_save(save_id, keep_satisfied=keep)
+        return json_response({"ok": True, **res})
+    except Exception as exc:
+        return json_response(
+            {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
 
 
 # worldline variable 写入路由：见 ui.py（同时更新 runtime state 和 DB）

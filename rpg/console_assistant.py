@@ -299,6 +299,34 @@ _SYSTEM_PROMPT = """你是 RPG Platform 的侧栏控制台助手。不是游戏 
    · modal 开着, 用户说"帮我建一个新存档" → 别直接 create_save, 应该填 modal 字段然后 ui_click
    · modal 关着, 用户说"帮我建一个新存档" → 才用 create_save 工具
 
+9. **【严格反幻觉】 tool_result 是唯一真相,禁止编造动作完成叙述。**
+   你**只能** narrate 那些"history 里有对应 tool_result 显示成功"的动作。
+   多个对象的 destructive 操作 (删除所有/批量) 必须**对每个对象独立发起 tool_use**:
+   · 错误示范 (真实事故): 用户说"删除所有 9 个存档" → 你只调一次 delete_save(save_id=6)
+     拿到 1 个 ✓ → 然后 narrate "删除存档 5✓ 4✓ 3✓ 2✓ 1✓ 全部删完" — **这是凭空捏造,
+     5/4/3/2/1 这些 ID 你压根没调用过 delete_save**。结果用户重要存档丢了你还报告"成功"。
+   · 正确做法:
+     a) 用户说"删除所有 N 个存档" → 先 list_my_saves 拿真实 ID 列表
+     b) **逐个**发起 delete_save (每个独立 tool_use, 各自走 destructive 确认)
+     c) 每个 tool_result 拿到 "✓" 后才能 narrate "save X 已删除"
+     d) 如果某个 tool_call 在 history 里不存在 → **不能 narrate 它**, 即使语义上"应该"删
+   · destructive 操作绝对不允许"省略中间步骤"靠 narrate 蒙混过关。
+
+10. **删除/批量 destructive 前先 list_my_saves 拿真实 ID, 禁止凭印象/猜测填 save_id。**
+    猜错了删错存档是不可逆事故。看到"删除全部/清理一下/删 N 个" → list 先, 然后逐个。
+
+8. **page_context.ui_atlas.forms 为空或没有合适字段时,绝对不要 ui_set_field。**
+   只读统计页 (Usage / Library 列表 / Settings 查看) 没有"用户该填的表单"。
+   看到用户说"统计/汇总/给我看/分析/解读/算一下/看看 X" → 走 list_*/get_* 查询工具:
+   · 用量页问"统计用量" → list_my_usage (不是 ui_set_field("textarea", "..."))
+   · 存档页问"我有几个存档" → list_my_saves
+   · 不确定哪个工具能查 → ui_describe(intent) 找,或者坦白说"目前还没有对应查询工具"
+   · 如果连 ui_describe 都没结果 → **直接回答"暂时没有自动化能力, 你可以在此页面看到 X"** —
+     不要硬填一个无关字段冒充完成任务。
+   反例 (绝对不能):
+   · 用户说"统计一下用量" → 你 ui_set_field("textarea", "统计一下用量") 把请求塞回我自己输入框
+     —— 这是世界上最蠢的实现,会让用户彻底失去信任。
+
 中文, 简洁。"""
 
 
@@ -409,7 +437,11 @@ def list_assistant_tools() -> list[dict[str, Any]]:
         # persona
         "create_persona", "list_my_personas", "delete_persona",
         # 存档
-        "create_save", "list_my_saves", "activate_save", "delete_save", "rename_save",
+        "create_save", "list_my_saves", "activate_save", "delete_save", "delete_saves", "rename_save",
+        # 新建存档向导 — 推荐初始身份
+        "recommend_player_identity",
+        # 用量统计 (task 119)
+        "list_my_usage",
         # 剧本
         "list_scripts",
         # 设置

@@ -326,6 +326,18 @@ def ensure_registered() -> None:
         register_ui_action_tools()
     except Exception as exc:
         print(f"[command_tools_register] ui_action 工具注册失败: {exc}")
+    # creative tools: recommend_player_identity (新建存档时推荐初始身份)
+    try:
+        from command_tools_creative import register_creative_tools
+        register_creative_tools()
+    except Exception as exc:
+        print(f"[command_tools_register] creative 工具注册失败: {exc}")
+    # task 136: 世界线收束机制 — list_pending_anchors / mark_satisfied / mark_superseded
+    try:
+        from command_tools_anchors import register_anchor_tools
+        register_anchor_tools()
+    except Exception as exc:
+        print(f"[command_tools_register] anchors 工具注册失败: {exc}")
     # task 68/72 — 给已注册工具打 intent_keywords + side_effect_topics 标签,
     # 供 ui_describe 模糊匹配 + dispatcher 状态变更广播。
     try:

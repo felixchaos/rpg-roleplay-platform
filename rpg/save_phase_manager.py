@@ -253,10 +253,97 @@ def open_new_phase(
         # fire-and-forget 触发 LLM 摘要老 phase (不阻塞玩家 chat)
         if new_index > 0:
             _fire_and_forget_compact(save_id, new_index - 1)
+            # task 136f: 世界线收束 phase boundary audit —
+            # 老 phase 的 pending 锚点要么 fatal (留警告) 要么自动 superseded
+            _audit_anchors_on_phase_close(save_id, new_index - 1)
         return dict(row) if row else {"phase_index": new_index, "save_id": save_id}
     except Exception as exc:
         print(f"[save_phase_manager] open_new_phase failed: {exc}")
         return {}
+
+
+def _audit_anchors_on_phase_close(save_id: int, closed_phase_index: int) -> None:
+    """task 136f: 老 phase 关闭时 audit 世界线收束锚点。
+
+    规则:
+    - 老 phase 的 pending 锚点中, is_fatal=true → 留 pending + 写 audit_log warning
+      (下个 phase 的 GM 仍能看到, 但会被强制注意"超期 fatal 锚点")
+    - 非 fatal pending → 自动 mark superseded, reason="phase 已结束未触发, 自动绕过"
+
+    不阻塞主流程; 任何异常 print 警告即可。
+    """
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            # 取该 phase_index 对应的 phase_label,再按 phase_label 过滤锚点
+            phase_row = db.execute(
+                "select phase_label, turn_end from save_phase_digests "
+                "where save_id = %s and phase_index = %s",
+                (save_id, closed_phase_index),
+            ).fetchone()
+            if not phase_row:
+                return
+            phase_label = phase_row.get("phase_label") or ""
+            turn_end = int(phase_row.get("turn_end") or 0)
+            if not phase_label:
+                return
+            # 该 phase 的 pending 锚点
+            rows = db.execute(
+                """
+                select id, anchor_key, is_fatal, summary, importance
+                from save_anchor_states
+                where save_id = %s and phase_label = %s and status = 'pending'
+                """,
+                (save_id, phase_label),
+            ).fetchall() or []
+            if not rows:
+                return
+            fatal_pending = [r for r in rows if r.get("is_fatal")]
+            non_fatal = [r for r in rows if not r.get("is_fatal")]
+            # 非 fatal: 自动 superseded
+            if non_fatal:
+                db.execute(
+                    """
+                    update save_anchor_states
+                    set status = 'superseded',
+                        variant_description = %s,
+                        drift_score = 1.0,
+                        updated_at = now()
+                    where save_id = %s
+                      and phase_label = %s
+                      and status = 'pending'
+                      and is_fatal = false
+                    """,
+                    (
+                        f"phase '{phase_label}' 已结束 (turn {turn_end}) 未触发, 自动绕过",
+                        save_id, phase_label,
+                    ),
+                )
+                print(f"[anchor_audit] save={save_id} phase={closed_phase_index} "
+                      f"自动 superseded {len(non_fatal)} 个 non-fatal 锚点")
+            # fatal: 留 pending,但写到 save_phase_digests.metadata 警告字段
+            if fatal_pending:
+                from psycopg.types.json import Jsonb
+                warning = {
+                    "fatal_anchors_overdue": [
+                        {"anchor_key": r["anchor_key"], "summary": r["summary"][:120],
+                         "importance": r["importance"]}
+                        for r in fatal_pending
+                    ],
+                    "audit_at_phase_close": closed_phase_index,
+                }
+                db.execute(
+                    "update save_phase_digests "
+                    "set metadata = coalesce(metadata, '{}'::jsonb) || %s "
+                    "where save_id = %s and phase_index = %s",
+                    (Jsonb(warning), save_id, closed_phase_index),
+                )
+                print(f"[anchor_audit] save={save_id} phase={closed_phase_index} "
+                      f"WARNING: {len(fatal_pending)} 个 is_fatal 锚点超期未触发, 已记录")
+    except Exception as exc:
+        print(f"[anchor_audit] save={save_id} phase={closed_phase_index} failed: "
+              f"{type(exc).__name__}: {exc}")
 
 
 def _fire_and_forget_compact(save_id: int, phase_index: int) -> None:

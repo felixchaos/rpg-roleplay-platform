@@ -511,21 +511,98 @@ def _story_phase(chapter: int, text: str) -> str:
     return "初期穿越与火星线"
 
 
+# task 121b: 章节标题质量检测 — 通用算法,不依赖单本书。
+# 排除:作者口语吐槽 / 纯章节序号 / 太短太长。
+_AUTHOR_META_KEYWORDS = (
+    "周推", "收藏", "月票", "感谢", "PS:", "PS：", "求票", "推荐票",
+    "上架", "鞠躬", "请假", "本章免费", "VIP", "加更", "正版",
+    "求评论", "求订阅", "求月票", "码字", "更新", "请假条", "感言",
+    "新书", "签约", "推荐位", "点击", "撒娇", "认输", "卷末",
+)
+_GENERIC_CHAPTER_RE = re.compile(
+    r"^第?[一二三四五六七八九十百千万0-9〇零]+\s*[章回节卷部话集]?$"
+)
+_CHAPTER_PREFIX_RE = re.compile(
+    r"^第[一二三四五六七八九十百千万0-9〇零]+\s*[章回节卷部话集]?[\s　：:、,，\-—]*"
+)
+
+
+def _strip_chapter_prefix(t: str) -> str:
+    """剥掉 '第一章 ' / 'Chapter 1: ' 前缀,留剧情部分。"""
+    if not t:
+        return ""
+    s = t.lstrip().lstrip("#").strip()
+    s = _CHAPTER_PREFIX_RE.sub("", s).strip()
+    s = re.sub(r"^[Cc]hapter\s*\d+[\s\-:：]*", "", s).strip()
+    return s
+
+
+def _good_title(title: str) -> str:
+    """返回清洗后的可用标题,不可用返回空串。"""
+    if not title:
+        return ""
+    s = _strip_chapter_prefix(title)
+    if not s or len(s) < 2 or len(s) > 28:
+        return ""
+    if _GENERIC_CHAPTER_RE.match(s):
+        return ""
+    if any(kw in s for kw in _AUTHOR_META_KEYWORDS):
+        return ""
+    # 全数字 / 全标点
+    if re.match(r"^[\d\W_]+$", s):
+        return ""
+    return s
+
+
+def _good_summary_lead(summary: str) -> str:
+    """从 summary 抽第一句话作为锚点(15-30 字最佳)。"""
+    if not summary:
+        return ""
+    # 切第一个句号/分号/换行
+    first = re.split(r"[。;；\n]", summary)[0].strip()
+    if 4 <= len(first) <= 40:
+        # 去引号包裹
+        first = first.strip("“”\"'")
+        if 4 <= len(first) <= 40:
+            return first
+    return ""
+
+
+def _good_event_lead(events_or_text: Any) -> str:
+    """从 events list 或 text 抽第一个有意义的语句。"""
+    if isinstance(events_or_text, list) and events_or_text:
+        first = events_or_text[0]
+        if isinstance(first, dict):
+            first = first.get("event") or ""
+        return _good_summary_lead(str(first or ""))
+    if isinstance(events_or_text, str):
+        return _good_summary_lead(events_or_text)
+    return ""
+
+
 def _story_time_label(chapter: int, title: str, text: str, summary: str) -> str:
-    if chapter in KEY_CHAPTER_TIME_LABELS:
-        return KEY_CHAPTER_TIME_LABELS[chapter]
-    hay = f"{title} {summary} {text[:1600]}"
-    if "图卢兹战报" in hay or "图卢兹失守" in hay:
-        return "图卢兹失守当晚，柏林"
-    if any(x in hay for x in ("暂留柏林", "北城旧宅", "蛇信外围")):
-        return "图卢兹失守后翌日，柏林"
-    if "内城旧楼" in hay or "次日" in hay:
-        return "图卢兹失守后次日，柏林内城"
-    for pattern in (r"(第[一二三四五六七八九十百千万〇零0-9]+天(?:清晨|早上|上午|中午|下午|傍晚|晚上|深夜)?)", r"((?:当天|当晚|次日|翌日|第二天|清晨|傍晚|深夜)[^，。]{0,12})"):
-        match = re.search(pattern, hay)
-        if match:
-            return match.group(1)
-    return f"原著第{chapter}章附近"
+    """通用算法 — 多级 fallback 选最佳锚点,不依赖单本书。
+
+    优先级:
+      1. 章节标题质量过关 (剥掉'第 N 章'前缀,排除作者口语/纯序号)
+      2. summary 首句 (15-30 字最佳)
+      3. text 首段首句
+      4. 最后退化到 'ch{N} 节点' (绝不是'原著第 N 章附近'垃圾标签)
+    """
+    # 1. title 路径
+    good = _good_title(title)
+    if good:
+        return good
+    # 2. summary 路径
+    lead = _good_summary_lead(summary)
+    if lead:
+        return lead
+    # 3. text 首句
+    lead = _good_summary_lead(text or "")
+    if lead:
+        return lead
+    # 4. 兜底
+    return f"ch{chapter} 节点"
 
 
 def _evidence(text: str, needle: str) -> str:

@@ -1450,12 +1450,11 @@ async def api_opening(request: Request) -> StreamingResponse:
     gm = _get_gm(api_user)
 
     async def stream():
-        # task 43：原 query 硬编码『柏林 图卢兹 娅赛兰 蛇信 蕾穆丽娜』+ retrieve_context
-        # 没传 script_id → retrieval.py 退化到 is_default=True → 拉 MuMu .webnovel SQLite/
-        # indexes JSON（角色卡/原文/摘要），让导入剧本的 /api/opening 也被柏林污染。
-        # 修：query 按当前 state 动态构（player 位置 + world 时间 + 当前目标 + 首章 known_events），
-        # retrieve_context 收 script_id —— 非默认剧本走 task 42 的 script-scoped 路径，
-        # 不读任何 MuMu 私有源；默认剧本保留原硬编码 query 兼容性。
+        # task 121a: 4 阶段 stage 事件让前端能显示 thinking pill,避免 5-15s 无反馈
+        yield _sse("stage", {"phase": "retrieving", "label": "翻阅剧本设定中…"})
+        # 修(task 117):走 phase 算法路径 — 不硬编码"第一章"。
+        # retrieve_context 内部消费 state.world.timeline.current_phase / save.active_phase_index
+        # 来限定 chapter window;空 state 时 fallback 到 phase 0 的 chapter_range,适用任意小说。
         script_id = _active_script_id(api_user)
         if script_id:
             world = state.data.get("world", {}) or {}
@@ -1470,7 +1469,6 @@ async def api_opening(request: Request) -> StreamingResponse:
             ]
             query = " ".join(p for p in query_parts if p).strip() or "开场"
         else:
-            # 兼容旧无 script_id 路径（匿名/未绑定 save）：保留原 MuMu hint
             query = "柏林 图卢兹 娅赛兰 蛇信 蕾穆丽娜"
         ctx = retrieve_context(
             query,
@@ -1481,12 +1479,15 @@ async def api_opening(request: Request) -> StreamingResponse:
         state.set_last_retrieval(ctx)
         # task 107E: 把 save_id 透传给 context_engine, 让 runtime_phase_digests provider 工作
         _, _save_id_for_ctx = _resolve_persist_target(api_user)
+        yield _sse("stage", {"phase": "building_context", "label": "组装上下文…"})
         bundle = _build_turn_context(state, query, ctx, script_id=script_id, save_id=_save_id_for_ctx)
         yield _sse("status", _payload(api_user))
+        yield _sse("stage", {"phase": "generating", "label": "GM 构思开场中…"})
         text = ""
         try:
             opening = gm.generate_opening(state, retrieved_context=bundle["prompt"])
             text = opening
+            yield _sse("stage", {"phase": "done", "label": ""})
             yield _sse("token", {"text": opening})
             state.data["history"].append({"role": "assistant", "content": opening})
             state.save()

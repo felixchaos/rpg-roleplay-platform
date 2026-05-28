@@ -99,6 +99,9 @@ def create_save(
     title: str,
     new_card: dict[str, Any] | None = None,
     character: dict[str, Any] | None = None,
+    *,
+    birthpoint: dict[str, Any] | None = None,
+    identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """创建新存档。
 
@@ -110,15 +113,20 @@ def create_save(
     new_card  = {"name": str, "role": str, "background": str}  —— UI「新建角色卡」分支
     character = {"kind": "persona"|"user_card"|"script_card", "id"|"slug": ...}
                 —— UI「使用现有」分支，留作扩展，本次先 best-effort 取 name/role/background
+    birthpoint = {"phase_label": str, "anchor_id": int, "chapter_min": int,
+                  "chapter_max": int, "story_time_label": str}
+                 —— 入场选出生点，写入 world.timeline / world.time
+    identity  = {"name": str, "role": str, "background": str}
+                 —— 入场选初始身份，直接 setup_player（覆盖 character_card 默认值）
 
-    无 new_card / character 时退回到旧行为（空白快照）。
+    无 new_card / character / birthpoint / identity 时退回到旧行为（空白快照）。
     """
     init_db()
     with connect() as db:
         script = db.execute("select * from scripts where id = %s and owner_id = %s", (script_id, user_id)).fetchone()
         if not script:
             raise ValueError("无权访问该剧本")
-        snapshot = _build_initial_snapshot(user_id, script_id, new_card, character)
+        snapshot = _build_initial_snapshot(user_id, script_id, new_card, character, birthpoint=birthpoint, identity=identity)
         save = db.execute(
             """
             insert into game_saves(user_id, script_id, title, state_path, state_snapshot)
@@ -128,6 +136,20 @@ def create_save(
             (user_id, script_id, title.strip() or "新存档", str(SAVE_FILE), Jsonb(snapshot)),
         ).fetchone()
     branches.seed_tree(save["id"], str(SAVE_FILE))
+    # task 136: 新存档创建后异步 seed 世界线收束锚点。
+    # 800 章 × 5 events 量级,放后台不阻塞 UI;失败也不影响存档创建。
+    try:
+        import threading
+        from anchor_seed_agent import seed_anchors_for_save
+        def _bg_seed():
+            try:
+                res = seed_anchors_for_save(save["id"])
+                print(f"[anchor_seed] save={save['id']} result={res}")
+            except Exception as exc:
+                print(f"[anchor_seed] save={save['id']} failed: {type(exc).__name__}: {exc}")
+        threading.Thread(target=_bg_seed, daemon=True, name=f"anchor-seed-{save['id']}").start()
+    except Exception as _seed_err:
+        print(f"[anchor_seed] schedule failed save={save['id']}: {_seed_err}")
     return expose(save)
 
 
@@ -136,6 +158,9 @@ def _build_initial_snapshot(
     script_id: int,
     new_card: dict[str, Any] | None,
     character: dict[str, Any] | None,
+    *,
+    birthpoint: dict[str, Any] | None = None,
+    identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """根据 UI 选择构造新存档的初始 state。任何异常退到空白快照。"""
     try:
@@ -220,6 +245,52 @@ def _build_initial_snapshot(
     except Exception:
         # 任何解析失败都不应该让 create_save 整个崩；退到 user/角色卡已写入的最小可玩 state。
         pass
+
+    # 入场选出生点：覆盖 world.timeline / world.time（优先级高于 _apply_script_opening）
+    if isinstance(birthpoint, dict):
+        try:
+            phase_label = str(birthpoint.get("phase_label") or "").strip()
+            story_time_label = str(birthpoint.get("story_time_label") or "").strip()
+            chapter_min = birthpoint.get("chapter_min")
+            chapter_max = birthpoint.get("chapter_max")
+            world = state.data.setdefault("world", {})
+            timeline = world.setdefault("timeline", {})
+            if phase_label:
+                timeline["current_phase"] = phase_label
+            if story_time_label:
+                world["time"] = story_time_label
+                timeline["current_label"] = story_time_label
+            if chapter_min is not None and chapter_max is not None:
+                timeline["anchor_chapter_range"] = [int(chapter_min), int(chapter_max)]
+        except Exception:
+            pass
+
+    # 入场选初始身份：**逐字段** merge,只覆盖非空字段。
+    # task 126: 用户选了角色卡(已写 name=杭雁菱) → Step 4 又选了 LLM 推荐身份
+    # (可能 name="" role="穿越者") → 不能因为 identity.name=="" 就把 player.name 抹成"无名者"。
+    if isinstance(identity, dict):
+        try:
+            id_name = str(identity.get("name") or "").strip()
+            id_role = str(identity.get("role") or "").strip()
+            id_background = str(identity.get("background") or "").strip()
+            player = state.data.setdefault("player", {})
+            # 只覆盖非空字段;为空时保留角色卡已写入的值
+            if id_name:
+                player["name"] = id_name
+            if id_role:
+                player["role"] = id_role
+            if id_background:
+                player["background"] = id_background
+            # 兜底:如果一直空(没角色卡也没身份),才用占位
+            if not player.get("name"):
+                player["name"] = "无名者"
+            if not player.get("role"):
+                player["role"] = "未指定"
+            if not player.get("background"):
+                player["background"] = "（无背景）"
+        except Exception:
+            pass
+
     return state.data
 
 

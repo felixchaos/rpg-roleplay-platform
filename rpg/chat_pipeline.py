@@ -628,9 +628,15 @@ async def run_gm_phase(
         print(f"[chat] unified tool router 构造失败,GM 仅用 MCP 工具: {_router_err}")
 
     response = ""
+    # task 135: max_iterations 是【单轮】上限 (本轮 user 消息内的工具调用次数),
+    # for-loop 每次新 chat 都重新计 0,不跨轮累计。
+    # 原本 3 太紧 — GM 一轮里常需要:
+    #   update_state -> list_pending_anchors -> set_pending_question -> 写正文
+    # 现在世界线收束 (task 136) 还会再叠 mark_anchor_satisfied / record_anchor_variant,
+    # 8 是平衡值: 够 GM 串完整轮工具流, 又不至于死循环烧 token。
     for event in gm.respond_stream_with_tools(
         message_for_model, bundle["prompt"], state,
-        tools=unified_tools, max_iterations=3,
+        tools=unified_tools, max_iterations=8,
         tool_call_router=gm_tool_router,
     ):
         if stop_event.is_set() or run_id != current_run_id_fn(api_user) or is_stop_requested_global(api_user, run_id):
@@ -836,6 +842,20 @@ async def persist_turn_phase(
     updates = getattr(ctx, "_updates", []) or []
 
     visible_response = strip_json_state_ops(response)
+    # task 128: GM 返回空时不写 history (避免出现"GM 主代理"标题但内容空的诡异消息),
+    # 改为 yield error 让用户清楚知道并能重试。常见原因:
+    #   · LLM 触发 safety filter (Gemini 对暴力/儿童虐待场景敏感)
+    #   · backend stream 提前 EOF / 超时
+    #   · 工具循环耗尽但没产出 text block
+    if not visible_response.strip():
+        print(f"[chat] WARN: GM 返回空响应, len(raw)={len(response)} "
+              f"user_msg='{message_for_model[:80]}', save_id={ctx.active_save_id}")
+        yield ("error", {
+            "message": "GM 没生成内容(可能触发了模型的安全过滤,或者上下文出错)。请尝试换个说法重新发送。",
+            "kind": "empty_response",
+        })
+        yield ("done", {"status": payload_fn(api_user), "interrupted": False, "empty": True})
+        return
     persist_chat_turn(
         api_user, state, message_for_model, visible_response,
         persist_user_id=ctx.persist_user_id, active_save_id=ctx.active_save_id,

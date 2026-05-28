@@ -716,6 +716,173 @@ def delete_subtree(user_id: int, node_id: int) -> dict[str, Any]:
     return result
 
 
+def rollback_to_message(
+    user_id: int,
+    save_id: int,
+    message_index: int,
+) -> dict[str, Any]:
+    """task 116c — 删除消息 N 及之后所有 → 软回滚到 turn (N//2 - 1) 的 round commit。
+
+    Git-style 语义:
+      1. 先把当前 HEAD 用一个 refs/trash/<ts> 引用保留(可恢复)
+      2. UPDATE game_saves.active_commit_id → 目标 turn 的 round commit
+      3. UPDATE runtime_checkouts.commit_id → 同上
+      4. DELETE messages / context_runs / save_timeline_anchors WHERE turn >= 删除起点
+      5. UPDATE save_phase_digests.turn_end 若该 phase 跨过回滚点
+      6. activate_state_snapshot 把目标 commit 写到 runtime 文件
+
+    返回 {ok, deleted: {messages, anchors, runs, phase_fixed},
+          dropped_turn_count, restored_turn, trash_ref, runtime}
+    """
+    init_db()
+    msg_index = int(message_index)
+    if msg_index < 0:
+        raise ValueError("message_index 不能小于 0")
+    # 删除 msg N → 想回到"该 msg 不存在"的状态。
+    # history 是 [user, assistant, user, assistant, ...] 配对追加,每对来自同一个 turn。
+    # 所以 turn_of_msg = msg_index // 2;回滚目标 = turn_of_msg - 1 的 round commit。
+    deleted_turn = msg_index // 2
+    target_turn = deleted_turn - 1
+    runtime_payload: dict[str, Any] | None = None
+
+    with connect() as db:
+        save = db.execute(
+            "select * from game_saves where id = %s and user_id = %s",
+            (save_id, user_id),
+        ).fetchone()
+        if not save:
+            raise ValueError("无权访问该存档,或存档不存在")
+
+        # task 116c-Q1: 用户选 '回退到 N-1' → 删除 deleted_turn 及之后所有
+        # 找目标 commit:turn_index = target_turn,kind 优先 "round" (新数据),
+        # 否则 "gm" (旧 dual-commit 数据)
+        if target_turn < 0:
+            # 回到 root commit (turn_index=0, kind='root')
+            target_commit = db.execute(
+                """
+                select * from branch_commits
+                where save_id = %s and kind = 'root'
+                order by id asc limit 1
+                """,
+                (save_id,),
+            ).fetchone()
+            if not target_commit:
+                raise ValueError("找不到 root commit,无法回到开局之前")
+        else:
+            target_commit = db.execute(
+                """
+                select * from branch_commits
+                where save_id = %s and turn_index = %s and kind in ('round', 'gm')
+                order by id desc limit 1
+                """,
+                (save_id, target_turn),
+            ).fetchone()
+            if not target_commit:
+                raise ValueError(f"找不到 turn {target_turn} 的 commit,无法回滚")
+
+        # Q2: 自动建分支保留 — 把当前 HEAD ref 复制为 refs/trash/<ts>
+        current_commit_id = save.get("active_commit_id") or save.get("active_branch_node_id")
+        trash_ref = None
+        if current_commit_id and current_commit_id != target_commit["id"]:
+            import time
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            trash_name = f"refs/trash/{ts}-msg{msg_index}"
+            trash_ref = _upsert_ref(
+                db, save_id, trash_name, current_commit_id,
+                active=False, kind="trash",
+            )
+
+        # 切换 active commit 指针 (O(1) UPDATE)
+        new_ref = _find_or_create_ref_for_commit(db, user_id, target_commit)
+        _set_save_active(db, save_id, target_commit["id"], new_ref["id"])
+        _write_checkout(db, user_id, save_id, new_ref["id"], target_commit["id"])
+
+        # 计算需要 DELETE 的最小 turn (deleted_turn 起所有都不存在了)
+        # messages 表里 turn = state.turn (record_turn 后 +1),与 branch_commits.turn_index
+        # 不一定完全对齐(record_runtime_turn 用的是 state['turn'] 写 turn_index)。
+        # 实测两者都是 0-based 一致,放心用 deleted_turn 做切线。
+        deleted_messages = db.execute(
+            "delete from messages where save_id = %s and turn >= %s returning id",
+            (save_id, deleted_turn),
+        ).fetchall()
+        n_msgs = len(deleted_messages or [])
+
+        # save_timeline_anchors 直接按 turn_index 切
+        deleted_anchors = db.execute(
+            "delete from save_timeline_anchors where save_id = %s and turn_index >= %s returning id",
+            (save_id, deleted_turn),
+        ).fetchall()
+        n_anchors = len(deleted_anchors or [])
+
+        # context_runs 通过 game_sessions 关联到 save;按 session+turn 切
+        deleted_runs = db.execute(
+            """
+            delete from context_runs
+            where session_id in (select id from game_sessions where save_id = %s)
+              and turn >= %s
+            returning id
+            """,
+            (save_id, deleted_turn),
+        ).fetchall()
+        n_runs = len(deleted_runs or [])
+
+        # Q3: 自动修正 phase_digest.turn_end
+        # 若 phase 的 turn_end >= deleted_turn,把 turn_end 收到 deleted_turn - 1
+        # 若 phase 的 turn_start > deleted_turn-1,整个 phase 都失效 → 删
+        phase_fixed = 0
+        phase_dropped = 0
+        # 先 dump 影响范围,便于 fix
+        affected_phases = db.execute(
+            """
+            select id, phase_index, turn_start, turn_end from save_phase_digests
+            where save_id = %s and turn_end >= %s
+            order by phase_index
+            """,
+            (save_id, deleted_turn),
+        ).fetchall()
+        for ph in affected_phases:
+            if ph["turn_start"] >= deleted_turn:
+                # 整个 phase 都在被删除范围里
+                db.execute("delete from save_phase_digests where id = %s", (ph["id"],))
+                phase_dropped += 1
+            else:
+                # 截断 turn_end
+                db.execute(
+                    "update save_phase_digests set turn_end = %s, updated_at = now() where id = %s",
+                    (deleted_turn - 1, ph["id"]),
+                )
+                phase_fixed += 1
+
+        # save_worldbook_overlays 留着(运行时按 introduced_turn 过滤即可)
+        # branch_commits 留着(git 哲学:历史不删,只移指针 + 加 trash ref)
+
+        target_state = commit_state(target_commit)
+        state_path = target_commit.get("state_path") or str(SAVE_FILE)
+        ref_id_for_runtime = new_ref["id"]
+
+    # 出事务:刷 runtime 文件
+    runtime_payload = runtime.activate_state_snapshot(
+        user_id, save_id, target_commit["id"], target_state, state_path, ref_id=ref_id_for_runtime,
+    )
+
+    result = tree(user_id, save_id)
+    result["ok"] = True
+    result["runtime"] = runtime_payload
+    result["game_url"] = runtime_payload.get("game_url")
+    result["active_commit_id"] = target_commit["id"]
+    result["active_branch_node_id"] = target_commit["id"]
+    result["restored_turn"] = target_turn if target_turn >= 0 else -1
+    result["deleted"] = {
+        "messages": n_msgs,
+        "timeline_anchors": n_anchors,
+        "context_runs": n_runs,
+        "phase_digests_truncated": phase_fixed,
+        "phase_digests_dropped": phase_dropped,
+    }
+    result["trash_ref"] = (expose(trash_ref) if trash_ref else None)
+    return result
+
+
 def _seed_and_bootstrap(owner_id: int, save_id: int, state_path: str, user_id: int | None) -> dict[str, Any]:
     seed_tree(save_id, state_path)
     return bootstrap_runtime_binding(user_id=user_id or owner_id)
