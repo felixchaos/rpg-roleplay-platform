@@ -71,6 +71,34 @@ BASE = Path(__file__).parent.parent  # state/core.py 比原 state.py 深一层,S
 SAVE_FILE = BASE / "saves" / "game_state.json"
 CURRENT_SCHEMA_VERSION = 6
 
+# task 138: 剥离 markdown 角色卡里的"秘密 / 隐藏 / 内心 / 元知识 / 真实身份 / 来历"段。
+# user_card 详细字段(personality/appearance/background)由玩家自定义,经常把秘密段
+# 直接写在里面(## 秘密 / ## 隐藏 / ## 元知识 …)。short_summary 注入到 GM prompt
+# 之前必须 strip 这些段,GM 物理上看不到字面秘密;workspace 入档时同样调用一次,
+# 把这些段抽取到 player_private.secrets,原字段只保留 NPC 可观察部分。
+# 通用 markdown 段头(## 任意 / ### 任意 都匹配),后跟可能空格 + 段名 + 行尾;
+# 段内容到下一个同级或更高级标题、或文本末尾结束(re.DOTALL + 多行)。
+_SECRET_SECTION_RE = re.compile(
+    r"(?ms)^##+\s*(秘密|隐藏|内心|元知识|真实身份|来历|背景秘密|未公开)\s*$.*?(?=^##+\s|\Z)"
+)
+
+
+def _strip_secret_sections(text: str) -> str:
+    """从 markdown 文本里剥离常见秘密段(## 秘密 / ## 隐藏 / ## 元知识 等),
+    返回 NPC 可见的剩余部分。空 / 非字符串输入返回空串。"""
+    if not text or not isinstance(text, str):
+        return ""
+    return _SECRET_SECTION_RE.sub("", text).strip()
+
+
+def _extract_secret_sections(text: str) -> list[str]:
+    """从 markdown 文本里抽出常见秘密段(## 秘密 / ## 隐藏 / ## 元知识 等)原文,
+    用于 workspace 入档时把秘密段迁移到 player_private.secrets。
+    返回每段(含头)的列表。空 / 非字符串输入返回空列表。"""
+    if not text or not isinstance(text, str):
+        return []
+    return [m.group(0).strip() for m in _SECRET_SECTION_RE.finditer(text) if m.group(0).strip()]
+
 # 剧情开始时的初始状态
 DEFAULT_STATE = {
     "schema_version": CURRENT_SCHEMA_VERSION,
@@ -499,35 +527,58 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             memory_lines.extend(f"事实：{x}" for x in m["facts"][:5])
             memory_lines.extend(f"笔记：{x}" for x in m["notes"][:3])
         memory_text = "\n".join(f"  · {line}" for line in memory_lines) or "  （暂无长期记忆）"
+        # task 138: user_variables 里的 story_intent 是 player_private 范畴,不再注入 GM prompt。
+        # 旧存档迁移函数已把 story_intent 复制到 player_private.story_intent,这里只是把字面
+        # 从 system prompt 里抹掉(player_private namespace 整个不进 prompt)。
         variables = worldline.get("user_variables", {})
-        if variables:
+        _public_vars = [
+            (name, info) for name, info in variables.items()
+            if name != "story_intent"
+        ]
+        if _public_vars:
             variable_text = "\n".join(
                 f"  · {name}={info.get('value', '')}"
-                for name, info in list(variables.items())[:12]
+                if isinstance(info, dict) else f"  · {name}={info}"
+                for name, info in _public_vars[:12]
             )
         else:
             variable_text = "  （暂无用户变量）"
-        # task 137: 注入详细角色卡字段（appearance/personality/speech_style/secrets/identity_role_desc）
+        # task 138: 玩家段只注入 NPC 可观察字段。规则:
+        #   1. 不注入 player_private.* 整个 namespace(secrets / hidden_traits / flags / story_intent)
+        #   2. 不注入 player.secrets(老 task 137 残留;迁移函数会清空但保险起见这里再过一遍)
+        #   3. background / personality / appearance 注入前用 _strip_secret_sections 剥离
+        #      ## 秘密 / ## 隐藏 / ## 内心 / ## 元知识 / ## 真实身份 / ## 来历 / ## 背景秘密 / ## 未公开 段
+        #   4. 玩家档案保留 NPC 可观察字段:name / role / 外貌(strip) / 当前位置 / identity_role_desc
+        #      性格/语气/背景也是 NPC 可推断但秘密段必须 strip。
         _card_detail_lines = []
-        if p.get("appearance"):
-            _card_detail_lines.append(f"外貌：{p['appearance']}")
-        if p.get("personality"):
-            _card_detail_lines.append(f"性格/详细设定：{p['personality']}")
+        _appearance = _strip_secret_sections(p.get("appearance") or "")
+        _personality = _strip_secret_sections(p.get("personality") or "")
+        if _appearance:
+            _card_detail_lines.append(f"外貌：{_appearance}")
+        if _personality:
+            _card_detail_lines.append(f"性格/详细设定：{_personality}")
         if p.get("speech_style"):
             _card_detail_lines.append(f"语气/说话方式：{p['speech_style']}")
-        if p.get("secrets"):
-            _card_detail_lines.append(f"【玩家隐藏知识（NPC 不知道，叙事不主动揭示）】{p['secrets']}")
+        # 注意: p.get("secrets") 显式 *不* 注入 — 即使老存档仍有该字段,
+        # GM 也物理上看不到。秘密属于 state.player_private.*(永不进 system prompt)。
         if p.get("aliases"):
             _card_detail_lines.append(f"别名：{p['aliases']}")
         if p.get("identity_role_desc"):
             _card_detail_lines.append(f"入场定位：{p['identity_role_desc']}")
         _card_detail = ("\n" + "\n".join(_card_detail_lines)) if _card_detail_lines else ""
-        _story_intent = variables.get("story_intent", {}).get("value", "") if isinstance(variables.get("story_intent"), dict) else str(variables.get("story_intent", "") or "")
-        _story_intent_block = f"\n\n【玩家剧情期望】\n{_story_intent}" if _story_intent else ""
+        # task 138: story_intent 改从 player_private.story_intent 读取(dual-read 旧存档兼容)。
+        # 但 story_intent 也不应注入到 system prompt — 这是玩家剧情期望,属于 player_private 范畴,
+        # GM 看不到字面意图,只能通过场景反应自然推进。如果玩家想让 GM 知道,用 /reveal。
+        # 这里保留向后兼容: 旧存档没改完前,user_variables.story_intent 仍可能有值,但**不再注入**。
+        # 阶段 5 /reveal 会用 player_private.flags["revealed_this_turn"] 做 ephemeral 注入。
+        _revealed = self.data.get("player_private", {}).get("flags", {}).get("revealed_this_turn") or ""
+        _revealed_block = f"\n\n【玩家本轮揭示】\n{_revealed}" if _revealed else ""
+        # background 字段同样 strip 秘密段
+        _background = _strip_secret_sections(p.get("background") or "")
         return f"""【玩家档案】
 姓名：{p['name']}
 定位：{p['role']}
-背景：{p['background']}{_card_detail}
+背景：{_background}{_card_detail}
 当前位置：{p['current_location']}
 
 【当前时间线】{w['time']}
@@ -550,7 +601,7 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
   · 用户变量：
 {variable_text}
 
-【当前回合】第 {self.data['turn']} 回合{_story_intent_block}"""
+【当前回合】第 {self.data['turn']} 回合{_revealed_block}"""
 
     def status_payload(self) -> dict:
         p = self.data["player"]
