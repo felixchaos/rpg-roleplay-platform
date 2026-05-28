@@ -671,82 +671,139 @@ function MentionMenu({ chars, query, onPick, onClose }) {
 // task 39 收尾：MODEL_OPTIONS 已删，不再 export。
 Object.assign(window, { Composer, ConfirmStrip, SuggestionRow, MentionMenu, SLASH_COMMANDS, PERMISSION_OPTIONS });
 
-function ContextUsage({ gameState, used: usedProp, cap: capProp, plan: planProp }) {
-  // 数据源（按优先级）：
-  //   1. props（测试/调用方显式传入）
-  //   2. gameState.memory.last_context.estimated_tokens（GM 上轮真实用量）
-  //   3. gameState.app.context_window（后端 context_window_for 算的当前模型上限）
-  //   4. /api/me/usage（最近 30 天 turns + cost）— 用 React state 缓存
+function ContextBreakdownPanel({ used, cap, onClose, triggerRef }) {
+  const [data, setData] = useStateC(null);
+  const [loading, setLoading] = useStateC(true);
+  const panelRef = useRefC(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const doFetch = async () => {
+      setLoading(true);
+      try {
+        const r = await window.api.game.contextBreakdown();
+        if (!cancelled && r && r.ok !== false) setData(r);
+      } catch (_) {}
+      if (!cancelled) setLoading(false);
+    };
+    doFetch();
+    return () => { cancelled = true; };
+  }, []);
+
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    const onOutside = (e) => {
+      const inPanel = panelRef.current && panelRef.current.contains(e.target);
+      const inTrigger = triggerRef && triggerRef.current && triggerRef.current.contains(e.target);
+      if (!inPanel && !inTrigger) onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    document.addEventListener("mousedown", onOutside, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousedown", onOutside, true);
+    };
+  }, [onClose, triggerRef]);
+
+  const fmt = (n) => n >= 1_000_000 ? (n / 1_000_000).toFixed(2) + "M"
+                   : n >= 1_000     ? (n / 1_000).toFixed(1) + "k"
+                   : String(n);
+
+  const total = data ? (data.total_tokens || 0) : used;
+  const limit = data ? (data.ctx_limit || cap) : cap;
+  const pct = limit > 0 ? Math.max(0, Math.min(1, total / limit)) : 0;
+  const pctTxt = (pct * 100).toFixed(0);
+  const barColor = pct > 0.9 ? "var(--danger)" : pct > 0.7 ? "var(--warn)" : "var(--accent)";
+  const breakdown = (data && data.breakdown) || [];
+  const nonFree = breakdown.filter(b => b.key !== "free" && b.tokens > 0);
+
+  return (
+    <div className="gc-ctx-breakdown" ref={panelRef}>
+      <div className="gc-ctx-breakdown-head">
+        <span className="gc-ctx-breakdown-title">
+          <svg width="13" height="13" viewBox="0 0 20 20" style={{display:"inline-block",verticalAlign:"-1px"}}>
+            <circle cx="10" cy="10" r="8" fill="none" stroke={barColor} strokeWidth="2.5"
+              strokeDasharray={`${pct * 50.27} 50.27`} strokeLinecap="round"
+              transform="rotate(-90 10 10)" />
+            <circle cx="10" cy="10" r="8" fill="none" stroke="var(--line)" strokeWidth="2.5" />
+          </svg>
+          上下文用量
+        </span>
+        <span className="gc-ctx-breakdown-total">
+          {fmt(total)} / {fmt(limit)} ({pctTxt}%)
+        </span>
+      </div>
+      <div className="gc-ctx-breakdown-bar-wrap">
+        <div className="gc-ctx-breakdown-bar">
+          {nonFree.map(b => (
+            <div key={b.key} className="gc-ctx-breakdown-bar-seg"
+              style={{width: (b.pct || 0) + "%", background: b.color}} />
+          ))}
+        </div>
+      </div>
+      {loading && (
+        <div style={{padding: "12px", textAlign: "center", fontSize: 12, color: "var(--muted)"}}>
+          加载中…
+        </div>
+      )}
+      {!loading && breakdown.length > 0 && (
+        <ul className="gc-ctx-breakdown-list">
+          {breakdown.map(b => (
+            <li key={b.key} className={`gc-ctx-breakdown-row${b.key === "free" ? " gc-ctx-breakdown-free" : ""}`}>
+              <div className="gc-ctx-breakdown-dot" style={{background: b.color}} />
+              <span className="gc-ctx-breakdown-label">{b.label}</span>
+              <span className="gc-ctx-breakdown-tok">{fmt(b.tokens)}</span>
+              <span className="gc-ctx-breakdown-pct">{b.pct}%</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!loading && breakdown.length === 0 && (
+        <div style={{padding: "10px 12px", fontSize: 12, color: "var(--muted)"}}>
+          暂无数据（发送第一条消息后可见）
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function ContextUsage({ gameState, used: usedProp, cap: capProp }) {
   const liveUsed = (gameState && gameState.memory && gameState.memory.last_context
                     && gameState.memory.last_context.estimated_tokens) || 0;
   const liveCap = (gameState && gameState.app && gameState.app.context_window) || 0;
   const used = usedProp != null ? usedProp : liveUsed;
-  // cap 必须 > 0 才有意义；如果后端没给（context_window_for 未识别模型），
-  // 用 1M 兜底以免除以零。
   const cap = capProp != null ? capProp : (liveCap > 0 ? liveCap : 1_000_000);
 
-  // 本月用量：每 60s 拉一次 /api/me/usage（不阻塞首屏）
-  const [usage, setUsage] = useStateC(null);
-  React.useEffect(() => {
-    let cancelled = false;
-    const fetchUsage = async () => {
-      if (!window.api || !window.api.account || !window.api.account.usage) return;
-      try {
-        const r = await window.api.account.usage(30);
-        if (!cancelled && r && r.ok !== false) setUsage(r);
-      } catch (_) {}
-    };
-    fetchUsage();
-    const t = setInterval(fetchUsage, 60_000);
-    return () => { cancelled = true; clearInterval(t); };
-  }, []);
-  // plan: 显示最近 30 天累计 turns；用户传 planProp 时优先
-  const planText = (() => {
-    if (planProp != null) return `本月预算 ${planProp}%`;
-    if (usage && usage.totals) {
-      const turns = usage.totals.turns || 0;
-      const cost = (usage.totals.cost_usd || 0).toFixed(2);
-      return `近 ${usage.window_days || 30} 天：${turns} 轮 · $${cost}`;
-    }
-    return "本月用量：加载中…";
-  })();
+  const [open, setOpen] = useStateC(false);
+  const wrapRef = useRefC(null);
 
   const pct = Math.max(0, Math.min(1, used / cap));
-  const planPct = (() => {
-    if (planProp != null) return Math.max(0, Math.min(1, planProp / 100));
-    // 用 turns / 100 作为粗略月度刻度（无配额概念时只是参考）
-    if (usage && usage.totals) {
-      return Math.max(0, Math.min(1, (usage.totals.turns || 0) / 100));
-    }
-    return 0;
-  })();
   const r = 8;
   const c = 2 * Math.PI * r;
   const fmt = (n) => n >= 1_000_000 ? (n / 1_000_000).toFixed(2) + "M"
-                  : n >= 1_000     ? (n / 1_000).toFixed(1) + "k"
-                  : String(n);
+                   : n >= 1_000     ? (n / 1_000).toFixed(1) + "k"
+                   : String(n);
   const pctTxt = (pct * 100).toFixed(0);
   const color = pct > 0.9 ? "var(--danger)" : pct > 0.7 ? "var(--warn)" : "var(--accent)";
-  const tooltip = `Context ${fmt(used)} / ${fmt(cap)} (${pctTxt}%) · ${planText}`;
+
   return (
-    <span className="gc-context-usage" data-tip={tooltip}>
+    <span className={`gc-context-usage${open ? " active" : ""}`} ref={wrapRef}
+      onClick={() => setOpen(o => !o)}
+      title="点击查看上下文用量详情">
       <svg width="20" height="20" viewBox="0 0 20 20" style={{display: "block"}}>
         <circle cx="10" cy="10" r={r} fill="none" stroke="var(--line)" strokeWidth="2" />
         <circle cx="10" cy="10" r={r} fill="none" stroke={color} strokeWidth="2"
           strokeDasharray={c} strokeDashoffset={c * (1 - pct)} strokeLinecap="round"
           transform="rotate(-90 10 10)"
           style={{transition: "stroke-dashoffset 320ms cubic-bezier(0.16, 1, 0.3, 1)"}} />
-        {planPct > 0 && (
-          <circle cx="10" cy="10" r={r - 3} fill="none" stroke="var(--muted-2)" strokeWidth="1"
-            strokeDasharray={2 * Math.PI * (r - 3)} strokeDashoffset={2 * Math.PI * (r - 3) * (1 - planPct)}
-            strokeLinecap="round" transform="rotate(-90 10 10)" opacity="0.5" />
-        )}
       </svg>
       <span className="gc-context-usage-text mono">
         <span style={{color: "var(--text-quiet)"}}>{fmt(used)}</span>
         <span className="muted-2"> / {fmt(cap)}</span>
       </span>
       <span className="gc-context-usage-pct mono" style={{color}}>{pctTxt}%</span>
+      {open && <ContextBreakdownPanel used={used} cap={cap} onClose={() => setOpen(false)} triggerRef={wrapRef} />}
     </span>
   );
 }
@@ -762,4 +819,4 @@ function _currentModelLabel(gameState, _ignored) {
 }
 
 
-Object.assign(window, { ContextUsage });
+Object.assign(window, { ContextUsage, ContextBreakdownPanel });
