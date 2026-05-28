@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from functools import lru_cache
 from pathlib import Path
 from datetime import datetime
 from typing import Any
@@ -175,6 +176,32 @@ DEFAULT_STATE = {
 
 MAX_HISTORY_TURNS = 6  # 保留最近6轮（12条消息）
 
+
+@lru_cache(maxsize=1)
+def _load_script_overrides() -> dict:
+    """加载所有 rpg/modules/_script_overrides/*.json,返回 {script_key: data}。"""
+    overrides_dir = BASE / "modules" / "_script_overrides"
+    out: dict[str, dict] = {}
+    if not overrides_dir.is_dir():
+        return out
+    for f in sorted(overrides_dir.glob("*.json")):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            key = data.get("script_key")
+            if key:
+                out[key] = data
+        except Exception:
+            continue
+    return out
+
+
+def _detect_active_script_key(context: str) -> str | None:
+    """根据 context 中出现的 signature tokens 推测当前剧本 key。返回 None 表示未识别 (用通用 fallback)。"""
+    for key, ov in _load_script_overrides().items():
+        tokens = ov.get("novel_signature_tokens") or []
+        if tokens and any(t in context for t in tokens):
+            return key
+    return None
 
 
 class GameState:
@@ -470,21 +497,17 @@ class GameState:
             "\n".join(memory.get("abilities", [])),
             "\n".join(memory.get("facts", [])),
         ])
-        # task 41：判断当前 state 是不是 MuMuAINovel 默认柏林剧情上下文。
-        # 导入剧本（task 34/40 已 scrub 柏林默认）context 不应再出现 柏林/图卢兹/哈布斯堡/蛇信
-        # 等 token —— 这时不能把"要求一份柏林当前势力图..." fallback 推给用户。
-        is_default_novel = any(
-            tok in context for tok in
-            ("柏林", "图卢兹", "哈布斯堡", "蛇信", "薇瑟帝国", "扎兹巴鲁姆", "蕾穆丽娜",
-             "斯雷因", "伊奈帆", "甲胄骑士", "Kataphrakt", "调令伪造")
-        )
+
+        # 识别当前剧本 key (None 表示未识别 → 用通用 fallback)
+        active_script_key = _detect_active_script_key(context)
+        active_overrides = _load_script_overrides().get(active_script_key, {}) if active_script_key else {}
 
         # task 86：剧情位置一致性检查。
         # 历史 memory.facts / pinned / known_events 可能积累了之前柏林剧情的事实
         # （比如"扎兹巴鲁姆"、"特殊小队"），跨剧情跳跃到月球/火星后这些 needle 仍
         # 会命中,但建议内容含"柏林城内/柏林战役"等当前位置已不再适用的地理词,
-        # 让玩家困惑。这里检查**当前剧情位置**是否仍在柏林,决定是否允许含柏林
-        # 地理词的建议出现。当前位置以 player.current_location / world.time /
+        # 让玩家困惑。这里检查**当前剧情位置**是否仍在 setting lock 范围内,决定是否允许含
+        # 锁定地理词的建议出现。当前位置以 player.current_location / world.time /
         # timeline.current_phase / timeline.current_label 为准（这些是"此时此刻"，
         # 不受过往记忆污染）。
         _setting_blob = " ".join([
@@ -493,43 +516,30 @@ class GameState:
             str((world.get("timeline") or {}).get("current_phase") or ""),
             str((world.get("timeline") or {}).get("current_label") or ""),
         ])
-        _setting_is_berlin = any(
-            tok in _setting_blob for tok in ("柏林", "扎府", "暗流")
-        )
-        # 含明确"柏林"地理位置的建议文本,只在当前剧情仍在柏林时才允许出现。
-        _berlin_locked_text_tokens = ("柏林", "扎府")
+        _setting_lock_tokens = active_overrides.get("setting_lock_tokens") or []
+        _setting_is_active = any(tok in _setting_blob for tok in _setting_lock_tokens) if _setting_lock_tokens else True
+        _setting_locked_text_tokens = tuple(active_overrides.get("setting_locked_text_tokens") or ())
 
         candidates: list[tuple[int, str]] = []
 
         def add(score: int, text: str, *needles: str):
             if needles and not any(n in context for n in needles):
                 return
-            # task 86: 含柏林地理词的建议,当前不在柏林剧情时跳过。
-            if not _setting_is_berlin and any(
-                tok in text for tok in _berlin_locked_text_tokens
+            # setting lock: 含锁定 token 的文本只在当前剧情匹配 setting 时允许
+            if not _setting_is_active and _setting_locked_text_tokens and any(
+                tok in text for tok in _setting_locked_text_tokens
             ):
                 return
             candidates.append((score + _hit_score(context, needles), _player_action_text(text)))
 
-        # 命名 needle 的候选保留——它们本身就要求 context 含对应 token 才会被加入。
-        add(120, "追问斯雷因：界冢伊奈帆一行的位置、人数和目的。", "斯雷因", "伊奈帆", "新动作")
-        add(112, "确认蕾穆丽娜的安置、护卫和通讯权限。", "蕾穆丽娜", "内宅", "安置")
-        add(106, "要求扎兹巴鲁姆交出柏林战役情报图和权限边界。", "扎兹巴鲁姆", "伯爵")
-        add(102, "召集特殊小队，建立城内侦察与撤离预案。", "特殊小队", "整备班")
-        add(98, "检查两台甲胄骑士配置，挑选不易背叛的驾驶员。", "甲胄骑士", "Kataphrakt")
-        add(94, "摸清基地核心机密库、通讯室和医疗区的位置。", "基地", "核心机密库")
-        add(90, "排查可疑监视线路的源头，确认能否反向利用。", "蛇信", "监视")
-        add(86, "复盘最近一场关键战役，寻找下一步反扑窗口。", "图卢兹", "地联溃败")
-        add(82, "核对调令伪造事件的受益者和内鬼线索。", "调令伪造", "宴会")
-        add(78, "测试重力控制的精度上限，避免误伤友方。", "重力控制", "肉身飞行")
-        add(74, "设定魔力输出分级，避免再次摧毁基地设施。", "魔力∞", "百分之十", "10%")
+        # 从 overrides 加载剧本专属规则 (替代原 11 条硬编码)
+        for rule in active_overrides.get("rules") or []:
+            add(rule["score"], rule["text"], *rule.get("needles", []))
 
         if latest and re.search(r"[？?]\s*$", latest):
             add(125, "直接回应当前抉择，并要求列出风险与代价。")
 
-        # task 41：fallback 拆成『通用』+『默认柏林剧情专属』两组。
-        # 通用 fallback 跨剧本都安全；柏林专属的『要求一份柏林当前势力图...』只在
-        # is_default_novel=True 时才推。导入剧本的 UI 不再泄漏。
+        # 通用 fallback 跨剧本都安全；剧本专属 fallback 从 overrides 加载
         fallback_generic = [
             "观察当前场景的可见人物、出口和风险点。",
             "整理当下已知情报，标出最危险变量。",
@@ -537,13 +547,8 @@ class GameState:
             "先和关键人物单独谈话，判断真实立场。",
             "回顾当前剧本开场设定，校准核心动机。",
         ]
-        fallback_default_novel = [
-            "要求一份柏林当前势力图和行动时限。",
-        ]
-        fallback = (
-            fallback_generic + fallback_default_novel
-            if is_default_novel else fallback_generic
-        )
+        fallback_novel = active_overrides.get("default_novel_fallbacks") or []
+        fallback = fallback_generic + fallback_novel
         for index, text in enumerate(fallback):
             add(20 - index, text)
 
