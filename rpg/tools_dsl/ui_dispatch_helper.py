@@ -43,6 +43,12 @@ def dispatch_ui_tool(
 
     state 是当前 user 的 GameState (save 级工具需要); user 级工具不需要。
     """
+    # 兜底注册：startup 事件未触发时（e.g. 测试环境 TestClient 不用 with 语法）确保工具已注册。
+    try:
+        from tools_dsl.command_tools_register import ensure_registered as _ensure_reg
+        _ensure_reg()
+    except Exception:
+        pass
     if trace_id is None:
         trace_id = f"ui-{secrets.token_urlsafe(6)}"
     dispatcher = ToolDispatcher(

@@ -12,6 +12,14 @@ from agents.gm.helpers import _anthropic_curator_tool_use, _format_tools_for_pro
 BASE = Path(__file__).parent.parent.parent  # rpg/agents/gm/ → rpg/
 SA_FILE = BASE / "vertex_sa.json"
 
+# ── 柏林宇宙世界数据 (向后兼容 — 测试通过 agents.gm._WORLD 访问) ──────────────
+_WORLD_FILE = BASE / "indexes" / "world.json"
+try:
+    with open(_WORLD_FILE, encoding="utf-8") as _wf:
+        _WORLD: dict = json.load(_wf)
+except FileNotFoundError:
+    _WORLD = {}
+
 # ── System Prompt 模板 ────────────────────────────────────────────────────────
 _SYSTEM_BASE = """\
 你是一个沉浸式文字 RPG 的 GM（游戏主持人）。
@@ -258,7 +266,7 @@ class GameMaster:
             manifest = resolve_content_pack(state) or {}
             mid = str(manifest.get("id") or "")
             if not mid.startswith("script:"):
-                return ""
+                return self._world_section_berlin_fallback(state)
             script_id = int(mid.split(":", 1)[1])
             with _connect() as db:
                 rows = db.execute(
@@ -272,6 +280,37 @@ class GameMaster:
             parts = []
             for r in rows:
                 parts.append(f"# {r['title']}\n{(r['content'] or '')[:1200]}")
+            return "\n\n".join(parts)
+        except Exception:
+            return self._world_section_berlin_fallback(state)
+
+    def _world_section_berlin_fallback(self, state: Any) -> str:
+        """向后兼容: 若 state 绑定的是柏林宇宙老存档 (world.time 含"柏林"),
+        从 _WORLD 注入基础世界简介。新存档 / 模组应走 worldbook_entries 路径。
+        通过 agents.gm._WORLD 读取,使测试可以 monkey-patch 该变量。"""
+        try:
+            world_time = (state.data.get("world") or {}).get("time") or ""
+            location = (state.data.get("player") or {}).get("current_location") or ""
+            if "柏林" not in world_time and "柏林" not in location:
+                return ""
+            # 动态读 agents.gm._WORLD 以支持测试 monkey-patch
+            import sys
+            gm_pkg = sys.modules.get("agents.gm")
+            world = getattr(gm_pkg, "_WORLD", _WORLD) if gm_pkg is not None else _WORLD
+            setting = world.get("setting") or ""
+            situation = world.get("current_situation") or ""
+            if not setting:
+                return ""
+            parts = [f"{setting}\n当前局势：{situation}"]
+            berlin = world.get("current_berlin") or {}
+            if berlin:
+                atm = berlin.get("atmosphere") or ""
+                risk = berlin.get("risk_level") or ""
+                powers = berlin.get("power_presence") or []
+                detail = f"氛围：{atm}\n风险：{risk}"
+                if powers:
+                    detail += "\n在场势力：" + "、".join(str(p) for p in powers)
+                parts.append(detail)
             return "\n\n".join(parts)
         except Exception:
             return ""

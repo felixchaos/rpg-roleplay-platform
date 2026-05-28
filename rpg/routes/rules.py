@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from schemas._common import COMMON_ERROR_RESPONSES, GenericOkResponse, StateResponse
 from schemas.rules import (
     RulesActionRequest,
     RulesEncounterEnemyRequest,
@@ -27,7 +28,7 @@ async def api_rules_modules(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "modules": _rules_module_registry.list_modules()})
 
 
-@router.post("/api/rules/module/start")
+@router.post("/api/rules/module/start", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_rules_module_start(body: RulesModuleStartRequest, request: Request) -> JSONResponse:
     """低层原语：把模组加载到当前激活的 save，会直接 mutate 该 save state。
     task 87 Phase 6: 走 dispatcher module_load 工具(destructive,UI 直触发)。"""
@@ -57,11 +58,21 @@ async def api_rules_module_start(body: RulesModuleStartRequest, request: Request
         raise HTTPException(status_code=400, detail=d_result.error or "module_load 失败")
     state.save()
     _persist_runtime_checkpoint(state, api_user)
+    # 从模组 opening.md 读取开场白
+    opening = ""
+    try:
+        from pathlib import Path as _Path
+        _modules_dir = _Path(__file__).resolve().parent.parent / "modules"
+        _opening_file = _modules_dir / module_id / "opening.md"
+        if _opening_file.exists():
+            opening = _opening_file.read_text(encoding="utf-8")
+    except Exception:
+        pass
     return JSONResponse({"ok": True, "rules": _rules_payload(state),
-                         "opening": "", "state": _payload(api_user)})
+                         "opening": opening, "state": _payload(api_user)})
 
 
-@router.post("/api/rules/module/launch")
+@router.post("/api/rules/module/launch", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_rules_module_launch(body: RulesModuleLaunchRequest, request: Request) -> JSONResponse:
     """Bug 2：模组启动的标准入口。
 
@@ -170,7 +181,7 @@ async def api_rules_scene(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "rules": _rules_payload(state)})
 
 
-@router.post("/api/rules/move")
+@router.post("/api/rules/move", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_rules_move(body: RulesMoveRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher module_enter_room 工具。"""
     from app import (
@@ -208,7 +219,7 @@ async def api_rules_move(body: RulesMoveRequest, request: Request) -> JSONRespon
     return JSONResponse({"ok": True, "rules": _rules_payload(state), "room": room})
 
 
-@router.post("/api/rules/action")
+@router.post("/api/rules/action", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_rules_action(body: RulesActionRequest, request: Request) -> JSONResponse:
     """通用规则动作执行入口。根据 body.kind 路由到具体规则函数。"""
     from app import (
@@ -237,7 +248,7 @@ async def api_rules_action(body: RulesActionRequest, request: Request) -> JSONRe
     return JSONResponse(out)
 
 
-@router.post("/api/rules/encounter/start")
+@router.post("/api/rules/encounter/start", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_rules_encounter_start(body: RulesEncounterStartRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher combat_start 工具。"""
     from app import (
@@ -277,7 +288,7 @@ async def api_rules_encounter_start(body: RulesEncounterStartRequest, request: R
     return JSONResponse({"ok": True, "rules": _rules_payload(state), "encounter": encounter})
 
 
-@router.post("/api/rules/encounter/next")
+@router.post("/api/rules/encounter/next", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_rules_encounter_next(body: RulesEncounterNextRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher combat_next_turn 工具。"""
     from app import (
@@ -309,7 +320,7 @@ async def api_rules_encounter_next(body: RulesEncounterNextRequest, request: Req
     return JSONResponse({"ok": True, "rules": _rules_payload(state), "encounter": encounter})
 
 
-@router.post("/api/rules/encounter/enemy")
+@router.post("/api/rules/encounter/enemy", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_rules_encounter_enemy(body: RulesEncounterEnemyRequest, request: Request) -> JSONResponse:
     """敌方回合：task 87 Phase 6 走 dispatcher combat_enemy_attack。"""
     from app import (
@@ -352,7 +363,7 @@ async def api_rules_encounter_enemy(body: RulesEncounterEnemyRequest, request: R
                          "encounter": encounter})
 
 
-@router.post("/api/rules/suggest")
+@router.post("/api/rules/suggest", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_rules_suggest(body: RulesSuggestRequest, request: Request) -> JSONResponse:
     """从玩家自由文本输入推断候选规则动作（轻量本地匹配，用于前端候选按钮）。"""
     from app import _ensure_loaded, _require_api_user

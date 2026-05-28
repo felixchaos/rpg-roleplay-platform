@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from schemas._common import COMMON_ERROR_RESPONSES, ErrorResponse, GenericOkResponse
 from schemas.mcp import (
     McpServerDeleteRequest,
     McpServerEnabledRequest,
@@ -25,7 +26,7 @@ async def api_tools(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "tools": _redact_tools(tool_payload(), is_admin)})
 
 
-@router.post("/api/mcp/server")
+@router.post("/api/mcp/server", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_mcp_server(body: McpServerRequest, request: Request) -> JSONResponse:
     from app import _require_api_user, tool_payload, upsert_mcp_server
     _require_api_user(request, admin=True)
@@ -37,7 +38,7 @@ async def api_mcp_server(body: McpServerRequest, request: Request) -> JSONRespon
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
 
-@router.post("/api/mcp/server/enabled")
+@router.post("/api/mcp/server/enabled", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_mcp_server_enabled(body: McpServerEnabledRequest, request: Request) -> JSONResponse:
     from app import _require_api_user, set_mcp_server_enabled, tool_payload
     _require_api_user(request, admin=True)
@@ -49,7 +50,7 @@ async def api_mcp_server_enabled(body: McpServerEnabledRequest, request: Request
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
 
-@router.post("/api/mcp/server/delete")
+@router.post("/api/mcp/server/delete", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_mcp_server_delete(body: McpServerDeleteRequest, request: Request) -> JSONResponse:
     from app import _require_api_user, delete_mcp_server, tool_payload
     _require_api_user(request, admin=True)
@@ -61,7 +62,7 @@ async def api_mcp_server_delete(body: McpServerDeleteRequest, request: Request) 
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
 
-@router.post("/api/mcp/server/validate")
+@router.post("/api/mcp/server/validate", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_mcp_server_validate(body: McpServerValidateRequest, request: Request) -> JSONResponse:
     from app import _require_api_user, validate_mcp_server
     _require_api_user(request, admin=True)
@@ -72,7 +73,7 @@ async def api_mcp_server_validate(body: McpServerValidateRequest, request: Reque
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
 
-@router.post("/api/mcp/server/start")
+@router.post("/api/mcp/server/start", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_mcp_server_start(body: McpServerStartRequest, request: Request) -> JSONResponse:
     from app import _require_api_user
     _require_api_user(request, admin=True)
@@ -81,7 +82,7 @@ async def api_mcp_server_start(body: McpServerStartRequest, request: Request) ->
     return JSONResponse(mcp_broker.start_server(body_dict.get("id", "")))
 
 
-@router.post("/api/mcp/server/stop")
+@router.post("/api/mcp/server/stop", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_mcp_server_stop(body: McpServerStopRequest, request: Request) -> JSONResponse:
     from app import _require_api_user
     _require_api_user(request, admin=True)
@@ -116,7 +117,7 @@ async def api_mcp_runtime(request: Request) -> JSONResponse:
     return JSONResponse(payload)
 
 
-@router.post("/api/mcp/tool/call")
+@router.post("/api/mcp/tool/call", response_model=GenericOkResponse, responses={**COMMON_ERROR_RESPONSES, 403: {"model": ErrorResponse}})
 async def api_mcp_tool_call(body: McpToolCallRequest, request: Request) -> JSONResponse:
     """前端或主 GM 调用 MCP 工具的统一入口。
 

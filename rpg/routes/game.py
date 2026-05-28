@@ -4,12 +4,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from schemas._common import COMMON_ERROR_RESPONSES, GenericOkResponse, OkResponse, StateResponse
 from schemas.game import ChatEstimateRequest, ChatRequest, NewGameRequest
 
 router = APIRouter()
 
 
-@router.post("/api/new")
+@router.post("/api/new", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_new(body: NewGameRequest, request: Request) -> JSONResponse:
     """创建新存档。
 
@@ -173,7 +174,7 @@ async def api_opening(request: Request) -> StreamingResponse:
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
-@router.post("/api/chat/estimate")
+@router.post("/api/chat/estimate", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_chat_estimate(body: ChatEstimateRequest, request: Request) -> JSONResponse:
     """实时上下文预估。前端 debounce 用户输入后调用，显示 ctx X/Y (Z%) · in~A out~B。
 
@@ -475,7 +476,7 @@ async def api_chat(body: ChatRequest, request: Request) -> StreamingResponse:
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
-@router.post("/api/stop")
+@router.post("/api/stop", response_model=OkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_stop(request: Request) -> JSONResponse:
     """打断当前用户正在跑的 chat。其他用户的 chat 不受影响。
     task 87 Phase 6: 同时调 dispatcher stop_current_chat 工具,把 stop_signal 写到 state.permissions。"""
@@ -497,7 +498,7 @@ async def api_stop(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-@router.post("/api/save")
+@router.post("/api/save", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_save(request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher save_runtime。"""
     from app import (

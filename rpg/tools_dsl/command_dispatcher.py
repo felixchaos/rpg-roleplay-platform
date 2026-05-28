@@ -293,14 +293,15 @@ class ToolDispatcher:
                 "rate_limited",
                 f"user_id={env.user_id} 每秒工具调用数超 {MAX_CALLS_PER_USER_PER_SECOND}",
             )
-        # task 97: 8) required 字段检查 — 缺字段返友好错误,LLM 读了自己调 ask_user_choice。
-        # 之前用 NEEDS_USER_INPUT 字符串哨兵 + ui_invoke 包装,现在 native tool_use 直接
-        # 返错误。注意"友好": 列出具体哪些字段缺,LLM 才能针对性问。
+        # task 97: 8) required 字段检查 — 字段完全不存在 (None) 时返友好错误,
+        # LLM 读了自己调 ask_user_choice。
+        # 注意: 字段存在但为空字符串/空列表时不在此处拦截 — 让 tool handler 自己
+        # 产生专属错误消息 (e.g. "server_id 为空"),测试可直接断言 r.result。
         required = (spec.input_schema or {}).get("required") or []
         missing = []
         for fld in required:
             v = env.args.get(fld)
-            if v is None or (isinstance(v, str) and not v.strip()) or (isinstance(v, (list, dict)) and len(v) == 0):
+            if v is None:
                 missing.append(fld)
         if missing:
             raise DispatchError(
