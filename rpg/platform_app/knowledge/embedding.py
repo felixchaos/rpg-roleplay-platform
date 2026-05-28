@@ -26,7 +26,14 @@ log = logging.getLogger(__name__)
 
 EMBED_MODEL = "text-embedding-004"
 EMBED_DIM = 768
-BATCH_SIZE = 100  # Vertex 单请求上限 250,留 buffer
+# Vertex text-embedding-004 限制:**单请求总 token ≤ 20000**(不是 250 项)。
+# 中文 chunk 平均 ~200 token,100 项已经超过 20K → 400 INVALID_ARGUMENT。
+# 减到 30 项 × ~600 char ≈ 9000 tokens,留足 50% buffer 处理长 chunk。
+BATCH_SIZE = 30
+# 每个 chunk 文本上限(char),配合 batch_size 控制总 token。
+# Vertex 中文 ~1 char/0.5 token,2400 char ≈ 1200 token;30 × 1200 = 36000 仍超。
+# 改成 1200 char/chunk ≈ 600 token;30 × 600 = 18000 安全。
+PER_CHUNK_CHAR_LIMIT = 1200
 # 进程内 cache,避免 ChatPipeline 每次 _embed_query 都重新 import vertex SDK
 _VERTEX_CLIENT_CACHE: dict[str, Any] = {}
 _EMBED_QUEUE_RUNNING: dict[int, bool] = {}  # script_id → 是否在跑
@@ -183,7 +190,7 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
         if not rows:
             break
 
-        texts = [r["content"][:8000] for r in rows]  # Vertex 限 8K tokens/text
+        texts = [r["content"][:PER_CHUNK_CHAR_LIMIT] for r in rows]  # 见模块顶 PER_CHUNK_CHAR_LIMIT 注释
         vecs = _embed_batch(texts)
         if vecs is None:
             log.warning("[embedding] batch failed, sleeping 30s then retry")

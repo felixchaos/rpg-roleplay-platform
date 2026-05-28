@@ -91,3 +91,56 @@ def _search_chunks(db, script_id: int, tokens: list[str], chapter_min: int | Non
     """
     params = score_params + [script_id, chapter_min, chapter_min, chapter_max, chapter_max] + where_params
     return db.execute(query, tuple(params)).fetchall()
+
+
+def _search_entities(db, script_id: int, query_text: str, top_k_cards: int = 3, top_k_wb: int = 3) -> dict[str, list[dict[str, Any]]]:
+    """task 51: LightRAG 双层检索的第二层 — entity 层。
+
+    用 query 的 embedding 找最相关的 character_cards + worldbook_entries,
+    给 GM 补充"提到 NPC 时的完整人物卡"和"提到地名时的世界书条目"。
+
+    Returns: {"cards": [...], "worldbook": [...]}
+    """
+    out = {"cards": [], "worldbook": []}
+    if not query_text:
+        return out
+    vec = _embed_query(query_text)
+    if not vec:
+        return out  # 没 embedding 跑不动,自动跳过
+
+    if _vector_column_exists(db, "character_cards"):
+        try:
+            out["cards"] = db.execute(
+                """
+                select id, name, identity, personality, appearance,
+                       (1 - (embedding_vec <=> %s::vector)) as score
+                from character_cards
+                where script_id = %s
+                  and embedding_vec is not null
+                  and enabled = true
+                order by embedding_vec <=> %s::vector
+                limit %s
+                """,
+                (vec, script_id, vec, max(1, min(top_k_cards, 8))),
+            ).fetchall()
+        except Exception:
+            pass
+
+    if _vector_column_exists(db, "worldbook_entries"):
+        try:
+            out["worldbook"] = db.execute(
+                """
+                select id, title, content,
+                       (1 - (embedding_vec <=> %s::vector)) as score
+                from worldbook_entries
+                where script_id = %s
+                  and embedding_vec is not null
+                order by embedding_vec <=> %s::vector
+                limit %s
+                """,
+                (vec, script_id, vec, max(1, min(top_k_wb, 8))),
+            ).fetchall()
+        except Exception:
+            pass
+
+    return out
