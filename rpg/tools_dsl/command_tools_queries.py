@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from command_dispatcher import ToolSpec, get_registry
+from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
 
 # task 48: console_assistant 是 user-driven agent,所有 read 工具都对它开放

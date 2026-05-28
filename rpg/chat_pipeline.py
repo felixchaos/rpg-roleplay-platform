@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from threading import Event
 from typing import Any, AsyncIterator, Callable
 
-from context_agent import run_context_agent
+from agents.context_agent import run_context_agent
 from state import GameState, strip_json_state_ops
 
 
@@ -122,11 +122,11 @@ async def apply_player_directives_phase(
     # step 2: /set 工具化路径
     if _is_set_command:
         try:
-            from command_agent import parse_set_command
-            from command_dispatcher import (
+            from agents.command_agent import parse_set_command
+            from tools_dsl.command_dispatcher import (
                 ToolCallEnvelope, ToolDispatcher, get_registry,
             )
-            from command_tools_register import ensure_registered
+            from tools_dsl.command_tools_register import ensure_registered
             ensure_registered()  # 幂等
 
             _uid = int(api_user.get("id")) if api_user else 0
@@ -172,7 +172,7 @@ async def apply_player_directives_phase(
             message_for_model.strip().startswith("/set") and
             is_set_parser_enabled(api_user)):
         try:
-            import set_parser as _set_parser
+            import tools_dsl.set_parser as _set_parser
             parser_ops = _set_parser.parse_set_directive(
                 set_text=message_for_model,
                 state_data=state.data,
@@ -613,7 +613,7 @@ async def run_gm_phase(
     unified_tools = mcp_tools
     gm_tool_router = None
     try:
-        from chat_tool_router import build_unified_tool_list, build_tool_call_router
+        from tools_dsl.chat_tool_router import build_unified_tool_list, build_tool_call_router
         import secrets as _secrets
         unified_tools = build_unified_tool_list(mcp_tools, origin="llm_chat")
         _gm_trace_id = f"gm-{_secrets.token_urlsafe(6)}"
@@ -701,7 +701,7 @@ async def run_gm_phase(
 
     # 时间线 user_set 跳跃叙事检测
     try:
-        from timeline_narrative_guard import (
+        from agents.timeline_narrative_guard import (
             detect_time_jump_violations, record_violations_to_audit,
         )
         if response.strip():
@@ -726,7 +726,7 @@ async def run_gm_phase(
     try:
         if is_extractor_enabled(api_user) and response.strip():
             extractor_active = True
-            import extractor as _extractor
+            from agents import extractor as _extractor
             extractor_ops = _extractor.extract_state_ops(
                 narrative_text=response,
                 state_data=state.data,

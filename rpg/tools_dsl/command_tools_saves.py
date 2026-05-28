@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from command_dispatcher import ToolSpec, get_registry
+from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
 
 # task 87 Phase 7 安全审查:跨"世界泡"隔离

@@ -85,7 +85,7 @@ def main() -> int:
     args = ap.parse_args()
 
     try:
-        from phase_digest_agent import compact_phase
+        from agents.phase_digest_agent import compact_phase
     except ImportError as exc:
         print(f"ERROR: 无法 import phase_digest_agent: {exc}", file=sys.stderr)
         return 99

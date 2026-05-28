@@ -43,7 +43,7 @@ def _get_summary_gm():
     with _SUMMARY_GM_LOCK:
         if _SUMMARY_GM is None:
             try:
-                from gm import GameMaster
+                from agents.gm import GameMaster
                 _SUMMARY_GM = GameMaster()  # 默认 gemini-3.5-flash，够用
             except Exception:
                 _SUMMARY_GM = False

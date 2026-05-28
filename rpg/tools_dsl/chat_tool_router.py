@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from command_dispatcher import (
+from tools_dsl.command_dispatcher import (
     ToolCallEnvelope, ToolDispatcher, get_registry,
 )
 

@@ -38,27 +38,27 @@ from tests.helpers import (  # noqa: E402
 
 class ParseJsonTests(unittest.TestCase):
     def test_raw_json_object(self):
-        from phase_digest_agent import _parse_json
+        from agents.phase_digest_agent import _parse_json
         out = _parse_json('{"summary": "hi", "key_events": []}')
         self.assertIsInstance(out, dict)
         self.assertEqual(out["summary"], "hi")
 
     def test_json_in_markdown_fence(self):
-        from phase_digest_agent import _parse_json
+        from agents.phase_digest_agent import _parse_json
         text = '好的, 这是结果:\n\n```json\n{"summary":"测试","key_events":[]}\n```\n'
         out = _parse_json(text)
         self.assertIsInstance(out, dict)
         self.assertEqual(out["summary"], "测试")
 
     def test_json_with_leading_garbage(self):
-        from phase_digest_agent import _parse_json
+        from agents.phase_digest_agent import _parse_json
         text = '某些前导文字 {"summary":"x","emotion_arc":"a→b"} 一些尾部'
         out = _parse_json(text)
         self.assertEqual(out["summary"], "x")
         self.assertEqual(out["emotion_arc"], "a→b")
 
     def test_invalid_returns_none(self):
-        from phase_digest_agent import _parse_json
+        from agents.phase_digest_agent import _parse_json
         self.assertIsNone(_parse_json(""))
         self.assertIsNone(_parse_json("纯文本没 JSON"))
         self.assertIsNone(_parse_json("[1,2,3]"))  # 是 list 不是 dict
@@ -66,7 +66,7 @@ class ParseJsonTests(unittest.TestCase):
 
 class NormalizeDigestTests(unittest.TestCase):
     def test_full_valid_input(self):
-        from phase_digest_agent import _normalize_digest
+        from agents.phase_digest_agent import _normalize_digest
         d = _normalize_digest({
             "summary": "一段摘要",
             "key_events": [{"turn": 3, "summary": "事件"}],
@@ -82,7 +82,7 @@ class NormalizeDigestTests(unittest.TestCase):
         self.assertEqual(d["key_locations"], ["雾港", "灯塔"])
 
     def test_truncates_overflow(self):
-        from phase_digest_agent import _normalize_digest
+        from agents.phase_digest_agent import _normalize_digest
         d = _normalize_digest({
             "summary": "x" * 5000,
             "key_events": [{"turn": i, "summary": "e"} for i in range(100)],
@@ -99,7 +99,7 @@ class NormalizeDigestTests(unittest.TestCase):
         self.assertLessEqual(len(d["emotion_arc"]), 200)
 
     def test_coerces_turn_to_int(self):
-        from phase_digest_agent import _normalize_digest
+        from agents.phase_digest_agent import _normalize_digest
         d = _normalize_digest({
             "summary": "x",
             "key_events": [{"turn": "5", "summary": "ok"},
@@ -109,7 +109,7 @@ class NormalizeDigestTests(unittest.TestCase):
         self.assertEqual(d["key_events"][1]["turn"], 0)
 
     def test_handles_missing_fields(self):
-        from phase_digest_agent import _normalize_digest
+        from agents.phase_digest_agent import _normalize_digest
         d = _normalize_digest({"summary": "只有 summary"})
         self.assertEqual(d["summary"], "只有 summary")
         self.assertEqual(d["key_events"], [])
@@ -119,7 +119,7 @@ class NormalizeDigestTests(unittest.TestCase):
         self.assertEqual(d["emotion_arc"], "")
 
     def test_filters_non_dict_items(self):
-        from phase_digest_agent import _normalize_digest
+        from agents.phase_digest_agent import _normalize_digest
         d = _normalize_digest({
             "summary": "x",
             "key_events": ["not a dict", {"turn": 1, "summary": "ok"}, 123],
@@ -244,7 +244,7 @@ class CompactPhaseIntegration(unittest.TestCase):
         return uid, save_id, phase_index
 
     def test_happy_path_writes_all_fields(self):
-        from phase_digest_agent import compact_phase
+        from agents.phase_digest_agent import compact_phase
         from platform_app.db import connect
 
         uid, save_id, phase_index = self._seed(n_commits=3)
@@ -294,7 +294,7 @@ class CompactPhaseIntegration(unittest.TestCase):
 
     def test_prompt_includes_dialogue(self):
         """system prompt + user prompt 里要看到玩家+GM 的话, 否则 LLM 没法摘。"""
-        from phase_digest_agent import compact_phase
+        from agents.phase_digest_agent import compact_phase
         uid, save_id, phase_index = self._seed(n_commits=2)
         fake = _FakeBackend("happy")
         compact_phase(save_id, phase_index, user_id=uid, force=False, _backend=fake)
@@ -306,7 +306,7 @@ class CompactPhaseIntegration(unittest.TestCase):
 
     def test_short_circuit_when_already_closed(self):
         """已经 closed 且有 summary 时, force=False 不重做。"""
-        from phase_digest_agent import compact_phase
+        from agents.phase_digest_agent import compact_phase
         from platform_app.db import connect
 
         uid, save_id, phase_index = self._seed(n_commits=2)
@@ -324,7 +324,7 @@ class CompactPhaseIntegration(unittest.TestCase):
         self.assertEqual(result["summary"], "旧摘要已存在")
 
     def test_force_rewrites_even_when_closed(self):
-        from phase_digest_agent import compact_phase
+        from agents.phase_digest_agent import compact_phase
         from platform_app.db import connect
 
         uid, save_id, phase_index = self._seed(n_commits=2)
@@ -343,7 +343,7 @@ class CompactPhaseIntegration(unittest.TestCase):
         self.assertIn("怀表", result["summary"])
 
     def test_llm_call_failure_returns_error_dict(self):
-        from phase_digest_agent import compact_phase
+        from agents.phase_digest_agent import compact_phase
         from platform_app.db import connect
 
         uid, save_id, phase_index = self._seed(n_commits=2)
@@ -363,7 +363,7 @@ class CompactPhaseIntegration(unittest.TestCase):
             self.assertEqual(row["summary"], "")
 
     def test_retry_succeeds_on_second_call(self):
-        from phase_digest_agent import compact_phase
+        from agents.phase_digest_agent import compact_phase
         uid, save_id, phase_index = self._seed(n_commits=2)
         fake = _FakeBackend("retry")
         result = compact_phase(save_id, phase_index, user_id=uid,
@@ -373,7 +373,7 @@ class CompactPhaseIntegration(unittest.TestCase):
         self.assertIn("怀表", result["summary"])
 
     def test_garbage_twice_raises(self):
-        from phase_digest_agent import compact_phase
+        from agents.phase_digest_agent import compact_phase
         uid, save_id, phase_index = self._seed(n_commits=2)
         fake = _FakeBackend("garbage")
         # 第二次仍失败 → 函数应当吞掉 ValueError 转成 error dict (compact_phase
@@ -385,7 +385,7 @@ class CompactPhaseIntegration(unittest.TestCase):
         self.assertEqual(fake.call_count, 2)
 
     def test_missing_phase_returns_error(self):
-        from phase_digest_agent import compact_phase
+        from agents.phase_digest_agent import compact_phase
         uid, save_id, phase_index = self._seed(n_commits=1)
         # phase 99 不存在
         result = compact_phase(save_id, 99, user_id=uid, _backend=_FakeBackend("happy"))
@@ -393,7 +393,7 @@ class CompactPhaseIntegration(unittest.TestCase):
         self.assertIn("not found", result["error"])
 
     def test_no_commits_returns_error(self):
-        from phase_digest_agent import compact_phase
+        from agents.phase_digest_agent import compact_phase
         from platform_app.db import connect
 
         uid, save_id, phase_index = self._seed(n_commits=1)

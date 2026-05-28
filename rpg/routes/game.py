@@ -335,7 +335,7 @@ async def api_chat(request: Request) -> StreamingResponse:
             # 翻阅 phase_digests + chapter_facts + worldbook → 注入 ctx_text。
             # SSE 广播 worldbook_consulting/ready, 前端显示"翻阅设定中"。
             try:
-                import worldbook_agent
+                from agents import worldbook_agent
                 script_id_for_wb = _active_script_id(api_user)
                 world = state.data.get("world", {}) or {}
                 memory = state.data.get("memory", {}) or {}
@@ -445,7 +445,7 @@ async def api_stop(request: Request) -> JSONResponse:
     # 同时通过 dispatcher 记录 audit 与 state.permissions.stop_signal
     try:
         state = _ensure_loaded(api_user)
-        from ui_dispatch_helper import dispatch_ui_tool
+        from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
         dispatch_ui_tool(
             tool_name="stop_current_chat", args={},
             user_id=int(api_user.get("id")) if api_user else 0,
@@ -466,7 +466,7 @@ async def api_save(request: Request) -> JSONResponse:
     )
     api_user = _require_api_user(request)
     state = _ensure_loaded(api_user)
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(
         tool_name="save_runtime", args={},
         user_id=int(api_user.get("id")) if api_user else 0,

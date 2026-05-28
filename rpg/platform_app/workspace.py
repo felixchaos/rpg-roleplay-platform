@@ -140,7 +140,7 @@ def create_save(
     # 800 章 × 5 events 量级,放后台不阻塞 UI;失败也不影响存档创建。
     try:
         import threading
-        from anchor_seed_agent import seed_anchors_for_save
+        from agents.anchor_seed_agent import seed_anchors_for_save
         def _bg_seed():
             try:
                 res = seed_anchors_for_save(save["id"])

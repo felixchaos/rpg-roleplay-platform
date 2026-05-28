@@ -113,7 +113,7 @@ class DetectViolationsUnit(unittest.TestCase):
         return g
 
     def test_detects_chuanyue_in_text(self):
-        from timeline_narrative_guard import detect_time_jump_violations
+        from agents.timeline_narrative_guard import detect_time_jump_violations
         state = self._state_user_set_now()
         text = "时间被一双看不见的手生生拨回了最初的起点。"
         violations = detect_time_jump_violations(text, state)
@@ -126,7 +126,7 @@ class DetectViolationsUnit(unittest.TestCase):
         )
 
     def test_detects_user_zaici_kaiyan(self):
-        from timeline_narrative_guard import detect_time_jump_violations
+        from agents.timeline_narrative_guard import detect_time_jump_violations
         state = self._state_user_set_now()
         text = "当你再次睁开眼睛时,四周已经不是柏林。"
         violations = detect_time_jump_violations(text, state)
@@ -136,7 +136,7 @@ class DetectViolationsUnit(unittest.TestCase):
             f"应命中 '再次睁开眼' 或 '当你再次X时',实际: {labels}")
 
     def test_detects_cold_opening(self):
-        from timeline_narrative_guard import detect_time_jump_violations
+        from agents.timeline_narrative_guard import detect_time_jump_violations
         state = self._state_user_set_now()
         text = "冷,刺骨的冷。"
         violations = detect_time_jump_violations(text, state)
@@ -147,7 +147,7 @@ class DetectViolationsUnit(unittest.TestCase):
         )
 
     def test_clean_text_no_violation(self):
-        from timeline_narrative_guard import detect_time_jump_violations
+        from agents.timeline_narrative_guard import detect_time_jump_violations
         state = self._state_user_set_now()
         text = "薇瑟帝国扬陆城的大厅笼罩在猩红的日光下,蕾穆丽娜坐在精致的轮椅上看着你。"
         violations = detect_time_jump_violations(text, state)
@@ -156,7 +156,7 @@ class DetectViolationsUnit(unittest.TestCase):
 
     def test_no_user_set_jump_skips_check(self):
         """如果 last_transition 不是 user_set,不应检测 (避免误伤普通叙事)。"""
-        from timeline_narrative_guard import detect_time_jump_violations
+        from agents.timeline_narrative_guard import detect_time_jump_violations
         from state import GameState, DEFAULT_STATE
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.data["turn"] = 5
@@ -170,7 +170,7 @@ class DetectViolationsUnit(unittest.TestCase):
 
     def test_old_jump_skips_check(self):
         """user_set 跳跃但在过去 turn,不应再检测。"""
-        from timeline_narrative_guard import detect_time_jump_violations
+        from agents.timeline_narrative_guard import detect_time_jump_violations
         from state import GameState, DEFAULT_STATE
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.data["turn"] = 10
@@ -190,7 +190,7 @@ class DetectViolationsUnit(unittest.TestCase):
 
 class RecordViolationsAudit(unittest.TestCase):
     def test_audit_log_entry_structure(self):
-        from timeline_narrative_guard import record_violations_to_audit
+        from agents.timeline_narrative_guard import record_violations_to_audit
         from state import GameState, DEFAULT_STATE
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.data["turn"] = 5
@@ -210,7 +210,7 @@ class RecordViolationsAudit(unittest.TestCase):
         self.assertIn("retry", entry["hint"])  # 提示用户可以 /retry
 
     def test_empty_violations_no_op(self):
-        from timeline_narrative_guard import record_violations_to_audit
+        from agents.timeline_narrative_guard import record_violations_to_audit
         from state import GameState, DEFAULT_STATE
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         record_violations_to_audit(g, [])

@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse as BaseJSONResponse
 
-from tool_registry import tool_payload
+from tools_dsl.tool_registry import tool_payload
 
 from psycopg.types.json import Jsonb
 
@@ -992,7 +992,7 @@ async def api_save_anchors(request: Request, save_id: int):
         if not owned:
             return json_response({"ok": False, "error": "无权访问该存档"}, status_code=403)
     try:
-        from anchor_seed_agent import (
+        from agents.anchor_seed_agent import (
             summarize_save_anchor_state,
             drift_by_phase,
             list_pending_for_phase,
@@ -1062,7 +1062,7 @@ async def api_save_anchors_reseed(request: Request, save_id: int):
         pass
     keep = bool(body.get("keep_satisfied", True))
     try:
-        from anchor_seed_agent import reseed_anchors_for_save
+        from agents.anchor_seed_agent import reseed_anchors_for_save
         res = reseed_anchors_for_save(save_id, keep_satisfied=keep)
         return json_response({"ok": True, **res})
     except Exception as exc:

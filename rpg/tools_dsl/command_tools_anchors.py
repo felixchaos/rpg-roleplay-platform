@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from command_dispatcher import ToolSpec, get_registry
+from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
 
 _ANCHOR_READ_ORIGINS = frozenset({"ui_button", "api_direct", "console_assistant", "llm_chat", "llm_set"})
@@ -69,7 +69,7 @@ def _t_list_pending_anchors(user_id: int, args: dict) -> str:
         with connect() as db:
             if not _own_save(db, save_id, user_id):
                 return f"失败 (权限): save {save_id} 不属于当前用户或不存在"
-        from anchor_seed_agent import list_pending_for_phase, summarize_save_anchor_state
+        from agents.anchor_seed_agent import list_pending_for_phase, summarize_save_anchor_state
         anchors = list_pending_for_phase(
             save_id, phase_label,
             limit=limit, chapter_min=chapter_min, chapter_max=chapter_max,
@@ -275,7 +275,7 @@ def _t_summarize_anchors(user_id: int, args: dict) -> str:
         with connect() as db:
             if not _own_save(db, save_id, user_id):
                 return f"失败 (权限): save {save_id} 不属于当前用户或不存在"
-        from anchor_seed_agent import summarize_save_anchor_state
+        from agents.anchor_seed_agent import summarize_save_anchor_state
         s = summarize_save_anchor_state(save_id)
         return json.dumps(s, ensure_ascii=False, indent=2)
     except Exception as exc:

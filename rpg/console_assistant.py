@@ -64,7 +64,7 @@ from datetime import datetime
 from threading import Lock
 from typing import Any, Callable, Iterator
 
-from command_dispatcher import (
+from tools_dsl.command_dispatcher import (
     ToolCallEnvelope, ToolDispatcher, ToolResult, get_registry,
 )
 
@@ -429,7 +429,7 @@ def list_assistant_tools() -> list[dict[str, Any]]:
     LLM 直接 tool_use create_character_card({name, summary, identity}) — 缺 required
     schema 自然报错 → LLM 读 error → 调 ask_user_question 问用户。无哨兵无嵌套。
     """
-    from chat_tool_router import DISPATCHER_SENTINEL
+    from tools_dsl.chat_tool_router import DISPATCHER_SENTINEL
     PRIMARY = {
         # 角色卡
         "create_character_card", "list_my_character_cards", "delete_character_card",

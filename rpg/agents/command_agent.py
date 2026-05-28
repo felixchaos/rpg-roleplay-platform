@@ -23,7 +23,7 @@ import json
 import os
 from typing import Any
 
-from command_tools import COMMAND_TOOLS
+from tools_dsl.command_tools import COMMAND_TOOLS
 
 
 # ────────────────────────────────────────────────────────────
@@ -203,7 +203,7 @@ def _schema_args(schema: dict) -> str:
 
 
 def _call_vertex_tools(model: str, user_prompt: str, user_id: int | None) -> list[dict]:
-    from gm import _VertexBackend
+    from agents.gm import _VertexBackend
     backend = _VertexBackend(model=model)
     system_prompt = (
         _SYSTEM_PROMPT
@@ -224,7 +224,7 @@ def _call_openai_compat_tools(
     api_id: str, model: str, user_prompt: str, user_id: int | None, timeout_sec: int
 ) -> list[dict]:
     """OpenAI 兼容 JSON mode。"""
-    from extractor import _api_base_url
+    from agents.extractor import _api_base_url
     from platform_app.user_credentials import resolve_api_key
     cred = resolve_api_key(user_id, api_id)
     key = cred.get("key")
@@ -329,7 +329,7 @@ def _detect_default_api() -> str:
     """启动时检测可用 backend: 优先 vertex_ai (SA 文件), 然后 anthropic (env key)."""
     import os as _os
     from pathlib import Path as _Path
-    sa_path = _Path(__file__).parent / "vertex_sa.json"
+    sa_path = _Path(__file__).parent.parent / "vertex_sa.json"
     if sa_path.exists():
         return "vertex_ai"
     if _os.environ.get("ANTHROPIC_API_KEY"):

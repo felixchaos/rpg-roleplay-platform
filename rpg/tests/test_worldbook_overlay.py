@@ -27,8 +27,8 @@ if str(REPO) not in sys.path:
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
 from state import GameState, DEFAULT_STATE  # noqa: E402
-from command_dispatcher import ToolCallEnvelope, ToolDispatcher, get_registry  # noqa: E402
-from command_tools_register import force_reset_for_tests  # noqa: E402
+from tools_dsl.command_dispatcher import ToolCallEnvelope, ToolDispatcher, get_registry  # noqa: E402
+from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
 
 
 # ────────────────────────────────────────────────────────────
@@ -374,7 +374,7 @@ class TestLoadEffectiveWorldbook(unittest.TestCase):
 
     def _run(self, script_rows, overlay_rows):
         """构造 mock db 并调用 load_effective_worldbook_for_save。"""
-        from worldbook_agent import load_effective_worldbook_for_save
+        from agents.worldbook_agent import load_effective_worldbook_for_save
 
         mock_script_cursor = MagicMock()
         mock_script_cursor.fetchall = _make_fetchall(script_rows)
@@ -525,7 +525,7 @@ class TestConsultWithSaveId(unittest.TestCase):
 
     def test_consult_without_save_id_uses_script_entries(self):
         """不传 save_id 时，consult 直接查 worldbook_entries（旧路径）。"""
-        from worldbook_agent import consult
+        from agents.worldbook_agent import consult
 
         script_rows = [
             {"id": 1, "title": "活 NPC", "content": "活", "keys": ["活"], "priority": 95},
@@ -539,7 +539,7 @@ class TestConsultWithSaveId(unittest.TestCase):
 
     def test_consult_with_save_id_excludes_retired(self):
         """传 save_id 时，consult 通过 merge view 排除被 retired 的 entry。"""
-        from worldbook_agent import consult
+        from agents.worldbook_agent import consult
 
         script_rows = [
             {"id": 1, "title": "死去的 NPC", "content": "死", "keys": ["死去"], "priority": 95},
@@ -564,7 +564,7 @@ class TestConsultWithSaveId(unittest.TestCase):
 
     def test_consult_with_save_id_includes_addition(self):
         """传 save_id 时，consult 结果包含 addition overlay。"""
-        from worldbook_agent import consult
+        from agents.worldbook_agent import consult
 
         script_rows = [
             {"id": 1, "title": "剧本 NPC", "content": "x", "keys": ["剧本"], "priority": 50},

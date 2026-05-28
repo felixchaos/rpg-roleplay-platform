@@ -37,7 +37,7 @@ async def api_skill_run(request: Request, skill_id: str) -> JSONResponse:
         return JSONResponse({"ok": False, "error": "cmd 必须是非空 list"}, status_code=400)
 
     # 找 skill_id 对应的目录
-    from tool_registry import list_imported_skills
+    from tools_dsl.tool_registry import list_imported_skills
     skill = next((s for s in list_imported_skills() if s.get("id") == skill_id), None)
     if not skill:
         return JSONResponse({"ok": False, "error": f"skill 不存在: {skill_id}"}, status_code=404)

@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from command_dispatcher import ToolSpec, get_registry
-from command_tools import COMMAND_TOOLS, execute_tool as _execute_legacy
+from tools_dsl.command_dispatcher import ToolSpec, get_registry
+from tools_dsl.command_tools import COMMAND_TOOLS, execute_tool as _execute_legacy
 
 
 # 这些 origin 默认允许从 LLM (llm_set / llm_chat) 和 UI 调用 (save 级游戏指令).
@@ -288,53 +288,53 @@ def ensure_registered() -> None:
     _register_phase2_tools()
     # task 87 Phase 2.2 / 2.3 / Phase 3: 三个独立子模块的工具
     try:
-        from command_tools_saves import register_saves_tools
+        from tools_dsl.command_tools_saves import register_saves_tools
         register_saves_tools()
     except Exception as exc:
         print(f"[command_tools_register] saves 工具注册失败: {exc}")
     try:
-        from command_tools_rules import register_rules_tools
+        from tools_dsl.command_tools_rules import register_rules_tools
         register_rules_tools()
     except Exception as exc:
         print(f"[command_tools_register] rules 工具注册失败: {exc}")
     try:
-        from command_tools_queries import register_query_tools
+        from tools_dsl.command_tools_queries import register_query_tools
         register_query_tools()
     except Exception as exc:
         print(f"[command_tools_register] query 工具注册失败: {exc}")
     # task 87 Phase 4 + 余下补全
     try:
-        from command_tools_misc import register_misc_tools
+        from tools_dsl.command_tools_misc import register_misc_tools
         register_misc_tools()
     except Exception as exc:
         print(f"[command_tools_register] misc 工具注册失败: {exc}")
     # task 107C: phase management tools
     try:
-        from command_tools_phase import register_phase_tools
+        from tools_dsl.command_tools_phase import register_phase_tools
         register_phase_tools()
     except Exception as exc:
         print(f"[command_tools_register] phase 工具注册失败: {exc}")
     # task 107H: worldbook overlay tools
     try:
-        from command_tools_worldbook import register_worldbook_tools
+        from tools_dsl.command_tools_worldbook import register_worldbook_tools
         register_worldbook_tools()
     except Exception as exc:
         print(f"[command_tools_register] worldbook 工具注册失败: {exc}")
     # task 109b: ui action tools (set_field/click via SSE to frontend)
     try:
-        from command_tools_ui_action import register_ui_action_tools
+        from tools_dsl.command_tools_ui_action import register_ui_action_tools
         register_ui_action_tools()
     except Exception as exc:
         print(f"[command_tools_register] ui_action 工具注册失败: {exc}")
     # creative tools: recommend_player_identity (新建存档时推荐初始身份)
     try:
-        from command_tools_creative import register_creative_tools
+        from tools_dsl.command_tools_creative import register_creative_tools
         register_creative_tools()
     except Exception as exc:
         print(f"[command_tools_register] creative 工具注册失败: {exc}")
     # task 136: 世界线收束机制 — list_pending_anchors / mark_satisfied / mark_superseded
     try:
-        from command_tools_anchors import register_anchor_tools
+        from tools_dsl.command_tools_anchors import register_anchor_tools
         register_anchor_tools()
     except Exception as exc:
         print(f"[command_tools_register] anchors 工具注册失败: {exc}")

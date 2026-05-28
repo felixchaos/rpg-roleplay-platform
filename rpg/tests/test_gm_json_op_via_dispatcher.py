@@ -27,7 +27,7 @@ from state_op_tool_map import map_op_to_tool  # noqa: E402
 from state_write_context import (  # noqa: E402
     ChatWriteContext, set_context, clear_context,
 )
-from command_tools_register import force_reset_for_tests  # noqa: E402
+from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
 
 
 def _new_state(turn=3):

@@ -14,7 +14,7 @@ import json
 import re
 from typing import Any
 
-from command_dispatcher import ToolSpec, get_registry
+from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
 # 与 command_tools_saves.py 保持一致 — 任何 origin 都可以调只读工具
 _USER_ORIGINS_READ = frozenset({

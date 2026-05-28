@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from command_dispatcher import ToolSpec, get_registry
+from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
 
 # ────────────────────────────────────────────────────────────

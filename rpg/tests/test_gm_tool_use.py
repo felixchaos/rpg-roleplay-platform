@@ -25,9 +25,9 @@ if str(REPO) not in sys.path:
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
 from state import GameState, DEFAULT_STATE  # noqa: E402
-from command_tools_register import force_reset_for_tests  # noqa: E402
-from command_dispatcher import get_registry  # noqa: E402
-from chat_tool_router import (  # noqa: E402
+from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
+from tools_dsl.command_dispatcher import get_registry  # noqa: E402
+from tools_dsl.chat_tool_router import (  # noqa: E402
     DISPATCHER_SENTINEL, build_unified_tool_list, build_tool_call_router,
 )
 
@@ -164,7 +164,7 @@ class GMRespondStreamSignature(unittest.TestCase):
 
     def test_signature_accepts_tool_call_router(self):
         import inspect
-        from gm import GameMaster
+        from agents.gm import GameMaster
         sig = inspect.signature(GameMaster.respond_stream_with_tools)
         self.assertIn("tool_call_router", sig.parameters)
         self.assertIn("tools", sig.parameters)
@@ -185,7 +185,7 @@ class CrossOriginIsolation(unittest.TestCase):
             state_provider=lambda env: state,
         )
         # /set origin
-        from command_dispatcher import ToolCallEnvelope, ToolDispatcher
+        from tools_dsl.command_dispatcher import ToolCallEnvelope, ToolDispatcher
         d = ToolDispatcher(get_registry(), state_provider=lambda env: state)
         r1 = router_gm(DISPATCHER_SENTINEL, "set_world_time",
                        {"target": "时间A"})

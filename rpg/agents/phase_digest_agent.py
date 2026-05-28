@@ -425,7 +425,7 @@ def _build_backend(
     api_id = api_id_override or "vertex_ai"
     model = model_override or "gemini-3.5-flash"
     if api_id == "vertex_ai":
-        from gm import _VertexBackend
+        from agents.gm import _VertexBackend
         return _VertexBackend(model=model), model
     # 不支持的 backend: 抛错,让调用方知道。
     raise ValueError(f"phase_digest_agent 暂只支持 vertex_ai (传入 api_id={api_id!r})")

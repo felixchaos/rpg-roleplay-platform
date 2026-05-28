@@ -25,7 +25,7 @@ except ImportError:
 
 from state     import GameState
 from retrieval import retrieve_context
-from gm        import GameMaster
+from agents.gm import GameMaster
 
 DIVIDER   = "─" * 52
 THIN_DIV  = "·" * 52

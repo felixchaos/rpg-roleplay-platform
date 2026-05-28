@@ -356,7 +356,7 @@ def _fire_and_forget_compact(save_id: int, phase_index: int) -> None:
 
     def _worker() -> None:
         try:
-            from phase_digest_agent import compact_phase
+            from agents.phase_digest_agent import compact_phase
             result = compact_phase(save_id, phase_index)
             err = (result or {}).get("error")
             if err:

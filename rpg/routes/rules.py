@@ -29,7 +29,7 @@ async def api_rules_module_start(request: Request) -> JSONResponse:
     character_overrides = body.get("character") or None
 
     state = _ensure_loaded(api_user)
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     d_result = dispatch_ui_tool(
         tool_name="module_load",
         args={"module_id": module_id, "character_overrides": character_overrides},
@@ -161,7 +161,7 @@ async def api_rules_move(request: Request) -> JSONResponse:
     if not location_id:
         raise HTTPException(status_code=400, detail="缺少 to")
     state = _ensure_loaded(api_user)
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     d_result = dispatch_ui_tool(
         tool_name="module_enter_room",
         args={"location_id": location_id},
@@ -219,7 +219,7 @@ async def api_rules_encounter_start(request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="缺少 encounter_id")
     seed = body.get("seed")
     state = _ensure_loaded(api_user)
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     args: dict = {"encounter_id": encounter_id}
     if seed is not None and str(seed).lstrip("-").isdigit():
         args["seed"] = int(seed)
@@ -249,7 +249,7 @@ async def api_rules_encounter_next(request: Request) -> JSONResponse:
     )
     api_user = _require_api_user(request)
     state = _ensure_loaded(api_user)
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     d_result = dispatch_ui_tool(
         tool_name="combat_next_turn", args={},
         user_id=int(api_user.get("id")) if api_user else 0,
@@ -280,7 +280,7 @@ async def api_rules_encounter_enemy(request: Request) -> JSONResponse:
     target_id = str(body.get("target_id") or "player").strip()
     seed = body.get("seed")
     state = _ensure_loaded(api_user)
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     args: dict = {"attacker_id": attacker_id, "target_id": target_id}
     if seed is not None and str(seed).lstrip("-").isdigit():
         args["seed"] = int(seed)

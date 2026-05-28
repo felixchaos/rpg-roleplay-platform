@@ -20,7 +20,7 @@ async def api_worldline_variable(request: Request) -> JSONResponse:
     value = body.get("value", "")
     state = _ensure_loaded(api_user)
     persist_user_id, active_save_id = _resolve_persist_target(api_user)
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(
         tool_name="set_user_variable",
         args={"key": key, "value": value},
@@ -54,7 +54,7 @@ async def api_worldline_variable_remove(request: Request) -> JSONResponse:
     key = body.get("key", "")
     state = _ensure_loaded(api_user)
     persist_user_id, active_save_id = _resolve_persist_target(api_user)
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(
         tool_name="remove_user_variable",
         args={"key": key},

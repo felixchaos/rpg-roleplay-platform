@@ -145,7 +145,7 @@ def parse_set_directive(
 
     try:
         # 复用 extractor 的 backend dispatcher（同 schema 同协议同 fallback）
-        from extractor import _call_extractor_backend
+        from agents.extractor import _call_extractor_backend
         text = _call_extractor_backend(
             api_id=api_id,
             model=model,

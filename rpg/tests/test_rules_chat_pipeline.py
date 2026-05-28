@@ -289,7 +289,7 @@ class RulesChatPipeline(unittest.TestCase):
         """通用 RPG 底座：system prompt 任何状态下都必须保留 JSON 写回示例（"op": "set" ...）
         不被 str.format 误解析；只有绑定到《我蕾穆丽娜不爱你》兼容老存档的 session 才注入
         柏林世界简介（world.json）。"""
-        import gm as gm_mod
+        import agents.gm as gm_mod
 
         old_world = gm_mod._WORLD
         gm_mod._WORLD = {

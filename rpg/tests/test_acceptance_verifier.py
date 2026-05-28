@@ -51,7 +51,7 @@ class VerifyAcceptanceRuleMode(unittest.TestCase):
     def test_rule_mode_does_not_call_llm(self):
         """rule 模式不能触发 LLM 调用。"""
         import app
-        with patch("acceptance_verifier.verify_acceptance_llm") as mock_llm:
+        with patch("agents.acceptance_verifier.verify_acceptance_llm") as mock_llm:
             app._verify_acceptance(
                 ["回应了去灯塔意图"],
                 "你坐下来喝茶。",
@@ -86,7 +86,7 @@ class VerifyAcceptanceLLMMode(unittest.TestCase):
 
     def test_llm_mode_uses_llm_result(self):
         import app
-        with patch("acceptance_verifier.verify_acceptance_llm", return_value=[]) as mock_llm:
+        with patch("agents.acceptance_verifier.verify_acceptance_llm", return_value=[]) as mock_llm:
             unmet = app._verify_acceptance(
                 ["条款A", "条款B"],
                 "GM 叙事",
@@ -102,7 +102,7 @@ class VerifyAcceptanceLLMMode(unittest.TestCase):
     def test_llm_mode_returns_llm_unmet(self):
         import app
         with patch(
-            "acceptance_verifier.verify_acceptance_llm",
+            "agents.acceptance_verifier.verify_acceptance_llm",
             return_value=["条款A"],
         ):
             unmet = app._verify_acceptance(
@@ -117,7 +117,7 @@ class VerifyAcceptanceLLMMode(unittest.TestCase):
         """LLM 返回 None（不可用）→ 降级 rule。"""
         import app
         with patch(
-            "acceptance_verifier.verify_acceptance_llm",
+            "agents.acceptance_verifier.verify_acceptance_llm",
             return_value=None,
         ):
             unmet = app._verify_acceptance(
@@ -133,7 +133,7 @@ class VerifyAcceptanceLLMMode(unittest.TestCase):
         """LLM 抛异常 → 降级 rule，不破坏主流程。"""
         import app
         with patch(
-            "acceptance_verifier.verify_acceptance_llm",
+            "agents.acceptance_verifier.verify_acceptance_llm",
             side_effect=RuntimeError("backend down"),
         ):
             unmet = app._verify_acceptance(
@@ -151,7 +151,7 @@ class VerifyAcceptanceHybridMode(unittest.TestCase):
     def test_hybrid_rule_passes_short_circuits(self):
         """rule 没问题 → 不调 LLM。"""
         import app
-        with patch("acceptance_verifier.verify_acceptance_llm") as mock_llm:
+        with patch("agents.acceptance_verifier.verify_acceptance_llm") as mock_llm:
             unmet = app._verify_acceptance(
                 ["回应了去灯塔意图"],
                 "你点头，向灯塔走去。",  # rule 判 met
@@ -166,7 +166,7 @@ class VerifyAcceptanceHybridMode(unittest.TestCase):
         import app
         # rule 会判 ["回应了去灯塔意图"] unmet（response 里没"灯塔"）
         with patch(
-            "acceptance_verifier.verify_acceptance_llm",
+            "agents.acceptance_verifier.verify_acceptance_llm",
             return_value=[],  # LLM 说"其实通过了"
         ) as mock_llm:
             unmet = app._verify_acceptance(
@@ -185,7 +185,7 @@ class VerifyAcceptanceHybridMode(unittest.TestCase):
         """LLM 也说 unmet → 最终就是 unmet。"""
         import app
         with patch(
-            "acceptance_verifier.verify_acceptance_llm",
+            "agents.acceptance_verifier.verify_acceptance_llm",
             return_value=["回应了去灯塔意图"],
         ):
             unmet = app._verify_acceptance(
@@ -200,7 +200,7 @@ class VerifyAcceptanceHybridMode(unittest.TestCase):
         """LLM 不可用 → 保留 rule unmet（保守）。"""
         import app
         with patch(
-            "acceptance_verifier.verify_acceptance_llm",
+            "agents.acceptance_verifier.verify_acceptance_llm",
             return_value=None,
         ):
             unmet = app._verify_acceptance(
@@ -214,7 +214,7 @@ class VerifyAcceptanceHybridMode(unittest.TestCase):
     def test_hybrid_llm_exception_keeps_rule_verdict(self):
         import app
         with patch(
-            "acceptance_verifier.verify_acceptance_llm",
+            "agents.acceptance_verifier.verify_acceptance_llm",
             side_effect=RuntimeError("backend down"),
         ):
             unmet = app._verify_acceptance(
@@ -227,22 +227,22 @@ class VerifyAcceptanceHybridMode(unittest.TestCase):
 
 
 class AcceptanceVerifierLLMModule(unittest.TestCase):
-    """acceptance_verifier.py 模块行为 smoke。"""
+    """agents.acceptance_verifier.py 模块行为 smoke。"""
 
     def test_empty_acceptance_returns_empty(self):
-        from acceptance_verifier import verify_acceptance_llm
+        from agents.acceptance_verifier import verify_acceptance_llm
         self.assertEqual(verify_acceptance_llm([], "anything", []), [])
 
     def test_empty_response_returns_empty(self):
-        from acceptance_verifier import verify_acceptance_llm
+        from agents.acceptance_verifier import verify_acceptance_llm
         self.assertEqual(verify_acceptance_llm(["a"], "", []), [])
 
     def test_backend_returns_unmet_list(self):
         """模拟 backend 返回 {"unmet": [...]}。"""
-        import acceptance_verifier
+        import agents.acceptance_verifier as acceptance_verifier
         fake_response = '{"unmet": ["条款A"]}'
         with patch(
-            "acceptance_verifier._call_verifier_backend",
+            "agents.acceptance_verifier._call_verifier_backend",
             return_value=fake_response,
         ):
             out = acceptance_verifier.verify_acceptance_llm(
@@ -251,9 +251,9 @@ class AcceptanceVerifierLLMModule(unittest.TestCase):
             self.assertEqual(out, ["条款A"])
 
     def test_backend_returns_empty_unmet(self):
-        import acceptance_verifier
+        import agents.acceptance_verifier as acceptance_verifier
         with patch(
-            "acceptance_verifier._call_verifier_backend",
+            "agents.acceptance_verifier._call_verifier_backend",
             return_value='{"unmet": []}',
         ):
             out = acceptance_verifier.verify_acceptance_llm(
@@ -263,9 +263,9 @@ class AcceptanceVerifierLLMModule(unittest.TestCase):
 
     def test_backend_exception_returns_none(self):
         """backend 异常 → None 让上层 fallback。"""
-        import acceptance_verifier
+        import agents.acceptance_verifier as acceptance_verifier
         with patch(
-            "acceptance_verifier._call_verifier_backend",
+            "agents.acceptance_verifier._call_verifier_backend",
             side_effect=RuntimeError("nope"),
         ):
             out = acceptance_verifier.verify_acceptance_llm(
@@ -275,9 +275,9 @@ class AcceptanceVerifierLLMModule(unittest.TestCase):
 
     def test_backend_garbage_returns_none(self):
         """完全无法解析的回包 → None。"""
-        import acceptance_verifier
+        import agents.acceptance_verifier as acceptance_verifier
         with patch(
-            "acceptance_verifier._call_verifier_backend",
+            "agents.acceptance_verifier._call_verifier_backend",
             return_value="this is not json at all",
         ):
             out = acceptance_verifier.verify_acceptance_llm(
@@ -287,9 +287,9 @@ class AcceptanceVerifierLLMModule(unittest.TestCase):
 
     def test_backend_fence_wrapped_json_parses(self):
         """LLM 包了 ```json fence → 仍能解析。"""
-        import acceptance_verifier
+        import agents.acceptance_verifier as acceptance_verifier
         with patch(
-            "acceptance_verifier._call_verifier_backend",
+            "agents.acceptance_verifier._call_verifier_backend",
             return_value='```json\n{"unmet": ["条款A"]}\n```',
         ):
             out = acceptance_verifier.verify_acceptance_llm(
@@ -299,9 +299,9 @@ class AcceptanceVerifierLLMModule(unittest.TestCase):
 
     def test_backend_empty_string_returns_none(self):
         """空回包 → None。"""
-        import acceptance_verifier
+        import agents.acceptance_verifier as acceptance_verifier
         with patch(
-            "acceptance_verifier._call_verifier_backend",
+            "agents.acceptance_verifier._call_verifier_backend",
             return_value="",
         ):
             out = acceptance_verifier.verify_acceptance_llm(
@@ -311,10 +311,10 @@ class AcceptanceVerifierLLMModule(unittest.TestCase):
 
     def test_unmet_normalization_back_to_original(self):
         """LLM 返回的 unmet 字符串与原文有差异时，做 fuzzy 回填。"""
-        import acceptance_verifier
+        import agents.acceptance_verifier as acceptance_verifier
         # LLM 返回截断版，应回填到完整原文
         with patch(
-            "acceptance_verifier._call_verifier_backend",
+            "agents.acceptance_verifier._call_verifier_backend",
             return_value='{"unmet": ["回应了去灯塔"]}',
         ):
             out = acceptance_verifier.verify_acceptance_llm(
@@ -335,7 +335,7 @@ class AcceptanceVerifierModePref(unittest.TestCase):
     def test_unknown_pref_value_falls_back_to_rule(self):
         """preferences 里写了奇怪的值 → 默认 rule。"""
         import app
-        fake_row = {"preferences": {"acceptance_verifier.mode": "magic"}}
+        fake_row = {"preferences": {"agents.acceptance_verifier.mode": "magic"}}
         # 模拟 db connect 上下文，让其返回 fake_row
         class _FakeCursor:
             def fetchone(self_inner):

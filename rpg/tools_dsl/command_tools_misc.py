@@ -40,7 +40,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from command_dispatcher import ToolSpec, get_registry
+from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
 
 # task 87 Phase 7 安全审查:
@@ -230,7 +230,7 @@ def _t_mcp_server_enable(user_id: int, args: dict) -> str:
     if not sid:
         return "失败: server_id 为空"
     try:
-        import tool_registry as _tr
+        import tools_dsl.tool_registry as _tr
         catalog = _tr.load_mcp_catalog()
         servers = catalog.get("servers", [])
         for s in servers:

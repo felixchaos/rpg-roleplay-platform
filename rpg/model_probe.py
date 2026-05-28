@@ -367,7 +367,7 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
 
     start = time.monotonic()
     try:
-        from gm import GameMaster
+        from agents.gm import GameMaster
         # 强制按 user 取 key；服务器模式下 user_id=None 会导致 backend 取不到 key 抛错
         gm = GameMaster(api_id=api_id, model=model_real_name, user_id=user_id)
         text = gm._backend.call(
