@@ -5,7 +5,6 @@ from fastapi import APIRouter
 router = APIRouter()
 
 # sub-router 必须先 import,然后 include
-from .app_html import router as _app_html_router
 from .auth import router as _auth_router
 from .imports import router as _imports_router
 from .library import router as _library_router
@@ -16,7 +15,6 @@ from .scripts import router as _scripts_router
 from .settings import router as _settings_router
 from .worldline_memory import router as _wm_router
 
-router.include_router(_app_html_router)
 router.include_router(_auth_router)
 router.include_router(_platform_router)
 router.include_router(_scripts_router)

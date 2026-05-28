@@ -16,8 +16,7 @@ SESSION_COOKIE = "rpg_session"
 API_VERSION = "1"
 
 COMMANDS = [
-    ("GET", "/", "文字 RPG 主游戏界面"),
-    ("GET", "/app", "多用户平台/创作平台界面"),
+    ("GET", "/", "Backend root (service info JSON)"),
     ("GET", "/api/state", "读取当前可玩存档状态"),
     ("POST", "/api/new", "创建新游戏并保留旧档备份"),
     ("POST", "/api/opening", "生成开场"),
