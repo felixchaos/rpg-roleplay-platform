@@ -1067,6 +1067,7 @@
 
 /* ============================ RIGHT PANEL ========================= */
 .gp-panel {
+  position: relative;
   border-left: 1px solid var(--line);
   background: var(--panel);
   min-height: 0;
@@ -1076,6 +1077,20 @@
   transition: width var(--m-base) var(--m-inout), border-left-color var(--m-base) var(--m-inout);
   flex-shrink: 0;
 }
+/* right-panel drag handle: anchors to left edge of panel */
+.gp-panel-resize-handle {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background 0.15s;
+  touch-action: none;
+}
+.gp-panel-resize-handle:hover,
+.gp-panel-resize-handle:active { background: var(--accent); opacity: 0.45; }
+@media (pointer: coarse) { .gp-panel-resize-handle { width: 12px; } }
 .gp-panel.collapsed {
   width: 0 !important;
   border-left-color: transparent;
@@ -1154,6 +1169,11 @@
 .gp-panel-title .mono { font-size: 10.5px; }
 
 .gp-panel-body { overflow: auto; overflow-x: hidden; padding: 14px 16px 24px; }
+/* narrow panel responsive: stack all grid fields to single column when panel < 280px */
+.gp-panel-body.narrow { padding: 8px 10px 18px; }
+.gp-panel-body.narrow .gp-field-row { grid-template-columns: 1fr !important; }
+.gp-panel-body.narrow .gp-grid-2 { grid-template-columns: 1fr !important; }
+.gp-panel-body.narrow .gp-stat-grid { grid-template-columns: 1fr 1fr !important; }
 .gp-stack { display: grid; gap: 18px; }
 .gp-section { display: grid; gap: 8px; }
 .gp-section .section-head { margin-bottom: 4px; }
