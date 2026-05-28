@@ -688,15 +688,7 @@ ROLES = {
     "薇瑟帝国流亡边缘贵族": "薇瑟帝国流亡边缘贵族",
 }
 
-PRESET = {
-    "穿越者·魔女（白毛红瞳，魔力∞）": {
-        "name": "杭雁菱",
-        "background": (
-            "原为27岁社畜打工人晓卡，穿越后成为魔力∞的魔女。穿越落点在火星，剧情开始时。"
-            "外表白发红瞳，看起来像个少女，实际年龄∞。读过这个世界的原著小说，但现实和书里总有出入。"
-        ),
-    }
-}
+PRESET = {}  # 通用底座: 默认无预置角色, 由剧本元数据 (script_card / persona) 提供
 
 
 def _selfheal_player_from_save_snapshot(state: GameState, api_user: dict[str, Any]) -> None:
