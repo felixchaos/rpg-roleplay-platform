@@ -538,24 +538,33 @@ async def api_card_import_json(request: Request):
 # ------------------------------------------------------------
 @router.post("/api/models/visibility")
 async def api_models_visibility(request: Request):
-    """Toggle visibility flags for individual models."""
+    """Toggle visibility flags for individual models.
+
+    Writes through upsert_model so DB + JSON catalog stay in sync.
+    Previously wrote only to model_entries.enabled, which diverged from the
+    catalog JSON on restart when DB was unavailable.
+    """
     require_user(request)
     body = await request.json() or {}
     api_id = body.get("api_id") or body.get("api")
-    model = body.get("model") or body.get("real_name")
+    model_real_name = body.get("model") or body.get("real_name")
     visible = body.get("visible")
-    if not api_id or model is None or visible is None:
+    if not api_id or model_real_name is None or visible is None:
         return _bad("缺少参数")
-    init_db()
-    with connect() as db:
-        # model_entries.api_id references model_apis.api_id (text). Toggle enabled.
-        db.execute(
-            """
-            update model_entries set enabled = %s
-            where api_id = %s and real_name = %s
-            """,
-            (bool(visible), api_id, model),
-        )
+    from model_registry import find_api, load_model_catalog, upsert_model
+    catalog = load_model_catalog()
+    api = find_api(catalog, api_id)
+    if not api:
+        return _bad(f"未知 API: {api_id}")
+    # locate model by real_name or id
+    model_entry = next(
+        (m for m in api.get("models", []) if m.get("real_name") == model_real_name or m.get("id") == model_real_name),
+        None,
+    )
+    if not model_entry:
+        return _bad(f"模型不存在: {model_real_name}")
+    # upsert_model merges into catalog and calls save_model_catalog (writes DB + JSON)
+    upsert_model(api_id, {**model_entry, "enabled": bool(visible)})
     return json_response({"ok": True})
 
 
