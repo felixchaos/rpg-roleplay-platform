@@ -316,6 +316,11 @@ def _run_pipeline(job_id: str, user_id: int, script_id: int, options: dict[str, 
         stages_progress.append({"id": "facts", "status": "done", "count": facts_n})
         ctl.update(stages=stages_progress, overall_progress=2)
 
+        # ── 阶段 2.5: story_phase LLM 推断（facts 后，一次 LLM call）────────
+        if ctl.is_cancelled():
+            return _finalize_cancelled(ctl)
+        _stage_story_phase_llm(ctl, user_id, script_id)
+
         # ── 阶段 3: entities（高频人物名）────────────────
         if ctl.is_cancelled():
             return _finalize_cancelled(ctl)
@@ -450,6 +455,81 @@ def _stage_facts(ctl: JobController, script_id: int, user_id: int) -> int:
     return len(chapters)
 
 
+def _stage_story_phase_llm(ctl: JobController, user_id: int, script_id: int) -> None:
+    """facts 完成后，一次 LLM call 推断每章 story_phase。
+    只处理 story_phase 为空的行；失败静默跳过（不阻断流水线）。
+    """
+    try:
+        from agents.gm import GameMaster
+        gm = GameMaster(user_id=user_id)
+    except Exception:
+        return
+
+    with connect() as db:
+        rows = db.execute(
+            "select chapter, summary, title from chapter_facts "
+            "where script_id = %s and (story_phase = '' or story_phase is null) "
+            "order by chapter",
+            (script_id,),
+        ).fetchall()
+
+    if not rows:
+        return
+
+    # 采样最多 30 章的摘要喂给 LLM（成本控）
+    sample = rows[:30]
+    lines = "\n".join(
+        f"第{r['chapter']}章《{r['title']}》: {(r['summary'] or '')[:120]}"
+        for r in sample
+    )
+    total = len(rows)
+    prompt = (
+        f"这本书共 {total} 章，以下是部分章节摘要。"
+        "根据这些内容，这本书整体目前大致处于哪个故事阶段？"
+        "从以下标签中选一个返回，只返回标签本身，不要其他文字：\n"
+        "开端 / 发展 / 高潮 / 结局 / 番外 / 未明\n\n"
+        f"章节摘要：\n{lines}"
+    )
+    try:
+        raw = gm._backend.call_structured(
+            system="你是小说剧情分析器，只输出单个阶段标签。",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=20,
+        )
+        last = getattr(gm._backend, "last_usage", {}) or {}
+        from .usage import compute_cost
+        cost = float(compute_cost(gm.api_id, gm._backend.model_name, last))
+        ctl.add_usage(int(last.get("input_tokens", 0)), int(last.get("output_tokens", 0)), cost)
+
+        valid = {"开端", "发展", "高潮", "结局", "番外", "未明"}
+        phase = (raw or "").strip().strip('"').strip("'")
+        # 从回复里找第一个合法标签
+        for token in valid:
+            if token in phase:
+                phase = token
+                break
+        else:
+            phase = "未明"
+
+        with connect() as db:
+            db.execute(
+                "update chapter_facts set story_phase = %s "
+                "where script_id = %s and (story_phase = '' or story_phase is null)",
+                (phase, script_id),
+            )
+    except Exception:
+        # fallback: 写 "未明" 而不留空
+        try:
+            with connect() as db:
+                db.execute(
+                    "update chapter_facts set story_phase = '未明' "
+                    "where script_id = %s and (story_phase = '' or story_phase is null)",
+                    (script_id,),
+                )
+        except Exception:
+            pass
+
+
 def _stage_entities(ctl: JobController, script_id: int, user_id: int) -> list[dict[str, Any]]:
     """高频人名提取（中文 2-3 字 + 出现次数排序）。
 
@@ -514,34 +594,58 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
         ).fetchone()
         int(book_row["id"]) if book_row else None
 
+    # 拉该 script 的 chapter_facts（用摘要做二次 pass 输入）
+    with connect() as db:
+        fact_rows = db.execute(
+            "select chapter, summary, characters from chapter_facts "
+            "where script_id = %s order by chapter",
+            (script_id,),
+        ).fetchall()
+
     generated = 0
     for i, entity in enumerate(targets):
         if ctl.is_cancelled():
             raise RuntimeError("cancelled")
         name = entity["name"]
-        # 找前 3 个含该名字的章节，截首 1500 字
-        snippets = []
-        for ch in chapters_idx:
-            if name in ch["content"]:
-                snippets.append(ch["content"][:1500])
-                if len(snippets) >= 3:
-                    break
-        if not snippets:
-            ctl.update(stage_progress=i + 1)
-            continue
+
+        # 优先用 chapter_facts 摘要（信噪比高），fallback 到原始章节文本片段
+        relevant_summaries = []
+        for fr in fact_rows:
+            chars = fr.get("characters") or []
+            if isinstance(chars, list) and any(
+                isinstance(c, dict) and c.get("name") == name for c in chars
+            ):
+                relevant_summaries.append(f"第{fr['chapter']}章: {(fr['summary'] or '')[:200]}")
+            if len(relevant_summaries) >= 8:
+                break
+
+        if relevant_summaries:
+            context = "章节摘要（该角色相关）：\n" + "\n".join(relevant_summaries)
+        else:
+            snippets = []
+            for ch in chapters_idx:
+                if name in ch["content"]:
+                    snippets.append(ch["content"][:1500])
+                    if len(snippets) >= 3:
+                        break
+            if not snippets:
+                ctl.update(stage_progress=i + 1)
+                continue
+            context = "文本片段：\n" + "\n---\n".join(snippets)
 
         prompt = (
-            f"从下面文本里提取角色「{name}」的设定，返回严格 JSON：\n"
-            "{ \"identity\": \"身份/势力\", \"appearance\": \"外貌\", "
-            "\"personality\": \"性格\", \"speech_style\": \"说话风格\", "
-            "\"aliases\": [\"别名1\",\"别名2\"] }\n\n"
-            "文本：\n" + "\n---\n".join(snippets)
+            f"从下面内容里提取角色「{name}」的设定，返回严格 JSON：\n"
+            "{ \"identity\": \"身份/职业/势力\", \"appearance\": \"外貌描述\", "
+            "\"personality\": \"性格特点\", \"speech_style\": \"说话风格\", "
+            "\"secrets\": \"秘密或重要伏笔（如无则空字符串）\", "
+            "\"aliases\": [\"别名1\"] }\n\n"
+            + context
         )
         try:
             raw = gm._backend.call_structured(
                 system="你是角色卡提取器，只输出 JSON。",
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=600,
+                max_tokens=700,
             )
             data = _parse_json(raw)
             if data:
@@ -550,7 +654,7 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
                 from .usage import compute_cost
                 cost = float(compute_cost(gm.api_id, gm._backend.model_name, last))
                 ctl.add_usage(int(last.get("input_tokens", 0)), int(last.get("output_tokens", 0)), cost)
-                # 写入 character_cards
+                # 写入 character_cards（含 secrets 字段）
                 knowledge.upsert_character_card(user_id, script_id, {
                     "name": name,
                     "aliases": data.get("aliases") or [],
@@ -558,6 +662,7 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
                     "appearance": data.get("appearance") or "",
                     "personality": data.get("personality") or "",
                     "speech_style": data.get("speech_style") or "",
+                    "secrets": data.get("secrets") or "",
                     "metadata": {"source": "llm_pipeline", "freq": entity["count"]},
                 })
                 generated += 1
@@ -568,7 +673,7 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
 
 
 def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
-    """LLM 提取地点/势力/概念入 worldbook_entries。"""
+    """LLM 从 chapter_facts 摘要 + facts 提取世界观条目入 worldbook_entries。"""
     try:
         from agents.gm import GameMaster
         gm = GameMaster(user_id=user_id)
@@ -576,10 +681,6 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
         return 0
 
     with connect() as db:
-        chapters = db.execute(
-            "select content from script_chapters where script_id = %s order by chapter_index",
-            (script_id,),
-        ).fetchall()
         book_row = db.execute(
             "select id from books where script_id = %s", (script_id,),
         ).fetchone()
@@ -587,14 +688,56 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
             return 0
         book_id = int(book_row["id"])
 
-    # 把全书前 8000 字作为种子（成本控）
-    seed = "\n".join(c["content"] for c in chapters)[:8000]
+        # 用 chapter_facts 摘要 + locations/factions/concepts 作为输入（比原始文本信噪比高）
+        fact_rows = db.execute(
+            "select chapter, summary, locations, factions, concepts "
+            "from chapter_facts where script_id = %s order by chapter limit 40",
+            (script_id,),
+        ).fetchall()
+
     ctl.update(stage_progress=0, stage_total=1)
 
+    if fact_rows:
+        summaries_block = "\n".join(
+            f"第{r['chapter']}章: {(r['summary'] or '')[:100]}"
+            for r in fact_rows[:30]
+        )
+        # 聚合高频地点/势力/概念作为提示
+        from collections import Counter as _Counter
+        loc_cnt: _Counter = _Counter()
+        fac_cnt: _Counter = _Counter()
+        con_cnt: _Counter = _Counter()
+        for r in fact_rows:
+            for item in (r.get("locations") or []):
+                if isinstance(item, dict):
+                    loc_cnt[item.get("name", "")] += item.get("count", 1)
+            for item in (r.get("factions") or []):
+                if isinstance(item, dict):
+                    fac_cnt[item.get("name", "")] += item.get("count", 1)
+            for item in (r.get("concepts") or []):
+                if isinstance(item, dict):
+                    con_cnt[item.get("name", "")] += item.get("count", 1)
+        top_locs = [n for n, _ in loc_cnt.most_common(10) if n]
+        top_facs = [n for n, _ in fac_cnt.most_common(10) if n]
+        top_cons = [n for n, _ in con_cnt.most_common(10) if n]
+        hints = (
+            f"高频地点: {', '.join(top_locs)}\n"
+            f"高频势力: {', '.join(top_facs)}\n"
+            f"高频概念: {', '.join(top_cons)}\n"
+        )
+        seed = hints + "\n章节摘要：\n" + summaries_block
+    else:
+        with connect() as db:
+            chapters = db.execute(
+                "select content from script_chapters where script_id = %s order by chapter_index",
+                (script_id,),
+            ).fetchall()
+        seed = "\n".join(c["content"] for c in chapters)[:8000]
+
     prompt = (
-        "从下面文本里提取重要的世界观条目（地点/势力/概念），返回严格 JSON 数组：\n"
+        "根据下面的章节摘要和高频实体，提取重要的世界观条目（地点/势力/概念），返回严格 JSON 数组：\n"
         "[{\"name\":\"...\",\"keys\":[\"关键词1\",\"关键词2\"],\"content\":\"≤200字解释\",\"priority\":80}]\n"
-        "数量上限 20。\n\n文本：\n" + seed
+        "数量上限 20。\n\n" + seed
     )
     try:
         raw = gm._backend.call_structured(
