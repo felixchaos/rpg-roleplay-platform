@@ -106,6 +106,15 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.exception("durable sync recovery failed")
 
+    # 4. 清理残留上传分片（防磁盘泄漏）
+    try:
+        from platform_app.script_import import cleanup_stale_upload_chunks
+        n = cleanup_stale_upload_chunks(ttl_hours=24)
+        if n:
+            log.info("[startup] 清理 %d 个 stale upload chunks (>24h)", n)
+    except Exception as e:
+        log.warning("[startup] cleanup_stale_upload_chunks failed: %s", e)
+
     yield
 
     # ── shutdown ──────────────────────────────────────────────────────────

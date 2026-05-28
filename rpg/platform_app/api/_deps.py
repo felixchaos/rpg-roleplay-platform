@@ -134,7 +134,15 @@ def require_user(request: Request) -> dict:
 def _resolve_save_id(user_id: int, body: dict) -> int:
     raw = body.get("save_id")
     if raw:
-        return int(raw)
+        sid = int(raw)
+        # P1 fix: 显式校验 save 属于本人，不依赖下游兜底
+        with connect() as db:
+            cur = db.cursor()
+            cur.execute("select id from game_saves where id=%s and user_id=%s", (sid, user_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=403, detail="无权访问该存档")
+        return sid
     with connect() as db:
         row = db.execute(
             "select id from game_saves where user_id = %s order by updated_at desc, id desc limit 1",

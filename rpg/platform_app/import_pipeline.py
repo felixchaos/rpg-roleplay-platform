@@ -39,6 +39,9 @@ STAGES = [
 
 # ── 后台执行器 ──────────────────────────────────────────────────────
 _POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="import-pipe")
+# 进程内 thread 跟踪表 (best-effort)。多 worker 部署时只对当前 worker 可见，
+# 跨 worker 协调依赖 DB advisory lock (cluster.try_acquire_job_lock)。
+# daemon thread 在 worker 退出时自动清理 — 不需要手动 cleanup。
 _RUNNING: dict[str, threading.Thread] = {}  # job_id → thread
 
 

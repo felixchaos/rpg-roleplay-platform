@@ -973,3 +973,34 @@ def _consume_upload_chunks(user_id: int | None, upload_id: str, peek: bool = Fal
         import shutil
         shutil.rmtree(user_dir, ignore_errors=True)
     return bytes(out)
+
+
+def cleanup_stale_upload_chunks(ttl_hours: int = 24, base_dir: Path | None = None) -> int:
+    """清理超过 ttl_hours 的上传分片目录。返回清理的目录数。
+
+    在 startup 时调用一次，以及 recover_pending_sync_jobs 附带调用。
+    目录结构: base_dir/user_<id>/up_<id>_<token>/
+    best-effort: 单个目录失败不影响其余目录。
+    """
+    import shutil
+
+    if base_dir is None:
+        base_dir = UPLOAD_CHUNK_ROOT
+    if not base_dir.exists():
+        return 0
+    cutoff = _t.time() - (ttl_hours * 3600)
+    cleaned = 0
+    for user_dir in base_dir.glob("user_*"):
+        if not user_dir.is_dir():
+            continue
+        for upload_dir in user_dir.glob("up_*"):
+            if not upload_dir.is_dir():
+                continue
+            try:
+                mtime = upload_dir.stat().st_mtime
+                if mtime < cutoff:
+                    shutil.rmtree(upload_dir, ignore_errors=True)
+                    cleaned += 1
+            except Exception:
+                pass
+    return cleaned
