@@ -140,6 +140,8 @@ function ScriptsListView() {
   // Codex P0-2 修复:没有现成存档时,不再传 fake save {id:null}。
   // 改成弹 NewGameModal,默认填好 script_id,走 saves.create 原子流。
   const [newModalScriptId, setNewModalScriptId] = useStatePL(null);
+  // B1: export pack
+  const [exportingId, setExportingId] = useStatePL(null);
 
   const reload = React.useCallback(async () => {
     try {
@@ -175,6 +177,19 @@ function ScriptsListView() {
       window.__apiToast?.("删除失败", { kind: "danger", detail: e?.message });
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const onExportPack = async (s) => {
+    setExportingId(s.id);
+    try {
+      const filename = (s.title || "script").replace(/[\\/:*?"<>|]/g, "_") + "_pack.zip";
+      await window.api.scripts.exportPack(s.id, filename);
+      window.__apiToast?.("导出成功", { kind: "ok", detail: filename });
+    } catch (e) {
+      window.__apiToast?.("导出失败", { kind: "danger", detail: e?.message });
+    } finally {
+      setExportingId(null);
     }
   };
 
@@ -229,6 +244,9 @@ function ScriptsListView() {
                   <Icon name="play" size={13} />
                 </button>
                 <button className="iconbtn" data-tip="查看章节 / 重切分" onClick={() => setChaptersOpen(s)}><Icon name="eye" size={13} /></button>
+                <button className="iconbtn" data-tip="导出剧本包 (zip)" disabled={exportingId === s.id} onClick={() => onExportPack(s)}>
+                  {exportingId === s.id ? <Icon name="spinner" size={13} className="spin" /> : <Icon name="download" size={13} />}
+                </button>
                 <button className="iconbtn danger" data-tip="删除剧本" onClick={() => onDelete(s)} disabled={busyId === s.id}>
                   <Icon name="trash" size={13} />
                 </button>
