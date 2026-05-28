@@ -1,7 +1,7 @@
 """platform_app.api.scripts — /api/scripts*, /api/uploads/* 路由。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from .. import knowledge, script_import
 from ..db import connect
@@ -11,15 +11,13 @@ router = APIRouter()
 
 
 @router.get("/api/scripts")
-async def api_scripts(request: Request, limit: int | None = None, cursor: str | None = None):
-    user = require_user(request)
+async def api_scripts(limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
     from .. import workspace
     return json_response({"ok": True, **workspace.scripts_page(user["id"], limit, cursor)})
 
 
 @router.post("/api/scripts/import")
-async def api_import_script(request: Request):
-    user = require_user(request)
+async def api_import_script(request: Request, user=Depends(require_user)):
     body = await request.json()
     try:
         # task 17: 之前漏传 upload_id，分片上传走完后端拿不到 raw → "请提供 file 或 upload_id"。
@@ -41,11 +39,11 @@ async def api_import_script(request: Request):
 
 @router.get("/api/scripts/{script_id}/chapters")
 async def api_script_chapters(
-    request: Request, script_id: int,
+    script_id: int,
     limit: int | None = None, cursor: str | None = None, q: str | None = None,
+    user=Depends(require_user),
 ):
     """章节列表，支持 ?q=... 标题/内容全文 ILIKE 搜索。"""
-    user = require_user(request)
     try:
         if q:
             # 全文搜索分支
@@ -71,8 +69,7 @@ async def api_script_chapters(
 
 
 @router.get("/api/scripts/{script_id}/chapter-facts")
-async def api_script_chapter_facts(request: Request, script_id: int, limit: int | None = None, cursor: str | None = None):
-    user = require_user(request)
+async def api_script_chapter_facts(script_id: int, limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
     try:
         return json_response({"ok": True, **knowledge.list_chapter_facts(user["id"], script_id, limit, cursor)})
     except ValueError as exc:
@@ -80,13 +77,12 @@ async def api_script_chapter_facts(request: Request, script_id: int, limit: int 
 
 
 @router.get("/api/scripts/{script_id}/birthpoints")
-async def api_script_birthpoints(request: Request, script_id: int):
+async def api_script_birthpoints(script_id: int, user=Depends(require_user)):
     """入场选出生点：按 phase 聚合 + 每 phase 均匀采样代表性 anchor。
 
     返回 phase_digests 的各阶段，以及每阶段从 script_timeline_anchors 均匀采样的
     5-15 个 anchor（≤15 全取，否则步长 round(N/12) 采样）。
     """
-    user = require_user(request)
     with connect() as db:
         owned = db.execute(
             "select 1 from scripts where id = %s and owner_id = %s",
@@ -153,12 +149,11 @@ async def api_script_birthpoints(request: Request, script_id: int):
 
 
 @router.post("/api/scripts/{script_id}/recommend-identity")
-async def api_script_recommend_identity(request: Request, script_id: int):
+async def api_script_recommend_identity(request: Request, script_id: int, user=Depends(require_user)):
     """task 123: 入场 wizard Step 4 — LLM 推荐玩家初始身份。
     入参 body: {birthpoint_phase, birthpoint_label, character_card_id?, character_card_kind?, n?}
     返回: {ok, recommendations: [{name, role, background}, ...]}
     """
-    user = require_user(request)
     body = await request.json()
     # 校验 script 归属
     with connect() as db:
@@ -209,8 +204,7 @@ async def api_script_recommend_identity(request: Request, script_id: int):
 
 
 @router.get("/api/scripts/{script_id}/character-cards")
-async def api_script_character_cards(request: Request, script_id: int, limit: int | None = None, cursor: str | None = None):
-    user = require_user(request)
+async def api_script_character_cards(script_id: int, limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
     try:
         return json_response({"ok": True, **knowledge.list_character_cards(user["id"], script_id, limit, cursor)})
     except ValueError as exc:
@@ -218,9 +212,8 @@ async def api_script_character_cards(request: Request, script_id: int, limit: in
 
 
 @router.get("/api/scripts/{script_id}/character-cards/{card_id}")
-async def api_script_character_card(request: Request, script_id: int, card_id: int):
+async def api_script_character_card(script_id: int, card_id: int, user=Depends(require_user)):
     """单条剧本角色卡详情。"""
-    user = require_user(request)
     try:
         card = knowledge.get_character_card(user["id"], script_id, card_id)
     except ValueError as exc:
@@ -231,9 +224,8 @@ async def api_script_character_card(request: Request, script_id: int, card_id: i
 
 
 @router.post("/api/scripts/{script_id}/character-cards")
-async def api_script_upsert_character_card(request: Request, script_id: int):
+async def api_script_upsert_character_card(request: Request, script_id: int, user=Depends(require_user)):
     """创建/更新剧本角色卡（payload 传 id 则 update，否则 insert）。"""
-    user = require_user(request)
     body = await request.json()
     try:
         return json_response({"ok": True, "card": knowledge.upsert_character_card(user["id"], script_id, body)})
@@ -242,8 +234,7 @@ async def api_script_upsert_character_card(request: Request, script_id: int):
 
 
 @router.post("/api/scripts/{script_id}/character-cards/{card_id}/delete")
-async def api_script_delete_character_card(request: Request, script_id: int, card_id: int):
-    user = require_user(request)
+async def api_script_delete_character_card(script_id: int, card_id: int, user=Depends(require_user)):
     try:
         return json_response(knowledge.delete_character_card(user["id"], script_id, card_id))
     except ValueError as exc:
@@ -251,9 +242,8 @@ async def api_script_delete_character_card(request: Request, script_id: int, car
 
 
 @router.post("/api/scripts/{script_id}/character-cards/{card_id}/enabled")
-async def api_script_card_enabled(request: Request, script_id: int, card_id: int):
+async def api_script_card_enabled(request: Request, script_id: int, card_id: int, user=Depends(require_user)):
     """快捷切换 enabled（检索中临时屏蔽某角色）。"""
-    user = require_user(request)
     body = await request.json()
     try:
         return json_response({"ok": True, "card": knowledge.set_character_card_enabled(
@@ -264,8 +254,7 @@ async def api_script_card_enabled(request: Request, script_id: int, card_id: int
 
 
 @router.get("/api/scripts/{script_id}/worldbook")
-async def api_script_worldbook(request: Request, script_id: int, limit: int | None = None, cursor: str | None = None):
-    user = require_user(request)
+async def api_script_worldbook(script_id: int, limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
     try:
         return json_response({"ok": True, **knowledge.list_worldbook_entries(user["id"], script_id, limit, cursor)})
     except ValueError as exc:
@@ -273,9 +262,8 @@ async def api_script_worldbook(request: Request, script_id: int, limit: int | No
 
 
 @router.post("/api/scripts/{script_id}/chapters/{chapter_index}")
-async def api_chapter_update(request: Request, script_id: int, chapter_index: int):
+async def api_chapter_update(request: Request, script_id: int, chapter_index: int, user=Depends(require_user)):
     """编辑单章 title/content/volume_title。"""
-    user = require_user(request)
     body = await request.json()
     try:
         return json_response(script_import.update_chapter(
@@ -288,9 +276,8 @@ async def api_chapter_update(request: Request, script_id: int, chapter_index: in
 
 
 @router.post("/api/scripts/{script_id}/chapters/merge")
-async def api_chapter_merge(request: Request, script_id: int):
+async def api_chapter_merge(request: Request, script_id: int, user=Depends(require_user)):
     """合并 first_index 和 first_index+1 两章。"""
-    user = require_user(request)
     body = await request.json()
     try:
         return json_response(script_import.merge_chapters(
@@ -302,9 +289,8 @@ async def api_chapter_merge(request: Request, script_id: int):
 
 
 @router.post("/api/scripts/{script_id}/chapters/{chapter_index}/split")
-async def api_chapter_split(request: Request, script_id: int, chapter_index: int):
+async def api_chapter_split(request: Request, script_id: int, chapter_index: int, user=Depends(require_user)):
     """按字符位置 split_at 把一章拆成两章。"""
-    user = require_user(request)
     body = await request.json()
     try:
         return json_response(script_import.split_chapter(
@@ -317,9 +303,8 @@ async def api_chapter_split(request: Request, script_id: int, chapter_index: int
 
 
 @router.post("/api/scripts/{script_id}/resplit")
-async def api_script_resplit(request: Request, script_id: int):
+async def api_script_resplit(request: Request, script_id: int, user=Depends(require_user)):
     """用新规则重切已导入剧本。保留 script + 存档，只换章节。"""
-    user = require_user(request)
     body = await request.json()
     try:
         return json_response(script_import.resplit_script(
@@ -332,9 +317,8 @@ async def api_script_resplit(request: Request, script_id: int):
 
 
 @router.post("/api/scripts/{script_id}/delete")
-async def api_script_delete(request: Request, script_id: int):
+async def api_script_delete(request: Request, script_id: int, user=Depends(require_user)):
     """删除剧本。force=True 时连带删除其下所有存档。"""
-    user = require_user(request)
     body = {}
     try:
         body = await request.json()
@@ -347,9 +331,8 @@ async def api_script_delete(request: Request, script_id: int):
 
 
 @router.post("/api/scripts/preview")
-async def api_script_preview(request: Request):
+async def api_script_preview(request: Request, user=Depends(require_user)):
     """Dry-run：不入库返切分预览，前端调参用。"""
-    user = require_user(request)
     body = await request.json()
     try:
         return json_response(script_import.preview_split(
@@ -365,12 +348,11 @@ async def api_script_preview(request: Request):
 
 
 @router.post("/api/scripts/batch-import")
-async def api_scripts_batch_import(request: Request):
+async def api_scripts_batch_import(request: Request, user=Depends(require_user)):
     """从 ZIP 包批量导入剧本：每个 TXT/MD 视为一本书。
 
     Body: {"file": {"name": "books.zip", "base64": "..."}}
     """
-    user = require_user(request)
     body = await request.json()
     file_item = body.get("file") or {}
     if not file_item:
@@ -415,9 +397,8 @@ async def api_scripts_batch_import(request: Request):
 
 # ── 大文件分片上传（替代单次 base64 POST，避免内存爆）─────────────
 @router.post("/api/uploads/init")
-async def api_upload_init(request: Request):
+async def api_upload_init(request: Request, user=Depends(require_user)):
     """开始分片上传，返回 upload_id。"""
-    user = require_user(request)
     body = await request.json()
     try:
         return json_response({"ok": True, **script_import.init_upload(
@@ -431,9 +412,8 @@ async def api_upload_init(request: Request):
 
 
 @router.post("/api/uploads/{upload_id}/chunk")
-async def api_upload_chunk(request: Request, upload_id: str):
+async def api_upload_chunk(request: Request, upload_id: str, user=Depends(require_user)):
     """上传一个 chunk。body: {"chunk_index": N, "base64": "..."}"""
-    user = require_user(request)
     body = await request.json()
     try:
         import base64 as _b64
@@ -446,9 +426,8 @@ async def api_upload_chunk(request: Request, upload_id: str):
 
 
 @router.post("/api/uploads/{upload_id}/finish")
-async def api_upload_finish(request: Request, upload_id: str):
+async def api_upload_finish(upload_id: str, user=Depends(require_user)):
     """全部分片到齐后调，返回 file_item（可直接传给 /api/scripts/import 的 file 字段）。"""
-    user = require_user(request)
     try:
         return json_response(script_import.finish_upload(user["id"], upload_id))
     except ValueError as exc:
@@ -456,9 +435,8 @@ async def api_upload_finish(request: Request, upload_id: str):
 
 
 @router.post("/api/uploads/{upload_id}/cancel")
-async def api_upload_cancel(request: Request, upload_id: str):
+async def api_upload_cancel(upload_id: str, user=Depends(require_user)):
     """放弃上传，清掉服务器上的临时块。"""
-    user = require_user(request)
     try:
         return json_response(script_import.cancel_upload(user["id"], upload_id))
     except ValueError as exc:

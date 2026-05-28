@@ -49,11 +49,16 @@ DEFAULT_MCP_CATALOG = {
 
 
 def deployment_capabilities() -> dict[str, Any]:
-    mode = os.environ.get("RPG_DEPLOYMENT_MODE", "local").strip().lower() or "local"
+    from core.config import (
+        deployment_mode as _deployment_mode,
+        enable_skill_import as _enable_skill_import,
+        enable_mcp_config_write as _enable_mcp_config_write,
+    )
+    mode = _deployment_mode().strip().lower() or "local"
     is_local = mode in {"local", "desktop", "self_hosted", "self-hosted"}
-    allow_skill = os.environ.get("RPG_ENABLE_SKILL_IMPORT")
+    allow_skill = _enable_skill_import()
     skill_import_enabled = is_local if allow_skill is None else allow_skill == "1"
-    allow_mcp_write = os.environ.get("RPG_ENABLE_MCP_CONFIG_WRITE")
+    allow_mcp_write = _enable_mcp_config_write()
     mcp_config_write_enabled = is_local if allow_mcp_write is None else allow_mcp_write == "1"
     return {
         "deployment_mode": mode,

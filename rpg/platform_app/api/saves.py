@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from .. import branches, knowledge, workspace
 from ..db import connect
@@ -13,16 +13,14 @@ router = APIRouter()
 
 
 @router.get("/api/saves")
-async def api_saves(request: Request, limit: int | None = None, cursor: str | None = None):
+async def api_saves(limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
     """轻量列表：只返摘要字段（turn/player_name/world_time/history_count），不含 state_snapshot。"""
-    user = require_user(request)
     return json_response({"ok": True, **workspace.saves_page(user["id"], limit, cursor)})
 
 
 @router.get("/api/saves/{save_id}/export")
-async def api_save_export(request: Request, save_id: int):
+async def api_save_export(save_id: int, user=Depends(require_user)):
     """下载存档 JSON（含 commits + messages + memories）。"""
-    user = require_user(request)
     from .. import save_io
     try:
         return json_response({"ok": True, **save_io.export_save(user["id"], save_id)})
@@ -31,9 +29,8 @@ async def api_save_export(request: Request, save_id: int):
 
 
 @router.post("/api/saves/import")
-async def api_save_import(request: Request):
+async def api_save_import(request: Request, user=Depends(require_user)):
     """上传一份导出的 JSON 恢复成新存档，按当前 user 重映射 owner。"""
-    user = require_user(request)
     body = await request.json()
     from .. import save_io
     try:
@@ -43,9 +40,8 @@ async def api_save_import(request: Request):
 
 
 @router.get("/api/saves/{save_id}")
-async def api_save_detail(request: Request, save_id: int):
+async def api_save_detail(save_id: int, user=Depends(require_user)):
     """单条详情：包含完整 state_snapshot。"""
-    user = require_user(request)
     try:
         return json_response({"ok": True, "save": workspace.save_detail(user["id"], save_id)})
     except ValueError as exc:
@@ -53,8 +49,7 @@ async def api_save_detail(request: Request, save_id: int):
 
 
 @router.post("/api/saves")
-async def api_create_save(request: Request):
-    user = require_user(request)
+async def api_create_save(request: Request, user=Depends(require_user)):
     body = await request.json()
     raw_script_id = body.get("script_id")
     if raw_script_id is None:
@@ -86,8 +81,7 @@ async def api_create_save(request: Request):
 
 
 @router.get("/api/branches/{save_id}")
-async def api_branches(request: Request, save_id: int, limit: int | None = None, cursor: str | None = None):
-    user = require_user(request)
+async def api_branches(save_id: int, limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
     # 先校验存档归属，避免 tree() 内部抛 raw exception
     with connect() as db:
         owned = db.execute("select 1 from game_saves where id = %s and user_id = %s", (save_id, user["id"])).fetchone()
@@ -97,13 +91,12 @@ async def api_branches(request: Request, save_id: int, limit: int | None = None,
 
 
 @router.post("/api/branches/continue")
-async def api_continue_branch(request: Request):
+async def api_continue_branch(request: Request, user=Depends(require_user)):
     """task 38：接受两种 body 形态：
        A) {node_id: <int>}              —— 老路径，前端拿得到 commit id 时直接传
        B) {save_id, message_index, ...} —— Game Console 「从这里新建分支」用，
           后端把 message_index → turn_index → commit_id。
        缺字段或解析失败一律 400（不再因 int(None) 抛 TypeError 成 500）。"""
-    user = require_user(request)
     body = await request.json() if (await request.body()) else {}
     node_id_raw = body.get("node_id")
     save_id_raw = body.get("save_id")
@@ -148,8 +141,7 @@ async def api_continue_branch(request: Request):
 
 
 @router.post("/api/branches/activate")
-async def api_activate_branch(request: Request):
-    user = require_user(request)
+async def api_activate_branch(request: Request, user=Depends(require_user)):
     body = await request.json()
     try:
         result = branches.activate_node(user["id"], int(body.get("node_id")))
@@ -168,8 +160,7 @@ async def api_activate_branch(request: Request):
 
 
 @router.post("/api/branches/delete")
-async def api_delete_branch(request: Request):
-    user = require_user(request)
+async def api_delete_branch(request: Request, user=Depends(require_user)):
     body = await request.json()
     try:
         return json_response(branches.delete_subtree(user["id"], int(body.get("node_id"))))
@@ -178,13 +169,12 @@ async def api_delete_branch(request: Request):
 
 
 @router.post("/api/branches/rollback")
-async def api_rollback_to_message(request: Request):
+async def api_rollback_to_message(request: Request, user=Depends(require_user)):
     """task 116c — 删除消息 N 及之后所有 (git-style 软回滚)。
 
     入参: { save_id, message_index }
     出参: { ok, restored_turn, dropped_turn_count, deleted: {...}, trash_ref, runtime }
     """
-    user = require_user(request)
     body = await request.json()
     try:
         save_id = int(body.get("save_id"))
@@ -208,8 +198,7 @@ async def api_rollback_to_message(request: Request):
 
 
 @router.get("/api/saves/{save_id}/context-runs")
-async def api_save_context_runs(request: Request, save_id: int, limit: int | None = None, cursor: str | None = None):
-    user = require_user(request)
+async def api_save_context_runs(save_id: int, limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
     try:
         return json_response({"ok": True, **knowledge.list_context_runs(user["id"], save_id, limit, cursor)})
     except ValueError as exc:
@@ -217,7 +206,7 @@ async def api_save_context_runs(request: Request, save_id: int, limit: int | Non
 
 
 @router.get("/api/saves/{save_id}/anchors")
-async def api_save_anchors(request: Request, save_id: int):
+async def api_save_anchors(save_id: int, user=Depends(require_user)):
     """task 136h: 世界线收束 — 存档锚点状态.
 
     返回:
@@ -229,7 +218,6 @@ async def api_save_anchors(request: Request, save_id: int):
         recent_occurred: [...up to 8 most recently occurred...]
       }
     """
-    user = require_user(request)
     with connect() as db:
         owned = db.execute(
             "select 1 from game_saves where id = %s and user_id = %s",
@@ -289,11 +277,10 @@ async def api_save_anchors(request: Request, save_id: int):
 
 
 @router.post("/api/saves/{save_id}/anchors/reseed")
-async def api_save_anchors_reseed(request: Request, save_id: int):
+async def api_save_anchors_reseed(request: Request, save_id: int, user=Depends(require_user)):
     """task 136h: 强制重 seed 锚点 (调试用)。
     body 可选: {"keep_satisfied": true|false} 默认 true (保留已发生)。
     """
-    user = require_user(request)
     with connect() as db:
         owned = db.execute(
             "select 1 from game_saves where id = %s and user_id = %s",

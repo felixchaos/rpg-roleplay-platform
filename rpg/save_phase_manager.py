@@ -19,7 +19,9 @@ from __future__ import annotations
 import os
 from typing import Any
 
-PHASE_TURN_THRESHOLD = int(os.environ.get("RPG_PHASE_TURN_THRESHOLD", "30"))
+from core.config import phase_turn_threshold as _phase_turn_threshold
+
+PHASE_TURN_THRESHOLD = _phase_turn_threshold()
 
 
 # ────────────────────────────────────────────────────────────

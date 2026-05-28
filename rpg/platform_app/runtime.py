@@ -29,12 +29,17 @@ RUNTIME_STATE_ROOT = BASE / "platform_data" / "runtime_states"
 # ── backend 选择 ──────────────────────────────────────────────────
 def _runtime_backend() -> str:
     """db / file. 默认：server 模式用 db，本地用 file。"""
-    backend = os.environ.get("RPG_RUNTIME_BACKEND", "auto").strip().lower()
+    from core.config import (
+        runtime_backend as _runtime_backend_cfg,
+        require_auth as _require_auth,
+        deployment_mode as _deployment_mode,
+    )
+    backend = _runtime_backend_cfg().strip().lower()
     if backend in {"db", "file"}:
         return backend
-    if os.environ.get("RPG_REQUIRE_AUTH") == "1":
+    if _require_auth():
         return "db"
-    mode = os.environ.get("RPG_DEPLOYMENT_MODE", "local").strip().lower()
+    mode = _deployment_mode().strip().lower()
     if mode not in {"local", "desktop", "self_hosted", "self-hosted"}:
         return "db"
     return "file"
@@ -46,9 +51,10 @@ def _should_mirror_save_file() -> bool:
     """
     if _runtime_backend() == "db":
         return False
-    if os.environ.get("RPG_REQUIRE_AUTH") == "1":
+    from core.config import require_auth as _require_auth, deployment_mode as _deployment_mode
+    if _require_auth():
         return False
-    mode = os.environ.get("RPG_DEPLOYMENT_MODE", "local").strip().lower()
+    mode = _deployment_mode().strip().lower()
     return mode in {"local", "desktop", "self_hosted", "self-hosted"}
 
 

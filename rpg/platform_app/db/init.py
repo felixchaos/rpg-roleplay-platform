@@ -32,7 +32,8 @@ def init_db(force: bool = False) -> None:
     with _DB_INIT_LOCK:
         if _DB_INITED and not force:
             return
-        if os.environ.get("RPG_SKIP_AUTO_MIGRATE") == "1":
+        from core.config import skip_auto_migrate as _skip_auto_migrate
+        if _skip_auto_migrate():
             # 仅做版本检查：schema 落后就 raise
             _assert_schema_up_to_date()
         else:

@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from routes._deps_fastapi import get_current_user
 from schemas._common import COMMON_ERROR_RESPONSES, GenericOkResponse, OkResponse
 from schemas.console_assistant import (
     ConsoleAssistantChatRequest,
@@ -17,16 +19,16 @@ router = APIRouter()
 
 
 @router.get("/api/console_assistant/ping")
-async def api_console_assistant_ping(request: Request) -> JSONResponse:
+async def api_console_assistant_ping() -> JSONResponse:
     """task 48: 给前端探测后端是否就绪,200 = 真后端可用 (前端切走 mock)。"""
     return JSONResponse({"ok": True, "service": "console_assistant", "version": "1"})
 
 
 @router.get("/api/console_assistant/conversations")
-async def api_console_assistant_conversations(request: Request) -> JSONResponse:
+async def api_console_assistant_conversations(
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """task 111: 列当前用户所有对话。"""
-    from app import _require_api_user
-    api_user = _require_api_user(request)
     user_id = int((api_user or {}).get("id") or 0)
     if not user_id:
         return JSONResponse({"items": []})
@@ -36,10 +38,10 @@ async def api_console_assistant_conversations(request: Request) -> JSONResponse:
 
 
 @router.post("/api/console_assistant/new_conversation", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
-async def api_console_assistant_new_conversation(request: Request) -> JSONResponse:
+async def api_console_assistant_new_conversation(
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """task 111: 开新对话, 返新 conversation_id。"""
-    from app import _require_api_user
-    api_user = _require_api_user(request)
     user_id = int((api_user or {}).get("id") or 0)
     if not user_id:
         return JSONResponse({"ok": False, "error": "需要登录"}, status_code=401)
@@ -49,10 +51,11 @@ async def api_console_assistant_new_conversation(request: Request) -> JSONRespon
 
 
 @router.post("/api/console_assistant/delete_conversation", response_model=OkResponse, responses=COMMON_ERROR_RESPONSES)
-async def api_console_assistant_delete_conversation(body: ConsoleAssistantDeleteConversationRequest, request: Request) -> JSONResponse:
+async def api_console_assistant_delete_conversation(
+    body: ConsoleAssistantDeleteConversationRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """task 111: 删除某对话。"""
-    from app import _require_api_user
-    api_user = _require_api_user(request)
     user_id = int((api_user or {}).get("id") or 0)
     if not user_id:
         return JSONResponse({"ok": False, "error": "需要登录"}, status_code=401)
@@ -66,14 +69,16 @@ async def api_console_assistant_delete_conversation(body: ConsoleAssistantDelete
 
 
 @router.post("/api/console_assistant/chat")
-async def api_console_assistant_chat(body: ConsoleAssistantChatRequest, request: Request) -> StreamingResponse:
+async def api_console_assistant_chat(
+    body: ConsoleAssistantChatRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> StreamingResponse:
     """task 48: 侧栏助手主聊天 SSE endpoint。
 
     body: { message: str, conversation_id?: str, page_context?: dict }
     SSE: meta / token / tool_call / tool_result / confirmation_required / error / done
     """
-    from app import _ensure_loaded, _require_api_user, _resolve_console_assistant_backend
-    api_user = _require_api_user(request)
+    from app import _ensure_loaded, _resolve_console_assistant_backend
     body_dict = body.model_dump(exclude_none=True)
     message = str(body_dict.get("message") or "").strip()
     conversation_id = body_dict.get("conversation_id")
@@ -130,7 +135,10 @@ async def api_console_assistant_chat(body: ConsoleAssistantChatRequest, request:
 
 
 @router.post("/api/console_assistant/confirm")
-async def api_console_assistant_confirm(body: ConsoleAssistantConfirmRequest, request: Request) -> StreamingResponse:
+async def api_console_assistant_confirm(
+    body: ConsoleAssistantConfirmRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> StreamingResponse:
     """task 58: 对一个 pending destructive 工具调用做决策, 返 SSE 流。
 
     body: { conversation_id: str, call_id: str, decision: 'approve'|'reject',
@@ -141,8 +149,7 @@ async def api_console_assistant_confirm(body: ConsoleAssistantConfirmRequest, re
     旧 JSON 协议已弃用 — 修复:用户点确认后 LLM 必须基于工具结果续写,
     否则对话直接断在工具结果。
     """
-    from app import _ensure_loaded, _require_api_user, _resolve_console_assistant_backend
-    api_user = _require_api_user(request)
+    from app import _ensure_loaded, _resolve_console_assistant_backend
     body_dict = body.model_dump(exclude_none=True)
     conversation_id = str(body_dict.get("conversation_id") or "").strip()
     call_id = str(body_dict.get("call_id") or "").strip()

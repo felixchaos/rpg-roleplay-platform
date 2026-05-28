@@ -1,7 +1,7 @@
 """platform_app.api.library — /api/library/* 路由。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from .. import library as _library
@@ -11,8 +11,7 @@ router = APIRouter()
 
 
 @router.get("/api/library")
-async def api_library(request: Request, path: str = "", limit: int | None = None, cursor: str | None = None):
-    user = require_user(request)
+async def api_library(path: str = "", limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
     try:
         return json_response(_library.list_dir(user["id"], path, limit, cursor))
     except ValueError as exc:
@@ -20,8 +19,7 @@ async def api_library(request: Request, path: str = "", limit: int | None = None
 
 
 @router.post("/api/library/upload")
-async def api_library_upload(request: Request):
-    user = require_user(request)
+async def api_library_upload(request: Request, user=Depends(require_user)):
     body = await request.json()
     try:
         return json_response(_library.upload(user["id"], body.get("path", ""), body.get("files") or []))
@@ -30,8 +28,7 @@ async def api_library_upload(request: Request):
 
 
 @router.post("/api/library/mkdir")
-async def api_library_mkdir(request: Request):
-    user = require_user(request)
+async def api_library_mkdir(request: Request, user=Depends(require_user)):
     body = await request.json()
     try:
         return json_response(_library.mkdir(user["id"], body.get("path", "")))
@@ -40,8 +37,7 @@ async def api_library_mkdir(request: Request):
 
 
 @router.post("/api/library/delete")
-async def api_library_delete(request: Request):
-    user = require_user(request)
+async def api_library_delete(request: Request, user=Depends(require_user)):
     body = await request.json()
     try:
         return json_response(_library.delete(user["id"], body.get("path", "")))
@@ -50,8 +46,7 @@ async def api_library_delete(request: Request):
 
 
 @router.get("/api/library/download")
-async def api_library_download(request: Request, path: str) -> FileResponse:
-    user = require_user(request)
+async def api_library_download(path: str, user=Depends(require_user)) -> FileResponse:
     try:
         target = _library.download_path(user["id"], path)
     except ValueError as exc:

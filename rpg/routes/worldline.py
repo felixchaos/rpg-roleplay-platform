@@ -1,9 +1,12 @@
 """worldline.py — 世界线变量管理路由 (/api/worldline/*)。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from typing import Any
+
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
+from routes._deps_fastapi import get_current_user
 from schemas._common import COMMON_ERROR_RESPONSES, StateResponse
 from schemas.worldline import WorldlineVariableRemoveRequest, WorldlineVariableRequest
 
@@ -11,17 +14,18 @@ router = APIRouter()
 
 
 @router.post("/api/worldline/variable", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
-async def api_worldline_variable(body: WorldlineVariableRequest, request: Request) -> JSONResponse:
+async def api_worldline_variable(
+    body: WorldlineVariableRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher 的 set_user_variable 工具。"""
     from app import (
         _ensure_loaded,
         _payload,
         _persist_runtime_checkpoint,
-        _require_api_user,
         _resolve_persist_target,
     )
     from platform_app import knowledge as platform_knowledge
-    api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     key = body_dict.get("key", "")
     value = body_dict.get("value", "")
@@ -49,17 +53,18 @@ async def api_worldline_variable(body: WorldlineVariableRequest, request: Reques
 
 
 @router.post("/api/worldline/variable/remove", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
-async def api_worldline_variable_remove(body: WorldlineVariableRemoveRequest, request: Request) -> JSONResponse:
+async def api_worldline_variable_remove(
+    body: WorldlineVariableRemoveRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """task 87 Phase 6: destructive,走 dispatcher remove_user_variable 工具。"""
     from app import (
         _ensure_loaded,
         _payload,
         _persist_runtime_checkpoint,
-        _require_api_user,
         _resolve_persist_target,
     )
     from platform_app import knowledge as platform_knowledge
-    api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     key = body_dict.get("key", "")
     state = _ensure_loaded(api_user)
