@@ -861,6 +861,8 @@
       const onStop = () => stopRun();
 
       // task 50：重试本轮 = 用 lastPlayerText 再发一次（不需要用户在 composer 里重新输入）
+      // task 49 fix: 必须先 pop 掉上一轮失败的 player message（和可能存在的空 assistant
+      // streaming row）,否则 startRun 又 push 一条同样的 user 消息,UI 上显示两次同样输入。
       const onRetry = useCallback(() => {
         if (runState.running) return;
         const t = lastPlayerText && lastPlayerText.trim();
@@ -869,6 +871,20 @@
           return;
         }
         setHasError(false);
+        setHistory(h => {
+          // 从尾部向前找:先剥可能存在的空 assistant 行(失败的 streaming),
+          // 再剥最后一条 user 行(失败那轮的输入)。剥完 startRun 会重新 push 一条 user。
+          const out = [...h];
+          while (out.length && out[out.length - 1].role === "assistant"
+                 && !(out[out.length - 1].content || "").trim()) {
+            out.pop();
+          }
+          if (out.length && out[out.length - 1].role === "user"
+              && (out[out.length - 1].content || "").trim() === t) {
+            out.pop();
+          }
+          return out;
+        });
         startRun(t);
       }, [lastPlayerText, runState.running]);
       // task 50：查看 SSE = 打开本轮 SSE 事件流弹窗（含 send + status/agent/token/done/error）
