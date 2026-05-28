@@ -139,7 +139,7 @@ def main() -> int:
 
     # 实际执行: 调 phase_digest_agent.compact_phase
     try:
-        from phase_digest_agent import compact_phase  # 107D 提供
+        from agents.phase_digest_agent import compact_phase  # 107D 提供
     except ImportError:
         print("\nERROR: rpg/phase_digest_agent.py 不存在或未实现 compact_phase()。"
               "请先完成 task 107D 再跑 backfill。", file=sys.stderr)

@@ -20,7 +20,7 @@ import json
 from dataclasses import replace as dc_replace
 from typing import Any
 
-from command_dispatcher import (
+from tools_dsl.command_dispatcher import (
     ToolCallEnvelope,
     ToolSpec,
     get_registry,
@@ -461,7 +461,7 @@ def ui_invoke(user_id: int, args: dict) -> str:
       · 否则 → 原 dispatcher 执行结果 (失败也走原文返回)
     """
     # 延迟 import 防循环
-    from command_dispatcher import (
+    from tools_dsl.command_dispatcher import (
         ToolCallEnvelope as _Env,
         ToolDispatcher as _Disp,
         get_registry as _get_reg,

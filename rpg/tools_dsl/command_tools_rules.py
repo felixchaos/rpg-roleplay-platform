@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from command_dispatcher import ToolSpec, get_registry
+from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
 
 # 5E 模组工具默认 origin: UI / API / LLM 都可调,但战斗具体动作禁止 llm_chat

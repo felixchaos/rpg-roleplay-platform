@@ -28,8 +28,8 @@ if str(REPO) not in sys.path:
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
 import character_card_generator as ccg  # noqa: E402
-from command_dispatcher import ToolCallEnvelope, ToolDispatcher, get_registry  # noqa: E402
-from command_tools_register import force_reset_for_tests  # noqa: E402
+from tools_dsl.command_dispatcher import ToolCallEnvelope, ToolDispatcher, get_registry  # noqa: E402
+from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
 
 
 # ────────────────────────────────────────────────────────────

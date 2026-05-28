@@ -25,10 +25,10 @@ if str(REPO) not in sys.path:
 
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
-from command_dispatcher import (  # noqa: E402
+from tools_dsl.command_dispatcher import (  # noqa: E402
     ToolCallEnvelope, ToolDispatcher, get_registry,
 )
-from command_tools_register import force_reset_for_tests  # noqa: E402
+from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
 
 
 # user 级 mutate 工具清单 (必须禁 LLM origin)
@@ -182,7 +182,7 @@ class CrossUserDispatchRejection(unittest.TestCase):
 
     def test_save_ownership_enforced_in_sql(self):
         """检查 _t_rename_save 实现是否含 user_id 过滤。"""
-        src = (REPO / "command_tools_saves.py").read_text(encoding="utf-8")
+        src = (REPO / "tools_dsl" / "command_tools_saves.py").read_text(encoding="utf-8")
         # rename / delete / list 都必须含 user_id 过滤
         for fn_marker in (
             "_t_rename_save", "_t_delete_save", "_t_activate_save",
@@ -201,7 +201,7 @@ class CrossUserDispatchRejection(unittest.TestCase):
             )
 
     def test_persona_card_credentials_ownership_enforced(self):
-        src = (REPO / "command_tools_misc.py").read_text(encoding="utf-8")
+        src = (REPO / "tools_dsl" / "command_tools_misc.py").read_text(encoding="utf-8")
         for fn_marker in (
             "_t_create_persona", "_t_delete_persona",
             "_t_create_character_card", "_t_delete_character_card",
@@ -223,7 +223,7 @@ class CredentialsToolCannotLeakKey(unittest.TestCase):
     """list_my_credentials_meta 即使 LLM 调,也不会返回 key 实际值。"""
 
     def test_select_excludes_key_encrypted(self):
-        src = (REPO / "command_tools_misc.py").read_text(encoding="utf-8")
+        src = (REPO / "tools_dsl" / "command_tools_misc.py").read_text(encoding="utf-8")
         import re as _re
         block = _re.search(
             r"_t_list_my_credentials_meta.*?(?=^def |\Z)",

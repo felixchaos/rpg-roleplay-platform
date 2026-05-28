@@ -20,7 +20,7 @@ async def api_memory_mode(request: Request) -> JSONResponse:
     api_user = _require_api_user(request)
     body = await request.json()
     state = _ensure_loaded(api_user)
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(
         tool_name="set_memory_mode",
         args={"mode": body.get("mode", "normal")},
@@ -52,7 +52,7 @@ async def api_memory_add(request: Request) -> JSONResponse:
         "pinned": "pin_memory",
         "notes": "add_memory_note",
     }.get(bucket, "add_memory_note")
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(
         tool_name=bucket_tool,
         args={"text": text},
@@ -74,7 +74,7 @@ async def api_memory_remove(request: Request) -> JSONResponse:
     api_user = _require_api_user(request)
     body = await request.json()
     state = _ensure_loaded(api_user)
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(
         tool_name="remove_memory_item",
         args={

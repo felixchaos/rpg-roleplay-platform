@@ -218,7 +218,7 @@ def _call_extractor_backend(
     if api_id == "anthropic":
         return _call_anthropic_tool_use(model, system_prompt, user_prompt, user_id)
     if api_id == "vertex_ai":
-        from gm import _VertexBackend
+        from agents.gm import _VertexBackend
         backend = _VertexBackend(model=model, api_id="vertex_ai", user_id=user_id)
         # call_structured 已经设了 response_mime_type=application/json
         return backend.call_structured(

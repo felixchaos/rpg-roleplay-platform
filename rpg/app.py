@@ -33,13 +33,13 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from gm import GameMaster
+from agents.gm import GameMaster
 from context_engine import build_context_bundle
-from context_agent import run_context_agent
+from agents.context_agent import run_context_agent
 from model_registry import delete_model, load_model_catalog, selected_model, select_model, upsert_api, upsert_model
 from retrieval import retrieve_context
 from state import GameState, SAVE_FILE, strip_json_state_ops
-from tool_registry import (
+from tools_dsl.tool_registry import (
     delete_mcp_server,
     import_skill_bundle,
     set_mcp_server_enabled,
@@ -205,7 +205,7 @@ def _verify_acceptance(
 
     if mode_norm == "llm":
         try:
-            from acceptance_verifier import verify_acceptance_llm
+            from agents.acceptance_verifier import verify_acceptance_llm
             out = verify_acceptance_llm(
                 acceptance=acceptance,
                 response_text=response_text,
@@ -225,7 +225,7 @@ def _verify_acceptance(
         # 规则都通过：不浪费 LLM 调用
         return []
     try:
-        from acceptance_verifier import verify_acceptance_llm
+        from agents.acceptance_verifier import verify_acceptance_llm
         llm_unmet = verify_acceptance_llm(
             acceptance=rule_unmet,
             response_text=response_text,
@@ -538,9 +538,9 @@ async def _register_command_tools_startup() -> None:
     """task 87: 启动时把 command_tools + Phase 2 工具注册到全局 dispatcher。
     幂等,多次调用安全 (内部 _REGISTERED 标志)。"""
     try:
-        from command_tools_register import ensure_registered
+        from tools_dsl.command_tools_register import ensure_registered
         ensure_registered()
-        from command_dispatcher import get_registry
+        from tools_dsl.command_dispatcher import get_registry
         print(f"[startup] command_dispatcher: 已注册 {len(get_registry().list_all())} 个工具")
     except Exception as exc:
         # 注册失败不阻塞启动;chat handler 内部 ensure_registered 兜底

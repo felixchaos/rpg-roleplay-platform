@@ -492,7 +492,7 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
     """
     from . import knowledge
     try:
-        from gm import GameMaster
+        from agents.gm import GameMaster
         gm = GameMaster(user_id=user_id)
     except Exception as exc:
         # 没配 user 凭证：跳过这阶段
@@ -570,7 +570,7 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
     """LLM 提取地点/势力/概念入 worldbook_entries。"""
     from . import knowledge
     try:
-        from gm import GameMaster
+        from agents.gm import GameMaster
         gm = GameMaster(user_id=user_id)
     except Exception:
         return 0

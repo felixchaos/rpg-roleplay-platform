@@ -23,7 +23,7 @@ async def api_permissions(request: Request) -> JSONResponse:
     api_user = _require_api_user(request)
     body = await request.json()
     state = _ensure_loaded(api_user)
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(
         tool_name="set_permission_mode",
         args={"mode": body.get("mode", "full_access")},
@@ -68,7 +68,7 @@ async def api_pending_write(request: Request) -> JSONResponse:
         pws = (state.data.get("permissions") or {}).get("pending_writes") or []
         if 0 <= index < len(pws):
             item_id = pws[index].get("id")
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     d_result = dispatch_ui_tool(
         tool_name=tool_name,
         args={"id": item_id or ""},
@@ -107,7 +107,7 @@ async def api_question_clear(request: Request) -> JSONResponse:
     if choice or not item_id:
         popped = state.clear_pending_question(index=index, id=item_id, choice=choice)
     else:
-        from ui_dispatch_helper import dispatch_ui_tool
+        from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
         d_result = dispatch_ui_tool(
             tool_name="dismiss_pending_question",
             args={"id": item_id},
@@ -137,7 +137,7 @@ async def api_debug_pending_question(request: Request) -> JSONResponse:
         options = [s.strip() for s in opt_str.split("、") if s.strip()]
     else:
         question, options = raw_text, []
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     d_result = dispatch_ui_tool(
         tool_name="inject_pending_question",
         args={"question": question, "options": options, "source": "debug"},

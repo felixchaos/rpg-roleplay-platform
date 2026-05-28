@@ -29,8 +29,8 @@ if str(REPO) not in sys.path:
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
 from state import GameState, DEFAULT_STATE  # noqa: E402
-from command_dispatcher import ToolCallEnvelope, ToolDispatcher, get_registry  # noqa: E402
-from command_tools_register import force_reset_for_tests  # noqa: E402
+from tools_dsl.command_dispatcher import ToolCallEnvelope, ToolDispatcher, get_registry  # noqa: E402
+from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
 
 
 def _new_state(turn=3) -> GameState:
@@ -274,7 +274,7 @@ class QueryToolsCompletion(unittest.TestCase):
     def test_list_my_credentials_meta_never_returns_keys(self):
         """安全: 此工具的实现里 SELECT 列表必须只含 provider/key_len/updated_at,
         永不 SELECT key_encrypted 实际值。"""
-        src = Path(__file__).resolve().parents[1] / "command_tools_misc.py"
+        src = Path(__file__).resolve().parents[1] / "tools_dsl" / "command_tools_misc.py"
         content = src.read_text(encoding="utf-8")
         # 搜 _t_list_my_credentials_meta 函数体
         import re

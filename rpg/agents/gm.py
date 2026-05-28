@@ -9,7 +9,7 @@ import json
 from collections.abc import Iterator
 from typing import Any
 
-BASE = Path(__file__).parent
+BASE = Path(__file__).parent.parent  # rpg/agents/ → rpg/
 SA_FILE = BASE / "vertex_sa.json"          # 服务账户 JSON（gitignored）
 
 # task 80: 通用底座 — 不再 eager 加载 indexes/world.json (那是柏林书的固化设定)。

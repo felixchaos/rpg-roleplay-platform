@@ -529,7 +529,7 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
         try:
             _sid_for_anchors = _resolve_save_id_from_user(user_id)
             if _sid_for_anchors:
-                from anchor_seed_agent import list_pending_for_phase, summarize_save_anchor_state
+                from agents.anchor_seed_agent import list_pending_for_phase, summarize_save_anchor_state
                 # 优先按当前 phase 过滤; 没有 phase 信息时按 chapter window 过滤
                 _phase_label = (phase_range or {}).get("phase_label") if phase_range else None
                 if not _phase_label:

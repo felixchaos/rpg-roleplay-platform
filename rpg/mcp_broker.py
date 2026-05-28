@@ -233,7 +233,7 @@ def start_server(server_id: str) -> dict[str, Any]:
 
     兼容两种字段名：catalog 用 `id`（_normalize_mcp_server 输出），broker 也允许 `server_id` 别名。
     """
-    from tool_registry import load_mcp_catalog
+    from tools_dsl.tool_registry import load_mcp_catalog
     catalog = load_mcp_catalog()
     server_config = None
     for s in catalog.get("servers", []):
@@ -439,7 +439,7 @@ def call_tool(server_id: str, tool_name: str, arguments: dict[str, Any], timeout
 
 def discover_all_tools() -> list[dict[str, Any]]:
     """列出所有启用 server 的可用工具，给主 GM 注入工具清单用。"""
-    from tool_registry import load_mcp_catalog
+    from tools_dsl.tool_registry import load_mcp_catalog
     catalog = load_mcp_catalog()
     out = []
     for s in catalog.get("servers", []):

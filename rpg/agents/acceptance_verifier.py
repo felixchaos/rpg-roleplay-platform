@@ -168,7 +168,7 @@ def verify_acceptance_llm(
 
     # 复用 extractor 模块的偏好读取，避免重复 SQL 代码。
     try:
-        import extractor as _extractor
+        import agents.extractor as _extractor
     except Exception as exc:
         print(f"[acceptance_verifier] import extractor failed: {exc}")
         return None
@@ -229,9 +229,9 @@ def _call_verifier_backend(
             model, system_prompt, user_prompt, user_id, acceptance,
         )
     # 其它通道直接复用 extractor 已经有的便宜实现。
-    import extractor as _extractor
+    import agents.extractor as _extractor
     if api_id == "vertex_ai":
-        from gm import _VertexBackend
+        from agents.gm import _VertexBackend
         backend = _VertexBackend(model=model, api_id="vertex_ai", user_id=user_id)
         return backend.call_structured(
             system=system_prompt,

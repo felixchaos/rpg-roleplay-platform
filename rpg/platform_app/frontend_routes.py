@@ -634,7 +634,7 @@ async def api_search(request: Request):
 @router.get("/api/plugins")
 async def api_plugins(request: Request):
     """Reuse /api/tools but slice the 'plugins' channel for the CapPage."""
-    from tool_registry import tool_payload
+    from tools_dsl.tool_registry import tool_payload
     payload = tool_payload()
     return json_response({"ok": True, "plugins": payload.get("plugins", [])})
 
@@ -642,7 +642,7 @@ async def api_plugins(request: Request):
 @router.get("/api/skills")
 async def api_skills_list(request: Request):
     require_user(request)
-    from tool_registry import tool_payload
+    from tools_dsl.tool_registry import tool_payload
     payload = tool_payload()
     return json_response({"ok": True, "skills": payload.get("skills", [])})
 

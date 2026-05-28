@@ -1061,7 +1061,7 @@ class GameState:
             try:
                 from state_write_context import get_context as _get_chat_ctx
                 from state_op_tool_map import map_op_to_tool
-                from command_dispatcher import (
+                from tools_dsl.command_dispatcher import (
                     ToolCallEnvelope, ToolDispatcher, get_registry,
                 )
                 _ctx = _get_chat_ctx()

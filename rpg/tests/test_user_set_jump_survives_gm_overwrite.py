@@ -43,7 +43,7 @@ if str(REPO) not in sys.path:
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
 from state import GameState, DEFAULT_STATE  # noqa: E402
-from timeline_narrative_guard import detect_time_jump_violations  # noqa: E402
+from agents.timeline_narrative_guard import detect_time_jump_violations  # noqa: E402
 
 
 class UserSetJumpTurnSetOnUserSet(unittest.TestCase):

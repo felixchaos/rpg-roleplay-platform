@@ -137,7 +137,7 @@ class NarrativeGuardChatFlowE2E(unittest.TestCase):
         ui_mod._get_gm = _fake_get_gm
 
         # task 86: monkeypatch command_agent.parse_set_command (LLM 命令工具调用解析)
-        import command_agent as _cmd_agent
+        import agents.command_agent as _cmd_agent
         original_parse = _cmd_agent.parse_set_command
         if command_tool_calls is not None:
             def _fake_parse(set_text, state_data, **kwargs):
@@ -302,7 +302,7 @@ class NarrativeGuardChatFlowE2E(unittest.TestCase):
         cookies = u["cookies"]
 
         # monkeypatch 让 parse_set_command 抛异常
-        import command_agent as _cmd_agent
+        import agents.command_agent as _cmd_agent
         original = _cmd_agent.parse_set_command
 
         def _raise(*a, **kw):

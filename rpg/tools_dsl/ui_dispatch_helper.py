@@ -8,7 +8,7 @@ ui_dispatch_helper.py — task 87 Phase 6 余下: UI HTTP endpoint 接入 dispat
   · 用户跨用户操作仍由 SQL where user_id=? 强保护 + dispatcher 鉴权双重防御
 
 用法 (在 chat handler 等同步路径):
-    from ui_dispatch_helper import dispatch_ui_tool
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(
         tool_name="set_memory_mode", args={"mode": "deep"},
         user_id=user_id, save_id=save_id, state=state,
@@ -21,7 +21,7 @@ from __future__ import annotations
 import secrets
 from typing import Any
 
-from command_dispatcher import (
+from tools_dsl.command_dispatcher import (
     ToolCallEnvelope, ToolDispatcher, ToolResult, get_registry,
 )
 

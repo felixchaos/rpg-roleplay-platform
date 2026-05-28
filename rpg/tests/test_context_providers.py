@@ -14,7 +14,7 @@ import unittest
 
 from state import GameState
 from rules_bridge import start_module, enter_room
-from context_agent import run_context_agent, _demand_from_curator_plan
+from agents.context_agent import run_context_agent, _demand_from_curator_plan
 from context_providers import (
     available_providers, resolve_content_pack, run_providers,
     DEFAULT_NOVEL_MANIFEST, DEFAULT_MODULE_MANIFEST, DEFAULT_FREEFORM_MANIFEST,

@@ -459,18 +459,18 @@ def _select_backend(user_id: int | None, role: str = "generator"):
     model = _resolve_preferred_model(user_id, role)
     if api_id and model:
         try:
-            from gm import GameMaster
+            from agents.gm import GameMaster
             return GameMaster(api_id=api_id, model=model, user_id=user_id)._backend
         except Exception as exc:
             print(f"[card-gen] 偏好 backend 构建失败 ({api_id}/{model}: {exc})，回退默认")
     # 默认: 直接构造 Anthropic backend, 失败则降级到 Vertex
     try:
-        from gm import _AnthropicBackend
+        from agents.gm import _AnthropicBackend
         return _AnthropicBackend(user_id=user_id)
     except Exception:
         pass
     try:
-        from gm import _VertexBackend
+        from agents.gm import _VertexBackend
         return _VertexBackend()
     except Exception as exc:
         raise RuntimeError(f"无可用 LLM backend: {exc}") from exc

@@ -21,7 +21,7 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 
-BASE = Path(__file__).parent
+BASE = Path(__file__).parent.parent  # rpg/tools_dsl/ → rpg/
 CONFIG_DIR = BASE / "config"
 MCP_CONFIG_FILE = CONFIG_DIR / "mcp_servers.json"
 USER_SKILL_DIR = BASE / "user_skills"
