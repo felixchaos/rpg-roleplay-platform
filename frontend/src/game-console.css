@@ -37,7 +37,8 @@
   flex-direction: column;
   height: 100%;
   flex-shrink: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   transition: opacity var(--m-base) var(--m-inout), transform var(--m-base) var(--m-out);
 }
 /* task 102E/103: 游戏左栏拖动手柄 (handle 在边缘内,避免被 overflow:hidden 切) */
@@ -966,7 +967,7 @@
 .gc-attach-label .muted-2 { font-size: 11px; }
 
 /* model / permission popover */
-.gc-pop-menu { width: 320px; }
+.gc-pop-menu { width: 320px; left: 0; }
 .gc-pop-list { list-style: none; padding: 6px; margin: 0; display: grid; gap: 2px; }
 .gc-pop-list button {
   display: grid;
