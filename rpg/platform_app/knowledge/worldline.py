@@ -59,6 +59,19 @@ def remove_worldline_variable(user_id: int, save_id: int, key: str) -> dict[str,
     return {"removed": key}
 
 
+def _db_select_worldline_variables(db, save_id: int) -> list:
+    """repository: 按 save_id 查所有 worldline_variables，返回 rows。"""
+    return db.execute(
+        """
+        select wv.* from worldline_variables wv
+        join game_sessions s on s.id = wv.session_id
+        where s.save_id = %s
+        order by wv.updated_at desc, wv.id desc
+        """,
+        (save_id,),
+    ).fetchall()
+
+
 def list_worldline_variables(user_id: int, save_id: int) -> dict[str, Any]:
     """前端面板用：列出某存档的所有 worldline 变量。"""
     init_db()
@@ -66,13 +79,5 @@ def list_worldline_variables(user_id: int, save_id: int) -> dict[str, Any]:
         save = db.execute("select * from game_saves where id = %s and user_id = %s", (save_id, user_id)).fetchone()
         if not save:
             raise ValueError("无权访问该存档")
-        rows = db.execute(
-            """
-            select wv.* from worldline_variables wv
-            join game_sessions s on s.id = wv.session_id
-            where s.save_id = %s
-            order by wv.updated_at desc, wv.id desc
-            """,
-            (save_id,),
-        ).fetchall()
+        rows = _db_select_worldline_variables(db, save_id)
     return {"items": [expose(r) for r in rows], "total": len(rows)}

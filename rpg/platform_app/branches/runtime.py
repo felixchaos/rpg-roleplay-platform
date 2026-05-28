@@ -250,21 +250,26 @@ def bootstrap_runtime_binding(user_id: int | None = None) -> dict[str, Any]:
     return _runtime_module.activate_state_snapshot(save["owner_id"], save["id"], commit["id"], commit_state(commit), commit["state_path"], ref_id=ref["id"])
 
 
+def _db_mark_checkout_dirty(db, save_id: int, runtime_state: dict[str, Any], snap_hash: str, turn: int) -> None:
+    """repository: 将 runtime_checkouts.dirty 置为 true 并更新 snapshot。"""
+    db.execute(
+        """
+        update runtime_checkouts
+           set state_snapshot = %s,
+               snapshot_hash = %s,
+               turn_runtime = %s,
+               dirty = (snapshot_hash <> %s OR turn_runtime <> %s),
+               row_version = row_version + 1,
+               updated_at = now()
+         where save_id = %s
+        """,
+        (Jsonb(runtime_state), snap_hash, turn, snap_hash, turn, save_id),
+    )
+
+
 def mark_runtime_dirty(save_id: int, runtime_state: dict[str, Any]) -> None:
     """Runtime state 已被改写、但尚未 commit 时调用。"""
     snap_hash = _state_snapshot_hash(runtime_state)
     turn = int(runtime_state.get("turn", 0)) if isinstance(runtime_state, dict) else 0
     with connect() as db:
-        db.execute(
-            """
-            update runtime_checkouts
-               set state_snapshot = %s,
-                   snapshot_hash = %s,
-                   turn_runtime = %s,
-                   dirty = (snapshot_hash <> %s OR turn_runtime <> %s),
-                   row_version = row_version + 1,
-                   updated_at = now()
-             where save_id = %s
-            """,
-            (Jsonb(runtime_state), snap_hash, turn, snap_hash, turn, save_id),
-        )
+        _db_mark_checkout_dirty(db, save_id, runtime_state, snap_hash, turn)

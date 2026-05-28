@@ -125,6 +125,43 @@ def _sync_session_state(db, session: dict[str, Any], book_id: int, user_id: int,
             )
 
 
+def _db_upsert_game_session(db, save_id: int, book_id: int, script_id: int, user_id: int, title: str, payload: dict[str, Any]):
+    """repository: upsert game_sessions 并返回 row。"""
+    return db.execute(
+        """
+        insert into game_sessions(
+          save_id, book_id, script_id, user_id, title, state,
+          memory_mode, permission_mode, worldline, turn
+        )
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        on conflict(save_id) do update set
+          book_id = excluded.book_id,
+          script_id = excluded.script_id,
+          title = excluded.title,
+          state = excluded.state,
+          memory_mode = excluded.memory_mode,
+          permission_mode = excluded.permission_mode,
+          worldline = excluded.worldline,
+          turn = excluded.turn,
+          row_version = game_sessions.row_version + 1,
+          updated_at = now()
+        returning *
+        """,
+        (
+            save_id,
+            book_id,
+            script_id,
+            user_id,
+            title,
+            Jsonb(payload),
+            (payload.get("memory") or {}).get("mode", "normal"),
+            (payload.get("permissions") or {}).get("mode", "full_access"),
+            Jsonb(payload.get("worldline") or {}),
+            int(payload.get("turn") or 0),
+        ),
+    ).fetchone()
+
+
 def ensure_game_session(user_id: int, save_id: int, state: dict[str, Any] | None = None) -> dict[str, Any]:
     init_db()
     with connect() as db:
@@ -142,39 +179,10 @@ def ensure_game_session(user_id: int, save_id: int, state: dict[str, Any] | None
         script = db.execute("select * from scripts where id = %s", (save["script_id"],)).fetchone()
         book = _ensure_book(db, script)
         payload = state or {}
-        session = db.execute(
-            """
-            insert into game_sessions(
-              save_id, book_id, script_id, user_id, title, state,
-              memory_mode, permission_mode, worldline, turn
-            )
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            on conflict(save_id) do update set
-              book_id = excluded.book_id,
-              script_id = excluded.script_id,
-              title = excluded.title,
-              state = excluded.state,
-              memory_mode = excluded.memory_mode,
-              permission_mode = excluded.permission_mode,
-              worldline = excluded.worldline,
-              turn = excluded.turn,
-              row_version = game_sessions.row_version + 1,
-              updated_at = now()
-            returning *
-            """,
-            (
-                save_id,
-                book["id"],
-                save["script_id"],
-                user_id,
-                save["title"] or save["script_title"],
-                Jsonb(payload),
-                (payload.get("memory") or {}).get("mode", "normal"),
-                (payload.get("permissions") or {}).get("mode", "full_access"),
-                Jsonb(payload.get("worldline") or {}),
-                int(payload.get("turn") or 0),
-            ),
-        ).fetchone()
+        session = _db_upsert_game_session(
+            db, save_id, book["id"], save["script_id"], user_id,
+            save["title"] or save["script_title"], payload,
+        )
         _sync_session_state(db, session, book["id"], user_id, payload)
     return expose(session)
 
