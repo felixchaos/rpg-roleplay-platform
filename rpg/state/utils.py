@@ -1,5 +1,6 @@
 """state/utils.py — 通用工具函数 (_deep_update, _latest_assistant_text, _hit_score, _player_action_text)"""
 from __future__ import annotations
+
 import re
 
 from state.parsers import _clean_item

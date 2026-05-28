@@ -1,5 +1,6 @@
 """agents.gm.backends.anthropic — Anthropic backend."""
 from __future__ import annotations
+
 import json
 import os
 import re
@@ -12,6 +13,7 @@ class _AnthropicBackend:
     # Opus 4.7 是 frontier 但成本 5×，留给用户显式选。
     def __init__(self, model: str = "claude-sonnet-4-6", user_id: int | None = None):
         from anthropic import Anthropic
+
         from platform_app.user_credentials import resolve_api_key
         result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
         key = result.get("key") or os.environ.get("EMBED_API_KEY")
@@ -56,8 +58,7 @@ class _AnthropicBackend:
             system=system,
             messages=messages,
         ) as stream:
-            for text in stream.text_stream:
-                yield text
+            yield from stream.text_stream
             # stream 结束后从 final_message 抽 usage
             try:
                 final = stream.get_final_message()
@@ -199,7 +200,7 @@ class _AnthropicBackend:
                 yield {"type": "text", "text": chunk}
             return
 
-        for iteration in range(max_iterations):
+        for _iteration in range(max_iterations):
             pending_uses: list[dict[str, Any]] = []
             accumulated_blocks: list[dict[str, Any]] = []
             current_text = ""

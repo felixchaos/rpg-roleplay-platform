@@ -15,7 +15,6 @@ from pathlib import Path
 
 from tests.helpers import cleanup_test_users, make_client, register_user
 
-
 REPO = Path(__file__).resolve().parents[2]
 TEST_NOVEL = REPO / "output" / "playwright" / "timeline_set_test_novel.md"
 

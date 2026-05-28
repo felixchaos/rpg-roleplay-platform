@@ -1,17 +1,19 @@
 """console_assistant.streaming — stream_chat 主入口。"""
 from __future__ import annotations
 
-from typing import Any, Callable, Iterator
-
-from tools_dsl.command_dispatcher import ToolCallEnvelope
+from collections.abc import Callable, Iterator
+from typing import Any
 
 from console_assistant.conversations import (
-    _get_or_create_conversation, _new_trace_id, _trim_messages,
+    _get_or_create_conversation,
+    _new_trace_id,
+    _trim_messages,
 )
 from console_assistant.llm_loop import _run_llm_loop, _sse_event
 
 # re-export for backward compat (tests / routes import _to_backend_messages from streaming indirectly)
 from console_assistant.llm_loop import _to_backend_messages as _to_backend_messages  # noqa: F401
+from tools_dsl.command_dispatcher import ToolCallEnvelope
 
 
 def stream_chat(

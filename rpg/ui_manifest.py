@@ -26,7 +26,6 @@ from tools_dsl.command_dispatcher import (
     get_registry,
 )
 
-
 # ────────────────────────────────────────────────────────────
 # 工具 → (intent_keywords, side_effect_topics) 标签表
 # ────────────────────────────────────────────────────────────
@@ -463,7 +462,11 @@ def ui_invoke(user_id: int, args: dict) -> str:
     # 延迟 import 防循环
     from tools_dsl.command_dispatcher import (
         ToolCallEnvelope as _Env,
+    )
+    from tools_dsl.command_dispatcher import (
         ToolDispatcher as _Disp,
+    )
+    from tools_dsl.command_dispatcher import (
         get_registry as _get_reg,
     )
 

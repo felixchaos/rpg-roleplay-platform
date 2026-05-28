@@ -20,7 +20,6 @@ from typing import Any
 
 from state import SAVE_FILE
 
-
 BASE = Path(__file__).resolve().parents[1]
 RUNTIME_DIR = BASE / "platform_data" / "runtime"
 LEGACY_RUNTIME_FILE = BASE / "platform_data" / "runtime.json"
@@ -99,8 +98,9 @@ def _db_read_runtime(user_id: int) -> dict[str, Any]:
 
 
 def _db_write_runtime(payload: dict[str, Any]) -> None:
-    from platform_app.db import connect, init_db
     from psycopg.types.json import Jsonb
+
+    from platform_app.db import connect, init_db
     init_db()
     user_id = int(payload.get("user_id") or 0)
     if not user_id:

@@ -1,16 +1,17 @@
 """rules.py — 5E 规则模组与战斗路由 (/api/rules/*)。"""
 from __future__ import annotations
-from fastapi import APIRouter, Request, HTTPException
+
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from schemas.rules import (
-    RulesModuleStartRequest,
-    RulesModuleLaunchRequest,
-    RulesMoveRequest,
     RulesActionRequest,
-    RulesEncounterStartRequest,
-    RulesEncounterNextRequest,
     RulesEncounterEnemyRequest,
+    RulesEncounterNextRequest,
+    RulesEncounterStartRequest,
+    RulesModuleLaunchRequest,
+    RulesModuleStartRequest,
+    RulesMoveRequest,
     RulesSuggestRequest,
 )
 
@@ -20,8 +21,8 @@ router = APIRouter()
 @router.get("/api/rules/modules")
 async def api_rules_modules(request: Request) -> JSONResponse:
     """列出可用的 5E-compatible 冒险模组。"""
-    from app import _require_api_user
     import modules as _rules_module_registry
+    from app import _require_api_user
     _require_api_user(request)
     return JSONResponse({"ok": True, "modules": _rules_module_registry.list_modules()})
 
@@ -31,8 +32,12 @@ async def api_rules_module_start(body: RulesModuleStartRequest, request: Request
     """低层原语：把模组加载到当前激活的 save，会直接 mutate 该 save state。
     task 87 Phase 6: 走 dispatcher module_load 工具(destructive,UI 直触发)。"""
     from app import (
-        _require_api_user, _payload, _ensure_loaded, _resolve_persist_target,
-        _persist_runtime_checkpoint, _rules_payload,
+        _ensure_loaded,
+        _payload,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
+        _rules_payload,
     )
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
@@ -69,8 +74,14 @@ async def api_rules_module_launch(body: RulesModuleLaunchRequest, request: Reque
     绝不 mutate 当前小说/普通 save。已注册用户必填（匿名不允许，避免污染本地默认 save）。
     """
     from app import (
-        _require_api_user, _payload, _ensure_loaded, _invalidate_user_cache,
-        _persist_runtime_checkpoint, _rules_payload, SAVE_FILE, GameState,
+        SAVE_FILE,
+        GameState,
+        _ensure_loaded,
+        _invalidate_user_cache,
+        _payload,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _rules_payload,
     )
     api_user = _require_api_user(request)
     if not api_user or not api_user.get("id"):
@@ -89,7 +100,7 @@ async def api_rules_module_launch(body: RulesModuleLaunchRequest, request: Reque
     try:
         bundle = _rules_module_registry.load_module(module_id)
     except Exception as exc:
-        raise HTTPException(status_code=404, detail=f"未知模组 {module_id}：{exc}")
+        raise HTTPException(status_code=404, detail=f"未知模组 {module_id}：{exc}") from exc
     manifest = bundle.get("manifest") or {}
     title = custom_title or manifest.get("name_cn") or manifest.get("name") or module_id
 
@@ -119,8 +130,9 @@ async def api_rules_module_launch(body: RulesModuleLaunchRequest, request: Reque
         raise HTTPException(status_code=400, detail=res.get("error", "start_module 失败"))
 
     # 把初始 snapshot 写入新 save
-    from platform_app import branches as _branches
     from psycopg.types.json import Jsonb as _Jsonb
+
+    from platform_app import branches as _branches
     with _db_connect() as db:
         save_row = db.execute(
             """
@@ -152,7 +164,7 @@ async def api_rules_module_launch(body: RulesModuleLaunchRequest, request: Reque
 @router.get("/api/rules/scene")
 async def api_rules_scene(request: Request) -> JSONResponse:
     """返回当前 scene / player_character / encounter / dice_log 快照。"""
-    from app import _require_api_user, _ensure_loaded, _rules_payload
+    from app import _ensure_loaded, _require_api_user, _rules_payload
     api_user = _require_api_user(request)
     state = _ensure_loaded(api_user)
     return JSONResponse({"ok": True, "rules": _rules_payload(state)})
@@ -162,9 +174,14 @@ async def api_rules_scene(request: Request) -> JSONResponse:
 async def api_rules_move(body: RulesMoveRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher module_enter_room 工具。"""
     from app import (
-        _require_api_user, _ensure_loaded, _resolve_persist_target,
-        _persist_runtime_checkpoint, _rules_payload,
-        _clear_pending_questions_after_rule_action, _append_rules_receipt, _room_receipt,
+        _append_rules_receipt,
+        _clear_pending_questions_after_rule_action,
+        _ensure_loaded,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
+        _room_receipt,
+        _rules_payload,
     )
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
@@ -195,9 +212,14 @@ async def api_rules_move(body: RulesMoveRequest, request: Request) -> JSONRespon
 async def api_rules_action(body: RulesActionRequest, request: Request) -> JSONResponse:
     """通用规则动作执行入口。根据 body.kind 路由到具体规则函数。"""
     from app import (
-        _require_api_user, _ensure_loaded, _persist_runtime_checkpoint,
-        _rules_payload, _execute_rules_action,
-        _clear_pending_questions_after_rule_action, _append_rules_receipt, _action_receipt,
+        _action_receipt,
+        _append_rules_receipt,
+        _clear_pending_questions_after_rule_action,
+        _ensure_loaded,
+        _execute_rules_action,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _rules_payload,
     )
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
@@ -219,9 +241,14 @@ async def api_rules_action(body: RulesActionRequest, request: Request) -> JSONRe
 async def api_rules_encounter_start(body: RulesEncounterStartRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher combat_start 工具。"""
     from app import (
-        _require_api_user, _ensure_loaded, _resolve_persist_target,
-        _persist_runtime_checkpoint, _rules_payload,
-        _clear_pending_questions_after_rule_action, _append_rules_receipt, _encounter_receipt,
+        _append_rules_receipt,
+        _clear_pending_questions_after_rule_action,
+        _encounter_receipt,
+        _ensure_loaded,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
+        _rules_payload,
     )
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
@@ -254,9 +281,14 @@ async def api_rules_encounter_start(body: RulesEncounterStartRequest, request: R
 async def api_rules_encounter_next(body: RulesEncounterNextRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher combat_next_turn 工具。"""
     from app import (
-        _require_api_user, _ensure_loaded, _resolve_persist_target,
-        _persist_runtime_checkpoint, _rules_payload,
-        _clear_pending_questions_after_rule_action, _append_rules_receipt, _encounter_receipt,
+        _append_rules_receipt,
+        _clear_pending_questions_after_rule_action,
+        _encounter_receipt,
+        _ensure_loaded,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
+        _rules_payload,
     )
     api_user = _require_api_user(request)
     state = _ensure_loaded(api_user)
@@ -281,9 +313,14 @@ async def api_rules_encounter_next(body: RulesEncounterNextRequest, request: Req
 async def api_rules_encounter_enemy(body: RulesEncounterEnemyRequest, request: Request) -> JSONResponse:
     """敌方回合：task 87 Phase 6 走 dispatcher combat_enemy_attack。"""
     from app import (
-        _require_api_user, _ensure_loaded, _resolve_persist_target,
-        _persist_runtime_checkpoint, _rules_payload,
-        _clear_pending_questions_after_rule_action, _append_rules_receipt, _encounter_receipt,
+        _append_rules_receipt,
+        _clear_pending_questions_after_rule_action,
+        _encounter_receipt,
+        _ensure_loaded,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
+        _rules_payload,
     )
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
@@ -318,7 +355,7 @@ async def api_rules_encounter_enemy(body: RulesEncounterEnemyRequest, request: R
 @router.post("/api/rules/suggest")
 async def api_rules_suggest(body: RulesSuggestRequest, request: Request) -> JSONResponse:
     """从玩家自由文本输入推断候选规则动作（轻量本地匹配，用于前端候选按钮）。"""
-    from app import _require_api_user, _ensure_loaded
+    from app import _ensure_loaded, _require_api_user
     from rules_bridge import suggest_rule_actions as _rb_suggest_rule_actions
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)

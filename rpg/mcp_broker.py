@@ -28,9 +28,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 # ── 全局 server 注册表（运行时） ──────────────────────────────────────────────
-_RUNNING: dict[str, "MCPServerConn"] = {}
+_RUNNING: dict[str, MCPServerConn] = {}
 _LOCK = threading.RLock()
 
 DEFAULT_INIT_TIMEOUT = 8       # 启动 + 握手超时
@@ -165,7 +164,7 @@ class MCPServerConn:
                 if remaining <= 0:
                     raise TimeoutError(f"等待 {method} 响应超时")
                 if self._closed or not self.is_alive():
-                    raise RuntimeError(f"MCP server 进程退出")
+                    raise RuntimeError("MCP server 进程退出")
                 self._pending_lock.wait(timeout=min(remaining, 1.0))
             resp = self._pending.pop(req_id)
         if "error" in resp:
@@ -328,7 +327,7 @@ def _health_loop():
         try:
             with _LOCK:
                 servers = list(_RUNNING.items())
-            for sid, conn in servers:
+            for _sid, conn in servers:
                 if _HEALTH_STOP.is_set():
                     break
                 if not conn.is_alive():

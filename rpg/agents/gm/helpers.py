@@ -1,5 +1,6 @@
 """agents.gm.helpers — 共享工具函数 (format_tools, curator tool_use, text_marker_loop)."""
 from __future__ import annotations
+
 import json
 import re
 from collections.abc import Iterator
@@ -123,7 +124,7 @@ def _openai_text_marker_loop(
     tail_keep = max(len(START), len(END)) - 1
     accumulated_text = ""
 
-    for iteration in range(max_iterations):
+    for _iteration in range(max_iterations):
         buffer = ""
         in_tool = False
         tool_invoked = False

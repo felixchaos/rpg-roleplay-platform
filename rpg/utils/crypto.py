@@ -19,10 +19,9 @@ import os
 import secrets
 from pathlib import Path
 
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives import hashes
-
 
 _MASTER_KEY_ENV = "RPG_MASTER_KEY"
 # utils/crypto.py 在 rpg/utils/ 下，platform_data/ 在 rpg/ 下，需要上溯两级
@@ -77,7 +76,7 @@ def _derive_user_key(user_id: int, api_id: str) -> bytes:
         algorithm=hashes.SHA256(),
         length=32,
         salt=str(int(user_id)).encode("utf-8"),
-        info=f"api:{api_id}".encode("utf-8"),
+        info=f"api:{api_id}".encode(),
     ).derive(master)
 
 
@@ -89,7 +88,7 @@ def encrypt_api_key(plaintext: str, user_id: int, api_id: str) -> bytes:
     key = _derive_user_key(user_id, api_id)
     aes = AESGCM(key)
     nonce = secrets.token_bytes(_NONCE_LEN)
-    aad = f"user={user_id}&api={api_id}".encode("utf-8")
+    aad = f"user={user_id}&api={api_id}".encode()
     ct = aes.encrypt(nonce, plaintext.encode("utf-8"), aad)
     return nonce + ct  # ct 已含 16 字节 tag 在末尾
 
@@ -103,7 +102,7 @@ def decrypt_api_key(blob: bytes | memoryview | None, user_id: int, api_id: str) 
         return ""
     nonce = raw[:_NONCE_LEN]
     ct = raw[_NONCE_LEN:]
-    aad = f"user={user_id}&api={api_id}".encode("utf-8")
+    aad = f"user={user_id}&api={api_id}".encode()
     try:
         key = _derive_user_key(user_id, api_id)
         return AESGCM(key).decrypt(nonce, ct, aad).decode("utf-8")

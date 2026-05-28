@@ -12,8 +12,9 @@ demo.py — 主入口：CLI 游戏循环
     q / 退出 — 存档并退出
 """
 from __future__ import annotations
-import sys
+
 import os
+import sys
 from pathlib import Path
 
 # 加载 .env（位于项目根目录，rpg/ 的上一级）
@@ -23,9 +24,9 @@ try:
 except ImportError:
     pass  # dotenv 不可用时直接读环境变量
 
-from state     import GameState
-from retrieval import retrieve_context
 from agents.gm import GameMaster
+from retrieval import retrieve_context
+from state import GameState
 
 DIVIDER   = "─" * 52
 THIN_DIV  = "·" * 52

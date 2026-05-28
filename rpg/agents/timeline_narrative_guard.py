@@ -19,7 +19,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 # 禁词模式 — 涵盖"穿越/重置/醒来发现/时间倒流"类过渡叙事的常见表达。
 # 用 regex 而非纯字符串,捕获各种变体(『时间被一双看不见的手拨回』『时钟被拨回最初』...)。
 _FORBIDDEN_PATTERNS: list[tuple[str, str]] = [

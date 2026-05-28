@@ -14,7 +14,7 @@ Novel providers — 只在 manifest.kind == 'novel_adaptation' 时启用。
 """
 from __future__ import annotations
 
-from .base import ContextProvider, ContextContribution, Demand, ProviderServices
+from .base import ContextContribution, ContextProvider, Demand, ProviderServices
 from .registry import register_provider
 
 
@@ -143,8 +143,11 @@ class NovelCharactersProvider(ContextProvider):
         # 委托给 context_engine 现有的 character cards 逻辑（避免重新实现 NPC 卡选）。
         try:
             from context_engine import (
-                _load_characters, _player_card, _active_character_cards, _strip_card_text,
+                _active_character_cards,
+                _load_characters,
+                _player_card,
                 _recent_text,
+                _strip_card_text,
             )
         except Exception as exc:
             return ContextContribution(
@@ -191,7 +194,7 @@ class NovelCharactersProvider(ContextProvider):
             kind="novel_characters",
             priority=80,
             layers=layers,
-            tokens_estimate=sum(len(l["content"]) for l in layers) // 2,
+            tokens_estimate=sum(len(lyr["content"]) for lyr in layers) // 2,
             debug={"cards_count": len(npc_cards)},
         )
 
@@ -208,7 +211,10 @@ class NovelWorldbookProvider(ContextProvider):
     def collect(self, state, manifest, demand, services) -> ContextContribution:
         try:
             from context_engine import (
-                _load_world, _active_worldbook, _strip_worldbook_text, _recent_text,
+                _active_worldbook,
+                _load_world,
+                _recent_text,
+                _strip_worldbook_text,
             )
         except Exception as exc:
             return ContextContribution(

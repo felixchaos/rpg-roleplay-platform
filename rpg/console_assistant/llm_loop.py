@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Iterator
-
-from tools_dsl.command_dispatcher import ToolCallEnvelope, ToolResult
+from collections.abc import Callable, Iterator
+from typing import Any
 
 from console_assistant.conversations import _trim_messages
 from console_assistant.prompts import build_system_prompt
 from console_assistant.tools import dispatch_assistant_tool, get_tool_spec, list_assistant_tools
+from tools_dsl.command_dispatcher import ToolCallEnvelope, ToolResult
 
 
 def _sse_event(event: str, data: Any) -> str:

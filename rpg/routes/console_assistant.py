@@ -1,13 +1,15 @@
 """console_assistant.py — 侧栏控制台助手路由 (/api/console_assistant/*)。"""
 from __future__ import annotations
+
 import json
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from schemas.console_assistant import (
-    ConsoleAssistantDeleteConversationRequest,
     ConsoleAssistantChatRequest,
     ConsoleAssistantConfirmRequest,
+    ConsoleAssistantDeleteConversationRequest,
 )
 
 router = APIRouter()
@@ -69,7 +71,7 @@ async def api_console_assistant_chat(body: ConsoleAssistantChatRequest, request:
     body: { message: str, conversation_id?: str, page_context?: dict }
     SSE: meta / token / tool_call / tool_result / confirmation_required / error / done
     """
-    from app import _require_api_user, _ensure_loaded, _resolve_console_assistant_backend
+    from app import _ensure_loaded, _require_api_user, _resolve_console_assistant_backend
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     message = str(body_dict.get("message") or "").strip()
@@ -138,7 +140,7 @@ async def api_console_assistant_confirm(body: ConsoleAssistantConfirmRequest, re
     旧 JSON 协议已弃用 — 修复:用户点确认后 LLM 必须基于工具结果续写,
     否则对话直接断在工具结果。
     """
-    from app import _require_api_user, _ensure_loaded, _resolve_console_assistant_backend
+    from app import _ensure_loaded, _require_api_user, _resolve_console_assistant_backend
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     conversation_id = str(body_dict.get("conversation_id") or "").strip()
@@ -148,7 +150,7 @@ async def api_console_assistant_confirm(body: ConsoleAssistantConfirmRequest, re
     if not conversation_id or not call_id or decision not in {"approve", "reject"}:
         return StreamingResponse(
             iter([f"event: error\ndata: {json.dumps({'message':'conversation_id / call_id / decision 必填; decision ∈ {approve,reject}'}, ensure_ascii=False)}\n\n",
-                  f"event: done\ndata: {{}}\n\n"]),
+                  "event: done\ndata: {}\n\n"]),
             media_type="text/event-stream",
             status_code=400,
         )
@@ -157,7 +159,7 @@ async def api_console_assistant_confirm(body: ConsoleAssistantConfirmRequest, re
     if not user_id:
         return StreamingResponse(
             iter([f"event: error\ndata: {json.dumps({'message':'需要登录'}, ensure_ascii=False)}\n\n",
-                  f"event: done\ndata: {{}}\n\n"]),
+                  "event: done\ndata: {}\n\n"]),
             media_type="text/event-stream",
             status_code=401,
         )
@@ -175,7 +177,7 @@ async def api_console_assistant_confirm(body: ConsoleAssistantConfirmRequest, re
     except Exception as exc:
         return StreamingResponse(
             iter([f"event: error\ndata: {json.dumps({'message':f'backend 初始化失败: {exc}'}, ensure_ascii=False)}\n\n",
-                  f"event: done\ndata: {{}}\n\n"]),
+                  "event: done\ndata: {}\n\n"]),
             media_type="text/event-stream",
         )
 

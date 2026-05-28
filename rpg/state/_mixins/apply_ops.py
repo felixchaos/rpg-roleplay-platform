@@ -12,26 +12,40 @@ update_time / set_user_variable / confirm_time_jump / mark_user_locked 等),
 通过多继承 + MRO 解析。
 """
 from __future__ import annotations
+
 import re
 import secrets
 from datetime import datetime
-from timeline_state import is_time_key, detect_time_directives
 
-from state.parsers import _clean_item, _split_label, _split_items, _parse_assignment, _split_relation
 from state.extractors import (
-    _extract_set_directive, _extract_set_assignments,
-    _extract_location_override, _extract_set_time_targets,
     _extract_explicit_time_updates,
+    _extract_location_override,
+    _extract_set_assignments,
+    _extract_set_directive,
+    _extract_set_time_targets,
 )
-from state.time_ops import _gm_is_asking_for_time_confirm
-from state.permissions import _normalize_permission_mode, _permission_label
 from state.json_ops import _extract_json_state_ops
 from state.labels import _risk_label, _validation_label
-from state.path_ops import (
-    _write_path_hard_forbidden, _write_path_rules_managed,
-    _write_path_module_managed, _module_scene_active, _write_path_allowed,
-    _write_path_kind, _set_path, _get_path,
+from state.parsers import (
+    _clean_item,
+    _parse_assignment,
+    _split_items,
+    _split_label,
+    _split_relation,
 )
+from state.path_ops import (
+    _get_path,
+    _module_scene_active,
+    _set_path,
+    _write_path_allowed,
+    _write_path_hard_forbidden,
+    _write_path_kind,
+    _write_path_module_managed,
+    _write_path_rules_managed,
+)
+from state.permissions import _normalize_permission_mode, _permission_label
+from state.time_ops import _gm_is_asking_for_time_confirm
+from timeline_state import detect_time_directives, is_time_key
 
 
 class ApplyOpsMixin:
@@ -353,10 +367,12 @@ class ApplyOpsMixin:
         # task 87 Phase 6: dispatcher 路由
         if str(source or "").startswith("gm") and not force:
             try:
-                from state_write_context import get_context as _get_chat_ctx
                 from state_op_tool_map import map_op_to_tool
+                from state_write_context import get_context as _get_chat_ctx
                 from tools_dsl.command_dispatcher import (
-                    ToolCallEnvelope, ToolDispatcher, get_registry,
+                    ToolCallEnvelope,
+                    ToolDispatcher,
+                    get_registry,
                 )
                 _ctx = _get_chat_ctx()
                 if _ctx is not None:

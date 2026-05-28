@@ -18,8 +18,7 @@ from __future__ import annotations
 import copy
 from typing import Any, Optional
 
-from .base import ContextProvider, ContextContribution, Demand, ProviderServices
-
+from .base import ContextContribution, ContextProvider, Demand, ProviderServices
 
 # ── 注册表 ───────────────────────────────────────────────────────
 
@@ -33,7 +32,7 @@ def register_provider(provider: ContextProvider) -> None:
     _REGISTRY[provider.id] = provider
 
 
-def get_provider(provider_id: str) -> Optional[ContextProvider]:
+def get_provider(provider_id: str) -> ContextProvider | None:
     return _REGISTRY.get(provider_id)
 
 
@@ -123,7 +122,7 @@ DEFAULT_FREEFORM_MANIFEST: dict = {
 
 # ── ContentPack Manifest 解析 ────────────────────────────────────
 
-def resolve_content_pack(state, script_id: Optional[int] = None) -> dict:
+def resolve_content_pack(state, script_id: int | None = None) -> dict:
     """根据当前 session state 推断 active ContentPack manifest。
 
     返回 manifest dict，必含 kind / context_providers / retrieval_policy / gm_policy。
@@ -181,7 +180,7 @@ def _normalize_manifest(m: dict) -> dict:
     return out
 
 
-def _load_full_module_manifest(module_id: str) -> Optional[dict]:
+def _load_full_module_manifest(module_id: str) -> dict | None:
     """从 rpg/modules/<id>/module.json 加载完整 manifest（含 context_providers 等）。"""
     try:
         import modules as _module_registry

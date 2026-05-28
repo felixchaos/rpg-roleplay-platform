@@ -14,10 +14,10 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from schemas.permissions import (
-    PermissionsRequest,
-    PendingWriteRequest,
-    QuestionClearRequest,
     DebugPendingQuestionRequest,
+    PendingWriteRequest,
+    PermissionsRequest,
+    QuestionClearRequest,
 )
 
 router = APIRouter()
@@ -26,7 +26,13 @@ router = APIRouter()
 @router.post("/api/permissions")
 async def api_permissions(body: PermissionsRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 敏感权限切换走 dispatcher (origin=ui_button)。"""
-    from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded, _persist_runtime_checkpoint
+    from app import (
+        _ensure_loaded,
+        _payload,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
+    )
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
@@ -53,7 +59,13 @@ async def api_pending_write(body: PendingWriteRequest, request: Request) -> JSON
     /set 后端 body.get("index", -1) = -1 → "待审写入不存在" → 整个审批流死。
     现在按 id 优先（稳定），index/decision 作 fallback。
     """
-    from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded, _persist_runtime_checkpoint
+    from app import (
+        _ensure_loaded,
+        _payload,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
+    )
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
@@ -102,7 +114,13 @@ async def api_question_clear(body: QuestionClearRequest, request: Request) -> JS
     """回答(或跳过)一条 GM 询问。{id, choice?} 或 {index, choice?}。
     task 87 Phase 6: 走 dispatcher dismiss_pending_question。choice 走老路径
     (clear_pending_question 支持记录玩家选择,工具暂不支持 choice)。"""
-    from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded, _persist_runtime_checkpoint
+    from app import (
+        _ensure_loaded,
+        _payload,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
+    )
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
@@ -131,7 +149,7 @@ async def api_question_clear(body: QuestionClearRequest, request: Request) -> JS
 @router.post("/api/debug/pending-question")
 async def api_debug_pending_question(body: DebugPendingQuestionRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: debug 注入也走 dispatcher 的 inject_pending_question 工具。"""
-    from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded
+    from app import _ensure_loaded, _payload, _require_api_user, _resolve_persist_target
     api_user = _require_api_user(request, admin=True)
     if not os.getenv("RPG_DEBUG_UI"):
         return JSONResponse({"ok": False, "error": "debug disabled"}, status_code=404)

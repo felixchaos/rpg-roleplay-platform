@@ -30,8 +30,8 @@ import json
 import os
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -125,7 +125,7 @@ def main() -> int:
     args = ap.parse_args()
 
     token = args.token or get_admin_session_token()
-    print(f"== task 107I: 长游戏 GM 失忆验证 ==")
+    print("== task 107I: 长游戏 GM 失忆验证 ==")
     print(f"目标: 跑 {args.turns} turn, 验证 phase digest 自动聚合 + GM 能回忆 turn 5")
     print(f"backend: {BASE}, user: {args.user_id}")
 
@@ -193,7 +193,7 @@ def main() -> int:
         memory_check = False
 
     # 总结
-    print(f"\n==== 结果 ====")
+    print("\n==== 结果 ====")
     print(f"  turns 跑通:        {successes}/{args.turns}")
     print(f"  phase 自动聚合:    {'PASS' if phase_check else 'FAIL'} ({new_phases} 新)")
     print(f"  anchor 自动记录:   {'PASS' if anchor_check else 'FAIL'} ({new_anchors} 新)")

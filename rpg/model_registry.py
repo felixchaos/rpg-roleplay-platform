@@ -13,7 +13,6 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-
 BASE = Path(__file__).parent
 MODEL_CONFIG_FILE = BASE / "config" / "model_catalog.json"
 
@@ -194,7 +193,7 @@ def load_model_catalog() -> dict[str, Any]:
         save_model_catalog(catalog)
         return catalog
     try:
-        with open(MODEL_CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(MODEL_CONFIG_FILE, encoding="utf-8") as f:
             data = json.load(f)
     except Exception:
         data = {}

@@ -25,7 +25,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 PROJECT = Path(__file__).resolve().parents[2]
 BG_JSX = (PROJECT / "frontend" / "src" / "branch-graph.jsx").read_text(encoding="utf-8")
 GAME_APP = (PROJECT / "frontend" / "src" / "game-app.jsx").read_text(encoding="utf-8")

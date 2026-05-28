@@ -100,9 +100,10 @@ async def api_import_job_stream(request: Request, job_id: str):
     每秒检测一次 DB，状态/阶段/进度变化时推 event；任务结束（done/failed/cancelled）后退出。
     """
     user = require_user(request)
-    from .. import import_pipeline
-    import json as _json
     import asyncio as _asyncio
+    import json as _json
+
+    from .. import import_pipeline
 
     async def gen():
         last_snapshot = None

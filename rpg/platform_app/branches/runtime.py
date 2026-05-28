@@ -8,15 +8,17 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from platform_app import runtime as _runtime_module
 from platform_app.branches._helpers import (
     BRANCH_STATE_DIR,
+    _snapshot_quality,
     commit_state,
     load_state,
     rough_summary,
     round_preview,
     write_runtime_snapshot,
-    _snapshot_quality,
 )
+from platform_app.branches._runtime_repo import _db_mark_checkout_dirty
 from platform_app.branches.commits import _insert_commit, _state_snapshot_hash
 from platform_app.branches.refs import (
     _find_or_create_ref_for_commit,
@@ -26,8 +28,6 @@ from platform_app.branches.refs import (
 )
 from platform_app.branches.summary import schedule_llm_summary
 from platform_app.db import connect, expose, init_db
-from platform_app import runtime as _runtime_module
-from platform_app.branches._runtime_repo import _db_mark_checkout_dirty
 
 
 def record_runtime_turn(

@@ -11,7 +11,6 @@ from chapter_splitter import chapter_splitter
 from .db import connect, expose, init_db, limit_value, page_payload
 from .library import decode_upload, safe_filename, unique_path
 
-
 BASE = Path(__file__).resolve().parents[1]
 SCRIPT_ROOT = BASE / "platform_data" / "scripts"
 UPLOAD_CHUNK_ROOT = BASE / "platform_data" / "upload_chunks"
@@ -98,7 +97,7 @@ def import_script(
         try:
             __import__("re").compile(custom_pattern)
         except Exception as exc:
-            raise ValueError(f"custom_pattern 不是合法正则：{exc}")
+            raise ValueError(f"custom_pattern 不是合法正则：{exc}") from exc
 
     chapters, report = chapter_splitter.split_chapters_with_report(
         cleaned,
@@ -210,6 +209,7 @@ def _schedule_knowledge_sync(user_id: int, script_id: int) -> str:
     失败方回查同 (user, script) 拿到对方的 job_id 返回。
     """
     import secrets
+
     from .db import connect, init_db
     init_db()
     job_id = f"ks_{script_id}_{secrets.token_hex(6)}"
@@ -306,9 +306,10 @@ def _claim_pending_job(job_id: str) -> dict[str, Any] | None:
 
 def _run_sync_job(job_id: str) -> None:
     """worker 入口：必须先 _claim_pending_job 原子领取，领不到直接退出。"""
+    from psycopg.types.json import Jsonb
+
     from . import knowledge
     from .db import connect, init_db
-    from psycopg.types.json import Jsonb
     init_db()
 
     claim = _claim_pending_job(job_id)
@@ -557,7 +558,7 @@ def preview_split(
         try:
             __import__("re").compile(custom_pattern)
         except Exception as exc:
-            raise ValueError(f"custom_pattern 不是合法正则：{exc}")
+            raise ValueError(f"custom_pattern 不是合法正则：{exc}") from exc
 
     chapters, report = chapter_splitter.split_chapters_with_report(
         cleaned, split_rule=split_rule or "auto",
@@ -644,7 +645,7 @@ def resplit_script(
         try:
             __import__("re").compile(custom_pattern)
         except Exception as exc:
-            raise ValueError(f"custom_pattern 不是合法正则：{exc}")
+            raise ValueError(f"custom_pattern 不是合法正则：{exc}") from exc
 
     text, encoding = chapter_splitter.decode_bytes(raw)
     cleaned = chapter_splitter.clean_text(text)
@@ -691,8 +692,8 @@ def resplit_script(
 # ══════════════════════════════════════════════════════════════════════
 #  分片上传（大文件 stream 到磁盘，避免 base64 撑爆内存）
 # ══════════════════════════════════════════════════════════════════════
-import secrets as _secrets
 import json as _json
+import secrets as _secrets
 import time as _t
 
 
@@ -800,13 +801,17 @@ def update_chapter(user_id: int, script_id: int, chapter_index: int, *,
             raise ValueError("无权访问该剧本")
         sets, params = [], []
         if title is not None:
-            sets.append("title = %s"); params.append(str(title)[:200])
+            sets.append("title = %s")
+            params.append(str(title)[:200])
         if content is not None:
             new_content = str(content)
-            sets.append("content = %s"); params.append(new_content)
-            sets.append("word_count = %s"); params.append(len(new_content))
+            sets.append("content = %s")
+            params.append(new_content)
+            sets.append("word_count = %s")
+            params.append(len(new_content))
         if volume_title is not None:
-            sets.append("volume_title = %s"); params.append(str(volume_title)[:200])
+            sets.append("volume_title = %s")
+            params.append(str(volume_title)[:200])
         if not sets:
             raise ValueError("没有要更新的字段")
         sets.append("updated_at = now()")

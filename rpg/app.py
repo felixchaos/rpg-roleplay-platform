@@ -33,12 +33,24 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from agents.context_agent import run_context_agent
 from agents.gm import GameMaster
 from context_engine import build_context_bundle
-from agents.context_agent import run_context_agent
-from model_registry import delete_model, load_model_catalog, selected_model, select_model, upsert_api, upsert_model
+from model_registry import (
+    delete_model,
+    load_model_catalog,
+    select_model,
+    selected_model,
+    upsert_api,
+    upsert_model,
+)
+from platform_app import branches as platform_branches
+from platform_app import knowledge as platform_knowledge
+from platform_app import runtime as platform_runtime
+from platform_app.api import current_user as platform_current_user
+from platform_app.api import router as platform_router
 from retrieval import retrieve_context
-from state import GameState, SAVE_FILE, strip_json_state_ops
+from state import SAVE_FILE, GameState, strip_json_state_ops
 from tools_dsl.tool_registry import (
     delete_mcp_server,
     import_skill_bundle,
@@ -47,11 +59,6 @@ from tools_dsl.tool_registry import (
     upsert_mcp_server,
     validate_mcp_server,
 )
-from platform_app import branches as platform_branches
-from platform_app import knowledge as platform_knowledge
-from platform_app import runtime as platform_runtime
-from platform_app.api import current_user as platform_current_user
-from platform_app.api import router as platform_router
 
 # 通用 RPG 底座：APP_TITLE 是平台名称，不绑定特定剧本。可由 RPG_APP_TITLE env 覆写。
 APP_TITLE = os.environ.get("RPG_APP_TITLE", "RPG Roplay")
@@ -461,19 +468,21 @@ except Exception as _e:
 from routes.core import router as core_router
 from routes.memory import router as memory_router
 from routes.permissions import router as permissions_router
+
 app.include_router(core_router)
 app.include_router(memory_router)
 app.include_router(permissions_router)
 
 # ── Phase 1.2: 迁移剩余路由 ──────────────────────────────────────────
-from routes.game import router as game_router
-from routes.models import router as models_router
-from routes.mcp import router as mcp_router
-from routes.skills import router as skills_router
-from routes.worldline import router as worldline_router
-from routes.rules import router as rules_router
-from routes.timeline import router as timeline_router
 from routes.console_assistant import router as console_assistant_router
+from routes.game import router as game_router
+from routes.mcp import router as mcp_router
+from routes.models import router as models_router
+from routes.rules import router as rules_router
+from routes.skills import router as skills_router
+from routes.timeline import router as timeline_router
+from routes.worldline import router as worldline_router
+
 app.include_router(game_router)
 app.include_router(models_router)
 app.include_router(mcp_router)
@@ -485,6 +494,7 @@ app.include_router(console_assistant_router)
 
 # 启动时一次性触发 schema + migration，避免请求路径 DDL 撞锁
 from platform_app.db import init_db as _bootstrap_init_db
+
 try:
     _bootstrap_init_db()
 except Exception as _e:
@@ -494,8 +504,10 @@ _startup_auth_banner()
 
 
 # ── 全局异常 → 4xx，避免 500 泄露 stack trace ─────────────────────────────
-from fastapi.exceptions import RequestValidationError
 from json import JSONDecodeError
+
+from fastapi.exceptions import RequestValidationError
+
 
 @app.exception_handler(ValueError)
 async def _value_error_handler(request: Request, exc: ValueError):
@@ -706,8 +718,8 @@ def _selfheal_player_from_save_snapshot(state: GameState, api_user: dict[str, An
     if not user_id:
         return
     try:
-        from platform_app.runtime import read_runtime
         from platform_app.db import connect
+        from platform_app.runtime import read_runtime
     except Exception:
         return
     meta = read_runtime(user_id=user_id) or {}
@@ -959,8 +971,8 @@ def _payload(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
     # Game Console 左侧栏拿来显示「当前存档」，避免回退到 hard-coded mock id=11。
     try:
         if api_user and api_user.get("id"):
-            from platform_app.runtime import read_runtime
             from platform_app.db import connect
+            from platform_app.runtime import read_runtime
             rmeta = read_runtime(user_id=api_user["id"]) or {}
             sid = int(rmeta.get("save_id") or 0) or None
             if sid:
@@ -1057,11 +1069,11 @@ def _persist_chat_turn(
     if active_save_id:
         try:
             from save_phase_manager import (
-                upsert_timeline_anchor,
-                ensure_initial_phase,
                 detect_phase_boundary,
+                ensure_initial_phase,
                 open_new_phase,
                 update_phase_turn_end,
+                upsert_timeline_anchor,
             )
             _turn = int(state.data.get("turn") or 0)
             _world = state.data.get("world") or {}
@@ -1192,8 +1204,8 @@ def _active_script_id(api_user: dict[str, Any] | None) -> int | None:
     if not api_user:
         return None
     try:
-        from platform_app.runtime import read_runtime
         from platform_app.db import connect
+        from platform_app.runtime import read_runtime
         meta = read_runtime(user_id=api_user["id"])
         save_id = int((meta or {}).get("save_id") or 0)
         if not save_id:
@@ -1246,7 +1258,7 @@ def _save_attachments(raw_items: list[dict[str, Any]], user_id: int | None = Non
         try:
             data = base64.b64decode(encoded, validate=True)
         except (binascii.Error, ValueError) as exc:
-            raise ValueError(f"附件 {name} 不是合法 base64：{exc}")
+            raise ValueError(f"附件 {name} 不是合法 base64：{exc}") from exc
         if not data:
             raise ValueError(f"附件 {name} 解码后为空")
         if len(data) > MAX_ATTACHMENT_BYTES:
@@ -1379,23 +1391,49 @@ def _check_probe_permission(api_user: dict[str, Any] | None, api_id: str) -> JSO
 # ── 5E-compatible 规则模组 / RulesEngine 接口 ─────────────────────
 # 内部 ruleset id "dnd5e"，对外文案使用 "5E compatible / 五版规则兼容"。
 # 不引入任何官方 Dungeons & Dragons 商标、Forgotten Realms 设定或非 SRD IP。
+import modules as _rules_module_registry
 from rules_bridge import (
-    start_module as _rb_start_module,
-    enter_room as _rb_enter_room,
-    perform_skill_check as _rb_skill_check,
-    perform_saving_throw as _rb_saving_throw,
-    trap_check as _rb_trap_check,
-    start_encounter_by_id as _rb_start_encounter,
-    player_attack as _rb_player_attack,
-    enemy_attack as _rb_enemy_attack,
     advance_turn as _rb_advance_turn,
-    short_rest as _rb_short_rest,
-    suggest_rule_actions as _rb_suggest_rule_actions,
-    parse_consume_intent as _rb_parse_consume_intent,
-    consume_item_action as _rb_consume_item_action,
+)
+from rules_bridge import (
     classify_combat_intent as _rb_classify_combat_intent,
 )
-import modules as _rules_module_registry
+from rules_bridge import (
+    consume_item_action as _rb_consume_item_action,
+)
+from rules_bridge import (
+    enemy_attack as _rb_enemy_attack,
+)
+from rules_bridge import (
+    enter_room as _rb_enter_room,
+)
+from rules_bridge import (
+    parse_consume_intent as _rb_parse_consume_intent,
+)
+from rules_bridge import (
+    perform_saving_throw as _rb_saving_throw,
+)
+from rules_bridge import (
+    perform_skill_check as _rb_skill_check,
+)
+from rules_bridge import (
+    player_attack as _rb_player_attack,
+)
+from rules_bridge import (
+    short_rest as _rb_short_rest,
+)
+from rules_bridge import (
+    start_encounter_by_id as _rb_start_encounter,
+)
+from rules_bridge import (
+    start_module as _rb_start_module,
+)
+from rules_bridge import (
+    suggest_rule_actions as _rb_suggest_rule_actions,
+)
+from rules_bridge import (
+    trap_check as _rb_trap_check,
+)
 
 
 def _coerce_rule_seed(seed: Any) -> int | None:
@@ -1687,8 +1725,8 @@ def _rule_results_prompt(rule_results: list[dict[str, Any]], state: GameState | 
                 f"- ❌ {action.get('kind')} 未执行：{err}"
                 + (f"（玩家文本似乎想去 {req!r}，但当前房间没有这个出口）" if req else "")
             )
-            lines.append(f"  · GM 必须在叙事里反映这条失败：不要把玩家描述成已经移动/已经完成；"
-                         f"可让玩家明确选择真正可用的出口或重述意图。")
+            lines.append("  · GM 必须在叙事里反映这条失败：不要把玩家描述成已经移动/已经完成；"
+                         "可让玩家明确选择真正可用的出口或重述意图。")
             continue
         result = out.get("result") or {}
         if out.get("prelude"):
@@ -1908,5 +1946,5 @@ if __name__ == "__main__":
     import uvicorn
 
     print(f"[API] {APP_TITLE} RPG backend: http://{HOST}:{PORT}")
-    print(f"[UI]  React frontend served separately via Vite (默认 http://127.0.0.1:5173/Platform.html)")
+    print("[UI]  React frontend served separately via Vite (默认 http://127.0.0.1:5173/Platform.html)")
     uvicorn.run(app, host=HOST, port=PORT, log_level="info")

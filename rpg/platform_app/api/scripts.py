@@ -170,8 +170,9 @@ async def api_script_recommend_identity(request: Request, script_id: int):
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
     # 调 recommend_player_identity 工具
     try:
-        from console_assistant import dispatch_assistant_tool
         import secrets as _sec
+
+        from console_assistant import dispatch_assistant_tool
         args = {
             "script_id": int(script_id),
             "birthpoint_phase": str(body.get("birthpoint_phase") or ""),

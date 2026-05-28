@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+
 from context_engine._constants import CHAR_IDX, WORLD_IDX
 
 
@@ -29,7 +30,7 @@ def _load_characters(script_id: int | None = None, book_id: int | None = None) -
         except Exception:
             return {}
     try:
-        with open(CHAR_IDX, "r", encoding="utf-8") as f:
+        with open(CHAR_IDX, encoding="utf-8") as f:
             return json.load(f).get("characters", {})
     except Exception:
         return {}
@@ -120,7 +121,7 @@ def _load_world(script_id: int | None = None) -> dict[str, Any]:
             pass
         return {}
     try:
-        with open(WORLD_IDX, "r", encoding="utf-8") as f:
+        with open(WORLD_IDX, encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return {}

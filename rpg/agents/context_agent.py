@@ -13,21 +13,23 @@ context_agent 本身不再硬编码"小说时间线锚点 / ChapterFact 检索 /
 """
 from __future__ import annotations
 
-import time
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor
+import time
 from collections.abc import Callable, Generator
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from context_engine import build_context_bundle
+from context_providers import (
+    Demand,
+    ProviderServices,
+    resolve_content_pack,
+    run_providers,
+)
 from retrieval import retrieve_context
 from timeline_index import timeline_filter_for_label
 from timeline_state import detect_time_directives
-from context_providers import (
-    Demand, ProviderServices, resolve_content_pack, run_providers,
-)
-
 
 AGENT_PROMPT = """\
 你是 Demand Resolver 子代理。你的唯一任务是把玩家的自然语言输入翻译成

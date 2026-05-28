@@ -15,7 +15,6 @@ from typing import Any
 
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
-
 # Origins: console_assistant + ui_button + api_direct
 # (LLM free-chat should not spontaneously advance phases)
 _PHASE_READ_ORIGINS = frozenset({"ui_button", "api_direct", "console_assistant", "llm_chat", "llm_set"})
@@ -126,8 +125,9 @@ def _t_phase_rebuild(user_id: int, args: dict) -> str:
     save_id = int(save_id)
     phase_index = int(phase_index)
     try:
-        from platform_app.db import connect, init_db
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect, init_db
 
         init_db()
         with connect() as db:

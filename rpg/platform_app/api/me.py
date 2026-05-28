@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
+from psycopg.types.json import Jsonb
 
 from ..db import connect
 from ..security import public_user
 from ._deps import SESSION_COOKIE, json_response, require_user
-
-from psycopg.types.json import Jsonb
 
 router = APIRouter()
 
@@ -341,7 +340,7 @@ async def api_import_tavern_card(request: Request):
             try:
                 blob = _b64.b64decode(body["png_base64"], validate=True)
             except Exception as exc:
-                raise ValueError(f"png_base64 不合法：{exc}")
+                raise ValueError(f"png_base64 不合法：{exc}") from exc
             v2 = tavern_cards.parse_png_card(blob)
         elif body.get("json") is not None:
             v2 = tavern_cards.parse_card(body["json"])
@@ -363,7 +362,7 @@ async def api_import_tavern_card(request: Request):
 async def api_export_tavern_card(request: Request, card_id: int):
     """导出本人 NPC 卡为酒馆 V2 JSON 格式（可直接下载/给酒馆导入）。"""
     user = require_user(request)
-    from .. import user_cards, tavern_cards
+    from .. import tavern_cards, user_cards
     card = user_cards.get_user_card(user["id"], card_id)
     if not card:
         return json_response({"ok": False, "error": "card 不存在"}, status_code=404)
@@ -376,7 +375,7 @@ async def api_export_tavern_png(request: Request, card_id: int):
     """导出 PNG 嵌入式酒馆卡（tEXt chara chunk），可直接拖进酒馆。"""
     from fastapi.responses import Response
     user = require_user(request)
-    from .. import user_cards, tavern_cards
+    from .. import tavern_cards, user_cards
     card = user_cards.get_user_card(user["id"], card_id)
     if not card:
         return json_response({"ok": False, "error": "card 不存在"}, status_code=404)

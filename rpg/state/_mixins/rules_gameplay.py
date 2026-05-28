@@ -10,6 +10,7 @@
                       prune_active_entities / replace_active_entities_with_source
 """
 from __future__ import annotations
+
 import copy
 from datetime import datetime
 
@@ -59,6 +60,8 @@ class RulesGameplayMixin:
         """
         from rules.dnd5e.character import (
             consume_inventory_item as _consume,
+        )
+        from rules.dnd5e.character import (
             resources_from_inventory as _derive,
         )
         pc = self.data.setdefault("player_character", {})

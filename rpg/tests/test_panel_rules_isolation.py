@@ -10,8 +10,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from state import GameState
 from rules_bridge import start_module
+from state import GameState
 
 
 class ContentPackPayloadTests(unittest.TestCase):

@@ -8,7 +8,7 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from platform_app.branches._helpers import load_state, _snapshot_quality  # noqa: F401
+from platform_app.branches._helpers import _snapshot_quality, load_state  # noqa: F401
 
 
 def _object_hash(payload: dict[str, Any]) -> str:

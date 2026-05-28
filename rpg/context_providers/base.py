@@ -13,9 +13,9 @@ rpg.context_providers.base — ContextProvider 抽象 + ContextContribution / De
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import Any, Callable, Optional
-
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from typing import Any, Optional
 
 # ── Demand：Demand Resolver 输出 ───────────────────────────────────
 
@@ -41,13 +41,13 @@ class Demand:
     confidence: float = 1.0
     clarifying_question: str = ""
     reason: str = ""
-    raw_curator_plan: Optional[dict] = None  # 保留 LLM 原始输出便于审计
+    raw_curator_plan: dict | None = None  # 保留 LLM 原始输出便于审计
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
-    def empty(cls) -> "Demand":
+    def empty(cls) -> Demand:
         return cls()
 
 
@@ -80,7 +80,7 @@ class ContextContribution:
         return asdict(self)
 
     @classmethod
-    def skipped(cls, provider_id: str, reason: str = "") -> "ContextContribution":
+    def skipped(cls, provider_id: str, reason: str = "") -> ContextContribution:
         return cls(provider_id=provider_id, applied=False, debug={"skipped": reason})
 
 
@@ -89,16 +89,16 @@ class ContextContribution:
 @dataclass
 class ProviderServices:
     """所有外部服务的统一入口，方便测试 mock 全套依赖。"""
-    user_id: Optional[int] = None
-    script_id: Optional[int] = None
-    book_id: Optional[int] = None
-    save_id: Optional[int] = None  # task 107E: 给 RuntimePhaseDigestProvider 用
+    user_id: int | None = None
+    script_id: int | None = None
+    book_id: int | None = None
+    save_id: int | None = None  # task 107E: 给 RuntimePhaseDigestProvider 用
     # 检索引擎（可选）。给 NovelRetrievalProvider 用。
-    retrieve_fn: Optional[Callable[..., str]] = None
+    retrieve_fn: Callable[..., str] | None = None
     # 时间线锚点查询（可选）。给 NovelTimelineProvider 用。
-    timeline_filter_fn: Optional[Callable[[str], dict]] = None
+    timeline_filter_fn: Callable[[str], dict] | None = None
     # 模组加载器（可选）。给 ModuleSceneProvider 用。
-    module_loader: Optional[Callable[[str], dict]] = None
+    module_loader: Callable[[str], dict] | None = None
 
 
 # ── ContextProvider 抽象 ─────────────────────────────────────────

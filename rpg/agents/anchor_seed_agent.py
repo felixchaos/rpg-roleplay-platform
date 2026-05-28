@@ -36,9 +36,9 @@ import re
 import time
 from typing import Any
 
-from platform_app.db import connect, init_db
 from psycopg.types.json import Jsonb
 
+from platform_app.db import connect, init_db
 
 # ────────────────────────────────────────────────────────────
 #  常量

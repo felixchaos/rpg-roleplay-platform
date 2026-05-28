@@ -43,8 +43,9 @@ def upsert_timeline_anchor(
     Silent on failure: must never crash the turn pipeline.
     """
     try:
-        from platform_app.db import connect, init_db
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect, init_db
 
         init_db()
         with connect() as db:
@@ -192,8 +193,9 @@ def open_new_phase(
     Returns the newly inserted row as a dict.
     """
     try:
-        from platform_app.db import connect, init_db
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect, init_db
 
         init_db()
         with connect() as db:
@@ -363,8 +365,9 @@ def _fire_and_forget_compact(save_id: int, phase_index: int) -> None:
                 print(f"[phase_digest async] save {save_id} phase {phase_index} LLM error: {err}")
                 # 标记 needs_rebuild 让 worker 后续重试
                 try:
-                    from platform_app.db import connect, init_db
                     from psycopg.types.json import Jsonb
+
+                    from platform_app.db import connect, init_db
                     init_db()
                     with connect() as db:
                         db.execute(
@@ -411,8 +414,9 @@ def ensure_initial_phase(save_id: int, turn_index: int, phase_label: str = "", s
     if active is not None:
         return
     try:
-        from platform_app.db import connect, init_db
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect, init_db
 
         init_db()
         with connect() as db:

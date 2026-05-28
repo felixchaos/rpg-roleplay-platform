@@ -37,8 +37,8 @@ class BranchesContinueAcceptsMessageIndex(unittest.TestCase):
 
     def _mk_save_with_chapters(self, uid: int) -> int:
         """建一个 script + save + 几个 branch_commits（模拟跑过几轮）"""
+        from platform_app import branches, workspace
         from platform_app.db import connect
-        from platform_app import workspace, branches
         with connect() as db:
             scr = db.execute(
                 "insert into scripts(owner_id, title) values (%s, %s) returning id",

@@ -24,7 +24,6 @@ from typing import Any
 
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
-
 # 允许所有 origin 调用 — 因为这些工具本质是"代用户点鼠标",
 # 安全边界由前端 permission_mode 把关 (agent 写到 form 字段, 用户能看到)。
 _UI_ORIGINS = frozenset({

@@ -12,15 +12,20 @@ from __future__ import annotations
 
 import unittest
 
-from state import GameState
-from rules_bridge import start_module, enter_room
-from agents.context_agent import run_context_agent, _demand_from_curator_plan
+from agents.context_agent import _demand_from_curator_plan, run_context_agent
 from context_providers import (
-    available_providers, resolve_content_pack, run_providers,
-    DEFAULT_NOVEL_MANIFEST, DEFAULT_MODULE_MANIFEST, DEFAULT_FREEFORM_MANIFEST,
-    Demand, ProviderServices,
+    DEFAULT_FREEFORM_MANIFEST,
+    DEFAULT_MODULE_MANIFEST,
+    DEFAULT_NOVEL_MANIFEST,
+    Demand,
+    ProviderServices,
+    available_providers,
+    resolve_content_pack,
+    run_providers,
 )
 from context_providers.registry import _REGISTRY
+from rules_bridge import enter_room, start_module
+from state import GameState
 
 
 class ProviderRegistryTests(unittest.TestCase):
@@ -134,7 +139,7 @@ class AshMineContextIsolationTests(unittest.TestCase):
 
     def test_ash_mine_layers_have_no_novel_ids(self):
         result = self._run("我悄悄靠近矿车")
-        layer_ids = {l["id"] for l in result["bundle"]["debug"]["layers"]}
+        layer_ids = {lyr["id"] for lyr in result["bundle"]["debug"]["layers"]}
         # novel_* layers 不应出现
         for forbidden in ("novel_timeline", "novel_retrieval", "novel_worldbook",
                           "novel_characters", "npc_cards", "player_card", "worldbook"):

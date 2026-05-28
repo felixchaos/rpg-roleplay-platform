@@ -1,34 +1,67 @@
 """state/core.py — GameState class + module constants (DEFAULT_STATE, SAVE_FILE, etc.)"""
 from __future__ import annotations
+
 import copy
 import json
 import re
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from datetime import datetime
 from typing import Any
-from timeline_state import detect_time_directives, is_time_key, clean_time_value, looks_like_time_value
 
-# ── helpers imported from sub-modules ──────────────────────────────────────
-from state.utils import _deep_update, _latest_assistant_text, _hit_score, _player_action_text
-from state.parsers import _clean_item, _split_label, _split_items, _split_relation, _parse_assignment, _parse_question
+from state._mixins import ApplyOpsMixin, PendingMixin, RulesGameplayMixin
 from state.extractors import (
-    _extract_player_time_directives, _extract_set_directive, _extract_set_assignments,
-    _extract_location_override, _extract_set_time_targets,
-    _extract_explicit_time_updates, _extract_time_matches,
+    _extract_explicit_time_updates,
+    _extract_location_override,
+    _extract_player_time_directives,
+    _extract_set_assignments,
+    _extract_set_directive,
+    _extract_set_time_targets,
+    _extract_time_matches,
 )
-from state.time_ops import _gm_is_asking_for_time_confirm, _clean_time_value, _looks_like_time_value, _format_pending_timeline, _phase_for_time
-from state.permissions import _normalize_permission_mode, _permission_label
 from state.json_ops import _extract_json_state_ops, strip_json_state_ops
 from state.labels import _risk_label, _validation_label
-from state.path_ops import (
-    _clean_path, _write_path_hard_forbidden, _write_path_rules_managed,
-    _write_path_module_managed, _module_scene_active, _write_path_allowed,
-    _write_path_kind, _set_path, _get_path,
-    _HARD_FORBIDDEN_PATHS, _HARD_FORBIDDEN_PREFIXES,
-    _RULES_MANAGED_PATHS, _RULES_MANAGED_PREFIXES, _MODULE_MANAGED_PATHS,
+from state.parsers import (
+    _clean_item,
+    _parse_assignment,
+    _parse_question,
+    _split_items,
+    _split_label,
+    _split_relation,
 )
-from state._mixins import ApplyOpsMixin, RulesGameplayMixin, PendingMixin
+from state.path_ops import (
+    _HARD_FORBIDDEN_PATHS,
+    _HARD_FORBIDDEN_PREFIXES,
+    _MODULE_MANAGED_PATHS,
+    _RULES_MANAGED_PATHS,
+    _RULES_MANAGED_PREFIXES,
+    _clean_path,
+    _get_path,
+    _module_scene_active,
+    _set_path,
+    _write_path_allowed,
+    _write_path_hard_forbidden,
+    _write_path_kind,
+    _write_path_module_managed,
+    _write_path_rules_managed,
+)
+from state.permissions import _normalize_permission_mode, _permission_label
+from state.time_ops import (
+    _clean_time_value,
+    _format_pending_timeline,
+    _gm_is_asking_for_time_confirm,
+    _looks_like_time_value,
+    _phase_for_time,
+)
+
+# ── helpers imported from sub-modules ──────────────────────────────────────
+from state.utils import _deep_update, _hit_score, _latest_assistant_text, _player_action_text
+from timeline_state import (
+    clean_time_value,
+    detect_time_directives,
+    is_time_key,
+    looks_like_time_value,
+)
 
 BASE = Path(__file__).parent.parent  # state/core.py 比原 state.py 深一层,SAVE_FILE 必须回到 rpg/saves/
 SAVE_FILE = BASE / "saves" / "game_state.json"
@@ -211,11 +244,11 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
 
     # ── 读档 / 新档 ────────────────────────────────────────────────
     @classmethod
-    def load_or_new(cls) -> "GameState":
+    def load_or_new(cls) -> GameState:
         SAVE_FILE.parent.mkdir(parents=True, exist_ok=True)
         if SAVE_FILE.exists():
             try:
-                with open(SAVE_FILE, "r", encoding="utf-8") as f:
+                with open(SAVE_FILE, encoding="utf-8") as f:
                     data = json.load(f)
                 data = cls._migrate(data)
                 print(f"[读档] {data['player']['name']} · 第{data['turn']}回合 · {data['world']['time']}")
@@ -225,7 +258,7 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         return cls.new()
 
     @classmethod
-    def new(cls) -> "GameState":
+    def new(cls) -> GameState:
         data = copy.deepcopy(DEFAULT_STATE)
         data["created_at"] = datetime.now().isoformat(timespec="seconds")
         return cls(data)
@@ -316,7 +349,7 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         return migrated
 
     # ── 存档 ──────────────────────────────────────────────────────
-    def save(self, target_path: "Path | str | None" = None) -> str:
+    def save(self, target_path: Path | str | None = None) -> str:
         """写 state 到磁盘。
 
         多用户安全：在服务器模式下，**绝对不能写全局 SAVE_FILE**——这是并发污染源。

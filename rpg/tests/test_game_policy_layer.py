@@ -32,7 +32,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -45,7 +44,7 @@ class GamePolicyClassUnit(unittest.TestCase):
     """game_policy.py 公共 API:get_game_policy / preflight / gm_prompt_constraints。"""
 
     def _state(self, *, module_id="ash_mine", encounter_active=False, live_enemies=None):
-        from state import GameState, DEFAULT_STATE
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.data["scene"] = {
             "module_id": module_id,
@@ -67,14 +66,14 @@ class GamePolicyClassUnit(unittest.TestCase):
         return g
 
     def test_module_policy_selected_for_ash_mine(self):
-        from game_policy import get_game_policy, ModuleAdventurePolicy
+        from game_policy import ModuleAdventurePolicy, get_game_policy
         g = self._state(module_id="ash_mine")
         policy = get_game_policy(g)
         self.assertIsInstance(policy, ModuleAdventurePolicy)
         self.assertEqual(policy.id, "module_adventure")
 
     def test_freeform_policy_for_empty_module(self):
-        from game_policy import get_game_policy, FreeformPolicy
+        from game_policy import FreeformPolicy, get_game_policy
         g = self._state(module_id="")
         # 同时清掉 content_pack 让 resolve 返回 freeform
         policy = get_game_policy(g)
@@ -229,8 +228,7 @@ class KnowledgeIsReferenceOnly(unittest.TestCase):
     这是全局原则:state 是真相源,retrieval 是参考。"""
 
     def test_all_policies_say_knowledge_is_reference_only(self):
-        from game_policy import (ModuleAdventurePolicy, NovelAdaptationPolicy,
-                                  FreeformPolicy)
+        from game_policy import FreeformPolicy, ModuleAdventurePolicy, NovelAdaptationPolicy
         for cls in (ModuleAdventurePolicy, NovelAdaptationPolicy, FreeformPolicy):
             p = cls()
             self.assertTrue(p.knowledge_is_reference_only(),

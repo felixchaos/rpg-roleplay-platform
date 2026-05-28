@@ -21,13 +21,13 @@ import secrets
 import threading
 import time
 from collections import Counter
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable
+from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from .db import connect, init_db, expose
-
+from .db import connect, expose, init_db
 
 # ── 阶段定义 ────────────────────────────────────────────────────────
 STAGES = [
@@ -283,7 +283,7 @@ def list_jobs(user_id: int, limit: int = 20) -> dict[str, Any]:
 def _run_pipeline(job_id: str, user_id: int, script_id: int, options: dict[str, Any]) -> None:
     # 多 worker 部署：advisory lock 防止同 job 被多 worker 同时跑
     try:
-        from .cluster import try_acquire_job_lock, release_job_lock
+        from .cluster import release_job_lock, try_acquire_job_lock
         if not try_acquire_job_lock(f"import_job:{job_id}"):
             # 已被别的 worker 占了，直接退出（那个 worker 会处理）
             return

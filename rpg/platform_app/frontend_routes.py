@@ -21,20 +21,19 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
-from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from .db import connect, expose, init_db
-from .security import hash_password, verify_password
 from . import auth as _auth
 from .api import (
     SESSION_COOKIE,
     current_user,
-    require_user,
     json_response,
     public_user,
+    require_user,
 )
-
+from .db import connect, expose, init_db
+from .security import hash_password, verify_password
 
 router = APIRouter()
 

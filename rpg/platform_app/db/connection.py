@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import atexit
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator
 
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
-
 
 DEFAULT_DATABASE_URL = "postgresql:///rpg_platform"
 _pool: ConnectionPool | None = None

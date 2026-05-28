@@ -61,8 +61,9 @@ class SubAgentInstanceSeparation(unittest.TestCase):
     def test_with_override_creates_separate_instance(self):
         ui, fake_main = self._inject_fake_main()
         # 写一个 override 到 user_preferences
-        from platform_app.db import connect
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect
         with connect() as db:
             db.execute(
                 """
@@ -113,8 +114,8 @@ class SubAgentUsageRecording(unittest.TestCase):
         cleanup_test_users()
 
     def test_record_usage_with_sub_agent_metadata(self):
-        from platform_app.usage import record_usage
         from platform_app.db import connect
+        from platform_app.usage import record_usage
         row = record_usage(
             user_id=self.user_id,
             save_id=None,

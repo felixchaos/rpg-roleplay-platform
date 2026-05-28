@@ -15,16 +15,16 @@ from __future__ import annotations
 
 import unittest
 
-from state import GameState
-from rules_bridge import start_module, parse_consume_intent, consume_item_action
 from rules.dnd5e.character import (
-    consume_inventory_item, find_inventory_item, normalize_item_alias,
+    consume_inventory_item,
+    find_inventory_item,
+    normalize_item_alias,
     resources_from_inventory,
 )
 from rules.engine import RulesEngine
-
+from rules_bridge import consume_item_action, parse_consume_intent, start_module
+from state import GameState
 from tests.helpers import cleanup_test_users, make_client, register_user
-
 
 # ── 纯函数单测 ───────────────────────────────────────────────────
 

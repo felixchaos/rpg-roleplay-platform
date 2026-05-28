@@ -15,15 +15,14 @@ worker_id：每个 uvicorn 进程启动时分配一个 UUID，用来区分谁在
 from __future__ import annotations
 
 import os
-import socket
 import secrets
+import socket
 import time
 from typing import Any
 
 from psycopg.types.json import Jsonb
 
 from .db import connect, init_db
-
 
 # 进程唯一标识：hostname + pid + 启动时的随机数
 WORKER_ID = f"{socket.gethostname()}-{os.getpid()}-{secrets.token_hex(4)}"

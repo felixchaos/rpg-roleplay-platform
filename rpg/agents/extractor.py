@@ -35,7 +35,6 @@ import json
 import re
 from typing import Any
 
-
 _EXTRACTOR_SYSTEM = """\
 你是状态提取器。读 GM 这一轮的叙事正文 + 当前状态快照，输出一个 JSON 数组，
 每条代表一次状态变化。**不要写小说**，只输出 JSON。
@@ -247,6 +246,7 @@ def _call_anthropic_tool_use(
     错误率比文本 JSON 低 5-10×。
     """
     from anthropic import Anthropic
+
     from platform_app.user_credentials import resolve_api_key
     result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
     key = result.get("key")
@@ -360,7 +360,7 @@ def _call_openai_compat_json_mode(
 def _api_base_url(api_id: str) -> str:
     """从 catalog 拿 base_url 做 OpenAI-compat 兜底。"""
     try:
-        from model_registry import load_model_catalog, find_api
+        from model_registry import find_api, load_model_catalog
         api = find_api(load_model_catalog(), api_id)
         return api.get("base_url", "") if api else ""
     except Exception:

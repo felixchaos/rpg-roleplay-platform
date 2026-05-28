@@ -28,7 +28,6 @@ import copy as _copy
 import unittest
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -41,7 +40,7 @@ class ExpireStaleGmQuestionsUnit(unittest.TestCase):
     """state.expire_stale_gm_questions:玩家进入新一轮自动过期上轮系统询问。"""
 
     def _fresh_state(self):
-        from state import GameState, DEFAULT_STATE
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.data["turn"] = 0
         g.data.setdefault("permissions", {})["pending_questions"] = []
@@ -188,8 +187,8 @@ class SocialIntentDeterministicRouting(unittest.TestCase):
 
     def _module_state(self):
         """开 Ash Mine 进 minecart_track,有 module_id 才会触发 module rules 路径。"""
+        from rules_bridge import enter_room, start_module
         from state import GameState
-        from rules_bridge import start_module, enter_room
         g = GameState.new()
         start_module(g, "ash_mine")
         enter_room(g, "minecart_track")
@@ -287,8 +286,8 @@ class SocialIntentDeterministicRouting(unittest.TestCase):
     def test_non_module_state_does_not_run_module_rules(self):
         """没 module_id 时,_apply_chat_rule_candidates 直接跳过 — 小说模式不强制 5E 规则。
         这保证 deterministic rules 不污染小说叙事流程。"""
-        from app import _chat_rule_candidates, _apply_chat_rule_candidates
-        from state import GameState, DEFAULT_STATE
+        from app import _apply_chat_rule_candidates, _chat_rule_candidates
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.data["scene"] = {"module_id": "", "location_id": "",
                            "current_room": {"id": "", "enemies": []}}

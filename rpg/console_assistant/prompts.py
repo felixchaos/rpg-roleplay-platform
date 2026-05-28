@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 _SYSTEM_PROMPT = """你是 RPG Platform 的侧栏控制台助手。不是游戏 GM, 不写故事、不推剧情。
 帮用户管理平台资源 (存档/角色卡/persona/剧本/设置/MCP)。
 

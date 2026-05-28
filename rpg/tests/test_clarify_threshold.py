@@ -44,8 +44,9 @@ class ClarifyThresholdHelper(unittest.TestCase):
             )
 
     def _write_pref(self, value):
-        from platform_app.db import connect
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect
         with connect() as db:
             db.execute(
                 """

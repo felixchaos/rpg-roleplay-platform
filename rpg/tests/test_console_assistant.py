@@ -26,11 +26,13 @@ if str(REPO) not in sys.path:
 
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
-from state import GameState, DEFAULT_STATE  # noqa: E402
-from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
+from state import DEFAULT_STATE, GameState  # noqa: E402
 from tools_dsl.command_dispatcher import (  # noqa: E402
-    ToolCallEnvelope, ToolDispatcher, get_registry,
+    ToolCallEnvelope,
+    ToolDispatcher,
+    get_registry,
 )
+from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
 
 
 def _new_state(turn=3) -> GameState:
@@ -51,9 +53,10 @@ class DispatcherOriginsHaveConsoleAssistant(unittest.TestCase):
 
     def test_origin_literal_includes_console_assistant(self):
         """Origin literal type should include console_assistant."""
-        from tools_dsl.command_dispatcher import Origin
         # 用 typing 拿 Literal args
         import typing
+
+        from tools_dsl.command_dispatcher import Origin
         args = typing.get_args(Origin)
         self.assertIn("console_assistant", args)
 
@@ -302,7 +305,7 @@ class StreamChatSSEProtocol(unittest.TestCase):
 
     def test_destructive_yields_confirmation_required_and_pauses(self):
         """destructive 工具: stream_chat 应 yield confirmation_required, 不 dispatch, 中止本轮。"""
-        from console_assistant import stream_chat, get_conversation_state
+        from console_assistant import get_conversation_state, stream_chat
         backend = FakeBackend([
             {"type": "text", "text": "我要删存档了。"},
             {"type": "tool_call", "server_id": "dispatcher",
@@ -785,7 +788,7 @@ class CrossUserConversationIsolation(unittest.TestCase):
         reset_all_conversations()
 
     def test_two_users_have_separate_buckets(self):
-        from console_assistant import stream_chat, get_conversation_state
+        from console_assistant import get_conversation_state, stream_chat
         backend = FakeBackend([{"type": "text", "text": "hi"}])
         events_a = _consume_sse(stream_chat(
             user_id=100, message="msg-A", conversation_id=None,
@@ -810,7 +813,7 @@ class CrossUserConversationIsolation(unittest.TestCase):
 
     def test_same_conversation_id_does_not_leak_across_users(self):
         """如果两个用户都传一样的 conversation_id, 应当成两个独立的 conv (按 user_id 分桶)。"""
-        from console_assistant import stream_chat, get_conversation_state
+        from console_assistant import get_conversation_state, stream_chat
         cid = "shared-conv-id"
         _consume_sse(stream_chat(
             user_id=300, message="A", conversation_id=cid,

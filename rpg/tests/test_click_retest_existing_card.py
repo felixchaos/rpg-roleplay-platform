@@ -173,8 +173,9 @@ class ClickPathExistingCard(unittest.TestCase):
         """模拟 runtime_checkouts.state_snapshot 缺 player 的故障态：
         _ensure_loaded 必须从 game_saves.state_snapshot 自愈，让 /api/state
         仍能返回正确 player。这是 Bug 1 click-retest 的兜底防线。"""
-        from platform_app.db import connect
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect
 
         u = register_user(self.client)
         cookies = u["cookies"]

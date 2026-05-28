@@ -1,7 +1,6 @@
 """state/labels.py — 风险/校验标签 helpers (_risk_label, _validation_label)"""
 from __future__ import annotations
 
-
 # 风险评级。前端 ConfirmStrip 根据 risk 染色（low/medium/high）显示给玩家，
 # 让玩家在批量待审时快速看到"高风险动作"先决策。
 _HIGH_RISK_PREFIXES = (

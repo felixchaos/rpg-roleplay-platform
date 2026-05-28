@@ -33,7 +33,7 @@ async def index() -> JSONResponse:
 
 @router.get("/api/state")
 async def api_state(request: Request) -> JSONResponse:
-    from app import _require_api_user, _payload
+    from app import _payload, _require_api_user
     api_user = _require_api_user(request)
     return JSONResponse(_payload(api_user))
 
@@ -46,8 +46,9 @@ async def api_state_events(request: Request) -> StreamingResponse:
     `rpg-{topic}-updated`,各页面已有的 reload listener 自动触发。
     """
     import asyncio as _asyncio
-    from state_event_bus import subscribe, unsubscribe
+
     from app import _require_api_user
+    from state_event_bus import subscribe, unsubscribe
 
     api_user = _require_api_user(request)
     user_id = int((api_user or {}).get("id") or 0)
@@ -72,7 +73,7 @@ async def api_state_events(request: Request) -> StreamingResponse:
                     break
                 try:
                     event = await _asyncio.wait_for(queue.get(), timeout=25.0)
-                except _asyncio.TimeoutError:
+                except TimeoutError:
                     # 25 秒没动静就发 keepalive,防 proxy 切连接
                     yield f": keepalive {int(time.time())}\n\n"
                     continue

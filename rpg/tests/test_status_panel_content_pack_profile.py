@@ -32,7 +32,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 PANELS = (Path(__file__).resolve().parents[2]
           / "frontend" / "src" / "game-panels.jsx").read_text(encoding="utf-8")
 

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import copy
 
-
 # 内部 stat block：每个键为 stat_block_id
 STAT_BLOCKS: dict[str, dict] = {
     "ash_skulker": {

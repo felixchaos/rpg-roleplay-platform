@@ -4,7 +4,6 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-
 # Bug 2 (retest)：哪些中文动词算"移动意图"。
 # "观察 / 留意 / 倾听 / 检查"等是原地行为，不应触发跨房候选。
 # "靠近 / 沿 / 往 / 向 / 去 / 前往 / 走向 / 进入 / 穿过"等才是真正的移动。
@@ -122,7 +121,7 @@ def _detect_dodge(text: str) -> bool:
     return _has_any(text, _DODGE_HINTS)
 
 
-def classify_combat_intent(text: str, state) -> Optional[dict]:
+def classify_combat_intent(text: str, state) -> dict | None:
     """deterministic 战斗意图分类。详见模块顶注释。
 
     Returns None / {"kind": "no_target_combat" | "combat_pending_question", ...}.

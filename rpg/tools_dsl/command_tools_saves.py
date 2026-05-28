@@ -25,7 +25,6 @@ from typing import Any
 
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
-
 # task 87 Phase 7 安全审查:跨"世界泡"隔离
 # task 48 新增 console_assistant:控制台助手是「用户带方向盘的 agent」,
 # 它的工具调用语义上等同于「用户在 UI 上点了相应按钮」(read 自由,mutate 直接执行,
@@ -401,6 +400,7 @@ def _t_activate_branch(user_id: int, args: dict) -> str:
         return "失败: branch_id 必须是整数"
     try:
         from platform_app import branches as _branches
+
         # branches.activate_branch 期望 (user_id, branch_id) 但有的版本要 dict
         # 这里通过 DB 自校验所有权
         from platform_app.db import connect, init_db

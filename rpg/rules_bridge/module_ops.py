@@ -5,7 +5,6 @@ from typing import Optional
 
 import modules as module_registry
 from rules.dnd5e.character import make_default_character
-
 from rules_bridge.entity_sync import _entities_from_room, _sync_active_entities_to_scene
 
 
@@ -26,7 +25,7 @@ def _room_snapshot(room: dict) -> dict:
     }
 
 
-def start_module(state, module_id: str, character_overrides: Optional[dict] = None) -> dict:
+def start_module(state, module_id: str, character_overrides: dict | None = None) -> dict:
     """加载指定模组到 game state。重置 scene/encounter/dice_log。
     返回 {"ok": True, "scene": ..., "opening": ...}。
     """

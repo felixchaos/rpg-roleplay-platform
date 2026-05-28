@@ -5,7 +5,6 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from chapter_fact_indexer import _iter_chapters
-
 from platform_app.knowledge._utils import _slugify, _worldbook_seed_entries
 
 

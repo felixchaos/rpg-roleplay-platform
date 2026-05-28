@@ -48,7 +48,7 @@ def parse_card(data: dict[str, Any] | str | bytes) -> dict[str, Any]:
             decoded = base64.b64decode(stripped, validate=True).decode("utf-8")
             return parse_card(json.loads(decoded))
         except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise ValueError(f"无法解析角色卡：既不是 JSON 也不是 base64({exc})")
+            raise ValueError(f"无法解析角色卡：既不是 JSON 也不是 base64({exc})") from exc
     if not isinstance(data, dict):
         raise ValueError(f"不支持的角色卡类型：{type(data)}")
     # 是 V2 还是 V1？

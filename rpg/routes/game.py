@@ -1,9 +1,10 @@
 """game.py — 游戏核心流程路由 (new / opening / chat / stop / save)。"""
 from __future__ import annotations
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from schemas.game import NewGameRequest, ChatEstimateRequest, ChatRequest
+from schemas.game import ChatEstimateRequest, ChatRequest, NewGameRequest
 
 router = APIRouter()
 
@@ -20,9 +21,16 @@ async def api_new(body: NewGameRequest, request: Request) -> JSONResponse:
       4. body 里直接传 name/role/background
     """
     from app import (
-        _require_api_user, _payload, _backup_save, _invalidate_user_cache,
-        _user_key, _state_lock, _state_by_user, _persist_runtime_checkpoint,
-        GameState, ROLES,
+        ROLES,
+        GameState,
+        _backup_save,
+        _invalidate_user_cache,
+        _payload,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _state_by_user,
+        _state_lock,
+        _user_key,
     )
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
@@ -99,9 +107,16 @@ async def api_new(body: NewGameRequest, request: Request) -> JSONResponse:
 @router.post("/api/opening")
 async def api_opening(request: Request) -> StreamingResponse:
     from app import (
-        _require_api_user, _payload, _ensure_loaded, _get_gm, _sse,
-        _active_script_id, _resolve_persist_target, _build_turn_context,
-        _persist_runtime_checkpoint, retrieve_context,
+        _active_script_id,
+        _build_turn_context,
+        _ensure_loaded,
+        _get_gm,
+        _payload,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
+        _sse,
+        retrieve_context,
     )
     api_user = _require_api_user(request)
     state = _ensure_loaded(api_user)
@@ -167,7 +182,10 @@ async def api_chat_estimate(body: ChatEstimateRequest, request: Request) -> JSON
       output_tokens ≈ 该用户最近 10 轮该模型的平均输出
     """
     from app import (
-        _require_api_user, _ensure_loaded, _resolve_persist_target, selected_model,
+        _ensure_loaded,
+        _require_api_user,
+        _resolve_persist_target,
+        selected_model,
     )
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
@@ -180,7 +198,7 @@ async def api_chat_estimate(body: ChatEstimateRequest, request: Request) -> JSON
     model_name = model["real_name"]
 
     # 各部分粗估
-    from platform_app.usage import estimate_input_tokens, context_window_for, average_output_tokens
+    from platform_app.usage import average_output_tokens, context_window_for, estimate_input_tokens
     history = state.history_messages()  # 已限制 MAX_HISTORY_TURNS
     history_text = "\n".join(m.get("content", "") for m in history)
     # system prompt 用 GM 模板的近似长度；不真正构建避免昂贵
@@ -231,17 +249,36 @@ async def api_chat_estimate(body: ChatEstimateRequest, request: Request) -> JSON
 @router.post("/api/chat")
 async def api_chat(body: ChatRequest, request: Request) -> StreamingResponse:
     import time
-    from app import (
-        _require_api_user, _payload, _ensure_loaded, _get_gm, _get_sub_gm,
-        _sse, _save_attachments, _message_with_attachments, _command_response,
-        _get_run_state, _persist_runtime_checkpoint, _resolve_persist_target,
-        _active_script_id, _clarify_threshold, _persist_chat_turn, _mark_context_run,
-        _apply_chat_rule_candidates, _chat_rule_candidates, _rule_results_prompt,
-        _is_set_parser_enabled, _current_run_id, _is_stop_requested_global,
-        _is_extractor_enabled, _acceptance_verifier_mode, _verify_acceptance,
-        _build_usage_payload,
-    )
+
     import app as _self_mod
+    from app import (
+        _acceptance_verifier_mode,
+        _active_script_id,
+        _apply_chat_rule_candidates,
+        _build_usage_payload,
+        _chat_rule_candidates,
+        _clarify_threshold,
+        _command_response,
+        _current_run_id,
+        _ensure_loaded,
+        _get_gm,
+        _get_run_state,
+        _get_sub_gm,
+        _is_extractor_enabled,
+        _is_set_parser_enabled,
+        _is_stop_requested_global,
+        _mark_context_run,
+        _message_with_attachments,
+        _payload,
+        _persist_chat_turn,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
+        _rule_results_prompt,
+        _save_attachments,
+        _sse,
+        _verify_acceptance,
+    )
     from platform_app import knowledge as platform_knowledge
 
     api_user = _require_api_user(request)
@@ -271,10 +308,10 @@ async def api_chat(body: ChatRequest, request: Request) -> StreamingResponse:
         from chat_pipeline import (
             PipelineContext,
             apply_player_directives_phase,
-            run_context_phase,
-            run_rules_phase,
-            run_gm_phase,
             persist_turn_phase,
+            run_context_phase,
+            run_gm_phase,
+            run_rules_phase,
         )
 
         response = ""
@@ -442,7 +479,7 @@ async def api_chat(body: ChatRequest, request: Request) -> StreamingResponse:
 async def api_stop(request: Request) -> JSONResponse:
     """打断当前用户正在跑的 chat。其他用户的 chat 不受影响。
     task 87 Phase 6: 同时调 dispatcher stop_current_chat 工具,把 stop_signal 写到 state.permissions。"""
-    from app import _require_api_user, _stop_user, _ensure_loaded, _resolve_persist_target
+    from app import _ensure_loaded, _require_api_user, _resolve_persist_target, _stop_user
     api_user = _require_api_user(request)
     _stop_user(api_user)  # 真正的 stop_event 仍由 _stop_user 处理 (跨 chat handler 协程)
     # 同时通过 dispatcher 记录 audit 与 state.permissions.stop_signal
@@ -464,8 +501,11 @@ async def api_stop(request: Request) -> JSONResponse:
 async def api_save(request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher save_runtime。"""
     from app import (
-        _require_api_user, _payload, _ensure_loaded, _resolve_persist_target,
+        _ensure_loaded,
+        _payload,
         _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
     )
     api_user = _require_api_user(request)
     state = _ensure_loaded(api_user)

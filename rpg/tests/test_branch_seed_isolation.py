@@ -38,9 +38,9 @@ class SeedTreeUsesOwnSnapshot(unittest.TestCase):
         """
         u = register_user(self.client)
         cookies = u["cookies"]
-        from platform_app.db import connect
         from platform_app import branches as br
         from platform_app import workspace
+        from platform_app.db import connect
 
         # 0) 找 user_id + 创 script
         with connect() as db:
@@ -103,14 +103,16 @@ class SeedTreeUsesOwnSnapshot(unittest.TestCase):
                 f"task 25：B 的 timeline.current_label 不应是 A 的运行时态；实际 {current_label!r}")
         finally:
             # 清理污染文件，避免影响其他测试
-            try: state_path.unlink()
-            except Exception: pass
+            try:
+                state_path.unlink()
+            except Exception:
+                pass
 
     def test_seed_tree_still_works_with_empty_snapshot_and_fallback(self):
         """兼容历史数据：snapshot 完全为空时仍允许走 state_path（不能破坏老用户）"""
         u = register_user(self.client)
-        from platform_app.db import connect
         from platform_app import branches as br
+        from platform_app.db import connect
 
         with connect() as db:
             uid_row = db.execute(
@@ -152,8 +154,10 @@ class SeedTreeUsesOwnSnapshot(unittest.TestCase):
             self.assertEqual((snap.get("player") or {}).get("name"), "legacy player",
                 f"空 snapshot 兼容路径未生效；snap={snap!r}")
         finally:
-            try: tmp_state.unlink()
-            except Exception: pass
+            try:
+                tmp_state.unlink()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

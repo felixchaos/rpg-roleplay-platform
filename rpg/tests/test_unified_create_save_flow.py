@@ -30,7 +30,6 @@ from pathlib import Path
 
 from tests.helpers import make_client, register_user
 
-
 PROJECT = Path(__file__).resolve().parents[2]
 PLATFORM_JSX = (PROJECT / "frontend" / "src" / "platform-app.jsx").read_text(encoding="utf-8")
 GAME_HTML = (PROJECT / "frontend" / "Game Console.html").read_text(encoding="utf-8")

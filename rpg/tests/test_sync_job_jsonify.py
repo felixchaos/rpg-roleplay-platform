@@ -31,7 +31,7 @@ def _stub_sync_with_problem_types(user_id, script_id, rebuild=False):
             "id": 100,
             "title": "测试书",
             "result": {
-                "created_at": _dt.datetime(2026, 5, 25, 13, 30, 0, tzinfo=_dt.timezone.utc),
+                "created_at": _dt.datetime(2026, 5, 25, 13, 30, 0, tzinfo=_dt.UTC),
                 "updated_at": _dt.date(2026, 5, 25),
                 "cost": _dec.Decimal("0.42"),
                 "uid": _uuid.UUID("00000000-0000-0000-0000-000000000042"),

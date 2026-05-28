@@ -1,8 +1,8 @@
 """context_engine._utils — 轻量工具函数（无业务依赖）."""
 from __future__ import annotations
 
-import re
 import hashlib
+import re
 from typing import Any
 
 

@@ -5,14 +5,14 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from platform_app.db import connect, expose, init_db, limit_value, page_payload
-from platform_app.knowledge._utils import _cursor_int, _require_script
 from platform_app.knowledge._character_cards_repo import (
+    _db_delete_character_card,
+    _db_get_character_card,
     _db_select_chapter_facts,
     _db_select_character_cards,
-    _db_get_character_card,
-    _db_delete_character_card,
     _db_set_character_card_enabled,
 )
+from platform_app.knowledge._utils import _cursor_int, _require_script
 
 
 def list_chapter_facts(user_id: int, script_id: int, limit: int | str | None = None, cursor: str | None = None) -> dict[str, Any]:

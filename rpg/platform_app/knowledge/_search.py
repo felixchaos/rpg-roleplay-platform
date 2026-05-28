@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 _VEC_COLUMN_CACHE: dict[str, bool] = {}
 
 

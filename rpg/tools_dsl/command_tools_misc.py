@@ -42,7 +42,6 @@ from typing import Any
 
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
-
 # task 87 Phase 7 安全审查:
 #   _USER_READ      : 任意 origin (含 LLM 与 console_assistant) — read-only
 #   _USER_MUTATE    : UI/API + console_assistant — LLM 仍禁;console_assistant 是「带方向盘的 agent」,
@@ -279,8 +278,9 @@ def _t_select_model(user_id: int, args: dict) -> str:
     if not api_id or not model_real_name:
         return "失败: api_id 与 model 都不能为空"
     try:
-        from platform_app.db import connect, init_db
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect, init_db
         init_db()
         with connect() as db:
             row = db.execute(
@@ -965,7 +965,8 @@ def register_misc_tools() -> None:
     # 它们替代了"把 52 个子工具全塞 LLM tool list"的旧做法,
     # 让 LLM 只见 5 把工具:ui_describe / ui_invoke / ask_user_choice
     # / ask_user_text / navigate_to_setting。
-    from ui_manifest import ui_describe as _ui_describe, ui_invoke as _ui_invoke
+    from ui_manifest import ui_describe as _ui_describe
+    from ui_manifest import ui_invoke as _ui_invoke
 
     describe_spec = ToolSpec(
         name="ui_describe",

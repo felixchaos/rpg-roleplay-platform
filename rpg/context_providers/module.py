@@ -5,7 +5,7 @@ Module providers — 只在 manifest.kind == 'module_adventure' 时启用。
 """
 from __future__ import annotations
 
-from .base import ContextProvider, ContextContribution, Demand, ProviderServices
+from .base import ContextContribution, ContextProvider, Demand, ProviderServices
 from .registry import register_provider
 
 

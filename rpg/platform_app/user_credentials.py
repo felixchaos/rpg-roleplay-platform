@@ -21,9 +21,9 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from .db import connect, init_db, expose
-from utils.crypto import encrypt_api_key, decrypt_api_key
+from utils.crypto import decrypt_api_key, encrypt_api_key
 
+from .db import connect, expose, init_db
 
 _PRIVATE_HOST_PREFIXES = (
     "127.", "10.", "192.168.", "169.254.",
@@ -39,8 +39,8 @@ def _validate_base_url(url: str) -> None:
     from urllib.parse import urlparse
     try:
         p = urlparse(url)
-    except Exception:
-        raise ValueError("base_url 必须是合法 URL")
+    except Exception as exc:
+        raise ValueError("base_url 必须是合法 URL") from exc
     if p.scheme not in {"https", "http"}:
         raise ValueError("base_url 必须是 http/https")
     # 生产建议只允许 https；本地 admin 调试可允许 http

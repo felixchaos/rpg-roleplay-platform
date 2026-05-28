@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from schemas.memory import MemoryModeRequest, MemoryAddRequest, MemoryRemoveRequest
+from schemas.memory import MemoryAddRequest, MemoryModeRequest, MemoryRemoveRequest
 
 router = APIRouter()
 
@@ -18,7 +18,13 @@ router = APIRouter()
 @router.post("/api/memory/mode")
 async def api_memory_mode(body: MemoryModeRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: UI 按钮也走 dispatcher,获得统一审计 + destructive 检查。"""
-    from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded, _persist_runtime_checkpoint
+    from app import (
+        _ensure_loaded,
+        _payload,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
+    )
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
@@ -40,7 +46,13 @@ async def api_memory_mode(body: MemoryModeRequest, request: Request) -> JSONResp
 @router.post("/api/memory/add")
 async def api_memory_add(body: MemoryAddRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher 的 add_memory_* 工具系列。"""
-    from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded, _persist_runtime_checkpoint
+    from app import (
+        _ensure_loaded,
+        _payload,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
+    )
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
@@ -72,7 +84,13 @@ async def api_memory_add(body: MemoryAddRequest, request: Request) -> JSONRespon
 @router.post("/api/memory/remove")
 async def api_memory_remove(body: MemoryRemoveRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: destructive 走 dispatcher remove_memory_item 工具。"""
-    from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded, _persist_runtime_checkpoint
+    from app import (
+        _ensure_loaded,
+        _payload,
+        _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
+    )
     api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)

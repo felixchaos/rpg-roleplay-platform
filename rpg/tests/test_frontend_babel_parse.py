@@ -20,7 +20,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 SRC = FRONTEND / "src"
 HTMLS = [

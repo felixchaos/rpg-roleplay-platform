@@ -25,7 +25,6 @@ from typing import Any
 
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
-
 # ────────────────────────────────────────────────────────────
 # Origin 集合
 # ────────────────────────────────────────────────────────────
@@ -84,8 +83,9 @@ def _t_worldbook_add(state: Any, args: dict) -> str:
         return "失败: save_id 必须是整数"
 
     try:
-        from platform_app.db import connect, init_db
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect, init_db
         init_db()
         with connect() as db:
             row = db.execute(

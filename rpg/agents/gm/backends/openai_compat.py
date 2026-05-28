@@ -1,5 +1,6 @@
 """agents.gm.backends.openai_compat — OpenAI 兼容 backend。"""
 from __future__ import annotations
+
 import json
 import re
 from collections.abc import Iterator
@@ -24,6 +25,7 @@ class _OpenAICompatBackend:
     def __init__(self, model: str, base_url: str, env_key: str, display_kind: str = "openai_compat",
                  user_id: int | None = None, api_id: str | None = None):
         from openai import OpenAI
+
         from platform_app.user_credentials import resolve_api_key
         result = resolve_api_key(user_id, api_id or display_kind, env_fallback=env_key)
         key = result.get("key")
@@ -171,7 +173,7 @@ class _OpenAICompatBackend:
         oai_messages = self._to_messages(system, messages)
 
         first_attempt = True
-        for iteration in range(max_iterations):
+        for _iteration in range(max_iterations):
             tool_calls_buf: dict[int, dict[str, Any]] = {}  # index → {id, name, arguments}
             current_text = ""
             finish_reason: str | None = None

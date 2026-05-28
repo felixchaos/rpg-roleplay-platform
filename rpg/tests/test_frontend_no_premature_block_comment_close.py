@@ -19,7 +19,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 EXTS = {".jsx", ".js", ".html", ".ts", ".tsx"}
 # 排除目录:不属于我们写的源

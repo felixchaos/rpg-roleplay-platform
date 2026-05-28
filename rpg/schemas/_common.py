@@ -1,5 +1,6 @@
 """schemas._common — 全局共享的基础模型与配置。"""
 from __future__ import annotations
+
 from pydantic import BaseModel, ConfigDict
 
 

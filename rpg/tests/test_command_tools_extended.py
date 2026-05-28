@@ -17,7 +17,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
@@ -25,9 +25,11 @@ if str(REPO) not in sys.path:
 
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
-from state import GameState, DEFAULT_STATE  # noqa: E402
+from state import DEFAULT_STATE, GameState  # noqa: E402
 from tools_dsl.command_dispatcher import (  # noqa: E402
-    ToolCallEnvelope, ToolDispatcher, get_registry,
+    ToolCallEnvelope,
+    ToolDispatcher,
+    get_registry,
 )
 from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
 
@@ -288,8 +290,10 @@ class CrossUserQueryIsolation(unittest.TestCase):
 
     def setUp(self):
         # 两个 user 的 state 各加自己的 fact
-        s1 = _new_state(); s1.add_memory("facts", "user1 fact")
-        s2 = _new_state(); s2.add_memory("facts", "user2 fact")
+        s1 = _new_state()
+        s1.add_memory("facts", "user1 fact")
+        s2 = _new_state()
+        s2.add_memory("facts", "user2 fact")
         self.states = {1: s1, 2: s2}
         self.dispatcher = ToolDispatcher(
             registry=get_registry(),
@@ -304,7 +308,8 @@ class CrossUserQueryIsolation(unittest.TestCase):
                 trace_id=f"tu{uid}",
             )
             return self.dispatcher.dispatch_sync(env)
-        r1 = q(1); r2 = q(2)
+        r1 = q(1)
+        r2 = q(2)
         self.assertTrue(r1.ok and r2.ok)
         self.assertIn("user1", r1.result)
         self.assertNotIn("user2", r1.result)

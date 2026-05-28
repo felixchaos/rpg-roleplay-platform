@@ -18,9 +18,14 @@ from __future__ import annotations
 
 import unittest
 
-from state import GameState
+from app import (
+    _apply_chat_rule_candidates,
+    _canonicalize_exit_target,
+    _execute_rules_action,
+    _rule_results_prompt,
+)
 from rules_bridge import start_module, suggest_rule_actions
-from app import _canonicalize_exit_target, _execute_rules_action, _apply_chat_rule_candidates, _rule_results_prompt
+from state import GameState
 
 
 class CanonicalizeExitTarget(unittest.TestCase):

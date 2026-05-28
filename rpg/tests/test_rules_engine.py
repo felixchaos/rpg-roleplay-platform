@@ -15,9 +15,9 @@ from __future__ import annotations
 import unittest
 
 from rules.dice import parse_expression, roll
-from rules.engine import RulesEngine
+from rules.dnd5e.monsters import build_combatant, get_stat_block
 from rules.dnd5e.ruleset import ability_modifier, proficiency_bonus
-from rules.dnd5e.monsters import get_stat_block, build_combatant
+from rules.engine import RulesEngine
 
 
 class DiceTests(unittest.TestCase):

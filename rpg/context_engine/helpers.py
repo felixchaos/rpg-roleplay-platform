@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 from context_engine._constants import CHAR_IDX, WORLD_IDX
 
 

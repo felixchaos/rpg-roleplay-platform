@@ -23,13 +23,19 @@ if str(REPO) not in sys.path:
 
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
-from state import GameState, DEFAULT_STATE  # noqa: E402
+from state import DEFAULT_STATE, GameState  # noqa: E402
 from tools_dsl.command_dispatcher import (  # noqa: E402
-    ToolSpec, ToolCallEnvelope, ToolRegistry, ToolDispatcher,
-    get_registry, MAX_TRACE_DEPTH, MAX_CALLS_PER_USER_PER_SECOND,
+    MAX_CALLS_PER_USER_PER_SECOND,
+    MAX_TRACE_DEPTH,
+    ToolCallEnvelope,
+    ToolDispatcher,
+    ToolRegistry,
+    ToolSpec,
+    get_registry,
 )
 from tools_dsl.command_tools_register import (  # noqa: E402
-    ensure_registered, force_reset_for_tests,
+    ensure_registered,
+    force_reset_for_tests,
 )
 
 

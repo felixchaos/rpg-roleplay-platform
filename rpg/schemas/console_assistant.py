@@ -1,21 +1,23 @@
 """schemas.console_assistant — 侧栏控制台助手路由请求模型。"""
 from __future__ import annotations
-from typing import Optional, Any
+
+from typing import Any, Optional
+
 from schemas._common import _BaseRequest
 
 
 class ConsoleAssistantDeleteConversationRequest(_BaseRequest):
-    conversation_id: Optional[str] = ""
+    conversation_id: str | None = ""
 
 
 class ConsoleAssistantChatRequest(_BaseRequest):
-    message: Optional[str] = ""
-    conversation_id: Optional[str] = None
-    page_context: Optional[dict[str, Any]] = None
+    message: str | None = ""
+    conversation_id: str | None = None
+    page_context: dict[str, Any] | None = None
 
 
 class ConsoleAssistantConfirmRequest(_BaseRequest):
-    conversation_id: Optional[str] = ""
-    call_id: Optional[str] = ""
-    decision: Optional[str] = ""
-    page_context: Optional[dict[str, Any]] = None
+    conversation_id: str | None = ""
+    call_id: str | None = ""
+    decision: str | None = ""
+    page_context: dict[str, Any] | None = None

@@ -11,8 +11,8 @@ from __future__ import annotations
 from typing import Any
 
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
-from tools_dsl.command_tools import COMMAND_TOOLS, execute_tool as _execute_legacy
-
+from tools_dsl.command_tools import COMMAND_TOOLS
+from tools_dsl.command_tools import execute_tool as _execute_legacy
 
 # 这些 origin 默认允许从 LLM (llm_set / llm_chat) 和 UI 调用 (save 级游戏指令).
 # task 62: 移除 console_assistant — 它是"跨 save 资源管理"助手,

@@ -20,7 +20,6 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-
 BASE = Path(__file__).parent.parent  # rpg/tools_dsl/ → rpg/
 CONFIG_DIR = BASE / "config"
 MCP_CONFIG_FILE = CONFIG_DIR / "mcp_servers.json"
@@ -91,7 +90,7 @@ def _load_mcp_catalog_from_file() -> dict[str, Any]:
     if not MCP_CONFIG_FILE.exists():
         save_mcp_catalog(copy.deepcopy(DEFAULT_MCP_CATALOG))
     try:
-        with open(MCP_CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(MCP_CONFIG_FILE, encoding="utf-8") as f:
             data = json.load(f)
     except Exception:
         data = {}

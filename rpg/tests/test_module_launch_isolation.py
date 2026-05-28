@@ -107,7 +107,7 @@ class ModuleLaunchIsolation(unittest.TestCase):
         # content_pack 也应回到非模组
         self.assertNotEqual(
             (state_novel.get("content_pack") or {}).get("kind"), "module_adventure",
-            f"小说存档 content_pack 不应是 module_adventure"
+            "小说存档 content_pack 不应是 module_adventure"
         )
 
     def test_launch_uses_module_title_in_save(self):

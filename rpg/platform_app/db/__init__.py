@@ -1,28 +1,28 @@
 """platform_app.db — DB 连接/初始化/migrations/utils 子包."""
-from .connection import database_url, connect, get_pool, close_pool
-from .init import init_db, reset_db_init_flag, _do_init_db
-from .migrations import (
-    MIGRATIONS,
-    list_migrations,
-    _migration_advisory_lock,
-    _apply_versioned_migrations,
-    _assert_schema_up_to_date,
-    _assert_migrations_monotonic,
-)
-from .pgvector import try_enable_pgvector, has_pgvector
-from .utils import (
-    DEFAULT_LIMIT,
-    MAX_LIMIT,
-    redacted_url,
-    expose,
-    limit_value,
-    cursor_id,
-    page_payload,
-)
-
 # status() references connect, redacted_url, has_pgvector, database_url — defined here
 # after all imports to avoid circular deps.
 from typing import Any
+
+from .connection import close_pool, connect, database_url, get_pool
+from .init import _do_init_db, init_db, reset_db_init_flag
+from .migrations import (
+    MIGRATIONS,
+    _apply_versioned_migrations,
+    _assert_migrations_monotonic,
+    _assert_schema_up_to_date,
+    _migration_advisory_lock,
+    list_migrations,
+)
+from .pgvector import has_pgvector, try_enable_pgvector
+from .utils import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    cursor_id,
+    expose,
+    limit_value,
+    page_payload,
+    redacted_url,
+)
 
 
 def status(reveal_details: bool = False) -> dict:

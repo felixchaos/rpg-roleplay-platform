@@ -2,12 +2,12 @@
 from platform_app.auth import (
     RateLimited,
     admin_unlock,
-    register,
+    get_user,
     login,
     logout,
-    user_from_token,
-    get_user,
+    register,
     update_profile,
+    user_from_token,
 )
 
 __all__ = [

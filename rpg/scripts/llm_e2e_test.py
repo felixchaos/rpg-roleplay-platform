@@ -24,10 +24,9 @@ import json
 import os
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from typing import Any
-
 
 BASE = os.environ.get("RPG_BACKEND_BASE", "http://127.0.0.1:7860")
 

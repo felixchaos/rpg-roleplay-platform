@@ -27,7 +27,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-
 _VERIFIER_SYSTEM = """\
 你是 acceptance（验收条件）判定器。读 GM 这一轮的叙事正文 + 一组验收条款，
 判断每条条款是否被满足。**不要写小说**，只输出 JSON。
@@ -261,6 +260,7 @@ def _call_anthropic_tool_use_for_acceptance(
     的 acceptance 原文，避免 LLM 改写。
     """
     from anthropic import Anthropic
+
     from platform_app.user_credentials import resolve_api_key
     result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
     key = result.get("key")

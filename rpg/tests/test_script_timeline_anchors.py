@@ -20,7 +20,6 @@ from pathlib import Path
 
 from tests.helpers import make_client, register_user
 
-
 PROJECT = Path(__file__).resolve().parents[2]
 
 
@@ -181,7 +180,7 @@ class TimelineLayerUsesRealAnchor(unittest.TestCase):
     def _state(self, *, anchor_chapter=50, chapter_min=1, chapter_max=255,
                anchor_phase="初期穿越与火星线", anchor_event="火星·扬陆城内",
                locked_label="火星·扬陆城内"):
-        from state import GameState, DEFAULT_STATE
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         tl = g.data["world"]["timeline"]
         tl["current_label"] = locked_label
@@ -212,7 +211,7 @@ class TimelineLayerUsesRealAnchor(unittest.TestCase):
     def test_layer_falls_back_to_sqlite_when_no_anchor(self):
         """state.world.timeline 没写 anchor_chapter 时退化到旧 SQLite 索引。"""
         from context_engine import _timeline_layer
-        from state import GameState, DEFAULT_STATE
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         # 没写 anchor_chapter / chapter_min/max
         g.data["world"]["timeline"]["pending_jump"] = None

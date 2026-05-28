@@ -16,7 +16,6 @@ import unittest
 
 from tests.helpers import cleanup_test_users, make_client, register_user
 
-
 TEST_CHAPTER_CONTENT = (
     "申时三刻，雾港码头的铜钟敲了六下。"
     "玩家角色『测试旅人』刚从破损的渡船上醒来，手里只有一枚蓝色罗盘。"
@@ -49,8 +48,8 @@ class OpeningRetrievalNoDefaultLeak(unittest.TestCase):
 
     def _mk_imported_save(self, uid: int) -> int:
         """建一个 script + chapter + save（带 new_card），并 activate 这个 save。"""
+        from platform_app import branches, workspace
         from platform_app.db import connect
-        from platform_app import workspace, branches
         with connect() as db:
             scr = db.execute(
                 "insert into scripts(owner_id, title, source_path) values (%s, %s, %s) returning id",
@@ -90,7 +89,8 @@ class OpeningRetrievalNoDefaultLeak(unittest.TestCase):
                     except Exception:
                         d = "\n".join(data_lines)
                     events.append({"event": ev, "data": d})
-                ev = "message"; data_lines = []
+                ev = "message"
+                data_lines = []
                 continue
             if line.startswith("event:"):
                 ev = line[len("event:"):].strip()
@@ -111,7 +111,8 @@ class OpeningRetrievalNoDefaultLeak(unittest.TestCase):
             def generate_opening(self, state, retrieved_context=""):
                 return "（测试存根开场：雾港码头雾色未散。）"
             def respond_stream_with_tools(self, *a, **kw):
-                if False: yield {}
+                if False:
+                    yield {}
                 return
             def curate_context(self, *a, **kw):
                 return ""
@@ -198,7 +199,7 @@ class OpeningRetrievalNoDefaultLeak(unittest.TestCase):
         cookies = u["cookies"]
         uid = self._uid(u["username"])
         # 用真实 ensure_default 创默认 MuMu 剧本 + save
-        from platform_app import workspace, branches
+        from platform_app import branches, workspace
         from platform_app.db import connect
         workspace.ensure_default(uid)
         with connect() as db:

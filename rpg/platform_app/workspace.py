@@ -8,9 +8,9 @@ from psycopg.types.json import Jsonb
 from state import SAVE_FILE
 
 from . import branches, runtime
-from .db import connect, cursor_id, expose, init_db, limit_value, page_payload, status as db_status
+from .db import connect, cursor_id, expose, init_db, limit_value, page_payload
+from .db import status as db_status
 from .security import public_user
-
 
 BASE_TITLE = "《我蕾穆丽娜不爱你》"
 
@@ -140,6 +140,7 @@ def create_save(
     # 800 章 × 5 events 量级,放后台不阻塞 UI;失败也不影响存档创建。
     try:
         import threading
+
         from agents.anchor_seed_agent import seed_anchors_for_save
         def _bg_seed():
             try:

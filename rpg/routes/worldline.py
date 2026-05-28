@@ -1,9 +1,10 @@
 """worldline.py — 世界线变量管理路由 (/api/worldline/*)。"""
 from __future__ import annotations
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from schemas.worldline import WorldlineVariableRequest, WorldlineVariableRemoveRequest
+from schemas.worldline import WorldlineVariableRemoveRequest, WorldlineVariableRequest
 
 router = APIRouter()
 
@@ -12,8 +13,11 @@ router = APIRouter()
 async def api_worldline_variable(body: WorldlineVariableRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher 的 set_user_variable 工具。"""
     from app import (
-        _require_api_user, _payload, _ensure_loaded, _resolve_persist_target,
+        _ensure_loaded,
+        _payload,
         _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
     )
     from platform_app import knowledge as platform_knowledge
     api_user = _require_api_user(request)
@@ -47,8 +51,11 @@ async def api_worldline_variable(body: WorldlineVariableRequest, request: Reques
 async def api_worldline_variable_remove(body: WorldlineVariableRemoveRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: destructive,走 dispatcher remove_user_variable 工具。"""
     from app import (
-        _require_api_user, _payload, _ensure_loaded, _resolve_persist_target,
+        _ensure_loaded,
+        _payload,
         _persist_runtime_checkpoint,
+        _require_api_user,
+        _resolve_persist_target,
     )
     from platform_app import knowledge as platform_knowledge
     api_user = _require_api_user(request)

@@ -31,9 +31,8 @@ if str(REPO) not in sys.path:
 
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
-from state import GameState, DEFAULT_STATE  # noqa: E402
 import retrieval  # noqa: E402
-
+from state import DEFAULT_STATE, GameState  # noqa: E402
 
 FORBIDDEN_DEFAULT_TOKENS = (
     "柏林", "图卢兹", "哈布斯堡", "蛇信", "薇瑟", "扎兹巴鲁姆",

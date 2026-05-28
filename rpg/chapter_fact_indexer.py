@@ -473,7 +473,7 @@ def _extract_events(sentences: list[str], scenes: list[str], aliases: dict[str, 
     scored.sort(key=lambda x: (-x[0], x[1]))
     chosen = sorted(scored[:8], key=lambda x: x[1])
     out = []
-    for order, (score, index, sentence, participants, locs, cons) in enumerate(chosen, start=1):
+    for _order, (score, _index, sentence, participants, locs, cons) in enumerate(chosen, start=1):
         out.append({
             "scene_index": _scene_index_for_sentence(sentence, scenes),
             "event": sentence[:160],

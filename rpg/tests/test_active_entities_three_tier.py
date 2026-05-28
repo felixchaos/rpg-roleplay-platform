@@ -42,7 +42,6 @@ from pathlib import Path
 
 from tests.helpers import make_client, register_user
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PANELS_JSX = (PROJECT_ROOT / "frontend" / "src" / "game-panels.jsx").read_text(encoding="utf-8")
 PLATFORM_JSX = (PROJECT_ROOT / "frontend" / "src" / "platform-app.jsx").read_text(encoding="utf-8")
@@ -66,7 +65,8 @@ class ActiveEntitiesStateSchema(unittest.TestCase):
 
     def test_upsert_new_entity(self):
         import copy as _copy
-        from state import GameState, DEFAULT_STATE
+
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.upsert_active_entity({"id": "ash_skulker_1", "name": "灰布教徒·甲", "kind": "enemy"})
         active = g.data["active_entities"]
@@ -82,7 +82,8 @@ class ActiveEntitiesStateSchema(unittest.TestCase):
     def test_upsert_existing_entity_preserves_source_and_first_seen(self):
         """重复 upsert 同一 id 不应覆盖 source / first_seen_turn,只更新 last_seen + 合并字段。"""
         import copy as _copy
-        from state import GameState, DEFAULT_STATE
+
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.data["turn"] = 5
         g.upsert_active_entity({"id": "x", "name": "X", "source": "room_data"})
@@ -99,7 +100,8 @@ class ActiveEntitiesStateSchema(unittest.TestCase):
     def test_replace_active_entities_with_source(self):
         """换房间时只删 source=room_data,encounter / gm_provisional 保留。"""
         import copy as _copy
-        from state import GameState, DEFAULT_STATE
+
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.upsert_active_entity({"id": "room_npc", "name": "矿工", "source": "room_data"})
         g.upsert_active_entity({"id": "enc_enemy", "name": "教徒", "source": "encounter"})
@@ -114,7 +116,8 @@ class ActiveEntitiesStateSchema(unittest.TestCase):
 
     def test_prune_active_entities(self):
         import copy as _copy
-        from state import GameState, DEFAULT_STATE
+
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.upsert_active_entity({"id": "a", "source": "room_data"})
         g.upsert_active_entity({"id": "b", "source": "room_data"})
@@ -126,7 +129,8 @@ class ActiveEntitiesStateSchema(unittest.TestCase):
 
     def test_set_active_entities_overwrites(self):
         import copy as _copy
-        from state import GameState, DEFAULT_STATE
+
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.upsert_active_entity({"id": "x"})
         g.set_active_entities([{"id": "y"}, {"id": "z"}])
@@ -144,8 +148,9 @@ class RulesBridgeSyncsActiveEntities(unittest.TestCase):
 
     def _ash_mine_state(self):
         import copy as _copy
-        from state import GameState, DEFAULT_STATE
+
         from rules_bridge import start_module
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         start_module(g, "ash_mine")
         return g
