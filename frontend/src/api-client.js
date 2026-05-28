@@ -264,6 +264,12 @@
         const url = BASE + "/api/v1/scripts/import-jobs/" + jobId + "/stream";
         return openEventSource(url, handlers);
       },
+      // B2: upload script pack zip — POST /api/v1/scripts/import-pack multipart
+      importPack: (file) => {
+        const fd = new FormData();
+        fd.append("file", file);
+        return _send("/api/v1/scripts/import-pack", { method: "POST", body: fd });
+      },
       // B1: download script pack zip — GET /api/v1/scripts/{id}/export-pack → blob download
       exportPack: async (sid, filename) => {
         const url = (BASE || "") + "/api/v1/scripts/" + sid + "/export-pack";

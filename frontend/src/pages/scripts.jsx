@@ -142,6 +142,9 @@ function ScriptsListView() {
   const [newModalScriptId, setNewModalScriptId] = useStatePL(null);
   // B1: export pack
   const [exportingId, setExportingId] = useStatePL(null);
+  // B2: import pack
+  const importPackRef = React.useRef(null);
+  const [importPackBusy, setImportPackBusy] = useStatePL(false);
 
   const reload = React.useCallback(async () => {
     try {
@@ -180,6 +183,28 @@ function ScriptsListView() {
     }
   };
 
+  const onImportPackFile = async (file) => {
+    if (!file) return;
+    setImportPackBusy(true);
+    try {
+      const result = await window.api.scripts.importPack(file);
+      if (result && result.ok === false) throw new Error(result.error || result.detail || "导入失败");
+      const sid = result?.script_id;
+      const warnings = result?.warnings;
+      window.__apiToast?.(
+        "剧本包导入成功",
+        { kind: "ok", detail: warnings?.length ? `警告: ${warnings.join("; ")}` : (sid ? `script #${sid}` : "") }
+      );
+      reload();
+    } catch (e) {
+      const detail = e?.payload?.detail || e?.message || "未知错误";
+      window.__apiToast?.("导入失败", { kind: "danger", detail });
+    } finally {
+      setImportPackBusy(false);
+      if (importPackRef.current) importPackRef.current.value = "";
+    }
+  };
+
   const onExportPack = async (s) => {
     setExportingId(s.id);
     try {
@@ -202,6 +227,10 @@ function ScriptsListView() {
       <div className="pl-sec-head">
         <h2>已有剧本 <span className="muted-2">{scripts.length} 个</span></h2>
         <div className="pl-sec-tools">
+          <button className="btn ghost" onClick={() => importPackRef.current?.click()} disabled={importPackBusy} data-tip="从 zip pack 导入完整剧本（含章节/角色卡/世界书）">
+            {importPackBusy ? <Icon name="spinner" size={12} className="spin" /> : <Icon name="download" size={12} />} {importPackBusy ? "导入中…" : "导入剧本包"}
+          </button>
+          <input ref={importPackRef} type="file" accept=".zip" style={{display:"none"}} onChange={(e) => onImportPackFile(e.target.files?.[0])} />
           <a className="btn primary" href="#scripts-import" data-tip="导入新剧本">
             <Icon name="upload" size={12} /> 导入剧本
           </a>
