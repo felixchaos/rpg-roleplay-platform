@@ -1391,7 +1391,10 @@ function ModelParamsSection() {
     stop: "玩家:",
   });
   const [advanced, setAdvanced] = useStatePL(false);
-  const u = (k, v) => { setParams(p => ({ ...p, [k]: v })); save(k); };
+  // task 51 fix: 之前 `save(k)` 只传 1 个参数,useAutoSave 收到 val===undefined
+  // 走 toast-only 分支 → 用户改 temperature/top_p/max_tokens 等全无效,刷新即丢。
+  // 必须传 v,让 backend 真的落库 user_preferences。
+  const u = (k, v) => { setParams(p => ({ ...p, [k]: v })); save(k, v); };
 
   const applyPreset = (name) => {
     setPreset(name);
@@ -1852,34 +1855,55 @@ function ModuleModelsSection() {
 
 function MemorySection() {
   const save = useAutoSave("记忆", "settings");
+  const [recallDepth, setRecallDepth] = useStatePL(6);
+  const [pinnedLimit, setPinnedLimit] = useStatePL(20);
+  const [summaryWindow, setSummaryWindow] = useStatePL(8);
+  useEffectPL(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await window.api.account.profile();
+        if (cancelled) return;
+        const p = (r && r.preferences) || {};
+        if (p["settings.召回深度"] !== undefined) setRecallDepth(Number(p["settings.召回深度"]));
+        if (p["settings.固定记忆上限"] !== undefined) setPinnedLimit(Number(p["settings.固定记忆上限"]));
+        if (p["settings.摘要窗口"] !== undefined) setSummaryWindow(Number(p["settings.摘要窗口"]));
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
   return (
     <div className="pl-set-group" data-cap-anchor="settings.memory">
       <h3>记忆系统</h3>
       <div className="pl-set-row">
         <div className="pl-set-label"><strong>默认召回深度</strong><div className="muted">每轮从原文检索的最大段数。</div></div>
         <div className="pl-set-control">
-          <input type="number" defaultValue={6} min={2} max={20} onChange={() => save("召回深度")} />
+          <input type="number" value={recallDepth} min={2} max={20} onChange={(e) => { setRecallDepth(Number(e.target.value)); save("召回深度", Number(e.target.value)); }} />
         </div>
       </div>
       <div className="pl-set-row">
         <div className="pl-set-label"><strong>固定记忆上限</strong><div className="muted">超出后旧条目会自动转入事实库。</div></div>
         <div className="pl-set-control">
-          <input type="number" defaultValue={20} min={5} max={80} onChange={() => save("固定记忆上限")} />
+          <input type="number" value={pinnedLimit} min={5} max={80} onChange={(e) => { setPinnedLimit(Number(e.target.value)); save("固定记忆上限", Number(e.target.value)); }} />
         </div>
       </div>
       <div className="pl-set-row">
         <div className="pl-set-label"><strong>历史摘要窗口</strong><div className="muted">最近 N 个回合压缩为摘要喂入。</div></div>
         <div className="pl-set-control">
-          <input type="number" defaultValue={8} min={3} max={20} onChange={() => save("摘要窗口")} />
+          <input type="number" value={summaryWindow} min={3} max={20} onChange={(e) => { setSummaryWindow(Number(e.target.value)); save("摘要窗口", Number(e.target.value)); }} />
         </div>
       </div>
     </div>
   );
 }
 
+const _HIGH_RISK_DEFAULTS = ["timeline.pending_jump", "player.background", "world.constraints"];
+const _HIGH_RISK_ALL = ["timeline.pending_jump", "player.background", "world.constraints", "relationships.*.tone"];
+
 function PermSection() {
   // task 52：从 user_preferences 拉真实值，改动 patch /api/me/preference
   const [defaultMode, setDefaultMode] = useStatePL("review");
+  const [highRiskWhitelist, setHighRiskWhitelist] = useStatePL(_HIGH_RISK_DEFAULTS);
   const save = useAutoSave("权限", "perm");
   useEffectPL(() => {
     let cancelled = false;
@@ -1890,10 +1914,19 @@ function PermSection() {
         const p = (r && r.preferences) || {};
         const v = p["perm.default_mode"] || p.default_perm_mode;
         if (v) setDefaultMode(v);
+        const wl = p["perm.high_risk_whitelist"];
+        if (Array.isArray(wl)) setHighRiskWhitelist(wl);
       } catch (_) {}
     })();
     return () => { cancelled = true; };
   }, []);
+  const toggleWhitelist = (field) => {
+    const next = highRiskWhitelist.includes(field)
+      ? highRiskWhitelist.filter(f => f !== field)
+      : [...highRiskWhitelist, field];
+    setHighRiskWhitelist(next);
+    save("high_risk_whitelist", next);
+  };
   return (
     <div className="pl-set-group" data-cap-anchor="settings.permissions">
       <h3>写入权限</h3>
@@ -1911,13 +1944,17 @@ function PermSection() {
         </div>
       </div>
       <div className="pl-set-row">
-        <div className="pl-set-label"><strong>高风险白名单</strong><div className="muted">即便处于『完全访问』，这些字段仍会非阻塞弹窗。</div></div>
+        <div className="pl-set-label"><strong>高风险白名单</strong><div className="muted">即便处于『完全访问』，这些字段仍会非阻塞弹窗。点击切换。</div></div>
         <div className="pl-set-control">
           <div className="pl-rules">
-            <span className="pl-rule-chip active">timeline.pending_jump</span>
-            <span className="pl-rule-chip active">player.background</span>
-            <span className="pl-rule-chip active">world.constraints</span>
-            <span className="pl-rule-chip">relationships.*.tone</span>
+            {_HIGH_RISK_ALL.map(field => (
+              <span
+                key={field}
+                className={`pl-rule-chip ${highRiskWhitelist.includes(field) ? "active" : ""}`}
+                style={{cursor: "pointer", userSelect: "none"}}
+                onClick={() => toggleWhitelist(field)}
+              >{field}</span>
+            ))}
           </div>
         </div>
       </div>
