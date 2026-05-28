@@ -1,7 +1,8 @@
 """platform_app.api.scripts — /api/scripts*, /api/uploads/* 路由。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 
 from .. import knowledge, script_import
 from ..db import connect
@@ -441,6 +442,61 @@ async def api_upload_cancel(upload_id: str, user=Depends(require_user)):
         return json_response(script_import.cancel_upload(user["id"], upload_id))
     except ValueError as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
+
+
+# ── script pack export / import ───────────────────────────────────────────────
+
+@router.get("/api/scripts/{script_id}/export-pack")
+async def api_export_script_pack(script_id: int, user=Depends(require_user)):
+    """导出剧本为 zip pack (含 chapters/facts/cards/worldbook/overrides/documents)。
+
+    不含: document_chunks/embeddings (收件方重建), saves, credentials。
+    """
+    from platform_app.knowledge.script_pack import export_script_pack
+    try:
+        zip_bytes, filename = export_script_pack(script_id, user["id"])
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="无权访问该剧本")
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/api/scripts/import-pack")
+async def api_import_script_pack(request: Request, user=Depends(require_user)):
+    """导入剧本 pack zip。
+
+    接受 multipart/form-data 的 file 字段，或 application/octet-stream body。
+    返回 {ok, script_id, warnings}。
+    """
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        file = form.get("file")
+        if not file:
+            raise HTTPException(status_code=400, detail="missing file field")
+        zip_bytes = await file.read()
+    else:
+        zip_bytes = await request.body()
+
+    if not zip_bytes:
+        raise HTTPException(status_code=400, detail="empty request body")
+
+    from platform_app.knowledge.script_pack import MAX_ZIP_BYTES, import_script_pack
+    if len(zip_bytes) > MAX_ZIP_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"file too large (max {MAX_ZIP_BYTES // 1024 // 1024}MB)",
+        )
+
+    try:
+        result = import_script_pack(zip_bytes, user["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return JSONResponse(result)
 
 
 # ── script overrides API ──────────────────────────────────────────────────────
