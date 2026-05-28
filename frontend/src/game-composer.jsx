@@ -276,6 +276,7 @@ function ModelPopover({ current, onPick, align = "left", gameState }) {
   const apis = (catalog && Array.isArray(catalog.apis)) ? catalog.apis : [];
   apis.forEach((api) => {
     if (api && api.enabled === false) return;
+    if (!api.has_credential) return;
     const mods = api.models || [];
     mods.forEach((m) => {
       if (m && m.enabled !== false) {
@@ -285,7 +286,6 @@ function ModelPopover({ current, onPick, align = "left", gameState }) {
           label: m.display_name || m.real_name || m.id,
           api_id: api.id,
           api_label: api.display_name || api.id,
-          desc: (m.capabilities || []).slice(0, 3).join(" · "),
         });
       }
     });
@@ -338,11 +338,10 @@ function ModelPopover({ current, onPick, align = "left", gameState }) {
           return (
             <li key={key}>
               <button onClick={() => !busy && pickModel(m)} className={active ? "active" : ""} disabled={busy}>
-                <div>
+                <div style={{display: "flex", flexDirection: "column", gap: 1}}>
                   <strong>{m.label}</strong>
-                  <span className="muted-2 mono" style={{marginLeft: 6, fontSize: 11}}>{m.api_label}</span>
+                  <span className="muted-2" style={{fontSize: 11}}>{m.api_label}</span>
                 </div>
-                {m.desc ? <span className="muted" style={{fontSize: 12}}>{m.desc}</span> : null}
                 {active && <Icon name="check" size={14} style={{color: "var(--accent)"}} />}
               </button>
             </li>
