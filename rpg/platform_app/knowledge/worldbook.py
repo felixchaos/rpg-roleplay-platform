@@ -6,19 +6,24 @@ from platform_app.db import connect, expose, init_db, limit_value, page_payload
 from platform_app.knowledge._utils import _cursor_int, _require_script
 
 
+def _db_select_worldbook_entries(db, script_id: int, before_id: int | None, page_limit: int) -> list:
+    """repository: 按 script_id/cursor 分页查 worldbook_entries，返回 rows。"""
+    return db.execute(
+        """
+        select * from worldbook_entries
+        where script_id = %s and (%s::bigint is null or id < %s)
+        order by priority desc, id desc
+        limit %s
+        """,
+        (script_id, before_id, before_id, page_limit + 1),
+    ).fetchall()
+
+
 def list_worldbook_entries(user_id: int, script_id: int, limit: int | str | None = None, cursor: str | None = None) -> dict[str, Any]:
     init_db()
     page_limit = limit_value(limit)
     before_id = _cursor_int(cursor)
     with connect() as db:
         _require_script(db, user_id, script_id)
-        rows = db.execute(
-            """
-            select * from worldbook_entries
-            where script_id = %s and (%s::bigint is null or id < %s)
-            order by priority desc, id desc
-            limit %s
-            """,
-            (script_id, before_id, before_id, page_limit + 1),
-        ).fetchall()
+        rows = _db_select_worldbook_entries(db, script_id, before_id, page_limit)
     return page_payload(rows, page_limit)

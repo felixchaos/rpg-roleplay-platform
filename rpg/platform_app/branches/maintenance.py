@@ -34,6 +34,20 @@ def ensure_summaries(db, save_id: int) -> None:
         db.execute("update branch_commits set summary = %s where id = %s", (rough_summary(player_text, gm_text), row["id"]))
 
 
+def _db_update_commit_snapshot(db, commit_id: int, snapshot: dict[str, Any], tree_hash: str) -> None:
+    """repository: 回填 branch_commits 的 state_snapshot 和 tree_hash。"""
+    db.execute(
+        """
+        update branch_commits
+        set state_snapshot = %s,
+            tree_hash = %s,
+            row_version = row_version + 1
+        where id = %s
+        """,
+        (Jsonb(snapshot), tree_hash, commit_id),
+    )
+
+
 def ensure_state_snapshots(db, save_id: int) -> None:
     rows = db.execute(
         """
@@ -47,13 +61,4 @@ def ensure_state_snapshots(db, save_id: int) -> None:
     ).fetchall()
     for row in rows:
         snapshot = load_state(Path(row.get("state_path") or ""))
-        db.execute(
-            """
-            update branch_commits
-            set state_snapshot = %s,
-                tree_hash = %s,
-                row_version = row_version + 1
-            where id = %s
-            """,
-            (Jsonb(snapshot), _state_snapshot_hash(snapshot), row["id"]),
-        )
+        _db_update_commit_snapshot(db, row["id"], snapshot, _state_snapshot_hash(snapshot))
