@@ -10,10 +10,29 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 BASE = Path(__file__).parent
+_OVERRIDES_DIR = BASE / "modules" / "_script_overrides"
+
+
+@lru_cache(maxsize=8)
+def _load_overrides_for_script(script_key: str | None) -> dict:
+    """从 modules/_script_overrides/<script_key>.json 加载剧本专有规则。
+
+    无 script_key 或文件不存在时返回空 dict,让调用方走 hardcoded fallback。
+    """
+    if not script_key:
+        return {}
+    p = _OVERRIDES_DIR / f"{script_key}.json"
+    if not p.is_file():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 DB_PATH = BASE.parent / ".webnovel" / "vectors.db"
 SUMMARY_PATH = BASE / "indexes" / "summaries.json"
 
@@ -94,7 +113,7 @@ def ensure_timeline_schema(db_path: Path = DB_PATH) -> None:
         conn.close()
 
 
-def bootstrap_timeline_from_summaries(db_path: Path = DB_PATH, summary_path: Path = SUMMARY_PATH) -> dict[str, Any]:
+def bootstrap_timeline_from_summaries(db_path: Path = DB_PATH, summary_path: Path = SUMMARY_PATH, script_key: str | None = None) -> dict[str, Any]:
     if not _db_available(db_path):
         return {"events": 0, "chunks": 0, "skipped": "sqlite_unavailable"}
     ensure_timeline_schema(db_path)
@@ -114,10 +133,10 @@ def bootstrap_timeline_from_summaries(db_path: Path = DB_PATH, summary_path: Pat
             chapter = int(item["chapter"])
             event = str(item.get("event", "")).strip()
             summary = summaries.get(str(chapter), "")
-            phase = _phase_for(chapter, event, summary)
-            time_label = _time_label_for(chapter, event, summary)
-            participants = _extract_names(event + " " + summary)
-            locations = _extract_locations(event + " " + summary)
+            phase = _phase_for(chapter, event, summary, script_key=script_key)
+            time_label = _time_label_for(chapter, event, summary, script_key=script_key)
+            participants = _extract_names(event + " " + summary, script_key=script_key)
+            locations = _extract_locations(event + " " + summary, script_key=script_key)
             event_id = f"ch{chapter:04d}_e{order:03d}"
             cur.execute("""
                 INSERT OR REPLACE INTO story_timeline_events
@@ -142,11 +161,11 @@ def bootstrap_timeline_from_summaries(db_path: Path = DB_PATH, summary_path: Pat
             event_chapter = int(event_item["chapter"]) if event_item else chapter
             event = str(event_item.get("event", "")) if event_item else ""
             summary = summaries.get(str(chapter), "")
-            phase = _phase_for(chapter, event, summary or content or "")
-            time_label = _time_label_for(chapter, event, summary or content or "")
+            phase = _phase_for(chapter, event, summary or content or "", script_key=script_key)
+            time_label = _time_label_for(chapter, event, summary or content or "", script_key=script_key)
             event_id = _event_id_for(event_chapter, key_events) if event_item else None
-            participants = _extract_names(" ".join([event, summary, content or ""]))
-            locations = _extract_locations(" ".join([event, summary, content or ""]))
+            participants = _extract_names(" ".join([event, summary, content or ""]), script_key=script_key)
+            locations = _extract_locations(" ".join([event, summary, content or ""]), script_key=script_key)
             timeline_order = chapter * 1000 + scene_index
             cur.execute("""
                 INSERT OR REPLACE INTO chunk_timeline
@@ -316,33 +335,72 @@ def _event_id_for(chapter: int, events: list[dict]) -> str | None:
     return None
 
 
-def _phase_for(chapter: int, event: str, text: str) -> str:
+def _phase_for(chapter: int, event: str, text: str, script_key: str | None = None) -> str:
+    """推断当前 story phase。
+
+    timeline_index 只区分"是否柏林暗流篇"（binary 语义），因此只匹配
+    phase_inference.rules 的第一条；其余 chapter 返回 fallback_simple。
+    无 script_key 或 JSON 不存在时返回空字符串，调用方自行处理。
+    """
+    overrides = _load_overrides_for_script(script_key)
+    rules = (overrides.get("phase_inference") or {}).get("rules") or []
+    fallback = (overrides.get("phase_inference") or {}).get("fallback_simple") or ""
     hay = f"{event} {text}"
-    if chapter >= 1309 or any(x in hay for x in ("柏林", "图卢兹", "调令", "特洛耶德")):
-        return "柏林暗流篇"
-    return "原著主线"
+    if rules:
+        rule = rules[0]
+        ch_min = rule.get("chapter_min", 0)
+        needles = rule.get("or_text_needles") or []
+        if chapter >= ch_min or (needles and any(n in hay for n in needles)):
+            return rule["phase"]
+        return fallback
+    # 无 script_key 或 JSON 不存在 → 返回空字符串
+    return ""
 
 
-def _time_label_for(chapter: int, event: str, text: str) -> str:
+def _time_label_for(chapter: int, event: str, text: str, script_key: str | None = None) -> str:
+    """推断当前 time label。
+
+    优先按 time_label_inference 规则匹配（needles_any 或 chapter_min），
+    命中即返回对应 label；兜底用 time_label_fallback_template。
+    无 script_key 或 JSON 不存在时返回 f"第{chapter}章"。
+    """
+    overrides = _load_overrides_for_script(script_key)
+    tl_rules = overrides.get("time_label_inference") or []
+    tl_fallback_tmpl = overrides.get("time_label_fallback_template") or ""
     hay = f"{event} {text}"
-    if "图卢兹战报" in hay or "图卢兹失守" in hay:
-        return "图卢兹失守当晚，柏林"
-    if any(x in hay for x in ("暂留柏林", "北城旧宅", "蛇信外围")):
-        return "图卢兹失守后翌日，柏林"
-    if "次日" in hay or "内城旧楼" in hay:
-        return "图卢兹失守后次日，柏林内城"
-    if chapter >= 1309:
-        return "柏林战局前夕"
-    return f"原著第{chapter}章附近"
+    if tl_rules:
+        for rule in tl_rules:
+            needles = rule.get("needles_any") or []
+            ch_min = rule.get("chapter_min")
+            if needles and any(n in hay for n in needles):
+                return rule["label"]
+            if ch_min is not None and not needles and chapter >= ch_min:
+                return rule["label"]
+        if tl_fallback_tmpl:
+            return tl_fallback_tmpl.format(chapter=chapter)
+    # 无 script_key 或 JSON 不存在 → 通用兜底
+    return f"第{chapter}章"
 
 
-def _extract_names(text: str) -> list[str]:
-    known = ["蕾穆丽娜", "斯雷因", "伊奈帆", "界冢伊奈帆", "娅赛兰", "觉－哈布斯堡", "薛克", "赫克勒斯", "黎骨月", "韵子", "莱艾", "扎兹巴鲁姆"]
+def _extract_names(text: str, script_key: str | None = None) -> list[str]:
+    """从 text 中抽取已知角色名（按 known_names 顺序）。
+
+    优先从 script_key 对应 JSON 的 known_names 加载列表；
+    无 script_key 或 JSON 不存在时返回空列表。
+    """
+    overrides = _load_overrides_for_script(script_key)
+    known = overrides.get("known_names") or []
     return [name for name in known if name in text][:8]
 
 
-def _extract_locations(text: str) -> list[str]:
-    known = ["柏林", "图卢兹", "北城旧宅", "内城旧楼", "布鲁塞尔", "哈布斯堡庄园", "地下基地"]
+def _extract_locations(text: str, script_key: str | None = None) -> list[str]:
+    """从 text 中抽取已知地点名（按 known_locations 顺序）。
+
+    优先从 script_key 对应 JSON 的 known_locations 加载列表；
+    无 script_key 或 JSON 不存在时返回空列表。
+    """
+    overrides = _load_overrides_for_script(script_key)
+    known = overrides.get("known_locations") or []
     return [loc for loc in known if loc in text][:8]
 
 
@@ -352,5 +410,9 @@ def _overlap_score(a: str, b: str) -> int:
 
 
 if __name__ == "__main__":
-    result = bootstrap_timeline_from_summaries()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--script-key", default=None, help="剧本标识 (对应 modules/_script_overrides/<key>.json),不传则用 generic 推断")
+    args = parser.parse_args()
+    result = bootstrap_timeline_from_summaries(script_key=args.script_key)
     print(json.dumps(result, ensure_ascii=False, indent=2))

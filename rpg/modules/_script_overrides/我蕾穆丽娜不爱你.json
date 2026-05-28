@@ -22,5 +22,29 @@
   ],
   "default_novel_fallbacks": [
     "要求一份柏林当前势力图和行动时限。"
+  ],
+  "phase_inference": {
+    "rules": [
+      {"phase": "柏林暗流篇", "chapter_min": 1309, "or_text_needles": ["柏林", "图卢兹", "调令", "特洛耶德"]},
+      {"phase": "后期欧洲与帝国线", "chapter_min": 1200},
+      {"phase": "中后期权谋线", "chapter_min": 800},
+      {"phase": "战争与成长线", "chapter_min": 300},
+      {"phase": "初期穿越与火星线", "chapter_min": 0}
+    ],
+    "fallback_simple": "原著主线"
+  },
+  "time_label_inference": [
+    {"label": "图卢兹失守当晚，柏林", "needles_any": ["图卢兹战报", "图卢兹失守"]},
+    {"label": "图卢兹失守后翌日，柏林", "needles_any": ["暂留柏林", "北城旧宅", "蛇信外围"]},
+    {"label": "图卢兹失守后次日，柏林内城", "needles_any": ["次日", "内城旧楼"]},
+    {"label": "柏林战局前夕", "chapter_min": 1309}
+  ],
+  "time_label_fallback_template": "原著第{chapter}章附近",
+  "known_names": [
+    "蕾穆丽娜", "斯雷因", "伊奈帆", "界冢伊奈帆", "娅赛兰",
+    "觉－哈布斯堡", "薛克", "赫克勒斯", "黎骨月", "韵子", "莱艾", "扎兹巴鲁姆"
+  ],
+  "known_locations": [
+    "柏林", "图卢兹", "北城旧宅", "内城旧楼", "布鲁塞尔", "哈布斯堡庄园", "地下基地"
   ]
 }

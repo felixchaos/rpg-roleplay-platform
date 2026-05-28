@@ -15,12 +15,31 @@ import json
 import re
 import sqlite3
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from timeline_index import ensure_timeline_schema
 
 BASE = Path(__file__).parent
+_OVERRIDES_DIR = BASE / "modules" / "_script_overrides"
+
+
+@lru_cache(maxsize=8)
+def _load_overrides_for_script(script_key: str | None) -> dict:
+    """从 modules/_script_overrides/<script_key>.json 加载剧本专有规则。
+
+    无 script_key 或文件不存在时返回空 dict,让调用方走 hardcoded fallback。
+    """
+    if not script_key:
+        return {}
+    p = _OVERRIDES_DIR / f"{script_key}.json"
+    if not p.is_file():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 ROOT = BASE.parent
 CHAPTER_DIR = ROOT / "正文"
 OUT_DB = ROOT / ".webnovel" / "chapter_facts.db"
@@ -58,7 +77,7 @@ KEY_CHAPTER_TIME_LABELS = {
 }
 
 
-def build_chapter_facts() -> dict[str, Any]:
+def build_chapter_facts(script_key: str | None = None) -> dict[str, Any]:
     OUT_DB.parent.mkdir(parents=True, exist_ok=True)
     chars = _load_characters()
     world = _load_world()
@@ -79,7 +98,7 @@ def build_chapter_facts() -> dict[str, Any]:
         total_events = 0
         total_entities = 0
         for chapter in chapters:
-            fact = _extract_fact(chapter, summaries, known_names, known_locations, known_concepts)
+            fact = _extract_fact(chapter, summaries, known_names, known_locations, known_concepts, script_key=script_key)
             _insert_fact(cur, fact)
             total_events += len(fact["events"])
             total_entities += sum(len(fact[key]) for key in ("characters", "locations", "factions", "concepts", "items"))
@@ -259,7 +278,7 @@ def _insert_fact(cur: sqlite3.Cursor, fact: dict[str, Any]) -> None:
         ))
 
 
-def _extract_fact(chapter: dict[str, Any], summaries: dict[str, Any], known_names: dict[str, str], known_locations: list[str], known_concepts: list[str]) -> dict[str, Any]:
+def _extract_fact(chapter: dict[str, Any], summaries: dict[str, Any], known_names: dict[str, str], known_locations: list[str], known_concepts: list[str], script_key: str | None = None) -> dict[str, Any]:
     text = _strip_frontmatter(chapter["text"])
     body = _strip_notes(text)
     scenes = _split_scenes(body)
@@ -290,7 +309,7 @@ def _extract_fact(chapter: dict[str, Any], summaries: dict[str, Any], known_name
         "source_file": str(chapter["path"]),
         "viewpoint": _viewpoint(body),
         "summary": known_summary or _summary_from_events(events, sentences),
-        "story_phase": _story_phase(chapter_num, body),
+        "story_phase": _story_phase(chapter_num, body, script_key=script_key),
         "story_time_label": _story_time_label(chapter_num, title, body, known_summary),
         "scene_count": len(scenes),
         "token_estimate": max(1, len(body) // 2),
@@ -499,16 +518,31 @@ def _summary_from_events(events: list[dict[str, Any]], sentences: list[str]) -> 
     return "；".join(sentences[:3])[:240]
 
 
-def _story_phase(chapter: int, text: str) -> str:
-    if chapter >= 1309 or any(key in text for key in ("柏林", "图卢兹", "特洛耶德", "调令伪造")):
-        return "柏林暗流篇"
-    if chapter >= 1200:
-        return "后期欧洲与帝国线"
-    if chapter >= 800:
-        return "中后期权谋线"
-    if chapter >= 300:
-        return "战争与成长线"
-    return "初期穿越与火星线"
+def _story_phase(chapter: int, text: str, script_key: str | None = None) -> str:
+    """推断章节所在故事阶段（5 级 full 模式）。
+
+    按 phase_inference.rules 顺序匹配（chapter_min + or_text_needles），
+    第一条命中即返回对应 phase；全不命中返回 fallback_simple。
+    无 script_key 或 JSON 不存在时返回空字符串，调用方自行处理。
+    """
+    overrides = _load_overrides_for_script(script_key)
+    rules = (overrides.get("phase_inference") or {}).get("rules") or []
+    fallback = (overrides.get("phase_inference") or {}).get("fallback_simple") or ""
+    if rules:
+        for rule in rules:
+            ch_min = rule.get("chapter_min", 0)
+            needles = rule.get("or_text_needles") or []
+            # 有 needles 时：chapter >= ch_min OR 任一 needle 命中（等价原始 OR 逻辑）
+            # 无 needles 时：chapter >= ch_min（纯章节范围规则）
+            if needles:
+                if chapter >= ch_min or any(n in text for n in needles):
+                    return rule["phase"]
+            else:
+                if chapter >= ch_min:
+                    return rule["phase"]
+        return fallback
+    # 无 script_key 或 JSON 不存在 → 返回空字符串
+    return ""
 
 
 # task 121b: 章节标题质量检测 — 通用算法,不依赖单本书。
@@ -619,4 +653,8 @@ def _json(value: Any) -> str:
 
 
 if __name__ == "__main__":
-    print(json.dumps(build_chapter_facts(), ensure_ascii=False, indent=2))
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--script-key", default=None, help="剧本标识 (对应 modules/_script_overrides/<key>.json),不传则用 generic 推断")
+    args = parser.parse_args()
+    print(json.dumps(build_chapter_facts(script_key=args.script_key), ensure_ascii=False, indent=2))
