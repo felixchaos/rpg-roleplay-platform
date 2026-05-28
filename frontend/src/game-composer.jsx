@@ -336,7 +336,7 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
     try {
       const r = await window.api.models.select({
         api_id: item.api_id,
-        model: item.real_name,
+        model_id: item.real_name,
       });
       if (r && r.ok === false) throw new Error(r.error || r.detail || "切换模型失败");
       window.__apiToast?.(`已切到 ${item.label}`, { kind: "ok", duration: 1800 });
