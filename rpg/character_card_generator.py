@@ -62,6 +62,10 @@ import json
 import re
 from typing import Any
 
+from core.logging import get_logger
+
+log = get_logger(__name__)
+
 # ════════════════════════════════════════════════════════════════════
 # Schema
 # ════════════════════════════════════════════════════════════════════
@@ -461,7 +465,7 @@ def _select_backend(user_id: int | None, role: str = "generator"):
             from agents.gm import GameMaster
             return GameMaster(api_id=api_id, model=model, user_id=user_id)._backend
         except Exception as exc:
-            print(f"[card-gen] 偏好 backend 构建失败 ({api_id}/{model}: {exc})，回退默认")
+            log.warning(f"[card-gen] 偏好 backend 构建失败 ({api_id}/{model}: {exc})，回退默认")
     # 默认: 直接构造 Anthropic backend, 失败则降级到 Vertex
     try:
         from agents.gm import _AnthropicBackend

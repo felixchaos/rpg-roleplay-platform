@@ -8,6 +8,9 @@ from typing import Any
 
 from agents.gm.backends import _AnthropicBackend, _OpenAICompatBackend, _VertexBackend
 from agents.gm.helpers import _anthropic_curator_tool_use, _format_tools_for_prompt
+from core.logging import get_logger
+
+log = get_logger(__name__)
 
 BASE = Path(__file__).parent.parent.parent  # rpg/agents/gm/ → rpg/
 SA_FILE = BASE / "vertex_sa.json"
@@ -232,7 +235,7 @@ class GameMaster:
             if SA_FILE.exists():
                 self._backend = _VertexBackend(model=model)
             else:
-                print(f"[GM] 未知 kind={kind}，降级到 Anthropic")
+                log.warning(f"[GM] 未知 kind={kind}，降级到 Anthropic")
                 self._backend = _AnthropicBackend(user_id=user_id)
 
     # ── 构建 system prompt ────────────────────────────────────────
@@ -360,7 +363,7 @@ class GameMaster:
                     backend, agent_prompt, messages, max_tokens=900,
                 )
             except Exception as exc:
-                print(f"[curator] native tool_use 失败，降级到文本 JSON：{exc}")
+                log.warning(f"[curator] native tool_use 失败，降级到文本 JSON：{exc}")
                 # fallback to text JSON
         return backend.call_structured(agent_prompt, messages, max_tokens=900)
 

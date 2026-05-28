@@ -7,6 +7,10 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from core.logging import get_logger
+
+log = get_logger(__name__)
+
 BASE = Path(__file__).parent.parent.parent.parent  # rpg/agents/gm/backends/ → rpg/
 SA_FILE = BASE / "vertex_sa.json"
 
@@ -34,7 +38,7 @@ class _VertexBackend:
         )
         self.model_name = model
         self._genai = genai
-        print(f"[GM] Vertex AI (google-genai) · {model} @ global")
+        log.info(f"[GM] Vertex AI (google-genai) · {model} @ global")
 
     def call(self, system: str, messages: list[dict], max_tokens: int) -> str:
         from google.genai import types

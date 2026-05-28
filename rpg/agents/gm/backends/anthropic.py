@@ -7,6 +7,10 @@ import re
 from collections.abc import Iterator
 from typing import Any
 
+from core.logging import get_logger
+
+log = get_logger(__name__)
+
 
 class _AnthropicBackend:
     # task 57 (2026-05-25): 默认改为当前 Sonnet（最新平衡型）；
@@ -22,7 +26,7 @@ class _AnthropicBackend:
         self.client = Anthropic(api_key=key)
         self.model_name = model
         self.last_usage: dict[str, int] = {}
-        print(f"[GM] Anthropic · {self.model_name} (key from {result.get('source', 'env')})")
+        log.info(f"[GM] Anthropic · {self.model_name} (key from {result.get('source', 'env')})")
 
     def call(self, system: str, messages: list[dict], max_tokens: int) -> str:
         resp = self.client.messages.create(

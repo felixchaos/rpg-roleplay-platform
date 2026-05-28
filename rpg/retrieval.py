@@ -11,6 +11,9 @@ import sqlite3
 from pathlib import Path
 
 from timeline_index import bootstrap_timeline_from_summaries, timeline_filter_for_label
+from core.logging import get_logger
+
+log = get_logger(__name__)
 
 BASE     = Path(__file__).parent
 DB_PATH  = BASE.parent / ".webnovel" / "vectors.db"
@@ -587,7 +590,7 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
                         f"variant={summary['variant']} avg_drift={summary['avg_drift']}"
                     )
         except Exception as _anchor_err:
-            print(f"[retrieval] pending_anchors 注入失败 (非致命): {_anchor_err}")
+            log.warning(f"[retrieval] pending_anchors 注入失败 (非致命): {_anchor_err}")
 
         try:
             from platform_app.knowledge import retrieve_runtime_context
@@ -658,7 +661,7 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
             pass
 
     if verbose:
-        print(f"[召回] script_id={script_id}  BM25片段：{len(snippets)}条")
+        log.info(f"[召回] script_id={script_id}  BM25片段：{len(snippets)}条")
 
     return "\n\n".join(parts)
 

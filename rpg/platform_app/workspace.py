@@ -11,6 +11,9 @@ from . import branches, runtime
 from .db import connect, cursor_id, expose, init_db, limit_value, page_payload
 from .db import status as db_status
 from .security import public_user
+from core.logging import get_logger
+
+log = get_logger(__name__)
 
 BASE_TITLE = "《我蕾穆丽娜不爱你》"
 
@@ -145,12 +148,12 @@ def create_save(
         def _bg_seed():
             try:
                 res = seed_anchors_for_save(save["id"])
-                print(f"[anchor_seed] save={save['id']} result={res}")
+                log.info(f"[anchor_seed] save={save['id']} result={res}")
             except Exception as exc:
-                print(f"[anchor_seed] save={save['id']} failed: {type(exc).__name__}: {exc}")
+                log.error(f"[anchor_seed] save={save['id']} failed: {type(exc).__name__}: {exc}")
         threading.Thread(target=_bg_seed, daemon=True, name=f"anchor-seed-{save['id']}").start()
     except Exception as _seed_err:
-        print(f"[anchor_seed] schedule failed save={save['id']}: {_seed_err}")
+        log.error(f"[anchor_seed] schedule failed save={save['id']}: {_seed_err}")
     return expose(save)  # type: ignore[return-value]
 
 

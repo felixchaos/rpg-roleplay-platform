@@ -22,6 +22,9 @@ from pathlib import Path
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from core.logging import get_logger
+
+log = get_logger(__name__)
 
 _MASTER_KEY_ENV = "RPG_MASTER_KEY"
 # utils/crypto.py 在 rpg/utils/ 下，platform_data/ 在 rpg/ 下，需要上溯两级
@@ -52,7 +55,7 @@ def _get_master_key() -> bytes:
     key = secrets.token_bytes(32)
     _FALLBACK_KEY_FILE.write_text(key.hex(), encoding="utf-8")
     os.chmod(_FALLBACK_KEY_FILE, 0o600)
-    print(
+    log.warning(
         f"[CRYPTO] 未设置 {_MASTER_KEY_ENV} 环境变量，已生成本地主密钥 → {_FALLBACK_KEY_FILE}\n"
         f"         生产部署请设置 RPG_MASTER_KEY=<32 字节 hex>"
     )

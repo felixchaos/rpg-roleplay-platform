@@ -13,6 +13,9 @@ from typing import Any
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 from tools_dsl.command_tools import COMMAND_TOOLS
 from tools_dsl.command_tools import execute_tool as _execute_legacy
+from core.logging import get_logger
+
+log = get_logger(__name__)
 
 # 这些 origin 默认允许从 LLM (llm_set / llm_chat) 和 UI 调用 (save 级游戏指令).
 # task 62: 移除 console_assistant — 它是"跨 save 资源管理"助手,
@@ -291,60 +294,60 @@ def ensure_registered() -> None:
         from tools_dsl.command_tools_saves import register_saves_tools
         register_saves_tools()
     except Exception as exc:
-        print(f"[command_tools_register] saves 工具注册失败: {exc}")
+        log.warning(f"[command_tools_register] saves 工具注册失败: {exc}")
     try:
         from tools_dsl.command_tools_rules import register_rules_tools
         register_rules_tools()
     except Exception as exc:
-        print(f"[command_tools_register] rules 工具注册失败: {exc}")
+        log.warning(f"[command_tools_register] rules 工具注册失败: {exc}")
     try:
         from tools_dsl.command_tools_queries import register_query_tools
         register_query_tools()
     except Exception as exc:
-        print(f"[command_tools_register] query 工具注册失败: {exc}")
+        log.warning(f"[command_tools_register] query 工具注册失败: {exc}")
     # task 87 Phase 4 + 余下补全
     try:
         from tools_dsl.command_tools_misc import register_misc_tools
         register_misc_tools()
     except Exception as exc:
-        print(f"[command_tools_register] misc 工具注册失败: {exc}")
+        log.warning(f"[command_tools_register] misc 工具注册失败: {exc}")
     # task 107C: phase management tools
     try:
         from tools_dsl.command_tools_phase import register_phase_tools
         register_phase_tools()
     except Exception as exc:
-        print(f"[command_tools_register] phase 工具注册失败: {exc}")
+        log.warning(f"[command_tools_register] phase 工具注册失败: {exc}")
     # task 107H: worldbook overlay tools
     try:
         from tools_dsl.command_tools_worldbook import register_worldbook_tools
         register_worldbook_tools()
     except Exception as exc:
-        print(f"[command_tools_register] worldbook 工具注册失败: {exc}")
+        log.warning(f"[command_tools_register] worldbook 工具注册失败: {exc}")
     # task 109b: ui action tools (set_field/click via SSE to frontend)
     try:
         from tools_dsl.command_tools_ui_action import register_ui_action_tools
         register_ui_action_tools()
     except Exception as exc:
-        print(f"[command_tools_register] ui_action 工具注册失败: {exc}")
+        log.warning(f"[command_tools_register] ui_action 工具注册失败: {exc}")
     # creative tools: recommend_player_identity (新建存档时推荐初始身份)
     try:
         from tools_dsl.command_tools_creative import register_creative_tools
         register_creative_tools()
     except Exception as exc:
-        print(f"[command_tools_register] creative 工具注册失败: {exc}")
+        log.warning(f"[command_tools_register] creative 工具注册失败: {exc}")
     # task 136: 世界线收束机制 — list_pending_anchors / mark_satisfied / mark_superseded
     try:
         from tools_dsl.command_tools_anchors import register_anchor_tools
         register_anchor_tools()
     except Exception as exc:
-        print(f"[command_tools_register] anchors 工具注册失败: {exc}")
+        log.warning(f"[command_tools_register] anchors 工具注册失败: {exc}")
     # task 68/72 — 给已注册工具打 intent_keywords + side_effect_topics 标签,
     # 供 ui_describe 模糊匹配 + dispatcher 状态变更广播。
     try:
         from ui_manifest import apply_tags
         apply_tags()
     except Exception as exc:
-        print(f"[command_tools_register] ui_manifest.apply_tags 失败: {exc}")
+        log.warning(f"[command_tools_register] ui_manifest.apply_tags 失败: {exc}")
     _REGISTERED = True
 
 

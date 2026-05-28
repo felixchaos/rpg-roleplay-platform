@@ -22,6 +22,9 @@ from typing import Any
 
 from agents.context_agent import run_context_agent
 from state import GameState, strip_json_state_ops
+from core.logging import get_logger
+
+log = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Pipeline context: 在 phase 之间传递的可变状态
@@ -106,7 +109,7 @@ async def apply_player_directives_phase(
                 "stage": "pre_directive",
             })
     except Exception as _exp_err:
-        print(f"[chat] expire stale questions failed: {_exp_err}")
+        log.warning(f"[chat] expire stale questions failed: {_exp_err}")
 
     directive_updates: list[str] = []
     command_tools_handled = False
@@ -164,7 +167,7 @@ async def apply_player_directives_phase(
                         )
                 command_tools_handled = True
         except Exception as _cmd_exc:
-            print(f"[chat] command_agent/dispatcher failed, fallback to regex: {_cmd_exc}")
+            log.warning(f"[chat] command_agent/dispatcher failed, fallback to regex: {_cmd_exc}")
 
     # step 3: 正则 fallback — 总是跑,补齐 LLM 没覆盖的字段
     directive_updates.extend(state.apply_player_directives(message_for_model))
@@ -205,9 +208,9 @@ async def apply_player_directives_phase(
                             )
                             directive_updates.append(f"/set 解析: {res}")
                 except Exception as op_exc:
-                    print(f"[set_parser] op apply failed: {op_exc} for {op}")
+                    log.warning(f"[set_parser] op apply failed: {op_exc} for {op}")
         except Exception as exc:
-            print(f"[chat] set_parser failed: {exc}; 继续走简单 /set 路径")
+            log.warning(f"[chat] set_parser failed: {exc}; 继续走简单 /set 路径")
             try:
                 from datetime import datetime as _dt
                 audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
@@ -246,7 +249,7 @@ async def apply_player_directives_phase(
                         f"{_anchor['story_phase']}"
                     )
     except Exception as _anchor_err:
-        print(f"[chat] timeline anchor resolve failed: {_anchor_err}")
+        log.warning(f"[chat] timeline anchor resolve failed: {_anchor_err}")
 
     if directive_updates:
         persist_runtime_checkpoint(state, api_user)
@@ -628,7 +631,7 @@ async def run_gm_phase(
             state_provider=lambda env, _state=state: _state,
         )
     except Exception as _router_err:
-        print(f"[chat] unified tool router 构造失败,GM 仅用 MCP 工具: {_router_err}")
+        log.warning(f"[chat] unified tool router 构造失败,GM 仅用 MCP 工具: {_router_err}")
 
     response = ""
     # task 135: max_iterations 是【单轮】上限 (本轮 user 消息内的工具调用次数),
@@ -723,7 +726,7 @@ async def run_gm_phase(
                     ],
                 })
     except Exception as _tj_err:
-        print(f"[chat] timeline_narrative_guard 检测失败: {_tj_err}")
+        log.warning(f"[chat] timeline_narrative_guard 检测失败: {_tj_err}")
 
     # sprint 5: 黑天鹅子代理 post-GM hook (默认关闭,RPG_ENABLE_BLACK_SWAN=1 开启)
     try:
@@ -750,7 +753,7 @@ async def run_gm_phase(
                 if len(_audit) > 200:
                     state.data["permissions"]["audit_log"] = _audit[-200:]
     except Exception as _swan_err:
-        print(f"[black_swan] failed silently: {_swan_err}")
+        log.warning(f"[black_swan] failed silently: {_swan_err}")
 
     # task 62 / 65 / 69: extractor 第二步
     extractor_active = False
@@ -771,7 +774,7 @@ async def run_gm_phase(
         else:
             response_with_ops = response
     except Exception as exc:
-        print(f"[chat] extractor pipeline failed: {exc}; falling back to single-step")
+        log.warning(f"[chat] extractor pipeline failed: {exc}; falling back to single-step")
         try:
             from datetime import datetime as _dt
             audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
@@ -849,7 +852,7 @@ async def run_gm_phase(
                     "unmet": unmet[:5],
                 })
     except Exception as _acc_exc:
-        print(f"[acceptance] check failed: {_acc_exc}")
+        log.warning(f"[acceptance] check failed: {_acc_exc}")
 
     # 把 updates 写到 ctx 留给 phase 5
     ctx.response = response
@@ -891,8 +894,8 @@ async def persist_turn_phase(
             # /set 已落盘，GM 空响应无需报错
             yield ("done", {"status": payload_fn(api_user), "interrupted": False, "empty": True})
         else:
-            print(f"[chat] WARN: GM 返回空响应, len(raw)={len(response)} "
-                  f"user_msg='{message_for_model[:80]}', save_id={ctx.active_save_id}")
+            log.warning(f"[chat] WARN: GM 返回空响应, len(raw)={len(response)} "
+                        f"user_msg='{message_for_model[:80]}', save_id={ctx.active_save_id}")
             yield ("error", {
                 "message": "GM 没生成内容(可能触发了模型的安全过滤,或者上下文出错)。请尝试换个说法重新发送。",
                 "kind": "empty_response",

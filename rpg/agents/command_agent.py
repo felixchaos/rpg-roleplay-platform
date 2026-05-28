@@ -23,6 +23,9 @@ import json
 from typing import Any
 
 from tools_dsl.command_tools import COMMAND_TOOLS
+from core.logging import get_logger
+
+log = get_logger(__name__)
 
 # ────────────────────────────────────────────────────────────
 # Prompts
@@ -128,7 +131,7 @@ def parse_set_command(
         # OpenAI 兼容
         return _call_openai_compat_tools(api_id, model, user_prompt, user_id, timeout_sec)
     except Exception as exc:
-        print(f"[command_agent] parse failed: {type(exc).__name__}: {exc}")
+        log.warning(f"[command_agent] parse failed: {type(exc).__name__}: {exc}")
         return []
 
 

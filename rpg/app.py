@@ -65,6 +65,10 @@ from core.config import (
     cors_max_age as _cors_max_age,
     gzip_min_bytes as _gzip_min_bytes,
 )
+from core.logging import get_logger, setup_default_logging
+
+setup_default_logging()
+log = get_logger(__name__)
 APP_TITLE = _app_title_cfg()
 MODEL_LABEL = "Gemini 3.5 Flash"
 HOST = "127.0.0.1"
@@ -225,7 +229,7 @@ def _verify_acceptance(
                 user_id=user_id,
             )
         except Exception as exc:
-            print(f"[acceptance] llm mode raised; falling back to rule: {exc}")
+            log.warning(f"[acceptance] llm mode raised; falling back to rule: {exc}")
             return _verify_acceptance_rule(acceptance, response_text, updates)
         if out is None:
             return _verify_acceptance_rule(acceptance, response_text, updates)
@@ -245,7 +249,7 @@ def _verify_acceptance(
             user_id=user_id,
         )
     except Exception as exc:
-        print(f"[acceptance] hybrid llm step raised; keeping rule verdict: {exc}")
+        log.warning(f"[acceptance] hybrid llm step raised; keeping rule verdict: {exc}")
         return rule_unmet
     if llm_unmet is None:
         # LLM 不可用 → 保留 rule 判定（保守）
@@ -402,9 +406,9 @@ def _startup_auth_banner() -> None:
     explicit = _require_auth_raw()
     source = f"RPG_REQUIRE_AUTH={explicit}" if explicit else f"RPG_DEPLOYMENT_MODE={mode}"
     if required:
-        print(f"[启动] 部署模式={mode} 鉴权=强制 (源={source})")
+        log.info(f"[启动] 部署模式={mode} 鉴权=强制 (源={source})")
     else:
-        print(f"[启动] 部署模式={mode} 鉴权=不强制 (源={source}) — 仅适用于单用户本地使用")
+        log.info(f"[启动] 部署模式={mode} 鉴权=不强制 (源={source}) — 仅适用于单用户本地使用")
 
 
 def _require_api_user(request: Request, *, admin: bool = False) -> dict[str, Any] | None:
@@ -469,7 +473,7 @@ try:
     from platform_app.frontend_routes import router as _frontend_router
     app.include_router(_frontend_router)
 except Exception as _e:
-    print(f"[启动] frontend_routes 未挂载：{_e}")
+    log.warning(f"[启动] frontend_routes 未挂载：{_e}")
 
 # ── Phase 1.1 Pilot: 迁移路由子包 ──────────────────────────────────────
 from routes.core import router as core_router
@@ -505,7 +509,7 @@ from platform_app.db import init_db as _bootstrap_init_db
 try:
     _bootstrap_init_db()
 except Exception as _e:
-    print(f"[启动] init_db 失败：{_e}")
+    log.error(f"[启动] init_db 失败：{_e}")
 
 _startup_auth_banner()
 
@@ -558,13 +562,10 @@ async def _register_command_tools_startup() -> None:
         from tools_dsl.command_tools_register import ensure_registered
         ensure_registered()
         from tools_dsl.command_dispatcher import get_registry
-        print(f"[startup] command_dispatcher: 已注册 {len(get_registry().list_all())} 个工具")
+        log.info(f"[startup] command_dispatcher: 已注册 {len(get_registry().list_all())} 个工具")
     except Exception as exc:
         # 注册失败不阻塞启动;chat handler 内部 ensure_registered 兜底
-        import logging
-        logging.getLogger("rpg.startup").exception(
-            "command tools registration failed: %s", exc,
-        )
+        log.exception("command tools registration failed: %s", exc)
 
 
 @app.on_event("startup")
@@ -576,8 +577,7 @@ async def _recover_durable_jobs() -> None:
         from platform_app import script_import
         result = script_import.recover_pending_sync_jobs()
         if result.get("recovered_pending") or result.get("reclaimed_stale"):
-            import logging
-            logging.getLogger("rpg.startup").info(
+            log.info(
                 "durable sync recovery: pending=%s stale=%s resubmitted=%s",
                 result.get("recovered_pending"),
                 result.get("reclaimed_stale"),
@@ -585,8 +585,7 @@ async def _recover_durable_jobs() -> None:
             )
     except Exception:
         # 启动恢复失败不应阻挡服务启动；下次有人调度时会带走 pending
-        import logging
-        logging.getLogger("rpg.startup").exception("durable sync recovery failed")
+        log.exception("durable sync recovery failed")
 
 
 @app.on_event("shutdown")
@@ -840,7 +839,7 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
                 try:
                     _selfheal_player_from_save_snapshot(state, api_user)
                 except Exception as exc:
-                    print(f"[ensure_loaded] selfheal failed: {exc}")
+                    log.warning(f"[ensure_loaded] selfheal failed: {exc}")
             _state_by_user[uid] = state
             if uid == 0:
                 _state_mtime_by_user[uid] = SAVE_FILE.stat().st_mtime_ns if SAVE_FILE.exists() else 0
@@ -917,13 +916,13 @@ def _get_sub_gm(api_user: dict[str, Any] | None) -> GameMaster:
                 model=override.get("model") or main_gm._backend.model_name,
                 user_id=api_user["id"] if api_user else None,
             )
-            print(f"[SUB-AGENT] uid={uid} 独立实例 api={sub.api_id} model={sub._backend.model_name}")
+            log.info(f"[SUB-AGENT] uid={uid} 独立实例 api={sub.api_id} model={sub._backend.model_name}")
         except Exception as exc:
-            print(f"[SUB-AGENT] 独立实例创建失败 ({exc})，回退共用主 GM")
+            log.warning(f"[SUB-AGENT] 独立实例创建失败 ({exc})，回退共用主 GM")
             sub = main_gm
     else:
         sub = main_gm
-        print(f"[SUB-AGENT] uid={uid} 复用主 GM api={main_gm.api_id}")
+        log.info(f"[SUB-AGENT] uid={uid} 复用主 GM api={main_gm.api_id}")
     # 写回缓存时取锁，但这里不会再 reenter
     with _state_lock:
         _sub_gm_by_user.setdefault(uid, sub)
@@ -1110,7 +1109,7 @@ def _persist_chat_turn(
                     story_time_label=_story_time,
                 )
         except Exception as _pm_err:
-            print(f"[chat] save_phase_manager hook failed: {_pm_err}")
+            log.warning(f"[chat] save_phase_manager hook failed: {_pm_err}")
 
 
 def _build_usage_payload(

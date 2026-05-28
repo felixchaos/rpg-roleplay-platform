@@ -27,6 +27,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from core.logging import get_logger
+
+log = get_logger(__name__)
+
 _VERIFIER_SYSTEM = """\
 你是 acceptance（验收条件）判定器。读 GM 这一轮的叙事正文 + 一组验收条款，
 判断每条条款是否被满足。**不要写小说**，只输出 JSON。
@@ -169,7 +173,7 @@ def verify_acceptance_llm(
     try:
         import agents.extractor as _extractor
     except Exception as exc:
-        print(f"[acceptance_verifier] import extractor failed: {exc}")
+        log.warning(f"[acceptance_verifier] import extractor failed: {exc}")
         return None
 
     api_id = (
@@ -198,7 +202,7 @@ def verify_acceptance_llm(
             acceptance=acceptance,
         )
     except Exception as exc:
-        print(f"[acceptance_verifier] call failed: {exc}")
+        log.warning(f"[acceptance_verifier] call failed: {exc}")
         return None
 
     parsed = _parse_verifier_output(text, acceptance)

@@ -34,6 +34,10 @@ from __future__ import annotations
 import json
 import re
 
+from core.logging import get_logger
+
+log = get_logger(__name__)
+
 _EXTRACTOR_SYSTEM = """\
 你是状态提取器。读 GM 这一轮的叙事正文 + 当前状态快照，输出一个 JSON 数组，
 每条代表一次状态变化。**不要写小说**，只输出 JSON。
@@ -156,7 +160,7 @@ def extract_state_ops(
             timeout_sec=timeout_sec,
         )
     except Exception as exc:
-        print(f"[extractor] call failed: {exc}")
+        log.warning(f"[extractor] call failed: {exc}")
         return []
     return _parse_extractor_output(text)
 

@@ -120,6 +120,25 @@ npm run dev
 
 ---
 
+## 📖 API 文档
+
+完整文档见 [`rpg/docs/README.md`](rpg/docs/README.md),摘要:
+
+| 入口 | 说明 |
+|---|---|
+| `http://127.0.0.1:7860/docs` | Swagger UI 在线交互测试 |
+| `http://127.0.0.1:7860/redoc` | ReDoc 优美阅读体验 |
+| `rpg/docs/openapi.json` | 静态导出的 OpenAPI 3 schema (159 endpoints, 188 KB) |
+
+重新生成静态 schema:
+
+```bash
+cd rpg/
+../rpg_env/bin/python -m scripts.gen_openapi
+```
+
+---
+
 ## 🛠️ 开发指南
 
 ### 跑测试

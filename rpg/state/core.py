@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from state._mixins import ApplyOpsMixin, PendingMixin, RulesGameplayMixin
+from core.logging import get_logger
+
+log = get_logger(__name__)
 from state.extractors import (
     _extract_explicit_time_updates,
     _extract_location_override,
@@ -252,10 +255,10 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
                 with open(SAVE_FILE, encoding="utf-8") as f:
                     data = json.load(f)
                 data = cls._migrate(data)
-                print(f"[读档] {data['player']['name']} · 第{data['turn']}回合 · {data['world']['time']}")
+                log.info(f"[读档] {data['player']['name']} · 第{data['turn']}回合 · {data['world']['time']}")
                 return cls(data)
             except Exception as e:
-                print(f"[读档失败：{e}，开始新游戏]")
+                log.warning(f"[读档失败：{e}，开始新游戏]")
         return cls.new()
 
     @classmethod

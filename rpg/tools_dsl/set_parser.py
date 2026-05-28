@@ -34,6 +34,10 @@ from __future__ import annotations
 import json
 import re
 
+from core.logging import get_logger
+
+log = get_logger(__name__)
+
 _SET_PARSER_SYSTEM = """\
 你是 /set 解析器。玩家用自然语言描述了想强制改写的设定，
 你把它拆成精确的 JSON ops 列表让系统写入。**不要写小说**，只输出 JSON。
@@ -153,7 +157,7 @@ def parse_set_directive(
             timeout_sec=timeout_sec,
         )
     except Exception as exc:
-        print(f"[set_parser] call failed: {exc}")
+        log.warning(f"[set_parser] call failed: {exc}")
         return []
     return _parse_parser_output(text)
 

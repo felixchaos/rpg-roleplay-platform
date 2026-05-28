@@ -7,6 +7,9 @@ from collections.abc import Iterator
 from typing import Any
 
 from agents.gm.helpers import _openai_text_marker_loop
+from core.logging import get_logger
+
+log = get_logger(__name__)
 
 
 class _OpenAICompatBackend:
@@ -41,7 +44,7 @@ class _OpenAICompatBackend:
         self.kind = display_kind
         self.api_id = api_id or display_kind
         self.last_usage: dict[str, int] = {}
-        print(f"[GM] {display_kind} · {model} (base={effective_base or 'default'}, key from {result.get('source')})")
+        log.info(f"[GM] {display_kind} · {model} (base={effective_base or 'default'}, key from {result.get('source')})")
 
     def _to_messages(self, system: str, messages: list[dict]) -> list[dict]:
         out = []
@@ -222,7 +225,7 @@ class _OpenAICompatBackend:
             except Exception as exc:
                 # tools 不支持？标记并降级（只在第一次尝试时降级，避免循环中途异常被当成"不支持"）
                 if first_attempt:
-                    print(f"[gm] {self.api_id}/{self.model_name} native tools failed: {exc} → text marker fallback")
+                    log.warning(f"[gm] {self.api_id}/{self.model_name} native tools failed: {exc} → text marker fallback")
                     self._unsupported_combos.add(combo_key)
                     yield from _openai_text_marker_loop(self, system, messages, mcp_tools, max_iterations, max_tokens, mcp_call)
                     return

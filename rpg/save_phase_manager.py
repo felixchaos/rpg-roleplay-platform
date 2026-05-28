@@ -20,6 +20,9 @@ import os
 from typing import Any
 
 from core.config import phase_turn_threshold as _phase_turn_threshold
+from core.logging import get_logger
+
+log = get_logger(__name__)
 
 PHASE_TURN_THRESHOLD = _phase_turn_threshold()
 
@@ -74,7 +77,7 @@ def upsert_timeline_anchor(
                 ),
             )
     except Exception as exc:
-        print(f"[save_phase_manager] upsert_timeline_anchor failed: {exc}")
+        log.warning(f"[save_phase_manager] upsert_timeline_anchor failed: {exc}")
 
 
 # ────────────────────────────────────────────────────────────
@@ -100,7 +103,7 @@ def get_active_phase(save_id: int) -> dict | None:
             ).fetchone()
         return dict(row) if row else None
     except Exception as exc:
-        print(f"[save_phase_manager] get_active_phase failed: {exc}")
+        log.warning(f"[save_phase_manager] get_active_phase failed: {exc}")
         return None
 
 
@@ -261,7 +264,7 @@ def open_new_phase(
             _audit_anchors_on_phase_close(save_id, new_index - 1)
         return dict(row) if row else {"phase_index": new_index, "save_id": save_id}
     except Exception as exc:
-        print(f"[save_phase_manager] open_new_phase failed: {exc}")
+        log.warning(f"[save_phase_manager] open_new_phase failed: {exc}")
         return {}
 
 
@@ -323,8 +326,8 @@ def _audit_anchors_on_phase_close(save_id: int, closed_phase_index: int) -> None
                         save_id, phase_label,
                     ),
                 )
-                print(f"[anchor_audit] save={save_id} phase={closed_phase_index} "
-                      f"自动 superseded {len(non_fatal)} 个 non-fatal 锚点")
+                log.info(f"[anchor_audit] save={save_id} phase={closed_phase_index} "
+                         f"自动 superseded {len(non_fatal)} 个 non-fatal 锚点")
             # fatal: 留 pending,但写到 save_phase_digests.metadata 警告字段
             if fatal_pending:
                 from psycopg.types.json import Jsonb
@@ -342,11 +345,11 @@ def _audit_anchors_on_phase_close(save_id: int, closed_phase_index: int) -> None
                     "where save_id = %s and phase_index = %s",
                     (Jsonb(warning), save_id, closed_phase_index),
                 )
-                print(f"[anchor_audit] save={save_id} phase={closed_phase_index} "
-                      f"WARNING: {len(fatal_pending)} 个 is_fatal 锚点超期未触发, 已记录")
+                log.warning(f"[anchor_audit] save={save_id} phase={closed_phase_index} "
+                            f"WARNING: {len(fatal_pending)} 个 is_fatal 锚点超期未触发, 已记录")
     except Exception as exc:
-        print(f"[anchor_audit] save={save_id} phase={closed_phase_index} failed: "
-              f"{type(exc).__name__}: {exc}")
+        log.error(f"[anchor_audit] save={save_id} phase={closed_phase_index} failed: "
+                  f"{type(exc).__name__}: {exc}")
 
 
 def _fire_and_forget_compact(save_id: int, phase_index: int) -> None:
@@ -363,7 +366,7 @@ def _fire_and_forget_compact(save_id: int, phase_index: int) -> None:
             result = compact_phase(save_id, phase_index)
             err = (result or {}).get("error")
             if err:
-                print(f"[phase_digest async] save {save_id} phase {phase_index} LLM error: {err}")
+                log.warning(f"[phase_digest async] save {save_id} phase {phase_index} LLM error: {err}")
                 # 标记 needs_rebuild 让 worker 后续重试
                 try:
                     from psycopg.types.json import Jsonb
@@ -379,11 +382,11 @@ def _fire_and_forget_compact(save_id: int, phase_index: int) -> None:
                 except Exception:
                     pass
         except ImportError:
-            print(f"[phase_digest async] phase_digest_agent not yet available, "
-                  f"save {save_id} phase {phase_index} will be backfilled later")
+            log.warning(f"[phase_digest async] phase_digest_agent not yet available, "
+                        f"save {save_id} phase {phase_index} will be backfilled later")
         except Exception as exc:
-            print(f"[phase_digest async] save {save_id} phase {phase_index}: "
-                  f"{type(exc).__name__}: {exc}")
+            log.error(f"[phase_digest async] save {save_id} phase {phase_index}: "
+                      f"{type(exc).__name__}: {exc}")
 
     threading.Thread(target=_worker, daemon=True, name=f"compact-{save_id}-{phase_index}").start()
 
@@ -401,7 +404,7 @@ def close_phase(save_id: int, phase_index: int) -> None:
                 (save_id, phase_index),
             )
     except Exception as exc:
-        print(f"[save_phase_manager] close_phase failed: {exc}")
+        log.error(f"[save_phase_manager] close_phase failed: {exc}")
 
 
 # ────────────────────────────────────────────────────────────
@@ -459,7 +462,7 @@ def ensure_initial_phase(save_id: int, turn_index: int, phase_label: str = "", s
                 (save_id,),
             )
     except Exception as exc:
-        print(f"[save_phase_manager] ensure_initial_phase failed: {exc}")
+        log.warning(f"[save_phase_manager] ensure_initial_phase failed: {exc}")
 
 
 # ────────────────────────────────────────────────────────────
@@ -484,7 +487,7 @@ def update_phase_turn_end(save_id: int, turn_index: int) -> None:
                 (turn_index, save_id),
             )
     except Exception as exc:
-        print(f"[save_phase_manager] update_phase_turn_end failed: {exc}")
+        log.warning(f"[save_phase_manager] update_phase_turn_end failed: {exc}")
 
 
 __all__ = [
