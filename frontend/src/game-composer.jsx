@@ -308,7 +308,6 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
   const apis = (catalog && Array.isArray(catalog.apis)) ? catalog.apis : [];
   apis.forEach((api) => {
     if (api && api.enabled === false) return;
-    if (!api.has_credential) return;
     const mods = api.models || [];
     mods.forEach((m) => {
       if (m && m.enabled !== false) {
@@ -318,6 +317,7 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
           label: m.display_name || m.real_name || m.id,
           api_id: api.id,
           api_label: api.display_name || api.id,
+          desc: (m.capabilities || []).slice(0, 3).join(" · "),
         });
       }
     });
@@ -336,7 +336,7 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
     try {
       const r = await window.api.models.select({
         api_id: item.api_id,
-        model_id: item.real_name,
+        model: item.real_name,
       });
       if (r && r.ok === false) throw new Error(r.error || r.detail || "切换模型失败");
       window.__apiToast?.(`已切到 ${item.label}`, { kind: "ok", duration: 1800 });
@@ -370,10 +370,11 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
           return (
             <li key={key}>
               <button onClick={() => !busy && pickModel(m)} className={active ? "active" : ""} disabled={busy}>
-                <div style={{display: "flex", flexDirection: "column", gap: 1}}>
+                <div>
                   <strong>{m.label}</strong>
-                  <span className="muted-2" style={{fontSize: 11}}>{m.api_label}</span>
+                  <span className="muted-2 mono" style={{marginLeft: 6, fontSize: 11}}>{m.api_label}</span>
                 </div>
+                {m.desc ? <span className="muted" style={{fontSize: 12}}>{m.desc}</span> : null}
                 {active && <Icon name="check" size={14} style={{color: "var(--accent)"}} />}
               </button>
             </li>
@@ -731,8 +732,10 @@ function ContextBreakdownPanel({ used, cap, onClose, triggerRef }) {
     const doFetch = async () => {
       setLoading(true);
       try {
-        const r = await window.api.game.contextBreakdown();
-        if (!cancelled && r && r.ok !== false) setData(r);
+        if (window.api && window.api.game && window.api.game.contextBreakdown) {
+          const r = await window.api.game.contextBreakdown();
+          if (!cancelled && r && r.ok !== false) setData(r);
+        }
       } catch (_) {}
       if (!cancelled) setLoading(false);
     };
@@ -758,7 +761,6 @@ function ContextBreakdownPanel({ used, cap, onClose, triggerRef }) {
   const fmt = (n) => n >= 1_000_000 ? (n / 1_000_000).toFixed(2) + "M"
                    : n >= 1_000     ? (n / 1_000).toFixed(1) + "k"
                    : String(n);
-
   const total = data ? (data.total_tokens || 0) : used;
   const limit = data ? (data.ctx_limit || cap) : cap;
   const pct = limit > 0 ? Math.max(0, Math.min(1, total / limit)) : 0;
@@ -779,9 +781,7 @@ function ContextBreakdownPanel({ used, cap, onClose, triggerRef }) {
           </svg>
           上下文用量
         </span>
-        <span className="gc-ctx-breakdown-total">
-          {fmt(total)} / {fmt(limit)} ({pctTxt}%)
-        </span>
+        <span className="gc-ctx-breakdown-total">{fmt(total)} / {fmt(limit)} ({pctTxt}%)</span>
       </div>
       <div className="gc-ctx-breakdown-bar-wrap">
         <div className="gc-ctx-breakdown-bar">
@@ -791,11 +791,7 @@ function ContextBreakdownPanel({ used, cap, onClose, triggerRef }) {
           ))}
         </div>
       </div>
-      {loading && (
-        <div style={{padding: "12px", textAlign: "center", fontSize: 12, color: "var(--muted)"}}>
-          加载中…
-        </div>
-      )}
+      {loading && <div style={{padding:"12px",textAlign:"center",fontSize:12,color:"var(--muted)"}}>加载中…</div>}
       {!loading && breakdown.length > 0 && (
         <ul className="gc-ctx-breakdown-list">
           {breakdown.map(b => (
@@ -809,14 +805,11 @@ function ContextBreakdownPanel({ used, cap, onClose, triggerRef }) {
         </ul>
       )}
       {!loading && breakdown.length === 0 && (
-        <div style={{padding: "10px 12px", fontSize: 12, color: "var(--muted)"}}>
-          暂无数据（发送第一条消息后可见）
-        </div>
+        <div style={{padding:"10px 12px",fontSize:12,color:"var(--muted)"}}>暂无数据（发送第一条消息后可见）</div>
       )}
     </div>
   );
 }
-
 
 function ContextUsage({ gameState, used: usedProp, cap: capProp }) {
   const liveUsed = (gameState && gameState.memory && gameState.memory.last_context
@@ -838,7 +831,8 @@ function ContextUsage({ gameState, used: usedProp, cap: capProp }) {
   const color = pct > 0.9 ? "var(--danger)" : pct > 0.7 ? "var(--warn)" : "var(--accent)";
 
   return (
-    <span className={`gc-context-usage${open ? " active" : ""}`} ref={wrapRef}
+    <span className={`gc-context-usage gc-context-usage-ring${open ? " active" : ""}`}
+      ref={wrapRef}
       onClick={() => setOpen(o => !o)}
       title="点击查看上下文用量详情">
       <svg width="20" height="20" viewBox="0 0 20 20" style={{display: "block"}}>
@@ -848,11 +842,6 @@ function ContextUsage({ gameState, used: usedProp, cap: capProp }) {
           transform="rotate(-90 10 10)"
           style={{transition: "stroke-dashoffset 320ms cubic-bezier(0.16, 1, 0.3, 1)"}} />
       </svg>
-      <span className="gc-context-usage-text mono">
-        <span style={{color: "var(--text-quiet)"}}>{fmt(used)}</span>
-        <span className="muted-2"> / {fmt(cap)}</span>
-      </span>
-      <span className="gc-context-usage-pct mono" style={{color}}>{pctTxt}%</span>
       {open && <ContextBreakdownPanel used={used} cap={cap} onClose={() => setOpen(false)} triggerRef={wrapRef} />}
     </span>
   );

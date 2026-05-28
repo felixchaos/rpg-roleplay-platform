@@ -1684,21 +1684,22 @@ function PanelRules({ state }) {
   );
 }
 
-function RightPanel({ state, activeTab, setActiveTab, sidebarWidth, density, collapsed, onToggle }) {
+function RightPanel({ state, activeTab, setActiveTab, sidebarWidth, density, collapsed, onToggle, resizeHandle }) {
   const tabs = PANEL_TABS;
   const active = tabs.find(t => t.id === activeTab) || tabs[0];
   let body = null;
-  if (activeTab === "status") body = <PanelStatus state={state} />;
+  if (activeTab === "status") body = <PanelStatus state={state} panelWidth={sidebarWidth} />;
   else if (activeTab === "rules") body = <PanelRules state={state} />;
-  else if (activeTab === "memory") body = <PanelMemory state={state} density={density} />;
-  else if (activeTab === "worldbook") body = <PanelWorldbook state={state} />;
-  else if (activeTab === "cards") body = <PanelCharacters state={state} />;
-  else if (activeTab === "timeline") body = <PanelTimeline state={state} />;
+  else if (activeTab === "memory") body = <PanelMemory state={state} density={density} panelWidth={sidebarWidth} />;
+  else if (activeTab === "worldbook") body = <PanelWorldbook state={state} panelWidth={sidebarWidth} />;
+  else if (activeTab === "cards") body = <PanelCharacters state={state} panelWidth={sidebarWidth} />;
+  else if (activeTab === "timeline") body = <PanelTimeline state={state} panelWidth={sidebarWidth} />;
   else if (activeTab === "context") body = <PanelContext state={state} />;
   else if (activeTab === "debug") body = <PanelDebug state={state} />;
 
   return (
     <aside className={`gp-panel ${collapsed ? "collapsed" : ""}`} style={{width: collapsed ? 0 : sidebarWidth}} aria-hidden={collapsed}>
+      {!collapsed && resizeHandle}
       <div className="gp-panel-inner" style={{width: sidebarWidth}}>
         <header className="gp-panel-head">
           <div className="gp-tabs">
@@ -1724,7 +1725,7 @@ function RightPanel({ state, activeTab, setActiveTab, sidebarWidth, density, col
             <span className="muted-2 mono">{active.id}</span>
           </div>
         </header>
-        <div className="gp-panel-body">{body}</div>
+        <div className={`gp-panel-body${sidebarWidth < 280 ? " narrow" : ""}`}>{body}</div>
       </div>
     </aside>
   );

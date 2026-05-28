@@ -191,6 +191,17 @@
       }) : { size: 240, dragHandleProps: {} };
       const gcRailW = _railResize.size;
       const gcRailDragProps = _railResize.dragHandleProps;
+      // 右侧 panel 拖动 resize: side="right" 表示拖左边缘缩宽
+      const _panelResize = (typeof window !== "undefined" && window.useResizable) ? window.useResizable({
+        storageKey: "gc.panel.w", defaultSize: 320, min: 180, max: 520, side: "right",
+      }) : { size: 320, setSize: () => {}, dragHandleProps: {} };
+      const gcPanelW = _panelResize.size;
+      const gcPanelDragProps = _panelResize.dragHandleProps;
+      // 拖到 < 180px 阈值时自动折叠右侧面板
+      useEffect(() => {
+        if (gcPanelW < 180 && !panelCollapsed) setPanelCollapsed(true);
+        else if (gcPanelW >= 180 && panelCollapsed && gcPanelW !== 320) setPanelCollapsed(false);
+      }, [gcPanelW]);
       useEffect(() => {
         const bus = window.__capBus || (window.__capBus = new EventTarget());
         const onOpen = () => setAssistantOpen(true);
@@ -1085,11 +1096,16 @@
             state={game}
             activeTab={activeTab}
             setActiveTab={setActiveTab}
-            sidebarWidth={t.rightPanelWidth}
+            sidebarWidth={gcPanelW}
             density={t.density}
             collapsed={panelCollapsed}
             onToggle={() => setPanelCollapsed(c => !c)}
+            resizeHandle={<div className="gp-panel-resize-handle" title="拖动调整宽度 · 双击恢复默认" {...gcPanelDragProps} />}
           />}
+
+          {/* 窄屏 float ⌖ 按钮 — CSS @media(max-width:768px) 才显示 */}
+          <button className="gc-float-panel-btn" onClick={() => { setPanelCollapsed(false); _panelResize.setSize(320); }}
+            title="打开状态面板">⌖</button>
 
           {/* task 127: 删 Tweaks 调试面板 — 用户不要这个内部入口 */}
 
