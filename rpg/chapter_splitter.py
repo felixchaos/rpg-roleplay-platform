@@ -889,38 +889,6 @@ class ChapterSplitter:
         # 动态 timeout 探测：子进程跑 0.3s，超时认为不安全
         return _regex_timeout_probe(pattern)
 
-
-def _regex_timeout_probe(pattern: str, timeout_sec: float = 0.3) -> bool:
-    """子进程跑一次对抗性匹配，超时即 unsafe。"""
-    import multiprocessing
-    # 构造对抗输入：长 `a` + 让 backtrack 触发的尾字符
-    payloads = [
-        ("a" * 60) + "!",
-        ("ab" * 30) + "x",
-        ("(" * 20) + "y",
-    ]
-
-    def _worker(p, samples, q):
-        import re as _re
-        try:
-            comp = _re.compile(p, _re.MULTILINE)
-            for s in samples:
-                comp.match(s)
-            q.put("ok")
-        except Exception as e:
-            q.put(f"err:{e}")
-
-    ctx = multiprocessing.get_context("fork") if hasattr(multiprocessing, "get_context") else multiprocessing
-    q = ctx.Queue()
-    proc = ctx.Process(target=_worker, args=(pattern, payloads, q))
-    proc.start()
-    proc.join(timeout=timeout_sec)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(timeout=0.5)
-        return False
-    return not q.empty()
-
     def split_file(
         self,
         path: str | Path,
@@ -952,6 +920,38 @@ def _regex_timeout_probe(pattern: str, timeout_sec: float = 0.3) -> bool:
             return int(value.translate(fullwidth))
         except ValueError:
             return 0
+
+
+def _regex_timeout_probe(pattern: str, timeout_sec: float = 0.3) -> bool:
+    """子进程跑一次对抗性匹配，超时即 unsafe。"""
+    import multiprocessing
+    # 构造对抗输入：长 `a` + 让 backtrack 触发的尾字符
+    payloads = [
+        ("a" * 60) + "!",
+        ("ab" * 30) + "x",
+        ("(" * 20) + "y",
+    ]
+
+    def _worker(p, samples, q):
+        import re as _re
+        try:
+            comp = _re.compile(p, _re.MULTILINE)
+            for s in samples:
+                comp.match(s)
+            q.put("ok")
+        except Exception as e:
+            q.put(f"err:{e}")
+
+    ctx = multiprocessing.get_context("fork") if hasattr(multiprocessing, "get_context") else multiprocessing
+    q = ctx.Queue()
+    proc = ctx.Process(target=_worker, args=(pattern, payloads, q))
+    proc.start()
+    proc.join(timeout=timeout_sec)
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(timeout=0.5)
+        return False
+    return not q.empty()
 
 
 chapter_splitter = ChapterSplitter()

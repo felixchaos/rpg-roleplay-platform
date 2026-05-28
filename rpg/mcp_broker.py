@@ -25,7 +25,6 @@ import os
 import subprocess
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
 # ── 全局 server 注册表（运行时） ──────────────────────────────────────────────

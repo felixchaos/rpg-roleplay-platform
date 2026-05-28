@@ -13,7 +13,6 @@ demo.py — 主入口：CLI 游戏循环
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from schemas._common import COMMON_ERROR_RESPONSES, GenericOkResponse, StateResponse
+from schemas._common import COMMON_ERROR_RESPONSES, GenericOkResponse
 from schemas.rules import (
     RulesActionRequest,
     RulesEncounterEnemyRequest,
@@ -90,7 +90,6 @@ async def api_rules_module_launch(body: RulesModuleLaunchRequest, request: Reque
         _ensure_loaded,
         _invalidate_user_cache,
         _payload,
-        _persist_runtime_checkpoint,
         _require_api_user,
         _rules_payload,
     )

@@ -5,7 +5,6 @@
 · 设定集 → worldbook_entries
 · 更新 scripts.chapter_count / word_count
 """
-import os
 import re
 import sys
 from pathlib import Path

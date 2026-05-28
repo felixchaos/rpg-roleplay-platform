@@ -46,7 +46,6 @@ command_tools.py — task 86: LLM 命令工具表。
 """
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 # ────────────────────────────────────────────────────────────

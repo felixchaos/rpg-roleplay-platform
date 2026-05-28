@@ -1,4 +1,5 @@
 """platform_app.api — FastAPI router 主包,按主题拆 sub-router。"""
+# ruff: noqa: F401
 from fastapi import APIRouter
 
 router = APIRouter()

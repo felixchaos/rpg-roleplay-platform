@@ -1,11 +1,8 @@
 """checks.py — 技能检定、豁免检定、陷阱检定。"""
 from __future__ import annotations
 
-from typing import Optional
-
 import modules as module_registry
 from rules import RulesEngine, get_engine
-from rules.base import RuleResult
 
 
 def perform_skill_check(

@@ -13,7 +13,6 @@ from ._deps import (
     current_user,
     json_response,
     platform_for,
-    require_user,
 )
 
 router = APIRouter()

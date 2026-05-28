@@ -1,8 +1,6 @@
 """schemas.memory — 记忆管理路由请求模型。"""
 from __future__ import annotations
 
-from typing import Optional
-
 from schemas._common import _BaseRequest
 
 

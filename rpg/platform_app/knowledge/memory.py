@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from platform_app.db import connect, expose, init_db, limit_value, page_payload
+from platform_app.db import connect, init_db, limit_value, page_payload
 from platform_app.knowledge._memory_repo import _db_select_memories
 from platform_app.knowledge._utils import _cursor_int
 

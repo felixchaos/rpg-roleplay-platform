@@ -32,7 +32,6 @@ GM 看到的锚点信息是: summary + participants + locations + importance + i
 """
 from __future__ import annotations
 
-import re
 import time
 from typing import Any
 

@@ -39,7 +39,7 @@ def _active_character_cards(scan_text: str, chars: dict[str, Any], player_name: 
             "priority": 100 + len(matched) * 8,
             "text": _format_card(name, card),
         })
-    active.sort(key=lambda x: x["priority"], reverse=True)
+    active.sort(key=lambda x: x["priority"], reverse=True)  # type: ignore[return-value]
     return active[:4]
 
 

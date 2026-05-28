@@ -367,7 +367,7 @@ def register_query_tools() -> None:
         ("list_scripts", "列出当前用户可见的剧本。",
          {"type": "object", "properties": {}}, _t_list_scripts),
     ]
-    for name, desc, schema, exec_ in user_specs:
+    for name, desc, schema, exec_ in user_specs:  # type: ignore[assignment]
         if not registry.has(name):
             registry.register(ToolSpec(
                 name=name, description=desc, input_schema=schema,
@@ -384,7 +384,7 @@ def register_query_tools() -> None:
          {"type": "object", "properties": {"script_id": {"type": "integer"}}},
          _t_list_script_npcs),
     ]
-    for name, desc, schema, exec_ in script_specs:
+    for name, desc, schema, exec_ in script_specs:  # type: ignore[assignment]
         if not registry.has(name):
             registry.register(ToolSpec(
                 name=name, description=desc, input_schema=schema,
@@ -405,7 +405,7 @@ def register_query_tools() -> None:
          {"type": "object", "properties": {}},
          _t_list_available_models),
     ]
-    for name, desc, schema, exec_ in global_specs:
+    for name, desc, schema, exec_ in global_specs:  # type: ignore[assignment]
         if not registry.has(name):
             registry.register(ToolSpec(
                 name=name, description=desc, input_schema=schema,

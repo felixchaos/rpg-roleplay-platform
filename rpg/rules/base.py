@@ -4,7 +4,7 @@ rules.base — RulesEngine 通用数据结构。
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass

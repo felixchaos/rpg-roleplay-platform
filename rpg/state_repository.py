@@ -59,7 +59,7 @@ def load_active_state(user_id: int | None = None) -> tuple[GameState, dict[str, 
 
     # 安全检查:runtime_meta 不属于当前 user → 作废
     if user_id and runtime_meta and int(runtime_meta.get("user_id") or 0) != int(user_id):
-        runtime_meta = None
+        runtime_meta = None  # type: ignore[assignment]
 
     # 没绑 runtime → 先 bootstrap 找当前 active save
     if user_id and not runtime_meta:

@@ -151,7 +151,7 @@ def create_save(
         threading.Thread(target=_bg_seed, daemon=True, name=f"anchor-seed-{save['id']}").start()
     except Exception as _seed_err:
         print(f"[anchor_seed] schedule failed save={save['id']}: {_seed_err}")
-    return expose(save)
+    return expose(save)  # type: ignore[return-value]
 
 
 def _build_initial_snapshot(

@@ -4,7 +4,6 @@ from __future__ import annotations
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
 
 from platform_app.db import connect
 

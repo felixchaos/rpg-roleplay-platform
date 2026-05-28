@@ -61,7 +61,7 @@ def record_context_run(
                 int(duration_ms),
             ),
         ).fetchone()
-    return expose(row)
+    return expose(row)  # type: ignore[return-value]
 
 
 def update_context_run_status(run_id: int, status: str, error: str = "", duration_ms: int | None = None) -> None:

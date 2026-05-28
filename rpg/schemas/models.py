@@ -1,7 +1,7 @@
 """schemas.models — 模型目录与 API 管理路由请求模型。"""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from schemas._common import _BaseRequest
 

@@ -12,7 +12,7 @@ def _cursor_int(value: str | int | None) -> int | None:
     if value in (None, ""):
         return None
     try:
-        parsed = int(value)
+        parsed = int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None

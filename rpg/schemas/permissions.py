@@ -1,7 +1,7 @@
 """schemas.permissions — 权限/确认管理路由请求模型。"""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from schemas._common import _BaseRequest
 

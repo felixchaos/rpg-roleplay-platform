@@ -14,15 +14,10 @@ update_time / set_user_variable / confirm_time_jump / mark_user_locked 等),
 from __future__ import annotations
 
 import re
-import secrets
 from datetime import datetime
 
 from state.extractors import (
     _extract_explicit_time_updates,
-    _extract_location_override,
-    _extract_set_assignments,
-    _extract_set_directive,
-    _extract_set_time_targets,
 )
 from state.json_ops import _extract_json_state_ops
 from state.labels import _risk_label, _validation_label

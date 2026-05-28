@@ -14,7 +14,7 @@ Novel providers — 只在 manifest.kind == 'novel_adaptation' 时启用。
 """
 from __future__ import annotations
 
-from .base import ContextContribution, ContextProvider, Demand, ProviderServices
+from .base import ContextContribution, ContextProvider
 from .registry import register_provider
 
 

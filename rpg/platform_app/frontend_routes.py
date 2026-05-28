@@ -15,21 +15,17 @@ import csv
 import io
 import json
 import os
-import secrets
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, StreamingResponse
 
 from . import auth as _auth
 from .api import (
     SESSION_COOKIE,
-    current_user,
     json_response,
-    public_user,
     require_user,
 )
 from .db import connect, expose, init_db
@@ -525,7 +521,7 @@ async def api_card_import_json(request: Request):
     if not name:
         return _bad("缺少 name 字段")
     from . import user_cards as _uc
-    card = _uc.upsert_card(user["id"], None, {
+    card = _uc.upsert_user_card(user["id"], {
         "name": name,
         "description": data.get("description") or data.get("personality") or "",
         "first_message": data.get("first_mes") or data.get("first_message") or "",

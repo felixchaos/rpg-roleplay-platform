@@ -13,7 +13,6 @@
 """
 from __future__ import annotations
 
-import secrets
 from datetime import datetime
 
 from state.parsers import _clean_item, _parse_question

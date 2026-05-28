@@ -11,7 +11,6 @@ Registered in command_tools_register.ensure_registered().
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 

@@ -186,7 +186,7 @@ class _VertexBackend:
                 tools=tools_param,
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
             )
-            for chunk in self.client.models.generate_content_stream(
+            for chunk in self.client.models.generate_content_stream(  # type: ignore[assignment]
                 model=self.model_name, contents=contents, config=config,
             ):
                 if getattr(chunk, "usage_metadata", None):

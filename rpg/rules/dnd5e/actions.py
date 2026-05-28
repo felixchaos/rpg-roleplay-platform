@@ -3,10 +3,8 @@ rules.dnd5e.actions — 攻击/伤害/短休等动作。
 """
 from __future__ import annotations
 
-from typing import Optional
-
 from ..base import RuleResult, StateOp
-from ..dice import RollResult, is_critical_hit, is_critical_miss, parse_expression, roll
+from ..dice import is_critical_hit, is_critical_miss, parse_expression, roll
 from .character import heal, take_damage
 from .ruleset import ability_modifier
 

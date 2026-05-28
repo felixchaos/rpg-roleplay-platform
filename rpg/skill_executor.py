@@ -19,7 +19,6 @@ skill_executor.py — Skill 沙箱执行
 """
 from __future__ import annotations
 
-import json
 import os
 import resource
 import shutil

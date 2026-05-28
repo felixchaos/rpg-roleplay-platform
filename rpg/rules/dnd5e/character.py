@@ -4,7 +4,6 @@ rules.dnd5e.character — 角色卡数据结构与默认值。
 from __future__ import annotations
 
 import copy
-from typing import Any
 
 from .ruleset import (
     ABILITIES,

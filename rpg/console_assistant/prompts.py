@@ -136,7 +136,6 @@ def build_system_prompt(page_context: dict[str, Any] | None) -> str:
 
 def _render_ui_atlas_for_llm(atlas: dict[str, Any]) -> str:
     """把前端推上来的 ui_atlas snapshot 渲染成 LLM 友好的紧凑文本."""
-    import json as _json
     lines: list[str] = ["", "ui_atlas (当前页面结构):"]
     page = atlas.get("page")
     page_label = atlas.get("page_label")

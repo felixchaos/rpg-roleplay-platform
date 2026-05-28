@@ -13,7 +13,6 @@ command_tools_anchors.py — task 136: 世界线收束机制 · GM 工具
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 

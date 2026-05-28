@@ -737,7 +737,7 @@ def _load_worldbook_for_retrieval(
         if not picks:
             return ""
         lines = []
-        for r in picks:
+        for r in picks:  # type: ignore[assignment]
             lines.append(f"【{r['title']}】\n{(r['content'] or '')[:500]}")
         return "\n\n".join(lines)
     except Exception:

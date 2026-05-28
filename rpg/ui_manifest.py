@@ -21,7 +21,6 @@ from dataclasses import replace as dc_replace
 from typing import Any
 
 from tools_dsl.command_dispatcher import (
-    ToolCallEnvelope,
     ToolSpec,
     get_registry,
 )
@@ -471,7 +470,8 @@ def ui_invoke(user_id: int, args: dict) -> str:
     )
 
     action_id = (args.get("action_id") or "").strip()
-    sub_args = args.get("args") if isinstance(args.get("args"), dict) else {}
+    _raw_args = args.get("args")
+    sub_args: dict[Any, Any] = _raw_args if isinstance(_raw_args, dict) else {}
     if not action_id:
         return "失败: action_id 为空"
     reg = _get_reg()

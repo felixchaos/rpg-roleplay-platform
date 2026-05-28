@@ -1,10 +1,6 @@
 """context_engine.helpers — 小工具函数."""
 from __future__ import annotations
 
-from typing import Any
-
-from context_engine._constants import CHAR_IDX, WORLD_IDX
-
 
 def _neutralize_state_write_tags(text: str) -> str:
     """P0 #2：从检索内容里中和 `【状态写入：…】` / `【询问：…】` /

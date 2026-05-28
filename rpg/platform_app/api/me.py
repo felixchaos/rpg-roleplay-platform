@@ -5,7 +5,6 @@ from fastapi import APIRouter, Request
 from psycopg.types.json import Jsonb
 
 from ..db import connect
-from ..security import public_user
 from ._deps import SESSION_COOKIE, json_response, require_user
 
 router = APIRouter()

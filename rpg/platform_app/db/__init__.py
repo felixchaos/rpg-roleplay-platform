@@ -1,8 +1,6 @@
 """platform_app.db — DB 连接/初始化/migrations/utils 子包."""
 # status() references connect, redacted_url, has_pgvector, database_url — defined here
 # after all imports to avoid circular deps.
-from typing import Any
-
 from .connection import close_pool, connect, database_url, get_pool
 from .init import _do_init_db, init_db, reset_db_init_flag
 from .migrations import (
@@ -39,7 +37,7 @@ def status(reveal_details: bool = False) -> dict:
             with connect() as db:
                 meta = db.execute("select current_database() as database, current_user as user, version() as version").fetchone()
             out["url"] = redacted_url(database_url())
-            out.update(dict(meta))
+            out.update(dict(meta))  # type: ignore[arg-type]
         return out
     except Exception as exc:
         out = {"driver": "postgresql", "ok": False}
