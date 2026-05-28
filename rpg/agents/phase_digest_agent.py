@@ -174,6 +174,7 @@ def compact_phase(
     )
 
     # ── LLM 调用 ─────────────────────────────────────────────
+    api_id_used = api_id_override or "vertex_ai"
     backend, model_name = _build_backend(
         _backend, model_override=model_override, api_id_override=api_id_override,
         user_id=user_id,
@@ -188,6 +189,23 @@ def compact_phase(
             "model": model_name,
             "commit_count": len(commits),
         }
+
+    # 记 usage（background worker；user_id 可能为 None，有则写，无则跳过）
+    try:
+        phase_usage = getattr(backend, "last_usage", None) or {}
+        if phase_usage and user_id:
+            from platform_app.usage import record_usage as _rec
+            _rec(
+                user_id=user_id,
+                save_id=save_id,
+                context_run_id=None,
+                api_id=api_id_used,
+                model_real_name=model_name,
+                usage=phase_usage,
+                metadata={"kind": "phase_digest", "phase_index": phase_index},
+            )
+    except Exception:
+        pass
 
     # 规范化字段 (LLM 偶尔会缺字段)
     digest = _normalize_digest(digest)
