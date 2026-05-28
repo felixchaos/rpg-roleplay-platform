@@ -213,9 +213,25 @@ function CommandMenu({ query, onPick, onClose }) {
   );
 }
 
-function AttachMenu({ onPick, onClose }) {
+function AttachMenu({ onPick, onClose, triggerRef }) {
+  const menuRef = useRefC(null);
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose && onClose(); };
+    const onOutside = (e) => {
+      const inMenu = menuRef.current && menuRef.current.contains(e.target);
+      const inTrigger = triggerRef && triggerRef.current && triggerRef.current.contains(e.target);
+      if (!inMenu && !inTrigger) onClose && onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    document.addEventListener("mousedown", onOutside, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousedown", onOutside, true);
+    };
+  }, [onClose, triggerRef]);
+
   return (
-    <div className="gc-menu gc-attach-menu">
+    <div ref={menuRef} className="gc-menu gc-attach-menu">
       <div className="gc-menu-head">
         <Icon name="plus" size={12} />
         <span>附加 / 工具</span>
@@ -243,7 +259,23 @@ function AttachMenu({ onPick, onClose }) {
   );
 }
 
-function ModelPopover({ current, onPick, align = "left", gameState }) {
+function ModelPopover({ current, onPick, align = "left", gameState, onClose, triggerRef }) {
+  const menuRef = useRefC(null);
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose && onClose(); };
+    const onOutside = (e) => {
+      const inMenu = menuRef.current && menuRef.current.contains(e.target);
+      const inTrigger = triggerRef && triggerRef.current && triggerRef.current.contains(e.target);
+      if (!inMenu && !inTrigger) onClose && onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    document.addEventListener("mousedown", onOutside, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousedown", onOutside, true);
+    };
+  }, [onClose, triggerRef]);
+
   // 真实模型目录走后端：优先 gameState.models（来自 /api/state 同步），
   // fallback 到独立拉 /api/models（首次打开还没有同步 state 的场景）。
   const [catalog, setCatalog] = useStateC(null);
@@ -320,7 +352,7 @@ function ModelPopover({ current, onPick, align = "left", gameState }) {
   };
 
   return (
-    <div className={`gc-menu gc-pop-menu ${align === "right" ? "gc-menu-right" : ""}`}>
+    <div ref={menuRef} className={`gc-menu gc-pop-menu ${align === "right" ? "gc-menu-right" : ""}`}>
       <div className="gc-menu-head">
         <Icon name="sparkle" size={12} /><span>模型</span>
         {busy ? <span className="muted-2" style={{marginLeft: "auto", fontSize: 11}}>切换中…</span> : null}
@@ -353,9 +385,25 @@ function ModelPopover({ current, onPick, align = "left", gameState }) {
   );
 }
 
-function PermissionPopover({ current, onPick }) {
+function PermissionPopover({ current, onPick, onClose, triggerRef }) {
+  const menuRef = useRefC(null);
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose && onClose(); };
+    const onOutside = (e) => {
+      const inMenu = menuRef.current && menuRef.current.contains(e.target);
+      const inTrigger = triggerRef && triggerRef.current && triggerRef.current.contains(e.target);
+      if (!inMenu && !inTrigger) onClose && onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    document.addEventListener("mousedown", onOutside, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousedown", onOutside, true);
+    };
+  }, [onClose, triggerRef]);
+
   return (
-    <div className="gc-menu gc-pop-menu">
+    <div ref={menuRef} className="gc-menu gc-pop-menu">
       <div className="gc-menu-head">
         <Icon name="lock" size={12} /><span>LLM 写入权限</span>
       </div>
@@ -417,6 +465,9 @@ function Composer({
   gameState,   // task 48：透传 game state 拿 relationships，让 @ mention 用真角色
 }) {
   const taRef = useRefC(null);
+  const plusTriggerRef = useRefC(null);
+  const modelTriggerRef = useRefC(null);
+  const permTriggerRef = useRefC(null);
   const isWriting = composerMode === "writing";
 
   // task 50：暴露 window.__rpgInsertMention(name)，让外部（右侧 PanelCharacters
@@ -563,7 +614,7 @@ function Composer({
         </div>
         <div className="gc-composer-row gc-composer-bottom">
           <div className="gc-composer-left">
-            <button className={`iconbtn ${showPlus ? "active" : ""}`} onClick={togglePlus} data-tip="附件 / 工具 / Skill">
+            <button ref={plusTriggerRef} className={`iconbtn ${showPlus ? "active" : ""}`} onClick={togglePlus} data-tip="附件 / 工具 / Skill">
               <Icon name="plus" size={14} />
             </button>
             <button className={`iconbtn ${showSlash ? "active" : ""}`} onClick={toggleSlash} data-tip="命令 (/)">
@@ -580,7 +631,7 @@ function Composer({
                 <span>继续</span>
               </button>
             )}
-            <button className="gc-pop-trigger" onClick={togglePerm}>
+            <button ref={permTriggerRef} className="gc-pop-trigger" onClick={togglePerm}>
               <Icon name={PERMISSION_OPTIONS.find(p => p.id === permission)?.icon || "lock"} size={12} />
               <span>{PERMISSION_OPTIONS.find(p => p.id === permission)?.label}</span>
               <Icon name="chevron_down" size={11} />
@@ -588,9 +639,9 @@ function Composer({
           </div>
           <div className="gc-composer-right">
             <ContextUsage gameState={gameState} />
-            <button className="gc-pop-trigger" onClick={toggleModel}>
+            <button ref={modelTriggerRef} className="gc-pop-trigger" onClick={toggleModel}>
               <Icon name="sparkle" size={12} />
-              <span>{_currentModelLabel(gameState, model)}</span>
+              <span className="gc-model-label">{_currentModelLabel(gameState, model)}</span>
               <Icon name="chevron_down" size={11} />
             </button>
             <span className="muted-2" style={{fontSize: 11.5}}>
@@ -616,9 +667,9 @@ function Composer({
         {mention && filteredChars.length > 0 && (
           <MentionMenu chars={filteredChars} query={mention.query} onPick={insertMention} onClose={() => setMention(null)} />
         )}
-        {showPlus && <AttachMenu onPick={onAttachPick} onClose={togglePlus} />}
-        {showModel && <ModelPopover current={model} onPick={(id) => { setModel(id); toggleModel(); }} align="right" gameState={gameState} />}
-        {showPerm && <PermissionPopover current={permission} onPick={(id) => { setPermission(id); togglePerm(); }} />}
+        {showPlus && <AttachMenu onPick={onAttachPick} onClose={togglePlus} triggerRef={plusTriggerRef} />}
+        {showModel && <ModelPopover current={model} onPick={(id) => { setModel(id); toggleModel(); }} align="right" gameState={gameState} onClose={toggleModel} triggerRef={modelTriggerRef} />}
+        {showPerm && <PermissionPopover current={permission} onPick={(id) => { setPermission(id); togglePerm(); }} onClose={togglePerm} triggerRef={permTriggerRef} />}
       </div>
     </div>
   );
