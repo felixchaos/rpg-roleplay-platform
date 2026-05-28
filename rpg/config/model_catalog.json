@@ -1,6 +1,5 @@
 {
   "schema_version": 1,
-  "_comment": "task 57 (2026-05-25): 校准到当前最新模型。Gemini 3.5 Flash 是 2026-05-19 default；Claude Opus 4.7 是 2026-04-16 frontier；GPT-5.5 是 2026-05-05 default；Qwen 3.7-Max 是 2026-05-21；DeepSeek V4 是 2026-04-24",
   "selected": {
     "api_id": "vertex_ai",
     "model_id": "gemini-3.5-flash"
@@ -16,28 +15,21 @@
         {
           "id": "gemini-3.5-flash",
           "real_name": "gemini-3.5-flash",
-          "display_name": "Gemini 3.5 Flash · 当前默认",
+          "display_name": "Gemini 3.5 Flash",
           "enabled": true,
           "capabilities": ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode", "reasoning"]
         },
         {
           "id": "gemini-3.1-pro",
           "real_name": "gemini-3.1-pro",
-          "display_name": "Gemini 3.1 Pro · 强推理 / 1M context",
+          "display_name": "Gemini 3.1 Pro",
           "enabled": true,
           "capabilities": ["text", "streaming", "image_input", "audio_input", "video_input", "file_input", "tools", "json_mode", "reasoning", "code_exec"]
         },
         {
-          "id": "gemini-2.5-pro",
-          "real_name": "gemini-2.5-pro",
-          "display_name": "Gemini 2.5 Pro · 旧版便宜",
-          "enabled": true,
-          "capabilities": ["text", "streaming", "image_input", "audio_input", "video_input", "file_input", "tools", "json_mode", "reasoning"]
-        },
-        {
           "id": "gemini-2.5-flash",
           "real_name": "gemini-2.5-flash",
-          "display_name": "Gemini 2.5 Flash · 旧版便宜",
+          "display_name": "Gemini 2.5 Flash",
           "enabled": true,
           "capabilities": ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode"]
         }
@@ -53,30 +45,23 @@
         {
           "id": "claude-opus-4-7",
           "real_name": "claude-opus-4-7",
-          "display_name": "Claude Opus 4.7 · 当前 frontier (2026-04-16)",
+          "display_name": "Claude Opus 4.7",
           "enabled": true,
           "capabilities": ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "computer_use", "code_exec"]
         },
         {
           "id": "claude-sonnet-4-6",
           "real_name": "claude-sonnet-4-6",
-          "display_name": "Claude Sonnet 4.6 · 平衡 (2026-02)",
+          "display_name": "Claude Sonnet 4.6",
           "enabled": true,
           "capabilities": ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "computer_use"]
         },
         {
           "id": "claude-haiku-4-5",
           "real_name": "claude-haiku-4-5",
-          "display_name": "Claude Haiku 4.5 · 低成本 (2025-10)",
+          "display_name": "Claude Haiku 4.5",
           "enabled": true,
           "capabilities": ["text", "streaming", "image_input", "tools", "json_mode"]
-        },
-        {
-          "id": "claude-opus-4-5",
-          "real_name": "claude-opus-4-5",
-          "display_name": "Claude Opus 4.5 · 旧 frontier",
-          "enabled": false,
-          "capabilities": ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning"]
         }
       ]
     },
@@ -86,41 +71,59 @@
       "kind": "openai",
       "enabled": false,
       "credential_env": "OPENAI_API_KEY",
+      "base_url": "https://api.openai.com/v1",
       "models": [
         {
           "id": "gpt-5.5",
           "real_name": "gpt-5.5",
-          "display_name": "GPT-5.5 · 当前默认 (2026-05-05)",
+          "display_name": "GPT-5.5",
           "enabled": true,
           "capabilities": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"]
         },
         {
           "id": "gpt-5.5-pro",
           "real_name": "gpt-5.5-pro",
-          "display_name": "GPT-5.5 Pro · 付费旗舰",
+          "display_name": "GPT-5.5 Pro",
           "enabled": true,
           "capabilities": ["text", "streaming", "image_input", "audio_input", "tools", "json_mode", "reasoning", "code_exec", "web_search"]
         },
         {
           "id": "gpt-5.5-thinking",
           "real_name": "gpt-5.5-thinking",
-          "display_name": "GPT-5.5 Thinking · 推理优化",
+          "display_name": "GPT-5.5 Thinking",
+          "enabled": true,
+          "capabilities": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"]
+        }
+      ]
+    },
+    {
+      "id": "openrouter",
+      "display_name": "OpenRouter",
+      "kind": "openai_compat",
+      "enabled": false,
+      "credential_env": "OPENROUTER_API_KEY",
+      "base_url": "https://openrouter.ai/api/v1",
+      "models": [
+        {
+          "id": "anthropic/claude-opus-4-7",
+          "real_name": "anthropic/claude-opus-4-7",
+          "display_name": "Claude Opus 4.7",
           "enabled": true,
           "capabilities": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"]
         },
         {
-          "id": "gpt-5.5-instant",
-          "real_name": "gpt-5.5-instant",
-          "display_name": "GPT-5.5 Instant · 低延迟",
+          "id": "openai/gpt-5.5",
+          "real_name": "openai/gpt-5.5",
+          "display_name": "GPT-5.5",
           "enabled": true,
-          "capabilities": ["text", "streaming", "image_input", "tools", "json_mode"]
+          "capabilities": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"]
         },
         {
-          "id": "gpt-4o",
-          "real_name": "gpt-4o",
-          "display_name": "GPT-4o · 旧版多模态",
-          "enabled": false,
-          "capabilities": ["text", "streaming", "image_input", "audio_input", "tools", "json_mode"]
+          "id": "google/gemini-3.5-flash",
+          "real_name": "google/gemini-3.5-flash",
+          "display_name": "Gemini 3.5 Flash",
+          "enabled": true,
+          "capabilities": ["text", "streaming", "image_input", "tools", "json_mode"]
         }
       ]
     },
@@ -128,92 +131,144 @@
       "id": "siliconflow",
       "display_name": "SiliconFlow",
       "kind": "openai_compat",
-      "base_url": "https://api.siliconflow.cn/v1",
       "enabled": false,
       "credential_env": "SILICONFLOW_API_KEY",
+      "base_url": "https://api.siliconflow.cn/v1",
       "models": [
         {
-          "id": "deepseek-v4-pro",
+          "id": "deepseek-ai/DeepSeek-V4-Pro",
           "real_name": "deepseek-ai/DeepSeek-V4-Pro",
-          "display_name": "DeepSeek V4 Pro · 1.6T 参数 / 1M context (2026-04-24)",
+          "display_name": "DeepSeek V4 Pro",
           "enabled": true,
           "capabilities": ["text", "streaming", "tools", "json_mode", "reasoning", "code_exec"]
         },
         {
-          "id": "deepseek-v4-flash",
+          "id": "deepseek-ai/DeepSeek-V4-Flash",
           "real_name": "deepseek-ai/DeepSeek-V4-Flash",
-          "display_name": "DeepSeek V4 Flash · 廉价版",
+          "display_name": "DeepSeek V4 Flash",
           "enabled": true,
           "capabilities": ["text", "streaming", "tools", "json_mode"]
         },
         {
-          "id": "qwen3.7-max",
+          "id": "Qwen/Qwen3.7-Max",
           "real_name": "Qwen/Qwen3.7-Max",
-          "display_name": "Qwen 3.7-Max · 1M context (2026-05-21)",
+          "display_name": "Qwen 3.7-Max",
           "enabled": true,
           "capabilities": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning", "code_exec"]
+        }
+      ]
+    },
+    {
+      "id": "minimax",
+      "display_name": "MiniMax",
+      "kind": "openai_compat",
+      "enabled": false,
+      "credential_env": "MINIMAX_API_KEY",
+      "base_url": "https://api.minimax.chat/v1",
+      "models": [
+        {
+          "id": "MiniMax-M1",
+          "real_name": "MiniMax-M1",
+          "display_name": "MiniMax M1",
+          "enabled": true,
+          "capabilities": ["text", "streaming"]
         },
         {
-          "id": "qwen3.6-flash",
-          "real_name": "Qwen/Qwen3.6-Flash",
-          "display_name": "Qwen 3.6 Flash · 便宜",
+          "id": "abab6.5s-chat",
+          "real_name": "abab6.5s-chat",
+          "display_name": "abab 6.5s",
           "enabled": true,
-          "capabilities": ["text", "streaming", "tools", "json_mode"]
+          "capabilities": ["text", "streaming"]
         }
       ]
     },
     {
       "id": "dashscope",
-      "display_name": "Alibaba DashScope (国内直连)",
+      "display_name": "DashScope",
       "kind": "openai_compat",
-      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
       "enabled": false,
       "credential_env": "DASHSCOPE_API_KEY",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
       "models": [
         {
           "id": "qwen3.7-max",
           "real_name": "qwen3.7-max",
-          "display_name": "Qwen 3.7-Max · 国内直供 (2026-05-21)",
+          "display_name": "Qwen 3.7-Max",
           "enabled": true,
           "capabilities": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"]
         },
         {
           "id": "qwen3.6-flash",
           "real_name": "qwen3.6-flash",
-          "display_name": "Qwen 3.6 Flash · 国内便宜",
+          "display_name": "Qwen 3.6 Flash",
           "enabled": true,
           "capabilities": ["text", "streaming", "tools", "json_mode"]
         }
       ]
     },
     {
-      "id": "openrouter",
-      "display_name": "OpenRouter (聚合)",
+      "id": "hunyuan",
+      "display_name": "Hunyuan",
       "kind": "openai_compat",
-      "base_url": "https://openrouter.ai/api/v1",
       "enabled": false,
-      "credential_env": "OPENROUTER_API_KEY",
+      "credential_env": "HUNYUAN_API_KEY",
+      "base_url": "https://api.hunyuan.cloud.tencent.com/v1",
       "models": [
         {
-          "id": "anthropic-opus-4-7",
-          "real_name": "anthropic/claude-opus-4-7",
-          "display_name": "Claude Opus 4.7 · 经 OpenRouter",
+          "id": "hunyuan-turbos-latest",
+          "real_name": "hunyuan-turbos-latest",
+          "display_name": "Hunyuan TurboS",
           "enabled": true,
-          "capabilities": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"]
+          "capabilities": ["text", "streaming"]
         },
         {
-          "id": "openai-gpt-5-5",
-          "real_name": "openai/gpt-5.5",
-          "display_name": "GPT-5.5 · 经 OpenRouter",
+          "id": "hunyuan-large",
+          "real_name": "hunyuan-large",
+          "display_name": "Hunyuan Large",
           "enabled": true,
-          "capabilities": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"]
+          "capabilities": ["text", "streaming"]
+        }
+      ]
+    },
+    {
+      "id": "doubao",
+      "display_name": "Doubao",
+      "kind": "openai_compat",
+      "enabled": false,
+      "credential_env": "ARK_API_KEY",
+      "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+      "models": [
+        {
+          "id": "doubao-1-5-pro-32k-250115",
+          "real_name": "doubao-1-5-pro-32k-250115",
+          "display_name": "Doubao 1.5 Pro",
+          "enabled": true,
+          "capabilities": ["text", "streaming"]
         },
         {
-          "id": "google-gemini-3-5-flash",
-          "real_name": "google/gemini-3.5-flash",
-          "display_name": "Gemini 3.5 Flash · 经 OpenRouter",
+          "id": "doubao-1-5-lite-32k-250115",
+          "real_name": "doubao-1-5-lite-32k-250115",
+          "display_name": "Doubao 1.5 Lite",
           "enabled": true,
-          "capabilities": ["text", "streaming", "image_input", "tools", "json_mode"]
+          "capabilities": ["text", "streaming"]
+        }
+      ]
+    },
+    {
+      "id": "xiaomi_mimo",
+      "display_name": "MiMo",
+      "kind": "openai_compat",
+      "enabled": false,
+      "credential_env": "MIMO_API_KEY",
+      "base_url": "",
+      "metadata": {"status": "preview", "note": "MiMo 公共 API 暂未开放，base_url 待小米发布后填入"},
+      "models": [
+        {
+          "id": "mimo-7b-rl",
+          "real_name": "mimo-7b-rl",
+          "display_name": "MiMo-7B-RL",
+          "enabled": false,
+          "capabilities": ["text"]
         }
       ]
     }
