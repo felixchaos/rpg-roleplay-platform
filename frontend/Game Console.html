@@ -507,6 +507,16 @@
         setSseLog([{ t: Date.now(), kind: "send", payload: { message: playerText, model: model && model.id } }]);
         setText(""); setAttachments([]);
         setShowSlash(false); setShowPlus(false);
+        // Bug 3 fix：玩家发新 chat = 默认放弃上轮未答 GM 询问。
+        // 后端 chat_pipeline phase 1 step 1 会 expire_stale_gm_questions，
+        // 但 pendingQuestions 状态在 on_done 才同步。中间 1~30s 流式期间 ConfirmStrip
+        // 仍显示 stale "N 项待确认" → 用户截图截到这个就以为"累积没清"。
+        // 乐观清空 systems-source（gm/curator/rules_engine/...），保留玩家自己加的笔记。
+        setPendingQuestions((arr) => (arr || []).filter(q => {
+          const src = String(q && q.source || "");
+          const systemPrefix = ["gm", "rules_engine", "curator", "extractor", "set_parser"];
+          return !systemPrefix.some(s => src === s || src.startsWith(s + ":"));
+        }));
         const startedAt = Date.now();
         // task 92：不再预填 STEP_TEMPLATE 那套 mock pending 步骤；rawSteps 由 on_agent 实时累加，
         // publicStage 默认进入 "context"（玩家看到的是「正在整理剧情上下文」一行简洁状态）。
