@@ -189,6 +189,9 @@ def _build_initial_snapshot(
                     character = {"kind": "user_card", "id": cards[0].get("id")}
         except Exception:
             pass
+    # task 137: 详细角色卡字段（外貌/性格/语气/秘密/别名），setup_player 后再单独写入
+    _extra_card_fields: dict[str, str] = {}
+
     if isinstance(new_card, dict):
         name = str(new_card.get("name") or "").strip()
         role = str(new_card.get("role") or "").strip()
@@ -214,13 +217,23 @@ def _build_initial_snapshot(
                     c = _ucards.get_user_card(user_id, cid_int) or {}
                     name = str(c.get("name") or "").strip()
                     role = str(c.get("identity") or "").strip()
-                    background = str(c.get("appearance") or c.get("personality") or "").strip()
+                    # background 优先取 personality（详细设定），其次 appearance
+                    background = str(c.get("personality") or c.get("appearance") or "").strip()
+                    # 复刻 game.py:99-101 的逻辑：把详细字段全部存进 player
+                    for _f in ("appearance", "personality", "speech_style", "secrets", "aliases"):
+                        _v = str(c.get(_f) or "").strip()
+                        if _v:
+                            _extra_card_fields[_f] = _v
                 elif kind == "script_card":
                     from . import knowledge as _know
                     c = _know.get_character_card(user_id, script_id, cid_int) or {}
                     name = str(c.get("name") or "").strip()
                     role = str(c.get("identity") or "").strip()
-                    background = str(c.get("appearance") or c.get("personality") or "").strip()
+                    background = str(c.get("personality") or c.get("appearance") or "").strip()
+                    for _f in ("appearance", "personality", "speech_style", "secrets", "aliases"):
+                        _v = str(c.get(_f) or "").strip()
+                        if _v:
+                            _extra_card_fields[_f] = _v
                     # task 114: LLM 经常用 script_card_id 传了 user_card_id (混淆),
                     # 找不到时自动兜底到 user_card 表 — 因为 user_card 跨 script 共享,
                     # 给空白 player 强过让用户开局看到 "—"。
@@ -230,13 +243,26 @@ def _build_initial_snapshot(
                         if uc:
                             name = str(uc.get("name") or "").strip()
                             role = str(uc.get("identity") or "").strip()
-                            background = str(uc.get("appearance") or uc.get("personality") or "").strip()
+                            background = str(uc.get("personality") or uc.get("appearance") or "").strip()
+                            for _f in ("appearance", "personality", "speech_style", "secrets", "aliases"):
+                                _v = str(uc.get(_f) or "").strip()
+                                if _v:
+                                    _extra_card_fields[_f] = _v
             except Exception:
                 pass
 
     if name or role or background:
         try:
             state.setup_player(name or "无名者", role or "未指定", background or "（无背景）")
+        except Exception:
+            pass
+
+    # task 137: 把详细角色卡字段写入 state.data["player"]（供 short_summary → GM 读取）
+    if _extra_card_fields:
+        try:
+            player = state.data.setdefault("player", {})
+            for _f, _v in _extra_card_fields.items():
+                player[_f] = _v
         except Exception:
             pass
 
@@ -272,19 +298,24 @@ def _build_initial_snapshot(
     # 入场选初始身份：**逐字段** merge,只覆盖非空字段。
     # task 126: 用户选了角色卡(已写 name=杭雁菱) → Step 4 又选了 LLM 推荐身份
     # (可能 name="" role="穿越者") → 不能因为 identity.name=="" 就把 player.name 抹成"无名者"。
+    # task 137: identity.background 是"入场身份描述"(局外观察者/穿越者等定位说明),
+    # 不能覆盖 user_card 的 personality/appearance 等详细设定。
+    # 改为存入 player.identity_role_desc 单独字段,供 short_summary 作为"入场定位"显示。
     if isinstance(identity, dict):
         try:
             id_name = str(identity.get("name") or "").strip()
             id_role = str(identity.get("role") or "").strip()
             id_background = str(identity.get("background") or "").strip()
             player = state.data.setdefault("player", {})
-            # 只覆盖非空字段;为空时保留角色卡已写入的值
+            # 只覆盖 name/role 非空字段;为空时保留角色卡已写入的值
             if id_name:
                 player["name"] = id_name
             if id_role:
                 player["role"] = id_role
+            # identity.background 不覆盖角色卡的 personality/background，
+            # 改为存到独立字段 identity_role_desc（入场定位描述）
             if id_background:
-                player["background"] = id_background
+                player["identity_role_desc"] = id_background
             # 兜底:如果一直空(没角色卡也没身份),才用占位
             if not player.get("name"):
                 player["name"] = "无名者"
