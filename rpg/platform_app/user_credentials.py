@@ -22,9 +22,7 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from .db import connect, init_db, expose
-import sys
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
-from crypto_utils import encrypt_api_key, decrypt_api_key  # noqa: E402
+from utils.crypto import encrypt_api_key, decrypt_api_key
 
 
 _PRIVATE_HOST_PREFIXES = (
