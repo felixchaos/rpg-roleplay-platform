@@ -140,6 +140,13 @@ function ScriptsListView() {
   // Codex P0-2 修复:没有现成存档时,不再传 fake save {id:null}。
   // 改成弹 NewGameModal,默认填好 script_id,走 saves.create 原子流。
   const [newModalScriptId, setNewModalScriptId] = useStatePL(null);
+  // B1: export pack
+  const [exportingId, setExportingId] = useStatePL(null);
+  // B2: import pack
+  const importPackRef = React.useRef(null);
+  const [importPackBusy, setImportPackBusy] = useStatePL(false);
+  // B3: overrides editor
+  const [overridesScript, setOverridesScript] = useStatePL(null);
 
   const reload = React.useCallback(async () => {
     try {
@@ -178,6 +185,41 @@ function ScriptsListView() {
     }
   };
 
+  const onImportPackFile = async (file) => {
+    if (!file) return;
+    setImportPackBusy(true);
+    try {
+      const result = await window.api.scripts.importPack(file);
+      if (result && result.ok === false) throw new Error(result.error || result.detail || "导入失败");
+      const sid = result?.script_id;
+      const warnings = result?.warnings;
+      window.__apiToast?.(
+        "剧本包导入成功",
+        { kind: "ok", detail: warnings?.length ? `警告: ${warnings.join("; ")}` : (sid ? `script #${sid}` : "") }
+      );
+      reload();
+    } catch (e) {
+      const detail = e?.payload?.detail || e?.message || "未知错误";
+      window.__apiToast?.("导入失败", { kind: "danger", detail });
+    } finally {
+      setImportPackBusy(false);
+      if (importPackRef.current) importPackRef.current.value = "";
+    }
+  };
+
+  const onExportPack = async (s) => {
+    setExportingId(s.id);
+    try {
+      const filename = (s.title || "script").replace(/[\\/:*?"<>|]/g, "_") + "_pack.zip";
+      await window.api.scripts.exportPack(s.id, filename);
+      window.__apiToast?.("导出成功", { kind: "ok", detail: filename });
+    } catch (e) {
+      window.__apiToast?.("导出失败", { kind: "danger", detail: e?.message });
+    } finally {
+      setExportingId(null);
+    }
+  };
+
   // task 52：之前 onPreview 只 alert 第一章前 400 字，章节多了无法浏览/编辑。
   // 改成开 ChaptersModal —— 真正展示章节列表 + 内容预览 + 重命名 + 重切分。
   const [chaptersOpen, setChaptersOpen] = useStatePL(null); // script row
@@ -187,6 +229,10 @@ function ScriptsListView() {
       <div className="pl-sec-head">
         <h2>已有剧本 <span className="muted-2">{scripts.length} 个</span></h2>
         <div className="pl-sec-tools">
+          <button className="btn ghost" onClick={() => importPackRef.current?.click()} disabled={importPackBusy} data-tip="从 zip pack 导入完整剧本（含章节/角色卡/世界书）">
+            {importPackBusy ? <Icon name="spinner" size={12} className="spin" /> : <Icon name="download" size={12} />} {importPackBusy ? "导入中…" : "导入剧本包"}
+          </button>
+          <input ref={importPackRef} type="file" accept=".zip" style={{display:"none"}} onChange={(e) => onImportPackFile(e.target.files?.[0])} />
           <a className="btn primary" href="#scripts-import" data-tip="导入新剧本">
             <Icon name="upload" size={12} /> 导入剧本
           </a>
@@ -229,6 +275,12 @@ function ScriptsListView() {
                   <Icon name="play" size={13} />
                 </button>
                 <button className="iconbtn" data-tip="查看章节 / 重切分" onClick={() => setChaptersOpen(s)}><Icon name="eye" size={13} /></button>
+                <button className="iconbtn" data-tip="剧本覆盖设定 (overrides)" onClick={() => setOverridesScript(s)}>
+                  <Icon name="edit" size={13} />
+                </button>
+                <button className="iconbtn" data-tip="导出剧本包 (zip)" disabled={exportingId === s.id} onClick={() => onExportPack(s)}>
+                  {exportingId === s.id ? <Icon name="spinner" size={13} className="spin" /> : <Icon name="download" size={13} />}
+                </button>
                 <button className="iconbtn danger" data-tip="删除剧本" onClick={() => onDelete(s)} disabled={busyId === s.id}>
                   <Icon name="trash" size={13} />
                 </button>
@@ -238,6 +290,7 @@ function ScriptsListView() {
         </tbody>
       </table>
       <ChaptersModal script={chaptersOpen} onClose={() => setChaptersOpen(null)} onChanged={reload} />
+      <OverridesModal script={overridesScript} onClose={() => setOverridesScript(null)} />
       {/* Codex P0-2 修复:基于此剧本"新建存档"流。无现成 save 时弹这个 modal,
           走 window.__createAndEnterSave 原子流 (POST /api/saves → activate → 跳页),
           不再走 ContinuePicker 假 save 跳过建档的旧路径。 */}
@@ -253,6 +306,102 @@ function ScriptsListView() {
         }}
       />
     </section>
+  );
+}
+
+/* B3: overrides editor — GET/POST /api/v1/scripts/{id}/overrides (JSONB)。
+   显示当前 script_overrides 的 raw JSON，支持 edit/save。 */
+function OverridesModal({ script, onClose }) {
+  const [raw, setRaw] = useStatePL("");
+  const [loading, setLoading] = useStatePL(false);
+  const [saving, setSaving] = useStatePL(false);
+  const [err, setErr] = useStatePL("");
+  const [dirty, setDirty] = useStatePL(false);
+
+  React.useEffect(() => {
+    if (!script) return;
+    setLoading(true); setErr(""); setRaw(""); setDirty(false);
+    (async () => {
+      try {
+        const r = await window.api.scripts.getOverrides(script.id);
+        const data = r?.data ?? r ?? {};
+        setRaw(JSON.stringify(data, null, 2));
+      } catch (e) {
+        setErr(e?.message || "加载失败");
+        setRaw("{}");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [script?.id]);
+
+  if (!script) return null;
+
+  const onSave = async () => {
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (e) {
+      window.__apiToast?.("JSON 格式错误", { kind: "danger", detail: e.message });
+      return;
+    }
+    setSaving(true);
+    try {
+      await window.api.scripts.saveOverrides(script.id, parsed);
+      window.__apiToast?.("已保存", { kind: "ok" });
+      setDirty(false);
+    } catch (e) {
+      window.__apiToast?.("保存失败", { kind: "danger", detail: e?.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  let jsonValid = true;
+  try { JSON.parse(raw); } catch (_) { jsonValid = false; }
+
+  return (
+    <div className="pl-modal-backdrop" onClick={onClose}>
+      <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(700px, 96vw)", maxHeight: "90vh", display: "flex", flexDirection: "column"}}>
+        <header className="pl-modal-head">
+          <div>
+            <div className="pl-modal-eyebrow">剧本覆盖设定 (overrides) · {script.title}</div>
+            <h2 className="pl-modal-title">{loading ? "加载中…" : "script_overrides JSONB"}</h2>
+          </div>
+          <button className="iconbtn" onClick={onClose} data-tip="关闭"><Icon name="close" size={14} /></button>
+        </header>
+        {err && <div style={{padding: "8px 16px", color: "var(--danger)", fontSize: 13}}>{err}</div>}
+        {!loading && (
+          <div style={{flex: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: "0 16px 0"}}>
+            <div style={{fontSize: 11.5, color: "var(--muted-2)", marginBottom: 6, paddingTop: 12}}>
+              直接编辑 JSON 对象。字段含义由后端解释；不认识的 key 会被保留。
+              {!jsonValid && <span style={{color: "var(--danger)", marginLeft: 8}}>⚠ JSON 格式错误，无法保存</span>}
+            </div>
+            <textarea
+              value={raw}
+              onChange={(e) => { setRaw(e.target.value); setDirty(true); }}
+              spellCheck={false}
+              style={{
+                flex: 1, minHeight: 320, fontFamily: "var(--font-mono, monospace)", fontSize: 12.5,
+                lineHeight: 1.55, resize: "vertical", background: "var(--surface-2)",
+                border: "1px solid " + (jsonValid ? "var(--line-soft)" : "var(--danger)"),
+                borderRadius: "var(--r-2)", padding: "10px 12px", color: "var(--text)",
+                outline: "none",
+              }}
+            />
+          </div>
+        )}
+        <footer className="pl-modal-foot" style={{marginTop: 12}}>
+          <span className="muted-2" style={{fontSize: 11.5}}>
+            GET/POST /api/v1/scripts/{script.id}/overrides
+          </span>
+          <div style={{display: "flex", gap: 8}}>
+            <button className="btn ghost" onClick={onClose}>关闭</button>
+            <button className="btn primary" onClick={onSave} disabled={saving || !dirty || !jsonValid}>
+              {saving ? <><Icon name="spinner" size={12} className="spin" /> 保存中…</> : <><Icon name="check" size={12} /> 保存</>}
+            </button>
+          </div>
+        </footer>
+      </div>
+    </div>
   );
 }
 
@@ -917,7 +1066,7 @@ function ImportEstimateView({ estimate, rule, onCancel, onConfirm }) {
 }
 
 Object.assign(window, {
-  ScriptsPage, ScriptsListView, ChaptersModal, ScriptsImportView,
+  ScriptsPage, ScriptsListView, ChaptersModal, OverridesModal, ScriptsImportView,
   ImportJobBanner, ImportJobResult, ImportEstimateView,
   ScriptPreviewModal, ConfidenceBar,
 });

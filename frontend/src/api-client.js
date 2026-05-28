@@ -264,6 +264,32 @@
         const url = BASE + "/api/v1/scripts/import-jobs/" + jobId + "/stream";
         return openEventSource(url, handlers);
       },
+      // B3: script overrides CRUD (JSONB)
+      getOverrides: (sid) => GET("/api/v1/scripts/" + sid + "/overrides"),
+      saveOverrides: (sid, data) => POST("/api/v1/scripts/" + sid + "/overrides", { data }),
+      // B2: upload script pack zip — POST /api/v1/scripts/import-pack multipart
+      importPack: (file) => {
+        const fd = new FormData();
+        fd.append("file", file);
+        return _send("/api/v1/scripts/import-pack", { method: "POST", body: fd });
+      },
+      // B1: download script pack zip — GET /api/v1/scripts/{id}/export-pack → blob download
+      exportPack: async (sid, filename) => {
+        const url = (BASE || "") + "/api/v1/scripts/" + sid + "/export-pack";
+        const res = await fetch(url, { credentials: "include" });
+        if (!res.ok) {
+          let msg = res.statusText;
+          try { const j = await res.json(); msg = j.detail || j.error || msg; } catch (_) {}
+          throw new ApiError("http", res.status, msg);
+        }
+        const blob = await res.blob();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = filename || "script_pack.zip";
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+      },
     },
 
     // ---------- Saves & branches ----------
