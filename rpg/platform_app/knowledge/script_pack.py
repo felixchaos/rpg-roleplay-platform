@@ -23,15 +23,20 @@ from typing import Any
 from platform_app.db import connect
 
 FORMAT_VERSION = 1
+CHUNKS_VERSION = 1  # chunks 序列化格式版本; 未来改变字段时递增
 MAX_ZIP_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
 # ── Export ────────────────────────────────────────────────────────────────────
 
-def export_script_pack(script_id: int, user_id: int) -> tuple[bytes, str]:
+def export_script_pack(
+    script_id: int,
+    user_id: int,
+    include_chunks: bool = False,
+) -> tuple[bytes, str]:
     """导出指定 script 为 zip 包。返回 (zip_bytes, filename)。
 
-    校验 ownership; 不含 chunks/embeddings (收件方重建)。
+    include_chunks=True 时把 document_chunks 一并打包 (不含 embedding_vec)。
     """
     with connect() as db:
         # 1. 校验 ownership
@@ -118,7 +123,25 @@ def export_script_pack(script_id: int, user_id: int) -> tuple[bytes, str]:
         ).fetchone()
         overrides = dict(ov_row["data"]) if ov_row and ov_row["data"] else {}
 
-    # 8. 构建 zip
+        # 8. chunks (可选) — 不含 embedding_vec / search_tsv (generated/不可移植)
+        chunks: list[dict] = []
+        if include_chunks:
+            chunk_rows = db.execute(
+                """
+                SELECT dc.chapter_index, dc.chunk_index, dc.content,
+                       dc.token_count, dc.embedding, dc.embedding_model,
+                       dc.metadata,
+                       d.source_kind, d.source_ref
+                FROM document_chunks dc
+                JOIN documents d ON d.id = dc.document_id
+                WHERE dc.script_id = %s
+                ORDER BY dc.chapter_index, dc.chunk_index
+                """,
+                (script_id,),
+            ).fetchall()
+            chunks = [dict(r) for r in chunk_rows]
+
+    # 9. 构建 zip
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         manifest = {
@@ -126,6 +149,8 @@ def export_script_pack(script_id: int, user_id: int) -> tuple[bytes, str]:
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "script_title": script_dict.get("title"),
             "script_id_origin": script_id,
+            "chunks_included": include_chunks,
+            "chunks_version": CHUNKS_VERSION if include_chunks else None,
             # 不含 owner_id / user_id
         }
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
@@ -136,6 +161,8 @@ def export_script_pack(script_id: int, user_id: int) -> tuple[bytes, str]:
         zf.writestr("worldbook.jsonl", _dump_jsonl(wb))
         zf.writestr("overrides.json", json.dumps(overrides, ensure_ascii=False, default=str, indent=2))
         zf.writestr("documents.jsonl", _dump_jsonl(docs))
+        if include_chunks:
+            zf.writestr("chunks.jsonl", _dump_jsonl(chunks))
 
     title_slug = str(script_dict.get("title") or "unknown").replace("/", "-").replace("\\", "-")[:40]
     filename = f"script_{script_id}_{title_slug}.zip"
@@ -191,6 +218,16 @@ def import_script_pack(zip_bytes: bytes, user_id: int) -> dict[str, Any]:
             overrides: dict = json.loads(zf.read("overrides.json").decode("utf-8"))
         except KeyError:
             overrides = {}
+
+        # chunks — 仅在 manifest 声明且版本兼容时读取; 容错 fallback
+        pack_chunks_included = bool(manifest.get("chunks_included"))
+        pack_chunks_version = manifest.get("chunks_version")
+        chunks: list[dict] = []
+        if pack_chunks_included and pack_chunks_version == CHUNKS_VERSION:
+            try:
+                chunks = _read_jsonl(zf, "chunks.jsonl")
+            except Exception:
+                chunks = []  # 损坏/缺失 → fallback 到无 chunks
 
     warnings: list[str] = []
 
@@ -287,7 +324,20 @@ def import_script_pack(zip_bytes: bytes, user_id: int) -> dict[str, Any]:
                 warnings.append(f"chapter_fact chapter={fact.get('chapter')} skipped: {exc}")
 
         # 5d. character_cards — 需要 book_id
-        #     新 script 没有 books 行 (知识同步前),先尝试插入; 无 book 则 skip + warn
+        #     若 pack 含 chunks/docs/cards/worldbook, 提前确保 book 行存在
+        if chunks or docs or cards or wb:
+            from platform_app.knowledge._sync import _ensure_book
+            try:
+                _ensure_book(db, {
+                    "id": new_script_id,
+                    "owner_id": user_id,
+                    "title": title,
+                    "description": description,
+                    "source_path": "",
+                })
+            except Exception:
+                pass  # book 建失败时后续走 skip+warn 分支
+
         book_row = db.execute(
             "SELECT id FROM books WHERE script_id = %s",
             (new_script_id,),
@@ -375,35 +425,90 @@ def import_script_pack(zip_bytes: bytes, user_id: int) -> dict[str, Any]:
                     "run /api/scripts/{id}/knowledge/sync to rebuild)"
                 )
 
-        # 5g. documents (no chunks)
+        # 5g. documents — track (source_kind, source_ref) → new_document_id for chunks
+        # key: (source_kind, source_ref) → new document id
+        doc_key_to_new_id: dict[tuple[str, str], int] = {}
         if book_row and docs:
             for doc in docs:
-                # map chapter_id
                 old_ch_id = doc.get("chapter_id")
                 new_ch_id = old_chapter_id_to_new.get(int(old_ch_id)) if old_ch_id else None
+                src_kind = str(doc.get("source_kind") or "chapter")
+                src_ref = str(doc.get("source_ref") or "")
                 try:
-                    db.execute(
+                    new_doc = db.execute(
                         """
                         INSERT INTO documents
                           (book_id, script_id, chapter_id, source_kind, source_ref,
                            title, content, metadata)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-                        ON CONFLICT (book_id, source_kind, source_ref) DO NOTHING
+                        ON CONFLICT (book_id, source_kind, source_ref) DO UPDATE
+                          SET updated_at = now()
+                        RETURNING id
                         """,
                         (
                             book_id, new_script_id, new_ch_id,
-                            str(doc.get("source_kind") or "chapter"),
-                            str(doc.get("source_ref") or ""),
+                            src_kind, src_ref,
                             str(doc.get("title") or ""),
                             str(doc.get("content") or ""),
                             json.dumps(doc.get("metadata") or {}, ensure_ascii=False, default=str),
                         ),
-                    )
+                    ).fetchone()
+                    if new_doc:
+                        doc_key_to_new_id[(src_kind, src_ref)] = int(new_doc["id"])
                 except Exception as exc:
-                    warnings.append(f"document source_ref={doc.get('source_ref')!r} skipped: {exc}")
+                    warnings.append(f"document source_ref={src_ref!r} skipped: {exc}")
         elif docs and not book_row:
             warnings.append(
                 f"{len(docs)} documents skipped (no books row yet; "
+                "run /api/scripts/{id}/knowledge/sync to rebuild)"
+            )
+
+        # 5h. chunks — 仅当 pack 含 chunks 且 documents 成功插入时还原
+        if chunks and book_row and doc_key_to_new_id:
+            inserted_chunks = 0
+            for ck in chunks:
+                src_kind = str(ck.get("source_kind") or "chapter")
+                src_ref = str(ck.get("source_ref") or "")
+                doc_id = doc_key_to_new_id.get((src_kind, src_ref))
+                if doc_id is None:
+                    continue  # 对应 document 未插入, 跳过
+                chapter_index = int(ck.get("chapter_index") or 0)
+                ch_row = db.execute(
+                    "SELECT id FROM script_chapters WHERE script_id = %s AND chapter_index = %s",
+                    (new_script_id, chapter_index),
+                ).fetchone()
+                new_ch_id = int(ch_row["id"]) if ch_row else None
+                try:
+                    db.execute(
+                        """
+                        INSERT INTO document_chunks
+                          (document_id, book_id, script_id, chapter_id, chapter_index,
+                           chunk_index, content, token_count, embedding, embedding_model,
+                           metadata)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb)
+                        ON CONFLICT (document_id, chunk_index) DO NOTHING
+                        """,
+                        (
+                            doc_id, book_id, new_script_id, new_ch_id, chapter_index,
+                            int(ck.get("chunk_index") or 0),
+                            str(ck.get("content") or ""),
+                            int(ck.get("token_count") or 0),
+                            json.dumps(ck.get("embedding"), ensure_ascii=False, default=str)
+                            if ck.get("embedding") is not None else None,
+                            str(ck.get("embedding_model") or ""),
+                            json.dumps(ck.get("metadata") or {}, ensure_ascii=False, default=str),
+                        ),
+                    )
+                    inserted_chunks += 1
+                except Exception as exc:
+                    warnings.append(
+                        f"chunk chapter_index={chapter_index} chunk_index={ck.get('chunk_index')} skipped: {exc}"
+                    )
+            if inserted_chunks:
+                pass  # 正常还原, 不需要 warning
+        elif chunks and not book_row:
+            warnings.append(
+                f"{len(chunks)} chunks skipped (no books row yet; "
                 "run /api/scripts/{id}/knowledge/sync to rebuild)"
             )
 

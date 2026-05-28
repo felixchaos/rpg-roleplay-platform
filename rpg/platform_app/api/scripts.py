@@ -447,14 +447,15 @@ async def api_upload_cancel(upload_id: str, user=Depends(require_user)):
 # ── script pack export / import ───────────────────────────────────────────────
 
 @router.get("/api/scripts/{script_id}/export-pack")
-async def api_export_script_pack(script_id: int, user=Depends(require_user)):
-    """导出剧本为 zip pack (含 chapters/facts/cards/worldbook/overrides/documents)。
-
-    不含: document_chunks/embeddings (收件方重建), saves, credentials。
-    """
+async def api_export_script_pack(
+    script_id: int,
+    include_chunks: bool = False,
+    user=Depends(require_user),
+):
+    """导出剧本为 zip pack。include_chunks=true 时把 document_chunks 一并打包。"""
     from platform_app.knowledge.script_pack import export_script_pack
     try:
-        zip_bytes, filename = export_script_pack(script_id, user["id"])
+        zip_bytes, filename = export_script_pack(script_id, user["id"], include_chunks=include_chunks)
     except PermissionError:
         raise HTTPException(status_code=403, detail="无权访问该剧本")
     return Response(
