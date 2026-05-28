@@ -45,6 +45,31 @@
   <script type="text/babel" src="src/console-assistant-navigation.jsx?v=20260527-gc1"></script>
   <script type="text/babel" src="src/console-assistant-panel.jsx?v=unify1"></script>
 
+  <!-- density preset + narrative font init — reads localStorage, applies to <html> on load -->
+  <script>
+    (function () {
+      var VALID_DENSITY = { compact: 1, default: 1, spacious: 1 };
+      function _applyDensity(d) {
+        if (!VALID_DENSITY[d]) d = "default";
+        document.documentElement.setAttribute("data-density", d);
+        try { localStorage.setItem("rpg.density", d); } catch (_) {}
+        window.dispatchEvent(new CustomEvent("rpg-density-change", { detail: d }));
+      }
+      var storedDensity = "default";
+      try { storedDensity = localStorage.getItem("rpg.density") || "default"; } catch (_) {}
+      _applyDensity(storedDensity);
+      window.RPG_setDensity = _applyDensity;
+
+      // restore narrative font
+      var FONT_MAP = { serif: "var(--font-serif)", sans: "var(--font-sans)", mono: "var(--font-mono)" };
+      var storedFont = "serif";
+      try { storedFont = localStorage.getItem("rpg.narrativeFont") || "serif"; } catch (_) {}
+      if (FONT_MAP[storedFont]) {
+        document.documentElement.style.setProperty("--narrative-font", FONT_MAP[storedFont]);
+      }
+    })();
+  </script>
+
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo, useCallback } = React;
     // task 21（修订）：之前 task 15 引入的 `__late = (name) => (props) => React.createElement(window[name], props)`
@@ -1008,7 +1033,8 @@
             {mountStage >= 2 && <>
               {/* task 45：把真实存档标题传进去，避免硬编码 mock 标题 */}
               <GameSettingsModal open={showInGameSettings} onClose={() => setShowInGameSettings(false)}
-                saveTitle={activeSave?.title || game?._raw?.save_title || ""} />
+                saveTitle={activeSave?.title || game?._raw?.save_title || ""}
+                permission={permission} />
               <HistoryDrawer open={showHistoryDrawer} history={history} onClose={() => setShowHistoryDrawer(false)} />
               <SearchDrawer open={showSearchDrawer} history={history} state={game} onClose={() => setShowSearchDrawer(false)} />
             </>}

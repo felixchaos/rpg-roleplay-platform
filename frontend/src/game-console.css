@@ -120,7 +120,7 @@
 .gc-brand-text { display: grid; min-width: 0; }
 .gc-brand-text strong { font-family: var(--font-serif); font-size: 14px; letter-spacing: 0.04em; }
 
-.gc-rail-section { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); display: grid; gap: 6px; flex-shrink: 0; }
+.gc-rail-section { padding: var(--d-pad, 10px) 12px; border-bottom: 1px solid var(--line-soft); display: grid; gap: 6px; flex-shrink: 0; }
 .gc-rail-section.compact { padding: 8px 12px; gap: 4px; }
 .gc-rail-section.gc-rail-fill { flex: 0 0 auto; }
 .gc-rail-spacer { flex: 1 1 auto; min-height: 0; border-bottom: 1px solid var(--line-soft); }
@@ -368,7 +368,7 @@
   gap: 18px;
 }
 
-.gc-msg { display: grid; gap: 6px; position: relative; padding-bottom: 24px; }
+.gc-msg { display: grid; gap: 6px; position: relative; padding-bottom: var(--d-msg-pad, 24px); }
 /* task 91: actions 用绝对定位,hover 出现/消失不再撑动上下消息 */
 .gc-msg-actions {
   position: absolute;
@@ -418,7 +418,7 @@
 }
 .gc-msg-gm .gc-msg-tag { color: var(--accent); }
 
-.gc-msg-body { font-size: var(--narrative-size, 16.5px); line-height: 1.78; color: var(--text); }
+.gc-msg-body { font-size: var(--d-narrative, var(--narrative-size, 16.5px)); line-height: var(--d-line, 1.78); color: var(--text); }
 .gc-msg-gm .gc-msg-body {
   font-family: var(--narrative-font, var(--font-serif));
   letter-spacing: 0.02em;
@@ -427,10 +427,10 @@
 }
 .gc-msg-player .gc-msg-body {
   font-family: var(--font-sans);
-  font-size: 14.5px;
-  line-height: 1.65;
+  font-size: var(--d-font-base, 14.5px);
+  line-height: var(--d-line, 1.65);
   color: var(--text-quiet);
-  padding: 10px 12px;
+  padding: var(--d-pad, 10px) 12px;
   border: 1px solid var(--line-soft);
   border-radius: var(--r-2);
   background: var(--panel);
