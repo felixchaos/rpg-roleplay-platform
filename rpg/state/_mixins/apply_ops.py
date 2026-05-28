@@ -315,6 +315,25 @@ class ApplyOpsMixin:
 
     def apply_player_directives(self, player_input: str) -> list[str]:
         updates: list[str] = []
+        # task 138: /reveal <text> 主动揭示秘密给 GM。
+        # 默认 player_private.* 永不进 system prompt;玩家可以在本轮临时把
+        # <text> 注入到 GM prompt 的【玩家本轮揭示】块。short_summary 会读
+        # player_private.flags["revealed_this_turn"]。record_turn 清掉。
+        # 先清上一轮残留(防御:正常 record_turn 会清,但异常路径可能漏)。
+        _pp = self.data.setdefault("player_private", {})
+        _flags = _pp.setdefault("flags", {})
+        if "revealed_this_turn" in _flags:
+            _flags["revealed_this_turn"] = ""
+        _raw = (player_input or "").strip()
+        if _raw.startswith("/reveal "):
+            _reveal_text = _raw[len("/reveal "):].strip()
+            if _reveal_text:
+                _flags["revealed_this_turn"] = _reveal_text
+                # 同时累加到 secrets 历史(玩家显式揭示的秘密下次自动可见)
+                _sec_list = _pp.setdefault("secrets", [])
+                if _reveal_text not in _sec_list:
+                    _sec_list.append(_reveal_text)
+                updates.append(f"玩家揭示秘密(本轮)：{_reveal_text[:40]}")
         updates.extend(self.apply_set_directive(player_input or ""))
         for directive in detect_time_directives(player_input or ""):
             value = directive.target

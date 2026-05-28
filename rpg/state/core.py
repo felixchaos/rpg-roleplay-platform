@@ -490,6 +490,14 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         self.data["history"].append({"role": "user",      "content": player_input})
         self.data["history"].append({"role": "assistant", "content": gm_response})
         self.data["turn"] += 1
+        # task 138: ephemeral reveal 是本回合一次性注入,GM 已经吃过 prompt,
+        # 现在清掉避免下一轮自动重注。secrets 仍留在 player_private.secrets 历史里。
+        try:
+            _flags = self.data.setdefault("player_private", {}).setdefault("flags", {})
+            if _flags.get("revealed_this_turn"):
+                _flags["revealed_this_turn"] = ""
+        except Exception:
+            pass
 
     # ── 给 GM 用的历史消息列表 ────────────────────────────────────
     def history_messages(self, limit_turns: int = MAX_HISTORY_TURNS) -> list[dict]:
