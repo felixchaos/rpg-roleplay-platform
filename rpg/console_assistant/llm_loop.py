@@ -246,5 +246,27 @@ def _run_llm_loop(
             })
         except Exception:
             pass
+
+        # 写 token_usage 表（不影响主流程，异常静默）
+        try:
+            if user_id and usage and (in_tk or out_tk):
+                from platform_app.usage import record_usage as _rec
+                _backend_api_id = (
+                    getattr(backend, "api_id", None)
+                    or ("anthropic" if "anthropic" in type(backend).__module__ else
+                        "vertex_ai" if "vertex" in type(backend).__module__ else
+                        "openai")
+                )
+                _rec(
+                    user_id=user_id,
+                    save_id=None,
+                    context_run_id=None,
+                    api_id=_backend_api_id,
+                    model_real_name=getattr(backend, "model_name", "unknown"),
+                    usage=usage,
+                    metadata={"kind": "console"},
+                )
+        except Exception:
+            pass
     except Exception as exc:
         yield _sse_event("error", {"message": f"{type(exc).__name__}: {exc}"})
