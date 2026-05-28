@@ -10,12 +10,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from schemas._common import COMMON_ERROR_RESPONSES, StateResponse
 from schemas.memory import MemoryAddRequest, MemoryModeRequest, MemoryRemoveRequest
 
 router = APIRouter()
 
 
-@router.post("/api/memory/mode")
+@router.post("/api/memory/mode", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_memory_mode(body: MemoryModeRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: UI 按钮也走 dispatcher,获得统一审计 + destructive 检查。"""
     from app import (
@@ -43,7 +44,7 @@ async def api_memory_mode(body: MemoryModeRequest, request: Request) -> JSONResp
     return JSONResponse({"ok": True, "state": _payload(api_user)})
 
 
-@router.post("/api/memory/add")
+@router.post("/api/memory/add", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_memory_add(body: MemoryAddRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher 的 add_memory_* 工具系列。"""
     from app import (
@@ -81,7 +82,7 @@ async def api_memory_add(body: MemoryAddRequest, request: Request) -> JSONRespon
     return JSONResponse({"ok": True, "state": _payload(api_user)})
 
 
-@router.post("/api/memory/remove")
+@router.post("/api/memory/remove", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_memory_remove(body: MemoryRemoveRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: destructive 走 dispatcher remove_memory_item 工具。"""
     from app import (

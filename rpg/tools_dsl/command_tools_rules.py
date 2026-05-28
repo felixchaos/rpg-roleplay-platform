@@ -206,7 +206,7 @@ def register_rules_tools() -> None:
                     "character_overrides": {"type": "object",
                                              "description": "可选: 覆盖默认角色卡属性"},
                 },
-                "required": ["module_id"],
+                "required": [],  # handler 自行校验并返回"module_id 为空"友好消息
             },
             executor=_t_module_load,
             scope="save",
@@ -258,7 +258,7 @@ def register_rules_tools() -> None:
                     "weapon_id": {"type": "string", "default": "shortsword"},
                     "seed": {"type": "integer"},
                 },
-                "required": ["target_id"],
+                "required": [],  # handler 自行校验并返回"target_id 为空"友好消息
             },
             executor=_t_combat_player_attack,
             scope="save",
@@ -290,7 +290,7 @@ def register_rules_tools() -> None:
                     "dc": {"type": "integer"},
                     "seed": {"type": "integer"},
                 },
-                "required": ["skill", "dc"],
+                "required": [],  # handler 自行校验并返回"dc 缺失"友好消息
             },
             executor=_t_skill_check,
             scope="save",
@@ -334,7 +334,7 @@ def register_rules_tools() -> None:
                     "qty": {"type": "integer", "default": 1, "minimum": 1},
                     "seed": {"type": "integer"},
                 },
-                "required": ["item_id"],
+                "required": [],  # handler 自行校验并返回"item_id 为空"友好消息
             },
             executor=_t_consume_item,
             scope="save",

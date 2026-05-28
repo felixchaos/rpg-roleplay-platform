@@ -230,7 +230,7 @@ class TimelineLayerUsesRealAnchor(unittest.TestCase):
 class ChatHandlerWritesAnchorAfterSet(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app_text = (PROJECT / "rpg" / "app.py").read_text(encoding="utf-8")
+        cls.app_text = (PROJECT / "rpg" / "chat_pipeline.py").read_text(encoding="utf-8")
 
     def test_chat_imports_resolve_timeline_anchor(self):
         self.assertIn("from script_timeline import resolve_timeline_anchor", self.app_text,

@@ -4,12 +4,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from schemas._common import COMMON_ERROR_RESPONSES, StateResponse
 from schemas.worldline import WorldlineVariableRemoveRequest, WorldlineVariableRequest
 
 router = APIRouter()
 
 
-@router.post("/api/worldline/variable")
+@router.post("/api/worldline/variable", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_worldline_variable(body: WorldlineVariableRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher 的 set_user_variable 工具。"""
     from app import (
@@ -47,7 +48,7 @@ async def api_worldline_variable(body: WorldlineVariableRequest, request: Reques
     return JSONResponse({"ok": True, "state": _payload(api_user)})
 
 
-@router.post("/api/worldline/variable/remove")
+@router.post("/api/worldline/variable/remove", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_worldline_variable_remove(body: WorldlineVariableRemoveRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: destructive,走 dispatcher remove_user_variable 工具。"""
     from app import (

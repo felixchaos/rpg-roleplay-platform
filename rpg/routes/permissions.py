@@ -13,6 +13,7 @@ import os
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from schemas._common import COMMON_ERROR_RESPONSES, ErrorResponse, StateResponse
 from schemas.permissions import (
     DebugPendingQuestionRequest,
     PendingWriteRequest,
@@ -23,7 +24,7 @@ from schemas.permissions import (
 router = APIRouter()
 
 
-@router.post("/api/permissions")
+@router.post("/api/permissions", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_permissions(body: PermissionsRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 敏感权限切换走 dispatcher (origin=ui_button)。"""
     from app import (
@@ -51,7 +52,7 @@ async def api_permissions(body: PermissionsRequest, request: Request) -> JSONRes
     return JSONResponse({"ok": True, "state": _payload(api_user)})
 
 
-@router.post("/api/permissions/pending-write")
+@router.post("/api/permissions/pending-write", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_pending_write(body: PendingWriteRequest, request: Request) -> JSONResponse:
     """审批一条待写入。前端发 {id, action} 或 {index, decision}（兼容老 contract）。
 
@@ -109,7 +110,7 @@ async def api_pending_write(body: PendingWriteRequest, request: Request) -> JSON
     return JSONResponse({"ok": True, "result": result, "state": _payload(api_user)})
 
 
-@router.post("/api/questions/clear")
+@router.post("/api/questions/clear", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_question_clear(body: QuestionClearRequest, request: Request) -> JSONResponse:
     """回答(或跳过)一条 GM 询问。{id, choice?} 或 {index, choice?}。
     task 87 Phase 6: 走 dispatcher dismiss_pending_question。choice 走老路径
@@ -146,7 +147,7 @@ async def api_question_clear(body: QuestionClearRequest, request: Request) -> JS
     return JSONResponse({"ok": True, "cleared": bool(popped), "state": _payload(api_user)})
 
 
-@router.post("/api/debug/pending-question")
+@router.post("/api/debug/pending-question", response_model=StateResponse, responses={**COMMON_ERROR_RESPONSES, 404: {"model": ErrorResponse}})
 async def api_debug_pending_question(body: DebugPendingQuestionRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: debug 注入也走 dispatcher 的 inject_pending_question 工具。"""
     from app import _ensure_loaded, _payload, _require_api_user, _resolve_persist_target

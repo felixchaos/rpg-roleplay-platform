@@ -182,7 +182,7 @@ class ChatHandlerUsesGamePolicy(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app_text = (PROJECT_ROOT / "rpg" / "app.py").read_text(encoding="utf-8")
+        cls.app_text = (PROJECT_ROOT / "rpg" / "chat_pipeline.py").read_text(encoding="utf-8")
 
     def test_chat_handler_calls_get_game_policy(self):
         self.assertIn("get_game_policy", self.app_text,

@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from schemas._common import COMMON_ERROR_RESPONSES, ErrorResponse, GenericOkResponse
 from schemas.models import (
     ModelsDeleteModelRequest,
     ModelsProbeRequest,
@@ -28,7 +29,7 @@ async def api_models(request: Request) -> JSONResponse:
     })
 
 
-@router.post("/api/models/select")
+@router.post("/api/models/select", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_models_select(body: ModelsSelectRequest, request: Request) -> JSONResponse:
     from app import (
         _gm_by_user,
@@ -47,7 +48,7 @@ async def api_models_select(body: ModelsSelectRequest, request: Request) -> JSON
     return JSONResponse({"ok": True, "models": catalog, "selected": selected_model(catalog), "state": _payload(api_user)})
 
 
-@router.post("/api/models/api")
+@router.post("/api/models/api", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_models_upsert_api(body: ModelsUpsertApiRequest, request: Request) -> JSONResponse:
     from app import _require_api_user, selected_model, upsert_api
     _require_api_user(request, admin=True)
@@ -56,7 +57,7 @@ async def api_models_upsert_api(body: ModelsUpsertApiRequest, request: Request) 
     return JSONResponse({"ok": True, "models": catalog, "selected": selected_model(catalog)})
 
 
-@router.post("/api/models/model")
+@router.post("/api/models/model", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_models_upsert_model(body: ModelsUpsertModelRequest, request: Request) -> JSONResponse:
     from app import _require_api_user, selected_model, upsert_model
     _require_api_user(request, admin=True)
@@ -68,7 +69,7 @@ async def api_models_upsert_model(body: ModelsUpsertModelRequest, request: Reque
     return JSONResponse({"ok": True, "models": catalog, "selected": selected_model(catalog)})
 
 
-@router.post("/api/models/model/delete")
+@router.post("/api/models/model/delete", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_models_delete_model(body: ModelsDeleteModelRequest, request: Request) -> JSONResponse:
     from app import _require_api_user, delete_model, selected_model
     _require_api_user(request, admin=True)
@@ -107,7 +108,7 @@ async def api_models_diff(request: Request) -> JSONResponse:
     return JSONResponse(model_probe.diff_catalog(api_id, user_id=api_user["id"] if api_user else None))
 
 
-@router.post("/api/models/probe")
+@router.post("/api/models/probe", response_model=GenericOkResponse, responses={**COMMON_ERROR_RESPONSES, 403: {"model": ErrorResponse}})
 async def api_models_probe(body: ModelsProbeRequest, request: Request) -> JSONResponse:
     """发一条最小请求验证可用性 + 测延迟。
 

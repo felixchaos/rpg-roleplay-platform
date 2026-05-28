@@ -155,7 +155,7 @@ class ChatHandlerCallsExpire(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app_text = (PROJECT_ROOT / "rpg" / "app.py").read_text(encoding="utf-8")
+        cls.app_text = (PROJECT_ROOT / "rpg" / "chat_pipeline.py").read_text(encoding="utf-8")
 
     def test_chat_imports_or_calls_expire(self):
         self.assertIn("expire_stale_gm_questions", self.app_text,
@@ -163,9 +163,10 @@ class ChatHandlerCallsExpire(unittest.TestCase):
 
     def test_expire_is_before_apply_directives(self):
         """expire 必须在 apply_player_directives **之前** — 否则玩家这一轮的
-        directive 还在用旧 pending_question 跟自己打架。"""
-        idx_expire = self.app_text.find("expire_stale_gm_questions")
-        idx_apply = self.app_text.find("apply_player_directives")
+        directive 还在用旧 pending_question 跟自己打架。
+        用 state.expire_stale_gm_questions / state.apply_player_directives 的实际调用位置比较。"""
+        idx_expire = self.app_text.find("state.expire_stale_gm_questions")
+        idx_apply = self.app_text.find("state.apply_player_directives")
         self.assertGreater(idx_expire, 0)
         self.assertGreater(idx_apply, 0)
         self.assertLess(idx_expire, idx_apply,
@@ -310,14 +311,14 @@ class ChatHandlerWiresDeterministicRouting(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app_text = (PROJECT_ROOT / "rpg" / "app.py").read_text(encoding="utf-8")
+        cls.app_text = (PROJECT_ROOT / "rpg" / "chat_pipeline.py").read_text(encoding="utf-8")
 
     def test_chat_calls_apply_chat_rule_candidates(self):
-        self.assertIn("_apply_chat_rule_candidates", self.app_text)
+        self.assertIn("apply_chat_rule_candidates", self.app_text)
 
     def test_chat_appends_rule_prompt_to_gm_bundle(self):
-        """rule_results 之后必须把 _rule_results_prompt 接到 bundle["prompt"]。"""
-        self.assertIn("_rule_results_prompt(rule_results", self.app_text)
+        """rule_results 之后必须把 rule_results_prompt 接到 bundle["prompt"]。"""
+        self.assertIn("rule_results_prompt(rule_results", self.app_text)
         # rule_prompt 拼到 bundle prompt 上
         self.assertIn('bundle["prompt"]', self.app_text)
 

@@ -2,6 +2,6 @@
 from agents.gm.backends.anthropic import _AnthropicBackend
 from agents.gm.backends.openai_compat import _OpenAICompatBackend
 from agents.gm.backends.vertex import _VertexBackend
-from agents.gm.master import GameMaster
+from agents.gm.master import GameMaster, _WORLD  # noqa: F401 — 测试通过 agents.gm._WORLD 访问
 
-__all__ = ["GameMaster", "_VertexBackend", "_AnthropicBackend", "_OpenAICompatBackend"]
+__all__ = ["GameMaster", "_VertexBackend", "_AnthropicBackend", "_OpenAICompatBackend", "_WORLD"]

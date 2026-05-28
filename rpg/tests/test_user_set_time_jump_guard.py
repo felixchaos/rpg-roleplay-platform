@@ -226,11 +226,11 @@ class ChatFlowIntegratesGuard(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app_text = (PROJECT / "rpg" / "app.py").read_text(encoding="utf-8")
+        cls.app_text = (PROJECT / "rpg" / "chat_pipeline.py").read_text(encoding="utf-8")
 
     def test_imports_guard(self):
-        self.assertIn("from timeline_narrative_guard import", self.app_text,
-            "app.py 必须 import timeline_narrative_guard")
+        self.assertIn("timeline_narrative_guard import", self.app_text,
+            "chat_pipeline.py 必须 import timeline_narrative_guard")
         self.assertIn("detect_time_jump_violations", self.app_text)
         self.assertIn("record_violations_to_audit", self.app_text)
 

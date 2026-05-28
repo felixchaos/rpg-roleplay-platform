@@ -30,6 +30,12 @@ _UI_ORIGINS = frozenset({
     "ui_button", "api_direct", "llm_set", "llm_chat", "llm_chat_json_op",
     "console_assistant",
 })
+# ui_click 是 destructive=True 工具 — 安全不变量: destructive 工具不允许 llm_chat。
+# llm 可通过 console_assistant / llm_set / ui_button 触发点击,但不能通过 llm_chat 直接调。
+_UI_CLICK_ORIGINS = frozenset({
+    "ui_button", "api_direct", "llm_set", "llm_chat_json_op",
+    "console_assistant",
+})
 
 
 def _t_ui_describe_page(user_id: int, args: dict) -> str:
@@ -155,7 +161,7 @@ def register_ui_action_tools() -> None:
         },
         executor=_t_ui_click,
         scope="user",
-        origins=_UI_ORIGINS,
+        origins=_UI_CLICK_ORIGINS,  # destructive=True 不允许 llm_chat (安全不变量)
         destructive=True,  # 点提交按钮可能产生不可逆动作 (创建存档/删存档等)
         intent_keywords=("click", "submit", "点", "提交", "创建", "确定"),
         input_examples=(

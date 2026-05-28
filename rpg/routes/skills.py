@@ -4,12 +4,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from schemas._common import COMMON_ERROR_RESPONSES, ErrorResponse, GenericOkResponse
 from schemas.skills import SkillRunRequest, SkillsImportRequest
 
 router = APIRouter()
 
 
-@router.post("/api/skills/import")
+@router.post("/api/skills/import", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_skills_import(body: SkillsImportRequest, request: Request) -> JSONResponse:
     from app import _require_api_user, import_skill_bundle, tool_payload
     _require_api_user(request, admin=True)
@@ -21,7 +22,7 @@ async def api_skills_import(body: SkillsImportRequest, request: Request) -> JSON
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
 
-@router.post("/api/skills/{skill_id}/run")
+@router.post("/api/skills/{skill_id}/run", response_model=GenericOkResponse, responses={**COMMON_ERROR_RESPONSES, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})
 async def api_skill_run(body: SkillRunRequest, request: Request, skill_id: str) -> JSONResponse:
     """在沙箱里跑某个 imported skill。
 

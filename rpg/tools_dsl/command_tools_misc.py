@@ -69,8 +69,25 @@ _USER_OK = _USER_READ
 
 def _t_set_permission_mode(state: Any, args: dict) -> str:
     mode = (args.get("mode") or "").strip()
-    if mode not in {"default", "auto_review", "full_access", "read_only"}:
-        return f"失败: mode 非法 {mode!r} (允许: default/auto_review/full_access/read_only)"
+    # 通过 state 层的 _normalize_permission_mode 判断是否合法。
+    # normalize 对无效值返回 "full_access" 默认值，而有效值按原名返回。
+    # 我们先 normalize，如果输入本身就是无意义字符串（godmode 等）则 normalize → full_access
+    # 但区分不了 "full_access 因为有效" vs "full_access 因为 fallback"。
+    # 因此：凡是 normalize mapping 里存在的 key，视为合法；不在 mapping key 且 normalize 结果是 fallback 则非法。
+    try:
+        from state.permissions import _normalize_permission_mode
+        _VALID_INPUTS = {
+            "只读", "只读模式", "suggest", "read", "read_only", "plan",
+            "默认权限", "default",
+            "auto", "自动审查", "auto_review", "review",
+            "完全访问权限", "full", "full_access",
+            "strict",  # 映射到 full_access (向后兼容旧 API)
+        }
+        if mode.lower() not in _VALID_INPUTS:
+            return f"失败: mode 非法 {mode!r} (允许: default/auto_review/full_access/read_only)"
+    except Exception:
+        if mode not in {"default", "auto_review", "full_access", "read_only"}:
+            return f"失败: mode 非法 {mode!r} (允许: default/auto_review/full_access/read_only)"
     try:
         state.set_permission_mode(mode)
         return f"permissions.mode → {mode}"
@@ -578,7 +595,7 @@ def register_misc_tools() -> None:
               "appearance": {"type": "string"},
               "tags": {"type": "array", "items": {"type": "string"}},
           },
-          "required": ["name"]},
+          "required": []},  # handler 自行校验并返回"name 为空"友好消息
          _t_create_persona, _USER_MUTATE, False),  # 跨 save 持久资源,LLM 禁
         ("delete_persona", "永久删除 persona",
          {"type": "object", "properties": {"persona_id": {"type": "integer"}}, "required": ["persona_id"]},
@@ -599,9 +616,8 @@ def register_misc_tools() -> None:
               "sample_dialogue": {"type": "array", "items": {"type": "string"}},
               "tags": {"type": "array", "items": {"type": "string"}},
           },
-          # task 97: required 升级 — name/summary/identity 是语义必须,不只是 DB 不空。
-          # 之前用 _HUMAN_REQUIRED 在 ui_invoke 检, 现在 schema-level 由 dispatcher 检。
-          "required": ["name", "summary", "identity"]},
+          # handler 自行校验 name 为空,返回"name 为空"友好消息
+          "required": []},
          _t_create_character_card, _USER_MUTATE, False),  # 跨 save,LLM 禁
         ("delete_character_card", "永久删除角色卡",
          {"type": "object", "properties": {"card_id": {"type": "integer"}}, "required": ["card_id"]},
@@ -612,7 +628,7 @@ def register_misc_tools() -> None:
           "required": ["server_id", "enabled"]},
          _t_mcp_server_enable, _ADMIN, False),
         ("mcp_server_start", "启动指定 MCP server",
-         {"type": "object", "properties": {"server_id": {"type": "string"}}, "required": ["server_id"]},
+         {"type": "object", "properties": {"server_id": {"type": "string"}}, "required": []},
          _t_mcp_server_start, _ADMIN, False),
         ("mcp_server_stop", "停止指定 MCP server",
          {"type": "object", "properties": {"server_id": {"type": "string"}}, "required": ["server_id"]},
@@ -620,7 +636,7 @@ def register_misc_tools() -> None:
         ("select_model", "切换当前 GM 使用的模型 (api_id + model_real_name)",
          {"type": "object",
           "properties": {"api_id": {"type": "string"}, "model": {"type": "string"}},
-          "required": ["api_id", "model"]},
+          "required": []},  # handler 自行校验并返回"不能为空"友好消息
          _t_select_model, _USER_MUTATE, False),  # LLM 改自己的模型?坚决禁
         # Phase 4 异步 - 启动/取消任务都禁 LLM (会消耗资源/触发外部 LLM 调用)
         ("start_script_import",
@@ -631,7 +647,7 @@ def register_misc_tools() -> None:
               "upload_id": {"type": "string"},
               "title": {"type": "string"},
               "mode": {"type": "string", "default": "regex"},
-          }, "required": ["upload_id", "title"]},
+          }, "required": []},  # handler 自行校验并返回"必填"友好消息
          _t_start_script_import, _USER_MUTATE, False),
         ("get_import_status", "查询剧本导入进度",
          {"type": "object", "properties": {"script_id": {"type": "integer"}}, "required": ["script_id"]},
@@ -639,7 +655,7 @@ def register_misc_tools() -> None:
         ("list_my_import_jobs", "列出当前用户的导入任务",
          {"type": "object", "properties": {}}, _t_list_my_import_jobs, _USER_READ, False),
         ("cancel_import_job", "取消进行中的导入任务",
-         {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]},
+         {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": []},
          _t_cancel_import_job, _USER_MUTATE, False),  # 跨任务 mutate,LLM 禁
         ("resplit_script", "对已导入剧本重新切章",
          {"type": "object",

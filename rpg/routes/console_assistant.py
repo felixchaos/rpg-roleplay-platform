@@ -6,6 +6,7 @@ import json
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from schemas._common import COMMON_ERROR_RESPONSES, GenericOkResponse, OkResponse
 from schemas.console_assistant import (
     ConsoleAssistantChatRequest,
     ConsoleAssistantConfirmRequest,
@@ -34,7 +35,7 @@ async def api_console_assistant_conversations(request: Request) -> JSONResponse:
     return JSONResponse({"items": items})
 
 
-@router.post("/api/console_assistant/new_conversation")
+@router.post("/api/console_assistant/new_conversation", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_console_assistant_new_conversation(request: Request) -> JSONResponse:
     """task 111: 开新对话, 返新 conversation_id。"""
     from app import _require_api_user
@@ -47,7 +48,7 @@ async def api_console_assistant_new_conversation(request: Request) -> JSONRespon
     return JSONResponse({"ok": True, "conversation_id": new_id})
 
 
-@router.post("/api/console_assistant/delete_conversation")
+@router.post("/api/console_assistant/delete_conversation", response_model=OkResponse, responses=COMMON_ERROR_RESPONSES)
 async def api_console_assistant_delete_conversation(body: ConsoleAssistantDeleteConversationRequest, request: Request) -> JSONResponse:
     """task 111: 删除某对话。"""
     from app import _require_api_user
