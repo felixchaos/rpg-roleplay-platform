@@ -25,7 +25,8 @@ from cryptography.hazmat.primitives import hashes
 
 
 _MASTER_KEY_ENV = "RPG_MASTER_KEY"
-_FALLBACK_KEY_FILE = Path(__file__).parent / "platform_data" / "master.key"
+# utils/crypto.py 在 rpg/utils/ 下，platform_data/ 在 rpg/ 下，需要上溯两级
+_FALLBACK_KEY_FILE = Path(__file__).parent.parent / "platform_data" / "master.key"
 _NONCE_LEN = 12
 
 
