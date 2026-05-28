@@ -1450,10 +1450,10 @@
               +
             </button>
             <button className="cap-icon-btn" title="设置"
-                    onClick={() => { setShowSettings(s => !s); setShowConvList(false); }}>⚙</button>
+                    onClick={() => { setShowSettings(s => !s); setShowConvList(false); }}><Icon name="settings" size={14} /></button>
             <button className="cap-icon-btn" title="关闭助手"
                     aria-label="关闭助手"
-                    onClick={() => setOpen(false)}>✕</button>
+                    onClick={() => setOpen(false)}><Icon name="close" size={14} /></button>
           </div>
           {showConvList && (
             <div className="cap-conv-pop" ref={convListRef} onClick={(e) => e.stopPropagation()}>
@@ -1484,7 +1484,7 @@
                     {!active && (
                       <button className="cap-conv-del"
                               title="删除此对话"
-                              onClick={(e) => deleteConv(e, item)}>✕</button>
+                              onClick={(e) => deleteConv(e, item)}><Icon name="close" size={12} /></button>
                     )}
                   </div>
                 );

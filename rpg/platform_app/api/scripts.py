@@ -441,3 +441,44 @@ async def api_upload_cancel(upload_id: str, user=Depends(require_user)):
         return json_response(script_import.cancel_upload(user["id"], upload_id))
     except ValueError as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
+
+
+# ── script overrides API ──────────────────────────────────────────────────────
+
+@router.get("/api/scripts/{script_id}/overrides")
+async def api_get_script_overrides(script_id: int, user=Depends(require_user)):
+    """查询剧本 overrides（能访问该 script 的用户均可读）。"""
+    with connect() as db:
+        owned = db.execute(
+            "SELECT 1 FROM scripts WHERE id = %s AND owner_id = %s",
+            (script_id, user["id"]),
+        ).fetchone()
+    if not owned:
+        return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+    from platform_app.knowledge.script_overrides import get_overrides_by_script_id
+    data = get_overrides_by_script_id(script_id)
+    return json_response({"ok": True, "data": data})
+
+
+@router.post("/api/scripts/{script_id}/overrides")
+async def api_update_script_overrides(request: Request, script_id: int, user=Depends(require_user)):
+    """更新剧本 overrides（仅 owner）。
+
+    Body: overrides data dict（直接替换整条记录）。
+    """
+    with connect() as db:
+        owned = db.execute(
+            "SELECT 1 FROM scripts WHERE id = %s AND owner_id = %s",
+            (script_id, user["id"]),
+        ).fetchone()
+    if not owned:
+        return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_response({"ok": False, "error": "请求 body 必须是合法 JSON"}, status_code=400)
+    # 支持两种格式: {"data": {...}} 或直接 {...}
+    overrides_data = body.get("data") if isinstance(body.get("data"), dict) else body
+    from platform_app.knowledge.script_overrides import upsert_overrides
+    upsert_overrides(script_id, overrides_data)
+    return json_response({"ok": True})

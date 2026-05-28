@@ -27,12 +27,23 @@ _OVERRIDES_DIR = BASE / "modules" / "_script_overrides"
 
 @lru_cache(maxsize=8)
 def _load_overrides_for_script(script_key: str | None) -> dict:
-    """从 modules/_script_overrides/<script_key>.json 加载剧本专有规则。
+    """加载指定剧本的 overrides。
 
-    无 script_key 或文件不存在时返回空 dict,让调用方走 hardcoded fallback。
+    优先从 DB script_overrides 表读取（按 script_key 匹配 scripts.title）；
+    DB 不可用时 fallback 到 modules/_script_overrides/<script_key>.json。
+    无 script_key 或无记录时返回空 dict,让调用方走 hardcoded fallback。
     """
     if not script_key:
         return {}
+    try:
+        from platform_app.knowledge.script_overrides import load_all_overrides_by_key
+        all_overrides = load_all_overrides_by_key()
+        if script_key in all_overrides:
+            return all_overrides[script_key]
+        return {}
+    except Exception:
+        pass
+    # fallback: 读 JSON 文件（本地开发 / DB 不可用时兜底）
     p = _OVERRIDES_DIR / f"{script_key}.json"
     if not p.is_file():
         return {}

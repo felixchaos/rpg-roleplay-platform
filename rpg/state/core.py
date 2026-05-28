@@ -217,7 +217,16 @@ MAX_HISTORY_TURNS = 6  # 保留最近6轮（12条消息）
 
 @lru_cache(maxsize=1)
 def _load_script_overrides() -> dict:
-    """加载所有 rpg/modules/_script_overrides/*.json,返回 {script_key: data}。"""
+    """从 DB script_overrides 表加载所有剧本 overrides,按 script_key 索引。
+
+    DB 不可用时 fallback 到 modules/_script_overrides/*.json（本地开发兜底）。
+    """
+    try:
+        from platform_app.knowledge.script_overrides import load_all_overrides_by_key
+        return load_all_overrides_by_key()
+    except Exception:
+        pass
+    # fallback: 读 JSON 文件（本地开发 / DB 不可用时兜底）
     overrides_dir = BASE / "modules" / "_script_overrides"
     out: dict[str, dict] = {}
     if not overrides_dir.is_dir():
