@@ -69,7 +69,7 @@ from timeline_state import (
 
 BASE = Path(__file__).parent.parent  # state/core.py 比原 state.py 深一层,SAVE_FILE 必须回到 rpg/saves/
 SAVE_FILE = BASE / "saves" / "game_state.json"
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 # 剧情开始时的初始状态
 DEFAULT_STATE = {
@@ -148,6 +148,22 @@ DEFAULT_STATE = {
         "role": "",          # 玩家选择的角色定位
         "background": "",    # 玩家自定义背景
         "current_location": ""
+    },
+    # task 138：玩家私密状态机（Player Private State）。
+    # 这层 namespace **永远不进 GM system prompt 字面注入** —— short_summary() 会显式
+    # 排除整个 player_private.*,strip player.background/personality/appearance 里的
+    # "## 秘密 / ## 隐藏 / ## 内心 / ## 元知识" 段。GM 物理上看不到秘密字面;只有玩家
+    # 用 /reveal <text> 主动揭示时,该秘密本回合作为 ephemeral context 注入。
+    # 字段说明:
+    #   secrets        : 玩家声明的秘密原文(角色卡 secrets 字段 + 角色卡 ## 秘密 段 + /set 追加)
+    #   flags          : 秘密 flag(GM 收束时可查 True/False,但不读字面 —— 当前 MVP 不引入 tool)
+    #   hidden_traits  : 隐藏特质 / 元身份描述(穿越者 / 读过原著 / 真名等 meta 标签)
+    #   story_intent   : 玩家剧情期望(从 worldline.user_variables.story_intent 迁移至此)
+    "player_private": {
+        "secrets": [],
+        "flags": {},
+        "hidden_traits": [],
+        "story_intent": "",
     },
     "world": {
         "time": "",
@@ -315,6 +331,42 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         for rules_key in ("ruleset", "player_character", "scene", "encounter", "dice_log"):
             if rules_key not in migrated:
                 migrated[rules_key] = copy.deepcopy(DEFAULT_STATE[rules_key])
+        # schema v6 (task 138): player_private namespace 默认。旧存档没有时补默认空 struct,
+        # 已有字段不变;并尝试从 player.secrets / worldline.user_variables.story_intent
+        # 迁移过来(后者 *仅* 在 player_private.story_intent 仍空时,避免覆盖玩家本回合
+        # 已经在新结构里写过的 intent)。
+        pp = migrated.setdefault("player_private", copy.deepcopy(DEFAULT_STATE["player_private"]))
+        if not isinstance(pp.get("secrets"), list):
+            pp["secrets"] = []
+        if not isinstance(pp.get("flags"), dict):
+            pp["flags"] = {}
+        if not isinstance(pp.get("hidden_traits"), list):
+            pp["hidden_traits"] = []
+        if not isinstance(pp.get("story_intent"), str):
+            pp["story_intent"] = ""
+        # 迁移 1: player.secrets(老 task 137 字段)→ player_private.secrets
+        # 老存档 player.secrets 是字符串(整段角色卡 ## 秘密 节)。这里转 list[str]
+        # 单条目;若已经在 player_private.secrets 里出现则跳过。
+        _old_secrets = (migrated.get("player") or {}).get("secrets") or ""
+        if isinstance(_old_secrets, str) and _old_secrets.strip():
+            if _old_secrets.strip() not in pp["secrets"]:
+                pp["secrets"].append(_old_secrets.strip())
+        elif isinstance(_old_secrets, list):
+            for _s in _old_secrets:
+                _t = str(_s or "").strip()
+                if _t and _t not in pp["secrets"]:
+                    pp["secrets"].append(_t)
+        # 迁移 2: worldline.user_variables.story_intent → player_private.story_intent
+        # 只迁不删 user_variables(留 backward compat,避免别处 dual-read 失败)。
+        _wl_vars = (migrated.get("worldline") or {}).get("user_variables") or {}
+        _wl_intent = _wl_vars.get("story_intent")
+        if not pp["story_intent"]:
+            if isinstance(_wl_intent, dict):
+                _v = str(_wl_intent.get("value") or "").strip()
+                if _v:
+                    pp["story_intent"] = _v
+            elif isinstance(_wl_intent, str) and _wl_intent.strip():
+                pp["story_intent"] = _wl_intent.strip()
         # 兼容旧存档：如果 player_character.hp 为空但 max_hp 有值，回填 hp=max_hp。
         pc = migrated.get("player_character") or {}
         if pc and pc.get("max_hp") and not pc.get("hp"):
