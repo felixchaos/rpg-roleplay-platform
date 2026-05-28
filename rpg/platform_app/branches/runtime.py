@@ -27,6 +27,7 @@ from platform_app.branches.refs import (
 from platform_app.branches.summary import schedule_llm_summary
 from platform_app.db import connect, expose, init_db
 from platform_app import runtime as _runtime_module
+from platform_app.branches._runtime_repo import _db_mark_checkout_dirty
 
 
 def record_runtime_turn(
@@ -248,23 +249,6 @@ def bootstrap_runtime_binding(user_id: int | None = None) -> dict[str, Any]:
         from platform_app.branches.seed import _seed_and_bootstrap
         return _seed_and_bootstrap(owner_id, save_id, seed_path, user_id=user_id)
     return _runtime_module.activate_state_snapshot(save["owner_id"], save["id"], commit["id"], commit_state(commit), commit["state_path"], ref_id=ref["id"])
-
-
-def _db_mark_checkout_dirty(db, save_id: int, runtime_state: dict[str, Any], snap_hash: str, turn: int) -> None:
-    """repository: 将 runtime_checkouts.dirty 置为 true 并更新 snapshot。"""
-    db.execute(
-        """
-        update runtime_checkouts
-           set state_snapshot = %s,
-               snapshot_hash = %s,
-               turn_runtime = %s,
-               dirty = (snapshot_hash <> %s OR turn_runtime <> %s),
-               row_version = row_version + 1,
-               updated_at = now()
-         where save_id = %s
-        """,
-        (Jsonb(runtime_state), snap_hash, turn, snap_hash, turn, save_id),
-    )
 
 
 def mark_runtime_dirty(save_id: int, runtime_state: dict[str, Any]) -> None:

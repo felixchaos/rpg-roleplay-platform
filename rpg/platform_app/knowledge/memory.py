@@ -4,28 +4,7 @@ from typing import Any
 
 from platform_app.db import connect, expose, init_db, limit_value, page_payload
 from platform_app.knowledge._utils import _cursor_int
-
-
-def _db_select_memories(db, save_id: int, bucket: str | None, page_limit: int, before_id: int | None) -> list:
-    """repository: 按 save_id/bucket/cursor 查 memories，返回 rows。"""
-    params: list[Any] = [save_id]
-    where_clause = "s.save_id = %s"
-    if bucket:
-        where_clause += " and m.bucket = %s"
-        params.append(bucket)
-    where_clause += " and (%s::bigint is null or m.id < %s)"
-    params.extend([before_id, before_id])
-    params.append(page_limit + 1)
-    return db.execute(
-        f"""
-        select m.* from memories m
-        join game_sessions s on s.id = m.session_id
-        where {where_clause}
-        order by m.importance desc, m.id desc
-        limit %s
-        """,
-        tuple(params),
-    ).fetchall()
+from platform_app.knowledge._memory_repo import _db_select_memories
 
 
 def list_memories(user_id: int, save_id: int, bucket: str | None = None, limit: int | str | None = None, cursor: str | None = None) -> dict[str, Any]:
