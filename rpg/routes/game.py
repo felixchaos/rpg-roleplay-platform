@@ -252,6 +252,103 @@ async def api_chat_estimate(
     })
 
 
+# layer id → (category key, label, color)
+_LAYER_CATEGORY = {
+    # 对话历史
+    "recent_chat": ("history", "对话历史", "#4f8ef7"),
+    # 系统提示 / 规则
+    "rules": ("system_prompt", "系统提示", "#9b6bdf"),
+    "agent_runtime": ("system_prompt", "系统提示", "#9b6bdf"),
+    "timeline_pending": ("system_prompt", "系统提示", "#9b6bdf"),
+    "worldline": ("system_prompt", "系统提示", "#9b6bdf"),
+    "write_results": ("system_prompt", "系统提示", "#9b6bdf"),
+    "context_agent": ("system_prompt", "系统提示", "#9b6bdf"),
+    "candidate_actions": ("system_prompt", "系统提示", "#9b6bdf"),
+    "state_schema": ("system_prompt", "系统提示", "#9b6bdf"),
+    # 状态摘要
+    "state": ("system_prompt", "系统提示", "#9b6bdf"),
+    # RAG 召回
+    "rag": ("retrieved_chunks", "RAG 召回", "#2bae8a"),
+    "novel_retrieval": ("retrieved_chunks", "RAG 召回", "#2bae8a"),
+    # 长期记忆
+    "fact_groups": ("memory_facts", "长期记忆", "#e6a817"),
+    "hypotheses": ("memory_facts", "长期记忆", "#e6a817"),
+    "memory": ("memory_facts", "长期记忆", "#e6a817"),
+    # 角色卡
+    "player_card": ("character_cards", "角色卡", "#e05c7a"),
+    "npc_cards": ("character_cards", "角色卡", "#e05c7a"),
+    "novel_characters": ("character_cards", "角色卡", "#e05c7a"),
+    # 世界书
+    "worldbook": ("worldbook", "世界书", "#3dbad4"),
+    "novel_worldbook": ("worldbook", "世界书", "#3dbad4"),
+    "module_worldbook": ("worldbook", "世界书", "#3dbad4"),
+    # 阶段摘要
+    "novel_timeline": ("phase_digests", "阶段摘要", "#f07a3c"),
+    "runtime_phase_digests": ("phase_digests", "阶段摘要", "#f07a3c"),
+    # 玩家输入（不计入 breakdown，归入 history）
+    "user_input": ("history", "对话历史", "#4f8ef7"),
+}
+
+_CATEGORY_ORDER = [
+    ("history", "对话历史", "#4f8ef7"),
+    ("system_prompt", "系统提示", "#9b6bdf"),
+    ("retrieved_chunks", "RAG 召回", "#2bae8a"),
+    ("memory_facts", "长期记忆", "#e6a817"),
+    ("character_cards", "角色卡", "#e05c7a"),
+    ("worldbook", "世界书", "#3dbad4"),
+    ("phase_digests", "阶段摘要", "#f07a3c"),
+    ("tools", "工具/MCP", "#8899aa"),
+]
+
+
+@router.get("/api/chat/context-breakdown", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
+async def api_context_breakdown(
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
+    from app import _ensure_loaded
+    from platform_app.usage import context_window_for
+    state = _ensure_loaded(api_user)
+    last_ctx = (state.data.get("memory") or {}).get("last_context") or {}
+    layers = last_ctx.get("layers") or []
+    total_tokens = int(last_ctx.get("estimated_tokens") or 0)
+
+    # 按 category 累加
+    cat_tokens: dict[str, int] = {}
+    for layer in layers:
+        lid = layer.get("id") or ""
+        tok = int(layer.get("estimated_tokens") or 0)
+        mapping = _LAYER_CATEGORY.get(lid)
+        if mapping:
+            key = mapping[0]
+        else:
+            # 未知 layer → 归入 system_prompt
+            key = "system_prompt"
+        cat_tokens[key] = cat_tokens.get(key, 0) + tok
+
+    from app import selected_model
+    model = selected_model()
+    ctx_limit = int(context_window_for(model["api_id"], model["real_name"]) or 1_000_000)
+
+    breakdown = []
+    used_sum = 0
+    for key, label, color in _CATEGORY_ORDER:
+        tok = cat_tokens.get(key, 0)
+        used_sum += tok
+        pct = round(100 * tok / ctx_limit, 1) if ctx_limit else 0.0
+        breakdown.append({"key": key, "label": label, "tokens": tok, "pct": pct, "color": color})
+
+    free_tokens = max(0, ctx_limit - used_sum)
+    free_pct = round(100 * free_tokens / ctx_limit, 1) if ctx_limit else 0.0
+    breakdown.append({"key": "free", "label": "剩余空间", "tokens": free_tokens, "pct": free_pct, "color": "#555e6a"})
+
+    return JSONResponse({
+        "ok": True,
+        "total_tokens": total_tokens or used_sum,
+        "ctx_limit": ctx_limit,
+        "breakdown": breakdown,
+    })
+
+
 @router.post("/api/chat")
 async def api_chat(
     body: ChatRequest,

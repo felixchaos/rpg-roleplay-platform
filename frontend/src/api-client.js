@@ -465,6 +465,7 @@
       opening: (body, handlers) => sseStream("/api/v1/opening", body || {}, _wbHook(handlers)),
       chat: (body, handlers) => sseStream("/api/v1/chat", body || {}, _wbHook(handlers)),
       chatEstimate: (body) => POST("/api/v1/chat/estimate", body),
+      contextBreakdown: () => GET("/api/v1/chat/context-breakdown"),
       memoryMode: (mode) => POST("/api/v1/memory/mode", { mode }),
       memoryAdd: (body) => POST("/api/v1/memory/add", body),
       memoryRemove: (body) => POST("/api/v1/memory/remove", body),
