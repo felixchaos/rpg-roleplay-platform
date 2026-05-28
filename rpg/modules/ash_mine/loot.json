@@ -1,0 +1,12 @@
+[
+  {"id": "miner_journal", "name": "矿工日志", "name_en": "Miner's Journal", "kind": "key_item",
+   "description": "五十年前的失踪矿工留下的日志，提到祭坛低语。"},
+  {"id": "healing_draught", "name": "Healing Draught", "kind": "consumable",
+   "description": "矿工急救药剂，使用回复 2d4+2 HP。", "effect": {"kind": "heal", "expression": "2d4+2"}},
+  {"id": "camp_map", "name": "矿坑手绘图", "kind": "key_item",
+   "description": "灰烬营地桌上找到的草图，标注祭坛位置。提供前往祭坛的捷径。"},
+  {"id": "mine_core", "name": "暗红矿核", "kind": "artifact",
+   "description": "被封印的灰烬之心，仍在脉动。模组通关核心物品。"},
+  {"id": "ash_relic", "name": "灰烬遗物", "kind": "artifact",
+   "description": "灰烬教派的核心信物，刻有原创纹章。"}
+]

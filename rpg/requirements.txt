@@ -1,0 +1,9 @@
+anthropic>=0.72
+fastapi>=0.124
+fsspec>=2025.12
+google-auth>=2.43
+google-genai>=1.55
+psycopg[binary]>=3.3
+psycopg-pool>=3.3
+python-dotenv>=1.2
+uvicorn>=0.38

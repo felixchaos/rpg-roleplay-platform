@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "project": {
+    "title": "我蕾穆丽娜不爱你",
+    "genre": "科幻-战争-言情",
+    "target_words": 4850000,
+    "target_chapters": 1360,
+    "platform": "原创",
+    "status": "连载中"
+  },
+  "protagonist": {
+    "name": "蕾穆丽娜·扎兹巴鲁姆",
+    "structure": "单主角"
+  },
+  "progress": {
+    "total_chapters_written": 1310,
+    "last_chapter": 1310,
+    "last_chapter_title": "十万卸甲，无一男儿"
+  },
+  "volumes": {
+    "1": {
+      "title": "火星十年，大战将起",
+      "chapters": 208
+    },
+    "2": {
+      "title": "烽火连天，血剑斩戟",
+      "chapters": 637
+    },
+    "3": {
+      "title": "血脉链续，命死神生",
+      "chapters": 465
+    }
+  },
+  "source_file": "/Volumes/我的电脑/我穆蕾莉娅不爱你/我蕾穆丽娜不爱你.txt",
+  "split_by": "split_novel.py"
+}

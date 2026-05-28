@@ -1,0 +1,3573 @@
+"""
+ui.py - local Claude-like RPG workspace
+
+Run:
+    cd rpg/
+    ../rpg_env/bin/python ui.py
+
+Then open http://127.0.0.1:7860
+"""
+from __future__ import annotations
+
+import asyncio
+import base64
+import binascii
+import json
+import os
+import re
+import shutil
+import sys
+import time
+import uuid
+from pathlib import Path
+from threading import Event, Lock
+from typing import Any
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.middleware.gzip import GZipMiddleware
+
+load_dotenv(Path(__file__).parent.parent / ".env")
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from gm import GameMaster
+from context_engine import build_context_bundle
+from context_agent import run_context_agent
+from model_registry import delete_model, load_model_catalog, selected_model, select_model, upsert_api, upsert_model
+from retrieval import retrieve_context
+from state import GameState, SAVE_FILE, strip_json_state_ops
+from tool_registry import (
+    delete_mcp_server,
+    import_skill_bundle,
+    set_mcp_server_enabled,
+    tool_payload,
+    upsert_mcp_server,
+    validate_mcp_server,
+)
+from platform_app import branches as platform_branches
+from platform_app import knowledge as platform_knowledge
+from platform_app import runtime as platform_runtime
+from platform_app.api import current_user as platform_current_user
+from platform_app.api import router as platform_router
+
+# 通用 RPG 底座：APP_TITLE 是平台名称，不绑定特定剧本。可由 RPG_APP_TITLE env 覆写。
+APP_TITLE = os.environ.get("RPG_APP_TITLE", "RPG Roplay")
+MODEL_LABEL = "Gemini 3.5 Flash"
+HOST = "127.0.0.1"
+PORT = 7860
+APP_DIR = Path(__file__).parent
+UPLOAD_DIR = APP_DIR / "uploads"
+MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024
+API_VERSION = "1"
+
+app = FastAPI(title=f"{APP_TITLE} RPG")
+
+
+def _cors_origins() -> tuple[list[str], bool]:
+    default_origins = (
+        "http://127.0.0.1:7860,http://localhost:7860,"
+        "http://127.0.0.1:5173,http://localhost:5173,"
+        "http://127.0.0.1:3000,http://localhost:3000"
+    )
+    raw = os.environ.get("RPG_CORS_ORIGINS", default_origins)
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    if not origins:
+        origins = ["http://127.0.0.1:7860", "http://localhost:7860"]
+    allow_all = "*" in origins
+    return (["*"] if allow_all else origins), not allow_all
+
+
+_origins, _allow_credentials = _cors_origins()
+
+
+_LOCAL_MODES = {"local", "desktop", "self_hosted", "self-hosted"}
+_SERVER_MODES = {"server", "production", "prod", "cloud"}
+
+
+def _deployment_mode() -> str:
+    mode = os.environ.get("RPG_DEPLOYMENT_MODE", "local").strip().lower() or "local"
+    return mode
+
+
+def _verify_acceptance_rule(acceptance: list[str], response_text: str, updates: list[str]) -> list[str]:
+    """task 81：cheap 规则验证。返回未通过的 acceptance 条款列表。
+
+    Chinese 用 bigram (2-char 连续片段) 匹配，避免长串 greedy token 匹配
+    导致永远查不到。例 "回应了去灯塔意图" → bigrams 含 '灯塔'，response
+    含 '灯塔' 即认为关联词命中。
+
+    策略：
+    1. 否定条款（含 不要/不应/禁止 等关键词）→ 提目标主体 bigram 出现在
+       response 就算 unmet
+    2. 肯定条款 → 至少 30% 的 ≥2-char 关键 bigram 出现在 response 算通过
+
+    task 84 把这个函数拆出来作为 rule 模式的实现；llm / hybrid 模式见
+    acceptance_verifier.py。
+    """
+    if not acceptance or not response_text:
+        return []
+    haystack = (response_text + "\n" + "\n".join(str(u) for u in (updates or []))).lower()
+    unmet: list[str] = []
+    import re as _re
+    _STOPWORDS = {
+        "回应", "玩家", "本轮", "保留", "正文", "GM", "gm", "应该", "需要",
+        "如果", "或者", "包括", "其它", "其他", "可以", "应当", "必须", "条件",
+        "这个", "那个", "我们", "他们", "她们", "你们",
+    }
+    # 否定关键词：retest 加入"没有 / 未" — 之前 "没有直接修改玩家的 HP 或 AC"
+    # 这种正向 success state 写法（"X 没发生"）被错当成肯定条款，规则要求
+    # bigram 命中才算通过，narration 里没出现"HP/AC"就被误报 unmet。
+    # 把"没有"列为否定标记后：response 不含 HP/AC → 不命中 → 否定条款 met。
+    _NEG_KEYWORDS = ("不要", "不应", "禁止", "不能", "不得", "没把", "没有", "未曾",
+                     "不可", "杜绝", "勿", "切勿", "无", "未")
+
+    def _key_bigrams(text: str) -> list[str]:
+        """从中文条款里取所有 2-3 字 bigram/trigram，过掉 stopword。"""
+        # 单独把 stopword 删掉再切 bigram，避免 '玩家' 之类被切到名词里
+        cleaned = text
+        for sw in _STOPWORDS:
+            cleaned = cleaned.replace(sw, " ")
+        # 同时去掉否定关键词本身（不希望把"不要"也当成匹配标的）
+        for nk in _NEG_KEYWORDS:
+            cleaned = cleaned.replace(nk, " ")
+        # 切连续中文段
+        segs = _re.findall(r"[一-鿿]+", cleaned)
+        # 每段做 bigram + trigram
+        out: list[str] = []
+        for seg in segs:
+            if len(seg) >= 2:
+                for i in range(len(seg) - 1):
+                    out.append(seg[i:i + 2])
+                for i in range(len(seg) - 2):
+                    out.append(seg[i:i + 3])
+        # 字母 token（如英文名词）也加入
+        for tok in _re.findall(r"[A-Za-z][A-Za-z0-9_-]{1,}", cleaned):
+            if tok not in _STOPWORDS:
+                out.append(tok.lower())
+        # dedup 保持顺序
+        seen: set[str] = set()
+        dedup = []
+        for x in out:
+            if x not in seen:
+                seen.add(x)
+                dedup.append(x)
+        return dedup[:30]
+
+    for cond in acceptance[:8]:
+        cond_str = str(cond).strip()
+        if not cond_str:
+            continue
+        cond_low = cond_str.lower()
+        bigrams = _key_bigrams(cond_str)
+        if not bigrams:
+            continue
+        is_negative = any(k in cond_low for k in _NEG_KEYWORDS)
+        if is_negative:
+            # click retest minor：否定条款（"GM 未/不/没做 X"）的语义判断规则版
+            # 做不准——bigram 匹配会把"叙事里提到 X"误报成"X 发生了"，
+            # 反复制造 acceptance_unmet 假阳性（用户报告：「GM 未自行决定检定成败」
+            # 被报 unmet，而 GM 实际上没做这种事）。
+            # 规则版统一默认 MET；要真正语义检查请切到 acceptance_verifier.mode=llm 或 hybrid。
+            continue
+        # 肯定条款：至少 1 个核心 bigram 命中算通过；全没命中 → unmet
+        hit = any(b.lower() in haystack for b in bigrams)
+        if not hit:
+            unmet.append(cond_str)
+    return unmet
+
+
+def _verify_acceptance(
+    acceptance: list[str],
+    response_text: str,
+    updates: list[str],
+    *,
+    mode: str = "rule",
+    user_id: int | None = None,
+) -> list[str]:
+    """task 84：acceptance 验证三模式 dispatcher。
+
+    - mode="rule"   纯规则（task 81 实现），便宜，召回好假阳性多
+    - mode="llm"    便宜 LLM 整批判定；调用失败 → 降级到 rule
+    - mode="hybrid" 先 rule 跑，rule 判定 unmet 的条款再让 LLM 二次确认；
+                    rule 全通过就直接 [] 不浪费 LLM 调用
+
+    返回 unmet 条款列表。调用方负责回填 audit_log。
+    """
+    mode_norm = (mode or "rule").strip().lower()
+    if mode_norm not in ("rule", "llm", "hybrid"):
+        mode_norm = "rule"
+
+    if mode_norm == "rule":
+        return _verify_acceptance_rule(acceptance, response_text, updates)
+
+    if mode_norm == "llm":
+        try:
+            from acceptance_verifier import verify_acceptance_llm
+            out = verify_acceptance_llm(
+                acceptance=acceptance,
+                response_text=response_text,
+                updates=updates or [],
+                user_id=user_id,
+            )
+        except Exception as exc:
+            print(f"[acceptance] llm mode raised; falling back to rule: {exc}")
+            return _verify_acceptance_rule(acceptance, response_text, updates)
+        if out is None:
+            return _verify_acceptance_rule(acceptance, response_text, updates)
+        return out
+
+    # hybrid
+    rule_unmet = _verify_acceptance_rule(acceptance, response_text, updates)
+    if not rule_unmet:
+        # 规则都通过：不浪费 LLM 调用
+        return []
+    try:
+        from acceptance_verifier import verify_acceptance_llm
+        llm_unmet = verify_acceptance_llm(
+            acceptance=rule_unmet,
+            response_text=response_text,
+            updates=updates or [],
+            user_id=user_id,
+        )
+    except Exception as exc:
+        print(f"[acceptance] hybrid llm step raised; keeping rule verdict: {exc}")
+        return rule_unmet
+    if llm_unmet is None:
+        # LLM 不可用 → 保留 rule 判定（保守）
+        return rule_unmet
+    return llm_unmet
+
+
+def _is_set_parser_enabled(api_user: dict | None) -> bool:
+    """task 77：用户偏好 set_parser.enabled = true 时开启 /set 自然语言解析子代理。
+    默认 false（向后兼容：detect_set_directive 简单 path=value 仍工作）。
+    """
+    if not api_user:
+        return False
+    uid = api_user.get("id")
+    if not uid:
+        return False
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select preferences from user_preferences where user_id = %s",
+                (int(uid),),
+            ).fetchone()
+        if row and isinstance(row.get("preferences"), dict):
+            return bool(row["preferences"].get("set_parser.enabled"))
+    except Exception:
+        return False
+    return False
+
+
+def _is_extractor_enabled(api_user: dict | None) -> bool:
+    """task 62：用户偏好 extractor.enabled = true 时开启 GM-extractor 第二步。
+    默认 false（保持向后兼容，单步 GM 流程不变）。
+    """
+    if not api_user:
+        return False
+    uid = api_user.get("id")
+    if not uid:
+        return False
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select preferences from user_preferences where user_id = %s",
+                (int(uid),),
+            ).fetchone()
+        if row and isinstance(row.get("preferences"), dict):
+            return bool(row["preferences"].get("extractor.enabled"))
+    except Exception:
+        return False
+    return False
+
+
+def _clarify_threshold(api_user: dict | None) -> float:
+    """task 85：用户偏好 curator.confidence_threshold —— curator confidence 低于
+    此值时跳过主 GM 直接询问玩家（task 80 routing）。默认 0.5；非法 / 越界值
+    一律 clamp 到 [0.0, 1.0]，读不到偏好（匿名 / 数据库异常）也回退 0.5。
+    """
+    default = 0.5
+    if not api_user:
+        return default
+    uid = api_user.get("id")
+    if not uid:
+        return default
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select preferences from user_preferences where user_id = %s",
+                (int(uid),),
+            ).fetchone()
+        if row and isinstance(row.get("preferences"), dict):
+            raw = row["preferences"].get("curator.confidence_threshold")
+            if raw is None:
+                return default
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                return default
+            if val != val:  # NaN
+                return default
+            if val < 0.0:
+                return 0.0
+            if val > 1.0:
+                return 1.0
+            return val
+    except Exception:
+        return default
+    return default
+
+
+def _acceptance_verifier_mode(api_user: dict | None) -> str:
+    """task 84：读 preferences.acceptance_verifier.mode；返回 'rule'|'llm'|'hybrid'。
+
+    缺省 'rule'（task 81 行为不变）。值校验在 _verify_acceptance 里也会再做
+    一道，未知值都会落到 'rule'。
+    """
+    default = "rule"
+    if not api_user:
+        return default
+    uid = api_user.get("id")
+    if not uid:
+        return default
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select preferences from user_preferences where user_id = %s",
+                (int(uid),),
+            ).fetchone()
+        if row and isinstance(row.get("preferences"), dict):
+            val = row["preferences"].get("acceptance_verifier.mode")
+            if isinstance(val, str):
+                v = val.strip().lower()
+                if v in ("rule", "llm", "hybrid"):
+                    return v
+    except Exception:
+        return default
+    return default
+
+
+def _api_auth_required() -> bool:
+    """鉴权规则（优先级从高到低）：
+      1. RPG_REQUIRE_AUTH=1     → 强制鉴权
+      2. RPG_REQUIRE_AUTH=0     → 强制关闭（仅本地/桌面用，慎用）
+      3. RPG_DEPLOYMENT_MODE in {server,production,prod,cloud}  → 强制鉴权
+      4. RPG_DEPLOYMENT_MODE in {local,desktop,self_hosted}     → 不强制
+      5. 未设置                  → 默认本地模式，不强制
+    """
+    explicit = os.environ.get("RPG_REQUIRE_AUTH", "").strip()
+    if explicit == "1":
+        return True
+    if explicit == "0":
+        return False
+    mode = _deployment_mode()
+    if mode in _SERVER_MODES:
+        return True
+    if mode in _LOCAL_MODES:
+        return False
+    # 未知部署模式：保守起见，强制鉴权
+    return True
+
+
+def _startup_auth_banner() -> None:
+    """启动时打印一次部署模式 + 鉴权策略，避免运维误判。"""
+    mode = _deployment_mode()
+    required = _api_auth_required()
+    explicit = os.environ.get("RPG_REQUIRE_AUTH", "")
+    source = f"RPG_REQUIRE_AUTH={explicit}" if explicit else f"RPG_DEPLOYMENT_MODE={mode}"
+    if required:
+        print(f"[启动] 部署模式={mode} 鉴权=强制 (源={source})")
+    else:
+        print(f"[启动] 部署模式={mode} 鉴权=不强制 (源={source}) — 仅适用于单用户本地使用")
+
+
+def _require_api_user(request: Request, *, admin: bool = False) -> dict[str, Any] | None:
+    user = platform_current_user(request)
+    if not _api_auth_required():
+        return user
+    if not user:
+        raise HTTPException(status_code=401, detail="需要登录")
+    if admin and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user
+
+
+def _resolve_persist_target(api_user: dict[str, Any] | None) -> tuple[int | None, int | None]:
+    """返回 (user_id, save_id)，用于 DB 写入。
+
+    本地未登录时回退到 runtime.json 里的当前激活存档所有者，
+    保证 messages/context_runs/memories 表能被写入。
+    服务器部署/已登录场景维持原行为。
+    """
+    if api_user:
+        runtime_meta = platform_runtime.read_runtime(user_id=api_user["id"]) or platform_branches.bootstrap_runtime_binding(
+            user_id=api_user["id"]
+        )
+        # 严格校验：runtime 必须属于当前用户
+        if runtime_meta and int(runtime_meta.get("user_id") or 0) != int(api_user["id"]):
+            runtime_meta = platform_branches.bootstrap_runtime_binding(user_id=api_user["id"])
+        save_id = int((runtime_meta or {}).get("save_id") or 0) or None
+        return api_user["id"], save_id
+
+    # 未登录：仅在本地模式回退
+    if _api_auth_required():
+        return None, None
+
+    runtime_meta = platform_runtime.read_runtime() or platform_branches.bootstrap_runtime_binding()
+    if not runtime_meta:
+        return None, None
+    save_id = int(runtime_meta.get("save_id") or 0) or None
+    user_id = int(runtime_meta.get("user_id") or 0) or None
+    return user_id, save_id
+
+
+def _origin_allowed(origin: str | None) -> bool:
+    if not origin:
+        return True
+    return "*" in _origins or origin in _origins
+
+
+MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=_allow_credentials,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["X-API-Version", "X-Request-ID"],
+    max_age=int(os.environ.get("RPG_CORS_MAX_AGE", "86400")),
+)
+app.add_middleware(GZipMiddleware, minimum_size=int(os.environ.get("RPG_GZIP_MIN_BYTES", "1024")))
+app.include_router(platform_router)
+try:
+    from platform_app.frontend_routes import router as _frontend_router
+    app.include_router(_frontend_router)
+except Exception as _e:
+    print(f"[启动] frontend_routes 未挂载：{_e}")
+
+# 启动时一次性触发 schema + migration，避免请求路径 DDL 撞锁
+from platform_app.db import init_db as _bootstrap_init_db
+try:
+    _bootstrap_init_db()
+except Exception as _e:
+    print(f"[启动] init_db 失败：{_e}")
+
+_startup_auth_banner()
+
+
+# ── 全局异常 → 4xx，避免 500 泄露 stack trace ─────────────────────────────
+from fastapi.exceptions import RequestValidationError
+from json import JSONDecodeError
+
+@app.exception_handler(ValueError)
+async def _value_error_handler(request: Request, exc: ValueError):
+    return JSONResponse({"ok": False, "error": str(exc) or "invalid value"}, status_code=400)
+
+@app.exception_handler(KeyError)
+async def _key_error_handler(request: Request, exc: KeyError):
+    return JSONResponse({"ok": False, "error": f"missing field: {exc}"}, status_code=400)
+
+@app.exception_handler(TypeError)
+async def _type_error_handler(request: Request, exc: TypeError):
+    msg = str(exc)
+    # 主要 catch int(None) / NoneType subscript 这种"传参类型不对"
+    return JSONResponse({"ok": False, "error": f"invalid input type: {msg[:200]}"}, status_code=400)
+
+@app.exception_handler(JSONDecodeError)
+async def _json_decode_handler(request: Request, exc: JSONDecodeError):
+    return JSONResponse({"ok": False, "error": "invalid JSON body"}, status_code=400)
+
+@app.exception_handler(PermissionError)
+async def _permission_handler(request: Request, exc: PermissionError):
+    return JSONResponse({"ok": False, "error": str(exc) or "forbidden"}, status_code=403)
+
+@app.exception_handler(FileNotFoundError)
+async def _file_not_found_handler(request: Request, exc: FileNotFoundError):
+    return JSONResponse({"ok": False, "error": str(exc) or "not found"}, status_code=404)
+
+
+@app.on_event("startup")
+async def _start_mcp_health() -> None:
+    try:
+        import mcp_broker
+        mcp_broker.start_health_loop()
+    except Exception:
+        pass
+
+
+@app.on_event("startup")
+async def _register_command_tools_startup() -> None:
+    """task 87: 启动时把 command_tools + Phase 2 工具注册到全局 dispatcher。
+    幂等,多次调用安全 (内部 _REGISTERED 标志)。"""
+    try:
+        from command_tools_register import ensure_registered
+        ensure_registered()
+        from command_dispatcher import get_registry
+        print(f"[startup] command_dispatcher: 已注册 {len(get_registry().list_all())} 个工具")
+    except Exception as exc:
+        # 注册失败不阻塞启动;chat handler 内部 ensure_registered 兜底
+        import logging
+        logging.getLogger("rpg.startup").exception(
+            "command tools registration failed: %s", exc,
+        )
+
+
+@app.on_event("startup")
+async def _recover_durable_jobs() -> None:
+    """B5：worker 重启时把 DB 里 pending + 超时 running 的 sync job 重新提交进线程池。
+    多 worker 同时执行也安全：UPDATE 用 WHERE status=... + 唯一索引兜底，每个 job 只会被一个 worker 真正领走。
+    """
+    try:
+        from platform_app import script_import
+        result = script_import.recover_pending_sync_jobs()
+        if result.get("recovered_pending") or result.get("reclaimed_stale"):
+            import logging
+            logging.getLogger("rpg.startup").info(
+                "durable sync recovery: pending=%s stale=%s resubmitted=%s",
+                result.get("recovered_pending"),
+                result.get("reclaimed_stale"),
+                len(result.get("resubmitted", [])),
+            )
+    except Exception:
+        # 启动恢复失败不应阻挡服务启动；下次有人调度时会带走 pending
+        import logging
+        logging.getLogger("rpg.startup").exception("durable sync recovery failed")
+
+
+@app.on_event("shutdown")
+async def _shutdown_mcp_brokers() -> None:
+    """uvicorn 退出时优雅关闭所有 MCP 子进程，避免僵尸进程。"""
+    try:
+        import mcp_broker
+        mcp_broker.stop_health_loop()
+        mcp_broker.stop_all()
+    except Exception:
+        pass
+
+
+@app.middleware("http")
+async def api_contract_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    original_path = request.scope.get("path", "")
+    prefix = f"/api/v{API_VERSION}"
+    if original_path == prefix:
+        request.scope["path"] = "/api"
+    elif original_path.startswith(prefix + "/"):
+        request.scope["path"] = "/api" + original_path[len(prefix):]
+    if original_path.startswith("/api") and request.method in MUTATING_METHODS:
+        origin = request.headers.get("origin")
+        if not _origin_allowed(origin):
+            return JSONResponse(
+                {"ok": False, "error": "Origin 不在允许列表", "request_id": request_id},
+                status_code=403,
+                headers={"X-API-Version": API_VERSION, "X-Request-ID": request_id, "Cache-Control": "no-store"},
+            )
+    response = await call_next(request)
+    if original_path.startswith("/api"):
+        response.headers.setdefault("Cache-Control", "no-store")
+        response.headers["X-API-Version"] = API_VERSION
+        response.headers["X-Request-ID"] = request_id
+        response.headers.setdefault("Vary", "Origin")
+    return response
+
+_state_by_user: dict[int, GameState] = {}     # key = api_user["id"] 或 0 (anonymous local)
+# 记录每个 cached state 对应的 (save_id, commit_id) tuple。
+# 真相源 = branch_commits[user_runtime.active_commit_id].state_snapshot。
+# 用户在别处切了 save / commit 之后,_ensure_loaded 拿当前 user_runtime
+# (save_id, commit_id) 跟这里的值比对;**任一不同** → 缓存失效重新加载。
+# 之前只比 save_id 导致"同 save 内换 commit 缓存命中读旧 state"。
+_state_save_id_by_user: dict[int, int] = {}
+_state_commit_id_by_user: dict[int, int] = {}
+_gm_by_user: dict[int, GameMaster] = {}
+# B4: 子代理使用独立 GameMaster 实例，独立模型 / 独立 usage / 独立日志
+_sub_gm_by_user: dict[int, GameMaster] = {}
+_state_mtime_by_user: dict[int, int] = {}
+_state_lock = Lock()
+_run_lock = Lock()
+# 多用户安全：每个 user 独立的 run_id / stop_event。
+# 全局 _run_id/_stop_event 会让一个用户的 /api/stop 打断所有其他用户正在跑的 chat。
+_run_id_by_user: dict[int, int] = {}
+_stop_events_by_user: dict[int, Event] = {}
+
+
+def _get_run_state(api_user: dict[str, Any] | None) -> tuple[int, Event]:
+    """返回 (current_run_id, stop_event) 给当前用户"""
+    uid = _user_key(api_user)
+    with _run_lock:
+        if uid not in _stop_events_by_user:
+            _stop_events_by_user[uid] = Event()
+        _run_id_by_user[uid] = _run_id_by_user.get(uid, 0) + 1
+        _stop_events_by_user[uid].clear()
+        return _run_id_by_user[uid], _stop_events_by_user[uid]
+
+
+def _current_run_id(api_user: dict[str, Any] | None) -> int:
+    return _run_id_by_user.get(_user_key(api_user), 0)
+
+
+def _stop_user(api_user: dict[str, Any] | None) -> None:
+    """同时设置进程内信号 + DB 跨进程信号，多 worker 部署也能 stop 到正确的请求。"""
+    uid = _user_key(api_user)
+    with _run_lock:
+        ev = _stop_events_by_user.get(uid)
+        if ev:
+            ev.set()
+    # 跨进程：写 DB stop_signals
+    if api_user:
+        try:
+            from platform_app.cluster import request_stop
+            current_run = _run_id_by_user.get(uid, 0)
+            if current_run:
+                request_stop(int(api_user["id"]), current_run)
+        except Exception:
+            pass
+
+
+def _is_stop_requested_global(api_user: dict[str, Any] | None, run_id: int) -> bool:
+    """合并检查：进程内 event + DB 跨进程信号。"""
+    uid = _user_key(api_user)
+    ev = _stop_events_by_user.get(uid)
+    if ev and ev.is_set():
+        return True
+    if api_user:
+        try:
+            from platform_app.cluster import is_stop_requested
+            if is_stop_requested(int(api_user["id"]), run_id):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _user_key(api_user: dict[str, Any] | None) -> int:
+    """统一返回 cache key：登录用户用其 id，本地匿名用 0"""
+    return int(api_user["id"]) if api_user else 0
+
+ROLES = {
+    "穿越者·魔女（白毛红瞳，魔力∞）": "穿越者·魔女",
+    "欧洲世家信使 - 在各方势力间传递消息": "欧洲世家信使",
+    "地联太平洋方面情报协力人员": "地联太平洋方面情报协力人员",
+    "薇瑟帝国流亡边缘贵族": "薇瑟帝国流亡边缘贵族",
+}
+
+PRESET = {
+    "穿越者·魔女（白毛红瞳，魔力∞）": {
+        "name": "杭雁菱",
+        "background": (
+            "原为27岁社畜打工人晓卡，穿越后成为魔力∞的魔女。穿越落点在火星，剧情开始时。"
+            "外表白发红瞳，看起来像个少女，实际年龄∞。读过这个世界的原著小说，但现实和书里总有出入。"
+        ),
+    }
+}
+
+
+def _selfheal_player_from_save_snapshot(state: GameState, api_user: dict[str, Any]) -> None:
+    """Bug 1 (click retest) self-heal：runtime player 空时，从 game_saves.state_snapshot
+    重写 player（+ player_character 若也空）。这是 user_card / persona / new_card 注入
+    的权威源，不依赖 runtime_checkouts 健康。
+
+    多用户安全：必须用 api_user.id 限定 game_saves 行，避免读到别人的存档。
+    幂等：只在 state.player.name 完全空时触发。
+    """
+    player = (state.data.get("player") or {}) if isinstance(state.data.get("player"), dict) else {}
+    if player.get("name") or player.get("role") or player.get("background"):
+        return  # runtime 已经有数据，不动
+    user_id = int(api_user.get("id") or 0)
+    if not user_id:
+        return
+    try:
+        from platform_app.runtime import read_runtime
+        from platform_app.db import connect
+    except Exception:
+        return
+    meta = read_runtime(user_id=user_id) or {}
+    save_id = int(meta.get("save_id") or 0)
+    if not save_id:
+        return
+    with connect() as db:
+        row = db.execute(
+            "select state_snapshot from game_saves where id = %s and user_id = %s",
+            (save_id, user_id),
+        ).fetchone()
+    if not row:
+        return
+    snap = row.get("state_snapshot") if isinstance(row, dict) else None
+    if not isinstance(snap, dict):
+        return
+    saved_player = snap.get("player") if isinstance(snap.get("player"), dict) else None
+    if not saved_player or not saved_player.get("name"):
+        return  # game_saves snapshot 也没 player 数据，没什么可救的
+    # 把 game_saves.player 写回 runtime state（保留 history / scene / 战斗等运行态）
+    state.data.setdefault("player", {})
+    for key in ("name", "role", "background", "current_location",
+                "source_kind", "source_id", "appearance", "personality", "speech_style"):
+        if saved_player.get(key):
+            state.data["player"][key] = saved_player[key]
+    # 也修 player_character（如果 game_saves 有且 runtime 空）
+    saved_pc = snap.get("player_character")
+    runtime_pc = state.data.get("player_character") or {}
+    if (isinstance(saved_pc, dict) and saved_pc.get("name")
+            and not runtime_pc.get("name")):
+        state.data["player_character"] = json.loads(json.dumps(saved_pc, ensure_ascii=False))
+    state.data["is_new"] = False
+    # 写 audit 留痕
+    try:
+        from datetime import datetime as _dt
+        audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
+        audit.append({
+            "ts": _dt.now().isoformat(timespec="seconds"),
+            "source": "ensure_loaded:selfheal",
+            "kind": "player_restored_from_save_snapshot",
+            "save_id": save_id,
+            "turn": state.data.get("turn", 0),
+            "hint": "runtime player 为空但 game_saves.snapshot 有 player，已恢复",
+        })
+        state.data["permissions"]["audit_log"] = audit[-200:]
+    except Exception:
+        pass
+
+
+def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
+    """加载当前用户的游戏状态。多用户安全：按 user_id 隔离。
+
+    优先走 state_repository（DB 权威源 + 按 user 隔离 + JSON 镜像兜底）。
+    每个 user 独立缓存 _state / _gm，避免跨 user 串数据。
+    """
+    uid = _user_key(api_user)
+    with _state_lock:
+        cached = _state_by_user.get(uid)
+        # 匿名模式下还要看 SAVE_FILE mtime（兼容旧行为）
+        if uid == 0:
+            current_mtime = SAVE_FILE.stat().st_mtime_ns if SAVE_FILE.exists() else 0
+            if cached is None or current_mtime != _state_mtime_by_user.get(uid, 0):
+                cached = None
+        # 缓存一致性自检:cached state 对应的 (save_id, commit_id) 必须等于
+        # 当前 user_runtime 的 (save_id, active_commit_id)。任一不同就失效。
+        # 之前只比 save_id → 同 save 内换 commit 时缓存命中读旧 state。
+        if cached is not None and api_user and api_user.get("id"):
+            try:
+                from platform_app.runtime import read_runtime
+                _rt = read_runtime(user_id=int(api_user["id"])) or {}
+                _rt_save = int(_rt.get("save_id") or 0)
+                _rt_commit = int(
+                    _rt.get("active_commit_id")
+                    or _rt.get("active_branch_node_id")
+                    or 0
+                )
+                _cached_save = int(_state_save_id_by_user.get(uid) or 0)
+                _cached_commit = int(_state_commit_id_by_user.get(uid) or 0)
+                save_drift = _rt_save and _cached_save and _rt_save != _cached_save
+                commit_drift = _rt_commit and _cached_commit and _rt_commit != _cached_commit
+                if save_drift or commit_drift:
+                    cached = None
+            except Exception:
+                pass
+        if cached is None:
+            try:
+                from state_repository import load_active_state
+                state, _runtime_meta = load_active_state(user_id=api_user["id"] if api_user else None)
+                _new_save_id = int((_runtime_meta or {}).get("save_id") or 0)
+                _new_commit_id = int(
+                    (_runtime_meta or {}).get("active_commit_id")
+                    or (_runtime_meta or {}).get("active_branch_node_id")
+                    or 0
+                )
+                if _new_save_id:
+                    _state_save_id_by_user[uid] = _new_save_id
+                else:
+                    _state_save_id_by_user.pop(uid, None)
+                if _new_commit_id:
+                    _state_commit_id_by_user[uid] = _new_commit_id
+                else:
+                    _state_commit_id_by_user.pop(uid, None)
+            except Exception:
+                state = GameState.new() if api_user else GameState.load_or_new()
+                _state_save_id_by_user.pop(uid, None)
+                _state_commit_id_by_user.pop(uid, None)
+            # Self-heal (Bug 1 click retest)：若 runtime 加载到的 state.player 为空
+            # 但 game_saves.state_snapshot 有 player 数据，说明 runtime_checkouts
+            # 没拿到完整 snapshot（可能在 activate 时序窗口里出问题）。
+            # 直接从 game_saves.state_snapshot 重新加载 — 这是 user_card / persona
+            # / new_card 注入的权威源。不依赖 runtime cache 健康。
+            if api_user and api_user.get("id"):
+                try:
+                    _selfheal_player_from_save_snapshot(state, api_user)
+                except Exception as exc:
+                    print(f"[ensure_loaded] selfheal failed: {exc}")
+            _state_by_user[uid] = state
+            if uid == 0:
+                _state_mtime_by_user[uid] = SAVE_FILE.stat().st_mtime_ns if SAVE_FILE.exists() else 0
+        if uid not in _gm_by_user:
+            model = selected_model()
+            _gm_by_user[uid] = GameMaster(
+                api_id=model["api_id"],
+                model=model["real_name"],
+                user_id=api_user["id"] if api_user else None,
+            )
+        return _state_by_user[uid]
+
+
+def _invalidate_user_cache(api_user: dict[str, Any] | None) -> None:
+    uid = _user_key(api_user)
+    with _state_lock:
+        _state_by_user.pop(uid, None)
+        _gm_by_user.pop(uid, None)
+        _sub_gm_by_user.pop(uid, None)
+        _state_mtime_by_user.pop(uid, None)
+        _state_save_id_by_user.pop(uid, None)
+        _state_commit_id_by_user.pop(uid, None)
+
+
+def _get_gm(api_user: dict[str, Any] | None) -> GameMaster:
+    _ensure_loaded(api_user)
+    return _gm_by_user[_user_key(api_user)]
+
+
+def _get_sub_gm(api_user: dict[str, Any] | None) -> GameMaster:
+    """B4: 子代理用独立 GameMaster 实例（条件：用户配置了 override）。
+
+    模型选择优先级：
+      1. user_preferences.sub_agent_model_override = {api_id, model} → 真·独立实例
+      2. 无 override → 复用主 GM 实例（避免 init SDK 二次成本），但 usage 仍按
+         "子代理"标签独立记账（snapshot last_usage 后立刻 record）
+
+    无论哪种情况，调用方都应该用「_get_sub_gm(api_user)」拿到的对象去做 curate_context，
+    后续 record_usage 时显式标 metadata.kind='sub_agent'。
+    """
+    uid = _user_key(api_user)
+    # 快路径：缓存命中无需取锁的 _get_gm 重入
+    cached = _sub_gm_by_user.get(uid)
+    if cached is not None:
+        return cached
+    # 注意：_get_gm/_ensure_loaded 内部会取 _state_lock；这里必须先释放再调，
+    # 因为 _state_lock 是非可重入 Lock。
+    main_gm = _get_gm(api_user)
+    override: dict[str, Any] = {}
+    if api_user:
+        try:
+            from platform_app.db import connect as _connect
+            with _connect() as _db:
+                _row = _db.execute(
+                    "select preferences from user_preferences where user_id = %s",
+                    (api_user["id"],),
+                ).fetchone()
+            prefs = (_row or {}).get("preferences") or {}
+            override = prefs.get("sub_agent_model_override") or {}
+        except Exception:
+            override = {}
+
+    need_separate = bool(
+        override
+        and (
+            override.get("api_id") and override["api_id"] != main_gm.api_id
+            or override.get("model") and override["model"] != main_gm._backend.model_name
+        )
+    )
+    if need_separate:
+        try:
+            sub = GameMaster(
+                api_id=override.get("api_id") or main_gm.api_id,
+                model=override.get("model") or main_gm._backend.model_name,
+                user_id=api_user["id"] if api_user else None,
+            )
+            print(f"[SUB-AGENT] uid={uid} 独立实例 api={sub.api_id} model={sub._backend.model_name}")
+        except Exception as exc:
+            print(f"[SUB-AGENT] 独立实例创建失败 ({exc})，回退共用主 GM")
+            sub = main_gm
+    else:
+        sub = main_gm
+        print(f"[SUB-AGENT] uid={uid} 复用主 GM api={main_gm.api_id}")
+    # 写回缓存时取锁，但这里不会再 reenter
+    with _state_lock:
+        _sub_gm_by_user.setdefault(uid, sub)
+        return _sub_gm_by_user[uid]
+
+
+def _backup_save(reason: str) -> str | None:
+    if not SAVE_FILE.exists():
+        return None
+    backup_dir = SAVE_FILE.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    backup = backup_dir / f"game_state_{stamp}_{reason}.json"
+    shutil.copy2(SAVE_FILE, backup)
+    return str(backup)
+
+
+def _payload(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
+    state = _ensure_loaded(api_user)
+    model_catalog = load_model_catalog()
+    model = selected_model(model_catalog)
+    is_admin = bool(api_user and api_user.get("role") == "admin")
+    payload = state.status_payload()
+    # 当前模型的 context window（tokens），由 platform_app.usage.context_window_for
+    # 按 api_id+real_name 查映射表。FE Composer 里 ContextUsage 圆环需要这个值
+    # 作为分母，从悬空 hard-coded 1.05M 变成真实当前模型上限。
+    try:
+        from platform_app.usage import context_window_for as _ctx_for
+        ctx_window = int(_ctx_for(model["api_id"], model["real_name"]) or 0)
+    except Exception:
+        ctx_window = 0
+    payload["app"] = {
+        "title": APP_TITLE,
+        "model": model["display_name"],
+        "model_real_name": model["real_name"],
+        "model_capabilities": model.get("capabilities", []),
+        "context_window": ctx_window,
+        "api": model["api_display_name"],
+        "api_id": model["api_id"],
+        "roles": list(ROLES.keys()),
+        "preset": PRESET,
+    }
+    # 绝对路径仅 admin 可见
+    if is_admin:
+        payload["app"]["save_file"] = str(SAVE_FILE)
+    # catalog 按角色脱敏（普通用户拿不到 credential_ref/credential_env/base_url）
+    payload["models"] = _redact_catalog(model_catalog, is_admin)
+    payload["tools"] = _redact_tools(tool_payload(), is_admin)
+    # task 10：把当前激活存档的 id/title 直接挂在 /api/state 顶层 + state 字段里，
+    # Game Console 左侧栏拿来显示「当前存档」，避免回退到 hard-coded mock id=11。
+    try:
+        if api_user and api_user.get("id"):
+            from platform_app.runtime import read_runtime
+            from platform_app.db import connect
+            rmeta = read_runtime(user_id=api_user["id"]) or {}
+            sid = int(rmeta.get("save_id") or 0) or None
+            if sid:
+                with connect() as db:
+                    row = db.execute(
+                        "select id, title, updated_at from game_saves where id = %s and user_id = %s",
+                        (sid, int(api_user["id"])),
+                    ).fetchone()
+                if row:
+                    payload["save_id"] = int(row["id"])
+                    payload["save_title"] = str(row["title"] or "")
+                    if row.get("updated_at"):
+                        payload["save_updated_at"] = row["updated_at"].isoformat() if hasattr(row["updated_at"], "isoformat") else str(row["updated_at"])
+    except Exception:
+        # 任何 DB 异常都不能让 /api/state 整个 500，缺字段前端有兜底
+        pass
+    return payload
+
+
+def _redact_catalog(catalog: dict[str, Any], is_admin: bool) -> dict[str, Any]:
+    """普通用户拿不到 credential_ref / credential_env / base_url（部署形状信息）"""
+    if is_admin:
+        return catalog
+    import copy
+    redacted = copy.deepcopy(catalog)
+    for api in redacted.get("apis", []):
+        api.pop("credential_ref", None)
+        api.pop("credential_env", None)
+        api.pop("base_url", None)
+    return redacted
+
+
+_MCP_SECRET_FIELDS = ("command", "args", "env", "credential", "secret", "token")
+
+
+def _redact_tools(tools: dict[str, Any], is_admin: bool) -> dict[str, Any]:
+    """MCP server 的 command/args/env 含 secret，普通用户拿不到。
+
+    实际结构是 tools["mcp"]["servers"]（catalog 形态），不是顶层 mcp_servers。
+    递归清理任何位置的 mcp server 节点。
+    """
+    if is_admin:
+        return tools
+    import copy
+    redacted = copy.deepcopy(tools)
+    # 主路径：tool_payload() → mcp.servers
+    mcp_block = redacted.get("mcp") or {}
+    for srv in (mcp_block.get("servers") or []):
+        for field in _MCP_SECRET_FIELDS:
+            srv.pop(field, None)
+    # 兼容旧路径：万一上游改回 mcp_servers
+    for srv in (redacted.get("mcp_servers") or []):
+        for field in _MCP_SECRET_FIELDS:
+            srv.pop(field, None)
+    return redacted
+
+
+# ── chat handler 辅助函数（避免 /api/chat 重复逻辑膨胀）───────────────────
+def _persist_chat_turn(
+    api_user: dict[str, Any] | None,
+    state: GameState,
+    message_for_model: str,
+    response: str,
+    *,
+    persist_user_id: int | None,
+    active_save_id: int | None,
+    interrupted: bool = False,
+) -> None:
+    """一轮 chat 结束（正常 or 打断）的持久化集合。
+    state.save + record_runtime_turn（创建新 commit）+ record_turn_messages（DB messages 表）。
+    """
+    state.record_turn(message_for_model, response)
+    state.save()
+    platform_branches.record_runtime_turn(
+        message_for_model,
+        response,
+        str(SAVE_FILE),
+        user_id=api_user["id"] if api_user else None,
+        state_data=state.data,
+    )
+    if persist_user_id and active_save_id:
+        try:
+            platform_knowledge.record_turn_messages(
+                persist_user_id,
+                active_save_id,
+                state.data,
+                message_for_model,
+                response,
+                {"interrupted": True} if interrupted else None,
+            )
+        except Exception:
+            pass
+    # task 107B/107C: 每 turn 写 save_timeline_anchors + phase boundary 检测
+    if active_save_id:
+        try:
+            from save_phase_manager import (
+                upsert_timeline_anchor,
+                ensure_initial_phase,
+                detect_phase_boundary,
+                open_new_phase,
+                update_phase_turn_end,
+            )
+            _turn = int(state.data.get("turn") or 0)
+            _world = state.data.get("world") or {}
+            _tl = _world.get("timeline") or {}
+            _story_time = (
+                _tl.get("current_label")
+                or _world.get("time")
+                or ""
+            )
+            _phase_label = _tl.get("current_phase") or ""
+            # 107B: write timeline anchor
+            upsert_timeline_anchor(
+                save_id=active_save_id,
+                turn_index=_turn,
+                story_time_label=_story_time,
+                phase_label=_phase_label,
+                source="gm",
+            )
+            # 107C: ensure phase 0 on first turn
+            ensure_initial_phase(active_save_id, _turn, _phase_label, _story_time)
+            # 107C: update turn_end of open phase
+            update_phase_turn_end(active_save_id, _turn)
+            # 107C: detect boundary and open new phase if needed
+            if detect_phase_boundary(active_save_id, state):
+                open_new_phase(
+                    save_id=active_save_id,
+                    turn_index=_turn,
+                    phase_label=_phase_label,
+                    story_time_label=_story_time,
+                )
+        except Exception as _pm_err:
+            print(f"[chat] save_phase_manager hook failed: {_pm_err}")
+
+
+def _build_usage_payload(
+    api_user: dict[str, Any] | None,
+    gm: GameMaster,
+    bundle: dict[str, Any],
+    message_for_model: str,
+    persist_user_id: int | None,
+    active_save_id: int | None,
+    context_run_id: int | None,
+) -> dict[str, Any] | None:
+    """从 backend.last_usage 抽 SSE usage 形状 + 写 token_usage 表。"""
+    try:
+        from platform_app import usage as usage_mod
+        from platform_app.usage import context_window_for, estimate_input_tokens
+        last_usage = getattr(gm._backend, "last_usage", {}) or {}
+        ctx_max = context_window_for(gm.api_id, gm._backend.model_name)
+        ctx_used = int(last_usage.get("input_tokens", 0)) or estimate_input_tokens(
+            bundle["prompt"] + message_for_model
+        )
+        usage_row = {}
+        if persist_user_id:
+            usage_row = usage_mod.record_usage(
+                user_id=persist_user_id,
+                save_id=active_save_id,
+                context_run_id=context_run_id,
+                api_id=gm.api_id,
+                model_real_name=gm._backend.model_name,
+                usage=last_usage,
+                context_used=ctx_used,
+                context_max=ctx_max,
+            )
+        return {
+            "model": gm._backend.model_name,
+            "api_id": gm.api_id,
+            "input_tokens": int(last_usage.get("input_tokens", 0)),
+            "output_tokens": int(last_usage.get("output_tokens", 0)),
+            "cached_input_tokens": int(last_usage.get("cached_input_tokens", 0)),
+            "reasoning_tokens": int(last_usage.get("reasoning_tokens", 0)),
+            "total_tokens": int(last_usage.get("total_tokens", 0)),
+            "context_used": ctx_used,
+            "context_max": ctx_max,
+            "context_pct": round(100 * ctx_used / ctx_max, 1) if ctx_max else 0,
+            "cost_usd": float(usage_row.get("cost_usd", 0)),
+        }
+    except Exception:
+        return None
+
+
+def _mark_context_run(context_run_id: int | None, status: str, error: str = "", duration_ms: int = 0) -> None:
+    """安全 wrap context_runs 状态更新；失败静默。"""
+    if not context_run_id:
+        return
+    try:
+        platform_knowledge.update_context_run_status(
+            int(context_run_id),
+            status=status,
+            error=error,
+            duration_ms=duration_ms,
+        )
+    except Exception:
+        pass
+
+
+def _persist_runtime_checkpoint(state: GameState, user: dict[str, Any] | None) -> None:
+    if not user:
+        return
+    try:
+        result = platform_branches.persist_runtime_state(str(SAVE_FILE), user_id=user["id"], state_data=state.data)
+        runtime_meta = (result or {}).get("runtime") or platform_runtime.read_runtime(user_id=user["id"])
+        save_id = int((runtime_meta or {}).get("save_id") or 0)
+        if save_id:
+            platform_knowledge.ensure_game_session(user["id"], save_id, state.data)
+    except Exception:
+        return
+
+
+def _build_turn_context(
+    state: GameState,
+    message: str,
+    retrieved_context: str,
+    script_id: int | None = None,
+    book_id: int | None = None,
+    save_id: int | None = None,  # task 107E: 给 runtime_phase_digests provider
+) -> dict[str, Any]:
+    bundle = build_context_bundle(
+        state, message, retrieved_context,
+        script_id=script_id, book_id=book_id, save_id=save_id,
+    )
+    state.set_last_context(bundle["debug"])
+    return bundle
+
+
+def _active_script_id(api_user: dict[str, Any] | None) -> int | None:
+    """从 runtime/save 派生当前 script_id，供 context_engine 走 DB 数据。"""
+    if not api_user:
+        return None
+    try:
+        from platform_app.runtime import read_runtime
+        from platform_app.db import connect
+        meta = read_runtime(user_id=api_user["id"])
+        save_id = int((meta or {}).get("save_id") or 0)
+        if not save_id:
+            return None
+        with connect() as db:
+            row = db.execute(
+                "select script_id from game_saves where id = %s",
+                (save_id,),
+            ).fetchone()
+        return int(row["script_id"]) if row and row.get("script_id") else None
+    except Exception:
+        return None
+
+
+def _sse(event: str, data: Any) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _split_inline_assignment(text: str) -> tuple[str, str]:
+    for sep in ("=", "：", ":"):
+        if sep in text:
+            left, right = text.split(sep, 1)
+            return left.strip(), right.strip()
+    return "", text.strip()
+
+
+MAX_ATTACHMENTS_PER_REQUEST = 8
+
+
+def _save_attachments(raw_items: list[dict[str, Any]], user_id: int | None = None) -> list[dict[str, Any]]:
+    saved: list[dict[str, Any]] = []
+    if not raw_items:
+        return saved
+    # 超量明确拒绝，不再静默截断
+    if len(raw_items) > MAX_ATTACHMENTS_PER_REQUEST:
+        raise ValueError(f"单次最多上传 {MAX_ATTACHMENTS_PER_REQUEST} 个附件，本次提交 {len(raw_items)}")
+    upload_dir = UPLOAD_DIR / f"user_{int(user_id)}" if user_id else UPLOAD_DIR / "local"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    for index, item in enumerate(raw_items):
+        name = Path(str(item.get("name") or f"attachment-{index + 1}")).name
+        mime_type = str(item.get("type") or "application/octet-stream")
+        data_url = str(item.get("data_url") or item.get("dataUrl") or "")
+        encoded = str(item.get("base64") or "")
+        if "," in data_url:
+            encoded = data_url.split(",", 1)[1]
+        if not encoded:
+            raise ValueError(f"附件 {name} 内容为空")
+        # 严格 base64：非法字符直接拒绝，避免落盘 0 字节脏文件
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"附件 {name} 不是合法 base64：{exc}")
+        if not data:
+            raise ValueError(f"附件 {name} 解码后为空")
+        if len(data) > MAX_ATTACHMENT_BYTES:
+            raise ValueError(f"附件 {name} 超过 {MAX_ATTACHMENT_BYTES} 字节")
+        safe_name = re.sub(r"[^0-9A-Za-z._\-\u4e00-\u9fff]+", "_", name).strip("._") or f"attachment-{index + 1}"
+        file_path = upload_dir / f"{stamp}_{index + 1}_{safe_name}"
+        file_path.write_bytes(data)
+        preview = _text_preview_for_attachment(file_path, mime_type, data)
+        saved.append({
+            "name": name,
+            "type": mime_type,
+            "size": len(data),
+            "path": str(file_path),
+            "is_image": mime_type.startswith("image/"),
+            "text_preview": preview,
+        })
+    return saved
+
+
+def _text_preview_for_attachment(file_path: Path, mime_type: str, data: bytes) -> str:
+    if not (
+        mime_type.startswith("text/")
+        or file_path.suffix.lower() in {".txt", ".md", ".json", ".csv", ".log"}
+    ):
+        return ""
+    try:
+        return data[:6000].decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _message_with_attachments(message: str, attachments: list[dict[str, Any]]) -> str:
+    if not attachments:
+        return message
+    lines = [message or "请参考本轮附件。", "", "【用户附件】"]
+    for item in attachments:
+        lines.append(
+            f"- {item['name']} ({item['type'] or 'unknown'}, {item['size']} bytes) -> {item['path']}"
+        )
+        if item.get("is_image"):
+            lines.append("  图片已上传；当前文本管线先记录附件，后续多模态模型接入后可作为视觉输入。")
+        if item.get("text_preview"):
+            lines.append("  文本预览：")
+            lines.append(item["text_preview"])
+    return "\n".join(lines)
+
+
+def _command_response(message: str, state: GameState) -> tuple[str, bool]:
+    cmd = message.strip()
+    low = cmd.lower()
+    changed = False
+
+    if low == "/status":
+        return f"```text\n{state.short_summary()}\n```", changed
+    if low == "/save":
+        state.save()
+        return "已手动存档。", changed
+    if low == "/debug":
+        ctx = state.data["memory"].get("last_retrieval") or "（无）"
+        return f"**上轮检索到的参考资料**\n\n```text\n{ctx}\n```", changed
+    if low.startswith("/loc "):
+        loc = cmd[5:].strip()
+        state.update_location(loc)
+        state.save()
+        return f"位置已更新：{loc}", True
+    if low.startswith("/time "):
+        time_desc = cmd[6:].strip()
+        state.update_time(time_desc)
+        state.save()
+        return f"时间线已更新：{time_desc}", True
+    if low.startswith("/timeline "):
+        time_desc = cmd[10:].strip()
+        state.update_time(time_desc)
+        state.save()
+        return f"时间线已更新：{time_desc}", True
+    if low.startswith("/rel "):
+        parts = cmd[5:].strip().split(" ", 1)
+        if len(parts) != 2:
+            return "用法：`/rel 角色 关系状态`", changed
+        state.update_relationship(parts[0], parts[1])
+        state.save()
+        return f"关系已更新：{parts[0]} -> {parts[1]}", True
+    if low.startswith("/memory "):
+        mode = low.split(" ", 1)[1].strip()
+        state.set_memory_mode(mode)
+        state.save()
+        return f"记忆模式已切换为：{state.data['memory']['mode']}", True
+    if low.startswith("/permission "):
+        mode = cmd.split(" ", 1)[1].strip()
+        state.set_permission_mode(mode)
+        state.save()
+        return f"LLM 写入权限已切换为：{state.data['permissions']['mode']}", True
+    if low.startswith("/var "):
+        path, value = _split_inline_assignment(cmd[5:].strip())
+        if not path:
+            return "用法：`/var 变量名=变量值`", changed
+        state.set_user_variable(path, value, source="user")
+        state.save()
+        return f"用户变量已写入：{path}={value}", True
+    if low.startswith("/pin "):
+        state.add_memory("pinned", cmd[5:].strip())
+        state.save()
+        return "已加入固定记忆。", True
+    if low.startswith("/note "):
+        state.add_memory("notes", cmd[6:].strip())
+        state.save()
+        return "已加入玩家笔记。", True
+
+    return "", changed
+
+
+@app.get("/")
+async def index() -> JSONResponse:
+    """Backend root。前端由 frontend/ React 应用提供（Vite dev server 或静态部署）。"""
+    return JSONResponse({
+        "ok": True,
+        "service": f"{APP_TITLE} RPG backend",
+        "frontend": {
+            "platform": "Platform.html (Vite dev: http://127.0.0.1:5173/Platform.html)",
+            "game_console": "Game Console.html (Vite dev: http://127.0.0.1:5173/Game%20Console.html)",
+        },
+        "docs": "/docs",
+    })
+
+
+@app.get("/api/state")
+async def api_state(request: Request) -> JSONResponse:
+    api_user = _require_api_user(request)
+    return JSONResponse(_payload(api_user))
+
+
+@app.post("/api/new")
+async def api_new(request: Request) -> JSONResponse:
+    """创建新存档。
+
+    切换角色卡（user persona / 用户自创 NPC / 剧本预置角色）一律走这个接口，
+    不会污染现有存档。优先级（高 → 低）：
+      1. script_card_id + script_id  (扮演某剧本里的角色)
+      2. user_card_id                 (用户自创 NPC 卡)
+      3. persona_id                   (用户自己的 persona)
+      4. body 里直接传 name/role/background
+    """
+    api_user = _require_api_user(request)
+    body = await request.json()
+    backup = _backup_save("before_new_game") if api_user is None else None
+
+    source_meta: dict[str, Any] | None = None
+    source_kind = ""
+
+    # 优先级 1：剧本预置角色卡
+    script_card_id = body.get("script_card_id")
+    script_id = body.get("script_id")
+    if script_card_id and script_id and api_user:
+        from platform_app import knowledge as _know
+        card = _know.get_character_card(api_user["id"], int(script_id), int(script_card_id))
+        if card:
+            source_meta = card
+            source_kind = "script_card"
+
+    # 优先级 2：用户自创 NPC 卡
+    if source_meta is None:
+        user_card_id = body.get("user_card_id")
+        if user_card_id and api_user:
+            from platform_app import user_cards as _ucards
+            card = _ucards.get_user_card(api_user["id"], int(user_card_id))
+            if card:
+                source_meta = card
+                source_kind = "user_card"
+
+    # 优先级 3：persona
+    if source_meta is None:
+        persona_id = body.get("persona_id")
+        if persona_id and api_user:
+            from platform_app import user_cards as _ucards
+            persona = _ucards.get_persona(api_user["id"], int(persona_id))
+            if persona:
+                source_meta = persona
+                source_kind = "persona"
+
+    if source_meta:
+        # 字段映射：script_card / user_card 用 identity 作 role，persona 用 role 字段
+        name = source_meta.get("name") or "无名者"
+        if source_kind == "persona":
+            role = source_meta.get("role") or "未指定"
+            background = source_meta.get("background") or "（无背景）"
+        else:
+            role = source_meta.get("identity") or "未指定"
+            background = source_meta.get("appearance") or source_meta.get("personality") or "（来自角色卡）"
+    else:
+        # 通用 RPG 底座：默认 role 不再 fallback 到《我蕾穆丽娜不爱你》的『穿越者·魔女』。
+        # ROLES 字典里有该剧本的 role label，作为兼容映射保留，但不再当默认值。
+        role_label = (body.get("role") or "").strip() or "未指定"
+        role = ROLES.get(role_label, role_label)
+        name = (body.get("name") or "无名者").strip()
+        background = (body.get("background") or "").strip()
+
+    state = GameState.new()
+    state.setup_player(name, role, background)
+    if source_meta:
+        state.data["player"]["source_kind"] = source_kind
+        state.data["player"]["source_id"] = int(source_meta["id"])
+        for field in ("appearance", "personality", "speech_style"):
+            if source_meta.get(field):
+                state.data["player"][field] = source_meta[field]
+    state.save()
+    # 清掉缓存，下次 _ensure_loaded 会用新 state
+    _invalidate_user_cache(api_user)
+    uid = _user_key(api_user)
+    with _state_lock:
+        _state_by_user[uid] = state
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "backup": backup, "state": _payload(api_user)})
+
+
+@app.post("/api/opening")
+async def api_opening(request: Request) -> StreamingResponse:
+    api_user = _require_api_user(request)
+    state = _ensure_loaded(api_user)
+    gm = _get_gm(api_user)
+
+    async def stream():
+        # task 121a: 4 阶段 stage 事件让前端能显示 thinking pill,避免 5-15s 无反馈
+        yield _sse("stage", {"phase": "retrieving", "label": "翻阅剧本设定中…"})
+        # 修(task 117):走 phase 算法路径 — 不硬编码"第一章"。
+        # retrieve_context 内部消费 state.world.timeline.current_phase / save.active_phase_index
+        # 来限定 chapter window;空 state 时 fallback 到 phase 0 的 chapter_range,适用任意小说。
+        script_id = _active_script_id(api_user)
+        if script_id:
+            world = state.data.get("world", {}) or {}
+            player = state.data.get("player", {}) or {}
+            memory = state.data.get("memory", {}) or {}
+            events = world.get("known_events") or []
+            query_parts = [
+                str(player.get("current_location") or ""),
+                str(world.get("time") or ""),
+                str(memory.get("current_objective") or ""),
+                *[str(e) for e in events[:2]],
+            ]
+            query = " ".join(p for p in query_parts if p).strip() or "开场"
+        else:
+            query = "柏林 图卢兹 娅赛兰 蛇信 蕾穆丽娜"
+        ctx = retrieve_context(
+            query,
+            state=state,
+            user_id=api_user["id"] if api_user else None,
+            script_id=script_id,
+        )
+        state.set_last_retrieval(ctx)
+        # task 107E: 把 save_id 透传给 context_engine, 让 runtime_phase_digests provider 工作
+        _, _save_id_for_ctx = _resolve_persist_target(api_user)
+        yield _sse("stage", {"phase": "building_context", "label": "组装上下文…"})
+        bundle = _build_turn_context(state, query, ctx, script_id=script_id, save_id=_save_id_for_ctx)
+        yield _sse("status", _payload(api_user))
+        yield _sse("stage", {"phase": "generating", "label": "GM 构思开场中…"})
+        text = ""
+        try:
+            opening = gm.generate_opening(state, retrieved_context=bundle["prompt"])
+            text = opening
+            yield _sse("stage", {"phase": "done", "label": ""})
+            yield _sse("token", {"text": opening})
+            state.data["history"].append({"role": "assistant", "content": opening})
+            state.save()
+            _persist_runtime_checkpoint(state, api_user)
+            yield _sse("done", {"status": _payload(api_user)})
+        except Exception as exc:
+            yield _sse("error", {"message": str(exc), "partial": text})
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/api/chat/estimate")
+async def api_chat_estimate(request: Request) -> JSONResponse:
+    """实时上下文预估。前端 debounce 用户输入后调用，显示 ctx X/Y (Z%) · in~A out~B。
+
+    估算思路（轻量，避免真的跑 retrieval）：
+      input_tokens ≈ system_prompt + history_window + retrieved_budget + 当前输入
+      output_tokens ≈ 该用户最近 10 轮该模型的平均输出
+    """
+    api_user = _require_api_user(request)
+    body = await request.json()
+    message = (body.get("message") or "").strip()
+    include_retrieval = bool(body.get("include_retrieval", True))
+
+    state = _ensure_loaded(api_user)
+    model = selected_model()
+    api_id = model["api_id"]
+    model_name = model["real_name"]
+
+    # 各部分粗估
+    from platform_app.usage import estimate_input_tokens, context_window_for, average_output_tokens
+    history = state.history_messages()  # 已限制 MAX_HISTORY_TURNS
+    history_text = "\n".join(m.get("content", "") for m in history)
+    # system prompt 用 GM 模板的近似长度；不真正构建避免昂贵
+    system_estimate = 1200  # 世界观+伯林局势+穿越者补丁 加起来约 1.2K tokens
+    # 召回部分按预算（context_engine 配置的 ~800 token）
+    retrieval_estimate = 800 if include_retrieval else 0
+    # 玩家档案/记忆摘要
+    profile_estimate = estimate_input_tokens(state.short_summary())
+
+    input_tokens = (
+        system_estimate
+        + profile_estimate
+        + estimate_input_tokens(history_text)
+        + retrieval_estimate
+        + estimate_input_tokens(message)
+    )
+    persist_user_id, _ = _resolve_persist_target(api_user)
+    output_estimate = average_output_tokens(persist_user_id, model_name) if persist_user_id else 600
+    if output_estimate <= 0:
+        output_estimate = 600  # 没历史时的默认猜测
+
+    ctx_max = context_window_for(api_id, model_name) or 0
+    total_estimate = input_tokens + output_estimate
+    ctx_pct = round(100 * input_tokens / ctx_max, 1) if ctx_max else 0
+    will_overflow = (input_tokens + output_estimate > ctx_max) if ctx_max else False
+
+    return JSONResponse({
+        "ok": True,
+        "api_id": api_id,
+        "model": model_name,
+        "context_used": input_tokens,
+        "context_max": ctx_max,
+        "context_pct": ctx_pct,
+        "estimated_output_tokens": output_estimate,
+        "estimated_total_tokens": total_estimate,
+        "will_overflow": will_overflow,
+        "breakdown": {
+            "system_prompt": system_estimate,
+            "profile_and_memory": profile_estimate,
+            "history": estimate_input_tokens(history_text),
+            "retrieval_budget": retrieval_estimate,
+            "current_input": estimate_input_tokens(message),
+        },
+        "headroom_tokens": max(0, ctx_max - input_tokens - output_estimate) if ctx_max else 0,
+    })
+
+
+@app.post("/api/chat")
+async def api_chat(request: Request) -> StreamingResponse:
+    api_user = _require_api_user(request)
+    body = await request.json()
+    # task 31：前端历史上同时存在 {message:...} 和 {text:...} 两套契约。
+    # 老的 Game Console.html 发 text，新的 game-app.jsx 也偶尔走 message。
+    # 后端必须两边兼容，否则用户输入直接被 "空消息" error 吞掉。
+    message = (body.get("message") or body.get("text") or "").strip()
+    attachments = _save_attachments(body.get("attachments") or [], user_id=api_user["id"] if api_user else None)
+    message_for_model = _message_with_attachments(message, attachments)
+    if not message_for_model.strip():
+        return StreamingResponse(iter([_sse("error", {"message": "空消息"})]), media_type="text/event-stream")
+    _chat_start_time = time.time()
+
+    # 多用户隔离：当前用户的 run_id 自增、stop_event 清零
+    run_id, stop_event = _get_run_state(api_user)
+
+    state = _ensure_loaded(api_user)
+    gm = _get_gm(api_user)
+
+    async def stream():
+        # task #51: chat 主流程拆到 chat_pipeline.py 5 个 phase。
+        # 这里只剩:
+        #   - /命令短路 (本 endpoint 自己处理,不进 pipeline)
+        #   - 构造 PipelineContext + 依次跑 phase + SSE 透传
+        #   - 兜底 except 包到 error 事件
+        from chat_pipeline import (
+            PipelineContext,
+            apply_player_directives_phase,
+            run_context_phase,
+            run_rules_phase,
+            run_gm_phase,
+            persist_turn_phase,
+        )
+
+        response = ""
+        command_text, changed = ("", False) if attachments else _command_response(message, state)
+        if command_text:
+            if changed:
+                _persist_runtime_checkpoint(state, api_user)
+                yield _sse("status", _payload(api_user))
+            yield _sse("token", {"text": command_text})
+            yield _sse("done", {"status": _payload(api_user), "interrupted": False})
+            return
+
+        sub_gm = _get_sub_gm(api_user)
+        pipeline_ctx = PipelineContext(
+            api_user=api_user,
+            state=state,
+            gm=gm,
+            sub_gm=sub_gm,
+            message_for_model=message_for_model,
+            run_id=run_id,
+            stop_event=stop_event,
+            chat_start_time=_chat_start_time,
+        )
+
+        try:
+            # Phase 1: 玩家 directive (过期问题 + /set 工具化 + 正则 fallback + set_parser + timeline anchor)
+            async for evt, data in apply_player_directives_phase(
+                pipeline_ctx,
+                resolve_persist_target=_resolve_persist_target,
+                persist_runtime_checkpoint=_persist_runtime_checkpoint,
+                payload_fn=_payload,
+                is_set_parser_enabled=_is_set_parser_enabled,
+                active_script_id=_active_script_id,
+            ):
+                yield _sse(evt, data)
+            if pipeline_ctx.early_return:
+                return
+
+            # Phase 2: context agent (子 GM curator)
+            # 注入 run_context_agent 让测试 monkeypatch (app.run_context_agent = ...) 能透到 pipeline。
+            import app as _self_mod
+            async for evt, data in run_context_phase(
+                pipeline_ctx,
+                resolve_persist_target=_resolve_persist_target,
+                payload_fn=_payload,
+                active_script_id=_active_script_id,
+                clarify_threshold=_clarify_threshold,
+                persist_chat_turn=_persist_chat_turn,
+                mark_context_run=_mark_context_run,
+                apply_chat_rule_candidates=_apply_chat_rule_candidates,
+                chat_rule_candidates=_chat_rule_candidates,
+                rule_results_prompt=_rule_results_prompt,
+                persist_runtime_checkpoint=_persist_runtime_checkpoint,
+                platform_knowledge_mod=platform_knowledge,
+                run_context_agent_fn=getattr(_self_mod, "run_context_agent", None),
+            ):
+                yield _sse(evt, data)
+            if pipeline_ctx.early_return:
+                return
+
+            # Phase 2.5 — task 86/87: 世界书子代理 (确定性, 不调 LLM, ~20ms)
+            # 翻阅 phase_digests + chapter_facts + worldbook → 注入 ctx_text。
+            # SSE 广播 worldbook_consulting/ready, 前端显示"翻阅设定中"。
+            try:
+                import worldbook_agent
+                script_id_for_wb = _active_script_id(api_user)
+                world = state.data.get("world", {}) or {}
+                memory = state.data.get("memory", {}) or {}
+                cur_phase = str((world.get("timeline") or {}).get("current_phase") or "")
+                cur_time = str(world.get("time") or "")
+                yield _sse("worldbook_consulting", {
+                    "query": message_for_model[:80],
+                    "phase": cur_phase,
+                    "time": cur_time,
+                })
+                wb_query = " ".join(filter(None, [
+                    message_for_model,
+                    str(memory.get("current_objective") or ""),
+                ]))[:300]
+                wb_result = worldbook_agent.consult(
+                    script_id=int(script_id_for_wb or 0),
+                    query=wb_query,
+                    current_phase=cur_phase,
+                    current_time=cur_time,
+                )
+                yield _sse("worldbook_ready", {
+                    "confidence": round(wb_result.confidence, 2),
+                    "sources": wb_result.sources,
+                    "phase": (wb_result.timeline_anchor or {}).get("phase"),
+                    "elapsed_ms": wb_result.elapsed_ms,
+                })
+                if wb_result.confidence > 0:
+                    wb_text = wb_result.to_context_text()
+                    if wb_text:
+                        pipeline_ctx.ctx_text = (pipeline_ctx.ctx_text or "") + "\n\n" + wb_text
+                # 把 confidence + progress_note 也塞 bundle 让 GM prompt 知道是否"翻阅未果"
+                if pipeline_ctx.bundle is None:
+                    pipeline_ctx.bundle = {}
+                pipeline_ctx.bundle.setdefault("worldbook", {})
+                pipeline_ctx.bundle["worldbook"].update({
+                    "confidence": wb_result.confidence,
+                    "progress_note": wb_result.progress_note,
+                    "sources": wb_result.sources,
+                })
+            except Exception as wb_exc:
+                yield _sse("worldbook_ready", {
+                    "confidence": 0.0, "error": f"{type(wb_exc).__name__}: {wb_exc}",
+                })
+
+            # Phase 3: 5E rules preflight + rule candidates + clarify 短路
+            async for evt, data in run_rules_phase(
+                pipeline_ctx,
+                payload_fn=_payload,
+                persist_chat_turn=_persist_chat_turn,
+                persist_runtime_checkpoint=_persist_runtime_checkpoint,
+                resolve_persist_target=_resolve_persist_target,
+                mark_context_run=_mark_context_run,
+                clarify_threshold=_clarify_threshold,
+                apply_chat_rule_candidates=_apply_chat_rule_candidates,
+                chat_rule_candidates=_chat_rule_candidates,
+                rule_results_prompt=_rule_results_prompt,
+                platform_knowledge_mod=platform_knowledge,
+            ):
+                yield _sse(evt, data)
+            if pipeline_ctx.early_return:
+                return
+
+            # Phase 4: GM 主响应 (token + tool_call + extractor + acceptance)
+            async for evt, data in run_gm_phase(
+                pipeline_ctx,
+                payload_fn=_payload,
+                persist_chat_turn=_persist_chat_turn,
+                mark_context_run=_mark_context_run,
+                current_run_id_fn=_current_run_id,
+                is_stop_requested_global=_is_stop_requested_global,
+                is_extractor_enabled=_is_extractor_enabled,
+                acceptance_verifier_mode=_acceptance_verifier_mode,
+                verify_acceptance=_verify_acceptance,
+                active_script_id=_active_script_id,
+            ):
+                yield _sse(evt, data)
+            if pipeline_ctx.early_return:
+                return
+
+            # Phase 5: 持久化 + done
+            async for evt, data in persist_turn_phase(
+                pipeline_ctx,
+                payload_fn=_payload,
+                persist_chat_turn=_persist_chat_turn,
+                build_usage_payload=_build_usage_payload,
+            ):
+                yield _sse(evt, data)
+        except Exception as exc:
+            _mark_context_run(
+                pipeline_ctx.context_run_id,
+                "failed",
+                error=str(exc),
+                duration_ms=int((time.time() - _chat_start_time) * 1000),
+            )
+            yield _sse("error", {"message": str(exc), "partial": pipeline_ctx.response or response})
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/api/stop")
+async def api_stop(request: Request) -> JSONResponse:
+    """打断当前用户正在跑的 chat。其他用户的 chat 不受影响。
+    task 87 Phase 6: 同时调 dispatcher stop_current_chat 工具,把 stop_signal 写到 state.permissions。"""
+    api_user = _require_api_user(request)
+    _stop_user(api_user)  # 真正的 stop_event 仍由 _stop_user 处理 (跨 chat handler 协程)
+    # 同时通过 dispatcher 记录 audit 与 state.permissions.stop_signal
+    try:
+        state = _ensure_loaded(api_user)
+        from ui_dispatch_helper import dispatch_ui_tool
+        dispatch_ui_tool(
+            tool_name="stop_current_chat", args={},
+            user_id=int(api_user.get("id")) if api_user else 0,
+            save_id=_resolve_persist_target(api_user)[1] or 0,
+            state=state,
+        )
+    except Exception:
+        pass
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/save")
+async def api_save(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 走 dispatcher save_runtime。"""
+    api_user = _require_api_user(request)
+    state = _ensure_loaded(api_user)
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name="save_runtime", args={},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "state": _payload(api_user)})
+
+
+@app.post("/api/memory/mode")
+async def api_memory_mode(request: Request) -> JSONResponse:
+    """task 87 Phase 6: UI 按钮也走 dispatcher,获得统一审计 + destructive 检查。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    state = _ensure_loaded(api_user)
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name="set_memory_mode",
+        args={"mode": body.get("mode", "normal")},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "state": _payload(api_user)})
+
+
+@app.post("/api/memory/add")
+async def api_memory_add(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 走 dispatcher 的 add_memory_* 工具系列。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    state = _ensure_loaded(api_user)
+    bucket = body.get("bucket", "notes")
+    text = body.get("text", "")
+    # bucket → 对应工具名
+    bucket_tool = {
+        "facts": "add_memory_fact",
+        "resources": "add_memory_resource",
+        "abilities": "add_memory_ability",
+        "pinned": "pin_memory",
+        "notes": "add_memory_note",
+    }.get(bucket, "add_memory_note")
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name=bucket_tool,
+        args={"text": text},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "state": _payload(api_user)})
+
+
+@app.post("/api/memory/remove")
+async def api_memory_remove(request: Request) -> JSONResponse:
+    """task 87 Phase 6: destructive 走 dispatcher remove_memory_item 工具。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    state = _ensure_loaded(api_user)
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name="remove_memory_item",
+        args={
+            "bucket": body.get("bucket", "notes"),
+            "index": int(body.get("index", -1)),
+        },
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "state": _payload(api_user)})
+
+
+@app.post("/api/permissions")
+async def api_permissions(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 敏感权限切换走 dispatcher (origin=ui_button)。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    state = _ensure_loaded(api_user)
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name="set_permission_mode",
+        args={"mode": body.get("mode", "full_access")},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "state": _payload(api_user)})
+
+
+@app.post("/api/permissions/pending-write")
+async def api_pending_write(request: Request) -> JSONResponse:
+    """审批一条待写入。前端发 {id, action} 或 {index, decision}（兼容老 contract）。
+
+    P0 修复（task #53）：之前后端只读 index+decision，前端发 id+action →
+    /set 后端 body.get("index", -1) = -1 → "待审写入不存在" → 整个审批流死。
+    现在按 id 优先（稳定），index/decision 作 fallback。
+    """
+    api_user = _require_api_user(request)
+    body = await request.json()
+    state = _ensure_loaded(api_user)
+    item_id = body.get("id")
+    raw_index = body.get("index")
+    index = int(raw_index) if raw_index is not None else None
+    decision = str(body.get("action") or body.get("decision") or "").lower()
+    # task 87 Phase 6: 走 dispatcher 的 approve/reject_pending_write 工具。
+    # 老路径 (state.approve_pending_write/reject_pending_write) 接受 index 旧契约,
+    # 工具只用 id; index 仅 fallback。
+    if decision == "approve":
+        tool_name = "approve_pending_write"
+    elif decision == "reject":
+        tool_name = "reject_pending_write"
+    else:
+        return JSONResponse({"ok": False, "error": "缺少 action/decision（approve|reject）"}, status_code=400)
+    if not item_id and index is not None:
+        # 旧契约 index → 在 pending_writes 里找 id 兜底
+        pws = (state.data.get("permissions") or {}).get("pending_writes") or []
+        if 0 <= index < len(pws):
+            item_id = pws[index].get("id")
+    from ui_dispatch_helper import dispatch_ui_tool
+    d_result = dispatch_ui_tool(
+        tool_name=tool_name,
+        args={"id": item_id or ""},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        # dispatcher 失败 → fallback 到老路径(向后兼容,例如老存档无 id 时)
+        if decision == "approve":
+            result = state.approve_pending_write(index=index, id=item_id)
+        else:
+            result = state.reject_pending_write(index=index, id=item_id)
+    else:
+        result = d_result.result
+    state.data["memory"]["last_structured_updates"] = [result] + state.data["memory"].get("last_structured_updates", [])[:11]
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "result": result, "state": _payload(api_user)})
+
+
+@app.post("/api/questions/clear")
+async def api_question_clear(request: Request) -> JSONResponse:
+    """回答(或跳过)一条 GM 询问。{id, choice?} 或 {index, choice?}。
+    task 87 Phase 6: 走 dispatcher dismiss_pending_question。choice 走老路径
+    (clear_pending_question 支持记录玩家选择,工具暂不支持 choice)。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    state = _ensure_loaded(api_user)
+    item_id = body.get("id")
+    raw_index = body.get("index")
+    index = int(raw_index) if raw_index is not None else None
+    choice = body.get("choice")
+    # 若有 choice (玩家选了选项),走老路径以保留 choice 记录;若仅 dismiss → dispatcher
+    if choice or not item_id:
+        popped = state.clear_pending_question(index=index, id=item_id, choice=choice)
+    else:
+        from ui_dispatch_helper import dispatch_ui_tool
+        d_result = dispatch_ui_tool(
+            tool_name="dismiss_pending_question",
+            args={"id": item_id},
+            user_id=int(api_user.get("id")) if api_user else 0,
+            save_id=_resolve_persist_target(api_user)[1] or 0,
+            state=state,
+        )
+        popped = d_result.ok
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "cleared": bool(popped), "state": _payload(api_user)})
+
+
+@app.post("/api/debug/pending-question")
+async def api_debug_pending_question(request: Request) -> JSONResponse:
+    """task 87 Phase 6: debug 注入也走 dispatcher 的 inject_pending_question 工具。"""
+    api_user = _require_api_user(request, admin=True)
+    if not os.getenv("RPG_DEBUG_UI"):
+        return JSONResponse({"ok": False, "error": "debug disabled"}, status_code=404)
+    body = await request.json()
+    state = _ensure_loaded(api_user)
+    # 把老 text+| 分隔 options 拆成 question + options 列表
+    raw_text = body.get("text") or "下一步怎么做？｜选项：继续调查、返回基地、询问同伴"
+    if "｜选项：" in raw_text:
+        question, _, opt_str = raw_text.partition("｜选项：")
+        options = [s.strip() for s in opt_str.split("、") if s.strip()]
+    else:
+        question, options = raw_text, []
+    from ui_dispatch_helper import dispatch_ui_tool
+    d_result = dispatch_ui_tool(
+        tool_name="inject_pending_question",
+        args={"question": question, "options": options, "source": "debug"},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        return JSONResponse({"ok": False, "error": d_result.error}, status_code=400)
+    state.save()
+    return JSONResponse({"ok": True, "state": _payload(api_user)})
+
+
+@app.get("/api/models")
+async def api_models(request: Request) -> JSONResponse:
+    api_user = _require_api_user(request)
+    catalog = load_model_catalog()
+    is_admin = bool(api_user and api_user.get("role") == "admin")
+    return JSONResponse({
+        "ok": True,
+        "models": _redact_catalog(catalog, is_admin),
+        "selected": selected_model(catalog),
+    })
+
+
+@app.post("/api/models/select")
+async def api_models_select(request: Request) -> JSONResponse:
+    api_user = _require_api_user(request, admin=True)
+    body = await request.json()
+    catalog = select_model(body.get("api_id", ""), body.get("model_id", ""))
+    # 切换模型后清掉所有用户的 GM 缓存，下次会用新模型重建
+    with _state_lock:
+        _gm_by_user.clear()
+    return JSONResponse({"ok": True, "models": catalog, "selected": selected_model(catalog), "state": _payload(api_user)})
+
+
+@app.post("/api/models/api")
+async def api_models_upsert_api(request: Request) -> JSONResponse:
+    _require_api_user(request, admin=True)
+    catalog = upsert_api(await request.json())
+    return JSONResponse({"ok": True, "models": catalog, "selected": selected_model(catalog)})
+
+
+@app.post("/api/models/model")
+async def api_models_upsert_model(request: Request) -> JSONResponse:
+    _require_api_user(request, admin=True)
+    body = await request.json()
+    model_payload = body.get("model") if isinstance(body.get("model"), dict) else {
+        k: v for k, v in body.items() if k != "api_id"
+    }
+    catalog = upsert_model(body.get("api_id", ""), model_payload)
+    return JSONResponse({"ok": True, "models": catalog, "selected": selected_model(catalog)})
+
+
+@app.post("/api/models/model/delete")
+async def api_models_delete_model(request: Request) -> JSONResponse:
+    _require_api_user(request, admin=True)
+    body = await request.json()
+    catalog = delete_model(body.get("api_id", ""), body.get("model_id") or body.get("real_name", ""))
+    return JSONResponse({"ok": True, "models": catalog, "selected": selected_model(catalog)})
+
+
+@app.get("/api/tools")
+async def api_tools(request: Request) -> JSONResponse:
+    api_user = _require_api_user(request)
+    is_admin = bool(api_user and api_user.get("role") == "admin")
+    return JSONResponse({"ok": True, "tools": _redact_tools(tool_payload(), is_admin)})
+
+
+@app.post("/api/mcp/server")
+async def api_mcp_server(request: Request) -> JSONResponse:
+    _require_api_user(request, admin=True)
+    try:
+        catalog = upsert_mcp_server(await request.json())
+        return JSONResponse({"ok": True, "mcp": catalog, "tools": tool_payload()})
+    except (PermissionError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@app.post("/api/mcp/server/enabled")
+async def api_mcp_server_enabled(request: Request) -> JSONResponse:
+    _require_api_user(request, admin=True)
+    body = await request.json()
+    try:
+        catalog = set_mcp_server_enabled(body.get("id", ""), bool(body.get("enabled", True)))
+        return JSONResponse({"ok": True, "mcp": catalog, "tools": tool_payload()})
+    except (PermissionError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@app.post("/api/mcp/server/delete")
+async def api_mcp_server_delete(request: Request) -> JSONResponse:
+    _require_api_user(request, admin=True)
+    body = await request.json()
+    try:
+        catalog = delete_mcp_server(body.get("id", ""))
+        return JSONResponse({"ok": True, "mcp": catalog, "tools": tool_payload()})
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@app.post("/api/mcp/server/validate")
+async def api_mcp_server_validate(request: Request) -> JSONResponse:
+    _require_api_user(request, admin=True)
+    body = await request.json()
+    try:
+        return JSONResponse({"ok": True, "result": validate_mcp_server(body.get("id", ""))})
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
+# ── API 探测：模型列表 / 可用性 / 定价 / 综合报告 ──────────────────
+def _check_probe_permission(api_user: dict[str, Any] | None, api_id: str) -> JSONResponse | None:
+    """同 /api/models/probe 的权限策略：admin 或用户已配置该 provider key。
+    返回 None 表示允许，否则返回 403。
+    """
+    if not api_user or api_user.get("role") == "admin":
+        return None
+    from platform_app import user_credentials as _ucreds
+    cred = _ucreds.get_credential(api_user["id"], api_id)
+    if cred:
+        return None
+    return JSONResponse(
+        {"ok": False, "error": "需要先在「个人主页 → API 凭证」中配置该 provider 才能调用探测接口"},
+        status_code=403,
+    )
+
+
+@app.get("/api/models/remote")
+async def api_models_remote(request: Request) -> JSONResponse:
+    """从供应商 SDK 拉取真实可用模型清单（带 60s 缓存）"""
+    api_user = _require_api_user(request)
+    api_id = request.query_params.get("api_id", "")
+    blocked = _check_probe_permission(api_user, api_id)
+    if blocked:
+        return blocked
+    force = request.query_params.get("refresh") == "1"
+    import model_probe
+    return JSONResponse(model_probe.list_remote_models(
+        api_id, force_refresh=force,
+        user_id=api_user["id"] if api_user else None,
+    ))
+
+
+@app.get("/api/models/diff")
+async def api_models_diff(request: Request) -> JSONResponse:
+    """对比本地 catalog 和远端真实模型，返回 missing/extra/matching"""
+    api_user = _require_api_user(request)
+    api_id = request.query_params.get("api_id", "")
+    blocked = _check_probe_permission(api_user, api_id)
+    if blocked:
+        return blocked
+    import model_probe
+    return JSONResponse(model_probe.diff_catalog(api_id, user_id=api_user["id"] if api_user else None))
+
+
+@app.post("/api/models/probe")
+async def api_models_probe(request: Request) -> JSONResponse:
+    """发一条最小请求验证可用性 + 测延迟。
+
+    安全：避免用别人的 key 测试。要么 user 自己配置过该 api_id 的凭证，
+    要么必须是 admin。其他普通用户不允许触发付费 API 调用。
+    """
+    api_user = _require_api_user(request)
+    body = await request.json()
+    api_id = body.get("api_id", "")
+    # admin 可以测任何 provider；普通用户只能测自己配过 key 的 provider
+    if api_user and api_user.get("role") != "admin":
+        from platform_app import user_credentials as _ucreds
+        cred = _ucreds.get_credential(api_user["id"], api_id)
+        if not cred:
+            return JSONResponse(
+                {"ok": False, "error": "需要先在「个人主页 → API 凭证」中配置该 provider 的 key 才能测试"},
+                status_code=403,
+            )
+    import model_probe
+    return JSONResponse(model_probe.probe_availability(
+        api_id,
+        body.get("model"),
+        timeout_sec=int(body.get("timeout", 15)),
+        user_id=api_user["id"] if api_user else None,
+    ))
+
+
+@app.get("/api/models/pricing")
+async def api_models_pricing(request: Request) -> JSONResponse:
+    """查询单个模型的定价（USD per million tokens）"""
+    _require_api_user(request)
+    import model_probe
+    from model_registry import load_model_catalog, find_api, find_model
+    api_id = request.query_params.get("api_id", "")
+    model_id = request.query_params.get("model", "")
+    catalog = load_model_catalog()
+    api = find_api(catalog, api_id)
+    if not api:
+        return JSONResponse({"ok": False, "error": f"api_id 不存在: {api_id}"})
+    model = find_model(api, model_id)
+    real_name = (model or {}).get("real_name") if model else model_id
+    # 先用 api_id 查（按 provider 分组的定价表），找不到再用 kind 兜底
+    pricing = model_probe.get_pricing(api_id, real_name, (model or {}).get("pricing"))
+    if not pricing:
+        pricing = model_probe.get_pricing(api.get("kind") or "", real_name)
+    return JSONResponse({"ok": True, "api_id": api_id, "model": real_name, "pricing": pricing})
+
+
+@app.get("/api/models/report")
+async def api_models_report(request: Request) -> JSONResponse:
+    """API 综合健康报告：catalog + 远端 diff + 定价 + 可选 probe"""
+    api_user = _require_api_user(request)
+    api_id = request.query_params.get("api_id", "")
+    blocked = _check_probe_permission(api_user, api_id)
+    if blocked:
+        return blocked
+    probe = request.query_params.get("probe") == "1"
+    import model_probe
+    return JSONResponse(model_probe.full_report(
+        api_id, probe_model=probe,
+        user_id=api_user["id"] if api_user else None,
+    ))
+
+
+@app.get("/api/models/capabilities")
+async def api_models_capabilities(request: Request) -> JSONResponse:
+    """查询单个模型的能力清单（text/vision/tools/json_mode 等）"""
+    _require_api_user(request)
+    import model_probe
+    from model_registry import load_model_catalog, find_api, find_model
+    api_id = request.query_params.get("api_id", "")
+    model_id = request.query_params.get("model", "")
+    catalog = load_model_catalog()
+    api = find_api(catalog, api_id)
+    if not api:
+        return JSONResponse({"ok": False, "error": f"api_id 不存在: {api_id}"})
+    model = find_model(api, model_id)
+    real_name = (model or {}).get("real_name") if model else model_id
+    caps = model_probe.get_capabilities(api_id, real_name, (model or {}).get("capabilities"))
+    return JSONResponse({
+        "ok": True,
+        "api_id": api_id,
+        "model": real_name,
+        "capabilities": model_probe.describe_capabilities(caps),
+        "capability_ids": caps,
+    })
+
+
+@app.get("/api/models/capabilities/labels")
+async def api_models_capability_labels(request: Request) -> JSONResponse:
+    """返回所有已知能力的标签词典（前端筛选器/徽标用）"""
+    _require_api_user(request)
+    import model_probe
+    return JSONResponse({"ok": True, "labels": model_probe.CAPABILITY_LABELS})
+
+
+# ── MCP runtime broker ──────────────────────────────────────────────
+@app.post("/api/mcp/server/start")
+async def api_mcp_server_start(request: Request) -> JSONResponse:
+    _require_api_user(request, admin=True)
+    body = await request.json()
+    import mcp_broker
+    return JSONResponse(mcp_broker.start_server(body.get("id", "")))
+
+
+@app.post("/api/mcp/server/stop")
+async def api_mcp_server_stop(request: Request) -> JSONResponse:
+    _require_api_user(request, admin=True)
+    body = await request.json()
+    import mcp_broker
+    return JSONResponse(mcp_broker.stop_server(body.get("id", "")))
+
+
+@app.get("/api/mcp/runtime")
+async def api_mcp_runtime(request: Request) -> JSONResponse:
+    """MCP 运行时状态 + per-user 调用审计。
+    - 普通用户：拿不到 stderr（可能含 token/路径），audit_log 只看自己的
+    - admin：full stderr + 全部用户的 audit_log
+    """
+    api_user = _require_api_user(request)
+    is_admin = bool(api_user and api_user.get("role") == "admin")
+    import mcp_broker
+    payload = mcp_broker.status()
+    if not is_admin:
+        for entry in payload.get("running") or []:
+            entry.pop("last_stderr", None)
+    # P0 #3：附 audit_log，让管理员能查跨用户 MCP 调用
+    try:
+        audit = mcp_broker.get_audit_log(
+            user_id=None if is_admin else (api_user["id"] if api_user else None),
+            limit=200,
+        )
+        payload["audit_log"] = audit
+    except Exception:
+        payload["audit_log"] = []
+    return JSONResponse(payload)
+
+
+@app.post("/api/mcp/tool/call")
+async def api_mcp_tool_call(request: Request) -> JSONResponse:
+    """前端或主 GM 调用 MCP 工具的统一入口。
+
+    安全：MCP server 配置目前是全局共享，调用任意工具等于以服务进程身份执行。
+    在多用户/服务器模式下只允许 admin；本地匿名模式才允许任意调用。
+    后续要让 MCP server 支持 per-user 注册再放宽。
+    """
+    api_user = _require_api_user(request)
+    if _api_auth_required() and (not api_user or api_user.get("role") != "admin"):
+        return JSONResponse({"ok": False, "error": "MCP 工具调用目前仅限管理员（per-user 注册待支持）"}, status_code=403)
+    body = await request.json()
+    import mcp_broker
+    return JSONResponse(mcp_broker.call_tool(
+        body.get("server_id", ""),
+        body.get("tool", ""),
+        body.get("arguments", {}) or {},
+        timeout=int(body.get("timeout", 30)),
+        user_id=api_user["id"] if api_user else None,
+    ))
+
+
+@app.get("/api/mcp/tools")
+async def api_mcp_tools(request: Request) -> JSONResponse:
+    """列出所有已启动 server 的工具清单（前端加号菜单/Skill 选择面板用）。"""
+    _require_api_user(request)
+    import mcp_broker
+    return JSONResponse({"ok": True, "tools": mcp_broker.discover_all_tools()})
+
+
+@app.post("/api/skills/import")
+async def api_skills_import(request: Request) -> JSONResponse:
+    _require_api_user(request, admin=True)
+    body = await request.json()
+    try:
+        skill = import_skill_bundle(body.get("file", {}))
+        return JSONResponse({"ok": True, "skill": skill, "tools": tool_payload()})
+    except (PermissionError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@app.post("/api/skills/{skill_id}/run")
+async def api_skill_run(request: Request, skill_id: str) -> JSONResponse:
+    """在沙箱里跑某个 imported skill。
+
+    Body: {"cmd": ["bash", "script.sh", "arg1"], "stdin": "...", "timeout_sec": 30}
+
+    安全：admin only；本地匿名也允许（开发场景）。
+    """
+    api_user = _require_api_user(request)
+    if _api_auth_required() and (not api_user or api_user.get("role") != "admin"):
+        return JSONResponse({"ok": False, "error": "需要管理员权限"}, status_code=403)
+
+    body = await request.json()
+    cmd = body.get("cmd") or body.get("command")
+    if not isinstance(cmd, list) or not cmd:
+        return JSONResponse({"ok": False, "error": "cmd 必须是非空 list"}, status_code=400)
+
+    # 找 skill_id 对应的目录
+    from tool_registry import list_imported_skills
+    skill = next((s for s in list_imported_skills() if s.get("id") == skill_id), None)
+    if not skill:
+        return JSONResponse({"ok": False, "error": f"skill 不存在: {skill_id}"}, status_code=404)
+    skill_path = skill.get("path") or ""
+    if not skill_path:
+        return JSONResponse({"ok": False, "error": "skill 路径丢失"}, status_code=500)
+
+    # 找 skill 根目录（SKILL.md 的父目录）
+    from pathlib import Path as _Path
+    skill_root = _Path(skill_path).parent
+
+    import skill_executor
+    result = skill_executor.run_skill_command(
+        cmd=cmd,
+        skill_root=skill_root,
+        timeout_sec=int(body.get("timeout_sec") or skill_executor.DEFAULT_TIMEOUT_SEC),
+        stdin_text=body.get("stdin"),
+    )
+    return JSONResponse({"ok": True, **result})
+
+
+@app.post("/api/worldline/variable")
+async def api_worldline_variable(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 走 dispatcher 的 set_user_variable 工具。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    key = body.get("key", "")
+    value = body.get("value", "")
+    state = _ensure_loaded(api_user)
+    persist_user_id, active_save_id = _resolve_persist_target(api_user)
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name="set_user_variable",
+        args={"key": key, "value": value},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=active_save_id or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    # 同步写入 DB(保证前端管理面板可见)
+    if persist_user_id and active_save_id:
+        try:
+            platform_knowledge.set_worldline_variable(persist_user_id, active_save_id, key, value, source="user")
+        except Exception:
+            pass
+    return JSONResponse({"ok": True, "state": _payload(api_user)})
+
+
+@app.post("/api/worldline/variable/remove")
+async def api_worldline_variable_remove(request: Request) -> JSONResponse:
+    """task 87 Phase 6: destructive,走 dispatcher remove_user_variable 工具。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    key = body.get("key", "")
+    state = _ensure_loaded(api_user)
+    persist_user_id, active_save_id = _resolve_persist_target(api_user)
+    from ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name="remove_user_variable",
+        args={"key": key},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=active_save_id or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    if persist_user_id and active_save_id:
+        try:
+            platform_knowledge.remove_worldline_variable(persist_user_id, active_save_id, key)
+        except Exception:
+            pass
+    return JSONResponse({"ok": True, "state": _payload(api_user)})
+
+
+# ── 5E-compatible 规则模组 / RulesEngine 接口 ─────────────────────
+# 内部 ruleset id "dnd5e"，对外文案使用 "5E compatible / 五版规则兼容"。
+# 不引入任何官方 Dungeons & Dragons 商标、Forgotten Realms 设定或非 SRD IP。
+from rules_bridge import (
+    start_module as _rb_start_module,
+    enter_room as _rb_enter_room,
+    perform_skill_check as _rb_skill_check,
+    perform_saving_throw as _rb_saving_throw,
+    trap_check as _rb_trap_check,
+    start_encounter_by_id as _rb_start_encounter,
+    player_attack as _rb_player_attack,
+    enemy_attack as _rb_enemy_attack,
+    advance_turn as _rb_advance_turn,
+    short_rest as _rb_short_rest,
+    suggest_rule_actions as _rb_suggest_rule_actions,
+    parse_consume_intent as _rb_parse_consume_intent,
+    consume_item_action as _rb_consume_item_action,
+    classify_combat_intent as _rb_classify_combat_intent,
+)
+import modules as _rules_module_registry
+
+
+def _coerce_rule_seed(seed: Any) -> int | None:
+    return int(seed) if isinstance(seed, (int, float, str)) and str(seed).lstrip("-").isdigit() else None
+
+
+def _canonicalize_exit_target(state: GameState, target: str) -> tuple[str, str]:
+    """Bug 4：LLM 经常虚构 exit id（如 "east_rust_track" 而非真正的
+    "minecart_track"）。本函数把任意字符串归到当前房间真实出口 id：
+      1. 完全匹配 `to` 或 `id` → 直接返回
+      2. 否则按 label 和 to 做子串/前缀模糊匹配（中文标签如「沿外侧锈轨往东」也能
+         匹配到 "east"/"east_rust_track" 这类 LLM 编造的英文 id）
+      3. 找不到返回 ("", reason)。
+
+    返回 (canonical_id, debug_reason)。canonical_id 为空时说明无法规范化。"""
+    target = (target or "").strip()
+    if not target:
+        return "", "empty target"
+    scene = state.data.get("scene") or {}
+    current_room = scene.get("current_room") or {}
+    exits = list(current_room.get("exits") or [])
+    if not exits:
+        return target, "no exits to validate"
+    # 1. 直接命中
+    for ex in exits:
+        if str(ex.get("to") or "") == target:
+            return target, "exact match"
+    # 2. 模糊匹配 — 拆 target 成关键词 token，与 exit.to 或 label 做对应。
+    tokens = [t for t in re.split(r"[_\-\s]+", target.lower()) if t]
+    best_id = ""
+    best_score = 0
+    for ex in exits:
+        to_id = str(ex.get("to") or "").lower()
+        label = str(ex.get("label") or "")
+        score = 0
+        for tok in tokens:
+            if tok and tok in to_id:
+                score += 2
+            if tok and tok in label.lower():
+                score += 1
+        # 中文方向关键词映射
+        direction_map = {
+            "east": ["东", "外侧"], "west": ["西"], "north": ["北"],
+            "south": ["南"], "down": ["下", "降"], "up": ["上", "升"],
+        }
+        for tok in tokens:
+            for cn in direction_map.get(tok, []):
+                if cn in label:
+                    score += 1
+        if score > best_score:
+            best_score = score
+            best_id = str(ex.get("to") or "")
+    if best_id and best_score >= 1:
+        return best_id, f"fuzzy match score={best_score} from tokens={tokens}"
+    return "", f"no exit matches target={target!r} (exits={[e.get('to') for e in exits]})"
+
+
+def _execute_rules_action(state: GameState, body: dict[str, Any]) -> dict[str, Any]:
+    """Execute one deterministic RulesEngine action against state.
+
+    Used by both /api/rules/action and the chat pipeline so free-form player
+    input can trigger dice before the GM narrates the outcome.
+    """
+    body = dict(body or {})
+    kind = str(body.get("kind") or "").strip()
+    seed = _coerce_rule_seed(body.get("seed"))
+    prelude: list[dict[str, Any]] = []
+
+    move_to = str(body.get("move_to") or "").strip()
+    if move_to and kind in {"skill_check", "saving_throw", "trap_check"}:
+        cur = (state.data.get("scene") or {}).get("location_id")
+        if move_to != cur:
+            canonical, reason = _canonicalize_exit_target(state, move_to)
+            if not canonical:
+                return {"ok": False, "error": f"无法前往 {move_to}：{reason}",
+                        "canonicalize": {"requested": move_to, "reason": reason}}
+            moved = _rb_enter_room(state, canonical)
+            if not moved.get("ok"):
+                return {"ok": False, "error": moved.get("error") or f"无法前往 {canonical}",
+                        "canonicalize": {"requested": move_to, "resolved": canonical}}
+            prelude.append({"kind": "move", "to": canonical, "requested": move_to,
+                            "room": moved.get("room")})
+
+    if kind == "skill_check":
+        skill = str(body.get("skill") or "")
+        if not skill:
+            return {"ok": False, "error": "缺少 skill"}
+        dc = int(body.get("dc", body.get("dc_hint", 12)))
+        result = _rb_skill_check(
+            state, skill=skill, dc=dc,
+            advantage=bool(body.get("advantage")),
+            disadvantage=bool(body.get("disadvantage")),
+            seed=seed,
+            reason=str(body.get("reason") or body.get("fact") or ""),
+            sets_flag=body.get("sets_flag") or body.get("reveals"),
+        )
+        out: dict[str, Any] = {"ok": True, "result": result}
+    elif kind == "saving_throw":
+        ability = str(body.get("ability") or "")
+        if not ability:
+            return {"ok": False, "error": "缺少 ability"}
+        dc = int(body.get("dc", body.get("dc_hint", 12)))
+        result = _rb_saving_throw(
+            state, ability=ability, dc=dc,
+            advantage=bool(body.get("advantage")),
+            disadvantage=bool(body.get("disadvantage")),
+            seed=seed,
+            reason=str(body.get("reason") or body.get("fact") or ""),
+            fail_damage_expr=body.get("fail_damage_expr") or body.get("fail_damage"),
+            fail_condition=body.get("fail_condition"),
+        )
+        out = {"ok": True, "result": result}
+    elif kind == "trap_check":
+        room_id = str(body.get("room_id") or state.data.get("scene", {}).get("location_id") or "")
+        trap_id = str(body.get("trap_id") or "")
+        if not room_id or not trap_id:
+            return {"ok": False, "error": "缺少 room_id 或 trap_id"}
+        out = _rb_trap_check(state, room_id=room_id, trap_id=trap_id, seed=seed)
+    elif kind == "attack":
+        target_id = str(body.get("target") or body.get("target_id") or "")
+        weapon_id = str(body.get("weapon") or body.get("weapon_id") or "shortsword")
+        enc = state.data.get("encounter") or {}
+        encounter_id = str(body.get("encounter_id") or "").strip()
+        if not enc.get("active") and encounter_id:
+            started = _rb_start_encounter(state, encounter_id=encounter_id, seed=seed)
+            if not started.get("ok"):
+                return {"ok": False, "error": started.get("error") or f"无法启动遭遇 {encounter_id}"}
+            prelude.append({"kind": "start_encounter", "encounter": started.get("encounter")})
+            enc = state.data.get("encounter") or {}
+        if not target_id and enc.get("active"):
+            enemy = next(
+                (c for c in enc.get("combatants", []) if c.get("side") == "enemy" and not c.get("defeated")),
+                None,
+            )
+            if enemy:
+                target_id = str(enemy.get("id") or "")
+        out = _rb_player_attack(
+            state, target_id=target_id, weapon_id=weapon_id,
+            advantage=bool(body.get("advantage")),
+            disadvantage=bool(body.get("disadvantage")),
+            seed=seed,
+        )
+    elif kind == "short_rest":
+        out = _rb_short_rest(state, seed=seed)
+    elif kind == "consume_item":
+        item_id = str(body.get("item_id") or body.get("item") or body.get("alias") or "")
+        try:
+            qty = int(body.get("qty") or 1)
+        except (TypeError, ValueError):
+            qty = 1
+        out = _rb_consume_item_action(state, item_id=item_id, qty=qty,
+                                       reason=str(body.get("reason") or ""))
+    elif kind == "move":
+        loc = str(body.get("to") or body.get("target") or body.get("move_to") or "")
+        canonical, reason = _canonicalize_exit_target(state, loc)
+        if not canonical:
+            return {"ok": False, "error": f"无法前往 {loc}：{reason}",
+                    "canonicalize": {"requested": loc, "reason": reason}}
+        out = _rb_enter_room(state, canonical)
+        if isinstance(out, dict) and out.get("ok"):
+            out.setdefault("canonicalize", {"requested": loc, "resolved": canonical})
+    else:
+        return {"ok": False, "error": f"未支持的 kind: {kind}"}
+
+    if prelude:
+        out.setdefault("prelude", prelude)
+    return out
+
+
+def _chat_rule_candidates(
+    state: GameState,
+    user_input: str,
+    curator_actions: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Merge local module rules with LLM-inferred rule candidates.
+
+    Module rules are deterministic and tied to the active room graph, so they
+    must win over generic LLM candidates such as a loose "stealth DC 12".
+    """
+    scene = state.data.get("scene") or {}
+    if not scene.get("module_id"):
+        return list(curator_actions or [])
+
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+
+    def add(raw: dict[str, Any] | None) -> None:
+        if not isinstance(raw, dict):
+            return
+        action = dict(raw)
+        key = (
+            action.get("kind"),
+            action.get("skill") or action.get("ability"),
+            action.get("target") or action.get("target_id"),
+            action.get("move_to") or action.get("to"),
+            action.get("trap_id"),
+        )
+        if key in seen:
+            return
+        seen.add(key)
+        merged.append(action)
+
+    for action in _rb_suggest_rule_actions(user_input, state):
+        add(action)
+    # Bug 5：从玩家文本里 deterministic 解析 inventory 消耗意图。
+    # 不依赖 LLM —— "点燃 1 支 Torch" / "use 2 Healing Draught" 等都从这里入。
+    pc = state.data.get("player_character") or {}
+    for intent in _rb_parse_consume_intent(user_input, pc):
+        add({
+            "kind": "consume_item",
+            "item_id": intent["item_id"],
+            "qty": intent["qty"],
+            "reason": f"backend parser: {intent['matched']!r}",
+        })
+    for action in curator_actions or []:
+        add(action)
+    return merged
+
+
+def _apply_chat_rule_candidates(state: GameState, actions: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Apply rule actions inferred from the player's text.
+
+    Bug 4：之前只跑第一条成功动作，玩家说「我调查脚印然后沿东侧锈轨探索」时
+    Investigation 成功就 break，move 永不触发，GM 又自己叙事成已经移动。
+    现在按 kind 去重，每种 kind 至多跑一次，但不同 kind 可以同回合都跑
+    （e.g. 一次 investigation + 一次 move）。
+
+    失败的动作（含 exit 规范化失败）也保留在 results 里，让
+    _rule_results_prompt 把失败原因传给 GM 防止幻觉。
+    """
+    scene = state.data.get("scene") or {}
+    if not scene.get("module_id"):
+        return []
+
+    allowed = {"skill_check", "saving_throw", "trap_check", "attack", "short_rest", "move", "consume_item"}
+    # 一种 kind 最多跑一次 — 同一回合不允许双重 attack / 双重 skill_check 等。
+    # 但 skill_check + move 可以同回合跑（玩家描述含调查 + 移动）。
+    consumed_kinds: set[str] = set()
+    results: list[dict[str, Any]] = []
+    for raw in actions or []:
+        if not isinstance(raw, dict):
+            continue
+        action = dict(raw)
+        kind = action.get("kind")
+        if kind not in allowed or kind in consumed_kinds:
+            continue
+        out = _execute_rules_action(state, action)
+        # 不管 ok / not ok 都记录：失败的也要传给 GM 让它明白发生了什么
+        results.append({"action": action, "out": out})
+        if out.get("ok"):
+            consumed_kinds.add(kind)
+        # 允许继续找下一种 kind 的候选；只对成功的 kind 占位
+    return results
+
+
+def _rule_results_prompt(rule_results: list[dict[str, Any]], state: GameState | None = None) -> str:
+    if not rule_results:
+        return ""
+    lines = [
+        "【RulesEngine 本轮裁定】",
+        "以下结果已经由 deterministic RulesEngine 写入状态。GM 必须基于这些结果叙事，不能重新掷骰、改写 HP/AC/先攻/dice_log。",
+    ]
+    if isinstance(state, GameState):
+        scene = state.data.get("scene") or {}
+        room = scene.get("current_room") or {}
+        room_name = room.get("name") or scene.get("location_id") or ""
+        room_id = scene.get("location_id") or room.get("id") or ""
+        if room_name or room_id:
+            lines.append(f"当前规则场景：{room_name} ({room_id})。GM 输出中的当前位置必须以此为准，不要写成其他房间。")
+        enc = state.data.get("encounter") or {}
+        if enc.get("active"):
+            live = [
+                f"{c.get('name') or c.get('id')} HP {c.get('hp')}/{c.get('max_hp')}"
+                for c in enc.get("combatants", [])
+                if c.get("side") == "enemy" and not c.get("defeated")
+            ]
+            if live:
+                lines.append("当前仍在战斗的敌人：" + "；".join(live))
+    for item in rule_results:
+        action = item.get("action") or {}
+        out = item.get("out") or {}
+        # Bug 4：失败 action（含 exit 规范化失败 / 不可达房间）也要写进 prompt，
+        # 否则 GM 不知道移动没真发生还会接着叙事「沿轨道向东摸索过去」。
+        if not out.get("ok"):
+            err = out.get("error") or "（未知）"
+            canon = out.get("canonicalize") or {}
+            req = canon.get("requested") or action.get("move_to") or action.get("to") or ""
+            lines.append(
+                f"- ❌ {action.get('kind')} 未执行：{err}"
+                + (f"（玩家文本似乎想去 {req!r}，但当前房间没有这个出口）" if req else "")
+            )
+            lines.append(f"  · GM 必须在叙事里反映这条失败：不要把玩家描述成已经移动/已经完成；"
+                         f"可让玩家明确选择真正可用的出口或重述意图。")
+            continue
+        result = out.get("result") or {}
+        if out.get("prelude"):
+            for pre in out["prelude"]:
+                room = pre.get("room") or {}
+                requested = pre.get("requested")
+                resolved = pre.get("to")
+                if requested and requested != resolved:
+                    lines.append(
+                        f"- 先移动到：{room.get('name') or resolved}"
+                        f"（玩家文本写的是 {requested!r}，系统规范化到真实出口 {resolved!r}）"
+                    )
+                else:
+                    lines.append(f"- 先移动到：{room.get('name') or resolved}")
+        roll = result.get("roll") or {}
+        total = roll.get("total")
+        dc = result.get("dc")
+        success = result.get("success")
+        skill = action.get("skill") or action.get("ability") or action.get("target") or action.get("kind")
+        verdict = "成功" if success is True else "失败" if success is False else "已执行"
+        bit = f"- {action.get('kind')} {skill}: {verdict}"
+        if total is not None:
+            bit += f"，骰点总计 {total}"
+        if dc is not None:
+            bit += f" vs DC {dc}"
+        lines.append(bit)
+        for fact in result.get("gm_facts") or []:
+            lines.append(f"  · GM fact: {fact}")
+    return "\n".join(lines)
+
+
+def _rules_payload(state: GameState) -> dict:
+    """前端 UI 需要的精简切片：角色卡 + 场景 + 战斗 + 骰子日志 + 模组元信息。"""
+    return {
+        "ruleset": state.data.get("ruleset", {}),
+        "player_character": state.data.get("player_character", {}),
+        "scene": state.data.get("scene", {}),
+        "encounter": state.data.get("encounter", {}),
+        "dice_log": list(state.data.get("dice_log", []))[-30:],
+    }
+
+
+def _append_rules_receipt(state: GameState, text: str) -> None:
+    text = str(text or "").strip()
+    if not text:
+        return
+    state.data.setdefault("history", []).append({
+        "role": "assistant",
+        "content": text,
+        "source": "rules_engine",
+    })
+
+
+def _clear_pending_questions_after_rule_action(state: GameState, choice: str) -> None:
+    questions = state.data.setdefault("permissions", {}).setdefault("pending_questions", [])
+    cleared = 0
+    while questions:
+        state.clear_pending_question(index=0, choice=choice or "rules_action")
+        cleared += 1
+        questions = state.data.setdefault("permissions", {}).setdefault("pending_questions", [])
+    if cleared:
+        memory = state.data.setdefault("memory", {})
+        updates = memory.get("last_structured_updates") or []
+        memory["last_structured_updates"] = [
+            item for item in updates
+            if "等待玩家回答" not in str(item)
+        ][:12]
+
+
+def _room_receipt(room: dict[str, Any] | None) -> str:
+    room = room or {}
+    name = room.get("name") or room.get("id") or "未知房间"
+    room_id = room.get("id") or ""
+    lines = [f"【RulesEngine：移动】你来到「{name}」{f'（{room_id}）' if room_id else ''}。"]
+    desc = str(room.get("description") or "").strip()
+    if desc:
+        lines.append(desc)
+    clues = [c.get("text") if isinstance(c, dict) else str(c) for c in (room.get("visible_clues") or [])]
+    clues = [c for c in clues if c]
+    if clues:
+        lines.append("可见线索：" + "；".join(clues[:4]) + "。")
+    exits = [e.get("label") or e.get("to") for e in (room.get("exits") or []) if isinstance(e, dict)]
+    exits = [e for e in exits if e]
+    if exits:
+        lines.append("可用出口：" + "、".join(exits[:5]) + "。")
+    return "\n\n".join(lines)
+
+
+def _roll_line(result: dict[str, Any]) -> str:
+    roll = result.get("roll") or {}
+    expr = roll.get("expression") or ""
+    rolls = ",".join(str(x) for x in (roll.get("rolls") or []))
+    mod = roll.get("modifier")
+    total = roll.get("total")
+    dc = result.get("dc")
+    parts = []
+    if expr or rolls:
+        bit = expr or "roll"
+        if rolls:
+            bit += f"=[{rolls}]"
+        if isinstance(mod, (int, float)) and mod:
+            bit += f"{mod:+g}"
+        if total is not None:
+            bit += f" → {total}"
+        if dc is not None:
+            bit += f" vs DC {dc}"
+        parts.append(bit)
+    return "；".join(parts)
+
+
+def _action_receipt(action: dict[str, Any], out: dict[str, Any]) -> str:
+    result = out.get("result") or {}
+    kind = action.get("kind") or "action"
+    verdict = "成功" if result.get("success") is True else "失败" if result.get("success") is False else "已执行"
+    label = action.get("skill") or action.get("ability") or action.get("target") or action.get("target_id") or kind
+    lines = [f"【RulesEngine：{kind}】{label}：{verdict}。"]
+    roll = _roll_line(result)
+    if roll:
+        lines.append(f"掷骰：{roll}。")
+    damage = result.get("damage") or {}
+    if damage.get("total") is not None:
+        lines.append(f"伤害：{damage.get('total')}。")
+    for fact in result.get("gm_facts") or []:
+        if fact:
+            lines.append(str(fact))
+    if out.get("prelude"):
+        for pre in out["prelude"]:
+            if pre.get("kind") == "move":
+                room = pre.get("room") or {}
+                moved_to = room.get("name") or pre.get("to")
+                if moved_to:
+                    lines.insert(1, f"先移动到：{moved_to}。")
+            elif pre.get("kind") == "start_encounter":
+                enc = pre.get("encounter") or {}
+                name = (enc.get("definition") or {}).get("name") or enc.get("encounter_id")
+                lines.insert(1, f"遭遇开始：{name}。")
+    return "\n\n".join(lines)
+
+
+def _encounter_receipt(prefix: str, res: dict[str, Any]) -> str:
+    enc = res.get("encounter") or {}
+    if not enc:
+        return f"【RulesEngine：{prefix}】已执行。"
+    if prefix == "先攻":
+        order = enc.get("initiative_order") or []
+        order_line = " → ".join(f"{o.get('name')}({o.get('init')})" for o in order if o)
+        return f"【RulesEngine：先攻】遭遇开始。\n\n先攻顺序：{order_line}。"
+    if prefix == "下一回合":
+        order = enc.get("initiative_order") or []
+        idx = int(enc.get("turn_index") or 0)
+        current = order[idx] if 0 <= idx < len(order) else {}
+        return f"【RulesEngine：下一回合】现在轮到 {current.get('name') or '未知'}。"
+    result = res.get("result") or {}
+    action = {"kind": prefix, "target": result.get("target_name") or "player"}
+    return _action_receipt(action, {"result": result})
+
+
+@app.get("/api/rules/modules")
+async def api_rules_modules(request: Request) -> JSONResponse:
+    """列出可用的 5E-compatible 冒险模组。"""
+    _require_api_user(request)
+    return JSONResponse({"ok": True, "modules": _rules_module_registry.list_modules()})
+
+
+@app.post("/api/rules/module/start")
+async def api_rules_module_start(request: Request) -> JSONResponse:
+    """低层原语：把模组加载到当前激活的 save，会直接 mutate 该 save state。
+    task 87 Phase 6: 走 dispatcher module_load 工具(destructive,UI 直触发)。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    module_id = str(body.get("module_id") or "ash_mine").strip()
+    character_overrides = body.get("character") or None
+
+    state = _ensure_loaded(api_user)
+    from ui_dispatch_helper import dispatch_ui_tool
+    d_result = dispatch_ui_tool(
+        tool_name="module_load",
+        args={"module_id": module_id, "character_overrides": character_overrides},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        raise HTTPException(status_code=400, detail=d_result.error or "module_load 失败")
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "rules": _rules_payload(state),
+                         "opening": "", "state": _payload(api_user)})
+
+
+@app.post("/api/rules/module/launch")
+async def api_rules_module_launch(request: Request) -> JSONResponse:
+    """Bug 2：模组启动的标准入口。
+
+    流程：
+      1. 后端真正建立一个**独立 game_save**（kind=module_adventure 标题=模组名）
+      2. 用模组开局状态填 state_snapshot（Cinder + 灰烬矿坑 scene 等）
+      3. 激活该 save（切 runtime_checkout / user_runtime / 缓存）
+      4. 返回新 save_id + 状态 → FE 跳 Game Console 看到的就是新存档
+
+    绝不 mutate 当前小说/普通 save。已注册用户必填（匿名不允许，避免污染本地默认 save）。
+    """
+    api_user = _require_api_user(request)
+    if not api_user or not api_user.get("id"):
+        raise HTTPException(status_code=401, detail="启动模组需要登录")
+    body = await request.json()
+    module_id = str(body.get("module_id") or "ash_mine").strip()
+    if not module_id:
+        raise HTTPException(status_code=400, detail="缺少 module_id")
+    character_overrides = body.get("character") or None
+    custom_title = str(body.get("title") or "").strip()
+
+    # 加载模组 manifest 取标题
+    try:
+        bundle = _rules_module_registry.load_module(module_id)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"未知模组 {module_id}：{exc}")
+    manifest = bundle.get("manifest") or {}
+    title = custom_title or manifest.get("name_cn") or manifest.get("name") or module_id
+
+    # 找到（或创建）一个属于本用户的 ad-hoc script，作为模组 save 的 owner script。
+    # 模组不依赖小说章节，但 game_saves.script_id 是 NOT NULL 外键 → 必须给个 script。
+    # 复用 ad-hoc"模组容器"剧本，避免每次都建新 script row。
+    from platform_app.db import connect as _db_connect
+    user_id = int(api_user["id"])
+    with _db_connect() as db:
+        scr = db.execute(
+            "select id from scripts where owner_id = %s and title = %s",
+            (user_id, "[内部] 5E 模组容器"),
+        ).fetchone()
+        if scr:
+            container_script_id = int(scr["id"])
+        else:
+            scr = db.execute(
+                "insert into scripts(owner_id, title) values (%s, %s) returning id",
+                (user_id, "[内部] 5E 模组容器"),
+            ).fetchone()
+            container_script_id = int(scr["id"])
+
+    # 用一个空的临时 GameState 跑 rules_bridge.start_module 拿到完整初始 snapshot
+    tmp_state = GameState.new()
+    res = _rb_start_module(tmp_state, module_id, character_overrides=character_overrides)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error", "start_module 失败"))
+
+    # 把初始 snapshot 写入新 save
+    from platform_app import workspace as _workspace
+    from platform_app import branches as _branches
+    from psycopg.types.json import Jsonb as _Jsonb
+    with _db_connect() as db:
+        save_row = db.execute(
+            """
+            insert into game_saves(user_id, script_id, title, state_path, state_snapshot)
+            values (%s, %s, %s, %s, %s)
+            returning *
+            """,
+            (user_id, container_script_id, title, str(SAVE_FILE), _Jsonb(tmp_state.data)),
+        ).fetchone()
+    save_id = int(save_row["id"])
+    _branches.seed_tree(save_id, str(SAVE_FILE))
+    # 激活
+    _branches.activate_save(user_id, save_id)
+    # 清缓存让 _ensure_loaded 重读
+    _invalidate_user_cache(api_user)
+
+    # 重新拉 state
+    state = _ensure_loaded(api_user)
+    return JSONResponse({
+        "ok": True,
+        "save_id": save_id,
+        "save_title": title,
+        "rules": _rules_payload(state),
+        "opening": res.get("opening") or "",
+        "state": _payload(api_user),
+    })
+
+
+@app.get("/api/rules/scene")
+async def api_rules_scene(request: Request) -> JSONResponse:
+    """返回当前 scene / player_character / encounter / dice_log 快照。"""
+    api_user = _require_api_user(request)
+    state = _ensure_loaded(api_user)
+    return JSONResponse({"ok": True, "rules": _rules_payload(state)})
+
+
+@app.post("/api/rules/move")
+async def api_rules_move(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 走 dispatcher module_enter_room 工具。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    location_id = str(body.get("to") or "").strip()
+    if not location_id:
+        raise HTTPException(status_code=400, detail="缺少 to")
+    state = _ensure_loaded(api_user)
+    from ui_dispatch_helper import dispatch_ui_tool
+    d_result = dispatch_ui_tool(
+        tool_name="module_enter_room",
+        args={"location_id": location_id},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        return JSONResponse({"ok": False, "error": d_result.error}, status_code=400)
+    _clear_pending_questions_after_rule_action(state, f"move:{location_id}")
+    # 从 state.scene 重新读 current_room 做 receipt
+    room = (state.data.get("scene") or {}).get("current_room") or {}
+    _append_rules_receipt(state, _room_receipt(room))
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "rules": _rules_payload(state), "room": room})
+
+
+@app.post("/api/rules/action")
+async def api_rules_action(request: Request) -> JSONResponse:
+    """通用规则动作执行入口。根据 body.kind 路由到具体规则函数。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    state = _ensure_loaded(api_user)
+
+    out = _execute_rules_action(state, body)
+    if not out.get("ok"):
+        return JSONResponse(out, status_code=400)
+
+    _clear_pending_questions_after_rule_action(state, f"rules:{body.get('kind') or 'action'}")
+    _append_rules_receipt(state, _action_receipt(body, out))
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    out["rules"] = _rules_payload(state)
+    return JSONResponse(out)
+
+
+@app.post("/api/rules/encounter/start")
+async def api_rules_encounter_start(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 走 dispatcher combat_start 工具。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    encounter_id = str(body.get("encounter_id") or "").strip()
+    if not encounter_id:
+        raise HTTPException(status_code=400, detail="缺少 encounter_id")
+    seed = body.get("seed")
+    state = _ensure_loaded(api_user)
+    from ui_dispatch_helper import dispatch_ui_tool
+    args: dict = {"encounter_id": encounter_id}
+    if seed is not None and str(seed).lstrip("-").isdigit():
+        args["seed"] = int(seed)
+    d_result = dispatch_ui_tool(
+        tool_name="combat_start", args=args,
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        return JSONResponse({"ok": False, "error": d_result.error}, status_code=400)
+    encounter = state.data.get("encounter") or {}
+    _clear_pending_questions_after_rule_action(state, f"encounter:start:{encounter_id}")
+    _append_rules_receipt(state, _encounter_receipt("先攻", {"encounter": encounter}))
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "rules": _rules_payload(state), "encounter": encounter})
+
+
+@app.post("/api/rules/encounter/next")
+async def api_rules_encounter_next(request: Request) -> JSONResponse:
+    """task 87 Phase 6: 走 dispatcher combat_next_turn 工具。"""
+    api_user = _require_api_user(request)
+    state = _ensure_loaded(api_user)
+    from ui_dispatch_helper import dispatch_ui_tool
+    d_result = dispatch_ui_tool(
+        tool_name="combat_next_turn", args={},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        return JSONResponse({"ok": False, "error": d_result.error}, status_code=400)
+    encounter = state.data.get("encounter") or {}
+    _clear_pending_questions_after_rule_action(state, "encounter:next")
+    _append_rules_receipt(state, _encounter_receipt("下一回合", {"encounter": encounter}))
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "rules": _rules_payload(state), "encounter": encounter})
+
+
+@app.post("/api/rules/encounter/enemy")
+async def api_rules_encounter_enemy(request: Request) -> JSONResponse:
+    """敌方回合：task 87 Phase 6 走 dispatcher combat_enemy_attack。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    attacker_id = str(body.get("attacker_id") or "").strip()
+    target_id = str(body.get("target_id") or "player").strip()
+    seed = body.get("seed")
+    state = _ensure_loaded(api_user)
+    from ui_dispatch_helper import dispatch_ui_tool
+    args: dict = {"attacker_id": attacker_id, "target_id": target_id}
+    if seed is not None and str(seed).lstrip("-").isdigit():
+        args["seed"] = int(seed)
+    d_result = dispatch_ui_tool(
+        tool_name="combat_enemy_attack", args=args,
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not d_result.ok:
+        return JSONResponse({"ok": False, "error": d_result.error}, status_code=400)
+    encounter = state.data.get("encounter") or {}
+    _clear_pending_questions_after_rule_action(state, f"enemy:{attacker_id}")
+    _append_rules_receipt(state, _encounter_receipt(
+        "敌方攻击", {"result": {"target_name": target_id, "summary": d_result.result}}
+    ))
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "rules": _rules_payload(state),
+                         "result": {"summary": d_result.result},
+                         "encounter": encounter})
+
+
+@app.post("/api/rules/suggest")
+async def api_rules_suggest(request: Request) -> JSONResponse:
+    """从玩家自由文本输入推断候选规则动作（轻量本地匹配，用于前端候选按钮）。"""
+    api_user = _require_api_user(request)
+    body = await request.json()
+    text = str(body.get("text") or "")
+    state = _ensure_loaded(api_user)
+    return JSONResponse({"ok": True, "actions": _rb_suggest_rule_actions(text, state)})
+
+
+
+
+# ────────────────────────────────────────────────────────────
+# task 48: 侧栏控制台助手 (/api/console_assistant/*)
+# ────────────────────────────────────────────────────────────
+
+
+def _resolve_console_assistant_backend(api_user: dict[str, Any] | None):
+    """按用户偏好取 backend (复用 GM 的 backend 抽象)。
+
+    优先级:
+      1. user_preferences.console_assistant_model_override = {api_id, model}
+         (前端可单独切助手模型, 与 GM 模型解耦)
+      2. user_preferences.gm.api_id + gm.model_real_name (跟随 GM)
+      3. 系统 selected_model() 默认值
+    """
+    api_id = None
+    model_real = None
+    if api_user and api_user.get("id"):
+        try:
+            from platform_app.db import connect, init_db
+            init_db()
+            with connect() as db:
+                row = db.execute(
+                    "select preferences from user_preferences where user_id = %s",
+                    (int(api_user["id"]),),
+                ).fetchone()
+                prefs = (row and row.get("preferences")) or {}
+                if isinstance(prefs, dict):
+                    override = prefs.get("console_assistant_model_override") or {}
+                    if isinstance(override, dict):
+                        api_id = override.get("api_id") or api_id
+                        model_real = override.get("model") or model_real
+                    if not api_id:
+                        api_id = prefs.get("gm.api_id") or None
+                    if not model_real:
+                        model_real = prefs.get("gm.model_real_name") or None
+        except Exception:
+            pass
+    if not api_id or not model_real:
+        model = selected_model()
+        api_id = api_id or model.get("api_id")
+        model_real = model_real or model.get("real_name")
+    # 用 GameMaster 构造 backend, 再借用其 ._backend
+    gm = GameMaster(
+        api_id=api_id, model=model_real,
+        user_id=int(api_user["id"]) if api_user and api_user.get("id") else None,
+    )
+    return gm._backend
+
+
+# ────────────────────────────────────────────────────────────
+# task 107G: 双时间线 panel — GET /api/saves/:save_id/timeline
+# ────────────────────────────────────────────────────────────
+
+
+@app.get("/api/saves/{save_id}/timeline")
+async def api_saves_timeline(save_id: int, request: Request) -> JSONResponse:
+    """返回指定存档的双时间线数据:剧本期望线 + 实际足迹线。
+
+    权限: 必须是该 save 的所有者,否则 403。
+    """
+    api_user = _require_api_user(request)
+    # 本地无鉴权时 api_user 可能为 None，回退到 runtime.json 的 user_id
+    if api_user:
+        user_id = int(api_user["id"])
+    else:
+        _rt_user_id, _ = _resolve_persist_target(None)  # returns (user_id, save_id)
+        user_id = int(_rt_user_id or 0)
+
+    from platform_app.db import connect, init_db
+    init_db()
+
+    with connect() as db:
+        # 1. 验证 ownership — 同时拿 script_id 和 active_phase_index
+        # 本地无鉴权时 user_id 可能为 0（runtime.json 还没有），允许宽松查询
+        if user_id:
+            save_row = db.execute(
+                """
+                select id, script_id, active_phase_index
+                  from game_saves
+                 where id = %s and user_id = %s
+                """,
+                (save_id, user_id),
+            ).fetchone()
+        else:
+            save_row = db.execute(
+                "select id, script_id, active_phase_index from game_saves where id = %s",
+                (save_id,),
+            ).fetchone()
+        if not save_row:
+            raise HTTPException(status_code=403, detail="存档不存在或无权访问")
+
+        script_id = save_row["script_id"]
+        active_phase_index = save_row.get("active_phase_index") or 0
+
+        # 2. 剧本期望线 — script_timeline_anchors 按 chapter_min 排序
+        # 字段名: story_phase → 对应任务描述里的 phase_label
+        anchor_rows = db.execute(
+            """
+            select chapter_min, chapter_max,
+                   story_phase   as phase_label,
+                   story_time_label
+              from script_timeline_anchors
+             where script_id = %s
+             order by chapter_min
+            """,
+            (script_id,),
+        ).fetchall()
+
+        script_anchors = [
+            {
+                "chapter_min": r["chapter_min"],
+                "chapter_max": r["chapter_max"],
+                "phase_label": r["phase_label"] or "",
+                "story_time_label": r["story_time_label"] or "",
+            }
+            for r in anchor_rows
+        ]
+
+        # 3. 实际足迹线 — save_phase_digests 按 phase_index 排序
+        phase_rows = db.execute(
+            """
+            select phase_index, phase_label, turn_start, turn_end,
+                   story_time_label, summary, key_events, status
+              from save_phase_digests
+             where save_id = %s
+             order by phase_index
+            """,
+            (save_id,),
+        ).fetchall()
+
+        import json as _json
+
+        def _parse_jsonb(v):
+            if v is None:
+                return []
+            if isinstance(v, (list, dict)):
+                return v
+            try:
+                return _json.loads(v)
+            except Exception:
+                return []
+
+        save_phases = [
+            {
+                "phase_index": r["phase_index"],
+                "phase_label": r["phase_label"] or "",
+                "turn_start": r["turn_start"],
+                "turn_end": r["turn_end"],
+                "story_time_label": r["story_time_label"] or "",
+                "summary": r["summary"] or "",
+                "key_events": _parse_jsonb(r["key_events"]),
+                "status": r["status"] or "open",
+            }
+            for r in phase_rows
+        ]
+
+    return JSONResponse({
+        "ok": True,
+        "script_anchors": script_anchors,
+        "save_phases": save_phases,
+        "current_phase_index": active_phase_index,
+    })
+
+
+@app.get("/api/console_assistant/ping")
+async def api_console_assistant_ping(request: Request) -> JSONResponse:
+    """task 48: 给前端探测后端是否就绪,200 = 真后端可用 (前端切走 mock)。"""
+    return JSONResponse({"ok": True, "service": "console_assistant", "version": "1"})
+
+
+@app.get("/api/console_assistant/conversations")
+async def api_console_assistant_conversations(request: Request) -> JSONResponse:
+    """task 111: 列当前用户所有对话。"""
+    api_user = _require_api_user(request)
+    user_id = int((api_user or {}).get("id") or 0)
+    if not user_id:
+        return JSONResponse({"items": []})
+    from console_assistant import list_conversations
+    items = list_conversations(user_id)
+    return JSONResponse({"items": items})
+
+
+@app.post("/api/console_assistant/new_conversation")
+async def api_console_assistant_new_conversation(request: Request) -> JSONResponse:
+    """task 111: 开新对话, 返新 conversation_id。"""
+    api_user = _require_api_user(request)
+    user_id = int((api_user or {}).get("id") or 0)
+    if not user_id:
+        return JSONResponse({"ok": False, "error": "需要登录"}, status_code=401)
+    from console_assistant import new_conversation
+    new_id = new_conversation(user_id)
+    return JSONResponse({"ok": True, "conversation_id": new_id})
+
+
+@app.post("/api/console_assistant/delete_conversation")
+async def api_console_assistant_delete_conversation(request: Request) -> JSONResponse:
+    """task 111: 删除某对话。"""
+    api_user = _require_api_user(request)
+    user_id = int((api_user or {}).get("id") or 0)
+    if not user_id:
+        return JSONResponse({"ok": False, "error": "需要登录"}, status_code=401)
+    body = await request.json()
+    cid = str(body.get("conversation_id") or "").strip()
+    if not cid:
+        return JSONResponse({"ok": False, "error": "conversation_id 必填"}, status_code=400)
+    from console_assistant import delete_conversation
+    ok = delete_conversation(user_id, cid)
+    return JSONResponse({"ok": ok})
+
+
+@app.post("/api/console_assistant/chat")
+async def api_console_assistant_chat(request: Request) -> StreamingResponse:
+    """task 48: 侧栏助手主聊天 SSE endpoint。
+
+    body: { message: str, conversation_id?: str, page_context?: dict }
+    SSE: meta / token / tool_call / tool_result / confirmation_required / error / done
+    """
+    api_user = _require_api_user(request)
+    body = await request.json()
+    message = str(body.get("message") or "").strip()
+    conversation_id = body.get("conversation_id")
+    if isinstance(conversation_id, str):
+        conversation_id = conversation_id.strip() or None
+    else:
+        conversation_id = None
+    page_context = body.get("page_context") if isinstance(body.get("page_context"), dict) else None
+
+    if not message:
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message':'空消息'}, ensure_ascii=False)}\n\n"]),
+            media_type="text/event-stream",
+        )
+
+    user_id = int((api_user or {}).get("id") or 0)
+    if not user_id:
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message':'需要登录'}, ensure_ascii=False)}\n\n"]),
+            media_type="text/event-stream",
+        )
+
+    # 注意:这里 state_provider 用 _ensure_loaded — 只有 save scope 工具用得到。
+    def _sp(env):
+        try:
+            if env.save_id is None:
+                return None
+            return _ensure_loaded(api_user)
+        except Exception:
+            return None
+
+    # 解析 backend
+    try:
+        backend = _resolve_console_assistant_backend(api_user)
+    except Exception as exc:
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message':f'backend 初始化失败: {exc}'}, ensure_ascii=False)}\n\n"]),
+            media_type="text/event-stream",
+        )
+
+    from console_assistant import stream_chat as _stream_chat
+
+    def _gen():
+        yield from _stream_chat(
+            user_id=user_id,
+            message=message,
+            conversation_id=conversation_id,
+            page_context=page_context,
+            backend=backend,
+            state_provider=_sp,
+        )
+
+    return StreamingResponse(_gen(), media_type="text/event-stream")
+
+
+@app.post("/api/console_assistant/confirm")
+async def api_console_assistant_confirm(request: Request) -> StreamingResponse:
+    """task 58: 对一个 pending destructive 工具调用做决策, 返 SSE 流。
+
+    body: { conversation_id: str, call_id: str, decision: 'approve'|'reject',
+            page_context?: dict }
+    SSE: 与 /chat endpoint 同款 (meta / tool_call / tool_result / token /
+         confirmation_required / navigation_required / error / done)
+
+    旧 JSON 协议已弃用 — 修复:用户点确认后 LLM 必须基于工具结果续写,
+    否则对话直接断在工具结果。
+    """
+    api_user = _require_api_user(request)
+    body = await request.json()
+    conversation_id = str(body.get("conversation_id") or "").strip()
+    call_id = str(body.get("call_id") or "").strip()
+    decision = str(body.get("decision") or "").strip().lower()
+    page_context = body.get("page_context") if isinstance(body.get("page_context"), dict) else None
+    if not conversation_id or not call_id or decision not in {"approve", "reject"}:
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message':'conversation_id / call_id / decision 必填; decision ∈ {approve,reject}'}, ensure_ascii=False)}\n\n",
+                  f"event: done\ndata: {{}}\n\n"]),
+            media_type="text/event-stream",
+            status_code=400,
+        )
+
+    user_id = int((api_user or {}).get("id") or 0)
+    if not user_id:
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message':'需要登录'}, ensure_ascii=False)}\n\n",
+                  f"event: done\ndata: {{}}\n\n"]),
+            media_type="text/event-stream",
+            status_code=401,
+        )
+
+    def _sp(env):
+        try:
+            if env.save_id is None:
+                return None
+            return _ensure_loaded(api_user)
+        except Exception:
+            return None
+
+    try:
+        backend = _resolve_console_assistant_backend(api_user)
+    except Exception as exc:
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message':f'backend 初始化失败: {exc}'}, ensure_ascii=False)}\n\n",
+                  f"event: done\ndata: {{}}\n\n"]),
+            media_type="text/event-stream",
+        )
+
+    from console_assistant import apply_confirmation_stream as _apply_stream
+
+    def _gen():
+        yield from _apply_stream(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            call_id=call_id,
+            decision=decision,
+            page_context=page_context,
+            backend=backend,
+            state_provider=_sp,
+        )
+
+    return StreamingResponse(_gen(), media_type="text/event-stream")
+
+
+# ────────────────────────────────────────────────────────────
+# task 69: state-event SSE 通道 — 后端工具改动 → 前端无刷新同步
+# ────────────────────────────────────────────────────────────
+
+
+@app.get("/api/state_events")
+async def api_state_events(request: Request) -> StreamingResponse:
+    """长连 SSE,推送当前 user 范围内的 state 变更事件。
+
+    前端每个标签页开一条,收到 `event: state_change` 后转 CustomEvent
+    `rpg-{topic}-updated`,各页面已有的 reload listener 自动触发。
+    """
+    import asyncio as _asyncio
+    from state_event_bus import subscribe, unsubscribe
+
+    api_user = _require_api_user(request)
+    user_id = int((api_user or {}).get("id") or 0)
+    if not user_id:
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message':'需要登录'}, ensure_ascii=False)}\n\n"]),
+            media_type="text/event-stream",
+            status_code=401,
+        )
+
+    queue = subscribe(user_id)
+
+    async def _gen():
+        try:
+            # 立刻发一个 hello 让前端知道连上了
+            yield (
+                f"event: hello\ndata: "
+                f"{json.dumps({'user_id': user_id, 'ts': time.time()}, ensure_ascii=False)}\n\n"
+            )
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await _asyncio.wait_for(queue.get(), timeout=25.0)
+                except _asyncio.TimeoutError:
+                    # 25 秒没动静就发 keepalive,防 proxy 切连接
+                    yield f": keepalive {int(time.time())}\n\n"
+                    continue
+                yield f"event: state_change\ndata: {event.to_sse_data()}\n\n"
+        finally:
+            unsubscribe(user_id, queue)
+
+    return StreamingResponse(_gen(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    print(f"[API] {APP_TITLE} RPG backend: http://{HOST}:{PORT}")
+    print(f"[UI]  React frontend served separately via Vite (默认 http://127.0.0.1:5173/Platform.html)")
+    uvicorn.run(app, host=HOST, port=PORT, log_level="info")

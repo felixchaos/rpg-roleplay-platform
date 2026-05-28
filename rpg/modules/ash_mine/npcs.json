@@ -1,0 +1,41 @@
+[
+  {
+    "id": "ash_acolyte_1",
+    "name": "灰布教徒·甲",
+    "kind": "humanoid",
+    "disposition": "hostile",
+    "description": "灰布兜帽下隐约可见焦痕烙印。声音平稳但眼神空洞。",
+    "tags": ["原创"],
+    "dialogue_hints": ["『矿心需要更多养分。』", "『你不是矿工？那就是祭品。』"]
+  },
+  {
+    "id": "ash_acolyte_2",
+    "name": "灰布教徒·乙",
+    "kind": "humanoid",
+    "disposition": "hostile",
+    "description": "比甲号年轻，嗓音略带颤抖，似乎是新加入。",
+    "tags": ["原创"],
+    "dialogue_hints": ["『典狱大人说外人就是养分……』"]
+  },
+  {
+    "id": "ash_warden",
+    "name": "灰烬教典狱",
+    "kind": "humanoid",
+    "disposition": "hostile",
+    "description": "高壮男子，胸口挂着一枚焦黑铁牌，腰间是铁制粗棍。",
+    "tags": ["原创"],
+    "dialogue_hints": ["『你不该闻到这股气味。』"]
+  },
+  {
+    "id": "char_acolyte",
+    "name": "焦痕祭司",
+    "kind": "humanoid",
+    "disposition": "hostile_boss",
+    "description": "通体披着焦痕长袍，左半张脸覆盖着烫伤般的纹路。手中黑色权杖端连接着一束悬浮的暗红色光纤，连向祭坛上的矿核。",
+    "tags": ["原创", "首领"],
+    "dialogue_hints": [
+      "『矿心已经认出了你，但它会更喜欢你燃尽的样子。』",
+      "『关闭它？你愿意把这片山岭一并埋葬么？』"
+    ]
+  }
+]
