@@ -38,6 +38,34 @@ async def api_import_script(request: Request, user=Depends(require_user)):
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 
 
+@router.post("/api/scripts/{script_id}/embed")
+async def api_script_embed(script_id: int, user=Depends(require_user)):
+    """task 51: 触发后台向量化(Vertex text-embedding-004 + pgvector)。
+
+    fire-and-forget,前端 poll GET /embed/status。已经 embedded 的行跳过,可重复调。
+    要求 user 是 script.owner。Vertex 凭证缺失时返 ok:false + 提示。
+    """
+    from ..knowledge import embedding as _embed
+    try:
+        return json_response(_embed.embed_script(user["id"], script_id))
+    except ValueError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=403)
+
+
+@router.get("/api/scripts/{script_id}/embed/status")
+async def api_script_embed_status(script_id: int, user=Depends(require_user)):
+    """task 51: 查询某剧本的向量化进度。前端轮询用。"""
+    from ..knowledge import embedding as _embed
+    with connect() as db:
+        owned = db.execute(
+            "select 1 from scripts where id = %s and owner_id = %s",
+            (script_id, user["id"]),
+        ).fetchone()
+    if not owned:
+        return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+    return json_response({"ok": True, "status": _embed.embed_status(script_id)})
+
+
 @router.get("/api/scripts/{script_id}/chapters")
 async def api_script_chapters(
     script_id: int,

@@ -147,12 +147,69 @@ function ScriptsListView() {
   const [importPackBusy, setImportPackBusy] = useStatePL(false);
   // B3: overrides editor
   const [overridesScript, setOverridesScript] = useStatePL(null);
+  // task 51: vector embedding 状态 per script (key: script_id → {running, chunks, cards, worldbook, model})
+  const [embedStatus, setEmbedStatus] = useStatePL({});
+
+  // task 51: 触发某 script 的向量化(GET status 也走这里 polling)
+  const triggerEmbed = React.useCallback(async (sid) => {
+    try {
+      const r = await fetch(`${window.__API_BASE || ""}/api/scripts/${sid}/embed`, {
+        method: "POST", credentials: "include",
+      });
+      const j = await r.json();
+      if (j.ok === false) {
+        window.__apiToast?.("向量化失败", { kind: "danger", detail: j.error || "未知错误", duration: 5000 });
+        return;
+      }
+      window.toast?.("已启动向量化", { kind: "ok", detail: "Vertex text-embedding-004 后台跑,可在按钮上看进度", duration: 3000 });
+      setEmbedStatus(s => ({ ...s, [sid]: j.status }));
+    } catch (e) {
+      window.__apiToast?.("向量化失败", { kind: "danger", detail: String(e), duration: 3000 });
+    }
+  }, []);
+
+  // task 51: 自动 poll 所有 running 状态的 script,每 3s 刷一次 progress
+  useEffectPL(() => {
+    const runningIds = Object.entries(embedStatus).filter(([, v]) => v && v.running).map(([k]) => k);
+    if (runningIds.length === 0) return;
+    const iv = setInterval(async () => {
+      for (const sid of runningIds) {
+        try {
+          const r = await fetch(`${window.__API_BASE || ""}/api/scripts/${sid}/embed/status`, { credentials: "include" });
+          const j = await r.json();
+          if (j.ok && j.status) {
+            setEmbedStatus(s => ({ ...s, [sid]: j.status }));
+            if (!j.status.running) {
+              window.toast?.("向量化完成", {
+                kind: "ok",
+                detail: `chunks ${j.status.chunks.done} · cards ${j.status.cards.done} · worldbook ${j.status.worldbook.done}`,
+                duration: 4000,
+              });
+            }
+          }
+        } catch (_) {}
+      }
+    }, 3000);
+    return () => clearInterval(iv);
+  }, [embedStatus]);
 
   const reload = React.useCallback(async () => {
     try {
       const r = await window.api.scripts.list();
       const list = Array.isArray(r) ? r : (r?.items || r?.scripts || []);
-      setScripts(list.map(window.__normalizeScript || ((x) => x)));
+      const normed = list.map(window.__normalizeScript || ((x) => x));
+      setScripts(normed);
+      // task 51: 拉每个剧本的 embed 进度,UI 显示已建索引的剧本(check icon)
+      // 失败不影响列表加载(各自 catch)
+      Promise.all(normed.map(async (s) => {
+        try {
+          const sr = await fetch(`${window.__API_BASE || ""}/api/scripts/${s.id}/embed/status`, { credentials: "include" });
+          const sj = await sr.json();
+          if (sj.ok && sj.status) {
+            setEmbedStatus(es => ({ ...es, [s.id]: sj.status }));
+          }
+        } catch (_) {}
+      })).catch(() => {});
     } catch (_) {
       setScripts([]);
     } finally {
@@ -278,6 +335,34 @@ function ScriptsListView() {
                 <button className="iconbtn" data-tip="剧本覆盖设定 (overrides)" onClick={() => setOverridesScript(s)}>
                   <Icon name="edit" size={13} />
                 </button>
+                {/* task 51: 向量化按钮 — 触发 Vertex text-embedding-004 + pgvector
+                    pipeline。进度从 embedStatus[s.id] 拿,显示 "建立向量索引" /
+                    "向量化中 N%" / "已建索引"。 */}
+                {(() => {
+                  const es = embedStatus[s.id];
+                  const totalDone = es ? (es.chunks.done + es.cards.done + es.worldbook.done) : 0;
+                  const totalAll = es ? (es.chunks.total + es.cards.total + es.worldbook.total) : 0;
+                  const pct = totalAll > 0 ? Math.round((totalDone / totalAll) * 100) : 0;
+                  const fullyDone = es && !es.running && totalAll > 0 && totalDone >= totalAll;
+                  const running = es && es.running;
+                  const tip = running ? `向量化中 ${pct}%(${totalDone}/${totalAll})`
+                    : fullyDone ? `已建索引 ${totalAll} 项(Vertex ${es.model || "text-embedding-004"})`
+                    : "建立向量索引 — 提醒:需 Vertex API 凭证配置,跑全书 chunks + 角色卡 + 世界书";
+                  return (
+                    <button
+                      className={`iconbtn ${fullyDone ? "ok" : ""}`}
+                      data-tip={tip}
+                      disabled={running}
+                      onClick={() => !running && triggerEmbed(s.id)}
+                    >
+                      {running
+                        ? <Icon name="spinner" size={13} className="spin" />
+                        : fullyDone
+                          ? <Icon name="check" size={13} />
+                          : <Icon name="sparkle" size={13} />}
+                    </button>
+                  );
+                })()}
                 <button className="iconbtn" data-tip="导出剧本包 (zip)" disabled={exportingId === s.id} onClick={() => onExportPack(s)}>
                   {exportingId === s.id ? <Icon name="spinner" size={13} className="spin" /> : <Icon name="download" size={13} />}
                 </button>

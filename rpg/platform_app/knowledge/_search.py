@@ -23,10 +23,14 @@ def _vector_column_exists(db, table: str) -> bool:
 def _embed_query(text: str) -> str | None:
     """把 query 文本转 vector(768) 字符串。
 
-    生产应接 Vertex/Anthropic/OpenAI 的 embedding API。当前简化：
-    返回 None 让上层走 ILIKE 兜底。未来在这里接 embedding 服务即可全栈打通。
+    task 51: 接 Vertex text-embedding-004 (768 维)。失败返 None 自动 fallback ILIKE。
+    embedding 模块 lazy import 避免冷启动开销;client 内部 cache。
     """
-    return None
+    try:
+        from .embedding import embed_query as _eq
+        return _eq(text)
+    except Exception:
+        return None
 
 
 def _search_chunks(db, script_id: int, tokens: list[str], chapter_min: int | None, chapter_max: int | None, top_k: int) -> list[dict[str, Any]]:
