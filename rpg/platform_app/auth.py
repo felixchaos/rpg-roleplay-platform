@@ -14,12 +14,19 @@ from .db import connect, init_db
 from .security import hash_password, normalize_username, verify_password
 
 SESSION_DAYS = 14
-MIN_PASSWORD_LENGTH = int(os.environ.get("RPG_MIN_PASSWORD_LENGTH", "8"))
+
+from core.config import (
+    min_password_length as _min_password_length,
+    login_max_fails as _login_max_fails,
+    login_lockout_sec as _login_lockout_sec,
+    login_window_sec as _login_window_sec,
+)
+MIN_PASSWORD_LENGTH = _min_password_length()
 
 # ── 登录速率限制 ──────────────────────────────────────────────────────────
-LOGIN_MAX_FAILS = int(os.environ.get("RPG_LOGIN_MAX_FAILS", "5"))
-LOGIN_LOCKOUT_SEC = int(os.environ.get("RPG_LOGIN_LOCKOUT_SEC", "60"))
-LOGIN_WINDOW_SEC = int(os.environ.get("RPG_LOGIN_WINDOW_SEC", "300"))  # 5min 内累计失败计数
+LOGIN_MAX_FAILS = _login_max_fails()
+LOGIN_LOCKOUT_SEC = _login_lockout_sec()
+LOGIN_WINDOW_SEC = _login_window_sec()  # 5min 内累计失败计数
 _FAIL_BUCKETS: dict[str, list[float]] = {}  # key="ip|username" → [失败时间戳...]
 _LOCKED_UNTIL: dict[str, float] = {}        # key → 解锁时间
 _FAIL_LOCK = threading.Lock()

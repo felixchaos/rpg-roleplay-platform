@@ -126,7 +126,8 @@ def release_job_lock(job_key: str) -> None:
 # 思路：state_repository 缓存 state 时记一个 last_db_check_ts，
 # 每 STATE_CACHE_TTL 秒后再回 DB 查 runtime_checkouts.updated_at，
 # 比内存版新就丢缓存。这个逻辑在 state_repository 里实现，cluster.py 只提供 TTL 常量。
-STATE_CACHE_TTL_SEC = int(os.environ.get("RPG_STATE_CACHE_TTL", "5"))
+from core.config import state_cache_ttl as _state_cache_ttl
+STATE_CACHE_TTL_SEC = _state_cache_ttl()
 
 
 def is_state_stale(save_id: int, cached_updated_at_ns: int) -> bool:

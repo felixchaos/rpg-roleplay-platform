@@ -24,7 +24,8 @@ def _get_migrations():
 # Postgres advisory lock 唯一 ID（任意 int64 即可，固定即可）
 # 'rpg_platform_migrate' 的 hash → 一个稳定的常量
 MIGRATION_ADVISORY_LOCK_ID = 0x52504D49475254AB  # "RPMIGRT" + ab
-MIGRATION_LOCK_TIMEOUT_MS = int(os.environ.get("RPG_MIGRATION_LOCK_TIMEOUT_MS", "30000"))
+from core.config import migration_lock_timeout_ms as _migration_lock_timeout_ms
+MIGRATION_LOCK_TIMEOUT_MS = _migration_lock_timeout_ms()
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -60,7 +60,12 @@ from tools_dsl.tool_registry import (
 )
 
 # 通用 RPG 底座：APP_TITLE 是平台名称，不绑定特定剧本。可由 RPG_APP_TITLE env 覆写。
-APP_TITLE = os.environ.get("RPG_APP_TITLE", "RPG Roplay")
+from core.config import (
+    app_title as _app_title_cfg,
+    cors_max_age as _cors_max_age,
+    gzip_min_bytes as _gzip_min_bytes,
+)
+APP_TITLE = _app_title_cfg()
 MODEL_LABEL = "Gemini 3.5 Flash"
 HOST = "127.0.0.1"
 PORT = 7860
@@ -78,7 +83,8 @@ def _cors_origins() -> tuple[list[str], bool]:
         "http://127.0.0.1:5173,http://localhost:5173,"
         "http://127.0.0.1:3000,http://localhost:3000"
     )
-    raw = os.environ.get("RPG_CORS_ORIGINS", default_origins)
+    from core.config import cors_origins_with_default as _cors_origins_with_default
+    raw = _cors_origins_with_default(default_origins)
     origins = [item.strip() for item in raw.split(",") if item.strip()]
     if not origins:
         origins = ["http://127.0.0.1:7860", "http://localhost:7860"]
@@ -94,8 +100,8 @@ _SERVER_MODES = {"server", "production", "prod", "cloud"}
 
 
 def _deployment_mode() -> str:
-    mode = os.environ.get("RPG_DEPLOYMENT_MODE", "local").strip().lower() or "local"
-    return mode
+    from core.config import deployment_mode as _deployment_mode_cfg
+    return _deployment_mode_cfg().strip().lower() or "local"
 
 
 def _verify_acceptance_rule(acceptance: list[str], response_text: str, updates: list[str]) -> list[str]:
@@ -373,7 +379,8 @@ def _api_auth_required() -> bool:
       4. RPG_DEPLOYMENT_MODE in {local,desktop,self_hosted}     → 不强制
       5. 未设置                  → 默认本地模式，不强制
     """
-    explicit = os.environ.get("RPG_REQUIRE_AUTH", "").strip()
+    from core.config import require_auth_raw as _require_auth_raw
+    explicit = _require_auth_raw().strip()
     if explicit == "1":
         return True
     if explicit == "0":
@@ -389,9 +396,10 @@ def _api_auth_required() -> bool:
 
 def _startup_auth_banner() -> None:
     """启动时打印一次部署模式 + 鉴权策略，避免运维误判。"""
+    from core.config import require_auth_raw as _require_auth_raw
     mode = _deployment_mode()
     required = _api_auth_required()
-    explicit = os.environ.get("RPG_REQUIRE_AUTH", "")
+    explicit = _require_auth_raw()
     source = f"RPG_REQUIRE_AUTH={explicit}" if explicit else f"RPG_DEPLOYMENT_MODE={mode}"
     if required:
         print(f"[启动] 部署模式={mode} 鉴权=强制 (源={source})")
@@ -453,9 +461,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["X-API-Version", "X-Request-ID"],
-    max_age=int(os.environ.get("RPG_CORS_MAX_AGE", "86400")),
+    max_age=_cors_max_age(),
 )
-app.add_middleware(GZipMiddleware, minimum_size=int(os.environ.get("RPG_GZIP_MIN_BYTES", "1024")))
+app.add_middleware(GZipMiddleware, minimum_size=_gzip_min_bytes())
 app.include_router(platform_router)
 try:
     from platform_app.frontend_routes import router as _frontend_router

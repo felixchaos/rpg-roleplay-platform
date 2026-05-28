@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+
+from routes._deps_fastapi import get_current_user
 
 router = APIRouter()
 
@@ -32,14 +35,18 @@ async def index() -> JSONResponse:
 
 
 @router.get("/api/state")
-async def api_state(request: Request) -> JSONResponse:
-    from app import _payload, _require_api_user
-    api_user = _require_api_user(request)
+async def api_state(
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
+    from app import _payload
     return JSONResponse(_payload(api_user))
 
 
 @router.get("/api/state_events")
-async def api_state_events(request: Request) -> StreamingResponse:
+async def api_state_events(
+    request: Request,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> StreamingResponse:
     """长连 SSE,推送当前 user 范围内的 state 变更事件。
 
     前端每个标签页开一条,收到 `event: state_change` 后转 CustomEvent
@@ -47,10 +54,8 @@ async def api_state_events(request: Request) -> StreamingResponse:
     """
     import asyncio as _asyncio
 
-    from app import _require_api_user
     from state_event_bus import subscribe, unsubscribe
 
-    api_user = _require_api_user(request)
     user_id = int((api_user or {}).get("id") or 0)
     if not user_id:
         return StreamingResponse(

@@ -367,9 +367,9 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             out_path = Path(target_path)
         else:
             # 服务器模式：禁止落到全局 SAVE_FILE
-            mode = _os.environ.get("RPG_DEPLOYMENT_MODE", "local").strip().lower()
-            require_auth = _os.environ.get("RPG_REQUIRE_AUTH", "")
-            is_server = require_auth == "1" or mode not in {"local", "desktop", "self_hosted", "self-hosted"}
+            from core.config import deployment_mode as _deployment_mode, require_auth as _require_auth
+            mode = _deployment_mode().strip().lower()
+            is_server = _require_auth() or mode not in {"local", "desktop", "self_hosted", "self-hosted"}
             if is_server:
                 return ""  # 不写盘；DB 是权威源，runtime_state_path 由 branches.persist_runtime_state 管
             out_path = SAVE_FILE

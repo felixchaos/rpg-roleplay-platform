@@ -1,7 +1,7 @@
 """platform_app.api.auth — /api/auth/* 路由。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from .. import auth as _auth
 from .. import workspace
@@ -18,6 +18,7 @@ from ._deps import (
 router = APIRouter()
 
 
+# 保留 request：register/login/logout 是认证类 endpoint，本身处理 cookie/IP
 @router.post("/api/auth/register")
 async def api_register(request: Request):
     body = await request.json()
@@ -32,6 +33,7 @@ async def api_register(request: Request):
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 
 
+# 保留 request：login 需要 _client_ip(request) 用于速率限制
 @router.post("/api/auth/login")
 async def api_login(request: Request):
     body = await request.json()
@@ -52,6 +54,7 @@ async def api_login(request: Request):
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 
 
+# 保留 request：logout 需要读 cookies 并设置 delete_cookie
 @router.post("/api/auth/logout")
 async def api_logout(request: Request):
     _auth.logout(request.cookies.get(SESSION_COOKIE))
@@ -61,8 +64,7 @@ async def api_logout(request: Request):
 
 
 @router.get("/api/auth/me")
-async def api_me(request: Request):
-    user = current_user(request)
+async def api_me(user=Depends(current_user)):
     # 安全：未登录不返回 DB 细节，仅返回 driver/ok 健康标识
     is_admin = bool(user and user.get("role") == "admin")
     from ..db import status as db_status

@@ -1,20 +1,26 @@
 """timeline.py — 存档时间线路由 (/api/saves/:save_id/timeline)。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+
+from routes._deps_fastapi import get_current_user
 
 router = APIRouter()
 
 
 @router.get("/api/saves/{save_id}/timeline")
-async def api_saves_timeline(save_id: int, request: Request) -> JSONResponse:
+async def api_saves_timeline(
+    save_id: int,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """返回指定存档的双时间线数据:剧本期望线 + 实际足迹线。
 
     权限: 必须是该 save 的所有者,否则 403。
     """
-    from app import _require_api_user, _resolve_persist_target
-    api_user = _require_api_user(request)
+    from app import _resolve_persist_target
     # 本地无鉴权时 api_user 可能为 None，回退到 runtime.json 的 user_id
     if api_user:
         user_id = int(api_user["id"])

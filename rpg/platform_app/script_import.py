@@ -14,8 +14,12 @@ from .library import decode_upload, safe_filename, unique_path
 BASE = Path(__file__).resolve().parents[1]
 SCRIPT_ROOT = BASE / "platform_data" / "scripts"
 UPLOAD_CHUNK_ROOT = BASE / "platform_data" / "upload_chunks"
-MAX_SCRIPT_UPLOAD_BYTES = int(os.environ.get("RPG_SCRIPT_UPLOAD_MAX_BYTES", str(128 * 1024 * 1024)))
-MAX_UPLOAD_CHUNK_BYTES = int(os.environ.get("RPG_UPLOAD_CHUNK_MAX_BYTES", str(8 * 1024 * 1024)))  # 8MB / 块
+from core.config import (
+    script_upload_max_bytes as _script_upload_max_bytes,
+    upload_chunk_max_bytes as _upload_chunk_max_bytes,
+)
+MAX_SCRIPT_UPLOAD_BYTES = _script_upload_max_bytes()
+MAX_UPLOAD_CHUNK_BYTES = _upload_chunk_max_bytes()  # 8MB / 块
 
 
 # task 23：knowledge.sync_script_knowledge 的返回结果里常常嵌套 backend Row（dict-like）+ datetime
@@ -193,9 +197,13 @@ _SYNC_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="script-sync")
 
 MAX_ACTIVE_JOBS_PER_USER = 1
 # 超过这个时长还在 running 视为 worker 崩溃，启动 recover 时回收
-STALE_RUNNING_SECONDS = int(os.environ.get("RPG_SYNC_STALE_RUNNING_SECONDS", "1800"))
+from core.config import (
+    sync_stale_running_seconds as _sync_stale_running_seconds,
+    sync_heartbeat_seconds as _sync_heartbeat_seconds,
+)
+STALE_RUNNING_SECONDS = _sync_stale_running_seconds()
 # heartbeat 刷新间隔（worker 跑长任务时定期更新 heartbeat_at）
-SYNC_HEARTBEAT_SECONDS = int(os.environ.get("RPG_SYNC_HEARTBEAT_SECONDS", "60"))
+SYNC_HEARTBEAT_SECONDS = _sync_heartbeat_seconds()
 
 
 def _schedule_knowledge_sync(user_id: int, script_id: int) -> str:

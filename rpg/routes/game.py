@@ -1,9 +1,12 @@
 """game.py — 游戏核心流程路由 (new / opening / chat / stop / save)。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from typing import Any
+
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from routes._deps_fastapi import get_current_user
 from schemas._common import COMMON_ERROR_RESPONSES, GenericOkResponse, OkResponse, StateResponse
 from schemas.game import ChatEstimateRequest, ChatRequest, NewGameRequest
 
@@ -11,7 +14,10 @@ router = APIRouter()
 
 
 @router.post("/api/new", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
-async def api_new(body: NewGameRequest, request: Request) -> JSONResponse:
+async def api_new(
+    body: NewGameRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """创建新存档。
 
     切换角色卡（user persona / 用户自创 NPC / 剧本预置角色）一律走这个接口，
@@ -28,12 +34,10 @@ async def api_new(body: NewGameRequest, request: Request) -> JSONResponse:
         _invalidate_user_cache,
         _payload,
         _persist_runtime_checkpoint,
-        _require_api_user,
         _state_by_user,
         _state_lock,
         _user_key,
     )
-    api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     backup = _backup_save("before_new_game") if api_user is None else None
 
@@ -106,7 +110,9 @@ async def api_new(body: NewGameRequest, request: Request) -> JSONResponse:
 
 
 @router.post("/api/opening")
-async def api_opening(request: Request) -> StreamingResponse:
+async def api_opening(
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> StreamingResponse:
     from app import (
         _active_script_id,
         _build_turn_context,
@@ -114,12 +120,10 @@ async def api_opening(request: Request) -> StreamingResponse:
         _get_gm,
         _payload,
         _persist_runtime_checkpoint,
-        _require_api_user,
         _resolve_persist_target,
         _sse,
         retrieve_context,
     )
-    api_user = _require_api_user(request)
     state = _ensure_loaded(api_user)
     gm = _get_gm(api_user)
 
@@ -175,7 +179,10 @@ async def api_opening(request: Request) -> StreamingResponse:
 
 
 @router.post("/api/chat/estimate", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
-async def api_chat_estimate(body: ChatEstimateRequest, request: Request) -> JSONResponse:
+async def api_chat_estimate(
+    body: ChatEstimateRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """实时上下文预估。前端 debounce 用户输入后调用，显示 ctx X/Y (Z%) · in~A out~B。
 
     估算思路（轻量，避免真的跑 retrieval）：
@@ -184,11 +191,9 @@ async def api_chat_estimate(body: ChatEstimateRequest, request: Request) -> JSON
     """
     from app import (
         _ensure_loaded,
-        _require_api_user,
         _resolve_persist_target,
         selected_model,
     )
-    api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     message = (body_dict.get("message") or "").strip()
     include_retrieval = bool(body_dict.get("include_retrieval", True))
@@ -248,7 +253,10 @@ async def api_chat_estimate(body: ChatEstimateRequest, request: Request) -> JSON
 
 
 @router.post("/api/chat")
-async def api_chat(body: ChatRequest, request: Request) -> StreamingResponse:
+async def api_chat(
+    body: ChatRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> StreamingResponse:
     import time
 
     import app as _self_mod
@@ -273,7 +281,6 @@ async def api_chat(body: ChatRequest, request: Request) -> StreamingResponse:
         _payload,
         _persist_chat_turn,
         _persist_runtime_checkpoint,
-        _require_api_user,
         _resolve_persist_target,
         _rule_results_prompt,
         _save_attachments,
@@ -282,7 +289,6 @@ async def api_chat(body: ChatRequest, request: Request) -> StreamingResponse:
     )
     from platform_app import knowledge as platform_knowledge
 
-    api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     # task 31：前端历史上同时存在 {message:...} 和 {text:...} 两套契约。
     # 老的 Game Console.html 发 text，新的 game-app.jsx 也偶尔走 message。
@@ -477,11 +483,12 @@ async def api_chat(body: ChatRequest, request: Request) -> StreamingResponse:
 
 
 @router.post("/api/stop", response_model=OkResponse, responses=COMMON_ERROR_RESPONSES)
-async def api_stop(request: Request) -> JSONResponse:
+async def api_stop(
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """打断当前用户正在跑的 chat。其他用户的 chat 不受影响。
     task 87 Phase 6: 同时调 dispatcher stop_current_chat 工具,把 stop_signal 写到 state.permissions。"""
-    from app import _ensure_loaded, _require_api_user, _resolve_persist_target, _stop_user
-    api_user = _require_api_user(request)
+    from app import _ensure_loaded, _resolve_persist_target, _stop_user
     _stop_user(api_user)  # 真正的 stop_event 仍由 _stop_user 处理 (跨 chat handler 协程)
     # 同时通过 dispatcher 记录 audit 与 state.permissions.stop_signal
     try:
@@ -499,16 +506,16 @@ async def api_stop(request: Request) -> JSONResponse:
 
 
 @router.post("/api/save", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
-async def api_save(request: Request) -> JSONResponse:
+async def api_save(
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher save_runtime。"""
     from app import (
         _ensure_loaded,
         _payload,
         _persist_runtime_checkpoint,
-        _require_api_user,
         _resolve_persist_target,
     )
-    api_user = _require_api_user(request)
     state = _ensure_loaded(api_user)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(

@@ -146,10 +146,10 @@ _CACHE_TTL = 60.0
 
 def _require_user_credential() -> bool:
     """服务器模式强制要求 user-scoped 凭证；本地匿名允许走环境变量。"""
-    import os as _os
-    if _os.environ.get("RPG_REQUIRE_AUTH") == "1":
+    from core.config import deployment_mode as _deployment_mode, require_auth as _require_auth
+    if _require_auth():
         return True
-    mode = _os.environ.get("RPG_DEPLOYMENT_MODE", "local").strip().lower()
+    mode = _deployment_mode().strip().lower()
     return mode not in {"local", "desktop", "self_hosted", "self-hosted"}
 
 

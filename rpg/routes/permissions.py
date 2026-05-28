@@ -9,10 +9,12 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
+from routes._deps_fastapi import get_current_admin, get_current_user
 from schemas._common import COMMON_ERROR_RESPONSES, ErrorResponse, StateResponse
 from schemas.permissions import (
     DebugPendingQuestionRequest,
@@ -25,16 +27,17 @@ router = APIRouter()
 
 
 @router.post("/api/permissions", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
-async def api_permissions(body: PermissionsRequest, request: Request) -> JSONResponse:
+async def api_permissions(
+    body: PermissionsRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """task 87 Phase 6: 敏感权限切换走 dispatcher (origin=ui_button)。"""
     from app import (
         _ensure_loaded,
         _payload,
         _persist_runtime_checkpoint,
-        _require_api_user,
         _resolve_persist_target,
     )
-    api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
@@ -53,7 +56,10 @@ async def api_permissions(body: PermissionsRequest, request: Request) -> JSONRes
 
 
 @router.post("/api/permissions/pending-write", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
-async def api_pending_write(body: PendingWriteRequest, request: Request) -> JSONResponse:
+async def api_pending_write(
+    body: PendingWriteRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """审批一条待写入。前端发 {id, action} 或 {index, decision}（兼容老 contract）。
 
     P0 修复（task #53）：之前后端只读 index+decision，前端发 id+action →
@@ -64,10 +70,8 @@ async def api_pending_write(body: PendingWriteRequest, request: Request) -> JSON
         _ensure_loaded,
         _payload,
         _persist_runtime_checkpoint,
-        _require_api_user,
         _resolve_persist_target,
     )
-    api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
     item_id = body_dict.get("id")
@@ -111,7 +115,10 @@ async def api_pending_write(body: PendingWriteRequest, request: Request) -> JSON
 
 
 @router.post("/api/questions/clear", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
-async def api_question_clear(body: QuestionClearRequest, request: Request) -> JSONResponse:
+async def api_question_clear(
+    body: QuestionClearRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """回答(或跳过)一条 GM 询问。{id, choice?} 或 {index, choice?}。
     task 87 Phase 6: 走 dispatcher dismiss_pending_question。choice 走老路径
     (clear_pending_question 支持记录玩家选择,工具暂不支持 choice)。"""
@@ -119,10 +126,8 @@ async def api_question_clear(body: QuestionClearRequest, request: Request) -> JS
         _ensure_loaded,
         _payload,
         _persist_runtime_checkpoint,
-        _require_api_user,
         _resolve_persist_target,
     )
-    api_user = _require_api_user(request)
     body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
     item_id = body_dict.get("id")
@@ -148,11 +153,14 @@ async def api_question_clear(body: QuestionClearRequest, request: Request) -> JS
 
 
 @router.post("/api/debug/pending-question", response_model=StateResponse, responses={**COMMON_ERROR_RESPONSES, 404: {"model": ErrorResponse}})
-async def api_debug_pending_question(body: DebugPendingQuestionRequest, request: Request) -> JSONResponse:
+async def api_debug_pending_question(
+    body: DebugPendingQuestionRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_admin),
+) -> JSONResponse:
     """task 87 Phase 6: debug 注入也走 dispatcher 的 inject_pending_question 工具。"""
-    from app import _ensure_loaded, _payload, _require_api_user, _resolve_persist_target
-    api_user = _require_api_user(request, admin=True)
-    if not os.getenv("RPG_DEBUG_UI"):
+    from app import _ensure_loaded, _payload, _resolve_persist_target
+    from core.config import debug_ui as _debug_ui
+    if not _debug_ui():
         return JSONResponse({"ok": False, "error": "debug disabled"}, status_code=404)
     body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)

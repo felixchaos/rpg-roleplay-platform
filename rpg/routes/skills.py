@@ -1,9 +1,12 @@
 """skills.py — Skill 导入与运行路由 (/api/skills/*)。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from typing import Any
+
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
+from routes._deps_fastapi import get_current_admin, get_current_user
 from schemas._common import COMMON_ERROR_RESPONSES, ErrorResponse, GenericOkResponse
 from schemas.skills import SkillRunRequest, SkillsImportRequest
 
@@ -11,9 +14,11 @@ router = APIRouter()
 
 
 @router.post("/api/skills/import", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
-async def api_skills_import(body: SkillsImportRequest, request: Request) -> JSONResponse:
-    from app import _require_api_user, import_skill_bundle, tool_payload
-    _require_api_user(request, admin=True)
+async def api_skills_import(
+    body: SkillsImportRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_admin),
+) -> JSONResponse:
+    from app import import_skill_bundle, tool_payload
     body_dict = body.model_dump(exclude_none=True)
     try:
         skill = import_skill_bundle(body_dict.get("file", {}))
@@ -23,15 +28,18 @@ async def api_skills_import(body: SkillsImportRequest, request: Request) -> JSON
 
 
 @router.post("/api/skills/{skill_id}/run", response_model=GenericOkResponse, responses={**COMMON_ERROR_RESPONSES, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})
-async def api_skill_run(body: SkillRunRequest, request: Request, skill_id: str) -> JSONResponse:
+async def api_skill_run(
+    body: SkillRunRequest,
+    skill_id: str,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
     """在沙箱里跑某个 imported skill。
 
     Body: {"cmd": ["bash", "script.sh", "arg1"], "stdin": "...", "timeout_sec": 30}
 
     安全：admin only；本地匿名也允许（开发场景）。
     """
-    from app import _api_auth_required, _require_api_user
-    api_user = _require_api_user(request)
+    from app import _api_auth_required
     if _api_auth_required() and (not api_user or api_user.get("role") != "admin"):
         return JSONResponse({"ok": False, "error": "需要管理员权限"}, status_code=403)
 

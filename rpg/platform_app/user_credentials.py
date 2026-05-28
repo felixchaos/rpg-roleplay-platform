@@ -43,7 +43,8 @@ def _validate_base_url(url: str) -> None:
     if p.scheme not in {"https", "http"}:
         raise ValueError("base_url 必须是 http/https")
     # 生产建议只允许 https；本地 admin 调试可允许 http
-    if p.scheme == "http" and os.environ.get("RPG_REQUIRE_AUTH") == "1":
+    from core.config import require_auth as _require_auth
+    if p.scheme == "http" and _require_auth():
         raise ValueError("服务器模式下 base_url 必须是 https")
     host = (p.hostname or "").lower()
     if not host:
@@ -165,7 +166,8 @@ def resolve_api_key(user_id: int | None, api_id: str, env_fallback: str = "") ->
             return {"key": cred["key"], "source": "user_db", "base_url_override": cred.get("base_url_override", "")}
 
     # 仅未强制鉴权时允许环境变量回退
-    if os.environ.get("RPG_REQUIRE_AUTH") == "1":
+    from core.config import require_auth as _require_auth
+    if _require_auth():
         return {"key": "", "source": "none", "base_url_override": ""}
     if env_fallback:
         env_key = os.environ.get(env_fallback)

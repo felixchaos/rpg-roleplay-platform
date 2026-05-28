@@ -1,7 +1,7 @@
 """platform_app.api.imports — /api/scripts/{id}/knowledge/sync, import-* 路由, /api/me/import-jobs。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from .. import script_import
@@ -12,9 +12,8 @@ router = APIRouter()
 
 
 @router.post("/api/scripts/{script_id}/knowledge/sync")
-async def api_script_knowledge_sync(request: Request, script_id: int):
+async def api_script_knowledge_sync(script_id: int, user=Depends(require_user)):
     """触发后台异步同步。立即返回 job_id；通过 /import-status 轮询进度。"""
-    user = require_user(request)
     # 校验 owner
     with connect() as db:
         owned = db.execute("select 1 from scripts where id = %s and owner_id = %s", (script_id, user["id"])).fetchone()
@@ -25,21 +24,19 @@ async def api_script_knowledge_sync(request: Request, script_id: int):
 
 
 @router.get("/api/scripts/{script_id}/import-status")
-async def api_script_import_status(request: Request, script_id: int):
+async def api_script_import_status(script_id: int, user=Depends(require_user)):
     """查询某剧本最近一次后台同步任务的状态。"""
-    user = require_user(request)
     return json_response(script_import.get_sync_status(user["id"], script_id))
 
 
 # ── 拆书流水线（多阶段 + 预算 + 取消 + 持久化进度）─────────────
 @router.post("/api/scripts/{script_id}/import-budget")
-async def api_script_import_budget(request: Request, script_id: int):
+async def api_script_import_budget(request: Request, script_id: int, user=Depends(require_user)):
     """开始拆书前给出预算（token/cost/时长）。
 
     Body: {"enable_cards": true, "enable_worldbook": true,
            "model_api_id": "...", "model_real_name": "..."}（全可选）
     """
-    user = require_user(request)
     body = {}
     try:
         body = await request.json()
@@ -65,9 +62,8 @@ async def api_script_import_budget(request: Request, script_id: int):
 
 
 @router.post("/api/scripts/{script_id}/import-pipeline")
-async def api_script_import_pipeline(request: Request, script_id: int):
+async def api_script_import_pipeline(request: Request, script_id: int, user=Depends(require_user)):
     """启动完整拆书流水线，立即返 job_id。前端轮询 /import-job-status 看进度。"""
-    user = require_user(request)
     body = {}
     try:
         body = await request.json()
@@ -86,20 +82,19 @@ async def api_script_import_pipeline(request: Request, script_id: int):
 
 
 @router.get("/api/scripts/import-jobs/{job_id}")
-async def api_import_job_status(request: Request, job_id: str):
+async def api_import_job_status(job_id: str, user=Depends(require_user)):
     """轮询任务状态：进度、当前阶段、token/cost 累计、错误。"""
-    user = require_user(request)
     from .. import import_pipeline
     return json_response(import_pipeline.get_job_status(user["id"], job_id=job_id))
 
 
 @router.get("/api/scripts/import-jobs/{job_id}/stream")
-async def api_import_job_stream(request: Request, job_id: str):
+async def api_import_job_stream(request: Request, job_id: str, user=Depends(require_user)):
     """SSE 实时推送 job 进度，前端不再轮询。
 
     每秒检测一次 DB，状态/阶段/进度变化时推 event；任务结束（done/failed/cancelled）后退出。
+    保留 request：SSE endpoint 需要 request.is_disconnected() 检测客户端断开（虽然此处通过任务状态退出）。
     """
-    user = require_user(request)
     import asyncio as _asyncio
     import json as _json
 
@@ -139,9 +134,8 @@ async def api_import_job_stream(request: Request, job_id: str):
 
 
 @router.post("/api/scripts/import-jobs/{job_id}/cancel")
-async def api_import_job_cancel(request: Request, job_id: str):
+async def api_import_job_cancel(job_id: str, user=Depends(require_user)):
     """请求取消。worker 在下一个检查点退出。"""
-    user = require_user(request)
     from .. import import_pipeline
     try:
         return json_response(import_pipeline.cancel_job(user["id"], job_id))
@@ -150,9 +144,7 @@ async def api_import_job_cancel(request: Request, job_id: str):
 
 
 @router.get("/api/me/import-jobs")
-async def api_my_import_jobs(request: Request):
+async def api_my_import_jobs(limit: int = 20, user=Depends(require_user)):
     """列出本人最近 20 个导入任务（dashboard 用）。"""
-    user = require_user(request)
     from .. import import_pipeline
-    limit = int(request.query_params.get("limit") or 20)
     return json_response(import_pipeline.list_jobs(user["id"], limit=limit))

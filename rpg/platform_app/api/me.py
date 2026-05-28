@@ -1,7 +1,7 @@
 """platform_app.api.me — /api/me/* 路由 (profile/usage/stats/personas/character-cards/credentials/preference)。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from psycopg.types.json import Jsonb
 
 from ..db import connect
@@ -12,9 +12,8 @@ router = APIRouter()
 
 # ── 个人主页 ────────────────────────────────────────────────────────
 @router.get("/api/me/profile")
-async def api_my_profile(request: Request):
+async def api_my_profile(user=Depends(require_user)):
     """个人主页一次拉全：账户 + 用量摘要 + 凭证清单 + 偏好"""
-    user = require_user(request)
     from .. import usage as usage_mod
     from .. import user_credentials
     with connect() as db:
@@ -43,39 +42,36 @@ async def api_my_profile(request: Request):
 
 
 @router.get("/api/me/usage")
-async def api_my_usage(request: Request):
+async def api_my_usage(days: int = 30, user=Depends(require_user)):
     """单独的用量明细 API（dashboard 用）"""
-    user = require_user(request)
-    days = int(request.query_params.get("days") or 30)
     from .. import usage as usage_mod
     return json_response(usage_mod.aggregate_usage(user["id"], days=days))
 
 
 @router.get("/api/me/usage/timeline")
-async def api_my_usage_timeline(request: Request):
+async def api_my_usage_timeline(days: int = 30, group_by: str = "day", user=Depends(require_user)):
     """时间序列用量（dashboard 图表用）。group_by=day|model"""
-    user = require_user(request)
     from .. import usage as usage_mod
     try:
         return json_response(usage_mod.timeline_usage(
             user["id"],
-            days=int(request.query_params.get("days") or 30),
-            group_by=request.query_params.get("group_by") or "day",
+            days=days,
+            group_by=group_by,
         ))
     except ValueError as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 
 
 @router.get("/api/me/stats")
-async def api_my_stats(request: Request):
+async def api_my_stats(request: Request, user=Depends(require_user)):
     """玩家档案统计：回合数 / 分支 / 字数 / 连续登录。
 
     task 49（mock 清扫第二轮）：之前 MeOverview 用 totalRounds = saves.reduce(× 7)、
     playHours = totalRounds × 1.2 / 60，以及 "本周 +6.4h / 最深 6 层 / 共 418 万字 /
     7 天连续登录 / 最长 14 天" 全部硬编码。这里给出全部真实派生值；没有真实
     来源的字段（如累计游玩分钟数）返回 null，由前端显示「—」而不是假数字。
+    保留 request：需要读 request.cookies.get(SESSION_COOKIE) 用于 login_audit 查询。
     """
-    user = require_user(request)
     cur_token = request.cookies.get(SESSION_COOKIE) or ""
     with connect() as db:
         # 剧本汇总
@@ -209,9 +205,8 @@ async def api_my_stats(request: Request):
 
 
 @router.post("/api/me/preference")
-async def api_set_preference(request: Request):
+async def api_set_preference(request: Request, user=Depends(require_user)):
     """更新或合并界面偏好（主题/字号/默认模型...）"""
-    user = require_user(request)
     body = await request.json()
     # 支持两种写法：整对象覆盖 (replace=true) 或 patch 合并 (默认)
     replace = bool(body.get("replace", False))
@@ -245,17 +240,15 @@ async def api_set_preference(request: Request):
 # ── 用户级 API 凭证（加密存储，按用户隔离）──────────────────────────────
 # ── 用户级 persona / character card（独立于剧本存档）─────────────
 @router.get("/api/me/personas")
-async def api_my_personas(request: Request):
+async def api_my_personas(user=Depends(require_user)):
     """列出本人所有玩家身份卡（杭雁菱穿越者 / 林知意信使 / ...）"""
-    user = require_user(request)
     from .. import user_cards
     return json_response(user_cards.list_personas(user["id"]))
 
 
 @router.post("/api/me/personas")
-async def api_upsert_persona(request: Request):
+async def api_upsert_persona(request: Request, user=Depends(require_user)):
     """创建或更新 persona。传 id 强制更新某条；否则按 slug upsert。"""
-    user = require_user(request)
     body = await request.json()
     from .. import user_cards
     try:
@@ -265,8 +258,7 @@ async def api_upsert_persona(request: Request):
 
 
 @router.get("/api/me/personas/{persona_id}")
-async def api_get_persona(request: Request, persona_id: int):
-    user = require_user(request)
+async def api_get_persona(persona_id: int, user=Depends(require_user)):
     from .. import user_cards
     p = user_cards.get_persona(user["id"], persona_id)
     if not p:
@@ -275,25 +267,21 @@ async def api_get_persona(request: Request, persona_id: int):
 
 
 @router.post("/api/me/personas/{persona_id}/delete")
-async def api_delete_persona(request: Request, persona_id: int):
-    user = require_user(request)
+async def api_delete_persona(persona_id: int, user=Depends(require_user)):
     from .. import user_cards
     return json_response(user_cards.delete_persona(user["id"], persona_id))
 
 
 @router.get("/api/me/character-cards")
-async def api_my_character_cards(request: Request):
+async def api_my_character_cards(q: str | None = None, enabled: str | None = None, user=Depends(require_user)):
     """用户自创的 NPC 卡库，可挂任何剧本/存档"""
-    user = require_user(request)
     from .. import user_cards
-    q = request.query_params.get("q") or None
-    enabled = request.query_params.get("enabled") == "1"
-    return json_response(user_cards.list_user_cards(user["id"], q=q, enabled_only=enabled))
+    enabled_only = enabled == "1"
+    return json_response(user_cards.list_user_cards(user["id"], q=q or None, enabled_only=enabled_only))
 
 
 @router.post("/api/me/character-cards")
-async def api_upsert_character_card(request: Request):
-    user = require_user(request)
+async def api_upsert_character_card(request: Request, user=Depends(require_user)):
     body = await request.json()
     from .. import user_cards
     try:
@@ -303,8 +291,7 @@ async def api_upsert_character_card(request: Request):
 
 
 @router.get("/api/me/character-cards/{card_id}")
-async def api_get_character_card(request: Request, card_id: int):
-    user = require_user(request)
+async def api_get_character_card(card_id: int, user=Depends(require_user)):
     from .. import user_cards
     c = user_cards.get_user_card(user["id"], card_id)
     if not c:
@@ -313,15 +300,14 @@ async def api_get_character_card(request: Request, card_id: int):
 
 
 @router.post("/api/me/character-cards/{card_id}/delete")
-async def api_delete_character_card(request: Request, card_id: int):
-    user = require_user(request)
+async def api_delete_character_card(card_id: int, user=Depends(require_user)):
     from .. import user_cards
     return json_response(user_cards.delete_user_card(user["id"], card_id))
 
 
 # ── 酒馆 (SillyTavern) 角色卡兼容 ───────────────────────────────────
 @router.post("/api/me/character-cards/import-tavern")
-async def api_import_tavern_card(request: Request):
+async def api_import_tavern_card(request: Request, user=Depends(require_user)):
     """导入酒馆角色卡。
 
     payload 形态（支持多种来源）：
@@ -330,7 +316,6 @@ async def api_import_tavern_card(request: Request):
     - {"base64": "..."}                          # base64-encoded JSON
     - {"png_base64": "..."}                      # PNG 文件 base64（解析 tEXt chunk）
     """
-    user = require_user(request)
     body = await request.json()
     from .. import tavern_cards, user_cards
     try:
@@ -358,9 +343,8 @@ async def api_import_tavern_card(request: Request):
 
 
 @router.get("/api/me/character-cards/{card_id}/export-tavern")
-async def api_export_tavern_card(request: Request, card_id: int):
+async def api_export_tavern_card(card_id: int, user=Depends(require_user)):
     """导出本人 NPC 卡为酒馆 V2 JSON 格式（可直接下载/给酒馆导入）。"""
-    user = require_user(request)
     from .. import tavern_cards, user_cards
     card = user_cards.get_user_card(user["id"], card_id)
     if not card:
@@ -370,10 +354,9 @@ async def api_export_tavern_card(request: Request, card_id: int):
 
 
 @router.get("/api/me/character-cards/{card_id}/export-png")
-async def api_export_tavern_png(request: Request, card_id: int):
+async def api_export_tavern_png(card_id: int, user=Depends(require_user)):
     """导出 PNG 嵌入式酒馆卡（tEXt chara chunk），可直接拖进酒馆。"""
     from fastapi.responses import Response
-    user = require_user(request)
     from .. import tavern_cards, user_cards
     card = user_cards.get_user_card(user["id"], card_id)
     if not card:
@@ -388,20 +371,18 @@ async def api_export_tavern_png(request: Request, card_id: int):
 
 
 @router.get("/api/me/credentials")
-async def api_my_credentials(request: Request):
+async def api_my_credentials(user=Depends(require_user)):
     """列出当前用户已配置的 API 凭证（不含 raw key）"""
-    user = require_user(request)
     from .. import user_credentials
     return json_response(user_credentials.list_credentials(user["id"]))
 
 
 @router.post("/api/me/credentials")
-async def api_set_credential(request: Request):
+async def api_set_credential(request: Request, user=Depends(require_user)):
     """设置/更新当前用户某个 provider 的 API key。
 
     base_url_override 仅 admin 可设；普通用户的 base_url 强制走 catalog。
     """
-    user = require_user(request)
     body = await request.json()
     from .. import user_credentials
     is_admin = user.get("role") == "admin"
@@ -420,18 +401,15 @@ async def api_set_credential(request: Request):
 
 
 @router.post("/api/me/credentials/delete")
-async def api_delete_credential(request: Request):
-    user = require_user(request)
+async def api_delete_credential(request: Request, user=Depends(require_user)):
     body = await request.json()
     from .. import user_credentials
     return json_response(user_credentials.delete_credential(user["id"], body.get("api_id", "")))
 
 
 @router.get("/api/me/credentials/test")
-async def api_test_credential(request: Request):
+async def api_test_credential(api_id: str = "", user=Depends(require_user)):
     """用户级凭证可用性自检（不暴露 key）"""
-    user = require_user(request)
-    api_id = request.query_params.get("api_id", "")
     from .. import user_credentials
     cred = user_credentials.get_credential(user["id"], api_id)
     return json_response({

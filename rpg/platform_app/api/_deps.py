@@ -85,14 +85,15 @@ def json_response(content, status_code: int = 200, **kwargs):
 
 
 def _set_session_cookie(response: BaseJSONResponse, request: Request, token: str) -> None:
-    secure_env = os.environ.get("RPG_COOKIE_SECURE")
+    from core.config import cookie_secure as _cookie_secure, cookie_samesite as _cookie_samesite
+    secure_env = _cookie_secure()
     secure = request.url.scheme == "https" if secure_env is None else secure_env == "1"
     response.set_cookie(
         SESSION_COOKIE,
         token,
         httponly=True,
         secure=secure,
-        samesite=os.environ.get("RPG_COOKIE_SAMESITE", "lax"),
+        samesite=_cookie_samesite(),
         max_age=auth.SESSION_DAYS * 24 * 60 * 60,
         path="/",
     )
@@ -100,12 +101,13 @@ def _set_session_cookie(response: BaseJSONResponse, request: Request, token: str
 
 def _auth_required() -> bool:
     """与 ui.py:_api_auth_required 同义，避免循环导入；服务器模式禁止匿名访问。"""
-    explicit = os.environ.get("RPG_REQUIRE_AUTH", "").strip()
+    from core.config import require_auth_raw as _require_auth_raw, deployment_mode as _deployment_mode
+    explicit = _require_auth_raw().strip()
     if explicit == "1":
         return True
     if explicit == "0":
         return False
-    mode = os.environ.get("RPG_DEPLOYMENT_MODE", "local").strip().lower()
+    mode = _deployment_mode().strip().lower()
     return mode not in {"local", "desktop", "self_hosted", "self-hosted"}
 
 
@@ -187,8 +189,9 @@ def _client_ip(request: Request) -> str:
     才信 XFF 的第一段。
     """
     tcp_ip = request.client.host if request.client else ""
+    from core.config import trusted_proxies_raw as _trusted_proxies_raw
     trusted = {
-        ip.strip() for ip in os.environ.get("RPG_TRUSTED_PROXIES", "").split(",") if ip.strip()
+        ip.strip() for ip in _trusted_proxies_raw().split(",") if ip.strip()
     }
     if tcp_ip and tcp_ip in trusted:
         xff = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
