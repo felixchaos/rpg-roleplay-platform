@@ -49,6 +49,13 @@
   --body-size: 15px;
   --narrative-size: 16.5px;
 
+  /* density preset vars — set by RPG_setDensity / data-density attr on <html> */
+  --d-font-base: 14px;
+  --d-narrative: 16.5px;
+  --d-line: 1.55;
+  --d-pad: 10px;
+  --d-msg-pad: 24px;
+
   /* spacing scale */
   --s-1: 4px;
   --s-2: 6px;
@@ -69,6 +76,29 @@
   --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 1px 1px rgba(0, 0, 0, 0.18);
   --shadow-2: 0 18px 48px -18px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.25);
   --shadow-3: 0 24px 72px -24px rgba(0, 0, 0, 0.72), 0 4px 12px rgba(0, 0, 0, 0.32);
+}
+
+/* === Density presets — applied by [data-density] on <html> === */
+:root[data-density="compact"] {
+  --d-font-base: 12.5px;
+  --d-narrative: 14.5px;
+  --d-line: 1.4;
+  --d-pad: 5px;
+  --d-msg-pad: 14px;
+}
+:root[data-density="default"] {
+  --d-font-base: 14px;
+  --d-narrative: 16.5px;
+  --d-line: 1.55;
+  --d-pad: 10px;
+  --d-msg-pad: 24px;
+}
+:root[data-density="spacious"] {
+  --d-font-base: 15.5px;
+  --d-narrative: 18px;
+  --d-line: 1.75;
+  --d-pad: 12px;
+  --d-msg-pad: 32px;
 }
 
 * { box-sizing: border-box; }

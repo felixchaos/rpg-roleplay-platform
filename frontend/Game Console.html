@@ -45,6 +45,25 @@
   <script type="text/babel" src="src/console-assistant-navigation.jsx?v=20260527-gc1"></script>
   <script type="text/babel" src="src/console-assistant-panel.jsx?v=unify1"></script>
 
+  <!-- density preset init — reads localStorage rpg.density, sets data-density on <html> -->
+  <script>
+    (function () {
+      var VALID = { compact: 1, default: 1, spacious: 1 };
+      function _applyDensity(d) {
+        if (!VALID[d]) d = "default";
+        document.documentElement.setAttribute("data-density", d);
+        try { localStorage.setItem("rpg.density", d); } catch (_) {}
+        window.dispatchEvent(new CustomEvent("rpg-density-change", { detail: d }));
+      }
+      // restore on load
+      var stored = "default";
+      try { stored = localStorage.getItem("rpg.density") || "default"; } catch (_) {}
+      _applyDensity(stored);
+      // public API
+      window.RPG_setDensity = _applyDensity;
+    })();
+  </script>
+
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo, useCallback } = React;
     // task 21（修订）：之前 task 15 引入的 `__late = (name) => (props) => React.createElement(window[name], props)`
