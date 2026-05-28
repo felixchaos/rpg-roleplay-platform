@@ -39,7 +39,13 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[2]
 PLATFORM_JSX = (PROJECT / "frontend" / "src" / "platform-app.jsx").read_text(encoding="utf-8")
-API_PY = (PROJECT / "rpg" / "platform_app" / "api.py").read_text(encoding="utf-8")
+# Phase 5.8: api.py 已拆分为 api/ 子包，branches 路由移到 api/saves.py
+_api_py_path = PROJECT / "rpg" / "platform_app" / "api.py"
+_saves_py_path = PROJECT / "rpg" / "platform_app" / "api" / "saves.py"
+if _saves_py_path.exists():
+    API_PY = _saves_py_path.read_text(encoding="utf-8")
+else:
+    API_PY = _api_py_path.read_text(encoding="utf-8")
 
 
 def _continue_picker_confirm_body() -> str:
