@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "selected": {
-    "api_id": "vertex_ai",
-    "model_id": "gemini-2.5-flash"
+    "api_id": "anthropic",
+    "model_id": "claude-sonnet-4-6"
   },
   "apis": [
     {
