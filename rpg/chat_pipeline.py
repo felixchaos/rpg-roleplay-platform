@@ -725,6 +725,33 @@ async def run_gm_phase(
     except Exception as _tj_err:
         print(f"[chat] timeline_narrative_guard 检测失败: {_tj_err}")
 
+    # sprint 5: 黑天鹅子代理 post-GM hook (默认关闭,RPG_ENABLE_BLACK_SWAN=1 开启)
+    try:
+        from core.config import enable_black_swan as _enable_black_swan
+        if _enable_black_swan():
+            from agents.black_swan_agent import maybe_trigger as _maybe_trigger
+            _swan_result = _maybe_trigger(
+                state,
+                user_id=int(api_user.get("id")) if api_user else 0,
+                save_id=ctx.early_active_save_id or 0,
+                script_id=active_script_id(api_user),
+                llm_caller=None,  # MVP: hook 就位但不实际 call LLM (避免外部依赖)
+            )
+            if _swan_result.get("triggered"):
+                from datetime import datetime as _dt
+                _audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                _audit.append({
+                    "ts": _dt.now().isoformat(timespec="seconds"),
+                    "kind": "black_swan_triggered",
+                    "source": "black_swan_agent",
+                    "hint": (_swan_result.get("proposal") or {}).get("summary", "")[:200],
+                    "turn": state.data.get("turn", 0),
+                })
+                if len(_audit) > 200:
+                    state.data["permissions"]["audit_log"] = _audit[-200:]
+    except Exception as _swan_err:
+        print(f"[black_swan] failed silently: {_swan_err}")
+
     # task 62 / 65 / 69: extractor 第二步
     extractor_active = False
     try:

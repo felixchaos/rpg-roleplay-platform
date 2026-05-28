@@ -54,6 +54,9 @@ Origin = Literal[
     # 拥有 user 级 mutate 工具(activate/rename/create_*)和 destructive 工具(需二次确认),
     # 但不能 inject_pending_question / set_permission_mode / approve_pending_write 这些 UI-only 工具。
     "console_assistant",
+    # sprint 5: 黑天鹅子代理 — post-GM hook 主动触发世界事件。
+    # 受 validator 管线约束,不能调 destructive 工具。
+    "autonomous_agent",
 ]
 
 

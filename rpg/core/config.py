@@ -134,3 +134,9 @@ def enable_mcp_config_write() -> str | None:
 # ── Phase manager ────────────────────────────────────────────────────────
 def phase_turn_threshold() -> int:
     return int(os.getenv("RPG_PHASE_TURN_THRESHOLD", "30"))
+
+
+# ── 黑天鹅子代理 (sprint 5) ────────────────────────────────────────────
+def enable_black_swan() -> bool:
+    """是否启用 BlackSwanAgent post-GM hook。默认关闭,需 RPG_ENABLE_BLACK_SWAN=1。"""
+    return os.getenv("RPG_ENABLE_BLACK_SWAN", "0") == "1"
