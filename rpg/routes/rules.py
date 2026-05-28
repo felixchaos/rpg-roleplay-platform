@@ -3,6 +3,17 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 
+from schemas.rules import (
+    RulesModuleStartRequest,
+    RulesModuleLaunchRequest,
+    RulesMoveRequest,
+    RulesActionRequest,
+    RulesEncounterStartRequest,
+    RulesEncounterNextRequest,
+    RulesEncounterEnemyRequest,
+    RulesSuggestRequest,
+)
+
 router = APIRouter()
 
 
@@ -16,7 +27,7 @@ async def api_rules_modules(request: Request) -> JSONResponse:
 
 
 @router.post("/api/rules/module/start")
-async def api_rules_module_start(request: Request) -> JSONResponse:
+async def api_rules_module_start(body: RulesModuleStartRequest, request: Request) -> JSONResponse:
     """低层原语：把模组加载到当前激活的 save，会直接 mutate 该 save state。
     task 87 Phase 6: 走 dispatcher module_load 工具(destructive,UI 直触发)。"""
     from app import (
@@ -24,9 +35,9 @@ async def api_rules_module_start(request: Request) -> JSONResponse:
         _persist_runtime_checkpoint, _rules_payload,
     )
     api_user = _require_api_user(request)
-    body = await request.json()
-    module_id = str(body.get("module_id") or "ash_mine").strip()
-    character_overrides = body.get("character") or None
+    body_dict = body.model_dump(exclude_none=True)
+    module_id = str(body_dict.get("module_id") or "ash_mine").strip()
+    character_overrides = body_dict.get("character") or None
 
     state = _ensure_loaded(api_user)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
@@ -46,7 +57,7 @@ async def api_rules_module_start(request: Request) -> JSONResponse:
 
 
 @router.post("/api/rules/module/launch")
-async def api_rules_module_launch(request: Request) -> JSONResponse:
+async def api_rules_module_launch(body: RulesModuleLaunchRequest, request: Request) -> JSONResponse:
     """Bug 2：模组启动的标准入口。
 
     流程：
@@ -64,12 +75,12 @@ async def api_rules_module_launch(request: Request) -> JSONResponse:
     api_user = _require_api_user(request)
     if not api_user or not api_user.get("id"):
         raise HTTPException(status_code=401, detail="启动模组需要登录")
-    body = await request.json()
-    module_id = str(body.get("module_id") or "ash_mine").strip()
+    body_dict = body.model_dump(exclude_none=True)
+    module_id = str(body_dict.get("module_id") or "ash_mine").strip()
     if not module_id:
         raise HTTPException(status_code=400, detail="缺少 module_id")
-    character_overrides = body.get("character") or None
-    custom_title = str(body.get("title") or "").strip()
+    character_overrides = body_dict.get("character") or None
+    custom_title = str(body_dict.get("title") or "").strip()
 
     import modules as _rules_module_registry
     from rules_bridge import start_module as _rb_start_module
@@ -148,7 +159,7 @@ async def api_rules_scene(request: Request) -> JSONResponse:
 
 
 @router.post("/api/rules/move")
-async def api_rules_move(request: Request) -> JSONResponse:
+async def api_rules_move(body: RulesMoveRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher module_enter_room 工具。"""
     from app import (
         _require_api_user, _ensure_loaded, _resolve_persist_target,
@@ -156,8 +167,8 @@ async def api_rules_move(request: Request) -> JSONResponse:
         _clear_pending_questions_after_rule_action, _append_rules_receipt, _room_receipt,
     )
     api_user = _require_api_user(request)
-    body = await request.json()
-    location_id = str(body.get("to") or "").strip()
+    body_dict = body.model_dump(exclude_none=True)
+    location_id = str(body_dict.get("to") or "").strip()
     if not location_id:
         raise HTTPException(status_code=400, detail="缺少 to")
     state = _ensure_loaded(api_user)
@@ -181,7 +192,7 @@ async def api_rules_move(request: Request) -> JSONResponse:
 
 
 @router.post("/api/rules/action")
-async def api_rules_action(request: Request) -> JSONResponse:
+async def api_rules_action(body: RulesActionRequest, request: Request) -> JSONResponse:
     """通用规则动作执行入口。根据 body.kind 路由到具体规则函数。"""
     from app import (
         _require_api_user, _ensure_loaded, _persist_runtime_checkpoint,
@@ -189,15 +200,15 @@ async def api_rules_action(request: Request) -> JSONResponse:
         _clear_pending_questions_after_rule_action, _append_rules_receipt, _action_receipt,
     )
     api_user = _require_api_user(request)
-    body = await request.json()
+    body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
 
-    out = _execute_rules_action(state, body)
+    out = _execute_rules_action(state, body_dict)
     if not out.get("ok"):
         return JSONResponse(out, status_code=400)
 
-    _clear_pending_questions_after_rule_action(state, f"rules:{body.get('kind') or 'action'}")
-    _append_rules_receipt(state, _action_receipt(body, out))
+    _clear_pending_questions_after_rule_action(state, f"rules:{body_dict.get('kind') or 'action'}")
+    _append_rules_receipt(state, _action_receipt(body_dict, out))
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     out["rules"] = _rules_payload(state)
@@ -205,7 +216,7 @@ async def api_rules_action(request: Request) -> JSONResponse:
 
 
 @router.post("/api/rules/encounter/start")
-async def api_rules_encounter_start(request: Request) -> JSONResponse:
+async def api_rules_encounter_start(body: RulesEncounterStartRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher combat_start 工具。"""
     from app import (
         _require_api_user, _ensure_loaded, _resolve_persist_target,
@@ -213,11 +224,11 @@ async def api_rules_encounter_start(request: Request) -> JSONResponse:
         _clear_pending_questions_after_rule_action, _append_rules_receipt, _encounter_receipt,
     )
     api_user = _require_api_user(request)
-    body = await request.json()
-    encounter_id = str(body.get("encounter_id") or "").strip()
+    body_dict = body.model_dump(exclude_none=True)
+    encounter_id = str(body_dict.get("encounter_id") or "").strip()
     if not encounter_id:
         raise HTTPException(status_code=400, detail="缺少 encounter_id")
-    seed = body.get("seed")
+    seed = body_dict.get("seed")
     state = _ensure_loaded(api_user)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     args: dict = {"encounter_id": encounter_id}
@@ -240,7 +251,7 @@ async def api_rules_encounter_start(request: Request) -> JSONResponse:
 
 
 @router.post("/api/rules/encounter/next")
-async def api_rules_encounter_next(request: Request) -> JSONResponse:
+async def api_rules_encounter_next(body: RulesEncounterNextRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher combat_next_turn 工具。"""
     from app import (
         _require_api_user, _ensure_loaded, _resolve_persist_target,
@@ -267,7 +278,7 @@ async def api_rules_encounter_next(request: Request) -> JSONResponse:
 
 
 @router.post("/api/rules/encounter/enemy")
-async def api_rules_encounter_enemy(request: Request) -> JSONResponse:
+async def api_rules_encounter_enemy(body: RulesEncounterEnemyRequest, request: Request) -> JSONResponse:
     """敌方回合：task 87 Phase 6 走 dispatcher combat_enemy_attack。"""
     from app import (
         _require_api_user, _ensure_loaded, _resolve_persist_target,
@@ -275,10 +286,10 @@ async def api_rules_encounter_enemy(request: Request) -> JSONResponse:
         _clear_pending_questions_after_rule_action, _append_rules_receipt, _encounter_receipt,
     )
     api_user = _require_api_user(request)
-    body = await request.json()
-    attacker_id = str(body.get("attacker_id") or "").strip()
-    target_id = str(body.get("target_id") or "player").strip()
-    seed = body.get("seed")
+    body_dict = body.model_dump(exclude_none=True)
+    attacker_id = str(body_dict.get("attacker_id") or "").strip()
+    target_id = str(body_dict.get("target_id") or "player").strip()
+    seed = body_dict.get("seed")
     state = _ensure_loaded(api_user)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     args: dict = {"attacker_id": attacker_id, "target_id": target_id}
@@ -305,12 +316,12 @@ async def api_rules_encounter_enemy(request: Request) -> JSONResponse:
 
 
 @router.post("/api/rules/suggest")
-async def api_rules_suggest(request: Request) -> JSONResponse:
+async def api_rules_suggest(body: RulesSuggestRequest, request: Request) -> JSONResponse:
     """从玩家自由文本输入推断候选规则动作（轻量本地匹配，用于前端候选按钮）。"""
     from app import _require_api_user, _ensure_loaded
     from rules_bridge import suggest_rule_actions as _rb_suggest_rule_actions
     api_user = _require_api_user(request)
-    body = await request.json()
-    text = str(body.get("text") or "")
+    body_dict = body.model_dump(exclude_none=True)
+    text = str(body_dict.get("text") or "")
     state = _ensure_loaded(api_user)
     return JSONResponse({"ok": True, "actions": _rb_suggest_rule_actions(text, state)})

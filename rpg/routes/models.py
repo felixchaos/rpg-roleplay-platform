@@ -3,6 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from schemas.models import (
+    ModelsSelectRequest,
+    ModelsUpsertApiRequest,
+    ModelsUpsertModelRequest,
+    ModelsDeleteModelRequest,
+    ModelsProbeRequest,
+)
+
 router = APIRouter()
 
 
@@ -20,14 +28,14 @@ async def api_models(request: Request) -> JSONResponse:
 
 
 @router.post("/api/models/select")
-async def api_models_select(request: Request) -> JSONResponse:
+async def api_models_select(body: ModelsSelectRequest, request: Request) -> JSONResponse:
     from app import (
         _require_api_user, _payload, _state_lock, _gm_by_user,
         selected_model, select_model,
     )
     api_user = _require_api_user(request, admin=True)
-    body = await request.json()
-    catalog = select_model(body.get("api_id", ""), body.get("model_id", ""))
+    body_dict = body.model_dump(exclude_none=True)
+    catalog = select_model(body_dict.get("api_id", ""), body_dict.get("model_id", ""))
     # 切换模型后清掉所有用户的 GM 缓存，下次会用新模型重建
     with _state_lock:
         _gm_by_user.clear()
@@ -35,31 +43,32 @@ async def api_models_select(request: Request) -> JSONResponse:
 
 
 @router.post("/api/models/api")
-async def api_models_upsert_api(request: Request) -> JSONResponse:
+async def api_models_upsert_api(body: ModelsUpsertApiRequest, request: Request) -> JSONResponse:
     from app import _require_api_user, selected_model, upsert_api
     _require_api_user(request, admin=True)
-    catalog = upsert_api(await request.json())
+    body_dict = body.model_dump()
+    catalog = upsert_api(body_dict)
     return JSONResponse({"ok": True, "models": catalog, "selected": selected_model(catalog)})
 
 
 @router.post("/api/models/model")
-async def api_models_upsert_model(request: Request) -> JSONResponse:
+async def api_models_upsert_model(body: ModelsUpsertModelRequest, request: Request) -> JSONResponse:
     from app import _require_api_user, selected_model, upsert_model
     _require_api_user(request, admin=True)
-    body = await request.json()
-    model_payload = body.get("model") if isinstance(body.get("model"), dict) else {
-        k: v for k, v in body.items() if k != "api_id"
+    body_dict = body.model_dump(exclude_none=True)
+    model_payload = body_dict.get("model") if isinstance(body_dict.get("model"), dict) else {
+        k: v for k, v in body_dict.items() if k != "api_id" and k != "model"
     }
-    catalog = upsert_model(body.get("api_id", ""), model_payload)
+    catalog = upsert_model(body_dict.get("api_id", ""), model_payload)
     return JSONResponse({"ok": True, "models": catalog, "selected": selected_model(catalog)})
 
 
 @router.post("/api/models/model/delete")
-async def api_models_delete_model(request: Request) -> JSONResponse:
+async def api_models_delete_model(body: ModelsDeleteModelRequest, request: Request) -> JSONResponse:
     from app import _require_api_user, selected_model, delete_model
     _require_api_user(request, admin=True)
-    body = await request.json()
-    catalog = delete_model(body.get("api_id", ""), body.get("model_id") or body.get("real_name", ""))
+    body_dict = body.model_dump(exclude_none=True)
+    catalog = delete_model(body_dict.get("api_id", ""), body_dict.get("model_id") or body_dict.get("real_name", ""))
     return JSONResponse({"ok": True, "models": catalog, "selected": selected_model(catalog)})
 
 
@@ -94,7 +103,7 @@ async def api_models_diff(request: Request) -> JSONResponse:
 
 
 @router.post("/api/models/probe")
-async def api_models_probe(request: Request) -> JSONResponse:
+async def api_models_probe(body: ModelsProbeRequest, request: Request) -> JSONResponse:
     """发一条最小请求验证可用性 + 测延迟。
 
     安全：避免用别人的 key 测试。要么 user 自己配置过该 api_id 的凭证，
@@ -102,8 +111,8 @@ async def api_models_probe(request: Request) -> JSONResponse:
     """
     from app import _require_api_user
     api_user = _require_api_user(request)
-    body = await request.json()
-    api_id = body.get("api_id", "")
+    body_dict = body.model_dump(exclude_none=True)
+    api_id = body_dict.get("api_id", "")
     # admin 可以测任何 provider；普通用户只能测自己配过 key 的 provider
     if api_user and api_user.get("role") != "admin":
         from platform_app import user_credentials as _ucreds
@@ -116,8 +125,8 @@ async def api_models_probe(request: Request) -> JSONResponse:
     import model_probe
     return JSONResponse(model_probe.probe_availability(
         api_id,
-        body.get("model"),
-        timeout_sec=int(body.get("timeout", 15)),
+        body_dict.get("model"),
+        timeout_sec=int(body_dict.get("timeout", 15)),
         user_id=api_user["id"] if api_user else None,
     ))
 

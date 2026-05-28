@@ -3,11 +3,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from schemas.worldline import WorldlineVariableRequest, WorldlineVariableRemoveRequest
+
 router = APIRouter()
 
 
 @router.post("/api/worldline/variable")
-async def api_worldline_variable(request: Request) -> JSONResponse:
+async def api_worldline_variable(body: WorldlineVariableRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher 的 set_user_variable 工具。"""
     from app import (
         _require_api_user, _payload, _ensure_loaded, _resolve_persist_target,
@@ -15,9 +17,9 @@ async def api_worldline_variable(request: Request) -> JSONResponse:
     )
     from platform_app import knowledge as platform_knowledge
     api_user = _require_api_user(request)
-    body = await request.json()
-    key = body.get("key", "")
-    value = body.get("value", "")
+    body_dict = body.model_dump(exclude_none=True)
+    key = body_dict.get("key", "")
+    value = body_dict.get("value", "")
     state = _ensure_loaded(api_user)
     persist_user_id, active_save_id = _resolve_persist_target(api_user)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
@@ -42,7 +44,7 @@ async def api_worldline_variable(request: Request) -> JSONResponse:
 
 
 @router.post("/api/worldline/variable/remove")
-async def api_worldline_variable_remove(request: Request) -> JSONResponse:
+async def api_worldline_variable_remove(body: WorldlineVariableRemoveRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: destructive,走 dispatcher remove_user_variable 工具。"""
     from app import (
         _require_api_user, _payload, _ensure_loaded, _resolve_persist_target,
@@ -50,8 +52,8 @@ async def api_worldline_variable_remove(request: Request) -> JSONResponse:
     )
     from platform_app import knowledge as platform_knowledge
     api_user = _require_api_user(request)
-    body = await request.json()
-    key = body.get("key", "")
+    body_dict = body.model_dump(exclude_none=True)
+    key = body_dict.get("key", "")
     state = _ensure_loaded(api_user)
     persist_user_id, active_save_id = _resolve_persist_target(api_user)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
