@@ -271,16 +271,73 @@ function NovelStatusProfile({ state }) {
   const timeline = w.timeline || {};
   const inventory = Array.isArray(p.inventory) ? p.inventory : [];
   const knownEvents = Array.isArray(w.known_events) ? w.known_events : [];
+  const [playerExpanded, setPlayerExpanded] = React.useState(false);
+
+  const hasDetail = !!(p.appearance || p.personality || p.speech_style || p.secrets || p.background || p.identity_role_desc);
+
   return (
     <div className="gp-stack">
       <div className="gp-section">
-        <div className="section-head"><h3>玩家</h3></div>
+        <div className="section-head">
+          <h3>玩家</h3>
+          {hasDetail && (
+            <button
+              className="iconbtn"
+              style={{ fontSize: 11, padding: "2px 6px", borderRadius: 4 }}
+              onClick={() => setPlayerExpanded(v => !v)}
+              data-tip={playerExpanded ? "收起详情" : "查看完整设定"}
+            >
+              {playerExpanded ? "▲ 收起" : "▼ 详情"}
+            </button>
+          )}
+        </div>
         <div className="gp-kv">
           <div className="gp-row"><span className="gp-label">姓名</span><strong>{p.name || "—"}</strong></div>
           <div className="gp-row"><span className="gp-label">身份</span><span>{p.role || "—"}</span></div>
           <div className="gp-row"><span className="gp-label">所在</span><span>{p.current_location || "—"}</span></div>
         </div>
-        <p className="gp-bio">{p.background || ""}</p>
+        {playerExpanded && hasDetail && (
+          <div className="gp-player-detail" style={{ marginTop: 8 }}>
+            {p.appearance && (
+              <div style={{ marginBottom: 6 }}>
+                <div className="gp-label" style={{ marginBottom: 2 }}>外貌</div>
+                <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.appearance}</p>
+              </div>
+            )}
+            {p.personality && (
+              <div style={{ marginBottom: 6 }}>
+                <div className="gp-label" style={{ marginBottom: 2 }}>性格 / 设定</div>
+                <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.personality}</p>
+              </div>
+            )}
+            {p.speech_style && (
+              <div style={{ marginBottom: 6 }}>
+                <div className="gp-label" style={{ marginBottom: 2 }}>语气</div>
+                <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.speech_style}</p>
+              </div>
+            )}
+            {p.background && !p.personality && (
+              <div style={{ marginBottom: 6 }}>
+                <div className="gp-label" style={{ marginBottom: 2 }}>背景</div>
+                <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.background}</p>
+              </div>
+            )}
+            {p.identity_role_desc && (
+              <div style={{ marginBottom: 6 }}>
+                <div className="gp-label" style={{ marginBottom: 2 }}>入场定位</div>
+                <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.identity_role_desc}</p>
+              </div>
+            )}
+            {p.secrets && (
+              <div style={{ marginBottom: 6, padding: "6px 8px", background: "var(--panel-3)", borderRadius: 6, border: "1px dashed var(--line)" }}>
+                <div className="gp-label" style={{ marginBottom: 2, color: "var(--accent)" }}>
+                  🔒 玩家隐藏知识 — 仅你可见
+                </div>
+                <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6, fontStyle: "italic" }}>{p.secrets}</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="gp-section">
