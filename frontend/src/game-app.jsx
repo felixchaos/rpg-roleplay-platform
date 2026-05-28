@@ -831,20 +831,85 @@ function BranchTreeRail({ saveId }) {
 }
 
 // ----------------------------- IN-GAME SETTINGS --------------------------
-// task 89：原本这里有 9 个开关（自动存档/敏感前置/行动建议/显示运行步骤/
-// 显示思考过程/低风险自动放行/流式速度/失败重试/静音），但全是 local
-// useState，没接 /api/me/preference，没影响任何游戏行为，"保存到本档"
-// 按钮 onClick={onClose} 实际只关弹窗。等于 9 个装饰品 + 1 个谎言按钮。
-//
-// 改成诚实版：明确告诉用户"本档专属设置仍在开发"，列出当前已经在哪些
-// 地方真正生效的偏好（全局设置面板里的扣子，task 64/85 加的 extractor /
-// curator threshold 等），并提供新标签直达全局设置的链接。
-// 未来真的有本档级 override 时再加回来 toggle，且必须 wire 到后端 prefs。
-function GameSettingsModal({ open, onClose, saveTitle }) {
+// task 89 → task 135: 用真实可用的设置面板替换 placeholder。
+// MVP 范围: 密度预设 / 叙事字体 / 自动存档 / 权限模式只读展示 / 全局设置链接。
+// 所有改动均为纯前端 localStorage — 不需要后端。
+function _readDensity() {
+  try { return localStorage.getItem("rpg.density") || "default"; } catch (_) { return "default"; }
+}
+function _readNarrativeFont() {
+  try { return localStorage.getItem("rpg.narrativeFont") || "serif"; } catch (_) { return "serif"; }
+}
+function _readAutosave() {
+  try { return localStorage.getItem("rpg.autosave") !== "off"; } catch (_) { return true; }
+}
+
+function GameSettingsModal({ open, onClose, saveTitle, permission }) {
+  const [density, setDensityState] = useStateA(_readDensity);
+  const [narrativeFont, setNarrativeFontState] = useStateA(_readNarrativeFont);
+  const [autosave, setAutosaveState] = useStateA(_readAutosave);
+
+  // sync density state with external RPG_setDensity calls
+  useEffectA(() => {
+    const onDensityChange = (e) => setDensityState(e.detail || "default");
+    window.addEventListener("rpg-density-change", onDensityChange);
+    return () => window.removeEventListener("rpg-density-change", onDensityChange);
+  }, []);
+
+  const handleDensity = (d) => {
+    setDensityState(d);
+    if (typeof window.RPG_setDensity === "function") window.RPG_setDensity(d);
+  };
+
+  const handleNarrativeFont = (f) => {
+    setNarrativeFontState(f);
+    try { localStorage.setItem("rpg.narrativeFont", f); } catch (_) {}
+    const fontMap = {
+      serif: "var(--font-serif)",
+      sans: "var(--font-sans)",
+      mono: "var(--font-mono)",
+    };
+    document.documentElement.style.setProperty("--narrative-font", fontMap[f] || fontMap.serif);
+    window.dispatchEvent(new CustomEvent("rpg-narrative-font-change", { detail: f }));
+  };
+
+  const handleAutosave = (v) => {
+    setAutosaveState(v);
+    try { localStorage.setItem("rpg.autosave", v ? "on" : "off"); } catch (_) {}
+  };
+
   if (!open) return null;
+
+  const PERM_OPT = (typeof window.PERMISSION_OPTIONS !== "undefined" && window.PERMISSION_OPTIONS) || [
+    { id: "read_only",   label: "只读 · 纯叙事", icon: "eye" },
+    { id: "default",     label: "默认权限",       icon: "lock" },
+    { id: "review",      label: "自动审查",       icon: "shield" },
+    { id: "full_access", label: "完全访问",       icon: "unlock" },
+  ];
+  const currentPerm = PERM_OPT.find(p => p.id === permission) || PERM_OPT[1];
+
+  const DENSITY_OPTS = [
+    { id: "compact",  label: "紧凑" },
+    { id: "default",  label: "默认" },
+    { id: "spacious", label: "宽松" },
+  ];
+  const FONT_OPTS = [
+    { id: "serif", label: "宋体 Serif" },
+    { id: "sans",  label: "黑体 Sans" },
+    { id: "mono",  label: "等宽 Mono" },
+  ];
+
+  const rowStyle = {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    padding: "10px 0", borderBottom: "1px solid var(--line-soft)",
+    gap: 16,
+  };
+  const labelStyle = { fontSize: 13, color: "var(--text)", flex: 1 };
+  const sublabelStyle = { fontSize: 11.5, color: "var(--muted)", marginTop: 2 };
+
   const node = (
     <div className="pl-modal-backdrop" onClick={onClose}>
-      <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(520px, 100%)"}}>
+      <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(480px, 100%)"}}>
         <header className="pl-modal-head">
           <div>
             <div className="pl-modal-eyebrow">游戏内设置 · 本档</div>
@@ -853,35 +918,78 @@ function GameSettingsModal({ open, onClose, saveTitle }) {
           <button className="iconbtn" onClick={onClose} data-tip="关闭"><Icon name="close" size={14} /></button>
         </header>
         <div className="pl-modal-form" style={{paddingTop: 4}}>
-          <div style={{
-            padding: "10px 12px", marginBottom: 12,
-            background: "var(--warn-soft, rgba(212,179,102,0.12))",
-            border: "1px solid var(--warn, #d4a857)", borderRadius: 6,
-            fontSize: 12.5, color: "var(--text-quiet)", lineHeight: 1.7,
-          }}>
-            本档专属设置（autosave / 行动建议 / 流式速度 / 自动重试等）正在重做。
-            当前对游戏行为生效的开关请在 <strong>全局设置</strong> 调整：
+
+          {/* ── 信息密度 ── */}
+          <div style={rowStyle}>
+            <div style={labelStyle}>
+              <div>信息密度</div>
+              <div style={sublabelStyle}>调整字号、行距与内边距</div>
+            </div>
+            <div className="seg" style={{flexShrink: 0}}>
+              {DENSITY_OPTS.map(d => (
+                <button key={d.id} className={density === d.id ? "active" : ""}
+                        onClick={() => handleDensity(d.id)}>
+                  {d.label}
+                </button>
+              ))}
+            </div>
           </div>
-          <ul style={{margin: 0, padding: "0 0 0 18px", fontSize: 13, color: "var(--text-quiet)", lineHeight: 2}}>
-            <li>偏好 → 界面语言 / 叙述字体 / 自动存档（生效）</li>
-            <li>偏好 → <strong>叙事提取器</strong>（task 64：GM 第二步开关 + API + 模型）</li>
-            <li>偏好 → <strong>Curator 反问阈值</strong>（task 85：confidence 低于此值跳过主 GM 直接问玩家）</li>
-            <li>写入权限 → 默认权限模式 + 审计日志</li>
-            <li>模型 → 切换主 GM / 子代理 / 提取器使用的模型与 API</li>
-          </ul>
+
+          {/* ── 叙事字体 ── */}
+          <div style={rowStyle}>
+            <div style={labelStyle}>
+              <div>叙事字体</div>
+              <div style={sublabelStyle}>GM 回复的文字字体</div>
+            </div>
+            <div className="seg" style={{flexShrink: 0}}>
+              {FONT_OPTS.map(f => (
+                <button key={f.id} className={narrativeFont === f.id ? "active" : ""}
+                        onClick={() => handleNarrativeFont(f.id)}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* ── 自动存档 ── */}
+          <div style={rowStyle}>
+            <div style={labelStyle}>
+              <div>自动存档</div>
+              <div style={sublabelStyle}>每轮 GM 回复后自动保存进度</div>
+            </div>
+            <label style={{display: "flex", alignItems: "center", gap: 8, cursor: "pointer", flexShrink: 0}}>
+              <input type="checkbox" checked={autosave}
+                     onChange={(e) => handleAutosave(e.target.checked)}
+                     style={{width: 15, height: 15, cursor: "pointer"}} />
+              <span style={{fontSize: 12.5, color: "var(--text-quiet)"}}>{autosave ? "开启" : "关闭"}</span>
+            </label>
+          </div>
+
+          {/* ── 写入权限（只读展示） ── */}
+          <div style={{...rowStyle, borderBottom: "none"}}>
+            <div style={labelStyle}>
+              <div>LLM 写入权限</div>
+              <div style={sublabelStyle}>在输入框旁的锁图标切换；完整选项见全局设置</div>
+            </div>
+            <div className="pill" style={{flexShrink: 0, gap: 6}}>
+              <Icon name={currentPerm.icon} size={11} />
+              {currentPerm.label}
+            </div>
+          </div>
+
         </div>
         <footer className="pl-modal-foot">
           <span className="muted-2" style={{fontSize: 11.5}}>
-            <Icon name="info" size={11} /> 本面板不再有假开关
+            <Icon name="info" size={11} /> 密度/字体改动即时生效
           </span>
           <div style={{display: "flex", gap: 8}}>
             <a className="btn ghost" href="Platform.html#settings"
                target="_blank" rel="noopener noreferrer"
                style={{textDecoration: "none"}}>
-              <Icon name="settings" size={12} /> 打开全局设置 ↗
+              <Icon name="settings" size={12} /> 全局设置 ↗
             </a>
             <button className="btn primary" onClick={onClose}>
-              <Icon name="check" size={12} /> 知道了
+              <Icon name="check" size={12} /> 完成
             </button>
           </div>
         </footer>

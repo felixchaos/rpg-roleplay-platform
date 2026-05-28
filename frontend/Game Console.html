@@ -45,22 +45,28 @@
   <script type="text/babel" src="src/console-assistant-navigation.jsx?v=20260527-gc1"></script>
   <script type="text/babel" src="src/console-assistant-panel.jsx?v=unify1"></script>
 
-  <!-- density preset init — reads localStorage rpg.density, sets data-density on <html> -->
+  <!-- density preset + narrative font init — reads localStorage, applies to <html> on load -->
   <script>
     (function () {
-      var VALID = { compact: 1, default: 1, spacious: 1 };
+      var VALID_DENSITY = { compact: 1, default: 1, spacious: 1 };
       function _applyDensity(d) {
-        if (!VALID[d]) d = "default";
+        if (!VALID_DENSITY[d]) d = "default";
         document.documentElement.setAttribute("data-density", d);
         try { localStorage.setItem("rpg.density", d); } catch (_) {}
         window.dispatchEvent(new CustomEvent("rpg-density-change", { detail: d }));
       }
-      // restore on load
-      var stored = "default";
-      try { stored = localStorage.getItem("rpg.density") || "default"; } catch (_) {}
-      _applyDensity(stored);
-      // public API
+      var storedDensity = "default";
+      try { storedDensity = localStorage.getItem("rpg.density") || "default"; } catch (_) {}
+      _applyDensity(storedDensity);
       window.RPG_setDensity = _applyDensity;
+
+      // restore narrative font
+      var FONT_MAP = { serif: "var(--font-serif)", sans: "var(--font-sans)", mono: "var(--font-mono)" };
+      var storedFont = "serif";
+      try { storedFont = localStorage.getItem("rpg.narrativeFont") || "serif"; } catch (_) {}
+      if (FONT_MAP[storedFont]) {
+        document.documentElement.style.setProperty("--narrative-font", FONT_MAP[storedFont]);
+      }
     })();
   </script>
 
@@ -1016,7 +1022,8 @@
             {mountStage >= 2 && <>
               {/* task 45：把真实存档标题传进去，避免硬编码 mock 标题 */}
               <GameSettingsModal open={showInGameSettings} onClose={() => setShowInGameSettings(false)}
-                saveTitle={activeSave?.title || game?._raw?.save_title || ""} />
+                saveTitle={activeSave?.title || game?._raw?.save_title || ""}
+                permission={permission} />
               <HistoryDrawer open={showHistoryDrawer} history={history} onClose={() => setShowHistoryDrawer(false)} />
               <SearchDrawer open={showSearchDrawer} history={history} state={game} onClose={() => setShowSearchDrawer(false)} />
             </>}
