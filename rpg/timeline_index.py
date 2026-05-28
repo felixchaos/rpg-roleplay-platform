@@ -163,7 +163,7 @@ def bootstrap_timeline_from_summaries(db_path: Path = DB_PATH, summary_path: Pat
             summary = summaries.get(str(chapter), "")
             phase = _phase_for(chapter, event, summary or content or "", script_key=script_key)
             time_label = _time_label_for(chapter, event, summary or content or "", script_key=script_key)
-            event_id = _event_id_for(event_chapter, key_events) if event_item else None
+            event_id = _event_id_for(event_chapter, key_events) if event_item else None  # type: ignore[assignment]
             participants = _extract_names(" ".join([event, summary, content or ""]), script_key=script_key)
             locations = _extract_locations(" ".join([event, summary, content or ""]), script_key=script_key)
             timeline_order = chapter * 1000 + scene_index

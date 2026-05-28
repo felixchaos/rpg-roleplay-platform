@@ -3,9 +3,7 @@ rules.dnd5e.checks — 技能检定与豁免。纯函数。
 """
 from __future__ import annotations
 
-from typing import Optional
-
-from ..base import RuleResult, StateOp
+from ..base import RuleResult
 from ..dice import roll
 from .character import saving_throw_modifier, skill_modifier
 from .ruleset import ABILITIES, normalize_skill

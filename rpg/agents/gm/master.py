@@ -214,6 +214,7 @@ class GameMaster:
         kind = (api or {}).get("kind", api_id)
         self.api_id = api_id
         self.user_id = user_id
+        self._backend: _AnthropicBackend | _VertexBackend | _OpenAICompatBackend
 
         if kind == "anthropic":
             self._backend = _AnthropicBackend(model=model, user_id=user_id)

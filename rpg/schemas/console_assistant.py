@@ -1,7 +1,7 @@
 """schemas.console_assistant — 侧栏控制台助手路由请求模型。"""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from schemas._common import _BaseRequest
 

@@ -1,21 +1,8 @@
 """console_assistant._state — 进程内共享状态 (imports + 常量 + mutable global)."""
 from __future__ import annotations
 
-import json
-import secrets
-import time
-import uuid
-from collections.abc import Callable, Iterator
-from datetime import datetime
 from threading import Lock
 from typing import Any
-
-from tools_dsl.command_dispatcher import (
-    ToolCallEnvelope,
-    ToolDispatcher,
-    ToolResult,
-    get_registry,
-)
 
 # ────────────────────────────────────────────────────────────
 # 常量

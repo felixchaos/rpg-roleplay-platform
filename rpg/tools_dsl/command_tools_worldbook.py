@@ -213,7 +213,7 @@ def _t_worldbook_list_save_overlay(user_id: int, args: dict) -> str:
         additions = []
         retirements = []
         for r in rows:
-            r = dict(r)
+            r = dict(r)  # type: ignore[assignment]
             if r["kind"] == "addition":
                 additions.append({
                     "id": r["id"],

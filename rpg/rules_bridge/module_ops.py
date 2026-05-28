@@ -1,8 +1,6 @@
 """module_ops.py — 模组加载与房间移动操作。"""
 from __future__ import annotations
 
-from typing import Optional
-
 import modules as module_registry
 from rules.dnd5e.character import make_default_character
 from rules_bridge.entity_sync import _entities_from_room, _sync_active_entities_to_scene

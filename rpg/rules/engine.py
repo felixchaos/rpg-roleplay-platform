@@ -4,11 +4,9 @@ rules.engine — RulesEngine 统一入口。
 """
 from __future__ import annotations
 
-import copy
 from datetime import datetime
-from typing import Optional
 
-from .base import RuleResult, StateOp
+from .base import RuleResult
 from .dice import RollResult
 from .dice import roll as _roll
 from .dnd5e import ability_modifier, proficiency_bonus
@@ -25,17 +23,13 @@ from .dnd5e.actions import (
     short_rest as _short_rest,
 )
 from .dnd5e.character import (
-    add_condition,
-    heal,
-    make_default_character,
-    remove_condition,
-    take_damage,
-)
-from .dnd5e.character import (
     consume_inventory_item as _consume_inventory_item,
 )
 from .dnd5e.character import (
     find_inventory_item as _find_inventory_item,
+)
+from .dnd5e.character import (
+    make_default_character,
 )
 from .dnd5e.character import (
     normalize_item_alias as _normalize_item_alias,

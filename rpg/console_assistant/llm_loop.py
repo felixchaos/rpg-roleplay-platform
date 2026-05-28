@@ -179,7 +179,7 @@ def _run_llm_loop(
                     try:
                         payload = json.loads(payload_str)
                     except Exception:
-                        payload = {"question": payload_str, "options": []}
+                        payload = {"question": payload_str, "options": []}  # type: ignore[assignment]
                     if not assistant_text_acc.strip():
                         intro = "好的,先确认一下:"
                         assistant_text_acc += intro

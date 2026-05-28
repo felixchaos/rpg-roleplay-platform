@@ -231,7 +231,7 @@ def _call_verifier_backend(
     import agents.extractor as _extractor
     if api_id == "vertex_ai":
         from agents.gm import _VertexBackend
-        backend = _VertexBackend(model=model, api_id="vertex_ai", user_id=user_id)
+        backend = _VertexBackend(model=model)
         return backend.call_structured(
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],

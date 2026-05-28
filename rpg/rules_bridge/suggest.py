@@ -1,8 +1,6 @@
 """suggest.py — 基于关键词的规则候选动作生成器。"""
 from __future__ import annotations
 
-import re
-
 import modules as module_registry
 from rules_bridge.intent import (
     _direction_to_exit,

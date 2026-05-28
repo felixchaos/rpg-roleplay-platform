@@ -17,7 +17,6 @@ Usage (from project root):
 """
 from __future__ import annotations
 
-import os
 import re
 import sys
 from collections import defaultdict

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
-
 from platform_app import runtime
-from platform_app.db import connect, expose, init_db
+from platform_app.db import connect, init_db
 from platform_app.knowledge._search import _search_chunks
 from platform_app.knowledge._utils import _query_tokens
 

@@ -141,7 +141,7 @@ def _t_skill_check(state: Any, args: dict) -> str:
     seed_int = int(seed) if isinstance(seed, (int, float, str)) and str(seed).lstrip("-").isdigit() else None
     try:
         from rules_bridge import perform_skill_check
-        res = perform_skill_check(state, skill_id=skill, dc=int(dc), seed=seed_int)
+        res = perform_skill_check(state, skill=skill, dc=int(dc), seed=seed_int)
         return f"{skill} 检定 DC={dc}: {res.get('summary') or res}"
     except Exception as exc:
         return f"失败: {type(exc).__name__}: {exc}"
@@ -156,7 +156,7 @@ def _t_saving_throw(state: Any, args: dict) -> str:
     seed_int = int(seed) if isinstance(seed, (int, float, str)) and str(seed).lstrip("-").isdigit() else None
     try:
         from rules_bridge import perform_saving_throw
-        res = perform_saving_throw(state, save_id=save, dc=int(dc), seed=seed_int)
+        res = perform_saving_throw(state, ability=save, dc=int(dc), seed=seed_int)
         return f"{save} 豁免 DC={dc}: {res.get('summary') or res}"
     except Exception as exc:
         return f"失败: {type(exc).__name__}: {exc}"
@@ -182,7 +182,7 @@ def _t_consume_item(state: Any, args: dict) -> str:
     seed_int = int(seed) if isinstance(seed, (int, float, str)) and str(seed).lstrip("-").isdigit() else None
     try:
         from rules_bridge import consume_item_action
-        res = consume_item_action(state, item_id=item_id, qty=int(qty), seed=seed_int)
+        res = consume_item_action(state, item_id=item_id, qty=int(qty))
         if not res.get("ok"):
             return f"失败: {res.get('error') or '未知错误'}"
         return f"消耗 {item_id} ×{qty}: {res.get('summary') or '完成'}"

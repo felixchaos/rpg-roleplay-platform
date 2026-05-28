@@ -24,9 +24,8 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass

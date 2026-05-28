@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from typing import Any, Optional
 
 # ── Demand：Demand Resolver 输出 ───────────────────────────────────
 

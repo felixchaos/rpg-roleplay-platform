@@ -6,7 +6,6 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from chapter_fact_indexer import _extract_fact
-from platform_app.db import expose
 
 
 def _upsert_document(db, book: dict[str, Any], script: dict[str, Any], chapter: dict[str, Any]) -> dict[str, Any]:

@@ -1,8 +1,25 @@
 from __future__ import annotations
+# ruff: noqa: F401
 
 # Public API — re-export all non-private symbols so that
 # `from platform_app import knowledge as k; k.sync_script_knowledge(...)` works
 # and patch.object(knowledge, "sync_script_knowledge", ...) still works.
+# Private helpers re-exported so import_pipeline can access `knowledge._ensure_book` etc.
+from chapter_fact_indexer import (
+    _known_concepts,
+    _known_locations,
+    _known_names,
+    _load_summaries,
+)
+from context_engine.loaders import _load_characters, _load_world
+from platform_app.knowledge._chunks import (
+    _fact_from_chapter,
+    _insert_chunk,
+    _upsert_chapter_fact,
+    _upsert_document,
+)
+from platform_app.knowledge._sync import _ensure_book
+from platform_app.knowledge._utils import _chunk_text
 from platform_app.knowledge._constants import CHUNK_CHARS, CHUNK_OVERLAP
 from platform_app.knowledge.character_cards import (
     delete_character_card,

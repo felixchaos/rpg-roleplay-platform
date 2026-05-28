@@ -262,7 +262,7 @@ def upsert_api(api_data: dict[str, Any]) -> dict[str, Any]:
         if "kind" in api_data:
             normalized["kind"] = str(api_data.get("kind") or api_id).strip()
         if "enabled" in api_data:
-            normalized["enabled"] = bool(api_data.get("enabled"))
+            normalized["enabled"] = bool(api_data.get("enabled"))  # type: ignore[assignment]
         for key in ("credential_ref", "credential_env", "base_url"):
             if key in api_data:
                 normalized[key] = api_data.get(key, "")

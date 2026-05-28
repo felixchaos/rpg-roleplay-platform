@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
 
 _SET_PARSER_SYSTEM = """\
 你是 /set 解析器。玩家用自然语言描述了想强制改写的设定，

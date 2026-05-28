@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-from typing import Any
 
 from fastapi import HTTPException, Request
 from fastapi.encoders import jsonable_encoder
@@ -10,10 +9,8 @@ from fastapi.responses import JSONResponse as BaseJSONResponse
 
 from tools_dsl.tool_registry import tool_payload
 
-from .. import auth, branches, knowledge, library, script_import, settings, workspace
+from .. import auth, library, workspace
 from ..db import connect, init_db
-from ..db import status as db_status
-from ..security import public_user
 
 SESSION_COOKIE = "rpg_session"
 API_VERSION = "1"

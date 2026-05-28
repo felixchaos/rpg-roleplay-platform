@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 # Bug 2 (retest)：哪些中文动词算"移动意图"。
 # "观察 / 留意 / 倾听 / 检查"等是原地行为，不应触发跨房候选。

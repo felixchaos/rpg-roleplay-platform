@@ -16,7 +16,7 @@ script_phase_anticipation.py — task 107E (part 2/2)
 """
 from __future__ import annotations
 
-from .base import ContextContribution, ContextProvider, Demand, ProviderServices
+from .base import ContextContribution, ContextProvider
 from .registry import register_provider
 
 MAX_LOOKAHEAD_PHASES = 2

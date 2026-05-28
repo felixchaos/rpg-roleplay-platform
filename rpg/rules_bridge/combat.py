@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 import modules as module_registry
 from rules import RulesEngine, get_engine
@@ -140,7 +139,7 @@ def enemy_attack(state, attacker_id: str, target_id: str = "player",
         pc = state.data.get("player_character") or {}
         target = {"name": pc.get("name") or "Player", "ac": int(pc.get("ac", 10)), "id": "player"}
     else:
-        target = next((c for c in encounter.get("combatants", []) if c.get("id") == target_id), None)
+        target = next((c for c in encounter.get("combatants", []) if c.get("id") == target_id), None)  # type: ignore[arg-type]
         if not target:
             return {"ok": False, "error": f"未知目标：{target_id}"}
 
@@ -150,7 +149,7 @@ def enemy_attack(state, attacker_id: str, target_id: str = "player",
         damage_expr=str(atk_def.get("damage", "1d6")),
         seed=seed,
         attacker_name=attacker.get("name"),
-        target_name=target.get("name"),
+        target_name=str(target.get("name")) if target.get("name") is not None else None,
         weapon_name=atk_def.get("name") or "Attack",
     )
     if result.success and target_id == "player":

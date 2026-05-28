@@ -51,7 +51,7 @@ def _t_ui_describe_page(user_id: int, args: dict) -> str:
             "forms (字段及当前值), top_actions (可点按钮)。")
 
 
-def _t_ui_set_field(user_id: int, args: dict) -> dict[str, Any]:
+def _t_ui_set_field(user_id: int, args: dict) -> str | dict[str, Any]:
     """填某 form 的某字段。返回特殊 __ui_action__ payload 让 console_assistant
     转成 SSE event 推到前端。"""
     form_id = str(args.get("form_id") or "").strip()
@@ -73,7 +73,7 @@ def _t_ui_set_field(user_id: int, args: dict) -> dict[str, Any]:
     }
 
 
-def _t_ui_click(user_id: int, args: dict) -> dict[str, Any]:
+def _t_ui_click(user_id: int, args: dict) -> str | dict[str, Any]:
     """点击某 form 的某 action 按钮 (或 global 区按钮)。
 
     form_id="global" 时 action_label 是 page-level 按钮 (如 "新游戏"、"导入剧本");

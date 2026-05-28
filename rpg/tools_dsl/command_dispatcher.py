@@ -62,7 +62,7 @@ class ToolSpec:
     name: str
     description: str
     input_schema: dict[str, Any]
-    executor: Callable[..., str]
+    executor: Callable[..., str | dict[str, Any]]
     scope: Scope = "save"
     origins: frozenset[str] = frozenset({"ui_button", "api_direct", "llm_set"})
     destructive: bool = False  # delete_* / 重置类操作,LLM 不能调

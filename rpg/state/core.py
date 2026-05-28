@@ -1,4 +1,5 @@
 """state/core.py — GameState class + module constants (DEFAULT_STATE, SAVE_FILE, etc.)"""
+# ruff: noqa: F401
 from __future__ import annotations
 
 import copy
@@ -668,7 +669,7 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         # task 78 migration 阶段决定永久策略）
         if len(items) > 500:
             self.data["memory"]["items"] = items[-500:]
-        return item["id"]
+        return item["id"]  # type: ignore[return-value]
 
     def remove_memory(self, bucket: str, index: int):
         items = self.data["memory"].get(bucket, [])

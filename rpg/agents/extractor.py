@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
 
 _EXTRACTOR_SYSTEM = """\
 你是状态提取器。读 GM 这一轮的叙事正文 + 当前状态快照，输出一个 JSON 数组，
@@ -218,7 +217,7 @@ def _call_extractor_backend(
         return _call_anthropic_tool_use(model, system_prompt, user_prompt, user_id)
     if api_id == "vertex_ai":
         from agents.gm import _VertexBackend
-        backend = _VertexBackend(model=model, api_id="vertex_ai", user_id=user_id)
+        backend = _VertexBackend(model=model)
         # call_structured 已经设了 response_mime_type=application/json
         return backend.call_structured(
             system=system_prompt,

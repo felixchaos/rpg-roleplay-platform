@@ -19,9 +19,7 @@ import json
 import re
 import secrets
 import threading
-import time
 from collections import Counter
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -288,8 +286,8 @@ def _run_pipeline(job_id: str, user_id: int, script_id: int, options: dict[str, 
             # 已被别的 worker 占了，直接退出（那个 worker 会处理）
             return
     except Exception:
-        try_acquire_job_lock = None
-        release_job_lock = None
+        try_acquire_job_lock = None  # type: ignore[assignment]
+        release_job_lock = None  # type: ignore[assignment]
 
     ctl = JobController(job_id)
     ctl.update(status="running", stages=[{"id": s[0], "label": s[1], "status": "pending"} for s in STAGES])
@@ -441,7 +439,7 @@ def _stage_facts(ctl: JobController, script_id: int, user_id: int) -> int:
                 (script_id, chapter["chapter_index"]),
             ).fetchone()
             if not doc_row:
-                doc_row = knowledge._upsert_document(db, book, script, chapter)
+                doc_row = knowledge._upsert_document(db, book, script, chapter)  # type: ignore[assignment]
             fact = knowledge._fact_from_chapter(chapter, summaries, known_names, known_locations, known_concepts)
             knowledge._upsert_chapter_fact(db, book, script, chapter, doc_row, fact)
             if (i + 1) % 10 == 0 or i == len(chapters) - 1:
@@ -568,7 +566,6 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
 
 def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
     """LLM 提取地点/势力/概念入 worldbook_entries。"""
-    from . import knowledge
     try:
         from agents.gm import GameMaster
         gm = GameMaster(user_id=user_id)

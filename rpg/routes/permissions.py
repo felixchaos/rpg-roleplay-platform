@@ -141,7 +141,7 @@ async def api_question_clear(body: QuestionClearRequest, request: Request) -> JS
             save_id=_resolve_persist_target(api_user)[1] or 0,
             state=state,
         )
-        popped = d_result.ok
+        popped = d_result.ok  # type: ignore[assignment]
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "cleared": bool(popped), "state": _payload(api_user)})

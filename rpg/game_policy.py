@@ -32,7 +32,7 @@ GamePolicy 根据当前 content_pack.kind / scene.module_id 切换边界:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass

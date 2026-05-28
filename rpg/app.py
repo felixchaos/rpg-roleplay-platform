@@ -9,7 +9,6 @@ Then open http://127.0.0.1:7860
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 import binascii
 import json
@@ -26,38 +25,38 @@ from typing import Any
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from starlette.middleware.gzip import GZipMiddleware
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from agents.context_agent import run_context_agent
+from agents.context_agent import run_context_agent  # noqa: F401
 from agents.gm import GameMaster
 from context_engine import build_context_bundle
+from retrieval import retrieve_context  # noqa: F401
 from model_registry import (
-    delete_model,
+    delete_model,  # noqa: F401
     load_model_catalog,
-    select_model,
+    select_model,  # noqa: F401
     selected_model,
-    upsert_api,
-    upsert_model,
+    upsert_api,  # noqa: F401
+    upsert_model,  # noqa: F401
 )
 from platform_app import branches as platform_branches
 from platform_app import knowledge as platform_knowledge
 from platform_app import runtime as platform_runtime
 from platform_app.api import current_user as platform_current_user
 from platform_app.api import router as platform_router
-from retrieval import retrieve_context
-from state import SAVE_FILE, GameState, strip_json_state_ops
+from state import SAVE_FILE, GameState
 from tools_dsl.tool_registry import (
-    delete_mcp_server,
-    import_skill_bundle,
-    set_mcp_server_enabled,
+    delete_mcp_server,  # noqa: F401
+    import_skill_bundle,  # noqa: F401
+    set_mcp_server_enabled,  # noqa: F401
     tool_payload,
-    upsert_mcp_server,
-    validate_mcp_server,
+    upsert_mcp_server,  # noqa: F401
+    validate_mcp_server,  # noqa: F401
 )
 
 # 通用 RPG 底座：APP_TITLE 是平台名称，不绑定特定剧本。可由 RPG_APP_TITLE env 覆写。
@@ -505,8 +504,6 @@ _startup_auth_banner()
 
 # ── 全局异常 → 4xx，避免 500 泄露 stack trace ─────────────────────────────
 from json import JSONDecodeError
-
-from fastapi.exceptions import RequestValidationError
 
 
 @app.exception_handler(ValueError)
@@ -1391,18 +1388,9 @@ def _check_probe_permission(api_user: dict[str, Any] | None, api_id: str) -> JSO
 # ── 5E-compatible 规则模组 / RulesEngine 接口 ─────────────────────
 # 内部 ruleset id "dnd5e"，对外文案使用 "5E compatible / 五版规则兼容"。
 # 不引入任何官方 Dungeons & Dragons 商标、Forgotten Realms 设定或非 SRD IP。
-import modules as _rules_module_registry
-from rules_bridge import (
-    advance_turn as _rb_advance_turn,
-)
-from rules_bridge import (
-    classify_combat_intent as _rb_classify_combat_intent,
-)
+import modules as _rules_module_registry  # noqa: F401
 from rules_bridge import (
     consume_item_action as _rb_consume_item_action,
-)
-from rules_bridge import (
-    enemy_attack as _rb_enemy_attack,
 )
 from rules_bridge import (
     enter_room as _rb_enter_room,
@@ -1424,9 +1412,6 @@ from rules_bridge import (
 )
 from rules_bridge import (
     start_encounter_by_id as _rb_start_encounter,
-)
-from rules_bridge import (
-    start_module as _rb_start_module,
 )
 from rules_bridge import (
     suggest_rule_actions as _rb_suggest_rule_actions,
@@ -1930,7 +1915,8 @@ def _resolve_console_assistant_backend(api_user: dict[str, Any] | None):
         model_real = model_real or model.get("real_name")
     # 用 GameMaster 构造 backend, 再借用其 ._backend
     gm = GameMaster(
-        api_id=api_id, model=model_real,
+        api_id=str(api_id) if api_id is not None else api_id,
+        model=str(model_real) if model_real is not None else model_real,
         user_id=int(api_user["id"]) if api_user and api_user.get("id") else None,
     )
     return gm._backend

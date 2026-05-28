@@ -6,7 +6,6 @@ from __future__ import annotations
 import random
 import re
 from dataclasses import asdict, dataclass, field
-from typing import Optional
 
 _EXPR_RE = re.compile(r"^\s*(\d+)?\s*d\s*(\d+)\s*(?:([+-])\s*(\d+))?\s*$", re.IGNORECASE)
 
@@ -91,11 +90,11 @@ def roll(
 def is_critical_hit(result: RollResult) -> bool:
     """d20 自然 20 视为暴击。"""
     if result.d20_raw is not None:
-        return result.rolls and result.rolls[0] == 20
+        return bool(result.rolls) and result.rolls[0] == 20
     return result.rolls == [20] and "d20" in result.expression.lower()
 
 
 def is_critical_miss(result: RollResult) -> bool:
     if result.d20_raw is not None:
-        return result.rolls and result.rolls[0] == 1
+        return bool(result.rolls) and result.rolls[0] == 1
     return result.rolls == [1] and "d20" in result.expression.lower()

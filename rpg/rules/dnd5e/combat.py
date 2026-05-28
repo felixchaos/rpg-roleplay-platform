@@ -3,9 +3,6 @@ rules.dnd5e.combat — 战斗遭遇状态。
 """
 from __future__ import annotations
 
-from typing import Optional
-
-from ..base import RuleResult, StateOp
 from ..dice import roll
 from .ruleset import ability_modifier
 

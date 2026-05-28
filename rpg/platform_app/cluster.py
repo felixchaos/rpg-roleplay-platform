@@ -17,10 +17,6 @@ from __future__ import annotations
 import os
 import secrets
 import socket
-import time
-from typing import Any
-
-from psycopg.types.json import Jsonb
 
 from .db import connect, init_db
 

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
 
 
 def load_dotenv_once() -> None:

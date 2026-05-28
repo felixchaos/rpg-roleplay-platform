@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Optional
 
 from rules import RulesEngine, get_engine
 from rules_bridge.combat import _sync_player_combatant
@@ -89,7 +88,7 @@ def parse_consume_intent(text: str, character: dict) -> list[dict]:
             "item_id": canonical,
             "item_name": item.get("name"),
             "qty": qty,
-            "matched": text_str[verb_match.start() : verb_end + alias_offset + len(found_alias)],
+            "matched": text_str[verb_match.start() : verb_end + alias_offset + len(found_alias)],  # type: ignore[operator]
         })
     return out
 

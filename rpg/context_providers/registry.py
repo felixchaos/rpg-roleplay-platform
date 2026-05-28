@@ -16,7 +16,6 @@ Manifest 的来源优先级：
 from __future__ import annotations
 
 import copy
-from typing import Any, Optional
 
 from .base import ContextContribution, ContextProvider, Demand, ProviderServices
 

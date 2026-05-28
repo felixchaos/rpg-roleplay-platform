@@ -10,7 +10,6 @@ from psycopg.types.json import Jsonb
 
 from platform_app import runtime as _runtime_module
 from platform_app.branches._helpers import (
-    BRANCH_STATE_DIR,
     _snapshot_quality,
     commit_state,
     load_state,
@@ -241,7 +240,7 @@ def bootstrap_runtime_binding(user_id: int | None = None) -> dict[str, Any]:
                 (save["id"], commit["id"]),
             ).fetchone()
             if not ref:
-                ref = _find_or_create_ref_for_commit(db, int(save["owner_id"]), commit)
+                ref = _find_or_create_ref_for_commit(db, int(save["owner_id"]), commit)  # type: ignore[assignment]
             _set_save_active(db, save["id"], commit["id"], ref["id"])
             _write_checkout(db, int(save["owner_id"]), save["id"], ref["id"], commit["id"])
     if seed_request:

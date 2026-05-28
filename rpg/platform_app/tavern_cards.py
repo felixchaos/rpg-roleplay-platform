@@ -140,9 +140,9 @@ def parse_png_card(blob: bytes) -> dict[str, Any]:
             except Exception:
                 continue
     # SillyTavern 通常用 key="chara" 或 "ccv3"
-    for key in ("ccv3", "chara"):
-        if key in text_chunks:
-            return parse_card(text_chunks[key])
+    for search_key in ("ccv3", "chara"):
+        if search_key in text_chunks:
+            return parse_card(text_chunks[search_key])
     raise ValueError("PNG 不包含 chara/ccv3 tEXt chunk")
 
 

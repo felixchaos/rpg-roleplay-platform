@@ -7,7 +7,6 @@ memories（记忆）+ worldline_variables。
 """
 from __future__ import annotations
 
-import json
 import secrets
 from typing import Any
 

@@ -75,7 +75,6 @@ def _t_set_permission_mode(state: Any, args: dict) -> str:
     # 但区分不了 "full_access 因为有效" vs "full_access 因为 fallback"。
     # 因此：凡是 normalize mapping 里存在的 key，视为合法；不在 mapping key 且 normalize 结果是 fallback 则非法。
     try:
-        from state.permissions import _normalize_permission_mode
         _VALID_INPUTS = {
             "只读", "只读模式", "suggest", "read", "read_only", "plan",
             "默认权限", "default",
@@ -337,7 +336,7 @@ def _t_start_script_import(user_id: int, args: dict) -> str:
             user_id=user_id,
             upload_id=upload_id,
             title=title,
-            mode=(args.get("mode") or "regex").strip() or "regex",
+            split_rule=(args.get("mode") or "regex").strip() or "regex",
         )
         sid = result.get("script_id")
         return f"导入剧本启动: script_id={sid} (事件流: /api/scripts/import-jobs/{result.get('job_id','?')}/stream)"
@@ -401,7 +400,7 @@ def _t_resplit_script(user_id: int, args: dict) -> str:
         return "失败: script_id 必须整数"
     try:
         from platform_app import script_import
-        result = script_import.resplit_script(user_id=user_id, script_id=int(script_id), mode=mode)
+        result = script_import.resplit_script(user_id=user_id, script_id=int(script_id), split_rule=mode)
         return f"重新拆分: chapters={result.get('chapter_count','?')} (mode={mode})"
     except Exception as exc:
         return f"失败: {type(exc).__name__}: {exc}"
@@ -680,7 +679,7 @@ def register_misc_tools() -> None:
          "只返凭证元数据(provider/last_updated),**永不返 key 本身**",
          {"type": "object", "properties": {}}, _t_list_my_credentials_meta, _USER_READ, False),
     ]
-    for name, desc, schema, exec_, origins, destructive in user_specs:
+    for name, desc, schema, exec_, origins, destructive in user_specs:  # type: ignore[assignment]
         if not registry.has(name):
             registry.register(ToolSpec(
                 name=name, description=desc, input_schema=schema,
@@ -701,7 +700,7 @@ def register_misc_tools() -> None:
           "required": []},
          _t_get_worldbook),
     ]
-    for name, desc, schema, exec_ in script_specs:
+    for name, desc, schema, exec_ in script_specs:  # type: ignore[assignment]
         if not registry.has(name):
             registry.register(ToolSpec(
                 name=name, description=desc, input_schema=schema,
@@ -772,7 +771,7 @@ def register_misc_tools() -> None:
           "required": ["previous_draft", "feedback"]},
          _t_refine_card_draft),
     ]
-    for name, desc, schema, exec_ in creative_specs:
+    for name, desc, schema, exec_ in creative_specs:  # type: ignore[assignment]
         if not registry.has(name):
             registry.register(ToolSpec(
                 name=name, description=desc, input_schema=schema,
@@ -982,7 +981,6 @@ def register_misc_tools() -> None:
     # 让 LLM 只见 5 把工具:ui_describe / ui_invoke / ask_user_choice
     # / ask_user_text / navigate_to_setting。
     from ui_manifest import ui_describe as _ui_describe
-    from ui_manifest import ui_invoke as _ui_invoke
 
     describe_spec = ToolSpec(
         name="ui_describe",

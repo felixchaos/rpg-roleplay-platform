@@ -349,7 +349,7 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
           "error": "..." (if failed),
         }
     """
-    from model_registry import find_api, find_model, load_model_catalog
+    from model_registry import find_api, load_model_catalog
 
     catalog = load_model_catalog()
     api = find_api(catalog, api_id)

@@ -148,7 +148,7 @@ def ensure_game_session(user_id: int, save_id: int, state: dict[str, Any] | None
             save["title"] or save["script_title"], payload,
         )
         _sync_session_state(db, session, book["id"], user_id, payload)
-    return expose(session)
+    return expose(session)  # type: ignore[return-value]
 
 
 def sync_script_knowledge(user_id: int, script_id: int, *, rebuild: bool = False) -> dict[str, Any]:
@@ -162,8 +162,10 @@ def sync_script_knowledge(user_id: int, script_id: int, *, rebuild: bool = False
         _known_concepts,
         _known_locations,
         _known_names,
-        _load_characters,
         _load_summaries,
+    )
+    from context_engine.loaders import (
+        _load_characters,
         _load_world,
     )
     from platform_app.db import init_db as _init_db

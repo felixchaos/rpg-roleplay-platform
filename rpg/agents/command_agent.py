@@ -20,7 +20,6 @@ command_agent.py — task 86: /set 命令的 LLM 工具调用入口。
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 from tools_dsl.command_tools import COMMAND_TOOLS
