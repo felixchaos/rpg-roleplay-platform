@@ -21,10 +21,10 @@ import os
 import re
 import sys
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 # ---------------------------------------------------------------------------
 # Paths (resolved relative to this file → repo layout)
@@ -36,18 +36,18 @@ PROJECT_ROOT = RPG_DIR.parent                              # …/我蕾穆丽娜
 FRONTEND_SRC = PROJECT_ROOT / "frontend" / "src"
 REPORT_PATH = RPG_DIR / "docs" / "api_contract_drift.md"
 
-BACKEND_FILES: List[Path] = [
+BACKEND_FILES: list[Path] = [
     RPG_DIR / "app.py",
     RPG_DIR / "platform_app" / "api.py",
     RPG_DIR / "platform_app" / "frontend_routes.py",
 ]
 
-FRONTEND_CORE_FILES: List[Path] = [
+FRONTEND_CORE_FILES: list[Path] = [
     FRONTEND_SRC / "api-client.js",
     FRONTEND_SRC / "data-loader.js",
 ]
 
-DOC_FILES: List[Path] = [
+DOC_FILES: list[Path] = [
     RPG_DIR / "BACKEND_API_CONTRACT.md",
     RPG_DIR / "CLAUDE_CODE_HANDOFF.md",
 ]
@@ -74,13 +74,13 @@ class Hit:
 
 @dataclass
 class Scan:
-    routes: Dict[Endpoint, List[Hit]] = field(default_factory=lambda: defaultdict(list))
-    calls: Dict[Endpoint, List[Hit]] = field(default_factory=lambda: defaultdict(list))
-    doc_mentions: Dict[Endpoint, List[Hit]] = field(default_factory=lambda: defaultdict(list))
-    doc_cookies: Dict[str, List[Hit]] = field(default_factory=lambda: defaultdict(list))
-    code_cookies: Dict[str, List[Hit]] = field(default_factory=lambda: defaultdict(list))
-    files_scanned: List[Path] = field(default_factory=list)
-    files_missing: List[Path] = field(default_factory=list)
+    routes: dict[Endpoint, list[Hit]] = field(default_factory=lambda: defaultdict(list))
+    calls: dict[Endpoint, list[Hit]] = field(default_factory=lambda: defaultdict(list))
+    doc_mentions: dict[Endpoint, list[Hit]] = field(default_factory=lambda: defaultdict(list))
+    doc_cookies: dict[str, list[Hit]] = field(default_factory=lambda: defaultdict(list))
+    code_cookies: dict[str, list[Hit]] = field(default_factory=lambda: defaultdict(list))
+    files_scanned: list[Path] = field(default_factory=list)
+    files_missing: list[Path] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ def _rel(p: Path) -> str:
         return str(p)
 
 
-def _read(p: Path) -> Optional[List[str]]:
+def _read(p: Path) -> list[str] | None:
     if not p.exists():
         return None
     try:
@@ -115,7 +115,7 @@ def _read(p: Path) -> Optional[List[str]]:
         return None
 
 
-def _norm_path(raw: str) -> Tuple[str, bool]:
+def _norm_path(raw: str) -> tuple[str, bool]:
     """Normalise a path string. Returns (canonical, low_confidence)."""
     s = raw.strip()
     low = False
@@ -206,7 +206,7 @@ FE_API_BASE_CONCAT_RE = re.compile(
 FE_METHOD_KV_RE = re.compile(r'method\s*:\s*["\'](GET|POST|PUT|PATCH|DELETE)["\']', re.IGNORECASE)
 
 
-def _extract_first_arg(text: str) -> Optional[str]:
+def _extract_first_arg(text: str) -> str | None:
     """Given text starting right after the opening '(' of a call, return the
     first argument's source verbatim (handles nested parens, ignores commas
     inside parens/brackets/strings). Returns None if no balanced first arg.
@@ -214,9 +214,9 @@ def _extract_first_arg(text: str) -> Optional[str]:
     depth_paren = 0
     depth_brack = 0
     depth_brace = 0
-    in_str: Optional[str] = None
+    in_str: str | None = None
     escape = False
-    out: List[str] = []
+    out: list[str] = []
     for ch in text:
         if escape:
             out.append(ch)
@@ -267,7 +267,7 @@ def _extract_first_arg(text: str) -> Optional[str]:
     return "".join(out)
 
 
-def _normalize_arg_expression(expr: str) -> Tuple[Optional[str], bool]:
+def _normalize_arg_expression(expr: str) -> tuple[str | None, bool]:
     """Take a JS expression like '"/api/saves/" + sid + "/delete"' and return
     a normalised path string and a low-confidence flag.
 
@@ -285,7 +285,7 @@ def _normalize_arg_expression(expr: str) -> Tuple[Optional[str], bool]:
 
     # Walk: alternate quoted strings and outer code.
     parts = re.findall(r'(["\'])([^"\']*)\1|([^"\']+)', expr_clean)
-    pieces: List[str] = []
+    pieces: list[str] = []
     saw_api = False
     last_was_string = False
     for q, lit, mid in parts:
@@ -318,7 +318,7 @@ def _strip_calls(expr: str) -> str:
     inside calls are NOT preserved — the goal is to collapse function-call
     dynamic segments to a single placeholder so the outer concat walker only
     sees real path literals."""
-    out: List[str] = []
+    out: list[str] = []
     i = 0
     n = len(expr)
     while i < n:
@@ -336,7 +336,7 @@ def _strip_calls(expr: str) -> str:
                 # find matching close
                 depth = 1
                 m = k + 1
-                in_str: Optional[str] = None
+                in_str: str | None = None
                 escape = False
                 while m < n and depth > 0:
                     c = expr[m]
@@ -405,10 +405,10 @@ def _record_call(scan: Scan, method: str, raw_path: str, src: Path, line_no: int
 
 
 def scan_frontend_calls(scan: Scan) -> None:
-    files: List[Path] = list(FRONTEND_CORE_FILES)
+    files: list[Path] = list(FRONTEND_CORE_FILES)
     if FRONTEND_SRC.exists():
         files.extend(sorted(p for p in FRONTEND_SRC.glob("*.jsx")))
-    seen: Set[Path] = set()
+    seen: set[Path] = set()
     for f in files:
         if f in seen:
             continue
@@ -504,7 +504,7 @@ def scan_docs(scan: Scan) -> None:
                     )
 
 
-def _scan_cookies(target: Dict[str, List[Hit]], f: Path, lines: List[str]) -> None:
+def _scan_cookies(target: dict[str, list[Hit]], f: Path, lines: list[str]) -> None:
     for i, line in enumerate(lines, 1):
         if not COOKIE_KW_RE.search(line) and "rpg_session" not in line:
             continue
@@ -521,12 +521,12 @@ def _scan_cookies(target: Dict[str, List[Hit]], f: Path, lines: List[str]) -> No
 class Drift:
     kind: str            # human-readable category
     severity: str        # "high" | "medium" | "low" | "info"
-    endpoint: Optional[Endpoint]
+    endpoint: Endpoint | None
     summary: str
-    details: List[str] = field(default_factory=list)
+    details: list[str] = field(default_factory=list)
 
 
-def _match_endpoint(target: Endpoint, pool: Iterable[Endpoint]) -> Optional[Endpoint]:
+def _match_endpoint(target: Endpoint, pool: Iterable[Endpoint]) -> Endpoint | None:
     """Find a matching endpoint in pool. Method ANY/GET fallback allowed."""
     for ep in pool:
         if ep.path != target.path:
@@ -538,8 +538,8 @@ def _match_endpoint(target: Endpoint, pool: Iterable[Endpoint]) -> Optional[Endp
     return None
 
 
-def analyse(scan: Scan) -> List[Drift]:
-    drifts: List[Drift] = []
+def analyse(scan: Scan) -> list[Drift]:
+    drifts: list[Drift] = []
 
     # 1) Frontend calls without a backend route → wishlist (real problem)
     for ep, hits in sorted(scan.calls.items(), key=lambda kv: (kv[0].path, kv[0].method)):
@@ -628,16 +628,16 @@ def analyse(scan: Scan) -> List[Drift]:
 SEV_RANK = {"high": 0, "medium": 1, "info": 2, "low": 3}
 
 
-def _group_for_report(drifts: List[Drift]) -> Dict[str, List[Drift]]:
-    g: Dict[str, List[Drift]] = defaultdict(list)
+def _group_for_report(drifts: list[Drift]) -> dict[str, list[Drift]]:
+    g: dict[str, list[Drift]] = defaultdict(list)
     for d in drifts:
         g[d.kind].append(d)
     return g
 
 
-def render_report(scan: Scan, drifts: List[Drift]) -> str:
+def render_report(scan: Scan, drifts: list[Drift]) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    out: List[str] = []
+    out: list[str] = []
     out.append("# API 契约漂移报告")
     out.append("")
     out.append(f"_生成时间_: {now}")
@@ -683,8 +683,8 @@ def render_report(scan: Scan, drifts: List[Drift]) -> str:
         out.append("> 未发现漂移。前后端契约与文档一致。")
         out.append("")
     else:
-        by_sev: Dict[str, int] = defaultdict(int)
-        by_kind: Dict[str, int] = defaultdict(int)
+        by_sev: dict[str, int] = defaultdict(int)
+        by_kind: dict[str, int] = defaultdict(int)
         for d in drifts:
             by_sev[d.severity] += 1
             by_kind[d.kind] += 1
@@ -774,7 +774,7 @@ def render_report(scan: Scan, drifts: List[Drift]) -> str:
 # Stdout summary
 # ---------------------------------------------------------------------------
 
-def print_summary(scan: Scan, drifts: List[Drift]) -> None:
+def print_summary(scan: Scan, drifts: list[Drift]) -> None:
     print("=" * 70)
     print("API CONTRACT DRIFT CHECK")
     print("=" * 70)
@@ -787,8 +787,8 @@ def print_summary(scan: Scan, drifts: List[Drift]) -> None:
     if scan.files_missing:
         print(f"files MISSING             : {[_rel(p) for p in scan.files_missing]}")
     print("-" * 70)
-    by_sev: Dict[str, int] = defaultdict(int)
-    by_kind: Dict[str, int] = defaultdict(int)
+    by_sev: dict[str, int] = defaultdict(int)
+    by_kind: dict[str, int] = defaultdict(int)
     for d in drifts:
         by_sev[d.severity] += 1
         by_kind[d.kind] += 1

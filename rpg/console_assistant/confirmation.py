@@ -1,16 +1,18 @@
 """console_assistant.confirmation — apply_confirmation / apply_confirmation_stream。"""
 from __future__ import annotations
 
-from typing import Any, Callable, Iterator
-
-from tools_dsl.command_dispatcher import ToolCallEnvelope
+from collections.abc import Callable, Iterator
+from typing import Any
 
 from console_assistant import _state
 from console_assistant.conversations import _new_trace_id, _trim_messages
 from console_assistant.llm_loop import (
-    _format_tool_result_for_llm, _run_llm_loop, _sse_event,
+    _format_tool_result_for_llm,
+    _run_llm_loop,
+    _sse_event,
 )
 from console_assistant.tools import dispatch_assistant_tool
+from tools_dsl.command_dispatcher import ToolCallEnvelope
 
 
 def _resolve_pending(

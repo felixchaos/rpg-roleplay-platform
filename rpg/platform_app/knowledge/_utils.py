@@ -99,6 +99,7 @@ def _wb(title: str, keys: list[str], priority: int, content: str) -> dict[str, A
 
 def _chunk_text(text: str) -> list[str]:
     import re as _re
+
     from platform_app.knowledge._constants import CHUNK_CHARS, CHUNK_OVERLAP
     text = _re.sub(r"\n{3,}", "\n\n", text or "").strip()
     if not text:

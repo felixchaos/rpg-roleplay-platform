@@ -4,7 +4,7 @@ MemoryProvider — 通用记忆层。所有 manifest 都应该启用。
 """
 from __future__ import annotations
 
-from .base import ContextProvider, ContextContribution, Demand, ProviderServices
+from .base import ContextContribution, ContextProvider, Demand, ProviderServices
 from .registry import register_provider
 
 

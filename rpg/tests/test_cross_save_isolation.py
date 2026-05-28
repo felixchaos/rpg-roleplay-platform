@@ -26,10 +26,11 @@ if str(REPO) not in sys.path:
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
 from tools_dsl.command_dispatcher import (  # noqa: E402
-    ToolCallEnvelope, ToolDispatcher, get_registry,
+    ToolCallEnvelope,
+    ToolDispatcher,
+    get_registry,
 )
 from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
-
 
 # user 级 mutate 工具清单 (必须禁 LLM origin)
 USER_MUTATE_TOOLS = {

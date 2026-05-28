@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from platform_app import runtime as _runtime_module
 from platform_app.branches._helpers import MAIN_REF, _unlink_branch_state, commit_state
 from platform_app.branches.commits import _commit_for_user
 from platform_app.branches.refs import (
@@ -14,7 +15,6 @@ from platform_app.branches.refs import (
 )
 from platform_app.branches.tree_ops import collect_ids, round_start_node, tree
 from platform_app.db import connect, expose, init_db
-from platform_app import runtime as _runtime_module
 
 
 def delete_subtree(user_id: int, node_id: int) -> dict[str, Any]:

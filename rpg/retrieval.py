@@ -4,10 +4,12 @@ retrieval.py — 两段式召回
   2. BM25 关键词搜索 vectors.db → 注入相关章节片段
 """
 from __future__ import annotations
+
 import json
 import re
 import sqlite3
 from pathlib import Path
+
 from timeline_index import bootstrap_timeline_from_summaries, timeline_filter_for_label
 
 BASE     = Path(__file__).parent
@@ -25,7 +27,7 @@ def _load_aliases():
     global _CHAR_ALIASES
     if _CHAR_ALIASES:
         return
-    with open(CHAR_IDX, "r", encoding="utf-8") as f:
+    with open(CHAR_IDX, encoding="utf-8") as f:
         chars = json.load(f)["characters"]
     for name, info in chars.items():
         _CHAR_ALIASES[name] = name
@@ -47,7 +49,7 @@ def load_character_cards(names: list[str]) -> str:
     """将角色卡格式化为可注入的文本块"""
     if not names:
         return ""
-    with open(CHAR_IDX, "r", encoding="utf-8") as f:
+    with open(CHAR_IDX, encoding="utf-8") as f:
         chars = json.load(f)["characters"]
     lines = []
     for name in names:
@@ -146,7 +148,7 @@ def bm25_search(query: str, top_k: int = 4, chapter_min: int | None = None, chap
 
 def load_recent_summaries(n: int = 3) -> str:
     """加载最近 n 章的摘要"""
-    with open(SUM_IDX, "r", encoding="utf-8") as f:
+    with open(SUM_IDX, encoding="utf-8") as f:
         data = json.load(f)
     summaries = data.get("summaries", {})
     # 按章节号降序取最近 n 个
@@ -161,7 +163,7 @@ def load_summaries_window(chapter_min: int | None, chapter_max: int | None, fall
     """Load summaries near the resolved timeline anchor instead of always using book-tail chapters."""
     if chapter_min is None or chapter_max is None:
         return load_recent_summaries(n=fallback_n)
-    with open(SUM_IDX, "r", encoding="utf-8") as f:
+    with open(SUM_IDX, encoding="utf-8") as f:
         summaries = json.load(f).get("summaries", {})
     selected = []
     for key in sorted(summaries.keys(), key=lambda x: int(x)):
@@ -271,7 +273,8 @@ def _resolve_active_phase_range(save_id: int | None, script_id: int | None) -> d
     if not script_id:
         return None
     try:
-        from platform_app.db import connect as _conn, init_db as _init
+        from platform_app.db import connect as _conn
+        from platform_app.db import init_db as _init
         _init()
         with _conn() as _db:
             active_phase_label = ""
@@ -403,7 +406,8 @@ def _resolve_save_id_from_user(user_id: int | None) -> int | None:
     if not user_id:
         return None
     try:
-        from platform_app.db import connect as _conn, init_db as _init
+        from platform_app.db import connect as _conn
+        from platform_app.db import init_db as _init
         _init()
         with _conn() as _db:
             r = _db.execute(
@@ -529,7 +533,10 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
         try:
             _sid_for_anchors = _resolve_save_id_from_user(user_id)
             if _sid_for_anchors:
-                from agents.anchor_seed_agent import list_pending_for_phase, summarize_save_anchor_state
+                from agents.anchor_seed_agent import (
+                    list_pending_for_phase,
+                    summarize_save_anchor_state,
+                )
                 # 优先按当前 phase 过滤; 没有 phase 信息时按 chapter window 过滤
                 _phase_label = (phase_range or {}).get("phase_label") if phase_range else None
                 if not _phase_label:

@@ -43,10 +43,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from state import GameState, SAVE_FILE
 from platform_app import branches as _branches
 from platform_app import runtime as _runtime
 from platform_app.db import connect, init_db
+from state import SAVE_FILE, GameState
 
 
 # ── 读取 ──────────────────────────────────────────────────────────

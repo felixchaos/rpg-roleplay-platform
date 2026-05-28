@@ -15,13 +15,13 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from threading import Event
-from typing import Any, AsyncIterator, Callable
+from typing import Any
 
 from agents.context_agent import run_context_agent
 from state import GameState, strip_json_state_ops
-
 
 # ---------------------------------------------------------------------------
 # Pipeline context: 在 phase 之间传递的可变状态
@@ -124,7 +124,9 @@ async def apply_player_directives_phase(
         try:
             from agents.command_agent import parse_set_command
             from tools_dsl.command_dispatcher import (
-                ToolCallEnvelope, ToolDispatcher, get_registry,
+                ToolCallEnvelope,
+                ToolDispatcher,
+                get_registry,
             )
             from tools_dsl.command_tools_register import ensure_registered
             ensure_registered()  # 幂等
@@ -613,8 +615,9 @@ async def run_gm_phase(
     unified_tools = mcp_tools
     gm_tool_router = None
     try:
-        from tools_dsl.chat_tool_router import build_unified_tool_list, build_tool_call_router
         import secrets as _secrets
+
+        from tools_dsl.chat_tool_router import build_tool_call_router, build_unified_tool_list
         unified_tools = build_unified_tool_list(mcp_tools, origin="llm_chat")
         _gm_trace_id = f"gm-{_secrets.token_urlsafe(6)}"
         gm_tool_router = build_tool_call_router(
@@ -702,7 +705,8 @@ async def run_gm_phase(
     # 时间线 user_set 跳跃叙事检测
     try:
         from agents.timeline_narrative_guard import (
-            detect_time_jump_violations, record_violations_to_audit,
+            detect_time_jump_violations,
+            record_violations_to_audit,
         )
         if response.strip():
             _tj_violations = detect_time_jump_violations(response, state)
@@ -759,11 +763,17 @@ async def run_gm_phase(
 
     # task 87 Phase 6: 设置 chat write context,让 state.apply_state_write_typed 拿到
     # user/save/trace,把 GM JSON op 直调 apply_state_write 路径转 dispatcher 工具调用。
+    import secrets as _ctx_secrets
+
     from state_write_context import (
-        ChatWriteContext, set_context as _set_write_ctx,
+        ChatWriteContext,
+    )
+    from state_write_context import (
         clear_context as _clear_write_ctx,
     )
-    import secrets as _ctx_secrets
+    from state_write_context import (
+        set_context as _set_write_ctx,
+    )
     _json_op_ctx = ChatWriteContext(
         user_id=int(api_user.get("id")) if api_user else 0,
         save_id=ctx.early_active_save_id or 0,
@@ -817,7 +827,7 @@ async def run_gm_phase(
     # 把 updates 写到 ctx 留给 phase 5
     ctx.response = response
     # 用 ctx.__dict__ 也行,这里直接挂属性
-    setattr(ctx, "_updates", updates)
+    ctx._updates = updates
 
 
 # ---------------------------------------------------------------------------

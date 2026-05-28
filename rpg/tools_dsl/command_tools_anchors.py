@@ -17,7 +17,6 @@ from typing import Any
 
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
-
 _ANCHOR_READ_ORIGINS = frozenset({"ui_button", "api_direct", "console_assistant", "llm_chat", "llm_set"})
 # GM 直接负责标记锚点状态, 必须给 llm_chat origin
 _ANCHOR_MUTATE_ORIGINS = frozenset({"ui_button", "api_direct", "console_assistant", "llm_chat"})
@@ -240,7 +239,7 @@ def _t_mark_anchor_superseded(user_id: int, args: dict) -> str:
                     "实际发生方式 (可以高 drift_score)。"
                 )
             if row.get("status") == "superseded":
-                return f"提示: 锚点已是 superseded 状态,未变动。"
+                return "提示: 锚点已是 superseded 状态,未变动。"
             db.execute(
                 """
                 update save_anchor_states set

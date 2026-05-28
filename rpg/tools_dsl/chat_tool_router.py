@@ -9,12 +9,14 @@ unified router 在 chat handler 内构造,带上当前 user_id / save_id / trace
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from tools_dsl.command_dispatcher import (
-    ToolCallEnvelope, ToolDispatcher, get_registry,
+    ToolCallEnvelope,
+    ToolDispatcher,
+    get_registry,
 )
-
 
 # task 87 Phase 5: sentinel 必须不含 "__" (backend 用作 server_id__tool_name 分隔符),
 # 否则 backend 把 full_name 拆错,server_id 解析失败 → router 回退到 mcp_broker 调用失败。

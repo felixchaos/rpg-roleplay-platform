@@ -1,16 +1,17 @@
 """skills.py — Skill 导入与运行路由 (/api/skills/*)。"""
 from __future__ import annotations
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from schemas.skills import SkillsImportRequest, SkillRunRequest
+from schemas.skills import SkillRunRequest, SkillsImportRequest
 
 router = APIRouter()
 
 
 @router.post("/api/skills/import")
 async def api_skills_import(body: SkillsImportRequest, request: Request) -> JSONResponse:
-    from app import _require_api_user, tool_payload, import_skill_bundle
+    from app import _require_api_user, import_skill_bundle, tool_payload
     _require_api_user(request, admin=True)
     body_dict = body.model_dump(exclude_none=True)
     try:
@@ -28,7 +29,7 @@ async def api_skill_run(body: SkillRunRequest, request: Request, skill_id: str) 
 
     安全：admin only；本地匿名也允许（开发场景）。
     """
-    from app import _require_api_user, _api_auth_required
+    from app import _api_auth_required, _require_api_user
     api_user = _require_api_user(request)
     if _api_auth_required() and (not api_user or api_user.get("role") != "admin"):
         return JSONResponse({"ok": False, "error": "需要管理员权限"}, status_code=403)

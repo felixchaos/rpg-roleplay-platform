@@ -6,9 +6,7 @@ from datetime import datetime
 from typing import Optional
 
 from rules import RulesEngine, get_engine
-
 from rules_bridge.combat import _sync_player_combatant
-
 
 # 中文/英文消耗动词
 _CONSUME_VERBS_CN = ("点燃", "使用", "消耗", "用掉", "喝", "饮", "服下", "服用",
@@ -147,7 +145,7 @@ def consume_item_action(state, item_id: str, qty: int = 1,
     }
 
 
-def short_rest(state, seed: Optional[int] = None) -> dict:
+def short_rest(state, seed: int | None = None) -> dict:
     """玩家短休：花生命骰回血。"""
     engine = get_engine()
     scene = state.data.get("scene") or {}

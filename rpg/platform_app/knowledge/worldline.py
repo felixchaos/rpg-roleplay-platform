@@ -6,8 +6,8 @@ from psycopg.types.json import Jsonb
 
 from platform_app.db import connect, expose, init_db
 from platform_app.knowledge._utils import _clean_text, _cursor_int
-from platform_app.knowledge.session import _state_from_save, ensure_game_session
 from platform_app.knowledge._worldline_repo import _db_select_worldline_variables
+from platform_app.knowledge.session import _state_from_save, ensure_game_session
 
 
 def set_worldline_variable(user_id: int, save_id: int, key: str, value: str, source: str = "user") -> dict[str, Any]:

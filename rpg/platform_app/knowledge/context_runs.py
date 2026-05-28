@@ -5,13 +5,13 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from platform_app.db import connect, expose, init_db, limit_value, page_payload
-from platform_app.knowledge._utils import _cursor_int, _retrieved_chunks_payload
-from platform_app.knowledge.session import ensure_game_session
 from platform_app.knowledge._context_runs_repo import (
-    _db_update_context_run_status,
     _db_insert_turn_messages,
     _db_select_context_runs,
+    _db_update_context_run_status,
 )
+from platform_app.knowledge._utils import _cursor_int, _retrieved_chunks_payload
+from platform_app.knowledge.session import ensure_game_session
 
 
 def record_context_run(

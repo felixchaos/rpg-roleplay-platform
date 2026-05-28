@@ -14,9 +14,9 @@ def perform_skill_check(
     dc: int,
     advantage: bool = False,
     disadvantage: bool = False,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     reason: str = "",
-    sets_flag: Optional[str] = None,
+    sets_flag: str | None = None,
 ) -> dict:
     """对玩家角色执行技能检定，写入 dice_log 与 scene.flags。"""
     engine = get_engine()
@@ -45,10 +45,10 @@ def perform_saving_throw(
     dc: int,
     advantage: bool = False,
     disadvantage: bool = False,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     reason: str = "",
-    fail_damage_expr: Optional[str] = None,
-    fail_condition: Optional[str] = None,
+    fail_damage_expr: str | None = None,
+    fail_condition: str | None = None,
 ) -> dict:
     from rules_bridge.combat import _sync_player_combatant
     engine = get_engine()
@@ -78,7 +78,7 @@ def perform_saving_throw(
     return out
 
 
-def trap_check(state, room_id: str, trap_id: str, seed: Optional[int] = None) -> dict:
+def trap_check(state, room_id: str, trap_id: str, seed: int | None = None) -> dict:
     """对房间内某个 hazard/陷阱解析掷豁免。"""
     engine = get_engine()
     scene = state.data.get("scene") or {}

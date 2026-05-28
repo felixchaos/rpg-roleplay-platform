@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+
 from context_engine._utils import _preview
 from context_engine.loaders import _load_worldbook_db
 

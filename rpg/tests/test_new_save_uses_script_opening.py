@@ -24,7 +24,6 @@ import unittest
 
 from tests.helpers import cleanup_test_users, make_client, register_user
 
-
 # 测试剧本首章内容（取自真实 output/playwright/timeline_set_test_novel.md）
 TEST_CHAPTER_TITLE = "第一章 雾港入夜"
 TEST_CHAPTER_CONTENT = """申时三刻，雾港码头的铜钟敲了六下。玩家角色『测试旅人』刚从破损的渡船上醒来，手里只有一枚蓝色罗盘。守灯人沈知微告诉他：今晚子时，灯塔会出现只持续一刻钟的星门。

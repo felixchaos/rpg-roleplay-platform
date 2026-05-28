@@ -4,8 +4,8 @@ from __future__ import annotations
 from typing import Any
 
 from platform_app.branches._helpers import display_nodes
-from platform_app.branches.seed import seed_tree
 from platform_app.branches.maintenance import ensure_summaries
+from platform_app.branches.seed import seed_tree
 from platform_app.db import connect, cursor_id, expose, init_db, limit_value
 
 

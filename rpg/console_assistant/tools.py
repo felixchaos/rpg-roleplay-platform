@@ -1,10 +1,14 @@
 """console_assistant.tools — 工具表 + dispatcher 入口。"""
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from tools_dsl.command_dispatcher import (
-    ToolCallEnvelope, ToolDispatcher, ToolResult, get_registry,
+    ToolCallEnvelope,
+    ToolDispatcher,
+    ToolResult,
+    get_registry,
 )
 
 

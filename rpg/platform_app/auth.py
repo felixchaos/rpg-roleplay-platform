@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import secrets
 import os
+import secrets
 import threading
 import time
 from datetime import datetime, timedelta
@@ -12,7 +12,6 @@ from psycopg.types.json import Jsonb
 
 from .db import connect, init_db
 from .security import hash_password, normalize_username, verify_password
-
 
 SESSION_DAYS = 14
 MIN_PASSWORD_LENGTH = int(os.environ.get("RPG_MIN_PASSWORD_LENGTH", "8"))

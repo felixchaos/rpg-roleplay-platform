@@ -181,7 +181,7 @@ def list_remote_models(api_id: str, force_refresh: bool = False, user_id: int | 
         if cached and (time.monotonic() - cached[0]) < _CACHE_TTL:
             return {"ok": True, "models": cached[1], "cached": True}
 
-    from model_registry import load_model_catalog, find_api
+    from model_registry import find_api, load_model_catalog
     catalog = load_model_catalog()
     api = find_api(catalog, api_id)
     if not api:
@@ -278,8 +278,8 @@ def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) 
     """通用 OpenAI 兼容拉模型清单，适用于 OpenAI / OpenRouter / 硅基 / 阿里 / 腾讯 / 火山 等。"""
     try:
         from openai import OpenAI
-    except ImportError:
-        raise RuntimeError("openai SDK 未安装")
+    except ImportError as exc:
+        raise RuntimeError("openai SDK 未安装") from exc
     key = _resolve_provider_key(api, user_id)
     base_url = api.get("base_url") or None
     kwargs: dict[str, Any] = {"api_key": key}
@@ -291,7 +291,7 @@ def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) 
         data = client.models.list().data
     except Exception as exc:
         # 某些 provider（如部分 OpenAI 兼容厂商）可能不支持 /v1/models，把这种情况显式标出
-        raise RuntimeError(f"provider 拒绝列模型（可能不支持 /v1/models）: {exc}")
+        raise RuntimeError(f"provider 拒绝列模型（可能不支持 /v1/models）: {exc}") from exc
     for m in data:
         mid = getattr(m, "id", "") or getattr(m, "name", "")
         if mid:
@@ -307,7 +307,7 @@ def diff_catalog(api_id: str, user_id: int | None = None) -> dict[str, Any]:
     remote = list_remote_models(api_id, user_id=user_id)
     if not remote["ok"]:
         return {"ok": False, "error": remote.get("error"), "api_id": api_id}
-    from model_registry import load_model_catalog, find_api
+    from model_registry import find_api, load_model_catalog
     api = find_api(load_model_catalog(), api_id)
     if not api:
         return {"ok": False, "error": f"api_id 不存在: {api_id}"}
@@ -349,7 +349,7 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
           "error": "..." (if failed),
         }
     """
-    from model_registry import load_model_catalog, find_api, find_model
+    from model_registry import find_api, find_model, load_model_catalog
 
     catalog = load_model_catalog()
     api = find_api(catalog, api_id)
@@ -398,7 +398,7 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
 # ══════════════════════════════════════════════════════════════════════
 def full_report(api_id: str, probe_model: bool = False, user_id: int | None = None) -> dict[str, Any]:
     """一次性返回：模型列表 + diff + 定价 + 可选可用性"""
-    from model_registry import load_model_catalog, find_api
+    from model_registry import find_api, load_model_catalog
     catalog = load_model_catalog()
     api = find_api(catalog, api_id)
     if not api:

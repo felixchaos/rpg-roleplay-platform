@@ -45,9 +45,10 @@ class _CleanupRowsBase(unittest.TestCase):
 
 class CharacterCardsFromDB(_CleanupRowsBase):
     def test_load_characters_db_returns_seeded_card(self):
-        from platform_app.db import connect
         from psycopg.types.json import Jsonb
+
         import context_engine
+        from platform_app.db import connect
 
         with connect() as db:
             db.execute(
@@ -78,9 +79,10 @@ class CharacterCardsFromDB(_CleanupRowsBase):
 
 class WorldbookFromDB(_CleanupRowsBase):
     def test_active_worldbook_picks_db_entries(self):
-        from platform_app.db import connect
         from psycopg.types.json import Jsonb
+
         import context_engine
+        from platform_app.db import connect
 
         with connect() as db:
             db.execute(

@@ -5,13 +5,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..dice import roll, is_critical_hit, is_critical_miss, parse_expression, RollResult
 from ..base import RuleResult, StateOp
+from ..dice import RollResult, is_critical_hit, is_critical_miss, parse_expression, roll
+from .character import heal, take_damage
 from .ruleset import ability_modifier
-from .character import take_damage, heal
 
 
-def damage_roll(expression: str, seed: Optional[int] = None, critical: bool = False) -> dict:
+def damage_roll(expression: str, seed: int | None = None, critical: bool = False) -> dict:
     """掷伤害骰。critical=True 时骰子数 x2（5E 兼容：双倍 dice，不双倍 mod）。"""
     if critical:
         count, sides, mod = parse_expression(expression)
@@ -31,9 +31,9 @@ def attack_roll(
     damage_expr: str,
     advantage: bool = False,
     disadvantage: bool = False,
-    seed: Optional[int] = None,
-    attacker_name: Optional[str] = None,
-    target_name: Optional[str] = None,
+    seed: int | None = None,
+    attacker_name: str | None = None,
+    target_name: str | None = None,
     weapon_name: str = "",
 ) -> RuleResult:
     """完整攻击流程：d20+atk vs AC；命中则 damage_expr 扣 HP；自然 20 暴击。"""
@@ -46,7 +46,7 @@ def attack_roll(
 
     state_ops: list[StateOp] = []
     gm_facts: list[str] = []
-    damage_info: Optional[dict] = None
+    damage_info: dict | None = None
     success: bool = False
     critical = is_critical_hit(atk)
     critical_miss = is_critical_miss(atk)
@@ -113,7 +113,7 @@ def apply_damage(target: dict, amount: int) -> RuleResult:
     )
 
 
-def short_rest(character: dict, hit_die: str = "1d8", seed: Optional[int] = None) -> RuleResult:
+def short_rest(character: dict, hit_die: str = "1d8", seed: int | None = None) -> RuleResult:
     """简化短休：花 1 个生命骰 + con 修正。"""
     con_mod = ability_modifier(int((character or {}).get("abilities", {}).get("con", 10)))
     rr = roll(hit_die, seed=seed)

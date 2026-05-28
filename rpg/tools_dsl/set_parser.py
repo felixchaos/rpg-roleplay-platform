@@ -35,7 +35,6 @@ import json
 import re
 from typing import Any
 
-
 _SET_PARSER_SYSTEM = """\
 你是 /set 解析器。玩家用自然语言描述了想强制改写的设定，
 你把它拆成精确的 JSON ops 列表让系统写入。**不要写小说**，只输出 JSON。

@@ -24,12 +24,14 @@ if str(REPO) not in sys.path:
 
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
-from state import GameState, DEFAULT_STATE  # noqa: E402
-from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
-from tools_dsl.command_dispatcher import get_registry  # noqa: E402
+from state import DEFAULT_STATE, GameState  # noqa: E402
 from tools_dsl.chat_tool_router import (  # noqa: E402
-    DISPATCHER_SENTINEL, build_unified_tool_list, build_tool_call_router,
+    DISPATCHER_SENTINEL,
+    build_tool_call_router,
+    build_unified_tool_list,
 )
+from tools_dsl.command_dispatcher import get_registry  # noqa: E402
+from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
 
 
 def _new_state(turn=3):
@@ -164,6 +166,7 @@ class GMRespondStreamSignature(unittest.TestCase):
 
     def test_signature_accepts_tool_call_router(self):
         import inspect
+
         from agents.gm import GameMaster
         sig = inspect.signature(GameMaster.respond_stream_with_tools)
         self.assertIn("tool_call_router", sig.parameters)

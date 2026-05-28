@@ -40,7 +40,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 BG_JSX = (FRONTEND / "src" / "branch-graph.jsx").read_text(encoding="utf-8")
 GAME_APP = (FRONTEND / "src" / "game-app.jsx").read_text(encoding="utf-8")

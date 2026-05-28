@@ -1,14 +1,15 @@
 """models.py — 模型目录与 API 管理路由 (/api/models/*)。"""
 from __future__ import annotations
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from schemas.models import (
+    ModelsDeleteModelRequest,
+    ModelsProbeRequest,
     ModelsSelectRequest,
     ModelsUpsertApiRequest,
     ModelsUpsertModelRequest,
-    ModelsDeleteModelRequest,
-    ModelsProbeRequest,
 )
 
 router = APIRouter()
@@ -16,7 +17,7 @@ router = APIRouter()
 
 @router.get("/api/models")
 async def api_models(request: Request) -> JSONResponse:
-    from app import _require_api_user, _redact_catalog, selected_model, load_model_catalog
+    from app import _redact_catalog, _require_api_user, load_model_catalog, selected_model
     api_user = _require_api_user(request)
     catalog = load_model_catalog()
     is_admin = bool(api_user and api_user.get("role") == "admin")
@@ -30,8 +31,12 @@ async def api_models(request: Request) -> JSONResponse:
 @router.post("/api/models/select")
 async def api_models_select(body: ModelsSelectRequest, request: Request) -> JSONResponse:
     from app import (
-        _require_api_user, _payload, _state_lock, _gm_by_user,
-        selected_model, select_model,
+        _gm_by_user,
+        _payload,
+        _require_api_user,
+        _state_lock,
+        select_model,
+        selected_model,
     )
     api_user = _require_api_user(request, admin=True)
     body_dict = body.model_dump(exclude_none=True)
@@ -65,7 +70,7 @@ async def api_models_upsert_model(body: ModelsUpsertModelRequest, request: Reque
 
 @router.post("/api/models/model/delete")
 async def api_models_delete_model(body: ModelsDeleteModelRequest, request: Request) -> JSONResponse:
-    from app import _require_api_user, selected_model, delete_model
+    from app import _require_api_user, delete_model, selected_model
     _require_api_user(request, admin=True)
     body_dict = body.model_dump(exclude_none=True)
     catalog = delete_model(body_dict.get("api_id", ""), body_dict.get("model_id") or body_dict.get("real_name", ""))
@@ -75,7 +80,7 @@ async def api_models_delete_model(body: ModelsDeleteModelRequest, request: Reque
 @router.get("/api/models/remote")
 async def api_models_remote(request: Request) -> JSONResponse:
     """从供应商 SDK 拉取真实可用模型清单（带 60s 缓存）"""
-    from app import _require_api_user, _check_probe_permission
+    from app import _check_probe_permission, _require_api_user
     api_user = _require_api_user(request)
     api_id = request.query_params.get("api_id", "")
     blocked = _check_probe_permission(api_user, api_id)
@@ -92,7 +97,7 @@ async def api_models_remote(request: Request) -> JSONResponse:
 @router.get("/api/models/diff")
 async def api_models_diff(request: Request) -> JSONResponse:
     """对比本地 catalog 和远端真实模型，返回 missing/extra/matching"""
-    from app import _require_api_user, _check_probe_permission
+    from app import _check_probe_permission, _require_api_user
     api_user = _require_api_user(request)
     api_id = request.query_params.get("api_id", "")
     blocked = _check_probe_permission(api_user, api_id)
@@ -137,7 +142,7 @@ async def api_models_pricing(request: Request) -> JSONResponse:
     from app import _require_api_user
     _require_api_user(request)
     import model_probe
-    from model_registry import load_model_catalog, find_api, find_model
+    from model_registry import find_api, find_model, load_model_catalog
     api_id = request.query_params.get("api_id", "")
     model_id = request.query_params.get("model", "")
     catalog = load_model_catalog()
@@ -156,7 +161,7 @@ async def api_models_pricing(request: Request) -> JSONResponse:
 @router.get("/api/models/report")
 async def api_models_report(request: Request) -> JSONResponse:
     """API 综合健康报告：catalog + 远端 diff + 定价 + 可选 probe"""
-    from app import _require_api_user, _check_probe_permission
+    from app import _check_probe_permission, _require_api_user
     api_user = _require_api_user(request)
     api_id = request.query_params.get("api_id", "")
     blocked = _check_probe_permission(api_user, api_id)
@@ -176,7 +181,7 @@ async def api_models_capabilities(request: Request) -> JSONResponse:
     from app import _require_api_user
     _require_api_user(request)
     import model_probe
-    from model_registry import load_model_catalog, find_api, find_model
+    from model_registry import find_api, find_model, load_model_catalog
     api_id = request.query_params.get("api_id", "")
     model_id = request.query_params.get("model", "")
     catalog = load_model_catalog()

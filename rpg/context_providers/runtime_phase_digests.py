@@ -13,9 +13,8 @@ Save 级 runtime phase digest provider — 把当前 save 已经摘要好的历�
 """
 from __future__ import annotations
 
-from .base import ContextProvider, ContextContribution, Demand, ProviderServices
+from .base import ContextContribution, ContextProvider, Demand, ProviderServices
 from .registry import register_provider
-
 
 # 最大返回的 phase 数 (避免长游戏拉太多)
 MAX_PHASES = 4

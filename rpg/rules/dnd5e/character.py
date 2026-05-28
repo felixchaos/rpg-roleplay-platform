@@ -6,8 +6,13 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from .ruleset import ABILITIES, ability_modifier, proficiency_bonus, normalize_skill, SKILL_TO_ABILITY
-
+from .ruleset import (
+    ABILITIES,
+    SKILL_TO_ABILITY,
+    ability_modifier,
+    normalize_skill,
+    proficiency_bonus,
+)
 
 DEFAULT_CHARACTER: dict = {
     "name": "",
@@ -45,7 +50,7 @@ def make_default_character(name: str = "Drifter", level: int = 1) -> dict:
     # con 修正调整 max_hp（首级用类似 d8 + con）
     con_mod = ability_modifier(char["abilities"]["con"])
     base_hp = 8 + con_mod
-    for lvl in range(2, char["level"] + 1):
+    for _lvl in range(2, char["level"] + 1):
         base_hp += 5 + con_mod
     char["max_hp"] = max(1, base_hp)
     char["hp"] = char["max_hp"]

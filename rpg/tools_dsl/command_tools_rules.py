@@ -26,7 +26,6 @@ from typing import Any
 
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
-
 # 5E 模组工具默认 origin: UI / API / LLM 都可调,但战斗具体动作禁止 llm_chat
 # (LLM 必须明确通过 /set 或 UI 显式按按钮才能动 HP/initiative)。
 # task 62: 移除 console_assistant — 模组装载/战斗都是 save 内行为,

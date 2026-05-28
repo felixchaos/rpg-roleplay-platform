@@ -45,7 +45,6 @@ from typing import Any
 
 from platform_app.db import connect, init_db
 
-
 # ── Phase 1: ETL — 从 chapter_facts 聚合到 script_timeline_anchors ──
 
 

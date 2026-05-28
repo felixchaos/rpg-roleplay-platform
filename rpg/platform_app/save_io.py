@@ -13,8 +13,7 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from .db import connect, init_db, expose
-
+from .db import connect, expose, init_db
 
 EXPORT_VERSION = 1
 

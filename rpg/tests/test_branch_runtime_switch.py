@@ -36,7 +36,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 PROJECT = Path(__file__).resolve().parents[2]
 APP_PY = (PROJECT / "rpg" / "app.py").read_text(encoding="utf-8")
 GAME_APP = (PROJECT / "frontend" / "src" / "game-app.jsx").read_text(encoding="utf-8")
@@ -99,10 +98,11 @@ class EnsureLoadedReloadsOnRuntimeSwitch(unittest.TestCase):
         import sys
         sys.path.insert(0, str(PROJECT / "rpg"))
         # 重要:不要真启动后端,只单元测 _ensure_loaded 的分支逻辑
-        from unittest import mock
-        import app as _app
-        from state import GameState, DEFAULT_STATE
         import copy
+        from unittest import mock
+
+        import app as _app
+        from state import DEFAULT_STATE, GameState
         uid = 9999  # 不会冲突的测试 uid
         old_state = GameState(copy.deepcopy(DEFAULT_STATE))
         old_state.data["player"] = {"name": "OldPlayer"}

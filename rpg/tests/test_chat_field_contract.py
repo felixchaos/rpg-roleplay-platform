@@ -43,7 +43,8 @@ class ChatAcceptsBothMessageAndText(unittest.TestCase):
                     except Exception:
                         d = "\n".join(data_lines)
                     events.append({"event": ev, "data": d})
-                ev = "message"; data_lines = []
+                ev = "message"
+                data_lines = []
                 continue
             if line.startswith("event:"):
                 ev = line[len("event:"):].strip()

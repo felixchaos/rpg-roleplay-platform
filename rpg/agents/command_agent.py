@@ -25,7 +25,6 @@ from typing import Any
 
 from tools_dsl.command_tools import COMMAND_TOOLS
 
-
 # ────────────────────────────────────────────────────────────
 # Prompts
 # ────────────────────────────────────────────────────────────
@@ -142,6 +141,7 @@ def parse_set_command(
 def _call_anthropic_tools(model: str, user_prompt: str, user_id: int | None) -> list[dict]:
     """Anthropic native tool_use,允许并行多个 tool_use blocks。"""
     from anthropic import Anthropic
+
     from platform_app.user_credentials import resolve_api_key
     result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
     key = result.get("key")
@@ -196,7 +196,7 @@ def _schema_args(schema: dict) -> str:
     props = schema.get("properties", {})
     required = set(schema.get("required") or [])
     parts = []
-    for name, spec in props.items():
+    for name, _spec in props.items():
         suffix = "" if name in required else "?"
         parts.append(f"{name}{suffix}")
     return ", ".join(parts)

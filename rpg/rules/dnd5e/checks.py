@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..dice import roll
 from ..base import RuleResult, StateOp
-from .ruleset import normalize_skill, ABILITIES
-from .character import skill_modifier, saving_throw_modifier
+from ..dice import roll
+from .character import saving_throw_modifier, skill_modifier
+from .ruleset import ABILITIES, normalize_skill
 
 
 def skill_check(
@@ -17,8 +17,8 @@ def skill_check(
     dc: int,
     advantage: bool = False,
     disadvantage: bool = False,
-    seed: Optional[int] = None,
-    actor_name: Optional[str] = None,
+    seed: int | None = None,
+    actor_name: str | None = None,
     reason: str = "",
 ) -> RuleResult:
     """对 `character` 用 `skill` 做 d20 检定，目标 DC。返回标准 RuleResult。"""
@@ -53,8 +53,8 @@ def saving_throw(
     dc: int,
     advantage: bool = False,
     disadvantage: bool = False,
-    seed: Optional[int] = None,
-    actor_name: Optional[str] = None,
+    seed: int | None = None,
+    actor_name: str | None = None,
     reason: str = "",
 ) -> RuleResult:
     """属性豁免。"""

@@ -46,8 +46,8 @@ command_tools.py — task 86: LLM 命令工具表。
 """
 from __future__ import annotations
 
-from typing import Any, Callable
-
+from collections.abc import Callable
+from typing import Any
 
 # ────────────────────────────────────────────────────────────
 # Tool schema (Anthropic tool_use input_schema 兼容)
@@ -388,7 +388,7 @@ def execute_tool(state: Any, name: str, args: dict) -> str:
             if not v:
                 return "set_player_background 失败: background 为空"
             state.data.setdefault("player", {})["background"] = v
-            return f"玩家背景已更新"
+            return "玩家背景已更新"
         if name == "set_relationship":
             ch = (args.get("character") or "").strip()
             st = (args.get("status") or "").strip()

@@ -26,7 +26,7 @@ if str(REPO) not in sys.path:
 
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
-from state import GameState, DEFAULT_STATE  # noqa: E402
+from state import DEFAULT_STATE, GameState  # noqa: E402
 
 
 def _state_with_player_pending(initial: str = "四日后的黄昏") -> GameState:

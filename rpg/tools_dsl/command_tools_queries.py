@@ -18,7 +18,6 @@ from typing import Any
 
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
-
 # task 48: console_assistant 是 user-driven agent,所有 read 工具都对它开放
 _READ_ANY_ORIGIN = frozenset({
     "ui_button", "api_direct", "llm_set", "llm_chat", "mcp_call", "console_assistant",

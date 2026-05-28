@@ -1,8 +1,8 @@
 """state/json_ops.py — JSON state ops 提取 (_extract_json_state_ops, strip_json_state_ops)"""
 from __future__ import annotations
+
 import json
 import re
-
 
 _JSON_STATE_OPS_RE = re.compile(
     r"```(?:json|state-ops|state)?\s*\n?\s*"

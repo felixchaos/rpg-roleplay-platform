@@ -20,7 +20,8 @@ if str(REPO) not in sys.path:
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
 import copy  # noqa: E402
-from state import GameState, DEFAULT_STATE  # noqa: E402
+
+from state import DEFAULT_STATE, GameState  # noqa: E402
 
 
 def _make_state(initial_time: str = "三日后的子夜") -> GameState:

@@ -8,31 +8,57 @@ import copy
 from datetime import datetime
 from typing import Optional
 
-from .dice import roll as _roll, RollResult
 from .base import RuleResult, StateOp
+from .dice import RollResult
+from .dice import roll as _roll
 from .dnd5e import ability_modifier, proficiency_bonus
-from .dnd5e.character import (
-    make_default_character, take_damage, heal, add_condition, remove_condition,
-    consume_inventory_item as _consume_inventory_item,
-    find_inventory_item as _find_inventory_item,
-    normalize_item_alias as _normalize_item_alias,
-    resources_from_inventory as _resources_from_inventory,
+from .dnd5e.actions import (
+    apply_damage as _apply_damage,
 )
-from .dnd5e.checks import skill_check as _skill_check, saving_throw as _saving_throw
 from .dnd5e.actions import (
     attack_roll as _attack_roll,
+)
+from .dnd5e.actions import (
     damage_roll as _damage_roll,
-    apply_damage as _apply_damage,
+)
+from .dnd5e.actions import (
     short_rest as _short_rest,
 )
+from .dnd5e.character import (
+    add_condition,
+    heal,
+    make_default_character,
+    remove_condition,
+    take_damage,
+)
+from .dnd5e.character import (
+    consume_inventory_item as _consume_inventory_item,
+)
+from .dnd5e.character import (
+    find_inventory_item as _find_inventory_item,
+)
+from .dnd5e.character import (
+    normalize_item_alias as _normalize_item_alias,
+)
+from .dnd5e.character import (
+    resources_from_inventory as _resources_from_inventory,
+)
+from .dnd5e.checks import saving_throw as _saving_throw
+from .dnd5e.checks import skill_check as _skill_check
 from .dnd5e.combat import (
     initiative as _initiative,
-    start_encounter as _start_encounter,
-    next_turn as _next_turn,
+)
+from .dnd5e.combat import (
     is_encounter_resolved,
     mark_defeated_by_hp,
 )
-from .dnd5e.monsters import get_stat_block, build_combatant, list_stat_blocks
+from .dnd5e.combat import (
+    next_turn as _next_turn,
+)
+from .dnd5e.combat import (
+    start_encounter as _start_encounter,
+)
+from .dnd5e.monsters import build_combatant, get_stat_block, list_stat_blocks
 
 
 class RulesEngine:
@@ -69,13 +95,13 @@ class RulesEngine:
     def roll(
         self,
         expression: str,
-        seed: Optional[int] = None,
+        seed: int | None = None,
         advantage: bool = False,
         disadvantage: bool = False,
     ) -> RollResult:
         return _roll(expression, seed=seed, advantage=advantage, disadvantage=disadvantage)
 
-    def damage_roll(self, expression: str, seed: Optional[int] = None, critical: bool = False) -> dict:
+    def damage_roll(self, expression: str, seed: int | None = None, critical: bool = False) -> dict:
         return _damage_roll(expression, seed=seed, critical=critical)
 
     # ── 角色 ────────────────────────────────────────────────────
@@ -103,8 +129,8 @@ class RulesEngine:
         dc: int,
         advantage: bool = False,
         disadvantage: bool = False,
-        seed: Optional[int] = None,
-        actor_name: Optional[str] = None,
+        seed: int | None = None,
+        actor_name: str | None = None,
         reason: str = "",
     ) -> RuleResult:
         return _skill_check(character, skill, dc, advantage=advantage, disadvantage=disadvantage,
@@ -117,18 +143,18 @@ class RulesEngine:
         dc: int,
         advantage: bool = False,
         disadvantage: bool = False,
-        seed: Optional[int] = None,
-        actor_name: Optional[str] = None,
+        seed: int | None = None,
+        actor_name: str | None = None,
         reason: str = "",
     ) -> RuleResult:
         return _saving_throw(character, ability, dc, advantage=advantage, disadvantage=disadvantage,
                              seed=seed, actor_name=actor_name, reason=reason)
 
     # ── 战斗 ────────────────────────────────────────────────────
-    def initiative(self, combatants: list[dict], seed: Optional[int] = None) -> list[dict]:
+    def initiative(self, combatants: list[dict], seed: int | None = None) -> list[dict]:
         return _initiative(combatants, seed=seed)
 
-    def start_encounter(self, party: list[dict], enemies: list[dict], seed: Optional[int] = None,
+    def start_encounter(self, party: list[dict], enemies: list[dict], seed: int | None = None,
                         encounter_id: str = "") -> dict:
         return _start_encounter(party, enemies, seed=seed, encounter_id=encounter_id)
 
@@ -143,9 +169,9 @@ class RulesEngine:
         damage_expr: str,
         advantage: bool = False,
         disadvantage: bool = False,
-        seed: Optional[int] = None,
-        attacker_name: Optional[str] = None,
-        target_name: Optional[str] = None,
+        seed: int | None = None,
+        attacker_name: str | None = None,
+        target_name: str | None = None,
         weapon_name: str = "",
     ) -> RuleResult:
         return _attack_roll(
@@ -157,7 +183,7 @@ class RulesEngine:
     def apply_damage(self, target: dict, amount: int) -> RuleResult:
         return _apply_damage(target, amount)
 
-    def short_rest(self, character: dict, hit_die: str = "1d8", seed: Optional[int] = None) -> RuleResult:
+    def short_rest(self, character: dict, hit_die: str = "1d8", seed: int | None = None) -> RuleResult:
         return _short_rest(character, hit_die=hit_die, seed=seed)
 
     # ── encounter 工具 ──────────────────────────────────────────
@@ -214,7 +240,7 @@ class RulesEngine:
         return entry
 
 
-_DEFAULT_ENGINE: Optional[RulesEngine] = None
+_DEFAULT_ENGINE: RulesEngine | None = None
 
 
 def get_engine(ruleset_id: str = "dnd5e", mode: str = "5e_compatible") -> RulesEngine:

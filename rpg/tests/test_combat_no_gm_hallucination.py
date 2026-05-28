@@ -30,7 +30,6 @@ from pathlib import Path
 
 from tests.helpers import make_client, register_user
 
-
 # ────────────────────────────────────────────────────────────────────
 # Layer A: classify_combat_intent 单元
 # ────────────────────────────────────────────────────────────────────
@@ -329,8 +328,8 @@ class RulesProviderInjectsFactsNotDirectives(unittest.TestCase):
         return _S()
 
     def _collect_text(self, state) -> str:
-        from context_providers.rules import RulesProvider
         from context_providers.base import Demand, ProviderServices
+        from context_providers.rules import RulesProvider
         manifest = {"kind": "module_adventure", "ruleset": "dnd5e"}
         prov = RulesProvider()
         contrib = prov.collect(state, manifest, Demand(player_intent="explore"), ProviderServices())

@@ -5,12 +5,16 @@ import json
 import secrets
 import time
 import uuid
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from threading import Lock
-from typing import Any, Callable, Iterator
+from typing import Any
 
 from tools_dsl.command_dispatcher import (
-    ToolCallEnvelope, ToolDispatcher, ToolResult, get_registry,
+    ToolCallEnvelope,
+    ToolDispatcher,
+    ToolResult,
+    get_registry,
 )
 
 # ────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ RulesProvider — 在 manifest.ruleset 非 none 时启用。
 """
 from __future__ import annotations
 
-from .base import ContextProvider, ContextContribution, Demand, ProviderServices
+from .base import ContextContribution, ContextProvider, Demand, ProviderServices
 from .registry import register_provider
 
 

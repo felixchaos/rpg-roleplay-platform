@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from timeline_state import clean_time_value, looks_like_time_value
 
-
 _ASKING_FOR_CONFIRM_PATTERNS = (
     r"是否(?:要|要不要|确认|继续|推进|跳到|跳转)",
     r"请(?:玩家|你)?(?:确认|选择|决定|回答)",

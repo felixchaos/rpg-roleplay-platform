@@ -3,6 +3,7 @@
 汇集分散在各处的 os.getenv 调用,提供类型化访问。
 """
 from __future__ import annotations
+
 import os
 from pathlib import Path
 from typing import Optional
@@ -29,11 +30,11 @@ def require_auth() -> bool:
 def debug_ui() -> bool:
     return bool(os.getenv("RPG_DEBUG_UI"))
 
-def cors_origins() -> Optional[str]:
+def cors_origins() -> str | None:
     return os.getenv("RPG_CORS_ORIGINS")
 
-def trusted_proxies() -> Optional[str]:
+def trusted_proxies() -> str | None:
     return os.getenv("RPG_TRUSTED_PROXIES")
 
-def master_key() -> Optional[str]:
+def master_key() -> str | None:
     return os.getenv("RPG_MASTER_KEY")

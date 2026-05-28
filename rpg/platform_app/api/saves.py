@@ -239,9 +239,9 @@ async def api_save_anchors(request: Request, save_id: int):
             return json_response({"ok": False, "error": "无权访问该存档"}, status_code=403)
     try:
         from agents.anchor_seed_agent import (
-            summarize_save_anchor_state,
             drift_by_phase,
             list_pending_for_phase,
+            summarize_save_anchor_state,
         )
         summary = summarize_save_anchor_state(save_id)
         by_phase = drift_by_phase(save_id)

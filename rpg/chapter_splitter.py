@@ -9,9 +9,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from re import Pattern
 from statistics import mean, stdev
-from typing import Pattern
-
 
 NUMBER_TOKEN = r"零一二三四五六七八九十百千万〇两\d０-９"
 

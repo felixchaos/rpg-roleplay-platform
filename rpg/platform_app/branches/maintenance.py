@@ -4,8 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from platform_app.branches._helpers import load_state, rough_summary
-from platform_app.branches.commits import _state_snapshot_hash
 from platform_app.branches._maintenance_repo import _db_update_commit_snapshot
+from platform_app.branches.commits import _state_snapshot_hash
 
 
 def ensure_summaries(db, save_id: int) -> None:

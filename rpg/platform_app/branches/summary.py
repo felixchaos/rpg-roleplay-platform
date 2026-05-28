@@ -8,7 +8,6 @@ from typing import Any
 
 from platform_app.db import connect
 
-
 _SUMMARY_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="branch-summary")
 _SUMMARY_GM = None
 _SUMMARY_GM_LOCK = threading.Lock()

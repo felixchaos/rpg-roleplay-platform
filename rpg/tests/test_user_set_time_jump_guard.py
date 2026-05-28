@@ -24,7 +24,6 @@ import copy as _copy
 import unittest
 from pathlib import Path
 
-
 PROJECT = Path(__file__).resolve().parents[2]
 
 
@@ -38,7 +37,7 @@ class TimelineLayerUserSetWarning(unittest.TestCase):
 
     def _state_with(self, *, source="user_set", turn=5, last_turn=5,
                     from_label="柏林", to_label="火星·薇瑟帝国扬陆城内"):
-        from state import GameState, DEFAULT_STATE
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.data["turn"] = turn
         g.data["world"]["timeline"]["last_transition"] = {
@@ -103,7 +102,7 @@ class TimelineLayerUserSetWarning(unittest.TestCase):
 
 class DetectViolationsUnit(unittest.TestCase):
     def _state_user_set_now(self, turn=5):
-        from state import GameState, DEFAULT_STATE
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.data["turn"] = turn
         g.data["world"]["timeline"]["last_transition"] = {
@@ -157,7 +156,7 @@ class DetectViolationsUnit(unittest.TestCase):
     def test_no_user_set_jump_skips_check(self):
         """如果 last_transition 不是 user_set,不应检测 (避免误伤普通叙事)。"""
         from agents.timeline_narrative_guard import detect_time_jump_violations
-        from state import GameState, DEFAULT_STATE
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.data["turn"] = 5
         g.data["world"]["timeline"]["last_transition"] = {
@@ -171,7 +170,7 @@ class DetectViolationsUnit(unittest.TestCase):
     def test_old_jump_skips_check(self):
         """user_set 跳跃但在过去 turn,不应再检测。"""
         from agents.timeline_narrative_guard import detect_time_jump_violations
-        from state import GameState, DEFAULT_STATE
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.data["turn"] = 10
         g.data["world"]["timeline"]["last_transition"] = {
@@ -191,7 +190,7 @@ class DetectViolationsUnit(unittest.TestCase):
 class RecordViolationsAudit(unittest.TestCase):
     def test_audit_log_entry_structure(self):
         from agents.timeline_narrative_guard import record_violations_to_audit
-        from state import GameState, DEFAULT_STATE
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         g.data["turn"] = 5
         violations = [
@@ -211,7 +210,7 @@ class RecordViolationsAudit(unittest.TestCase):
 
     def test_empty_violations_no_op(self):
         from agents.timeline_narrative_guard import record_violations_to_audit
-        from state import GameState, DEFAULT_STATE
+        from state import DEFAULT_STATE, GameState
         g = GameState(_copy.deepcopy(DEFAULT_STATE))
         record_violations_to_audit(g, [])
         self.assertEqual(g.data["permissions"].get("audit_log", []), [])

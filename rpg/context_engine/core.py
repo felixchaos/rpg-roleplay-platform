@@ -2,30 +2,30 @@
 from __future__ import annotations
 
 from typing import Any
-from timeline_index import timeline_filter_for_label
 
 from context_engine._constants import MAX_LAYER_CHARS
-from context_engine._utils import _layer, _trim, _preview, _estimate_tokens, _cache_plan
-from context_engine.layers import (
-    _state_schema_layer,
-    _fact_groups_layer,
-    _candidate_actions_layer,
-    _active_hypotheses_layer,
-    _write_results_layer,
-    _timeline_layer,
-    _worldline_layer,
-)
-from context_engine.loaders import _safe_load_chars
+from context_engine._utils import _cache_plan, _estimate_tokens, _layer, _preview, _trim
 from context_engine.helpers import (
     _neutralize_state_write_tags,
     _pending_jump_warning_text,
 )
-from context_engine.rules_text import (
-    _story_rules,
-    _agent_runtime_rules,
-    _context_agent_decision,
-    _context_agent_debug,
+from context_engine.layers import (
+    _active_hypotheses_layer,
+    _candidate_actions_layer,
+    _fact_groups_layer,
+    _state_schema_layer,
+    _timeline_layer,
+    _worldline_layer,
+    _write_results_layer,
 )
+from context_engine.loaders import _safe_load_chars
+from context_engine.rules_text import (
+    _agent_runtime_rules,
+    _context_agent_debug,
+    _context_agent_decision,
+    _story_rules,
+)
+from timeline_index import timeline_filter_for_label
 
 
 def _format_history(history: list[dict]) -> str:
@@ -68,7 +68,9 @@ def build_context_bundle(
     # 自动 resolve manifest + run providers（旧 caller 兼容）
     if contributions is None or manifest is None:
         from context_providers import (
-            resolve_content_pack, run_providers, ProviderServices,
+            ProviderServices,
+            resolve_content_pack,
+            run_providers,
         )
         if manifest is None:
             manifest = resolve_content_pack(state, script_id=script_id)
@@ -129,10 +131,10 @@ def build_context_bundle(
             "debug": dict(contrib.debug),
         })
         for layer in contrib.layers:
-            l = dict(layer)
-            l.setdefault("priority", contrib.priority)
-            l.setdefault("source", contrib.provider_id)
-            provider_layers.append(l)
+            lyr = dict(layer)
+            lyr.setdefault("priority", contrib.priority)
+            lyr.setdefault("source", contrib.provider_id)
+            provider_layers.append(lyr)
 
     # 兜底 rag 层：若 contributions 没注入 retrieval，但 caller 传了 retrieved_context（旧 caller）
     if not has_retrieval_layer and retrieved_context:
@@ -149,7 +151,7 @@ def build_context_bundle(
 
     # 合并 + 按 priority 降序排序（高优先级在前 = 稳定前缀，利于 prompt cache）
     all_layers = universal_layers + provider_layers + tail_layers
-    all_layers.sort(key=lambda l: -int(l.get("priority", 50)))
+    all_layers.sort(key=lambda lyr: -int(lyr.get("priority", 50)))
 
     prompt_parts = []
     debug_layers = []

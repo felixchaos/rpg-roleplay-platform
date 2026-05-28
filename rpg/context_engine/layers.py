@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from typing import Any
+
 from context_engine._constants import MAX_LAYER_CHARS  # noqa: F401 (re-exported via __init__)
-from context_engine._utils import _layer, _trim, _preview, _estimate_tokens
+from context_engine._utils import _estimate_tokens, _layer, _preview, _trim
 from timeline_index import timeline_filter_for_label
 
 

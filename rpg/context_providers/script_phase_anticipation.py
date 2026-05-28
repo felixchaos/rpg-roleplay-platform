@@ -16,9 +16,8 @@ script_phase_anticipation.py — task 107E (part 2/2)
 """
 from __future__ import annotations
 
-from .base import ContextProvider, ContextContribution, Demand, ProviderServices
+from .base import ContextContribution, ContextProvider, Demand, ProviderServices
 from .registry import register_provider
-
 
 MAX_LOOKAHEAD_PHASES = 2
 PER_PHASE_BUDGET = 400
@@ -140,7 +139,7 @@ def _render_lookahead(phases: list[dict], current_phase: str) -> str:
                 block.append("预期事件:")
                 block.extend(evt_lines)
         if locs:
-            loc_str = "、".join(str(l) for l in locs[:5] if l)
+            loc_str = "、".join(str(loc) for loc in locs[:5] if loc)
             if loc_str:
                 block.append(f"预期场景: {loc_str}")
 

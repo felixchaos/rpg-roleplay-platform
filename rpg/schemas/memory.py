@@ -1,18 +1,20 @@
 """schemas.memory — 记忆管理路由请求模型。"""
 from __future__ import annotations
+
 from typing import Optional
+
 from schemas._common import _BaseRequest
 
 
 class MemoryModeRequest(_BaseRequest):
-    mode: Optional[str] = "normal"
+    mode: str | None = "normal"
 
 
 class MemoryAddRequest(_BaseRequest):
-    bucket: Optional[str] = "notes"
-    text: Optional[str] = ""
+    bucket: str | None = "notes"
+    text: str | None = ""
 
 
 class MemoryRemoveRequest(_BaseRequest):
-    bucket: Optional[str] = "notes"
-    index: Optional[int] = -1
+    bucket: str | None = "notes"
+    index: int | None = -1

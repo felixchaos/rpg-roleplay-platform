@@ -44,7 +44,6 @@ import re
 import time
 from typing import Any
 
-
 # ────────────────────────────────────────────────────────────
 #  LLM Prompt
 # ────────────────────────────────────────────────────────────
@@ -337,7 +336,7 @@ def _build_user_prompt(
     script_anchor: dict[str, Any] | None,
 ) -> str:
     lines: list[str] = []
-    lines.append(f"# 阶段元信息")
+    lines.append("# 阶段元信息")
     lines.append(f"- save_id = {save_id}")
     lines.append(f"- phase_index = {phase_index}")
     lines.append(f"- phase_label = {(phase_row.get('phase_label') or '(未命名)')!r}")
@@ -586,8 +585,9 @@ def _persist_digest(
     turn_start: int, turn_end: int,
     model: str,
 ) -> None:
-    from platform_app.db import connect, init_db
     from psycopg.types.json import Jsonb
+
+    from platform_app.db import connect, init_db
 
     init_db()
     with connect() as db:

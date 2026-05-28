@@ -74,7 +74,7 @@ class GamePolicy:
 
     id = "base"
 
-    def preflight(self, user_input: str, state: Any) -> Optional[dict]:
+    def preflight(self, user_input: str, state: Any) -> dict | None:
         """玩家输入到 GM 之间的拦截点。返回:
         - None: 放行,正常 GM 流程
         - dict (PreflightBlock.to_dict()): 阻挡块,chat handler 直接 yield
@@ -110,7 +110,7 @@ class ModuleAdventurePolicy(GamePolicy):
 
     id = "module_adventure"
 
-    def preflight(self, user_input: str, state: Any) -> Optional[dict]:
+    def preflight(self, user_input: str, state: Any) -> dict | None:
         # 复用现有 classify_combat_intent (已在 rules_bridge.py 实现)。
         # 这里只做协调:任何返回非 None 的 classifier 都构成阻挡。
         try:
@@ -187,7 +187,7 @@ class NovelAdaptationPolicy(GamePolicy):
 
     id = "novel_adaptation"
 
-    def preflight(self, user_input: str, state: Any) -> Optional[dict]:
+    def preflight(self, user_input: str, state: Any) -> dict | None:
         return None  # 小说不拦截战斗;叙事完全交给 GM
 
     def gm_prompt_constraints(self, state: Any) -> list[str]:
@@ -210,7 +210,7 @@ class FreeformPolicy(GamePolicy):
 
     id = "freeform"
 
-    def preflight(self, user_input: str, state: Any) -> Optional[dict]:
+    def preflight(self, user_input: str, state: Any) -> dict | None:
         return None
 
     def gm_prompt_constraints(self, state: Any) -> list[str]:

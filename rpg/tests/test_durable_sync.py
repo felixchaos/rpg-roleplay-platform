@@ -109,8 +109,8 @@ class DurableKnowledgeSync(unittest.TestCase):
         """唯一索引 uq_import_jobs_active_per_script 保证 (user,script,kind) pending/running 只能有一行。
         手工 INSERT 第二行模拟竞争插入，必须被 PG 拒绝。
         """
-        from platform_app.db import connect
         from platform_app import script_import
+        from platform_app.db import connect
         with self._stub_pool_submit():
             script_import._schedule_knowledge_sync(self.owner_id, self.script_id_1)
         import psycopg

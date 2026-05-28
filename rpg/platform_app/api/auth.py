@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
-from .. import auth as _auth, workspace
+from .. import auth as _auth
+from .. import workspace
 from ..security import public_user
 from ._deps import (
     SESSION_COOKIE,

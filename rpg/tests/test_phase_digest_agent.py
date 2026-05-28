@@ -27,9 +27,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tests.helpers import (  # noqa: E402
-    cleanup_test_users, integtest_username, make_client, register_user,
+    cleanup_test_users,
+    integtest_username,
+    make_client,
+    register_user,
 )
-
 
 # ────────────────────────────────────────────────────────────
 #  纯函数: 不需 DB

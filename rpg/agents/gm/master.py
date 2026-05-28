@@ -1,12 +1,13 @@
 """agents.gm.master — GameMaster 统一接口。"""
 from __future__ import annotations
+
 import json
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from agents.gm.helpers import _format_tools_for_prompt, _anthropic_curator_tool_use
-from agents.gm.backends import _VertexBackend, _AnthropicBackend, _OpenAICompatBackend
+from agents.gm.backends import _AnthropicBackend, _OpenAICompatBackend, _VertexBackend
+from agents.gm.helpers import _anthropic_curator_tool_use, _format_tools_for_prompt
 
 BASE = Path(__file__).parent.parent.parent  # rpg/agents/gm/ → rpg/
 SA_FILE = BASE / "vertex_sa.json"
@@ -199,7 +200,7 @@ class GameMaster:
         model: provider-native real model name.
         user_id: 当前用户 ID，用于按用户隔离取 API key。本地未登录 + RPG_REQUIRE_AUTH!=1 时回退环境变量。
         """
-        from model_registry import load_model_catalog, find_api
+        from model_registry import find_api, load_model_catalog
         catalog = load_model_catalog()
         api = find_api(catalog, api_id)
         kind = (api or {}).get("kind", api_id)
@@ -395,7 +396,7 @@ class GameMaster:
         tail_keep = max(len(START), len(END)) - 1
         accumulated_text = ""  # 用于把 assistant 回合拼回 messages
 
-        for iteration in range(max_iterations):
+        for _iteration in range(max_iterations):
             buffer = ""
             in_tool = False
             tool_invoked = False

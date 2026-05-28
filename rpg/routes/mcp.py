@@ -1,15 +1,16 @@
 """mcp.py — MCP server 管理与工具调用路由 (/api/tools + /api/mcp/*)。"""
 from __future__ import annotations
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from schemas.mcp import (
-    McpServerRequest,
-    McpServerEnabledRequest,
     McpServerDeleteRequest,
-    McpServerValidateRequest,
+    McpServerEnabledRequest,
+    McpServerRequest,
     McpServerStartRequest,
     McpServerStopRequest,
+    McpServerValidateRequest,
     McpToolCallRequest,
 )
 
@@ -18,7 +19,7 @@ router = APIRouter()
 
 @router.get("/api/tools")
 async def api_tools(request: Request) -> JSONResponse:
-    from app import _require_api_user, _redact_tools, tool_payload
+    from app import _redact_tools, _require_api_user, tool_payload
     api_user = _require_api_user(request)
     is_admin = bool(api_user and api_user.get("role") == "admin")
     return JSONResponse({"ok": True, "tools": _redact_tools(tool_payload(), is_admin)})
@@ -38,7 +39,7 @@ async def api_mcp_server(body: McpServerRequest, request: Request) -> JSONRespon
 
 @router.post("/api/mcp/server/enabled")
 async def api_mcp_server_enabled(body: McpServerEnabledRequest, request: Request) -> JSONResponse:
-    from app import _require_api_user, tool_payload, set_mcp_server_enabled
+    from app import _require_api_user, set_mcp_server_enabled, tool_payload
     _require_api_user(request, admin=True)
     body_dict = body.model_dump(exclude_none=True)
     try:
@@ -50,7 +51,7 @@ async def api_mcp_server_enabled(body: McpServerEnabledRequest, request: Request
 
 @router.post("/api/mcp/server/delete")
 async def api_mcp_server_delete(body: McpServerDeleteRequest, request: Request) -> JSONResponse:
-    from app import _require_api_user, tool_payload, delete_mcp_server
+    from app import _require_api_user, delete_mcp_server, tool_payload
     _require_api_user(request, admin=True)
     body_dict = body.model_dump(exclude_none=True)
     try:
@@ -123,7 +124,7 @@ async def api_mcp_tool_call(body: McpToolCallRequest, request: Request) -> JSONR
     在多用户/服务器模式下只允许 admin；本地匿名模式才允许任意调用。
     后续要让 MCP server 支持 per-user 注册再放宽。
     """
-    from app import _require_api_user, _api_auth_required
+    from app import _api_auth_required, _require_api_user
     api_user = _require_api_user(request)
     if _api_auth_required() and (not api_user or api_user.get("role") != "admin"):
         return JSONResponse({"ok": False, "error": "MCP 工具调用目前仅限管理员（per-user 注册待支持）"}, status_code=403)

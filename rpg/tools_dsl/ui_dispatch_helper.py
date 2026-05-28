@@ -22,7 +22,10 @@ import secrets
 from typing import Any
 
 from tools_dsl.command_dispatcher import (
-    ToolCallEnvelope, ToolDispatcher, ToolResult, get_registry,
+    ToolCallEnvelope,
+    ToolDispatcher,
+    ToolResult,
+    get_registry,
 )
 
 

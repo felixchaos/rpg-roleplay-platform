@@ -45,7 +45,7 @@ class MigrationOrdering(unittest.TestCase):
     def _check(self, items):
         # 直接复用 db._assert_migrations_monotonic 的判定，但喂入自定义列表
         seen, last = set(), 0
-        for version, name, _ in items:
+        for version, _name, _ in items:
             if version in seen:
                 raise RuntimeError(f"dup v{version}")
             if version <= last:

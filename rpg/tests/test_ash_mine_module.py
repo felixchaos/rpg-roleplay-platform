@@ -16,13 +16,20 @@ from __future__ import annotations
 import unittest
 
 import modules as module_registry
-from state import GameState
 from rules_bridge import (
-    start_module, enter_room,
-    perform_skill_check, perform_saving_throw,
-    start_encounter_by_id, player_attack, advance_turn, enemy_attack,
-    trap_check, short_rest, suggest_rule_actions,
+    advance_turn,
+    enemy_attack,
+    enter_room,
+    perform_saving_throw,
+    perform_skill_check,
+    player_attack,
+    short_rest,
+    start_encounter_by_id,
+    start_module,
+    suggest_rule_actions,
+    trap_check,
 )
+from state import GameState
 
 
 class ModuleLoaderTests(unittest.TestCase):

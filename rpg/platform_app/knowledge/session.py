@@ -5,9 +5,9 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from platform_app.db import connect, expose, init_db
+from platform_app.knowledge._session_repo import _db_upsert_game_session
 from platform_app.knowledge._sync import _ensure_book
 from platform_app.knowledge._utils import _clean_text
-from platform_app.knowledge._session_repo import _db_upsert_game_session
 
 
 def _state_from_save(user_id: int, save_id: int) -> dict[str, Any]:

@@ -18,8 +18,9 @@ from pathlib import Path
 
 sys.path.insert(0, "/Volumes/我的电脑/我穆蕾莉娅不爱你/我蕾穆丽娜不爱你/rpg")
 
-from platform_app.db import connect, init_db  # noqa: E402
 from psycopg.types.json import Jsonb  # noqa: E402
+
+from platform_app.db import connect, init_db  # noqa: E402
 
 
 def aggregate_for_script(script_id: int) -> int:

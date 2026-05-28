@@ -5,12 +5,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..dice import roll
 from ..base import RuleResult, StateOp
+from ..dice import roll
 from .ruleset import ability_modifier
 
 
-def initiative(combatants: list[dict], seed: Optional[int] = None) -> list[dict]:
+def initiative(combatants: list[dict], seed: int | None = None) -> list[dict]:
     """对每个 combatant 掷 1d20+DEX mod 决定先攻顺序，返回排序后的 [{id, name, init, side}] 列表。"""
     rolls: list[dict] = []
     for idx, c in enumerate(combatants or []):
@@ -34,7 +34,7 @@ def initiative(combatants: list[dict], seed: Optional[int] = None) -> list[dict]
 def start_encounter(
     party: list[dict],
     enemies: list[dict],
-    seed: Optional[int] = None,
+    seed: int | None = None,
     encounter_id: str = "",
 ) -> dict:
     """生成 encounter 状态字典。party 通常只有玩家。"""

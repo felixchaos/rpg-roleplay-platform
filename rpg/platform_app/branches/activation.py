@@ -4,6 +4,8 @@ from __future__ import annotations
 import secrets
 from typing import Any
 
+from platform_app import runtime as _runtime_module
+from platform_app.branches._helpers import commit_state
 from platform_app.branches.commits import _commit_for_user
 from platform_app.branches.refs import (
     _find_or_create_ref_for_commit,
@@ -11,11 +13,9 @@ from platform_app.branches.refs import (
     _upsert_ref,
     _write_checkout,
 )
-from platform_app.branches._helpers import commit_state
 from platform_app.branches.seed import seed_tree
 from platform_app.branches.tree_ops import tree
 from platform_app.db import connect, expose, init_db
-from platform_app import runtime as _runtime_module
 
 
 def continue_from(user_id: int, node_id: int) -> dict[str, Any]:

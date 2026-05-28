@@ -22,7 +22,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 PROJECT = Path(__file__).resolve().parents[2]
 REPO_PY = (PROJECT / "rpg" / "state_repository.py").read_text(encoding="utf-8")
 APP_PY = (PROJECT / "rpg" / "app.py").read_text(encoding="utf-8")

@@ -1,5 +1,6 @@
 """state/path_ops.py — 路径操作 helpers (_clean_path, _write_path_*, _set_path, _get_path, _module_scene_active)"""
 from __future__ import annotations
+
 from typing import Any
 
 

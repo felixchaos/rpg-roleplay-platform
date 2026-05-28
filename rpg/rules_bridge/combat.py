@@ -6,7 +6,6 @@ from typing import Optional
 
 import modules as module_registry
 from rules import RulesEngine, get_engine
-
 from rules_bridge.entity_sync import _entities_from_encounter
 
 
@@ -25,7 +24,7 @@ def _sync_player_combatant(state) -> None:
             break
 
 
-def start_encounter_by_id(state, encounter_id: str, seed: Optional[int] = None) -> dict:
+def start_encounter_by_id(state, encounter_id: str, seed: int | None = None) -> dict:
     """根据当前模组 encounters.json 中的 id 启动战斗。"""
     engine = get_engine()
     scene = state.data.setdefault("scene", {})
@@ -73,7 +72,7 @@ def start_encounter_by_id(state, encounter_id: str, seed: Optional[int] = None) 
 
 def player_attack(state, target_id: str, weapon_id: str = "shortsword",
                   advantage: bool = False, disadvantage: bool = False,
-                  seed: Optional[int] = None) -> dict:
+                  seed: int | None = None) -> dict:
     """玩家对当前 encounter 中的 target 发动攻击。"""
     engine = get_engine()
     encounter = state.data.get("encounter") or {}
@@ -123,7 +122,7 @@ def player_attack(state, target_id: str, weapon_id: str = "shortsword",
 
 
 def enemy_attack(state, attacker_id: str, target_id: str = "player",
-                 attack_index: int = 0, seed: Optional[int] = None) -> dict:
+                 attack_index: int = 0, seed: int | None = None) -> dict:
     """敌方角色对玩家或其他战斗员发动攻击。"""
     engine = get_engine()
     encounter = state.data.get("encounter") or {}

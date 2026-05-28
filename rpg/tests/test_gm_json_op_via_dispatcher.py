@@ -22,10 +22,12 @@ if str(REPO) not in sys.path:
 
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
-from state import GameState, DEFAULT_STATE  # noqa: E402
+from state import DEFAULT_STATE, GameState  # noqa: E402
 from state_op_tool_map import map_op_to_tool  # noqa: E402
 from state_write_context import (  # noqa: E402
-    ChatWriteContext, set_context, clear_context,
+    ChatWriteContext,
+    clear_context,
+    set_context,
 )
 from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
 

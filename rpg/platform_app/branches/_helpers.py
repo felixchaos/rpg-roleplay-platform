@@ -9,7 +9,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-
 # ── 常量 ─────────────────────────────────────────────────────────────────────
 BASE = Path(__file__).resolve().parents[2]
 BRANCH_STATE_DIR = BASE / "platform_data" / "branch_states"
@@ -124,8 +123,8 @@ def write_runtime_snapshot(save_id: int, data: dict[str, Any]) -> str:
 
 
 def copy_state(source_path: str, save_id: int, label: str) -> str:
-    import shutil as _shutil
     import secrets as _secrets
+    import shutil as _shutil
     BRANCH_STATE_DIR.mkdir(parents=True, exist_ok=True)
     target = BRANCH_STATE_DIR / f"save_{save_id}_{label}_{_secrets.token_hex(4)}.json"
     source = Path(source_path)

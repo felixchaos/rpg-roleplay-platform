@@ -12,7 +12,7 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from .db import connect, init_db, expose
+from .db import connect, expose, init_db
 
 
 def compute_cost(api_id: str, model_real_name: str, usage: dict[str, int]) -> Decimal:

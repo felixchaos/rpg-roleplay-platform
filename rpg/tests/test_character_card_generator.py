@@ -19,7 +19,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
@@ -28,9 +28,12 @@ if str(REPO) not in sys.path:
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
 import character_card_generator as ccg  # noqa: E402
-from tools_dsl.command_dispatcher import ToolCallEnvelope, ToolDispatcher, get_registry  # noqa: E402
+from tools_dsl.command_dispatcher import (  # noqa: E402
+    ToolCallEnvelope,
+    ToolDispatcher,
+    get_registry,
+)
 from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
-
 
 # ────────────────────────────────────────────────────────────
 # 辅助: 构造一个完整合规的 draft

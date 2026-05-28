@@ -20,7 +20,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
@@ -28,8 +28,12 @@ if str(REPO) not in sys.path:
 
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
-from state import GameState, DEFAULT_STATE  # noqa: E402
-from tools_dsl.command_dispatcher import ToolCallEnvelope, ToolDispatcher, get_registry  # noqa: E402
+from state import DEFAULT_STATE, GameState  # noqa: E402
+from tools_dsl.command_dispatcher import (  # noqa: E402
+    ToolCallEnvelope,
+    ToolDispatcher,
+    get_registry,
+)
 from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
 
 

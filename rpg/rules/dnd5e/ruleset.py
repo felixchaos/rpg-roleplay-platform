@@ -3,7 +3,6 @@ rules.dnd5e.ruleset — 5E-compatible 通用规则常量与基础函数。
 """
 from __future__ import annotations
 
-
 ABILITIES = ("str", "dex", "con", "int", "wis", "cha")
 
 

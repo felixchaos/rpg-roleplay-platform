@@ -1,5 +1,6 @@
 """agents.gm.backends.vertex — Vertex AI (Gemini) backend."""
 from __future__ import annotations
+
 import json
 import re
 from collections.abc import Iterator
@@ -173,7 +174,7 @@ class _VertexBackend:
         tools_param = [types.Tool(function_declarations=fn_decls)]
         contents = self._to_contents(messages, types)
 
-        for iteration in range(max_iterations):
+        for _iteration in range(max_iterations):
             pending_calls: list[dict[str, Any]] = []
             current_text_parts: list[Any] = []
             current_text_str = ""

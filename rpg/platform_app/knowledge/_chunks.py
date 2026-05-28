@@ -6,7 +6,6 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from chapter_fact_indexer import _extract_fact
-
 from platform_app.db import expose
 
 

@@ -3,7 +3,7 @@ rules.base — RulesEngine 通用数据结构。
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
 
@@ -29,10 +29,10 @@ class RuleResult:
     kind: str                                 # "skill_check" / "saving_throw" / "attack" / ...
     actor: str = ""
     target: str = ""
-    success: Optional[bool] = None
-    dc: Optional[int] = None
+    success: bool | None = None
+    dc: int | None = None
     roll: dict = field(default_factory=dict)  # RollResult.to_dict() or composite
-    damage: Optional[dict] = None
+    damage: dict | None = None
     state_ops: list[StateOp] = field(default_factory=list)
     gm_facts: list[str] = field(default_factory=list)
     extra: dict = field(default_factory=dict)

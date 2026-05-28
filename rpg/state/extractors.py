@@ -1,9 +1,10 @@
 """state/extractors.py — 从文本提取指令的 helpers"""
 from __future__ import annotations
+
 import re
 
-from timeline_state import detect_time_directives, clean_time_value, looks_like_time_value
 from state.parsers import _clean_item, _parse_assignment
+from timeline_state import clean_time_value, detect_time_directives, looks_like_time_value
 
 
 def _extract_player_time_directives(text: str) -> list[str]:

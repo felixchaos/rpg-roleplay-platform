@@ -14,8 +14,7 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from .db import connect, init_db, expose
-
+from .db import connect, expose, init_db
 
 _SLUG_RE = re.compile(r"[^0-9A-Za-z_一-鿿]+")
 

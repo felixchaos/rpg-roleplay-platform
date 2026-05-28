@@ -132,9 +132,9 @@ PLATFORM_HTML = r"""
       background: var(--panel);
       padding: 16px;
     }
-	    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
-	    .import-grid { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(180px, .45fr) minmax(260px, 1fr); gap: 12px; align-items: end; }
-	    .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .68fr); gap: 12px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+        .import-grid { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(180px, .45fr) minmax(260px, 1fr); gap: 12px; align-items: end; }
+        .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .68fr); gap: 12px; }
     .list { display: grid; gap: 8px; }
     .item {
       display: grid;
@@ -168,8 +168,8 @@ PLATFORM_HTML = r"""
     .title-cell { display: grid; gap: 4px; min-width: 0; }
     .title-cell strong { overflow-wrap: anywhere; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--muted); overflow-wrap: anywhere; }
-	    .small { font-size: 12px; color: var(--muted); }
-	    .nowrap { white-space: nowrap; }
+        .small { font-size: 12px; color: var(--muted); }
+        .nowrap { white-space: nowrap; }
     .empty { border: 1px dashed var(--line); border-radius: 8px; padding: 26px; color: var(--muted); text-align: center; }
     .auth-wrap {
       min-height: 100vh;
@@ -221,11 +221,11 @@ PLATFORM_HTML = r"""
     @media (max-width: 920px) {
       .shell { grid-template-columns: 1fr; }
       .sidebar { position: static; height: auto; }
-	      .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-	      .split { grid-template-columns: 1fr; }
-	      .import-grid { grid-template-columns: 1fr; }
-	      .topbar { align-items: flex-start; flex-direction: column; }
-	    }
+          .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .split { grid-template-columns: 1fr; }
+          .import-grid { grid-template-columns: 1fr; }
+          .topbar { align-items: flex-start; flex-direction: column; }
+        }
   </style>
 </head>
 <body>
@@ -234,8 +234,8 @@ PLATFORM_HTML = r"""
   <script>
     const API = "/api/v1";
     const routes = [
-	      ["profile", "主页", "user"],
-	      ["shelf", "剧本", "book"],
+          ["profile", "主页", "user"],
+          ["shelf", "剧本", "book"],
       ["saves", "开始游戏", "play"],
       ["branches", "分支", "branch"],
       ["library", "库", "folder"],
@@ -263,14 +263,14 @@ PLATFORM_HTML = r"""
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
     }[ch]));
-	    const fmtBytes = (n) => {
+        const fmtBytes = (n) => {
       const value = Number(n || 0);
       if (value < 1024) return `${value} B`;
       if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-	      return `${(value / 1024 / 1024).toFixed(1)} MB`;
-	    };
-	    const fmtCount = (n) => Number(n || 0).toLocaleString("zh-CN");
-	    const uid = (item) => item?.uid || item?.public_id || item?.id || "";
+          return `${(value / 1024 / 1024).toFixed(1)} MB`;
+        };
+        const fmtCount = (n) => Number(n || 0).toLocaleString("zh-CN");
+        const uid = (item) => item?.uid || item?.public_id || item?.id || "";
     const shortUid = (value) => String(value || "").replace(/-/g, "").slice(0, 10);
     const clip = (value, limit = 24) => {
       const text = String(value ?? "").replace(/\s+/g, " ").trim();
@@ -365,8 +365,8 @@ PLATFORM_HTML = r"""
     }
     function subtitle(label) {
       const map = {
-	        "主页": "账号、资料和平台状态",
-	        "剧本": "多书籍剧本入口，支持 TXT/MD 导入与章节识别",
+            "主页": "账号、资料和平台状态",
+            "剧本": "多书籍剧本入口，支持 TXT/MD 导入与章节识别",
         "开始游戏": "每个剧本下的游戏存档目录",
         "分支": "从任意对话节点继续游戏，并创建新的分支",
         "库": "上传、整理和下载多媒体与文档资产",
@@ -383,7 +383,7 @@ PLATFORM_HTML = r"""
       const isRegister = state.authMode === "register";
       return `<div class="auth-wrap">
         <div class="auth">
-	          <div><h1>RPG Platform</h1><p class="muted">登录后进入剧本、存档、分支和库。</p></div>
+              <div><h1>RPG Platform</h1><p class="muted">登录后进入剧本、存档、分支和库。</p></div>
           <div class="tabs">
             <button class="${!isRegister ? "active" : ""}" onclick="state.authMode='login'; render()">登录</button>
             <button class="${isRegister ? "active" : ""}" onclick="state.authMode='register'; render()">注册</button>
@@ -455,78 +455,78 @@ PLATFORM_HTML = r"""
       } catch (error) { notify(error.message); }
     }
 
-	    function shelf() {
-	      const items = state.data.scripts || [];
-	      return `<div class="section">
-	        <div class="panel">
-	          <h2>导入剧本</h2>
-	          <div class="import-grid" style="margin-top:12px">
-	            <label><span>标题</span><input id="scriptImportTitle" placeholder="默认使用文件名" /></label>
-	            <label><span>章节规则</span><select id="scriptSplitRule">
-	              <option value="auto">自动识别</option>
-	              <option value="corpus">语料章节</option>
-	              <option value="chapter_cn">中文章节</option>
-	              <option value="chapter_en">英文章节</option>
-	              <option value="number_dot">数字点号</option>
-	              <option value="paren_num">括号编号</option>
-	              <option value="custom">自定义</option>
-	            </select></label>
-	            <label><span>自定义模板或正则</span><input id="scriptCustomPattern" placeholder="例如：第*章 或 ^(卷.*第.*章.*)$" /></label>
-	          </div>
-	          <div class="toolbar" style="margin-top:12px">
-	            <input id="scriptFileInput" class="hidden" type="file" accept=".txt,.md,text/plain,text/markdown" onchange="importSelectedScript(this.files && this.files[0])" />
-	            <button class="primary" onclick="document.getElementById('scriptFileInput').click()">导入 TXT/MD</button>
-	            <button onclick="reload()">刷新剧本</button>
-	          </div>
-	          <p class="small" style="margin-top:10px">已合并旧项目规则：中文/英文/数字/括号编号、篇章小节、分页标题、分卷和蕾穆丽娜混合标题。</p>
-	        </div>
-	        ${items.length ? `<div class="panel"><table class="data-table"><thead><tr><th>剧本</th><th>章节</th><th>字数</th><th>来源</th><th>标识</th><th>操作</th></tr></thead><tbody>${items.map(scriptRow).join("")}</tbody></table></div>` : empty("暂无剧本") }
-	      </div>`;
-	    }
-	    function scriptRow(script) {
-	      const report = script.import_report || {};
-	      const chapters = Number(script.chapter_count || 0);
-	      const words = Number(script.word_count || 0);
-	      return `<tr>
-	        <td><div class="title-cell"><strong>${esc(script.title)}</strong><span class="small">${esc(script.description || "暂无描述")}</span></div></td>
-	        <td><span class="nowrap">${fmtCount(chapters)} 章</span><br><span class="small">${esc(report.mode_label || "未导入章节")}</span></td>
-	        <td class="mono">${fmtCount(words)}</td>
-	        <td class="mono">${esc(script.source_path || "无源路径")}</td>
-	        <td><span class="pill">${esc(shortUid(uid(script)))}</span></td>
-	        <td><button onclick="createSave(${script.id})">创建存档</button></td>
-	      </tr>`;
-	    }
-	    function readAsDataUrl(file) {
-	      return new Promise((resolve, reject) => {
-	        const reader = new FileReader();
-	        reader.onload = () => resolve(reader.result);
-	        reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
-	        reader.readAsDataURL(file);
-	      });
-	    }
-	    async function importSelectedScript(file) {
-	      if (!file) return;
-	      try {
-	        notify("正在识别章节...");
-	        const out = await api("/scripts/import", {
-	          method: "POST",
-	          body: JSON.stringify({
-	            title: document.getElementById("scriptImportTitle")?.value || "",
-	            split_rule: document.getElementById("scriptSplitRule")?.value || "auto",
-	            custom_pattern: document.getElementById("scriptCustomPattern")?.value || "",
-	            file: { name: file.name, type: file.type || "text/plain", data_url: await readAsDataUrl(file) },
-	          }),
-	        });
-	        state.data = await api("/platform");
-	        render();
-	        notify(`已导入 ${fmtCount(out.report?.chapter_count || 0)} 章，${out.report?.mode_label || "自动识别"}`);
-	      } catch (error) {
-	        notify(error.message);
-	      } finally {
-	        const input = document.getElementById("scriptFileInput");
-	        if (input) input.value = "";
-	      }
-	    }
+        function shelf() {
+          const items = state.data.scripts || [];
+          return `<div class="section">
+            <div class="panel">
+              <h2>导入剧本</h2>
+              <div class="import-grid" style="margin-top:12px">
+                <label><span>标题</span><input id="scriptImportTitle" placeholder="默认使用文件名" /></label>
+                <label><span>章节规则</span><select id="scriptSplitRule">
+                  <option value="auto">自动识别</option>
+                  <option value="corpus">语料章节</option>
+                  <option value="chapter_cn">中文章节</option>
+                  <option value="chapter_en">英文章节</option>
+                  <option value="number_dot">数字点号</option>
+                  <option value="paren_num">括号编号</option>
+                  <option value="custom">自定义</option>
+                </select></label>
+                <label><span>自定义模板或正则</span><input id="scriptCustomPattern" placeholder="例如：第*章 或 ^(卷.*第.*章.*)$" /></label>
+              </div>
+              <div class="toolbar" style="margin-top:12px">
+                <input id="scriptFileInput" class="hidden" type="file" accept=".txt,.md,text/plain,text/markdown" onchange="importSelectedScript(this.files && this.files[0])" />
+                <button class="primary" onclick="document.getElementById('scriptFileInput').click()">导入 TXT/MD</button>
+                <button onclick="reload()">刷新剧本</button>
+              </div>
+              <p class="small" style="margin-top:10px">已合并旧项目规则：中文/英文/数字/括号编号、篇章小节、分页标题、分卷和蕾穆丽娜混合标题。</p>
+            </div>
+            ${items.length ? `<div class="panel"><table class="data-table"><thead><tr><th>剧本</th><th>章节</th><th>字数</th><th>来源</th><th>标识</th><th>操作</th></tr></thead><tbody>${items.map(scriptRow).join("")}</tbody></table></div>` : empty("暂无剧本") }
+          </div>`;
+        }
+        function scriptRow(script) {
+          const report = script.import_report || {};
+          const chapters = Number(script.chapter_count || 0);
+          const words = Number(script.word_count || 0);
+          return `<tr>
+            <td><div class="title-cell"><strong>${esc(script.title)}</strong><span class="small">${esc(script.description || "暂无描述")}</span></div></td>
+            <td><span class="nowrap">${fmtCount(chapters)} 章</span><br><span class="small">${esc(report.mode_label || "未导入章节")}</span></td>
+            <td class="mono">${fmtCount(words)}</td>
+            <td class="mono">${esc(script.source_path || "无源路径")}</td>
+            <td><span class="pill">${esc(shortUid(uid(script)))}</span></td>
+            <td><button onclick="createSave(${script.id})">创建存档</button></td>
+          </tr>`;
+        }
+        function readAsDataUrl(file) {
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+            reader.readAsDataURL(file);
+          });
+        }
+        async function importSelectedScript(file) {
+          if (!file) return;
+          try {
+            notify("正在识别章节...");
+            const out = await api("/scripts/import", {
+              method: "POST",
+              body: JSON.stringify({
+                title: document.getElementById("scriptImportTitle")?.value || "",
+                split_rule: document.getElementById("scriptSplitRule")?.value || "auto",
+                custom_pattern: document.getElementById("scriptCustomPattern")?.value || "",
+                file: { name: file.name, type: file.type || "text/plain", data_url: await readAsDataUrl(file) },
+              }),
+            });
+            state.data = await api("/platform");
+            render();
+            notify(`已导入 ${fmtCount(out.report?.chapter_count || 0)} 章，${out.report?.mode_label || "自动识别"}`);
+          } catch (error) {
+            notify(error.message);
+          } finally {
+            const input = document.getElementById("scriptFileInput");
+            if (input) input.value = "";
+          }
+        }
     async function createSave(scriptId) {
       const title = prompt("存档名称", "新存档");
       if (title === null) return;

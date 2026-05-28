@@ -1,6 +1,7 @@
 """timeline.py — 存档时间线路由 (/api/saves/:save_id/timeline)。"""
 from __future__ import annotations
-from fastapi import APIRouter, Request, HTTPException
+
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 router = APIRouter()

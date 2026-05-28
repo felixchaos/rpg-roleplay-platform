@@ -5,12 +5,11 @@ import threading
 
 from platform_app.db.connection import connect
 from platform_app.db.migrations import (
-    _migration_advisory_lock,
     _apply_versioned_migrations,
     _assert_schema_up_to_date,
+    _migration_advisory_lock,
 )
 from platform_app.db.pgvector import try_enable_pgvector
-
 
 _DB_INITED = False
 _DB_INIT_LOCK = threading.Lock()

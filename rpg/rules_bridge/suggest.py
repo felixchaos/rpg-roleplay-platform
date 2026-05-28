@@ -4,12 +4,10 @@ from __future__ import annotations
 import re
 
 import modules as module_registry
-
 from rules_bridge.intent import (
-    _has_movement_intent,
     _direction_to_exit,
+    _has_movement_intent,
 )
-
 
 # ── 简易意图 → 候选规则动作 ─────────────────────────────────────
 

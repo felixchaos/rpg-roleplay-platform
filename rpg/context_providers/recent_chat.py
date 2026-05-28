@@ -3,7 +3,7 @@ RecentChatProvider — 通用最近对话注入。
 """
 from __future__ import annotations
 
-from .base import ContextProvider, ContextContribution, Demand, ProviderServices
+from .base import ContextContribution, ContextProvider, Demand, ProviderServices
 from .registry import register_provider
 
 

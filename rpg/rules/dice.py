@@ -5,9 +5,8 @@ from __future__ import annotations
 
 import random
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Optional
-
 
 _EXPR_RE = re.compile(r"^\s*(\d+)?\s*d\s*(\d+)\s*(?:([+-])\s*(\d+))?\s*$", re.IGNORECASE)
 
@@ -21,7 +20,7 @@ class RollResult:
     advantage: bool = False
     disadvantage: bool = False
     # d20 检定时记录两次原始骰，用于显示 / 审计
-    d20_raw: Optional[list[int]] = None
+    d20_raw: list[int] | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -50,13 +49,13 @@ def parse_expression(expression: str) -> tuple[int, int, int]:
     return count, sides, modifier
 
 
-def _rng(seed: Optional[int]) -> random.Random:
+def _rng(seed: int | None) -> random.Random:
     return random.Random(seed) if seed is not None else random.Random()
 
 
 def roll(
     expression: str,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     advantage: bool = False,
     disadvantage: bool = False,
 ) -> RollResult:
@@ -67,7 +66,7 @@ def roll(
     if advantage and disadvantage:
         advantage = disadvantage = False
 
-    d20_raw: Optional[list[int]] = None
+    d20_raw: list[int] | None = None
     if sides == 20 and count == 1 and (advantage or disadvantage):
         a = rng.randint(1, 20)
         b = rng.randint(1, 20)
