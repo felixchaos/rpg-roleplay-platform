@@ -1213,7 +1213,7 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
    MAIN WIZARD COMPONENT
    ============================================================ */
 function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
-  const TOTAL_STEPS = 4;
+  const TOTAL_STEPS = 5;
 
   // ── shared data ──────────────────────────────────────────────
   const [scripts, setScripts] = useStatePL([]);
@@ -1241,6 +1241,9 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   // ── Step 4 state ─────────────────────────────────────────────
   const [identity, setIdentity] = useStatePL(null);
 
+  // ── Step 5 state ─────────────────────────────────────────────
+  const [storyIntent, setStoryIntent] = useStatePL("");
+
   // ── submit ───────────────────────────────────────────────────
   const [submitErr, setSubmitErr] = useStatePL("");
   const [submitting, setSubmitting] = useStatePL(false);
@@ -1252,7 +1255,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
     setStep(0);
     setTitle(""); setSubmitErr(""); setSubmitting(false); setLoading(true);
     setNewCardName(""); setNewCardRole(""); setNewCardBg("");
-    setBirthpoint(null); setIdentity(null);
+    setBirthpoint(null); setIdentity(null); setStoryIntent("");
     (async () => {
       let scList = [];
       try {
@@ -1320,8 +1323,9 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const step2Valid = (roleMode === "existing" && pickedCard) || (roleMode === "new" && newCardName.trim());
   const step3Valid = !!birthpoint;
   const step4Valid = !!identity;
+  const step5Valid = true; // optional step, always valid
 
-  const stepValid = [step1Valid, step2Valid, step3Valid, step4Valid];
+  const stepValid = [step1Valid, step2Valid, step3Valid, step4Valid, step5Valid];
   const canNext = !loading && stepValid[step];
   const canSubmit = !submitting && stepValid[0] && stepValid[1] && stepValid[2] && stepValid[3];
 
@@ -1345,6 +1349,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
         role_mode: roleMode,
         birthpoint: birthpoint || null,
         identity: identity ? { name: identity.name, role: identity.role, background: identity.background } : null,
+        story_intent: storyIntent.trim() || null,
       };
       const res = onConfirm?.(payload);
       if (res && typeof res.then === "function") await res;
@@ -1356,7 +1361,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   };
 
   /* ── step labels ── */
-  const stepLabels = ["剧本", "角色", "出生点", "初始身份"];
+  const stepLabels = ["剧本", "角色", "出生点", "初始身份", "剧情期望"];
 
   const node = (
     <div className="pl-modal-backdrop" onClick={onClose}>
@@ -1370,6 +1375,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
               {step === 1 && "选择扮演角色"}
               {step === 2 && "选择出生点"}
               {step === 3 && "设定初始身份"}
+              {step === 4 && "剧情走向期望（可跳过）"}
             </h2>
           </div>
           <button className="iconbtn" onClick={onClose} data-tip="关闭"><Icon name="close" size={14} /></button>
@@ -1514,6 +1520,26 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
             />
           )}
 
+          {/* ══ Step 4: Story Intent ══ */}
+          {step === 4 && (
+            <div>
+              <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+                告诉 GM 你希望的剧情走向。哪些设定是 NPC 知道的？哪些是你的秘密？哪些是你希望 GM 优先发展的方向？
+                <br /><span className="muted-2" style={{ fontSize: 11 }}>此项可选，留空跳过。填写后存入存档，GM 每轮都能参考。</span>
+              </p>
+              <div className="pl-field">
+                <label>剧情期望 / 秘密分配</label>
+                <textarea
+                  rows={6}
+                  style={{ resize: "vertical" }}
+                  placeholder={"例：\n- 林晓芸知道原著剧情，但绝口不提，NPC 不知道她是穿越者\n- 希望 GM 优先推进与林有德的相遇\n- 不希望出现过于血腥的场面"}
+                  value={storyIntent}
+                  onChange={e => setStoryIntent(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+
           {/* custom identity "use this" sets _custom flag */}
           {/* (IdentityStep handles it internally via applyCustom) */}
 
@@ -1537,6 +1563,11 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
             {step === 3 && !identity && (
               <span className="muted-2" style={{ fontSize: 11 }}>
                 <Icon name="info" size={10} /> 请选择或填写初始身份
+              </span>
+            )}
+            {step === 4 && (
+              <span className="muted-2" style={{ fontSize: 11 }}>
+                <Icon name="info" size={10} /> 可跳过，留空即可
               </span>
             )}
           </div>

@@ -105,6 +105,7 @@ def create_save(
     *,
     birthpoint: dict[str, Any] | None = None,
     identity: dict[str, Any] | None = None,
+    story_intent: str | None = None,
 ) -> dict[str, Any]:
     """创建新存档。
 
@@ -129,7 +130,7 @@ def create_save(
         script = db.execute("select * from scripts where id = %s and owner_id = %s", (script_id, user_id)).fetchone()
         if not script:
             raise ValueError("无权访问该剧本")
-        snapshot = _build_initial_snapshot(user_id, script_id, new_card, character, birthpoint=birthpoint, identity=identity)
+        snapshot = _build_initial_snapshot(user_id, script_id, new_card, character, birthpoint=birthpoint, identity=identity, story_intent=story_intent)
         save = db.execute(
             """
             insert into game_saves(user_id, script_id, title, state_path, state_snapshot)
@@ -165,6 +166,7 @@ def _build_initial_snapshot(
     *,
     birthpoint: dict[str, Any] | None = None,
     identity: dict[str, Any] | None = None,
+    story_intent: str | None = None,
 ) -> dict[str, Any]:
     """根据 UI 选择构造新存档的初始 state。任何异常退到空白快照。"""
     try:
@@ -323,6 +325,20 @@ def _build_initial_snapshot(
                 player["role"] = "未指定"
             if not player.get("background"):
                 player["background"] = "（无背景）"
+        except Exception:
+            pass
+
+    if story_intent:
+        try:
+            from datetime import datetime as _dt
+            variables = state.data.setdefault("worldline", {}).setdefault("user_variables", {})
+            variables["story_intent"] = {
+                "value": story_intent,
+                "source": "user:new_game_wizard",
+                "locked": False,
+                "turn": 0,
+                "updated_at": _dt.now().isoformat(timespec="seconds"),
+            }
         except Exception:
             pass
 
