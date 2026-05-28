@@ -464,6 +464,16 @@ app.include_router(rules_router)
 app.include_router(timeline_router)
 app.include_router(console_assistant_router)
 
+# 同源 mount frontend 静态文件 — dev/prod 都需要 (cookie SameSite=lax 跨 origin 5173↔7860 会丢)
+# 必须在所有具体路由之后 mount,否则会拦截 /api/* 和 /
+from pathlib import Path as _Path
+
+from fastapi.staticfiles import StaticFiles as _StaticFiles
+
+_FRONTEND_DIR = _Path(__file__).resolve().parent.parent / "frontend"
+if _FRONTEND_DIR.is_dir():
+    app.mount("/", _StaticFiles(directory=str(_FRONTEND_DIR), html=False), name="frontend")
+
 # 启动时一次性触发 schema + migration，避免请求路径 DDL 撞锁
 from platform_app.db import init_db as _bootstrap_init_db
 

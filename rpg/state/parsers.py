@@ -86,5 +86,14 @@ def _parse_question(value: str) -> tuple[str, list[str]]:
             option_text = match.group(2)
     if option_text:
         option_text = re.sub(r"^(?:选项|可选|choices?)[:：]\s*", "", option_text, flags=re.I)
-    options = [_clean_item(x) for x in re.split(r"[、,，/]|(?:\s+or\s+)", option_text) if _clean_item(x)]
+    # GM 经常按 "A、option1、B、option2、C、option3" 输出(字母/数字 label + 顿号 + 描述)。
+    # 这种 label 模式直接按 `、` split 会把 A/B/C 当作独立选项。
+    # 检测 option_text 开头是不是 label,如果是按 label 边界 split。
+    label_re = re.compile(r"^[A-Za-z0-9①-⑩]{1,3}[、,，:：]")
+    if label_re.match(option_text):
+        # label 模式:按 label 边界切,丢掉 label 本身
+        raw = re.split(r"(?:^|[、,，])\s*[A-Za-z0-9①-⑩]{1,3}[、,，:：]\s*", option_text)
+    else:
+        raw = re.split(r"[、,，/]|(?:\s+or\s+)", option_text)
+    options = [_clean_item(x) for x in raw if _clean_item(x)]
     return _clean_item(question), options[:4]

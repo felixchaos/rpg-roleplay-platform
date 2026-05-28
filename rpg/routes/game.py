@@ -169,6 +169,12 @@ async def api_opening(
             yield _sse("stage", {"phase": "done", "label": ""})
             yield _sse("token", {"text": opening})
             state.data["history"].append({"role": "assistant", "content": opening})
+            # 让开场也走结构化解析,把【询问玩家】+JSON ops 解析进 pending_questions / state
+            try:
+                state.apply_structured_updates(opening)
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).warning("opening apply_structured_updates failed", exc_info=True)
             state.save()
             _persist_runtime_checkpoint(state, api_user)
             yield _sse("done", {"status": _payload(api_user)})

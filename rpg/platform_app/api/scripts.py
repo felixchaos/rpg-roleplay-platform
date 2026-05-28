@@ -458,10 +458,15 @@ async def api_export_script_pack(
         zip_bytes, filename = export_script_pack(script_id, user["id"], include_chunks=include_chunks)
     except PermissionError:
         raise HTTPException(status_code=403, detail="无权访问该剧本")
+    # 文件名含中文时按 RFC 5987 编码,否则 latin-1 header 报 codec 错
+    from urllib.parse import quote as _quote
+    ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "script_pack.zip"
+    quoted = _quote(filename, safe="")
+    cd = f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quoted}"
     return Response(
         content=zip_bytes,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": cd},
     )
 
 

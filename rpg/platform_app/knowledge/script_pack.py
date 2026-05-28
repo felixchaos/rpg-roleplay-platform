@@ -275,6 +275,20 @@ def import_script_pack(zip_bytes: bytes, user_id: int) -> dict[str, Any]:
             if ch.get("id") is not None:
                 old_chapter_id_to_new[int(ch["id"])] = int(new_ch["id"])
 
+        # 5b'. 先 ensure book — chapter_facts/cards/worldbook 的 INSERT 都靠 books.script_id 子查询
+        # (原来只在 5d 之后才建 book → chapter_facts SELECT FROM books 拿不到行 → 0 写入)
+        from platform_app.knowledge._sync import _ensure_book
+        try:
+            _ensure_book(db, {
+                "id": new_script_id,
+                "owner_id": user_id,
+                "title": title,
+                "description": description,
+                "source_path": "",
+            })
+        except Exception as _e:
+            warnings.append(f"_ensure_book failed: {_e}")
+
         # 5c. 写 chapter_facts — 不依赖 book_id/document_id (允许为 NULL 直到知识同步)
         #     用 chapter (index) 作 conflict key
         for fact in facts:

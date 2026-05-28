@@ -115,8 +115,7 @@ function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitc
       <div className="gc-rail-section compact">
         <div className="gc-rail-runstate">
           <div className="gc-rail-runstate-line">
-            <span className="muted-2" style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.14em", marginRight: 2 }}>运行</span>
-            <span className={`dot ${runState.running ? "accent pulse" : "ok"}`} />
+            <span className={`dot ${runState.running ? "accent pulse" : "ok"}`} style={{ marginRight: 6 }} />
             {runState.running ?
               <span>{runState.label}</span> :
               <span className="muted">空闲 · 等待玩家</span>

@@ -443,8 +443,8 @@ def _stage_facts(ctl: JobController, script_id: int, user_id: int) -> int:
             if ctl.is_cancelled():
                 raise RuntimeError("cancelled")
             doc_row = db.execute(
-                "select * from documents where script_id = %s and chapter_index = %s",
-                (script_id, chapter["chapter_index"]),
+                "select * from documents where script_id = %s and chapter_id = %s",
+                (script_id, chapter["id"]),
             ).fetchone()
             if not doc_row:
                 doc_row = knowledge._upsert_document(db, book, script, chapter)  # type: ignore[assignment]
@@ -456,8 +456,9 @@ def _stage_facts(ctl: JobController, script_id: int, user_id: int) -> int:
 
 
 def _stage_story_phase_llm(ctl: JobController, user_id: int, script_id: int) -> None:
-    """facts 完成后，一次 LLM call 推断每章 story_phase。
-    只处理 story_phase 为空的行；失败静默跳过（不阻断流水线）。
+    """facts 完成后，一次 LLM call 把章节范围分到 开端/发展/高潮/结局/番外。
+    成功 → 按范围批量 update chapter_facts.story_phase；
+    失败/解析不出 → 全部回退 "未明"。
     """
     try:
         from agents.gm import GameMaster
@@ -476,46 +477,64 @@ def _stage_story_phase_llm(ctl: JobController, user_id: int, script_id: int) -> 
     if not rows:
         return
 
-    # 采样最多 30 章的摘要喂给 LLM（成本控）
-    sample = rows[:30]
+    total = len(rows)
+    # 均匀采样 ≤30 章喂给 LLM (成本控)；保留每章的 chapter 号让模型按号给区间
+    if total <= 30:
+        sample = rows
+    else:
+        step = max(1, total // 30)
+        sample = rows[::step][:30]
     lines = "\n".join(
         f"第{r['chapter']}章《{r['title']}》: {(r['summary'] or '')[:120]}"
         for r in sample
     )
-    total = len(rows)
     prompt = (
-        f"这本书共 {total} 章，以下是部分章节摘要。"
-        "根据这些内容，这本书整体目前大致处于哪个故事阶段？"
-        "从以下标签中选一个返回，只返回标签本身，不要其他文字：\n"
-        "开端 / 发展 / 高潮 / 结局 / 番外 / 未明\n\n"
-        f"章节摘要：\n{lines}"
+        f"这本书共 {total} 章 (第 1 章 — 第 {total} 章)，以下是均匀采样的章节摘要。"
+        "请把章节范围划分到这 5 个阶段:开端 / 发展 / 高潮 / 结局 / 番外。"
+        "不需要每个阶段都出现 — 只列实际存在的。番外通常出现在书末。\n\n"
+        "返回严格 JSON 数组，每段一项,无任何前后文字:\n"
+        '[{"phase":"开端","start":1,"end":N},{"phase":"发展","start":N+1,"end":M},...]\n\n'
+        f"章节摘要:\n{lines}"
     )
     try:
         raw = gm._backend.call_structured(
-            system="你是小说剧情分析器，只输出单个阶段标签。",
+            system="你是小说剧情分析器,只输出 JSON 数组。",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=20,
+            max_tokens=400,
         )
         last = getattr(gm._backend, "last_usage", {}) or {}
         from .usage import compute_cost
         cost = float(compute_cost(gm.api_id, gm._backend.model_name, last))
         ctl.add_usage(int(last.get("input_tokens", 0)), int(last.get("output_tokens", 0)), cost)
 
-        valid = {"开端", "发展", "高潮", "结局", "番外", "未明"}
-        phase = (raw or "").strip().strip('"').strip("'")
-        # 从回复里找第一个合法标签
-        for token in valid:
-            if token in phase:
-                phase = token
-                break
-        else:
-            phase = "未明"
+        valid = {"开端", "发展", "高潮", "结局", "番外"}
+        ranges = _parse_json(raw)
+        if not isinstance(ranges, list) or not ranges:
+            raise ValueError("phase ranges 非数组")
 
         with connect() as db:
+            for item in ranges:
+                if not isinstance(item, dict):
+                    continue
+                phase = str(item.get("phase", "")).strip()
+                if phase not in valid:
+                    continue
+                try:
+                    start = int(item.get("start") or 1)
+                    end = int(item.get("end") or total)
+                except (TypeError, ValueError):
+                    continue
+                db.execute(
+                    "update chapter_facts set story_phase = %s "
+                    "where script_id = %s and chapter between %s and %s "
+                    "and (story_phase = '' or story_phase is null)",
+                    (phase, script_id, start, end),
+                )
+            # 剩余没匹配到的章 → 未明
             db.execute(
-                "update chapter_facts set story_phase = %s "
+                "update chapter_facts set story_phase = '未明' "
                 "where script_id = %s and (story_phase = '' or story_phase is null)",
-                (phase, script_id),
+                (script_id,),
             )
     except Exception:
         # fallback: 写 "未明" 而不留空

@@ -52,8 +52,8 @@
 .cap-resize-handle:hover,.cap-resize-handle:active{background:var(--accent,#c46a4a);opacity:.45}
 @media (pointer:coarse){.cap-resize-handle{width:12px}}
 
-/* task 60: 头部高度对齐 platform topbar (72px),背景/border 一致 */
-.cap-head{display:flex;align-items:center;gap:8px;padding:0 14px;height:72px;
+/* 头部高度对齐游戏控制台 topbar (64px),背景/border 一致 */
+.cap-head{display:flex;align-items:center;gap:8px;padding:0 14px;height:64px;
   flex-shrink:0;
   border-bottom:1px solid var(--line-soft,#2a2724);
   background:rgba(26,24,23,0.92);backdrop-filter:blur(12px);
@@ -1441,13 +1441,12 @@
             <button className="cap-icon-btn" title="对话历史"
                     aria-label="对话历史"
                     onClick={() => { setShowConvList(v => !v); setShowSettings(false); }}>
-              &#128337;
+              <Icon name="history" size={14} />
             </button>
             <button className="cap-icon-btn" title="新对话"
                     aria-label="新对话"
-                    onClick={newConversation}
-                    style={{ fontWeight: 600, fontSize: 15 }}>
-              +
+                    onClick={newConversation}>
+              <Icon name="plus" size={14} />
             </button>
             <button className="cap-icon-btn" title="设置"
                     onClick={() => { setShowSettings(s => !s); setShowConvList(false); }}><Icon name="settings" size={14} /></button>
