@@ -21,8 +21,8 @@ from threading import Event
 from typing import Any
 
 from agents.context_agent import run_context_agent
-from state import GameState, strip_json_state_ops
 from core.logging import get_logger
+from state import GameState, strip_json_state_ops
 
 log = get_logger(__name__)
 

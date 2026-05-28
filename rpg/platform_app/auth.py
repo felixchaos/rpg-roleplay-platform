@@ -16,11 +16,18 @@ from .security import hash_password, normalize_username, verify_password
 SESSION_DAYS = 14
 
 from core.config import (
-    min_password_length as _min_password_length,
-    login_max_fails as _login_max_fails,
     login_lockout_sec as _login_lockout_sec,
+)
+from core.config import (
+    login_max_fails as _login_max_fails,
+)
+from core.config import (
     login_window_sec as _login_window_sec,
 )
+from core.config import (
+    min_password_length as _min_password_length,
+)
+
 MIN_PASSWORD_LENGTH = _min_password_length()
 
 # ── 登录速率限制 ──────────────────────────────────────────────────────────

@@ -157,7 +157,7 @@ class NonGMSourceUnchanged(unittest.TestCase):
         clear_context(self._token)
 
     def test_user_source_uses_legacy(self):
-        result = self.state.apply_state_write_typed(
+        self.state.apply_state_write_typed(
             "world.time", "用户设定时间", source="user:/set", force=True,
         )
         # force=True 也跳过 dispatcher 路由,直接老路径

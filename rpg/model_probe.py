@@ -146,7 +146,8 @@ _CACHE_TTL = 60.0
 
 def _require_user_credential() -> bool:
     """服务器模式强制要求 user-scoped 凭证；本地匿名允许走环境变量。"""
-    from core.config import deployment_mode as _deployment_mode, require_auth as _require_auth
+    from core.config import deployment_mode as _deployment_mode
+    from core.config import require_auth as _require_auth
     if _require_auth():
         return True
     mode = _deployment_mode().strip().lower()

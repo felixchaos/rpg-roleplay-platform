@@ -22,8 +22,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from tools_dsl.command_tools import COMMAND_TOOLS
+from core.llm_backend import (
+    detect_default_api as _detect_default_api,
+    resolve_preferred_api as _resolve_preferred_api_base,
+    resolve_preferred_model as _resolve_preferred_model_base,
+)
 from core.logging import get_logger
+from tools_dsl.command_tools import COMMAND_TOOLS
 
 log = get_logger(__name__)
 
@@ -323,20 +328,8 @@ def _coerce_calls(parsed: Any) -> list[dict]:
 
 
 # ────────────────────────────────────────────────────────────
-# Model preference resolution (与 set_parser 复用同一项)
+# Model preference resolution — 实现已移至 core.llm_backend
 # ────────────────────────────────────────────────────────────
-
-
-def _detect_default_api() -> str:
-    """启动时检测可用 backend: 优先 vertex_ai (SA 文件), 然后 anthropic (env key)."""
-    import os as _os
-    from pathlib import Path as _Path
-    sa_path = _Path(__file__).parent.parent / "vertex_sa.json"
-    if sa_path.exists():
-        return "vertex_ai"
-    if _os.environ.get("ANTHROPIC_API_KEY"):
-        return "anthropic"
-    return "vertex_ai"  # 默认仍兜底 vertex,失败时调用方走 fallback
 
 
 def _default_model_for_api(api_id: str) -> str:
@@ -346,39 +339,13 @@ def _default_model_for_api(api_id: str) -> str:
 
 
 def _resolve_preferred_model(user_id: int | None) -> str | None:
-    if not user_id:
-        return None
-    try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "select preferences from user_preferences where user_id = %s",
-                (int(user_id),),
-            ).fetchone()
-        if row and isinstance(row.get("preferences"), dict):
-            return row["preferences"].get("set_parser.model_real_name") or None
-    except Exception:
-        return None
-    return None
+    """Alias → core.llm_backend.resolve_preferred_model (set_parser namespace)."""
+    return _resolve_preferred_model_base(user_id, pref_key="set_parser.model_real_name")
 
 
 def _resolve_preferred_api(user_id: int | None) -> str | None:
-    if not user_id:
-        return None
-    try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "select preferences from user_preferences where user_id = %s",
-                (int(user_id),),
-            ).fetchone()
-        if row and isinstance(row.get("preferences"), dict):
-            return row["preferences"].get("set_parser.api_id") or None
-    except Exception:
-        return None
-    return None
+    """Alias → core.llm_backend.resolve_preferred_api (set_parser namespace)."""
+    return _resolve_preferred_api_base(user_id, pref_key="set_parser.api_id")
 
 
 __all__ = ["parse_set_command"]

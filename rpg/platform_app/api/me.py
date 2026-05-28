@@ -72,7 +72,7 @@ async def api_my_stats(request: Request, user=Depends(require_user)):
     来源的字段（如累计游玩分钟数）返回 null，由前端显示「—」而不是假数字。
     保留 request：需要读 request.cookies.get(SESSION_COOKIE) 用于 login_audit 查询。
     """
-    cur_token = request.cookies.get(SESSION_COOKIE) or ""
+    request.cookies.get(SESSION_COOKIE) or ""
     with connect() as db:
         # 剧本汇总
         sc_row = db.execute(
@@ -357,6 +357,7 @@ async def api_export_tavern_card(card_id: int, user=Depends(require_user)):
 async def api_export_tavern_png(card_id: int, user=Depends(require_user)):
     """导出 PNG 嵌入式酒馆卡（tEXt chara chunk），可直接拖进酒馆。"""
     from fastapi.responses import Response
+
     from .. import tavern_cards, user_cards
     card = user_cards.get_user_card(user["id"], card_id)
     if not card:

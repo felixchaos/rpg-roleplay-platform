@@ -75,7 +75,7 @@ class SetWorldTimeWritesUserSetJumpTurn(unittest.TestCase):
     def test_arbitrary_target_accepted(self):
         """工具不再被 looks_like_time_value 启发式过滤 ——
         '魔王城地下三层'/'第七纪元'/'XYZ星系' 等任意标签都被接受。"""
-        s = _new_state()
+        _new_state()
         for target in ("魔王城地下三层", "第七纪元", "XYZ 星系", "宇宙战时"):
             s2 = _new_state()
             r = execute_tool(s2, "set_world_time", {"target": target})

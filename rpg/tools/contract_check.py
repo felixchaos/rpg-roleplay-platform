@@ -286,13 +286,11 @@ def _normalize_arg_expression(expr: str) -> tuple[str | None, bool]:
     parts = re.findall(r'(["\'])([^"\']*)\1|([^"\']+)', expr_clean)
     pieces: list[str] = []
     saw_api = False
-    last_was_string = False
     for q, lit, mid in parts:
         if q:
             pieces.append(lit)
             if "/api/" in lit:
                 saw_api = True
-            last_was_string = True
         else:
             # mid is the connective code between strings.
             # If it contains a + on either side bridging a variable, that's a
@@ -300,7 +298,6 @@ def _normalize_arg_expression(expr: str) -> tuple[str | None, bool]:
             if "+" in mid and re.search(r"[a-zA-Z_${]", mid):
                 pieces.append("{arg}")
                 low = True
-            last_was_string = False
     if not saw_api:
         return None, low
     full = "".join(pieces)

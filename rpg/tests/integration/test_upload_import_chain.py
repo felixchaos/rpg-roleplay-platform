@@ -99,7 +99,7 @@ class UploadImportChain(unittest.TestCase):
 
     def test_save_create_with_foreign_script_403(self):
         """task 20：发 mock/非自己的 script_id 必须 403，不能静默成功。"""
-        a = register_user(self.client)
+        register_user(self.client)
         b = register_user(self.client)
         # a 没有任何 script，b 也没有；随便选一个不存在的 id
         r = self.client.post("/api/v1/saves", json={"title": "foreign", "script_id": 999999}, cookies=b["cookies"])

@@ -154,7 +154,7 @@ def main() -> int:
     for s, chunks in plans:
         save_id = s["save_id"]
         for phase_index, (turn_start, turn_end) in enumerate(chunks):
-            phase_id = ensure_phase_row(save_id, phase_index, turn_start, turn_end)
+            ensure_phase_row(save_id, phase_index, turn_start, turn_end)
             tag = f"save {save_id} phase {phase_index} (turn {turn_start}-{turn_end})"
             try:
                 t0 = time.time()

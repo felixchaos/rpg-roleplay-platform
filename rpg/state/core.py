@@ -10,8 +10,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from state._mixins import ApplyOpsMixin, PendingMixin, RulesGameplayMixin
 from core.logging import get_logger
+from state._mixins import ApplyOpsMixin, PendingMixin, RulesGameplayMixin
 
 log = get_logger(__name__)
 from state.extractors import (
@@ -370,7 +370,8 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             out_path = Path(target_path)
         else:
             # 服务器模式：禁止落到全局 SAVE_FILE
-            from core.config import deployment_mode as _deployment_mode, require_auth as _require_auth
+            from core.config import deployment_mode as _deployment_mode
+            from core.config import require_auth as _require_auth
             mode = _deployment_mode().strip().lower()
             is_server = _require_auth() or mode not in {"local", "desktop", "self_hosted", "self-hosted"}
             if is_server:

@@ -11,14 +11,14 @@
 触发方式: Path B (post-GM chat handler hook)。
 """
 from __future__ import annotations
+
 import re
 import secrets
-from typing import Any, Optional
-
+from typing import Any, Callable, Optional, cast
 
 # ─── Layer 1: 现实切片 ────────────────────────────────────────────
 
-def reality_snapshot(state: Any, script_id: Optional[int] = None) -> dict:
+def reality_snapshot(state: Any, script_id: int | None = None) -> dict:
     """暴露当前剧情快照给 LLM,不含敏感字段。
 
     返回字段:
@@ -136,7 +136,7 @@ def proposal_tool_schema(snapshot: dict) -> dict:
 # ─── Layer 3a: token 黑名单 ──────────────────────────────────────
 
 def validator_token_blacklist(
-    proposal: dict, snapshot: dict, script_overrides: Optional[dict] = None
+    proposal: dict, snapshot: dict, script_overrides: dict | None = None
 ) -> tuple[bool, str]:
     """检查 proposal 文本是否含跨 phase 的不允许 token。
 
@@ -221,7 +221,7 @@ def validator_timeline_anchor(proposal: dict, snapshot: dict) -> tuple[bool, str
 # ─── Layer 3b/3e: 留接口 (TODO) ──────────────────────────────────
 
 def validator_npc_presence(
-    proposal: dict, snapshot: dict, script_id: Optional[int]
+    proposal: dict, snapshot: dict, script_id: int | None
 ) -> tuple[bool, str]:
     """TODO: 接 script_character_cards.available_in_phases 字段。
 
@@ -242,7 +242,7 @@ def validator_independent_critic(proposal: dict, snapshot: dict) -> tuple[bool, 
 
 def run_validators(
     proposal: dict, snapshot: dict,
-    script_id: Optional[int], script_overrides: Optional[dict]
+    script_id: int | None, script_overrides: dict | None
 ) -> list[tuple[str, bool, str]]:
     """跑所有 validator,返回 [(name, passed, reason), ...]"""
     return [
@@ -258,7 +258,7 @@ def run_validators(
 
 def dispatch_event(
     proposal: dict, state: Any,
-    user_id: int, save_id: int, script_id: Optional[int],
+    user_id: int, save_id: int, script_id: int | None,
 ) -> list[dict]:
     """把 proposal.tools_to_call 通过 dispatcher 落地。
 
@@ -269,13 +269,16 @@ def dispatch_event(
         return []
 
     from tools_dsl.command_dispatcher import (
-        ToolCallEnvelope, ToolDispatcher, get_registry,
+        ToolCallEnvelope,
+        ToolDispatcher,
+        get_registry,
     )
 
     trace_id = f"swan-{secrets.token_urlsafe(6)}"
+    _sp = cast(Callable[[Any], Any], lambda env, _s=state: _s)
     dispatcher = ToolDispatcher(
         registry=get_registry(),
-        state_provider=lambda env, _s=state: _s,
+        state_provider=_sp,
     )
     results = []
     for call in tools_to_call:
@@ -308,9 +311,9 @@ def maybe_trigger(
     *,
     user_id: int,
     save_id: int,
-    script_id: Optional[int] = None,
+    script_id: int | None = None,
     max_retries: int = 2,
-    llm_caller: Optional[Any] = None,
+    llm_caller: Any | None = None,
 ) -> dict:
     """post-GM hook 调用入口。
 
@@ -349,7 +352,7 @@ def maybe_trigger(
 
     schema = proposal_tool_schema(snapshot)
 
-    last_proposal: Optional[dict] = None
+    last_proposal: dict | None = None
     last_validator_results: list = []
 
     for attempt in range(max_retries + 1):

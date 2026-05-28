@@ -25,6 +25,7 @@ def _get_migrations():
 # 'rpg_platform_migrate' 的 hash → 一个稳定的常量
 MIGRATION_ADVISORY_LOCK_ID = 0x52504D49475254AB  # "RPMIGRT" + ab
 from core.config import migration_lock_timeout_ms as _migration_lock_timeout_ms
+
 MIGRATION_LOCK_TIMEOUT_MS = _migration_lock_timeout_ms()
 
 

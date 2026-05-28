@@ -492,7 +492,7 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
     try:
         from agents.gm import GameMaster
         gm = GameMaster(user_id=user_id)
-    except Exception as exc:
+    except Exception:
         # 没配 user 凭证：跳过这阶段
         return 0
 
@@ -509,7 +509,7 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
         book_row = db.execute(
             "select id from books where script_id = %s", (script_id,),
         ).fetchone()
-        book_id = int(book_row["id"]) if book_row else None
+        int(book_row["id"]) if book_row else None
 
     generated = 0
     for i, entity in enumerate(targets):

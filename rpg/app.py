@@ -17,16 +17,13 @@ import re
 import shutil
 import sys
 import time
-import uuid
 from pathlib import Path
 from threading import Event, Lock
 from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from starlette.middleware.gzip import GZipMiddleware
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
@@ -35,7 +32,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 from agents.context_agent import run_context_agent  # noqa: F401
 from agents.gm import GameMaster
 from context_engine import build_context_bundle
-from retrieval import retrieve_context  # noqa: F401
+
+# 通用 RPG 底座：APP_TITLE 是平台名称，不绑定特定剧本。可由 RPG_APP_TITLE env 覆写。
+from core.config import (
+    app_title as _app_title_cfg,
+)
+from core.logging import get_logger, setup_default_logging
+from core.startup import configure_app, lifespan
 from model_registry import (
     delete_model,  # noqa: F401
     load_model_catalog,
@@ -49,6 +52,7 @@ from platform_app import knowledge as platform_knowledge
 from platform_app import runtime as platform_runtime
 from platform_app.api import current_user as platform_current_user
 from platform_app.api import router as platform_router
+from retrieval import retrieve_context  # noqa: F401
 from state import SAVE_FILE, GameState
 from tools_dsl.tool_registry import (
     delete_mcp_server,  # noqa: F401
@@ -59,14 +63,6 @@ from tools_dsl.tool_registry import (
     validate_mcp_server,  # noqa: F401
 )
 
-# 通用 RPG 底座：APP_TITLE 是平台名称，不绑定特定剧本。可由 RPG_APP_TITLE env 覆写。
-from core.config import (
-    app_title as _app_title_cfg,
-    cors_max_age as _cors_max_age,
-    gzip_min_bytes as _gzip_min_bytes,
-)
-from core.logging import get_logger, setup_default_logging
-
 setup_default_logging()
 log = get_logger(__name__)
 APP_TITLE = _app_title_cfg()
@@ -76,27 +72,8 @@ PORT = 7860
 APP_DIR = Path(__file__).parent
 UPLOAD_DIR = APP_DIR / "uploads"
 MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024
-API_VERSION = "1"
 
-app = FastAPI(title=f"{APP_TITLE} RPG")
-
-
-def _cors_origins() -> tuple[list[str], bool]:
-    default_origins = (
-        "http://127.0.0.1:7860,http://localhost:7860,"
-        "http://127.0.0.1:5173,http://localhost:5173,"
-        "http://127.0.0.1:3000,http://localhost:3000"
-    )
-    from core.config import cors_origins_with_default as _cors_origins_with_default
-    raw = _cors_origins_with_default(default_origins)
-    origins = [item.strip() for item in raw.split(",") if item.strip()]
-    if not origins:
-        origins = ["http://127.0.0.1:7860", "http://localhost:7860"]
-    allow_all = "*" in origins
-    return (["*"] if allow_all else origins), not allow_all
-
-
-_origins, _allow_credentials = _cors_origins()
+app = FastAPI(title=f"{APP_TITLE} RPG", lifespan=lifespan)
 
 
 _LOCAL_MODES = {"local", "desktop", "self_hosted", "self-hosted"}
@@ -451,23 +428,7 @@ def _resolve_persist_target(api_user: dict[str, Any] | None) -> tuple[int | None
     return user_id, save_id
 
 
-def _origin_allowed(origin: str | None) -> bool:
-    if not origin:
-        return True
-    return "*" in _origins or origin in _origins
-
-
-MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_origins,
-    allow_credentials=_allow_credentials,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-    expose_headers=["X-API-Version", "X-Request-ID"],
-    max_age=_cors_max_age(),
-)
-app.add_middleware(GZipMiddleware, minimum_size=_gzip_min_bytes())
+configure_app(app)
 app.include_router(platform_router)
 try:
     from platform_app.frontend_routes import router as _frontend_router
@@ -513,116 +474,6 @@ except Exception as _e:
 
 _startup_auth_banner()
 
-
-# ── 全局异常 → 4xx，避免 500 泄露 stack trace ─────────────────────────────
-from json import JSONDecodeError
-
-
-@app.exception_handler(ValueError)
-async def _value_error_handler(request: Request, exc: ValueError):
-    return JSONResponse({"ok": False, "error": str(exc) or "invalid value"}, status_code=400)
-
-@app.exception_handler(KeyError)
-async def _key_error_handler(request: Request, exc: KeyError):
-    return JSONResponse({"ok": False, "error": f"missing field: {exc}"}, status_code=400)
-
-@app.exception_handler(TypeError)
-async def _type_error_handler(request: Request, exc: TypeError):
-    msg = str(exc)
-    # 主要 catch int(None) / NoneType subscript 这种"传参类型不对"
-    return JSONResponse({"ok": False, "error": f"invalid input type: {msg[:200]}"}, status_code=400)
-
-@app.exception_handler(JSONDecodeError)
-async def _json_decode_handler(request: Request, exc: JSONDecodeError):
-    return JSONResponse({"ok": False, "error": "invalid JSON body"}, status_code=400)
-
-@app.exception_handler(PermissionError)
-async def _permission_handler(request: Request, exc: PermissionError):
-    return JSONResponse({"ok": False, "error": str(exc) or "forbidden"}, status_code=403)
-
-@app.exception_handler(FileNotFoundError)
-async def _file_not_found_handler(request: Request, exc: FileNotFoundError):
-    return JSONResponse({"ok": False, "error": str(exc) or "not found"}, status_code=404)
-
-
-@app.on_event("startup")
-async def _start_mcp_health() -> None:
-    try:
-        import mcp_broker
-        mcp_broker.start_health_loop()
-    except Exception:
-        pass
-
-
-@app.on_event("startup")
-async def _register_command_tools_startup() -> None:
-    """task 87: 启动时把 command_tools + Phase 2 工具注册到全局 dispatcher。
-    幂等,多次调用安全 (内部 _REGISTERED 标志)。"""
-    try:
-        from tools_dsl.command_tools_register import ensure_registered
-        ensure_registered()
-        from tools_dsl.command_dispatcher import get_registry
-        log.info(f"[startup] command_dispatcher: 已注册 {len(get_registry().list_all())} 个工具")
-    except Exception as exc:
-        # 注册失败不阻塞启动;chat handler 内部 ensure_registered 兜底
-        log.exception("command tools registration failed: %s", exc)
-
-
-@app.on_event("startup")
-async def _recover_durable_jobs() -> None:
-    """B5：worker 重启时把 DB 里 pending + 超时 running 的 sync job 重新提交进线程池。
-    多 worker 同时执行也安全：UPDATE 用 WHERE status=... + 唯一索引兜底，每个 job 只会被一个 worker 真正领走。
-    """
-    try:
-        from platform_app import script_import
-        result = script_import.recover_pending_sync_jobs()
-        if result.get("recovered_pending") or result.get("reclaimed_stale"):
-            log.info(
-                "durable sync recovery: pending=%s stale=%s resubmitted=%s",
-                result.get("recovered_pending"),
-                result.get("reclaimed_stale"),
-                len(result.get("resubmitted", [])),
-            )
-    except Exception:
-        # 启动恢复失败不应阻挡服务启动；下次有人调度时会带走 pending
-        log.exception("durable sync recovery failed")
-
-
-@app.on_event("shutdown")
-async def _shutdown_mcp_brokers() -> None:
-    """uvicorn 退出时优雅关闭所有 MCP 子进程，避免僵尸进程。"""
-    try:
-        import mcp_broker
-        mcp_broker.stop_health_loop()
-        mcp_broker.stop_all()
-    except Exception:
-        pass
-
-
-@app.middleware("http")
-async def api_contract_middleware(request: Request, call_next):
-    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
-    original_path = request.scope.get("path", "")
-    prefix = f"/api/v{API_VERSION}"
-    if original_path == prefix:
-        request.scope["path"] = "/api"
-    elif original_path.startswith(prefix + "/"):
-        request.scope["path"] = "/api" + original_path[len(prefix):]
-    if original_path.startswith("/api") and request.method in MUTATING_METHODS:
-        origin = request.headers.get("origin")
-        if not _origin_allowed(origin):
-            return JSONResponse(
-                {"ok": False, "error": "Origin 不在允许列表", "request_id": request_id},
-                status_code=403,
-                headers={"X-API-Version": API_VERSION, "X-Request-ID": request_id, "Cache-Control": "no-store"},
-            )
-    response = await call_next(request)
-    if original_path.startswith("/api"):
-        response.headers.setdefault("Cache-Control", "no-store")
-        response.headers["X-API-Version"] = API_VERSION
-        response.headers["X-Request-ID"] = request_id
-        response.headers.setdefault("Vary", "Origin")
-    return response
 
 _state_by_user: dict[int, GameState] = {}     # key = api_user["id"] 或 0 (anonymous local)
 # 记录每个 cached state 对应的 (save_id, commit_id) tuple。

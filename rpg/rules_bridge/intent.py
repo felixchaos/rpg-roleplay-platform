@@ -142,7 +142,7 @@ def classify_combat_intent(text: str, state) -> dict | None:
     has_melee = _detect_melee_weapon(text)
     has_move_away = _detect_move_away(text)
     has_disengage = _detect_disengage(text)
-    has_dodge = _detect_dodge(text)
+    _detect_dodge(text)
 
     # 完全没有战斗 / 远程 / 近战 / 离场 信号 → 不关我事
     if not (has_attack or has_ranged or has_melee or has_move_away):

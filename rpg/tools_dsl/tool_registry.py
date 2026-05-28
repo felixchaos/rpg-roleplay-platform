@@ -51,8 +51,12 @@ DEFAULT_MCP_CATALOG = {
 def deployment_capabilities() -> dict[str, Any]:
     from core.config import (
         deployment_mode as _deployment_mode,
-        enable_skill_import as _enable_skill_import,
+    )
+    from core.config import (
         enable_mcp_config_write as _enable_mcp_config_write,
+    )
+    from core.config import (
+        enable_skill_import as _enable_skill_import,
     )
     mode = _deployment_mode().strip().lower() or "local"
     is_local = mode in {"local", "desktop", "self_hosted", "self-hosted"}

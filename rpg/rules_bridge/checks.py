@@ -77,7 +77,7 @@ def perform_saving_throw(
 
 def trap_check(state, room_id: str, trap_id: str, seed: int | None = None) -> dict:
     """对房间内某个 hazard/陷阱解析掷豁免。"""
-    engine = get_engine()
+    get_engine()
     scene = state.data.get("scene") or {}
     module_id = scene.get("module_id")
     if not module_id:

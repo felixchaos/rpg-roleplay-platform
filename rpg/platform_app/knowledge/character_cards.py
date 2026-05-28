@@ -70,7 +70,7 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
         "metadata": Jsonb(payload.get("metadata") or {}),
     }
     with connect() as db:
-        script = _require_script(db, user_id, script_id)
+        _require_script(db, user_id, script_id)
         book = db.execute("select id from books where script_id = %s", (script_id,)).fetchone()
         if not book:
             raise ValueError("剧本 book 未初始化，先调一次 /api/scripts/{id}/knowledge/sync")

@@ -8,6 +8,7 @@
 然后可用 redocly/swagger-ui 等工具生成 standalone HTML。
 """
 from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path

@@ -208,7 +208,7 @@ class MemoryInvariantE2E(unittest.TestCase):
 
         # 内存里应该有 3 条 audit 条目（write / parse_error / hard_forbidden）
         audit_mem = state.data.get("permissions", {}).get("audit_log") or []
-        kinds_mem = [a.get("kind") or ("write" if a.get("path") and not a.get("blocked") else a.get("blocked"))
+        [a.get("kind") or ("write" if a.get("path") and not a.get("blocked") else a.get("blocked"))
                      for a in audit_mem]
         self.assertIn("parse_error", [a.get("kind") for a in audit_mem],
             f"应记录 parse_error: {audit_mem}")

@@ -30,9 +30,13 @@ RUNTIME_STATE_ROOT = BASE / "platform_data" / "runtime_states"
 def _runtime_backend() -> str:
     """db / file. 默认：server 模式用 db，本地用 file。"""
     from core.config import (
-        runtime_backend as _runtime_backend_cfg,
-        require_auth as _require_auth,
         deployment_mode as _deployment_mode,
+    )
+    from core.config import (
+        require_auth as _require_auth,
+    )
+    from core.config import (
+        runtime_backend as _runtime_backend_cfg,
     )
     backend = _runtime_backend_cfg().strip().lower()
     if backend in {"db", "file"}:
@@ -51,7 +55,8 @@ def _should_mirror_save_file() -> bool:
     """
     if _runtime_backend() == "db":
         return False
-    from core.config import require_auth as _require_auth, deployment_mode as _deployment_mode
+    from core.config import deployment_mode as _deployment_mode
+    from core.config import require_auth as _require_auth
     if _require_auth():
         return False
     mode = _deployment_mode().strip().lower()

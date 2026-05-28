@@ -21,7 +21,6 @@ import unittest
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-
 # ── 辅助: 构造一个最小 GameState-like 对象 ────────────────────────────────────
 
 def _make_state(

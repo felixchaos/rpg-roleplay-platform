@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.logging import get_logger
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 from tools_dsl.command_tools import COMMAND_TOOLS
 from tools_dsl.command_tools import execute_tool as _execute_legacy
-from core.logging import get_logger
 
 log = get_logger(__name__)
 
@@ -311,6 +311,18 @@ def ensure_registered() -> None:
         register_misc_tools()
     except Exception as exc:
         log.warning(f"[command_tools_register] misc 工具注册失败: {exc}")
+    # persona / character_card 工具 (拆自 misc)
+    try:
+        from tools_dsl.command_tools_persona import register_persona_tools
+        register_persona_tools()
+    except Exception as exc:
+        log.warning(f"[command_tools_register] persona 工具注册失败: {exc}")
+    # script import / probe 工具 (拆自 misc)
+    try:
+        from tools_dsl.command_tools_imports import register_imports_tools
+        register_imports_tools()
+    except Exception as exc:
+        log.warning(f"[command_tools_register] imports 工具注册失败: {exc}")
     # task 107C: phase management tools
     try:
         from tools_dsl.command_tools_phase import register_phase_tools

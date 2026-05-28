@@ -441,7 +441,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(stealth_action["target"], "minecart_track")
 
         # 4. 执行规则动作（前端会调 /api/rules/action）
-        result = perform_skill_check(
+        perform_skill_check(
             g,
             skill=stealth_action["skill"],
             dc=stealth_action["dc"],

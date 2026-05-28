@@ -31,7 +31,6 @@ def map_op_to_tool(path: str, value: Any, *, op_kind: str = "set",
         return None
 
     # 是否是 append 操作 (op_kind="append" 或 append=True)
-    is_append = (op_kind == "append") or append
 
     # ── world.* ─────────────────────────────────────────
     if path == "world.time":

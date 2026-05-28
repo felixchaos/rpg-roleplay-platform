@@ -179,7 +179,6 @@ class _OpenAICompatBackend:
         for _iteration in range(max_iterations):
             tool_calls_buf: dict[int, dict[str, Any]] = {}  # index → {id, name, arguments}
             current_text = ""
-            finish_reason: str | None = None
             try:
                 stream = self.client.chat.completions.create(
                     model=self.model_name,
@@ -219,7 +218,7 @@ class _OpenAICompatBackend:
                                         buf["arguments"] += args_delta
                         fr = getattr(choice, "finish_reason", None)
                         if fr:
-                            finish_reason = fr
+                            pass
                     except Exception:
                         continue
             except Exception as exc:

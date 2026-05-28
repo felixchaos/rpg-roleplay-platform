@@ -34,6 +34,10 @@ from __future__ import annotations
 import json
 import re
 
+from core.llm_backend import (
+    resolve_preferred_api as _resolve_preferred_api_base,
+    resolve_preferred_model as _resolve_preferred_model_base,
+)
 from core.logging import get_logger
 
 log = get_logger(__name__)
@@ -166,39 +170,13 @@ def extract_state_ops(
 
 
 def _resolve_preferred_extractor_model(user_id: int | None) -> str | None:
-    if not user_id:
-        return None
-    try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "select preferences from user_preferences where user_id = %s",
-                (user_id,),
-            ).fetchone()
-        if row and isinstance(row.get("preferences"), dict):
-            return row["preferences"].get("extractor.model_real_name") or None
-    except Exception:
-        return None
-    return None
+    """Alias → core.llm_backend.resolve_preferred_model (extractor namespace)."""
+    return _resolve_preferred_model_base(user_id, pref_key="extractor.model_real_name")
 
 
 def _resolve_preferred_extractor_api(user_id: int | None) -> str | None:
-    if not user_id:
-        return None
-    try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "select preferences from user_preferences where user_id = %s",
-                (user_id,),
-            ).fetchone()
-        if row and isinstance(row.get("preferences"), dict):
-            return row["preferences"].get("extractor.api_id") or None
-    except Exception:
-        return None
-    return None
+    """Alias → core.llm_backend.resolve_preferred_api (extractor namespace)."""
+    return _resolve_preferred_api_base(user_id, pref_key="extractor.api_id")
 
 
 def _call_extractor_backend(

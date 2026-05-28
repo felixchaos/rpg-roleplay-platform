@@ -85,7 +85,8 @@ def json_response(content, status_code: int = 200, **kwargs):
 
 
 def _set_session_cookie(response: BaseJSONResponse, request: Request, token: str) -> None:
-    from core.config import cookie_secure as _cookie_secure, cookie_samesite as _cookie_samesite
+    from core.config import cookie_samesite as _cookie_samesite
+    from core.config import cookie_secure as _cookie_secure
     secure_env = _cookie_secure()
     secure = request.url.scheme == "https" if secure_env is None else secure_env == "1"
     response.set_cookie(
@@ -101,7 +102,8 @@ def _set_session_cookie(response: BaseJSONResponse, request: Request, token: str
 
 def _auth_required() -> bool:
     """与 ui.py:_api_auth_required 同义，避免循环导入；服务器模式禁止匿名访问。"""
-    from core.config import require_auth_raw as _require_auth_raw, deployment_mode as _deployment_mode
+    from core.config import deployment_mode as _deployment_mode
+    from core.config import require_auth_raw as _require_auth_raw
     explicit = _require_auth_raw().strip()
     if explicit == "1":
         return True

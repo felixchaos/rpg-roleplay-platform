@@ -16,8 +16,11 @@ SCRIPT_ROOT = BASE / "platform_data" / "scripts"
 UPLOAD_CHUNK_ROOT = BASE / "platform_data" / "upload_chunks"
 from core.config import (
     script_upload_max_bytes as _script_upload_max_bytes,
+)
+from core.config import (
     upload_chunk_max_bytes as _upload_chunk_max_bytes,
 )
+
 MAX_SCRIPT_UPLOAD_BYTES = _script_upload_max_bytes()
 MAX_UPLOAD_CHUNK_BYTES = _upload_chunk_max_bytes()  # 8MB / 块
 
@@ -198,9 +201,12 @@ _SYNC_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="script-sync")
 MAX_ACTIVE_JOBS_PER_USER = 1
 # 超过这个时长还在 running 视为 worker 崩溃，启动 recover 时回收
 from core.config import (
-    sync_stale_running_seconds as _sync_stale_running_seconds,
     sync_heartbeat_seconds as _sync_heartbeat_seconds,
 )
+from core.config import (
+    sync_stale_running_seconds as _sync_stale_running_seconds,
+)
+
 STALE_RUNNING_SECONDS = _sync_stale_running_seconds()
 # heartbeat 刷新间隔（worker 跑长任务时定期更新 heartbeat_at）
 SYNC_HEARTBEAT_SECONDS = _sync_heartbeat_seconds()

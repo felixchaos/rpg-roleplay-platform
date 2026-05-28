@@ -342,7 +342,7 @@ class TestWorldbookListOverlay(unittest.TestCase):
 
     def test_list_allowed_from_llm_chat(self):
         """列表工具允许 llm_chat 读取（无 mock 路径会在 origin 检查之前/之后失败，但不被 origin 拦截）。"""
-        env = ToolCallEnvelope(
+        ToolCallEnvelope(
             user_id=1, save_id=None, tool="worldbook_list_save_overlay",
             args={"save_id": 1}, origin="llm_chat", trace_id="t-wb-list-llm",
         )

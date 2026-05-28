@@ -5,10 +5,6 @@ command_tools_misc.py — task 87 Phase 2 / 3 / 4 余下工具
   A 类补全 (save / user 级 mutate):
     set_permission_mode       save     (敏感,只 ui_button + api_direct)
     set_preference            user
-    create_persona            user
-    delete_persona            user destructive
-    create_character_card     user
-    delete_character_card     user destructive
     inject_pending_question   save     (debug,UI/API only)
 
   A 类管理员级 (MCP / 模型 / skills):
@@ -19,21 +15,16 @@ command_tools_misc.py — task 87 Phase 2 / 3 / 4 余下工具
     mcp_server_delete         user destructive
     select_model              user
 
-  C 类异步包装 (Phase 4):
-    start_script_import       user     (返回 job_id,事件流仍走 /api/scripts/import-jobs/{id}/stream 副通道)
-    get_import_status         user
-    list_my_import_jobs       user
-    cancel_import_job         user
-    resplit_script            user destructive
-    delete_script             user destructive
-    probe_models              user
-
   B 类补全查询:
     get_save_detail           user
     get_chapter_facts         script
     get_worldbook             script
     get_my_stats              user
     list_my_credentials_meta  user (只元数据,不返 key)
+
+  已拆出:
+    persona / character_card   → command_tools_persona.py
+    script import / probe      → command_tools_imports.py
 """
 from __future__ import annotations
 
@@ -150,90 +141,6 @@ def _t_set_preference(user_id: int, args: dict) -> str:
         return f"失败: {type(exc).__name__}: {exc}"
 
 
-def _t_create_persona(user_id: int, args: dict) -> str:
-    name = (args.get("name") or "").strip()
-    summary = (args.get("summary") or "").strip()
-    if not name:
-        return "失败: name 为空"
-    payload = {
-        "name": name,
-        "personality": summary,
-        "role": (args.get("role") or "").strip(),
-        "background": (args.get("background") or "").strip(),
-        "appearance": (args.get("appearance") or "").strip(),
-        "tags": args.get("tags") or [],
-    }
-    try:
-        from platform_app.user_cards import upsert_persona
-        row = upsert_persona(user_id, payload)
-        return f"persona 创建: id={row.get('id')} name={name} slug={row.get('slug')}"
-    except Exception as exc:
-        return f"失败: {type(exc).__name__}: {exc}"
-
-
-def _t_delete_persona(user_id: int, args: dict) -> str:
-    pid = args.get("persona_id")
-    if not isinstance(pid, (int, float, str)) or not str(pid).lstrip("-").isdigit():
-        return "失败: persona_id 必须整数"
-    try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "delete from user_personas where id = %s and user_id = %s returning id",
-                (int(pid), user_id),
-            ).fetchone()
-            if not row:
-                return f"失败: persona {pid} 不属于当前用户或不存在"
-        return f"persona {pid} 已删除"
-    except Exception as exc:
-        return f"失败: {type(exc).__name__}: {exc}"
-
-
-def _t_create_character_card(user_id: int, args: dict) -> str:
-    name = (args.get("name") or "").strip()
-    summary = (args.get("summary") or "").strip()
-    if not name:
-        return "失败: name 为空"
-    payload = {
-        "name": name,
-        "personality": summary,
-        "identity": (args.get("identity") or "").strip(),
-        "appearance": (args.get("appearance") or "").strip(),
-        "speech_style": (args.get("speech_style") or "").strip(),
-        "current_status": (args.get("current_status") or "").strip(),
-        "secrets": (args.get("secrets") or "").strip(),
-        "aliases": args.get("aliases") or [],
-        "sample_dialogue": args.get("sample_dialogue") or [],
-        "tags": args.get("tags") or [],
-    }
-    try:
-        from platform_app.user_cards import upsert_user_card
-        row = upsert_user_card(user_id, payload)
-        return f"角色卡创建: id={row.get('id')} name={name} slug={row.get('slug')}"
-    except Exception as exc:
-        return f"失败: {type(exc).__name__}: {exc}"
-
-
-def _t_delete_character_card(user_id: int, args: dict) -> str:
-    cid = args.get("card_id")
-    if not isinstance(cid, (int, float, str)) or not str(cid).lstrip("-").isdigit():
-        return "失败: card_id 必须整数"
-    try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "delete from user_character_cards where id = %s and user_id = %s returning id",
-                (int(cid), user_id),
-            ).fetchone()
-            if not row:
-                return f"失败: card {cid} 不属于当前用户或不存在"
-        return f"角色卡 {cid} 已删除"
-    except Exception as exc:
-        return f"失败: {type(exc).__name__}: {exc}"
-
-
 # ────────────────────────────────────────────────────────────
 # MCP 管理 (admin 工具,只 ui_button)
 # ────────────────────────────────────────────────────────────
@@ -315,118 +222,6 @@ def _t_select_model(user_id: int, args: dict) -> str:
                 (user_id, Jsonb(prefs)),
             )
         return f"GM 模型切换: {api_id} / {model_real_name}"
-    except Exception as exc:
-        return f"失败: {type(exc).__name__}: {exc}"
-
-
-# ────────────────────────────────────────────────────────────
-# Phase 4 异步: script import / probe
-# ────────────────────────────────────────────────────────────
-
-
-def _t_start_script_import(user_id: int, args: dict) -> str:
-    """从已上传的 upload_id 启动剧本导入。upload 走 /api/uploads (二进制,保留 HTTP)。"""
-    upload_id = (args.get("upload_id") or "").strip()
-    title = (args.get("title") or "").strip()
-    if not upload_id or not title:
-        return "失败: upload_id 与 title 都必填"
-    try:
-        from platform_app import script_import
-        result = script_import.import_script(
-            user_id=user_id,
-            upload_id=upload_id,
-            title=title,
-            split_rule=(args.get("mode") or "regex").strip() or "regex",
-        )
-        sid = result.get("script_id")
-        return f"导入剧本启动: script_id={sid} (事件流: /api/scripts/import-jobs/{result.get('job_id','?')}/stream)"
-    except Exception as exc:
-        return f"失败: {type(exc).__name__}: {exc}"
-
-
-def _t_get_import_status(user_id: int, args: dict) -> str:
-    script_id = args.get("script_id")
-    if not isinstance(script_id, (int, float, str)) or not str(script_id).lstrip("-").isdigit():
-        return "失败: script_id 必须整数"
-    try:
-        from platform_app import script_import
-        status = script_import.get_sync_status(user_id, int(script_id))
-        return json.dumps(status, ensure_ascii=False, indent=2)
-    except Exception as exc:
-        return f"失败: {type(exc).__name__}: {exc}"
-
-
-def _t_list_my_import_jobs(user_id: int, args: dict) -> str:
-    try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            rows = db.execute(
-                "select id, script_id, status, progress, created_at, updated_at "
-                "from script_import_jobs where user_id = %s "
-                "order by created_at desc limit 30",
-                (user_id,),
-            ).fetchall() or []
-        return json.dumps([dict(r) for r in rows], ensure_ascii=False, default=str, indent=2)
-    except Exception as exc:
-        return f"失败: {type(exc).__name__}: {exc}"
-
-
-def _t_cancel_import_job(user_id: int, args: dict) -> str:
-    job_id = (args.get("job_id") or "").strip()
-    if not job_id:
-        return "失败: job_id 为空"
-    try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "update script_import_jobs set status = 'cancelled', "
-                "updated_at = now() where id = %s and user_id = %s "
-                "and status in ('pending','running') returning id",
-                (job_id, user_id),
-            ).fetchone()
-            if not row:
-                return f"失败: job {job_id} 不属于当前用户、不存在,或已终止"
-        return f"取消导入 job {job_id} ✓"
-    except Exception as exc:
-        return f"失败: {type(exc).__name__}: {exc}"
-
-
-def _t_resplit_script(user_id: int, args: dict) -> str:
-    script_id = args.get("script_id")
-    mode = (args.get("mode") or "regex").strip() or "regex"
-    if not isinstance(script_id, (int, float, str)) or not str(script_id).lstrip("-").isdigit():
-        return "失败: script_id 必须整数"
-    try:
-        from platform_app import script_import
-        result = script_import.resplit_script(user_id=user_id, script_id=int(script_id), split_rule=mode)
-        return f"重新拆分: chapters={result.get('chapter_count','?')} (mode={mode})"
-    except Exception as exc:
-        return f"失败: {type(exc).__name__}: {exc}"
-
-
-def _t_delete_script(user_id: int, args: dict) -> str:
-    script_id = args.get("script_id")
-    force = bool(args.get("force"))
-    if not isinstance(script_id, (int, float, str)) or not str(script_id).lstrip("-").isdigit():
-        return "失败: script_id 必须整数"
-    try:
-        from platform_app import script_import
-        result = script_import.delete_script(user_id=user_id, script_id=int(script_id), force=force)
-        return f"剧本 {script_id} 已删除 (chapters_dropped={result.get('chapters_dropped',0)})"
-    except Exception as exc:
-        return f"失败: {type(exc).__name__}: {exc}"
-
-
-def _t_probe_models(user_id: int, args: dict) -> str:
-    api_id = (args.get("api_id") or "").strip() or None
-    try:
-        import model_probe
-        result = model_probe.probe(user_id=user_id, api_id_filter=api_id) if hasattr(model_probe, "probe") else None
-        if result is None:
-            return "失败: model_probe.probe 未提供"
-        return json.dumps(result, ensure_ascii=False, indent=2)[:1500]
     except Exception as exc:
         return f"失败: {type(exc).__name__}: {exc}"
 
@@ -584,43 +379,6 @@ def register_misc_tools() -> None:
           "properties": {"key": {"type": "string"}, "value": {}},
           "required": ["key", "value"]},
          _t_set_preference, _USER_MUTATE, False),  # 跨 save,LLM 禁
-        ("create_persona", "新建一个用户 persona (玩家身份模板)。summary 写入 personality 字段。",
-         {"type": "object",
-          "properties": {
-              "name": {"type": "string"},
-              "summary": {"type": "string", "description": "性格简介,写入 personality 字段"},
-              "role": {"type": "string"},
-              "background": {"type": "string"},
-              "appearance": {"type": "string"},
-              "tags": {"type": "array", "items": {"type": "string"}},
-          },
-          "required": []},  # handler 自行校验并返回"name 为空"友好消息
-         _t_create_persona, _USER_MUTATE, False),  # 跨 save 持久资源,LLM 禁
-        ("delete_persona", "永久删除 persona",
-         {"type": "object", "properties": {"persona_id": {"type": "integer"}}, "required": ["persona_id"]},
-         _t_delete_persona, _USER_DEST, True),
-        ("create_character_card",
-         "新建一张可复用角色卡片 (跨 save 共享)。summary 写入 personality 字段。\n"
-         "**不是** 改剧情内玩家名 (那是 set_player_name, 助手不管)。",
-         {"type": "object",
-          "properties": {
-              "name": {"type": "string", "description": "角色名 (例: 晓星 / 阿狸)"},
-              "summary": {"type": "string", "description": "性格简介 (例: 开朗元气 / 冷静腹黑)"},
-              "identity": {"type": "string", "description": "身份背景 1 句话 (例: 女高中生穿越者)"},
-              "appearance": {"type": "string", "description": "外貌特征"},
-              "speech_style": {"type": "string", "description": "说话方式"},
-              "current_status": {"type": "string", "description": "当前状态"},
-              "secrets": {"type": "string", "description": "未公开秘密"},
-              "aliases": {"type": "array", "items": {"type": "string"}},
-              "sample_dialogue": {"type": "array", "items": {"type": "string"}},
-              "tags": {"type": "array", "items": {"type": "string"}},
-          },
-          # handler 自行校验 name 为空,返回"name 为空"友好消息
-          "required": []},
-         _t_create_character_card, _USER_MUTATE, False),  # 跨 save,LLM 禁
-        ("delete_character_card", "永久删除角色卡",
-         {"type": "object", "properties": {"card_id": {"type": "integer"}}, "required": ["card_id"]},
-         _t_delete_character_card, _USER_DEST, True),
         ("mcp_server_enable", "切换 MCP server 启用状态 (admin)",
          {"type": "object",
           "properties": {"server_id": {"type": "string"}, "enabled": {"type": "boolean"}},
@@ -637,38 +395,6 @@ def register_misc_tools() -> None:
           "properties": {"api_id": {"type": "string"}, "model": {"type": "string"}},
           "required": []},  # handler 自行校验并返回"不能为空"友好消息
          _t_select_model, _USER_MUTATE, False),  # LLM 改自己的模型?坚决禁
-        # Phase 4 异步 - 启动/取消任务都禁 LLM (会消耗资源/触发外部 LLM 调用)
-        ("start_script_import",
-         "从已上传 upload_id 启动剧本导入 (上传走 /api/uploads,这里只触发导入). "
-         "返回 script_id 与 job_id,事件流走 /api/scripts/import-jobs/{job_id}/stream",
-         {"type": "object",
-          "properties": {
-              "upload_id": {"type": "string"},
-              "title": {"type": "string"},
-              "mode": {"type": "string", "default": "regex"},
-          }, "required": []},  # handler 自行校验并返回"必填"友好消息
-         _t_start_script_import, _USER_MUTATE, False),
-        ("get_import_status", "查询剧本导入进度",
-         {"type": "object", "properties": {"script_id": {"type": "integer"}}, "required": ["script_id"]},
-         _t_get_import_status, _USER_READ, False),  # read OK
-        ("list_my_import_jobs", "列出当前用户的导入任务",
-         {"type": "object", "properties": {}}, _t_list_my_import_jobs, _USER_READ, False),
-        ("cancel_import_job", "取消进行中的导入任务",
-         {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": []},
-         _t_cancel_import_job, _USER_MUTATE, False),  # 跨任务 mutate,LLM 禁
-        ("resplit_script", "对已导入剧本重新切章",
-         {"type": "object",
-          "properties": {"script_id": {"type": "integer"}, "mode": {"type": "string", "default": "regex"}},
-          "required": ["script_id"]},
-         _t_resplit_script, _USER_DEST, True),
-        ("delete_script", "永久删除剧本及其所有派生数据",
-         {"type": "object",
-          "properties": {"script_id": {"type": "integer"}, "force": {"type": "boolean", "default": False}},
-          "required": ["script_id"]},
-         _t_delete_script, _USER_DEST, True),
-        ("probe_models", "探测可用模型 (异步,可能耗时)",
-         {"type": "object", "properties": {"api_id": {"type": "string"}}},
-         _t_probe_models, _USER_MUTATE, False),  # 触发外部 LLM 调用,LLM 不能自启
         # B 类补全 (全部 read)
         ("get_save_detail", "返回指定 save 的元数据(标题/script_id/激活 commit 等)",
          {"type": "object", "properties": {"save_id": {"type": "integer"}}, "required": ["save_id"]},
@@ -705,77 +431,6 @@ def register_misc_tools() -> None:
             registry.register(ToolSpec(
                 name=name, description=desc, input_schema=schema,
                 executor=exec_, scope="script", origins=_USER_OK, destructive=False,
-            ))
-
-    # ────────────────────────────────────────────────────────────
-    # task 49: 创意工具 — generate/refine_character_card_draft
-    # 仅 console_assistant + api_direct 可调; LLM 自由叙事 (llm_chat) 不允许
-    # 自创角色卡 (该走 gm_provisional active_entity 路径)。
-    # ────────────────────────────────────────────────────────────
-    _CREATIVE_ORIGINS = frozenset({"console_assistant", "api_direct"})
-
-    def _t_generate_card_draft(user_id: int, args: dict) -> str:
-        try:
-            import character_card_generator as ccg
-            result = ccg.generate_character_card_draft(
-                brief=str(args.get("brief") or ""),
-                user_id=user_id,
-                script_id=args.get("script_id"),
-                kind=str(args.get("kind") or "user"),
-                phase=args.get("phase"),
-                timeout_sec=int(args.get("timeout_sec") or 30),
-            )
-            return json.dumps(result, ensure_ascii=False, default=str)
-        except Exception as exc:
-            return f"失败: {type(exc).__name__}: {exc}"
-
-    def _t_refine_card_draft(user_id: int, args: dict) -> str:
-        try:
-            import character_card_generator as ccg
-            prev = args.get("previous_draft")
-            if not isinstance(prev, dict):
-                return "失败: previous_draft 必须是对象"
-            result = ccg.refine_character_card_draft(
-                previous_draft=prev,
-                feedback=str(args.get("feedback") or ""),
-                user_id=user_id,
-                script_id=args.get("script_id"),
-                timeout_sec=int(args.get("timeout_sec") or 30),
-            )
-            return json.dumps(result, ensure_ascii=False, default=str)
-        except Exception as exc:
-            return f"失败: {type(exc).__name__}: {exc}"
-
-    creative_specs = [
-        ("generate_character_card_draft",
-         "把简短人设描述扩展为符合当前剧本规范的角色卡 candidate (不写 DB,只返回 draft+validations)",
-         {"type": "object",
-          "properties": {
-              "brief": {"type": "string", "description": "用户简短描述,如 '20 岁女法师,流亡贵族'"},
-              "script_id": {"type": "integer", "description": "目标剧本 id (用于查重/phase/风格)"},
-              "kind": {"type": "string", "enum": ["user", "script"], "default": "user"},
-              "phase": {"type": "string", "description": "目标 phase 标签,空则由 DB 推断"},
-              "timeout_sec": {"type": "integer", "default": 30},
-          },
-          "required": ["brief"]},
-         _t_generate_card_draft),
-        ("refine_character_card_draft",
-         "用 previous_draft + 用户反馈重新生成卡片 candidate (走同一 5 层 validator)",
-         {"type": "object",
-          "properties": {
-              "previous_draft": {"type": "object", "description": "上一版 draft (generate 返回的 draft 字段)"},
-              "feedback": {"type": "string", "description": "用户反馈,如 '把性格改得更内向'"},
-              "script_id": {"type": "integer"},
-              "timeout_sec": {"type": "integer", "default": 30},
-          },
-          "required": ["previous_draft", "feedback"]},
-         _t_refine_card_draft),
-    ]
-    for name, desc, schema, exec_ in creative_specs:  # type: ignore[assignment]
-        if not registry.has(name):
-            registry.register(ToolSpec(
-                name=name, description=desc, input_schema=schema,
-                executor=exec_, scope="user", origins=_CREATIVE_ORIGINS, destructive=False,
             ))
 
     # ────────────────────────────────────────────────────────────

@@ -10,8 +10,8 @@ import re
 import sqlite3
 from pathlib import Path
 
-from timeline_index import bootstrap_timeline_from_summaries, timeline_filter_for_label
 from core.logging import get_logger
+from timeline_index import bootstrap_timeline_from_summaries, timeline_filter_for_label
 
 log = get_logger(__name__)
 
@@ -115,26 +115,28 @@ def bm25_search(query: str, top_k: int = 4, chapter_min: int | None = None, chap
         results: list[tuple[str, str, int]] = []  # (chapter, content, score)
         seen_chunks: set[str] = set()
 
-        for tok in list(tokens)[:8]:  # 最多用8个词元
-            params: list[object] = [f"%{tok}%"]
-            where = "content LIKE ?"
-            if chapter_min is not None:
-                where += " AND chapter >= ?"
-                params.append(chapter_min)
-            if chapter_max is not None:
-                where += " AND chapter <= ?"
-                params.append(chapter_max)
-            cur.execute(
-                f"SELECT chapter, content, chunk_id FROM vectors WHERE {where} LIMIT 6",
-                params,
-            )
-            for chapter, content, chunk_id in cur.fetchall():
-                if chunk_id in seen_chunks:
-                    continue
-                seen_chunks.add(chunk_id)
-                # 简单评分：命中词元数
-                score = sum(1 for t in tokens if t in content)
-                results.append((chapter, content, score))
+        # 合并为单条 SQL（原 N+1 循环最多 8 次 SELECT，现改为 1 次）
+        tok_list = list(tokens)[:8]  # 最多用8个词元
+        like_clauses = " OR ".join("content LIKE ?" for _ in tok_list)
+        params: list[object] = [f"%{tok}%" for tok in tok_list]
+        where = f"({like_clauses})"
+        if chapter_min is not None:
+            where += " AND chapter >= ?"
+            params.append(chapter_min)
+        if chapter_max is not None:
+            where += " AND chapter <= ?"
+            params.append(chapter_max)
+        cur.execute(
+            f"SELECT chapter, content, chunk_id FROM vectors WHERE {where} LIMIT {len(tok_list) * 6}",
+            params,
+        )
+        for chapter, content, chunk_id in cur.fetchall():
+            if chunk_id in seen_chunks:
+                continue
+            seen_chunks.add(chunk_id)
+            # 简单评分：命中词元数
+            score = sum(1 for t in tokens if t in content)
+            results.append((chapter, content, score))
 
         conn.close()
         # 按评分排序，取 top_k

@@ -32,7 +32,9 @@ def connect() -> Iterator[psycopg.Connection]:
 def get_pool() -> ConnectionPool:
     global _pool
     if _pool is None:
-        from core.config import db_pool_min as _db_pool_min, db_pool_max as _db_pool_max, db_pool_timeout as _db_pool_timeout
+        from core.config import db_pool_max as _db_pool_max
+        from core.config import db_pool_min as _db_pool_min
+        from core.config import db_pool_timeout as _db_pool_timeout
         _pool = ConnectionPool(
             conninfo=database_url(),
             min_size=_db_pool_min(),
