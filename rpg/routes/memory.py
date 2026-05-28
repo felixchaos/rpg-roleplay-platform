@@ -10,20 +10,22 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from schemas.memory import MemoryModeRequest, MemoryAddRequest, MemoryRemoveRequest
+
 router = APIRouter()
 
 
 @router.post("/api/memory/mode")
-async def api_memory_mode(request: Request) -> JSONResponse:
+async def api_memory_mode(body: MemoryModeRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: UI 按钮也走 dispatcher,获得统一审计 + destructive 检查。"""
     from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded, _persist_runtime_checkpoint
     api_user = _require_api_user(request)
-    body = await request.json()
+    body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(
         tool_name="set_memory_mode",
-        args={"mode": body.get("mode", "normal")},
+        args={"mode": body_dict.get("mode", "normal")},
         user_id=int(api_user.get("id")) if api_user else 0,
         save_id=_resolve_persist_target(api_user)[1] or 0,
         state=state,
@@ -36,14 +38,14 @@ async def api_memory_mode(request: Request) -> JSONResponse:
 
 
 @router.post("/api/memory/add")
-async def api_memory_add(request: Request) -> JSONResponse:
+async def api_memory_add(body: MemoryAddRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 走 dispatcher 的 add_memory_* 工具系列。"""
     from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded, _persist_runtime_checkpoint
     api_user = _require_api_user(request)
-    body = await request.json()
+    body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
-    bucket = body.get("bucket", "notes")
-    text = body.get("text", "")
+    bucket = body_dict.get("bucket", "notes")
+    text = body_dict.get("text", "")
     # bucket → 对应工具名
     bucket_tool = {
         "facts": "add_memory_fact",
@@ -68,18 +70,18 @@ async def api_memory_add(request: Request) -> JSONResponse:
 
 
 @router.post("/api/memory/remove")
-async def api_memory_remove(request: Request) -> JSONResponse:
+async def api_memory_remove(body: MemoryRemoveRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: destructive 走 dispatcher remove_memory_item 工具。"""
     from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded, _persist_runtime_checkpoint
     api_user = _require_api_user(request)
-    body = await request.json()
+    body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(
         tool_name="remove_memory_item",
         args={
-            "bucket": body.get("bucket", "notes"),
-            "index": int(body.get("index", -1)),
+            "bucket": body_dict.get("bucket", "notes"),
+            "index": int(body_dict.get("index", -1)),
         },
         user_id=int(api_user.get("id")) if api_user else 0,
         save_id=_resolve_persist_target(api_user)[1] or 0,

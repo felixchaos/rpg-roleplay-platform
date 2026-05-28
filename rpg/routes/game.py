@@ -3,11 +3,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from schemas.game import NewGameRequest, ChatEstimateRequest, ChatRequest
+
 router = APIRouter()
 
 
 @router.post("/api/new")
-async def api_new(request: Request) -> JSONResponse:
+async def api_new(body: NewGameRequest, request: Request) -> JSONResponse:
     """创建新存档。
 
     切换角色卡（user persona / 用户自创 NPC / 剧本预置角色）一律走这个接口，
@@ -23,15 +25,15 @@ async def api_new(request: Request) -> JSONResponse:
         GameState, ROLES,
     )
     api_user = _require_api_user(request)
-    body = await request.json()
+    body_dict = body.model_dump(exclude_none=True)
     backup = _backup_save("before_new_game") if api_user is None else None
 
     source_meta: dict | None = None
     source_kind = ""
 
     # 优先级 1：剧本预置角色卡
-    script_card_id = body.get("script_card_id")
-    script_id = body.get("script_id")
+    script_card_id = body_dict.get("script_card_id")
+    script_id = body_dict.get("script_id")
     if script_card_id and script_id and api_user:
         from platform_app import knowledge as _know
         card = _know.get_character_card(api_user["id"], int(script_id), int(script_card_id))
@@ -41,7 +43,7 @@ async def api_new(request: Request) -> JSONResponse:
 
     # 优先级 2：用户自创 NPC 卡
     if source_meta is None:
-        user_card_id = body.get("user_card_id")
+        user_card_id = body_dict.get("user_card_id")
         if user_card_id and api_user:
             from platform_app import user_cards as _ucards
             card = _ucards.get_user_card(api_user["id"], int(user_card_id))
@@ -51,7 +53,7 @@ async def api_new(request: Request) -> JSONResponse:
 
     # 优先级 3：persona
     if source_meta is None:
-        persona_id = body.get("persona_id")
+        persona_id = body_dict.get("persona_id")
         if persona_id and api_user:
             from platform_app import user_cards as _ucards
             persona = _ucards.get_persona(api_user["id"], int(persona_id))
@@ -71,10 +73,10 @@ async def api_new(request: Request) -> JSONResponse:
     else:
         # 通用 RPG 底座：默认 role 不再 fallback 到《我蕾穆丽娜不爱你》的『穿越者·魔女』。
         # ROLES 字典里有该剧本的 role label，作为兼容映射保留，但不再当默认值。
-        role_label = (body.get("role") or "").strip() or "未指定"
+        role_label = (body_dict.get("role") or "").strip() or "未指定"
         role = ROLES.get(role_label, role_label)
-        name = (body.get("name") or "无名者").strip()
-        background = (body.get("background") or "").strip()
+        name = (body_dict.get("name") or "无名者").strip()
+        background = (body_dict.get("background") or "").strip()
 
     state = GameState.new()
     state.setup_player(name, role, background)
@@ -156,7 +158,7 @@ async def api_opening(request: Request) -> StreamingResponse:
 
 
 @router.post("/api/chat/estimate")
-async def api_chat_estimate(request: Request) -> JSONResponse:
+async def api_chat_estimate(body: ChatEstimateRequest, request: Request) -> JSONResponse:
     """实时上下文预估。前端 debounce 用户输入后调用，显示 ctx X/Y (Z%) · in~A out~B。
 
     估算思路（轻量，避免真的跑 retrieval）：
@@ -167,9 +169,9 @@ async def api_chat_estimate(request: Request) -> JSONResponse:
         _require_api_user, _ensure_loaded, _resolve_persist_target, selected_model,
     )
     api_user = _require_api_user(request)
-    body = await request.json()
-    message = (body.get("message") or "").strip()
-    include_retrieval = bool(body.get("include_retrieval", True))
+    body_dict = body.model_dump(exclude_none=True)
+    message = (body_dict.get("message") or "").strip()
+    include_retrieval = bool(body_dict.get("include_retrieval", True))
 
     state = _ensure_loaded(api_user)
     model = selected_model()
@@ -226,7 +228,7 @@ async def api_chat_estimate(request: Request) -> JSONResponse:
 
 
 @router.post("/api/chat")
-async def api_chat(request: Request) -> StreamingResponse:
+async def api_chat(body: ChatRequest, request: Request) -> StreamingResponse:
     import time
     from app import (
         _require_api_user, _payload, _ensure_loaded, _get_gm, _get_sub_gm,
@@ -242,12 +244,12 @@ async def api_chat(request: Request) -> StreamingResponse:
     from platform_app import knowledge as platform_knowledge
 
     api_user = _require_api_user(request)
-    body = await request.json()
+    body_dict = body.model_dump(exclude_none=True)
     # task 31：前端历史上同时存在 {message:...} 和 {text:...} 两套契约。
     # 老的 Game Console.html 发 text，新的 game-app.jsx 也偶尔走 message。
     # 后端必须两边兼容，否则用户输入直接被 "空消息" error 吞掉。
-    message = (body.get("message") or body.get("text") or "").strip()
-    attachments = _save_attachments(body.get("attachments") or [], user_id=api_user["id"] if api_user else None)
+    message = (body_dict.get("message") or body_dict.get("text") or "").strip()
+    attachments = _save_attachments(body_dict.get("attachments") or [], user_id=api_user["id"] if api_user else None)
     message_for_model = _message_with_attachments(message, attachments)
     if not message_for_model.strip():
         return StreamingResponse(iter([_sse("error", {"message": "空消息"})]), media_type="text/event-stream")

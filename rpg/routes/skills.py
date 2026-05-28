@@ -3,23 +3,25 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from schemas.skills import SkillsImportRequest, SkillRunRequest
+
 router = APIRouter()
 
 
 @router.post("/api/skills/import")
-async def api_skills_import(request: Request) -> JSONResponse:
+async def api_skills_import(body: SkillsImportRequest, request: Request) -> JSONResponse:
     from app import _require_api_user, tool_payload, import_skill_bundle
     _require_api_user(request, admin=True)
-    body = await request.json()
+    body_dict = body.model_dump(exclude_none=True)
     try:
-        skill = import_skill_bundle(body.get("file", {}))
+        skill = import_skill_bundle(body_dict.get("file", {}))
         return JSONResponse({"ok": True, "skill": skill, "tools": tool_payload()})
     except (PermissionError, ValueError) as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
 
 @router.post("/api/skills/{skill_id}/run")
-async def api_skill_run(request: Request, skill_id: str) -> JSONResponse:
+async def api_skill_run(body: SkillRunRequest, request: Request, skill_id: str) -> JSONResponse:
     """在沙箱里跑某个 imported skill。
 
     Body: {"cmd": ["bash", "script.sh", "arg1"], "stdin": "...", "timeout_sec": 30}
@@ -31,8 +33,8 @@ async def api_skill_run(request: Request, skill_id: str) -> JSONResponse:
     if _api_auth_required() and (not api_user or api_user.get("role") != "admin"):
         return JSONResponse({"ok": False, "error": "需要管理员权限"}, status_code=403)
 
-    body = await request.json()
-    cmd = body.get("cmd") or body.get("command")
+    body_dict = body.model_dump(exclude_none=True)
+    cmd = body_dict.get("cmd") or body_dict.get("command")
     if not isinstance(cmd, list) or not cmd:
         return JSONResponse({"ok": False, "error": "cmd 必须是非空 list"}, status_code=400)
 
@@ -53,7 +55,7 @@ async def api_skill_run(request: Request, skill_id: str) -> JSONResponse:
     result = skill_executor.run_skill_command(
         cmd=cmd,
         skill_root=skill_root,
-        timeout_sec=int(body.get("timeout_sec") or skill_executor.DEFAULT_TIMEOUT_SEC),
-        stdin_text=body.get("stdin"),
+        timeout_sec=int(body_dict.get("timeout_sec") or skill_executor.DEFAULT_TIMEOUT_SEC),
+        stdin_text=body_dict.get("stdin"),
     )
     return JSONResponse({"ok": True, **result})

@@ -4,6 +4,12 @@ import json
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from schemas.console_assistant import (
+    ConsoleAssistantDeleteConversationRequest,
+    ConsoleAssistantChatRequest,
+    ConsoleAssistantConfirmRequest,
+)
+
 router = APIRouter()
 
 
@@ -40,15 +46,15 @@ async def api_console_assistant_new_conversation(request: Request) -> JSONRespon
 
 
 @router.post("/api/console_assistant/delete_conversation")
-async def api_console_assistant_delete_conversation(request: Request) -> JSONResponse:
+async def api_console_assistant_delete_conversation(body: ConsoleAssistantDeleteConversationRequest, request: Request) -> JSONResponse:
     """task 111: 删除某对话。"""
     from app import _require_api_user
     api_user = _require_api_user(request)
     user_id = int((api_user or {}).get("id") or 0)
     if not user_id:
         return JSONResponse({"ok": False, "error": "需要登录"}, status_code=401)
-    body = await request.json()
-    cid = str(body.get("conversation_id") or "").strip()
+    body_dict = body.model_dump(exclude_none=True)
+    cid = str(body_dict.get("conversation_id") or "").strip()
     if not cid:
         return JSONResponse({"ok": False, "error": "conversation_id 必填"}, status_code=400)
     from console_assistant import delete_conversation
@@ -57,7 +63,7 @@ async def api_console_assistant_delete_conversation(request: Request) -> JSONRes
 
 
 @router.post("/api/console_assistant/chat")
-async def api_console_assistant_chat(request: Request) -> StreamingResponse:
+async def api_console_assistant_chat(body: ConsoleAssistantChatRequest, request: Request) -> StreamingResponse:
     """task 48: 侧栏助手主聊天 SSE endpoint。
 
     body: { message: str, conversation_id?: str, page_context?: dict }
@@ -65,14 +71,14 @@ async def api_console_assistant_chat(request: Request) -> StreamingResponse:
     """
     from app import _require_api_user, _ensure_loaded, _resolve_console_assistant_backend
     api_user = _require_api_user(request)
-    body = await request.json()
-    message = str(body.get("message") or "").strip()
-    conversation_id = body.get("conversation_id")
+    body_dict = body.model_dump(exclude_none=True)
+    message = str(body_dict.get("message") or "").strip()
+    conversation_id = body_dict.get("conversation_id")
     if isinstance(conversation_id, str):
         conversation_id = conversation_id.strip() or None
     else:
         conversation_id = None
-    page_context = body.get("page_context") if isinstance(body.get("page_context"), dict) else None
+    page_context = body_dict.get("page_context") if isinstance(body_dict.get("page_context"), dict) else None
 
     if not message:
         return StreamingResponse(
@@ -121,7 +127,7 @@ async def api_console_assistant_chat(request: Request) -> StreamingResponse:
 
 
 @router.post("/api/console_assistant/confirm")
-async def api_console_assistant_confirm(request: Request) -> StreamingResponse:
+async def api_console_assistant_confirm(body: ConsoleAssistantConfirmRequest, request: Request) -> StreamingResponse:
     """task 58: 对一个 pending destructive 工具调用做决策, 返 SSE 流。
 
     body: { conversation_id: str, call_id: str, decision: 'approve'|'reject',
@@ -134,11 +140,11 @@ async def api_console_assistant_confirm(request: Request) -> StreamingResponse:
     """
     from app import _require_api_user, _ensure_loaded, _resolve_console_assistant_backend
     api_user = _require_api_user(request)
-    body = await request.json()
-    conversation_id = str(body.get("conversation_id") or "").strip()
-    call_id = str(body.get("call_id") or "").strip()
-    decision = str(body.get("decision") or "").strip().lower()
-    page_context = body.get("page_context") if isinstance(body.get("page_context"), dict) else None
+    body_dict = body.model_dump(exclude_none=True)
+    conversation_id = str(body_dict.get("conversation_id") or "").strip()
+    call_id = str(body_dict.get("call_id") or "").strip()
+    decision = str(body_dict.get("decision") or "").strip().lower()
+    page_context = body_dict.get("page_context") if isinstance(body_dict.get("page_context"), dict) else None
     if not conversation_id or not call_id or decision not in {"approve", "reject"}:
         return StreamingResponse(
             iter([f"event: error\ndata: {json.dumps({'message':'conversation_id / call_id / decision 必填; decision ∈ {approve,reject}'}, ensure_ascii=False)}\n\n",

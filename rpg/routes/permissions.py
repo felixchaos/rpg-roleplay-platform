@@ -13,20 +13,27 @@ import os
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from schemas.permissions import (
+    PermissionsRequest,
+    PendingWriteRequest,
+    QuestionClearRequest,
+    DebugPendingQuestionRequest,
+)
+
 router = APIRouter()
 
 
 @router.post("/api/permissions")
-async def api_permissions(request: Request) -> JSONResponse:
+async def api_permissions(body: PermissionsRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: 敏感权限切换走 dispatcher (origin=ui_button)。"""
     from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded, _persist_runtime_checkpoint
     api_user = _require_api_user(request)
-    body = await request.json()
+    body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(
         tool_name="set_permission_mode",
-        args={"mode": body.get("mode", "full_access")},
+        args={"mode": body_dict.get("mode", "full_access")},
         user_id=int(api_user.get("id")) if api_user else 0,
         save_id=_resolve_persist_target(api_user)[1] or 0,
         state=state,
@@ -39,7 +46,7 @@ async def api_permissions(request: Request) -> JSONResponse:
 
 
 @router.post("/api/permissions/pending-write")
-async def api_pending_write(request: Request) -> JSONResponse:
+async def api_pending_write(body: PendingWriteRequest, request: Request) -> JSONResponse:
     """审批一条待写入。前端发 {id, action} 或 {index, decision}（兼容老 contract）。
 
     P0 修复（task #53）：之前后端只读 index+decision，前端发 id+action →
@@ -48,12 +55,12 @@ async def api_pending_write(request: Request) -> JSONResponse:
     """
     from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded, _persist_runtime_checkpoint
     api_user = _require_api_user(request)
-    body = await request.json()
+    body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
-    item_id = body.get("id")
-    raw_index = body.get("index")
+    item_id = body_dict.get("id")
+    raw_index = body_dict.get("index")
     index = int(raw_index) if raw_index is not None else None
-    decision = str(body.get("action") or body.get("decision") or "").lower()
+    decision = str(body_dict.get("action") or body_dict.get("decision") or "").lower()
     # task 87 Phase 6: 走 dispatcher 的 approve/reject_pending_write 工具。
     # 老路径 (state.approve_pending_write/reject_pending_write) 接受 index 旧契约,
     # 工具只用 id; index 仅 fallback。
@@ -91,18 +98,18 @@ async def api_pending_write(request: Request) -> JSONResponse:
 
 
 @router.post("/api/questions/clear")
-async def api_question_clear(request: Request) -> JSONResponse:
+async def api_question_clear(body: QuestionClearRequest, request: Request) -> JSONResponse:
     """回答(或跳过)一条 GM 询问。{id, choice?} 或 {index, choice?}。
     task 87 Phase 6: 走 dispatcher dismiss_pending_question。choice 走老路径
     (clear_pending_question 支持记录玩家选择,工具暂不支持 choice)。"""
     from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded, _persist_runtime_checkpoint
     api_user = _require_api_user(request)
-    body = await request.json()
+    body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
-    item_id = body.get("id")
-    raw_index = body.get("index")
+    item_id = body_dict.get("id")
+    raw_index = body_dict.get("index")
     index = int(raw_index) if raw_index is not None else None
-    choice = body.get("choice")
+    choice = body_dict.get("choice")
     # 若有 choice (玩家选了选项),走老路径以保留 choice 记录;若仅 dismiss → dispatcher
     if choice or not item_id:
         popped = state.clear_pending_question(index=index, id=item_id, choice=choice)
@@ -122,16 +129,16 @@ async def api_question_clear(request: Request) -> JSONResponse:
 
 
 @router.post("/api/debug/pending-question")
-async def api_debug_pending_question(request: Request) -> JSONResponse:
+async def api_debug_pending_question(body: DebugPendingQuestionRequest, request: Request) -> JSONResponse:
     """task 87 Phase 6: debug 注入也走 dispatcher 的 inject_pending_question 工具。"""
     from app import _require_api_user, _payload, _resolve_persist_target, _ensure_loaded
     api_user = _require_api_user(request, admin=True)
     if not os.getenv("RPG_DEBUG_UI"):
         return JSONResponse({"ok": False, "error": "debug disabled"}, status_code=404)
-    body = await request.json()
+    body_dict = body.model_dump(exclude_none=True)
     state = _ensure_loaded(api_user)
     # 把老 text+| 分隔 options 拆成 question + options 列表
-    raw_text = body.get("text") or "下一步怎么做？｜选项：继续调查、返回基地、询问同伴"
+    raw_text = body_dict.get("text") or "下一步怎么做？｜选项：继续调查、返回基地、询问同伴"
     if "｜选项：" in raw_text:
         question, _, opt_str = raw_text.partition("｜选项：")
         options = [s.strip() for s in opt_str.split("、") if s.strip()]
