@@ -1204,7 +1204,16 @@
 .gp-panel-body.narrow .gp-stat-grid { grid-template-columns: 1fr 1fr !important; }
 .gp-stack { display: grid; gap: 18px; }
 .gp-section { display: grid; gap: 8px; }
-.gp-section .section-head { margin-bottom: 4px; }
+/* Bug 4 fix：原来 .section-head 没 flex/grid，h3(block) 把右侧的 pill/badge
+ * 挤到下一行，看起来突兀。改成 flex space-between，h3 和 pill 同行。 */
+.gp-section .section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.gp-section .section-head h3 { margin: 0; min-width: 0; flex: 1; }
 
 .gp-kv { display: grid; gap: 6px; }
 .gp-row { display: grid; grid-template-columns: 64px 1fr; gap: 8px; font-size: 12.5px; align-items: baseline; }
