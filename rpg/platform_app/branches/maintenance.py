@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-
-from psycopg.types.json import Jsonb
 
 from platform_app.branches._helpers import load_state, rough_summary
 from platform_app.branches.commits import _state_snapshot_hash
+from platform_app.branches._maintenance_repo import _db_update_commit_snapshot
 
 
 def ensure_summaries(db, save_id: int) -> None:
@@ -32,20 +30,6 @@ def ensure_summaries(db, save_id: int) -> None:
             else:
                 gm_text = row.get("content_preview", "") or row.get("title", "")
         db.execute("update branch_commits set summary = %s where id = %s", (rough_summary(player_text, gm_text), row["id"]))
-
-
-def _db_update_commit_snapshot(db, commit_id: int, snapshot: dict[str, Any], tree_hash: str) -> None:
-    """repository: 回填 branch_commits 的 state_snapshot 和 tree_hash。"""
-    db.execute(
-        """
-        update branch_commits
-        set state_snapshot = %s,
-            tree_hash = %s,
-            row_version = row_version + 1
-        where id = %s
-        """,
-        (Jsonb(snapshot), tree_hash, commit_id),
-    )
 
 
 def ensure_state_snapshots(db, save_id: int) -> None:
