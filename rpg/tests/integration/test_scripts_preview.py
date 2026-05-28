@@ -40,7 +40,7 @@ class ScriptsPreviewContract(unittest.TestCase):
             "sample_limit": 20,
         }
         u = register_user(self.client)
-        r = self.client.post("/api/scripts/preview", json=body, cookies=u["cookies"])
+        r = self.client.post("/api/v1/scripts/preview", json=body, cookies=u["cookies"])
         self.assertEqual(r.status_code, 200, f"预览必须 200，实际 {r.status_code} body={r.text[:300]}")
         out = r.json()
         self.assertTrue(out.get("ok"))
@@ -59,7 +59,7 @@ class ScriptsPreviewContract(unittest.TestCase):
         """
         u = register_user(self.client)
         r = self.client.post(
-            "/api/scripts/preview",
+            "/api/v1/scripts/preview",
             json={"rule": "auto", "filename": "x.md", "size": 1024},
             cookies=u["cookies"],
         )
@@ -73,7 +73,7 @@ class ScriptsPreviewContract(unittest.TestCase):
             "file": {"name": "empty.txt", "base64": ""},
             "split_rule": "auto",
         }
-        r = self.client.post("/api/scripts/preview", json=body, cookies=u["cookies"])
+        r = self.client.post("/api/v1/scripts/preview", json=body, cookies=u["cookies"])
         self.assertEqual(r.status_code, 400)
 
 

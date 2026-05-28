@@ -15,7 +15,7 @@ from state import GameState
 
 
 class ContentPackPayloadTests(unittest.TestCase):
-    """/api/state 应暴露 content_pack manifest 供 FE 自适应。"""
+    """/api/v1/state 应暴露 content_pack manifest 供 FE 自适应。"""
 
     def test_brand_new_state_content_pack_is_freeform(self):
         g = GameState.new()

@@ -47,7 +47,7 @@ class RulesChatPipeline(unittest.TestCase):
 
         user = register_user(self.client)
         cookies = user["cookies"]
-        self.client.post("/api/rules/module/start", json={"module_id": "ash_mine"}, cookies=cookies)
+        self.client.post("/api/v1/rules/module/start", json={"module_id": "ash_mine"}, cookies=cookies)
 
         def fake_context_agent(*args, **kwargs):
             yield {
@@ -92,7 +92,7 @@ class RulesChatPipeline(unittest.TestCase):
         try:
             with self.client.stream(
                 "POST",
-                "/api/chat",
+                "/api/v1/chat",
                 json={"message": "我悄悄靠近矿车", "attachments": []},
                 cookies=cookies,
             ) as resp:
@@ -111,7 +111,7 @@ class RulesChatPipeline(unittest.TestCase):
         ]
         self.assertTrue(rule_updates, events)
 
-        state = self.client.get("/api/state", cookies=cookies).json()
+        state = self.client.get("/api/v1/state", cookies=cookies).json()
         self.assertEqual(state["scene"]["location_id"], "minecart_track")
         self.assertEqual(len(state["dice_log"]), 1)
         self.assertEqual(state["dice_log"][0]["kind"], "skill_check")
@@ -122,7 +122,7 @@ class RulesChatPipeline(unittest.TestCase):
 
         user = register_user(self.client)
         cookies = user["cookies"]
-        self.client.post("/api/rules/module/start", json={"module_id": "ash_mine"}, cookies=cookies)
+        self.client.post("/api/v1/rules/module/start", json={"module_id": "ash_mine"}, cookies=cookies)
 
         def fake_context_agent(*args, **kwargs):
             yield {
@@ -165,7 +165,7 @@ class RulesChatPipeline(unittest.TestCase):
         try:
             with self.client.stream(
                 "POST",
-                "/api/chat",
+                "/api/v1/chat",
                 json={"message": "我悄悄靠近矿车", "attachments": []},
                 cookies=cookies,
             ) as resp:
@@ -177,7 +177,7 @@ class RulesChatPipeline(unittest.TestCase):
             ui_mod._get_sub_gm = orig_get_sub_gm
 
         self.assertNotIn("error", [e["event"] for e in events], events)
-        state = self.client.get("/api/state", cookies=cookies).json()
+        state = self.client.get("/api/v1/state", cookies=cookies).json()
         self.assertEqual(state["scene"]["location_id"], "minecart_track")
         self.assertEqual(state["dice_log"][0]["dc"], 13)
 
@@ -186,7 +186,7 @@ class RulesChatPipeline(unittest.TestCase):
 
         user = register_user(self.client)
         cookies = user["cookies"]
-        self.client.post("/api/rules/module/start", json={"module_id": "ash_mine"}, cookies=cookies)
+        self.client.post("/api/v1/rules/module/start", json={"module_id": "ash_mine"}, cookies=cookies)
 
         def fake_context_agent(*args, **kwargs):
             yield {
@@ -230,7 +230,7 @@ class RulesChatPipeline(unittest.TestCase):
         try:
             with self.client.stream(
                 "POST",
-                "/api/chat",
+                "/api/v1/chat",
                 json={"message": "搜查矿车", "attachments": []},
                 cookies=cookies,
             ) as resp:
@@ -242,7 +242,7 @@ class RulesChatPipeline(unittest.TestCase):
             ui_mod._get_sub_gm = orig_get_sub_gm
 
         self.assertNotIn("error", [e["event"] for e in events], events)
-        state = self.client.get("/api/state", cookies=cookies).json()
+        state = self.client.get("/api/v1/state", cookies=cookies).json()
         last = state["history"][-1]["content"]
         self.assertIn("裂纹徽章", last)
         self.assertNotIn("```json", last)

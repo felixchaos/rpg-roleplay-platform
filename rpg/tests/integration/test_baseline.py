@@ -43,7 +43,7 @@ class AuthFlow(unittest.TestCase):
         u = register_user(self.client)
         self.assertEqual(u["status"], 200, f"register failed: {u['body']}")
         self.assertTrue(u["body"]["ok"])
-        me = self.client.get("/api/auth/me", cookies=u["cookies"])
+        me = self.client.get("/api/v1/auth/me", cookies=u["cookies"])
         self.assertEqual(me.status_code, 200)
         body = me.json()
         self.assertTrue(body["ok"])
@@ -72,15 +72,15 @@ class AuthFlow(unittest.TestCase):
     def test_logout_invalidates_session(self):
         u = register_user(self.client)
         # 退出
-        out = self.client.post("/api/auth/logout", cookies=u["cookies"])
+        out = self.client.post("/api/v1/auth/logout", cookies=u["cookies"])
         self.assertEqual(out.status_code, 200)
         # 退出后 /me 不应返回 user
-        me = self.client.get("/api/auth/me", cookies=u["cookies"])
+        me = self.client.get("/api/v1/auth/me", cookies=u["cookies"])
         body = me.json()
         self.assertIsNone(body.get("user"))
 
     def test_me_anonymous_no_user(self):
-        me = self.client.get("/api/auth/me")
+        me = self.client.get("/api/v1/auth/me")
         self.assertEqual(me.status_code, 200)
         body = me.json()
         self.assertIsNone(body.get("user"))
@@ -98,11 +98,11 @@ class AuthGuardedEndpoints(unittest.TestCase):
         cleanup_test_users()
 
     PROTECTED_GET = [
-        "/api/me/usage",
-        "/api/me/usage/timeline",
-        "/api/me/character-cards",
-        "/api/saves",
-        "/api/scripts",
+        "/api/v1/me/usage",
+        "/api/v1/me/usage/timeline",
+        "/api/v1/me/character-cards",
+        "/api/v1/saves",
+        "/api/v1/scripts",
     ]
 
     def test_anonymous_get_blocked(self):
@@ -126,7 +126,7 @@ class MCPSkillVisibility(unittest.TestCase):
         cleanup_test_users()
 
     def test_mcp_tools_anonymous(self):
-        resp = self.client.get("/api/tools")
+        resp = self.client.get("/api/v1/tools")
         # 未登录可能允许返回脱敏列表，也可能 401，两者都接受
         self.assertIn(resp.status_code, (200, 401, 403))
         if resp.status_code == 200:
@@ -137,7 +137,7 @@ class MCPSkillVisibility(unittest.TestCase):
 
     def test_skill_run_requires_auth(self):
         # 不存在的 skill_id；只要不是 200 就行
-        resp = self.client.post("/api/skills/__nope__/run", json={"args": []})
+        resp = self.client.post("/api/v1/skills/__nope__/run", json={"args": []})
         self.assertNotEqual(resp.status_code, 200)
 
 
@@ -153,7 +153,7 @@ class SavesListEmptyForNewUser(unittest.TestCase):
 
     def test_new_user_saves_empty(self):
         u = register_user(self.client)
-        resp = self.client.get("/api/saves", cookies=u["cookies"])
+        resp = self.client.get("/api/v1/saves", cookies=u["cookies"])
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertTrue(body.get("ok"))

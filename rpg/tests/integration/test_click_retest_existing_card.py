@@ -56,7 +56,7 @@ class ClickPathExistingCard(unittest.TestCase):
         # 1. 注册（已 register_user）✓
 
         # 2. Platform #cards → 新建角色卡
-        r = self.client.post("/api/me/character-cards", json={
+        r = self.client.post("/api/v1/me/character-cards", json={
             "name": "林晚舟点击复测",
             "identity": "QA 探险者",
             "appearance": "黑发披风，背着旧皮包。",
@@ -71,7 +71,7 @@ class ClickPathExistingCard(unittest.TestCase):
         script_id = self._create_script_with_chapters(uid, "qa_click_retest_script")
 
         # 4. POST /api/saves（FE NewGameModal 默认选中刚才那张 user_card）
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "QA click existing card retest",
             "script_id": script_id,
             "character_id": card_id,
@@ -98,17 +98,17 @@ class ClickPathExistingCard(unittest.TestCase):
         )
 
         # 5. ContinuePicker.confirm: POST /api/saves/{id}/activate
-        r = self.client.post(f"/api/saves/{save_id}/activate", cookies=cookies)
+        r = self.client.post(f"/api/v1/saves/{save_id}/activate", cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text[:300])
         body = r.json()
         self.assertTrue(body.get("ok"), body)
         self.assertEqual(int(body.get("active_save_id") or 0), save_id)
 
         # 6. GET /api/state（Game Console.html mount → window.api.game.state()）
-        r = self.client.get("/api/state", cookies=cookies)
+        r = self.client.get("/api/v1/state", cookies=cookies)
         state = r.json()
         self.assertEqual(int(state.get("save_id") or 0), save_id,
-            f"/api/state.save_id 应=新建 save；实际={state.get('save_id')}")
+            f"/api/v1/state.save_id 应=新建 save；实际={state.get('save_id')}")
 
         # 关键断言：player.name 必须从 user_card 注入
         player = state.get("player") or {}
@@ -134,12 +134,12 @@ class ClickPathExistingCard(unittest.TestCase):
         uid = self._uid(u["username"])
 
         # 先 launch 模组（之前的测试可能留下活跃 save）
-        r = self.client.post("/api/rules/module/launch",
+        r = self.client.post("/api/v1/rules/module/launch",
                              json={"module_id": "ash_mine"}, cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text[:300])
 
         # 建 user_card
-        r = self.client.post("/api/me/character-cards", json={
+        r = self.client.post("/api/v1/me/character-cards", json={
             "name": "林晚舟点击复测2",
             "identity": "测试探险者",
             "appearance": "—",
@@ -149,7 +149,7 @@ class ClickPathExistingCard(unittest.TestCase):
 
         # 建普通 save
         script_id = self._create_script_with_chapters(uid, "qa_click_after_module")
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "after module - existing card",
             "script_id": script_id,
             "character_id": card_id,
@@ -159,10 +159,10 @@ class ClickPathExistingCard(unittest.TestCase):
         save_id = int(((r.json() or {}).get("save") or {}).get("id") or 0)
 
         # activate
-        self.client.post(f"/api/saves/{save_id}/activate", cookies=cookies)
+        self.client.post(f"/api/v1/saves/{save_id}/activate", cookies=cookies)
 
         # /api/state
-        state = self.client.get("/api/state", cookies=cookies).json()
+        state = self.client.get("/api/v1/state", cookies=cookies).json()
         self.assertEqual(int(state.get("save_id") or 0), save_id)
         self.assertEqual(
             (state.get("player") or {}).get("name"), "林晚舟点击复测2",
@@ -182,7 +182,7 @@ class ClickPathExistingCard(unittest.TestCase):
         uid = self._uid(u["username"])
 
         # 1. 走完正常 click path 拿到 save_id
-        r = self.client.post("/api/me/character-cards", json={
+        r = self.client.post("/api/v1/me/character-cards", json={
             "name": "selfheal 测试",
             "identity": "selfheal tester",
             "appearance": "—",
@@ -190,14 +190,14 @@ class ClickPathExistingCard(unittest.TestCase):
         }, cookies=cookies)
         card_id = int(((r.json() or {}).get("card") or {}).get("id") or 0)
         script_id = self._create_script_with_chapters(uid, "selfheal_script")
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "selfheal",
             "script_id": script_id,
             "character_id": card_id,
             "character_kind": "user_card",
         }, cookies=cookies)
         save_id = int(((r.json() or {}).get("save") or {}).get("id") or 0)
-        self.client.post(f"/api/saves/{save_id}/activate", cookies=cookies)
+        self.client.post(f"/api/v1/saves/{save_id}/activate", cookies=cookies)
 
         # 2. 故意把 runtime_checkouts.state_snapshot 弄空（模拟 activate 时序故障）
         broken_snapshot = {"history": [], "turn": 0, "player": {"name": "", "role": "", "background": ""}}
@@ -213,7 +213,7 @@ class ClickPathExistingCard(unittest.TestCase):
             ui_mod._state_by_user.pop(uid, None)
 
         # 4. GET /api/state — 应该 self-heal 出来
-        state = self.client.get("/api/state", cookies=cookies).json()
+        state = self.client.get("/api/v1/state", cookies=cookies).json()
         self.assertEqual(
             (state.get("player") or {}).get("name"), "selfheal 测试",
             f"self-heal 应从 game_saves.state_snapshot 恢复 player；"
@@ -227,7 +227,7 @@ class ClickPathExistingCard(unittest.TestCase):
         cookies = u["cookies"]
         uid = self._uid(u["username"])
 
-        r = self.client.post("/api/me/character-cards", json={
+        r = self.client.post("/api/v1/me/character-cards", json={
             "name": "string id test",
             "identity": "tester",
             "appearance": "",
@@ -238,7 +238,7 @@ class ClickPathExistingCard(unittest.TestCase):
 
         script_id = self._create_script_with_chapters(uid, "qa_string_id_script")
         # 故意把 character_id 当字符串传（FE 可能这么发）
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "string id save",
             "script_id": script_id,
             "character_id": str(card_id),
@@ -247,8 +247,8 @@ class ClickPathExistingCard(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text[:300])
         save_id = int(((r.json() or {}).get("save") or {}).get("id") or 0)
 
-        self.client.post(f"/api/saves/{save_id}/activate", cookies=cookies)
-        state = self.client.get("/api/state", cookies=cookies).json()
+        self.client.post(f"/api/v1/saves/{save_id}/activate", cookies=cookies)
+        state = self.client.get("/api/v1/state", cookies=cookies).json()
         self.assertEqual(
             (state.get("player") or {}).get("name"), "string id test",
             f"character_id=string 应仍能解析；实际 player={state.get('player')}"

@@ -73,20 +73,20 @@ class BackendAnonContract(unittest.TestCase):
         cleanup_test_users()
 
     def test_anonymous_me_returns_null_user(self):
-        r = self.client.get("/api/auth/me")
-        self.assertEqual(r.status_code, 200, "/api/auth/me 必须对匿名 200，否则前端连 gate 都跑不到")
+        r = self.client.get("/api/v1/auth/me")
+        self.assertEqual(r.status_code, 200, "/api/v1/auth/me 必须对匿名 200，否则前端连 gate 都跑不到")
         body = r.json()
         self.assertIsNone(body.get("user"), f"匿名 user 必须 null，实际：{body.get('user')}")
 
     def test_anonymous_business_endpoints_4xx(self):
         # Gate 假设这些接口对匿名 401/403，不能静默 200 漏数据
-        for p in ("/api/scripts", "/api/saves", "/api/library?path="):
+        for p in ("/api/v1/scripts", "/api/v1/saves", "/api/v1/library?path="):
             r = self.client.get(p)
             self.assertIn(r.status_code, (400, 401, 403), f"{p} 匿名必须 4xx")
 
     def test_authenticated_me_returns_user(self):
         u = register_user(self.client)
-        r = self.client.get("/api/auth/me", cookies=u["cookies"])
+        r = self.client.get("/api/v1/auth/me", cookies=u["cookies"])
         self.assertEqual(r.status_code, 200)
         self.assertIsNotNone(r.json().get("user"))
 

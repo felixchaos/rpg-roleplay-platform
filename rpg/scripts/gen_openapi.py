@@ -20,6 +20,16 @@ from app import app
 
 def main():
     schema = app.openapi()
+    # Rewrite internal /api/ paths to public /api/v1/ for documentation.
+    # At runtime the middleware strips /v1/ back to /api/; docs should show the public surface.
+    old_paths = schema.get("paths", {})
+    new_paths: dict = {}
+    for path, item in old_paths.items():
+        if path.startswith("/api/") and not path.startswith("/api/v1/"):
+            new_paths["/api/v1/" + path[len("/api/"):]] = item
+        else:
+            new_paths[path] = item
+    schema["paths"] = new_paths
     out = Path(__file__).parent.parent / "docs" / "openapi.json"
     out.parent.mkdir(exist_ok=True)
     out.write_text(json.dumps(schema, ensure_ascii=False, indent=2), encoding="utf-8")

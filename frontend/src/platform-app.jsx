@@ -1717,7 +1717,7 @@ function MeUserSettings() {
               <div style={{display: "flex", gap: 8}}>
                 <button className="btn ghost" onClick={() => setHistoryOpen(false)}>关闭</button>
                 <button className="btn ghost" onClick={() => {
-                  const url = window.api.base + "/api/auth/login-history?format=csv";
+                  const url = window.api.base + "/api/v1/auth/login-history?format=csv";
                   window.open(url, "_blank");
                 }}><Icon name="download" size={12} /> 导出 CSV</button>
               </div>
@@ -2944,30 +2944,30 @@ function CapCard({ id, name, desc, tag, on, status, kind, onChanged, _raw }) {
 const API_ROWS = [
   { m: "GET",  p: "/",                              d: "文字 RPG 主游戏界面",                       group: "主页" },
   { m: "GET",  p: "/app",                           d: "多用户平台 / 创作平台界面",                   group: "主页" },
-  { m: "GET",  p: "/api/state",                     d: "读取当前可玩存档状态",                       group: "存档" },
-  { m: "POST", p: "/api/new",                       d: "创建新游戏并保留旧档备份",                   group: "存档" },
-  { m: "POST", p: "/api/chat",                      d: "发送玩家行动，返回 SSE 流",                  group: "存档" },
-  { m: "POST", p: "/api/stop",                      d: "打断当前生成",                               group: "存档" },
-  { m: "POST", p: "/api/save",                      d: "手动保存当前游戏",                           group: "存档" },
-  { m: "POST", p: "/api/permissions",               d: "设置 LLM 写入权限",                          group: "权限" },
-  { m: "POST", p: "/api/memory/add",                d: "新增长期记忆条目",                           group: "记忆" },
-  { m: "POST", p: "/api/memory/remove",             d: "移除长期记忆条目",                           group: "记忆" },
-  { m: "GET",  p: "/api/models",                    d: "读取 API / 模型清单",                        group: "模型" },
-  { m: "POST", p: "/api/models/select",             d: "选择当前前端模型",                           group: "模型" },
-  { m: "GET",  p: "/api/scripts",                   d: "剧本列表",                                   group: "剧本" },
-  { m: "POST", p: "/api/scripts/import",            d: "导入 TXT / MD 剧本并自动识别章节",           group: "剧本" },
-  { m: "GET",  p: "/api/scripts/{id}/chapters",     d: "读取剧本章节目录与预览",                     group: "剧本" },
-  { m: "GET",  p: "/api/saves",                     d: "游戏存档目录",                               group: "平台" },
-  { m: "POST", p: "/api/saves",                     d: "基于剧本创建新存档",                         group: "平台" },
-  { m: "GET",  p: "/api/branches/{save_id}",        d: "读取分支树",                                 group: "分支" },
-  { m: "POST", p: "/api/branches/continue",         d: "从节点继续并创建新分支",                     group: "分支" },
-  { m: "POST", p: "/api/branches/delete",           d: "删除某条连线下的整条分支",                   group: "分支" },
-  { m: "GET",  p: "/api/library",                   d: "库文件列表",                                 group: "库" },
-  { m: "POST", p: "/api/library/upload",            d: "上传文件",                                   group: "库" },
-  { m: "POST", p: "/api/library/mkdir",             d: "创建文件夹",                                 group: "库" },
-  { m: "GET",  p: "/api/library/download",          d: "下载文件",                                   group: "库" },
-  { m: "POST", p: "/api/mcp/server",                d: "新增 / 更新 MCP 服务器配置",                 group: "能力" },
-  { m: "POST", p: "/api/skills/import",             d: "本地部署导入 Skill 包",                       group: "能力" },
+  { m: "GET",  p: "/api/v1/state",                     d: "读取当前可玩存档状态",                       group: "存档" },
+  { m: "POST", p: "/api/v1/new",                       d: "创建新游戏并保留旧档备份",                   group: "存档" },
+  { m: "POST", p: "/api/v1/chat",                      d: "发送玩家行动，返回 SSE 流",                  group: "存档" },
+  { m: "POST", p: "/api/v1/stop",                      d: "打断当前生成",                               group: "存档" },
+  { m: "POST", p: "/api/v1/save",                      d: "手动保存当前游戏",                           group: "存档" },
+  { m: "POST", p: "/api/v1/permissions",               d: "设置 LLM 写入权限",                          group: "权限" },
+  { m: "POST", p: "/api/v1/memory/add",                d: "新增长期记忆条目",                           group: "记忆" },
+  { m: "POST", p: "/api/v1/memory/remove",             d: "移除长期记忆条目",                           group: "记忆" },
+  { m: "GET",  p: "/api/v1/models",                    d: "读取 API / 模型清单",                        group: "模型" },
+  { m: "POST", p: "/api/v1/models/select",             d: "选择当前前端模型",                           group: "模型" },
+  { m: "GET",  p: "/api/v1/scripts",                   d: "剧本列表",                                   group: "剧本" },
+  { m: "POST", p: "/api/v1/scripts/import",            d: "导入 TXT / MD 剧本并自动识别章节",           group: "剧本" },
+  { m: "GET",  p: "/api/v1/scripts/{id}/chapters",     d: "读取剧本章节目录与预览",                     group: "剧本" },
+  { m: "GET",  p: "/api/v1/saves",                     d: "游戏存档目录",                               group: "平台" },
+  { m: "POST", p: "/api/v1/saves",                     d: "基于剧本创建新存档",                         group: "平台" },
+  { m: "GET",  p: "/api/v1/branches/{save_id}",        d: "读取分支树",                                 group: "分支" },
+  { m: "POST", p: "/api/v1/branches/continue",         d: "从节点继续并创建新分支",                     group: "分支" },
+  { m: "POST", p: "/api/v1/branches/delete",           d: "删除某条连线下的整条分支",                   group: "分支" },
+  { m: "GET",  p: "/api/v1/library",                   d: "库文件列表",                                 group: "库" },
+  { m: "POST", p: "/api/v1/library/upload",            d: "上传文件",                                   group: "库" },
+  { m: "POST", p: "/api/v1/library/mkdir",             d: "创建文件夹",                                 group: "库" },
+  { m: "GET",  p: "/api/v1/library/download",          d: "下载文件",                                   group: "库" },
+  { m: "POST", p: "/api/v1/mcp/server",                d: "新增 / 更新 MCP 服务器配置",                 group: "能力" },
+  { m: "POST", p: "/api/v1/skills/import",             d: "本地部署导入 Skill 包",                       group: "能力" },
 ];
 
 function ApiList() {
@@ -3209,7 +3209,7 @@ function BranchesPage() {
   // 渲染 BranchGraph 组件 (VSCode Git Graph 风格):
   //   <BranchGraph data={treePayload} variant="full" ... />
   // 删除确认:
-  //   <ConfirmModal ... /api/branches/delete ... />
+  //   <ConfirmModal ... /api/v1/branches/delete ... />
   const [deleteTarget, setDeleteTarget] = React.useState(null);
   return (
     <div>
@@ -3217,7 +3217,7 @@ function BranchesPage() {
       <ConfirmModal
         open={!!deleteTarget}
         title="删除 commit 及其子树？"
-        body={<div>POST /api/branches/delete</div>}
+        body={<div>POST /api/v1/branches/delete</div>}
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => setDeleteTarget(null)}
       />

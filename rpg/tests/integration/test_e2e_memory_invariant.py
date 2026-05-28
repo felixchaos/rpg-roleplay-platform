@@ -40,8 +40,8 @@ from tests.helpers import (  # noqa: E402
 
 def _get_user_id(client, cookies) -> int:
     """从 /api/auth/me 拿当前 user_id"""
-    r = client.get("/api/auth/me", cookies=cookies)
-    assert r.status_code == 200, f"/api/auth/me failed: {r.text}"
+    r = client.get("/api/v1/auth/me", cookies=cookies)
+    assert r.status_code == 200, f"/api/v1/auth/me failed: {r.text}"
     return int(r.json()["user"]["id"])
 
 
@@ -78,7 +78,7 @@ class MemoryInvariantE2E(unittest.TestCase):
         self.assertEqual(u["status"], 200, f"register failed: {u['body']}")
         cookies = u["cookies"]
         # 初次拉一次 /api/state，触发 _ensure_loaded → 在 _state_by_user 注册
-        r = self.client.get("/api/state", cookies=cookies)
+        r = self.client.get("/api/v1/state", cookies=cookies)
         self.assertEqual(r.status_code, 200, f"initial /api/state failed: {r.text}")
         user_id = _get_user_id(self.client, cookies)
         return cookies, user_id
@@ -93,11 +93,11 @@ class MemoryInvariantE2E(unittest.TestCase):
         state = _runtime_state(user_id)
         state.apply_player_directives("/set memory.main_quest=营救沈知微")
         # 把 runtime 状态持久化到 DB（同 /api/save 路径）
-        r_save = self.client.post("/api/save", cookies=cookies)
+        r_save = self.client.post("/api/v1/save", cookies=cookies)
         self.assertEqual(r_save.status_code, 200, f"save failed: {r_save.text}")
 
         # 第一次验证：还在内存里时 /api/state 反映
-        r1 = self.client.get("/api/state", cookies=cookies)
+        r1 = self.client.get("/api/v1/state", cookies=cookies)
         self.assertEqual(r1.status_code, 200)
         body1 = r1.json()
         main_quest_before = (body1.get("memory") or body1.get("state", {}).get("memory") or {}).get("main_quest")
@@ -106,7 +106,7 @@ class MemoryInvariantE2E(unittest.TestCase):
 
         # 关键：清缓存，强制下一次 /api/state 从 DB 重读
         _invalidate_runtime(user_id)
-        r2 = self.client.get("/api/state", cookies=cookies)
+        r2 = self.client.get("/api/v1/state", cookies=cookies)
         self.assertEqual(r2.status_code, 200)
         body2 = r2.json()
         main_quest_after = (body2.get("memory") or body2.get("state", {}).get("memory") or {}).get("main_quest")
@@ -129,11 +129,11 @@ class MemoryInvariantE2E(unittest.TestCase):
             f"自然语言跳跃应入 pending: {timeline}")
 
         # 持久化
-        r_save = self.client.post("/api/save", cookies=cookies)
+        r_save = self.client.post("/api/v1/save", cookies=cookies)
         self.assertEqual(r_save.status_code, 200)
 
         # API 应反映 pending + world.time 未变
-        r = self.client.get("/api/state", cookies=cookies)
+        r = self.client.get("/api/v1/state", cookies=cookies)
         self.assertEqual(r.status_code, 200)
         body = r.json()
         world = body.get("world") or body.get("state", {}).get("world") or {}
@@ -147,7 +147,7 @@ class MemoryInvariantE2E(unittest.TestCase):
 
         # reload 后仍一致
         _invalidate_runtime(user_id)
-        r2 = self.client.get("/api/state", cookies=cookies)
+        r2 = self.client.get("/api/v1/state", cookies=cookies)
         body2 = r2.json()
         world2 = body2.get("world") or body2.get("state", {}).get("world") or {}
         tl2 = world2.get("timeline") or {}
@@ -178,12 +178,12 @@ class MemoryInvariantE2E(unittest.TestCase):
             "confirm 后 pending_jump 应被清")
 
         # 持久化
-        r_save = self.client.post("/api/save", cookies=cookies)
+        r_save = self.client.post("/api/v1/save", cookies=cookies)
         self.assertEqual(r_save.status_code, 200)
 
         # reload 后验证：API 应继续显示锁定 + 无 pending
         _invalidate_runtime(user_id)
-        r = self.client.get("/api/state", cookies=cookies)
+        r = self.client.get("/api/v1/state", cookies=cookies)
         body = r.json()
         world = body.get("world") or body.get("state", {}).get("world") or {}
         self.assertEqual(world.get("time"), "次日清晨", f"reload 后时间锁定丢失: {world}")
@@ -216,10 +216,10 @@ class MemoryInvariantE2E(unittest.TestCase):
             f"应记录 hard_forbidden: {audit_mem}")
 
         # 持久化 + reload
-        r_save = self.client.post("/api/save", cookies=cookies)
+        r_save = self.client.post("/api/v1/save", cookies=cookies)
         self.assertEqual(r_save.status_code, 200)
         _invalidate_runtime(user_id)
-        r = self.client.get("/api/state", cookies=cookies)
+        r = self.client.get("/api/v1/state", cookies=cookies)
         body = r.json()
         perms = body.get("permissions") or body.get("state", {}).get("permissions") or {}
         audit_api = perms.get("audit_log") or []

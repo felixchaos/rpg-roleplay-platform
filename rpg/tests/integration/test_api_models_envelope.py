@@ -19,14 +19,14 @@ class ModelsEndpointShape(unittest.TestCase):
     def test_api_models_returns_nested_envelope(self):
         client = make_client()
         u = register_user(client)
-        r = client.get("/api/models", cookies=u["cookies"])
+        r = client.get("/api/v1/models", cookies=u["cookies"])
         self.assertEqual(r.status_code, 200, r.text[:300])
         body = r.json()
         # 形态：{ok, models: catalog, selected}
         self.assertTrue(body.get("ok"))
         catalog = body.get("models") or {}
         self.assertIn("apis", catalog,
-            "/api/models 嵌套 models.apis 必须存在；FE ExtractorSection / ModelPopover 都从这里取。")
+            "/api/v1/models 嵌套 models.apis 必须存在；FE ExtractorSection / ModelPopover 都从这里取。")
         self.assertIsInstance(catalog["apis"], list)
 
 

@@ -56,7 +56,7 @@ def register_user(client, username: str | None = None, password: str = "Test1234
     """注册并返回 (username, password, body)。"""
     uname = username or integtest_username()
     resp = client.post(
-        "/api/auth/register",
+        "/api/v1/auth/register",
         json={"username": uname, "password": password, "display_name": "integ"},
     )
     return {
@@ -70,7 +70,7 @@ def register_user(client, username: str | None = None, password: str = "Test1234
 
 def login_user(client, username: str, password: str = "Test12345!") -> dict[str, Any]:
     resp = client.post(
-        "/api/auth/login",
+        "/api/v1/auth/login",
         json={"username": username, "password": password},
     )
     return {

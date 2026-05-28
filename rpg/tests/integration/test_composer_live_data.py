@@ -11,15 +11,15 @@ from tests.helpers import make_client, register_user
 
 
 class StatePayloadIncludesContextWindow(unittest.TestCase):
-    """/api/state.app.context_window 必须存在，给 FE ContextUsage 圆环做分母。"""
+    """/api/v1/state.app.context_window 必须存在，给 FE ContextUsage 圆环做分母。"""
 
     def test_app_context_window_is_present_and_int(self):
         client = make_client()
         u = register_user(client)
-        state = client.get("/api/state", cookies=u["cookies"]).json()
+        state = client.get("/api/v1/state", cookies=u["cookies"]).json()
         app_block = state.get("app") or {}
         self.assertIn("context_window", app_block,
-            "/api/state.app 必须含 context_window；否则 Composer 圆环只能用 mock 1M")
+            "/api/v1/state.app 必须含 context_window；否则 Composer 圆环只能用 mock 1M")
         ctx = app_block["context_window"]
         self.assertIsInstance(ctx, int)
         self.assertGreater(ctx, 0,
@@ -27,12 +27,12 @@ class StatePayloadIncludesContextWindow(unittest.TestCase):
 
 
 class StatePayloadIncludesModelCatalog(unittest.TestCase):
-    """/api/state.models.apis 必须存在 + .selected 指向当前模型。"""
+    """/api/v1/state.models.apis 必须存在 + .selected 指向当前模型。"""
 
     def test_models_catalog_present(self):
         client = make_client()
         u = register_user(client)
-        state = client.get("/api/state", cookies=u["cookies"]).json()
+        state = client.get("/api/v1/state", cookies=u["cookies"]).json()
         models = state.get("models") or {}
         self.assertIsInstance(models.get("apis"), list)
         self.assertGreater(len(models["apis"]), 0,
@@ -45,7 +45,7 @@ class StatePayloadIncludesModelCatalog(unittest.TestCase):
     def test_at_least_one_model_in_first_enabled_api(self):
         client = make_client()
         u = register_user(client)
-        state = client.get("/api/state", cookies=u["cookies"]).json()
+        state = client.get("/api/v1/state", cookies=u["cookies"]).json()
         apis = (state.get("models") or {}).get("apis") or []
         enabled_apis = [a for a in apis if a.get("enabled") is not False]
         self.assertGreater(len(enabled_apis), 0, "需要至少一个 enabled API")

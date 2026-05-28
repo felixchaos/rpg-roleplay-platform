@@ -300,7 +300,7 @@
                       arr.push({ role: "assistant", content: "正在为你拉开剧本帷幕…", _opening: true, _thinking: "starting" });
                       return arr;
                     });
-                    sse("/api/opening", {}, {
+                    sse("/api/v1/opening", {}, {
                       // task 121a: stage 事件 → 更新 thinking pill 文案
                       on_stage: (d) => {
                         const label = (d && d.label) || "";

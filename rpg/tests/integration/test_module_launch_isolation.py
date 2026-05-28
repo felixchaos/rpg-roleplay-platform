@@ -47,7 +47,7 @@ class ModuleLaunchIsolation(unittest.TestCase):
         script_id = self._create_script(uid, "qa_novel_script")
 
         # 1. 建小说存档，模拟用户的「QA 角色卡新游戏 0847」
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "QA 角色卡新游戏",
             "script_id": script_id,
             "new_card": {"name": "林晚舟QA", "role": "QA 探险者", "background": "测试背景。"},
@@ -56,12 +56,12 @@ class ModuleLaunchIsolation(unittest.TestCase):
         novel_save_id = int(((r.json() or {}).get("save") or {}).get("id") or 0)
 
         # 激活这个小说存档，模拟"现在用户正在玩这个剧本"
-        self.client.post(f"/api/saves/{novel_save_id}/activate", cookies=cookies)
-        state_before = self.client.get("/api/state", cookies=cookies).json()
+        self.client.post(f"/api/v1/saves/{novel_save_id}/activate", cookies=cookies)
+        state_before = self.client.get("/api/v1/state", cookies=cookies).json()
         self.assertEqual((state_before.get("player") or {}).get("name"), "林晚舟QA")
 
         # 2. launch ash_mine
-        r = self.client.post("/api/rules/module/launch",
+        r = self.client.post("/api/v1/rules/module/launch",
                              json={"module_id": "ash_mine"}, cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text[:500])
         body = r.json()
@@ -75,14 +75,14 @@ class ModuleLaunchIsolation(unittest.TestCase):
         )
 
         # 3. /api/saves 列表应该多了一个
-        r = self.client.get("/api/saves", cookies=cookies)
+        r = self.client.get("/api/v1/saves", cookies=cookies)
         saves = r.json().get("items") or []
         save_ids = [int(s.get("id")) for s in saves]
         self.assertIn(novel_save_id, save_ids, "小说存档应仍在列表")
         self.assertIn(module_save_id, save_ids, "模组存档应已在列表")
 
         # 4. 当前 /api/state 应该是模组 save（已被激活）
-        state_after = self.client.get("/api/state", cookies=cookies).json()
+        state_after = self.client.get("/api/v1/state", cookies=cookies).json()
         self.assertEqual(
             (state_after.get("scene") or {}).get("module_id"), "ash_mine",
             f"launch 后当前 state 应在 ash_mine：{state_after.get('scene')}"
@@ -93,8 +93,8 @@ class ModuleLaunchIsolation(unittest.TestCase):
         )
 
         # 5. 切回小说存档，玩家档案必须完整保留
-        self.client.post(f"/api/saves/{novel_save_id}/activate", cookies=cookies)
-        state_novel = self.client.get("/api/state", cookies=cookies).json()
+        self.client.post(f"/api/v1/saves/{novel_save_id}/activate", cookies=cookies)
+        state_novel = self.client.get("/api/v1/state", cookies=cookies).json()
         self.assertEqual(
             (state_novel.get("player") or {}).get("name"), "林晚舟QA",
             f"Bug 2：切回小说存档后 player.name 应仍是 林晚舟QA；"
@@ -113,7 +113,7 @@ class ModuleLaunchIsolation(unittest.TestCase):
     def test_launch_uses_module_title_in_save(self):
         u = register_user(self.client)
         cookies = u["cookies"]
-        r = self.client.post("/api/rules/module/launch",
+        r = self.client.post("/api/v1/rules/module/launch",
                              json={"module_id": "ash_mine"}, cookies=cookies)
         body = r.json()
         self.assertEqual(body.get("save_title"), "灰烬矿坑",
@@ -122,7 +122,7 @@ class ModuleLaunchIsolation(unittest.TestCase):
     def test_launch_unknown_module_returns_404(self):
         u = register_user(self.client)
         cookies = u["cookies"]
-        r = self.client.post("/api/rules/module/launch",
+        r = self.client.post("/api/v1/rules/module/launch",
                              json={"module_id": "definitely_not_a_module"}, cookies=cookies)
         self.assertEqual(r.status_code, 404, r.text[:200])
 

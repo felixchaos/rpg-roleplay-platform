@@ -238,15 +238,15 @@ class ApiConsumeItemEndToEnd(unittest.TestCase):
     def test_api_rules_action_consume_item(self):
         u = register_user(self.client)
         cookies = u["cookies"]
-        self.client.post("/api/rules/module/launch",
+        self.client.post("/api/v1/rules/module/launch",
                          json={"module_id": "ash_mine"}, cookies=cookies)
         # 起点：Torch ×2
-        state = self.client.get("/api/state", cookies=cookies).json()
+        state = self.client.get("/api/v1/state", cookies=cookies).json()
         torch = next(i for i in state["player_character"]["inventory"] if i["id"] == "torch")
         self.assertEqual(torch["qty"], 2)
 
         # POST /api/rules/action consume_item
-        r = self.client.post("/api/rules/action", json={
+        r = self.client.post("/api/v1/rules/action", json={
             "kind": "consume_item",
             "item_id": "torch",
             "qty": 1,
@@ -257,7 +257,7 @@ class ApiConsumeItemEndToEnd(unittest.TestCase):
         self.assertTrue(body.get("ok"), body)
 
         # /api/state torch qty 应该是 1
-        state2 = self.client.get("/api/state", cookies=cookies).json()
+        state2 = self.client.get("/api/v1/state", cookies=cookies).json()
         torch2 = next(i for i in state2["player_character"]["inventory"] if i["id"] == "torch")
         self.assertEqual(torch2["qty"], 1,
             f"硬要求 #2：canonical inventory torch qty 必须 2→1；实际 {torch2['qty']}")

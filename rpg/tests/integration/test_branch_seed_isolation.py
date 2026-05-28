@@ -77,7 +77,7 @@ class SeedTreeUsesOwnSnapshot(unittest.TestCase):
             self.assertNotEqual(save_a_id, save_b_id)
 
             # 4) GET /api/branches/B 触发 seed
-            r = self.client.get(f"/api/branches/{save_b_id}", cookies=cookies)
+            r = self.client.get(f"/api/v1/branches/{save_b_id}", cookies=cookies)
             self.assertEqual(r.status_code, 200, f"branches GET 200: {r.text[:200]}")
             body = r.json()
             nodes = body.get("nodes") or body.get("commits") or []

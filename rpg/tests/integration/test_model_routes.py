@@ -29,13 +29,13 @@ class ModelRoutesFrontendContract(unittest.TestCase):
 
             api_id = "openai"
             api = next(a for a in original_catalog["apis"] if a["id"] == api_id)
-            resp = self.client.post("/api/models/api", json={"api_id": api_id, "enabled": api.get("enabled", False)})
+            resp = self.client.post("/api/v1/models/api", json={"api_id": api_id, "enabled": api.get("enabled", False)})
             self.assertEqual(resp.status_code, 200, resp.text)
             self.assertTrue(resp.json().get("ok"))
 
             model_id = f"integtest-model-{random_suffix()}"
             resp = self.client.post(
-                "/api/models/model",
+                "/api/v1/models/model",
                 json={
                     "api_id": api_id,
                     "real_name": model_id,
@@ -47,7 +47,7 @@ class ModelRoutesFrontendContract(unittest.TestCase):
             models = next(a for a in resp.json()["models"]["apis"] if a["id"] == api_id)["models"]
             self.assertTrue(any(m["id"] == model_id for m in models))
 
-            resp = self.client.post("/api/models/model/delete", json={"api_id": api_id, "real_name": model_id})
+            resp = self.client.post("/api/v1/models/model/delete", json={"api_id": api_id, "real_name": model_id})
             self.assertEqual(resp.status_code, 200, resp.text)
             models = next(a for a in resp.json()["models"]["apis"] if a["id"] == api_id)["models"]
             self.assertFalse(any(m["id"] == model_id or m.get("real_name") == model_id for m in models))

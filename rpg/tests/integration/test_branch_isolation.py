@@ -50,7 +50,7 @@ class BranchesAuthorizationContract(unittest.TestCase):
             ).fetchone()
             save_id = int(sv["id"])
 
-        r = self.client.get(f"/api/branches/{save_id}", cookies=u["cookies"])
+        r = self.client.get(f"/api/v1/branches/{save_id}", cookies=u["cookies"])
         self.assertEqual(
             r.status_code, 200,
             f"owner 应能读自己的分支，实际 {r.status_code} body={r.text[:200]}",
@@ -81,7 +81,7 @@ class BranchesAuthorizationContract(unittest.TestCase):
             ).fetchone()
             a_save_id = int(sv["id"])
 
-        r = self.client.get(f"/api/branches/{a_save_id}", cookies=b["cookies"])
+        r = self.client.get(f"/api/v1/branches/{a_save_id}", cookies=b["cookies"])
         self.assertIn(
             r.status_code, (400, 401, 403, 404),
             f"跨用户读分支必须 4xx，实际 {r.status_code}：data leak 风险",
@@ -89,7 +89,7 @@ class BranchesAuthorizationContract(unittest.TestCase):
 
     def test_anonymous_blocked(self):
         """匿名读任意分支：401（避免未登录用户也能爬别人的分支）"""
-        r = self.client.get("/api/branches/1")
+        r = self.client.get("/api/v1/branches/1")
         self.assertIn(r.status_code, (400, 401, 403))
 
 

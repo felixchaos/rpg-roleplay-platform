@@ -102,7 +102,7 @@ class ChatAcceptsBothMessageAndText(unittest.TestCase):
                 "model": "gpt-4o-mini-rpg",
                 "command": None,
             }
-            with self.client.stream("POST", "/api/chat", json=payload, cookies=cookies) as resp:
+            with self.client.stream("POST", "/api/v1/chat", json=payload, cookies=cookies) as resp:
                 self.assertEqual(resp.status_code, 200)
                 events = self._consume(resp)
             names = [e["event"] for e in events]
@@ -115,7 +115,7 @@ class ChatAcceptsBothMessageAndText(unittest.TestCase):
             self.assertTrue(pre, f"应有 pre_llm updates；events={names}")
 
             # state 应该被写入
-            s = self.client.get("/api/state", cookies=cookies).json() or {}
+            s = self.client.get("/api/v1/state", cookies=cookies).json() or {}
             loc = (s.get("player") or {}).get("current_location", "")
             self.assertEqual(loc, "雾港码头",
                 f"task 31：text 字段下的 /set 应生效；loc={loc!r}")
@@ -129,14 +129,14 @@ class ChatAcceptsBothMessageAndText(unittest.TestCase):
         ui_mod, orig_rca, orig_get = self._patch_no_llm()
         try:
             payload = {"message": "/set 当前位置改为雾港灯塔", "attachments": []}
-            with self.client.stream("POST", "/api/chat", json=payload, cookies=cookies) as resp:
+            with self.client.stream("POST", "/api/v1/chat", json=payload, cookies=cookies) as resp:
                 self.assertEqual(resp.status_code, 200)
                 events = self._consume(resp)
             names = [e["event"] for e in events]
             for ev in events:
                 if ev["event"] == "error":
                     self.fail(f"task 31：message 字段不应回归出错；events={names} err={ev['data']}")
-            s = self.client.get("/api/state", cookies=cookies).json() or {}
+            s = self.client.get("/api/v1/state", cookies=cookies).json() or {}
             self.assertEqual((s.get("player") or {}).get("current_location"), "雾港灯塔")
         finally:
             self._restore(ui_mod, orig_rca, orig_get)
@@ -152,10 +152,10 @@ class ChatAcceptsBothMessageAndText(unittest.TestCase):
                 "text": "/set 当前位置改为兜底位置",
                 "attachments": [],
             }
-            with self.client.stream("POST", "/api/chat", json=payload, cookies=cookies) as resp:
+            with self.client.stream("POST", "/api/v1/chat", json=payload, cookies=cookies) as resp:
                 self.assertEqual(resp.status_code, 200)
                 self._consume(resp)
-            s = self.client.get("/api/state", cookies=cookies).json() or {}
+            s = self.client.get("/api/v1/state", cookies=cookies).json() or {}
             self.assertEqual((s.get("player") or {}).get("current_location"), "优先位置",
                 "task 31：message 应优先于 text")
         finally:
@@ -166,7 +166,7 @@ class ChatAcceptsBothMessageAndText(unittest.TestCase):
         u = register_user(self.client)
         cookies = u["cookies"]
         payload = {"attachments": []}
-        with self.client.stream("POST", "/api/chat", json=payload, cookies=cookies) as resp:
+        with self.client.stream("POST", "/api/v1/chat", json=payload, cookies=cookies) as resp:
             events = self._consume(resp)
         err_events = [e for e in events if e["event"] == "error"]
         self.assertTrue(err_events, "真正空消息应返 error event")

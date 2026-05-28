@@ -71,7 +71,7 @@ class SetPersistsBeforeGMCall(unittest.TestCase):
         cookies = u["cookies"]
 
         # 0) baseline
-        r0 = self.client.get("/api/state", cookies=cookies)
+        r0 = self.client.get("/api/v1/state", cookies=cookies)
         self.assertEqual(r0.status_code, 200, r0.text[:300])
         s0 = r0.json()
         original_time = (s0.get("world") or {}).get("time", "")
@@ -103,7 +103,7 @@ class SetPersistsBeforeGMCall(unittest.TestCase):
                 ),
                 "attachments": [],
             }
-            with self.client.stream("POST", "/api/chat", json=payload, cookies=cookies) as resp:
+            with self.client.stream("POST", "/api/v1/chat", json=payload, cookies=cookies) as resp:
                 self.assertEqual(resp.status_code, 200, "chat 应回 200 SSE 流")
                 events = self._consume_sse(resp)
 
@@ -133,7 +133,7 @@ class SetPersistsBeforeGMCall(unittest.TestCase):
                 f"error.message 应反映 context_agent 抛的异常；实际 {err_msg!r}")
 
             # 4) GET /api/state：/set 的改动应该已落盘，跨进程内 state cache 重读也能看到
-            r1 = self.client.get("/api/state", cookies=cookies)
+            r1 = self.client.get("/api/v1/state", cookies=cookies)
             self.assertEqual(r1.status_code, 200, r1.text[:300])
             s1 = r1.json()
 
@@ -228,7 +228,7 @@ class SetPersistsBeforeGMCall(unittest.TestCase):
                 "message": "/set 当前位置改为试验台",
                 "attachments": [],
             }
-            with self.client.stream("POST", "/api/chat", json=payload, cookies=cookies) as resp:
+            with self.client.stream("POST", "/api/v1/chat", json=payload, cookies=cookies) as resp:
                 self.assertEqual(resp.status_code, 200)
                 events = self._consume_sse(resp)
             event_names = [e["event"] for e in events]
@@ -241,7 +241,7 @@ class SetPersistsBeforeGMCall(unittest.TestCase):
             self.assertNotIn("error", event_names,
                 f"正常路径不应 error；got={event_names}; err={err_msg!r}")
             self.assertIn("done", event_names, f"正常路径应有 done；got={event_names}")
-            r1 = self.client.get("/api/state", cookies=cookies)
+            r1 = self.client.get("/api/v1/state", cookies=cookies)
             loc = (r1.json().get("player") or {}).get("current_location", "")
             self.assertEqual(loc, "试验台", f"正常路径下 /set 也应生效；loc={loc!r}")
         finally:

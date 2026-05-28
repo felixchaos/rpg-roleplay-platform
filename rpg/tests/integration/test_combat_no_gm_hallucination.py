@@ -167,7 +167,7 @@ class ClassifyCombatIntentUnit(unittest.TestCase):
 def _launch_ash_mine(client, cookies) -> dict:
     """启动 Ash Mine 模组到独立 save,返回 launch payload。"""
     r = client.post(
-        "/api/rules/module/launch",
+        "/api/v1/rules/module/launch",
         json={"module_id": "ash_mine"},
         cookies=cookies,
     )
@@ -177,7 +177,7 @@ def _launch_ash_mine(client, cookies) -> dict:
 
 def _move_to(client, cookies, room_id: str):
     r = client.post(
-        "/api/rules/move",
+        "/api/v1/rules/move",
         json={"to": room_id},
         cookies=cookies,
     )
@@ -185,7 +185,7 @@ def _move_to(client, cookies, room_id: str):
 
 
 def _get_state(client, cookies) -> dict:
-    return client.get("/api/state", cookies=cookies).json()
+    return client.get("/api/v1/state", cookies=cookies).json()
 
 
 def _consume_sse(client, cookies, text: str) -> tuple[str, list[dict]]:
@@ -195,7 +195,7 @@ def _consume_sse(client, cookies, text: str) -> tuple[str, list[dict]]:
     text_out = ""
     with client.stream(
         "POST",
-        "/api/chat",
+        "/api/v1/chat",
         json={"text": text},
         cookies=cookies,
         headers={"Accept": "text/event-stream"},

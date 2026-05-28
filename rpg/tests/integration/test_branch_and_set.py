@@ -28,8 +28,8 @@ class MultiUserSaveIsolation(unittest.TestCase):
         a = register_user(self.client)
         b = register_user(self.client)
         # 两个用户都默认有空 saves 列表
-        ra = self.client.get("/api/saves", cookies=a["cookies"])
-        rb = self.client.get("/api/saves", cookies=b["cookies"])
+        ra = self.client.get("/api/v1/saves", cookies=a["cookies"])
+        rb = self.client.get("/api/v1/saves", cookies=b["cookies"])
         self.assertEqual(ra.status_code, 200)
         self.assertEqual(rb.status_code, 200)
         # 无论里面有什么，A 看到的 user_id 都必须是 A 自己；B 同理
@@ -53,7 +53,7 @@ class PermissionsRoundtrip(unittest.TestCase):
         # 设为 strict（如果 API 允许该值）
         for mode in ("strict", "full_access"):
             r = self.client.post(
-                "/api/permissions",
+                "/api/v1/permissions",
                 json={"mode": mode},
                 cookies=u["cookies"],
             )
@@ -76,14 +76,14 @@ class ApiKeyEncryption(unittest.TestCase):
         u = register_user(self.client)
         plaintext = "sk-integtest-abc-secret-xyz-99999"
         r = self.client.post(
-            "/api/me/credentials",
+            "/api/v1/me/credentials",
             json={"api_id": "openai", "api_key": plaintext},
             cookies=u["cookies"],
         )
         # 接口可能 200 / 404（不支持该 api_id），但绝不应在响应里回显明文
         self.assertNotIn(plaintext, r.text, "响应不应包含明文 key")
         # 列表接口也不该回显
-        r2 = self.client.get("/api/me/credentials", cookies=u["cookies"])
+        r2 = self.client.get("/api/v1/me/credentials", cookies=u["cookies"])
         if r2.status_code == 200:
             self.assertNotIn(plaintext, r2.text, "列表不应包含明文 key")
 
@@ -91,7 +91,7 @@ class ApiKeyEncryption(unittest.TestCase):
         u = register_user(self.client)
         plaintext = "sk-integtest-rrrr-secret-vvvvv"
         r = self.client.post(
-            "/api/me/credentials",
+            "/api/v1/me/credentials",
             json={"api_id": "openai", "api_key": plaintext},
             cookies=u["cookies"],
         )

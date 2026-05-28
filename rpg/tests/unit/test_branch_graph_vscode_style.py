@@ -174,7 +174,7 @@ class PlatformBranchesPageUsesBranchGraph(unittest.TestCase):
         end = PLATFORM.find("\nfunction ", idx + 1)
         body = PLATFORM[idx:end if end > 0 else len(PLATFORM)]
         self.assertIn("ConfirmModal", body)
-        self.assertIn("/api/branches/delete", body)
+        self.assertIn("/api/v1/branches/delete", body)
 
 
 # ────────────────────────────────────────────────────────────

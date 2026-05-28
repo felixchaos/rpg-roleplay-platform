@@ -47,14 +47,14 @@ class Retest_Bug1_ExistingCardAfterPriorActiveSave(unittest.TestCase):
         uid = self._uid(u["username"])
 
         # 1. 先 launch 一个模组（模拟 QA 之前测 Bug 2 留下的活跃 save）
-        r = self.client.post("/api/rules/module/launch",
+        r = self.client.post("/api/v1/rules/module/launch",
                              json={"module_id": "ash_mine"}, cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text[:300])
         module_save_id = int(r.json().get("save_id") or 0)
         self.assertGreater(module_save_id, 0)
 
         # 2. 建 user_card
-        r = self.client.post("/api/me/character-cards", json={
+        r = self.client.post("/api/v1/me/character-cards", json={
             "name": "林晚舟复测",
             "identity": "QA 探险者",
             "appearance": "黑发披风",
@@ -65,7 +65,7 @@ class Retest_Bug1_ExistingCardAfterPriorActiveSave(unittest.TestCase):
 
         # 3. 建普通新存档（选择 user_card）
         script_id = self._script(uid, "qa_retest_existing_card_script")
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "QA existing card retest 0938",
             "script_id": script_id,
             "character_id": card_id,
@@ -78,15 +78,15 @@ class Retest_Bug1_ExistingCardAfterPriorActiveSave(unittest.TestCase):
         self.assertNotEqual(novel_save_id, module_save_id, "新 save 应是独立 id")
 
         # 4. 走 FE ContinuePicker.confirm 同样的路径：/api/saves/{id}/activate → /api/state
-        r = self.client.post(f"/api/saves/{novel_save_id}/activate", cookies=cookies)
+        r = self.client.post(f"/api/v1/saves/{novel_save_id}/activate", cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text[:300])
         body = r.json()
         self.assertEqual(int(body.get("active_save_id") or 0), novel_save_id)
 
         # 5. /api/state 必须读到 player.name = 林晚舟复测
-        state = self.client.get("/api/state", cookies=cookies).json()
+        state = self.client.get("/api/v1/state", cookies=cookies).json()
         self.assertEqual(int(state.get("save_id") or 0), novel_save_id,
-            f"/api/state.save_id 应=novel save；实际={state.get('save_id')}")
+            f"/api/v1/state.save_id 应=novel save；实际={state.get('save_id')}")
         player = state.get("player") or {}
         self.assertEqual(
             player.get("name"), "林晚舟复测",
@@ -112,17 +112,17 @@ class Retest_NewBug_ObserveDoesNotTriggerCrossRoomMove(unittest.TestCase):
         u = register_user(self.client)
         cookies = u["cookies"]
         # 1. launch ash_mine + 移动到 minecart_track
-        r = self.client.post("/api/rules/module/launch",
+        r = self.client.post("/api/v1/rules/module/launch",
                              json={"module_id": "ash_mine"}, cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text[:300])
-        r = self.client.post("/api/rules/move",
+        r = self.client.post("/api/v1/rules/move",
                              json={"to": "minecart_track"}, cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text[:300])
-        state = self.client.get("/api/state", cookies=cookies).json()
+        state = self.client.get("/api/v1/state", cookies=cookies).json()
         self.assertEqual((state.get("scene") or {}).get("location_id"), "minecart_track")
 
         # 2. suggest 观察意图 → 不应给 move_to
-        r = self.client.post("/api/rules/suggest", json={
+        r = self.client.post("/api/v1/rules/suggest", json={
             "text": "我点燃一支火把照亮矿车轨道，消耗背包里 1 支 Torch，然后保持戒备观察灌木后的动静。",
         }, cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text[:300])

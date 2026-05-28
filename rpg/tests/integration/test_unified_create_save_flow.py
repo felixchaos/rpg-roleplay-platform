@@ -171,7 +171,7 @@ class CreateThenActivateThenState(unittest.TestCase):
         # 先创建剧本(saves.create 需要 script_id)
         # 用 /api/scripts/import 或最简方式 — 看 saves.create 是不是必须 script_id
         # 试试不传 script_id,看后端反应
-        r = client.post("/api/saves", json={
+        r = client.post("/api/v1/saves", json={
             "title": "原子流测试存档",
         }, cookies=u["cookies"])
         if r.status_code >= 400:
@@ -184,26 +184,26 @@ class CreateThenActivateThenState(unittest.TestCase):
         save_id = save.get("id")
         self.assertIsNotNone(save_id, "建档成功必须返回 save.id")
         # 激活
-        r2 = client.post(f"/api/saves/{save_id}/activate", json={}, cookies=u["cookies"])
+        r2 = client.post(f"/api/v1/saves/{save_id}/activate", json={}, cookies=u["cookies"])
         self.assertEqual(r2.status_code, 200, r2.text[:300])
         # 校验 state.save_id
-        r3 = client.get("/api/state", cookies=u["cookies"])
+        r3 = client.get("/api/v1/state", cookies=u["cookies"])
         self.assertEqual(r3.status_code, 200)
         state = r3.json()
         self.assertEqual(int(state.get("save_id") or 0), int(save_id),
             "原子流走完后 /api/state.save_id 必须等于新建 save.id")
 
     def test_old_api_new_endpoint_still_exists_but_for_dev_only(self):
-        """/api/new 暂留兼容(开发可能用),但 UI 入口已下线 — 仅锁端点存在。
+        """/api/v1/new 暂留兼容(开发可能用),但 UI 入口已下线 — 仅锁端点存在。
         未来若改名 /api/runtime/reset,把这测试删掉。"""
         client = make_client()
         u = register_user(client)
-        r = client.post("/api/new", json={}, cookies=u["cookies"])
+        r = client.post("/api/v1/new", json={}, cookies=u["cookies"])
         # 不期望它失败,但更不期望它建出新 game_save
         # 这里只 sanity check 它返回的 state 没有 save_id 字段或返回 save_id 是旧 save
         # (这是它的 "重置 runtime" 语义,不是 "建新存档")
         self.assertIn(r.status_code, (200, 400),
-            "/api/new 端点应仍存在 (200) 或返回 400 (空请求);不应 404")
+            "/api/v1/new 端点应仍存在 (200) 或返回 400 (空请求);不应 404")
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ class RulesApiSmoke(unittest.TestCase):
         self.cookies = u["cookies"]
 
     def test_list_modules_contains_ash_mine(self):
-        r = self.client.get("/api/rules/modules", cookies=self.cookies)
+        r = self.client.get("/api/v1/rules/modules", cookies=self.cookies)
         self.assertEqual(r.status_code, 200)
         body = r.json()
         self.assertTrue(body["ok"])
@@ -23,7 +23,7 @@ class RulesApiSmoke(unittest.TestCase):
         self.assertIn("ash_mine", ids)
 
     def test_start_module_and_scene(self):
-        r = self.client.post("/api/rules/module/start", json={"module_id": "ash_mine"}, cookies=self.cookies)
+        r = self.client.post("/api/v1/rules/module/start", json={"module_id": "ash_mine"}, cookies=self.cookies)
         self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
         self.assertTrue(body["ok"])
@@ -36,12 +36,12 @@ class RulesApiSmoke(unittest.TestCase):
         self.assertIn("灰烬", body["opening"])
 
     def test_skill_check_action(self):
-        self.client.post("/api/rules/module/start", json={"module_id": "ash_mine"}, cookies=self.cookies)
+        self.client.post("/api/v1/rules/module/start", json={"module_id": "ash_mine"}, cookies=self.cookies)
         # 移动到 minecart_track
-        r = self.client.post("/api/rules/move", json={"to": "minecart_track"}, cookies=self.cookies)
+        r = self.client.post("/api/v1/rules/move", json={"to": "minecart_track"}, cookies=self.cookies)
         self.assertEqual(r.status_code, 200, r.text)
         # 执行 stealth 检定
-        r = self.client.post("/api/rules/action", json={
+        r = self.client.post("/api/v1/rules/action", json={
             "kind": "skill_check", "skill": "stealth", "dc": 13, "seed": 7,
             "reason": "悄悄翻越矿车", "sets_flag": "sneak_pass",
         }, cookies=self.cookies)
@@ -53,17 +53,17 @@ class RulesApiSmoke(unittest.TestCase):
         self.assertTrue(body["rules"]["scene"]["flags"].get("sneak_pass"))
 
     def test_state_payload_includes_rules_block(self):
-        """/api/state 必须包含 ruleset / player_character / scene / encounter / dice_log。"""
-        self.client.post("/api/rules/module/start", json={"module_id": "ash_mine"}, cookies=self.cookies)
-        r = self.client.get("/api/state", cookies=self.cookies)
+        """/api/v1/state 必须包含 ruleset / player_character / scene / encounter / dice_log。"""
+        self.client.post("/api/v1/rules/module/start", json={"module_id": "ash_mine"}, cookies=self.cookies)
+        r = self.client.get("/api/v1/state", cookies=self.cookies)
         body = r.json()
         for key in ("ruleset", "player_character", "scene", "encounter", "dice_log"):
-            self.assertIn(key, body, f"/api/state 缺少 {key}")
+            self.assertIn(key, body, f"/api/v1/state 缺少 {key}")
 
     def test_suggest_rule_actions(self):
-        self.client.post("/api/rules/module/start", json={"module_id": "ash_mine"}, cookies=self.cookies)
-        self.client.post("/api/rules/move", json={"to": "minecart_track"}, cookies=self.cookies)
-        r = self.client.post("/api/rules/suggest", json={"text": "我悄悄靠近矿车"}, cookies=self.cookies)
+        self.client.post("/api/v1/rules/module/start", json={"module_id": "ash_mine"}, cookies=self.cookies)
+        self.client.post("/api/v1/rules/move", json={"to": "minecart_track"}, cookies=self.cookies)
+        r = self.client.post("/api/v1/rules/suggest", json={"text": "我悄悄靠近矿车"}, cookies=self.cookies)
         self.assertEqual(r.status_code, 200)
         body = r.json()
         self.assertTrue(body["ok"])
@@ -73,8 +73,8 @@ class RulesApiSmoke(unittest.TestCase):
         self.assertEqual(stealth["dc"], 13)
 
     def test_suggest_stealth_can_target_adjacent_minecart_room(self):
-        self.client.post("/api/rules/module/start", json={"module_id": "ash_mine"}, cookies=self.cookies)
-        r = self.client.post("/api/rules/suggest", json={"text": "我悄悄靠近矿车"}, cookies=self.cookies)
+        self.client.post("/api/v1/rules/module/start", json={"module_id": "ash_mine"}, cookies=self.cookies)
+        r = self.client.post("/api/v1/rules/suggest", json={"text": "我悄悄靠近矿车"}, cookies=self.cookies)
         self.assertEqual(r.status_code, 200)
         actions = r.json()["actions"]
         stealth = next(a for a in actions if a.get("skill") == "stealth")
@@ -88,8 +88,8 @@ class RulesApiSmoke(unittest.TestCase):
         user = register_user(self.client)
         cookies = user["cookies"]
         api_user = user["body"]["user"]
-        self.client.post("/api/rules/module/start", json={"module_id": "ash_mine"}, cookies=cookies)
-        self.client.post("/api/rules/move", json={"to": "minecart_track"}, cookies=cookies)
+        self.client.post("/api/v1/rules/module/start", json={"module_id": "ash_mine"}, cookies=cookies)
+        self.client.post("/api/v1/rules/move", json={"to": "minecart_track"}, cookies=cookies)
 
         state = ui_mod._ensure_loaded(api_user)
         state.add_pending_question(
@@ -103,7 +103,7 @@ class RulesApiSmoke(unittest.TestCase):
         ]
         state.save()
 
-        r = self.client.post("/api/rules/action", json={
+        r = self.client.post("/api/v1/rules/action", json={
             "kind": "skill_check",
             "skill": "investigation",
             "dc": 12,
@@ -112,7 +112,7 @@ class RulesApiSmoke(unittest.TestCase):
         }, cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text)
 
-        state_body = self.client.get("/api/state", cookies=cookies).json()
+        state_body = self.client.get("/api/v1/state", cookies=cookies).json()
         self.assertEqual(state_body["permissions"]["pending_questions"], [])
         self.assertNotIn("等待玩家回答", state_body["memory"]["last_structured_updates"])
         self.assertIn("append: world.known_events", state_body["memory"]["last_structured_updates"])

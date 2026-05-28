@@ -332,12 +332,12 @@ class ApiStateExposesActiveEntities(unittest.TestCase):
         client = make_client()
         u = register_user(client)
         # 启动 Ash Mine
-        r = client.post("/api/rules/module/launch", json={"module_id": "ash_mine"},
+        r = client.post("/api/v1/rules/module/launch", json={"module_id": "ash_mine"},
                         cookies=u["cookies"])
         self.assertEqual(r.status_code, 200, r.text[:200])
-        state = client.get("/api/state", cookies=u["cookies"]).json()
+        state = client.get("/api/v1/state", cookies=u["cookies"]).json()
         self.assertIn("active_entities", state,
-            "/api/state 必须含 active_entities 字段")
+            "/api/v1/state 必须含 active_entities 字段")
         self.assertIsInstance(state["active_entities"], list)
 
 

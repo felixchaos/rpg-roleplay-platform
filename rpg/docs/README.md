@@ -49,9 +49,9 @@ npx @openapitools/openapi-generator-cli generate \
 
 | 主题 | Endpoint 数 | 路径前缀 |
 |---|---|---|
-| 主游戏 (routes/) | 59 | `/api/*` (chat / state / new / save / opening / 等) |
-| 平台 (platform_app/api/) | 82 | `/api/auth/*` / `/api/scripts/*` / `/api/saves/*` / `/api/me/*` / `/api/library/*` 等 |
-| Frontend pages | 27 | `/api/profile/*` / `/api/admin/*` 等 |
+| 主游戏 (routes/) | 59 | `/api/v1/*` (chat / state / new / save / opening / 等) |
+| 平台 (platform_app/api/) | 82 | `/api/v1/auth/*` / `/api/v1/scripts/*` / `/api/v1/saves/*` / `/api/v1/me/*` / `/api/v1/library/*` 等 |
+| Frontend pages | 27 | `/api/v1/profile/*` / `/api/v1/admin/*` 等 |
 
 实际导出总数见 `openapi.json` 中 `paths` 键的条目数(当前 159 个路径)。
 

@@ -43,9 +43,9 @@ class ExistingCardAppliedToRuntime(unittest.TestCase):
         return int(scr["id"])
 
     def _activate_and_state(self, cookies, save_id: int) -> dict:
-        r = self.client.post(f"/api/saves/{save_id}/activate", cookies=cookies)
+        r = self.client.post(f"/api/v1/saves/{save_id}/activate", cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text[:300])
-        r2 = self.client.get("/api/state", cookies=cookies)
+        r2 = self.client.get("/api/v1/state", cookies=cookies)
         self.assertEqual(r2.status_code, 200, r2.text[:300])
         return r2.json()
 
@@ -56,7 +56,7 @@ class ExistingCardAppliedToRuntime(unittest.TestCase):
         script_id = self._create_script(uid, "card_apply_user_card")
 
         # 1. 建 user_card「林晚舟QA」
-        r = self.client.post("/api/me/character-cards", json={
+        r = self.client.post("/api/v1/me/character-cards", json={
             "name": "林晚舟QA",
             "identity": "QA 探险者",
             "appearance": "黑发披风，背着旧皮包。",
@@ -68,7 +68,7 @@ class ExistingCardAppliedToRuntime(unittest.TestCase):
         self.assertGreater(card_id, 0)
 
         # 2. POST /api/saves 用 character_id+character_kind=user_card
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "QA 角色卡新游戏",
             "script_id": script_id,
             "character_id": card_id,
@@ -107,7 +107,7 @@ class ExistingCardAppliedToRuntime(unittest.TestCase):
         script_id = self._create_script(uid, "card_apply_persona")
 
         # 建 persona
-        r = self.client.post("/api/me/personas", json={
+        r = self.client.post("/api/v1/me/personas", json={
             "name": "测试 persona",
             "role": "侦探",
             "background": "一名退役军人。",
@@ -117,7 +117,7 @@ class ExistingCardAppliedToRuntime(unittest.TestCase):
         persona_id = int(persona.get("id") or 0)
         self.assertGreater(persona_id, 0)
 
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "persona save",
             "script_id": script_id,
             "character_id": persona_id,
@@ -139,13 +139,13 @@ class ExistingCardAppliedToRuntime(unittest.TestCase):
         uid = self._user_id(u["username"])
         script_id = self._create_script(uid, "card_apply_continue")
 
-        r = self.client.post("/api/me/character-cards", json={
+        r = self.client.post("/api/v1/me/character-cards", json={
             "name": "继续路径测试", "identity": "测试者",
             "appearance": "—", "personality": "—",
         }, cookies=cookies)
         card_id = int(((r.json() or {}).get("card") or {}).get("id") or 0)
 
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "branches continue path",
             "script_id": script_id,
             "character_id": card_id,
@@ -154,7 +154,7 @@ class ExistingCardAppliedToRuntime(unittest.TestCase):
         save_id = int(((r.json() or {}).get("save") or {}).get("id") or 0)
 
         # 拉根 commit
-        r = self.client.get(f"/api/branches/{save_id}", cookies=cookies)
+        r = self.client.get(f"/api/v1/branches/{save_id}", cookies=cookies)
         body = r.json() or {}
         commits = body.get("nodes") or body.get("commits") or []
         self.assertGreater(len(commits), 0, "无 root commit")
@@ -163,12 +163,12 @@ class ExistingCardAppliedToRuntime(unittest.TestCase):
         self.assertGreater(root_id, 0)
 
         # POST /api/branches/continue
-        r = self.client.post("/api/branches/continue",
+        r = self.client.post("/api/v1/branches/continue",
                              json={"node_id": root_id}, cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text[:300])
 
         # /api/state 必须含 player.name
-        r = self.client.get("/api/state", cookies=cookies)
+        r = self.client.get("/api/v1/state", cookies=cookies)
         state = r.json()
         self.assertEqual(
             (state.get("player") or {}).get("name"), "继续路径测试",
@@ -182,7 +182,7 @@ class ExistingCardAppliedToRuntime(unittest.TestCase):
         cookies = u["cookies"]
         uid = self._user_id(u["username"])
         script_id = self._create_script(uid, "card_apply_blank")
-        r = self.client.post("/api/saves", json={"title": "blank", "script_id": script_id}, cookies=cookies)
+        r = self.client.post("/api/v1/saves", json={"title": "blank", "script_id": script_id}, cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text[:300])
 
 

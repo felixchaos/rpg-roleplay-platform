@@ -138,7 +138,7 @@ class OpeningRetrievalNoDefaultLeak(unittest.TestCase):
             # 走 ui 的状态缓存：先清掉避免上一个 save 的缓存污染（task 30 已有此机制）
             ui_mod._invalidate_user_cache({"id": uid, "username": u["username"], "role": "user"})
 
-            with self.client.stream("POST", "/api/opening", json={}, cookies=cookies) as resp:
+            with self.client.stream("POST", "/api/v1/opening", json={}, cookies=cookies) as resp:
                 self.assertEqual(resp.status_code, 200, "POST /api/opening 应 200")
                 events = self._consume_sse(resp)
             event_names = [e["event"] for e in events]
@@ -148,7 +148,7 @@ class OpeningRetrievalNoDefaultLeak(unittest.TestCase):
             self.assertIn("done", event_names, f"应有 done event；got={event_names}")
 
             # 查 state
-            r2 = self.client.get("/api/state", cookies=cookies)
+            r2 = self.client.get("/api/v1/state", cookies=cookies)
             self.assertEqual(r2.status_code, 200, r2.text[:200])
             state_payload = r2.json() or {}
             self.assertEqual(int(state_payload.get("save_id") or 0), save_id,
@@ -217,10 +217,10 @@ class OpeningRetrievalNoDefaultLeak(unittest.TestCase):
         ui_mod, orig_get = self._patch_gm_to_canned_opening()
         try:
             ui_mod._invalidate_user_cache({"id": uid, "username": u["username"], "role": "user"})
-            with self.client.stream("POST", "/api/opening", json={}, cookies=cookies) as resp:
+            with self.client.stream("POST", "/api/v1/opening", json={}, cookies=cookies) as resp:
                 self.assertEqual(resp.status_code, 200)
                 _ = self._consume_sse(resp)
-            r2 = self.client.get("/api/state", cookies=cookies)
+            r2 = self.client.get("/api/v1/state", cookies=cookies)
             self.assertEqual(r2.status_code, 200)
             payload = r2.json() or {}
             # 默认 MuMu save 仍允许出现柏林 token（这是它的正常剧情）—— 不破坏老 user

@@ -893,7 +893,7 @@
     // 探测后端是否就绪：HEAD/POST 都不可靠（POST 会触发 SSE），改用 OPTIONS / GET ping
     useEffect(() => {
       let alive = true;
-      const url = (apiBase || "") + "/api/console_assistant/ping";
+      const url = (apiBase || "") + "/api/v1/console_assistant/ping";
       fetch(url, { method: "GET", credentials: "include" })
         .then(r => { if (!alive) return; if (r.ok) { setUseMock(false); setAutoMockReason("后端就绪"); } else { setUseMock(true); setAutoMockReason("后端 " + r.status + "，走 mock"); } })
         .catch(() => { if (!alive) return; setUseMock(true); setAutoMockReason("后端不可达，走 mock"); });
@@ -1135,7 +1135,7 @@
         try {
           const sseStream = window.api && window.api.raw && window.api.raw.sseStream;
           if (!sseStream) throw new Error("api.raw.sseStream 不可用");
-          stream = sseStream("/api/console_assistant/chat", body, handlers);
+          stream = sseStream("/api/v1/console_assistant/chat", body, handlers);
         } catch (e) {
           // 真后端 fallback 到 mock
           setMessages(ms => [...ms, { type: "error",
@@ -1188,7 +1188,7 @@
       try {
         const sseStream = window.api && window.api.raw && window.api.raw.sseStream;
         if (!sseStream) throw new Error("api.raw.sseStream 不可用");
-        const stream = sseStream("/api/console_assistant/confirm", body, handlers);
+        const stream = sseStream("/api/v1/console_assistant/confirm", body, handlers);
         streamRef.current = stream;
       } catch (e) {
         setRunning(false);
@@ -1212,7 +1212,7 @@
       setRunning(false);
       try {
         if (!useMock) {
-          const r = await fetch((apiBase || "") + "/api/console_assistant/new_conversation", {
+          const r = await fetch((apiBase || "") + "/api/v1/console_assistant/new_conversation", {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -1246,7 +1246,7 @@
       setConvListLoading(true);
       try {
         if (!useMock) {
-          const r = await fetch((apiBase || "") + "/api/console_assistant/conversations", {
+          const r = await fetch((apiBase || "") + "/api/v1/console_assistant/conversations", {
             credentials: "include",
           });
           if (r.ok) {
@@ -1297,7 +1297,7 @@
       if (!item || item.id === convId) return; // 不能删当前
       try {
         if (!useMock) {
-          await fetch((apiBase || "") + "/api/console_assistant/delete_conversation", {
+          await fetch((apiBase || "") + "/api/v1/console_assistant/delete_conversation", {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },

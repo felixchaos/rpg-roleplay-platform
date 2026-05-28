@@ -2086,7 +2086,7 @@ function DeploySection() {
                 let ok = false;
                 try {
                   // 后端尚未提供 /api/admin/smtp/test，先用 raw POST，404 也按"失败"展示
-                  const r = await window.api.raw.POST("/api/admin/smtp/test", {});
+                  const r = await window.api.raw.POST("/api/v1/admin/smtp/test", {});
                   ok = !!(r && r.ok !== false);
                 } catch (_) { ok = false; }
                 setSmtpTesting(false);

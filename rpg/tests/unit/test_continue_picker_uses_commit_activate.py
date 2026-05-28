@@ -108,7 +108,7 @@ class ContinuePickerUsesBranchActivate(unittest.TestCase):
 
 
 class BranchesHandlerInvalidatesCache(unittest.TestCase):
-    """/api/branches/activate 和 /api/branches/continue 在 commit 级操作后,
+    """/api/v1/branches/activate 和 /api/branches/continue 在 commit 级操作后,
     必须显式清 app._state_by_user 缓存 (不能依赖 _ensure_loaded 的 save_id
     自检 — 同 save 内换 commit 时自检不会触发)。"""
 
@@ -118,7 +118,7 @@ class BranchesHandlerInvalidatesCache(unittest.TestCase):
         end = API_PY.find("@router.", idx + 1)
         body = API_PY[idx:end if end > 0 else len(API_PY)]
         self.assertIn("_invalidate_user_cache", body,
-            "/api/branches/activate handler 必须调 app._invalidate_user_cache(user)")
+            "/api/v1/branches/activate handler 必须调 app._invalidate_user_cache(user)")
         self.assertIn("import app", body,
             "handler 必须 import app 才能调 _invalidate_user_cache")
 
@@ -128,7 +128,7 @@ class BranchesHandlerInvalidatesCache(unittest.TestCase):
         end = API_PY.find("@router.", idx + 1)
         body = API_PY[idx:end if end > 0 else len(API_PY)]
         self.assertIn("_invalidate_user_cache", body,
-            "/api/branches/continue handler 必须调 app._invalidate_user_cache(user)")
+            "/api/v1/branches/continue handler 必须调 app._invalidate_user_cache(user)")
 
 
 if __name__ == "__main__":

@@ -145,13 +145,13 @@ class NarrativeGuardChatFlowE2E(unittest.TestCase):
             _cmd_agent.parse_set_command = _fake_parse
 
         try:
-            with self.client.stream("POST", "/api/chat",
+            with self.client.stream("POST", "/api/v1/chat",
                                      json={"message": message, "attachments": []},
                                      cookies=cookies) as resp:
                 self.assertEqual(resp.status_code, 200,
                                  f"chat 应 200;实际 {resp.status_code}")
                 events = _consume_sse(resp)
-            state_resp = self.client.get("/api/state", cookies=cookies)
+            state_resp = self.client.get("/api/v1/state", cookies=cookies)
             return events, state_resp.json()
         finally:
             ui_mod.run_context_agent = original_rca

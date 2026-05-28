@@ -90,7 +90,7 @@ class BranchesContinueAcceptsMessageIndex(unittest.TestCase):
         save_id = self._mk_save_with_chapters(uid)
 
         # message_index=3 → turn=1, kind=gm（msg=3 是 turn1 的 gm）
-        r = self.client.post("/api/branches/continue", json={
+        r = self.client.post("/api/v1/branches/continue", json={
             "save_id": save_id,
             "message_index": 3,
             "label": "从消息分支",
@@ -114,7 +114,7 @@ class BranchesContinueAcceptsMessageIndex(unittest.TestCase):
                 (save_id,),
             ).fetchone()
         node_id = int(row["id"])
-        r = self.client.post("/api/branches/continue", json={
+        r = self.client.post("/api/v1/branches/continue", json={
             "node_id": node_id,
             "label": "old path",
         }, cookies=u["cookies"])
@@ -124,7 +124,7 @@ class BranchesContinueAcceptsMessageIndex(unittest.TestCase):
     def test_continue_with_no_fields_returns_400_not_500(self):
         """关键回归：原 bug——空 body 让后端 int(None) 崩；现在必须 400 + 清晰 message"""
         u = register_user(self.client)
-        r = self.client.post("/api/branches/continue", json={"label": "从消息分支"}, cookies=u["cookies"])
+        r = self.client.post("/api/v1/branches/continue", json={"label": "从消息分支"}, cookies=u["cookies"])
         self.assertEqual(r.status_code, 400,
             f"task 38：缺 node_id/save_id+message_index 应回 400，不是 500；实际 {r.status_code}: {r.text[:200]}")
         body = r.json()
@@ -135,7 +135,7 @@ class BranchesContinueAcceptsMessageIndex(unittest.TestCase):
     def test_continue_with_bad_node_id_returns_400(self):
         """对照：node_id 不是整数 → 400 而不是 500"""
         u = register_user(self.client)
-        r = self.client.post("/api/branches/continue", json={"node_id": "not-a-number"}, cookies=u["cookies"])
+        r = self.client.post("/api/v1/branches/continue", json={"node_id": "not-a-number"}, cookies=u["cookies"])
         self.assertEqual(r.status_code, 400, r.text[:200])
         self.assertIn("不是整数", str((r.json() or {}).get("error", "")))
 
@@ -145,7 +145,7 @@ class BranchesContinueAcceptsMessageIndex(unittest.TestCase):
         uid = self._uid(u["username"])
         save_id = self._mk_save_with_chapters(uid)
         # 该 save 只有 3 turn (0,1,2)，msg=10 → turn=5 不存在
-        r = self.client.post("/api/branches/continue", json={
+        r = self.client.post("/api/v1/branches/continue", json={
             "save_id": save_id,
             "message_index": 100,
             "label": "x",

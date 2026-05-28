@@ -85,13 +85,13 @@ class NewSaveUsesScriptOpening(unittest.TestCase):
                 "background": "用于从导入剧本开始验证。",
             },
         }
-        r = self.client.post("/api/saves", json=payload, cookies=cookies)
+        r = self.client.post("/api/v1/saves", json=payload, cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text[:300])
         save_id = int(((r.json() or {}).get("save") or {}).get("id") or 0)
         self.assertGreater(save_id, 0)
 
         # 直接看 save_detail 的 state_snapshot
-        r2 = self.client.get(f"/api/saves/{save_id}", cookies=cookies)
+        r2 = self.client.get(f"/api/v1/saves/{save_id}", cookies=cookies)
         self.assertEqual(r2.status_code, 200, r2.text[:300])
         snap = ((r2.json() or {}).get("save") or {}).get("state_snapshot") or {}
         if isinstance(snap, str):
@@ -148,13 +148,13 @@ class NewSaveUsesScriptOpening(unittest.TestCase):
         uid = self._uid(u["username"])
         script_id = self._mk_script_with_chapter(uid, "E2E_branches_seed_test_34")
 
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "root snap test",
             "script_id": script_id,
             "new_card": {"name": "P", "role": "R", "background": "B"},
         }, cookies=cookies)
         save_id = int(((r.json() or {}).get("save") or {}).get("id") or 0)
-        r2 = self.client.get(f"/api/branches/{save_id}", cookies=cookies)
+        r2 = self.client.get(f"/api/v1/branches/{save_id}", cookies=cookies)
         self.assertEqual(r2.status_code, 200)
         nodes = (r2.json() or {}).get("nodes") or (r2.json() or {}).get("commits") or []
         self.assertGreaterEqual(len(nodes), 1)
@@ -186,7 +186,7 @@ class NewSaveUsesScriptOpening(unittest.TestCase):
                 (uid, "no chapters script"),
             ).fetchone()["id"])
 
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "no-chap save",
             "script_id": sid,
             "new_card": {"name": "X", "role": "Y", "background": "Z"},
@@ -216,13 +216,13 @@ class NewSaveUsesScriptOpening(unittest.TestCase):
                  "这是测试开场的第一段。\n这是测试开场的第二段。\n这是测试开场的第三段。",
                  100),
             )
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "plain chap save",
             "script_id": sid,
             "new_card": {"name": "X", "role": "Y", "background": "Z"},
         }, cookies=cookies)
         save_id = int(((r.json() or {}).get("save") or {}).get("id") or 0)
-        snap = ((self.client.get(f"/api/saves/{save_id}", cookies=cookies).json() or {})
+        snap = ((self.client.get(f"/api/v1/saves/{save_id}", cookies=cookies).json() or {})
                 .get("save") or {}).get("state_snapshot") or {}
         if isinstance(snap, str):
             snap = json.loads(snap)
@@ -279,7 +279,7 @@ class NewSaveUsesScriptOpening(unittest.TestCase):
                 (sid, 3, "## 第二章 子时灯塔", "子时正... 当前地点：雾港灯塔。", 50),
             )
 
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "real-import-shape save",
             "script_id": sid,
             "new_card": {
@@ -292,7 +292,7 @@ class NewSaveUsesScriptOpening(unittest.TestCase):
         save_id = int(((r.json() or {}).get("save") or {}).get("id") or 0)
         self.assertGreater(save_id, 0)
 
-        snap = ((self.client.get(f"/api/saves/{save_id}", cookies=cookies).json() or {})
+        snap = ((self.client.get(f"/api/v1/saves/{save_id}", cookies=cookies).json() or {})
                 .get("save") or {}).get("state_snapshot") or {}
         if isinstance(snap, str):
             snap = json.loads(snap)
@@ -327,7 +327,7 @@ class NewSaveUsesScriptOpening(unittest.TestCase):
                 f"world={world!r} player={player!r} memory.objective={memory.get('current_objective')!r}")
 
         # ── branches root 也必须同步 ─────────
-        rsnap = ((self.client.get(f"/api/branches/{save_id}", cookies=cookies).json() or {})
+        rsnap = ((self.client.get(f"/api/v1/branches/{save_id}", cookies=cookies).json() or {})
                  .get("nodes") or [{}])[0].get("state_snapshot") or {}
         if isinstance(rsnap, str):
             rsnap = json.loads(rsnap)
@@ -362,13 +362,13 @@ class NewSaveUsesScriptOpening(unittest.TestCase):
                 "values (%s, %s, %s, %s, %s)",
                 (sid, 2, "## 真章节", "正文。 当前地点：测试地。 时间锚点：测试时。", 80),
             )
-        r = self.client.post("/api/saves", json={
+        r = self.client.post("/api/v1/saves", json={
             "title": "doc-title-str save",
             "script_id": sid,
             "new_card": {"name": "X", "role": "Y", "background": "Z"},
         }, cookies=cookies)
         snap = ((self.client.get(
-            f"/api/saves/{int(((r.json() or {}).get('save') or {}).get('id') or 0)}",
+            f"/api/v1/saves/{int(((r.json() or {}).get('save') or {}).get('id') or 0)}",
             cookies=cookies).json() or {}).get("save") or {}).get("state_snapshot") or {}
         if isinstance(snap, str):
             snap = json.loads(snap)

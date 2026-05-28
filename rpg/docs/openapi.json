@@ -41,7 +41,7 @@
         }
       }
     },
-    "/api/auth/register": {
+    "/api/v1/auth/register": {
       "post": {
         "summary": "Api Register",
         "operationId": "api_register_api_auth_register_post",
@@ -57,7 +57,7 @@
         }
       }
     },
-    "/api/auth/login": {
+    "/api/v1/auth/login": {
       "post": {
         "summary": "Api Login",
         "operationId": "api_login_api_auth_login_post",
@@ -73,7 +73,7 @@
         }
       }
     },
-    "/api/auth/logout": {
+    "/api/v1/auth/logout": {
       "post": {
         "summary": "Api Logout",
         "operationId": "api_logout_api_auth_logout_post",
@@ -89,7 +89,7 @@
         }
       }
     },
-    "/api/auth/me": {
+    "/api/v1/auth/me": {
       "get": {
         "summary": "Api Me",
         "operationId": "api_me_api_auth_me_get",
@@ -105,7 +105,7 @@
         }
       }
     },
-    "/api/platform": {
+    "/api/v1/platform": {
       "get": {
         "summary": "Api Platform",
         "operationId": "api_platform_api_platform_get",
@@ -121,7 +121,7 @@
         }
       }
     },
-    "/api/profile": {
+    "/api/v1/profile": {
       "post": {
         "summary": "Api Profile",
         "operationId": "api_profile_api_profile_post",
@@ -137,7 +137,7 @@
         }
       }
     },
-    "/api/platform/commands": {
+    "/api/v1/platform/commands": {
       "get": {
         "summary": "Api Commands",
         "description": "命令清单：未登录 + 服务器模式下拒绝；登录用户可见，但隐藏 admin-only 命令",
@@ -154,7 +154,7 @@
         }
       }
     },
-    "/api/scripts": {
+    "/api/v1/scripts": {
       "get": {
         "summary": "Api Scripts",
         "operationId": "api_scripts_api_scripts_get",
@@ -214,7 +214,7 @@
         }
       }
     },
-    "/api/scripts/import": {
+    "/api/v1/scripts/import": {
       "post": {
         "summary": "Api Import Script",
         "operationId": "api_import_script_api_scripts_import_post",
@@ -230,7 +230,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/chapters": {
+    "/api/v1/scripts/{script_id}/chapters": {
       "get": {
         "summary": "Api Script Chapters",
         "description": "章节列表，支持 ?q=... 标题/内容全文 ILIKE 搜索。",
@@ -316,7 +316,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/chapter-facts": {
+    "/api/v1/scripts/{script_id}/chapter-facts": {
       "get": {
         "summary": "Api Script Chapter Facts",
         "operationId": "api_script_chapter_facts_api_scripts__script_id__chapter_facts_get",
@@ -385,7 +385,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/birthpoints": {
+    "/api/v1/scripts/{script_id}/birthpoints": {
       "get": {
         "summary": "Api Script Birthpoints",
         "description": "入场选出生点：按 phase 聚合 + 每 phase 均匀采样代表性 anchor。\n\n返回 phase_digests 的各阶段，以及每阶段从 script_timeline_anchors 均匀采样的\n5-15 个 anchor（≤15 全取，否则步长 round(N/12) 采样）。",
@@ -423,7 +423,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/recommend-identity": {
+    "/api/v1/scripts/{script_id}/recommend-identity": {
       "post": {
         "summary": "Api Script Recommend Identity",
         "description": "task 123: 入场 wizard Step 4 — LLM 推荐玩家初始身份。\n入参 body: {birthpoint_phase, birthpoint_label, character_card_id?, character_card_kind?, n?}\n返回: {ok, recommendations: [{name, role, background}, ...]}",
@@ -461,7 +461,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/character-cards": {
+    "/api/v1/scripts/{script_id}/character-cards": {
       "get": {
         "summary": "Api Script Character Cards",
         "operationId": "api_script_character_cards_api_scripts__script_id__character_cards_get",
@@ -566,7 +566,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/character-cards/{card_id}": {
+    "/api/v1/scripts/{script_id}/character-cards/{card_id}": {
       "get": {
         "summary": "Api Script Character Card",
         "description": "单条剧本角色卡详情。",
@@ -613,7 +613,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/character-cards/{card_id}/delete": {
+    "/api/v1/scripts/{script_id}/character-cards/{card_id}/delete": {
       "post": {
         "summary": "Api Script Delete Character Card",
         "operationId": "api_script_delete_character_card_api_scripts__script_id__character_cards__card_id__delete_post",
@@ -659,7 +659,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/character-cards/{card_id}/enabled": {
+    "/api/v1/scripts/{script_id}/character-cards/{card_id}/enabled": {
       "post": {
         "summary": "Api Script Card Enabled",
         "description": "快捷切换 enabled（检索中临时屏蔽某角色）。",
@@ -706,7 +706,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/worldbook": {
+    "/api/v1/scripts/{script_id}/worldbook": {
       "get": {
         "summary": "Api Script Worldbook",
         "operationId": "api_script_worldbook_api_scripts__script_id__worldbook_get",
@@ -775,7 +775,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/chapters/{chapter_index}": {
+    "/api/v1/scripts/{script_id}/chapters/{chapter_index}": {
       "post": {
         "summary": "Api Chapter Update",
         "description": "编辑单章 title/content/volume_title。",
@@ -822,7 +822,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/chapters/merge": {
+    "/api/v1/scripts/{script_id}/chapters/merge": {
       "post": {
         "summary": "Api Chapter Merge",
         "description": "合并 first_index 和 first_index+1 两章。",
@@ -860,7 +860,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/chapters/{chapter_index}/split": {
+    "/api/v1/scripts/{script_id}/chapters/{chapter_index}/split": {
       "post": {
         "summary": "Api Chapter Split",
         "description": "按字符位置 split_at 把一章拆成两章。",
@@ -907,7 +907,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/resplit": {
+    "/api/v1/scripts/{script_id}/resplit": {
       "post": {
         "summary": "Api Script Resplit",
         "description": "用新规则重切已导入剧本。保留 script + 存档，只换章节。",
@@ -945,7 +945,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/delete": {
+    "/api/v1/scripts/{script_id}/delete": {
       "post": {
         "summary": "Api Script Delete",
         "description": "删除剧本。force=True 时连带删除其下所有存档。",
@@ -983,7 +983,7 @@
         }
       }
     },
-    "/api/scripts/preview": {
+    "/api/v1/scripts/preview": {
       "post": {
         "summary": "Api Script Preview",
         "description": "Dry-run：不入库返切分预览，前端调参用。",
@@ -1000,7 +1000,7 @@
         }
       }
     },
-    "/api/scripts/batch-import": {
+    "/api/v1/scripts/batch-import": {
       "post": {
         "summary": "Api Scripts Batch Import",
         "description": "从 ZIP 包批量导入剧本：每个 TXT/MD 视为一本书。\n\nBody: {\"file\": {\"name\": \"books.zip\", \"base64\": \"...\"}}",
@@ -1017,7 +1017,7 @@
         }
       }
     },
-    "/api/uploads/init": {
+    "/api/v1/uploads/init": {
       "post": {
         "summary": "Api Upload Init",
         "description": "开始分片上传，返回 upload_id。",
@@ -1034,7 +1034,7 @@
         }
       }
     },
-    "/api/uploads/{upload_id}/chunk": {
+    "/api/v1/uploads/{upload_id}/chunk": {
       "post": {
         "summary": "Api Upload Chunk",
         "description": "上传一个 chunk。body: {\"chunk_index\": N, \"base64\": \"...\"}",
@@ -1072,7 +1072,7 @@
         }
       }
     },
-    "/api/uploads/{upload_id}/finish": {
+    "/api/v1/uploads/{upload_id}/finish": {
       "post": {
         "summary": "Api Upload Finish",
         "description": "全部分片到齐后调，返回 file_item（可直接传给 /api/scripts/import 的 file 字段）。",
@@ -1110,7 +1110,7 @@
         }
       }
     },
-    "/api/uploads/{upload_id}/cancel": {
+    "/api/v1/uploads/{upload_id}/cancel": {
       "post": {
         "summary": "Api Upload Cancel",
         "description": "放弃上传，清掉服务器上的临时块。",
@@ -1148,7 +1148,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/knowledge/sync": {
+    "/api/v1/scripts/{script_id}/knowledge/sync": {
       "post": {
         "summary": "Api Script Knowledge Sync",
         "description": "触发后台异步同步。立即返回 job_id；通过 /import-status 轮询进度。",
@@ -1186,7 +1186,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/import-status": {
+    "/api/v1/scripts/{script_id}/import-status": {
       "get": {
         "summary": "Api Script Import Status",
         "description": "查询某剧本最近一次后台同步任务的状态。",
@@ -1224,7 +1224,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/import-budget": {
+    "/api/v1/scripts/{script_id}/import-budget": {
       "post": {
         "summary": "Api Script Import Budget",
         "description": "开始拆书前给出预算（token/cost/时长）。\n\nBody: {\"enable_cards\": true, \"enable_worldbook\": true,\n       \"model_api_id\": \"...\", \"model_real_name\": \"...\"}（全可选）",
@@ -1262,7 +1262,7 @@
         }
       }
     },
-    "/api/scripts/{script_id}/import-pipeline": {
+    "/api/v1/scripts/{script_id}/import-pipeline": {
       "post": {
         "summary": "Api Script Import Pipeline",
         "description": "启动完整拆书流水线，立即返 job_id。前端轮询 /import-job-status 看进度。",
@@ -1300,7 +1300,7 @@
         }
       }
     },
-    "/api/scripts/import-jobs/{job_id}": {
+    "/api/v1/scripts/import-jobs/{job_id}": {
       "get": {
         "summary": "Api Import Job Status",
         "description": "轮询任务状态：进度、当前阶段、token/cost 累计、错误。",
@@ -1338,7 +1338,7 @@
         }
       }
     },
-    "/api/scripts/import-jobs/{job_id}/stream": {
+    "/api/v1/scripts/import-jobs/{job_id}/stream": {
       "get": {
         "summary": "Api Import Job Stream",
         "description": "SSE 实时推送 job 进度，前端不再轮询。\n\n每秒检测一次 DB，状态/阶段/进度变化时推 event；任务结束（done/failed/cancelled）后退出。\n保留 request：SSE endpoint 需要 request.is_disconnected() 检测客户端断开（虽然此处通过任务状态退出）。",
@@ -1376,7 +1376,7 @@
         }
       }
     },
-    "/api/scripts/import-jobs/{job_id}/cancel": {
+    "/api/v1/scripts/import-jobs/{job_id}/cancel": {
       "post": {
         "summary": "Api Import Job Cancel",
         "description": "请求取消。worker 在下一个检查点退出。",
@@ -1414,7 +1414,7 @@
         }
       }
     },
-    "/api/me/import-jobs": {
+    "/api/v1/me/import-jobs": {
       "get": {
         "summary": "Api My Import Jobs",
         "description": "列出本人最近 20 个导入任务（dashboard 用）。",
@@ -1453,7 +1453,7 @@
         }
       }
     },
-    "/api/saves": {
+    "/api/v1/saves": {
       "get": {
         "summary": "Api Saves",
         "description": "轻量列表：只返摘要字段（turn/player_name/world_time/history_count），不含 state_snapshot。",
@@ -1528,7 +1528,7 @@
         }
       }
     },
-    "/api/saves/{save_id}/export": {
+    "/api/v1/saves/{save_id}/export": {
       "get": {
         "summary": "Api Save Export",
         "operationId": "api_save_export_api_saves__save_id__export_get",
@@ -1565,7 +1565,7 @@
         }
       }
     },
-    "/api/saves/import": {
+    "/api/v1/saves/import": {
       "post": {
         "summary": "Api Save Import",
         "description": "上传一份导出的 JSON 恢复成新存档，按当前 user 重映射 owner。",
@@ -1582,7 +1582,7 @@
         }
       }
     },
-    "/api/saves/{save_id}": {
+    "/api/v1/saves/{save_id}": {
       "get": {
         "summary": "Api Save Detail",
         "description": "单条详情：包含完整 state_snapshot。",
@@ -1620,7 +1620,7 @@
         }
       }
     },
-    "/api/branches/{save_id}": {
+    "/api/v1/branches/{save_id}": {
       "get": {
         "summary": "Api Branches",
         "operationId": "api_branches_api_branches__save_id__get",
@@ -1689,7 +1689,7 @@
         }
       }
     },
-    "/api/branches/continue": {
+    "/api/v1/branches/continue": {
       "post": {
         "summary": "Api Continue Branch",
         "description": "task 38：接受两种 body 形态：\nA) {node_id: <int>}              —— 老路径，前端拿得到 commit id 时直接传\nB) {save_id, message_index, ...} —— Game Console 「从这里新建分支」用，\n   后端把 message_index → turn_index → commit_id。\n缺字段或解析失败一律 400（不再因 int(None) 抛 TypeError 成 500）。",
@@ -1706,7 +1706,7 @@
         }
       }
     },
-    "/api/branches/activate": {
+    "/api/v1/branches/activate": {
       "post": {
         "summary": "Api Activate Branch",
         "operationId": "api_activate_branch_api_branches_activate_post",
@@ -1722,7 +1722,7 @@
         }
       }
     },
-    "/api/branches/delete": {
+    "/api/v1/branches/delete": {
       "post": {
         "summary": "Api Delete Branch",
         "operationId": "api_delete_branch_api_branches_delete_post",
@@ -1738,7 +1738,7 @@
         }
       }
     },
-    "/api/branches/rollback": {
+    "/api/v1/branches/rollback": {
       "post": {
         "summary": "Api Rollback To Message",
         "description": "task 116c — 删除消息 N 及之后所有 (git-style 软回滚)。\n\n入参: { save_id, message_index }\n出参: { ok, restored_turn, dropped_turn_count, deleted: {...}, trash_ref, runtime }",
@@ -1755,7 +1755,7 @@
         }
       }
     },
-    "/api/saves/{save_id}/context-runs": {
+    "/api/v1/saves/{save_id}/context-runs": {
       "get": {
         "summary": "Api Save Context Runs",
         "operationId": "api_save_context_runs_api_saves__save_id__context_runs_get",
@@ -1824,7 +1824,7 @@
         }
       }
     },
-    "/api/saves/{save_id}/anchors": {
+    "/api/v1/saves/{save_id}/anchors": {
       "get": {
         "summary": "Api Save Anchors",
         "description": "task 136h: 世界线收束 — 存档锚点状态.\n\n返回:\n  {\n    ok: true,\n    summary: {pending, occurred, variant, superseded, fatal_pending, avg_drift, total},\n    by_phase: [{phase_label, pending, occurred, variant, ..., avg_drift, convergence_pressure}, ...],\n    recent_pending: [...up to 12 most important pending anchors...],\n    recent_occurred: [...up to 8 most recently occurred...]\n  }",
@@ -1862,7 +1862,7 @@
         }
       }
     },
-    "/api/saves/{save_id}/anchors/reseed": {
+    "/api/v1/saves/{save_id}/anchors/reseed": {
       "post": {
         "summary": "Api Save Anchors Reseed",
         "description": "task 136h: 强制重 seed 锚点 (调试用)。\nbody 可选: {\"keep_satisfied\": true|false} 默认 true (保留已发生)。",
@@ -1900,7 +1900,7 @@
         }
       }
     },
-    "/api/worldline/variables": {
+    "/api/v1/worldline/variables": {
       "get": {
         "summary": "Api Worldline Variables",
         "operationId": "api_worldline_variables_api_worldline_variables_get",
@@ -1916,7 +1916,7 @@
         }
       }
     },
-    "/api/memories": {
+    "/api/v1/memories": {
       "get": {
         "summary": "Api Memories",
         "operationId": "api_memories_api_memories_get",
@@ -1932,7 +1932,7 @@
         }
       }
     },
-    "/api/settings": {
+    "/api/v1/settings": {
       "get": {
         "summary": "Api Settings",
         "operationId": "api_settings_api_settings_get",
@@ -1962,7 +1962,7 @@
         }
       }
     },
-    "/api/me/profile": {
+    "/api/v1/me/profile": {
       "get": {
         "summary": "Api Me Profile",
         "operationId": "api_me_profile_api_me_profile_get",
@@ -1978,7 +1978,7 @@
         }
       }
     },
-    "/api/me/usage": {
+    "/api/v1/me/usage": {
       "get": {
         "summary": "Api My Usage",
         "description": "单独的用量明细 API（dashboard 用）",
@@ -2017,7 +2017,7 @@
         }
       }
     },
-    "/api/me/usage/timeline": {
+    "/api/v1/me/usage/timeline": {
       "get": {
         "summary": "Api My Usage Timeline",
         "description": "时间序列用量（dashboard 图表用）。group_by=day|model",
@@ -2066,7 +2066,7 @@
         }
       }
     },
-    "/api/me/stats": {
+    "/api/v1/me/stats": {
       "get": {
         "summary": "Api My Stats",
         "description": "玩家档案统计：回合数 / 分支 / 字数 / 连续登录。\n\ntask 49（mock 清扫第二轮）：之前 MeOverview 用 totalRounds = saves.reduce(× 7)、\nplayHours = totalRounds × 1.2 / 60，以及 \"本周 +6.4h / 最深 6 层 / 共 418 万字 /\n7 天连续登录 / 最长 14 天\" 全部硬编码。这里给出全部真实派生值；没有真实\n来源的字段（如累计游玩分钟数）返回 null，由前端显示「—」而不是假数字。\n保留 request：需要读 request.cookies.get(SESSION_COOKIE) 用于 login_audit 查询。",
@@ -2083,7 +2083,7 @@
         }
       }
     },
-    "/api/me/preference": {
+    "/api/v1/me/preference": {
       "post": {
         "summary": "Api Save Preference",
         "operationId": "api_save_preference_api_me_preference_post",
@@ -2099,7 +2099,7 @@
         }
       }
     },
-    "/api/me/personas": {
+    "/api/v1/me/personas": {
       "get": {
         "summary": "Api My Personas",
         "description": "列出本人所有玩家身份卡（杭雁菱穿越者 / 林知意信使 / ...）",
@@ -2131,7 +2131,7 @@
         }
       }
     },
-    "/api/me/personas/{persona_id}": {
+    "/api/v1/me/personas/{persona_id}": {
       "get": {
         "summary": "Api Get Persona",
         "operationId": "api_get_persona_api_me_personas__persona_id__get",
@@ -2168,7 +2168,7 @@
         }
       }
     },
-    "/api/me/personas/{persona_id}/delete": {
+    "/api/v1/me/personas/{persona_id}/delete": {
       "post": {
         "summary": "Api Delete Persona",
         "operationId": "api_delete_persona_api_me_personas__persona_id__delete_post",
@@ -2205,7 +2205,7 @@
         }
       }
     },
-    "/api/me/character-cards": {
+    "/api/v1/me/character-cards": {
       "get": {
         "summary": "Api My Character Cards",
         "description": "用户自创的 NPC 卡库，可挂任何剧本/存档",
@@ -2280,7 +2280,7 @@
         }
       }
     },
-    "/api/me/character-cards/{card_id}": {
+    "/api/v1/me/character-cards/{card_id}": {
       "get": {
         "summary": "Api Get Character Card",
         "operationId": "api_get_character_card_api_me_character_cards__card_id__get",
@@ -2317,7 +2317,7 @@
         }
       }
     },
-    "/api/me/character-cards/{card_id}/delete": {
+    "/api/v1/me/character-cards/{card_id}/delete": {
       "post": {
         "summary": "Api Delete Character Card",
         "operationId": "api_delete_character_card_api_me_character_cards__card_id__delete_post",
@@ -2354,7 +2354,7 @@
         }
       }
     },
-    "/api/me/character-cards/import-tavern": {
+    "/api/v1/me/character-cards/import-tavern": {
       "post": {
         "summary": "Api Import Tavern Card",
         "description": "导入酒馆角色卡。\n\npayload 形态（支持多种来源）：\n- {\"json\": {...V2 dict...}}                # 直接传 V2 对象\n- {\"json_string\": \"{...}\"}                  # JSON 字符串\n- {\"base64\": \"...\"}                          # base64-encoded JSON\n- {\"png_base64\": \"...\"}                      # PNG 文件 base64（解析 tEXt chunk）",
@@ -2371,7 +2371,7 @@
         }
       }
     },
-    "/api/me/character-cards/{card_id}/export-tavern": {
+    "/api/v1/me/character-cards/{card_id}/export-tavern": {
       "get": {
         "summary": "Api Export Tavern Card",
         "description": "导出本人 NPC 卡为酒馆 V2 JSON 格式（可直接下载/给酒馆导入）。",
@@ -2409,7 +2409,7 @@
         }
       }
     },
-    "/api/me/character-cards/{card_id}/export-png": {
+    "/api/v1/me/character-cards/{card_id}/export-png": {
       "get": {
         "summary": "Api Export Tavern Png",
         "description": "导出 PNG 嵌入式酒馆卡（tEXt chara chunk），可直接拖进酒馆。",
@@ -2447,7 +2447,7 @@
         }
       }
     },
-    "/api/me/credentials": {
+    "/api/v1/me/credentials": {
       "get": {
         "summary": "Api My Credentials",
         "description": "列出当前用户已配置的 API 凭证（不含 raw key）",
@@ -2479,7 +2479,7 @@
         }
       }
     },
-    "/api/me/credentials/delete": {
+    "/api/v1/me/credentials/delete": {
       "post": {
         "summary": "Api Delete Credential",
         "operationId": "api_delete_credential_api_me_credentials_delete_post",
@@ -2495,7 +2495,7 @@
         }
       }
     },
-    "/api/me/credentials/test": {
+    "/api/v1/me/credentials/test": {
       "get": {
         "summary": "Api Test Credential",
         "description": "用户级凭证可用性自检（不暴露 key）",
@@ -2534,7 +2534,7 @@
         }
       }
     },
-    "/api/library": {
+    "/api/v1/library": {
       "get": {
         "summary": "Api Library",
         "operationId": "api_library_api_library_get",
@@ -2604,7 +2604,7 @@
         }
       }
     },
-    "/api/library/upload": {
+    "/api/v1/library/upload": {
       "post": {
         "summary": "Api Library Upload",
         "operationId": "api_library_upload_api_library_upload_post",
@@ -2620,7 +2620,7 @@
         }
       }
     },
-    "/api/library/mkdir": {
+    "/api/v1/library/mkdir": {
       "post": {
         "summary": "Api Library Mkdir",
         "operationId": "api_library_mkdir_api_library_mkdir_post",
@@ -2636,7 +2636,7 @@
         }
       }
     },
-    "/api/library/delete": {
+    "/api/v1/library/delete": {
       "post": {
         "summary": "Api Library Delete",
         "operationId": "api_library_delete_api_library_delete_post",
@@ -2652,7 +2652,7 @@
         }
       }
     },
-    "/api/library/download": {
+    "/api/v1/library/download": {
       "get": {
         "summary": "Api Library Download",
         "operationId": "api_library_download_api_library_download_get",
@@ -2689,7 +2689,7 @@
         }
       }
     },
-    "/api/auth/password": {
+    "/api/v1/auth/password": {
       "post": {
         "summary": "Api Change Password",
         "description": "Change current user's password (`current` -> `next`).",
@@ -2706,7 +2706,7 @@
         }
       }
     },
-    "/api/auth/login-history": {
+    "/api/v1/auth/login-history": {
       "get": {
         "summary": "Api Login History",
         "description": "Return last N login_audit rows for the current user. ?format=csv supported.",
@@ -2723,7 +2723,7 @@
         }
       }
     },
-    "/api/auth/sessions": {
+    "/api/v1/auth/sessions": {
       "get": {
         "summary": "Api List Sessions",
         "operationId": "api_list_sessions_api_auth_sessions_get",
@@ -2739,7 +2739,7 @@
         }
       }
     },
-    "/api/auth/sessions/revoke": {
+    "/api/v1/auth/sessions/revoke": {
       "post": {
         "summary": "Api Revoke Session",
         "operationId": "api_revoke_session_api_auth_sessions_revoke_post",
@@ -2755,7 +2755,7 @@
         }
       }
     },
-    "/api/auth/sessions/revoke-all": {
+    "/api/v1/auth/sessions/revoke-all": {
       "post": {
         "summary": "Api Revoke All Sessions",
         "operationId": "api_revoke_all_sessions_api_auth_sessions_revoke_all_post",
@@ -2771,7 +2771,7 @@
         }
       }
     },
-    "/api/auth/sms-code": {
+    "/api/v1/auth/sms-code": {
       "post": {
         "summary": "Api Sms Code",
         "description": "Stub: we don't actually have an SMS gateway. Pretend success.",
@@ -2788,7 +2788,7 @@
         }
       }
     },
-    "/api/auth/sms-verify": {
+    "/api/v1/auth/sms-verify": {
       "post": {
         "summary": "Api Sms Verify",
         "description": "Stub: accept any 4-6 digit code for demo purposes.",
@@ -2805,7 +2805,7 @@
         }
       }
     },
-    "/api/profile/avatar": {
+    "/api/v1/profile/avatar": {
       "post": {
         "summary": "Api Upload Avatar",
         "operationId": "api_upload_avatar_api_profile_avatar_post",
@@ -2821,7 +2821,7 @@
         }
       }
     },
-    "/api/profile/avatar/reset": {
+    "/api/v1/profile/avatar/reset": {
       "post": {
         "summary": "Api Reset Avatar",
         "operationId": "api_reset_avatar_api_profile_avatar_reset_post",
@@ -2837,7 +2837,7 @@
         }
       }
     },
-    "/api/profile/avatar/file/{name}": {
+    "/api/v1/profile/avatar/file/{name}": {
       "get": {
         "summary": "Api Avatar File",
         "operationId": "api_avatar_file_api_profile_avatar_file__name__get",
@@ -2874,7 +2874,7 @@
         }
       }
     },
-    "/api/profile/visibility": {
+    "/api/v1/profile/visibility": {
       "post": {
         "summary": "Api Profile Visibility",
         "operationId": "api_profile_visibility_api_profile_visibility_post",
@@ -2890,7 +2890,7 @@
         }
       }
     },
-    "/api/account/export": {
+    "/api/v1/account/export": {
       "post": {
         "summary": "Api Account Export",
         "operationId": "api_account_export_api_account_export_post",
@@ -2906,7 +2906,7 @@
         }
       }
     },
-    "/api/account/deactivate": {
+    "/api/v1/account/deactivate": {
       "post": {
         "summary": "Api Account Deactivate",
         "operationId": "api_account_deactivate_api_account_deactivate_post",
@@ -2922,7 +2922,7 @@
         }
       }
     },
-    "/api/account/delete": {
+    "/api/v1/account/delete": {
       "post": {
         "summary": "Api Account Delete",
         "operationId": "api_account_delete_api_account_delete_post",
@@ -2938,7 +2938,7 @@
         }
       }
     },
-    "/api/saves/{save_id}/delete": {
+    "/api/v1/saves/{save_id}/delete": {
       "post": {
         "summary": "Api Save Delete",
         "operationId": "api_save_delete_api_saves__save_id__delete_post",
@@ -2975,7 +2975,7 @@
         }
       }
     },
-    "/api/saves/{save_id}/rename": {
+    "/api/v1/saves/{save_id}/rename": {
       "post": {
         "summary": "Api Save Rename",
         "operationId": "api_save_rename_api_saves__save_id__rename_post",
@@ -3012,7 +3012,7 @@
         }
       }
     },
-    "/api/saves/{save_id}/activate": {
+    "/api/v1/saves/{save_id}/activate": {
       "post": {
         "summary": "Api Save Activate",
         "description": "task 30：之前只 select 1 验证归属就返 ok=True，既不写 user_runtime，\n也不清 ui._state_by_user 缓存 → 用户点完「继续」跳到 Game Console，\nGET /api/state 拿到的是上一个 active save 的 player/world。\n\n现在：调用 branches.activate_save → runtime.activate_state_snapshot\n把 user_runtime 切到目标 save 的 active commit；并清掉 ui 进程内 state 缓存，\n下一次 _ensure_loaded 会从 user_runtime 重新加载新 save 的 state。",
@@ -3050,7 +3050,7 @@
         }
       }
     },
-    "/api/me/character-cards/import-json": {
+    "/api/v1/me/character-cards/import-json": {
       "post": {
         "summary": "Api Card Import Json",
         "operationId": "api_card_import_json_api_me_character_cards_import_json_post",
@@ -3066,7 +3066,7 @@
         }
       }
     },
-    "/api/models/visibility": {
+    "/api/v1/models/visibility": {
       "post": {
         "summary": "Api Models Visibility",
         "description": "Toggle visibility flags for individual models.",
@@ -3083,7 +3083,7 @@
         }
       }
     },
-    "/api/models/validate": {
+    "/api/v1/models/validate": {
       "post": {
         "summary": "Api Models Validate",
         "description": "Lightweight credentials probe — defers to model_probe.list_remote_models.",
@@ -3100,7 +3100,7 @@
         }
       }
     },
-    "/api/search": {
+    "/api/v1/search": {
       "get": {
         "summary": "Api Search",
         "description": "Cross-resource search. Returns grouped results (scripts, saves, cards, chapters).",
@@ -3117,7 +3117,7 @@
         }
       }
     },
-    "/api/plugins": {
+    "/api/v1/plugins": {
       "get": {
         "summary": "Api Plugins",
         "description": "Reuse /api/tools but slice the 'plugins' channel for the CapPage.",
@@ -3134,7 +3134,7 @@
         }
       }
     },
-    "/api/skills": {
+    "/api/v1/skills": {
       "get": {
         "summary": "Api Skills List",
         "operationId": "api_skills_list_api_skills_get",
@@ -3150,7 +3150,7 @@
         }
       }
     },
-    "/api/admin/smtp/test": {
+    "/api/v1/admin/smtp/test": {
       "post": {
         "summary": "Api Admin Smtp Test",
         "description": "task 51：FE DeploySection 有「发送测试邮件」按钮但后端从未实现。\n返回明确的\"未配置\"错误，让 UI 显示真实失败而不是 404 黑洞。\n\n真正实现需要：读 user_preferences (SMTP host/port/user/pass/from) →\nsmtplib.SMTP(host, port).login(user, pass).sendmail(from, to, msg)。\n现在 SMTP 配置还存在 user_preferences 待规范化阶段，先给清晰的占位错误。",
@@ -3184,7 +3184,7 @@
         }
       }
     },
-    "/api/state": {
+    "/api/v1/state": {
       "get": {
         "summary": "Api State",
         "operationId": "api_state_api_state_get",
@@ -3200,7 +3200,7 @@
         }
       }
     },
-    "/api/state_events": {
+    "/api/v1/state_events": {
       "get": {
         "summary": "Api State Events",
         "description": "长连 SSE,推送当前 user 范围内的 state 变更事件。\n\n前端每个标签页开一条,收到 `event: state_change` 后转 CustomEvent\n`rpg-{topic}-updated`,各页面已有的 reload listener 自动触发。",
@@ -3217,7 +3217,7 @@
         }
       }
     },
-    "/api/memory/mode": {
+    "/api/v1/memory/mode": {
       "post": {
         "summary": "Api Memory Mode",
         "description": "task 87 Phase 6: UI 按钮也走 dispatcher,获得统一审计 + destructive 检查。",
@@ -3276,7 +3276,7 @@
         }
       }
     },
-    "/api/memory/add": {
+    "/api/v1/memory/add": {
       "post": {
         "summary": "Api Memory Add",
         "description": "task 87 Phase 6: 走 dispatcher 的 add_memory_* 工具系列。",
@@ -3335,7 +3335,7 @@
         }
       }
     },
-    "/api/memory/remove": {
+    "/api/v1/memory/remove": {
       "post": {
         "summary": "Api Memory Remove",
         "description": "task 87 Phase 6: destructive 走 dispatcher remove_memory_item 工具。",
@@ -3394,7 +3394,7 @@
         }
       }
     },
-    "/api/permissions": {
+    "/api/v1/permissions": {
       "post": {
         "summary": "Api Permissions",
         "description": "task 87 Phase 6: 敏感权限切换走 dispatcher (origin=ui_button)。",
@@ -3453,7 +3453,7 @@
         }
       }
     },
-    "/api/permissions/pending-write": {
+    "/api/v1/permissions/pending-write": {
       "post": {
         "summary": "Api Pending Write",
         "description": "审批一条待写入。前端发 {id, action} 或 {index, decision}（兼容老 contract）。\n\nP0 修复（task #53）：之前后端只读 index+decision，前端发 id+action →\n/set 后端 body.get(\"index\", -1) = -1 → \"待审写入不存在\" → 整个审批流死。\n现在按 id 优先（稳定），index/decision 作 fallback。",
@@ -3512,7 +3512,7 @@
         }
       }
     },
-    "/api/questions/clear": {
+    "/api/v1/questions/clear": {
       "post": {
         "summary": "Api Question Clear",
         "description": "回答(或跳过)一条 GM 询问。{id, choice?} 或 {index, choice?}。\ntask 87 Phase 6: 走 dispatcher dismiss_pending_question。choice 走老路径\n(clear_pending_question 支持记录玩家选择,工具暂不支持 choice)。",
@@ -3571,7 +3571,7 @@
         }
       }
     },
-    "/api/debug/pending-question": {
+    "/api/v1/debug/pending-question": {
       "post": {
         "summary": "Api Debug Pending Question",
         "description": "task 87 Phase 6: debug 注入也走 dispatcher 的 inject_pending_question 工具。",
@@ -3640,7 +3640,7 @@
         }
       }
     },
-    "/api/new": {
+    "/api/v1/new": {
       "post": {
         "summary": "Api New",
         "description": "创建新存档。\n\n切换角色卡（user persona / 用户自创 NPC / 剧本预置角色）一律走这个接口，\n不会污染现有存档。优先级（高 → 低）：\n  1. script_card_id + script_id  (扮演某剧本里的角色)\n  2. user_card_id                 (用户自创 NPC 卡)\n  3. persona_id                   (用户自己的 persona)\n  4. body 里直接传 name/role/background",
@@ -3699,7 +3699,7 @@
         }
       }
     },
-    "/api/opening": {
+    "/api/v1/opening": {
       "post": {
         "summary": "Api Opening",
         "operationId": "api_opening_api_opening_post",
@@ -3715,7 +3715,7 @@
         }
       }
     },
-    "/api/chat/estimate": {
+    "/api/v1/chat/estimate": {
       "post": {
         "summary": "Api Chat Estimate",
         "description": "实时上下文预估。前端 debounce 用户输入后调用，显示 ctx X/Y (Z%) · in~A out~B。\n\n估算思路（轻量，避免真的跑 retrieval）：\n  input_tokens ≈ system_prompt + history_window + retrieved_budget + 当前输入\n  output_tokens ≈ 该用户最近 10 轮该模型的平均输出",
@@ -3774,7 +3774,7 @@
         }
       }
     },
-    "/api/chat": {
+    "/api/v1/chat": {
       "post": {
         "summary": "Api Chat",
         "operationId": "api_chat_api_chat_post",
@@ -3810,7 +3810,7 @@
         }
       }
     },
-    "/api/stop": {
+    "/api/v1/stop": {
       "post": {
         "summary": "Api Stop",
         "description": "打断当前用户正在跑的 chat。其他用户的 chat 不受影响。\ntask 87 Phase 6: 同时调 dispatcher stop_current_chat 工具,把 stop_signal 写到 state.permissions。",
@@ -3849,7 +3849,7 @@
         }
       }
     },
-    "/api/save": {
+    "/api/v1/save": {
       "post": {
         "summary": "Api Save",
         "description": "task 87 Phase 6: 走 dispatcher save_runtime。",
@@ -3888,7 +3888,7 @@
         }
       }
     },
-    "/api/models": {
+    "/api/v1/models": {
       "get": {
         "summary": "Api Models",
         "operationId": "api_models_api_models_get",
@@ -3904,7 +3904,7 @@
         }
       }
     },
-    "/api/models/select": {
+    "/api/v1/models/select": {
       "post": {
         "summary": "Api Models Select",
         "operationId": "api_models_select_api_models_select_post",
@@ -3962,7 +3962,7 @@
         }
       }
     },
-    "/api/models/api": {
+    "/api/v1/models/api": {
       "post": {
         "summary": "Api Models Upsert Api",
         "operationId": "api_models_upsert_api_api_models_api_post",
@@ -4020,7 +4020,7 @@
         }
       }
     },
-    "/api/models/model": {
+    "/api/v1/models/model": {
       "post": {
         "summary": "Api Models Upsert Model",
         "operationId": "api_models_upsert_model_api_models_model_post",
@@ -4078,7 +4078,7 @@
         }
       }
     },
-    "/api/models/model/delete": {
+    "/api/v1/models/model/delete": {
       "post": {
         "summary": "Api Models Delete Model",
         "operationId": "api_models_delete_model_api_models_model_delete_post",
@@ -4136,7 +4136,7 @@
         }
       }
     },
-    "/api/models/remote": {
+    "/api/v1/models/remote": {
       "get": {
         "summary": "Api Models Remote",
         "description": "从供应商 SDK 拉取真实可用模型清单（带 60s 缓存）",
@@ -4153,7 +4153,7 @@
         }
       }
     },
-    "/api/models/diff": {
+    "/api/v1/models/diff": {
       "get": {
         "summary": "Api Models Diff",
         "description": "对比本地 catalog 和远端真实模型，返回 missing/extra/matching",
@@ -4170,7 +4170,7 @@
         }
       }
     },
-    "/api/models/probe": {
+    "/api/v1/models/probe": {
       "post": {
         "summary": "Api Models Probe",
         "description": "发一条最小请求验证可用性 + 测延迟。\n\n安全：避免用别人的 key 测试。要么 user 自己配置过该 api_id 的凭证，\n要么必须是 admin。其他普通用户不允许触发付费 API 调用。",
@@ -4239,7 +4239,7 @@
         }
       }
     },
-    "/api/models/pricing": {
+    "/api/v1/models/pricing": {
       "get": {
         "summary": "Api Models Pricing",
         "description": "查询单个模型的定价（USD per million tokens）",
@@ -4256,7 +4256,7 @@
         }
       }
     },
-    "/api/models/report": {
+    "/api/v1/models/report": {
       "get": {
         "summary": "Api Models Report",
         "description": "API 综合健康报告：catalog + 远端 diff + 定价 + 可选 probe",
@@ -4273,7 +4273,7 @@
         }
       }
     },
-    "/api/models/capabilities": {
+    "/api/v1/models/capabilities": {
       "get": {
         "summary": "Api Models Capabilities",
         "description": "查询单个模型的能力清单（text/vision/tools/json_mode 等）",
@@ -4290,7 +4290,7 @@
         }
       }
     },
-    "/api/models/capabilities/labels": {
+    "/api/v1/models/capabilities/labels": {
       "get": {
         "summary": "Api Models Capability Labels",
         "description": "返回所有已知能力的标签词典（前端筛选器/徽标用）",
@@ -4307,7 +4307,7 @@
         }
       }
     },
-    "/api/tools": {
+    "/api/v1/tools": {
       "get": {
         "summary": "Api Tools",
         "operationId": "api_tools_api_tools_get",
@@ -4323,7 +4323,7 @@
         }
       }
     },
-    "/api/mcp/server": {
+    "/api/v1/mcp/server": {
       "post": {
         "summary": "Api Mcp Server",
         "operationId": "api_mcp_server_api_mcp_server_post",
@@ -4381,7 +4381,7 @@
         }
       }
     },
-    "/api/mcp/server/enabled": {
+    "/api/v1/mcp/server/enabled": {
       "post": {
         "summary": "Api Mcp Server Enabled",
         "operationId": "api_mcp_server_enabled_api_mcp_server_enabled_post",
@@ -4439,7 +4439,7 @@
         }
       }
     },
-    "/api/mcp/server/delete": {
+    "/api/v1/mcp/server/delete": {
       "post": {
         "summary": "Api Mcp Server Delete",
         "operationId": "api_mcp_server_delete_api_mcp_server_delete_post",
@@ -4497,7 +4497,7 @@
         }
       }
     },
-    "/api/mcp/server/validate": {
+    "/api/v1/mcp/server/validate": {
       "post": {
         "summary": "Api Mcp Server Validate",
         "operationId": "api_mcp_server_validate_api_mcp_server_validate_post",
@@ -4555,7 +4555,7 @@
         }
       }
     },
-    "/api/mcp/server/start": {
+    "/api/v1/mcp/server/start": {
       "post": {
         "summary": "Api Mcp Server Start",
         "operationId": "api_mcp_server_start_api_mcp_server_start_post",
@@ -4613,7 +4613,7 @@
         }
       }
     },
-    "/api/mcp/server/stop": {
+    "/api/v1/mcp/server/stop": {
       "post": {
         "summary": "Api Mcp Server Stop",
         "operationId": "api_mcp_server_stop_api_mcp_server_stop_post",
@@ -4671,7 +4671,7 @@
         }
       }
     },
-    "/api/mcp/runtime": {
+    "/api/v1/mcp/runtime": {
       "get": {
         "summary": "Api Mcp Runtime",
         "description": "MCP 运行时状态 + per-user 调用审计。\n- 普通用户：拿不到 stderr（可能含 token/路径），audit_log 只看自己的\n- admin：full stderr + 全部用户的 audit_log",
@@ -4688,7 +4688,7 @@
         }
       }
     },
-    "/api/mcp/tool/call": {
+    "/api/v1/mcp/tool/call": {
       "post": {
         "summary": "Api Mcp Tool Call",
         "description": "前端或主 GM 调用 MCP 工具的统一入口。\n\n安全：MCP server 配置目前是全局共享，调用任意工具等于以服务进程身份执行。\n在多用户/服务器模式下只允许 admin；本地匿名模式才允许任意调用。\n后续要让 MCP server 支持 per-user 注册再放宽。",
@@ -4757,7 +4757,7 @@
         }
       }
     },
-    "/api/mcp/tools": {
+    "/api/v1/mcp/tools": {
       "get": {
         "summary": "Api Mcp Tools",
         "description": "列出所有已启动 server 的工具清单（前端加号菜单/Skill 选择面板用）。",
@@ -4774,7 +4774,7 @@
         }
       }
     },
-    "/api/skills/import": {
+    "/api/v1/skills/import": {
       "post": {
         "summary": "Api Skills Import",
         "operationId": "api_skills_import_api_skills_import_post",
@@ -4832,7 +4832,7 @@
         }
       }
     },
-    "/api/skills/{skill_id}/run": {
+    "/api/v1/skills/{skill_id}/run": {
       "post": {
         "summary": "Api Skill Run",
         "description": "在沙箱里跑某个 imported skill。\n\nBody: {\"cmd\": [\"bash\", \"script.sh\", \"arg1\"], \"stdin\": \"...\", \"timeout_sec\": 30}\n\n安全：admin only；本地匿名也允许（开发场景）。",
@@ -4932,7 +4932,7 @@
         }
       }
     },
-    "/api/worldline/variable": {
+    "/api/v1/worldline/variable": {
       "post": {
         "summary": "Api Worldline Variable",
         "description": "task 87 Phase 6: 走 dispatcher 的 set_user_variable 工具。",
@@ -4991,7 +4991,7 @@
         }
       }
     },
-    "/api/worldline/variable/remove": {
+    "/api/v1/worldline/variable/remove": {
       "post": {
         "summary": "Api Worldline Variable Remove",
         "description": "task 87 Phase 6: destructive,走 dispatcher remove_user_variable 工具。",
@@ -5050,7 +5050,7 @@
         }
       }
     },
-    "/api/rules/modules": {
+    "/api/v1/rules/modules": {
       "get": {
         "summary": "Api Rules Modules",
         "description": "列出可用的 5E-compatible 冒险模组。",
@@ -5067,7 +5067,7 @@
         }
       }
     },
-    "/api/rules/module/start": {
+    "/api/v1/rules/module/start": {
       "post": {
         "summary": "Api Rules Module Start",
         "description": "低层原语：把模组加载到当前激活的 save，会直接 mutate 该 save state。\ntask 87 Phase 6: 走 dispatcher module_load 工具(destructive,UI 直触发)。",
@@ -5126,7 +5126,7 @@
         }
       }
     },
-    "/api/rules/module/launch": {
+    "/api/v1/rules/module/launch": {
       "post": {
         "summary": "Api Rules Module Launch",
         "description": "Bug 2：模组启动的标准入口。\n\n流程：\n  1. 后端真正建立一个**独立 game_save**（kind=module_adventure 标题=模组名）\n  2. 用模组开局状态填 state_snapshot（Cinder + 灰烬矿坑 scene 等）\n  3. 激活该 save（切 runtime_checkout / user_runtime / 缓存）\n  4. 返回新 save_id + 状态 → FE 跳 Game Console 看到的就是新存档\n\n绝不 mutate 当前小说/普通 save。已注册用户必填（匿名不允许，避免污染本地默认 save）。",
@@ -5185,7 +5185,7 @@
         }
       }
     },
-    "/api/rules/scene": {
+    "/api/v1/rules/scene": {
       "get": {
         "summary": "Api Rules Scene",
         "description": "返回当前 scene / player_character / encounter / dice_log 快照。",
@@ -5202,7 +5202,7 @@
         }
       }
     },
-    "/api/rules/move": {
+    "/api/v1/rules/move": {
       "post": {
         "summary": "Api Rules Move",
         "description": "task 87 Phase 6: 走 dispatcher module_enter_room 工具。",
@@ -5261,7 +5261,7 @@
         }
       }
     },
-    "/api/rules/action": {
+    "/api/v1/rules/action": {
       "post": {
         "summary": "Api Rules Action",
         "description": "通用规则动作执行入口。根据 body.kind 路由到具体规则函数。",
@@ -5320,7 +5320,7 @@
         }
       }
     },
-    "/api/rules/encounter/start": {
+    "/api/v1/rules/encounter/start": {
       "post": {
         "summary": "Api Rules Encounter Start",
         "description": "task 87 Phase 6: 走 dispatcher combat_start 工具。",
@@ -5379,7 +5379,7 @@
         }
       }
     },
-    "/api/rules/encounter/next": {
+    "/api/v1/rules/encounter/next": {
       "post": {
         "summary": "Api Rules Encounter Next",
         "description": "task 87 Phase 6: 走 dispatcher combat_next_turn 工具。",
@@ -5438,7 +5438,7 @@
         }
       }
     },
-    "/api/rules/encounter/enemy": {
+    "/api/v1/rules/encounter/enemy": {
       "post": {
         "summary": "Api Rules Encounter Enemy",
         "description": "敌方回合：task 87 Phase 6 走 dispatcher combat_enemy_attack。",
@@ -5497,7 +5497,7 @@
         }
       }
     },
-    "/api/rules/suggest": {
+    "/api/v1/rules/suggest": {
       "post": {
         "summary": "Api Rules Suggest",
         "description": "从玩家自由文本输入推断候选规则动作（轻量本地匹配，用于前端候选按钮）。",
@@ -5556,7 +5556,7 @@
         }
       }
     },
-    "/api/saves/{save_id}/timeline": {
+    "/api/v1/saves/{save_id}/timeline": {
       "get": {
         "summary": "Api Saves Timeline",
         "description": "返回指定存档的双时间线数据:剧本期望线 + 实际足迹线。\n\n权限: 必须是该 save 的所有者,否则 403。",
@@ -5594,7 +5594,7 @@
         }
       }
     },
-    "/api/console_assistant/ping": {
+    "/api/v1/console_assistant/ping": {
       "get": {
         "summary": "Api Console Assistant Ping",
         "description": "task 48: 给前端探测后端是否就绪,200 = 真后端可用 (前端切走 mock)。",
@@ -5611,7 +5611,7 @@
         }
       }
     },
-    "/api/console_assistant/conversations": {
+    "/api/v1/console_assistant/conversations": {
       "get": {
         "summary": "Api Console Assistant Conversations",
         "description": "task 111: 列当前用户所有对话。",
@@ -5628,7 +5628,7 @@
         }
       }
     },
-    "/api/console_assistant/new_conversation": {
+    "/api/v1/console_assistant/new_conversation": {
       "post": {
         "summary": "Api Console Assistant New Conversation",
         "description": "task 111: 开新对话, 返新 conversation_id。",
@@ -5667,7 +5667,7 @@
         }
       }
     },
-    "/api/console_assistant/delete_conversation": {
+    "/api/v1/console_assistant/delete_conversation": {
       "post": {
         "summary": "Api Console Assistant Delete Conversation",
         "description": "task 111: 删除某对话。",
@@ -5726,7 +5726,7 @@
         }
       }
     },
-    "/api/console_assistant/chat": {
+    "/api/v1/console_assistant/chat": {
       "post": {
         "summary": "Api Console Assistant Chat",
         "description": "task 48: 侧栏助手主聊天 SSE endpoint。\n\nbody: { message: str, conversation_id?: str, page_context?: dict }\nSSE: meta / token / tool_call / tool_result / confirmation_required / error / done",
@@ -5763,7 +5763,7 @@
         }
       }
     },
-    "/api/console_assistant/confirm": {
+    "/api/v1/console_assistant/confirm": {
       "post": {
         "summary": "Api Console Assistant Confirm",
         "description": "task 58: 对一个 pending destructive 工具调用做决策, 返 SSE 流。\n\nbody: { conversation_id: str, call_id: str, decision: 'approve'|'reject',\n        page_context?: dict }\nSSE: 与 /chat endpoint 同款 (meta / tool_call / tool_result / token /\n     confirmation_required / navigation_required / error / done)\n\n旧 JSON 协议已弃用 — 修复:用户点确认后 LLM 必须基于工具结果续写,\n否则对话直接断在工具结果。",

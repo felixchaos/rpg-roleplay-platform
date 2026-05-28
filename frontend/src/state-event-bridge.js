@@ -1,7 +1,7 @@
 /**
  * state-event-bridge.js — task 69
  *
- * 长连 SSE `/api/state_events`,后端推送来 (topic, op) 事件后,
+ * 长连 SSE `/api/v1/state_events`,后端推送来 (topic, op) 事件后,
  * 转 CustomEvent("rpg-{topic}-updated"),触发各页面已有的 reload listener。
  *
  * 现有总线 (frontend/src/platform-app.jsx 已订阅):
@@ -20,7 +20,7 @@
 
   // api-client.js exposes the resolved cross-origin base via window.__API_BASE
   const BASE = (window.__API_BASE || window.RPG_API_BASE || "").replace(/\/+$/, "");
-  const URL = (BASE || "") + "/api/state_events";
+  const URL = (BASE || "") + "/api/v1/state_events";
   let es = null;
   let backoff = 1000;
   let stopped = false;

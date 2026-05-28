@@ -66,7 +66,7 @@ class NewSaveAppliesNewCard(unittest.TestCase):
                 "background": "用于从导入剧本开始验证 /set、自然语言时间修改和按钮后端联动。",
             },
         }
-        r = self.client.post("/api/saves", json=payload, cookies=cookies)
+        r = self.client.post("/api/v1/saves", json=payload, cookies=cookies)
         self.assertEqual(r.status_code, 200, f"POST /api/saves 应 200：{r.text[:300]}")
         body = r.json()
         self.assertTrue(body.get("ok"), f"应 ok=True：{body}")
@@ -75,7 +75,7 @@ class NewSaveAppliesNewCard(unittest.TestCase):
         self.assertGreater(save_id, 0)
 
         # GET /api/saves/{id} → detail 内含 state_snapshot
-        r2 = self.client.get(f"/api/saves/{save_id}", cookies=cookies)
+        r2 = self.client.get(f"/api/v1/saves/{save_id}", cookies=cookies)
         self.assertEqual(r2.status_code, 200, r2.text[:300])
         detail = (r2.json() or {}).get("save") or {}
         snap = detail.get("state_snapshot") or {}
@@ -90,7 +90,7 @@ class NewSaveAppliesNewCard(unittest.TestCase):
             f"task 29：background 应反映用户输入；实际 {player.get('background')!r}")
 
         # 分支 root snapshot 也必须同步（task 25 修过 seed_tree 信任 snapshot）
-        r3 = self.client.get(f"/api/branches/{save_id}", cookies=cookies)
+        r3 = self.client.get(f"/api/v1/branches/{save_id}", cookies=cookies)
         self.assertEqual(r3.status_code, 200, r3.text[:300])
         nodes = (r3.json() or {}).get("nodes") or (r3.json() or {}).get("commits") or []
         self.assertGreaterEqual(len(nodes), 1, "应至少一个 root commit")
@@ -112,11 +112,11 @@ class NewSaveAppliesNewCard(unittest.TestCase):
         script_id = self._create_script(uid, "integtest_card_blank")
 
         payload = {"title": "blank save", "script_id": script_id}
-        r = self.client.post("/api/saves", json=payload, cookies=cookies)
+        r = self.client.post("/api/v1/saves", json=payload, cookies=cookies)
         self.assertEqual(r.status_code, 200, r.text[:300])
         save_id = int(((r.json() or {}).get("save") or {}).get("id") or 0)
         self.assertGreater(save_id, 0)
-        r2 = self.client.get(f"/api/saves/{save_id}", cookies=cookies)
+        r2 = self.client.get(f"/api/v1/saves/{save_id}", cookies=cookies)
         snap = ((r2.json() or {}).get("save") or {}).get("state_snapshot") or {}
         if isinstance(snap, str):
             snap = json.loads(snap)
