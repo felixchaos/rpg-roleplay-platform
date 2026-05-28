@@ -1103,6 +1103,10 @@
             resizeHandle={<div className="gp-panel-resize-handle" title="拖动调整宽度 · 双击恢复默认" {...gcPanelDragProps} />}
           />}
 
+          {/* 窄屏 float ⌖ 按钮 — CSS @media(max-width:768px) 才显示 */}
+          <button className="gc-float-panel-btn" onClick={() => { setPanelCollapsed(false); _panelResize.setSize(320); }}
+            title="打开状态面板">⌖</button>
+
           {/* task 127: 删 Tweaks 调试面板 — 用户不要这个内部入口 */}
 
           {/* task 55: 助手挤压式布局 —— gc-shell 是 display:flex,助手作为最后

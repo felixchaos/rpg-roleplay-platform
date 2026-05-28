@@ -713,7 +713,27 @@
   white-space: nowrap;
 }
 .gc-pop-trigger:hover { color: var(--text); background: var(--panel-3); }
+.gc-model-label { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
 .gc-tokens { font-size: 10.5px; padding-left: 4px; border-left: 1px solid var(--line-soft); }
+/* float button to reopen right panel at narrow viewport */
+.gc-float-panel-btn {
+  display: none;
+  position: fixed;
+  bottom: 80px;
+  right: 16px;
+  width: 40px; height: 40px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-3);
+  align-items: center; justify-content: center;
+  z-index: 20;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 18px;
+  transition: background .12s, box-shadow .12s;
+}
+.gc-float-panel-btn:hover { background: var(--panel-2); }
 .gc-context-usage {
   display: inline-flex; align-items: center; gap: 0;
   height: 24px; padding: 2px;
@@ -1362,10 +1382,17 @@
   .gc-topbar-left > .pill { display: none; }
   .gc-topbar-right > .btn.ghost > span { display: none; }
   .gc-topbar-right > .btn.ghost { padding: 0 8px; }
+  .gc-model-label { max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
 }
 @media (max-width: 900px) {
   .gc-shell { grid-template-columns: auto minmax(0, 1fr); }
+}
+@media (max-width: 768px) {
   .gp-panel { display: none; }
+  /* float panel-open button: fixed ⌖ in bottom-right corner */
+  .gc-float-panel-btn {
+    display: flex !important;
+  }
 }
 @media (max-width: 720px) {
   /* task 102E: 移动端覆盖 CSS var 而非硬覆盖 width — 让用户拖到的值仍有效 */
