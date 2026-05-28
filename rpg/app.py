@@ -848,16 +848,19 @@ def _payload(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def _redact_catalog(catalog: dict[str, Any], is_admin: bool) -> dict[str, Any]:
-    """普通用户拿不到 credential_ref / credential_env / base_url（部署形状信息）"""
-    if is_admin:
-        return catalog
+    """普通用户拿不到 credential_ref / credential_env / base_url（部署形状信息）。
+    所有角色都能看到 has_credential 字段（布尔），便于前端过滤掉没配 key 的 API。
+    """
     import copy
-    redacted = copy.deepcopy(catalog)
-    for api in redacted.get("apis", []):
-        api.pop("credential_ref", None)
-        api.pop("credential_env", None)
-        api.pop("base_url", None)
-    return redacted
+    import model_probe
+    result = copy.deepcopy(catalog)
+    for api in result.get("apis", []):
+        api["has_credential"] = model_probe._credential_present(api)
+        if not is_admin:
+            api.pop("credential_ref", None)
+            api.pop("credential_env", None)
+            api.pop("base_url", None)
+    return result
 
 
 _MCP_SECRET_FIELDS = ("command", "args", "env", "credential", "secret", "token")
