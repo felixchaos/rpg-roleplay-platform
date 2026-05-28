@@ -7,6 +7,7 @@ from psycopg.types.json import Jsonb
 
 from core.logging import get_logger
 from state import SAVE_FILE
+from state.core import _extract_secret_sections, _strip_secret_sections
 
 from . import branches, runtime
 from .db import connect, cursor_id, expose, init_db, limit_value, page_payload
@@ -191,13 +192,53 @@ def _build_initial_snapshot(
                     character = {"kind": "user_card", "id": cards[0].get("id")}
         except Exception:
             pass
-    # task 137: 详细角色卡字段（外貌/性格/语气/秘密/别名），setup_player 后再单独写入
+    # task 137: 详细角色卡字段（外貌/性格/语气/别名），setup_player 后再单独写入
+    # task 138: secrets 字段 *不再* 放入 player namespace,改成 _extra_private 收集到
+    # player_private.secrets。同时把 personality/appearance/background 里的 ## 秘密 段
+    # 用 _extract_secret_sections 抽走 → player_private.secrets;原字段用 _strip_secret_sections
+    # 剥离后保留 NPC 可观察部分。这样 short_summary 注入 GM prompt 时秘密物理上不存在。
     _extra_card_fields: dict[str, str] = {}
+    _extra_private_secrets: list[str] = []
+
+    def _absorb_card_secrets(card: dict[str, Any]) -> None:
+        """从一张 user_card / script_card / persona dict 抽出秘密 → _extra_private_secrets,
+        同时把 personality/appearance/background 里的秘密段 strip 后写回 _extra_card_fields。
+        通用底座 — 不依赖具体剧本字段名。"""
+        # 1. 直接的 secrets 字段(角色卡 schema 里独立的"秘密"字段)→ player_private
+        _sec_raw = str(card.get("secrets") or "").strip()
+        if _sec_raw and _sec_raw not in _extra_private_secrets:
+            _extra_private_secrets.append(_sec_raw)
+        # 2. personality / appearance / background 里嵌入的 ## 秘密 / ## 隐藏 / ## 元知识 …段
+        #    → 抽到 player_private.secrets, 原字段保留 strip 后的剩余
+        for _f in ("appearance", "personality", "background"):
+            _v = str(card.get(_f) or "").strip()
+            if not _v:
+                continue
+            _hidden_sections = _extract_secret_sections(_v)
+            for _h in _hidden_sections:
+                if _h and _h not in _extra_private_secrets:
+                    _extra_private_secrets.append(_h)
+            _stripped = _strip_secret_sections(_v)
+            if _stripped:
+                _extra_card_fields[_f] = _stripped
+        # 3. speech_style / aliases 一般 NPC 可观察,直接保留
+        for _f in ("speech_style", "aliases"):
+            _v = str(card.get(_f) or "").strip()
+            if _v:
+                _extra_card_fields[_f] = _v
 
     if isinstance(new_card, dict):
         name = str(new_card.get("name") or "").strip()
         role = str(new_card.get("role") or "").strip()
-        background = str(new_card.get("background") or "").strip()
+        # background 也 strip 一遍秘密段(玩家在向导里手填可能也写 ## 秘密)
+        _new_bg = str(new_card.get("background") or "").strip()
+        if _new_bg:
+            for _h in _extract_secret_sections(_new_bg):
+                if _h and _h not in _extra_private_secrets:
+                    _extra_private_secrets.append(_h)
+            background = _strip_secret_sections(_new_bg)
+        else:
+            background = ""
     elif isinstance(character, dict):
         # best-effort：从已有 persona / character card 取 name + role + background
         kind = str(character.get("kind") or "").strip()
@@ -213,29 +254,28 @@ def _build_initial_snapshot(
                     p = _ucards.get_persona(user_id, cid_int) or {}
                     name = str(p.get("name") or "").strip()
                     role = str(p.get("role") or "").strip()
-                    background = str(p.get("background") or "").strip()
+                    _p_bg = str(p.get("background") or "").strip()
+                    for _h in _extract_secret_sections(_p_bg):
+                        if _h and _h not in _extra_private_secrets:
+                            _extra_private_secrets.append(_h)
+                    background = _strip_secret_sections(_p_bg) if _p_bg else ""
                 elif kind == "user_card":
                     from . import user_cards as _ucards
                     c = _ucards.get_user_card(user_id, cid_int) or {}
                     name = str(c.get("name") or "").strip()
                     role = str(c.get("identity") or "").strip()
                     # background 优先取 personality（详细设定），其次 appearance
-                    background = str(c.get("personality") or c.get("appearance") or "").strip()
-                    # 复刻 game.py:99-101 的逻辑：把详细字段全部存进 player
-                    for _f in ("appearance", "personality", "speech_style", "secrets", "aliases"):
-                        _v = str(c.get(_f) or "").strip()
-                        if _v:
-                            _extra_card_fields[_f] = _v
+                    _bg_src = str(c.get("personality") or c.get("appearance") or "").strip()
+                    background = _strip_secret_sections(_bg_src) if _bg_src else ""
+                    _absorb_card_secrets(c)
                 elif kind == "script_card":
                     from . import knowledge as _know
                     c = _know.get_character_card(user_id, script_id, cid_int) or {}
                     name = str(c.get("name") or "").strip()
                     role = str(c.get("identity") or "").strip()
-                    background = str(c.get("personality") or c.get("appearance") or "").strip()
-                    for _f in ("appearance", "personality", "speech_style", "secrets", "aliases"):
-                        _v = str(c.get(_f) or "").strip()
-                        if _v:
-                            _extra_card_fields[_f] = _v
+                    _bg_src = str(c.get("personality") or c.get("appearance") or "").strip()
+                    background = _strip_secret_sections(_bg_src) if _bg_src else ""
+                    _absorb_card_secrets(c)
                     # task 114: LLM 经常用 script_card_id 传了 user_card_id (混淆),
                     # 找不到时自动兜底到 user_card 表 — 因为 user_card 跨 script 共享,
                     # 给空白 player 强过让用户开局看到 "—"。
@@ -245,11 +285,9 @@ def _build_initial_snapshot(
                         if uc:
                             name = str(uc.get("name") or "").strip()
                             role = str(uc.get("identity") or "").strip()
-                            background = str(uc.get("personality") or uc.get("appearance") or "").strip()
-                            for _f in ("appearance", "personality", "speech_style", "secrets", "aliases"):
-                                _v = str(uc.get(_f) or "").strip()
-                                if _v:
-                                    _extra_card_fields[_f] = _v
+                            _bg_src = str(uc.get("personality") or uc.get("appearance") or "").strip()
+                            background = _strip_secret_sections(_bg_src) if _bg_src else ""
+                            _absorb_card_secrets(uc)
             except Exception:
                 pass
 
@@ -260,11 +298,26 @@ def _build_initial_snapshot(
             pass
 
     # task 137: 把详细角色卡字段写入 state.data["player"]（供 short_summary → GM 读取）
+    # task 138: 已经在 _absorb_card_secrets 里 strip 过秘密段,_extra_card_fields 里
+    # 只剩 NPC 可观察部分;secrets 字段不再被 _absorb 收集进 _extra_card_fields,
+    # 不会污染 player namespace。
     if _extra_card_fields:
         try:
             player = state.data.setdefault("player", {})
             for _f, _v in _extra_card_fields.items():
                 player[_f] = _v
+        except Exception:
+            pass
+
+    # task 138: 把从角色卡 secrets 字段 + ## 秘密 段抽出来的内容写到 player_private.secrets。
+    # player_private namespace 永远不进 GM system prompt(short_summary 显式排除)。
+    if _extra_private_secrets:
+        try:
+            pp = state.data.setdefault("player_private", {})
+            sec_list = pp.setdefault("secrets", [])
+            for _s in _extra_private_secrets:
+                if _s and _s not in sec_list:
+                    sec_list.append(_s)
         except Exception:
             pass
 
@@ -331,6 +384,12 @@ def _build_initial_snapshot(
     if story_intent:
         try:
             from datetime import datetime as _dt
+            # task 138: 主存到 player_private.story_intent(NPC / GM 看不到)。
+            # user_variables.story_intent 仍写一份保留旧代码 dual-read 兼容,但 short_summary
+            # 已经显式跳过该 key,不会注入到 GM prompt。后续把这条 dual-write 删掉前,
+            # 任何读 worldline.user_variables.story_intent 的地方应该改读 player_private.story_intent。
+            pp = state.data.setdefault("player_private", {})
+            pp["story_intent"] = str(story_intent)
             variables = state.data.setdefault("worldline", {}).setdefault("user_variables", {})
             variables["story_intent"] = {
                 "value": story_intent,
