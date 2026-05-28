@@ -884,14 +884,20 @@ async def persist_turn_phase(
     #   · LLM 触发 safety filter (Gemini 对暴力/儿童虐待场景敏感)
     #   · backend stream 提前 EOF / 超时
     #   · 工具循环耗尽但没产出 text block
+    # task 31/27: /set 命令已在 Phase 1 持久化 (directive_updates 非空),
+    # 此时 GM 返空是正常的 — 不应 error，直接 done。
     if not visible_response.strip():
-        print(f"[chat] WARN: GM 返回空响应, len(raw)={len(response)} "
-              f"user_msg='{message_for_model[:80]}', save_id={ctx.active_save_id}")
-        yield ("error", {
-            "message": "GM 没生成内容(可能触发了模型的安全过滤,或者上下文出错)。请尝试换个说法重新发送。",
-            "kind": "empty_response",
-        })
-        yield ("done", {"status": payload_fn(api_user), "interrupted": False, "empty": True})
+        if ctx.directive_updates:
+            # /set 已落盘，GM 空响应无需报错
+            yield ("done", {"status": payload_fn(api_user), "interrupted": False, "empty": True})
+        else:
+            print(f"[chat] WARN: GM 返回空响应, len(raw)={len(response)} "
+                  f"user_msg='{message_for_model[:80]}', save_id={ctx.active_save_id}")
+            yield ("error", {
+                "message": "GM 没生成内容(可能触发了模型的安全过滤,或者上下文出错)。请尝试换个说法重新发送。",
+                "kind": "empty_response",
+            })
+            yield ("done", {"status": payload_fn(api_user), "interrupted": False, "empty": True})
         return
     persist_chat_turn(
         api_user, state, message_for_model, visible_response,

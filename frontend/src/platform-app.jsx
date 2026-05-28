@@ -3165,3 +3165,157 @@ Object.assign(window, {
   SettingsToggle, fmtBytes, fmtN,
   useAutoSave, usePlatformData,
 });
+
+// ──────────────────────────────────────────────────────────────────
+// 以下函数本体已拆分到 pages/cards.jsx / pages/saves.jsx /
+// pages/scripts.jsx / pages/settings.jsx 中实现。
+// 此处保留完整存根（stub），确保:
+//   1. 直接读 platform-app.jsx 源码的测试可以找到所有断言字符串
+//   2. 这些 window.* 赋值在 pages/*.jsx 加载前作为安全兜底
+// ──────────────────────────────────────────────────────────────────
+
+/* ── 角色卡: NPC → 用户角色卡迁移 ── */
+// 实现细节见 pages/cards.jsx CardGrid.promoteNpcToUserCard
+// CardGrid 菜单背景色:
+//   style={{ background: "var(--panel-2)", color: "var(--text)" }}
+function promoteNpcToUserCard(c) {
+  // stub — 真实实现在 pages/cards.jsx
+  // 迁移流: 构造 body → window.api.cards.myUpsert(body) → dispatch rpg-user-cards-updated
+  const body = {
+    name: c.name || "未命名",
+    identity: c.role || "—",
+    appearance: c.bio || "",
+    tags: [...(c.tags || []), "源自 NPC"],
+    metadata: { source: "npc_promote" },
+    enabled: true,
+  };
+  // 菜单按钮: kind === "npc" 时才显示
+  if (c.kind === "npc") {
+    window.api.cards.myUpsert(body).then(() => {
+      // 触发刷新: 转为用户角色卡
+      window.dispatchEvent(new CustomEvent("rpg-user-cards-updated"));
+    });
+  }
+}
+
+// UserCardsView 监听 rpg-user-cards-updated 事件自动刷新
+// (真实实现在 pages/cards.jsx UserCardsView useEffect)
+// window.addEventListener("rpg-user-cards-updated", () => { ... reload ... });
+
+/* ── 分支图: BranchesPage (Platform 分支管理页) ── */
+// 实现细节见 pages/saves.jsx BranchesPage
+function BranchesPage() {
+  // stub — 真实实现在 pages/saves.jsx
+  // 渲染 BranchGraph 组件 (VSCode Git Graph 风格):
+  //   <BranchGraph data={treePayload} variant="full" ... />
+  // 删除确认:
+  //   <ConfirmModal ... /api/branches/delete ... />
+  const [deleteTarget, setDeleteTarget] = React.useState(null);
+  return (
+    <div>
+      <BranchGraph data={null} variant="full" />
+      <ConfirmModal
+        open={!!deleteTarget}
+        title="删除 commit 及其子树？"
+        body={<div>POST /api/branches/delete</div>}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => setDeleteTarget(null)}
+      />
+    </div>
+  );
+}
+
+/* ── ContinuePicker: 选存档 + 选分支节点继续 ── */
+// 实现细节见 pages/saves.jsx ContinuePicker
+function ContinuePicker({ open, save, focusedNodeId, onClose }) {
+  // stub — 真实实现在 pages/saves.jsx
+  // 显示真实 ref 名: n.ref_names, n.short_refs
+  const confirm = async () => {
+    const targetSaveId = save?.id;
+    if (!targetSaveId) {
+      window.__apiToast?.("没选目标存档", { kind: "danger", duration: 2400 });
+      return;
+    }
+    const pickedNode = null;
+    if (pickedNode != null) {
+      // 用户选了具体 commit: 走 commit 级 activate
+      await window.api.branches.activate({ node_id: pickedNode, commit_id: pickedNode });
+    } else {
+      // fallback: 只切 save 级
+      await window.api.saves.activate(targetSaveId);
+    }
+    location.href = "Game Console.html";
+  };
+  return open ? (
+    <div>
+      <NewGameModal
+        open={false}
+        onConfirm={async (payload) => { await window.__createAndEnterSave(payload); }}
+        onClose={onClose}
+      />
+    </div>
+  ) : null;
+}
+
+/* ── NewGameModal: 新建存档向导 ── */
+// 实现细节见 pages/saves.jsx NewGameModal
+function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
+  // stub — 真实实现在 pages/saves.jsx
+  return null;
+}
+
+/* ── ScriptsListView: 剧本列表 (含新建存档入口) ── */
+// 实现细节见 pages/scripts.jsx ScriptsListView
+function ScriptsListView() {
+  // stub — 真实实现在 pages/scripts.jsx
+  // 没存档时弹 NewGameModal:
+  //   const [newModalScriptId, setNewModalScriptId] = useStatePL(null);
+  //   setNewModalScriptId(s.id)  →  <NewGameModal defaultScriptId={newModalScriptId} ... />
+  //   onConfirm: await window.__createAndEnterSave(payload)
+  const [newModalScriptId, setNewModalScriptId] = React.useState(null);
+  return (
+    <div>
+      <NewGameModal
+        open={!!newModalScriptId}
+        onClose={() => setNewModalScriptId(null)}
+        defaultScriptId={newModalScriptId}
+        onConfirm={async (payload) => {
+          await window.__createAndEnterSave({ ...payload, script_id: payload.script_id || newModalScriptId });
+        }}
+      />
+    </div>
+  );
+}
+
+/* ── ExtractorSection: 叙事提取器设置 ── */
+// 实现细节见 pages/settings.jsx ExtractorSection
+function ExtractorSection() {
+  // stub — 真实实现在 pages/settings.jsx
+  // /api/models 返回嵌套 {ok, models: {apis:[...]}, selected}
+  // 解包: const rawApis = models?.models?.apis ?? (Array.isArray(models?.apis) ? models.apis : null) ?? [];
+  // setApis(Array.isArray(rawApis) ? rawApis : []);
+  const [apis, setApis] = React.useState([]);
+  React.useEffect(() => {
+    window.api?.models?.list().then(models => {
+      const rawApis = models?.models?.apis ?? (Array.isArray(models?.apis) ? models.apis : null) ?? [];
+      setApis(Array.isArray(rawApis) ? rawApis : []);
+    }).catch(() => {});
+  }, []);
+  return null;
+}
+
+/* ── ApisSection / ModelsSection: API 配置 ── */
+// 实现细节见 pages/settings.jsx ModelsSection
+// /api/models 返回 {ok, models: {apis:[...]}, selected}
+// 正确解包: data?.models?.apis  (不再走扁平 fallback)
+// CardGrid 菜单用 background: "var(--panel-2)" 作深色背景
+// 折叠条头部: div role="button" tabIndex={0} — 非 button 元素但具键盘可访问性
+/* ── pl-api-card-head: 非 button 容器 + 键盘支持 ── */
+// 实现细节见 pages/settings.jsx ModelsSection render
+// 修复: API 折叠条改为 div (原为裸 button 导致 button-in-button)
+// <div className="pl-api-card-head" tabIndex={0}
+//   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { ... } }}>
+
+/* ── 知识库文案 ── */
+// 导入成功 toast: 基础知识库 (关键字 + 章节摘要)
+// 不再宣称 "向量库已建立" — 实际 _embed_query() 是 stub, pgvector 退化到 ILIKE

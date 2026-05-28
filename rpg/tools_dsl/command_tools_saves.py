@@ -243,18 +243,21 @@ def _t_delete_save(user_id: int, args: dict) -> str:
         from platform_app.db import connect, init_db
         init_db()
         with connect() as db:
-            # task 120: 先查 save 详情, 包括 turn (有进度的不该让 LLM 轻易删)
+            # task 120: 先查 save 归属 (select 1 快速存在性校验)
             owned = db.execute(
-                "select id, title, "
-                "  (state_snapshot->>'turn')::int as turn, "
-                "  coalesce(jsonb_array_length(state_snapshot->'history'), 0) as msg_count "
-                "from game_saves where id = %s and user_id = %s",
+                "select 1 from game_saves where id = %s and user_id = %s",
                 (int(save_id), user_id),
             ).fetchone()
             if not owned:
                 return f"失败 (权限/不存在): save_id={save_id} 不属于当前用户或已不存在。**禁止编造 '已删除'**: 这个 ID 根本没操作过。"
-            turn = int(owned.get("turn") or 0)
-            title = str(owned.get("title") or "")
+            # task 120: 拿 turn 信息警告高价值存档
+            detail = db.execute(
+                "select title, coalesce((state_snapshot->>'turn')::int, 0) as turn "
+                "from game_saves where id = %s",
+                (int(save_id),),
+            ).fetchone() or {}
+            turn = int(detail.get("turn") or 0)
+            title = str(detail.get("title") or "")
             db.execute(
                 "delete from game_saves where id = %s and user_id = %s",
                 (int(save_id), user_id),

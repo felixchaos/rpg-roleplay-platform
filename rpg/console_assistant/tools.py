@@ -31,6 +31,8 @@ def list_assistant_tools() -> list[dict[str, Any]]:
         "list_scripts",
         # 设置
         "select_model", "set_preference", "list_available_models",
+        # 游戏状态查询 (task 48: console_assistant 读当前 save 状态)
+        "get_game_state",
         # 询问 + 长尾发现 + 导航
         "ask_user_choice",  # 等同 AskUserQuestion
         "ui_describe",      # 长尾工具发现
