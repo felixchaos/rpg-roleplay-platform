@@ -28,7 +28,7 @@ from state.path_ops import (
     _RULES_MANAGED_PATHS, _RULES_MANAGED_PREFIXES, _MODULE_MANAGED_PATHS,
 )
 
-BASE = Path(__file__).parent
+BASE = Path(__file__).parent.parent  # state/core.py 比原 state.py 深一层,SAVE_FILE 必须回到 rpg/saves/
 SAVE_FILE = BASE / "saves" / "game_state.json"
 CURRENT_SCHEMA_VERSION = 5
 
