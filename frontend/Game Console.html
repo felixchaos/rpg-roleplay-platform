@@ -647,10 +647,27 @@
               if (runRef.current.inactivityTimer) { clearTimeout(runRef.current.inactivityTimer); runRef.current.inactivityTimer = null; }  // task 132
               logEvent("done", { status: !!data && data.status ? "ok" : "noop", interrupted: data && data.interrupted, usage: data && data.usage });
               clearInterval(tickerId);
+              // task 50: stream 完成后剥掉 GM 输出末尾的 JSON ops 块(Claude Sonnet 不走
+              // native tool_use 时会把 ops 直接拼成 ```json [...] ``` 或裸 [{"op":...}],
+              // 这些块 backend Phase 5 已 apply 到 state,但 chat 里仍显示 raw text。
+              // 这里同步做一遍 strip 让用户看到的就是叙事正文。
+              const stripOps = (text) => {
+                if (!text) return text;
+                let out = text;
+                // 剥 ```json ... ``` 包裹的 op 数组/对象
+                out = out.replace(/```(?:json)?\s*(\[\s*\{[\s\S]*?"op"\s*:[\s\S]*?\}\s*\])\s*```/gi, "");
+                out = out.replace(/```(?:json)?\s*(\{\s*"op"\s*:[\s\S]*?\})\s*```/gi, "");
+                // 剥裸 JSON ops 块(开头是 `[` 后跟 `{"op":...}`)
+                out = out.replace(/\n*\[\s*\{\s*"op"\s*:[\s\S]*?\}\s*\](?=\s*$)/g, "");
+                // 行首裸 op 对象
+                out = out.replace(/\n*\{\s*"op"\s*:[\s\S]*?\}(?=\s*$)/gm, "");
+                return out.trimEnd();
+              };
               setHistory(h => {
                 const last = h[h.length - 1];
                 if (!last || last.role !== "assistant") return h;
-                return [...h.slice(0, -1), { ...last, streaming: false, streaming_done: true }];
+                const cleaned = stripOps(last.content || "");
+                return [...h.slice(0, -1), { ...last, content: cleaned, streaming: false, streaming_done: true }];
               });
               // task 92：本轮收尾——running 立刻置 false，但保留 completedAt 给 ChatArea 短暂显示
               // 「已完成 · X.Xs」(~1.8s 后自动收起)。publicStage 留着让"完成"那一格 UI 知道渲染哪种图标。
