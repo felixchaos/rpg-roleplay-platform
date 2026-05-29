@@ -96,28 +96,67 @@ fn is_user_set_jump_turn(state: &GameState) -> bool {
     source == "user_set" && turn == state_turn(state)
 }
 
-/// 把违规列表写入 state.audit_log。
+/// audit_log 保留上限,对齐 Python 端的 `audit[-200:]` 截断。
+const AUDIT_LOG_CAP: usize = 200;
+
+/// 把违规列表写入 `state.data.permissions.audit_log`。
 ///
-/// TODO[rpg-state]: 当 GameState 实装 audit_log 字段后接上 push。
-pub fn record_violations_to_audit(state: &mut GameState, violations: &[Violation]) -> AgentResult<()> {
+/// 对应 Python `rpg/agents/timeline_narrative_guard.py::record_violations_to_audit`。
+/// 字段:
+///   - kind: "time_jump_narrative_violation"
+///   - source: "timeline_narrative_guard"
+///   - turn: 当前回合
+///   - violations: [{ label, match }, ...](放到 AuditEntry.extra)
+///   - hint: 让前端展示的提示文本
+pub fn record_violations_to_audit(
+    state: &mut GameState,
+    violations: &[Violation],
+) -> AgentResult<()> {
     if violations.is_empty() {
         return Ok(());
     }
-    let entry = serde_json::json!({
-        "type": "narrative_guard_violation",
-        "turn": state_turn(state),
-        "violations": violations.iter().map(|v| {
+    use rpg_schemas::AuditEntry;
+    use serde_json::{Map, Value};
+
+    let turn = state_turn(state);
+    let violations_json: Vec<Value> = violations
+        .iter()
+        .map(|v| {
             serde_json::json!({
                 "label": v.pattern_label,
                 "match": v.matched_text,
-                "position": v.position,
             })
-        }).collect::<Vec<_>>(),
-    });
-    // 写到 permissions.audit_log
-    use rpg_schemas::AuditEntry;
-    let audit_entry: AuditEntry = serde_json::from_value(entry).unwrap_or_default();
-    state.data.permissions.audit_log.push(audit_entry);
+        })
+        .collect();
+    let hint = format!(
+        "GM 在 user_set 时间跳跃当回合写了{} 处过渡叙事禁词,可考虑 /retry 重新生成。",
+        violations.len()
+    );
+
+    let mut extra: Map<String, Value> = Map::new();
+    extra.insert("kind".into(), Value::String("time_jump_narrative_violation".into()));
+    extra.insert("violations".into(), Value::Array(violations_json));
+
+    let entry = AuditEntry {
+        ts: AuditEntry::now_ts(),
+        source: "timeline_narrative_guard".into(),
+        path: String::new(),
+        blocked: None,
+        hint: Some(hint),
+        op: None,
+        value: None,
+        mode: None,
+        turn,
+        extra,
+    };
+
+    let log = &mut state.data.permissions.audit_log;
+    log.push(entry);
+    // Python 用 `audit[-200:]` 截尾,Rust drain 前缀实现等价。
+    if log.len() > AUDIT_LOG_CAP {
+        let drop = log.len() - AUDIT_LOG_CAP;
+        log.drain(0..drop);
+    }
     Ok(())
 }
 
@@ -136,5 +175,101 @@ impl TimelineNarrativeGuard {
 impl Default for TimelineNarrativeGuard {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    fn fixture_state_with_user_jump(turn: u64) -> GameState {
+        let mut s = GameState::new("u_test");
+        // 把 GameState 内部 turn 推到目标值。GameState 的 turn 路径是
+        // typed: state.data.turn (u64-ish)。直接 set。
+        s.data.turn = turn;
+        s.data
+            .world
+            .timeline
+            .extra
+            .insert("user_set_jump_turn".into(), Value::from(turn));
+        s
+    }
+
+    #[test]
+    fn test_detect_no_violation_when_not_user_set_turn() {
+        let mut s = GameState::new("u");
+        s.data.turn = 5u64;
+        // 没有 user_set_jump_turn,也没有 last_transition
+        let viols = detect_time_jump_violations("穿越到过去", &s);
+        assert!(viols.is_empty());
+    }
+
+    #[test]
+    fn test_detect_violation_basic() {
+        let s = fixture_state_with_user_jump(7);
+        let text = "你忽然时空错乱,再次睁开眼睛";
+        let viols = detect_time_jump_violations(text, &s);
+        assert!(!viols.is_empty(), "should detect: {viols:?}");
+        let labels: Vec<&str> = viols.iter().map(|v| v.pattern_label.as_str()).collect();
+        assert!(labels.iter().any(|l| l.contains("时空错乱")));
+        assert!(labels.iter().any(|l| l.contains("再次睁开眼")));
+    }
+
+    #[test]
+    fn test_detect_empty_text() {
+        let s = fixture_state_with_user_jump(1);
+        assert!(detect_time_jump_violations("", &s).is_empty());
+    }
+
+    #[test]
+    fn test_record_violations_writes_audit_log() {
+        let mut s = fixture_state_with_user_jump(3);
+        let viols = vec![Violation {
+            pattern_label: "穿越叙事".into(),
+            matched_text: "穿越到".into(),
+            position: 0,
+        }];
+        assert!(s.data.permissions.audit_log.is_empty());
+        record_violations_to_audit(&mut s, &viols).unwrap();
+        assert_eq!(s.data.permissions.audit_log.len(), 1);
+        let entry = &s.data.permissions.audit_log[0];
+        assert_eq!(entry.source, "timeline_narrative_guard");
+        assert_eq!(entry.turn, 3);
+        assert!(entry.hint.is_some());
+        // kind / violations 走 extra (AuditEntry flatten)
+        let kind = entry.extra.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        assert_eq!(kind, "time_jump_narrative_violation");
+        let vs = entry.extra.get("violations").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(vs.len(), 1);
+    }
+
+    #[test]
+    fn test_record_violations_empty_is_noop() {
+        let mut s = fixture_state_with_user_jump(1);
+        record_violations_to_audit(&mut s, &[]).unwrap();
+        assert!(s.data.permissions.audit_log.is_empty());
+    }
+
+    #[test]
+    fn test_record_violations_caps_audit_log() {
+        let mut s = fixture_state_with_user_jump(1);
+        // 预填 AUDIT_LOG_CAP 条
+        for _ in 0..AUDIT_LOG_CAP {
+            s.data
+                .permissions
+                .audit_log
+                .push(rpg_schemas::AuditEntry::default());
+        }
+        let viols = vec![Violation {
+            pattern_label: "x".into(),
+            matched_text: "y".into(),
+            position: 0,
+        }];
+        record_violations_to_audit(&mut s, &viols).unwrap();
+        assert_eq!(s.data.permissions.audit_log.len(), AUDIT_LOG_CAP);
+        // 最新一条应是我们刚写的
+        let last = s.data.permissions.audit_log.last().unwrap();
+        assert_eq!(last.source, "timeline_narrative_guard");
     }
 }

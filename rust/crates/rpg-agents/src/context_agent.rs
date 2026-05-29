@@ -6,9 +6,15 @@
 //! candidate_actions / acceptance / confidence),让主 GM 在受控的候选范围
 //! 内决策。
 //!
-//! ⚠️ Python 端深度耦合 context_engine / context_providers / retrieval。
-//! Rust 端这些 crate 还都是 TODO,本骨架只完成「调 LLM 出 Demand JSON」
-//! 这一最小回路,Provider 调度留 TODO。
+//! 主回路:
+//!   1) `call_structured` 出 Demand JSON
+//!   2) `resolve_content_pack(state)` → manifest(选脚本/书)
+//!   3) `run_providers(state, manifest, demand, services)` → contributions
+//!   4) `build_bundle_text(contributions)` 拼成最终 GM prompt 段
+//!
+//! Provider 调度由 rpg-context 内置的 registry 路由(rules / agent_runtime /
+//! player_card / module / novel_retrieval 等),本 agent 只负责把 Demand 翻
+//! 给它们。
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -254,10 +260,126 @@ fn parse_demand(text: &str) -> Option<Demand> {
     serde_json::from_str::<Demand>(blk).ok()
 }
 
-// ── 辅助:把玩家输入识别为时间跳转指令(简化版,Python 端用 timeline_state.detect_time_directives) ──
+// ── 辅助:把玩家输入识别为时间跳转指令 ──
 //
-// TODO[rpg-context]: 调 rpg-context 的 timeline 实现。
-#[doc(hidden)]
-pub fn detect_time_directives(_text: &str) -> Vec<String> {
-    Vec::new()
+// 对应 Python `rpg/timeline_state.py::detect_time_directives`。返回归一化后
+// 的 target 字符串列表(去重,保留首次出现顺序)。
+//
+// Rust 的 `regex` crate 不支持 Python 的某些 lookaround/重复语法,但本组
+// 表达式是纯 forward,可以直接搬。Python 用 `re.findall` 取的是第一个分组
+// (因为模式里第一组是 target);Rust 用 `Captures::get(1)` 对齐。
+static TIME_DIRECTIVE_PATTERNS: once_cell::sync::Lazy<Vec<regex::Regex>> =
+    once_cell::sync::Lazy::new(|| {
+        let raw = [
+            r"(?:时间线|时间|剧情|镜头|场景)?\s*(?:跳到|跳转到|快进到|切到|来到|推进到|过渡到|直接到|直接进入|进入|等到|等至|直到|跳过到|略过到|越过到)\s*([^，。！？\n]{2,48})",
+            r"(?:/time|/timeline)\s+([^\n]{2,80})",
+            r"(?:跳到|跳转到|快进到|切到|来到|进入)?\s*(第\s*\d{1,5}\s*章[^，。！？\n]{0,24})",
+            r"(?:跳到|跳转到|快进到|切到|来到|进入)?\s*((?:公元)?\d{3,5}\s*年[^，。！？\n]{0,24})",
+        ];
+        raw.iter().filter_map(|p| regex::Regex::new(p).ok()).collect()
+    });
+
+pub fn detect_time_directives(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<String> = Vec::new();
+    for re in TIME_DIRECTIVE_PATTERNS.iter() {
+        for caps in re.captures_iter(text) {
+            let Some(m) = caps.get(1) else { continue };
+            let target = clean_time_value(m.as_str());
+            if looks_like_time_value(&target) && !out.iter().any(|t| t == &target) {
+                out.push(target);
+            }
+        }
+    }
+    out
+}
+
+/// 对应 Python `timeline_state.clean_time_value`。
+fn clean_time_value(text: &str) -> String {
+    static WS: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| regex::Regex::new(r"\s+").unwrap());
+    static LEADING: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| regex::Regex::new(r"^(?:到|至|在)\s*").unwrap());
+    static TRAILING: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"(?:后?再)?(?:行动|出发|继续|调查|处理|会合|潜入|开场|开始)$").unwrap()
+    });
+    let trim_set: &[char] = &[' ', '\n', '\t', ':', '：', '-', '—'];
+    let s = text.trim_matches(trim_set);
+    let s = WS.replace_all(s, " ");
+    let s = LEADING.replace(&s, "").into_owned();
+    let s = TRAILING.replace(&s, "").into_owned();
+    let s = WS.replace_all(&s, " ").into_owned();
+    s.trim_matches(trim_set).to_string()
+}
+
+/// 对应 Python `timeline_state.looks_like_time_value`。
+fn looks_like_time_value(value: &str) -> bool {
+    let len = value.chars().count();
+    if !(2..=80).contains(&len) {
+        return false;
+    }
+    static RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"日|天|夜|晨|早|午|晚|周|月|年|后|前|翌|次|清晨|傍晚|深夜|黎明|柏林|图卢兹|基地|第\s*\d{1,5}\s*章").unwrap()
+    });
+    RE.is_match(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_time_directives_empty() {
+        assert!(detect_time_directives("").is_empty());
+    }
+
+    #[test]
+    fn test_detect_time_directives_simple_jump() {
+        let out = detect_time_directives("时间线跳到第二天上午十点");
+        assert!(!out.is_empty(), "should detect: {out:?}");
+        assert!(
+            out.iter().any(|t| t.contains("第二天")),
+            "should contain 第二天: {out:?}"
+        );
+    }
+
+    #[test]
+    fn test_detect_time_directives_chapter() {
+        let out = detect_time_directives("进入第10章");
+        assert!(
+            out.iter().any(|t| t.contains("第") && t.contains("章")),
+            "should match chapter: {out:?}"
+        );
+    }
+
+    #[test]
+    fn test_detect_time_directives_year() {
+        let out = detect_time_directives("快进到公元2049年");
+        assert!(
+            out.iter().any(|t| t.contains("2049年")),
+            "should match year: {out:?}"
+        );
+    }
+
+    #[test]
+    fn test_detect_time_directives_no_time_word() {
+        // 不含时间相关词,looks_like_time_value 应过滤掉
+        let out = detect_time_directives("跳到xxx");
+        assert!(out.is_empty(), "should reject non-time-looking: {out:?}");
+    }
+
+    #[test]
+    fn test_clean_time_value_strips_trailing_verbs() {
+        assert_eq!(clean_time_value("第二天清晨行动"), "第二天清晨");
+        assert_eq!(clean_time_value(" 到 明日早晨 "), "明日早晨");
+    }
+
+    #[test]
+    fn test_detect_time_directives_dedupes() {
+        let out = detect_time_directives("跳到明天早晨,然后进入明天早晨调查");
+        let count = out.iter().filter(|t| t.contains("明天早晨")).count();
+        assert_eq!(count, 1, "dup target should be deduped: {out:?}");
+    }
 }

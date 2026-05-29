@@ -27,6 +27,7 @@ use crate::common::{
 use rpg_state::{apply_op, Op};
 use serde_json::json;
 use crate::context_agent::{ContextAgent, ContextAgentInput, Demand};
+use rpg_context::ContextContribution;
 use crate::extractor::{ExtractorAgent, ExtractorInput, ExtractorOutput};
 use crate::timeline_narrative_guard::{
     detect_time_jump_violations, record_violations_to_audit, Violation,
@@ -276,11 +277,11 @@ impl GameMaster {
     // ── 高层 step:一站式流式回路 ───────────────────────────
 
     /// 一次完整的 GM step:
-    ///   1. context_agent 出 Demand
-    ///   2. respond_stream 出叙事
-    ///   3. timeline_narrative_guard 扫禁词
+    ///   1. context_agent 出 Demand + 跑 providers → context_bundle/retrieval
+    ///   2. respond_stream 出叙事(吃 retrieval)
+    ///   3. timeline_narrative_guard 扫禁词 → 写 permissions.audit_log
     ///   4. extractor 把叙事 → ops
-    ///   5. apply ops 到 state(留 TODO,等 rpg-state 完成)
+    ///   5. apply_op 逐个落到 GameState(source="gm", force=true)
     #[tracing::instrument(skip(self, state), fields(action = "step"))]
     pub async fn step(
         self: Arc<Self>,
@@ -292,38 +293,33 @@ impl GameMaster {
         let s = self.clone();
         let user_input = user_input.clone();
         let stream = async_stream_iter(move |tx| async move {
-            // 1. Demand
+            // 1. Demand + provider 调度 → context_bundle / retrieval 文本
             let snapshot = state.read().await.clone();
             let ctx_in = ContextAgentInput {
                 user_input: user_input.clone(),
                 directives: Vec::new(),
             };
-            match s.context_agent.run(ctx_in, &snapshot).await {
+            let retrieved: String = match s.context_agent.run(ctx_in, &snapshot).await {
                 Ok(out) => {
                     tx.send(GmEvent::Demand { demand: out.demand.clone() }).ok();
+                    // 优先用 novel_retrieval provider 的 layer.content (对齐 Python
+                    // _pick_retrieval_text); 回退用整段 context_bundle。
+                    pick_novel_retrieval(&out.contributions)
+                        .unwrap_or(out.context_bundle)
                 }
                 Err(e) => {
                     tracing::warn!("[gm.step] context_agent failed: {e}");
+                    String::new()
                 }
-            }
+            };
 
             // 2. respond_stream 累积叙事
             // 重新读 state(curator 可能因为 clarifying_question 直接中止;
             // 本骨架不分支,直接进 GM)。
             let snapshot = state.read().await.clone();
-            // TODO[Sonnet]: 从 ContextBundle.retrieval_layer_text 拿 retrieval 文本。
-            // 当前 stub 导致 GM prompt 里 retrieval 字段恒为空字符串,LLM 输出质量受影响。
-            static WARN_ONCE_RETRIEVAL: std::sync::Once = std::sync::Once::new();
-            WARN_ONCE_RETRIEVAL.call_once(|| {
-                tracing::warn!(
-                    target: "rpg_agents::stubs",
-                    "gm.rs prompt 用 retrieval=\"\" stub,本进程不再重复警告"
-                );
-            });
-            let retrieved = "";
             let mut narrative = String::new();
             match s
-                .respond_stream(&user_input, retrieved, &snapshot)
+                .respond_stream(&user_input, &retrieved, &snapshot)
                 .await
             {
                 Ok(mut stream) => {
@@ -528,6 +524,30 @@ impl GameMaster {
     }
 }
 
+/// 从 contributions 抽 novel_retrieval provider 的 retrieval 文本。
+/// 对应 Python `rpg/agents/context_agent.py::_pick_retrieval_text`。
+/// 模组场景没有 novel_retrieval → 返回 None,调用方回退到 context_bundle。
+fn pick_novel_retrieval(contributions: &[ContextContribution]) -> Option<String> {
+    for c in contributions {
+        if c.provider_id != "novel_retrieval" || !c.applied {
+            continue;
+        }
+        for layer in &c.layers {
+            if layer.id == "novel_retrieval" && !layer.content.is_empty() {
+                return Some(layer.content.clone());
+            }
+        }
+        if let Some(item) = c.retrieval_items.first() {
+            if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                if !text.is_empty() {
+                    return Some(text.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// 拆 "server__tool" 或 "server.tool" → (server, tool)。
 /// 无分隔符则返回 ("", full)。
 fn parse_namespaced_tool(full: &str) -> (String, String) {
@@ -552,4 +572,71 @@ where
         f(tx).await;
     });
     futures::stream::poll_fn(move |cx| rx.poll_recv(cx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rpg_context::Layer;
+
+    fn novel_contribution_with_layer() -> ContextContribution {
+        let mut c = ContextContribution::new("novel_retrieval");
+        c.layers.push(
+            Layer::new("novel_retrieval", "原著召回", "原文片段 A → B → C")
+                .with_priority(80),
+        );
+        c
+    }
+
+    #[test]
+    fn test_pick_novel_retrieval_from_layer() {
+        let contribs = vec![novel_contribution_with_layer()];
+        let out = pick_novel_retrieval(&contribs).unwrap();
+        assert!(out.contains("原文片段"));
+    }
+
+    #[test]
+    fn test_pick_novel_retrieval_skipped_provider() {
+        let mut c = novel_contribution_with_layer();
+        c.applied = false;
+        assert!(pick_novel_retrieval(&[c]).is_none());
+    }
+
+    #[test]
+    fn test_pick_novel_retrieval_no_provider() {
+        let other = ContextContribution::new("rules");
+        assert!(pick_novel_retrieval(&[other]).is_none());
+    }
+
+    #[test]
+    fn test_pick_novel_retrieval_fallback_to_retrieval_items() {
+        let mut c = ContextContribution::new("novel_retrieval");
+        c.retrieval_items.push(serde_json::json!({"text": "片段 from items"}));
+        let out = pick_novel_retrieval(&[c]).unwrap();
+        assert_eq!(out, "片段 from items");
+    }
+
+    #[test]
+    fn test_parse_namespaced_tool_double_underscore() {
+        assert_eq!(
+            parse_namespaced_tool("mcp_fs__read_file"),
+            ("mcp_fs".to_string(), "read_file".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_namespaced_tool_dot() {
+        assert_eq!(
+            parse_namespaced_tool("server.tool"),
+            ("server".to_string(), "tool".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_namespaced_tool_bare() {
+        assert_eq!(
+            parse_namespaced_tool("bare_tool"),
+            (String::new(), "bare_tool".to_string())
+        );
+    }
 }
