@@ -88,7 +88,7 @@ rpg-tools-dsl = { path = "crates/rpg-tools-dsl" }
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 strip = true
 
