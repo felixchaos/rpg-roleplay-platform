@@ -217,7 +217,7 @@ pub async fn load_chapter_facts(
     // 使用运行时 query，不依赖 DATABASE_URL 或 sqlx-prepare 缓存
     let rows = sqlx::query(
         r#"
-        SELECT chapter, title, story_time_label, summary, events_json
+        SELECT chapter, title, story_time_label, summary, events::text AS events_json
         FROM chapter_facts
         WHERE script_id = $1
           AND chapter BETWEEN $2 AND $3

@@ -33,9 +33,9 @@ async fn api_saves_timeline(
     Path(save_id): Path<i64>,
 ) -> Result<Response, ResponseError> {
     let user = require_user(&s, &headers).await?;
-    // ownership 校验:save 必须 belong to current user。
-    let owns: Option<(i64,)> = sqlx::query_as(
-        "SELECT user_id FROM platform_saves WHERE id = $1 AND user_id = $2",
+    // ownership 校验:save 必须 belong to current user,同时取 script_id。
+    let save_row: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT user_id, script_id FROM game_saves WHERE id = $1 AND user_id = $2",
     )
     .bind(save_id)
     .bind(user.id)
@@ -43,15 +43,18 @@ async fn api_saves_timeline(
     .await
     .ok()
     .flatten();
-    if owns.is_none() {
-        return Err(ResponseError::forbidden("save 不属于当前用户"));
-    }
+    let script_id = match save_row {
+        Some((_, sid)) => sid,
+        None => return Err(ResponseError::forbidden("save 不属于当前用户")),
+    };
     // 简单读两个表(若不存在/未迁移,直接当空)。
+    // script_timeline_anchors 按 script_id 索引,列名 story_phase / story_time_label。
     let script_anchors = sqlx::query(
-        "SELECT phase, label, anchor_turn FROM script_timeline_anchors \
-         WHERE save_id = $1 ORDER BY phase",
+        "SELECT story_phase, story_time_label, chapter_min, chapter_max \
+         FROM script_timeline_anchors \
+         WHERE script_id = $1 ORDER BY chapter_min",
     )
-    .bind(save_id)
+    .bind(script_id)
     .fetch_all(&s.db)
     .await
     .ok()
@@ -59,14 +62,16 @@ async fn api_saves_timeline(
     .into_iter()
     .map(|r| {
         json!({
-            "phase": r.try_get::<String, _>("phase").unwrap_or_default(),
-            "label": r.try_get::<String, _>("label").unwrap_or_default(),
-            "anchor_turn": r.try_get::<i64, _>("anchor_turn").unwrap_or(0),
+            "phase": r.try_get::<String, _>("story_phase").unwrap_or_default(),
+            "label": r.try_get::<String, _>("story_time_label").unwrap_or_default(),
+            "chapter_min": r.try_get::<i32, _>("chapter_min").unwrap_or(0),
+            "chapter_max": r.try_get::<i32, _>("chapter_max").unwrap_or(0),
         })
     })
     .collect::<Vec<_>>();
+    // save_phase_digests 列名 phase_label / turn_start。
     let save_phases = sqlx::query(
-        "SELECT phase_index, label, turn FROM save_phase_digests \
+        "SELECT phase_index, phase_label, turn_start FROM save_phase_digests \
          WHERE save_id = $1 ORDER BY phase_index",
     )
     .bind(save_id)
@@ -78,8 +83,8 @@ async fn api_saves_timeline(
     .map(|r| {
         json!({
             "phase_index": r.try_get::<i64, _>("phase_index").unwrap_or(0),
-            "label": r.try_get::<String, _>("label").unwrap_or_default(),
-            "turn": r.try_get::<i64, _>("turn").unwrap_or(0),
+            "label": r.try_get::<String, _>("phase_label").unwrap_or_default(),
+            "turn": r.try_get::<i32, _>("turn_start").unwrap_or(0),
         })
     })
     .collect::<Vec<_>>();

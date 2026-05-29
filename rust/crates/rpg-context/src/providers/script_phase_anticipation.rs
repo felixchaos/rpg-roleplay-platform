@@ -117,7 +117,8 @@ async fn load_script_lookahead(
         None => return Ok(Vec::new()),
     };
 
-    let mut chapter_threshold: i64 = 0;
+    // chapter_min/chapter_max 在 phase_digests 表中是 integer(i32)。
+    let mut chapter_threshold: i32 = 0;
     if !current_phase.is_empty() {
         let row = sqlx::query(
             "select chapter_max from phase_digests \
@@ -128,7 +129,7 @@ async fn load_script_lookahead(
         .fetch_optional(pool)
         .await?;
         if let Some(row) = row {
-            chapter_threshold = row.try_get::<i64, _>("chapter_max").unwrap_or(0);
+            chapter_threshold = row.try_get::<i32, _>("chapter_max").unwrap_or(0);
         }
     }
 
@@ -151,8 +152,8 @@ async fn load_script_lookahead(
         .into_iter()
         .map(|row| {
             let phase_label: Option<String> = row.try_get("phase_label").ok();
-            let chapter_min: i64 = row.try_get("chapter_min").unwrap_or(0);
-            let chapter_max: i64 = row.try_get("chapter_max").unwrap_or(0);
+            let chapter_min: i32 = row.try_get("chapter_min").unwrap_or(0);
+            let chapter_max: i32 = row.try_get("chapter_max").unwrap_or(0);
             let summary: Option<String> = row.try_get("summary").ok();
             let key_events: Value = row.try_get("key_events").unwrap_or(Value::Null);
             let key_locations: Value = row.try_get("key_locations").unwrap_or(Value::Null);

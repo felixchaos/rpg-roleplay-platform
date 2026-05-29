@@ -464,12 +464,11 @@ async fn consult_worldbook_entries(
 fn worldbook_entry_to_value(entry: rpg_db::repos::worldbook_entries::WorldbookEntry) -> Value {
     json!({
         "id": entry.id,
-        "title": entry.key,
+        "title": entry.title,
         "content": entry.content,
-        "comment": entry.comment,
-        "aliases": entry.aliases,
+        "keys": entry.keys,
         "priority": entry.priority,
-        "tags": entry.tags,
+        "enabled": entry.enabled,
     })
 }
 
@@ -480,9 +479,9 @@ async fn load_timeline_anchor(pool: &PgPool, script_id: i64, phase_key: &str) ->
         return None;
     }
     let row = sqlx::query_as::<_, (String, Option<i32>, Option<i32>, Option<String>, Option<Value>)>(
-        r#"SELECT phase, chapter_min, chapter_max, time_label, metadata
+        r#"SELECT story_phase, chapter_min, chapter_max, story_time_label, metadata
            FROM script_timeline_anchors
-           WHERE script_id = $1 AND phase = $2
+           WHERE script_id = $1 AND story_phase = $2
            LIMIT 1"#,
     )
     .bind(script_id)
@@ -496,8 +495,8 @@ async fn load_timeline_anchor(pool: &PgPool, script_id: i64, phase_key: &str) ->
         // i32 写进 timeline_anchor,允许为 null(对应 Python 的 None)。
         // 老逻辑用 `.to_string()` 把 i32 编成 JSON 字符串,导致前端 /消费方拿到
         // `"10"` 而非 `10`,与 Python 类型签名漂移。
-        let cmin_v = cmin.map(|x| Value::from(x)).unwrap_or(Value::Null);
-        let cmax_v = cmax.map(|x| Value::from(x)).unwrap_or(Value::Null);
+        let cmin_v = cmin.map(Value::from).unwrap_or(Value::Null);
+        let cmax_v = cmax.map(Value::from).unwrap_or(Value::Null);
         json!({
             "phase": phase,
             "chapter_min": cmin_v,

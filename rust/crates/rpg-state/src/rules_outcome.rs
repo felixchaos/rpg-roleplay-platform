@@ -83,7 +83,6 @@ pub fn apply_rules_outcome_data(
                 let next = (cur - delta).max(0);
                 typed_path::set_path(data, &cleaned, json!(next))
                     .map(|_| format!("{path}={next}"))
-                    .map_err(Into::into)
             }
             "add" => {
                 let cur = typed_path::get_path(data, &cleaned)
@@ -93,14 +92,11 @@ pub fn apply_rules_outcome_data(
                 let next = cur + delta;
                 typed_path::set_path(data, &cleaned, json!(next))
                     .map(|_| format!("{path}={next}"))
-                    .map_err(Into::into)
             }
             "append" => typed_path::append_path(data, &cleaned, value.clone())
-                .map(|_| format!("append {path}"))
-                .map_err(Into::into),
+                .map(|_| format!("append {path}")),
             _ => typed_path::set_path(data, &cleaned, value.clone())
-                .map(|_| format!("set {path}={value}"))
-                .map_err(Into::into),
+                .map(|_| format!("set {path}={value}")),
         };
         match result {
             Ok(msg) => applied.push(msg),
