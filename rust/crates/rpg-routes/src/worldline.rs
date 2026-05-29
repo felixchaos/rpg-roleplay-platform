@@ -43,6 +43,7 @@ pub struct WorldlineVariableRemoveRequest {
 /// 写到 state.worldline.user_variables.{key} = value。
 /// Python 端还会同步写 platform_knowledge.worldline_variable 表(用于 DB
 /// 持久化),Rust 翻译期暂略。
+#[tracing::instrument(skip_all)]
 async fn api_worldline_variable(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -68,6 +69,7 @@ async fn api_worldline_variable(
 }
 
 /// POST /api/worldline/variable/remove — 删除世界线变量
+#[tracing::instrument(skip_all)]
 async fn api_worldline_variable_remove(
     State(s): State<AppState>,
     headers: HeaderMap,

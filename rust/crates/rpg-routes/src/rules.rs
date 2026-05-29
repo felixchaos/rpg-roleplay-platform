@@ -88,11 +88,13 @@ pub struct RulesSuggestRequest {
 
 // ── handlers ──────────────────────────────────────────────────────────────────
 
+#[tracing::instrument(skip_all)]
 async fn api_rules_modules(State(_s): State<AppState>) -> impl IntoResponse {
     // TODO: list_modules() — rpg_rules 没有 Python module catalog 等价物;翻译期返回空列表。
     Json(json!({"ok": true, "modules": []}))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_rules_module_start(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -112,6 +114,7 @@ async fn api_rules_module_start(
     Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_rules_module_launch(
     State(_s): State<AppState>,
     Json(_body): Json<RulesModuleLaunchRequest>,
@@ -120,6 +123,7 @@ async fn api_rules_module_launch(
     Json(json!({"ok": true, "save_id": 0}))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_rules_scene(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -151,6 +155,7 @@ async fn api_rules_scene(
     .into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_rules_move(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -171,6 +176,7 @@ async fn api_rules_move(
     Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_rules_action(
     State(_s): State<AppState>,
     Json(body): Json<RulesActionRequest>,
@@ -179,6 +185,7 @@ async fn api_rules_action(
     Json(json!({"ok": true, "kind": body.kind.unwrap_or_default()}))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_rules_encounter_start(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -199,6 +206,7 @@ async fn api_rules_encounter_start(
     Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_rules_encounter_next(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -218,6 +226,7 @@ async fn api_rules_encounter_next(
     Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_rules_encounter_enemy(
     State(_s): State<AppState>,
     Json(_body): Json<RulesEncounterEnemyRequest>,
@@ -226,6 +235,7 @@ async fn api_rules_encounter_enemy(
     Json(json!({"ok": true, "result": {"hit": false, "damage": 0}}))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_rules_suggest(
     State(s): State<AppState>,
     headers: HeaderMap,

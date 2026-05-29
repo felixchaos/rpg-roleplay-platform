@@ -36,3 +36,4 @@ dashmap.workspace = true
 parking_lot.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+base64.workspace = true

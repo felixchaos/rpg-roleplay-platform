@@ -66,6 +66,7 @@ fn allowed_bucket(b: &str) -> &'static str {
 }
 
 /// POST /api/memory/mode
+#[tracing::instrument(skip(s, headers, body), fields(user_id))]
 async fn api_memory_mode(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -73,6 +74,7 @@ async fn api_memory_mode(
 ) -> Result<Response, ResponseError> {
     let mode = allowed_mode(body.mode.as_deref().unwrap_or("normal"));
     let user_id = user_id_or_anon(&s, &headers).await;
+    tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
     let snapshot = {
         let mut st = shared.write();
@@ -83,17 +85,20 @@ async fn api_memory_mode(
 }
 
 /// POST /api/memory/add
+#[tracing::instrument(skip(s, headers, body), fields(user_id, bucket))]
 async fn api_memory_add(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<MemoryAddRequest>,
 ) -> Result<Response, ResponseError> {
     let bucket = allowed_bucket(body.bucket.as_deref().unwrap_or("notes"));
+    tracing::Span::current().record("bucket", tracing::field::display(bucket));
     let text = body.text.unwrap_or_default();
     if text.trim().is_empty() {
         return Err(ResponseError::bad_request("text 不能为空"));
     }
     let user_id = user_id_or_anon(&s, &headers).await;
+    tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
     let snapshot = {
         let mut st = shared.write();
@@ -104,14 +109,18 @@ async fn api_memory_add(
 }
 
 /// POST /api/memory/remove
+#[tracing::instrument(skip(s, headers, body), fields(user_id, bucket, idx))]
 async fn api_memory_remove(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<MemoryRemoveRequest>,
 ) -> Result<Response, ResponseError> {
     let bucket = allowed_bucket(body.bucket.as_deref().unwrap_or("notes"));
+    tracing::Span::current().record("bucket", tracing::field::display(bucket));
     let idx = body.index.unwrap_or(-1);
+    tracing::Span::current().record("idx", idx);
     let user_id = user_id_or_anon(&s, &headers).await;
+    tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
     let snapshot = {
         let mut st = shared.write();

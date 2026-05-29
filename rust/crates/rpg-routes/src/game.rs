@@ -25,7 +25,7 @@ use serde_json::{json, Value};
 
 use rpg_state::GameState;
 
-use crate::{user_id_or_anon, AppState, ResponseError};
+use crate::{hello_payload, named_sse_event, user_id_or_anon, AppState, ResponseError};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -72,6 +72,7 @@ pub struct ChatEstimateRequest {
 /// 把现有 state 重置成空白存档(可选地写 player 基础字段)。
 /// 注:剧本角色卡 / persona / user_card 查询走 rpg-platform,本翻译期暂不接,
 /// 优先支持 body.name/role/background 这条主路径。
+#[tracing::instrument(skip(s, headers, body), fields(user_id))]
 async fn api_new(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -79,6 +80,7 @@ async fn api_new(
 ) -> Result<Response, ResponseError> {
     let body = body.map(|Json(b)| b).unwrap_or_default();
     let user_id = user_id_or_anon(&s, &headers).await;
+    tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
     {
         let mut st = shared.write();
@@ -122,26 +124,27 @@ async fn api_new(
 /// POST /api/opening — SSE 开场白流
 ///
 /// 本翻译期未接 GameMaster.generate_opening 全链路(rpg-agents 需要 SharedLlm 注入),
-/// 留下一个 stub SSE,发 stage + done,前端不会卡住。
+/// 留下一个 stub SSE,发 hello + state_change + chunk + done,前端不会卡住。
+#[tracing::instrument(skip(s, headers), fields(user_id))]
 async fn api_opening(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ResponseError> {
     let user_id = user_id_or_anon(&s, &headers).await;
+    tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
     let snapshot = shared.read().clone();
     let events = vec![
-        Ok::<_, Infallible>(
-            Event::default()
-                .event("stage")
-                .data(json!({"phase":"generating","label":"GM 构思开场中…"}).to_string()),
-        ),
-        Ok(Event::default()
-            .event("token")
-            .data(json!({"text":""}).to_string())),
-        Ok(Event::default()
-            .event("done")
-            .data(json!({"status": {"state": snapshot.data}, "interrupted": false}).to_string())),
+        Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id))),
+        Ok(named_sse_event(
+            "state_change",
+            json!({"phase":"generating","label":"GM 构思开场中…"}),
+        )),
+        Ok(named_sse_event("chunk", json!({"text":""}))),
+        Ok(named_sse_event(
+            "done",
+            json!({"status": {"state": snapshot.data}, "interrupted": false}),
+        )),
     ];
     let stream = stream::iter(events);
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
@@ -151,12 +154,14 @@ async fn api_opening(
 ///
 /// 本翻译期没接 platform_app.usage,给一个极轻量估算:
 /// 输入 = system(1200) + history_char/3 + retrieval(800 if include) + message_char/3。
+#[tracing::instrument(skip(s, headers, body), fields(user_id))]
 async fn api_chat_estimate(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ChatEstimateRequest>,
 ) -> Result<Response, ResponseError> {
     let user_id = user_id_or_anon(&s, &headers).await;
+    tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
     let snapshot = shared.read().clone();
     let message = body.message.unwrap_or_default();
@@ -207,11 +212,13 @@ async fn api_chat_estimate(
 ///
 /// 直接读 state.memory.last_context,layer 分类映射放到 inline 表;
 /// 没有 last_context 时返回 0 token + 单一 free 项。
+#[tracing::instrument(skip(s, headers), fields(user_id))]
 async fn api_context_breakdown(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ResponseError> {
     let user_id = user_id_or_anon(&s, &headers).await;
+    tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
     let snapshot = shared.read().clone();
     let last_ctx = snapshot
@@ -298,6 +305,7 @@ async fn api_context_breakdown(
 /// Python 端是 5 阶段 chat_pipeline。Rust 翻译期 GameMaster 链路 (rpg-agents + rpg-llm
 /// router 注入) 还在搭,本接口只做空消息校验 + 把 user input 写进 history + echo 一个空 token,
 /// 等 chat_pipeline crate 落地后再 wire 真实流式响应。
+#[tracing::instrument(skip(s, headers, body), fields(user_id))]
 async fn api_chat(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -305,6 +313,7 @@ async fn api_chat(
 ) -> Response {
     let body = body.map(|Json(b)| b).unwrap_or_default();
     let user_id = user_id_or_anon(&s, &headers).await;
+    tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let message = body
         .message
         .or(body.text)
@@ -312,11 +321,14 @@ async fn api_chat(
         .trim()
         .to_string();
     if message.is_empty() {
-        let evt = Event::default()
-            .event("error")
-            .data(json!({"message":"空消息"}).to_string());
-        let stream = stream::iter(vec![Ok::<_, Infallible>(evt)]);
-        return Sse::new(stream).into_response();
+        let events = vec![
+            Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id))),
+            Ok(named_sse_event(
+                "error",
+                json!({"detail":"空消息","code":"bad_request"}),
+            )),
+        ];
+        return Sse::new(stream::iter(events)).into_response();
     }
     // 清零该 user 的 stop notify(重新建一个,旧的 awaiter 自动 drop)。
     s.stop_events.remove(&user_id);
@@ -333,16 +345,15 @@ async fn api_chat(
     }
     let snapshot_after = shared.read().clone();
     let events = vec![
-        Ok::<_, Infallible>(
-            Event::default()
-                .event("stage")
-                .data(json!({"phase":"generating","label":"GM 思考中…"}).to_string()),
-        ),
-        Ok(Event::default()
-            .event("token")
-            .data(json!({"text":""}).to_string())),
-        Ok(Event::default().event("done").data(
-            json!({"status": {"state": snapshot_after.data}, "interrupted": false}).to_string(),
+        Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id))),
+        Ok(named_sse_event(
+            "state_change",
+            json!({"phase":"generating","label":"GM 思考中…"}),
+        )),
+        Ok(named_sse_event("chunk", json!({"text":""}))),
+        Ok(named_sse_event(
+            "done",
+            json!({"status": {"state": snapshot_after.data}, "interrupted": false}),
         )),
     ];
     Sse::new(stream::iter(events))
@@ -353,11 +364,13 @@ async fn api_chat(
 /// POST /api/stop — 打断当前 chat
 ///
 /// 拿到当前 user 的 Notify,notify_waiters。chat 流里 awaiter 收到后能短路。
+#[tracing::instrument(skip(s, headers), fields(user_id))]
 async fn api_stop(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ResponseError> {
     let user_id = user_id_or_anon(&s, &headers).await;
+    tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     if let Some(n) = s.stop_events.get(&user_id) {
         n.notify_waiters();
     }
@@ -373,11 +386,13 @@ async fn api_stop(
 ///
 /// Python 端调 dispatcher save_runtime → rpg-platform runtime backend。
 /// 本翻译期暂用 state.touch() + 返回最新 snapshot;真实持久化等 dispatcher 落地后接。
+#[tracing::instrument(skip(s, headers), fields(user_id))]
 async fn api_save(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ResponseError> {
     let user_id = user_id_or_anon(&s, &headers).await;
+    tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
     let snapshot = {
         let mut st = shared.write();

@@ -26,6 +26,7 @@ pub fn router() -> Router<AppState> {
 /// Python 端会校验 ownership(save belongs to user)+ 拉 script_timeline_anchors
 /// + save_phase_digests。Rust 翻译期只做 1 次合理 DB 查询(ownership +
 /// 两个表 join,失败 → 空数组),不写完整数据迁移。
+#[tracing::instrument(skip_all)]
 async fn api_saves_timeline(
     State(s): State<AppState>,
     headers: HeaderMap,

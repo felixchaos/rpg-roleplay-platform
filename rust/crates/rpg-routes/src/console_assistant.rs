@@ -25,7 +25,7 @@ use http::HeaderMap;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{require_user, AppState, ConsoleMessage, ResponseError};
+use crate::{hello_payload, named_sse_event, require_user, AppState, ConsoleMessage, ResponseError};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -84,11 +84,13 @@ async fn api_console_assistant_ping() -> impl IntoResponse {
 }
 
 /// GET /api/console_assistant/conversations
+#[tracing::instrument(skip(s, headers), fields(user_id))]
 async fn api_console_assistant_conversations(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ResponseError> {
     let user = require_user(&s, &headers).await?;
+    tracing::Span::current().record("user_id", tracing::field::display(&user.id));
     let prefix = format!("{}:", user.id);
     let items: Vec<Value> = s
         .console_conversations
@@ -107,11 +109,13 @@ async fn api_console_assistant_conversations(
 }
 
 /// POST /api/console_assistant/new_conversation
+#[tracing::instrument(skip(s, headers), fields(user_id))]
 async fn api_console_assistant_new_conversation(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ResponseError> {
     let user = require_user(&s, &headers).await?;
+    tracing::Span::current().record("user_id", tracing::field::display(&user.id));
     let conv_id = format!("conv-{}", uuid::Uuid::new_v4());
     s.console_conversations
         .insert(conv_key(user.id, &conv_id), Vec::new());
@@ -119,12 +123,14 @@ async fn api_console_assistant_new_conversation(
 }
 
 /// POST /api/console_assistant/delete_conversation
+#[tracing::instrument(skip(s, headers, body), fields(user_id))]
 async fn api_console_assistant_delete_conversation(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ConsoleAssistantDeleteConversationRequest>,
 ) -> Result<Response, ResponseError> {
     let user = require_user(&s, &headers).await?;
+    tracing::Span::current().record("user_id", tracing::field::display(&user.id));
     let conv_id = body
         .conversation_id
         .ok_or_else(|| ResponseError::bad_request("conversation_id required"))?;
@@ -136,16 +142,19 @@ async fn api_console_assistant_delete_conversation(
 ///
 /// 翻译期:把 user message 追加到内存对话,echo 一个空 token + done。
 /// 等接 LlmRouter 之后,这里替换为 stream_chat 透传。
+#[tracing::instrument(skip(s, headers, body), fields(user_id, conv_id))]
 async fn api_console_assistant_chat(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ConsoleAssistantChatRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ResponseError> {
     let user = require_user(&s, &headers).await?;
+    tracing::Span::current().record("user_id", tracing::field::display(&user.id));
     let conv_id = body
         .conversation_id
         .clone()
         .unwrap_or_else(|| "default".into());
+    tracing::Span::current().record("conv_id", tracing::field::display(&conv_id));
     let message = body.message.unwrap_or_default();
     let key = conv_key(user.id, &conv_id);
     s.console_conversations
@@ -156,40 +165,39 @@ async fn api_console_assistant_chat(
             text: message,
             at: chrono::Utc::now(),
         });
+    let user_id_str = user.id.to_string();
     let events = vec![
-        Ok::<_, Infallible>(
-            Event::default()
-                .event("meta")
-                .data(json!({"conversation_id": conv_id}).to_string()),
-        ),
-        Ok(Event::default()
-            .event("token")
-            .data(json!({"text": ""}).to_string())),
-        Ok(Event::default()
-            .event("done")
-            .data(json!({"ok": true}).to_string())),
+        Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id_str))),
+        Ok(named_sse_event(
+            "state_change",
+            json!({"conversation_id": conv_id}),
+        )),
+        Ok(named_sse_event("chunk", json!({"text": ""}))),
+        Ok(named_sse_event("done", json!({"ok": true}))),
     ];
     Ok(Sse::new(stream::iter(events)).keep_alive(KeepAlive::default()))
 }
 
 /// POST /api/console_assistant/confirm — SSE
+#[tracing::instrument(skip(s, headers, body), fields(user_id, call_id))]
 async fn api_console_assistant_confirm(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ConsoleAssistantConfirmRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ResponseError> {
-    let _user = require_user(&s, &headers).await?;
+    let user = require_user(&s, &headers).await?;
+    tracing::Span::current().record("user_id", tracing::field::display(&user.id));
     let call_id = body.call_id.unwrap_or_default();
+    tracing::Span::current().record("call_id", tracing::field::display(&call_id));
     let decision = body.decision.unwrap_or_default();
+    let user_id_str = user.id.to_string();
     let events = vec![
-        Ok::<_, Infallible>(
-            Event::default()
-                .event("tool_result")
-                .data(json!({"call_id": call_id, "decision": decision}).to_string()),
-        ),
-        Ok(Event::default()
-            .event("done")
-            .data(json!({"ok": true}).to_string())),
+        Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id_str))),
+        Ok(named_sse_event(
+            "state_change",
+            json!({"call_id": call_id, "decision": decision}),
+        )),
+        Ok(named_sse_event("done", json!({"ok": true}))),
     ];
     Ok(Sse::new(stream::iter(events)).keep_alive(KeepAlive::default()))
 }

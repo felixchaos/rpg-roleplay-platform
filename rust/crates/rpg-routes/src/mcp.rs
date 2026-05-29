@@ -97,6 +97,7 @@ async fn load_catalog(s: &AppState) -> McpCatalog {
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 /// GET /api/tools — 工具清单(本地 tool registry)
+#[tracing::instrument(skip_all)]
 async fn api_tools(State(s): State<AppState>) -> impl IntoResponse {
     let reg = s.tool_registry.read();
     let tools: Vec<Value> = reg
@@ -107,6 +108,7 @@ async fn api_tools(State(s): State<AppState>) -> impl IntoResponse {
     Json(json!({"ok": true, "tools": tools}))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_mcp_server(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -125,6 +127,7 @@ async fn api_mcp_server(
     Ok(Json(json!({"ok": true})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_mcp_server_enabled(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -146,6 +149,7 @@ async fn api_mcp_server_enabled(
     Ok(Json(json!({"ok": true, "changed": changed})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_mcp_server_delete(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -164,6 +168,7 @@ async fn api_mcp_server_delete(
     Ok(Json(json!({"ok": true})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_mcp_server_validate(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -181,6 +186,7 @@ async fn api_mcp_server_validate(
     Ok(Json(json!({"ok": true, "valid": true})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_mcp_server_start(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -191,6 +197,7 @@ async fn api_mcp_server_start(
     Ok(Json(json!({"ok": true, "started": false, "reason": "broker TODO"})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_mcp_server_stop(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -200,6 +207,7 @@ async fn api_mcp_server_stop(
     Ok(Json(json!({"ok": true, "stopped": false, "reason": "broker TODO"})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_mcp_runtime(State(s): State<AppState>) -> impl IntoResponse {
     let catalog = load_catalog(&s).await;
     Json(json!({
@@ -210,6 +218,7 @@ async fn api_mcp_runtime(State(s): State<AppState>) -> impl IntoResponse {
     }))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_mcp_tool_call(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -234,6 +243,7 @@ async fn api_mcp_tool_call(
     Ok(Json(result).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_mcp_tools(State(s): State<AppState>) -> impl IntoResponse {
     let catalog = load_catalog(&s).await;
     let servers: Vec<Value> = catalog

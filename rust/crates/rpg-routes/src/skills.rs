@@ -43,12 +43,14 @@ pub struct SkillRunRequest {
 ///   - `name`  : skill slug(可选,默认取文件名去 .zip)
 ///
 /// 返回 `{ok, skill_id, name, version}`.
+#[tracing::instrument(skip(s, headers, multipart), fields(user_id))]
 async fn api_skills_import(
     State(s): State<AppState>,
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Response, ResponseError> {
     let u = require_user(&s, &headers).await?;
+    tracing::Span::current().record("user_id", tracing::field::display(&u.id));
     if u.role != "admin" {
         return Err(ResponseError::forbidden("仅管理员"));
     }
@@ -122,6 +124,7 @@ async fn api_skills_import(
 }
 
 /// POST /api/skills/{skill_id}/run
+#[tracing::instrument(skip(s, headers, body), fields(user_id, skill_id = %skill_id))]
 async fn api_skill_run(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -129,6 +132,7 @@ async fn api_skill_run(
     Json(body): Json<SkillRunRequest>,
 ) -> Result<Response, ResponseError> {
     let u = require_user(&s, &headers).await?;
+    tracing::Span::current().record("user_id", tracing::field::display(&u.id));
     if u.role != "admin" {
         return Err(ResponseError::forbidden("仅管理员"));
     }

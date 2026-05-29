@@ -114,6 +114,7 @@ async fn require_admin(s: &AppState, headers: &HeaderMap) -> Result<(), Response
 
 // ── handlers ──────────────────────────────────────────────────────────────────
 
+#[tracing::instrument(skip_all)]
 async fn api_models(State(s): State<AppState>) -> Result<Response, ResponseError> {
     let catalog = catalog_snapshot(&s);
     let selected = catalog.selected.clone();
@@ -126,6 +127,7 @@ async fn api_models(State(s): State<AppState>) -> Result<Response, ResponseError
     .into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_models_health_refresh_all(
     State(_s): State<AppState>,
     Json(_body): Json<Value>,
@@ -134,11 +136,13 @@ async fn api_models_health_refresh_all(
     Json(json!({"ok": true, "scheduled": 0}))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_models_health(State(_s): State<AppState>) -> impl IntoResponse {
     // TODO: 翻译期没接 probe 缓存,返回空 map。
     Json(json!({"ok": true, "health": {}}))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_models_select(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -157,6 +161,7 @@ async fn api_models_select(
     Ok(Json(json!({"ok": true})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_models_upsert_api(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -192,6 +197,7 @@ async fn api_models_upsert_api(
     Ok(Json(json!({"ok": true})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_models_upsert_model(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -220,6 +226,7 @@ async fn api_models_upsert_model(
     Ok(Json(json!({"ok": true})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_models_delete_model(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -241,6 +248,7 @@ async fn api_models_delete_model(
     Ok(Json(json!({"ok": true})).into_response())
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_models_remote(
     State(_s): State<AppState>,
     Query(_q): Query<ModelQueryParams>,
@@ -249,6 +257,7 @@ async fn api_models_remote(
     Json(json!({"ok": true, "models": []}))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_models_diff(
     State(_s): State<AppState>,
     Query(_q): Query<ModelQueryParams>,
@@ -257,6 +266,7 @@ async fn api_models_diff(
     Json(json!({"ok": true, "diff": {"added": [], "removed": [], "changed": []}}))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_models_probe(
     State(_s): State<AppState>,
     Json(_body): Json<ModelsProbeRequest>,
@@ -265,6 +275,7 @@ async fn api_models_probe(
     Json(json!({"ok": true, "result": {"ok": true, "error": null}}))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_models_pricing(
     State(_s): State<AppState>,
     Query(_q): Query<ModelQueryParams>,
@@ -273,6 +284,7 @@ async fn api_models_pricing(
     Json(json!({"ok": true, "pricing": {}}))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_models_report(
     State(_s): State<AppState>,
     Query(_q): Query<ModelQueryParams>,
@@ -280,6 +292,7 @@ async fn api_models_report(
     Json(json!({"ok": true, "report": {}}))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_models_capabilities(
     State(s): State<AppState>,
     Query(q): Query<ModelQueryParams>,
@@ -297,6 +310,7 @@ async fn api_models_capabilities(
     Json(json!({"ok": true, "capabilities": caps}))
 }
 
+#[tracing::instrument(skip_all)]
 async fn api_models_capability_labels(State(_s): State<AppState>) -> impl IntoResponse {
     Json(json!({
         "ok": true,

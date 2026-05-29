@@ -19,7 +19,7 @@ use futures_util::stream::{self, Stream};
 use http::HeaderMap;
 use serde_json::json;
 
-use crate::{require_user, user_id_or_anon, AppState, ResponseError};
+use crate::{hello_payload, named_sse_event, require_user, user_id_or_anon, AppState, ResponseError};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -38,11 +38,13 @@ async fn index() -> impl IntoResponse {
 }
 
 /// GET /api/state — 当前游戏状态快照
+#[tracing::instrument(skip(s, headers), fields(user_id))]
 async fn api_state(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ResponseError> {
     let user_id = user_id_or_anon(&s, &headers).await;
+    tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
     let snapshot = shared.read().clone();
     Ok(Json(json!({
@@ -63,21 +65,16 @@ async fn api_state(
 ///   1. 在 `AppState` 加 `state_bus: tokio::sync::broadcast::Sender<StateEvent>`
 ///   2. 将 `state_bus.subscribe()` 转换成 `ReceiverStream`
 ///   3. 把每个 `StateEvent` 序列化为 SSE `data`
+#[tracing::instrument(skip(s, headers), fields(user_id))]
 async fn api_state_events(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ResponseError> {
     let user = require_user(&s, &headers).await?;
-    let hello = Event::default()
-        .event("hello")
-        .data(
-            json!({
-                "user_id": user.id,
-                "ts": chrono::Utc::now().timestamp(),
-                "note": "state_events bus: W3-2 TODO"
-            })
-            .to_string(),
-        );
+    tracing::Span::current().record("user_id", tracing::field::display(&user.id));
+    let user_id_str = user.id.to_string();
+    // 首条 hello — 前端用此 reset backoff。
+    let hello = named_sse_event("hello", hello_payload(&user_id_str));
     // TODO(W3-2): replace with real bus subscription:
     //   let rx = s.state_bus.subscribe();
     //   let bus_stream = BroadcastStream::new(rx).filter_map(|r| ...);
