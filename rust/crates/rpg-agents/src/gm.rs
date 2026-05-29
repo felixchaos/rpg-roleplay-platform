@@ -21,8 +21,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::common::{
+    call_text, call_with_tools, state_history_messages, state_short_summary, stream_text,
     AgentResult, ChatMessage, GameState, SharedLlm, ToolSchema,
 };
+use rpg_state::{apply_op, Op};
 use serde_json::json;
 use crate::context_agent::{ContextAgent, ContextAgentInput, Demand};
 use crate::extractor::{ExtractorAgent, ExtractorInput, ExtractorOutput};
@@ -204,7 +206,7 @@ impl GameMaster {
     fn turn_message(&self, user_input: &str, state: &GameState, retrieved: &str) -> String {
         format!(
             "{}\n\n【玩家本轮输入】\n{}",
-            self.dynamic_context(&state.short_summary(), retrieved),
+            self.dynamic_context(&state_short_summary(state), retrieved),
             user_input,
         )
     }
@@ -220,9 +222,13 @@ impl GameMaster {
         let system = self.build_system(state).await;
         let message = self.turn_message(OPENING_PROMPT, state, retrieved);
         let messages = vec![ChatMessage::user(message)];
-        self.llm
-            .call(&system, &messages, self.config.opening_max_tokens)
-            .await
+        call_text(
+            self.llm.as_ref(),
+            &system,
+            &messages,
+            self.config.opening_max_tokens,
+        )
+        .await
     }
 
     /// 同步主响应。
@@ -233,11 +239,15 @@ impl GameMaster {
         state: &GameState,
     ) -> AgentResult<String> {
         let system = self.build_system(state).await;
-        let mut messages = state.history_messages();
+        let mut messages = state_history_messages(state);
         messages.push(ChatMessage::user(self.turn_message(user_input, state, retrieved)));
-        self.llm
-            .call(&system, &messages, self.config.default_max_tokens)
-            .await
+        call_text(
+            self.llm.as_ref(),
+            &system,
+            &messages,
+            self.config.default_max_tokens,
+        )
+        .await
     }
 
     /// 流式回复(简版,只产 text chunk)。
@@ -248,11 +258,15 @@ impl GameMaster {
         state: &GameState,
     ) -> AgentResult<BoxStream<'static, AgentResult<String>>> {
         let system = self.build_system(state).await;
-        let mut messages = state.history_messages();
+        let mut messages = state_history_messages(state);
         messages.push(ChatMessage::user(self.turn_message(user_input, state, retrieved)));
-        self.llm
-            .stream(&system, &messages, self.config.default_max_tokens)
-            .await
+        stream_text(
+            self.llm.clone(),
+            &system,
+            &messages,
+            self.config.default_max_tokens,
+        )
+        .await
     }
 
     // ── 高层 step:一站式流式回路 ───────────────────────────
@@ -338,11 +352,31 @@ impl GameMaster {
             let ex_in = ExtractorInput::new(narrative.clone());
             match s.extractor.run(ex_in, &snapshot).await {
                 Ok(ExtractorOutput { ops }) => {
-                    // 5. apply ops。本 placeholder GameState 没有 apply 路径;
-                    // 真正接 rpg-state 时,在 build_system / state 注入处把
-                    // common::GameState 换成 rpg_state::GameState 并调
-                    // apply_op(state, op, "gm", false)。这里仍 emit ops 让
-                    // 上层(server / tests)消费。
+                    // 5. apply ops 到真 rpg_state::GameState — force=true (GM 自主写入,
+                    // 走 audit_log + user_locked 但不被权限模式拦截)。
+                    if !ops.is_empty() {
+                        let mut st = state.write().await;
+                        for op_value in ops.iter() {
+                            match serde_json::from_value::<Op>(op_value.clone()) {
+                                Ok(op) => {
+                                    if let Err(e) =
+                                        apply_op(&mut st, op, "gm", true)
+                                    {
+                                        tracing::warn!(
+                                            "[gm.step] apply_op 失败 ({:?}): {e}",
+                                            op_value
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "[gm.step] op 反序列化失败 ({:?}): {e}",
+                                        op_value
+                                    );
+                                }
+                            }
+                        }
+                    }
                     tx.send(GmEvent::StateOps { ops }).ok();
                 }
                 Err(e) => {
@@ -382,7 +416,7 @@ impl GameMaster {
         let s = self.clone();
         let stream = async_stream_iter(move |tx| async move {
             let system = s.build_system(&state).await;
-            let mut messages = state.history_messages();
+            let mut messages = state_history_messages(&state);
             messages.push(ChatMessage::user(s.turn_message(
                 &user_input,
                 &state,
@@ -401,10 +435,14 @@ impl GameMaster {
                 }
                 iter += 1;
 
-                let resp_res = s
-                    .llm
-                    .call_with_tools(&system, &messages, &tools, max_tokens)
-                    .await;
+                let resp_res = call_with_tools(
+                    s.llm.as_ref(),
+                    &system,
+                    &messages,
+                    &tools,
+                    max_tokens,
+                )
+                .await;
                 let resp = match resp_res {
                     Ok(r) => r,
                     Err(e) => {

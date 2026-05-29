@@ -1,16 +1,37 @@
 //! 公共抽象 / 错误类型 / JSON 解析工具。
 //!
-//! rpg-llm、rpg-state、rpg-context 等依赖 crate 当前还是空 TODO,本文件给
-//! rpg-agents 提供本地占位 trait 与类型;外部 crate 实现完成后,可把这里
-//! 的占位 alias 换成对应 re-export(API surface 不变)。
+//! W3-1 切换:placeholder LlmBackend / GameState / ChatMessage / ToolCall /
+//! ToolSchema 全部改为 re-export rpg-llm / rpg-state 真实类型。
+//!
+//! 由于 `rpg_llm::pipeline::LlmBackend` trait 只暴露 `stream_chat(ChatRequest)`,
+//! 本模块给 agents 提供薄的 adapter helper:
+//!   * [`call_text`] — 一次性文本(对应原 `call`)
+//!   * [`call_structured`] — JSON-mode 文本(对应原 `call_structured`)
+//!   * [`stream_text`] — 流式 String 序列(对应原 `stream`)
+//!   * [`call_with_tools`] — native tool_use(对应原 `call_with_tools`)
+//!   * [`supports_native_tools`] — 启发式:Anthropic / Vertex / OpenAI 都支持
+//!
+//! 由于 `rpg_state::state::GameState` 不再带 `turn` 字段(改成方法)/
+//! `history` / `short_summary`,这里给出对应 helper:
+//!   * [`state_turn`] — `state.turn() as u64`
+//!   * [`state_history_messages`] — 默认空 Vec(后续接入对话历史时再扩展)
+//!   * [`state_short_summary`] — player / world / memory 关键字段拼装
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use async_trait::async_trait;
+use futures::stream::BoxStream;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use thiserror::Error;
+
+// ── re-export real types ──────────────────────────────────────────────
+
+pub use rpg_llm::pipeline::{
+    ChatChunk, ChatMessage, ChatRequest, ChatRole, ChunkStream, LlmBackend, LlmError, MessagePart,
+    ToolCall, ToolSchema, Usage,
+};
+pub use rpg_state::state::GameState;
 
 // ── Error ──────────────────────────────────────────────────────────────
 
@@ -45,152 +66,22 @@ impl From<serde_json::Error> for AgentError {
     }
 }
 
+impl From<LlmError> for AgentError {
+    fn from(e: LlmError) -> Self {
+        AgentError::Llm(e.to_string())
+    }
+}
+
 pub type AgentResult<T> = Result<T, AgentError>;
 
-// ── Placeholder for rpg-llm::pipeline::LlmBackend ─────────────────────
-//
-// rpg-llm 完成后这里改成 `pub use rpg_llm::pipeline::LlmBackend;`
-// 同步把 ChatMessage / ChatRequest 也搬过去。
+// ── ToolCallResponse(本地保留,rpg-llm 没有此聚合类型) ──────────────
 
-/// 占位 LlmBackend trait — 与 Python 端 backend.call / call_structured / stream
-/// 三个接口对齐。**这里只是骨架;rpg-llm 完成后整体替换。**
-#[async_trait]
-pub trait LlmBackend: Send + Sync {
-    /// 一次性同步调用(非流)。
-    async fn call(
-        &self,
-        system: &str,
-        messages: &[ChatMessage],
-        max_tokens: usize,
-    ) -> AgentResult<String>;
-
-    /// 强 JSON 返回(provider 支持 response_format=json_object / response_mime_type 时启用)。
-    async fn call_structured(
-        &self,
-        system: &str,
-        messages: &[ChatMessage],
-        max_tokens: usize,
-    ) -> AgentResult<String> {
-        // 默认实现:走普通 call,调用方自己抠 JSON
-        self.call(system, messages, max_tokens).await
-    }
-
-    /// 流式增量文本。
-    async fn stream(
-        &self,
-        system: &str,
-        messages: &[ChatMessage],
-        max_tokens: usize,
-    ) -> AgentResult<ChatStream>;
-
-    /// 是否支持 native tool_use(Anthropic / 部分 Vertex)。
-    fn supports_native_tools(&self) -> bool {
-        false
-    }
-
-    /// native tool_use 入口(本骨架不展开)。
-    async fn call_with_tools(
-        &self,
-        _system: &str,
-        _messages: &[ChatMessage],
-        _tools: &[ToolSchema],
-        _max_tokens: usize,
-    ) -> AgentResult<ToolCallResponse> {
-        Err(AgentError::NotImplemented("call_with_tools"))
-    }
-}
-
-/// 对话消息(用 Value 持有 content 兼容文字 / 多模态 block list)。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessage {
-    pub role: String,
-    pub content: Value,
-}
-
-impl ChatMessage {
-    pub fn user(text: impl Into<String>) -> Self {
-        Self {
-            role: "user".to_string(),
-            content: Value::String(text.into()),
-        }
-    }
-    pub fn assistant(text: impl Into<String>) -> Self {
-        Self {
-            role: "assistant".to_string(),
-            content: Value::String(text.into()),
-        }
-    }
-}
-
-/// 流式输出抽象;rpg-llm 接入后换成 BoxStream<String>。
-pub type ChatStream = futures::stream::BoxStream<'static, AgentResult<String>>;
-
-/// 工具 schema(Anthropic-style)。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolSchema {
-    pub name: String,
-    pub description: String,
-    pub input_schema: Value,
-}
-
-/// 单次 tool_use 调用结果。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 一次 `call_with_tools` 合成结果(文本 + tool_calls + usage)。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolCallResponse {
     pub tool_calls: Vec<ToolCall>,
     pub text: String,
-    pub usage: HashMap<String, u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    pub name: String,
-    pub input: Value,
-}
-
-// ── Placeholder for rpg-state::GameState ──────────────────────────────
-
-/// 占位 GameState — rpg-state 完成后换成 `pub use rpg_state::state::GameState;`
-///
-/// 设计:`data` 是 serde_json::Value(对齐 Python state.data: dict)。
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct GameState {
-    pub data: Value,
-    pub turn: u64,
-    pub history: Vec<ChatMessage>,
-}
-
-impl GameState {
-    pub fn new() -> Self {
-        Self {
-            data: Value::Object(Default::default()),
-            turn: 0,
-            history: Vec::new(),
-        }
-    }
-
-    /// 仿 Python state.short_summary():把 player/world/memory 关键字段拼成 prompt 片段。
-    pub fn short_summary(&self) -> String {
-        let p = self.data.get("player").cloned().unwrap_or(Value::Null);
-        let w = self.data.get("world").cloned().unwrap_or(Value::Null);
-        let m = self.data.get("memory").cloned().unwrap_or(Value::Null);
-        format!(
-            "player={} world={} memory={}",
-            json_str_or_empty(&p, "name"),
-            json_str_or_empty(&w, "time"),
-            json_str_or_empty(&m, "main_quest"),
-        )
-    }
-
-    pub fn history_messages(&self) -> Vec<ChatMessage> {
-        self.history.clone()
-    }
-}
-
-fn json_str_or_empty(v: &Value, key: &str) -> String {
-    v.get(key)
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .to_string()
+    pub usage: Usage,
 }
 
 // ── Common JSON helpers ───────────────────────────────────────────────
@@ -201,21 +92,16 @@ fn json_str_or_empty(v: &Value, key: &str) -> String {
 /// 1. 整段就是 JSON(顶层 `[` 或 `{`)
 /// 2. 反引号包裹的 ```json ... ``` fence
 /// 3. 否则报错
-///
-/// 返回 &str 切片,调用方自己 from_str。
 pub fn extract_json_block(text: &str) -> AgentResult<&str> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Err(AgentError::JsonParse("空字符串".to_string()));
     }
-    // 顶层 [ 或 {
     if trimmed.starts_with('[') || trimmed.starts_with('{') {
         return Ok(trimmed);
     }
-    // ```json fence
     if let Some(start) = trimmed.find("```") {
         let after = &trimmed[start + 3..];
-        // 跳过可能的 "json\n"
         let after = after.strip_prefix("json").unwrap_or(after);
         let after = after.trim_start_matches(|c: char| c == '\n' || c.is_whitespace());
         if let Some(end) = after.find("```") {
@@ -245,6 +131,206 @@ pub fn parse_json_array_field(text: &str, key: &str) -> AgentResult<Vec<Value>> 
     }
 }
 
-// ── 通用 BackendRef alias ─────────────────────────────────────────────
+// ── 通用 Shared backend alias ─────────────────────────────────────────
 
 pub type SharedLlm = Arc<dyn LlmBackend>;
+
+// ── LlmBackend adapter helpers ────────────────────────────────────────
+
+/// 默认 model_id。真实接入 catalog 之后由 caller 自己 build ChatRequest 覆盖;
+/// 此处给 agent 适配层一个保底值,避免 model 为空被 provider 拒绝。
+fn default_model_for(kind: rpg_llm::pipeline::BackendKind) -> &'static str {
+    use rpg_llm::pipeline::BackendKind;
+    match kind {
+        BackendKind::Anthropic => "claude-haiku-4-5",
+        BackendKind::Vertex => "gemini-3.5-flash",
+        BackendKind::Openai | BackendKind::OpenaiCompat => "gpt-5-mini",
+    }
+}
+
+/// 是否支持 native tool_use(Anthropic / Vertex / OpenAI 都支持)。
+pub fn supports_native_tools(llm: &dyn LlmBackend) -> bool {
+    use rpg_llm::pipeline::BackendKind;
+    matches!(
+        llm.kind(),
+        BackendKind::Anthropic | BackendKind::Vertex | BackendKind::Openai | BackendKind::OpenaiCompat
+    )
+}
+
+fn base_request(
+    llm: &dyn LlmBackend,
+    system: &str,
+    messages: &[ChatMessage],
+    max_tokens: usize,
+) -> ChatRequest {
+    ChatRequest {
+        model: default_model_for(llm.kind()).to_string(),
+        system: if system.is_empty() {
+            None
+        } else {
+            Some(system.to_string())
+        },
+        messages: messages.to_vec(),
+        tools: Vec::new(),
+        temperature: None,
+        max_tokens: Some(max_tokens.min(u32::MAX as usize) as u32),
+        stream: false,
+        extra: Value::Null,
+    }
+}
+
+/// 一次性文本调用。drain `stream_chat`,把 Text chunk join 成 String。
+pub async fn call_text(
+    llm: &dyn LlmBackend,
+    system: &str,
+    messages: &[ChatMessage],
+    max_tokens: usize,
+) -> AgentResult<String> {
+    let req = base_request(llm, system, messages, max_tokens);
+    let mut stream = llm.stream_chat(req).await?;
+    let mut out = String::new();
+    while let Some(chunk) = stream.next().await {
+        match chunk? {
+            ChatChunk::Text(t) => out.push_str(&t),
+            ChatChunk::Stop { .. } | ChatChunk::Usage(_) => {}
+            ChatChunk::Thinking(_) | ChatChunk::ToolCall { .. } | ChatChunk::Error(_) => {}
+        }
+    }
+    Ok(out)
+}
+
+/// JSON-mode 调用。可能的 provider 特定参数走 extra(OpenAI response_format /
+/// Vertex response_mime_type)。失败时退化到普通 [`call_text`]。
+pub async fn call_structured(
+    llm: &dyn LlmBackend,
+    system: &str,
+    messages: &[ChatMessage],
+    max_tokens: usize,
+) -> AgentResult<String> {
+    use rpg_llm::pipeline::BackendKind;
+    let mut req = base_request(llm, system, messages, max_tokens);
+    req.extra = match llm.kind() {
+        BackendKind::Openai | BackendKind::OpenaiCompat => json!({
+            "response_format": {"type": "json_object"}
+        }),
+        BackendKind::Vertex => json!({
+            "response_mime_type": "application/json"
+        }),
+        // Anthropic 没有原生 JSON mode,system prompt 里强约束即可。
+        _ => Value::Null,
+    };
+    let mut stream = llm.stream_chat(req).await?;
+    let mut out = String::new();
+    while let Some(chunk) = stream.next().await {
+        match chunk? {
+            ChatChunk::Text(t) => out.push_str(&t),
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+/// 流式 String 序列。仅 surface Text chunk(Thinking / ToolCall 过滤掉)。
+pub async fn stream_text(
+    llm: SharedLlm,
+    system: &str,
+    messages: &[ChatMessage],
+    max_tokens: usize,
+) -> AgentResult<BoxStream<'static, AgentResult<String>>> {
+    let mut req = base_request(llm.as_ref(), system, messages, max_tokens);
+    req.stream = true;
+    let llm_clone = llm.clone();
+    // 把 stream_chat 拆出独立 Stream + 包装出 'static 序列。
+    // 用 mpsc 跨任务搬运,避免与 trait lifetime 纠缠。
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AgentResult<String>>();
+    tokio::spawn(async move {
+        let mut stream = match llm_clone.stream_chat(req).await {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = tx.send(Err(AgentError::Llm(e.to_string())));
+                return;
+            }
+        };
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(ChatChunk::Text(t)) => {
+                    if tx.send(Ok(t)).is_err() {
+                        return;
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    let _ = tx.send(Err(AgentError::Llm(e.to_string())));
+                    return;
+                }
+            }
+        }
+    });
+    let s = futures::stream::poll_fn(move |cx| rx.poll_recv(cx));
+    Ok(s.boxed())
+}
+
+/// native tool_use 入口。把 stream_chat 的 Text + ToolCall + Usage 合并成
+/// 一次 ToolCallResponse。
+pub async fn call_with_tools(
+    llm: &dyn LlmBackend,
+    system: &str,
+    messages: &[ChatMessage],
+    tools: &[ToolSchema],
+    max_tokens: usize,
+) -> AgentResult<ToolCallResponse> {
+    let mut req = base_request(llm, system, messages, max_tokens);
+    req.tools = tools.to_vec();
+    let mut stream = llm.stream_chat(req).await?;
+    let mut text = String::new();
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
+    let mut usage = Usage::default();
+    while let Some(chunk) = stream.next().await {
+        match chunk? {
+            ChatChunk::Text(t) => text.push_str(&t),
+            ChatChunk::ToolCall { id, name, input } => {
+                tool_calls.push(ToolCall { id, name, input });
+            }
+            ChatChunk::Usage(u) => usage = u,
+            ChatChunk::Thinking(_) | ChatChunk::Stop { .. } | ChatChunk::Error(_) => {}
+        }
+    }
+    Ok(ToolCallResponse {
+        tool_calls,
+        text,
+        usage,
+    })
+}
+
+// ── GameState helper(真实 GameState 无 history / short_summary 字段) ──
+
+/// 与 Python `state.turn` 对齐;真实 GameState 用方法暴露,这里包成 u64。
+pub fn state_turn(state: &GameState) -> u64 {
+    state.turn().max(0) as u64
+}
+
+/// `state.history_messages()` — 真实 GameState 不再保留 ChatMessage 历史
+/// (Python 端历史在 branch_commits 表里)。暂返空,等真有需要再补 DB 加载。
+pub fn state_history_messages(_state: &GameState) -> Vec<ChatMessage> {
+    Vec::new()
+}
+
+/// `state.short_summary()` — 拼 player / world / memory 关键字段。
+pub fn state_short_summary(state: &GameState) -> String {
+    let p = state.data.get("player").cloned().unwrap_or(Value::Null);
+    let w = state.data.get("world").cloned().unwrap_or(Value::Null);
+    let m = state.data.get("memory").cloned().unwrap_or(Value::Null);
+    format!(
+        "player={} world={} memory={}",
+        json_str_or_empty(&p, "name"),
+        json_str_or_empty(&w, "time"),
+        json_str_or_empty(&m, "main_quest"),
+    )
+}
+
+fn json_str_or_empty(v: &Value, key: &str) -> String {
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string()
+}

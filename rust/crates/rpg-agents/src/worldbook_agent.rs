@@ -17,6 +17,11 @@ use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::common::AgentResult;
+use rpg_llm::pipeline::LlmBackend;
+use rpg_llm::vertex::VertexBackend;
+
+/// 默认 Vertex embedding 模型。
+const DEFAULT_EMBED_MODEL: &str = "text-embedding-005";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorldbookResult {
@@ -127,15 +132,34 @@ pub struct ConsultInput {
 
 pub struct WorldbookAgent {
     db: Option<Arc<PgPool>>,
+    /// 可选 Vertex backend(注入后启用 embedding 检索)。
+    embedder: Option<Arc<VertexBackend>>,
+    embed_model: String,
 }
 
 impl WorldbookAgent {
     pub fn new() -> Self {
-        Self { db: None }
+        Self {
+            db: None,
+            embedder: None,
+            embed_model: DEFAULT_EMBED_MODEL.to_string(),
+        }
     }
 
     pub fn with_db(mut self, pool: Arc<PgPool>) -> Self {
         self.db = Some(pool);
+        self
+    }
+
+    /// 注入 Vertex embedder — 注入后 consult_worldbook_entries 优先走 pgvector
+    /// `embedding <=> $1::vector` 排序,失败回退 ILIKE。
+    pub fn with_embedder(mut self, embedder: Arc<VertexBackend>) -> Self {
+        self.embedder = Some(embedder);
+        self
+    }
+
+    pub fn with_embed_model(mut self, model: impl Into<String>) -> Self {
+        self.embed_model = model.into();
         self
     }
 
@@ -202,12 +226,14 @@ impl WorldbookAgent {
             }
         }
 
-        // Layer 4: worldbook_entries — keyword / aliases 模糊匹配。
+        // Layer 4: worldbook_entries — embedding 优先,失败回退 ILIKE。
         let mut hits = consult_worldbook_entries(
             pool.as_ref(),
             input.script_id,
             input.save_id,
             &input.query,
+            self.embedder.as_deref(),
+            &self.embed_model,
         )
         .await;
         if !hits.is_empty() {
@@ -248,6 +274,10 @@ impl Default for WorldbookAgent {
 
 /// 从 worldbook_entries 表按 keyword / aliases / content 做模糊匹配。
 ///
+/// 优先级:
+///   1. 如果传了 embedder + 表里有 `embedding` 列 → pgvector cosine 排序。
+///   2. 失败 / 没传 embedder → ILIKE 模糊匹配。
+///
 /// 返回的 Value 形如 `{"id":..,"title":..,"content":..,"priority":..,"key":..}`,
 /// 已按 priority DESC 排序。
 async fn consult_worldbook_entries(
@@ -255,6 +285,8 @@ async fn consult_worldbook_entries(
     script_id: i64,
     save_id: Option<i64>,
     query: &str,
+    embedder: Option<&VertexBackend>,
+    embed_model: &str,
 ) -> Vec<Value> {
     if query.trim().is_empty() {
         // 仍返回 script 全部,按 priority 排序前 8。
@@ -267,6 +299,94 @@ async fn consult_worldbook_entries(
             .map(worldbook_entry_to_value)
             .collect();
     }
+
+    // ── 1) 尝试 pgvector 路径(注入 embedder 时)──
+    if let Some(emb) = embedder {
+        match emb.embed(embed_model, &[query.to_string()]).await {
+            Ok(vecs) if !vecs.is_empty() && !vecs[0].is_empty() => {
+                let qvec = &vecs[0];
+                // pgvector 字面量:`[0.1,0.2,...]`。
+                let vec_lit = format!(
+                    "[{}]",
+                    qvec.iter()
+                        .map(|x| format!("{x}"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+                let q = sqlx::query_as::<
+                    _,
+                    (
+                        i64,
+                        Option<i64>,
+                        Option<i64>,
+                        Option<i64>,
+                        String,
+                        Value,
+                        String,
+                        String,
+                        bool,
+                        i32,
+                        i32,
+                        Value,
+                        Value,
+                    ),
+                >(
+                    r#"SELECT id, script_id, save_id, user_id, key, aliases, content, comment,
+                              enabled, priority, token_budget, tags, metadata
+                       FROM worldbook_entries
+                       WHERE enabled = true
+                         AND (script_id = $1 OR save_id = $2)
+                         AND embedding IS NOT NULL
+                       ORDER BY embedding <=> $3::vector ASC, priority DESC
+                       LIMIT 16"#,
+                )
+                .bind(script_id)
+                .bind(save_id)
+                .bind(&vec_lit)
+                .fetch_all(pool)
+                .await;
+                match q {
+                    Ok(rows) if !rows.is_empty() => {
+                        return rows
+                            .into_iter()
+                            .map(
+                                |(id, _sid, _save, _uid, key, aliases, content, comment, _en, priority, _tb, tags, _meta)| {
+                                    json!({
+                                        "id": id,
+                                        "title": key,
+                                        "key": "",
+                                        "content": content,
+                                        "comment": comment,
+                                        "aliases": aliases,
+                                        "priority": priority,
+                                        "tags": tags,
+                                    })
+                                },
+                            )
+                            .collect();
+                    }
+                    Ok(_) => {
+                        tracing::debug!(
+                            "[worldbook] pgvector 查询无结果,回退 ILIKE"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[worldbook] pgvector 查询失败({e}),回退 ILIKE"
+                        );
+                    }
+                }
+            }
+            Ok(_) => {
+                tracing::warn!("[worldbook] embedder 返回空向量,回退 ILIKE");
+            }
+            Err(e) => {
+                tracing::warn!("[worldbook] embed 失败({e}),回退 ILIKE");
+            }
+        }
+    }
+
+    // ── 2) ILIKE 兜底 ──
     // pattern: 任何子串都触发 ILIKE。
     let pat = format!("%{}%", query.trim().to_lowercase());
 

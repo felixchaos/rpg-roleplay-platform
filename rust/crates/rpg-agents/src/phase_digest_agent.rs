@@ -14,7 +14,9 @@ use serde_json::Value;
 use sqlx::PgPool;
 use std::sync::Arc;
 
-use crate::common::{extract_json_block, AgentError, AgentResult, ChatMessage, SharedLlm};
+use crate::common::{
+    call_structured, extract_json_block, AgentError, AgentResult, ChatMessage, SharedLlm,
+};
 
 const SYSTEM_PROMPT: &str = include_str!("prompts/phase_digest.txt");
 
@@ -61,6 +63,8 @@ struct PhaseContext {
     prev_summary: String,
     /// 该 phase 内的对话原文(已拼好)。
     dialog_text: String,
+    /// 剧本端 chapter_facts 摘要(衔接段:GM 应该把 phase 推到哪里)。
+    script_chapter_facts: String,
     /// 是否已有摘要(status=closed)。
     already_closed: bool,
     /// 已存在的 summary(用于 force=false 直接返回)。
@@ -233,6 +237,16 @@ impl PhaseDigestAgent {
             }
         }
 
+        // (d) script_chapter_facts — 衔接段:GM 应该把当前 phase 推到哪里。
+        //     从 game_saves → script_id → chapter_facts(取 phase_index 附近 ±2 章)。
+        ctx.script_chapter_facts = load_script_chapter_facts_for_phase(
+            pool.as_ref(),
+            input.save_id,
+            input.phase_index,
+        )
+        .await
+        .unwrap_or_default();
+
         ctx
     }
 
@@ -286,7 +300,7 @@ impl PhaseDigestAgent {
         Ok(())
     }
 
-    /// 构造 user prompt。注入 dialog / prev summary。
+    /// 构造 user prompt。注入 dialog / prev summary / script chapter_facts 衔接段。
     fn build_user_prompt(
         &self,
         input: &PhaseDigestInput,
@@ -302,11 +316,16 @@ impl PhaseDigestAgent {
         } else {
             ctx.prev_summary.clone()
         };
+        let script_facts = if ctx.script_chapter_facts.is_empty() {
+            "(无剧本端 chapter_facts)".to_string()
+        } else {
+            ctx.script_chapter_facts.clone()
+        };
         Ok(format!(
             "## 阶段元数据\n- save_id: {}\n- phase_index: {}\n- phase_label: {}\n\n\
              ## 玩家与 GM 对话原文\n{}\n\n\
              ## 上一段摘要(衔接参考)\n{}\n\n\
-             ## 剧本预期段落(衔接参考)\n(TODO[rpg-db]: chapter_facts 接入后填充)\n",
+             ## 剧本预期段落(chapter_facts 衔接段)\n{}\n",
             input.save_id,
             input.phase_index,
             if ctx.phase_label.is_empty() {
@@ -316,17 +335,21 @@ impl PhaseDigestAgent {
             },
             dialog,
             prev,
+            script_facts,
         ))
     }
 
     async fn call_with_retry(&self, messages: &[ChatMessage]) -> AgentResult<PhaseDigest> {
         let mut last_err: Option<AgentError> = None;
         for attempt in 0..=MAX_RETRIES {
-            let raw = self
-                .llm
-                .call_structured(SYSTEM_PROMPT, messages, self.max_tokens)
-                .await
-                .map_err(|e| AgentError::Llm(format!("attempt {attempt}: {e}")))?;
+            let raw = call_structured(
+                self.llm.as_ref(),
+                SYSTEM_PROMPT,
+                messages,
+                self.max_tokens,
+            )
+            .await
+            .map_err(|e| AgentError::Llm(format!("attempt {attempt}: {e}")))?;
             match parse_digest(&raw) {
                 Some(d) => return Ok(normalize_digest(d)),
                 None => {
@@ -360,4 +383,70 @@ fn normalize_digest(mut d: PhaseDigest) -> PhaseDigest {
         d.key_decisions.truncate(5);
     }
     d
+}
+
+/// 拉 script 端 chapter_facts 衔接段。
+///
+/// 流程:
+///   1. game_saves(id=save_id) → script_id
+///   2. chapter_facts WHERE script_id=$1 — 取窗口 [phase_index-2, phase_index+2]
+///      (chapter 字段近似当作 phase_index 用,精度有限但够 prompt 拼接)。
+///   3. 拼成 "第N章《title》(time_label): summary" 多行。
+///
+/// 全部失败/空表 → 返回空 String,由调用方兜底显示 "(无...)"。
+async fn load_script_chapter_facts_for_phase(
+    pool: &sqlx::PgPool,
+    save_id: i64,
+    phase_index: i32,
+) -> Option<String> {
+    let script_row: Option<(Option<i64>,)> =
+        sqlx::query_as("SELECT script_id FROM game_saves WHERE id = $1")
+            .bind(save_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    let script_id = script_row.and_then(|(s,)| s)?;
+    let lo = (phase_index - 2).max(0);
+    let hi = phase_index + 2;
+    let rows = sqlx::query_as::<
+        _,
+        (i32, Option<String>, Option<String>, Option<String>),
+    >(
+        r#"SELECT chapter, title, story_time_label, summary
+           FROM chapter_facts
+           WHERE script_id = $1 AND chapter BETWEEN $2 AND $3
+           ORDER BY chapter ASC
+           LIMIT 8"#,
+    )
+    .bind(script_id)
+    .bind(lo)
+    .bind(hi)
+    .fetch_all(pool)
+    .await
+    .ok()?;
+    if rows.is_empty() {
+        return None;
+    }
+    let mut lines: Vec<String> = Vec::with_capacity(rows.len());
+    for (chapter, title, time_label, summary) in rows {
+        let title_s = title.unwrap_or_default();
+        let time_s = time_label.unwrap_or_default();
+        let sum: String = summary
+            .unwrap_or_default()
+            .chars()
+            .take(400)
+            .collect();
+        if sum.trim().is_empty() {
+            continue;
+        }
+        lines.push(format!(
+            "- 第{chapter}章《{title_s}》({time_s}): {sum}"
+        ));
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
 }

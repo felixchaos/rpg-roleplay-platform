@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::common::{
-    extract_json_block, AgentResult, ChatMessage, GameState, SharedLlm, ToolSchema,
+    call_structured, call_with_tools, extract_json_block, supports_native_tools, AgentResult,
+    ChatMessage, GameState, SharedLlm, ToolSchema,
 };
 
 const SYSTEM_PROMPT: &str = include_str!("prompts/command_agent.txt");
@@ -59,12 +60,16 @@ impl CommandAgent {
         let messages = vec![ChatMessage::user(user_prompt)];
 
         // 优先 native tool_use 路径(Anthropic / Vertex 支持)。
-        if self.llm.supports_native_tools() {
+        if supports_native_tools(self.llm.as_ref()) {
             let tools = command_tool_schemas();
-            match self
-                .llm
-                .call_with_tools(SYSTEM_PROMPT, &messages, &tools, self.max_tokens)
-                .await
+            match call_with_tools(
+                self.llm.as_ref(),
+                SYSTEM_PROMPT,
+                &messages,
+                &tools,
+                self.max_tokens,
+            )
+            .await
             {
                 Ok(resp) => {
                     if !resp.tool_calls.is_empty() {
@@ -98,10 +103,13 @@ impl CommandAgent {
         }
 
         // Fallback: JSON mode 文本解析。
-        let raw = match self
-            .llm
-            .call_structured(SYSTEM_PROMPT, &messages, self.max_tokens)
-            .await
+        let raw = match call_structured(
+            self.llm.as_ref(),
+            SYSTEM_PROMPT,
+            &messages,
+            self.max_tokens,
+        )
+        .await
         {
             Ok(t) => t,
             Err(e) => {
@@ -130,6 +138,7 @@ fn command_tool_schemas() -> Vec<ToolSchema> {
                     "value": {"description": "任意 JSON 值"},
                 },
             }),
+            server_id: None,
         },
         ToolSchema {
             name: "delete_state_path".into(),
@@ -141,6 +150,7 @@ fn command_tool_schemas() -> Vec<ToolSchema> {
                     "path": {"type": "string"},
                 },
             }),
+            server_id: None,
         },
         ToolSchema {
             name: "append_state_path".into(),
@@ -153,6 +163,7 @@ fn command_tool_schemas() -> Vec<ToolSchema> {
                     "value": {"description": "任意 JSON 值"},
                 },
             }),
+            server_id: None,
         },
         ToolSchema {
             name: "set_relationship".into(),
@@ -165,6 +176,7 @@ fn command_tool_schemas() -> Vec<ToolSchema> {
                     "value": {"description": "新关系状态(string 或 object)"},
                 },
             }),
+            server_id: None,
         },
         ToolSchema {
             name: "add_memory_item".into(),
@@ -177,6 +189,7 @@ fn command_tool_schemas() -> Vec<ToolSchema> {
                     "content": {"type": "string"},
                 },
             }),
+            server_id: None,
         },
     ]
 }

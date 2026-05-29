@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::common::{
-    extract_json_block, parse_json_array_field, AgentError, AgentResult, ChatMessage, GameState,
-    SharedLlm,
+    call_structured, extract_json_block, parse_json_array_field, AgentError, AgentResult,
+    ChatMessage, GameState, SharedLlm,
 };
 
 const SYSTEM_PROMPT: &str = include_str!("prompts/extractor.txt");
@@ -102,10 +102,13 @@ impl ExtractorAgent {
         let user_prompt = build_user_prompt(&input.narrative_text, &state.data);
         let messages = vec![ChatMessage::user(user_prompt)];
 
-        let raw = match self
-            .llm
-            .call_structured(SYSTEM_PROMPT, &messages, self.config.max_tokens)
-            .await
+        let raw = match call_structured(
+            self.llm.as_ref(),
+            SYSTEM_PROMPT,
+            &messages,
+            self.config.max_tokens,
+        )
+        .await
         {
             Ok(t) => t,
             Err(e) => {

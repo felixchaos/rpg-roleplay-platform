@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::common::{
-    extract_json_block, AgentResult, ChatMessage, GameState, SharedLlm,
+    call_structured, extract_json_block, state_short_summary, AgentResult, ChatMessage, GameState,
+    SharedLlm,
 };
 
 use rpg_context::{
@@ -131,10 +132,13 @@ impl ContextAgent {
         let user_prompt = build_curator_task_prompt(state, &input.user_input, &input.directives);
         let messages = vec![ChatMessage::user(user_prompt)];
 
-        let raw = match self
-            .llm
-            .call_structured(AGENT_PROMPT, &messages, self.max_tokens)
-            .await
+        let raw = match call_structured(
+            self.llm.as_ref(),
+            AGENT_PROMPT,
+            &messages,
+            self.max_tokens,
+        )
+        .await
         {
             Ok(t) => t,
             Err(e) => {
@@ -233,7 +237,7 @@ fn build_curator_task_prompt(
 ) -> String {
     let mut out = String::new();
     out.push_str("## 当前剧情状态\n");
-    out.push_str(&state.short_summary());
+    out.push_str(&state_short_summary(state));
     out.push_str("\n\n## 玩家本轮输入\n");
     out.push_str(user_input);
     if !directives.is_empty() {

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::common::{
-    extract_json_block, AgentResult, ChatMessage, GameState, SharedLlm,
+    call_structured, extract_json_block, AgentResult, ChatMessage, GameState, SharedLlm,
 };
 
 const SYSTEM_PROMPT: &str = include_str!("prompts/acceptance_verifier.txt");
@@ -76,10 +76,13 @@ impl AcceptanceVerifierAgent {
         let user_prompt = build_user_prompt(&input.acceptance, &input.response_text, &input.updates);
         let messages = vec![ChatMessage::user(user_prompt)];
 
-        let raw = match self
-            .llm
-            .call_structured(SYSTEM_PROMPT, &messages, self.config.max_tokens)
-            .await
+        let raw = match call_structured(
+            self.llm.as_ref(),
+            SYSTEM_PROMPT,
+            &messages,
+            self.config.max_tokens,
+        )
+        .await
         {
             Ok(t) => t,
             Err(e) => {

@@ -16,8 +16,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::common::{AgentResult, GameState, SharedLlm, ToolSchema};
-use rpg_state::{apply_op, GameState as RealGameState, Op};
+use crate::common::{
+    call_with_tools, extract_json_block, state_turn, AgentResult, ChatMessage, GameState, SharedLlm,
+    ToolSchema,
+};
+use rpg_state::{apply_op, Op};
+
+/// 与 RealGameState 别名 — 现在 common::GameState 已经就是 rpg_state::GameState。
+pub type RealGameState = GameState;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RealitySnapshot {
@@ -105,7 +111,7 @@ pub fn reality_snapshot(state: &GameState, _script_id: Option<i64>) -> RealitySn
             "min": timeline.get("chapter_min").cloned().unwrap_or(Value::Null),
             "max": timeline.get("chapter_max").cloned().unwrap_or(Value::Null),
         }),
-        turn: state.turn,
+        turn: state_turn(state),
     }
 }
 
@@ -144,6 +150,7 @@ pub fn proposal_tool_schema(snapshot: &RealitySnapshot) -> ToolSchema {
                       If no suitable event fits the current situation, return event_kind='no_op'."
             .into(),
         input_schema: schema,
+        server_id: None,
     }
 }
 
@@ -277,8 +284,25 @@ pub struct BlackSwanOutput {
     pub validation_failures: Vec<String>,
 }
 
+/// 默认 token blacklist — 阻止 propose 用穿越 / 重启之类的禁词。
+const DEFAULT_BLACKLIST: &[&str] = &[
+    "穿越", "重启世界", "重置世界", "时间倒流", "时空错乱", "回到过去",
+    "死亡", "灭门", "覆灭",
+];
+
+const BLACK_SWAN_SYSTEM_PROMPT: &str = r#"你是世界事件提案器(black swan agent)。
+任务:根据 reality snapshot,主动提议一个【小规模】的世界事件,丰富当前 phase 的环境。
+约束:
+  * 只能使用 snapshot 里出现过的 NPC / 地点 / phase。不要发明新角色或新地点。
+  * 不得违反 locked_variables(玩家锁定的世界设定)。
+  * 不得跨 phase。
+  * 不得描写穿越 / 时间倒流 / 重置世界 / 死亡 / 灭门类内容。
+  * 若当前情境不适合任何事件,event_kind 返回 "no_op"。
+输出:严格调用 propose_black_swan_event 工具。"#;
+
+const BLACK_SWAN_MAX_TOKENS: usize = 600;
+
 pub struct BlackSwanAgent {
-    #[allow(dead_code)] // 当前管线 LLM 提案路径走 GM 端,这里 dispatcher only
     llm: SharedLlm,
 }
 
@@ -289,8 +313,8 @@ impl BlackSwanAgent {
 
     /// 主入口:Layer 1 snapshot → Layer 2 schema → LLM propose → Layer 3 validate → Layer 5 dispatch。
     ///
-    /// 当前 LLM propose 仍走 GM 端 — 本 agent 提供 snapshot + schema + 校验闸门 + dispatch。
-    /// 上层若想跑完整 maybe_trigger,需自己拿 schema 调 LLM 再调 dispatch。
+    /// LLM propose 走 rpg_llm::stream_chat — native tool_use 优先,JSON fallback 兜底。
+    /// validate 通过后由 caller 拿 proposal 自己调 [`dispatch_swan`] apply 到 state。
     pub async fn maybe_trigger(
         &self,
         input: BlackSwanInput,
@@ -317,16 +341,135 @@ impl BlackSwanAgent {
         }
 
         let snapshot = reality_snapshot(state, input.script_id);
-        let _schema = proposal_tool_schema(&snapshot);
+        let schema = proposal_tool_schema(&snapshot);
 
-        // 完整 propose+validate 路径需 GM 端协同;此处只做接口校验,返回空。
-        // 上层若有 proposal,可直接调 dispatch_swan() apply 到 RealGameState。
+        // 1) propose via native tool_use(走 call_with_tools)。
+        let user_prompt = build_propose_prompt(&snapshot);
+        let messages = vec![ChatMessage::user(user_prompt)];
+        let proposal = match call_with_tools(
+            self.llm.as_ref(),
+            BLACK_SWAN_SYSTEM_PROMPT,
+            &messages,
+            std::slice::from_ref(&schema),
+            BLACK_SWAN_MAX_TOKENS,
+        )
+        .await
+        {
+            Ok(resp) => {
+                // 优先 tool_calls[0].input;否则尝试 resp.text 抠 JSON。
+                resp.tool_calls
+                    .into_iter()
+                    .find(|tc| tc.name == "propose_black_swan_event")
+                    .map(|tc| tc.input)
+                    .or_else(|| {
+                        let blk = extract_json_block(&resp.text).ok()?;
+                        serde_json::from_str::<Value>(blk).ok()
+                    })
+            }
+            Err(e) => {
+                tracing::warn!("[black_swan] propose 调用失败: {e}");
+                None
+            }
+        };
+
+        let Some(proposal) = proposal else {
+            return Ok(BlackSwanOutput {
+                triggered: false,
+                proposal: None,
+                validation_failures: vec!["LLM 未返回有效 proposal".into()],
+            });
+        };
+
+        // event_kind="no_op" 视为 "agent 主动放弃本轮",不算 fail。
+        if proposal
+            .get("event_kind")
+            .and_then(|v| v.as_str())
+            .map(|k| k == "no_op")
+            .unwrap_or(false)
+        {
+            return Ok(BlackSwanOutput {
+                triggered: false,
+                proposal: Some(proposal),
+                validation_failures: vec!["event_kind=no_op".into()],
+            });
+        }
+
+        // 2) Layer 3 validators。
+        let (ok, failures) = run_validators(&proposal, &snapshot, DEFAULT_BLACKLIST);
+        if !ok {
+            return Ok(BlackSwanOutput {
+                triggered: false,
+                proposal: Some(proposal),
+                validation_failures: failures,
+            });
+        }
+
         Ok(BlackSwanOutput {
-            triggered: false,
-            proposal: None,
-            validation_failures: vec!["snapshot 已生成,LLM propose 待上层调用 dispatch_swan".into()],
+            triggered: true,
+            proposal: Some(proposal),
+            validation_failures: vec![],
         })
     }
+}
+
+/// 组装 propose 时的 user prompt — 仅暴露 snapshot 关键字段。
+fn build_propose_prompt(snapshot: &RealitySnapshot) -> String {
+    let npc_lines: Vec<String> = snapshot
+        .active_npcs
+        .iter()
+        .filter_map(|n| {
+            let id = n.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let name = n.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let disp = n.get("disposition").and_then(|v| v.as_str()).unwrap_or("");
+            if id.is_empty() {
+                None
+            } else {
+                Some(format!("  - id={id} name={name} disposition={disp}"))
+            }
+        })
+        .collect();
+    let locked_lines: Vec<String> = snapshot
+        .locked_variables
+        .iter()
+        .map(|(k, v)| format!("  - {k} = {v}"))
+        .collect();
+    let recent_lines: Vec<String> = snapshot
+        .recent_events
+        .iter()
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("  - {s}"))
+        .collect();
+
+    format!(
+        "## reality snapshot\n\
+         - current_phase: {phase}\n\
+         - current_location: {loc}\n\
+         - current_time: {time}\n\
+         - turn: {turn}\n\n\
+         ### active_npcs\n{npcs}\n\n\
+         ### locked_variables\n{locked}\n\n\
+         ### recent_events\n{recent}\n\n\
+         请调用 propose_black_swan_event 给出一个【小规模】事件;若不合适请用 event_kind=\"no_op\"。",
+        phase = snapshot.current_phase,
+        loc = snapshot.current_location,
+        time = snapshot.current_time,
+        turn = snapshot.turn,
+        npcs = if npc_lines.is_empty() {
+            "  (无)".to_string()
+        } else {
+            npc_lines.join("\n")
+        },
+        locked = if locked_lines.is_empty() {
+            "  (无)".to_string()
+        } else {
+            locked_lines.join("\n")
+        },
+        recent = if recent_lines.is_empty() {
+            "  (无)".to_string()
+        } else {
+            recent_lines.join("\n")
+        },
+    )
 }
 
 /// 把校验通过的 proposal 落地到 RealGameState(rpg-state)。

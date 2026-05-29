@@ -12,7 +12,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::common::{AgentResult, GameState};
+use crate::common::{state_turn, AgentResult, GameState};
 
 /// 禁词模式 — 涵盖"穿越/重置/醒来发现/时间倒流"类过渡叙事的常见表达。
 const FORBIDDEN_PATTERNS_RAW: &[(&str, &str)] = &[
@@ -56,9 +56,9 @@ pub struct Violation {
 /// 检测 GM 文本是否在 user_set 时间跳跃当回合写了禁止叙事。
 ///
 /// 判定优先级:
-/// 1. state.world.timeline.user_set_jump_turn == state.turn
+/// 1. state.world.timeline.user_set_jump_turn == state_turn(state)
 /// 2. state.world.timeline.last_transition.source == "user_set"
-///    AND last_transition.turn == state.turn
+///    AND last_transition.turn == state_turn(state)
 pub fn detect_time_jump_violations(text: &str, state: &GameState) -> Vec<Violation> {
     if !is_user_set_jump_turn(state) {
         return Vec::new();
@@ -90,7 +90,7 @@ fn is_user_set_jump_turn(state: &GameState) -> bool {
 
     // 优先 user_set_jump_turn
     if let Some(jump_turn) = timeline.get("user_set_jump_turn").and_then(|v| v.as_u64()) {
-        if jump_turn == state.turn {
+        if jump_turn == state_turn(state) {
             return true;
         }
     }
@@ -98,7 +98,7 @@ fn is_user_set_jump_turn(state: &GameState) -> bool {
     let last = timeline.get("last_transition").cloned().unwrap_or_default();
     let source = last.get("source").and_then(|v| v.as_str()).unwrap_or("");
     let turn = last.get("turn").and_then(|v| v.as_u64()).unwrap_or(u64::MAX);
-    source == "user_set" && turn == state.turn
+    source == "user_set" && turn == state_turn(state)
 }
 
 /// 把违规列表写入 state.audit_log。
@@ -110,7 +110,7 @@ pub fn record_violations_to_audit(state: &mut GameState, violations: &[Violation
     }
     let entry = serde_json::json!({
         "type": "narrative_guard_violation",
-        "turn": state.turn,
+        "turn": state_turn(state),
         "violations": violations.iter().map(|v| {
             serde_json::json!({
                 "label": v.pattern_label,

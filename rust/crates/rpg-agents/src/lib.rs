@@ -50,6 +50,8 @@ pub mod worldbook_agent;
 pub mod gm;
 
 pub use common::{
-    extract_json_block, AgentError, AgentResult, ChatMessage, GameState, LlmBackend, SharedLlm,
-    ToolCall, ToolCallResponse, ToolSchema,
+    call_structured, call_text, call_with_tools, extract_json_block, state_history_messages,
+    state_short_summary, state_turn, stream_text, supports_native_tools, AgentError, AgentResult,
+    ChatMessage, ChatRequest, ChatRole, GameState, LlmBackend, SharedLlm, ToolCall,
+    ToolCallResponse, ToolSchema,
 };
