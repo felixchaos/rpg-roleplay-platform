@@ -684,3 +684,397 @@ fn clip(s: &str, n: usize) -> String {
 fn _ensure_hashmap_import() -> HashMap<String, String> {
     HashMap::new()
 }
+
+// -----------------------------------------------------------------------------
+// SSE state machine 单元测试
+// -----------------------------------------------------------------------------
+//
+// fixture JSON 直接抄自 Anthropic Messages API SSE 规范
+// (https://docs.anthropic.com/en/api/messages-streaming),驱动 StreamState
+// 的 6 条核心路径:basic text / tool_use partial json / extended thinking /
+// 多 block 顺序 / usage 透传 / stop_reason 透传。
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::ChatChunk;
+
+    /// 把一组 (event, data) 顺次喂给一个新 StreamState,聚合所有 emit。
+    fn drive(events: &[(&str, &str)]) -> Vec<ChatChunk> {
+        let mut state = StreamState::default();
+        let mut out = Vec::new();
+        for (ev, data) in events {
+            for r in state.process(ev, data) {
+                out.push(r.expect("state machine should not emit hard errors on valid fixture"));
+            }
+        }
+        out
+    }
+
+    fn count_text(chunks: &[ChatChunk]) -> usize {
+        chunks
+            .iter()
+            .filter(|c| matches!(c, ChatChunk::Text(_)))
+            .count()
+    }
+
+    fn last_stop_reason(chunks: &[ChatChunk]) -> Option<String> {
+        chunks.iter().rev().find_map(|c| match c {
+            ChatChunk::Stop { reason } => Some(reason.clone()),
+            _ => None,
+        })
+    }
+
+    fn last_usage(chunks: &[ChatChunk]) -> Option<Usage> {
+        chunks.iter().rev().find_map(|c| match c {
+            ChatChunk::Usage(u) => Some(*u),
+            _ => None,
+        })
+    }
+
+    // --------- test 1: 基本 text 流 ---------
+    #[test]
+    fn test_basic_text_streaming() {
+        let events: &[(&str, &str)] = &[
+            (
+                "message_start",
+                r#"{"type":"message_start","message":{"id":"msg_01","type":"message","role":"assistant","content":[],"model":"claude-opus-4-7","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":12,"output_tokens":1}}}"#,
+            ),
+            (
+                "content_block_start",
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#,
+            ),
+            (
+                "content_block_stop",
+                r#"{"type":"content_block_stop","index":0}"#,
+            ),
+            (
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":24}}"#,
+            ),
+            (
+                "message_stop",
+                r#"{"type":"message_stop"}"#,
+            ),
+        ];
+
+        let chunks = drive(events);
+        // 3 个 text + 1 个 usage + 1 个 stop
+        assert_eq!(count_text(&chunks), 3, "expect 3 text chunks, got {:?}", chunks);
+        for c in chunks.iter().filter(|c| matches!(c, ChatChunk::Text(_))) {
+            if let ChatChunk::Text(t) = c {
+                assert_eq!(t, "Hello");
+            }
+        }
+        assert_eq!(last_stop_reason(&chunks).as_deref(), Some("end_turn"));
+        let u = last_usage(&chunks).expect("expect Usage chunk");
+        assert_eq!(u.input_tokens, 12);
+        assert_eq!(u.output_tokens, 24);
+    }
+
+    // --------- test 2: tool_use partial_json 累加 ---------
+    #[test]
+    fn test_tool_use_partial_json_accumulation() {
+        let events: &[(&str, &str)] = &[
+            (
+                "message_start",
+                r#"{"type":"message_start","message":{"id":"msg_02","type":"message","role":"assistant","content":[],"model":"claude-opus-4-7","stop_reason":null,"usage":{"input_tokens":5,"output_tokens":1}}}"#,
+            ),
+            (
+                "content_block_start",
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_X","name":"calc_tool","input":{}}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"a\":"}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"1}"}}"#,
+            ),
+            (
+                "content_block_stop",
+                r#"{"type":"content_block_stop","index":0}"#,
+            ),
+            (
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":7}}"#,
+            ),
+            (
+                "message_stop",
+                r#"{"type":"message_stop"}"#,
+            ),
+        ];
+        let chunks = drive(events);
+
+        // 必须有且仅有 1 个 ToolCall;input 是合并完的 {"a":1}
+        let tool_calls: Vec<&ChatChunk> = chunks
+            .iter()
+            .filter(|c| matches!(c, ChatChunk::ToolCall { .. }))
+            .collect();
+        assert_eq!(tool_calls.len(), 1, "expect single ToolCall, got {:?}", chunks);
+        match tool_calls[0] {
+            ChatChunk::ToolCall { id, name, input } => {
+                assert_eq!(id, "toolu_X");
+                assert_eq!(name, "calc_tool");
+                assert_eq!(input, &serde_json::json!({"a": 1}));
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(last_stop_reason(&chunks).as_deref(), Some("tool_use"));
+    }
+
+    // --------- test 3: extended thinking + signature_delta ---------
+    #[test]
+    fn test_extended_thinking() {
+        let events: &[(&str, &str)] = &[
+            (
+                "message_start",
+                r#"{"type":"message_start","message":{"id":"msg_03","type":"message","role":"assistant","content":[],"model":"claude-opus-4-7","stop_reason":null,"usage":{"input_tokens":8,"output_tokens":1}}}"#,
+            ),
+            (
+                "content_block_start",
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"reasoning"}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig123"}}"#,
+            ),
+            (
+                "content_block_stop",
+                r#"{"type":"content_block_stop","index":0}"#,
+            ),
+            (
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":3}}"#,
+            ),
+            (
+                "message_stop",
+                r#"{"type":"message_stop"}"#,
+            ),
+        ];
+
+        // 这里我们要观察 signature_delta 的内部累加,直接驱动一个 state 检视
+        let mut state = StreamState::default();
+        let mut chunks = Vec::new();
+        for (i, (ev, data)) in events.iter().enumerate() {
+            for r in state.process(ev, data) {
+                chunks.push(r.expect("no hard errors"));
+            }
+            // signature_delta 出现后 (index=3) 且 content_block_stop 之前 (index=4),
+            // 累积应等于 "sig123"
+            if i == 3 {
+                assert_eq!(
+                    state.current_thinking_signature.as_deref(),
+                    Some("sig123"),
+                    "signature should accumulate inside thinking block",
+                );
+            }
+            // content_block_stop 之后,thinking signature 状态被清空
+            if i == 4 {
+                assert!(
+                    state.current_thinking_signature.is_none(),
+                    "signature buffer must be cleared on content_block_stop",
+                );
+            }
+        }
+
+        let thinking_chunks: Vec<&ChatChunk> = chunks
+            .iter()
+            .filter(|c| matches!(c, ChatChunk::Thinking(_)))
+            .collect();
+        assert_eq!(thinking_chunks.len(), 1);
+        if let ChatChunk::Thinking(t) = thinking_chunks[0] {
+            assert_eq!(t, "reasoning");
+        }
+        // signature_delta 不向上 emit 任何 ChatChunk
+        assert_eq!(count_text(&chunks), 0);
+        assert_eq!(last_stop_reason(&chunks).as_deref(), Some("end_turn"));
+    }
+
+    // --------- test 4: 多 content_block 顺序 (text + text + tool_use) ---------
+    #[test]
+    fn test_multi_content_block() {
+        let events: &[(&str, &str)] = &[
+            (
+                "message_start",
+                r#"{"type":"message_start","message":{"id":"msg_04","type":"message","role":"assistant","content":[],"model":"claude-opus-4-7","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}"#,
+            ),
+            // block 0: text
+            (
+                "content_block_start",
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"first"}}"#,
+            ),
+            (
+                "content_block_stop",
+                r#"{"type":"content_block_stop","index":0}"#,
+            ),
+            // block 1: text
+            (
+                "content_block_start",
+                r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"second"}}"#,
+            ),
+            (
+                "content_block_stop",
+                r#"{"type":"content_block_stop","index":1}"#,
+            ),
+            // block 2: tool_use
+            (
+                "content_block_start",
+                r#"{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_Y","name":"fetch_thing","input":{}}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"k\":\"v\"}"}}"#,
+            ),
+            (
+                "content_block_stop",
+                r#"{"type":"content_block_stop","index":2}"#,
+            ),
+            (
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":15}}"#,
+            ),
+            (
+                "message_stop",
+                r#"{"type":"message_stop"}"#,
+            ),
+        ];
+
+        let chunks = drive(events);
+        // 期望顺序:Text("first") → Text("second") → ToolCall → Usage → Stop
+        let interesting: Vec<&ChatChunk> = chunks
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c,
+                    ChatChunk::Text(_) | ChatChunk::ToolCall { .. } | ChatChunk::Stop { .. }
+                )
+            })
+            .collect();
+        assert_eq!(interesting.len(), 4, "got chunks: {:?}", chunks);
+        match interesting[0] {
+            ChatChunk::Text(t) => assert_eq!(t, "first"),
+            other => panic!("expect text 'first', got {other:?}"),
+        }
+        match interesting[1] {
+            ChatChunk::Text(t) => assert_eq!(t, "second"),
+            other => panic!("expect text 'second', got {other:?}"),
+        }
+        match interesting[2] {
+            ChatChunk::ToolCall { id, name, input } => {
+                assert_eq!(id, "toolu_Y");
+                assert_eq!(name, "fetch_thing");
+                assert_eq!(input, &serde_json::json!({"k": "v"}));
+            }
+            other => panic!("expect ToolCall, got {other:?}"),
+        }
+        match interesting[3] {
+            ChatChunk::Stop { reason } => assert_eq!(reason, "tool_use"),
+            other => panic!("expect Stop, got {other:?}"),
+        }
+    }
+
+    // --------- test 5: usage 抽取 (input/output/cache_*) ---------
+    #[test]
+    fn test_usage_extraction() {
+        let events: &[(&str, &str)] = &[
+            (
+                "message_start",
+                r#"{"type":"message_start","message":{"id":"msg_05","type":"message","role":"assistant","content":[],"model":"claude-opus-4-7","stop_reason":null,"usage":{"input_tokens":1000,"output_tokens":1,"cache_creation_input_tokens":500,"cache_read_input_tokens":200}}}"#,
+            ),
+            (
+                "content_block_start",
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}"#,
+            ),
+            (
+                "content_block_stop",
+                r#"{"type":"content_block_stop","index":0}"#,
+            ),
+            (
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":42,"cache_read_input_tokens":250}}"#,
+            ),
+            (
+                "message_stop",
+                r#"{"type":"message_stop"}"#,
+            ),
+        ];
+        let chunks = drive(events);
+        let u = last_usage(&chunks).expect("expect Usage in stream tail");
+        assert_eq!(u.input_tokens, 1000, "input_tokens from message_start");
+        assert_eq!(u.output_tokens, 42, "output_tokens from message_delta");
+        assert_eq!(
+            u.cache_create, 500,
+            "cache_creation_input_tokens come from message_start"
+        );
+        // message_delta override 了 cache_read 为 250
+        assert_eq!(
+            u.cache_read, 250,
+            "cache_read_input_tokens should be overridden by message_delta"
+        );
+    }
+
+    // --------- test 6: stop_reason 各种值都透传 ---------
+    #[test]
+    fn test_stop_reason_passes() {
+        for reason in ["end_turn", "tool_use", "max_tokens", "stop_sequence"] {
+            let msg_delta = format!(
+                r#"{{"type":"message_delta","delta":{{"stop_reason":"{reason}","stop_sequence":null}},"usage":{{"output_tokens":1}}}}"#,
+            );
+            let events: Vec<(&str, &str)> = vec![
+                (
+                    "message_start",
+                    r#"{"type":"message_start","message":{"id":"msg_06","type":"message","role":"assistant","content":[],"model":"claude-opus-4-7","stop_reason":null,"usage":{"input_tokens":3,"output_tokens":1}}}"#,
+                ),
+                (
+                    "content_block_start",
+                    r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+                ),
+                (
+                    "content_block_delta",
+                    r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"x"}}"#,
+                ),
+                (
+                    "content_block_stop",
+                    r#"{"type":"content_block_stop","index":0}"#,
+                ),
+                ("message_delta", msg_delta.as_str()),
+                ("message_stop", r#"{"type":"message_stop"}"#),
+            ];
+            let chunks = drive(&events);
+            assert_eq!(
+                last_stop_reason(&chunks).as_deref(),
+                Some(reason),
+                "stop_reason {reason} should be passed through verbatim",
+            );
+        }
+    }
+}
