@@ -18,7 +18,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use futures_util::stream::{self, Stream, StreamExt};
+use futures_util::stream::StreamExt;
 use http::{HeaderMap, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -30,6 +30,7 @@ use rpg_llm::pipeline::{
 use rpg_platform::quota::{self, QuotaConfig, QuotaError};
 use rpg_state::GameState;
 
+use crate::sse_metrics::{GuardedStream, SseConnectionGuard};
 use crate::{hello_payload, named_sse_event, require_user, user_id_or_anon, AppState, ResponseError};
 
 pub fn router() -> Router<AppState> {
@@ -162,34 +163,40 @@ async fn api_new(
 pub(crate) async fn api_opening(
     State(s): State<AppState>,
     headers: HeaderMap,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ResponseError> {
+) -> Result<Sse<GuardedStream<ReceiverStream<Result<Event, Infallible>>>>, ResponseError> {
     // 触达 LLM 路由:强鉴权,匿名严禁触达 LLM → 401。
     let user = require_user(&s, &headers).await?;
     let user_id = user.id.to_string();
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
 
+    // SSE 活跃连接 gauge +1。
+    let guard = SseConnectionGuard::new("opening");
+
     // 取 backend(若无 catalog/无注册则 stub fallback,不报错以兼容空环境)。
     let backend_opt = s.llm_router.read().current_backend().ok();
 
+    // 所有路径统一用 ReceiverStream 出口(避免 Either 带来的 Unpin 问题)。
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(32);
+
     // 没 backend → 老 stub 路径(同旧行为)。
-    let Some(backend) = backend_opt else {
+    if backend_opt.is_none() {
         let state_data = shared.read().snapshot();
-        let events = vec![
-            Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id))),
-            Ok(named_sse_event(
-                "state_change",
-                json!({"phase":"generating","label":"GM 构思开场中(stub)…"}),
-            )),
-            Ok(named_sse_event("chunk", json!({"text":""}))),
-            Ok(named_sse_event(
-                "done",
-                json!({"status": {"state": state_data}, "interrupted": false}),
-            )),
-        ];
-        let stream = stream::iter(events).left_stream();
+        let _ = tx.send(Ok(named_sse_event("hello", hello_payload(&user_id)))).await;
+        let _ = tx.send(Ok(named_sse_event(
+            "state_change",
+            json!({"phase":"generating","label":"GM 构思开场中(stub)…"}),
+        ))).await;
+        let _ = tx.send(Ok(named_sse_event("chunk", json!({"text":""})))).await;
+        let _ = tx.send(Ok(named_sse_event(
+            "done",
+            json!({"status": {"state": state_data}, "interrupted": false}),
+        ))).await;
+        let stream = GuardedStream::new(ReceiverStream::new(rx), guard);
         return Ok(Sse::new(stream).keep_alive(KeepAlive::default()));
-    };
+    }
+
+    let backend = backend_opt.unwrap();
 
     // 取 catalog 的 selected.model_id(空则让 router 兜底)。
     let model = s
@@ -214,10 +221,6 @@ pub(crate) async fn api_opening(
         ..Default::default()
     };
 
-    // 把流处理委托给 helper:返回 mpsc::Receiver<Event>。
-    let state_handle = shared.clone();
-    let user_id_clone = user_id.clone();
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(32);
     // 首帧 hello。
     let _ = tx
         .send(Ok(named_sse_event("hello", hello_payload(&user_id))))
@@ -229,6 +232,8 @@ pub(crate) async fn api_opening(
         )))
         .await;
 
+    let state_handle = shared.clone();
+    let user_id_clone = user_id.clone();
     tokio::spawn(async move {
         let mut full = String::new();
         match backend.stream_chat(req).await {
@@ -292,7 +297,7 @@ pub(crate) async fn api_opening(
         let _ = user_id_clone;
     });
 
-    let stream = ReceiverStream::new(rx).right_stream();
+    let stream = GuardedStream::new(ReceiverStream::new(rx), guard);
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
@@ -478,6 +483,9 @@ pub(crate) async fn api_chat(
     let user_id = user.id.to_string();
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
 
+    // SSE 活跃连接 gauge +1(guard drop 时 -1)。
+    let sse_guard = SseConnectionGuard::new("chat");
+
     let message = body
         .message
         .or(body.text)
@@ -485,14 +493,15 @@ pub(crate) async fn api_chat(
         .trim()
         .to_string();
     if message.is_empty() {
-        let events = vec![
-            Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id))),
-            Ok(named_sse_event(
-                "error",
-                json!({"detail":"空消息","code":"bad_request"}),
-            )),
-        ];
-        return Sse::new(stream::iter(events)).into_response();
+        let (err_tx, err_rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(4);
+        let _ = err_tx.send(Ok(named_sse_event("hello", hello_payload(&user_id)))).await;
+        let _ = err_tx.send(Ok(named_sse_event(
+            "error",
+            json!({"detail":"空消息","code":"bad_request"}),
+        ))).await;
+        drop(err_tx);
+        let guarded = GuardedStream::new(ReceiverStream::new(err_rx), sse_guard);
+        return Sse::new(guarded).keep_alive(KeepAlive::default()).into_response();
     }
 
     // ── 调 LLM 前过配额闸:预算 / 日配额 / 速率 / 并发。失败 → 429 + Retry-After。
@@ -603,8 +612,8 @@ pub(crate) async fn api_chat(
             )))
             .await;
         drop(tx);
-        let stream = ReceiverStream::new(rx);
-        return Sse::new(stream).keep_alive(KeepAlive::default()).into_response();
+        let guarded = GuardedStream::new(ReceiverStream::new(rx), sse_guard);
+        return Sse::new(guarded).keep_alive(KeepAlive::default()).into_response();
     };
 
     let req = LlmChatRequest {
@@ -715,8 +724,8 @@ pub(crate) async fn api_chat(
         let _ = user_id_str; // 静音 unused warning。
     });
 
-    let stream = ReceiverStream::new(rx);
-    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+    let guarded = GuardedStream::new(ReceiverStream::new(rx), sse_guard);
+    Sse::new(guarded).keep_alive(KeepAlive::default()).into_response()
 }
 
 /// chat 用的 system prompt。简化版,等接 GameMaster `build_system` 后替换。

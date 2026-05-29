@@ -12,9 +12,11 @@
 
 pub mod console_assistant;
 pub mod core;
+pub mod db_metrics;
 pub mod game;
 pub mod metrics;
 pub mod sse_events;
+pub mod sse_metrics;
 pub mod mcp;
 pub mod memory;
 pub mod models;

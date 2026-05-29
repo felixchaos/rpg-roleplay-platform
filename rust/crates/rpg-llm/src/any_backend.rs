@@ -9,10 +9,17 @@
 //! `&dyn LlmBackend` adapter helper(common.rs 的 call_text / call_with_tools 等)
 //! 无需改写,只是改为持有具体 enum。
 
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Instant;
+
+use futures_util::stream::Stream;
+
 use crate::anthropic::AnthropicBackend;
+use crate::metrics;
 use crate::openai::OpenAiBackend;
 use crate::pipeline::{
-    BackendKind, ChatRequest, ChunkStream, LlmBackend, LlmError, ModelInfo,
+    BackendKind, ChatChunk, ChatRequest, ChunkStream, LlmBackend, LlmError, ModelInfo, Usage,
 };
 use crate::responses::ResponsesBackend;
 use crate::vertex::VertexBackend;
@@ -48,15 +55,43 @@ impl AnyBackend {
     }
 
     /// 主路径:流式 ChatChunk。`'a` 借的是具体 backend `&self`,与 trait 一致。
+    ///
+    /// 埋点:
+    ///   * `llm_request_duration_seconds` — 从发请求到内层 stream 首帧就绪的延迟;
+    ///     流本身用 [`InstrumentedStream`] 包裹,在 stream 关闭时发 `ok`/`error` 计数。
+    ///   * `llm_request_total` — 请求结果计数(ok / error)。
+    ///   * `llm_tokens_used_total` — 从 `ChatChunk::Usage` 取 token 数。
     pub async fn stream_chat<'a>(
         &'a self,
         req: ChatRequest,
     ) -> Result<ChunkStream<'a>, LlmError> {
-        match self {
+        let backend_label = self.kind().to_string();
+        let model_label = req.model.clone();
+        let start = Instant::now();
+
+        let inner_result = match self {
             Self::Anthropic(b) => b.stream_chat(req).await,
             Self::Vertex(b) => b.stream_chat(req).await,
             Self::OpenAi(b) => b.stream_chat(req).await,
             Self::Responses(b) => b.stream_chat(req).await,
+        };
+
+        match inner_result {
+            Err(e) => {
+                metrics::record_llm_request(&backend_label, start.elapsed(), false);
+                Err(e)
+            }
+            Ok(inner) => {
+                // 首帧延迟(发请求到首次可 poll)在此记录;流消费延迟由 caller 自行测量。
+                metrics::record_llm_request(&backend_label, start.elapsed(), true);
+                let stream = InstrumentedStream {
+                    inner,
+                    backend: backend_label,
+                    model: model_label,
+                    usage: Usage::default(),
+                };
+                Ok(Box::pin(stream))
+            }
         }
     }
 
@@ -122,5 +157,67 @@ impl LlmBackend for AnyBackend {
 
     async fn embed(&self, model: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, LlmError> {
         AnyBackend::embed(self, model, texts).await
+    }
+}
+
+// ── InstrumentedStream ───────────────────────────────────────────────────────
+
+/// 包裹内层 `ChunkStream`,拦截 `ChatChunk::Usage` 并在流结束时发 token 计数。
+///
+/// Drop 时如果累积到 `Usage` 数据则记录一次 `llm_tokens_used_total`。
+struct InstrumentedStream<'a> {
+    inner: ChunkStream<'a>,
+    backend: String,
+    model: String,
+    usage: Usage,
+}
+
+impl<'a> Stream for InstrumentedStream<'a> {
+    type Item = Result<ChatChunk, LlmError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // SAFETY: Pin 投影到内层 stream。inner 不含自引用,投影安全。
+        let inner = unsafe { self.as_mut().map_unchecked_mut(|s| &mut s.inner) };
+        match inner.poll_next(cx) {
+            Poll::Ready(Some(Ok(ChatChunk::Usage(u)))) => {
+                // 累加(部分 provider 可能分多帧发 usage)。
+                let s = self.get_mut();
+                s.usage.input_tokens = s.usage.input_tokens.saturating_add(u.input_tokens);
+                s.usage.output_tokens = s.usage.output_tokens.saturating_add(u.output_tokens);
+                s.usage.cache_read = s.usage.cache_read.saturating_add(u.cache_read);
+                // 透传 Usage chunk 给 caller。
+                Poll::Ready(Some(Ok(ChatChunk::Usage(u))))
+            }
+            Poll::Ready(None) => {
+                // 流结束:刷 token 指标。
+                let s = self.get_mut();
+                metrics::record_llm_tokens(
+                    &s.backend,
+                    &s.model,
+                    s.usage.input_tokens,
+                    s.usage.output_tokens,
+                    s.usage.cache_read,
+                );
+                // 重置防 Drop 重复记录。
+                s.usage = Usage::default();
+                Poll::Ready(None)
+            }
+            other => other,
+        }
+    }
+}
+
+impl<'a> Drop for InstrumentedStream<'a> {
+    fn drop(&mut self) {
+        // 如果 caller 提前 drop stream(中断),也把已累积的 token 数发出。
+        if self.usage.input_tokens > 0 || self.usage.output_tokens > 0 {
+            metrics::record_llm_tokens(
+                &self.backend,
+                &self.model,
+                self.usage.input_tokens,
+                self.usage.output_tokens,
+                self.usage.cache_read,
+            );
+        }
     }
 }

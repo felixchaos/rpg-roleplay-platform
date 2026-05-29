@@ -35,6 +35,7 @@
 
 pub mod anthropic;
 pub mod any_backend;
+pub mod metrics;
 pub mod openai;
 pub mod pipeline;
 pub mod registry;

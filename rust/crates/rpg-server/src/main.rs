@@ -443,7 +443,23 @@ async fn lifespan_startup(state: &AppState) {
         }
     }
 
-    // 5. TODO: cleanup stale upload chunks(等 rpg-platform 提供入口)
+    // 5. DB 连接池 metrics 采样任务 — 每 15s 更新 db_pool_* gauge。
+    {
+        let pool = state.db.clone();
+        let token = state.shutdown_token.clone();
+        state.task_tracker.spawn(async move {
+            loop {
+                rpg_routes::db_metrics::record_pool(&pool);
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(15)) => {}
+                    _ = token.cancelled() => break,
+                }
+            }
+        });
+    }
+    info!("startup: db_pool metrics sampler started (15s interval)");
+
+    // 6. TODO: cleanup stale upload chunks(等 rpg-platform 提供入口)
     //    对应 Python `platform_app.script_import.cleanup_stale_upload_chunks(ttl_hours=24)`
 }
 

@@ -53,6 +53,9 @@ eventsource-stream = "0.2"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "uuid", "json", "chrono", "macros"] }
 pgvector = { version = "0.4", features = ["sqlx"] }
 
+# metrics
+metrics = "0.24"
+
 # util
 anyhow = "1"
 thiserror = "2"

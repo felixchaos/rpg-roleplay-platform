@@ -20,7 +20,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use futures_util::stream::{Stream, StreamExt};
+use futures_util::stream::StreamExt;
 use http::HeaderMap;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -28,6 +28,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use rpg_llm::pipeline::{ChatChunk, ChatMessage, ChatRequest, WireChatChunk};
 
+use crate::sse_metrics::{GuardedStream, SseConnectionGuard};
 use crate::{hello_payload, named_sse_event, require_user, AppState, ConsoleMessage, ResponseError};
 
 pub fn router() -> Router<AppState> {
@@ -176,7 +177,7 @@ pub(crate) async fn api_console_assistant_chat(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ConsoleAssistantChatRequest>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ResponseError> {
+) -> Result<Sse<GuardedStream<ReceiverStream<Result<Event, Infallible>>>>, ResponseError> {
     let user = require_user(&s, &headers).await?;
     tracing::Span::current().record("user_id", tracing::field::display(&user.id));
     let conv_id = body
@@ -195,6 +196,9 @@ pub(crate) async fn api_console_assistant_chat(
             at: chrono::Utc::now(),
         });
     let user_id_str = user.id.to_string();
+
+    // SSE 活跃连接 gauge +1。
+    let guard = SseConnectionGuard::new("console");
 
     // backend + model id。
     let backend_opt = s.llm_router.read().current_backend().ok();
@@ -225,7 +229,7 @@ pub(crate) async fn api_console_assistant_chat(
             .send(Ok(named_sse_event("done", json!({"ok": true}))))
             .await;
         drop(tx);
-        return Ok(Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default()));
+        return Ok(Sse::new(GuardedStream::new(ReceiverStream::new(rx), guard)).keep_alive(KeepAlive::default()));
     };
 
     // 从 conversation 历史构造 ChatMessage。
@@ -314,7 +318,7 @@ pub(crate) async fn api_console_assistant_chat(
             .await;
     });
 
-    Ok(Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default()))
+    Ok(Sse::new(GuardedStream::new(ReceiverStream::new(rx), guard)).keep_alive(KeepAlive::default()))
 }
 
 /// console_assistant 用的 system prompt(简化版)。
@@ -336,7 +340,7 @@ pub(crate) async fn api_console_assistant_confirm(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ConsoleAssistantConfirmRequest>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ResponseError> {
+) -> Result<Sse<GuardedStream<ReceiverStream<Result<Event, Infallible>>>>, ResponseError> {
     let user = require_user(&s, &headers).await?;
     tracing::Span::current().record("user_id", tracing::field::display(&user.id));
     let call_id = body.call_id.unwrap_or_default();
@@ -344,6 +348,9 @@ pub(crate) async fn api_console_assistant_confirm(
     let decision = body.decision.unwrap_or_default();
     let conv_id_opt = body.conversation_id.clone();
     let user_id_str = user.id.to_string();
+
+    // SSE 活跃连接 gauge +1。
+    let guard = SseConnectionGuard::new("console");
 
     let backend_opt = s.llm_router.read().current_backend().ok();
     let model_id = s
@@ -370,14 +377,14 @@ pub(crate) async fn api_console_assistant_confirm(
             .send(Ok(named_sse_event("done", json!({"ok": true}))))
             .await;
         drop(tx);
-        return Ok(Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default()));
+        return Ok(Sse::new(GuardedStream::new(ReceiverStream::new(rx), guard)).keep_alive(KeepAlive::default()));
     };
     let Some(conv_id) = conv_id_opt else {
         let _ = tx
             .send(Ok(named_sse_event("done", json!({"ok": true}))))
             .await;
         drop(tx);
-        return Ok(Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default()));
+        return Ok(Sse::new(GuardedStream::new(ReceiverStream::new(rx), guard)).keep_alive(KeepAlive::default()));
     };
 
     let key = conv_key(user.id, &conv_id);
@@ -477,7 +484,7 @@ pub(crate) async fn api_console_assistant_confirm(
             .await;
     });
 
-    Ok(Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default()))
+    Ok(Sse::new(GuardedStream::new(ReceiverStream::new(rx), guard)).keep_alive(KeepAlive::default()))
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────

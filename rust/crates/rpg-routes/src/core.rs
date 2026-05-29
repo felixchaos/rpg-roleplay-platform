@@ -22,6 +22,7 @@ use serde_json::json;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
 use crate::sse_events::SseStateBusPayload;
+use crate::sse_metrics::{BoxedGuardedStream, SseConnectionGuard};
 use crate::{hello_payload, named_sse_event, require_user, user_id_or_anon, AppState, ResponseError};
 
 pub fn router() -> Router<AppState> {
@@ -85,10 +86,13 @@ async fn api_state(
 pub(crate) async fn api_state_events(
     State(s): State<AppState>,
     headers: HeaderMap,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ResponseError> {
+) -> Result<Sse<BoxedGuardedStream>, ResponseError> {
     let user = require_user(&s, &headers).await?;
     tracing::Span::current().record("user_id", tracing::field::display(&user.id));
     let user_id_str = user.id.to_string();
+
+    // SSE 活跃连接 gauge +1(guard drop 时 -1)。
+    let guard = SseConnectionGuard::new("state_events");
 
     // 首条 hello — 前端用此 reset backoff。
     let hello = named_sse_event("hello", hello_payload(&user_id_str));
@@ -119,7 +123,10 @@ pub(crate) async fn api_state_events(
         }
     });
 
-    let stream = hello_stream.chain(bus_stream);
+    let chained = hello_stream.chain(bus_stream);
+    let boxed: std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>> =
+        Box::pin(chained);
+    let stream = BoxedGuardedStream::new(boxed, guard);
 
     Ok(Sse::new(stream).keep_alive(
         KeepAlive::new()
