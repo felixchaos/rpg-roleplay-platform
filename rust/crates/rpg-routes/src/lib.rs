@@ -26,6 +26,7 @@ pub mod skills;
 pub mod timeline;
 pub mod uploads;
 pub mod worldline;
+pub mod ws;
 
 use std::ops::Deref;
 use std::sync::Arc;
@@ -472,6 +473,8 @@ pub fn build_sse_routes() -> Router<AppState> {
             "/api/console_assistant/confirm",
             post(console_assistant::api_console_assistant_confirm),
         )
+        // Wave 10-B:`/api/ws` 是 WebSocket 长连接,也走豁免 timeout 的 SSE 路由组。
+        .merge(ws::router())
         .layer(middleware::from_fn(rewrite_v1_prefix))
 }
 
@@ -533,6 +536,7 @@ fn api_router() -> Router<AppState> {
         .merge(models::router())
         .merge(console_assistant::router())
         .merge(uploads::router())
+        .merge(ws::router())
 }
 
 /// 普通业务路由(去掉 SSE 路由 + 上传路由)。
