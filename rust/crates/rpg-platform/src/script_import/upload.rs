@@ -278,10 +278,8 @@ pub fn cleanup_stale_upload_chunks(ttl_hours: u64) -> PlatformResult<usize> {
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs_f64())
                     .unwrap_or(0.0);
-                if mtime < cutoff {
-                    if std::fs::remove_dir_all(&p).is_ok() {
-                        cleaned += 1;
-                    }
+                if mtime < cutoff && std::fs::remove_dir_all(&p).is_ok() {
+                    cleaned += 1;
                 }
             }
         }

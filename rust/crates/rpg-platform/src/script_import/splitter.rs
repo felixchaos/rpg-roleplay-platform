@@ -401,7 +401,7 @@ fn split_auto(text: &str) -> (Vec<Chapter>, String) {
     let mut heading_indexes: Vec<usize> = if has_strong {
         strong.clone()
     } else {
-        let mut combined: Vec<usize> = strong.into_iter().chain(weak.into_iter()).collect();
+        let mut combined: Vec<usize> = strong.into_iter().chain(weak).collect();
         combined.sort_unstable();
         combined.dedup();
         combined

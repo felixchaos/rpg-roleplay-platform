@@ -843,7 +843,6 @@ mod tests {
     #[test]
     fn tavern_v2_roundtrip() {
         use crate::tavern_cards::{parse_card_value, user_card_to_tavern_v2};
-        use serde_json::to_value;
 
         let v2 = json!({
             "spec": "chara_card_v2",
@@ -927,7 +926,7 @@ mod tests {
 
     #[test]
     fn tavern_base64_parse() {
-        use crate::tavern_cards::{parse_card_str, parse_card_value};
+        use crate::tavern_cards::parse_card_str;
         use base64::{engine::general_purpose, Engine};
 
         // 先生成一张 V2 卡的 JSON,再 base64 编码。

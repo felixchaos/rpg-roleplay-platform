@@ -625,8 +625,10 @@ mod tests {
 
     #[test]
     fn test_validator_timeline_anchor_passes_same_phase() {
-        let mut snap = RealitySnapshot::default();
-        snap.current_phase = "东征".to_string();
+        let snap = RealitySnapshot {
+            current_phase: "东征".to_string(),
+            ..Default::default()
+        };
         let proposal = json!({"event_kind": "weather", "summary": "大雨"});
         // proposal 没有 phase 字段 → 默认通过
         let (pass, _) = validator_timeline_anchor(&proposal, &snap);
@@ -635,8 +637,10 @@ mod tests {
 
     #[test]
     fn test_validator_timeline_anchor_rejects_wrong_phase() {
-        let mut snap = RealitySnapshot::default();
-        snap.current_phase = "东征".to_string();
+        let snap = RealitySnapshot {
+            current_phase: "东征".to_string(),
+            ..Default::default()
+        };
         let proposal = json!({"phase": "西征", "event_kind": "weather", "summary": "大雨"});
         let (pass, reason) = validator_timeline_anchor(&proposal, &snap);
         assert!(!pass);
@@ -653,8 +657,10 @@ mod tests {
 
     #[test]
     fn test_validator_npc_presence_rejects_unknown_npc() {
-        let mut snap = RealitySnapshot::default();
-        snap.active_npcs = vec![json!({"id": "npc_1", "name": "李大人"})];
+        let snap = RealitySnapshot {
+            active_npcs: vec![json!({"id": "npc_1", "name": "李大人"})],
+            ..Default::default()
+        };
         let proposal = json!({"event_kind": "npc_action", "affected_npc_ids": ["npc_999"]});
         let (pass, _) = validator_npc_presence(&proposal, &snap);
         assert!(!pass);
