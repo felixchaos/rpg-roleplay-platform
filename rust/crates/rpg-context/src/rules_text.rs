@@ -88,7 +88,7 @@ pub fn context_agent_decision(plan: Option<&Value>) -> String {
         let joined = targets_e
             .iter()
             .take(8)
-            .map(|v| value_to_short(v))
+            .map(value_to_short)
             .collect::<Vec<_>>()
             .join("、");
         lines.push(format!("涉及实体：{}", joined));
@@ -119,7 +119,7 @@ pub fn context_agent_decision(plan: Option<&Value>) -> String {
     } else {
         let joined = must_include
             .iter()
-            .map(|v| value_to_short(v))
+            .map(value_to_short)
             .collect::<Vec<_>>()
             .join("；");
         lines.push(format!("必含事实：{}", joined));
@@ -141,7 +141,7 @@ pub fn context_agent_decision(plan: Option<&Value>) -> String {
     } else {
         let joined = risk_flags
             .iter()
-            .map(|v| value_to_short(v))
+            .map(value_to_short)
             .collect::<Vec<_>>()
             .join("；");
         lines.push(format!("风险标记：{}", joined));

@@ -10,9 +10,17 @@ use crate::error::ContextResult;
 use crate::provider::{ContextProvider, ProviderServices};
 use crate::types::{ContextContribution, Demand, Layer, Manifest};
 use async_trait::async_trait;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::{json, Value};
 use sqlx::Row;
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+/// 正则编译缓存：key=pattern, value=Some(Regex) 编译成功 / None 编译失败(避免重复报错)。
+/// 超过 1024 条时清空（简单 LRU 替代；实际模式数远小于该值）。
+static REGEX_CACHE: Lazy<Mutex<HashMap<String, Option<Regex>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn is_novel(manifest: &Manifest) -> bool {
     manifest.kind == "novel_adaptation"
@@ -490,7 +498,7 @@ fn pick_active_cards(
             scored.push((score, card.clone()));
         }
     }
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|b| std::cmp::Reverse(b.0));
     let npc_cards: Vec<Value> = scored.into_iter().take(6).map(|(_, c)| c).collect();
     (player_card, npc_cards)
 }
@@ -639,17 +647,26 @@ fn pick_active_worldbook(entries: &[Value], scan_text: &str) -> Vec<Value> {
                 }
             }
         }
-        // regex_keys: 编译为 Regex 并 match;编译失败的 key 退回朴素 contains。
+        // regex_keys: 查缓存或编译 Regex 并 match;编译失败的 key 退回朴素 contains。
         if let Some(keys) = e.get("regex_keys").and_then(|v| v.as_array()) {
             for k in keys {
                 if let Some(s) = k.as_str() {
                     if s.is_empty() {
                         continue;
                     }
-                    let matched = match Regex::new(s) {
-                        Ok(re) => re.is_match(scan_text),
-                        // 编译失败 fallback 到 contains
-                        Err(_) => scan_text.contains(s),
+                    let matched = {
+                        let mut cache = REGEX_CACHE.lock().unwrap();
+                        // 超上限时清空（简单策略）
+                        if cache.len() >= 1024 {
+                            cache.clear();
+                        }
+                        let entry = cache
+                            .entry(s.to_string())
+                            .or_insert_with(|| Regex::new(s).ok());
+                        match entry {
+                            Some(re) => re.is_match(scan_text),
+                            None => scan_text.contains(s),
+                        }
                     };
                     if matched {
                         hits += 1;
@@ -665,7 +682,7 @@ fn pick_active_worldbook(entries: &[Value], scan_text: &str) -> Vec<Value> {
             scored.push((hits * 100 + pri, e.clone()));
         }
     }
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|b| std::cmp::Reverse(b.0));
     scored.into_iter().take(8).map(|(_, e)| e).collect()
 }
 

@@ -166,7 +166,7 @@ pub fn fact_groups_layer(state_data: &Value) -> String {
         }
     }
 
-    fn sort_by_turn_desc(list: &mut Vec<Value>) {
+    fn sort_by_turn_desc(list: &mut [Value]) {
         list.sort_by(|a, b| {
             let at = a.get("turn").and_then(|v| v.as_i64()).unwrap_or(0);
             let bt = b.get("turn").and_then(|v| v.as_i64()).unwrap_or(0);

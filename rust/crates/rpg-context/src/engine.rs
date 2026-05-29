@@ -21,6 +21,7 @@ use serde_json::{json, Value};
 /// 调用方式:
 /// - 新路径(推荐):传 contributions + manifest(已预先跑好 providers)。
 /// - 旧路径:不传 contributions/manifest,本函数自动 resolve_content_pack + run_providers。
+#[allow(clippy::too_many_arguments)]
 pub async fn build_context_bundle(
     state_data: &Value,
     user_input: &str,
@@ -174,10 +175,10 @@ pub async fn build_context_bundle(
     // 合并 + 按 priority 降序排序
     let mut all_layers: Vec<Layer> = universal_layers
         .into_iter()
-        .chain(provider_layers.into_iter())
-        .chain(tail_layers.into_iter())
+        .chain(provider_layers)
+        .chain(tail_layers)
         .collect();
-    all_layers.sort_by(|a, b| b.priority.cmp(&a.priority));
+    all_layers.sort_by_key(|b| std::cmp::Reverse(b.priority));
 
     let max_chars_map = max_layer_chars();
     let mut prompt_parts: Vec<String> = Vec::new();
