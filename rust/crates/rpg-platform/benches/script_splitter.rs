@@ -79,7 +79,7 @@ fn make_dirty_text(target_chars: usize) -> String {
         out.push_str(clean_para);
         total += clean_para.chars().count();
         line_no += 1;
-        if line_no % 10 == 0 {
+        if line_no.is_multiple_of(10) {
             // 每 10 段加一条水印行
             out.push_str(dirty_line);
             total += dirty_line.chars().count();

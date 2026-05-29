@@ -1,3 +1,4 @@
+#![allow(clippy::field_reassign_with_default)]
 //! typed_path hot-path micro-benchmarks
 //!
 //! 覆盖三条 hot path:

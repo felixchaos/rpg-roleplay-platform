@@ -47,7 +47,6 @@ pub fn parse_sse_value(s: &str) -> Result<serde_json::Value, serde_json::Error> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     // -------------------------------------------------------------------------
     // 基础兼容性:simd-json 与 serde_json parse 同一 JSON 结果应一致。

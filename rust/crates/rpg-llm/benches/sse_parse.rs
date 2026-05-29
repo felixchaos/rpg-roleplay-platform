@@ -192,6 +192,7 @@ fn bench_size_scaling(c: &mut Criterion) {
 // ── typed struct parse (concrete type, not Value) ────────────────────────────
 
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 struct ContentBlockDelta {
     #[serde(rename = "type")]
     event_type: String,
