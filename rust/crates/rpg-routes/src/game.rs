@@ -214,7 +214,7 @@ pub(crate) async fn api_opening(
     let user_msg = format!(
         "【当前剧情状态】\n{summary}\n\n{OPENING_USER}",
     );
-    let req = LlmChatRequest {
+    let mut req = LlmChatRequest {
         model,
         system: Some(system),
         messages: vec![ChatMessage::user(user_msg)],
@@ -222,6 +222,9 @@ pub(crate) async fn api_opening(
         stream: true,
         ..Default::default()
     };
+    // Wave 10-A:按 RPG_OPENING_THINKING_BUDGET / ANTHROPIC_THINKING_BUDGET
+    // 注入 extended thinking 预算(0 时是 no-op)。
+    rpg_llm::merge_thinking_extra(&mut req.extra, rpg_core::config::opening_thinking_budget());
 
     // 首帧 hello。
     let _ = tx
@@ -618,7 +621,7 @@ pub(crate) async fn api_chat(
         return Sse::new(guarded).keep_alive(KeepAlive::default()).into_response();
     };
 
-    let req = LlmChatRequest {
+    let mut req = LlmChatRequest {
         model: model_id,
         system: Some(CHAT_SYSTEM.to_string()),
         messages,
@@ -626,6 +629,9 @@ pub(crate) async fn api_chat(
         stream: true,
         ..Default::default()
     };
+    // Wave 10-A:按 RPG_CHAT_THINKING_BUDGET / ANTHROPIC_THINKING_BUDGET
+    // 注入 extended thinking 预算(0 时是 no-op,保持 Python 端默认行为)。
+    rpg_llm::merge_thinking_extra(&mut req.extra, rpg_core::config::chat_thinking_budget());
 
     // 在 task 内跑 LLM stream,SSE 流由 ReceiverStream 包 rx。
     let stop_notify = s.stop_notify(&user_id);
@@ -994,5 +1000,91 @@ mod tests {
         const { assert!(OPENING_MAX_TOKENS > 0) };
         assert!(!CHAT_SYSTEM.is_empty());
         const { assert!(CHAT_MAX_TOKENS > 0) };
+    }
+
+    // ── Wave 10-A:Extended thinking SSE envelope 端到端 ──────────────────
+
+    /// MockBackend 自带 thinking → text → usage → stop 全序列时,投影出的
+    /// SSE envelope 顺序与 kind 都正确,且 thinking 文本不被吞。
+    #[tokio::test]
+    async fn test_wave10a_thinking_chunks_project_through_sse_envelope() {
+        use crate::sse_events::{SseChunkPayload, SseEnvelope};
+        let backend = MockBackend {
+            chunks: vec![
+                Ok(ChatChunk::Thinking("分析剧情中…".into())),
+                Ok(ChatChunk::Thinking("决定回应".into())),
+                Ok(ChatChunk::Text("你看到月光下".into())),
+                Ok(ChatChunk::Text("一只白猫".into())),
+                Ok(ChatChunk::Usage(Usage {
+                    input_tokens: 100,
+                    output_tokens: 20,
+                    reasoning_tokens: 50,
+                    ..Default::default()
+                })),
+                Ok(ChatChunk::Stop {
+                    reason: "end_turn".into(),
+                }),
+            ],
+        };
+        let wires = drain_to_wire(&backend).await;
+        // 序列:thinking ×2 → text ×2 → usage → stop
+        let kinds: Vec<&str> = wires.iter().map(|w| w.kind.as_str()).collect();
+        assert_eq!(
+            kinds,
+            vec!["thinking", "thinking", "text", "text", "usage", "stop"]
+        );
+
+        // 每个 wire 都能被反序列化成 SseChunkPayload(routes 用同字段名),
+        // 进一步包成 envelope 仍是 SseEnvelope::Chunk discriminant。
+        for w in &wires {
+            let json = serde_json::to_value(w).expect("wire serializes");
+            let payload: SseChunkPayload =
+                serde_json::from_value(json).expect("payload decodes");
+            let env = SseEnvelope::Chunk {
+                payload: payload.clone(),
+            };
+            let env_json = serde_json::to_value(&env).expect("envelope ok");
+            assert_eq!(env_json["event"], "chunk");
+            // kind 不丢失
+            assert_eq!(payload.kind.as_deref(), Some(w.kind.as_str()));
+        }
+
+        // thinking 文本完整保留
+        assert_eq!(wires[0].text.as_deref(), Some("分析剧情中…"));
+        assert_eq!(wires[1].text.as_deref(), Some("决定回应"));
+
+        // reasoning_tokens 透传
+        let usage_wire = wires.iter().find(|w| w.kind == "usage").unwrap();
+        assert_eq!(usage_wire.usage.as_ref().unwrap().reasoning_tokens, 50);
+    }
+
+    /// `rpg_llm::merge_thinking_extra` 被 caller 注入后,ChatRequest::extra
+    /// 同时含 thinking_budget(Anthropic/Vertex)和 reasoning_effort(OpenAI/Responses)。
+    #[test]
+    fn test_wave10a_merge_thinking_extra_covers_all_backends() {
+        let mut req = LlmChatRequest::default();
+        rpg_llm::merge_thinking_extra(&mut req.extra, 3000);
+        // Anthropic/Vertex 读 thinking_budget
+        assert_eq!(req.extra["thinking_budget"], 3000);
+        // OpenAI/Responses 读 reasoning_effort
+        assert_eq!(req.extra["reasoning_effort"], "medium");
+    }
+
+    /// thinking_budget=0 走 default(关闭),extra 维持原状,不污染请求。
+    #[test]
+    fn test_wave10a_disabled_budget_keeps_extra_clean() {
+        let mut req = LlmChatRequest::default();
+        rpg_llm::merge_thinking_extra(&mut req.extra, 0);
+        let clean = req.extra.is_null()
+            || req
+                .extra
+                .as_object()
+                .map(|o| o.is_empty())
+                .unwrap_or(true);
+        assert!(
+            clean,
+            "0 budget must not inject any thinking field, got {:?}",
+            req.extra
+        );
     }
 }

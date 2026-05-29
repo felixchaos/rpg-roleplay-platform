@@ -249,7 +249,7 @@ pub(crate) async fn api_console_assistant_chat(
         messages.push(ChatMessage::user(message.clone()));
     }
 
-    let req = ChatRequest {
+    let mut req = ChatRequest {
         model: model_id,
         system: Some(CONSOLE_ASSISTANT_SYSTEM.to_string()),
         messages,
@@ -257,6 +257,8 @@ pub(crate) async fn api_console_assistant_chat(
         stream: true,
         ..Default::default()
     };
+    // Wave 10-A:console_assistant 默认 0,运营可通过 RPG_CONSOLE_THINKING_BUDGET 开启。
+    rpg_llm::merge_thinking_extra(&mut req.extra, rpg_core::config::console_thinking_budget());
 
     let conv_key_for_task = key.clone();
     let s_for_task = s.clone();
@@ -416,7 +418,7 @@ pub(crate) async fn api_console_assistant_confirm(
     if messages.is_empty() {
         messages.push(ChatMessage::user(decision_text.clone()));
     }
-    let req = ChatRequest {
+    let mut req = ChatRequest {
         model: model_id,
         system: Some(CONSOLE_ASSISTANT_SYSTEM.to_string()),
         messages,
@@ -424,6 +426,8 @@ pub(crate) async fn api_console_assistant_confirm(
         stream: true,
         ..Default::default()
     };
+    // Wave 10-A:console_assistant confirm 路径同样接 extended thinking。
+    rpg_llm::merge_thinking_extra(&mut req.extra, rpg_core::config::console_thinking_budget());
 
     let conv_key_for_task = key;
     let s_for_task = s.clone();

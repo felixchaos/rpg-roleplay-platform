@@ -52,8 +52,9 @@ pub const HARD_MAX_OUTPUT_TOKENS: u32 = 8192;
 
 // Prelude:常用类型 reexport,方便上层 (rpg-agents) 引用。
 pub use pipeline::{
-    BackendKind, ChatChunk, ChatMessage, ChatRequest, ChatRole, ChunkStream, LlmBackend, LlmError,
-    MessagePart, ModelInfo, ToolCall, ToolSchema, Usage,
+    build_thinking_extra, merge_thinking_extra, BackendKind, ChatChunk, ChatMessage, ChatRequest,
+    ChatRole, ChunkStream, LlmBackend, LlmError, MessagePart, ModelInfo, ToolCall, ToolSchema,
+    Usage,
 };
 
 pub use anthropic::AnthropicBackend;

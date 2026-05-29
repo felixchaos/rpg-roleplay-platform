@@ -253,6 +253,56 @@ pub fn enable_black_swan() -> bool {
     env::var("RPG_ENABLE_BLACK_SWAN").unwrap_or_default() == "1"
 }
 
+// ── Extended Thinking / Reasoning 预算 ──────────────────────────────────
+//
+// Wave 10-A:统一抽象 LLM 的"思考预算"。Anthropic Claude 4+ 用 `thinking_budget`
+// (token 数),Vertex Gemini 用 `thinkingBudget`(token 数),OpenAI o-系列 / Responses
+// 用 `reasoning_effort`(枚举 low/medium/high)。
+//
+// 三个调用入口各自独立 env 默认,**默认全部为 0**(关闭),保持与 Python 端
+// 一致的费用与延迟行为。运营按需通过 env 开启:
+//   * `RPG_OPENING_THINKING_BUDGET=5000`   — GM 开场预算
+//   * `RPG_CHAT_THINKING_BUDGET=2000`      — 主聊天回合预算
+//   * `RPG_CONSOLE_THINKING_BUDGET=0`      — console_assistant(默认仍关)
+//   * `ANTHROPIC_THINKING_BUDGET=3000`     — 全局兜底(若上面未设置)
+//
+// 这是一组"路由层 policy"配置:LLM crate 本身不读 env,只接收 `extra.thinking_budget`
+// 由 caller 注入(rpg-routes 在构建 ChatRequest 时合并 extra,见 [`build_thinking_extra`])。
+
+const ENV_OPENING_THINKING_BUDGET: &str = "RPG_OPENING_THINKING_BUDGET";
+const ENV_CHAT_THINKING_BUDGET: &str = "RPG_CHAT_THINKING_BUDGET";
+const ENV_CONSOLE_THINKING_BUDGET: &str = "RPG_CONSOLE_THINKING_BUDGET";
+const ENV_GLOBAL_THINKING_BUDGET: &str = "ANTHROPIC_THINKING_BUDGET";
+
+fn parse_budget(name: &str) -> Option<u32> {
+    env::var(name).ok().and_then(|v| v.trim().parse::<u32>().ok())
+}
+
+fn parse_budget_with_fallback(primary: &str) -> u32 {
+    parse_budget(primary)
+        .or_else(|| parse_budget(ENV_GLOBAL_THINKING_BUDGET))
+        .unwrap_or(0)
+}
+
+/// GM 开场剧情生成时使用的 extended thinking 预算(token 数)。
+///
+/// 默认 0(禁用);`RPG_OPENING_THINKING_BUDGET` 优先,缺失则回落 `ANTHROPIC_THINKING_BUDGET`。
+pub fn opening_thinking_budget() -> u32 {
+    parse_budget_with_fallback(ENV_OPENING_THINKING_BUDGET)
+}
+
+/// 主聊天回合(/api/chat)使用的 extended thinking 预算(token 数)。
+pub fn chat_thinking_budget() -> u32 {
+    parse_budget_with_fallback(ENV_CHAT_THINKING_BUDGET)
+}
+
+/// console_assistant 调试通道使用的 extended thinking 预算(token 数)。
+///
+/// 默认 0:控制台一般是工具/导航类任务,thinking 额外成本不值得。
+pub fn console_thinking_budget() -> u32 {
+    parse_budget_with_fallback(ENV_CONSOLE_THINKING_BUDGET)
+}
+
 // ── Settings struct ───────────────────────────────────────────────────────
 
 /// 上传子系统运行时设置。
@@ -373,5 +423,47 @@ mod tests {
         let _g = SETTINGS_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("RPG_MAX_UPLOAD_CHUNKS");
         assert_eq!(max_upload_chunks(), 4096);
+    }
+
+    // Wave 10-A:thinking 预算解析 ────────────────────────────────────────
+
+    #[test]
+    fn test_thinking_budget_defaults_zero() {
+        let _g = SETTINGS_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var(ENV_OPENING_THINKING_BUDGET);
+        std::env::remove_var(ENV_CHAT_THINKING_BUDGET);
+        std::env::remove_var(ENV_CONSOLE_THINKING_BUDGET);
+        std::env::remove_var(ENV_GLOBAL_THINKING_BUDGET);
+        assert_eq!(opening_thinking_budget(), 0);
+        assert_eq!(chat_thinking_budget(), 0);
+        assert_eq!(console_thinking_budget(), 0);
+    }
+
+    #[test]
+    fn test_thinking_budget_primary_wins_over_global() {
+        let _g = SETTINGS_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var(ENV_OPENING_THINKING_BUDGET, "7000");
+        std::env::set_var(ENV_GLOBAL_THINKING_BUDGET, "1000");
+        assert_eq!(opening_thinking_budget(), 7000);
+        std::env::remove_var(ENV_OPENING_THINKING_BUDGET);
+        std::env::remove_var(ENV_GLOBAL_THINKING_BUDGET);
+    }
+
+    #[test]
+    fn test_thinking_budget_global_fallback() {
+        let _g = SETTINGS_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var(ENV_CHAT_THINKING_BUDGET);
+        std::env::set_var(ENV_GLOBAL_THINKING_BUDGET, "2500");
+        assert_eq!(chat_thinking_budget(), 2500);
+        std::env::remove_var(ENV_GLOBAL_THINKING_BUDGET);
+    }
+
+    #[test]
+    fn test_thinking_budget_invalid_falls_back_to_zero() {
+        let _g = SETTINGS_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var(ENV_CONSOLE_THINKING_BUDGET, "not-a-num");
+        std::env::remove_var(ENV_GLOBAL_THINKING_BUDGET);
+        assert_eq!(console_thinking_budget(), 0);
+        std::env::remove_var(ENV_CONSOLE_THINKING_BUDGET);
     }
 }

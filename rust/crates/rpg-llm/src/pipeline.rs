@@ -535,6 +535,65 @@ impl WireChatChunk {
     }
 }
 
+/// 构造一份 backend 不可知的 extended thinking `extra` patch。
+///
+/// Wave 10-A:统一抽象 thinking/reasoning 三个 provider 的开启方式。
+/// caller(rpg-routes / rpg-agents)把这个 Value 直接赋给 `ChatRequest::extra`,
+/// 各 backend 各取所需:
+///   * Anthropic / Vertex 看 `thinking_budget`(token 数)
+///   * OpenAI / Responses 看 `reasoning_effort`(`low` / `medium` / `high`)
+///
+/// `budget=0` 返回 `Value::Null`,caller 可直接挂上去,等同 "不启用 thinking"
+/// (各 backend 在 build_body 时把 thinking 关掉)。
+///
+/// 阈值映射(token → effort):0=off, 1..=2000=low, 2001..=5000=medium, >5000=high。
+/// 这是粗略心智模型,与 OpenAI/o-系列文档"effort 大致对应每 step 思考 token 上限"
+/// 的实证一致(o3-mini high ≈ 8k+ thoughts)。
+pub fn build_thinking_extra(budget: u32) -> serde_json::Value {
+    if budget == 0 {
+        return serde_json::Value::Null;
+    }
+    let effort = if budget <= 2000 {
+        "low"
+    } else if budget <= 5000 {
+        "medium"
+    } else {
+        "high"
+    };
+    serde_json::json!({
+        "thinking_budget": budget,
+        "reasoning_effort": effort,
+    })
+}
+
+/// 把 `build_thinking_extra` 的结果合并进现有的 `ChatRequest::extra`。
+///
+/// 既有 `extra`(对象 / Null / 其它形态)与 thinking patch 浅合并:
+///   * 既有为 Null → 直接用 patch(patch 也是 Null 时 extra 保持 Null)
+///   * 既有为 Object → patch 字段写入(已存在则不覆盖,保留 caller 显式 override)
+///   * 既有为非 Object 非 Null → 不动(避免破坏未知 schema)
+///
+/// 注:不 deep-merge,只在顶层合并(thinking 的字段都是顶层标量,无需递归)。
+pub fn merge_thinking_extra(extra: &mut serde_json::Value, budget: u32) {
+    let patch = build_thinking_extra(budget);
+    if patch.is_null() {
+        return;
+    }
+    let Some(patch_obj) = patch.as_object() else {
+        return;
+    };
+    if extra.is_null() {
+        *extra = serde_json::Value::Object(patch_obj.clone());
+        return;
+    }
+    let Some(obj) = extra.as_object_mut() else {
+        return;
+    };
+    for (k, v) in patch_obj {
+        obj.entry(k.clone()).or_insert_with(|| v.clone());
+    }
+}
+
 /// 为 backend 提供的简单 header bag。
 pub fn extra_headers(extra: &serde_json::Value, key: &str) -> Option<HashMap<String, String>> {
     let m = extra.as_object()?.get(key)?.as_object()?;
@@ -554,5 +613,72 @@ mod ts_export_tests {
     #[test]
     fn export_ts_types() {
         // ts-rs 在 #[ts(export)] 时会通过 inventory/ctor 机制在测试结束后自动写文件。
+    }
+}
+
+#[cfg(test)]
+mod thinking_extra_tests {
+    use super::*;
+
+    #[test]
+    fn test_build_thinking_extra_zero_is_null() {
+        assert_eq!(build_thinking_extra(0), serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_build_thinking_extra_maps_effort_buckets() {
+        // 低预算 → low
+        let v = build_thinking_extra(1000);
+        assert_eq!(v["thinking_budget"], 1000);
+        assert_eq!(v["reasoning_effort"], "low");
+
+        // 中预算 → medium
+        let v = build_thinking_extra(3000);
+        assert_eq!(v["thinking_budget"], 3000);
+        assert_eq!(v["reasoning_effort"], "medium");
+
+        // 高预算 → high
+        let v = build_thinking_extra(8000);
+        assert_eq!(v["thinking_budget"], 8000);
+        assert_eq!(v["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn test_merge_thinking_extra_into_null_extra() {
+        let mut extra = serde_json::Value::Null;
+        merge_thinking_extra(&mut extra, 4000);
+        assert_eq!(extra["thinking_budget"], 4000);
+        assert_eq!(extra["reasoning_effort"], "medium");
+    }
+
+    #[test]
+    fn test_merge_thinking_extra_into_existing_object_does_not_overwrite() {
+        let mut extra = serde_json::json!({
+            "reasoning_effort": "high",  // caller 显式覆盖,不应被 patch 改写
+            "metadata": {"user": "u1"},
+        });
+        merge_thinking_extra(&mut extra, 1500); // 1500 → low
+        assert_eq!(
+            extra["reasoning_effort"], "high",
+            "caller-supplied effort must take precedence"
+        );
+        assert_eq!(extra["thinking_budget"], 1500);
+        assert_eq!(extra["metadata"]["user"], "u1");
+    }
+
+    #[test]
+    fn test_merge_thinking_extra_zero_is_noop() {
+        let mut extra = serde_json::json!({"foo": "bar"});
+        merge_thinking_extra(&mut extra, 0);
+        assert_eq!(extra, serde_json::json!({"foo": "bar"}));
+    }
+
+    /// 投影 ChatChunk::Thinking → WireChatChunk 必须给前端可识别的 kind="thinking"。
+    #[test]
+    fn test_wire_chunk_thinking_projection() {
+        let chunk = ChatChunk::Thinking("(在想)".into());
+        let wire = WireChatChunk::from_chunk(&chunk);
+        assert_eq!(wire.kind, "thinking");
+        assert_eq!(wire.text.as_deref(), Some("(在想)"));
     }
 }
