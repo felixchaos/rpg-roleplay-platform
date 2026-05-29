@@ -574,6 +574,6 @@ mod tests {
     #[test]
     fn test_console_assistant_constants_alive() {
         assert!(!CONSOLE_ASSISTANT_SYSTEM.is_empty());
-        assert!(CONSOLE_ASSISTANT_MAX_TOKENS > 0);
+        const { assert!(CONSOLE_ASSISTANT_MAX_TOKENS > 0) };
     }
 }

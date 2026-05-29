@@ -980,8 +980,8 @@ mod tests {
     fn test_opening_prompts_non_empty() {
         assert!(!OPENING_SYSTEM.is_empty());
         assert!(!OPENING_USER.is_empty());
-        assert!(OPENING_MAX_TOKENS > 0);
+        const { assert!(OPENING_MAX_TOKENS > 0) };
         assert!(!CHAT_SYSTEM.is_empty());
-        assert!(CHAT_MAX_TOKENS > 0);
+        const { assert!(CHAT_MAX_TOKENS > 0) };
     }
 }
