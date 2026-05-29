@@ -72,6 +72,7 @@ static SQL_020: &str = include_str!("../migrations/020_user_card_public_audit.sq
 static SQL_021: &str = include_str!("../migrations/021_scripts_and_chapters.sql");
 static SQL_022: &str = include_str!("../migrations/022_branches_extended_columns.sql");
 static SQL_023: &str = include_str!("../migrations/023_phase_digests.sql");
+static SQL_024: &str = include_str!("../migrations/024_provider_rename.sql");
 
 /// 所有迁移的静态列表。
 ///
@@ -100,6 +101,7 @@ pub static MIGRATIONS: &[MigrationStep] = &[
     MigrationStep { id: 21, name: "scripts_and_chapters",                    sql: SQL_021 },
     MigrationStep { id: 22, name: "branches_extended_columns",               sql: SQL_022 },
     MigrationStep { id: 23, name: "phase_digests",                           sql: SQL_023 },
+    MigrationStep { id: 24, name: "provider_rename",                         sql: SQL_024 },
 ];
 
 // ──────────────────────────────────────────────────────────────
@@ -347,6 +349,49 @@ mod tests {
             step.sql.contains("user_card_public_audit"),
             "v020 SQL 内容应建 user_card_public_audit 表",
         );
+    }
+
+    /// Wave 11.5-A 新增:v024 provider_rename 必须 (a) 在 MIGRATIONS 数组里注册,
+    /// (b) SQL 包含 vertex / vertex_ai → agent_platform 的所有 UPDATE/DELETE 语句,
+    /// (c) MIGRATIONS 版本号从 1 起严格连续(防止漏注册中间版本)。
+    #[test]
+    fn migration_024_provider_rename_registered_and_complete() {
+        let step = MIGRATIONS
+            .iter()
+            .find(|s| s.id == 24)
+            .expect("migration v24 (provider_rename) 必须注册");
+        assert_eq!(step.name, "provider_rename");
+        let sql = step.sql;
+        // 三张目标表都要被改
+        for table in &["model_apis", "model_entries", "user_api_credentials"] {
+            assert!(
+                sql.contains(table),
+                "v024 SQL 缺表 '{table}'",
+            );
+        }
+        // 改名方向: vertex* → agent_platform
+        assert!(sql.contains("'vertex'"), "v024 SQL 缺老 id 'vertex'");
+        assert!(sql.contains("'vertex_ai'"), "v024 SQL 缺老 id 'vertex_ai'");
+        assert!(sql.contains("'agent_platform'"), "v024 SQL 缺新 id 'agent_platform'");
+        // 显示名校正
+        assert!(
+            sql.contains("Agent Platform"),
+            "v024 SQL 缺显示名 'Agent Platform' 校正",
+        );
+    }
+
+    /// Wave 11.5-A 新增:MIGRATIONS 版本号必须从 1 起严格连续,
+    /// 否则增量加 migration 时漏一个版本,后续 fresh DB 会缺 schema。
+    #[test]
+    fn migrations_ids_are_contiguous_from_1() {
+        for (i, step) in MIGRATIONS.iter().enumerate() {
+            let expected = (i as i64) + 1;
+            assert_eq!(
+                step.id, expected,
+                "migration 列表 v{} 不连续 — 期望 v{expected},实际 v{}({})",
+                step.id, step.id, step.name,
+            );
+        }
     }
 
     /// runtime_checkouts 在 Rust 端跨 019+022 两次 migration 装配,

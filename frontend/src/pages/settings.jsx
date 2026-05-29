@@ -126,7 +126,9 @@ function PrefSection() {
    useAutoSave("叙事提取器", "extractor") 让 save("enabled", v) 写到 extractor.enabled，键正好对齐。 */
 function ExtractorSection() {
   const [enabled, setEnabled] = useStatePL(false);
-  const [apiId, setApiId] = useStatePL("vertex_ai");
+  // Wave 11.5-A: 旧默认是 "vertex_ai",改为统一的 "agent_platform"(后端 v024 migration
+   //   会把 user_credentials.api_id = 'vertex'/'vertex_ai' 自动改名)。
+  const [apiId, setApiId] = useStatePL("agent_platform");
   const [modelRealName, setModelRealName] = useStatePL("gemini-3.5-flash");
   const [apis, setApis] = useStatePL([]);
   const save = useAutoSave("叙事提取器", "extractor");
@@ -155,13 +157,17 @@ function ExtractorSection() {
     return () => { cancelled = true; };
   }, []);
 
-  const currentApi = apis.find(a => (a.api_id || a.id) === apiId);
+  // Wave 11.5-A: 兼容老 profile 里仍存 "vertex"/"vertex_ai" 的 api_id —
+  // 匹配时把它折成 "agent_platform" 再找 currentApi,避免下拉默认空。
+  const _normApi = (id) => (id === "vertex" || id === "vertex_ai") ? "agent_platform" : id;
+  const currentApi = apis.find(a => _normApi(a.api_id || a.id) === _normApi(apiId));
   const modelList = (currentApi?.models || currentApi?.entries || []);
-  // 推荐 provider 排前，未在 /api/models 出现的兜底也保留（用户可能未配 vertex/anthropic 但仍要选）
+  // 推荐 provider 排前，未在 /api/models 出现的兜底也保留（用户可能未配 agent_platform/anthropic 但仍要选）
+  // Wave 11.5-A: vertex_ai → agent_platform 统一命名。
   const apiOptions = [];
   const seen = new Set();
-  for (const preferred of ["vertex_ai", "anthropic"]) {
-    apiOptions.push({ id: preferred, name: preferred === "vertex_ai" ? "Vertex AI（JSON mode）" : "Anthropic（native tool_use）" });
+  for (const preferred of ["agent_platform", "anthropic"]) {
+    apiOptions.push({ id: preferred, name: preferred === "agent_platform" ? "Agent Platform（JSON mode）" : "Anthropic（native tool_use）" });
     seen.add(preferred);
   }
   for (const a of apis) {
@@ -815,7 +821,7 @@ function VisibilityModal({ open, api, onClose, onConfirm }) {
               <div className="pl-vis-row-meta">
                 <div style={{display: "flex", gap: 3}}>
                   {(() => {
-                    const caps = Array.isArray(m.capabilities) ? m.capabilities : capFlags(m.capabilities);
+                    const caps = getCaps(m);
                     return (<>
                       {caps.slice(0, 2).map(c => (
                         <span key={c} className="pl-cap-tag">{CAP_LABEL[c] || c}</span>
@@ -1036,8 +1042,9 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
   // "编辑显示" modal, not per-row.
   const visibleModels = api.models.filter(m => m.visible !== false);
 
-  // helpers to normalize capabilities (array legacy vs typed struct)
-  const getCaps = (m) => Array.isArray(m.capabilities) ? m.capabilities : capFlags(m.capabilities);
+  // helpers to normalize capabilities (Wave 11.5-A: 复用 components/catalog-helpers.js,
+  // 老 array / 新 typed object 两种 shape 都兼容)
+  const getCaps = window.getCaps;
 
   const filtered = visibleModels.filter(m => {
     if (q) {
@@ -1311,34 +1318,10 @@ function HealthDot({ health }) {
 // import type { ModelCapabilities } from "@/types/rust/catalog/ModelCapabilities"
 // import type { CatalogSource } from "@/types/rust/catalog/CatalogSource"
 /** @type {Record<keyof import("../types/rust/catalog/ModelCapabilities").ModelCapabilities, string>} */
-const CAP_LABEL = {
-  streaming:          "流式输出",
-  tools:              "工具调用",
-  vision:             "视觉",
-  audio:              "音频",
-  structured_output:  "结构化输出",
-  extended_thinking:  "深度思考",
-  embedding:          "向量嵌入",
-  function_calling:   "函数调用",
-  prompt_caching:     "提示词缓存",
-  web_search:         "联网搜索",
-  pdf_input:          "PDF 输入",
-  // 兼容旧字符串 capability (catalog 迁移前旧条目)
-  text:               "文本",
-  "tool-use":         "工具",
-  reasoning:          "推理",
-  fast:               "快",
-  long:               "长上下文",
-  cn:                 "中文",
-  rpg:                "RPG 调优",
-};
-
-/** @param {import("../types/rust/catalog/ModelCapabilities").ModelCapabilities | Record<string,boolean>} caps */
-function capFlags(caps) {
-  if (!caps || typeof caps !== "object") return [];
-  // typed struct mode: Object.entries 过滤 true
-  return Object.entries(caps).filter(([, v]) => v === true).map(([k]) => k);
-}
+// Wave 11.5-A: CAP_LABEL / capFlags 抽到 components/catalog-helpers.js,
+// 这里只读 window 上的副本(由 entries/platform.jsx 提前 import 注册)。
+const CAP_LABEL = window.CAP_LABEL;
+const capFlags = window.capFlags;
 
 /** @param {import("../types/rust/catalog/CatalogSource").CatalogSource} source */
 function sourceLabel(source) {

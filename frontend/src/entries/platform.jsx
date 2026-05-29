@@ -24,6 +24,7 @@ import '../platform-app.jsx';
 import '../pages/saves.jsx';
 import '../pages/scripts.jsx';
 import '../pages/cards.jsx';
+import '../components/catalog-helpers.js';
 import '../pages/settings.jsx';
 import '../tweaks-panel.jsx';
 import '../console-assistant-navigation.jsx';

@@ -22,6 +22,7 @@ import '../game-app.jsx';
 import '../tweaks-panel.jsx';
 import '../console-assistant-navigation.jsx';
 import '../console-assistant-panel.jsx';
+import '../components/catalog-helpers.js';
 import '../components/ModelPicker.jsx';
 
 // density preset + narrative font init（等价原 HTML 非 babel inline script）

@@ -317,13 +317,22 @@ function ModelPicker({ value, onChange, filter }) {
     return () => { alive = false; };
   }, []);
 
+  // Wave 11.5-A: 通过 catalog-helpers.getCaps 归一化,兼容老 array shape。
+  const _getCaps = (typeof window !== "undefined" && window.getCaps) || ((m) => {
+    if (!m) return [];
+    const c = m.capabilities;
+    if (Array.isArray(c)) return c;
+    if (!c || typeof c !== "object") return [];
+    return Object.entries(c).filter(([, v]) => v === true).map(([k]) => k);
+  });
+
   // 应用 filter prop 的 capability + kind
   const baseFiltered = useMemo(() => {
     let list = models;
     if (filter && filter.kind === "embedding") {
-      list = list.filter((m) => m.capabilities && m.capabilities.embedding);
+      list = list.filter((m) => _getCaps(m).includes("embedding"));
     } else if (filter && filter.kind === "chat") {
-      list = list.filter((m) => !(m.capabilities && m.capabilities.embedding));
+      list = list.filter((m) => !_getCaps(m).includes("embedding"));
     }
     return list;
   }, [models, filter]);
@@ -332,7 +341,7 @@ function ModelPicker({ value, onChange, filter }) {
   const displayed = useMemo(() => {
     let list = baseFiltered;
     if (capFilter) {
-      list = list.filter((m) => m.capabilities && m.capabilities[capFilter]);
+      list = list.filter((m) => _getCaps(m).includes(capFilter));
     }
     if (search.trim()) {
       const q = search.trim();
@@ -344,10 +353,13 @@ function ModelPicker({ value, onChange, filter }) {
   }, [baseFiltered, capFilter, search]);
 
   // 按 provider 分组
+  // Wave 11.5-A: 老 catalog 数据可能带 "vertex"/"vertex_ai",normalize 到 "AgentPlatform"。
+  const _normProvider = (typeof window !== "undefined" && window.normalizeProviderId)
+    || ((p) => (p === "vertex" || p === "vertex_ai" ? "AgentPlatform" : (p || "Unknown")));
   const grouped = useMemo(() => {
     const map = {};
     for (const m of displayed) {
-      const p = m.provider || "Unknown";
+      const p = _normProvider(m.provider) || "Unknown";
       if (!map[p]) map[p] = [];
       map[p].push(m);
     }
