@@ -31,6 +31,8 @@ use rpg_llm::pipeline::{ChatChunk, ChatMessage, ChatRequest, WireChatChunk};
 use crate::sse_metrics::{GuardedStream, SseConnectionGuard};
 use crate::{hello_payload, named_sse_event, require_user, AppState, ConsoleMessage, ResponseError};
 
+type SseResponse = Result<Sse<GuardedStream<ReceiverStream<Result<Event, Infallible>>>>, ResponseError>;
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/console_assistant/ping", get(api_console_assistant_ping))
@@ -177,7 +179,7 @@ pub(crate) async fn api_console_assistant_chat(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ConsoleAssistantChatRequest>,
-) -> Result<Sse<GuardedStream<ReceiverStream<Result<Event, Infallible>>>>, ResponseError> {
+) -> SseResponse {
     let user = require_user(&s, &headers).await?;
     tracing::Span::current().record("user_id", tracing::field::display(&user.id));
     let conv_id = body
@@ -340,7 +342,7 @@ pub(crate) async fn api_console_assistant_confirm(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ConsoleAssistantConfirmRequest>,
-) -> Result<Sse<GuardedStream<ReceiverStream<Result<Event, Infallible>>>>, ResponseError> {
+) -> SseResponse {
     let user = require_user(&s, &headers).await?;
     tracing::Span::current().record("user_id", tracing::field::display(&user.id));
     let call_id = body.call_id.unwrap_or_default();

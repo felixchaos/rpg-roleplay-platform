@@ -285,6 +285,7 @@ static ACT_HEADING_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// 卷标题识别(用于 _split_with_volumes)
+#[allow(dead_code)]
 static VOLUME_PATTERN: Lazy<Regex> = Lazy::new(|| {
     let n = NUMBER_TOKEN;
     Regex::new(&format!(r"^(.{{0,30}}第[{n}]+卷.*)$")).unwrap()
@@ -994,8 +995,8 @@ fn split_remulina_novel(text: &str) -> Vec<Chapter> {
 /// Python `_has_upcoming_remulina_full_title`
 fn has_upcoming_remulina_full_title(lines: &[&str], start_idx: usize, lookahead: usize) -> bool {
     let mut seen = 0usize;
-    for idx in start_idx..lines.len() {
-        let trimmed = lines[idx].trim();
+    for line in lines.iter().skip(start_idx) {
+        let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
@@ -1177,12 +1178,12 @@ fn split_numbered_sections(lines: &[&str], heading_indexes: &[usize]) -> Vec<Cha
     let first_heading = heading_indexes[0];
     if first_heading > 0 {
         let mut preface_lines: Vec<&str> = Vec::new();
-        for idx in 0..first_heading {
-            let stripped = lines[idx].trim();
+        for line in lines.iter().take(first_heading) {
+            let stripped = line.trim();
             if let Some(act_t) = extract_act_heading(stripped) {
                 current_act_title = Some(act_t);
             } else if !stripped.is_empty() {
-                preface_lines.push(lines[idx]);
+                preface_lines.push(line);
             }
         }
         let preface = preface_lines.join("\n").trim().to_string();
@@ -1201,8 +1202,8 @@ fn split_numbered_sections(lines: &[&str], heading_indexes: &[usize]) -> Vec<Cha
 
     for (index, &start_idx) in heading_indexes.iter().enumerate() {
         // scan for act headings before this section marker
-        for idx in scan_from..start_idx {
-            if let Some(act_t) = extract_act_heading(lines[idx].trim()) {
+        for line in lines.iter().take(start_idx).skip(scan_from) {
+            if let Some(act_t) = extract_act_heading(line.trim()) {
                 current_act_title = Some(act_t);
             }
         }
@@ -1280,12 +1281,7 @@ fn trim_trailing_act_heading(lines: &[&str], start_idx: usize, end_idx: usize) -
 
 /// Python `_next_nonempty_line_index`
 fn next_nonempty_line_index(lines: &[&str], start_idx: usize) -> Option<usize> {
-    for idx in start_idx..lines.len() {
-        if !lines[idx].trim().is_empty() {
-            return Some(idx);
-        }
-    }
-    None
+    (start_idx..lines.len()).find(|&idx| !lines[idx].trim().is_empty())
 }
 
 /// Python `_to_int`:全角数字 → 半角 int。
@@ -1641,13 +1637,14 @@ mod tests {
     #[test]
     fn test_split_numbered_sections_basic() {
         let long_body = "这是小节内容，需要超过五百字以触发小节识别规则。".repeat(12);
-        let mut lines2: Vec<String> = Vec::new();
-        lines2.push("第一幕 序".to_string());
-        lines2.push("（一）".to_string());
-        lines2.push(long_body.clone());
-        lines2.push(String::new());
-        lines2.push("（二）".to_string());
-        lines2.push(long_body.clone());
+        let lines2: Vec<String> = vec![
+            "第一幕 序".to_string(),
+            "（一）".to_string(),
+            long_body.clone(),
+            String::new(),
+            "（二）".to_string(),
+            long_body.clone(),
+        ];
         let lines_ref: Vec<&str> = lines2.iter().map(|s| s.as_str()).collect();
         let indexes = collect_numbered_section_headings(&lines_ref);
         if indexes.len() >= 2 {

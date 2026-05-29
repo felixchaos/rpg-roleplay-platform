@@ -10,54 +10,6 @@ use serde_json::json;
 
 pub struct RecentChatProvider;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::provider::ProviderServices;
-    use crate::types::{Demand, Manifest};
-    use rpg_schemas::GameStateData;
-    use serde_json::json;
-
-    // ── Wave 9-A: RecentChatProvider 单测 ───────────────────────────
-
-    #[tokio::test]
-    async fn recent_chat_skips_when_no_history() {
-        let state = GameStateData::default(); // history = []
-        let manifest = Manifest::default();
-        let demand = Demand::default();
-        let services = ProviderServices::default();
-        let contrib = RecentChatProvider
-            .collect(&state, &manifest, &demand, &services)
-            .await
-            .expect("collect 不应 Err");
-        assert!(!contrib.applied, "无历史时 applied 应为 false");
-    }
-
-    #[tokio::test]
-    async fn recent_chat_returns_last_6_turns() {
-        let mut state = GameStateData::default();
-        // 放入 8 条历史
-        for i in 0..8u64 {
-            state.history.push(json!({
-                "role": if i % 2 == 0 { "user" } else { "assistant" },
-                "content": format!("第{}条", i)
-            }));
-        }
-        let manifest = Manifest::default();
-        let demand = Demand::default();
-        let services = ProviderServices::default();
-        let contrib = RecentChatProvider
-            .collect(&state, &manifest, &demand, &services)
-            .await
-            .expect("collect 不应 Err");
-        assert!(contrib.applied, "有历史时 applied 应为 true");
-        // 最近 6 条:第2~7条;第0/1条不应出现
-        let text = &contrib.layers[0].content;
-        assert!(!text.contains("第0条"), "超出 6 条窗口的历史不应出现: {text}");
-        assert!(text.contains("第2条"), "最近 6 条内的历史应出现: {text}");
-    }
-}
-
 #[async_trait]
 impl ContextProvider for RecentChatProvider {
     fn id(&self) -> &'static str {
@@ -108,5 +60,53 @@ impl ContextProvider for RecentChatProvider {
             tokens_estimate: tokens,
             applied: true,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::ProviderServices;
+    use crate::types::{Demand, Manifest};
+    use rpg_schemas::GameStateData;
+    use serde_json::json;
+
+    // ── Wave 9-A: RecentChatProvider 单测 ───────────────────────────
+
+    #[tokio::test]
+    async fn recent_chat_skips_when_no_history() {
+        let state = GameStateData::default(); // history = []
+        let manifest = Manifest::default();
+        let demand = Demand::default();
+        let services = ProviderServices::default();
+        let contrib = RecentChatProvider
+            .collect(&state, &manifest, &demand, &services)
+            .await
+            .expect("collect 不应 Err");
+        assert!(!contrib.applied, "无历史时 applied 应为 false");
+    }
+
+    #[tokio::test]
+    async fn recent_chat_returns_last_6_turns() {
+        let mut state = GameStateData::default();
+        // 放入 8 条历史
+        for i in 0..8u64 {
+            state.history.push(json!({
+                "role": if i % 2 == 0 { "user" } else { "assistant" },
+                "content": format!("第{}条", i)
+            }));
+        }
+        let manifest = Manifest::default();
+        let demand = Demand::default();
+        let services = ProviderServices::default();
+        let contrib = RecentChatProvider
+            .collect(&state, &manifest, &demand, &services)
+            .await
+            .expect("collect 不应 Err");
+        assert!(contrib.applied, "有历史时 applied 应为 true");
+        // 最近 6 条:第2~7条;第0/1条不应出现
+        let text = &contrib.layers[0].content;
+        assert!(!text.contains("第0条"), "超出 6 条窗口的历史不应出现: {text}");
+        assert!(text.contains("第2条"), "最近 6 条内的历史应出现: {text}");
     }
 }

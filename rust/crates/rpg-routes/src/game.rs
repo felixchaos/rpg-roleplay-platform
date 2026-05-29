@@ -33,6 +33,8 @@ use rpg_state::GameState;
 use crate::sse_metrics::{GuardedStream, SseConnectionGuard};
 use crate::{hello_payload, named_sse_event, require_user, user_id_or_anon, AppState, ResponseError};
 
+type SseResponse = Result<Sse<GuardedStream<ReceiverStream<Result<Event, Infallible>>>>, ResponseError>;
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/new", post(api_new))
@@ -163,7 +165,7 @@ async fn api_new(
 pub(crate) async fn api_opening(
     State(s): State<AppState>,
     headers: HeaderMap,
-) -> Result<Sse<GuardedStream<ReceiverStream<Result<Event, Infallible>>>>, ResponseError> {
+) -> SseResponse {
     // 触达 LLM 路由:强鉴权,匿名严禁触达 LLM → 401。
     let user = require_user(&s, &headers).await?;
     let user_id = user.id.to_string();
