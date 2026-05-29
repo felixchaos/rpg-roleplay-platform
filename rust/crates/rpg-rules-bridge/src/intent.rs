@@ -4,6 +4,7 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::{json, Value};
+use rpg_schemas::GameStateData;
 
 // ── 词表 ──────────────────────────────────────────────────────────────────
 
@@ -126,14 +127,13 @@ pub fn direction_to_exit<'a>(text: &str, current_room: &'a Value) -> Option<&'a 
 ///
 /// 返回 `None` = 非战斗意图，正常走 GM。
 /// 返回 `Some(Value)` = 阻挡块，含 `kind` / `question` / `options`。
-pub fn classify_combat_intent(text: &str, data: &Value) -> Option<Value> {
+pub fn classify_combat_intent(text: &str, data: &GameStateData) -> Option<Value> {
     if text.is_empty() {
         return None;
     }
 
     // 只对模组场景生效
-    let scene = &data["scene"];
-    if scene["module_id"].as_str().map(|s| s.is_empty()).unwrap_or(true) {
+    if data.scene.module_id.is_empty() {
         return None;
     }
 
@@ -148,15 +148,14 @@ pub fn classify_combat_intent(text: &str, data: &Value) -> Option<Value> {
         return None;
     }
 
-    let enc = &data["encounter"];
-    let encounter_active = enc["active"].as_bool().unwrap_or(false);
-    let empty = vec![];
-    let combatants = enc["combatants"].as_array().unwrap_or(&empty);
-    let live_enemies: Vec<&Value> = combatants.iter()
+    let encounter_active = data.encounter.active;
+    let live_enemies: Vec<&Value> = data.encounter.combatants.iter()
         .filter(|c| c["side"].as_str() == Some("enemy") && c["defeated"].as_bool() != Some(true))
         .collect();
 
-    let room_enemies = scene["current_room"]["enemies"].as_array()
+    // current_room 存在 scene.extra 里
+    let current_room = data.scene.extra.get("current_room").cloned().unwrap_or(Value::Null);
+    let room_enemies = current_room["enemies"].as_array()
         .map(|a| a.len())
         .unwrap_or(0);
 

@@ -2,18 +2,15 @@
 //! 对应 Python: rpg/context_engine/helpers.py
 
 use serde_json::Value;
+use rpg_schemas::GameStateData;
 
 /// 通用 pending_jump 警告。GM 运行契约的一部分,与 ContentPack 无关。
 /// 对应 Python `_pending_jump_warning_text`。
-pub fn pending_jump_warning_text(state_data: &Value) -> String {
-    let timeline = state_data
-        .pointer("/world/timeline")
-        .cloned()
-        .unwrap_or(Value::Null);
-    let pending = timeline.get("pending_jump").cloned().unwrap_or(Value::Null);
-    if !pending.is_object() {
-        return String::new();
-    }
+pub fn pending_jump_warning_text(state_data: &GameStateData) -> String {
+    let pending = match &state_data.world.timeline.pending_jump {
+        Some(p) if p.is_object() => p.clone(),
+        _ => return String::new(),
+    };
     let pending_status = pending
         .get("status")
         .and_then(|v| v.as_str())

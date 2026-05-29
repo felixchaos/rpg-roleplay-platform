@@ -3,6 +3,7 @@
 
 use serde_json::{json, Value};
 use rpg_rules::dnd5e::actions;
+use rpg_schemas::GameStateData;
 use crate::error::BridgeError;
 use crate::combat::sync_player_combatant;
 
@@ -178,19 +179,23 @@ pub fn consume_item_action(
 }
 
 /// short_rest：花 1 个生命骰 + CON 修正回血。
-pub fn short_rest(data: &mut Value, seed: Option<u64>) -> Result<Value, BridgeError> {
-    // 检查房间 flag
-    let can_rest = data["scene"]["current_room"]["flags"]["can_short_rest"]
-        .as_bool()
+pub fn short_rest(data: &mut GameStateData, seed: Option<u64>) -> Result<Value, BridgeError> {
+    // 检查房间 flag(current_room 存在 scene.extra 里,属于动态字段)
+    let can_rest = data.scene.extra
+        .get("current_room")
+        .and_then(|cr| cr.get("flags"))
+        .and_then(|f| f.get("can_short_rest"))
+        .and_then(|v| v.as_bool())
         .unwrap_or(false);
     if !can_rest {
         return Err(BridgeError::Logic("当前房间不适合短休".into()));
     }
 
-    let result = {
-        let pc = &mut data["player_character"];
-        actions::short_rest(pc, "1d8", seed)?
-    };
+    // rpg-rules actions::short_rest 仍接受 &mut Value,在边界转换
+    let mut pc_val = serde_json::to_value(&data.player_character)?;
+    let result = actions::short_rest(&mut pc_val, "1d8", seed)?;
+    data.player_character = serde_json::from_value(pc_val)
+        .map_err(|e| BridgeError::Json(e))?;
 
     sync_player_combatant(data);
     Ok(serde_json::to_value(&result)?)

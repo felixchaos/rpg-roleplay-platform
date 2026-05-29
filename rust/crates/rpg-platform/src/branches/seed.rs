@@ -3,6 +3,7 @@
 //! 对应 Python `branches/seed.py`。新存档建 root commit + 默认 ref;老数据迁移
 //! 留 TODO(`migrate_legacy_nodes` 需要把 `branch_nodes` 老表读出来重建)。
 
+use rpg_schemas::GameStateData;
 use sqlx::PgPool;
 
 use crate::error::PlatformResult;
@@ -55,13 +56,19 @@ pub async fn seed_tree(
             .bind(save_id)
             .fetch_optional(pool)
             .await?;
-    let data = snap_opt
+    let data_value = snap_opt
         .map(|(v,)| v)
         .filter(|v| v.is_object() && !v.as_object().map(|o| o.is_empty()).unwrap_or(true))
         .unwrap_or_else(|| load_state(std::path::Path::new(state_path)));
+    // 转为 typed 数据,以便调用迁移后的 snapshot_for_history / write_snapshot
+    let data: GameStateData = serde_json::from_value(data_value.clone())
+        .unwrap_or_default();
 
-    let root_snapshot = snapshot_for_history(&data, 0);
-    let root_state = write_snapshot(save_id, 0, &root_snapshot)?;
+    let root_snapshot_val = snapshot_for_history(&data, 0);
+    // write_snapshot 需要 &GameStateData;把截短后的 Value 反序列化回 typed
+    let root_data_truncated: GameStateData = serde_json::from_value(root_snapshot_val.clone())
+        .unwrap_or_default();
+    let root_state = write_snapshot(save_id, 0, &root_data_truncated)?;
     let metadata = serde_json::json!({});
     let root = insert_commit(
         pool,
@@ -74,7 +81,7 @@ pub async fn seed_tree(
         "存档起点",
         "存档起点",
         &root_state,
-        &root_snapshot,
+        &root_snapshot_val,
         "",
         "",
         &metadata,

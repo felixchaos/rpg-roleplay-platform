@@ -233,7 +233,6 @@ async fn api_rules_suggest(
     let user_id = user_id_or_anon(&s, &headers).await;
     let shared = s.state_store.get_or_create(&user_id).await;
     let snapshot = shared.read().clone();
-    let state_data_value = serde_json::to_value(&snapshot.data).unwrap_or(serde_json::Value::Null);
-    let actions = suggest_rule_actions(&text, &state_data_value);
+    let actions = suggest_rule_actions(&text, &snapshot.data);
     Ok(Json(json!({"ok": true, "actions": actions})).into_response())
 }

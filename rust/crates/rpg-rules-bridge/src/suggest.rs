@@ -4,6 +4,7 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::{json, Value};
+use rpg_schemas::GameStateData;
 use crate::intent::{direction_to_exit, has_movement_intent};
 
 // ── 意图关键词表 ──────────────────────────────────────────────────────────
@@ -53,14 +54,17 @@ fn weapon_from_text(text: &str) -> &'static str {
 // ── 公开 API ──────────────────────────────────────────────────────────────
 
 /// 根据用户输入文本和当前 state.data，生成规则候选动作列表。
-pub fn suggest_rule_actions(user_input: &str, data: &Value) -> Vec<Value> {
+pub fn suggest_rule_actions(user_input: &str, data: &GameStateData) -> Vec<Value> {
     if user_input.is_empty() {
         return vec![];
     }
     let text = user_input;
-    let scene = &data["scene"];
-    let current_room = &scene["current_room"];
-    let location_id = scene["location_id"].as_str().unwrap_or("");
+    // current_room 存在 scene.extra 里(动态字段)
+    let current_room = data.scene.extra
+        .get("current_room")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let location_id = data.scene.location_id.as_str();
 
     let mut out: Vec<Value> = vec![];
 
@@ -109,11 +113,8 @@ pub fn suggest_rule_actions(user_input: &str, data: &Value) -> Vec<Value> {
             }
             "attack" => {
                 action["weapon"] = json!(weapon_from_text(text));
-                let enc = &data["encounter"];
-                if enc["active"].as_bool().unwrap_or(false) {
-                    let empty = vec![];
-                    let enemies: Vec<&Value> = enc["combatants"].as_array().unwrap_or(&empty)
-                        .iter()
+                if data.encounter.active {
+                    let enemies: Vec<&Value> = data.encounter.combatants.iter()
                         .filter(|c| c["side"].as_str() == Some("enemy") && c["defeated"].as_bool() != Some(true))
                         .collect();
                     if let Some(first) = enemies.first() {
@@ -125,7 +126,7 @@ pub fn suggest_rule_actions(user_input: &str, data: &Value) -> Vec<Value> {
             }
             "move" => {
                 // 方向词解析
-                if let Some(exit_id) = direction_to_exit(text, current_room) {
+                if let Some(exit_id) = direction_to_exit(text, &current_room) {
                     action["to"] = json!(exit_id);
                     action["target"] = json!(exit_id);
                     // 补充 exit label

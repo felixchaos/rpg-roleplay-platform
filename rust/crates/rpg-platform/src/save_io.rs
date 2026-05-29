@@ -11,6 +11,7 @@
 use chrono::{DateTime, Utc};
 use rand::RngCore;
 use rpg_core::UserId;
+use rpg_schemas::GameStateData;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{Column, PgPool, Row};
@@ -544,11 +545,13 @@ pub async fn write_state_snapshot(
 pub async fn write_active_state_snapshot(
     pool: &PgPool,
     user_id: UserId,
-    snapshot: &Value,
+    data: &GameStateData,
 ) -> PlatformResult<bool> {
+    // DB 列仍是 jsonb — 在 IO 边界序列化一次
+    let snapshot = serde_json::to_value(data)?;
     match resolve_active_save_id(pool, user_id).await {
         Some(save_id) => {
-            write_state_snapshot(pool, user_id, save_id, snapshot).await?;
+            write_state_snapshot(pool, user_id, save_id, &snapshot).await?;
             Ok(true)
         }
         None => Ok(false),

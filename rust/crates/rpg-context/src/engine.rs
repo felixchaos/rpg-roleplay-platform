@@ -11,6 +11,7 @@ use crate::registry::{resolve_content_pack, run_providers};
 use crate::rules_text::{agent_runtime_rules, context_agent_debug, context_agent_decision, story_rules};
 use crate::types::{ContextContribution, Demand, Layer, Manifest};
 use crate::utils::{cache_plan, estimate_tokens, max_layer_chars, neutralize_state_write_tags, preview, trim_text};
+use rpg_schemas::GameStateData;
 use serde_json::{json, Value};
 
 /// 组装单轮 prompt 上下文。
@@ -23,7 +24,7 @@ use serde_json::{json, Value};
 /// - 旧路径:不传 contributions/manifest,本函数自动 resolve_content_pack + run_providers。
 #[allow(clippy::too_many_arguments)]
 pub async fn build_context_bundle(
-    state_data: &Value,
+    state_data: &GameStateData,
     user_input: &str,
     retrieved_context: &str,
     curator_plan: Option<&Value>,
@@ -231,22 +232,19 @@ pub async fn build_context_bundle(
 /// 这是一个精简版:挑 GameState 里 GM 最常需要的几个公开字段,把它们渲染成一段文本。
 /// 不暴露 player_private / secrets / story_intent 这些只属于玩家私域的字段。
 /// rpg-state 完全成熟时这里可改成直接调 `state.short_summary()`。
-fn state_short_summary(state_data: &Value) -> String {
-    // 静态空对象 / Null 占位,避免 .get() 返回 None 时分配。
-    static NULL: Value = Value::Null;
+fn state_short_summary(state_data: &GameStateData) -> String {
     let mut lines: Vec<String> = Vec::new();
 
     // ── 玩家段 ───────────────────────────────────────────────
-    let player = state_data.get("player").unwrap_or(&NULL);
-    let p_name = player.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let p_role = player.get("role").and_then(|v| v.as_str()).unwrap_or("");
-    let p_loc = player
-        .get("current_location")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let p_hp = player.get("hp").or_else(|| player.get("HP"));
-    let p_hp_max = player.get("hp_max").or_else(|| player.get("max_hp"));
-    let p_status = player
+    let p_name = &state_data.player.name;
+    let p_role = &state_data.player.role;
+    let p_loc = &state_data.player.current_location;
+    // hp/hp_max/current_status 来自 player.extra(动态字段)
+    let p_hp = state_data.player.extra.get("hp")
+        .or_else(|| state_data.player.extra.get("HP"));
+    let p_hp_max = state_data.player.extra.get("hp_max")
+        .or_else(|| state_data.player.extra.get("max_hp"));
+    let p_status = state_data.player.extra
         .get("current_status")
         .and_then(|v| v.as_str())
         .unwrap_or("");
@@ -273,17 +271,13 @@ fn state_short_summary(state_data: &Value) -> String {
     }
 
     // ── 场景 / 时间 ───────────────────────────────────────────
-    let world = state_data.get("world").unwrap_or(&NULL);
-    let scene = state_data
-        .get("scene")
-        .or_else(|| world.get("scene"))
-        .unwrap_or(&NULL);
-    let w_time = world.get("time").and_then(|v| v.as_str()).unwrap_or("");
-    let s_loc = scene.get("location").and_then(|v| v.as_str()).unwrap_or("");
-    let s_phase = world
-        .pointer("/timeline/current_phase")
+    let w_time = &state_data.world.time;
+    // scene.location / scene.extra["location"] 是动态字段
+    let s_loc = state_data.scene.extra
+        .get("location")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    let s_phase = &state_data.world.timeline.current_phase;
     if !w_time.is_empty() || !s_loc.is_empty() || !s_phase.is_empty() {
         lines.push(String::new());
         lines.push("【场景 / 时间】".to_string());
@@ -299,60 +293,42 @@ fn state_short_summary(state_data: &Value) -> String {
     }
 
     // ── 战斗 / encounter ──────────────────────────────────────
-    let encounter = state_data
-        .get("encounter")
-        .or_else(|| scene.get("encounter"))
-        .unwrap_or(&NULL);
-    if encounter.is_object() {
-        let active = encounter
-            .get("active")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if active {
-            lines.push(String::new());
-            lines.push("【遭遇】".to_string());
-            lines.push("状态：进行中".to_string());
-            if let Some(name) = encounter.get("name").and_then(|v| v.as_str()) {
-                if !name.is_empty() {
-                    lines.push(format!("名称：{}", name));
-                }
+    if state_data.encounter.active {
+        lines.push(String::new());
+        lines.push("【遭遇】".to_string());
+        lines.push("状态：进行中".to_string());
+        // name/enemies 在 encounter.extra 里
+        if let Some(name) = state_data.encounter.extra.get("name").and_then(|v| v.as_str()) {
+            if !name.is_empty() {
+                lines.push(format!("名称：{}", name));
             }
-            if let Some(enemies) = encounter.get("enemies").and_then(|v| v.as_array()) {
-                let names: Vec<String> = enemies
-                    .iter()
-                    .filter_map(|e| {
-                        e.get("name")
-                            .and_then(|v| v.as_str())
-                            .or_else(|| e.as_str())
-                            .map(|s| s.to_string())
-                    })
-                    .collect();
-                if !names.is_empty() {
-                    lines.push(format!("敌方：{}", names.join("、")));
-                }
+        }
+        if let Some(enemies) = state_data.encounter.extra.get("enemies").and_then(|v| v.as_array()) {
+            let names: Vec<String> = enemies
+                .iter()
+                .filter_map(|e| {
+                    e.get("name")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| e.as_str())
+                        .map(|s| s.to_string())
+                })
+                .collect();
+            if !names.is_empty() {
+                lines.push(format!("敌方：{}", names.join("、")));
             }
         }
     }
 
     // ── 关系 / 记忆精简 ───────────────────────────────────────
-    if let Some(rels) = state_data.get("relationships").and_then(|v| v.as_object()) {
-        if !rels.is_empty() {
-            lines.push(String::new());
-            lines.push("【关系】".to_string());
-            for (k, v) in rels.iter().take(8) {
-                lines.push(format!("· {}：{}", k, value_to_short(v)));
-            }
+    if !state_data.relationships.is_empty() {
+        lines.push(String::new());
+        lines.push("【关系】".to_string());
+        for (k, v) in state_data.relationships.iter().take(8) {
+            lines.push(format!("· {}：{}", k, value_to_short(v)));
         }
     }
-    let memory = state_data.get("memory").unwrap_or(&NULL);
-    let main_quest = memory
-        .get("main_quest")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let cur_obj = memory
-        .get("current_objective")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let main_quest = &state_data.memory.main_quest;
+    let cur_obj = &state_data.memory.current_objective;
     if !main_quest.is_empty() || !cur_obj.is_empty() {
         lines.push(String::new());
         lines.push("【目标】".to_string());

@@ -8,49 +8,29 @@
 
 use crate::helpers::{normalize_permission_mode, permission_label};
 use serde_json::Value;
+use rpg_schemas::GameStateData;
 
 /// state_schema 层。task 59:把 state 字段真实 schema + 当前 enum 喂给 LLM。
 /// 对应 Python `_state_schema_layer(state, chars)`。
-pub fn state_schema_layer(state_data: &Value, chars: &Value) -> String {
-    let player = state_data.get("player").cloned().unwrap_or(Value::Null);
-    let world = state_data.get("world").cloned().unwrap_or(Value::Null);
-    let rels = state_data
-        .get("relationships")
-        .cloned()
-        .unwrap_or(Value::Null);
-    let worldline = state_data.get("worldline").cloned().unwrap_or(Value::Null);
+pub fn state_schema_layer(state_data: &GameStateData, chars: &Value) -> String {
+    let player_name = &state_data.player.name;
+    let player_role = &state_data.player.role;
+    let player_background = &state_data.player.background;
+    let player_loc = &state_data.player.current_location;
+    let world_time = &state_data.world.time;
+    // weather 存在 world.extra 里
+    let world_weather = state_data.world.extra
+        .get("weather")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
-    let get_player_str = |k: &str| {
-        player
-            .get(k)
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string()
-    };
-    let get_world_str = |k: &str| {
-        world
-            .get(k)
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string()
-    };
-
-    let player_name = get_player_str("name");
-    let player_role = get_player_str("role");
-    let player_background = get_player_str("background");
-    let player_loc = get_player_str("current_location");
-    let world_time = get_world_str("time");
-    let world_weather = get_world_str("weather");
-
-    let rels_keys: Vec<String> = rels
-        .as_object()
-        .map(|m| m.keys().cloned().collect())
-        .unwrap_or_default();
+    let rels_keys: Vec<String> = state_data.relationships.keys().cloned().collect();
     let chars_keys: Vec<String> = chars
         .as_object()
         .map(|m| {
             m.keys()
-                .filter(|k| *k != &player_name)
+                .filter(|k| *k != player_name)
                 .cloned()
                 .collect::<Vec<_>>()
         })
@@ -67,11 +47,7 @@ pub fn state_schema_layer(state_data: &Value, chars: &Value) -> String {
         npcs.iter().take(20).cloned().collect::<Vec<_>>().join("、")
     };
 
-    let user_vars = worldline
-        .get("user_variables")
-        .and_then(|v| v.as_object())
-        .cloned()
-        .unwrap_or_default();
+    let user_vars = &state_data.worldline.user_variables;
     let var_names: Vec<&String> = user_vars.keys().take(10).collect();
     let var_names_str = if var_names.is_empty() {
         "（无）".to_string()
@@ -140,9 +116,9 @@ pub fn state_schema_layer(state_data: &Value, chars: &Value) -> String {
 }
 
 /// task 76: 把记忆按 kind 分组渲染。对应 Python `_fact_groups_layer`。
-pub fn fact_groups_layer(state_data: &Value) -> String {
-    let memory = state_data.get("memory").cloned().unwrap_or(Value::Null);
-    let items = memory
+pub fn fact_groups_layer(state_data: &GameStateData) -> String {
+    // memory.items 存在 memory.extra 里(动态字段)
+    let items: Vec<Value> = state_data.memory.extra
         .get("items")
         .and_then(|v| v.as_array())
         .cloned()
@@ -181,17 +157,11 @@ pub fn fact_groups_layer(state_data: &Value) -> String {
     constraints.truncate(6);
 
     let legacy_facts: Vec<String> = if runtime.is_empty() {
-        memory
-            .get("facts")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .filter(|s| !s.is_empty())
-                    .take(10)
-                    .collect()
-            })
-            .unwrap_or_default()
+        state_data.memory.facts.iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .filter(|s| !s.is_empty())
+            .take(10)
+            .collect()
     } else {
         Vec::new()
     };
@@ -294,11 +264,10 @@ pub fn candidate_actions_layer(plan: Option<&Value>) -> String {
 }
 
 /// task 75:暴露 active hypothesis 给 LLM。对应 Python `_active_hypotheses_layer`。
-/// 注:这里我们假设 hypothesis 存在 `state.data.memory.items` 中(kind=="hypothesis"),
+/// 注:这里我们假设 hypothesis 存在 `state.data.memory.extra["items"]` 中(kind=="hypothesis"),
 /// 而不是依赖 state 的 list_active_hypotheses 方法。
-pub fn active_hypotheses_layer(state_data: &Value) -> String {
-    let memory = state_data.get("memory").cloned().unwrap_or(Value::Null);
-    let items = memory
+pub fn active_hypotheses_layer(state_data: &GameStateData) -> String {
+    let items: Vec<Value> = state_data.memory.extra
         .get("items")
         .and_then(|v| v.as_array())
         .cloned()
@@ -352,24 +321,14 @@ pub fn active_hypotheses_layer(state_data: &Value) -> String {
 }
 
 /// task 54:把上轮 GM 标签的处理结果反馈给模型。对应 Python `_write_results_layer`。
-pub fn write_results_layer(state_data: &Value) -> String {
-    let memory = state_data.get("memory").cloned().unwrap_or(Value::Null);
-    let permissions = state_data.get("permissions").cloned().unwrap_or(Value::Null);
-    let last_updates = memory
-        .get("last_structured_updates")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let pending = permissions
-        .get("pending_writes")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let audit_log = permissions
-        .get("audit_log")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+pub fn write_results_layer(state_data: &GameStateData) -> String {
+    let last_updates = &state_data.memory.last_structured_updates;
+    let pending: Vec<Value> = state_data.permissions.pending_writes.iter()
+        .map(|pw| serde_json::to_value(pw).unwrap_or(Value::Null))
+        .collect();
+    let audit_log: Vec<Value> = state_data.permissions.audit_log.iter()
+        .map(|ae| serde_json::to_value(ae).unwrap_or(Value::Null))
+        .collect();
 
     let mut lines: Vec<String> = Vec::new();
 
@@ -476,18 +435,9 @@ fn value_to_text(v: &Value) -> String {
 }
 
 /// worldline 通用层。对应 Python `_worldline_layer`(text 部分)。
-pub fn worldline_layer_text(state_data: &Value) -> String {
-    let permissions = state_data.get("permissions").cloned().unwrap_or(Value::Null);
-    let worldline = state_data.get("worldline").cloned().unwrap_or(Value::Null);
-    let variables = worldline
-        .get("user_variables")
-        .and_then(|v| v.as_object())
-        .cloned()
-        .unwrap_or_default();
-    let mode = permissions
-        .get("mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or("full_access");
+pub fn worldline_layer_text(state_data: &GameStateData) -> String {
+    let variables = &state_data.worldline.user_variables;
+    let mode = state_data.permissions.mode.as_str();
 
     let mut variable_lines: Vec<String> = Vec::new();
     for (name, info) in variables.iter() {

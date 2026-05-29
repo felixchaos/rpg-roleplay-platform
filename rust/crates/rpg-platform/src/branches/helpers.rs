@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use once_cell::sync::Lazy;
 use regex::Regex;
+use rpg_schemas::GameStateData;
 use serde_json::{json, Value};
 
 /// `refs/heads/main`(默认 ref 名)。
@@ -167,8 +168,9 @@ pub fn snapshot_quality(state: &Value) -> i64 {
 }
 
 /// Python `snapshot_for_history(data, history_len)` — 截短 history 后写新 snapshot。
-pub fn snapshot_for_history(data: &Value, history_len: usize) -> Value {
-    let mut snap = data.clone();
+pub fn snapshot_for_history(data: &GameStateData, history_len: usize) -> Value {
+    // 序列化为 Value,截短 history 后返回 — 输出层合法序列化
+    let mut snap = serde_json::to_value(data).unwrap_or_else(|_| json!({}));
     if let Some(obj) = snap.as_object_mut() {
         let truncated = obj
             .get("history")
@@ -183,26 +185,27 @@ pub fn snapshot_for_history(data: &Value, history_len: usize) -> Value {
 
 /// Python `write_snapshot(save_id, index, data)` — 写到
 /// `<state_dir>/save_<save>_commit_seed_<index>.json`,返回路径。
-pub fn write_snapshot(save_id: i64, index: usize, data: &Value) -> std::io::Result<String> {
+pub fn write_snapshot(save_id: i64, index: usize, data: &GameStateData) -> std::io::Result<String> {
     let dir = state_dir();
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("save_{save_id}_commit_seed_{index}.json"));
-    std::fs::write(&path, serde_json::to_string_pretty(data)?)?;
+    // 序列化为 JSON 字符串写文件 — 输出层合法序列化
+    let json_str = serde_json::to_string_pretty(data)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    std::fs::write(&path, json_str)?;
     Ok(path.to_string_lossy().into_owned())
 }
 
 /// Python `write_runtime_snapshot(save_id, data)`。
-pub fn write_runtime_snapshot(save_id: i64, data: &Value) -> std::io::Result<String> {
+pub fn write_runtime_snapshot(save_id: i64, data: &GameStateData) -> std::io::Result<String> {
     let dir = state_dir();
     std::fs::create_dir_all(&dir)?;
-    let turn = data
-        .get("turn")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0)
-        .max(0);
+    let turn = (data.turn as i64).max(0);
     let hex = random_hex(4);
     let path = dir.join(format!("save_{save_id}_runtime_turn_{turn}_{hex}.json"));
-    std::fs::write(&path, serde_json::to_string_pretty(data)?)?;
+    let json_str = serde_json::to_string_pretty(data)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    std::fs::write(&path, json_str)?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -222,17 +225,14 @@ pub fn copy_state(source_path: &str, save_id: i64, label: &str) -> std::io::Resu
 }
 
 /// Python `write_named_snapshot(save_id, label, data)`。
-pub fn write_named_snapshot(save_id: i64, label: &str, data: &Value) -> std::io::Result<String> {
+pub fn write_named_snapshot(save_id: i64, label: &str, data: &GameStateData) -> std::io::Result<String> {
     let dir = state_dir();
     std::fs::create_dir_all(&dir)?;
     let hex = random_hex(4);
     let target = dir.join(format!("save_{save_id}_{label}_{hex}.json"));
-    let payload = if data.is_object() {
-        data.clone()
-    } else {
-        empty_state()
-    };
-    std::fs::write(&target, serde_json::to_string_pretty(&payload)?)?;
+    let json_str = serde_json::to_string_pretty(data)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    std::fs::write(&target, json_str)?;
     Ok(target.to_string_lossy().into_owned())
 }
 

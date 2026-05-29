@@ -149,12 +149,11 @@ impl ContextAgent {
 
         let demand = parse_demand(&raw).unwrap_or_default();
 
-        // 2) Provider 调度。序列化为 Value 供 rpg-context 函数使用(跨 crate 接口保持 Value)。
-        let state_data_value = serde_json::to_value(&state.data).unwrap_or(Value::Null);
-        let manifest: RcManifest = resolve_content_pack(&state_data_value, self.default_script_id);
+        // 2) Provider 调度。直接传 typed GameStateData — rpg-context 内部统一处理
+        let manifest: RcManifest = resolve_content_pack(&state.data, self.default_script_id);
         let rc_demand = to_rc_demand(&demand);
         let (contributions, used) =
-            run_providers(&state_data_value, &manifest, &rc_demand, &self.services).await;
+            run_providers(&state.data, &manifest, &rc_demand, &self.services).await;
 
         // 3) 拼接 context_bundle:按 priority 倒序的 layers,sticky 优先。
         let bundle = build_bundle_text(&contributions);

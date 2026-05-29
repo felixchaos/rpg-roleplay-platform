@@ -3,6 +3,7 @@
 
 use crate::provider::{ContextProvider, ProviderServices};
 use crate::types::{ContextContribution, Demand, Manifest};
+use rpg_schemas::GameStateData;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
@@ -146,9 +147,9 @@ pub fn default_freeform_manifest() -> Manifest {
 
 /// 根据当前 state 推断 active ContentPack manifest。
 /// 对应 Python `resolve_content_pack(state, script_id)`。
-pub fn resolve_content_pack(state_data: &Value, script_id: Option<i64>) -> Manifest {
-    // 1. state.content_pack 显式指定(最高优先级)
-    if let Some(explicit) = state_data.get("content_pack") {
+pub fn resolve_content_pack(state_data: &GameStateData, script_id: Option<i64>) -> Manifest {
+    // 1. state.content_pack 显式指定(存在 extra 里)
+    if let Some(explicit) = state_data.extra.get("content_pack") {
         if explicit.is_object() {
             if let Some(providers) = explicit.get("context_providers") {
                 if providers.as_array().map(|a| !a.is_empty()).unwrap_or(false) {
@@ -157,22 +158,19 @@ pub fn resolve_content_pack(state_data: &Value, script_id: Option<i64>) -> Manif
             }
         }
     }
-    // 2. state.scene.module_manifest(模组开局写入)
-    let scene = state_data.get("scene").cloned().unwrap_or(Value::Null);
-    let module_manifest = scene
+    // 2. state.scene.module_manifest(模组开局写入,存在 scene.extra)
+    let module_manifest = state_data.scene.extra
         .get("module_manifest")
         .cloned()
         .unwrap_or(Value::Null);
-    let has_module = scene
-        .get("module_id")
-        .is_some_and(|v| !v.is_null())
+    let has_module = !state_data.scene.module_id.is_empty()
         || module_manifest.get("id").is_some_and(|v| !v.is_null());
     if has_module {
         let mut merged = default_module_manifest();
         if let Some(id) = module_manifest.get("id").and_then(|v| v.as_str()) {
             merged.id = id.to_string();
-        } else if let Some(id) = scene.get("module_id").and_then(|v| v.as_str()) {
-            merged.id = id.to_string();
+        } else if !state_data.scene.module_id.is_empty() {
+            merged.id = state_data.scene.module_id.clone();
         }
         // TODO: 等 rpg-modules 把 _load_full_module_manifest 接上时再 merge full module.json
         return merged;
@@ -184,12 +182,7 @@ pub fn resolve_content_pack(state_data: &Value, script_id: Option<i64>) -> Manif
         return m;
     }
     // 4. 老存档兼容:history 有内容也按 novel_adaptation 走
-    if state_data
-        .get("history")
-        .and_then(|v| v.as_array())
-        .map(|a| !a.is_empty())
-        .unwrap_or(false)
-    {
+    if !state_data.history.is_empty() {
         let mut m = default_novel_manifest();
         m.id = "__legacy_save__".to_string();
         return m;
@@ -206,12 +199,17 @@ fn normalize_manifest(v: Value) -> Manifest {
 ///
 /// 对应 Python `run_providers(state, manifest, demand, services)`。
 /// 返回 `(contributions, used_ids)`。任何 provider 异常都被吞掉。
+///
+/// 注:ContextProvider trait 的 applies/collect 仍接受 &Value(动态层边界),
+/// 在此处做一次序列化转换,转换成本可接受(每轮调用一次)。
 pub async fn run_providers(
-    state_data: &Value,
+    state_data: &GameStateData,
     manifest: &Manifest,
     demand: &Demand,
     services: &ProviderServices,
 ) -> (Vec<ContextContribution>, Vec<String>) {
+    // ContextProvider trait 边界仍是 &Value — 在 run_providers 入口统一转换一次
+    let state_value = serde_json::to_value(state_data).unwrap_or(Value::Null);
     let mut out: Vec<ContextContribution> = Vec::new();
     let mut used: Vec<String> = Vec::new();
 
@@ -225,14 +223,14 @@ pub async fn run_providers(
                 continue;
             }
         };
-        if !provider.applies(state_data, manifest, demand) {
+        if !provider.applies(&state_value, manifest, demand) {
             out.push(ContextContribution::skipped(
                 pid.clone(),
                 "applies()=False",
             ));
             continue;
         }
-        let result = provider.collect(state_data, manifest, demand, services).await;
+        let result = provider.collect(&state_value, manifest, demand, services).await;
         match result {
             Ok(mut contrib) => {
                 // 保持 id 一致(防 provider 自己写错)

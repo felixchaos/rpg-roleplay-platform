@@ -6,19 +6,16 @@ use crate::error::ContextResult;
 use crate::provider::{ContextProvider, ProviderServices};
 use crate::types::{ContextContribution, Demand, Layer, Manifest};
 use async_trait::async_trait;
+use rpg_schemas::GameStateData;
 use serde_json::{json, Value};
 
 pub struct RulesProvider;
 
-fn has_ruleset(state_data: &Value, manifest: &Manifest) -> bool {
+fn has_ruleset(state_data: &GameStateData, manifest: &Manifest) -> bool {
     if !manifest.ruleset.is_empty() && manifest.ruleset != "none" {
         return true;
     }
-    state_data
-        .pointer("/ruleset/id")
-        .and_then(|v| v.as_str())
-        .map(|s| !s.is_empty())
-        .unwrap_or(false)
+    !state_data.ruleset.id.is_empty()
 }
 
 #[async_trait]
@@ -31,7 +28,15 @@ impl ContextProvider for RulesProvider {
         if !manifest.context_providers.iter().any(|p| p == self.id()) {
             return false;
         }
-        has_ruleset(state_data, manifest)
+        // ContextProvider trait 边界仍是 &Value;短路 manifest 检查避免反序列化
+        if !manifest.ruleset.is_empty() && manifest.ruleset != "none" {
+            return true;
+        }
+        let typed: GameStateData = match serde_json::from_value(state_data.clone()) {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
+        has_ruleset(&typed, manifest)
     }
 
     async fn collect(

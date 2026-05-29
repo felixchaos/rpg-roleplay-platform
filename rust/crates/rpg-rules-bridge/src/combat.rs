@@ -3,6 +3,7 @@
 
 use serde_json::{json, Value};
 use rpg_rules::dnd5e::{actions, combat as rules_combat, RuleResult};
+use rpg_schemas::GameStateData;
 use crate::error::BridgeError;
 
 // ── 类型别名 ──────────────────────────────────────────────────────────────
@@ -44,23 +45,22 @@ pub struct CombatOutcome {
 
 // ── 内部工具 ─────────────────────────────────────────────────────────────
 
-/// 从 state.data["encounter"]["combatants"] 中把 player 的 HP/AC 与 player_character 同步。
-pub fn sync_player_combatant(data: &mut Value) {
-    let pc_hp = data["player_character"]["hp"].as_i64().unwrap_or(0) as i32;
-    let pc_max_hp = data["player_character"]["max_hp"].as_i64().unwrap_or(0) as i32;
-    let pc_ac = data["player_character"]["ac"].as_i64().unwrap_or(10) as i32;
-    let pc_conditions = data["player_character"]["conditions"].clone();
+/// 从 state.data.encounter.combatants 中把 player 的 HP/AC 与 player_character 同步。
+pub fn sync_player_combatant(data: &mut GameStateData) {
+    let pc_hp = data.player_character.hp;
+    let pc_max_hp = data.player_character.max_hp;
+    let pc_ac = data.player_character.ac;
+    let pc_conditions = serde_json::to_value(&data.player_character.conditions)
+        .unwrap_or(Value::Array(vec![]));
 
-    if let Some(combs) = data["encounter"]["combatants"].as_array_mut() {
-        for c in combs.iter_mut() {
-            if c["id"].as_str() == Some("player") {
-                c["hp"] = json!(pc_hp);
-                c["max_hp"] = json!(pc_max_hp);
-                c["ac"] = json!(pc_ac);
-                c["conditions"] = pc_conditions.clone();
-                c["defeated"] = json!(pc_hp <= 0);
-                break;
-            }
+    for c in data.encounter.combatants.iter_mut() {
+        if c["id"].as_str() == Some("player") {
+            c["hp"] = json!(pc_hp);
+            c["max_hp"] = json!(pc_max_hp);
+            c["ac"] = json!(pc_ac);
+            c["conditions"] = pc_conditions.clone();
+            c["defeated"] = json!(pc_hp <= 0);
+            break;
         }
     }
 }
@@ -91,11 +91,12 @@ pub fn apply_combatant_ops(encounter: &mut Value, state_ops: &[rpg_rules::dnd5e:
 // ── 公开 dispatcher ───────────────────────────────────────────────────────
 
 /// 主入口：根据 CombatAction 调度战斗逻辑，原地修改 state.data，返回 CombatOutcome。
-pub fn apply_combat(data: &mut Value, action: CombatAction) -> Result<CombatOutcome, BridgeError> {
+pub fn apply_combat(data: &mut GameStateData, action: CombatAction) -> Result<CombatOutcome, BridgeError> {
     match action {
         CombatAction::StartEncounter { encounter_id, party, enemies, seed } => {
             let enc = rules_combat::start_encounter(&party, &enemies, seed, &encounter_id)?;
-            data["encounter"] = enc.clone();
+            data.encounter = serde_json::from_value(enc.clone())
+                .unwrap_or_default();
             let gm_facts = vec![format!("遭遇 {} 已开始。", encounter_id)];
             Ok(CombatOutcome {
                 rule_result: enc.clone(),
@@ -108,15 +109,13 @@ pub fn apply_combat(data: &mut Value, action: CombatAction) -> Result<CombatOutc
             target_id, weapon_id: _, attack_bonus, damage_expr,
             advantage, disadvantage, seed,
         } => {
-            if data["encounter"]["active"].as_bool() != Some(true) {
+            if !data.encounter.active {
                 return Err(BridgeError::EncounterNotActive);
             }
 
             // 找目标
             let target = {
-                let combs = data["encounter"]["combatants"].as_array()
-                    .ok_or_else(|| BridgeError::MissingField("encounter.combatants".into()))?;
-                combs.iter()
+                data.encounter.combatants.iter()
                     .find(|c| c["id"].as_str() == Some(&target_id) && c["side"].as_str() == Some("enemy"))
                     .cloned()
                     .ok_or_else(|| BridgeError::TargetNotFound(target_id.clone()))?
@@ -126,7 +125,7 @@ pub fn apply_combat(data: &mut Value, action: CombatAction) -> Result<CombatOutc
                 return Err(BridgeError::Logic(format!("目标已倒下：{}", target_id)));
             }
 
-            let pc = data["player_character"].clone();
+            let pc = serde_json::to_value(&data.player_character)?;
             let result: RuleResult = actions::attack_roll(
                 &pc,
                 &target,
@@ -141,30 +140,32 @@ pub fn apply_combat(data: &mut Value, action: CombatAction) -> Result<CombatOutc
             )?;
 
             // 应用 state_ops 到 encounter
-            apply_combatant_ops(&mut data["encounter"], &result.state_ops);
+            let mut enc_value = serde_json::to_value(&data.encounter)?;
+            apply_combatant_ops(&mut enc_value, &result.state_ops);
 
             // 检查阵亡
-            let newly = rules_combat::mark_defeated_by_hp(&mut data["encounter"]);
-            let (resolved, outcome) = rules_combat::is_encounter_resolved(&data["encounter"]);
+            let newly = rules_combat::mark_defeated_by_hp(&mut enc_value);
+            let (resolved, outcome) = rules_combat::is_encounter_resolved(&enc_value);
 
             let mut gm_facts = result.gm_facts.clone();
             if !newly.is_empty() {
                 gm_facts.push(format!("{} 倒下。", newly.join("、")));
             }
             if resolved {
-                data["encounter"]["active"] = json!(false);
-                data["encounter"]["outcome"] = json!(outcome);
+                enc_value["active"] = json!(false);
+                enc_value["outcome"] = json!(outcome);
                 gm_facts.push(format!("战斗结束：{}。", outcome));
                 // 胜利标志
                 if outcome == "victory" {
-                    if let Some(vf) = data["encounter"]["definition"]["victory_flag"].as_str() {
+                    if let Some(vf) = enc_value["definition"]["victory_flag"].as_str() {
                         let vf = vf.to_string();
-                        data["scene"]["flags"][&vf] = json!(true);
+                        data.scene.flags.insert(vf, json!(true));
                     }
                 }
             }
+            let enc_snap = enc_value.clone();
+            data.encounter = serde_json::from_value(enc_value).unwrap_or_default();
 
-            let enc_snap = data["encounter"].clone();
             Ok(CombatOutcome {
                 rule_result: serde_json::to_value(&result)?,
                 encounter: enc_snap,
@@ -173,19 +174,15 @@ pub fn apply_combat(data: &mut Value, action: CombatAction) -> Result<CombatOutc
         }
 
         CombatAction::EnemyAttack { attacker_id, target_id, attack_index, seed } => {
-            if data["encounter"]["active"].as_bool() != Some(true) {
+            if !data.encounter.active {
                 return Err(BridgeError::EncounterNotActive);
             }
 
             // 找攻击者
-            let attacker = {
-                let combs = data["encounter"]["combatants"].as_array()
-                    .ok_or_else(|| BridgeError::MissingField("encounter.combatants".into()))?;
-                combs.iter()
-                    .find(|c| c["id"].as_str() == Some(&attacker_id))
-                    .cloned()
-                    .ok_or_else(|| BridgeError::TargetNotFound(attacker_id.clone()))?
-            };
+            let attacker = data.encounter.combatants.iter()
+                .find(|c| c["id"].as_str() == Some(&attacker_id))
+                .cloned()
+                .ok_or_else(|| BridgeError::TargetNotFound(attacker_id.clone()))?;
 
             if attacker["defeated"].as_bool() == Some(true) {
                 return Err(BridgeError::Logic(format!("攻击者已阵亡：{}", attacker_id)));
@@ -202,16 +199,13 @@ pub fn apply_combat(data: &mut Value, action: CombatAction) -> Result<CombatOutc
 
             // 构造 target
             let target: Value = if target_id == "player" {
-                let pc = &data["player_character"];
                 json!({
                     "id": "player",
-                    "name": pc["name"].as_str().unwrap_or("Player"),
-                    "ac": pc["ac"].as_i64().unwrap_or(10)
+                    "name": &data.player_character.name,
+                    "ac": data.player_character.ac
                 })
             } else {
-                let combs = data["encounter"]["combatants"].as_array()
-                    .ok_or_else(|| BridgeError::MissingField("encounter.combatants".into()))?;
-                combs.iter()
+                data.encounter.combatants.iter()
                     .find(|c| c["id"].as_str() == Some(&target_id))
                     .cloned()
                     .ok_or_else(|| BridgeError::TargetNotFound(target_id.clone()))?
@@ -239,28 +233,31 @@ pub fn apply_combat(data: &mut Value, action: CombatAction) -> Result<CombatOutc
                         .and_then(|d| d.get("total"))
                         .and_then(|v| v.as_i64())
                         .unwrap_or(0) as i32;
-                    let cur_hp = data["player_character"]["hp"].as_i64().unwrap_or(0) as i32;
-                    let new_hp = (cur_hp - dmg).max(0);
-                    data["player_character"]["hp"] = json!(new_hp);
+                    let new_hp = (data.player_character.hp - dmg).max(0);
+                    data.player_character.hp = new_hp;
                     sync_player_combatant(data);
-                    let max_hp = data["player_character"]["max_hp"].as_i64().unwrap_or(0);
+                    let max_hp = data.player_character.max_hp;
                     gm_facts.push(format!(
                         "玩家受到 {} 点伤害（HP {}/{}）。", dmg, new_hp, max_hp
                     ));
                 } else {
-                    apply_combatant_ops(&mut data["encounter"], &result.state_ops);
+                    let mut enc_value = serde_json::to_value(&data.encounter)?;
+                    apply_combatant_ops(&mut enc_value, &result.state_ops);
+                    data.encounter = serde_json::from_value(enc_value).unwrap_or_default();
                 }
             }
 
-            rules_combat::mark_defeated_by_hp(&mut data["encounter"]);
-            let (resolved, outcome) = rules_combat::is_encounter_resolved(&data["encounter"]);
+            let mut enc_value = serde_json::to_value(&data.encounter)?;
+            rules_combat::mark_defeated_by_hp(&mut enc_value);
+            let (resolved, outcome) = rules_combat::is_encounter_resolved(&enc_value);
             if resolved {
-                data["encounter"]["active"] = json!(false);
-                data["encounter"]["outcome"] = json!(outcome);
+                enc_value["active"] = json!(false);
+                enc_value["outcome"] = json!(outcome);
                 gm_facts.push(format!("战斗结束：{}。", outcome));
             }
+            let enc_snap = enc_value.clone();
+            data.encounter = serde_json::from_value(enc_value).unwrap_or_default();
 
-            let enc_snap = data["encounter"].clone();
             Ok(CombatOutcome {
                 rule_result: serde_json::to_value(&result)?,
                 encounter: enc_snap,
@@ -269,12 +266,14 @@ pub fn apply_combat(data: &mut Value, action: CombatAction) -> Result<CombatOutc
         }
 
         CombatAction::AdvanceTurn => {
-            if data["encounter"]["active"].as_bool() != Some(true) {
+            if !data.encounter.active {
                 return Err(BridgeError::EncounterNotActive);
             }
             sync_player_combatant(data);
-            rules_combat::next_turn(&mut data["encounter"]);
-            let enc_snap = data["encounter"].clone();
+            let mut enc_value = serde_json::to_value(&data.encounter)?;
+            rules_combat::next_turn(&mut enc_value);
+            let enc_snap = enc_value.clone();
+            data.encounter = serde_json::from_value(enc_value).unwrap_or_default();
             Ok(CombatOutcome {
                 rule_result: json!({"kind": "advance_turn"}),
                 encounter: enc_snap,
