@@ -10,7 +10,9 @@ use sqlx::{PgPool, Row};
 
 use crate::error::{PlatformError, PlatformResult};
 
-use super::password::{hash_password, normalize_username, verify_password};
+use super::password::{
+    hash_password, normalize_username, verify_and_maybe_rehash, AuthVerifyError,
+};
 use super::rate_limit::{RateLimited, RateLimiter, GLOBAL_LIMITER};
 
 /// 等价于 Python `SESSION_DAYS = 14`。
@@ -201,9 +203,31 @@ impl AuthService {
             return Err(PlatformError::validation("用户名或密码错误"));
         };
         let user = User::from_row(&row)?;
-        if !verify_password(password, &user.password_hash) {
-            self.limiter.record_fail(ip, &normalized);
-            return Err(PlatformError::validation("用户名或密码错误"));
+        // W4-2:verify_and_maybe_rehash — 老 PBKDF2 命中后 silent rehash 到 Argon2id 写回 DB。
+        match verify_and_maybe_rehash(password, &user.password_hash) {
+            Ok(Some(new_hash)) => {
+                // 老 hash 验证通过,silent upgrade。失败不阻断登录,只记 warn。
+                if let Err(e) = sqlx::query(
+                    "update users set password_hash = $1, row_version = row_version + 1 where id = $2",
+                )
+                .bind(&new_hash)
+                .bind(user.id)
+                .execute(&self.pool)
+                .await
+                {
+                    tracing::warn!(
+                        target: "rpg_platform::auth",
+                        user_id = user.id,
+                        error = %e,
+                        "silent rehash 写回失败,登录继续",
+                    );
+                }
+            }
+            Ok(None) => {} // 已是新 hash
+            Err(AuthVerifyError::WrongPassword) | Err(AuthVerifyError::Malformed) => {
+                self.limiter.record_fail(ip, &normalized);
+                return Err(PlatformError::validation("用户名或密码错误"));
+            }
         }
         // 生成 32 字节 token,url-safe base64 编码(对应 Python `secrets.token_urlsafe(32)`).
         let token = url_safe_token(32);

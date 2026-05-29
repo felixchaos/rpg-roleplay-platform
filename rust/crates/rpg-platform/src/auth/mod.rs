@@ -9,7 +9,10 @@ pub mod password;
 pub mod rate_limit;
 pub mod sessions;
 
-pub use password::{hash_password, normalize_username, public_user, verify_password, PublicUser};
+pub use password::{
+    hash_password, normalize_username, public_user, verify_and_maybe_rehash, verify_password,
+    AuthVerifyError, PublicUser,
+};
 pub use rate_limit::{admin_unlock, RateLimitConfig, RateLimiter, RateLimited};
 pub use sessions::{
     get_user, login, logout, register, update_profile, user_from_token, AuthService, User,
