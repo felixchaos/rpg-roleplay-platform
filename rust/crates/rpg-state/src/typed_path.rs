@@ -22,7 +22,7 @@ use rpg_schemas::{
     AuditEntry, Encounter, GameStateData, Memory, PendingWrite, PermissionsState, PlayerCharacter,
     PlayerInfo, PlayerPrivate, Ruleset, Scene, World, Worldline,
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::de::DeserializeOwned;
 use serde_json::{json, Map, Value};
 
 use crate::path::{
@@ -394,8 +394,10 @@ mod tests {
 
     #[test]
     fn get_path_top_level_scalar() {
-        let mut data = GameStateData::default();
-        data.turn = 7;
+        let data = GameStateData {
+            turn: 7,
+            ..Default::default()
+        };
         assert_eq!(get_path(&data, "turn"), Some(json!(7)));
         assert_eq!(get_path(&data, "is_new"), Some(json!(true)));
     }

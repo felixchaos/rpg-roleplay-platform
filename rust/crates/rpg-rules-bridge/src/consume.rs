@@ -202,8 +202,7 @@ pub fn short_rest(data: &mut GameStateData, seed: Option<u64>) -> Result<Value, 
     // rpg-rules actions::short_rest 仍接受 &mut Value,在边界转换
     let mut pc_val = serde_json::to_value(&data.player_character)?;
     let result = actions::short_rest(&mut pc_val, "1d8", seed)?;
-    data.player_character = serde_json::from_value(pc_val)
-        .map_err(|e| BridgeError::Json(e))?;
+    data.player_character = serde_json::from_value(pc_val).map_err(BridgeError::Json)?;
 
     sync_player_combatant(data);
     Ok(serde_json::to_value(&result)?)

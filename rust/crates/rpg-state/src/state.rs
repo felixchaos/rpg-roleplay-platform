@@ -80,8 +80,10 @@ impl Clone for GameState {
 impl GameState {
     /// 创建空白存档。
     pub fn new(user_id: impl Into<String>) -> Self {
-        let mut data = GameStateData::default();
-        data.created_at = Utc::now().to_rfc3339();
+        let data = GameStateData {
+            created_at: Utc::now().to_rfc3339(),
+            ..GameStateData::default()
+        };
         Self {
             user_id: user_id.into(),
             data,

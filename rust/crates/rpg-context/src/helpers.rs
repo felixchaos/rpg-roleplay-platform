@@ -1,7 +1,6 @@
 //! 小工具函数:权限标签、pending jump 警告。
 //! 对应 Python: rpg/context_engine/helpers.py
 
-use serde_json::Value;
 use rpg_schemas::GameStateData;
 
 /// 通用 pending_jump 警告。GM 运行契约的一部分,与 ContentPack 无关。

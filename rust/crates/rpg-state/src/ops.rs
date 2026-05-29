@@ -379,7 +379,7 @@ pub fn apply_op(
             &path,
             op.kind_name(),
             op.value().cloned().unwrap_or(Value::Null),
-            &mode,
+            mode,
             state.turn().max(0) as u64,
         ),
     );
