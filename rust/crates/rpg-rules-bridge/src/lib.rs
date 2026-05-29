@@ -9,7 +9,9 @@ pub mod intent;
 pub mod suggest;
 
 pub use error::BridgeError;
-pub use combat::{CombatAction, CombatOutcome, apply_combat};
+pub use combat::{
+    CombatAction, CombatOutcome, apply_combat, apply_combatant_ops, apply_rule_state_ops_full,
+};
 pub use checks::{perform_skill_check, perform_saving_throw, trap_check};
 pub use consume::{consume_item_action, short_rest, parse_consume_intent, ConsumeIntent};
 pub use intent::{classify_combat_intent, has_movement_intent, direction_to_exit};

@@ -88,6 +88,37 @@ pub fn apply_combatant_ops(encounter: &mut Value, state_ops: &[rpg_rules::dnd5e:
     }
 }
 
+/// Wave 5-B / P1-5: 把 RulesEngine 算出的 state_ops 完整写回 state。
+///
+/// - `_combatant.<id>.<field>` 走 [`apply_combatant_ops`](自身 path 解析,encounter 内)。
+/// - 其余 path(`player_character.hp` / `player_character.inventory[i].qty` /
+///   `scene.flags.xxx` 等)走 `rpg_state::apply_rules_outcome_data`,
+///   通过 `typed_path::set_path` 落到 GameStateData。
+///
+/// 之前 dispatcher 只调 `apply_combatant_ops`,导致 RulesEngine 算出的 player HP /
+/// inventory 变化全部被吃掉。
+pub fn apply_rule_state_ops_full(
+    data: &mut GameStateData,
+    state_ops: &[rpg_rules::dnd5e::StateOp],
+) {
+    // 1) encounter 内部 ops
+    let mut enc_value = serde_json::to_value(&data.encounter).unwrap_or(Value::Null);
+    apply_combatant_ops(&mut enc_value, state_ops);
+    if let Ok(enc) = serde_json::from_value(enc_value) {
+        data.encounter = enc;
+    }
+    // 2) 其余 ops 走 rpg-state 的通用 dispatcher
+    let owned: Vec<rpg_state::RulesOp<'_>> = state_ops
+        .iter()
+        .map(|op| rpg_state::RulesOp {
+            op: op.op.as_str(),
+            path: op.path.as_str(),
+            value: op.value.as_ref(),
+        })
+        .collect();
+    let _ = rpg_state::apply_rules_outcome_data(data, &owned);
+}
+
 // ── 公开 dispatcher ───────────────────────────────────────────────────────
 
 /// 主入口：根据 CombatAction 调度战斗逻辑，原地修改 state.data，返回 CombatOutcome。
@@ -139,11 +170,12 @@ pub fn apply_combat(data: &mut GameStateData, action: CombatAction) -> Result<Co
                 &damage_expr,
             )?;
 
-            // 应用 state_ops 到 encounter
-            let mut enc_value = serde_json::to_value(&data.encounter)?;
-            apply_combatant_ops(&mut enc_value, &result.state_ops);
+            // 应用 state_ops:Wave 5-B / P1-5 走 full dispatcher,
+            // 既处理 _combatant.* 也处理 player_character.* / scene.* 等通用 path。
+            apply_rule_state_ops_full(data, &result.state_ops);
 
-            // 检查阵亡
+            // 检查阵亡(需要把 encounter 取出来给 rules_combat 工具用)
+            let mut enc_value = serde_json::to_value(&data.encounter)?;
             let newly = rules_combat::mark_defeated_by_hp(&mut enc_value);
             let (resolved, outcome) = rules_combat::is_encounter_resolved(&enc_value);
 
@@ -241,9 +273,8 @@ pub fn apply_combat(data: &mut GameStateData, action: CombatAction) -> Result<Co
                         "玩家受到 {} 点伤害（HP {}/{}）。", dmg, new_hp, max_hp
                     ));
                 } else {
-                    let mut enc_value = serde_json::to_value(&data.encounter)?;
-                    apply_combatant_ops(&mut enc_value, &result.state_ops);
-                    data.encounter = serde_json::from_value(enc_value).unwrap_or_default();
+                    // Wave 5-B / P1-5: 同样走 full dispatcher。
+                    apply_rule_state_ops_full(data, &result.state_ops);
                 }
             }
 

@@ -2753,6 +2753,7 @@ dependencies = [
  "regex",
  "rpg-rules",
  "rpg-schemas",
+ "rpg-state",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

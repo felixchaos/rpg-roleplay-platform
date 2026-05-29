@@ -48,6 +48,7 @@ pub mod ops;
 pub mod path;
 pub mod pending;
 pub mod rules_gameplay;
+pub mod rules_outcome;
 pub mod script_overrides;
 pub mod state;
 pub mod store;
@@ -84,6 +85,10 @@ pub use pending::{
 pub use rules_gameplay::{
     add_memory_item, confirm_hypothesis, record_hypothesis, reject_hypothesis,
     update_relationship, AddMemoryItemArgs, MemoryItem, RulesGameplayError,
+};
+pub use rules_outcome::{
+    apply_hp_delta, apply_hp_delta_data, apply_inventory_change, apply_inventory_change_data,
+    apply_rules_outcome, apply_rules_outcome_data, RulesOp,
 };
 pub use script_overrides::{
     load_for_script, load_script_overrides, ScriptOverridesError, ScriptOverridesPayload,

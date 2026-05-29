@@ -224,6 +224,12 @@ pub struct AnchorRow {
     pub anchor_key: String,
     pub source_chapter: Option<i32>,
     pub source_event_index: i32,
+    /// Wave 5-B / P0-2: phase_digests.phase_index (script 级)。
+    /// Python schema 在 migration v15 里就声明了这列,但 Python 侧 seed 时漏写,
+    /// 导致 chapter-sourced 锚点全部 NULL → drift_by_phase 无法按 phase 聚合。
+    /// Rust 这里在 chapter_facts.story_phase 出现顺序基础上,
+    /// 按"首次出现的 chapter asc"计算 phase_index,与 Python phase_digests 编号策略一致。
+    pub source_phase_index: Option<i32>,
     pub script_id: i64,
     pub summary: String,
     pub participants: Vec<String>,
@@ -253,8 +259,11 @@ async fn build_anchors_from_chapter_facts(
     // chapter_facts.events 是 jsonb 数组;每条 event 形如:
     //   {"event":"...", "importance":"high", "participants":["A","B"]}
     // Python: anchor_key = f"chapter:{chapter}:event:{idx}"
-    let rows = sqlx::query_as::<_, (i32, Option<Value>)>(
-        r#"SELECT chapter, events
+    //
+    // Wave 5-B / P0-2: 同时把 story_phase 拉出来,在 ORDER BY chapter ASC 顺序里
+    // 按 phase 首次出现给一个 0-based phase_index。空 story_phase 不参与编号(NULL)。
+    let rows = sqlx::query_as::<_, (i32, Option<Value>, Option<String>)>(
+        r#"SELECT chapter, events, story_phase
            FROM chapter_facts
            WHERE script_id = $1
            ORDER BY chapter ASC"#,
@@ -262,8 +271,33 @@ async fn build_anchors_from_chapter_facts(
     .bind(script_id)
     .fetch_all(pool)
     .await?;
+    // phase_label -> phase_index(首次出现顺序)
+    let mut phase_index_map: std::collections::HashMap<String, i32> =
+        std::collections::HashMap::new();
+    let mut next_phase_idx: i32 = 0;
+    for (_chapter, _events, story_phase) in &rows {
+        if let Some(label) = story_phase.as_ref().and_then(|s| {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }) {
+            phase_index_map.entry(label).or_insert_with(|| {
+                let v = next_phase_idx;
+                next_phase_idx += 1;
+                v
+            });
+        }
+    }
     let mut out: Vec<AnchorRow> = Vec::new();
-    for (chapter, events_opt) in rows {
+    for (chapter, events_opt, story_phase) in rows {
+        let source_phase_index: Option<i32> = story_phase
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .and_then(|label| phase_index_map.get(&label).copied());
         let arr = events_opt
             .and_then(|v| v.as_array().cloned())
             .unwrap_or_default();
@@ -306,6 +340,7 @@ async fn build_anchors_from_chapter_facts(
                 anchor_key,
                 source_chapter: Some(chapter),
                 source_event_index: idx as i32,
+                source_phase_index,
                 script_id,
                 summary,
                 participants,
@@ -335,15 +370,17 @@ async fn upsert_anchor(
         // force: 覆盖大多字段,但 status (occurred/variant) 保留。
         // Python: on conflict (save_id, anchor_key) do nothing (force 时先 delete 再 insert;
         //         Rust 用 DO UPDATE WHERE NOT IN ('occurred','variant') 等价)
+        // Wave 5-B / P0-2: 新增 source_phase_index 列,修 chapter-sourced 锚点 NULL bug。
         let res = sqlx::query(
             r#"INSERT INTO save_anchor_states
                  (save_id, anchor_key, source_kind, source_chapter, source_event_index,
-                  script_id, summary, importance, is_fatal, status, metadata,
-                  created_at, updated_at)
-               VALUES ($1, $2, 'chapter', $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
+                  source_phase_index, script_id, summary, importance, is_fatal,
+                  status, metadata, created_at, updated_at)
+               VALUES ($1, $2, 'chapter', $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
                ON CONFLICT (save_id, anchor_key) DO UPDATE SET
                  source_chapter = EXCLUDED.source_chapter,
                  source_event_index = EXCLUDED.source_event_index,
+                 source_phase_index = EXCLUDED.source_phase_index,
                  summary = EXCLUDED.summary,
                  importance = EXCLUDED.importance,
                  is_fatal = EXCLUDED.is_fatal,
@@ -355,6 +392,7 @@ async fn upsert_anchor(
         .bind(&anchor.anchor_key)
         .bind(anchor.source_chapter)
         .bind(anchor.source_event_index)
+        .bind(anchor.source_phase_index)
         .bind(anchor.script_id)
         .bind(&anchor.summary)
         .bind(anchor.importance)
@@ -369,15 +407,16 @@ async fn upsert_anchor(
         let res = sqlx::query(
             r#"INSERT INTO save_anchor_states
                  (save_id, anchor_key, source_kind, source_chapter, source_event_index,
-                  script_id, summary, importance, is_fatal, status, metadata,
-                  created_at, updated_at)
-               VALUES ($1, $2, 'chapter', $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
+                  source_phase_index, script_id, summary, importance, is_fatal,
+                  status, metadata, created_at, updated_at)
+               VALUES ($1, $2, 'chapter', $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
                ON CONFLICT (save_id, anchor_key) DO NOTHING"#,
         )
         .bind(save_id)
         .bind(&anchor.anchor_key)
         .bind(anchor.source_chapter)
         .bind(anchor.source_event_index)
+        .bind(anchor.source_phase_index)
         .bind(anchor.script_id)
         .bind(&anchor.summary)
         .bind(anchor.importance)
@@ -439,11 +478,13 @@ pub async fn list_pending_for_phase(
 ) -> Result<Vec<Value>, sqlx::Error> {
     // Python 用动态 WHERE 拼接;Rust 用 NULL-safe 参数等价。
     // 若参数为 None,条件 `$n::int IS NULL OR col >= $n` 等价于无过滤。
+    // Wave 5-B / P0-2: 同时回 source_phase_index,与 Python 行为对齐。
     let rows = sqlx::query_as::<
         _,
         (
             i64,
             String,
+            Option<i32>,
             Option<i32>,
             Option<String>,
             String,
@@ -453,7 +494,7 @@ pub async fn list_pending_for_phase(
             Value,
         ),
     >(
-        r#"SELECT id, anchor_key, source_chapter, phase_label,
+        r#"SELECT id, anchor_key, source_chapter, source_phase_index, phase_label,
                   summary, source_event_index, importance, is_fatal, metadata
            FROM save_anchor_states
            WHERE save_id = $1
@@ -474,11 +515,12 @@ pub async fn list_pending_for_phase(
 
     Ok(rows
         .into_iter()
-        .map(|(id, anchor_key, source_chapter, phase_lbl, summary, event_idx, importance, is_fatal, metadata)| {
+        .map(|(id, anchor_key, source_chapter, source_phase_index, phase_lbl, summary, event_idx, importance, is_fatal, metadata)| {
             json!({
                 "id": id,
                 "anchor_key": anchor_key,
                 "chapter": source_chapter,
+                "source_phase_index": source_phase_index,
                 "phase_label": phase_lbl.unwrap_or_default(),
                 "summary": summary,
                 "source_event_index": event_idx,
@@ -496,10 +538,13 @@ pub async fn list_pending_for_phase(
 /// 按 chapter_min asc 排序。
 /// 对应 Python: drift_by_phase(save_id)
 pub async fn drift_by_phase(pool: &PgPool, save_id: i64) -> Result<Vec<Value>, sqlx::Error> {
+    // Wave 5-B / P0-2: GROUP BY 同时按 phase_label 和 source_phase_index,
+    // 这样既能按 script-级 phase_index 对齐到 phase_digests,也兼容老 NULL 行(单独成一组)。
     let rows = sqlx::query_as::<
         _,
         (
             Option<String>,
+            Option<i32>,
             Option<i32>,
             i64,
             i64,
@@ -512,6 +557,7 @@ pub async fn drift_by_phase(pool: &PgPool, save_id: i64) -> Result<Vec<Value>, s
     >(
         r#"SELECT
              phase_label,
+             source_phase_index,
              min(source_chapter) as ch_min,
              count(*) as total,
              sum(case when status = 'pending'    then 1 else 0 end) as pending,
@@ -522,7 +568,7 @@ pub async fn drift_by_phase(pool: &PgPool, save_id: i64) -> Result<Vec<Value>, s
              coalesce(avg(drift_score), 0)::float8 as avg_drift
            FROM save_anchor_states
            WHERE save_id = $1
-           GROUP BY phase_label
+           GROUP BY phase_label, source_phase_index
            ORDER BY min(source_chapter) asc"#,
     )
     .bind(save_id)
@@ -531,7 +577,7 @@ pub async fn drift_by_phase(pool: &PgPool, save_id: i64) -> Result<Vec<Value>, s
 
     Ok(rows
         .into_iter()
-        .map(|(phase_lbl, ch_min, total, pending, occurred, variant, superseded, fatal_pending, avg_drift)| {
+        .map(|(phase_lbl, phase_idx, ch_min, total, pending, occurred, variant, superseded, fatal_pending, avg_drift)| {
             // convergence_pressure 启发式: Python 算法逐行翻译
             let pressure = if total > 0 {
                 let p = (pending as f64 / total as f64) * 0.4
@@ -543,6 +589,7 @@ pub async fn drift_by_phase(pool: &PgPool, save_id: i64) -> Result<Vec<Value>, s
             };
             json!({
                 "phase_label": phase_lbl.unwrap_or_default(),
+                "source_phase_index": phase_idx,
                 "chapter_min": ch_min,
                 "total": total,
                 "pending": pending,
