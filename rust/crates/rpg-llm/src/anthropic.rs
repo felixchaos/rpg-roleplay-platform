@@ -361,7 +361,8 @@ type SseChunks = SmallVec<[Result<ChatChunk, LlmError>; 2]>;
 impl StreamState {
     fn process(&mut self, event: &str, data: &str) -> SseChunks {
         // 解析 JSON,失败直接吐 error chunk 但不停止流。
-        let value: serde_json::Value = match serde_json::from_str(data) {
+        // hot path: 使用 simd-json;fallback serde_json (在 simd_parse 内部自动处理)。
+        let value: serde_json::Value = match crate::simd_parse::parse_sse_value(data) {
             Ok(v) => v,
             Err(e) => {
                 let mut sv: SseChunks = SmallVec::new();

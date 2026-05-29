@@ -256,7 +256,8 @@ impl ResponsesStreamState {
         if data.trim().is_empty() {
             return SmallVec::new();
         }
-        let value: serde_json::Value = match serde_json::from_str(data) {
+        // hot path: 使用 simd-json;fallback serde_json (在 simd_parse 内部自动处理)。
+        let value: serde_json::Value = match crate::simd_parse::parse_sse_value(data) {
             Ok(v) => v,
             Err(e) => {
                 let mut sv: RespSseChunks = SmallVec::new();

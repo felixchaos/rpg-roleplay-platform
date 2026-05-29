@@ -40,6 +40,7 @@ pub mod openai;
 pub mod pipeline;
 pub mod registry;
 pub mod responses;
+pub mod simd_parse;
 pub mod vertex;
 
 /// 服务端 max_tokens 硬上限。任何 backend 在 build body 时都把客户端传入的
