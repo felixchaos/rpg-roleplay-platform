@@ -90,6 +90,95 @@ pub async fn collect_ids(pool: &PgPool, node_id: i64) -> PlatformResult<Vec<i64>
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
-// TODO[Sonnet]: resolve_commit_id_by_message(user_id, save_id, message_index) —
-//               按 message index 找对应 commit_id(用于 rollback_to_message)
-// TODO[Sonnet]: round_start_node(db, node) — 找到回合开头(player kind)
+/// Python `resolve_commit_id_by_message(user_id, save_id, message_index)`。
+///
+/// 把前端 chat history 的 message index 映射到 `branch_commits.id`:
+/// - `turn_index = message_index // 2`
+/// - `is_player = message_index % 2 == 0` → 优先匹配同 turn 的 `player`/`gm` kind
+/// - 找不到 preferred kind 时 fallback 同 turn 任意 kind
+/// - save 不属于 user → 返回 None
+/// - message_index < 0 → 返回 None(对齐 Python 边界)
+pub async fn resolve_commit_id_by_message(
+    pool: &PgPool,
+    user_id: i64,
+    save_id: i64,
+    message_index: i64,
+) -> PlatformResult<Option<i64>> {
+    if message_index < 0 {
+        return Ok(None);
+    }
+    let turn_index = (message_index / 2) as i32;
+    let is_player = message_index % 2 == 0;
+
+    let owned: Option<(i64,)> = sqlx::query_as(
+        "select 1::bigint from game_saves where id = $1 and user_id = $2",
+    )
+    .bind(save_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+    if owned.is_none() {
+        return Ok(None);
+    }
+
+    let preferred_kind = if is_player { "player" } else { "gm" };
+    let preferred: Option<(i64,)> = sqlx::query_as(
+        r#"
+        select id from branch_commits
+         where save_id = $1 and turn_index = $2 and kind = $3
+         order by id desc limit 1
+        "#,
+    )
+    .bind(save_id)
+    .bind(turn_index)
+    .bind(preferred_kind)
+    .fetch_optional(pool)
+    .await?;
+    if let Some((id,)) = preferred {
+        return Ok(Some(id));
+    }
+
+    let fallback: Option<(i64,)> = sqlx::query_as(
+        r#"
+        select id from branch_commits
+         where save_id = $1 and turn_index = $2
+         order by id desc limit 1
+        "#,
+    )
+    .bind(save_id)
+    .bind(turn_index)
+    .fetch_optional(pool)
+    .await?;
+    Ok(fallback.map(|(id,)| id))
+}
+
+/// Python `round_start_node(db, node)` —— 若 `node` 是 gm,且其 parent 是同 save/同 turn 的
+/// player,则返回 parent(回合开头);否则原样返回。
+///
+/// 用于 delete_subtree 把 gm 节点的删除范围扩到 player parent,避免半残回合。
+pub async fn round_start_node(
+    pool: &PgPool,
+    node: &BranchCommit,
+) -> PlatformResult<BranchCommit> {
+    if node.kind != "gm" {
+        return Ok(node.clone());
+    }
+    let parent_id = match node.parent_id {
+        Some(p) => p,
+        None => return Ok(node.clone()),
+    };
+    let parent_row = sqlx::query("select * from branch_commits where id = $1")
+        .bind(parent_id)
+        .fetch_optional(pool)
+        .await?;
+    if let Some(row) = parent_row {
+        let parent = BranchCommit::from_row(&row)?;
+        if parent.kind == "player"
+            && parent.save_id == node.save_id
+            && parent.turn_index == node.turn_index
+        {
+            return Ok(parent);
+        }
+    }
+    Ok(node.clone())
+}
