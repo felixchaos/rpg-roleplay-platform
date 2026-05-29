@@ -67,6 +67,10 @@ struct PhaseContext {
     already_closed: bool,
     /// 已存在的 summary(用于 force=false 直接返回)。
     existing_digest: Option<PhaseDigest>,
+    /// turn range — 从 save_phase_digests.turn_start/turn_end 读取。
+    /// 用于 mark_commits_digested。
+    turn_start: Option<i32>,
+    turn_end: Option<i32>,
 }
 
 pub struct PhaseDigestAgent {
@@ -143,8 +147,20 @@ impl PhaseDigestAgent {
 
         let mut ctx = PhaseContext::default();
 
-        // (a) save_phase_digests 行 — 拿 phase_label / 现存 summary / status。
-        //     表中没有 status 列;status=closed 用 summary 非空 + key_events 非空启发判定。
+        // (a) save_phase_digests 行 — 拿 phase_label / 现存 summary / status / turn_start / turn_end。
+        //     turn_start/turn_end 不在 rpg_db repo struct 里,先用 raw SQL 单独拉。
+        if let Ok(Some((ts, te))) = sqlx::query_as::<_, (Option<i32>, Option<i32>)>(
+            "SELECT turn_start, turn_end FROM save_phase_digests WHERE save_id = $1 AND phase_index = $2",
+        )
+        .bind(input.save_id)
+        .bind(input.phase_index)
+        .fetch_optional(pool.as_ref())
+        .await
+        {
+            ctx.turn_start = ts;
+            ctx.turn_end = te;
+        }
+
         if let Ok(Some(row)) =
             rpg_db::repos::save_phase_digests::get(pool, input.save_id, input.phase_index).await
         {
@@ -207,27 +223,36 @@ impl PhaseDigestAgent {
             }
         }
 
-        // (c) branch_commits 对话原文(可能表名不同,用 raw SQL 兜底,失败不中断)。
-        //     使用 sqlx::query 拉 turn / role / content。
+        // (c) branch_commits 对话原文 — Python 用 player_input + gm_output + turn_index。
+        //     只拉有效 turn (每 turn 取最新 commit: id 最大),对应 Python 的 ranked CTE。
+        //     player_input 截 800 字,gm_output 截 1600 字,与 Python _truncate 对齐。
         let dialog_q = sqlx::query_as::<_, (Option<i32>, Option<String>, Option<String>)>(
-            r#"SELECT turn, role, content
-               FROM branch_commits
-               WHERE save_id = $1
-               ORDER BY turn ASC, id ASC
-               LIMIT 200"#,
+            r#"WITH ranked AS (
+                 SELECT turn_index, player_input, gm_output,
+                        row_number() OVER (PARTITION BY turn_index ORDER BY id DESC) AS rn
+                   FROM branch_commits
+                  WHERE save_id = $1
+               )
+               SELECT turn_index, player_input, gm_output
+                 FROM ranked
+                WHERE rn = 1
+                ORDER BY turn_index ASC
+                LIMIT 200"#,
         )
         .bind(input.save_id)
         .fetch_all(pool.as_ref())
         .await;
         if let Ok(rows) = dialog_q {
-            let mut lines: Vec<String> = Vec::with_capacity(rows.len());
-            for (turn, role, content) in rows {
+            let mut lines: Vec<String> = Vec::with_capacity(rows.len() * 2);
+            for (turn, player_input, gm_output) in rows {
                 let t = turn.map(|x| x.to_string()).unwrap_or_default();
-                let r = role.unwrap_or_default();
-                let c = content.unwrap_or_default();
-                let c_trunc: String = c.chars().take(600).collect();
-                if !c_trunc.trim().is_empty() {
-                    lines.push(format!("[t={t} {r}] {c_trunc}"));
+                let p: String = player_input.unwrap_or_default().chars().take(800).collect();
+                let g: String = gm_output.unwrap_or_default().chars().take(1600).collect();
+                if !p.trim().is_empty() {
+                    lines.push(format!("[turn={t} 玩家] {p}"));
+                }
+                if !g.trim().is_empty() {
+                    lines.push(format!("[turn={t} GM] {g}"));
                 }
             }
             if !lines.is_empty() {
@@ -295,6 +320,29 @@ impl PhaseDigestAgent {
             updated_at: chrono::Utc::now(),
         };
         rpg_db::repos::save_phase_digests::upsert(pool.as_ref(), &row).await?;
+
+        // Python: _mark_commits_digested(save_id, turn_start, turn_end, phase_index)
+        // UPDATE branch_commits SET digested_in_phase = $1, digest_at = now()
+        //   WHERE save_id = $2 AND turn_index BETWEEN $3 AND $4
+        if let (Some(ts), Some(te)) = (ctx.turn_start, ctx.turn_end) {
+            if let Err(e) = sqlx::query(
+                r#"UPDATE branch_commits
+                      SET digested_in_phase = $1,
+                          digest_at = now()
+                    WHERE save_id = $2
+                      AND turn_index BETWEEN $3 AND $4"#,
+            )
+            .bind(input.phase_index)
+            .bind(input.save_id)
+            .bind(ts)
+            .bind(te)
+            .execute(pool.as_ref())
+            .await
+            {
+                tracing::warn!("[phase_digest] mark_commits_digested 失败: {e}");
+            }
+        }
+
         Ok(())
     }
 

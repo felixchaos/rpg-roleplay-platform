@@ -222,7 +222,9 @@ impl Default for AnchorSeedAgent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnchorRow {
     pub anchor_key: String,
-    pub chapter: Option<i32>,
+    pub source_chapter: Option<i32>,
+    pub source_event_index: i32,
+    pub script_id: i64,
     pub summary: String,
     pub participants: Vec<String>,
     pub importance: i32,
@@ -250,6 +252,7 @@ async fn build_anchors_from_chapter_facts(
 ) -> Result<Vec<AnchorRow>, sqlx::Error> {
     // chapter_facts.events 是 jsonb 数组;每条 event 形如:
     //   {"event":"...", "importance":"high", "participants":["A","B"]}
+    // Python: anchor_key = f"chapter:{chapter}:event:{idx}"
     let rows = sqlx::query_as::<_, (i32, Option<Value>)>(
         r#"SELECT chapter, events
            FROM chapter_facts
@@ -274,6 +277,10 @@ async fn build_anchors_from_chapter_facts(
             if summary.trim().is_empty() {
                 continue;
             }
+            // 过滤太短
+            if summary.chars().count() < 6 {
+                continue;
+            }
             let importance_level = ev
                 .get("importance")
                 .and_then(|v| v.as_str())
@@ -288,11 +295,18 @@ async fn build_anchors_from_chapter_facts(
                 .collect();
             let is_fatal = classify_event_fatal(&summary);
             let importance = compute_importance(importance_level, &summary);
+            // 过滤太低
+            if importance < 40 {
+                continue;
+            }
             let must_preserve = derive_must_preserve(&summary, &participants);
-            let anchor_key = format!("ch{chapter}_e{idx}");
+            // Python: anchor_key = f"chapter:{chapter}:event:{idx}"
+            let anchor_key = format!("chapter:{chapter}:event:{idx}");
             out.push(AnchorRow {
                 anchor_key,
-                chapter: Some(chapter),
+                source_chapter: Some(chapter),
+                source_event_index: idx as i32,
+                script_id,
                 summary,
                 participants,
                 importance,
@@ -311,19 +325,25 @@ async fn upsert_anchor(
     anchor: &AnchorRow,
     force: bool,
 ) -> Result<bool, sqlx::Error> {
+    // Python: metadata = Jsonb({"participants":..., "locations":..., "concepts":..., "seed_source":"deterministic"})
     let metadata = json!({
         "participants": anchor.participants,
         "must_preserve": anchor.must_preserve,
+        "seed_source": "deterministic",
     });
     if force {
         // force: 覆盖大多字段,但 status (occurred/variant) 保留。
+        // Python: on conflict (save_id, anchor_key) do nothing (force 时先 delete 再 insert;
+        //         Rust 用 DO UPDATE WHERE NOT IN ('occurred','variant') 等价)
         let res = sqlx::query(
             r#"INSERT INTO save_anchor_states
-                 (save_id, anchor_key, chapter, summary, importance,
-                  is_fatal, status, metadata, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
+                 (save_id, anchor_key, source_kind, source_chapter, source_event_index,
+                  script_id, summary, importance, is_fatal, status, metadata,
+                  created_at, updated_at)
+               VALUES ($1, $2, 'chapter', $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
                ON CONFLICT (save_id, anchor_key) DO UPDATE SET
-                 chapter = EXCLUDED.chapter,
+                 source_chapter = EXCLUDED.source_chapter,
+                 source_event_index = EXCLUDED.source_event_index,
                  summary = EXCLUDED.summary,
                  importance = EXCLUDED.importance,
                  is_fatal = EXCLUDED.is_fatal,
@@ -333,7 +353,9 @@ async fn upsert_anchor(
         )
         .bind(save_id)
         .bind(&anchor.anchor_key)
-        .bind(anchor.chapter)
+        .bind(anchor.source_chapter)
+        .bind(anchor.source_event_index)
+        .bind(anchor.script_id)
         .bind(&anchor.summary)
         .bind(anchor.importance)
         .bind(anchor.is_fatal)
@@ -343,16 +365,20 @@ async fn upsert_anchor(
         .await?;
         Ok(res.rows_affected() > 0)
     } else {
+        // Python: on conflict (save_id, anchor_key) do nothing
         let res = sqlx::query(
             r#"INSERT INTO save_anchor_states
-                 (save_id, anchor_key, chapter, summary, importance,
-                  is_fatal, status, metadata, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
+                 (save_id, anchor_key, source_kind, source_chapter, source_event_index,
+                  script_id, summary, importance, is_fatal, status, metadata,
+                  created_at, updated_at)
+               VALUES ($1, $2, 'chapter', $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
                ON CONFLICT (save_id, anchor_key) DO NOTHING"#,
         )
         .bind(save_id)
         .bind(&anchor.anchor_key)
-        .bind(anchor.chapter)
+        .bind(anchor.source_chapter)
+        .bind(anchor.source_event_index)
+        .bind(anchor.script_id)
         .bind(&anchor.summary)
         .bind(anchor.importance)
         .bind(anchor.is_fatal)
@@ -396,6 +422,198 @@ pub fn derive_must_preserve(summary: &str, participants: &[String]) -> Vec<Strin
         out.push("characters".into());
     }
     out
+}
+
+// ── 查询辅助 (给 GM 工具用) ────────────────────────────────────────────
+
+/// 查待发生的锚点。phase_label 给定时按 phase 过滤;chapter window 给定时按章节范围过滤。
+/// 按 importance desc + source_chapter asc 排序。
+/// 对应 Python: list_pending_for_phase(save_id, phase_label, *, limit, chapter_min, chapter_max)
+pub async fn list_pending_for_phase(
+    pool: &PgPool,
+    save_id: i64,
+    phase_label: Option<&str>,
+    limit: i64,
+    chapter_min: Option<i32>,
+    chapter_max: Option<i32>,
+) -> Result<Vec<Value>, sqlx::Error> {
+    // Python 用动态 WHERE 拼接;Rust 用 NULL-safe 参数等价。
+    // 若参数为 None,条件 `$n::int IS NULL OR col >= $n` 等价于无过滤。
+    let rows = sqlx::query_as::<
+        _,
+        (
+            i64,
+            String,
+            Option<i32>,
+            Option<String>,
+            String,
+            Option<i32>,
+            i32,
+            bool,
+            Value,
+        ),
+    >(
+        r#"SELECT id, anchor_key, source_chapter, phase_label,
+                  summary, source_event_index, importance, is_fatal, metadata
+           FROM save_anchor_states
+           WHERE save_id = $1
+             AND status = 'pending'
+             AND ($2::text IS NULL OR phase_label = $2)
+             AND ($3::int  IS NULL OR source_chapter >= $3)
+             AND ($4::int  IS NULL OR source_chapter <= $4)
+           ORDER BY importance DESC, source_chapter ASC
+           LIMIT $5"#,
+    )
+    .bind(save_id)
+    .bind(phase_label)
+    .bind(chapter_min)
+    .bind(chapter_max)
+    .bind(limit.max(1))
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(id, anchor_key, source_chapter, phase_lbl, summary, event_idx, importance, is_fatal, metadata)| {
+            json!({
+                "id": id,
+                "anchor_key": anchor_key,
+                "chapter": source_chapter,
+                "phase_label": phase_lbl.unwrap_or_default(),
+                "summary": summary,
+                "source_event_index": event_idx,
+                "importance": importance,
+                "is_fatal": is_fatal,
+                "metadata": metadata,
+            })
+        })
+        .collect())
+}
+
+/// 按 phase_label 聚合 drift score,供 UI 时间线展示。
+/// 返回 [{phase_label, chapter_min, total, pending, occurred, variant, superseded,
+///         fatal_pending, avg_drift, convergence_pressure}, ...]
+/// 按 chapter_min asc 排序。
+/// 对应 Python: drift_by_phase(save_id)
+pub async fn drift_by_phase(pool: &PgPool, save_id: i64) -> Result<Vec<Value>, sqlx::Error> {
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Option<String>,
+            Option<i32>,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            f64,
+        ),
+    >(
+        r#"SELECT
+             phase_label,
+             min(source_chapter) as ch_min,
+             count(*) as total,
+             sum(case when status = 'pending'    then 1 else 0 end) as pending,
+             sum(case when status = 'occurred'   then 1 else 0 end) as occurred,
+             sum(case when status = 'variant'    then 1 else 0 end) as variant,
+             sum(case when status = 'superseded' then 1 else 0 end) as superseded,
+             sum(case when status = 'pending' and is_fatal then 1 else 0 end) as fatal_pending,
+             coalesce(avg(drift_score), 0)::float8 as avg_drift
+           FROM save_anchor_states
+           WHERE save_id = $1
+           GROUP BY phase_label
+           ORDER BY min(source_chapter) asc"#,
+    )
+    .bind(save_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(phase_lbl, ch_min, total, pending, occurred, variant, superseded, fatal_pending, avg_drift)| {
+            // convergence_pressure 启发式: Python 算法逐行翻译
+            let pressure = if total > 0 {
+                let p = (pending as f64 / total as f64) * 0.4
+                    + avg_drift * 0.3
+                    + (fatal_pending as f64 / 3.0).min(1.0) * 0.3;
+                (p * 1000.0).round() / 1000.0_f64.min(1.0)
+            } else {
+                0.0
+            };
+            json!({
+                "phase_label": phase_lbl.unwrap_or_default(),
+                "chapter_min": ch_min,
+                "total": total,
+                "pending": pending,
+                "occurred": occurred,
+                "variant": variant,
+                "superseded": superseded,
+                "fatal_pending": fatal_pending,
+                "avg_drift": avg_drift,
+                "convergence_pressure": pressure,
+            })
+        })
+        .collect())
+}
+
+/// 整体状态: pending/occurred/variant/superseded 各多少 + drift 平均。
+/// 对应 Python: summarize_save_anchor_state(save_id)
+pub async fn summarize_save_anchor_state(
+    pool: &PgPool,
+    save_id: i64,
+) -> Result<Value, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (Option<String>, i64, f64, i64)>(
+        r#"SELECT status, count(*) as n,
+                  coalesce(avg(drift_score), 0)::float8 as avg_drift,
+                  sum(case when is_fatal then 1 else 0 end) as fatal_n
+           FROM save_anchor_states
+           WHERE save_id = $1
+           GROUP BY status"#,
+    )
+    .bind(save_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut pending: i64 = 0;
+    let mut occurred: i64 = 0;
+    let mut variant: i64 = 0;
+    let mut superseded: i64 = 0;
+    let mut fatal_pending: i64 = 0;
+    let mut total: i64 = 0;
+    let mut weighted_drift: f64 = 0.0;
+
+    for (status_opt, n, avg_drift, fatal_n) in rows {
+        let status = status_opt.unwrap_or_default();
+        total += n;
+        weighted_drift += avg_drift * n as f64;
+        match status.as_str() {
+            "pending" => {
+                pending = n;
+                fatal_pending = fatal_n;
+            }
+            "occurred" => occurred = n,
+            "variant" => variant = n,
+            "superseded" => superseded = n,
+            _ => {}
+        }
+    }
+    let avg_drift = if total > 0 {
+        (weighted_drift / total as f64 * 1000.0).round() / 1000.0
+    } else {
+        0.0
+    };
+
+    Ok(json!({
+        "save_id": save_id,
+        "pending": pending,
+        "occurred": occurred,
+        "variant": variant,
+        "superseded": superseded,
+        "fatal_pending": fatal_pending,
+        "avg_drift": avg_drift,
+        "total": total,
+    }))
 }
 
 #[cfg(test)]
