@@ -276,6 +276,12 @@ DEFAULT_STATE = {
     },
     "worldline": {
         "user_variables": {},
+        # task 53: 玩家分支偏离原书的章节。一旦玩家做了影响主线的动作(杀死主角/
+        # 改了关键事件/进入原书没写过的场景),GM 不该再用原书 divergence_chapter
+        # 之后的 chunks/entities 作为"确定信息"。retrieval 会用 min(timeline.chapter_max,
+        # divergence_chapter) 作为实际可见上限。
+        # 默认 None = 没偏离,原书全部可查。可通过 /set worldline.divergence_chapter=N 设置。
+        "divergence_chapter": None,
         "constraints": [
             "用户变量优先级高于世界线推演。",
             "世界线推演必须先满足玩家设定，再外推局势。",

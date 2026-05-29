@@ -602,10 +602,22 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
             # 所有 chunks/entities,第 1 章玩家被召回第 800 章人物剧透。
             # 修:**无条件**传 timeline_filter 的边界 — 它本身已经是 anchor
             # 解析结果,跟剧本是否默认无关。
+            #
+            # task 53: worldline divergence — 玩家分支偏离原书后,GM 不该再用
+            # 原书 divergence_chapter 之后的 chunks/entities 当"确定信息"。
+            # 实际 chapter_max = min(timeline.chapter_max, worldline.divergence_chapter)。
+            _ch_max = timeline_filter.get("chapter_max")
+            try:
+                _div = (state.data.get("worldline") or {}).get("divergence_chapter") if state else None
+                if isinstance(_div, int) and _div > 0:
+                    _ch_max = _div if _ch_max is None else min(_ch_max, _div)
+            except Exception:
+                pass
+
             pg_context = retrieve_runtime_context(
                 user_input,
                 chapter_min=timeline_filter.get("chapter_min"),
-                chapter_max=timeline_filter.get("chapter_max"),
+                chapter_max=_ch_max,
                 top_k=3,
                 user_id=user_id,
             )
