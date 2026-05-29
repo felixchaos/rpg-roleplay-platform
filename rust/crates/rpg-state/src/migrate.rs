@@ -426,8 +426,7 @@ mod tests {
 
     #[test]
     fn migrate_from_zero_treats_as_v1() {
-        let mut data = GameStateData::default();
-        data.schema_version = 0;
+        let mut data = GameStateData { schema_version: 0, ..Default::default() };
         migrate(&mut data, 0).unwrap();
         assert_eq!(data.schema_version, CURRENT_SCHEMA_VERSION);
     }
