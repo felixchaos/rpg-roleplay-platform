@@ -291,27 +291,46 @@ pub fn cleanup_stale_upload_chunks(ttl_hours: u64) -> PlatformResult<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Mutex, MutexGuard};
 
-    static TEST_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
+    /// 全局互斥锁:保证同一进程内所有操作 `RPG_UPLOAD_CHUNK_DIR` 环境变量的测试串行执行,
+    /// 消除并行测试对共享 env var 的竞争(race condition)。
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     /// 给每个测试一个独立的临时上传根,避免并行测试互相打架。
+    ///
+    /// 持有 `ENV_MUTEX` 锁期间设置 env var → 执行测试体 → 恢复 env var → 清理目录。
+    /// TempDir 由 UUID-like 路径替代:用进程 id + 线程 id 组合保证唯一性。
     fn with_isolated_dir<F: FnOnce()>(f: F) {
-        let n = TEST_DIR_SEQ.fetch_add(1, Ordering::SeqCst);
+        // 持锁:阻止其他测试线程同时修改 RPG_UPLOAD_CHUNK_DIR
+        let _guard: MutexGuard<'_, ()> = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        // 用线程 id 确保即使序列号相同(不同进程)路径也不冲突
+        let thread_id = format!("{:?}", std::thread::current().id());
+        let thread_hash: u64 = thread_id
+            .bytes()
+            .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
         let dir = std::env::temp_dir().join(format!(
             "rpg_upload_test_{}_{}",
             std::process::id(),
-            n
+            thread_hash
         ));
+
         let prev = std::env::var("RPG_UPLOAD_CHUNK_DIR").ok();
         std::env::set_var("RPG_UPLOAD_CHUNK_DIR", &dir);
+
+        // 每次使用前清理可能残留的旧目录
+        let _ = std::fs::remove_dir_all(&dir);
+
         f();
+
         // cleanup
         let _ = std::fs::remove_dir_all(&dir);
         match prev {
             Some(p) => std::env::set_var("RPG_UPLOAD_CHUNK_DIR", p),
             None => std::env::remove_var("RPG_UPLOAD_CHUNK_DIR"),
         }
+        // _guard 在此处 drop,释放锁
     }
 
     #[test]
