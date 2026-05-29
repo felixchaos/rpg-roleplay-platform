@@ -265,6 +265,19 @@ pub async fn migrate_legacy_nodes(pool: &PgPool, save_id: i64) -> PlatformResult
     Ok(())
 }
 
-// TODO[Wave-2]: seed_and_bootstrap(owner_id, save_id, state_path, user_id) —
-//               seed_tree + bootstrap_runtime_binding 一把梭(需 bootstrap 完整版)。
+/// Python `_seed_and_bootstrap(owner_id, save_id, state_path, user_id)` ——
+/// seed_tree + bootstrap_runtime_binding 一把梭。
+///
+/// 当 save 还没有任何 commit 时,bootstrap 内部已经会调 seed_tree 自动兜底。
+/// 这里仅为对应 Python 接口保留,显式 seed → bootstrap,让 caller 表达意图。
+pub async fn seed_and_bootstrap(
+    pool: &PgPool,
+    _owner_id: i64,
+    save_id: i64,
+    state_path: &str,
+    user_id: Option<i64>,
+) -> PlatformResult<crate::runtime::UserRuntime> {
+    seed_tree(pool, save_id, state_path).await?;
+    super::runtime::bootstrap_runtime_binding(pool, user_id).await
+}
 

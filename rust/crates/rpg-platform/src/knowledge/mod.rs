@@ -32,7 +32,8 @@ pub use memory::{
 };
 pub use retrieval::{
     entity_search, entity_search_with_vec, list_chapter_facts, retrieve_runtime_context,
-    retrieve_script_context, ChapterFactRow, EntityHit, RetrievalOptions,
+    retrieve_runtime_context_with_client, retrieve_script_context,
+    retrieve_script_context_with_client, ChapterFactRow, EntityHit, RetrievalOptions,
 };
 pub use worldbook::{
     consult, delete_worldbook_entry, get_worldbook_entry, list_worldbook_entries,

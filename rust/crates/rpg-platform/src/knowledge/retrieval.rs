@@ -223,9 +223,20 @@ async fn load_chapter_fact_text(
 /// 输出拼接好的文本块,供 GM prompt 注入。组合策略与 Python 一致:
 /// 1. chapter_facts 摘要
 /// 2. document_chunks BM25 命中(via rpg-retrieval)
-/// 3. entity 向量召回(失败自动跳过,目前 embed_query 未接入 → 直接跳)
+/// 3. entity 向量召回(client=None 时跳过,有 client → 真接 Vertex)
 pub async fn retrieve_script_context(
     pool: &PgPool,
+    script_id: i64,
+    query: &str,
+    opts: RetrievalOptions,
+) -> PlatformResult<String> {
+    retrieve_script_context_with_client(pool, None, script_id, query, opts).await
+}
+
+/// `retrieve_script_context` 的 client 注入版,供有 Vertex 客户端的调用方使用。
+pub async fn retrieve_script_context_with_client(
+    pool: &PgPool,
+    client: Option<&dyn crate::knowledge::embedding::EmbeddingClient>,
     script_id: i64,
     query: &str,
     opts: RetrievalOptions,
@@ -263,8 +274,8 @@ pub async fn retrieve_script_context(
         }
     }
 
-    // 3) entity 向量召回(目前 embed_query 未接入 → 内部静默返回空,不报错)
-    if let Ok(ents) = entity_search(pool, script_id, query, opts.chapter_max, top_k).await {
+    // 3) entity 向量召回(client=None 时静默跳过,有 client → embed_query → pgvector)
+    if let Ok(ents) = entity_search(pool, client, script_id, query, opts.chapter_max, top_k).await {
         let mut card_lines: Vec<String> = Vec::new();
         let mut wb_lines: Vec<String> = Vec::new();
         for h in &ents {
@@ -312,6 +323,17 @@ pub async fn retrieve_runtime_context(
     query: &str,
     opts: RetrievalOptions,
 ) -> PlatformResult<String> {
+    retrieve_runtime_context_with_client(pool, None, user_id, query, opts).await
+}
+
+/// `retrieve_runtime_context` 的 client 注入版,把 Vertex embedding 真接进 entity 召回。
+pub async fn retrieve_runtime_context_with_client(
+    pool: &PgPool,
+    client: Option<&dyn crate::knowledge::embedding::EmbeddingClient>,
+    user_id: i64,
+    query: &str,
+    opts: RetrievalOptions,
+) -> PlatformResult<String> {
     // 取 runtime —— file or db backend,read_runtime 内部自动分发
     let rt = crate::runtime::read_runtime(pool, Some(user_id)).await?;
     if rt.save_id == 0 {
@@ -336,7 +358,7 @@ pub async fn retrieve_runtime_context(
     if script_id == 0 {
         return Ok(String::new());
     }
-    retrieve_script_context(pool, script_id, query, opts).await
+    retrieve_script_context_with_client(pool, client, script_id, query, opts).await
 }
 
 // ─── entity 向量召回 ──────────────────────────────────────────────────────
@@ -344,10 +366,11 @@ pub async fn retrieve_runtime_context(
 /// Python: `_search_entities(db, script_id, query, chapter_min, chapter_max, ...)`。
 ///
 /// pgvector 余弦距离召回 character_cards + worldbook_entries。
-/// 当前 embedding 模块的 `embed_query` 还没接 rpg-llm,会返 `None`,
-/// 此时直接返回空 vec(GM 端继续走 chunks fallback,无副作用)。
+/// `client=None` 时静默返回空 vec(GM 端继续走 chunks fallback,无副作用),
+/// 等价 Python 里 try/except 静默路径。
 pub async fn entity_search(
     pool: &PgPool,
+    client: Option<&dyn crate::knowledge::embedding::EmbeddingClient>,
     script_id: i64,
     query: &str,
     chapter_max: Option<i32>,
@@ -356,10 +379,19 @@ pub async fn entity_search(
     if query.trim().is_empty() {
         return Ok(Vec::new());
     }
-    // 没真正 client → embedding 跑不动,跳过
-    // 这一层的 client 注入由调用方负责,Python 也是 lazy import + try/except 静默
-    let _ = (pool, script_id, chapter_max, top_k);
-    Ok(Vec::new())
+    let client = match client {
+        Some(c) => c,
+        None => return Ok(Vec::new()),
+    };
+    // 真接 embed_query → 调 Vertex(或 mock) → pgvector 余弦召回
+    let vec = match crate::knowledge::embedding::embed_query(client, query).await {
+        Ok(Some(v)) => v,
+        Ok(None) => return Ok(Vec::new()),
+        // embedding API 报错时静默(GM 端有 BM25 fallback,不要让一个临时故障打死整条召回)
+        Err(_) => return Ok(Vec::new()),
+    };
+    let cap = top_k.clamp(1, 8);
+    entity_search_with_vec(pool, script_id, &vec, chapter_max, cap, cap).await
 }
 
 /// 给定 embedding 向量(由 caller 用 `embedding::embed_query` 拿到)做 entity 召回。
@@ -473,4 +505,91 @@ fn vec_to_pgvector_literal(v: &[f32]) -> String {
     }
     s.push(']');
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::knowledge::embedding::{
+        EmbeddingClient, EmbeddingError, EmbeddingTaskType, EMBED_DIM,
+    };
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// 测试用 mock — 记录 task_type,验证 entity_search 用对 RetrievalQuery。
+    struct CapturingClient {
+        last_task_type: parking_lot::Mutex<Option<EmbeddingTaskType>>,
+        call_count: Arc<AtomicUsize>,
+    }
+
+    impl CapturingClient {
+        fn new() -> Self {
+            Self {
+                last_task_type: parking_lot::Mutex::new(None),
+                call_count: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl EmbeddingClient for CapturingClient {
+        async fn embed(
+            &self,
+            texts: &[String],
+            task_type: EmbeddingTaskType,
+        ) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            *self.last_task_type.lock() = Some(task_type);
+            Ok(texts.iter().map(|_| vec![0.5_f32; EMBED_DIM]).collect())
+        }
+    }
+
+    /// P1-4 wire test 1: 无 client → entity_search 静默返回空(GM 端继续走 BM25 fallback)。
+    #[tokio::test]
+    async fn entity_search_no_client_returns_empty() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://127.0.0.1:1/none").unwrap();
+        let res = entity_search(&pool, None, 1, "hello", None, 3).await.unwrap();
+        assert!(res.is_empty());
+    }
+
+    /// P1-4 wire test 2: 空 query → 直接 short-circuit,不调 client(连接也不发)。
+    #[tokio::test]
+    async fn entity_search_empty_query_skips_client() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://127.0.0.1:1/none").unwrap();
+        let client = CapturingClient::new();
+        let call_count = client.call_count.clone();
+        let res = entity_search(&pool, Some(&client), 1, "   ", None, 3)
+            .await
+            .unwrap();
+        assert!(res.is_empty());
+        assert_eq!(call_count.load(Ordering::SeqCst), 0, "client 不应被触发");
+    }
+
+    /// P1-4 wire test 3: 有 client + 非空 query → 真调 embed,task_type=RetrievalQuery。
+    /// embed_query 包了一层,这里直接对 `crate::knowledge::embedding::embed_query` 验真接:
+    /// CapturingClient 被调一次,且接到 RetrievalQuery。
+    #[tokio::test]
+    async fn embed_query_real_wire_uses_retrieval_query() {
+        let client = CapturingClient::new();
+        let call_count = client.call_count.clone();
+        let res = crate::knowledge::embedding::embed_query(&client, "战斗发生在森林")
+            .await
+            .unwrap();
+        assert!(res.is_some(), "非空 query 应返回向量");
+        assert_eq!(res.unwrap().len(), EMBED_DIM);
+        assert_eq!(call_count.load(Ordering::SeqCst), 1, "embed 必须真接调一次");
+        let task_type = *client.last_task_type.lock();
+        assert_eq!(task_type, Some(EmbeddingTaskType::RetrievalQuery));
+    }
+
+    /// vec_to_pgvector_literal 与 embedding::vec_literal 保持一致:`[v1,v2,...]`,六位小数。
+    #[test]
+    fn vec_literal_format() {
+        let lit = vec_to_pgvector_literal(&[0.1_f32, -0.5_f32]);
+        assert!(lit.starts_with('['));
+        assert!(lit.ends_with(']'));
+        assert!(lit.contains("0.100000"));
+        assert!(lit.contains("-0.500000"));
+    }
 }

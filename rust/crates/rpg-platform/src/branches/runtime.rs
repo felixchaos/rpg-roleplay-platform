@@ -1,23 +1,27 @@
-//! branches/runtime —— 把回合落地到 commit + 推 ref + dirty 标记。
+//! branches/runtime —— 把回合落地到 commit + 推 ref + dirty 标记 + bootstrap。
 //!
-//! 对应 Python `branches/runtime.py`(~190 行)。
+//! 对应 Python `branches/runtime.py`(~260 行)。
 //!
-//! 完成度: **主路径完整**(`record_runtime_turn` / `persist_runtime_state` / `mark_runtime_dirty`)。
-//!   `bootstrap_runtime_binding` 仍是 stub —— 涉及 seed 二次启动,单独 wave 翻。
+//! 完成度: **主路径完整**(`record_runtime_turn` / `persist_runtime_state` /
+//!   `mark_runtime_dirty` / `bootstrap_runtime_binding`)。
 //!
 //! 关键事务边界(对照 Python `connect()` 上下文 = 1 tx):
 //!   1. record_runtime_turn: **1 tx** —— select parent + insert commit + upsert ref + update save +
 //!      write_checkout 全部在一个 BEGIN..COMMIT。失败 rollback。
 //!   2. persist_runtime_state: **1 tx** —— update game_saves + upsert runtime_checkouts。
-//!   3. spawn LLM summary 在 tx **之外**(commit 已落,异步补 summary 不阻塞返回)。
+//!   3. bootstrap_runtime_binding: 多步,但每步本身是 atomic(seed_tree / activate_save 内部都用 tx)。
+//!   4. spawn LLM summary 在 tx **之外**(commit 已落,异步补 summary 不阻塞返回)。
 
 use serde_json::Value;
 use sqlx::{PgPool, Row};
 
 use crate::error::{PlatformError, PlatformResult};
+use crate::runtime::{self as runtime_mod, UserRuntime};
 
 use super::commits::{state_snapshot_hash, BranchCommit};
-use super::helpers::{rough_summary, round_preview};
+use super::helpers::{commit_state, rough_summary, round_preview};
+use super::refs::{find_or_create_ref_for_commit, set_save_active, write_checkout};
+use super::seed::seed_tree;
 use super::summary::schedule_llm_summary;
 
 /// `record_runtime_turn` 的成功返回:新 commit + 推后的 ref id。
@@ -313,13 +317,137 @@ pub async fn persist_runtime_state(
     Ok(())
 }
 
-/// Python `bootstrap_runtime_binding(user_id)` —— TODO(seed 二次启动 + ref 切换的复杂分支)。
+/// Python `bootstrap_runtime_binding(user_id)` —— 新用户开存档 / 切换分支必经路径。
+///
+/// 流程对齐 Python:
+/// 1. 取 user 最近一个 save(无 user_id 则取全局最近一个),没 save → 返回 default 空 UserRuntime
+/// 2. 优先用 save.active_commit_id 拿 commit;不存在则取该 save 最新 commit
+/// 3. 都没有 → 调 `seed_tree` 建 root,再回到 step 1 递归一次(seed 后必有 commit)
+/// 4. 找/建 active ref → `set_save_active` → `write_checkout` → `activate_state_snapshot`
+///
+/// 返回写好元数据的 `UserRuntime`(对应 Python 返回 dict 的形态)。
 pub async fn bootstrap_runtime_binding(
-    _pool: &PgPool,
-    _user_id: Option<i64>,
-) -> PlatformResult<Value> {
-    // TODO[Wave-2]: 翻译 Python `bootstrap_runtime_binding`,涉及 _seed_and_bootstrap 回调。
-    Ok(serde_json::json!({}))
+    pool: &PgPool,
+    user_id: Option<i64>,
+) -> PlatformResult<UserRuntime> {
+    // ── step 1: 拿最近一个 save (含 owner_id)
+    let save_row = match user_id {
+        Some(uid) => {
+            sqlx::query(
+                r#"
+                select game_saves.id as save_id,
+                       game_saves.user_id as owner_id,
+                       game_saves.active_commit_id,
+                       game_saves.active_branch_node_id,
+                       coalesce(game_saves.state_path, '') as state_path
+                  from game_saves
+                  join users on users.id = game_saves.user_id
+                 where users.id = $1
+                 order by game_saves.updated_at desc, game_saves.id desc
+                 limit 1
+                "#,
+            )
+            .bind(uid)
+            .fetch_optional(pool)
+            .await?
+        }
+        None => {
+            sqlx::query(
+                r#"
+                select game_saves.id as save_id,
+                       game_saves.user_id as owner_id,
+                       game_saves.active_commit_id,
+                       game_saves.active_branch_node_id,
+                       coalesce(game_saves.state_path, '') as state_path
+                  from game_saves
+                  join users on users.id = game_saves.user_id
+                 order by game_saves.updated_at desc, game_saves.id desc
+                 limit 1
+                "#,
+            )
+            .fetch_optional(pool)
+            .await?
+        }
+    };
+    let save = match save_row {
+        Some(r) => r,
+        None => return Ok(UserRuntime::default()),
+    };
+    let save_id: i64 = save.try_get("save_id")?;
+    let owner_id: i64 = save.try_get("owner_id")?;
+    let active_commit_id: Option<i64> = save.try_get("active_commit_id").ok().flatten();
+    let active_branch_node_id: Option<i64> = save.try_get("active_branch_node_id").ok().flatten();
+    let state_path: String = save.try_get("state_path").unwrap_or_default();
+
+    // ── step 2: 找 commit;先 active_commit_id / active_branch_node_id,再 fallback 最新
+    let candidate = active_commit_id.or(active_branch_node_id);
+    let commit = fetch_commit(pool, save_id, candidate).await?;
+
+    let commit = match commit {
+        Some(c) => c,
+        None => {
+            // ── step 3: seed_tree 后重试
+            seed_tree(pool, save_id, &state_path).await?;
+            let after = fetch_commit(pool, save_id, None).await?;
+            match after {
+                Some(c) => c,
+                None => return Ok(UserRuntime::default()),
+            }
+        }
+    };
+
+    // ── step 4: 找/建 active ref → set_save_active → write_checkout → activate snapshot
+    let r = find_or_create_ref_for_commit(pool, owner_id, save_id, commit.id).await?;
+    let ref_id = Some(r.id);
+    set_save_active(pool, save_id, commit.id, ref_id).await?;
+    write_checkout(pool, owner_id, save_id, ref_id, commit.id).await?;
+
+    let state_snapshot = commit_state(Some(&commit.state_snapshot), &commit.state_path);
+    let snapshot_path = if commit.state_path.is_empty() {
+        state_path.clone()
+    } else {
+        commit.state_path.clone()
+    };
+    runtime_mod::activate_state_snapshot(
+        pool,
+        owner_id,
+        save_id,
+        commit.id,
+        &state_snapshot,
+        &snapshot_path,
+        ref_id,
+    )
+    .await
+}
+
+/// 内部 helper:按候选 id 取 commit,失败则取该 save 最新 commit;均无则 None。
+async fn fetch_commit(
+    pool: &PgPool,
+    save_id: i64,
+    candidate: Option<i64>,
+) -> PlatformResult<Option<BranchCommit>> {
+    if let Some(cid) = candidate {
+        let row = sqlx::query(
+            "select * from branch_commits where id = $1 and save_id = $2",
+        )
+        .bind(cid)
+        .bind(save_id)
+        .fetch_optional(pool)
+        .await?;
+        if let Some(r) = row {
+            return Ok(Some(BranchCommit::from_row(&r)?));
+        }
+    }
+    let fallback = sqlx::query(
+        "select * from branch_commits where save_id = $1 order by id desc limit 1",
+    )
+    .bind(save_id)
+    .fetch_optional(pool)
+    .await?;
+    match fallback {
+        Some(r) => Ok(Some(BranchCommit::from_row(&r)?)),
+        None => Ok(None),
+    }
 }
 
 /// Python `mark_runtime_dirty(save_id, runtime_state)` —— runtime state 被改但未 commit 时标 dirty。
@@ -482,6 +610,34 @@ mod tests {
         )
         .await;
         assert!(matches!(res, Err(PlatformError::Validation(_))));
+    }
+
+    /// bootstrap 在 user_id=Some(x) 但 DB 不可达时,网络/连接错误以 PlatformError 形式返回(不 panic)。
+    /// 用 lazy pool 强制走 query 的真实路径,确保我们没有静默吞错误。
+    #[tokio::test]
+    async fn bootstrap_returns_error_on_unreachable_db() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://127.0.0.1:1/none").unwrap();
+        let res = bootstrap_runtime_binding(&pool, Some(42)).await;
+        assert!(res.is_err(), "unreachable DB should yield error, got {res:?}");
+    }
+
+    /// bootstrap 在 user_id=None 时,同样应该尝试查询 (而不是早返 default)。
+    /// DB 不可达时 → 错误,而不是默认 UserRuntime。
+    #[tokio::test]
+    async fn bootstrap_none_user_id_still_queries() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://127.0.0.1:1/none").unwrap();
+        let res = bootstrap_runtime_binding(&pool, None).await;
+        // 期望:DB 拒绝连接 → Err,而不是 Ok(default)
+        assert!(res.is_err());
+    }
+
+    /// fetch_commit(no candidate, no fallback) 在 DB 不可达时返 Err(而非静默 None)。
+    /// 用 lazy pool 走真实 SQL 路径。
+    #[tokio::test]
+    async fn fetch_commit_propagates_db_error() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://127.0.0.1:1/none").unwrap();
+        let res = fetch_commit(&pool, 999, Some(123)).await;
+        assert!(res.is_err());
     }
 
     /// `RecordedTurn` 可序列化字段断言(防回归):commit.id / ref_id 必须公开可访问。
