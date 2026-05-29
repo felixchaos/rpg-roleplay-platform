@@ -41,6 +41,7 @@ pub enum StateError {
 /// 深拷贝,本类型缓存一个 `Arc<Value>`(`snapshot_cache`):
 ///   - 每次写入(`touch`)使其失效(置 `None`);
 ///   - [`Self::snapshot`] 惰性重建一次,之后连续读只 `Arc::clone`(仅 inc refcount)。
+///
 /// 该字段是纯派生缓存,不参与序列化(`#[serde(skip)]`),`Clone` 时也不复制(置空,
 /// 下次 `snapshot()` 自然重建),避免与 `data` 漂移。
 #[derive(Debug, Default, Serialize, Deserialize)]

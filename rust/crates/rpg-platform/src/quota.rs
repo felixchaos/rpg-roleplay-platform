@@ -227,7 +227,7 @@ fn rate_check_locked(
         // 最早一条出窗即可再次允许。
         let oldest = *st.hits.front().unwrap_or(&now_ms);
         let wait_ms = WINDOW_MS.saturating_sub(now_ms.saturating_sub(oldest));
-        let retry_after_sec = (wait_ms + 999) / 1000; // 向上取整到秒
+        let retry_after_sec = wait_ms.div_ceil(1000); // 向上取整到秒
         return Err(QuotaError::RateLimited {
             count: st.hits.len() as u32,
             limit,

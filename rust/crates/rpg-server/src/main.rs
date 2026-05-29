@@ -593,13 +593,13 @@ fn build_router(state: AppState) -> Router {
     // body limit 仍保留(SSE 请求本身体积小,全局 2 MB 够用)。
     let sse_routes = rpg_routes::build_sse_routes()
         .with_state(state.clone())
-        .layer(global_body_limit.clone());
+        .layer(global_body_limit);
 
     // ── 上传路由(放宽 body limit) ───────────────────────────────────────────
     let upload_routes = rpg_routes::build_upload_routes()
         .with_state(state.clone())
         .layer(axum::extract::DefaultBodyLimit::max(upload_body_limit_bytes()))
-        .layer(timeout.clone())
+        .layer(timeout)
         .layer(governor_layer.clone());
 
     // ── 普通业务路由(全套中间件) ────────────────────────────────────────────
