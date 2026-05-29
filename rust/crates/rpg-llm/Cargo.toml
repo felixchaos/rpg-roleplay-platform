@@ -38,3 +38,11 @@ ts-rs = ["dep:ts-rs"]
 version = "12"
 features = ["serde-compat", "serde-json-impl", "chrono"]
 optional = true
+
+[dev-dependencies]
+criterion.workspace = true
+serde.workspace = true
+
+[[bench]]
+name = "sse_parse"
+harness = false

@@ -33,3 +33,10 @@ ts-rs = ["dep:ts-rs", "rpg-schemas/ts-rs"]
 version = "12"
 features = ["serde-compat", "serde-json-impl", "chrono"]
 optional = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "typed_path"
+harness = false

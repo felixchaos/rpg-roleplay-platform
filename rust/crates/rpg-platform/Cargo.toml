@@ -48,3 +48,10 @@ redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "scr
 # Wave 8-A: GcpKmsProvider / VaultProvider 用 reqwest 调 KMS REST endpoint。
 # 复用 workspace reqwest(rustls-tls,与 rpg-llm 一致),不引入新 dep。
 reqwest.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "script_splitter"
+harness = false
