@@ -2657,6 +2657,7 @@ dependencies = [
  "rand 0.8.6",
  "redis",
  "regex",
+ "reqwest",
  "rpg-core",
  "rpg-db",
  "rpg-llm",

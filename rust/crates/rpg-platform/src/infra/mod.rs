@@ -8,8 +8,8 @@
 //!   或连接失败 → fallback Memory(单副本仍然正确)。
 //!
 //! - [`key_provider`] —— master_key 的 [`KeyProvider`] envelope 抽象。
-//!   `EnvKeyProvider`(env/文件,保持现有行为)+ `KmsKeyProvider`(KEK 包 DEK 的
-//!   骨架,留 AWS KMS / Vault HTTP 接缝)。
+//!   `EnvKeyProvider`(env/文件,保持现有行为)+ `GcpKmsProvider` / `VaultProvider`
+//!   (KEK 留 HSM,REST wrap/unwrap + 3 次指数退避 retry,见 Wave 8-A)。
 
 pub mod key_provider;
 pub mod rate_limit;

@@ -14,8 +14,9 @@
 //!
 //! ## master_key 取值现经 [`KeyProvider`](crate::infra::key_provider::KeyProvider)
 //! 默认 `EnvKeyProvider`(就是本文件下方 `load_master_key_raw` 的 env/文件逻辑),
-//! 行为与历史完全一致。设了 `RPG_KMS_ENDPOINT` 则切到 `KmsKeyProvider`(envelope/KMS-ready)。
-//! 见 `infra::key_provider` 模块文档了解如何接 AWS KMS / Vault。
+//! 行为与历史完全一致。设 `KEY_PROVIDER=gcp_kms|vault` 切到云端 envelope(KEK 不出 HSM,
+//! `wrap_dek` / `unwrap_dek` 走 REST,见 Wave 8-A)。
+//! 见 `infra::key_provider` 模块文档了解 GCP KMS / Vault 接入细节。
 
 use aes_gcm::{
     aead::{Aead, KeyInit, Payload},

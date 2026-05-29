@@ -45,3 +45,6 @@ dirs = "6"
 # 待办A:限流可选下沉到 Redis(多副本共享速率/并发计数)。未设 RPG_REDIS_URL 时不连接,
 # 仅作为依赖编译进来 —— 工厂在运行期决定走 Memory 还是 Redis 后端(优雅降级)。
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "script"] }
+# Wave 8-A: GcpKmsProvider / VaultProvider 用 reqwest 调 KMS REST endpoint。
+# 复用 workspace reqwest(rustls-tls,与 rpg-llm 一致),不引入新 dep。
+reqwest.workspace = true
