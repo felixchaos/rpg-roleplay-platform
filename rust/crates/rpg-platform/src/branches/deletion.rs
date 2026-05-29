@@ -38,5 +38,19 @@ pub async fn delete_subtree(
     Ok(deleted.rows_affected() as usize)
 }
 
-// TODO[Sonnet]: rollback_to_message(user_id, save_id, message_index) —
-//               用 tree_ops::resolve_commit_id_by_message 找到 commit,删除其后子树。
+/// Python `rollback_to_message(user_id, save_id, message_index)` —— 回滚到指定消息。
+///
+/// TODO[Sonnet]: 用 tree_ops::resolve_commit_id_by_message 找到 commit,删除其后子树。
+pub async fn rollback_to_message(
+    _pool: &PgPool,
+    user_id: i64,
+    save_id: i64,
+    _message_index: i64,
+) -> PlatformResult<()> {
+    tracing::warn!(
+        user_id = ?user_id,
+        save_id = ?save_id,
+        "rollback_to_message 是 stub,Python 源未补完 (TODO[Sonnet]); 生产用前需补完"
+    );
+    Ok(())
+}

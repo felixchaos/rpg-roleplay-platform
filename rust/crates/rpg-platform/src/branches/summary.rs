@@ -17,6 +17,10 @@ pub async fn schedule_llm_summary(
     player_text: &str,
     gm_text: &str,
 ) -> PlatformResult<()> {
+    tracing::warn!(
+        commit_id = ?commit_id,
+        "schedule_llm_summary 是 stub,仅写 placeholder 而非真实 LLM 摘要 (TODO[Sonnet]); 生产用前需补完"
+    );
     let placeholder = if !player_text.is_empty() {
         crate::branches::helpers::rough_summary(player_text, gm_text, 22)
     } else {

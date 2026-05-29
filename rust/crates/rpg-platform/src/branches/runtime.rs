@@ -11,24 +11,34 @@ use crate::error::PlatformResult;
 /// Python `record_runtime_turn(...)` —— 一次玩家回合 +1。
 pub async fn record_runtime_turn(
     _pool: &PgPool,
-    _user_id: i64,
-    _save_id: i64,
+    user_id: i64,
+    save_id: i64,
     _player_input: &str,
     _gm_output: &str,
     _state: &Value,
 ) -> PlatformResult<()> {
     // TODO[Sonnet]: 主路径 — insert 两条 commit(player + gm),写新 ref,
     //               同步 runtime_checkouts.turn_runtime + 1,标 dirty=false。
+    tracing::warn!(
+        user_id = ?user_id,
+        save_id = ?save_id,
+        "record_runtime_turn 是 stub,Python 源未补完 (TODO[Sonnet]); 生产用前需补完"
+    );
     Ok(())
 }
 
 /// Python `persist_runtime_state(...)` —— 把当前 runtime state 镜像到 commit/snapshot。
 pub async fn persist_runtime_state(
     _pool: &PgPool,
-    _user_id: i64,
-    _save_id: i64,
+    user_id: i64,
+    save_id: i64,
     _state: &Value,
 ) -> PlatformResult<()> {
+    tracing::warn!(
+        user_id = ?user_id,
+        save_id = ?save_id,
+        "persist_runtime_state 是 stub,Python 源未补完 (TODO[Sonnet]); 生产用前需补完"
+    );
     Ok(())
 }
 

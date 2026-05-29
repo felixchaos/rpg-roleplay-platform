@@ -311,7 +311,16 @@ impl GameMaster {
             // 重新读 state(curator 可能因为 clarifying_question 直接中止;
             // 本骨架不分支,直接进 GM)。
             let snapshot = state.read().await.clone();
-            let retrieved = ""; // TODO: 从 context bundle 拿
+            // TODO[Sonnet]: 从 ContextBundle.retrieval_layer_text 拿 retrieval 文本。
+            // 当前 stub 导致 GM prompt 里 retrieval 字段恒为空字符串,LLM 输出质量受影响。
+            static WARN_ONCE_RETRIEVAL: std::sync::Once = std::sync::Once::new();
+            WARN_ONCE_RETRIEVAL.call_once(|| {
+                tracing::warn!(
+                    target: "rpg_agents::stubs",
+                    "gm.rs prompt 用 retrieval=\"\" stub,本进程不再重复警告"
+                );
+            });
+            let retrieved = "";
             let mut narrative = String::new();
             match s
                 .respond_stream(&user_input, retrieved, &snapshot)
