@@ -13,12 +13,17 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+#[cfg(feature = "ts-rs")]
+use ts_rs::TS;
+
 // ===== 顶层 =====================================================================
 
 /// 与旧 `rpg-state::default_state()` 同形的顶层游戏状态数据。
 ///
 /// 字段顺序刻意贴近旧 JSON,序列化输出友好。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct GameStateData {
     #[serde(default = "default_schema_version")]
     pub schema_version: u64,
@@ -60,6 +65,7 @@ pub struct GameStateData {
     /// `user_locked_fields` 等迁移期产生的辅助键、未来未知字段,统一吃进这里,
     /// 反序列化不丢、序列化原样回写。
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
@@ -100,6 +106,8 @@ impl Default for GameStateData {
 // ===== ruleset ==================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct Ruleset {
     pub id: String,
     pub mode: String,
@@ -119,6 +127,8 @@ impl Default for Ruleset {
 // ===== player_character =========================================================
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct PlayerCharacter {
     #[serde(default)]
     pub name: String,
@@ -153,12 +163,15 @@ pub struct PlayerCharacter {
     #[serde(default)]
     pub weapons: Map<String, Value>,
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
 // ===== scene ====================================================================
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct Scene {
     #[serde(default)]
     pub module_id: String,
@@ -173,12 +186,15 @@ pub struct Scene {
     #[serde(default)]
     pub flags: Map<String, Value>,
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
 // ===== encounter ================================================================
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct Encounter {
     #[serde(default)]
     pub active: bool,
@@ -195,12 +211,15 @@ pub struct Encounter {
     #[serde(default)]
     pub log: Vec<Value>,
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
 // ===== player / player_private ==================================================
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct PlayerInfo {
     #[serde(default)]
     pub name: String,
@@ -211,10 +230,13 @@ pub struct PlayerInfo {
     #[serde(default)]
     pub current_location: String,
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct PlayerPrivate {
     #[serde(default)]
     pub secrets: Vec<Value>,
@@ -225,12 +247,15 @@ pub struct PlayerPrivate {
     #[serde(default)]
     pub story_intent: String,
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
 // ===== world / timeline =========================================================
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct World {
     #[serde(default)]
     pub time: String,
@@ -239,10 +264,13 @@ pub struct World {
     #[serde(default)]
     pub known_events: Vec<Value>,
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct TimelineState {
     #[serde(default = "default_anchor_state")]
     pub anchor_state: String,
@@ -259,6 +287,7 @@ pub struct TimelineState {
     #[serde(default)]
     pub last_transition: Option<Value>,
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
@@ -287,6 +316,8 @@ impl Default for TimelineState {
 // ===== permissions / audit / pending ============================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct PermissionsState {
     #[serde(default = "default_permission_mode")]
     pub mode: String,
@@ -297,6 +328,7 @@ pub struct PermissionsState {
     #[serde(default)]
     pub audit_log: Vec<AuditEntry>,
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
@@ -322,6 +354,8 @@ impl Default for PermissionsState {
 /// `module_managed`);成功写入时 `op` + `value` + `mode` 填实际写入。
 /// 字段顺序贴近旧 `json!({...})` 输出。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct AuditEntry {
     #[serde(default)]
     pub ts: String,
@@ -342,6 +376,7 @@ pub struct AuditEntry {
     #[serde(default)]
     pub turn: u64,
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
@@ -389,6 +424,8 @@ impl AuditEntry {
 
 /// 写入待审条目(权限模式不放行 + 未 force 时落到 pending)。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct PendingWrite {
     #[serde(default)]
     pub id: String,
@@ -409,12 +446,15 @@ pub struct PendingWrite {
     #[serde(default)]
     pub reason: String,
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
 // ===== worldline ================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct Worldline {
     #[serde(default)]
     pub user_variables: Map<String, Value>,
@@ -431,6 +471,7 @@ pub struct Worldline {
     #[serde(default)]
     pub custom_ui: Map<String, Value>,
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
@@ -458,6 +499,8 @@ impl Default for Worldline {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct WorldlineValidation {
     #[serde(default = "default_validation_status")]
     pub status: String,
@@ -466,6 +509,7 @@ pub struct WorldlineValidation {
     #[serde(default)]
     pub turn: u64,
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
@@ -487,6 +531,8 @@ impl Default for WorldlineValidation {
 // ===== memory ===================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../../../frontend/src/types/rust/"))]
 pub struct Memory {
     #[serde(default = "default_memory_mode")]
     pub mode: String,
@@ -515,6 +561,7 @@ pub struct Memory {
     #[serde(default)]
     pub last_structured_updates: Vec<Value>,
     #[serde(flatten, default)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,
 }
 
@@ -569,6 +616,14 @@ fn _ensure_chrono_used() -> DateTime<Utc> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// 触发 ts-rs 导出(--features ts-rs 时生效)。
+    #[cfg(feature = "ts-rs")]
+    #[test]
+    fn export_ts_types() {
+        // ts-rs 在 #[ts(export)] 时会通过 inventory/ctor 机制在测试结束后自动写文件。
+        // 空函数体即可触发所有已注册的导出。
+    }
 
     /// 与旧 `rpg-state::default_state()` 字面常量同形。
     /// 这份字面量是唯一事实源 — 改这里 = 改 schema。

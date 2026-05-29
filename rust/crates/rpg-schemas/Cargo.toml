@@ -4,9 +4,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+ts-rs = ["dep:ts-rs"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
+
+[dependencies.ts-rs]
+version = "12"
+features = ["serde-compat", "serde-json-impl", "chrono"]
+optional = true
