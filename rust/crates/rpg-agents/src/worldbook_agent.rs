@@ -8,8 +8,6 @@
 //! Layer 3: WorldTimeline — phase_digests 按时间顺序遍列
 //!
 //! **确定性算法,不调 LLM**(快、低延迟、可解释)。
-//!
-//! ⚠️ DB 查询全部留 TODO,接 rpg-db 后填。
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -583,4 +581,81 @@ pub async fn load_effective_worldbook_for_save(
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── WorldbookResult::to_context_text ────────────────────────────
+
+    #[test]
+    fn test_to_context_text_empty_result() {
+        let r = WorldbookResult::default();
+        let txt = r.to_context_text();
+        // 空结果 → 空字符串
+        assert!(txt.is_empty());
+    }
+
+    #[test]
+    fn test_to_context_text_with_anchor() {
+        let r = WorldbookResult {
+            confidence: 0.4,
+            timeline_anchor: json!({
+                "phase": "东征战役",
+                "chapter_min": "10",
+                "chapter_max": "20",
+                "time_label": "战时"
+            }),
+            ..Default::default()
+        };
+        let txt = r.to_context_text();
+        assert!(txt.contains("东征战役"));
+        assert!(txt.contains("战时"));
+    }
+
+    #[test]
+    fn test_to_context_text_with_worldbook_entries() {
+        let r = WorldbookResult {
+            confidence: 0.1,
+            worldbook_entries: vec![
+                json!({"title": "王都", "content": "帝国的政治中心"}),
+            ],
+            ..Default::default()
+        };
+        let txt = r.to_context_text();
+        assert!(txt.contains("王都"));
+        assert!(txt.contains("帝国的政治中心"));
+    }
+
+    // ── WorldbookAgent::consult (db=None 路径) ─────────────────────
+
+    #[tokio::test]
+    async fn test_consult_no_db_returns_zero_confidence() {
+        let agent = WorldbookAgent::new(); // db 未注入
+        let out = agent
+            .consult(ConsultInput {
+                script_id: 1,
+                query: "寻找信息".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.confidence, 0.0);
+        assert!(out.sources.contains(&"db_not_injected".to_string()));
+    }
+
+    // ── ConsultInput default ────────────────────────────────────────
+
+    #[test]
+    fn test_consult_input_default() {
+        let input = ConsultInput {
+            script_id: 99,
+            ..Default::default()
+        };
+        assert_eq!(input.script_id, 99);
+        assert!(input.query.is_empty());
+        assert!(input.current_phase.is_empty());
+    }
 }
