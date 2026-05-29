@@ -34,6 +34,7 @@
 //!   * OpenAI Realtime (WebSocket / WebRTC) - 暂不实现,后续若需要再补 ws 通路。
 
 pub mod anthropic;
+pub mod any_backend;
 pub mod openai;
 pub mod pipeline;
 pub mod registry;
@@ -55,6 +56,7 @@ pub use pipeline::{
 };
 
 pub use anthropic::AnthropicBackend;
+pub use any_backend::AnyBackend;
 pub use openai::OpenAiBackend;
 pub use registry::{
     probe_anthropic, probe_backend, probe_openai, probe_vertex, ApiEntry, LlmRouter, ModelCatalog,

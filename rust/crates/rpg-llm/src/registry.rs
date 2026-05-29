@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::any_backend::AnyBackend;
 use crate::pipeline::{BackendKind, ChunkStream, LlmBackend, LlmError, ModelInfo};
 use crate::pipeline::{ChatRequest};
 
@@ -277,7 +278,9 @@ fn model_entry(id: &str, display: &str) -> ModelEntry {
 pub struct LlmRouter {
     /// 按 (BackendKind, api_id) 索引,因为同一个 kind 可能对应多个 provider
     /// (e.g. openai_compat 下 deepseek / moonshot / kimi 各一份 backend)。
-    backends: HashMap<RouterKey, Arc<dyn LlmBackend>>,
+    ///
+    /// 6B-3:`Arc<dyn LlmBackend>` → `Arc<AnyBackend>` enum 静态分派,去虚表。
+    backends: HashMap<RouterKey, Arc<AnyBackend>>,
     catalog: Option<ModelCatalog>,
 }
 
@@ -307,7 +310,10 @@ impl LlmRouter {
 
     /// 注册 backend。`api_id` 与 catalog 中 apis[].id 对齐;同一个 backend 实例
     /// 可以注册多次 (同 kind / 不同 api_id) 实现透传。
-    pub fn register(&mut self, api_id: impl Into<String>, backend: Arc<dyn LlmBackend>) {
+    ///
+    /// 6B-3:接收 `Arc<AnyBackend>`(enum 静态分派)。caller 用
+    /// `Arc::new(AnyBackend::from(concrete_backend))` 或 `.into()` 构造。
+    pub fn register(&mut self, api_id: impl Into<String>, backend: Arc<AnyBackend>) {
         let kind = backend.kind();
         self.backends.insert(
             RouterKey {
@@ -319,7 +325,7 @@ impl LlmRouter {
     }
 
     /// 取 selected.api_id 当前选中的 backend。
-    pub fn current_backend(&self) -> Result<Arc<dyn LlmBackend>, LlmError> {
+    pub fn current_backend(&self) -> Result<Arc<AnyBackend>, LlmError> {
         let catalog = self
             .catalog
             .as_ref()
@@ -343,7 +349,7 @@ impl LlmRouter {
     }
 
     /// 显式按 api_id 选择(不改变 selected)。
-    pub fn backend_for_api(&self, api_id: &str) -> Result<Arc<dyn LlmBackend>, LlmError> {
+    pub fn backend_for_api(&self, api_id: &str) -> Result<Arc<AnyBackend>, LlmError> {
         let catalog = self
             .catalog
             .as_ref()
@@ -392,7 +398,7 @@ impl LlmRouter {
                 api_id: api.id.clone(),
             }
         };
-        let backend: &Arc<dyn LlmBackend> = self.backends.get(&key).ok_or_else(|| {
+        let backend: &Arc<AnyBackend> = self.backends.get(&key).ok_or_else(|| {
             LlmError::Config(format!(
                 "router: backend not registered for {} ({})",
                 key.api_id, key.kind

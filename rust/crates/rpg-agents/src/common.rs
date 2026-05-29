@@ -32,6 +32,7 @@ pub use rpg_llm::pipeline::{
     ChatChunk, ChatMessage, ChatRequest, ChatRole, ChunkStream, LlmBackend, LlmError, MessagePart,
     ToolCall, ToolSchema, Usage,
 };
+pub use rpg_llm::AnyBackend;
 pub use rpg_state::state::GameState;
 
 // ── Error ──────────────────────────────────────────────────────────────
@@ -134,7 +135,14 @@ pub fn parse_json_array_field(text: &str, key: &str) -> AgentResult<Vec<Value>> 
 
 // ── 通用 Shared backend alias ─────────────────────────────────────────
 
-pub type SharedLlm = Arc<dyn LlmBackend>;
+/// 6B-3:`Arc<dyn LlmBackend>` → `Arc<AnyBackend>` enum 静态分派,去虚表 + 去
+/// 调用点的动态分派。各 agent 调 `self.llm.stream_chat(...)` 走 enum 的 inherent
+/// 方法(签名与 trait 一致),改动只在类型别名这一处。
+///
+/// `AnyBackend` 同时 `impl LlmBackend`,故 common.rs 里既有的 `&dyn LlmBackend`
+/// adapter helper(call_text / call_structured / call_with_tools / stream_text /
+/// supports_native_tools)无需改写,`llm.as_ref()` 会自动 coerce 成 `&dyn`。
+pub type SharedLlm = Arc<AnyBackend>;
 
 // ── LlmBackend adapter helpers ────────────────────────────────────────
 
