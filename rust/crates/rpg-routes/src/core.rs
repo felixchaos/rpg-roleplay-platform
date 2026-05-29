@@ -24,6 +24,7 @@ use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use crate::sse_events::SseStateBusPayload;
 use crate::sse_metrics::{BoxedGuardedStream, SseConnectionGuard};
 use crate::{hello_payload, named_sse_event, require_user, user_id_or_anon, AppState, ResponseError};
+// 用于 api_state 的 DB 查询（save_id/save_title）
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -49,21 +50,130 @@ async fn index() -> impl IntoResponse {
 }
 
 /// GET /api/state — 当前游戏状态快照
+///
+/// 对应 Python _payload(api_user)，返回 state + app + models + tools + save_id/save_title。
+/// 所有字段缺失时前端有兜底，DB 异常不影响基础状态字段。
 #[tracing::instrument(skip(s, headers), fields(user_id))]
 async fn api_state(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ResponseError> {
-    let user_id = user_id_or_anon(&s, &headers).await;
+    let user_opt = require_user(&s, &headers).await.ok();
+    let user_id = match &user_opt {
+        Some(u) => u.id.to_string(),
+        None => user_id_or_anon(&s, &headers).await,
+    };
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
+    let is_admin = user_opt.as_ref().map(|u| u.role == "admin").unwrap_or(false);
+
     let shared = s.state_store.get_or_create(&user_id).await;
     let snapshot = shared.read().clone();
+
+    // ── app 字段：当前选中模型信息（对应 Python payload["app"]）
+    let app_info = {
+        let router = s.llm_router.read();
+        let selected = router.catalog().and_then(|c| c.selected_model());
+        if let Some((api, model)) = selected {
+            let real_name = model.real_name.clone().unwrap_or_else(|| model.id.clone());
+            let ctx_window = rpg_platform::usage::context_window_for(&api.id, &real_name);
+            json!({
+                "title": rpg_core::config::app_title(),
+                "model": model.display_name,
+                "model_real_name": real_name,
+                "model_capabilities": model.capabilities,
+                "context_window": ctx_window,
+                "api": api.display_name,
+                "api_id": api.id,
+                "roles": [],
+                "preset": serde_json::Value::Null,
+            })
+        } else {
+            json!({
+                "title": rpg_core::config::app_title(),
+                "model": serde_json::Value::Null,
+                "model_real_name": serde_json::Value::Null,
+                "model_capabilities": serde_json::json!([]),
+                "context_window": 0,
+                "api": serde_json::Value::Null,
+                "api_id": serde_json::Value::Null,
+                "roles": serde_json::json!([]),
+                "preset": serde_json::Value::Null,
+            })
+        }
+    };
+
+    // ── models 字段：模型目录（对应 Python payload["models"]）
+    let models_info = {
+        let router = s.llm_router.read();
+        let mut cat_val = router.catalog()
+            .map(|c| serde_json::to_value(c).unwrap_or(json!({})))
+            .unwrap_or(json!({}));
+        // 非 admin 去掉 credential_ref/credential_env/base_url
+        if !is_admin {
+            if let Some(apis) = cat_val.get_mut("apis").and_then(|v| v.as_array_mut()) {
+                for api in apis.iter_mut() {
+                    if let Some(obj) = api.as_object_mut() {
+                        obj.remove("credential_ref");
+                        obj.remove("credential_env");
+                        obj.remove("base_url");
+                    }
+                }
+            }
+        }
+        cat_val
+    };
+
+    // ── tools 字段：工具清单（对应 Python payload["tools"]）
+    let tools_info: Vec<serde_json::Value> = {
+        let reg = s.tool_registry.read();
+        reg.list()
+            .into_iter()
+            .filter_map(|t| {
+                let mut v = serde_json::to_value(t).ok()?;
+                if !is_admin {
+                    if let Some(obj) = v.as_object_mut() {
+                        for key in &["command", "args", "env", "credential", "secret", "token"] {
+                            obj.remove(*key);
+                        }
+                    }
+                }
+                Some(v)
+            })
+            .collect()
+    };
+
+    // ── save_id/save_title：从 game_saves 查当前激活存档（对应 Python payload["save_id"]）
+    let (save_id, save_title, save_updated_at) = if let Some(ref u) = user_opt {
+        let uid: i64 = u.id.into();
+        // 取最近一条激活存档（按 updated_at desc）
+        let row: Option<(i64, String, Option<chrono::DateTime<chrono::Utc>>)> =
+            sqlx::query_as(
+                "SELECT id, title, updated_at FROM game_saves WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1",
+            )
+            .bind(uid)
+            .fetch_optional(&s.db)
+            .await
+            .unwrap_or(None);
+        match row {
+            Some((sid, stitle, sup)) => (Some(sid), Some(stitle), sup.map(|t| t.to_rfc3339())),
+            None => (None, None, None),
+        }
+    } else {
+        (None, None, None)
+    };
+
     Ok(Json(json!({
         "ok": true,
         "state": snapshot.data,
         "version": snapshot.version,
         "updated_at": snapshot.updated_at,
         "user_id": snapshot.user_id,
+        "app": app_info,
+        "models": models_info,
+        "tools": tools_info,
+        "save_id": save_id,
+        "save_title": save_title,
+        "save_updated_at": save_updated_at,
     }))
     .into_response())
 }

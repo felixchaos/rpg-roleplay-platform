@@ -61,6 +61,7 @@ fn allowed_bucket(b: &str) -> &'static str {
         "resources" => "resources",
         "abilities" => "abilities",
         "pinned" => "pinned",
+        "items" => "items",
         _ => "notes",
     }
 }
@@ -81,6 +82,8 @@ async fn api_memory_mode(
         st.set_path("memory.mode", Value::String(mode.to_string()))?;
         st.clone()
     };
+    // Persist to DB (MEMORY-NO-PERSIST-CHECKPOINT: matching Python state.save())
+    s.state_store.flush(&user_id).await;
     Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
 }
 
@@ -105,6 +108,8 @@ async fn api_memory_add(
         st.append_to_path(&format!("memory.{bucket}"), Value::String(text))?;
         st.clone()
     };
+    // Persist to DB (MEMORY-NO-PERSIST-CHECKPOINT: matching Python state.save())
+    s.state_store.flush(&user_id).await;
     Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
 }
 
@@ -137,5 +142,7 @@ async fn api_memory_remove(
         }
         st.clone()
     };
+    // Persist to DB (MEMORY-NO-PERSIST-CHECKPOINT: matching Python state.save())
+    s.state_store.flush(&user_id).await;
     Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
 }

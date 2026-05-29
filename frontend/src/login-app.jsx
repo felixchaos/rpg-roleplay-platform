@@ -233,5 +233,4 @@ function LoginApp() {
   );
 }
 
-window.LoginApp = LoginApp;
 export { LoginApp };

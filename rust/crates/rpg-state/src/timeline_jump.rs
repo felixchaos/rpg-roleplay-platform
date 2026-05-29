@@ -183,7 +183,10 @@ pub fn reject_time_jump(state: &mut GameState, reason: &str) -> TimelineJumpResu
 // ─────────────────────────────────────────────────────────────
 
 /// 直接 update world.time 同步 timeline 锚点。对应 Python `update_time`。
-/// 不做 phase 派生(留给后续 rules_bridge)。
+///
+/// SM-19: 在更新 current_label 之后派生 current_phase。
+/// Python 逻辑(core.py:1077-1079):若该 path 未被 user_locked,则设为 '玩家分支'。
+/// `user_locked_fields` 存在 player_private.extra 里。
 pub(crate) fn update_time(state: &mut GameState, time_desc: &str, source: &str) {
     let cleaned = clean_time_value(time_desc);
     if cleaned.is_empty() {
@@ -208,6 +211,22 @@ pub(crate) fn update_time(state: &mut GameState, time_desc: &str, source: &str) 
     tl.pending_jump = None;
     if source == "user_set" {
         tl.extra.insert("user_set_jump_turn".to_string(), json!(turn));
+    }
+    // SM-19: 派生 current_phase — 若 'world.timeline.current_phase' 未被 user_locked,
+    // 则 fallback 到 '玩家分支'(对齐 Python _phase_for_time 默认值)。
+    let phase_locked = state
+        .data
+        .player_private
+        .extra
+        .get("user_locked_fields")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .any(|v| v.as_str() == Some("world.timeline.current_phase"))
+        })
+        .unwrap_or(false);
+    if !phase_locked {
+        state.data.world.timeline.current_phase = "玩家分支".to_string();
     }
     state.touch();
 }

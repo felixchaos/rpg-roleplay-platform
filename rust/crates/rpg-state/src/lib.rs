@@ -79,12 +79,12 @@ pub use ops::{
 pub use path::{clean_path, parse_path, PathError, PathSegment};
 pub use pending::{
     add_pending_question, approve_pending_write, clear_pending_question,
-    expire_stale_gm_questions, pop_pending_write, reject_pending_write, ApproveResult,
-    PendingError, RejectResult,
+    expire_stale_gm_questions, parse_question, pop_pending_write, reject_pending_write,
+    ApproveResult, PendingError, RejectResult,
 };
 pub use rules_gameplay::{
-    add_memory_item, confirm_hypothesis, record_hypothesis, reject_hypothesis,
-    update_relationship, AddMemoryItemArgs, MemoryItem, RulesGameplayError,
+    add_memory_item, confirm_hypothesis, list_active_hypotheses, record_hypothesis,
+    reject_hypothesis, update_relationship, AddMemoryItemArgs, MemoryItem, RulesGameplayError,
 };
 pub use rules_outcome::{
     apply_hp_delta, apply_hp_delta_data, apply_inventory_change, apply_inventory_change_data,

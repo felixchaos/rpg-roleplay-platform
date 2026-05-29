@@ -97,13 +97,30 @@ async fn load_catalog(s: &AppState) -> McpCatalog {
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 /// GET /api/tools — 工具清单(本地 tool registry)
+/// 对应 Python api_tools → _redact_tools(tool_payload(), is_admin)
+/// 非 admin 用户去掉 MCP server 条目中的 command/args/env/credential/secret/token 字段。
 #[tracing::instrument(skip_all)]
-async fn api_tools(State(s): State<AppState>) -> impl IntoResponse {
+async fn api_tools(State(s): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    let is_admin = crate::require_user(&s, &headers)
+        .await
+        .ok()
+        .map(|u| u.role == "admin")
+        .unwrap_or(false);
     let reg = s.tool_registry.read();
     let tools: Vec<Value> = reg
         .list()
         .into_iter()
-        .map(|t| serde_json::to_value(t).unwrap_or(json!({})))
+        .map(|t| {
+            let mut v = serde_json::to_value(t).unwrap_or(json!({}));
+            if !is_admin {
+                if let Some(obj) = v.as_object_mut() {
+                    for key in &["command", "args", "env", "credential", "secret", "token"] {
+                        obj.remove(*key);
+                    }
+                }
+            }
+            v
+        })
         .collect();
     Json(json!({"ok": true, "tools": tools}))
 }
@@ -124,7 +141,13 @@ async fn api_mcp_server(
         .save(&s.db)
         .await
         .map_err(|e| ResponseError::internal(e.to_string()))?;
-    Ok(Json(json!({"ok": true})).into_response())
+    // 对应 Python: return JSONResponse({"ok": True, "mcp": catalog, "tools": tool_payload()})
+    let catalog_val = serde_json::to_value(&catalog).unwrap_or(json!({}));
+    let tools: Vec<Value> = s.mcp_broker.discover_all_tools()
+        .into_iter()
+        .map(|t| serde_json::to_value(t).unwrap_or(json!({})))
+        .collect();
+    Ok(Json(json!({"ok": true, "mcp": catalog_val, "tools": tools})).into_response())
 }
 
 #[tracing::instrument(skip_all)]
@@ -146,7 +169,13 @@ async fn api_mcp_server_enabled(
             .await
             .map_err(|e| ResponseError::internal(e.to_string()))?;
     }
-    Ok(Json(json!({"ok": true, "changed": changed})).into_response())
+    // 对应 Python: return JSONResponse({"ok": True, "mcp": catalog, "tools": tool_payload()})
+    let catalog_val = serde_json::to_value(&catalog).unwrap_or(json!({}));
+    let tools: Vec<Value> = s.mcp_broker.discover_all_tools()
+        .into_iter()
+        .map(|t| serde_json::to_value(t).unwrap_or(json!({})))
+        .collect();
+    Ok(Json(json!({"ok": true, "mcp": catalog_val, "tools": tools, "changed": changed})).into_response())
 }
 
 #[tracing::instrument(skip_all)]
@@ -165,7 +194,13 @@ async fn api_mcp_server_delete(
         .save(&s.db)
         .await
         .map_err(|e| ResponseError::internal(e.to_string()))?;
-    Ok(Json(json!({"ok": true})).into_response())
+    // 对应 Python: return JSONResponse({"ok": True, "mcp": catalog, "tools": tool_payload()})
+    let catalog_val = serde_json::to_value(&catalog).unwrap_or(json!({}));
+    let tools: Vec<Value> = s.mcp_broker.discover_all_tools()
+        .into_iter()
+        .map(|t| serde_json::to_value(t).unwrap_or(json!({})))
+        .collect();
+    Ok(Json(json!({"ok": true, "mcp": catalog_val, "tools": tools})).into_response())
 }
 
 #[tracing::instrument(skip_all)]
@@ -182,8 +217,11 @@ async fn api_mcp_server_validate(
         .iter()
         .find(|s| s.id == id)
         .ok_or_else(|| ResponseError::bad_request("server not found"))?;
+    // 对应 Python: return JSONResponse({"ok": True, "result": validate_mcp_server(id)})
+    // validate_server 在此路径中成功则结果为"ok"，失败已被 ? 捕获
     validate_server(server).map_err(|e| ResponseError::bad_request(e.to_string()))?;
-    Ok(Json(json!({"ok": true, "valid": true})).into_response())
+    let validate_result = json!({"status": "ok"});
+    Ok(Json(json!({"ok": true, "result": validate_result})).into_response())
 }
 
 /// POST /api/mcp/server/start — 启动指定 MCP server 子进程。
@@ -236,17 +274,17 @@ async fn api_mcp_server_stop(
 /// GET /api/mcp/runtime — 列出 server / running 进程 / audit_log。
 ///
 /// 对应 Python `api_mcp_runtime` → `mcp_broker.status()` + `get_audit_log`。
-/// 非 admin 时 strip 掉 `last_stderr`(可能含 token / 路径),与 Python 行为一致。
+/// 非 admin 时:
+///   - strip 掉 `last_stderr`(可能含 token / 路径)
+///   - audit_log 只返回当前用户的条目(按 Python get_audit_log(user_id=...) 行为)
 #[tracing::instrument(skip_all)]
 async fn api_mcp_runtime(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    let is_admin = crate::require_user(&s, &headers)
-        .await
-        .ok()
-        .map(|u| u.role == "admin")
-        .unwrap_or(false);
+    let user_opt = crate::require_user(&s, &headers).await.ok();
+    let is_admin = user_opt.as_ref().map(|u| u.role == "admin").unwrap_or(false);
+    let current_user_id = user_opt.as_ref().map(|u| u.id);
     let catalog = load_catalog(&s).await;
     let mut running: Vec<Value> =
         s.mcp_broker.status().into_iter().map(|st| serde_json::to_value(st).unwrap_or(json!({}))).collect();
@@ -257,7 +295,27 @@ async fn api_mcp_runtime(
             }
         }
     }
-    let audit = list_audit_entries(200);
+    let all_audit = list_audit_entries(200);
+    // 对应 Python: get_audit_log(user_id=None if is_admin else api_user["id"])
+    // 非 admin 只能看自己的调用记录
+    let audit: Vec<Value> = if is_admin {
+        all_audit.into_iter().map(|v| serde_json::to_value(v).unwrap_or(json!({}))).collect()
+    } else if let Some(uid) = current_user_id {
+        let uid_val = serde_json::Value::Number(serde_json::Number::from(uid.get()));
+        all_audit
+            .into_iter()
+            .filter_map(|v| {
+                let jv = serde_json::to_value(v).unwrap_or(json!({}));
+                if jv.get("user_id") == Some(&uid_val) {
+                    Some(jv)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        vec![]
+    };
     Json(json!({
         "ok": true,
         "servers": catalog.servers,
@@ -266,13 +324,27 @@ async fn api_mcp_runtime(
     }))
 }
 
+/// POST /api/mcp/tool/call — 调用 MCP 工具。
+///
+/// 对应 Python api_mcp_tool_call 安全规则:
+/// - 服务器部署模式(require_auth=true): 只允许 admin 调用
+/// - 本地/匿名模式(require_auth=false): 任意已登录或匿名用户均可调用
+/// audit user_id 来自当前登录用户(如有)。
 #[tracing::instrument(skip_all)]
 async fn api_mcp_tool_call(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<McpToolCallRequest>,
 ) -> Result<Response, ResponseError> {
-    require_admin(&s, &headers).await?;
+    // 对应 Python: if _api_auth_required() and (not admin): 403
+    // Rust: config.require_auth 相当于 _api_auth_required()
+    let user_opt = crate::require_user(&s, &headers).await.ok();
+    let is_admin = user_opt.as_ref().map(|u| u.role == "admin").unwrap_or(false);
+    if s.config.require_auth && !is_admin {
+        return Err(ResponseError::forbidden(
+            "MCP 工具调用目前仅限管理员（per-user 注册待支持）",
+        ));
+    }
 
     let server_id = body
         .server_id

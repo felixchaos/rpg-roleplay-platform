@@ -35,6 +35,9 @@ pub struct User {
     pub row_version: i64,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
+    /// AUTH-16: avatar_url from users table
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 impl User {
@@ -50,6 +53,7 @@ impl User {
             row_version: row.try_get::<i64, _>("row_version").unwrap_or(0),
             created_at: row.try_get("created_at").ok(),
             updated_at: row.try_get("updated_at").ok(),
+            avatar_url: row.try_get::<Option<String>, _>("avatar_url").unwrap_or(None),
         })
     }
 }

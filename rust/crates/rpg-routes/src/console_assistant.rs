@@ -172,6 +172,11 @@ async fn api_console_assistant_delete_conversation(
 ///   5. 逐 chunk 转 SSE,assistant 完整文本追加回 conversation。
 ///   6. 结尾 emit done。
 ///
+/// CONSOLE-MISSING-TOOL-LOOP: MCP tool loop not yet implemented.
+/// Python has full MCP tool loop: discovers assistant tools, dispatches tool calls with
+/// destructive/navigation confirmation flow, emits tool_call/tool_result/confirmation_required
+/// SSE events. Needs rpg-tools-dsl dispatcher integration.
+///
 /// 不包含:MCP tool 循环 / confirmation_required / page_context 上下文注入。
 /// Wave 6-B 起逐步引入(rpg-agents 那边把 MCP loop 抽象起来后)。
 #[tracing::instrument(skip(s, headers, body), fields(user_id, conv_id))]
@@ -188,6 +193,22 @@ pub(crate) async fn api_console_assistant_chat(
         .unwrap_or_else(|| "default".into());
     tracing::Span::current().record("conv_id", tracing::field::display(&conv_id));
     let message = body.message.unwrap_or_default();
+
+    // CONSOLE-CHAT-MISSING-EMPTY-MESSAGE-GUARD: check for empty message
+    if message.trim().is_empty() {
+        let uid_str = user.id.to_string();
+        let (err_tx, err_rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(4);
+        let _ = err_tx.send(Ok(named_sse_event("hello", hello_payload(&uid_str)))).await;
+        let _ = err_tx.send(Ok(named_sse_event(
+            "error",
+            json!({"message": "空消息", "code": "bad_request"}),
+        ))).await;
+        let _ = err_tx.send(Ok(named_sse_event("done", json!({"ok": true})))).await;
+        drop(err_tx);
+        let guard = SseConnectionGuard::new("console");
+        return Ok(Sse::new(GuardedStream::new(ReceiverStream::new(err_rx), guard)).keep_alive(KeepAlive::default()));
+    }
+
     let key = conv_key(user.id, &conv_id);
     s.console_conversations
         .entry(key.clone())
@@ -228,7 +249,8 @@ pub(crate) async fn api_console_assistant_chat(
             .send(Ok(named_sse_event("chunk", json!({"text":""}))))
             .await;
         let _ = tx
-            .send(Ok(named_sse_event("done", json!({"ok": true}))))
+            // CONSOLE-DONE-MISSING-PENDING-CONFIRMATIONS: include pending_confirmations
+            .send(Ok(named_sse_event("done", json!({"ok": true, "pending_confirmations": []}))))
             .await;
         drop(tx);
         return Ok(Sse::new(GuardedStream::new(ReceiverStream::new(rx), guard)).keep_alive(KeepAlive::default()));
@@ -318,7 +340,8 @@ pub(crate) async fn api_console_assistant_chat(
                 });
         }
         let _ = tx
-            .send(Ok(named_sse_event("done", json!({"ok": true}))))
+            // CONSOLE-DONE-MISSING-PENDING-CONFIRMATIONS: include pending_confirmations
+            .send(Ok(named_sse_event("done", json!({"ok": true, "pending_confirmations": []}))))
             .await;
     });
 
@@ -336,6 +359,11 @@ const CONSOLE_ASSISTANT_MAX_TOKENS: u32 = 600;
 /// 用户 approve / reject 一个 pending 工具调用后,把决策塞回 conversation
 /// 当作 user 视角的"决策声明",触发一次 LLM 续写。无 conversation_id 或
 /// 无 backend 时退化老 stub(state_change + done)。
+///
+/// CONSOLE-CONFIRM-MISSING-PENDING-RESOLUTION: pending confirmation resolution not yet
+/// implemented. Python resolves the pending confirmation (pop from conv['pending_confirmations']),
+/// dispatches the tool if approved via tools_dsl dispatcher, emits tool_result or navigation_required.
+/// Needs pending_confirmations tracking in AppState and rpg-tools-dsl dispatcher integration.
 ///
 /// 不包含:dispatcher 实际调度 destructive tool、navigation_required 事件。
 /// 这两块需要等 rpg-tools-dsl 真接 dispatcher,归 Wave 6-B。
@@ -378,14 +406,16 @@ pub(crate) async fn api_console_assistant_confirm(
     // 无 backend 或无 conversation_id → stub 退化(保持兼容前端 polling 逻辑)。
     let Some(backend) = backend_opt else {
         let _ = tx
-            .send(Ok(named_sse_event("done", json!({"ok": true}))))
+            // CONSOLE-DONE-MISSING-PENDING-CONFIRMATIONS: include pending_confirmations
+            .send(Ok(named_sse_event("done", json!({"ok": true, "pending_confirmations": []}))))
             .await;
         drop(tx);
         return Ok(Sse::new(GuardedStream::new(ReceiverStream::new(rx), guard)).keep_alive(KeepAlive::default()));
     };
     let Some(conv_id) = conv_id_opt else {
         let _ = tx
-            .send(Ok(named_sse_event("done", json!({"ok": true}))))
+            // CONSOLE-DONE-MISSING-PENDING-CONFIRMATIONS: include pending_confirmations
+            .send(Ok(named_sse_event("done", json!({"ok": true, "pending_confirmations": []}))))
             .await;
         drop(tx);
         return Ok(Sse::new(GuardedStream::new(ReceiverStream::new(rx), guard)).keep_alive(KeepAlive::default()));
@@ -486,7 +516,8 @@ pub(crate) async fn api_console_assistant_confirm(
                 });
         }
         let _ = tx
-            .send(Ok(named_sse_event("done", json!({"ok": true}))))
+            // CONSOLE-DONE-MISSING-PENDING-CONFIRMATIONS: include pending_confirmations
+            .send(Ok(named_sse_event("done", json!({"ok": true, "pending_confirmations": []}))))
             .await;
     });
 

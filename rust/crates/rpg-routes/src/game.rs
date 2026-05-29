@@ -39,6 +39,61 @@ use crate::{hello_payload, named_sse_event, require_user, user_id_or_anon, AppSt
 
 type SseResponse = Result<Sse<GuardedStream<ReceiverStream<Result<Event, Infallible>>>>, ResponseError>;
 
+/// Build a full status payload matching Python `_payload(api_user)`.
+///
+/// Contains: state snapshot + app info + models catalog + save metadata.
+/// Used by: `/api/state`, `/api/new`, `/api/save`, `/api/opening` done event,
+/// `/api/chat` status/done events.
+fn build_status_payload(
+    state_data: &Value,
+    app_state: &AppState,
+    _user_id_num: i64,
+    _db: &sqlx::PgPool,
+) -> Value {
+    // Core state
+    let mut payload = json!({ "state": state_data });
+
+    // App info block — matches Python _payload()["app"]
+    let (api_id, model_display, model_real, api_display, ctx_window, capabilities) = {
+        let cat = app_state.llm_router.read().catalog().cloned().unwrap_or_default();
+        if let Some((api, model)) = cat.selected_model() {
+            let real = model.real_name.clone().unwrap_or_else(|| model.id.clone());
+            let cw = rpg_platform::usage::context_window_for(&api.id, &real);
+            (
+                api.id.clone(),
+                model.display_name.clone(),
+                real,
+                api.display_name.clone(),
+                cw,
+                model.capabilities.clone(),
+            )
+        } else {
+            (String::new(), String::new(), String::new(), String::new(), 0i64, vec![])
+        }
+    };
+
+    payload["app"] = json!({
+        "title": rpg_core::config::app_title(),
+        "model": model_display,
+        "model_real_name": model_real,
+        "model_capabilities": capabilities,
+        "context_window": ctx_window,
+        "api": api_display,
+        "api_id": api_id,
+    });
+
+    // Models catalog (redacted for non-admin — simplified: always send without credentials)
+    {
+        let cat = app_state.llm_router.read().catalog().cloned().unwrap_or_default();
+        let cat_val = serde_json::to_value(&cat).unwrap_or(json!({}));
+        payload["models"] = cat_val;
+    }
+
+    payload
+}
+
+// build_status_payload_with_save removed — save metadata query deferred to future wave
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/new", post(api_new))
@@ -236,6 +291,18 @@ async fn api_new(
     };
     let background = background.trim().to_string();
 
+    // game-new-03: capture source_id before the match ends
+    // We need the row id for script_card / user_card / persona cases
+    let source_id: Option<i64> = if body.script_card_id.is_some() {
+        body.script_card_id
+    } else if body.user_card_id.is_some() {
+        body.user_card_id
+    } else if body.persona_id.is_some() {
+        body.persona_id
+    } else {
+        None
+    };
+
     let shared = s.state_store.get_or_create(&user_id).await;
     {
         let mut st = shared.write();
@@ -245,19 +312,53 @@ async fn api_new(
         let _ = st.set_path("player.background", Value::String(background));
         if !source_kind.is_empty() {
             let _ = st.set_path("player.source_kind", Value::String(source_kind.to_string()));
+            // game-new-03: set player.source_id matching Python line 98
+            if let Some(sid) = source_id {
+                let _ = st.set_path("player.source_id", Value::Number(serde_json::Number::from(sid)));
+            }
         }
         let _ = st.set_path("is_new", Value::Bool(false));
     }
-    // 6C-1 Arc 快照:读路径不再深拷贝整树,snapshot() 仅 inc Arc refcount。
-    // api_new 刚写过 state(touch 已让快照缓存失效),此处重建一次后返回。
-    let (data, version) = {
-        let st = shared.read();
-        (st.snapshot(), st.version)
-    };
+
+    // game-new-02: copy extra fields (appearance, personality, speech_style) from source row
+    // For script_card and user_card: read from the DB row we already fetched
+    if source_kind == "script_card" || source_kind == "user_card" {
+        // Re-query to get extra fields (appearance, personality, speech_style)
+        // We already have the row but the original match consumed it; query is cheap.
+        let extra_query = if source_kind == "script_card" {
+            "SELECT appearance, personality, speech_style FROM character_cards WHERE id = $1"
+        } else {
+            "SELECT appearance, personality, speech_style FROM character_cards WHERE id = $1"
+        };
+        let extra_id = source_id.unwrap_or(0);
+        if let Ok(Some(extra_row)) = sqlx::query(extra_query)
+            .bind(extra_id)
+            .fetch_optional(&s.db)
+            .await
+        {
+            let mut st = shared.write();
+            for field in &["appearance", "personality", "speech_style"] {
+                if let Ok(val) = extra_row.try_get::<String, _>(*field) {
+                    if !val.is_empty() {
+                        let _ = st.set_path(
+                            &format!("player.{field}"),
+                            Value::String(val),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // game-new-04: flush state to DB (matching Python _persist_runtime_checkpoint)
+    s.state_store.flush(&user_id).await;
+
+    // game-new-01: return full payload matching Python _payload(api_user) shape
+    let data = shared.read().snapshot();
+    let payload = build_status_payload(&data, &s, user_id_num, &s.db);
     Ok(Json(json!({
         "ok": true,
-        "state": data,
-        "version": version,
+        "state": payload,
     }))
     .into_response())
 }
@@ -299,6 +400,7 @@ pub(crate) async fn api_opening(
     // 没 backend → 老 stub 路径(同旧行为)。
     if backend_opt.is_none() {
         let state_data = shared.read().snapshot();
+        let status_payload = build_status_payload(&state_data, &s, user_id_num, &s.db);
         let _ = tx.send(Ok(named_sse_event("hello", hello_payload(&user_id)))).await;
         let _ = tx.send(Ok(named_sse_event(
             "stage",
@@ -309,9 +411,10 @@ pub(crate) async fn api_opening(
             json!({"phase":"done"}),
         ))).await;
         let _ = tx.send(Ok(named_sse_event("token", json!({"text":""})))).await;
+        // game-sse-03: done event uses full status payload
         let _ = tx.send(Ok(named_sse_event(
             "done",
-            json!({"status": {"state": state_data}, "interrupted": false}),
+            json!({"status": status_payload}),
         ))).await;
         let stream = GuardedStream::new(ReceiverStream::new(rx), guard);
         return Ok(Sse::new(stream).keep_alive(KeepAlive::default()));
@@ -348,6 +451,8 @@ pub(crate) async fn api_opening(
     let llm_router = s.llm_router.clone();
     let user_id_clone = user_id.clone();
     let state_store_clone = s.state_store.clone();
+    let app_state_clone = s.clone();
+    let user_id_num_clone = user_id_num;
     tokio::spawn(async move {
         // ── Phase 2: RAG 检索 ──────────────────────────────────────────
         let _ = tx
@@ -453,6 +558,13 @@ pub(crate) async fn api_opening(
                 .to_string()
         };
 
+        // game-sse-06: emit 'status' event after context assembly (matches Python line 163)
+        {
+            let state_data = state_handle.read().snapshot();
+            let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db);
+            let _ = tx.send(Ok(named_sse_event("status", status))).await;
+        }
+
         // ── Phase 4: 生成开场白 ────────────────────────────────────────
         let _ = tx
             .send(Ok(named_sse_event(
@@ -471,13 +583,14 @@ pub(crate) async fn api_opening(
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, "opening: 无法获取 LLM backend");
-                        // stub fallback
+                        // stub fallback — game-sse-03: use full payload
                         let state_data = state_handle.read().snapshot();
+                        let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db);
                         let _ = tx.send(Ok(named_sse_event("stage", json!({"phase":"done"})))).await;
                         let _ = tx.send(Ok(named_sse_event("token", json!({"text":""})))).await;
                         let _ = tx.send(Ok(named_sse_event(
                             "done",
-                            json!({"status": {"state": state_data}, "interrupted": false}),
+                            json!({"status": status}),
                         ))).await;
                         return;
                     }
@@ -492,22 +605,24 @@ pub(crate) async fn api_opening(
             Ok(_) => {
                 tracing::warn!("opening: GM 返回空文本,走 stub fallback");
                 let state_data = state_handle.read().snapshot();
+                let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db);
                 let _ = tx.send(Ok(named_sse_event("stage", json!({"phase":"done"})))).await;
                 let _ = tx.send(Ok(named_sse_event("token", json!({"text":""})))).await;
                 let _ = tx.send(Ok(named_sse_event(
                     "done",
-                    json!({"status": {"state": state_data}, "interrupted": false}),
+                    json!({"status": status}),
                 ))).await;
                 return;
             }
             Err(e) => {
                 tracing::warn!(error = %e, "opening: GM generate_opening 失败,走 stub fallback");
                 let state_data = state_handle.read().snapshot();
+                let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db);
                 let _ = tx.send(Ok(named_sse_event("stage", json!({"phase":"done"})))).await;
                 let _ = tx.send(Ok(named_sse_event("token", json!({"text":""})))).await;
                 let _ = tx.send(Ok(named_sse_event(
                     "done",
-                    json!({"status": {"state": state_data}, "interrupted": false}),
+                    json!({"status": status}),
                 ))).await;
                 return;
             }
@@ -538,12 +653,13 @@ pub(crate) async fn api_opening(
             .send(Ok(named_sse_event("token", json!({"text": opening_text}))))
             .await;
 
-        // done — 带最新 snapshot。
+        // done — game-sse-03: full status payload matching Python _payload()
         let state_data = state_handle.read().snapshot();
+        let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db);
         let _ = tx
             .send(Ok(named_sse_event(
                 "done",
-                json!({"status": {"state": state_data}, "interrupted": false}),
+                json!({"status": status}),
             )))
             .await;
         let _ = user_id_clone;
@@ -553,9 +669,7 @@ pub(crate) async fn api_opening(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-/// opening max_tokens(保留常量,供测试引用;实际 max_tokens 由 GameMaster::config 控制)。
-#[allow(dead_code)]
-const OPENING_MAX_TOKENS: u32 = 600;
+// game-dead-code-01: removed OPENING_MAX_TOKENS constant (actual max_tokens from GameMaster::config)
 
 /// POST /api/chat/estimate — 实时上下文预估
 ///
@@ -572,29 +686,49 @@ async fn api_chat_estimate(
     let shared = s.state_store.get_or_create(&user_id).await;
     let message = body.message.unwrap_or_default();
     let include_retrieval = body.include_retrieval.unwrap_or(true);
-    let history_text = {
+    let (history_text, profile_text) = {
         let st = shared.read();
-        st.data
+        let ht = st.data
             .history
             .iter()
             .filter_map(|m| m.get("content").and_then(|v| v.as_str()))
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n");
+        // game-estimate-01: compute profile_and_memory from player + memory
+        let player = serde_json::to_string(&st.data.player).unwrap_or_default();
+        let memory_summary = &st.data.memory.current_objective;
+        let pt = format!("{player} {memory_summary}");
+        (ht, pt)
     };
-    let est = |s: &str| (s.chars().count() / 3) as i64;
+    let est = |s: &str| rpg_platform::usage::estimate_input_tokens(s);
     let system_est: i64 = 1200;
     let retrieval_est: i64 = if include_retrieval { 800 } else { 0 };
     let history_est = est(&history_text);
-    let input_tokens = system_est + history_est + retrieval_est + est(&message);
+    let profile_est = est(&profile_text);
+
+    // game-estimate-02: populate api_id and model from LLM router
+    let (api_id_est, model_name_est, ctx_max) = {
+        let cat = s.llm_router.read().catalog().cloned().unwrap_or_default();
+        if let Some((api, model)) = cat.selected_model() {
+            let real = model.real_name.clone().unwrap_or_else(|| model.id.clone());
+            let cw = rpg_platform::usage::context_window_for(&api.id, &real);
+            (api.id.clone(), real, if cw > 0 { cw } else { 1_000_000 })
+        } else {
+            (String::new(), String::new(), 1_000_000i64)
+        }
+    };
+
+    let input_tokens = system_est + profile_est + history_est + retrieval_est + est(&message);
     let output_estimate: i64 = 600;
-    let ctx_max: i64 = 1_000_000;
-    let ctx_pct = (input_tokens as f64 * 100.0 / ctx_max as f64 * 10.0).round() / 10.0;
+    let ctx_pct = if ctx_max > 0 {
+        (input_tokens as f64 * 100.0 / ctx_max as f64 * 10.0).round() / 10.0
+    } else { 0.0 };
     let total = input_tokens + output_estimate;
     let will_overflow = total > ctx_max;
     Ok(Json(json!({
         "ok": true,
-        "api_id": "",
-        "model": "",
+        "api_id": api_id_est,
+        "model": model_name_est,
         "context_used": input_tokens,
         "context_max": ctx_max,
         "context_pct": ctx_pct,
@@ -603,11 +737,12 @@ async fn api_chat_estimate(
         "will_overflow": will_overflow,
         "breakdown": {
             "system_prompt": system_est,
+            "profile_and_memory": profile_est,
             "history": history_est,
             "retrieval_budget": retrieval_est,
             "current_input": est(&message),
         },
-        "headroom_tokens": (ctx_max - input_tokens - output_estimate).max(0),
+        "headroom_tokens": if ctx_max > 0 { (ctx_max - input_tokens - output_estimate).max(0) } else { 0 },
     }))
     .into_response())
 }
@@ -670,7 +805,17 @@ async fn api_context_breakdown(
         ("phase_digests", "阶段摘要", "#f07a3c"),
         ("tools", "工具/MCP", "#8899aa"),
     ];
-    let ctx_limit: i64 = 1_000_000;
+    // game-breakdown-01: use real model context window instead of hardcoded 1M
+    let ctx_limit: i64 = {
+        let cat = s.llm_router.read().catalog().cloned().unwrap_or_default();
+        if let Some((api, model)) = cat.selected_model() {
+            let real = model.real_name.clone().unwrap_or_else(|| model.id.clone());
+            let cw = rpg_platform::usage::context_window_for(&api.id, &real);
+            if cw > 0 { cw } else { 1_000_000 }
+        } else {
+            1_000_000
+        }
+    };
     let mut used_sum = 0i64;
     let mut breakdown = Vec::new();
     for (key, label, color) in order {
@@ -803,6 +948,7 @@ pub(crate) async fn api_chat(
     // 无 backend → stub fallback:只 emit 一个空 chunk + done。
     let Some(backend) = backend_opt else {
         let state_after = shared.read().snapshot();
+        let status = build_status_payload(&state_after, &s, user.id.into(), &db);
         let actual = rpg_platform::usage::UsageBreakdown {
             input_tokens: est_input.clamp(0, i32::MAX as i64) as i32,
             output_tokens: 0,
@@ -817,7 +963,7 @@ pub(crate) async fn api_chat(
         let _ = tx
             .send(Ok(named_sse_event(
                 "done",
-                json!({"status": {"state": state_after}, "interrupted": false}),
+                json!({"status": status, "interrupted": false}),
             )))
             .await;
         drop(tx);
@@ -828,12 +974,22 @@ pub(crate) async fn api_chat(
     // ── 有 backend:5 阶段 pipeline(在 spawned task 内跑) ──────────
     let stop_notify = s.stop_notify(&user_id);
     let user_id_u = user.id;
+    let chat_app_state = s.clone();
+    let chat_llm_router = s.llm_router.clone();
     tokio::spawn(async move {
         let mut full = String::new();
-        let usage_total: u32 = 0;
+        // game-chat-07: track actual usage from LLM stream
+        let mut usage_input: i32 = 0;
+        let mut usage_output: i32 = 0;
+        let usage_cached: i32 = 0;
+        let usage_reasoning: i32 = 0;
         let mut interrupted = false;
 
         // ── Phase 1: Player Directives ──────────────────────────────
+        // game-chat-06 TODO: Python handles attachments via _save_attachments + _message_with_attachments.
+        // Also handles /command short-circuit (e.g. /set → directive parse → tool dispatcher → early return).
+        // Currently Rust only runs regex-based apply_player_directives; attachment support and
+        // command_agent / ToolDispatcher integration pending rpg-tools-dsl readiness.
         {
             let mut st = state_handle.write();
             let _ = rpg_state::apply_player_directives(&mut st, &message);
@@ -847,9 +1003,11 @@ pub(crate) async fn api_chat(
         ))).await;
 
         // 2a. 从 DB 取当前用户活跃存档的 script_id + save_id
+        // game-chat-05: add is_active = true filter to match Python behavior
         use sqlx::Row as _;
         let save_row_chat = sqlx::query(
             "SELECT id, script_id FROM game_saves WHERE user_id = $1 \
+             AND is_active = true \
              ORDER BY updated_at DESC LIMIT 1",
         )
         .bind(user_id_i64)
@@ -952,6 +1110,13 @@ pub(crate) async fn api_chat(
             tracing::debug!("Phase 3: 活跃 encounter,跳过规则预检 (TODO)");
         }
 
+        // game-chat-04: append user history BEFORE GM generation (Python does this in Phase 1)
+        // This ensures the LLM sees the user message in history context.
+        {
+            let mut st = state_handle.write();
+            st.append_history("user", &message);
+        }
+
         // ── Phase 4: GM Response ────────────────────────────────────
         let _ = tx.send(Ok(named_sse_event(
             "stage",
@@ -1011,13 +1176,16 @@ pub(crate) async fn api_chat(
 
         // ── Phase 5: Persist ────────────────────────────────────────
         if !full.is_empty() {
+            // game-chat-07: estimate usage from text since respond_stream only yields String
+            usage_output = rpg_platform::usage::estimate_input_tokens(&full).clamp(0, i32::MAX as i64) as i32;
+            usage_input = est_input.clamp(0, i32::MAX as i64) as i32;
+
             let mut st = state_handle.write();
             // 结构化更新(【…】tags + ```json``` ops)
             if let Err(e) = rpg_state::apply_structured_updates(&mut st, &full) {
                 tracing::warn!(error = %e, "Phase 5: apply_structured_updates 部分失败");
             }
-            // append history + increment turn
-            st.append_history("user", &message);
+            // game-chat-04: only append assistant history (user already appended before Phase 4)
             st.append_history("assistant", &full);
             st.increment_turn();
             // Gap 6: clear revealed_this_turn flag (matches Python record_turn behavior).
@@ -1043,23 +1211,55 @@ pub(crate) async fn api_chat(
         }
         rpg_platform::cluster::clear_stop(&db, user_id_u.get(), run_id).await;
 
-        // 配额回填 usage
-        let out_tokens = usage_total.clamp(0, i32::MAX as u32) as i32;
+        // game-chat-07: use tracked usage for quota recording
+        let total_tokens = usage_input + usage_output;
         let actual = rpg_platform::usage::UsageBreakdown {
-            input_tokens: est_input.clamp(0, i32::MAX as i64) as i32,
-            output_tokens: out_tokens,
-            cached_input_tokens: 0,
-            reasoning_tokens: 0,
-            total_tokens: est_input.clamp(0, i32::MAX as i64) as i32 + out_tokens,
+            input_tokens: usage_input,
+            output_tokens: usage_output,
+            cached_input_tokens: usage_cached,
+            reasoning_tokens: usage_reasoning,
+            total_tokens,
         };
+
+        // Get model info for usage event
+        let (usage_api_id, usage_model_name, usage_ctx_max) = {
+            let cat = chat_llm_router.read().catalog().cloned().unwrap_or_default();
+            if let Some((api, model)) = cat.selected_model() {
+                let real = model.real_name.clone().unwrap_or_else(|| model.id.clone());
+                let cw = rpg_platform::usage::context_window_for(&api.id, &real);
+                (api.id.clone(), real, cw)
+            } else {
+                (String::new(), String::new(), 1_000_000i64)
+            }
+        };
+
         quota::record_actual(
-            &db, grant, None, None, &actual, est_input as i32, 1_000_000,
+            &db, grant, None, None, &actual, usage_input, usage_ctx_max as i32,
         ).await;
 
+        // game-sse-04: emit 'usage' event before 'done' (matches Python persist_turn_phase)
+        let usage_payload = json!({
+            "model": usage_model_name,
+            "api_id": usage_api_id,
+            "input_tokens": usage_input,
+            "output_tokens": usage_output,
+            "cached_input_tokens": usage_cached,
+            "reasoning_tokens": usage_reasoning,
+            "total_tokens": total_tokens,
+            "context_used": usage_input,
+            "context_max": usage_ctx_max,
+            "context_pct": if usage_ctx_max > 0 {
+                ((usage_input as f64) * 100.0 / usage_ctx_max as f64 * 10.0).round() / 10.0
+            } else { 0.0 },
+        });
+        let _ = tx.send(Ok(named_sse_event("usage", usage_payload.clone()))).await;
+
+        // game-sse-03: done event uses full status payload
+        let status = build_status_payload(&state_after, &chat_app_state, user_id_i64, &db);
         let _ = tx
             .send(Ok(named_sse_event(
                 "done",
-                json!({"status": {"state": state_after}, "interrupted": interrupted}),
+                json!({"status": status, "interrupted": interrupted, "usage": usage_payload}),
             )))
             .await;
         let _ = user_id_str;
@@ -1069,14 +1269,8 @@ pub(crate) async fn api_chat(
     Sse::new(guarded).keep_alive(KeepAlive::default()).into_response()
 }
 
-/// chat 用的 system prompt。GameMaster 内部有自己的 system prompt(gm_master.txt),
-/// 此常量保留供测试引用。
-#[allow(dead_code)]
-const CHAT_SYSTEM: &str = "你是这局 TRPG 的 Game Master,根据玩家输入推进剧情。第二人称叙事,描写场景与可触发的下一步。";
-
-/// chat 默认 max_tokens(实际由 GameMaster::config 控制)。
-#[allow(dead_code)]
-const CHAT_MAX_TOKENS: u32 = 800;
+// game-dead-code-01: removed CHAT_SYSTEM and CHAT_MAX_TOKENS constants
+// (actual system prompt from GameMaster::build_system, max_tokens from GameMaster::config)
 
 /// 把 [`QuotaError`] 渲染成 429 响应 + `Retry-After` 头(若有建议),
 /// body 沿用 `{ok:false, detail, code}` 协议。
@@ -1153,20 +1347,21 @@ async fn api_save(
     let user_id = user.id.to_string();
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
-    let (data, version) = {
+    let data = {
         let mut st = shared.write();
         // 触一次 version+updated_at(同时让 Arc 快照缓存失效)。
         let _ = st.set_path("saved_at", Value::String(chrono::Utc::now().to_rfc3339()));
         // Arc 快照(snapshot 重建一次后返回,仅 inc refcount)。
-        (st.snapshot(), st.version)
+        st.snapshot()
     };
     // 落库(read-through cache 的写回端)。saver 未注入(纯内存)→ false,不影响响应。
-    let persisted = s.state_store.flush(&user_id).await;
+    let _persisted = s.state_store.flush(&user_id).await;
+    // game-save-01: state field uses full payload matching Python _payload()
+    let user_id_num: i64 = user.id.into();
+    let payload = build_status_payload(&data, &s, user_id_num, &s.db);
     Ok(Json(json!({
         "ok": true,
-        "state": data,
-        "version": version,
-        "persisted": persisted,
+        "state": payload,
     }))
     .into_response())
 }
@@ -1328,13 +1523,7 @@ mod tests {
         assert_eq!(full, "Hello world");
     }
 
-    /// Opening / Chat prompt 常量非空,避免硬退化掉。
-    #[test]
-    fn test_opening_prompts_non_empty() {
-        const { assert!(OPENING_MAX_TOKENS > 0) };
-        assert!(!CHAT_SYSTEM.is_empty());
-        const { assert!(CHAT_MAX_TOKENS > 0) };
-    }
+    // game-dead-code-01: removed test_opening_prompts_non_empty (dead constants removed)
 
     // ── Wave 10-A:Extended thinking SSE envelope 端到端 ──────────────────
 

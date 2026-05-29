@@ -15,7 +15,8 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use http::HeaderMap;
+use http::{HeaderMap, StatusCode};
+
 use serde_json::json;
 
 use crate::{require_user, AppState, ResponseError};
@@ -63,19 +64,23 @@ async fn ensure_app_config_table(state: &AppState) -> Result<(), ResponseError> 
 
 /// POST /api/admin/smtp/test — SMTP 连通测试(stub)
 ///
-/// Python 端会真发测试邮件;Rust 翻译期只返 stub 表示未配置 SMTP。
+/// 对应 Python: 返回 503 + {ok:false, error:..., configured:false}
+/// Rust 翻译期只返 stub 表示未配置 SMTP。
 #[tracing::instrument(skip(s, headers), fields(user_id))]
 async fn api_smtp_test(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ResponseError> {
     check_admin(&s, &headers).await?;
-    Ok(Json(json!({
-        "ok": false,
-        "error": "未配置 SMTP",
-        "detail": "SMTP stub: 翻译期未接真实邮件发送,请在部署配置中设置 SMTP 参数。"
-    }))
-    .into_response())
+    Ok((
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({
+            "ok": false,
+            "error": "未配置 SMTP",
+            "configured": false,
+        })),
+    )
+        .into_response())
 }
 
 /// GET /api/admin/deployment-config — 读取部署配置

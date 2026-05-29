@@ -401,5 +401,4 @@ function _fmtTime(ts) {
   } catch (_) { return ""; }
 }
 
-Object.assign(window, { BranchGraph });
 export { BranchGraph };

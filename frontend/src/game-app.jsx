@@ -1283,5 +1283,4 @@ function TopBar({ state, saveUpdatedAt, onOpenTweaks, onOpenSearch, onOpenHistor
 
 }
 
-Object.assign(window, { LeftRail, RunSteps, ThinkingPill, ChatArea, TopBar, HistoryDrawer, SearchDrawer, GameToastStack, GameSettingsModal });
 export { LeftRail, RunSteps, ThinkingPill, ChatArea, TopBar, HistoryDrawer, SearchDrawer, GameToastStack, GameSettingsModal };

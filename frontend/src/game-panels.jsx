@@ -1790,5 +1790,4 @@ function RightPanel({ state, activeTab, setActiveTab, sidebarWidth, density, col
   );
 }
 
-Object.assign(window, { RightPanel, PANEL_TABS, PanelRules });
 export { RightPanel, PANEL_TABS, PanelRules, PanelCharacters, PanelStatus, PanelContext, PanelMemory, PanelTimeline, PanelWorldbook, PanelDebug, CharacterCard, WorldlineAnchorsSection };

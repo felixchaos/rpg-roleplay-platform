@@ -12,7 +12,68 @@ use http::HeaderMap;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{user_id_or_anon, AppState, ResponseError};
+use rpg_platform::auth::user_from_token;
+
+use crate::{token_from_headers, user_id_or_anon, AppState, ResponseError};
+
+/// 对应 Python `platform_knowledge.set_worldline_variable(user_id, save_id, key, value, source)`.
+/// 解析活跃 save → 找 game_sessions → upsert worldline_variables。失败只 warn,不打断响应。
+async fn persist_worldline_variable(s: &AppState, headers: &HeaderMap, key: &str, value: &str) {
+    let token = token_from_headers(headers);
+    let user_opt = match user_from_token(&s.db, token.as_deref()).await {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    let Some(user) = user_opt else { return };
+    let Some(save_id) = rpg_platform::save_io::resolve_active_save_id(&s.db, user.id).await else {
+        return;
+    };
+    // game_sessions 里找 session_id
+    let session_id: Option<i64> = sqlx::query(
+        "select id from game_sessions where save_id = $1 order by updated_at desc limit 1",
+    )
+    .bind(save_id)
+    .fetch_optional(&s.db)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|r| sqlx::Row::try_get::<i64, _>(&r, "id").ok());
+    let Some(sid) = session_id else { return };
+    if let Err(e) = rpg_platform::runtime::worldline::set_user_worldline_variable(
+        &s.db, sid, key, value, "user", true, None,
+    )
+    .await
+    {
+        tracing::warn!("worldline variable DB persist failed ({key}): {e}");
+    }
+}
+
+/// 对应 Python `platform_knowledge.remove_worldline_variable(user_id, save_id, key)`.
+async fn persist_worldline_variable_remove(s: &AppState, headers: &HeaderMap, key: &str) {
+    let token = token_from_headers(headers);
+    let user_opt = match user_from_token(&s.db, token.as_deref()).await {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    let Some(user) = user_opt else { return };
+    let Some(save_id) = rpg_platform::save_io::resolve_active_save_id(&s.db, user.id).await else {
+        return;
+    };
+    let session_id: Option<i64> = sqlx::query_scalar(
+        "select id from game_sessions where save_id = $1 order by updated_at desc limit 1",
+    )
+    .bind(save_id)
+    .fetch_optional(&s.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(sid) = session_id else { return };
+    if let Err(e) =
+        rpg_platform::runtime::worldline::remove_user_worldline_variable(&s.db, sid, key).await
+    {
+        tracing::warn!("worldline variable DB remove failed ({key}): {e}");
+    }
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -57,14 +118,16 @@ async fn api_worldline_variable(
     let value = body.value.unwrap_or_default();
     let user_id = user_id_or_anon(&s, &headers).await;
     let shared = s.state_store.get_or_create(&user_id).await;
-    let snapshot = {
+    let (snapshot, value_cloned) = {
         let mut st = shared.write();
         st.set_path(
             &format!("worldline.user_variables.{key}"),
-            Value::String(value),
+            Value::String(value.clone()),
         )?;
-        st.clone()
+        (st.clone(), value.clone())
     };
+    // 对应 Python platform_knowledge.set_worldline_variable(user_id, save_id, key, value, source='user')
+    persist_worldline_variable(&s, &headers, &key, &value_cloned).await;
     Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
 }
 
@@ -87,5 +150,7 @@ async fn api_worldline_variable_remove(
         let _ = st.delete_path(&format!("worldline.user_variables.{key}"))?;
         st.clone()
     };
+    // 对应 Python platform_knowledge.remove_worldline_variable(user_id, save_id, key)
+    persist_worldline_variable_remove(&s, &headers, &key).await;
     Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
 }

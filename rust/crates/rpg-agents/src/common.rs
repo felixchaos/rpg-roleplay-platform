@@ -390,6 +390,92 @@ pub fn state_history_messages(state: &GameState) -> Vec<ChatMessage> {
         .collect()
 }
 
+/// SM-05: 从 markdown 文本里剥离常见秘密段(## 秘密 / ## 隐藏 / ## 元知识 等)
+/// + 句子级元知识关键词,返回 NPC 可见部分。
+/// 对应 Python `_strip_secret_sections` + `_strip_meta_knowledge_sentences`。
+pub fn strip_secret_sections(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    // 第一步: 按 markdown 标题剥除秘密段
+    // 匹配 "##+ 秘密|隐藏|内心|元知识|真实身份|来历|背景秘密|未公开" 直到下一个标题或结尾
+    let secret_headings = [
+        "秘密", "隐藏", "内心", "元知识", "真实身份", "来历", "背景秘密", "未公开",
+    ];
+    let lines: Vec<&str> = text.lines().collect();
+    let mut result_lines: Vec<&str> = Vec::new();
+    let mut skip = false;
+    for line in &lines {
+        let trimmed = line.trim();
+        // 检查是否是 ##+ 标题
+        if trimmed.starts_with("##") {
+            let heading = trimmed.trim_start_matches('#').trim();
+            if secret_headings.contains(&heading) {
+                skip = true;
+                continue;
+            } else {
+                // 遇到其他 ## 标题则结束跳过
+                skip = false;
+            }
+        }
+        if !skip {
+            result_lines.push(line);
+        }
+    }
+    let no_sections = result_lines.join("\n").trim().to_string();
+
+    // 第二步: 句子级元知识关键词过滤
+    // 按 。!?;；\n 分句,含元知识关键词的整句移除
+    let meta_patterns = [
+        "穿越", "重生回", "重生至", "重生到", "重生成", "转生",
+        "原著", "原书", "原作",
+        "知道剧情", "知道未来", "知道历史", "知道结局", "知道走向",
+        "记得剧情", "记得未来", "记得历史", "记得结局", "记得走向",
+        "预知剧情", "预知未来", "预知历史", "预知结局", "预知走向",
+        "穿越前", "穿越以前", "穿越之前", "来这之前", "来到这",
+        "前世", "21世纪", "22世纪",
+    ];
+    let mut kept = String::new();
+    let mut buf = String::new();
+    let delimiters = ['。', '!', '?', ';', '；', '\n'];
+    for ch in no_sections.chars() {
+        if delimiters.contains(&ch) {
+            buf.push(ch);
+            let has_meta = meta_patterns.iter().any(|p| buf.contains(p));
+            if !has_meta {
+                kept.push_str(&buf);
+            }
+            buf.clear();
+        } else {
+            buf.push(ch);
+        }
+    }
+    if !buf.is_empty() {
+        let has_meta = meta_patterns.iter().any(|p| buf.contains(p));
+        if !has_meta {
+            kept.push_str(&buf);
+        }
+    }
+
+    // 压缩多余空行
+    let cleaned = kept.trim().to_string();
+    let mut out = String::new();
+    let mut blank_count = 0u32;
+    for line in cleaned.lines() {
+        if line.trim().is_empty() {
+            blank_count += 1;
+            if blank_count <= 2 {
+                out.push('\n');
+            }
+        } else {
+            blank_count = 0;
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out.trim().to_string()
+}
+
 /// `state.short_summary()` — 对应 Python `state.short_summary()`,包含玩家、时间线、
 /// 关系、长期记忆、世界线变量和当前回合等关键字段。
 pub fn state_short_summary(state: &GameState) -> String {
@@ -401,16 +487,25 @@ pub fn state_short_summary(state: &GameState) -> String {
     let pp = &state.data.player_private;
 
     // 角色卡详情段(appearance, personality, speech_style, aliases, identity_role_desc)
+    // SM-05: appearance 和 personality 注入前用 strip_secret_sections 剥离秘密段
     let mut card_lines: Vec<String> = Vec::new();
     for key in &["appearance", "personality", "speech_style", "aliases", "identity_role_desc"] {
         if let Some(val) = p.extra.get(*key) {
-            let text = match val {
+            let raw = match val {
                 serde_json::Value::String(s) if !s.is_empty() => s.clone(),
                 serde_json::Value::Array(arr) if !arr.is_empty() => {
                     arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")
                 }
                 _ => continue,
             };
+            // 对 appearance / personality 做秘密段剥离
+            let text = match *key {
+                "appearance" | "personality" => strip_secret_sections(&raw),
+                _ => raw,
+            };
+            if text.is_empty() {
+                continue;
+            }
             let label = match *key {
                 "appearance" => "外貌",
                 "personality" => "性格",
@@ -520,6 +615,8 @@ pub fn state_short_summary(state: &GameState) -> String {
         _ => "无".to_string(),
     };
 
+    // SM-05: background 注入前剥离秘密段
+    let background_stripped = strip_secret_sections(&p.background);
     format!(
         "【玩家档案】\n姓名：{}\n定位：{}\n背景：{}\n当前位置：{}{}\n\n\
 【当前时间线】{}\n\
@@ -529,7 +626,7 @@ pub fn state_short_summary(state: &GameState) -> String {
 【长期记忆】\n{}\n\n\
 【权限与世界线】\n  · LLM写入权限：{}\n  · 用户变量：\n{}\n\n\
 【当前回合】第 {} 回合{}",
-        p.name, p.role, p.background, p.current_location, card_text,
+        p.name, p.role, background_stripped, p.current_location, card_text,
         w.time,
         anchor_state, current_phase, pending_jump,
         known,

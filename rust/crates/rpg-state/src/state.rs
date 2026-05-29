@@ -264,6 +264,26 @@ impl GameState {
         self.data.is_new = false;
         self.touch();
     }
+
+    /// SM-15: 设置记忆模式。有效值: concise / normal / deep。
+    ///
+    /// 对应 Python `state.set_memory_mode(mode)` (core.py:809-810)。
+    /// 非法值静默忽略(与 Python 一致)。
+    pub fn set_memory_mode(&mut self, mode: &str) {
+        if matches!(mode, "concise" | "normal" | "deep") {
+            self.data.memory.mode = mode.to_string();
+            self.touch();
+        }
+    }
+
+    /// SM-15: 设置权限模式。输入经归一化后写入 permissions.mode。
+    ///
+    /// 对应 Python `state.set_permission_mode(mode)` (core.py:945-947)。
+    pub fn set_permission_mode(&mut self, mode: &str) {
+        let normalized = crate::ops::normalize_permission_mode(mode);
+        self.data.permissions.mode = normalized.to_string();
+        self.touch();
+    }
 }
 
 /// 默认状态的 JSON 形态。C3 后只是 [`GameStateData::default`] 的 serde wrapper,

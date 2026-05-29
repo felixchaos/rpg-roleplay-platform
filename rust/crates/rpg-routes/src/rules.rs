@@ -32,6 +32,24 @@ use rpg_rules_bridge::{
 
 use crate::{require_user, user_id_or_anon, AppState, ResponseError};
 
+/// 对应 Python rules 路由里 `state.save()` + `_persist_runtime_checkpoint(state, api_user)`。
+/// 尝试把当前 state 写回活跃 game_save(仅登录用户;匿名跳过)。
+/// 失败只 tracing::warn,不打断响应。
+async fn persist_rules_checkpoint(s: &AppState, headers: &HeaderMap, data: &rpg_state::state::GameState) {
+    use rpg_platform::auth::user_from_token;
+    let token = crate::token_from_headers(headers);
+    let user_opt = match user_from_token(&s.db, token.as_deref()).await {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    let Some(user) = user_opt else { return };
+    if let Err(e) =
+        rpg_platform::save_io::write_active_state_snapshot(&s.db, user.id, &data.data).await
+    {
+        tracing::warn!("rules checkpoint persist failed: {e}");
+    }
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/rules/modules", get(api_rules_modules))
@@ -498,14 +516,88 @@ async fn api_rules_module_start(
     if module_id.is_empty() {
         return Err(ResponseError::bad_request("module_id required"));
     }
+    // 加载模组 manifest,对应 Python dispatch_ui_tool('module_load') 的模组加载逻辑
+    let bundle: ModuleBundle = load_module(&module_id)
+        .map_err(|e| ResponseError::not_found(format!("未知模组 {module_id}：{e}")))?;
+    let manifest = &bundle.manifest;
+    let rooms = bundle.rooms.as_array().cloned().unwrap_or_default();
+    let start_id = manifest
+        .get("starting_location")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            rooms
+                .first()
+                .and_then(|r| r.get("id"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_default();
+    let start_room: Value = rooms
+        .iter()
+        .find(|r| r.get("id").and_then(|v| v.as_str()) == Some(&start_id))
+        .cloned()
+        .or_else(|| rooms.first().cloned())
+        .unwrap_or(Value::Object(Default::default()));
+    let current_room = room_snapshot(&start_room);
+
+    let pc_name = body
+        .character
+        .as_ref()
+        .and_then(|v| v.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Cinder")
+        .to_string();
+    let pc = rules_character::make_default_character(&pc_name, 1);
+
     let user_id = user_id_or_anon(&s, &headers).await;
     let shared = s.state_store.get_or_create(&user_id).await;
     let snapshot = {
         let mut st = shared.write();
-        st.set_path("scene.module_id", Value::String(module_id))?;
+        // scene 字段全套写入(与 api_rules_module_launch 逻辑对齐)
+        st.set_path("scene.module_id", Value::String(module_id.clone()))?;
+        if !start_id.is_empty() {
+            st.set_path("scene.location_id", Value::String(start_id.clone()))?;
+        }
+        st.set_path(
+            "scene.exits",
+            start_room.get("exits").cloned().unwrap_or(json!([])),
+        )?;
+        st.set_path(
+            "scene.visible_clues",
+            start_room.get("visible_clues").cloned().unwrap_or(json!([])),
+        )?;
+        st.set_path("scene.current_room", current_room)?;
+        // module_manifest 精简字段
+        let ruleset_field = {
+            let raw = manifest
+                .get("ruleset_meta")
+                .cloned()
+                .or_else(|| manifest.get("ruleset").cloned())
+                .unwrap_or(Value::Null);
+            if let Value::String(s) = &raw {
+                json!({"id": s, "mode": s, "public_label": s})
+            } else {
+                raw
+            }
+        };
+        let module_manifest = json!({
+            "id": manifest.get("id").cloned().unwrap_or(Value::String(module_id.clone())),
+            "name": manifest.get("name").cloned().unwrap_or(Value::Null),
+            "name_cn": manifest.get("name_cn").cloned().unwrap_or(Value::Null),
+            "kind": manifest.get("kind").cloned().unwrap_or(Value::String("module_adventure".into())),
+            "ruleset": ruleset_field,
+        });
+        st.set_path("scene.module_manifest", module_manifest)?;
+        // player_character
+        st.set_path("player_character", pc)?;
         st.clone()
     };
-    Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
+    Ok(Json(json!({
+        "ok": true,
+        "opening": bundle.opening,
+        "state": snapshot.data,
+    })).into_response())
 }
 
 /// 标准入口:为已登录用户建一个独立 game_save 跑模组。
@@ -772,10 +864,20 @@ async fn api_rules_module_launch(
         st.data = serde_json::from_value(initial_snapshot.clone()).unwrap_or_default();
     }
 
+    // rules 字段 — 对应 Python _rules_payload(state):{ruleset,player_character,scene,encounter,dice_log}
+    let rules_payload = json!({
+        "ruleset": initial_snapshot.get("ruleset").cloned().unwrap_or(json!({})),
+        "player_character": initial_snapshot.get("player_character").cloned().unwrap_or(json!({})),
+        "scene": initial_snapshot.get("scene").cloned().unwrap_or(json!({})),
+        "encounter": initial_snapshot.get("encounter").cloned().unwrap_or(json!({"active": false, "combatants": []})),
+        "dice_log": initial_snapshot.get("dice_log").cloned().unwrap_or(json!([])),
+    });
+
     Ok(Json(json!({
         "ok": true,
         "save_id": save_id,
         "save_title": title,
+        "rules": rules_payload,
         "opening": bundle.opening,
         "state": initial_snapshot,
     }))
@@ -827,6 +929,7 @@ async fn api_rules_move(
         append_rules_receipt(&mut st, &room_receipt(&room));
         (room, st.clone())
     };
+    persist_rules_checkpoint(&s, &headers, &snapshot).await;
     Ok(Json(json!({
         "ok": true,
         "room": room,
@@ -867,6 +970,111 @@ async fn api_rules_action(
 
     let (result, label_for_receipt) = {
         let mut st = shared.write();
+
+        // ── move_to prelude (Python _execute_rules_action:1376-1389) ──────────
+        // skill_check / saving_throw / trap_check:如果 body 含 move_to,先移动再执行检定。
+        let mut preludes: Vec<Value> = Vec::new();
+        let move_to_prelude = extra
+            .get("move_to")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        if let Some(ref mv) = move_to_prelude {
+            if matches!(kind.as_str(), "skill_check" | "saving_throw" | "trap_check") {
+                let cur_id = st.data.scene.location_id.clone();
+                if mv != &cur_id {
+                    match enter_room_op(&mut st, mv) {
+                        Ok(room) => {
+                            preludes.push(json!({
+                                "kind": "move",
+                                "to": mv,
+                                "room": room,
+                            }));
+                        }
+                        Err(e) => {
+                            return Err(ResponseError::bad_request(format!(
+                                "move_to prelude 失败({mv}):{e}"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── attack 自动启动遭遇 (Python:1431-1435) ─────────────────────────
+        // attack kind:如果当前 encounter 未激活且 body 含 encounter_id,先 StartEncounter。
+        // 注:这里只做 prelude;start_encounter 需要 bundle,故先读 module_id 后加载。
+        if kind == "attack" && !st.data.encounter.active {
+            let encounter_id_str = extra
+                .get("encounter_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            if let Some(ref enc_id) = encounter_id_str {
+                let module_id = st.data.scene.module_id.clone();
+                if !module_id.is_empty() {
+                    let bundle_res = rpg_rules::load_module(&module_id);
+                    if let Ok(bundle) = bundle_res {
+                        let enc_defs = bundle.encounters.as_array().cloned().unwrap_or_default();
+                        if let Some(enc_def) = enc_defs
+                            .iter()
+                            .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(enc_id))
+                            .cloned()
+                        {
+                            // 构建 enemies
+                            let mut enemies: Vec<Value> = Vec::new();
+                            let mut ok_enc = true;
+                            for e in enc_def
+                                .get("enemies")
+                                .and_then(|v| v.as_array())
+                                .cloned()
+                                .unwrap_or_default()
+                            {
+                                let stat_block_id =
+                                    e.get("stat_block_id").and_then(|v| v.as_str()).unwrap_or("");
+                                let instance_id =
+                                    e.get("instance_id").and_then(|v| v.as_str());
+                                let name = e.get("name").and_then(|v| v.as_str());
+                                match rpg_rules::dnd5e::monsters::build_combatant(
+                                    stat_block_id,
+                                    instance_id,
+                                    name,
+                                ) {
+                                    Ok(c) => enemies.push(c),
+                                    Err(_) => {
+                                        ok_enc = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if ok_enc {
+                                let pc_value = serde_json::to_value(&st.data.player_character)
+                                    .unwrap_or(json!({}));
+                                let mut party = pc_value.clone();
+                                if let Some(obj) = party.as_object_mut() {
+                                    obj.insert("id".to_string(), json!("player"));
+                                }
+                                if let Ok(outcome) = apply_combat(
+                                    &mut st.data,
+                                    CombatAction::StartEncounter {
+                                        encounter_id: enc_id.clone(),
+                                        party: vec![party],
+                                        enemies,
+                                        seed,
+                                    },
+                                ) {
+                                    preludes.push(json!({
+                                        "kind": "start_encounter",
+                                        "encounter": outcome.encounter,
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let label = match kind.as_str() {
             "skill_check" => extra
                 .get("skill")
@@ -1138,9 +1346,22 @@ async fn api_rules_action(
             action_receipt(&kind, &label, &result_val)
         };
         append_rules_receipt(&mut st, &receipt_text);
-        (result_val, label)
+        // 把 prelude 注入 result(Python `out["prelude"] = prelude` parity)
+        let mut result_with_prelude = result_val.clone();
+        if !preludes.is_empty() {
+            if let Some(obj) = result_with_prelude.as_object_mut() {
+                obj.insert("prelude".to_string(), json!(preludes));
+            }
+        }
+        (result_with_prelude, label)
     };
     let _ = label_for_receipt; // 消除未读警告(label 仅在 closure 内使用)
+
+    // 对应 Python rules 路由里 state.save() + _persist_runtime_checkpoint
+    {
+        let st = shared.read().clone();
+        persist_rules_checkpoint(&s, &headers, &st).await;
+    }
 
     Ok(Json(result).into_response())
 }
@@ -1310,6 +1531,7 @@ async fn api_rules_encounter_start(
         (enc_value, st.clone())
     };
 
+    persist_rules_checkpoint(&s, &headers, &snapshot).await;
     Ok(Json(json!({
         "ok": true,
         "encounter": encounter_snap,
@@ -1343,6 +1565,7 @@ async fn api_rules_encounter_next(
         append_rules_receipt(&mut st, &encounter_receipt("下一回合", &enc, &Value::Null));
         (enc, st.clone())
     };
+    persist_rules_checkpoint(&s, &headers, &snapshot).await;
     Ok(Json(json!({
         "ok": true,
         "encounter": encounter,
@@ -1392,6 +1615,7 @@ async fn api_rules_encounter_enemy(
         (outcome, st.clone())
     };
 
+    persist_rules_checkpoint(&s, &headers, &snapshot).await;
     Ok(Json(json!({
         "ok": true,
         "result": outcome.rule_result,

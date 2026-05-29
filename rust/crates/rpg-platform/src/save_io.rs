@@ -33,6 +33,10 @@ pub struct Save {
     pub active_commit_id: Option<i64>,
     #[serde(default)]
     pub state_snapshot: Value,
+    /// UUID public_id — 对应 Python 端 `public_id`,前端 normalize 为 'uid'。
+    /// 旧存档可能无此列,用 Option 兜底。
+    #[serde(default)]
+    pub public_id: Option<uuid::Uuid>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
 }
@@ -48,6 +52,7 @@ fn save_from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Save> {
         state_snapshot: row
             .try_get::<Value, _>("state_snapshot")
             .unwrap_or(Value::Object(Default::default())),
+        public_id: row.try_get::<Option<uuid::Uuid>, _>("public_id").unwrap_or(None),
         created_at: row.try_get("created_at").ok(),
         updated_at: row.try_get("updated_at").ok(),
     })
@@ -59,7 +64,7 @@ pub async fn list_saves_for_user(pool: &PgPool, user_id: UserId) -> PlatformResu
         "select id, user_id, script_id, title, state_path, \
                 active_commit_id, \
                 coalesce(state_snapshot, '{}'::jsonb) as state_snapshot, \
-                created_at, updated_at \
+                public_id, created_at, updated_at \
          from game_saves where user_id = $1 order by updated_at desc, id desc",
     )
     .bind(user_id)
@@ -81,7 +86,7 @@ pub async fn read_save(
         "select id, user_id, script_id, title, state_path, \
                 active_commit_id, \
                 coalesce(state_snapshot, '{}'::jsonb) as state_snapshot, \
-                created_at, updated_at \
+                public_id, created_at, updated_at \
          from game_saves where id = $1 and user_id = $2",
     )
     .bind(save_id)
@@ -110,7 +115,7 @@ pub async fn create_save(
          returning id, user_id, script_id, title, state_path, \
                    active_commit_id, \
                    coalesce(state_snapshot, '{}'::jsonb) as state_snapshot, \
-                   created_at, updated_at",
+                   public_id, created_at, updated_at",
     )
     .bind(user_id)
     .bind(script_id)

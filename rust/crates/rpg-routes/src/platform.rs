@@ -32,37 +32,62 @@ pub fn router() -> Router<AppState> {
 
 // ── hardcoded command list ────────────────────────────────────────────────────
 
-/// 核心 command 清单(对应 Python `platform.py` 的 `COMMANDS` 常量列表)。
-/// 翻译期 hardcoded;后续可从 DB / 配置文件动态加载。
+/// 核心 command 清单 — 与 Python `platform_app.api._deps.COMMANDS` + `command_payload()` 对齐。
+/// 格式: [{method, path, name, desc}]，其中 name = path 末段。
 fn core_commands() -> serde_json::Value {
     json!([
-        {"id": "new_game",         "label": "新游戏",           "category": "game"},
-        {"id": "load_game",        "label": "读取存档",         "category": "game"},
-        {"id": "save_game",        "label": "保存存档",         "category": "game"},
-        {"id": "quick_save",       "label": "快速保存",         "category": "game"},
-        {"id": "quick_load",       "label": "快速读取",         "category": "game"},
-        {"id": "export_save",      "label": "导出存档",         "category": "game"},
-        {"id": "import_save",      "label": "导入存档",         "category": "game"},
-        {"id": "delete_save",      "label": "删除存档",         "category": "game"},
-        {"id": "view_timeline",    "label": "查看时间线",       "category": "navigation"},
-        {"id": "worldline_jump",   "label": "世界线跳转",       "category": "navigation"},
-        {"id": "open_library",     "label": "角色库",           "category": "library"},
-        {"id": "open_rules",       "label": "规则设置",         "category": "settings"},
-        {"id": "open_permissions", "label": "权限管理",         "category": "settings"},
-        {"id": "open_memory",      "label": "记忆管理",         "category": "memory"},
-        {"id": "clear_memory",     "label": "清空记忆",         "category": "memory"},
-        {"id": "open_scripts",     "label": "脚本管理",         "category": "scripts"},
-        {"id": "run_script",       "label": "运行脚本",         "category": "scripts"},
-        {"id": "open_branches",    "label": "分支管理",         "category": "branches"},
-        {"id": "create_branch",    "label": "创建分支",         "category": "branches"},
-        {"id": "merge_branch",     "label": "合并分支",         "category": "branches"},
-        {"id": "open_metrics",     "label": "指标面板",         "category": "admin"},
-        {"id": "admin_config",     "label": "部署配置",         "category": "admin"},
-        {"id": "admin_smtp_test",  "label": "测试 SMTP",        "category": "admin"},
-        {"id": "open_mcp",         "label": "MCP 工具管理",     "category": "tools"},
-        {"id": "open_plugins",     "label": "插件管理",         "category": "tools"},
-        {"id": "open_profile",     "label": "个人设置",         "category": "user"},
-        {"id": "logout",           "label": "退出登录",         "category": "user"},
+        {"method": "GET",  "path": "/",                                         "name": "",                     "desc": "Backend root (service info JSON)"},
+        {"method": "GET",  "path": "/api/state",                                "name": "state",                "desc": "读取当前可玩存档状态"},
+        {"method": "POST", "path": "/api/new",                                  "name": "new",                  "desc": "创建新游戏并保留旧档备份"},
+        {"method": "POST", "path": "/api/opening",                              "name": "opening",              "desc": "生成开场"},
+        {"method": "POST", "path": "/api/chat",                                 "name": "chat",                 "desc": "发送玩家行动/对话，支持流式 GM 输出与结构化状态写回"},
+        {"method": "POST", "path": "/api/stop",                                 "name": "stop",                 "desc": "打断当前生成"},
+        {"method": "POST", "path": "/api/save",                                 "name": "save",                 "desc": "手动保存当前游戏"},
+        {"method": "POST", "path": "/api/memory/mode",                          "name": "mode",                 "desc": "设置记忆模式"},
+        {"method": "POST", "path": "/api/memory/add",                           "name": "add",                  "desc": "添加长期记忆"},
+        {"method": "POST", "path": "/api/memory/remove",                        "name": "remove",               "desc": "删除长期记忆"},
+        {"method": "POST", "path": "/api/permissions",                          "name": "permissions",          "desc": "设置 LLM 状态写入权限"},
+        {"method": "GET",  "path": "/api/models",                               "name": "models",               "desc": "读取 API/模型树与前端显示模型"},
+        {"method": "POST", "path": "/api/models/select",                        "name": "select",               "desc": "选择当前前端模型"},
+        {"method": "POST", "path": "/api/models/api",                           "name": "api",                  "desc": "新增或更新 API 供应商"},
+        {"method": "POST", "path": "/api/models/model",                         "name": "model",                "desc": "新增或更新 API 下属模型"},
+        {"method": "GET",  "path": "/api/tools",                                "name": "tools",                "desc": "插件/MCP/Skill 能力状态"},
+        {"method": "POST", "path": "/api/mcp/server",                           "name": "server",               "desc": "新增或更新 MCP 服务器配置"},
+        {"method": "POST", "path": "/api/mcp/server/enabled",                   "name": "enabled",              "desc": "启用或禁用 MCP 服务器"},
+        {"method": "POST", "path": "/api/mcp/server/delete",                    "name": "delete",               "desc": "删除 MCP 服务器配置"},
+        {"method": "POST", "path": "/api/mcp/server/validate",                  "name": "validate",             "desc": "校验 MCP stdio 命令可用性"},
+        {"method": "POST", "path": "/api/skills/import",                        "name": "import",               "desc": "本地部署导入 Skill 包"},
+        {"method": "POST", "path": "/api/worldline/variable",                   "name": "variable",             "desc": "新增或锁定用户世界线变量"},
+        {"method": "POST", "path": "/api/worldline/variable/remove",            "name": "remove",               "desc": "移除用户世界线变量"},
+        {"method": "POST", "path": "/api/auth/register",                        "name": "register",             "desc": "注册账号"},
+        {"method": "POST", "path": "/api/auth/login",                           "name": "login",                "desc": "登录并写入会话 cookie"},
+        {"method": "POST", "path": "/api/auth/logout",                          "name": "logout",               "desc": "退出登录"},
+        {"method": "GET",  "path": "/api/platform",                             "name": "platform",             "desc": "平台总览：主页、剧本、存档、库、工具"},
+        {"method": "GET",  "path": "/api/scripts",                              "name": "scripts",              "desc": "剧本列表"},
+        {"method": "POST", "path": "/api/scripts/import",                       "name": "import",               "desc": "导入 TXT/MD 剧本并自动识别章节"},
+        {"method": "GET",  "path": "/api/scripts/{script_id}/chapters",         "name": "chapters",             "desc": "读取剧本章节目录与预览"},
+        {"method": "POST", "path": "/api/scripts/{script_id}/knowledge/sync",   "name": "sync",                 "desc": "重建剧本 ChapterFact、世界书、人设卡和检索块"},
+        {"method": "GET",  "path": "/api/scripts/{script_id}/chapter-facts",    "name": "chapter-facts",        "desc": "读取剧本 ChapterFact 时间线"},
+        {"method": "GET",  "path": "/api/scripts/{script_id}/birthpoints",      "name": "birthpoints",          "desc": "入场选出生点：按 phase 聚合 + 每 phase 均匀采样 anchor"},
+        {"method": "GET",  "path": "/api/scripts/{script_id}/character-cards",  "name": "character-cards",      "desc": "读取剧本人设卡"},
+        {"method": "GET",  "path": "/api/scripts/{script_id}/worldbook",        "name": "worldbook",            "desc": "读取剧本世界书条目"},
+        {"method": "GET",  "path": "/api/saves",                                "name": "saves",                "desc": "游戏存档目录"},
+        {"method": "POST", "path": "/api/saves",                                "name": "saves",                "desc": "基于剧本创建新存档"},
+        {"method": "GET",  "path": "/api/branches/{save_id}",                   "name": "{save_id}",            "desc": "读取某个存档的分支树"},
+        {"method": "POST", "path": "/api/branches/continue",                    "name": "continue",             "desc": "从任意对话节点派生/激活当前游戏 runtime"},
+        {"method": "POST", "path": "/api/branches/activate",                    "name": "activate",             "desc": "直接激活某个分支节点为当前游戏 runtime"},
+        {"method": "POST", "path": "/api/branches/delete",                      "name": "delete",               "desc": "删除某条连线下的整条分支"},
+        {"method": "GET",  "path": "/api/saves/{save_id}/context-runs",         "name": "context-runs",         "desc": "读取某个存档的上下文子代理运行记录"},
+        {"method": "GET",  "path": "/api/saves/{save_id}/anchors",              "name": "anchors",              "desc": "task 136: 读取存档世界线收束锚点状态"},
+        {"method": "POST", "path": "/api/saves/{save_id}/anchors/reseed",       "name": "reseed",               "desc": "task 136: 重 seed 锚点 (调试用)"},
+        {"method": "GET",  "path": "/api/settings",                             "name": "settings",             "desc": "读取设置"},
+        {"method": "POST", "path": "/api/settings",                             "name": "settings",             "desc": "写入设置"},
+        {"method": "GET",  "path": "/api/library",                              "name": "library",              "desc": "文件库列表"},
+        {"method": "POST", "path": "/api/library/upload",                       "name": "upload",               "desc": "文件库上传"},
+        {"method": "POST", "path": "/api/library/mkdir",                        "name": "mkdir",                "desc": "文件库创建文件夹"},
+        {"method": "POST", "path": "/api/library/delete",                       "name": "delete",               "desc": "文件库删除"},
+        {"method": "GET",  "path": "/api/library/download",                     "name": "download",             "desc": "文件库下载"},
+        {"method": "GET",  "path": "/api/platform/commands",                    "name": "commands",             "desc": "读取全部功能指令清单"},
     ])
 }
 
@@ -105,8 +130,12 @@ async fn api_platform(
 
     let commands = core_commands();
 
+    // user 字段:与 Python platform_for() 中 payload["user"] = public_user(user) 对齐
+    let user_field = users_svc::public_user(&user);
+
     Ok(Json(json!({
         "ok": true,
+        "user": user_field,
         "workspace": workspace,
         "tools": tools,
         "commands": commands,

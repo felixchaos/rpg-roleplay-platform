@@ -259,9 +259,12 @@ impl ContextProvider for NovelCharactersProvider {
         }
 
         let player_name = state_data.player.name.clone();
+        let player_role = state_data.player.role.clone();
+        let player_background = state_data.player.background.clone();
         let scan_text = build_scan_text(state_data, demand);
 
-        let (player_card, npc_cards) = pick_active_cards(&cards, &scan_text, &player_name);
+        let (player_card, npc_cards) =
+            pick_active_cards(&cards, &scan_text, &player_name, &player_role, &player_background);
 
         let mut layers: Vec<Layer> = Vec::new();
         if let Some(p) = player_card.as_ref() {
@@ -333,7 +336,7 @@ async fn load_character_cards(
     let rows = if let Some(sid) = script_id {
         sqlx::query(
             "select name, aliases, identity, appearance, personality, \
-                    speech_style, current_status, secrets, token_budget, priority \
+                    speech_style, current_status, secrets, sample_dialogue, token_budget, priority \
              from character_cards \
              where enabled = true and script_id = $1 \
              order by priority desc, id asc",
@@ -344,7 +347,7 @@ async fn load_character_cards(
     } else if let Some(bid) = book_id {
         sqlx::query(
             "select name, aliases, identity, appearance, personality, \
-                    speech_style, current_status, secrets, token_budget, priority \
+                    speech_style, current_status, secrets, sample_dialogue, token_budget, priority \
              from character_cards \
              where book_id = $1 \
              order by priority desc, id asc",
@@ -373,9 +376,21 @@ async fn load_character_cards(
             let speech_style: Option<String> = row.try_get("speech_style").ok();
             let current_status: Option<String> = row.try_get("current_status").ok();
             let secrets: Option<String> = row.try_get("secrets").ok();
+            // sample_dialogue: jsonb array 或 text[]
+            let sample_dialogue: Value = row
+                .try_get::<Value, _>("sample_dialogue")
+                .or_else(|_| {
+                    row.try_get::<Vec<String>, _>("sample_dialogue")
+                        .map(|v| Value::Array(v.into_iter().map(Value::String).collect()))
+                })
+                .unwrap_or(Value::Array(Vec::new()));
             let token_budget: i32 = row.try_get("token_budget").unwrap_or(450);
             let priority: i32 = row.try_get("priority").unwrap_or(100);
             let name_s = name.unwrap_or_default();
+            let dialogue_strs: Vec<&str> = sample_dialogue
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
             let text = render_card_text(
                 &name_s,
                 identity.as_deref().unwrap_or(""),
@@ -384,6 +399,7 @@ async fn load_character_cards(
                 speech_style.as_deref().unwrap_or(""),
                 current_status.as_deref().unwrap_or(""),
                 secrets.as_deref().unwrap_or(""),
+                &dialogue_strs,
             );
             json!({
                 "name": name_s,
@@ -394,6 +410,7 @@ async fn load_character_cards(
                 "speech_style": speech_style.unwrap_or_default(),
                 "current_status": current_status.unwrap_or_default(),
                 "secrets": secrets.unwrap_or_default(),
+                "sample_dialogue": sample_dialogue,
                 "token_budget": token_budget,
                 "priority": priority,
                 "text": text,
@@ -402,6 +419,11 @@ async fn load_character_cards(
         .collect())
 }
 
+/// ctx-09: 对齐 Python _format_card 的渲染格式:
+///   - 使用 【name】 而非 # name
+///   - '说话风格' 而非 '语气'
+///   - '隐藏信息' 而非 '秘密（GM 私有）'
+///   - 追加 '台词示例' (前 3 条，以 '；' 连接)
 fn render_card_text(
     name: &str,
     identity: &str,
@@ -410,9 +432,10 @@ fn render_card_text(
     speech: &str,
     status: &str,
     secrets: &str,
+    sample_dialogue: &[&str],
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
-    parts.push(format!("# {}", name));
+    parts.push(format!("【{}】", name));
     if !identity.trim().is_empty() {
         parts.push(format!("身份：{}", identity.trim()));
     }
@@ -423,13 +446,17 @@ fn render_card_text(
         parts.push(format!("性格：{}", personality.trim()));
     }
     if !speech.trim().is_empty() {
-        parts.push(format!("语气：{}", speech.trim()));
+        parts.push(format!("说话风格：{}", speech.trim()));
     }
     if !status.trim().is_empty() {
         parts.push(format!("当前状态：{}", status.trim()));
     }
     if !secrets.trim().is_empty() {
-        parts.push(format!("秘密（GM 私有）：{}", secrets.trim()));
+        parts.push(format!("隐藏信息：{}", secrets.trim()));
+    }
+    let sample: Vec<&str> = sample_dialogue.iter().take(3).copied().collect();
+    if !sample.is_empty() {
+        parts.push(format!("台词示例：{}", sample.join("；")));
     }
     parts.join("\n")
 }
@@ -472,13 +499,22 @@ fn build_scan_text(state_data: &GameStateData, demand: &Demand) -> String {
     parts.join("\n")
 }
 
-/// 简单 NPC 卡选:先挑 player_card(按 player_name 匹配),再按 scan_text 命中数挑前 6 个 NPC。
+/// NPC 卡选:先挑 player_card(按 player_name 匹配,fallback 到 '杭雁菱'),
+/// 再按 scan_text 命中数挑前 4 个 NPC。
+///
+/// ctx-10: Python active[:4],Rust 之前是 take(6),对齐 Python → take(4)。
+/// ctx-11: 评分公式对齐 Python: score = 100 + matched_count * 8。
+/// ctx-14: player_card 合并 runtime state(player.role → identity, player.background → current_status),
+///         并在 player_name 不命中时 fallback 到 '杭雁菱'。
 fn pick_active_cards(
     cards: &[Value],
     scan_text: &str,
     player_name: &str,
+    player_role: &str,
+    player_background: &str,
 ) -> (Option<Value>, Vec<Value>) {
-    let player_card = cards
+    // 找 player card — 先按 player_name,再 fallback 到 '杭雁菱'(ctx-14)
+    let raw_player_card = cards
         .iter()
         .find(|c| {
             c.get("name")
@@ -486,33 +522,92 @@ fn pick_active_cards(
                 .map(|n| !player_name.is_empty() && n == player_name)
                 .unwrap_or(false)
         })
+        .or_else(|| {
+            cards.iter().find(|c| {
+                c.get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|n| n == "杭雁菱")
+                    .unwrap_or(false)
+            })
+        })
         .cloned();
 
+    // 合并 runtime state 到 player card(ctx-14)
+    let player_card = raw_player_card.map(|mut card| {
+        // 确定渲染时用的姓名:优先 player_name,否则保留卡面名
+        let display_name = if !player_name.is_empty() {
+            player_name.to_string()
+        } else {
+            card.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string()
+        };
+        // 合并 runtime 字段
+        let identity = if !player_role.is_empty() {
+            player_role.to_string()
+        } else {
+            card.get("identity").and_then(|v| v.as_str()).unwrap_or("").to_string()
+        };
+        let current_status = if !player_background.is_empty() {
+            player_background.to_string()
+        } else {
+            card.get("current_status").and_then(|v| v.as_str()).unwrap_or("").to_string()
+        };
+        // 读其他字段
+        let appearance = card.get("appearance").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let personality = card.get("personality").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let speech_style = card.get("speech_style").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let secrets = card.get("secrets").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let sample_dialogue: Vec<String> = card
+            .get("sample_dialogue")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+        let dialogue_refs: Vec<&str> = sample_dialogue.iter().map(|s| s.as_str()).collect();
+        let text = render_card_text(
+            &display_name,
+            &identity,
+            &appearance,
+            &personality,
+            &speech_style,
+            &current_status,
+            &secrets,
+            &dialogue_refs,
+        );
+        if let Some(obj) = card.as_object_mut() {
+            obj.insert("identity".to_string(), Value::String(identity));
+            obj.insert("current_status".to_string(), Value::String(current_status));
+            obj.insert("text".to_string(), Value::String(text));
+        }
+        card
+    });
+
+    // NPC 评分:ctx-11 score = 100 + matched_count * 8
     let mut scored: Vec<(i32, Value)> = Vec::new();
     for card in cards {
         let name = card.get("name").and_then(|v| v.as_str()).unwrap_or("");
         if name.is_empty() || (!player_name.is_empty() && name == player_name) {
             continue;
         }
-        let mut score: i32 = 0;
+        let mut matched_count: i32 = 0;
         if scan_text.contains(name) {
-            score += 10;
+            matched_count += 1;
         }
         if let Some(aliases) = card.get("aliases").and_then(|v| v.as_array()) {
             for a in aliases {
                 if let Some(s) = a.as_str() {
                     if !s.is_empty() && scan_text.contains(s) {
-                        score += 5;
+                        matched_count += 1;
                     }
                 }
             }
         }
-        if score > 0 {
+        if matched_count > 0 {
+            let score = 100 + matched_count * 8;
             scored.push((score, card.clone()));
         }
     }
     scored.sort_by_key(|b| std::cmp::Reverse(b.0));
-    let npc_cards: Vec<Value> = scored.into_iter().take(6).map(|(_, c)| c).collect();
+    // ctx-10: Python active[:4]
+    let npc_cards: Vec<Value> = scored.into_iter().take(4).map(|(_, c)| c).collect();
     (player_card, npc_cards)
 }
 
@@ -673,7 +768,7 @@ async fn load_worldbook_entries(
 }
 
 fn pick_active_worldbook(entries: &[Value], scan_text: &str) -> Vec<Value> {
-    let mut scored: Vec<(i32, Value)> = Vec::new();
+    let mut scored: Vec<(i32, i32, Value)> = Vec::new();
     for e in entries {
         let mut hits = 0;
         if let Some(keys) = e.get("keys").and_then(|v| v.as_array()) {
@@ -717,11 +812,15 @@ fn pick_active_worldbook(entries: &[Value], scan_text: &str) -> Vec<Value> {
                 .get("priority")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(50) as i32;
-            scored.push((hits * 100 + pri, e.clone()));
+            // ctx-13: 对齐 Python score = priority + len(matched) * 6
+            let score = pri + hits * 6;
+            scored.push((score, pri, e.clone()));
         }
     }
-    scored.sort_by_key(|b| std::cmp::Reverse(b.0));
-    scored.into_iter().take(8).map(|(_, e)| e).collect()
+    // ctx-13: sort by (score, priority) descending,对齐 Python sort key
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+    // ctx-12: Python active[:6]
+    scored.into_iter().take(6).map(|(_, _, e)| e).collect()
 }
 
 fn strip_worldbook(e: &Value) -> Value {

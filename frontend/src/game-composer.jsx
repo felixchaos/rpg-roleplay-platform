@@ -747,8 +747,6 @@ function MentionMenu({ chars, query, onPick, onClose }) {
 }
 
 // task 39 收尾：MODEL_OPTIONS 已删，不再 export。
-Object.assign(window, { Composer, ConfirmStrip, SuggestionRow, MentionMenu, SLASH_COMMANDS, PERMISSION_OPTIONS });
-
 function ContextBreakdownPanel({ used, cap, onClose, triggerRef }) {
   const [data, setData] = useStateC(null);
   const [loading, setLoading] = useStateC(true);
@@ -884,7 +882,5 @@ function _currentModelLabel(gameState, _ignored) {
   return "模型";
 }
 
-
-Object.assign(window, { ContextUsage, ContextBreakdownPanel });
 
 export { Composer, ConfirmStrip, SuggestionRow, MentionMenu, SLASH_COMMANDS, PERMISSION_OPTIONS, ContextUsage, ContextBreakdownPanel };

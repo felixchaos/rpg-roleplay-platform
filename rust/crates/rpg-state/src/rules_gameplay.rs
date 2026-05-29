@@ -155,6 +155,22 @@ pub fn add_memory_item(
         }
     }
 
+    // SM-14: dual-write to legacy arrays (facts/notes/pinned/abilities/resources)
+    // matching Python add_memory behavior
+    if let Some(bucket) = args.legacy_bucket {
+        if !bucket.is_empty() {
+            let text_val = Value::String(text.clone());
+            match bucket {
+                "facts" => state.data.memory.facts.push(text_val),
+                "notes" => state.data.memory.notes.push(text_val),
+                "pinned" => state.data.memory.pinned.push(text_val),
+                "abilities" => state.data.memory.abilities.push(text_val),
+                "resources" => state.data.memory.resources.push(text_val),
+                _ => {} // unknown bucket, skip legacy write
+            }
+        }
+    }
+
     let items = ensure_memory_items(state);
     items.push(item);
     let len = items.len();
@@ -303,6 +319,26 @@ pub fn reject_hypothesis(state: &mut GameState, item_id: &str) -> bool {
     }
     state.touch();
     true
+}
+
+/// SM-17: list active hypotheses sorted by turn descending (max 20).
+/// Matches Python `list_active_hypotheses()` (core.py:906-914).
+pub fn list_active_hypotheses(state: &GameState) -> Vec<Value> {
+    let items = &state.data.memory.items;
+    let mut out: Vec<&Value> = items
+        .iter()
+        .filter(|i| {
+            i.get("kind").and_then(Value::as_str) == Some("hypothesis")
+                && i.get("status").and_then(Value::as_str) == Some("active")
+        })
+        .collect();
+    // Sort by turn descending
+    out.sort_by(|a, b| {
+        let ta = a.get("turn").and_then(Value::as_i64).unwrap_or(0);
+        let tb = b.get("turn").and_then(Value::as_i64).unwrap_or(0);
+        tb.cmp(&ta)
+    });
+    out.into_iter().take(20).cloned().collect()
 }
 
 // ─────────────────────────────────────────────────────────────

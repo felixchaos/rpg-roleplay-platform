@@ -32,69 +32,99 @@ pub struct ModelPricing {
 
 impl ModelPricing {
     /// 内置默认定价表 — key: `"{api_id}/{model_id}"`。
-    /// 数据来源:各 provider 官网,按 2025-Q2 定价录入。
+    /// 数据来源:各 provider 官网,2026-05-25 校准(同步自 Python model_probe._STATIC_PRICING)。
+    /// 单位:USD per 1k tokens(Python 端是 per-million,此处除以 1000)。
     fn builtin_table() -> HashMap<String, ModelPricing> {
         let mut m = HashMap::new();
+
+        // ── helper macro: (input_M, output_M) → per-1k values ─────────────
+        macro_rules! p {
+            ($i:expr, $o:expr) => {
+                ModelPricing {
+                    input_per_1k_usd: $i / 1000.0,
+                    output_per_1k_usd: $o / 1000.0,
+                    cache_read_per_1k_usd: 0.0,
+                    cache_write_per_1k_usd: 0.0,
+                }
+            };
+            ($i:expr, $o:expr, $cr:expr, $cw:expr) => {
+                ModelPricing {
+                    input_per_1k_usd: $i / 1000.0,
+                    output_per_1k_usd: $o / 1000.0,
+                    cache_read_per_1k_usd: $cr / 1000.0,
+                    cache_write_per_1k_usd: $cw / 1000.0,
+                }
+            };
+        }
+
         // ── Anthropic ──────────────────────────────────────────────────────
-        // claude-opus-4-7
-        m.insert("anthropic/claude-opus-4-7".into(), ModelPricing {
-            input_per_1k_usd: 0.015,
-            output_per_1k_usd: 0.075,
-            cache_read_per_1k_usd: 0.0015,
-            cache_write_per_1k_usd: 0.01875,
-        });
-        // claude-sonnet-4-6
-        m.insert("anthropic/claude-sonnet-4-6".into(), ModelPricing {
-            input_per_1k_usd: 0.003,
-            output_per_1k_usd: 0.015,
-            cache_read_per_1k_usd: 0.0003,
-            cache_write_per_1k_usd: 0.00375,
-        });
-        // claude-haiku-4-5
-        m.insert("anthropic/claude-haiku-4-5".into(), ModelPricing {
-            input_per_1k_usd: 0.00025,
-            output_per_1k_usd: 0.00125,
-            cache_read_per_1k_usd: 0.00003,
-            cache_write_per_1k_usd: 0.0003,
-        });
-        // ── Gemini (Vertex AI / Google AI Studio) ──────────────────────────
-        // gemini-2.5-flash (≤200k ctx)
-        m.insert("vertex_ai/gemini-2.5-flash".into(), ModelPricing {
-            input_per_1k_usd: 0.000075,
-            output_per_1k_usd: 0.0003,
-            cache_read_per_1k_usd: 0.0000188,
-            cache_write_per_1k_usd: 0.000075,
-        });
-        // gemini-2.5-pro
-        m.insert("vertex_ai/gemini-2.5-pro".into(), ModelPricing {
-            input_per_1k_usd: 0.00125,
-            output_per_1k_usd: 0.01,
-            cache_read_per_1k_usd: 0.0003125,
-            cache_write_per_1k_usd: 0.00125,
-        });
-        // ── DeepSeek ───────────────────────────────────────────────────────
-        // deepseek-v3 (openai_compat)
-        m.insert("openai_compat/deepseek-v3".into(), ModelPricing {
-            input_per_1k_usd: 0.00027,
-            output_per_1k_usd: 0.0011,
-            cache_read_per_1k_usd: 0.000007,
-            cache_write_per_1k_usd: 0.00027,
-        });
+        // task 57: 2026-05-25 校准。Anthropic 有 prompt caching,保留 cache 列。
+        m.insert("anthropic/claude-opus-4-7".into(),   p!(15.0, 75.0, 1.5,   18.75));
+        m.insert("anthropic/claude-opus-4-6".into(),   p!(15.0, 75.0, 1.5,   18.75));
+        m.insert("anthropic/claude-opus-4-5".into(),   p!(15.0, 75.0, 1.5,   18.75));
+        m.insert("anthropic/claude-sonnet-4-6".into(), p!(3.0,  15.0, 0.3,   3.75));
+        m.insert("anthropic/claude-sonnet-4-5".into(), p!(3.0,  15.0, 0.3,   3.75));
+        m.insert("anthropic/claude-haiku-4-5".into(),  p!(1.0,  5.0,  0.1,   1.25));
+        m.insert("anthropic/claude-3-5-sonnet".into(), p!(3.0,  15.0, 0.3,   3.75));
+        m.insert("anthropic/claude-3-5-haiku".into(),  p!(0.8,  4.0,  0.08,  1.0));
+
+        // ── Vertex AI (Gemini) ─────────────────────────────────────────────
+        m.insert("vertex_ai/gemini-3.5-flash".into(), p!(1.50,  9.00));
+        m.insert("vertex_ai/gemini-3.1-pro".into(),   p!(2.00,  12.00));
+        m.insert("vertex_ai/gemini-3-flash".into(),   p!(1.50,  9.00));
+        m.insert("vertex_ai/gemini-3-pro".into(),     p!(1.25,  10.0));
+        m.insert("vertex_ai/gemini-2.5-flash".into(), p!(0.075, 0.3,  0.018_75, 0.075));
+        m.insert("vertex_ai/gemini-2.5-pro".into(),   p!(1.25,  5.0,  0.312_5,  1.25));
+        m.insert("vertex_ai/gemini-2.0-flash".into(), p!(0.075, 0.3));
+
         // ── OpenAI ─────────────────────────────────────────────────────────
-        // gpt-4o
-        m.insert("openai/gpt-4o".into(), ModelPricing {
-            input_per_1k_usd: 0.0025,
-            output_per_1k_usd: 0.01,
-            cache_read_per_1k_usd: 0.00125,
-            cache_write_per_1k_usd: 0.0025,
-        });
-        // gpt-5
-        m.insert("openai/gpt-5".into(), ModelPricing {
-            input_per_1k_usd: 0.01,
-            output_per_1k_usd: 0.04,
-            cache_read_per_1k_usd: 0.005,
-            cache_write_per_1k_usd: 0.01,
-        });
+        m.insert("openai/gpt-5.5".into(),          p!(2.5,  10.0));
+        m.insert("openai/gpt-5.5-instant".into(),  p!(1.25, 5.0));
+        m.insert("openai/gpt-5.5-pro".into(),      p!(5.0,  20.0));
+        m.insert("openai/gpt-5.5-thinking".into(), p!(5.0,  20.0));
+        m.insert("openai/gpt-5".into(),            p!(2.0,  8.0));
+        m.insert("openai/gpt-4.1".into(),          p!(2.0,  8.0));
+        m.insert("openai/gpt-4o".into(),           p!(2.5,  10.0));
+        m.insert("openai/gpt-4o-mini".into(),      p!(0.15, 0.6));
+        m.insert("openai/gpt-4-turbo".into(),      p!(10.0, 30.0));
+        m.insert("openai/o1-mini".into(),          p!(1.1,  4.4));
+
+        // ── OpenRouter ─────────────────────────────────────────────────────
+        m.insert("openrouter/anthropic/claude-opus-4-7".into(),   p!(15.75, 78.75));
+        m.insert("openrouter/anthropic/claude-sonnet-4-6".into(), p!(3.15,  15.75));
+        m.insert("openrouter/openai/gpt-5.5".into(),              p!(2.625, 10.5));
+        m.insert("openrouter/openai/gpt-4o".into(),               p!(2.625, 10.5));
+        m.insert("openrouter/google/gemini-3.5-flash".into(),     p!(1.575, 9.45));
+        m.insert("openrouter/google/gemini-3.1-pro".into(),       p!(2.10,  12.60));
+        m.insert("openrouter/google/gemini-2.5-pro".into(),       p!(1.31,  5.25));
+
+        // ── SiliconFlow ────────────────────────────────────────────────────
+        m.insert("siliconflow/deepseek-ai/DeepSeek-V4-Pro".into(),   p!(1.74, 3.48));
+        m.insert("siliconflow/deepseek-ai/DeepSeek-V4-Flash".into(), p!(0.30, 1.20));
+        m.insert("siliconflow/deepseek-ai/DeepSeek-V3".into(),       p!(0.27, 1.10));
+        m.insert("siliconflow/Qwen/Qwen3.7-Max".into(),              p!(2.50, 7.50));
+        m.insert("siliconflow/Qwen/Qwen3.6-Flash".into(),            p!(0.19, 1.13));
+        m.insert("siliconflow/Qwen/Qwen2.5-72B-Instruct".into(),     p!(0.55, 1.65));
+
+        // ── MiniMax ────────────────────────────────────────────────────────
+        m.insert("minimax/MiniMax-M1".into(),    p!(0.55, 2.20));
+        m.insert("minimax/abab6.5s-chat".into(), p!(0.14, 0.14));
+
+        // ── DashScope (Alibaba) ────────────────────────────────────────────
+        m.insert("dashscope/qwen3.7-max".into(),   p!(2.50, 7.50));
+        m.insert("dashscope/qwen3.6-flash".into(), p!(0.19, 1.13));
+        m.insert("dashscope/qwen-max".into(),      p!(1.40, 5.6));
+        m.insert("dashscope/qwen-plus".into(),     p!(0.11, 0.28));
+        m.insert("dashscope/qwen-turbo".into(),    p!(0.04, 0.08));
+
+        // ── Hunyuan (Tencent) ──────────────────────────────────────────────
+        m.insert("hunyuan/hunyuan-turbos-latest".into(), p!(0.11, 0.32));
+        m.insert("hunyuan/hunyuan-large".into(),         p!(0.55, 1.65));
+
+        // ── Doubao (ByteDance) ─────────────────────────────────────────────
+        m.insert("doubao/doubao-1-5-pro-32k-250115".into(),  p!(0.11, 0.28));
+        m.insert("doubao/doubao-1-5-lite-32k-250115".into(), p!(0.04, 0.08));
+
         m
     }
 }

@@ -8,7 +8,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{header, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -29,7 +29,9 @@ use rpg_platform::tavern_cards::{
     write_png_card,
 };
 
-use crate::{require_user, AppState, ResponseError};
+use crate::{
+    build_session_delete_cookie, request_is_https, require_user, AppState, ResponseError,
+};
 
 // ─── router ──────────────────────────────────────────────────────────────────
 
@@ -121,69 +123,48 @@ struct CredTestQuery {
 
 // ─── /api/me/profile ─────────────────────────────────────────────────────────
 
-/// GET /api/me/profile — 个人主页一次拉全：账户 + 用量摘要 + 凭证清单 + 偏好
+/// GET /api/me/profile — 个人主页（AUTH-17: 以 frontend_routes.py 为权威）
+///
+/// Python frontend_routes.py 返回 {ok, profile: {id, username, display_name, bio,
+/// role, avatar_url, ...profile_extras_fields}}，与 api/me.py 的扩展格式不同。
+/// 前端 Profile 页面依赖此 profile_extras 格式。
 async fn get_profile(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ResponseError> {
     let user = require_user(&s, &headers).await?;
-    let user_id = user.id;
 
-    // 并发查询：偏好 + save/script 数量 + 用量摘要 + 凭证
-    let prefs_row = sqlx::query(
-        "select preferences, updated_at from user_preferences where user_id = $1",
+    // AUTH-17: 以 frontend_routes.py 为权威。
+    // 用 row_to_json 将 profile_extras 整行转 JSON，再剔除 user_id，与 Python expose(row) 等价。
+    let extras: Value = sqlx::query_scalar(
+        "select row_to_json(e) from profile_extras e where user_id = $1",
     )
-    .bind(user_id)
+    .bind(user.id)
     .fetch_optional(&s.db)
-    .await?;
-
-    let save_count: i64 = sqlx::query_scalar(
-        "select count(*)::bigint from game_saves where user_id = $1",
-    )
-    .bind(user_id)
-    .fetch_one(&s.db)
     .await
-    .unwrap_or(0);
+    .ok()
+    .flatten()
+    .unwrap_or(Value::Object(Default::default()));
 
-    let script_count: i64 = sqlx::query_scalar(
-        "select count(*)::bigint from scripts where owner_id = $1",
-    )
-    .bind(user_id)
-    .fetch_one(&s.db)
-    .await
-    .unwrap_or(0);
-
-    let usage = usage_svc::aggregate_usage(&s.db, user_id, 30).await?;
-    let credentials = users_svc::list_credentials(&s.db, user_id).await?;
-
-    let (prefs_value, prefs_updated_at): (Value, Option<String>) = match prefs_row {
-        Some(ref r) => {
-            let v: Value = r.try_get("preferences").unwrap_or(Value::Object(Default::default()));
-            let ts: Option<chrono::DateTime<chrono::Utc>> = r.try_get("updated_at").ok();
-            (v, ts.map(|t| t.to_rfc3339()))
+    let mut profile = serde_json::Map::new();
+    // 先把 extras 的所有字段展开（包含 visibility、real_name、gender、avatar_url 等）
+    if let Value::Object(extras_map) = extras {
+        for (k, v) in extras_map {
+            if k != "user_id" {
+                profile.insert(k, v);
+            }
         }
-        None => (Value::Object(Default::default()), None),
-    };
+    }
+    // 再覆写核心字段（user 表权威字段优先）
+    profile.insert("id".to_string(), json!(user.id));
+    profile.insert("username".to_string(), json!(user.username));
+    profile.insert("display_name".to_string(), json!(user.display_name));
+    profile.insert("bio".to_string(), json!(user.bio));
+    profile.insert("role".to_string(), json!(user.role));
 
     Ok(Json(json!({
         "ok": true,
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "display_name": user.display_name,
-            "bio": user.bio,
-            "role": user.role,
-            "created_at": user.created_at,
-            "updated_at": user.updated_at,
-        },
-        "stats": {
-            "saves": save_count,
-            "scripts": script_count,
-        },
-        "usage_30d": usage,
-        "credentials": credentials,
-        "preferences": prefs_value,
-        "preferences_updated_at": prefs_updated_at,
+        "profile": Value::Object(profile),
     }))
     .into_response())
 }
@@ -398,7 +379,8 @@ async fn get_usage_timeline(
     let days = q.days.unwrap_or(30);
     let group_by = q.group_by.as_deref().unwrap_or("day");
     match usage_svc::timeline_usage(&s.db, user.id, days, group_by).await {
-        Ok(rows) => Ok(Json(json!({"ok": true, "rows": rows})).into_response()),
+        // AUTH-06: 与 Python 一致 — 字段名 series, 补 group_by / days
+        Ok(rows) => Ok(Json(json!({"ok": true, "group_by": group_by, "days": days, "series": rows})).into_response()),
         Err(e) => {
             let msg = e.to_string();
             Ok((
@@ -823,7 +805,9 @@ async fn list_credentials(
 ) -> Result<Response, ResponseError> {
     let user = require_user(&s, &headers).await?;
     let creds = users_svc::list_credentials(&s.db, user.id).await?;
-    Ok(Json(json!({"ok": true, "items": creds})).into_response())
+    // AUTH-07: 补 total 字段
+    let total = creds.len();
+    Ok(Json(json!({"ok": true, "items": creds, "total": total})).into_response())
 }
 
 /// POST /api/me/credentials — 设置/更新 API key
@@ -993,6 +977,7 @@ async fn account_deactivate(
 async fn account_delete(
     State(s): State<AppState>,
     headers: HeaderMap,
+    uri: Uri,
 ) -> Result<Response, ResponseError> {
     let user = require_user(&s, &headers).await?;
     sqlx::query("delete from sessions where user_id = $1")
@@ -1003,5 +988,13 @@ async fn account_delete(
         .bind(user.id)
         .execute(&s.db)
         .await?;
-    Ok(Json(json!({"ok": true})).into_response())
+    // AUTH-09: 与 Python _delete_session_cookie 一致 — 清除浏览器 cookie
+    let is_https = request_is_https(&headers, &uri);
+    let cookie = build_session_delete_cookie(is_https);
+    Ok((
+        StatusCode::OK,
+        [(header::SET_COOKIE, cookie)],
+        Json(json!({"ok": true})),
+    )
+        .into_response())
 }

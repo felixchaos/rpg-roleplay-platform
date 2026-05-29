@@ -58,7 +58,10 @@ impl ContextProvider for RulesProvider {
         // TODO: game_policy.gm_prompt_constraints — 等 rpg-rules-bridge 提供。
         // policy_constraints 暂时空。
 
-        {
+        // Only emit PC block when pc.name is non-empty (matching Python `if pc:` check).
+        // Empty PlayerCharacter (all zeros/empty strings) is falsy — skip to avoid
+        // polluting novel-adaptation GM prompts with garbage like 'HP 0/0 · AC 0'.
+        if !pc.name.is_empty() {
             let name = pc.name.as_str();
             let level = pc.level as i64;
             let class_name = pc.class_name.as_str();
@@ -144,7 +147,10 @@ impl ContextProvider for RulesProvider {
         let layer = Layer::new("rules", "规则集状态", text.clone()).with_priority(80);
 
         let mut facts: Vec<String> = Vec::new();
-        facts.push(format!("角色 HP {}/{}, AC {}", pc.hp, pc.max_hp, pc.ac));
+        // Only push HP fact when pc is non-empty (matching Python `if pc:` check, ctx-07).
+        if !pc.name.is_empty() {
+            facts.push(format!("角色 HP {}/{}, AC {}", pc.hp, pc.max_hp, pc.ac));
+        }
         if !rcas.is_empty() {
             facts.push(format!("本轮候选规则动作 {} 条", rcas.len()));
         }

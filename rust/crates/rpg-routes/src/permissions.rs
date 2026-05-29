@@ -138,6 +138,20 @@ async fn api_pending_write(
                 Err(e) => return Err(ResponseError::internal(e.to_string())),
             },
         };
+        // PERMISSIONS-PENDING-WRITE-MISSING-STRUCTURED-UPDATES:
+        // 对应 Python: state.data['memory']['last_structured_updates'] =
+        //   [result] + state.data['memory'].get('last_structured_updates', [])[:11]
+        // 将结果预置到 memory.last_structured_updates(最多保留 12 条)。
+        {
+            let mut updates = st.data.memory.last_structured_updates.clone();
+            updates.insert(0, payload.clone());
+            updates.truncate(12);
+            // set_path 触发 touch() + snapshot cache 失效
+            let _ = st.set_path(
+                "memory.last_structured_updates",
+                Value::Array(updates),
+            );
+        }
         (st.clone(), payload)
     };
     let mut out = result_payload;

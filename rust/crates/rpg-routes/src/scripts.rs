@@ -252,8 +252,7 @@ async fn api_script_chapters(
         let like = format!("%{}%", q);
         let rows = sqlx::query(
             r#"
-            select id, chapter_index, title, volume_title, word_count,
-                   substring(content for 200) as preview
+            select id, chapter_index, title, volume_title, word_count, content
             from script_chapters
             where script_id = $1 and (title ilike $2 or content ilike $3)
             order by chapter_index limit $4
@@ -270,13 +269,15 @@ async fn api_script_chapters(
         let items: Vec<Value> = rows
             .iter()
             .map(|r| {
+                let ci = r.try_get::<i32,_>("chapter_index").unwrap_or_default();
                 json!({
                     "id": r.try_get::<i64,_>("id").unwrap_or_default(),
-                    "chapter_index": r.try_get::<i32,_>("chapter_index").unwrap_or_default(),
+                    "chapter_index": ci,
+                    "index": ci,
                     "title": r.try_get::<String,_>("title").unwrap_or_default(),
                     "volume_title": r.try_get::<String,_>("volume_title").unwrap_or_default(),
                     "word_count": r.try_get::<i32,_>("word_count").unwrap_or_default(),
-                    "preview": r.try_get::<String,_>("preview").unwrap_or_default(),
+                    "content": r.try_get::<String,_>("content").unwrap_or_default(),
                 })
             })
             .collect();
@@ -291,8 +292,7 @@ async fn api_script_chapters(
     let rows = if let Some(ci) = cursor_index {
         sqlx::query(
             r#"
-            select id, chapter_index, title, volume_title, word_count,
-                   substring(content for 200) as preview
+            select id, chapter_index, title, volume_title, word_count, content
             from script_chapters
             where script_id = $1 and chapter_index > $2
             order by chapter_index limit $3
@@ -306,8 +306,7 @@ async fn api_script_chapters(
     } else {
         sqlx::query(
             r#"
-            select id, chapter_index, title, volume_title, word_count,
-                   substring(content for 200) as preview
+            select id, chapter_index, title, volume_title, word_count, content
             from script_chapters
             where script_id = $1
             order by chapter_index limit $2
@@ -323,13 +322,15 @@ async fn api_script_chapters(
     let items: Vec<Value> = rows
         .iter()
         .map(|r| {
+            let ci = r.try_get::<i32,_>("chapter_index").unwrap_or_default();
             json!({
                 "id": r.try_get::<i64,_>("id").unwrap_or_default(),
-                "chapter_index": r.try_get::<i32,_>("chapter_index").unwrap_or_default(),
+                "chapter_index": ci,
+                "index": ci,
                 "title": r.try_get::<String,_>("title").unwrap_or_default(),
                 "volume_title": r.try_get::<String,_>("volume_title").unwrap_or_default(),
                 "word_count": r.try_get::<i32,_>("word_count").unwrap_or_default(),
-                "preview": r.try_get::<String,_>("preview").unwrap_or_default(),
+                "content": r.try_get::<String,_>("content").unwrap_or_default(),
             })
         })
         .collect();

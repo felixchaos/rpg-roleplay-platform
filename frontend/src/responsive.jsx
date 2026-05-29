@@ -190,12 +190,4 @@ function chatComposerKey(e, onSend) {
   if (typeof onSend === "function") onSend();
 }
 
-Object.assign(window, {
-useBreakpoint,
-useResizable,
-chatComposerKey,
-ResizeHandle,
-PL_BREAKPOINTS: BREAKPOINTS,
-});
-
 export { useBreakpoint, useResizable, chatComposerKey, ResizeHandle, BREAKPOINTS as PL_BREAKPOINTS };

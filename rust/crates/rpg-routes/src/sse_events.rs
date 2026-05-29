@@ -11,12 +11,25 @@
 //! 让前端 TS 编译炸出 mismatch,做 silent-break 兜底。
 //!
 //! 涉及事件名(与 `frontend/src/api-client.js` 监听对齐):
-//! - `hello`         — 流首帧,握手 + reset 前端 backoff
-//! - `state_change`  — 阶段切换 / phase 标签 / 会话 id 等
-//! - `chunk`         — LLM 流式片段(text / tool_use / thinking)
-//! - `done`          — 流末尾(可能携带最新 state snapshot)
-//! - `error`         — 任意错误(detail + code)
-//! - `keepalive`     — 长连接心跳(空 payload,前端忽略)
+//! - `hello`                — 流首帧,握手 + reset 前端 backoff
+//! - `stage`                — 阶段切换(phase + label)
+//! - `state_change`         — bus 投影的状态变更(保留兼容)
+//! - `token`                — GM 文本片段(game chat/opening)
+//! - `status`               — 中间状态快照(full payload)
+//! - `retrieval`            — RAG 检索结果
+//! - `context`              — context debug 信息
+//! - `agent`                — 子代理 step 进度
+//! - `updates`              — 结构化状态更新列表
+//! - `tool_call`            — 工具调用
+//! - `tool_result`          — 工具结果
+//! - `tool_error`           — 工具错误
+//! - `usage`                — token 用量统计
+//! - `worldbook_consulting` — 世界书查阅中
+//! - `worldbook_ready`      — 世界书查阅完毕
+//! - `done`                 — 流末尾(可能携带最新 state snapshot)
+//! - `error`                — 任意错误(detail + code)
+//! - `keepalive`            — 长连接心跳(空 payload,前端忽略)
+//! - `chunk`                — LLM 流式片段(console_assistant 仍用)
 //!
 //! 顶层 [`SseEnvelope`] 是 tagged union(event 名 + payload),给前端做
 //! discriminated union 用。后端不直接构造 envelope — 由 `named_sse_event`
@@ -195,6 +208,32 @@ pub enum SseEnvelope {
     Chunk { payload: SseChunkPayload },
     Done { payload: SseDonePayload },
     Error { payload: SseErrorPayload },
+    /// game-sse-02: stage event (phase transitions)
+    Stage { payload: Value },
+    /// game-sse-02: GM text token
+    Token { payload: Value },
+    /// game-sse-02: intermediate status snapshot
+    Status { payload: Value },
+    /// game-sse-02: RAG retrieval result
+    Retrieval { payload: Value },
+    /// game-sse-02: context debug info
+    Context { payload: Value },
+    /// game-sse-02: sub-agent step progress
+    Agent { payload: Value },
+    /// game-sse-02: structured state updates
+    Updates { payload: Value },
+    /// game-sse-02: tool call
+    ToolCall { payload: Value },
+    /// game-sse-02: tool result
+    ToolResult { payload: Value },
+    /// game-sse-02: tool error
+    ToolError { payload: Value },
+    /// game-sse-04: usage statistics
+    Usage { payload: Value },
+    /// game-sse-02: worldbook consulting
+    WorldbookConsulting { payload: Value },
+    /// game-sse-02: worldbook ready
+    WorldbookReady { payload: Value },
     /// 心跳帧,无 payload(axum KeepAlive 实际发 `: keepalive\n\n` 注释帧,
     /// 这里只是形式登记)。
     Keepalive,

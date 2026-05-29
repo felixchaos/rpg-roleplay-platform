@@ -171,6 +171,9 @@ pub struct PublicUser {
     /// Python 里的 `uid` 字段 = `str(public_id)`,前端按字符串展示。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uid: Option<String>,
+    /// AUTH-16: avatar_url from users table (Python public_user includes this)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
 }
 
 /// User → PublicUser(对应 Python `public_user`)。
@@ -186,6 +189,7 @@ pub fn public_user(user: &User) -> PublicUser {
         updated_at: user.updated_at,
         row_version: user.row_version,
         uid: user.public_id.map(|u| u.to_string()),
+        avatar_url: user.avatar_url.clone(),
     }
 }
 

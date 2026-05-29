@@ -933,6 +933,7 @@ async fn main() -> Result<()> {
         run_ids: DashMap::new(),
         console_conversations: DashMap::new(),
         chunk_uploads: DashMap::new(),
+        health_cache: DashMap::new(),
         config: config.clone(),
         shutdown_token: CancellationToken::new(),
         task_tracker: TaskTracker::new(),

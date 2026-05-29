@@ -119,9 +119,23 @@ async fn api_settings_set(
         })?;
     }
 
+    // AUTH-04: 与 Python 一致 — 写完后返回完整 settings map 而非 updated 计数
+    let rows: Vec<(String, serde_json::Value)> = sqlx::query_as(
+        "SELECT key, value FROM settings WHERE user_id = $1 ORDER BY key",
+    )
+    .bind(user.id)
+    .fetch_all(&s.db)
+    .await
+    .map_err(|e| ResponseError::internal(format!("读取 settings 失败: {e}")))?;
+
+    let mut map = serde_json::Map::new();
+    for (k, v) in rows {
+        map.insert(k, v);
+    }
+
     Ok(Json(json!({
         "ok": true,
-        "updated": pairs.len(),
+        "settings": serde_json::Value::Object(map),
     }))
     .into_response())
 }

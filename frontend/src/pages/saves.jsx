@@ -1595,7 +1595,4 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   return createPortal(node, document.body);
 }
 
-Object.assign(window, {
-  SavesPage, SavesListView, BranchesPage, ContinuePicker, NewGameModal,
-});
 export { SavesPage, SavesListView, BranchesPage, ContinuePicker, NewGameModal };

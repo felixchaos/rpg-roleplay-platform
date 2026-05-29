@@ -2850,8 +2850,3 @@ export {
 };
 
 // 过渡期保留 window 注入,等所有 consumer 改完 import 后删除。
-Object.assign(window, {
-  SettingsPage,
-  MODELS_DATA,
-  PROVIDERS_CONFIG,
-});

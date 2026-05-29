@@ -690,7 +690,4 @@ function CardEditModal({ card, isNew, kind, onClose, onSave }) {
   return createPortal(node, document.body);
 }
 
-Object.assign(window, {
-  CardsPage, CardGrid, UserCardsView, NpcCardsView, CardEditModal, TavernImportModal,
-});
 export { CardsPage, CardGrid, UserCardsView, NpcCardsView, CardEditModal, TavernImportModal };

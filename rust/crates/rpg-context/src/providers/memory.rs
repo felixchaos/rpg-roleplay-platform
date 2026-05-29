@@ -46,13 +46,19 @@ impl ContextProvider for MemoryProvider {
             }
         }
 
-        // hypotheses
+        // hypotheses — limit to 5 matching Python `active_hypos[:5]` (ctx-15).
+        // ctx-16: only include items with explicit status == "active" (not missing status).
+        let mut hypo_count = 0usize;
         for it in &memory.items {
+            if hypo_count >= 5 {
+                break;
+            }
             if it.get("kind").and_then(|v| v.as_str()) == Some("hypothesis")
-                && it.get("status").and_then(|v| v.as_str()).unwrap_or("active") == "active"
+                && it.get("status").and_then(|v| v.as_str()) == Some("active")
             {
                 let text = it.get("text").and_then(|v| v.as_str()).unwrap_or("");
                 lines.push(format!("未确认推测：{}", text));
+                hypo_count += 1;
             }
         }
 

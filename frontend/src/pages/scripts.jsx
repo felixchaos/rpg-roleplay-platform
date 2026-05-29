@@ -1206,9 +1206,4 @@ function ImportEstimateView({ estimate, rule, onCancel, onConfirm }) {
   );
 }
 
-Object.assign(window, {
-  ScriptsPage, ScriptsListView, ChaptersModal, OverridesModal, ScriptsImportView,
-  ImportJobBanner, ImportJobResult, ImportEstimateView,
-  ScriptPreviewModal, ConfidenceBar,
-});
 export { ScriptsPage, ScriptsListView, ChaptersModal, OverridesModal, ScriptsImportView, ImportJobBanner, ImportJobResult, ImportEstimateView, ScriptPreviewModal, ConfidenceBar };

@@ -162,6 +162,110 @@ pub fn clear_encounter(state: &mut GameState) {
     update_encounter(state, default);
 }
 
+/// SM-16: 移除所有 source 匹配的 active entities,再插入新 entities。
+///
+/// 对应 Python `replace_active_entities_with_source(source, entities)` (rules_gameplay.py:182-193)。
+/// 用于房间切换时替换 source='room_data' 的实体。
+pub fn replace_active_entities_with_source(
+    state: &mut GameState,
+    source: &str,
+    entities: Vec<Value>,
+) {
+    {
+        let arr = ensure_active_entities(state);
+        arr.retain(|e| {
+            e.get("source")
+                .and_then(Value::as_str)
+                .map(|s| s != source)
+                .unwrap_or(true)
+        });
+    }
+    for entity in entities {
+        // 忽略 upsert 错误(缺少 id 的条目跳过)
+        let _ = upsert_active_entity(state, entity);
+    }
+}
+
+/// SM-16: 覆盖整个 scene 对象。
+///
+/// 对应 Python `set_scene(scene)` (rules_gameplay.py)。
+pub fn set_scene(state: &mut GameState, scene: Value) {
+    if let Ok(s) = serde_json::from_value(scene) {
+        state.data.scene = s;
+        state.touch();
+    } else {
+        tracing::warn!("set_scene: invalid scene value, skipping");
+    }
+}
+
+/// SM-16: 标记一次地点访问记录。
+///
+/// 对应 Python `mark_scene_visit(location_id)` (rules_gameplay.py)。
+/// 若 location_id 不在 visited_rooms 中,则追加。
+pub fn mark_scene_visit(state: &mut GameState, location_id: &str) {
+    if location_id.is_empty() {
+        return;
+    }
+    let already = state
+        .data
+        .scene
+        .visited_rooms
+        .iter()
+        .any(|v| v.as_str().map(|s| s == location_id).unwrap_or(false));
+    if !already {
+        state
+            .data
+            .scene
+            .visited_rooms
+            .push(Value::String(location_id.to_string()));
+        state.touch();
+    }
+}
+
+/// SM-16: 设置 scene flag。
+///
+/// 对应 Python `set_scene_flag(flag, value)` (rules_gameplay.py)。
+pub fn set_scene_flag(state: &mut GameState, flag: &str, value: Value) {
+    state
+        .data
+        .scene
+        .flags
+        .insert(flag.to_string(), value);
+    state.touch();
+}
+
+/// SM-16: 覆盖 player_character 对象。
+///
+/// 对应 Python `set_player_character(character)` (rules_gameplay.py)。
+pub fn set_player_character(state: &mut GameState, character: Value) {
+    if let Ok(pc) = serde_json::from_value(character) {
+        state.data.player_character = pc;
+        state.touch();
+    } else {
+        tracing::warn!("set_player_character: invalid character value, skipping");
+    }
+}
+
+/// SM-16: 直接设置 player_character.hp,返回新 hp 值。
+///
+/// 对应 Python `update_player_hp(new_hp, reason)` (rules_gameplay.py)。
+/// hp 钳制在 [0, max_hp]。
+pub fn update_player_hp(state: &mut GameState, new_hp: i32) -> i32 {
+    let max = state.data.player_character.max_hp.max(0);
+    let clamped = new_hp.clamp(0, if max == 0 { i32::MAX } else { max });
+    state.data.player_character.hp = clamped;
+    state.touch();
+    clamped
+}
+
+/// SM-16: 对玩家造成伤害,返回新 hp 值。
+///
+/// 对应 Python `damage_player(amount, reason)` (rules_gameplay.py)。
+pub fn damage_player(state: &mut GameState, amount: i32) -> i32 {
+    let current = state.data.player_character.hp;
+    update_player_hp(state, current - amount)
+}
+
 // ─────────────────────────────────────────────────────────────
 // helpers
 // ─────────────────────────────────────────────────────────────

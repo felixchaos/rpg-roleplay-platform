@@ -485,20 +485,17 @@ async fn api_login_history(
             let ip: Option<String> = r.try_get("ip").ok().flatten();
             let event: Option<String> = r.try_get("event").ok();
             let meta: Option<serde_json::Value> = r.try_get("meta").ok();
-            // meta 里可能有 "result" / "ok" 字段;fallback 用 event 判断
-            let result_str = meta
+            // AUTH-11: 与 Python 一致 — event == 'login_ok' → 'ok', 其余 → 'blocked'
+            let result_str = if event.as_deref() == Some("login_ok") { "ok" } else { "blocked" }.to_string();
+            // AUTH-08: 从 meta.ua 提取 user_agent
+            let user_agent: Option<String> = meta
                 .as_ref()
-                .and_then(|m| m.get("result").and_then(|v| v.as_str()).map(String::from))
-                .or_else(|| {
-                    meta.as_ref()
-                        .and_then(|m| m.get("ok").and_then(|v| v.as_bool()))
-                        .map(|ok| if ok { "ok" } else { "blocked" }.to_string())
-                })
-                .unwrap_or_else(|| "ok".to_string());
+                .and_then(|m| m.get("ua").and_then(|v| v.as_str()).map(String::from));
             json!({
                 "id": id,
                 "at": at.map(|t| t.to_rfc3339()),
                 "ip": ip,
+                "user_agent": user_agent,
                 "meta": meta,
                 "result": result_str,
                 "event": event,

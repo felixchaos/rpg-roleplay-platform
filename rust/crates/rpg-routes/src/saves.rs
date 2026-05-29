@@ -78,6 +78,7 @@ fn default_keep_satisfied() -> bool {
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 /// GET /api/saves — 存档列表（轻量摘要）
+/// 对应 Python: 附带 branch_count per save（来自 branch_commits 表）
 async fn api_saves_list(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -111,9 +112,43 @@ async fn api_saves_list(
         None
     };
 
+    // 查询每个 save 的 branch_count（对应 Python overview 中 branch_commits 计数）
+    let save_ids: Vec<i64> = filtered.iter().map(|s| s.id).collect();
+    let mut branch_counts: std::collections::HashMap<i64, i32> = std::collections::HashMap::new();
+    if !save_ids.is_empty() {
+        let rows = sqlx::query(
+            "SELECT save_id, count(*)::int as count FROM branch_commits WHERE save_id = ANY($1) GROUP BY save_id",
+        )
+        .bind(&save_ids)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+        for row in rows {
+            use sqlx::Row;
+            if let (Ok(sid), Ok(cnt)) = (row.try_get::<i64, _>("save_id"), row.try_get::<i32, _>("count")) {
+                branch_counts.insert(sid, cnt);
+            }
+        }
+    }
+
+    // 将 branch_count 合并进 save JSON
+    let saves_with_branch: Vec<serde_json::Value> = filtered
+        .iter()
+        .map(|s| {
+            let mut v = serde_json::to_value(s).unwrap_or(json!({}));
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert(
+                    "branch_count".to_string(),
+                    json!(branch_counts.get(&s.id).copied().unwrap_or(0)),
+                );
+            }
+            v
+        })
+        .collect();
+
     Ok(Json(json!({
         "ok": true,
-        "saves": filtered,
+        "saves": saves_with_branch,
         "has_more": has_more,
         "next_cursor": next_cursor,
     })))

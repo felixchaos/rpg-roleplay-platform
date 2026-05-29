@@ -124,6 +124,7 @@ pub struct CredentialMeta {
     pub has_credential: bool,
     pub base_url_override: String,
     pub enabled: bool,
+    pub updated_at: String,
 }
 
 /// API key 解析结果(对应 Python `resolve_api_key` 返回的 dict)。
@@ -166,7 +167,8 @@ pub async fn list_credentials(
 ) -> PlatformResult<Vec<CredentialMeta>> {
     let rows = sqlx::query(
         r#"
-        select api_id, base_url_override, enabled, length(encrypted_key) as cipher_len
+        select api_id, base_url_override, enabled, length(encrypted_key) as cipher_len,
+               updated_at
           from user_api_credentials
          where user_id = $1
          order by api_id
@@ -178,11 +180,16 @@ pub async fn list_credentials(
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let cipher_len: i32 = r.try_get("cipher_len").unwrap_or(0);
+        let updated_at = r
+            .try_get::<chrono::DateTime<chrono::Utc>, _>("updated_at")
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_default();
         out.push(CredentialMeta {
             api_id: r.try_get("api_id")?,
             has_credential: cipher_len > 0,
             base_url_override: r.try_get::<String, _>("base_url_override").unwrap_or_default(),
             enabled: r.try_get::<bool, _>("enabled").unwrap_or(false),
+            updated_at,
         });
     }
     Ok(out)

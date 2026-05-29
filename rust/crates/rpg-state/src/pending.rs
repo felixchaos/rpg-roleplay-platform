@@ -396,6 +396,44 @@ fn push_audit(state: &mut GameState, entry: Value) {
     }
 }
 
+/// SM-18: Parse question text for inline options.
+/// Mirrors Python `_parse_question` (parsers.py:72-99).
+/// Splits on '|' or '｜', cleans each option.
+/// Returns (question_text, options_vec).
+pub fn parse_question(text: &str) -> (String, Vec<String>) {
+    let text = text.trim();
+    if text.is_empty() {
+        return (String::new(), vec![]);
+    }
+
+    // Try splitting on fullwidth '｜' first, then ASCII '|'
+    let parts: Vec<&str> = if text.contains('｜') {
+        text.splitn(2, '｜').collect()
+    } else if text.contains('|') {
+        text.splitn(2, '|').collect()
+    } else {
+        return (clean_item(text), vec![]);
+    };
+
+    if parts.len() < 2 {
+        return (clean_item(text), vec![]);
+    }
+
+    let question = clean_item(parts[0]);
+    let opts_text = parts[1];
+
+    // Split options by the same delimiter
+    let delimiter = if text.contains('｜') { '｜' } else { '|' };
+    let options: Vec<String> = opts_text
+        .split(delimiter)
+        .map(|o| clean_item(o))
+        .filter(|o| !o.is_empty())
+        .take(4)
+        .collect();
+
+    (question, options)
+}
+
 /// 对应 Python `_clean_item`:strip 头尾空白/冒号/分隔符,折叠中间空白。
 pub(crate) fn clean_item(text: &str) -> String {
     let trimmed = text

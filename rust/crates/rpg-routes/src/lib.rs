@@ -96,6 +96,9 @@ pub struct AppStateInner {
     pub console_conversations: DashMap<String, Vec<ConsoleMessage>>,
     /// 分片上传缓存:`upload_id → ChunkUploadState`。由 `uploads.rs` 写入。
     pub chunk_uploads: DashMap<String, ChunkUploadState>,
+    /// 模型健康缓存:`(api_id, model_id) → {status, latency_ms, checked_at, error}`。
+    /// 对应 Python `model_probe._HEALTH_CACHE`。由 spawn_probe_sweep 写入,GET /api/models/health 读取。
+    pub health_cache: DashMap<(String, String), serde_json::Value>,
     /// 进程级配置快照(env 变量已 freeze,从 server 并入)。
     pub config: Arc<AppConfig>,
     /// 用于通知所有 spawned task 退出的取消令牌(从 server 并入)。
@@ -162,6 +165,7 @@ impl AppState {
             run_ids: DashMap::new(),
             console_conversations: DashMap::new(),
             chunk_uploads: DashMap::new(),
+            health_cache: DashMap::new(),
             config: Arc::new(AppConfig::default()),
             shutdown_token: CancellationToken::new(),
             task_tracker: TaskTracker::new(),

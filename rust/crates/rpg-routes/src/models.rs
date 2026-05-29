@@ -260,6 +260,84 @@ fn catalog_with_selected_response(s: &AppState, is_admin: bool) -> Value {
     })
 }
 
+/// 把整个 catalog 持久化到 DB — 对应 Python `_write_model_catalog_rows`。
+/// 写 model_apis + model_entries + app_config(selected_model)。
+async fn persist_catalog_to_db(pool: &sqlx::PgPool, catalog: &ModelCatalog) {
+    // 1. persist selected_model
+    persist_selected_to_db(pool, &catalog.selected.api_id, &catalog.selected.model_id).await;
+
+    // 2. upsert each api + models
+    for api in &catalog.apis {
+        let res = sqlx::query(
+            "INSERT INTO model_apis(api_id, display_name, kind, enabled, credential_ref, credential_env, base_url) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             ON CONFLICT(api_id) DO UPDATE SET \
+               display_name = excluded.display_name, \
+               kind = excluded.kind, \
+               enabled = excluded.enabled, \
+               credential_ref = excluded.credential_ref, \
+               credential_env = excluded.credential_env, \
+               base_url = excluded.base_url, \
+               updated_at = now()"
+        )
+        .bind(&api.id)
+        .bind(&api.display_name)
+        .bind(&api.kind)
+        .bind(api.enabled)
+        .bind(api.credential_ref.as_deref().unwrap_or(""))
+        .bind(api.credential_env.as_deref().unwrap_or(""))
+        .bind(api.base_url.as_deref().unwrap_or(""))
+        .execute(pool)
+        .await;
+        if let Err(e) = res {
+            tracing::warn!(api_id = %api.id, error = %e, "persist model_api failed");
+            continue;
+        }
+
+        let keep_ids: Vec<String> = api.models.iter().map(|m| m.id.clone()).collect();
+
+        for model in &api.models {
+            let real = model.real_name.as_deref().unwrap_or(&model.id);
+            let caps = serde_json::to_value(&model.capabilities).unwrap_or(json!([]));
+            let res = sqlx::query(
+                "INSERT INTO model_entries(api_id, model_id, real_name, display_name, enabled, capabilities) \
+                 VALUES ($1, $2, $3, $4, $5, $6) \
+                 ON CONFLICT(api_id, model_id) DO UPDATE SET \
+                   real_name = excluded.real_name, \
+                   display_name = excluded.display_name, \
+                   enabled = excluded.enabled, \
+                   capabilities = excluded.capabilities, \
+                   updated_at = now()"
+            )
+            .bind(&api.id)
+            .bind(&model.id)
+            .bind(real)
+            .bind(&model.display_name)
+            .bind(model.enabled)
+            .bind(&caps)
+            .execute(pool)
+            .await;
+            if let Err(e) = res {
+                tracing::warn!(api_id = %api.id, model_id = %model.id, error = %e, "persist model_entry failed");
+            }
+        }
+
+        // Delete removed models from DB
+        if !keep_ids.is_empty() {
+            let res = sqlx::query(
+                "DELETE FROM model_entries WHERE api_id = $1 AND model_id <> ALL($2)"
+            )
+            .bind(&api.id)
+            .bind(&keep_ids)
+            .execute(pool)
+            .await;
+            if let Err(e) = res {
+                tracing::warn!(api_id = %api.id, error = %e, "delete stale model_entries failed");
+            }
+        }
+    }
+}
+
 /// 把当前选中模型持久化到 DB `app_config(key='selected_model')`。
 /// 对齐 Python `_write_model_catalog_rows` 中 `INSERT INTO app_config …` 那一行。
 async fn persist_selected_to_db(pool: &sqlx::PgPool, api_id: &str, model_id: &str) {
@@ -285,17 +363,42 @@ async fn require_admin(s: &AppState, headers: &HeaderMap) -> Result<(), Response
 }
 
 /// 后台 probe 扫描一批 (api_id, backend, model_id) 目标,fire-and-forget。
-fn spawn_probe_sweep(targets: Vec<(String, Arc<AnyBackend>, String)>) {
+/// 对应 Python `model_probe.probe_availability`:结果写入 health_cache。
+fn spawn_probe_sweep(targets: Vec<(String, Arc<AnyBackend>, String)>, s: AppState) {
     tokio::spawn(async move {
         for (api_id, backend, model_id) in targets {
+            let start = std::time::Instant::now();
             let result = probe_backend(backend.as_ref(), &api_id, &model_id).await;
+            let latency_ms = start.elapsed().as_millis() as u64;
+            let checked_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
             if result.ok {
                 tracing::debug!(api_id = %api_id, model_id = %model_id, "probe ok");
+                s.health_cache.insert(
+                    (api_id.clone(), model_id.clone()),
+                    json!({
+                        "status": "ok",
+                        "latency_ms": latency_ms,
+                        "checked_at": checked_at,
+                        "error": "",
+                    }),
+                );
             } else {
                 tracing::warn!(
                     api_id = %api_id, model_id = %model_id,
                     error = ?result.error,
                     "probe failed"
+                );
+                s.health_cache.insert(
+                    (api_id.clone(), model_id.clone()),
+                    json!({
+                        "status": "err",
+                        "latency_ms": latency_ms,
+                        "checked_at": checked_at,
+                        "error": result.error.unwrap_or_default(),
+                    }),
                 );
             }
         }
@@ -461,7 +564,7 @@ async fn api_models_health_refresh_all(
     drop(router);
 
     let scheduled = targets.len();
-    spawn_probe_sweep(targets);
+    spawn_probe_sweep(targets, s.clone());
 
     Json(json!({"ok": true, "scheduled": scheduled}))
 }
@@ -469,9 +572,7 @@ async fn api_models_health_refresh_all(
 /// GET /api/models/health
 ///
 /// 对应 Python `api_models_health`:返回所有 API 下各 model 的当前 health 快照。
-/// Rust 侧暂无独立 health 缓存结构(probe 结果直接 tracing log),
-/// 这里从 catalog 构造一个 "untested" 的骨架供前端轮询使用。
-/// 实际的 probe 结果在 health_refresh_all 触发后通过 /api/models 获取。
+/// 读取 health_cache(由 spawn_probe_sweep 写入)。未探测过的 model 返回 "untested"。
 #[tracing::instrument(skip_all)]
 async fn api_models_health(State(s): State<AppState>) -> impl IntoResponse {
     let catalog = catalog_snapshot(&s);
@@ -481,7 +582,12 @@ async fn api_models_health(State(s): State<AppState>) -> impl IntoResponse {
         for model in &api.models {
             let real = model.real_name.as_deref().unwrap_or(&model.id);
             let key = format!("{}/{}", api.id, real);
-            health.insert(key, json!({"status": "untested"}));
+            let entry = s
+                .health_cache
+                .get(&(api.id.clone(), real.to_string()))
+                .map(|v| v.clone())
+                .unwrap_or_else(|| json!({"status": "untested"}));
+            health.insert(key, entry);
         }
     }
 
@@ -549,6 +655,9 @@ async fn api_models_upsert_api(
         }
     }
     write_catalog(&s, catalog);
+    // Persist to DB (llm-19: matching Python _write_model_catalog_rows)
+    let snap = catalog_snapshot(&s);
+    persist_catalog_to_db(&s.db, &snap).await;
     // Gap 3: return full catalog + selected (matching Python response shape)
     let resp = catalog_with_selected_response(&s, /*is_admin=*/ true);
     Ok(Json(resp).into_response())
@@ -580,6 +689,9 @@ async fn api_models_upsert_model(
         return Err(ResponseError::bad_request("api not found"));
     }
     write_catalog(&s, catalog);
+    // Persist to DB (llm-19: matching Python _write_model_catalog_rows)
+    let snap = catalog_snapshot(&s);
+    persist_catalog_to_db(&s.db, &snap).await;
     // Gap 3: return full catalog + selected (matching Python response shape)
     let resp = catalog_with_selected_response(&s, /*is_admin=*/ true);
     Ok(Json(resp).into_response())
@@ -601,10 +713,33 @@ async fn api_models_delete_model(
         .ok_or_else(|| ResponseError::bad_request("model_id required"))?;
     let mut catalog = catalog_snapshot(&s);
     if let Some(api) = catalog.apis.iter_mut().find(|a| a.id == api_id) {
+        // Validate at least one model remains after deletion (matching Python behavior)
+        let remaining = api.models.iter().filter(|m| m.id != model_id).count();
+        if remaining == 0 {
+            return Err(ResponseError::bad_request(
+                "至少保留一个 model，无法删除唯一 model",
+            ));
+        }
         api.models.retain(|m| m.id != model_id);
     }
+    // If selected model was deleted, fall back to first enabled model
+    let selected_deleted = catalog.selected.api_id == api_id && catalog.selected.model_id == model_id;
+    if selected_deleted {
+        if let Some(api) = catalog.apis.iter().find(|a| a.id == api_id) {
+            if let Some(m) = api.models.iter().find(|m| m.enabled) {
+                catalog.selected = Selected {
+                    api_id: api_id.clone(),
+                    model_id: m.id.clone(),
+                };
+            }
+        }
+    }
     write_catalog(&s, catalog);
-    Ok(Json(json!({"ok": true})).into_response())
+    // Persist to DB (llm-19: matching Python _write_model_catalog_rows)
+    let snap = catalog_snapshot(&s);
+    persist_catalog_to_db(&s.db, &snap).await;
+    let resp = catalog_with_selected_response(&s, /*is_admin=*/ true);
+    Ok(Json(resp).into_response())
 }
 
 /// GET /api/models/remote?api_id=...&refresh=1
@@ -683,12 +818,15 @@ async fn api_models_diff(
         })
         .unwrap_or_default();
 
-    let missing: Vec<&str> = remote_ids
+    let remote_total = remote_ids.len();
+    let local_total = local_ids.len();
+
+    let remote_only: Vec<&str> = remote_ids
         .iter()
         .filter(|id| !local_ids.contains(*id))
         .map(|s| s.as_str())
         .collect();
-    let extra: Vec<&str> = local_ids
+    let local_only: Vec<&str> = local_ids
         .iter()
         .filter(|id| !remote_ids.contains(*id))
         .map(|s| s.as_str())
@@ -702,9 +840,11 @@ async fn api_models_diff(
     Ok(Json(json!({
         "ok": true,
         "api_id": api_id,
-        "missing": missing,
-        "extra": extra,
+        "remote_only": remote_only,
+        "local_only": local_only,
         "matching": matching,
+        "remote_total": remote_total,
+        "local_total": local_total,
     }))
     .into_response())
 }
@@ -746,16 +886,18 @@ async fn api_models_probe(
         Ok(Json(json!({
             "ok": true,
             "api_id": api_id,
-            "model": model_id,
+            "model_used": model_id,
             "latency_ms": latency_ms,
+            "response_text": "",
         }))
         .into_response())
     } else {
         Ok(Json(json!({
             "ok": false,
             "api_id": api_id,
-            "model": model_id,
+            "model_used": model_id,
             "latency_ms": latency_ms,
+            "response_text": "",
             "error": result.error,
         }))
         .into_response())
@@ -784,6 +926,17 @@ async fn api_models_pricing(
     let router = s.llm_router.read();
     let pricing = router.pricing_for(&api_id, &model_id);
 
+    // Find context window from catalog for this model
+    let context = {
+        let catalog = catalog_snapshot(&s);
+        catalog
+            .apis
+            .iter()
+            .find(|a| a.id == api_id)
+            .and_then(|a| a.models.iter().find(|m| m.id == model_id || m.real_name.as_deref() == Some(&model_id)))
+            .and_then(|_| None::<u32>) // No context_window in ModelEntry; use None
+    };
+
     match pricing {
         Some(p) => (
             StatusCode::OK,
@@ -792,10 +945,14 @@ async fn api_models_pricing(
                 "api_id": api_id,
                 "model": model_id,
                 "pricing": {
-                    "input_per_1k_usd": p.input_per_1k_usd,
-                    "output_per_1k_usd": p.output_per_1k_usd,
-                    "cache_read_per_1k_usd": p.cache_read_per_1k_usd,
-                    "cache_write_per_1k_usd": p.cache_write_per_1k_usd,
+                    // per-million-token units matching Python's _STATIC_PRICING format
+                    "input": p.input_per_1k_usd * 1000.0,
+                    "output": p.output_per_1k_usd * 1000.0,
+                    "cache_read": p.cache_read_per_1k_usd * 1000.0,
+                    "cache_write": p.cache_write_per_1k_usd * 1000.0,
+                    "source": "static",
+                    "unit": "USD per million tokens",
+                    "context": context,
                 },
             })),
         ),
@@ -811,12 +968,66 @@ async fn api_models_pricing(
     }
 }
 
+/// GET /api/models/report?api_id=...
+///
+/// 对应 Python `model_probe.full_report`:返回 api_id 的综合健康报告。
+/// 包含: local_catalog(含 pricing/capabilities)、credential_present、kind/enabled。
+/// remote_models_summary 和 availability 因需要远端调用而标为 TODO(不阻断返回)。
 #[tracing::instrument(skip_all)]
 async fn api_models_report(
-    State(_s): State<AppState>,
-    Query(_q): Query<ModelQueryParams>,
+    State(s): State<AppState>,
+    Query(q): Query<ModelQueryParams>,
 ) -> impl IntoResponse {
-    Json(json!({"ok": true, "report": {}}))
+    let api_id = q.api_id.unwrap_or_default();
+    if api_id.is_empty() {
+        return Json(json!({"ok": false, "error": "api_id required"}));
+    }
+    let catalog = catalog_snapshot(&s);
+    let Some(api) = catalog.apis.iter().find(|a| a.id == api_id) else {
+        return Json(json!({"ok": false, "error": format!("api_id 不存在: {}", api_id)}));
+    };
+
+    // Build credential_present (matches Python _credential_present)
+    let credential_present = {
+        let api_val = serde_json::to_value(api).unwrap_or(json!({}));
+        crate::models::credential_present(&api_val)
+    };
+
+    let router = s.llm_router.read();
+
+    // local_catalog: each model with pricing and capabilities
+    let local_catalog: Vec<Value> = api.models.iter().map(|m| {
+        let real = m.real_name.as_deref().unwrap_or(&m.id);
+        let pricing = router.pricing_for(&api_id, &m.id).map(|p| json!({
+            "input": p.input_per_1k_usd * 1000.0,
+            "output": p.output_per_1k_usd * 1000.0,
+            "source": "static",
+            "unit": "USD per million tokens",
+        }));
+        let caps: Vec<Value> = m.capabilities.iter().map(|c| json!({
+            "id": c,
+            "label": capability_label(c),
+        })).collect();
+        json!({
+            "id": m.id,
+            "real_name": real,
+            "enabled": m.enabled,
+            "pricing": pricing,
+            "capabilities": caps,
+        })
+    }).collect();
+    drop(router);
+
+    Json(json!({
+        "ok": true,
+        "api_id": api_id,
+        "kind": api.kind,
+        "enabled": api.enabled,
+        "credential_present": credential_present,
+        "local_catalog": local_catalog,
+        // remote_models_summary: TODO — requires live backend call
+        "remote_models_error": "remote diff not implemented in report endpoint",
+    }))
 }
 
 #[tracing::instrument(skip_all)]

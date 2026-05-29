@@ -100,8 +100,24 @@ pub fn apply_structured_updates(
         .as_ref()
         .map(|v| !v.is_null())
         .unwrap_or(false);
-    let asking_for_confirm =
+    let mut asking_for_confirm =
         pending_jump_present && gm_is_asking_for_time_confirm(gm_text, &tags);
+
+    // task 35：玩家本轮自然语言触发的 pending_jump(pending.turn == 当前 turn)
+    // → GM 同一轮不准锁,无论 GM 文本是否含 pending 信号。
+    // 对应 Python apply_ops.py:89-97 的 _player_pending_this_turn 守卫。
+    if pending_jump_present && !asking_for_confirm {
+        let current_turn = state.turn();
+        let player_pending_this_turn = pending_jump_object
+            .as_ref()
+            .and_then(|p| p.get("turn"))
+            .and_then(Value::as_i64)
+            .map(|t| t == current_turn as i64)
+            .unwrap_or(false);
+        if player_pending_this_turn {
+            asking_for_confirm = true;
+        }
+    }
 
     // 4) 处理 【】 tags
     for tag in &tags {
@@ -571,27 +587,100 @@ fn extract_brace_tags(text: &str) -> Vec<String> {
     out
 }
 
-/// 对应 Python `_gm_is_asking_for_time_confirm` 的简化版:
-/// 在 GM 正文或 tags 里找询问/待确认信号。
+/// 对应 Python `time_ops._gm_is_asking_for_time_confirm` 的三信号分类器。
+///
+/// 规则(与 Python task 32 对齐):
+/// 1. 扫 tags:
+///    - 含 "时间跳跃确认" 的 tag:value 含 pending_value_markers → pending_signal;
+///      value 干净 → explicit_confirm。
+///    - 含 pending_tag_keywords 的 tag → pending_signal。
+/// 2. 若此时还没 pending_signal,扫正文 _ASKING_FOR_CONFIRM_PATTERNS(regex)。
+/// 3. pending_signal 优先:有 → true;只有 explicit_confirm 而无 pending_signal → false;
+///    两者都无 → false。
 fn gm_is_asking_for_time_confirm(text: &str, tags: &[String]) -> bool {
-    const SIGNALS: &[&str] = &[
-        "待确认",
-        "请确认",
-        "是否",
+    static ASKING_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
+        let patterns = [
+            r"是否(?:要|要不要|确认|继续|推进|跳到|跳转)",
+            r"请(?:玩家|你)?(?:确认|选择|决定|回答)",
+            r"等(?:待|待玩家)?(?:玩家|你)?(?:确认|选择|决定|回答|回应)",
+            r"待确认",
+            r"awaiting[_ ]?(?:gm|player)?[_ ]?confirm",
+            r"pending[_ ]?confirm",
+            r"询问玩家",
+            r"向玩家提问",
+            r"先(?:让|请)?(?:子代理|GM|你)?(?:检查|确认|核对)",
+            r"不要(?:直接|立即)?(?:跳过|改写|锁定)",
+        ];
+        patterns
+            .iter()
+            .filter_map(|p| Regex::new(p).ok())
+            .collect()
+    });
+
+    const PENDING_VALUE_MARKERS: &[&str] =
+        &["待确认", "未确认", "暂不", "暂缓", "pending", "awaiting"];
+    const PENDING_TAG_KEYWORDS: &[&str] = &[
         "询问玩家",
-        "awaiting",
-        "pending",
-        "等待玩家",
+        "向玩家提问",
+        "澄清问题",
+        "时间跳跃待确认",
+        "时间提案",
+        "时间冲突",
         "设定冲突",
+        "设定校验",
+        "等待玩家回答",
+        "等待玩家",
     ];
-    let low = text.to_lowercase();
-    if SIGNALS.iter().any(|s| text.contains(s) || low.contains(&s.to_lowercase())) {
+
+    let mut has_explicit_confirm = false;
+    let mut has_pending_signal = false;
+
+    for tag in tags {
+        if tag.is_empty() {
+            continue;
+        }
+        // 拆 key/value
+        let (tag_key, tag_val) = if let Some(pos) = tag.find('：') {
+            let (l, r) = tag.split_at(pos);
+            (l, &r['：'.len_utf8()..])
+        } else if let Some(pos) = tag.find(':') {
+            (&tag[..pos], &tag[pos + 1..])
+        } else {
+            (tag.as_str(), "")
+        };
+
+        if tag_key.contains("时间跳跃确认") || tag.contains("时间跳跃确认") {
+            let val_low = tag_val.to_lowercase();
+            if PENDING_VALUE_MARKERS
+                .iter()
+                .any(|m| tag_val.contains(m) || val_low.contains(&m.to_lowercase()))
+            {
+                has_pending_signal = true;
+            } else {
+                has_explicit_confirm = true;
+            }
+            continue;
+        }
+        if PENDING_TAG_KEYWORDS.iter().any(|kw| tag.contains(kw)) {
+            has_pending_signal = true;
+        }
+    }
+
+    // 只有在 tags 里没有发现 pending_signal 时才扫正文 patterns
+    if !has_pending_signal {
+        for re in ASKING_PATTERNS.iter() {
+            if re.is_match(text) {
+                has_pending_signal = true;
+                break;
+            }
+        }
+    }
+
+    if has_pending_signal {
         return true;
     }
-    for tag in tags {
-        if SIGNALS.iter().any(|s| tag.contains(s)) {
-            return true;
-        }
+    if has_explicit_confirm {
+        return false;
     }
     false
 }

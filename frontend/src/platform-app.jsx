@@ -3160,17 +3160,6 @@ function AuthPage() {
 // ScriptsPage / SavesPage / CardsPage / SettingsPage / BranchesPage / ContinuePicker /
 // NewGameModal / ConfidenceBar 现在分别在 pages/scripts.jsx / saves.jsx / cards.jsx /
 // settings.jsx 中定义并自己 Object.assign(window, ...)；这里不再列出，避免 ReferenceError。
-Object.assign(window, {
-  PlatformShell, ProfilePage, MePage,
-  ModulesPage,
-  LibraryPage, UsagePage, CapPage, AuthPage,
-  PL_NAV, PL_TITLES,
-  // 拆分后的 page 文件依赖这些 helper / 公共组件，统一暴露到 window 上：
-  PromptModal, ConfirmModal,
-  SettingsToggle, fmtBytes, fmtN,
-  useAutoSave, usePlatformData,
-});
-
 export { PlatformShell, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData };
 
 // ──────────────────────────────────────────────────────────────────
