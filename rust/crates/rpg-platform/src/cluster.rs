@@ -46,6 +46,12 @@ async fn ensure_stop_table(pool: &PgPool) -> PlatformResult<()> {
     Ok(())
 }
 
+/// 兜底初始化 `stop_signals` 表。rpg-db migrations 没接管时由 platform 调用。
+/// 供 `app.rs` 启动钩子在 init 阶段调用一次,避免每次 request_stop 都重建。
+pub async fn init_stop_signals_table(pool: &PgPool) -> PlatformResult<()> {
+    ensure_stop_table(pool).await
+}
+
 /// 请求停止 user 当前正在跑的 run。
 pub async fn request_stop(pool: &PgPool, user_id: i64, run_id: i64) -> PlatformResult<()> {
     ensure_stop_table(pool).await?;
@@ -169,5 +175,6 @@ pub async fn is_state_stale(
 // 实际指 `branch_*` 分支树,见 `branches/` 模块。这里只占位 re-export 入口。
 pub use crate::branches::tree_ops;
 
-// TODO[Sonnet]: DDL 迁到 rpg-db migrations,而非每次调用 create table if not exists。
+// 兜底 DDL:rpg-db migrations 没接管时由 `init_stop_signals_table` 一次性创建;
+// CRUD 也仍各自走 ensure_stop_table 以容错 fresh DB(零成本 if exists)。
 // TODO[Sonnet]: import_pipeline 那边的 worker heartbeat,跨进程超时检测。

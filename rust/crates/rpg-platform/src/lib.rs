@@ -16,6 +16,7 @@
 pub mod auth;
 pub mod branches;
 pub mod cluster;
+pub mod context_runs;
 pub mod crypto;
 pub mod error;
 pub mod knowledge;
@@ -23,6 +24,8 @@ pub mod library;
 pub mod runtime;
 pub mod save_io;
 pub mod script_import;
+pub mod script_pack;
+pub mod session;
 pub mod tavern_cards;
 pub mod usage;
 pub mod user_cards;

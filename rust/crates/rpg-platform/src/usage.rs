@@ -4,13 +4,23 @@
 //!
 //! 复用 `rpg_db::repos::token_usage::insert` 走底层;聚合查询保留在本模块。
 //!
-//! 价格表(`model_probe.get_pricing`)在 Rust 这边目前空缺,`compute_cost` 暂返回 0,
-//! 详见 TODO。
+//! 价格表通过 `rpg_llm::LlmRouter::pricing_for` 拿,优先 catalog 内联 pricing,
+//! 回落 BUILTIN_PRICING(2025-Q2 各家官网定价)。`compute_cost` 把
+//! `UsageBreakdown` 转成 USD numeric(12,6) 字符串。
 
+use once_cell::sync::Lazy;
+use rpg_llm::{LlmRouter, ModelPricing};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 
 use crate::error::{PlatformError, PlatformResult};
+
+/// 全局只读 router,用来查 builtin pricing(无需 backend 注册)。
+static PRICING_ROUTER: Lazy<LlmRouter> = Lazy::new(|| {
+    let mut r = LlmRouter::new();
+    r.set_catalog(rpg_llm::ModelCatalog::default());
+    r
+});
 
 /// 单轮 token 用量(对应 Python `backend.last_usage`)。
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -29,13 +39,38 @@ pub struct UsageBreakdown {
 
 /// Python `compute_cost`。返回 USD 字符串(numeric(12,6))。
 ///
-/// **当前实现**:价格表尚未在 Rust 实现,固定返回 "0.000000"。
+/// 实现:`LlmRouter::pricing_for(api_id, model_id)` -> `ModelPricing`,
+/// 按 input/output/cache_read/cache_write 四档 per-1k token 计价相加。
+/// 找不到定价时返回 "0.000000"。
 pub fn compute_cost(
-    _api_id: &str,
-    _model_real_name: &str,
-    _usage: &UsageBreakdown,
+    api_id: &str,
+    model_real_name: &str,
+    usage: &UsageBreakdown,
 ) -> String {
-    "0.000000".to_string()
+    let Some(pricing) = PRICING_ROUTER.pricing_for(api_id, model_real_name) else {
+        return "0.000000".to_string();
+    };
+    let cost = cost_from_pricing(pricing, usage);
+    // numeric(12,6) → 截到 6 位小数,负数夹到 0。
+    format!("{:.6}", cost.max(0.0))
+}
+
+fn cost_from_pricing(pricing: &ModelPricing, u: &UsageBreakdown) -> f64 {
+    // cached_input_tokens 走 cache_read 价;其余 input 走 input 价。
+    // reasoning_tokens 算 output 范畴(供应商一般这样算)。
+    let cached = u.cached_input_tokens.max(0) as f64;
+    let fresh_input = (u.input_tokens.max(0) as f64 - cached).max(0.0);
+    let output = (u.output_tokens.max(0) + u.reasoning_tokens.max(0)) as f64;
+
+    let input_cost = fresh_input / 1000.0 * pricing.input_per_1k_usd;
+    let cached_cost = cached / 1000.0 * pricing.cache_read_per_1k_usd;
+    let output_cost = output / 1000.0 * pricing.output_per_1k_usd;
+    input_cost + cached_cost + output_cost
+}
+
+/// 返回 (api_id, model_id) 当前生效的定价(供 routes 层展示用)。
+pub fn pricing_for(api_id: &str, model_id: &str) -> Option<ModelPricing> {
+    PRICING_ROUTER.pricing_for(api_id, model_id).cloned()
 }
 
 /// Python `record_usage` —— 写一条 token_usage。

@@ -309,7 +309,10 @@ pub async fn list_user_cards(
     q: Option<&str>,
     enabled_only: bool,
 ) -> PlatformResult<Vec<UserCardRow>> {
-    let mut sql = String::from("select * from user_character_cards where user_id = $1");
+    // scope=public 跨用户共享:owner 看到自己的全部卡 + 所有 public 卡。
+    let mut sql = String::from(
+        "select * from user_character_cards where (user_id = $1 or scope = 'public')",
+    );
     if enabled_only {
         sql.push_str(" and enabled = true");
     }
@@ -320,7 +323,7 @@ pub async fn list_user_cards(
             bind_q = Some(format!("%{}%", qstr.to_lowercase()));
         }
     }
-    sql.push_str(" order by priority desc, updated_at desc, id desc");
+    sql.push_str(" order by (user_id = $1) desc, priority desc, updated_at desc, id desc");
     let mut query = sqlx::query(&sql).bind(user_id);
     if let Some(like) = bind_q {
         query = query.bind(like);
@@ -332,16 +335,41 @@ pub async fn list_user_cards(
         .map_err(Into::into)
 }
 
+/// 仅列出 scope='public' 的卡(跨用户共享市场页)。
+pub async fn list_public_user_cards(
+    pool: &PgPool,
+    limit: i64,
+) -> PlatformResult<Vec<UserCardRow>> {
+    let limit = limit.clamp(1, 500);
+    let rows = sqlx::query(
+        "select * from user_character_cards \
+          where scope = 'public' and enabled = true \
+          order by priority desc, updated_at desc, id desc \
+          limit $1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(card_from_row)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
 pub async fn get_user_card(
     pool: &PgPool,
     user_id: i64,
     card_id: i64,
 ) -> PlatformResult<Option<UserCardRow>> {
-    let row = sqlx::query("select * from user_character_cards where id = $1 and user_id = $2")
-        .bind(card_id)
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await?;
+    // scope=public 跨用户共享:任何 user 都能读他人公开卡(但不能改)。
+    let row = sqlx::query(
+        "select * from user_character_cards \
+          where id = $1 and (user_id = $2 or scope = 'public')",
+    )
+    .bind(card_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
     Ok(row.map(|r| card_from_row(&r)).transpose()?)
 }
 
@@ -493,8 +521,10 @@ pub async fn user_cards_for_retrieval(
         .filter(|n| !n.is_empty())
         .map(|n| n.to_lowercase())
         .collect();
+    // scope=public 跨用户共享:retrieval 也吃公开卡。
     let rows = sqlx::query(
-        "select * from user_character_cards where user_id = $1 and enabled = true",
+        "select * from user_character_cards \
+          where (user_id = $1 or scope = 'public') and enabled = true",
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -520,4 +550,4 @@ pub async fn user_cards_for_retrieval(
     Ok(out)
 }
 
-// TODO[Sonnet]: scope=public 的卡跨用户共享、admin 审计。
+// TODO[Sonnet]: admin 审计(谁把卡设成 public、什么时候、被多少人吃了)。

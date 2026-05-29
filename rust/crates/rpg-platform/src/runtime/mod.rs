@@ -3,6 +3,8 @@
 //! 对应 Python `rpg/platform_app/runtime.py` (346 行)。
 //! 完成度: **完整**(file backend)+ **主路径**(db backend),legacy 迁移 TODO。
 
+pub mod worldline;
+
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
