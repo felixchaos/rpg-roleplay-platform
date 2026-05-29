@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rpg-server
+  namespace: rpg
+  labels:
+    app: rpg-server
+    version: "latest"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: rpg-server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0   # 零停机滚动更新
+  template:
+    metadata:
+      labels:
+        app: rpg-server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "7860"
+        prometheus.io/path: "/metrics"
+    spec:
+      # ─── 优雅 shutdown ─────────────────────────────────────────────────────
+      # terminationGracePeriodSeconds 需覆盖 TaskTracker drain 最长时间。
+      # Axum with_graceful_shutdown 监听 SIGTERM,drain 所有 SSE/HTTP 连接;
+      # TaskTracker.wait() 等所有 spawned task 完成;DB flush dirty states。
+      # 建议值 = RPG_REQUEST_TIMEOUT_SECS(30) + TaskTracker drain buffer(30) = 60s
+      terminationGracePeriodSeconds: 60
+
+      serviceAccountName: rpg-server
+
+      # 确保同一节点不会聚集过多副本
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: rpg-server
+
+      containers:
+        - name: rpg-server
+          image: rpg-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 7860
+              protocol: TCP
+
+          # ─── 环境变量:从 ConfigMap + Secret 注入 ────────────────────────
+          envFrom:
+            - configMapRef:
+                name: rpg-server-config
+            - secretRef:
+                name: rpg-server-secrets
+
+          # 覆盖:DATABASE_URL 指向 pgbouncer svc
+          env:
+            - name: DATABASE_URL
+              value: "postgres://rpg:$(POSTGRES_PASSWORD)@pgbouncer-svc:6432/rpg"
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis-svc:6379"
+
+          # ─── 探针 ────────────────────────────────────────────────────────
+          # livenessProbe: 进程是否存活(/livez 不检查 DB,只返回 200)
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 7860
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # readinessProbe: 是否就绪接受流量(/readyz 检查 DB + 依赖)
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 7860
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # startupProbe: 首次启动时宽松检测(避免 crash loop)
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: 7860
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12   # 最多等 60s 启动
+
+          # ─── 资源限制 ─────────────────────────────────────────────────────
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+
+          # ─── 优雅 shutdown preStop ────────────────────────────────────────
+          # 在 SIGTERM 前先等待 kube-proxy 更新完 iptables(避免新请求进来)
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+
+      # ─── 镜像拉取 Secret(如使用私有 registry) ────────────────────────────
+      # imagePullSecrets:
+      #   - name: registry-credentials

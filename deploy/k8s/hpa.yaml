@@ -1,0 +1,71 @@
+---
+# HorizontalPodAutoscaler — rpg-server
+# 基于 CPU 使用率 + 自定义 Prometheus 指标(HTTP 请求速率)自动扩缩
+# 副本范围: 3(最小) ~ 10(最大)
+#
+# 扩缩策略说明:
+#   - scaleUp:   CPU > 70% 或 HTTP RPS > 500,每 30s 最多新增 2 副本
+#   - scaleDown: CPU < 40% 持续 300s 才缩容,避免抖动(SSE 长连接场景)
+#   - stabilizationWindowSeconds: 缩容稳定窗口 300s,防频繁 scale in
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rpg-server-hpa
+  namespace: rpg
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rpg-server
+  minReplicas: 3
+  maxReplicas: 10
+
+  metrics:
+    # ─── CPU 利用率(相对 requests.cpu) ──────────────────────────────────────
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+    # ─── 内存利用率 ──────────────────────────────────────────────────────────
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+    # ─── 自定义指标: HTTP 请求速率(需要 prometheus-adapter) ─────────────────
+    # 若未安装 prometheus-adapter,注释掉此段即可
+    - type: Pods
+      pods:
+        metric:
+          # 对应 axum-prometheus 导出的 http_requests_total counter
+          name: http_requests_per_second
+        target:
+          type: AverageValue
+          averageValue: "500"
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2          # 每次最多新增 2 副本
+          periodSeconds: 30
+        - type: Percent
+          value: 50         # 或增加 50%,取较大值
+          periodSeconds: 60
+      selectPolicy: Max
+
+    scaleDown:
+      # 缩容窗口较长,避免 SSE 长连接场景频繁 scale in
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1          # 每次最多移除 1 副本
+          periodSeconds: 120
+      selectPolicy: Min

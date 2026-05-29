@@ -1,0 +1,73 @@
+---
+# rpg-server Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rpg-server-svc
+  namespace: rpg
+  labels:
+    app: rpg-server
+spec:
+  selector:
+    app: rpg-server
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 7860
+      targetPort: 7860
+      protocol: TCP
+
+---
+# PgBouncer Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer-svc
+  namespace: rpg
+  labels:
+    app: pgbouncer
+spec:
+  selector:
+    app: pgbouncer
+  type: ClusterIP
+  ports:
+    - name: pgbouncer
+      port: 6432
+      targetPort: 6432
+      protocol: TCP
+
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-svc
+  namespace: rpg
+  labels:
+    app: redis
+spec:
+  selector:
+    app: redis
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP
+
+---
+# ServiceAccount for rpg-server
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rpg-server
+  namespace: rpg
+
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rpg
+  labels:
+    name: rpg

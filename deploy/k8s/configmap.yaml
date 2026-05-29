@@ -1,0 +1,43 @@
+---
+# ConfigMap — rpg-server 非敏感配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rpg-server-config
+  namespace: rpg
+data:
+  RPG_PORT: "7860"
+  RPG_HOST: "0.0.0.0"
+  RPG_RATE_LIMIT_PER_MIN: "100"
+  RPG_REQUEST_TIMEOUT_SECS: "30"
+  RPG_BODY_LIMIT_BYTES: "2097152"
+  RPG_UPLOAD_BODY_LIMIT_BYTES: "52428800"
+  RPG_COOKIE_SAMESITE: "lax"
+  RPG_COOKIE_SECURE: "1"
+  RPG_SKIP_AUTO_MIGRATE: "0"
+  EMBED_MODEL: "text-embedding-004"
+  RUST_LOG: "rpg_server=info,tower_http=warn"
+
+---
+# Secret 模板 — 敏感值请用 sealed-secrets 或 External Secrets Operator 管理
+# kubectl create secret generic rpg-server-secrets \
+#   --from-literal=POSTGRES_PASSWORD=xxx \
+#   --from-literal=REDIS_PASSWORD=xxx \
+#   --from-literal=ANTHROPIC_API_KEY=xxx \
+#   --from-literal=EMBED_API_KEY=xxx \
+#   -n rpg
+#
+# 下方为结构示例,不包含真实值:
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rpg-server-secrets
+  namespace: rpg
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: "REPLACE_WITH_REAL_VALUE"
+  REDIS_PASSWORD: "REPLACE_WITH_REAL_VALUE"
+  ANTHROPIC_API_KEY: "REPLACE_WITH_REAL_VALUE"
+  EMBED_API_KEY: "REPLACE_WITH_REAL_VALUE"
+  EMBED_BASE_URL: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  RPG_CORS_ORIGINS: "https://your-production-domain.com"

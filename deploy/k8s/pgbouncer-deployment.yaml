@@ -1,0 +1,140 @@
+---
+# PgBouncer Deployment — k8s
+# 单副本(pgbouncer 本身是轻量级代理,瓶颈在 PG 端)
+# 如需 HA 可改 replicas=2 + 前置 NLB
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: rpg
+  labels:
+    app: pgbouncer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgbouncer
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: pgbouncer
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: pgbouncer
+          image: bitnami/pgbouncer:1.22.1
+          ports:
+            - containerPort: 6432
+              name: pgbouncer
+
+          envFrom:
+            - configMapRef:
+                name: pgbouncer-config
+            - secretRef:
+                name: pgbouncer-secrets
+
+          env:
+            - name: PGBOUNCER_DATABASE
+              value: rpg
+            - name: PGBOUNCER_POOL_MODE
+              value: transaction
+            - name: PGBOUNCER_MAX_CLIENT_CONN
+              value: "1000"
+            - name: PGBOUNCER_DEFAULT_POOL_SIZE
+              value: "20"
+            - name: PGBOUNCER_RESERVE_POOL_SIZE
+              value: "5"
+            - name: PGBOUNCER_AUTH_TYPE
+              value: md5
+
+          livenessProbe:
+            tcpSocket:
+              port: 6432
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            tcpSocket:
+              port: 6432
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+
+          volumeMounts:
+            - name: pgbouncer-config-vol
+              mountPath: /bitnami/pgbouncer/conf/pgbouncer.ini
+              subPath: pgbouncer.ini
+              readOnly: true
+            - name: pgbouncer-userlist-vol
+              mountPath: /bitnami/pgbouncer/conf/userlist.txt
+              subPath: userlist.txt
+              readOnly: true
+
+      volumes:
+        - name: pgbouncer-config-vol
+          configMap:
+            name: pgbouncer-ini
+        - name: pgbouncer-userlist-vol
+          secret:
+            secretName: pgbouncer-userlist
+
+---
+# ConfigMap for pgbouncer.ini(内容参考 deploy/pgbouncer.ini)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgbouncer-ini
+  namespace: rpg
+data:
+  pgbouncer.ini: |
+    [databases]
+    rpg = host=postgres-svc port=5432 dbname=rpg
+
+    [pgbouncer]
+    listen_addr = 0.0.0.0
+    listen_port = 6432
+    auth_type = md5
+    auth_file = /bitnami/pgbouncer/conf/userlist.txt
+    pool_mode = transaction
+    max_client_conn = 1000
+    default_pool_size = 20
+    min_pool_size = 5
+    reserve_pool_size = 5
+    reserve_pool_timeout = 3
+    server_idle_timeout = 600
+    server_lifetime = 3600
+    query_wait_timeout = 30
+    log_connections = 0
+    log_disconnections = 0
+    log_pooler_errors = 1
+
+---
+# Secret for userlist.txt(生产环境替换为真实 hash)
+# 注: 实际部署用 kubectl create secret 或 sealed-secrets,不要明文 commit
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pgbouncer-userlist
+  namespace: rpg
+type: Opaque
+stringData:
+  userlist.txt: |
+    "rpg" "md5REPLACE_WITH_REAL_HASH"
+    "rpg_admin" "md5REPLACE_WITH_REAL_ADMIN_HASH"
