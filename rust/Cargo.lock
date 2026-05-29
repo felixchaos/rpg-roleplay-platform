@@ -2023,6 +2023,7 @@ dependencies = [
  "tracing",
  "ts-rs",
  "wiremock",
+ "yup-oauth2",
 ]
 
 [[package]]

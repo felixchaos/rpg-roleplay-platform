@@ -12,7 +12,9 @@ pub mod catalog;
 pub mod providers;
 pub mod schema;
 
-pub use catalog::{ModelCatalog, KNOWN_OPENAI_COMPAT_PROVIDERS};
+pub use catalog::{
+    ModelCatalog, KNOWN_ALL_PROVIDERS, KNOWN_NATIVE_PROVIDERS, KNOWN_OPENAI_COMPAT_PROVIDERS,
+};
 pub use providers::openai_compat::{fetch_models, load_static_catalog, OpenAICompatConfig};
 pub use schema::{
     CatalogError, CatalogSource, ModelCapabilities, ModelInfo, ProviderId,

@@ -4,7 +4,11 @@
 //! - `config()` 返回 [`openai_compat::OpenAICompatConfig`];
 //! - `static_catalog()` 返回兜底 `Vec<ModelInfo>`。
 
+pub mod agent_platform;
+pub mod alibaba_dashscope;
+pub mod anthropic;
 pub mod deepseek;
+pub mod google_ai_studio;
 pub mod openai;
 pub mod openai_compat;
 pub mod openrouter;

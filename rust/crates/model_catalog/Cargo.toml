@@ -20,6 +20,7 @@ thiserror.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+yup-oauth2.workspace = true
 
 [dependencies.ts-rs]
 version = "12"

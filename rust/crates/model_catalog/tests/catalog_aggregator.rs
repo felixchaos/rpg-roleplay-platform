@@ -8,13 +8,11 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
-async fn preload_static_includes_all_6_providers() {
+async fn preload_static_includes_all_10_providers() {
     let cat = ModelCatalog::default();
     cat.preload_static().expect("preload");
     let all = cat.list_all().await;
-    // 至少含 OpenAI / DeepSeek / xAI / MiMo(9) / Hunyuan / OpenRouter
-    assert!(all.len() >= 4 + 3 + 3 + 9 + 5 + 3);
-    // 6 家都有数据
+    // 6 OpenAI-compat + 4 native = 10 家
     for p in [
         ProviderId::OpenAI,
         ProviderId::DeepSeek,
@@ -22,9 +20,16 @@ async fn preload_static_includes_all_6_providers() {
         ProviderId::XiaomiMimo,
         ProviderId::TencentHunyuan,
         ProviderId::OpenRouter,
+        ProviderId::Anthropic,
+        ProviderId::GoogleAIStudio,
+        ProviderId::AgentPlatform,
+        ProviderId::AlibabaQwen,
     ] {
         assert!(all.iter().any(|m| m.provider == p), "缺 provider {:?}", p);
     }
+    // 至少 OpenAI(4) + DeepSeek(3) + xAI(3) + MiMo(9) + Hunyuan(5) + OpenRouter(3)
+    //     + Anthropic(5) + GoogleAIStudio(4) + AgentPlatform(3) + DashScope(6) = 45
+    assert!(all.len() >= 45, "实际 {}", all.len());
 }
 
 #[tokio::test]
