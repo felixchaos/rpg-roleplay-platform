@@ -1,0 +1,11 @@
+# Cargo build artifacts
+/target/
+**/target/
+
+# Backup / editor
+*.swp
+*.bak
+.DS_Store
+
+# sqlx offline cache (optional, leave out by default)
+# /.sqlx/

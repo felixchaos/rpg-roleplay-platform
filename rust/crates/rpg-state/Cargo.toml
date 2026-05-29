@@ -1,0 +1,24 @@
+[package]
+name = "rpg-state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rpg-core.workspace = true
+rpg-schemas.workspace = true
+rpg-db.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+parking_lot.workspace = true
+dashmap.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+once_cell.workspace = true
+regex.workspace = true
+rand.workspace = true
+# task: script_overrides 走 rpg-db::repos::script_overrides;saves 表 join 走 sqlx raw SQL 兜底。
+sqlx.workspace = true

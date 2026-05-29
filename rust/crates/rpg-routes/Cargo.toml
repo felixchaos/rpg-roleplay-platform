@@ -1,0 +1,38 @@
+[package]
+name = "rpg-routes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rpg-core.workspace = true
+rpg-schemas.workspace = true
+rpg-state.workspace = true
+rpg-llm.workspace = true
+rpg-context.workspace = true
+rpg-agents.workspace = true
+rpg-platform.workspace = true
+rpg-db.workspace = true
+rpg-rules.workspace = true
+rpg-rules-bridge.workspace = true
+rpg-tools-dsl.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+hyper.workspace = true
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+futures.workspace = true
+futures-util.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+sqlx.workspace = true
+dashmap.workspace = true
+parking_lot.workspace = true
+chrono.workspace = true
+uuid.workspace = true

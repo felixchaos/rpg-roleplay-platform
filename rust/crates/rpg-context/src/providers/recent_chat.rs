@@ -1,0 +1,69 @@
+//! RecentChatProvider — 通用最近对话注入。
+//! 对应 Python: rpg/context_providers/recent_chat.py
+
+use crate::error::ContextResult;
+use crate::provider::{ContextProvider, ProviderServices};
+use crate::types::{ContextContribution, Demand, Layer, Manifest};
+use async_trait::async_trait;
+use serde_json::{json, Value};
+
+pub struct RecentChatProvider;
+
+#[async_trait]
+impl ContextProvider for RecentChatProvider {
+    fn id(&self) -> &'static str {
+        "recent_chat"
+    }
+
+    async fn collect(
+        &self,
+        state_data: &Value,
+        _manifest: &Manifest,
+        _demand: &Demand,
+        _services: &ProviderServices,
+    ) -> ContextResult<ContextContribution> {
+        // 假设 state_data.history 是 history messages 数组。
+        // 等 rpg-state 提供 history_messages() 后这里改成 state.history_messages()。
+        let history = state_data
+            .get("history")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if history.is_empty() {
+            return Ok(ContextContribution::skipped(self.id(), "no history"));
+        }
+        let mut lines: Vec<String> = Vec::new();
+        let start = history.len().saturating_sub(6);
+        for msg in &history[start..] {
+            let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+            let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let content = content.trim();
+            if content.is_empty() {
+                continue;
+            }
+            let prefix = if role == "user" { "玩家" } else { "GM" };
+            let truncated: String = content.chars().take(600).collect();
+            lines.push(format!("{}：{}", prefix, truncated));
+        }
+        let text = if lines.is_empty() {
+            "（暂无对话）".to_string()
+        } else {
+            lines.join("\n\n")
+        };
+        let layer = Layer::new("recent_chat", "最近对话", text.clone()).with_priority(20);
+        let tokens = (text.chars().count() / 2) as u32;
+
+        Ok(ContextContribution {
+            provider_id: self.id().to_string(),
+            kind: "recent_chat".to_string(),
+            priority: 20,
+            facts: Vec::new(),
+            layers: vec![layer],
+            retrieval_items: Vec::new(),
+            warnings: Vec::new(),
+            debug: json!({ "turns": history.len() }),
+            tokens_estimate: tokens,
+            applied: true,
+        })
+    }
+}

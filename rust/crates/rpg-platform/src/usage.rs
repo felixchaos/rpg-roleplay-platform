@@ -1,0 +1,359 @@
+//! usage —— token_usage 表写入 + 聚合查询。
+//!
+//! 对应 Python: `rpg/platform_app/usage.py`。
+//!
+//! 复用 `rpg_db::repos::token_usage::insert` 走底层;聚合查询保留在本模块。
+//!
+//! 价格表(`model_probe.get_pricing`)在 Rust 这边目前空缺,`compute_cost` 暂返回 0,
+//! 详见 TODO。
+
+use serde::{Deserialize, Serialize};
+use sqlx::{PgPool, Row};
+
+use crate::error::{PlatformError, PlatformResult};
+
+/// 单轮 token 用量(对应 Python `backend.last_usage`)。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UsageBreakdown {
+    #[serde(default)]
+    pub input_tokens: i32,
+    #[serde(default)]
+    pub output_tokens: i32,
+    #[serde(default)]
+    pub cached_input_tokens: i32,
+    #[serde(default)]
+    pub reasoning_tokens: i32,
+    #[serde(default)]
+    pub total_tokens: i32,
+}
+
+/// Python `compute_cost`。返回 USD 字符串(numeric(12,6))。
+///
+/// **当前实现**:价格表尚未在 Rust 实现,固定返回 "0.000000"。
+pub fn compute_cost(
+    _api_id: &str,
+    _model_real_name: &str,
+    _usage: &UsageBreakdown,
+) -> String {
+    "0.000000".to_string()
+}
+
+/// Python `record_usage` —— 写一条 token_usage。
+#[allow(clippy::too_many_arguments)]
+pub async fn record_token_usage(
+    pool: &PgPool,
+    user_id: i64,
+    save_id: Option<i64>,
+    context_run_id: Option<i64>,
+    api_id: &str,
+    model_real_name: &str,
+    usage: &UsageBreakdown,
+    context_used: i32,
+    context_max: i32,
+    metadata: serde_json::Value,
+) -> PlatformResult<rpg_db::repos::token_usage::TokenUsageRow> {
+    let cost = compute_cost(api_id, model_real_name, usage);
+    let row = rpg_db::repos::token_usage::TokenUsageRow {
+        id: 0,
+        user_id,
+        save_id,
+        context_run_id,
+        api_id: api_id.to_string(),
+        model_real_name: model_real_name.to_string(),
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        cached_input_tokens: usage.cached_input_tokens,
+        reasoning_tokens: usage.reasoning_tokens,
+        total_tokens: usage.total_tokens,
+        cost_usd: cost,
+        context_used,
+        context_max,
+        metadata,
+        created_at: chrono::Utc::now(),
+    };
+    rpg_db::repos::token_usage::insert(pool, &row)
+        .await
+        .map_err(PlatformError::from)
+}
+
+// ─── 聚合 ──────────────────────────────────────────────────────────────
+
+/// `aggregate_usage` 总览。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageTotals {
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cached_input_tokens: i64,
+    pub total_tokens: i64,
+    pub cost_usd: f64,
+    pub turns: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageByModel {
+    pub api_id: String,
+    pub model: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cost_usd: f64,
+    pub turns: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageRecent {
+    pub at: String,
+    pub api_id: String,
+    pub model: String,
+    pub input_tokens: i32,
+    pub output_tokens: i32,
+    pub cost_usd: f64,
+    pub context_used: i32,
+    pub context_max: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageAggregate {
+    pub window_days: i32,
+    pub totals: UsageTotals,
+    pub by_model: Vec<UsageByModel>,
+    pub recent_turns: Vec<UsageRecent>,
+}
+
+/// Python `aggregate_usage(user_id, days=30)`。
+pub async fn aggregate_usage(
+    pool: &PgPool,
+    user_id: i64,
+    days: i32,
+) -> PlatformResult<UsageAggregate> {
+    let days = days.clamp(1, 365);
+    let total_row = sqlx::query(
+        "select \
+           coalesce(sum(input_tokens), 0)::bigint as input_tokens, \
+           coalesce(sum(output_tokens), 0)::bigint as output_tokens, \
+           coalesce(sum(cached_input_tokens), 0)::bigint as cached_input_tokens, \
+           coalesce(sum(total_tokens), 0)::bigint as total_tokens, \
+           coalesce(sum(cost_usd), 0)::float8 as cost_usd, \
+           count(*)::bigint as turns \
+         from token_usage \
+         where user_id = $1 and created_at >= now() - (interval '1 day' * $2)",
+    )
+    .bind(user_id)
+    .bind(days)
+    .fetch_one(pool)
+    .await?;
+    let totals = UsageTotals {
+        input_tokens: total_row.try_get("input_tokens")?,
+        output_tokens: total_row.try_get("output_tokens")?,
+        cached_input_tokens: total_row.try_get("cached_input_tokens")?,
+        total_tokens: total_row.try_get("total_tokens")?,
+        cost_usd: total_row.try_get("cost_usd")?,
+        turns: total_row.try_get("turns")?,
+    };
+
+    let by_rows = sqlx::query(
+        "select api_id, model_real_name as model, \
+                coalesce(sum(input_tokens), 0)::bigint as input_tokens, \
+                coalesce(sum(output_tokens), 0)::bigint as output_tokens, \
+                coalesce(sum(cost_usd), 0)::float8 as cost_usd, \
+                count(*)::bigint as turns \
+         from token_usage \
+         where user_id = $1 and created_at >= now() - (interval '1 day' * $2) \
+         group by api_id, model_real_name \
+         order by cost_usd desc",
+    )
+    .bind(user_id)
+    .bind(days)
+    .fetch_all(pool)
+    .await?;
+    let by_model = by_rows
+        .iter()
+        .map(|r| {
+            Ok::<_, sqlx::Error>(UsageByModel {
+                api_id: r.try_get("api_id")?,
+                model: r.try_get("model")?,
+                input_tokens: r.try_get("input_tokens")?,
+                output_tokens: r.try_get("output_tokens")?,
+                cost_usd: r.try_get("cost_usd")?,
+                turns: r.try_get("turns")?,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let recent_rows = sqlx::query(
+        "select created_at, api_id, model_real_name as model, input_tokens, output_tokens, \
+                cost_usd::float8 as cost_usd, context_used, context_max \
+         from token_usage where user_id = $1 order by id desc limit 20",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    let recent_turns = recent_rows
+        .iter()
+        .map(|r| {
+            Ok::<_, sqlx::Error>(UsageRecent {
+                at: r
+                    .try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                    .map(|t| t.to_rfc3339())
+                    .unwrap_or_default(),
+                api_id: r.try_get("api_id")?,
+                model: r.try_get("model")?,
+                input_tokens: r.try_get("input_tokens")?,
+                output_tokens: r.try_get("output_tokens")?,
+                cost_usd: r.try_get("cost_usd")?,
+                context_used: r.try_get("context_used")?,
+                context_max: r.try_get("context_max")?,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(UsageAggregate {
+        window_days: days,
+        totals,
+        by_model,
+        recent_turns,
+    })
+}
+
+/// Python `list_usage_for_user`(简化版,paginate by id desc)。
+pub async fn list_usage_for_user(
+    pool: &PgPool,
+    user_id: i64,
+    limit: i64,
+) -> PlatformResult<Vec<UsageRecent>> {
+    let limit = limit.clamp(1, 500);
+    let rows = sqlx::query(
+        "select created_at, api_id, model_real_name as model, input_tokens, output_tokens, \
+                cost_usd::float8 as cost_usd, context_used, context_max \
+         from token_usage where user_id = $1 order by id desc limit $2",
+    )
+    .bind(user_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(UsageRecent {
+                at: r
+                    .try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                    .map(|t| t.to_rfc3339())
+                    .unwrap_or_default(),
+                api_id: r.try_get("api_id")?,
+                model: r.try_get("model")?,
+                input_tokens: r.try_get("input_tokens")?,
+                output_tokens: r.try_get("output_tokens")?,
+                cost_usd: r.try_get("cost_usd")?,
+                context_used: r.try_get("context_used")?,
+                context_max: r.try_get("context_max")?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+        .map_err(Into::into)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageTimelineRow {
+    pub bucket: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cost_usd: f64,
+    pub turns: i64,
+}
+
+/// Python `timeline_usage`。
+pub async fn timeline_usage(
+    pool: &PgPool,
+    user_id: i64,
+    days: i32,
+    group_by: &str,
+) -> PlatformResult<Vec<UsageTimelineRow>> {
+    if group_by != "day" && group_by != "model" {
+        return Err(PlatformError::validation("group_by 只支持 day / model"));
+    }
+    let days = days.clamp(1, 365);
+    let sql = if group_by == "day" {
+        "select to_char(date_trunc('day', created_at), 'YYYY-MM-DD') as bucket, \
+                coalesce(sum(input_tokens), 0)::bigint as input_tokens, \
+                coalesce(sum(output_tokens), 0)::bigint as output_tokens, \
+                coalesce(sum(cost_usd), 0)::float8 as cost_usd, \
+                count(*)::bigint as turns \
+         from token_usage \
+         where user_id = $1 and created_at >= now() - (interval '1 day' * $2) \
+         group by bucket order by bucket"
+    } else {
+        "select (api_id || '/' || model_real_name) as bucket, \
+                coalesce(sum(input_tokens), 0)::bigint as input_tokens, \
+                coalesce(sum(output_tokens), 0)::bigint as output_tokens, \
+                coalesce(sum(cost_usd), 0)::float8 as cost_usd, \
+                count(*)::bigint as turns \
+         from token_usage \
+         where user_id = $1 and created_at >= now() - (interval '1 day' * $2) \
+         group by bucket order by cost_usd desc"
+    };
+    let rows = sqlx::query(sql)
+        .bind(user_id)
+        .bind(days)
+        .fetch_all(pool)
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(UsageTimelineRow {
+                bucket: r.try_get("bucket")?,
+                input_tokens: r.try_get("input_tokens")?,
+                output_tokens: r.try_get("output_tokens")?,
+                cost_usd: r.try_get("cost_usd")?,
+                turns: r.try_get("turns")?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+        .map_err(Into::into)
+}
+
+/// 粗略估算 token 数。中文按 0.6,其他按 4 字符/token。
+pub fn estimate_input_tokens(text: &str) -> i64 {
+    let mut cn = 0i64;
+    for ch in text.chars() {
+        if ('\u{4e00}'..='\u{9fff}').contains(&ch) {
+            cn += 1;
+        }
+    }
+    let other = text.chars().count() as i64 - cn;
+    ((cn as f64) * 0.6 + (other as f64) / 4.0) as i64
+}
+
+/// 最近 N 轮该模型的平均 output tokens。
+pub async fn average_output_tokens(
+    pool: &PgPool,
+    user_id: i64,
+    model_real_name: &str,
+    last_n: i64,
+) -> PlatformResult<i32> {
+    let last_n = last_n.clamp(1, 200);
+    let row = if !model_real_name.is_empty() {
+        sqlx::query(
+            "select coalesce(avg(output_tokens), 0)::int as avg from ( \
+               select output_tokens from token_usage \
+               where user_id = $1 and model_real_name = $2 order by id desc limit $3 \
+             ) t",
+        )
+        .bind(user_id)
+        .bind(model_real_name)
+        .bind(last_n)
+        .fetch_one(pool)
+        .await?
+    } else {
+        sqlx::query(
+            "select coalesce(avg(output_tokens), 0)::int as avg from ( \
+               select output_tokens from token_usage \
+               where user_id = $1 order by id desc limit $2 \
+             ) t",
+        )
+        .bind(user_id)
+        .bind(last_n)
+        .fetch_one(pool)
+        .await?
+    };
+    Ok(row.try_get::<i32, _>("avg").unwrap_or(0))
+}
+
+// TODO[Sonnet]: 接入 model_probe 价格表(rpg-llm crate) → 真实 compute_cost。
+// TODO[Sonnet]: context_window_for(): 同价格表来源。
