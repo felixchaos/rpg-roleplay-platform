@@ -22,8 +22,9 @@
 
 use chrono::Utc;
 use phf::phf_set;
+use rpg_schemas::{AuditEntry, PendingWrite};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
@@ -312,13 +313,7 @@ pub fn apply_op(
     if is_hard_forbidden(&path) {
         push_audit(
             state,
-            json!({
-                "ts": Utc::now().to_rfc3339(),
-                "source": source,
-                "path": path,
-                "blocked": "hard_forbidden",
-                "turn": state.turn(),
-            }),
+            AuditEntry::blocked(source, &path, "hard_forbidden", state.turn().max(0) as u64),
         );
         return Err(OpError::HardForbidden(path));
     }
@@ -327,14 +322,13 @@ pub fn apply_op(
     if is_rules_managed(&path) && !source.starts_with("rules_engine") {
         push_audit(
             state,
-            json!({
-                "ts": Utc::now().to_rfc3339(),
-                "source": source,
-                "path": path,
-                "blocked": "rules_managed",
-                "hint": "受规则引擎管理的硬数值(HP/AC/initiative/dice_log)只能由 RulesEngine 写入",
-                "turn": state.turn(),
-            }),
+            AuditEntry::blocked_with_hint(
+                source,
+                &path,
+                "rules_managed",
+                "受规则引擎管理的硬数值(HP/AC/initiative/dice_log)只能由 RulesEngine 写入",
+                state.turn().max(0) as u64,
+            ),
         );
         return Err(OpError::RulesManaged(path, source.to_string()));
     }
@@ -343,13 +337,7 @@ pub fn apply_op(
     if is_module_managed(&path) && module_scene_active(state) && source.starts_with("gm") {
         push_audit(
             state,
-            json!({
-                "ts": Utc::now().to_rfc3339(),
-                "source": source,
-                "path": path,
-                "blocked": "module_managed",
-                "turn": state.turn(),
-            }),
+            AuditEntry::blocked(source, &path, "module_managed", state.turn().max(0) as u64),
         );
         return Err(OpError::ModuleManaged(path));
     }
@@ -362,17 +350,18 @@ pub fn apply_op(
         let pending_id = next_pending_id();
         let from = path::get_path(&state.data, &path).cloned().unwrap_or(Value::Null);
         let value_for_log = op.value().cloned().unwrap_or(Value::Null);
-        let pending = json!({
-            "id": pending_id,
-            "path": path,
-            "value": value_for_log,
-            "op": op.kind_name(),
-            "source": source,
-            "turn": state.turn(),
-            "from": from,
-            "to": value_for_log,
-            "reason": format!("{}未授权此字段自动写入", permission_label(&mode_raw)),
-        });
+        let pending = PendingWrite {
+            id: pending_id,
+            path: path.clone(),
+            value: value_for_log.clone(),
+            op: op.kind_name().to_string(),
+            source: source.to_string(),
+            turn: state.turn().max(0) as u64,
+            from,
+            to: value_for_log,
+            reason: format!("{}未授权此字段自动写入", permission_label(&mode_raw)),
+            extra: Default::default(),
+        };
         push_pending(state, pending);
         return Ok(ApplyOutcome {
             kind: ApplyKind::Pending,
@@ -391,15 +380,14 @@ pub fn apply_op(
 
     push_audit(
         state,
-        json!({
-            "ts": Utc::now().to_rfc3339(),
-            "source": source,
-            "path": path,
-            "op": op.kind_name(),
-            "value": op.value().cloned().unwrap_or(Value::Null),
-            "mode": mode,
-            "turn": state.turn(),
-        }),
+        AuditEntry::applied(
+            source,
+            &path,
+            op.kind_name(),
+            op.value().cloned().unwrap_or(Value::Null),
+            &mode,
+            state.turn().max(0) as u64,
+        ),
     );
 
     Ok(ApplyOutcome {
@@ -425,13 +413,19 @@ fn perform_write(state: &mut GameState, op: &Op, path: &str) -> Result<(), State
     }
 }
 
-fn push_audit(state: &mut GameState, entry: Value) {
+/// 落 audit_log。typed AuditEntry 内部 to_value 一次后塞进 `permissions.audit_log` 数组。
+///
+/// 注意 `data` 顶层仍是 Value 存储(避免动摇全仓 100+ path 访问点的兼容性);typed
+/// 化只发生在"入口构造"与"出口读取(后续 typed 访问 API)",存储层渐进 typed 化
+/// 是 C3 工作。
+fn push_audit(state: &mut GameState, entry: AuditEntry) {
+    let v = serde_json::to_value(&entry).expect("AuditEntry serializes");
     let permissions = ensure_object_at(&mut state.data, "permissions");
     let audit_log = permissions
         .entry("audit_log".to_string())
         .or_insert_with(|| Value::Array(Vec::new()));
     if let Value::Array(arr) = audit_log {
-        arr.push(entry);
+        arr.push(v);
         let len = arr.len();
         if len > 200 {
             arr.drain(0..len - 200);
@@ -439,13 +433,14 @@ fn push_audit(state: &mut GameState, entry: Value) {
     }
 }
 
-fn push_pending(state: &mut GameState, entry: Value) {
+fn push_pending(state: &mut GameState, entry: PendingWrite) {
+    let v = serde_json::to_value(&entry).expect("PendingWrite serializes");
     let permissions = ensure_object_at(&mut state.data, "permissions");
     let pending = permissions
         .entry("pending_writes".to_string())
         .or_insert_with(|| Value::Array(Vec::new()));
     if let Value::Array(arr) = pending {
-        arr.push(entry);
+        arr.push(v);
         let len = arr.len();
         if len > 20 {
             arr.drain(0..len - 20);
@@ -501,6 +496,7 @@ fn mark_user_locked(state: &mut GameState, path: &str) {
 mod tests {
     use super::*;
     use crate::state::GameState;
+    use serde_json::json;
 
     fn make_state() -> GameState {
         GameState::new("test_user")
