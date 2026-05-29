@@ -49,6 +49,24 @@ pub fn router() -> Router<AppState> {
         )
 }
 
+/// 非 SSE 路由(供 build_regular_routes 使用,排除 /chat 和 /confirm)。
+pub fn regular_router() -> Router<AppState> {
+    Router::new()
+        .route("/api/console_assistant/ping", get(api_console_assistant_ping))
+        .route(
+            "/api/console_assistant/conversations",
+            get(api_console_assistant_conversations),
+        )
+        .route(
+            "/api/console_assistant/new_conversation",
+            post(api_console_assistant_new_conversation),
+        )
+        .route(
+            "/api/console_assistant/delete_conversation",
+            post(api_console_assistant_delete_conversation),
+        )
+}
+
 // ── request types ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Default)]
@@ -143,7 +161,7 @@ async fn api_console_assistant_delete_conversation(
 /// 翻译期:把 user message 追加到内存对话,echo 一个空 token + done。
 /// 等接 LlmRouter 之后,这里替换为 stream_chat 透传。
 #[tracing::instrument(skip(s, headers, body), fields(user_id, conv_id))]
-async fn api_console_assistant_chat(
+pub(crate) async fn api_console_assistant_chat(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ConsoleAssistantChatRequest>,
@@ -180,7 +198,7 @@ async fn api_console_assistant_chat(
 
 /// POST /api/console_assistant/confirm — SSE
 #[tracing::instrument(skip(s, headers, body), fields(user_id, call_id))]
-async fn api_console_assistant_confirm(
+pub(crate) async fn api_console_assistant_confirm(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ConsoleAssistantConfirmRequest>,

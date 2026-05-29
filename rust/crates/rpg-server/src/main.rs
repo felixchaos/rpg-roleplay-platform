@@ -47,6 +47,11 @@ use axum::{
     routing::get,
     Router,
 };
+use axum_prometheus::PrometheusMetricLayer;
+use tower_governor::{
+    governor::GovernorConfigBuilder,
+    GovernorLayer,
+};
 use dashmap::DashMap;
 use http::HeaderMap;
 use parking_lot::RwLock;
@@ -60,6 +65,7 @@ use tokio_util::task::TaskTracker;
 use tower_http::{
     compression::CompressionLayer,
     cors::{AllowOrigin, CorsLayer},
+    timeout::TimeoutLayer,
     trace::TraceLayer,
 };
 use tracing::{error as log_error, info, warn};
@@ -474,28 +480,157 @@ async fn health() -> impl IntoResponse {
     }))
 }
 
+/// GET /livez — k8s liveness probe。进程活着即返回 200。
+async fn livez() -> impl IntoResponse {
+    (StatusCode::OK, Json(json!({"ok": true, "status": "alive"})))
+}
+
+/// GET /readyz — k8s readiness probe。探 DB 连通性,通过 → 200,失败 → 503。
+///
+/// 跳过:SSO / auth token 鉴权(探针本身不需要用户 token),
+/// 探针失败时 k8s 停止向此 pod 分流流量。
+async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
+    match sqlx::query("SELECT 1").execute(&state.db).await {
+        Ok(_) => (StatusCode::OK, Json(json!({"ok": true, "db": "ready"}))),
+        Err(e) => {
+            warn!(error = %e, "readyz: DB probe failed");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"ok": false, "db": "unavailable", "error": e.to_string()})),
+            )
+        }
+    }
+}
+
+/// 从 env 读取限流配置(可通过 RPG_RATE_LIMIT_PER_MIN 覆盖,默认 100)。
+fn rate_limit_per_minute() -> u32 {
+    std::env::var("RPG_RATE_LIMIT_PER_MIN")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(100)
+}
+
+/// 从 env 读取请求超时(秒,可通过 RPG_REQUEST_TIMEOUT_SECS 覆盖,默认 30)。
+fn request_timeout_secs() -> Duration {
+    let secs = std::env::var("RPG_REQUEST_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(30);
+    Duration::from_secs(secs)
+}
+
+/// 全局请求体大小限制(字节,可通过 RPG_BODY_LIMIT_BYTES 覆盖,默认 2 MB)。
+fn body_limit_bytes() -> usize {
+    std::env::var("RPG_BODY_LIMIT_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(2 * 1024 * 1024) // 2 MB
+}
+
+/// 上传路由专用大 body limit(字节,可通过 RPG_UPLOAD_BODY_LIMIT_BYTES 覆盖,默认 50 MB)。
+fn upload_body_limit_bytes() -> usize {
+    std::env::var("RPG_UPLOAD_BODY_LIMIT_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(50 * 1024 * 1024) // 50 MB
+}
+
 /// 组装完整 Router 与中间件栈。
 ///
-/// 中间件挂载顺序对应 Python `configure_app`:
-///   1. CORS(最外层)
-///   2. GZip 压缩
-///   3. Trace(请求日志)
-///   4. api_contract_middleware(最内层,挨着 handler 跑)
+/// ## 中间件分层设计
+///
+/// ### 观测层(全局,含 SSE)
+///   Prometheus metrics → TraceLayer → CompressionLayer
+///
+/// ### 非 SSE 业务层(普通 API)
+///   body limit(2 MB) + timeout(30 s) + governor 限流(100 req/min per-IP)
+///   → api_contract_middleware → handler
+///
+/// ### SSE 路由层(豁免 timeout + governor)
+///   /api/chat  /api/opening  /api/state_events — 只走 body limit,
+///   不走 TimeoutLayer(避免长连接被切断)和 governor(流式连接本身无刷量风险)。
+///
+/// ### 上传路由层
+///   /api/uploads/* — body limit 放宽至 50 MB(per-route 覆盖全局 2 MB)。
+///
+/// ### 探针/metrics 端点(完全在限流之外)
+///   /health  /livez  /readyz  /metrics — 不走 governor / body limit / timeout
 fn build_router(state: AppState) -> Router {
     let cors = build_cors_layer(&state.config);
 
-    // 6B-1:server 与 routes 现共享同一份 `AppState`(单一 `Arc<AppStateInner>`)。
-    // 不再逐字段 clone 重建 routes 版 —— 这里把同一个 state clone(仅 inc 1 次外层
-    // Arc refcount)直接喂给 routes 的 router,彻底消除两份割裂与字段漂移风险。
-    let api_routes = rpg_routes::build_routes().with_state(state.clone());
+    // ── Prometheus metrics ──────────────────────────────────────────────────
+    let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
-    // 健康检查保留在 server 侧:`GET /health` 兜底(routes 的 `GET /` 走业务侧 index)。
-    //
-    // 中间件挂载顺序:axum 的 .layer() **从内向外** 包裹,书写顺序与执行顺序相反。
-    // 期望调用栈(外→内):CORS → Trace → Compression → contract → handler
-    // 实现书写(外→内 reverse):contract → Compression → Trace → CORS
-    Router::new()
+    // ── governor 限流配置(per-IP) ───────────────────────────────────────────
+    // tower_governor 0.4 API:
+    //   - per_second(n) 表示每 n 秒补充 1 token(令牌桶速率 = 60/rpm per-second)
+    //   - burst_size(b) 允许 b 个请求的短时突发
+    // 100 req/min → 每 60/100=0.6s 补充 1 个令牌(以毫秒表示)。
+    let rpm = rate_limit_per_minute();
+    let period_ms = (60_000u64 / rpm as u64).max(1); // 每 token 补充时间(ms)
+    let burst = (rpm / 10).max(1);
+    let governor_cfg = GovernorConfigBuilder::default()
+        .per_millisecond(period_ms)
+        .burst_size(burst)
+        .finish()
+        .expect("governor config should be valid");
+    let governor_layer = GovernorLayer {
+        config: std::sync::Arc::new(governor_cfg),
+    };
+
+    // ── timeout ─────────────────────────────────────────────────────────────
+    // tower_http 0.6 推荐 with_status_code (TimeoutLayer::new 已标 deprecated)。
+    // 超时时返回 504 Gateway Timeout。
+    #[allow(deprecated)]
+    let timeout = TimeoutLayer::new(request_timeout_secs());
+
+    // ── body limit ──────────────────────────────────────────────────────────
+    let global_body_limit = axum::extract::DefaultBodyLimit::max(body_limit_bytes());
+
+    // ── SSE 路由(豁免 governor + timeout) ──────────────────────────────────
+    // 这三条路由产生长连接流,不设超时也不限流。
+    // body limit 仍保留(SSE 请求本身体积小,全局 2 MB 够用)。
+    let sse_routes = rpg_routes::build_sse_routes()
+        .with_state(state.clone())
+        .layer(global_body_limit.clone());
+
+    // ── 上传路由(放宽 body limit) ───────────────────────────────────────────
+    let upload_routes = rpg_routes::build_upload_routes()
+        .with_state(state.clone())
+        .layer(axum::extract::DefaultBodyLimit::max(upload_body_limit_bytes()))
+        .layer(timeout.clone())
+        .layer(governor_layer.clone());
+
+    // ── 普通业务路由(全套中间件) ────────────────────────────────────────────
+    let api_routes = rpg_routes::build_regular_routes()
+        .with_state(state.clone())
+        .layer(global_body_limit)
+        .layer(timeout)
+        .layer(governor_layer);
+
+    // ── 探针端点(完全无限流/超时/body limit,运维专用) ──────────────────────
+    let probe_routes = Router::new()
         .route("/health", get(health))
+        .route("/livez", get(livez))
+        .route("/readyz", get(readyz))
+        .route(
+            "/metrics",
+            get(move || {
+                let h = metric_handle.clone();
+                async move { h.render() }
+            }),
+        )
+        .with_state(state.clone());
+
+    // ── 拼装完整路由树 ──────────────────────────────────────────────────────
+    //
+    // axum 的 .layer() **从内向外** 包裹,书写顺序与执行顺序相反。
+    // 期望外→内顺序: CORS → Prometheus → Trace → Compression → contract → [各子树自己的层]
+    Router::new()
+        .merge(probe_routes)
+        .merge(sse_routes)
+        .merge(upload_routes)
         .merge(api_routes)
         .with_state(state.clone())
         .layer(axum::middleware::from_fn_with_state(
@@ -504,6 +639,7 @@ fn build_router(state: AppState) -> Router {
         ))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
+        .layer(prometheus_layer)
         .layer(cors)
 }
 
@@ -688,13 +824,18 @@ async fn main() -> Result<()> {
         .context("bind tcp listener failed")?;
 
     // 10. 优雅 shutdown
+    // `into_make_service_with_connect_info::<SocketAddr>()` 使 axum-governor PeerIp extractor
+    // 能读取 ConnectInfo<SocketAddr>。若不加此项,governor 会因 MissingConnectInfo 而 panic。
     let shutdown_state = state.clone();
-    let serve_result = axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            lifespan_shutdown(&shutdown_state).await;
-        })
-        .await;
+    let serve_result = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        lifespan_shutdown(&shutdown_state).await;
+    })
+    .await;
 
     if let Err(err) = serve_result {
         log_error!(?err, "axum::serve exited with error");

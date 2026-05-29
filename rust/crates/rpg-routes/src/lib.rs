@@ -442,6 +442,54 @@ pub fn build_routes() -> Router<AppState> {
         .layer(middleware::from_fn(rewrite_v1_prefix))
 }
 
+/// SSE 长连接路由(豁免 timeout + governor)。
+///
+/// 包括所有会产生 Server-Sent Events 的端点:
+/// - `/api/chat` — 主聊天 SSE
+/// - `/api/opening` — 开场白 SSE
+/// - `/api/state_events` — 状态变更推送
+/// - `/api/console_assistant/chat` — 控制台助手 SSE
+/// - `/api/console_assistant/confirm` — 确认操作 SSE
+///
+/// server 侧对这些路由不挂 TimeoutLayer 和 GovernorLayer,
+/// 避免长连接被超时切断 / 被流量计数器误判。
+pub fn build_sse_routes() -> Router<AppState> {
+    use axum::routing::{get, post};
+    // 直接引用同 crate 内 pub(crate) handler(不走 pub re-export)。
+    Router::new()
+        .route("/api/chat", post(game::api_chat))
+        .route("/api/opening", post(game::api_opening))
+        .route("/api/state_events", get(core::api_state_events))
+        .route(
+            "/api/console_assistant/chat",
+            post(console_assistant::api_console_assistant_chat),
+        )
+        .route(
+            "/api/console_assistant/confirm",
+            post(console_assistant::api_console_assistant_confirm),
+        )
+        .layer(middleware::from_fn(rewrite_v1_prefix))
+}
+
+/// 上传路由(需要放宽 body limit,其余中间件与普通路由一致)。
+///
+/// `/api/uploads/*` — base64 分片上传。server 侧对此组路由替换成更大的 body limit。
+pub fn build_upload_routes() -> Router<AppState> {
+    Router::new()
+        .merge(uploads::router())
+        .layer(middleware::from_fn(rewrite_v1_prefix))
+}
+
+/// 普通业务路由(全套中间件:governor + timeout + 全局 body limit)。
+///
+/// 排除 SSE 路由和上传路由。
+pub fn build_regular_routes() -> Router<AppState> {
+    let inner = regular_api_router();
+    Router::new()
+        .merge(inner)
+        .layer(middleware::from_fn(rewrite_v1_prefix))
+}
+
 /// middleware:把 `/api/v1/...` 路径改写为 `/api/...`,其它路径直通。
 ///
 /// 兼容前端 `lib/api.ts` 走 `/api/v1/*` 调用,而后端 handler 注册的是 `/api/*`。
@@ -480,4 +528,24 @@ fn api_router() -> Router<AppState> {
         .merge(models::router())
         .merge(console_assistant::router())
         .merge(uploads::router())
+}
+
+/// 普通业务路由(去掉 SSE 路由 + 上传路由)。
+fn regular_api_router() -> Router<AppState> {
+    Router::new()
+        // core.rs 中的非 SSE 路由:/ 和 /api/state
+        .merge(core::regular_router())
+        // game.rs 中的非 SSE 路由
+        .merge(game::regular_router())
+        .merge(memory::router())
+        .merge(permissions::router())
+        .merge(rules::router())
+        .merge(skills::router())
+        .merge(timeline::router())
+        .merge(worldline::router())
+        .merge(mcp::router())
+        .merge(models::router())
+        // console_assistant 的非 SSE 路由
+        .merge(console_assistant::regular_router())
+        // uploads 已单独拎出,不再包含
 }

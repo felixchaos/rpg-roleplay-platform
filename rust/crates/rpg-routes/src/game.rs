@@ -39,6 +39,17 @@ pub fn router() -> Router<AppState> {
         .route("/api/save", post(api_save))
 }
 
+/// 非 SSE 路由(供 build_regular_routes 使用,排除 /api/chat 和 /api/opening)。
+pub fn regular_router() -> Router<AppState> {
+    Router::new()
+        .route("/api/new", post(api_new))
+        .route("/api/chat/estimate", post(api_chat_estimate))
+        .route("/api/chat/context-breakdown", get(api_context_breakdown))
+        .route("/api/stop", post(api_stop))
+        .route("/api/save", post(api_save))
+}
+
+
 // ── request / response types ────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Default)]
@@ -134,7 +145,7 @@ async fn api_new(
 /// 本翻译期未接 GameMaster.generate_opening 全链路(rpg-agents 需要 SharedLlm 注入),
 /// 留下一个 stub SSE,发 hello + state_change + chunk + done,前端不会卡住。
 #[tracing::instrument(skip(s, headers), fields(user_id))]
-async fn api_opening(
+pub(crate) async fn api_opening(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ResponseError> {
@@ -319,7 +330,7 @@ async fn api_context_breakdown(
 /// router 注入) 还在搭,本接口只做空消息校验 + 把 user input 写进 history + echo 一个空 token,
 /// 等 chat_pipeline crate 落地后再 wire 真实流式响应。
 #[tracing::instrument(skip(s, headers, body), fields(user_id))]
-async fn api_chat(
+pub(crate) async fn api_chat(
     State(s): State<AppState>,
     headers: HeaderMap,
     body: Option<Json<ChatRequest>>,

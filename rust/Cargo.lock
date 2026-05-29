@@ -264,26 +264,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "axum-governor"
-version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aca10cfdb0b0a1be23df58da590f958f8b136a52a6da637855a5ea4db6e159bc"
-dependencies = [
- "axum 0.8.9",
- "dashmap",
- "forwarded-header-value",
- "governor",
- "http",
- "ipnet",
- "nonzero_ext",
- "pin-project-lite",
- "serde_json",
- "tokio",
- "tower",
- "tracing",
-]
-
-[[package]]
 name = "axum-macros"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -593,6 +573,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
 dependencies = [
  "cmov",
+]
+
+[[package]]
+name = "dashmap"
+version = "5.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
+dependencies = [
+ "cfg-if",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -1049,22 +1042,22 @@ dependencies = [
 
 [[package]]
 name = "governor"
-version = "0.10.4"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9efcab3c1958580ff1f25a2a41be1668f7603d849bb63af523b208a3cc1223b8"
+checksum = "68a7f542ee6b35af73b06abc0dad1c1bae89964e4e253bc4b587b91c9637867b"
 dependencies = [
  "cfg-if",
- "dashmap",
- "futures-sink",
+ "dashmap 5.5.3",
+ "futures",
  "futures-timer",
- "futures-util",
- "hashbrown 0.16.1",
+ "no-std-compat",
  "nonzero_ext",
  "parking_lot",
  "portable-atomic",
+ "quanta",
+ "rand 0.8.6",
  "smallvec",
  "spinning_top",
- "web-time",
 ]
 
 [[package]]
@@ -1747,6 +1740,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "no-std-compat"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b93853da6d84c2e3c7d730d6473e8817692dd89be387eb01b94d7f108ecb5b8c"
+
+[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1966,6 +1965,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
 dependencies = [
  "siphasher",
+]
+
+[[package]]
+name = "pin-project"
+version = "1.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2466b2336ed02bcdca6b294417127b90ec92038d1d5c4fbeac971a922e0e0924"
+dependencies = [
+ "pin-project-internal",
+]
+
+[[package]]
+name = "pin-project-internal"
+version = "1.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c96395f0a926bc13b1c17622aaddda1ecb55d49c8f1bf9777e4d877800a43f8b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -2564,7 +2583,7 @@ dependencies = [
  "base64",
  "bytes",
  "chrono",
- "dashmap",
+ "dashmap 6.2.1",
  "futures",
  "futures-util",
  "http",
@@ -2636,9 +2655,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
- "axum-governor",
  "axum-prometheus",
- "dashmap",
+ "dashmap 6.2.1",
  "dotenvy",
  "futures-util",
  "http",
@@ -2664,6 +2682,7 @@ dependencies = [
  "tokio-util",
  "tower",
  "tower-http",
+ "tower_governor",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -2676,7 +2695,7 @@ dependencies = [
  "ahash",
  "anyhow",
  "chrono",
- "dashmap",
+ "dashmap 6.2.1",
  "once_cell",
  "parking_lot",
  "phf",
@@ -3710,6 +3729,22 @@ name = "tower-service"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
+
+[[package]]
+name = "tower_governor"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aea939ea6cfa7c4880f3e7422616624f97a567c16df67b53b11f0d03917a8e46"
+dependencies = [
+ "axum 0.7.9",
+ "forwarded-header-value",
+ "governor",
+ "http",
+ "pin-project",
+ "thiserror 1.0.69",
+ "tower",
+ "tracing",
+]
 
 [[package]]
 name = "tracing"

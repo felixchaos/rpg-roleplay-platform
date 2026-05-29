@@ -28,6 +28,13 @@ pub fn router() -> Router<AppState> {
         .route("/api/state_events", get(api_state_events))
 }
 
+/// 非 SSE 路由(供 build_regular_routes 使用)。
+pub fn regular_router() -> Router<AppState> {
+    Router::new()
+        .route("/", get(index))
+        .route("/api/state", get(api_state))
+}
+
 /// GET / — backend 根路径
 async fn index() -> impl IntoResponse {
     Json(json!({
@@ -66,7 +73,7 @@ async fn api_state(
 ///   2. 将 `state_bus.subscribe()` 转换成 `ReceiverStream`
 ///   3. 把每个 `StateEvent` 序列化为 SSE `data`
 #[tracing::instrument(skip(s, headers), fields(user_id))]
-async fn api_state_events(
+pub(crate) async fn api_state_events(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ResponseError> {
