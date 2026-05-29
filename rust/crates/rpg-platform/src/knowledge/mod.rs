@@ -23,9 +23,9 @@ pub use character_cards::{
     CharacterCard, CharacterCardPayload,
 };
 pub use embedding::{
-    embed_query, embed_script, embed_status, EmbeddingClient, EmbeddingError,
-    EmbeddingJobStatus, VertexEmbeddingClient, BATCH_SIZE, EMBED_DIM, EMBED_MODEL,
-    PER_CHUNK_CHAR_LIMIT,
+    embed_query, embed_script, embed_status, spawn_embed_script, EmbeddingClient,
+    EmbeddingError, EmbeddingJobStatus, EmbeddingTaskType, VertexEmbeddingClient, BATCH_SIZE,
+    EMBED_DIM, EMBED_MODEL, PER_CHUNK_CHAR_LIMIT,
 };
 pub use memory::{
     delete_memory, get_memory, list_memories, upsert_memory, MemoryItem, MemoryPayload,
