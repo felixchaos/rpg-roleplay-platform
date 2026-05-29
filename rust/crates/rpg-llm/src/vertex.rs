@@ -76,6 +76,16 @@ impl VertexBackend {
         Self::from_sa_file(path).await
     }
 
+    /// 返回 GCP project_id。
+    pub fn project_id(&self) -> &str {
+        &self.project_id
+    }
+
+    /// 返回 region (e.g. "us-central1" / "global")。
+    pub fn region(&self) -> &str {
+        &self.region
+    }
+
     async fn token(&self) -> Result<String, LlmError> {
         // 简单缓存策略:第一次取出后存起来。yup-oauth2 内部也会自动刷新。
         let mut cache = self.token_cache.lock().await;
@@ -110,6 +120,64 @@ impl VertexBackend {
         );
         let resp = self.http.get(&url).bearer_auth(&tok).send().await?;
         Ok(resp.status().is_success())
+    }
+
+    /// 带 task_type 的 embedding 调用,含重试逻辑:
+    ///   - 429 / 503 → 指数退避(1s,2s,4s,最多 3 次)
+    ///   - 5xx      → 最多 3 次重试
+    ///
+    /// `task_type` 对应 Vertex EmbedContentConfig:
+    ///   "RETRIEVAL_DOCUMENT" — 文档侧
+    ///   "RETRIEVAL_QUERY"    — 查询侧
+    pub async fn embed_with_task_type(
+        &self,
+        model: &str,
+        texts: &[String],
+        task_type: &str,
+    ) -> Result<Vec<Vec<f32>>, LlmError> {
+        if texts.is_empty() {
+            return Ok(vec![]);
+        }
+        let tok = self.token().await?;
+        let url = self.endpoint(model, "predict");
+        let body = build_embed_body(texts, task_type);
+
+        const MAX_RETRIES: u32 = 3;
+        let mut attempt = 0u32;
+        loop {
+            let resp = self
+                .http
+                .post(&url)
+                .bearer_auth(&tok)
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await?;
+            let status = resp.status();
+            let status_u16 = status.as_u16();
+
+            if status.is_success() {
+                let v: serde_json::Value = resp.json().await?;
+                let out = parse_embed_response(&v).ok_or_else(|| {
+                    LlmError::Stream("vertex embed: no predictions field".into())
+                })?;
+                return Ok(out);
+            }
+
+            // 判断是否可重试:429/503 → 指数退避;5xx → 最多 3 次
+            if !is_retryable_status(status_u16) || attempt >= MAX_RETRIES {
+                let body_text = resp.text().await.unwrap_or_default();
+                return Err(LlmError::Provider {
+                    status: status_u16,
+                    body: body_text,
+                });
+            }
+
+            // 指数退避:1s, 2s, 4s
+            let delay_ms = 1000u64 << attempt;
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            attempt += 1;
+        }
     }
 
     fn endpoint(&self, model: &str, action: &str) -> String {
@@ -298,52 +366,7 @@ impl LlmBackend for VertexBackend {
     }
 
     async fn embed(&self, model: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, LlmError> {
-        if texts.is_empty() {
-            return Ok(vec![]);
-        }
-        let tok = self.token().await?;
-        let url = self.endpoint(model, "predict");
-        let instances: Vec<serde_json::Value> = texts
-            .iter()
-            .map(|t| serde_json::json!({"content": t}))
-            .collect();
-        let body = serde_json::json!({ "instances": instances });
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&tok)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(LlmError::Provider {
-                status: status.as_u16(),
-                body,
-            });
-        }
-        let v: serde_json::Value = resp.json().await?;
-        let preds = v
-            .get("predictions")
-            .and_then(|p| p.as_array())
-            .ok_or_else(|| LlmError::Stream("vertex embed: no predictions".into()))?;
-        let mut out = Vec::new();
-        for p in preds {
-            let vec = p
-                .get("embeddings")
-                .and_then(|e| e.get("values"))
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|n| n.as_f64().map(|f| f as f32))
-                        .collect::<Vec<f32>>()
-                })
-                .unwrap_or_default();
-            out.push(vec);
-        }
-        Ok(out)
+        self.embed_with_task_type(model, texts, "RETRIEVAL_DOCUMENT").await
     }
 }
 
@@ -600,5 +623,221 @@ fn clip(s: &str, n: usize) -> String {
         s.to_string()
     } else {
         s.chars().take(n).collect::<String>() + "…"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: embed request body 构造(与 embed_with_task_type 一致,供测试验证)
+// ---------------------------------------------------------------------------
+
+fn build_embed_body(texts: &[String], task_type: &str) -> serde_json::Value {
+    let instances: Vec<serde_json::Value> = texts
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "content": t,
+                "task_type": task_type,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "instances": instances,
+        "parameters": {
+            "outputDimensionality": 768_u32,
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Helper: 解析 Vertex :predict 响应中的 embeddings
+// ---------------------------------------------------------------------------
+
+fn parse_embed_response(v: &serde_json::Value) -> Option<Vec<Vec<f32>>> {
+    let preds = v.get("predictions")?.as_array()?;
+    let mut out = Vec::with_capacity(preds.len());
+    for p in preds {
+        let vec = p
+            .get("embeddings")
+            .and_then(|e| e.get("values"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|n| n.as_f64().map(|f| f as f32))
+                    .collect::<Vec<f32>>()
+            })
+            .unwrap_or_default();
+        out.push(vec);
+    }
+    Some(out)
+}
+
+// ---------------------------------------------------------------------------
+// Helper: 判断 HTTP status code 是否可重试
+// ---------------------------------------------------------------------------
+
+fn is_retryable_status(status: u16) -> bool {
+    status == 429 || status == 503 || (status >= 500 && status < 600)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -------------------------------------------------------------------------
+    // test: embed request body shape
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_embed_body_shape_retrieval_document() {
+        let texts = vec!["hello".to_string(), "world".to_string()];
+        let body = build_embed_body(&texts, "RETRIEVAL_DOCUMENT");
+
+        // instances 数组
+        let instances = body["instances"].as_array().expect("instances must be array");
+        assert_eq!(instances.len(), 2);
+
+        // 每个 instance 有 content 和 task_type
+        assert_eq!(instances[0]["content"], "hello");
+        assert_eq!(instances[0]["task_type"], "RETRIEVAL_DOCUMENT");
+        assert_eq!(instances[1]["content"], "world");
+        assert_eq!(instances[1]["task_type"], "RETRIEVAL_DOCUMENT");
+
+        // parameters
+        let dim = body["parameters"]["outputDimensionality"]
+            .as_u64()
+            .expect("outputDimensionality must be u64");
+        assert_eq!(dim, 768);
+    }
+
+    #[test]
+    fn test_embed_body_shape_retrieval_query() {
+        let texts = vec!["query text".to_string()];
+        let body = build_embed_body(&texts, "RETRIEVAL_QUERY");
+
+        let instances = body["instances"].as_array().unwrap();
+        assert_eq!(instances[0]["task_type"], "RETRIEVAL_QUERY");
+    }
+
+    #[test]
+    fn test_embed_body_empty_texts() {
+        let texts: Vec<String> = vec![];
+        let body = build_embed_body(&texts, "RETRIEVAL_DOCUMENT");
+        let instances = body["instances"].as_array().unwrap();
+        assert!(instances.is_empty());
+    }
+
+    // -------------------------------------------------------------------------
+    // test: response parsing
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_embed_response_valid() {
+        let resp = serde_json::json!({
+            "predictions": [
+                {
+                    "embeddings": {
+                        "values": [0.1, 0.2, 0.3],
+                        "statistics": { "token_count": 5, "truncated": false }
+                    }
+                },
+                {
+                    "embeddings": {
+                        "values": [0.4, 0.5, 0.6]
+                    }
+                }
+            ]
+        });
+
+        let result = parse_embed_response(&resp).expect("should parse");
+        assert_eq!(result.len(), 2);
+        assert!((result[0][0] - 0.1_f32).abs() < 1e-6);
+        assert!((result[0][1] - 0.2_f32).abs() < 1e-6);
+        assert!((result[1][0] - 0.4_f32).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_parse_embed_response_missing_predictions() {
+        let resp = serde_json::json!({ "error": "something went wrong" });
+        let result = parse_embed_response(&resp);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_embed_response_empty_values() {
+        let resp = serde_json::json!({
+            "predictions": [
+                { "embeddings": { "values": [] } }
+            ]
+        });
+        let result = parse_embed_response(&resp).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result[0].is_empty());
+    }
+
+    // -------------------------------------------------------------------------
+    // test: retry decision logic
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_retry_429_is_retryable() {
+        assert!(is_retryable_status(429));
+    }
+
+    #[test]
+    fn test_retry_503_is_retryable() {
+        assert!(is_retryable_status(503));
+    }
+
+    #[test]
+    fn test_retry_500_is_retryable() {
+        assert!(is_retryable_status(500));
+    }
+
+    #[test]
+    fn test_retry_502_is_retryable() {
+        assert!(is_retryable_status(502));
+    }
+
+    #[test]
+    fn test_retry_400_not_retryable() {
+        assert!(!is_retryable_status(400));
+    }
+
+    #[test]
+    fn test_retry_401_not_retryable() {
+        assert!(!is_retryable_status(401));
+    }
+
+    #[test]
+    fn test_retry_200_not_retryable() {
+        assert!(!is_retryable_status(200));
+    }
+
+    // -------------------------------------------------------------------------
+    // test: 指数退避延迟计算
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_exponential_backoff_delays() {
+        // attempt 0 → 1000ms, attempt 1 → 2000ms, attempt 2 → 4000ms
+        assert_eq!(1000u64 << 0u32, 1000);
+        assert_eq!(1000u64 << 1u32, 2000);
+        assert_eq!(1000u64 << 2u32, 4000);
+    }
+
+    // -------------------------------------------------------------------------
+    // test: clip helper
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_clip_short_string() {
+        let s = clip("hello", 10);
+        assert_eq!(s, "hello");
+    }
+
+    #[test]
+    fn test_clip_long_string() {
+        let s = clip("hello world", 5);
+        assert_eq!(s, "hello…");
     }
 }
