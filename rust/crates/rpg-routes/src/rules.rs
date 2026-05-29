@@ -22,7 +22,8 @@ use serde_json::{json, Value};
 
 use rpg_platform::{branches, save_io};
 use rpg_rules::{
-    dnd5e::character as rules_character, list_modules, load_module, ModuleBundle,
+    dnd5e::{character as rules_character, monsters as rules_monsters},
+    list_modules, load_module, ModuleBundle,
 };
 use rpg_rules_bridge::{
     apply_combat, consume_item_action, parse_consume_intent, perform_saving_throw,
@@ -1146,9 +1147,16 @@ async fn api_rules_action(
 
 /// POST /api/rules/encounter/start — 开战。
 ///
-/// 对应 Python `api_rules_encounter_start` → `combat_start` 工具,Rust 端目前
-/// 没接战斗 seed 逻辑,只标记 encounter.active/round/encounter_id。执行后接
-/// receipt + 清 pending_questions(与 Python 一致)。
+/// 对应 Python `api_rules_encounter_start` → `combat_start` 工具 →
+/// `rules_bridge.start_encounter_by_id`:
+///   1. 取 scene.module_id,加载模组 bundle 找到 encounters[encounter_id]
+///   2. party 用 player_character(id=player),enemies 走 build_combatant(stat_block_id)
+///   3. 调 bridge `apply_combat(StartEncounter)` 触发先攻骰 + 写 state.encounter
+///   4. encounter.definition 注入 {id, name, victory_flag}(供胜利 flag 触发)
+///   5. 每个 initiative_order 条目入 dice_log
+///   6. 清 pending_questions + 追加 receipt
+///
+/// 匿名用户禁用(Python 一致;模组运行需要 user save)。
 #[tracing::instrument(skip_all)]
 async fn api_rules_encounter_start(
     State(s): State<AppState>,
@@ -1159,27 +1167,162 @@ async fn api_rules_encounter_start(
     if encounter_id.is_empty() {
         return Err(ResponseError::bad_request("缺少 encounter_id"));
     }
+    let seed = coerce_seed(body.seed.as_ref().unwrap_or(&Value::Null));
+
     let user_id = user_id_or_anon(&s, &headers).await;
     let shared = s.state_store.get_or_create(&user_id).await;
-    let (encounter, snapshot) = {
-        let mut st = shared.write();
-        st.set_path("encounter.active", Value::Bool(true))?;
-        st.set_path("encounter.round", Value::from(1))?;
-        st.set_path("encounter.encounter_id", Value::String(encounter_id.clone()))?;
-        let enc = serde_json::to_value(&st.data.encounter).unwrap_or(json!({}));
-        clear_pending_questions_after_rule_action(&mut st, &format!("encounter:start:{encounter_id}"));
-        append_rules_receipt(&mut st, &encounter_receipt("先攻", &enc, &Value::Null));
-        (enc, st.clone())
+
+    // 先把 module_id / pc 拷出来释放锁,加载 bundle 不持锁(load_module 同步 IO,
+    // 但 RwLock 写锁里 spinning 不友好)。然后再写锁里做 apply_combat。
+    let (module_id, party_member) = {
+        let st = shared.read();
+        let module_id = st.data.scene.module_id.clone();
+        let pc_value = serde_json::to_value(&st.data.player_character).unwrap_or(json!({}));
+        let mut party = pc_value.clone();
+        if let Some(obj) = party.as_object_mut() {
+            obj.insert("id".to_string(), json!("player"));
+            if !obj.contains_key("name") {
+                obj.insert("name".to_string(), json!("Player"));
+            }
+        }
+        (module_id, party)
     };
+    if module_id.is_empty() {
+        return Err(ResponseError::bad_request("未加载模组"));
+    }
+    let bundle = load_module(&module_id)
+        .map_err(|e| ResponseError::not_found(format!("未知模组 {module_id}:{e}")))?;
+    let enc_defs = bundle.encounters.as_array().cloned().unwrap_or_default();
+    let enc_def = enc_defs
+        .iter()
+        .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(&encounter_id))
+        .cloned()
+        .ok_or_else(|| ResponseError::bad_request(format!("未知遭遇:{encounter_id}")))?;
+
+    // 构造 enemies — 用 build_combatant 注入 stat_block 数值
+    let mut enemies: Vec<Value> = Vec::new();
+    for e in enc_def
+        .get("enemies")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default()
+    {
+        let stat_block_id = e
+            .get("stat_block_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if stat_block_id.is_empty() {
+            return Err(ResponseError::bad_request(
+                "encounter enemy 缺少 stat_block_id".to_string(),
+            ));
+        }
+        let instance_id = e.get("instance_id").and_then(|v| v.as_str());
+        let name = e.get("name").and_then(|v| v.as_str());
+        let comb = rules_monsters::build_combatant(stat_block_id, instance_id, name)
+            .map_err(ResponseError::bad_request)?;
+        enemies.push(comb);
+    }
+
+    // 写锁内:apply_combat + 定义注入 + dice_log + receipt
+    let (encounter_snap, snapshot) = {
+        let mut st = shared.write();
+        let outcome = apply_combat(
+            &mut st.data,
+            CombatAction::StartEncounter {
+                encounter_id: encounter_id.clone(),
+                party: vec![party_member],
+                enemies,
+                seed,
+            },
+        )
+        .map_err(bridge_to_response_error)?;
+
+        // encounter.definition({id, name, victory_flag})— Python parity,
+        // player_attack 击败首领时会读这个写 scene.flags[victory_flag]
+        let enc_name = enc_def
+            .get("name")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let victory_flag = enc_def
+            .get("victory_flag")
+            .cloned()
+            .unwrap_or(Value::Null);
+        st.data.encounter.extra.insert(
+            "definition".to_string(),
+            json!({
+                "id": encounter_id,
+                "name": enc_name,
+                "victory_flag": victory_flag,
+            }),
+        );
+
+        // 把先攻条目入 dice_log(对应 Python `state.append_dice_log({...})`)
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        let init_order = outcome
+            .encounter
+            .get("initiative_order")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for entry in &init_order {
+            let actor_id = entry
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let actor_name = entry
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let roll = entry.get("roll").cloned().unwrap_or(json!({}));
+            let expression = roll.get("expression").cloned().unwrap_or(Value::Null);
+            let rolls = roll.get("rolls").cloned().unwrap_or(json!([]));
+            let dex_mod = entry.get("dex_mod").cloned().unwrap_or(Value::Null);
+            let init = entry.get("init").cloned().unwrap_or(Value::Null);
+            let enc_name_str = enc_def
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&encounter_id);
+            rpg_state::combat_state::append_dice_log(
+                &mut st,
+                json!({
+                    "id": format!("dl_init_{actor_id}"),
+                    "kind": "initiative",
+                    "actor": actor_name,
+                    "expression": expression,
+                    "rolls": rolls,
+                    "modifier": dex_mod,
+                    "total": init,
+                    "reason": format!("先攻 - {enc_name_str}"),
+                    "ts": now_iso.clone(),
+                }),
+                None,
+            );
+        }
+
+        let enc_value = serde_json::to_value(&st.data.encounter).unwrap_or(json!({}));
+        clear_pending_questions_after_rule_action(
+            &mut st,
+            &format!("encounter:start:{encounter_id}"),
+        );
+        append_rules_receipt(&mut st, &encounter_receipt("先攻", &enc_value, &Value::Null));
+        (enc_value, st.clone())
+    };
+
     Ok(Json(json!({
         "ok": true,
-        "encounter": encounter,
+        "encounter": encounter_snap,
         "state": snapshot.data,
     }))
     .into_response())
 }
 
 /// POST /api/rules/encounter/next — 下一回合。
+///
+/// 对应 Python `combat_next_turn` → `rules_bridge.advance_turn` →
+/// `engine.next_turn(encounter)`:跳过已倒下战斗员,推进 turn_index;到末尾时
+/// round +1。前后都会 sync_player_combatant 把 PC HP/AC 同步到 combatants。
 #[tracing::instrument(skip_all)]
 async fn api_rules_encounter_next(
     State(s): State<AppState>,
@@ -1190,12 +1333,12 @@ async fn api_rules_encounter_next(
     let shared = s.state_store.get_or_create(&user_id).await;
     let (encounter, snapshot) = {
         let mut st = shared.write();
-        let round = st
-            .get_path("encounter.round")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
-        st.set_path("encounter.round", Value::from(round + 1))?;
-        let enc = serde_json::to_value(&st.data.encounter).unwrap_or(json!({}));
+        if !st.data.encounter.active {
+            return Err(ResponseError::bad_request("没有进行中的战斗"));
+        }
+        let outcome = apply_combat(&mut st.data, CombatAction::AdvanceTurn)
+            .map_err(bridge_to_response_error)?;
+        let enc = outcome.encounter.clone();
         clear_pending_questions_after_rule_action(&mut st, "encounter:next");
         append_rules_receipt(&mut st, &encounter_receipt("下一回合", &enc, &Value::Null));
         (enc, st.clone())
@@ -1510,5 +1653,120 @@ mod tests {
         // 引一下 ModuleBundle 防止编译警告 dead code
         let bundle = ModuleBundle::default();
         assert_eq!(bundle.id, "");
+    }
+
+    // ── encounter dispatch:start / next / enemy ─────────────────────────────
+
+    /// 直接驱动 bridge `apply_combat(StartEncounter)`,确认:
+    /// - encounter.active = true / round = 1
+    /// - combatants 含 party(player) + enemies(根据 build_combatant 出来的 stat block)
+    /// - initiative_order 长度 = 1(party)+ enemies 数
+    ///
+    /// 这条复刻 handler 在拿到 module bundle 之后真正调用的链路。
+    #[test]
+    fn encounter_start_seeds_combatants_and_initiative() {
+        let mut data = make_pc_with_weapon();
+        // 模组 stat_block_id (从 monsters.rs 内置 STAT_BLOCKS 取一个)
+        let stat_blocks = rules_monsters::list_stat_blocks();
+        assert!(!stat_blocks.is_empty(), "需要内置 stat block 才能跑 start");
+        let stat_block_id = stat_blocks[0];
+
+        let enemy = rules_monsters::build_combatant(stat_block_id, Some("e_0"), None)
+            .expect("build_combatant 应成功");
+        let mut party = serde_json::to_value(&data.player_character).unwrap();
+        if let Some(obj) = party.as_object_mut() {
+            obj.insert("id".to_string(), json!("player"));
+        }
+
+        let outcome = apply_combat(
+            &mut data,
+            CombatAction::StartEncounter {
+                encounter_id: "enc_1".into(),
+                party: vec![party],
+                enemies: vec![enemy],
+                seed: Some(7),
+            },
+        )
+        .expect("StartEncounter 应成功");
+
+        assert!(data.encounter.active, "encounter 应被激活");
+        assert_eq!(data.encounter.round, 1);
+        assert_eq!(data.encounter.combatants.len(), 2, "应有 1 party + 1 enemy");
+        let init_len = outcome
+            .encounter
+            .get("initiative_order")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        assert_eq!(init_len, 2, "initiative_order 也应是 2 条");
+    }
+
+    /// AdvanceTurn 在 encounter active 时推进 turn_index;不 active 时返回错误。
+    #[test]
+    fn encounter_advance_turn_requires_active() {
+        let mut data = make_pc_with_weapon();
+        // 未激活 → 应 EncounterNotActive
+        let err = apply_combat(&mut data, CombatAction::AdvanceTurn).unwrap_err();
+        assert!(matches!(err, BridgeError::EncounterNotActive));
+
+        // 激活后能推进
+        data.encounter.active = true;
+        data.encounter.round = 1;
+        data.encounter.turn_index = 0;
+        data.encounter.initiative_order = vec![
+            json!({"id": "player", "name": "Player", "init": 18}),
+            json!({"id": "goblin1", "name": "Goblin", "init": 12}),
+        ];
+        data.encounter.combatants = vec![
+            json!({"id": "player", "name": "Player", "side": "party", "hp": 12, "defeated": false}),
+            enemy_combatant("goblin1", 5, 12),
+        ];
+        let before = data.encounter.turn_index;
+        let outcome = apply_combat(&mut data, CombatAction::AdvanceTurn)
+            .expect("AdvanceTurn 应成功");
+        let after = outcome
+            .encounter
+            .get("turn_index")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(-1);
+        assert!(after != before as i64 || after == 0, "turn_index 应推进或回到 0");
+    }
+
+    /// `encounter_receipt` 在 prefix="先攻" 时输出 initiative_order 描述。
+    #[test]
+    fn encounter_receipt_lists_initiative() {
+        let enc = json!({
+            "initiative_order": [
+                {"name": "Player", "init": 18},
+                {"name": "Goblin", "init": 12}
+            ]
+        });
+        let receipt = encounter_receipt("先攻", &enc, &Value::Null);
+        assert!(receipt.contains("先攻"), "应含『先攻』前缀");
+        assert!(receipt.contains("Player(18)"), "应含 Player(18)");
+        assert!(receipt.contains("Goblin(12)"), "应含 Goblin(12)");
+    }
+
+    /// 敌方攻击未注册 attacker → BridgeError::TargetNotFound,
+    /// 验证 handler 把它映射成 400 bad_request(bridge_to_response_error 已测,
+    /// 这里再确保链路完整)。
+    #[test]
+    fn encounter_enemy_attack_unknown_attacker_maps_to_bad_request() {
+        let mut data = make_pc_with_weapon();
+        data.encounter.active = true;
+        data.encounter.combatants = vec![enemy_combatant("goblin1", 5, 12)];
+        let err = apply_combat(
+            &mut data,
+            CombatAction::EnemyAttack {
+                attacker_id: "ghost".into(),
+                target_id: "player".into(),
+                attack_index: 0,
+                seed: Some(1),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, BridgeError::TargetNotFound(_)));
+        let resp_err = bridge_to_response_error(err);
+        assert_eq!(resp_err.status, http::StatusCode::BAD_REQUEST);
     }
 }

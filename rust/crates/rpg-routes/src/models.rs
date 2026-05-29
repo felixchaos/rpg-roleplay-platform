@@ -32,6 +32,58 @@ use rpg_llm::{probe_backend, AnyBackend, ModelCatalog, ProbeResult, Selected};
 
 use crate::{require_user, AppState, ResponseError};
 
+// ── 凭证检测 + 脱敏 ───────────────────────────────────────────────────────────
+//
+// 对应 Python `model_probe._credential_present` + `app._redact_catalog`。
+// 把 catalog 序列化后的 JSON Value 中,每个 api 节点添加 `has_credential` 布尔,
+// 然后 *non-admin* 删除 `credential_env` / `credential_ref` / `base_url` 三个
+// 部署形状字段。前端用 `has_credential` 过滤"未配 key 的 API"按钮。
+//
+// 之前 `api_models` handler 直接把整个 catalog 序列化返回,任何登录用户都能
+// 拿到 `credential_env` ↔ `OPENAI_API_KEY` 这种环境变量名(等价于把 deployment
+// 配置泄露给所有 user)。Python 端早就靠 `_redact_catalog` 做了对称的保护。
+
+/// 轻量检查 api 节点的凭证是否就绪 — env 形态查环境变量,ref 形态查文件存在。
+/// 与 Python `_credential_present` 同义。
+fn credential_present(api: &Value) -> bool {
+    if let Some(env_name) = api.get("credential_env").and_then(|v| v.as_str()) {
+        if !env_name.is_empty() {
+            return std::env::var(env_name).map(|v| !v.is_empty()).unwrap_or(false);
+        }
+    }
+    if let Some(ref_path) = api.get("credential_ref").and_then(|v| v.as_str()) {
+        if !ref_path.is_empty() {
+            return std::path::Path::new(ref_path).exists();
+        }
+    }
+    false
+}
+
+/// 把 catalog JSON 按角色脱敏。
+///
+/// 对所有 apis[*]:
+///   - 总是注入 `has_credential` 布尔(对应 Python `api["has_credential"]`)
+///   - 非 admin 删除 `credential_env` / `credential_ref` / `base_url`
+///
+/// 返回脱敏后的新 Value(原值不变)。在 JSON 层做避免改 `ApiEntry` strict schema。
+pub(crate) fn redact_catalog(catalog: Value, is_admin: bool) -> Value {
+    let mut v = catalog;
+    if let Some(apis) = v.get_mut("apis").and_then(|a| a.as_array_mut()) {
+        for api in apis.iter_mut() {
+            let present = credential_present(api);
+            if let Some(obj) = api.as_object_mut() {
+                obj.insert("has_credential".to_string(), Value::Bool(present));
+                if !is_admin {
+                    obj.remove("credential_env");
+                    obj.remove("credential_ref");
+                    obj.remove("base_url");
+                }
+            }
+        }
+    }
+    v
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/models", get(api_models))
@@ -137,13 +189,23 @@ fn spawn_probe_sweep(targets: Vec<(String, Arc<AnyBackend>, String)>) {
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 #[tracing::instrument(skip_all)]
-async fn api_models(State(s): State<AppState>) -> Result<Response, ResponseError> {
+async fn api_models(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ResponseError> {
     let catalog = catalog_snapshot(&s);
     let selected = catalog.selected.clone();
+    // 决定调用者是否 admin —— 匿名/未登录视为 non-admin(对 Python 一致:
+    // 失败的 `require_user` 在 `/api/state` 也是 redact 路径)。
+    let is_admin = match require_user(&s, &headers).await {
+        Ok(u) => u.role == "admin",
+        Err(_) => false,
+    };
     let value = serde_json::to_value(&catalog).unwrap_or(json!({}));
+    let redacted = redact_catalog(value, is_admin);
     Ok(Json(json!({
         "ok": true,
-        "models": value,
+        "models": redacted,
         "selected": selected,
     }))
     .into_response())
@@ -776,6 +838,47 @@ mod tests {
         let router = LlmRouter::new();
         let p = router.pricing_for("nonexistent", "does-not-exist");
         assert!(p.is_none());
+    }
+
+    // ── redact_catalog: API key/base_url 脱敏 ───────────────────────────────
+
+    /// 非 admin 看到的 catalog 不应再含 credential_env / credential_ref / base_url
+    /// 三个泄露 deployment 形状的字段;同时仍能看到 has_credential。
+    #[test]
+    fn test_redact_catalog_strips_credentials_for_non_admin() {
+        let mut catalog = make_catalog_with_model("test-api", "gpt-test");
+        catalog.apis[0].credential_env = Some("OPENAI_API_KEY".into());
+        catalog.apis[0].credential_ref = Some("/tmp/does-not-exist".into());
+        catalog.apis[0].base_url = Some("https://internal.example.com/v1".into());
+        let v = serde_json::to_value(&catalog).unwrap();
+        let redacted = redact_catalog(v, /*is_admin=*/ false);
+        let api0 = &redacted["apis"][0];
+        assert!(api0.get("credential_env").is_none(), "credential_env 应被删");
+        assert!(api0.get("credential_ref").is_none(), "credential_ref 应被删");
+        assert!(api0.get("base_url").is_none(), "base_url 应被删");
+        assert!(api0.get("has_credential").is_some(), "has_credential 标记应存在");
+    }
+
+    /// admin 应能看到完整 credential_env / base_url 明文(用于配置面板)。
+    #[test]
+    fn test_redact_catalog_admin_sees_credentials() {
+        let mut catalog = make_catalog_with_model("test-api", "gpt-test");
+        catalog.apis[0].credential_env = Some("OPENAI_API_KEY".into());
+        catalog.apis[0].base_url = Some("https://api.openai.com/v1".into());
+        let v = serde_json::to_value(&catalog).unwrap();
+        let redacted = redact_catalog(v, /*is_admin=*/ true);
+        let api0 = &redacted["apis"][0];
+        assert_eq!(
+            api0.get("credential_env").and_then(|v| v.as_str()),
+            Some("OPENAI_API_KEY"),
+            "admin 应看到 credential_env 原值"
+        );
+        assert_eq!(
+            api0.get("base_url").and_then(|v| v.as_str()),
+            Some("https://api.openai.com/v1"),
+            "admin 应看到 base_url 原值"
+        );
+        assert!(api0.get("has_credential").is_some());
     }
 
     #[test]

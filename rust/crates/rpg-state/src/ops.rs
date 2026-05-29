@@ -265,6 +265,75 @@ pub fn is_write_allowed(path: &str, mode_raw: &str) -> bool {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 预评估闸门 — evaluate_pending_rule
+// ─────────────────────────────────────────────────────────────
+
+/// 预评估某 op + source 在当前 state 下的"应该走哪条路径"。
+///
+/// 对应 Python `_write_path_allowed` + 上层的 hard/rules/module 闸门组合。
+/// 不写 audit_log,不写 pending,纯函数 — 供调度器在真正 `apply_op` 之前
+/// 决定 batch 中哪些会落地、哪些会进 pending,以便提前裁剪 / 用户预览。
+///
+/// 决策表(与 [`apply_op`] 一致):
+///   1. hard_forbidden → `Rejected("hard_forbidden")`
+///   2. rules_managed && source ≠ "rules_engine*" → `Rejected("rules_managed")`
+///   3. module_managed && scene.module_id 非空 && source = "gm*" → `Rejected("module_managed")`
+///   4. !is_write_allowed(path, mode) && !force → `Pending(<permission_label>)`
+///   5. 其它 → `Applied("")`
+///
+/// `force=true` 跳过 (4),但保留 (1)(2)(3)。这与 Python `apply_state_write_typed`
+/// 的硬黑名单语义对齐:任何 force(玩家 /set)都不能突破 permissions.* / history.*。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingDecision {
+    pub kind: ApplyKind,
+    pub reason: String,
+}
+
+pub fn evaluate_pending_rule(
+    state: &GameState,
+    op: &Op,
+    source: &str,
+    force: bool,
+) -> PendingDecision {
+    let path = clean_path(op.path());
+
+    // 闸门 a: hard forbidden — 任何 force 都不能突破
+    if is_hard_forbidden(&path) {
+        return PendingDecision {
+            kind: ApplyKind::Rejected,
+            reason: "hard_forbidden".to_string(),
+        };
+    }
+    // 闸门 b: rules_managed
+    if is_rules_managed(&path) && !source.starts_with("rules_engine") {
+        return PendingDecision {
+            kind: ApplyKind::Rejected,
+            reason: "rules_managed".to_string(),
+        };
+    }
+    // 闸门 c: module_managed
+    if is_module_managed(&path) && module_scene_active(state) && source.starts_with("gm") {
+        return PendingDecision {
+            kind: ApplyKind::Rejected,
+            reason: "module_managed".to_string(),
+        };
+    }
+    // 闸门 d: 权限模式 — pending 路径
+    let mode_raw = state.permission_mode_raw().to_string();
+    let allowed = is_write_allowed(&path, &mode_raw);
+    if !allowed && !force {
+        return PendingDecision {
+            kind: ApplyKind::Pending,
+            reason: format!("{}未授权此字段自动写入", permission_label(&mode_raw)),
+        };
+    }
+    PendingDecision {
+        kind: ApplyKind::Applied,
+        reason: String::new(),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
 // apply_op 主流程
 // ─────────────────────────────────────────────────────────────
 
@@ -311,66 +380,73 @@ pub fn apply_op(
     let raw_path = op.path().to_string();
     let path = clean_path(&raw_path);
 
-    // 闸门 a: hard forbidden 任何 force 都不能突破
-    if is_hard_forbidden(&path) {
-        push_audit(
-            state,
-            AuditEntry::blocked(source, &path, "hard_forbidden", state.turn().max(0) as u64),
-        );
-        return Err(OpError::HardForbidden(path));
+    // 先走纯函数预评估,得到 (kind, reason);再按 kind 落地 audit / pending /
+    // 写入。这与 Python 端 `_write_path_*` 系列辅助函数的角色一致:决策与
+    // 副作用解耦,让其它路径(批量 dry-run / 前端预览)能复用同一规则表。
+    let decision = evaluate_pending_rule(state, &op, source, force);
+    match decision.kind {
+        ApplyKind::Rejected => match decision.reason.as_str() {
+            "hard_forbidden" => {
+                push_audit(
+                    state,
+                    AuditEntry::blocked(source, &path, "hard_forbidden", state.turn().max(0) as u64),
+                );
+                return Err(OpError::HardForbidden(path));
+            }
+            "rules_managed" => {
+                push_audit(
+                    state,
+                    AuditEntry::blocked_with_hint(
+                        source,
+                        &path,
+                        "rules_managed",
+                        "受规则引擎管理的硬数值(HP/AC/initiative/dice_log)只能由 RulesEngine 写入",
+                        state.turn().max(0) as u64,
+                    ),
+                );
+                return Err(OpError::RulesManaged(path, source.to_string()));
+            }
+            "module_managed" => {
+                push_audit(
+                    state,
+                    AuditEntry::blocked(source, &path, "module_managed", state.turn().max(0) as u64),
+                );
+                return Err(OpError::ModuleManaged(path));
+            }
+            other => {
+                // 预评估只产生上述三类 rejected reason;任何新增类型走兜底 blocked。
+                push_audit(state, AuditEntry::blocked(source, &path, other, state.turn().max(0) as u64));
+                return Err(OpError::HardForbidden(path));
+            }
+        },
+        ApplyKind::Pending => {
+            let pending_id = next_pending_id();
+            let from = crate::typed_path::get_path(&state.data, &path).unwrap_or(Value::Null);
+            let value_for_log = op.value().cloned().unwrap_or(Value::Null);
+            let pending = PendingWrite {
+                id: pending_id,
+                path: path.clone(),
+                value: value_for_log.clone(),
+                op: op.kind_name().to_string(),
+                source: source.to_string(),
+                turn: state.turn().max(0) as u64,
+                from,
+                to: value_for_log,
+                reason: decision.reason.clone(),
+                extra: Default::default(),
+            };
+            push_pending(state, pending);
+            return Ok(ApplyOutcome {
+                kind: ApplyKind::Pending,
+                path: path.clone(),
+                message: format!("状态写入待审:{path}"),
+            });
+        }
+        ApplyKind::Applied => {}
     }
-
-    // 闸门 b: rules_managed
-    if is_rules_managed(&path) && !source.starts_with("rules_engine") {
-        push_audit(
-            state,
-            AuditEntry::blocked_with_hint(
-                source,
-                &path,
-                "rules_managed",
-                "受规则引擎管理的硬数值(HP/AC/initiative/dice_log)只能由 RulesEngine 写入",
-                state.turn().max(0) as u64,
-            ),
-        );
-        return Err(OpError::RulesManaged(path, source.to_string()));
-    }
-
-    // 闸门 c: module_managed (模组运行时 GM 不能写)
-    if is_module_managed(&path) && module_scene_active(state) && source.starts_with("gm") {
-        push_audit(
-            state,
-            AuditEntry::blocked(source, &path, "module_managed", state.turn().max(0) as u64),
-        );
-        return Err(OpError::ModuleManaged(path));
-    }
-
-    // 闸门 d: 权限模式
+    // mode 在 audit 落地阶段需要(applied 分支),这里晚一拍读出
     let mode_raw = state.permission_mode_raw().to_string();
     let mode = normalize_permission_mode(&mode_raw);
-    let allowed = is_write_allowed(&path, &mode_raw);
-    if !allowed && !force {
-        let pending_id = next_pending_id();
-        let from = crate::typed_path::get_path(&state.data, &path).unwrap_or(Value::Null);
-        let value_for_log = op.value().cloned().unwrap_or(Value::Null);
-        let pending = PendingWrite {
-            id: pending_id,
-            path: path.clone(),
-            value: value_for_log.clone(),
-            op: op.kind_name().to_string(),
-            source: source.to_string(),
-            turn: state.turn().max(0) as u64,
-            from,
-            to: value_for_log,
-            reason: format!("{}未授权此字段自动写入", permission_label(&mode_raw)),
-            extra: Default::default(),
-        };
-        push_pending(state, pending);
-        return Ok(ApplyOutcome {
-            kind: ApplyKind::Pending,
-            path: path.clone(),
-            message: format!("状态写入待审:{path}"),
-        });
-    }
 
     // 闸门 e: 通过 — 实际写入
     perform_write(state, &op, &path)?;
@@ -621,6 +697,84 @@ mod tests {
             assert_eq!(outcome.kind, ApplyKind::Applied);
         }
         assert_eq!(audit_log_len(&state), 200);
+    }
+
+    // ── evaluate_pending_rule:纯函数预评估 ───────────────────────────
+
+    /// hard_forbidden 路径任何 force / source 都拒,reason="hard_forbidden"
+    #[test]
+    fn evaluate_pending_rule_hard_forbidden() {
+        let state = make_state();
+        let op = Op::Set {
+            path: "permissions.mode".to_string(),
+            value: json!("read_only"),
+        };
+        for force in [true, false] {
+            for src in ["user", "gm", "rules_engine"] {
+                let d = evaluate_pending_rule(&state, &op, src, force);
+                assert_eq!(d.kind, ApplyKind::Rejected);
+                assert_eq!(d.reason, "hard_forbidden");
+            }
+        }
+    }
+
+    /// rules_managed:非 rules_engine source 一律拒,带 hint;rules_engine 通过
+    #[test]
+    fn evaluate_pending_rule_rules_managed_distinguishes_source() {
+        let mut state = make_state();
+        set_permission_mode(&mut state, "full_access");
+        let op = Op::Set {
+            path: "player_character.hp".to_string(),
+            value: json!(5),
+        };
+        let d_gm = evaluate_pending_rule(&state, &op, "gm", true);
+        assert_eq!(d_gm.kind, ApplyKind::Rejected);
+        assert_eq!(d_gm.reason, "rules_managed");
+        let d_engine = evaluate_pending_rule(&state, &op, "rules_engine", false);
+        assert_eq!(d_engine.kind, ApplyKind::Applied);
+    }
+
+    /// default 模式下 player.name 不在白名单 → Pending(reason 含权限标签),
+    /// force=true 直接 Applied
+    #[test]
+    fn evaluate_pending_rule_pending_vs_force() {
+        let mut state = make_state();
+        set_permission_mode(&mut state, "default");
+        let op = Op::Set {
+            path: "player.name".to_string(),
+            value: json!("Felix"),
+        };
+        let d_pending = evaluate_pending_rule(&state, &op, "gm", false);
+        assert_eq!(d_pending.kind, ApplyKind::Pending);
+        assert!(
+            d_pending.reason.contains("默认权限"),
+            "reason 应含权限标签:{}",
+            d_pending.reason
+        );
+        let d_force = evaluate_pending_rule(&state, &op, "gm", true);
+        assert_eq!(d_force.kind, ApplyKind::Applied);
+    }
+
+    /// module_managed 仅在 scene.module_id 非空 + gm source 时拒
+    #[test]
+    fn evaluate_pending_rule_module_managed_only_when_scene_active() {
+        let mut state = make_state();
+        set_permission_mode(&mut state, "full_access");
+        let op = Op::Set {
+            path: "player.current_location".to_string(),
+            value: json!("dungeon"),
+        };
+        // 未激活模组 → 允许
+        let d_no_module = evaluate_pending_rule(&state, &op, "gm", false);
+        assert_eq!(d_no_module.kind, ApplyKind::Applied);
+        // 激活模组 + gm → 拒
+        set_module_scene(&mut state, "test_module");
+        let d_gm = evaluate_pending_rule(&state, &op, "gm", false);
+        assert_eq!(d_gm.kind, ApplyKind::Rejected);
+        assert_eq!(d_gm.reason, "module_managed");
+        // 同条件 + user source → 不拒(只挡 gm.*)
+        let d_user = evaluate_pending_rule(&state, &op, "user", true);
+        assert_eq!(d_user.kind, ApplyKind::Applied);
     }
 
     #[test]

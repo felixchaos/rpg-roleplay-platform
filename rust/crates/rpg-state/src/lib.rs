@@ -72,9 +72,9 @@ pub use worldline_validation::{
     validation_label, ValidationScan, WorldlineValidationError,
 };
 pub use ops::{
-    apply_op, is_hard_forbidden, is_module_managed, is_rules_managed, is_write_allowed,
-    normalize_permission_mode, permission_label, validate_op, ApplyKind, ApplyOutcome, Op,
-    OpError,
+    apply_op, evaluate_pending_rule, is_hard_forbidden, is_module_managed, is_rules_managed,
+    is_write_allowed, normalize_permission_mode, permission_label, validate_op, ApplyKind,
+    ApplyOutcome, Op, OpError, PendingDecision,
 };
 pub use path::{clean_path, parse_path, PathError, PathSegment};
 pub use pending::{
