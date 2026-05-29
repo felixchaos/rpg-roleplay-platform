@@ -54,7 +54,6 @@ use serde::Serialize;
 use serde_json::json;
 use thiserror::Error as ThisError;
 use tokio::signal;
-use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tower_http::{
@@ -65,98 +64,40 @@ use tower_http::{
 use tracing::{error as log_error, info, warn};
 use uuid::Uuid;
 
-use rpg_agents::gm::GameMaster;
 use rpg_core::{config as core_config, startup as core_startup};
-use rpg_db::PgPool;
 use rpg_llm::registry::ModelCatalog;
 use rpg_llm::LlmRouter;
+use rpg_routes::{AppConfig, AppState, AppStateInner};
 use rpg_state::StateStore;
 use rpg_tools_dsl::{McpBroker, ToolRegistry};
 
 // ─── AppState ──────────────────────────────────────────────────────────────
+//
+// 6B-1:server 不再自持 AppState/AppConfig。两者已上移到 `rpg-routes`(单一权威),
+// 这里只 `use rpg_routes::{AppState, AppStateInner, AppConfig}` 并在 main 装配一次。
+// 旧版在 build_router 里逐字段 9×Arc clone 重建一份 routes::AppState 的反模式已删除。
 
-/// Python 侧 `from app import _state_by_user` 反模式的 Rust 解药。
+/// 从 env 装配 [`AppConfig`]。
 ///
-/// 所有 handler 通过 `State<AppState>` extractor 显式拿依赖,编译器替我们追踪
-/// "谁在用哪个全局",避免 Python 侧那种"一改全局,运行时才知道挂在哪"的脆弱。
-#[derive(Clone)]
-pub struct AppState {
-    /// Postgres 连接池。对应 Python `platform_app.db.connect()`。
-    pub db: PgPool,
-
-    /// 按 user_id 分片的 GameState 持有者。
-    /// 对应 Python `_state_by_user` + `_state_save_id_by_user` + `_state_commit_id_by_user`。
-    pub state_store: Arc<StateStore>,
-
-    /// 按 user_id 分片的 GameMaster 池。
-    /// 对应 Python `_gm_by_user` + `_sub_gm_by_user`(后者也接进同一个池)。
-    pub gm_pool: Arc<DashMap<i64, Arc<RwLock<GameMaster>>>>,
-
-    /// LLM provider 路由器(Anthropic / Vertex / OpenAI / OpenAI-compat)。
-    /// 对应 Python `agents/gm/backends/` 工厂。
-    /// **类型与 `rpg_routes::AppState::llm_router` 对齐**(`Arc<RwLock<...>>`),
-    /// 便于 server 与 routes 共享同一份 router 实例。
-    pub llm_router: Arc<RwLock<LlmRouter>>,
-
-    /// 工具注册表(plugins / mcp / skills)。
-    /// 对应 Python `tools_dsl.tool_registry.tool_payload()`。
-    pub tool_registry: Arc<RwLock<ToolRegistry>>,
-
-    /// 按 user_id 分片的"打断"信号。
-    /// 对应 Python `_stop_events_by_user`。Tokio `Notify` 是 sync `Event` 的天然对等。
-    /// **key 类型与 routes 对齐为 `String`**(routes 用 user_id 字符串索引)。
-    pub stop_events: Arc<DashMap<String, Arc<Notify>>>,
-
-    /// 按 user_id 分片的 run_id 计数器。
-    /// 对应 Python `_run_id_by_user`。
-    pub run_ids: Arc<DashMap<i64, u64>>,
-
-    /// MCP 子进程 broker。对应 Python `mcp_broker` 模块。
-    pub mcp_broker: Arc<McpBroker>,
-
-    /// 进程级配置快照(env 变量已 freeze)。
-    pub config: Arc<AppConfig>,
-
-    /// 用于通知所有 spawned task 退出的取消令牌。
-    pub shutdown_token: CancellationToken,
-
-    /// 追踪所有 spawned task,graceful shutdown 时等待全部完成。
-    pub task_tracker: TaskTracker,
-}
-
-/// 启动期 freeze 的配置,避免 handler 反复 `env::var`。
-#[derive(Debug, Clone)]
-pub struct AppConfig {
-    pub app_title: String,
-    pub deployment_mode: String,
-    pub require_auth: bool,
-    pub cors_origins: Vec<String>,
-    pub cors_allow_credentials: bool,
-    pub cors_max_age: i64,
-    pub gzip_min_bytes: usize,
-    pub host: String,
-    pub port: u16,
-}
-
-impl AppConfig {
-    fn from_env() -> Self {
-        let (cors_origins, cors_allow_credentials) = core_startup::cors_origins();
-        let port: u16 = std::env::var("RPG_PORT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(7860);
-        let host = std::env::var("RPG_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-        Self {
-            app_title: core_config::app_title(),
-            deployment_mode: core_config::deployment_mode().trim().to_lowercase(),
-            require_auth: resolve_require_auth(),
-            cors_origins,
-            cors_allow_credentials,
-            cors_max_age: core_config::cors_max_age(),
-            gzip_min_bytes: core_config::gzip_min_bytes(),
-            host,
-            port,
-        }
+/// `AppConfig` 现定义在 rpg-routes(外部类型,Rust 不允许在此写 inherent impl),
+/// 故由本自由函数承担原 `AppConfig::from_env`。
+fn app_config_from_env() -> AppConfig {
+    let (cors_origins, cors_allow_credentials) = core_startup::cors_origins();
+    let port: u16 = std::env::var("RPG_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(7860);
+    let host = std::env::var("RPG_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    AppConfig {
+        app_title: core_config::app_title(),
+        deployment_mode: core_config::deployment_mode().trim().to_lowercase(),
+        require_auth: resolve_require_auth(),
+        cors_origins,
+        cors_allow_credentials,
+        cors_max_age: core_config::cors_max_age(),
+        gzip_min_bytes: core_config::gzip_min_bytes(),
+        host,
+        port,
     }
 }
 
@@ -465,21 +406,10 @@ async fn health() -> impl IntoResponse {
 fn build_router(state: AppState) -> Router {
     let cors = build_cors_layer(&state.config);
 
-    // rpg-routes 的 build_routes 返回 `Router<rpg_routes::AppState>`。
-    // 共享 server 这边的 state_store / llm_router / tool_registry / stop_events:
-    // 由于这些字段都是 Arc(内部 mutability),clone 是零拷贝 alias。
-    // `console_conversations` 只在 routes 自己侧用,这里新建一份内嵌即可。
-    let routes_state = rpg_routes::AppState {
-        db: state.db.clone(),
-        state_store: state.state_store.clone(),
-        llm_router: state.llm_router.clone(),
-        tool_registry: state.tool_registry.clone(),
-        stop_events: state.stop_events.clone(),
-        mcp_broker: state.mcp_broker.clone(),
-        console_conversations: Arc::new(DashMap::new()),
-        chunk_uploads: Arc::new(DashMap::new()),
-    };
-    let api_routes = rpg_routes::build_routes().with_state(routes_state);
+    // 6B-1:server 与 routes 现共享同一份 `AppState`(单一 `Arc<AppStateInner>`)。
+    // 不再逐字段 clone 重建 routes 版 —— 这里把同一个 state clone(仅 inc 1 次外层
+    // Arc refcount)直接喂给 routes 的 router,彻底消除两份割裂与字段漂移风险。
+    let api_routes = rpg_routes::build_routes().with_state(state.clone());
 
     // 健康检查保留在 server 侧:`GET /health` 兜底(routes 的 `GET /` 走业务侧 index)。
     //
@@ -609,7 +539,7 @@ async fn main() -> Result<()> {
     info!(commit = commit_hash, "rpg-server starting");
 
     // 3. 配置 + 鉴权 banner(对应 Python `_startup_auth_banner`)
-    let config = Arc::new(AppConfig::from_env());
+    let config = Arc::new(app_config_from_env());
     info!(
         deployment_mode = %config.deployment_mode,
         require_auth = config.require_auth,
@@ -635,28 +565,31 @@ async fn main() -> Result<()> {
         warn!("RPG_SKIP_AUTO_MIGRATE=1,跳过自动迁移");
     }
 
-    // 6. 装配 AppState
+    // 6. 装配 AppState(6B-1:单一 `AppStateInner`,一次性收口全部句柄)
     //    - LlmRouter:目前用 `ModelCatalog::default()` 兜底,后续 `model_registry.load_model_catalog`
     //      会从 DB / 文件读取 catalog 并 set_catalog;backend 注册由 rpg-llm 上层负责。
     //    - StateStore:按 user_id(String key)分片 GameState。
-    //    - GameMaster pool / stop_events / run_ids:进程内,lazy 填充。
+    //    - GameMaster pool / stop_events / run_ids:进程内,lazy 填充(bare DashMap,
+    //      外层 `AppState(Arc<_>)` 已提供共享语义,无需各自再包 Arc)。
     let tool_registry = Arc::new(RwLock::new(ToolRegistry::new()));
     let llm_router = Arc::new(RwLock::new(
         LlmRouter::new().with_catalog(ModelCatalog::default()),
     ));
-    let state = AppState {
+    let state = AppState::from_inner(AppStateInner {
         db,
         state_store: Arc::new(StateStore::new()),
-        gm_pool: Arc::new(DashMap::new()),
+        gm_pool: DashMap::new(),
         llm_router,
         tool_registry,
-        stop_events: Arc::new(DashMap::new()),
-        run_ids: Arc::new(DashMap::new()),
         mcp_broker: Arc::new(McpBroker::default()),
+        stop_events: DashMap::new(),
+        run_ids: DashMap::new(),
+        console_conversations: DashMap::new(),
+        chunk_uploads: DashMap::new(),
         config: config.clone(),
         shutdown_token: CancellationToken::new(),
         task_tracker: TaskTracker::new(),
-    };
+    });
 
     // 7. lifespan startup
     lifespan_startup(&state).await;

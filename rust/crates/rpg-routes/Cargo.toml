@@ -27,6 +27,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
+tokio-util = { version = "0.7", features = ["rt"] }
 futures.workspace = true
 futures-util.workspace = true
 async-trait.workspace = true

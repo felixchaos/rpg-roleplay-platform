@@ -2228,6 +2228,7 @@ dependencies = [
  "sqlx 0.8.6",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tower",
  "tower-http",
  "tracing",
