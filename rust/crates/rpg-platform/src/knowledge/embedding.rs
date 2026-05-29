@@ -28,6 +28,9 @@ pub const BATCH_SIZE: usize = 30;
 /// Python: `PER_CHUNK_CHAR_LIMIT = 1200`。
 pub const PER_CHUNK_CHAR_LIMIT: usize = 1200;
 
+/// character_cards 查询行:(id, name, identity, personality, appearance)
+type CharCardRow = (i64, String, Option<String>, Option<String>, Option<String>);
+
 // 进程内运行标记:script_id → Arc<AtomicBool>
 // 对应 Python `_EMBED_QUEUE_RUNNING: dict[int, bool]`
 static RUNNING_MAP: Lazy<Mutex<HashMap<i64, Arc<AtomicBool>>>> =
@@ -273,7 +276,7 @@ pub async fn embed_script(
     // 对应 Python: entity 层 embed —— name + identity + personality + appearance 拼接
     loop {
         // 每次只拉 BATCH_SIZE 条未 embed 的
-        let rows: Vec<(i64, String, Option<String>, Option<String>, Option<String>)> =
+        let rows: Vec<CharCardRow> =
             sqlx::query_as(
                 r#"
                 select id, name, identity, personality, appearance

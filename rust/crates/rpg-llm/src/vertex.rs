@@ -676,7 +676,7 @@ fn parse_embed_response(v: &serde_json::Value) -> Option<Vec<Vec<f32>>> {
 // ---------------------------------------------------------------------------
 
 fn is_retryable_status(status: u16) -> bool {
-    status == 429 || status == 503 || (status >= 500 && status < 600)
+    status == 429 || status == 503 || (500..600).contains(&status)
 }
 
 #[cfg(test)]
@@ -820,7 +820,7 @@ mod tests {
     #[test]
     fn test_exponential_backoff_delays() {
         // attempt 0 → 1000ms, attempt 1 → 2000ms, attempt 2 → 4000ms
-        assert_eq!(1000u64 << 0u32, 1000);
+        assert_eq!(1000u64, 1000);
         assert_eq!(1000u64 << 1u32, 2000);
         assert_eq!(1000u64 << 2u32, 4000);
     }

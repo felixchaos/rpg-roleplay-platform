@@ -580,11 +580,9 @@ mod tests {
     use super::*;
     use rpg_llm::{
         registry::{ApiEntry, ModelCatalog, ModelEntry, ModelPricing, Selected},
-        AnyBackend, BackendKind, ChatChunk, ChatRequest, ChunkStream, LlmBackend, LlmError,
+        BackendKind, ChatChunk, ChatRequest, ChunkStream, LlmBackend, LlmError,
         ModelInfo,
     };
-    use std::sync::Arc;
-
     // ── minimal mock backend ─────────────────────────────────────────────────
 
     /// Mock backend 总是返回 ok 的 probe 结果,list_models 返回固定列表。

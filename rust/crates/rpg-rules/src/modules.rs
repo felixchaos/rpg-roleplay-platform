@@ -110,7 +110,7 @@ pub struct ModuleBundle {
 /// 加载一个模组的所有 JSON/markdown 数据。
 /// 找不到模组目录或 `module.json` → `Err(描述)`。
 pub fn load_module(module_id: &str) -> Result<ModuleBundle, String> {
-    let root = modules_dir().ok_or_else(|| format!("未配置模组目录(RPG_MODULES_DIR)"))?;
+    let root = modules_dir().ok_or_else(|| "未配置模组目录(RPG_MODULES_DIR)".to_string())?;
     let sub = root.join(module_id);
     if !sub.exists() || !sub.is_dir() {
         return Err(format!("未知模组：{}", module_id));

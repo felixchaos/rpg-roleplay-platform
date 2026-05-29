@@ -535,16 +535,6 @@ impl WireChatChunk {
     }
 }
 
-#[cfg(test)]
-mod ts_export_tests {
-    /// 触发 ts-rs 导出(--features ts-rs 时生效)。
-    #[cfg(feature = "ts-rs")]
-    #[test]
-    fn export_ts_types() {
-        // ts-rs 在 #[ts(export)] 时会通过 inventory/ctor 机制在测试结束后自动写文件。
-    }
-}
-
 /// 为 backend 提供的简单 header bag。
 pub fn extra_headers(extra: &serde_json::Value, key: &str) -> Option<HashMap<String, String>> {
     let m = extra.as_object()?.get(key)?.as_object()?;
@@ -555,4 +545,14 @@ pub fn extra_headers(extra: &serde_json::Value, key: &str) -> Option<HashMap<Str
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod ts_export_tests {
+    /// 触发 ts-rs 导出(--features ts-rs 时生效)。
+    #[cfg(feature = "ts-rs")]
+    #[test]
+    fn export_ts_types() {
+        // ts-rs 在 #[ts(export)] 时会通过 inventory/ctor 机制在测试结束后自动写文件。
+    }
 }

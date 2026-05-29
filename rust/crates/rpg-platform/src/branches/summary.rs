@@ -103,6 +103,5 @@ mod tests {
         // 此测试本质是编译时签名校验 + early-return 路径不需要 runtime。
         // 没法 mock PgPool,所以只验签名稳定。
         let _f: fn(PgPool, i64, String, String) = schedule_llm_summary;
-        assert!(true);
     }
 }
