@@ -28,6 +28,7 @@ thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 tokio-util = { version = "0.7", features = ["rt"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 futures.workspace = true
 futures-util.workspace = true
 async-trait.workspace = true

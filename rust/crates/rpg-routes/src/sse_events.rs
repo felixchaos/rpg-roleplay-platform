@@ -141,6 +141,40 @@ pub struct SseErrorPayload {
     pub code: String,
 }
 
+// ── state-change bus 投影 ───────────────────────────────────────────────────
+
+/// `state_change` 事件 — bus 投影 payload。
+///
+/// W3-2:`/api/state_events` SSE 通道把 [`rpg_state::StateEvent`] 投影成
+/// `{ topic, op, payload, ts }` 形态推给前端,与 Python `state_event_bus.StateEvent.to_sse_data`
+/// 保持线上兼容。前端 `state-event-bridge.js` 据 `topic` 派 `rpg-{topic}-updated` CustomEvent。
+///
+/// 与 [`SseStateChangePayload`] 区分:那个是流内阶段标签(chat / opening 等),
+/// 这个是 bus → 前端的状态总线投影。两者共用同一个 SSE event name 是历史包袱,
+/// 前端按字段是否存在区分(`phase` vs `topic`)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "../../../../frontend/src/types/rust/events/")
+)]
+pub struct SseStateBusPayload {
+    /// 业务 topic(`saves` / `cards` / `personas` / `permissions` / `pending` /
+    /// `questions` / `timeline` / `worldline` / `state` 等)。
+    pub topic: String,
+    /// 操作(`updated` / `created` / `deleted` / `applied` / `added` / `resolved`
+    /// / `answered` / `jump` / `validated` 等)。
+    pub op: String,
+    /// user_id(防 cross-user 泄漏,前端校验)。
+    pub user_id: String,
+    /// 关联载荷 — 与具体 [`rpg_state::StateEvent`] 变体相关字段(version / op /
+    /// pending_id / question_id 等)。
+    #[serde(default)]
+    pub payload: Value,
+    /// Unix 秒时间戳。
+    pub ts: i64,
+}
+
 // ── 顶层 envelope ───────────────────────────────────────────────────────────
 
 /// 顶层 SSE event 信封 — 前端做 discriminated union 用。
