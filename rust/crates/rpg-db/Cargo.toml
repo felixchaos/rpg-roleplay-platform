@@ -18,3 +18,4 @@ thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
+metrics.workspace = true

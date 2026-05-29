@@ -9,6 +9,7 @@
 //! 注:表无 save_id / user_id / key / aliases / comment / tags 列;
 //!     save 级 overlay 在 save_worldbook_overlays 表。
 
+use crate::query_timed;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
@@ -54,18 +55,20 @@ pub async fn list_for_script(
     pool: &PgPool,
     script_id: i64,
 ) -> Result<Vec<WorldbookEntry>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT id, book_id, script_id, title, content, keys, regex_keys,
-                priority, token_budget, insertion_position, sticky_turns, cooldown_turns,
-                probability, character_filter, scene_filter, enabled, metadata,
-                created_at, updated_at
-         FROM worldbook_entries
-         WHERE script_id = $1 AND enabled = true
-         ORDER BY priority DESC, id ASC",
-    )
-    .bind(script_id)
-    .fetch_all(pool)
-    .await
+    query_timed!("select", "rpg-db", {
+        sqlx::query_as(
+            "SELECT id, book_id, script_id, title, content, keys, regex_keys,
+                    priority, token_budget, insertion_position, sticky_turns, cooldown_turns,
+                    probability, character_filter, scene_filter, enabled, metadata,
+                    created_at, updated_at
+             FROM worldbook_entries
+             WHERE script_id = $1 AND enabled = true
+             ORDER BY priority DESC, id ASC",
+        )
+        .bind(script_id)
+        .fetch_all(pool)
+        .await
+    })
 }
 
 /// worldbook_entries 无 save_id 列 — save 级 overlay 在 save_worldbook_overlays。
@@ -85,50 +88,52 @@ pub async fn upsert(
     pool: &PgPool,
     entry: &WorldbookEntry,
 ) -> Result<WorldbookEntry, sqlx::Error> {
-    sqlx::query_as(
-        "INSERT INTO worldbook_entries
-            (book_id, script_id, title, content, keys, regex_keys,
-             priority, token_budget, insertion_position, sticky_turns, cooldown_turns,
-             probability, character_filter, scene_filter, enabled, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-         ON CONFLICT (script_id, title) DO UPDATE SET
-            content = EXCLUDED.content,
-            keys = EXCLUDED.keys,
-            regex_keys = EXCLUDED.regex_keys,
-            priority = EXCLUDED.priority,
-            token_budget = EXCLUDED.token_budget,
-            insertion_position = EXCLUDED.insertion_position,
-            sticky_turns = EXCLUDED.sticky_turns,
-            cooldown_turns = EXCLUDED.cooldown_turns,
-            probability = EXCLUDED.probability,
-            character_filter = EXCLUDED.character_filter,
-            scene_filter = EXCLUDED.scene_filter,
-            enabled = EXCLUDED.enabled,
-            metadata = EXCLUDED.metadata,
-            updated_at = now()
-         RETURNING id, book_id, script_id, title, content, keys, regex_keys,
-                   priority, token_budget, insertion_position, sticky_turns, cooldown_turns,
-                   probability, character_filter, scene_filter, enabled, metadata,
-                   created_at, updated_at",
-    )
-    .bind(entry.book_id)
-    .bind(entry.script_id)
-    .bind(&entry.title)
-    .bind(&entry.content)
-    .bind(&entry.keys)
-    .bind(&entry.regex_keys)
-    .bind(entry.priority)
-    .bind(entry.token_budget)
-    .bind(&entry.insertion_position)
-    .bind(entry.sticky_turns)
-    .bind(entry.cooldown_turns)
-    .bind(entry.probability)
-    .bind(&entry.character_filter)
-    .bind(&entry.scene_filter)
-    .bind(entry.enabled)
-    .bind(&entry.metadata)
-    .fetch_one(pool)
-    .await
+    query_timed!("upsert", "rpg-db", {
+        sqlx::query_as(
+            "INSERT INTO worldbook_entries
+                (book_id, script_id, title, content, keys, regex_keys,
+                 priority, token_budget, insertion_position, sticky_turns, cooldown_turns,
+                 probability, character_filter, scene_filter, enabled, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+             ON CONFLICT (script_id, title) DO UPDATE SET
+                content = EXCLUDED.content,
+                keys = EXCLUDED.keys,
+                regex_keys = EXCLUDED.regex_keys,
+                priority = EXCLUDED.priority,
+                token_budget = EXCLUDED.token_budget,
+                insertion_position = EXCLUDED.insertion_position,
+                sticky_turns = EXCLUDED.sticky_turns,
+                cooldown_turns = EXCLUDED.cooldown_turns,
+                probability = EXCLUDED.probability,
+                character_filter = EXCLUDED.character_filter,
+                scene_filter = EXCLUDED.scene_filter,
+                enabled = EXCLUDED.enabled,
+                metadata = EXCLUDED.metadata,
+                updated_at = now()
+             RETURNING id, book_id, script_id, title, content, keys, regex_keys,
+                       priority, token_budget, insertion_position, sticky_turns, cooldown_turns,
+                       probability, character_filter, scene_filter, enabled, metadata,
+                       created_at, updated_at",
+        )
+        .bind(entry.book_id)
+        .bind(entry.script_id)
+        .bind(&entry.title)
+        .bind(&entry.content)
+        .bind(&entry.keys)
+        .bind(&entry.regex_keys)
+        .bind(entry.priority)
+        .bind(entry.token_budget)
+        .bind(&entry.insertion_position)
+        .bind(entry.sticky_turns)
+        .bind(entry.cooldown_turns)
+        .bind(entry.probability)
+        .bind(&entry.character_filter)
+        .bind(&entry.scene_filter)
+        .bind(entry.enabled)
+        .bind(&entry.metadata)
+        .fetch_one(pool)
+        .await
+    })
 }
 
 #[tracing::instrument(skip(pool), fields(id = %id))]

@@ -1,5 +1,6 @@
 //! repos/import_jobs.rs — import_jobs 拆书流水线状态表操作
 
+use crate::query_timed;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
@@ -37,36 +38,40 @@ pub async fn start(
     script_id: Option<i64>,
     kind: &str,
 ) -> Result<ImportJob, sqlx::Error> {
-    sqlx::query_as(
-        "INSERT INTO import_jobs
-            (job_id, user_id, script_id, status, stage, kind)
-         VALUES ($1, $2, $3, 'pending', 'pending', $4)
-         RETURNING id, job_id, user_id, script_id, status, stage,
-                   stage_progress, stage_total, overall_progress, overall_total,
-                   cancel_requested, budget_estimate, usage_actual, stages, error,
-                   started_at, finished_at, created_at, updated_at, kind, heartbeat_at",
-    )
-    .bind(job_id)
-    .bind(user_id)
-    .bind(script_id)
-    .bind(kind)
-    .fetch_one(pool)
-    .await
+    query_timed!("insert", "rpg-db", {
+        sqlx::query_as(
+            "INSERT INTO import_jobs
+                (job_id, user_id, script_id, status, stage, kind)
+             VALUES ($1, $2, $3, 'pending', 'pending', $4)
+             RETURNING id, job_id, user_id, script_id, status, stage,
+                       stage_progress, stage_total, overall_progress, overall_total,
+                       cancel_requested, budget_estimate, usage_actual, stages, error,
+                       started_at, finished_at, created_at, updated_at, kind, heartbeat_at",
+        )
+        .bind(job_id)
+        .bind(user_id)
+        .bind(script_id)
+        .bind(kind)
+        .fetch_one(pool)
+        .await
+    })
 }
 
 /// 查询单条 import_jobs 记录。
 #[tracing::instrument(skip(pool), fields(job_id = %job_id))]
 pub async fn get(pool: &PgPool, job_id: &str) -> Result<Option<ImportJob>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT id, job_id, user_id, script_id, status, stage,
-                stage_progress, stage_total, overall_progress, overall_total,
-                cancel_requested, budget_estimate, usage_actual, stages, error,
-                started_at, finished_at, created_at, updated_at, kind, heartbeat_at
-         FROM import_jobs WHERE job_id = $1",
-    )
-    .bind(job_id)
-    .fetch_optional(pool)
-    .await
+    query_timed!("select", "rpg-db", {
+        sqlx::query_as(
+            "SELECT id, job_id, user_id, script_id, status, stage,
+                    stage_progress, stage_total, overall_progress, overall_total,
+                    cancel_requested, budget_estimate, usage_actual, stages, error,
+                    started_at, finished_at, created_at, updated_at, kind, heartbeat_at
+             FROM import_jobs WHERE job_id = $1",
+        )
+        .bind(job_id)
+        .fetch_optional(pool)
+        .await
+    })
 }
 
 /// 状态流转：更新 status/stage/进度等字段。
@@ -80,29 +85,31 @@ pub async fn transition(
     stage_total: i32,
     overall_progress: i32,
 ) -> Result<Option<ImportJob>, sqlx::Error> {
-    sqlx::query_as(
-        "UPDATE import_jobs SET
-            status = $2,
-            stage = $3,
-            stage_progress = $4,
-            stage_total = $5,
-            overall_progress = $6,
-            updated_at = now(),
-            heartbeat_at = now()
-         WHERE job_id = $1
-         RETURNING id, job_id, user_id, script_id, status, stage,
-                   stage_progress, stage_total, overall_progress, overall_total,
-                   cancel_requested, budget_estimate, usage_actual, stages, error,
-                   started_at, finished_at, created_at, updated_at, kind, heartbeat_at",
-    )
-    .bind(job_id)
-    .bind(status)
-    .bind(stage)
-    .bind(stage_progress)
-    .bind(stage_total)
-    .bind(overall_progress)
-    .fetch_optional(pool)
-    .await
+    query_timed!("update", "rpg-db", {
+        sqlx::query_as(
+            "UPDATE import_jobs SET
+                status = $2,
+                stage = $3,
+                stage_progress = $4,
+                stage_total = $5,
+                overall_progress = $6,
+                updated_at = now(),
+                heartbeat_at = now()
+             WHERE job_id = $1
+             RETURNING id, job_id, user_id, script_id, status, stage,
+                       stage_progress, stage_total, overall_progress, overall_total,
+                       cancel_requested, budget_estimate, usage_actual, stages, error,
+                       started_at, finished_at, created_at, updated_at, kind, heartbeat_at",
+        )
+        .bind(job_id)
+        .bind(status)
+        .bind(stage)
+        .bind(stage_progress)
+        .bind(stage_total)
+        .bind(overall_progress)
+        .fetch_optional(pool)
+        .await
+    })
 }
 
 /// 标记任务失败。
@@ -112,20 +119,22 @@ pub async fn fail(
     job_id: &str,
     error: &str,
 ) -> Result<Option<ImportJob>, sqlx::Error> {
-    sqlx::query_as(
-        "UPDATE import_jobs SET
-            status = 'failed',
-            error = $2,
-            finished_at = now(),
-            updated_at = now()
-         WHERE job_id = $1
-         RETURNING id, job_id, user_id, script_id, status, stage,
-                   stage_progress, stage_total, overall_progress, overall_total,
-                   cancel_requested, budget_estimate, usage_actual, stages, error,
-                   started_at, finished_at, created_at, updated_at, kind, heartbeat_at",
-    )
-    .bind(job_id)
-    .bind(error)
-    .fetch_optional(pool)
-    .await
+    query_timed!("update", "rpg-db", {
+        sqlx::query_as(
+            "UPDATE import_jobs SET
+                status = 'failed',
+                error = $2,
+                finished_at = now(),
+                updated_at = now()
+             WHERE job_id = $1
+             RETURNING id, job_id, user_id, script_id, status, stage,
+                       stage_progress, stage_total, overall_progress, overall_total,
+                       cancel_requested, budget_estimate, usage_actual, stages, error,
+                       started_at, finished_at, created_at, updated_at, kind, heartbeat_at",
+        )
+        .bind(job_id)
+        .bind(error)
+        .fetch_optional(pool)
+        .await
+    })
 }

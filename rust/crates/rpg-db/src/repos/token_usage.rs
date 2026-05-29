@@ -1,5 +1,6 @@
 //! repos/token_usage.rs — token_usage 用量计费表操作（v5 migration）
 
+use crate::query_timed;
 use rpg_core::UserId;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -28,30 +29,32 @@ pub struct TokenUsageRow {
 /// 插入一条 token_usage 记录（fire-and-forget 计费写入）。
 #[tracing::instrument(skip(pool, row), fields(user_id = %row.user_id, api_id = %row.api_id, model = %row.model_real_name))]
 pub async fn insert(pool: &PgPool, row: &TokenUsageRow) -> Result<TokenUsageRow, sqlx::Error> {
-    sqlx::query_as(
-        "INSERT INTO token_usage
-            (user_id, save_id, context_run_id, api_id, model_real_name,
-             input_tokens, output_tokens, cached_input_tokens, reasoning_tokens,
-             total_tokens, cost_usd, context_used, context_max, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-         RETURNING id, user_id, save_id, context_run_id, api_id, model_real_name,
-                   input_tokens, output_tokens, cached_input_tokens, reasoning_tokens,
-                   total_tokens, cost_usd, context_used, context_max, metadata, created_at",
-    )
-    .bind(row.user_id)
-    .bind(row.save_id)
-    .bind(row.context_run_id)
-    .bind(&row.api_id)
-    .bind(&row.model_real_name)
-    .bind(row.input_tokens)
-    .bind(row.output_tokens)
-    .bind(row.cached_input_tokens)
-    .bind(row.reasoning_tokens)
-    .bind(row.total_tokens)
-    .bind(&row.cost_usd)
-    .bind(row.context_used)
-    .bind(row.context_max)
-    .bind(&row.metadata)
-    .fetch_one(pool)
-    .await
+    query_timed!("insert", "rpg-db", {
+        sqlx::query_as(
+            "INSERT INTO token_usage
+                (user_id, save_id, context_run_id, api_id, model_real_name,
+                 input_tokens, output_tokens, cached_input_tokens, reasoning_tokens,
+                 total_tokens, cost_usd, context_used, context_max, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             RETURNING id, user_id, save_id, context_run_id, api_id, model_real_name,
+                       input_tokens, output_tokens, cached_input_tokens, reasoning_tokens,
+                       total_tokens, cost_usd, context_used, context_max, metadata, created_at",
+        )
+        .bind(row.user_id)
+        .bind(row.save_id)
+        .bind(row.context_run_id)
+        .bind(&row.api_id)
+        .bind(&row.model_real_name)
+        .bind(row.input_tokens)
+        .bind(row.output_tokens)
+        .bind(row.cached_input_tokens)
+        .bind(row.reasoning_tokens)
+        .bind(row.total_tokens)
+        .bind(&row.cost_usd)
+        .bind(row.context_used)
+        .bind(row.context_max)
+        .bind(&row.metadata)
+        .fetch_one(pool)
+        .await
+    })
 }

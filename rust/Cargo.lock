@@ -2592,6 +2592,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "metrics",
  "pgvector",
  "rpg-core",
  "rpg-schemas",

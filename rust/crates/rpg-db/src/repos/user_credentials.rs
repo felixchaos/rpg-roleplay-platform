@@ -1,5 +1,6 @@
 //! repos/user_credentials.rs — user_api_credentials 表操作（v4 migration）
 
+use crate::query_timed;
 use rpg_core::UserId;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -39,27 +40,29 @@ pub async fn upsert(
     pool: &PgPool,
     cred: &UserApiCredential,
 ) -> Result<UserApiCredential, sqlx::Error> {
-    sqlx::query_as(
-        "INSERT INTO user_api_credentials
-            (user_id, api_id, encrypted_key, base_url_override, enabled, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (user_id, api_id) DO UPDATE SET
-            encrypted_key = EXCLUDED.encrypted_key,
-            base_url_override = EXCLUDED.base_url_override,
-            enabled = EXCLUDED.enabled,
-            metadata = EXCLUDED.metadata,
-            updated_at = now()
-         RETURNING id, user_id, api_id, encrypted_key, base_url_override,
-                   enabled, metadata, created_at, updated_at",
-    )
-    .bind(cred.user_id)
-    .bind(&cred.api_id)
-    .bind(&cred.encrypted_key)
-    .bind(&cred.base_url_override)
-    .bind(cred.enabled)
-    .bind(&cred.metadata)
-    .fetch_one(pool)
-    .await
+    query_timed!("upsert", "rpg-db", {
+        sqlx::query_as(
+            "INSERT INTO user_api_credentials
+                (user_id, api_id, encrypted_key, base_url_override, enabled, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (user_id, api_id) DO UPDATE SET
+                encrypted_key = EXCLUDED.encrypted_key,
+                base_url_override = EXCLUDED.base_url_override,
+                enabled = EXCLUDED.enabled,
+                metadata = EXCLUDED.metadata,
+                updated_at = now()
+             RETURNING id, user_id, api_id, encrypted_key, base_url_override,
+                       enabled, metadata, created_at, updated_at",
+        )
+        .bind(cred.user_id)
+        .bind(&cred.api_id)
+        .bind(&cred.encrypted_key)
+        .bind(&cred.base_url_override)
+        .bind(cred.enabled)
+        .bind(&cred.metadata)
+        .fetch_one(pool)
+        .await
+    })
 }
 
 #[tracing::instrument(skip(pool), fields(user_id = %user_id, api_id = %api_id))]
@@ -81,14 +84,16 @@ pub async fn resolve(
     user_id: UserId,
     api_id: &str,
 ) -> Result<Option<UserApiCredential>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT id, user_id, api_id, encrypted_key, base_url_override,
-                enabled, metadata, created_at, updated_at
-         FROM user_api_credentials
-         WHERE user_id = $1 AND api_id = $2 AND enabled = true",
-    )
-    .bind(user_id)
-    .bind(api_id)
-    .fetch_optional(pool)
-    .await
+    query_timed!("select", "rpg-db", {
+        sqlx::query_as(
+            "SELECT id, user_id, api_id, encrypted_key, base_url_override,
+                    enabled, metadata, created_at, updated_at
+             FROM user_api_credentials
+             WHERE user_id = $1 AND api_id = $2 AND enabled = true",
+        )
+        .bind(user_id)
+        .bind(api_id)
+        .fetch_optional(pool)
+        .await
+    })
 }
