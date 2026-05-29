@@ -19,13 +19,14 @@ use axum::{
     Json, Router,
 };
 use futures_util::stream::{self, Stream};
-use http::HeaderMap;
+use http::{HeaderMap, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use rpg_platform::quota::{self, QuotaConfig, QuotaError};
 use rpg_state::GameState;
 
-use crate::{hello_payload, named_sse_event, user_id_or_anon, AppState, ResponseError};
+use crate::{hello_payload, named_sse_event, require_user, user_id_or_anon, AppState, ResponseError};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -79,7 +80,9 @@ async fn api_new(
     body: Option<Json<NewGameRequest>>,
 ) -> Result<Response, ResponseError> {
     let body = body.map(|Json(b)| b).unwrap_or_default();
-    let user_id = user_id_or_anon(&s, &headers).await;
+    // 写状态路由:强鉴权,匿名 → 401。
+    let user = require_user(&s, &headers).await?;
+    let user_id = user.id.to_string();
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
     {
@@ -133,7 +136,9 @@ async fn api_opening(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ResponseError> {
-    let user_id = user_id_or_anon(&s, &headers).await;
+    // 触达 LLM 路由:强鉴权,匿名严禁触达 LLM → 401。
+    let user = require_user(&s, &headers).await?;
+    let user_id = user.id.to_string();
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
     let state_data = shared.read().data.clone();
@@ -317,8 +322,15 @@ async fn api_chat(
     body: Option<Json<ChatRequest>>,
 ) -> Response {
     let body = body.map(|Json(b)| b).unwrap_or_default();
-    let user_id = user_id_or_anon(&s, &headers).await;
+
+    // ── 强鉴权:匿名严禁触达 LLM → 401。本 handler 返回裸 Response,手动渲染。
+    let user = match require_user(&s, &headers).await {
+        Ok(u) => u,
+        Err(e) => return e.into_response(),
+    };
+    let user_id = user.id.to_string();
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
+
     let message = body
         .message
         .or(body.text)
@@ -335,6 +347,24 @@ async fn api_chat(
         ];
         return Sse::new(stream::iter(events)).into_response();
     }
+
+    // ── 调 LLM 前过配额闸:预算 / 日配额 / 速率 / 并发。失败 → 429 + Retry-After。
+    let cfg = QuotaConfig::from_env();
+    // 预估总 token:输入按字符粗估 + 预期 output 上限(hard cap)。
+    let est_input = rpg_platform::usage::estimate_input_tokens(&message);
+    let est_tokens = est_input + cfg.hard_max_tokens as i64;
+    // 当前 chat 链路尚未注入真实 model 选择,先用占位 api/model(record_actual 也用同值)。
+    let api_id = "anthropic";
+    let model = "claude-stub";
+    let grant = match quota::check_and_reserve(
+        &s.db, &cfg, user.id, api_id, model, est_tokens,
+    )
+    .await
+    {
+        Ok(g) => g,
+        Err(e) => return quota_error_response(&user_id, e),
+    };
+
     // 清零该 user 的 stop notify(重新建一个,旧的 awaiter 自动 drop)。
     s.stop_events.remove(&user_id);
     let _stop = s.stop_notify(&user_id);
@@ -349,6 +379,18 @@ async fn api_chat(
         );
     }
     let state_after = shared.read().data.clone();
+
+    // ── 调用 LLM(本翻译期为 stub,无真实 output)。链路落地后此处填真实 usage。
+    // 调用后回填用量 + 释放并发槽。stub 阶段 actual 用预估输入 + 0 output。
+    let actual = rpg_platform::usage::UsageBreakdown {
+        input_tokens: est_input.clamp(0, i32::MAX as i64) as i32,
+        output_tokens: 0,
+        cached_input_tokens: 0,
+        reasoning_tokens: 0,
+        total_tokens: est_input.clamp(0, i32::MAX as i64) as i32,
+    };
+    quota::record_actual(&s.db, grant, None, None, &actual, est_input as i32, 1_000_000).await;
+
     let events = vec![
         Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id))),
         Ok(named_sse_event(
@@ -366,6 +408,27 @@ async fn api_chat(
         .into_response()
 }
 
+/// 把 [`QuotaError`] 渲染成 429 响应 + `Retry-After` 头(若有建议),
+/// body 沿用 `{ok:false, detail, code}` 协议。
+fn quota_error_response(user_id: &str, err: QuotaError) -> Response {
+    tracing::warn!(user_id, code = err.code(), error = %err, "quota 闸拦截");
+    let mut resp = (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(json!({
+            "ok": false,
+            "detail": err.to_string(),
+            "code": err.code(),
+        })),
+    )
+        .into_response();
+    if let Some(secs) = err.retry_after_sec() {
+        if let Ok(v) = http::HeaderValue::from_str(&secs.to_string()) {
+            resp.headers_mut().insert(http::header::RETRY_AFTER, v);
+        }
+    }
+    resp
+}
+
 /// POST /api/stop — 打断当前 chat
 ///
 /// 拿到当前 user 的 Notify,notify_waiters。chat 流里 awaiter 收到后能短路。
@@ -374,7 +437,9 @@ async fn api_stop(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ResponseError> {
-    let user_id = user_id_or_anon(&s, &headers).await;
+    // 写状态(stop_signal)路由:强鉴权。
+    let user = require_user(&s, &headers).await?;
+    let user_id = user.id.to_string();
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     if let Some(n) = s.stop_events.get(&user_id) {
         n.notify_waiters();
@@ -396,7 +461,9 @@ async fn api_save(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ResponseError> {
-    let user_id = user_id_or_anon(&s, &headers).await;
+    // 写状态(持久化存档)路由:强鉴权。
+    let user = require_user(&s, &headers).await?;
+    let user_id = user.id.to_string();
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
     let (data, version) = {

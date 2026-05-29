@@ -63,9 +63,16 @@ impl AnthropicBackend {
     fn build_body(&self, req: &ChatRequest) -> Result<serde_json::Value, LlmError> {
         let mut body = serde_json::Map::new();
         body.insert("model".into(), serde_json::Value::String(req.model.clone()));
+        // 服务端硬 clamp:忽略客户端超限的 max_tokens,防刷爆。
+        // 贵模型(opus)后续可在此处加授权位检查再放宽上限。
+        // TODO[auth]: if req.model.contains("opus") && !authorized_for_premium { 维持低上限 }
+        let max_tokens = req
+            .max_tokens
+            .unwrap_or(4096)
+            .min(crate::HARD_MAX_OUTPUT_TOKENS);
         body.insert(
             "max_tokens".into(),
-            serde_json::Value::Number(req.max_tokens.unwrap_or(4096).into()),
+            serde_json::Value::Number(max_tokens.into()),
         );
         if req.stream {
             body.insert("stream".into(), serde_json::Value::Bool(true));

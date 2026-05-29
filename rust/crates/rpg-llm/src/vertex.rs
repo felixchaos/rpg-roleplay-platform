@@ -180,6 +180,8 @@ impl VertexBackend {
             gc.insert("temperature".into(), serde_json::json!(t));
         }
         if let Some(m) = req.max_tokens {
+            // 服务端硬 clamp:忽略客户端超限的 maxOutputTokens,防刷爆。
+            let m = m.min(crate::HARD_MAX_OUTPUT_TOKENS);
             gc.insert("maxOutputTokens".into(), serde_json::json!(m));
         }
         // 默认禁用 thinking,跟 python 端语义一致。

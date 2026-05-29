@@ -61,6 +61,8 @@ impl ResponsesBackend {
         }
         body.insert("input".into(), messages_to_responses_input(&req.messages));
         if let Some(m) = req.max_tokens {
+            // 服务端硬 clamp:忽略客户端超限的 max_output_tokens,防刷爆。
+            let m = m.min(crate::HARD_MAX_OUTPUT_TOKENS);
             body.insert("max_output_tokens".into(), serde_json::json!(m));
         }
         if let Some(t) = req.temperature {

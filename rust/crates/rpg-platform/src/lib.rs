@@ -21,6 +21,7 @@ pub mod crypto;
 pub mod error;
 pub mod knowledge;
 pub mod library;
+pub mod quota;
 pub mod runtime;
 pub mod save_io;
 pub mod script_import;
@@ -32,6 +33,8 @@ pub mod user_cards;
 pub mod users;
 
 pub use error::{PlatformError, PlatformResult};
+
+pub use quota::{QuotaConfig, QuotaError, QuotaGrant, HARD_MAX_TOKENS};
 
 pub use library::{Script, LibraryEntry, LibraryListing};
 pub use save_io::{Save, SaveExport, ImportResult};

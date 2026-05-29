@@ -57,6 +57,8 @@ impl OpenAiBackend {
             messages_to_openai(&req.system, &req.messages),
         );
         if let Some(m) = req.max_tokens {
+            // 服务端硬 clamp:忽略客户端超限的 max_tokens,防刷爆。
+            let m = m.min(crate::HARD_MAX_OUTPUT_TOKENS);
             body.insert("max_tokens".into(), serde_json::json!(m));
         }
         if let Some(t) = req.temperature {

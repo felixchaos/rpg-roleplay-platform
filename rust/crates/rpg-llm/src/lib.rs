@@ -40,6 +40,14 @@ pub mod registry;
 pub mod responses;
 pub mod vertex;
 
+/// 服务端 max_tokens 硬上限。任何 backend 在 build body 时都把客户端传入的
+/// `max_tokens` 通过 `.min(HARD_MAX_OUTPUT_TOKENS)` clamp,忽略超限值,
+/// 防止盗 session / 恶意请求把单次 output 拉到天价。
+///
+/// 注:与 `rpg-platform::quota::HARD_MAX_TOKENS` 数值一致(两 crate 无依赖环,
+/// 故各自持常量)。改动需同步两处。
+pub const HARD_MAX_OUTPUT_TOKENS: u32 = 8192;
+
 // Prelude:常用类型 reexport,方便上层 (rpg-agents) 引用。
 pub use pipeline::{
     BackendKind, ChatChunk, ChatMessage, ChatRequest, ChatRole, ChunkStream, LlmBackend, LlmError,
