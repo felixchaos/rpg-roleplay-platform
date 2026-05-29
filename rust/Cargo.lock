@@ -3027,6 +3027,7 @@ dependencies = [
  "http",
  "hyper",
  "metrics",
+ "model_catalog",
  "parking_lot",
  "rpg-agents",
  "rpg-context",

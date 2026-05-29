@@ -96,6 +96,7 @@ rpg-agents = { path = "crates/rpg-agents" }
 rpg-platform = { path = "crates/rpg-platform" }
 rpg-routes = { path = "crates/rpg-routes" }
 rpg-tools-dsl = { path = "crates/rpg-tools-dsl" }
+model_catalog = { path = "crates/model_catalog" }
 
 [profile.release]
 opt-level = 3

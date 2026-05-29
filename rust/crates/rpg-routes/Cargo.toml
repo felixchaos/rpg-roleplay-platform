@@ -16,6 +16,7 @@ rpg-db.workspace = true
 rpg-rules.workspace = true
 rpg-rules-bridge.workspace = true
 rpg-tools-dsl.workspace = true
+model_catalog.workspace = true
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true

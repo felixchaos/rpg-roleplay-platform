@@ -422,6 +422,10 @@
     // ---------- Models & APIs ----------
     models: {
       list: () => GET(`${API_PREFIX}/models`),
+      // Wave 11-C: 新统一 catalog 端点,返回完整 ModelInfo Vec(10 provider)
+      catalog: () => GET(`${API_PREFIX}/models/catalog`),
+      // Wave 11-C: 强制重拉所有 provider live /models,清 TTL cache
+      refresh: () => POST(`${API_PREFIX}/models/refresh`, {}),
       select: (body) => POST(`${API_PREFIX}/models/select`, body),
       upsertApi: (body) => POST(`${API_PREFIX}/models/api`, body),
       upsertModel: (body) => POST(`${API_PREFIX}/models/model`, body),

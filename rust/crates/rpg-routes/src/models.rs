@@ -28,6 +28,7 @@ use http::HeaderMap;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use model_catalog::ModelCatalog as NewModelCatalog;
 use rpg_llm::{probe_backend, AnyBackend, ModelCatalog, ProbeResult, Selected};
 
 use crate::{require_user, AppState, ResponseError};
@@ -87,6 +88,8 @@ pub(crate) fn redact_catalog(catalog: Value, is_admin: bool) -> Value {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/models", get(api_models))
+        .route("/api/models/catalog", get(api_models_catalog))
+        .route("/api/models/refresh", post(api_models_refresh))
         .route("/api/models/health/refresh-all", post(api_models_health_refresh_all))
         .route("/api/models/health", get(api_models_health))
         .route("/api/models/select", post(api_models_select))
@@ -187,6 +190,45 @@ fn spawn_probe_sweep(targets: Vec<(String, Arc<AnyBackend>, String)>) {
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────────
+
+/// GET /api/models/catalog
+///
+/// 统一 catalog 端点:调用 model_catalog::ModelCatalog::list_all() 返回完整
+/// Vec<ModelInfo>(10 家 provider 合并)。前端用此端点渲染模型列表新字段
+/// (context_window / max_output_tokens / deprecated_at / pricing / source 等)。
+///
+/// 缓存由 model_catalog 内部 per-provider TTL 管理(默认 5 分钟)。
+/// 返回: {"ok": true, "models": [...ModelInfo]}
+#[tracing::instrument(skip_all)]
+async fn api_models_catalog() -> impl IntoResponse {
+    let catalog = NewModelCatalog::default();
+    // preload_static 保证离线时也能返回 static 数据而不挂起。
+    if catalog.preload_static().is_err() {
+        tracing::warn!("api_models_catalog: preload_static 失败,返回空列表");
+        return Json(json!({"ok": true, "models": []}));
+    }
+    let models = catalog.list_all().await;
+    Json(json!({"ok": true, "models": models}))
+}
+
+/// POST /api/models/refresh
+///
+/// 强制重拉所有 provider 的 live /models 端点,清除 TTL cache 后返回最新列表。
+/// 耗时操作(并发请求 10 家 provider),前端应 fire-and-forget 或展示 loading。
+/// 返回: {"ok": true, "count": <total model count>}
+#[tracing::instrument(skip_all)]
+async fn api_models_refresh() -> impl IntoResponse {
+    let catalog = NewModelCatalog::default();
+    // 依次 refresh 每家 provider(live → static 降级)
+    for &p in model_catalog::KNOWN_ALL_PROVIDERS {
+        if let Err(e) = catalog.refresh(p).await {
+            tracing::warn!(provider = ?p, error = %e, "refresh provider 失败,已降级");
+        }
+    }
+    let models = catalog.list_all().await;
+    let count = models.len();
+    Json(json!({"ok": true, "count": count}))
+}
 
 #[tracing::instrument(skip_all)]
 async fn api_models(

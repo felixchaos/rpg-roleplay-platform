@@ -608,6 +608,8 @@ function ModelsSection() {
         onClose={() => setValidateApi(null)}
         onConfirm={(toRemove) => { removeModels(validateApi, toRemove); setValidateApi(null); }}
       />
+      {/* Wave 11-C: 10 provider typed 凭证配置 */}
+      <ProviderConfigSection />
     </div>
   );
 }
@@ -812,12 +814,19 @@ function VisibilityModal({ open, api, onClose, onConfirm }) {
               </div>
               <div className="pl-vis-row-meta">
                 <div style={{display: "flex", gap: 3}}>
-                  {m.capabilities.slice(0, 2).map(c => (
-                    <span key={c} className="pl-cap-tag">{CAP_LABEL[c] || c}</span>
-                  ))}
-                  {m.capabilities.length > 2 && <span className="muted-2" style={{fontSize: 11}}>+{m.capabilities.length - 2}</span>}
+                  {(() => {
+                    const caps = Array.isArray(m.capabilities) ? m.capabilities : capFlags(m.capabilities);
+                    return (<>
+                      {caps.slice(0, 2).map(c => (
+                        <span key={c} className="pl-cap-tag">{CAP_LABEL[c] || c}</span>
+                      ))}
+                      {caps.length > 2 && <span className="muted-2" style={{fontSize: 11}}>+{caps.length - 2}</span>}
+                    </>);
+                  })()}
                 </div>
-                <span className="mono muted-2" style={{fontSize: 11}}>{m.context}</span>
+                <span className="mono muted-2" style={{fontSize: 11}}>
+                  {m.context_window != null ? fmtCtx(m.context_window) : (m.context || "—")}
+                </span>
               </div>
             </label>
           ))}
@@ -1027,12 +1036,15 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
   // "编辑显示" modal, not per-row.
   const visibleModels = api.models.filter(m => m.visible !== false);
 
+  // helpers to normalize capabilities (array legacy vs typed struct)
+  const getCaps = (m) => Array.isArray(m.capabilities) ? m.capabilities : capFlags(m.capabilities);
+
   const filtered = visibleModels.filter(m => {
     if (q) {
       const s = q.toLowerCase();
       if (!m.display.toLowerCase().includes(s) && !m.real_name.toLowerCase().includes(s)) return false;
     }
-    if (capFilter && !m.capabilities.includes(capFilter)) return false;
+    if (capFilter && !getCaps(m).includes(capFilter)) return false;
     if (statusFilter === "enabled" && !m.enabled) return false;
     if (statusFilter === "disabled" && m.enabled) return false;
     if (statusFilter === "ok" && m.health !== "ok") return false;
@@ -1046,7 +1058,11 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
       return a.display.localeCompare(b.display, "zh-CN");
     }
     if (sortKey === "name") return a.display.localeCompare(b.display, "zh-CN");
-    if (sortKey === "context") return (parseInt(b.context) || 0) - (parseInt(a.context) || 0);
+    if (sortKey === "context") {
+      // Wave 11-C: 优先用 context_window 数值,兼容旧 context 字符串
+      const getCtx = (m) => m.context_window ?? parseInt(m.context) ?? 0;
+      return getCtx(b) - getCtx(a);
+    }
     if (sortKey === "health") {
       const order = { ok: 0, degraded: 1, untested: 2, err: 3 };
       return (order[a.health] ?? 4) - (order[b.health] ?? 4);
@@ -1057,7 +1073,7 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
   const visible = showAll ? sorted : sorted.slice(0, PAGE);
   const hasMore = sorted.length > visible.length;
   const filtersActive = q || capFilter || statusFilter !== "all";
-  const allCaps = [...new Set(visibleModels.flatMap(m => m.capabilities))];
+  const allCaps = [...new Set(visibleModels.flatMap(m => getCaps(m)))];
   const showSearch = visibleModels.length > 5;
   const hiddenCount = api.models.length - visibleModels.length;
 
@@ -1133,6 +1149,7 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
             <col className="c-caps" />
             <col className="c-price" />
             <col className="c-ctx" />
+            <col style={{width: 70}} />
             <col className="c-toggle" />
           </colgroup>
           <thead>
@@ -1140,34 +1157,66 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
               <th className="c-health"></th>
               <th className="c-name">显示名 / Model</th>
               <th className="c-caps">能力</th>
-              <th className="c-price">价格 (1K tok)</th>
+              <th className="c-price">价格 /M</th>
               <th className="c-ctx">上下文</th>
+              <th style={{fontSize: 11}}>来源</th>
               <th className="c-toggle"></th>
             </tr>
           </thead>
           <tbody>
-            {visible.map(m => (
-              <tr key={m.id} className={m.enabled ? "" : "pl-model-disabled"}>
+            {visible.map(m => {
+              const isDeprecated = !!m.deprecated_at;
+              return (
+              <tr key={m.id} className={`${m.enabled ? "" : "pl-model-disabled"}${isDeprecated ? " pl-model-deprecated" : ""}`}>
                 <td className="c-health">
                   <HealthDot health={m.health} />
                 </td>
                 <td className="c-name">
-                  <ModelNameCell m={m} onRename={(v) => onRenameModel?.(m.id, v)} />
+                  <ModelNameCell m={m} onRename={(v) => onRenameModel?.(m.id, v)} deprecated={isDeprecated} />
                 </td>
                 <td className="c-caps">
                   <div style={{display: "flex", gap: 4, flexWrap: "wrap"}}>
-                    {m.capabilities.map(c => (
+                    {getCaps(m).map(c => (
                       <span key={c} className="pl-cap-tag" data-tip={CAP_LABEL[c] || c}>{CAP_LABEL[c] || c}</span>
                     ))}
                   </div>
                 </td>
-                <td className="c-price mono muted">{m.price}</td>
-                <td className="c-ctx mono muted">{m.context}</td>
+                <td className="c-price mono muted">
+                  {/* Wave 11-C: 优先展示 typed ModelInfo pricing(per million),兼容旧 price 字符串 */}
+                  {m.input_cost_per_million != null
+                    ? <span data-tip={`输入 $${m.input_cost_per_million}/M · 输出 $${m.output_cost_per_million ?? "?"}/M`}>
+                        {fmtPrice(m.input_cost_per_million)} / {fmtPrice(m.output_cost_per_million)}
+                      </span>
+                    : (m.price || "—")}
+                </td>
+                <td className="c-ctx mono muted">
+                  {/* Wave 11-C: 优先展示 typed context_window,兼容旧 context 字符串 */}
+                  {m.context_window != null ? fmtCtx(m.context_window) : (m.context || "—")}
+                  {m.max_output_tokens != null && (
+                    <div className="muted-2" style={{fontSize: 10}} data-tip={`最大输出 ${fmtCtx(m.max_output_tokens)} tokens`}>
+                      ↑{fmtCtx(m.max_output_tokens)}
+                    </div>
+                  )}
+                </td>
+                <td className="muted-2" style={{fontSize: 11}}>
+                  {/* Wave 11-C: catalog 数据来源 */}
+                  {m.source ? (
+                    <span className="pl-cap-tag" data-tip={`数据来源: ${sourceLabel(m.source)}`} style={{fontSize: 10}}>
+                      {sourceLabel(m.source)}
+                    </span>
+                  ) : "—"}
+                  {isDeprecated && (
+                    <span className="pl-cap-tag" data-tip={`已弃用: ${m.deprecated_at}`} style={{marginLeft: 2, color: "var(--warn)", fontSize: 10, borderColor: "var(--warn)"}}>
+                      弃用
+                    </span>
+                  )}
+                </td>
                 <td className="c-toggle">
                   <SettingsToggle on={m.enabled} set={() => onToggleModel(m.id)} />
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -1191,7 +1240,7 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
   );
 }
 
-function ModelNameCell({ m, onRename }) {
+function ModelNameCell({ m, onRename, deprecated }) {
   const [editing, setEditing] = useStatePL(false);
   const [val, setVal] = useStatePL(m.display);
   React.useEffect(() => { setVal(m.display); }, [m.display]);
@@ -1229,11 +1278,12 @@ function ModelNameCell({ m, onRename }) {
   return (
     <div className="pl-title-cell">
       <strong
-        style={{fontSize: 13.5, cursor: "text"}}
+        style={{fontSize: 13.5, cursor: "text", textDecoration: deprecated ? "line-through" : "none", opacity: deprecated ? 0.7 : 1}}
         onDoubleClick={() => setEditing(true)}
-        data-tip="双击编辑显示名"
+        data-tip={deprecated ? `已弃用 · ${m.deprecated_at || ""}` : "双击编辑显示名"}
       >
         {m.display}
+        {deprecated && <span style={{marginLeft: 4, fontSize: 11, color: "var(--warn)"}}><Icon name="warn" size={10} /></span>}
       </strong>
       <span className="muted-2 mono">{m.real_name}</span>
     </div>
@@ -1255,16 +1305,65 @@ function HealthDot({ health }) {
   );
 }
 
+// Wave 11-C: typed map 对齐 ModelCapabilities struct 字段
+// import type { ModelInfo } from "@/types/rust/catalog/ModelInfo"
+// import type { ProviderId } from "@/types/rust/catalog/ProviderId"
+// import type { ModelCapabilities } from "@/types/rust/catalog/ModelCapabilities"
+// import type { CatalogSource } from "@/types/rust/catalog/CatalogSource"
+/** @type {Record<keyof import("../types/rust/catalog/ModelCapabilities").ModelCapabilities, string>} */
 const CAP_LABEL = {
-  text: "文本",
-  vision: "视觉",
-  "tool-use": "工具",
-  reasoning: "推理",
-  fast: "快",
-  long: "长上下文",
-  cn: "中文",
-  rpg: "RPG 调优",
+  streaming:          "流式输出",
+  tools:              "工具调用",
+  vision:             "视觉",
+  audio:              "音频",
+  structured_output:  "结构化输出",
+  extended_thinking:  "深度思考",
+  embedding:          "向量嵌入",
+  function_calling:   "函数调用",
+  prompt_caching:     "提示词缓存",
+  web_search:         "联网搜索",
+  pdf_input:          "PDF 输入",
+  // 兼容旧字符串 capability (catalog 迁移前旧条目)
+  text:               "文本",
+  "tool-use":         "工具",
+  reasoning:          "推理",
+  fast:               "快",
+  long:               "长上下文",
+  cn:                 "中文",
+  rpg:                "RPG 调优",
 };
+
+/** @param {import("../types/rust/catalog/ModelCapabilities").ModelCapabilities | Record<string,boolean>} caps */
+function capFlags(caps) {
+  if (!caps || typeof caps !== "object") return [];
+  // typed struct mode: Object.entries 过滤 true
+  return Object.entries(caps).filter(([, v]) => v === true).map(([k]) => k);
+}
+
+/** @param {import("../types/rust/catalog/CatalogSource").CatalogSource} source */
+function sourceLabel(source) {
+  const MAP = {
+    LiveApi:        "Live API",
+    StaticCatalog:  "Static",
+    UserOverride:   "用户覆盖",
+    OpenRouterProxy:"OpenRouter Proxy",
+  };
+  return MAP[source] || source || "—";
+}
+
+/** @param {number|null|undefined} n context_window 格式化 */
+function fmtCtx(n) {
+  if (!n) return "—";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(0)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+  return String(n);
+}
+
+/** @param {number|null|undefined} v 每百万 token 价格 → 格式化 */
+function fmtPrice(v) {
+  if (v === null || v === undefined) return null;
+  return `$${v.toFixed(3)}`;
+}
 
 const MODELS_DATA = [
   {
@@ -1365,6 +1464,295 @@ const MODELS_DATA = [
     ]
   },
 ];
+
+// Wave 11-C: 10 provider typed 配置表
+// /** @type {Array<{id: import("../types/rust/catalog/ProviderId").ProviderId, name: string, kind: "openai_compat"|"native", defaultBase: string, keyEnv: string, note?: string, special?: "agent_platform"|"alibaba_qwen"|"openrouter"}>} */
+const PROVIDERS_CONFIG = [
+  {
+    id: "OpenAI",       name: "OpenAI",         kind: "openai_compat",
+    defaultBase: "https://api.openai.com/v1",
+    keyEnv: "OPENAI_API_KEY",
+  },
+  {
+    id: "OpenRouter",   name: "OpenRouter",     kind: "openai_compat",
+    defaultBase: "https://openrouter.ai/api/v1",
+    keyEnv: "OPENROUTER_API_KEY",
+    special: "openrouter",
+    note: "可填中转站 OpenAI-compat 端点（如 https://your-proxy.com/v1），鉴权方式不变（Bearer）",
+  },
+  {
+    id: "DeepSeek",     name: "DeepSeek",       kind: "openai_compat",
+    defaultBase: "https://api.deepseek.com/v1",
+    keyEnv: "DEEPSEEK_API_KEY",
+  },
+  {
+    id: "XAi",          name: "xAI / Grok",     kind: "openai_compat",
+    defaultBase: "https://api.x.ai/v1",
+    keyEnv: "XAI_API_KEY",
+  },
+  {
+    id: "XiaomiMimo",   name: "Xiaomi MiMo",    kind: "openai_compat",
+    defaultBase: "https://chat.d.xiaomi.net/ai/api/v1",
+    keyEnv: "XIAOMI_MIMO_API_KEY",
+  },
+  {
+    id: "TencentHunyuan", name: "腾讯 Hunyuan", kind: "openai_compat",
+    defaultBase: "https://api.hunyuan.cloud.tencent.com/v1",
+    keyEnv: "TENCENT_HUNYUAN_API_KEY",
+  },
+  {
+    id: "Anthropic",    name: "Anthropic",      kind: "native",
+    defaultBase: "https://api.anthropic.com",
+    keyEnv: "ANTHROPIC_API_KEY",
+  },
+  {
+    id: "GoogleAIStudio", name: "Google AI Studio", kind: "native",
+    defaultBase: "https://generativelanguage.googleapis.com",
+    keyEnv: "GOOGLE_API_KEY",
+  },
+  {
+    id: "AgentPlatform", name: "Agent Platform (Service Account)", kind: "native",
+    defaultBase: "",
+    keyEnv: "",
+    special: "agent_platform",
+    note: "上传 Service Account JSON（含 client_email / private_key / project_id）",
+  },
+  {
+    id: "AlibabaQwen",  name: "阿里 DashScope / Qwen", kind: "native",
+    defaultBase: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    keyEnv: "DASHSCOPE_API_KEY",
+    special: "alibaba_qwen",
+    note: "支持 OpenAI-compat 模式（/compatible-mode/v1）或 native DashScope 协议",
+  },
+];
+
+/**
+ * Wave 11-C: 10 provider 配置卡片
+ * 每家 provider 独立一卡:API Key 输入 + base_url 可改(中转站)
+ * Agent Platform:JSON 文件上传, 解析验证字段后 POST credentials.set
+ * 阿里 DashScope:mode toggle (OpenAI-compat vs native)
+ */
+function ProviderConfigSection() {
+  const [creds, setCreds] = useStatePL({});
+  const [saving, setSaving] = useStatePL({});
+  const [agentPlatformJson, setAgentPlatformJson] = useStatePL(null);
+  const [agentPlatformError, setAgentPlatformError] = useStatePL("");
+  const [alibabaMode, setAlibabaMode] = useStatePL("openai_compat");
+
+  useEffectPL(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await window.api.credentials.list().catch(() => ({ items: [] }));
+        if (cancelled) return;
+        const map = {};
+        for (const c of (r?.items || r?.credentials || [])) {
+          const pid = c.api_id || c.id;
+          map[pid] = { has_key: !!c.has_credential || !!c.has_key, key_hint: c.key_hint || "", base_url: c.base_url_override || "" };
+        }
+        setCreds(map);
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const saveKey = async (providerId, apiKey, baseUrl) => {
+    setSaving(s => ({ ...s, [providerId]: true }));
+    try {
+      if (apiKey && apiKey.trim()) {
+        await window.api.credentials.set({ api_id: providerId, api_key: apiKey.trim() });
+      }
+      if (baseUrl !== undefined) {
+        await window.api.models.upsertApi({ api_id: providerId, base_url: baseUrl });
+      }
+      window.__apiToast?.("已保存", { kind: "ok", duration: 1800 });
+      setCreds(s => ({ ...s, [providerId]: { ...s[providerId], has_key: !!(apiKey?.trim() || s[providerId]?.has_key), base_url: baseUrl ?? s[providerId]?.base_url } }));
+    } catch (e) {
+      window.__apiToast?.("保存失败", { kind: "danger", detail: e?.message });
+    } finally {
+      setSaving(s => ({ ...s, [providerId]: false }));
+    }
+  };
+
+  const handleAgentPlatformFile = async (file) => {
+    setAgentPlatformError("");
+    setAgentPlatformJson(null);
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      const missing = ["client_email", "private_key", "project_id"].filter(k => !json[k]);
+      if (missing.length > 0) {
+        setAgentPlatformError(`JSON 缺少必需字段: ${missing.join(", ")}`);
+        return;
+      }
+      setAgentPlatformJson(json);
+    } catch (e) {
+      setAgentPlatformError("JSON 解析失败: " + (e?.message || "未知错误"));
+    }
+  };
+
+  const saveAgentPlatform = async () => {
+    if (!agentPlatformJson) return;
+    setSaving(s => ({ ...s, AgentPlatform: true }));
+    try {
+      await window.api.credentials.set({
+        api_id: "AgentPlatform",
+        api_key: JSON.stringify(agentPlatformJson),
+      });
+      window.__apiToast?.("Agent Platform 凭证已保存", { kind: "ok", duration: 2000 });
+      setCreds(s => ({ ...s, AgentPlatform: { ...s.AgentPlatform, has_key: true } }));
+      setAgentPlatformJson(null);
+    } catch (e) {
+      window.__apiToast?.("保存失败", { kind: "danger", detail: e?.message });
+    } finally {
+      setSaving(s => ({ ...s, AgentPlatform: false }));
+    }
+  };
+
+  return (
+    <div className="pl-set-group" data-cap-anchor="settings.providers">
+      <h3>10 Provider 凭证配置</h3>
+      <div className="muted" style={{fontSize: 12, marginBottom: 12}}>
+        API key 加密存储在用户凭证表中，不在 catalog 明文保存。base_url 支持中转站覆盖。
+      </div>
+      {PROVIDERS_CONFIG.map(p => {
+        const cred = creds[p.id] || {};
+        const isSaving = !!saving[p.id];
+        return (
+          <ProviderCard
+            key={p.id}
+            provider={p}
+            cred={cred}
+            isSaving={isSaving}
+            agentPlatformJson={agentPlatformJson}
+            agentPlatformError={agentPlatformError}
+            alibabaMode={alibabaMode}
+            onSaveKey={saveKey}
+            onAgentPlatformFile={handleAgentPlatformFile}
+            onSaveAgentPlatform={saveAgentPlatform}
+            onAlibabaMode={(v) => { setAlibabaMode(v); window.api.models.upsertApi({ api_id: "AlibabaQwen", base_url: v === "openai_compat" ? "https://dashscope.aliyuncs.com/compatible-mode/v1" : "https://dashscope.aliyuncs.com/api/v1" }).catch(() => {}); }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPlatformError, alibabaMode, onSaveKey, onAgentPlatformFile, onSaveAgentPlatform, onAlibabaMode }) {
+  const [keyVal, setKeyVal] = useStatePL("");
+  const [baseVal, setBaseVal] = useStatePL(cred.base_url || p.defaultBase || "");
+  useEffectPL(() => { setBaseVal(cred.base_url || p.defaultBase || ""); }, [cred.base_url, p.defaultBase]);
+
+  // Agent Platform 走专用 UI
+  if (p.special === "agent_platform") {
+    return (
+      <div className="pl-set-row" style={{flexDirection: "column", alignItems: "stretch", paddingBottom: 16}}>
+        <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+          <div>
+            <strong>{p.name}</strong>
+            <div className="muted" style={{fontSize: 12}}>{p.note}</div>
+          </div>
+          {cred.has_key && <span className="pill ok" style={{fontSize: 11}}><span className="dot ok" />已配置</span>}
+        </div>
+        <div style={{marginTop: 8, display: "flex", gap: 8, alignItems: "center"}}>
+          <label className="btn ghost" style={{cursor: "pointer", position: "relative"}}>
+            <Icon name="upload" size={12} /> 选择 JSON 文件
+            <input
+              type="file"
+              accept="application/json,.json"
+              style={{position: "absolute", opacity: 0, width: 0, height: 0}}
+              onChange={(e) => onAgentPlatformFile(e.target.files?.[0] || null)}
+            />
+          </label>
+          {agentPlatformJson && (
+            <span className="muted" style={{fontSize: 12}}>
+              <Icon name="check" size={11} style={{color: "var(--ok)"}} /> {agentPlatformJson.client_email}
+            </span>
+          )}
+        </div>
+        {agentPlatformError && <div className="muted" style={{color: "var(--danger)", fontSize: 12, marginTop: 4}}>{agentPlatformError}</div>}
+        {agentPlatformJson && !agentPlatformError && (
+          <div style={{marginTop: 8, display: "flex", gap: 8, alignItems: "center"}}>
+            <div className="muted" style={{fontSize: 12}}>
+              project_id: <span className="mono">{agentPlatformJson.project_id}</span>
+            </div>
+            <button className="btn primary" disabled={isSaving} onClick={onSaveAgentPlatform} style={{height: 28}}>
+              {isSaving ? "保存中…" : <><Icon name="check" size={12} /> 保存凭证</>}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // 阿里 DashScope 带 mode toggle
+  if (p.special === "alibaba_qwen") {
+    return (
+      <div className="pl-set-row" style={{flexDirection: "column", alignItems: "stretch", paddingBottom: 16}}>
+        <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+          <div>
+            <strong>{p.name}</strong>
+            <div className="muted" style={{fontSize: 12}}>{p.note}</div>
+          </div>
+          {cred.has_key && <span className="pill ok" style={{fontSize: 11}}><span className="dot ok" />已配置</span>}
+        </div>
+        <div style={{marginTop: 8, display: "flex", gap: 8, alignItems: "center"}}>
+          <div className="seg" style={{display: "flex"}}>
+            <button className={alibabaMode === "openai_compat" ? "active" : ""} onClick={() => onAlibabaMode("openai_compat")} data-tip="OpenAI-compat 兼容模式（推荐）">OpenAI-compat</button>
+            <button className={alibabaMode === "native" ? "active" : ""} onClick={() => onAlibabaMode("native")} data-tip="DashScope native 协议（HMAC 签名 + 原生 streaming）">Native DashScope</button>
+          </div>
+          <span className="muted-2 mono" style={{fontSize: 11}}>
+            {alibabaMode === "openai_compat" ? "/compatible-mode/v1" : "/api/v1"}
+          </span>
+        </div>
+        <div style={{marginTop: 8, display: "flex", gap: 8, alignItems: "flex-end"}}>
+          <div style={{flex: 1}}>
+            <label style={{fontSize: 11, color: "var(--text-quiet)", display: "block", marginBottom: 4}}>API Key</label>
+            <input type="password" value={keyVal} onChange={(e) => setKeyVal(e.target.value)}
+              placeholder={cred.has_key ? "留空保留原 key" : "sk-…"} autoComplete="new-password"
+              style={{width: "100%"}} />
+          </div>
+          <button className="btn primary" disabled={isSaving || (!keyVal.trim() && !baseVal)} onClick={() => onSaveKey(p.id, keyVal, baseVal)} style={{height: 34, flexShrink: 0}}>
+            {isSaving ? "保存中…" : "保存"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // OpenRouter 带 base_url hint
+  return (
+    <div className="pl-set-row" style={{flexDirection: "column", alignItems: "stretch", paddingBottom: 16}}>
+      <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+        <div>
+          <strong>{p.name}</strong>
+          {p.note && <div className="muted" style={{fontSize: 12, marginTop: 2}}>{p.note}</div>}
+        </div>
+        {cred.has_key && <span className="pill ok" style={{fontSize: 11}}><span className="dot ok" />已配置</span>}
+      </div>
+      <div style={{marginTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, alignItems: "flex-end"}}>
+        <div>
+          <label style={{fontSize: 11, color: "var(--text-quiet)", display: "block", marginBottom: 4}}>API Key</label>
+          <input type="password" value={keyVal} onChange={(e) => setKeyVal(e.target.value)}
+            placeholder={cred.has_key ? "留空保留原 key" : (p.keyEnv ? p.keyEnv : "sk-…")}
+            autoComplete="new-password" />
+        </div>
+        <div>
+          <label style={{fontSize: 11, color: "var(--text-quiet)", display: "block", marginBottom: 4}}>
+            Base URL
+            {p.special === "openrouter" && <span className="muted-2" style={{marginLeft: 4}}>中转站可改</span>}
+          </label>
+          <input className="mono" value={baseVal} onChange={(e) => setBaseVal(e.target.value)}
+            placeholder={p.defaultBase || "https://…"} />
+        </div>
+        <button className="btn primary" disabled={isSaving || (!keyVal.trim() && baseVal === (cred.base_url || p.defaultBase || ""))} onClick={() => onSaveKey(p.id, keyVal, baseVal)} style={{height: 34, marginTop: 2}}>
+          {isSaving ? "保存中…" : "保存"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function ModelParamsSection() {
   const PRESETS = ["平衡", "保守", "创意", "确定", "自定义"];
