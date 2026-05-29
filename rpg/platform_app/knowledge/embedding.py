@@ -208,6 +208,39 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
                 )
         log.info("[embedding] chunks +%d (script_id=%s)", len(rows), script_id)
 
+    # task 52: entity 层 embed 之前,先回填 first_chapter / last_seen_chapter。
+    # 这样下游 _search_entities 能按时间线硬过滤,GM 不会被召回未来章节的角色/词条。
+    # 算法:全文 LIKE 搜 script_chapters.content,聚合 MIN/MAX chapter_index。
+    # 一次性 SQL,~O(N × chapter_count),866 章场景下 ~200ms。
+    with connect() as db:
+        db.execute(
+            """
+            with char_first_last as (
+              select cc.id as cc_id,
+                     min(sc.chapter_index) as first_ch,
+                     max(sc.chapter_index) as last_ch
+              from character_cards cc
+              join script_chapters sc on sc.script_id = cc.script_id
+              where cc.script_id = %s
+                and sc.content like '%%' || cc.name || '%%'
+              group by cc.id
+            )
+            update character_cards cc
+            set first_chapter = cfl.first_ch,
+                last_seen_chapter = cfl.last_ch
+            from char_first_last cfl
+            where cc.id = cfl.cc_id
+              and cc.first_chapter is null
+            """,
+            (script_id,),
+        )
+        db.execute(
+            "update worldbook_entries set first_chapter = 1 "
+            "where script_id = %s and first_chapter is null",
+            (script_id,),
+        )
+        log.info("[embedding] task 52: backfilled chapter boundaries for script %s", script_id)
+
     # entity 层:character_cards
     with connect() as db:
         cards = db.execute(

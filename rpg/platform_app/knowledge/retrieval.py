@@ -99,11 +99,18 @@ def retrieve_script_context(
                 )
             )
 
-        # task 51: LightRAG 双层检索第 2 层 — entity 层向量召回。
+        # task 51/52: LightRAG 双层检索第 2 层 — entity 层向量召回。
         # query 提到 NPC 名 / 地名 / 设定词时,直接返回完整人物卡 + 世界书条目,
         # GM 拿到的不是"片段+猜",而是"角色档案+确定信息"。
+        # task 52: 必须传 chapter_min/chapter_max 限制召回范围,防止剧透 — 第 1 章
+        # 玩家向量召回不能拉第 391 章才出现的角色。
         try:
-            ents = _search_entities(db, script_id, query, top_k_cards=3, top_k_wb=3)
+            ents = _search_entities(
+                db, script_id, query,
+                chapter_min=chapter_min,
+                chapter_max=chapter_max,
+                top_k_cards=3, top_k_wb=3,
+            )
             if ents.get("cards"):
                 lines = []
                 for c in ents["cards"]:

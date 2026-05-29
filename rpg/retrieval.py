@@ -597,10 +597,15 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
         try:
             from platform_app.knowledge import retrieve_runtime_context
 
+            # task 52: 之前 chapter_min/max 只在 is_default 时传 → 非默认剧本
+            # (包括用户导入的全部小说)retrieve 拿不到时间线边界,GM 看到全书
+            # 所有 chunks/entities,第 1 章玩家被召回第 800 章人物剧透。
+            # 修:**无条件**传 timeline_filter 的边界 — 它本身已经是 anchor
+            # 解析结果,跟剧本是否默认无关。
             pg_context = retrieve_runtime_context(
                 user_input,
-                chapter_min=timeline_filter.get("chapter_min") if is_default else None,
-                chapter_max=timeline_filter.get("chapter_max") if is_default else None,
+                chapter_min=timeline_filter.get("chapter_min"),
+                chapter_max=timeline_filter.get("chapter_max"),
                 top_k=3,
                 user_id=user_id,
             )
