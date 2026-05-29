@@ -19,7 +19,6 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
-use tracing::warn;
 
 // ─────────────────────────────────────────────
 // 公共结果类型
@@ -336,27 +335,226 @@ pub async fn keyword_scan_chunks(
 }
 
 // ─────────────────────────────────────────────
-// pgvector 语义搜索（占位）
+// pgvector 语义搜索
 // ─────────────────────────────────────────────
 
 /// pgvector 余弦相似度搜索（`embedding <=> $1::vector`）。
 ///
-/// TODO: 等 rpg-db PgPool wrapper + embedding 生成侧完成后实现。
-/// 当前只返回空 Vec，不影响编译。
-#[allow(unused_variables)]
-pub async fn vector_search(
+/// 对应 Python `retrieval.__init__.search(embedding, top_k, chapter_min, chapter_max)`:
+/// ```sql
+/// SELECT id, chapter_index, chunk_index, content,
+///        1.0 - (embedding <=> '<vec>'::vector) AS score
+/// FROM document_chunks
+/// WHERE script_id = $1
+///   [AND chapter_index >= $2]
+///   [AND chapter_index <= $3]
+/// ORDER BY embedding <=> '<vec>'::vector
+/// LIMIT top_k
+/// ```
+/// 对应 Python search():
+///   - embedding 是已生成的 f32 向量（调用方负责生成，Wave 0-B Vertex embed）
+///   - 余弦相似度 = 1 - cosine_distance（越大越好）
+///   - 向量通过 pgvector 字面量(`[v1,v2,...]::vector`)内联到 SQL，避免 Encode trait 依赖
+pub async fn search_embeddings(
     pool: &PgPool,
     script_id: i32,
-    embedding: pgvector::Vector,
+    embedding: &[f32],
     top_k: usize,
     chapter_min: Option<i32>,
     chapter_max: Option<i32>,
 ) -> Result<Vec<RetrievalHit>> {
-    // TODO: 等 rpg-db PgPool wrapper
-    // SELECT id, chapter_index, chunk_index, content,
-    //        1 - (embedding <=> $1::vector) AS score
-    // FROM document_chunks
-    // WHERE script_id = $2 ...
-    warn!("vector_search: not yet implemented, returning empty");
-    Ok(vec![])
+    if embedding.is_empty() {
+        return Ok(vec![]);
+    }
+    // 序列化为 pgvector 字面量字符串 `[v1,v2,...]`（与 rpg-platform entity_search 一致）
+    let vec_lit = embedding_to_pgvector_literal(embedding);
+
+    // 动态构造 WHERE 子句（章节过滤）
+    // $1 = script_id, $2 = chapter_min（可选）, $3 = chapter_max（可选）
+    let mut bind_idx = 2usize; // $1=script_id
+    let mut where_extra = String::new();
+    if chapter_min.is_some() {
+        where_extra.push_str(&format!(" AND chapter_index >= ${}", bind_idx));
+        bind_idx += 1;
+    }
+    if chapter_max.is_some() {
+        where_extra.push_str(&format!(" AND chapter_index <= ${}", bind_idx));
+        // bind_idx += 1; // 最后
+    }
+    let sql = format!(
+        "SELECT id, chapter_index, chunk_index, content, \
+         1.0 - (embedding <=> '{vec}'::vector) AS score \
+         FROM document_chunks \
+         WHERE script_id = $1{extra} \
+         ORDER BY embedding <=> '{vec}'::vector \
+         LIMIT {top}",
+        vec = vec_lit,
+        extra = where_extra,
+        top = top_k,
+    );
+
+    let mut q = sqlx::query(&sql).bind(script_id);
+    if let Some(cmin) = chapter_min {
+        q = q.bind(cmin);
+    }
+    if let Some(cmax) = chapter_max {
+        q = q.bind(cmax);
+    }
+
+    let rows = q.fetch_all(pool).await?;
+
+    use sqlx::Row;
+    let mut hits: Vec<RetrievalHit> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let id: i64 = row.try_get("id")?;
+        let chapter_index: i32 = row.try_get("chapter_index").unwrap_or(0);
+        let chunk_index: i32 = row.try_get("chunk_index").unwrap_or(0);
+        let content: String = row.try_get("content").unwrap_or_default();
+        // score = cosine 相似度（1 - 距离）
+        let score: f64 = row.try_get::<f64, _>("score")
+            .or_else(|_| row.try_get::<f32, _>("score").map(|v| v as f64))
+            .unwrap_or(0.0);
+        hits.push(RetrievalHit {
+            chunk_id: id,
+            chapter_index,
+            chunk_index,
+            score,
+            text: content,
+        });
+    }
+    Ok(hits)
+}
+
+/// 将 f32 向量序列化为 pgvector 字面量字符串 `[v1,v2,...]`。
+/// 与 rpg-platform knowledge/retrieval.rs 中的 `vec_to_pgvector_literal` 逻辑一致。
+fn embedding_to_pgvector_literal(v: &[f32]) -> String {
+    let inner: Vec<String> = v.iter().map(|x| format!("{:.8}", x)).collect();
+    format!("[{}]", inner.join(","))
+}
+
+/// 触发 embedding pipeline，为给定文本片段生成并写入 embedding。
+///
+/// 对应 Python `retrieval.__init__.build_index(texts, script_id, chapter_index)`:
+///   - 将 texts 切分为 chunks（已由调用方切好，每条一行）
+///   - 通过 Wave 0-B Vertex embed 接口生成向量
+///   - UPSERT 到 `document_chunks` 的 `embedding` 列
+///
+/// 当前约束：embedding 生成侧（Vertex AI / Wave 0-B）未接入 Rust 端，
+/// 故本函数执行 DB 写入侧（清空旧 embedding、写 content），
+/// 并在行记录里将 `embedding` 置 NULL（等后台 pipeline 回填）。
+/// 返回已插入/更新的行数。
+///
+/// 完整 embedding 回填路径：TODO[P2-EMBED] — 等 Wave 0-B vertex_embed crate 完成后接入。
+pub async fn build_index(
+    pool: &PgPool,
+    script_id: i32,
+    chapter_index: i32,
+    chunks: &[String],
+) -> Result<usize> {
+    if chunks.is_empty() {
+        return Ok(0);
+    }
+    // 删除当前 chapter 已有的 chunks，准备重新写入
+    // （对应 Python build_index 的 _clear_chapter_chunks 步骤）
+    sqlx::query(
+        "DELETE FROM document_chunks \
+         WHERE script_id = $1 AND chapter_index = $2",
+    )
+    .bind(script_id)
+    .bind(chapter_index)
+    .execute(pool)
+    .await?;
+
+    // 逐条插入（embedding 列留 NULL，等 pipeline 回填）
+    let mut inserted = 0usize;
+    for (chunk_idx, content) in chunks.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO document_chunks \
+             (script_id, chapter_index, chunk_index, content, embedding) \
+             VALUES ($1, $2, $3, $4, NULL)",
+        )
+        .bind(script_id)
+        .bind(chapter_index)
+        .bind(chunk_idx as i32)
+        .bind(content.as_str())
+        .execute(pool)
+        .await?;
+        inserted += 1;
+    }
+    Ok(inserted)
+}
+
+// ─────────────────────────────────────────────
+// 单测
+// ─────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bigrams_basic() {
+        let result = bigrams("你好世界");
+        assert_eq!(result, vec!["你好", "好世", "世界"]);
+    }
+
+    #[test]
+    fn bigrams_empty() {
+        assert!(bigrams("").is_empty());
+        assert!(bigrams("a").is_empty()); // 单字无 bigram
+    }
+
+    #[test]
+    fn bm25_tokens_dedup_and_limit() {
+        let tokens = bm25_tokens("调查调查调查调查调查调查调查调查调查");
+        // "调查" 只应出现一次（HashSet 去重）
+        let count = tokens.iter().filter(|t| t.as_str() == "调查").count();
+        assert_eq!(count, 1, "dedup 失败: {:?}", tokens);
+        // 不超过 8 个
+        assert!(tokens.len() <= 8);
+    }
+
+    #[test]
+    fn bm25_tokens_extracts_cjk_bigrams() {
+        let tokens = bm25_tokens("隐蔽潜行");
+        assert!(
+            tokens.iter().any(|t| t == "隐蔽" || t == "蔽潜" || t == "潜行"),
+            "CJK bigram 提取失败: {:?}", tokens
+        );
+    }
+
+    #[test]
+    fn keyword_freq_counts_correctly() {
+        let text = "怪物怪物宝剑";
+        let hits = keyword_freq(text, &["怪物", "宝剑", "法术"]);
+        let monster = hits.iter().find(|h| h.term == "怪物").expect("怪物应命中");
+        assert_eq!(monster.count, 2);
+        let sword = hits.iter().find(|h| h.term == "宝剑").expect("宝剑应命中");
+        assert_eq!(sword.count, 1);
+        assert!(hits.iter().all(|h| h.term != "法术"), "法术不应出现");
+    }
+
+    #[test]
+    fn keyword_freq_sorted_descending() {
+        let text = "abc abc abc xyz xyz";
+        let hits = keyword_freq(text, &["abc", "xyz"]);
+        assert!(!hits.is_empty());
+        assert_eq!(hits[0].term, "abc", "最高频词应排在最前");
+        assert_eq!(hits[0].count, 3);
+    }
+
+    #[test]
+    fn format_chapter_facts_renders_correctly() {
+        let rows = vec![ChapterFactRow {
+            chapter: 1,
+            title: "序章".into(),
+            story_time_label: "初春".into(),
+            summary: "玩家到达村庄".into(),
+            events_json: r#"[{"event":"进入村庄"},{"event":"遇见村长"}]"#.into(),
+        }];
+        let text = format_chapter_facts(&rows);
+        assert!(text.contains("第1章"), "应含章节号: {}", text);
+        assert!(text.contains("序章"), "应含标题: {}", text);
+        assert!(text.contains("进入村庄"), "应含事件: {}", text);
+    }
 }
