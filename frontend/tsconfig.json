@@ -1,0 +1,31 @@
+{
+  // 渐进式 TypeScript 迁移配置
+  // checkJs=false 初始设置:现有 .jsx/.js 文件有大量 window.* 动态属性和 React global 用法,
+  // 强制 checkJs 会产生 1000+ 错误。初期只让新建 .ts/.tsx 文件受检查。
+  // 迁移路线:
+  //   1. 新功能用 .ts/.tsx 编写,享受完整类型检查
+  //   2. 逐步把 .jsx 改成 .tsx,解决对应错误
+  //   3. 全部迁完后再把 checkJs 改回 true
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "preserve",
+    "allowJs": true,
+    "checkJs": false,
+    "strict": false,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": false,
+    "verbatimModuleSyntax": false,
+    "paths": {
+      "@/types/*": ["./src/types/rust/*"],
+      "@/events/*": ["./src/types/rust/events/*"]
+    }
+  },
+  "include": ["src/**/*.js", "src/**/*.jsx", "src/**/*.ts", "src/**/*.tsx", "src/types/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
