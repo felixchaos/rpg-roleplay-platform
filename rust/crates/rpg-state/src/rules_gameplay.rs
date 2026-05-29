@@ -172,22 +172,7 @@ pub fn update_relationship(state: &mut GameState, character: &str, status: &str)
     if name.is_empty() {
         return;
     }
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data is object");
-    if !root
-        .get("relationships")
-        .map(Value::is_object)
-        .unwrap_or(false)
-    {
-        root.insert("relationships".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    let rel = root
-        .get_mut("relationships")
-        .and_then(Value::as_object_mut)
-        .expect("relationships object");
-    rel.insert(name, Value::String(status.to_string()));
+    state.data.relationships.insert(name, Value::String(status.to_string()));
     state.touch();
 }
 
@@ -325,24 +310,7 @@ pub fn reject_hypothesis(state: &mut GameState, item_id: &str) -> bool {
 // ─────────────────────────────────────────────────────────────
 
 fn ensure_memory_items(state: &mut GameState) -> &mut Vec<Value> {
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data is object");
-    if !root.get("memory").map(Value::is_object).unwrap_or(false) {
-        root.insert("memory".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    let memory = root
-        .get_mut("memory")
-        .and_then(Value::as_object_mut)
-        .expect("memory object");
-    if !memory.get("items").map(Value::is_array).unwrap_or(false) {
-        memory.insert("items".to_string(), Value::Array(Vec::new()));
-    }
-    memory
-        .get_mut("items")
-        .and_then(Value::as_array_mut)
-        .expect("items array")
+    &mut state.data.memory.items
 }
 
 fn ensure_memory_items_opt(state: &mut GameState) -> Option<&mut Vec<Value>> {
@@ -350,9 +318,5 @@ fn ensure_memory_items_opt(state: &mut GameState) -> Option<&mut Vec<Value>> {
 }
 
 fn memory_items_ref(state: &GameState) -> Option<&Vec<Value>> {
-    state
-        .data
-        .get("memory")
-        .and_then(|m| m.get("items"))
-        .and_then(Value::as_array)
+    Some(&state.data.memory.items)
 }

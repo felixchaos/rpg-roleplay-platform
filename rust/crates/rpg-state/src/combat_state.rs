@@ -140,16 +140,11 @@ pub fn append_dice_log(state: &mut GameState, entry: Value, cap: Option<usize>) 
 ///
 /// 对应 Python `set_encounter(encounter)`。空 dict / null 等同清空。
 pub fn update_encounter(state: &mut GameState, encounter: Value) {
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data is object");
-    let to_write = match encounter {
-        Value::Object(_) => encounter,
-        Value::Null => Value::Object(serde_json::Map::new()),
+    let enc = match encounter {
+        Value::Object(_) | Value::Null => encounter,
         _ => Value::Object(serde_json::Map::new()),
     };
-    root.insert("encounter".to_string(), to_write);
+    state.data.encounter = serde_json::from_value(enc).unwrap_or_default();
     state.touch();
 }
 
@@ -172,31 +167,9 @@ pub fn clear_encounter(state: &mut GameState) {
 // ─────────────────────────────────────────────────────────────
 
 fn ensure_active_entities(state: &mut GameState) -> &mut Vec<Value> {
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data is object");
-    if !root
-        .get("active_entities")
-        .map(Value::is_array)
-        .unwrap_or(false)
-    {
-        root.insert("active_entities".to_string(), Value::Array(Vec::new()));
-    }
-    root.get_mut("active_entities")
-        .and_then(Value::as_array_mut)
-        .expect("active_entities array")
+    &mut state.data.active_entities
 }
 
 fn ensure_dice_log(state: &mut GameState) -> &mut Vec<Value> {
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data is object");
-    if !root.get("dice_log").map(Value::is_array).unwrap_or(false) {
-        root.insert("dice_log".to_string(), Value::Array(Vec::new()));
-    }
-    root.get_mut("dice_log")
-        .and_then(Value::as_array_mut)
-        .expect("dice_log array")
+    &mut state.data.dice_log
 }

@@ -56,13 +56,7 @@ pub fn scan_worldline_validation(state: &GameState, tags: &[String]) -> Validati
         }
     }
     // 有 user_variables 且 GM 提到「世界线推演」但没显式校验 → review
-    let has_user_vars = state
-        .data
-        .get("worldline")
-        .and_then(|w| w.get("user_variables"))
-        .and_then(Value::as_object)
-        .map(|m| !m.is_empty())
-        .unwrap_or(false);
+    let has_user_vars = !state.data.worldline.user_variables.is_empty();
     let has_projection_tag = tags.iter().any(|t| t.contains("世界线推演"));
     if has_user_vars && has_projection_tag && status == "none" {
         return ValidationScan {
@@ -77,26 +71,14 @@ pub fn scan_worldline_validation(state: &GameState, tags: &[String]) -> Validati
 ///
 /// 对应 Python `_set_worldline_validation(status, message)`。
 pub fn set_worldline_validation(state: &mut GameState, status: &str, message: &str) {
+    use rpg_schemas::WorldlineValidation;
     let turn = state.turn();
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data is object");
-    if !root.get("worldline").map(Value::is_object).unwrap_or(false) {
-        root.insert("worldline".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    let worldline = root
-        .get_mut("worldline")
-        .and_then(Value::as_object_mut)
-        .expect("worldline object");
-    worldline.insert(
-        "last_validation".to_string(),
-        json!({
-            "status": status,
-            "message": message,
-            "turn": turn,
-        }),
-    );
+    state.data.worldline.last_validation = WorldlineValidation {
+        status: status.to_string(),
+        message: message.to_string(),
+        turn: turn as u64,
+        extra: Default::default(),
+    };
     state.touch();
 }
 
@@ -107,19 +89,8 @@ pub fn set_worldline_validation(state: &mut GameState, status: &str, message: &s
 pub fn store_worldline_projection(state: &mut GameState, text: &str, validated: bool) -> bool {
     let cleaned = clean_item(text);
     let turn = state.turn();
-    let world_time = state
-        .data
-        .get("world")
-        .and_then(|w| w.get("time"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
-    let user_vars = state
-        .data
-        .get("worldline")
-        .and_then(|w| w.get("user_variables"))
-        .cloned()
-        .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+    let world_time = state.data.world.time.clone();
+    let user_vars = Value::Object(state.data.worldline.user_variables.clone());
     let projection = json!({
         "text": cleaned,
         "turn": turn,
@@ -128,30 +99,15 @@ pub fn store_worldline_projection(state: &mut GameState, text: &str, validated: 
         "variables": user_vars,
     });
 
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data is object");
-    if !root.get("worldline").map(Value::is_object).unwrap_or(false) {
-        root.insert("worldline".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    let worldline = root
-        .get_mut("worldline")
-        .and_then(Value::as_object_mut)
-        .expect("worldline object");
-    let has_user_vars = worldline
-        .get("user_variables")
-        .and_then(Value::as_object)
-        .map(|m| !m.is_empty())
-        .unwrap_or(false);
+    let has_user_vars = !state.data.worldline.user_variables.is_empty();
     let write_last = validated || !has_user_vars;
     if write_last {
-        worldline.insert("last_projection".to_string(), projection);
-        worldline.insert("pending_projection".to_string(), Value::Null);
+        state.data.worldline.last_projection = Some(projection);
+        state.data.worldline.pending_projection = None;
         state.touch();
         true
     } else {
-        worldline.insert("pending_projection".to_string(), projection);
+        state.data.worldline.pending_projection = Some(projection);
         state.touch();
         false
     }

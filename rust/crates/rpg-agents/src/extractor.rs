@@ -124,40 +124,34 @@ impl ExtractorAgent {
 }
 
 /// 组装 user message:state 快照 + 叙事正文。
-fn build_user_prompt(narrative: &str, state_data: &Value) -> String {
-    let player = state_data.get("player").cloned().unwrap_or(Value::Null);
-    let world = state_data.get("world").cloned().unwrap_or(Value::Null);
-    let memory = state_data.get("memory").cloned().unwrap_or(Value::Null);
-    let rels = state_data.get("relationships").cloned().unwrap_or(Value::Null);
+fn build_user_prompt(narrative: &str, state_data: &rpg_schemas::GameStateData) -> String {
+    let resources_preview = state_data
+        .memory
+        .resources
+        .iter()
+        .take(5)
+        .map(|x| x.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
 
-    let s = |v: &Value, k: &str| -> String {
-        v.get(k).and_then(|x| x.as_str()).unwrap_or("(空)").to_string()
-    };
-
-    let resources_preview = memory
-        .get("resources")
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .take(5)
-                .map(|x| x.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_default();
-
-    let rels_preview = rels
-        .as_object()
-        .map(|o| {
-            o.iter()
-                .take(8)
-                .map(|(k, v)| format!("{k}={v}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_default();
+    let rels_preview = state_data
+        .relationships
+        .iter()
+        .take(8)
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(", ");
 
     let narr_trunc: String = narrative.chars().take(MAX_NARRATIVE_CHARS).collect();
+
+    // world.weather is stored in world.extra
+    let world_weather = state_data
+        .world
+        .extra
+        .get("weather")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(空)")
+        .to_string();
 
     format!(
         "## 当前状态快照(在叙事之前的值)\n\
@@ -172,13 +166,13 @@ fn build_user_prompt(narrative: &str, state_data: &Value) -> String {
          - relationships = {{{}}}\n\
          \n\n\
          ## GM 本轮叙事\n{}",
-        s(&player, "name"),
-        s(&player, "role"),
-        s(&player, "current_location"),
-        s(&world, "time"),
-        s(&world, "weather"),
-        s(&memory, "main_quest"),
-        s(&memory, "current_objective"),
+        state_data.player.name,
+        state_data.player.role,
+        state_data.player.current_location,
+        state_data.world.time,
+        world_weather,
+        state_data.memory.main_quest,
+        state_data.memory.current_objective,
         resources_preview,
         rels_preview,
         narr_trunc,
@@ -211,7 +205,7 @@ fn parse_extractor_output(text: &str) -> Vec<Value> {
 
 // 仅供绑定层 / 测试使用
 #[doc(hidden)]
-pub fn _expose_build_user_prompt(narrative: &str, state_data: &Value) -> String {
+pub fn _expose_build_user_prompt(narrative: &str, state_data: &rpg_schemas::GameStateData) -> String {
     build_user_prompt(narrative, state_data)
 }
 

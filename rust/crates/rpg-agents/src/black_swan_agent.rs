@@ -39,30 +39,18 @@ pub struct RealitySnapshot {
 
 /// Layer 1: 现实切片。
 pub fn reality_snapshot(state: &GameState, _script_id: Option<i64>) -> RealitySnapshot {
-    let world = state.data.get("world").cloned().unwrap_or(Value::Null);
-    let timeline = world.get("timeline").cloned().unwrap_or(Value::Null);
-    let player = state.data.get("player").cloned().unwrap_or(Value::Null);
-    let worldline = state.data.get("worldline").cloned().unwrap_or(Value::Null);
-
     let mut locked_vars = serde_json::Map::new();
-    if let Some(user_vars) = worldline.get("user_variables").and_then(|v| v.as_object()) {
-        for (key, info) in user_vars {
-            if info.get("locked").and_then(|v| v.as_bool()).unwrap_or(false) {
-                let v = info.get("value").cloned().unwrap_or(Value::String("".into()));
-                locked_vars.insert(key.clone(), v);
-            }
+    for (key, info) in &state.data.worldline.user_variables {
+        if info.get("locked").and_then(|v| v.as_bool()).unwrap_or(false) {
+            let v = info.get("value").cloned().unwrap_or(Value::String("".into()));
+            locked_vars.insert(key.clone(), v);
         }
     }
 
-    let active_entities = state
+    let active_npcs: Vec<Value> = state
         .data
-        .get("active_entities")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let active_npcs: Vec<Value> = active_entities
-        .into_iter()
+        .active_entities
+        .iter()
         .filter(|e| {
             let kind = e.get("kind").and_then(|v| v.as_str()).unwrap_or("unknown");
             matches!(kind, "npc" | "enemy" | "unknown")
@@ -78,12 +66,11 @@ pub fn reality_snapshot(state: &GameState, _script_id: Option<i64>) -> RealitySn
         })
         .collect();
 
-    let recent_events: Vec<String> = world
-        .get("known_events")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
+    let recent_events: Vec<String> = state
+        .data
+        .world
+        .known_events
+        .iter()
         .rev()
         .take(5)
         .map(|v| v.as_str().unwrap_or("").to_string())
@@ -92,24 +79,20 @@ pub fn reality_snapshot(state: &GameState, _script_id: Option<i64>) -> RealitySn
         .rev()
         .collect();
 
+    // chapter_min/max are non-schema extra fields
+    let chapter_min = state.data.world.timeline.extra.get("chapter_min").cloned().unwrap_or(Value::Null);
+    let chapter_max = state.data.world.timeline.extra.get("chapter_max").cloned().unwrap_or(Value::Null);
+
     RealitySnapshot {
-        current_phase: timeline
-            .get("current_phase")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        current_location: player
-            .get("current_location")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        current_time: world.get("time").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        current_phase: state.data.world.timeline.current_phase.clone(),
+        current_location: state.data.player.current_location.clone(),
+        current_time: state.data.world.time.clone(),
         active_npcs,
         locked_variables: locked_vars,
         recent_events,
         chapter_window: json!({
-            "min": timeline.get("chapter_min").cloned().unwrap_or(Value::Null),
-            "max": timeline.get("chapter_max").cloned().unwrap_or(Value::Null),
+            "min": chapter_min,
+            "max": chapter_max,
         }),
         turn: state_turn(state),
     }

@@ -81,21 +81,16 @@ pub fn detect_time_jump_violations(text: &str, state: &GameState) -> Vec<Violati
 }
 
 fn is_user_set_jump_turn(state: &GameState) -> bool {
-    let timeline = state
-        .data
-        .get("world")
-        .and_then(|w| w.get("timeline"))
-        .cloned()
-        .unwrap_or_default();
+    let timeline = &state.data.world.timeline;
 
-    // 优先 user_set_jump_turn
-    if let Some(jump_turn) = timeline.get("user_set_jump_turn").and_then(|v| v.as_u64()) {
+    // 优先 user_set_jump_turn (stored in timeline.extra)
+    if let Some(jump_turn) = timeline.extra.get("user_set_jump_turn").and_then(|v| v.as_u64()) {
         if jump_turn == state_turn(state) {
             return true;
         }
     }
     // 回退 last_transition
-    let last = timeline.get("last_transition").cloned().unwrap_or_default();
+    let last = timeline.last_transition.as_ref().cloned().unwrap_or_default();
     let source = last.get("source").and_then(|v| v.as_str()).unwrap_or("");
     let turn = last.get("turn").and_then(|v| v.as_u64()).unwrap_or(u64::MAX);
     source == "user_set" && turn == state_turn(state)
@@ -119,20 +114,10 @@ pub fn record_violations_to_audit(state: &mut GameState, violations: &[Violation
             })
         }).collect::<Vec<_>>(),
     });
-    // 占位:塞到 state.data.audit_log 数组
-    let log = state
-        .data
-        .as_object_mut()
-        .and_then(|o| {
-            if !o.contains_key("audit_log") {
-                o.insert("audit_log".into(), serde_json::Value::Array(vec![]));
-            }
-            o.get_mut("audit_log")
-        })
-        .and_then(|v| v.as_array_mut());
-    if let Some(arr) = log {
-        arr.push(entry);
-    }
+    // 写到 permissions.audit_log
+    use rpg_schemas::AuditEntry;
+    let audit_entry: AuditEntry = serde_json::from_value(entry).unwrap_or_default();
+    state.data.permissions.audit_log.push(audit_entry);
     Ok(())
 }
 

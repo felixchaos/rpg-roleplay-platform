@@ -52,25 +52,18 @@ pub fn pop_pending_write(
     id: Option<&str>,
     index: Option<usize>,
 ) -> Option<Value> {
-    let permissions = ensure_permissions(state);
-    let pending = permissions
-        .entry("pending_writes".to_string())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    let arr = pending.as_array_mut()?;
+    let arr = &mut state.data.permissions.pending_writes;
     if let Some(target_id) = id {
-        if let Some(pos) = arr.iter().position(|item| {
-            item.get("id")
-                .and_then(Value::as_str)
-                .map(|s| s == target_id)
-                .unwrap_or(false)
-        }) {
-            return Some(arr.remove(pos));
+        if let Some(pos) = arr.iter().position(|item| item.id == target_id) {
+            let item = arr.remove(pos);
+            return Some(serde_json::to_value(item).unwrap_or(Value::Null));
         }
         return None;
     }
     if let Some(i) = index {
         if i < arr.len() {
-            return Some(arr.remove(i));
+            let item = arr.remove(i);
+            return Some(serde_json::to_value(item).unwrap_or(Value::Null));
         }
     }
     None
@@ -226,14 +219,7 @@ pub fn add_pending_question(
         .collect();
     // 先把 state.turn 取出,避免后面同时 mutable+immutable borrow。
     let turn = state.turn();
-    let permissions = ensure_permissions(state);
-    let questions = permissions
-        .entry("pending_questions".to_string())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    let arr = match questions.as_array_mut() {
-        Some(a) => a,
-        None => return false,
-    };
+    let arr = &mut state.data.permissions.pending_questions;
     // 去重:同 question + 同 options 算重复。
     let already = arr.iter().any(|q| {
         q.get("question")
@@ -279,15 +265,7 @@ pub fn expire_stale_gm_questions(
 ) -> usize {
     let turn_snapshot = state.turn();
     let cur = current_turn.unwrap_or(turn_snapshot);
-    let permissions = ensure_permissions(state);
-    let questions = permissions
-        .entry("pending_questions".to_string())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    let arr = match questions.as_array_mut() {
-        Some(a) => a,
-        None => return 0,
-    };
-    if arr.is_empty() {
+    if state.data.permissions.pending_questions.is_empty() {
         return 0;
     }
     let system_sources: &[&str] = &[
@@ -297,9 +275,9 @@ pub fn expire_stale_gm_questions(
         "extractor",
         "set_parser",
     ];
-    let mut keep: Vec<Value> = Vec::with_capacity(arr.len());
+    let mut keep: Vec<Value> = Vec::with_capacity(state.data.permissions.pending_questions.len());
     let mut expired: Vec<Value> = Vec::new();
-    for q in arr.drain(..) {
+    for q in state.data.permissions.pending_questions.drain(..) {
         let q_turn = q.get("turn").and_then(Value::as_i64).unwrap_or(0);
         let q_source = q
             .get("source")
@@ -315,11 +293,10 @@ pub fn expire_stale_gm_questions(
             keep.push(q);
         }
     }
+    state.data.permissions.pending_questions = keep;
     if expired.is_empty() {
-        *arr = keep;
         return 0;
     }
-    *arr = keep;
     let count = expired.len();
     let summary: Vec<Value> = expired
         .iter()
@@ -361,11 +338,7 @@ pub fn clear_pending_question(
     choice: Option<&str>,
 ) -> Option<Value> {
     let turn_snapshot = state.turn();
-    let permissions = ensure_permissions(state);
-    let questions = permissions
-        .entry("pending_questions".to_string())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    let arr = questions.as_array_mut()?;
+    let arr = &mut state.data.permissions.pending_questions;
     let popped = if let Some(target_id) = id {
         let pos = arr.iter().position(|q| {
             q.get("id")
@@ -412,34 +385,14 @@ pub fn clear_pending_question(
 // helpers
 // ─────────────────────────────────────────────────────────────
 
-fn ensure_permissions(state: &mut GameState) -> &mut serde_json::Map<String, Value> {
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let obj = state.data.as_object_mut().expect("state.data is object");
-    if !obj
-        .get("permissions")
-        .map(Value::is_object)
-        .unwrap_or(false)
-    {
-        obj.insert("permissions".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    obj.get_mut("permissions")
-        .and_then(Value::as_object_mut)
-        .expect("ensured permissions object")
-}
-
 fn push_audit(state: &mut GameState, entry: Value) {
-    let permissions = ensure_permissions(state);
-    let audit_log = permissions
-        .entry("audit_log".to_string())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if let Value::Array(arr) = audit_log {
-        arr.push(entry);
-        let len = arr.len();
-        if len > 200 {
-            arr.drain(0..len - 200);
-        }
+    use rpg_schemas::AuditEntry;
+    let audit_entry: AuditEntry = serde_json::from_value(entry).unwrap_or_default();
+    let arr = &mut state.data.permissions.audit_log;
+    arr.push(audit_entry);
+    let len = arr.len();
+    if len > 200 {
+        arr.drain(0..len - 200);
     }
 }
 

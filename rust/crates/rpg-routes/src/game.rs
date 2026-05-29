@@ -190,15 +190,11 @@ async fn api_chat_estimate(
     let history_text = {
         let st = shared.read();
         st.data
-            .get("history")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|m| m.get("content").and_then(|v| v.as_str()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default()
+            .history
+            .iter()
+            .filter_map(|m| m.get("content").and_then(|v| v.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n")
     };
     let est = |s: &str| (s.chars().count() / 3) as i64;
     let system_est: i64 = 1200;
@@ -245,11 +241,7 @@ async fn api_context_breakdown(
     let shared = s.state_store.get_or_create(&user_id).await;
     let last_ctx = {
         let st = shared.read();
-        st.data
-            .get("memory")
-            .and_then(|m| m.get("last_context"))
-            .cloned()
-            .unwrap_or(json!({}))
+        Value::Object(st.data.memory.last_context.clone())
     };
     let total_tokens = last_ctx
         .get("estimated_tokens")

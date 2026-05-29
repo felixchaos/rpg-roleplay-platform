@@ -194,26 +194,14 @@ fn command_tool_schemas() -> Vec<ToolSchema> {
     ]
 }
 
-fn build_user_prompt(set_text: &str, state_data: &Value) -> String {
-    let p = state_data.get("player").cloned().unwrap_or(Value::Null);
-    let rels = state_data.get("relationships").cloned().unwrap_or(Value::Null);
-    let m = state_data.get("memory").cloned().unwrap_or(Value::Null);
-    let w = state_data.get("world").cloned().unwrap_or(Value::Null);
-
-    let g = |v: &Value, k: &str| -> String {
-        v.get(k).and_then(|x| x.as_str()).unwrap_or("(空)").to_string()
-    };
-
-    let rels_text = rels
-        .as_object()
-        .map(|o| {
-            o.iter()
-                .take(8)
-                .map(|(k, v)| format!("  - {k}: {v}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .unwrap_or_default();
+fn build_user_prompt(set_text: &str, state_data: &rpg_schemas::GameStateData) -> String {
+    let rels_text = state_data
+        .relationships
+        .iter()
+        .take(8)
+        .map(|(k, v)| format!("  - {k}: {v}"))
+        .collect::<Vec<_>>()
+        .join("\n");
 
     format!(
         "## 当前状态快照\n\
@@ -225,12 +213,12 @@ fn build_user_prompt(set_text: &str, state_data: &Value) -> String {
          - memory.current_objective = {}\n\
          - relationships:\n{}\n\
          \n## /set 命令文本\n{}",
-        g(&p, "name"),
-        g(&p, "role"),
-        g(&p, "current_location"),
-        g(&w, "time"),
-        g(&m, "main_quest"),
-        g(&m, "current_objective"),
+        state_data.player_character.name,
+        state_data.player.role,
+        state_data.player.current_location,
+        state_data.world.time,
+        state_data.memory.main_quest,
+        state_data.memory.current_objective,
         rels_text,
         set_text,
     )

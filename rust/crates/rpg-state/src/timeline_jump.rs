@@ -29,8 +29,6 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::{json, Value};
 use thiserror::Error;
-use tracing::warn;
-
 use crate::state::GameState;
 
 #[derive(Debug, Error)]
@@ -67,21 +65,17 @@ pub fn request_time_jump(
     }
     let turn = state.turn();
     let world_time = current_world_time(state);
-    let timeline = ensure_timeline(state);
-    timeline.insert(
-        "anchor_state".to_string(),
-        Value::String("pending_confirmation".to_string()),
-    );
-    timeline.insert(
-        "pending_jump".to_string(),
-        json!({
+    {
+        let tl = ensure_timeline(state);
+        tl.anchor_state = "pending_confirmation".to_string();
+        tl.pending_jump = Some(json!({
             "from": world_time,
             "to": cleaned,
             "raw": raw,
             "turn": turn,
             "status": "awaiting_gm_confirmation",
-        }),
-    );
+        }));
+    }
     state.touch();
     push_audit_jump(
         state,
@@ -154,22 +148,18 @@ pub fn reject_time_jump(state: &mut GameState, reason: &str) -> TimelineJumpResu
             .unwrap_or_default();
         (from, to)
     };
-    let timeline = ensure_timeline(state);
-    timeline.insert(
-        "last_transition".to_string(),
-        json!({
+    {
+        let tl = ensure_timeline(state);
+        tl.last_transition = Some(json!({
             "from": from,
             "to": to,
             "source": "gm_rejected",
             "reason": reason,
             "turn": turn,
-        }),
-    );
-    timeline.insert(
-        "anchor_state".to_string(),
-        Value::String("locked".to_string()),
-    );
-    timeline.insert("pending_jump".to_string(), Value::Null);
+        }));
+        tl.anchor_state = "locked".to_string();
+        tl.pending_jump = None;
+    }
     state.touch();
     push_audit_jump(
         state,
@@ -200,56 +190,24 @@ pub(crate) fn update_time(state: &mut GameState, time_desc: &str, source: &str) 
         return;
     }
     let turn = state.turn();
-    let old_label = state
-        .data
-        .get("world")
-        .and_then(|w| w.get("timeline"))
-        .and_then(|t| t.get("current_label"))
-        .and_then(Value::as_str)
-        .map(|s| s.to_string());
+    let old_label = state.data.world.timeline.current_label.clone();
     // world.time 直接写
-    if let Some(world) = state
-        .data
-        .as_object_mut()
-        .and_then(|m| m.get_mut("world"))
-        .and_then(Value::as_object_mut)
-    {
-        world.insert("time".to_string(), Value::String(cleaned.clone()));
-    } else {
-        // world 不存在或不是 object — 兜底建一个
-        if let Some(root) = state.data.as_object_mut() {
-            root.insert(
-                "world".to_string(),
-                json!({ "time": cleaned, "timeline": {}, "known_events": [] }),
-            );
-        }
-    }
-    let timeline = ensure_timeline(state);
-    timeline.insert(
-        "current_label".to_string(),
-        Value::String(cleaned.clone()),
-    );
-    timeline.insert(
-        "anchor_state".to_string(),
-        Value::String("locked".to_string()),
-    );
-    timeline.insert(
-        "anchor_source".to_string(),
-        Value::String(source.to_string()),
-    );
-    timeline.insert("anchor_turn".to_string(), json!(turn));
-    timeline.insert(
-        "last_transition".to_string(),
-        json!({
-            "from": old_label,
-            "to": cleaned,
-            "source": source,
-            "turn": turn,
-        }),
-    );
-    timeline.insert("pending_jump".to_string(), Value::Null);
+    state.data.world.time = cleaned.clone();
+    // timeline 字段更新
+    let tl = &mut state.data.world.timeline;
+    tl.current_label = cleaned.clone();
+    tl.anchor_state = "locked".to_string();
+    tl.anchor_source = source.to_string();
+    tl.anchor_turn = turn as u64;
+    tl.last_transition = Some(json!({
+        "from": old_label,
+        "to": cleaned,
+        "source": source,
+        "turn": turn,
+    }));
+    tl.pending_jump = None;
     if source == "user_set" {
-        timeline.insert("user_set_jump_turn".to_string(), json!(turn));
+        tl.extra.insert("user_set_jump_turn".to_string(), json!(turn));
     }
     state.touch();
 }
@@ -257,93 +215,38 @@ pub(crate) fn update_time(state: &mut GameState, time_desc: &str, source: &str) 
 fn pending_jump_to(state: &GameState) -> Option<String> {
     state
         .data
-        .get("world")
-        .and_then(|w| w.get("timeline"))
-        .and_then(|t| t.get("pending_jump"))
+        .world
+        .timeline
+        .pending_jump
+        .as_ref()
         .and_then(|p| p.get("to"))
         .and_then(Value::as_str)
         .map(|s| s.to_string())
 }
 
 fn pending_jump_object(state: &GameState) -> Option<Value> {
-    state
-        .data
-        .get("world")
-        .and_then(|w| w.get("timeline"))
-        .and_then(|t| t.get("pending_jump"))
-        .cloned()
+    state.data.world.timeline.pending_jump.clone()
 }
 
 fn current_world_time(state: &GameState) -> String {
-    state
-        .data
-        .get("world")
-        .and_then(|w| w.get("time"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
+    state.data.world.time.clone()
 }
 
-/// 拿到 timeline object 的可变引用,缺失字段全 default 补齐。
-fn ensure_timeline(state: &mut GameState) -> &mut serde_json::Map<String, Value> {
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data is object");
-    if !root.get("world").map(Value::is_object).unwrap_or(false) {
-        root.insert("world".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    let world = root
-        .get_mut("world")
-        .and_then(Value::as_object_mut)
-        .expect("world object");
-    if !world.get("timeline").map(Value::is_object).unwrap_or(false) {
-        world.insert("timeline".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    let timeline = world
-        .get_mut("timeline")
-        .and_then(Value::as_object_mut)
-        .expect("timeline object");
-    timeline.entry("anchor_state").or_insert_with(|| Value::String("locked".to_string()));
-    timeline.entry("current_label").or_insert_with(|| Value::String(String::new()));
-    timeline.entry("current_phase").or_insert_with(|| Value::String(String::new()));
-    timeline.entry("anchor_source").or_insert_with(|| Value::String("legacy".to_string()));
-    timeline.entry("anchor_turn").or_insert_with(|| json!(0));
-    timeline.entry("pending_jump").or_insert(Value::Null);
-    timeline.entry("last_transition").or_insert(Value::Null);
-    timeline
+/// 拿到 timeline 的可变引用(typed struct,已有默认值,无需额外初始化)。
+fn ensure_timeline(state: &mut GameState) -> &mut rpg_schemas::TimelineState {
+    &mut state.data.world.timeline
 }
 
 /// 环形 audit log — 同 ops::push_audit,这里独立写一份避免 cross-module
 /// 借用冲突。容量 200。
 fn push_audit_jump(state: &mut GameState, entry: Value) {
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data is object");
-    if !root
-        .get("permissions")
-        .map(Value::is_object)
-        .unwrap_or(false)
-    {
-        root.insert("permissions".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    let permissions = root
-        .get_mut("permissions")
-        .and_then(Value::as_object_mut)
-        .expect("permissions object");
-    let log = permissions
-        .entry("audit_log".to_string())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if let Value::Array(arr) = log {
-        arr.push(entry);
-        let len = arr.len();
-        if len > 200 {
-            arr.drain(0..len - 200);
-        }
-    } else {
-        warn!(target: "rpg_state::timeline_jump", "audit_log not array; resetting");
-        *log = Value::Array(Vec::new());
+    use rpg_schemas::AuditEntry;
+    let audit_entry: AuditEntry = serde_json::from_value(entry).unwrap_or_default();
+    let arr = &mut state.data.permissions.audit_log;
+    arr.push(audit_entry);
+    let len = arr.len();
+    if len > 200 {
+        arr.drain(0..len - 200);
     }
 }
 

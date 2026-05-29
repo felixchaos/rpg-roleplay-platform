@@ -150,7 +150,8 @@ fn build_state_store(pool: sqlx::PgPool) -> StateStore {
             let Some(uid) = parse_user_id(&user_id) else {
                 return; // 匿名不落库
             };
-            match rpg_platform::save_io::write_active_state_snapshot(&pool, uid, &state.data).await {
+            let data_value = serde_json::to_value(&state.data).unwrap_or(serde_json::Value::Null);
+            match rpg_platform::save_io::write_active_state_snapshot(&pool, uid, &data_value).await {
                 Ok(true) => {}
                 Ok(false) => {
                     tracing::debug!(user_id = %user_id, "state flush: 无活跃存档,跳过落库");

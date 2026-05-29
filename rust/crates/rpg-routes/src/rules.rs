@@ -131,21 +131,9 @@ async fn api_rules_scene(
     let user_id = user_id_or_anon(&s, &headers).await;
     let shared = s.state_store.get_or_create(&user_id).await;
     let snapshot = shared.read().clone();
-    let scene = snapshot
-        .data
-        .get("scene")
-        .cloned()
-        .unwrap_or(Value::Object(Default::default()));
-    let encounter = snapshot
-        .data
-        .get("encounter")
-        .cloned()
-        .unwrap_or(Value::Object(Default::default()));
-    let player_character = snapshot
-        .data
-        .get("player_character")
-        .cloned()
-        .unwrap_or(Value::Object(Default::default()));
+    let scene = serde_json::to_value(&snapshot.data.scene).unwrap_or(Value::Object(Default::default()));
+    let encounter = serde_json::to_value(&snapshot.data.encounter).unwrap_or(Value::Object(Default::default()));
+    let player_character = serde_json::to_value(&snapshot.data.player_character).unwrap_or(Value::Object(Default::default()));
     Ok(Json(json!({
         "ok": true,
         "scene": scene,
@@ -245,6 +233,7 @@ async fn api_rules_suggest(
     let user_id = user_id_or_anon(&s, &headers).await;
     let shared = s.state_store.get_or_create(&user_id).await;
     let snapshot = shared.read().clone();
-    let actions = suggest_rule_actions(&text, &snapshot.data);
+    let state_data_value = serde_json::to_value(&snapshot.data).unwrap_or(serde_json::Value::Null);
+    let actions = suggest_rule_actions(&text, &state_data_value);
     Ok(Json(json!({"ok": true, "actions": actions})).into_response())
 }

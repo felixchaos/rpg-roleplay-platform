@@ -368,20 +368,10 @@ pub fn state_history_messages(_state: &GameState) -> Vec<ChatMessage> {
 
 /// `state.short_summary()` — 拼 player / world / memory 关键字段。
 pub fn state_short_summary(state: &GameState) -> String {
-    let p = state.data.get("player").cloned().unwrap_or(Value::Null);
-    let w = state.data.get("world").cloned().unwrap_or(Value::Null);
-    let m = state.data.get("memory").cloned().unwrap_or(Value::Null);
     format!(
         "player={} world={} memory={}",
-        json_str_or_empty(&p, "name"),
-        json_str_or_empty(&w, "time"),
-        json_str_or_empty(&m, "main_quest"),
+        state.data.player.name,
+        state.data.world.time,
+        state.data.memory.main_quest,
     )
-}
-
-fn json_str_or_empty(v: &Value, key: &str) -> String {
-    v.get(key)
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .to_string()
 }

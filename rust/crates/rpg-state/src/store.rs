@@ -182,13 +182,10 @@ impl StateStore {
             let pending_id = if outcome.kind == ApplyKind::Pending {
                 guard
                     .data
-                    .get("permissions")
-                    .and_then(|p| p.get("pending_writes"))
-                    .and_then(|p| p.as_array())
-                    .and_then(|arr| arr.last())
-                    .and_then(|v| v.get("id"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
+                    .permissions
+                    .pending_writes
+                    .last()
+                    .map(|pw| pw.id.clone())
             } else {
                 None
             };
@@ -411,8 +408,8 @@ mod tests {
             let store = Arc::clone(&store);
             handles.push(tokio::spawn(async move {
                 let op = Op::Set {
-                    path: "memory.facts".to_string(),
-                    value: serde_json::json!(format!("fact_{i}")),
+                    path: "player.name".to_string(),
+                    value: serde_json::json!(format!("name_{i}")),
                 };
                 store.apply_op_for_user(user_id, op, "user", true)
             }));
@@ -465,8 +462,8 @@ mod tests {
             shared
                 .read()
                 .get_path("memory.main_quest")
-                .and_then(|v| v.as_str()),
-            Some("loaded-quest"),
+                .and_then(|v| v.as_str().map(|s| s.to_string())),
+            Some("loaded-quest".to_string()),
             "miss 时应从 loader 加载存档"
         );
         assert_eq!(load_calls.load(Ordering::SeqCst), 1);
@@ -487,8 +484,8 @@ mod tests {
             Box::pin(async move {
                 // 落库的快照应含已写入的字段。
                 assert_eq!(
-                    gs.get_path("memory.main_quest").and_then(|v| v.as_str()),
-                    Some("q")
+                    gs.get_path("memory.main_quest").and_then(|v| v.as_str().map(|s| s.to_string())),
+                    Some("q".to_string())
                 );
                 sc.fetch_add(1, Ordering::SeqCst);
             })

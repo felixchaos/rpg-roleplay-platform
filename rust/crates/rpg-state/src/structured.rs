@@ -95,12 +95,7 @@ pub fn apply_structured_updates(
     let validated = validation.status == "passed";
 
     // 3) pending_jump 询问语境探测 — Python 的 task 22 / 35 双重防御
-    let pending_jump_object = state
-        .data
-        .get("world")
-        .and_then(|w| w.get("timeline"))
-        .and_then(|t| t.get("pending_jump"))
-        .cloned();
+    let pending_jump_object = state.data.world.timeline.pending_jump.clone();
     let pending_jump_present = pending_jump_object
         .as_ref()
         .map(|v| !v.is_null())
@@ -284,13 +279,7 @@ pub fn apply_structured_updates(
     }
 
     // 4.1) 兜底:GM 正文里抽显式时间推进短语(无【】标签)
-    let world_time_now = state
-        .data
-        .get("world")
-        .and_then(|w| w.get("time"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+    let world_time_now = state.data.world.time.clone();
     for value in extract_explicit_time_updates(gm_text) {
         if value == world_time_now {
             continue;
@@ -612,57 +601,30 @@ fn gm_is_asking_for_time_confirm(text: &str, tags: &[String]) -> bool {
 // ─────────────────────────────────────────────────────────────
 
 fn write_last_structured_updates(state: &mut GameState, updates: &[String]) {
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data object");
-    if !root.get("memory").map(Value::is_object).unwrap_or(false) {
-        root.insert("memory".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    if let Some(memory) = root.get_mut("memory").and_then(Value::as_object_mut) {
-        let tail: Vec<Value> = updates
-            .iter()
-            .rev()
-            .take(12)
-            .rev()
-            .map(|s| Value::String(s.clone()))
-            .collect();
-        memory.insert("last_structured_updates".to_string(), Value::Array(tail));
-    }
+    let tail: Vec<Value> = updates
+        .iter()
+        .rev()
+        .take(12)
+        .rev()
+        .map(|s| Value::String(s.clone()))
+        .collect();
+    state.data.memory.last_structured_updates = tail;
 }
 
 fn log_op_parse_error(state: &mut GameState, hint: &str) {
     use chrono::Utc;
-    use serde_json::json;
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data object");
-    if !root
-        .get("permissions")
-        .map(Value::is_object)
-        .unwrap_or(false)
-    {
-        root.insert("permissions".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    let permissions = root
-        .get_mut("permissions")
-        .and_then(Value::as_object_mut)
-        .expect("permissions object");
-    let audit = permissions
-        .entry("audit_log".to_string())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if let Value::Array(arr) = audit {
-        arr.push(json!({
-            "ts": Utc::now().to_rfc3339(),
-            "kind": "parse_error",
-            "source": "gm:json",
-            "hint": hint,
-        }));
-        let len = arr.len();
-        if len > 200 {
-            arr.drain(0..len - 200);
-        }
+    use rpg_schemas::AuditEntry;
+    let entry = AuditEntry {
+        ts: Utc::now().to_rfc3339(),
+        source: "gm:json".to_string(),
+        hint: Some(hint.to_string()),
+        ..Default::default()
+    };
+    let arr = &mut state.data.permissions.audit_log;
+    arr.push(entry);
+    let len = arr.len();
+    if len > 200 {
+        arr.drain(0..len - 200);
     }
 }
 
@@ -780,31 +742,7 @@ fn set_user_variable(state: &mut GameState, key: &str, value: &str, source: &str
         return false;
     }
     let turn = state.turn();
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data object");
-    if !root.get("worldline").map(Value::is_object).unwrap_or(false) {
-        root.insert("worldline".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    let worldline = root
-        .get_mut("worldline")
-        .and_then(Value::as_object_mut)
-        .expect("worldline object");
-    if !worldline
-        .get("user_variables")
-        .map(Value::is_object)
-        .unwrap_or(false)
-    {
-        worldline.insert(
-            "user_variables".to_string(),
-            Value::Object(serde_json::Map::new()),
-        );
-    }
-    let vars = worldline
-        .get_mut("user_variables")
-        .and_then(Value::as_object_mut)
-        .expect("user_variables object");
+    let vars = &mut state.data.worldline.user_variables;
     let old_value = vars
         .get(&key)
         .and_then(|v| v.get("value"))

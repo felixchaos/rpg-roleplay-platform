@@ -69,13 +69,7 @@ pub fn apply_player_directives(
     // 4) 玩家自然语言时间跳跃 — 不属于 /set,但 Python 的
     //    apply_player_directives 把它合并在这一函数。复刻同样的位置。
     for target in detect_time_directives_for_player(player_input) {
-        let current = state
-            .data
-            .get("world")
-            .and_then(|w| w.get("time"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
+        let current = state.data.world.time.clone();
         if target == current {
             continue;
         }
@@ -119,13 +113,7 @@ pub fn apply_set_directive(
         if target.is_empty() {
             continue;
         }
-        let current = state
-            .data
-            .get("world")
-            .and_then(|w| w.get("time"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
+        let current = state.data.world.time.clone();
         if target == current {
             continue;
         }
@@ -387,17 +375,7 @@ fn detect_time_directives_for_player(text: &str) -> Vec<String> {
 // ─────────────────────────────────────────────────────────────
 
 fn update_location(state: &mut GameState, loc: &str) {
-    if let Some(root) = state.data.as_object_mut() {
-        if !root.get("player").map(Value::is_object).unwrap_or(false) {
-            root.insert("player".to_string(), Value::Object(serde_json::Map::new()));
-        }
-        if let Some(player) = root.get_mut("player").and_then(Value::as_object_mut) {
-            player.insert(
-                "current_location".to_string(),
-                Value::String(loc.to_string()),
-            );
-        }
-    }
+    state.data.player.current_location = loc.to_string();
     state.touch();
 }
 
@@ -408,32 +386,7 @@ fn set_user_variable(state: &mut GameState, key: &str, value: &str, source: &str
         return false;
     }
     let turn = state.turn();
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data object");
-    if !root
-        .get("worldline")
-        .map(Value::is_object)
-        .unwrap_or(false)
-    {
-        root.insert("worldline".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    let worldline = root
-        .get_mut("worldline")
-        .and_then(Value::as_object_mut)
-        .expect("worldline object");
-    if !worldline
-        .get("user_variables")
-        .map(Value::is_object)
-        .unwrap_or(false)
-    {
-        worldline.insert("user_variables".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    let vars = worldline
-        .get_mut("user_variables")
-        .and_then(Value::as_object_mut)
-        .expect("user_variables object");
+    let vars = &mut state.data.worldline.user_variables;
     let old_value = vars
         .get(&key)
         .and_then(|v| v.get("value"))
@@ -455,13 +408,7 @@ fn set_user_variable(state: &mut GameState, key: &str, value: &str, source: &str
 
 fn next_user_variable_key(state: &GameState) -> String {
     let turn = state.turn();
-    let count = state
-        .data
-        .get("worldline")
-        .and_then(|w| w.get("user_variables"))
-        .and_then(Value::as_object)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let count = state.data.worldline.user_variables.len();
     format!("set_{}_{}", turn + 1, count + 1)
 }
 
@@ -470,24 +417,7 @@ fn push_pinned_memory(state: &mut GameState, text: &str) -> bool {
     if cleaned.is_empty() {
         return false;
     }
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data object");
-    if !root.get("memory").map(Value::is_object).unwrap_or(false) {
-        root.insert("memory".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    let memory = root
-        .get_mut("memory")
-        .and_then(Value::as_object_mut)
-        .expect("memory object");
-    if !memory.get("pinned").map(Value::is_array).unwrap_or(false) {
-        memory.insert("pinned".to_string(), Value::Array(Vec::new()));
-    }
-    let pinned = memory
-        .get_mut("pinned")
-        .and_then(Value::as_array_mut)
-        .expect("pinned array");
+    let pinned = &mut state.data.memory.pinned;
     let already = pinned
         .iter()
         .any(|v| v.as_str().map(|s| s == cleaned).unwrap_or(false));
@@ -500,97 +430,39 @@ fn push_pinned_memory(state: &mut GameState, text: &str) -> bool {
 }
 
 fn clear_revealed_flag(state: &mut GameState) {
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data object");
-    if !root
-        .get("player_private")
-        .map(Value::is_object)
-        .unwrap_or(false)
-    {
-        root.insert(
-            "player_private".to_string(),
-            Value::Object(serde_json::Map::new()),
+    let flags = &mut state.data.player_private.flags;
+    if flags.contains_key("revealed_this_turn") {
+        flags.insert(
+            "revealed_this_turn".to_string(),
+            Value::String(String::new()),
         );
-    }
-    let pp = root
-        .get_mut("player_private")
-        .and_then(Value::as_object_mut)
-        .expect("player_private object");
-    if !pp.get("flags").map(Value::is_object).unwrap_or(false) {
-        pp.insert("flags".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    if let Some(flags) = pp.get_mut("flags").and_then(Value::as_object_mut) {
-        if flags.contains_key("revealed_this_turn") {
-            flags.insert(
-                "revealed_this_turn".to_string(),
-                Value::String(String::new()),
-            );
-        }
     }
 }
 
 fn apply_reveal(state: &mut GameState, reveal_text: &str) {
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data object");
-    if !root
-        .get("player_private")
-        .map(Value::is_object)
-        .unwrap_or(false)
-    {
-        root.insert(
-            "player_private".to_string(),
-            Value::Object(serde_json::Map::new()),
-        );
-    }
-    let pp = root
-        .get_mut("player_private")
-        .and_then(Value::as_object_mut)
-        .expect("player_private object");
-    if !pp.get("flags").map(Value::is_object).unwrap_or(false) {
-        pp.insert("flags".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    if let Some(flags) = pp.get_mut("flags").and_then(Value::as_object_mut) {
-        flags.insert(
-            "revealed_this_turn".to_string(),
-            Value::String(reveal_text.to_string()),
-        );
-    }
-    if !pp.get("secrets").map(Value::is_array).unwrap_or(false) {
-        pp.insert("secrets".to_string(), Value::Array(Vec::new()));
-    }
-    if let Some(secrets) = pp.get_mut("secrets").and_then(Value::as_array_mut) {
-        let already = secrets
-            .iter()
-            .any(|v| v.as_str().map(|s| s == reveal_text).unwrap_or(false));
-        if !already {
-            secrets.push(Value::String(reveal_text.to_string()));
-        }
+    state.data.player_private.flags.insert(
+        "revealed_this_turn".to_string(),
+        Value::String(reveal_text.to_string()),
+    );
+    let secrets = &mut state.data.player_private.secrets;
+    let already = secrets
+        .iter()
+        .any(|v| v.as_str().map(|s| s == reveal_text).unwrap_or(false));
+    if !already {
+        secrets.push(Value::String(reveal_text.to_string()));
     }
     state.touch();
 }
 
 fn write_last_structured_updates(state: &mut GameState, updates: &[String]) {
-    if !state.data.is_object() {
-        state.data = Value::Object(serde_json::Map::new());
-    }
-    let root = state.data.as_object_mut().expect("state.data object");
-    if !root.get("memory").map(Value::is_object).unwrap_or(false) {
-        root.insert("memory".to_string(), Value::Object(serde_json::Map::new()));
-    }
-    if let Some(memory) = root.get_mut("memory").and_then(Value::as_object_mut) {
-        let tail: Vec<Value> = updates
-            .iter()
-            .rev()
-            .take(12)
-            .rev()
-            .map(|s| Value::String(s.clone()))
-            .collect();
-        memory.insert("last_structured_updates".to_string(), Value::Array(tail));
-    }
+    let tail: Vec<Value> = updates
+        .iter()
+        .rev()
+        .take(12)
+        .rev()
+        .map(|s| Value::String(s.clone()))
+        .collect();
+    state.data.memory.last_structured_updates = tail;
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -127,7 +127,6 @@ async fn api_memory_remove(
         // 取出当前数组
         let cur = st
             .get_path(&format!("memory.{bucket}"))
-            .cloned()
             .unwrap_or(Value::Array(vec![]));
         if let Value::Array(mut arr) = cur {
             if idx < 0 || (idx as usize) >= arr.len() {

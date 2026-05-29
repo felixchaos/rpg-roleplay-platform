@@ -28,7 +28,7 @@ use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
-use crate::path::{self, clean_path};
+use crate::path::clean_path;
 use crate::state::{GameState, StateError};
 
 #[derive(Debug, Error)]
@@ -174,13 +174,7 @@ pub fn is_module_managed(path: &str) -> bool {
 }
 
 fn module_scene_active(state: &GameState) -> bool {
-    state
-        .data
-        .get("scene")
-        .and_then(|s| s.get("module_id"))
-        .and_then(|v| v.as_str())
-        .map(|s| !s.is_empty())
-        .unwrap_or(false)
+    !state.data.scene.module_id.is_empty()
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -348,7 +342,7 @@ pub fn apply_op(
     let allowed = is_write_allowed(&path, &mode_raw);
     if !allowed && !force {
         let pending_id = next_pending_id();
-        let from = path::get_path(&state.data, &path).cloned().unwrap_or(Value::Null);
+        let from = crate::typed_path::get_path(&state.data, &path).unwrap_or(Value::Null);
         let value_for_log = op.value().cloned().unwrap_or(Value::Null);
         let pending = PendingWrite {
             id: pending_id,
@@ -413,56 +407,13 @@ fn perform_write(state: &mut GameState, op: &Op, path: &str) -> Result<(), State
     }
 }
 
-/// 落 audit_log。typed AuditEntry 内部 to_value 一次后塞进 `permissions.audit_log` 数组。
-///
-/// 注意 `data` 顶层仍是 Value 存储(避免动摇全仓 100+ path 访问点的兼容性);typed
-/// 化只发生在"入口构造"与"出口读取(后续 typed 访问 API)",存储层渐进 typed 化
-/// 是 C3 工作。
+/// 落 audit_log — 直 typed push,cap 200。委托给 [`crate::typed_path::push_audit`]。
 fn push_audit(state: &mut GameState, entry: AuditEntry) {
-    let v = serde_json::to_value(&entry).expect("AuditEntry serializes");
-    let permissions = ensure_object_at(&mut state.data, "permissions");
-    let audit_log = permissions
-        .entry("audit_log".to_string())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if let Value::Array(arr) = audit_log {
-        arr.push(v);
-        let len = arr.len();
-        if len > 200 {
-            arr.drain(0..len - 200);
-        }
-    }
+    crate::typed_path::push_audit(&mut state.data, entry);
 }
 
 fn push_pending(state: &mut GameState, entry: PendingWrite) {
-    let v = serde_json::to_value(&entry).expect("PendingWrite serializes");
-    let permissions = ensure_object_at(&mut state.data, "permissions");
-    let pending = permissions
-        .entry("pending_writes".to_string())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if let Value::Array(arr) = pending {
-        arr.push(v);
-        let len = arr.len();
-        if len > 20 {
-            arr.drain(0..len - 20);
-        }
-    }
-}
-
-/// 顶层 obj 上保证存在某个 key,返回对应的 Object map 引用。
-fn ensure_object_at<'a>(
-    root: &'a mut Value,
-    key: &str,
-) -> &'a mut serde_json::Map<String, Value> {
-    if !root.is_object() {
-        *root = Value::Object(serde_json::Map::new());
-    }
-    let obj = root.as_object_mut().expect("ensured object");
-    if !obj.get(key).map(Value::is_object).unwrap_or(false) {
-        obj.insert(key.to_string(), Value::Object(serde_json::Map::new()));
-    }
-    obj.get_mut(key)
-        .and_then(Value::as_object_mut)
-        .expect("just inserted object")
+    crate::typed_path::push_pending(&mut state.data, entry);
 }
 
 /// Pending 写入 ID 生成器(进程内单调递增 + 启动时间戳前缀)。
@@ -475,21 +426,10 @@ fn next_pending_id() -> String {
     format!("pw_{ts:x}_{seq:x}")
 }
 
-/// 把 path 登记到 player_private.user_locked_fields(去重 append)
-/// TODO[Opus]: 与 PendingMixin 的精细化登记策略对齐(目前实现只是去重 append)。
+/// 把 path 登记到 player_private.user_locked_fields(去重 append)。
+/// 字段是 `PlayerPrivate.extra` 里的运行时附加键(task 36 加的,非原 schema)。
 fn mark_user_locked(state: &mut GameState, path: &str) {
-    let pp = ensure_object_at(&mut state.data, "player_private");
-    let locked = pp
-        .entry("user_locked_fields".to_string())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if let Value::Array(arr) = locked {
-        let already = arr
-            .iter()
-            .any(|v| v.as_str().map(|s| s == path).unwrap_or(false));
-        if !already {
-            arr.push(Value::String(path.to_string()));
-        }
-    }
+    crate::typed_path::mark_user_locked(&mut state.data, path);
 }
 
 #[cfg(test)]
@@ -503,36 +443,21 @@ mod tests {
     }
 
     fn set_permission_mode(state: &mut GameState, mode: &str) {
-        let permissions = ensure_object_at(&mut state.data, "permissions");
-        permissions.insert("mode".to_string(), Value::String(mode.to_string()));
+        state.data.permissions.mode = mode.to_string();
     }
 
     fn set_module_scene(state: &mut GameState, module_id: &str) {
-        let scene = ensure_object_at(&mut state.data, "scene");
-        scene.insert(
-            "module_id".to_string(),
-            Value::String(module_id.to_string()),
-        );
+        state.data.scene.module_id = module_id.to_string();
+        // 保留旧测试结构 — 第二行 noop,避免触发未使用变量警告
+        let _ = module_id;
     }
 
     fn audit_log_len(state: &GameState) -> usize {
-        state
-            .data
-            .get("permissions")
-            .and_then(|p| p.get("audit_log"))
-            .and_then(|a| a.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0)
+        state.data.permissions.audit_log.len()
     }
 
     fn pending_writes_len(state: &GameState) -> usize {
-        state
-            .data
-            .get("permissions")
-            .and_then(|p| p.get("pending_writes"))
-            .and_then(|a| a.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0)
+        state.data.permissions.pending_writes.len()
     }
 
     // ── 闸门 a: hard forbidden ──────────────────────────────────
@@ -610,7 +535,7 @@ mod tests {
         };
         let outcome = apply_op(&mut state, op, "rules_engine", false).unwrap();
         assert_eq!(outcome.kind, ApplyKind::Applied);
-        assert_eq!(state.get_path("player_character.hp"), Some(&json!(15)));
+        assert_eq!(state.get_path("player_character.hp"), Some(json!(15)));
     }
 
     // ── 闸门 c: module_managed ───────────────────────────────────
@@ -653,7 +578,7 @@ mod tests {
         let outcome = apply_op(&mut state, op, "gm", false).unwrap();
         assert_eq!(outcome.kind, ApplyKind::Pending);
         // 路径未生效
-        assert_eq!(state.get_path("player.name"), Some(&json!("")));
+        assert_eq!(state.get_path("player.name"), Some(json!("")));
         assert_eq!(pending_writes_len(&state), 1);
     }
 
@@ -668,7 +593,7 @@ mod tests {
         };
         let outcome = apply_op(&mut state, op, "gm", false).unwrap();
         assert_eq!(outcome.kind, ApplyKind::Applied);
-        assert_eq!(state.get_path("player.name"), Some(&json!("Carol")));
+        assert_eq!(state.get_path("player.name"), Some(json!("Carol")));
         assert_eq!(pending_writes_len(&state), 0);
     }
 
@@ -680,8 +605,8 @@ mod tests {
         let mut state = make_state();
         for i in 0..250 {
             let op = Op::Set {
-                path: format!("memory.facts"),
-                value: json!(format!("fact_{i}")),
+                path: "player.name".to_string(),
+                value: json!(format!("name_{i}")),
             };
             // user source + force=true 保证全部通过闸门
             let outcome = apply_op(&mut state, op, "user", true).unwrap();

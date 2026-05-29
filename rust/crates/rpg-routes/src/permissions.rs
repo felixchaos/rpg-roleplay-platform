@@ -92,7 +92,6 @@ async fn api_pending_write(
         let mut st = shared.write();
         let pending = st
             .get_path("permissions.pending_writes")
-            .cloned()
             .unwrap_or(Value::Array(vec![]));
         if let Value::Array(mut arr) = pending {
             let by_id = body.id.as_deref();
@@ -115,7 +114,6 @@ async fn api_pending_write(
                 let action = body.action.or(body.decision).unwrap_or_default();
                 let mut audit = st
                     .get_path("permissions.audit_log")
-                    .cloned()
                     .unwrap_or(Value::Array(vec![]));
                 if let Value::Array(ref mut a) = audit {
                     a.push(
@@ -144,7 +142,6 @@ async fn api_question_clear(
         let mut st = shared.write();
         let cur = st
             .get_path("permissions.pending_questions")
-            .cloned()
             .unwrap_or(Value::Array(vec![]));
         if let Value::Array(mut arr) = cur {
             let pos = if let Some(id) = body.id.as_deref() {
