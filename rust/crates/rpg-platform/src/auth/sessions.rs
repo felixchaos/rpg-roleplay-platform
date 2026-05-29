@@ -238,14 +238,23 @@ impl AuthService {
             }
         }
         // 生成 32 字节 token,url-safe base64 编码(对应 Python `secrets.token_urlsafe(32)`).
+        // DB 只存 SHA-256 hex(token_hash),明文只返回给客户端。
         let token = url_safe_token(32);
+        let token_hash = sha256_hex(&token);
         let expires_at = Utc::now() + chrono::Duration::days(SESSION_DAYS);
-        sqlx::query("insert into sessions(token, user_id, expires_at) values ($1, $2, $3)")
-            .bind(&token)
+        // 轮换:先删该 user 的旧 session(旧 token 立即失效),再插入新 session。
+        sqlx::query("delete from sessions where user_id = $1")
             .bind(user.id)
-            .bind(expires_at)
             .execute(&self.pool)
             .await?;
+        sqlx::query(
+            "insert into sessions(token_hash, user_id, expires_at) values ($1, $2, $3)",
+        )
+        .bind(&token_hash)
+        .bind(user.id)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await?;
         self.limiter.record_success(ip, &normalized);
         Ok((user, token))
     }
@@ -255,8 +264,9 @@ impl AuthService {
         let Some(token) = token.filter(|t| !t.is_empty()) else {
             return Ok(());
         };
-        sqlx::query("delete from sessions where token = $1")
-            .bind(token)
+        let token_hash = sha256_hex(token);
+        sqlx::query("delete from sessions where token_hash = $1")
+            .bind(&token_hash)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -267,14 +277,15 @@ impl AuthService {
         let Some(token) = token.filter(|t| !t.is_empty()) else {
             return Ok(None);
         };
+        let token_hash = sha256_hex(token);
         let row = sqlx::query(
             r#"
             select users.* from sessions
             join users on users.id = sessions.user_id
-            where sessions.token = $1 and sessions.expires_at > now()
+            where sessions.token_hash = $1 and sessions.expires_at > now()
             "#,
         )
-        .bind(token)
+        .bind(&token_hash)
         .fetch_optional(&self.pool)
         .await?;
         match row {
@@ -328,4 +339,21 @@ fn url_safe_token(n_bytes: usize) -> String {
     let mut buf = vec![0u8; n_bytes];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut buf);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&buf)
+}
+
+/// 对明文 token 计算 SHA-256,返回小写 hex(64 字符)。
+/// DB 只存此 hash,明文只返回给客户端。
+fn sha256_hex(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(token.as_bytes());
+    hex::encode(hash)
+}
+
+/// 撤销 user 的全部 session(改密时调用)。
+pub async fn revoke_all_user_sessions(pool: &PgPool, user_id: i64) -> PlatformResult<u64> {
+    let result = sqlx::query("delete from sessions where user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
 }
