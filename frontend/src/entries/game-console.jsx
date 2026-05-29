@@ -22,6 +22,7 @@ import '../game-app.jsx';
 import '../tweaks-panel.jsx';
 import '../console-assistant-navigation.jsx';
 import '../console-assistant-panel.jsx';
+import '../components/ModelPicker.jsx';
 
 // density preset + narrative font init（等价原 HTML 非 babel inline script）
 (function () {
@@ -722,6 +723,47 @@ function App() {
           <HistoryDrawer open={showHistoryDrawer} history={history} onClose={() => setShowHistoryDrawer(false)} />
           <SearchDrawer open={showSearchDrawer} history={history} state={game} onClose={() => setShowSearchDrawer(false)} />
         </>}
+        {/* Wave 11-D: GM 模型选择 — ModelPicker modal overlay */}
+        {showModel && (() => {
+          const _MP = window.ModelPicker || (() => null);
+          const _currentModelId = (game && game.app && (game.app.model_real_name || game.app.model)) || '';
+          const _handleModelChange = async (modelId, _provider) => {
+            try {
+              if (window.api && window.api.models && window.api.models.select) {
+                // 找到 provider api_id 对应关系
+                const cat = await (window.api.models.catalog ? window.api.models.catalog() : Promise.resolve({ models: [] }));
+                const info = cat && Array.isArray(cat.models) ? cat.models.find(m => m.id === modelId) : null;
+                const apiId = info ? String(info.provider) : '';
+                await window.api.models.select({ api_id: apiId, model_id: modelId });
+                window.__apiToast?.(`GM 模型 → ${modelId}`, { kind: 'ok', duration: 1500 });
+              }
+            } catch (e) { window.__apiToast?.('切换失败', { kind: 'danger', detail: e && e.message }); }
+            setShowModel(false);
+          };
+          return (
+            <div
+              style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              onClick={() => setShowModel(false)}
+            >
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{ width: 'min(620px, 94vw)', maxHeight: '82vh', display: 'flex', flexDirection: 'column', borderRadius: 'var(--r-3,8px)', overflow: 'hidden', boxShadow: 'var(--shadow-3)' }}
+              >
+                <div style={{ background: 'var(--panel,#211f1d)', borderBottom: '1px solid var(--line-soft,#2a2724)', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <strong style={{ fontFamily: 'var(--font-serif)', fontSize: 14, letterSpacing: '0.03em' }}>选择 GM 模型</strong>
+                  <button className="iconbtn" onClick={() => setShowModel(false)} title="关闭" style={{ border: 0, background: 'transparent', color: 'var(--muted)', cursor: 'pointer', padding: '4px 8px', borderRadius: 4 }}>✕</button>
+                </div>
+                <div style={{ overflow: 'auto', flex: 1 }}>
+                  <_MP
+                    value={_currentModelId}
+                    onChange={_handleModelChange}
+                    filter={{ capability: 'streaming' }}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         {mountStage >= 1 ? <ChatArea
           history={history} runState={runState} runStyle={t.runStyle}
           narrativeFont={t.narrativeFont} narrativeSize={t.narrativeSize}
@@ -739,7 +781,7 @@ function App() {
             attachments={attachments} removeAttachment={(i) => setAttachments((a) => a.filter((_, j) => j !== i))}
             onAttachPick={onAttachPick} onSlashPick={onSlashPick}
             pickedCommand={pickedCommand} onClearCommand={() => setPickedCommand(null)}
-            showSlash={showSlash} showPlus={showPlus} showModel={showModel} showPerm={showPerm}
+            showSlash={showSlash} showPlus={showPlus} showModel={false} showPerm={showPerm}
             toggleSlash={() => { setShowSlash((s) => !s); setShowPlus(false); setShowModel(false); setShowPerm(false); }}
             togglePlus={() => { setShowPlus((s) => !s); setShowSlash(false); setShowModel(false); setShowPerm(false); }}
             toggleModel={() => { setShowModel((s) => !s); setShowSlash(false); setShowPlus(false); setShowPerm(false); }}

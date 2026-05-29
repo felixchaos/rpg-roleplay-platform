@@ -640,6 +640,104 @@
     );
   }
 
+  // ---------------- ModelPickerDropdown (Wave 11-D) ------------
+  // 复用 window.ModelPicker — 以 cap-model-pick 按钮 + 绝对定位浮层的形式嵌入助手头部。
+  // 选定后调 /api/me/preference 写入 console_assistant_model_override (同 ModelDropdown)。
+  function ModelPickerDropdown({ apiBase }) {
+    const [open, setOpen] = useState(false);
+    const [currentId, setCurrentId] = useState("");
+    const [busy, setBusy] = useState(false);
+    const wrapRef = useRef(null);
+
+    // 拉当前模型覆盖
+    useEffect(() => {
+      let alive = true;
+      (async () => {
+        try {
+          if (window.api && window.api.account && window.api.account.profile) {
+            const profile = await window.api.account.profile();
+            const ov = profile && profile.preferences && profile.preferences.console_assistant_model_override;
+            if (alive && ov && ov.model) setCurrentId(ov.model);
+          }
+        } catch (_) {}
+      })();
+      return () => { alive = false; };
+    }, [apiBase]);
+
+    // 点外面关
+    useEffect(() => {
+      if (!open) return;
+      const onDoc = (e) => {
+        if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+      };
+      document.addEventListener("mousedown", onDoc);
+      return () => document.removeEventListener("mousedown", onDoc);
+    }, [open]);
+
+    const onPick = async (modelId, _provider) => {
+      setBusy(true);
+      try {
+        if (window.api && window.api.account && window.api.account.preferences) {
+          await window.api.account.preferences({
+            console_assistant_model_override: modelId ? { model: modelId } : null,
+          });
+          setCurrentId(modelId || "");
+          if (window.__apiToast) window.__apiToast(
+            modelId ? `助手模型 → ${modelId}` : "助手模型已重置",
+            { kind: "ok", duration: 1500 });
+        }
+      } catch (e) {
+        if (window.__apiToast) window.__apiToast("切换失败", { kind: "danger", detail: e && e.message });
+      } finally {
+        setBusy(false);
+        setOpen(false);
+      }
+    };
+
+    const _MP = window.ModelPicker;
+    if (!_MP) {
+      // ModelPicker 未加载时降级到旧 ModelDropdown
+      return <ModelDropdown apiBase={apiBase} />;
+    }
+
+    return (
+      <div ref={wrapRef} style={{ position: "relative" }}>
+        <button
+          className="cap-model-pick"
+          onClick={() => setOpen(o => !o)}
+          disabled={busy}
+          title={currentId || "选择助手模型"}
+        >
+          <span>{currentId || "跟随主 GM"}</span>
+          <span className="cap-caret">▼</span>
+        </button>
+        {open && (
+          <div
+            style={{
+              position: "absolute",
+              top: "calc(100% + 4px)",
+              left: 0,
+              right: 0,
+              zIndex: 70,
+              minWidth: 320,
+              maxWidth: "90vw",
+              boxShadow: "0 12px 28px -10px rgba(0,0,0,.6)",
+              borderRadius: "var(--r-3,8px)",
+              overflow: "hidden",
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <_MP
+              value={currentId}
+              onChange={onPick}
+              filter={{ capability: "streaming" }}
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // ---------------- ConfirmationCard ---------------------------
   function ConfirmationCard({ entry, onDecide, busy }) {
     const resolved = entry.decided;
@@ -1434,7 +1532,8 @@
               <span className={"cap-dot" + (running ? " cap-on" : "")} />
               <span className="cap-title">控制台助手</span>
             </div>
-            <ModelDropdown apiBase={apiBase} />
+            {/* Wave 11-D: 替换旧 ModelDropdown 为基于 catalog 的 ModelPickerDropdown */}
+            <ModelPickerDropdown apiBase={apiBase} />
           </div>
           <div className="cap-head-actions">
             <ContextRing cumIn={ctxUsage.cumIn} cumOut={ctxUsage.cumOut} ctxLimit={ctxUsage.ctxLimit} />
