@@ -19,6 +19,7 @@ pub mod cluster;
 pub mod context_runs;
 pub mod crypto;
 pub mod error;
+pub mod infra;
 pub mod knowledge;
 pub mod library;
 pub mod quota;

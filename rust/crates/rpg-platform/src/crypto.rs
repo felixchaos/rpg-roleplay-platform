@@ -11,6 +11,11 @@
 //! - 派生:HKDF(master, salt=user_id, info=`api:<api_id>`) → 32 byte key。
 //! - 加密:AES-256-GCM,12 字节 nonce,AAD = `user=<id>&api=<api_id>`。
 //! - 输出格式:`nonce(12) || ciphertext || tag(16)`,可直接 INSERT。
+//!
+//! ## master_key 取值现经 [`KeyProvider`](crate::infra::key_provider::KeyProvider)
+//! 默认 `EnvKeyProvider`(就是本文件下方 `load_master_key_raw` 的 env/文件逻辑),
+//! 行为与历史完全一致。设了 `RPG_KMS_ENDPOINT` 则切到 `KmsKeyProvider`(envelope/KMS-ready)。
+//! 见 `infra::key_provider` 模块文档了解如何接 AWS KMS / Vault。
 
 use aes_gcm::{
     aead::{Aead, KeyInit, Payload},
@@ -38,7 +43,7 @@ static MASTER_KEY: OnceLock<[u8; 32]> = OnceLock::new();
 /// 业务路径建议改走 [`master_key_checked`] 拿到 `Result` 显式处理。
 pub fn master_key() -> [u8; 32] {
     *MASTER_KEY.get_or_init(|| {
-        load_master_key().unwrap_or_else(|e| {
+        load_master_key_via_provider().unwrap_or_else(|e| {
             panic!(
                 "rpg_platform::crypto::master_key 初始化失败 — 请检查部署 {} 设置: {}",
                 MASTER_KEY_ENV, e
@@ -52,10 +57,20 @@ pub fn master_key_checked() -> PlatformResult<[u8; 32]> {
     if let Some(k) = MASTER_KEY.get() {
         return Ok(*k);
     }
-    let k = load_master_key()?;
+    let k = load_master_key_via_provider()?;
     // 抢占式写入 —— 失败说明已被别人初始化,以那份为准。
     let stored = *MASTER_KEY.get_or_init(|| k);
     Ok(stored)
+}
+
+/// 经全局 [`KeyProvider`](crate::infra::key_provider) 取 master_key(KEK)。
+///
+/// 默认 `EnvKeyProvider` → 等价于直接调 [`load_master_key_raw`](原 env/文件逻辑),
+/// 现有行为不回归;`RPG_KMS_ENDPOINT` 设了则走 KMS provider。
+fn load_master_key_via_provider() -> PlatformResult<[u8; 32]> {
+    use crate::infra::key_provider::GLOBAL_PROVIDER;
+    let z = GLOBAL_PROVIDER.master_key()?;
+    Ok(*z)
 }
 
 /// 部署模式枚举 —— 用来判断是否允许 fallback 生成 master_key。
@@ -74,7 +89,11 @@ fn is_local_mode(mode: &str) -> bool {
     matches!(mode, "local" | "desktop" | "self_hosted" | "self-hosted")
 }
 
-fn load_master_key() -> PlatformResult<[u8; 32]> {
+/// 原始 master_key 加载逻辑(env `RPG_MASTER_KEY` / 本地 fallback 文件 + fail-fast)。
+///
+/// `EnvKeyProvider` 直接调用本函数 —— 是「现有 env/文件行为」的唯一真源,
+/// 既不缓存也不经 provider,供 [`KeyProvider`](crate::infra::key_provider) 默认实现复用。
+pub(crate) fn load_master_key_raw() -> PlatformResult<[u8; 32]> {
     if let Ok(raw) = std::env::var(MASTER_KEY_ENV) {
         let raw = raw.trim();
         if !raw.is_empty() {

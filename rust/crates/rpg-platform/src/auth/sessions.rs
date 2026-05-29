@@ -195,7 +195,7 @@ impl AuthService {
         if let Err(RateLimited {
             retry_after_sec,
             key,
-        }) = self.limiter.check(ip, &normalized)
+        }) = self.limiter.check(ip, &normalized).await
         {
             return Err(PlatformError::RateLimited {
                 retry_after_sec,
@@ -208,7 +208,7 @@ impl AuthService {
             .fetch_optional(&self.pool)
             .await?;
         let Some(row) = row_opt else {
-            self.limiter.record_fail(ip, &normalized);
+            self.limiter.record_fail(ip, &normalized).await;
             return Err(PlatformError::validation("用户名或密码错误"));
         };
         let user = User::from_row(&row)?;
@@ -234,7 +234,7 @@ impl AuthService {
             }
             Ok(None) => {} // 已是新 hash
             Err(AuthVerifyError::WrongPassword) | Err(AuthVerifyError::Malformed) => {
-                self.limiter.record_fail(ip, &normalized);
+                self.limiter.record_fail(ip, &normalized).await;
                 return Err(PlatformError::validation("用户名或密码错误"));
             }
         }
@@ -256,7 +256,7 @@ impl AuthService {
         .bind(expires_at)
         .execute(&self.pool)
         .await?;
-        self.limiter.record_success(ip, &normalized);
+        self.limiter.record_success(ip, &normalized).await;
         Ok((user, token))
     }
 

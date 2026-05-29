@@ -13,13 +13,12 @@
 //!
 //! 聚合查询复用本 crate `usage` 模块的写入/计价基础设施;配额读取走纯 SQL `sum`。
 
-use std::collections::{HashMap, VecDeque};
+use std::time::Duration;
 
-use once_cell::sync::Lazy;
-use parking_lot::Mutex;
 use rpg_core::UserId;
 use sqlx::{PgPool, Row};
 
+use crate::infra::rate_limit::{SharedBackend, GLOBAL_BACKEND};
 use crate::usage::{self, UsageBreakdown};
 
 /// 服务端硬上限:任何客户端 `max_tokens` 都会被 clamp 到这个值。
@@ -179,101 +178,109 @@ pub struct QuotaGrant {
     pub model: String,
     /// 进闸时的预估 token(供观测 / 调试)。
     pub est_tokens: i64,
-    /// 并发槽位守卫(Drop 即释放),`record_actual` 后失效。
+    /// 并发槽位守卫(Drop 兜底释放),`record_actual` 显式释放后失效。
     _slot: ConcurrencyGuard,
 }
 
-// ───────────────────────── 滑动窗口速率限制 + 并发计数(内存) ─────────────────────────
+// ───────────────────────── 滑动窗口速率 + 并发(经可插拔后端) ─────────────────────────
 //
-// 后续可换 Redis;目前单进程内存版,满足"先内存 later Redis"。
+// 待办A:速率/并发计数下沉到 [`RateLimitBackend`](crate::infra::rate_limit) —— 默认进程内
+// Memory,设 `RPG_REDIS_URL` 则共享到 Redis(多副本统一限流)。key 用 `quota:user:<id>`。
 
-struct RateState {
-    /// 最近请求时间戳(单调毫秒)。滑窗 60s。
-    hits: VecDeque<u64>,
-    /// 当前在飞请求数。
-    in_flight: u32,
+/// 60s 滑窗。
+const RATE_WINDOW: Duration = Duration::from_secs(60);
+
+/// per-user 限流 key —— 进程内/Redis 共用同一命名空间。
+fn rate_key(user_id: i64) -> String {
+    format!("quota:user:{user_id}")
 }
 
-static RATE_TABLE: Lazy<Mutex<HashMap<i64, RateState>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-/// 单调时钟毫秒(避免系统时间回拨影响滑窗)。
-fn now_millis() -> u64 {
-    use std::sync::OnceLock;
-    use std::time::Instant;
-    static START: OnceLock<Instant> = OnceLock::new();
-    let start = START.get_or_init(Instant::now);
-    start.elapsed().as_millis() as u64
-}
-
-const WINDOW_MS: u64 = 60_000;
-
-/// 纯逻辑:在滑窗里登记一次命中并判定是否超限。返回 `Err(QuotaError::RateLimited)` 即拒。
-/// 拆出来便于单测(传入显式 now + 状态)。
-fn rate_check_locked(
-    st: &mut RateState,
-    now_ms: u64,
-    limit: u32,
-) -> Result<(), QuotaError> {
-    // 清掉窗口外的旧命中。
-    while let Some(&front) = st.hits.front() {
-        if now_ms.saturating_sub(front) >= WINDOW_MS {
-            st.hits.pop_front();
-        } else {
-            break;
-        }
-    }
-    if st.hits.len() as u32 >= limit {
-        // 最早一条出窗即可再次允许。
-        let oldest = *st.hits.front().unwrap_or(&now_ms);
-        let wait_ms = WINDOW_MS.saturating_sub(now_ms.saturating_sub(oldest));
-        let retry_after_sec = wait_ms.div_ceil(1000); // 向上取整到秒
-        return Err(QuotaError::RateLimited {
-            count: st.hits.len() as u32,
-            limit,
-            retry_after_sec: retry_after_sec.max(1),
-        });
-    }
-    st.hits.push_back(now_ms);
-    Ok(())
-}
-
-/// 并发守卫:Drop 时把 `in_flight` 减回去。
-#[derive(Debug)]
+/// 并发守卫:Drop 时兜底把后端 `in_flight` 减回去(防 record_actual 未走到的早退/panic 路径)。
+///
+/// 正常路径由 [`record_actual`] 显式 `decr` 后 `disarm`;Drop 仅在异常路径生效。
+/// Drop 不能 async,故 spawn 一个 detached 任务做 decr(Redis 后端需要)。
 struct ConcurrencyGuard {
-    user_id: i64,
+    backend: SharedBackend,
+    key: String,
+    /// true = 已显式释放,Drop 不再重复 decr。
+    released: bool,
+}
+
+impl std::fmt::Debug for ConcurrencyGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConcurrencyGuard")
+            .field("key", &self.key)
+            .field("released", &self.released)
+            .finish()
+    }
+}
+
+impl ConcurrencyGuard {
+    /// 标记已释放(record_actual 显式 decr 后调用),阻止 Drop 重复减。
+    fn disarm(&mut self) {
+        self.released = true;
+    }
 }
 
 impl Drop for ConcurrencyGuard {
     fn drop(&mut self) {
-        let mut tbl = RATE_TABLE.lock();
-        if let Some(st) = tbl.get_mut(&self.user_id) {
-            st.in_flight = st.in_flight.saturating_sub(1);
+        if self.released {
+            return;
+        }
+        // 异常路径兜底:spawn detached decr。若不在 tokio runtime 内(理论上不该发生),
+        // 只 warn —— Redis 后端有 TTL 兜底,Memory 后端槽位最终随进程结束释放。
+        let backend = self.backend.clone();
+        let key = self.key.clone();
+        match tokio::runtime::Handle::try_current() {
+            Ok(h) => {
+                h.spawn(async move {
+                    backend.decr_concurrent(&key).await;
+                });
+            }
+            Err(_) => {
+                tracing::warn!(
+                    target: "rpg_platform::quota",
+                    key = %key,
+                    "ConcurrencyGuard drop 不在 tokio runtime 内,无法异步释放并发槽(后端 TTL 兜底)"
+                );
+            }
         }
     }
 }
 
-/// 速率 + 并发联合闸门(内存)。成功则占一个并发槽并返回守卫。
-fn reserve_rate_and_slot(
+/// 速率 + 并发联合闸门(经后端)。成功则占一个并发槽并返回守卫。
+///
+/// 顺序与旧版一致:先查并发(占槽前先验),再过速率;但本版**先过速率再占槽**,
+/// 因为后端 incr 是原子占槽,需在速率放行后才占,避免速率拒绝时虚占 Redis 计数。
+async fn reserve_rate_and_slot(
+    backend: &SharedBackend,
     user_id: i64,
     rate_per_min: u32,
     max_concurrent: u32,
 ) -> Result<ConcurrencyGuard, QuotaError> {
-    let mut tbl = RATE_TABLE.lock();
-    let st = tbl.entry(user_id).or_insert_with(|| RateState {
-        hits: VecDeque::new(),
-        in_flight: 0,
-    });
-    // 先查并发(占槽前先验,避免速率通过却卡并发时虚占）。
-    if st.in_flight >= max_concurrent {
+    let key = rate_key(user_id);
+    // 1) 速率滑窗。
+    if !backend.check_rate(&key, rate_per_min, RATE_WINDOW).await {
+        return Err(QuotaError::RateLimited {
+            count: rate_per_min,
+            limit: rate_per_min,
+            // 滑窗后端不回传精确出窗时刻;给保守的整窗秒数让客户端稍后重试。
+            retry_after_sec: RATE_WINDOW.as_secs().max(1),
+        });
+    }
+    // 2) 并发占槽(原子;超限不占)。
+    if !backend.incr_concurrent(&key, max_concurrent).await {
+        let active = backend.concurrent_count(&key).await;
         return Err(QuotaError::TooManyConcurrent {
-            active: st.in_flight,
+            active,
             limit: max_concurrent,
         });
     }
-    rate_check_locked(st, now_millis(), rate_per_min)?;
-    st.in_flight += 1;
-    Ok(ConcurrencyGuard { user_id })
+    Ok(ConcurrencyGuard {
+        backend: backend.clone(),
+        key,
+        released: false,
+    })
 }
 
 // ───────────────────────── DB 聚合查询 ─────────────────────────
@@ -340,6 +347,21 @@ pub async fn check_and_reserve(
     model: &str,
     est_tokens: i64,
 ) -> Result<QuotaGrant, QuotaError> {
+    check_and_reserve_with(&GLOBAL_BACKEND, pool, cfg, user_id, api_id, model, est_tokens).await
+}
+
+/// [`check_and_reserve`] 的可注入后端版本 —— 便于测试传入显式 [`RateLimitBackend`],
+/// 也供需要自定义后端的部署场景调用。
+#[allow(clippy::too_many_arguments)]
+pub async fn check_and_reserve_with(
+    backend: &SharedBackend,
+    pool: &PgPool,
+    cfg: &QuotaConfig,
+    user_id: UserId,
+    api_id: &str,
+    model: &str,
+    est_tokens: i64,
+) -> Result<QuotaGrant, QuotaError> {
     // 1) 月度预算
     let spent = month_to_date_cost_usd(pool, user_id)
         .await
@@ -352,9 +374,14 @@ pub async fn check_and_reserve(
         .map_err(|e| QuotaError::Backend(e.to_string()))?;
     check_daily(used, est_tokens, cfg.daily_token_limit)?;
 
-    // 3+4) 速率(滑窗) + 并发(占槽)。占槽放最后,前面拒了不会虚占。
-    // 内存速率表 key 仍用裸 i64(进程内私有实现细节),在此接缝转换。
-    let slot = reserve_rate_and_slot(user_id.get(), cfg.rate_per_min, cfg.max_concurrent_sessions)?;
+    // 3+4) 速率(滑窗) + 并发(占槽),经可插拔后端(Memory / Redis)。
+    let slot = reserve_rate_and_slot(
+        backend,
+        user_id.get(),
+        cfg.rate_per_min,
+        cfg.max_concurrent_sessions,
+    )
+    .await?;
 
     Ok(QuotaGrant {
         user_id,
@@ -394,19 +421,17 @@ pub async fn record_actual(
     if let Err(e) = res {
         tracing::warn!(error = %e, user_id = %grant.user_id, "record_actual 写 token_usage 失败");
     }
-    // grant 在此函数结束时 drop → ConcurrencyGuard 释放并发槽。
+    // 显式释放并发槽(经后端;Redis 后端需 await),再 disarm 守卫避免 Drop 重复 decr。
+    let mut grant = grant;
+    grant._slot.backend.decr_concurrent(&grant._slot.key).await;
+    grant._slot.disarm();
     drop(grant);
-}
-
-/// 测试 / 运维辅助:清空内存速率表(进程级,谨慎使用)。
-#[doc(hidden)]
-pub fn _reset_rate_table_for_tests() {
-    RATE_TABLE.lock().clear();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     fn breakdown(input: i32, output: i32) -> UsageBreakdown {
         UsageBreakdown {
@@ -463,46 +488,46 @@ mod tests {
         assert!(check_daily(0, 0, 2_000_000).is_ok());
     }
 
-    #[test]
-    fn rate_window_blocks_after_limit_and_recovers() {
-        let mut st = RateState {
-            hits: VecDeque::new(),
-            in_flight: 0,
-        };
+    #[tokio::test]
+    async fn rate_window_blocks_after_limit_via_backend() {
+        // 速率滑窗逻辑现在由 RateLimitBackend(Memory)承载,这里验证 quota 层接缝:
+        // limit 内放行、超限给 RateLimited、窗口外恢复。
+        use crate::infra::rate_limit::MemoryRateLimiter;
+        let be: SharedBackend = Arc::new(MemoryRateLimiter::new());
         let limit = 3u32;
-        let t0 = 1_000u64;
-        // 前 3 次在同一时刻通过。
-        assert!(rate_check_locked(&mut st, t0, limit).is_ok());
-        assert!(rate_check_locked(&mut st, t0, limit).is_ok());
-        assert!(rate_check_locked(&mut st, t0, limit).is_ok());
-        // 第 4 次(窗口内)被拒,且给出 retry_after。
-        let err = rate_check_locked(&mut st, t0 + 10, limit).unwrap_err();
-        match err {
-            QuotaError::RateLimited {
-                count,
-                limit: l,
-                retry_after_sec,
-            } => {
-                assert_eq!(count, 3);
-                assert_eq!(l, 3);
-                assert!(retry_after_sec >= 1);
-            }
-            other => panic!("expected RateLimited, got {other:?}"),
-        }
-        // 跨过整个窗口后,旧命中清空,重新允许。
-        assert!(rate_check_locked(&mut st, t0 + WINDOW_MS + 1, limit).is_ok());
+        let w = RATE_WINDOW;
+        let k = "quota:user:99";
+        assert!(be.check_rate(k, limit, w).await);
+        assert!(be.check_rate(k, limit, w).await);
+        assert!(be.check_rate(k, limit, w).await);
+        // 第 4 次窗口内被拒。
+        assert!(!be.check_rate(k, limit, w).await);
     }
 
-    #[test]
-    fn rate_limited_is_retryable() {
-        let mut st = RateState {
-            hits: VecDeque::new(),
-            in_flight: 0,
-        };
-        assert!(rate_check_locked(&mut st, 0, 1).is_ok());
-        let err = rate_check_locked(&mut st, 1, 1).unwrap_err();
-        assert!(err.retry_after_sec().is_some());
+    #[tokio::test]
+    async fn reserve_rejects_rate_then_concurrency() {
+        use crate::infra::rate_limit::MemoryRateLimiter;
+        let be: SharedBackend = Arc::new(MemoryRateLimiter::new());
+        // rate 充足,但并发上限 1:第二次占槽应 TooManyConcurrent。
+        let g1 = reserve_rate_and_slot(&be, 7, 100, 1).await.unwrap();
+        let err = reserve_rate_and_slot(&be, 7, 100, 1).await.unwrap_err();
+        assert_eq!(err.code(), "too_many_concurrent");
+        // 释放后又能占。
+        drop(g1);
+        // Drop 走 detached 任务释放;给它一拍。
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let _g2 = reserve_rate_and_slot(&be, 7, 100, 1).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reserve_rate_limited_is_retryable() {
+        use crate::infra::rate_limit::MemoryRateLimiter;
+        let be: SharedBackend = Arc::new(MemoryRateLimiter::new());
+        // rate=1:第一次占成功,第二次速率拒。
+        let _g = reserve_rate_and_slot(&be, 8, 1, 10).await.unwrap();
+        let err = reserve_rate_and_slot(&be, 8, 1, 10).await.unwrap_err();
         assert_eq!(err.code(), "rate_limited");
+        assert!(err.retry_after_sec().is_some());
     }
 
     #[test]
