@@ -445,6 +445,7 @@ fn build_router(state: AppState) -> Router {
         llm_router: state.llm_router.clone(),
         tool_registry: state.tool_registry.clone(),
         stop_events: state.stop_events.clone(),
+        mcp_broker: state.mcp_broker.clone(),
         console_conversations: Arc::new(DashMap::new()),
     };
     let api_routes = rpg_routes::build_routes().with_state(routes_state);
