@@ -4,8 +4,6 @@
 //!
 //! 把剧本 chapter_facts 里的关键事件拍平到 save_anchor_states,供 GM 在
 //! 每一轮查询并主动触发。**纯确定性算法,不调 LLM**。
-//!
-//! ⚠️ DB 全部留 TODO,接 rpg-db 后填。
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -398,4 +396,99 @@ pub fn derive_must_preserve(summary: &str, participants: &[String]) -> Vec<Strin
         out.push("characters".into());
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── classify_event_fatal ─────────────────────────────────────
+
+    #[test]
+    fn test_classify_fatal_empty() {
+        assert!(!classify_event_fatal(""));
+    }
+
+    #[test]
+    fn test_classify_fatal_match() {
+        assert!(classify_event_fatal("王爷战死沙场"));
+        assert!(classify_event_fatal("灭门惨案发生"));
+        assert!(classify_event_fatal("全军覆灭消息传来"));
+    }
+
+    #[test]
+    fn test_classify_fatal_no_match() {
+        assert!(!classify_event_fatal("公主出嫁庆典"));
+        assert!(!classify_event_fatal("秋日宴席"));
+    }
+
+    // ── compute_importance ────────────────────────────────────────
+
+    #[test]
+    fn test_importance_base_levels() {
+        assert_eq!(compute_importance("high", "普通事件"), 70);
+        assert_eq!(compute_importance("medium", "普通事件"), 50);
+        assert_eq!(compute_importance("low", "普通事件"), 30);
+        assert_eq!(compute_importance("unknown", "普通事件"), 30);
+    }
+
+    #[test]
+    fn test_importance_fatal_bonus() {
+        // fatal keyword 命中 → +15,不超过 100
+        let score = compute_importance("high", "皇帝驾崩战死");
+        assert!(score > 70);
+        assert!(score <= 100);
+    }
+
+    #[test]
+    fn test_importance_critical_bonus() {
+        // critical keyword 命中 → +20,不超过 100
+        let score = compute_importance("medium", "太子登基继位");
+        assert!(score > 50);
+        assert!(score <= 100);
+    }
+
+    // ── derive_must_preserve ──────────────────────────────────────
+
+    #[test]
+    fn test_must_preserve_empty() {
+        let items = derive_must_preserve("普通叙事", &[]);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_must_preserve_with_fatal() {
+        let items = derive_must_preserve("角色死亡", &[]);
+        assert!(items.contains(&"outcome".to_string()));
+    }
+
+    #[test]
+    fn test_must_preserve_with_participants() {
+        let p = vec!["李将军".to_string()];
+        let items = derive_must_preserve("普通事件", &p);
+        assert!(items.contains(&"characters".to_string()));
+    }
+
+    // ── AnchorSeedAgent::seed_anchors_for_save (db=None 路径) ────
+
+    #[tokio::test]
+    async fn test_seed_no_db_returns_ok_false() {
+        let agent = AnchorSeedAgent::new(); // db 未注入
+        let out = agent
+            .seed_anchors_for_save(SeedAnchorsInput {
+                save_id: 1,
+                force: false,
+            })
+            .await
+            .unwrap();
+        assert!(!out.ok);
+        assert_eq!(out.reason.as_deref(), Some("db_not_injected"));
+    }
+
+    #[tokio::test]
+    async fn test_reseed_no_db_returns_ok_false() {
+        let agent = AnchorSeedAgent::new();
+        let out = agent.reseed_anchors_for_save(1, true).await.unwrap();
+        assert!(!out.ok);
+    }
 }

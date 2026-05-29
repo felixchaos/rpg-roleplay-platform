@@ -582,3 +582,100 @@ pub fn dispatch_swan(
 
     (applied, errors)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rpg_state::state::GameState;
+    use serde_json::json;
+
+    fn make_state() -> GameState {
+        GameState::new("test_user")
+    }
+
+    // ── reality_snapshot ────────────────────────────────────────────
+
+    #[test]
+    fn test_reality_snapshot_defaults() {
+        let state = make_state();
+        let snap = reality_snapshot(&state, None);
+        assert!(snap.current_phase.is_empty());
+        assert!(snap.active_npcs.is_empty());
+        assert!(snap.recent_events.is_empty());
+        assert_eq!(snap.turn, 0);
+    }
+
+    // ── validators ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_validator_token_blacklist_blocks() {
+        let proposal = json!({"summary": "时间倒流了,回到过去"});
+        let blacklist = &["时间倒流", "回到过去"];
+        let (pass, reason) = validator_token_blacklist(&proposal, blacklist);
+        assert!(!pass);
+        assert!(reason.contains("时间倒流"));
+    }
+
+    #[test]
+    fn test_validator_token_blacklist_passes_clean() {
+        let proposal = json!({"summary": "一场轻柔的夜雨开始下起来"});
+        let (pass, _) = validator_token_blacklist(&proposal, DEFAULT_BLACKLIST);
+        assert!(pass);
+    }
+
+    #[test]
+    fn test_validator_timeline_anchor_passes_same_phase() {
+        let mut snap = RealitySnapshot::default();
+        snap.current_phase = "东征".to_string();
+        let proposal = json!({"event_kind": "weather", "summary": "大雨"});
+        // proposal 没有 phase 字段 → 默认通过
+        let (pass, _) = validator_timeline_anchor(&proposal, &snap);
+        assert!(pass);
+    }
+
+    #[test]
+    fn test_validator_timeline_anchor_rejects_wrong_phase() {
+        let mut snap = RealitySnapshot::default();
+        snap.current_phase = "东征".to_string();
+        let proposal = json!({"phase": "西征", "event_kind": "weather", "summary": "大雨"});
+        let (pass, reason) = validator_timeline_anchor(&proposal, &snap);
+        assert!(!pass);
+        assert!(reason.contains("西征"));
+    }
+
+    #[test]
+    fn test_validator_npc_presence_passes_empty() {
+        let snap = RealitySnapshot::default();
+        let proposal = json!({"event_kind": "rumor", "summary": "消息传来"});
+        let (pass, _) = validator_npc_presence(&proposal, &snap);
+        assert!(pass);
+    }
+
+    #[test]
+    fn test_validator_npc_presence_rejects_unknown_npc() {
+        let mut snap = RealitySnapshot::default();
+        snap.active_npcs = vec![json!({"id": "npc_1", "name": "李大人"})];
+        let proposal = json!({"event_kind": "npc_action", "affected_npc_ids": ["npc_999"]});
+        let (pass, _) = validator_npc_presence(&proposal, &snap);
+        assert!(!pass);
+    }
+
+    // ── dispatch_swan ────────────────────────────────────────────────
+
+    #[test]
+    fn test_dispatch_swan_no_op_skips() {
+        let mut state = make_state();
+        let proposal = json!({"event_kind": "no_op", "summary": ""});
+        let (applied, errors) = dispatch_swan(&mut state, &proposal, "test");
+        assert_eq!(applied, 0);
+        assert!(!errors.is_empty()); // "no_op,跳过" 算 errors
+    }
+
+    #[test]
+    fn test_dispatch_swan_weather_writes_state() {
+        let mut state = make_state();
+        let proposal = json!({"event_kind": "weather", "summary": "暴风雪"});
+        let (applied, errors) = dispatch_swan(&mut state, &proposal, "test");
+        assert!(applied > 0, "applied={applied} errors={errors:?}");
+    }
+}

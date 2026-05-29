@@ -6,8 +6,6 @@
 //! 对 100 turn 之前彻底失忆。本 agent 把每段 phase 的对话喂给轻量 LLM,
 //! 产出结构化摘要(summary / key_events / key_npcs / key_locations /
 //! key_decisions / emotion_arc),回写 save_phase_digests。
-//!
-//! ⚠️ DB 写入留 TODO,rpg-db 完成后接 sqlx。
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -448,5 +446,109 @@ async fn load_script_chapter_facts_for_phase(
         None
     } else {
         Some(lines.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── parse_digest ────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_digest_valid_json() {
+        let json_str = r#"{
+            "summary": "这是一段摘要",
+            "key_events": [{"turn": 1, "summary": "重要事件"}],
+            "key_npcs": [],
+            "key_locations": ["大殿"],
+            "key_decisions": [],
+            "emotion_arc": "好奇 → 紧张"
+        }"#;
+        let d = parse_digest(json_str).unwrap();
+        assert_eq!(d.summary, "这是一段摘要");
+        assert_eq!(d.key_locations, vec!["大殿"]);
+        assert_eq!(d.emotion_arc, "好奇 → 紧张");
+    }
+
+    #[test]
+    fn test_parse_digest_invalid_returns_none() {
+        assert!(parse_digest("not json at all").is_none());
+        assert!(parse_digest("").is_none());
+    }
+
+    #[test]
+    fn test_parse_digest_with_fence() {
+        let fenced = "```json\n{\"summary\":\"摘要\",\"key_events\":[],\"key_npcs\":[],\"key_locations\":[],\"key_decisions\":[],\"emotion_arc\":\"\"}\n```";
+        let d = parse_digest(fenced).unwrap();
+        assert_eq!(d.summary, "摘要");
+    }
+
+    // ── normalize_digest ────────────────────────────────────────────
+
+    #[test]
+    fn test_normalize_truncates_lists() {
+        let d = PhaseDigest {
+            summary: "s".to_string(),
+            key_events: (0..10).map(|i| json!({"turn": i})).collect(),
+            key_npcs: (0..12).map(|i| json!({"name": i})).collect(),
+            key_locations: (0..9).map(|i| i.to_string()).collect(),
+            key_decisions: (0..7).map(|i| json!({"turn": i})).collect(),
+            emotion_arc: "".to_string(),
+        };
+        let n = normalize_digest(d);
+        assert_eq!(n.key_events.len(), 5);
+        assert_eq!(n.key_npcs.len(), 8);
+        assert_eq!(n.key_locations.len(), 6);
+        assert_eq!(n.key_decisions.len(), 5);
+    }
+
+    #[test]
+    fn test_normalize_keeps_short_lists() {
+        let d = PhaseDigest {
+            summary: "短摘要".to_string(),
+            key_events: vec![json!({"turn": 1})],
+            key_npcs: vec![],
+            key_locations: vec!["城门".to_string()],
+            key_decisions: vec![],
+            emotion_arc: "紧张".to_string(),
+        };
+        let n = normalize_digest(d);
+        assert_eq!(n.key_events.len(), 1);
+        assert_eq!(n.key_locations.len(), 1);
+    }
+
+    // ── PhaseDigestAgent build_user_prompt ─────────────────────────
+
+    #[test]
+    fn test_build_user_prompt_contains_metadata() {
+        // 无 DB 时 load_phase_context 返回 default PhaseContext,
+        // build_user_prompt 应能正常构造 prompt 字符串。
+        use rpg_llm::AnyBackend;
+        use rpg_llm::anthropic::AnthropicBackend;
+        use std::sync::Arc;
+
+        // 构造一个 stub Anthropic backend(不会真正调用)
+        let backend = AnthropicBackend::new("stub-key").expect("build stub backend");
+        let agent = PhaseDigestAgent::new(Arc::new(AnyBackend::Anthropic(backend)));
+        let input = PhaseDigestInput {
+            save_id: 42,
+            phase_index: 3,
+            user_id: None,
+            force: false,
+            model_override: None,
+            api_id_override: None,
+        };
+        let ctx = PhaseContext {
+            phase_label: "第三阶段".to_string(),
+            dialog_text: "玩家说:我要去城门".to_string(),
+            ..Default::default()
+        };
+        let prompt = agent.build_user_prompt(&input, &ctx).unwrap();
+        assert!(prompt.contains("42"));
+        assert!(prompt.contains("3"));
+        assert!(prompt.contains("第三阶段"));
+        assert!(prompt.contains("城门"));
     }
 }
