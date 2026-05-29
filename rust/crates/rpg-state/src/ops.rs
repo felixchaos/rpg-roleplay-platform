@@ -301,6 +301,16 @@ pub enum ApplyKind {
 /// - `"user*"` 或 `force=true`:写入后自动 mark_user_locked(本实现在 TODO 里)
 ///
 /// `force=true` 不能突破 hard forbidden,但可绕过权限模式白名单(对应 `/set`)。
+#[tracing::instrument(
+    skip(state, op),
+    fields(
+        user_id = %state.user_id,
+        op_type = ?std::mem::discriminant(&op),
+        path = %op.path(),
+        source = %source,
+        force = force,
+    )
+)]
 pub fn apply_op(
     state: &mut GameState,
     op: Op,
@@ -497,5 +507,219 @@ fn mark_user_locked(state: &mut GameState, path: &str) {
         if !already {
             arr.push(Value::String(path.to_string()));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::GameState;
+
+    fn make_state() -> GameState {
+        GameState::new("test_user")
+    }
+
+    fn set_permission_mode(state: &mut GameState, mode: &str) {
+        let permissions = ensure_object_at(&mut state.data, "permissions");
+        permissions.insert("mode".to_string(), Value::String(mode.to_string()));
+    }
+
+    fn set_module_scene(state: &mut GameState, module_id: &str) {
+        let scene = ensure_object_at(&mut state.data, "scene");
+        scene.insert(
+            "module_id".to_string(),
+            Value::String(module_id.to_string()),
+        );
+    }
+
+    fn audit_log_len(state: &GameState) -> usize {
+        state
+            .data
+            .get("permissions")
+            .and_then(|p| p.get("audit_log"))
+            .and_then(|a| a.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0)
+    }
+
+    fn pending_writes_len(state: &GameState) -> usize {
+        state
+            .data
+            .get("permissions")
+            .and_then(|p| p.get("pending_writes"))
+            .and_then(|a| a.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0)
+    }
+
+    // ── 闸门 a: hard forbidden ──────────────────────────────────
+
+    #[test]
+    fn test_hard_forbidden_blocks_all() {
+        // history.* / permissions.* 任何 source 都拒
+        let mut state = make_state();
+        for source in ["user", "gm", "rules_engine", "user:/set", "anything"] {
+            let op = Op::Set {
+                path: "history.foo".to_string(),
+                value: json!("x"),
+            };
+            let err = apply_op(&mut state, op, source, false).unwrap_err();
+            assert!(
+                matches!(err, OpError::HardForbidden(_)),
+                "source={source} not blocked: {err:?}"
+            );
+        }
+        // permissions.* prefix
+        let op = Op::Set {
+            path: "permissions.mode".to_string(),
+            value: json!("read_only"),
+        };
+        let err = apply_op(&mut state, op, "rules_engine", false).unwrap_err();
+        assert!(matches!(err, OpError::HardForbidden(_)));
+        // schema_version 整路径
+        let op = Op::Set {
+            path: "schema_version".to_string(),
+            value: json!(999),
+        };
+        let err = apply_op(&mut state, op, "rules_engine", false).unwrap_err();
+        assert!(matches!(err, OpError::HardForbidden(_)));
+    }
+
+    #[test]
+    fn test_hard_forbidden_blocks_even_with_force() {
+        // force=true 也不能突破 hard forbidden
+        let mut state = make_state();
+        let op = Op::Set {
+            path: "history.foo".to_string(),
+            value: json!("x"),
+        };
+        let err = apply_op(&mut state, op, "user:/set", /*force=*/ true).unwrap_err();
+        assert!(matches!(err, OpError::HardForbidden(_)));
+    }
+
+    // ── 闸门 b: rules_managed ────────────────────────────────────
+
+    #[test]
+    fn test_rules_managed_only_rules_engine() {
+        // HP / encounter.* 只 rules_engine source 可写
+        let mut state = make_state();
+
+        // gm source 写 player_character.hp 拒绝
+        let op = Op::Set {
+            path: "player_character.hp".to_string(),
+            value: json!(10),
+        };
+        let err = apply_op(&mut state, op, "gm", false).unwrap_err();
+        assert!(matches!(err, OpError::RulesManaged(_, _)));
+
+        // user source 写 encounter.round 拒绝
+        let op = Op::Set {
+            path: "encounter.round".to_string(),
+            value: json!(2),
+        };
+        let err = apply_op(&mut state, op, "user", true).unwrap_err();
+        assert!(matches!(err, OpError::RulesManaged(_, _)));
+
+        // rules_engine 写 player_character.hp 通过
+        let op = Op::Set {
+            path: "player_character.hp".to_string(),
+            value: json!(15),
+        };
+        let outcome = apply_op(&mut state, op, "rules_engine", false).unwrap();
+        assert_eq!(outcome.kind, ApplyKind::Applied);
+        assert_eq!(state.get_path("player_character.hp"), Some(&json!(15)));
+    }
+
+    // ── 闸门 c: module_managed ───────────────────────────────────
+
+    #[test]
+    fn test_module_managed_blocks_gm_player_location() {
+        // 有 module_id 时 gm* source 拒 player.current_location
+        let mut state = make_state();
+        set_module_scene(&mut state, "the_cave");
+        let op = Op::Set {
+            path: "player.current_location".to_string(),
+            value: json!("洞穴"),
+        };
+        let err = apply_op(&mut state, op, "gm", false).unwrap_err();
+        assert!(matches!(err, OpError::ModuleManaged(_)));
+
+        // 没有 module_id 时 gm 可以写
+        let mut state2 = make_state();
+        let op2 = Op::Set {
+            path: "player.current_location".to_string(),
+            value: json!("城镇"),
+        };
+        let outcome = apply_op(&mut state2, op2, "gm", false).unwrap();
+        assert_eq!(outcome.kind, ApplyKind::Applied);
+    }
+
+    // ── 闸门 d: 权限模式 ────────────────────────────────────────
+
+    #[test]
+    fn test_permission_default_pushes_pending() {
+        // default 模式下,未授权字段 → pending_writes,不直接生效
+        let mut state = make_state();
+        set_permission_mode(&mut state, "default");
+
+        // player.name 不在 default 白名单 → pending
+        let op = Op::Set {
+            path: "player.name".to_string(),
+            value: json!("Bob"),
+        };
+        let outcome = apply_op(&mut state, op, "gm", false).unwrap();
+        assert_eq!(outcome.kind, ApplyKind::Pending);
+        // 路径未生效
+        assert_eq!(state.get_path("player.name"), Some(&json!("")));
+        assert_eq!(pending_writes_len(&state), 1);
+    }
+
+    #[test]
+    fn test_permission_full_access_passes() {
+        // full_access 模式 → 直接生效
+        let mut state = make_state();
+        set_permission_mode(&mut state, "full_access");
+        let op = Op::Set {
+            path: "player.name".to_string(),
+            value: json!("Carol"),
+        };
+        let outcome = apply_op(&mut state, op, "gm", false).unwrap();
+        assert_eq!(outcome.kind, ApplyKind::Applied);
+        assert_eq!(state.get_path("player.name"), Some(&json!("Carol")));
+        assert_eq!(pending_writes_len(&state), 0);
+    }
+
+    // ── audit_log / pending_writes 容量 ─────────────────────────
+
+    #[test]
+    fn test_audit_log_capped_200() {
+        // 写 250 次只保留最新 200
+        let mut state = make_state();
+        for i in 0..250 {
+            let op = Op::Set {
+                path: format!("memory.facts"),
+                value: json!(format!("fact_{i}")),
+            };
+            // user source + force=true 保证全部通过闸门
+            let outcome = apply_op(&mut state, op, "user", true).unwrap();
+            assert_eq!(outcome.kind, ApplyKind::Applied);
+        }
+        assert_eq!(audit_log_len(&state), 200);
+    }
+
+    #[test]
+    fn test_pending_writes_capped_20() {
+        // 30 次 pending 只保留最新 20
+        let mut state = make_state();
+        set_permission_mode(&mut state, "default");
+        for i in 0..30 {
+            let op = Op::Set {
+                path: "player.name".to_string(),
+                value: json!(format!("name_{i}")),
+            };
+            let outcome = apply_op(&mut state, op, "gm", false).unwrap();
+            assert_eq!(outcome.kind, ApplyKind::Pending);
+        }
+        assert_eq!(pending_writes_len(&state), 20);
     }
 }

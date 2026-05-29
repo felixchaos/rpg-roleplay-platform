@@ -64,6 +64,16 @@ impl StateStore {
     ///
     /// 失败(OpError)不发事件;Pending / Rejected 也不发 `Updated`,
     /// 但会发 [`StateEvent::PendingAdded`] 让 UI 即时看见排队中的写入。
+    #[tracing::instrument(
+        skip(self, op),
+        fields(
+            user_id = %user_id,
+            op_type = ?std::mem::discriminant(&op),
+            path = %op.path(),
+            source = %source,
+            force = force,
+        )
+    )]
     pub fn apply_op_for_user(
         &self,
         user_id: &str,
@@ -151,10 +161,17 @@ impl StateStore {
     ///
     /// 异步签名留口:未来需要从持久层(rpg-db)惰性 load 时,在此处 await。
     /// 当前实现纯内存,不会阻塞。
+    ///
+    /// 并发安全:`DashMap::entry(...).or_insert_with(...)` 在 not-found 路径下
+    /// 是原子 upsert,内部 `or_insert_with` 闭包对单个 user_id 只会被求值一次,
+    /// 即使 N 个 task 同时撞进来,也只会创建一份 GameState。
+    #[tracing::instrument(skip(self), fields(user_id = %user_id))]
     pub async fn get_or_create(&self, user_id: &str) -> SharedState {
+        // fast path:已存在直接返回(避免拿 entry 的写锁)
         if let Some(existing) = self.inner.get(user_id) {
             return Arc::clone(existing.value());
         }
+        // slow path:dashmap entry API 保证 or_insert_with 只对一个 task 求值
         let entry = self
             .inner
             .entry(user_id.to_string())
@@ -189,5 +206,67 @@ impl StateStore {
     /// 当前在线 user_id 快照(用于 admin / metrics)。
     pub fn user_ids(&self) -> Vec<String> {
         self.inner.iter().map(|r| r.key().clone()).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn test_get_or_create_concurrent() {
+        // 50 个 task 同时调用 same user_id,确保只创建 1 个 GameState。
+        // dashmap 的 entry API 在 get-not-found 时是原子 upsert,
+        // 内部 or_insert_with 只对单个 task 求值,其余拿到现成的 Arc。
+        let store = Arc::new(StateStore::new());
+        let user_id = "race_user";
+        let mut handles = Vec::with_capacity(50);
+        for _ in 0..50 {
+            let store = Arc::clone(&store);
+            handles.push(tokio::spawn(async move {
+                store.get_or_create(user_id).await
+            }));
+        }
+        let mut shares: Vec<SharedState> = Vec::with_capacity(50);
+        for h in handles {
+            shares.push(h.await.unwrap());
+        }
+        // 所有 task 必须拿到同一个 Arc 实例(指针相同)
+        let first = Arc::clone(&shares[0]);
+        for s in &shares[1..] {
+            assert!(
+                Arc::ptr_eq(&first, s),
+                "get_or_create 在并发下创建了多个 GameState"
+            );
+        }
+        // store 里只有 1 条记录
+        assert_eq!(store.len(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn test_apply_op_for_user_concurrent_single_state() {
+        // 同时多 task 走 apply_op_for_user,也只创建一份 state。
+        let store = Arc::new(StateStore::new());
+        let user_id = "writer_user";
+        let mut handles = Vec::with_capacity(50);
+        for i in 0..50 {
+            let store = Arc::clone(&store);
+            handles.push(tokio::spawn(async move {
+                let op = Op::Set {
+                    path: "memory.facts".to_string(),
+                    value: serde_json::json!(format!("fact_{i}")),
+                };
+                store.apply_op_for_user(user_id, op, "user", true)
+            }));
+        }
+        for h in handles {
+            let _ = h.await.unwrap();
+        }
+        assert_eq!(store.len(), 1);
+        let shared = store.get(user_id).unwrap();
+        let g = shared.read();
+        // 50 次写入都被 apply,version 至少 50
+        assert!(g.version >= 50, "version={} expected >=50", g.version);
     }
 }

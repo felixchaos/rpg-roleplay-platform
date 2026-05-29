@@ -179,16 +179,82 @@ fn extract_set_directive(text: &str) -> Option<String> {
 
 static SEGMENT_SPLIT_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[；;\n]+").expect("segment split regex"));
-static COMMA_SPLIT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"[，,]\s*(?=[^，,。！？；;\n]{1,32}(?:=|：|:))")
-        .expect("comma split regex")
-});
+
+/// 在逗号/中文逗号处切段,但只在"逗号后 32 字符内存在 `=` / `:` / `：` 并且
+/// 沿途没遇到段终止符(`，` `,` `。` `！` `？` `；` `;` 换行)"时才切。
+///
+/// 等价于 Python 侧 `[，,]\s*(?=[^，,。！？；;\n]{1,32}(?:=|：|:))`,但 Rust
+/// 标准 regex 不支持 lookahead — 改手写状态机。无外部依赖,O(n)。
+fn comma_split_assignment(segment: &str) -> Vec<String> {
+    let bytes_chars: Vec<(usize, char)> = segment.char_indices().collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut start = 0usize; // 当前 piece 的 byte 起点
+    let len = bytes_chars.len();
+    let mut i = 0usize;
+    while i < len {
+        let (byte_pos, ch) = bytes_chars[i];
+        if ch == ',' || ch == '，' {
+            // 检查后 32 个 char 内是否在不遇到段终止符的情况下出现 `=`/`:`/`：`
+            let mut should_split = false;
+            let mut scanned = 0usize;
+            let mut j = i + 1;
+            // 跳过空白(对应 Python 的 `\s*`)
+            while j < len {
+                let (_, c) = bytes_chars[j];
+                if c.is_whitespace() {
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            while j < len && scanned < 32 {
+                let (_, c) = bytes_chars[j];
+                if matches!(
+                    c,
+                    '，' | ',' | '。' | '！' | '？' | '；' | ';' | '\n'
+                ) {
+                    break;
+                }
+                if c == '=' || c == ':' || c == '：' {
+                    should_split = true;
+                    break;
+                }
+                scanned += 1;
+                j += 1;
+            }
+            if should_split {
+                let piece = &segment[start..byte_pos];
+                out.push(piece.to_string());
+                // 跳过逗号本身,以及后续空白(同 `\s*`),供下一段使用
+                let mut next = i + 1;
+                while next < len {
+                    let (_, c) = bytes_chars[next];
+                    if c.is_whitespace() {
+                        next += 1;
+                    } else {
+                        break;
+                    }
+                }
+                start = if next < len {
+                    bytes_chars[next].0
+                } else {
+                    segment.len()
+                };
+                i = next;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out.push(segment[start..].to_string());
+    out
+}
 
 fn extract_set_assignments(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     for segment in SEGMENT_SPLIT_RE.split(text) {
-        for raw in COMMA_SPLIT_RE.split(segment) {
-            let item = clean_item(raw);
+        for raw in comma_split_assignment(segment) {
+            let item = clean_item(&raw);
             if item.is_empty() {
                 continue;
             }
@@ -563,4 +629,58 @@ pub fn parse_assignment(text: &str) -> (String, String) {
         }
     }
     (String::new(), cleaned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_comma_split_keeps_in_value() {
+        // 关键场景:"x=1,y=2,3,4" → ["x=1", "y=2,3,4"]
+        // 第一个 `,` 后面 32 字符内有 `=`(y=2),所以切;
+        // 第二个 `,` 后面 32 字符内没有 `=`/`:`/`：`,所以不切,值原样保留。
+        let segs = comma_split_assignment("x=1,y=2,3,4");
+        assert_eq!(segs, vec!["x=1".to_string(), "y=2,3,4".to_string()]);
+    }
+
+    #[test]
+    fn test_comma_split_chinese_comma() {
+        // 中文逗号同样工作
+        let segs = comma_split_assignment("a=1,b:2,c=3");
+        assert_eq!(
+            segs,
+            vec!["a=1".to_string(), "b:2".to_string(), "c=3".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_comma_split_no_assignment_no_split() {
+        // 整段没有任何 = / : / : 就不切
+        let segs = comma_split_assignment("一句话,无赋值,继续");
+        assert_eq!(segs, vec!["一句话,无赋值,继续".to_string()]);
+    }
+
+    #[test]
+    fn test_comma_split_terminator_stops_lookahead() {
+        // 逗号后第一个非空白就是终止符 → 不切
+        let segs = comma_split_assignment("x=1,。后面 y=2");
+        // 第一个逗号后立刻是 `。`(段终止符),不切
+        assert_eq!(segs, vec!["x=1,。后面 y=2".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_set_assignments_via_state_machine() {
+        // 端到端:extract_set_assignments 走的就是新状态机;
+        // 中文别名 `姓名` → `player.name` 由 clean_path 处理。
+        let out = extract_set_assignments("姓名=Alice, age=18, hobby=吃 喝 玩");
+        assert_eq!(
+            out,
+            vec![
+                "player.name=Alice".to_string(),
+                "age=18".to_string(),
+                "hobby=吃 喝 玩".to_string(),
+            ]
+        );
+    }
 }
