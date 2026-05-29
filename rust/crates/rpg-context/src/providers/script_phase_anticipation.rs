@@ -13,6 +13,68 @@ use sqlx::Row;
 pub const MAX_LOOKAHEAD_PHASES: usize = 2;
 pub const PER_PHASE_BUDGET: usize = 400;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── Wave 9-A: render_lookahead 单测 ──────────────────────────────
+
+    #[test]
+    fn render_lookahead_empty_phases_returns_header_only() {
+        let text = render_lookahead(&[], "当前阶段");
+        assert!(text.contains("仅供参考"), "应含参考免责声明: {text}");
+        assert!(text.contains("当前所在"), "应含当前所在: {text}");
+        assert!(!text.contains("剧本下一段"), "无 phase 时不应有段落标题: {text}");
+    }
+
+    #[test]
+    fn render_lookahead_single_phase_shows_label_and_chapter_range() {
+        let phases = vec![json!({
+            "phase_label": "序章:黑暗降临",
+            "chapter_min": 1,
+            "chapter_max": 10,
+            "summary": "世界开始崩裂",
+            "key_events": [],
+            "key_locations": [],
+            "story_time_label_start": "初春",
+            "story_time_label_end": "晚秋"
+        })];
+        let text = render_lookahead(&phases, "");
+        assert!(text.contains("序章:黑暗降临"), "应含 phase 标签: {text}");
+        assert!(text.contains("1"), "应含 chapter_min: {text}");
+        assert!(text.contains("10"), "应含 chapter_max: {text}");
+        assert!(text.contains("世界开始崩裂"), "应含 summary: {text}");
+        assert!(text.contains("初春"), "应含时间标签: {text}");
+    }
+
+    #[test]
+    fn render_lookahead_per_phase_budget_truncates_long_summary() {
+        // PER_PHASE_BUDGET = 400;生成超过 400 字的 summary 应截断
+        let long_summary: String = "深".repeat(500);
+        let phases = vec![json!({
+            "phase_label": "长章",
+            "chapter_min": 1,
+            "chapter_max": 5,
+            "summary": long_summary,
+            "key_events": [],
+            "key_locations": [],
+            "story_time_label_start": "",
+            "story_time_label_end": ""
+        })];
+        let text = render_lookahead(&phases, "");
+        // 单个 phase 块不超过 PER_PHASE_BUDGET 字符
+        // (整体 text 包含 header,只看 phase 块是否含截断符)
+        // 块内 '深' 字数 <= 400 - 各种前缀字符
+        let deep_count = text.chars().filter(|c| *c == '深').count();
+        assert!(
+            deep_count <= PER_PHASE_BUDGET,
+            "超长 summary 应被截断, '深' 出现 {} 次 > budget {}", deep_count, PER_PHASE_BUDGET
+        );
+        assert!(text.contains("..."), "截断时应有省略号: {text}");
+    }
+}
+
 pub struct ScriptPhaseAnticipationProvider;
 
 #[async_trait]

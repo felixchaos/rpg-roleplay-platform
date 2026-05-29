@@ -832,4 +832,71 @@ mod tests {
         assert!(text.contains("序章"), "应含标题: {}", text);
         assert!(text.contains("进入村庄"), "应含事件: {}", text);
     }
+
+    // ── Wave 9-A 补单测:bm25_tokens / keyword_freq / format_chapter_facts ────
+
+    #[test]
+    fn bm25_tokens_mixed_cjk_and_ascii() {
+        // 空格分隔的英文词 ≥2 字应进 token 集
+        let tokens = bm25_tokens("investigate 调查 village");
+        // "investigate" 和 "village" 是 ASCII 词,长度 ≥ 2
+        assert!(
+            tokens.iter().any(|t| t == "investigate"),
+            "长 ASCII 词应保留: {:?}", tokens
+        );
+        assert!(
+            tokens.iter().any(|t| t == "village"),
+            "短 ASCII 词应保留: {:?}", tokens
+        );
+        // CJK bigram 也应有
+        assert!(
+            tokens.iter().any(|t| t == "调查"),
+            "CJK bigram 应保留: {:?}", tokens
+        );
+    }
+
+    #[test]
+    fn bm25_tokens_single_char_excluded() {
+        // 单字中文既不满足 ≥2 字,也不形成 bigram(窗口需两字)
+        // 单字母 ASCII 也过滤
+        let tokens = bm25_tokens("a 的 b");
+        assert!(tokens.is_empty(), "单字/单字母不应进 token: {:?}", tokens);
+    }
+
+    #[test]
+    fn keyword_freq_empty_terms_returns_empty() {
+        let hits = keyword_freq("有很多文字内容", &[]);
+        assert!(hits.is_empty(), "空词表应返回空 Vec");
+    }
+
+    #[test]
+    fn keyword_freq_empty_text_returns_empty() {
+        let hits = keyword_freq("", &["怪物", "宝剑"]);
+        assert!(hits.is_empty(), "空文本无命中应返回空 Vec");
+    }
+
+    #[test]
+    fn format_chapter_facts_empty_returns_empty_string() {
+        assert_eq!(format_chapter_facts(&[]), "");
+    }
+
+    #[test]
+    fn format_chapter_facts_truncates_long_summary() {
+        // summary 超过 180 字时应截断
+        let long_summary: String = "字".repeat(300);
+        let rows = vec![ChapterFactRow {
+            chapter: 2,
+            title: "中间章".into(),
+            story_time_label: "夏末".into(),
+            summary: long_summary,
+            events_json: "[]".into(),
+        }];
+        let text = format_chapter_facts(&rows);
+        // 截到 180 字,所以 '字' 最多出现 180 次
+        let char_count = text.chars().filter(|c| *c == '字').count();
+        assert!(
+            char_count <= 180,
+            "摘要应截到 180 字,实际 '字' 出现 {} 次: {}", char_count, &text[..text.len().min(60)]
+        );
+    }
 }

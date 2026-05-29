@@ -17,6 +17,73 @@ fn module_id_of(state_data: &GameStateData) -> Option<String> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{Demand, Manifest};
+    use rpg_schemas::GameStateData;
+
+    fn module_manifest(providers: &[&str]) -> Manifest {
+        Manifest {
+            id: "test_mod".into(),
+            kind: "module_adventure".into(),
+            ruleset: "5e_compatible".into(),
+            context_providers: providers.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    // ── Wave 9-A: Module providers applies() 单测 ───────────────────
+
+    #[test]
+    fn module_scene_applies_when_module_id_set() {
+        let mut state = GameStateData::default();
+        state.scene.module_id = "keep_001".to_string();
+        let manifest = module_manifest(&["module_scene"]);
+        let demand = Demand::default();
+        assert!(
+            ModuleSceneProvider.applies(&state, &manifest, &demand),
+            "module_id 存在时 ModuleSceneProvider 应 applies=true"
+        );
+    }
+
+    #[test]
+    fn module_scene_does_not_apply_without_module_id() {
+        let state = GameStateData::default(); // module_id = ""
+        let manifest = module_manifest(&["module_scene"]);
+        let demand = Demand::default();
+        assert!(
+            !ModuleSceneProvider.applies(&state, &manifest, &demand),
+            "无 module_id 时 ModuleSceneProvider 应 applies=false"
+        );
+    }
+
+    #[test]
+    fn module_encounter_applies_when_module_id_set() {
+        let mut state = GameStateData::default();
+        state.scene.module_id = "dungeon_boss".to_string();
+        let manifest = module_manifest(&["module_encounter"]);
+        let demand = Demand::default();
+        assert!(
+            ModuleEncounterProvider.applies(&state, &manifest, &demand),
+            "module_id 存在时 ModuleEncounterProvider 应 applies=true"
+        );
+    }
+
+    #[test]
+    fn module_worldbook_does_not_apply_without_provider_in_manifest() {
+        let mut state = GameStateData::default();
+        state.scene.module_id = "test_mod".to_string();
+        // module_worldbook 不在 context_providers 里
+        let manifest = module_manifest(&["module_scene"]);
+        let demand = Demand::default();
+        assert!(
+            !ModuleWorldbookProvider.applies(&state, &manifest, &demand),
+            "不在 context_providers 中时应 applies=false"
+        );
+    }
+}
+
 fn load_bundle(services: &ProviderServices, module_id: &str) -> Option<Value> {
     let loader = services.module_loader.as_ref()?;
     loader(module_id).ok()

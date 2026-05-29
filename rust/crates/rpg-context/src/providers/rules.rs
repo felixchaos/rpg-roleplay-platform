@@ -18,6 +18,71 @@ fn has_ruleset(state_data: &GameStateData, manifest: &Manifest) -> bool {
     !state_data.ruleset.id.is_empty()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{Demand, Manifest};
+    use rpg_schemas::GameStateData;
+
+    fn manifest_with_rules() -> Manifest {
+        Manifest {
+            id: "test".into(),
+            kind: "module_adventure".into(),
+            ruleset: "5e_compatible".into(),
+            context_providers: vec!["rules".into()],
+            ..Default::default()
+        }
+    }
+
+    fn manifest_no_rules() -> Manifest {
+        Manifest {
+            id: "test".into(),
+            kind: "freeform".into(),
+            ruleset: "none".into(),
+            context_providers: vec!["rules".into()],
+            ..Default::default()
+        }
+    }
+
+    // ── Wave 9-A: RulesProvider applies() 单测 ──────────────────────
+
+    #[test]
+    fn rules_provider_applies_when_manifest_has_ruleset() {
+        let state = GameStateData::default();
+        let manifest = manifest_with_rules();
+        let demand = Demand::default();
+        assert!(
+            RulesProvider.applies(&state, &manifest, &demand),
+            "manifest.ruleset=5e_compatible 应返回 true"
+        );
+    }
+
+    #[test]
+    fn rules_provider_does_not_apply_when_ruleset_is_none_and_state_empty() {
+        let mut state = GameStateData::default();
+        // 清除默认 ruleset.id ("dnd5e")
+        state.ruleset.id = String::new();
+        let manifest = manifest_no_rules();
+        let demand = Demand::default();
+        assert!(
+            !RulesProvider.applies(&state, &manifest, &demand),
+            "ruleset=none 且 state.ruleset.id 为空时应返回 false"
+        );
+    }
+
+    #[test]
+    fn rules_provider_applies_when_state_ruleset_id_is_set() {
+        // manifest.ruleset="none" 但 state.ruleset.id 非空 → 仍 true
+        let state = GameStateData::default(); // default ruleset.id = "dnd5e"
+        let manifest = manifest_no_rules();
+        let demand = Demand::default();
+        assert!(
+            RulesProvider.applies(&state, &manifest, &demand),
+            "state.ruleset.id 非空时 applies 应为 true"
+        );
+    }
+}
+
 #[async_trait]
 impl ContextProvider for RulesProvider {
     fn id(&self) -> &'static str {

@@ -195,6 +195,49 @@ fn normalize_manifest(v: Value) -> Manifest {
     serde_json::from_value::<Manifest>(v).unwrap_or_default()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rpg_schemas::GameStateData;
+    use serde_json::json;
+
+    // ── Wave 9-A: resolve_content_pack 单测 ─────────────────────────
+
+    #[test]
+    fn resolve_content_pack_returns_novel_manifest_when_script_id_given() {
+        let state = GameStateData::default();
+        let manifest = resolve_content_pack(&state, Some(42));
+        assert_eq!(manifest.kind, "novel_adaptation", "script_id 存在应走 novel_adaptation");
+        assert!(manifest.id.contains("42"), "manifest id 应包含 script_id: {}", manifest.id);
+    }
+
+    #[test]
+    fn resolve_content_pack_returns_freeform_when_nothing_set() {
+        let state = GameStateData::default();
+        // 无 script_id、无历史、无模组
+        let manifest = resolve_content_pack(&state, None);
+        assert_eq!(manifest.kind, "freeform", "空 state 无 script_id 应走 freeform");
+    }
+
+    #[test]
+    fn resolve_content_pack_prefers_module_when_module_id_set() {
+        let mut state = GameStateData::default();
+        state.scene.module_id = "dungeon_001".to_string();
+        let manifest = resolve_content_pack(&state, None);
+        assert_eq!(manifest.kind, "module_adventure", "module_id 存在应走 module_adventure");
+        assert_eq!(manifest.id, "dungeon_001", "manifest id 应等于 module_id");
+    }
+
+    #[test]
+    fn resolve_content_pack_legacy_save_with_history_gets_novel_manifest() {
+        let mut state = GameStateData::default();
+        state.history.push(json!({"role":"user","content":"开始"}));
+        let manifest = resolve_content_pack(&state, None);
+        assert_eq!(manifest.kind, "novel_adaptation", "有历史的旧存档应走 novel_adaptation");
+        assert_eq!(manifest.id, "__legacy_save__");
+    }
+}
+
 /// 按 manifest.context_providers 顺序运行每个 provider。
 ///
 /// 对应 Python `run_providers(state, manifest, demand, services)`。

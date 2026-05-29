@@ -241,4 +241,41 @@ mod tests {
     fn cache_ttl_constant_is_60_seconds() {
         assert_eq!(CHARS_CACHE_TTL, Duration::from_secs(60));
     }
+
+    // ── Wave 9-A 补单测 ─────────────────────────────────────────────
+
+    #[test]
+    fn make_key_both_none_gives_sentinel_values() {
+        // 两个 id 都没传 → (-1, -1)
+        let key = make_key(None, None);
+        assert_eq!(key, (-1i64, -1i64));
+    }
+
+    #[test]
+    fn make_key_script_id_and_book_id_differ_from_each_other() {
+        // (Some(5), None) ≠ (None, Some(5)):不同轴不能混淆
+        let k1 = make_key(Some(5), None);
+        let k2 = make_key(None, Some(5));
+        assert_ne!(k1, k2, "script_id=5 和 book_id=5 的 key 不能相同");
+    }
+
+    #[tokio::test]
+    async fn load_chars_both_ids_none_does_not_write_cache() {
+        _clear_cache_for_test();
+        // 两个 id 都 None,即使有 pool 也不应走 DB 或写 cache
+        let _v = load_chars_cached(None, None, None).await;
+        assert_eq!(_cache_len_for_test(), 0, "不应写 cache");
+    }
+
+    #[tokio::test]
+    async fn load_chars_db_error_returns_empty_without_caching() {
+        // pool 传 None 代表无法连接 DB,应返回空对象,且不写 cache。
+        _clear_cache_for_test();
+        let v = load_chars_cached(None, Some(99), Some(77)).await;
+        assert!(
+            v.as_object().map(|m| m.is_empty()).unwrap_or(false),
+            "DB 不可达应返回空对象"
+        );
+        assert_eq!(_cache_len_for_test(), 0, "DB 失败不应写 cache");
+    }
 }

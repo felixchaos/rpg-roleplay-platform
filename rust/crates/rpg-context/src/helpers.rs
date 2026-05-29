@@ -76,3 +76,58 @@ pub fn permission_label(mode: &str) -> &'static str {
         _ => "完全访问权限",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rpg_schemas::GameStateData;
+    use serde_json::json;
+
+    // ── Wave 9-A: pending_jump_warning_text 单测 ─────────────────────
+
+    #[test]
+    fn pending_jump_no_pending_returns_empty() {
+        // pending_jump = None → 返回空字符串
+        let state = GameStateData::default();
+        let text = pending_jump_warning_text(&state);
+        assert_eq!(text, "", "无 pending_jump 应返回空字符串");
+    }
+
+    #[test]
+    fn pending_jump_awaiting_gm_confirmation_emits_warning_lines() {
+        let mut state = GameStateData::default();
+        state.world.timeline.pending_jump = Some(json!({
+            "status": "awaiting_gm_confirmation",
+            "from": "第5章",
+            "to": "第10章"
+        }));
+        let text = pending_jump_warning_text(&state);
+        assert!(text.contains("第5章"), "应含 from: {text}");
+        assert!(text.contains("第10章"), "应含 to: {text}");
+        // awaiting → 禁止措辞行
+        assert!(text.contains("禁止"), "awaiting 状态应含禁止警告: {text}");
+    }
+
+    #[test]
+    fn pending_jump_non_awaiting_status_emits_confirm_flow() {
+        let mut state = GameStateData::default();
+        state.world.timeline.pending_jump = Some(json!({
+            "status": "open",
+            "from": "春",
+            "to": "冬"
+        }));
+        let text = pending_jump_warning_text(&state);
+        // non-awaiting 路径:要求先处理跳跃事务
+        assert!(text.contains("必须先处理时间跳跃"), "非 awaiting 应要求先处理: {text}");
+    }
+
+    #[test]
+    fn normalize_permission_mode_maps_variants() {
+        assert_eq!(normalize_permission_mode("只读"), "read_only");
+        assert_eq!(normalize_permission_mode("full"), "full_access");
+        assert_eq!(normalize_permission_mode("auto"), "auto_review");
+        assert_eq!(normalize_permission_mode("default"), "default");
+        // 未知 → full_access
+        assert_eq!(normalize_permission_mode("wizard"), "full_access");
+    }
+}

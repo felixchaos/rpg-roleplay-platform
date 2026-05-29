@@ -90,3 +90,65 @@ fn value_to_text(v: &Value) -> String {
         other => other.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::ProviderServices;
+    use crate::types::{Demand, Manifest};
+    use rpg_schemas::{GameStateData, Worldline};
+    use serde_json::json;
+
+    // ── Wave 9-A: WorldlineProvider collect() 单测 ──────────────────
+
+    #[tokio::test]
+    async fn worldline_provider_always_applies() {
+        let state = GameStateData::default();
+        let manifest = Manifest::default();
+        let demand = Demand::default();
+        // 默认 applies() 实现检查 manifest.context_providers
+        // 这里只测 collect() 始终返回 applied=true
+        let services = ProviderServices::default();
+        let contrib = WorldlineProvider
+            .collect(&state, &manifest, &demand, &services)
+            .await
+            .expect("collect 不应 Err");
+        assert!(contrib.applied, "WorldlineProvider collect 应 applied=true");
+    }
+
+    #[tokio::test]
+    async fn worldline_provider_injects_user_variables() {
+        let mut state = GameStateData::default();
+        let mut vars = serde_json::Map::new();
+        vars.insert("命运之轮".to_string(), json!("破碎"));
+        state.worldline = Worldline {
+            user_variables: vars,
+            ..Default::default()
+        };
+        let manifest = Manifest::default();
+        let demand = Demand::default();
+        let services = ProviderServices::default();
+        let contrib = WorldlineProvider
+            .collect(&state, &manifest, &demand, &services)
+            .await
+            .expect("collect 不应 Err");
+        let text = &contrib.layers[0].content;
+        assert!(text.contains("命运之轮"), "变量名应注入 layer: {text}");
+        assert!(text.contains("破碎"), "变量值应注入 layer: {text}");
+    }
+
+    #[tokio::test]
+    async fn worldline_provider_injects_location() {
+        let mut state = GameStateData::default();
+        state.player.current_location = "星落谷".to_string();
+        let manifest = Manifest::default();
+        let demand = Demand::default();
+        let services = ProviderServices::default();
+        let contrib = WorldlineProvider
+            .collect(&state, &manifest, &demand, &services)
+            .await
+            .expect("collect 不应 Err");
+        let text = &contrib.layers[0].content;
+        assert!(text.contains("星落谷"), "位置应注入 layer: {text}");
+    }
+}

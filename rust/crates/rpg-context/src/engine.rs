@@ -427,3 +427,74 @@ pub fn recent_text(history: &[Value]) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rpg_schemas::GameStateData;
+    use serde_json::json;
+
+    // ── Wave 9-A: state_short_summary 单测 ──────────────────────────
+
+    #[test]
+    fn state_short_summary_empty_state_returns_placeholder() {
+        // 所有字段都是默认空 → 仍返回可读的占位串或含【玩家档案】
+        let state = GameStateData::default();
+        let summary = state_short_summary(&state);
+        // 默认 state 的 player.name 等都空,但函数会输出【玩家档案】标题
+        assert!(!summary.is_empty(), "不应返回空字符串");
+    }
+
+    #[test]
+    fn state_short_summary_shows_player_fields() {
+        let mut state = GameStateData::default();
+        state.player.name = "薇瑟".to_string();
+        state.player.role = "女巫".to_string();
+        state.player.current_location = "幽暗城".to_string();
+        let summary = state_short_summary(&state);
+        assert!(summary.contains("薇瑟"), "应含玩家名: {summary}");
+        assert!(summary.contains("女巫"), "应含角色定位: {summary}");
+        assert!(summary.contains("幽暗城"), "应含位置: {summary}");
+    }
+
+    #[test]
+    fn state_short_summary_shows_encounter_when_active() {
+        let mut state = GameStateData::default();
+        state.encounter.active = true;
+        state.encounter.extra.insert(
+            "name".to_string(),
+            json!("巨蜘蛛遭遇"),
+        );
+        let summary = state_short_summary(&state);
+        assert!(summary.contains("遭遇"), "有遭遇时应含遭遇段: {summary}");
+        assert!(summary.contains("巨蜘蛛遭遇"), "应含遭遇名: {summary}");
+    }
+
+    #[test]
+    fn state_short_summary_shows_relationships() {
+        let mut state = GameStateData::default();
+        state.relationships.insert("寒蝉".to_string(), json!("盟友"));
+        let summary = state_short_summary(&state);
+        assert!(summary.contains("关系"), "有关系时应含【关系】段: {summary}");
+        assert!(summary.contains("寒蝉"), "应含关系人名: {summary}");
+    }
+
+    // ── format_history / recent_text ────────────────────────────────
+
+    #[test]
+    fn format_history_empty_returns_placeholder() {
+        let text = format_history(&[]);
+        assert!(text.contains("暂无"), "空历史应有占位提示: {text}");
+    }
+
+    #[test]
+    fn format_history_assigns_role_prefix() {
+        let history = vec![
+            json!({"role": "user", "content": "我去北方"}),
+            json!({"role": "assistant", "content": "好的,已出发"}),
+        ];
+        let text = format_history(&history);
+        assert!(text.contains("玩家：我去北方"), "user 应标为玩家: {text}");
+        assert!(text.contains("GM：好的"), "assistant 应标为 GM: {text}");
+    }
+}
