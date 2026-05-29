@@ -525,22 +525,36 @@ impl LlmRouter {
             }
         }
 
-        // 3. 构造 catalog:若 DB 里没有任何 api,回落到默认
+        // 3. 从 app_config 读取持久化的 selected_model(与 Python _load_model_catalog_from_db 对齐)
+        let persisted_selected: Option<Selected> = {
+            let row: Option<(serde_json::Value,)> = sqlx::query_as(
+                "SELECT value FROM app_config WHERE key = 'selected_model'",
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+
+            row.and_then(|(v,)| serde_json::from_value::<Selected>(v).ok())
+        };
+
+        // 4. 构造 catalog:若 DB 里没有任何 api,回落到默认
         let catalog = if apis.is_empty() {
             ModelCatalog::default()
         } else {
-            let selected = apis
-                .iter()
-                .find(|a| a.enabled)
-                .and_then(|a| a.models.iter().find(|m| m.enabled).map(|m| (a, m)))
-                .map(|(a, m)| Selected {
-                    api_id: a.id.clone(),
-                    model_id: m.id.clone(),
-                })
-                .unwrap_or_else(|| Selected {
-                    api_id: apis[0].id.clone(),
-                    model_id: apis[0].models.first().map(|m| m.id.clone()).unwrap_or_default(),
-                });
+            // 优先使用持久化的 selected_model;若无则回落到第一个 enabled api+model
+            let selected = persisted_selected.unwrap_or_else(|| {
+                apis.iter()
+                    .find(|a| a.enabled)
+                    .and_then(|a| a.models.iter().find(|m| m.enabled).map(|m| (a, m)))
+                    .map(|(a, m)| Selected {
+                        api_id: a.id.clone(),
+                        model_id: m.id.clone(),
+                    })
+                    .unwrap_or_else(|| Selected {
+                        api_id: apis[0].id.clone(),
+                        model_id: apis[0].models.first().map(|m| m.id.clone()).unwrap_or_default(),
+                    })
+            });
             ModelCatalog {
                 schema_version: 1,
                 selected,

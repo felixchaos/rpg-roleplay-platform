@@ -1,6 +1,7 @@
 /* Game Console — main app shell: top bar, left rail, chat area with run-state, right panel. */
 
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { useState as useStateA, useEffect as useEffectA, useRef as useRefA, useMemo as useMemoA, useCallback as useCallbackA } from 'react';
 import { Icon } from './game-icons.jsx';
 import { RpgMarkdown } from './markdown-render.jsx';
@@ -506,7 +507,7 @@ function DeleteConfirmModal({ open, text, msgIndex, busy, onClose, onConfirm }) 
       </div>
     </div>
   );
-  return ReactDOM.createPortal(node, document.body);
+  return createPortal(node, document.body);
 }
 
 function ForkConfirmModal({ open, text, onClose, onConfirm }) {
@@ -547,7 +548,7 @@ function ForkConfirmModal({ open, text, onClose, onConfirm }) {
       </div>
     </div>
   );
-  return ReactDOM.createPortal(node, document.body);
+  return createPortal(node, document.body);
 }
 
 function stripStateOpsForDisplay(text) {
@@ -1002,7 +1003,7 @@ function GameSettingsModal({ open, onClose, saveTitle, permission }) {
       </div>
     </div>
   );
-  return ReactDOM.createPortal(node, document.body);
+  return createPortal(node, document.body);
 }
 
 function SettingRow({ title, desc, control }) {
@@ -1092,7 +1093,7 @@ function GameToastStack() {
       ))}
     </div>
   );
-  return ReactDOM.createPortal(node, document.body);
+  return createPortal(node, document.body);
 }
 
 // ---------------------- 历史回顾 / 搜索本档 抽屉 -------------------------
@@ -1151,7 +1152,7 @@ function HistoryDrawer({ open, history, onClose }) {
       </div>
     </div>
   );
-  return ReactDOM.createPortal(node, document.body);
+  return createPortal(node, document.body);
 }
 
 function SearchDrawer({ open, history, state, onClose }) {
@@ -1239,7 +1240,7 @@ function SearchDrawer({ open, history, state, onClose }) {
       </div>
     </div>
   );
-  return ReactDOM.createPortal(node, document.body);
+  return createPortal(node, document.body);
 }
 
 // ----------------------------- TOP BAR -----------------------------------

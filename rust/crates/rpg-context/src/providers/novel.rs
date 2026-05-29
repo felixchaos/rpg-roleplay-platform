@@ -236,14 +236,16 @@ impl ContextProvider for NovelCharactersProvider {
                 ));
             }
         };
-        let book_id = match services.book_id {
-            Some(b) => b,
-            None => {
-                return Ok(ContextContribution::skipped(self.id(), "no book_id"));
-            }
-        };
+        // Python 逻辑: script_id 优先,book_id 作为 fallback。
+        // 两者都没有时才 skip。
+        if services.script_id.is_none() && services.book_id.is_none() {
+            return Ok(ContextContribution::skipped(
+                self.id(),
+                "no script_id or book_id",
+            ));
+        }
 
-        let cards = match load_character_cards(pool, book_id).await {
+        let cards = match load_character_cards(pool, services.script_id, services.book_id).await {
             Ok(c) => c,
             Err(exc) => {
                 return Ok(ContextContribution::skipped(
@@ -311,7 +313,8 @@ impl ContextProvider for NovelCharactersProvider {
             debug: json!({
                 "cards_total": cards.len(),
                 "npc_picked": npc_cards.len(),
-                "book_id": book_id,
+                "script_id": services.script_id,
+                "book_id": services.book_id,
             }),
             tokens_estimate: tokens,
             applied: true,
@@ -319,18 +322,39 @@ impl ContextProvider for NovelCharactersProvider {
     }
 }
 
-/// 从 character_cards 表拉一本书的全部角色卡。
-async fn load_character_cards(pool: &sqlx::PgPool, book_id: i64) -> anyhow::Result<Vec<Value>> {
-    let rows = sqlx::query(
-        "select name, aliases, identity, appearance, personality, \
-                speech_style, current_status, secrets, token_budget, priority \
-         from character_cards \
-         where book_id = $1 \
-         order by priority desc",
-    )
-    .bind(book_id)
-    .fetch_all(pool)
-    .await?;
+/// 从 character_cards 表拉角色卡。
+/// Python 逻辑: script_id 优先 (`WHERE enabled = true AND script_id = $1`)，
+/// 没有 script_id 时 fallback 到 book_id (`WHERE book_id = $1`)。
+async fn load_character_cards(
+    pool: &sqlx::PgPool,
+    script_id: Option<i64>,
+    book_id: Option<i64>,
+) -> anyhow::Result<Vec<Value>> {
+    let rows = if let Some(sid) = script_id {
+        sqlx::query(
+            "select name, aliases, identity, appearance, personality, \
+                    speech_style, current_status, secrets, token_budget, priority \
+             from character_cards \
+             where enabled = true and script_id = $1 \
+             order by priority desc, id asc",
+        )
+        .bind(sid)
+        .fetch_all(pool)
+        .await?
+    } else if let Some(bid) = book_id {
+        sqlx::query(
+            "select name, aliases, identity, appearance, personality, \
+                    speech_style, current_status, secrets, token_budget, priority \
+             from character_cards \
+             where book_id = $1 \
+             order by priority desc, id asc",
+        )
+        .bind(bid)
+        .fetch_all(pool)
+        .await?
+    } else {
+        return Ok(Vec::new());
+    };
     Ok(rows
         .into_iter()
         .map(|row| {
@@ -517,12 +541,15 @@ impl ContextProvider for NovelWorldbookProvider {
             Some(p) => p,
             None => return Ok(ContextContribution::skipped(self.id(), "no db_pool injected")),
         };
-        let book_id = match services.book_id {
-            Some(b) => b,
-            None => return Ok(ContextContribution::skipped(self.id(), "no book_id")),
-        };
+        // Python 逻辑: script_id 优先,book_id 作为 fallback。
+        if services.script_id.is_none() && services.book_id.is_none() {
+            return Ok(ContextContribution::skipped(
+                self.id(),
+                "no script_id or book_id",
+            ));
+        }
 
-        let entries = match load_worldbook_entries(pool, book_id).await {
+        let entries = match load_worldbook_entries(pool, services.script_id, services.book_id).await {
             Ok(e) => e,
             Err(exc) => {
                 return Ok(ContextContribution::skipped(
@@ -564,7 +591,8 @@ impl ContextProvider for NovelWorldbookProvider {
             debug: json!({
                 "entries_total": entries.len(),
                 "entries_active": active.len(),
-                "book_id": book_id,
+                "script_id": services.script_id,
+                "book_id": services.book_id,
             }),
             tokens_estimate: tokens,
             applied: true,
@@ -572,16 +600,37 @@ impl ContextProvider for NovelWorldbookProvider {
     }
 }
 
-async fn load_worldbook_entries(pool: &sqlx::PgPool, book_id: i64) -> anyhow::Result<Vec<Value>> {
-    let rows = sqlx::query(
-        "select title, content, keys, regex_keys, priority, token_budget, enabled \
-         from worldbook_entries \
-         where book_id = $1 and enabled = true \
-         order by priority desc",
-    )
-    .bind(book_id)
-    .fetch_all(pool)
-    .await?;
+/// 从 worldbook_entries 表拉世界书条目。
+/// Python 逻辑: script_id 优先 (`WHERE enabled = true AND script_id = $1`)，
+/// 没有 script_id 时 fallback 到 book_id (`WHERE book_id = $1 AND enabled = true`)。
+async fn load_worldbook_entries(
+    pool: &sqlx::PgPool,
+    script_id: Option<i64>,
+    book_id: Option<i64>,
+) -> anyhow::Result<Vec<Value>> {
+    let rows = if let Some(sid) = script_id {
+        sqlx::query(
+            "select title, content, keys, regex_keys, priority, token_budget, enabled \
+             from worldbook_entries \
+             where enabled = true and script_id = $1 \
+             order by priority desc, id asc",
+        )
+        .bind(sid)
+        .fetch_all(pool)
+        .await?
+    } else if let Some(bid) = book_id {
+        sqlx::query(
+            "select title, content, keys, regex_keys, priority, token_budget, enabled \
+             from worldbook_entries \
+             where book_id = $1 and enabled = true \
+             order by priority desc, id asc",
+        )
+        .bind(bid)
+        .fetch_all(pool)
+        .await?
+    } else {
+        return Ok(Vec::new());
+    };
     Ok(rows
         .into_iter()
         .map(|row| {

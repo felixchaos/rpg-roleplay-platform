@@ -3,6 +3,7 @@
    依赖 platform-app.jsx 注入的全局: Icon / fmtBytes。 */
 
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { Icon } from '../game-icons.jsx';
 import { fmtBytes } from '../platform-app.jsx';
@@ -472,7 +473,7 @@ function TavernImportModal({ open, onClose, onConfirm }) {
       </div>
     </div>
   );
-  return ReactDOM.createPortal(node, document.body);
+  return createPortal(node, document.body);
 }
 
 function NpcCardsView() {
@@ -686,7 +687,7 @@ function CardEditModal({ card, isNew, kind, onClose, onSave }) {
       </div>
     </div>
   );
-  return ReactDOM.createPortal(node, document.body);
+  return createPortal(node, document.body);
 }
 
 Object.assign(window, {

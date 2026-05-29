@@ -433,6 +433,7 @@ pub fn apply_op(
                 from,
                 to: value_for_log,
                 reason: decision.reason.clone(),
+                risk: risk_label(&path).to_string(),
                 extra: Default::default(),
             };
             push_pending(state, pending);
@@ -498,6 +499,37 @@ fn push_audit(state: &mut GameState, entry: AuditEntry) {
 
 fn push_pending(state: &mut GameState, entry: PendingWrite) {
     crate::typed_path::push_pending(&mut state.data, entry);
+}
+
+/// 风险等级标签 — 对应 Python `state/labels.py::_risk_label`。
+/// 前端 ConfirmStrip 根据返回值 ("high"/"medium"/"low") 染色显示。
+fn risk_label(path: &str) -> &'static str {
+    const HIGH_EXACT: &[&str] = &[
+        "player.name",
+        "player.role",
+        "player.background",
+        "world.time",
+        "memory.main_quest",
+    ];
+    const HIGH_PREFIXES: &[&str] = &[
+        "world.timeline.",
+        "worldline.",
+        "memory.pinned",
+    ];
+    const MEDIUM_PREFIXES: &[&str] = &[
+        "relationships.",
+        "memory.facts",
+        "memory.abilities",
+        "memory.resources",
+    ];
+
+    if HIGH_EXACT.contains(&path) || HIGH_PREFIXES.iter().any(|p| path.starts_with(p)) {
+        return "high";
+    }
+    if MEDIUM_PREFIXES.iter().any(|p| path.starts_with(p)) {
+        return "medium";
+    }
+    "low"
 }
 
 /// Pending 写入 ID 生成器(进程内单调递增 + 启动时间戳前缀)。

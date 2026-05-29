@@ -445,6 +445,9 @@ pub struct PendingWrite {
     pub to: Value,
     #[serde(default)]
     pub reason: String,
+    /// 风险等级: "high" / "medium" / "low"。前端 ConfirmStrip 按此字段染色。
+    #[serde(default)]
+    pub risk: String,
     #[serde(flatten, default)]
     #[cfg_attr(feature = "ts-rs", ts(skip))]
     pub extra: Map<String, Value>,

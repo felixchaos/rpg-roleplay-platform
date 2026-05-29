@@ -365,7 +365,7 @@ pub fn state_turn(state: &GameState) -> u64 {
 /// 对应 Python `state.history_messages()`:返回 history 数组最近 MAX_HISTORY_TURNS*2 条,
 /// role=="user" 转 ChatMessage::user,其他转 ChatMessage::assistant。
 pub fn state_history_messages(state: &GameState) -> Vec<ChatMessage> {
-    const MAX_HISTORY_TURNS: usize = 20;
+    const MAX_HISTORY_TURNS: usize = 6;
     const MAX_MSGS: usize = MAX_HISTORY_TURNS * 2;
     let history = &state.data.history;
     let slice = if history.len() > MAX_MSGS {
@@ -398,6 +398,42 @@ pub fn state_short_summary(state: &GameState) -> String {
     let m = &state.data.memory;
     let permissions = &state.data.permissions;
     let worldline = &state.data.worldline;
+    let pp = &state.data.player_private;
+
+    // 角色卡详情段(appearance, personality, speech_style, aliases, identity_role_desc)
+    let mut card_lines: Vec<String> = Vec::new();
+    for key in &["appearance", "personality", "speech_style", "aliases", "identity_role_desc"] {
+        if let Some(val) = p.extra.get(*key) {
+            let text = match val {
+                serde_json::Value::String(s) if !s.is_empty() => s.clone(),
+                serde_json::Value::Array(arr) if !arr.is_empty() => {
+                    arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")
+                }
+                _ => continue,
+            };
+            let label = match *key {
+                "appearance" => "外貌",
+                "personality" => "性格",
+                "speech_style" => "说话风格",
+                "aliases" => "别名",
+                "identity_role_desc" => "身份描述",
+                _ => *key,
+            };
+            card_lines.push(format!("{}：{}", label, text));
+        }
+    }
+    let card_text = if card_lines.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", card_lines.join("\n"))
+    };
+
+    // 玩家本轮揭示(revealed_this_turn)
+    let revealed_text = pp.flags.get("revealed_this_turn")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("\n\n【玩家本轮揭示】\n{}", s))
+        .unwrap_or_default();
 
     // 关系段
     let rel_text = if state.data.relationships.is_empty() {
@@ -437,7 +473,7 @@ pub fn state_short_summary(state: &GameState) -> String {
     let ability_limit = 6usize;
     let resource_limit = 6usize;
     let pinned_limit = 6usize;
-    let (fact_limit, note_limit) = if m.mode == "deep" { (10, 8) } else { (5, 3) };
+    let (fact_limit, note_limit) = match m.mode.as_str() { "deep" => (10, 8), "normal" => (5, 3), _ => (0, 0) };
     for x in m.abilities.iter().take(ability_limit) {
         if let Some(s) = x.as_str() { memory_lines.push(format!("能力：{}", s)); }
     }
@@ -460,18 +496,13 @@ pub fn state_short_summary(state: &GameState) -> String {
     };
 
     // 权限模式标签
-    let perm_label = match permissions.mode.as_str() {
-        "full_access" => "完全开放",
-        "ask_before_write" => "写前询问",
-        "read_only" => "只读",
-        other => other,
-    };
+    let perm_label = rpg_state::permission_label(&permissions.mode);
 
     // 世界线变量段
     let variable_text = if worldline.user_variables.is_empty() {
         "  （暂无用户变量）".to_string()
     } else {
-        worldline.user_variables.iter().take(12).map(|(name, info)| {
+        worldline.user_variables.iter().filter(|(name, _)| name.as_str() != "story_intent").take(12).map(|(name, info)| {
             let val = info.get("value").and_then(|v| v.as_str()).unwrap_or("");
             format!("  · {}={}", name, val)
         }).collect::<Vec<_>>().join("\n")
@@ -490,15 +521,15 @@ pub fn state_short_summary(state: &GameState) -> String {
     };
 
     format!(
-        "【玩家档案】\n姓名：{}\n定位：{}\n背景：{}\n当前位置：{}\n\n\
+        "【玩家档案】\n姓名：{}\n定位：{}\n背景：{}\n当前位置：{}{}\n\n\
 【当前时间线】{}\n\
 【时间线锚定】\n  · 状态：{}\n  · 阶段：{}\n  · 待确认跳跃：{}\n\n\
 【已知事件】\n{}\n\n\
 【关系状态】\n{}\n\n\
 【长期记忆】\n{}\n\n\
 【权限与世界线】\n  · LLM写入权限：{}\n  · 用户变量：\n{}\n\n\
-【当前回合】第 {} 回合",
-        p.name, p.role, p.background, p.current_location,
+【当前回合】第 {} 回合{}",
+        p.name, p.role, p.background, p.current_location, card_text,
         w.time,
         anchor_state, current_phase, pending_jump,
         known,
@@ -507,5 +538,6 @@ pub fn state_short_summary(state: &GameState) -> String {
         perm_label,
         variable_text,
         state.data.turn,
+        revealed_text,
     )
 }

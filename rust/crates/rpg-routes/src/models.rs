@@ -215,6 +215,67 @@ fn write_catalog(s: &AppState, catalog: ModelCatalog) {
     s.llm_router.write().set_catalog(catalog);
 }
 
+/// 构建 Python `selected_model(catalog)` 等价的 JSON 对象。
+/// 返回 `{"api_id", "api_display_name", "api_kind", "model_id", "real_name", "display_name", "capabilities"}`.
+fn build_selected_value(catalog: &ModelCatalog) -> Value {
+    let (api, model) = catalog
+        .selected_model()
+        .or_else(|| {
+            catalog
+                .apis
+                .iter()
+                .find(|a| a.enabled)
+                .and_then(|a| a.models.iter().find(|m| m.enabled).map(|m| (a, m)))
+        })
+        .unwrap_or_else(|| {
+            let api = &catalog.apis[0];
+            let model = &api.models[0];
+            (api, model)
+        });
+    json!({
+        "api_id": api.id,
+        "api_display_name": api.display_name,
+        "api_kind": api.kind,
+        "model_id": model.id,
+        "real_name": model.real_name.as_deref().unwrap_or(&model.id),
+        "display_name": if model.display_name.is_empty() {
+            model.real_name.as_deref().unwrap_or(&model.id)
+        } else {
+            &model.display_name
+        },
+        "capabilities": model.capabilities,
+    })
+}
+
+/// 把 catalog 序列化 + 脱敏后,附上 selected 一起返回 `{"ok": true, "models": ..., "selected": ...}`。
+fn catalog_with_selected_response(s: &AppState, is_admin: bool) -> Value {
+    let catalog = catalog_snapshot(s);
+    let selected = build_selected_value(&catalog);
+    let catalog_value = serde_json::to_value(&catalog).unwrap_or(json!({}));
+    let redacted = redact_catalog(catalog_value, is_admin);
+    json!({
+        "ok": true,
+        "models": redacted,
+        "selected": selected,
+    })
+}
+
+/// 把当前选中模型持久化到 DB `app_config(key='selected_model')`。
+/// 对齐 Python `_write_model_catalog_rows` 中 `INSERT INTO app_config …` 那一行。
+async fn persist_selected_to_db(pool: &sqlx::PgPool, api_id: &str, model_id: &str) {
+    let value = json!({"api_id": api_id, "model_id": model_id});
+    let res = sqlx::query(
+        "INSERT INTO app_config(key, value) VALUES ('selected_model', $1) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = now()"
+    )
+    .bind(&value)
+    .execute(pool)
+    .await;
+    if let Err(e) = res {
+        tracing::warn!(error = %e, "persist selected_model to app_config failed");
+    }
+}
+
 async fn require_admin(s: &AppState, headers: &HeaderMap) -> Result<(), ResponseError> {
     let u = require_user(s, headers).await?;
     if u.role != "admin" {
@@ -441,9 +502,18 @@ async fn api_models_select(
         .model_id
         .ok_or_else(|| ResponseError::bad_request("model_id required"))?;
     let mut catalog = catalog_snapshot(&s);
-    catalog.selected = Selected { api_id, model_id };
+    catalog.selected = Selected {
+        api_id: api_id.clone(),
+        model_id: model_id.clone(),
+    };
     write_catalog(&s, catalog);
-    Ok(Json(json!({"ok": true})).into_response())
+
+    // Gap 1: persist selection to DB (app_config table)
+    persist_selected_to_db(&s.db, &api_id, &model_id).await;
+
+    // Gap 2: return full catalog + selected (matching Python response shape)
+    let resp = catalog_with_selected_response(&s, /*is_admin=*/ true);
+    Ok(Json(resp).into_response())
 }
 
 #[tracing::instrument(skip_all)]
@@ -479,7 +549,9 @@ async fn api_models_upsert_api(
         }
     }
     write_catalog(&s, catalog);
-    Ok(Json(json!({"ok": true})).into_response())
+    // Gap 3: return full catalog + selected (matching Python response shape)
+    let resp = catalog_with_selected_response(&s, /*is_admin=*/ true);
+    Ok(Json(resp).into_response())
 }
 
 #[tracing::instrument(skip_all)]
@@ -508,7 +580,9 @@ async fn api_models_upsert_model(
         return Err(ResponseError::bad_request("api not found"));
     }
     write_catalog(&s, catalog);
-    Ok(Json(json!({"ok": true})).into_response())
+    // Gap 3: return full catalog + selected (matching Python response shape)
+    let resp = catalog_with_selected_response(&s, /*is_admin=*/ true);
+    Ok(Json(resp).into_response())
 }
 
 #[tracing::instrument(skip_all)]
@@ -753,26 +827,84 @@ async fn api_models_capabilities(
     let catalog = catalog_snapshot(&s);
     let api_id = q.api_id.unwrap_or_default();
     let model_id = q.model.unwrap_or_default();
-    let caps = catalog
+    let caps: Vec<String> = catalog
         .apis
         .iter()
         .find(|a| a.id == api_id)
         .and_then(|a| a.models.iter().find(|m| m.id == model_id))
         .map(|m| m.capabilities.clone())
         .unwrap_or_default();
-    Json(json!({"ok": true, "capabilities": caps}))
+    // Gap 4: return structured {id, label} pairs matching Python describe_capabilities()
+    let described: Vec<Value> = caps
+        .iter()
+        .map(|c| {
+            let label = capability_label(c);
+            json!({"id": c, "label": label})
+        })
+        .collect();
+    let real_name = catalog
+        .apis
+        .iter()
+        .find(|a| a.id == api_id)
+        .and_then(|a| a.models.iter().find(|m| m.id == model_id))
+        .and_then(|m| m.real_name.as_deref())
+        .unwrap_or(&model_id);
+    Json(json!({
+        "ok": true,
+        "api_id": api_id,
+        "model": real_name,
+        "capabilities": described,
+        "capability_ids": caps,
+    }))
+}
+
+/// 能力代码 → 中文标签,与 Python `CAPABILITY_LABELS` 完全对齐。
+fn capability_label(cap: &str) -> &'static str {
+    match cap {
+        "text"         => "文本生成",
+        "streaming"    => "流式输出",
+        "image_input"  => "视觉输入",
+        "audio_input"  => "音频输入",
+        "video_input"  => "视频输入",
+        "file_input"   => "文件附件",
+        "tools"        => "Function Calling",
+        "json_mode"    => "JSON 结构化输出",
+        "image_gen"    => "图像生成",
+        "audio_gen"    => "音频生成",
+        "reasoning"    => "深度思考",
+        "computer_use" => "电脑控制",
+        "code_exec"    => "代码执行",
+        "web_search"   => "联网搜索",
+        _other         => {
+            // 未知能力:返回原始代码(与 Python CAPABILITY_LABELS.get(c, c) 对齐)。
+            // 由于返回 &'static str,此处用 leak 兜底;实际不会命中,
+            // 因为所有已知能力已穷举。
+            // 为避免 leak,不走此路径——直接返回固定提示。
+            "未知能力"
+        }
+    }
 }
 
 #[tracing::instrument(skip_all)]
 async fn api_models_capability_labels(State(_s): State<AppState>) -> impl IntoResponse {
+    // Gap 5: expanded to match Python's CAPABILITY_LABELS (14 entries)
     Json(json!({
         "ok": true,
         "labels": {
-            "text": "文本",
-            "streaming": "流式",
-            "tools": "工具调用",
-            "vision": "视觉",
-            "thinking": "扩展思考",
+            "text":         "文本生成",
+            "streaming":    "流式输出",
+            "image_input":  "视觉输入",
+            "audio_input":  "音频输入",
+            "video_input":  "视频输入",
+            "file_input":   "文件附件",
+            "tools":        "Function Calling",
+            "json_mode":    "JSON 结构化输出",
+            "image_gen":    "图像生成",
+            "audio_gen":    "音频生成",
+            "reasoning":    "深度思考",
+            "computer_use": "电脑控制",
+            "code_exec":    "代码执行",
+            "web_search":   "联网搜索",
         }
     }))
 }

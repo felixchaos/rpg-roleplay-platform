@@ -62,7 +62,7 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/api/me/character-cards",
-            get(list_character_cards),
+            get(list_character_cards).post(upsert_character_card),
         )
         .route(
             "/api/me/character-cards/:card_id",
@@ -379,7 +379,13 @@ async fn get_usage(
     let user = require_user(&s, &headers).await?;
     let days = q.days.unwrap_or(30);
     let agg = usage_svc::aggregate_usage(&s.db, user.id, days).await?;
-    Ok(Json(agg).into_response())
+    Ok(Json(json!({
+        "ok": true,
+        "window_days": agg.window_days,
+        "totals": agg.totals,
+        "by_model": agg.by_model,
+        "recent_turns": agg.recent_turns,
+    })).into_response())
 }
 
 /// GET /api/me/usage/timeline?days=30&group_by=day
@@ -563,6 +569,23 @@ async fn list_character_cards(
     let cards =
         cards_svc::list_user_cards(&s.db, user.id.get(), q.q.as_deref(), enabled_only).await?;
     Ok(Json(cards).into_response())
+}
+
+/// POST /api/me/character-cards — 创建或更新角色卡
+async fn upsert_character_card(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Response, ResponseError> {
+    let user = require_user(&s, &headers).await?;
+    match cards_svc::upsert_user_card(&s.db, user.id.get(), &body).await {
+        Ok(card) => Ok(Json(json!({"ok": true, "card": card})).into_response()),
+        Err(e) => Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"ok": false, "error": e.to_string()})),
+        )
+            .into_response()),
+    }
 }
 
 /// GET /api/me/character-cards/:card_id

@@ -261,6 +261,7 @@ impl GameState {
         self.data.player.name = name.to_string();
         self.data.player.role = role.to_string();
         self.data.player.background = background.to_string();
+        self.data.is_new = false;
         self.touch();
     }
 }

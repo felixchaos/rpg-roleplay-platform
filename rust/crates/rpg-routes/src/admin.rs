@@ -1,10 +1,13 @@
 //! `/api/admin/*` — SMTP 测试 / 部署配置。
 //!
-//! Python 源: `platform_app/api/platform.py` + `api/settings.py`
+//! Python 源: `platform_app/frontend_routes.py`
 //! 端点:
 //!   POST /api/admin/smtp/test            — SMTP 连通测试(admin only,stub 返回未配置)
-//!   POST /api/admin/deployment-config    — 写部署配置 kv(admin only)
-//!   GET  /api/admin/deployment-config    — 读部署配置 kv(admin only)
+//!   POST /api/admin/deployment-config    — 写部署配置(admin only, patch 合并语义)
+//!   GET  /api/admin/deployment-config    — 读部署配置(admin only)
+//!
+//! 存储模型: 所有部署配置存储为 app_config 表中 key='admin.deployment_config' 的单条 JSONB 记录,
+//! 与 Python 实现完全一致。
 
 use axum::{
     extract::State,
@@ -13,10 +16,12 @@ use axum::{
     Json, Router,
 };
 use http::HeaderMap;
-use serde::Deserialize;
 use serde_json::json;
 
 use crate::{require_user, AppState, ResponseError};
+
+/// Python 端使用的配置键名。
+const DEPLOY_CFG_KEY: &str = "admin.deployment_config";
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -39,11 +44,12 @@ async fn check_admin(state: &AppState, headers: &HeaderMap) -> Result<(), Respon
 }
 
 /// 确保 `app_config` 表存在(handler 内兜底建表;不优雅但够用)。
+/// value 列使用 JSONB 以与 Python 端一致。
 async fn ensure_app_config_table(state: &AppState) -> Result<(), ResponseError> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS app_config (
             key        TEXT PRIMARY KEY,
-            value      TEXT NOT NULL DEFAULT '',
+            value      JSONB NOT NULL DEFAULT '{}'::jsonb,
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )",
     )
@@ -51,18 +57,6 @@ async fn ensure_app_config_table(state: &AppState) -> Result<(), ResponseError> 
     .await
     .map_err(|e| ResponseError::internal(format!("建表失败: {e}")))?;
     Ok(())
-}
-
-// ── request types ─────────────────────────────────────────────────────────────
-
-/// POST /api/admin/deployment-config body
-#[derive(Debug, Deserialize)]
-pub struct DeploymentConfigBody {
-    /// 单 kv 写入 —— `{key, value}`
-    pub key: Option<String>,
-    pub value: Option<serde_json::Value>,
-    /// 批量写入 —— `{config: {key: value, ...}}`
-    pub config: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────────
@@ -84,7 +78,9 @@ async fn api_smtp_test(
     .into_response())
 }
 
-/// GET /api/admin/deployment-config — 读取所有部署配置 kv
+/// GET /api/admin/deployment-config — 读取部署配置
+///
+/// 与 Python 一致:从 app_config 表读取 key='admin.deployment_config' 的单条 JSONB 记录。
 #[tracing::instrument(skip(s, headers), fields(user_id))]
 async fn api_deployment_config_get(
     State(s): State<AppState>,
@@ -93,83 +89,83 @@ async fn api_deployment_config_get(
     check_admin(&s, &headers).await?;
     ensure_app_config_table(&s).await?;
 
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT key, value FROM app_config ORDER BY key",
+    let row: Option<(serde_json::Value,)> = sqlx::query_as(
+        "SELECT value FROM app_config WHERE key = $1",
     )
-    .fetch_all(&s.db)
+    .bind(DEPLOY_CFG_KEY)
+    .fetch_optional(&s.db)
     .await
     .map_err(|e| ResponseError::internal(format!("读取配置失败: {e}")))?;
 
-    let mut config = serde_json::Map::new();
-    for (k, v) in rows {
-        // value 列存 JSON 字符串;尝试反序列化,失败则当字符串字面量
-        let parsed: serde_json::Value = serde_json::from_str(&v).unwrap_or(serde_json::Value::String(v));
-        config.insert(k, parsed);
-    }
+    let config = match row {
+        Some((v,)) => v,
+        None => json!({}),
+    };
 
     Ok(Json(json!({
         "ok": true,
-        "config": serde_json::Value::Object(config),
+        "config": config,
     }))
     .into_response())
 }
 
-/// POST /api/admin/deployment-config — 写部署配置
+/// POST /api/admin/deployment-config — 写部署配置(patch 合并语义)
 ///
-/// 支持两种 body:
-/// 1. `{key, value}` — 单条 upsert
-/// 2. `{config: {key: value, ...}}` — 批量 upsert
+/// 与 Python 一致:读取现有 JSONB 对象,与 body 合并后 upsert 回同一 key。
+/// body 直接作为 JSON 对象,每个顶层 key 覆盖对应配置项,不影响未出现的键。
 #[tracing::instrument(skip(s, headers, body), fields(user_id))]
 async fn api_deployment_config_set(
     State(s): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<DeploymentConfigBody>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<Response, ResponseError> {
     check_admin(&s, &headers).await?;
     ensure_app_config_table(&s).await?;
 
-    // 组装要写入的 kv 对
-    let mut pairs: Vec<(String, String)> = Vec::new();
-
-    if let Some(config) = body.config {
-        for (k, v) in config {
-            let serialized = serde_json::to_string(&v)
-                .map_err(|e| ResponseError::bad_request(format!("序列化失败: {e}")))?;
-            pairs.push((k, serialized));
+    let incoming = match body.as_object() {
+        Some(obj) => obj.clone(),
+        None => {
+            return Err(ResponseError::bad_request("请求体必须是对象"));
         }
-    } else if let (Some(key), Some(value)) = (body.key, body.value) {
-        if key.trim().is_empty() {
-            return Err(ResponseError::bad_request("key 不能为空"));
-        }
-        let serialized = serde_json::to_string(&value)
-            .map_err(|e| ResponseError::bad_request(format!("序列化失败: {e}")))?;
-        pairs.push((key, serialized));
-    } else {
-        return Err(ResponseError::bad_request(
-            "body 需包含 {key, value} 或 {config: {...}}",
-        ));
+    };
+
+    // 读取现有配置
+    let row: Option<(serde_json::Value,)> = sqlx::query_as(
+        "SELECT value FROM app_config WHERE key = $1",
+    )
+    .bind(DEPLOY_CFG_KEY)
+    .fetch_optional(&s.db)
+    .await
+    .map_err(|e| ResponseError::internal(format!("读取配置失败: {e}")))?;
+
+    let mut existing = match row {
+        Some((serde_json::Value::Object(map),)) => map,
+        _ => serde_json::Map::new(),
+    };
+
+    // patch 合并:incoming 覆盖 existing 中的同名键
+    for (k, v) in incoming {
+        existing.insert(k, v);
     }
 
-    if pairs.is_empty() {
-        return Ok(Json(json!({"ok": true, "updated": 0})).into_response());
-    }
+    let merged = serde_json::Value::Object(existing);
 
-    for (k, v) in &pairs {
-        sqlx::query(
-            "INSERT INTO app_config(key, value, updated_at)
-             VALUES ($1, $2, NOW())
-             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
-        )
-        .bind(k)
-        .bind(v)
-        .execute(&s.db)
-        .await
-        .map_err(|e| ResponseError::internal(format!("写入配置失败 key={k}: {e}")))?;
-    }
+    // upsert 回 app_config,value 列为 JSONB
+    sqlx::query(
+        "INSERT INTO app_config(key, value, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+    )
+    .bind(DEPLOY_CFG_KEY)
+    .bind(&merged)
+    .execute(&s.db)
+    .await
+    .map_err(|e| ResponseError::internal(format!("写入配置失败: {e}")))?;
 
     Ok(Json(json!({
         "ok": true,
-        "updated": pairs.len(),
+        "config": merged,
+        "note": "listen_address / cors_origins 等网络配置需重启服务才能生效",
     }))
     .into_response())
 }

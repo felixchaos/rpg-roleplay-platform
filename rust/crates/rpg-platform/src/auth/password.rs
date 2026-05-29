@@ -163,9 +163,9 @@ pub struct PublicUser {
     #[serde(default)]
     pub bio: String,
     pub role: String,
-    #[serde(with = "chrono::serde::ts_seconds_option", default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
-    #[serde(with = "chrono::serde::ts_seconds_option", default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
     pub row_version: i64,
     /// Python 里的 `uid` 字段 = `str(public_id)`,前端按字符串展示。

@@ -82,7 +82,21 @@ async fn api_library_list(
     )
     .await
     .map_err(|e| ResponseError::bad_request(e.to_string()))?;
-    Ok(Json(json!({ "ok": true, "listing": listing })))
+    Ok(Json(flatten_listing(listing)))
+}
+
+/// Flatten a `LibraryListing` into a top-level JSON object so the frontend
+/// can access `r.entries` / `r.items` directly (matching the Python backend).
+fn flatten_listing(listing: library::LibraryListing) -> serde_json::Value {
+    let items = listing.entries.clone();
+    json!({
+        "ok": true,
+        "engine": listing.engine,
+        "path": listing.path,
+        "entries": listing.entries,
+        "items": items,
+        "page": listing.page,
+    })
 }
 
 // ── POST /api/library/upload — JSON body (base64 files) ─────────────────────
@@ -96,7 +110,7 @@ async fn api_library_upload(
     let listing = library::upload(&state.db, user.id.into(), &body.path, body.files)
         .await
         .map_err(|e| ResponseError::bad_request(e.to_string()))?;
-    Ok(Json(json!({ "ok": true, "listing": listing })))
+    Ok(Json(flatten_listing(listing)))
 }
 
 // ── POST /api/library/mkdir ───────────────────────────────────────────────────
@@ -118,7 +132,7 @@ async fn api_library_mkdir(
     let listing = library::mkdir(&state.db, user.id.into(), &full_path)
         .await
         .map_err(|e| ResponseError::bad_request(e.to_string()))?;
-    Ok(Json(json!({ "ok": true, "listing": listing })))
+    Ok(Json(flatten_listing(listing)))
 }
 
 // ── POST /api/library/delete ─────────────────────────────────────────────────
@@ -132,7 +146,7 @@ async fn api_library_delete(
     let listing = library::delete(&state.db, user.id.into(), &body.path)
         .await
         .map_err(|e| ResponseError::bad_request(e.to_string()))?;
-    Ok(Json(json!({ "ok": true, "listing": listing })))
+    Ok(Json(flatten_listing(listing)))
 }
 
 // ── GET /api/library/download ────────────────────────────────────────────────

@@ -4,6 +4,7 @@
    注意：本文件提供 NewGameModal 给 scripts.jsx 与 platform-app.jsx 共享（通过 window.NewGameModal）。 */
 
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { Icon } from '../game-icons.jsx';
 import { ConfirmModal } from '../platform-app.jsx';
@@ -1591,7 +1592,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
       </div>
     </div>
   );
-  return ReactDOM.createPortal(node, document.body);
+  return createPortal(node, document.body);
 }
 
 Object.assign(window, {

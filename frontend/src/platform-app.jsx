@@ -1,6 +1,7 @@
 /* Platform shell + all page bodies. Single-file for simplicity. */
 
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { Icon } from './game-icons.jsx';
 import { useResizable, ResizeHandle } from './responsive.jsx';
@@ -203,7 +204,7 @@ function ToastStack() {
       ))}
     </div>
   );
-  return ReactDOM.createPortal(node, document.body);
+  return createPortal(node, document.body);
 }
 
 /* ---------------------------- useAutoSave ----------------------- */

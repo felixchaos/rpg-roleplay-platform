@@ -386,11 +386,11 @@ async fn api_script_chapter_facts(
     let rows = if let Some(ci) = cursor_index {
         sqlx::query(
             r#"
-            select id, script_id, chapter_index, fact_type, content,
-                   character_names, created_at
+            select id, script_id, chapter, story_phase, summary,
+                   characters, created_at
             from chapter_facts
-            where script_id = $1 and chapter_index > $2
-            order by chapter_index limit $3
+            where script_id = $1 and chapter > $2
+            order by chapter limit $3
             "#,
         )
         .bind(script_id)
@@ -401,11 +401,11 @@ async fn api_script_chapter_facts(
     } else {
         sqlx::query(
             r#"
-            select id, script_id, chapter_index, fact_type, content,
-                   character_names, created_at
+            select id, script_id, chapter, story_phase, summary,
+                   characters, created_at
             from chapter_facts
             where script_id = $1
-            order by chapter_index limit $2
+            order by chapter limit $2
             "#,
         )
         .bind(script_id)
@@ -421,10 +421,10 @@ async fn api_script_chapter_facts(
             json!({
                 "id": r.try_get::<i64,_>("id").unwrap_or_default(),
                 "script_id": r.try_get::<i64,_>("script_id").unwrap_or_default(),
-                "chapter_index": r.try_get::<i32,_>("chapter_index").unwrap_or_default(),
-                "fact_type": r.try_get::<String,_>("fact_type").unwrap_or_default(),
-                "content": r.try_get::<String,_>("content").unwrap_or_default(),
-                "character_names": r.try_get::<Vec<String>,_>("character_names").unwrap_or_default(),
+                "chapter": r.try_get::<i32,_>("chapter").unwrap_or_default(),
+                "story_phase": r.try_get::<String,_>("story_phase").unwrap_or_default(),
+                "summary": r.try_get::<String,_>("summary").unwrap_or_default(),
+                "characters": r.try_get::<Value,_>("characters").unwrap_or(json!([])),
                 "created_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>,_>("created_at").unwrap_or_default(),
             })
         })
@@ -433,7 +433,7 @@ async fn api_script_chapter_facts(
     let next_cursor = if items.len() == limit as usize {
         items
             .last()
-            .and_then(|v| v.get("chapter_index"))
+            .and_then(|v| v.get("chapter"))
             .and_then(|v| v.as_i64())
             .map(|i| i.to_string())
     } else {
@@ -847,7 +847,7 @@ async fn api_get_script_overrides(
     }
 
     let row = sqlx::query(
-        "SELECT overrides FROM script_overrides WHERE script_id = $1",
+        "SELECT data FROM script_overrides WHERE script_id = $1",
     )
     .bind(script_id)
     .fetch_optional(&state.db)
@@ -855,7 +855,7 @@ async fn api_get_script_overrides(
     .map_err(|e| ResponseError::internal(e.to_string()))?;
 
     let data = match row {
-        Some(r) => r.try_get::<Value, _>("overrides").unwrap_or(Value::Object(Default::default())),
+        Some(r) => r.try_get::<Value, _>("data").unwrap_or(Value::Object(Default::default())),
         None => Value::Object(Default::default()),
     };
 
@@ -897,10 +897,10 @@ async fn api_update_script_overrides(
 
     sqlx::query(
         r#"
-        INSERT INTO script_overrides(script_id, overrides)
+        INSERT INTO script_overrides(script_id, data)
         VALUES ($1, $2)
         ON CONFLICT(script_id)
-        DO UPDATE SET overrides = $2, updated_at = now()
+        DO UPDATE SET data = $2, updated_at = now()
         "#,
     )
     .bind(script_id)
@@ -950,7 +950,7 @@ async fn api_script_delete(
 
     if delete_body.force {
         // force=true: 删除其下所有存档(saves)
-        sqlx::query("DELETE FROM saves WHERE script_id = $1")
+        sqlx::query("DELETE FROM game_saves WHERE script_id = $1")
             .bind(script_id)
             .execute(&state.db)
             .await
@@ -958,7 +958,7 @@ async fn api_script_delete(
     } else {
         // 检查是否有存档
         let save_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM saves WHERE script_id = $1",
+            "SELECT COUNT(*) FROM game_saves WHERE script_id = $1",
         )
         .bind(script_id)
         .fetch_one(&state.db)

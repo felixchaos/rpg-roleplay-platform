@@ -301,10 +301,14 @@ pub(crate) async fn api_opening(
         let state_data = shared.read().snapshot();
         let _ = tx.send(Ok(named_sse_event("hello", hello_payload(&user_id)))).await;
         let _ = tx.send(Ok(named_sse_event(
-            "state_change",
+            "stage",
             json!({"phase":"generating","label":"GM 构思开场中(stub)…"}),
         ))).await;
-        let _ = tx.send(Ok(named_sse_event("chunk", json!({"text":""})))).await;
+        let _ = tx.send(Ok(named_sse_event(
+            "stage",
+            json!({"phase":"done"}),
+        ))).await;
+        let _ = tx.send(Ok(named_sse_event("token", json!({"text":""})))).await;
         let _ = tx.send(Ok(named_sse_event(
             "done",
             json!({"status": {"state": state_data}, "interrupted": false}),
@@ -317,7 +321,7 @@ pub(crate) async fn api_opening(
     use sqlx::Row as _;
     let save_row = sqlx::query(
         "SELECT id, script_id FROM game_saves \
-         WHERE user_id = $1 AND is_active = true \
+         WHERE user_id = $1 \
          ORDER BY updated_at DESC LIMIT 1",
     )
     .bind(user_id_num)
@@ -343,11 +347,12 @@ pub(crate) async fn api_opening(
     let db = s.db.clone();
     let llm_router = s.llm_router.clone();
     let user_id_clone = user_id.clone();
+    let state_store_clone = s.state_store.clone();
     tokio::spawn(async move {
         // ── Phase 2: RAG 检索 ──────────────────────────────────────────
         let _ = tx
             .send(Ok(named_sse_event(
-                "state_change",
+                "stage",
                 json!({"phase":"retrieving","label":"正在检索相关剧情…"}),
             )))
             .await;
@@ -394,10 +399,37 @@ pub(crate) async fn api_opening(
         };
 
         // ── Phase 3: Context bundle ────────────────────────────────────
+        let _ = tx
+            .send(Ok(named_sse_event(
+                "stage",
+                json!({"phase":"building_context","label":"正在构建上下文…"}),
+            )))
+            .await;
         // 先 clone state data(parking_lot guard 不能跨 await),再调 async。
         let state_data_snapshot = {
             let st = state_handle.read();
             st.data.clone()
+        };
+        // Gap 9: query book_id from books table + construct ProviderServices with db_pool
+        let book_id: Option<i64> = if let Some(sid) = script_id {
+            sqlx::query_scalar(
+                "SELECT b.id FROM books b WHERE b.script_id = $1 ORDER BY b.id LIMIT 1",
+            )
+            .bind(sid)
+            .fetch_optional(&db)
+            .await
+            .ok()
+            .flatten()
+        } else {
+            None
+        };
+        let services = rpg_context::ProviderServices {
+            db_pool: Some(db.clone()),
+            script_id,
+            book_id,
+            save_id,
+            user_id: Some(user_id_num),
+            ..Default::default()
         };
         let context_text = {
             let bundle = rpg_context::build_context_bundle(
@@ -406,11 +438,11 @@ pub(crate) async fn api_opening(
                 &retrieved,
                 None,           // curator_plan
                 script_id,
-                None,           // book_id
+                book_id,
                 None,           // contributions (auto-resolve)
                 None,           // manifest (auto-resolve)
                 save_id,
-                None,           // services (default)
+                Some(services),
             )
             .await;
             // bundle["prompt"] 是 context engine 拼好的完整 prompt 文本
@@ -424,7 +456,7 @@ pub(crate) async fn api_opening(
         // ── Phase 4: 生成开场白 ────────────────────────────────────────
         let _ = tx
             .send(Ok(named_sse_event(
-                "state_change",
+                "stage",
                 json!({"phase":"generating","label":"GM 正在构思开场白…"}),
             )))
             .await;
@@ -441,7 +473,8 @@ pub(crate) async fn api_opening(
                         tracing::warn!(error = %e, "opening: 无法获取 LLM backend");
                         // stub fallback
                         let state_data = state_handle.read().snapshot();
-                        let _ = tx.send(Ok(named_sse_event("chunk", json!({"text":""})))).await;
+                        let _ = tx.send(Ok(named_sse_event("stage", json!({"phase":"done"})))).await;
+                        let _ = tx.send(Ok(named_sse_event("token", json!({"text":""})))).await;
                         let _ = tx.send(Ok(named_sse_event(
                             "done",
                             json!({"status": {"state": state_data}, "interrupted": false}),
@@ -459,7 +492,8 @@ pub(crate) async fn api_opening(
             Ok(_) => {
                 tracing::warn!("opening: GM 返回空文本,走 stub fallback");
                 let state_data = state_handle.read().snapshot();
-                let _ = tx.send(Ok(named_sse_event("chunk", json!({"text":""})))).await;
+                let _ = tx.send(Ok(named_sse_event("stage", json!({"phase":"done"})))).await;
+                let _ = tx.send(Ok(named_sse_event("token", json!({"text":""})))).await;
                 let _ = tx.send(Ok(named_sse_event(
                     "done",
                     json!({"status": {"state": state_data}, "interrupted": false}),
@@ -469,7 +503,8 @@ pub(crate) async fn api_opening(
             Err(e) => {
                 tracing::warn!(error = %e, "opening: GM generate_opening 失败,走 stub fallback");
                 let state_data = state_handle.read().snapshot();
-                let _ = tx.send(Ok(named_sse_event("chunk", json!({"text":""})))).await;
+                let _ = tx.send(Ok(named_sse_event("stage", json!({"phase":"done"})))).await;
+                let _ = tx.send(Ok(named_sse_event("token", json!({"text":""})))).await;
                 let _ = tx.send(Ok(named_sse_event(
                     "done",
                     json!({"status": {"state": state_data}, "interrupted": false}),
@@ -490,10 +525,17 @@ pub(crate) async fn api_opening(
             st.increment_turn();
         }
 
+        // 持久化到 DB,对齐 Python state.save() + _persist_runtime_checkpoint。
+        state_store_clone.flush(&user_id_clone).await;
+
         // ── Phase 6: SSE 事件 ──────────────────────────────────────────
+        // stage(done) 告知前端 GM 生成完毕,紧跟 token 事件发完整文本
+        let _ = tx
+            .send(Ok(named_sse_event("stage", json!({"phase":"done"}))))
+            .await;
         // 一次性发完整文本(gm.generate_opening 不是 stream)
         let _ = tx
-            .send(Ok(named_sse_event("chunk", json!({"text": opening_text}))))
+            .send(Ok(named_sse_event("token", json!({"text": opening_text}))))
             .await;
 
         // done — 带最新 snapshot。
@@ -700,7 +742,7 @@ pub(crate) async fn api_chat(
         let _ = err_tx.send(Ok(named_sse_event("hello", hello_payload(&user_id)))).await;
         let _ = err_tx.send(Ok(named_sse_event(
             "error",
-            json!({"detail":"空消息","code":"bad_request"}),
+            json!({"message":"空消息","code":"bad_request"}),
         ))).await;
         drop(err_tx);
         let guarded = GuardedStream::new(ReceiverStream::new(err_rx), sse_guard);
@@ -712,11 +754,13 @@ pub(crate) async fn api_chat(
     // 预估总 token:输入按字符粗估 + 预期 output 上限(hard cap)。
     let est_input = rpg_platform::usage::estimate_input_tokens(&message);
     let est_tokens = est_input + cfg.hard_max_tokens as i64;
-    // 当前 chat 链路尚未注入真实 model 选择,先用占位 api/model(record_actual 也用同值)。
-    let api_id = "anthropic";
-    let model = "claude-stub";
+    // 从 catalog 读当前选用的 api_id / model_id,对齐 Python selected_model()。
+    let (api_id_owned, model_owned) = {
+        let cat = s.llm_router.read().catalog().cloned().unwrap_or_default();
+        (cat.selected.api_id.clone(), cat.selected.model_id.clone())
+    };
     let grant = match quota::check_and_reserve(
-        &s.db, &cfg, user.id, api_id, model, est_tokens,
+        &s.db, &cfg, user.id, &api_id_owned, &model_owned, est_tokens,
     )
     .await
     {
@@ -751,7 +795,7 @@ pub(crate) async fn api_chat(
         .await;
     let _ = tx
         .send(Ok(named_sse_event(
-            "state_change",
+            "stage",
             json!({"phase":"generating","label":"GM 思考中…"}),
         )))
         .await;
@@ -768,7 +812,7 @@ pub(crate) async fn api_chat(
         };
         quota::record_actual(&db, grant, None, None, &actual, est_input as i32, 1_000_000).await;
         let _ = tx
-            .send(Ok(named_sse_event("chunk", json!({"text":""}))))
+            .send(Ok(named_sse_event("token", json!({"text":""}))))
             .await;
         let _ = tx
             .send(Ok(named_sse_event(
@@ -798,13 +842,14 @@ pub(crate) async fn api_chat(
 
         // ── Phase 2: Context Assembly ───────────────────────────────
         let _ = tx.send(Ok(named_sse_event(
-            "state_change",
+            "stage",
             json!({"phase":"context","label":"正在整理上下文…"}),
         ))).await;
 
-        // 2a. 从 DB 取当前用户活跃存档的 script_id
-        let script_id: Option<i64> = sqlx::query_scalar(
-            "SELECT script_id FROM game_saves WHERE user_id = $1 \
+        // 2a. 从 DB 取当前用户活跃存档的 script_id + save_id
+        use sqlx::Row as _;
+        let save_row_chat = sqlx::query(
+            "SELECT id, script_id FROM game_saves WHERE user_id = $1 \
              ORDER BY updated_at DESC LIMIT 1",
         )
         .bind(user_id_i64)
@@ -812,6 +857,23 @@ pub(crate) async fn api_chat(
         .await
         .ok()
         .flatten();
+        let (chat_save_id, script_id): (Option<i64>, Option<i64>) = match &save_row_chat {
+            Some(row) => (row.try_get("id").ok(), row.try_get("script_id").ok()),
+            None => (None, None),
+        };
+        // Gap 8: query book_id for NovelCharactersProvider / NovelWorldbookProvider
+        let chat_book_id: Option<i64> = if let Some(sid) = script_id {
+            sqlx::query_scalar(
+                "SELECT b.id FROM books b WHERE b.script_id = $1 ORDER BY b.id LIMIT 1",
+            )
+            .bind(sid)
+            .fetch_optional(&db)
+            .await
+            .ok()
+            .flatten()
+        } else {
+            None
+        };
 
         // 2b. RAG 检索
         let retrieved = if let Some(sid) = script_id {
@@ -841,11 +903,19 @@ pub(crate) async fn api_chat(
         // 2c. build_context_bundle
         let context_text = if let Some(sid) = script_id {
             let state_data = state_handle.read().data.clone();
+            let chat_services = rpg_context::ProviderServices {
+                db_pool: Some(db.clone()),
+                script_id: Some(sid),
+                book_id: chat_book_id,
+                save_id: chat_save_id,
+                user_id: Some(user_id_i64),
+                ..Default::default()
+            };
             let bundle = rpg_context::build_context_bundle(
                 &state_data,
                 &message,
                 &retrieved,
-                None, Some(sid), None, None, None, None, None,
+                None, Some(sid), chat_book_id, None, None, chat_save_id, Some(chat_services),
             ).await;
             bundle.get("prompt")
                 .and_then(|v| v.as_str())
@@ -856,9 +926,20 @@ pub(crate) async fn api_chat(
             retrieved.clone()
         };
 
+        // ── Phase 2.5: Worldbook Agent stubs ────────────────────────
+        // TODO: replace stubs with real worldbook agent calls when the crate is ready.
+        let _ = tx.send(Ok(named_sse_event(
+            "worldbook_consulting",
+            json!({"query": message, "phase": "consulting", "time": chrono::Utc::now().to_rfc3339()}),
+        ))).await;
+        let _ = tx.send(Ok(named_sse_event(
+            "worldbook_ready",
+            json!({"confidence": 0.0, "sources": [], "elapsed_ms": 0}),
+        ))).await;
+
         // ── Phase 3: Rules Preflight ────────────────────────────────
         let _ = tx.send(Ok(named_sse_event(
-            "state_change",
+            "stage",
             json!({"phase":"rules","label":"正在检查规则…"}),
         ))).await;
 
@@ -873,7 +954,7 @@ pub(crate) async fn api_chat(
 
         // ── Phase 4: GM Response ────────────────────────────────────
         let _ = tx.send(Ok(named_sse_event(
-            "state_change",
+            "stage",
             json!({"phase":"generating","label":"GM 正在回应…"}),
         ))).await;
 
@@ -900,7 +981,7 @@ pub(crate) async fn api_chat(
                                     }
                                     full.push_str(&text);
                                     if tx.send(Ok(named_sse_event(
-                                        "chunk",
+                                        "token",
                                         json!({"text": text}),
                                     ))).await.is_err() {
                                         return;
@@ -909,7 +990,7 @@ pub(crate) async fn api_chat(
                                 Err(e) => {
                                     let _ = tx.send(Ok(named_sse_event(
                                         "error",
-                                        json!({"detail": e.to_string(), "code": "llm_error"}),
+                                        json!({"message": e.to_string(), "code": "llm_error"}),
                                     ))).await;
                                     break;
                                 }
@@ -919,11 +1000,11 @@ pub(crate) async fn api_chat(
                 }
             }
             Err(e) => {
-                let _ = tx.send(Ok(named_sse_event("chunk", json!({"text":""})))).await;
+                let _ = tx.send(Ok(named_sse_event("token", json!({"text":""})))).await;
                 tracing::error!(error = %e, "GM respond_stream failed");
                 let _ = tx.send(Ok(named_sse_event(
                     "error",
-                    json!({"detail": e.to_string(), "code": "llm_error"}),
+                    json!({"message": e.to_string(), "code": "llm_error"}),
                 ))).await;
             }
         }
@@ -939,6 +1020,14 @@ pub(crate) async fn api_chat(
             st.append_history("user", &message);
             st.append_history("assistant", &full);
             st.increment_turn();
+            // Gap 6: clear revealed_this_turn flag (matches Python record_turn behavior).
+            // The /reveal directive sets this flag for one-shot GM visibility; must clear after each turn.
+            if st.data.player_private.flags.contains_key("revealed_this_turn") {
+                st.data.player_private.flags.insert(
+                    "revealed_this_turn".to_string(),
+                    Value::String(String::new()),
+                );
+            }
         }
 
         // TODO: record_runtime_turn — 需要 parent_commit_id / ref_id 等分支上下文,

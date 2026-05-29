@@ -2,10 +2,11 @@
 //!
 //! Python 源: `rpg/platform_app/api/platform.py` (42 行) + `routes/core.py`(部分)
 //! 端点:
-//!   GET /api/platform          — 平台总览(require_user)
-//!   GET /api/platform/commands — commands 清单(require_user)
-//!   GET /api/plugins           — 已安装插件清单(公开)
-//!   GET /api/profile           — 公开 profile(无需登录)
+//!   GET  /api/platform          — 平台总览(require_user)
+//!   GET  /api/platform/commands — commands 清单(require_user)
+//!   GET  /api/plugins           — 已安装插件清单(公开)
+//!   GET  /api/profile           — 公开 profile(无需登录)
+//!   POST /api/profile           — 保存 display_name/bio(require_user)
 
 use axum::{
     extract::State,
@@ -14,7 +15,10 @@ use axum::{
     Json, Router,
 };
 use http::HeaderMap;
+use serde::Deserialize;
 use serde_json::json;
+
+use rpg_platform::users as users_svc;
 
 use crate::{require_user, AppState, ResponseError};
 
@@ -23,7 +27,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/platform", get(api_platform))
         .route("/api/platform/commands", get(api_platform_commands))
         .route("/api/plugins", get(api_plugins))
-        .route("/api/profile", get(api_profile))
+        .route("/api/profile", get(api_profile).post(api_save_profile))
 }
 
 // ── hardcoded command list ────────────────────────────────────────────────────
@@ -165,6 +169,41 @@ async fn api_profile(State(s): State<AppState>) -> Result<Response, ResponseErro
         "deployment_mode": s.config.deployment_mode,
         "require_auth": s.config.require_auth,
         "version": env!("CARGO_PKG_VERSION"),
+    }))
+    .into_response())
+}
+
+// ── POST /api/profile — save profile ─────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct SaveProfileBody {
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    bio: Option<String>,
+}
+
+/// POST /api/profile — 保存用户 display_name / bio
+///
+/// 对应 Python `platform.py` 的 `POST /api/profile` → `_auth.update_profile()`。
+/// 前端调用: `api.account.saveProfile(body) => POST /api/v1/profile`
+#[tracing::instrument(skip(s, headers), fields(user_id))]
+async fn api_save_profile(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<SaveProfileBody>,
+) -> Result<Response, ResponseError> {
+    let user = require_user(&s, &headers).await?;
+    tracing::Span::current().record("user_id", tracing::field::display(&user.id));
+
+    let display_name = body.display_name.as_deref().unwrap_or(&user.display_name);
+    let bio = body.bio.as_deref().unwrap_or(&user.bio);
+
+    let updated = users_svc::update_profile(&s.db, user.id, display_name, bio).await?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "user": users_svc::public_user(&updated),
     }))
     .into_response())
 }

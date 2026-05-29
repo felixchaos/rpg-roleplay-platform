@@ -753,7 +753,7 @@ fn set_user_variable(state: &mut GameState, key: &str, value: &str, source: &str
         json!({
             "value": value,
             "source": source,
-            "locked": false,
+            "locked": true,
             "turn": turn,
             "updated_at": chrono::Utc::now().to_rfc3339(),
         }),

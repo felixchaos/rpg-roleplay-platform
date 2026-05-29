@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose, Engine};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{PgPool, Row};
@@ -439,7 +440,13 @@ pub struct Script {
     #[serde(default)]
     pub source_path: String,
     #[serde(default)]
-    pub metadata: Value,
+    pub chapter_count: i32,
+    #[serde(default)]
+    pub word_count: i32,
+    #[serde(default)]
+    pub import_report: Value,
+    pub updated_at: Option<DateTime<Utc>>,
+    pub public_id: Option<uuid::Uuid>,
 }
 
 fn script_from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Script> {
@@ -449,9 +456,13 @@ fn script_from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Script> {
         title: row.try_get("title")?,
         description: row.try_get::<String, _>("description").unwrap_or_default(),
         source_path: row.try_get::<String, _>("source_path").unwrap_or_default(),
-        metadata: row
-            .try_get::<Value, _>("metadata")
+        chapter_count: row.try_get::<i32, _>("chapter_count").unwrap_or(0),
+        word_count: row.try_get::<i32, _>("word_count").unwrap_or(0),
+        import_report: row
+            .try_get::<Value, _>("import_report")
             .unwrap_or(Value::Object(Default::default())),
+        updated_at: row.try_get::<Option<DateTime<Utc>>, _>("updated_at").unwrap_or(None),
+        public_id: row.try_get::<Option<uuid::Uuid>, _>("public_id").unwrap_or(None),
     })
 }
 
@@ -459,7 +470,9 @@ fn script_from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Script> {
 pub async fn list_scripts(pool: &PgPool, owner_id: i64) -> PlatformResult<Vec<Script>> {
     let rows = sqlx::query(
         "select id, owner_id, title, description, source_path, \
-         '{}'::jsonb as metadata \
+         chapter_count, word_count, \
+         coalesce(import_report, '{}'::jsonb) as import_report, \
+         updated_at, public_id \
          from scripts where owner_id = $1 order by id desc",
     )
     .bind(owner_id)
@@ -479,7 +492,9 @@ pub async fn get_script(
 ) -> PlatformResult<Option<Script>> {
     let row = sqlx::query(
         "select id, owner_id, title, description, source_path, \
-         '{}'::jsonb as metadata \
+         chapter_count, word_count, \
+         coalesce(import_report, '{}'::jsonb) as import_report, \
+         updated_at, public_id \
          from scripts where id = $1 and owner_id = $2",
     )
     .bind(script_id)
@@ -505,7 +520,9 @@ pub async fn create_script(
         "insert into scripts(owner_id, title, description, source_path) \
          values ($1, $2, $3, $4) \
          returning id, owner_id, title, description, source_path, \
-                   '{}'::jsonb as metadata",
+                   chapter_count, word_count, \
+                   coalesce(import_report, '{}'::jsonb) as import_report, \
+                   updated_at, public_id",
     )
     .bind(owner_id)
     .bind(title)
