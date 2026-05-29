@@ -29,12 +29,17 @@
 //! - `script_overrides` — `load_script_overrides`(save_id → script_id → DB,
 //!   走 rpg-db::repos::script_overrides,raw SQL 兜底)。
 //!
-//! 未迁移子模块(TODO):
-//! - active_entities / dice_log / encounter rules 写入入口 — 依赖 rpg-rules
-//!   crate 同步迁移。
-//! - `_scan_worldline_validation` / `_store_worldline_projection` — 与世界线
-//!   推演子模块强耦合,等 rpg-context 渲染层接管后再迁。
+//! 已迁移的子模块(W3-2 补完):
+//! - `worldline_validation` — `_scan_worldline_validation` /
+//!   `_set_worldline_validation` / `_store_worldline_projection`。
+//! - `combat_state` — RulesEngine 入口:`update_active_entities` /
+//!   `append_dice_log` / `update_encounter` / `upsert_active_entity` /
+//!   `prune_active_entities` / `clear_encounter`。
+//! - `bus` — `StateEventBus` + `StateEvent` 广播(tokio::sync::broadcast),
+//!   嵌入 `StateStore`,apply_op 后 publish。
 
+pub mod bus;
+pub mod combat_state;
 pub mod directives;
 pub mod ops;
 pub mod path;
@@ -45,10 +50,20 @@ pub mod state;
 pub mod store;
 pub mod structured;
 pub mod timeline_jump;
+pub mod worldline_validation;
 
+pub use bus::{StateEvent, StateEventBus};
+pub use combat_state::{
+    append_dice_log, clear_encounter, prune_active_entities, update_active_entities,
+    update_encounter, upsert_active_entity, CombatStateError,
+};
 pub use directives::{
     apply_player_directives, apply_set_directive, parse_assignment, DirectiveError,
     DirectiveResult,
+};
+pub use worldline_validation::{
+    scan_worldline_validation, set_worldline_validation, store_worldline_projection,
+    validation_label, ValidationScan, WorldlineValidationError,
 };
 pub use ops::{
     apply_op, is_hard_forbidden, is_module_managed, is_rules_managed, is_write_allowed,

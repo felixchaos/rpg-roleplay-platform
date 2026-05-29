@@ -15,24 +15,136 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use parking_lot::RwLock;
+use tokio::sync::broadcast;
 
+use crate::bus::{StateEvent, StateEventBus};
+use crate::ops::{apply_op, ApplyKind, ApplyOutcome, Op, OpError};
 use crate::state::GameState;
 
 pub type SharedState = Arc<RwLock<GameState>>;
 
-/// 按 user_id 分片的 GameState 集合。
+/// 按 user_id 分片的 GameState 集合 + 嵌入的 state-event bus。
 ///
-/// 替代 Python 全局 `_state_by_user`。
+/// 替代 Python 全局 `_state_by_user`。bus 字段对外暴露 [`Self::subscribe`],
+/// 任何写入路径(`apply_op_for_user` / 入口方法)统一从这里 publish 事件。
 #[derive(Debug, Default, Clone)]
 pub struct StateStore {
     inner: Arc<DashMap<String, SharedState>>,
+    bus: StateEventBus,
 }
 
 impl StateStore {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(DashMap::new()),
+            bus: StateEventBus::new(),
         }
+    }
+
+    /// 自定义 bus 容量(默认 256)— 给高吞吐场景留口。
+    pub fn with_bus_capacity(capacity: usize) -> Self {
+        Self {
+            inner: Arc::new(DashMap::new()),
+            bus: StateEventBus::with_capacity(capacity),
+        }
+    }
+
+    /// 暴露内部 bus,供需要直接 publish 自定义事件的调用方使用。
+    pub fn bus(&self) -> &StateEventBus {
+        &self.bus
+    }
+
+    /// 订阅 state-event 流。每次调用拿到独立 receiver,慢消费者会拿到
+    /// `RecvError::Lagged` 但不会阻塞 publisher。
+    pub fn subscribe(&self) -> broadcast::Receiver<StateEvent> {
+        self.bus.subscribe()
+    }
+
+    /// 应用 op 到指定 user 的 state,成功后 publish 事件。
+    ///
+    /// 失败(OpError)不发事件;Pending / Rejected 也不发 `Updated`,
+    /// 但会发 [`StateEvent::PendingAdded`] 让 UI 即时看见排队中的写入。
+    pub fn apply_op_for_user(
+        &self,
+        user_id: &str,
+        op: Op,
+        source: &str,
+        force: bool,
+    ) -> Result<ApplyOutcome, OpError> {
+        let shared = match self.inner.get(user_id) {
+            Some(r) => Arc::clone(r.value()),
+            None => {
+                let entry = self.inner.entry(user_id.to_string()).or_insert_with(|| {
+                    Arc::new(RwLock::new(GameState::new(user_id.to_string())))
+                });
+                Arc::clone(entry.value())
+            }
+        };
+        let (outcome, version, pending_id) = {
+            let mut guard = shared.write();
+            let outcome = apply_op(&mut guard, op.clone(), source, force)?;
+            let version = guard.version;
+            // pending 情况下从 permissions.pending_writes 尾部取最新 id
+            let pending_id = if outcome.kind == ApplyKind::Pending {
+                guard
+                    .data
+                    .get("permissions")
+                    .and_then(|p| p.get("pending_writes"))
+                    .and_then(|p| p.as_array())
+                    .and_then(|arr| arr.last())
+                    .and_then(|v| v.get("id"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            };
+            (outcome, version, pending_id)
+        };
+
+        match outcome.kind {
+            ApplyKind::Applied => {
+                self.bus.publish(StateEvent::OpApplied {
+                    user_id: user_id.to_string(),
+                    version,
+                    op,
+                    source: source.to_string(),
+                });
+                self.bus.publish(StateEvent::Updated {
+                    user_id: user_id.to_string(),
+                    version,
+                });
+            }
+            ApplyKind::Pending => {
+                if let Some(pid) = pending_id {
+                    self.bus.publish(StateEvent::PendingAdded {
+                        user_id: user_id.to_string(),
+                        pending_id: pid,
+                        path: outcome.path.clone(),
+                        source: source.to_string(),
+                    });
+                }
+            }
+            ApplyKind::Rejected => {}
+        }
+        Ok(outcome)
+    }
+
+    /// 发布一条 `Updated` 事件 — 用于外部直接 mutate state(`SharedState.write()`)
+    /// 后通知订阅方。例如 directives / structured 等聚合调用走完所有 op,在最后
+    /// 调一次让 SSE 收到一次性的 refetch 信号。
+    pub fn notify_updated(&self, user_id: &str) {
+        if let Some(s) = self.inner.get(user_id) {
+            let version = s.read().version;
+            self.bus.publish(StateEvent::Updated {
+                user_id: user_id.to_string(),
+                version,
+            });
+        }
+    }
+
+    /// 直接发布任意事件 — 给已经知道事件细节的入口(timeline_jump / question / pending)用。
+    pub fn publish(&self, event: StateEvent) {
+        self.bus.publish(event);
     }
 
     /// 拿到 user_id 对应的 state,不存在则创建空白存档。

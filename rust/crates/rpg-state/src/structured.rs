@@ -11,24 +11,26 @@
 //! 2. 【…】 中文标签 — 向后兼容。剥离 JSON 块后再扫,避免双重计算。
 //!
 //! 与 Python 差异:
-//! - 不再调 `_gm_write_via_gate` 内部 path 路由(memory.facts / abilities /
-//!   resources 全套中文标签别名),Python 那段 200 行 if/elif 链与 LLM 输出
-//!   习惯高度耦合,等 rpg-context 渲染层完整成型后单独迁。
-//!   当前 Rust 版本只迁:
-//!     · 时间标签(world.time / pending_jump)
+//! - 全套 GM 中文标签 dispatch(W3-2 补完):
+//!     · 时间标签(world.time / pending_jump)+ 时间跳跃确认/拒绝
 //!     · 关系标签(relationships.{name})
 //!     · 位置标签(player.current_location)
 //!     · 主线/目标(memory.main_quest / memory.current_objective)
 //!     · 询问玩家(add_pending_question)
+//!     · 资源(memory.resources,_split_items 切分)
+//!     · 能力/技能/掌握(memory.abilities)
+//!     · 用户变量(worldline.user_variables.{key})
+//!     · 状态写入 / 追加 / 覆盖(走 ops::apply_op)
+//!     · 设定校验 / 设定冲突 → worldline.last_validation
+//!     · 世界线推演 / 推演结果 → worldline.last_projection
+//!     · 获得新身份 / 身份 → memory.facts append
 //!     · JSON op:set/append/overwrite/question/hypothesis/confirm/reject
 //! - Regex fallback("重力控制 / 特殊小队")是 Python 早期硬编码,Rust 不迁,
 //!   等任务系统驱动起来再补 hook。
-//! - 不调 `_scan_worldline_validation` —— 那段 worldline.last_validation 写入
-//!   留给后续 worldline 子模块。
 
 use once_cell::sync::Lazy;
 use regex::Regex;
-use serde_json::Value;
+use serde_json::{json, Value};
 use thiserror::Error;
 
 use crate::ops::{self, ApplyKind, Op, OpError};
@@ -40,6 +42,10 @@ use crate::rules_gameplay::{
 use crate::state::GameState;
 use crate::timeline_jump::{
     confirm_time_jump, is_time_key, reject_time_jump, TimelineJumpError,
+};
+use crate::worldline_validation::{
+    scan_worldline_validation, set_worldline_validation, store_worldline_projection,
+    validation_label,
 };
 
 #[derive(Debug, Error)]
@@ -77,6 +83,17 @@ pub fn apply_structured_updates(
     // 2) 抽 【...】 tags(从 stripped_text 里抽,避免双重计算)
     let tags = extract_brace_tags(&stripped_text);
 
+    // 2.1) 世界线设定校验 — 扫 tags 里的 设定校验 / 设定冲突 → worldline.last_validation
+    let validation = scan_worldline_validation(state, &tags);
+    if validation.status != "none" {
+        set_worldline_validation(state, &validation.status, &validation.message);
+        result.updates.push(format!(
+            "设定校验:{}",
+            validation_label(&validation.status)
+        ));
+    }
+    let validated = validation.status == "passed";
+
     // 3) pending_jump 询问语境探测 — Python 的 task 22 / 35 双重防御
     let pending_jump_object = state
         .data
@@ -97,11 +114,13 @@ pub fn apply_structured_updates(
         if key.is_empty() && value.is_empty() {
             continue;
         }
+
         // 位置
         if key.contains("当前位置") || key == "地点" || key == "位置" {
             apply_gm_write(state, "player.current_location", &value, &mut result, false)?;
             continue;
         }
+
         // 时间
         if is_time_key(&key) {
             if pending_jump_present && asking_for_confirm {
@@ -113,6 +132,7 @@ pub fn apply_structured_updates(
             apply_gm_write(state, "world.time", &value, &mut result, false)?;
             continue;
         }
+
         // 时间跳跃确认
         if key.contains("时间跳跃确认") {
             let v_lower = value.to_lowercase();
@@ -134,12 +154,48 @@ pub fn apply_structured_updates(
             }
             continue;
         }
+
         // 时间跳跃拒绝
         if key.contains("时间跳跃拒绝") {
             let res = reject_time_jump(state, &value);
             result.updates.push(res.message);
             continue;
         }
+
+        // 设定校验 / 设定冲突 — 已在 scan 阶段处理,这里跳过避免落到 default 写 facts
+        if key.contains("设定校验") || key.contains("设定冲突") {
+            continue;
+        }
+
+        // 世界线推演 / 推演结果
+        if key.contains("世界线推演")
+            || key.contains("世界线预测")
+            || key.contains("推演结果")
+        {
+            let stored = store_worldline_projection(state, &value, validated);
+            if stored {
+                result.updates.push("世界线推演:已写回".to_string());
+            } else {
+                result.updates.push("世界线推演:待用户确认".to_string());
+            }
+            continue;
+        }
+
+        // 用户变量(GM 主动设定/调整)
+        if key.contains("用户变量")
+            || key == "变量"
+            || key == "设定变量"
+            || key == "玩家变量"
+        {
+            let (var_key, var_value) = parse_assignment(&value);
+            if !var_key.is_empty() && set_user_variable(state, &var_key, &var_value, "gm") {
+                result
+                    .updates
+                    .push(format!("用户变量:{var_key}={var_value}"));
+            }
+            continue;
+        }
+
         // 询问玩家
         if key.contains("询问玩家") || key.contains("向玩家提问") || key.contains("澄清问题") {
             let q_text = if value.is_empty() { &key } else { &value };
@@ -148,6 +204,59 @@ pub fn apply_structured_updates(
             }
             continue;
         }
+
+        // 状态写入 / UI变量 / 界面变量
+        if key.contains("状态写入") || key.contains("UI变量") || key.contains("界面变量") {
+            let (path, raw_value) = parse_assignment(&value);
+            if !path.is_empty() {
+                apply_gm_write(state, &path, &raw_value, &mut result, false)?;
+            }
+            continue;
+        }
+        // 状态追加 / 追加变量
+        if key.contains("状态追加") || key.contains("追加变量") {
+            let (path, raw_value) = parse_assignment(&value);
+            if !path.is_empty() {
+                apply_gm_write(state, &path, &raw_value, &mut result, true)?;
+            }
+            continue;
+        }
+        // 状态覆盖 / 覆盖变量(typed value 整路径替换;Rust 侧 set 即覆盖)
+        if key.contains("状态覆盖") || key.contains("覆盖变量") {
+            let (path, raw_value) = parse_assignment(&value);
+            if !path.is_empty() {
+                apply_gm_write(state, &path, &raw_value, &mut result, false)?;
+            }
+            continue;
+        }
+
+        // 主线任务更新 / 主线(同时写 main_quest + current_objective)
+        if key.contains("主线任务更新") || key.contains("主线") {
+            apply_gm_write(state, "memory.main_quest", &value, &mut result, false)?;
+            apply_gm_write(state, "memory.current_objective", &value, &mut result, false)?;
+            continue;
+        }
+
+        // 当前目标 / 目标
+        if key.contains("当前目标") || key == "目标" {
+            apply_gm_write(state, "memory.current_objective", &value, &mut result, false)?;
+            continue;
+        }
+
+        // 当前可支配资源 / 资源(list 切分逐条 append)
+        if key.contains("当前可支配资源") || key.contains("资源") {
+            for part in split_items(&value) {
+                apply_gm_write(state, "memory.resources", &part, &mut result, true)?;
+            }
+            continue;
+        }
+
+        // 能力 / 技能 / 掌握
+        if key.contains("能力") || key.contains("技能") || key.contains("掌握") {
+            apply_gm_write(state, "memory.abilities", &value, &mut result, true)?;
+            continue;
+        }
+
         // 关系
         if key.contains("关系") {
             if let Some((name, status)) = split_relation(&value) {
@@ -155,24 +264,44 @@ pub fn apply_structured_updates(
                 result
                     .updates
                     .push(format!("关系:{name} -> {status}"));
-                continue;
+            } else {
+                // Python 同分支兜底:不像关系格式 → 当 facts append
+                apply_gm_write(state, "memory.facts", tag, &mut result, true)?;
             }
-        }
-        // 目标
-        if key.contains("当前目标") || key == "目标" {
-            apply_gm_write(state, "memory.current_objective", &value, &mut result, false)?;
             continue;
         }
-        // 主线
-        if key.contains("主线任务更新") || key.contains("主线") {
-            apply_gm_write(state, "memory.main_quest", &value, &mut result, false)?;
-            apply_gm_write(state, "memory.current_objective", &value, &mut result, false)?;
+
+        // 获得新身份 / 身份 / "你已获得..." 开头
+        if key.contains("获得新身份") || key.contains("身份") || tag.starts_with("你已获得") {
+            apply_gm_write(state, "memory.facts", tag, &mut result, true)?;
             continue;
         }
+
         // 默认:不识别的 key 当 facts append
         if !tag.trim().is_empty() {
             apply_gm_write(state, "memory.facts", tag, &mut result, true)?;
         }
+    }
+
+    // 4.1) 兜底:GM 正文里抽显式时间推进短语(无【】标签)
+    let world_time_now = state
+        .data
+        .get("world")
+        .and_then(|w| w.get("time"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    for value in extract_explicit_time_updates(gm_text) {
+        if value == world_time_now {
+            continue;
+        }
+        if pending_jump_present && asking_for_confirm {
+            result
+                .updates
+                .push(format!("时间提案保留待确认:{value}"));
+            continue;
+        }
+        apply_gm_write(state, "world.time", &value, &mut result, false)?;
     }
 
     // 5) 处理 JSON ops
@@ -579,5 +708,148 @@ fn split_relation(text: &str) -> Option<(String, String)> {
         }
     }
     None
+}
+
+/// 对应 Python `_parse_assignment(text)` — 切 `+=` / `=` / `：` / `:` 取 (path, value)。
+fn parse_assignment(text: &str) -> (String, String) {
+    let cleaned = clean_item(text);
+    for sep in ["+=", "=", "：", ":"] {
+        if let Some(pos) = cleaned.find(sep) {
+            let (l, r) = cleaned.split_at(pos);
+            let right = &r[sep.len()..];
+            let left_clean = crate::path::clean_path(&clean_item(l));
+            let right_clean = clean_item(right);
+            return (left_clean, right_clean);
+        }
+    }
+    (String::new(), cleaned)
+}
+
+/// 对应 Python `_split_items` — 顿号/分号/换行强切;逗号在 ≤12 字短词列表才切。
+fn split_items(text: &str) -> Vec<String> {
+    let raw = text.trim();
+    if raw.is_empty() {
+        return Vec::new();
+    }
+    static STRONG_SEP: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"[、;；\n]\s*").expect("strong sep regex"));
+    static COMMA_SEP: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"[,,]\s*").expect("comma sep regex"));
+    static SENTENCE_PUNCT: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"[。！？!?]").expect("sentence punct regex"));
+
+    let mut out: Vec<String> = Vec::new();
+    for part in STRONG_SEP.split(raw) {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let sub_parts: Vec<&str> = COMMA_SEP
+            .split(trimmed)
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let can_split_commas = sub_parts.len() > 1
+            && sub_parts.iter().all(|s| {
+                clean_item(s).chars().count() <= 12 && !SENTENCE_PUNCT.is_match(s)
+            });
+        if can_split_commas {
+            for s in sub_parts {
+                let cleaned = clean_item(s);
+                if !cleaned.is_empty() {
+                    out.push(cleaned);
+                }
+            }
+        } else {
+            let cleaned = clean_item(trimmed);
+            if !cleaned.is_empty() {
+                out.push(cleaned);
+            }
+        }
+    }
+    out
+}
+
+/// 对应 Python `set_user_variable(key, value, source)` — 写 worldline.user_variables.{key}。
+/// 返回 true 代表值实际有变化(老值不存在或值不同)。
+fn set_user_variable(state: &mut GameState, key: &str, value: &str, source: &str) -> bool {
+    let key = clean_item(key);
+    let value = clean_item(value);
+    if key.is_empty() || value.is_empty() {
+        return false;
+    }
+    let turn = state.turn();
+    if !state.data.is_object() {
+        state.data = Value::Object(serde_json::Map::new());
+    }
+    let root = state.data.as_object_mut().expect("state.data object");
+    if !root.get("worldline").map(Value::is_object).unwrap_or(false) {
+        root.insert("worldline".to_string(), Value::Object(serde_json::Map::new()));
+    }
+    let worldline = root
+        .get_mut("worldline")
+        .and_then(Value::as_object_mut)
+        .expect("worldline object");
+    if !worldline
+        .get("user_variables")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
+        worldline.insert(
+            "user_variables".to_string(),
+            Value::Object(serde_json::Map::new()),
+        );
+    }
+    let vars = worldline
+        .get_mut("user_variables")
+        .and_then(Value::as_object_mut)
+        .expect("user_variables object");
+    let old_value = vars
+        .get(&key)
+        .and_then(|v| v.get("value"))
+        .and_then(Value::as_str)
+        .map(|s| s.to_string());
+    vars.insert(
+        key.clone(),
+        json!({
+            "value": value,
+            "source": source,
+            "locked": false,
+            "turn": turn,
+            "updated_at": chrono::Utc::now().to_rfc3339(),
+        }),
+    );
+    state.touch();
+    old_value.map(|s| s != value).unwrap_or(true)
+}
+
+static TIME_PATTERN_1: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?:时间线|时间|剧情|镜头|场景)\s*(?:跳到|跳转到|快进到|切到|来到|推进到|过渡到|直接进入|进入)\s*([^，。！？\n]{2,40})",
+    )
+    .expect("explicit time pattern 1")
+});
+static TIME_PATTERN_2: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?:时间来到|时间推进至|时间推进到|时间跳至|时间跳到|镜头切到|画面切到|场景切到|场景来到)\s*([^，。！？\n]{2,40})",
+    )
+    .expect("explicit time pattern 2")
+});
+
+/// 对应 Python `_extract_explicit_time_updates` — 从 GM 正文匹配显式时间推进短语。
+fn extract_explicit_time_updates(text: &str) -> Vec<String> {
+    use crate::timeline_jump::{clean_time_value, looks_like_time_value};
+    let mut values: Vec<String> = Vec::new();
+    for re in [&*TIME_PATTERN_1, &*TIME_PATTERN_2] {
+        for caps in re.captures_iter(text) {
+            if let Some(m) = caps.get(1) {
+                let cleaned = clean_time_value(m.as_str());
+                if looks_like_time_value(&cleaned) && !values.contains(&cleaned) {
+                    values.push(cleaned);
+                }
+            }
+        }
+    }
+    values
 }
 
