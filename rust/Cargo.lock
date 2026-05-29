@@ -2721,6 +2721,7 @@ dependencies = [
  "sqlx 0.8.6",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tower",
  "tower-http",
@@ -3795,6 +3796,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
