@@ -39,7 +39,7 @@ serde_yaml = "0.9"
 # web
 axum = { version = "0.7", features = ["macros", "json", "multipart", "ws"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "timeout"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "compression-br", "timeout"] }
 tower_governor = { version = "0.4", features = ["axum"] }
 axum-prometheus = "0.10"
 hyper = "1"

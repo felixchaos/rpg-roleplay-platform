@@ -29,7 +29,7 @@
 //!   5. run_migrations(版本化 advisory-lock)
 //!   6. 装配 AppState
 //!   7. lifespan startup hooks(MCP 健康 loop / command tools / durable jobs / model catalog)
-//!   8. build_router → CORS + GZip + Trace + api_contract_middleware
+//!   8. build_router → CORS + Brotli/Gzip(SSE 排除) + Trace + api_contract_middleware
 //!   9. bind 0.0.0.0:7860 axum::serve
 //!  10. 优雅 shutdown(ctrl-c / SIGTERM → lifespan shutdown hooks)
 //! ```
@@ -63,7 +63,10 @@ use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tower_http::{
-    compression::CompressionLayer,
+    compression::{
+        CompressionLayer,
+        predicate::{NotForContentType, Predicate, SizeAbove},
+    },
     cors::{AllowOrigin, CorsLayer},
     timeout::TimeoutLayer,
     trace::TraceLayer,
@@ -637,7 +640,13 @@ fn build_router(state: AppState) -> Router {
             state.clone(),
             api_contract_middleware,
         ))
-        .layer(CompressionLayer::new())
+        .layer(
+            CompressionLayer::new()
+                .compress_when(
+                    SizeAbove::new(512)
+                        .and(NotForContentType::const_new("text/event-stream")),
+                ),
+        )
         .layer(TraceLayer::new_for_http())
         .layer(prometheus_layer)
         .layer(cors)

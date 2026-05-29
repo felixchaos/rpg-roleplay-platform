@@ -201,6 +201,123 @@ SIGTERM
      (terminationGracePeriodSeconds=60,覆盖全流程)
 ```
 
+## 前端生产部署 Web 性能配置
+
+本节记录推荐的网络层优化手段，供 nginx/CDN 配置参考。**以下均为文档化最佳实践，不强制要求逐条实施。**
+
+### HTTP/3 (QUIC)
+
+```nginx
+server {
+    listen 443 quic reuseport;
+    listen 443 ssl;
+    http2 on;
+    http3 on;
+    quic_retry on;
+
+    ssl_certificate     /etc/ssl/certs/cert.pem;
+    ssl_certificate_key /etc/ssl/private/key.pem;
+
+    # 告知客户端支持 h3，缓存 1 天
+    add_header Alt-Svc 'h3=":443"; ma=86400' always;
+}
+```
+
+需要 nginx >= 1.25.0（主线版）且编译时带 `--with-http_v3_module`。
+
+### Brotli / Gzip 压缩
+
+后端（rpg-server）已内置 Axum + tower-http `CompressionLayer`，支持 Brotli 与 Gzip，
+自动根据客户端 `Accept-Encoding` 选择算法，SSE 流已通过 predicate 排除压缩以防缓冲。
+
+若前端静态文件由 nginx 直接 serve（非后端代理），可额外开启 nginx Brotli：
+
+```nginx
+# 需 ngx_brotli 模块
+brotli on;
+brotli_comp_level 6;
+brotli_types text/html text/css application/javascript application/json image/svg+xml;
+
+# Gzip 兜底
+gzip on;
+gzip_comp_level 6;
+gzip_types text/html text/css application/javascript application/json;
+```
+
+### Early Hints (103)
+
+在 nginx 发送完整响应前提前推送关键资源链接，减少渲染阻塞：
+
+```nginx
+location / {
+    # 提前告知浏览器预加载核心 CSS / JS
+    add_header Link "</assets/react-vendor-[hash].js>; rel=preload; as=script" always;
+    add_header Link "</assets/index-[hash].css>; rel=preload; as=style" always;
+    # 103 Early Hints 由 nginx >= 1.27.x 或 Caddy 原生支持
+}
+```
+
+### CDN 边缘缓存策略
+
+Vite build 已启用 asset hash 文件名（`[name]-[hash][extname]`），内容变更时 hash 自动更换，
+可安全配置超长缓存：
+
+```nginx
+# hash 文件名的静态资源：永不过期
+location /assets/ {
+    add_header Cache-Control "public, max-age=31536000, immutable";
+    expires 1y;
+}
+
+# HTML 入口：禁止缓存，确保部署后立即生效
+location ~* \.(html)$ {
+    add_header Cache-Control "no-cache, no-store, must-revalidate";
+    expires 0;
+}
+```
+
+CDN 厂商（CloudFront、Cloudflare、阿里云 CDN）配置相同的 `Cache-Control` 即可在边缘节点缓存。
+
+### 字体子集化
+
+减少中文字体包体积，仅保留实际用到的字形（中英文 + 拉丁扩展）：
+
+```bash
+# 安装工具
+pip install fonttools brotli
+
+# 使用 Unicode 范围子集化（CJK 统一汉字基本区 + ASCII + 拉丁扩展）
+pyftsubset NotoSansSC.ttf \
+  --unicodes="U+0020-007E,U+00A0-00FF,U+4E00-9FFF,U+3000-303F,U+FF00-FFEF" \
+  --flavor=woff2 \
+  --output-file=NotoSansSC-subset.woff2
+
+# 验证体积压缩率（通常可从 10MB+ 降至 200KB 以内）
+ls -lh NotoSansSC-subset.woff2
+```
+
+### 图片现代格式（AVIF / WebP）
+
+```bash
+# AVIF 编码（需 libavif）
+avifenc --min 20 --max 40 input.jpg output.avif
+
+# WebP 编码（需 libwebp）
+cwebp -q 80 input.jpg -o output.webp
+```
+
+HTML 中使用 `<picture>` 渐进增强，浏览器按支持情况自动选择：
+
+```html
+<picture>
+  <source srcset="image.avif" type="image/avif">
+  <source srcset="image.webp" type="image/webp">
+  <img src="image.jpg" alt="描述" loading="lazy" decoding="async">
+</picture>
+```
+
+---
+
 ## PgBouncer 关键参数
 
 | 参数 | 值 | 说明 |

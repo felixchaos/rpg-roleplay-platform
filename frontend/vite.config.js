@@ -22,6 +22,9 @@ export default defineConfig({
   },
 
   build: {
+    cssCodeSplit: true,
+    reportCompressedSize: true,
+    sourcemap: false,
     rollupOptions: {
       input: {
         // 6 个 HTML 多页入口，保留原有多页结构
@@ -31,6 +34,15 @@ export default defineConfig({
         game_console:   resolve(__dirname, 'Game Console.html'),
         login:          resolve(__dirname, 'Login.html'),
         design_canvas:  resolve(__dirname, 'Design Canvas.html'),
+      },
+      output: {
+        assetFileNames: 'assets/[name]-[hash][extname]',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        entryFileNames: 'assets/[name]-[hash].js',
+        manualChunks: {
+          // React 单独 vendor chunk，跨页面缓存，减少 hash 抖动
+          'react-vendor': ['react', 'react-dom'],
+        },
       },
     },
   },
