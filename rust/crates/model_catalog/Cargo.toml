@@ -1,0 +1,31 @@
+[package]
+name = "model_catalog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# 触发 ts-rs export — cargo test -p model_catalog --features ts-rs。
+ts-rs = ["dep:ts-rs"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+dashmap.workspace = true
+once_cell.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+
+[dependencies.ts-rs]
+version = "12"
+features = ["serde-compat", "serde-json-impl", "chrono-impl"]
+optional = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+wiremock = "0.6"

@@ -15,6 +15,7 @@ members = [
     "crates/rpg-routes",
     "crates/rpg-tools-dsl",
     "crates/rpg-server",
+    "crates/model_catalog",
 ]
 
 [workspace.package]

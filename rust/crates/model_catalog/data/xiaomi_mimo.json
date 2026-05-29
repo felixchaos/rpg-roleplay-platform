@@ -1,0 +1,191 @@
+[
+  {
+    "id": "mimo-v2.5-pro",
+    "provider": "XiaomiMimo",
+    "display_name": "MiMo V2.5 Pro",
+    "context_window": 1048576,
+    "max_output_tokens": 131072,
+    "input_cost_per_million": 0.84,
+    "output_cost_per_million": 3.36,
+    "cache_write_cost_per_million": null,
+    "cache_read_cost_per_million": null,
+    "capabilities": {
+      "streaming": true, "tools": true, "vision": false, "audio": false,
+      "structured_output": true, "extended_thinking": true, "embedding": false,
+      "function_calling": true, "prompt_caching": false, "web_search": true, "pdf_input": false
+    },
+    "unsupported_params": [],
+    "deprecated_at": null,
+    "retiring_at": null,
+    "source": "StaticCatalog",
+    "last_updated": "2026-05-01T00:00:00Z"
+  },
+  {
+    "id": "mimo-v2-pro",
+    "provider": "XiaomiMimo",
+    "display_name": "MiMo V2 Pro",
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "input_cost_per_million": 0.7,
+    "output_cost_per_million": 2.8,
+    "cache_write_cost_per_million": null,
+    "cache_read_cost_per_million": null,
+    "capabilities": {
+      "streaming": true, "tools": true, "vision": false, "audio": false,
+      "structured_output": true, "extended_thinking": true, "embedding": false,
+      "function_calling": true, "prompt_caching": false, "web_search": true, "pdf_input": false
+    },
+    "unsupported_params": [],
+    "deprecated_at": "2026-06-30",
+    "retiring_at": "2026-09-30",
+    "source": "StaticCatalog",
+    "last_updated": "2026-05-01T00:00:00Z"
+  },
+  {
+    "id": "mimo-v2.5",
+    "provider": "XiaomiMimo",
+    "display_name": "MiMo V2.5 Omni",
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "input_cost_per_million": 0.42,
+    "output_cost_per_million": 1.68,
+    "cache_write_cost_per_million": null,
+    "cache_read_cost_per_million": null,
+    "capabilities": {
+      "streaming": true, "tools": true, "vision": true, "audio": true,
+      "structured_output": true, "extended_thinking": false, "embedding": false,
+      "function_calling": true, "prompt_caching": false, "web_search": true, "pdf_input": false
+    },
+    "unsupported_params": [],
+    "deprecated_at": null,
+    "retiring_at": null,
+    "source": "StaticCatalog",
+    "last_updated": "2026-05-01T00:00:00Z"
+  },
+  {
+    "id": "mimo-v2-omni",
+    "provider": "XiaomiMimo",
+    "display_name": "MiMo V2 Omni",
+    "context_window": 262144,
+    "max_output_tokens": 32768,
+    "input_cost_per_million": 0.35,
+    "output_cost_per_million": 1.4,
+    "cache_write_cost_per_million": null,
+    "cache_read_cost_per_million": null,
+    "capabilities": {
+      "streaming": true, "tools": true, "vision": true, "audio": true,
+      "structured_output": true, "extended_thinking": false, "embedding": false,
+      "function_calling": true, "prompt_caching": false, "web_search": false, "pdf_input": false
+    },
+    "unsupported_params": [],
+    "deprecated_at": null,
+    "retiring_at": null,
+    "source": "StaticCatalog",
+    "last_updated": "2026-05-01T00:00:00Z"
+  },
+  {
+    "id": "mimo-v2-flash",
+    "provider": "XiaomiMimo",
+    "display_name": "MiMo V2 Flash",
+    "context_window": 262144,
+    "max_output_tokens": 16384,
+    "input_cost_per_million": 0.14,
+    "output_cost_per_million": 0.56,
+    "cache_write_cost_per_million": null,
+    "cache_read_cost_per_million": null,
+    "capabilities": {
+      "streaming": true, "tools": true, "vision": false, "audio": false,
+      "structured_output": true, "extended_thinking": false, "embedding": false,
+      "function_calling": true, "prompt_caching": false, "web_search": false, "pdf_input": false
+    },
+    "unsupported_params": [],
+    "deprecated_at": null,
+    "retiring_at": null,
+    "source": "StaticCatalog",
+    "last_updated": "2026-05-01T00:00:00Z"
+  },
+  {
+    "id": "mimo-v2.5-tts",
+    "provider": "XiaomiMimo",
+    "display_name": "MiMo V2.5 TTS (base)",
+    "context_window": 8192,
+    "max_output_tokens": 8192,
+    "input_cost_per_million": 0.21,
+    "output_cost_per_million": 0.42,
+    "cache_write_cost_per_million": null,
+    "cache_read_cost_per_million": null,
+    "capabilities": {
+      "streaming": true, "tools": false, "vision": false, "audio": true,
+      "structured_output": false, "extended_thinking": false, "embedding": false,
+      "function_calling": false, "prompt_caching": false, "web_search": false, "pdf_input": false
+    },
+    "unsupported_params": ["tools", "tool_choice", "response_format"],
+    "deprecated_at": null,
+    "retiring_at": null,
+    "source": "StaticCatalog",
+    "last_updated": "2026-05-01T00:00:00Z"
+  },
+  {
+    "id": "mimo-v2.5-tts-voice-a",
+    "provider": "XiaomiMimo",
+    "display_name": "MiMo V2.5 TTS (Voice A)",
+    "context_window": 8192,
+    "max_output_tokens": 8192,
+    "input_cost_per_million": 0.21,
+    "output_cost_per_million": 0.42,
+    "cache_write_cost_per_million": null,
+    "cache_read_cost_per_million": null,
+    "capabilities": {
+      "streaming": true, "tools": false, "vision": false, "audio": true,
+      "structured_output": false, "extended_thinking": false, "embedding": false,
+      "function_calling": false, "prompt_caching": false, "web_search": false, "pdf_input": false
+    },
+    "unsupported_params": ["tools", "tool_choice", "response_format"],
+    "deprecated_at": null,
+    "retiring_at": null,
+    "source": "StaticCatalog",
+    "last_updated": "2026-05-01T00:00:00Z"
+  },
+  {
+    "id": "mimo-v2.5-tts-voice-b",
+    "provider": "XiaomiMimo",
+    "display_name": "MiMo V2.5 TTS (Voice B)",
+    "context_window": 8192,
+    "max_output_tokens": 8192,
+    "input_cost_per_million": 0.21,
+    "output_cost_per_million": 0.42,
+    "cache_write_cost_per_million": null,
+    "cache_read_cost_per_million": null,
+    "capabilities": {
+      "streaming": true, "tools": false, "vision": false, "audio": true,
+      "structured_output": false, "extended_thinking": false, "embedding": false,
+      "function_calling": false, "prompt_caching": false, "web_search": false, "pdf_input": false
+    },
+    "unsupported_params": ["tools", "tool_choice", "response_format"],
+    "deprecated_at": null,
+    "retiring_at": null,
+    "source": "StaticCatalog",
+    "last_updated": "2026-05-01T00:00:00Z"
+  },
+  {
+    "id": "mimo-v2.5-tts-voice-c",
+    "provider": "XiaomiMimo",
+    "display_name": "MiMo V2.5 TTS (Voice C)",
+    "context_window": 8192,
+    "max_output_tokens": 8192,
+    "input_cost_per_million": 0.21,
+    "output_cost_per_million": 0.42,
+    "cache_write_cost_per_million": null,
+    "cache_read_cost_per_million": null,
+    "capabilities": {
+      "streaming": true, "tools": false, "vision": false, "audio": true,
+      "structured_output": false, "extended_thinking": false, "embedding": false,
+      "function_calling": false, "prompt_caching": false, "web_search": false, "pdf_input": false
+    },
+    "unsupported_params": ["tools", "tool_choice", "response_format"],
+    "deprecated_at": null,
+    "retiring_at": null,
+    "source": "StaticCatalog",
+    "last_updated": "2026-05-01T00:00:00Z"
+  }
+]
