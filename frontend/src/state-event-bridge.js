@@ -12,6 +12,7 @@
  *     rpg-preferences-updated, rpg-branches-updated, rpg-mcp-updated
  *
  * 自动重连 (5s 退避),tab 隐藏时不重连。authed 才连。
+ * W4-7: 加 watchdog — 每 10s 检查,45s 无事件强制重连。
  */
 (function () {
   "use strict";
@@ -25,6 +26,33 @@
   let backoff = 1000;
   let stopped = false;
   let connectedAt = 0;
+  let lastEventAt = 0;
+  let watchdogTimer = null;
+
+  const WATCHDOG_INTERVAL = 10_000;  // 每 10s 检查一次
+  const WATCHDOG_TIMEOUT  = 45_000;  // 45s 无事件 → 强制重连
+
+  function touchLastEvent() {
+    lastEventAt = Date.now();
+  }
+
+  function startWatchdog() {
+    stopWatchdog();
+    watchdogTimer = setInterval(() => {
+      if (stopped || !es) { stopWatchdog(); return; }
+      if (lastEventAt > 0 && Date.now() - lastEventAt > WATCHDOG_TIMEOUT) {
+        console.warn("[state-event-bridge] watchdog: no event for 45s, forcing reconnect");
+        try { es.close(); } catch (_) {}
+        es = null;
+        stopWatchdog();
+        scheduleReconnect();
+      }
+    }, WATCHDOG_INTERVAL);
+  }
+
+  function stopWatchdog() {
+    if (watchdogTimer !== null) { clearInterval(watchdogTimer); watchdogTimer = null; }
+  }
 
   function connect() {
     if (stopped) return;
@@ -36,11 +64,15 @@
       scheduleReconnect();
       return;
     }
+    lastEventAt = Date.now();  // 连接建立时初始化时间戳
+    startWatchdog();
     es.addEventListener("hello", (ev) => {
       backoff = 1000;
       connectedAt = Date.now();
+      touchLastEvent();
     });
     es.addEventListener("state_change", (ev) => {
+      touchLastEvent();
       let data;
       try { data = JSON.parse(ev.data || "{}"); } catch { return; }
       const topic = (data && data.topic) || "";
@@ -56,6 +88,7 @@
       // EventSource 自己有重连,但失败多次后我们也手动重置
       const elapsed = Date.now() - connectedAt;
       if (elapsed > 60_000) backoff = 1000;  // 连上一分钟以上的连接,重置退避
+      stopWatchdog();
       try { es.close(); } catch (_) {}
       es = null;
       scheduleReconnect();
@@ -77,6 +110,7 @@
 
   function stop() {
     stopped = true;
+    stopWatchdog();
     if (es) { try { es.close(); } catch (_) {} es = null; }
   }
 
@@ -84,6 +118,7 @@
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
       // 停连接但保留 stopped=false 让 visible 时自动重连
+      stopWatchdog();
       if (es) { try { es.close(); } catch (_) {} es = null; }
     } else if (document.visibilityState === "visible") {
       if (window.RPG_AUTH && window.RPG_AUTH.authed && !es && !stopped) {
