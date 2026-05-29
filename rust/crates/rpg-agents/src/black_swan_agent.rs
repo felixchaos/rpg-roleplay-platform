@@ -223,7 +223,9 @@ pub fn validator_npc_presence(
 
 /// 3e: independent critic — 接独立 LLM 二次判定(本骨架返回通过)。
 ///
-/// TODO[opus]: 引入第二个便宜 LLM 做 critic + reason 校验。
+/// TODO[P2-LLM]: 引入第二个便宜 LLM(单独 role / 单独价位)做 critic + reason 校验。
+/// 当前 short-circuit 通过,与 Python `validator_independent_critic` 同语义。
+/// 接入条件:rpg-llm 暴露 `LlmRouter::backend_for_role("critic")` 之后接通。
 pub fn validator_independent_critic(
     _proposal: &Value,
     _snapshot: &RealitySnapshot,
@@ -683,5 +685,93 @@ mod tests {
         let proposal = json!({"event_kind": "weather", "summary": "暴风雪"});
         let (applied, errors) = dispatch_swan(&mut state, &proposal, "test");
         assert!(applied > 0, "applied={applied} errors={errors:?}");
+    }
+
+    // ── maybe_trigger — probability gate + LLM 路径(stub backend)─────
+    //
+    // 这三个测试覆盖 LLM 真路径的入口:
+    // 1) probability=0 → 立即 short-circuit,绝不调用 stub backend(stub key 也不会触网)
+    // 2) probability=1.0 + stub key → LLM 调用必然失败 → 返回 triggered=false 含 "LLM 未返回"
+    // 3) proposal_tool_schema 暴露 active_npcs 给 enum,确保 schema 自身被正确生成
+
+    fn stub_llm() -> SharedLlm {
+        use rpg_llm::anthropic::AnthropicBackend;
+        use rpg_llm::AnyBackend;
+        use std::sync::Arc;
+        let b = AnthropicBackend::new("stub-key").expect("build stub backend");
+        Arc::new(AnyBackend::Anthropic(b))
+    }
+
+    #[tokio::test]
+    async fn test_maybe_trigger_probability_zero_skips_llm() {
+        let agent = BlackSwanAgent::new(stub_llm());
+        let state = make_state();
+        let out = agent
+            .maybe_trigger(
+                BlackSwanInput {
+                    user_id: Some(1),
+                    script_id: Some(1),
+                    probability: 0.0,
+                },
+                &state,
+            )
+            .await
+            .expect("maybe_trigger should succeed");
+        assert!(!out.triggered);
+        assert!(out.proposal.is_none());
+        // reason 应包含 probability<=0 提示,确认走的是概率门 short-circuit
+        assert!(
+            out.validation_failures
+                .iter()
+                .any(|s| s.contains("probability<=0")),
+            "actual failures: {:?}",
+            out.validation_failures
+        );
+    }
+
+    #[tokio::test]
+    async fn test_maybe_trigger_llm_failure_returns_safe_result() {
+        // probability=1.0 → 必然走 LLM;stub-key 调用 Anthropic 必然失败,
+        // call_with_tools 内部把错误转化成 None proposal,返回 "LLM 未返回有效 proposal"。
+        let agent = BlackSwanAgent::new(stub_llm());
+        let state = make_state();
+        let out = agent
+            .maybe_trigger(
+                BlackSwanInput {
+                    user_id: Some(1),
+                    script_id: Some(1),
+                    probability: 1.0,
+                },
+                &state,
+            )
+            .await
+            .expect("maybe_trigger should not panic even when LLM fails");
+        assert!(!out.triggered);
+        // 落在 LLM 路径(而非概率门),validation_failures 应记录 LLM 失败
+        assert!(
+            out.validation_failures
+                .iter()
+                .any(|s| s.contains("LLM") || s.contains("proposal")),
+            "actual failures: {:?}",
+            out.validation_failures
+        );
+    }
+
+    #[test]
+    fn test_proposal_tool_schema_enum_limits_to_active_npcs() {
+        let snap = RealitySnapshot {
+            active_npcs: vec![
+                json!({"id": "npc_1", "name": "张三"}),
+                json!({"id": "npc_2", "name": "李四"}),
+            ],
+            ..Default::default()
+        };
+        let schema = proposal_tool_schema(&snap);
+        // 校验 enum 字段被填入 active_npc id
+        let s = schema.input_schema.to_string();
+        assert!(s.contains("npc_1"));
+        assert!(s.contains("npc_2"));
+        // event_kind enum 必须含 no_op(允许 agent 主动放弃)
+        assert!(s.contains("no_op"));
     }
 }

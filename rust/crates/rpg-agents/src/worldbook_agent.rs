@@ -43,11 +43,21 @@ impl WorldbookResult {
 
         if let Some(a) = self.timeline_anchor.as_object() {
             let phase = a.get("phase").and_then(|v| v.as_str()).unwrap_or("(未匹配)");
-            let cmin = a.get("chapter_min").and_then(|v| v.as_str()).unwrap_or("?");
-            let cmax = a.get("chapter_max").and_then(|v| v.as_str()).unwrap_or("?");
+            // chapter_min / chapter_max 在 Python 端是 int(允许 None),Rust 端对齐 i32:
+            // 渲染时优先取整数,缺失时回落空字符串("?")。不再吃字符串。
+            let cmin_render = a
+                .get("chapter_min")
+                .and_then(|v| v.as_i64())
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "?".to_string());
+            let cmax_render = a
+                .get("chapter_max")
+                .and_then(|v| v.as_i64())
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "?".to_string());
             let tl = a.get("time_label").and_then(|v| v.as_str()).unwrap_or("");
             parts.push(format!(
-                "=== 当前时间线锚点 ===\n故事 phase: {phase}\n参考章节: 第{cmin}-{cmax}章\n时间标签: {tl}"
+                "=== 当前时间线锚点 ===\n故事 phase: {phase}\n参考章节: 第{cmin_render}-{cmax_render}章\n时间标签: {tl}"
             ));
         }
         if let Some(pd) = &self.phase_digest {
@@ -482,12 +492,16 @@ async fn load_timeline_anchor(pool: &PgPool, script_id: i64, phase_key: &str) ->
     .ok()
     .flatten();
     row.map(|(phase, cmin, cmax, time_label, metadata)| {
-        let cmin_s = cmin.map(|x| x.to_string()).unwrap_or_default();
-        let cmax_s = cmax.map(|x| x.to_string()).unwrap_or_default();
+        // 对齐 Python `worldbook_agent.py` —— chapter_min / chapter_max 直接以
+        // i32 写进 timeline_anchor,允许为 null(对应 Python 的 None)。
+        // 老逻辑用 `.to_string()` 把 i32 编成 JSON 字符串,导致前端 /消费方拿到
+        // `"10"` 而非 `10`,与 Python 类型签名漂移。
+        let cmin_v = cmin.map(|x| Value::from(x)).unwrap_or(Value::Null);
+        let cmax_v = cmax.map(|x| Value::from(x)).unwrap_or(Value::Null);
         json!({
             "phase": phase,
-            "chapter_min": cmin_s,
-            "chapter_max": cmax_s,
+            "chapter_min": cmin_v,
+            "chapter_max": cmax_v,
             "time_label": time_label.unwrap_or_default(),
             "metadata": metadata.unwrap_or(Value::Null),
         })
@@ -600,12 +614,13 @@ mod tests {
 
     #[test]
     fn test_to_context_text_with_anchor() {
+        // chapter_min / chapter_max 类型与 Python 对齐:i32(数字),不是 "10"/"20" 字符串。
         let r = WorldbookResult {
             confidence: 0.4,
             timeline_anchor: json!({
                 "phase": "东征战役",
-                "chapter_min": "10",
-                "chapter_max": "20",
+                "chapter_min": 10,
+                "chapter_max": 20,
                 "time_label": "战时"
             }),
             ..Default::default()
@@ -613,6 +628,23 @@ mod tests {
         let txt = r.to_context_text();
         assert!(txt.contains("东征战役"));
         assert!(txt.contains("战时"));
+        // 渲染时应展开成 "第10-20章"
+        assert!(txt.contains("第10-20章"), "actual={txt}");
+    }
+
+    #[test]
+    fn test_to_context_text_anchor_missing_chapters_fallback() {
+        // chapter_min / chapter_max 缺失时回落到 "?"(对齐 Python `.get(...,'?')`)。
+        let r = WorldbookResult {
+            confidence: 0.2,
+            timeline_anchor: json!({
+                "phase": "序幕",
+                "time_label": "黎明前",
+            }),
+            ..Default::default()
+        };
+        let txt = r.to_context_text();
+        assert!(txt.contains("第?-?章"), "actual={txt}");
     }
 
     #[test]
