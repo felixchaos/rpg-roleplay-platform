@@ -21,7 +21,7 @@ use crate::{require_user, AppState, ResponseError};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/skills/import", post(api_skills_import))
-        .route("/api/skills/{skill_id}/run", post(api_skill_run))
+        .route("/api/skills/:skill_id/run", post(api_skill_run))
 }
 
 // ── request types ─────────────────────────────────────────────────────────────

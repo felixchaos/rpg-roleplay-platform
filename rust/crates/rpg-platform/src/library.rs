@@ -459,7 +459,7 @@ fn script_from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Script> {
 pub async fn list_scripts(pool: &PgPool, owner_id: i64) -> PlatformResult<Vec<Script>> {
     let rows = sqlx::query(
         "select id, owner_id, title, description, source_path, \
-         coalesce(metadata, '{}'::jsonb) as metadata \
+         '{}'::jsonb as metadata \
          from scripts where owner_id = $1 order by id desc",
     )
     .bind(owner_id)
@@ -479,7 +479,7 @@ pub async fn get_script(
 ) -> PlatformResult<Option<Script>> {
     let row = sqlx::query(
         "select id, owner_id, title, description, source_path, \
-         coalesce(metadata, '{}'::jsonb) as metadata \
+         '{}'::jsonb as metadata \
          from scripts where id = $1 and owner_id = $2",
     )
     .bind(script_id)
@@ -505,7 +505,7 @@ pub async fn create_script(
         "insert into scripts(owner_id, title, description, source_path) \
          values ($1, $2, $3, $4) \
          returning id, owner_id, title, description, source_path, \
-                   coalesce(metadata, '{}'::jsonb) as metadata",
+                   '{}'::jsonb as metadata",
     )
     .bind(owner_id)
     .bind(title)

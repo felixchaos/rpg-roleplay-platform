@@ -333,12 +333,13 @@ pub async fn set_save_active_with_tx(
 }
 
 fn set_save_active_sql() -> &'static str {
+    // 注:`active_ref_id` 在 `user_runtime` 表上才存在;`game_saves` 表的 ref 列
+    // 叫 `active_branch_ref_id`(V001 schema)。早期把两者搞混会写挂。
     r#"
     update game_saves
        set active_branch_node_id = $1,
            active_commit_id = $1,
            active_branch_ref_id = $2,
-           active_ref_id = $2,
            state_snapshot = $3,
            row_version = row_version + 1,
            updated_at = now()

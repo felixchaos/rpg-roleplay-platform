@@ -196,6 +196,7 @@ pub async fn insert_commit(
     gm_output: &str,
     metadata: &Value,
 ) -> PlatformResult<BranchCommit> {
+    let oh = object_hash(state_snapshot)?;
     let row = sqlx::query(insert_commit_sql())
         .bind(save_id)
         .bind(parent_id)
@@ -210,6 +211,7 @@ pub async fn insert_commit(
         .bind(player_input)
         .bind(gm_output)
         .bind(metadata)
+        .bind(&oh)
         .fetch_one(pool)
         .await
         .map_err(PlatformError::from)?;
@@ -239,6 +241,7 @@ pub async fn insert_commit_with_tx(
     gm_output: &str,
     metadata: &Value,
 ) -> PlatformResult<BranchCommit> {
+    let oh = object_hash(state_snapshot)?;
     let row = sqlx::query(insert_commit_sql())
         .bind(save_id)
         .bind(parent_id)
@@ -253,6 +256,7 @@ pub async fn insert_commit_with_tx(
         .bind(player_input)
         .bind(gm_output)
         .bind(metadata)
+        .bind(&oh)
         .fetch_one(&mut **tx)
         .await
         .map_err(PlatformError::from)?;
@@ -260,13 +264,20 @@ pub async fn insert_commit_with_tx(
 }
 
 /// 公共 SQL 字面量 —— pool / tx 两版本共享,避免漂移。
+///
+/// 列顺序:`save_id, parent_id, turn_index, kind, title, message, summary,
+///         content_preview, state_path, state_snapshot, player_input,
+///         gm_output, metadata, object_hash`
+///
+/// `object_hash` 是 NOT NULL(V001 schema 对齐 Python init),由 [`object_hash`]
+/// 对 state_snapshot 计算 sha256 canonical-json,作为 14 号 bind。
 fn insert_commit_sql() -> &'static str {
     r#"
     insert into branch_commits(save_id, parent_id, turn_index, kind, title,
                                message, summary, content_preview,
                                state_path, state_snapshot, player_input,
-                               gm_output, metadata)
-    values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                               gm_output, metadata, object_hash)
+    values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
     returning *
     "#
 }

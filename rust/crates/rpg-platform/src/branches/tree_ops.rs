@@ -28,8 +28,10 @@ pub async fn tree(
     save_id: i64,
 ) -> PlatformResult<TreeResult> {
     // 校验 save 归属
+    // 列名:game_saves 用 `active_branch_ref_id`(V001 schema 对齐 Python),
+    // 别写成 `active_ref_id`(那是 user_runtime 表的列,W5 排查多次踩过)。
     let active: Option<(Option<i64>, Option<i64>)> = sqlx::query_as(
-        "select active_commit_id, active_ref_id from game_saves where id = $1 and user_id = $2",
+        "select active_commit_id, active_branch_ref_id from game_saves where id = $1 and user_id = $2",
     )
     .bind(save_id)
     .bind(user_id)

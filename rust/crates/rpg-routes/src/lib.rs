@@ -10,11 +10,21 @@
 //!   3. 提供 [`sse::named_event`] helper,所有 SSE handler 用 `.json_data` 输出 JSON。
 //!   4. 新增 `uploads` 模块 — base64 分片上传(`/api/uploads/chunk`、`/api/uploads/finalize`)。
 
+pub mod admin;
+pub mod auth;
+pub mod branches;
 pub mod console_assistant;
 pub mod core;
 pub mod db_metrics;
 pub mod game;
+pub mod imports;
+pub mod library;
+pub mod me;
 pub mod metrics;
+pub mod platform;
+pub mod saves;
+pub mod scripts;
+pub mod settings;
 pub mod sse_events;
 pub mod sse_metrics;
 pub mod mcp;
@@ -369,8 +379,11 @@ impl From<anyhow::Error> for ResponseError {
 
 // ── 鉴权 middleware ──────────────────────────────────────────────────────────
 
+/// 与 Python `_deps.py:SESSION_COOKIE` 对齐:前端 / Python 后端 / Rust 后端必须用同一名。
+pub const SESSION_COOKIE: &str = "rpg_session";
+
 /// 从 cookie / Authorization header 提 token。
-fn token_from_headers(headers: &HeaderMap) -> Option<String> {
+pub fn token_from_headers(headers: &HeaderMap) -> Option<String> {
     if let Some(auth) = headers.get(http::header::AUTHORIZATION) {
         if let Ok(s) = auth.to_str() {
             if let Some(rest) = s.strip_prefix("Bearer ") {
@@ -380,9 +393,10 @@ fn token_from_headers(headers: &HeaderMap) -> Option<String> {
     }
     if let Some(cookie) = headers.get(http::header::COOKIE) {
         if let Ok(s) = cookie.to_str() {
+            let needle = format!("{SESSION_COOKIE}=");
             for part in s.split(';') {
                 let p = part.trim();
-                if let Some(v) = p.strip_prefix("session_token=") {
+                if let Some(v) = p.strip_prefix(&needle) {
                     return Some(v.trim().to_string());
                 }
             }
@@ -409,6 +423,101 @@ pub async fn user_id_or_anon(state: &AppState, headers: &HeaderMap) -> String {
         Ok(Some(u)) => u.id.to_string(),
         _ => "anonymous".to_string(),
     }
+}
+
+// ── Cookie helpers ──────────────────────────────────────────────────────────
+//
+// 对齐 Python `_deps.py:_set_session_cookie / _delete_session_cookie`。
+//   - SameSite 从 env `RPG_COOKIE_SAMESITE` 读,默认 "lax"。
+//   - Secure 从 env `RPG_COOKIE_SECURE` 读(1/0),未设按 scheme 推断。
+//   - SameSite=None 时强制 Secure=true(Chrome 100+ 拒绝 SameSite=None;!Secure)。
+//   - 删 cookie 必须用同一组 attrs,否则浏览器视作另一条 cookie 残留。
+
+fn cookie_samesite_env() -> String {
+    std::env::var("RPG_COOKIE_SAMESITE")
+        .unwrap_or_else(|_| "lax".to_string())
+        .trim()
+        .to_lowercase()
+}
+
+fn cookie_secure_env(scheme_is_https: bool) -> bool {
+    match std::env::var("RPG_COOKIE_SECURE")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        Some(v) if v == "1" => true,
+        Some(v) if v == "0" => false,
+        _ => scheme_is_https,
+    }
+}
+
+/// 构造 `Set-Cookie` 头值,带 max_age 秒。
+///
+/// 用于登录/注册成功后写 `rpg_session`。`scheme_is_https` 来自请求 URI scheme,
+/// 或调用方根据 `x-forwarded-proto` 判定;开发环境通常为 false。
+pub fn build_session_set_cookie(token: &str, max_age_secs: i64, scheme_is_https: bool) -> String {
+    let samesite = cookie_samesite_env();
+    let mut secure = cookie_secure_env(scheme_is_https);
+    if samesite == "none" {
+        secure = true; // 浏览器规范硬要求
+    }
+    let mut parts = vec![
+        format!("{SESSION_COOKIE}={token}"),
+        "Path=/".to_string(),
+        "HttpOnly".to_string(),
+        format!(
+            "SameSite={}",
+            match samesite.as_str() {
+                "none" => "None",
+                "strict" => "Strict",
+                _ => "Lax",
+            }
+        ),
+        format!("Max-Age={max_age_secs}"),
+    ];
+    if secure {
+        parts.push("Secure".to_string());
+    }
+    parts.join("; ")
+}
+
+/// 构造删除 cookie 的 `Set-Cookie` 头值。必须与 set 用同一组 SameSite / Secure。
+pub fn build_session_delete_cookie(scheme_is_https: bool) -> String {
+    let samesite = cookie_samesite_env();
+    let mut secure = cookie_secure_env(scheme_is_https);
+    if samesite == "none" {
+        secure = true;
+    }
+    let mut parts = vec![
+        format!("{SESSION_COOKIE}="),
+        "Path=/".to_string(),
+        "HttpOnly".to_string(),
+        format!(
+            "SameSite={}",
+            match samesite.as_str() {
+                "none" => "None",
+                "strict" => "Strict",
+                _ => "Lax",
+            }
+        ),
+        "Max-Age=0".to_string(),
+    ];
+    if secure {
+        parts.push("Secure".to_string());
+    }
+    parts.join("; ")
+}
+
+/// 判定请求来自 https(用于 cookie Secure 推断)。
+/// 优先看 X-Forwarded-Proto(反代场景),再看 URI scheme。
+pub fn request_is_https(headers: &HeaderMap, uri: &http::Uri) -> bool {
+    if let Some(v) = headers.get("x-forwarded-proto") {
+        if let Ok(s) = v.to_str() {
+            return s.eq_ignore_ascii_case("https");
+        }
+    }
+    uri.scheme_str().map(|s| s == "https").unwrap_or(false)
 }
 
 // ── SSE helpers ──────────────────────────────────────────────────────────────
@@ -537,6 +646,17 @@ fn api_router() -> Router<AppState> {
         .merge(console_assistant::router())
         .merge(uploads::router())
         .merge(ws::router())
+        // Wave 12 新增 9 个 HTTP handler 域:
+        .merge(admin::router())
+        .merge(auth::router())
+        .merge(branches::router())
+        .merge(imports::router())
+        .merge(library::router())
+        .merge(me::router())
+        .merge(platform::router())
+        .merge(saves::router())
+        .merge(scripts::router())
+        .merge(settings::router())
 }
 
 /// 普通业务路由(去掉 SSE 路由 + 上传路由)。
@@ -558,4 +678,15 @@ fn regular_api_router() -> Router<AppState> {
         // console_assistant 的非 SSE 路由
         .merge(console_assistant::regular_router())
         // uploads 已单独拎出,不再包含
+        // Wave 12 新增 9 个 HTTP handler 域(全部 non-SSE,挂在 regular):
+        .merge(admin::router())
+        .merge(auth::router())
+        .merge(branches::router())
+        .merge(imports::router())
+        .merge(library::router())
+        .merge(me::router())
+        .merge(platform::router())
+        .merge(saves::router())
+        .merge(scripts::router())
+        .merge(settings::router())
 }

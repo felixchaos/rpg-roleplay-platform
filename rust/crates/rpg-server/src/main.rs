@@ -294,14 +294,11 @@ async fn api_contract_middleware(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    // 路径重写:/api/v1/* → /api/*
-    let mut request = request;
-    let prefix = format!("/api/v{API_VERSION}");
-    if original_path == prefix {
-        rewrite_path(&mut request, "/api");
-    } else if let Some(rest) = original_path.strip_prefix(&format!("{prefix}/")) {
-        rewrite_path(&mut request, &format!("/api/{rest}"));
-    }
+    // 路径重写已经在 `nest_service("/api/v1", AddApiPrefixLayer.layer(main))` 里
+    // 完成(routing 之前 mutate URI)。这里不再做 outer middleware 的 URI 改写,
+    // 因为 axum 0.7 的 Router::layer 是 per-route,中间件里 mutate URI 不会触发
+    // 重新路由,会一直 404。
+    let request = request;
 
     // Origin 校验(只针对 /api/* 的 mutating method)
     if original_path.starts_with("/api") && is_mutating(&method) {
@@ -350,6 +347,61 @@ fn rewrite_path(request: &mut Request<axum::body::Body>, new_path: &str) {
     }
     if let Ok(new_uri) = http::Uri::from_parts(parts) {
         *request.uri_mut() = new_uri;
+    }
+}
+
+// ── V1 别名:nest_service + tower Layer 在 routing 之前给路径加 /api 前缀 ─────
+//
+// 背景:axum 0.7 的 `Router::layer` 是 per-route 应用 — 即使中间件在
+// `next.run` 之前 mutate 了 `req.uri()`,Router 已经按 ORIGINAL URI 完成 matchit,
+// 不会重新路由。因此把 `/api/v1/...` 在 outer middleware 里改写成 `/api/...`
+// 是无效的(实测 status=404 即便 mutated URI 正确)。
+//
+// 正确做法:把 `/api/v1` 用 `Router::nest_service` 挂一个 prefix-stripping +
+// `/api` 前缀重补 + 转发到主 router 的 tower Service。这样请求在进入主 router
+// matchit 之前就已经变成 `/api/...`,会被正常路由。
+
+#[derive(Clone)]
+struct AddApiPrefixLayer;
+
+impl<S> tower::Layer<S> for AddApiPrefixLayer {
+    type Service = AddApiPrefix<S>;
+    fn layer(&self, inner: S) -> Self::Service {
+        AddApiPrefix { inner }
+    }
+}
+
+#[derive(Clone)]
+struct AddApiPrefix<S> {
+    inner: S,
+}
+
+impl<S> tower::Service<Request<axum::body::Body>> for AddApiPrefix<S>
+where
+    S: tower::Service<Request<axum::body::Body>>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut req: Request<axum::body::Body>) -> Self::Future {
+        // nest_service 已把 "/api/v1" 前缀剥掉,这里把剩下的路径(如 "/state")
+        // 改成 "/api/state",再转发给主 router。
+        let path = req.uri().path().to_string();
+        let new_path = if path.is_empty() || path == "/" {
+            "/api".to_string()
+        } else {
+            format!("/api{path}")
+        };
+        rewrite_path(&mut req, &new_path);
+        self.inner.call(req)
     }
 }
 
@@ -646,12 +698,28 @@ fn build_router(state: AppState) -> Router {
     //
     // axum 的 .layer() **从内向外** 包裹,书写顺序与执行顺序相反。
     // 期望外→内顺序: CORS → Prometheus → Trace → Compression → contract → [各子树自己的层]
-    Router::new()
+    //
+    // V1 别名:`main_router` 把所有 /api/* 路由合一,再克隆一份用
+    // `nest_service("/api/v1", AddApiPrefixLayer.layer(main_router.clone()))` 挂出,
+    // 在 axum routing 之前给路径补回 /api 前缀。axum 0.7 的 Router::layer 是
+    // per-route 不支持 routing 前 URI 改写,故必须用 nest_service 这一招。
+
+    let main_router: Router<()> = Router::new()
         .merge(probe_routes)
         .merge(sse_routes)
         .merge(upload_routes)
         .merge(api_routes)
-        .with_state(state.clone())
+        .with_state(state.clone());
+
+    let v1_alias: Router<()> = Router::new().nest_service(
+        "/api/v1",
+        tower::ServiceBuilder::new()
+            .layer(AddApiPrefixLayer)
+            .service(main_router.clone()),
+    );
+
+    main_router
+        .merge(v1_alias)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             api_contract_middleware,

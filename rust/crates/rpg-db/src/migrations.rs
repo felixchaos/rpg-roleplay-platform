@@ -184,10 +184,12 @@ async fn do_run_migrations(pool: &PgPool) -> Result<(), DbError> {
     .execute(pool)
     .await?;
 
-    // 查询已应用版本
-    let applied: Vec<i64> = sqlx::query_scalar("SELECT version FROM schema_migrations")
-        .fetch_all(pool)
-        .await?;
+    // 查询已应用版本。schema_migrations.version 旧 Python 库为 INTEGER (INT4),
+    // 新建库走上面的 DDL 也是 INTEGER;此处统一 cast 成 bigint 以兼容 Rust 侧 i64 step.id。
+    let applied: Vec<i64> =
+        sqlx::query_scalar("SELECT version::bigint FROM schema_migrations")
+            .fetch_all(pool)
+            .await?;
     let applied_set: std::collections::HashSet<i64> = applied.into_iter().collect();
 
     for step in MIGRATIONS {
@@ -198,20 +200,25 @@ async fn do_run_migrations(pool: &PgPool) -> Result<(), DbError> {
 
         tracing::info!("applying migration v{} '{}'", step.id, step.name);
 
-        // 整个 .sql 文件作为一条 SQL 字符串送入。Postgres simple query 协议支持
-        // 多语句以分号分隔;`DO $$ ... $$` 块由 PG 自己解析,不会因为内部分号被切分。
-        sqlx::query(step.sql)
-            .execute(pool)
+        // sqlx 0.8 中 `sqlx::query(sql).execute()` 走 extended query protocol(prepared
+        // statement),不允许 prepared statement 中放多条语句;迁移文件含多条 DDL。
+        // 改走 Executor::execute(&str),它走 simple query protocol,允许分号分隔多语句。
+        use sqlx::Executor;
+        pool.execute(step.sql)
             .await
             .map_err(|e| DbError::Migration(
                 format!("v{} '{}': {e}", step.id, step.name)
             ))?;
 
+        // version 列为 INTEGER;Rust 侧 step.id 是 i64,所有迁移版本号都很小,
+        // 安全 narrowing 到 i32(并断言无溢出)以匹配列类型。
+        let version_i32: i32 = i32::try_from(step.id)
+            .map_err(|_| DbError::Migration(format!("migration version {} overflows i32", step.id)))?;
         sqlx::query(
             "INSERT INTO schema_migrations(version, name) VALUES ($1, $2)
              ON CONFLICT DO NOTHING",
         )
-        .bind(step.id)
+        .bind(version_i32)
         .bind(step.name)
         .execute(pool)
         .await?;

@@ -133,13 +133,14 @@ pub async fn record_runtime_turn(
         "parent_commit_id": effective_parent_id,
         "nonce": nonce,
     });
+    let oh = super::commits::object_hash(state)?;
     let new_row = sqlx::query(
         r#"
         insert into branch_commits(save_id, parent_id, turn_index, kind, title,
                                    message, summary, content_preview,
                                    state_path, state_snapshot, player_input,
-                                   gm_output, metadata)
-        values ($1,$2,$3,'round',$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                                   gm_output, metadata, object_hash)
+        values ($1,$2,$3,'round',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
         returning *
         "#,
     )
@@ -155,6 +156,7 @@ pub async fn record_runtime_turn(
     .bind(player_input)
     .bind(gm_output)
     .bind(metadata)
+    .bind(&oh)
     .fetch_one(&mut *tx)
     .await?;
     let new_commit = BranchCommit::from_row(&new_row)?;
@@ -162,12 +164,13 @@ pub async fn record_runtime_turn(
     // 6. 推 ref(把 effective_ref_id 指到新 commit + 标 active)。
     upsert_ref_by_id(&mut tx, effective_ref_id, new_commit.id, true).await?;
 
-    // 7. 更新 game_saves.active_commit_id / active_ref_id。
+    // 7. 更新 game_saves.active_commit_id / active_branch_ref_id。
+    // 注:列名是 `active_branch_ref_id`(game_saves);`active_ref_id` 是 `user_runtime` 的列。
     sqlx::query(
         r#"
         update game_saves
            set active_commit_id = $1,
-               active_ref_id = $2,
+               active_branch_ref_id = $2,
                updated_at = now()
          where id = $3
         "#,
@@ -269,7 +272,7 @@ pub async fn persist_runtime_state(
         update game_saves
            set state_snapshot = $1,
                active_commit_id = $2,
-               active_ref_id = $3,
+               active_branch_ref_id = $3,
                row_version = row_version + 1,
                updated_at = now()
          where id = $4
