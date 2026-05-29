@@ -4,5 +4,7 @@
 pub mod dice;
 pub mod dnd5e;
 pub mod engine;
+pub mod modules;
 
 pub use engine::{get_engine, RulesEngine};
+pub use modules::{list_modules, load_module, ModuleBundle};
