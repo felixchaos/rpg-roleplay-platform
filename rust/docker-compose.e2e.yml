@@ -1,0 +1,41 @@
+version: "3.9"
+
+# rust/docker-compose.e2e.yml — Wave 9-B e2e 集成测试专用最小 stack。
+#
+# 与 deploy/docker-compose.yml 隔离:
+#   - 不起 pgbouncer / redis(e2e 不依赖)
+#   - 端口 55432 (避开本地 5432 + deploy 那套)
+#   - 数据库名 rpg_e2e,用户 rpg,密码 changeme
+#   - 默认不持久化(无 volumes),docker compose down -v 后彻底清空
+#
+# 跑 e2e:
+#   docker compose -f docker-compose.e2e.yml up -d
+#   export RPG_TEST_DB_URL=postgres://rpg:changeme@localhost:55432/rpg_e2e
+#   cargo test -p rpg-server --features e2e -- --ignored
+#   docker compose -f docker-compose.e2e.yml down -v
+
+services:
+  postgres-e2e:
+    image: pgvector/pgvector:pg16
+    container_name: rpg-postgres-e2e
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rpg_e2e
+      POSTGRES_USER: rpg
+      POSTGRES_PASSWORD: changeme
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rpg -d rpg_e2e"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # 性能调优:tests 跑临时数据,fsync=off 大幅提速,生产严禁。
+    command:
+      - postgres
+      - -c
+      - fsync=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - full_page_writes=off

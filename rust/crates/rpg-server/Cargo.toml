@@ -42,3 +42,26 @@ futures-util.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
 sqlx.workspace = true
+
+[features]
+# e2e 集成测试 feature flag。
+# 默认 `cargo test --workspace` 不跑 e2e（避免无 docker 的 CI 环境炸）。
+# 跑法:`docker compose -f docker-compose.e2e.yml up -d` →
+#       `RPG_TEST_DB_URL=postgres://rpg:changeme@localhost:55432/rpg_e2e \
+#        cargo test --workspace --features e2e -- --ignored`
+# 即使 feature 开了,#[ignore] 仍生效;-- --ignored 才会真跑。
+# RPG_TEST_DB_URL 未设时每个测试 early-return,跑也不会失败。
+e2e = []
+
+[dev-dependencies]
+tokio = { workspace = true }
+sqlx = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+http-body-util = "0.1"
+rpg-platform = { workspace = true }
+rpg-routes = { workspace = true }
+rpg-db = { workspace = true }
+rpg-state = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
