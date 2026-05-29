@@ -26,6 +26,12 @@ pub struct ProviderServices {
     /// 数据库连接池(可选)。runtime_phase_digests / script_phase_anticipation /
     /// 角色卡 / 世界书 都需要。
     pub db_pool: Option<sqlx::PgPool>,
+    /// 向量 embedding 回调(可选)。由上层注入 VertexBackend::embed 封装,
+    /// 用于 NovelRetrievalProvider entity_search 的语义排序。
+    /// 未注入时跳过向量召回,仅走 BM25。
+    ///
+    /// TODO[接入]: rpg-server 初始化时注入 `rpg_llm::vertex::VertexBackend::embed`。
+    pub embed_fn: Option<EmbedFn>,
 }
 
 /// 检索回调签名:`fn(query, state_data) -> retrieval text`。
@@ -33,6 +39,26 @@ pub struct ProviderServices {
 /// 用 async trait 也行;现阶段同步回调够用。Box::new(|q,s| ...).
 pub type RetrieveFn = Arc<
     dyn Fn(&str, &Value) -> futures::future::BoxFuture<'static, anyhow::Result<String>>
+        + Send
+        + Sync,
+>;
+
+/// Embedding 回调签名:`fn(text, task_type) -> 768-dim f32 向量`。
+///
+/// task_type 语义:
+///   - `"RETRIEVAL_QUERY"`  — 查询侧(Vertex text-embedding-004 task_type)
+///   - `"RETRIEVAL_DOCUMENT"` — 文档侧
+///
+/// 接入侧(rpg-server / rpg-platform)可注入 `VertexBackend::embed` 的封装:
+/// ```
+/// // TODO[接入]: 用 rpg_llm::vertex::VertexBackend::embed(query, "RETRIEVAL_QUERY")
+/// //   拿到 768-dim 向量后注入此回调,驱动 entity_search 向量排序。
+/// ```
+pub type EmbedFn = Arc<
+    dyn Fn(
+            String,
+            String,
+        ) -> futures::future::BoxFuture<'static, anyhow::Result<Vec<f32>>>
         + Send
         + Sync,
 >;

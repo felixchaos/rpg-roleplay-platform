@@ -10,6 +10,7 @@ use crate::error::ContextResult;
 use crate::provider::{ContextProvider, ProviderServices};
 use crate::types::{ContextContribution, Demand, Layer, Manifest};
 use async_trait::async_trait;
+use regex::Regex;
 use serde_json::{json, Value};
 use sqlx::Row;
 
@@ -147,6 +148,27 @@ impl ContextProvider for NovelRetrievalProvider {
             return Ok(ContextContribution::skipped(self.id(), "no retrieval content"));
         }
         // TODO: 等 rpg-state 提供 state.set_last_retrieval(text)
+
+        // ── 向量召回(entity_search embed_query 阶段) ──────────────────────
+        // 若上层注入了 embed_fn,则调用 embed(query, "RETRIEVAL_QUERY") 拿到
+        // 768-dim 向量,再通过 `embedding <=> $1::vector` 对 character_cards /
+        // worldbook_entries 做语义排序。
+        //
+        // TODO[接入]: db_pool + embed_fn 同时存在时,调用:
+        //   let vec = embed_fn(query.clone(), "RETRIEVAL_QUERY".to_string()).await?;
+        //   然后用 SQL:
+        //     SELECT id, name, (1 - (embedding <=> $1::vector)) AS score
+        //     FROM character_cards
+        //     WHERE book_id = $2 AND embedding IS NOT NULL
+        //     ORDER BY embedding <=> $1::vector
+        //     LIMIT 4
+        //   拼接结果追加到 text。
+        //
+        // 当前 embed_fn 未接入 rpg_llm::vertex::VertexBackend::embed,跳过。
+        if let Some(_embed) = services.embed_fn.as_ref() {
+            // TODO[接入]: 向量检索逻辑见上方注释。embed_fn 已注入时在此处实现。
+            tracing::debug!("novel_retrieval: embed_fn 已注入但向量召回尚未实现,跳过");
+        }
 
         let layer = Layer::new(
             "novel_retrieval",
@@ -617,11 +639,19 @@ fn pick_active_worldbook(entries: &[Value], scan_text: &str) -> Vec<Value> {
                 }
             }
         }
-        // regex_keys 在 sonnet 阶段先做朴素 contains 命中,留待后续接 regex crate。
+        // regex_keys: 编译为 Regex 并 match;编译失败的 key 退回朴素 contains。
         if let Some(keys) = e.get("regex_keys").and_then(|v| v.as_array()) {
             for k in keys {
                 if let Some(s) = k.as_str() {
-                    if !s.is_empty() && scan_text.contains(s) {
+                    if s.is_empty() {
+                        continue;
+                    }
+                    let matched = match Regex::new(s) {
+                        Ok(re) => re.is_match(scan_text),
+                        // 编译失败 fallback 到 contains
+                        Err(_) => scan_text.contains(s),
+                    };
+                    if matched {
                         hits += 1;
                     }
                 }
