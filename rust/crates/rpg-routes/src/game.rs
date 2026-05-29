@@ -1201,6 +1201,9 @@ pub(crate) async fn api_chat(
         // TODO: record_runtime_turn — 需要 parent_commit_id / ref_id 等分支上下文,
         // 当前 handler 未持有,留后续 Wave 接入。
 
+        // 持久化到 DB — 对齐 Python state.save() + _persist_runtime_checkpoint。
+        chat_app_state.state_store.flush(&user_id_str).await;
+
         let state_after = state_handle.read().snapshot();
 
         // 跨 pod stop 二次确认
