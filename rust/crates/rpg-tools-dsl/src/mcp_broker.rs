@@ -28,6 +28,21 @@ const HEALTH_CHECK_INTERVAL_SECS: u64 = 30;
 const MAX_CONSECUTIVE_FAILURES: u32 = 2;
 const STDERR_RING_SIZE: usize = 50;
 
+// ── ToolEntry ─────────────────────────────────────────────────────────────────
+
+/// 聚合后的单条工具条目（供 LLM native tool_use schema 生成）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolEntry {
+    /// 格式：{server_id}__{tool_name}
+    pub qualified_name: String,
+    /// 所属 server id
+    pub server_id: String,
+    /// 原始工具名
+    pub tool_name: String,
+    /// 原始工具 JSON schema（MCP tools/list 返回的条目）
+    pub schema: serde_json::Value,
+}
+
 // ── 进程状态 ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -464,6 +479,38 @@ impl McpBroker {
             .collect()
     }
 
+    /// 聚合所有 running server 的工具，命名为 `{server_id}__{tool_name}`。
+    /// 用于 LLM native tool_use schema 生成。
+    pub fn discover_all_tools(&self) -> Vec<ToolEntry> {
+        let guard = self.running.read();
+        let mut entries = Vec::new();
+        for (server_id, proc) in guard.iter() {
+            if !proc.is_alive() {
+                continue;
+            }
+            for tool in proc.tools.read().iter() {
+                let tool_name = tool
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_owned();
+                if tool_name.is_empty() {
+                    continue;
+                }
+                let qualified_name = format!("{}__{}", server_id, tool_name);
+                entries.push(ToolEntry {
+                    qualified_name,
+                    server_id: server_id.clone(),
+                    tool_name,
+                    schema: tool.clone(),
+                });
+            }
+        }
+        // 按 qualified_name 排序保证结果确定性
+        entries.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
+        entries
+    }
+
     // ── Health loop ───────────────────────────────────────────────────────────
 
     /// 启动后台健康检查 loop（周期 30s ping tools/list，失败 2 次尝试重启）。
@@ -546,20 +593,27 @@ impl McpBroker {
     }
 
     async fn try_restart_proc(&self, proc: &Arc<McpProcess>) {
-        warn!(server_id = %proc.spec.id, "attempting MCP server restart");
-        proc.alive.store(false, std::sync::atomic::Ordering::Relaxed);
+        let server_id = proc.spec.id.clone();
+        warn!(server_id = %server_id, "attempting MCP server restart");
 
-        // 重新 start（直接委托 start_server）
+        // 先把旧条目从 running 移除，让 start_server 不认为它在运行
+        self.running.write().remove(&server_id);
+
+        // 重新 start（直接委托 start_server，成功后会把新 Arc 插回 running）
         match self.start_server(proc.spec.clone()).await {
             Ok(_) => {
+                // 新 Arc 已由 start_server 写入 running map；旧 proc Arc 上标记仅供外部引用参考
                 *proc.health.write() = HealthStatus::Restarted;
                 proc.consecutive_failures
                     .store(0, std::sync::atomic::Ordering::Relaxed);
-                info!(server_id = %proc.spec.id, "MCP server restarted");
+                info!(server_id = %server_id, "MCP server restarted");
             }
             Err(e) => {
+                // 启动失败：重新放回一个标记为 RestartFailed 的旧条目，供 status() 展示
                 *proc.health.write() = HealthStatus::RestartFailed;
-                warn!(server_id = %proc.spec.id, "MCP server restart failed: {e}");
+                proc.alive.store(false, std::sync::atomic::Ordering::Relaxed);
+                self.running.write().insert(server_id.clone(), Arc::clone(proc));
+                warn!(server_id = %server_id, "MCP server restart failed: {e}");
             }
         }
     }

@@ -10,5 +10,8 @@ pub mod mcp_broker;
 pub use error::DslError;
 pub use tool_registry::{ToolDefinition, ToolRegistry, GLOBAL_REGISTRY};
 pub use skill_executor::{execute_skill, import_skill_bundle, ImportedSkill, SkillOutput};
-pub use mcp::{McpCatalog, McpServer, mirror_to_filesystem, validate_server};
-pub use mcp_broker::{McpBroker, McpServerStatus, HealthStatus};
+pub use mcp::{
+    AuditEntry, McpCatalog, McpServer, AUDIT_LOG,
+    list_audit_entries, mirror_to_filesystem, validate_server,
+};
+pub use mcp_broker::{McpBroker, McpServerStatus, HealthStatus, ToolEntry};

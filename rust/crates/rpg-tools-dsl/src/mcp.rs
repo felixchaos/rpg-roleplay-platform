@@ -6,11 +6,64 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use once_cell::sync::Lazy;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tracing::warn;
 
 use crate::DslError;
+
+// ── 审计日志 ──────────────────────────────────────────────────────────────────
+
+const AUDIT_RING_SIZE: usize = 200;
+
+/// 单条审计记录（对应 Python _AUDIT_LOG 条目）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditEntry {
+    /// Unix 时间戳（秒）
+    pub ts: f64,
+    /// 操作类型：validate_server / upsert_server / delete_server / set_enabled
+    pub action: String,
+    /// 涉及的 server_id（若有）
+    pub server_id: Option<String>,
+    /// 操作是否成功
+    pub ok: bool,
+    /// 附加说明（错误信息等）
+    pub detail: Option<String>,
+}
+
+/// 全局环形审计日志（最多 200 条）
+pub static AUDIT_LOG: Lazy<RwLock<Vec<AuditEntry>>> =
+    Lazy::new(|| RwLock::new(Vec::new()));
+
+/// 写入一条审计记录（自动截断到 AUDIT_RING_SIZE）
+fn push_audit(action: &str, server_id: Option<&str>, ok: bool, detail: Option<&str>) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    let entry = AuditEntry {
+        ts,
+        action: action.to_owned(),
+        server_id: server_id.map(|s| s.to_owned()),
+        ok,
+        detail: detail.map(|s| s.to_owned()),
+    };
+    let mut log = AUDIT_LOG.write();
+    log.push(entry);
+    if log.len() > AUDIT_RING_SIZE {
+        let drain_to = log.len() - AUDIT_RING_SIZE;
+        log.drain(..drain_to);
+    }
+}
+
+/// 返回最近 `limit` 条审计记录（给 routes 用）
+pub fn list_audit_entries(limit: usize) -> Vec<AuditEntry> {
+    let log = AUDIT_LOG.read();
+    let skip = log.len().saturating_sub(limit);
+    log[skip..].to_vec()
+}
 
 // ── 数据结构 ──────────────────────────────────────────────────────────────────
 
@@ -161,6 +214,7 @@ impl McpCatalog {
     /// 新增或覆盖一台 MCP 服务器。
     pub fn upsert_server(&mut self, server: McpServer) {
         let server = normalize_server(server);
+        push_audit("upsert_server", Some(&server.id), true, None);
         if let Some(existing) = self.servers.iter_mut().find(|s| s.id == server.id) {
             *existing = server;
         } else {
@@ -170,6 +224,7 @@ impl McpCatalog {
 
     /// 删除一台 MCP 服务器（若不存在则静默成功）。
     pub fn delete_server(&mut self, id: &str) {
+        push_audit("delete_server", Some(id), true, None);
         self.servers.retain(|s| s.id != id);
     }
 
@@ -177,8 +232,11 @@ impl McpCatalog {
     pub fn set_enabled(&mut self, id: &str, enabled: bool) -> bool {
         if let Some(s) = self.servers.iter_mut().find(|s| s.id == id) {
             s.enabled = enabled;
+            let detail = format!("enabled={enabled}");
+            push_audit("set_enabled", Some(id), true, Some(&detail));
             true
         } else {
+            push_audit("set_enabled", Some(id), false, Some("server not found"));
             false
         }
     }
@@ -194,24 +252,25 @@ impl McpCatalog {
 /// - `command` 非空且在 PATH 中可找到（`which` 检查）
 pub fn validate_server(spec: &McpServer) -> Result<(), DslError> {
     if spec.id.trim().is_empty() {
+        push_audit("validate_server", None, false, Some("id 为空"));
         return Err(DslError::Other("MCP server id 不能为空".into()));
     }
     if spec.transport != "stdio" {
-        return Err(DslError::Other(format!(
-            "transport '{}' 暂不支持（仅支持 stdio）",
-            spec.transport
-        )));
+        let detail = format!("transport '{}' 暂不支持（仅支持 stdio）", spec.transport);
+        push_audit("validate_server", Some(&spec.id), false, Some(&detail));
+        return Err(DslError::Other(detail));
     }
     if spec.command.trim().is_empty() {
+        push_audit("validate_server", Some(&spec.id), false, Some("command 为空"));
         return Err(DslError::Other("MCP server command 不能为空".into()));
     }
     // which 检查：找不到命令时警告（不视为硬错误，允许路径稍后再安装）
     if which::which(&spec.command).is_err() {
-        return Err(DslError::Other(format!(
-            "command '{}' 在 PATH 中找不到",
-            spec.command
-        )));
+        let detail = format!("command '{}' 在 PATH 中找不到", spec.command);
+        push_audit("validate_server", Some(&spec.id), false, Some(&detail));
+        return Err(DslError::Other(detail));
     }
+    push_audit("validate_server", Some(&spec.id), true, None);
     Ok(())
 }
 
