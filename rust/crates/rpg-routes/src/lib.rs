@@ -28,7 +28,7 @@ use tokio::sync::Notify;
 use rpg_llm::LlmRouter;
 use rpg_platform::auth::User;
 use rpg_state::StateStore;
-use rpg_tools_dsl::ToolRegistry;
+use rpg_tools_dsl::{McpBroker, ToolRegistry};
 
 // ── AppState ─────────────────────────────────────────────────────────────────
 //
@@ -42,6 +42,8 @@ pub struct AppState {
     pub state_store: Arc<StateStore>,
     pub llm_router: Arc<RwLock<LlmRouter>>,
     pub tool_registry: Arc<RwLock<ToolRegistry>>,
+    /// MCP broker — 管理子进程 MCP server + 工具调用。
+    pub mcp_broker: Arc<McpBroker>,
     /// 每个 user 一个 Notify,用于 /api/stop 打断当前 chat。
     pub stop_events: Arc<DashMap<String, Arc<Notify>>>,
     /// 控制台助手对话(简版:全内存)。Vec<(role, text)>。
@@ -57,6 +59,7 @@ impl AppState {
             state_store: Arc::new(StateStore::new()),
             llm_router: Arc::new(RwLock::new(LlmRouter::new())),
             tool_registry: Arc::new(RwLock::new(ToolRegistry::new())),
+            mcp_broker: Arc::new(McpBroker::default()),
             stop_events: Arc::new(DashMap::new()),
             console_conversations: Arc::new(DashMap::new()),
         }

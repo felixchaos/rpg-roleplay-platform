@@ -211,11 +211,27 @@ async fn api_mcp_runtime(State(s): State<AppState>) -> impl IntoResponse {
 }
 
 async fn api_mcp_tool_call(
-    State(_s): State<AppState>,
-    Json(_body): Json<McpToolCallRequest>,
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<McpToolCallRequest>,
 ) -> Result<Response, ResponseError> {
-    // TODO: McpBroker.call_tool — 等 broker 实现。
-    Err(ResponseError::not_implemented("mcp broker TODO"))
+    require_admin(&s, &headers).await?;
+
+    let server_id = body
+        .server_id
+        .ok_or_else(|| ResponseError::bad_request("server_id required"))?;
+    let tool_name = body
+        .tool
+        .ok_or_else(|| ResponseError::bad_request("tool required"))?;
+    let arguments = body.arguments.unwrap_or(serde_json::Value::Object(Default::default()));
+    let timeout_secs = body.timeout.unwrap_or(30).clamp(1, 300);
+
+    let result = s
+        .mcp_broker
+        .call_tool(&server_id, &tool_name, arguments, timeout_secs)
+        .await;
+
+    Ok(Json(result).into_response())
 }
 
 async fn api_mcp_tools(State(s): State<AppState>) -> impl IntoResponse {

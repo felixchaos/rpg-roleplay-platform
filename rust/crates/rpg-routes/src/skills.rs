@@ -5,16 +5,16 @@
 use std::path::PathBuf;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Multipart, Path, State},
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
 };
 use http::HeaderMap;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::json;
 
-use rpg_tools_dsl::skill_executor::run_skill_command;
+use rpg_tools_dsl::skill_executor::{import_skill_bundle, run_skill_command};
 
 use crate::{require_user, AppState, ResponseError};
 
@@ -27,11 +27,6 @@ pub fn router() -> Router<AppState> {
 // ── request types ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Default)]
-pub struct SkillsImportRequest {
-    pub file: Option<Value>,
-}
-
-#[derive(Debug, Deserialize, Default)]
 pub struct SkillRunRequest {
     pub cmd: Option<Vec<String>>,
     pub command: Option<Vec<String>>,
@@ -41,22 +36,89 @@ pub struct SkillRunRequest {
 
 // ── handlers ──────────────────────────────────────────────────────────────────
 
-/// POST /api/skills/import
+/// POST /api/skills/import  — multipart/form-data
 ///
-/// TODO: 接 multipart upload + skill bundle 解析(Python `skill_importer.py`)。
-/// 翻译期返回 not_implemented。
+/// 字段约定(对应 Python `skill_importer.py`):
+///   - `file`  : zip 文件内容
+///   - `name`  : skill slug(可选,默认取文件名去 .zip)
+///
+/// 返回 `{ok, skill_id, name, version}`.
 async fn api_skills_import(
     State(s): State<AppState>,
     headers: HeaderMap,
-    Json(_body): Json<SkillsImportRequest>,
+    mut multipart: Multipart,
 ) -> Result<Response, ResponseError> {
     let u = require_user(&s, &headers).await?;
     if u.role != "admin" {
         return Err(ResponseError::forbidden("仅管理员"));
     }
-    Err(ResponseError::not_implemented(
-        "skill import: multipart upload TODO",
-    ))
+
+    let mut zip_bytes: Option<bytes::Bytes> = None;
+    let mut file_name: Option<String> = None;
+    let mut skill_name: Option<String> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ResponseError::bad_request(format!("multipart error: {e}")))?
+    {
+        let field_name = field.name().unwrap_or("").to_string();
+        match field_name.as_str() {
+            "file" => {
+                file_name = field.file_name().map(|s| s.to_string());
+                let data = field
+                    .bytes()
+                    .await
+                    .map_err(|e| ResponseError::bad_request(format!("read file: {e}")))?;
+                zip_bytes = Some(data);
+            }
+            "name" => {
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| ResponseError::bad_request(format!("read name: {e}")))?;
+                if !text.trim().is_empty() {
+                    skill_name = Some(text.trim().to_string());
+                }
+            }
+            _ => {
+                // 忽略未知字段
+                let _ = field.bytes().await;
+            }
+        }
+    }
+
+    let zip_bytes = zip_bytes.ok_or_else(|| ResponseError::bad_request("missing file field"))?;
+
+    // skill_name 优先级: 显式 name 字段 > 文件名去 .zip > "unnamed"
+    let name = skill_name.unwrap_or_else(|| {
+        file_name
+            .as_deref()
+            .unwrap_or("unnamed")
+            .trim_end_matches(".zip")
+            .to_string()
+    });
+
+    // skill_dir: 翻译期用 env SKILL_DIR 或 ./skills 目录
+    let skill_dir: PathBuf = std::env::var("SKILL_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("skills")
+        });
+
+    let imported = import_skill_bundle(&zip_bytes, &name, &skill_dir)
+        .map_err(|e| ResponseError::bad_request(e.to_string()))?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "skill_id": imported.id,
+        "name": imported.name,
+        "version": "1.0.0",
+        "path": imported.path,
+    }))
+    .into_response())
 }
 
 /// POST /api/skills/{skill_id}/run

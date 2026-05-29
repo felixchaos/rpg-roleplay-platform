@@ -57,8 +57,12 @@ async fn api_state(
 
 /// GET /api/state_events — 长连 SSE,推送 state 变更事件
 ///
-/// 本翻译期没接 Python 的 `state_event_bus`,只发 hello + keepalive,
-/// 等 rpg-state 端补 event bus 后再 wire 进真实订阅。
+/// # W3-2 TODO
+/// `rpg_state::bus::subscribe()` 尚未实装(W3-2 并行任务)。
+/// 当前实现发送 hello 帧 + keepalive,等 W3-2 合并后:
+///   1. 在 `AppState` 加 `state_bus: tokio::sync::broadcast::Sender<StateEvent>`
+///   2. 将 `state_bus.subscribe()` 转换成 `ReceiverStream`
+///   3. 把每个 `StateEvent` 序列化为 SSE `data`
 async fn api_state_events(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -66,7 +70,18 @@ async fn api_state_events(
     let user = require_user(&s, &headers).await?;
     let hello = Event::default()
         .event("hello")
-        .data(json!({ "user_id": user.id, "ts": chrono::Utc::now().timestamp() }).to_string());
+        .data(
+            json!({
+                "user_id": user.id,
+                "ts": chrono::Utc::now().timestamp(),
+                "note": "state_events bus: W3-2 TODO"
+            })
+            .to_string(),
+        );
+    // TODO(W3-2): replace with real bus subscription:
+    //   let rx = s.state_bus.subscribe();
+    //   let bus_stream = BroadcastStream::new(rx).filter_map(|r| ...);
+    //   let stream = stream::once(async { Ok(hello) }).chain(bus_stream);
     let stream = stream::iter(vec![Ok::<_, Infallible>(hello)]);
     Ok(Sse::new(stream).keep_alive(
         KeepAlive::new()
