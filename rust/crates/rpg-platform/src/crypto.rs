@@ -21,6 +21,7 @@ use rand::RngCore;
 use sha2::Sha256;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use zeroize::Zeroizing;
 
 use crate::error::{PlatformError, PlatformResult};
 
@@ -126,6 +127,8 @@ fn load_master_key() -> PlatformResult<[u8; 32]> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&fallback, hex::encode(key))?;
+    // 主密钥落盘必须收紧权限到仅属主可读写(0600),避免同机其他用户读取。
+    harden_key_file_perms(&fallback);
     tracing::warn!(
         target: "rpg_platform::crypto",
         "⚠️ 生成新 master_key → {} | 部署模式 '{}'. \
@@ -138,12 +141,48 @@ fn load_master_key() -> PlatformResult<[u8; 32]> {
 }
 
 fn fallback_key_path() -> PathBuf {
-    // 等价 Python `rpg/platform_data/master.key`,以当前工作目录上溯。
-    // 优先使用 `RPG_DATA_DIR`,否则 `./platform_data/master.key`。
+    // 6A-1:fallback master_key 绝不再落到 cwd —— cwd 一变历史密文全废,
+    // 且 cwd 常被多进程共享/打包,泄漏风险高。落盘点优先级:
+    //   1. `$RPG_DATA_DIR/master.key`(显式覆盖,运维可控)
+    //   2. `dirs::data_dir()/rpg/master.key`(平台标准数据目录,如
+    //      Linux `~/.local/share`、macOS `~/Library/Application Support`)
+    //   3. 退路:`~/.rpg/master.key`(data_dir 不可用的极端环境)
     if let Ok(dir) = std::env::var("RPG_DATA_DIR") {
-        return PathBuf::from(dir).join("master.key");
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            return PathBuf::from(dir).join("master.key");
+        }
     }
-    PathBuf::from("platform_data/master.key")
+    if let Some(base) = dirs::data_dir() {
+        return base.join("rpg").join("master.key");
+    }
+    if let Some(home) = dirs::home_dir() {
+        return home.join(".rpg").join("master.key");
+    }
+    // 极端兜底:相对路径,但放进专用子目录而非裸 cwd。
+    PathBuf::from(".rpg").join("master.key")
+}
+
+/// 把 master.key 文件权限收紧到 0600(仅属主可读写)。
+///
+/// 非 unix 平台无 POSIX 权限模型,跳过(NTFS ACL 默认即属主可控)。
+/// 设权限失败只 WARN 不致命 —— 文件已写入,宁可降级也不要丢密钥。
+fn harden_key_file_perms(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+            tracing::warn!(
+                target: "rpg_platform::crypto",
+                path = %path.display(),
+                "无法将 master.key 权限收紧到 0600: {e} — 请手动 chmod 0600"
+            );
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
 }
 
 fn stretch_to_32(seed: &[u8]) -> [u8; 32] {
@@ -196,10 +235,25 @@ pub fn encrypt_api_key(plaintext: &str, user_id: i64, api_id: &str) -> PlatformR
     Ok(out)
 }
 
-/// 解密;任何失败都返回空串(与 Python 行为一致,让调用方走 fallback)。
-pub fn decrypt_api_key(blob: &[u8], user_id: i64, api_id: &str) -> String {
+/// 解密一个 API key 密文。
+///
+/// **安全行为变更(6A-1)**:不再静默返回空串。
+/// - 成功:返回 `Some(Zeroizing<String>)`,明文在 Drop 时擦除内存。
+/// - 失败(长度不足 / AEAD 鉴权失败 / 非法 UTF-8):返回 `None`,并以
+///   `tracing::error!` 记审计。**绝不在日志里泄漏密文或明文内容**,只记
+///   user_id / api_id / 失败原因,供运维定位「密钥轮换后历史密文全废」一类事故。
+/// - 调用方拿到 `None` 必须拒绝调用(而非把空串当 key 发出去)。
+pub fn decrypt_api_key(blob: &[u8], user_id: i64, api_id: &str) -> Option<Zeroizing<String>> {
     if blob.len() < NONCE_LEN + TAG_LEN {
-        return String::new();
+        // 空 blob(未设凭据)是正常状态,不刷审计噪声;只有「有数据但太短」才告警。
+        if !blob.is_empty() {
+            tracing::error!(
+                target: "rpg_platform::crypto",
+                user_id, api_id, blob_len = blob.len(),
+                "API key 密文长度不足(< nonce+tag),疑似损坏 — 拒绝使用"
+            );
+        }
+        return None;
     }
     let key_bytes = derive_user_key(user_id, api_id);
     let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
@@ -213,8 +267,31 @@ pub fn decrypt_api_key(blob: &[u8], user_id: i64, api_id: &str) -> String {
             aad: &aad,
         },
     ) {
-        Ok(plain) => String::from_utf8(plain).unwrap_or_default(),
-        Err(_) => String::new(),
+        Ok(plain) => {
+            // 先把解密出的明文字节包进 Zeroizing,确保任何提前 return 路径都会擦除。
+            let plain = Zeroizing::new(plain);
+            match std::str::from_utf8(&plain) {
+                Ok(s) => Some(Zeroizing::new(s.to_owned())),
+                Err(_) => {
+                    tracing::error!(
+                        target: "rpg_platform::crypto",
+                        user_id, api_id,
+                        "API key 解密成功但非合法 UTF-8 — 拒绝使用"
+                    );
+                    None
+                }
+            }
+        }
+        Err(_) => {
+            // AEAD 鉴权失败:master_key 轮换 / AAD 不匹配 / 密文被篡改。
+            // 这是最关键的审计点 —— 历史密文集体失效会在这里大量出现。
+            tracing::error!(
+                target: "rpg_platform::crypto",
+                user_id, api_id,
+                "API key 解密失败(AEAD 鉴权未通过)— 可能 master_key 轮换或密文损坏,拒绝使用"
+            );
+            None
+        }
     }
 }
 
@@ -276,16 +353,17 @@ mod tests {
     }
 
     /// 老测试保留 —— API key 加解密 round-trip,跨 user 隔离已隐含。
+    /// 6A-1:`decrypt_api_key` 现返回 `Option<Zeroizing<String>>`。
     #[test]
     fn roundtrip_api_key() {
         ensure_test_master_key();
         let blob = encrypt_api_key("sk-test-12345", 42, "openai").unwrap();
         assert!(blob.len() > NONCE_LEN + TAG_LEN);
         let plain = decrypt_api_key(&blob, 42, "openai");
-        assert_eq!(plain, "sk-test-12345");
-        // Wrong user → empty.
+        assert_eq!(plain.as_ref().map(|z| z.as_str()), Some("sk-test-12345"));
+        // Wrong user → None(不再是空串)。
         let bad = decrypt_api_key(&blob, 43, "openai");
-        assert_eq!(bad, "");
+        assert!(bad.is_none());
     }
 
     /// 通用 credential round-trip:直接传 key,完全绕开 OnceLock。
@@ -328,12 +406,18 @@ mod tests {
         let blob_b = encrypt_api_key("token-of-B", user_b, api).unwrap();
 
         // 自己解自己 → 原文
-        assert_eq!(decrypt_api_key(&blob_a, user_a, api), "token-of-A");
-        assert_eq!(decrypt_api_key(&blob_b, user_b, api), "token-of-B");
+        assert_eq!(
+            decrypt_api_key(&blob_a, user_a, api).as_ref().map(|z| z.as_str()),
+            Some("token-of-A")
+        );
+        assert_eq!(
+            decrypt_api_key(&blob_b, user_b, api).as_ref().map(|z| z.as_str()),
+            Some("token-of-B")
+        );
 
-        // user B 用自己 key 解 user A 的密文 → 失败(空串)。
-        assert_eq!(decrypt_api_key(&blob_a, user_b, api), "");
-        assert_eq!(decrypt_api_key(&blob_b, user_a, api), "");
+        // user B 用自己 key 解 user A 的密文 → 失败(None,不再是空串)。
+        assert!(decrypt_api_key(&blob_a, user_b, api).is_none());
+        assert!(decrypt_api_key(&blob_b, user_a, api).is_none());
 
         // 进一步验证 derive_user_key 的 raw 比特层面也不同。
         let k_a = derive_user_key(user_a, api);

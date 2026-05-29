@@ -11,7 +11,9 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
+use zeroize::Zeroizing;
 
+use crate::crypto;
 use crate::error::{PlatformError, PlatformResult};
 
 pub use crate::auth::sessions::{
@@ -108,9 +110,13 @@ pub struct CredentialMeta {
 }
 
 /// API key 解析结果(对应 Python `resolve_api_key` 返回的 dict)。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// 6A-1:`key` 改为 `Zeroizing<String>`,明文在 Drop 时擦除内存。
+/// **刻意不再 derive `Serialize`/`Deserialize`** —— 解析后的明文 key 绝不应被
+/// 整体序列化(那等于把密钥写进日志/响应体)。调用方需要时显式取 `&*resolved.key`。
+#[derive(Debug, Clone)]
 pub struct ResolvedApiKey {
-    pub key: String,
+    pub key: Zeroizing<String>,
     /// `user_db` | `env` | `none`
     pub source: &'static str,
     pub base_url_override: String,
@@ -119,10 +125,20 @@ pub struct ResolvedApiKey {
 impl ResolvedApiKey {
     pub fn none() -> Self {
         Self {
-            key: String::new(),
+            key: Zeroizing::new(String::new()),
             source: "none",
             base_url_override: String::new(),
         }
+    }
+
+    /// 是否解析到可用 key。
+    pub fn is_some(&self) -> bool {
+        !self.key.is_empty()
+    }
+
+    /// 借出明文 key 的 `&str` —— 调用方用完即弃,勿长期持有 owned 拷贝。
+    pub fn as_str(&self) -> &str {
+        &self.key
     }
 }
 
@@ -171,7 +187,8 @@ pub async fn delete_credential(
 
 /// Python: `set_credential(user_id, api_id, plaintext_key, base_url_override, ...)`
 ///
-/// 加密留 TODO,先以明文写入(框架可调)。
+/// 6A-1:写入前用 `crypto::encrypt_api_key(plaintext, user_id, api_id)` 做
+/// AES-256-GCM 加密,落库的是密文(`nonce||ct||tag`),**绝不明文落库**。
 pub async fn set_credential(
     pool: &PgPool,
     user_id: i64,
@@ -200,8 +217,9 @@ pub async fn set_credential(
         String::new()
     };
 
-    // TODO[Sonnet]: 调用 utils::crypto::encrypt_api_key (master_key + user_id + api_id → AEAD)
-    let encrypted = plaintext_key.as_bytes().to_vec();
+    // 6A-1:AES-256-GCM 加密后落库。HKDF 派生 key 以 user_id 为 salt、api_id 入 info,
+    // AAD 绑定 user/api —— 跨用户/跨 api 的密文互不可解。
+    let encrypted = crypto::encrypt_api_key(plaintext_key, user_id, api_id)?;
     sqlx::query(
         r#"
         insert into user_api_credentials(user_id, api_id, encrypted_key, base_url_override, enabled, metadata)
@@ -227,8 +245,12 @@ pub async fn set_credential(
 /// Python: `resolve_api_key(user_id, api_id, env_fallback)`
 ///
 /// 顺序:
-/// 1. `user_api_credentials` 表(明文解密 — TODO)
+/// 1. `user_api_credentials` 表(6A-1:AES-256-GCM 解密)
 /// 2. 未强制鉴权时,环境变量 fallback
+///
+/// **安全语义**:用户库里的密文解密失败时(`crypto::decrypt_api_key` 返回 `None`,
+/// 比如 master_key 轮换、密文损坏),**绝不**把空 key 当作可用凭据下发,而是当作
+/// 「该用户没有可用凭据」继续走后续 fallback —— 失败已在 crypto 层记审计。
 pub async fn resolve_api_key(
     pool: &PgPool,
     user_id: Option<i64>,
@@ -248,16 +270,18 @@ pub async fn resolve_api_key(
             let enabled: bool = r.try_get("enabled").unwrap_or(false);
             if enabled {
                 let encrypted: Vec<u8> = r.try_get("encrypted_key").unwrap_or_default();
-                // TODO[Sonnet]: utils::crypto::decrypt_api_key(encrypted, user_id, api_id)
-                let plaintext = String::from_utf8(encrypted).unwrap_or_default();
-                if !plaintext.is_empty() {
-                    return Ok(ResolvedApiKey {
-                        key: plaintext,
-                        source: "user_db",
-                        base_url_override: r
-                            .try_get::<String, _>("base_url_override")
-                            .unwrap_or_default(),
-                    });
+                // 6A-1:解密;失败返回 None(已在 crypto 层 tracing::error! 记审计),
+                // 此处不降级为空 key,而是跳过 user_db 继续 fallback。
+                if let Some(plaintext) = crypto::decrypt_api_key(&encrypted, uid, api_id) {
+                    if !plaintext.is_empty() {
+                        return Ok(ResolvedApiKey {
+                            key: plaintext,
+                            source: "user_db",
+                            base_url_override: r
+                                .try_get::<String, _>("base_url_override")
+                                .unwrap_or_default(),
+                        });
+                    }
                 }
             }
         }
@@ -269,7 +293,7 @@ pub async fn resolve_api_key(
         if let Ok(v) = std::env::var(env_fallback) {
             if !v.is_empty() {
                 return Ok(ResolvedApiKey {
-                    key: v,
+                    key: Zeroizing::new(v),
                     source: "env",
                     base_url_override: String::new(),
                 });
@@ -310,4 +334,68 @@ fn validate_base_url(url: &str) -> PlatformResult<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 与 crypto::tests 共用同一 `OnceLock<MASTER_KEY>`,首次进入前必须设好 env。
+    fn ensure_test_master_key() {
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            std::env::set_var("RPG_MASTER_KEY", "0".repeat(64));
+        });
+    }
+
+    /// 6A-1 核心回归:`set_credential` 写进 `encrypted_key` 列的那串字节,
+    /// 必须是密文 —— 既不包含明文 key,也不等于明文字节 —— 且能被
+    /// `resolve_api_key` 走的同一条 `decrypt_api_key` 路径还原。
+    ///
+    /// `set_credential` 绑定的就是 `crypto::encrypt_api_key(...)` 的返回值,
+    /// 这里直接对该值做不变量断言,无需 DB 连接即可锁死「明文落库」回归。
+    #[test]
+    fn test_credential_encrypted_at_rest() {
+        ensure_test_master_key();
+        let user_id: i64 = 777;
+        let api_id = "openai";
+        let plaintext = "sk-super-secret-DO-NOT-LEAK-0123456789";
+
+        // 这正是 set_credential 写入 encrypted_key 列的字节。
+        let at_rest = crypto::encrypt_api_key(plaintext, user_id, api_id).unwrap();
+
+        // 1) 落库字节绝不等于明文字节(旧 bug:plaintext.as_bytes().to_vec())。
+        assert_ne!(
+            at_rest.as_slice(),
+            plaintext.as_bytes(),
+            "encrypted_key 不能是明文字节"
+        );
+        // 2) 明文子串不得出现在密文里(防止部分泄漏)。
+        assert!(
+            at_rest
+                .windows(plaintext.len())
+                .all(|w| w != plaintext.as_bytes()),
+            "密文中不应出现明文 key 子串"
+        );
+        // 3) 至少含 nonce + tag 的开销,确认走了 AEAD 而非裸存。
+        assert!(at_rest.len() > plaintext.len(), "密文应比明文长(nonce+tag)");
+
+        // 4) resolve 侧解密路径能还原,且返回 Zeroizing<String>。
+        let recovered = crypto::decrypt_api_key(&at_rest, user_id, api_id);
+        assert_eq!(recovered.as_ref().map(|z| z.as_str()), Some(plaintext));
+
+        // 5) 换用户解密失败 → None(resolve 会据此拒绝下发,不降级空 key)。
+        let other_user = crypto::decrypt_api_key(&at_rest, user_id + 1, api_id);
+        assert!(other_user.is_none());
+    }
+
+    /// `ResolvedApiKey::none` 不含 key,`is_some()` 为假。
+    #[test]
+    fn test_resolved_none_is_empty() {
+        let none = ResolvedApiKey::none();
+        assert!(!none.is_some());
+        assert!(none.as_str().is_empty());
+        assert_eq!(none.source, "none");
+    }
 }
