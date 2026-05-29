@@ -452,5 +452,11 @@
 </div>
 
 <script type="module" src="src/entries/overview.js"></script>
+<script type="module">
+  // Design Canvas 是开发期内部工具，prod 环境隐藏相关链接
+  if (import.meta.env.PROD) {
+    document.querySelectorAll('a[href="Design Canvas.html"]').forEach(el => el.remove());
+  }
+</script>
 </body>
 </html>

@@ -2,48 +2,58 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
-export default defineConfig({
-  plugins: [react()],
+export default defineConfig(({ mode }) => {
+  const isProd = mode === 'production';
 
-  // 把 React / ReactDOM 注入为全局变量，兼容现有 JSX 里大量 `React.xxx` / `ReactDOM.xxx` 的写法
-  // （JSX 文件均未 import React，延续零构建 UMD 风格）
-  define: {
-    // 不需要额外 define：@vitejs/plugin-react 已通过 automatic JSX runtime 注入
-  },
+  const inputs = {
+    // 5 个正式多页入口
+    index:        resolve(__dirname, 'index.html'),
+    overview:     resolve(__dirname, 'Overview.html'),
+    platform:     resolve(__dirname, 'Platform.html'),
+    game_console: resolve(__dirname, 'Game Console.html'),
+    login:        resolve(__dirname, 'Login.html'),
+  };
 
-  server: {
-    port: 5173,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:7860',
-        changeOrigin: true,
-      },
+  // Design Canvas 仅 dev 模式（内部布局审稿工具，prod build 不包含）
+  if (!isProd) {
+    inputs.design_canvas = resolve(__dirname, 'Design Canvas.html');
+  }
+
+  return {
+    plugins: [react()],
+
+    // 把 React / ReactDOM 注入为全局变量，兼容现有 JSX 里大量 `React.xxx` / `ReactDOM.xxx` 的写法
+    // （JSX 文件均未 import React，延续零构建 UMD 风格）
+    define: {
+      // 不需要额外 define：@vitejs/plugin-react 已通过 automatic JSX runtime 注入
     },
-  },
 
-  build: {
-    cssCodeSplit: true,
-    reportCompressedSize: true,
-    sourcemap: false,
-    rollupOptions: {
-      input: {
-        // 6 个 HTML 多页入口，保留原有多页结构
-        index:          resolve(__dirname, 'index.html'),
-        overview:       resolve(__dirname, 'Overview.html'),
-        platform:       resolve(__dirname, 'Platform.html'),
-        game_console:   resolve(__dirname, 'Game Console.html'),
-        login:          resolve(__dirname, 'Login.html'),
-        design_canvas:  resolve(__dirname, 'Design Canvas.html'),
-      },
-      output: {
-        assetFileNames: 'assets/[name]-[hash][extname]',
-        chunkFileNames: 'assets/[name]-[hash].js',
-        entryFileNames: 'assets/[name]-[hash].js',
-        manualChunks: {
-          // React 单独 vendor chunk，跨页面缓存，减少 hash 抖动
-          'react-vendor': ['react', 'react-dom'],
+    server: {
+      port: 5173,
+      proxy: {
+        '/api': {
+          target: 'http://localhost:7860',
+          changeOrigin: true,
         },
       },
     },
-  },
+
+    build: {
+      cssCodeSplit: true,
+      reportCompressedSize: true,
+      sourcemap: false,
+      rollupOptions: {
+        input: inputs,
+        output: {
+          assetFileNames: 'assets/[name]-[hash][extname]',
+          chunkFileNames: 'assets/[name]-[hash].js',
+          entryFileNames: 'assets/[name]-[hash].js',
+          manualChunks: {
+            // React 单独 vendor chunk，跨页面缓存，减少 hash 抖动
+            'react-vendor': ['react', 'react-dom'],
+          },
+        },
+      },
+    },
+  };
 });
