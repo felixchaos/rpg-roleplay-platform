@@ -1,4 +1,5 @@
 // Game Console 页面入口 — Vite ESM 版
+import '../web-vitals-rum.js';
 import * as React from 'react';
 import * as ReactDOM from 'react-dom/client';
 window.React = React;

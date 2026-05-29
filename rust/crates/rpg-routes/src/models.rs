@@ -16,6 +16,7 @@
 
 use axum::{
     extract::{Query, State},
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -132,13 +133,21 @@ async fn api_models_health_refresh_all(
     State(_s): State<AppState>,
     Json(_body): Json<Value>,
 ) -> impl IntoResponse {
-    // TODO: 真后台 probe;翻译期返回 scheduled=0。
-    Json(json!({"ok": true, "scheduled": 0}))
+    // TODO: 真后台 probe;翻译期未实现。
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "error": "not_implemented",
+            "feature": "models_health_refresh",
+            "detail": "后台 model probe 未接入,在 rust-migration 期间为 stub。"
+        }))
+    )
 }
 
 #[tracing::instrument(skip_all)]
 async fn api_models_health(State(_s): State<AppState>) -> impl IntoResponse {
     // TODO: 翻译期没接 probe 缓存,返回空 map。
+    tracing::warn!(target = "stubs", "api_models_health 返回空 health map stub — probe 缓存未接入");
     Json(json!({"ok": true, "health": {}}))
 }
 
@@ -254,6 +263,7 @@ async fn api_models_remote(
     Query(_q): Query<ModelQueryParams>,
 ) -> impl IntoResponse {
     // TODO: 真远端清单需要在 LlmBackend::list_models 上调度;翻译期返回空。
+    tracing::warn!(target = "stubs", "api_models_remote 返回空列表 stub — LlmBackend::list_models 未接入");
     Json(json!({"ok": true, "models": []}))
 }
 
@@ -262,8 +272,15 @@ async fn api_models_diff(
     State(_s): State<AppState>,
     Query(_q): Query<ModelQueryParams>,
 ) -> impl IntoResponse {
-    // TODO: 真 diff 需要远端 + 本地;翻译期返回空。
-    Json(json!({"ok": true, "diff": {"added": [], "removed": [], "changed": []}}))
+    // TODO: 真 diff 需要远端 + 本地;翻译期未实现。
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "error": "not_implemented",
+            "feature": "models_diff",
+            "detail": "model diff 需要 LlmBackend 远端清单,在 rust-migration 期间为 stub。"
+        }))
+    )
 }
 
 #[tracing::instrument(skip_all)]
@@ -271,8 +288,15 @@ async fn api_models_probe(
     State(_s): State<AppState>,
     Json(_body): Json<ModelsProbeRequest>,
 ) -> impl IntoResponse {
-    // TODO: 真 probe 需要 backend.stream_chat(...).await,翻译期返回 ok=true stub。
-    Json(json!({"ok": true, "result": {"ok": true, "error": null}}))
+    // TODO: 真 probe 需要 backend.stream_chat(...).await,翻译期未实现。
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "error": "not_implemented",
+            "feature": "models_probe",
+            "detail": "model probe 未接入 LlmBackend,在 rust-migration 期间为 stub。"
+        }))
+    )
 }
 
 #[tracing::instrument(skip_all)]
@@ -280,7 +304,8 @@ async fn api_models_pricing(
     State(_s): State<AppState>,
     Query(_q): Query<ModelQueryParams>,
 ) -> impl IntoResponse {
-    // TODO: 接 pricing catalog;翻译期返回空。
+    // TODO: 接 pricing catalog;翻译期返回空。前端如依赖具体价格会显示空白。
+    tracing::warn!("api_models_pricing 返回空 pricing catalog stub (TODO[Sonnet] 未接入)");
     Json(json!({"ok": true, "pricing": {}}))
 }
 

@@ -12,6 +12,7 @@
 
 use axum::{
     extract::State,
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -193,8 +194,15 @@ async fn api_mcp_server_start(
     Json(_body): Json<McpServerStartRequest>,
 ) -> Result<Response, ResponseError> {
     require_admin(&s, &headers).await?;
-    // TODO: McpBroker.start_server — 翻译期没接 broker,只返回 stub。
-    Ok(Json(json!({"ok": true, "started": false, "reason": "broker TODO"})).into_response())
+    // TODO: McpBroker.start_server — 翻译期没接 broker。
+    Ok((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "error": "not_implemented",
+            "feature": "mcp_broker",
+            "detail": "McpBroker 未接入,本路径在 rust-migration 期间为 stub。前端不应依赖本接口返回 ok。"
+        }))
+    ).into_response())
 }
 
 #[tracing::instrument(skip_all)]
@@ -204,7 +212,15 @@ async fn api_mcp_server_stop(
     Json(_body): Json<McpServerStopRequest>,
 ) -> Result<Response, ResponseError> {
     require_admin(&s, &headers).await?;
-    Ok(Json(json!({"ok": true, "stopped": false, "reason": "broker TODO"})).into_response())
+    // TODO: McpBroker.stop_server — 翻译期没接 broker。
+    Ok((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "error": "not_implemented",
+            "feature": "mcp_broker",
+            "detail": "McpBroker 未接入,本路径在 rust-migration 期间为 stub。前端不应依赖本接口返回 ok。"
+        }))
+    ).into_response())
 }
 
 #[tracing::instrument(skip_all)]

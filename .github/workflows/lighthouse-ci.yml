@@ -1,0 +1,22 @@
+name: Lighthouse CI
+on:
+  pull_request:
+    paths: ['frontend/**', '.github/workflows/lighthouse-ci.yml']
+jobs:
+  lhci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: install
+        working-directory: frontend
+        run: npm ci
+      - name: build
+        working-directory: frontend
+        run: npm run build
+      - name: lighthouse
+        working-directory: frontend
+        run: |
+          npm install -D @lhci/cli@0.14.x
+          npx lhci autorun || true

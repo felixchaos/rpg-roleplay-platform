@@ -1,6 +1,7 @@
 // Platform 页面入口 — Vite ESM 版
 // 替代原先多条 <script type="text/babel" src="..."> 标签，按原加载顺序 import。
 // JSX 文件里大量用 `React.xxx` / `ReactDOM.xxx` 全局，先挂到 window。
+import '../web-vitals-rum.js';
 import * as React from 'react';
 import * as ReactDOM from 'react-dom/client';
 window.React = React;

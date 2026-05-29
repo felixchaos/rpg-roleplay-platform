@@ -13,6 +13,7 @@
 pub mod console_assistant;
 pub mod core;
 pub mod game;
+pub mod metrics;
 pub mod sse_events;
 pub mod mcp;
 pub mod memory;
@@ -520,6 +521,7 @@ fn api_router() -> Router<AppState> {
         .merge(core::router())
         .merge(game::router())
         .merge(memory::router())
+        .merge(metrics::router())
         .merge(permissions::router())
         .merge(rules::router())
         .merge(skills::router())
@@ -539,6 +541,7 @@ fn regular_api_router() -> Router<AppState> {
         // game.rs 中的非 SSE 路由
         .merge(game::regular_router())
         .merge(memory::router())
+        .merge(metrics::router())
         .merge(permissions::router())
         .merge(rules::router())
         .merge(skills::router())

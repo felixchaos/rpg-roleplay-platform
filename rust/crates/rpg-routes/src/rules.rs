@@ -12,6 +12,7 @@
 
 use axum::{
     extract::State,
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -91,6 +92,7 @@ pub struct RulesSuggestRequest {
 #[tracing::instrument(skip_all)]
 async fn api_rules_modules(State(_s): State<AppState>) -> impl IntoResponse {
     // TODO: list_modules() — rpg_rules 没有 Python module catalog 等价物;翻译期返回空列表。
+    tracing::warn!(target = "stubs", "api_rules_modules 返回空列表 stub — list_modules() 未接入");
     Json(json!({"ok": true, "modules": []}))
 }
 
@@ -119,8 +121,15 @@ async fn api_rules_module_launch(
     State(_s): State<AppState>,
     Json(_body): Json<RulesModuleLaunchRequest>,
 ) -> impl IntoResponse {
-    // TODO: 创建独立 save (rpg_platform.runtime),启动 module。翻译期返回 stub。
-    Json(json!({"ok": true, "save_id": 0}))
+    // TODO: 创建独立 save (rpg_platform.runtime),启动 module。翻译期未实现。
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "error": "not_implemented",
+            "feature": "rules_module_save",
+            "detail": "module launch 未接入 rpg_platform.runtime,在 rust-migration 期间为 stub。"
+        }))
+    )
 }
 
 #[tracing::instrument(skip_all)]
@@ -167,10 +176,17 @@ async fn api_rules_move(
 #[tracing::instrument(skip_all)]
 async fn api_rules_action(
     State(_s): State<AppState>,
-    Json(body): Json<RulesActionRequest>,
+    Json(_body): Json<RulesActionRequest>,
 ) -> impl IntoResponse {
-    // TODO: 真 RulesEngine action 分派;翻译期 echo kind。
-    Json(json!({"ok": true, "kind": body.kind.unwrap_or_default()}))
+    // TODO: 真 RulesEngine action 分派;翻译期未实现。
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "error": "not_implemented",
+            "feature": "rules_action_dispatch",
+            "detail": "RulesEngine action dispatcher 未接入,在 rust-migration 期间为 stub。"
+        }))
+    )
 }
 
 #[tracing::instrument(skip_all)]
@@ -219,8 +235,15 @@ async fn api_rules_encounter_enemy(
     State(_s): State<AppState>,
     Json(_body): Json<RulesEncounterEnemyRequest>,
 ) -> impl IntoResponse {
-    // TODO: rpg_rules::RulesEngine attack_roll → state 应用伤害;翻译期 stub。
-    Json(json!({"ok": true, "result": {"hit": false, "damage": 0}}))
+    // TODO: rpg_rules::RulesEngine attack_roll → state 应用伤害;翻译期未实现。
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "error": "not_implemented",
+            "feature": "rules_attack_roll",
+            "detail": "RulesEngine attack_roll 未接入,在 rust-migration 期间为 stub。"
+        }))
+    )
 }
 
 #[tracing::instrument(skip_all)]
