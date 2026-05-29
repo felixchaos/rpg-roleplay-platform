@@ -8,15 +8,23 @@ use sqlx::PgPool;
 use crate::error::PlatformResult;
 
 /// Python `ensure_summaries(db, save_id)` — TODO。
-pub async fn ensure_summaries(_pool: &PgPool, _save_id: i64) -> PlatformResult<()> {
+pub async fn ensure_summaries(_pool: &PgPool, save_id: i64) -> PlatformResult<()> {
     // TODO[Sonnet]: 遍历该 save 的所有 commit,缺 summary 的调用
     //               summary::schedule_llm_summary 异步补齐
+    tracing::warn!(
+        save_id = ?save_id,
+        "ensure_summaries 是 stub,Python 源未补完 (TODO[Sonnet]); 生产用前需补完"
+    );
     Ok(())
 }
 
 /// Python `ensure_state_snapshots(db, save_id)` — TODO。
-pub async fn ensure_state_snapshots(_pool: &PgPool, _save_id: i64) -> PlatformResult<()> {
+pub async fn ensure_state_snapshots(_pool: &PgPool, save_id: i64) -> PlatformResult<()> {
     // TODO[Sonnet]: 老数据可能只有 state_path 文件,没 state_snapshot 列,
     //               这里读盘补回 jsonb 列。
+    tracing::warn!(
+        save_id = ?save_id,
+        "ensure_state_snapshots 是 stub,Python 源未补完 (TODO[Sonnet]); 生产用前需补完"
+    );
     Ok(())
 }
