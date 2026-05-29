@@ -5,7 +5,8 @@ use crate::error::ContextResult;
 use crate::provider::{ContextProvider, ProviderServices};
 use crate::types::{ContextContribution, Demand, Layer, Manifest};
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use rpg_schemas::GameStateData;
+use serde_json::json;
 
 pub struct RecentChatProvider;
 
@@ -17,18 +18,12 @@ impl ContextProvider for RecentChatProvider {
 
     async fn collect(
         &self,
-        state_data: &Value,
+        state_data: &GameStateData,
         _manifest: &Manifest,
         _demand: &Demand,
         _services: &ProviderServices,
     ) -> ContextResult<ContextContribution> {
-        // 假设 state_data.history 是 history messages 数组。
-        // 等 rpg-state 提供 history_messages() 后这里改成 state.history_messages()。
-        let history = state_data
-            .get("history")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
+        let history = &state_data.history;
         if history.is_empty() {
             return Ok(ContextContribution::skipped(self.id(), "no history"));
         }

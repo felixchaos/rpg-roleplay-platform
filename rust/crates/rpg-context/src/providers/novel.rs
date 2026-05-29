@@ -12,6 +12,7 @@ use crate::types::{ContextContribution, Demand, Layer, Manifest};
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use rpg_schemas::GameStateData;
 use serde_json::{json, Value};
 use sqlx::Row;
 use std::collections::HashMap;
@@ -40,26 +41,28 @@ impl ContextProvider for NovelTimelineProvider {
         "novel_timeline"
     }
 
-    fn applies(&self, _state_data: &Value, manifest: &Manifest, _demand: &Demand) -> bool {
+    fn applies(&self, _state_data: &GameStateData, manifest: &Manifest, _demand: &Demand) -> bool {
         manifest.context_providers.iter().any(|p| p == self.id()) && is_novel(manifest)
     }
 
     async fn collect(
         &self,
-        state_data: &Value,
+        state_data: &GameStateData,
         _manifest: &Manifest,
         _demand: &Demand,
         services: &ProviderServices,
     ) -> ContextResult<ContextContribution> {
-        let world = state_data.get("world").cloned().unwrap_or(Value::Null);
-        let timeline = world.get("timeline").cloned().unwrap_or(Value::Null);
-        let pending = timeline.get("pending_jump").cloned().unwrap_or(Value::Null);
+        let world = &state_data.world;
+        let timeline = &world.timeline;
+        let pending = timeline.pending_jump.clone().unwrap_or(Value::Null);
         let label = pending
             .get("to")
             .and_then(|v| v.as_str())
-            .or_else(|| world.get("time").and_then(|v| v.as_str()))
-            .unwrap_or("")
-            .to_string();
+            .map(|s| s.to_string())
+            .or_else(|| {
+                if world.time.is_empty() { None } else { Some(world.time.clone()) }
+            })
+            .unwrap_or_default();
 
         let mut anchor: Value = Value::Null;
         if let Some(filter) = services.timeline_filter_fn.as_ref() {
@@ -120,7 +123,7 @@ impl ContextProvider for NovelRetrievalProvider {
         "novel_retrieval"
     }
 
-    fn applies(&self, _state_data: &Value, manifest: &Manifest, _demand: &Demand) -> bool {
+    fn applies(&self, _state_data: &GameStateData, manifest: &Manifest, _demand: &Demand) -> bool {
         manifest.context_providers.iter().any(|p| p == self.id())
             && is_novel(manifest)
             && allow_retrieval(manifest)
@@ -128,7 +131,7 @@ impl ContextProvider for NovelRetrievalProvider {
 
     async fn collect(
         &self,
-        state_data: &Value,
+        state_data: &GameStateData,
         _manifest: &Manifest,
         demand: &Demand,
         services: &ProviderServices,
@@ -143,7 +146,9 @@ impl ContextProvider for NovelRetrievalProvider {
             }
         };
         let query = demand.retrieval_query.clone();
-        let result = retrieve_fn(&query, state_data).await;
+        // RetrieveFn 边界仍是 &Value;在 provider 内部按需转换
+        let state_value = serde_json::to_value(state_data).unwrap_or(Value::Null);
+        let result = retrieve_fn(&query, &state_value).await;
         let text = match result {
             Ok(t) => t,
             Err(exc) => {
@@ -210,13 +215,13 @@ impl ContextProvider for NovelCharactersProvider {
         "novel_characters"
     }
 
-    fn applies(&self, _state_data: &Value, manifest: &Manifest, _demand: &Demand) -> bool {
+    fn applies(&self, _state_data: &GameStateData, manifest: &Manifest, _demand: &Demand) -> bool {
         manifest.context_providers.iter().any(|p| p == self.id()) && is_novel(manifest)
     }
 
     async fn collect(
         &self,
-        state_data: &Value,
+        state_data: &GameStateData,
         _manifest: &Manifest,
         demand: &Demand,
         services: &ProviderServices,
@@ -251,11 +256,7 @@ impl ContextProvider for NovelCharactersProvider {
             return Ok(ContextContribution::skipped(self.id(), "no character cards"));
         }
 
-        let player_name = state_data
-            .pointer("/player/name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        let player_name = state_data.player.name.clone();
         let scan_text = build_scan_text(state_data, demand);
 
         let (player_card, npc_cards) = pick_active_cards(&cards, &scan_text, &player_name);
@@ -418,43 +419,31 @@ fn strip_card(card: &Value) -> Value {
 }
 
 /// 把玩家意图 + 最近对话 + 当前位置/时间 拼成 scan 文本,用于命中角色卡 / 世界书。
-fn build_scan_text(state_data: &Value, demand: &Demand) -> String {
+fn build_scan_text(state_data: &GameStateData, demand: &Demand) -> String {
     let mut parts: Vec<String> = Vec::new();
     if !demand.player_intent.is_empty() {
         parts.push(demand.player_intent.clone());
     }
-    if let Some(history) = state_data.get("history").and_then(|v| v.as_array()) {
-        let start = history.len().saturating_sub(6);
-        for msg in &history[start..] {
-            if let Some(c) = msg.get("content").and_then(|v| v.as_str()) {
-                parts.push(c.to_string());
-            }
+    let history = &state_data.history;
+    let start = history.len().saturating_sub(6);
+    for msg in &history[start..] {
+        if let Some(c) = msg.get("content").and_then(|v| v.as_str()) {
+            parts.push(c.to_string());
         }
     }
-    if let Some(loc) = state_data
-        .pointer("/player/current_location")
-        .and_then(|v| v.as_str())
-    {
-        parts.push(loc.to_string());
+    if !state_data.player.current_location.is_empty() {
+        parts.push(state_data.player.current_location.clone());
     }
-    if let Some(t) = state_data.pointer("/world/time").and_then(|v| v.as_str()) {
-        parts.push(t.to_string());
+    if !state_data.world.time.is_empty() {
+        parts.push(state_data.world.time.clone());
     }
-    if let Some(events) = state_data
-        .pointer("/world/known_events")
-        .and_then(|v| v.as_array())
-    {
-        for e in events {
-            if let Some(s) = e.as_str() {
-                parts.push(s.to_string());
-            }
+    for e in &state_data.world.known_events {
+        if let Some(s) = e.as_str() {
+            parts.push(s.to_string());
         }
     }
-    if let Some(obj) = state_data
-        .pointer("/memory/current_objective")
-        .and_then(|v| v.as_str())
-    {
-        parts.push(obj.to_string());
+    if !state_data.memory.current_objective.is_empty() {
+        parts.push(state_data.memory.current_objective.clone());
     }
     parts.join("\n")
 }
@@ -513,13 +502,13 @@ impl ContextProvider for NovelWorldbookProvider {
         "novel_worldbook"
     }
 
-    fn applies(&self, _state_data: &Value, manifest: &Manifest, _demand: &Demand) -> bool {
+    fn applies(&self, _state_data: &GameStateData, manifest: &Manifest, _demand: &Demand) -> bool {
         manifest.context_providers.iter().any(|p| p == self.id()) && is_novel(manifest)
     }
 
     async fn collect(
         &self,
-        state_data: &Value,
+        state_data: &GameStateData,
         _manifest: &Manifest,
         demand: &Demand,
         services: &ProviderServices,

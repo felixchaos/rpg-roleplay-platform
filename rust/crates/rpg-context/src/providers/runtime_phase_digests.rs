@@ -9,6 +9,7 @@ use crate::error::ContextResult;
 use crate::provider::{ContextProvider, ProviderServices};
 use crate::types::{ContextContribution, Demand, Layer, Manifest};
 use async_trait::async_trait;
+use rpg_schemas::GameStateData;
 use serde_json::{json, Value};
 use sqlx::Row;
 
@@ -25,13 +26,13 @@ impl ContextProvider for RuntimePhaseDigestProvider {
         "runtime_phase_digests"
     }
 
-    fn applies(&self, _state_data: &Value, _manifest: &Manifest, _demand: &Demand) -> bool {
+    fn applies(&self, _state_data: &GameStateData, _manifest: &Manifest, _demand: &Demand) -> bool {
         true
     }
 
     async fn collect(
         &self,
-        _state_data: &Value,
+        _state_data: &GameStateData,
         _manifest: &Manifest,
         _demand: &Demand,
         services: &ProviderServices,

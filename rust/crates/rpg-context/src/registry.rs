@@ -199,17 +199,13 @@ fn normalize_manifest(v: Value) -> Manifest {
 ///
 /// 对应 Python `run_providers(state, manifest, demand, services)`。
 /// 返回 `(contributions, used_ids)`。任何 provider 异常都被吞掉。
-///
-/// 注:ContextProvider trait 的 applies/collect 仍接受 &Value(动态层边界),
-/// 在此处做一次序列化转换,转换成本可接受(每轮调用一次)。
 pub async fn run_providers(
     state_data: &GameStateData,
     manifest: &Manifest,
     demand: &Demand,
     services: &ProviderServices,
 ) -> (Vec<ContextContribution>, Vec<String>) {
-    // ContextProvider trait 边界仍是 &Value — 在 run_providers 入口统一转换一次
-    let state_value = serde_json::to_value(state_data).unwrap_or(Value::Null);
+    // trait 直接吃 &GameStateData,免序列化
     let mut out: Vec<ContextContribution> = Vec::new();
     let mut used: Vec<String> = Vec::new();
 
@@ -223,14 +219,14 @@ pub async fn run_providers(
                 continue;
             }
         };
-        if !provider.applies(&state_value, manifest, demand) {
+        if !provider.applies(state_data, manifest, demand) {
             out.push(ContextContribution::skipped(
                 pid.clone(),
                 "applies()=False",
             ));
             continue;
         }
-        let result = provider.collect(&state_value, manifest, demand, services).await;
+        let result = provider.collect(state_data, manifest, demand, services).await;
         match result {
             Ok(mut contrib) => {
                 // 保持 id 一致(防 provider 自己写错)

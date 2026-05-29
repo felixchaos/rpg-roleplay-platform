@@ -6,6 +6,7 @@ use crate::error::ContextResult;
 use crate::provider::{ContextProvider, ProviderServices};
 use crate::types::{ContextContribution, Demand, Layer, Manifest};
 use async_trait::async_trait;
+use rpg_schemas::GameStateData;
 use serde_json::{json, Value};
 use sqlx::Row;
 
@@ -20,13 +21,13 @@ impl ContextProvider for ScriptPhaseAnticipationProvider {
         "script_phase_anticipation"
     }
 
-    fn applies(&self, _state_data: &Value, _manifest: &Manifest, _demand: &Demand) -> bool {
+    fn applies(&self, _state_data: &GameStateData, _manifest: &Manifest, _demand: &Demand) -> bool {
         true
     }
 
     async fn collect(
         &self,
-        state_data: &Value,
+        state_data: &GameStateData,
         _manifest: &Manifest,
         _demand: &Demand,
         services: &ProviderServices,
@@ -36,12 +37,7 @@ impl ContextProvider for ScriptPhaseAnticipationProvider {
             None => return Ok(ContextContribution::skipped(self.id(), "no script_id")),
         };
 
-        let current_phase = state_data
-            .pointer("/world/timeline/current_phase")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        let current_phase = state_data.world.timeline.current_phase.trim().to_string();
 
         let phases = match load_script_lookahead(
             services,

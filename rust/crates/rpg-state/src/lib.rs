@@ -51,6 +51,7 @@ pub mod state;
 pub mod store;
 pub mod structured;
 pub mod timeline_jump;
+pub mod typed_path;
 pub mod worldline_validation;
 
 pub use bus::{StateEvent, StateEventBus};

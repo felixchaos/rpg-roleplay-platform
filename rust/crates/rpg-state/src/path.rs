@@ -116,8 +116,13 @@ pub fn parse_path(path: &str) -> Result<Vec<PathSegment>, PathError> {
 /// 读取路径,不存在返回 None。
 pub fn get_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     let segs = parse_path(path).ok()?;
+    get_path_segs(root, &segs)
+}
+
+/// 内部用 segs 形式的 get_path,供 typed_path dispatch 复用。
+pub(crate) fn get_path_segs<'a>(root: &'a Value, segs: &[PathSegment]) -> Option<&'a Value> {
     let mut cur = root;
-    for seg in &segs {
+    for seg in segs {
         cur = match (cur, seg) {
             (Value::Object(map), PathSegment::Key(k)) => map.get(k)?,
             (Value::Array(arr), PathSegment::Index(i)) => arr.get(*i)?,
@@ -139,7 +144,8 @@ pub fn set_path(root: &mut Value, path: &str, value: Value) -> Result<(), PathEr
     set_path_segs(root, &segs, value)
 }
 
-fn set_path_segs(root: &mut Value, segs: &[PathSegment], value: Value) -> Result<(), PathError> {
+/// 内部用 segs 形式的 set_path,供 typed_path dispatch 复用(避免再 parse 一遍)。
+pub(crate) fn set_path_segs(root: &mut Value, segs: &[PathSegment], value: Value) -> Result<(), PathError> {
     let (last, parents) = segs.split_last().ok_or(PathError::Empty)?;
     // 保证 root 是 Object — Python 顶层就是 dict
     if !root.is_object() && !root.is_array() {
@@ -168,6 +174,13 @@ fn set_path_segs(root: &mut Value, segs: &[PathSegment], value: Value) -> Result
 /// 删除路径,返回原值。不存在返回 None。
 pub fn delete_path(root: &mut Value, path: &str) -> Result<Option<Value>, PathError> {
     let segs = parse_path(path)?;
+    delete_path_segs(root, &segs)
+}
+
+pub(crate) fn delete_path_segs(
+    root: &mut Value,
+    segs: &[PathSegment],
+) -> Result<Option<Value>, PathError> {
     let (last, parents) = segs.split_last().ok_or(PathError::Empty)?;
     let mut cur: &mut Value = root;
     for seg in parents {
@@ -192,8 +205,16 @@ pub fn delete_path(root: &mut Value, path: &str) -> Result<Option<Value>, PathEr
 /// 数组 append。路径如果不是 array,自动初始化为空数组。
 pub fn append_path(root: &mut Value, path: &str, value: Value) -> Result<(), PathError> {
     let segs = parse_path(path)?;
+    append_path_segs(root, &segs, value)
+}
+
+pub(crate) fn append_path_segs(
+    root: &mut Value,
+    segs: &[PathSegment],
+    value: Value,
+) -> Result<(), PathError> {
     let mut cur: &mut Value = root;
-    for seg in &segs {
+    for seg in segs {
         cur = descend_mut(cur, seg, /*create*/ true)?;
     }
     if !cur.is_array() {

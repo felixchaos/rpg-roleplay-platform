@@ -4,6 +4,7 @@
 use crate::error::ContextResult;
 use crate::types::{ContextContribution, Demand, Manifest};
 use async_trait::async_trait;
+use rpg_schemas::GameStateData;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -79,14 +80,14 @@ pub trait ContextProvider: Send + Sync {
 
     /// 是否在本轮启用。可基于 manifest.context_providers / state / demand 判断。
     /// 默认实现:manifest.context_providers 里出现就启用。
-    fn applies(&self, _state_data: &Value, manifest: &Manifest, _demand: &Demand) -> bool {
+    fn applies(&self, _state_data: &GameStateData, manifest: &Manifest, _demand: &Demand) -> bool {
         manifest.context_providers.iter().any(|p| p == self.id())
     }
 
     /// 收集 provider 的贡献。失败应返回 warnings,而非抛错。
     async fn collect(
         &self,
-        state_data: &Value,
+        state_data: &GameStateData,
         manifest: &Manifest,
         demand: &Demand,
         services: &ProviderServices,

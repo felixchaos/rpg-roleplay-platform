@@ -5,7 +5,8 @@ use crate::error::ContextResult;
 use crate::provider::{ContextProvider, ProviderServices};
 use crate::types::{ContextContribution, Demand, Layer, Manifest};
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use rpg_schemas::GameStateData;
+use serde_json::json;
 
 pub struct MemoryProvider;
 
@@ -17,50 +18,41 @@ impl ContextProvider for MemoryProvider {
 
     async fn collect(
         &self,
-        state_data: &Value,
+        state_data: &GameStateData,
         _manifest: &Manifest,
         _demand: &Demand,
         _services: &ProviderServices,
     ) -> ContextResult<ContextContribution> {
-        let memory = state_data.get("memory").cloned().unwrap_or(Value::Null);
+        let memory = &state_data.memory;
         let mut lines: Vec<String> = Vec::new();
-        if let Some(s) = memory.get("main_quest").and_then(|v| v.as_str()) {
-            if !s.is_empty() {
-                lines.push(format!("主线：{}", s));
-            }
+        if !memory.main_quest.is_empty() {
+            lines.push(format!("主线：{}", memory.main_quest));
         }
-        if let Some(s) = memory.get("current_objective").and_then(|v| v.as_str()) {
-            if !s.is_empty() {
-                lines.push(format!("当前目标：{}", s));
-            }
+        if !memory.current_objective.is_empty() {
+            lines.push(format!("当前目标：{}", memory.current_objective));
         }
 
-        for (key, label) in [
-            ("pinned", "固定记忆"),
-            ("abilities", "能力"),
-            ("resources", "资源"),
-            ("facts", "事实"),
-            ("notes", "笔记"),
+        for (arr, label) in [
+            (memory.pinned.as_slice(), "固定记忆"),
+            (memory.abilities.as_slice(), "能力"),
+            (memory.resources.as_slice(), "资源"),
+            (memory.facts.as_slice(), "事实"),
+            (memory.notes.as_slice(), "笔记"),
         ] {
-            if let Some(arr) = memory.get(key).and_then(|v| v.as_array()) {
-                for item in arr.iter().take(5) {
-                    if let Some(s) = item.as_str() {
-                        lines.push(format!("{}：{}", label, s));
-                    }
+            for item in arr.iter().take(5) {
+                if let Some(s) = item.as_str() {
+                    lines.push(format!("{}：{}", label, s));
                 }
             }
         }
 
         // hypotheses
-        if let Some(items) = memory.get("items").and_then(|v| v.as_array()) {
-            for it in items {
-                if it.get("kind").and_then(|v| v.as_str()) == Some("hypothesis")
-                    && it.get("status").and_then(|v| v.as_str()).unwrap_or("active")
-                        == "active"
-                {
-                    let text = it.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                    lines.push(format!("未确认推测：{}", text));
-                }
+        for it in &memory.items {
+            if it.get("kind").and_then(|v| v.as_str()) == Some("hypothesis")
+                && it.get("status").and_then(|v| v.as_str()).unwrap_or("active") == "active"
+            {
+                let text = it.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                lines.push(format!("未确认推测：{}", text));
             }
         }
 
@@ -71,12 +63,8 @@ impl ContextProvider for MemoryProvider {
         };
         let layer = Layer::new("memory", "长期记忆", text.clone()).with_priority(60);
 
-        let mem_mode = memory.get("mode").cloned().unwrap_or(Value::Null);
-        let items_count = memory
-            .get("items")
-            .and_then(|v| v.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0);
+        let mem_mode = &memory.mode;
+        let items_count = memory.items.len();
 
         let facts: Vec<String> = lines.iter().take(3).cloned().collect();
         let tokens = (text.chars().count() / 2) as u32;

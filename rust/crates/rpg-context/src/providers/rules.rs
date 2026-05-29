@@ -24,87 +24,69 @@ impl ContextProvider for RulesProvider {
         "rules"
     }
 
-    fn applies(&self, state_data: &Value, manifest: &Manifest, _demand: &Demand) -> bool {
+    fn applies(&self, state_data: &GameStateData, manifest: &Manifest, _demand: &Demand) -> bool {
         if !manifest.context_providers.iter().any(|p| p == self.id()) {
             return false;
         }
-        // ContextProvider trait 边界仍是 &Value;短路 manifest 检查避免反序列化
-        if !manifest.ruleset.is_empty() && manifest.ruleset != "none" {
-            return true;
-        }
-        let typed: GameStateData = match serde_json::from_value(state_data.clone()) {
-            Ok(d) => d,
-            Err(_) => return false,
-        };
-        has_ruleset(&typed, manifest)
+        has_ruleset(state_data, manifest)
     }
 
     async fn collect(
         &self,
-        state_data: &Value,
+        state_data: &GameStateData,
         _manifest: &Manifest,
         demand: &Demand,
         _services: &ProviderServices,
     ) -> ContextResult<ContextContribution> {
-        let ruleset = state_data.get("ruleset").cloned().unwrap_or(Value::Null);
-        let pc = state_data
-            .get("player_character")
-            .cloned()
-            .unwrap_or(Value::Null);
-        let dice_log = state_data
-            .get("dice_log")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
+        let pc = &state_data.player_character;
+        let dice_log = &state_data.dice_log;
         let dice_recent: Vec<&Value> = dice_log.iter().rev().take(8).collect::<Vec<_>>();
         let mut dice_recent: Vec<&Value> = dice_recent.into_iter().collect();
         dice_recent.reverse();
 
         let mut lines: Vec<String> = Vec::new();
-        let label = ruleset
-            .get("public_label")
-            .and_then(|v| v.as_str())
-            .or_else(|| ruleset.get("id").and_then(|v| v.as_str()))
-            .unwrap_or("unknown");
+        let ruleset = &state_data.ruleset;
+        let label = if !ruleset.public_label.is_empty() {
+            &ruleset.public_label
+        } else if !ruleset.id.is_empty() {
+            &ruleset.id
+        } else {
+            "unknown"
+        };
         lines.push(format!("【规则集】{}", label));
 
         // TODO: game_policy.gm_prompt_constraints — 等 rpg-rules-bridge 提供。
         // policy_constraints 暂时空。
 
-        if pc.is_object() {
-            let name = pc.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let level = pc.get("level").and_then(|v| v.as_i64()).unwrap_or(0);
-            let class_name = pc.get("class_name").and_then(|v| v.as_str()).unwrap_or("");
-            let hp = pc.get("hp").and_then(|v| v.as_i64()).unwrap_or(0);
-            let max_hp = pc.get("max_hp").and_then(|v| v.as_i64()).unwrap_or(0);
-            let ac = pc.get("ac").and_then(|v| v.as_i64()).unwrap_or(0);
-            let prof = pc
-                .get("proficiency_bonus")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
+        {
+            let name = pc.name.as_str();
+            let level = pc.level as i64;
+            let class_name = pc.class_name.as_str();
+            let hp = pc.hp as i64;
+            let max_hp = pc.max_hp as i64;
+            let ac = pc.ac as i64;
+            let prof = pc.proficiency_bonus as i64;
             lines.push(format!(
                 "【角色】{} · Lv {} {} · HP {}/{} · AC {} · 熟练 +{}",
                 name, level, class_name, hp, max_hp, ac, prof
             ));
-            if let Some(abilities) = pc.get("abilities").and_then(|v| v.as_object()) {
-                let segs: Vec<String> = ["str", "dex", "con", "int", "wis", "cha"]
+            let segs: Vec<String> = ["str", "dex", "con", "int", "wis", "cha"]
+                .iter()
+                .map(|a| {
+                    let val = pc.abilities
+                        .get(*a)
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(10);
+                    format!("{} {}", a.to_uppercase(), val)
+                })
+                .collect();
+            lines.push(format!("  · 属性：{}", segs.join(" ")));
+            if !pc.conditions.is_empty() {
+                let cs: Vec<String> = pc.conditions
                     .iter()
-                    .map(|a| {
-                        let val = abilities
-                            .get(*a)
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(10);
-                        format!("{} {}", a.to_uppercase(), val)
-                    })
+                    .filter_map(|v| v.as_str().map(String::from))
                     .collect();
-                lines.push(format!("  · 属性：{}", segs.join(" ")));
-            }
-            if let Some(conds) = pc.get("conditions").and_then(|v| v.as_array()) {
-                if !conds.is_empty() {
-                    let cs: Vec<String> = conds
-                        .iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect();
+                if !cs.is_empty() {
                     lines.push(format!("  · 状态：{}", cs.join(", ")));
                 }
             }
@@ -162,12 +144,7 @@ impl ContextProvider for RulesProvider {
         let layer = Layer::new("rules", "规则集状态", text.clone()).with_priority(80);
 
         let mut facts: Vec<String> = Vec::new();
-        if pc.is_object() {
-            let hp = pc.get("hp").cloned().unwrap_or(Value::Null);
-            let max_hp = pc.get("max_hp").cloned().unwrap_or(Value::Null);
-            let ac = pc.get("ac").cloned().unwrap_or(Value::Null);
-            facts.push(format!("角色 HP {}/{}, AC {}", hp, max_hp, ac));
-        }
+        facts.push(format!("角色 HP {}/{}, AC {}", pc.hp, pc.max_hp, pc.ac));
         if !rcas.is_empty() {
             facts.push(format!("本轮候选规则动作 {} 条", rcas.len()));
         }
@@ -182,8 +159,8 @@ impl ContextProvider for RulesProvider {
             retrieval_items: Vec::new(),
             warnings: Vec::new(),
             debug: json!({
-                "ruleset": ruleset.get("id").cloned().unwrap_or(Value::Null),
-                "pc_hp": pc.get("hp").cloned().unwrap_or(Value::Null),
+                "ruleset": &state_data.ruleset.id,
+                "pc_hp": pc.hp,
                 "dice_log_count": dice_log.len(),
                 "candidate_actions_count": rcas.len(),
             }),

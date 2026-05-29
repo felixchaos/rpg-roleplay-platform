@@ -115,9 +115,9 @@ fn parse_qty(between: &str) -> i32 {
 }
 
 /// consume_item_action：消耗 inventory 中 item_id 的 qty 件。
-/// inventory 结构：`player_character.inventory.<item_id>.qty`。
+/// inventory 结构：`player_character.inventory` 是 `Vec<Value>`,每项包含 `id`/`name`/`qty`。
 pub fn consume_item_action(
-    data: &mut Value,
+    data: &mut GameStateData,
     item_id: &str,
     qty: i32,
     reason: &str,
@@ -125,19 +125,27 @@ pub fn consume_item_action(
     if item_id.is_empty() {
         return Err(BridgeError::Logic("缺少 item_id".into()));
     }
-    let item = data["player_character"]["inventory"][item_id].clone();
-    if item.is_null() {
-        return Err(BridgeError::TargetNotFound(format!("inventory 中不存在：{}", item_id)));
-    }
-    let qty_before = item["qty"].as_i64().unwrap_or(0) as i32;
+    // 找到 inventory Vec 中与 item_id 匹配的元素(按 id 字段精确匹配)
+    let idx = data.player_character.inventory
+        .iter()
+        .position(|item| {
+            item.get("id").and_then(|v| v.as_str()) == Some(item_id)
+        })
+        .ok_or_else(|| BridgeError::TargetNotFound(format!("inventory 中不存在：{}", item_id)))?;
+
+    let qty_before = data.player_character.inventory[idx]["qty"].as_i64().unwrap_or(0) as i32;
     if qty_before < qty {
         return Err(BridgeError::Logic(format!("库存不足：{} (有 {}, 需 {})", item_id, qty_before, qty)));
     }
     let qty_after = qty_before - qty;
-    data["player_character"]["inventory"][item_id]["qty"] = json!(qty_after);
+    data.player_character.inventory[idx]["qty"] = json!(qty_after);
 
-    let item_name = item["name"].as_str().unwrap_or(item_id).to_string();
-    let actor = data["player_character"]["name"].as_str().unwrap_or("player").to_string();
+    let item_name = data.player_character.inventory[idx]["name"]
+        .as_str()
+        .unwrap_or(item_id)
+        .to_string();
+    let actor = data.player_character.name.clone();
+    let actor = if actor.is_empty() { "player".to_string() } else { actor };
     let log_reason = if reason.is_empty() {
         format!("消耗 {} ×{}", item_name, qty)
     } else {

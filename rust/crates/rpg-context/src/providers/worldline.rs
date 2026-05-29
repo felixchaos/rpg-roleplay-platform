@@ -5,6 +5,7 @@ use crate::error::ContextResult;
 use crate::provider::{ContextProvider, ProviderServices};
 use crate::types::{ContextContribution, Demand, Layer, Manifest};
 use async_trait::async_trait;
+use rpg_schemas::GameStateData;
 use serde_json::{json, Value};
 
 pub struct WorldlineProvider;
@@ -17,23 +18,15 @@ impl ContextProvider for WorldlineProvider {
 
     async fn collect(
         &self,
-        state_data: &Value,
+        state_data: &GameStateData,
         _manifest: &Manifest,
         _demand: &Demand,
         _services: &ProviderServices,
     ) -> ContextResult<ContextContribution> {
-        let worldline = state_data.get("worldline").cloned().unwrap_or(Value::Null);
-        let variables = worldline
-            .get("user_variables")
-            .and_then(|v| v.as_object())
-            .cloned()
-            .unwrap_or_default();
-        let constraints = worldline
-            .get("constraints")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let player = state_data.get("player").cloned().unwrap_or(Value::Null);
+        let worldline = &state_data.worldline;
+        let variables = &worldline.user_variables;
+        let constraints = &worldline.constraints;
+        let player = &state_data.player;
 
         let mut lines: Vec<String> = Vec::new();
         let mut facts: Vec<String> = Vec::new();
@@ -59,14 +52,12 @@ impl ContextProvider for WorldlineProvider {
             lines.push(String::new());
             lines.push("【世界线推演约束】".to_string());
             for c in constraints.iter().take(8) {
-                lines.push(format!("  · {}", value_to_text(c)));
+                lines.push(format!("  · {}", c));
             }
         }
-        if let Some(loc) = player.get("current_location").and_then(|v| v.as_str()) {
-            if !loc.is_empty() {
-                lines.push(String::new());
-                lines.push(format!("【玩家当前位置】{}", loc));
-            }
+        if !player.current_location.is_empty() {
+            lines.push(String::new());
+            lines.push(format!("【玩家当前位置】{}", player.current_location));
         }
 
         let text = lines.join("\n");

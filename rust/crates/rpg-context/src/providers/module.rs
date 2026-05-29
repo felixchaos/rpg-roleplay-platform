@@ -32,27 +32,22 @@ impl ContextProvider for ModuleSceneProvider {
         "module_scene"
     }
 
-    fn applies(&self, state_data: &Value, manifest: &Manifest, _demand: &Demand) -> bool {
+    fn applies(&self, state_data: &GameStateData, manifest: &Manifest, _demand: &Demand) -> bool {
         if !manifest.context_providers.iter().any(|p| p == self.id()) {
             return false;
         }
-        let typed: GameStateData = match serde_json::from_value(state_data.clone()) {
-            Ok(d) => d,
-            Err(_) => return false,
-        };
-        module_id_of(&typed).is_some()
+        module_id_of(state_data).is_some()
     }
 
     async fn collect(
         &self,
-        state_data: &Value,
+        state_data: &GameStateData,
         _manifest: &Manifest,
         _demand: &Demand,
         services: &ProviderServices,
     ) -> ContextResult<ContextContribution> {
-        let scene = state_data.get("scene").cloned().unwrap_or(Value::Null);
-        let typed: GameStateData = serde_json::from_value(state_data.clone()).unwrap_or_default();
-        let module_id = match module_id_of(&typed) {
+        let scene = serde_json::to_value(&state_data.scene).unwrap_or(Value::Null);
+        let module_id = match module_id_of(state_data) {
             Some(id) => id,
             None => return Ok(ContextContribution::skipped(self.id(), "no module_id")),
         };
@@ -277,28 +272,23 @@ impl ContextProvider for ModuleEncounterProvider {
         "module_encounter"
     }
 
-    fn applies(&self, state_data: &Value, manifest: &Manifest, _demand: &Demand) -> bool {
+    fn applies(&self, state_data: &GameStateData, manifest: &Manifest, _demand: &Demand) -> bool {
         if !manifest.context_providers.iter().any(|p| p == self.id()) {
             return false;
         }
-        let typed: GameStateData = match serde_json::from_value(state_data.clone()) {
-            Ok(d) => d,
-            Err(_) => return false,
-        };
-        module_id_of(&typed).is_some()
+        module_id_of(state_data).is_some()
     }
 
     async fn collect(
         &self,
-        state_data: &Value,
+        state_data: &GameStateData,
         _manifest: &Manifest,
         _demand: &Demand,
         services: &ProviderServices,
     ) -> ContextResult<ContextContribution> {
-        let scene = state_data.get("scene").cloned().unwrap_or(Value::Null);
-        let encounter = state_data.get("encounter").cloned().unwrap_or(Value::Null);
-        let typed: GameStateData = serde_json::from_value(state_data.clone()).unwrap_or_default();
-        let module_id = match module_id_of(&typed) {
+        let scene = serde_json::to_value(&state_data.scene).unwrap_or(Value::Null);
+        let encounter = serde_json::to_value(&state_data.encounter).unwrap_or(Value::Null);
+        let module_id = match module_id_of(state_data) {
             Some(id) => id,
             None => return Ok(ContextContribution::skipped(self.id(), "no module")),
         };
@@ -424,26 +414,21 @@ impl ContextProvider for ModuleWorldbookProvider {
         "module_worldbook"
     }
 
-    fn applies(&self, state_data: &Value, manifest: &Manifest, _demand: &Demand) -> bool {
+    fn applies(&self, state_data: &GameStateData, manifest: &Manifest, _demand: &Demand) -> bool {
         if !manifest.context_providers.iter().any(|p| p == self.id()) {
             return false;
         }
-        let typed: GameStateData = match serde_json::from_value(state_data.clone()) {
-            Ok(d) => d,
-            Err(_) => return false,
-        };
-        module_id_of(&typed).is_some()
+        module_id_of(state_data).is_some()
     }
 
     async fn collect(
         &self,
-        state_data: &Value,
+        state_data: &GameStateData,
         _manifest: &Manifest,
         _demand: &Demand,
         services: &ProviderServices,
     ) -> ContextResult<ContextContribution> {
-        let typed: GameStateData = serde_json::from_value(state_data.clone()).unwrap_or_default();
-        let module_id = match module_id_of(&typed) {
+        let module_id = match module_id_of(state_data) {
             Some(id) => id,
             None => return Ok(ContextContribution::skipped(self.id(), "no module")),
         };
