@@ -18,11 +18,15 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use futures_util::stream::{self, Stream};
+use futures_util::stream::{self, Stream, StreamExt};
 use http::{HeaderMap, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tokio_stream::wrappers::ReceiverStream;
 
+use rpg_llm::pipeline::{
+    ChatChunk, ChatMessage, ChatRequest as LlmChatRequest, WireChatChunk,
+};
 use rpg_platform::quota::{self, QuotaConfig, QuotaError};
 use rpg_state::GameState;
 
@@ -140,10 +144,20 @@ async fn api_new(
     .into_response())
 }
 
-/// POST /api/opening — SSE 开场白流
+/// POST /api/opening — SSE 开场白流(Wave 6-A:真接 LLM stream)
 ///
-/// 本翻译期未接 GameMaster.generate_opening 全链路(rpg-agents 需要 SharedLlm 注入),
-/// 留下一个 stub SSE,发 hello + state_change + chunk + done,前端不会卡住。
+/// 流程:
+///   1. 鉴权 + 取 user GameState 快照。
+///   2. 构造 system + opening user prompt(`OPENING_SYSTEM` / `OPENING_USER`)。
+///   3. 取 `llm_router.current_backend()`;backend 未注册 → 退化成 stub
+///      (产 hello + state_change + 空 chunk + done),保证前端不卡。
+///   4. 真接 `backend.stream_chat(req)`,每个 [`ChatChunk`] 投影为 SSE event。
+///   5. 流末 append 完整 opening 到 `state.history` 并 emit done(带最新 snapshot)。
+///   6. 错误转 SSE error 帧。
+///
+/// 不包含:context_engine 调度(Python 走 retrieve_context + _build_turn_context),
+/// extractor / structured_updates 解析(只追加 raw assistant 文本)。
+/// 这两块由 Wave 6-B 后续 / rpg-agents `GmEvent` 引入。
 #[tracing::instrument(skip(s, headers), fields(user_id))]
 pub(crate) async fn api_opening(
     State(s): State<AppState>,
@@ -154,23 +168,142 @@ pub(crate) async fn api_opening(
     let user_id = user.id.to_string();
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
-    // 6C-1 Arc 快照:只读返回,snapshot() 复用缓存 Arc,避免整树深拷贝。
-    let state_data = shared.read().snapshot();
-    let events = vec![
-        Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id))),
-        Ok(named_sse_event(
+
+    // 取 backend(若无 catalog/无注册则 stub fallback,不报错以兼容空环境)。
+    let backend_opt = s.llm_router.read().current_backend().ok();
+
+    // 没 backend → 老 stub 路径(同旧行为)。
+    let Some(backend) = backend_opt else {
+        let state_data = shared.read().snapshot();
+        let events = vec![
+            Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id))),
+            Ok(named_sse_event(
+                "state_change",
+                json!({"phase":"generating","label":"GM 构思开场中(stub)…"}),
+            )),
+            Ok(named_sse_event("chunk", json!({"text":""}))),
+            Ok(named_sse_event(
+                "done",
+                json!({"status": {"state": state_data}, "interrupted": false}),
+            )),
+        ];
+        let stream = stream::iter(events).left_stream();
+        return Ok(Sse::new(stream).keep_alive(KeepAlive::default()));
+    };
+
+    // 取 catalog 的 selected.model_id(空则让 router 兜底)。
+    let model = s
+        .llm_router
+        .read()
+        .catalog()
+        .map(|c| c.selected.model_id.clone())
+        .unwrap_or_default();
+
+    // 构造 system + opening prompt(简化版,不接 module manifest world section)。
+    let summary = rpg_agents::common::state_short_summary(&shared.read());
+    let system = OPENING_SYSTEM.to_string();
+    let user_msg = format!(
+        "【当前剧情状态】\n{summary}\n\n{OPENING_USER}",
+    );
+    let req = LlmChatRequest {
+        model,
+        system: Some(system),
+        messages: vec![ChatMessage::user(user_msg)],
+        max_tokens: Some(OPENING_MAX_TOKENS),
+        stream: true,
+        ..Default::default()
+    };
+
+    // 把流处理委托给 helper:返回 mpsc::Receiver<Event>。
+    let state_handle = shared.clone();
+    let user_id_clone = user_id.clone();
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(32);
+    // 首帧 hello。
+    let _ = tx
+        .send(Ok(named_sse_event("hello", hello_payload(&user_id))))
+        .await;
+    let _ = tx
+        .send(Ok(named_sse_event(
             "state_change",
             json!({"phase":"generating","label":"GM 构思开场中…"}),
-        )),
-        Ok(named_sse_event("chunk", json!({"text":""}))),
-        Ok(named_sse_event(
-            "done",
-            json!({"status": {"state": state_data}, "interrupted": false}),
-        )),
-    ];
-    let stream = stream::iter(events);
+        )))
+        .await;
+
+    tokio::spawn(async move {
+        let mut full = String::new();
+        match backend.stream_chat(req).await {
+            Ok(mut stream) => {
+                while let Some(item) = stream.next().await {
+                    match item {
+                        Ok(chunk) => {
+                            if let ChatChunk::Text(t) = &chunk {
+                                full.push_str(t);
+                            }
+                            let wire = WireChatChunk::from_chunk(&chunk);
+                            let payload =
+                                serde_json::to_value(&wire).unwrap_or_else(|_| json!({}));
+                            if tx
+                                .send(Ok(named_sse_event("chunk", payload)))
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx
+                                .send(Ok(named_sse_event(
+                                    "error",
+                                    json!({"detail": e.to_string(), "code": "llm_error"}),
+                                )))
+                                .await;
+                            return;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = tx
+                    .send(Ok(named_sse_event(
+                        "error",
+                        json!({"detail": e.to_string(), "code": "llm_error"}),
+                    )))
+                    .await;
+                return;
+            }
+        }
+        // 追加 assistant 消息到 history。
+        if !full.is_empty() {
+            let mut st = state_handle.write();
+            let _ = st.append_to_path(
+                "history",
+                json!({"role": "assistant", "content": full.clone()}),
+            );
+        }
+        // done — 带最新 snapshot。
+        let state_data = state_handle.read().snapshot();
+        let _ = tx
+            .send(Ok(named_sse_event(
+                "done",
+                json!({"status": {"state": state_data}, "interrupted": false}),
+            )))
+            .await;
+        // user_id_clone 仅用作 spawn task 跟踪(防 borrow drop)。
+        let _ = user_id_clone;
+    });
+
+    let stream = ReceiverStream::new(rx).right_stream();
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
+
+/// opening 用的 system prompt — 简化版,够 LLM 知道自己是 GM 即可。
+const OPENING_SYSTEM: &str = "你是这局 TRPG 的 Game Master。请用第二人称叙事,聚焦于场景、五感与玩家可触发的下一步。语气克制,留白让玩家选择。";
+
+/// opening 用的 user prompt — 触发 GM 写开场。
+const OPENING_USER: &str = "请生成一段开场白(150~250 字),描述玩家角色刚醒来时的所见所感。结尾要让玩家自然引出第一个动作。";
+
+/// opening max_tokens。
+const OPENING_MAX_TOKENS: u32 = 600;
 
 /// POST /api/chat/estimate — 实时上下文预估
 ///
@@ -316,11 +449,19 @@ async fn api_context_breakdown(
     .into_response())
 }
 
-/// POST /api/chat — 主聊天 SSE
+/// POST /api/chat — 主聊天 SSE(Wave 6-A:真接 LLM stream)
 ///
 /// Python 端是 5 阶段 chat_pipeline。Rust 翻译期 GameMaster 链路 (rpg-agents + rpg-llm
-/// router 注入) 还在搭,本接口只做空消息校验 + 把 user input 写进 history + echo 一个空 token,
-/// 等 chat_pipeline crate 落地后再 wire 真实流式响应。
+/// router 注入) 还在搭,本 handler 只做:
+///   1. 鉴权 + 空消息校验
+///   2. 配额闸(预估 input + hard_max_tokens)
+///   3. 写 user 消息进 history
+///   4. 取 current_backend(无 backend → 老 stub fallback)→ 真接 stream_chat
+///   5. 逐 chunk 转 SSE,append assistant 文本到 history,emit done(带最新 snapshot)
+///   6. 流末检 cluster::is_stop_requested 决定 interrupted 字段
+///
+/// 尚未引入:context_engine 跑 retrieval、worldbook_consulting 中间事件、
+/// extractor → ops apply、rules preflight、persist_chat_turn。这些归 Wave 6-B。
 #[tracing::instrument(skip(s, headers, body), fields(user_id))]
 pub(crate) async fn api_chat(
     State(s): State<AppState>,
@@ -389,44 +530,200 @@ pub(crate) async fn api_chat(
             json!({"role": "user", "content": message.clone()}),
         );
     }
-    // 6C-1 Arc 快照(写后重建一次,SSE done 返回最新 state 仅 inc refcount)。
-    let state_after = shared.read().snapshot();
 
-    // ── 调用 LLM(本翻译期为 stub,无真实 output)。链路落地后此处填真实 usage。
-    // 调用后回填用量 + 释放并发槽。stub 阶段 actual 用预估输入 + 0 output。
-    let actual = rpg_platform::usage::UsageBreakdown {
-        input_tokens: est_input.clamp(0, i32::MAX as i64) as i32,
-        output_tokens: 0,
-        cached_input_tokens: 0,
-        reasoning_tokens: 0,
-        total_tokens: est_input.clamp(0, i32::MAX as i64) as i32,
+    // ── 构造 LLM 请求 ──────────────────────────────────────────────
+    // history → ChatMessage(从 state.data.history 翻译;过滤非 user/assistant)。
+    let mut messages: Vec<ChatMessage> = {
+        let st = shared.read();
+        st.data
+            .history
+            .iter()
+            .filter_map(|m| {
+                let role = m.get("role")?.as_str()?;
+                let content = m.get("content")?.as_str().unwrap_or("");
+                match role {
+                    "user" => Some(ChatMessage::user(content)),
+                    "assistant" => Some(ChatMessage::assistant(content)),
+                    _ => None,
+                }
+            })
+            .collect()
     };
-    quota::record_actual(&s.db, grant, None, None, &actual, est_input as i32, 1_000_000).await;
+    // history 已含本轮 user(刚 append),不再 push 重复。
+    if messages.is_empty() {
+        // 兜底:历史空时也得有当前 user 消息(理论上不该走到)。
+        messages.push(ChatMessage::user(message.clone()));
+    }
 
-    // 6C-1 跨 pod stop 检查点(真实 chat_pipeline 落地后应在流式循环里周期轮询):
-    // 本 pod 的 Notify 给真实 await 循环用(stub 无循环故不读它);此处查
-    // cluster::is_stop_requested —— 命中**别的 pod** 写入 stop_signals 也能感知。
-    let interrupted =
-        rpg_platform::cluster::is_stop_requested(&s.db, user.id.get(), run_id).await;
-    // 本轮结束:清掉跨进程 stop 信号(避免孤儿信号污染下一轮)。
-    rpg_platform::cluster::clear_stop(&s.db, user.id.get(), run_id).await;
+    // 取 backend + selected model;无 backend → 退化老 stub 路径(保持兼容)。
+    let backend_opt = s.llm_router.read().current_backend().ok();
+    let model_id = s
+        .llm_router
+        .read()
+        .catalog()
+        .map(|c| c.selected.model_id.clone())
+        .unwrap_or_default();
 
-    let events = vec![
-        Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id))),
-        Ok(named_sse_event(
+    // record_actual 闭包:仅在 LLM 路径走到末尾或失败时调一次。
+    // 为了让 spawned task 拿走 grant,把 db pool 也克隆进去。
+    let db = s.db.clone();
+    let user_id_str = user_id.clone();
+    let state_handle = shared.clone();
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(32);
+    // 首帧。
+    let _ = tx
+        .send(Ok(named_sse_event("hello", hello_payload(&user_id))))
+        .await;
+    let _ = tx
+        .send(Ok(named_sse_event(
             "state_change",
             json!({"phase":"generating","label":"GM 思考中…"}),
-        )),
-        Ok(named_sse_event("chunk", json!({"text":""}))),
-        Ok(named_sse_event(
-            "done",
-            json!({"status": {"state": state_after}, "interrupted": interrupted}),
-        )),
-    ];
-    Sse::new(stream::iter(events))
-        .keep_alive(KeepAlive::default())
-        .into_response()
+        )))
+        .await;
+
+    // 无 backend → stub fallback:只 emit 一个空 chunk + done。
+    let Some(backend) = backend_opt else {
+        let state_after = shared.read().snapshot();
+        let actual = rpg_platform::usage::UsageBreakdown {
+            input_tokens: est_input.clamp(0, i32::MAX as i64) as i32,
+            output_tokens: 0,
+            cached_input_tokens: 0,
+            reasoning_tokens: 0,
+            total_tokens: est_input.clamp(0, i32::MAX as i64) as i32,
+        };
+        quota::record_actual(&db, grant, None, None, &actual, est_input as i32, 1_000_000).await;
+        let _ = tx
+            .send(Ok(named_sse_event("chunk", json!({"text":""}))))
+            .await;
+        let _ = tx
+            .send(Ok(named_sse_event(
+                "done",
+                json!({"status": {"state": state_after}, "interrupted": false}),
+            )))
+            .await;
+        drop(tx);
+        let stream = ReceiverStream::new(rx);
+        return Sse::new(stream).keep_alive(KeepAlive::default()).into_response();
+    };
+
+    let req = LlmChatRequest {
+        model: model_id,
+        system: Some(CHAT_SYSTEM.to_string()),
+        messages,
+        max_tokens: Some(CHAT_MAX_TOKENS),
+        stream: true,
+        ..Default::default()
+    };
+
+    // 在 task 内跑 LLM stream,SSE 流由 ReceiverStream 包 rx。
+    let stop_notify = s.stop_notify(&user_id);
+    let user_id_u = user.id;
+    tokio::spawn(async move {
+        let mut full = String::new();
+        let mut usage_total: u32 = 0;
+        let mut interrupted = false;
+
+        let stream_result = backend.stream_chat(req).await;
+        match stream_result {
+            Ok(mut stream) => {
+                loop {
+                    tokio::select! {
+                        // 本 pod stop 信号
+                        _ = stop_notify.notified() => {
+                            interrupted = true;
+                            break;
+                        }
+                        item = stream.next() => {
+                            let Some(item) = item else { break };
+                            match item {
+                                Ok(chunk) => {
+                                    // 流式 cluster stop 轮询(写另一个 pod 的 stop_signals 时命中)。
+                                    if rpg_platform::cluster::is_stop_requested(
+                                        &db, user_id_u.get(), run_id,
+                                    ).await {
+                                        interrupted = true;
+                                        break;
+                                    }
+                                    if let ChatChunk::Text(t) = &chunk {
+                                        full.push_str(t);
+                                    }
+                                    if let ChatChunk::Usage(u) = &chunk {
+                                        usage_total = u.output_tokens;
+                                    }
+                                    let wire = WireChatChunk::from_chunk(&chunk);
+                                    let payload = serde_json::to_value(&wire).unwrap_or_else(|_| json!({}));
+                                    if tx.send(Ok(named_sse_event("chunk", payload))).await.is_err() {
+                                        return;
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Ok(named_sse_event(
+                                        "error",
+                                        json!({"detail": e.to_string(), "code": "llm_error"}),
+                                    ))).await;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = tx
+                    .send(Ok(named_sse_event(
+                        "error",
+                        json!({"detail": e.to_string(), "code": "llm_error"}),
+                    )))
+                    .await;
+            }
+        }
+
+        // append assistant 文本到 history。
+        if !full.is_empty() {
+            let mut st = state_handle.write();
+            let _ = st.append_to_path(
+                "history",
+                json!({"role": "assistant", "content": full.clone()}),
+            );
+        }
+        let state_after = state_handle.read().snapshot();
+
+        // 跨 pod stop 二次确认(被打断时 cluster::is_stop_requested 也应该为 true)。
+        if !interrupted {
+            interrupted = rpg_platform::cluster::is_stop_requested(&db, user_id_u.get(), run_id).await;
+        }
+        rpg_platform::cluster::clear_stop(&db, user_id_u.get(), run_id).await;
+
+        // 配额回填 usage。无 Usage chunk 时 fallback est_input + 0 output。
+        let out_tokens = usage_total.clamp(0, i32::MAX as u32) as i32;
+        let actual = rpg_platform::usage::UsageBreakdown {
+            input_tokens: est_input.clamp(0, i32::MAX as i64) as i32,
+            output_tokens: out_tokens,
+            cached_input_tokens: 0,
+            reasoning_tokens: 0,
+            total_tokens: est_input.clamp(0, i32::MAX as i64) as i32 + out_tokens,
+        };
+        quota::record_actual(&db, grant, None, None, &actual, est_input as i32, 1_000_000).await;
+
+        let _ = tx
+            .send(Ok(named_sse_event(
+                "done",
+                json!({"status": {"state": state_after}, "interrupted": interrupted}),
+            )))
+            .await;
+        let _ = user_id_str; // 静音 unused warning。
+    });
+
+    let stream = ReceiverStream::new(rx);
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
 }
+
+/// chat 用的 system prompt。简化版,等接 GameMaster `build_system` 后替换。
+const CHAT_SYSTEM: &str = "你是这局 TRPG 的 Game Master,根据玩家输入推进剧情。第二人称叙事,描写场景与可触发的下一步。";
+
+/// chat 默认 max_tokens。
+const CHAT_MAX_TOKENS: u32 = 800;
 
 /// 把 [`QuotaError`] 渲染成 429 响应 + `Retry-After` 头(若有建议),
 /// body 沿用 `{ok:false, detail, code}` 协议。
@@ -519,4 +816,172 @@ async fn api_save(
         "persisted": persisted,
     }))
     .into_response())
+}
+
+// ── tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use futures_util::stream;
+    use rpg_llm::pipeline::{
+        BackendKind, ChunkStream, LlmBackend, LlmError, Usage,
+    };
+
+    /// 受控 mock backend — 用于 Wave 6-A SSE 接 LLM 流的单测。
+    /// 注入一段固定 `ChatChunk` 序列,逐项 surface 出来。
+    struct MockBackend {
+        chunks: Vec<Result<ChatChunk, LlmError>>,
+    }
+
+    #[async_trait]
+    impl LlmBackend for MockBackend {
+        fn kind(&self) -> BackendKind {
+            BackendKind::Openai
+        }
+        async fn stream_chat<'a>(
+            &'a self,
+            _req: LlmChatRequest,
+        ) -> Result<ChunkStream<'a>, LlmError> {
+            let items: Vec<Result<ChatChunk, LlmError>> = self
+                .chunks
+                .iter()
+                .map(|r| match r {
+                    Ok(c) => Ok(c.clone()),
+                    Err(e) => Err(LlmError::Other(e.to_string())),
+                })
+                .collect();
+            Ok(Box::pin(stream::iter(items)))
+        }
+    }
+
+    /// 跑一遍 mock backend,把发出来的 ChatChunk 投影成 WireChatChunk 列表。
+    /// 这是 SSE handler 内部"chunk → SSE 帧"的核心转换。
+    async fn drain_to_wire(backend: &MockBackend) -> Vec<WireChatChunk> {
+        let req = LlmChatRequest::default();
+        let mut s = backend.stream_chat(req).await.expect("stream ok");
+        let mut out = Vec::new();
+        while let Some(item) = s.next().await {
+            if let Ok(c) = item {
+                out.push(WireChatChunk::from_chunk(&c));
+            }
+        }
+        out
+    }
+
+    /// Text + Stop → wire 帧分别带 kind=text(text=...) 与 kind=stop。
+    #[tokio::test]
+    async fn test_opening_text_chunk_then_stop_projects_to_wire() {
+        let backend = MockBackend {
+            chunks: vec![
+                Ok(ChatChunk::Text("早上好".into())),
+                Ok(ChatChunk::Stop {
+                    reason: "end_turn".into(),
+                }),
+            ],
+        };
+        let wires = drain_to_wire(&backend).await;
+        assert_eq!(wires.len(), 2);
+        assert_eq!(wires[0].kind, "text");
+        assert_eq!(wires[0].text.as_deref(), Some("早上好"));
+        assert_eq!(wires[1].kind, "stop");
+        assert_eq!(wires[1].stop_reason.as_deref(), Some("end_turn"));
+    }
+
+    /// Thinking + Text + Usage 三种 chunk 都能正确投影。
+    #[tokio::test]
+    async fn test_chat_thinking_and_usage_chunks_project_correctly() {
+        let backend = MockBackend {
+            chunks: vec![
+                Ok(ChatChunk::Thinking("(深思)".into())),
+                Ok(ChatChunk::Text("你看到一只猫".into())),
+                Ok(ChatChunk::Usage(Usage {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    ..Default::default()
+                })),
+            ],
+        };
+        let wires = drain_to_wire(&backend).await;
+        assert_eq!(wires.len(), 3);
+        assert_eq!(wires[0].kind, "thinking");
+        assert_eq!(wires[1].kind, "text");
+        assert_eq!(wires[2].kind, "usage");
+        let u = wires[2].usage.as_ref().expect("usage payload");
+        assert_eq!(u.input_tokens, 10);
+        assert_eq!(u.output_tokens, 5);
+    }
+
+    /// ToolCall chunk 投影成 wire 帧带 tool_call_id / tool_name / tool_input。
+    #[tokio::test]
+    async fn test_chat_tool_call_chunk_projects_correctly() {
+        let backend = MockBackend {
+            chunks: vec![Ok(ChatChunk::ToolCall {
+                id: "call_123".into(),
+                name: "read_file".into(),
+                input: json!({"path":"/tmp/x"}),
+            })],
+        };
+        let wires = drain_to_wire(&backend).await;
+        assert_eq!(wires.len(), 1);
+        assert_eq!(wires[0].kind, "tool_call");
+        assert_eq!(wires[0].tool_call_id.as_deref(), Some("call_123"));
+        assert_eq!(wires[0].tool_name.as_deref(), Some("read_file"));
+        assert_eq!(
+            wires[0]
+                .tool_input
+                .as_ref()
+                .and_then(|v| v.get("path"))
+                .and_then(|v| v.as_str()),
+            Some("/tmp/x"),
+        );
+    }
+
+    /// stream_chat 抛 Err → drain 看不到 chunk(handler 应转 SSE error 帧)。
+    #[tokio::test]
+    async fn test_chat_backend_error_surfaces_as_error_item() {
+        let backend = MockBackend {
+            chunks: vec![Err(LlmError::Other("boom".into()))],
+        };
+        let req = LlmChatRequest::default();
+        let mut stream = backend.stream_chat(req).await.expect("stream ok");
+        let first = stream.next().await.expect("one item");
+        assert!(first.is_err(), "first item should be Err");
+    }
+
+    /// Wave 6-A 关键约束:assistant 文本累积要拿到 ChatChunk::Text 的 text,
+    /// 而不会被 Thinking / Stop 污染。
+    #[tokio::test]
+    async fn test_accumulated_text_skips_thinking_and_stop() {
+        let backend = MockBackend {
+            chunks: vec![
+                Ok(ChatChunk::Thinking("(内心)".into())),
+                Ok(ChatChunk::Text("Hello".into())),
+                Ok(ChatChunk::Text(" world".into())),
+                Ok(ChatChunk::Stop {
+                    reason: "end_turn".into(),
+                }),
+            ],
+        };
+        let req = LlmChatRequest::default();
+        let mut stream = backend.stream_chat(req).await.expect("stream ok");
+        let mut full = String::new();
+        while let Some(item) = stream.next().await {
+            if let Ok(ChatChunk::Text(t)) = item {
+                full.push_str(&t);
+            }
+        }
+        assert_eq!(full, "Hello world");
+    }
+
+    /// Opening prompt 常量非空,避免硬退化掉。
+    #[test]
+    fn test_opening_prompts_non_empty() {
+        assert!(!OPENING_SYSTEM.is_empty());
+        assert!(!OPENING_USER.is_empty());
+        assert!(OPENING_MAX_TOKENS > 0);
+        assert!(!CHAT_SYSTEM.is_empty());
+        assert!(CHAT_MAX_TOKENS > 0);
+    }
 }
