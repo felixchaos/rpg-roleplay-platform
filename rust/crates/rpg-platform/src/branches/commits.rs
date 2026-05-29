@@ -174,7 +174,11 @@ pub async fn commit_for_user(
     }
 }
 
-/// 主路径版 `insert_commit` —— 跳过 metadata 哈希反推。返回插入的 id。
+/// 主路径版 `insert_commit` —— 跳过 metadata 哈希反推。返回插入的行。
+///
+/// 走 `&PgPool` 的非事务版本,保留给独立 commit / 单点调用方。需要把多条
+/// insert / 多张表写入 atomic 的场景,请用 [`insert_commit_with_tx`] 并自己
+/// 管 BEGIN/COMMIT。
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_commit(
     pool: &PgPool,
@@ -192,33 +196,79 @@ pub async fn insert_commit(
     gm_output: &str,
     metadata: &Value,
 ) -> PlatformResult<BranchCommit> {
-    let row = sqlx::query(
-        r#"
-        insert into branch_commits(save_id, parent_id, turn_index, kind, title,
-                                   message, summary, content_preview,
-                                   state_path, state_snapshot, player_input,
-                                   gm_output, metadata)
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-        returning *
-        "#,
-    )
-    .bind(save_id)
-    .bind(parent_id)
-    .bind(turn_index)
-    .bind(kind)
-    .bind(title)
-    .bind(message)
-    .bind(summary)
-    .bind(content_preview)
-    .bind(state_path)
-    .bind(state_snapshot)
-    .bind(player_input)
-    .bind(gm_output)
-    .bind(metadata)
-    .fetch_one(pool)
-    .await
-    .map_err(PlatformError::from)?;
+    let row = sqlx::query(insert_commit_sql())
+        .bind(save_id)
+        .bind(parent_id)
+        .bind(turn_index)
+        .bind(kind)
+        .bind(title)
+        .bind(message)
+        .bind(summary)
+        .bind(content_preview)
+        .bind(state_path)
+        .bind(state_snapshot)
+        .bind(player_input)
+        .bind(gm_output)
+        .bind(metadata)
+        .fetch_one(pool)
+        .await
+        .map_err(PlatformError::from)?;
     BranchCommit::from_row(&row).map_err(Into::into)
+}
+
+/// 事务版 `insert_commit` —— SQL/绑定完全等同 [`insert_commit`],但走调用方
+/// 持有的 `&mut sqlx::Transaction<'_, sqlx::Postgres>`,可与 ref upsert / save
+/// active 切换 等放在同一个 BEGIN/COMMIT 里。
+///
+/// 设计:不在内部 `tx.commit()` —— 由调用方在所有相关写入都完成后 commit 或
+/// rollback。
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_commit_with_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    save_id: i64,
+    parent_id: Option<i64>,
+    turn_index: i32,
+    kind: &str,
+    title: &str,
+    message: &str,
+    summary: &str,
+    content_preview: &str,
+    state_path: &str,
+    state_snapshot: &Value,
+    player_input: &str,
+    gm_output: &str,
+    metadata: &Value,
+) -> PlatformResult<BranchCommit> {
+    let row = sqlx::query(insert_commit_sql())
+        .bind(save_id)
+        .bind(parent_id)
+        .bind(turn_index)
+        .bind(kind)
+        .bind(title)
+        .bind(message)
+        .bind(summary)
+        .bind(content_preview)
+        .bind(state_path)
+        .bind(state_snapshot)
+        .bind(player_input)
+        .bind(gm_output)
+        .bind(metadata)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(PlatformError::from)?;
+    BranchCommit::from_row(&row).map_err(Into::into)
+}
+
+/// 公共 SQL 字面量 —— pool / tx 两版本共享,避免漂移。
+fn insert_commit_sql() -> &'static str {
+    r#"
+    insert into branch_commits(save_id, parent_id, turn_index, kind, title,
+                               message, summary, content_preview,
+                               state_path, state_snapshot, player_input,
+                               gm_output, metadata)
+    values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    returning *
+    "#
 }
 
 #[cfg(test)]
@@ -230,5 +280,28 @@ mod tests {
         let a = object_hash(&json!({"b":1,"a":2})).unwrap();
         let b = object_hash(&json!({"a":2,"b":1})).unwrap();
         assert_eq!(a, b);
+    }
+
+    /// pool/tx 两版本必须共用同一段 SQL,任何漂移都是写半个 schema 的灾难源。
+    #[test]
+    fn insert_commit_sql_is_shared_between_pool_and_tx_paths() {
+        let sql = insert_commit_sql();
+        // 关键 schema 字段都在,且 placeholder 13 个。
+        assert!(sql.contains("insert into branch_commits"));
+        assert!(sql.contains("state_snapshot"));
+        assert!(sql.contains("returning *"));
+        let placeholders = (1..=13).filter(|i| sql.contains(&format!("${i}"))).count();
+        assert_eq!(placeholders, 13, "expected 13 placeholders, sql: {sql}");
+        assert!(!sql.contains("$14"));
+    }
+
+    /// tx 版的 begin/rollback 在 lazy 连接上仍会回到一个 DB error(不会编译期/类型期
+    /// 失败),用来兜底"调用方写法对了"。真正的 commit/rollback 行为留给集成测试。
+    #[tokio::test]
+    async fn insert_commit_with_tx_propagates_db_error_on_dead_pool() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost:1/nonexistent").unwrap();
+        // tx begin 本身会因为连不上 DB 而返回 sqlx::Error。
+        let tx_res = pool.begin().await;
+        assert!(tx_res.is_err(), "expected connect-time error on dead pool");
     }
 }

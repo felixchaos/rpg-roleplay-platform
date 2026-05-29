@@ -17,10 +17,10 @@ use sqlx::{PgPool, Row};
 
 use crate::error::PlatformResult;
 
-use super::commits::insert_commit;
+use super::commits::insert_commit_with_tx;
 use super::helpers::{load_state, snapshot_for_history, write_snapshot, MAIN_REF};
 use super::maintenance::{ensure_state_snapshots, ensure_summaries};
-use super::refs::{ensure_active_ref, set_save_active, upsert_ref};
+use super::refs::{ensure_active_ref, set_save_active_with_tx, upsert_ref_with_tx};
 
 /// Python `seed_tree(save_id, state_path)`。
 ///
@@ -73,9 +73,12 @@ pub async fn seed_tree(
         .unwrap_or_else(|| load_state(Path::new(state_path)));
     let data: GameStateData = serde_json::from_value(data_value.clone()).unwrap_or_default();
 
-    // 注:insert_commit / upsert_ref 当前签名都是 &PgPool,没有 tx 重载。
-    // 整段 seed 不在单 tx 内 — 与 Python 单事务略有偏差(见 TODO[P3-TX])。
-    // TODO[P3-TX]: 抽 tx 重载 insert_commit,把 seed_tree 整体放进 tx。
+    // 单 tx 包整段 seed:root commit + history 回放的每条 round commit + main
+    // ref upsert + set_save_active。任一步失败 rollback,避免半建状态。
+    // 之前是逐 SQL 调 &PgPool;commits/refs 引入 *_with_tx 后接通。
+    // 文件 I/O(write_snapshot)放 tx 外:I/O 不进事务,失败已经做 best-effort
+    // map_err。文件先 write 再 commit DB,失败回滚 DB,孤儿 snapshot 文件以
+    // 后清理 job 兜底(对齐 Python 同位置行为)。
     let root_snapshot_val = snapshot_for_history(&data, 0);
     let root_data_truncated: GameStateData =
         serde_json::from_value(root_snapshot_val.clone()).unwrap_or_default();
@@ -83,8 +86,9 @@ pub async fn seed_tree(
         write_snapshot(save_id, 0, &root_data_truncated).map_err(crate::error::PlatformError::from)?;
     let metadata = json!({"source": "seed"});
 
-    let root = insert_commit(
-        pool,
+    let mut tx = pool.begin().await?;
+    let root = insert_commit_with_tx(
+        &mut tx,
         save_id,
         None,
         0,
@@ -149,8 +153,8 @@ pub async fn seed_tree(
         let preview = super::helpers::round_preview(&player_text, &gm_text, 260);
         let summary = super::helpers::rough_summary(&player_text, &gm_text, 22);
         let meta = json!({"source": "seed", "history_index": history_index});
-        let row = insert_commit(
-            pool,
+        let row = insert_commit_with_tx(
+            &mut tx,
             save_id,
             Some(parent_id),
             turn,
@@ -170,8 +174,9 @@ pub async fn seed_tree(
         turn += 1;
     }
 
-    let main = upsert_ref(pool, save_id, MAIN_REF, parent_id, true, "head").await?;
-    set_save_active(pool, save_id, parent_id, Some(main.id)).await?;
+    let main = upsert_ref_with_tx(&mut tx, save_id, MAIN_REF, parent_id, true, "head").await?;
+    set_save_active_with_tx(&mut tx, save_id, parent_id, Some(main.id)).await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -191,6 +196,9 @@ pub async fn migrate_legacy_nodes(pool: &PgPool, save_id: i64) -> PlatformResult
         return Ok(());
     }
 
+    // 整段 legacy 迁移走单 tx:每条 branch_nodes → branch_commits / 可选 legacy
+    // ref + 末尾选 active + main ref + set_save_active 全部 atomic。
+    let mut tx = pool.begin().await?;
     let mut id_map: HashMap<i64, i64> = HashMap::new();
     let mut last_new_id: Option<i64> = None;
     for r in &rows {
@@ -212,8 +220,8 @@ pub async fn migrate_legacy_nodes(pool: &PgPool, save_id: i64) -> PlatformResult
         let message = if summary.is_empty() { title.clone() } else { summary.clone() };
         let metadata = json!({"source": "legacy_branch_nodes", "legacy_node_id": legacy_id});
 
-        let commit = insert_commit(
-            pool,
+        let commit = insert_commit_with_tx(
+            &mut tx,
             save_id,
             parent_new,
             turn_index,
@@ -234,14 +242,14 @@ pub async fn migrate_legacy_nodes(pool: &PgPool, save_id: i64) -> PlatformResult
 
         if role == "branch" {
             let name = format!("refs/heads/legacy-{legacy_id}");
-            upsert_ref(pool, save_id, &name, commit.id, false, "head").await?;
+            upsert_ref_with_tx(&mut tx, save_id, &name, commit.id, false, "head").await?;
         }
     }
 
     // 选 active commit:save.active_branch_node_id 优先,否则最后一条。
     let save = sqlx::query("select active_branch_node_id from game_saves where id = $1")
         .bind(save_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *tx)
         .await?;
     let active_old: Option<i64> = save
         .as_ref()
@@ -250,9 +258,10 @@ pub async fn migrate_legacy_nodes(pool: &PgPool, save_id: i64) -> PlatformResult
         .and_then(|old| id_map.get(&old).copied())
         .or(last_new_id);
     if let Some(cid) = active_commit_id {
-        let main = upsert_ref(pool, save_id, MAIN_REF, cid, true, "head").await?;
-        set_save_active(pool, save_id, cid, Some(main.id)).await?;
+        let main = upsert_ref_with_tx(&mut tx, save_id, MAIN_REF, cid, true, "head").await?;
+        set_save_active_with_tx(&mut tx, save_id, cid, Some(main.id)).await?;
     }
+    tx.commit().await?;
     Ok(())
 }
 

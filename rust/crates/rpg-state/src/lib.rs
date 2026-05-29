@@ -15,7 +15,8 @@
 //! 实现深度(本 PR):
 //! - `path` — 完整。dot/bracket 解析 + get/set/delete/append + 中文别名归一。
 //! - `state` — 完整数据 + DEFAULT_STATE + 基础 path 访问 + version/touch。
-//!   `_migrate` 升级链 TODO(只补 schema_version)。
+//!   `_migrate` 升级链(v1→v6 + 最终 backfill)由 [`migrate`] 模块提供,
+//!   `from_value` 反序列化后无条件跑一遍。
 //! - `ops` — 完整。apply_op 走全五道闸门(hard / rules_managed / module_managed /
 //!   权限模式 / 通过)+ audit_log + pending_writes + user_locked 登记。
 //!   未接 dispatcher 路由(rpg-tools-dsl 完成后补)。
@@ -42,6 +43,7 @@
 pub mod bus;
 pub mod combat_state;
 pub mod directives;
+pub mod migrate;
 pub mod ops;
 pub mod path;
 pub mod pending;
@@ -63,6 +65,7 @@ pub use directives::{
     apply_player_directives, apply_set_directive, parse_assignment, DirectiveError,
     DirectiveResult,
 };
+pub use migrate::{migrate, MigrateError};
 pub use worldline_validation::{
     scan_worldline_validation, set_worldline_validation, store_worldline_projection,
     validation_label, ValidationScan, WorldlineValidationError,

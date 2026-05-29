@@ -98,14 +98,27 @@ impl GameState {
     /// 旧存档 JSON 形态完全兼容:GameStateData 各字段都 `#[serde(default)]` +
     /// `#[serde(flatten)] extra: Map<String, Value>`,未知/缺失字段不会反序列化失败。
     ///
-    /// TODO[Opus]: 完整迁移 `_migrate` 升级链。当前只兜底 schema_version。
+    /// 反序列化后跑 [`crate::migrate::migrate`] 升级链(v1→v6),把老存档的
+    /// permissions/worldline/timeline/memory/player_private/5E 骨架补齐;同时跑
+    /// 一次最终 backfill(memory.items 从 legacy buckets / player.secrets →
+    /// player_private / story_intent 迁移 / hp 兜底)。
     pub fn from_value(user_id: impl Into<String>, value: Value) -> Self {
         let mut data: GameStateData = if value.is_object() {
             serde_json::from_value(value).unwrap_or_default()
         } else {
             GameStateData::default()
         };
-        data.schema_version = CURRENT_SCHEMA_VERSION;
+        let from_version = data.schema_version;
+        // 升级链失败不应当 panic,记下错误后保持现状 + 强行刷 schema_version。
+        if let Err(err) = crate::migrate::migrate(&mut data, from_version) {
+            tracing::warn!(
+                target: "rpg_state::migrate",
+                ?err,
+                from_version,
+                "state migrate failed; keeping current data shape"
+            );
+            data.schema_version = CURRENT_SCHEMA_VERSION;
+        }
         Self {
             user_id: user_id.into(),
             data,

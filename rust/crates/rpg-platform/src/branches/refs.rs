@@ -61,27 +61,55 @@ pub async fn upsert_ref(
             .execute(pool)
             .await?;
     }
-    let row = sqlx::query(
-        r#"
-        insert into branch_refs(save_id, name, kind, target_commit_id, is_active)
-        values ($1, $2, $3, $4, $5)
-        on conflict(save_id, name) do update set
-          kind = excluded.kind,
-          target_commit_id = excluded.target_commit_id,
-          is_active = excluded.is_active,
-          row_version = branch_refs.row_version + 1,
-          updated_at = now()
-        returning *
-        "#,
-    )
-    .bind(save_id)
-    .bind(name)
-    .bind(kind)
-    .bind(target_commit_id)
-    .bind(active)
-    .fetch_one(pool)
-    .await?;
+    let row = sqlx::query(upsert_ref_sql())
+        .bind(save_id)
+        .bind(name)
+        .bind(kind)
+        .bind(target_commit_id)
+        .bind(active)
+        .fetch_one(pool)
+        .await?;
     BranchRef::from_row(&row).map_err(Into::into)
+}
+
+/// 事务版 `upsert_ref` —— SQL/绑定与 [`upsert_ref`] 一致,走调用方持有的 tx。
+pub async fn upsert_ref_with_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    save_id: i64,
+    name: &str,
+    target_commit_id: i64,
+    active: bool,
+    kind: &str,
+) -> PlatformResult<BranchRef> {
+    if active {
+        sqlx::query("update branch_refs set is_active = false where save_id = $1")
+            .bind(save_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    let row = sqlx::query(upsert_ref_sql())
+        .bind(save_id)
+        .bind(name)
+        .bind(kind)
+        .bind(target_commit_id)
+        .bind(active)
+        .fetch_one(&mut **tx)
+        .await?;
+    BranchRef::from_row(&row).map_err(Into::into)
+}
+
+fn upsert_ref_sql() -> &'static str {
+    r#"
+    insert into branch_refs(save_id, name, kind, target_commit_id, is_active)
+    values ($1, $2, $3, $4, $5)
+    on conflict(save_id, name) do update set
+      kind = excluded.kind,
+      target_commit_id = excluded.target_commit_id,
+      is_active = excluded.is_active,
+      row_version = branch_refs.row_version + 1,
+      updated_at = now()
+    returning *
+    "#
 }
 
 /// Python `_upsert_ref_by_id(db, ref_id, target_commit_id, *, active)`。
@@ -262,26 +290,60 @@ pub async fn set_save_active(
         }
         None => super::helpers::empty_state(),
     };
-    sqlx::query(
-        r#"
-        update game_saves
-           set active_branch_node_id = $1,
-               active_commit_id = $1,
-               active_branch_ref_id = $2,
-               active_ref_id = $2,
-               state_snapshot = $3,
-               row_version = row_version + 1,
-               updated_at = now()
-         where id = $4
-        "#,
+    sqlx::query(set_save_active_sql())
+        .bind(commit_id)
+        .bind(ref_id)
+        .bind(&state_snapshot)
+        .bind(save_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// 事务版 `set_save_active` —— 与 [`set_save_active`] 同 SQL,走调用方持有的 tx。
+pub async fn set_save_active_with_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    save_id: i64,
+    commit_id: i64,
+    ref_id: Option<i64>,
+) -> PlatformResult<()> {
+    let row = sqlx::query(
+        "select state_snapshot, state_path from branch_commits where id = $1 and save_id = $2",
     )
     .bind(commit_id)
-    .bind(ref_id)
-    .bind(&state_snapshot)
     .bind(save_id)
-    .execute(pool)
+    .fetch_optional(&mut **tx)
     .await?;
+    let state_snapshot = match row {
+        Some(r) => {
+            let snap: serde_json::Value = r.try_get("state_snapshot").unwrap_or(serde_json::Value::Null);
+            let path: String = r.try_get("state_path").unwrap_or_default();
+            commit_state(Some(&snap), &path)
+        }
+        None => super::helpers::empty_state(),
+    };
+    sqlx::query(set_save_active_sql())
+        .bind(commit_id)
+        .bind(ref_id)
+        .bind(&state_snapshot)
+        .bind(save_id)
+        .execute(&mut **tx)
+        .await?;
     Ok(())
+}
+
+fn set_save_active_sql() -> &'static str {
+    r#"
+    update game_saves
+       set active_branch_node_id = $1,
+           active_commit_id = $1,
+           active_branch_ref_id = $2,
+           active_ref_id = $2,
+           state_snapshot = $3,
+           row_version = row_version + 1,
+           updated_at = now()
+     where id = $4
+    "#
 }
 
 /// Python `_write_checkout(db, user_id, save_id, ref_id, commit_id)` —
