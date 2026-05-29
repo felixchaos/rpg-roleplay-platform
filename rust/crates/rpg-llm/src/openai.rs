@@ -201,7 +201,7 @@ impl LlmBackend for OpenAiBackend {
 
         let event_stream = resp
             .bytes_stream()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .map_err(std::io::Error::other)
             .eventsource()
             .map_err(|e| LlmError::Stream(e.to_string()));
 

@@ -1,10 +1,10 @@
-/// pool.rs — 对应 rpg/platform_app/db/connection.py
-///
-/// 核心函数：
-///   init_pool(database_url, max_size) → Result<PgPool, DbError>
-///
-/// Python 原版用 psycopg_pool.ConnectionPool(min_size, max_size, timeout)；
-/// 这里用 sqlx::postgres::PgPoolOptions 对等实现。
+//! pool.rs — 对应 rpg/platform_app/db/connection.py
+//!
+//! 核心函数：
+//!   init_pool(database_url, max_size) → Result<PgPool, DbError>
+//!
+//! Python 原版用 psycopg_pool.ConnectionPool(min_size, max_size, timeout)；
+//! 这里用 sqlx::postgres::PgPoolOptions 对等实现。
 
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;

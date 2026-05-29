@@ -104,7 +104,7 @@ pub async fn list_memories(
     before_id: Option<i64>,
 ) -> PlatformResult<(Vec<MemoryItem>, bool)> {
     require_save(pool, user_id, save_id).await?;
-    let page_limit = limit.max(1).min(200);
+    let page_limit = limit.clamp(1, 200);
     let rows = match bucket {
         Some(b) => sqlx::query(
             r#"

@@ -54,6 +54,7 @@ const TRANSMIGRATOR_NOTE: &str = r#"
 /// GM 一次 step 期间输出的事件流。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)] // Demand 字段大但非热路径，不值得引入 Box 间接层
 pub enum GmEvent {
     /// 子代理出 Demand。
     Demand { demand: Demand },
@@ -340,11 +341,10 @@ impl GameMaster {
             {
                 let mut st = state.write().await;
                 let viols = detect_time_jump_violations(&narrative, &st);
-                if !viols.is_empty() {
-                    if record_violations_to_audit(&mut st, &viols).is_ok() {
+                if !viols.is_empty()
+                    && record_violations_to_audit(&mut st, &viols).is_ok() {
                         tx.send(GmEvent::GuardViolations { violations: viols }).ok();
                     }
-                }
             }
 
             // 4. extractor

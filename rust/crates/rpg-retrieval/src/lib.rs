@@ -294,7 +294,7 @@ pub fn keyword_freq(text: &str, terms: &[&str]) -> Vec<KeywordHit> {
         .into_iter()
         .map(|(term, count)| KeywordHit { term, count })
         .collect();
-    hits.sort_by(|a, b| b.count.cmp(&a.count));
+    hits.sort_by_key(|b| std::cmp::Reverse(b.count));
     hits
 }
 

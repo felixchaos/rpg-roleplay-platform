@@ -10,6 +10,7 @@ use crate::combat::sync_player_combatant;
 
 /// 对 state.data 中的 player_character 执行技能检定。
 /// sets_flag：成功时写入 scene.flags.<key> = true。
+#[allow(clippy::too_many_arguments)]
 pub fn perform_skill_check(
     data: &mut Value,
     skill: &str,
@@ -56,6 +57,7 @@ pub fn perform_skill_check(
 /// 对 player_character 执行属性豁免。
 /// fail_damage_expr：失败时附加伤害骰。
 /// fail_condition：失败时附加状态条件。
+#[allow(clippy::too_many_arguments)]
 pub fn perform_saving_throw(
     data: &mut Value,
     ability: &str,

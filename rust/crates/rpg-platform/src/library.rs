@@ -539,9 +539,9 @@ pub async fn update_script(
     .bind(owner_id)
     .execute(pool)
     .await?;
-    Ok(get_script(pool, owner_id, script_id)
+    get_script(pool, owner_id, script_id)
         .await?
-        .ok_or_else(|| PlatformError::not_found("剧本不存在"))?)
+        .ok_or_else(|| PlatformError::not_found("剧本不存在"))
 }
 
 /// 删除剧本(级联会带走 saves/commits)。

@@ -267,7 +267,7 @@ impl LlmBackend for VertexBackend {
         // SSE 流:每个 data 是一个完整 GenerateContentResponse。
         let event_stream = resp
             .bytes_stream()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .map_err(std::io::Error::other)
             .eventsource()
             .map_err(|e| LlmError::Stream(e.to_string()));
 
@@ -496,8 +496,7 @@ fn messages_to_gemini_contents(messages: &[ChatMessage]) -> serde_json::Value {
             let response_value: serde_json::Value = m
                 .content
                 .as_deref()
-                .map(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                .flatten()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
                 .unwrap_or_else(|| {
                     serde_json::json!({"result": m.content.clone().unwrap_or_default()})
                 });

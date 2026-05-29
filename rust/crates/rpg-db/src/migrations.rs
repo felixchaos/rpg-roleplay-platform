@@ -1,15 +1,15 @@
-/// migrations.rs — 对应 rpg/platform_app/db/migrations.py
-///
-/// 设计：
-///   - `MigrationStep` 描述一个版本化迁移条目（id + name + sql 字符串切片）。
-///   - `MIGRATIONS` 是所有已知迁移的静态数组；001-003 已翻译，004-016 为 TODO。
-///   - `run_migrations(pool)` 负责：
-///       1. 用 pg_advisory_lock 串行化 DDL
-///       2. 确保 schema_migrations 表存在
-///       3. 跳过已应用的版本，顺序执行未应用的版本
-///
-/// Python 原版用 `pg_advisory_lock`（阻塞），这里用 `pg_try_advisory_lock` 轮询
-/// （避免 sqlx 长时间持有事务连接），超时后返回 `DbError::LockTimeout`。
+//! migrations.rs — 对应 rpg/platform_app/db/migrations.py
+//!
+//! 设计：
+//!   - `MigrationStep` 描述一个版本化迁移条目（id + name + sql 字符串切片）。
+//!   - `MIGRATIONS` 是所有已知迁移的静态数组；001-003 已翻译，004-016 为 TODO。
+//!   - `run_migrations(pool)` 负责：
+//!       1. 用 pg_advisory_lock 串行化 DDL
+//!       2. 确保 schema_migrations 表存在
+//!       3. 跳过已应用的版本，顺序执行未应用的版本
+//!
+//! Python 原版用 `pg_advisory_lock`（阻塞），这里用 `pg_try_advisory_lock` 轮询
+//! （避免 sqlx 长时间持有事务连接），超时后返回 `DbError::LockTimeout`。
 
 use sqlx::postgres::PgPool;
 use std::time::{Duration, Instant};

@@ -16,18 +16,12 @@ impl Default for OkResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ErrorResponse {
     #[serde(default)]
     pub ok: bool,
     #[serde(default)]
     pub error: String,
-}
-
-impl Default for ErrorResponse {
-    fn default() -> Self {
-        Self { ok: false, error: String::new() }
-    }
 }
 
 /// 通用 ok + state payload。state 字段允许任意嵌套。

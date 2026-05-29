@@ -12,6 +12,7 @@ fn roll_result_to_map(rr: &RollResult) -> HashMap<String, Value> {
     serde_json::from_value(serde_json::to_value(rr).unwrap()).unwrap()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn skill_check(
     character: &Value,
     skill: &str,
@@ -59,6 +60,7 @@ pub fn skill_check(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn saving_throw(
     character: &Value,
     ability: &str,

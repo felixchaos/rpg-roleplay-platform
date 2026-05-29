@@ -172,7 +172,7 @@ impl LlmBackend for ResponsesBackend {
 
         let event_stream = resp
             .bytes_stream()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .map_err(std::io::Error::other)
             .eventsource()
             .map_err(|e| LlmError::Stream(e.to_string()));
 
@@ -312,8 +312,7 @@ impl ResponsesStreamState {
                         buf.args.push_str(delta);
                     } else {
                         // item_added 缺失时的兜底:直接建一个。
-                        let mut buf = ToolBuf::default();
-                        buf.call_id = item_id.to_string();
+                        let mut buf = ToolBuf { call_id: item_id.to_string(), ..ToolBuf::default() };
                         buf.args.push_str(delta);
                         self.tools.insert(item_id.to_string(), buf);
                     }

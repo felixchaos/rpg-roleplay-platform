@@ -189,7 +189,7 @@ pub async fn list_character_cards(
     before_id: Option<i64>,
 ) -> PlatformResult<(Vec<CharacterCard>, bool)> {
     require_script(pool, user_id, script_id).await?;
-    let page_limit = limit.max(1).min(200);
+    let page_limit = limit.clamp(1, 200);
     let rows = sqlx::query(
         r#"
         select * from character_cards
@@ -478,7 +478,7 @@ pub fn tavern_v2_to_payload(card_v2: &serde_json::Value) -> PlatformResult<Chara
     let mes_example = g("mes_example");
     let mut samples: Vec<String> = Vec::new();
     let blocks: Vec<&str> = mes_example
-        .split(|c: char| c == '<' || c == '-')
+        .split(['<', '-'])
         .filter(|s| !s.trim().is_empty())
         .collect();
     'outer: for chunk in blocks {

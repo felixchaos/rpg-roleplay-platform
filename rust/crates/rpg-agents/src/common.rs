@@ -222,10 +222,7 @@ pub async fn call_structured(
     let mut stream = llm.stream_chat(req).await?;
     let mut out = String::new();
     while let Some(chunk) = stream.next().await {
-        match chunk? {
-            ChatChunk::Text(t) => out.push_str(&t),
-            _ => {}
-        }
+        if let ChatChunk::Text(t) = chunk? { out.push_str(&t) }
     }
     Ok(out)
 }

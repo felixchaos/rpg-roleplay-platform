@@ -111,6 +111,7 @@ impl RulesEngine {
     }
 
     // ── 检定 ──────────────────────────────────────────────────────────────
+    #[allow(clippy::too_many_arguments)]
     pub fn skill_check(
         &self,
         character: &Value,
@@ -125,6 +126,7 @@ impl RulesEngine {
         dnd_skill_check(character, skill, dc, advantage, disadvantage, seed, actor_name, reason)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn saving_throw(
         &self,
         character: &Value,
@@ -162,6 +164,7 @@ impl RulesEngine {
         dnd_next_turn(encounter)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn attack_roll(
         &self,
         attacker: &Value,

@@ -32,6 +32,7 @@ pub fn damage_roll(
 }
 
 /// 完整攻击流程：d20+atk vs AC；命中则 damage_expr 扣 HP；自然 20 暴击。
+#[allow(clippy::too_many_arguments)]
 pub fn attack_roll(
     attacker: &Value,
     target: &Value,

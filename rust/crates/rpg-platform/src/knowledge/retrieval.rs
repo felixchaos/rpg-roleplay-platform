@@ -92,7 +92,7 @@ pub async fn list_chapter_facts(
     before_chapter: Option<i32>,
 ) -> PlatformResult<(Vec<ChapterFactRow>, bool)> {
     require_script(pool, user_id, script_id).await?;
-    let page_limit = limit.max(1).min(200);
+    let page_limit = limit.clamp(1, 200);
     let rows = sqlx::query(
         r#"
         select id, public_id, chapter, title, summary, story_phase, story_time_label,
@@ -396,7 +396,7 @@ pub async fn entity_search_with_vec(
     .bind(&lit)
     .bind(script_id)
     .bind(chapter_max)
-    .bind(top_k_cards.max(1).min(8) as i64)
+    .bind(top_k_cards.clamp(1, 8) as i64)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
@@ -440,7 +440,7 @@ pub async fn entity_search_with_vec(
     .bind(&lit)
     .bind(script_id)
     .bind(chapter_max)
-    .bind(top_k_wb.max(1).min(8) as i64)
+    .bind(top_k_wb.clamp(1, 8) as i64)
     .fetch_all(pool)
     .await
     .unwrap_or_default();

@@ -187,7 +187,7 @@ pub async fn list_worldbook_entries(
     before_id: Option<i64>,
 ) -> PlatformResult<(Vec<WorldbookEntry>, bool)> {
     require_script(pool, user_id, script_id).await?;
-    let page_limit = limit.max(1).min(200);
+    let page_limit = limit.clamp(1, 200);
     let rows = sqlx::query(
         r#"
         select * from worldbook_entries

@@ -50,7 +50,7 @@ pub fn parse_consume_intent(text: &str, inventory: &Value) -> Vec<ConsumeIntent>
     }
     // 按长度降序，防止短 key 遮蔽
     let mut keys_sorted = inv_keys.clone();
-    keys_sorted.sort_by(|a, b| b.len().cmp(&a.len()));
+    keys_sorted.sort_by_key(|b| std::cmp::Reverse(b.len()));
 
     let all_verbs: Vec<&str> = CONSUME_VERBS_CN.iter().chain(CONSUME_VERBS_EN.iter()).copied().collect();
     let mut out: Vec<ConsumeIntent> = vec![];

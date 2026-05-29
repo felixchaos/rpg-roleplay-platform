@@ -222,7 +222,7 @@ fn build_bundle_text(contributions: &[ContextContribution]) -> String {
         if !out.is_empty() {
             out.push_str("\n\n");
         }
-        out.push_str("【");
+        out.push('【');
         out.push_str(&title);
         out.push_str("】\n");
         out.push_str(&content);

@@ -42,10 +42,10 @@ pub fn ability_modifier(score: i32) -> i32 {
 
 /// 熟练加值：1-4 级+2，5-8 级+3，9-12 级+4，13-16 级+5，17-20 级+6。
 pub fn proficiency_bonus(level: i32) -> i32 {
-    let level = level.max(1).min(20);
+    let level = level.clamp(1, 20);
     2 + (level - 1) / 4
 }
 
 pub fn normalize_skill(name: &str) -> String {
-    name.trim().to_lowercase().replace(' ', "_").replace('-', "_")
+    name.trim().to_lowercase().replace([' ', '-'], "_")
 }

@@ -18,9 +18,10 @@ use serde::{Deserialize, Serialize};
 // 角色 / 消息
 // -----------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ChatRole {
+    #[default]
     User,
     Assistant,
     System,
@@ -56,12 +57,6 @@ pub struct ChatMessage {
     /// provider 特定附加字段 (Anthropic cache_control 等)。
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub extra: serde_json::Value,
-}
-
-impl Default for ChatRole {
-    fn default() -> Self {
-        ChatRole::User
-    }
 }
 
 impl ChatMessage {

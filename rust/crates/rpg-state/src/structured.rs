@@ -12,19 +12,19 @@
 //!
 //! 与 Python 差异:
 //! - 全套 GM 中文标签 dispatch(W3-2 补完):
-//!     · 时间标签(world.time / pending_jump)+ 时间跳跃确认/拒绝
-//!     · 关系标签(relationships.{name})
-//!     · 位置标签(player.current_location)
-//!     · 主线/目标(memory.main_quest / memory.current_objective)
-//!     · 询问玩家(add_pending_question)
-//!     · 资源(memory.resources,_split_items 切分)
-//!     · 能力/技能/掌握(memory.abilities)
-//!     · 用户变量(worldline.user_variables.{key})
-//!     · 状态写入 / 追加 / 覆盖(走 ops::apply_op)
-//!     · 设定校验 / 设定冲突 → worldline.last_validation
-//!     · 世界线推演 / 推演结果 → worldline.last_projection
-//!     · 获得新身份 / 身份 → memory.facts append
-//!     · JSON op:set/append/overwrite/question/hypothesis/confirm/reject
+//!   · 时间标签(world.time / pending_jump)+ 时间跳跃确认/拒绝
+//!   · 关系标签(relationships.{name})
+//!   · 位置标签(player.current_location)
+//!   · 主线/目标(memory.main_quest / memory.current_objective)
+//!   · 询问玩家(add_pending_question)
+//!   · 资源(memory.resources,_split_items 切分)
+//!   · 能力/技能/掌握(memory.abilities)
+//!   · 用户变量(worldline.user_variables.{key})
+//!   · 状态写入 / 追加 / 覆盖(走 ops::apply_op)
+//!   · 设定校验 / 设定冲突 → worldline.last_validation
+//!   · 世界线推演 / 推演结果 → worldline.last_projection
+//!   · 获得新身份 / 身份 → memory.facts append
+//!   · JSON op:set/append/overwrite/question/hypothesis/confirm/reject
 //! - Regex fallback("重力控制 / 特殊小队")是 Python 早期硬编码,Rust 不迁,
 //!   等任务系统驱动起来再补 hook。
 
@@ -512,13 +512,14 @@ pub fn extract_json_state_ops(text: &str) -> (Vec<Value>, String) {
         let raw = caps.get(1).map(|m| m.as_str()).unwrap_or("");
         match serde_json::from_str::<Value>(raw) {
             Ok(parsed) => match parsed {
-                Value::Object(_) => {
+                Value::Object(_)
                     // 启发式:必须看着像 state op
-                    if has_op_key(&parsed) {
-                        ops.push(parsed);
-                    } else {
-                        stripped_parts.push(m.as_str().to_string());
-                    }
+                    if has_op_key(&parsed) =>
+                {
+                    ops.push(parsed);
+                }
+                Value::Object(_) => {
+                    stripped_parts.push(m.as_str().to_string());
                 }
                 Value::Array(arr) => {
                     for item in arr {

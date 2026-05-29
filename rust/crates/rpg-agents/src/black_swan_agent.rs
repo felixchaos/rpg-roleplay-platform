@@ -533,8 +533,8 @@ pub fn dispatch_swan(
 
     // 3) kind 特化字段 — weather / npc_arrival / rumor 等
     match event_kind {
-        "weather" => {
-            if !summary.is_empty() {
+        "weather"
+            if !summary.is_empty() => {
                 let op = Op::Set {
                     path: "world.weather".into(),
                     value: Value::String(summary.clone()),
@@ -545,7 +545,6 @@ pub fn dispatch_swan(
                     applied += 1;
                 }
             }
-        }
         "npc_arrival" => {
             // 把 affected_npc_ids 加进 world.active_npcs
             if let Some(ids) = proposal

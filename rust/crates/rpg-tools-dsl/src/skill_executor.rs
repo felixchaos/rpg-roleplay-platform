@@ -29,7 +29,7 @@ pub const MAX_SKILL_UNPACKED_BYTES: usize = 4 * 1024 * 1024; // 4 MB 解压后
 
 pub const DEFAULT_TIMEOUT_SEC: u64 = 30;
 pub const MAX_TIMEOUT_SEC: u64 = 300;
-pub const MAX_STDOUT_BYTES: usize = 1 * 1024 * 1024;   // 1 MB
+pub const MAX_STDOUT_BYTES: usize = 1024 * 1024;   // 1 MB
 pub const MAX_STDERR_BYTES: usize = 256 * 1024;          // 256 KB
 pub const RLIMIT_CPU_SEC: u64 = 60;
 pub const RLIMIT_AS_BYTES: u64 = 512 * 1024 * 1024;     // 512 MB
@@ -128,8 +128,8 @@ pub async fn execute_skill(
         None,
     )
     .await
-    .map_err(DslError::from)
 }
+
 
 /// 在沙箱里运行一条命令（对应 Python `run_skill_command`）
 pub async fn run_skill_command(
@@ -556,8 +556,8 @@ fn read_skill_title(skill_md: &Path) -> Option<String> {
     let content = std::fs::read_to_string(skill_md).ok()?;
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("# ") {
-            return Some(trimmed[2..].trim().to_owned());
+        if let Some(stripped) = trimmed.strip_prefix("# ") {
+            return Some(stripped.trim().to_owned());
         }
     }
     None

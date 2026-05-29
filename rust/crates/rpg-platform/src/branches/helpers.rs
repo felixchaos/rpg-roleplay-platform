@@ -99,11 +99,10 @@ pub fn rough_summary(player_text: &str, gm_text: &str, limit: usize) -> String {
     let mut source = player.clone();
     if is_continue(&player) {
         source = if gm.is_empty() { "继续当前剧情".into() } else { gm.clone() };
-    } else if source.chars().count() <= 2 {
-        if !gm.is_empty() {
+    } else if source.chars().count() <= 2
+        && !gm.is_empty() {
             source = gm.clone();
         }
-    }
     if source.is_empty() {
         source = "空回合".to_string();
     }
