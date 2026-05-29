@@ -24,6 +24,7 @@ tokio.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 regex.workspace = true
+encoding_rs = "0.8"
 base64.workspace = true
 bytes.workspace = true
 rand.workspace = true

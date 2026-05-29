@@ -63,6 +63,7 @@ static SQL_016: &str = include_str!("../migrations/016_script_overrides.sql");
 static SQL_017: &str = include_str!("../migrations/017_sessions_hashed_token.sql");
 static SQL_018: &str = include_str!("../migrations/018_stop_signals.sql");
 static SQL_019: &str = include_str!("../migrations/019_runtime_checkouts.sql");
+static SQL_021: &str = include_str!("../migrations/021_scripts_and_chapters.sql");
 
 /// 所有迁移的静态列表。
 ///
@@ -87,6 +88,8 @@ pub static MIGRATIONS: &[MigrationStep] = &[
     MigrationStep { id: 17, name: "sessions_hashed_token",                   sql: SQL_017 },
     MigrationStep { id: 18, name: "stop_signals",                            sql: SQL_018 },
     MigrationStep { id: 19, name: "runtime_checkouts",                       sql: SQL_019 },
+    // 注:020 (user_card_public_audit) sql 文件存在但暂未在此注册,留给 Wave 2-B 自行启用。
+    MigrationStep { id: 21, name: "scripts_and_chapters",                    sql: SQL_021 },
 ];
 
 // ──────────────────────────────────────────────────────────────
