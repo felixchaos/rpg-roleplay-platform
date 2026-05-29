@@ -19,6 +19,7 @@
 //! - `providers::runtime_phase_digests::RuntimePhaseDigestProvider` — 长游戏历史摘要
 //! - `providers::script_phase_anticipation::ScriptPhaseAnticipationProvider` — 剧本未来预期
 
+pub mod chars_cache;
 pub mod engine;
 pub mod error;
 pub mod helpers;

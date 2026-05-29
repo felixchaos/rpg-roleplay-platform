@@ -37,6 +37,15 @@ pub async fn build_context_bundle(
 ) -> Value {
     // 自动 resolve manifest + run providers(旧 caller 兼容)
     let manifest = manifest.unwrap_or_else(|| resolve_content_pack(state_data, script_id));
+    // Wave 7-A: 把 services 提前 own 出来,后面 chars lazy-load 也要用 pool。
+    // 旧 caller 不传 services 时构造默认值,保持 None 时不读 DB 的行为。
+    let services_owned = services.unwrap_or(ProviderServices {
+        user_id: None,
+        script_id,
+        book_id,
+        save_id,
+        ..Default::default()
+    });
     let contributions = match contributions {
         Some(c) => c,
         None => {
@@ -46,14 +55,8 @@ pub async fn build_context_bundle(
                 retrieval_query: user_input.to_string(),
                 ..Default::default()
             };
-            let svcs = services.unwrap_or(ProviderServices {
-                user_id: None,
-                script_id,
-                book_id,
-                save_id,
-                ..Default::default()
-            });
-            let (contribs, _used) = run_providers(state_data, &manifest, &demand, &svcs).await;
+            let (contribs, _used) =
+                run_providers(state_data, &manifest, &demand, &services_owned).await;
             contribs
         }
     };
@@ -65,7 +68,27 @@ pub async fn build_context_bundle(
 
     // 通用 GM 层
     let short_summary = state_short_summary(state_data);
-    let chars = json!({}); // TODO: 等 rpg-state 提供 _safe_load_chars 等价物
+    // Wave 7-A: chars 真接 — 走 chars_cache lazy-load + 60s TTL,对应 Python
+    // `_safe_load_chars(script_id, book_id, manifest)`。
+    //
+    // 守门规则(Python `_safe_load_chars`):
+    //   - manifest 为 freeform/module → 返 {}(NPC enum 不该掺小说角色卡)。
+    //   - manifest 为 novel_adaptation 或 None → 走 DB 加载。
+    //
+    // 没注入 db_pool 时 chars_cache 直接返 {},不阻塞。
+    let chars: Value = if should_load_chars(&manifest) {
+        let arc = crate::chars_cache::load_chars_cached(
+            services_owned.db_pool.as_ref(),
+            services_owned.script_id,
+            services_owned.book_id,
+        )
+        .await;
+        // state_schema_layer 只读 keys,Arc<Value> deref 即可;但下方有 clone 需求
+        // (chars 还要传给 contributions 循环之后的 schema 渲染),为了简单展开一份。
+        (*arc).clone()
+    } else {
+        json!({})
+    };
     let universal_layers = vec![
         Layer::new("rules", "剧情规则", story_rules()).with_sticky(true).with_priority(100),
         Layer::new(
@@ -226,6 +249,22 @@ pub async fn build_context_bundle(
         "prompt": prompt,
         "debug": debug,
     })
+}
+
+/// Wave 7-A: 对应 Python `_safe_load_chars` 的 manifest.kind 守门。
+///
+/// 规则:
+///   - manifest.kind == "novel_adaptation" → 加载小说角色卡。
+///   - manifest.kind 空 / 其它 → 不加载(模组场景 NPC 不该掺角色卡 enum)。
+///
+/// Python:
+/// ```python
+/// if not manifest: return _load_characters(...)
+/// if manifest.get("kind") == "novel_adaptation": return _load_characters(...)
+/// return {}
+/// ```
+fn should_load_chars(manifest: &Manifest) -> bool {
+    manifest.kind.is_empty() || manifest.kind == "novel_adaptation"
 }
 
 /// 对应 Python `state.short_summary()`。

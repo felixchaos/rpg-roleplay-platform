@@ -15,10 +15,16 @@
 //!   - pgvector 语义搜索（embedding <=> $1::vector）— 占位函数 `vector_search()` 已预留
 
 use anyhow::Result;
+use futures::StreamExt;
+use once_cell::sync::OnceCell;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use rpg_llm::pipeline::{ChatChunk, ChatMessage, ChatRequest, LlmBackend};
+use rpg_llm::AnyBackend;
 
 // ─────────────────────────────────────────────
 // 公共结果类型
@@ -485,6 +491,183 @@ pub async fn build_index(
 }
 
 // ─────────────────────────────────────────────
+// LLM summary pipeline (chunks → 摘要)
+// ─────────────────────────────────────────────
+//
+// Wave 7-A:rpg-retrieval 召回的 chunks 太长(每条 300+ 字),直接塞 GM prompt 会
+// 挤占预算。新增 summarize_chunks 调 LLM 把召回片段压成 80-150 字的紧凑摘要,
+// 给 GM "事实+情节脉络",而不是冗余原文。
+//
+// 注入入口:启动期(rpg-routes / rpg-server bootstrap)调用 [`init_summary_backend`]
+// 把 `Arc<AnyBackend>` + 默认 model_id 注入 OnceCell。未注入时 summarize_chunks
+// 直接走原文拼接 fallback(不阻断生产流量,与 branches::summary 同款幂等模式)。
+
+/// `summarize_chunks` 的 system prompt。
+const RETRIEVAL_SUMMARY_SYSTEM: &str = concat!(
+    "你是检索摘要助手。读完一组从原著章节召回的文本片段后,",
+    "用 80-150 字概括其中与玩家本轮意图相关的事实 / 角色 / 场景。\n",
+    "要求:\n",
+    "- 只输出摘要本身,不要前缀 / 标题\n",
+    "- 客观陈述,不要推测后续\n",
+    "- 保留关键人名 / 地名 / 时间标签\n",
+    "- 多条片段冲突时,逐条写明,不强行合并",
+);
+
+/// `summarize_chunks` 默认 max_tokens。对应 80-150 字 ≈ 120-240 token,留余量。
+const RETRIEVAL_SUMMARY_MAX_TOKENS: u32 = 360;
+
+/// LLM 调用总超时(秒)。
+const RETRIEVAL_SUMMARY_TIMEOUT_SECS: u64 = 30;
+
+/// LLM 摘要 backend OnceCell 容器。
+///
+/// 启动期(rpg-routes)调 `init_summary_backend` 注入选定的 backend + model。
+/// 未注入时 `summarize_chunks` 走 fallback,行为与"只 embed 不 summary"一致。
+struct SummaryBackend {
+    backend: Arc<AnyBackend>,
+    model: String,
+}
+
+static SUMMARY_BACKEND: OnceCell<SummaryBackend> = OnceCell::new();
+
+/// 启动期注入 backend + 默认 model_id。重复注入只生效第一次(OnceCell 语义)。
+///
+/// 对应 `rpg_platform::branches::summary::init_summary_backend` 模式 —— Wave 5-D
+/// 已建立同款幂等注入入口,这里复用相同形态。
+pub fn init_summary_backend(backend: Arc<AnyBackend>, model: impl Into<String>) {
+    let _ = SUMMARY_BACKEND.set(SummaryBackend {
+        backend,
+        model: model.into(),
+    });
+}
+
+/// 仅测试可见:验证 OnceCell 是否注入过(不暴露内容)。
+#[cfg(test)]
+fn summary_backend_is_set() -> bool {
+    SUMMARY_BACKEND.get().is_some()
+}
+
+/// Wave 7-A 主入口:把召回的 chunks 调 LLM 摘要为一段紧凑文本,供 GM prompt 注入。
+///
+/// 行为:
+/// - 没有 chunks → 返 ""
+/// - backend 未注入 → fallback:返 `format_chunks_fallback`(原文拼接,带章节标号)。
+/// - 已注入 → 拼 prompt → backend.stream_chat → drain Text chunk → trim。
+/// - 超时 / 错误 → 回退到 fallback,记 tracing::warn。
+///
+/// 参数:
+/// - `query`:玩家本轮 retrieval_query,塞进 user prompt 帮 LLM 锁住相关性。
+/// - `chunks`:从 BM25 / vector search 拿到的片段。
+pub async fn summarize_chunks(query: &str, chunks: &[RetrievalHit]) -> String {
+    if chunks.is_empty() {
+        return String::new();
+    }
+    let Some(cfg) = SUMMARY_BACKEND.get() else {
+        tracing::debug!("summarize_chunks: 未注入 backend,走原文拼接 fallback");
+        return format_chunks_fallback(chunks);
+    };
+    match run_llm_summarize(cfg.backend.as_ref(), &cfg.model, query, chunks).await {
+        Ok(text) if !text.is_empty() => text,
+        Ok(_) => {
+            tracing::debug!("summarize_chunks: LLM 返回空字符串,回退原文");
+            format_chunks_fallback(chunks)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "summarize_chunks: LLM 失败,回退原文");
+            format_chunks_fallback(chunks)
+        }
+    }
+}
+
+/// 不依赖 LLM 的 fallback:把 chunks 按章节排序后拼成可读文本。
+///
+/// 与 Python `bm25_search` 返回风格对齐:`[第N章片段]\n<content[:300]>`。
+pub fn format_chunks_fallback(chunks: &[RetrievalHit]) -> String {
+    let mut sorted: Vec<&RetrievalHit> = chunks.iter().collect();
+    sorted.sort_by(|a, b| {
+        a.chapter_index
+            .cmp(&b.chapter_index)
+            .then(a.chunk_index.cmp(&b.chunk_index))
+    });
+    sorted
+        .into_iter()
+        .map(|h| {
+            let body: String = h.text.chars().take(300).collect();
+            format!("[第{}章片段]\n{}", h.chapter_index, body.trim())
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// 实际跑 LLM 摘要 —— 注入了 backend 才走这条。
+async fn run_llm_summarize(
+    backend: &dyn LlmBackend,
+    model: &str,
+    query: &str,
+    chunks: &[RetrievalHit],
+) -> Result<String> {
+    let prompt = build_summarize_prompt(query, chunks);
+    let req = ChatRequest {
+        model: model.to_string(),
+        system: Some(RETRIEVAL_SUMMARY_SYSTEM.to_string()),
+        messages: vec![ChatMessage::user(prompt)],
+        tools: Vec::new(),
+        temperature: None,
+        max_tokens: Some(RETRIEVAL_SUMMARY_MAX_TOKENS),
+        stream: false,
+        extra: serde_json::Value::Null,
+    };
+
+    let collect_fut = async {
+        let mut stream = backend
+            .stream_chat(req)
+            .await
+            .map_err(|e| anyhow::anyhow!("stream_chat: {e}"))?;
+        let mut text = String::new();
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(ChatChunk::Text(t)) => text.push_str(&t),
+                Ok(_) => {}
+                Err(e) => return Err(anyhow::anyhow!("stream_chat chunk: {e}")),
+            }
+        }
+        Ok::<String, anyhow::Error>(text)
+    };
+
+    let raw = match tokio::time::timeout(
+        std::time::Duration::from_secs(RETRIEVAL_SUMMARY_TIMEOUT_SECS),
+        collect_fut,
+    )
+    .await
+    {
+        Ok(r) => r?,
+        Err(_) => return Err(anyhow::anyhow!("LLM summary timed out")),
+    };
+    Ok(raw.trim().to_string())
+}
+
+/// 拼 `summarize_chunks` 的 user prompt:玩家 query + 编号列出每条 chunk。
+fn build_summarize_prompt(query: &str, chunks: &[RetrievalHit]) -> String {
+    let query_clip: String = query.chars().take(300).collect();
+    let mut lines: Vec<String> = Vec::with_capacity(chunks.len() + 2);
+    lines.push(format!("玩家本轮意图:\n{}", query_clip));
+    lines.push(String::new());
+    lines.push("召回片段:".to_string());
+    for (idx, hit) in chunks.iter().enumerate() {
+        let body: String = hit.text.chars().take(400).collect();
+        lines.push(format!(
+            "{}. [第{}章, chunk {}, score {:.2}]\n{}",
+            idx + 1,
+            hit.chapter_index,
+            hit.chunk_index,
+            hit.score,
+            body.trim()
+        ));
+    }
+    lines.join("\n")
+}
+
+// ─────────────────────────────────────────────
 // 单测
 // ─────────────────────────────────────────────
 
@@ -541,6 +724,98 @@ mod tests {
         assert!(!hits.is_empty());
         assert_eq!(hits[0].term, "abc", "最高频词应排在最前");
         assert_eq!(hits[0].count, 3);
+    }
+
+    // ── Wave 7-A: summarize_chunks 单测 ─────────────────────────
+
+    fn make_hit(chapter: i32, chunk: i32, score: f64, text: &str) -> RetrievalHit {
+        RetrievalHit {
+            chunk_id: (chapter as i64) * 1000 + chunk as i64,
+            chapter_index: chapter,
+            chunk_index: chunk,
+            score,
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn format_chunks_fallback_orders_by_chapter_then_chunk() {
+        let hits = vec![
+            make_hit(3, 0, 1.0, "丙"),
+            make_hit(1, 1, 1.0, "乙"),
+            make_hit(1, 0, 1.0, "甲"),
+        ];
+        let text = format_chunks_fallback(&hits);
+        let pos_jia = text.find("甲").expect("含甲");
+        let pos_yi = text.find("乙").expect("含乙");
+        let pos_bing = text.find("丙").expect("含丙");
+        assert!(pos_jia < pos_yi, "1/0 应在 1/1 前: {text}");
+        assert!(pos_yi < pos_bing, "1/1 应在 3/0 前: {text}");
+        assert!(text.contains("[第1章片段]"));
+        assert!(text.contains("[第3章片段]"));
+    }
+
+    #[test]
+    fn format_chunks_fallback_truncates_to_300_chars() {
+        let long = "字".repeat(800);
+        let hits = vec![make_hit(1, 0, 1.0, &long)];
+        let text = format_chunks_fallback(&hits);
+        // 300 字内容 + 标题"[第1章片段]\n" 12 字符
+        let body_chars = text.chars().filter(|c| *c == '字').count();
+        assert_eq!(body_chars, 300, "应截到 300 字: 实际 {body_chars}");
+    }
+
+    #[test]
+    fn format_chunks_fallback_empty_returns_empty() {
+        assert_eq!(format_chunks_fallback(&[]), "");
+    }
+
+    #[tokio::test]
+    async fn summarize_chunks_empty_returns_empty() {
+        let out = summarize_chunks("任意 query", &[]).await;
+        assert_eq!(out, "");
+    }
+
+    #[tokio::test]
+    async fn summarize_chunks_falls_back_when_backend_unset() {
+        // 若 OnceCell 未注入,直接返 fallback(原文拼接)。
+        // 由于 OnceCell 跨测试持久,这个测试只能断言:
+        //   - 如果未注入 → 输出应包含原文 / 章节标号
+        //   - 如果已注入(其它 test 先跑了) → 我们不做强断言,仅验证非 panic
+        let hits = vec![make_hit(7, 2, 1.5, "薇瑟之歌"), make_hit(8, 0, 1.0, "另一段")];
+        let out = summarize_chunks("薇瑟", &hits).await;
+        if !summary_backend_is_set() {
+            assert!(out.contains("第7章") || out.contains("薇瑟"), "fallback 文本: {out}");
+            assert!(!out.is_empty());
+        }
+    }
+
+    #[test]
+    fn build_summarize_prompt_includes_query_and_indexed_chunks() {
+        let hits = vec![make_hit(1, 0, 0.5, "甲文"), make_hit(2, 0, 0.8, "乙文")];
+        let prompt = build_summarize_prompt("查询X", &hits);
+        assert!(prompt.contains("玩家本轮意图"), "{prompt}");
+        assert!(prompt.contains("查询X"));
+        assert!(prompt.starts_with("玩家本轮意图"));
+        assert!(prompt.contains("1. [第1章"));
+        assert!(prompt.contains("2. [第2章"));
+        assert!(prompt.contains("甲文"));
+        assert!(prompt.contains("乙文"));
+    }
+
+    #[test]
+    fn build_summarize_prompt_clips_query_to_300_chars() {
+        let big_query: String = "Q".repeat(500);
+        let prompt = build_summarize_prompt(&big_query, &[]);
+        // Q 出现的次数 = 实际写入的 query 长度
+        let q_count = prompt.chars().filter(|c| *c == 'Q').count();
+        assert_eq!(q_count, 300);
+    }
+
+    #[test]
+    fn init_summary_backend_helper_is_callable() {
+        // OnceCell 跨测持久,只验证 helper API 在 cfg(test) 下编译通过。
+        let _ = summary_backend_is_set();
     }
 
     #[test]

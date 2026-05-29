@@ -21,3 +21,4 @@ tokio.workspace = true
 futures.workspace = true
 regex.workspace = true
 once_cell.workspace = true
+dashmap.workspace = true

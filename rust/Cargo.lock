@@ -2549,6 +2549,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "dashmap 6.2.1",
  "futures",
  "once_cell",
  "regex",
@@ -2680,9 +2681,12 @@ name = "rpg-retrieval"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures",
+ "once_cell",
  "pgvector",
  "regex",
  "rpg-db",
+ "rpg-llm",
  "serde",
  "serde_json",
  "sqlx 0.8.6",

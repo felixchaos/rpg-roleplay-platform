@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 rpg-db.workspace = true
+rpg-llm.workspace = true
 sqlx.workspace = true
 pgvector.workspace = true
 serde.workspace = true
@@ -15,3 +16,5 @@ tracing.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+futures.workspace = true
+once_cell.workspace = true
