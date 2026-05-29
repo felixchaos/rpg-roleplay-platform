@@ -13,6 +13,7 @@
 //! 表 DDL `login_audit` 已在 rpg-db migrations 里;本模块兜底 CREATE IF NOT EXISTS。
 
 use chrono::{DateTime, Utc};
+use rpg_core::UserId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{PgPool, Row};
@@ -134,7 +135,7 @@ pub async fn list_login_audit(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActiveSession {
     pub token_prefix: String,
-    pub user_id: i64,
+    pub user_id: UserId,
     pub expires_at: DateTime<Utc>,
     #[serde(default)]
     pub created_at: Option<DateTime<Utc>>,
@@ -149,7 +150,7 @@ fn mask_token(token: &str) -> String {
 /// 列出用户当前所有未过期 session(token 仅暴露前 6 位前缀)。
 pub async fn list_active_sessions(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
 ) -> PlatformResult<Vec<ActiveSession>> {
     let rows = sqlx::query(
         "select token, user_id, expires_at, \
@@ -166,7 +167,7 @@ pub async fn list_active_sessions(
         let token: String = r.try_get("token")?;
         out.push(ActiveSession {
             token_prefix: mask_token(&token),
-            user_id: r.try_get::<i64, _>("user_id").unwrap_or(user_id),
+            user_id: r.try_get::<UserId, _>("user_id").unwrap_or(user_id),
             expires_at: r
                 .try_get::<DateTime<Utc>, _>("expires_at")
                 .unwrap_or_else(|_| Utc::now()),
@@ -177,7 +178,7 @@ pub async fn list_active_sessions(
 }
 
 /// 主动失活一条 session(按 token,需 owner)。
-pub async fn revoke_session(pool: &PgPool, user_id: i64, token: &str) -> PlatformResult<bool> {
+pub async fn revoke_session(pool: &PgPool, user_id: UserId, token: &str) -> PlatformResult<bool> {
     if token.is_empty() {
         return Ok(false);
     }
@@ -190,7 +191,7 @@ pub async fn revoke_session(pool: &PgPool, user_id: i64, token: &str) -> Platfor
 }
 
 /// 失活某用户全部 token(改密 / 强制下线场景)。返回删除条数。
-pub async fn revoke_all_user_sessions(pool: &PgPool, user_id: i64) -> PlatformResult<u64> {
+pub async fn revoke_all_user_sessions(pool: &PgPool, user_id: UserId) -> PlatformResult<u64> {
     let res = sqlx::query("delete from sessions where user_id = $1")
         .bind(user_id)
         .execute(pool)

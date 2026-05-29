@@ -10,6 +10,7 @@
 //! duration_ms, started_at, created_at`。
 
 use chrono::{DateTime, Utc};
+use rpg_core::UserId;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
@@ -22,7 +23,7 @@ pub struct ContextRunRow {
     pub id: i64,
     pub session_id: Option<i64>,
     pub save_id: i64,
-    pub user_id: i64,
+    pub user_id: UserId,
     pub turn: i32,
     pub user_input: String,
     pub agent_steps: Value,
@@ -45,7 +46,7 @@ fn row_to_run(row: &sqlx::postgres::PgRow) -> sqlx::Result<ContextRunRow> {
         id: row.try_get("id")?,
         session_id: row.try_get::<Option<i64>, _>("session_id").unwrap_or(None),
         save_id: row.try_get::<i64, _>("save_id").unwrap_or(0),
-        user_id: row.try_get::<i64, _>("user_id").unwrap_or(0),
+        user_id: row.try_get::<UserId, _>("user_id").unwrap_or(UserId(0)),
         turn: row.try_get::<i32, _>("turn").unwrap_or(0),
         user_input: row.try_get::<String, _>("user_input").unwrap_or_default(),
         agent_steps: row
@@ -82,7 +83,7 @@ pub async fn record_context_run(
     pool: &PgPool,
     session_id: Option<i64>,
     save_id: i64,
-    user_id: i64,
+    user_id: UserId,
     turn: i32,
     user_input: &str,
     agent_steps: Value,
@@ -131,7 +132,7 @@ pub async fn record_context_run(
 /// 翻某存档的运行历史(游标分页 by id desc)。
 pub async fn list_context_runs(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     save_id: i64,
     before_id: Option<i64>,
     limit: i64,
@@ -159,7 +160,7 @@ pub async fn list_context_runs(
 /// 单条详情。
 pub async fn get_context_run(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     run_id: i64,
 ) -> PlatformResult<Option<ContextRunRow>> {
     let row = sqlx::query("select * from context_runs where id = $1 and user_id = $2")

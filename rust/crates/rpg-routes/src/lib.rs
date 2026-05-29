@@ -42,6 +42,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 use rpg_agents::gm::GameMaster;
+use rpg_core::UserId;
 use rpg_llm::LlmRouter;
 use rpg_platform::auth::User;
 use rpg_state::StateStore;
@@ -65,7 +66,8 @@ pub struct AppStateInner {
     pub state_store: Arc<StateStore>,
     /// 按 user_id 分片的 GameMaster 池(从 server 并入)。
     /// 对应 Python `_gm_by_user` + `_sub_gm_by_user`。
-    pub gm_pool: DashMap<i64, Arc<RwLock<GameMaster>>>,
+    /// key 用强类型 [`UserId`]:此池只服务已登录用户(GM 必有 DB user)。
+    pub gm_pool: DashMap<UserId, Arc<RwLock<GameMaster>>>,
     pub llm_router: Arc<RwLock<LlmRouter>>,
     pub tool_registry: Arc<RwLock<ToolRegistry>>,
     /// MCP broker — 管理子进程 MCP server + 工具调用。
@@ -73,7 +75,8 @@ pub struct AppStateInner {
     /// 每个 user 一个 Notify,用于 /api/stop 打断当前 chat。
     pub stop_events: DashMap<String, Arc<Notify>>,
     /// 按 user_id 分片的 run_id 计数器(从 server 并入)。对应 Python `_run_id_by_user`。
-    pub run_ids: DashMap<i64, u64>,
+    /// key 用强类型 [`UserId`](已登录用户)。
+    pub run_ids: DashMap<UserId, u64>,
     /// 控制台助手对话(简版:全内存)。Vec<(role, text)>。
     pub console_conversations: DashMap<String, Vec<ConsoleMessage>>,
     /// 分片上传缓存:`upload_id → ChunkUploadState`。由 `uploads.rs` 写入。

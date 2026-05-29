@@ -9,6 +9,7 @@
 //!
 //! 详细 CRUD 路由后续由 rpg-routes 接管。
 
+use rpg_core::UserId;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use zeroize::Zeroizing;
@@ -27,7 +28,7 @@ pub use crate::auth::password::{public_user, PublicUser};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserPersona {
     pub id: i64,
-    pub user_id: i64,
+    pub user_id: UserId,
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -37,7 +38,7 @@ pub struct UserPersona {
 }
 
 /// Python: `list_personas(user_id)` —— 返回玩家所有 persona。
-pub async fn list_personas(pool: &PgPool, user_id: i64) -> PlatformResult<Vec<UserPersona>> {
+pub async fn list_personas(pool: &PgPool, user_id: UserId) -> PlatformResult<Vec<UserPersona>> {
     let rows = sqlx::query(
         r#"
         select id, user_id, name, coalesce(description,'') as description,
@@ -69,7 +70,7 @@ pub async fn list_personas(pool: &PgPool, user_id: i64) -> PlatformResult<Vec<Us
 /// Python: `get_persona(user_id, persona_id)` —— 未找到返回 None。
 pub async fn get_persona(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     persona_id: i64,
 ) -> PlatformResult<Option<UserPersona>> {
     let row = sqlx::query(
@@ -145,7 +146,7 @@ impl ResolvedApiKey {
 /// Python: `list_credentials(user_id)` — 不返回 raw key。
 pub async fn list_credentials(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
 ) -> PlatformResult<Vec<CredentialMeta>> {
     let rows = sqlx::query(
         r#"
@@ -174,7 +175,7 @@ pub async fn list_credentials(
 /// Python: `delete_credential(user_id, api_id)`
 pub async fn delete_credential(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     api_id: &str,
 ) -> PlatformResult<()> {
     sqlx::query("delete from user_api_credentials where user_id = $1 and api_id = $2")
@@ -191,7 +192,7 @@ pub async fn delete_credential(
 /// AES-256-GCM 加密,落库的是密文(`nonce||ct||tag`),**绝不明文落库**。
 pub async fn set_credential(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     api_id: &str,
     plaintext_key: &str,
     base_url_override: &str,
@@ -219,7 +220,8 @@ pub async fn set_credential(
 
     // 6A-1:AES-256-GCM 加密后落库。HKDF 派生 key 以 user_id 为 salt、api_id 入 info,
     // AAD 绑定 user/api —— 跨用户/跨 api 的密文互不可解。
-    let encrypted = crypto::encrypt_api_key(plaintext_key, user_id, api_id)?;
+    // crypto 是安全原语层,内部仍用裸 i64(派生 salt/AAD 的字节表示),在此接缝转换。
+    let encrypted = crypto::encrypt_api_key(plaintext_key, user_id.get(), api_id)?;
     sqlx::query(
         r#"
         insert into user_api_credentials(user_id, api_id, encrypted_key, base_url_override, enabled, metadata)
@@ -253,7 +255,7 @@ pub async fn set_credential(
 /// 「该用户没有可用凭据」继续走后续 fallback —— 失败已在 crypto 层记审计。
 pub async fn resolve_api_key(
     pool: &PgPool,
-    user_id: Option<i64>,
+    user_id: Option<UserId>,
     api_id: &str,
     env_fallback: &str,
 ) -> PlatformResult<ResolvedApiKey> {
@@ -272,7 +274,8 @@ pub async fn resolve_api_key(
                 let encrypted: Vec<u8> = r.try_get("encrypted_key").unwrap_or_default();
                 // 6A-1:解密;失败返回 None(已在 crypto 层 tracing::error! 记审计),
                 // 此处不降级为空 key,而是跳过 user_db 继续 fallback。
-                if let Some(plaintext) = crypto::decrypt_api_key(&encrypted, uid, api_id) {
+                // crypto 内部裸 i64,在此接缝 `.get()` 转换。
+                if let Some(plaintext) = crypto::decrypt_api_key(&encrypted, uid.get(), api_id) {
                     if !plaintext.is_empty() {
                         return Ok(ResolvedApiKey {
                             key: plaintext,

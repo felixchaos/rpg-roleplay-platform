@@ -8,8 +8,9 @@
 //!   字段的运行时灵活性,迁移期不强行收紧 schema。
 //! - 字符串路径写入 → JSON Pointer 风格 op(`Op::Set` / `Append` / `Inc` / `Merge` / `Delete`)。
 //! - Python 侧 mixin 多继承 → 平拍成单一 `impl GameState` + 模块函数。
-//! - 全局 `_state_by_user` → [`store::StateStore`](Arc<DashMap<UserId, Arc<RwLock<GameState>>>>),
-//!   消除 service locator。
+//! - 全局 `_state_by_user` → [`store::StateStore`](Arc<DashMap<String, Arc<RwLock<GameState>>>>),
+//!   消除 service locator。key 用 `String` 而非 `rpg_core::UserId`:需容纳匿名
+//!   哨兵 `"anonymous"`(详见 [`store`] 模块头注释的取舍说明)。
 //!
 //! 实现深度(本 PR):
 //! - `path` — 完整。dot/bracket 解析 + get/set/delete/append + 中文别名归一。

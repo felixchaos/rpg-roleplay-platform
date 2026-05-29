@@ -2089,6 +2089,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sqlx 0.8.6",
  "thiserror 2.0.18",
  "tracing",
  "tracing-subscriber",

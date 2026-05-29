@@ -1,8 +1,16 @@
 //! store.rs — 按 user_id 分片的 GameState 存储
 //!
 //! 对应 Python: 全局 `_state_by_user: dict[str, GameState]` + `_state_lock`。
-//! Rust 侧用 `DashMap<UserId, Arc<RwLock<GameState>>>` 取消全局可变状态,
+//! Rust 侧用 `DashMap<String, Arc<RwLock<GameState>>>` 取消全局可变状态,
 //! 每个 user 独立 lock,避免一个用户的写卡住所有用户。
+//!
+//! ## key 类型:务实保留 `String`(不改 `rpg_core::UserId`)
+//! 本 store 的 key **不是** `UserId`,而是 `String`:routes 的 `user_id_or_anon`
+//! 在未登录时回落 `"anonymous"` 哨兵,该值没有对应 `users.id`,无法表达成
+//! `UserId(i64)`。强行 `UserId` 化会破坏匿名游玩路径。因此这层保持 `String`,
+//! `UserId` 化止步于 routes 边界(`user.id.to_string()` 经 `Display` 落进来)。
+//! TODO(可选,后续 6B-x):若决定匿名也分配负数 / 保留 id,再将 key 升为 `UserId`
+//! 并同步改 routes 的取 id 逻辑。
 //!
 //! 设计:
 //! - 顶层 DashMap 已经是分片 lock,get_or_create 在不存在时插入空白存档。

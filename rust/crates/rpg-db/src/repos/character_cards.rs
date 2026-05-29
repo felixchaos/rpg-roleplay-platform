@@ -1,5 +1,6 @@
 //! repos/character_cards.rs — user_character_cards 表 CRUD
 
+use rpg_core::UserId;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -7,7 +8,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct CharacterCard {
     pub id: i64,
-    pub user_id: i64,
+    pub user_id: UserId,
     pub slug: String,
     pub name: String,
     pub aliases: serde_json::Value,
@@ -47,7 +48,7 @@ pub async fn get(pool: &PgPool, id: i64) -> Result<Option<CharacterCard>, sqlx::
 #[tracing::instrument(skip(pool), fields(user_id = %user_id, enabled_only = %enabled_only))]
 pub async fn list(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     enabled_only: bool,
 ) -> Result<Vec<CharacterCard>, sqlx::Error> {
     if enabled_only {

@@ -72,7 +72,7 @@ pub struct ConsoleAssistantConfirmRequest {
     pub page_context: Option<Value>,
 }
 
-fn conv_key(user_id: i64, conv_id: &str) -> String {
+fn conv_key(user_id: rpg_core::UserId, conv_id: &str) -> String {
     format!("{user_id}:{conv_id}")
 }
 

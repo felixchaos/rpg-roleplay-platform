@@ -17,6 +17,7 @@ use std::collections::{HashMap, VecDeque};
 
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
+use rpg_core::UserId;
 use sqlx::{PgPool, Row};
 
 use crate::usage::{self, UsageBreakdown};
@@ -173,7 +174,7 @@ impl QuotaError {
 /// 2. 释放并发槽位(Drop 时自动归还)
 #[derive(Debug)]
 pub struct QuotaGrant {
-    pub user_id: i64,
+    pub user_id: UserId,
     pub api_id: String,
     pub model: String,
     /// 进闸时的预估 token(供观测 / 调试)。
@@ -278,7 +279,7 @@ fn reserve_rate_and_slot(
 // ───────────────────────── DB 聚合查询 ─────────────────────────
 
 /// 当月(日历自然月,UTC)已花费 USD。复用 `token_usage`。
-pub async fn month_to_date_cost_usd(pool: &PgPool, user_id: i64) -> Result<f64, sqlx::Error> {
+pub async fn month_to_date_cost_usd(pool: &PgPool, user_id: UserId) -> Result<f64, sqlx::Error> {
     let row = sqlx::query(
         "select coalesce(sum(cost_usd), 0)::float8 as spent \
          from token_usage \
@@ -291,7 +292,7 @@ pub async fn month_to_date_cost_usd(pool: &PgPool, user_id: i64) -> Result<f64, 
 }
 
 /// 当日(自然日,UTC)已用 total_tokens 之和。
-pub async fn day_to_date_tokens(pool: &PgPool, user_id: i64) -> Result<i64, sqlx::Error> {
+pub async fn day_to_date_tokens(pool: &PgPool, user_id: UserId) -> Result<i64, sqlx::Error> {
     let row = sqlx::query(
         "select coalesce(sum(total_tokens), 0)::bigint as used \
          from token_usage \
@@ -334,7 +335,7 @@ pub fn check_daily(used: i64, est_tokens: i64, limit: i64) -> Result<(), QuotaEr
 pub async fn check_and_reserve(
     pool: &PgPool,
     cfg: &QuotaConfig,
-    user_id: i64,
+    user_id: UserId,
     api_id: &str,
     model: &str,
     est_tokens: i64,
@@ -352,7 +353,8 @@ pub async fn check_and_reserve(
     check_daily(used, est_tokens, cfg.daily_token_limit)?;
 
     // 3+4) 速率(滑窗) + 并发(占槽)。占槽放最后,前面拒了不会虚占。
-    let slot = reserve_rate_and_slot(user_id, cfg.rate_per_min, cfg.max_concurrent_sessions)?;
+    // 内存速率表 key 仍用裸 i64(进程内私有实现细节),在此接缝转换。
+    let slot = reserve_rate_and_slot(user_id.get(), cfg.rate_per_min, cfg.max_concurrent_sessions)?;
 
     Ok(QuotaGrant {
         user_id,
@@ -366,7 +368,7 @@ pub async fn check_and_reserve(
 /// 调用 LLM 之后回填真实用量:写一条 `token_usage`,并释放并发槽(消费 grant)。
 ///
 /// 失败只记 warn,不影响主流程(计费写入是 best-effort,但 grant 仍会 drop 释放槽位)。
-#[tracing::instrument(skip(pool, grant, actual), fields(user_id = grant.user_id))]
+#[tracing::instrument(skip(pool, grant, actual), fields(user_id = %grant.user_id))]
 pub async fn record_actual(
     pool: &PgPool,
     grant: QuotaGrant,
@@ -390,7 +392,7 @@ pub async fn record_actual(
     )
     .await;
     if let Err(e) = res {
-        tracing::warn!(error = %e, user_id = grant.user_id, "record_actual 写 token_usage 失败");
+        tracing::warn!(error = %e, user_id = %grant.user_id, "record_actual 写 token_usage 失败");
     }
     // grant 在此函数结束时 drop → ConcurrencyGuard 释放并发槽。
     drop(grant);

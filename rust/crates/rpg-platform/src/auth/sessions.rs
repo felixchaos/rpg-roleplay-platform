@@ -5,6 +5,7 @@
 //! `AuthService { pool, limiter }` 的形态,可在 axum extractor 里注入。
 
 use chrono::{DateTime, Utc};
+use rpg_core::UserId;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 
@@ -21,7 +22,7 @@ pub const SESSION_DAYS: i64 = 14;
 /// `users` 表行(对应 Python `dict(row)`)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
-    pub id: i64,
+    pub id: UserId,
     /// 部分老库可能没有 `public_id`;留 Option。
     #[serde(default)]
     pub public_id: Option<uuid::Uuid>,
@@ -39,7 +40,7 @@ pub struct User {
 impl User {
     fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
         Ok(User {
-            id: row.try_get::<i64, _>("id")?,
+            id: row.try_get::<UserId, _>("id")?,
             public_id: row.try_get::<Option<uuid::Uuid>, _>("public_id").unwrap_or(None),
             username: row.try_get::<String, _>("username")?,
             password_hash: row.try_get::<String, _>("password_hash")?,
@@ -110,7 +111,7 @@ pub async fn user_from_token(pool: &PgPool, token: Option<&str>) -> PlatformResu
 
 /// Python: `get_user(user_id)` — 不存在抛 `ValueError("用户不存在")`。
 #[tracing::instrument(skip(pool), fields(user_id = %user_id))]
-pub async fn get_user(pool: &PgPool, user_id: i64) -> PlatformResult<User> {
+pub async fn get_user(pool: &PgPool, user_id: UserId) -> PlatformResult<User> {
     let svc = AuthService::new(pool.clone());
     svc.get_user(user_id).await
 }
@@ -119,7 +120,7 @@ pub async fn get_user(pool: &PgPool, user_id: i64) -> PlatformResult<User> {
 #[tracing::instrument(skip(pool), fields(user_id = %user_id))]
 pub async fn update_profile(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     display_name: &str,
     bio: &str,
 ) -> PlatformResult<User> {
@@ -225,7 +226,7 @@ impl AuthService {
                 {
                     tracing::warn!(
                         target: "rpg_platform::auth",
-                        user_id = user.id,
+                        user_id = %user.id,
                         error = %e,
                         "silent rehash 写回失败,登录继续",
                     );
@@ -295,7 +296,7 @@ impl AuthService {
     }
 
     #[tracing::instrument(skip(self), fields(user_id = %user_id))]
-    pub async fn get_user(&self, user_id: i64) -> PlatformResult<User> {
+    pub async fn get_user(&self, user_id: UserId) -> PlatformResult<User> {
         let row = sqlx::query("select * from users where id = $1")
             .bind(user_id)
             .fetch_optional(&self.pool)
@@ -309,7 +310,7 @@ impl AuthService {
     #[tracing::instrument(skip(self), fields(user_id = %user_id))]
     pub async fn update_profile(
         &self,
-        user_id: i64,
+        user_id: UserId,
         display_name: &str,
         bio: &str,
     ) -> PlatformResult<User> {
@@ -350,7 +351,7 @@ fn sha256_hex(token: &str) -> String {
 }
 
 /// 撤销 user 的全部 session(改密时调用)。
-pub async fn revoke_all_user_sessions(pool: &PgPool, user_id: i64) -> PlatformResult<u64> {
+pub async fn revoke_all_user_sessions(pool: &PgPool, user_id: UserId) -> PlatformResult<u64> {
     let result = sqlx::query("delete from sessions where user_id = $1")
         .bind(user_id)
         .execute(pool)

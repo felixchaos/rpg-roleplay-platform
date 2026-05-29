@@ -10,6 +10,7 @@
 
 use chrono::{DateTime, Utc};
 use rand::RngCore;
+use rpg_core::UserId;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{Column, PgPool, Row};
@@ -22,7 +23,7 @@ pub const EXPORT_VERSION: i32 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Save {
     pub id: i64,
-    pub user_id: i64,
+    pub user_id: UserId,
     pub script_id: i64,
     pub title: String,
     #[serde(default)]
@@ -52,7 +53,7 @@ fn save_from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Save> {
 }
 
 /// 列出当前用户的所有 save (按更新时间倒序)。
-pub async fn list_saves_for_user(pool: &PgPool, user_id: i64) -> PlatformResult<Vec<Save>> {
+pub async fn list_saves_for_user(pool: &PgPool, user_id: UserId) -> PlatformResult<Vec<Save>> {
     let rows = sqlx::query(
         "select id, user_id, script_id, title, state_path, \
                 active_commit_id, \
@@ -72,7 +73,7 @@ pub async fn list_saves_for_user(pool: &PgPool, user_id: i64) -> PlatformResult<
 /// 读取单条 save。鉴权通过 user_id。
 pub async fn read_save(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     save_id: i64,
 ) -> PlatformResult<Option<Save>> {
     let row = sqlx::query(
@@ -92,7 +93,7 @@ pub async fn read_save(
 /// 新建 save。
 pub async fn create_save(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     script_id: i64,
     title: &str,
     state_snapshot: &Value,
@@ -120,7 +121,7 @@ pub async fn create_save(
 }
 
 /// 删除 save (级联删 commits/refs/checkouts)。
-pub async fn delete_save(pool: &PgPool, user_id: i64, save_id: i64) -> PlatformResult<bool> {
+pub async fn delete_save(pool: &PgPool, user_id: UserId, save_id: i64) -> PlatformResult<bool> {
     let res = sqlx::query("delete from game_saves where id = $1 and user_id = $2")
         .bind(save_id)
         .bind(user_id)
@@ -195,7 +196,7 @@ fn row_to_json(row: &sqlx::postgres::PgRow) -> Value {
 /// Python `export_save`:把整份 save 打包成 JSON。
 pub async fn export_save(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     save_id: i64,
 ) -> PlatformResult<SaveExport> {
     let save = sqlx::query("select * from game_saves where id = $1 and user_id = $2")
@@ -283,7 +284,7 @@ pub struct ImportResult {
 /// Python `import_save`:按当前 user 重建存档。返回新 save_id。
 pub async fn import_save(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     payload: &Value,
 ) -> PlatformResult<ImportResult> {
     let obj = payload

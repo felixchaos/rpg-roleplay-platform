@@ -9,6 +9,7 @@
 //! `UsageBreakdown` 转成 USD numeric(12,6) 字符串。
 
 use once_cell::sync::Lazy;
+use rpg_core::UserId;
 use rpg_llm::{LlmRouter, ModelPricing};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
@@ -77,7 +78,7 @@ pub fn pricing_for(api_id: &str, model_id: &str) -> Option<ModelPricing> {
 #[allow(clippy::too_many_arguments)]
 pub async fn record_token_usage(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     save_id: Option<i64>,
     context_run_id: Option<i64>,
     api_id: &str,
@@ -157,7 +158,7 @@ pub struct UsageAggregate {
 /// Python `aggregate_usage(user_id, days=30)`。
 pub async fn aggregate_usage(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     days: i32,
 ) -> PlatformResult<UsageAggregate> {
     let days = days.clamp(1, 365);
@@ -252,7 +253,7 @@ pub async fn aggregate_usage(
 /// Python `list_usage_for_user`(简化版,paginate by id desc)。
 pub async fn list_usage_for_user(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     limit: i64,
 ) -> PlatformResult<Vec<UsageRecent>> {
     let limit = limit.clamp(1, 500);
@@ -297,7 +298,7 @@ pub struct UsageTimelineRow {
 /// Python `timeline_usage`。
 pub async fn timeline_usage(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     days: i32,
     group_by: &str,
 ) -> PlatformResult<Vec<UsageTimelineRow>> {
@@ -358,7 +359,7 @@ pub fn estimate_input_tokens(text: &str) -> i64 {
 /// 最近 N 轮该模型的平均 output tokens。
 pub async fn average_output_tokens(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     model_real_name: &str,
     last_n: i64,
 ) -> PlatformResult<i32> {

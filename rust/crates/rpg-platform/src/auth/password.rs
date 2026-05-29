@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::sessions::User;
+use rpg_core::UserId;
 
 /// 旧 PBKDF2 轮数,与 Python 历史值一致(只用于 verify 老 hash)。
 const LEGACY_PBKDF2_ROUNDS: u32 = 180_000;
@@ -154,7 +155,7 @@ pub fn legacy_hash_password_pbkdf2(password: &str) -> String {
 /// Python: `public_user(user)` — 暴露给前端的公开形态。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicUser {
-    pub id: i64,
+    pub id: UserId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_id: Option<uuid::Uuid>,
     pub username: String,

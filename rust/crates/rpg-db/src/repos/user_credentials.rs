@@ -1,12 +1,13 @@
 //! repos/user_credentials.rs — user_api_credentials 表操作（v4 migration）
 
+use rpg_core::UserId;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct UserApiCredential {
     pub id: i64,
-    pub user_id: i64,
+    pub user_id: UserId,
     pub api_id: String,
     pub encrypted_key: Vec<u8>,
     pub base_url_override: String,
@@ -19,7 +20,7 @@ pub struct UserApiCredential {
 #[tracing::instrument(skip(pool), fields(user_id = %user_id))]
 pub async fn list(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
 ) -> Result<Vec<UserApiCredential>, sqlx::Error> {
     sqlx::query_as(
         "SELECT id, user_id, api_id, encrypted_key, base_url_override,
@@ -62,7 +63,7 @@ pub async fn upsert(
 }
 
 #[tracing::instrument(skip(pool), fields(user_id = %user_id, api_id = %api_id))]
-pub async fn delete(pool: &PgPool, user_id: i64, api_id: &str) -> Result<bool, sqlx::Error> {
+pub async fn delete(pool: &PgPool, user_id: UserId, api_id: &str) -> Result<bool, sqlx::Error> {
     let result = sqlx::query(
         "DELETE FROM user_api_credentials WHERE user_id = $1 AND api_id = $2",
     )
@@ -77,7 +78,7 @@ pub async fn delete(pool: &PgPool, user_id: i64, api_id: &str) -> Result<bool, s
 #[tracing::instrument(skip(pool), fields(user_id = %user_id, api_id = %api_id))]
 pub async fn resolve(
     pool: &PgPool,
-    user_id: i64,
+    user_id: UserId,
     api_id: &str,
 ) -> Result<Option<UserApiCredential>, sqlx::Error> {
     sqlx::query_as(

@@ -1,12 +1,13 @@
 //! repos/token_usage.rs — token_usage 用量计费表操作（v5 migration）
 
+use rpg_core::UserId;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct TokenUsageRow {
     pub id: i64,
-    pub user_id: i64,
+    pub user_id: UserId,
     pub save_id: Option<i64>,
     pub context_run_id: Option<i64>,
     pub api_id: String,

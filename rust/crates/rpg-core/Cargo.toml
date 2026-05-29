@@ -17,3 +17,6 @@ once_cell.workspace = true
 parking_lot.workspace = true
 chrono.workspace = true
 regex.workspace = true
+# 仅为 newtype id(UserId/SaveId/RunId)提供 sqlx Type/Encode/Decode(Postgres i8)。
+# 不引入 runtime / macros / query!,保持 rpg-core 无 DB 运行时依赖。
+sqlx.workspace = true
