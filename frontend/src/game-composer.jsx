@@ -1,7 +1,10 @@
 /* Composer + slash command menu + plus/attach menu + non-blocking confirm strip
    for the Game Console. */
 
-const { useState: useStateC, useRef: useRefC, useEffect: useEffectC } = React;
+import React from 'react';
+import { useState as useStateC, useRef as useRefC, useEffect as useEffectC } from 'react';
+import { Icon } from './game-icons.jsx';
+import { chatComposerKey } from './responsive.jsx';
 
 const SLASH_COMMANDS = [
   { id: "status", trigger: "/status", label: "查看状态摘要", group: "查询", hint: "/status" },
@@ -618,7 +621,7 @@ function Composer({
               // task 115: 统一聊天输入键位 (Claude Code Desktop 同款)
               // Enter 发送, Shift+Enter 换行, IME composition 时 Enter 不发,
               // Cmd/Ctrl+Enter 也发送 (备用)
-              const fn = (typeof window !== "undefined" && window.chatComposerKey);
+              const fn = chatComposerKey;
               if (fn) {
                 fn(e, () => onSend && onSend());
               } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent?.isComposing) {
@@ -883,3 +886,5 @@ function _currentModelLabel(gameState, _ignored) {
 
 
 Object.assign(window, { ContextUsage, ContextBreakdownPanel });
+
+export { Composer, ConfirmStrip, SuggestionRow, MentionMenu, SLASH_COMMANDS, PERMISSION_OPTIONS, ContextUsage, ContextBreakdownPanel };

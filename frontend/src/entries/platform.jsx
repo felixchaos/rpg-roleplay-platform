@@ -1,37 +1,27 @@
 // Platform 页面入口 — Vite ESM 版
-// 替代原先多条 <script type="text/babel" src="..."> 标签，按原加载顺序 import。
-// JSX 文件里大量用 `React.xxx` / `ReactDOM.xxx` 全局，先挂到 window。
 import '../web-vitals-rum.js';
-import * as React from 'react';
+import React from 'react';
+import { useState, useEffect } from 'react';
 import * as ReactDOM from 'react-dom/client';
-window.React = React;
-window.ReactDOM = ReactDOM;
 
-// 纯 JS 模块（无 JSX，直接执行，挂 window.MOCK_* / window.api / window.RPG_DATA_READY）
+// 基础设施 side-effect 模块(设置 window.api / window.MOCK_* / SSE bridge 等)
 import '../mock-data.js';
 import '../api-client.js';
 import '../data-loader.js';
 import '../state-event-bridge.js';
 import '../worldbook-status-toast.js';
 import '../ui-atlas.js';
-
-// JSX 组件模块（按原 HTML 中 text/babel 顺序）
-import '../responsive.jsx';
-import '../markdown-render.jsx';
-import '../game-icons.jsx';
-import '../branch-graph.jsx';
-import '../platform-app.jsx';
-import '../pages/saves.jsx';
-import '../pages/scripts.jsx';
-import '../pages/cards.jsx';
-import '../components/catalog-helpers.js';
-import '../pages/settings.jsx';
-import '../tweaks-panel.jsx';
 import '../console-assistant-navigation.jsx';
-import '../console-assistant-panel.jsx';
 
-// 挂载应用（等价于原 HTML 底部 inline <script type="text/babel">）
-const { useState, useEffect } = React;
+// 组件模块 — named import(ESM 自动拉入传递依赖)
+import { PlatformShell, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, PL_NAV } from '../platform-app.jsx';
+import { SavesPage } from '../pages/saves.jsx';
+import { ScriptsPage } from '../pages/scripts.jsx';
+import { CardsPage } from '../pages/cards.jsx';
+import { SettingsPage } from '../pages/settings.jsx';
+import { ConsoleAssistantPanel } from '../console-assistant-panel.jsx';
+
+// ── 挂载 ──
 
 const TWEAK_DEFAULTS = {
   startPage: 'profile',
@@ -44,7 +34,7 @@ function parsePageFromHash() {
   const raw = location.hash.replace('#', '');
   const hash = HASH_ALIASES[raw] || raw;
   const ids = [
-    ...((window.PL_NAV || []).filter((i) => i.id).map((i) => i.id)),
+    ...((PL_NAV || []).filter((i) => i.id).map((i) => i.id)),
     'me', 'me-edit', 'me-settings', 'saves-branches', 'scripts-import', 'cards-npc',
   ];
   if (!ids.includes(hash)) return null;
@@ -54,10 +44,8 @@ function parsePageFromHash() {
   return hash;
 }
 
-const ConsoleAssistantPanel = window.ConsoleAssistantPanel || (() => null);
-
 function PlatformApp() {
-  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const t = TWEAK_DEFAULTS;
   const [page, setPage] = useState(parsePageFromHash() || t.startPage || 'profile');
   const [assistantOpen, setAssistantOpen] = useState(false);
 

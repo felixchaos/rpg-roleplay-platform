@@ -230,6 +230,39 @@ impl GameState {
     pub fn permission_mode_raw(&self) -> &str {
         &self.data.permissions.mode
     }
+
+    /// 向 `data.history` 追加一条对话记录。
+    ///
+    /// 对应 Python `state.data["history"].append({"role": ..., "content": ...})`。
+    /// 每条记录包含 `role`、`content` 和 `ts`(当前时间 HH:MM)。
+    pub fn append_history(&mut self, role: &str, content: &str) {
+        let ts = Utc::now().format("%H:%M").to_string();
+        let entry = serde_json::json!({
+            "role": role,
+            "content": content,
+            "ts": ts,
+        });
+        self.data.history.push(entry);
+        self.touch();
+    }
+
+    /// turn 计数 +1,同时 bump version。
+    ///
+    /// 对应 Python `state.data["turn"] += 1`。
+    pub fn increment_turn(&mut self) {
+        self.data.turn += 1;
+        self.touch();
+    }
+
+    /// 设置玩家基础信息(name / role / background)。
+    ///
+    /// 对应 Python `state.data["player"]["name"] = ...` 等。
+    pub fn setup_player(&mut self, name: &str, role: &str, background: &str) {
+        self.data.player.name = name.to_string();
+        self.data.player.role = role.to_string();
+        self.data.player.background = background.to_string();
+        self.touch();
+    }
 }
 
 /// 默认状态的 JSON 形态。C3 后只是 [`GameStateData::default`] 的 serde wrapper,

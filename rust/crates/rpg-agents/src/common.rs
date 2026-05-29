@@ -360,18 +360,152 @@ pub fn state_turn(state: &GameState) -> u64 {
     state.turn().max(0) as u64
 }
 
-/// `state.history_messages()` — 真实 GameState 不再保留 ChatMessage 历史
-/// (Python 端历史在 branch_commits 表里)。暂返空,等真有需要再补 DB 加载。
-pub fn state_history_messages(_state: &GameState) -> Vec<ChatMessage> {
-    Vec::new()
+/// `state.history_messages()` — 从 `state.data.history` 读取对话历史。
+///
+/// 对应 Python `state.history_messages()`:返回 history 数组最近 MAX_HISTORY_TURNS*2 条,
+/// role=="user" 转 ChatMessage::user,其他转 ChatMessage::assistant。
+pub fn state_history_messages(state: &GameState) -> Vec<ChatMessage> {
+    const MAX_HISTORY_TURNS: usize = 20;
+    const MAX_MSGS: usize = MAX_HISTORY_TURNS * 2;
+    let history = &state.data.history;
+    let slice = if history.len() > MAX_MSGS {
+        &history[history.len() - MAX_MSGS..]
+    } else {
+        history.as_slice()
+    };
+    slice
+        .iter()
+        .filter_map(|entry| {
+            let role = entry.get("role").and_then(|v| v.as_str()).unwrap_or("");
+            let content = entry.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            if content.is_empty() {
+                return None;
+            }
+            if role == "user" {
+                Some(ChatMessage::user(content))
+            } else {
+                Some(ChatMessage::assistant(content))
+            }
+        })
+        .collect()
 }
 
-/// `state.short_summary()` — 拼 player / world / memory 关键字段。
+/// `state.short_summary()` — 对应 Python `state.short_summary()`,包含玩家、时间线、
+/// 关系、长期记忆、世界线变量和当前回合等关键字段。
 pub fn state_short_summary(state: &GameState) -> String {
+    let p = &state.data.player;
+    let w = &state.data.world;
+    let m = &state.data.memory;
+    let permissions = &state.data.permissions;
+    let worldline = &state.data.worldline;
+
+    // 关系段
+    let rel_text = if state.data.relationships.is_empty() {
+        "  （尚未与任何人建立明确关系）".to_string()
+    } else {
+        state.data.relationships.iter().take(12).map(|(k, v)| {
+            let status = match v {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Object(o) => o.get("status")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                other => other.to_string(),
+            };
+            format!("  · {}：{}", k, status)
+        }).collect::<Vec<_>>().join("\n")
+    };
+
+    // 已知事件段
+    let known_events: Vec<String> = w.known_events.iter().filter_map(|e| {
+        e.as_str().map(|s| format!("  · {}", s))
+    }).collect();
+    let known = if known_events.is_empty() {
+        "  （暂无已知事件）".to_string()
+    } else {
+        known_events.join("\n")
+    };
+
+    // 记忆段
+    let mut memory_lines: Vec<String> = Vec::new();
+    if !m.main_quest.is_empty() {
+        memory_lines.push(format!("主线：{}", m.main_quest));
+    }
+    if !m.current_objective.is_empty() {
+        memory_lines.push(format!("当前目标：{}", m.current_objective));
+    }
+    let ability_limit = 6usize;
+    let resource_limit = 6usize;
+    let pinned_limit = 6usize;
+    let (fact_limit, note_limit) = if m.mode == "deep" { (10, 8) } else { (5, 3) };
+    for x in m.abilities.iter().take(ability_limit) {
+        if let Some(s) = x.as_str() { memory_lines.push(format!("能力：{}", s)); }
+    }
+    for x in m.resources.iter().take(resource_limit) {
+        if let Some(s) = x.as_str() { memory_lines.push(format!("资源：{}", s)); }
+    }
+    for x in m.pinned.iter().take(pinned_limit) {
+        if let Some(s) = x.as_str() { memory_lines.push(format!("固定记忆：{}", s)); }
+    }
+    for x in m.facts.iter().take(fact_limit) {
+        if let Some(s) = x.as_str() { memory_lines.push(format!("事实：{}", s)); }
+    }
+    for x in m.notes.iter().take(note_limit) {
+        if let Some(s) = x.as_str() { memory_lines.push(format!("笔记：{}", s)); }
+    }
+    let memory_text = if memory_lines.is_empty() {
+        "  （暂无长期记忆）".to_string()
+    } else {
+        memory_lines.iter().map(|l| format!("  · {}", l)).collect::<Vec<_>>().join("\n")
+    };
+
+    // 权限模式标签
+    let perm_label = match permissions.mode.as_str() {
+        "full_access" => "完全开放",
+        "ask_before_write" => "写前询问",
+        "read_only" => "只读",
+        other => other,
+    };
+
+    // 世界线变量段
+    let variable_text = if worldline.user_variables.is_empty() {
+        "  （暂无用户变量）".to_string()
+    } else {
+        worldline.user_variables.iter().take(12).map(|(name, info)| {
+            let val = info.get("value").and_then(|v| v.as_str()).unwrap_or("");
+            format!("  · {}={}", name, val)
+        }).collect::<Vec<_>>().join("\n")
+    };
+
+    // 时间线锚定
+    let anchor_state = &w.timeline.anchor_state;
+    let current_phase = if w.timeline.current_phase.is_empty() {
+        "未知".to_string()
+    } else {
+        w.timeline.current_phase.clone()
+    };
+    let pending_jump = match &w.timeline.pending_jump {
+        Some(v) if !v.is_null() => v.to_string(),
+        _ => "无".to_string(),
+    };
+
     format!(
-        "player={} world={} memory={}",
-        state.data.player.name,
-        state.data.world.time,
-        state.data.memory.main_quest,
+        "【玩家档案】\n姓名：{}\n定位：{}\n背景：{}\n当前位置：{}\n\n\
+【当前时间线】{}\n\
+【时间线锚定】\n  · 状态：{}\n  · 阶段：{}\n  · 待确认跳跃：{}\n\n\
+【已知事件】\n{}\n\n\
+【关系状态】\n{}\n\n\
+【长期记忆】\n{}\n\n\
+【权限与世界线】\n  · LLM写入权限：{}\n  · 用户变量：\n{}\n\n\
+【当前回合】第 {} 回合",
+        p.name, p.role, p.background, p.current_location,
+        w.time,
+        anchor_state, current_phase, pending_jump,
+        known,
+        rel_text,
+        memory_text,
+        perm_label,
+        variable_text,
+        state.data.turn,
     )
 }

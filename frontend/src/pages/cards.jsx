@@ -2,7 +2,10 @@
    只搬家，UI / props 流 / fetch 路径完全不变。
    依赖 platform-app.jsx 注入的全局: Icon / fmtBytes。 */
 
-const { useState: useStatePL, useEffect: useEffectPL, useMemo: useMemoPL, useCallback: useCallbackPL } = React;
+import React from 'react';
+import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
+import { Icon } from '../game-icons.jsx';
+import { fmtBytes } from '../platform-app.jsx';
 
 const USER_CARDS = [
   { id: "uc1", name: "顾承砚", role: "漂流的史官", tone: "—", origin: "雾港未尽 · 默认主角",
@@ -689,3 +692,4 @@ function CardEditModal({ card, isNew, kind, onClose, onSave }) {
 Object.assign(window, {
   CardsPage, CardGrid, UserCardsView, NpcCardsView, CardEditModal, TavernImportModal,
 });
+export { CardsPage, CardGrid, UserCardsView, NpcCardsView, CardEditModal, TavernImportModal };

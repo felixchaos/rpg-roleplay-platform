@@ -23,7 +23,9 @@
  *   selectedId      = 当前选中 (Platform 详情联动)
  */
 
-const { useMemo: useMemoB, useState: useStateB, useEffect: useEffectB } = React;
+import React from 'react';
+import { useMemo as useMemoB, useState as useStateB, useEffect as useEffectB } from 'react';
+import { Icon } from './game-icons.jsx';
 
 // 颜色调色板:column index → CSS 变量。循环复用。
 // VSCode Git Graph 默认 8 色,我们对齐主题用 6 色。
@@ -400,3 +402,4 @@ function _fmtTime(ts) {
 }
 
 Object.assign(window, { BranchGraph });
+export { BranchGraph };

@@ -1,29 +1,25 @@
 // Game Console 页面入口 — Vite ESM 版
 import '../web-vitals-rum.js';
-import * as React from 'react';
+import React from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import * as ReactDOM from 'react-dom/client';
-window.React = React;
-window.ReactDOM = ReactDOM;
 
+// 基础设施 side-effect 模块
 import '../mock-data.js';
 import '../api-client.js';
 import '../data-loader.js';
 import '../state-event-bridge.js';
 import '../worldbook-status-toast.js';
 import '../ui-atlas.js';
-
-import '../responsive.jsx';
-import '../markdown-render.jsx';
-import '../game-icons.jsx';
-import '../branch-graph.jsx';
-import '../game-panels.jsx';
-import '../game-composer.jsx';
-import '../game-app.jsx';
-import '../tweaks-panel.jsx';
 import '../console-assistant-navigation.jsx';
-import '../console-assistant-panel.jsx';
-import '../components/catalog-helpers.js';
-import '../components/ModelPicker.jsx';
+
+// 组件模块 — named import
+import { useResizable } from '../responsive.jsx';
+import { LeftRail, TopBar, ChatArea, HistoryDrawer, SearchDrawer, GameToastStack, RunSteps, GameSettingsModal } from '../game-app.jsx';
+import { Composer, ConfirmStrip } from '../game-composer.jsx';
+import { RightPanel, PANEL_TABS } from '../game-panels.jsx';
+import { ConsoleAssistantPanel } from '../console-assistant-panel.jsx';
+import ModelPicker from '../components/ModelPicker.jsx';
 
 // density preset + narrative font init（等价原 HTML 非 babel inline script）
 (function () {
@@ -47,17 +43,7 @@ import '../components/ModelPicker.jsx';
   }
 })();
 
-// ---- App（从 HTML 内联 babel script 提取，逻辑完全不变） ----
-const { useState, useEffect, useRef, useMemo, useCallback } = React;
-
-const HistoryDrawer = window.HistoryDrawer || (() => null);
-const SearchDrawer = window.SearchDrawer || (() => null);
-const LeftRail = window.LeftRail || (() => null);
-const TopBar = window.TopBar || (() => null);
-const ChatArea = window.ChatArea || (() => null);
-const ConsoleAssistantPanel = window.ConsoleAssistantPanel || (() => null);
-const RunSteps = window.RunSteps || (() => null);
-const GameToastStack = window.GameToastStack || (() => null);
+// ---- App ----
 
 const TWEAK_DEFAULTS = {
   composerMode: 'compact',
@@ -107,7 +93,9 @@ const STREAM_CHUNKS = [
 ];
 
 function App() {
-  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  // 旧 useTweaks/setTweak 用法迁出(tweaks-panel.jsx 已删,只是设计原型工具);
+  // 这里仅消费默认值,改成普通常量即可。
+  const t = TWEAK_DEFAULTS;
   const openTweaks = () => window.postMessage({ type: '__activate_edit_mode' }, '*');
 
   const IS_ANON = !(window.RPG_AUTH && window.RPG_AUTH.authed);
@@ -138,7 +126,7 @@ function App() {
   );
   const getRightTabForLocation = (fallback) => {
     const hash = String(location.hash || '').replace(/^#/, '');
-    const tabs = window.PANEL_TABS || [];
+    const tabs = PANEL_TABS || [];
     return tabs.some((tab) => tab.id === hash) ? hash : fallback;
   };
   const [activeTab, setActiveTab] = useState(() => getRightTabForLocation(t.defaultRightTab || 'status'));
@@ -153,15 +141,15 @@ function App() {
   const [showSearchDrawer, setShowSearchDrawer] = useState(false);
   const [showInGameSettings, setShowInGameSettings] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
-  const _railResize = (typeof window !== 'undefined' && window.useResizable) ? window.useResizable({
+  const _railResize = useResizable({
     storageKey: 'gc.rail.w', defaultSize: 240, min: 180, max: 360, side: 'left',
     cssVar: '--gc-rail-w',
-  }) : { size: 240, dragHandleProps: {} };
+  });
   const gcRailW = _railResize.size;
   const gcRailDragProps = _railResize.dragHandleProps;
-  const _panelResize = (typeof window !== 'undefined' && window.useResizable) ? window.useResizable({
+  const _panelResize = useResizable({
     storageKey: 'gc.panel.w', defaultSize: 320, min: 180, max: 520, side: 'right',
-  }) : { size: 320, setSize: () => {}, dragHandleProps: {} };
+  });
   const gcPanelW = _panelResize.size;
   const gcPanelDragProps = _panelResize.dragHandleProps;
 
@@ -726,7 +714,7 @@ function App() {
         </>}
         {/* Wave 11-D: GM 模型选择 — ModelPicker modal overlay */}
         {showModel && (() => {
-          const _MP = window.ModelPicker || (() => null);
+          const _MP = ModelPicker;
           const _currentModelId = (game && game.app && (game.app.model_real_name || game.app.model)) || '';
           const _handleModelChange = async (modelId, _provider) => {
             try {

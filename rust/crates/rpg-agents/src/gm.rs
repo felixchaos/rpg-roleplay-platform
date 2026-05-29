@@ -527,7 +527,7 @@ impl GameMaster {
 /// 从 contributions 抽 novel_retrieval provider 的 retrieval 文本。
 /// 对应 Python `rpg/agents/context_agent.py::_pick_retrieval_text`。
 /// 模组场景没有 novel_retrieval → 返回 None,调用方回退到 context_bundle。
-fn pick_novel_retrieval(contributions: &[ContextContribution]) -> Option<String> {
+pub fn pick_novel_retrieval(contributions: &[ContextContribution]) -> Option<String> {
     for c in contributions {
         if c.provider_id != "novel_retrieval" || !c.applied {
             continue;

@@ -495,6 +495,43 @@ async fn lifespan_startup(state: &AppState) {
         }
     }
 
+    // 4b. 注册 LLM backend(Wave 6A 之前的硬缺口:`LlmRouter::register` 定义了
+    // 但 startup 从未调用过 → catalog 选啥都触发 `current_backend()` Err →
+    // /api/chat 静默退化成空 chunk stub)。
+    //
+    // 这里按 env 注入 backend:
+    //   - ANTHROPIC_API_KEY → AnthropicBackend
+    //   - 未来扩展时按相同 pattern 加 OpenAI / Vertex / 其它 OpenAI-compat。
+    //
+    // 后续应该改成"从 user_api_credentials 表加密 key 解密后注册",但那需要
+    // KMS / 用户态注入,本期先 env 注入跑通 Anthropic chat。
+    {
+        let anth_key = std::env::var("ANTHROPIC_API_KEY")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        match anth_key {
+            Some(key) => match rpg_llm::anthropic::AnthropicBackend::new(key) {
+                Ok(backend) => {
+                    let any: rpg_llm::any_backend::AnyBackend = backend.into();
+                    state
+                        .llm_router
+                        .write()
+                        .register("anthropic", Arc::new(any));
+                    info!("startup: anthropic backend registered from ANTHROPIC_API_KEY");
+                }
+                Err(e) => {
+                    warn!(error = %e, "startup: anthropic backend init failed");
+                }
+            },
+            None => {
+                warn!(
+                    "startup: ANTHROPIC_API_KEY not set — chat will fall back to empty-chunk stub"
+                );
+            }
+        }
+    }
+
     // 5. DB 连接池 metrics 采样任务 — 每 15s 更新 db_pool_* gauge。
     {
         let pool = state.db.clone();

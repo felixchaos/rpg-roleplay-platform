@@ -1,3 +1,6 @@
+import React from 'react';
+import { getCaps, normalizeProviderId } from './catalog-helpers.js';
+
 /**
  * ModelPicker — Wave 11-D
  *
@@ -318,13 +321,7 @@ function ModelPicker({ value, onChange, filter }) {
   }, []);
 
   // Wave 11.5-A: 通过 catalog-helpers.getCaps 归一化,兼容老 array shape。
-  const _getCaps = (typeof window !== "undefined" && window.getCaps) || ((m) => {
-    if (!m) return [];
-    const c = m.capabilities;
-    if (Array.isArray(c)) return c;
-    if (!c || typeof c !== "object") return [];
-    return Object.entries(c).filter(([, v]) => v === true).map(([k]) => k);
-  });
+  const _getCaps = getCaps;
 
   // 应用 filter prop 的 capability + kind
   const baseFiltered = useMemo(() => {
@@ -354,8 +351,7 @@ function ModelPicker({ value, onChange, filter }) {
 
   // 按 provider 分组
   // Wave 11.5-A: 老 catalog 数据可能带 "vertex"/"vertex_ai",normalize 到 "AgentPlatform"。
-  const _normProvider = (typeof window !== "undefined" && window.normalizeProviderId)
-    || ((p) => (p === "vertex" || p === "vertex_ai" ? "AgentPlatform" : (p || "Unknown")));
+  const _normProvider = normalizeProviderId;
   const grouped = useMemo(() => {
     const map = {};
     for (const m of displayed) {

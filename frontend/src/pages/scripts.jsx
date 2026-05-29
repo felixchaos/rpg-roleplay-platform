@@ -3,7 +3,11 @@
    依赖 platform-app.jsx 注入的全局: PromptModal / Icon / usePlatformData / fmtBytes / fmtN
    以及 saves.jsx 注入的 NewGameModal（顺序保证：platform-app.jsx → saves.jsx → scripts.jsx 在 Platform.html 中按序加载）。 */
 
-const { useState: useStatePL, useEffect: useEffectPL, useMemo: useMemoPL, useCallback: useCallbackPL } = React;
+import React from 'react';
+import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
+import { Icon } from '../game-icons.jsx';
+import { PromptModal, usePlatformData, fmtBytes, fmtN } from '../platform-app.jsx';
+import { NewGameModal } from './saves.jsx';
 
 function ScriptPreviewModal({ open, busy, data, rule, onClose, onRetryRule, onConfirm }) {
   if (!open) return null;
@@ -1207,3 +1211,4 @@ Object.assign(window, {
   ImportJobBanner, ImportJobResult, ImportEstimateView,
   ScriptPreviewModal, ConfidenceBar,
 });
+export { ScriptsPage, ScriptsListView, ChaptersModal, OverridesModal, ScriptsImportView, ImportJobBanner, ImportJobResult, ImportEstimateView, ScriptPreviewModal, ConfidenceBar };

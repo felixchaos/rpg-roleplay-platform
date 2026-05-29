@@ -1,6 +1,11 @@
 /* Game Console — main app shell: top bar, left rail, chat area with run-state, right panel. */
 
-const { useState: useStateA, useEffect: useEffectA, useRef: useRefA, useMemo: useMemoA, useCallback: useCallbackA } = React;
+import React from 'react';
+import { useState as useStateA, useEffect as useEffectA, useRef as useRefA, useMemo as useMemoA, useCallback as useCallbackA } from 'react';
+import { Icon } from './game-icons.jsx';
+import { RpgMarkdown } from './markdown-render.jsx';
+import { BranchGraph } from './branch-graph.jsx';
+import { useBreakpoint, useResizable, ResizeHandle } from './responsive.jsx';
 
 // ----------------------------- LEFT RAIL ---------------------------------
 function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitchSave, onMemoryMode, currentSaveId, saves, resizeHandle }) {
@@ -555,7 +560,7 @@ function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, think
   const displayText = stripStateOpsForDisplay(text);
   // task 90: 用 RpgMarkdown.Block 渲染 markdown (** / # / list / code / link...)
   // window.RpgMarkdown 由 markdown-render.jsx 提供,加载顺序在 game-app.jsx 之前。
-  const MdBlock = (typeof window !== "undefined" && window.RpgMarkdown && window.RpgMarkdown.Block) || null;
+  const MdBlock = RpgMarkdown.Block;
   // task 121a: thinking 状态显示带 spinner 的 italic 文字,跟正式 narrative 区分
   if (thinking) {
     return (
@@ -1277,4 +1282,5 @@ function TopBar({ state, saveUpdatedAt, onOpenTweaks, onOpenSearch, onOpenHistor
 
 }
 
-Object.assign(window, { LeftRail, RunSteps, ThinkingPill, ChatArea, TopBar, HistoryDrawer, SearchDrawer, GameToastStack });
+Object.assign(window, { LeftRail, RunSteps, ThinkingPill, ChatArea, TopBar, HistoryDrawer, SearchDrawer, GameToastStack, GameSettingsModal });
+export { LeftRail, RunSteps, ThinkingPill, ChatArea, TopBar, HistoryDrawer, SearchDrawer, GameToastStack, GameSettingsModal };

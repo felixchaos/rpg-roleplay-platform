@@ -24,9 +24,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio_stream::wrappers::ReceiverStream;
 
-use rpg_llm::pipeline::{
-    ChatChunk, ChatMessage, ChatRequest as LlmChatRequest, WireChatChunk,
-};
+// ChatChunk / LlmChatRequest / WireChatChunk — 仅测试引用(MockBackend + drain_to_wire)。
+#[cfg(test)]
+use rpg_llm::pipeline::ChatChunk;
+#[cfg(test)]
+use rpg_llm::pipeline::ChatRequest as LlmChatRequest;
+#[cfg(test)]
+use rpg_llm::pipeline::WireChatChunk;
 use rpg_platform::quota::{self, QuotaConfig, QuotaError};
 use rpg_state::GameState;
 
@@ -88,9 +92,11 @@ pub struct ChatEstimateRequest {
 
 /// POST /api/new — 创建新存档
 ///
-/// 把现有 state 重置成空白存档(可选地写 player 基础字段)。
-/// 注:剧本角色卡 / persona / user_card 查询走 rpg-platform,本翻译期暂不接,
-/// 优先支持 body.name/role/background 这条主路径。
+/// 把现有 state 重置成空白存档,并按 4 级优先链解析角色卡:
+///   1. script_card_id + script_id  → character_cards WHERE id=$1 AND script_id=$2
+///   2. user_card_id                → character_cards WHERE id=$1
+///   3. persona_id                  → user_personas WHERE id=$1 AND user_id=$2
+///   4. body.name / role / background 直接用
 #[tracing::instrument(skip(s, headers, body), fields(user_id))]
 async fn api_new(
     State(s): State<AppState>,
@@ -101,36 +107,145 @@ async fn api_new(
     // 写状态路由:强鉴权,匿名 → 401。
     let user = require_user(&s, &headers).await?;
     let user_id = user.id.to_string();
+    let user_id_num: i64 = user.id.into();
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
+
+    // ── 4 级角色卡解析 ──────────────────────────────────────────────────────
+    // source_kind 记录实际命中的来源,写入 player.source_kind。
+    // 注:用 sqlx::query(非宏版)避免编译期 DATABASE_URL 依赖。
+    use sqlx::Row as _;
+    let (name, role, background, source_kind): (String, String, String, &'static str) =
+        if let Some(script_card_id) = body.script_card_id {
+            // 优先级 1:剧本预置角色卡
+            let script_id = body.script_id.unwrap_or(0);
+            let row = sqlx::query(
+                "SELECT name, identity, appearance, personality \
+                 FROM character_cards WHERE id = $1 AND script_id = $2",
+            )
+            .bind(script_card_id)
+            .bind(script_id)
+            .fetch_optional(&s.db)
+            .await
+            .map_err(|e| {
+                tracing::error!("api_new: character_cards query failed: {e}");
+                ResponseError::internal(e.to_string())
+            })?;
+            if let Some(r) = row {
+                let appearance: String = r.try_get("appearance").unwrap_or_default();
+                let personality: String = r.try_get("personality").unwrap_or_default();
+                let bg = if appearance.trim().is_empty() { personality } else { appearance };
+                (
+                    r.try_get("name").unwrap_or_default(),
+                    r.try_get("identity").unwrap_or_default(),
+                    bg,
+                    "script_card",
+                )
+            } else {
+                tracing::warn!(
+                    script_card_id,
+                    script_id,
+                    "api_new: script_card not found, falling back to body fields"
+                );
+                (
+                    body.name.clone().unwrap_or_default(),
+                    body.role.clone().unwrap_or_default(),
+                    body.background.clone().unwrap_or_default(),
+                    "",
+                )
+            }
+        } else if let Some(user_card_id) = body.user_card_id {
+            // 优先级 2:用户自创 NPC 卡
+            let row = sqlx::query(
+                "SELECT name, identity, appearance, personality \
+                 FROM character_cards WHERE id = $1",
+            )
+            .bind(user_card_id)
+            .fetch_optional(&s.db)
+            .await
+            .map_err(|e| {
+                tracing::error!("api_new: user_card query failed: {e}");
+                ResponseError::internal(e.to_string())
+            })?;
+            if let Some(r) = row {
+                let appearance: String = r.try_get("appearance").unwrap_or_default();
+                let personality: String = r.try_get("personality").unwrap_or_default();
+                let bg = if appearance.trim().is_empty() { personality } else { appearance };
+                (
+                    r.try_get("name").unwrap_or_default(),
+                    r.try_get("identity").unwrap_or_default(),
+                    bg,
+                    "user_card",
+                )
+            } else {
+                tracing::warn!(user_card_id, "api_new: user_card not found, falling back to body fields");
+                (
+                    body.name.clone().unwrap_or_default(),
+                    body.role.clone().unwrap_or_default(),
+                    body.background.clone().unwrap_or_default(),
+                    "",
+                )
+            }
+        } else if let Some(persona_id) = body.persona_id {
+            // 优先级 3:用户 persona
+            let row = sqlx::query(
+                "SELECT name, role, background \
+                 FROM user_personas WHERE id = $1 AND user_id = $2",
+            )
+            .bind(persona_id)
+            .bind(user_id_num)
+            .fetch_optional(&s.db)
+            .await
+            .map_err(|e| {
+                tracing::error!("api_new: user_personas query failed: {e}");
+                ResponseError::internal(e.to_string())
+            })?;
+            if let Some(r) = row {
+                (
+                    r.try_get("name").unwrap_or_default(),
+                    r.try_get("role").unwrap_or_default(),
+                    r.try_get("background").unwrap_or_default(),
+                    "persona",
+                )
+            } else {
+                tracing::warn!(persona_id, "api_new: persona not found, falling back to body fields");
+                (
+                    body.name.clone().unwrap_or_default(),
+                    body.role.clone().unwrap_or_default(),
+                    body.background.clone().unwrap_or_default(),
+                    "",
+                )
+            }
+        } else {
+            // 优先级 4:body 直接字段
+            (
+                body.name.clone().unwrap_or_default(),
+                body.role.clone().unwrap_or_default(),
+                body.background.clone().unwrap_or_default(),
+                "",
+            )
+        };
+
+    // 最终默认值:与 Python 一致
+    let name = {
+        let t = name.trim().to_string();
+        if t.is_empty() { "无名者".to_string() } else { t }
+    };
+    let role = {
+        let t = role.trim().to_string();
+        if t.is_empty() { "未指定".to_string() } else { t }
+    };
+    let background = background.trim().to_string();
+
     let shared = s.state_store.get_or_create(&user_id).await;
     {
         let mut st = shared.write();
         *st = GameState::new(user_id.clone());
-        // 写 player 三件套
-        let name = body
-            .name
-            .as_deref()
-            .map(str::trim)
-            .filter(|x| !x.is_empty())
-            .unwrap_or("无名者")
-            .to_string();
-        let role = body
-            .role
-            .as_deref()
-            .map(str::trim)
-            .filter(|x| !x.is_empty())
-            .unwrap_or("未指定")
-            .to_string();
-        let background = body
-            .background
-            .as_deref()
-            .map(str::trim)
-            .filter(|x| !x.is_empty())
-            .unwrap_or("")
-            .to_string();
         let _ = st.set_path("player.name", Value::String(name));
         let _ = st.set_path("player.role", Value::String(role));
         let _ = st.set_path("player.background", Value::String(background));
+        if !source_kind.is_empty() {
+            let _ = st.set_path("player.source_kind", Value::String(source_kind.to_string()));
+        }
         let _ = st.set_path("is_new", Value::Bool(false));
     }
     // 6C-1 Arc 快照:读路径不再深拷贝整树,snapshot() 仅 inc Arc refcount。
@@ -147,20 +262,19 @@ async fn api_new(
     .into_response())
 }
 
-/// POST /api/opening — SSE 开场白流(Wave 6-A:真接 LLM stream)
+/// POST /api/opening — SSE 开场白(接通 context engine + GameMaster)
 ///
 /// 流程:
-///   1. 鉴权 + 取 user GameState 快照。
-///   2. 构造 system + opening user prompt(`OPENING_SYSTEM` / `OPENING_USER`)。
-///   3. 取 `llm_router.current_backend()`;backend 未注册 → 退化成 stub
-///      (产 hello + state_change + 空 chunk + done),保证前端不卡。
-///   4. 真接 `backend.stream_chat(req)`,每个 [`ChatChunk`] 投影为 SSE event。
-///   5. 流末 append 完整 opening 到 `state.history` 并 emit done(带最新 snapshot)。
-///   6. 错误转 SSE error 帧。
-///
-/// 不包含:context_engine 调度(Python 走 retrieve_context + _build_turn_context),
-/// extractor / structured_updates 解析(只追加 raw assistant 文本)。
-/// 这两块由 Wave 6-B 后续 / rpg-agents `GmEvent` 引入。
+///   1. 鉴权 + 取 user GameState。
+///   2. 查 DB `game_saves` 拿当前存档的 `script_id`(无 → 退化 stub)。
+///   3. RAG 检索:从 state 的 location + objective + time 拼 query,调 bm25_search。
+///   4. 构建 context bundle(rpg_context::build_context_bundle)。
+///   5. 创建 GameMaster,调 `gm.generate_opening(state, &context_text)`。
+///   6. 解析结构化更新(extract_json_state_ops + apply_structured_updates)。
+///   7. 追加 history + increment_turn。
+///   8. SSE 事件序列:hello → state_change(retrieving) → state_change(generating)
+///      → chunk(完整文本) → done(带 snapshot)。
+///   9. LLM 失败 → 退化 stub(空 chunk + done),不 500。
 #[tracing::instrument(skip(s, headers), fields(user_id))]
 pub(crate) async fn api_opening(
     State(s): State<AppState>,
@@ -169,17 +283,18 @@ pub(crate) async fn api_opening(
     // 触达 LLM 路由:强鉴权,匿名严禁触达 LLM → 401。
     let user = require_user(&s, &headers).await?;
     let user_id = user.id.to_string();
+    let user_id_num: i64 = user.id.into();
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
 
     // SSE 活跃连接 gauge +1。
     let guard = SseConnectionGuard::new("opening");
 
-    // 取 backend(若无 catalog/无注册则 stub fallback,不报错以兼容空环境)。
-    let backend_opt = s.llm_router.read().current_backend().ok();
-
     // 所有路径统一用 ReceiverStream 出口(避免 Either 带来的 Unpin 问题)。
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(32);
+
+    // 取 backend(若无 catalog/无注册则 stub fallback,不报错以兼容空环境)。
+    let backend_opt = s.llm_router.read().current_backend().ok();
 
     // 没 backend → 老 stub 路径(同旧行为)。
     if backend_opt.is_none() {
@@ -198,98 +313,189 @@ pub(crate) async fn api_opening(
         return Ok(Sse::new(stream).keep_alive(KeepAlive::default()));
     }
 
-    let backend = backend_opt.unwrap();
-
-    // 取 catalog 的 selected.model_id(空则让 router 兜底)。
-    let model = s
-        .llm_router
-        .read()
-        .catalog()
-        .map(|c| c.selected.model_id.clone())
-        .unwrap_or_default();
-
-    // 构造 system + opening prompt(简化版,不接 module manifest world section)。
-    let summary = rpg_agents::common::state_short_summary(&shared.read());
-    let system = OPENING_SYSTEM.to_string();
-    let user_msg = format!(
-        "【当前剧情状态】\n{summary}\n\n{OPENING_USER}",
-    );
-    let mut req = LlmChatRequest {
-        model,
-        system: Some(system),
-        messages: vec![ChatMessage::user(user_msg)],
-        max_tokens: Some(OPENING_MAX_TOKENS),
-        stream: true,
-        ..Default::default()
+    // ── Phase 1: 查存档的 script_id + save_id ──────────────────────────
+    use sqlx::Row as _;
+    let save_row = sqlx::query(
+        "SELECT id, script_id FROM game_saves \
+         WHERE user_id = $1 AND is_active = true \
+         ORDER BY updated_at DESC LIMIT 1",
+    )
+    .bind(user_id_num)
+    .fetch_optional(&s.db)
+    .await
+    .ok()
+    .flatten();
+    let (save_id, script_id): (Option<i64>, Option<i64>) = match &save_row {
+        Some(row) => (
+            row.try_get("id").ok(),
+            row.try_get("script_id").ok(),
+        ),
+        None => (None, None),
     };
-    // Wave 10-A:按 RPG_OPENING_THINKING_BUDGET / ANTHROPIC_THINKING_BUDGET
-    // 注入 extended thinking 预算(0 时是 no-op)。
-    rpg_llm::merge_thinking_extra(&mut req.extra, rpg_core::config::opening_thinking_budget());
 
     // 首帧 hello。
     let _ = tx
         .send(Ok(named_sse_event("hello", hello_payload(&user_id))))
         .await;
-    let _ = tx
-        .send(Ok(named_sse_event(
-            "state_change",
-            json!({"phase":"generating","label":"GM 构思开场中…"}),
-        )))
-        .await;
 
+    // 把所有 heavyweight 工作放到 spawned task,避免阻塞 SSE 握手。
     let state_handle = shared.clone();
+    let db = s.db.clone();
+    let llm_router = s.llm_router.clone();
     let user_id_clone = user_id.clone();
     tokio::spawn(async move {
-        let mut full = String::new();
-        match backend.stream_chat(req).await {
-            Ok(mut stream) => {
-                while let Some(item) = stream.next().await {
-                    match item {
-                        Ok(chunk) => {
-                            if let ChatChunk::Text(t) = &chunk {
-                                full.push_str(t);
-                            }
-                            let wire = WireChatChunk::from_chunk(&chunk);
-                            let payload =
-                                serde_json::to_value(&wire).unwrap_or_else(|_| json!({}));
-                            if tx
-                                .send(Ok(named_sse_event("chunk", payload)))
-                                .await
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                        Err(e) => {
-                            let _ = tx
-                                .send(Ok(named_sse_event(
-                                    "error",
-                                    json!({"detail": e.to_string(), "code": "llm_error"}),
-                                )))
-                                .await;
-                            return;
-                        }
-                    }
+        // ── Phase 2: RAG 检索 ──────────────────────────────────────────
+        let _ = tx
+            .send(Ok(named_sse_event(
+                "state_change",
+                json!({"phase":"retrieving","label":"正在检索相关剧情…"}),
+            )))
+            .await;
+
+        let retrieved = if let Some(sid) = script_id {
+            // 从 state 拼 retrieval query(对齐 Python api_opening)
+            let query = {
+                let st = state_handle.read();
+                let location = &st.data.player.current_location;
+                let time = &st.data.world.time;
+                let objective = &st.data.memory.current_objective;
+                let events: Vec<String> = st.data.world.known_events
+                    .iter()
+                    .take(2)
+                    .filter_map(|e| e.as_str().map(String::from))
+                    .collect();
+                let parts: Vec<&str> = [
+                    location.as_str(),
+                    time.as_str(),
+                    objective.as_str(),
+                ]
+                .into_iter()
+                .chain(events.iter().map(|s| s.as_str()))
+                .filter(|p| !p.is_empty())
+                .collect();
+                if parts.is_empty() {
+                    "开场".to_string()
+                } else {
+                    parts.join(" ")
+                }
+            };
+            // TODO: Python 端用 phase 算法限定 chapter_min/chapter_max;
+            // 此处暂传 None(全量搜索),后续接 _resolve_active_phase_range。
+            match rpg_retrieval::bm25_search(&db, sid as i32, &query, 6, None, None).await {
+                Ok(hits) if !hits.is_empty() => rpg_retrieval::format_chunks_fallback(&hits),
+                Ok(_) => String::new(),
+                Err(e) => {
+                    tracing::warn!(script_id = sid, error = %e, "opening RAG 检索失败,传空 retrieved");
+                    String::new()
                 }
             }
-            Err(e) => {
-                let _ = tx
-                    .send(Ok(named_sse_event(
-                        "error",
-                        json!({"detail": e.to_string(), "code": "llm_error"}),
-                    )))
-                    .await;
+        } else {
+            String::new()
+        };
+
+        // ── Phase 3: Context bundle ────────────────────────────────────
+        // 先 clone state data(parking_lot guard 不能跨 await),再调 async。
+        let state_data_snapshot = {
+            let st = state_handle.read();
+            st.data.clone()
+        };
+        let context_text = {
+            let bundle = rpg_context::build_context_bundle(
+                &state_data_snapshot,
+                "开场",
+                &retrieved,
+                None,           // curator_plan
+                script_id,
+                None,           // book_id
+                None,           // contributions (auto-resolve)
+                None,           // manifest (auto-resolve)
+                save_id,
+                None,           // services (default)
+            )
+            .await;
+            // bundle["prompt"] 是 context engine 拼好的完整 prompt 文本
+            bundle
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+
+        // ── Phase 4: 生成开场白 ────────────────────────────────────────
+        let _ = tx
+            .send(Ok(named_sse_event(
+                "state_change",
+                json!({"phase":"generating","label":"GM 正在构思开场白…"}),
+            )))
+            .await;
+
+        let opening_result = {
+            // 按需创建 GameMaster(不修改 AppState struct,只用局部变量)
+            let gm = {
+                let llm_res = llm_router.read().current_backend();
+                match llm_res {
+                    Ok(llm) => {
+                        std::sync::Arc::new(rpg_agents::gm::GameMaster::new(llm))
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "opening: 无法获取 LLM backend");
+                        // stub fallback
+                        let state_data = state_handle.read().snapshot();
+                        let _ = tx.send(Ok(named_sse_event("chunk", json!({"text":""})))).await;
+                        let _ = tx.send(Ok(named_sse_event(
+                            "done",
+                            json!({"status": {"state": state_data}, "interrupted": false}),
+                        ))).await;
+                        return;
+                    }
+                }
+            };
+            let state_snapshot = state_handle.read().clone();
+            gm.generate_opening(&state_snapshot, &context_text).await
+        };
+
+        let opening_text = match opening_result {
+            Ok(text) if !text.is_empty() => text,
+            Ok(_) => {
+                tracing::warn!("opening: GM 返回空文本,走 stub fallback");
+                let state_data = state_handle.read().snapshot();
+                let _ = tx.send(Ok(named_sse_event("chunk", json!({"text":""})))).await;
+                let _ = tx.send(Ok(named_sse_event(
+                    "done",
+                    json!({"status": {"state": state_data}, "interrupted": false}),
+                ))).await;
                 return;
             }
-        }
-        // 追加 assistant 消息到 history。
-        if !full.is_empty() {
+            Err(e) => {
+                tracing::warn!(error = %e, "opening: GM generate_opening 失败,走 stub fallback");
+                let state_data = state_handle.read().snapshot();
+                let _ = tx.send(Ok(named_sse_event("chunk", json!({"text":""})))).await;
+                let _ = tx.send(Ok(named_sse_event(
+                    "done",
+                    json!({"status": {"state": state_data}, "interrupted": false}),
+                ))).await;
+                return;
+            }
+        };
+
+        // ── Phase 5: 解析结构化更新 + 写 history ───────────────────────
+        {
             let mut st = state_handle.write();
-            let _ = st.append_to_path(
-                "history",
-                json!({"role": "assistant", "content": full.clone()}),
-            );
+            // 结构化 ops 提取 + 应用(对齐 Python state.apply_structured_updates)
+            // 失败不阻塞,只 warn。
+            if let Err(e) = rpg_state::apply_structured_updates(&mut st, &opening_text) {
+                tracing::warn!(error = %e, "opening: apply_structured_updates 失败");
+            }
+            st.append_history("assistant", &opening_text);
+            st.increment_turn();
         }
+
+        // ── Phase 6: SSE 事件 ──────────────────────────────────────────
+        // 一次性发完整文本(gm.generate_opening 不是 stream)
+        let _ = tx
+            .send(Ok(named_sse_event("chunk", json!({"text": opening_text}))))
+            .await;
+
         // done — 带最新 snapshot。
         let state_data = state_handle.read().snapshot();
         let _ = tx
@@ -298,7 +504,6 @@ pub(crate) async fn api_opening(
                 json!({"status": {"state": state_data}, "interrupted": false}),
             )))
             .await;
-        // user_id_clone 仅用作 spawn task 跟踪(防 borrow drop)。
         let _ = user_id_clone;
     });
 
@@ -306,13 +511,8 @@ pub(crate) async fn api_opening(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-/// opening 用的 system prompt — 简化版,够 LLM 知道自己是 GM 即可。
-const OPENING_SYSTEM: &str = "你是这局 TRPG 的 Game Master。请用第二人称叙事,聚焦于场景、五感与玩家可触发的下一步。语气克制,留白让玩家选择。";
-
-/// opening 用的 user prompt — 触发 GM 写开场。
-const OPENING_USER: &str = "请生成一段开场白(150~250 字),描述玩家角色刚醒来时的所见所感。结尾要让玩家自然引出第一个动作。";
-
-/// opening max_tokens。
+/// opening max_tokens(保留常量,供测试引用;实际 max_tokens 由 GameMaster::config 控制)。
+#[allow(dead_code)]
 const OPENING_MAX_TOKENS: u32 = 600;
 
 /// POST /api/chat/estimate — 实时上下文预估
@@ -459,19 +659,17 @@ async fn api_context_breakdown(
     .into_response())
 }
 
-/// POST /api/chat — 主聊天 SSE(Wave 6-A:真接 LLM stream)
+/// POST /api/chat — 主聊天 SSE(5 阶段 pipeline)
 ///
-/// Python 端是 5 阶段 chat_pipeline。Rust 翻译期 GameMaster 链路 (rpg-agents + rpg-llm
-/// router 注入) 还在搭,本 handler 只做:
-///   1. 鉴权 + 空消息校验
-///   2. 配额闸(预估 input + hard_max_tokens)
-///   3. 写 user 消息进 history
-///   4. 取 current_backend(无 backend → 老 stub fallback)→ 真接 stream_chat
-///   5. 逐 chunk 转 SSE,append assistant 文本到 history,emit done(带最新 snapshot)
-///   6. 流末检 cluster::is_stop_requested 决定 interrupted 字段
+/// 完整 pipeline 对齐 Python `chat_pipeline.py`:
+///   1. **Player Directives** — `/set` 解析 + 过期旧 pending questions
+///   2. **Context Assembly** — DB 查 script_id → RAG bm25_search → build_context_bundle
+///   3. **Rules Preflight** — encounter 检测(TODO: 完整 rules engine 集成)
+///   4. **GM Response** — `GameMaster::respond_stream` 流式叙事
+///   5. **Persist** — `apply_structured_updates` + `append_history` + `increment_turn`
 ///
-/// 尚未引入:context_engine 跑 retrieval、worldbook_consulting 中间事件、
-/// extractor → ops apply、rules preflight、persist_chat_turn。这些归 Wave 6-B。
+/// 无 backend 时退化成 stub fallback(空 chunk + done)。
+/// 检索 / 上下文 / 规则任一步失败均退化空上下文继续,不阻塞 GM。
 #[tracing::instrument(skip(s, headers, body), fields(user_id))]
 pub(crate) async fn api_chat(
     State(s): State<AppState>,
@@ -536,52 +734,14 @@ pub(crate) async fn api_chat(
     rpg_platform::cluster::clear_stop(&s.db, user.id.get(), run_id).await;
 
     let shared = s.state_store.get_or_create(&user_id).await;
-    // 写入 user 消息到 history
-    {
-        let mut st = shared.write();
-        let _ = st.append_to_path(
-            "history",
-            json!({"role": "user", "content": message.clone()}),
-        );
-    }
 
-    // ── 构造 LLM 请求 ──────────────────────────────────────────────
-    // history → ChatMessage(从 state.data.history 翻译;过滤非 user/assistant)。
-    let mut messages: Vec<ChatMessage> = {
-        let st = shared.read();
-        st.data
-            .history
-            .iter()
-            .filter_map(|m| {
-                let role = m.get("role")?.as_str()?;
-                let content = m.get("content")?.as_str().unwrap_or("");
-                match role {
-                    "user" => Some(ChatMessage::user(content)),
-                    "assistant" => Some(ChatMessage::assistant(content)),
-                    _ => None,
-                }
-            })
-            .collect()
-    };
-    // history 已含本轮 user(刚 append),不再 push 重复。
-    if messages.is_empty() {
-        // 兜底:历史空时也得有当前 user 消息(理论上不该走到)。
-        messages.push(ChatMessage::user(message.clone()));
-    }
-
-    // 取 backend + selected model;无 backend → 退化老 stub 路径(保持兼容)。
+    // 取 backend;无 backend → 退化老 stub 路径(保持兼容)。
     let backend_opt = s.llm_router.read().current_backend().ok();
-    let model_id = s
-        .llm_router
-        .read()
-        .catalog()
-        .map(|c| c.selected.model_id.clone())
-        .unwrap_or_default();
 
-    // record_actual 闭包:仅在 LLM 路径走到末尾或失败时调一次。
-    // 为了让 spawned task 拿走 grant,把 db pool 也克隆进去。
+    // 为让 spawned task 拿走 grant,把 db pool 也克隆进去。
     let db = s.db.clone();
     let user_id_str = user_id.clone();
+    let user_id_i64 = user.id.get();
     let state_handle = shared.clone();
 
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(32);
@@ -621,56 +781,128 @@ pub(crate) async fn api_chat(
         return Sse::new(guarded).keep_alive(KeepAlive::default()).into_response();
     };
 
-    let mut req = LlmChatRequest {
-        model: model_id,
-        system: Some(CHAT_SYSTEM.to_string()),
-        messages,
-        max_tokens: Some(CHAT_MAX_TOKENS),
-        stream: true,
-        ..Default::default()
-    };
-    // Wave 10-A:按 RPG_CHAT_THINKING_BUDGET / ANTHROPIC_THINKING_BUDGET
-    // 注入 extended thinking 预算(0 时是 no-op,保持 Python 端默认行为)。
-    rpg_llm::merge_thinking_extra(&mut req.extra, rpg_core::config::chat_thinking_budget());
-
-    // 在 task 内跑 LLM stream,SSE 流由 ReceiverStream 包 rx。
+    // ── 有 backend:5 阶段 pipeline(在 spawned task 内跑) ──────────
     let stop_notify = s.stop_notify(&user_id);
     let user_id_u = user.id;
     tokio::spawn(async move {
         let mut full = String::new();
-        let mut usage_total: u32 = 0;
+        let usage_total: u32 = 0;
         let mut interrupted = false;
 
-        let stream_result = backend.stream_chat(req).await;
-        match stream_result {
+        // ── Phase 1: Player Directives ──────────────────────────────
+        {
+            let mut st = state_handle.write();
+            let _ = rpg_state::apply_player_directives(&mut st, &message);
+            rpg_state::expire_stale_gm_questions(&mut st, None, "chat_new_turn");
+        }
+
+        // ── Phase 2: Context Assembly ───────────────────────────────
+        let _ = tx.send(Ok(named_sse_event(
+            "state_change",
+            json!({"phase":"context","label":"正在整理上下文…"}),
+        ))).await;
+
+        // 2a. 从 DB 取当前用户活跃存档的 script_id
+        let script_id: Option<i64> = sqlx::query_scalar(
+            "SELECT script_id FROM game_saves WHERE user_id = $1 \
+             ORDER BY updated_at DESC LIMIT 1",
+        )
+        .bind(user_id_i64)
+        .fetch_optional(&db)
+        .await
+        .ok()
+        .flatten();
+
+        // 2b. RAG 检索
+        let retrieved = if let Some(sid) = script_id {
+            let retrieval_query = {
+                let st = state_handle.read();
+                let loc = &st.data.player.current_location;
+                let obj = &st.data.memory.current_objective;
+                let mut parts: Vec<&str> = Vec::new();
+                if !loc.is_empty() { parts.push(loc.as_str()); }
+                if !obj.is_empty() { parts.push(obj.as_str()); }
+                parts.push(&message);
+                parts.join(" ")
+            };
+            match rpg_retrieval::bm25_search(
+                &db, sid as i32, &retrieval_query, 8, None, None,
+            ).await {
+                Ok(hits) => rpg_retrieval::format_chunks_fallback(&hits),
+                Err(e) => {
+                    tracing::warn!(error = %e, "Phase 2 RAG 检索失败,退化空上下文");
+                    String::new()
+                }
+            }
+        } else {
+            String::new()
+        };
+
+        // 2c. build_context_bundle
+        let context_text = if let Some(sid) = script_id {
+            let state_data = state_handle.read().data.clone();
+            let bundle = rpg_context::build_context_bundle(
+                &state_data,
+                &message,
+                &retrieved,
+                None, Some(sid), None, None, None, None, None,
+            ).await;
+            bundle.get("prompt")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| retrieved.clone())
+        } else {
+            retrieved.clone()
+        };
+
+        // ── Phase 3: Rules Preflight ────────────────────────────────
+        let _ = tx.send(Ok(named_sse_event(
+            "state_change",
+            json!({"phase":"rules","label":"正在检查规则…"}),
+        ))).await;
+
+        let has_encounter = {
+            let st = state_handle.read();
+            st.data.encounter.active
+        };
+        if has_encounter {
+            // TODO: 调 rpg_rules::get_engine().skill_check / initiative 等
+            tracing::debug!("Phase 3: 活跃 encounter,跳过规则预检 (TODO)");
+        }
+
+        // ── Phase 4: GM Response ────────────────────────────────────
+        let _ = tx.send(Ok(named_sse_event(
+            "state_change",
+            json!({"phase":"generating","label":"GM 正在回应…"}),
+        ))).await;
+
+        let gm = rpg_agents::gm::GameMaster::new(backend);
+        let state_snapshot = state_handle.read().clone();
+
+        match gm.respond_stream(&message, &context_text, &state_snapshot).await {
             Ok(mut stream) => {
                 loop {
                     tokio::select! {
-                        // 本 pod stop 信号
                         _ = stop_notify.notified() => {
                             interrupted = true;
                             break;
                         }
-                        item = stream.next() => {
-                            let Some(item) = item else { break };
-                            match item {
-                                Ok(chunk) => {
-                                    // 流式 cluster stop 轮询(写另一个 pod 的 stop_signals 时命中)。
+                        chunk_opt = stream.next() => {
+                            let Some(chunk_result) = chunk_opt else { break };
+                            match chunk_result {
+                                Ok(text) => {
                                     if rpg_platform::cluster::is_stop_requested(
                                         &db, user_id_u.get(), run_id,
                                     ).await {
                                         interrupted = true;
                                         break;
                                     }
-                                    if let ChatChunk::Text(t) = &chunk {
-                                        full.push_str(t);
-                                    }
-                                    if let ChatChunk::Usage(u) = &chunk {
-                                        usage_total = u.output_tokens;
-                                    }
-                                    let wire = WireChatChunk::from_chunk(&chunk);
-                                    let payload = serde_json::to_value(&wire).unwrap_or_else(|_| json!({}));
-                                    if tx.send(Ok(named_sse_event("chunk", payload))).await.is_err() {
+                                    full.push_str(&text);
+                                    if tx.send(Ok(named_sse_event(
+                                        "chunk",
+                                        json!({"text": text}),
+                                    ))).await.is_err() {
                                         return;
                                     }
                                 }
@@ -687,32 +919,42 @@ pub(crate) async fn api_chat(
                 }
             }
             Err(e) => {
-                let _ = tx
-                    .send(Ok(named_sse_event(
-                        "error",
-                        json!({"detail": e.to_string(), "code": "llm_error"}),
-                    )))
-                    .await;
+                let _ = tx.send(Ok(named_sse_event("chunk", json!({"text":""})))).await;
+                tracing::error!(error = %e, "GM respond_stream failed");
+                let _ = tx.send(Ok(named_sse_event(
+                    "error",
+                    json!({"detail": e.to_string(), "code": "llm_error"}),
+                ))).await;
             }
         }
 
-        // append assistant 文本到 history。
+        // ── Phase 5: Persist ────────────────────────────────────────
         if !full.is_empty() {
             let mut st = state_handle.write();
-            let _ = st.append_to_path(
-                "history",
-                json!({"role": "assistant", "content": full.clone()}),
-            );
+            // 结构化更新(【…】tags + ```json``` ops)
+            if let Err(e) = rpg_state::apply_structured_updates(&mut st, &full) {
+                tracing::warn!(error = %e, "Phase 5: apply_structured_updates 部分失败");
+            }
+            // append history + increment turn
+            st.append_history("user", &message);
+            st.append_history("assistant", &full);
+            st.increment_turn();
         }
+
+        // TODO: record_runtime_turn — 需要 parent_commit_id / ref_id 等分支上下文,
+        // 当前 handler 未持有,留后续 Wave 接入。
+
         let state_after = state_handle.read().snapshot();
 
-        // 跨 pod stop 二次确认(被打断时 cluster::is_stop_requested 也应该为 true)。
+        // 跨 pod stop 二次确认
         if !interrupted {
-            interrupted = rpg_platform::cluster::is_stop_requested(&db, user_id_u.get(), run_id).await;
+            interrupted = rpg_platform::cluster::is_stop_requested(
+                &db, user_id_u.get(), run_id,
+            ).await;
         }
         rpg_platform::cluster::clear_stop(&db, user_id_u.get(), run_id).await;
 
-        // 配额回填 usage。无 Usage chunk 时 fallback est_input + 0 output。
+        // 配额回填 usage
         let out_tokens = usage_total.clamp(0, i32::MAX as u32) as i32;
         let actual = rpg_platform::usage::UsageBreakdown {
             input_tokens: est_input.clamp(0, i32::MAX as i64) as i32,
@@ -721,7 +963,9 @@ pub(crate) async fn api_chat(
             reasoning_tokens: 0,
             total_tokens: est_input.clamp(0, i32::MAX as i64) as i32 + out_tokens,
         };
-        quota::record_actual(&db, grant, None, None, &actual, est_input as i32, 1_000_000).await;
+        quota::record_actual(
+            &db, grant, None, None, &actual, est_input as i32, 1_000_000,
+        ).await;
 
         let _ = tx
             .send(Ok(named_sse_event(
@@ -729,17 +973,20 @@ pub(crate) async fn api_chat(
                 json!({"status": {"state": state_after}, "interrupted": interrupted}),
             )))
             .await;
-        let _ = user_id_str; // 静音 unused warning。
+        let _ = user_id_str;
     });
 
     let guarded = GuardedStream::new(ReceiverStream::new(rx), sse_guard);
     Sse::new(guarded).keep_alive(KeepAlive::default()).into_response()
 }
 
-/// chat 用的 system prompt。简化版,等接 GameMaster `build_system` 后替换。
+/// chat 用的 system prompt。GameMaster 内部有自己的 system prompt(gm_master.txt),
+/// 此常量保留供测试引用。
+#[allow(dead_code)]
 const CHAT_SYSTEM: &str = "你是这局 TRPG 的 Game Master,根据玩家输入推进剧情。第二人称叙事,描写场景与可触发的下一步。";
 
-/// chat 默认 max_tokens。
+/// chat 默认 max_tokens(实际由 GameMaster::config 控制)。
+#[allow(dead_code)]
 const CHAT_MAX_TOKENS: u32 = 800;
 
 /// 把 [`QuotaError`] 渲染成 429 响应 + `Retry-After` 头(若有建议),
@@ -992,11 +1239,9 @@ mod tests {
         assert_eq!(full, "Hello world");
     }
 
-    /// Opening prompt 常量非空,避免硬退化掉。
+    /// Opening / Chat prompt 常量非空,避免硬退化掉。
     #[test]
     fn test_opening_prompts_non_empty() {
-        assert!(!OPENING_SYSTEM.is_empty());
-        assert!(!OPENING_USER.is_empty());
         const { assert!(OPENING_MAX_TOKENS > 0) };
         assert!(!CHAT_SYSTEM.is_empty());
         const { assert!(CHAT_MAX_TOKENS > 0) };

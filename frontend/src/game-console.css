@@ -1389,10 +1389,6 @@
 }
 .gp-sse li:nth-child(odd) { background: transparent; }
 
-/* ============================ TWEAKS PANEL ======================== */
-/* style overrides on top of starter component */
-.tweaks-panel { border-radius: 10px !important; border-color: var(--line) !important; background: var(--panel) !important; }
-
 /* ============================ RESPONSIVE ========================== */
 /* Bug 1 fix：1100px 下保留 topbar 4 段可见性。
  * 原来 `.gc-topbar-left > .pill { display: none }` 直接隐藏"已存档"pill；

@@ -14,6 +14,7 @@ rpg-agents.workspace = true
 rpg-platform.workspace = true
 rpg-db.workspace = true
 rpg-rules.workspace = true
+rpg-retrieval.workspace = true
 rpg-rules-bridge.workspace = true
 rpg-tools-dsl.workspace = true
 model_catalog.workspace = true

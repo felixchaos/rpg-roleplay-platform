@@ -2,7 +2,10 @@
    只搬家，UI / props 流 / fetch 路径完全不变。
    依赖 platform-app.jsx 注入的全局: Icon / SettingsToggle / ConfirmModal / useAutoSave / usePlatformData / fmtN。 */
 
-const { useState: useStatePL, useEffect: useEffectPL, useMemo: useMemoPL, useCallback: useCallbackPL } = React;
+import React from 'react';
+import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
+import { Icon } from '../game-icons.jsx';
+import { ConfirmModal, SettingsToggle, useAutoSave, usePlatformData, fmtN } from '../platform-app.jsx';
 
 /* ---------------------------- SETTINGS ------------------------- */
 function SettingsPage() {
@@ -2815,6 +2818,40 @@ function DangerSection() {
   );
 }
 
+// ── ESM export(W12 重构修复 Vite 迁移后的跨文件作用域断裂)──
+// platform-app.jsx 用到 MODELS_DATA / PROVIDERS_CONFIG;原 babel-script 时代它们
+// 是全局 const 自然可见,Vite ESM 下变成 module-local 必须显式 export 出来。
+export {
+  SettingsPage,
+  MODELS_DATA,
+  PROVIDERS_CONFIG,
+  CAP_LABEL,
+  ApiModelsList,
+  AddModelModal,
+  EditApiModal,
+  ValidateModal,
+  VisibilityModal,
+  ProviderCard,
+  ProviderConfigSection,
+  ParamSlider,
+  ModelNameCell,
+  HealthDot,
+  ModelsSection,
+  ModuleModelsSection,
+  ModelParamsSection,
+  ExtractorSection,
+  PrefSection,
+  PermSection,
+  ClarifySection,
+  MemorySection,
+  DangerSection,
+  DeploySection,
+  AuditLogView,
+};
+
+// 过渡期保留 window 注入,等所有 consumer 改完 import 后删除。
 Object.assign(window, {
   SettingsPage,
+  MODELS_DATA,
+  PROVIDERS_CONFIG,
 });

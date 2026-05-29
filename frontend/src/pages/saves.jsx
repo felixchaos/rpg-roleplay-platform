@@ -3,7 +3,11 @@
    依赖 platform-app.jsx 注入的全局: Icon / ConfirmModal / BranchGraph (来自 branch-graph.jsx)。
    注意：本文件提供 NewGameModal 给 scripts.jsx 与 platform-app.jsx 共享（通过 window.NewGameModal）。 */
 
-const { useState: useStatePL, useEffect: useEffectPL, useMemo: useMemoPL, useCallback: useCallbackPL } = React;
+import React from 'react';
+import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
+import { Icon } from '../game-icons.jsx';
+import { ConfirmModal } from '../platform-app.jsx';
+import { BranchGraph } from '../branch-graph.jsx';
 
 /* ---------------------------- SAVES ---------------------------- */
 function SavesPage({ subPage = "list" }) {
@@ -205,17 +209,15 @@ function SavesListView() {
         onConfirm={onCreate}
       />
       {/* task 127: 平台 ConfirmModal 取代浏览器 confirm() */}
-      {window.ConfirmModal && (
-        <window.ConfirmModal
-          open={!!deleteTarget}
-          title="删除存档"
-          body={deleteTarget ? `确定删除存档「${deleteTarget.title}」？此操作不可撤销 (但磁盘 commit 文件仍可恢复)。` : ""}
-          danger
-          confirmLabel="确认删除"
-          onClose={() => setDeleteTarget(null)}
-          onConfirm={confirmDeleteSave}
-        />
-      )}
+      <ConfirmModal
+        open={!!deleteTarget}
+        title="删除存档"
+        body={deleteTarget ? `确定删除存档「${deleteTarget.title}」？此操作不可撤销 (但磁盘 commit 文件仍可恢复)。` : ""}
+        danger
+        confirmLabel="确认删除"
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDeleteSave}
+      />
     </div>
   );
 }
@@ -1595,3 +1597,4 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
 Object.assign(window, {
   SavesPage, SavesListView, BranchesPage, ContinuePicker, NewGameModal,
 });
+export { SavesPage, SavesListView, BranchesPage, ContinuePicker, NewGameModal };

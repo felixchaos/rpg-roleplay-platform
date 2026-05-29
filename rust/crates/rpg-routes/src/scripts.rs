@@ -476,10 +476,10 @@ async fn api_script_character_cards(
     let rows = if let Some(cid) = cursor_id {
         sqlx::query(
             r#"
-            select id, script_id, name, kind, description, attributes,
-                   enabled, created_at
+            select id, script_id, name, identity, appearance, personality,
+                   speech_style, aliases, sample_dialogue, priority, enabled, created_at
             from character_cards
-            where script_id = $1 and id > $2
+            where script_id = $1 and id > $2 and enabled = true
             order by id limit $3
             "#,
         )
@@ -491,10 +491,10 @@ async fn api_script_character_cards(
     } else {
         sqlx::query(
             r#"
-            select id, script_id, name, kind, description, attributes,
-                   enabled, created_at
+            select id, script_id, name, identity, appearance, personality,
+                   speech_style, aliases, sample_dialogue, priority, enabled, created_at
             from character_cards
-            where script_id = $1
+            where script_id = $1 and enabled = true
             order by id limit $2
             "#,
         )
@@ -512,9 +512,13 @@ async fn api_script_character_cards(
                 "id": r.try_get::<i64,_>("id").unwrap_or_default(),
                 "script_id": r.try_get::<i64,_>("script_id").unwrap_or_default(),
                 "name": r.try_get::<String,_>("name").unwrap_or_default(),
-                "kind": r.try_get::<String,_>("kind").unwrap_or_default(),
-                "description": r.try_get::<String,_>("description").unwrap_or_default(),
-                "attributes": r.try_get::<Value,_>("attributes").unwrap_or(Value::Object(Default::default())),
+                "identity": r.try_get::<String,_>("identity").unwrap_or_default(),
+                "appearance": r.try_get::<String,_>("appearance").unwrap_or_default(),
+                "personality": r.try_get::<String,_>("personality").unwrap_or_default(),
+                "speech_style": r.try_get::<String,_>("speech_style").unwrap_or_default(),
+                "aliases": r.try_get::<Value,_>("aliases").unwrap_or(json!([])),
+                "sample_dialogue": r.try_get::<Value,_>("sample_dialogue").unwrap_or(json!([])),
+                "priority": r.try_get::<i32,_>("priority").unwrap_or(100),
                 "enabled": r.try_get::<bool,_>("enabled").unwrap_or(true),
                 "created_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>,_>("created_at").unwrap_or_default(),
             })
@@ -562,9 +566,10 @@ async fn api_script_character_card(
 
     let row = sqlx::query(
         r#"
-        select id, script_id, name, kind, description, attributes, enabled, created_at
+        select id, script_id, name, identity, appearance, personality,
+               speech_style, aliases, sample_dialogue, priority, enabled, created_at
         from character_cards
-        where id = $1 and script_id = $2
+        where id = $1 and script_id = $2 and enabled = true
         "#,
     )
     .bind(card_id)
@@ -581,9 +586,13 @@ async fn api_script_character_card(
                 "id": r.try_get::<i64,_>("id").unwrap_or_default(),
                 "script_id": r.try_get::<i64,_>("script_id").unwrap_or_default(),
                 "name": r.try_get::<String,_>("name").unwrap_or_default(),
-                "kind": r.try_get::<String,_>("kind").unwrap_or_default(),
-                "description": r.try_get::<String,_>("description").unwrap_or_default(),
-                "attributes": r.try_get::<Value,_>("attributes").unwrap_or(Value::Object(Default::default())),
+                "identity": r.try_get::<String,_>("identity").unwrap_or_default(),
+                "appearance": r.try_get::<String,_>("appearance").unwrap_or_default(),
+                "personality": r.try_get::<String,_>("personality").unwrap_or_default(),
+                "speech_style": r.try_get::<String,_>("speech_style").unwrap_or_default(),
+                "aliases": r.try_get::<Value,_>("aliases").unwrap_or(json!([])),
+                "sample_dialogue": r.try_get::<Value,_>("sample_dialogue").unwrap_or(json!([])),
+                "priority": r.try_get::<i32,_>("priority").unwrap_or(100),
                 "enabled": r.try_get::<bool,_>("enabled").unwrap_or(true),
                 "created_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>,_>("created_at").unwrap_or_default(),
             }
@@ -656,9 +665,9 @@ async fn api_script_worldbook(
     let rows = if let Some(cid) = cursor_id {
         sqlx::query(
             r#"
-            select id, script_id, keyword, content, tags, created_at
+            select id, script_id, title, content, keys, priority, enabled, created_at
             from worldbook_entries
-            where script_id = $1 and id > $2
+            where script_id = $1 and id > $2 and enabled = true
             order by id limit $3
             "#,
         )
@@ -670,9 +679,9 @@ async fn api_script_worldbook(
     } else {
         sqlx::query(
             r#"
-            select id, script_id, keyword, content, tags, created_at
+            select id, script_id, title, content, keys, priority, enabled, created_at
             from worldbook_entries
-            where script_id = $1
+            where script_id = $1 and enabled = true
             order by id limit $2
             "#,
         )
@@ -689,9 +698,11 @@ async fn api_script_worldbook(
             json!({
                 "id": r.try_get::<i64,_>("id").unwrap_or_default(),
                 "script_id": r.try_get::<i64,_>("script_id").unwrap_or_default(),
-                "keyword": r.try_get::<String,_>("keyword").unwrap_or_default(),
+                "title": r.try_get::<String,_>("title").unwrap_or_default(),
                 "content": r.try_get::<String,_>("content").unwrap_or_default(),
-                "tags": r.try_get::<Vec<String>,_>("tags").unwrap_or_default(),
+                "keys": r.try_get::<Value,_>("keys").unwrap_or(json!([])),
+                "priority": r.try_get::<i32,_>("priority").unwrap_or(50),
+                "enabled": r.try_get::<bool,_>("enabled").unwrap_or(true),
                 "created_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>,_>("created_at").unwrap_or_default(),
             })
         })

@@ -21,210 +21,209 @@
  *   流式 (streaming=true) 模式下,允许最后一段未闭合标记 (例如刚打到 `**` 还没第二个 `**`),
  *   按字面文本显示,等下一帧自然补齐。
  */
-(function () {
-  if (typeof React === "undefined" || window.RpgMarkdown) return;
+import React from 'react';
 
-  // ── inline 解析 ─────────────────────────────────────────────
-  // 顺序很重要: 长 token 在前
-  const INLINE_RULES = [
-    { re: /\*\*([^*\n]+?)\*\*/g, tag: "strong" },
-    { re: /__([^_\n]+?)__/g, tag: "strong" },
-    { re: /~~([^~\n]+?)~~/g, tag: "del" },
-    { re: /\*([^*\n]+?)\*/g, tag: "em" },
-    { re: /(?<!\w)_([^_\n]+?)_(?!\w)/g, tag: "em" },
-    { re: /`([^`\n]+?)`/g, tag: "code" },
-    { re: /\[([^\]\n]+?)\]\(([^)\s]+)\)/g, tag: "a" },
-  ];
+// ── inline 解析 ─────────────────────────────────────────────
+// 顺序很重要: 长 token 在前
+const INLINE_RULES = [
+  { re: /\*\*([^*\n]+?)\*\*/g, tag: "strong" },
+  { re: /__([^_\n]+?)__/g, tag: "strong" },
+  { re: /~~([^~\n]+?)~~/g, tag: "del" },
+  { re: /\*([^*\n]+?)\*/g, tag: "em" },
+  { re: /(?<!\w)_([^_\n]+?)_(?!\w)/g, tag: "em" },
+  { re: /`([^`\n]+?)`/g, tag: "code" },
+  { re: /\[([^\]\n]+?)\]\(([^)\s]+)\)/g, tag: "a" },
+];
 
-  function renderInline(text, keyPrefix) {
-    // 找出所有 match,按位置排序,non-overlap
-    const hits = [];
-    INLINE_RULES.forEach((rule, ri) => {
-      rule.re.lastIndex = 0;
-      let m;
-      while ((m = rule.re.exec(text)) !== null) {
-        hits.push({
-          start: m.index,
-          end: m.index + m[0].length,
-          tag: rule.tag,
-          text: m[1],
-          href: rule.tag === "a" ? m[2] : null,
-        });
-      }
-    });
-    hits.sort((a, b) => a.start - b.start || a.end - b.end);
-    // greedy non-overlap
-    const picked = [];
-    let lastEnd = 0;
-    for (const h of hits) {
-      if (h.start >= lastEnd) {
-        picked.push(h);
-        lastEnd = h.end;
-      }
+function renderInline(text, keyPrefix) {
+  // 找出所有 match,按位置排序,non-overlap
+  const hits = [];
+  INLINE_RULES.forEach((rule, ri) => {
+    rule.re.lastIndex = 0;
+    let m;
+    while ((m = rule.re.exec(text)) !== null) {
+      hits.push({
+        start: m.index,
+        end: m.index + m[0].length,
+        tag: rule.tag,
+        text: m[1],
+        href: rule.tag === "a" ? m[2] : null,
+      });
     }
-    if (!picked.length) return text;
-    const out = [];
-    let cur = 0;
-    let kid = 0;
-    for (const h of picked) {
-      if (h.start > cur) out.push(text.slice(cur, h.start));
-      const k = `${keyPrefix}-${kid++}`;
-      if (h.tag === "a") {
-        out.push(React.createElement("a", {
-          key: k, href: h.href, target: "_blank", rel: "noopener noreferrer",
-        }, h.text));
-      } else {
-        out.push(React.createElement(h.tag, { key: k }, h.text));
-      }
-      cur = h.end;
+  });
+  hits.sort((a, b) => a.start - b.start || a.end - b.end);
+  // greedy non-overlap
+  const picked = [];
+  let lastEnd = 0;
+  for (const h of hits) {
+    if (h.start >= lastEnd) {
+      picked.push(h);
+      lastEnd = h.end;
     }
-    if (cur < text.length) out.push(text.slice(cur));
-    return out;
   }
+  if (!picked.length) return text;
+  const out = [];
+  let cur = 0;
+  let kid = 0;
+  for (const h of picked) {
+    if (h.start > cur) out.push(text.slice(cur, h.start));
+    const k = `${keyPrefix}-${kid++}`;
+    if (h.tag === "a") {
+      out.push(React.createElement("a", {
+        key: k, href: h.href, target: "_blank", rel: "noopener noreferrer",
+      }, h.text));
+    } else {
+      out.push(React.createElement(h.tag, { key: k }, h.text));
+    }
+    cur = h.end;
+  }
+  if (cur < text.length) out.push(text.slice(cur));
+  return out;
+}
 
-  // ── block 级解析 ────────────────────────────────────────────
-  function parseBlocks(text) {
-    const lines = (text || "").split("\n");
-    const blocks = [];
-    let i = 0;
-    while (i < lines.length) {
-      const line = lines[i];
-      // 空行 → 段落分隔
-      if (!line.trim()) { i++; continue; }
-      // 水平线
-      if (/^\s*(---+|\*\*\*+|___+)\s*$/.test(line)) {
-        blocks.push({ type: "hr" });
-        i++;
-        continue;
-      }
-      // 标题
-      const hm = /^(#{1,6})\s+(.+)$/.exec(line);
-      if (hm) {
-        blocks.push({ type: "heading", level: hm[1].length, text: hm[2].trim() });
-        i++;
-        continue;
-      }
-      // 代码块
-      if (/^```/.test(line)) {
-        const lang = line.slice(3).trim();
-        const buf = [];
-        i++;
-        while (i < lines.length && !/^```/.test(lines[i])) {
-          buf.push(lines[i]);
-          i++;
-        }
-        if (i < lines.length) i++; // skip closing ```
-        blocks.push({ type: "code", lang, text: buf.join("\n") });
-        continue;
-      }
-      // 引用 - 连续 > 行合并
-      if (/^>\s?/.test(line)) {
-        const buf = [];
-        while (i < lines.length && /^>\s?/.test(lines[i])) {
-          buf.push(lines[i].replace(/^>\s?/, ""));
-          i++;
-        }
-        blocks.push({ type: "quote", text: buf.join("\n") });
-        continue;
-      }
-      // 无序列表
-      if (/^\s*[-*]\s+/.test(line)) {
-        const items = [];
-        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-          items.push(lines[i].replace(/^\s*[-*]\s+/, ""));
-          i++;
-        }
-        blocks.push({ type: "ul", items });
-        continue;
-      }
-      // 有序列表
-      if (/^\s*\d+\.\s+/.test(line)) {
-        const items = [];
-        while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
-          items.push(lines[i].replace(/^\s*\d+\.\s+/, ""));
-          i++;
-        }
-        blocks.push({ type: "ol", items });
-        continue;
-      }
-      // 段落 - 连续非空非特殊行合并
-      const buf = [line];
+// ── block 级解析 ────────────────────────────────────────────
+function parseBlocks(text) {
+  const lines = (text || "").split("\n");
+  const blocks = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    // 空行 → 段落分隔
+    if (!line.trim()) { i++; continue; }
+    // 水平线
+    if (/^\s*(---+|\*\*\*+|___+)\s*$/.test(line)) {
+      blocks.push({ type: "hr" });
       i++;
-      while (i < lines.length) {
-        const nl = lines[i];
-        if (!nl.trim()) break;
-        if (/^(#{1,6})\s+/.test(nl)) break;
-        if (/^```/.test(nl)) break;
-        if (/^>\s?/.test(nl)) break;
-        if (/^\s*[-*]\s+/.test(nl)) break;
-        if (/^\s*\d+\.\s+/.test(nl)) break;
-        if (/^\s*(---+|\*\*\*+|___+)\s*$/.test(nl)) break;
-        buf.push(nl);
+      continue;
+    }
+    // 标题
+    const hm = /^(#{1,6})\s+(.+)$/.exec(line);
+    if (hm) {
+      blocks.push({ type: "heading", level: hm[1].length, text: hm[2].trim() });
+      i++;
+      continue;
+    }
+    // 代码块
+    if (/^```/.test(line)) {
+      const lang = line.slice(3).trim();
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i])) {
+        buf.push(lines[i]);
         i++;
       }
-      blocks.push({ type: "p", text: buf.join("\n") });
+      if (i < lines.length) i++; // skip closing ```
+      blocks.push({ type: "code", lang, text: buf.join("\n") });
+      continue;
     }
-    return blocks;
+    // 引用 - 连续 > 行合并
+    if (/^>\s?/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        buf.push(lines[i].replace(/^>\s?/, ""));
+        i++;
+      }
+      blocks.push({ type: "quote", text: buf.join("\n") });
+      continue;
+    }
+    // 无序列表
+    if (/^\s*[-*]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*[-*]\s+/, ""));
+        i++;
+      }
+      blocks.push({ type: "ul", items });
+      continue;
+    }
+    // 有序列表
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*\d+\.\s+/, ""));
+        i++;
+      }
+      blocks.push({ type: "ol", items });
+      continue;
+    }
+    // 段落 - 连续非空非特殊行合并
+    const buf = [line];
+    i++;
+    while (i < lines.length) {
+      const nl = lines[i];
+      if (!nl.trim()) break;
+      if (/^(#{1,6})\s+/.test(nl)) break;
+      if (/^```/.test(nl)) break;
+      if (/^>\s?/.test(nl)) break;
+      if (/^\s*[-*]\s+/.test(nl)) break;
+      if (/^\s*\d+\.\s+/.test(nl)) break;
+      if (/^\s*(---+|\*\*\*+|___+)\s*$/.test(nl)) break;
+      buf.push(nl);
+      i++;
+    }
+    blocks.push({ type: "p", text: buf.join("\n") });
   }
+  return blocks;
+}
 
-  // ── React 渲染 ──────────────────────────────────────────────
-  function Block({ text, streaming, className }) {
-    const blocks = React.useMemo(() => parseBlocks(text || ""), [text]);
+// ── React 渲染 ──────────────────────────────────────────────
+function Block({ text, streaming, className }) {
+  const blocks = React.useMemo(() => parseBlocks(text || ""), [text]);
+  return React.createElement(
+    "div",
+    { className: className || "rpg-md" },
+    ...blocks.map((b, i) => renderBlock(b, i, streaming && i === blocks.length - 1))
+  );
+}
+
+function renderBlock(b, i, isLast) {
+  const k = `b${i}`;
+  if (b.type === "hr") return React.createElement("hr", { key: k });
+  if (b.type === "heading") {
     return React.createElement(
-      "div",
-      { className: className || "rpg-md" },
-      ...blocks.map((b, i) => renderBlock(b, i, streaming && i === blocks.length - 1))
+      "h" + Math.min(6, b.level), { key: k }, renderInline(b.text, k)
     );
   }
-
-  function renderBlock(b, i, isLast) {
-    const k = `b${i}`;
-    if (b.type === "hr") return React.createElement("hr", { key: k });
-    if (b.type === "heading") {
-      return React.createElement(
-        "h" + Math.min(6, b.level), { key: k }, renderInline(b.text, k)
-      );
-    }
-    if (b.type === "code") {
-      return React.createElement(
-        "pre", { key: k, "data-lang": b.lang || "" },
-        React.createElement("code", null, b.text + (isLast ? "" : ""))
-      );
-    }
-    if (b.type === "quote") {
-      // 引用内部允许多行 inline
-      const lines = b.text.split("\n");
-      return React.createElement(
-        "blockquote", { key: k },
-        ...lines.map((ln, j) => React.createElement(
-          "p", { key: `${k}-${j}` }, renderInline(ln, `${k}-${j}`),
-          isLast && j === lines.length - 1 ? React.createElement("span", { className: "gc-cursor", key: "c" }) : null,
-        ))
-      );
-    }
-    if (b.type === "ul") {
-      return React.createElement(
-        "ul", { key: k },
-        ...b.items.map((it, j) => React.createElement(
-          "li", { key: `${k}-${j}` }, renderInline(it, `${k}-${j}`)
-        ))
-      );
-    }
-    if (b.type === "ol") {
-      return React.createElement(
-        "ol", { key: k },
-        ...b.items.map((it, j) => React.createElement(
-          "li", { key: `${k}-${j}` }, renderInline(it, `${k}-${j}`)
-        ))
-      );
-    }
-    // paragraph (默认)
+  if (b.type === "code") {
     return React.createElement(
-      "p", { key: k },
-      ...[].concat(renderInline(b.text, k)),
-      isLast ? React.createElement("span", { className: "gc-cursor", key: "c" }) : null
+      "pre", { key: k, "data-lang": b.lang || "" },
+      React.createElement("code", null, b.text + (isLast ? "" : ""))
     );
   }
+  if (b.type === "quote") {
+    // 引用内部允许多行 inline
+    const lines = b.text.split("\n");
+    return React.createElement(
+      "blockquote", { key: k },
+      ...lines.map((ln, j) => React.createElement(
+        "p", { key: `${k}-${j}` }, renderInline(ln, `${k}-${j}`),
+        isLast && j === lines.length - 1 ? React.createElement("span", { className: "gc-cursor", key: "c" }) : null,
+      ))
+    );
+  }
+  if (b.type === "ul") {
+    return React.createElement(
+      "ul", { key: k },
+      ...b.items.map((it, j) => React.createElement(
+        "li", { key: `${k}-${j}` }, renderInline(it, `${k}-${j}`)
+      ))
+    );
+  }
+  if (b.type === "ol") {
+    return React.createElement(
+      "ol", { key: k },
+      ...b.items.map((it, j) => React.createElement(
+        "li", { key: `${k}-${j}` }, renderInline(it, `${k}-${j}`)
+      ))
+    );
+  }
+  // paragraph (默认)
+  return React.createElement(
+    "p", { key: k },
+    ...[].concat(renderInline(b.text, k)),
+    isLast ? React.createElement("span", { className: "gc-cursor", key: "c" }) : null
+  );
+}
 
-  window.RpgMarkdown = { Block, parseBlocks, renderInline };
-})();
+window.RpgMarkdown = { Block, parseBlocks, renderInline };
+export const RpgMarkdown = { Block, parseBlocks, renderInline };

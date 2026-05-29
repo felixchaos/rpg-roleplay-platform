@@ -175,41 +175,27 @@ async fn api_saves_create(
         return Err(ResponseError::forbidden("无权访问该剧本"));
     }
 
-    // 构建初始 state_snapshot（透传前端填的字段）
-    let mut initial_state = serde_json::Map::new();
-    if let Some(card) = &body.new_card {
-        if card.is_object() {
-            initial_state.insert("new_card".to_string(), card.clone());
+    // 构建 character 引用(合并 character_id + character_kind)
+    let character: Option<Value> = match (&body.character_id, &body.character_kind) {
+        (Some(cid), Some(ckind)) if !ckind.is_empty() => {
+            Some(json!({"id": cid, "kind": ckind}))
         }
-    }
-    if let Some(cid) = &body.character_id {
-        if let Some(ckind) = &body.character_kind {
-            if !ckind.is_empty() {
-                initial_state.insert(
-                    "character".to_string(),
-                    json!({"id": cid, "kind": ckind}),
-                );
-            }
-        }
-    }
-    if let Some(bp) = &body.birthpoint {
-        if bp.is_object() {
-            initial_state.insert("birthpoint".to_string(), bp.clone());
-        }
-    }
-    if let Some(id) = &body.identity {
-        if id.is_object() {
-            initial_state.insert("identity".to_string(), id.clone());
-        }
-    }
-    if let Some(si) = &body.story_intent {
-        let trimmed = si.trim();
-        if !trimmed.is_empty() {
-            initial_state.insert("story_intent".to_string(), json!(trimmed));
-        }
-    }
+        _ => None,
+    };
 
-    let snapshot = Value::Object(initial_state);
+    // 用 build_initial_snapshot 构造合法 GameState(对齐 Python _build_initial_snapshot)
+    let snapshot = rpg_platform::save_io::build_initial_snapshot(
+        &state.db,
+        user.id.into(),
+        script_id,
+        body.new_card.as_ref(),
+        character.as_ref(),
+        body.birthpoint.as_ref(),
+        body.identity.as_ref(),
+        body.story_intent.as_deref(),
+    )
+    .await;
+
     let title = body.title.trim().to_string();
 
     let save = rpg_platform::save_io::create_save(
@@ -221,6 +207,22 @@ async fn api_saves_create(
     )
     .await
     .map_err(ResponseError::from)?;
+
+    // seed_tree: 建立 branch tree root commit(对齐 Python workspace.create_save 的 anchor_seed)
+    let save_id = save.id;
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        if let Err(e) =
+            rpg_platform::branches::seed::seed_tree(&db, save_id, "").await
+        {
+            tracing::warn!(
+                target: "rpg_routes::saves",
+                save_id,
+                error = %e,
+                "background seed_tree failed for new save"
+            );
+        }
+    });
 
     Ok(Json(json!({"ok": true, "save": save})))
 }

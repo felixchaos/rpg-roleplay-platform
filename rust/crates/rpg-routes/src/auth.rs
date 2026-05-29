@@ -27,6 +27,7 @@ use rpg_platform::auth::password::{hash_password, verify_password};
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/auth/schema", get(api_auth_schema))
         .route("/api/auth/register", post(api_register))
         .route("/api/auth/login", post(api_login))
         .route("/api/auth/logout", post(api_logout))
@@ -38,6 +39,81 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/sessions/revoke-all", post(api_revoke_all_sessions))
         .route("/api/auth/sms-code", post(api_sms_code))
         .route("/api/auth/sms-verify", post(api_sms_verify))
+}
+
+/// GET /api/auth/schema —— 返回登录/注册表单的字段定义,供前端 Login 页动态渲染。
+///
+/// 字段定义只代表 HTTP 契约约定的形态(key/label/type/required/...),
+/// **不**包含密码策略 / SMS 验证开关之类的运行时配置(由各 handler 内部决定)。
+///
+/// 用户实测改变字段需求(比如以后增加 email 必填),只需:
+///   1. 修 `register` 数组 + Service 层 register 函数
+///   2. 前端无需改动 — 自动按新 schema 渲染
+async fn api_auth_schema(State(state): State<AppState>) -> impl IntoResponse {
+    let min_password = rpg_core::config::min_password_length();
+    let password_hint = format!("至少 {min_password} 位");
+    let mode = state.config.deployment_mode.as_str();
+    let invite_only = matches!(mode, "server" | "production" | "prod" | "cloud");
+
+    Json(serde_json::json!({
+        "ok": true,
+        "login": [
+            {
+                "key": "username",
+                "label": "用户名",
+                "type": "text",
+                "required": true,
+                "autocomplete": "username",
+                "placeholder": "字母 / 数字 / 下划线",
+                "max_length": 64
+            },
+            {
+                "key": "password",
+                "label": "密码",
+                "type": "password",
+                "required": true,
+                "autocomplete": "current-password",
+                "placeholder": password_hint.clone(),
+                "min_length": min_password
+            }
+        ],
+        "register": [
+            {
+                "key": "username",
+                "label": "用户名",
+                "type": "text",
+                "required": true,
+                "autocomplete": "username",
+                "placeholder": "字母 / 数字 / 下划线,3-32 位",
+                "max_length": 32,
+                "min_length": 3
+            },
+            {
+                "key": "password",
+                "label": "密码",
+                "type": "password",
+                "required": true,
+                "autocomplete": "new-password",
+                "placeholder": password_hint,
+                "min_length": min_password
+            },
+            {
+                "key": "display_name",
+                "label": "显示名",
+                "type": "text",
+                "required": false,
+                "autocomplete": "nickname",
+                "placeholder": "可选 · 留空将用用户名",
+                "max_length": 64
+            }
+        ],
+        "notes": {
+            // 给前端用作页脚提示。后端是唯一权威。
+            "first_user_is_admin": true,
+            "invite_only": invite_only,
+            "min_password_length": min_password
+        }
+    }))
 }
 
 // ── 请求/响应 query 结构体 ─────────────────────────────────────────────────────
@@ -376,27 +452,23 @@ async fn api_login_history(
     let fmt = params.format.as_deref().unwrap_or("").to_lowercase();
     let limit: i64 = params.limit.unwrap_or(50).clamp(1, 500);
 
-    // login_audit 表: 两种 schema 兼容处理
-    // Rust DB 中的 login_audit 可能是 rpg-db migration 建的版本:
-    //   (id, user_id, action, ip, user_agent, ok, created_at)
-    // Python frontend_routes.py 动态建的是:
-    //   (id, username, ip, event, meta jsonb, created_at)
-    // 这里尝试查 user_id 版,fallback 结果为空。
+    // login_audit 表真实 schema: (id, username, ip, event, meta jsonb, created_at)
+    // 按 username 匹配当前用户,username 存的就是登录时提交的用户名。
     let rows = match sqlx::query(
         r#"
         select id,
+               username,
                ip,
-               action as event,
-               user_agent,
-               ok,
+               event,
+               meta,
                created_at
         from login_audit
-        where user_id = $1
+        where username = $1
         order by created_at desc
         limit $2
         "#,
     )
-    .bind(user.id)
+    .bind(&user.username)
     .bind(limit)
     .fetch_all(&state.db)
     .await
@@ -412,16 +484,22 @@ async fn api_login_history(
             let at: Option<chrono::DateTime<chrono::Utc>> = r.try_get("created_at").ok();
             let ip: Option<String> = r.try_get("ip").ok().flatten();
             let event: Option<String> = r.try_get("event").ok();
-            let user_agent: Option<String> = r.try_get("user_agent").ok().flatten();
-            let ok_flag: Option<bool> = r.try_get("ok").ok();
-            let result_str = ok_flag
-                .map(|ok| if ok { "ok" } else { "blocked" })
-                .unwrap_or("ok");
+            let meta: Option<serde_json::Value> = r.try_get("meta").ok();
+            // meta 里可能有 "result" / "ok" 字段;fallback 用 event 判断
+            let result_str = meta
+                .as_ref()
+                .and_then(|m| m.get("result").and_then(|v| v.as_str()).map(String::from))
+                .or_else(|| {
+                    meta.as_ref()
+                        .and_then(|m| m.get("ok").and_then(|v| v.as_bool()))
+                        .map(|ok| if ok { "ok" } else { "blocked" }.to_string())
+                })
+                .unwrap_or_else(|| "ok".to_string());
             json!({
                 "id": id,
                 "at": at.map(|t| t.to_rfc3339()),
                 "ip": ip,
-                "user_agent": user_agent,
+                "meta": meta,
                 "result": result_str,
                 "event": event,
             })

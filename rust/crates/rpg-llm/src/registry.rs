@@ -209,8 +209,8 @@ impl Default for ModelCatalog {
         Self {
             schema_version: 1,
             selected: Selected {
-                api_id: "vertex_ai".into(),
-                model_id: "gemini-3.5-flash".into(),
+                api_id: "anthropic".into(),
+                model_id: "claude-haiku-4-5".into(),
             },
             apis: vec![
                 ApiEntry {

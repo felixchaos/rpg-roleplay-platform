@@ -1,6 +1,10 @@
 /* Platform shell + all page bodies. Single-file for simplicity. */
 
-const { useState: useStatePL, useEffect: useEffectPL, useMemo: useMemoPL, useCallback: useCallbackPL } = React;
+import React from 'react';
+import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
+import { Icon } from './game-icons.jsx';
+import { useResizable, ResizeHandle } from './responsive.jsx';
+import { MODELS_DATA } from './pages/settings.jsx';
 
 const PL_NAV = [
   { section: "工作台" },
@@ -382,7 +386,7 @@ function PlatformShell({ page, setPage, children, assistant, assistantOpen, onOp
   // task 102B/104b/105: sidebar 宽度可拖,
   //   · 拖动期间直接 mutate .pl-side inline style 绕过 React 重渲
   //   · collapsed 视觉态由 CSS @container (max-width: 139px) 自动触发, 不需 React 判断
-  const { size: sidebarW, dragHandleProps: sidebarDrag } = window.useResizable({
+  const { size: sidebarW, dragHandleProps: sidebarDrag } = useResizable({
     storageKey: "pl.sidebar.w",
     defaultSize: 244,
     min: 64,
@@ -398,7 +402,7 @@ function PlatformShell({ page, setPage, children, assistant, assistantOpen, onOp
       style={{ "--pl-sidebar-w": sidebarW + "px" }}
     >
       <aside className="pl-side">
-        <window.ResizeHandle side="left" {...sidebarDrag} />
+        <ResizeHandle side="left" {...sidebarDrag} />
         <div className="pl-side-head">
           <div className="pl-mark"><Icon name="logo" size={14} /></div>
           <div>
@@ -3165,6 +3169,8 @@ Object.assign(window, {
   SettingsToggle, fmtBytes, fmtN,
   useAutoSave, usePlatformData,
 });
+
+export { PlatformShell, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData };
 
 // ──────────────────────────────────────────────────────────────────
 // 以下函数本体已拆分到 pages/cards.jsx / pages/saves.jsx /

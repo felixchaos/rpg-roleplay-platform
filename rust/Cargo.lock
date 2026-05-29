@@ -3035,6 +3035,7 @@ dependencies = [
  "rpg-db",
  "rpg-llm",
  "rpg-platform",
+ "rpg-retrieval",
  "rpg-rules",
  "rpg-rules-bridge",
  "rpg-schemas",

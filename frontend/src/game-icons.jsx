@@ -1,5 +1,6 @@
 /* Shared icon set for the RPG console — minimal stroke icons.
    All icons are 24x24 viewBox, currentColor stroke. */
+import React from 'react';
 
 const Icon = ({ name, size = 16, strokeWidth = 1.6, style }) => {
   const common = {
@@ -101,3 +102,4 @@ const Icon = ({ name, size = 16, strokeWidth = 1.6, style }) => {
 };
 
 window.Icon = Icon;
+export { Icon };

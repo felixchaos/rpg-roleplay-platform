@@ -3,30 +3,22 @@ import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
 export default defineConfig(({ mode }) => {
-  const isProd = mode === 'production';
+  // mode 暂未驱动分支(原 dev-only Design Canvas 入口已删);保留 sig 兼容。
+  void mode;
 
   const inputs = {
-    // 5 个正式多页入口
-    index:        resolve(__dirname, 'index.html'),
-    overview:     resolve(__dirname, 'Overview.html'),
+    // 产品入口:登录 + 多用户创作工作台 + RPG 游戏控制台。
+    // 旧 Claude Design 原型(Overview / index 设计评审)+ Design Canvas 已删;
+    // landing 另起项目独立部署。Login 由本仓库提供(配套后端鉴权)。
+    login:        resolve(__dirname, 'Login.html'),
     platform:     resolve(__dirname, 'Platform.html'),
     game_console: resolve(__dirname, 'Game Console.html'),
-    login:        resolve(__dirname, 'Login.html'),
   };
 
-  // Design Canvas 仅 dev 模式（内部布局审稿工具，prod build 不包含）
-  if (!isProd) {
-    inputs.design_canvas = resolve(__dirname, 'Design Canvas.html');
-  }
-
   return {
-    plugins: [react()],
-
-    // 把 React / ReactDOM 注入为全局变量，兼容现有 JSX 里大量 `React.xxx` / `ReactDOM.xxx` 的写法
-    // （JSX 文件均未 import React，延续零构建 UMD 风格）
-    define: {
-      // 不需要额外 define：@vitejs/plugin-react 已通过 automatic JSX runtime 注入
-    },
+    // jsxRuntime: 'classic' — 所有 JSX 文件已显式 import React,
+    // classic runtime 用 React.createElement 替代 automatic 的 _jsx()。
+    plugins: [react({ jsxRuntime: 'classic' })],
 
     server: {
       port: 5173,

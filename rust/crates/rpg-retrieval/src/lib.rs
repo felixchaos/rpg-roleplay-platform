@@ -187,7 +187,7 @@ pub async fn bm25_search(
             continue;
         }
         seen.insert(id);
-        let chapter_index: i32 = row.try_get("chunk_index").unwrap_or(0);
+        let chapter_index: i32 = row.try_get("chapter_index").unwrap_or(0);
         let chunk_index: i32 = row.try_get("chunk_index").unwrap_or(0);
         let content: String = row.try_get("content").unwrap_or_default();
         let score = tokens.iter().filter(|t| content.contains(t.as_str())).count() as f64;

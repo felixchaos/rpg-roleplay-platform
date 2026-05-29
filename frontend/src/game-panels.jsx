@@ -2,7 +2,9 @@
    Tabs: status / memory / worldbook / characters / timeline / context / debug
    Each tab is data-driven from window.MOCK_STATE. */
 
-const { useState, useMemo } = React;
+import React from 'react';
+import { useState, useMemo } from 'react';
+import { Icon } from './game-icons.jsx';
 
 const PANEL_TABS = [
   { id: "status", label: "状态", icon: "status" },
@@ -1789,3 +1791,4 @@ function RightPanel({ state, activeTab, setActiveTab, sidebarWidth, density, col
 }
 
 Object.assign(window, { RightPanel, PANEL_TABS, PanelRules });
+export { RightPanel, PANEL_TABS, PanelRules, PanelCharacters, PanelStatus, PanelContext, PanelMemory, PanelTimeline, PanelWorldbook, PanelDebug, CharacterCard, WorldlineAnchorsSection };
