@@ -55,6 +55,8 @@ use serde_json::json;
 use thiserror::Error as ThisError;
 use tokio::signal;
 use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tower_http::{
     compression::CompressionLayer,
     cors::{AllowOrigin, CorsLayer},
@@ -114,6 +116,12 @@ pub struct AppState {
 
     /// 进程级配置快照(env 变量已 freeze)。
     pub config: Arc<AppConfig>,
+
+    /// 用于通知所有 spawned task 退出的取消令牌。
+    pub shutdown_token: CancellationToken,
+
+    /// 追踪所有 spawned task,graceful shutdown 时等待全部完成。
+    pub task_tracker: TaskTracker,
 }
 
 /// 启动期 freeze 的配置,避免 handler 反复 `env::var`。
@@ -356,8 +364,18 @@ fn inject_api_headers(headers: &mut HeaderMap, request_id: &str) {
 
 /// startup 阶段:MCP 健康 loop / command tools / durable job 恢复 / model catalog 加载。
 async fn lifespan_startup(state: &AppState) {
-    // 1. MCP 健康 loop(注意:start_health_loop 是 sync,内部 spawn tokio task)
-    state.mcp_broker.start_health_loop();
+    // 1. MCP 健康 loop — 用 task_tracker 追踪,使 graceful shutdown 能等待其退出
+    {
+        let broker = state.mcp_broker.clone();
+        let token = state.shutdown_token.clone();
+        state.task_tracker.spawn(async move {
+            // start_health_loop 是同步启动内部 tokio task,在 tracker 的 task 内运行,
+            // 并监听 shutdown_token,一旦取消则等待 health_loop 停止。
+            broker.start_health_loop();
+            token.cancelled().await;
+            broker.stop_health_loop().await;
+        });
+    }
     info!("startup: mcp_broker health loop started");
 
     // 2. 注册默认 plugin 工具(对应 Python `command_tools_register.ensure_registered`)
@@ -408,10 +426,22 @@ async fn lifespan_startup(state: &AppState) {
     //    对应 Python `platform_app.script_import.cleanup_stale_upload_chunks(ttl_hours=24)`
 }
 
-/// shutdown 阶段:停 MCP 健康 loop / 杀子进程 / 关闭 pool。
+/// shutdown 阶段:cancel → 等所有 task 完成 → 停 MCP 子进程 → 关 pool。
 async fn lifespan_shutdown(state: &AppState) {
-    state.mcp_broker.stop_health_loop().await;
+    // 1. 广播取消信号 — 所有持有 shutdown_token.clone() 的 spawned task 都会感知
+    state.shutdown_token.cancel();
+    info!("shutdown: cancellation token broadcast");
+
+    // 2. 等所有已追踪 task 退出(包括 in-flight SSE / LLM stream 写日志任务)
+    state.task_tracker.close();
+    state.task_tracker.wait().await;
+    info!("shutdown: all spawned tasks drained");
+
+    // 3. 停止 MCP 子进程(health_loop 已由 task 内部处理,此处补充保险)
     state.mcp_broker.stop_all().await;
+    info!("shutdown: mcp_broker stopped");
+
+    // 4. 关闭数据库连接池
     state.db.close().await;
     info!("lifespan shutdown done");
 }
@@ -447,6 +477,7 @@ fn build_router(state: AppState) -> Router {
         stop_events: state.stop_events.clone(),
         mcp_broker: state.mcp_broker.clone(),
         console_conversations: Arc::new(DashMap::new()),
+        chunk_uploads: Arc::new(DashMap::new()),
     };
     let api_routes = rpg_routes::build_routes().with_state(routes_state);
 
@@ -490,9 +521,32 @@ fn build_cors_layer(cfg: &AppConfig) -> CorsLayer {
         ])
         .max_age(Duration::from_secs(cfg.cors_max_age.max(0) as u64));
 
-    if cfg.cors_origins.iter().any(|o| o == "*") {
-        layer = layer.allow_origin(AllowOrigin::any());
+    let has_wildcard = cfg.cors_origins.iter().any(|o| o == "*");
+
+    if has_wildcard {
+        // `credentials: include` 不可与 `*` 同用;改为 Mirror — 回显请求 Origin,
+        // 这样既满足 allow_credentials(true) 的要求,又不硬写来源列表。
+        warn!(
+            "cors_origins 包含 '*',已自动切换为 AllowOrigin::mirror_request() \
+             以兼容 credentials: include (RFC 要求明确 origin)"
+        );
+        layer = layer
+            .allow_origin(AllowOrigin::mirror_request())
+            .allow_credentials(true);
+    } else if cfg.cors_origins.is_empty() {
+        // 生产环境 cors_origins 为空 → 无任何跨域请求会被放行,记 warn 便于排查
+        if cfg.deployment_mode == "production"
+            || cfg.deployment_mode == "prod"
+            || cfg.deployment_mode == "cloud"
+        {
+            warn!(
+                deployment_mode = %cfg.deployment_mode,
+                "cors_origins 为空,生产环境所有跨域请求将被拒绝,请在 RPG_CORS_ORIGINS 配置允许来源"
+            );
+        }
+        // 不设 allow_origin → tower-http 默认拒绝所有跨域
     } else {
+        // 明确 origin 列表:不含 `*`,可安全启用 allow_credentials
         let parsed: Vec<HeaderValue> = cfg
             .cors_origins
             .iter()
@@ -504,6 +558,34 @@ fn build_cors_layer(cfg: &AppConfig) -> CorsLayer {
         }
     }
     layer
+}
+
+// ─── Cookie helper ─────────────────────────────────────────────────────────
+
+/// 构造符合安全规范的 session cookie 头值字符串。
+///
+/// 属性约定:
+/// - `HttpOnly` — 防止 XSS 脚本读取
+/// - `Path=/` — 整个站点有效
+/// - `SameSite=Lax` — 防止 CSRF 同时允许普通跨站跳转携带
+/// - `Secure` — prod 环境强制 HTTPS(开发环境可传 `false`)
+///
+/// 用法示例(handler 侧,TODO: future routes wire):
+/// ```ignore
+/// let cookie = build_session_cookie("session", &token, cfg.deployment_mode == "production");
+/// response.headers_mut().insert(header::SET_COOKIE, HeaderValue::from_str(&cookie)?);
+/// ```
+pub fn build_session_cookie(name: &str, token: &str, secure: bool) -> String {
+    let mut parts = vec![
+        format!("{}={}", name, token),
+        "Path=/".to_string(),
+        "HttpOnly".to_string(),
+        "SameSite=Lax".to_string(),
+    ];
+    if secure {
+        parts.push("Secure".to_string());
+    }
+    parts.join("; ")
 }
 
 // ─── main ──────────────────────────────────────────────────────────────────
@@ -521,6 +603,10 @@ async fn main() -> Result<()> {
         .with_env_filter(env_filter)
         .with_target(true)
         .init();
+
+    // 启动日志含 commit hash,便于日志追踪(可后续通过 BUILD_COMMIT env 覆盖)
+    let commit_hash = option_env!("BUILD_COMMIT").unwrap_or("rust-migration");
+    info!(commit = commit_hash, "rpg-server starting");
 
     // 3. 配置 + 鉴权 banner(对应 Python `_startup_auth_banner`)
     let config = Arc::new(AppConfig::from_env());
@@ -568,6 +654,8 @@ async fn main() -> Result<()> {
         run_ids: Arc::new(DashMap::new()),
         mcp_broker: Arc::new(McpBroker::default()),
         config: config.clone(),
+        shutdown_token: CancellationToken::new(),
+        task_tracker: TaskTracker::new(),
     };
 
     // 7. lifespan startup
