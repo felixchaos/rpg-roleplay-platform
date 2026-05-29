@@ -232,10 +232,12 @@ pub async fn build_context_bundle(
 /// 不暴露 player_private / secrets / story_intent 这些只属于玩家私域的字段。
 /// rpg-state 完全成熟时这里可改成直接调 `state.short_summary()`。
 fn state_short_summary(state_data: &Value) -> String {
+    // 静态空对象 / Null 占位,避免 .get() 返回 None 时分配。
+    static NULL: Value = Value::Null;
     let mut lines: Vec<String> = Vec::new();
 
     // ── 玩家段 ───────────────────────────────────────────────
-    let player = state_data.get("player").cloned().unwrap_or(Value::Null);
+    let player = state_data.get("player").unwrap_or(&NULL);
     let p_name = player.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let p_role = player.get("role").and_then(|v| v.as_str()).unwrap_or("");
     let p_loc = player
@@ -271,12 +273,11 @@ fn state_short_summary(state_data: &Value) -> String {
     }
 
     // ── 场景 / 时间 ───────────────────────────────────────────
-    let world = state_data.get("world").cloned().unwrap_or(Value::Null);
+    let world = state_data.get("world").unwrap_or(&NULL);
     let scene = state_data
         .get("scene")
-        .cloned()
-        .or_else(|| world.get("scene").cloned())
-        .unwrap_or(Value::Null);
+        .or_else(|| world.get("scene"))
+        .unwrap_or(&NULL);
     let w_time = world.get("time").and_then(|v| v.as_str()).unwrap_or("");
     let s_loc = scene.get("location").and_then(|v| v.as_str()).unwrap_or("");
     let s_phase = world
@@ -300,9 +301,8 @@ fn state_short_summary(state_data: &Value) -> String {
     // ── 战斗 / encounter ──────────────────────────────────────
     let encounter = state_data
         .get("encounter")
-        .cloned()
-        .or_else(|| scene.get("encounter").cloned())
-        .unwrap_or(Value::Null);
+        .or_else(|| scene.get("encounter"))
+        .unwrap_or(&NULL);
     if encounter.is_object() {
         let active = encounter
             .get("active")
@@ -344,7 +344,7 @@ fn state_short_summary(state_data: &Value) -> String {
             }
         }
     }
-    let memory = state_data.get("memory").cloned().unwrap_or(Value::Null);
+    let memory = state_data.get("memory").unwrap_or(&NULL);
     let main_quest = memory
         .get("main_quest")
         .and_then(|v| v.as_str())

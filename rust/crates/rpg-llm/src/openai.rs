@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use eventsource_stream::Eventsource;
 use futures_util::stream::{self, StreamExt, TryStreamExt};
+use smallvec::SmallVec;
 
 use crate::pipeline::{
     build_http_client, namespaced_tool_name, BackendKind, ChatChunk, ChatMessage, ChatRequest,
@@ -209,7 +210,7 @@ impl LlmBackend for OpenAiBackend {
             .map_err(|e| LlmError::Stream(e.to_string()));
 
         let parsed = event_stream.scan(OpenAiStreamState::default(), |state, ev_res| {
-            let chunks = match ev_res {
+            let chunks: OpenAiSseChunks = match ev_res {
                 Ok(ev) => {
                     if ev.data.trim() == "[DONE]" {
                         state.finalize()
@@ -217,7 +218,11 @@ impl LlmBackend for OpenAiBackend {
                         state.process(&ev.data)
                     }
                 }
-                Err(e) => vec![Err(e)],
+                Err(e) => {
+                    let mut sv: OpenAiSseChunks = SmallVec::new();
+                    sv.push(Err(e));
+                    sv
+                }
             };
             futures_util::future::ready(Some(chunks))
         });
@@ -317,21 +322,26 @@ struct ToolCallBuf {
     args: String,
 }
 
+// OpenAI SSE 每事件通常 0-1 个 chunk;finalize 可能含多项工具调用,4 槽基本覆盖。
+type OpenAiSseChunks = SmallVec<[Result<ChatChunk, LlmError>; 2]>;
+
 impl OpenAiStreamState {
-    fn process(&mut self, data: &str) -> Vec<Result<ChatChunk, LlmError>> {
+    fn process(&mut self, data: &str) -> OpenAiSseChunks {
         if data.trim().is_empty() {
-            return vec![];
+            return SmallVec::new();
         }
         let value: serde_json::Value = match serde_json::from_str(data) {
             Ok(v) => v,
             Err(e) => {
-                return vec![Ok(ChatChunk::Error(format!(
+                let mut sv: OpenAiSseChunks = SmallVec::new();
+                sv.push(Ok(ChatChunk::Error(format!(
                     "openai sse parse: {e}; data={}",
                     clip(data, 200)
-                )))];
+                ))));
+                return sv;
             }
         };
-        let mut out = Vec::new();
+        let mut out: OpenAiSseChunks = SmallVec::new();
         if let Some(usage) = value.get("usage") {
             if !usage.is_null() {
                 self.last_usage = Some(parse_openai_usage(usage));
@@ -384,12 +394,12 @@ impl OpenAiStreamState {
         out
     }
 
-    fn finalize(&mut self) -> Vec<Result<ChatChunk, LlmError>> {
+    fn finalize(&mut self) -> OpenAiSseChunks {
         if self.finalized {
-            return vec![];
+            return SmallVec::new();
         }
         self.finalized = true;
-        let mut out = Vec::new();
+        let mut out: OpenAiSseChunks = SmallVec::new();
         let mut keys: Vec<u32> = self.tool_calls.keys().copied().collect();
         keys.sort_unstable();
         for k in keys {

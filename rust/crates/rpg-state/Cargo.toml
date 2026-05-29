@@ -20,5 +20,7 @@ tracing.workspace = true
 once_cell.workspace = true
 regex.workspace = true
 rand.workspace = true
+phf.workspace = true
+ahash.workspace = true
 # task: script_overrides 走 rpg-db::repos::script_overrides;saves 表 join 走 sqlx raw SQL 兜底。
 sqlx.workspace = true

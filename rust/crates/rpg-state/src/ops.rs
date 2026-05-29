@@ -21,10 +21,9 @@
 //!    e. 通过 → 写入 + audit_log + 用户写入 → mark_user_locked
 
 use chrono::Utc;
-use once_cell::sync::Lazy;
+use phf::phf_set;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
@@ -120,32 +119,27 @@ pub fn validate_op(op: &Op) -> Result<(), OpError> {
 // 黑白名单(原样搬 Python `rpg/state/path_ops.py`)
 // ─────────────────────────────────────────────────────────────
 
-static HARD_FORBIDDEN_PATHS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    ["schema_version", "history", "created_at", "is_new"]
-        .into_iter()
-        .collect()
-});
+/// 编译期完美哈希集合 — 精确路径黑名单(前缀匹配另有 HARD_FORBIDDEN_PREFIXES)。
+static HARD_FORBIDDEN_PATHS: phf::Set<&'static str> =
+    phf_set! { "schema_version", "history", "created_at", "is_new" };
 
 static HARD_FORBIDDEN_PREFIXES: &[&str] = &["history.", "permissions."];
 
-static RULES_MANAGED_PATHS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    [
-        "player_character.hp",
-        "player_character.max_hp",
-        "player_character.ac",
-        "player_character.inventory",
-        "encounter.active",
-        "encounter.round",
-        "encounter.turn_index",
-        "encounter.initiative_order",
-        "encounter.combatants",
-        "encounter.encounter_id",
-        "encounter.log",
-        "dice_log",
-    ]
-    .into_iter()
-    .collect()
-});
+/// 编译期完美哈希集合 — 规则引擎管理的精确路径。
+static RULES_MANAGED_PATHS: phf::Set<&'static str> = phf_set! {
+    "player_character.hp",
+    "player_character.max_hp",
+    "player_character.ac",
+    "player_character.inventory",
+    "encounter.active",
+    "encounter.round",
+    "encounter.turn_index",
+    "encounter.initiative_order",
+    "encounter.combatants",
+    "encounter.encounter_id",
+    "encounter.log",
+    "dice_log"
+};
 
 static RULES_MANAGED_PREFIXES: &[&str] = &[
     "encounter.combatants.",
@@ -155,8 +149,9 @@ static RULES_MANAGED_PREFIXES: &[&str] = &[
     "player_character.inventory.",
 ];
 
-static MODULE_MANAGED_PATHS: Lazy<HashSet<&'static str>> =
-    Lazy::new(|| ["player.current_location"].into_iter().collect());
+/// 编译期完美哈希集合 — 模组运行时管理的精确路径。
+static MODULE_MANAGED_PATHS: phf::Set<&'static str> =
+    phf_set! { "player.current_location" };
 
 pub fn is_hard_forbidden(path: &str) -> bool {
     HARD_FORBIDDEN_PATHS.contains(path)
@@ -227,48 +222,40 @@ pub fn is_write_allowed(path: &str, mode_raw: &str) -> bool {
     if path.starts_with("worldline.custom_ui.") || path.starts_with("ui.") {
         return mode == "full_access";
     }
-    static ALLOWED: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-        [
-            "player.name",
-            "player.role",
-            "player.background",
-            "player.current_location",
-            "world.time",
-            "world.timeline.current_phase",
-            "world.timeline.anchor_state",
-            "world.known_events",
-            "memory.mode",
-            "memory.main_quest",
-            "memory.current_objective",
-            "memory.resources",
-            "memory.abilities",
-            "memory.facts",
-            "memory.pinned",
-            "memory.notes",
-        ]
-        .into_iter()
-        .collect()
-    });
+    static ALLOWED: phf::Set<&'static str> = phf_set! {
+        "player.name",
+        "player.role",
+        "player.background",
+        "player.current_location",
+        "world.time",
+        "world.timeline.current_phase",
+        "world.timeline.anchor_state",
+        "world.known_events",
+        "memory.mode",
+        "memory.main_quest",
+        "memory.current_objective",
+        "memory.resources",
+        "memory.abilities",
+        "memory.facts",
+        "memory.pinned",
+        "memory.notes"
+    };
     if mode == "auto_review" {
         return ALLOWED.contains(path)
             || path.starts_with("relationships.")
             || path.starts_with("worldline.user_variables.");
     }
     if mode == "default" {
-        static DEFAULT_ALLOWED: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-            [
-                "player.current_location",
-                "world.time",
-                "memory.main_quest",
-                "memory.current_objective",
-                "memory.resources",
-                "memory.abilities",
-                "memory.facts",
-                "world.known_events",
-            ]
-            .into_iter()
-            .collect()
-        });
+        static DEFAULT_ALLOWED: phf::Set<&'static str> = phf_set! {
+            "player.current_location",
+            "world.time",
+            "memory.main_quest",
+            "memory.current_objective",
+            "memory.resources",
+            "memory.abilities",
+            "memory.facts",
+            "world.known_events"
+        };
         return DEFAULT_ALLOWED.contains(path) || path.starts_with("relationships.");
     }
     false

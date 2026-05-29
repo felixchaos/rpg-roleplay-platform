@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use eventsource_stream::Eventsource;
 use futures_util::stream::{self, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 use crate::pipeline::{
     build_http_client, namespaced_tool_name, BackendKind, ChatChunk, ChatMessage, ChatRequest,
@@ -262,9 +263,13 @@ impl LlmBackend for AnthropicBackend {
 
         let state = StreamState::default();
         let parsed = event_stream.scan(state, |state, ev_res| {
-            let chunks = match ev_res {
+            let chunks: SseChunks = match ev_res {
                 Ok(ev) => state.process(&ev.event, &ev.data),
-                Err(e) => vec![Err(e)],
+                Err(e) => {
+                    let mut sv: SseChunks = SmallVec::new();
+                    sv.push(Err(e));
+                    sv
+                }
             };
             futures_util::future::ready(Some(chunks))
         });
@@ -350,19 +355,24 @@ struct StreamState {
     current_thinking_signature: Option<String>,
 }
 
+// SSE 每事件通常只产出 0-1 个 chunk;2 槽足够 message_stop(Usage+Stop)栈上存放。
+type SseChunks = SmallVec<[Result<ChatChunk, LlmError>; 2]>;
+
 impl StreamState {
-    fn process(&mut self, event: &str, data: &str) -> Vec<Result<ChatChunk, LlmError>> {
+    fn process(&mut self, event: &str, data: &str) -> SseChunks {
         // 解析 JSON,失败直接吐 error chunk 但不停止流。
         let value: serde_json::Value = match serde_json::from_str(data) {
             Ok(v) => v,
             Err(e) => {
-                return vec![Ok(ChatChunk::Error(format!(
+                let mut sv: SseChunks = SmallVec::new();
+                sv.push(Ok(ChatChunk::Error(format!(
                     "anthropic sse parse: {e}; event={event}; data={}",
                     clip(data, 200)
-                )))];
+                ))));
+                return sv;
             }
         };
-        let mut out = Vec::new();
+        let mut out: SseChunks = SmallVec::new();
         match event {
             "message_start" => {
                 if let Some(u) = value

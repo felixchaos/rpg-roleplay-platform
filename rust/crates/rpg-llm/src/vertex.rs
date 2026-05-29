@@ -24,6 +24,8 @@ type DefaultConnector = yup_oauth2::hyper_rustls::HttpsConnector<
     hyper_util::client::legacy::connect::HttpConnector,
 >;
 
+use smallvec::SmallVec;
+
 use crate::pipeline::{
     build_http_client, namespaced_tool_name, BackendKind, ChatChunk, ChatMessage, ChatRequest,
     ChatRole, ChunkStream, LlmBackend, LlmError, MessagePart, ModelInfo, Usage,
@@ -275,9 +277,13 @@ impl LlmBackend for VertexBackend {
             .map_err(|e| LlmError::Stream(e.to_string()));
 
         let parsed = event_stream.scan(VertexStreamState::default(), |state, ev_res| {
-            let chunks = match ev_res {
+            let chunks: VertexSseChunks = match ev_res {
                 Ok(ev) => state.process(&ev.data),
-                Err(e) => vec![Err(e)],
+                Err(e) => {
+                    let mut sv: VertexSseChunks = SmallVec::new();
+                    sv.push(Err(e));
+                    sv
+                }
             };
             futures_util::future::ready(Some(chunks))
         });
@@ -372,21 +378,26 @@ struct VertexStreamState {
     _accumulated_text: String,
 }
 
+// Vertex 每 SSE 事件通常 1-2 个 chunk;2 槽足够多数情况栈上分配。
+type VertexSseChunks = SmallVec<[Result<ChatChunk, LlmError>; 2]>;
+
 impl VertexStreamState {
-    fn process(&mut self, data: &str) -> Vec<Result<ChatChunk, LlmError>> {
+    fn process(&mut self, data: &str) -> VertexSseChunks {
         if data.trim().is_empty() {
-            return vec![];
+            return SmallVec::new();
         }
         let value: serde_json::Value = match serde_json::from_str(data) {
             Ok(v) => v,
             Err(e) => {
-                return vec![Ok(ChatChunk::Error(format!(
+                let mut sv: VertexSseChunks = SmallVec::new();
+                sv.push(Ok(ChatChunk::Error(format!(
                     "vertex sse parse: {e}; data={}",
                     clip(data, 200)
-                )))];
+                ))));
+                return sv;
             }
         };
-        let mut out: Vec<Result<ChatChunk, LlmError>> = Vec::new();
+        let mut out: VertexSseChunks = SmallVec::new();
         push_response_chunks(&value, &mut out);
         if let Some(reason) = stop_reason_from(&value) {
             out.push(Ok(ChatChunk::Stop { reason }));
@@ -396,7 +407,11 @@ impl VertexStreamState {
 }
 
 /// 把单个 GenerateContentResponse / 流式 chunk JSON 拍成 ChatChunks。
-fn push_response_chunks(value: &serde_json::Value, out: &mut Vec<Result<ChatChunk, LlmError>>) {
+/// 接受任意支持 `push` 的容器(Vec / SmallVec 均可)。
+fn push_response_chunks<C>(value: &serde_json::Value, out: &mut C)
+where
+    C: Extend<Result<ChatChunk, LlmError>>,
+{
     if let Some(cands) = value.get("candidates").and_then(|v| v.as_array()) {
         for cand in cands {
             if let Some(parts) = cand
@@ -414,9 +429,9 @@ fn push_response_chunks(value: &serde_json::Value, out: &mut Vec<Result<ChatChun
                                 .and_then(|t| t.as_bool())
                                 .unwrap_or(false);
                             if is_thought {
-                                out.push(Ok(ChatChunk::Thinking(text.to_string())));
+                                out.extend([Ok(ChatChunk::Thinking(text.to_string()))]);
                             } else {
-                                out.push(Ok(ChatChunk::Text(text.to_string())));
+                                out.extend([Ok(ChatChunk::Text(text.to_string()))]);
                             }
                         }
                     }
@@ -431,11 +446,11 @@ fn push_response_chunks(value: &serde_json::Value, out: &mut Vec<Result<ChatChun
                             .cloned()
                             .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
                         // Gemini 没有显式 id,用 name 作为合成 id(GameMaster 层会再 namespace 一次)。
-                        out.push(Ok(ChatChunk::ToolCall {
+                        out.extend([Ok(ChatChunk::ToolCall {
                             id: format!("vertex_{name}"),
                             name,
                             input: args,
-                        }));
+                        })]);
                     }
                 }
             }
@@ -462,7 +477,7 @@ fn push_response_chunks(value: &serde_json::Value, out: &mut Vec<Result<ChatChun
                 .unwrap_or(0) as u32,
         };
         if u.input_tokens > 0 || u.output_tokens > 0 || u.reasoning_tokens > 0 {
-            out.push(Ok(ChatChunk::Usage(u)));
+            out.extend([Ok(ChatChunk::Usage(u))]);
         }
     }
 }

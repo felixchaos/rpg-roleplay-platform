@@ -36,6 +36,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use ahash::RandomState as AHashState;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use tokio::sync::broadcast;
@@ -62,12 +63,12 @@ pub type StateSaver =
 ///
 /// 替代 Python 全局 `_state_by_user`。bus 字段对外暴露 [`Self::subscribe`],
 /// 任何写入路径(`apply_op_for_user` / 入口方法)统一从这里 publish 事件。
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct StateStore {
-    inner: Arc<DashMap<String, SharedState>>,
+    inner: Arc<DashMap<String, SharedState, AHashState>>,
     bus: StateEventBus,
     /// dirty 集合:写入后登记,flush 落库后清除。值无意义,仅用 key 作集合。
-    dirty: Arc<DashMap<String, ()>>,
+    dirty: Arc<DashMap<String, (), AHashState>>,
     /// 注入的加载闭包(read-through);None 时纯内存(测试 / 无 DB 部署)。
     loader: Option<StateLoader>,
     /// 注入的落库闭包;None 时 flush 为 no-op(纯内存)。
@@ -89,20 +90,29 @@ impl std::fmt::Debug for StateStore {
 impl StateStore {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(DashMap::new()),
+            inner: Arc::new(DashMap::with_hasher(AHashState::default())),
             bus: StateEventBus::new(),
-            dirty: Arc::new(DashMap::new()),
+            dirty: Arc::new(DashMap::with_hasher(AHashState::default())),
             loader: None,
             saver: None,
         }
     }
+}
+
+impl Default for StateStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StateStore {
 
     /// 自定义 bus 容量(默认 256)— 给高吞吐场景留口。
     pub fn with_bus_capacity(capacity: usize) -> Self {
         Self {
-            inner: Arc::new(DashMap::new()),
+            inner: Arc::new(DashMap::with_hasher(AHashState::default())),
             bus: StateEventBus::with_capacity(capacity),
-            dirty: Arc::new(DashMap::new()),
+            dirty: Arc::new(DashMap::with_hasher(AHashState::default())),
             loader: None,
             saver: None,
         }

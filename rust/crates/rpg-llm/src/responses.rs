@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use eventsource_stream::Eventsource;
 use futures_util::stream::{self, StreamExt, TryStreamExt};
+use smallvec::SmallVec;
 
 use crate::pipeline::{
     build_http_client, namespaced_tool_name, BackendKind, ChatChunk, ChatMessage, ChatRequest,
@@ -179,9 +180,13 @@ impl LlmBackend for ResponsesBackend {
             .map_err(|e| LlmError::Stream(e.to_string()));
 
         let parsed = event_stream.scan(ResponsesStreamState::default(), |state, ev_res| {
-            let chunks = match ev_res {
+            let chunks: RespSseChunks = match ev_res {
                 Ok(ev) => state.process(&ev.event, &ev.data),
-                Err(e) => vec![Err(e)],
+                Err(e) => {
+                    let mut sv: RespSseChunks = SmallVec::new();
+                    sv.push(Err(e));
+                    sv
+                }
             };
             futures_util::future::ready(Some(chunks))
         });
@@ -243,21 +248,26 @@ struct ToolBuf {
     args: String,
 }
 
+// Responses API SSE 每事件通常 0-1 个 chunk;2 槽覆盖多数情况。
+type RespSseChunks = SmallVec<[Result<ChatChunk, LlmError>; 2]>;
+
 impl ResponsesStreamState {
-    fn process(&mut self, event: &str, data: &str) -> Vec<Result<ChatChunk, LlmError>> {
+    fn process(&mut self, event: &str, data: &str) -> RespSseChunks {
         if data.trim().is_empty() {
-            return vec![];
+            return SmallVec::new();
         }
         let value: serde_json::Value = match serde_json::from_str(data) {
             Ok(v) => v,
             Err(e) => {
-                return vec![Ok(ChatChunk::Error(format!(
+                let mut sv: RespSseChunks = SmallVec::new();
+                sv.push(Ok(ChatChunk::Error(format!(
                     "openai responses sse parse: {e}; event={event}; data={}",
                     clip(data, 200)
-                )))];
+                ))));
+                return sv;
             }
         };
-        let mut out = Vec::new();
+        let mut out: RespSseChunks = SmallVec::new();
         match event {
             "response.output_text.delta" => {
                 if let Some(d) = value.get("delta").and_then(|v| v.as_str()) {
@@ -370,12 +380,12 @@ impl ResponsesStreamState {
         out
     }
 
-    fn finalize(&mut self) -> Vec<Result<ChatChunk, LlmError>> {
+    fn finalize(&mut self) -> RespSseChunks {
         if self.finalized {
-            return vec![];
+            return SmallVec::new();
         }
         self.finalized = true;
-        let mut out = Vec::new();
+        let mut out: RespSseChunks = SmallVec::new();
         // 残留未关闭的 tool buf (理论上 .done 已经处理完;兜底)
         let leftover: Vec<String> = self.tools.keys().cloned().collect();
         for id in leftover {
