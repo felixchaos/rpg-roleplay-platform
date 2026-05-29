@@ -24,6 +24,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use thiserror::Error;
+use tokio::task::JoinHandle;
 
 // ── re-export real types ──────────────────────────────────────────────
 
@@ -137,7 +138,7 @@ pub type SharedLlm = Arc<dyn LlmBackend>;
 
 // ── LlmBackend adapter helpers ────────────────────────────────────────
 
-/// 默认 model_id。真实接入 catalog 之后由 caller 自己 build ChatRequest 覆盖;
+/// 默认 model_id(硬编码回退)。真实接入 catalog 之后由 caller 自己 build ChatRequest 覆盖;
 /// 此处给 agent 适配层一个保底值,避免 model 为空被 provider 拒绝。
 fn default_model_for(kind: rpg_llm::pipeline::BackendKind) -> &'static str {
     use rpg_llm::pipeline::BackendKind;
@@ -146,6 +147,23 @@ fn default_model_for(kind: rpg_llm::pipeline::BackendKind) -> &'static str {
         BackendKind::Vertex => "gemini-3.5-flash",
         BackendKind::Openai | BackendKind::OpenaiCompat => "gpt-5-mini",
     }
+}
+
+/// 优先从 catalog 拿 selected model_id;无 catalog 才回退硬编码。
+///
+/// caller 在白名单外时请保留 `default_model_for(kind)` 旧调用;
+/// 白名单内 agent 新增可用此签名。
+pub fn default_model_for_catalog(
+    kind: rpg_llm::pipeline::BackendKind,
+    catalog: Option<&rpg_llm::registry::ModelCatalog>,
+) -> String {
+    if let Some(cat) = catalog {
+        let id = cat.selected.model_id.clone();
+        if !id.is_empty() {
+            return id;
+        }
+    }
+    default_model_for(kind).to_string()
 }
 
 /// 是否支持 native tool_use(Anthropic / Vertex / OpenAI 都支持)。
@@ -227,7 +245,22 @@ pub async fn call_structured(
     Ok(out)
 }
 
+// ── stream_text guard:Stream 被 Drop 时 abort 后台 task ─────────────────
+
+/// 持有 JoinHandle 的 RAII guard。Drop 时 abort 对应 tokio task。
+struct AbortOnDrop(JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// 流式 String 序列。仅 surface Text chunk(Thinking / ToolCall 过滤掉)。
+///
+/// 改动(W5-2):
+/// - `unbounded_channel` → `mpsc::channel(16)` 背压,避免 LLM 无限堆积
+/// - 返回的 stream 内含 `AbortOnDrop` guard;stream drop → task abort,防泄漏
 pub async fn stream_text(
     llm: SharedLlm,
     system: &str,
@@ -237,33 +270,46 @@ pub async fn stream_text(
     let mut req = base_request(llm.as_ref(), system, messages, max_tokens);
     req.stream = true;
     let llm_clone = llm.clone();
-    // 把 stream_chat 拆出独立 Stream + 包装出 'static 序列。
-    // 用 mpsc 跨任务搬运,避免与 trait lifetime 纠缠。
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AgentResult<String>>();
-    tokio::spawn(async move {
+    // 背压 channel:缓冲 16 个 token,发送端阻塞等消费端跟上
+    let (tx, rx) = tokio::sync::mpsc::channel::<AgentResult<String>>(16);
+    let handle = tokio::spawn(async move {
         let mut stream = match llm_clone.stream_chat(req).await {
             Ok(s) => s,
             Err(e) => {
-                let _ = tx.send(Err(AgentError::Llm(e.to_string())));
+                let _ = tx.send(Err(AgentError::Llm(e.to_string()))).await;
                 return;
             }
         };
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(ChatChunk::Text(t)) => {
-                    if tx.send(Ok(t)).is_err() {
+                    // send 返回 Err 代表接收端已 drop → 直接退出
+                    if tx.send(Ok(t)).await.is_err() {
                         return;
                     }
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    let _ = tx.send(Err(AgentError::Llm(e.to_string())));
+                    let _ = tx.send(Err(AgentError::Llm(e.to_string()))).await;
                     return;
                 }
             }
         }
     });
-    let s = futures::stream::poll_fn(move |cx| rx.poll_recv(cx));
+    // guard 与 rx 打包进 stream,保证 stream drop 时 abort task
+    let guard = AbortOnDrop(handle);
+    let s = futures::stream::unfold(
+        (rx, guard),
+        |(mut rx, guard)| async move {
+            match rx.recv().await {
+                Some(item) => Some((item, (rx, guard))),
+                None => {
+                    drop(guard); // 显式 drop,编译器不会因 guard 未用报 warning
+                    None
+                }
+            }
+        },
+    );
     Ok(s.boxed())
 }
 

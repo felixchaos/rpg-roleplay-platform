@@ -191,21 +191,11 @@ pub fn public_user(user: &User) -> PublicUser {
 // ─── 工具函数 ────────────────────────────────────────────────────────────────
 
 fn hex_encode(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
+    hex::encode(bytes)
 }
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
-        .collect()
+    hex::decode(s).ok()
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {

@@ -163,8 +163,8 @@ pub struct ModelEntry {
 }
 
 impl ModelCatalog {
-    pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self, LlmError> {
-        let text = std::fs::read_to_string(path.as_ref())?;
+    pub async fn load_from_file(path: impl AsRef<Path>) -> Result<Self, LlmError> {
+        let text = tokio::fs::read_to_string(path.as_ref()).await?;
         Self::from_json(&text)
     }
 
@@ -173,9 +173,9 @@ impl ModelCatalog {
         Ok(catalog)
     }
 
-    pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<(), LlmError> {
+    pub async fn save_to_file(&self, path: impl AsRef<Path>) -> Result<(), LlmError> {
         let s = serde_json::to_string_pretty(self)?;
-        std::fs::write(path.as_ref(), s).map_err(LlmError::from)
+        tokio::fs::write(path.as_ref(), s).await.map_err(LlmError::from)
     }
 
     /// 找出 selected.api_id 指向的 ApiEntry。

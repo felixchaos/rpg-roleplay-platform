@@ -112,11 +112,14 @@ async fn api_new(
         let _ = st.set_path("player.background", Value::String(background));
         let _ = st.set_path("is_new", Value::Bool(false));
     }
-    let snapshot = shared.read().clone();
+    let (data, version) = {
+        let st = shared.read();
+        (st.data.clone(), st.version)
+    };
     Ok(Json(json!({
         "ok": true,
-        "state": snapshot.data,
-        "version": snapshot.version,
+        "state": data,
+        "version": version,
     }))
     .into_response())
 }
@@ -133,7 +136,7 @@ async fn api_opening(
     let user_id = user_id_or_anon(&s, &headers).await;
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
-    let snapshot = shared.read().clone();
+    let state_data = shared.read().data.clone();
     let events = vec![
         Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id))),
         Ok(named_sse_event(
@@ -143,7 +146,7 @@ async fn api_opening(
         Ok(named_sse_event("chunk", json!({"text":""}))),
         Ok(named_sse_event(
             "done",
-            json!({"status": {"state": snapshot.data}, "interrupted": false}),
+            json!({"status": {"state": state_data}, "interrupted": false}),
         )),
     ];
     let stream = stream::iter(events);
@@ -163,20 +166,21 @@ async fn api_chat_estimate(
     let user_id = user_id_or_anon(&s, &headers).await;
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
-    let snapshot = shared.read().clone();
     let message = body.message.unwrap_or_default();
     let include_retrieval = body.include_retrieval.unwrap_or(true);
-    let history_text = snapshot
-        .data
-        .get("history")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|m| m.get("content").and_then(|v| v.as_str()))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .unwrap_or_default();
+    let history_text = {
+        let st = shared.read();
+        st.data
+            .get("history")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m.get("content").and_then(|v| v.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default()
+    };
     let est = |s: &str| (s.chars().count() / 3) as i64;
     let system_est: i64 = 1200;
     let retrieval_est: i64 = if include_retrieval { 800 } else { 0 };
@@ -220,13 +224,14 @@ async fn api_context_breakdown(
     let user_id = user_id_or_anon(&s, &headers).await;
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
-    let snapshot = shared.read().clone();
-    let last_ctx = snapshot
-        .data
-        .get("memory")
-        .and_then(|m| m.get("last_context"))
-        .cloned()
-        .unwrap_or(json!({}));
+    let last_ctx = {
+        let st = shared.read();
+        st.data
+            .get("memory")
+            .and_then(|m| m.get("last_context"))
+            .cloned()
+            .unwrap_or(json!({}))
+    };
     let total_tokens = last_ctx
         .get("estimated_tokens")
         .and_then(|v| v.as_i64())
@@ -343,7 +348,7 @@ async fn api_chat(
             json!({"role": "user", "content": message.clone()}),
         );
     }
-    let snapshot_after = shared.read().clone();
+    let state_after = shared.read().data.clone();
     let events = vec![
         Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id))),
         Ok(named_sse_event(
@@ -353,7 +358,7 @@ async fn api_chat(
         Ok(named_sse_event("chunk", json!({"text":""}))),
         Ok(named_sse_event(
             "done",
-            json!({"status": {"state": snapshot_after.data}, "interrupted": false}),
+            json!({"status": {"state": state_after}, "interrupted": false}),
         )),
     ];
     Sse::new(stream::iter(events))
@@ -394,16 +399,16 @@ async fn api_save(
     let user_id = user_id_or_anon(&s, &headers).await;
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
-    let snapshot = {
+    let (data, version) = {
         let mut st = shared.write();
         // 触一次 version+updated_at,模拟"保存"。
         let _ = st.set_path("saved_at", Value::String(chrono::Utc::now().to_rfc3339()));
-        st.clone()
+        (st.data.clone(), st.version)
     };
     Ok(Json(json!({
         "ok": true,
-        "state": snapshot.data,
-        "version": snapshot.version,
+        "state": data,
+        "version": version,
     }))
     .into_response())
 }

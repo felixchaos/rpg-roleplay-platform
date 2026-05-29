@@ -255,11 +255,7 @@ pub fn unlink_branch_state(path: &str) {
 fn random_hex(n_bytes: usize) -> String {
     let mut buf = vec![0u8; n_bytes];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut buf);
-    let mut s = String::with_capacity(n_bytes * 2);
-    for b in buf {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
+    hex::encode(&buf)
 }
 
 // TODO[Sonnet]: display_nodes(rows) —— 把 player/gm 节点合成 round 节点的 UI 转换逻辑
