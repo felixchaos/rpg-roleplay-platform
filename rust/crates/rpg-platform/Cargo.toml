@@ -37,6 +37,7 @@ argon2 = "0.5"
 hkdf = "0.12"
 hex = "0.4"
 flate2 = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 crc32fast = "1"
 byteorder = "1"
 zeroize = "1"

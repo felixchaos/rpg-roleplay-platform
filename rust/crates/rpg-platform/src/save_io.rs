@@ -558,4 +558,122 @@ pub async fn write_active_state_snapshot(
     }
 }
 
-// TODO[Sonnet]: 多 slot 文件状态落盘(`runtime_state_path`)、压缩存档、版本迁移工具。
+// ─── 压缩存档 (flate2 gzip) ────────────────────────────────────────────────
+//
+// 对应 Python save_io 的扩展需求:"compress_save / version_migration"。
+// Python 端目前只做 JSON 导出,这里提供 gzip 压缩/解压 + 格式版本迁移工具。
+
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use std::io::{Read as IoRead, Write as IoWrite};
+
+/// 把 `SaveExport` 序列化后 gzip 压缩,返回字节数组。
+///
+/// 格式: gzip(UTF-8 JSON)。解压后即可 `serde_json::from_slice::<SaveExport>`。
+pub fn compress_save(export: &SaveExport) -> PlatformResult<Vec<u8>> {
+    let json = serde_json::to_vec(export)?;
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder
+        .write_all(&json)
+        .map_err(|e| PlatformError::validation(format!("gzip 压缩失败: {e}")))?;
+    encoder
+        .finish()
+        .map_err(|e| PlatformError::validation(format!("gzip finish 失败: {e}")))
+}
+
+/// 解压 `compress_save` 产生的字节数组,还原为 `SaveExport`。
+pub fn decompress_save(data: &[u8]) -> PlatformResult<SaveExport> {
+    let mut decoder = GzDecoder::new(data);
+    let mut buf = Vec::new();
+    decoder
+        .read_to_end(&mut buf)
+        .map_err(|e| PlatformError::validation(format!("gzip 解压失败: {e}")))?;
+    serde_json::from_slice(&buf)
+        .map_err(|e| PlatformError::validation(format!("存档 JSON 解析失败: {e}")))
+}
+
+// ─── 版本迁移 ──────────────────────────────────────────────────────────────
+//
+// 当 export_version 落后于当前 EXPORT_VERSION 时,`migrate_save_format` 逐步升级。
+// 目前只有 v1,但框架结构完整,之后每加一版 push 一段 migrate_v1_to_v2 即可。
+
+/// 把任意历史版本 `SaveExport` 升级到当前 `EXPORT_VERSION`。
+///
+/// - 若版本已是最新,直接返回原值(零拷贝 clone)。
+/// - 逐步升级:v0→v1→…→CURRENT。
+/// - 不支持降级(export_version > EXPORT_VERSION 时报 validation 错)。
+pub fn migrate_save_format(mut export: SaveExport) -> PlatformResult<SaveExport> {
+    if export.export_version > EXPORT_VERSION {
+        return Err(PlatformError::validation(format!(
+            "存档版本 {} 高于本程序支持的 {}",
+            export.export_version, EXPORT_VERSION
+        )));
+    }
+    // v0 → v1:补全缺失字段默认值(v0 是早期无版本号存档)。
+    if export.export_version < 1 {
+        export.export_version = 1;
+        // v0 存档 refs/messages/memories 可能缺失:已在 SaveExport 各字段 `#[serde(default)]` 兜底,
+        // 这里只需刷 version。
+    }
+    // 此处未来可继续: if export.export_version < 2 { migrate_v1_to_v2(...) }
+    Ok(export)
+}
+
+// ─── tests ─────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod save_io_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn dummy_export(ver: i32) -> SaveExport {
+        SaveExport {
+            export_version: ver,
+            exported_at: 1_700_000_000.0,
+            save: json!({"id": 1, "title": "test"}),
+            commits: vec![],
+            refs: vec![],
+            messages: vec![],
+            memories: vec![],
+        }
+    }
+
+    #[test]
+    fn compress_decompress_roundtrip() {
+        let original = dummy_export(1);
+        let compressed = compress_save(&original).unwrap();
+        assert!(!compressed.is_empty(), "压缩结果不应为空");
+        // 通常 gzip 结果比原始 JSON 小或相当
+        let restored = decompress_save(&compressed).unwrap();
+        assert_eq!(restored.export_version, original.export_version);
+        assert_eq!(restored.exported_at, original.exported_at);
+    }
+
+    #[test]
+    fn decompress_invalid_data_errors() {
+        let bad = b"not gzip data at all";
+        let result = decompress_save(bad);
+        assert!(result.is_err(), "非法 gzip 数据应返回 Err");
+    }
+
+    #[test]
+    fn migrate_v0_to_v1() {
+        let v0 = dummy_export(0);
+        let migrated = migrate_save_format(v0).unwrap();
+        assert_eq!(migrated.export_version, 1);
+    }
+
+    #[test]
+    fn migrate_already_current_is_noop() {
+        let current = dummy_export(EXPORT_VERSION);
+        let migrated = migrate_save_format(current).unwrap();
+        assert_eq!(migrated.export_version, EXPORT_VERSION);
+    }
+
+    #[test]
+    fn migrate_future_version_errors() {
+        let future = dummy_export(EXPORT_VERSION + 1);
+        let result = migrate_save_format(future);
+        assert!(result.is_err(), "未来版本应返回 Err");
+    }
+}

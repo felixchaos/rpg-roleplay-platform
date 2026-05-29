@@ -177,4 +177,98 @@ pub use crate::branches::tree_ops;
 
 // 兜底 DDL:rpg-db migrations 没接管时由 `init_stop_signals_table` 一次性创建;
 // CRUD 也仍各自走 ensure_stop_table 以容错 fresh DB(零成本 if exists)。
-// TODO[Sonnet]: import_pipeline 那边的 worker heartbeat,跨进程超时检测。
+
+// ─── worker heartbeat (import_jobs) ───────────────────────────────────────
+//
+// 对应 Python script_import.py `_heartbeat_loop`:长任务 worker 定期刷新
+// import_jobs.heartbeat_at,让 detect_stale_workers 能区分活 worker 与死 worker。
+//
+// Rust 端跑 Tokio 任务时可 spawn 一个后台 task 调 `worker_heartbeat`,
+// `detect_stale_workers` 供周期性巡检(如启动时 / cron)调用以回收脏行。
+
+/// 刷新 `import_jobs.heartbeat_at` — 长任务 worker 定期调用。
+///
+/// 只更新 status='running' 的行(防止覆盖已完成/失败任务)。
+/// 返回更新行数;0 = 任务已不在 running(worker 可自行退出心跳循环)。
+///
+/// 对应 Python `hb_db.execute("update import_jobs set heartbeat_at = now() ...")`。
+pub async fn worker_heartbeat(pool: &PgPool, job_id: &str) -> PlatformResult<u64> {
+    let res = sqlx::query(
+        "update import_jobs \
+         set heartbeat_at = now(), updated_at = now() \
+         where job_id = $1 and status = 'running'",
+    )
+    .bind(job_id)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
+/// 把 heartbeat_at 超时的 running 任务回退到 pending,供重新调度。
+///
+/// 对应 Python `test_durable_sync.py` 里的 stale-running 回收语义:
+/// `heartbeat_at < now() - timeout_sec` 且 `status='running'` → 回退为 `pending`。
+///
+/// 返回回收的任务 job_id 列表。
+pub async fn detect_stale_workers(
+    pool: &PgPool,
+    timeout_sec: i64,
+) -> PlatformResult<Vec<String>> {
+    // 两步:先查出 stale job_id,再批量回退。用 RETURNING 一步完成。
+    let rows = sqlx::query(
+        "update import_jobs \
+         set status = 'pending', \
+             heartbeat_at = null, \
+             updated_at = now() \
+         where status = 'running' \
+           and heartbeat_at < now() - (interval '1 second' * $1) \
+         returning job_id",
+    )
+    .bind(timeout_sec)
+    .fetch_all(pool)
+    .await?;
+    let ids: Vec<String> = rows
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("job_id").ok())
+        .collect();
+    if !ids.is_empty() {
+        tracing::warn!(
+            "detect_stale_workers: 回收 {} 个超时任务 (timeout={}s): {:?}",
+            ids.len(),
+            timeout_sec,
+            ids
+        );
+    }
+    Ok(ids)
+}
+
+// ─── tests ─────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod cluster_tests {
+    use super::*;
+
+    /// WORKER_ID 必须非空且包含预期格式部分。
+    #[test]
+    fn worker_id_non_empty() {
+        let id = WORKER_ID.as_str();
+        assert!(!id.is_empty(), "WORKER_ID 不应为空");
+        // 应包含 '-' 分隔符(hostname-pid-hex)
+        assert!(id.contains('-'), "WORKER_ID 应含 '-' 分隔符");
+    }
+
+    /// job_lock_id 对相同 key 应返回相同结果(稳定哈希)。
+    #[test]
+    fn job_lock_id_stable() {
+        let id1 = job_lock_id("sync:user42:script7");
+        let id2 = job_lock_id("sync:user42:script7");
+        assert_eq!(id1, id2, "同 key 的 lock_id 必须幂等");
+    }
+
+    /// 不同 key 应产生不同 lock_id(基本碰撞检测)。
+    #[test]
+    fn job_lock_id_differs() {
+        let id1 = job_lock_id("job_a");
+        let id2 = job_lock_id("job_b");
+        assert_ne!(id1, id2, "不同 key 的 lock_id 不应相同");
+    }
+}

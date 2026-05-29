@@ -391,5 +391,73 @@ pub async fn average_output_tokens(
     Ok(row.try_get::<i32, _>("avg").unwrap_or(0))
 }
 
-// TODO[Sonnet]: 接入 model_probe 价格表(rpg-llm crate) → 真实 compute_cost。
-// TODO[Sonnet]: context_window_for(): 同价格表来源。
+/// Python `context_window_for(api_id, model_real_name)` —— 从 rpg-llm 内置表查模型 context。
+///
+/// `ModelPricing` 目前不含 context_window 字段(仅有计价信息)。
+/// 这里通过已知的 builtin 映射表提供常用模型的 context window 大小(tokens)。
+/// 找不到定价条目或不在映射中时返回 0(对应 Python `get_pricing` 失败时的 0)。
+///
+/// TODO[P2-LLM]: 当 rpg-llm ModelEntry 补充 context_tokens 字段后,改从 pricing_for 路由拿。
+pub fn context_window_for(api_id: &str, model_real_name: &str) -> i64 {
+    // 先确认模型在定价表里(复用 PRICING_ROUTER 已有的 pricing_for 逻辑作有效性校验)。
+    if PRICING_ROUTER.pricing_for(api_id, model_real_name).is_none() {
+        return 0;
+    }
+    // 按 api_id/model_real_name 的已知 context window(tokens)。
+    // 来源:各 provider 2025-Q2 文档,与 Python model_probe.get_pricing("context") 对齐。
+    let key = format!("{api_id}/{model_real_name}");
+    match key.as_str() {
+        // Anthropic
+        "anthropic/claude-opus-4-7"    => 200_000,
+        "anthropic/claude-sonnet-4-6"  => 200_000,
+        "anthropic/claude-haiku-4-5"   => 200_000,
+        // Vertex AI / Google
+        "vertex_ai/gemini-2.5-flash"   => 1_000_000,
+        "vertex_ai/gemini-2.5-pro"     => 1_000_000,
+        // DeepSeek
+        "openai_compat/deepseek-v3"    => 64_000,
+        // OpenAI
+        "openai/gpt-4o"                => 128_000,
+        "openai/gpt-5"                 => 128_000,
+        _ => 0,
+    }
+}
+
+// ─── tests ─────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+
+    #[test]
+    fn compute_cost_known_model_nonzero() {
+        let u = UsageBreakdown {
+            input_tokens: 1000,
+            output_tokens: 500,
+            cached_input_tokens: 0,
+            reasoning_tokens: 0,
+            total_tokens: 1500,
+        };
+        let cost = compute_cost("anthropic", "claude-sonnet-4-6", &u);
+        // 1000 input @ 0.003/1k + 500 output @ 0.015/1k = 0.003 + 0.0075 = 0.0105
+        assert_ne!(cost, "0.000000", "已知模型应有非零费用");
+    }
+
+    #[test]
+    fn compute_cost_unknown_model_zero() {
+        let u = UsageBreakdown::default();
+        let cost = compute_cost("unknown_api", "unknown_model", &u);
+        assert_eq!(cost, "0.000000");
+    }
+
+    #[test]
+    fn context_window_for_known_models() {
+        assert_eq!(context_window_for("anthropic", "claude-sonnet-4-6"), 200_000);
+        assert_eq!(context_window_for("vertex_ai", "gemini-2.5-flash"), 1_000_000);
+        assert_eq!(context_window_for("openai", "gpt-4o"), 128_000);
+    }
+
+    #[test]
+    fn context_window_for_unknown_returns_zero() {
+        assert_eq!(context_window_for("no_api", "no_model"), 0);
+    }
+}

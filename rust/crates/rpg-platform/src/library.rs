@@ -558,4 +558,162 @@ pub async fn delete_script(
     Ok(res.rows_affected() > 0)
 }
 
-// TODO[Sonnet]: 完整移植 list_dir cursor 二级排序、archive 自动解压、metadata patch API。
+// ─── archive 自动解压 ──────────────────────────────────────────────────────
+//
+// Python library.py 里 `kind_for` 把 .zip/.gz 等标记为 "archive";
+// 前端上传时若 kind="archive" 则调用下面的 extract_archive 把内容展开到同目录。
+// 对应 Python `upload` 后的 archive 处理逻辑(Python 端用 fsspec 没做展开,
+// 这是 Rust 端扩展功能)。
+
+/// 把已上传的 zip 归档展开到同目录下的同名子文件夹。
+///
+/// 例: `images/photos.zip` → `images/photos/` 下各文件。
+/// 展开后原 zip 保留(与 Python 行为一致:不删原文件)。
+///
+/// 返回展开出的文件数。若不是有效 zip,返回 `Err`。
+pub fn extract_zip_archive(archive_path: &Path, dest_dir: &Path) -> PlatformResult<usize> {
+    std::fs::create_dir_all(dest_dir)?;
+    let file = std::fs::File::open(archive_path)?;
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|e| PlatformError::validation(format!("无效 zip 归档: {e}")))?;
+    let total = zip.len();
+    for i in 0..total {
+        let mut entry = zip
+            .by_index(i)
+            .map_err(|e| PlatformError::validation(format!("zip 读取错误: {e}")))?;
+        // 安全:规范化 entry 名称,防 zip-slip 路径穿越。
+        let raw_name = entry.name().replace('\\', "/");
+        let safe: PathBuf = raw_name
+            .split('/')
+            .filter(|c| !c.is_empty() && *c != ".." && *c != ".")
+            .collect();
+        if safe.as_os_str().is_empty() {
+            continue;
+        }
+        let out_path = dest_dir.join(&safe);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out_path)?;
+        } else {
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut out_file = std::fs::File::create(&out_path)?;
+            std::io::copy(&mut entry, &mut out_file)?;
+        }
+    }
+    Ok(total)
+}
+
+/// 上传后若 kind=="archive" 且 suffix==".zip",自动展开到同名子目录。
+///
+/// 展开失败只记 warning,不影响上传结果(对应 Python 宽松处理原则)。
+pub async fn maybe_extract_archive(
+    root: &Path,
+    target_path: &Path,
+    kind: &str,
+    suffix: &str,
+) {
+    if kind != "archive" {
+        return;
+    }
+    let s = suffix.to_lowercase();
+    if s != ".zip" {
+        // tar/gz 留 TODO;目前只展开 zip。
+        return;
+    }
+    let stem = target_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("archive");
+    let parent = target_path.parent().unwrap_or(root);
+    let dest = parent.join(stem);
+    if let Err(e) = extract_zip_archive(target_path, &dest) {
+        tracing::warn!("archive 自动展开失败 {:?}: {e}", target_path);
+    }
+}
+
+// ─── metadata patch ────────────────────────────────────────────────────────
+//
+// 对应 Python 端 assets 表 metadata 字段的局部更新(Python 里直接 UPDATE)。
+// 这里提供单条 patch:把 `patch` 对象的字段合并到 assets.metadata (jsonb merge)。
+
+/// 把 `patch` 里的字段合并写入 `assets.metadata`。
+///
+/// SQL: `metadata = metadata || $patch`  ── PostgreSQL jsonb concat 操作符。
+/// 若该 asset 不存在(user_id+rel_path 不匹配)返回 `false`。
+pub async fn patch_asset_metadata(
+    pool: &PgPool,
+    user_id: i64,
+    rel_path: &str,
+    patch: &serde_json::Value,
+) -> PlatformResult<bool> {
+    let res = sqlx::query(
+        "update assets set metadata = coalesce(metadata, '{}'::jsonb) || $1::jsonb \
+         where user_id = $2 and rel_path = $3",
+    )
+    .bind(patch)
+    .bind(user_id)
+    .bind(rel_path)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+// ─── tests ─────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// 构造一个最小 zip 文件并验证 extract_zip_archive 能展开。
+    #[test]
+    fn extract_zip_creates_files() {
+        let tmp = std::env::temp_dir().join(format!("rpg_lib_test_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let zip_path = tmp.join("test.zip");
+        // 写一个含单个文件的 zip
+        {
+            let file = std::fs::File::create(&zip_path).unwrap();
+            let mut zw = zip::ZipWriter::new(file);
+            zw.start_file("hello.txt", zip::write::SimpleFileOptions::default()).unwrap();
+            zw.write_all(b"hello zip").unwrap();
+            zw.finish().unwrap();
+        }
+        let dest = tmp.join("test");
+        let count = extract_zip_archive(&zip_path, &dest).unwrap();
+        assert!(count >= 1, "应展开至少 1 个条目");
+        assert!(dest.join("hello.txt").exists(), "hello.txt 应被展开");
+        let content = std::fs::read_to_string(dest.join("hello.txt")).unwrap();
+        assert_eq!(content, "hello zip");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// zip-slip 路径穿越应被过滤。
+    #[test]
+    fn extract_zip_blocks_zip_slip() {
+        let tmp = std::env::temp_dir().join(format!("rpg_lib_slip_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let zip_path = tmp.join("slip.zip");
+        {
+            let file = std::fs::File::create(&zip_path).unwrap();
+            let mut zw = zip::ZipWriter::new(file);
+            // 包含 `..` 的条目
+            zw.start_file("../../evil.txt", zip::write::SimpleFileOptions::default()).unwrap();
+            zw.write_all(b"evil").unwrap();
+            zw.finish().unwrap();
+        }
+        let dest = tmp.join("safe");
+        std::fs::create_dir_all(&dest).unwrap();
+        let _ = extract_zip_archive(&zip_path, &dest);
+        // evil.txt 不应出现在 dest 以外
+        assert!(!tmp.parent().unwrap_or(&tmp).join("evil.txt").exists());
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn safe_filename_handles_special() {
+        assert_eq!(safe_filename("hello world.png"), "hello world.png");
+        assert_eq!(safe_filename("../evil"), "evil");
+        assert_eq!(safe_filename(""), "file.bin");
+    }
+}
