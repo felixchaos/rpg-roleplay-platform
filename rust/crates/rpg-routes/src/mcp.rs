@@ -12,7 +12,6 @@
 
 use axum::{
     extract::State,
-    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -21,7 +20,7 @@ use http::HeaderMap;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use rpg_tools_dsl::mcp::{validate_server, McpCatalog, McpServer};
+use rpg_tools_dsl::mcp::{list_audit_entries, validate_server, McpCatalog, McpServer};
 
 use crate::{require_user, AppState, ResponseError};
 
@@ -187,50 +186,83 @@ async fn api_mcp_server_validate(
     Ok(Json(json!({"ok": true, "valid": true})).into_response())
 }
 
+/// POST /api/mcp/server/start — 启动指定 MCP server 子进程。
+///
+/// 对应 Python `api_mcp_server_start` → `mcp_broker.start_server(id)`。
+/// 从 catalog 取出 server spec,委托 `McpBroker::start_server`(已实现真起 child
+/// process,见 `rpg-tools-dsl::mcp_broker`)。
 #[tracing::instrument(skip_all)]
 async fn api_mcp_server_start(
     State(s): State<AppState>,
     headers: HeaderMap,
-    Json(_body): Json<McpServerStartRequest>,
+    Json(body): Json<McpServerStartRequest>,
 ) -> Result<Response, ResponseError> {
     require_admin(&s, &headers).await?;
-    // TODO: McpBroker.start_server — 翻译期没接 broker。
-    Ok((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": "not_implemented",
-            "feature": "mcp_broker",
-            "detail": "McpBroker 未接入,本路径在 rust-migration 期间为 stub。前端不应依赖本接口返回 ok。"
-        }))
-    ).into_response())
+    let id = body
+        .id
+        .ok_or_else(|| ResponseError::bad_request("id required"))?;
+    let catalog = load_catalog(&s).await;
+    let spec = catalog
+        .servers
+        .iter()
+        .find(|x| x.id == id)
+        .cloned()
+        .ok_or_else(|| ResponseError::bad_request(format!("未知 server: {id}")))?;
+    let result = s
+        .mcp_broker
+        .start_server(spec)
+        .await
+        .map_err(|e| ResponseError::bad_request(e.to_string()))?;
+    Ok(Json(result).into_response())
 }
 
+/// POST /api/mcp/server/stop — 停止指定 MCP server 子进程。
+///
+/// 对应 Python `api_mcp_server_stop` → `mcp_broker.stop_server(id)`。
 #[tracing::instrument(skip_all)]
 async fn api_mcp_server_stop(
     State(s): State<AppState>,
     headers: HeaderMap,
-    Json(_body): Json<McpServerStopRequest>,
+    Json(body): Json<McpServerStopRequest>,
 ) -> Result<Response, ResponseError> {
     require_admin(&s, &headers).await?;
-    // TODO: McpBroker.stop_server — 翻译期没接 broker。
-    Ok((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": "not_implemented",
-            "feature": "mcp_broker",
-            "detail": "McpBroker 未接入,本路径在 rust-migration 期间为 stub。前端不应依赖本接口返回 ok。"
-        }))
-    ).into_response())
+    let id = body
+        .id
+        .ok_or_else(|| ResponseError::bad_request("id required"))?;
+    let result = s.mcp_broker.stop_server(&id).await;
+    Ok(Json(result).into_response())
 }
 
+/// GET /api/mcp/runtime — 列出 server / running 进程 / audit_log。
+///
+/// 对应 Python `api_mcp_runtime` → `mcp_broker.status()` + `get_audit_log`。
+/// 非 admin 时 strip 掉 `last_stderr`(可能含 token / 路径),与 Python 行为一致。
 #[tracing::instrument(skip_all)]
-async fn api_mcp_runtime(State(s): State<AppState>) -> impl IntoResponse {
+async fn api_mcp_runtime(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let is_admin = crate::require_user(&s, &headers)
+        .await
+        .ok()
+        .map(|u| u.role == "admin")
+        .unwrap_or(false);
     let catalog = load_catalog(&s).await;
+    let mut running: Vec<Value> =
+        s.mcp_broker.status().into_iter().map(|st| serde_json::to_value(st).unwrap_or(json!({}))).collect();
+    if !is_admin {
+        for entry in running.iter_mut() {
+            if let Some(obj) = entry.as_object_mut() {
+                obj.remove("last_stderr");
+            }
+        }
+    }
+    let audit = list_audit_entries(200);
     Json(json!({
         "ok": true,
         "servers": catalog.servers,
-        "running": [],
-        "audit": [],
+        "running": running,
+        "audit_log": audit,
     }))
 }
 
@@ -259,14 +291,11 @@ async fn api_mcp_tool_call(
     Ok(Json(result).into_response())
 }
 
+/// GET /api/mcp/tools — 列出所有已启动 MCP server 的工具清单(前端加号菜单用)。
+///
+/// 对应 Python `api_mcp_tools` → `mcp_broker.discover_all_tools()`。
 #[tracing::instrument(skip_all)]
 async fn api_mcp_tools(State(s): State<AppState>) -> impl IntoResponse {
-    let catalog = load_catalog(&s).await;
-    let servers: Vec<Value> = catalog
-        .servers
-        .iter()
-        .filter(|s| s.enabled)
-        .map(|s| json!({"server_id": s.id, "tools": []}))
-        .collect();
-    Json(json!({"ok": true, "tools": servers}))
+    let tools = s.mcp_broker.discover_all_tools();
+    Json(json!({"ok": true, "tools": tools}))
 }

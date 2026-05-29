@@ -64,6 +64,7 @@ static SQL_017: &str = include_str!("../migrations/017_sessions_hashed_token.sql
 static SQL_018: &str = include_str!("../migrations/018_stop_signals.sql");
 static SQL_019: &str = include_str!("../migrations/019_runtime_checkouts.sql");
 static SQL_021: &str = include_str!("../migrations/021_scripts_and_chapters.sql");
+static SQL_022: &str = include_str!("../migrations/022_branches_extended_columns.sql");
 
 /// 所有迁移的静态列表。
 ///
@@ -90,6 +91,7 @@ pub static MIGRATIONS: &[MigrationStep] = &[
     MigrationStep { id: 19, name: "runtime_checkouts",                       sql: SQL_019 },
     // 注:020 (user_card_public_audit) sql 文件存在但暂未在此注册,留给 Wave 2-B 自行启用。
     MigrationStep { id: 21, name: "scripts_and_chapters",                    sql: SQL_021 },
+    MigrationStep { id: 22, name: "branches_extended_columns",               sql: SQL_022 },
 ];
 
 // ──────────────────────────────────────────────────────────────
@@ -255,5 +257,60 @@ mod tests {
                 step.id, step.name,
             );
         }
+    }
+
+    /// v022 branches_extended_columns 文本里必须包含所有任务列出的扩展列名,
+    /// 防止后续 sonnet 误删 alter 语句导致 schema 沉默回退。
+    #[test]
+    fn migration_022_covers_all_extended_columns() {
+        let step = MIGRATIONS
+            .iter()
+            .find(|s| s.id == 22)
+            .expect("migration v22 应存在");
+        let sql = step.sql;
+        for col in &[
+            "is_active",
+            "tree_hash",
+            "row_version",
+            "dirty",
+            "snapshot_hash",
+            "turn_at_commit",
+            "turn_runtime",
+            "state_snapshot",
+        ] {
+            assert!(
+                sql.contains(col),
+                "v022 SQL 缺扩展列 '{col}'(任务 Wave 1A 列名清单)"
+            );
+        }
+        // 基表也必须建(Rust 端之前完全缺):
+        for tbl in &["game_saves", "branch_commits", "branch_refs", "branch_nodes"] {
+            assert!(
+                sql.contains(&format!("create table if not exists {tbl}")),
+                "v022 SQL 缺基表 '{tbl}' 的 create",
+            );
+        }
+    }
+
+    /// runtime_checkouts 在 Rust 端跨 019+022 两次 migration 装配,
+    /// 022 必须只走 add column if not exists,不能 drop / rename(会丢数据)。
+    #[test]
+    fn migration_022_runtime_checkouts_uses_only_idempotent_alter() {
+        let step = MIGRATIONS.iter().find(|s| s.id == 22).unwrap();
+        let sql = step.sql.to_lowercase();
+        // 必须看到 alter table runtime_checkouts add column
+        assert!(
+            sql.contains("alter table runtime_checkouts add column if not exists"),
+            "v022 应只用 idempotent alter add column",
+        );
+        // 不能出现 drop column / rename column / drop table runtime_checkouts
+        assert!(
+            !sql.contains("drop column") && !sql.contains("rename column"),
+            "v022 不能对 runtime_checkouts 做破坏性变更",
+        );
+        assert!(
+            !sql.contains("drop table runtime_checkouts"),
+            "v022 不能删 runtime_checkouts 表",
+        );
     }
 }

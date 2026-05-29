@@ -15,6 +15,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use rpg_state::ops::normalize_permission_mode;
+use rpg_state::pending::{
+    approve_pending_write, clear_pending_question, reject_pending_write, PendingError,
+};
 
 use crate::{user_id_or_anon, AppState, ResponseError};
 
@@ -75,10 +78,14 @@ async fn api_permissions(
     Ok(Json(json!({"ok": true, "state": snapshot.data, "mode": mode})).into_response())
 }
 
-/// POST /api/permissions/pending-write — 审批待写入
+/// POST /api/permissions/pending-write — 审批待写入(approve / reject + 回放 op)
 ///
-/// 通过 index 删除 state.permissions.pending_writes 里指定项。
-/// 真正"批准后回放 op"留 TODO,接 rpg_state pending writes mixin。
+/// 对应 Python `api_pending_write`:
+///   - decision = approve → `state.approve_pending_write(id|index)` 走 apply_op force=true
+///   - decision = reject  → `state.reject_pending_write(id|index)` 写 audit_log
+///
+/// id 优先,index 兜底(Python P0 #53 修复:前端发 id+action,后端读 index/decision
+/// 旧契约就死)。
 #[tracing::instrument(skip(s, headers, body), fields(user_id))]
 async fn api_pending_write(
     State(s): State<AppState>,
@@ -87,48 +94,63 @@ async fn api_pending_write(
 ) -> Result<Response, ResponseError> {
     let user_id = user_id_or_anon(&s, &headers).await;
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
+    let action = body
+        .action
+        .as_deref()
+        .or(body.decision.as_deref())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if action != "approve" && action != "reject" {
+        return Err(ResponseError::bad_request(
+            "缺少 action/decision（approve|reject）",
+        ));
+    }
+    let id = body.id.as_deref();
+    let index = body
+        .index
+        .and_then(|i| if i >= 0 { Some(i as usize) } else { None });
+
     let shared = s.state_store.get_or_create(&user_id).await;
-    let snapshot = {
+    let (snapshot, result_payload) = {
         let mut st = shared.write();
-        let pending = st
-            .get_path("permissions.pending_writes")
-            .unwrap_or(Value::Array(vec![]));
-        if let Value::Array(mut arr) = pending {
-            let by_id = body.id.as_deref();
-            let by_idx = body.index;
-            let pos = if let Some(id) = by_id {
-                arr.iter()
-                    .position(|x| x.get("id").and_then(|v| v.as_str()) == Some(id))
-            } else if let Some(i) = by_idx {
-                if i >= 0 && (i as usize) < arr.len() {
-                    Some(i as usize)
-                } else {
-                    None
+        let payload = match action.as_str() {
+            "approve" => match approve_pending_write(&mut st, id, index) {
+                Ok(r) => json!({
+                    "ok": true,
+                    "message": r.message,
+                    "applied": matches!(r.outcome.kind, rpg_state::ops::ApplyKind::Applied),
+                }),
+                Err(PendingError::NotFound(_)) => {
+                    return Err(ResponseError::bad_request("待审写入不存在"));
                 }
-            } else {
-                None
-            };
-            if let Some(p) = pos {
-                let removed = arr.remove(p);
-                st.set_path("permissions.pending_writes", Value::Array(arr))?;
-                let action = body.action.or(body.decision).unwrap_or_default();
-                let mut audit = st
-                    .get_path("permissions.audit_log")
-                    .unwrap_or(Value::Array(vec![]));
-                if let Value::Array(ref mut a) = audit {
-                    a.push(
-                        json!({"action": action, "entry": removed, "at": chrono::Utc::now().to_rfc3339()}),
-                    );
+                Err(e) => return Err(ResponseError::internal(e.to_string())),
+            },
+            _ => match reject_pending_write(&mut st, id, index, None) {
+                Ok(r) => json!({
+                    "ok": true,
+                    "message": r.message,
+                    "path": r.path,
+                    "applied": false,
+                }),
+                Err(PendingError::NotFound(_)) => {
+                    return Err(ResponseError::bad_request("待审写入不存在"));
                 }
-                st.set_path("permissions.audit_log", audit)?;
-            }
-        }
-        st.clone()
+                Err(e) => return Err(ResponseError::internal(e.to_string())),
+            },
+        };
+        (st.clone(), payload)
     };
-    Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
+    let mut out = result_payload;
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("state".into(), serde_json::to_value(&snapshot.data).unwrap_or(Value::Null));
+    }
+    Ok(Json(out).into_response())
 }
 
 /// POST /api/questions/clear — 回答/跳过 GM 询问
+///
+/// 对应 Python `api_question_clear` → `state.clear_pending_question(index, id, choice)`。
+/// id 优先,index 兜底;choice 为 None 时写 "(skipped)"。
 #[tracing::instrument(skip(s, headers, body), fields(user_id))]
 async fn api_question_clear(
     State(s): State<AppState>,
@@ -138,32 +160,25 @@ async fn api_question_clear(
     let user_id = user_id_or_anon(&s, &headers).await;
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
-    let snapshot = {
+    let id = body.id.as_deref();
+    let index = body
+        .index
+        .and_then(|i| if i >= 0 { Some(i as usize) } else { None });
+    let choice_str = body.choice.as_ref().map(|v| match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    });
+    let (cleared, snapshot) = {
         let mut st = shared.write();
-        let cur = st
-            .get_path("permissions.pending_questions")
-            .unwrap_or(Value::Array(vec![]));
-        if let Value::Array(mut arr) = cur {
-            let pos = if let Some(id) = body.id.as_deref() {
-                arr.iter()
-                    .position(|x| x.get("id").and_then(|v| v.as_str()) == Some(id))
-            } else if let Some(i) = body.index {
-                if i >= 0 && (i as usize) < arr.len() {
-                    Some(i as usize)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            if let Some(p) = pos {
-                arr.remove(p);
-                st.set_path("permissions.pending_questions", Value::Array(arr))?;
-            }
-        }
-        st.clone()
+        let popped = clear_pending_question(&mut st, id, index, choice_str.as_deref());
+        (popped.is_some(), st.clone())
     };
-    Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
+    Ok(Json(json!({
+        "ok": true,
+        "cleared": cleared,
+        "state": snapshot.data,
+    }))
+    .into_response())
 }
 
 /// POST /api/debug/pending-question — [debug] 注入待处理问题

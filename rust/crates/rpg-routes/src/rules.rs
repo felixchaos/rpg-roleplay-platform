@@ -106,6 +106,360 @@ fn bridge_to_response_error(err: BridgeError) -> ResponseError {
     }
 }
 
+/// 对应 Python `app._clear_pending_questions_after_rule_action`:规则动作执行后
+/// 把所有 pending_questions 全部 dismiss(choice = "rules:<kind>"),并清掉
+/// `memory.last_structured_updates` 里"等待玩家回答"残留。
+fn clear_pending_questions_after_rule_action(state: &mut rpg_state::state::GameState, choice: &str) {
+    use rpg_state::pending::clear_pending_question;
+    let mut cleared = 0usize;
+    while !state.data.permissions.pending_questions.is_empty() {
+        if clear_pending_question(state, None, Some(0), Some(choice)).is_none() {
+            break;
+        }
+        cleared += 1;
+        if cleared > 64 {
+            // 防御:理论上 pending_questions 上限 8,这里多放 8 倍兜底。
+            break;
+        }
+    }
+    if cleared > 0 {
+        let updates = std::mem::take(&mut state.data.memory.last_structured_updates);
+        state.data.memory.last_structured_updates = updates
+            .into_iter()
+            .filter(|item| {
+                !serde_json::to_string(item)
+                    .map(|s| s.contains("等待玩家回答"))
+                    .unwrap_or(false)
+            })
+            .take(12)
+            .collect();
+    }
+}
+
+/// 对应 Python `app._append_rules_receipt`:把规则引擎产物作为 assistant 消息
+/// 追加到 history(便于前端聊天流展示)。
+fn append_rules_receipt(state: &mut rpg_state::state::GameState, text: &str) {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let entry = json!({
+        "role": "assistant",
+        "content": trimmed,
+        "source": "rules_engine",
+    });
+    let history_path = "history";
+    // history 是 typed Vec<HistoryEntry>;通过 append_to_path 走 typed 通道。
+    let _ = state.append_to_path(history_path, entry);
+}
+
+/// 对应 Python `app._room_receipt`:把房间数据格式化成"你来到「<name>」"段落。
+fn room_receipt(room: &Value) -> String {
+    let name = room
+        .get("name")
+        .and_then(|v| v.as_str())
+        .or_else(|| room.get("id").and_then(|v| v.as_str()))
+        .unwrap_or("未知房间");
+    let room_id = room.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let head = if room_id.is_empty() {
+        format!("【RulesEngine：移动】你来到「{name}」。")
+    } else {
+        format!("【RulesEngine：移动】你来到「{name}」（{room_id}）。")
+    };
+    let mut lines = vec![head];
+    if let Some(desc) = room.get("description").and_then(|v| v.as_str()) {
+        let d = desc.trim();
+        if !d.is_empty() {
+            lines.push(d.to_string());
+        }
+    }
+    if let Some(clues) = room.get("visible_clues").and_then(|v| v.as_array()) {
+        let texts: Vec<String> = clues
+            .iter()
+            .filter_map(|c| {
+                if let Some(s) = c.as_str() {
+                    Some(s.to_string())
+                } else {
+                    c.get("text").and_then(|v| v.as_str()).map(|s| s.to_string())
+                }
+            })
+            .filter(|s| !s.is_empty())
+            .take(4)
+            .collect();
+        if !texts.is_empty() {
+            lines.push(format!("可见线索：{}。", texts.join("；")));
+        }
+    }
+    if let Some(exits) = room.get("exits").and_then(|v| v.as_array()) {
+        let texts: Vec<String> = exits
+            .iter()
+            .filter_map(|e| {
+                e.get("label")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| e.get("to").and_then(|v| v.as_str()))
+                    .map(|s| s.to_string())
+            })
+            .filter(|s| !s.is_empty())
+            .take(5)
+            .collect();
+        if !texts.is_empty() {
+            lines.push(format!("可用出口：{}。", texts.join("、")));
+        }
+    }
+    lines.join("\n\n")
+}
+
+/// 对应 Python `app._roll_line`:把规则 result 里的 roll 段格式化成单行。
+fn roll_line(result: &Value) -> String {
+    let roll = result.get("roll").cloned().unwrap_or(Value::Null);
+    let expr = roll.get("expression").and_then(|v| v.as_str()).unwrap_or("");
+    let rolls_str = roll
+        .get("rolls")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    let modifier = roll.get("modifier").and_then(|v| v.as_f64());
+    let total = roll.get("total").and_then(|v| v.as_f64());
+    let dc = result.get("dc").and_then(|v| v.as_i64());
+    let has_any = !expr.is_empty() || !rolls_str.is_empty() || total.is_some();
+    if !has_any {
+        return String::new();
+    }
+    let mut bit = if expr.is_empty() { "roll".to_string() } else { expr.to_string() };
+    if !rolls_str.is_empty() {
+        bit.push_str(&format!("=[{rolls_str}]"));
+    }
+    if let Some(m) = modifier {
+        if m != 0.0 {
+            // 与 Python 的 f"{m:+g}" 一致:正数带 + 号,小数自动 trim
+            let s = if m.fract() == 0.0 {
+                format!("{:+}", m as i64)
+            } else {
+                format!("{m:+}")
+            };
+            bit.push_str(&s);
+        }
+    }
+    if let Some(t) = total {
+        let t_disp = if t.fract() == 0.0 {
+            format!("{}", t as i64)
+        } else {
+            format!("{t}")
+        };
+        bit.push_str(&format!(" → {t_disp}"));
+    }
+    if let Some(d) = dc {
+        bit.push_str(&format!(" vs DC {d}"));
+    }
+    bit
+}
+
+/// 对应 Python `app._action_receipt`:把规则动作的 result 转成"【RulesEngine：...】..."段落。
+fn action_receipt(kind: &str, label: &str, out: &Value) -> String {
+    let result = out.get("result").cloned().unwrap_or(Value::Null);
+    let verdict = match result.get("success").and_then(|v| v.as_bool()) {
+        Some(true) => "成功",
+        Some(false) => "失败",
+        None => "已执行",
+    };
+    let label_disp = if label.is_empty() { kind } else { label };
+    let mut lines = vec![format!("【RulesEngine：{kind}】{label_disp}：{verdict}。")];
+    let roll = roll_line(&result);
+    if !roll.is_empty() {
+        lines.push(format!("掷骰：{roll}。"));
+    }
+    if let Some(damage) = result.get("damage").and_then(|v| v.as_object()) {
+        if let Some(total) = damage.get("total") {
+            lines.push(format!("伤害：{total}。"));
+        }
+    }
+    if let Some(facts) = result.get("gm_facts").and_then(|v| v.as_array()) {
+        for f in facts {
+            if let Some(s) = f.as_str() {
+                if !s.is_empty() {
+                    lines.push(s.to_string());
+                }
+            }
+        }
+    }
+    lines.join("\n\n")
+}
+
+/// 对应 Python `app._encounter_receipt`:战斗开始 / 下一回合 / 敌方攻击的 receipt。
+fn encounter_receipt(prefix: &str, encounter: &Value, result: &Value) -> String {
+    if encounter.is_null() || encounter.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        return format!("【RulesEngine：{prefix}】已执行。");
+    }
+    if prefix == "先攻" {
+        let order = encounter
+            .get("initiative_order")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let order_line = order
+            .iter()
+            .filter_map(|o| {
+                let name = o.get("name").and_then(|v| v.as_str())?;
+                let init = o.get("init").and_then(|v| v.as_i64()).unwrap_or(0);
+                Some(format!("{name}({init})"))
+            })
+            .collect::<Vec<_>>()
+            .join(" → ");
+        return format!("【RulesEngine：先攻】遭遇开始。\n\n先攻顺序：{order_line}。");
+    }
+    if prefix == "下一回合" {
+        let order = encounter
+            .get("initiative_order")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let idx = encounter
+            .get("turn_index")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as usize;
+        let current_name = order
+            .get(idx)
+            .and_then(|c| c.get("name").and_then(|v| v.as_str()))
+            .unwrap_or("未知");
+        return format!("【RulesEngine：下一回合】现在轮到 {current_name}。");
+    }
+    let target = result
+        .get("target_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("player");
+    action_receipt(prefix, target, &json!({"result": result}))
+}
+
+/// 对应 Python `rules_bridge.module_ops.enter_room`:玩家移动到指定房间,
+/// 校验出口 + requires(flag:xxx) → 更新 scene 字段(location_id/exits/visible_clues/
+/// current_room)→ 返回新 scene + current_room。
+fn enter_room_op(state: &mut rpg_state::state::GameState, location_id: &str) -> Result<Value, String> {
+    let module_id = state.data.scene.module_id.clone();
+    if module_id.is_empty() {
+        return Err("未加载模组".into());
+    }
+    let bundle = rpg_rules::load_module(&module_id).map_err(|e| e.to_string())?;
+    let rooms = bundle.rooms.as_array().cloned().unwrap_or_default();
+    let target_room = rooms
+        .iter()
+        .find(|r| r.get("id").and_then(|v| v.as_str()) == Some(location_id))
+        .cloned()
+        .ok_or_else(|| format!("未知房间：{location_id}"))?;
+
+    let cur_id = state.data.scene.location_id.clone();
+    if let Some(cur_room) = rooms
+        .iter()
+        .find(|r| r.get("id").and_then(|v| v.as_str()) == Some(&cur_id))
+    {
+        let exits = cur_room
+            .get("exits")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let valid: Vec<String> = exits
+            .iter()
+            .filter_map(|e| e.get("to").and_then(|v| v.as_str()).map(|s| s.to_string()))
+            .collect();
+        if !valid.contains(&location_id.to_string()) {
+            return Err(format!(
+                "当前房间不能直接前往 {location_id}（出口：{valid:?}）"
+            ));
+        }
+        // requires=flag:xxx 校验
+        if let Some(target_exit) = exits
+            .iter()
+            .find(|e| e.get("to").and_then(|v| v.as_str()) == Some(location_id))
+        {
+            if let Some(req) = target_exit.get("requires").and_then(|v| v.as_str()) {
+                if let Some(flag) = req.strip_prefix("flag:") {
+                    let scene_flag_ok = state
+                        .data
+                        .scene
+                        .flags
+                        .get(flag)
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    if !scene_flag_ok {
+                        return Err(format!("前往 {location_id} 需要先满足条件：{flag}"));
+                    }
+                }
+            }
+        }
+    }
+
+    // 写 scene
+    let snapshot = room_snapshot(&target_room);
+    state.data.scene.location_id = location_id.to_string();
+    state.data.scene.exits = target_room
+        .get("exits")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    state.data.scene.visible_clues = target_room
+        .get("visible_clues")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    state
+        .data
+        .scene
+        .extra
+        .insert("current_room".to_string(), snapshot.clone());
+    if !state
+        .data
+        .scene
+        .visited_rooms
+        .iter()
+        .any(|v| v.as_str() == Some(location_id))
+    {
+        state
+            .data
+            .scene
+            .visited_rooms
+            .push(Value::String(location_id.to_string()));
+    }
+    Ok(snapshot)
+}
+
+/// 对应 Python `rules_bridge.module_ops._room_snapshot`:把 module manifest 的房间
+/// 字典裁成 scene.current_room 的 12 字段子集,丢掉无关 metadata。
+fn room_snapshot(room: &Value) -> Value {
+    let g = |k: &str| room.get(k).cloned().unwrap_or(Value::Null);
+    let arr = |k: &str| {
+        room.get(k)
+            .and_then(|v| v.as_array())
+            .cloned()
+            .map(Value::Array)
+            .unwrap_or(json!([]))
+    };
+    let obj = |k: &str| {
+        room.get(k)
+            .and_then(|v| v.as_object())
+            .cloned()
+            .map(Value::Object)
+            .unwrap_or(json!({}))
+    };
+    json!({
+        "id": g("id"),
+        "name": g("name"),
+        "name_en": g("name_en"),
+        "description": g("description"),
+        "exits": arr("exits"),
+        "visible_clues": arr("visible_clues"),
+        "checks": arr("checks"),
+        "hazards": arr("hazards"),
+        "npcs": arr("npcs"),
+        "enemies": arr("enemies"),
+        "loot": arr("loot"),
+        "flags": obj("flags"),
+    })
+}
+
 /// 把 `body.seed`(可能是 number 或 numeric string)规整为 `Option<u64>`。
 fn coerce_seed(seed: &Value) -> Option<u64> {
     if seed.is_null() {
@@ -242,9 +596,9 @@ async fn api_rules_module_launch(
         }
     }
 
-    // 起点房间
+    // 起点房间(对应 Python rules_bridge.start_module)
     let rooms = bundle.rooms.as_array().cloned().unwrap_or_default();
-    let starting_id = manifest
+    let start_id = manifest
         .get("starting_location")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
@@ -256,24 +610,141 @@ async fn api_rules_module_launch(
                 .map(|s| s.to_string())
         })
         .unwrap_or_default();
+    let start_room: Value = rooms
+        .iter()
+        .find(|r| r.get("id").and_then(|v| v.as_str()) == Some(&start_id))
+        .cloned()
+        .or_else(|| rooms.first().cloned())
+        .unwrap_or(Value::Object(Default::default()));
+
+    // ruleset 字段优先 ruleset_meta(dict),否则 ruleset(可能 string)→ 规整为 dict
+    let ruleset_field = {
+        let raw = manifest
+            .get("ruleset_meta")
+            .cloned()
+            .or_else(|| manifest.get("ruleset").cloned())
+            .unwrap_or(Value::Null);
+        if let Value::String(s) = &raw {
+            json!({"id": s, "mode": s, "public_label": s})
+        } else {
+            raw
+        }
+    };
+
+    let module_name = manifest
+        .get("name_cn")
+        .and_then(|v| v.as_str())
+        .or_else(|| manifest.get("name").and_then(|v| v.as_str()))
+        .unwrap_or(&module_id)
+        .to_string();
+    let module_tagline = manifest
+        .get("tagline")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let module_manifest = json!({
+        "id": manifest.get("id").cloned().unwrap_or(Value::String(module_id.clone())),
+        "name": manifest.get("name").cloned().unwrap_or(Value::Null),
+        "name_cn": manifest.get("name_cn").cloned().unwrap_or(Value::Null),
+        "tagline": manifest.get("tagline").cloned().unwrap_or(Value::Null),
+        "kind": manifest.get("kind").cloned().unwrap_or(Value::String("module_adventure".into())),
+        "ruleset": ruleset_field,
+        "context_providers": manifest.get("context_providers").cloned().unwrap_or(json!([])),
+        "retrieval_policy": manifest.get("retrieval_policy").cloned().unwrap_or(json!({})),
+        "gm_policy": manifest.get("gm_policy").cloned().unwrap_or(json!({})),
+    });
+
+    let current_room = room_snapshot(&start_room);
+    let pc_name_final = pc.get("name").and_then(|v| v.as_str()).unwrap_or("Drifter").to_string();
+    let start_location = start_room
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| start_id.clone());
+
+    let memory_resources: Vec<Value> = pc
+        .get("inventory")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .map(|it| {
+                    let name = it.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                    let qty = it
+                        .get("qty")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(1);
+                    Value::String(format!("{name} ×{qty}"))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let memory_abilities = pc
+        .get("features")
+        .cloned()
+        .unwrap_or(json!([]));
 
     let initial_snapshot = json!({
         "scene": {
             "module_id": module_id,
-            "location_id": starting_id,
-            "module_manifest": {
-                "id": manifest.get("id").cloned().unwrap_or(Value::String(module_id.clone())),
-                "name": manifest.get("name").cloned().unwrap_or(Value::Null),
-                "name_cn": manifest.get("name_cn").cloned().unwrap_or(Value::Null),
-                "tagline": manifest.get("tagline").cloned().unwrap_or(Value::Null),
-                "ruleset": manifest.get("ruleset_meta").cloned()
-                    .or_else(|| manifest.get("ruleset").cloned())
-                    .unwrap_or(Value::Null),
-            },
+            "location_id": start_id,
+            "visited_rooms": [start_id],
+            "exits": start_room.get("exits").cloned().unwrap_or(json!([])),
+            "visible_clues": start_room.get("visible_clues").cloned().unwrap_or(json!([])),
+            "flags": {},
+            "current_room": current_room,
+            "module_manifest": module_manifest,
         },
         "player_character": pc,
+        "player": {
+            "name": pc_name_final,
+            "role": "5E 探险者",
+            "background": format!(
+                "5E compatible · 五版规则兼容 · 原创规则模组『{module_name}』。{module_tagline}"
+            ),
+            "current_location": start_location,
+        },
+        "world": {
+            "time": "灰烬山岭 · 黎明前",
+            "timeline": {
+                "anchor_state": "locked",
+                "current_label": module_name.clone(),
+                "current_phase": module_name.clone(),
+                "anchor_source": "module",
+                "anchor_turn": 0,
+                "pending_jump": null,
+                "last_transition": null,
+            },
+            "known_events": [],
+        },
+        "relationships": {},
+        "memory": {
+            "main_quest": format!("完成 {module_name} 冒险"),
+            "current_objective": if module_tagline.is_empty() {
+                format!("从 {} 出发", start_room.get("name").and_then(|v| v.as_str()).unwrap_or("起点"))
+            } else {
+                module_tagline.clone()
+            },
+            "facts": [],
+            "notes": [],
+            "pinned": [],
+            "abilities": memory_abilities,
+            "resources": memory_resources,
+            "items": [],
+            "last_retrieval": "",
+            "last_context": {},
+            "last_context_agent": {},
+            "last_structured_updates": [],
+        },
         "encounter": {"active": false, "combatants": []},
-        "history": [],
+        "permissions": {"pending_writes": [], "pending_questions": []},
+        "history": if bundle.opening.is_empty() {
+            json!([])
+        } else {
+            json!([{"role": "assistant", "content": bundle.opening}])
+        },
+        "dice_log": [],
         "turn": 0,
     });
 
@@ -330,31 +801,44 @@ async fn api_rules_scene(
     .into_response())
 }
 
+/// POST /api/rules/move — 移动到指定房间。
+///
+/// 对应 Python `api_rules_move` → `module_enter_room` 工具:
+///   1. enter_room_op:校验出口/requires,写 scene 字段
+///   2. _clear_pending_questions_after_rule_action("move:<id>")
+///   3. _append_rules_receipt(_room_receipt(room))
 #[tracing::instrument(skip_all)]
 async fn api_rules_move(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<RulesMoveRequest>,
 ) -> Result<Response, ResponseError> {
-    let to = body.to.unwrap_or_default();
+    let to = body.to.unwrap_or_default().trim().to_string();
     if to.is_empty() {
-        return Err(ResponseError::bad_request("to required"));
+        return Err(ResponseError::bad_request("缺少 to"));
     }
     let user_id = user_id_or_anon(&s, &headers).await;
     let shared = s.state_store.get_or_create(&user_id).await;
-    let snapshot = {
+    let (room, snapshot) = {
         let mut st = shared.write();
-        st.set_path("scene.location_id", Value::String(to.clone()))?;
-        st.append_to_path("scene.visited_rooms", Value::String(to))?;
-        st.clone()
+        let room = enter_room_op(&mut st, &to).map_err(ResponseError::bad_request)?;
+        clear_pending_questions_after_rule_action(&mut st, &format!("move:{to}"));
+        append_rules_receipt(&mut st, &room_receipt(&room));
+        (room, st.clone())
     };
-    Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
+    Ok(Json(json!({
+        "ok": true,
+        "room": room,
+        "state": snapshot.data,
+    }))
+    .into_response())
 }
 
 /// 通用规则动作分派器。
 ///
 /// 对应 Python `_execute_rules_action`:按 `body.kind` 路由到 bridge 函数。
 /// 支持 kind:
+///   - `move`            → enter_room_op(到 location_id);prelude.kind=move
 ///   - `skill_check`     → `perform_skill_check`
 ///   - `saving_throw`    → `perform_saving_throw`
 ///   - `trap_check`      → `trap_check`
@@ -362,8 +846,8 @@ async fn api_rules_move(
 ///   - `consume_item`    → `consume_item_action`
 ///   - `attack`          → `apply_combat(PlayerAttack)`
 ///
-/// 未实现 kind:`move`(走 /api/rules/move),`start_encounter`(走
-/// /api/rules/encounter/start)。
+/// 执行后:`_clear_pending_questions_after_rule_action` + `_append_rules_receipt`,
+/// 与 Python 一致。
 #[tracing::instrument(skip_all)]
 async fn api_rules_action(
     State(s): State<AppState>,
@@ -380,9 +864,55 @@ async fn api_rules_action(
     let user_id = user_id_or_anon(&s, &headers).await;
     let shared = s.state_store.get_or_create(&user_id).await;
 
-    let result = {
+    let (result, label_for_receipt) = {
         let mut st = shared.write();
-        match kind.as_str() {
+        let label = match kind.as_str() {
+            "skill_check" => extra
+                .get("skill")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            "saving_throw" => extra
+                .get("ability")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            "attack" => extra
+                .get("target")
+                .or_else(|| extra.get("target_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            "consume_item" => extra
+                .get("item_id")
+                .or_else(|| extra.get("item"))
+                .or_else(|| extra.get("alias"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            "move" => extra
+                .get("to")
+                .or_else(|| extra.get("location_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            _ => kind.clone(),
+        };
+        let result_val: Value = match kind.as_str() {
+            "move" => {
+                let to = extra
+                    .get("to")
+                    .or_else(|| extra.get("location_id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if to.is_empty() {
+                    return Err(ResponseError::bad_request("缺少 to"));
+                }
+                let room = enter_room_op(&mut st, &to).map_err(ResponseError::bad_request)?;
+                json!({"ok": true, "result": {"success": true, "room": room}})
+            }
             "skill_check" => {
                 let skill = extra
                     .get("skill")
@@ -592,33 +1122,64 @@ async fn api_rules_action(
                     "未支持的 kind: {other}"
                 )));
             }
-        }
+        };
+        // 与 Python 一致:动作执行成功后清掉所有 pending_questions + 追加 receipt
+        clear_pending_questions_after_rule_action(&mut st, &format!("rules:{kind}"));
+        let receipt_text = if kind == "move" {
+            // move 的 receipt 用 _room_receipt(更详细),Python `rules.py` 在 move 路由里走的就是这个。
+            let room = result_val
+                .get("result")
+                .and_then(|v| v.get("room"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            room_receipt(&room)
+        } else {
+            action_receipt(&kind, &label, &result_val)
+        };
+        append_rules_receipt(&mut st, &receipt_text);
+        (result_val, label)
     };
+    let _ = label_for_receipt; // 消除未读警告(label 仅在 closure 内使用)
 
     Ok(Json(result).into_response())
 }
 
+/// POST /api/rules/encounter/start — 开战。
+///
+/// 对应 Python `api_rules_encounter_start` → `combat_start` 工具,Rust 端目前
+/// 没接战斗 seed 逻辑,只标记 encounter.active/round/encounter_id。执行后接
+/// receipt + 清 pending_questions(与 Python 一致)。
 #[tracing::instrument(skip_all)]
 async fn api_rules_encounter_start(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<RulesEncounterStartRequest>,
 ) -> Result<Response, ResponseError> {
+    let encounter_id = body.encounter_id.unwrap_or_default().trim().to_string();
+    if encounter_id.is_empty() {
+        return Err(ResponseError::bad_request("缺少 encounter_id"));
+    }
     let user_id = user_id_or_anon(&s, &headers).await;
     let shared = s.state_store.get_or_create(&user_id).await;
-    let snapshot = {
+    let (encounter, snapshot) = {
         let mut st = shared.write();
         st.set_path("encounter.active", Value::Bool(true))?;
         st.set_path("encounter.round", Value::from(1))?;
-        st.set_path(
-            "encounter.encounter_id",
-            Value::String(body.encounter_id.unwrap_or_default()),
-        )?;
-        st.clone()
+        st.set_path("encounter.encounter_id", Value::String(encounter_id.clone()))?;
+        let enc = serde_json::to_value(&st.data.encounter).unwrap_or(json!({}));
+        clear_pending_questions_after_rule_action(&mut st, &format!("encounter:start:{encounter_id}"));
+        append_rules_receipt(&mut st, &encounter_receipt("先攻", &enc, &Value::Null));
+        (enc, st.clone())
     };
-    Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
+    Ok(Json(json!({
+        "ok": true,
+        "encounter": encounter,
+        "state": snapshot.data,
+    }))
+    .into_response())
 }
 
+/// POST /api/rules/encounter/next — 下一回合。
 #[tracing::instrument(skip_all)]
 async fn api_rules_encounter_next(
     State(s): State<AppState>,
@@ -627,16 +1188,24 @@ async fn api_rules_encounter_next(
 ) -> Result<Response, ResponseError> {
     let user_id = user_id_or_anon(&s, &headers).await;
     let shared = s.state_store.get_or_create(&user_id).await;
-    let snapshot = {
+    let (encounter, snapshot) = {
         let mut st = shared.write();
         let round = st
             .get_path("encounter.round")
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
         st.set_path("encounter.round", Value::from(round + 1))?;
-        st.clone()
+        let enc = serde_json::to_value(&st.data.encounter).unwrap_or(json!({}));
+        clear_pending_questions_after_rule_action(&mut st, "encounter:next");
+        append_rules_receipt(&mut st, &encounter_receipt("下一回合", &enc, &Value::Null));
+        (enc, st.clone())
     };
-    Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
+    Ok(Json(json!({
+        "ok": true,
+        "encounter": encounter,
+        "state": snapshot.data,
+    }))
+    .into_response())
 }
 
 /// 敌方回合:走 `apply_combat(EnemyAttack)`,把伤害写入 player_character.hp。
@@ -660,9 +1229,10 @@ async fn api_rules_encounter_enemy(
     let user_id = user_id_or_anon(&s, &headers).await;
     let shared = s.state_store.get_or_create(&user_id).await;
 
-    let outcome = {
+    let (outcome, snapshot) = {
         let mut st = shared.write();
-        apply_combat(
+        let attacker_for_receipt = attacker_id.clone();
+        let outcome = apply_combat(
             &mut st.data,
             CombatAction::EnemyAttack {
                 attacker_id,
@@ -671,7 +1241,12 @@ async fn api_rules_encounter_enemy(
                 seed,
             },
         )
-        .map_err(bridge_to_response_error)?
+        .map_err(bridge_to_response_error)?;
+        let enc_val = outcome.encounter.clone();
+        let result_val = outcome.rule_result.clone();
+        clear_pending_questions_after_rule_action(&mut st, &format!("enemy:{attacker_for_receipt}"));
+        append_rules_receipt(&mut st, &encounter_receipt("敌方攻击", &enc_val, &result_val));
+        (outcome, st.clone())
     };
 
     Ok(Json(json!({
@@ -679,6 +1254,7 @@ async fn api_rules_encounter_enemy(
         "result": outcome.rule_result,
         "encounter": outcome.encounter,
         "gm_facts": outcome.gm_facts,
+        "state": snapshot.data,
     }))
     .into_response())
 }
