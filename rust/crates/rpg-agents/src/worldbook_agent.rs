@@ -578,22 +578,124 @@ async fn load_chapter_facts_window(
         .collect()
 }
 
+/// 返回 save 级"有效世界书"候选列表 (最多 30 条,用于 consult 的 picks 筛选)。
+///
+/// 对齐 Python `agents/worldbook_agent.py::load_effective_worldbook_for_save`:
+///
+/// Merge 逻辑:
+///   1. 拉 worldbook_entries (script 级, enabled=true), 最多 50 条
+///   2. 拉 save_worldbook_overlays (本 save 的 retirement 和 addition)
+///   3. 从 script entries 中排除掉被 retirement 覆盖的条目 (按 retired_entry_id)
+///   4. 把 addition overlay 追加到候选 (id=None, overlay_id=ov.id)
+///   5. 按 priority DESC 排序, 返回前 30 条
+///
+/// `save_id = None` 时只返回 script 级 entries (无 overlay 合并)。
 #[doc(hidden)]
 pub async fn load_effective_worldbook_for_save(
     pool: &PgPool,
     script_id: i64,
     save_id: Option<i64>,
 ) -> AgentResult<Vec<Value>> {
-    let mut out: Vec<Value> = Vec::new();
-    if let Ok(rows) = rpg_db::repos::worldbook_entries::list_for_script(pool, script_id).await {
-        out.extend(rows.into_iter().map(worldbook_entry_to_value));
-    }
-    if let Some(sid) = save_id {
-        if let Ok(rows) = rpg_db::repos::worldbook_entries::list_for_save(pool, sid).await {
-            out.extend(rows.into_iter().map(worldbook_entry_to_value));
+    // 1) script 级基础 entries (Python: LIMIT 50)
+    let script_rows = sqlx::query_as::<_, (i64, String, String, Value, i32)>(
+        r#"SELECT id, title, content, keys, priority
+           FROM worldbook_entries
+           WHERE script_id = $1 AND enabled = true
+           ORDER BY priority DESC, id ASC
+           LIMIT 50"#,
+    )
+    .bind(script_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    // save_id 缺失:只返回 script 级,不走 overlay merge。
+    let Some(sid) = save_id else {
+        let mut out: Vec<Value> = script_rows
+            .into_iter()
+            .map(script_row_to_value)
+            .collect();
+        out.truncate(30);
+        return Ok(out);
+    };
+
+    // 2) overlay rows
+    let overlay_rows = rpg_db::repos::save_worldbook_overlays::list_for_save(pool, sid)
+        .await
+        .unwrap_or_default();
+
+    Ok(merge_worldbook_with_overlays(script_rows, overlay_rows))
+}
+
+/// 把 (i64,String,String,Value,i32) script entry 翻成 Python 同款 dict 形 Value。
+fn script_row_to_value(row: (i64, String, String, Value, i32)) -> Value {
+    let (id, title, content, keys, priority) = row;
+    json!({
+        "id": id,
+        "title": title,
+        "content": content,
+        "keys": keys,
+        "priority": priority,
+        "_source": "script",
+    })
+}
+
+/// 纯函数版 merge —— 把 script 级 entries 与 save 级 overlay 行合并为有效世界书候选。
+///
+/// 抽出来便于单测(无需 DB)。
+/// 对齐 Python `load_effective_worldbook_for_save` 步骤 3-5:
+///   3. 收集 retired_entry_id 集合
+///   4. 过滤被 retirement 覆盖的 script entries
+///   5. 追加 addition overlay,按 priority DESC 排序,LIMIT 30
+fn merge_worldbook_with_overlays(
+    script_rows: Vec<(i64, String, String, Value, i32)>,
+    overlay_rows: Vec<rpg_db::repos::save_worldbook_overlays::SaveWorldbookOverlay>,
+) -> Vec<Value> {
+    use std::collections::HashSet;
+    let mut retired_ids: HashSet<i64> = HashSet::new();
+    let mut additions: Vec<Value> = Vec::new();
+    for ov in overlay_rows {
+        match ov.kind.as_str() {
+            "retirement" => {
+                if let Some(rid) = ov.retired_entry_id {
+                    retired_ids.insert(rid);
+                }
+            }
+            "addition" => {
+                additions.push(json!({
+                    "id": Value::Null,
+                    "overlay_id": ov.id,
+                    "title": ov.title,
+                    "content": ov.content,
+                    "keys": ov.keys,
+                    "priority": ov.priority,
+                    "_source": "addition",
+                }));
+            }
+            _ => {
+                // CHECK 约束在 SQL 端,不会到这里;防御性 skip。
+                tracing::warn!(
+                    overlay_id = ov.id,
+                    kind = %ov.kind,
+                    "save_worldbook_overlays: 未知 kind, 跳过"
+                );
+            }
         }
     }
-    Ok(out)
+
+    let mut filtered: Vec<Value> = script_rows
+        .into_iter()
+        .filter(|(id, _, _, _, _)| !retired_ids.contains(id))
+        .map(script_row_to_value)
+        .collect();
+    filtered.extend(additions);
+    filtered.sort_by(|a, b| {
+        let pa = a.get("priority").and_then(|v| v.as_i64()).unwrap_or(50);
+        let pb = b.get("priority").and_then(|v| v.as_i64()).unwrap_or(50);
+        pb.cmp(&pa)
+    });
+    filtered.truncate(30);
+    filtered
 }
 
 #[cfg(test)]
@@ -675,6 +777,136 @@ mod tests {
             .unwrap();
         assert_eq!(out.confidence, 0.0);
         assert!(out.sources.contains(&"db_not_injected".to_string()));
+    }
+
+    // ── load_effective_worldbook_for_save merge 逻辑 ────────────────
+    //
+    // 对齐 Python `tests/unit/test_worldbook_overlay.py::TestLoadEffectiveWorldbook`。
+    // 这里测纯函数 `merge_worldbook_with_overlays`,无需 DB。
+
+    use rpg_db::repos::save_worldbook_overlays::SaveWorldbookOverlay;
+
+    fn make_overlay(
+        id: i64,
+        kind: &str,
+        title: &str,
+        content: &str,
+        priority: i32,
+        retired_entry_id: Option<i64>,
+    ) -> SaveWorldbookOverlay {
+        SaveWorldbookOverlay {
+            id,
+            save_id: 10,
+            kind: kind.to_string(),
+            title: title.to_string(),
+            content: content.to_string(),
+            keys: json!([]),
+            priority,
+            retired_entry_id,
+            retired_reason: String::new(),
+            introduced_turn: None,
+            metadata: json!({}),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_merge_happy_path_no_overlays() {
+        // 无 overlay 时,script 行原样输出,按 priority DESC,_source=script。
+        let script_rows = vec![
+            (1, "王都".to_string(), "帝国中心".to_string(), json!([]), 80),
+            (2, "海港".to_string(), "贸易枢纽".to_string(), json!([]), 60),
+        ];
+        let out = merge_worldbook_with_overlays(script_rows, vec![]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].get("title").unwrap().as_str(), Some("王都"));
+        assert_eq!(out[0].get("priority").unwrap().as_i64(), Some(80));
+        assert_eq!(out[0].get("_source").unwrap().as_str(), Some("script"));
+        assert_eq!(out[1].get("title").unwrap().as_str(), Some("海港"));
+    }
+
+    #[test]
+    fn test_merge_empty_inputs_returns_empty() {
+        let out = merge_worldbook_with_overlays(vec![], vec![]);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn test_merge_retirement_excludes_script_entry() {
+        // script 有 id=1,2,3;overlay retirement 屏蔽 id=2;结果只剩 1,3。
+        let script_rows = vec![
+            (1, "A".to_string(), "".to_string(), json!([]), 90),
+            (2, "B".to_string(), "".to_string(), json!([]), 70),
+            (3, "C".to_string(), "".to_string(), json!([]), 50),
+        ];
+        let overlays = vec![make_overlay(100, "retirement", "", "", 0, Some(2))];
+        let out = merge_worldbook_with_overlays(script_rows, overlays);
+        assert_eq!(out.len(), 2);
+        // 排序后:A(90) > C(50)
+        assert_eq!(out[0].get("title").unwrap().as_str(), Some("A"));
+        assert_eq!(out[1].get("title").unwrap().as_str(), Some("C"));
+        // B 不在
+        for entry in &out {
+            assert_ne!(entry.get("title").unwrap().as_str(), Some("B"));
+        }
+    }
+
+    #[test]
+    fn test_merge_addition_appended_and_sorted() {
+        // addition overlay priority=95 应该排到 script 80 前面。
+        let script_rows = vec![
+            (1, "王都".to_string(), "".to_string(), json!([]), 80),
+        ];
+        let overlays = vec![make_overlay(
+            200,
+            "addition",
+            "新地标",
+            "玩家发现",
+            95,
+            None,
+        )];
+        let out = merge_worldbook_with_overlays(script_rows, overlays);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].get("title").unwrap().as_str(), Some("新地标"));
+        assert_eq!(out[0].get("_source").unwrap().as_str(), Some("addition"));
+        assert_eq!(out[0].get("overlay_id").unwrap().as_i64(), Some(200));
+        // addition 的 id 字段为 null (无 worldbook_entries.id)
+        assert!(out[0].get("id").unwrap().is_null());
+        assert_eq!(out[1].get("title").unwrap().as_str(), Some("王都"));
+        assert_eq!(out[1].get("_source").unwrap().as_str(), Some("script"));
+    }
+
+    #[test]
+    fn test_merge_retirement_and_addition_combined() {
+        // 三条 script,retire 其中一条,再加一条 addition,验证总数与排序。
+        let script_rows = vec![
+            (1, "A".to_string(), "".to_string(), json!([]), 80),
+            (2, "B".to_string(), "".to_string(), json!([]), 60),
+            (3, "C".to_string(), "".to_string(), json!([]), 40),
+        ];
+        let overlays = vec![
+            make_overlay(50, "retirement", "", "", 0, Some(2)),
+            make_overlay(51, "addition", "D", "新条目", 70, None),
+        ];
+        let out = merge_worldbook_with_overlays(script_rows, overlays);
+        assert_eq!(out.len(), 3);
+        // 排序: A(80) > D(70) > C(40),B 被 retire 掉
+        let titles: Vec<&str> = out
+            .iter()
+            .map(|v| v.get("title").unwrap().as_str().unwrap())
+            .collect();
+        assert_eq!(titles, vec!["A", "D", "C"]);
+    }
+
+    #[test]
+    fn test_merge_truncates_to_30() {
+        // 35 条 script + 0 overlay → 截断到 30。
+        let script_rows: Vec<_> = (0..35)
+            .map(|i| (i as i64, format!("E{i}"), "".to_string(), json!([]), 50))
+            .collect();
+        let out = merge_worldbook_with_overlays(script_rows, vec![]);
+        assert_eq!(out.len(), 30);
     }
 
     // ── ConsultInput default ────────────────────────────────────────

@@ -360,4 +360,117 @@ mod tests {
         // 不真实 set —— 仅验证 helper API 在 cfg(test) 下编译通过。
         let _ = summary_backend_is_set();
     }
+
+    // ── Mock backend + run_llm_summary 集成 ───────────────────────────
+
+    use async_trait::async_trait;
+    use rpg_llm::pipeline::{BackendKind, ChunkStream, LlmError};
+
+    /// 最小可控 mock backend:按构造时给的脚本逐步发 chunk,然后 Stop。
+    struct ScriptedBackend {
+        chunks: Vec<ChatChunk>,
+        /// 计数 stream_chat 调用次数,验证 LLM 真被调到 (而不是 placeholder 路径)。
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        last_req: std::sync::Arc<parking_lot::Mutex<Option<ChatRequest>>>,
+    }
+
+    impl ScriptedBackend {
+        fn new(chunks: Vec<ChatChunk>) -> Self {
+            Self {
+                chunks,
+                calls: Default::default(),
+                last_req: Default::default(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmBackend for ScriptedBackend {
+        fn kind(&self) -> BackendKind {
+            BackendKind::Openai
+        }
+        async fn stream_chat<'a>(
+            &'a self,
+            req: ChatRequest,
+        ) -> Result<ChunkStream<'a>, LlmError> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *self.last_req.lock() = Some(req);
+            let items: Vec<Result<ChatChunk, LlmError>> =
+                self.chunks.iter().cloned().map(Ok).collect();
+            Ok(Box::pin(futures::stream::iter(items)))
+        }
+    }
+
+    /// `run_llm_summary` 在 mock backend 上:
+    /// - 应调用 `stream_chat` 一次
+    /// - prompt 应含玩家输入和 GM 响应字面量
+    /// - system 应等于 LLM_SUMMARY_SYSTEM
+    /// - 文本清洗后长度达标 → 返回 Ok(true) (后续 SQL update 因 dead pool 会 err)
+    #[tokio::test]
+    async fn run_llm_summary_invokes_backend_with_expected_prompt() {
+        // 给一个完整且达标 (15-22 字) 的摘要文本,前后缀有引号让清洗逻辑生效。
+        let backend = ScriptedBackend::new(vec![
+            ChatChunk::Text("「主角推门进城与守卫对峙。".to_string()),
+            ChatChunk::Stop {
+                reason: "end".into(),
+            },
+        ]);
+        let calls = backend.calls.clone();
+        let last_req = backend.last_req.clone();
+
+        // SQL update 会因 dead pool 报错;我们捕获 Err 但只要 backend 被调到了,
+        // 就证明真 LLM 路径接通(不再是 placeholder-only)。
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost:1/nonexistent").unwrap();
+        let res = run_llm_summary(
+            &pool,
+            &backend,
+            "gpt-4o-mini",
+            42,
+            "玩家走向城门",
+            "GM:守卫拦下了你",
+        )
+        .await;
+
+        // backend 被调用一次
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // SQL update 会失败 (dead pool),所以 res 是 Err — 但 LLM 路径已走完。
+        assert!(
+            res.is_err(),
+            "dead pool 下 update 应失败,res={res:?}"
+        );
+
+        // 验请求结构
+        let req = last_req
+            .lock()
+            .take()
+            .expect("stream_chat should have been called");
+        assert_eq!(req.model, "gpt-4o-mini");
+        assert_eq!(req.system.as_deref(), Some(LLM_SUMMARY_SYSTEM));
+        assert_eq!(req.max_tokens, Some(LLM_SUMMARY_MAX_TOKENS));
+        assert_eq!(req.messages.len(), 1);
+        // user prompt 应包含玩家/GM 文本
+        let user_content = serde_json::to_string(&req.messages[0]).unwrap();
+        assert!(user_content.contains("玩家走向城门"), "actual={user_content}");
+        assert!(
+            user_content.contains("GM:守卫拦下了你"),
+            "actual={user_content}"
+        );
+    }
+
+    /// 文本太短 (< 4 字符) 时应放弃写回,返回 Ok(false),且不触碰 SQL。
+    /// 这里 SQL 即使触碰也会失败 (dead pool),用 Ok(false) 区分两条路径。
+    #[tokio::test]
+    async fn run_llm_summary_skips_write_when_too_short() {
+        let backend = ScriptedBackend::new(vec![
+            ChatChunk::Text("嗯".to_string()), // 清洗后只剩 1 字符 → 放弃
+            ChatChunk::Stop {
+                reason: "end".into(),
+            },
+        ]);
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost:1/nonexistent").unwrap();
+        let res = run_llm_summary(&pool, &backend, "m", 1, "p", "g").await;
+        // 太短 → Ok(false),并未尝试 SQL update (否则 dead pool 会 Err)。
+        assert!(matches!(res, Ok(false)), "expected Ok(false), got {res:?}");
+    }
 }
