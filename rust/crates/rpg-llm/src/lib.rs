@@ -50,7 +50,7 @@ pub use anthropic::AnthropicBackend;
 pub use openai::OpenAiBackend;
 pub use registry::{
     probe_anthropic, probe_backend, probe_openai, probe_vertex, ApiEntry, LlmRouter, ModelCatalog,
-    ModelEntry, ProbeResult, Selected,
+    ModelEntry, ModelPricing, ProbeResult, Selected,
 };
 pub use responses::ResponsesBackend;
 pub use vertex::VertexBackend;

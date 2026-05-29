@@ -18,6 +18,91 @@ use crate::pipeline::{BackendKind, ChunkStream, LlmBackend, LlmError, ModelInfo}
 use crate::pipeline::{ChatRequest};
 
 // -----------------------------------------------------------------------------
+// ModelPricing — 每千 token 计价,USD
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPricing {
+    pub input_per_1k_usd: f64,
+    pub output_per_1k_usd: f64,
+    pub cache_read_per_1k_usd: f64,
+    pub cache_write_per_1k_usd: f64,
+}
+
+impl ModelPricing {
+    /// 内置默认定价表 — key: `"{api_id}/{model_id}"`。
+    /// 数据来源:各 provider 官网,按 2025-Q2 定价录入。
+    fn builtin_table() -> HashMap<String, ModelPricing> {
+        let mut m = HashMap::new();
+        // ── Anthropic ──────────────────────────────────────────────────────
+        // claude-opus-4-7
+        m.insert("anthropic/claude-opus-4-7".into(), ModelPricing {
+            input_per_1k_usd: 0.015,
+            output_per_1k_usd: 0.075,
+            cache_read_per_1k_usd: 0.0015,
+            cache_write_per_1k_usd: 0.01875,
+        });
+        // claude-sonnet-4-6
+        m.insert("anthropic/claude-sonnet-4-6".into(), ModelPricing {
+            input_per_1k_usd: 0.003,
+            output_per_1k_usd: 0.015,
+            cache_read_per_1k_usd: 0.0003,
+            cache_write_per_1k_usd: 0.00375,
+        });
+        // claude-haiku-4-5
+        m.insert("anthropic/claude-haiku-4-5".into(), ModelPricing {
+            input_per_1k_usd: 0.00025,
+            output_per_1k_usd: 0.00125,
+            cache_read_per_1k_usd: 0.00003,
+            cache_write_per_1k_usd: 0.0003,
+        });
+        // ── Gemini (Vertex AI / Google AI Studio) ──────────────────────────
+        // gemini-2.5-flash (≤200k ctx)
+        m.insert("vertex_ai/gemini-2.5-flash".into(), ModelPricing {
+            input_per_1k_usd: 0.000075,
+            output_per_1k_usd: 0.0003,
+            cache_read_per_1k_usd: 0.0000188,
+            cache_write_per_1k_usd: 0.000075,
+        });
+        // gemini-2.5-pro
+        m.insert("vertex_ai/gemini-2.5-pro".into(), ModelPricing {
+            input_per_1k_usd: 0.00125,
+            output_per_1k_usd: 0.01,
+            cache_read_per_1k_usd: 0.0003125,
+            cache_write_per_1k_usd: 0.00125,
+        });
+        // ── DeepSeek ───────────────────────────────────────────────────────
+        // deepseek-v3 (openai_compat)
+        m.insert("openai_compat/deepseek-v3".into(), ModelPricing {
+            input_per_1k_usd: 0.00027,
+            output_per_1k_usd: 0.0011,
+            cache_read_per_1k_usd: 0.000007,
+            cache_write_per_1k_usd: 0.00027,
+        });
+        // ── OpenAI ─────────────────────────────────────────────────────────
+        // gpt-4o
+        m.insert("openai/gpt-4o".into(), ModelPricing {
+            input_per_1k_usd: 0.0025,
+            output_per_1k_usd: 0.01,
+            cache_read_per_1k_usd: 0.00125,
+            cache_write_per_1k_usd: 0.0025,
+        });
+        // gpt-5
+        m.insert("openai/gpt-5".into(), ModelPricing {
+            input_per_1k_usd: 0.01,
+            output_per_1k_usd: 0.04,
+            cache_read_per_1k_usd: 0.005,
+            cache_write_per_1k_usd: 0.01,
+        });
+        m
+    }
+}
+
+/// 全局懒加载定价表(builtin)。
+static BUILTIN_PRICING: once_cell::sync::Lazy<HashMap<String, ModelPricing>> =
+    once_cell::sync::Lazy::new(ModelPricing::builtin_table);
+
+// -----------------------------------------------------------------------------
 // Catalog 数据结构
 // -----------------------------------------------------------------------------
 
@@ -72,6 +157,9 @@ pub struct ModelEntry {
     pub enabled: bool,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// 计价信息;None 时由 LlmRouter 从 builtin 表回落。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<ModelPricing>,
 }
 
 impl ModelCatalog {
@@ -177,6 +265,7 @@ fn model_entry(id: &str, display: &str) -> ModelEntry {
         display_name: display.into(),
         enabled: true,
         capabilities: vec!["text".into(), "streaming".into(), "tools".into()],
+        pricing: None,
     }
 }
 
@@ -323,6 +412,161 @@ impl LlmRouter {
         out.sort_by(|a, b| a.id.cmp(&b.id));
         out.dedup_by(|a, b| a.id == b.id);
         out
+    }
+
+    /// 从数据库动态加载 catalog。
+    ///
+    /// 表结构假设:
+    /// ```sql
+    /// CREATE TABLE model_apis (
+    ///   id           text PRIMARY KEY,
+    ///   display_name text NOT NULL DEFAULT '',
+    ///   kind         text NOT NULL,          -- anthropic/vertex_ai/openai/openai_compat
+    ///   enabled      boolean NOT NULL DEFAULT true,
+    ///   credential_env  text,
+    ///   credential_ref  text,
+    ///   base_url     text
+    /// );
+    /// CREATE TABLE model_models (
+    ///   api_id       text NOT NULL REFERENCES model_apis(id) ON DELETE CASCADE,
+    ///   id           text NOT NULL,
+    ///   real_name    text,
+    ///   display_name text NOT NULL DEFAULT '',
+    ///   enabled      boolean NOT NULL DEFAULT true,
+    ///   capabilities text[] NOT NULL DEFAULT '{}',
+    ///   -- pricing (nullable)
+    ///   price_input_per_1k   double precision,
+    ///   price_output_per_1k  double precision,
+    ///   price_cache_read_per_1k  double precision,
+    ///   price_cache_write_per_1k double precision,
+    ///   PRIMARY KEY (api_id, id)
+    /// );
+    /// ```
+    #[cfg(feature = "db")]
+    pub async fn load_from_db(pool: &sqlx::PgPool) -> Result<Self, LlmError> {
+        // 1. 加载 model_apis
+        let api_rows = sqlx::query(
+            "SELECT id, display_name, kind, enabled, credential_env, credential_ref, base_url \
+             FROM model_apis ORDER BY id"
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| LlmError::Config(format!("load_from_db model_apis: {e}")))?;
+
+        let mut apis: Vec<ApiEntry> = Vec::with_capacity(api_rows.len());
+        for row in &api_rows {
+            use sqlx::Row;
+            apis.push(ApiEntry {
+                id: row.try_get::<String, _>("id")
+                    .map_err(|e| LlmError::Config(e.to_string()))?,
+                display_name: row.try_get::<String, _>("display_name")
+                    .unwrap_or_default(),
+                kind: row.try_get::<String, _>("kind")
+                    .map_err(|e| LlmError::Config(e.to_string()))?,
+                enabled: row.try_get::<bool, _>("enabled").unwrap_or(true),
+                credential_env: row.try_get::<Option<String>, _>("credential_env").ok().flatten(),
+                credential_ref: row.try_get::<Option<String>, _>("credential_ref").ok().flatten(),
+                base_url: row.try_get::<Option<String>, _>("base_url").ok().flatten(),
+                models: vec![],
+            });
+        }
+
+        // 2. 加载 model_models
+        let model_rows = sqlx::query(
+            "SELECT api_id, id, real_name, display_name, enabled, capabilities, \
+                    price_input_per_1k, price_output_per_1k, \
+                    price_cache_read_per_1k, price_cache_write_per_1k \
+             FROM model_models ORDER BY api_id, id"
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| LlmError::Config(format!("load_from_db model_models: {e}")))?;
+
+        for row in &model_rows {
+            use sqlx::Row;
+            let api_id: String = row.try_get("api_id")
+                .map_err(|e| LlmError::Config(e.to_string()))?;
+            let model_id: String = row.try_get("id")
+                .map_err(|e| LlmError::Config(e.to_string()))?;
+
+            let pricing = {
+                let inp: Option<f64> = row.try_get("price_input_per_1k").ok().flatten();
+                let out: Option<f64> = row.try_get("price_output_per_1k").ok().flatten();
+                let cr: Option<f64> = row.try_get("price_cache_read_per_1k").ok().flatten();
+                let cw: Option<f64> = row.try_get("price_cache_write_per_1k").ok().flatten();
+                match (inp, out, cr, cw) {
+                    (Some(i), Some(o), Some(r), Some(w)) => Some(ModelPricing {
+                        input_per_1k_usd: i,
+                        output_per_1k_usd: o,
+                        cache_read_per_1k_usd: r,
+                        cache_write_per_1k_usd: w,
+                    }),
+                    _ => None,
+                }
+            };
+
+            let caps: Vec<String> = row.try_get::<Vec<String>, _>("capabilities")
+                .unwrap_or_default();
+
+            let entry = ModelEntry {
+                id: model_id,
+                real_name: row.try_get::<Option<String>, _>("real_name").ok().flatten(),
+                display_name: row.try_get::<String, _>("display_name").unwrap_or_default(),
+                enabled: row.try_get::<bool, _>("enabled").unwrap_or(true),
+                capabilities: caps,
+                pricing,
+            };
+
+            if let Some(api) = apis.iter_mut().find(|a| a.id == api_id) {
+                api.models.push(entry);
+            }
+        }
+
+        // 3. 构造 catalog:若 DB 里没有任何 api,回落到默认
+        let catalog = if apis.is_empty() {
+            ModelCatalog::default()
+        } else {
+            let selected = apis
+                .iter()
+                .find(|a| a.enabled)
+                .and_then(|a| a.models.iter().find(|m| m.enabled).map(|m| (a, m)))
+                .map(|(a, m)| Selected {
+                    api_id: a.id.clone(),
+                    model_id: m.id.clone(),
+                })
+                .unwrap_or_else(|| Selected {
+                    api_id: apis[0].id.clone(),
+                    model_id: apis[0].models.first().map(|m| m.id.clone()).unwrap_or_default(),
+                });
+            ModelCatalog {
+                schema_version: 1,
+                selected,
+                apis,
+            }
+        };
+
+        Ok(Self {
+            backends: HashMap::new(),
+            catalog: Some(catalog),
+        })
+    }
+
+    /// 查询 (api_id, model_id) 的定价;先找 catalog 里的 ModelEntry.pricing,
+    /// 没有则回落到 builtin 表。
+    pub fn pricing_for(&self, api_id: &str, model_id: &str) -> Option<&ModelPricing> {
+        // 1. catalog 内联 pricing
+        if let Some(catalog) = &self.catalog {
+            if let Some(api) = catalog.apis.iter().find(|a| a.id == api_id) {
+                if let Some(model) = api.models.iter().find(|m| m.id == model_id) {
+                    if model.pricing.is_some() {
+                        return model.pricing.as_ref();
+                    }
+                }
+            }
+        }
+        // 2. 回落 builtin
+        let key = format!("{api_id}/{model_id}");
+        BUILTIN_PRICING.get(&key)
     }
 }
 

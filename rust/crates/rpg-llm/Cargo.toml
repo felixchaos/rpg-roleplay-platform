@@ -24,3 +24,7 @@ yup-oauth2.workspace = true
 hyper-util = { version = "0.1", features = ["client-legacy"] }
 base64.workspace = true
 once_cell.workspace = true
+sqlx = { workspace = true, optional = true }
+
+[features]
+db = ["sqlx"]
