@@ -24,6 +24,7 @@ pub struct WorldbookEntry {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[tracing::instrument(skip(pool), fields(id = %id))]
 pub async fn get(pool: &PgPool, id: i64) -> Result<Option<WorldbookEntry>, sqlx::Error> {
     sqlx::query_as(
         "SELECT id, script_id, save_id, user_id, key, aliases, content, comment,
@@ -35,6 +36,7 @@ pub async fn get(pool: &PgPool, id: i64) -> Result<Option<WorldbookEntry>, sqlx:
     .await
 }
 
+#[tracing::instrument(skip(pool), fields(script_id = %script_id))]
 pub async fn list_for_script(
     pool: &PgPool,
     script_id: i64,
@@ -51,6 +53,7 @@ pub async fn list_for_script(
     .await
 }
 
+#[tracing::instrument(skip(pool), fields(save_id = %save_id))]
 pub async fn list_for_save(
     pool: &PgPool,
     save_id: i64,
@@ -67,6 +70,7 @@ pub async fn list_for_save(
     .await
 }
 
+#[tracing::instrument(skip(pool, entry), fields(id = %entry.id, script_id = ?entry.script_id, save_id = ?entry.save_id))]
 pub async fn upsert(
     pool: &PgPool,
     entry: &WorldbookEntry,
@@ -106,6 +110,7 @@ pub async fn upsert(
     .await
 }
 
+#[tracing::instrument(skip(pool), fields(id = %id))]
 pub async fn delete(pool: &PgPool, id: i64) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM worldbook_entries WHERE id = $1")
         .bind(id)

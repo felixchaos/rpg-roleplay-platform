@@ -30,6 +30,7 @@ pub struct CharacterCard {
     pub row_version: i64,
 }
 
+#[tracing::instrument(skip(pool), fields(id = %id))]
 pub async fn get(pool: &PgPool, id: i64) -> Result<Option<CharacterCard>, sqlx::Error> {
     sqlx::query_as(
         "SELECT id, user_id, slug, name, aliases, identity, appearance, personality,
@@ -43,6 +44,7 @@ pub async fn get(pool: &PgPool, id: i64) -> Result<Option<CharacterCard>, sqlx::
     .await
 }
 
+#[tracing::instrument(skip(pool), fields(user_id = %user_id, enabled_only = %enabled_only))]
 pub async fn list(
     pool: &PgPool,
     user_id: i64,
@@ -77,6 +79,7 @@ pub async fn list(
     }
 }
 
+#[tracing::instrument(skip(pool, card), fields(user_id = %card.user_id, slug = %card.slug))]
 pub async fn upsert(pool: &PgPool, card: &CharacterCard) -> Result<CharacterCard, sqlx::Error> {
     sqlx::query_as(
         "INSERT INTO user_character_cards
@@ -128,6 +131,7 @@ pub async fn upsert(pool: &PgPool, card: &CharacterCard) -> Result<CharacterCard
     .await
 }
 
+#[tracing::instrument(skip(pool), fields(id = %id))]
 pub async fn delete(pool: &PgPool, id: i64) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM user_character_cards WHERE id = $1")
         .bind(id)

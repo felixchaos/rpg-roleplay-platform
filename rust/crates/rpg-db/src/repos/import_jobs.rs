@@ -29,6 +29,7 @@ pub struct ImportJob {
 }
 
 /// 创建一条新的 import_jobs 记录（status=pending）。
+#[tracing::instrument(skip(pool), fields(job_id = %job_id, user_id = %user_id, kind = %kind))]
 pub async fn start(
     pool: &PgPool,
     job_id: &str,
@@ -54,6 +55,7 @@ pub async fn start(
 }
 
 /// 查询单条 import_jobs 记录。
+#[tracing::instrument(skip(pool), fields(job_id = %job_id))]
 pub async fn get(pool: &PgPool, job_id: &str) -> Result<Option<ImportJob>, sqlx::Error> {
     sqlx::query_as(
         "SELECT id, job_id, user_id, script_id, status, stage,
@@ -68,6 +70,7 @@ pub async fn get(pool: &PgPool, job_id: &str) -> Result<Option<ImportJob>, sqlx:
 }
 
 /// 状态流转：更新 status/stage/进度等字段。
+#[tracing::instrument(skip(pool), fields(job_id = %job_id, status = %status, stage = %stage))]
 pub async fn transition(
     pool: &PgPool,
     job_id: &str,
@@ -103,6 +106,7 @@ pub async fn transition(
 }
 
 /// 标记任务失败。
+#[tracing::instrument(skip(pool), fields(job_id = %job_id))]
 pub async fn fail(
     pool: &PgPool,
     job_id: &str,

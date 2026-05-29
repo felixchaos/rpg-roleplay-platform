@@ -71,6 +71,7 @@ impl AuthService {
 // ─── 顶层函数(对应 Python 顶层 def) — 包装 AuthService ─────────────────────
 
 /// Python: `register(username, password, display_name)`
+#[tracing::instrument(skip(pool, password), fields(username = %username))]
 pub async fn register(
     pool: &PgPool,
     username: &str,
@@ -82,6 +83,7 @@ pub async fn register(
 }
 
 /// Python: `login(username, password, ip="")` → `(user, token)`
+#[tracing::instrument(skip(pool, password), fields(username = %username, ip = %ip))]
 pub async fn login(
     pool: &PgPool,
     username: &str,
@@ -93,24 +95,28 @@ pub async fn login(
 }
 
 /// Python: `logout(token)`
+#[tracing::instrument(skip(pool, token))]
 pub async fn logout(pool: &PgPool, token: Option<&str>) -> PlatformResult<()> {
     let svc = AuthService::new(pool.clone());
     svc.logout(token).await
 }
 
 /// Python: `user_from_token(token)` —— axum extractor 的核心。
+#[tracing::instrument(skip(pool, token))]
 pub async fn user_from_token(pool: &PgPool, token: Option<&str>) -> PlatformResult<Option<User>> {
     let svc = AuthService::new(pool.clone());
     svc.user_from_token(token).await
 }
 
 /// Python: `get_user(user_id)` — 不存在抛 `ValueError("用户不存在")`。
+#[tracing::instrument(skip(pool), fields(user_id = %user_id))]
 pub async fn get_user(pool: &PgPool, user_id: i64) -> PlatformResult<User> {
     let svc = AuthService::new(pool.clone());
     svc.get_user(user_id).await
 }
 
 /// Python: `update_profile(user_id, display_name, bio)`
+#[tracing::instrument(skip(pool), fields(user_id = %user_id))]
 pub async fn update_profile(
     pool: &PgPool,
     user_id: i64,
@@ -124,6 +130,7 @@ pub async fn update_profile(
 // ─── AuthService impl(主体)───────────────────────────────────────────────
 
 impl AuthService {
+    #[tracing::instrument(skip(self, password), fields(username = %username))]
     pub async fn register(
         &self,
         username: &str,
@@ -176,6 +183,7 @@ impl AuthService {
         User::from_row(&row).map_err(Into::into)
     }
 
+    #[tracing::instrument(skip(self, password), fields(username = %username, ip = %ip))]
     pub async fn login(
         &self,
         username: &str,
@@ -242,6 +250,7 @@ impl AuthService {
         Ok((user, token))
     }
 
+    #[tracing::instrument(skip(self, token))]
     pub async fn logout(&self, token: Option<&str>) -> PlatformResult<()> {
         let Some(token) = token.filter(|t| !t.is_empty()) else {
             return Ok(());
@@ -253,6 +262,7 @@ impl AuthService {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self, token))]
     pub async fn user_from_token(&self, token: Option<&str>) -> PlatformResult<Option<User>> {
         let Some(token) = token.filter(|t| !t.is_empty()) else {
             return Ok(None);
@@ -273,6 +283,7 @@ impl AuthService {
         }
     }
 
+    #[tracing::instrument(skip(self), fields(user_id = %user_id))]
     pub async fn get_user(&self, user_id: i64) -> PlatformResult<User> {
         let row = sqlx::query("select * from users where id = $1")
             .bind(user_id)
@@ -284,6 +295,7 @@ impl AuthService {
         }
     }
 
+    #[tracing::instrument(skip(self), fields(user_id = %user_id))]
     pub async fn update_profile(
         &self,
         user_id: i64,

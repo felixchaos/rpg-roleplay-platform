@@ -126,6 +126,7 @@ impl LlmBackend for OpenAiBackend {
         }
     }
 
+    #[tracing::instrument(skip(self, req), fields(model = %req.model, stream = req.stream, api_id = %self.api_id))]
     async fn stream_chat<'a>(&'a self, req: ChatRequest) -> Result<ChunkStream<'a>, LlmError> {
         let body = self.build_body(&req)?;
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
@@ -222,6 +223,7 @@ impl LlmBackend for OpenAiBackend {
         Ok(Box::pin(flat))
     }
 
+    #[tracing::instrument(skip(self), fields(api_id = %self.api_id))]
     async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> {
         let url = format!("{}/models", self.base_url.trim_end_matches('/'));
         let resp = self.http.get(&url).bearer_auth(&self.api_key).send().await;

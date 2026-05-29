@@ -18,6 +18,7 @@ pub struct SavePhaseDigest {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[tracing::instrument(skip(pool), fields(save_id = %save_id, limit = %limit))]
 pub async fn list_recent_for_save(
     pool: &PgPool,
     save_id: i64,
@@ -37,6 +38,7 @@ pub async fn list_recent_for_save(
     .await
 }
 
+#[tracing::instrument(skip(pool), fields(save_id = %save_id, phase_index = %phase_index))]
 pub async fn get(
     pool: &PgPool,
     save_id: i64,
@@ -54,6 +56,7 @@ pub async fn get(
     .await
 }
 
+#[tracing::instrument(skip(pool, digest), fields(save_id = %digest.save_id, phase_index = %digest.phase_index))]
 pub async fn upsert(
     pool: &PgPool,
     digest: &SavePhaseDigest,

@@ -16,6 +16,7 @@ pub struct UserApiCredential {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[tracing::instrument(skip(pool), fields(user_id = %user_id))]
 pub async fn list(
     pool: &PgPool,
     user_id: i64,
@@ -32,6 +33,7 @@ pub async fn list(
     .await
 }
 
+#[tracing::instrument(skip(pool, cred), fields(user_id = %cred.user_id, api_id = %cred.api_id))]
 pub async fn upsert(
     pool: &PgPool,
     cred: &UserApiCredential,
@@ -59,6 +61,7 @@ pub async fn upsert(
     .await
 }
 
+#[tracing::instrument(skip(pool), fields(user_id = %user_id, api_id = %api_id))]
 pub async fn delete(pool: &PgPool, user_id: i64, api_id: &str) -> Result<bool, sqlx::Error> {
     let result = sqlx::query(
         "DELETE FROM user_api_credentials WHERE user_id = $1 AND api_id = $2",
@@ -71,6 +74,7 @@ pub async fn delete(pool: &PgPool, user_id: i64, api_id: &str) -> Result<bool, s
 }
 
 /// 解析：按 user_id + api_id 取单条凭据（用于运行时鉴权）。
+#[tracing::instrument(skip(pool), fields(user_id = %user_id, api_id = %api_id))]
 pub async fn resolve(
     pool: &PgPool,
     user_id: i64,

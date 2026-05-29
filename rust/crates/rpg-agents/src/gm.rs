@@ -215,6 +215,7 @@ impl GameMaster {
     // ── 一次性回复 ──────────────────────────────────────────
 
     /// 生成开场白。
+    #[tracing::instrument(skip(self, state), fields(action = "generate_opening"))]
     pub async fn generate_opening(
         &self,
         state: &GameState,
@@ -233,6 +234,7 @@ impl GameMaster {
     }
 
     /// 同步主响应。
+    #[tracing::instrument(skip(self, state, retrieved), fields(action = "respond"))]
     pub async fn respond(
         &self,
         user_input: &str,
@@ -252,6 +254,7 @@ impl GameMaster {
     }
 
     /// 流式回复(简版,只产 text chunk)。
+    #[tracing::instrument(skip(self, state, retrieved), fields(action = "respond_stream"))]
     pub async fn respond_stream(
         &self,
         user_input: &str,
@@ -278,6 +281,7 @@ impl GameMaster {
     ///   3. timeline_narrative_guard 扫禁词
     ///   4. extractor 把叙事 → ops
     ///   5. apply ops 到 state(留 TODO,等 rpg-state 完成)
+    #[tracing::instrument(skip(self, state), fields(action = "step"))]
     pub async fn step(
         self: Arc<Self>,
         user_input: String,
@@ -404,6 +408,7 @@ impl GameMaster {
     // 注:本路径不依赖 LLM 的流式 stream();因为 placeholder LlmBackend
     // trait 的 stream() 只产 String chunks,无法表达 tool_call。等 rpg-llm
     // 真正接入(其 ChatChunk::ToolCall variant)后,可改成 stream_chat 路径。
+    #[tracing::instrument(skip(self, state, retrieved, tools), fields(action = "respond_stream_with_tools"))]
     pub async fn respond_stream_with_tools(
         self: Arc<Self>,
         user_input: String,

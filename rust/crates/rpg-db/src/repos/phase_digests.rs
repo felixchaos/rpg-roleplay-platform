@@ -21,6 +21,7 @@ pub struct PhaseDigest {
 }
 
 /// 拉取剧本的 phase_digests，用于 anticipation 场景（含 key_events）。
+#[tracing::instrument(skip(pool), fields(script_id = %script_id))]
 pub async fn list_for_script_anticipation(
     pool: &PgPool,
     script_id: i64,
@@ -38,6 +39,7 @@ pub async fn list_for_script_anticipation(
     .await
 }
 
+#[tracing::instrument(skip(pool), fields(script_id = %script_id, phase_index = %phase_index))]
 pub async fn get(
     pool: &PgPool,
     script_id: i64,
@@ -56,6 +58,7 @@ pub async fn get(
     .await
 }
 
+#[tracing::instrument(skip(pool, digest), fields(script_id = %digest.script_id, phase_index = %digest.phase_index))]
 pub async fn upsert(
     pool: &PgPool,
     digest: &PhaseDigest,

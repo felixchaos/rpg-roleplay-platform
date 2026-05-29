@@ -25,6 +25,7 @@ pub struct TokenUsageRow {
 }
 
 /// 插入一条 token_usage 记录（fire-and-forget 计费写入）。
+#[tracing::instrument(skip(pool, row), fields(user_id = %row.user_id, api_id = %row.api_id, model = %row.model_real_name))]
 pub async fn insert(pool: &PgPool, row: &TokenUsageRow) -> Result<TokenUsageRow, sqlx::Error> {
     sqlx::query_as(
         "INSERT INTO token_usage

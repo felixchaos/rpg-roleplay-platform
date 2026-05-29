@@ -12,6 +12,7 @@ pub struct ScriptOverride {
 
 /// 加载指定 save 对应剧本的 script_overrides。
 /// save_id → script_id 由调用方解析，这里直接按 script_id 查。
+#[tracing::instrument(skip(pool), fields(script_id = %script_id))]
 pub async fn load_for_save(
     pool: &PgPool,
     script_id: i64,
@@ -26,6 +27,7 @@ pub async fn load_for_save(
     .await
 }
 
+#[tracing::instrument(skip(pool), fields(script_id = %script_id))]
 pub async fn get(pool: &PgPool, script_id: i64) -> Result<Option<ScriptOverride>, sqlx::Error> {
     sqlx::query_as(
         "SELECT script_id, data, updated_at
@@ -37,6 +39,7 @@ pub async fn get(pool: &PgPool, script_id: i64) -> Result<Option<ScriptOverride>
     .await
 }
 
+#[tracing::instrument(skip(pool, data), fields(script_id = %script_id))]
 pub async fn upsert(
     pool: &PgPool,
     script_id: i64,
@@ -56,6 +59,7 @@ pub async fn upsert(
     .await
 }
 
+#[tracing::instrument(skip(pool), fields(script_id = %script_id))]
 pub async fn delete(pool: &PgPool, script_id: i64) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM script_overrides WHERE script_id = $1")
         .bind(script_id)

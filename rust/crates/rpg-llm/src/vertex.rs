@@ -223,6 +223,7 @@ impl LlmBackend for VertexBackend {
         BackendKind::Vertex
     }
 
+    #[tracing::instrument(skip(self, req), fields(model = %req.model, stream = req.stream))]
     async fn stream_chat<'a>(&'a self, req: ChatRequest) -> Result<ChunkStream<'a>, LlmError> {
         let tok = self.token().await?;
         let body = self.build_body(&req);
@@ -282,6 +283,7 @@ impl LlmBackend for VertexBackend {
         Ok(Box::pin(flat))
     }
 
+    #[tracing::instrument(skip(self))]
     async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> {
         // Vertex REST 列模型 endpoint 比较冷门,直接 hardcode (与 catalog 对齐)。
         Ok(default_vertex_models())

@@ -201,6 +201,7 @@ impl LlmBackend for AnthropicBackend {
         BackendKind::Anthropic
     }
 
+    #[tracing::instrument(skip(self, req), fields(model = %req.model, stream = req.stream))]
     async fn stream_chat<'a>(&'a self, req: ChatRequest) -> Result<ChunkStream<'a>, LlmError> {
         let body = self.build_body(&req)?;
         let headers = self.build_headers(&req);
@@ -265,6 +266,7 @@ impl LlmBackend for AnthropicBackend {
         Ok(Box::pin(flat))
     }
 
+    #[tracing::instrument(skip(self))]
     async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> {
         // Anthropic 公开了 GET /v1/models 端点。失败则降级到 hardcoded list。
         let url = format!("{}/v1/models", self.base_url.trim_end_matches('/'));
