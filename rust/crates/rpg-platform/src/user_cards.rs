@@ -273,6 +273,9 @@ pub struct UserCardRow {
     pub enabled: bool,
     pub scope: String,
     pub row_version: i64,
+    /// 迁移 020 新增:scope='public' 卡被 retrieval 命中的累计次数。
+    #[serde(default)]
+    pub public_retrieval_count: i64,
 }
 
 fn card_from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<UserCardRow> {
@@ -300,6 +303,9 @@ fn card_from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<UserCardRow> {
         enabled: row.try_get::<bool, _>("enabled").unwrap_or(true),
         scope: row.try_get::<String, _>("scope").unwrap_or_else(|_| "private".to_string()),
         row_version: row.try_get::<i64, _>("row_version").unwrap_or(1),
+        public_retrieval_count: row
+            .try_get::<i64, _>("public_retrieval_count")
+            .unwrap_or(0),
     })
 }
 
@@ -550,4 +556,405 @@ pub async fn user_cards_for_retrieval(
     Ok(out)
 }
 
-// TODO[Sonnet]: admin 审计(谁把卡设成 public、什么时候、被多少人吃了)。
+// ─── CREATE / UPDATE / SET_DEFAULT helpers ────────────────────────────
+// Python upsert_persona 同时处理 create 和 update;Rust 为路由层提供具名 wrapper。
+
+/// 创建新 persona(payload 不含 id)。
+pub async fn create_persona(
+    pool: &PgPool,
+    user_id: i64,
+    payload: &Value,
+) -> PlatformResult<PersonaRow> {
+    // 剥离 id,确保走 insert 路径。
+    let mut p = payload.clone();
+    if let Some(obj) = p.as_object_mut() {
+        obj.remove("id");
+    }
+    upsert_persona(pool, user_id, &p).await
+}
+
+/// 更新已有 persona(payload 必须含 id)。
+pub async fn update_persona(
+    pool: &PgPool,
+    user_id: i64,
+    persona_id: i64,
+    payload: &Value,
+) -> PlatformResult<PersonaRow> {
+    use serde_json::json;
+    let mut p = payload.clone();
+    if let Some(obj) = p.as_object_mut() {
+        obj.insert("id".to_string(), json!(persona_id));
+    }
+    upsert_persona(pool, user_id, &p).await
+}
+
+/// 把指定 persona 设为 default;其余全部清零。
+/// Python: `upsert_persona(user_id, {id, is_default: true})` 里的后半段。
+pub async fn set_default_persona(
+    pool: &PgPool,
+    user_id: i64,
+    persona_id: i64,
+) -> PlatformResult<()> {
+    // 先确认归属
+    let owned = sqlx::query("select 1 as ok from user_personas where id = $1 and user_id = $2")
+        .bind(persona_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+    if owned.is_none() {
+        return Err(PlatformError::not_found("persona 不存在或无权访问"));
+    }
+    // 本条设 true,其余清零
+    sqlx::query("update user_personas set is_default = true where id = $1 and user_id = $2")
+        .bind(persona_id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "update user_personas set is_default = false where user_id = $1 and id <> $2",
+    )
+    .bind(user_id)
+    .bind(persona_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+// ─── PUBLIC CARD AUDIT ────────────────────────────────────────────────
+
+/// 公开审计记录行。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CardPublicAuditRow {
+    pub id: i64,
+    pub card_id: i64,
+    pub card_owner_id: i64,
+    pub set_by_user_id: i64,
+    pub scope_before: String,
+    pub scope_after: String,
+    pub created_at: String,
+}
+
+/// 当卡 scope 变为 public 时写一条审计日志。
+/// 调用方(upsert_user_card 中 scope 从 non-public 变为 public 时)负责触发。
+pub async fn record_card_public_audit(
+    pool: &PgPool,
+    card_id: i64,
+    card_owner_id: i64,
+    set_by_user_id: i64,
+    scope_before: &str,
+    scope_after: &str,
+) -> PlatformResult<()> {
+    sqlx::query(
+        "insert into user_card_public_audit \
+         (card_id, card_owner_id, set_by_user_id, scope_before, scope_after) \
+         values ($1, $2, $3, $4, $5)",
+    )
+    .bind(card_id)
+    .bind(card_owner_id)
+    .bind(set_by_user_id)
+    .bind(scope_before)
+    .bind(scope_after)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// 查询某卡的全部公开审计记录(最新在前)。
+pub async fn get_card_public_audit(
+    pool: &PgPool,
+    card_id: i64,
+) -> PlatformResult<Vec<CardPublicAuditRow>> {
+    let rows = sqlx::query(
+        "select id, card_id, card_owner_id, set_by_user_id, \
+                scope_before, scope_after, \
+                to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at \
+           from user_card_public_audit \
+          where card_id = $1 \
+          order by created_at desc",
+    )
+    .bind(card_id)
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(CardPublicAuditRow {
+                id: r.try_get("id")?,
+                card_id: r.try_get("card_id")?,
+                card_owner_id: r.try_get("card_owner_id")?,
+                set_by_user_id: r.try_get("set_by_user_id")?,
+                scope_before: r.try_get::<String, _>("scope_before").unwrap_or_default(),
+                scope_after: r.try_get::<String, _>("scope_after").unwrap_or_default(),
+                created_at: r.try_get::<String, _>("created_at").unwrap_or_default(),
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+        .map_err(Into::into)
+}
+
+/// 公开卡被 retrieval 命中一次时递增计数。
+pub async fn increment_public_retrieval_count(
+    pool: &PgPool,
+    card_id: i64,
+) -> PlatformResult<()> {
+    sqlx::query(
+        "update user_character_cards \
+          set public_retrieval_count = public_retrieval_count + 1 \
+          where id = $1 and scope = 'public'",
+    )
+    .bind(card_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// 查询公开卡的检索命中统计(card_id → count)。
+pub async fn get_public_retrieval_stats(
+    pool: &PgPool,
+    limit: i64,
+) -> PlatformResult<Vec<(i64, String, i64)>> {
+    let limit = limit.clamp(1, 200);
+    let rows = sqlx::query(
+        "select id, name, public_retrieval_count \
+           from user_character_cards \
+          where scope = 'public' \
+          order by public_retrieval_count desc, updated_at desc \
+          limit $1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(|r| {
+            Ok((
+                r.try_get::<i64, _>("id")?,
+                r.try_get::<String, _>("name").unwrap_or_default(),
+                r.try_get::<i64, _>("public_retrieval_count").unwrap_or(0),
+            ))
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+        .map_err(Into::into)
+}
+
+// ─── UNIT TESTS ───────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── slugify ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn slugify_ascii() {
+        assert_eq!(slugify("Hello World"), "Hello-World");
+    }
+
+    #[test]
+    fn slugify_chinese_preserved() {
+        // CJK 字符属于 \u{4e00}-\u{9fff},不被替换。
+        let s = slugify("林知意");
+        assert_eq!(s, "林知意");
+    }
+
+    #[test]
+    fn slugify_truncates_at_80() {
+        let long = "a".repeat(200);
+        assert_eq!(slugify(&long).len(), 80);
+    }
+
+    #[test]
+    fn slugify_empty_becomes_untitled() {
+        assert_eq!(slugify(""), "untitled");
+        assert_eq!(slugify("   "), "untitled");
+    }
+
+    // ── normalize_list ────────────────────────────────────────────────────
+
+    #[test]
+    fn normalize_list_from_comma_str() {
+        let v = json!("foo,bar, baz");
+        let out = normalize_list(&v);
+        assert_eq!(out, vec![json!("foo"), json!("bar"), json!("baz")]);
+    }
+
+    #[test]
+    fn normalize_list_null_empty() {
+        assert!(normalize_list(&Value::Null).is_empty());
+        assert!(normalize_list(&json!("")).is_empty());
+    }
+
+    #[test]
+    fn normalize_list_array_passthrough() {
+        let v = json!(["x", "y"]);
+        let out = normalize_list(&v);
+        assert_eq!(out, vec![json!("x"), json!("y")]);
+    }
+
+    // ── persona payload helpers ────────────────────────────────────────────
+
+    #[test]
+    fn persona_payload_name_required() {
+        // upsert_persona 是 async + PgPool,这里只测同步字段检查路径:
+        // pick_str 返回 ""  → 应触发 validation 错误。
+        let payload = json!({"role": "hero"});
+        let name = pick_str(&payload, "name");
+        assert!(name.is_empty(), "空 name 应触发 validation");
+    }
+
+    // ── Tavern card integration (pure logic, no DB) ────────────────────────
+
+    #[test]
+    fn tavern_v1_to_user_card_maps_all_fields() {
+        use crate::tavern_cards::{parse_card_value, tavern_to_user_card};
+
+        let v1 = json!({
+            "name": "林知意",
+            "description": "信使",
+            "personality": "沉静",
+            "scenario": "现代都市",
+            "first_mes": "你好,我是林知意。",
+            "mes_example": "<START>\n{{char}}: 我记得你说过的每一句话。",
+            "creator": "felix",
+            "character_version": "1.0",
+            "tags": ["信使", "现代"]
+        });
+        let card = parse_card_value(&v1).unwrap();
+        assert_eq!(card.data.name, "林知意");
+        assert_eq!(card.spec, "chara_card_v1");
+
+        let payload = tavern_to_user_card(&card);
+        assert_eq!(payload["name"], "林知意");
+        assert_eq!(payload["identity"], "信使");
+        assert_eq!(payload["personality"], "沉静");
+
+        // sample_dialogue 从 mes_example 提取
+        let samples = payload["sample_dialogue"].as_array().unwrap();
+        assert!(!samples.is_empty(), "应从 mes_example 提取 sample_dialogue");
+        assert_eq!(samples[0], "我记得你说过的每一句话。");
+
+        // metadata 带 tavern_imported 标记
+        assert_eq!(payload["metadata"]["tavern_imported"], true);
+        assert_eq!(payload["metadata"]["scenario"], "现代都市");
+        assert_eq!(payload["metadata"]["first_mes"], "你好,我是林知意。");
+        assert_eq!(payload["metadata"]["creator"], "felix");
+        assert_eq!(payload["metadata"]["spec"], "chara_card_v1");
+    }
+
+    #[test]
+    fn tavern_v2_roundtrip() {
+        use crate::tavern_cards::{parse_card_value, user_card_to_tavern_v2};
+        use serde_json::to_value;
+
+        let v2 = json!({
+            "spec": "chara_card_v2",
+            "spec_version": "2.0",
+            "data": {
+                "name": "杭雁菱",
+                "description": "穿越者",
+                "personality": "坚毅",
+                "scenario": "异世界",
+                "first_mes": "我来自未来。",
+                "mes_example": "",
+                "creator_notes": "主角",
+                "system_prompt": "",
+                "post_history_instructions": "",
+                "alternate_greetings": ["你好啊", "嗨"],
+                "tags": ["穿越", "主角"],
+                "creator": "felix",
+                "character_version": "2.0",
+                "extensions": {},
+                "character_book": null
+            }
+        });
+        let card = parse_card_value(&v2).unwrap();
+        assert_eq!(card.data.name, "杭雁菱");
+        assert_eq!(card.spec, "chara_card_v2");
+        assert_eq!(card.data.alternate_greetings, vec!["你好啊", "嗨"]);
+        assert_eq!(card.data.tags, vec!["穿越", "主角"]);
+        assert_eq!(card.data.post_history_instructions, "");
+
+        // 反向:user_card → V2
+        let user_payload = json!({
+            "name": card.data.name,
+            "identity": card.data.description,
+            "personality": card.data.personality,
+            "sample_dialogue": ["我来自未来"],
+            "tags": card.data.tags,
+            "metadata": {
+                "scenario": card.data.scenario,
+                "first_mes": card.data.first_mes,
+                "alternate_greetings": card.data.alternate_greetings,
+                "creator_notes": card.data.creator_notes,
+                "system_prompt": card.data.system_prompt,
+                "post_history_instructions": card.data.post_history_instructions,
+                "creator": card.data.creator,
+                "character_version": card.data.character_version,
+                "extensions": card.data.extensions,
+                "character_book": null
+            }
+        });
+        let back = user_card_to_tavern_v2(&user_payload);
+        assert_eq!(back.data.name, "杭雁菱");
+        assert_eq!(back.data.description, "穿越者");
+        assert_eq!(back.data.alternate_greetings, vec!["你好啊", "嗨"]);
+        assert!(!back.data.mes_example.is_empty(), "sample_dialogue 应被合成进 mes_example");
+    }
+
+    #[test]
+    fn tavern_v1_missing_name_errors() {
+        use crate::tavern_cards::parse_card_value;
+        let v = json!({"description": "no name"});
+        assert!(parse_card_value(&v).is_err());
+    }
+
+    #[test]
+    fn tavern_v2_missing_name_errors() {
+        use crate::tavern_cards::parse_card_value;
+        let v = json!({"spec": "chara_card_v2", "spec_version": "2.0", "data": {"description": "no name"}});
+        assert!(parse_card_value(&v).is_err());
+    }
+
+    #[test]
+    fn tavern_description_truncated_to_2000() {
+        use crate::tavern_cards::{parse_card_value, tavern_to_user_card};
+        let long_desc: String = "x".repeat(3000);
+        let v1 = json!({"name": "Test", "description": long_desc});
+        let card = parse_card_value(&v1).unwrap();
+        let payload = tavern_to_user_card(&card);
+        let identity = payload["identity"].as_str().unwrap();
+        assert!(identity.len() <= 2000, "identity 应被截断到 2000 字符");
+    }
+
+    #[test]
+    fn tavern_base64_parse() {
+        use crate::tavern_cards::{parse_card_str, parse_card_value};
+        use base64::{engine::general_purpose, Engine};
+
+        // 先生成一张 V2 卡的 JSON,再 base64 编码。
+        let v2 = json!({
+            "spec": "chara_card_v2",
+            "spec_version": "2.0",
+            "data": {
+                "name": "Base64Test",
+                "description": "desc",
+                "personality": "",
+                "scenario": "",
+                "first_mes": "",
+                "mes_example": "",
+                "creator_notes": "",
+                "system_prompt": "",
+                "post_history_instructions": "",
+                "alternate_greetings": [],
+                "tags": [],
+                "creator": "",
+                "character_version": "",
+                "extensions": {},
+                "character_book": null
+            }
+        });
+        let json_bytes = serde_json::to_vec(&v2).unwrap();
+        let encoded = general_purpose::STANDARD.encode(&json_bytes);
+        let card = parse_card_str(&encoded).unwrap();
+        assert_eq!(card.data.name, "Base64Test");
+    }
+}

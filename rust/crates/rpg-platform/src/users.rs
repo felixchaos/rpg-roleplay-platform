@@ -95,9 +95,25 @@ pub async fn get_persona(
     })
 }
 
-// TODO[Sonnet]: create_persona / update_persona / delete_persona / set_default — 翻译 Python user_cards.py
-// TODO[Sonnet]: 用户角色卡(user_character_cards)CRUD — 翻译 Python user_cards.py
-// TODO[Sonnet]: tavern V1/V2 卡解析与导入 — 翻译 Python tavern_cards.py
+// persona 完整 CRUD(upsert / delete / list / get)已实现于 user_cards 模块。
+// users.rs 此处仅做 re-export,路由层统一从 user_cards 取。
+pub use crate::user_cards::{
+    create_persona, update_persona, delete_persona, set_default_persona,
+    list_personas as list_personas_full, get_persona as get_persona_full,
+    upsert_persona,
+};
+
+// 用户角色卡(user_character_cards)CRUD + 检索辅助已实现于 user_cards 模块。
+pub use crate::user_cards::{
+    list_user_cards, get_user_card, upsert_user_card, delete_user_card,
+    list_public_user_cards, user_cards_for_retrieval,
+};
+
+// Tavern V1/V2 解析 / 映射已实现于 tavern_cards 模块。
+pub use crate::tavern_cards::{
+    parse_card_value, parse_card_str, parse_png_card, write_png_card,
+    tavern_to_user_card, user_card_to_tavern_v2,
+};
 
 // ─── credentials ───────────────────────────────────────────────────────────
 
