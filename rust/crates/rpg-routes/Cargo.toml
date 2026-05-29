@@ -38,3 +38,12 @@ parking_lot.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 base64.workspace = true
+
+[features]
+# 触发 SSE event 类型 ts 导出 — cargo test -p rpg-routes --features ts-rs。
+ts-rs = ["dep:ts-rs", "rpg-llm/ts-rs", "rpg-state/ts-rs", "rpg-schemas/ts-rs"]
+
+[dependencies.ts-rs]
+version = "12"
+features = ["serde-compat", "serde-json-impl", "chrono"]
+optional = true

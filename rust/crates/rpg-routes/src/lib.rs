@@ -13,6 +13,7 @@
 pub mod console_assistant;
 pub mod core;
 pub mod game;
+pub mod sse_events;
 pub mod mcp;
 pub mod memory;
 pub mod models;

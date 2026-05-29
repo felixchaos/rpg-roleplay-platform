@@ -14,11 +14,19 @@ use async_trait::async_trait;
 use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "ts-rs")]
+use ts_rs::TS;
+
 // -----------------------------------------------------------------------------
 // 角色 / 消息
 // -----------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "../../../../frontend/src/types/rust/events/")
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ChatRole {
     #[default]
@@ -42,6 +50,11 @@ impl fmt::Display for ChatRole {
 /// 同一条消息可以是纯文本,也可以是 multipart (image / tool_result / tool_use)。
 /// `extra` 用来透传 provider 特定字段 (e.g. cache_control)。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "../../../../frontend/src/types/rust/events/")
+)]
 pub struct ChatMessage {
     pub role: ChatRole,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -92,6 +105,11 @@ impl ChatMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "../../../../frontend/src/types/rust/events/")
+)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MessagePart {
     Text {
@@ -130,6 +148,11 @@ pub enum MessagePart {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "../../../../frontend/src/types/rust/events/")
+)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
@@ -142,6 +165,11 @@ pub struct ToolCall {
 // -----------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "../../../../frontend/src/types/rust/events/")
+)]
 pub struct ToolSchema {
     pub name: String,
     #[serde(default)]
@@ -158,6 +186,11 @@ pub struct ToolSchema {
 // -----------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "../../../../frontend/src/types/rust/events/")
+)]
 pub struct ChatRequest {
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -185,6 +218,10 @@ fn default_true() -> bool {
 // 响应 chunk
 // -----------------------------------------------------------------------------
 
+/// 不直接导出 ts-rs 类型 — `ChatChunk` 是 backend 间的内部流通格式,含 tuple
+/// variant (`Text(String)` 等),ts-rs 12 对 `#[serde(tag)]` + newtype variant
+/// 会生成形如 `{type:"text"} & string` 的非法 TS(等价 never)。前端 SSE wire
+/// chunk 走 [`crate::pipeline::WireChatChunk`] 命名字段版本。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChatChunk {
@@ -208,6 +245,11 @@ pub enum ChatChunk {
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "../../../../frontend/src/types/rust/events/")
+)]
 pub struct Usage {
     #[serde(default)]
     pub input_tokens: u32,
@@ -270,6 +312,11 @@ impl From<anyhow::Error> for LlmError {
 pub type ChunkStream<'a> = Pin<Box<dyn Stream<Item = Result<ChatChunk, LlmError>> + Send + 'a>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "../../../../frontend/src/types/rust/events/")
+)]
 pub struct ModelInfo {
     pub id: String,
     pub display_name: String,
@@ -301,6 +348,11 @@ pub trait LlmBackend: Send + Sync {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "../../../../frontend/src/types/rust/events/")
+)]
 #[serde(rename_all = "snake_case")]
 pub enum BackendKind {
     Anthropic,
@@ -399,6 +451,97 @@ pub fn split_namespaced(full: &str) -> (String, String) {
         (full[..pos].to_string(), full[pos + 2..].to_string())
     } else {
         (String::new(), full.to_string())
+    }
+}
+
+// -----------------------------------------------------------------------------
+// 前端 SSE wire 形态
+// -----------------------------------------------------------------------------
+
+/// 前端 SSE 流接收的 chunk wire 形态(命名字段,ts-rs 友好)。
+///
+/// `ChatChunk` 是 backend 内部 enum,含 newtype tuple variant(`Text(String)`
+/// 等),`#[serde(tag)]` + tuple 在 ts-rs / TS 上无法生成可用类型。本结构是
+/// route 层在序列化为 SSE `chunk` event payload 前的 typed wrapper。
+///
+/// `kind` 取 `text` / `thinking` / `tool_call` / `usage` / `stop` / `error`,
+/// 对应字段按需可空。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "../../../../frontend/src/types/rust/events/")
+)]
+pub struct WireChatChunk {
+    /// chunk 子类型 tag。
+    pub kind: String,
+    /// `text` / `thinking` / `error` 类:实际文本内容。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// `tool_call` 类:已合并完的 tool 调用 id。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// `tool_call` 类:tool 名称。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    /// `tool_call` 类:已合并完的 tool input(JSON object)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_input: Option<serde_json::Value>,
+    /// `usage` 类:token 使用统计。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Usage>,
+    /// `stop` 类:模型给出的停止原因。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+}
+
+impl WireChatChunk {
+    /// 从内部 `ChatChunk` 投影到 wire 形态(无损,但字段拍平)。
+    pub fn from_chunk(chunk: &ChatChunk) -> Self {
+        match chunk {
+            ChatChunk::Text(t) => Self {
+                kind: "text".into(),
+                text: Some(t.clone()),
+                ..Default::default()
+            },
+            ChatChunk::Thinking(t) => Self {
+                kind: "thinking".into(),
+                text: Some(t.clone()),
+                ..Default::default()
+            },
+            ChatChunk::ToolCall { id, name, input } => Self {
+                kind: "tool_call".into(),
+                tool_call_id: Some(id.clone()),
+                tool_name: Some(name.clone()),
+                tool_input: Some(input.clone()),
+                ..Default::default()
+            },
+            ChatChunk::Usage(u) => Self {
+                kind: "usage".into(),
+                usage: Some(*u),
+                ..Default::default()
+            },
+            ChatChunk::Stop { reason } => Self {
+                kind: "stop".into(),
+                stop_reason: Some(reason.clone()),
+                ..Default::default()
+            },
+            ChatChunk::Error(e) => Self {
+                kind: "error".into(),
+                text: Some(e.clone()),
+                ..Default::default()
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod ts_export_tests {
+    /// 触发 ts-rs 导出(--features ts-rs 时生效)。
+    #[cfg(feature = "ts-rs")]
+    #[test]
+    fn export_ts_types() {
+        // ts-rs 在 #[ts(export)] 时会通过 inventory/ctor 机制在测试结束后自动写文件。
     }
 }
 

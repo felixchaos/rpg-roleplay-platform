@@ -2589,6 +2589,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "ts-rs",
  "url",
  "yup-oauth2",
 ]
@@ -2687,6 +2688,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "ts-rs",
  "uuid",
 ]
 
@@ -2789,6 +2791,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "ts-rs",
 ]
 
 [[package]]

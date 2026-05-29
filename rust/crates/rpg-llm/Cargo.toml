@@ -29,3 +29,10 @@ sqlx = { workspace = true, optional = true }
 
 [features]
 db = ["sqlx"]
+# 触发 SSE 流式 chunk 类型 ts 导出 — cargo test -p rpg-llm --features ts-rs。
+ts-rs = ["dep:ts-rs"]
+
+[dependencies.ts-rs]
+version = "12"
+features = ["serde-compat", "serde-json-impl", "chrono"]
+optional = true

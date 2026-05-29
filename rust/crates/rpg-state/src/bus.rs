@@ -30,6 +30,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::broadcast;
 
+#[cfg(feature = "ts-rs")]
+use ts_rs::TS;
+
 use crate::ops::Op;
 
 /// 单次 broadcast channel 容量。订阅方落后超过这个数会拿到 `RecvError::Lagged`。
@@ -86,6 +89,11 @@ impl Default for StateEventBus {
 /// - `QuestionAdded` / `QuestionAnswered` 给 pending-question 卡片用。
 /// - `TimelineJump` / `WorldlineValidation` 给世界线推演 UI 用。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "../../../../frontend/src/types/rust/events/")
+)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StateEvent {
     /// 任意状态变化,带 user_id + 新 version,前端按此 refetch。
@@ -162,5 +170,15 @@ impl StateEvent {
             | StateEvent::WorldlineValidation { user_id, .. }
             | StateEvent::Custom { user_id, .. } => user_id,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// 触发 ts-rs 导出(--features ts-rs 时生效)。
+    #[cfg(feature = "ts-rs")]
+    #[test]
+    fn export_ts_types() {
+        // ts-rs 在 #[ts(export)] 时会通过 inventory/ctor 机制在测试结束后自动写文件。
     }
 }

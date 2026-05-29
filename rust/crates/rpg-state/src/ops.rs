@@ -28,6 +28,9 @@ use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
+#[cfg(feature = "ts-rs")]
+use ts_rs::TS;
+
 use crate::path::clean_path;
 use crate::state::{GameState, StateError};
 
@@ -53,6 +56,11 @@ pub enum OpError {
 ///
 /// `path` 在内部统一过 [`clean_path`] 做中文别名 / 空白归一。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "../../../../frontend/src/types/rust/events/")
+)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Op {
     /// 整路径覆盖。
