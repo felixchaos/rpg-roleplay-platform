@@ -323,6 +323,29 @@ async fn api_save_activate(
         .await
         .map_err(|e| ResponseError::forbidden(e.to_string()))?;
 
+    // 关键:激活存档后必须重新加载 state_snapshot 到 state_store,
+    // 否则 state_store 缓存的可能是旧存档(或空白 state)的数据。
+    // 对齐 Python `_invalidate_user_cache(user)` 的行为。
+    {
+        let user_id_str = user.id.to_string();
+        // 从 DB 读新激活存档的 state_snapshot
+        let snapshot = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT coalesce(state_snapshot, '{}'::jsonb) FROM game_saves WHERE id = $1 AND user_id = $2",
+        )
+        .bind(save_id)
+        .bind(user.id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(serde_json::json!({}));
+
+        // 用 from_value 重建 GameState(含 migration),写入 state_store 覆盖缓存
+        let new_state = rpg_state::GameState::from_value(user_id_str.clone(), snapshot);
+        let shared = state.state_store.get_or_create(&user_id_str).await;
+        *shared.write() = new_state;
+    }
+
     Ok(Json(json!({
         "ok": result.ok,
         "save_id": result.save_id,
