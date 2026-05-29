@@ -448,4 +448,111 @@ pub async fn import_save(
     })
 }
 
+// ─── 状态外置(6C-1):active save 解析 + 读写 state_snapshot ───────────────
+//
+// rpg-state 的 StateStore read-through 需要"按 user 加载/落库存档",但 rpg-state
+// 不能依赖本 crate(循环)。所以这里只提供**面向 `Value` 快照**的纯持久化原语,
+// 由 rpg-server 装配层包成闭包注入 StateStore(在那里完成 Value↔GameState 转换)。
+
+/// 解析某 user 当前「活跃」存档 id。
+///
+/// 优先取 `user_runtime.save_id`(玩家正在玩的存档);没有则回落该 user 最近更新的
+/// `game_saves` 行。两者都没有(新用户 / 无存档)返回 `None`。
+pub async fn resolve_active_save_id(pool: &PgPool, user_id: UserId) -> Option<i64> {
+    // 1. user_runtime.save_id
+    if let Ok(Some(row)) =
+        sqlx::query("select save_id from user_runtime where user_id = $1 and save_id is not null")
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await
+    {
+        if let Ok(sid) = row.try_get::<i64, _>("save_id") {
+            return Some(sid);
+        }
+    }
+    // 2. 回落最近更新的 save
+    sqlx::query(
+        "select id from game_saves where user_id = $1 order by updated_at desc, id desc limit 1",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|r| r.try_get::<i64, _>("id").ok())
+}
+
+/// 加载某 user 活跃存档的 `state_snapshot`。返回 `(save_id, snapshot)`。
+///
+/// 无活跃存档时返回 `None`(StateStore 退化为创建空白存档)。
+pub async fn load_active_state_snapshot(
+    pool: &PgPool,
+    user_id: UserId,
+) -> Option<(i64, Value)> {
+    let save_id = resolve_active_save_id(pool, user_id).await?;
+    match read_save(pool, user_id, save_id).await {
+        Ok(Some(save)) => {
+            let snap = save.state_snapshot;
+            // 空对象视为"无有效快照",仍返回 save_id 以便落库时复用。
+            Some((save_id, snap))
+        }
+        _ => None,
+    }
+}
+
+/// 把 `snapshot` 写回某 save 的 `state_snapshot`,并刷新 `runtime_checkouts.updated_at`
+/// (供 `cluster::is_state_stale` 跨 pod 缓存失效判断)。鉴权通过 user_id。
+pub async fn write_state_snapshot(
+    pool: &PgPool,
+    user_id: UserId,
+    save_id: i64,
+    snapshot: &Value,
+) -> PlatformResult<()> {
+    let mut tx = pool.begin().await?;
+    let res = sqlx::query(
+        "update game_saves set state_snapshot = $1, updated_at = now() \
+         where id = $2 and user_id = $3",
+    )
+    .bind(snapshot)
+    .bind(save_id)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+    if res.rows_affected() == 0 {
+        // save 不存在或不归属该 user:不写,回滚。
+        tx.rollback().await?;
+        return Err(PlatformError::forbidden("无权写入该存档"));
+    }
+    // upsert runtime_checkouts 时间戳(worker_id 记当前进程,便于排障)。
+    let _ = sqlx::query(
+        "insert into runtime_checkouts(save_id, user_id, worker_id, updated_at) \
+         values ($1, $2, $3, now()) \
+         on conflict(save_id) do update set updated_at = now(), \
+           worker_id = excluded.worker_id, user_id = excluded.user_id",
+    )
+    .bind(save_id)
+    .bind(user_id)
+    .bind(crate::cluster::WORKER_ID.as_str())
+    .execute(&mut *tx)
+    .await;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// 便捷封装:解析活跃 save 后写回 snapshot。新用户无 save 时返回 `Ok(false)`(不报错,
+/// 因为 read-through 阶段尚无存档时落库无目标 —— 由 `/api/new` 等显式建档路径负责创建)。
+pub async fn write_active_state_snapshot(
+    pool: &PgPool,
+    user_id: UserId,
+    snapshot: &Value,
+) -> PlatformResult<bool> {
+    match resolve_active_save_id(pool, user_id).await {
+        Some(save_id) => {
+            write_state_snapshot(pool, user_id, save_id, snapshot).await?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
 // TODO[Sonnet]: 多 slot 文件状态落盘(`runtime_state_path`)、压缩存档、版本迁移工具。

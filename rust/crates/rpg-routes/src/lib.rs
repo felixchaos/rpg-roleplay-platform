@@ -165,6 +165,22 @@ impl AppState {
             .or_insert_with(|| Arc::new(Notify::new()))
             .clone()
     }
+
+    /// 为某 user 分配下一个 run_id(自增计数器,从 1 开始)。
+    ///
+    /// 6C-1:run_id 用于跨 pod stop —— `/api/stop` 据此往 `stop_signals` 写信号,
+    /// chat 循环按 (user_id, run_id) 轮询 `cluster::is_stop_requested`。
+    /// 返回 `i64`(`cluster` 用 i64 user_id/run_id;此处 u64 计数器转 i64)。
+    pub fn next_run_id(&self, user_id: UserId) -> i64 {
+        let mut entry = self.run_ids.entry(user_id).or_insert(0);
+        *entry += 1;
+        *entry as i64
+    }
+
+    /// 读取某 user 当前 run_id(无进行中 run 时返回 0)。
+    pub fn current_run_id(&self, user_id: UserId) -> i64 {
+        self.run_ids.get(&user_id).map(|r| *r as i64).unwrap_or(0)
+    }
 }
 
 impl Default for AppConfig {

@@ -50,6 +50,7 @@ use axum::{
 use dashmap::DashMap;
 use http::HeaderMap;
 use parking_lot::RwLock;
+use sqlx::Row;
 use serde::Serialize;
 use serde_json::json;
 use thiserror::Error as ThisError;
@@ -99,6 +100,63 @@ fn app_config_from_env() -> AppConfig {
         host,
         port,
     }
+}
+
+/// 装配带 DB read-through / flush 的 [`StateStore`](6C-1 状态外置)。
+///
+/// 这是打破 `rpg-state → rpg-platform` 循环的接缝:`rpg-state` 只持有不认 platform
+/// 类型的闭包,真实的 `save_io` 调用绑定在这里(rpg-server 同时依赖二者)。
+///   - **loader**:`String user_id → Option<GameState>`。跳过匿名哨兵;已登录用户经
+///     `save_io::load_active_state_snapshot` 拉活跃存档的 `state_snapshot`,
+///     用 `GameState::from_value` 包成运行态。无存档 / 解析失败 → `None`(退化建空白档)。
+///   - **saver**:`(String user_id, GameState) → ()`。经 `save_io::write_active_state_snapshot`
+///     把 `state.data` 写回 `game_saves.state_snapshot` 并刷新 `runtime_checkouts` 时间戳。
+fn build_state_store(pool: sqlx::PgPool) -> StateStore {
+    use rpg_state::GameState;
+
+    /// 把 store 的 String user_id 解析成已登录用户的 `UserId`;匿名 / 非数字 → None。
+    fn parse_user_id(user_id: &str) -> Option<rpg_core::UserId> {
+        if user_id == "anonymous" {
+            return None;
+        }
+        user_id.parse::<i64>().ok().map(rpg_core::UserId::from)
+    }
+
+    let load_pool = pool.clone();
+    let loader: rpg_state::store::StateLoader = Arc::new(move |user_id: String| {
+        let pool = load_pool.clone();
+        Box::pin(async move {
+            let uid = parse_user_id(&user_id)?;
+            let (_, snapshot) = rpg_platform::save_io::load_active_state_snapshot(&pool, uid).await?;
+            // 空对象 snapshot 视为无有效存档,退化建空白档(GameState::from_value 对
+            // 非 object 会兜底,但空 object 会被当成合法空存档 —— 这里显式过滤)。
+            if snapshot.as_object().map(|m| m.is_empty()).unwrap_or(true) {
+                return None;
+            }
+            Some(GameState::from_value(user_id, snapshot))
+        })
+    });
+
+    let save_pool = pool;
+    let saver: rpg_state::store::StateSaver = Arc::new(move |user_id: String, state: GameState| {
+        let pool = save_pool.clone();
+        Box::pin(async move {
+            let Some(uid) = parse_user_id(&user_id) else {
+                return; // 匿名不落库
+            };
+            match rpg_platform::save_io::write_active_state_snapshot(&pool, uid, &state.data).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::debug!(user_id = %user_id, "state flush: 无活跃存档,跳过落库");
+                }
+                Err(e) => {
+                    tracing::warn!(user_id = %user_id, error = %e, "state flush: 落库失败");
+                }
+            }
+        })
+    });
+
+    StateStore::new().with_persistence(loader, saver)
 }
 
 /// 严格对应 Python `_api_auth_required()`(`app.py:355-375`)。
@@ -324,27 +382,40 @@ async fn lifespan_startup(state: &AppState) {
     let count = state.tool_registry.read().list().len();
     info!(tool_count = count, "startup: tool registry primed");
 
-    // 3. durable script_import job 恢复
+    // 3. durable import job 恢复
     //    Python: `platform_app.script_import.recover_pending_sync_jobs(pool)`
-    //    Rust 端 rpg-platform 尚未提供 recover 函数,这里直接读 in_progress 状态行数,
-    //    后续把 transition / requeue 接进来。
-    match sqlx::query_scalar::<_, i64>(
-        r#"select count(*)::bigint
-           from script_import_jobs
-           where status in ('pending','splitting','persisting','syncing_knowledge')"#,
+    //    表名对齐:Rust migrations 建的是 `import_jobs`(见 migrations.rs SQL_009),
+    //    旧代码误写 `script_import_jobs`(Python 时代表名)在 fresh DB 上会直接报错。
+    //    in_progress 状态对齐 `import_jobs` 的 'pending'/'running'(见 SQL_013 单活跃索引)。
+    //    这里加载 in_progress 明细并 log 告警;真正 requeue/transition 留 TODO。
+    match sqlx::query(
+        r#"select id, job_id, kind, status, stage, user_id, script_id
+           from import_jobs
+           where status in ('pending','running')
+           order by created_at"#,
     )
-    .fetch_one(&state.db)
+    .fetch_all(&state.db)
     .await
     {
-        Ok(n) if n > 0 => {
+        Ok(rows) if !rows.is_empty() => {
             warn!(
-                in_progress_jobs = n,
-                "startup: durable script_import jobs in progress (resume logic TODO)"
+                in_progress_jobs = rows.len(),
+                "startup: durable import jobs in progress on boot (requeue logic TODO)"
             );
+            for r in &rows {
+                let job_id: String = r.try_get("job_id").unwrap_or_default();
+                let kind: String = r.try_get("kind").unwrap_or_default();
+                let status: String = r.try_get("status").unwrap_or_default();
+                let stage: String = r.try_get("stage").unwrap_or_default();
+                warn!(
+                    %job_id, %kind, %status, %stage,
+                    "startup: orphaned import job (was running when worker stopped)"
+                );
+            }
             // TODO[rpg-platform]: 真正 requeue/transition 等 `recover_pending_sync_jobs` 落地。
         }
-        Ok(_) => info!("startup: no in-progress script_import jobs"),
-        Err(e) => warn!(error = %e, "startup: probe script_import_jobs failed"),
+        Ok(_) => info!("startup: no in-progress import jobs"),
+        Err(e) => warn!(error = %e, "startup: probe import_jobs failed"),
     }
 
     // 4. 模型目录加载(rpg-llm registry)
@@ -378,11 +449,18 @@ async fn lifespan_shutdown(state: &AppState) {
     state.task_tracker.wait().await;
     info!("shutdown: all spawned tasks drained");
 
-    // 3. 停止 MCP 子进程(health_loop 已由 task 内部处理,此处补充保险)
+    // 3. 把所有 dirty 的内存 state 落库(6C-1),避免 graceful 重启丢未保存写入。
+    //    必须在关 pool 之前;saver 闭包持有的是 pool clone,close 后写会失败。
+    let flushed = state.state_store.flush_all_dirty().await;
+    if flushed > 0 {
+        info!(flushed_states = flushed, "shutdown: dirty game states flushed to DB");
+    }
+
+    // 4. 停止 MCP 子进程(health_loop 已由 task 内部处理,此处补充保险)
     state.mcp_broker.stop_all().await;
     info!("shutdown: mcp_broker stopped");
 
-    // 4. 关闭数据库连接池
+    // 5. 关闭数据库连接池
     state.db.close().await;
     info!("lifespan shutdown done");
 }
@@ -575,9 +653,12 @@ async fn main() -> Result<()> {
     let llm_router = Arc::new(RwLock::new(
         LlmRouter::new().with_catalog(ModelCatalog::default()),
     ));
+    // 6C-1:StateStore 接 DB read-through / flush(loader/saver 闭包注入,打破
+    // rpg-state→rpg-platform 循环)。pool 先 clone 给闭包,再把 db 本体移进 AppStateInner。
+    let state_store = Arc::new(build_state_store(db.clone()));
     let state = AppState::from_inner(AppStateInner {
         db,
-        state_store: Arc::new(StateStore::new()),
+        state_store,
         gm_pool: DashMap::new(),
         llm_router,
         tool_registry,

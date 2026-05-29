@@ -115,9 +115,11 @@ async fn api_new(
         let _ = st.set_path("player.background", Value::String(background));
         let _ = st.set_path("is_new", Value::Bool(false));
     }
+    // 6C-1 Arc 快照:读路径不再深拷贝整树,snapshot() 仅 inc Arc refcount。
+    // api_new 刚写过 state(touch 已让快照缓存失效),此处重建一次后返回。
     let (data, version) = {
         let st = shared.read();
-        (st.data.clone(), st.version)
+        (st.snapshot(), st.version)
     };
     Ok(Json(json!({
         "ok": true,
@@ -141,7 +143,8 @@ async fn api_opening(
     let user_id = user.id.to_string();
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let shared = s.state_store.get_or_create(&user_id).await;
-    let state_data = shared.read().data.clone();
+    // 6C-1 Arc 快照:只读返回,snapshot() 复用缓存 Arc,避免整树深拷贝。
+    let state_data = shared.read().snapshot();
     let events = vec![
         Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id))),
         Ok(named_sse_event(
@@ -369,6 +372,11 @@ async fn api_chat(
     s.stop_events.remove(&user_id);
     let _stop = s.stop_notify(&user_id);
 
+    // 6C-1 跨 pod stop:为本次 chat 分配 run_id 并登记;清掉上一轮可能残留的
+    // 跨进程 stop_signals(避免新 run 一上来就被旧信号打断)。
+    let run_id = s.next_run_id(user.id);
+    rpg_platform::cluster::clear_stop(&s.db, user.id.get(), run_id).await;
+
     let shared = s.state_store.get_or_create(&user_id).await;
     // 写入 user 消息到 history
     {
@@ -378,7 +386,8 @@ async fn api_chat(
             json!({"role": "user", "content": message.clone()}),
         );
     }
-    let state_after = shared.read().data.clone();
+    // 6C-1 Arc 快照(写后重建一次,SSE done 返回最新 state 仅 inc refcount)。
+    let state_after = shared.read().snapshot();
 
     // ── 调用 LLM(本翻译期为 stub,无真实 output)。链路落地后此处填真实 usage。
     // 调用后回填用量 + 释放并发槽。stub 阶段 actual 用预估输入 + 0 output。
@@ -391,6 +400,14 @@ async fn api_chat(
     };
     quota::record_actual(&s.db, grant, None, None, &actual, est_input as i32, 1_000_000).await;
 
+    // 6C-1 跨 pod stop 检查点(真实 chat_pipeline 落地后应在流式循环里周期轮询):
+    // 本 pod 的 Notify 给真实 await 循环用(stub 无循环故不读它);此处查
+    // cluster::is_stop_requested —— 命中**别的 pod** 写入 stop_signals 也能感知。
+    let interrupted =
+        rpg_platform::cluster::is_stop_requested(&s.db, user.id.get(), run_id).await;
+    // 本轮结束:清掉跨进程 stop 信号(避免孤儿信号污染下一轮)。
+    rpg_platform::cluster::clear_stop(&s.db, user.id.get(), run_id).await;
+
     let events = vec![
         Ok::<_, Infallible>(named_sse_event("hello", hello_payload(&user_id))),
         Ok(named_sse_event(
@@ -400,7 +417,7 @@ async fn api_chat(
         Ok(named_sse_event("chunk", json!({"text":""}))),
         Ok(named_sse_event(
             "done",
-            json!({"status": {"state": state_after}, "interrupted": false}),
+            json!({"status": {"state": state_after}, "interrupted": interrupted}),
         )),
     ];
     Sse::new(stream::iter(events))
@@ -429,9 +446,14 @@ fn quota_error_response(user_id: &str, err: QuotaError) -> Response {
     resp
 }
 
-/// POST /api/stop — 打断当前 chat
+/// POST /api/stop — 打断当前 chat(本 pod 快速路径 + 跨 pod DB 信号)
 ///
-/// 拿到当前 user 的 Notify,notify_waiters。chat 流里 awaiter 收到后能短路。
+/// 两条路径并发生效:
+///   1. **本 pod 快速路径**:`Notify::notify_waiters()` —— chat 在**同一 pod** 时
+///      awaiter 立即短路(零延迟)。
+///   2. **跨 pod 路径**:`cluster::request_stop` 往 `stop_signals` 表写一行 ——
+///      chat 跑在**别的 pod** 时,那边的轮询(`is_stop_requested`)会读到并停。
+///      这正是状态外置后多 pod 水平扩展的必备:进程内 Notify 命中不了别的 pod。
 #[tracing::instrument(skip(s, headers), fields(user_id))]
 async fn api_stop(
     State(s): State<AppState>,
@@ -441,8 +463,19 @@ async fn api_stop(
     let user = require_user(&s, &headers).await?;
     let user_id = user.id.to_string();
     tracing::Span::current().record("user_id", tracing::field::display(&user_id));
+    // 1. 本 pod 快速路径
     if let Some(n) = s.stop_events.get(&user_id) {
         n.notify_waiters();
+    }
+    // 2. 跨 pod 路径:对该 user 当前 run_id 写 stop_signals(cluster 用 i64 user_id,
+    //    经 UserId::get() 桥接)。没有进行中的 run(run_id 0)则跳过,避免写空信号。
+    let run_id = s.current_run_id(user.id);
+    if run_id != 0 {
+        if let Err(e) =
+            rpg_platform::cluster::request_stop(&s.db, user.id.get(), run_id).await
+        {
+            tracing::warn!(user_id = %user_id, run_id, error = %e, "cluster request_stop 失败");
+        }
     }
     // 同步标记 state.permissions.stop_signal,便于 GM 子模块感知。
     if let Some(shared) = s.state_store.get(&user_id) {
@@ -454,8 +487,9 @@ async fn api_stop(
 
 /// POST /api/save — 保存存档
 ///
-/// Python 端调 dispatcher save_runtime → rpg-platform runtime backend。
-/// 本翻译期暂用 state.touch() + 返回最新 snapshot;真实持久化等 dispatcher 落地后接。
+/// 6C-1 状态外置:写 `saved_at` 戳后**调 `state_store.flush` 落库**(经注入的 saver
+/// 闭包写回 `game_saves.state_snapshot`),实现跨 pod 持久化 / pod 重启不丢档。
+/// 纯内存部署(无 saver 注入)时 flush 返回 false,退化为旧的"只 touch + 返回快照"。
 #[tracing::instrument(skip(s, headers), fields(user_id))]
 async fn api_save(
     State(s): State<AppState>,
@@ -468,14 +502,18 @@ async fn api_save(
     let shared = s.state_store.get_or_create(&user_id).await;
     let (data, version) = {
         let mut st = shared.write();
-        // 触一次 version+updated_at,模拟"保存"。
+        // 触一次 version+updated_at(同时让 Arc 快照缓存失效)。
         let _ = st.set_path("saved_at", Value::String(chrono::Utc::now().to_rfc3339()));
-        (st.data.clone(), st.version)
+        // Arc 快照(snapshot 重建一次后返回,仅 inc refcount)。
+        (st.snapshot(), st.version)
     };
+    // 落库(read-through cache 的写回端)。saver 未注入(纯内存)→ false,不影响响应。
+    let persisted = s.state_store.flush(&user_id).await;
     Ok(Json(json!({
         "ok": true,
         "state": data,
         "version": version,
+        "persisted": persisted,
     }))
     .into_response())
 }

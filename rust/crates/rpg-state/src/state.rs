@@ -10,6 +10,8 @@
 //!   全部平拍成单个 `impl GameState`。本文件只放数据 + 基础路径访问 + 默认模板;
 //!   apply_op 主流程在 [`crate::ops`] 单独实现。
 
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -32,12 +34,38 @@ pub enum StateError {
 /// 与 Python `GameState` 对齐的运行时存档。
 ///
 /// 每个 user 一份;由 [`crate::store::StateStore`] 按 user_id 分片持有。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// ## 读快照 Arc 化(6C-1)
+/// `data` 仍是可变 `Value`(`set_path` 等写路径直接 `&mut self.data`);但 routes
+/// 层高频的 `read().data.clone()` 会对整棵 JSON 树做深拷贝。为消除这条热路径上的
+/// 深拷贝,本类型缓存一个 `Arc<Value>`(`snapshot_cache`):
+///   - 每次写入(`touch`)使其失效(置 `None`);
+///   - [`Self::snapshot`] 惰性重建一次,之后连续读只 `Arc::clone`(仅 inc refcount)。
+/// 该字段是纯派生缓存,不参与序列化(`#[serde(skip)]`),`Clone` 时也不复制(置空,
+/// 下次 `snapshot()` 自然重建),避免与 `data` 漂移。
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GameState {
     pub user_id: String,
     pub data: Value,
     pub version: u64,
     pub updated_at: DateTime<Utc>,
+    /// 派生快照缓存(见类型文档)。不序列化、不随 Clone 复制。
+    #[serde(skip)]
+    snapshot_cache: parking_lot::Mutex<Option<Arc<Value>>>,
+}
+
+impl Clone for GameState {
+    fn clone(&self) -> Self {
+        // 快照缓存是 data 的派生物,clone 时不复制(置空),下次 snapshot() 重建,
+        // 杜绝克隆后缓存与各自 data 漂移。
+        Self {
+            user_id: self.user_id.clone(),
+            data: self.data.clone(),
+            version: self.version,
+            updated_at: self.updated_at,
+            snapshot_cache: parking_lot::Mutex::new(None),
+        }
+    }
 }
 
 impl GameState {
@@ -55,6 +83,7 @@ impl GameState {
             data,
             version: 0,
             updated_at: Utc::now(),
+            snapshot_cache: parking_lot::Mutex::new(None),
         }
     }
 
@@ -78,7 +107,23 @@ impl GameState {
             data,
             version: 0,
             updated_at: Utc::now(),
+            snapshot_cache: parking_lot::Mutex::new(None),
         }
+    }
+
+    /// 返回 `data` 的 `Arc` 快照(读热路径用,避免整树深拷贝)。
+    ///
+    /// 首次调用(或写入后缓存失效)克隆一次 `data` 构建 `Arc<Value>`;之后在没有写入
+    /// 的情况下连续调用只 `Arc::clone`(仅自增引用计数)。配合 routes 层把
+    /// `read().data.clone()` 改为 `read().snapshot()`,SSE / 状态返回等高频读不再深拷贝。
+    pub fn snapshot(&self) -> Arc<Value> {
+        let mut guard = self.snapshot_cache.lock();
+        if let Some(arc) = guard.as_ref() {
+            return Arc::clone(arc);
+        }
+        let arc = Arc::new(self.data.clone());
+        *guard = Some(Arc::clone(&arc));
+        arc
     }
 
     /// 读取 dot-path,不存在返回 None。
@@ -155,9 +200,14 @@ impl GameState {
     }
 
     /// version + updated_at 同步刷新。所有写入路径必须调用。
+    ///
+    /// 同时使 `snapshot_cache` 失效:下次 [`Self::snapshot`] 会重建,保证读快照
+    /// 与最新 `data` 一致。
     pub(crate) fn touch(&mut self) {
         self.version += 1;
         self.updated_at = Utc::now();
+        // &mut self 已独占,直接清空缓存(get_mut 无锁开销)。
+        *self.snapshot_cache.get_mut() = None;
     }
 
     /// 当前 turn,Python 侧 `data.get("turn", 0)`。
