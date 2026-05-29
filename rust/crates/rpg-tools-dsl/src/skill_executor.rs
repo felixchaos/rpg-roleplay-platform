@@ -36,10 +36,16 @@ pub const RLIMIT_AS_BYTES: u64 = 512 * 1024 * 1024;     // 512 MB
 pub const RLIMIT_FSIZE_BYTES: u64 = 16 * 1024 * 1024;   // 16 MB
 pub const RLIMIT_NOFILE: u64 = 64;
 
-/// 环境变量白名单
-const ENV_ALLOW: &[&str] = &[
-    "PATH", "LANG", "LC_ALL", "LC_CTYPE", "HOME", "TMPDIR", "USER", "SHELL",
-];
+/// 环境变量白名单（**收紧**）。
+///
+/// 子进程只继承运行 python3 所必需的最小集合,**剔除** `HOME` / `USER` / `SHELL`
+/// 等可暴露宿主身份与目录布局的变量(脚本可借 `HOME` 探到 `~/.ssh`、配置里的
+/// `master.key` 路径等)。`PATH` 不直接继承宿主值,而在 [`build_env`] 里强制
+/// 覆写为最小集,避免脚本经 PATH 找到敏感工具。
+const ENV_ALLOW: &[&str] = &["LANG", "LC_ALL", "LC_CTYPE", "TMPDIR"];
+
+/// 子进程最小 PATH(不继承宿主 PATH)。
+const MIN_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 
 // ── 输出结构体 ────────────────────────────────────────────────────────────────
 
@@ -58,7 +64,7 @@ pub struct SkillOutput {
 }
 
 impl SkillOutput {
-    fn err(msg: impl Into<String>) -> Self {
+    pub(crate) fn err(msg: impl Into<String>) -> Self {
         Self {
             ok: false,
             exit_code: -1,
@@ -151,7 +157,9 @@ pub async fn run_skill_command(
     // 创建临时工作目录并复制 skill 文件
     let workdir = copy_to_tempdir(skill_root).await?;
 
-    let result = run_in_workdir(cmd, &workdir, timeout_sec, stdin_text, extra_env).await;
+    let limits = crate::sandbox::SandboxLimits::with_timeout(timeout_sec);
+    let result =
+        run_command_in_dir(cmd, &workdir, &limits, stdin_text, extra_env, false).await;
 
     // 清理临时目录
     if let Err(e) = tokio::fs::remove_dir_all(&workdir).await {
@@ -195,23 +203,33 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-async fn run_in_workdir(
+/// 在指定目录运行一条命令,套用 [`SandboxLimits`]。
+///
+/// - `skip_rlimit`:容器沙箱已在内核级隔离,无需(也不应)在宿主侧再套 rlimit;
+///   传 `true` 跳过 rlimit/setsid 逻辑(且 env 直传命令本身的运行时,见调用方)。
+///   [`RlimitSandbox`](crate::sandbox::RlimitSandbox) 与历史路径传 `false`。
+///
+/// 这是 [`crate::sandbox`] 各实现共享的底层执行器。
+pub(crate) async fn run_command_in_dir(
     cmd: &[String],
     workdir: &Path,
-    timeout_sec: u64,
+    limits: &crate::sandbox::SandboxLimits,
     stdin_text: Option<String>,
     extra_env: Option<HashMap<String, String>>,
+    skip_rlimit: bool,
 ) -> Result<SkillOutput, DslError> {
     if cmd.is_empty() {
         return Ok(SkillOutput::err("cmd is empty"));
     }
 
+    let timeout_sec = limits.timeout_secs.clamp(1, MAX_TIMEOUT_SEC);
     let env = build_env(extra_env.as_ref());
 
     let mut command = Command::new(&cmd[0]);
     command
         .args(&cmd[1..])
         .current_dir(workdir)
+        .env_clear()
         .envs(&env)
         .env("SKILL_WORKDIR", workdir)
         .stdin(if stdin_text.is_some() {
@@ -223,14 +241,22 @@ async fn run_in_workdir(
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
 
-    // Linux: pre_exec hook 在 fork 后 exec 前运行
-    #[cfg(target_os = "linux")]
-    unsafe {
-        command.pre_exec(preexec_setrlimit);
+    if !skip_rlimit {
+        // Linux: pre_exec hook 在 fork 后 exec 前运行(子进程内套 rlimit)。
+        #[cfg(target_os = "linux")]
+        {
+            let cpu = limits.cpu_secs;
+            let mem = limits.mem_bytes;
+            let fsize = limits.fsize_bytes;
+            unsafe {
+                command.pre_exec(move || preexec_setrlimit(cpu, mem, fsize));
+            }
+        }
+        // macOS: setrlimit 在 spawn 前调用(作用于当前进程 + 继承到子进程,
+        // 且忽略 RLIMIT_AS —— 见模块文档,这就是 rlimit 模式在 macOS 上弱的原因)。
+        #[cfg(target_os = "macos")]
+        apply_macos_rlimit(limits.cpu_secs, limits.fsize_bytes);
     }
-    // macOS: setrlimit 在 spawn 前调用（作用于当前进程 + 继承到子进程）
-    #[cfg(target_os = "macos")]
-    apply_macos_rlimit();
 
     debug!(?cmd, ?workdir, "launching skill");
 
@@ -332,32 +358,42 @@ async fn run_in_workdir(
     })
 }
 
-fn build_env(extra: Option<&HashMap<String, String>>) -> HashMap<String, String> {
+/// 构造子进程环境(白名单 + 强制最小 PATH)。
+///
+/// 安全要点:
+/// - 只从宿主继承 [`ENV_ALLOW`] 中的变量,不含 `HOME`/`USER`/`SHELL`。
+/// - `PATH` 强制覆写为 [`MIN_PATH`],**不**继承宿主 PATH。
+/// - `extra` 额外注入(各值长度 < 4096),但仍不允许覆写 PATH。
+pub(crate) fn build_env(extra: Option<&HashMap<String, String>>) -> HashMap<String, String> {
     let mut env: HashMap<String, String> = std::env::vars()
         .filter(|(k, _)| ENV_ALLOW.contains(&k.as_str()))
         .collect();
     env.entry("LANG".into()).or_insert_with(|| "en_US.UTF-8".into());
     env.entry("LC_ALL".into()).or_insert_with(|| "en_US.UTF-8".into());
-    env.entry("PATH".into())
-        .or_insert_with(|| "/usr/local/bin:/usr/bin:/bin".into());
     if let Some(extra) = extra {
         for (k, v) in extra {
+            // 不允许外部 extra 覆写 PATH(防止经此绕过最小集)。
+            if k == "PATH" {
+                continue;
+            }
             if v.len() < 4096 {
                 env.insert(k.clone(), v.clone());
             }
         }
     }
+    // 最后强制覆写 PATH,确保始终是最小集。
+    env.insert("PATH".into(), MIN_PATH.to_owned());
     env
 }
 
 /// Linux-only: preexec rlimit 设置（在子进程 fork 后 exec 前运行）
 #[cfg(target_os = "linux")]
-fn preexec_setrlimit() -> std::io::Result<()> {
+fn preexec_setrlimit(cpu: u64, mem: u64, fsize: u64) -> std::io::Result<()> {
     use rlimit::{setrlimit, Resource};
 
-    let _ = setrlimit(Resource::CPU, RLIMIT_CPU_SEC, RLIMIT_CPU_SEC);
-    let _ = setrlimit(Resource::AS, RLIMIT_AS_BYTES, RLIMIT_AS_BYTES);
-    let _ = setrlimit(Resource::FSIZE, RLIMIT_FSIZE_BYTES, RLIMIT_FSIZE_BYTES);
+    let _ = setrlimit(Resource::CPU, cpu, cpu);
+    let _ = setrlimit(Resource::AS, mem, mem);
+    let _ = setrlimit(Resource::FSIZE, fsize, fsize);
     let _ = setrlimit(Resource::NOFILE, RLIMIT_NOFILE, RLIMIT_NOFILE);
 
     // 与父进程脱离会话
@@ -372,11 +408,12 @@ fn preexec_setrlimit() -> std::io::Result<()> {
 /// macOS 上 `tokio::process::Command::pre_exec` 可用但 `rlimit` crate 的
 /// `Resource::AS` 无效（macOS 内核忽略 RLIMIT_AS）。改用 unsafe libc 直调，
 /// 只设置 RLIMIT_CPU / RLIMIT_FSIZE / RLIMIT_NOFILE，跳过 RLIMIT_AS。
+/// 这正是 rlimit 模式在 macOS 上「内存不受控」的根因(详见 sandbox 模块文档)。
 #[cfg(target_os = "macos")]
-fn apply_macos_rlimit() {
+fn apply_macos_rlimit(cpu: u64, fsize: u64) {
     unsafe {
-        set_rlimit_macos(libc::RLIMIT_CPU, RLIMIT_CPU_SEC);
-        set_rlimit_macos(libc::RLIMIT_FSIZE, RLIMIT_FSIZE_BYTES);
+        set_rlimit_macos(libc::RLIMIT_CPU, cpu);
+        set_rlimit_macos(libc::RLIMIT_FSIZE, fsize);
         set_rlimit_macos(libc::RLIMIT_NOFILE, RLIMIT_NOFILE);
         // RLIMIT_AS: macOS 内核不支持，跳过
     }

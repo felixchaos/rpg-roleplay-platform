@@ -4,12 +4,17 @@
 pub mod error;
 pub mod tool_registry;
 pub mod skill_executor;
+pub mod sandbox;
 pub mod mcp;
 pub mod mcp_broker;
 
 pub use error::DslError;
 pub use tool_registry::{ToolDefinition, ToolRegistry, GLOBAL_REGISTRY};
 pub use skill_executor::{execute_skill, import_skill_bundle, ImportedSkill, SkillOutput};
+pub use sandbox::{
+    default_sandbox, ContainerRuntime, ContainerSandbox, RlimitSandbox, SandboxLimits,
+    SkillSandbox,
+};
 pub use mcp::{
     AuditEntry, McpCatalog, McpServer, AUDIT_LOG,
     list_audit_entries, mirror_to_filesystem, validate_server,
