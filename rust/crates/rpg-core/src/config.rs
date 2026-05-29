@@ -167,18 +167,41 @@ pub fn login_window_sec() -> u64 {
 
 // ── 脚本上传 ─────────────────────────────────────────────────────────────
 
+/// 单次上传(总)最大字节数。对应 Python `MAX_SCRIPT_UPLOAD_BYTES`/`script_upload_max_bytes`。
+/// 默认 256 MiB(与 Python 端 core.config 默认一致)。
+/// 覆盖: `RPG_SCRIPT_UPLOAD_MAX_BYTES=<bytes>`
 pub fn script_upload_max_bytes() -> usize {
     env::var("RPG_SCRIPT_UPLOAD_MAX_BYTES")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(128 * 1024 * 1024)
+        .unwrap_or(256 * 1024 * 1024)
 }
 
+/// 单 chunk 最大字节数。对应 Python `MAX_UPLOAD_CHUNK_BYTES`。
+/// 默认 8 MiB。
+/// 覆盖: `RPG_UPLOAD_CHUNK_MAX_BYTES=<bytes>`
 pub fn upload_chunk_max_bytes() -> usize {
     env::var("RPG_UPLOAD_CHUNK_MAX_BYTES")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(8 * 1024 * 1024)
+}
+
+/// 单次上传最多分片数。对应 Python `MAX_CHUNKS`。
+/// 默认 4096。
+/// 覆盖: `RPG_MAX_UPLOAD_CHUNKS=<n>`
+pub fn max_upload_chunks() -> usize {
+    env::var("RPG_MAX_UPLOAD_CHUNKS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4096)
+}
+
+/// upload chunk 磁盘根目录。
+/// 覆盖: `RPG_UPLOAD_CHUNK_DIR=<path>` ;默认 `platform_data/upload_chunks`。
+pub fn upload_chunk_dir() -> String {
+    env::var("RPG_UPLOAD_CHUNK_DIR")
+        .unwrap_or_else(|_| "platform_data/upload_chunks".to_string())
 }
 
 pub fn sync_stale_running_seconds() -> u64 {
@@ -228,4 +251,127 @@ pub fn phase_turn_threshold() -> u32 {
 /// 是否启用 BlackSwanAgent post-GM hook。默认关闭,需 RPG_ENABLE_BLACK_SWAN=1。
 pub fn enable_black_swan() -> bool {
     env::var("RPG_ENABLE_BLACK_SWAN").unwrap_or_default() == "1"
+}
+
+// ── Settings struct ───────────────────────────────────────────────────────
+
+/// 上传子系统运行时设置。
+/// 由 `Settings::from_env()` 在进程启动时一次性读取,随后以 `Arc<Settings>` 注入
+/// AppState。各处不再调用裸 `std::env::var`,而是直接读字段。
+///
+/// 字段命名与 Python `core.config` 中对应配置项保持一致。
+#[derive(Debug, Clone)]
+pub struct Settings {
+    /// 单次上传(总)最大字节数。对应 `RPG_SCRIPT_UPLOAD_MAX_BYTES`。
+    pub max_script_upload_bytes: usize,
+    /// 单 chunk 最大字节数。对应 `RPG_UPLOAD_CHUNK_MAX_BYTES`。
+    pub max_upload_chunk_bytes: usize,
+    /// 单次上传最多分片数。对应 `RPG_MAX_UPLOAD_CHUNKS`。
+    pub max_chunks: usize,
+    /// upload chunk 磁盘根目录。对应 `RPG_UPLOAD_CHUNK_DIR`。
+    pub upload_chunk_dir: String,
+    /// KMS provider 类型字符串(透传 Wave 8-A KEY_PROVIDER env)。
+    /// 仅存入 Settings 以便 AppState 集中分发;实际解析由 rpg-platform key_provider 负责。
+    pub kms_provider: Option<String>,
+}
+
+impl Settings {
+    /// 从当前进程环境变量构造 Settings。
+    /// 应在 `load_dotenv_once()` 之后调用。
+    pub fn from_env() -> Self {
+        Settings {
+            max_script_upload_bytes: script_upload_max_bytes(),
+            max_upload_chunk_bytes: upload_chunk_max_bytes(),
+            max_chunks: max_upload_chunks(),
+            upload_chunk_dir: upload_chunk_dir(),
+            kms_provider: env::var("KEY_PROVIDER").ok(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 串行保护:Settings::from_env 读的是 live env var,并行测试修改同一变量会 race。
+    static SETTINGS_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_settings_defaults() {
+        let _g = SETTINGS_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        // 清掉可能残留的覆盖
+        std::env::remove_var("RPG_SCRIPT_UPLOAD_MAX_BYTES");
+        std::env::remove_var("RPG_UPLOAD_CHUNK_MAX_BYTES");
+        std::env::remove_var("RPG_MAX_UPLOAD_CHUNKS");
+        std::env::remove_var("RPG_UPLOAD_CHUNK_DIR");
+        std::env::remove_var("KEY_PROVIDER");
+
+        let s = Settings::from_env();
+        assert_eq!(s.max_script_upload_bytes, 256 * 1024 * 1024);
+        assert_eq!(s.max_upload_chunk_bytes, 8 * 1024 * 1024);
+        assert_eq!(s.max_chunks, 4096);
+        assert_eq!(s.upload_chunk_dir, "platform_data/upload_chunks");
+        assert!(s.kms_provider.is_none());
+    }
+
+    #[test]
+    fn test_settings_from_env_overrides() {
+        let _g = SETTINGS_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("RPG_SCRIPT_UPLOAD_MAX_BYTES", "1048576");
+        std::env::set_var("RPG_UPLOAD_CHUNK_MAX_BYTES", "131072");
+        std::env::set_var("RPG_MAX_UPLOAD_CHUNKS", "128");
+        std::env::set_var("RPG_UPLOAD_CHUNK_DIR", "/tmp/chunks");
+        std::env::set_var("KEY_PROVIDER", "gcp");
+
+        let s = Settings::from_env();
+        assert_eq!(s.max_script_upload_bytes, 1_048_576);
+        assert_eq!(s.max_upload_chunk_bytes, 131_072);
+        assert_eq!(s.max_chunks, 128);
+        assert_eq!(s.upload_chunk_dir, "/tmp/chunks");
+        assert_eq!(s.kms_provider.as_deref(), Some("gcp"));
+
+        // 清理
+        std::env::remove_var("RPG_SCRIPT_UPLOAD_MAX_BYTES");
+        std::env::remove_var("RPG_UPLOAD_CHUNK_MAX_BYTES");
+        std::env::remove_var("RPG_MAX_UPLOAD_CHUNKS");
+        std::env::remove_var("RPG_UPLOAD_CHUNK_DIR");
+        std::env::remove_var("KEY_PROVIDER");
+    }
+
+    #[test]
+    fn test_settings_invalid_env_falls_back_to_default() {
+        let _g = SETTINGS_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("RPG_SCRIPT_UPLOAD_MAX_BYTES", "not_a_number");
+        std::env::set_var("RPG_MAX_UPLOAD_CHUNKS", "xyz");
+
+        let s = Settings::from_env();
+        // 无法解析 → 退回默认
+        assert_eq!(s.max_script_upload_bytes, 256 * 1024 * 1024);
+        assert_eq!(s.max_chunks, 4096);
+
+        std::env::remove_var("RPG_SCRIPT_UPLOAD_MAX_BYTES");
+        std::env::remove_var("RPG_MAX_UPLOAD_CHUNKS");
+    }
+
+    #[test]
+    fn test_upload_chunk_dir_fn_default() {
+        let _g = SETTINGS_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("RPG_UPLOAD_CHUNK_DIR");
+        assert_eq!(upload_chunk_dir(), "platform_data/upload_chunks");
+    }
+
+    #[test]
+    fn test_upload_chunk_dir_fn_override() {
+        let _g = SETTINGS_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("RPG_UPLOAD_CHUNK_DIR", "/data/uploads");
+        assert_eq!(upload_chunk_dir(), "/data/uploads");
+        std::env::remove_var("RPG_UPLOAD_CHUNK_DIR");
+    }
+
+    #[test]
+    fn test_max_upload_chunks_default() {
+        let _g = SETTINGS_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("RPG_MAX_UPLOAD_CHUNKS");
+        assert_eq!(max_upload_chunks(), 4096);
+    }
 }

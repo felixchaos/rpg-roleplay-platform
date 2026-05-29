@@ -18,20 +18,38 @@ use serde::{Deserialize, Serialize};
 use crate::error::{PlatformError, PlatformResult};
 use crate::library::safe_filename;
 
-/// 单 chunk 最大 8 MiB(Python `MAX_UPLOAD_CHUNK_BYTES`)。
+/// 单 chunk 最大字节数。运行时从 `rpg_core::config::upload_chunk_max_bytes()` 读取,
+/// 受 `RPG_UPLOAD_CHUNK_MAX_BYTES` env var 覆盖;默认 8 MiB。
+/// 此处保留为内联函数以兼容现有调用点和测试引用。
+#[inline]
+pub fn max_upload_chunk_bytes() -> usize {
+    rpg_core::config::upload_chunk_max_bytes()
+}
+
+/// 单次上传(总)最大字节数。运行时从 `rpg_core::config::script_upload_max_bytes()` 读取,
+/// 受 `RPG_SCRIPT_UPLOAD_MAX_BYTES` env var 覆盖;默认 256 MiB。
+#[inline]
+pub fn max_script_upload_bytes() -> usize {
+    rpg_core::config::script_upload_max_bytes()
+}
+
+/// 单次上传最多分片数。运行时从 `rpg_core::config::max_upload_chunks()` 读取,
+/// 受 `RPG_MAX_UPLOAD_CHUNKS` env var 覆盖;默认 4096。
+#[inline]
+pub fn max_chunks() -> usize {
+    rpg_core::config::max_upload_chunks()
+}
+
+/// 向后兼容常量别名 —— 测试和 mod.rs 中既有引用。
+/// 使用这些常量的地方若需要运行时可配置,改调同名函数。
 pub const MAX_UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
-/// 单次上传(总)最大 256 MiB —— 与 Python 的 script_upload_max_bytes 默认一致。
-/// 实际 Python 是 read from core.config;Rust 端先固定,后续接 config crate 时收口 (TODO[P3-CFG])。
 pub const MAX_SCRIPT_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
-/// 单次上传最多 4096 分片(Python 同值)。
 pub const MAX_CHUNKS: usize = 4096;
 
-/// upload 磁盘根目录;由 `RPG_UPLOAD_CHUNK_DIR` 覆盖,否则用 `platform_data/upload_chunks`。
+/// upload 磁盘根目录;由 `rpg_core::config::upload_chunk_dir()` 读取,
+/// 底层读 `RPG_UPLOAD_CHUNK_DIR`,未设时默认 `platform_data/upload_chunks`。
 pub fn upload_chunk_root() -> PathBuf {
-    if let Ok(p) = std::env::var("RPG_UPLOAD_CHUNK_DIR") {
-        return PathBuf::from(p);
-    }
-    PathBuf::from("platform_data/upload_chunks")
+    PathBuf::from(rpg_core::config::upload_chunk_dir())
 }
 
 /// meta.json schema。
@@ -107,16 +125,18 @@ pub fn init_upload(
     if user_id <= 0 {
         return Err(PlatformError::validation("分片上传需要登录用户"));
     }
-    if total_bytes == 0 || total_bytes > MAX_SCRIPT_UPLOAD_BYTES {
+    let cfg_max_bytes = max_script_upload_bytes();
+    let cfg_max_chunks = max_chunks();
+    if total_bytes == 0 || total_bytes > cfg_max_bytes {
         return Err(PlatformError::validation(format!(
             "total_bytes 越界(最大 {})",
-            MAX_SCRIPT_UPLOAD_BYTES
+            cfg_max_bytes
         )));
     }
-    if total_chunks == 0 || total_chunks > MAX_CHUNKS {
+    if total_chunks == 0 || total_chunks > cfg_max_chunks {
         return Err(PlatformError::validation(format!(
             "total_chunks 越界(最大 {})",
-            MAX_CHUNKS
+            cfg_max_chunks
         )));
     }
     let upload_id = format!("up_{}_{}", user_id, random_token_hex(8));
@@ -148,10 +168,11 @@ pub fn put_chunk(
     if chunk_index >= meta.total_chunks {
         return Err(PlatformError::validation("chunk_index 越界"));
     }
-    if blob.len() > MAX_UPLOAD_CHUNK_BYTES {
+    let cfg_max_chunk = max_upload_chunk_bytes();
+    if blob.len() > cfg_max_chunk {
         return Err(PlatformError::validation(format!(
             "chunk 超过 {} 字节",
-            MAX_UPLOAD_CHUNK_BYTES
+            cfg_max_chunk
         )));
     }
     let chunk_path = dir.join(format!("chunk_{:04}.bin", chunk_index));

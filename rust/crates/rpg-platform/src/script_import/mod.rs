@@ -35,7 +35,8 @@ use crate::library::safe_filename;
 pub use splitter::{Chapter, SplitReport};
 pub use upload::{
     cancel_upload, cleanup_stale_upload_chunks, consume_upload_chunks, finish_upload, init_upload,
-    put_chunk, UploadMeta, MAX_SCRIPT_UPLOAD_BYTES, MAX_UPLOAD_CHUNK_BYTES,
+    put_chunk, UploadMeta, MAX_CHUNKS, MAX_SCRIPT_UPLOAD_BYTES, MAX_UPLOAD_CHUNK_BYTES,
+    max_chunks, max_script_upload_bytes, max_upload_chunk_bytes,
 };
 
 /// 同用户跨剧本最多 1 个活跃 knowledge_sync 任务(对应 Python 限流)。
@@ -230,7 +231,7 @@ pub async fn import_script(
             (bytes, n)
         }
     };
-    if raw.len() > MAX_SCRIPT_UPLOAD_BYTES {
+    if raw.len() > max_script_upload_bytes() {
         return Err(PlatformError::validation(format!(
             "剧本文件过大:{}",
             original_name
