@@ -46,10 +46,27 @@ npm run typecheck      # 运行 tsc 类型检查(不生成文件)
 npm run gen:types      # 从 Rust crate 重新生成 .ts 类型定义
 ```
 
+## Wave 11.5-B: checkJs 评估结果(诚实记录)
+
+Wave 11.5-B 尝试把 `checkJs: false` 改成 `checkJs: true`(渐进式)：
+
+```
+node_modules/.bin/tsc --noEmit --checkJs true 2>&1 | grep "error TS" | wc -l
+# 输出: 1228
+```
+
+1228 个错误，主要来源:
+- `window.*` 动态属性访问(无 global interface 声明)
+- `window.React` / `window.ReactDOM` UMD 风格引用
+- `.jsx` 文件大量裸 JS API 调用缺类型标注
+- `useStateC` / `useStatePL` 等自定义 hook 无类型签名
+
+**结论:** 暂时维持 `checkJs: false`,`npm run typecheck` 对 `.ts/.tsx` 保持零错误。
+待完成第二阶段(.jsx → .tsx 逐文件迁移)后再开启。
+
 ## 已知限制
 
 现有代码大量使用 `window.__xxx` 动态属性和 UMD 风格的 `window.React`。
 这些在迁移时需要:
 1. 声明扩展接口: `declare global { interface Window { api: ...; } }`
 2. 或改为正常 ESM import
-```

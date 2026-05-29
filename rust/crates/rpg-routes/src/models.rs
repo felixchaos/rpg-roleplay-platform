@@ -149,6 +149,58 @@ pub struct ModelQueryParams {
     pub probe: Option<String>,
 }
 
+/// GET /api/models 的 query params。
+/// `legacy=1` 时返回旧 shape:
+///   { apis:[...], models:[{id, capabilities:["text","streaming",...], context:"128K", ...}], selected:"..." }
+/// 默认(无 legacy)继续返回现有 rpg_llm::ModelCatalog 嵌套 shape。
+#[derive(Debug, Deserialize, Default)]
+pub struct ModelsListParams {
+    pub legacy: Option<String>,
+}
+
+// ── legacy shim helpers ───────────────────────────────────────────────────────
+
+/// 把 model_catalog::ModelCapabilities 的 true 字段名收集成字符串列表。
+/// 这样旧代码 `m.capabilities[0]` 仍能正常工作。
+fn caps_to_strings(c: &model_catalog::ModelCapabilities) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    // 总是把 "text" 加进去代表基础文本能力(旧 shape 惯例)
+    out.push("text");
+    if c.streaming        { out.push("streaming"); }
+    if c.tools            { out.push("tools"); }
+    if c.vision           { out.push("vision"); }
+    if c.audio            { out.push("audio"); }
+    if c.structured_output { out.push("structured_output"); }
+    if c.extended_thinking { out.push("extended_thinking"); }
+    if c.embedding        { out.push("embedding"); }
+    if c.function_calling { out.push("function_calling"); }
+    if c.prompt_caching   { out.push("prompt_caching"); }
+    if c.web_search       { out.push("web_search"); }
+    if c.pdf_input        { out.push("pdf_input"); }
+    out
+}
+
+/// context_window(tokens) → 人类可读字符串:"128K" / "1M" / "200K" 等。
+fn format_context(tokens: u32) -> String {
+    if tokens == 0 {
+        return "—".to_string();
+    }
+    if tokens >= 1_000_000 {
+        let m = tokens / 1_000_000;
+        let rem = (tokens % 1_000_000) / 100_000;
+        if rem == 0 {
+            return format!("{}M", m);
+        }
+        return format!("{}.{}M", m, rem);
+    }
+    let k = tokens / 1_000;
+    let rem = (tokens % 1_000) / 100;
+    if rem == 0 {
+        return format!("{}K", k);
+    }
+    format!("{}.{}K", k, rem)
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 fn catalog_snapshot(s: &AppState) -> ModelCatalog {
@@ -234,15 +286,63 @@ async fn api_models_refresh() -> impl IntoResponse {
 async fn api_models(
     State(s): State<AppState>,
     headers: HeaderMap,
+    Query(q): Query<ModelsListParams>,
 ) -> Result<Response, ResponseError> {
-    let catalog = catalog_snapshot(&s);
-    let selected = catalog.selected.clone();
-    // 决定调用者是否 admin —— 匿名/未登录视为 non-admin(对 Python 一致:
-    // 失败的 `require_user` 在 `/api/state` 也是 redact 路径)。
     let is_admin = match require_user(&s, &headers).await {
         Ok(u) => u.role == "admin",
         Err(_) => false,
     };
+
+    // ?legacy=1: 从 model_catalog crate 拉新 typed 数据,转换成旧 shape 返回,
+    // 保证老代码 `m.capabilities[0]` 不炸。
+    if q.legacy.as_deref() == Some("1") {
+        let new_catalog = NewModelCatalog::default();
+        let _ = new_catalog.preload_static();
+        let models: Vec<model_catalog::ModelInfo> = new_catalog.list_all().await;
+
+        let legacy_models: Vec<Value> = models
+            .iter()
+            .map(|m| {
+                let caps: Vec<&str> = caps_to_strings(&m.capabilities);
+                let context_str = m
+                    .context_window
+                    .map(format_context)
+                    .unwrap_or_else(|| "—".to_string());
+                json!({
+                    "id": m.id,
+                    "display_name": m.display_name,
+                    "provider": m.provider,
+                    "capabilities": caps,
+                    "context": context_str,
+                    "context_window": m.context_window,
+                    "max_output_tokens": m.max_output_tokens,
+                    "input_cost_per_million": m.input_cost_per_million,
+                    "output_cost_per_million": m.output_cost_per_million,
+                    "deprecated_at": m.deprecated_at,
+                    "source": m.source,
+                })
+            })
+            .collect();
+
+        // 旧 selected 字符串:取 rpg_llm catalog 的 selected.model_id 作为回落
+        let old_catalog = catalog_snapshot(&s);
+        let selected_str = format!(
+            "{}/{}",
+            old_catalog.selected.api_id, old_catalog.selected.model_id
+        );
+
+        return Ok(Json(json!({
+            "ok": true,
+            "apis": serde_json::to_value(&old_catalog.apis).unwrap_or(json!([])),
+            "models": legacy_models,
+            "selected": selected_str,
+        }))
+        .into_response());
+    }
+
+    // 默认路径:返回现有 rpg_llm::ModelCatalog 嵌套 shape。
+    let catalog = catalog_snapshot(&s);
+    let selected = catalog.selected.clone();
     let value = serde_json::to_value(&catalog).unwrap_or(json!({}));
     let redacted = redact_catalog(value, is_admin);
     Ok(Json(json!({
@@ -938,5 +1038,79 @@ mod tests {
         let p = router.pricing_for("test-api", "my-model");
         assert!(p.is_some());
         assert_eq!(p.unwrap().input_per_1k_usd, 0.001);
+    }
+
+    // ── legacy shim helpers ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_caps_to_strings_all_false_returns_text_only() {
+        let caps = model_catalog::ModelCapabilities::default();
+        let result = caps_to_strings(&caps);
+        assert_eq!(result, vec!["text"]);
+    }
+
+    #[test]
+    fn test_caps_to_strings_streaming_and_tools() {
+        let caps = model_catalog::ModelCapabilities {
+            streaming: true,
+            tools: true,
+            ..Default::default()
+        };
+        let result = caps_to_strings(&caps);
+        assert!(result.contains(&"text"));
+        assert!(result.contains(&"streaming"));
+        assert!(result.contains(&"tools"));
+        assert!(!result.contains(&"vision"));
+    }
+
+    #[test]
+    fn test_caps_to_strings_all_true() {
+        let caps = model_catalog::ModelCapabilities {
+            streaming: true,
+            tools: true,
+            vision: true,
+            audio: true,
+            structured_output: true,
+            extended_thinking: true,
+            embedding: true,
+            function_calling: true,
+            prompt_caching: true,
+            web_search: true,
+            pdf_input: true,
+        };
+        let result = caps_to_strings(&caps);
+        // text + 11 caps = 12 entries
+        assert_eq!(result.len(), 12);
+        assert_eq!(result[0], "text");
+    }
+
+    #[test]
+    fn test_format_context_128k() {
+        assert_eq!(format_context(128_000), "128K");
+    }
+
+    #[test]
+    fn test_format_context_1m() {
+        assert_eq!(format_context(1_000_000), "1M");
+    }
+
+    #[test]
+    fn test_format_context_200k() {
+        assert_eq!(format_context(200_000), "200K");
+    }
+
+    #[test]
+    fn test_format_context_1m5() {
+        assert_eq!(format_context(1_500_000), "1.5M");
+    }
+
+    #[test]
+    fn test_format_context_zero() {
+        assert_eq!(format_context(0), "—");
+    }
+
+    #[test]
+    fn test_format_context_32k() {
+        assert_eq!(format_context(32_000), "32K");
     }
 }
