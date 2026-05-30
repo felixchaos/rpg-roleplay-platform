@@ -51,8 +51,13 @@ def _extract_json_state_ops(text: str) -> tuple[list[dict], str]:
                     if isinstance(item, dict) and ("op" in item or "path" in item or "question" in item):
                         ops.append(item)
         except Exception:
-            # 解析失败保留原 fence 让玩家看到
-            stripped_parts.append(m.group(0))
+            # 解析失败:若围栏内容明显是 ops(含 op/path/question 标记),仍从可见文本
+            # 剥离 —— 玩家不该看到畸形的 ops JSON(GM 流式产出有时会残缺,如 `[,,`)。
+            # ops 的应用由更宽容的 extractor 兜底,state 不受影响。
+            inner = m.group(1)
+            if not ('"op"' in inner or '"path"' in inner or '"question"' in inner):
+                # 不像 ops 的其它结构化数据 → 保留原文
+                stripped_parts.append(m.group(0))
         last_end = m.end()
     stripped_parts.append(text[last_end:])
     return ops, "".join(stripped_parts)
@@ -133,11 +138,37 @@ def _strip_bare_json_ops(text: str) -> str:
     return "".join(result)
 
 
+def _strip_trailing_unclosed_ops(text: str) -> str:
+    """兜底:剥离截断的未闭合 ops 块。
+
+    GM 响应被切断时(停止/报错/超 token),可能留下半个 ops:
+    `...正文。\n\n```json\n[,,\n  {"op": "append", ...`(围栏没闭合 / JSON 残缺)。
+    前面的围栏/裸 stripper 都要求结构完整,拦不住。这里:若文本里仍残留 ops 标记
+    (`"op":` / `"path":`),从该标记回溯到最近的块起点(``` 或 [ 或 {)截断到末尾。
+    保守:找不到合理块起点就不动,避免误删正文。
+    """
+    if not text or ('"op"' not in text and '"path"' not in text):
+        return text or ""
+    m = re.search(r'"(?:op|path|question)"\s*:', text)
+    if not m:
+        return text
+    head = text[: m.start()]
+    cut = max(head.rfind("```"), head.rfind("["), head.rfind("{"))
+    if cut == -1:
+        return text  # 没有块起点 → 可能是正文里恰好出现 "op":,保守不动
+    return text[:cut].rstrip()
+
+
 def strip_json_state_ops(text: str) -> str:
     """Return player-facing narrative text without JSON state-op fences.
 
-    先剥围栏内的 ops,再保守剥离裸 ops(未加 ``` 围栏的 [{"op":...}])。
+    三层剥离(玩家永远不该看到 ops JSON,无论合法/畸形/截断):
+      1. 围栏内 ops(```json [...] ```),含畸形围栏
+      2. 裸 ops(未加围栏的 [{"op":...}])
+      3. 截断的未闭合 ops(GM 响应被切断留下的半个块)
+    ops 的"应用"由更宽容的 extractor 兜底,与可见文本剥离解耦。
     """
     fenced_stripped = _extract_json_state_ops(text or "")[1]
     bare_stripped = _strip_bare_json_ops(fenced_stripped)
-    return bare_stripped.strip()
+    final = _strip_trailing_unclosed_ops(bare_stripped)
+    return final.strip()
