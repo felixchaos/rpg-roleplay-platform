@@ -114,6 +114,23 @@ const theme = {
     borderRadiusItem: '6px',
     borderRadiusBadge: '999px',
   },
+  // 顶栏(TopNavigation)走独立 context,默认是 AWS 冷灰深色 —— 单独染暖
+  contexts: {
+    'top-navigation': {
+      tokens: {
+        colorBackgroundContainerContent: C.bgDeep,
+        colorBackgroundContainerHeader: C.bgDeep,
+        colorBackgroundDropdownItemDefault: C.panel,
+        colorBackgroundDropdownItemHover: C.panel2,
+        colorBorderDividerDefault: C.line,
+        colorTextBodyDefault: C.text,
+        colorTextInteractiveDefault: C.textQuiet,
+        colorTextInteractiveHover: C.text,
+        colorTextAccent: C.accent,
+        colorTextDropdownItemDefault: C.text,
+      },
+    },
+  },
 };
 
 let _reset = null;
