@@ -9,6 +9,7 @@ import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL,
 import { Icon } from '../game-icons.jsx';
 import { ConfirmModal } from '../platform-app.jsx';
 import { BranchGraph } from '../branch-graph.jsx';
+import { NewGameWizard } from './new-game-wizard.jsx';
 
 /* ---------------------------- SAVES ---------------------------- */
 function SavesPage({ subPage = "list" }) {
@@ -23,6 +24,7 @@ function SavesListView() {
   // task 19/20: 不再混 mock；空数组也覆盖，让"无存档/无剧本"的真实空态被前端识别到
   const [saves, setSaves] = useStatePL([]);
   const [scripts, setScripts] = useStatePL([]);
+  const [settingsSave, setSettingsSave] = useStatePL(null); // Phase F: 设置向导 modal
   const [createOpen, setCreateOpen] = useStatePL(false);
   const [menuOpen, setMenuOpen] = useStatePL(null);
 
@@ -178,6 +180,7 @@ function SavesListView() {
                         {!s.current && (
                           <button className="pl-pop-item" onClick={() => { onActivate(s); setMenuOpen(null); }}>设为当前</button>
                         )}
+                        <button className="pl-pop-item" onClick={() => { setSettingsSave(s); setMenuOpen(null); }}>游戏设置</button>
                         <button className="pl-pop-item" onClick={async () => {
                           const t = prompt("新名称", s.title);
                           if (!t || t === s.title) return setMenuOpen(null);
@@ -209,6 +212,20 @@ function SavesListView() {
         onClose={() => setCreateOpen(false)}
         onConfirm={onCreate}
       />
+      {settingsSave && (
+        <div className="pl-modal-backdrop" onClick={() => setSettingsSave(null)}>
+          <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{ width: "min(620px, 100%)", maxHeight: "85vh", overflow: "auto" }}>
+            <header className="pl-modal-head">
+              <div>
+                <div className="pl-modal-eyebrow">游戏设置 · 元知识 / 引导 / 防剧透</div>
+                <h2 className="pl-modal-title">{settingsSave.title}</h2>
+              </div>
+              <button className="iconbtn" onClick={() => setSettingsSave(null)} data-tip="关闭"><Icon name="close" size={14} /></button>
+            </header>
+            <NewGameWizard saveId={settingsSave.id} onDone={() => { setSettingsSave(null); window.__apiToast?.("设置已保存", { kind: "ok", duration: 1500 }); }} />
+          </div>
+        </div>
+      )}
       {/* task 127: 平台 ConfirmModal 取代浏览器 confirm() */}
       <ConfirmModal
         open={!!deleteTarget}
