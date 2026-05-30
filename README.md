@@ -19,9 +19,16 @@
 
 ## What it is
 
-Drop a long-form novel into a directory; get a playable RPG world the next time the server boots. Originally written to host one specific 4.85-million-character novel as a game, now generalized into a runtime that any author or GM can point at their own story. The engine handles the boring parts — branching saves, dice, scenes, retrieval over long-form lore, provider routing, token accounting — so the LLM can focus on roleplay and you can focus on the story.
+**Every reader who plays your story plays a different one.**
+
+RPG Roleplay drops a long-form novel into a self-hosted, LLM-driven RPG runtime: branching saves, retrieval over the original text, agent-driven scenes, and all the boring scaffolding — dice, provider routing, token accounting, cards, worldbook — is already wired up. Originally written to host one 4.85-million-character novel as a playable world; now any author or GM can point it at their own.
 
 ## What works today
+
+> The table below is the actual state, not marketing.
+> ✅ = tests pass and the feature is used in production by the author.
+> 🟡 = the code is there, rough edges remain — see [docs/MIGRATION_AUDIT.md](./docs/MIGRATION_AUDIT.md) for file:line specifics.
+> ❌ = planned but not built.
 
 | Layer | Status |
 |---|---|
@@ -119,6 +126,26 @@ Adding a provider = one entry in `model_catalog/src/providers/` + (if a new wire
 
 `Rust 1.83+` · `axum` · `sqlx` · `pgvector` · `pgbouncer` · `Redis` · `tokio` · `tower-governor` · `ts-rs` · `React 18` · `Vite` · `TypeScript`
 
+## Why not SillyTavern / Risu / KoboldCpp?
+
+We love SillyTavern. It's an incredible character-card playground. But it answers a different question:
+
+- **SillyTavern** = *"I have a character card. Let me chat with it."*
+- **RPG Roleplay** = *"I have a million-character novel. Let me play **inside** it."*
+
+| Concern | SillyTavern / Risu | RPG Roleplay |
+|---|---|---|
+| Primary unit | Character card | Novel + setting bible |
+| Long-form retrieval | Extension required | Built-in: BM25 + pgvector over the original text |
+| Branching saves | Manual chat export | Git-style commit / ref / checkout |
+| Engine state | Conversation history | Typed `GameState` + op protocol + D&D 5E core |
+| Worldbook | YAML / JSON files | DB-backed entries with semantic activation |
+| Multi-user | Single-user app | Auth + per-user runtime + quota |
+| Stack | Node, plain HTML/CSS | Rust + axum + sqlx + pgvector + typed React |
+| Tests | Mostly ad-hoc | 552 `#[test]` annotations across 15 crates |
+
+Use SillyTavern when your story is a character. Use RPG Roleplay when your story is a *world*. The two import the same V2 card format, so moving sideways is trivial.
+
 ## Configuration
 
 | Variable | Purpose | Required |
@@ -166,7 +193,7 @@ A full annotated example lives in `deploy/.env.example`.
 
 ## Contributing
 
-This is a private repository in active development; external PRs aren't accepted yet. Once we ship public beta, contributions will be welcome under [CONTRIBUTING.md](./CONTRIBUTING.md). For now: file issues, follow the [landing page](https://play.stellatrix.icu) for the public release window.
+This is a private repository in active development; external PRs aren't accepted yet. Once we ship public beta, contributions will be welcome under [CONTRIBUTING.md](./CONTRIBUTING.md). For now: file issues, follow the [landing page](https://play.stellatrix.icu) for the public release window, and see [CHANGELOG.md](./CHANGELOG.md) for what's shipped per wave.
 
 ## License
 

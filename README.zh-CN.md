@@ -19,9 +19,16 @@
 
 ## 这是什么
 
-把一本长篇小说塞进一个目录, 下一次启动服务时, 它就是一个可玩的 RPG 世界. 最早是为了把一本 485 万字小说做成可玩的剧本, 现在泛化成任意作者或 GM 都能把自己的故事丢进去的运行时. 引擎负责无聊的部分 — 分支存档, 骰子, 场景, 长文检索, provider 路由, token 账单 — LLM 专心扮演, 你专心讲故事.
+**千人千面的剧本，从你自己的故事开始。**
+
+RPG Roleplay 把一本长篇小说扔进一个自托管的 LLM 驱动的 RPG 运行时: 分支存档、原文检索、agent 驱动的场景, 以及骰子、provider 路由、token 账单、角色卡、世界书 — 这些无聊的脚手架全部就位. 最初为了把一本 485 万字小说做成可玩的世界, 现在任何作者或 GM 都能塞进自己的故事.
 
 ## 当前实际可用程度
+
+> 下面这张表是真实状态，不是 marketing。
+> ✅ = 跑通测试,作者本人在生产里用着。
+> 🟡 = 代码在,毛刺还有 — 看 [docs/MIGRATION_AUDIT.md](./docs/MIGRATION_AUDIT.md) 拿 file:line 级清单。
+> ❌ = 在 roadmap 上,还没做。
 
 | 层 | 状态 |
 |---|---|
@@ -119,6 +126,26 @@ open http://localhost:5173/Login.html
 
 `Rust 1.83+` · `axum` · `sqlx` · `pgvector` · `pgbouncer` · `Redis` · `tokio` · `tower-governor` · `ts-rs` · `React 18` · `Vite` · `TypeScript`
 
+## 为什么不是 SillyTavern / Risu / KoboldCpp?
+
+我们很喜欢 SillyTavern. 它是一个出色的角色卡聊天工具. 但它和我们解决的是不同问题:
+
+- **SillyTavern** = *"我有一张角色卡,让我跟它聊天."*
+- **RPG Roleplay** = *"我有一本百万字小说,让我**走进里面玩一遍**."*
+
+| 关注点 | SillyTavern / Risu | RPG Roleplay |
+|---|---|---|
+| 基本单位 | 角色卡 | 小说 + 设定集 |
+| 长文检索 | 要扩展才有 | 内置 BM25 + pgvector 跑原文 |
+| 分支存档 | 手动导出聊天记录 | Git 式 commit / ref / checkout |
+| 引擎状态 | 对话历史 | 类型化 `GameState` + op 协议 + D&D 5E 核心 |
+| 世界书 | YAML / JSON 文件 | 数据库条目 + 语义激活 |
+| 多用户 | 单机应用 | 鉴权 + 用户级 runtime + 配额 |
+| 技术栈 | Node + 原生 HTML/CSS | Rust + axum + sqlx + pgvector + 类型化 React |
+| 测试 | 多为临时 | 15 个 crate 累计 552 个 `#[test]` |
+
+故事是一个角色 → 用 SillyTavern。故事是一整个**世界** → 用 RPG Roleplay。两边都吃同一份 V2 卡格式,横移成本几乎为零.
+
 ## 配置
 
 | 变量 | 用途 | 必填 |
@@ -166,7 +193,7 @@ open http://localhost:5173/Login.html
 
 ## 贡献
 
-私有仓库, 开发中, 暂不接受外部 PR. 公测后会按 [CONTRIBUTING.md](./CONTRIBUTING.md) 开放贡献. 现在可以提 issue 或在[落地页](https://play.stellatrix.icu)预约公测.
+私有仓库, 开发中, 暂不接受外部 PR. 公测后会按 [CONTRIBUTING.md](./CONTRIBUTING.md) 开放贡献. 现在可以提 issue 或在[落地页](https://play.stellatrix.icu)预约公测. 每个 Wave 的发布记录见 [CHANGELOG.md](./CHANGELOG.md).
 
 ## 许可
 
