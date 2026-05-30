@@ -1579,7 +1579,6 @@ function ConsoleAssistantPanel(props) {
           <ModelPickerDropdown apiBase={apiBase} />
         </div>
         <div className="cap-head-actions">
-          <ContextRing cumIn={ctxUsage.cumIn} cumOut={ctxUsage.cumOut} ctxLimit={ctxUsage.ctxLimit} />
           <button className="cap-icon-btn" title="对话历史"
                   aria-label="对话历史"
                   onClick={() => { setShowConvList(v => !v); setShowSettings(false); }}>
@@ -1697,7 +1696,6 @@ function ConsoleAssistantPanel(props) {
       </div>
 
       <div className="cap-foot">
-        <div className="cap-context">ctx: {contextLabel}</div>
         {/* task 70: 4 档权限模式 — 对齐游戏控制台 PermissionPopover */}
         <div className="cap-ask-row">
           <span className="cap-perm-pill" data-mode={permissionMode}
