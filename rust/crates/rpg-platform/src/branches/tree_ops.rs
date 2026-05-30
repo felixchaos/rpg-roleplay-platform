@@ -105,14 +105,36 @@ pub async fn tree(
     };
 
     // 把 save row 序列化为 serde_json::Value(对齐 Python expose(save))。
-    let active_commit_id: Option<i64> = save_row
+    // Gap 10: 先从 game_saves 读 active_commit_id,再用 user_runtime 覆盖(若有)
+    let mut active_commit_id: Option<i64> = save_row
         .try_get::<Option<i64>, _>("active_commit_id")
         .unwrap_or(None)
         .or_else(|| save_row.try_get::<Option<i64>, _>("active_branch_node_id").ok().flatten());
-    let active_ref_id: Option<i64> = save_row
+    let mut active_ref_id: Option<i64> = save_row
         .try_get::<Option<i64>, _>("active_branch_ref_id")
         .ok()
         .flatten();
+    // 查 user_runtime override(若用户切过分支但 game_saves 还没同步)
+    let runtime_row = sqlx::query(
+        "SELECT active_commit_id, active_ref_id FROM user_runtime \
+         WHERE user_id = $1 AND save_id = $2",
+    )
+    .bind(user_id)
+    .bind(save_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    if let Some(rt) = runtime_row {
+        if let Ok(Some(rt_cid)) = rt.try_get::<Option<i64>, _>("active_commit_id") {
+            if rt_cid > 0 {
+                active_commit_id = Some(rt_cid);
+            }
+        }
+        if let Ok(Some(rt_rid)) = rt.try_get::<Option<i64>, _>("active_ref_id") {
+            active_ref_id = Some(rt_rid);
+        }
+    }
 
     let save_value = row_to_value(&save_row);
 

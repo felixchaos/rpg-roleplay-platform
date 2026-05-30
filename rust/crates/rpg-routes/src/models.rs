@@ -782,11 +782,24 @@ async fn api_models_delete_model(
 #[tracing::instrument(skip_all)]
 async fn api_models_remote(
     State(s): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<ModelQueryParams>,
 ) -> Result<Response, ResponseError> {
+    // Gap 18: 检查用户凭证
+    let user = require_user(&s, &headers).await?;
     let api_id = q.api_id.unwrap_or_default();
     if api_id.is_empty() {
         return Err(ResponseError::bad_request("api_id required"));
+    }
+    // 非 admin 需要在 user_api_credentials 表里配置了该 api_id 的 key
+    if user.role != "admin" {
+        let cred_result = rpg_platform::users::list_credentials(&s.db, user.id).await;
+        let has_cred = cred_result
+            .map(|creds| creds.iter().any(|c| c.api_id == api_id && c.has_credential))
+            .unwrap_or(false);
+        if !has_cred {
+            return Err(ResponseError::forbidden("需要先配置该 provider 的凭证"));
+        }
     }
 
     let backend = {
@@ -819,11 +832,23 @@ async fn api_models_remote(
 #[tracing::instrument(skip_all)]
 async fn api_models_diff(
     State(s): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<ModelQueryParams>,
 ) -> Result<Response, ResponseError> {
+    // Gap 19: 检查用户凭证
+    let user = require_user(&s, &headers).await?;
     let api_id = q.api_id.unwrap_or_default();
     if api_id.is_empty() {
         return Err(ResponseError::bad_request("api_id required"));
+    }
+    if user.role != "admin" {
+        let cred_result = rpg_platform::users::list_credentials(&s.db, user.id).await;
+        let has_cred = cred_result
+            .map(|creds| creds.iter().any(|c| c.api_id == api_id && c.has_credential))
+            .unwrap_or(false);
+        if !has_cred {
+            return Err(ResponseError::forbidden("需要先配置该 provider 的凭证"));
+        }
     }
 
     let backend = {
@@ -1034,51 +1059,71 @@ async fn api_models_report(
     if api_id.is_empty() {
         return Json(json!({"ok": false, "error": "api_id required"}));
     }
-    let catalog = catalog_snapshot(&s);
-    let Some(api) = catalog.apis.iter().find(|a| a.id == api_id) else {
-        return Json(json!({"ok": false, "error": format!("api_id 不存在: {}", api_id)}));
+    // Collect everything from catalog in a block so borrows are dropped before await
+    let (credential_present, api_kind, api_enabled, local_catalog) = {
+        let catalog = catalog_snapshot(&s);
+        let Some(api) = catalog.apis.iter().find(|a| a.id == api_id) else {
+            return Json(json!({"ok": false, "error": format!("api_id 不存在: {}", api_id)}));
+        };
+        let cred = {
+            let api_val = serde_json::to_value(api).unwrap_or(json!({}));
+            crate::models::credential_present(&api_val)
+        };
+        let kind = api.kind.clone();
+        let enabled = api.enabled;
+        let router = s.llm_router.read();
+        let lc: Vec<Value> = api.models.iter().map(|m| {
+            let real = m.real_name.as_deref().unwrap_or(&m.id);
+            let pricing = router.pricing_for(&api_id, &m.id).map(|p| json!({
+                "input": p.input_per_1k_usd * 1000.0,
+                "output": p.output_per_1k_usd * 1000.0,
+                "source": "static",
+                "unit": "USD per million tokens",
+            }));
+            let caps: Vec<Value> = m.capabilities.iter().map(|c| json!({
+                "id": c,
+                "label": capability_label(c),
+            })).collect();
+            json!({
+                "id": m.id,
+                "real_name": real,
+                "enabled": m.enabled,
+                "pricing": pricing,
+                "capabilities": caps,
+            })
+        }).collect();
+        (cred, kind, enabled, lc)
     };
 
-    // Build credential_present (matches Python _credential_present)
-    let credential_present = {
-        let api_val = serde_json::to_value(api).unwrap_or(json!({}));
-        crate::models::credential_present(&api_val)
+    // Gap 17: 实现简化版 remote models summary
+    let remote_summary = {
+        let backend_opt = {
+            let router = s.llm_router.read();
+            router.backend_for_api(&api_id).ok()
+        };
+        match backend_opt {
+            Some(backend) => {
+                match backend.list_models().await {
+                    Ok(models) if !models.is_empty() => {
+                        let model_ids: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
+                        json!({"count": models.len(), "models": model_ids})
+                    }
+                    Ok(_) => json!({"count": 0, "models": []}),
+                    Err(e) => json!({"error": e.to_string()}),
+                }
+            }
+            None => json!({"error": "no backend registered for this api_id"}),
+        }
     };
-
-    let router = s.llm_router.read();
-
-    // local_catalog: each model with pricing and capabilities
-    let local_catalog: Vec<Value> = api.models.iter().map(|m| {
-        let real = m.real_name.as_deref().unwrap_or(&m.id);
-        let pricing = router.pricing_for(&api_id, &m.id).map(|p| json!({
-            "input": p.input_per_1k_usd * 1000.0,
-            "output": p.output_per_1k_usd * 1000.0,
-            "source": "static",
-            "unit": "USD per million tokens",
-        }));
-        let caps: Vec<Value> = m.capabilities.iter().map(|c| json!({
-            "id": c,
-            "label": capability_label(c),
-        })).collect();
-        json!({
-            "id": m.id,
-            "real_name": real,
-            "enabled": m.enabled,
-            "pricing": pricing,
-            "capabilities": caps,
-        })
-    }).collect();
-    drop(router);
 
     Json(json!({
         "ok": true,
         "api_id": api_id,
-        "kind": api.kind,
-        "enabled": api.enabled,
+        "kind": api_kind,
+        "enabled": api_enabled,
         "credential_present": credential_present,
         "local_catalog": local_catalog,
-        // remote_models_summary: TODO — requires live backend call
-        "remote_models_error": "remote diff not implemented in report endpoint",
+        "remote_models_summary": remote_summary,
     }))
 }
 

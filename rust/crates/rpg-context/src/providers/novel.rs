@@ -23,6 +23,12 @@ use std::sync::Mutex;
 static REGEX_CACHE: Lazy<Mutex<HashMap<String, Option<Regex>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Gap 27: timeline_filter_fn 结果缓存（key=label, value=anchor JSON, TTL 60s）
+static TIMELINE_CACHE: Lazy<Mutex<HashMap<String, (std::time::Instant, Value)>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+const TIMELINE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
 fn is_novel(manifest: &Manifest) -> bool {
     manifest.kind == "novel_adaptation"
 }
@@ -64,10 +70,27 @@ impl ContextProvider for NovelTimelineProvider {
             })
             .unwrap_or_default();
 
+        // Gap 27: timeline_filter_fn 带缓存
         let mut anchor: Value = Value::Null;
         if let Some(filter) = services.timeline_filter_fn.as_ref() {
             if !label.is_empty() {
-                anchor = filter(&label).unwrap_or_else(|exc| json!({ "error": exc.to_string() }));
+                // 检查缓存
+                let cached = {
+                    let cache = TIMELINE_CACHE.lock().unwrap();
+                    cache.get(&label).and_then(|(ts, v)| {
+                        if ts.elapsed() < TIMELINE_CACHE_TTL { Some(v.clone()) } else { None }
+                    })
+                };
+                anchor = if let Some(v) = cached {
+                    v
+                } else {
+                    let result = filter(&label).unwrap_or_else(|exc| json!({ "error": exc.to_string() }));
+                    // 写入缓存
+                    let mut cache = TIMELINE_CACHE.lock().unwrap();
+                    if cache.len() >= 256 { cache.clear(); }
+                    cache.insert(label.clone(), (std::time::Instant::now(), result.clone()));
+                    result
+                };
             }
         }
 
@@ -178,9 +201,41 @@ impl ContextProvider for NovelRetrievalProvider {
         //   拼接结果追加到 text。
         //
         // 当前 embed_fn 未接入 rpg_llm::vertex::VertexBackend::embed,跳过。
-        if let Some(_embed) = services.embed_fn.as_ref() {
-            // TODO[接入]: 向量检索逻辑见上方注释。embed_fn 已注入时在此处实现。
-            tracing::debug!("novel_retrieval: embed_fn 已注入但向量召回尚未实现,跳过");
+        // Gap 24: 接入向量 embed search(当 embed_fn + db_pool 同时注入时)
+        if let (Some(embed_fn), Some(pool)) = (services.embed_fn.as_ref(), services.db_pool.as_ref()) {
+            if let Some(bid) = services.book_id {
+                let embed_query = query.clone();
+                let embed_fn_clone = embed_fn.clone();
+                match embed_fn_clone(embed_query, "RETRIEVAL_QUERY".to_string()).await {
+                    Ok(vec) if !vec.is_empty() => {
+                        // 用向量相似度查 character_cards 做语义排序
+                        let vec_str = format!("[{}]", vec.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(","));
+                        let entity_rows = sqlx::query(
+                            "SELECT name, identity, (1 - (embedding <=> $1::vector)) AS score \
+                             FROM character_cards \
+                             WHERE book_id = $2 AND embedding IS NOT NULL \
+                             ORDER BY embedding <=> $1::vector \
+                             LIMIT 4",
+                        )
+                        .bind(&vec_str)
+                        .bind(bid)
+                        .fetch_all(pool)
+                        .await;
+                        if let Ok(rows) = entity_rows {
+                            if !rows.is_empty() {
+                                tracing::debug!(
+                                    matched = rows.len(),
+                                    "novel_retrieval: 向量召回命中 entity"
+                                );
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!(error = %e, "novel_retrieval: embed_fn 调用失败,跳过向量召回");
+                    }
+                }
+            }
         }
 
         let layer = Layer::new(

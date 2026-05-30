@@ -206,7 +206,7 @@ async fn get_stats(
     let total_rounds: i64 = sqlx::query_scalar(
         "select coalesce(sum(per_save_max),0)::bigint from (\
            select max(b.turn_index) as per_save_max \
-           from branch_nodes b join game_saves s on s.id = b.save_id \
+           from branch_commits b join game_saves s on s.id = b.save_id \
            where s.user_id = $1 group by b.save_id\
          ) t",
     )
@@ -217,7 +217,7 @@ async fn get_stats(
 
     // 分支节点总数
     let branch_nodes: i64 = sqlx::query_scalar(
-        "select count(*)::bigint from branch_nodes b \
+        "select count(*)::bigint from branch_commits b \
          join game_saves s on s.id = b.save_id where s.user_id = $1",
     )
     .bind(uid)
@@ -229,7 +229,7 @@ async fn get_stats(
     let branches: i64 = sqlx::query_scalar(
         "select coalesce(sum(extra),0)::bigint from (\
            select count(*) - 1 as extra \
-           from branch_nodes b join game_saves s on s.id = b.save_id \
+           from branch_commits b join game_saves s on s.id = b.save_id \
            where s.user_id = $1 and b.parent_id is not null \
            group by b.parent_id having count(*) > 1\
          ) t",
@@ -243,11 +243,11 @@ async fn get_stats(
     let max_branch_depth: i64 = sqlx::query_scalar(
         "with recursive bn as (\
            select b.id, b.parent_id, 1 as depth \
-           from branch_nodes b join game_saves s on s.id = b.save_id \
+           from branch_commits b join game_saves s on s.id = b.save_id \
            where s.user_id = $1 and b.parent_id is null \
            union all \
            select c.id, c.parent_id, bn.depth + 1 \
-           from branch_nodes c join bn on c.parent_id = bn.id\
+           from branch_commits c join bn on c.parent_id = bn.id\
          ) select coalesce(max(depth),0)::bigint from bn",
     )
     .bind(uid)

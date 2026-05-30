@@ -1216,16 +1216,51 @@ pub(crate) async fn api_chat(
             retrieved.clone()
         };
 
-        // ── Phase 2.5: Worldbook Agent stubs ────────────────────────
-        // TODO: replace stubs with real worldbook agent calls when the crate is ready.
+        // ── Phase 2.5: Worldbook Agent (real query) ────────────────
         let _ = tx.send(Ok(named_sse_event(
             "worldbook_consulting",
             json!({"query": message, "phase": "consulting", "time": chrono::Utc::now().to_rfc3339()}),
         ))).await;
-        let _ = tx.send(Ok(named_sse_event(
-            "worldbook_ready",
-            json!({"confidence": 0.0, "sources": [], "elapsed_ms": 0}),
-        ))).await;
+        // Gap 2: 接真实 worldbook 查询
+        if let Some(sid) = script_id {
+            let wb_agent = rpg_agents::worldbook_agent::WorldbookAgent::new()
+                .with_db(std::sync::Arc::new(db.clone()));
+            let wb_input = {
+                let st = state_handle.read();
+                rpg_agents::worldbook_agent::ConsultInput {
+                    script_id: sid,
+                    query: message.clone(),
+                    save_id: chat_save_id,
+                    current_phase: st.data.world.timeline.current_phase.clone(),
+                    current_time: st.data.world.time.clone(),
+                    ..Default::default()
+                }
+            };
+            match wb_agent.consult(wb_input).await {
+                Ok(wb_result) => {
+                    let _ = tx.send(Ok(named_sse_event(
+                        "worldbook_ready",
+                        json!({
+                            "confidence": wb_result.confidence,
+                            "sources": wb_result.sources,
+                            "elapsed_ms": wb_result.elapsed_ms,
+                        }),
+                    ))).await;
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "worldbook agent consult 失败");
+                    let _ = tx.send(Ok(named_sse_event(
+                        "worldbook_ready",
+                        json!({"confidence": 0.0, "sources": [], "elapsed_ms": 0}),
+                    ))).await;
+                }
+            }
+        } else {
+            let _ = tx.send(Ok(named_sse_event(
+                "worldbook_ready",
+                json!({"confidence": 0.0, "sources": [], "elapsed_ms": 0}),
+            ))).await;
+        }
 
         // ── Phase 3: Rules Preflight ────────────────────────────────
         let _ = tx.send(Ok(named_sse_event(
@@ -1233,13 +1268,43 @@ pub(crate) async fn api_chat(
             json!({"phase":"rules","label":"正在检查规则…"}),
         ))).await;
 
+        // Gap 3: 接真实 rules engine
         let has_encounter = {
             let st = state_handle.read();
             st.data.encounter.active
         };
         if has_encounter {
-            // TODO: 调 rpg_rules::get_engine().skill_check / initiative 等
-            tracing::debug!("Phase 3: 活跃 encounter,跳过规则预检 (TODO)");
+            let engine = rpg_rules::get_engine();
+            let pending_check = {
+                let st = state_handle.read();
+                st.data.encounter.extra.get("pending_check").cloned()
+            };
+            if let Some(pending) = pending_check {
+                let skill = pending.get("skill").and_then(|v| v.as_str()).unwrap_or("perception");
+                let dc = pending.get("dc").and_then(|v| v.as_i64()).unwrap_or(10) as i32;
+                let (character, player_name) = {
+                    let st = state_handle.read();
+                    (serde_json::to_value(&st.data.player).unwrap_or(json!({})), st.data.player.name.clone())
+                };
+                match engine.skill_check(&character, skill, dc, false, false, None, Some(&player_name), "encounter_check") {
+                    Ok(result) => {
+                        let _ = tx.send(Ok(named_sse_event("rules_check", json!({
+                            "kind": result.kind,
+                            "skill": skill,
+                            "dc": dc,
+                            "roll": result.roll,
+                            "success": result.success,
+                            "gm_facts": result.gm_facts,
+                        })))).await;
+                        let mut st = state_handle.write();
+                        st.data.encounter.extra.remove("pending_check");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Phase 3: skill_check 失败(非阻塞)");
+                    }
+                }
+            }
+            tracing::debug!("Phase 3: 活跃 encounter,规则预检完毕");
         }
 
         // game-chat-04: append user history BEFORE GM generation (Python does this in Phase 1)

@@ -86,6 +86,18 @@ impl ExtractorAgent {
         }
     }
 
+    /// Gap 29: 从 catalog selected 读取模型配置,而非使用硬编码默认值
+    pub fn from_catalog_selected(llm: SharedLlm, api_id: &str, model_id: &str) -> Self {
+        Self {
+            llm,
+            config: ExtractorConfig {
+                default_api_id: api_id.to_string(),
+                default_model: model_id.to_string(),
+                ..Default::default()
+            },
+        }
+    }
+
     pub fn with_config(llm: SharedLlm, config: ExtractorConfig) -> Self {
         Self { llm, config }
     }

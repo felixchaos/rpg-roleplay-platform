@@ -172,7 +172,47 @@ pub fn resolve_content_pack(state_data: &GameStateData, script_id: Option<i64>) 
         } else if !state_data.scene.module_id.is_empty() {
             merged.id = state_data.scene.module_id.clone();
         }
-        // TODO: 等 rpg-modules 把 _load_full_module_manifest 接上时再 merge full module.json
+        // Gap 26: merge module_manifest 字段到 default manifest
+        if let Some(obj) = module_manifest.as_object() {
+            // 合并 context_providers
+            if let Some(providers) = obj.get("context_providers").and_then(|v| v.as_array()) {
+                let extra_providers: Vec<String> = providers
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .filter(|p| !merged.context_providers.contains(p))
+                    .collect();
+                merged.context_providers.extend(extra_providers);
+            }
+            // 合并 ruleset
+            if let Some(rs) = obj.get("ruleset").and_then(|v| v.as_str()) {
+                if !rs.is_empty() {
+                    merged.ruleset = rs.to_string();
+                }
+            }
+            // 合并 kind
+            if let Some(kind) = obj.get("kind").and_then(|v| v.as_str()) {
+                if !kind.is_empty() {
+                    merged.kind = kind.to_string();
+                }
+            }
+            // 合并 gm_policy / retrieval_policy
+            if let Some(gp) = obj.get("gm_policy") {
+                if gp.is_object() {
+                    merged.gm_policy = gp.clone();
+                }
+            }
+            if let Some(rp) = obj.get("retrieval_policy") {
+                if rp.is_object() {
+                    merged.retrieval_policy = rp.clone();
+                }
+            }
+            // 合并 extra 字段
+            for (k, v) in obj {
+                if !["id", "kind", "ruleset", "context_providers", "gm_policy", "retrieval_policy"].contains(&k.as_str()) {
+                    merged.extra.insert(k.clone(), v.clone());
+                }
+            }
+        }
         return merged;
     }
     // 3. script_id 存在 → novel adaptation legacy 默认

@@ -63,6 +63,18 @@ impl AcceptanceVerifierAgent {
         }
     }
 
+    /// Gap 29: 从 catalog selected 读取模型配置
+    pub fn from_catalog_selected(llm: SharedLlm, api_id: &str, model_id: &str) -> Self {
+        Self {
+            llm,
+            config: VerifierConfig {
+                default_api_id: api_id.to_string(),
+                default_model: model_id.to_string(),
+                ..Default::default()
+            },
+        }
+    }
+
     pub async fn run(
         &self,
         input: VerifierInput,

@@ -939,10 +939,13 @@ async fn api_script_chapters(
         .await
         .map_err(|e| ResponseError::internal(e.to_string()))?;
 
+        // Gap 8: 搜索结果截断 200 字符,不返全文
         let items: Vec<Value> = rows
             .iter()
             .map(|r| {
                 let ci = r.try_get::<i32,_>("chapter_index").unwrap_or_default();
+                let full_content: String = r.try_get::<String,_>("content").unwrap_or_default();
+                let content_preview: String = full_content.chars().take(200).collect();
                 json!({
                     "id": r.try_get::<i64,_>("id").unwrap_or_default(),
                     "chapter_index": ci,
@@ -950,12 +953,7 @@ async fn api_script_chapters(
                     "title": r.try_get::<String,_>("title").unwrap_or_default(),
                     "volume_title": r.try_get::<String,_>("volume_title").unwrap_or_default(),
                     "word_count": r.try_get::<i32,_>("word_count").unwrap_or_default(),
-                    // Gap 8: 搜索结果截断 200 字符,不返全文
-                    "content": {
-                        let full: String = r.try_get::<String,_>("content").unwrap_or_default();
-                        let preview: String = full.chars().take(200).collect();
-                        preview
-                    },
+                    "content": content_preview,
                 })
             })
             .collect();

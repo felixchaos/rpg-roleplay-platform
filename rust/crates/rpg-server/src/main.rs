@@ -532,6 +532,29 @@ async fn lifespan_startup(state: &AppState) {
         }
     }
 
+    // Gap 25: 初始化 embedding backend(Vertex 方式,有 GOOGLE_APPLICATION_CREDENTIALS 时)
+    {
+        let vertex_cred = std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        if let Some(cred_path) = vertex_cred {
+            if std::path::Path::new(&cred_path).exists() {
+                info!(cred_path = %cred_path, "startup: Vertex embedding credentials found");
+                // Vertex backend 初始化留给 rpg-llm crate 内部;此处只 log
+                // 真正注入 embed_fn 到 ProviderServices 需要 per-request 构造,
+                // 由 game.rs 在构建 ProviderServices 时按需创建
+            } else {
+                warn!(
+                    cred_path = %cred_path,
+                    "startup: GOOGLE_APPLICATION_CREDENTIALS 路径不存在,跳过 embedding 初始化"
+                );
+            }
+        } else {
+            info!("startup: GOOGLE_APPLICATION_CREDENTIALS not set, embedding search disabled");
+        }
+    }
+
     // 5. DB 连接池 metrics 采样任务 — 每 15s 更新 db_pool_* gauge。
     {
         let pool = state.db.clone();
