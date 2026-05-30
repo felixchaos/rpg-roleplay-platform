@@ -398,6 +398,9 @@
 .pl-table tbody td:last-child { padding-right: 14px; }
 .pl-table thead th:last-child { padding-right: 14px; text-align: right; }
 .pl-table tbody tr:hover { background: var(--panel); }
+.pl-table tbody tr.sel { background: var(--accent-soft); }
+.pl-table tbody tr.sel:hover { background: var(--accent-soft); }
+.pl-table tbody tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
 .pl-table tbody tr:last-child td { border-bottom: 0; }
 .pl-table .pl-title-cell { display: grid; gap: 2px; min-width: 0; max-width: 360px; }
 .pl-table .pl-title-cell strong { font-family: var(--font-serif); font-size: 14.5px; letter-spacing: 0.02em; }

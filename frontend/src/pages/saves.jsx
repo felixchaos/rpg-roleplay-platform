@@ -274,104 +274,123 @@ function SavesListView() {
     const sorted = [...xs];
     if (sortBy === 'name') sorted.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'zh'));
     else if (sortBy === 'created') sorted.sort((a, b) => ts(b.created_ts) - ts(a.created_ts));
-    else sorted.sort((a, b) => ts(b.last_played_ts) - ts(a.last_played_ts)); // played
+    else sorted.sort((a, b) => ts(b.last_played_ts) - ts(a.last_played_ts));
     return sorted;
   }, [saves, scripts, query, sortBy]);
 
-  const list = (
-    <div>
-      <div className="aw-list-toolbar">
-        <div className="aw-search">
-          <Icon name="search" size={13} />
-          <input className="aw-search-input" placeholder="搜索存档 / 剧本…" value={query}
-            onChange={(e) => setQuery(e.target.value)} />
-          {query && <button className="aw-search-clear" onClick={() => setQuery('')} aria-label="清除">✕</button>}
-        </div>
-        <UiSelect value={sortBy} onChange={setSortBy} options={[
-          { value: 'played', label: '最近游玩' },
-          { value: 'name', label: '名称' },
-          { value: 'created', label: '创建时间' },
-        ]} />
-      </div>
-      <ResourceList items={visibleSaves} selectedId={selectedId}
-        onSelect={(s) => { setSelectedId(s.id); setTab('overview'); setRenaming(false); }}
-        empty={query ? '没有匹配的存档。' : '还没有存档。点右上「新建存档」开始。'}
-        renderItem={(s) => {
-          const sc = scripts.find((x) => x.id === s.script_id);
-          return (
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <strong style={{ fontSize: 14 }}>{s.title}</strong>
-                {s.current && <Badge tone="ok">在玩</Badge>}
-              </div>
-              <div className="aw-muted" style={{ fontSize: 12 }}>
-                {sc?.title || '未知剧本'} · {s.branch_count} 节点 · 玩于 {s.last_played_at}
-              </div>
-            </div>
-          );
-        }} />
-    </div>
-  );
-
-  const detail = selected && (
-    <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        {renaming
-          ? (
-            <span style={{ display: 'flex', gap: 8, flex: 1, alignItems: 'center' }}>
-              <UiInput value={renameVal} onChange={setRenameVal} />
-              <Btn variant="primary" onClick={doRename}>保存</Btn>
-              <Btn variant="link" onClick={() => setRenaming(false)}>取消</Btn>
-            </span>
-          )
-          : <h2 style={{ fontSize: 18, margin: 0 }}>{selected.title}</h2>}
-        {!renaming && selected.current && <Badge tone="ok">在玩</Badge>}
-      </div>
-      <Tabs active={tab} onChange={setTab} tabs={[
-        { id: 'overview', label: '概览' },
-        { id: 'settings', label: '设置' },
-        { id: 'branches', label: '分支', badge: selected.branch_count },
-      ]} />
-      {tab === 'overview' && (
-        <div>
-          <KeyValue cols={3} items={[
-            { label: '剧本', value: selScript?.title || '未知' },
-            { label: '玩家', value: selected._raw?.player_name || <span className="aw-muted">未设定</span> },
-            { label: '状态', value: selected.current
-                ? <StatusIndicator type="ok">当前存档</StatusIndicator>
-                : <StatusIndicator type="pending">未激活</StatusIndicator> },
-            { label: '分支节点', value: `${selected.branch_count} 个` },
-            { label: '回合', value: selected._raw?.turn != null ? `第 ${selected._raw.turn} 回合` : '—' },
-            { label: '故事时间', value: selected._raw?.world_time || <span className="aw-muted">—</span> },
-            { label: '最后游玩', value: selected.last_played_at },
-            { label: '创建于', value: selected.created_ts ? new Date(selected.created_ts).toLocaleString('zh-CN') : '—' },
-            { label: '存档 ID', value: <span className="mono">#{selected.id}</span> },
-          ]} />
-          <div style={{ marginTop: 16, padding: '12px 14px', background: 'var(--bg-deep)', border: '1px solid var(--line-soft)', borderRadius: 8 }}>
-            <div className="aw-muted" style={{ fontSize: 11.5, marginBottom: 5 }}>最新片段</div>
-            <p style={{ color: 'var(--text-quiet)', fontSize: 13, lineHeight: 1.6, margin: 0 }}>
-              {selected._raw?.snippet || selected._raw?.last_message || '（暂无最新片段，进入游戏后会自动同步。）'}
-            </p>
-          </div>
-          <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginTop: 16 }}>
-            <Btn variant="primary" icon={<Icon name="play" size={13} />} onClick={() => window.__openContinue?.(selected)}>继续游戏</Btn>
-            {!selected.current && <Btn onClick={() => onActivate(selected)}>设为当前</Btn>}
-            <Btn onClick={() => { setRenameVal(selected.title); setRenaming(true); }}>重命名</Btn>
-            <Btn onClick={() => window.open(window.api.saves.exportUrl(selected.id), '_blank')}>导出</Btn>
-            <Btn variant="danger" onClick={() => setDeleteTarget(selected)}>删除</Btn>
-          </div>
-        </div>
-      )}
-      {tab === 'settings' && <SaveSettingsForm saveId={selected.id} flash={flash} />}
-      {tab === 'branches' && <SaveBranchList save={selected} />}
-    </>
-  );
-
   return (
-    <div className="aw-page" data-cap-anchor="saves.list">
+    <div className="pl-stack" style={{ maxWidth: 'none' }} data-cap-anchor="saves.list">
       <Flashbar items={flash.items} />
-      <SplitLayout list={list} detail={detail} detailOpen={!!selected}
-        onCloseDetail={() => setSelectedId(null)} />
+      <section className="pl-sec">
+        <div className="pl-sec-head">
+          <div className="pl-sec-tools" style={{ width: '100%', justifyContent: 'flex-start' }}>
+            <div className="aw-search" style={{ maxWidth: 320, flex: '0 1 320px' }}>
+              <Icon name="search" size={13} />
+              <input className="aw-search-input" placeholder="搜索存档 / 剧本…" value={query} onChange={(e) => setQuery(e.target.value)} />
+              {query && <button className="aw-search-clear" onClick={() => setQuery('')} aria-label="清除">✕</button>}
+            </div>
+            <UiSelect value={sortBy} onChange={setSortBy} options={[
+              { value: 'played', label: '最近游玩' },
+              { value: 'name', label: '名称' },
+              { value: 'created', label: '创建时间' },
+            ]} />
+          </div>
+        </div>
+        {visibleSaves.length === 0 ? (
+          <div className="aw-empty">{query ? '没有匹配的存档。' : '还没有存档。点右上「新建存档」开始你的第一段冒险。'}</div>
+        ) : (
+          <table className="pl-table">
+            <thead><tr>
+              <th>存档</th><th>剧本</th><th>玩家</th><th style={{ textAlign: 'right' }}>节点</th>
+              <th>最后游玩</th><th>状态</th><th></th>
+            </tr></thead>
+            <tbody>
+              {visibleSaves.map((s) => {
+                const sc = scripts.find((x) => x.id === s.script_id);
+                return (
+                  <tr key={s.id} className={selectedId === s.id ? 'sel' : ''} style={{ cursor: 'pointer' }}
+                    onClick={() => { setSelectedId(s.id); setTab('overview'); setRenaming(false); }}>
+                    <td><strong>{s.title}</strong></td>
+                    <td className="muted">{sc?.title || '未知剧本'}</td>
+                    <td className="muted">{s._raw?.player_name || '—'}</td>
+                    <td style={{ textAlign: 'right' }}>{s.branch_count}</td>
+                    <td className="muted">{s.last_played_at}</td>
+                    <td>{s.current ? <Badge tone="ok">在玩</Badge> : <span className="muted-2">未激活</span>}</td>
+                    <td className="pl-table-actions" onClick={(e) => e.stopPropagation()}>
+                      <Btn size="sm" variant="primary" onClick={() => window.__openContinue?.(s)}>继续</Btn>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      {selected && (
+        <section className="pl-sec" data-cap-anchor="saves.detail">
+          <div className="pl-sec-head">
+            {renaming ? (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1 }}>
+                <UiInput value={renameVal} onChange={setRenameVal} />
+                <Btn variant="primary" onClick={doRename}>保存</Btn>
+                <Btn variant="link" onClick={() => setRenaming(false)}>取消</Btn>
+              </div>
+            ) : (
+              <>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {selected.title}
+                  {selected.current && <Badge tone="ok">在玩</Badge>}
+                </h2>
+                <div className="pl-sec-tools">
+                  <button className="iconbtn" data-tip="收起详情" aria-label="收起" onClick={() => setSelectedId(null)}>
+                    <Icon name="close" size={14} />
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+          <Tabs active={tab} onChange={setTab} tabs={[
+            { id: 'overview', label: '概览' },
+            { id: 'settings', label: '设置' },
+            { id: 'branches', label: '分支', badge: selected.branch_count },
+          ]} />
+          <div style={{ padding: '2px 2px 4px' }}>
+            {tab === 'overview' && (
+              <div>
+                <KeyValue cols={4} items={[
+                  { label: '剧本', value: selScript?.title || '未知' },
+                  { label: '玩家', value: selected._raw?.player_name || <span className="aw-muted">未设定</span> },
+                  { label: '回合', value: selected._raw?.turn != null ? `第 ${selected._raw.turn} 回合` : '—' },
+                  { label: '状态', value: selected.current
+                      ? <StatusIndicator type="ok">当前存档</StatusIndicator>
+                      : <StatusIndicator type="pending">未激活</StatusIndicator> },
+                  { label: '分支节点', value: `${selected.branch_count} 个` },
+                  { label: '故事时间', value: selected._raw?.world_time || <span className="aw-muted">—</span> },
+                  { label: '最后游玩', value: selected.last_played_at },
+                  { label: '创建于', value: selected.created_ts ? new Date(selected.created_ts).toLocaleString('zh-CN') : '—' },
+                ]} />
+                <div style={{ marginTop: 14, padding: '11px 13px', background: 'var(--bg-deep)', border: '1px solid var(--line-soft)', borderRadius: 8 }}>
+                  <div className="aw-muted" style={{ fontSize: 11.5, marginBottom: 5 }}>最新片段</div>
+                  <p style={{ color: 'var(--text-quiet)', fontSize: 13, lineHeight: 1.6, margin: 0 }}>
+                    {selected._raw?.snippet || selected._raw?.last_message || '（暂无最新片段，进入游戏后会自动同步。）'}
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginTop: 14 }}>
+                  <Btn variant="primary" icon={<Icon name="play" size={13} />} onClick={() => window.__openContinue?.(selected)}>继续游戏</Btn>
+                  {!selected.current && <Btn onClick={() => onActivate(selected)}>设为当前</Btn>}
+                  <Btn onClick={() => { setRenameVal(selected.title); setRenaming(true); }}>重命名</Btn>
+                  <Btn onClick={() => window.open(window.api.saves.exportUrl(selected.id), '_blank')}>导出</Btn>
+                  <Btn variant="danger" onClick={() => setDeleteTarget(selected)}>删除</Btn>
+                </div>
+              </div>
+            )}
+            {tab === 'settings' && <SaveSettingsForm saveId={selected.id} flash={flash} />}
+            {tab === 'branches' && <SaveBranchList save={selected} />}
+          </div>
+        </section>
+      )}
+
       <NewGameModal open={createOpen} onClose={() => setCreateOpen(false)} onConfirm={onCreate} />
       <ConfirmDialog open={!!deleteTarget} title="删除存档" danger loading={deleting}
         body={deleteTarget ? `确定删除存档「${deleteTarget.title}」？此操作不可撤销(但磁盘 commit 文件仍可恢复)。` : ''}
