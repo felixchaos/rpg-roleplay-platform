@@ -1,11 +1,12 @@
 //! worldline.py → worldline.rs — 世界线变量管理路由
+//! GET  /api/worldline/variables       — 列出世界线变量
 //! POST /api/worldline/variable        — 设置世界线变量
 //! POST /api/worldline/variable/remove — 删除世界线变量
 
 use axum::{
     extract::State,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use http::HeaderMap;
@@ -79,6 +80,7 @@ async fn persist_worldline_variable_remove(s: &AppState, headers: &HeaderMap, ke
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/worldline/variables", get(api_worldline_variables_list))
         .route("/api/worldline/variable", post(api_worldline_variable))
         .route(
             "/api/worldline/variable/remove",
@@ -100,6 +102,32 @@ pub struct WorldlineVariableRemoveRequest {
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────────
+
+/// GET /api/worldline/variables — 列出当前存档的世界线变量
+///
+/// 从 state.worldline.constraints 读取,返回 `{ok: true, variables: [...]}`.
+async fn api_worldline_variables_list(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ResponseError> {
+    let user_id = crate::user_id_or_anon(&s, &headers).await;
+    let shared = s.state_store.get_or_create(&user_id).await;
+    let snap = shared.read().snapshot();
+    let constraints = snap
+        .get("worldline")
+        .and_then(|wl| wl.get("constraints"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    // constraints 是 { "key": "value", ... } 形式,转成前端期望的 [{key, value}, ...]
+    let variables: Vec<Value> = match &constraints {
+        Value::Object(m) => m
+            .iter()
+            .map(|(k, v)| json!({"key": k, "value": v}))
+            .collect(),
+        _ => vec![],
+    };
+    Ok(Json(json!({"ok": true, "variables": variables})).into_response())
+}
 
 /// POST /api/worldline/variable — 设置世界线变量
 ///
