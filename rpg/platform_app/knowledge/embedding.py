@@ -45,11 +45,10 @@ def _get_vertex_client():
     if "client" in _VERTEX_CLIENT_CACHE:
         return _VERTEX_CLIENT_CACHE["client"]
     try:
+        from google import genai
         import json
         import os
         from pathlib import Path
-
-        from google import genai
 
         # 找 vertex_sa.json:env > rpg/ > project root
         sa_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or ""
@@ -202,7 +201,7 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
             break
 
         with connect() as db:
-            for r, v in zip(rows, vecs, strict=False):
+            for r, v in zip(rows, vecs):
                 db.execute(
                     "update document_chunks set embedding_vec = %s::vector, embedded_at = now() where id = %s",
                     (_vec_literal(v), r["id"]),
@@ -261,7 +260,7 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
             if vecs is None:
                 continue
             with connect() as db:
-                for c, v in zip(batch, vecs, strict=False):
+                for c, v in zip(batch, vecs):
                     db.execute(
                         "update character_cards set embedding_vec = %s::vector, embedded_at = now() where id = %s",
                         (_vec_literal(v), c["id"]),
@@ -286,7 +285,7 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
             if vecs is None:
                 continue
             with connect() as db:
-                for w, v in zip(batch, vecs, strict=False):
+                for w, v in zip(batch, vecs):
                     db.execute(
                         "update worldbook_entries set embedding_vec = %s::vector, embedded_at = now() where id = %s",
                         (_vec_literal(v), w["id"]),

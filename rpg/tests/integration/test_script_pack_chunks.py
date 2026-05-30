@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import io
 import json
-import unittest
 import zipfile
+import unittest
 
 from tests.helpers import cleanup_test_users, make_client, register_user
 
@@ -106,7 +106,7 @@ class ScriptPackChunksRoundTrip(unittest.TestCase):
             self.assertTrue(manifest.get("chunks_included"), "manifest.chunks_included 应为 True")
             self.assertIsNotNone(manifest.get("chunks_version"), "manifest.chunks_version 应有值")
 
-            chunks = [json.loads(line) for line in zf.read("chunks.jsonl").decode("utf-8").split("\n") if line.strip()]
+            chunks = [json.loads(l) for l in zf.read("chunks.jsonl").decode("utf-8").split("\n") if l.strip()]
             self.assertEqual(len(chunks), chunk_count, f"导出的 chunk 数应={chunk_count}")
             self.assertIn("content", chunks[0])
             self.assertIn("chunk_index", chunks[0])
@@ -153,8 +153,8 @@ class ScriptPackChunksRoundTrip(unittest.TestCase):
         uid = _get_uid(u["username"])
         sid, _, _ = _make_script_with_book_and_chunks(uid, "pack_content_match_src")
 
-        from platform_app.db import connect
         from platform_app.knowledge.script_pack import export_script_pack, import_script_pack
+        from platform_app.db import connect
 
         with connect() as db:
             orig_chunks = db.execute(
@@ -187,7 +187,7 @@ class ScriptPackChunksRoundTrip(unittest.TestCase):
 
         # 验证旧 zip 确实没有 chunks 字段
         with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
-            _manifest = json.loads(zf.read("manifest.json").decode("utf-8"))  # noqa: F841 — TODO: 加 assertion
+            manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
 
         # 强制去掉 chunks_included 模拟真正的旧格式 zip
         old_buf = io.BytesIO(zip_bytes)
@@ -212,11 +212,8 @@ class ScriptPackChunksRoundTrip(unittest.TestCase):
         uid = _get_uid(u["username"])
         sid, _, _ = _make_script_with_book_and_chunks(uid, "pack_missing_chunks_src")
 
+        from platform_app.knowledge.script_pack import export_script_pack, import_script_pack, CHUNKS_VERSION
         from platform_app.db import connect
-        from platform_app.knowledge.script_pack import (
-            export_script_pack,
-            import_script_pack,
-        )
 
         zip_bytes, _ = export_script_pack(sid, uid, include_chunks=True)
 

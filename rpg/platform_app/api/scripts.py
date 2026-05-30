@@ -484,8 +484,8 @@ async def api_export_script_pack(
     from platform_app.knowledge.script_pack import export_script_pack
     try:
         zip_bytes, filename = export_script_pack(script_id, user["id"], include_chunks=include_chunks)
-    except PermissionError as err:
-        raise HTTPException(status_code=403, detail="无权访问该剧本") from err
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="无权访问该剧本")
     # 文件名含中文时按 RFC 5987 编码,否则 latin-1 header 报 codec 错
     from urllib.parse import quote as _quote
     ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "script_pack.zip"
@@ -528,7 +528,7 @@ async def api_import_script_pack(request: Request, user=Depends(require_user)):
     try:
         result = import_script_pack(zip_bytes, user["id"])
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc))
 
     return JSONResponse(result)
 

@@ -950,7 +950,12 @@ async fn api_script_chapters(
                     "title": r.try_get::<String,_>("title").unwrap_or_default(),
                     "volume_title": r.try_get::<String,_>("volume_title").unwrap_or_default(),
                     "word_count": r.try_get::<i32,_>("word_count").unwrap_or_default(),
-                    "content": r.try_get::<String,_>("content").unwrap_or_default(),
+                    // Gap 8: 搜索结果截断 200 字符,不返全文
+                    "content": {
+                        let full: String = r.try_get::<String,_>("content").unwrap_or_default();
+                        let preview: String = full.chars().take(200).collect();
+                        preview
+                    },
                 })
             })
             .collect();

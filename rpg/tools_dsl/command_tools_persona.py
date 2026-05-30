@@ -12,6 +12,7 @@ command_tools_persona.py — persona / character_card 工具 (拆自 command_too
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 

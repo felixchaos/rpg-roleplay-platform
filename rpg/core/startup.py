@@ -22,8 +22,6 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from core.config import (
     cors_max_age as _cors_max_age,
-)
-from core.config import (
     gzip_min_bytes as _gzip_min_bytes,
 )
 from core.logging import get_logger

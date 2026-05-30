@@ -64,8 +64,8 @@ async def api_models_health_refresh_all(
     """
     import threading
 
-    import model_probe
     from app import _check_probe_permission, load_model_catalog
+    import model_probe
 
     body = {}
     try:
