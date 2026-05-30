@@ -443,40 +443,39 @@ async fn lifespan_startup(state: &AppState) {
     let count = state.tool_registry.read().list().len();
     info!(tool_count = count, "startup: tool registry primed");
 
-    // 3. durable import job 恢复
+    // 3. durable import job 恢复(recover_pending_sync_jobs)
     //    Python: `platform_app.script_import.recover_pending_sync_jobs(pool)`
-    //    表名对齐:Rust migrations 建的是 `import_jobs`(见 migrations.rs SQL_009),
-    //    旧代码误写 `script_import_jobs`(Python 时代表名)在 fresh DB 上会直接报错。
+    //    表名对齐:Rust migrations 建的是 `import_jobs`(见 migrations.rs SQL_009)。
     //    in_progress 状态对齐 `import_jobs` 的 'pending'/'running'(见 SQL_013 单活跃索引)。
-    //    这里加载 in_progress 明细并 log 告警;真正 requeue/transition 留 TODO。
+    //    服务重启时,所有 pending/running job 不可能继续执行,统一标记 failed。
     match sqlx::query(
-        r#"select id, job_id, kind, status, stage, user_id, script_id
-           from import_jobs
-           where status in ('pending','running')
-           order by created_at"#,
+        r#"UPDATE import_jobs
+           SET status = 'failed',
+               error = 'server restart',
+               finished_at = now()
+           WHERE status IN ('pending', 'running')
+           RETURNING id, job_id, kind, stage"#,
     )
     .fetch_all(&state.db)
     .await
     {
         Ok(rows) if !rows.is_empty() => {
             warn!(
-                in_progress_jobs = rows.len(),
-                "startup: durable import jobs in progress on boot (requeue logic TODO)"
+                recovered_jobs = rows.len(),
+                "startup: marked orphaned import jobs as failed"
             );
             for r in &rows {
                 let job_id: String = r.try_get("job_id").unwrap_or_default();
                 let kind: String = r.try_get("kind").unwrap_or_default();
-                let status: String = r.try_get("status").unwrap_or_default();
                 let stage: String = r.try_get("stage").unwrap_or_default();
                 warn!(
-                    %job_id, %kind, %status, %stage,
-                    "startup: orphaned import job (was running when worker stopped)"
+                    %job_id, %kind, %stage,
+                    "startup: orphaned import job marked failed (server restart)"
                 );
             }
-            // TODO[rpg-platform]: 真正 requeue/transition 等 `recover_pending_sync_jobs` 落地。
         }
         Ok(_) => info!("startup: no in-progress import jobs"),
-        Err(e) => warn!(error = %e, "startup: probe import_jobs failed"),
+        Err(e) => warn!(error = %e, "startup: recover import_jobs failed"),
     }
 
     // 4. 模型目录加载(rpg-llm registry)
@@ -532,7 +531,82 @@ async fn lifespan_startup(state: &AppState) {
         }
     }
 
-    // Gap 25: 初始化 embedding backend(Vertex 方式,有 GOOGLE_APPLICATION_CREDENTIALS 时)
+    // 4c. Google AI Studio backend (API key auth, no SA needed)
+    {
+        let gais_key = std::env::var("GOOGLE_AI_STUDIO_API_KEY")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        match gais_key {
+            Some(key) => match rpg_llm::google_ai_studio::GoogleAiStudioBackend::new(key) {
+                Ok(backend) => {
+                    let any: rpg_llm::any_backend::AnyBackend = backend.into();
+                    state
+                        .llm_router
+                        .write()
+                        .register("google_ai_studio", Arc::new(any));
+                    info!("startup: google_ai_studio backend registered from GOOGLE_AI_STUDIO_API_KEY");
+                }
+                Err(e) => {
+                    warn!(error = %e, "startup: google_ai_studio backend init failed");
+                }
+            },
+            None => {
+                info!("startup: GOOGLE_AI_STUDIO_API_KEY not set, skipping google_ai_studio backend");
+            }
+        }
+    }
+
+    // 4d. DashScope (Alibaba Qwen) backend — uses OpenAI-compatible endpoint
+    {
+        let ds_key = std::env::var("DASHSCOPE_API_KEY")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        match ds_key {
+            Some(key) => match rpg_llm::openai::OpenAiBackend::new_with(
+                key,
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "dashscope",
+            ) {
+                Ok(backend) => {
+                    let any: rpg_llm::any_backend::AnyBackend = backend.into();
+                    state
+                        .llm_router
+                        .write()
+                        .register("dashscope", Arc::new(any));
+                    info!("startup: dashscope (alibaba qwen) backend registered from DASHSCOPE_API_KEY");
+                }
+                Err(e) => {
+                    warn!(error = %e, "startup: dashscope backend init failed");
+                }
+            },
+            None => {
+                info!("startup: DASHSCOPE_API_KEY not set, skipping dashscope backend");
+            }
+        }
+    }
+
+    // 4e. Catalog refresh scheduler (every 5 minutes)
+    {
+        let _router = state.llm_router.clone();
+        let token = state.shutdown_token.clone();
+        state.task_tracker.spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(300)) => {
+                        // Placeholder: refresh catalog from live APIs.
+                        // Currently catalog is static; future: ModelCatalog::refresh()
+                        tracing::debug!("catalog refresh tick (static, no-op)");
+                    }
+                    _ = token.cancelled() => break,
+                }
+            }
+        });
+    }
+    info!("startup: catalog refresh scheduler started (300s interval)");
+
+    // Gap 25: 初始化 embedding backend（Vertex 方式,有 GOOGLE_APPLICATION_CREDENTIALS 时）
     {
         let vertex_cred = std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
             .ok()

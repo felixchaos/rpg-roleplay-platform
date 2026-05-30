@@ -31,6 +31,135 @@ use crate::pipeline::{
     ChatRole, ChunkStream, LlmBackend, LlmError, MessagePart, ModelInfo, Usage,
 };
 
+// ── Public Gemini protocol helpers (shared with google_ai_studio) ───────────
+//
+// These free functions expose the Gemini wire format so that
+// `google_ai_studio.rs` can reuse the same request body builder and
+// response parsers without duplicating 200+ lines of protocol code.
+
+/// Build a Gemini `generateContent` / `streamGenerateContent` request body
+/// from a [`ChatRequest`]. Shared by both Vertex AI and Google AI Studio backends.
+pub fn build_gemini_body(req: &ChatRequest) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+
+    if let Some(sys) = &req.system {
+        body.insert(
+            "systemInstruction".into(),
+            serde_json::json!({ "parts": [ { "text": sys } ] }),
+        );
+    }
+
+    body.insert(
+        "contents".into(),
+        messages_to_gemini_contents(&req.messages),
+    );
+
+    if !req.tools.is_empty() {
+        let decls: Vec<serde_json::Value> = req
+            .tools
+            .iter()
+            .map(|t| {
+                let mut params = t.input_schema.clone();
+                if !params.is_object()
+                    || params.get("type").and_then(|v| v.as_str()) != Some("object")
+                {
+                    params = serde_json::json!({"type": "object", "properties": {}});
+                }
+                let name = match &t.server_id {
+                    Some(sid) => namespaced_tool_name(sid, &t.name),
+                    None => t.name.clone(),
+                };
+                serde_json::json!({
+                    "name": name,
+                    "description": t.description,
+                    "parameters": params,
+                })
+            })
+            .collect();
+        body.insert(
+            "tools".into(),
+            serde_json::json!([{ "functionDeclarations": decls }]),
+        );
+    }
+
+    let mut gc = serde_json::Map::new();
+    if let Some(t) = req.temperature {
+        gc.insert("temperature".into(), serde_json::json!(t));
+    }
+    if let Some(m) = req.max_tokens {
+        let m = m.min(crate::HARD_MAX_OUTPUT_TOKENS);
+        gc.insert("maxOutputTokens".into(), serde_json::json!(m));
+    }
+    if let Some(budget) = req.extra.get("thinking_budget") {
+        gc.insert(
+            "thinkingConfig".into(),
+            serde_json::json!({"thinkingBudget": budget}),
+        );
+    } else {
+        gc.insert(
+            "thinkingConfig".into(),
+            serde_json::json!({"thinkingBudget": 0}),
+        );
+    }
+    if let Some(rmt) = req.extra.get("response_mime_type") {
+        gc.insert("responseMimeType".into(), rmt.clone());
+    }
+    if !gc.is_empty() {
+        body.insert("generationConfig".into(), serde_json::Value::Object(gc));
+    }
+    if let Some(obj) = req.extra.as_object() {
+        for (k, v) in obj {
+            if matches!(
+                k.as_str(),
+                "thinking_budget" | "response_mime_type" | "headers"
+            ) {
+                continue;
+            }
+            body.insert(k.clone(), v.clone());
+        }
+    }
+
+    serde_json::Value::Object(body)
+}
+
+/// Push `ChatChunk`s from a single Gemini `GenerateContentResponse` JSON value.
+/// Works for both streaming SSE chunks and non-streaming full responses.
+pub fn push_gemini_response_chunks<C>(value: &serde_json::Value, out: &mut C)
+where
+    C: Extend<Result<ChatChunk, LlmError>>,
+{
+    push_response_chunks(value, out);
+}
+
+/// Extract the Gemini stop/finish reason from a response JSON.
+pub fn gemini_stop_reason(value: &serde_json::Value) -> Option<String> {
+    stop_reason_from(value)
+}
+
+/// Parse a single SSE `data:` payload from a Gemini stream into `ChatChunk`s.
+pub fn parse_gemini_sse_data(data: &str) -> SmallVec<[Result<ChatChunk, LlmError>; 2]> {
+    if data.trim().is_empty() {
+        return SmallVec::new();
+    }
+    let value: serde_json::Value = match crate::simd_parse::parse_sse_value(data) {
+        Ok(v) => v,
+        Err(e) => {
+            let mut sv: SmallVec<[Result<ChatChunk, LlmError>; 2]> = SmallVec::new();
+            sv.push(Ok(ChatChunk::Error(format!(
+                "gemini sse parse: {e}; data={}",
+                clip(data, 200)
+            ))));
+            return sv;
+        }
+    };
+    let mut out: SmallVec<[Result<ChatChunk, LlmError>; 2]> = SmallVec::new();
+    push_response_chunks(&value, &mut out);
+    if let Some(reason) = stop_reason_from(&value) {
+        out.push(Ok(ChatChunk::Stop { reason }));
+    }
+    out
+}
+
 const SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
 
 #[derive(Clone)]
@@ -197,95 +326,8 @@ impl VertexBackend {
     }
 
     fn build_body(&self, req: &ChatRequest) -> serde_json::Value {
-        let mut body = serde_json::Map::new();
-
-        // system_instruction
-        if let Some(sys) = &req.system {
-            body.insert(
-                "systemInstruction".into(),
-                serde_json::json!({
-                    "parts": [ { "text": sys } ]
-                }),
-            );
-        }
-
-        // contents
-        body.insert(
-            "contents".into(),
-            messages_to_gemini_contents(&req.messages),
-        );
-
-        // tools (function_declarations)
-        if !req.tools.is_empty() {
-            let decls: Vec<serde_json::Value> = req
-                .tools
-                .iter()
-                .map(|t| {
-                    let mut params = t.input_schema.clone();
-                    if !params.is_object()
-                        || params.get("type").and_then(|v| v.as_str()) != Some("object")
-                    {
-                        params = serde_json::json!({"type": "object", "properties": {}});
-                    }
-                    let name = match &t.server_id {
-                        Some(sid) => namespaced_tool_name(sid, &t.name),
-                        None => t.name.clone(),
-                    };
-                    serde_json::json!({
-                        "name": name,
-                        "description": t.description,
-                        "parameters": params,
-                    })
-                })
-                .collect();
-            body.insert(
-                "tools".into(),
-                serde_json::json!([{ "functionDeclarations": decls }]),
-            );
-        }
-
-        // generationConfig
-        let mut gc = serde_json::Map::new();
-        if let Some(t) = req.temperature {
-            gc.insert("temperature".into(), serde_json::json!(t));
-        }
-        if let Some(m) = req.max_tokens {
-            // 服务端硬 clamp:忽略客户端超限的 maxOutputTokens,防刷爆。
-            let m = m.min(crate::HARD_MAX_OUTPUT_TOKENS);
-            gc.insert("maxOutputTokens".into(), serde_json::json!(m));
-        }
-        // 默认禁用 thinking,跟 python 端语义一致。
-        if let Some(budget) = req.extra.get("thinking_budget") {
-            gc.insert(
-                "thinkingConfig".into(),
-                serde_json::json!({"thinkingBudget": budget}),
-            );
-        } else {
-            gc.insert(
-                "thinkingConfig".into(),
-                serde_json::json!({"thinkingBudget": 0}),
-            );
-        }
-        if let Some(rmt) = req.extra.get("response_mime_type") {
-            gc.insert("responseMimeType".into(), rmt.clone());
-        }
-        if !gc.is_empty() {
-            body.insert("generationConfig".into(), serde_json::Value::Object(gc));
-        }
-        // 透传 extra 中的其它顶层字段
-        if let Some(obj) = req.extra.as_object() {
-            for (k, v) in obj {
-                if matches!(
-                    k.as_str(),
-                    "thinking_budget" | "response_mime_type" | "headers"
-                ) {
-                    continue;
-                }
-                body.insert(k.clone(), v.clone());
-            }
-        }
-
-        serde_json::Value::Object(body)
+        // Delegate to shared Gemini protocol builder.
+        build_gemini_body(req)
     }
 }
 
@@ -406,27 +448,8 @@ type VertexSseChunks = SmallVec<[Result<ChatChunk, LlmError>; 2]>;
 
 impl VertexStreamState {
     fn process(&mut self, data: &str) -> VertexSseChunks {
-        if data.trim().is_empty() {
-            return SmallVec::new();
-        }
-        // hot path: 使用 simd-json;fallback serde_json (在 simd_parse 内部自动处理)。
-        let value: serde_json::Value = match crate::simd_parse::parse_sse_value(data) {
-            Ok(v) => v,
-            Err(e) => {
-                let mut sv: VertexSseChunks = SmallVec::new();
-                sv.push(Ok(ChatChunk::Error(format!(
-                    "vertex sse parse: {e}; data={}",
-                    clip(data, 200)
-                ))));
-                return sv;
-            }
-        };
-        let mut out: VertexSseChunks = SmallVec::new();
-        push_response_chunks(&value, &mut out);
-        if let Some(reason) = stop_reason_from(&value) {
-            out.push(Ok(ChatChunk::Stop { reason }));
-        }
-        out
+        // Delegate to shared Gemini SSE parser.
+        parse_gemini_sse_data(data)
     }
 }
 

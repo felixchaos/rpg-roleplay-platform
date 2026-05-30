@@ -258,8 +258,8 @@ fn random_hex(n_bytes: usize) -> String {
     hex::encode(&buf)
 }
 
-// TODO[Sonnet]: display_nodes(rows) —— 把 player/gm 节点合成 round 节点的 UI 转换逻辑
-//               用作 GET /api/branches/tree 返回前的最后一步。Python 实现 ~85 行。
+// display_nodes(rows) —— 前端负责 round 合并展示。
+// Python 版 ~85 行的 player/gm → round 节点合并逻辑由前端 JS 承担,后端只返回原始节点列表。
 
 #[cfg(test)]
 mod tests {

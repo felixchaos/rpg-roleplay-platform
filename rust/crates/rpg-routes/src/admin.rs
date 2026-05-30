@@ -31,6 +31,7 @@ pub fn router() -> Router<AppState> {
             "/api/admin/deployment-config",
             get(api_deployment_config_get).post(api_deployment_config_set),
         )
+        .route("/api/admin/branches/gc", post(api_branches_gc))
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -171,6 +172,41 @@ async fn api_deployment_config_set(
         "ok": true,
         "config": merged,
         "note": "listen_address / cors_origins 等网络配置需重启服务才能生效",
+    }))
+    .into_response())
+}
+
+// ── branches GC ──────────────────────────────────────────────────────────────
+
+/// POST /api/admin/branches/gc — 清理孤儿 branch commits
+///
+/// body: { "save_id": i64, "max_age_days": i64 (可选, 默认 30) }
+#[tracing::instrument(skip(s, headers, body), fields(user_id))]
+async fn api_branches_gc(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Response, ResponseError> {
+    check_admin(&s, &headers).await?;
+
+    let save_id = body
+        .get("save_id")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| ResponseError::bad_request("缺少 save_id"))?;
+    let max_age_days = body
+        .get("max_age_days")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(30);
+
+    let deleted = rpg_platform::branches::gc::gc_orphaned_commits(&s.db, save_id, max_age_days)
+        .await
+        .map_err(|e| ResponseError::internal(format!("gc 失败: {e}")))?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "deleted": deleted,
+        "save_id": save_id,
+        "max_age_days": max_age_days,
     }))
     .into_response())
 }

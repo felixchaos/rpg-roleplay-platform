@@ -372,6 +372,9 @@ pub async fn embed_script(
 /// 后台启动 embed_script,返回立即(fire-and-forget)。
 /// 调用方需要自己传入已构建好的 client Arc。
 /// 对应 Python `embed_script` 里的 `threading.Thread(target=_embed_chunks_loop, ...)` 模式。
+///
+/// 完成后写 `import_jobs SET status='done', finished_at=now()`;
+/// 失败时写 `status='failed', error=...`。
 pub fn spawn_embed_script(
     pool: PgPool,
     client: Arc<dyn EmbeddingClient>,
@@ -381,8 +384,31 @@ pub fn spawn_embed_script(
     set_running(script_id, flag.clone());
     let flag_clone = flag.clone();
     tokio::spawn(async move {
-        let _ = embed_script(&pool, client.as_ref(), script_id).await;
+        let result = embed_script(&pool, client.as_ref(), script_id).await;
         flag_clone.store(false, Ordering::Relaxed);
+        // 写 import_jobs 终态
+        match result {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "UPDATE import_jobs SET status = 'done', finished_at = now(), error = '' \
+                     WHERE script_id = $1 AND kind = 'embedding' AND status IN ('pending', 'running')",
+                )
+                .bind(script_id)
+                .execute(&pool)
+                .await;
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                let _ = sqlx::query(
+                    "UPDATE import_jobs SET status = 'failed', finished_at = now(), error = $1 \
+                     WHERE script_id = $2 AND kind = 'embedding' AND status IN ('pending', 'running')",
+                )
+                .bind(&err_msg)
+                .bind(script_id)
+                .execute(&pool)
+                .await;
+            }
+        }
     });
     flag
 }

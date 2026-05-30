@@ -154,6 +154,7 @@ fn default_model_for(kind: rpg_llm::pipeline::BackendKind) -> &'static str {
         BackendKind::Anthropic => "claude-haiku-4-5",
         BackendKind::Vertex => "gemini-3.5-flash",
         BackendKind::Openai | BackendKind::OpenaiCompat => "gpt-5-mini",
+        BackendKind::GoogleAiStudio => "gemini-3.5-flash",
     }
 }
 

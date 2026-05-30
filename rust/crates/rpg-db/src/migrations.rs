@@ -73,6 +73,7 @@ static SQL_021: &str = include_str!("../migrations/021_scripts_and_chapters.sql"
 static SQL_022: &str = include_str!("../migrations/022_branches_extended_columns.sql");
 static SQL_023: &str = include_str!("../migrations/023_phase_digests.sql");
 static SQL_024: &str = include_str!("../migrations/024_provider_rename.sql");
+static SQL_025: &str = include_str!("../migrations/025_script_packs.sql");
 
 /// 所有迁移的静态列表。
 ///
@@ -102,6 +103,7 @@ pub static MIGRATIONS: &[MigrationStep] = &[
     MigrationStep { id: 22, name: "branches_extended_columns",               sql: SQL_022 },
     MigrationStep { id: 23, name: "phase_digests",                           sql: SQL_023 },
     MigrationStep { id: 24, name: "provider_rename",                         sql: SQL_024 },
+    MigrationStep { id: 25, name: "script_packs",                            sql: SQL_025 },
 ];
 
 // ──────────────────────────────────────────────────────────────

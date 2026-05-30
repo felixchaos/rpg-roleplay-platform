@@ -1,7 +1,7 @@
 //! tree_ops —— GET /api/branches/tree 的核心。
 //!
 //! 对应 Python `branches/tree_ops.py`。
-//! 完成度: `tree` / `collect_ids` 主路径,`resolve_commit_id_by_message` / `round_start_node` TODO。
+//! 完成度: `tree` / `collect_ids` / `resolve_commit_id_by_message` / `round_start_node` 已实现。
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

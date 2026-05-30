@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# dev.sh — 一键开发启动 (postgres / backend / frontend static server / preview)
+# dev.sh — Python 版一键开发启动 (postgres / backend / frontend static server / preview)
+# 注意:此脚本启动的是 Python 后端 (rpg/app.py)。
+# Rust 后端请使用: cargo run -p rpg-server
 # 用法:
 #   ./scripts/dev.sh start      # 启动全部
 #   ./scripts/dev.sh stop       # 停掉

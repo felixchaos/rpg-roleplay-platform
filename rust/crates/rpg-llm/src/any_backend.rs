@@ -16,6 +16,7 @@ use std::time::Instant;
 use futures_util::stream::Stream;
 
 use crate::anthropic::AnthropicBackend;
+use crate::google_ai_studio::GoogleAiStudioBackend;
 use crate::metrics;
 use crate::openai::OpenAiBackend;
 use crate::pipeline::{
@@ -40,6 +41,7 @@ pub enum AnyBackend {
     Vertex(VertexBackend),
     OpenAi(OpenAiBackend),
     Responses(ResponsesBackend),
+    GoogleAiStudio(GoogleAiStudioBackend),
 }
 
 impl AnyBackend {
@@ -51,6 +53,7 @@ impl AnyBackend {
             Self::Vertex(b) => b.kind(),
             Self::OpenAi(b) => b.kind(),
             Self::Responses(b) => b.kind(),
+            Self::GoogleAiStudio(b) => b.kind(),
         }
     }
 
@@ -74,6 +77,7 @@ impl AnyBackend {
             Self::Vertex(b) => b.stream_chat(req).await,
             Self::OpenAi(b) => b.stream_chat(req).await,
             Self::Responses(b) => b.stream_chat(req).await,
+            Self::GoogleAiStudio(b) => b.stream_chat(req).await,
         };
 
         match inner_result {
@@ -102,6 +106,7 @@ impl AnyBackend {
             Self::Vertex(b) => b.list_models().await,
             Self::OpenAi(b) => b.list_models().await,
             Self::Responses(b) => b.list_models().await,
+            Self::GoogleAiStudio(b) => b.list_models().await,
         }
     }
 
@@ -112,6 +117,7 @@ impl AnyBackend {
             Self::Vertex(b) => b.embed(model, texts).await,
             Self::OpenAi(b) => b.embed(model, texts).await,
             Self::Responses(b) => b.embed(model, texts).await,
+            Self::GoogleAiStudio(b) => b.embed(model, texts).await,
         }
     }
 }
@@ -135,6 +141,11 @@ impl From<OpenAiBackend> for AnyBackend {
 impl From<ResponsesBackend> for AnyBackend {
     fn from(b: ResponsesBackend) -> Self {
         Self::Responses(b)
+    }
+}
+impl From<GoogleAiStudioBackend> for AnyBackend {
+    fn from(b: GoogleAiStudioBackend) -> Self {
+        Self::GoogleAiStudio(b)
     }
 }
 

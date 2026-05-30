@@ -35,6 +35,7 @@
 
 pub mod anthropic;
 pub mod any_backend;
+pub mod google_ai_studio;
 pub mod metrics;
 pub mod openai;
 pub mod pipeline;
@@ -60,6 +61,7 @@ pub use pipeline::{
 
 pub use anthropic::AnthropicBackend;
 pub use any_backend::AnyBackend;
+pub use google_ai_studio::GoogleAiStudioBackend;
 pub use openai::OpenAiBackend;
 pub use registry::{
     probe_anthropic, probe_backend, probe_openai, probe_vertex, ApiEntry, LlmRouter, ModelCatalog,

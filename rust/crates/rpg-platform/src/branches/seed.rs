@@ -2,8 +2,8 @@
 //!
 //! 对应 Python `branches/seed.py`。
 //!
-//! 完成度: 主路径(`seed_tree` 三分支 + `migrate_legacy_nodes`)。
-//! `_seed_and_bootstrap` 仍 TODO(需 bootstrap_runtime_binding 完整版,Wave-2 翻)。
+//! 完成度: 主路径(`seed_tree` 三分支 + `migrate_legacy_nodes` + `seed_and_bootstrap`)已实现。
+//! Rust 端用 `activate_state_snapshot` 替代 Python 的 `_seed_and_bootstrap` 内部逻辑。
 //!
 //! 关键事务边界(对照 Python):seed_tree 在 Python 里整个跑在 `connect()` 单事务,
 //! Rust 用 `pool.begin()` BEGIN/COMMIT 包整段,失败 rollback,避免半建状态。

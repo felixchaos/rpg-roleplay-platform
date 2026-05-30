@@ -9,7 +9,8 @@
 //!
 //! 表:`script_packs(id, owner_id, script_id, title, format_version,
 //!   chunks_included, byte_size, checksum, manifest, created_at)`。
-//! DDL 通过 `init_script_packs_table` 兜底创建,避免依赖 rpg-db migration。
+//! DDL 已迁移到 `rpg-db/migrations/025_script_packs.sql`,
+//! `init_script_packs_table` 保留但 CRUD 不再调用(依赖迁移)。
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -93,6 +94,7 @@ const TABLE_INDEX_DDL: &str =
     "create index if not exists idx_script_packs_owner on script_packs(owner_id, created_at desc)";
 
 /// 兜底建表,确保 script_packs / 索引存在。
+/// 已迁移到 025_script_packs.sql;保留此函数供非迁移场景(如测试)使用。
 pub async fn init_script_packs_table(pool: &PgPool) -> PlatformResult<()> {
     sqlx::query(TABLE_DDL).execute(pool).await?;
     sqlx::query(TABLE_INDEX_DDL).execute(pool).await?;
@@ -117,7 +119,6 @@ pub async fn create_pack(
             payload.format_version
         )));
     }
-    init_script_packs_table(pool).await?;
     let manifest = if payload.manifest.is_null() {
         Value::Object(Default::default())
     } else {
@@ -147,7 +148,6 @@ pub async fn list_packs(
     owner_id: i64,
     limit: i64,
 ) -> PlatformResult<Vec<ScriptPackRow>> {
-    init_script_packs_table(pool).await?;
     let limit = limit.clamp(1, 500);
     let rows = sqlx::query(
         "select * from script_packs where owner_id = $1 order by id desc limit $2",
@@ -168,7 +168,6 @@ pub async fn get_pack(
     owner_id: i64,
     pack_id: i64,
 ) -> PlatformResult<Option<ScriptPackRow>> {
-    init_script_packs_table(pool).await?;
     let row = sqlx::query("select * from script_packs where id = $1 and owner_id = $2")
         .bind(pack_id)
         .bind(owner_id)
@@ -183,7 +182,6 @@ pub async fn list_packs_by_script(
     script_id: i64,
     limit: i64,
 ) -> PlatformResult<Vec<ScriptPackRow>> {
-    init_script_packs_table(pool).await?;
     let limit = limit.clamp(1, 500);
     let rows = sqlx::query(
         "select * from script_packs where script_id = $1 order by id desc limit $2",
@@ -204,7 +202,6 @@ pub async fn delete_pack(
     owner_id: i64,
     pack_id: i64,
 ) -> PlatformResult<bool> {
-    init_script_packs_table(pool).await?;
     let res = sqlx::query("delete from script_packs where id = $1 and owner_id = $2")
         .bind(pack_id)
         .bind(owner_id)

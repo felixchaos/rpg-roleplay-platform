@@ -359,6 +359,7 @@ pub enum BackendKind {
     Vertex,
     Openai,
     OpenaiCompat,
+    GoogleAiStudio,
 }
 
 impl fmt::Display for BackendKind {
@@ -368,6 +369,7 @@ impl fmt::Display for BackendKind {
             BackendKind::Vertex => f.write_str("vertex_ai"),
             BackendKind::Openai => f.write_str("openai"),
             BackendKind::OpenaiCompat => f.write_str("openai_compat"),
+            BackendKind::GoogleAiStudio => f.write_str("google_ai_studio"),
         }
     }
 }

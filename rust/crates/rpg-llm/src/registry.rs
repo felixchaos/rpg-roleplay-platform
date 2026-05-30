@@ -77,6 +77,11 @@ impl ModelPricing {
         m.insert("vertex_ai/gemini-2.5-pro".into(),   p!(1.25,  5.0,  0.312_5,  1.25));
         m.insert("vertex_ai/gemini-2.0-flash".into(), p!(0.075, 0.3));
 
+        // ── Google AI Studio (same models as Vertex, API-key auth) ────────
+        m.insert("google_ai_studio/gemini-3.5-flash".into(), p!(1.50, 9.00));
+        m.insert("google_ai_studio/gemini-3.1-pro".into(),   p!(2.00, 12.00));
+        m.insert("google_ai_studio/gemini-2.5-flash".into(), p!(0.075, 0.3, 0.018_75, 0.075));
+
         // ── OpenAI ─────────────────────────────────────────────────────────
         m.insert("openai/gpt-5.5".into(),          p!(2.5,  10.0));
         m.insert("openai/gpt-5.5-instant".into(),  p!(1.25, 5.0));
@@ -228,6 +233,7 @@ impl ModelCatalog {
             "vertex_ai" | "vertex" => Ok(BackendKind::Vertex),
             "openai" => Ok(BackendKind::Openai),
             "openai_compat" => Ok(BackendKind::OpenaiCompat),
+            "google_ai_studio" => Ok(BackendKind::GoogleAiStudio),
             other => Err(LlmError::Config(format!("unknown backend kind: {other}"))),
         }
     }
@@ -282,6 +288,35 @@ impl Default for ModelCatalog {
                     models: vec![
                         model_entry("gpt-5.5", "GPT-5.5"),
                         model_entry("gpt-5.5-pro", "GPT-5.5 Pro"),
+                    ],
+                },
+                ApiEntry {
+                    id: "google_ai_studio".into(),
+                    display_name: "Google AI Studio".into(),
+                    kind: "google_ai_studio".into(),
+                    enabled: false,
+                    credential_env: Some("GOOGLE_AI_STUDIO_API_KEY".into()),
+                    credential_ref: None,
+                    base_url: None,
+                    models: vec![
+                        model_entry("gemini-3.5-flash", "Gemini 3.5 Flash"),
+                        model_entry("gemini-3.1-pro", "Gemini 3.1 Pro"),
+                        model_entry("gemini-2.5-flash", "Gemini 2.5 Flash"),
+                    ],
+                },
+                ApiEntry {
+                    id: "dashscope".into(),
+                    display_name: "Alibaba Qwen (DashScope)".into(),
+                    kind: "openai_compat".into(),
+                    enabled: false,
+                    credential_env: Some("DASHSCOPE_API_KEY".into()),
+                    credential_ref: None,
+                    base_url: Some("https://dashscope.aliyuncs.com/compatible-mode/v1".into()),
+                    models: vec![
+                        model_entry("qwen3.7-max", "Qwen 3.7 Max"),
+                        model_entry("qwen3.6-flash", "Qwen 3.6 Flash"),
+                        model_entry("qwen-max", "Qwen Max"),
+                        model_entry("qwen-plus", "Qwen Plus"),
                     ],
                 },
             ],
