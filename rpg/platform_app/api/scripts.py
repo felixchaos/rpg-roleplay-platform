@@ -576,11 +576,23 @@ async def api_script_visibility(request: Request, script_id: int, user=Depends(r
     is_public = bool(body.get("is_public"))
     with connect() as db:
         owned = db.execute(
-            "SELECT 1 FROM scripts WHERE id = %s AND owner_id = %s",
+            "SELECT chapter_count FROM scripts WHERE id = %s AND owner_id = %s",
             (script_id, user["id"]),
         ).fetchone()
         if not owned:
             return json_response({"ok": False, "error": "无权操作该剧本"}, status_code=403)
+        # 护栏:0 章空剧本(注册默认档 / 未导入正文)不允许公开,避免污染公开库。
+        # 以 script_chapters 实际行数为准(chapter_count 列可能陈旧)。
+        if is_public:
+            real_ch = db.execute(
+                "SELECT count(*) AS n FROM script_chapters WHERE script_id = %s",
+                (script_id,),
+            ).fetchone()
+            if not (dict(real_ch) or {}).get("n", 0):
+                return json_response(
+                    {"ok": False, "error": "空剧本(0 章)不能公开分享,请先导入正文。"},
+                    status_code=400,
+                )
         db.execute(
             "UPDATE scripts SET is_public = %s, "
             "published_at = COALESCE(published_at, CASE WHEN %s THEN now() ELSE NULL END) "
