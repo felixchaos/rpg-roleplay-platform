@@ -471,10 +471,12 @@
 /* toast notifications */
 .pl-toast-stack {
   position: fixed;
-  top: 16px;
+  /* 顶栏 #pl-cs-topnav 高 ~53px / z-index 1002:toast 必须落在它下方且层级更高,
+     否则通知框被顶栏遮盖。 */
+  top: 64px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 100;
+  z-index: 1100;
   display: flex;
   flex-direction: column;
   gap: 6px;
