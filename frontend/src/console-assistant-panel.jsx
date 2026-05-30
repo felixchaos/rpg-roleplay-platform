@@ -191,8 +191,16 @@ animation:cap-think-pulse 1.1s ease-in-out infinite}
 .cap-thinking-label{margin-left:4px}
 @keyframes cap-think-pulse{0%,80%,100%{opacity:.25;transform:scale(.7)}40%{opacity:1;transform:scale(1)}}
 
-.cap-empty{color:var(--muted,#968f85);text-align:center;margin:auto;padding:24px 12px;
-font-size:12.5px;line-height:1.6}
+.cap-empty{margin:auto 0;padding:18px 14px;width:100%;box-sizing:border-box}
+.cap-empty-logo{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:var(--accent-soft,rgba(201,100,66,.14));color:var(--accent,#c96442);font-size:19px;margin:0 auto 12px}
+.cap-empty-title{text-align:center;color:var(--text,#ebe7df);font-size:15px;font-weight:600;margin-bottom:4px}
+.cap-empty-sub{text-align:center;color:var(--muted,#968f85);font-size:12px;line-height:1.5;margin:0 auto 16px;max-width:280px}
+.cap-suggests{display:flex;flex-direction:column;gap:8px}
+.cap-suggest-card{text-align:left;background:var(--panel-2,#282623);border:1px solid var(--line,#36322d);border-radius:10px;padding:10px 12px;cursor:pointer;color:var(--text,#ebe7df);font:inherit;transition:border-color .14s,background .14s}
+.cap-suggest-card:hover{border-color:var(--accent-edge,rgba(201,100,66,.42));background:var(--panel-3,#2f2c28)}
+.cap-suggest-title{font-size:13px;font-weight:500;margin-bottom:3px}
+.cap-suggest-desc{font-size:11.5px;color:var(--muted,#968f85);line-height:1.45;margin-bottom:7px}
+.cap-suggest-tag{display:inline-block;font-size:10.5px;color:var(--accent,#c96442);background:var(--accent-soft,rgba(201,100,66,.14));border-radius:999px;padding:1px 8px}
 .cap-empty-hint{color:var(--muted-2,#6b655e);font-size:11.5px;margin-top:6px}
 
 .cap-foot{border-top:1px solid var(--line-soft,#2a2724);padding:10px 12px 8px;
@@ -870,6 +878,37 @@ function relativeTime(isoStr) {
 }
 
 // ---------------- main component -----------------------------
+// 空态建议卡(按当前页上下文给不同建议)
+function capSuggestions(ctx) {
+  const c = String(ctx || '').toLowerCase();
+  if (c.includes('saves') || c.includes('存档')) {
+    return [
+      { title: '列出我的存档', desc: '看所有存档的进度与最后游玩时间', tag: '列表', prompt: '列出我的所有存档及进度' },
+      { title: '当前剧本的世界观', desc: '用知识库讲讲世界设定、纪元与势力', tag: '查询', prompt: '介绍一下当前剧本的世界观、纪元与主要势力' },
+      { title: '帮我新建一个存档', desc: '选剧本 / 角色 / 出生点,一步建好', tag: '操作', prompt: '帮我新建一个存档' },
+    ];
+  }
+  if (c.includes('scripts') || c.includes('剧本')) {
+    return [
+      { title: '这本书讲了什么', desc: '总结当前剧本的世界观与主线', tag: '总结', prompt: '总结一下当前剧本的世界观和主线剧情' },
+      { title: '复核知识库实体', desc: '看提取出的角色 / 势力 / 概念是否准确', tag: '复核', prompt: '帮我复核当前剧本提取出的关键实体和世界线' },
+      { title: '导入一本新剧本', desc: '上传 TXT/MD,自动切章 + 提取', tag: '操作', prompt: '我要导入一本新剧本,应该怎么做?' },
+    ];
+  }
+  if (c.includes('cards') || c.includes('角色')) {
+    return [
+      { title: '列出我的角色卡', desc: '查看用户角色卡库', tag: '列表', prompt: '列出我的所有角色卡' },
+      { title: '帮我建一张角色卡', desc: '给名字 / 身份 / 设定,生成一张卡', tag: '操作', prompt: '帮我新建一张角色卡' },
+      { title: '导入酒馆卡', desc: '从 SillyTavern PNG/JSON 导入', tag: '导入', prompt: '我想导入 SillyTavern 角色卡,怎么做?' },
+    ];
+  }
+  return [
+    { title: '我能用这个平台做什么', desc: '快速了解核心功能与上手路径', tag: '入门', prompt: '我是新用户,这个平台能做什么?怎么开始?' },
+    { title: '当前页面有什么', desc: '让助手介绍当前页面的功能', tag: '查询', prompt: '介绍一下当前这个页面能做什么' },
+    { title: '帮我开始一局游戏', desc: '从建档到进入游戏', tag: '操作', prompt: '帮我开始一局新游戏' },
+  ];
+}
+
 function ConsoleAssistantPanel(props) {
   // task 48 fix: apiBase 默认从 window.__API_BASE 取 (api-client.js 已设),
   // 让前端 5173 静态服务也能 fetch 7860 后端,否则 ping 一直 404 永久 mock。
@@ -1623,10 +1662,21 @@ function ConsoleAssistantPanel(props) {
       <div className="cap-body" ref={scrollRef}>
         {messageNodes.length === 0 ? (
           <div className="cap-empty">
-            控制台助手
-            <div className="cap-empty-hint">
-              询问关于当前页面的内容、调用工具、或让助手帮你执行操作。
+            <div className="cap-empty-logo">✦</div>
+            <div className="cap-empty-title">有什么可以帮你的?</div>
+            <div className="cap-empty-sub">
+              询问当前页面的内容、调用工具,或让我帮你执行操作。
               {useMock ? "（当前 mock 模式）" : ""}
+            </div>
+            <div className="cap-suggests">
+              {capSuggestions(contextLabel).map((s, i) => (
+                <button key={i} className="cap-suggest-card"
+                        onClick={() => { setInput(s.prompt); setTimeout(() => inputRef.current?.focus(), 0); }}>
+                  <div className="cap-suggest-title">{s.title}</div>
+                  <div className="cap-suggest-desc">{s.desc}</div>
+                  <span className="cap-suggest-tag">{s.tag}</span>
+                </button>
+              ))}
             </div>
           </div>
         ) : messageNodes}
