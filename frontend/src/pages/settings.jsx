@@ -30,7 +30,8 @@ import CSExpandableSection from '@cloudscape-design/components/expandable-sectio
 function SetGroup({ title, description, actions, children }) {
   return (
     <CSContainer header={<CSHeader variant="h2" description={description} actions={actions}>{title}</CSHeader>}>
-      <CSSpaceBetween size="l">{children}</CSSpaceBetween>
+      {/* React.Children.toArray 给多子元素派稳定 key,避免 SpaceBetween 的 key 警告 */}
+      <CSSpaceBetween size="l">{React.Children.toArray(children)}</CSSpaceBetween>
     </CSContainer>
   );
 }
@@ -102,7 +103,7 @@ function SettingsPage({ section: sectionProp } = {}) {
         </CSSpaceBetween>
       )}
       {external && <CSHeader variant="h1">{sectionLabel}</CSHeader>}
-      {section === "preferences" && <><PrefSection /><ExtractorSection /><ClarifySection /></>}
+      {section === "preferences" && [<PrefSection key="pref" />, <ExtractorSection key="ext" />, <ClarifySection key="clar" />]}
       {section === "models" && <ModelsSection />}
       {section === "modelparams" && <ModelParamsSection />}
       {section === "modules" && <ModuleModelsSection />}
@@ -524,22 +525,20 @@ function ModelsSection() {
               variant="container"
               expanded={!!expanded[api.id]}
               onChange={() => toggleExpand(api.id)}
-              header={
-                <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
-                  <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
-                    <strong>{api.name}</strong>
-                    <CSBox color="text-status-inactive" fontSize="body-s" display="inline">
-                      <span className="mono">{api.id}</span>
-                    </CSBox>
-                    <CSStatusIndicator type={statusType}>{statusLabel}</CSStatusIndicator>
-                    <CSBox color="text-status-inactive" fontSize="body-s" display="inline">
-                      {enabledCount} / {visibleCount} 启用{hiddenCount > 0 ? ` · 隐藏 ${hiddenCount}` : ""}
-                    </CSBox>
-                  </CSSpaceBetween>
-                  <span onClick={e => e.stopPropagation()}>
-                    <SettingsToggle on={api.enabled} set={() => toggleApi(api.id)} />
+              headerText={api.name}
+              headerActions={
+                <span onClick={e => e.stopPropagation()}>
+                  <SettingsToggle on={api.enabled} set={() => toggleApi(api.id)} />
+                </span>
+              }
+              headerDescription={
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span className="mono">{api.id}</span>
+                  <CSStatusIndicator type={statusType}>{statusLabel}</CSStatusIndicator>
+                  <span style={{ color: 'var(--text-status-inactive, var(--muted))' }}>
+                    {enabledCount} / {visibleCount} 启用{hiddenCount > 0 ? ` · 隐藏 ${hiddenCount}` : ""}
                   </span>
-                </CSSpaceBetween>
+                </span>
               }
             >
               <CSSpaceBetween size="m">

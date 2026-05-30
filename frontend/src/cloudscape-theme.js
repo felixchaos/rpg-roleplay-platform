@@ -49,7 +49,6 @@ const theme = {
     colorBackgroundLayoutMain: dual(C.bg),
     colorBackgroundContainerContent: dual(C.panel),
     colorBackgroundContainerHeader: dual(C.panel),
-    colorBackgroundLayoutPanelContent: dual(C.bg),
     colorBackgroundHomeHeader: dual(C.bgDeep),
     colorBackgroundInputDefault: dual(C.bgDeep),
     colorBackgroundDropdownItemDefault: dual(C.panel),
@@ -58,7 +57,6 @@ const theme = {
     // 下拉/弹出层表面(awsui_dropdown-content-wrapper / popover)→ 暖色,
     // 否则落到 Cloudscape 暗色默认 #161d26 蓝灰。
     colorBackgroundPopover: dual(C.panel),
-    colorBackgroundDropdownItemDimmed: dual(C.panel),
     colorBackgroundDropdownItemFilterMatch: dual(C.accentSoft),
     colorBackgroundItemSelected: dual(C.accentSoft),
     colorBackgroundCellShaded: dual(C.panel2),
@@ -108,10 +106,8 @@ const theme = {
     colorBorderInputDefault: dual(C.lineStrong),
     colorBorderButtonNormalDefault: dual(C.lineStrong),
     colorBorderButtonNormalHover: dual(C.muted),
-    colorBorderDropdownItemDefault: dual(C.line),
     colorBorderItemFocused: dual(C.accent),
     colorBorderItemSelected: dual(C.accent),          // 表格/卡片选中行描边 → 暖色(原 AWS 蓝)
-    colorBorderItemCardHighlighted: dual(C.accent),
     // 分段控件(SegmentedControl)选中态 → 暖色(原 AWS 蓝)
     colorBackgroundSegmentActive: dual(C.accent),
     colorBorderSegmentActive: dual(C.accent),

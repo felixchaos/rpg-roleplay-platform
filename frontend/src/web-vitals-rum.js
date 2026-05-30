@@ -26,8 +26,12 @@ function report(metric) {
   }
 }
 
-onLCP(report);
-onINP(report);
-onCLS(report);
-onFCP(report);
-onTTFB(report);
+// 后端暂无 /api/v1/metrics/web-vitals 接口(POST 返回 405),默认不上报,
+// 避免控制台刷一堆 405 错误。需要 RUM 时设 window.__RUM_ENABLED = true 再注册。
+if (typeof window !== 'undefined' && window.__RUM_ENABLED === true) {
+  onLCP(report);
+  onINP(report);
+  onCLS(report);
+  onFCP(report);
+  onTTFB(report);
+}
