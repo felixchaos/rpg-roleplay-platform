@@ -1,28 +1,33 @@
 /* === AWS-console-style component kit — 基于 tokens.css 暖色暗主题 ============ */
 /* 类名前缀 aw-。所有颜色走 CSS 变量,跟随既有主题。 */
 
+/* 统一控件高度 — AWS 的协调感来自所有控件同高、同基线 */
+:root { --aw-h: 34px; --aw-h-sm: 28px; }
+
 .aw-muted { color: var(--muted); }
 
 /* ── 按钮 ──────────────────────────────────────────────────────────────── */
 .aw-btn {
-  display: inline-flex; align-items: center; gap: 7px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  box-sizing: border-box; height: var(--aw-h);
   font: inherit; font-size: 13px; line-height: 1; font-weight: 500;
-  padding: 8px 14px; border-radius: 8px; cursor: pointer;
+  padding: 0 14px; border-radius: 7px; cursor: pointer;
   border: 1px solid var(--line-strong); background: var(--panel-2); color: var(--text);
   transition: background .14s, border-color .14s, opacity .14s;
-  white-space: nowrap;
+  white-space: nowrap; vertical-align: middle;
 }
 .aw-btn:hover:not(:disabled) { background: var(--panel-3); border-color: var(--muted-2); }
-.aw-btn:disabled { opacity: .5; cursor: not-allowed; }
+.aw-btn:disabled { opacity: .45; cursor: not-allowed; }
 .aw-btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.aw-btn-primary:hover:not(:disabled) { background: #d6745260; background: color-mix(in srgb, var(--accent) 86%, #000); border-color: color-mix(in srgb, var(--accent) 86%, #000); }
-.aw-btn-danger { background: transparent; border-color: var(--danger); color: var(--danger); }
-.aw-btn-danger:hover:not(:disabled) { background: var(--danger-soft); }
-.aw-btn-link { background: transparent; border-color: transparent; color: var(--text-quiet); padding: 8px 8px; }
-.aw-btn-link:hover:not(:disabled) { background: transparent; color: var(--text); text-decoration: underline; }
-.aw-btn-sm { padding: 5px 10px; font-size: 12px; }
-.aw-btn-full { width: 100%; justify-content: center; }
-.aw-btn-ic { display: inline-flex; font-size: 14px; }
+.aw-btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, #000); border-color: color-mix(in srgb, var(--accent) 86%, #000); }
+.aw-btn-danger { background: var(--panel-2); border-color: var(--line-strong); color: var(--danger); }
+.aw-btn-danger:hover:not(:disabled) { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
+.aw-btn-link { background: transparent; border-color: transparent; color: var(--text-quiet); padding: 0 8px; }
+.aw-btn-link:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
+.aw-btn-sm { height: var(--aw-h-sm); padding: 0 10px; font-size: 12px; }
+.aw-btn-full { width: 100%; }
+.aw-btn-ic { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; flex: none; }
+.aw-btn-ic svg { width: 100%; height: 100%; }
 
 .aw-spin {
   width: 13px; height: 13px; border-radius: 50%;
@@ -58,13 +63,14 @@
 .aw-field-error { font-size: 11.5px; color: var(--danger); }
 
 .aw-input {
-  font: inherit; font-size: 13.5px; color: var(--text);
-  background: var(--bg-deep); border: 1px solid var(--line-strong); border-radius: 8px;
-  padding: 9px 11px; width: 100%; transition: border-color .14s, box-shadow .14s;
+  box-sizing: border-box; height: var(--aw-h);
+  font: inherit; font-size: 13px; color: var(--text);
+  background: var(--bg-deep); border: 1px solid var(--line-strong); border-radius: 7px;
+  padding: 0 11px; width: 100%; transition: border-color .14s, box-shadow .14s;
 }
 .aw-input::placeholder { color: var(--muted-2); }
 .aw-input:focus { outline: none; border-color: var(--accent-edge); box-shadow: 0 0 0 3px var(--accent-soft); }
-.aw-textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
+.aw-textarea { height: auto; resize: vertical; min-height: 80px; line-height: 1.5; padding: 9px 11px; }
 
 .aw-select-wrap { position: relative; }
 .aw-select { appearance: none; padding-right: 30px; cursor: pointer; }

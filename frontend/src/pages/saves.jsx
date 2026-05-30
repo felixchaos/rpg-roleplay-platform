@@ -249,9 +249,9 @@ function SavesListView() {
     <>
       <input ref={importInputRef} type="file" accept=".zip,.json,.tar.gz" style={{ display: 'none' }}
         onChange={(e) => { onImportFile(e.target.files?.[0]); e.target.value = ''; }} />
-      <Btn onClick={() => importInputRef.current?.click()} icon="↑">导入存档</Btn>
-      <Btn onClick={() => setCreateOpen(true)} icon="+">新建存档</Btn>
-      <Btn variant="primary" disabled={!saves.length} onClick={() => window.__openContinue?.(saves[0])}>进入当前游戏</Btn>
+      <Btn onClick={() => importInputRef.current?.click()} icon={<Icon name="upload" size={13} />}>导入存档</Btn>
+      <Btn onClick={() => setCreateOpen(true)} icon={<Icon name="plus" size={13} />}>新建存档</Btn>
+      <Btn variant="primary" disabled={!saves.length} icon={<Icon name="play" size={13} />} onClick={() => window.__openContinue?.(saves[0])}>进入当前游戏</Btn>
     </>
   );
 
@@ -282,8 +282,8 @@ function SavesListView() {
           ? (
             <span style={{ display: 'flex', gap: 8, flex: 1, alignItems: 'center' }}>
               <UiInput value={renameVal} onChange={setRenameVal} />
-              <Btn variant="primary" size="sm" onClick={doRename}>保存</Btn>
-              <Btn variant="link" size="sm" onClick={() => setRenaming(false)}>取消</Btn>
+              <Btn variant="primary" onClick={doRename}>保存</Btn>
+              <Btn variant="link" onClick={() => setRenaming(false)}>取消</Btn>
             </span>
           )
           : <h2 style={{ fontSize: 18, margin: 0 }}>{selected.title}</h2>}
@@ -308,7 +308,7 @@ function SavesListView() {
             {selected._raw?.snippet || selected._raw?.last_message || '（暂无最新片段，进入游戏后会自动同步。）'}
           </p>
           <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
-            <Btn variant="primary" onClick={() => window.__openContinue?.(selected)}>继续游戏</Btn>
+            <Btn variant="primary" icon={<Icon name="play" size={13} />} onClick={() => window.__openContinue?.(selected)}>继续游戏</Btn>
             {!selected.current && <Btn onClick={() => onActivate(selected)}>设为当前</Btn>}
             <Btn onClick={() => { setRenameVal(selected.title); setRenaming(true); }}>重命名</Btn>
             <Btn onClick={() => window.open(window.api.saves.exportUrl(selected.id), '_blank')}>导出</Btn>
