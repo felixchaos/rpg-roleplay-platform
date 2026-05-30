@@ -22,6 +22,37 @@ dev = [
     "mypy>=1.13",
 ]
 
+# setuptools 61+ 要求平铺布局必须显式声明 packages,否则 `pip install -e .`
+# 因"多个顶层包不知道选哪个"直接报错。 这里 include 项目实际的 14 个子包(及其子包),
+# exclude 文档/导出/缓存目录避免误打。
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "agents*",
+    "config*",
+    "console_assistant*",
+    "context_engine*",
+    "context_providers*",
+    "core*",
+    "modules*",
+    "platform_app*",
+    "routes*",
+    "rules*",
+    "rules_bridge*",
+    "schemas*",
+    "state*",
+    "tools_dsl*",
+]
+exclude = [
+    "tests*",
+    "docs*",
+    "claude_design_upload*",
+    "user_skills*",
+    "saves*",
+    "platform_data*",
+    "indexes*",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
