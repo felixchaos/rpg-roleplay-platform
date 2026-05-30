@@ -24,7 +24,6 @@ import { SavesPage } from '../pages/saves.jsx';
 import { ScriptsPage } from '../pages/scripts.jsx';
 import { CardsPage } from '../pages/cards.jsx';
 import { SettingsPage } from '../pages/settings.jsx';
-import { ConsoleAssistantPanel } from '../console-assistant-panel.jsx';
 
 // ── 挂载 ──
 

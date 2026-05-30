@@ -18,7 +18,6 @@ import { useResizable } from '../responsive.jsx';
 import { LeftRail, TopBar, ChatArea, HistoryDrawer, SearchDrawer, GameToastStack, RunSteps, GameSettingsModal } from '../game-app.jsx';
 import { Composer, ConfirmStrip } from '../game-composer.jsx';
 import { RightPanel, PANEL_TABS } from '../game-panels.jsx';
-import { ConsoleAssistantPanel } from '../console-assistant-panel.jsx';
 import ModelPicker from '../components/ModelPicker.jsx';
 
 // density preset + narrative font init（等价原 HTML 非 babel inline script）
@@ -731,8 +730,6 @@ function App() {
           onExpandRail={() => setRailCollapsed(false)}
           panelCollapsed={panelCollapsed}
           onExpandPanel={() => setPanelCollapsed(false)}
-          assistantCollapsed={!assistantOpen}
-          onExpandAssistant={() => setAssistantOpen(true)}
         />}
         {mountStage >= 2 && <>
           <GameSettingsModal open={showInGameSettings} onClose={() => setShowInGameSettings(false)} saveTitle={activeSave?.title || game?._raw?.save_title || ''} permission={permission} />
@@ -832,7 +829,6 @@ function App() {
 
       {mountStage >= 2 && <RightPanel state={game} activeTab={activeTab} setActiveTab={setActiveTab} sidebarWidth={gcPanelW} density={t.density} collapsed={panelCollapsed} onToggle={() => setPanelCollapsed((c) => !c)} resizeHandle={<div className="gp-panel-resize-handle" title="拖动调整宽度 · 双击恢复默认" {...gcPanelDragProps} />} />}
       <button className="gc-float-panel-btn" onClick={() => { setPanelCollapsed(false); _panelResize.setSize(320); }} title="打开状态面板">⌖</button>
-      {mountStage >= 2 && <ConsoleAssistantPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} pageContext={{ tab: 'game_console', save_id: activeSave?.id ?? null }} />}
     </div>
   );
 }
