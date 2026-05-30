@@ -334,18 +334,26 @@ function SavesListView() {
       ]} />
       {tab === 'overview' && (
         <div>
-          <KeyValue cols={2} items={[
+          <KeyValue cols={3} items={[
             { label: '剧本', value: selScript?.title || '未知' },
-            { label: '分支节点', value: `${selected.branch_count} 个` },
-            { label: '最后游玩', value: selected.last_played_at },
+            { label: '玩家', value: selected._raw?.player_name || <span className="aw-muted">未设定</span> },
             { label: '状态', value: selected.current
                 ? <StatusIndicator type="ok">当前存档</StatusIndicator>
                 : <StatusIndicator type="pending">未激活</StatusIndicator> },
+            { label: '分支节点', value: `${selected.branch_count} 个` },
+            { label: '回合', value: selected._raw?.turn != null ? `第 ${selected._raw.turn} 回合` : '—' },
+            { label: '故事时间', value: selected._raw?.world_time || <span className="aw-muted">—</span> },
+            { label: '最后游玩', value: selected.last_played_at },
+            { label: '创建于', value: selected.created_ts ? new Date(selected.created_ts).toLocaleString('zh-CN') : '—' },
+            { label: '存档 ID', value: <span className="mono">#{selected.id}</span> },
           ]} />
-          <p style={{ color: 'var(--text-quiet)', fontSize: 13, lineHeight: 1.6, margin: '16px 0' }}>
-            {selected._raw?.snippet || selected._raw?.last_message || '（暂无最新片段，进入游戏后会自动同步。）'}
-          </p>
-          <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+          <div style={{ marginTop: 16, padding: '12px 14px', background: 'var(--bg-deep)', border: '1px solid var(--line-soft)', borderRadius: 8 }}>
+            <div className="aw-muted" style={{ fontSize: 11.5, marginBottom: 5 }}>最新片段</div>
+            <p style={{ color: 'var(--text-quiet)', fontSize: 13, lineHeight: 1.6, margin: 0 }}>
+              {selected._raw?.snippet || selected._raw?.last_message || '（暂无最新片段，进入游戏后会自动同步。）'}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginTop: 16 }}>
             <Btn variant="primary" icon={<Icon name="play" size={13} />} onClick={() => window.__openContinue?.(selected)}>继续游戏</Btn>
             {!selected.current && <Btn onClick={() => onActivate(selected)}>设为当前</Btn>}
             <Btn onClick={() => { setRenameVal(selected.title); setRenaming(true); }}>重命名</Btn>
@@ -360,7 +368,7 @@ function SavesListView() {
   );
 
   return (
-    <div className="pl-stack" data-cap-anchor="saves.list">
+    <div className="aw-page" data-cap-anchor="saves.list">
       <Flashbar items={flash.items} />
       <SplitLayout list={list} detail={detail} detailOpen={!!selected}
         onCloseDetail={() => setSelectedId(null)} />

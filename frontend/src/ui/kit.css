@@ -52,7 +52,7 @@
 .aw-status-pending .aw-status-dot, .aw-status-loading .aw-status-dot { color: var(--muted); }
 
 /* ── KeyValue ─────────────────────────────────────────────────────────── */
-.aw-kv { display: grid; grid-template-columns: repeat(var(--aw-kv-cols, 2), minmax(0,1fr)); gap: 14px 28px; }
+.aw-kv { display: grid; grid-template-columns: repeat(var(--aw-kv-cols, 2), minmax(0,1fr)); gap: 11px 24px; }
 .aw-kv-label { font-size: 11.5px; color: var(--muted); margin-bottom: 3px; }
 .aw-kv-value { font-size: 13.5px; color: var(--text); }
 
@@ -97,12 +97,20 @@
 .aw-pagehead-actions { display: flex; gap: 9px; flex: none; }
 
 /* ── 列表 + 详情分栏 ────────────────────────────────────────────────────── */
-.aw-split { display: grid; grid-template-columns: 1fr; gap: 16px; }
-.aw-split-open { grid-template-columns: minmax(280px, 380px) 1fr; }
-.aw-split-detail { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; min-height: 240px; }
+/* 全宽全高页面容器:填满内容区,不留大片空白(对齐 AWS 控制台密度)。
+   高度 = 视口 - 顶栏(72px) - .pl-content 上下 padding(24*2)。顶栏高度固定。 */
+.aw-page { display: flex; flex-direction: column; height: calc(100vh - 72px - 48px); min-height: 360px; max-width: none; }
+.aw-page > .aw-split { flex: 1; min-height: 0; }
+@media (max-width: 1100px) { .aw-page { height: calc(100vh - 72px - 32px); } }
+
+.aw-split { display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); gap: 12px; }
+.aw-split-open { grid-template-columns: 300px 1fr; }
+.aw-split-list { min-height: 0; overflow: auto; }
+.aw-split-detail { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; min-height: 0; overflow: auto; }
 .aw-split-close { position: absolute; top: 12px; right: 12px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 4px; border-radius: 6px; }
 .aw-split-close:hover { background: var(--panel-3); color: var(--text); }
-@media (max-width: 900px) { .aw-split-open { grid-template-columns: 1fr; } }
+@media (max-width: 980px) { .aw-split-open { grid-template-columns: 260px 1fr; } }
+@media (max-width: 760px) { .aw-split-open { grid-template-columns: 1fr; } }
 
 /* 列表工具条:搜索 + 排序 */
 .aw-list-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
@@ -120,8 +128,8 @@
 .aw-search-clear:hover { color: var(--text); }
 .aw-list-toolbar .aw-select-wrap { flex: none; min-width: 120px; }
 
-.aw-rlist { display: flex; flex-direction: column; gap: 8px; }
-.aw-rlist-item { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 13px 15px; cursor: pointer; color: var(--text); font: inherit; transition: border-color .14s, background .14s; }
+.aw-rlist { display: flex; flex-direction: column; gap: 5px; }
+.aw-rlist-item { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; color: var(--text); font: inherit; transition: border-color .14s, background .14s; }
 .aw-rlist-item:hover { border-color: var(--line-strong); background: var(--panel-2); }
 .aw-rlist-item.sel { border-color: var(--accent-edge); background: var(--accent-soft); }
 .aw-empty { padding: 40px 20px; text-align: center; color: var(--muted); font-size: 13px; border: 1px dashed var(--line-strong); border-radius: 12px; }
@@ -135,11 +143,11 @@
 
 /* ── 分组表单容器 ──────────────────────────────────────────────────────── */
 .aw-section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 16px; overflow: hidden; }
-.aw-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 15px 18px; border-bottom: 1px solid var(--line-soft); }
+.aw-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); }
 .aw-section-title { font-size: 14.5px; font-weight: 600; color: var(--text); margin: 0; }
 .aw-section-desc { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
 .aw-section-actions { display: flex; gap: 8px; flex: none; }
-.aw-section-body { padding: 18px; display: flex; flex-direction: column; gap: 16px; }
+.aw-section-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 13px; }
 .aw-section.dense .aw-section-body { padding: 14px 18px; gap: 12px; }
 .aw-section-foot { padding: 12px 18px; border-top: 1px solid var(--line-soft); background: var(--bg-deep); display: flex; justify-content: flex-end; gap: 9px; }
 
