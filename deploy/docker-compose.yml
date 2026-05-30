@@ -107,6 +107,8 @@ services:
       RPG_REQUIRE_AUTH: ${RPG_REQUIRE_AUTH:-1}
       # DB 连接池:100 用户峰值并发写,10 偏小,调 25(pgbouncer 在前再兜一层)
       RPG_DB_POOL_MAX: ${RPG_DB_POOL_MAX:-25}
+      # uvicorn worker 数(6核默认 4,吃满多核;停止信号经 cluster DB 表跨 worker 安全)
+      RPG_WORKERS: ${RPG_WORKERS:-4}
       # 服务器配置
       RPG_PORT: "7860"
       RPG_HOST: "0.0.0.0"
