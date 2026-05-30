@@ -15,7 +15,7 @@ use crate::{require_user, AppState, ResponseError};
 
 pub fn router() -> Router<AppState> {
     Router::new().route(
-        "/api/saves/{save_id}/timeline",
+        "/api/saves/:save_id/timeline",
         get(api_saves_timeline),
     )
 }
@@ -62,17 +62,21 @@ async fn api_saves_timeline(
     .unwrap_or_default()
     .into_iter()
     .map(|r| {
+        // 对齐 Python: phase_label / story_time_label / chapter_min / chapter_max
         json!({
-            "phase": r.try_get::<String, _>("story_phase").unwrap_or_default(),
-            "label": r.try_get::<String, _>("story_time_label").unwrap_or_default(),
+            "phase_label": r.try_get::<String, _>("story_phase").unwrap_or_default(),
+            "story_time_label": r.try_get::<String, _>("story_time_label").unwrap_or_default(),
             "chapter_min": r.try_get::<i32, _>("chapter_min").unwrap_or(0),
             "chapter_max": r.try_get::<i32, _>("chapter_max").unwrap_or(0),
         })
     })
     .collect::<Vec<_>>();
-    // save_phase_digests 列名 phase_label / turn_start。
+    // save_phase_digests — 对齐 Python 全部列: phase_index/phase_label/turn_start/turn_end/
+    // story_time_label/summary/key_events/status
     let save_phases = sqlx::query(
-        "SELECT phase_index, phase_label, turn_start FROM save_phase_digests \
+        "SELECT phase_index, phase_label, turn_start, turn_end, \
+                story_time_label, summary, key_events, status \
+         FROM save_phase_digests \
          WHERE save_id = $1 ORDER BY phase_index",
     )
     .bind(save_id)
@@ -82,14 +86,32 @@ async fn api_saves_timeline(
     .unwrap_or_default()
     .into_iter()
     .map(|r| {
+        let key_events: serde_json::Value = r
+            .try_get::<serde_json::Value, _>("key_events")
+            .unwrap_or(json!([]));
         json!({
-            "phase_index": r.try_get::<i64, _>("phase_index").unwrap_or(0),
-            "label": r.try_get::<String, _>("phase_label").unwrap_or_default(),
-            "turn": r.try_get::<i32, _>("turn_start").unwrap_or(0),
+            "phase_index": r.try_get::<i32, _>("phase_index").unwrap_or(0),
+            "phase_label": r.try_get::<String, _>("phase_label").unwrap_or_default(),
+            "turn_start": r.try_get::<i32, _>("turn_start").unwrap_or(0),
+            "turn_end": r.try_get::<Option<i32>, _>("turn_end").unwrap_or(None),
+            "story_time_label": r.try_get::<String, _>("story_time_label").unwrap_or_default(),
+            "summary": r.try_get::<String, _>("summary").unwrap_or_default(),
+            "key_events": key_events,
+            "status": r.try_get::<String, _>("status").unwrap_or_else(|_| "open".to_string()),
         })
     })
     .collect::<Vec<_>>();
-    let current_phase_index = save_phases.len().saturating_sub(1) as i64;
+    // 对齐 Python: active_phase_index 从 game_saves 表读取
+    let active_phase_index: i32 = sqlx::query_scalar(
+        "SELECT COALESCE(active_phase_index, 0) FROM game_saves WHERE id = $1",
+    )
+    .bind(save_id)
+    .fetch_optional(&s.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(0);
+    let current_phase_index = active_phase_index as i64;
     Ok(Json(json!({
         "ok": true,
         "script_anchors": script_anchors,
