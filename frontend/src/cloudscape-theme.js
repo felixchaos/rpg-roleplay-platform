@@ -105,6 +105,8 @@ const theme = {
     colorBorderButtonNormalHover: dual(C.muted),
     colorBorderDropdownItemDefault: dual(C.line),
     colorBorderItemFocused: dual(C.accent),
+    colorBorderItemSelected: dual(C.accent),          // 表格/卡片选中行描边 → 暖色(原 AWS 蓝)
+    colorBorderItemCardHighlighted: dual(C.accent),
 
     // ── 圆角 ────────────────────────────────────────────────
     borderRadiusContainer: '12px',

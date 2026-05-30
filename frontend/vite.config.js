@@ -13,7 +13,6 @@ export default defineConfig(({ mode }) => {
     login:        resolve(__dirname, 'Login.html'),
     platform:     resolve(__dirname, 'Platform.html'),
     game_console: resolve(__dirname, 'Game Console.html'),
-    cloudscape_test: resolve(__dirname, 'CloudscapeTest.html'),
   };
 
   return {

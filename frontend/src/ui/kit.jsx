@@ -189,7 +189,7 @@ export function FormSection({ title, description, actions, footer, children, den
 }
 
 // ── 全页向导(左侧步骤条) ────────────────────────────────────────────────────
-export function Wizard({ steps = [], active = 0, onNav, onCancel, onSubmit, submitLabel = '完成', submitting }) {
+export function Wizard({ steps = [], active = 0, onNav, onCancel, onSubmit, submitLabel = '完成', submitting, canNext = true }) {
   const last = active >= steps.length - 1;
   return (
     <div className="aw-wizard">
@@ -213,8 +213,8 @@ export function Wizard({ steps = [], active = 0, onNav, onCancel, onSubmit, subm
           <div className="aw-wizard-foot-right">
             {active > 0 && <Btn onClick={() => onNav?.(active - 1)}>上一步</Btn>}
             {last
-              ? <Btn variant="primary" loading={submitting} onClick={onSubmit}>{submitLabel}</Btn>
-              : <Btn variant="primary" onClick={() => onNav?.(active + 1)}>下一步</Btn>}
+              ? <Btn variant="primary" loading={submitting} disabled={!canNext} onClick={onSubmit}>{submitLabel}</Btn>
+              : <Btn variant="primary" disabled={!canNext} onClick={() => onNav?.(active + 1)}>下一步</Btn>}
           </div>
         </div>
       </div>
