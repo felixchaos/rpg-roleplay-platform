@@ -297,13 +297,14 @@ mod tests {
     #[test]
     fn insert_commit_sql_is_shared_between_pool_and_tx_paths() {
         let sql = insert_commit_sql();
-        // 关键 schema 字段都在,且 placeholder 13 个。
+        // 关键 schema 字段都在,且 placeholder 14 个(含 object_hash)。
         assert!(sql.contains("insert into branch_commits"));
         assert!(sql.contains("state_snapshot"));
+        assert!(sql.contains("object_hash"));
         assert!(sql.contains("returning *"));
-        let placeholders = (1..=13).filter(|i| sql.contains(&format!("${i}"))).count();
-        assert_eq!(placeholders, 13, "expected 13 placeholders, sql: {sql}");
-        assert!(!sql.contains("$14"));
+        let placeholders = (1..=14).filter(|i| sql.contains(&format!("${i}"))).count();
+        assert_eq!(placeholders, 14, "expected 14 placeholders, sql: {sql}");
+        assert!(!sql.contains("$15"));
     }
 
     /// tx 版的 begin/rollback 在 lazy 连接上仍会回到一个 DB error(不会编译期/类型期

@@ -838,6 +838,7 @@ mod tests {
             from: json!(1),
             to: json!(2),
             reason: "未授权".into(),
+            risk: "high".into(),
             extra: Map::new(),
         };
         let v = serde_json::to_value(&p).unwrap();
