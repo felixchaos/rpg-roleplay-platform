@@ -181,6 +181,7 @@ def compact_phase(
         digest, phase_usage = _call_llm_with_retry(
             _SYSTEM_PROMPT, user_prompt,
             api_id=api_id_used, model=model_name, user_id=user_id,
+            save_id=save_id, phase_index=phase_index,
             _backend_inject=_backend,
         )
     except Exception as exc:
@@ -192,21 +193,10 @@ def compact_phase(
             "commit_count": len(commits),
         }
 
-    # 记 usage（background worker；user_id 可能为 None，有则写，无则跳过）
-    try:
-        if phase_usage and user_id:
-            from platform_app.usage import record_usage as _rec
-            _rec(
-                user_id=user_id,
-                save_id=save_id,
-                context_run_id=None,
-                api_id=api_id_used,
-                model_real_name=model_name,
-                usage=phase_usage,
-                metadata={"kind": "phase_digest", "phase_index": phase_index},
-            )
-    except Exception:
-        pass
+    # 注: usage 在 _harness.call_agent_json 内部已自动 record(agent_kind="phase_digest"),
+    # 这里不需要再调 record_usage,避免双计费。phase_index 信息丢失可接受
+    # (token_usage.metadata 仍保留 kind="phase_digest" + save_id + user_id 用于聚合)。
+    _ = phase_usage  # noqa: F841 — 保留变量名供 legacy backend 路径返
 
     # 规范化字段 (LLM 偶尔会缺字段)
     digest = _normalize_digest(digest)
@@ -457,6 +447,8 @@ def _call_llm_with_retry(
     api_id: str,
     model: str,
     user_id: int | None,
+    save_id: int | None = None,
+    phase_index: int | None = None,
     _backend_inject: Any = None,
 ) -> tuple[dict[str, Any], dict]:
     """走 agents._harness.call_agent_json,一次重试后强抛。
@@ -483,6 +475,9 @@ def _call_llm_with_retry(
             user_id=user_id,
             tool_schema=None,  # phase_digest 输出体长,文本 JSON 模式即可
             max_tokens=2400,
+            agent_kind="phase_digest",
+            save_id=save_id,
+            metadata_extra={"phase_index": phase_index} if phase_index is not None else None,
         )
         parsed = _parse_json(text)
         if parsed is not None:

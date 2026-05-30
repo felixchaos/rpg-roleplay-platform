@@ -543,9 +543,10 @@ def _call_curator_via_harness(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             user_id=user_id,
-            tool_schema=_CURATOR_TOOL_SCHEMA if api_id == "anthropic" else None,
+            tool_schema=_CURATOR_TOOL_SCHEMA,  # 三通道都启用强 schema
             max_tokens=1200,
             timeout_sec=30,
+            agent_kind="curator",
         )
         return text or ""
 

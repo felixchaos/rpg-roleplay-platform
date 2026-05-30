@@ -378,9 +378,10 @@ def _make_harness_caller(
             system_prompt=_SWAN_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             user_id=user_id,
-            tool_schema=schema if api_id == "anthropic" else None,
+            tool_schema=schema,  # 三通道都启用强 schema(enum 锁 NPC ID 等)
             max_tokens=600,
             timeout_sec=20,
+            agent_kind="black_swan",
         )
         # text 来自 tool_use input JSON(anthropic)或 JSON 字符串(其它通道)
         try:

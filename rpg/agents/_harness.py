@@ -42,6 +42,10 @@ def call_agent_json(
     tool_schema: dict | None = None,
     max_tokens: int = 1024,
     timeout_sec: int = 30,
+    agent_kind: str | None = None,
+    save_id: int | None = None,
+    context_run_id: int | None = None,
+    metadata_extra: dict | None = None,
 ) -> tuple[str, dict]:
     """三通道 dispatch,返回 (text, usage)。
 
@@ -49,25 +53,83 @@ def call_agent_json(
         Anthropic tool_use 的工具定义,形如
         {"name": "emit_xxx", "description": "...", "input_schema": {...}}
         只在 api_id="anthropic" 时启用 native tool_use,其它 provider 忽略。
+
+    agent_kind / save_id / context_run_id / metadata_extra:
+        当 agent_kind + user_id 同时存在时,**内部自动**调
+        `platform_app.usage.record_usage` 写入 token_usage 表,
+        消除"返了 usage 没人 record"的赊账漏洞。
+        agent_kind 用作 metadata.kind(如 "curator" / "black_swan" / "phase_digest")。
     """
     if api_id == "anthropic":
         if tool_schema:
-            return _anthropic_tool_use(
+            text, usage = _anthropic_tool_use(
                 model, system_prompt, user_prompt, user_id,
                 tool_schema, max_tokens,
             )
-        return _anthropic_json_text(
-            model, system_prompt, user_prompt, user_id, max_tokens,
-        )
-    if api_id == "vertex_ai":
-        return _vertex_structured(
-            model, system_prompt, user_prompt, max_tokens,
-        )
-    # OpenAI 兼容:openai / siliconflow / dashscope / qwen 等
-    return _openai_compat_json_mode(
-        api_id, model, system_prompt, user_prompt,
-        user_id, timeout_sec, max_tokens,
+        else:
+            text, usage = _anthropic_json_text(
+                model, system_prompt, user_prompt, user_id, max_tokens,
+            )
+    elif api_id == "vertex_ai":
+        if tool_schema:
+            text, usage = _vertex_function_call(
+                model, system_prompt, user_prompt, tool_schema, max_tokens,
+            )
+        else:
+            text, usage = _vertex_structured(
+                model, system_prompt, user_prompt, max_tokens,
+            )
+    else:
+        # OpenAI 兼容:openai / siliconflow / dashscope / qwen 等
+        if tool_schema:
+            text, usage = _openai_function_call(
+                api_id, model, system_prompt, user_prompt, tool_schema,
+                user_id, timeout_sec, max_tokens,
+            )
+        else:
+            text, usage = _openai_compat_json_mode(
+                api_id, model, system_prompt, user_prompt,
+                user_id, timeout_sec, max_tokens,
+            )
+    _maybe_record_usage(
+        user_id=user_id, save_id=save_id, context_run_id=context_run_id,
+        api_id=api_id, model=model, usage=usage,
+        agent_kind=agent_kind, metadata_extra=metadata_extra,
     )
+    return text, usage
+
+
+def _maybe_record_usage(
+    *,
+    user_id: int | None,
+    save_id: int | None,
+    context_run_id: int | None,
+    api_id: str,
+    model: str,
+    usage: dict,
+    agent_kind: str | None,
+    metadata_extra: dict | None,
+) -> None:
+    """内部自动 record_usage,失败静默(不影响主流程)。
+
+    触发条件:user_id + agent_kind 都非空,且 usage 含至少一个 token 计数。
+    """
+    if not user_id or not agent_kind or not usage:
+        return
+    if not (usage.get("input_tokens") or usage.get("output_tokens")):
+        return
+    try:
+        from platform_app.usage import record_usage
+        meta = {"kind": agent_kind}
+        if metadata_extra:
+            meta.update(metadata_extra)
+        record_usage(
+            user_id=user_id, save_id=save_id, context_run_id=context_run_id,
+            api_id=api_id, model_real_name=model,
+            usage=usage, metadata=meta,
+        )
+    except Exception as exc:
+        log.warning(f"[_harness] record_usage 失败(忽略): {exc}")
 
 
 # ── Anthropic native tool_use ─────────────────────────────────────
@@ -179,6 +241,68 @@ def _vertex_structured(
     return text, dict(usage) if isinstance(usage, dict) else {}
 
 
+def _vertex_function_call(
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    tool_schema: dict,
+    max_tokens: int,
+) -> tuple[str, dict]:
+    """Vertex (Gemini) native function calling,强制 schema 校验。
+
+    把 anthropic 风格 tool_schema(name/description/input_schema)翻译为 Gemini
+    FunctionDeclaration,tool_config 设 ANY 模式强制必调函数。错误率比文本 JSON
+    低 5-10×,跟 Anthropic native tool_use 对等。
+
+    返回 (tool.args 序列化 JSON, usage_dict)。
+    """
+    from agents.gm import _VertexBackend
+    backend = _VertexBackend(model=model)
+    from google.genai import types
+
+    fn_decl = types.FunctionDeclaration(
+        name=tool_schema.get("name", "emit_payload"),
+        description=tool_schema.get("description", ""),
+        parameters=tool_schema.get("input_schema") or {"type": "object", "properties": {}},
+    )
+    tools = [types.Tool(function_declarations=[fn_decl])]
+    tool_config = types.ToolConfig(
+        function_calling_config=types.FunctionCallingConfig(
+            mode="ANY",  # 强制必调,跟 anthropic tool_choice={type:"tool", name:...} 对等
+            allowed_function_names=[fn_decl.name],
+        ),
+    )
+    config = types.GenerateContentConfig(
+        system_instruction=system_prompt,
+        max_output_tokens=max_tokens,
+        temperature=0.1,
+        thinking_config=types.ThinkingConfig(thinking_budget=0),
+        tools=tools,
+        tool_config=tool_config,
+    )
+    resp = backend.client.models.generate_content(
+        model=backend.model_name,
+        contents=[types.Content(role="user", parts=[types.Part(text=user_prompt)])],
+        config=config,
+    )
+    backend._capture_usage(resp)
+    usage = dict(getattr(backend, "last_usage", None) or {})
+
+    # 抽 function_call.args
+    try:
+        for cand in (resp.candidates or []):
+            for part in (cand.content.parts or []):
+                fc = getattr(part, "function_call", None)
+                if fc and fc.name == fn_decl.name:
+                    args = dict(fc.args or {})
+                    return json.dumps(args, ensure_ascii=False), usage
+    except Exception:
+        pass
+    # 没拿到 function_call(罕见)→ 退化为文本(让调用方 parse)
+    text = getattr(resp, "text", None) or ""
+    return text.strip(), usage
+
+
 # ── OpenAI 兼容 ────────────────────────────────────────────────────
 
 def _openai_compat_json_mode(
@@ -245,6 +369,84 @@ def _openai_compat_json_mode(
         return text or "", usage
 
 
+def _openai_function_call(
+    api_id: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    tool_schema: dict,
+    user_id: int | None,
+    timeout_sec: int,
+    max_tokens: int,
+) -> tuple[str, dict]:
+    """OpenAI / 兼容 endpoint native function calling,强制 schema 校验。
+
+    把 anthropic 风格 tool_schema 翻译为 OpenAI tools format,tool_choice 强制必调。
+    支持的 endpoint:OpenAI / SiliconFlow / DashScope / Qwen / DeepSeek 等。
+    旧 endpoint 不支持 tools 时 → 降级到 response_format json_object。
+
+    返回 (tool.arguments JSON, usage_dict)。
+    """
+    from platform_app.user_credentials import resolve_api_key
+    cred = resolve_api_key(user_id, api_id)
+    if not cred.get("key"):
+        raise RuntimeError(f"无 {api_id} 凭证可用于 agent harness")
+    import urllib.request
+    base_url = cred.get("base_url_override") or _api_base_url(api_id)
+    if not base_url:
+        raise RuntimeError(f"未知 base_url for {api_id}")
+    tool_name = tool_schema.get("name", "emit_payload")
+    body_dict = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0,
+        "max_tokens": max_tokens,
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "description": tool_schema.get("description", ""),
+                "parameters": tool_schema.get("input_schema")
+                              or {"type": "object", "properties": {}},
+            },
+        }],
+        "tool_choice": {"type": "function", "function": {"name": tool_name}},
+    }
+    body = json.dumps(body_dict).encode("utf-8")
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/chat/completions",
+        data=body, method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {cred['key']}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        usage = _openai_usage(payload.get("usage") or {})
+        msg = payload["choices"][0]["message"]
+        tool_calls = msg.get("tool_calls") or []
+        for tc in tool_calls:
+            fn = tc.get("function") or {}
+            if fn.get("name") == tool_name:
+                args_text = fn.get("arguments") or "{}"
+                # arguments 通常是 JSON-encoded string;直接返
+                return args_text, usage
+        # 没拿到 tool_call → 降级到文本内容(让调用方 parse)
+        return msg.get("content") or "{}", usage
+    except Exception:
+        # endpoint 不支持 tools → 降级到 response_format json_object
+        log.warning(f"[_harness] {api_id} tools 不支持,降级到 json_object")
+        return _openai_compat_json_mode(
+            api_id, model, system_prompt, user_prompt,
+            user_id, timeout_sec, max_tokens,
+        )
+
+
 def _openai_usage(u: dict) -> dict:
     if not isinstance(u, dict):
         return {}
@@ -282,13 +484,35 @@ def resolve_api_and_model(
     api_id_override: str | None = None,
     model_override: str | None = None,
 ) -> tuple[str, str]:
-    """统一 api_id/model 解析:override > user_preferences > default。"""
+    """统一 api_id/model 解析,两级 fallback。
+
+    优先级:
+        1. override(传入参数,如来自 chat_pipeline 透传的 GM api_id)
+        2. user_preferences[<api_pref_key>] / [<model_pref_key>](specific agent)
+        3. user_preferences["agent.api_id"] / ["agent.model_real_name"](通配)
+        4. default
+
+    例:agent="black_swan",黑天鹅没单独配 model,user_preferences 里有
+    "agent.api_id"="anthropic" + "agent.model_real_name"="claude-haiku-4-5"
+    → 黑天鹅自动用 haiku。这是"所有子代理都用便宜模型"场景的常用配置,
+    避免用户重复配 5 个命名空间。
+    """
     from core.llm_backend import (
         resolve_preferred_api as _resolve_api,
         resolve_preferred_model as _resolve_model,
     )
-    api_id = api_id_override or _resolve_api(user_id, pref_key=api_pref_key) or default_api
-    model = model_override or _resolve_model(user_id, pref_key=model_pref_key) or default_model
+    api_id = (
+        api_id_override
+        or _resolve_api(user_id, pref_key=api_pref_key)
+        or _resolve_api(user_id, pref_key="agent.api_id")
+        or default_api
+    )
+    model = (
+        model_override
+        or _resolve_model(user_id, pref_key=model_pref_key)
+        or _resolve_model(user_id, pref_key="agent.model_real_name")
+        or default_model
+    )
     return api_id, model
 
 
