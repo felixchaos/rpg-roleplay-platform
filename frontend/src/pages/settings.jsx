@@ -343,6 +343,7 @@ function ModelsSection() {
   const [addingApi, setAddingApi] = useStatePL(false);
   const [visibilityApi, setVisibilityApi] = useStatePL(null);
   const [validateApi, setValidateApi] = useStatePL(null);
+  const [selectedApiId, setSelectedApiId] = useStatePL(null);
 
   // task 42: 用 health cache 把所有 model 的 health 字段刷新成最新状态。
   // 不重新 probe,只读 backend 内存 cache。轻量,可频繁 poll。
@@ -505,74 +506,79 @@ function ModelsSection() {
   const enabledTotal = apis.reduce((a, x) => a + x.models.filter(m => m.enabled).length, 0);
   const totalModels = apis.reduce((a, x) => a + x.models.length, 0);
 
+  // 只显示「已配置 API Key」的供应商(对齐剧本/存档:没有就显示添加按钮,不堆砌)
+  const configuredApis = apis.filter(a => a.key_set);
+  const selectedApi = configuredApis.find(a => a.id === selectedApiId) || null;
+
   return (
-    <SetGroup
-      title="API 设置"
-      description={`${enabledTotal} / ${totalModels} 个模型已启用`}
-      data-cap-anchor="settings.models"
-    >
-      <CSSpaceBetween size="m">
-        {apis.map(api => {
-          const visibleCount = api.models.filter(m => m.visible !== false).length;
-          const enabledCount = api.models.filter(m => m.enabled && m.visible !== false).length;
-          const hiddenCount = api.models.length - visibleCount;
-          const statusType = api.enabled && api.status === "online" ? "success"
-            : api.enabled ? "warning" : "stopped";
-          const statusLabel = api.enabled ? api.status : "已禁用";
-          return (
-            <CSExpandableSection
-              key={api.id}
-              variant="container"
-              expanded={!!expanded[api.id]}
-              onChange={() => toggleExpand(api.id)}
-              headerText={api.name}
-              headerActions={
-                <span onClick={e => e.stopPropagation()}>
-                  <SettingsToggle on={api.enabled} set={() => toggleApi(api.id)} />
-                </span>
-              }
-              headerDescription={
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <span className="mono">{api.id}</span>
-                  <CSStatusIndicator type={statusType}>{statusLabel}</CSStatusIndicator>
-                  <span style={{ color: 'var(--text-status-inactive, var(--muted))' }}>
-                    {enabledCount} / {visibleCount} 启用{hiddenCount > 0 ? ` · 隐藏 ${hiddenCount}` : ""}
-                  </span>
-                </span>
-              }
-            >
-              <CSSpaceBetween size="m">
-                <CSColumnLayout columns={3} variant="text-grid">
-                  <div>
-                    <CSBox color="text-label" fontWeight="bold">Base URL</CSBox>
-                    <CSBox color="text-body-secondary"><span className="mono">{api.base_url}</span></CSBox>
-                  </div>
-                  <div>
-                    <CSBox color="text-label" fontWeight="bold">API Key</CSBox>
-                    <CSBox color="text-body-secondary"><span className="mono">{api.key_set ? "•••• " + api.key_hint : "未配置"}</span></CSBox>
-                  </div>
-                  <div>
-                    <CSBox color="text-label" fontWeight="bold">连接</CSBox>
-                    <CSBox color="text-body-secondary">{api.proxy || "直连"}</CSBox>
-                  </div>
-                </CSColumnLayout>
-                <ApiModelsList api={api}
-                  onToggleModel={(mId) => toggleModel(api.id, mId)}
-                  onRenameModel={(mId, display) => renameModel(api.id, mId, display)}
-                />
-                <CSSpaceBetween direction="horizontal" size="xs">
-                  <CSButton variant="normal" iconName="view-full" onClick={() => setVisibilityApi(api.id)}>编辑显示</CSButton>
-                  <CSButton variant="normal" iconName="refresh" onClick={() => setValidateApi(api.id)}>校验连接</CSButton>
-                  <CSButton variant="normal" iconName="edit" onClick={() => setEditingApi(api.id)}>编辑 API</CSButton>
-                </CSSpaceBetween>
-              </CSSpaceBetween>
-            </CSExpandableSection>
-          );
-        })}
-        <CSButton iconName="add-plus" onClick={() => setAddingApi(true)}>
-          新增 API 供应商
-        </CSButton>
-      </CSSpaceBetween>
+    <CSSpaceBetween size="l">
+      <CSHeader
+        variant="h1"
+        counter={`(${configuredApis.length})`}
+        description="只显示已配置 API Key 的供应商。Key 加密存储在用户凭证表,不在服务端明文保存,也不回显。"
+        actions={<CSButton variant="primary" iconName="add-plus" onClick={() => setAddingApi(true)}>添加 API Key</CSButton>}
+      >API Key</CSHeader>
+
+      {configuredApis.length === 0 ? (
+        <CSContainer>
+          <CSBox textAlign="center" color="inherit" padding={{ vertical: 'xxl' }}>
+            <CSSpaceBetween size="s" alignItems="center">
+              <CSBox variant="h3">还没有配置任何 API Key</CSBox>
+              <CSBox color="text-body-secondary">添加一个供应商的 API Key 后,它的模型才会出现在这里。</CSBox>
+              <CSButton variant="primary" iconName="add-plus" onClick={() => setAddingApi(true)}>添加 API Key</CSButton>
+            </CSSpaceBetween>
+          </CSBox>
+        </CSContainer>
+      ) : (
+        <CSTable
+          variant="container"
+          trackBy="id"
+          selectionType="single"
+          items={configuredApis}
+          selectedItems={selectedApi ? [selectedApi] : []}
+          onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedApiId(x.id); }}
+          onRowClick={({ detail }) => setSelectedApiId(detail.item.id)}
+          columnDefinitions={[
+            { id: 'name', header: '供应商', cell: (a) => (
+              <div><CSBox fontWeight="bold">{a.name}</CSBox><CSBox fontSize="body-s" color="text-body-secondary"><span className="mono">{a.id}</span></CSBox></div>
+            ) },
+            { id: 'key', header: 'API Key', cell: (a) => <span className="mono">•••• {a.key_hint || '已设置'}</span> },
+            { id: 'models', header: '模型', cell: (a) => `${a.models.filter(m => m.enabled).length} / ${a.models.length}` },
+            { id: 'status', header: '状态', cell: (a) => (
+              a.enabled
+                ? <CSStatusIndicator type={a.status === 'online' ? 'success' : 'warning'}>{a.status}</CSStatusIndicator>
+                : <CSStatusIndicator type="stopped">已禁用</CSStatusIndicator>
+            ) },
+            { id: 'go', header: '', cell: (a) => (
+              <span onClick={(e) => e.stopPropagation()}>
+                <SettingsToggle on={a.enabled} set={() => toggleApi(a.id)} />
+              </span>
+            ) },
+          ]}
+        />
+      )}
+
+      {selectedApi && (
+        <ApiDetailPanel
+          api={selectedApi}
+          onEdit={() => setEditingApi(selectedApi.id)}
+          onVisibility={() => setVisibilityApi(selectedApi.id)}
+          onValidate={() => setValidateApi(selectedApi.id)}
+          onToggleModel={(mId) => toggleModel(selectedApi.id, mId)}
+          onRenameModel={(mId, display) => renameModel(selectedApi.id, mId, display)}
+          onDeleteKey={async () => {
+            if (!await window.__confirm({ title: '删除 API Key', message: `删除「${selectedApi.name}」的 API Key?该供应商的模型将不再可用。`, danger: true, confirmText: '删除' })) return;
+            try {
+              await window.api.credentials.set({ api_id: selectedApi.id, api_key: '' });
+              window.__apiToast?.('已删除 API Key', { kind: 'ok' });
+              setSelectedApiId(null);
+              setApis(arr => arr.map(a => a.id === selectedApi.id ? { ...a, key_set: false, key_hint: '—' } : a));
+              if (typeof window.__refreshPlatform === 'function') { try { await window.__refreshPlatform(); } catch (_) {} }
+            } catch (e) { window.__apiToast?.('删除失败', { kind: 'danger', detail: e?.message }); }
+          }}
+        />
+      )}
+
       <EditApiModal
         open={!!editingApi || addingApi}
         api={apis.find(a => a.id === editingApi)}
@@ -628,9 +634,67 @@ function ModelsSection() {
         onClose={() => setValidateApi(null)}
         onConfirm={(toRemove) => { removeModels(validateApi, toRemove); setValidateApi(null); }}
       />
-      {/* Wave 11-C: 10 provider typed 凭证配置 */}
-      <ProviderConfigSection />
-    </SetGroup>
+    </CSSpaceBetween>
+  );
+}
+
+/* API 详情面板 —— 选中某个已配置 Key 后在列表下方展开。
+   Tabs:模型列表(ApiModelsList)/ API 用量(简略)。头部:编辑 / 管理显示 / 校验 / 删除 Key。 */
+function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, onToggleModel, onRenameModel }) {
+  const [tab, setTab] = useStatePL('models');
+  const [usage, setUsage] = useStatePL(null);
+  useEffectPL(() => { setTab('models'); setUsage(null); }, [api.id]);
+  useEffectPL(() => {
+    if (tab !== 'usage' || usage != null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await window.api.account.usage(30);
+        if (cancelled) return;
+        const byApi = (r?.by_api || r?.apis || []).find(x => (x.api_id || x.id) === api.id);
+        setUsage(byApi || {});
+      } catch (_) { if (!cancelled) setUsage({}); }
+    })();
+    return () => { cancelled = true; };
+  }, [tab, api.id]);
+
+  return (
+    <CSContainer header={
+      <CSHeader variant="h2"
+        description={<span style={{ display: 'inline-flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="mono">{api.id}</span>
+          <span style={{ color: 'var(--muted)' }}>Base URL: <span className="mono">{api.base_url || '—'}</span></span>
+          <span style={{ color: 'var(--muted)' }}>Key: <span className="mono">•••• {api.key_hint || '已设置'}</span></span>
+        </span>}
+        actions={
+          <CSSpaceBetween direction="horizontal" size="xs">
+            <CSButton iconName="edit" onClick={onEdit}>编辑</CSButton>
+            <CSButton iconName="view-full" onClick={onVisibility}>管理显示模型</CSButton>
+            <CSButton iconName="refresh" onClick={onValidate}>校验连接</CSButton>
+            <CSButton iconName="remove" onClick={onDeleteKey}>删除 Key</CSButton>
+          </CSSpaceBetween>
+        }
+      >{api.name}</CSHeader>
+    }>
+      <CSTabs activeTabId={tab} onChange={({ detail }) => setTab(detail.activeTabId)} tabs={[
+        { id: 'models', label: `模型列表 (${api.models.length})`, content: (
+          <ApiModelsList api={api} onToggleModel={onToggleModel} onRenameModel={onRenameModel} />
+        ) },
+        { id: 'usage', label: 'API 用量', content: (
+          usage == null
+            ? <CSBox color="text-body-secondary">加载中…</CSBox>
+            : <CSSpaceBetween size="m">
+                <CSKeyValuePairs columns={4} items={[
+                  { label: '请求数(30天)', value: usage.requests != null ? Number(usage.requests).toLocaleString() : '—' },
+                  { label: '输入 Token', value: usage.input_tokens != null ? Number(usage.input_tokens).toLocaleString() : '—' },
+                  { label: '输出 Token', value: usage.output_tokens != null ? Number(usage.output_tokens).toLocaleString() : '—' },
+                  { label: '成本', value: usage.cost_usd != null ? `$${Number(usage.cost_usd).toFixed(2)}` : '—' },
+                ]} />
+                <CSBox fontSize="body-s" color="text-body-secondary">完整明细见 <a href="#usage">用量页</a>。</CSBox>
+              </CSSpaceBetween>
+        ) },
+      ]} />
+    </CSContainer>
   );
 }
 
@@ -1748,14 +1812,14 @@ function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPla
   return (
     <CSContainer>
       <CSSpaceBetween size="s">
-        <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
+        <CSSpaceBetween key="hdr" direction="horizontal" size="xs" alignItems="center">
           <div>
             <CSBox fontWeight="bold">{p.name}</CSBox>
             {p.note && <CSBox color="text-body-secondary" fontSize="body-s">{p.note}</CSBox>}
           </div>
           {cred.has_key && <CSStatusIndicator type="success">已配置</CSStatusIndicator>}
         </CSSpaceBetween>
-        <CSSpaceBetween direction="horizontal" size="xs" alignItems="flex-end">
+        <CSSpaceBetween key="form" direction="horizontal" size="xs" alignItems="flex-end">
           <CSFormField label="API Key" stretch>
             <CSInput
               type="password"
