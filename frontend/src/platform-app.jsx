@@ -16,6 +16,23 @@ import CSAppLayout from '@cloudscape-design/components/app-layout';
 import CSSideNavigation from '@cloudscape-design/components/side-navigation';
 import CSInput from '@cloudscape-design/components/input';
 import CSButtonDropdown from '@cloudscape-design/components/button-dropdown';
+// Cloudscape 内容迁移(me/profile/library/modules/extensions 等页)
+import CSContainer from '@cloudscape-design/components/container';
+import CSHeader from '@cloudscape-design/components/header';
+import CSSpaceBetween from '@cloudscape-design/components/space-between';
+import CSFormField from '@cloudscape-design/components/form-field';
+import CSSelect from '@cloudscape-design/components/select';
+import CSToggle from '@cloudscape-design/components/toggle';
+import CSBox from '@cloudscape-design/components/box';
+import CSButton from '@cloudscape-design/components/button';
+import CSTable from '@cloudscape-design/components/table';
+import CSCards from '@cloudscape-design/components/cards';
+import CSColumnLayout from '@cloudscape-design/components/column-layout';
+import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
+import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
+import CSBadge from '@cloudscape-design/components/badge';
+import CSAlert from '@cloudscape-design/components/alert';
+import CSTextarea from '@cloudscape-design/components/textarea';
 
 const PL_NAV = [
   { section: "工作台" },
@@ -863,12 +880,12 @@ const ME_ACHIEVEMENTS = [
 
 function MePage({ subPage = "overview" }) {
   return (
-    <div className="pl-stack">
+    <CSSpaceBetween size="l">
       <MeSubNav active={subPage} />
       {subPage === "overview" && <MeOverview />}
       {subPage === "edit" && <MeEditProfile />}
       {subPage === "settings" && <MeUserSettings />}
-    </div>
+    </CSSpaceBetween>
   );
 }
 
@@ -879,13 +896,17 @@ function MeSubNav({ active }) {
     { id: "settings", label: "用户设置", hash: "#me-settings" },
   ];
   return (
-    <div className="pl-me-subnav">
+    <CSSpaceBetween direction="horizontal" size="xs">
       {tabs.map(t => (
-        <a key={t.id} href={t.hash} className={`pl-me-subnav-item ${active === t.id ? "active" : ""}`}>
+        <CSButton
+          key={t.id}
+          variant={active === t.id ? "primary" : "normal"}
+          href={t.hash}
+        >
           {t.label}
-        </a>
+        </CSButton>
       ))}
-    </div>
+    </CSSpaceBetween>
   );
 }
 
@@ -950,101 +971,110 @@ function MeOverview() {
   const playHoursLabel = (playMinutesTotal == null) ? "—" : (playMinutesTotal / 60).toFixed(1);
 
   return (
-    <>
-      <section className="pl-sec">
-        <div className="pl-me-hero">
-          <div className="pl-me-avatar">{user.display_name.slice(0, 1)}</div>
-          <div className="pl-me-hero-body">
-            <div className="pl-me-name">
-              <h2>{user.display_name}</h2>
-              <span className="pill"><span className="dot ok pulse" /> 在线</span>
-              <span className="pill accent">{user.role === "admin" ? "管理员" : user.role}</span>
+    <CSSpaceBetween size="l">
+      {/* Hero section */}
+      <CSContainer>
+        <CSSpaceBetween size="m">
+          <CSSpaceBetween direction="horizontal" size="m">
+            <div className="pl-me-avatar">{user.display_name.slice(0, 1)}</div>
+            <div style={{flex: 1}}>
+              <CSSpaceBetween size="xs">
+                <CSBox variant="h2">
+                  {user.display_name}
+                  <span className="pill" style={{marginLeft: 8}}><span className="dot ok pulse" /> 在线</span>
+                  <span className="pill accent" style={{marginLeft: 6}}>{user.role === "admin" ? "管理员" : user.role}</span>
+                </CSBox>
+                <CSBox color="text-body-secondary" fontSize="body-s">
+                  <span><Icon name="user" size={11} /> @{user.username}</span>
+                  <span className="mono" style={{marginLeft: 12}}>uid {user.uid}</span>
+                  <span style={{marginLeft: 12}}><Icon name="history" size={11} /> 注册于 {regAt} · 上次登录 {lastLoginAgo}</span>
+                </CSBox>
+                <CSBox>{user.bio || "暂无简介。"}</CSBox>
+              </CSSpaceBetween>
             </div>
-            <div className="pl-me-meta muted">
-              <span><Icon name="user" size={11} /> @{user.username}</span>
-              <span className="mono">uid {user.uid}</span>
-              <span><Icon name="history" size={11} /> 注册于 {regAt} · 上次登录 {lastLoginAgo}</span>
-            </div>
-            <p className="pl-me-bio serif">{user.bio || "暂无简介。"}</p>
-          </div>
-          <div className="pl-me-hero-actions">
-            <a className="btn ghost" href="#me-edit" data-tip="修改账户信息"><Icon name="edit" size={12} /> 编辑资料</a>
-            <a className="btn ghost" href="#me-settings" data-tip="用户设置"><Icon name="settings" size={12} /> 用户设置</a>
-          </div>
-        </div>
-      </section>
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSButton href="#me-edit" iconName="edit">编辑资料</CSButton>
+              <CSButton href="#me-settings" iconName="settings">用户设置</CSButton>
+            </CSSpaceBetween>
+          </CSSpaceBetween>
+        </CSSpaceBetween>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-stat-row">
-          <div className="pl-stat">
-            <span className="pl-stat-label">游玩时长</span>
-            <span className="pl-stat-value">{playHoursLabel}{playMinutesTotal != null && <span style={{fontSize: 14, color: "var(--muted)", marginLeft: 4}}>h</span>}</span>
-            <span className="pl-stat-foot">{playMinutesWeek != null ? `本周 +${(playMinutesWeek / 60).toFixed(1)}h` : "暂无统计"}</span>
+      {/* Stat row */}
+      <CSContainer>
+        <CSColumnLayout columns={5} variant="text-grid">
+          <div>
+            <CSBox variant="awsui-key-label">游玩时长</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">
+              {playHoursLabel}{playMinutesTotal != null && <span style={{fontSize: 14, color: "var(--muted)", marginLeft: 4}}>h</span>}
+            </CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{playMinutesWeek != null ? `本周 +${(playMinutesWeek / 60).toFixed(1)}h` : "暂无统计"}</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">回合数</span>
-            <span className="pl-stat-value">{totalRounds != null ? totalRounds.toLocaleString() : "—"}</span>
-            <span className="pl-stat-foot">分布在 {saves.length} 个存档</span>
+          <div>
+            <CSBox variant="awsui-key-label">回合数</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{totalRounds != null ? totalRounds.toLocaleString() : "—"}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">分布在 {saves.length} 个存档</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">创建分支</span>
-            <span className="pl-stat-value">{branchesCount != null ? branchesCount : "—"}</span>
-            <span className="pl-stat-foot">{maxDepth ? `最深 ${maxDepth} 层` : "—"}</span>
+          <div>
+            <CSBox variant="awsui-key-label">创建分支</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{branchesCount != null ? branchesCount : "—"}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{maxDepth ? `最深 ${maxDepth} 层` : "—"}</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">导入剧本</span>
-            <span className="pl-stat-value">{importedScripts != null ? importedScripts : "—"}</span>
-            <span className="pl-stat-foot">{importedWords ? `共 ${fmtCN(importedWords)}字` : "—"}</span>
+          <div>
+            <CSBox variant="awsui-key-label">导入剧本</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{importedScripts != null ? importedScripts : "—"}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{importedWords ? `共 ${fmtCN(importedWords)}字` : "—"}</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">连续登录</span>
-            <span className="pl-stat-value">{loginStreak != null ? loginStreak : "—"}<span style={{fontSize: 14, color: "var(--muted)", marginLeft: 4}}>天</span></span>
-            <span className="pl-stat-foot">{longestStreak ? `最长 ${longestStreak} 天` : "—"}</span>
+          <div>
+            <CSBox variant="awsui-key-label">连续登录</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">
+              {loginStreak != null ? loginStreak : "—"}<span style={{fontSize: 14, color: "var(--muted)", marginLeft: 4}}>天</span>
+            </CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{longestStreak ? `最长 ${longestStreak} 天` : "—"}</CSBox>
           </div>
-        </div>
-      </section>
+        </CSColumnLayout>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>成就 <span className="muted-2">{unlockedCount} / {ACHIEVEMENTS.length} 已解锁</span></h2></div>
-        {ACHIEVEMENTS.length === 0 && (
-          <div className="muted-2" style={{padding: "20px 0", textAlign: "center", fontSize: 13, lineHeight: 1.7}}>
-            成就系统尚未上线。<br />
-            <span className="muted">后端接通成就 API 后此处会自动显示。</span>
-          </div>
-        )}
-        <div className="pl-achv-grid">
-          {ACHIEVEMENTS.map(a => (
-            <div key={a.id} className={`pl-achv ${a.unlocked ? "unlocked" : "locked"}`}>
-              <div className="pl-achv-mark"><Icon name={a.unlocked ? "check" : "lock"} size={a.unlocked ? 16 : 14} /></div>
-              <div className="pl-achv-body">
-                <strong>{a.name}</strong>
-                <span className="pl-achv-desc muted">{a.desc}</span>
-                {a.unlocked ? (
-                  <span className="muted-2 mono" style={{fontSize: 10.5}}>解锁于 {a.at}</span>
-                ) : (
-                  <div className="pl-achv-progress">
-                    <div className="pl-achv-bar"><div className="pl-achv-fill" style={{width: (a.progress / a.target * 100).toFixed(0) + "%"}} /></div>
-                    <span className="muted-2 mono" style={{fontSize: 10.5}}>{a.progress.toLocaleString()} / {a.target.toLocaleString()}</span>
-                  </div>
-                )}
+      {/* 成就 */}
+      <CSContainer header={<CSHeader variant="h2">成就 <span className="muted-2">{unlockedCount} / {ACHIEVEMENTS.length} 已解锁</span></CSHeader>}>
+        {ACHIEVEMENTS.length === 0 ? (
+          <CSBox color="text-body-secondary" textAlign="center" padding="l">
+            成就系统尚未上线。后端接通成就 API 后此处会自动显示。
+          </CSBox>
+        ) : (
+          <CSColumnLayout columns={4} variant="text-grid">
+            {ACHIEVEMENTS.map(a => (
+              <div key={a.id} className={`pl-achv ${a.unlocked ? "unlocked" : "locked"}`}>
+                <div className="pl-achv-mark"><Icon name={a.unlocked ? "check" : "lock"} size={a.unlocked ? 16 : 14} /></div>
+                <div className="pl-achv-body">
+                  <strong>{a.name}</strong>
+                  <span className="pl-achv-desc muted">{a.desc}</span>
+                  {a.unlocked ? (
+                    <span className="muted-2 mono" style={{fontSize: 10.5}}>解锁于 {a.at}</span>
+                  ) : (
+                    <div className="pl-achv-progress">
+                      <div className="pl-achv-bar"><div className="pl-achv-fill" style={{width: (a.progress / a.target * 100).toFixed(0) + "%"}} /></div>
+                      <span className="muted-2 mono" style={{fontSize: 10.5}}>{a.progress.toLocaleString()} / {a.target.toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-      </section>
+            ))}
+          </CSColumnLayout>
+        )}
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>最近活动</h2>
-          <div className="pl-sec-tools">
-            <div className="seg" style={{flexShrink: 0}}>
-              <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button>
-              <button className={filter === "回合" ? "active" : ""} onClick={() => setFilter("回合")}>回合</button>
-              <button className={filter === "分支" ? "active" : ""} onClick={() => setFilter("分支")}>分支</button>
-              <button className={filter === "剧本" ? "active" : ""} onClick={() => setFilter("剧本")}>剧本</button>
-            </div>
-          </div>
-        </div>
+      {/* 最近活动 */}
+      <CSContainer header={
+        <CSHeader variant="h2" actions={
+          <CSSpaceBetween direction="horizontal" size="xs">
+            <CSButton variant={filter === "all" ? "primary" : "normal"} onClick={() => setFilter("all")}>全部</CSButton>
+            <CSButton variant={filter === "回合" ? "primary" : "normal"} onClick={() => setFilter("回合")}>回合</CSButton>
+            <CSButton variant={filter === "分支" ? "primary" : "normal"} onClick={() => setFilter("分支")}>分支</CSButton>
+            <CSButton variant={filter === "剧本" ? "primary" : "normal"} onClick={() => setFilter("剧本")}>剧本</CSButton>
+          </CSSpaceBetween>
+        }>最近活动</CSHeader>
+      }>
         <ol className="pl-activity">
           {filteredActivity.map((a, i) => (
             <li key={i}>
@@ -1063,15 +1093,15 @@ function MeOverview() {
           ))}
           {/* task 48：登录态此列表为空，后端无活动接口 → 给明确空态文案 */}
           {filteredActivity.length === 0 && (
-            <div className="pl-model-empty">
+            <CSBox color="text-body-secondary" textAlign="center" padding="l">
               {ACTIVITY.length === 0
                 ? "活动日志接口未上线，登录玩游戏后这里会显示真实回合/分支/导入记录。"
                 : "未找到此分类的活动"}
-            </div>
+            </CSBox>
           )}
         </ol>
-      </section>
-    </>
+      </CSContainer>
+    </CSSpaceBetween>
   );
 }
 
@@ -1204,112 +1234,116 @@ function MeEditProfile() {
     }
   };
   return (
-    <div className="pl-me-form-stack">
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>头像</h2>
-        </div>
-        <div className="pl-me-avatar-row">
-          <div className="pl-me-avatar large">{form.display_name.slice(0, 1)}</div>
-          <div className="pl-me-avatar-actions">
-            <p className="muted" style={{fontSize: 12, margin: 0}}>支持 PNG / JPG / WEBP，建议 512×512。最大 2 MB。</p>
-            <div style={{display: "flex", gap: 6, marginTop: 8}}>
-              <button className="btn ghost" onClick={() => setUploadOpen(true)}><Icon name="upload" size={12} /> 上传新头像</button>
-              <button className="btn ghost" onClick={() => setResetAvatarOpen(true)}><Icon name="trash" size={12} /> 使用默认</button>
+    <CSSpaceBetween size="l">
+      {/* 头像 */}
+      <CSContainer header={<CSHeader variant="h2">头像</CSHeader>}>
+        <CSSpaceBetween size="m">
+          <div className="pl-me-avatar-row">
+            <div className="pl-me-avatar large">{form.display_name.slice(0, 1)}</div>
+            <div className="pl-me-avatar-actions">
+              <CSBox color="text-body-secondary" fontSize="body-s">支持 PNG / JPG / WEBP，建议 512×512。最大 2 MB。</CSBox>
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSButton iconName="upload" onClick={() => setUploadOpen(true)}>上传新头像</CSButton>
+                <CSButton iconName="remove" onClick={() => setResetAvatarOpen(true)}>使用默认</CSButton>
+              </CSSpaceBetween>
             </div>
           </div>
-        </div>
-      </section>
+        </CSSpaceBetween>
+      </CSContainer>
 
-      <section className="pl-sec" data-cap-anchor="settings.profile">
-        <div className="pl-sec-head"><h2>基本资料</h2></div>
-        <div className="pl-form-grid-2">
-          <Field label="显示名" hint="出现在游戏和评论里">
-            <input value={form.display_name} onChange={(e) => u("display_name", e.target.value)} />
+      {/* 基本资料 */}
+      <CSContainer header={<CSHeader variant="h2">基本资料</CSHeader>} data-cap-anchor="settings.profile">
+        <CSSpaceBetween size="l">
+          <div className="pl-form-grid-2">
+            <Field label="显示名" hint="出现在游戏和评论里">
+              <CSInput value={form.display_name} onChange={({ detail }) => u("display_name", detail.value)} />
+            </Field>
+            <Field label="代词">
+              <CSSelect
+                selectedOption={[{value:"她/她",label:"她/她"},{value:"他/他",label:"他/他"},{value:"TA/TA",label:"TA/TA"},{value:"不公开",label:"不公开"}].find(o => o.value === form.pronouns) || null}
+                options={[{value:"她/她",label:"她/她"},{value:"他/他",label:"他/他"},{value:"TA/TA",label:"TA/TA"},{value:"不公开",label:"不公开"}]}
+                onChange={({ detail }) => u("pronouns", detail.selectedOption.value)}
+              />
+            </Field>
+            <Field label="用户名" hint="登录用，6 个月可改一次" required>
+              <CSInput value={form.username} onChange={({ detail }) => u("username", detail.value)} />
+            </Field>
+            <Field label="真实姓名" hint="仅自己可见">
+              <CSInput value={form.real_name} onChange={({ detail }) => u("real_name", detail.value)} />
+            </Field>
+            <Field label="性别">
+              <CSSpaceBetween direction="horizontal" size="xs">
+                {[{v: "female", l: "女"}, {v: "male", l: "男"}, {v: "other", l: "其他"}, {v: "unspecified", l: "不公开"}].map(o => (
+                  <CSButton key={o.v} variant={form.gender === o.v ? "primary" : "normal"} onClick={() => u("gender", o.v)}>{o.l}</CSButton>
+                ))}
+              </CSSpaceBetween>
+            </Field>
+            <Field label="生日">
+              <CSInput type="date" value={form.birthday} onChange={({ detail }) => u("birthday", detail.value)} />
+            </Field>
+            <Field label="所在地">
+              <CSInput value={form.location} onChange={({ detail }) => u("location", detail.value)} placeholder="例：上海" />
+            </Field>
+            <Field label="个人网站">
+              <CSInput value={form.website} onChange={({ detail }) => u("website", detail.value)} placeholder="https://..." />
+            </Field>
+          </div>
+          <Field label="简介" hint="280 字以内">
+            <CSTextarea
+              rows={3}
+              value={form.bio}
+              onChange={({ detail }) => u("bio", detail.value)}
+            />
+            <CSBox color="text-body-secondary" fontSize="body-s" textAlign="right">{form.bio.length} / 280</CSBox>
           </Field>
-          <Field label="代词">
-            <select value={form.pronouns} onChange={(e) => u("pronouns", e.target.value)}>
-              <option value="她/她">她/她</option>
-              <option value="他/他">他/他</option>
-              <option value="TA/TA">TA/TA</option>
-              <option value="不公开">不公开</option>
-            </select>
-          </Field>
-          <Field label="用户名" hint="登录用，6 个月可改一次" required>
-            <input className="mono" value={form.username} onChange={(e) => u("username", e.target.value)} />
-          </Field>
-          <Field label="真实姓名" hint="仅自己可见">
-            <input value={form.real_name} onChange={(e) => u("real_name", e.target.value)} />
-          </Field>
-          <Field label="性别">
-            <div className="seg" style={{display: "flex"}}>
-              {[{v: "female", l: "女"}, {v: "male", l: "男"}, {v: "other", l: "其他"}, {v: "unspecified", l: "不公开"}].map(o => (
-                <button key={o.v} className={form.gender === o.v ? "active" : ""} onClick={() => u("gender", o.v)}>{o.l}</button>
-              ))}
-            </div>
-          </Field>
-          <Field label="生日">
-            <input type="date" value={form.birthday} onChange={(e) => u("birthday", e.target.value)} />
-          </Field>
-          <Field label="所在地">
-            <input value={form.location} onChange={(e) => u("location", e.target.value)} placeholder="例：上海" />
-          </Field>
-          <Field label="个人网站">
-            <input className="mono" value={form.website} onChange={(e) => u("website", e.target.value)} placeholder="https://..." />
-          </Field>
-        </div>
-        <Field label="简介" hint="280 字以内">
-          <textarea value={form.bio} onChange={(e) => u("bio", e.target.value)} rows={3} maxLength={280} />
-          <div className="muted-2 mono" style={{fontSize: 10.5, textAlign: "right"}}>{form.bio.length} / 280</div>
-        </Field>
-      </section>
+        </CSSpaceBetween>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>联系方式</h2></div>
+      {/* 联系方式 */}
+      <CSContainer header={<CSHeader variant="h2">联系方式</CSHeader>}>
         <div className="pl-form-grid-2">
           <Field label="邮箱" hint="已验证" required>
-            <div className="pl-inline-field">
-              <input value={form.email} onChange={(e) => u("email", e.target.value)} />
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSInput value={form.email} onChange={({ detail }) => u("email", detail.value)} />
               <span className="pill ok"><span className="dot ok" /> 已验证</span>
-            </div>
+            </CSSpaceBetween>
           </Field>
           <Field label="手机" hint="用于二次验证">
-            <div className="pl-inline-field">
-              <input className="mono" value={form.phone} onChange={(e) => u("phone", e.target.value)} />
-              <button className="btn ghost" style={{height: 30}} onClick={onSendSms}>发送验证码</button>
-            </div>
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSInput value={form.phone} onChange={({ detail }) => u("phone", detail.value)} />
+              <CSButton onClick={onSendSms}>发送验证码</CSButton>
+            </CSSpaceBetween>
           </Field>
         </div>
-      </section>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>本地化</h2></div>
+      {/* 本地化 */}
+      <CSContainer header={<CSHeader variant="h2">本地化</CSHeader>}>
         <div className="pl-form-grid-2">
           <Field label="界面语言">
-            <select value={form.language} onChange={(e) => u("language", e.target.value)}>
-              <option value="zh-CN">简体中文</option>
-              <option value="zh-TW">繁體中文</option>
-              <option value="en">English (Beta)</option>
-              <option value="ja">日本語</option>
-            </select>
+            <CSSelect
+              selectedOption={[{value:"zh-CN",label:"简体中文"},{value:"zh-TW",label:"繁體中文"},{value:"en",label:"English (Beta)"},{value:"ja",label:"日本語"}].find(o => o.value === form.language) || null}
+              options={[{value:"zh-CN",label:"简体中文"},{value:"zh-TW",label:"繁體中文"},{value:"en",label:"English (Beta)"},{value:"ja",label:"日本語"}]}
+              onChange={({ detail }) => u("language", detail.selectedOption.value)}
+            />
           </Field>
           <Field label="时区">
-            <select value={form.timezone} onChange={(e) => u("timezone", e.target.value)}>
-              <option value="Asia/Shanghai">UTC+8 · 上海</option>
-              <option value="Asia/Tokyo">UTC+9 · 东京</option>
-              <option value="UTC">UTC</option>
-              <option value="America/Los_Angeles">UTC-8 · 洛杉矶</option>
-            </select>
+            <CSSelect
+              selectedOption={[{value:"Asia/Shanghai",label:"UTC+8 · 上海"},{value:"Asia/Tokyo",label:"UTC+9 · 东京"},{value:"UTC",label:"UTC"},{value:"America/Los_Angeles",label:"UTC-8 · 洛杉矶"}].find(o => o.value === form.timezone) || null}
+              options={[{value:"Asia/Shanghai",label:"UTC+8 · 上海"},{value:"Asia/Tokyo",label:"UTC+9 · 东京"},{value:"UTC",label:"UTC"},{value:"America/Los_Angeles",label:"UTC-8 · 洛杉矶"}]}
+              onChange={({ detail }) => u("timezone", detail.selectedOption.value)}
+            />
           </Field>
         </div>
-      </section>
+      </CSContainer>
 
-      <div className="pl-me-form-foot">
-        <a className="btn ghost" href="#me">取消</a>
-        <button className="btn primary" onClick={onSave} disabled={saving}>
-          <Icon name="check" size={12} /> {saving ? "保存中…" : "保存资料"}
-        </button>
-      </div>
+      {/* 保存按钮行 */}
+      <CSSpaceBetween direction="horizontal" size="xs">
+        <CSButton href="#me">取消</CSButton>
+        <CSButton variant="primary" onClick={onSave} loading={saving}>
+          {saving ? "保存中…" : "保存资料"}
+        </CSButton>
+      </CSSpaceBetween>
 
       <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp"
         style={{display: "none"}} onChange={(e) => onAvatarPick(e.target.files?.[0])} />
@@ -1340,7 +1374,7 @@ function MeEditProfile() {
         onClose={() => setSmsOpen(false)}
         onConfirm={onVerifySms}
       />
-    </div>
+    </CSSpaceBetween>
   );
 }
 
@@ -1499,126 +1533,134 @@ function MeUserSettings() {
   useEffectPL(() => { onSavePreference("ads_track", adsTrack); }, [adsTrack]);
 
   return (
-    <div className="pl-me-form-stack" data-cap-anchor="me.settings">
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>隐私 · 公开范围</h2></div>
-        <SettingRow
-          title="公开个人主页"
-          desc="开启后，其他用户可以通过 @用户名 查看你的成就墙和最近活动。"
-          control={<SettingsToggle on={publicProfile} set={tog(setPublicProfile, "公开主页")} />}
-        />
-        <SettingRow
-          title="允许搜索"
-          desc="允许通过显示名或用户名在平台内搜索找到你。"
-          control={<SettingsToggle on={searchable} set={tog(setSearchable, "允许搜索")} />}
-        />
-        <SettingRow
-          title="资料字段可见性"
-          desc="逐项控制谁能看到你的真实姓名、所在地、生日等。"
-          control={<button className="btn ghost" onClick={() => setVisibilityOpen(true)}>逐项配置</button>}
-        />
-      </section>
+    <CSSpaceBetween size="l" data-cap-anchor="me.settings">
+      {/* 隐私 · 公开范围 */}
+      <CSContainer header={<CSHeader variant="h2">隐私 · 公开范围</CSHeader>}>
+        <CSSpaceBetween size="l">
+          <SettingRow
+            title="公开个人主页"
+            desc="开启后，其他用户可以通过 @用户名 查看你的成就墙和最近活动。"
+            control={<SettingsToggle on={publicProfile} set={tog(setPublicProfile, "公开主页")} />}
+          />
+          <SettingRow
+            title="允许搜索"
+            desc="允许通过显示名或用户名在平台内搜索找到你。"
+            control={<SettingsToggle on={searchable} set={tog(setSearchable, "允许搜索")} />}
+          />
+          <SettingRow
+            title="资料字段可见性"
+            desc="逐项控制谁能看到你的真实姓名、所在地、生日等。"
+            control={<CSButton onClick={() => setVisibilityOpen(true)}>逐项配置</CSButton>}
+          />
+        </CSSpaceBetween>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>数据共享 · 合规</h2></div>
-        <SettingRow
-          title="匿名用量统计"
-          desc="把按钮点击 / 页面停留时长（不含剧本内容）匿名上报给团队，用于改进体验。"
-          control={<SettingsToggle on={shareUsage} set={tog(setShareUsage, "匿名用量")} />}
-        />
-        <SettingRow
-          title="崩溃 / 错误报告"
-          desc="出现错误时上传堆栈信息和最近一次操作。剧本内容不会被上传。"
-          control={<SettingsToggle on={shareCrash} set={tog(setShareCrash, "崩溃报告")} />}
-        />
-        <SettingRow
-          title="个性化推荐"
-          desc="基于你的剧本与角色卡向你推荐 Skill 和 MCP。"
-          control={<SettingsToggle on={adsTrack} set={tog(setAdsTrack, "个性化推荐")} />}
-        />
-        <SettingRow
-          title="GDPR / 个人信息保护合规"
-          desc="本平台不向第三方分享你的剧本内容、玩家变量或私聊。详见隐私政策。"
-          control={<a className="btn ghost" href="#" onClick={(e) => { e.preventDefault(); setPolicyOpen(true); }} data-tip="查看隐私政策全文"><Icon name="file" size={12} /> 隐私政策</a>}
-        />
-      </section>
+      {/* 数据共享 · 合规 */}
+      <CSContainer header={<CSHeader variant="h2">数据共享 · 合规</CSHeader>}>
+        <CSSpaceBetween size="l">
+          <SettingRow
+            title="匿名用量统计"
+            desc="把按钮点击 / 页面停留时长（不含剧本内容）匿名上报给团队，用于改进体验。"
+            control={<SettingsToggle on={shareUsage} set={tog(setShareUsage, "匿名用量")} />}
+          />
+          <SettingRow
+            title="崩溃 / 错误报告"
+            desc="出现错误时上传堆栈信息和最近一次操作。剧本内容不会被上传。"
+            control={<SettingsToggle on={shareCrash} set={tog(setShareCrash, "崩溃报告")} />}
+          />
+          <SettingRow
+            title="个性化推荐"
+            desc="基于你的剧本与角色卡向你推荐 Skill 和 MCP。"
+            control={<SettingsToggle on={adsTrack} set={tog(setAdsTrack, "个性化推荐")} />}
+          />
+          <SettingRow
+            title="GDPR / 个人信息保护合规"
+            desc="本平台不向第三方分享你的剧本内容、玩家变量或私聊。详见隐私政策。"
+            control={<CSButton iconName="file-open" onClick={(e) => { e.preventDefault(); setPolicyOpen(true); }}>隐私政策</CSButton>}
+          />
+        </CSSpaceBetween>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>账号 · 安全</h2></div>
-        <SettingRow
-          title="修改密码"
-          desc="建议每 90 天更换一次，至少 12 位字符 + 大小写 + 数字。"
-          control={<button className="btn ghost" onClick={() => setPwOpen(true)}><Icon name="lock" size={12} /> 修改密码</button>}
-        />
-        <SettingRow
-          title="二次验证（2FA）"
-          desc="通过 Authenticator App 或手机短信进行二次验证。"
-          control={
-            <div style={{display: "flex", alignItems: "center", gap: 10}}>
-              {twofa && <span className="pill ok"><span className="dot ok" /> Authenticator</span>}
-              <SettingsToggle on={twofa} set={tog(setTwofa, "二次验证")} />
-            </div>
-          }
-        />
-        {(() => {
-          // task 49：原 desc 写死 "3 个登录会话 · 12 分钟前 / 14 次登录"。改成
-          // 真实派生：sessions.length + 最近一条 last_seen_at；30 天内 login_ok 次数。
-          const nSess = sessions.length;
-          const cur = sessions.find(s => s.current) || sessions[0];
-          const sessDesc = nSess === 0
-            ? "尚未拉取活跃会话。"
-            : `当前 ${nSess} 个登录会话${cur ? ` · 最近：${cur.device}${cur.ts ? " · " + cur.ts : ""}` : ""}。`;
-          const cutoff = Date.now() - 30 * 86400_000;
-          const okIn30d = loginHistory.filter(h => {
-            if (h.result !== "ok") return false;
-            try { return new Date(h.at).getTime() >= cutoff; } catch { return false; }
-          }).length;
-          const blocked = loginHistory.filter(h => h.result !== "ok").length;
-          const histDesc = loginHistory.length === 0
-            ? "尚未拉取登录历史。"
-            : `最近 30 天 ${okIn30d} 次成功登录${blocked ? `，${blocked} 次被拦截` : "，无异常 IP"}。`;
-          return <>
-            <SettingRow
-              title="活跃会话"
-              desc={sessDesc}
-              control={<button className="btn ghost" onClick={() => setSessionsOpen(true)}><Icon name="eye" size={12} /> 查看会话</button>}
-            />
-            <SettingRow
-              title="登录历史"
-              desc={histDesc}
-              control={<button className="btn ghost" onClick={() => setHistoryOpen(true)}><Icon name="history" size={12} /> 查看日志</button>}
-            />
-          </>;
-        })()}
-      </section>
+      {/* 账号 · 安全 */}
+      <CSContainer header={<CSHeader variant="h2">账号 · 安全</CSHeader>}>
+        <CSSpaceBetween size="l">
+          <SettingRow
+            title="修改密码"
+            desc="建议每 90 天更换一次，至少 12 位字符 + 大小写 + 数字。"
+            control={<CSButton iconName="lock-private" onClick={() => setPwOpen(true)}>修改密码</CSButton>}
+          />
+          <SettingRow
+            title="二次验证（2FA）"
+            desc="通过 Authenticator App 或手机短信进行二次验证。"
+            control={
+              <CSSpaceBetween direction="horizontal" size="xs">
+                {twofa && <span className="pill ok"><span className="dot ok" /> Authenticator</span>}
+                <SettingsToggle on={twofa} set={tog(setTwofa, "二次验证")} />
+              </CSSpaceBetween>
+            }
+          />
+          {(() => {
+            // task 49：原 desc 写死 "3 个登录会话 · 12 分钟前 / 14 次登录"。改成
+            // 真实派生：sessions.length + 最近一条 last_seen_at；30 天内 login_ok 次数。
+            const nSess = sessions.length;
+            const cur = sessions.find(s => s.current) || sessions[0];
+            const sessDesc = nSess === 0
+              ? "尚未拉取活跃会话。"
+              : `当前 ${nSess} 个登录会话${cur ? ` · 最近：${cur.device}${cur.ts ? " · " + cur.ts : ""}` : ""}。`;
+            const cutoff = Date.now() - 30 * 86400_000;
+            const okIn30d = loginHistory.filter(h => {
+              if (h.result !== "ok") return false;
+              try { return new Date(h.at).getTime() >= cutoff; } catch { return false; }
+            }).length;
+            const blocked = loginHistory.filter(h => h.result !== "ok").length;
+            const histDesc = loginHistory.length === 0
+              ? "尚未拉取登录历史。"
+              : `最近 30 天 ${okIn30d} 次成功登录${blocked ? `，${blocked} 次被拦截` : "，无异常 IP"}。`;
+            return <>
+              <SettingRow
+                title="活跃会话"
+                desc={sessDesc}
+                control={<CSButton iconName="visibility-on" onClick={() => setSessionsOpen(true)}>查看会话</CSButton>}
+              />
+              <SettingRow
+                title="登录历史"
+                desc={histDesc}
+                control={<CSButton iconName="status-info" onClick={() => setHistoryOpen(true)}>查看日志</CSButton>}
+              />
+            </>;
+          })()}
+        </CSSpaceBetween>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>通知</h2></div>
+      {/* 通知 */}
+      <CSContainer header={<CSHeader variant="h2">通知</CSHeader>}>
         <SettingRow
           title="邮件通知"
           desc="重要安全事件、订阅变更、长时间未登录提醒。"
           control={<SettingsToggle on={emailNotif} set={tog(setEmailNotif, "邮件通知")} />}
         />
-      </section>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>数据所有权</h2></div>
-        <SettingRow
-          title="导出我的数据"
-          desc="打包导出全部剧本、存档、记忆、库资产、用量记录。生成后通过邮件发送下载链接。"
-          control={<button className="btn ghost" onClick={() => setExportOpen(true)}><Icon name="download" size={12} /> 申请导出</button>}
-        />
-        <SettingRow
-          title="停用账号"
-          desc="停用后无法登录，剧本和存档保留 90 天，期间可随时恢复。"
-          control={<button className="btn danger" onClick={() => setConfirmDeact(true)}>停用账号</button>}
-        />
-        <SettingRow
-          title="永久删除账号"
-          desc="立刻删除全部账号信息、剧本、存档、库资产，无法恢复。"
-          control={<button className="btn danger" onClick={() => setConfirmDelete(true)}><Icon name="trash" size={12} /> 删除账号</button>}
-        />
-      </section>
+      {/* 数据所有权 */}
+      <CSContainer header={<CSHeader variant="h2">数据所有权</CSHeader>}>
+        <CSSpaceBetween size="l">
+          <SettingRow
+            title="导出我的数据"
+            desc="打包导出全部剧本、存档、记忆、库资产、用量记录。生成后通过邮件发送下载链接。"
+            control={<CSButton iconName="download" onClick={() => setExportOpen(true)}>申请导出</CSButton>}
+          />
+          <SettingRow
+            title="停用账号"
+            desc="停用后无法登录，剧本和存档保留 90 天，期间可随时恢复。"
+            control={<CSButton variant="normal" onClick={() => setConfirmDeact(true)}>停用账号</CSButton>}
+          />
+          <SettingRow
+            title="永久删除账号"
+            desc="立刻删除全部账号信息、剧本、存档、库资产，无法恢复。"
+            control={<CSButton variant="normal" iconName="remove" onClick={() => setConfirmDelete(true)}>删除账号</CSButton>}
+          />
+        </CSSpaceBetween>
+      </CSContainer>
 
       <ConfirmModal
         open={confirmDeact}
@@ -1798,32 +1840,23 @@ function MeUserSettings() {
           </div>
         </div>
       )}
-    </div>
+    </CSSpaceBetween>
   );
 }
 
 function Field({ label, hint, required, children }) {
   return (
-    <div className="pl-field">
-      <label>
-        {label}
-        {required && <span className="pl-field-req">*</span>}
-        {hint && <span className="muted-2" style={{textTransform: "none", letterSpacing: 0, marginLeft: 6}}>{hint}</span>}
-      </label>
+    <CSFormField label={<>{label}{required && <span style={{ color: 'var(--accent)', marginLeft: 2 }}>*</span>}</>} description={hint}>
       {children}
-    </div>
+    </CSFormField>
   );
 }
 
 function SettingRow({ title, desc, control }) {
   return (
-    <div className="pl-setting-row">
-      <div className="pl-setting-label">
-        <strong>{title}</strong>
-        <p className="muted">{desc}</p>
-      </div>
-      <div className="pl-setting-control">{control}</div>
-    </div>
+    <CSFormField label={title} description={desc}>
+      {control}
+    </CSFormField>
   );
 }
 
@@ -1842,122 +1875,138 @@ function ProfilePage() {
   const wordWan = wordTotal > 0 ? (wordTotal / 10000).toFixed(0) : "—";
   const branchAgg = realSaves.reduce((a, s) => a + (Number(s && s.branch_count) || 0), 0) || (stats?.branches ?? null);
   return (
-    <div className="pl-stack">
-      <section className="pl-sec">
-        <div className="pl-stat-row">
-          <div className="pl-stat">
-            <span className="pl-stat-label">剧本</span>
-            <span className="pl-stat-value">{realScripts.length}</span>
-            <span className="pl-stat-foot">{wordTotal > 0 ? `共 ${wordWan} 万字` : "未导入剧本"}</span>
+    <CSSpaceBetween size="l">
+      {/* 4 stat 卡 */}
+      <CSContainer>
+        <CSColumnLayout columns={4} variant="text-grid">
+          <div>
+            <CSBox variant="awsui-key-label">剧本</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{realScripts.length}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{wordTotal > 0 ? `共 ${wordWan} 万字` : "未导入剧本"}</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">存档</span>
-            <span className="pl-stat-value">{realSaves.length}</span>
-            <span className="pl-stat-foot">{realSaves[0]?.updated_at ? `最近：${realSaves[0].updated_at}` : "尚未创建存档"}</span>
+          <div>
+            <CSBox variant="awsui-key-label">存档</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{realSaves.length}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{realSaves[0]?.updated_at ? `最近：${realSaves[0].updated_at}` : "尚未创建存档"}</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">分支节点</span>
-            <span className="pl-stat-value">{fmtN(branchAgg)}</span>
-            <span className="pl-stat-foot">{realSaves.length ? `来自 ${realSaves.length} 个存档` : "—"}</span>
+          <div>
+            <CSBox variant="awsui-key-label">分支节点</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{fmtN(branchAgg)}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{realSaves.length ? `来自 ${realSaves.length} 个存档` : "—"}</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">库资产</span>
-            <span className="pl-stat-value">{fmtN(stats?.assets)}</span>
-            <span className="pl-stat-foot">用量详见 <a href="#usage" style={{borderBottom: "1px dotted var(--muted-2)"}}>用量页</a></span>
+          <div>
+            <CSBox variant="awsui-key-label">库资产</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{fmtN(stats?.assets)}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">用量详见 <a href="#usage" style={{borderBottom: "1px dotted var(--muted-2)"}}>用量页</a></CSBox>
           </div>
-        </div>
-      </section>
+        </CSColumnLayout>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>账号</h2>
-          <div className="pl-sec-tools"><a className="btn ghost" href="#me-edit" data-tip="跳转到个人主页 / 编辑资料"><Icon name="edit" size={12} /> 编辑资料</a></div>
-        </div>
-        <div className="pl-set-row">
-          <div className="pl-set-label">
-            <strong>{user.display_name}</strong>
-            <div className="muted">@{user.username} · {user.role} · uid {user.uid}</div>
-            <p className="muted" style={{margin: "10px 0 0", fontSize: 13}}>{user.bio}</p>
-          </div>
-          <div className="pl-set-control">
-            <div className="pl-stat-row" style={{gridTemplateColumns: "1fr 1fr"}}>
-              <div className="pl-stat" style={{padding: "10px 12px"}}>
-                <span className="pl-stat-label">数据库</span>
-                <span className="mono" style={{fontSize: 13, color: "var(--text)"}}>
-                  {database.driver} · <span className={database.ok ? "ok" : "danger"}>{database.ok ? "online" : "offline"}</span>
-                </span>
-              </div>
-              <div className="pl-stat" style={{padding: "10px 12px"}}>
-                <span className="pl-stat-label">API 版本</span>
-                <span className="mono" style={{fontSize: 13, color: "var(--text)"}}>v1 · stable</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+      {/* 账号 section */}
+      <CSContainer header={
+        <CSHeader variant="h2" actions={<CSButton href="#me-edit" iconName="edit">编辑资料</CSButton>}>
+          账号
+        </CSHeader>
+      }>
+        <CSKeyValuePairs
+          columns={2}
+          items={[
+            {
+              label: "用户",
+              value: (
+                <CSSpaceBetween size="xxs">
+                  <CSBox fontWeight="bold">{user.display_name}</CSBox>
+                  <CSBox color="text-body-secondary" fontSize="body-s">@{user.username} · {user.role} · uid {user.uid}</CSBox>
+                  {user.bio && <CSBox color="text-body-secondary" fontSize="body-s">{user.bio}</CSBox>}
+                </CSSpaceBetween>
+              ),
+            },
+            {
+              label: "数据库",
+              value: (
+                <CSBox>
+                  <span className="mono">{database.driver}</span>
+                  <CSStatusIndicator type={database.ok ? "success" : "error"} style={{marginLeft: 8}}>
+                    {database.ok ? "online" : "offline"}
+                  </CSStatusIndicator>
+                </CSBox>
+              ),
+            },
+            {
+              label: "API 版本",
+              value: <span className="mono">v1 · stable</span>,
+            },
+          ]}
+        />
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>最近游玩 <span className="muted-2">按上次操作时间</span></h2>
-          <div className="pl-sec-tools">
-            <a className="btn ghost" href="#saves" title="存档目录"><Icon name="play" size={12} /> 全部存档</a>
-          </div>
-        </div>
+      {/* 最近游玩 */}
+      <CSContainer header={
+        <CSHeader variant="h2" actions={<CSButton href="#saves" iconName="caret-right-filled">全部存档</CSButton>}>
+          最近游玩 <span className="muted-2" style={{fontWeight: "normal"}}>按上次操作时间</span>
+        </CSHeader>
+      }>
         {realSaves.length === 0 ? (
-          <div className="pl-empty" style={{padding: "28px 16px", textAlign: "center", color: "var(--muted)"}}>
-            <div style={{fontFamily: "var(--font-serif)", fontSize: 14, color: "var(--text)", marginBottom: 8}}>
-              还没有任何存档
-            </div>
-            <div style={{fontSize: 13, marginBottom: 12}}>
-              去「剧本」页选一本剧本开始新游戏，存档会自动出现在这里。
-            </div>
-            <a className="btn primary" href="#saves-scripts" style={{display: "inline-flex", alignItems: "center", gap: 6}}>
-              <Icon name="bookmark" size={12} /> 去剧本页
-            </a>
-          </div>
+          <CSBox textAlign="center" color="text-body-secondary" padding="l">
+            <CSSpaceBetween size="s">
+              <CSBox>还没有任何存档</CSBox>
+              <CSBox fontSize="body-s">去「剧本」页选一本剧本开始新游戏，存档会自动出现在这里。</CSBox>
+              <CSButton href="#saves-scripts" iconName="file">去剧本页</CSButton>
+            </CSSpaceBetween>
+          </CSBox>
         ) : (
-          <table className="pl-table">
-            <thead><tr><th>剧本 / 存档</th><th>进度</th><th>上次游玩</th><th></th></tr></thead>
-            <tbody>
-              {realSaves.map(s => {
-                // task 12：以前用 hard-coded mock branchLabel + Math.floor(s.id*137...)。
-                // 真实数据里没有这些字段，全部移除；只显示后端真给出的字段，缺则 —。
-                const script = realScripts.find(sc => sc && sc.id === s.script_id);
-                return (
-                  <tr key={s.id}>
-                    <td>
-                      <div className="pl-title-cell">
-                        <strong>{s.title || `存档 #${s.id}`}</strong>
-                        <span className="muted-2 mono">{script?.title || "—"}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div style={{display: "grid", gap: 2}}>
-                        <span className="mono">{Number(s.branch_count) || 0} 分支节点</span>
-                      </div>
-                    </td>
-                    <td className="muted">
-                      {s.current && <span className="pill accent" style={{marginRight: 6}}><span className="dot accent pulse" /> 在玩</span>}
-                      {s.updated_at || "—"}
-                    </td>
-                    <td style={{textAlign: "right"}}>
-                      <button className="btn primary" onClick={() => window.__openContinue?.(s)} title="继续游戏"
-                        style={{height: 26, padding: "0 10px", fontSize: 12}}>
-                        <Icon name="play" size={11} /> 继续
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <CSTable
+            columnDefinitions={[
+              {
+                id: "title",
+                header: "剧本 / 存档",
+                cell: s => {
+                  const script = realScripts.find(sc => sc && sc.id === s.script_id);
+                  return (
+                    <div className="pl-title-cell">
+                      <strong>{s.title || `存档 #${s.id}`}</strong>
+                      <span className="muted-2 mono">{script?.title || "—"}</span>
+                    </div>
+                  );
+                },
+              },
+              {
+                id: "progress",
+                header: "进度",
+                cell: s => <span className="mono">{Number(s.branch_count) || 0} 分支节点</span>,
+              },
+              {
+                id: "last",
+                header: "上次游玩",
+                cell: s => (
+                  <span className="muted">
+                    {s.current && <span className="pill accent" style={{marginRight: 6}}><span className="dot accent pulse" /> 在玩</span>}
+                    {s.updated_at || "—"}
+                  </span>
+                ),
+              },
+              {
+                id: "action",
+                header: "",
+                cell: s => (
+                  <CSButton variant="primary" iconName="caret-right-filled"
+                    onClick={() => window.__openContinue?.(s)}>
+                    继续
+                  </CSButton>
+                ),
+              },
+            ]}
+            items={realSaves}
+            trackBy="id"
+            empty={<CSBox color="text-body-secondary" textAlign="center">暂无存档</CSBox>}
+          />
         )}
-      </section>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>最近资源</h2></div>
+      {/* 最近资源 */}
+      <CSContainer header={<CSHeader variant="h2">最近资源</CSHeader>}>
         {Array.isArray(recent_assets) && recent_assets.length > 0 ? (
-          <div className="pl-lib-grid">
+          <CSColumnLayout columns={4} variant="text-grid">
             {recent_assets.map((a, i) => (
               <div key={`asset-${i}`} className="pl-lib-tile">
                 <div className="pl-lib-tile-icon">
@@ -1967,13 +2016,14 @@ function ProfilePage() {
                 <div className="pl-lib-tile-meta">{fmtBytes(a.size || 0)} · {a.at || "—"}</div>
               </div>
             ))}
-          </div>
+          </CSColumnLayout>
         ) : (
-          <div className="muted" style={{padding: "20px 8px", fontSize: 13, textAlign: "center"}}>
+          <CSBox color="text-body-secondary" textAlign="center" padding="l">
             文件库还没有内容。<a href="#library" style={{borderBottom: "1px dotted var(--muted-2)"}}>上传资源 →</a>
-          </div>
+          </CSBox>
         )}
-      </section>
+      </CSContainer>
+
       <PromptModal
         open={editOpen}
         eyebrow="编辑资料"
@@ -2013,7 +2063,7 @@ function ProfilePage() {
           }
         }}
       />
-    </div>
+    </CSSpaceBetween>
   );
 }
 
