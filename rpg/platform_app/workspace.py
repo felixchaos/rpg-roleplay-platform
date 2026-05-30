@@ -36,15 +36,12 @@ def ensure_default(user_id: int) -> None:
             "select * from game_saves where user_id = %s and script_id = %s order by id limit 1",
             (user_id, script["id"]),
         ).fetchone()
-        if not save:
-            save = db.execute(
-                """
-                insert into game_saves(user_id, script_id, title, state_path, state_snapshot)
-                values (%s, %s, %s, %s, %s)
-                returning *
-                """,
-                (user_id, script["id"], "当前自动存档", str(SAVE_FILE), Jsonb(_read_state_snapshot())),
-            ).fetchone()
+    # P0 修复:不再自动创建名为「当前自动存档」的引导存档。
+    # 自动存档是「每个存档每回合无感提交」的能力,不是一个独立槽位。
+    # 新用户进来 saves 列表为空 → 前端走空态 + 引导去建档(用户决策)。
+    # 仅当用户已有存档时,补齐分支树 / runtime 指针(兼容存量数据)。
+    if not save:
+        return
     branches.seed_tree(save["id"], str(SAVE_FILE))
     if not runtime.read_runtime(user_id=user_id):
         with connect() as db:
@@ -660,7 +657,7 @@ def _read_state_snapshot() -> dict[str, Any]:
 _SAVE_LIST_COLUMNS = """
     id, public_id, user_id, script_id, title, state_path,
     active_commit_id, active_branch_node_id, active_branch_ref_id,
-    created_at, updated_at, row_version,
+    created_at, updated_at, coalesce(last_played_at, updated_at) as last_played_at, row_version,
     (state_snapshot->>'turn')::int as turn,
     (state_snapshot->'player'->>'name') as player_name,
     coalesce(jsonb_array_length(state_snapshot->'history'), 0) as history_count,

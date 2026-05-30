@@ -578,6 +578,13 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "(select 1 from pg_extension where extname='pgcrypto')",
         "create index if not exists idx_sessions_token_hash2 on sessions(token_hash)",
     ]),
+    (24, "save_last_played_at", [
+        # v24: 存档「最后游玩日期」。autosave 是每个存档每回合无感提交,不再有独立
+        # 「当前自动存档」槽;列表显示最后游玩时间。回填存量为 updated_at。
+        "alter table game_saves add column if not exists last_played_at timestamptz",
+        "update game_saves set last_played_at = updated_at where last_played_at is null",
+        "create index if not exists idx_game_saves_last_played on game_saves(user_id, last_played_at desc)",
+    ]),
 ]
 
 

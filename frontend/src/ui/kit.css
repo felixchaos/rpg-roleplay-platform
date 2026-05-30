@@ -104,6 +104,22 @@
 .aw-split-close:hover { background: var(--panel-3); color: var(--text); }
 @media (max-width: 900px) { .aw-split-open { grid-template-columns: 1fr; } }
 
+/* 列表工具条:搜索 + 排序 */
+.aw-list-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+.aw-search { position: relative; flex: 1; display: flex; align-items: center; }
+.aw-search > svg { position: absolute; left: 10px; color: var(--muted); pointer-events: none; }
+.aw-search-input {
+  box-sizing: border-box; height: var(--aw-h); width: 100%;
+  font: inherit; font-size: 13px; color: var(--text);
+  background: var(--bg-deep); border: 1px solid var(--line-strong); border-radius: 7px;
+  padding: 0 30px 0 30px;
+}
+.aw-search-input::placeholder { color: var(--muted-2); }
+.aw-search-input:focus { outline: none; border-color: var(--accent-edge); box-shadow: 0 0 0 3px var(--accent-soft); }
+.aw-search-clear { position: absolute; right: 8px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 3px; }
+.aw-search-clear:hover { color: var(--text); }
+.aw-list-toolbar .aw-select-wrap { flex: none; min-width: 120px; }
+
 .aw-rlist { display: flex; flex-direction: column; gap: 8px; }
 .aw-rlist-item { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 13px 15px; cursor: pointer; color: var(--text); font: inherit; transition: border-color .14s, background .14s; }
 .aw-rlist-item:hover { border-color: var(--line-strong); background: var(--panel-2); }

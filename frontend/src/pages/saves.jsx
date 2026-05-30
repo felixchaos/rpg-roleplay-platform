@@ -147,6 +147,8 @@ function SavesListView() {
   const [deleting, setDeleting] = useStatePL(false);
   const [renaming, setRenaming] = useStatePL(false);
   const [renameVal, setRenameVal] = useStatePL('');
+  const [query, setQuery] = useStatePL('');
+  const [sortBy, setSortBy] = useStatePL('played'); // played | name | created
   const flash = useFlash();
   const importInputRef = React.useRef(null);
 
@@ -258,24 +260,57 @@ function SavesListView() {
   // 把标题 + 操作喂给统一顶栏(不再各页自渲染标题栏)
   useShellChrome({ title: '存档目录', subtitle: `${saves.length} 个存档`, actions: headerActions }, [saves.length]);
 
-  const list = (
-    <ResourceList items={saves} selectedId={selectedId}
-      onSelect={(s) => { setSelectedId(s.id); setTab('overview'); setRenaming(false); }}
-      empty="还没有存档。点右上「新建存档」开始。"
-      renderItem={(s) => {
+  // 搜索 + 排序
+  const visibleSaves = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let xs = saves;
+    if (q) {
+      xs = saves.filter((s) => {
         const sc = scripts.find((x) => x.id === s.script_id);
-        return (
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <strong style={{ fontSize: 14 }}>{s.title}</strong>
-              {s.current && <Badge tone="ok">在玩</Badge>}
+        return (s.title || '').toLowerCase().includes(q) || (sc?.title || '').toLowerCase().includes(q);
+      });
+    }
+    const ts = (v) => (v ? new Date(v).getTime() || 0 : 0);
+    const sorted = [...xs];
+    if (sortBy === 'name') sorted.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'zh'));
+    else if (sortBy === 'created') sorted.sort((a, b) => ts(b.created_ts) - ts(a.created_ts));
+    else sorted.sort((a, b) => ts(b.last_played_ts) - ts(a.last_played_ts)); // played
+    return sorted;
+  }, [saves, scripts, query, sortBy]);
+
+  const list = (
+    <div>
+      <div className="aw-list-toolbar">
+        <div className="aw-search">
+          <Icon name="search" size={13} />
+          <input className="aw-search-input" placeholder="搜索存档 / 剧本…" value={query}
+            onChange={(e) => setQuery(e.target.value)} />
+          {query && <button className="aw-search-clear" onClick={() => setQuery('')} aria-label="清除">✕</button>}
+        </div>
+        <UiSelect value={sortBy} onChange={setSortBy} options={[
+          { value: 'played', label: '最近游玩' },
+          { value: 'name', label: '名称' },
+          { value: 'created', label: '创建时间' },
+        ]} />
+      </div>
+      <ResourceList items={visibleSaves} selectedId={selectedId}
+        onSelect={(s) => { setSelectedId(s.id); setTab('overview'); setRenaming(false); }}
+        empty={query ? '没有匹配的存档。' : '还没有存档。点右上「新建存档」开始。'}
+        renderItem={(s) => {
+          const sc = scripts.find((x) => x.id === s.script_id);
+          return (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <strong style={{ fontSize: 14 }}>{s.title}</strong>
+                {s.current && <Badge tone="ok">在玩</Badge>}
+              </div>
+              <div className="aw-muted" style={{ fontSize: 12 }}>
+                {sc?.title || '未知剧本'} · {s.branch_count} 节点 · 玩于 {s.last_played_at}
+              </div>
             </div>
-            <div className="aw-muted" style={{ fontSize: 12 }}>
-              {sc?.title || '未知剧本'} · {s.branch_count} 节点
-            </div>
-          </div>
-        );
-      }} />
+          );
+        }} />
+    </div>
   );
 
   const detail = selected && (
@@ -302,7 +337,7 @@ function SavesListView() {
           <KeyValue cols={2} items={[
             { label: '剧本', value: selScript?.title || '未知' },
             { label: '分支节点', value: `${selected.branch_count} 个` },
-            { label: '最近更新', value: selected.updated_at },
+            { label: '最后游玩', value: selected.last_played_at },
             { label: '状态', value: selected.current
                 ? <StatusIndicator type="ok">当前存档</StatusIndicator>
                 : <StatusIndicator type="pending">未激活</StatusIndicator> },
