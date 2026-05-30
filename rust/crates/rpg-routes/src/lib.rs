@@ -598,11 +598,10 @@ pub fn build_sse_routes() -> Router<AppState> {
 /// 上传路由(需要放宽 body limit,其余中间件与普通路由一致)。
 ///
 /// `/api/uploads/*` — base64 分片上传。server 侧对此组路由替换成更大的 body limit。
-/// ROUTER_DUPLICATION: uploads.rs router 已统一到 imports.rs(含 /api/uploads/* 路由)。
-/// 此函数保留 imports::router() 以提供放宽 body limit 的上传路由。
+/// 仅包含 upload 路由,import-jobs 路由留在 regular_api_router 中(避免路由重复)。
 pub fn build_upload_routes() -> Router<AppState> {
     Router::new()
-        .merge(imports::router())
+        .merge(imports::upload_router())
         .layer(middleware::from_fn(rewrite_v1_prefix))
 }
 

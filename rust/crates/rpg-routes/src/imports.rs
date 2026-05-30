@@ -35,24 +35,29 @@ use rpg_platform::script_import::{self, upload as upload_svc};
 
 use crate::{named_sse_event, require_user, AppState, ResponseError};
 
+/// 完整路由(用于 regular_api_router,包含上传 + import-jobs)。
 pub fn router() -> Router<AppState> {
     Router::new()
-        // 分片上传
+        // import-jobs(非上传,body size 正常)
+        .route("/api/me/import-jobs", get(api_me_import_jobs))
+        .route("/api/scripts/import-jobs/:job_id", get(api_import_job_get))
+        .route(
+            "/api/scripts/import-jobs/:job_id/cancel",
+            post(api_import_job_cancel),
+        )
+        .route(
+            "/api/scripts/import-jobs/:job_id/stream",
+            get(api_import_job_stream),
+        )
+}
+
+/// 仅上传路由(用于 build_upload_routes,需要放宽 body limit)。
+pub fn upload_router() -> Router<AppState> {
+    Router::new()
         .route("/api/uploads/init", post(api_uploads_init))
         .route("/api/uploads/:upload_id/chunk", post(api_uploads_chunk))
         .route("/api/uploads/:upload_id/finish", post(api_uploads_finish))
         .route("/api/uploads/:upload_id/cancel", post(api_uploads_cancel))
-        // import-jobs
-        .route("/api/me/import-jobs", get(api_me_import_jobs))
-        .route("/api/scripts/import-jobs/:job_id", get(api_import_job_get))
-        .route(
-            "/api/scripts/import-jobs/{job_id}/cancel",
-            post(api_import_job_cancel),
-        )
-        .route(
-            "/api/scripts/import-jobs/{job_id}/stream",
-            get(api_import_job_stream),
-        )
 }
 
 // ── request bodies ───────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ pub fn cors_origins() -> (Vec<String>, bool) {
     let default_origins = concat!(
         "http://127.0.0.1:7860,http://localhost:7860,",
         "http://127.0.0.1:5173,http://localhost:5173,",
+        "http://127.0.0.1:5174,http://localhost:5174,",
         "http://127.0.0.1:3000,http://localhost:3000"
     );
     let raw = env::var("RPG_CORS_ORIGINS").unwrap_or_else(|_| default_origins.to_string());
