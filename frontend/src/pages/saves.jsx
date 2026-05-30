@@ -10,6 +10,123 @@ import { Icon } from '../game-icons.jsx';
 import { ConfirmModal } from '../platform-app.jsx';
 import { BranchGraph } from '../branch-graph.jsx';
 import { NewGameWizard } from './new-game-wizard.jsx';
+import {
+  PageHeader, SplitLayout, ResourceList, Tabs, FormSection,
+  Btn, Badge, KeyValue, StatusIndicator, ConfirmDialog, Flashbar, useFlash,
+  Field as UiField, Select as UiSelect, TextInput as UiInput,
+} from '../ui/kit.jsx';
+
+const _AWAPI = () => (window.__API_BASE || '');
+
+/* 就地设置表单(取代「游戏设置」弹窗向导)— 一屏展示全部字段,直接 PATCH。
+   建档锁死项由后端 enforce:is_create=false 时被拒,前端用 flash 提示。 */
+function SaveSettingsForm({ saveId, flash }) {
+  const [schema, setSchema] = useStatePL(null);
+  const [vals, setVals] = useStatePL({});
+  const [init, setInit] = useStatePL({});
+  const [saving, setSaving] = useStatePL(false);
+  const [err, setErr] = useStatePL('');
+  useEffectPL(() => {
+    let c = false; setSchema(null); setErr('');
+    fetch(`${_AWAPI()}/api/saves/${saveId}/settings`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((d) => {
+        if (c) return;
+        if (d.ok) {
+          setSchema(d.schema);
+          const v = {};
+          (d.schema.fields || []).forEach((f) => { v[f.key] = (d.settings && d.settings[f.key]) ?? f.default; });
+          setVals(v); setInit(v);
+        } else setErr(d.error || '加载设置失败');
+      })
+      .catch((e) => { if (!c) setErr(String(e)); });
+    return () => { c = true; };
+  }, [saveId]);
+
+  if (err) return <div className="aw-empty">加载失败:{err}</div>;
+  if (!schema) return <div className="aw-empty">加载设置…</div>;
+  const fields = schema.fields || [];
+  const dirty = JSON.stringify(vals) !== JSON.stringify(init);
+
+  const save = async () => {
+    // 只提交改动过的字段 — 避免把未改的锁死项(如 starting_worldline)发过去触发误报
+    const changed = {};
+    Object.keys(vals).forEach((k) => { if (vals[k] !== init[k]) changed[k] = vals[k]; });
+    if (!Object.keys(changed).length) return;
+    setSaving(true);
+    try {
+      const r = await fetch(`${_AWAPI()}/api/saves/${saveId}/settings`, {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates: changed, is_create: false }),
+      }).then((x) => x.json());
+      if (r.applied !== undefined) {
+        setInit(vals);
+        const rej = r.rejected && Object.keys(r.rejected);
+        if (rej && rej.length) flash.warn(`已保存,但 ${rej.join('/')} 为建档锁死项,未改`);
+        else flash.ok('设置已保存');
+      } else flash.err(r.error || '保存失败');
+    } catch (e) { flash.err(String(e)); }
+    setSaving(false);
+  };
+
+  return (
+    <FormSection
+      title="游戏设置"
+      description="元知识 / 引导 / 防剧透。建档锁死项(世界线/身份)在游戏中只读。"
+      footer={<Btn variant="primary" disabled={!dirty} loading={saving} onClick={save}>保存设置</Btn>}
+    >
+      {fields.map((f) => (
+        <UiField key={f.key} label={f.label} hint={f.help}>
+          {f.options
+            ? <UiSelect value={vals[f.key]} options={f.options.map((o) => ({ value: o, label: o }))}
+                onChange={(v) => setVals((p) => ({ ...p, [f.key]: v }))} />
+            : <UiInput value={vals[f.key]} onChange={(v) => setVals((p) => ({ ...p, [f.key]: v }))} />}
+        </UiField>
+      ))}
+    </FormSection>
+  );
+}
+
+/* 就地分支节点列表(取代跳页 / 弹窗)。 */
+function SaveBranchList({ save }) {
+  const [nodes, setNodes] = useStatePL(null);
+  useEffectPL(() => {
+    let c = false; setNodes(null);
+    (async () => {
+      try {
+        const r = await window.api.branches.list(save.id);
+        const activeId = r?.active_commit_id || r?.active_branch_node_id;
+        const ns = (r?.nodes || r?.commits || []).map((n, i) => ({
+          id: n.id,
+          summary: n.summary || n.message || n.content_preview || `节点 #${n.id}`,
+          turn: n.turn_index ?? i,
+          current: n.id === activeId,
+        }));
+        if (!c) setNodes(ns);
+      } catch (_) { if (!c) setNodes([]); }
+    })();
+    return () => { c = true; };
+  }, [save.id]);
+
+  if (!nodes) return <div className="aw-empty">加载分支…</div>;
+  if (!nodes.length) return <div className="aw-empty">还没有分支节点,进入游戏后会自动生成。</div>;
+  return (
+    <FormSection title="分支节点" description={`${nodes.length} 个节点`}
+      actions={<Btn size="sm" onClick={() => { location.hash = 'saves-branches'; }}>打开完整分支树</Btn>}>
+      <div className="aw-rlist">
+        {nodes.map((n) => (
+          <div key={n.id} className="aw-rlist-item" style={{ cursor: 'default' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+              <span>{n.summary}</span>
+              {n.current ? <Badge tone="ok">当前</Badge> : <span className="aw-muted" style={{ fontSize: 12 }}>#{n.turn}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </FormSection>
+  );
+}
 
 /* ---------------------------- SAVES ---------------------------- */
 function SavesPage({ subPage = "list" }) {
@@ -21,12 +138,17 @@ function SavesPage({ subPage = "list" }) {
 }
 
 function SavesListView() {
-  // task 19/20: 不再混 mock；空数组也覆盖，让"无存档/无剧本"的真实空态被前端识别到
   const [saves, setSaves] = useStatePL([]);
   const [scripts, setScripts] = useStatePL([]);
-  const [settingsSave, setSettingsSave] = useStatePL(null); // Phase F: 设置向导 modal
+  const [selectedId, setSelectedId] = useStatePL(null);
+  const [tab, setTab] = useStatePL('overview');
   const [createOpen, setCreateOpen] = useStatePL(false);
-  const [menuOpen, setMenuOpen] = useStatePL(null);
+  const [deleteTarget, setDeleteTarget] = useStatePL(null);
+  const [deleting, setDeleting] = useStatePL(false);
+  const [renaming, setRenaming] = useStatePL(false);
+  const [renameVal, setRenameVal] = useStatePL('');
+  const flash = useFlash();
+  const importInputRef = React.useRef(null);
 
   const reload = React.useCallback(async () => {
     try {
@@ -43,199 +165,174 @@ function SavesListView() {
   useEffectPL(() => {
     reload();
     const refresh = () => reload();
-    window.addEventListener("rpg-scripts-updated", refresh);
-    window.addEventListener("rpg-saves-updated", refresh);
+    window.addEventListener('rpg-scripts-updated', refresh);
+    window.addEventListener('rpg-saves-updated', refresh);
     return () => {
-      window.removeEventListener("rpg-scripts-updated", refresh);
-      window.removeEventListener("rpg-saves-updated", refresh);
+      window.removeEventListener('rpg-scripts-updated', refresh);
+      window.removeEventListener('rpg-saves-updated', refresh);
     };
   }, [reload]);
 
+  // 自动选中:当前存档 → 否则第一条
+  useEffectPL(() => {
+    if (selectedId && saves.some((s) => s.id === selectedId)) return;
+    const cur = saves.find((s) => s.current) || saves[0];
+    setSelectedId(cur ? cur.id : null);
+  }, [saves, selectedId]);
+
+  const selected = saves.find((s) => s.id === selectedId) || null;
+  const selScript = selected && scripts.find((sc) => sc.id === selected.script_id);
+
   const onCreate = async (vals) => {
-    // task 20: 失败时 throw，让 NewGameModal 里的 catch 把错误显示在 modal 内（不静默）。
-    // 成功才关闭 modal、reload、跳转。
     try {
       const created = await window.api.saves.create({
-        title: vals.title || ("新存档 · " + new Date().toLocaleString()),
+        title: vals.title || ('新存档 · ' + new Date().toLocaleString()),
         script_id: vals.script_id || (scripts[0] && scripts[0].id),
-        // task 29：把 character_kind 也透传给后端，否则 character_id 单独到达后端无法
-        // 区分 persona / user_card / script_card，应用不了到 initial state。
         character_id: vals.character_id || null,
         character_kind: vals.character_kind || null,
         npc_id: vals.npc_id || null,
         new_card: vals.new_card || null,
-        // wizard step 3 & 4: birthpoint + identity
         birthpoint: vals.birthpoint || null,
         identity: vals.identity || null,
       });
       if (created && created.ok === false) {
-        throw new Error(created.error || created.detail || "后端拒绝创建");
+        throw new Error(created.error || created.detail || '后端拒绝创建');
       }
-      window.__apiToast?.("已创建存档", { kind: "ok", duration: 1600 });
+      flash.ok('已创建存档');
       setCreateOpen(false);
       reload();
-      try { window.dispatchEvent(new CustomEvent("rpg-saves-updated")); } catch (_) {}
+      try { window.dispatchEvent(new CustomEvent('rpg-saves-updated')); } catch (_) {}
       const save = created && (created.save || created);
       if (save && save.id) {
+        setSelectedId(save.id);
         window.__openContinue?.({ ...save, ...window.__normalizeSave?.(save) });
       }
     } catch (e) {
-      window.__apiToast?.("创建失败", { kind: "danger", detail: e?.message, duration: 3000 });
-      throw e;  // 让 NewGameModal 接住，显示 inline 错误
+      flash.err('创建失败:' + (e?.message || ''));
+      throw e; // 让 NewGameModal 接住,显示 inline 错误
     }
   };
 
-  // task 127: 用平台 ConfirmModal 代替浏览器 confirm()
-  const [deleteTarget, setDeleteTarget] = React.useState(null);  // {id, title} | null
-  const onDeleteSave = (s) => setDeleteTarget(s);
-  const confirmDeleteSave = async () => {
-    if (!deleteTarget) return;
-    const s = deleteTarget;
-    setDeleteTarget(null);
-    try {
-      await window.api.saves.remove(s.id);
-      window.__apiToast?.("已删除", { kind: "ok" });
-      reload();
-    } catch (e) {
-      window.__apiToast?.("删除失败", { kind: "danger", detail: e?.message });
-    }
+  const onActivate = async (s) => {
+    try { await window.api.saves.activate(s.id); flash.ok('已设为当前存档'); reload(); }
+    catch (e) { flash.err('切换失败:' + (e?.message || '')); }
   };
-  // task 50：之前 SavesListView 只能"新建 + 继续"。补「导入存档」按钮 + 卡片
-  // 弹出菜单加「设为当前」（之前只在分支页有 activate）。BE 都早就有了。
-  const importInputRef = React.useRef(null);
   const onImportFile = async (file) => {
     if (!file) return;
     try {
-      window.__apiToast?.(`正在导入 ${file.name}…`, { kind: "info", duration: 1500 });
+      flash.info(`正在导入 ${file.name}…`);
       const r = await window.api.saves.importFile(file);
-      if (r && r.ok === false) throw new Error(r.error || r.detail || "后端拒绝导入");
-      window.__apiToast?.("存档已导入", { kind: "ok", duration: 2000 });
+      if (r && r.ok === false) throw new Error(r.error || r.detail || '后端拒绝导入');
+      flash.ok('存档已导入');
       reload();
-    } catch (e) {
-      window.__apiToast?.("导入失败", { kind: "danger", detail: e?.message });
-    }
+    } catch (e) { flash.err('导入失败:' + (e?.message || '')); }
   };
-  const onActivate = async (s) => {
+  const doRename = async () => {
+    const t = renameVal.trim();
+    if (!t || !selected || t === selected.title) { setRenaming(false); return; }
     try {
-      await window.api.saves.activate(s.id);
-      window.__apiToast?.("已设为当前存档", { kind: "ok", duration: 1600 });
-      reload();
-    } catch (e) {
-      window.__apiToast?.("切换失败", { kind: "danger", detail: e?.message });
-    }
+      await window.api.saves.rename(selected.id, t);
+      flash.ok('已重命名'); setRenaming(false); reload();
+    } catch (e) { flash.err('重命名失败:' + (e?.message || '')); }
+  };
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await window.api.saves.remove(deleteTarget.id);
+      flash.ok('已删除'); setDeleteTarget(null); setSelectedId(null); reload();
+    } catch (e) { flash.err('删除失败:' + (e?.message || '')); }
+    setDeleting(false);
   };
 
-  return (
-    <div className="pl-stack">
-      <section className="pl-sec" data-cap-anchor="saves.list">
-        <div className="pl-sec-head">
-          <h2>存档目录 <span className="muted-2">{saves.length} 个</span></h2>
-          <div className="pl-sec-tools">
-            <input ref={importInputRef} type="file" accept=".zip,.json,.tar.gz"
-              style={{display: "none"}} onChange={(e) => { onImportFile(e.target.files?.[0]); e.target.value = ""; }} />
-            <button className="btn ghost" onClick={() => importInputRef.current?.click()} title="从 zip/JSON 导入存档">
-              <Icon name="upload" size={12} /> 导入存档
-            </button>
-            <button className="btn ghost" onClick={() => setCreateOpen(true)} title="新建一个存档">
-              <Icon name="plus" size={12} /> 新建存档
-            </button>
-            <button className="btn primary" onClick={() => window.__openContinue?.(saves[0])} title="继续上次存档"
-              disabled={!saves.length} style={{opacity: saves.length ? 1 : 0.5}}>
-              <Icon name="play" size={12} /> 进入当前游戏
-            </button>
+  const headerActions = (
+    <>
+      <input ref={importInputRef} type="file" accept=".zip,.json,.tar.gz" style={{ display: 'none' }}
+        onChange={(e) => { onImportFile(e.target.files?.[0]); e.target.value = ''; }} />
+      <Btn onClick={() => importInputRef.current?.click()} icon="↑">导入存档</Btn>
+      <Btn onClick={() => setCreateOpen(true)} icon="+">新建存档</Btn>
+      <Btn variant="primary" disabled={!saves.length} onClick={() => window.__openContinue?.(saves[0])}>进入当前游戏</Btn>
+    </>
+  );
+
+  const list = (
+    <ResourceList items={saves} selectedId={selectedId}
+      onSelect={(s) => { setSelectedId(s.id); setTab('overview'); setRenaming(false); }}
+      empty="还没有存档。点右上「新建存档」开始。"
+      renderItem={(s) => {
+        const sc = scripts.find((x) => x.id === s.script_id);
+        return (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <strong style={{ fontSize: 14 }}>{s.title}</strong>
+              {s.current && <Badge tone="ok">在玩</Badge>}
+            </div>
+            <div className="aw-muted" style={{ fontSize: 12 }}>
+              {sc?.title || '未知剧本'} · {s.branch_count} 节点
+            </div>
           </div>
-        </div>
-        <div className="pl-saves-grid">
-          {saves.map(s => {
-            const script = scripts.find(sc => sc.id === s.script_id);
-            return (
-              <div key={s.id} className={`pl-save-card ${s.current ? "current" : ""}`}>
-                <div className="pl-save-card-head">
-                  <h3>{s.title}</h3>
-                  {s.current && <span className="pill accent"><span className="dot accent pulse" /> 在玩</span>}
-                </div>
-                <div className="pl-save-meta">
-                  <span><Icon name="book" size={11} /> {script?.title || "未知剧本"}</span>
-                  <span><Icon name="branch" size={11} /> {s.branch_count} 节点</span>
-                  <span><Icon name="history" size={11} /> {s.updated_at}</span>
-                </div>
-                <p className="pl-save-snippet">
-                  {s._raw?.snippet || s._raw?.last_message || "（暂无最新片段，进入游戏后会自动同步。）"}
-                </p>
-                <div className="pl-save-card-foot">
-                  <button className="btn primary" onClick={() => window.__openContinue?.(s)} title="选择分支继续">
-                    <Icon name="play" size={12} /> 继续
-                  </button>
-                  <button className="btn ghost" onClick={() => location.hash = "saves-branches"} title="查看分支树">
-                    <Icon name="branch" size={12} /> 分支
-                  </button>
-                  {/* task 126: wrap button + popup in a positioned container so absolute 不再跑屏幕外 */}
-                  <span style={{position: "relative", marginLeft: "auto", display: "inline-flex"}}>
-                    <button className="iconbtn" data-tip="重命名 / 导出 / 删除"
-                      onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === s.id ? null : s.id); }}>
-                      <Icon name="more" size={14} />
-                    </button>
-                    {menuOpen === s.id && (
-                      <div className="pl-pop" style={{position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 30}}>
-                        {!s.current && (
-                          <button className="pl-pop-item" onClick={() => { onActivate(s); setMenuOpen(null); }}>设为当前</button>
-                        )}
-                        <button className="pl-pop-item" onClick={() => { setSettingsSave(s); setMenuOpen(null); }}>游戏设置</button>
-                        <button className="pl-pop-item" onClick={async () => {
-                          const t = prompt("新名称", s.title);
-                          if (!t || t === s.title) return setMenuOpen(null);
-                          try {
-                            await window.api.saves.rename(s.id, t);
-                            window.__apiToast?.("已重命名", { kind: "ok", duration: 1500 });
-                            reload();
-                          } catch (e) {
-                            window.__apiToast?.("重命名失败", { kind: "danger", detail: e?.message });
-                          }
-                          setMenuOpen(null);
-                        }}>重命名</button>
-                        <button className="pl-pop-item" onClick={() => {
-                          window.open(window.api.saves.exportUrl(s.id), "_blank");
-                          setMenuOpen(null);
-                        }}>导出</button>
-                        <button className="pl-pop-item danger" onClick={() => { onDeleteSave(s); setMenuOpen(null); }}>删除</button>
-                      </div>
-                    )}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-      <NewGameModal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        onConfirm={onCreate}
-      />
-      {settingsSave && (
-        <div className="pl-modal-backdrop" onClick={() => setSettingsSave(null)}>
-          <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{ width: "min(620px, 100%)", maxHeight: "85vh", overflow: "auto" }}>
-            <header className="pl-modal-head">
-              <div>
-                <div className="pl-modal-eyebrow">游戏设置 · 元知识 / 引导 / 防剧透</div>
-                <h2 className="pl-modal-title">{settingsSave.title}</h2>
-              </div>
-              <button className="iconbtn" onClick={() => setSettingsSave(null)} data-tip="关闭"><Icon name="close" size={14} /></button>
-            </header>
-            <NewGameWizard saveId={settingsSave.id} onDone={() => { setSettingsSave(null); window.__apiToast?.("设置已保存", { kind: "ok", duration: 1500 }); }} />
+        );
+      }} />
+  );
+
+  const detail = selected && (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        {renaming
+          ? (
+            <span style={{ display: 'flex', gap: 8, flex: 1, alignItems: 'center' }}>
+              <UiInput value={renameVal} onChange={setRenameVal} />
+              <Btn variant="primary" size="sm" onClick={doRename}>保存</Btn>
+              <Btn variant="link" size="sm" onClick={() => setRenaming(false)}>取消</Btn>
+            </span>
+          )
+          : <h2 style={{ fontSize: 18, margin: 0 }}>{selected.title}</h2>}
+        {!renaming && selected.current && <Badge tone="ok">在玩</Badge>}
+      </div>
+      <Tabs active={tab} onChange={setTab} tabs={[
+        { id: 'overview', label: '概览' },
+        { id: 'settings', label: '设置' },
+        { id: 'branches', label: '分支', badge: selected.branch_count },
+      ]} />
+      {tab === 'overview' && (
+        <div>
+          <KeyValue cols={2} items={[
+            { label: '剧本', value: selScript?.title || '未知' },
+            { label: '分支节点', value: `${selected.branch_count} 个` },
+            { label: '最近更新', value: selected.updated_at },
+            { label: '状态', value: selected.current
+                ? <StatusIndicator type="ok">当前存档</StatusIndicator>
+                : <StatusIndicator type="pending">未激活</StatusIndicator> },
+          ]} />
+          <p style={{ color: 'var(--text-quiet)', fontSize: 13, lineHeight: 1.6, margin: '16px 0' }}>
+            {selected._raw?.snippet || selected._raw?.last_message || '（暂无最新片段，进入游戏后会自动同步。）'}
+          </p>
+          <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+            <Btn variant="primary" onClick={() => window.__openContinue?.(selected)}>继续游戏</Btn>
+            {!selected.current && <Btn onClick={() => onActivate(selected)}>设为当前</Btn>}
+            <Btn onClick={() => { setRenameVal(selected.title); setRenaming(true); }}>重命名</Btn>
+            <Btn onClick={() => window.open(window.api.saves.exportUrl(selected.id), '_blank')}>导出</Btn>
+            <Btn variant="danger" onClick={() => setDeleteTarget(selected)}>删除</Btn>
           </div>
         </div>
       )}
-      {/* task 127: 平台 ConfirmModal 取代浏览器 confirm() */}
-      <ConfirmModal
-        open={!!deleteTarget}
-        title="删除存档"
-        body={deleteTarget ? `确定删除存档「${deleteTarget.title}」？此操作不可撤销 (但磁盘 commit 文件仍可恢复)。` : ""}
-        danger
-        confirmLabel="确认删除"
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={confirmDeleteSave}
-      />
+      {tab === 'settings' && <SaveSettingsForm saveId={selected.id} flash={flash} />}
+      {tab === 'branches' && <SaveBranchList save={selected} />}
+    </>
+  );
+
+  return (
+    <div className="pl-stack" data-cap-anchor="saves.list">
+      <Flashbar items={flash.items} />
+      <PageHeader title="存档目录" counter={saves.length}
+        description="选择左侧存档查看详情、调整设置或继续游戏。"
+        actions={headerActions} />
+      <SplitLayout list={list} detail={detail} detailOpen={!!selected}
+        onCloseDetail={() => setSelectedId(null)} />
+      <NewGameModal open={createOpen} onClose={() => setCreateOpen(false)} onConfirm={onCreate} />
+      <ConfirmDialog open={!!deleteTarget} title="删除存档" danger loading={deleting}
+        body={deleteTarget ? `确定删除存档「${deleteTarget.title}」？此操作不可撤销(但磁盘 commit 文件仍可恢复)。` : ''}
+        confirmLabel="确认删除" onConfirm={confirmDelete} onCancel={() => setDeleteTarget(null)} />
     </div>
   );
 }
