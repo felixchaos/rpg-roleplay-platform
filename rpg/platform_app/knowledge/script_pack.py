@@ -584,3 +584,41 @@ def _dump_script_row(row: dict) -> str:
     # 脱敏 owner_id
     d.pop("owner_id", None)
     return json.dumps(d, ensure_ascii=False, default=str, indent=2)
+
+
+def clone_public_script(src_script_id: int, dst_user_id: int) -> dict[str, Any]:
+    """把一本【公开】剧本克隆进 dst_user 的账户。
+
+    复用 export_script_pack(以原 owner 身份导出) + import_script_pack(导入给当前用户)
+    这套已验证的跨表复制管线。只允许克隆 is_public=true 的剧本。
+    成功后给源剧本 clone_count +1(热度)。返回 import_script_pack 的结果。
+    """
+    with connect() as db:
+        row = db.execute(
+            "SELECT owner_id, is_public, title FROM scripts WHERE id = %s",
+            (src_script_id,),
+        ).fetchone()
+    if not row:
+        raise ValueError("剧本不存在")
+    src = dict(row)
+    if not src.get("is_public"):
+        raise PermissionError("该剧本未公开,无法导入")
+    owner_id = src["owner_id"]
+    if owner_id == dst_user_id:
+        raise ValueError("这是你自己的剧本,无需从公开库导入")
+
+    # 以原 owner 身份导出(满足 export 的 ownership 校验),再导入给当前用户。
+    zip_bytes, _filename = export_script_pack(src_script_id, owner_id, include_chunks=False)
+    result = import_script_pack(zip_bytes, dst_user_id)
+
+    # 热度计数(克隆成功才 +1;失败上面已抛异常)
+    try:
+        with connect() as db:
+            db.execute(
+                "UPDATE scripts SET clone_count = clone_count + 1 WHERE id = %s",
+                (src_script_id,),
+            )
+            db.commit()
+    except Exception:
+        pass  # 计数失败不影响克隆结果
+    return result

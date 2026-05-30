@@ -585,6 +585,14 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "update game_saves set last_played_at = updated_at where last_played_at is null",
         "create index if not exists idx_game_saves_last_played on game_saves(user_id, last_played_at desc)",
     ]),
+    (25, "scripts_public_library", [
+        # v25: 在线剧本库。is_public = owner 主动公开分享(区别于 shareable=已提取可零成本复用);
+        # published_at = 首次公开时间;clone_count = 被导入次数(热度)。索引服务公开浏览。
+        "alter table scripts add column if not exists is_public boolean not null default false",
+        "alter table scripts add column if not exists published_at timestamptz",
+        "alter table scripts add column if not exists clone_count integer not null default 0",
+        "create index if not exists idx_scripts_public on scripts(is_public, published_at desc) where is_public",
+    ]),
 ]
 
 

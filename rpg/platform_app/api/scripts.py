@@ -561,6 +561,127 @@ async def api_import_script_pack(request: Request, user=Depends(require_user)):
     return JSONResponse(result)
 
 
+# ── 在线剧本库(公开分享 / 浏览 / 导入)─────────────────────────────────────────
+
+@router.post("/api/scripts/{script_id}/visibility")
+async def api_script_visibility(request: Request, script_id: int, user=Depends(require_user)):
+    """owner 设置剧本是否公开分享。Body: {is_public: bool}。
+
+    公开后内容(章节/角色卡/世界书)对所有用户可浏览并导入到自己账户。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    is_public = bool(body.get("is_public"))
+    with connect() as db:
+        owned = db.execute(
+            "SELECT 1 FROM scripts WHERE id = %s AND owner_id = %s",
+            (script_id, user["id"]),
+        ).fetchone()
+        if not owned:
+            return json_response({"ok": False, "error": "无权操作该剧本"}, status_code=403)
+        db.execute(
+            "UPDATE scripts SET is_public = %s, "
+            "published_at = COALESCE(published_at, CASE WHEN %s THEN now() ELSE NULL END) "
+            "WHERE id = %s",
+            (is_public, is_public, script_id),
+        )
+        db.commit()
+    return json_response({"ok": True, "is_public": is_public})
+
+
+@router.get("/api/scripts/public")
+async def api_public_scripts(q: str | None = None, limit: int = 30, offset: int = 0,
+                             user=Depends(require_user)):
+    """浏览公开剧本库。支持标题/简介搜索,按发布时间倒序。"""
+    limit = max(1, min(int(limit or 30), 60))
+    offset = max(0, int(offset or 0))
+    where = "s.is_public"
+    params: list = []
+    if q:
+        where += " AND (s.title ILIKE %s OR s.description ILIKE %s)"
+        like = f"%{q}%"
+        params += [like, like]
+    with connect() as db:
+        rows = db.execute(
+            f"""
+            SELECT s.id, s.title, s.description, s.chapter_count, s.word_count,
+                   s.clone_count, s.published_at, s.owner_id,
+                   u.display_name AS author, u.username AS author_username
+            FROM scripts s JOIN users u ON u.id = s.owner_id
+            WHERE {where}
+            ORDER BY s.published_at DESC NULLS LAST, s.id DESC
+            LIMIT %s OFFSET %s
+            """,
+            (*params, limit + 1, offset),
+        ).fetchall()
+        rows = [dict(r) for r in rows]
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    for it in items:
+        it["mine"] = (it.pop("owner_id") == user["id"])
+    return json_response({"ok": True, "items": items, "has_more": has_more,
+                          "limit": limit, "offset": offset})
+
+
+@router.get("/api/scripts/public/{script_id}")
+async def api_public_script_detail(script_id: int, user=Depends(require_user)):
+    """公开剧本详情:元信息 + 前若干章标题 + 角色卡/世界书条目数。"""
+    with connect() as db:
+        row = db.execute(
+            """
+            SELECT s.id, s.title, s.description, s.chapter_count, s.word_count,
+                   s.clone_count, s.published_at, s.content_fingerprint, s.owner_id,
+                   u.display_name AS author, u.username AS author_username
+            FROM scripts s JOIN users u ON u.id = s.owner_id
+            WHERE s.id = %s AND s.is_public
+            """,
+            (script_id,),
+        ).fetchone()
+        if not row:
+            return json_response({"ok": False, "error": "剧本不存在或未公开"}, status_code=404)
+        d = dict(row)
+        chapter_titles = db.execute(
+            "SELECT title FROM script_chapters WHERE script_id = %s ORDER BY chapter_index LIMIT 12",
+            (script_id,),
+        ).fetchall()
+        card_count = db.execute(
+            "SELECT count(*) AS n FROM character_cards WHERE script_id = %s", (script_id,),
+        ).fetchone()
+        wb_count = db.execute(
+            "SELECT count(*) AS n FROM worldbook_entries WHERE script_id = %s", (script_id,),
+        ).fetchone()
+        fp = d.get("content_fingerprint") or ""
+        already = False
+        if fp:
+            already = bool(db.execute(
+                "SELECT 1 FROM scripts WHERE owner_id = %s AND content_fingerprint = %s LIMIT 1",
+                (user["id"], fp),
+            ).fetchone())
+    mine = d.pop("owner_id") == user["id"]
+    d.pop("content_fingerprint", None)
+    d["mine"] = mine
+    d["already_imported"] = already or mine
+    d["chapter_titles"] = [r["title"] for r in chapter_titles]
+    d["card_count"] = (dict(card_count) or {}).get("n", 0)
+    d["worldbook_count"] = (dict(wb_count) or {}).get("n", 0)
+    return json_response({"ok": True, "script": d})
+
+
+@router.post("/api/scripts/public/{script_id}/clone")
+async def api_clone_public_script(script_id: int, user=Depends(require_user)):
+    """把一本公开剧本导入(克隆)到当前用户账户。"""
+    from platform_app.knowledge.script_pack import clone_public_script
+    try:
+        result = clone_public_script(script_id, user["id"])
+    except PermissionError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=403)
+    except ValueError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=400)
+    return json_response({"ok": True, **result})
+
+
 # ── script overrides API ──────────────────────────────────────────────────────
 
 @router.get("/api/scripts/{script_id}/overrides")
