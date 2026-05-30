@@ -15,13 +15,16 @@ MODEL_PRICING: dict[str, dict] = {
     "claude-sonnet-4-6": {"in": 3.00, "out": 15.00, "tier": "frontier"},
 }
 
-# Pass1 每章估算(基于实测:正文截 6000 字符 ≈ 3500 token + system/词表/摘要 overhead ≈ 1000)
-_PER_CH_INPUT = 4500
-_PER_CH_OUTPUT = 800
+# Pass1 每章估算 — **已用真实 gemini-flash 调用校准(二战书 3 章实测)**:
+#   实测 输入均值 2930/章(正文截6000字符≈2900 + 词表/摘要)、输出均值 2069/章
+#   (固定schema三元组JSON比预想大得多)。取实测 + 小头寸,宁可略高不低估(BYOK 用户付费,
+#   报价宁高勿低,避免超账单)。全书重算 ≈ $1.0,贴实测 $0.98。
+_PER_CH_INPUT = 3200    # 实测 2930 + 词表随书增长头寸
+_PER_CH_OUTPUT = 2200   # 实测 2069 + 头寸(原 800 严重低估)
 # Pass0 自举:采样 ~min(12, chapters) 章 NER
 _SEED_SAMPLE = 12
-_SEED_PER_CALL_INPUT = 3000
-_SEED_PER_CALL_OUTPUT = 400
+_SEED_PER_CALL_INPUT = 2800
+_SEED_PER_CALL_OUTPUT = 1200
 # 嵌入(Vertex text-embedding-004)≈ 平台承担/极廉,不计入 BYOK 报价
 
 
