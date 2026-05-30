@@ -469,9 +469,10 @@ function PlatformShell({ page, setPage, children, assistant, assistantOpen, onOp
       }
       window.__apiToast?.(`已创建存档 #${newId}: ${save.title || ""}`, { kind: "ok", duration: 1800 });
       try { window.dispatchEvent(new CustomEvent("rpg-saves-updated")); } catch (_) {}
-      // 4. 在新标签页打开 Game Console(平台当前页保留)
-      if (gameWin) gameWin.location.href = "Game Console.html";
-      else window.open("Game Console.html", "_blank");
+      // 4. 在新标签页打开 Game Console(平台当前页保留)。about:blank 需绝对 URL。
+      const gameUrl = new URL("Game Console.html", window.location.href).href;
+      if (gameWin) gameWin.location.href = gameUrl;
+      else window.open(gameUrl, "_blank");
       return save;
       } catch (e) {
         try { if (gameWin) gameWin.close(); } catch (_) {}
@@ -3624,8 +3625,10 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
         window.__apiToast?.("切换存档失败", { kind: "danger", detail: e?.message, duration: 3000 });
         return;
       }
-      if (gameWin) gameWin.location.href = "Game Console.html";
-      else window.open("Game Console.html", "_blank");
+      // about:blank 无法解析相对 URL,必须用绝对地址
+      const gameUrl = new URL("Game Console.html", window.location.href).href;
+      if (gameWin) gameWin.location.href = gameUrl;
+      else window.open(gameUrl, "_blank");
     };
     return () => { delete window.__openContinue; };
   }, [platform.saves]);
