@@ -534,6 +534,13 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         end $$;
         """,
     ]),
+    (20, "script_content_fingerprint_dedup", [
+        # v20: Phase G 公开书共享去重。content_fingerprint = 归一正文 hash + 章数 + 字数;
+        # 导入时命中已提取的 shareable 公开书 → 直接复用规范层(零提取成本)。
+        "alter table scripts add column if not exists content_fingerprint text not null default ''",
+        "alter table scripts add column if not exists shareable boolean not null default false",
+        "create index if not exists idx_scripts_fingerprint on scripts(content_fingerprint) where content_fingerprint <> ''",
+    ]),
 ]
 
 
