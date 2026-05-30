@@ -107,7 +107,7 @@ def import_script(
             raise ValueError(f"custom_pattern 不是合法正则：{exc}") from exc
 
     chapters, report = chapter_splitter.split_chapters_with_report(
-        cleaned,
+        text,  # 传未清洗文本: with_report 内部 _normalize_encoding + sanitize 并计入 cleaning 报告
         split_rule=split_rule or "auto",
         custom_pattern=custom_pattern or "",
         source_name=original_name,
@@ -147,9 +147,10 @@ def import_script(
                 """
                 insert into script_chapters(
                   script_id, chapter_index, title, content, word_count,
-                  volume_title, source_marker, confidence
+                  volume_title, source_marker, confidence,
+                  is_author_note, exclude_from_extraction, title_confidence, content_descriptor
                 )
-                values (%s, %s, %s, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 [
                     (
@@ -161,6 +162,10 @@ def import_script(
                         str(chapter.get("volume_title") or ""),
                         str(chapter.get("source_marker") or ""),
                         float(report.get("confidence") or 0),
+                        bool(chapter.get("is_author_note", False)),
+                        bool(chapter.get("exclude_from_extraction", False)),
+                        float(chapter.get("title_confidence", 1.0)),
+                        str(chapter.get("content_descriptor") or ""),
                     )
                     for index, chapter in enumerate(chapters, start=1)
                 ],
@@ -575,7 +580,7 @@ def preview_split(
             raise ValueError(f"custom_pattern 不是合法正则：{exc}") from exc
 
     chapters, report = chapter_splitter.split_chapters_with_report(
-        cleaned, split_rule=split_rule or "auto",
+        text, split_rule=split_rule or "auto",  # 传未清洗文本: with_report 内部清洗并计入 cleaning 报告
         custom_pattern=custom_pattern or "",
         source_name=str(file_item and file_item.get("name") or "preview.txt"),
         title="preview",
@@ -664,7 +669,7 @@ def resplit_script(
     text, encoding = chapter_splitter.decode_bytes(raw)
     cleaned = chapter_splitter.clean_text(text)
     chapters, report = chapter_splitter.split_chapters_with_report(
-        cleaned, split_rule=split_rule or "auto",
+        text, split_rule=split_rule or "auto",  # 传未清洗文本: with_report 内部清洗并计入 cleaning 报告
         custom_pattern=custom_pattern or "",
         source_name=Path(src).name, title=script.get("title") or "",
     )
@@ -679,15 +684,18 @@ def resplit_script(
                 """
                 insert into script_chapters(
                   script_id, chapter_index, title, content, word_count,
-                  volume_title, source_marker, confidence
+                  volume_title, source_marker, confidence,
+                  is_author_note, exclude_from_extraction, title_confidence, content_descriptor
                 )
-                values (%s, %s, %s, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 [
                     (script_id, i, str(c.get("title") or f"第{i}章")[:200],
                      str(c.get("content") or ""), len(str(c.get("content") or "")),
                      str(c.get("volume_title") or ""), str(c.get("source_marker") or ""),
-                     float(report.get("confidence") or 0))
+                     float(report.get("confidence") or 0),
+                     bool(c.get("is_author_note", False)), bool(c.get("exclude_from_extraction", False)),
+                     float(c.get("title_confidence", 1.0)), str(c.get("content_descriptor") or ""))
                     for i, c in enumerate(chapters, start=1)
                 ],
             )
