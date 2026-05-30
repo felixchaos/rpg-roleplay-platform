@@ -284,64 +284,146 @@ pub(crate) async fn api_console_assistant_chat(
 
     let conv_key_for_task = key.clone();
     let s_for_task = s.clone();
+    let conv_id_for_task = conv_id.clone();
+    let user_id_for_task = user.id;
     tokio::spawn(async move {
-        let mut full = String::new();
-        match backend.stream_chat(req).await {
-            Ok(mut stream) => {
-                while let Some(item) = stream.next().await {
-                    match item {
-                        Ok(chunk) => {
-                            if let ChatChunk::Text(t) = &chunk {
-                                full.push_str(t);
+        // CONSOLE-MISSING-TOOL-LOOP: MCP tool loop — 最多 8 轮,防止死循环。
+        let max_rounds = 8usize;
+
+        'outer: for _round in 0..max_rounds {
+            let mut full = String::new();
+            let mut tool_calls_this_round: Vec<ChatChunk> = Vec::new();
+
+            match backend.stream_chat(req.clone()).await {
+                Ok(mut stream) => {
+                    while let Some(item) = stream.next().await {
+                        match item {
+                            Ok(chunk) => {
+                                if let ChatChunk::Text(t) = &chunk {
+                                    full.push_str(t);
+                                }
+                                if let ChatChunk::ToolCall { .. } = &chunk {
+                                    tool_calls_this_round.push(chunk.clone());
+                                }
+                                let wire = WireChatChunk::from_chunk(&chunk);
+                                let payload =
+                                    serde_json::to_value(&wire).unwrap_or_else(|_| json!({}));
+                                if tx
+                                    .send(Ok(named_sse_event("chunk", payload)))
+                                    .await
+                                    .is_err()
+                                {
+                                    return;
+                                }
                             }
-                            let wire = WireChatChunk::from_chunk(&chunk);
-                            let payload =
-                                serde_json::to_value(&wire).unwrap_or_else(|_| json!({}));
-                            if tx
-                                .send(Ok(named_sse_event("chunk", payload)))
-                                .await
-                                .is_err()
-                            {
+                            Err(e) => {
+                                let _ = tx
+                                    .send(Ok(named_sse_event(
+                                        "error",
+                                        json!({"detail": e.to_string(), "code": "llm_error"}),
+                                    )))
+                                    .await;
                                 return;
                             }
                         }
-                        Err(e) => {
-                            let _ = tx
-                                .send(Ok(named_sse_event(
-                                    "error",
-                                    json!({"detail": e.to_string(), "code": "llm_error"}),
-                                )))
-                                .await;
-                            return;
-                        }
                     }
                 }
+                Err(e) => {
+                    let _ = tx
+                        .send(Ok(named_sse_event(
+                            "error",
+                            json!({"detail": e.to_string(), "code": "llm_error"}),
+                        )))
+                        .await;
+                    return;
+                }
             }
-            Err(e) => {
-                let _ = tx
-                    .send(Ok(named_sse_event(
-                        "error",
-                        json!({"detail": e.to_string(), "code": "llm_error"}),
-                    )))
-                    .await;
-                return;
+
+            // 追加 assistant 文本到 conversation
+            if !full.is_empty() {
+                s_for_task
+                    .console_conversations
+                    .entry(conv_key_for_task.clone())
+                    .or_insert_with(Vec::new)
+                    .push(ConsoleMessage {
+                        role: "assistant".into(),
+                        text: full.clone(),
+                        at: chrono::Utc::now(),
+                    });
             }
+
+            // 无 tool calls → 结束循环
+            if tool_calls_this_round.is_empty() {
+                break 'outer;
+            }
+
+            // 处理每个 tool call
+            let mut tool_results: Vec<ChatMessage> = Vec::new();
+            for tc_chunk in &tool_calls_this_round {
+                if let ChatChunk::ToolCall { id, name, input } = tc_chunk {
+                    // 解析 server_id:tool_name (qualified: "server__tool")
+                    let (server_id, tool_name) = if let Some(idx) = name.find("__") {
+                        (&name[..idx], &name[idx + 2..])
+                    } else {
+                        ("", name.as_str())
+                    };
+
+                    // 发送 tool_call SSE 事件
+                    let _ = tx.send(Ok(named_sse_event("tool_call", json!({
+                        "call_id": id,
+                        "tool": tool_name,
+                        "server_id": server_id,
+                        "args": input,
+                    })))).await;
+
+                    // 调用 MCP broker
+                    let result = s_for_task
+                        .mcp_broker
+                        .call_tool(server_id, tool_name, input.clone(), 30)
+                        .await;
+
+                    let ok = result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let result_text = serde_json::to_string(&result).unwrap_or_default();
+
+                    // 发送 tool_result SSE 事件
+                    let _ = tx.send(Ok(named_sse_event("tool_result", json!({
+                        "call_id": id,
+                        "ok": ok,
+                        "result": result,
+                    })))).await;
+
+                    // 存储 pending confirmation key（用于 confirm endpoint 查找）
+                    let pending_key = format!("{user_id_for_task}:{conv_id_for_task}:{id}");
+                    s_for_task.console_pending_confirmations.insert(
+                        pending_key,
+                        json!({
+                            "call_id": id,
+                            "tool": tool_name,
+                            "server_id": server_id,
+                            "arguments": input,
+                            "result": result,
+                        }),
+                    );
+
+                    tool_results.push(ChatMessage::tool_result(id.clone(), result_text));
+                }
+            }
+
+            // 把 tool results 追加进下一轮的 messages
+            req.messages.extend(tool_results);
         }
-        if !full.is_empty() {
-            // append assistant reply 到 conversation。
-            s_for_task
-                .console_conversations
-                .entry(conv_key_for_task)
-                .or_insert_with(Vec::new)
-                .push(ConsoleMessage {
-                    role: "assistant".into(),
-                    text: full.clone(),
-                    at: chrono::Utc::now(),
-                });
-        }
+
+        // 收集 pending_confirmations 列表
+        let prefix = format!("{user_id_for_task}:{conv_id_for_task}:");
+        let pending_confirmations: Vec<serde_json::Value> = s_for_task
+            .console_pending_confirmations
+            .iter()
+            .filter(|e| e.key().starts_with(&prefix))
+            .map(|e| e.value().clone())
+            .collect();
+
         let _ = tx
-            // CONSOLE-DONE-MISSING-PENDING-CONFIRMATIONS: include pending_confirmations
-            .send(Ok(named_sse_event("done", json!({"ok": true, "pending_confirmations": []}))))
+            .send(Ok(named_sse_event("done", json!({"ok": true, "pending_confirmations": pending_confirmations}))))
             .await;
     });
 
@@ -422,6 +504,64 @@ pub(crate) async fn api_console_assistant_confirm(
     };
 
     let key = conv_key(user.id, &conv_id);
+
+    // CONSOLE-CONFIRM-MISSING-PENDING-RESOLUTION: 真实 dispatch pending tool call。
+    // 从 console_pending_confirmations 找到对应的 tool call。
+    let pending_key = format!("{}:{}:{}", user.id, conv_id, call_id);
+    let pending = s.console_pending_confirmations.get(&pending_key).map(|v| v.clone());
+
+    if let Some(pending_info) = &pending {
+        if decision == "approve" {
+            // 从 pending_info 提取 tool call 参数
+            let server_id = pending_info.get("server_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let tool_name = pending_info.get("tool").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let arguments = pending_info.get("arguments").cloned().unwrap_or(json!({}));
+
+            // 发送 tool_call SSE 事件
+            let _ = tx.send(Ok(named_sse_event("tool_call", json!({
+                "call_id": call_id,
+                "tool": tool_name,
+                "server_id": server_id,
+                "args": arguments,
+                "approved": true,
+            })))).await;
+
+            // 实际调用 MCP broker
+            let result = s.mcp_broker.call_tool(&server_id, &tool_name, arguments, 30).await;
+            let ok = result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+
+            // 发送 tool_result SSE 事件
+            let _ = tx.send(Ok(named_sse_event("tool_result", json!({
+                "call_id": call_id,
+                "ok": ok,
+                "result": result.clone(),
+            })))).await;
+
+            // 把 tool result 追加进 conversation(role=tool)
+            let result_text = serde_json::to_string(&result).unwrap_or_default();
+            s.console_conversations
+                .entry(key.clone())
+                .or_insert_with(Vec::new)
+                .push(ConsoleMessage {
+                    role: "tool".into(),
+                    text: result_text,
+                    at: chrono::Utc::now(),
+                });
+        } else {
+            // reject:注入拒绝声明
+            s.console_conversations
+                .entry(key.clone())
+                .or_insert_with(Vec::new)
+                .push(ConsoleMessage {
+                    role: "user".into(),
+                    text: format!("[用户拒绝了工具调用 {call_id}]"),
+                    at: chrono::Utc::now(),
+                });
+        }
+        // 移除 pending confirmation(无论 approve 还是 reject)
+        s.console_pending_confirmations.remove(&pending_key);
+    }
+
     // 把 decision 当 user 视角的"决策声明"推进 conversation。
     let decision_text = format!(
         "[用户对工具调用 {call_id} 的决策: {decision}]",
@@ -461,6 +601,8 @@ pub(crate) async fn api_console_assistant_confirm(
 
     let conv_key_for_task = key;
     let s_for_task = s.clone();
+    let conv_id_for_confirm = conv_id.clone();
+    let user_id_for_confirm = user.id;
     tokio::spawn(async move {
         let mut full = String::new();
         match backend.stream_chat(req).await {
@@ -515,9 +657,16 @@ pub(crate) async fn api_console_assistant_confirm(
                     at: chrono::Utc::now(),
                 });
         }
+        // 收集剩余 pending_confirmations
+        let prefix = format!("{user_id_for_confirm}:{conv_id_for_confirm}:");
+        let remaining_confirmations: Vec<serde_json::Value> = s_for_task
+            .console_pending_confirmations
+            .iter()
+            .filter(|e| e.key().starts_with(&prefix))
+            .map(|e| e.value().clone())
+            .collect();
         let _ = tx
-            // CONSOLE-DONE-MISSING-PENDING-CONFIRMATIONS: include pending_confirmations
-            .send(Ok(named_sse_event("done", json!({"ok": true, "pending_confirmations": []}))))
+            .send(Ok(named_sse_event("done", json!({"ok": true, "pending_confirmations": remaining_confirmations}))))
             .await;
     });
 
