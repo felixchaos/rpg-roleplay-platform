@@ -2123,58 +2123,86 @@ function ModulesPage() {
   };
 
   return (
-    <div className="pl-stack">
-      <section className="pl-sec" data-cap-anchor="modules">
-        <div className="pl-sec-head">
-          <h2>5E 兼容冒险模组 <span className="muted-2">{modules.length} 个</span></h2>
-          <div className="pl-sec-tools">
-            <span className="muted-2 mono" style={{fontSize:11}}>5E compatible / 五版规则兼容</span>
-          </div>
-        </div>
-        {errorMsg ? <p className="muted-2" style={{color:"var(--danger)"}}>{errorMsg}</p> : null}
+    <CSSpaceBetween size="l">
+      {errorMsg && (
+        <CSAlert type="error" dismissible={false}>{errorMsg}</CSAlert>
+      )}
+      <CSContainer header={
+        <CSHeader
+          variant="h2"
+          counter={loaded ? `(${modules.length})` : undefined}
+          description="5E compatible / 五版规则兼容"
+        >
+          5E 兼容冒险模组
+        </CSHeader>
+      }>
         {!loaded ? (
-          <p className="muted-2">加载中…</p>
-        ) : modules.length === 0 ? (
-          <div className="pl-empty">
-            <p>当前没有内置冒险模组。模组数据位于 <code>rpg/modules/</code> 目录。</p>
-          </div>
+          <CSBox color="text-body-secondary" textAlign="center" padding="l">加载中…</CSBox>
         ) : (
-          <table className="pl-table">
-            <thead><tr><th>模组</th><th>规则集</th><th>等级</th><th>预计时长</th><th></th></tr></thead>
-            <tbody>
-              {modules.map(m => {
-                const ruleset = m.ruleset || {};
-                return (
-                  <tr key={m.id}>
-                    <td>
-                      <div className="pl-title-cell">
-                        <strong>{m.name_cn || m.name}</strong>
-                        <span className="muted-2 mono">{m.id}</span>
-                        {m.tagline ? <span className="muted-2" style={{fontStyle:"italic",marginTop:3}}>{m.tagline}</span> : null}
-                      </div>
-                    </td>
-                    <td><span className="pill ok"><span className="dot ok" /> {ruleset.public_label || "5E compatible"}</span></td>
-                    <td className="mono">{(m.level_range || []).join("-") || "—"}</td>
-                    <td className="muted">{m.estimated_minutes ? `${m.estimated_minutes} 分钟` : "—"}</td>
-                    <td>
-                      <button className="btn primary" disabled={busyId === m.id} onClick={() => startModule(m)}>
-                        {busyId === m.id ? "启动中…" : "开始模组"}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <CSTable
+            columnDefinitions={[
+              {
+                id: "module",
+                header: "模组",
+                cell: m => (
+                  <div className="pl-title-cell">
+                    <strong>{m.name_cn || m.name}</strong>
+                    <span className="muted-2 mono">{m.id}</span>
+                    {m.tagline ? <span className="muted-2" style={{fontStyle:"italic",marginTop:3}}>{m.tagline}</span> : null}
+                  </div>
+                ),
+              },
+              {
+                id: "ruleset",
+                header: "规则集",
+                cell: m => {
+                  const ruleset = m.ruleset || {};
+                  return <CSStatusIndicator type="success">{ruleset.public_label || "5E compatible"}</CSStatusIndicator>;
+                },
+              },
+              {
+                id: "level",
+                header: "等级",
+                cell: m => <span className="mono">{(m.level_range || []).join("-") || "—"}</span>,
+              },
+              {
+                id: "duration",
+                header: "预计时长",
+                cell: m => <span className="muted">{m.estimated_minutes ? `${m.estimated_minutes} 分钟` : "—"}</span>,
+              },
+              {
+                id: "action",
+                header: "",
+                cell: m => (
+                  <CSButton
+                    variant="primary"
+                    loading={busyId === m.id}
+                    onClick={() => startModule(m)}
+                  >
+                    {busyId === m.id ? "启动中…" : "开始模组"}
+                  </CSButton>
+                ),
+              },
+            ]}
+            items={modules}
+            trackBy="id"
+            empty={
+              <CSBox textAlign="center" color="text-body-secondary" padding="l">
+                当前没有内置冒险模组。模组数据位于 <code>rpg/modules/</code> 目录。
+              </CSBox>
+            }
+          />
         )}
-        <div className="muted-2" style={{marginTop:12,fontSize:12,padding:"8px 10px",background:"var(--pl-panel-2,#1c1c1c)",borderRadius:6}}>
+      </CSContainer>
+      <CSContainer>
+        <CSBox color="text-body-secondary" fontSize="body-s">
           本页所有模组使用原创地名、角色、怪物。规则层为 5E-compatible（五版规则兼容），
           不引入任何官方 Dungeons &amp; Dragons 商标或非 SRD IP。LLM 仅负责叙事，所有掷骰、
           检定、战斗、HP/AC 计算由确定性 RulesEngine 完成；GM 直写 HP/AC/initiative
           会被 State Gate 拒绝。
-        </div>
-      </section>
-    </div>
+        </CSBox>
+      </CSContainer>
+    </CSSpaceBetween>
   );
 }
 
@@ -2267,69 +2295,180 @@ function LibraryPage() {
     window.open(u, "_blank");
   };
 
-  return (
-    <div className="pl-stack">
-      <section className="pl-sec" data-cap-anchor="library">
-        <div className="pl-lib-bar">
-          <div className="pl-crumb">
-            <a href="#" onClick={(e) => { e.preventDefault(); setPath(""); }}>库</a>
-            {(path || "").split("/").filter(Boolean).map((seg, i, arr) => (
-              <React.Fragment key={i}>
-                <span className="pl-crumb-sep">/</span>
-                <a href="#" onClick={(e) => { e.preventDefault(); setPath(arr.slice(0, i + 1).join("/")); }}>{seg}</a>
-              </React.Fragment>
-            ))}
-            {!path && <><span className="pl-crumb-sep">/</span><span className="pl-crumb-current">默认工作区</span></>}
-          </div>
-          <div className="seg" title="切换视图">
-            <button className={view === "list" ? "active" : ""} onClick={() => setView("list")} title="表格视图"><Icon name="list" size={11} /> 表格</button>
-            <button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} title="网格视图"><Icon name="grid" size={11} /> 网格</button>
-          </div>
-          <button className="btn ghost" onClick={() => setMkdirOpen(true)} title="新建文件夹"><Icon name="plus" size={12} /> 新建文件夹</button>
-          <button className="btn primary" onClick={() => fileInputRef.current?.click()} title="上传文件 / 图片 / 压缩包">
-            <Icon name="upload" size={12} /> 上传
-          </button>
-          <input ref={fileInputRef} type="file" style={{display: "none"}}
-            onChange={(e) => onUploadFile(e.target.files?.[0])} />
-        </div>
+  // breadcrumb path segments
+  const pathSegments = (path || "").split("/").filter(Boolean);
 
+  return (
+    <CSSpaceBetween size="l">
+      {/* hidden file input for upload */}
+      <input ref={fileInputRef} type="file" style={{display: "none"}}
+        onChange={(e) => onUploadFile(e.target.files?.[0])} />
+
+      <CSContainer header={
+        <CSHeader
+          variant="h2"
+          counter={`(${rows.length})`}
+          description={
+            <CSSpaceBetween size="xs" direction="horizontal">
+              <CSButton variant="inline-link" onClick={() => setPath("")}>库</CSButton>
+              {pathSegments.map((seg, i, arr) => (
+                <React.Fragment key={`seg-${i}`}>
+                  <span className="muted-2">/</span>
+                  <CSButton variant="inline-link" onClick={() => setPath(arr.slice(0, i + 1).join("/"))}>{seg}</CSButton>
+                </React.Fragment>
+              ))}
+              {!path && <span className="muted-2">/ 默认工作区</span>}
+            </CSSpaceBetween>
+          }
+          actions={
+            <CSSpaceBetween size="xs" direction="horizontal">
+              <CSButton
+                variant={view === "list" ? "primary" : "normal"}
+                iconName="list"
+                onClick={() => setView("list")}
+              >表格</CSButton>
+              <CSButton
+                variant={view === "grid" ? "primary" : "normal"}
+                iconName="grid"
+                onClick={() => setView("grid")}
+              >网格</CSButton>
+              <CSButton iconName="add-plus" onClick={() => setMkdirOpen(true)}>新建文件夹</CSButton>
+              <CSButton variant="primary" iconName="upload" onClick={() => fileInputRef.current?.click()}>上传</CSButton>
+            </CSSpaceBetween>
+          }
+        >
+          资产库
+        </CSHeader>
+      }>
         {view === "list" ? (
-          <div className="pl-lib-list">
-            <div className="pl-lib-row head">
-              <div></div><div>名称</div><div>类型</div><div>大小</div><div>修改时间</div><div></div>
-            </div>
-            {rows.map((r, i) => (
-              <div key={i} className="pl-lib-row">
-                <div className={`pl-lib-icon ${r.kind}`}><Icon name={LIB_ICON[r.kind] || "file"} size={16} /></div>
-                <div className="pl-lib-name" title={r.name}
-                  onClick={() => { if (r.kind === "folder") setPath(r.path || r.name); }}
-                  style={{cursor: r.kind === "folder" ? "pointer" : "default"}}>{r.name}</div>
-                <div className="muted">{r.kind}</div>
-                <div className="mono muted">{r.kind === "folder" ? `${r.items || 0} 项` : fmtBytes(r.size)}</div>
-                <div className="muted">{r.at}</div>
-                <div className="pl-table-actions">
-                  <button className="iconbtn" data-tip="下载" onClick={() => onDownload(r)} disabled={r.kind === "folder"}>
-                    <Icon name="download" size={13} />
-                  </button>
-                  <button className="iconbtn" data-tip="删除" onClick={() => setDeleteTarget(r)}><Icon name="trash" size={13} /></button>
-                </div>
-              </div>
-            ))}
-          </div>
+          <CSTable
+            columnDefinitions={[
+              {
+                id: "icon",
+                header: "",
+                width: 40,
+                cell: r => <Icon name={LIB_ICON[r.kind] || "file"} size={16} />,
+              },
+              {
+                id: "name",
+                header: "名称",
+                cell: r => (
+                  <span
+                    title={r.name}
+                    onClick={() => { if (r.kind === "folder") setPath(r.path || r.name); }}
+                    style={{cursor: r.kind === "folder" ? "pointer" : "default", color: r.kind === "folder" ? "var(--color-text-link-default)" : undefined}}
+                  >
+                    {r.name}
+                  </span>
+                ),
+              },
+              {
+                id: "kind",
+                header: "类型",
+                cell: r => <span className="muted">{r.kind}</span>,
+              },
+              {
+                id: "size",
+                header: "大小",
+                cell: r => <span className="mono muted">{r.kind === "folder" ? `${r.items || 0} 项` : fmtBytes(r.size)}</span>,
+              },
+              {
+                id: "at",
+                header: "修改时间",
+                cell: r => <span className="muted">{r.at}</span>,
+              },
+              {
+                id: "actions",
+                header: "",
+                cell: r => (
+                  <CSSpaceBetween size="xs" direction="horizontal">
+                    <CSButton
+                      variant="inline-icon"
+                      iconName="download"
+                      disabled={r.kind === "folder"}
+                      onClick={() => onDownload(r)}
+                      ariaLabel="下载"
+                    />
+                    <CSButton
+                      variant="inline-icon"
+                      iconName="remove"
+                      onClick={() => setDeleteTarget(r)}
+                      ariaLabel="删除"
+                    />
+                  </CSSpaceBetween>
+                ),
+              },
+            ]}
+            items={rows}
+            trackBy="name"
+            empty={
+              <CSBox textAlign="center" color="text-body-secondary" padding="l">
+                当前目录为空
+              </CSBox>
+            }
+          />
         ) : (
-          <div className="pl-lib-grid">
-            {rows.map((r, i) => (
-              <div key={i} className="pl-lib-tile" title={r.name}
-                onClick={() => { if (r.kind === "folder") setPath(r.path || r.name); }}
-                style={{cursor: r.kind === "folder" ? "pointer" : "default"}}>
-                <div className="pl-lib-tile-icon"><Icon name={LIB_ICON[r.kind] || "file"} size={28} /></div>
-                <div className="pl-lib-tile-name">{r.name}</div>
-                <div className="pl-lib-tile-meta">{r.kind === "folder" ? `${r.items || 0} 项` : fmtBytes(r.size)} · {r.at}</div>
-              </div>
-            ))}
-          </div>
+          <CSCards
+            cardDefinition={{
+              header: r => (
+                <span
+                  onClick={() => { if (r.kind === "folder") setPath(r.path || r.name); }}
+                  style={{cursor: r.kind === "folder" ? "pointer" : "default"}}
+                  title={r.name}
+                >
+                  {r.name}
+                </span>
+              ),
+              sections: [
+                {
+                  id: "icon",
+                  content: r => (
+                    <div style={{textAlign: "center", padding: "8px 0"}}>
+                      <Icon name={LIB_ICON[r.kind] || "file"} size={28} />
+                    </div>
+                  ),
+                },
+                {
+                  id: "meta",
+                  content: r => (
+                    <CSBox color="text-body-secondary" fontSize="body-s">
+                      {r.kind === "folder" ? `${r.items || 0} 项` : fmtBytes(r.size)} · {r.at}
+                    </CSBox>
+                  ),
+                },
+                {
+                  id: "actions",
+                  content: r => (
+                    <CSSpaceBetween size="xs" direction="horizontal">
+                      <CSButton
+                        variant="inline-icon"
+                        iconName="download"
+                        disabled={r.kind === "folder"}
+                        onClick={() => onDownload(r)}
+                        ariaLabel="下载"
+                      />
+                      <CSButton
+                        variant="inline-icon"
+                        iconName="remove"
+                        onClick={() => setDeleteTarget(r)}
+                        ariaLabel="删除"
+                      />
+                    </CSSpaceBetween>
+                  ),
+                },
+              ],
+            }}
+            cardsPerRow={[{ cards: 2 }, { minWidth: 600, cards: 4 }, { minWidth: 900, cards: 6 }]}
+            items={rows}
+            trackBy="name"
+            empty={
+              <CSBox textAlign="center" color="text-body-secondary" padding="l">
+                当前目录为空
+              </CSBox>
+            }
+          />
         )}
-      </section>
+      </CSContainer>
 
       <PromptModal
         open={mkdirOpen}
@@ -2358,7 +2497,7 @@ function LibraryPage() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => onDelete(deleteTarget)}
       />
-    </div>
+    </CSSpaceBetween>
   );
 }
 
@@ -2494,195 +2633,241 @@ function UsagePage() {
   const costSeriesVals = bucketSeries.map(b => Number(b.cost_usd || 0));
 
   return (
-    <div className="pl-stack">
-      <section className="pl-sec" data-cap-anchor="usage">
-        <div className="pl-sec-head">
-          <h2>
-            用量 <span className="muted-2">最近 {USAGE_RANGES.find(r => r.id === range)?.label}</span>
-            {loading && <span className="muted-2" style={{marginLeft: 8, fontSize: 11}}>加载中…</span>}
-            {err && <span className="danger" style={{marginLeft: 8, fontSize: 11}}>{err}</span>}
-          </h2>
-          <div className="pl-sec-tools">
-            <div className="seg">
+    <CSSpaceBetween size="l">
+      {err && <CSAlert type="error" dismissible={false}>{err}</CSAlert>}
+
+      {/* 统计卡 */}
+      <CSContainer header={
+        <CSHeader
+          variant="h2"
+          description={loading ? "加载中…" : undefined}
+          actions={
+            <CSSpaceBetween size="xs" direction="horizontal">
               {USAGE_RANGES.map(r => (
-                <button key={r.id} className={range === r.id ? "active" : ""} onClick={() => setRange(r.id)} title={`查看最近 ${r.label} 用量`}>
+                <CSButton
+                  key={r.id}
+                  variant={range === r.id ? "primary" : "normal"}
+                  onClick={() => setRange(r.id)}
+                >
                   {r.label}
-                </button>
+                </CSButton>
               ))}
-            </div>
-            <button className="iconbtn" data-tip="刷新" onClick={() => setTick(t => t + 1)}><Icon name="refresh" size={14} /></button>
+              <CSButton iconName="refresh" variant="icon" onClick={() => setTick(t => t + 1)} ariaLabel="刷新" />
+            </CSSpaceBetween>
+          }
+        >
+          用量 <span style={{fontWeight: "normal", fontSize: "0.85em", color: "var(--color-text-body-secondary)"}}>最近 {USAGE_RANGES.find(r => r.id === range)?.label}</span>
+        </CSHeader>
+      }>
+        <CSColumnLayout columns={5} variant="text-grid">
+          <div>
+            <CSBox variant="awsui-key-label">请求数</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{fmtN(totalTurns)}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{totalTurns ? `日均 ${Math.round(totalTurns / days)}` : "—"}</CSBox>
           </div>
-        </div>
+          <div>
+            <CSBox variant="awsui-key-label">Token 输入</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{fmtN(totalTokIn)}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{totalTokOut ? `输出 ${fmtN(totalTokOut)} · 比 1 : ${(totalTokIn / Math.max(1, totalTokOut)).toFixed(1)}` : "输出 —"}</CSBox>
+          </div>
+          <div>
+            <CSBox variant="awsui-key-label">成本</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">${totalCost.toFixed(2)}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">本窗口累计</CSBox>
+          </div>
+          <div>
+            <CSBox variant="awsui-key-label">平均延迟</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">—</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">后端未记录</CSBox>
+          </div>
+          <div>
+            <CSBox variant="awsui-key-label">错误率</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">—</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">后端未记录</CSBox>
+          </div>
+        </CSColumnLayout>
+      </CSContainer>
 
-        <div className="pl-stat-row">
-          <div className="pl-stat">
-            <span className="pl-stat-label">请求数</span>
-            <span className="pl-stat-value">{fmtN(totalTurns)}</span>
-            <span className="pl-stat-foot">{totalTurns ? `日均 ${Math.round(totalTurns / days)}` : "—"}</span>
-          </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">Token 输入</span>
-            <span className="pl-stat-value">{fmtN(totalTokIn)}</span>
-            <span className="pl-stat-foot">{totalTokOut ? `输出 ${fmtN(totalTokOut)} · 比 1 : ${(totalTokIn / Math.max(1, totalTokOut)).toFixed(1)}` : "输出 —"}</span>
-          </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">成本</span>
-            <span className="pl-stat-value">${totalCost.toFixed(2)}</span>
-            <span className="pl-stat-foot">本窗口累计</span>
-          </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">平均延迟</span>
-            <span className="pl-stat-value">—</span>
-            <span className="pl-stat-foot">后端未记录</span>
-          </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">错误率</span>
-            <span className="pl-stat-value">—</span>
-            <span className="pl-stat-foot">后端未记录</span>
-          </div>
-        </div>
-      </section>
-
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>趋势 <span className="muted-2">每日聚合</span></h2>
-        </div>
+      {/* 趋势图（保留原生 SVG Spark 自绘） */}
+      <CSContainer header={<CSHeader variant="h2" description="每日聚合">趋势</CSHeader>}>
         {bucketSeries.length === 0 ? (
-          <div className="pl-model-empty">{loading ? "加载中…" : "近期没有用量记录"}</div>
+          <CSBox textAlign="center" color="text-body-secondary" padding="l">
+            {loading ? "加载中…" : "近期没有用量记录"}
+          </CSBox>
         ) : (
-          <div className="pl-usage-charts">
-            <div className="pl-usage-chart">
-              <div className="pl-usage-chart-head">
-                <span className="pl-stat-label">请求</span>
-                <span className="mono" style={{fontSize: 12, color: "var(--text-quiet)"}}>{fmtN(reqSeriesVals.reduce((a, x) => a + x, 0))}</span>
+          <CSColumnLayout columns={2} variant="text-grid">
+            <div>
+              <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
+                <CSBox variant="awsui-key-label">请求</CSBox>
+                <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>{fmtN(reqSeriesVals.reduce((a, x) => a + x, 0))}</span>
               </div>
               <Spark values={reqSeriesVals} color="var(--accent)" />
             </div>
-            <div className="pl-usage-chart">
-              <div className="pl-usage-chart-head">
-                <span className="pl-stat-label">成本 $</span>
-                <span className="mono" style={{fontSize: 12, color: "var(--text-quiet)"}}>${costSeriesVals.reduce((a, x) => a + x, 0).toFixed(2)}</span>
+            <div>
+              <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
+                <CSBox variant="awsui-key-label">成本 $</CSBox>
+                <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>${costSeriesVals.reduce((a, x) => a + x, 0).toFixed(2)}</span>
               </div>
               <Spark values={costSeriesVals} color="var(--ok)" />
             </div>
-          </div>
+          </CSColumnLayout>
         )}
-      </section>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>按 API 拆分</h2>
-        </div>
-        {byApi.length === 0 ? (
-          <div className="pl-model-empty">{loading ? "加载中…" : "暂无调用记录"}</div>
-        ) : (
-          <table className="pl-table">
-            <thead>
-              <tr>
-                <th>API</th>
-                <th>请求</th>
-                <th>Token (入 / 出)</th>
-                <th>成本</th>
-                <th>占比</th>
-              </tr>
-            </thead>
-            <tbody>
-              {byApi.map(r => (
-                <tr key={r.id}>
-                  <td><strong style={{fontFamily: "var(--font-serif)", fontSize: 13.5}}>{r.id}</strong></td>
-                  <td className="mono">{fmtN(r.requests)}</td>
-                  <td className="mono"><span className="muted">{fmtN(r.tokens_in)}</span> <span className="muted-2">/</span> {fmtN(r.tokens_out)}</td>
-                  <td className="mono">${r.cost.toFixed(2)}</td>
-                  <td>
-                    <div style={{display: "flex", alignItems: "center", gap: 8}}>
-                      <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--line-soft)", overflow: "hidden"}}>
-                        <div style={{width: (totalTurns ? r.requests / totalTurns * 100 : 0) + "%", height: "100%", background: "var(--accent)"}} />
-                      </div>
-                      <span className="muted-2 mono" style={{fontSize: 11}}>{totalTurns ? Math.round(r.requests / totalTurns * 100) : 0}%</span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+      {/* 按 API 拆分 */}
+      <CSContainer header={<CSHeader variant="h2">按 API 拆分</CSHeader>}>
+        <CSTable
+          columnDefinitions={[
+            {
+              id: "api",
+              header: "API",
+              cell: r => <strong style={{fontFamily: "var(--font-serif)", fontSize: 13.5}}>{r.id}</strong>,
+            },
+            {
+              id: "requests",
+              header: "请求",
+              cell: r => <span className="mono">{fmtN(r.requests)}</span>,
+            },
+            {
+              id: "tokens",
+              header: "Token (入 / 出)",
+              cell: r => <span className="mono"><span className="muted">{fmtN(r.tokens_in)}</span> <span className="muted-2">/</span> {fmtN(r.tokens_out)}</span>,
+            },
+            {
+              id: "cost",
+              header: "成本",
+              cell: r => <span className="mono">${r.cost.toFixed(2)}</span>,
+            },
+            {
+              id: "pct",
+              header: "占比",
+              cell: r => (
+                <div style={{display: "flex", alignItems: "center", gap: 8}}>
+                  <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--color-background-control-default)", overflow: "hidden"}}>
+                    <div style={{width: (totalTurns ? r.requests / totalTurns * 100 : 0) + "%", height: "100%", background: "var(--color-text-accent)"}} />
+                  </div>
+                  <span className="muted-2 mono" style={{fontSize: 11}}>{totalTurns ? Math.round(r.requests / totalTurns * 100) : 0}%</span>
+                </div>
+              ),
+            },
+          ]}
+          items={byApi}
+          trackBy="id"
+          empty={
+            <CSBox textAlign="center" color="text-body-secondary" padding="l">
+              {loading ? "加载中…" : "暂无调用记录"}
+            </CSBox>
+          }
+        />
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>Top 模型 <span className="muted-2">按请求数</span></h2>
-        </div>
-        {byModel.length === 0 ? (
-          <div className="pl-model-empty">{loading ? "加载中…" : "暂无调用记录"}</div>
-        ) : (
-          <table className="pl-table">
-            <thead>
-              <tr>
-                <th style={{width: 30}}>#</th>
-                <th>模型</th>
-                <th>API</th>
-                <th>请求</th>
-                <th>Token (入 / 出)</th>
-                <th>成本</th>
-                <th>占比</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...byModel].sort((a, b) => Number(b.turns || 0) - Number(a.turns || 0)).map((m, i) => (
-                <tr key={`${m.api_id}/${m.model}`}>
-                  <td className="mono muted-2">{String(i + 1).padStart(2, "0")}</td>
-                  <td>
-                    <div className="pl-title-cell">
-                      <strong style={{fontSize: 13.5}}>{m.model}</strong>
-                    </div>
-                  </td>
-                  <td className="muted">{m.api_id}</td>
-                  <td className="mono">{fmtN(Number(m.turns || 0))}</td>
-                  <td className="mono"><span className="muted">{fmtN(Number(m.input_tokens || 0))}</span> <span className="muted-2">/</span> {fmtN(Number(m.output_tokens || 0))}</td>
-                  <td className="mono">${Number(m.cost_usd || 0).toFixed(2)}</td>
-                  <td>
-                    <div style={{display: "flex", alignItems: "center", gap: 8}}>
-                      <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--line-soft)", overflow: "hidden"}}>
-                        <div style={{width: (totalTurns ? Number(m.turns || 0) / totalTurns * 100 : 0) + "%", height: "100%", background: "var(--accent)"}} />
-                      </div>
-                      <span className="muted-2 mono" style={{fontSize: 11}}>{totalTurns ? Math.round(Number(m.turns || 0) / totalTurns * 100) : 0}%</span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+      {/* Top 模型 */}
+      <CSContainer header={<CSHeader variant="h2" description="按请求数">Top 模型</CSHeader>}>
+        <CSTable
+          columnDefinitions={[
+            {
+              id: "rank",
+              header: "#",
+              width: 40,
+              cell: m => <span className="mono muted-2">{String((m._rank ?? 0) + 1).padStart(2, "0")}</span>,
+            },
+            {
+              id: "model",
+              header: "模型",
+              cell: m => <strong style={{fontSize: 13.5}}>{m.model}</strong>,
+            },
+            {
+              id: "api",
+              header: "API",
+              cell: m => <span className="muted">{m.api_id}</span>,
+            },
+            {
+              id: "requests",
+              header: "请求",
+              cell: m => <span className="mono">{fmtN(Number(m.turns || 0))}</span>,
+            },
+            {
+              id: "tokens",
+              header: "Token (入 / 出)",
+              cell: m => <span className="mono"><span className="muted">{fmtN(Number(m.input_tokens || 0))}</span> <span className="muted-2">/</span> {fmtN(Number(m.output_tokens || 0))}</span>,
+            },
+            {
+              id: "cost",
+              header: "成本",
+              cell: m => <span className="mono">${Number(m.cost_usd || 0).toFixed(2)}</span>,
+            },
+            {
+              id: "pct",
+              header: "占比",
+              cell: m => (
+                <div style={{display: "flex", alignItems: "center", gap: 8}}>
+                  <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--color-background-control-default)", overflow: "hidden"}}>
+                    <div style={{width: (totalTurns ? Number(m.turns || 0) / totalTurns * 100 : 0) + "%", height: "100%", background: "var(--color-text-accent)"}} />
+                  </div>
+                  <span className="muted-2 mono" style={{fontSize: 11}}>{totalTurns ? Math.round(Number(m.turns || 0) / totalTurns * 100) : 0}%</span>
+                </div>
+              ),
+            },
+          ]}
+          items={[...byModel].sort((a, b) => Number(b.turns || 0) - Number(a.turns || 0)).map((m, i) => ({ ...m, _rank: i }))}
+          trackBy={m => `${m.api_id}/${m.model}`}
+          empty={
+            <CSBox textAlign="center" color="text-body-secondary" padding="l">
+              {loading ? "加载中…" : "暂无调用记录"}
+            </CSBox>
+          }
+        />
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>最近请求</h2>
-          <div className="pl-sec-tools">
-            <span className="muted-2" style={{fontSize: 11.5}}>显示最近 20 条 · GET /api/me/usage</span>
-          </div>
-        </div>
-        {recent.length === 0 ? (
-          <div className="pl-model-empty">{loading ? "加载中…" : "暂无最近调用"}</div>
-        ) : (
-          <div className="pl-api">
-            <div className="pl-usage-log-row head">
-              <div>时间</div><div>API</div><div>模型</div><div style={{textAlign: "right"}}>Token in / out</div><div style={{textAlign: "right"}}>成本</div><div style={{textAlign: "right"}}>上下文</div>
-            </div>
-            {recent.map((r, i) => (
-              <div key={i} className="pl-usage-log-row">
-                <div className="mono">{r.at ? (window.__fmt?.ago(r.at) || r.at) : "—"}</div>
-                <div className="muted">{r.api_id}</div>
-                <div className="mono" style={{fontSize: 11.5}}>{r.model}</div>
-                <div className="mono" style={{textAlign: "right"}}><span className="muted">{fmtN(Number(r.input_tokens || 0))}</span> <span className="muted-2">/</span> {fmtN(Number(r.output_tokens || 0))}</div>
-                <div className="mono" style={{textAlign: "right"}}>${Number(r.cost_usd || 0).toFixed(3)}</div>
-                <div className="mono" style={{textAlign: "right"}}>{Number(r.context_used || 0)} / {Number(r.context_max || 0)}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-    </div>
+      {/* 最近请求 */}
+      <CSContainer header={
+        <CSHeader variant="h2" description="显示最近 20 条 · GET /api/me/usage">
+          最近请求
+        </CSHeader>
+      }>
+        <CSTable
+          columnDefinitions={[
+            {
+              id: "at",
+              header: "时间",
+              cell: r => <span className="mono">{r.at ? (window.__fmt?.ago(r.at) || r.at) : "—"}</span>,
+            },
+            {
+              id: "api",
+              header: "API",
+              cell: r => <span className="muted">{r.api_id}</span>,
+            },
+            {
+              id: "model",
+              header: "模型",
+              cell: r => <span className="mono" style={{fontSize: 11.5}}>{r.model}</span>,
+            },
+            {
+              id: "tokens",
+              header: "Token in / out",
+              cell: r => <span className="mono"><span className="muted">{fmtN(Number(r.input_tokens || 0))}</span> <span className="muted-2">/</span> {fmtN(Number(r.output_tokens || 0))}</span>,
+            },
+            {
+              id: "cost",
+              header: "成本",
+              cell: r => <span className="mono">${Number(r.cost_usd || 0).toFixed(3)}</span>,
+            },
+            {
+              id: "ctx",
+              header: "上下文",
+              cell: r => <span className="mono">{Number(r.context_used || 0)} / {Number(r.context_max || 0)}</span>,
+            },
+          ]}
+          items={recent}
+          trackBy={r => `${r.at || ""}/${r.api_id || ""}/${r.model || ""}/${r.input_tokens || ""}`}
+          empty={
+            <CSBox textAlign="center" color="text-body-secondary" padding="l">
+              {loading ? "加载中…" : "暂无最近调用"}
+            </CSBox>
+          }
+        />
+      </CSContainer>
+    </CSSpaceBetween>
   );
 }
 
@@ -2771,36 +2956,51 @@ function CapPage({ kind }) {
     setReloadTick(t => t + 1);
   };
 
+  const emptyMsg = kind === "mcp"
+    ? "尚未配置 MCP 服务器。点击「新增服务器」添加。"
+    : kind === "skills"
+    ? "尚未导入 Skill 包。点击「导入 Skill」上传。"
+    : "暂无插件。";
+
   return (
-    <div className="pl-stack">
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>
-            {kind === "plugins" ? "插件" : kind === "mcp" ? "MCP 服务器" : "Skill 包"}
-            <span className="muted-2">
-              {loading ? "加载中…" : err ? `加载失败：${err}` : `${items.length} 项 · ${items.filter(i => i.on).length} 已启用`}
-            </span>
-          </h2>
-          <div className="pl-sec-tools">
-            <button className="btn ghost" title="重新校验所有项目" onClick={onValidateAll} disabled={loading}>
-              <Icon name="refresh" size={12} /> 校验
-            </button>
-            <button className="btn primary" onClick={() => setAddOpen(true)}
-              title={kind === "mcp" ? "添加一个 MCP 服务器（stdio 或 HTTP）" : kind === "skills" ? "从本地导入 Skill 包" : "添加一个平台插件"}>
-              <Icon name="plus" size={12} /> {kind === "mcp" ? "新增服务器" : kind === "skills" ? "导入 Skill" : "新增插件"}
-            </button>
-          </div>
-        </div>
-        {!loading && items.length === 0 && !err && (
-          <div className="pl-model-empty" style={{padding: "32px 16px"}}>
-            <Icon name="info" size={18} />
-            <div>{kind === "mcp" ? "尚未配置 MCP 服务器。点击「新增服务器」添加。" : kind === "skills" ? "尚未导入 Skill 包。点击「导入 Skill」上传。" : "暂无插件。"}</div>
+    <CSSpaceBetween size="l">
+      {err && <CSAlert type="error" dismissible={false}>加载失败：{err}</CSAlert>}
+      <CSContainer header={
+        <CSHeader
+          variant="h2"
+          counter={loading ? undefined : `(${items.length} 项 · ${items.filter(i => i.on).length} 已启用)`}
+          actions={
+            <CSSpaceBetween size="xs" direction="horizontal">
+              <CSButton
+                iconName="refresh"
+                onClick={onValidateAll}
+                loading={loading}
+              >
+                校验
+              </CSButton>
+              <CSButton
+                variant="primary"
+                iconName="add-plus"
+                onClick={() => setAddOpen(true)}
+              >
+                {kind === "mcp" ? "新增服务器" : kind === "skills" ? "导入 Skill" : "新增插件"}
+              </CSButton>
+            </CSSpaceBetween>
+          }
+        >
+          {kind === "plugins" ? "插件" : kind === "mcp" ? "MCP 服务器" : "Skill 包"}
+        </CSHeader>
+      }>
+        {loading && items.length === 0 ? (
+          <CSBox textAlign="center" color="text-body-secondary" padding="l">加载中…</CSBox>
+        ) : items.length === 0 ? (
+          <CSBox textAlign="center" color="text-body-secondary" padding="l">{emptyMsg}</CSBox>
+        ) : (
+          <div className="pl-cap-grid">
+            {items.map((it, i) => <CapCard key={it.id || i} {...it} kind={kind} onChanged={() => setReloadTick(t => t + 1)} />)}
           </div>
         )}
-        <div className="pl-cap-grid">
-          {items.map((it, i) => <CapCard key={it.id || i} {...it} kind={kind} onChanged={() => setReloadTick(t => t + 1)} />)}
-        </div>
-      </section>
+      </CSContainer>
       <PromptModal
         open={addOpen}
         eyebrow={kind === "mcp" ? "新增 MCP 服务器" : kind === "skills" ? "导入 Skill" : "新增插件"}
@@ -2860,7 +3060,7 @@ function CapPage({ kind }) {
           }
         }}
       />
-    </div>
+    </CSSpaceBetween>
   );
 }
 
