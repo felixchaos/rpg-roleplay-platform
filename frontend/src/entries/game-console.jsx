@@ -300,7 +300,9 @@ function App() {
       if (data && data.save_id != null) {
         setActiveSave({ id: data.save_id, title: data.save_title || `存档 #${data.save_id}`, updated_at: data.save_updated_at || '' });
       }
-    } catch (_) {}
+      // 返回是否真正拿到了可玩状态(供 mount 重试判断是否还要再拉一次)。
+      return !!(data && data.player);
+    } catch (_) { return false; }
   }, []);
 
   const reloadSaves = useCallback(async () => {
@@ -319,11 +321,19 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
-    const id = requestAnimationFrame(() => {
-      if (cancelled) return;
-      reloadState(); reloadSaves();
-    });
-    return () => { cancelled = true; cancelAnimationFrame(id); };
+    // 后端 per-user 运行时状态在页面首次加载/导航后可能尚未热(_ensure_loaded 冷启动),
+    // 首次 /api/state 可能返回空(无 player/save_id),导致首屏停在 INITIAL_STATE
+    // ("尚未创建存档")。带界限重试直到拿到可玩状态;对 100 并发用户首进游戏的
+    // 冷缓存同样有韧性。拿到即停,不过度轮询。
+    (async () => {
+      for (let i = 0; i < 6 && !cancelled; i++) {
+        const ok = await reloadState();
+        await reloadSaves();
+        if (ok || cancelled) break;
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    })();
+    return () => { cancelled = true; };
   }, [reloadState, reloadSaves]);
 
   useEffect(() => {
@@ -463,16 +473,28 @@ function App() {
           clearInterval(tickerId);
           const stripOps = (txt) => {
             if (!txt) return txt;
+            // Robust: find JSON arrays containing "op": and remove them.
+            // Strategy: locate `[` followed by `"op"` within 80 chars, then find matching `]`.
             let out = txt;
-            // 1. fenced code blocks wrapping ops array/object
-            out = out.replace(/```(?:json)?\s*(\[\s*\{[\s\S]*?"op"\s*:[\s\S]*?\}\s*\])\s*```/gi, '');
-            out = out.replace(/```(?:json)?\s*(\{\s*"op"\s*:[\s\S]*?\})\s*```/gi, '');
-            // 2. bare JSON ops array at end of text
-            out = out.replace(/\n*\[\s*\{[\s\S]*?"op"\s*:[\s\S]*?\}\s*\](?=\s*$)/g, '');
-            // 3. bare JSON ops object(s) at end of text
-            out = out.replace(/\n*\{\s*"op"\s*:[\s\S]*?\}(?=\s*$)/gm, '');
-            // 4. bare JSON ops array/object anywhere in text (GM sometimes puts ops mid-response)
-            out = out.replace(/\n*\[\s*\n*\s*\{\s*\n*\s*"op"\s*:\s*"[^"]*"[\s\S]*?\}\s*\n*\s*\]/g, '');
+            // 1. fenced code blocks wrapping ops
+            out = out.replace(/```(?:json)?\s*\[[\s\S]*?"op"\s*:[\s\S]*?\]\s*```/gi, '');
+            out = out.replace(/```(?:json)?\s*\{[\s\S]*?"op"\s*:[\s\S]*?\}\s*```/gi, '');
+            // 2. Bare JSON ops array: find `[` + within 80 chars `"op":` + greedy to last `]`
+            // Use a function-based replace to find the matching bracket
+            let idx;
+            while ((idx = out.search(/\[\s*\{[^[\]]{0,80}"op"\s*:/)) !== -1) {
+              // Find matching ] by counting brackets
+              let depth = 0, end = -1;
+              for (let i = idx; i < out.length; i++) {
+                if (out[i] === '[') depth++;
+                else if (out[i] === ']') { depth--; if (depth === 0) { end = i; break; } }
+              }
+              if (end === -1) break; // malformed, stop
+              // Remove including leading newlines
+              let start = idx;
+              while (start > 0 && out[start - 1] === '\n') start--;
+              out = out.slice(0, start) + out.slice(end + 1);
+            }
             return out.trimEnd();
           };
           setHistory((h) => {

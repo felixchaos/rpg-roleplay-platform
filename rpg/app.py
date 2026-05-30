@@ -470,7 +470,11 @@ from pathlib import Path as _Path
 
 from fastapi.staticfiles import StaticFiles as _StaticFiles
 
-_FRONTEND_DIR = _Path(__file__).resolve().parent.parent / "frontend"
+_FRONTEND_ROOT = _Path(__file__).resolve().parent.parent / "frontend"
+# Vite 构建产物在 frontend/dist;同源/生产服务必须挂 dist(打包后的 /assets/*.js)。
+# 源码目录的 *.html 引用裸 .jsx 模块,浏览器无法直接运行 → 白屏。
+# dist 不存在(未 npm run build)时回退源码目录,仅配合 vite dev server (:5173) 用。
+_FRONTEND_DIR = _FRONTEND_ROOT / "dist" if (_FRONTEND_ROOT / "dist").is_dir() else _FRONTEND_ROOT
 if _FRONTEND_DIR.is_dir():
     app.mount("/", _StaticFiles(directory=str(_FRONTEND_DIR), html=False), name="frontend")
 

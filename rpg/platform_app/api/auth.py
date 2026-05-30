@@ -76,3 +76,27 @@ async def api_me(user=Depends(current_user)):
         "user": public_user(user) if user else None,
         "database": db_status(reveal_details=is_admin),
     })
+
+
+@router.get("/api/auth/schema")
+async def api_auth_schema():
+    """登录/注册表单的字段定义,前端 login-app.jsx 据此动态渲染。
+
+    返回结构 (前端直接 setSchema(j),按 schema[mode] 取字段数组):
+      { login: [...], register: [...], notes: {...} }
+    字段属性: key / label / type / required / min_length。
+    后端是字段的唯一权威源 — 加减字段只改这里,前端零改动。
+    """
+    pw_min = _auth.MIN_PASSWORD_LENGTH
+    return json_response({
+        "login": [
+            {"key": "username", "label": "用户名", "type": "text", "required": True},
+            {"key": "password", "label": "密码", "type": "password", "required": True, "min_length": pw_min},
+        ],
+        "register": [
+            {"key": "username", "label": "用户名", "type": "text", "required": True},
+            {"key": "display_name", "label": "昵称(可选)", "type": "text", "required": False},
+            {"key": "password", "label": "密码", "type": "password", "required": True, "min_length": pw_min},
+        ],
+        "notes": {"min_password_length": pw_min, "invite_only": False},
+    })

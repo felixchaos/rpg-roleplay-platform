@@ -6,6 +6,10 @@ import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL,
 import { Icon } from './game-icons.jsx';
 import { useResizable, ResizeHandle } from './responsive.jsx';
 import { MODELS_DATA } from './pages/settings.jsx';
+// ESM 重构遗漏修复:ContinuePicker / NewGameModal 的真实现在 pages/saves.jsx,
+// platform-app 之前留了返回 null 的 stub 遮蔽它们 → "继续游戏"/"新建存档" 全失效。
+// PlatformShell(本文件)直接渲染这两个组件,必须从真实现 import,不能用 stub。
+import { ContinuePicker, NewGameModal } from './pages/saves.jsx';
 
 const PL_NAV = [
   { section: "工作台" },
@@ -3221,44 +3225,9 @@ function BranchesPage() {
   );
 }
 
-/* ── ContinuePicker: 选存档 + 选分支节点继续 ── */
-// 实现细节见 pages/saves.jsx ContinuePicker
-function ContinuePicker({ open, save, focusedNodeId, onClose }) {
-  // stub — 真实实现在 pages/saves.jsx
-  // 显示真实 ref 名: n.ref_names, n.short_refs
-  const confirm = async () => {
-    const targetSaveId = save?.id;
-    if (!targetSaveId) {
-      window.__apiToast?.("没选目标存档", { kind: "danger", duration: 2400 });
-      return;
-    }
-    const pickedNode = null;
-    if (pickedNode != null) {
-      // 用户选了具体 commit: 走 commit 级 activate
-      await window.api.branches.activate({ node_id: pickedNode, commit_id: pickedNode });
-    } else {
-      // fallback: 只切 save 级
-      await window.api.saves.activate(targetSaveId);
-    }
-    location.href = "Game Console.html";
-  };
-  return open ? (
-    <div>
-      <NewGameModal
-        open={false}
-        onConfirm={async (payload) => { await window.__createAndEnterSave(payload); }}
-        onClose={onClose}
-      />
-    </div>
-  ) : null;
-}
-
-/* ── NewGameModal: 新建存档向导 ── */
-// 实现细节见 pages/saves.jsx NewGameModal
-function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
-  // stub — 真实实现在 pages/saves.jsx
-  return null;
-}
+/* ── ContinuePicker / NewGameModal ──
+   真实现在 pages/saves.jsx,已在文件顶部 import。
+   此处原有的返回 null 的 stub 已删除(ESM 重构遗漏,曾导致继续/新建存档失效)。 */
 
 /* ── ScriptsListView: 剧本列表 (含新建存档入口) ── */
 // 实现细节见 pages/scripts.jsx ScriptsListView
