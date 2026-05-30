@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 import threading
@@ -146,6 +147,11 @@ def register(username: str, password: str, display_name: str = "") -> dict[str, 
         return dict(row)
 
 
+def _hash_token(token: str) -> str:
+    """session token → sha256 hex(DB 只存哈希,不存明文)。"""
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
 def login(username: str, password: str, *, ip: str = "") -> tuple[dict[str, Any], str]:
     """登录，带速率限制 + 失败审计"""
     init_db()
@@ -158,9 +164,10 @@ def login(username: str, password: str, *, ip: str = "") -> tuple[dict[str, Any]
             raise ValueError("用户名或密码错误")
         token = secrets.token_urlsafe(32)
         expires_at = datetime.now() + timedelta(days=SESSION_DAYS)
+        # 安全:DB 只存 token 的 sha256 哈希,不存可直接使用的明文(拖库不得有效会话)
         db.execute(
-            "insert into sessions(token, user_id, expires_at) values (%s, %s, %s)",
-            (token, row["id"], expires_at),
+            "insert into sessions(token, token_hash, user_id, expires_at) values (%s, %s, %s, %s)",
+            ("", _hash_token(token), row["id"], expires_at),
         )
         _record_login_success(ip, normalized)
         return dict(row), token
@@ -171,7 +178,8 @@ def logout(token: str | None) -> None:
         return
     init_db()
     with connect() as db:
-        db.execute("delete from sessions where token = %s", (token,))
+        db.execute("delete from sessions where token_hash = %s or (token <> '' and token = %s)",
+                   (_hash_token(token), token))
 
 
 def user_from_token(token: str | None) -> dict[str, Any] | None:
@@ -179,13 +187,15 @@ def user_from_token(token: str | None) -> dict[str, Any] | None:
         return None
     init_db()
     with connect() as db:
+        # 按哈希查找(过渡期兼容历史明文 token 行)
         row = db.execute(
             """
             select users.* from sessions
             join users on users.id = sessions.user_id
-            where sessions.token = %s and sessions.expires_at > now()
+            where (sessions.token_hash = %s or (sessions.token <> '' and sessions.token = %s))
+              and sessions.expires_at > now()
             """,
-            (token,),
+            (_hash_token(token), token),
         ).fetchone()
         return dict(row) if row else None
 

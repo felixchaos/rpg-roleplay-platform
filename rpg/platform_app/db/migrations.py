@@ -564,6 +564,20 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "alter table scripts add column if not exists extracted_through_chapter integer not null default 0",
         "alter table scripts add column if not exists extraction_seeded boolean not null default false",
     ]),
+    (23, "sessions_token_hash_security", [
+        # v23: 会话令牌哈希化(安全)。不在 DB 存明文 session token,存 sha256(token);
+        # 按 hash 查找/删除。修复部分环境 token_hash NOT NULL 但 login 未填的漂移,
+        # 并统一到"哈希存储"(拖库不直接拿到可用 session token)。
+        "alter table sessions add column if not exists token_hash text",
+        # 容错:历史/漂移环境可能 NOT NULL 且无默认 → 放开,改由代码填哈希
+        "alter table sessions alter column token_hash drop not null",
+        "alter table sessions alter column token drop not null",
+        # 回填存量明文 session 的哈希(SHA-256 hex)
+        "update sessions set token_hash = encode(digest(token, 'sha256'), 'hex') "
+        "where token_hash is null and coalesce(token,'') <> '' and exists "
+        "(select 1 from pg_extension where extname='pgcrypto')",
+        "create index if not exists idx_sessions_token_hash2 on sessions(token_hash)",
+    ]),
 ]
 
 
