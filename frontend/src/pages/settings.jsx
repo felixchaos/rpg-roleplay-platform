@@ -6,10 +6,14 @@ import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { Icon } from '../game-icons.jsx';
 import { ConfirmModal, SettingsToggle, useAutoSave, usePlatformData, fmtN } from '../platform-app.jsx';
+import { getCaps as _getCapsImported } from '../components/catalog-helpers.js';
 
 /* ---------------------------- SETTINGS ------------------------- */
-function SettingsPage() {
-  const [section, setSection] = useStatePL("preferences");
+function SettingsPage({ section: sectionProp } = {}) {
+  // 新 IA:section 由模块左栏(路由)驱动。传入 sectionProp 时隐藏内部导航。
+  const [sectionState, setSection] = useStatePL("preferences");
+  const external = !!sectionProp;
+  const section = sectionProp || sectionState;
   const SECTIONS = [
     { id: "preferences", label: "偏好",       icon: "settings" },
     { id: "models",      label: "API 设置",   icon: "sparkle" },
@@ -39,21 +43,23 @@ function SettingsPage() {
   return (
     <div className="pl-stack">
       <section className="pl-sec" data-cap-anchor="settings">
-        <div className="pl-settings-grid">
-          <div className="pl-set-nav">
-            {SECTIONS.map(s => (
-              <button
-                key={s.id}
-                className={`pl-set-nav-item ${section === s.id ? "active" : ""} ${s.id === "danger" ? "danger" : ""}`}
-                onClick={() => setSection(s.id)}
-                data-tip={`${s.label} 设置`}
-                data-tip-pos="right"
-              >
-                <Icon name={s.icon} size={15} />
-                <span>{s.label}</span>
-              </button>
-            ))}
-          </div>
+        <div className={external ? "pl-settings-grid pl-settings-grid-flat" : "pl-settings-grid"}>
+          {!external && (
+            <div className="pl-set-nav">
+              {SECTIONS.map(s => (
+                <button
+                  key={s.id}
+                  className={`pl-set-nav-item ${section === s.id ? "active" : ""} ${s.id === "danger" ? "danger" : ""}`}
+                  onClick={() => setSection(s.id)}
+                  data-tip={`${s.label} 设置`}
+                  data-tip-pos="right"
+                >
+                  <Icon name={s.icon} size={15} />
+                  <span>{s.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <div className="pl-set-body">
             {section === "preferences" && <><PrefSection /><ExtractorSection /><ClarifySection /></>}
             {section === "models" && <ModelsSection />}
@@ -1047,7 +1053,7 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
 
   // helpers to normalize capabilities (Wave 11.5-A: 复用 components/catalog-helpers.js,
   // 老 array / 新 typed object 两种 shape 都兼容)
-  const getCaps = window.getCaps;
+  const getCaps = window.getCaps || _getCapsImported;
 
   const filtered = visibleModels.filter(m => {
     if (q) {

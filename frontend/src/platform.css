@@ -782,6 +782,7 @@
 
 /* settings */
 .pl-settings-grid { display: grid; grid-template-columns: 220px 1fr; gap: 24px; }
+.pl-settings-grid-flat { grid-template-columns: 1fr; }
 .pl-set-nav {
   display: grid; gap: 1px; align-content: start;
   position: sticky;
