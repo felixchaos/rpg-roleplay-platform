@@ -37,6 +37,45 @@ use rpg_state::GameState;
 use crate::sse_metrics::{GuardedStream, SseConnectionGuard};
 use crate::{hello_payload, named_sse_event, require_user, user_id_or_anon, AppState, ResponseError};
 
+// ── McpBroker → ToolCallRouter 适配器 ───────────────────────────────
+/// 把 `rpg_tools_dsl::McpBroker` 包成 `rpg_agents::gm::ToolCallRouter`,
+/// 使 `GameMaster::step()` 内部的 tool_call 循环能透传到 MCP 子进程。
+struct McpToolRouter {
+    broker: std::sync::Arc<rpg_tools_dsl::McpBroker>,
+}
+
+#[async_trait::async_trait]
+impl rpg_agents::gm::ToolCallRouter for McpToolRouter {
+    async fn call(
+        &self,
+        server_id: &str,
+        tool: &str,
+        arguments: serde_json::Value,
+    ) -> rpg_agents::gm::ToolCallResult {
+        // McpBroker.call_tool 返回 Value (含 ok / error 字段),不是 Result
+        let resp = self.broker.call_tool(server_id, tool, arguments, 30).await;
+        let ok = resp.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        if ok {
+            rpg_agents::gm::ToolCallResult {
+                ok: true,
+                result: Some(resp),
+                error: None,
+            }
+        } else {
+            let err_msg = resp
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown MCP error")
+                .to_string();
+            rpg_agents::gm::ToolCallResult {
+                ok: false,
+                result: None,
+                error: Some(err_msg),
+            }
+        }
+    }
+}
+
 type SseResponse = Result<Sse<GuardedStream<ReceiverStream<Result<Event, Infallible>>>>, ResponseError>;
 
 /// Build a full status payload matching Python `_payload(api_user)`.
@@ -1059,7 +1098,9 @@ pub(crate) async fn api_chat(
         };
 
         // 2c. build_context_bundle
-        let context_text = if let Some(sid) = script_id {
+        // NOTE: step() 内部通过 context_agent 自行组装上下文,此处 context_text
+        // 目前未被 step() 消费,保留用于后续 token 估算或回退路径。
+        let _context_text = if let Some(sid) = script_id {
             let state_data = state_handle.read().data.clone();
             let chat_services = rpg_context::ProviderServices {
                 db_pool: Some(db.clone()),
@@ -1123,60 +1164,101 @@ pub(crate) async fn api_chat(
             json!({"phase":"generating","label":"GM 正在回应…"}),
         ))).await;
 
-        let gm = rpg_agents::gm::GameMaster::new(backend);
-        let state_snapshot = state_handle.read().clone();
+        // 构造带 MCP tool_router 的 GameMaster
+        let gm = std::sync::Arc::new(
+            rpg_agents::gm::GameMaster::new(backend)
+                .with_tool_router(std::sync::Arc::new(McpToolRouter {
+                    broker: chat_app_state.mcp_broker.clone(),
+                })),
+        );
 
-        match gm.respond_stream(&message, &context_text, &state_snapshot).await {
-            Ok(mut stream) => {
-                loop {
-                    tokio::select! {
-                        _ = stop_notify.notified() => {
-                            interrupted = true;
-                            break;
-                        }
-                        chunk_opt = stream.next() => {
-                            let Some(chunk_result) = chunk_opt else { break };
-                            match chunk_result {
-                                Ok(text) => {
-                                    if rpg_platform::cluster::is_stop_requested(
-                                        &db, user_id_u.get(), run_id,
-                                    ).await {
-                                        interrupted = true;
-                                        break;
-                                    }
-                                    full.push_str(&text);
-                                    if tx.send(Ok(named_sse_event(
-                                        "token",
-                                        json!({"text": text}),
-                                    ))).await.is_err() {
-                                        return;
-                                    }
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(Ok(named_sse_event(
-                                        "error",
-                                        json!({"message": e.to_string(), "code": "llm_error"}),
-                                    ))).await;
-                                    break;
-                                }
+        // step() 需要 tokio::sync::RwLock;从 parking_lot handle 复制一份快照
+        let step_state = std::sync::Arc::new(
+            tokio::sync::RwLock::new(state_handle.read().clone()),
+        );
+        let mut event_stream = gm.step(message.clone(), step_state.clone()).await;
+
+        // 消费 GmEvent 流
+        loop {
+            tokio::select! {
+                _ = stop_notify.notified() => {
+                    interrupted = true;
+                    break;
+                }
+                ev_opt = event_stream.next() => {
+                    let Some(event) = ev_opt else { break };
+                    match event {
+                        rpg_agents::gm::GmEvent::Text { text } => {
+                            if rpg_platform::cluster::is_stop_requested(
+                                &db, user_id_u.get(), run_id,
+                            ).await {
+                                interrupted = true;
+                                break;
+                            }
+                            full.push_str(&text);
+                            if tx.send(Ok(named_sse_event(
+                                "token",
+                                json!({"text": text}),
+                            ))).await.is_err() {
+                                return;
                             }
                         }
+                        rpg_agents::gm::GmEvent::ToolCall { server_id, tool, arguments } => {
+                            let _ = tx.send(Ok(named_sse_event("tool_call", json!({
+                                "tool": tool,
+                                "server_id": server_id,
+                                "args": arguments,
+                            })))).await;
+                        }
+                        rpg_agents::gm::GmEvent::ToolResult { ok, result, error } => {
+                            let _ = tx.send(Ok(named_sse_event("tool_result", json!({
+                                "ok": ok,
+                                "result": result,
+                                "error": error,
+                            })))).await;
+                        }
+                        rpg_agents::gm::GmEvent::ToolError { error, raw } => {
+                            tracing::warn!(error = %error, raw = %raw, "tool protocol error");
+                            let _ = tx.send(Ok(named_sse_event("tool_result", json!({
+                                "ok": false,
+                                "error": error,
+                            })))).await;
+                        }
+                        rpg_agents::gm::GmEvent::StateOps { ops } => {
+                            let _ = tx.send(Ok(named_sse_event("updates", json!({
+                                "ops": ops,
+                            })))).await;
+                        }
+                        rpg_agents::gm::GmEvent::GuardViolations { violations } => {
+                            for v in &violations {
+                                tracing::warn!(
+                                    pattern = %v.pattern_label,
+                                    matched = %v.matched_text,
+                                    "timeline guard violation"
+                                );
+                            }
+                        }
+                        rpg_agents::gm::GmEvent::Demand { demand } => {
+                            let _ = tx.send(Ok(named_sse_event("agent", json!({
+                                "demand": demand,
+                            })))).await;
+                        }
+                        rpg_agents::gm::GmEvent::Done => break,
                     }
                 }
             }
-            Err(e) => {
-                let _ = tx.send(Ok(named_sse_event("token", json!({"text":""})))).await;
-                tracing::error!(error = %e, "GM respond_stream failed");
-                let _ = tx.send(Ok(named_sse_event(
-                    "error",
-                    json!({"message": e.to_string(), "code": "llm_error"}),
-                ))).await;
-            }
+        }
+
+        // step() 内部已通过 extractor + apply_op 更新了 step_state;
+        // 把变更同步回 parking_lot state_handle。
+        {
+            let updated = step_state.read().await;
+            *state_handle.write() = updated.clone();
         }
 
         // ── Phase 5: Persist ────────────────────────────────────────
         if !full.is_empty() {
-            // game-chat-07: estimate usage from text since respond_stream only yields String
+            // game-chat-07: estimate usage from accumulated narrative text
             usage_output = rpg_platform::usage::estimate_input_tokens(&full).clamp(0, i32::MAX as i64) as i32;
             usage_input = est_input.clamp(0, i32::MAX as i64) as i32;
 
