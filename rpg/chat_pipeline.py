@@ -598,6 +598,30 @@ async def run_gm_phase(
     bundle = ctx.bundle
     agent_result = ctx.agent_result
 
+    # Phase D: 注入规范层常驻骨架(治 1935)+ 规范世界线软目标。
+    # 加固:任何失败都不影响既有 gameplay(纯增量 prepend)。KB 无 constant 条目时为空。
+    try:
+        _save_id_pd = ctx.early_active_save_id or 0
+        _uid_pd = int(api_user.get("id")) if api_user else 0
+        if _save_id_pd and _uid_pd:
+            from gm_serving.serve import assemble_gm_context
+            from platform_app.db import connect as _connect_pd
+            with _connect_pd() as _db_pd:
+                _pd = assemble_gm_context(
+                    _db_pd, save_id=_save_id_pd, user_id=_uid_pd,
+                    user_input=message_for_model or "",
+                )
+            _inj = (_pd or {}).get("injection_text") or ""
+            if _inj and _inj not in (bundle.get("prompt") or ""):
+                bundle["prompt"] = _inj + "\n\n" + (bundle.get("prompt") or "")
+                bundle.setdefault("debug", {})["phase_d_injection"] = {
+                    "tokens": _pd.get("tokens"), "budget": _pd.get("budget"),
+                    "steering_next": (_pd.get("steering") or {}).get("next_node"),
+                    "impact": _pd.get("impact"),
+                }
+    except Exception as _pd_err:
+        log.warning(f"[chat] Phase D 注入跳过(不影响 gameplay): {_pd_err}")
+
     yield ("agent", {
         "phase": "main_gm",
         "message": "主 GM 正在读取上下文并生成正文。",
