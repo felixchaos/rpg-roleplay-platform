@@ -12,9 +12,10 @@
 ## 1. 设计要点(为什么这样切)
 - **规范层(B)只读、per-script、可共享**:一本书提取一次,所有玩它的存档共享(成本摊薄,§G)
 - **活态层(C)可写、per-save、行级版本化**:玩家改的世界,COW,沿 commit 谱系隔离分支
-- **不重复造脊柱**:commit DAG 已有。C 层每行只挂一个 `born_commit`(= 写入时的 active commit_id),不新建第二套树
-- **轻重分离**:`branch_commits.state_snapshot` 继续存**轻量运行态**(player/scene/turn/relationships 摘要,玩家可见即时态);**重型世界知识**(实体库/事件库/世界线变量)进 `kb_*` 行级层,避免每回合复制整个世界到 JSON 快照
+- **复用 commit 拓扑**:`branch_commits.parent_id` 树已有(`init.py:128`)。C 层每行挂一个 `born_commit`(= 写入时 active commit_id),不新建第二套树
+- ⚠️ **关键修正(读码后)**:`branch_commits.state_snapshot` 当前存的**不是**轻量运行态——它存**整份 `state.data`**,world/relationships/events/active_entities/memory 全在里面(`commits.py:96`、`state/core.py`)。所以这不是"加层"而是**迁移**:把世界知识字段从 blob **搬进** `kb_*` 行级表,`kb_*` 成**唯一真相源**,blob 退成瞬时运行态或可重建检查点缓存(见根 §2)。**不允许 blob 与 kb_* 双写同一世界知识**(两个真相源 = 必然漂移)。
 - **读 = 规范层(钉死)∪ 活态层(当前分支 newest-per-key)**,活态覆盖规范(玩家改了 NPC 状态以玩家版为准)
+- **迁移代价(已认)**:动 `state.data` 核心结构,牵连 `_build_initial_snapshot` / `record_runtime_turn` / 读档 / GM 上下文 / 所有读 `state.data.world|relationships` 处。需迁移脚本 + 双读兼容期 + 回归(§5)。这是 Phase C 的真实体量,不是"挂个表"。
 
 ---
 
