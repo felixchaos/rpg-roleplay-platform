@@ -572,3 +572,123 @@ async def api_update_script_overrides(request: Request, script_id: int, user=Dep
     from platform_app.knowledge.script_overrides import upsert_overrides
     upsert_overrides(script_id, overrides_data)
     return json_response({"ok": True})
+
+
+# ── Phase E: 可视化复核(只读图 + god 编辑)─────────────────────────────────
+def _owned_script(db, script_id: int, user_id: int):
+    return db.execute(
+        "select id, title, import_report from scripts where id=%s and owner_id=%s",
+        (script_id, user_id),
+    ).fetchone()
+
+
+@router.get("/api/scripts/{script_id}/graph")
+async def api_script_graph(script_id: int, user=Depends(require_user)):
+    """Phase E.1 复核图:规范实体 + 世界线 DAG + 时间线 + 摄入质量 flag。"""
+    with connect() as db:
+        s = _owned_script(db, script_id, user["id"])
+        if not s:
+            return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+        entities = db.execute(
+            "select id, logical_key, name, type, aliases, summary, importance, "
+            "first_revealed_chapter, public_knowledge from kb_canon_entities "
+            "where script_id=%s order by importance desc, logical_key limit 1000",
+            (script_id,),
+        ).fetchall()
+        worldlines = db.execute(
+            "select wl_key, label, parent_wl, branch_at_node, is_primary, source "
+            "from script_worldlines where script_id=%s order by is_primary desc, wl_key",
+            (script_id,),
+        ).fetchall()
+        nodes = db.execute(
+            "select wl_key, node_key, seq, label, summary, chapter_min, chapter_max, "
+            "anchor_keys, must_preserve, may_vary from script_worldline_nodes "
+            "where script_id=%s order by wl_key, seq",
+            (script_id,),
+        ).fetchall()
+        timeline = db.execute(
+            "select story_time_label, chapter_min, chapter_max from script_timeline_anchors "
+            "where script_id=%s order by chapter_min limit 500",
+            (script_id,),
+        ).fetchall()
+        report = s.get("import_report") or {}
+        review_flags = {
+            "needs_review": report.get("needs_review"),
+            "author_notes": report.get("author_notes", []),
+            "weird_titles": report.get("weird_titles", []),
+            "gaps": report.get("gaps", []),
+            "cleaning": report.get("cleaning", {}),
+        }
+    return json_response({
+        "ok": True, "script": {"id": script_id, "title": s["title"]},
+        "entities": [dict(e) for e in entities],
+        "worldlines": [dict(w) for w in worldlines],
+        "nodes": [dict(n) for n in nodes],
+        "timeline": [dict(t) for t in timeline],
+        "review_flags": review_flags,
+    })
+
+
+@router.patch("/api/scripts/{script_id}/canon")
+async def api_patch_canon(request: Request, script_id: int, user=Depends(require_user)):
+    """Phase E god 编辑(仅 owner)。
+
+    Body 之一:
+      {"op": "update_entity", "logical_key": "...", "summary": "...", "aliases": [...], "importance": N}
+      {"op": "merge_entity", "from_key": "...", "into_key": "..."}  # from 的别名并入 into,删 from
+      {"op": "delete_entity", "logical_key": "..."}
+    """
+    with connect() as db:
+        if not _owned_script(db, script_id, user["id"]):
+            return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+        try:
+            body = await request.json()
+        except Exception:
+            return json_response({"ok": False, "error": "body 必须是合法 JSON"}, status_code=400)
+        op = (body.get("op") or "").strip()
+        if op == "update_entity":
+            lk = (body.get("logical_key") or "").strip()
+            if not lk:
+                return json_response({"ok": False, "error": "缺 logical_key"}, status_code=400)
+            sets, args = [], []
+            for col in ("summary",):
+                if col in body:
+                    sets.append(f"{col}=%s")
+                    args.append(str(body[col]))
+            if "importance" in body:
+                sets.append("importance=%s")
+                args.append(int(body["importance"]))
+            if "aliases" in body and isinstance(body["aliases"], list):
+                from psycopg.types.json import Jsonb
+                sets.append("aliases=%s")
+                args.append(Jsonb(body["aliases"]))
+            if not sets:
+                return json_response({"ok": False, "error": "无可更新字段"}, status_code=400)
+            args.extend([script_id, lk])
+            n = db.execute(
+                f"update kb_canon_entities set {', '.join(sets)} where script_id=%s and logical_key=%s",
+                tuple(args),
+            ).rowcount
+            return json_response({"ok": True, "updated": n})
+        if op == "merge_entity":
+            frm = (body.get("from_key") or "").strip()
+            into = (body.get("into_key") or "").strip()
+            if not frm or not into:
+                return json_response({"ok": False, "error": "缺 from_key/into_key"}, status_code=400)
+            src = db.execute("select name, aliases from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, frm)).fetchone()
+            if src:
+                from psycopg.types.json import Jsonb
+                merged_aliases = list({*(src.get("aliases") or []), src["name"]})
+                db.execute(
+                    "update kb_canon_entities set aliases = (select to_jsonb(array(select distinct e from unnest("
+                    "  array(select jsonb_array_elements_text(coalesce(aliases,'[]'::jsonb))) || %s::text[]) e))) "
+                    "where script_id=%s and logical_key=%s",
+                    (merged_aliases, script_id, into),
+                )
+                db.execute("delete from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, frm))
+            return json_response({"ok": True, "merged": bool(src)})
+        if op == "delete_entity":
+            lk = (body.get("logical_key") or "").strip()
+            n = db.execute("delete from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, lk)).rowcount
+            return json_response({"ok": True, "deleted": n})
+        return json_response({"ok": False, "error": f"未知 op: {op}"}, status_code=400)
