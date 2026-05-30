@@ -58,6 +58,86 @@ def _extract_json_state_ops(text: str) -> tuple[list[dict], str]:
     return ops, "".join(stripped_parts)
 
 
+def _looks_like_ops_json(s: str) -> bool:
+    """候选字符串是否解析为明确的 state-ops JSON(dict 含 op/path/question,
+    或 list 全是 dict 且至少一个是 op)。用于保守剥离裸 ops。"""
+    try:
+        parsed = json.loads(s)
+    except Exception:
+        return False
+
+    def _is_op(d: object) -> bool:
+        return isinstance(d, dict) and ("op" in d or "path" in d or "question" in d)
+
+    if _is_op(parsed):
+        return True
+    if (
+        isinstance(parsed, list)
+        and parsed
+        and all(isinstance(x, dict) for x in parsed)
+        and any(_is_op(x) for x in parsed)
+    ):
+        return True
+    return False
+
+
+def _strip_bare_json_ops(text: str) -> str:
+    """剥离未加 ``` 围栏的裸 JSON ops 块。
+
+    GM(尤其 Sonnet/Opus)偶尔不加围栏直接把 `[{"op":...}, ...]` 拼在正文里,
+    `_extract_json_state_ops` 只认围栏 → 这些裸 ops 会漏进玩家可见文本并被持久化。
+    这里用括号配对找出每个候选 JSON 块,仅当能解析且内容明确是 ops 时才剥离,
+    避免误删正文里的合法 JSON / 代码示例。
+    """
+    # 快速预判:没有 ops 特征子串就直接返回,避免对正常正文做 O(n) 扫描。
+    if not text or ('"op"' not in text and '"path"' not in text and '"question"' not in text):
+        return text or ""
+    result: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch in "[{":
+            depth = 0
+            in_str = False
+            esc = False
+            end = -1
+            j = i
+            while j < n:
+                c = text[j]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif c == "\\":
+                        esc = True
+                    elif c == '"':
+                        in_str = False
+                else:
+                    if c == '"':
+                        in_str = True
+                    elif c in "[{":
+                        depth += 1
+                    elif c in "]}":
+                        depth -= 1
+                        if depth == 0:
+                            end = j
+                            break
+                j += 1
+            if end != -1 and _looks_like_ops_json(text[i : end + 1]):
+                # 剥离该块,并吞掉紧邻的前导空白/换行,避免留下空行
+                while result and result[-1] in " \t\n\r":
+                    result.pop()
+                i = end + 1
+                continue
+        result.append(ch)
+        i += 1
+    return "".join(result)
+
+
 def strip_json_state_ops(text: str) -> str:
-    """Return player-facing narrative text without JSON state-op fences."""
-    return _extract_json_state_ops(text or "")[1].strip()
+    """Return player-facing narrative text without JSON state-op fences.
+
+    先剥围栏内的 ops,再保守剥离裸 ops(未加 ``` 围栏的 [{"op":...}])。
+    """
+    fenced_stripped = _extract_json_state_ops(text or "")[1]
+    bare_stripped = _strip_bare_json_ops(fenced_stripped)
+    return bare_stripped.strip()
