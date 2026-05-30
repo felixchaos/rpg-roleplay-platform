@@ -379,6 +379,10 @@ function PlatformShell({ page, setPage, children, assistant, assistantOpen, onOp
       if (!payload || typeof payload !== "object") {
         throw new Error("缺少 payload");
       }
+      // 在用户手势内先开空白标签页(绕过弹窗拦截),激活完成后再跳到 Game Console。
+      // 游戏在新页运行,不离开平台当前页。
+      const gameWin = window.open("about:blank", "_blank");
+      try {
       // 1. 创建 save (后端会 seed root commit + 写 initial state)
       const created = await window.api.saves.create({
         title: payload.title || ("新存档 · " + new Date().toLocaleString()),
@@ -417,9 +421,14 @@ function PlatformShell({ page, setPage, children, assistant, assistantOpen, onOp
       }
       window.__apiToast?.(`已创建存档 #${newId}: ${save.title || ""}`, { kind: "ok", duration: 1800 });
       try { window.dispatchEvent(new CustomEvent("rpg-saves-updated")); } catch (_) {}
-      // 4. 跳到 Game Console
-      location.href = "Game Console.html";
+      // 4. 在新标签页打开 Game Console(平台当前页保留)
+      if (gameWin) gameWin.location.href = "Game Console.html";
+      else window.open("Game Console.html", "_blank");
       return save;
+      } catch (e) {
+        try { if (gameWin) gameWin.close(); } catch (_) {}
+        throw e;
+      }
     };
     return () => { delete window.__createAndEnterSave; };
   }, []);
@@ -3548,7 +3557,28 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
   useEffectPL(() => { setChromeState({}); }, [page]);
 
   useEffectPL(() => {
-    window.__openContinue = (save, nodeId) => setContinueState({ open: true, save: save || platform.saves[0], nodeId: nodeId || null });
+    // 直接启动:激活 runtime(选了节点走 commit 级,否则 save 级)后在新标签页打开
+    // Game Console。不再弹 ContinuePicker 二次确认。
+    window.__openContinue = async (save, nodeId) => {
+      const target = save || platform.saves[0];
+      const targetSaveId = target?.id;
+      if (!targetSaveId) { window.__apiToast?.("没有可进入的存档", { kind: "warn", duration: 2400 }); return; }
+      // 用户手势内先开空白标签,绕过弹窗拦截
+      const gameWin = window.open("about:blank", "_blank");
+      try {
+        if (nodeId != null && nodeId !== "") {
+          await window.api.branches.activate({ node_id: nodeId, commit_id: nodeId });
+        } else {
+          await window.api.saves.activate(targetSaveId);
+        }
+      } catch (e) {
+        try { if (gameWin) gameWin.close(); } catch (_) {}
+        window.__apiToast?.("切换存档失败", { kind: "danger", detail: e?.message, duration: 3000 });
+        return;
+      }
+      if (gameWin) gameWin.location.href = "Game Console.html";
+      else window.open("Game Console.html", "_blank");
+    };
     return () => { delete window.__openContinue; };
   }, [platform.saves]);
 
