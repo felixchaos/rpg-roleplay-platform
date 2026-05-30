@@ -16,7 +16,7 @@ use smallvec::SmallVec;
 
 use crate::pipeline::{
     build_http_client, BackendKind, ChatChunk, ChatRequest, ChunkStream, LlmBackend, LlmError,
-    ModelInfo, Usage,
+    ModelInfo,
 };
 // Reuse Gemini protocol helpers from vertex module.
 use crate::vertex;

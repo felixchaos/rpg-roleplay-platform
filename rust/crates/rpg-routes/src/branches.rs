@@ -123,10 +123,7 @@ async fn api_branches_continue(
         None => None,
         Some(Value::Null) => None,
         Some(Value::String(s)) if s.is_empty() => None,
-        Some(v) => match parse_i64_field(&Some(v.clone()), "node_id")? {
-            Some(n) => Some(n),
-            None => None,
-        },
+        Some(v) => parse_i64_field(&Some(v.clone()), "node_id")?,
     };
 
     // 若没有 node_id，尝试形态 B

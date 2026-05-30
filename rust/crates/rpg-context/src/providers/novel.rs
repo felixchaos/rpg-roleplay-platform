@@ -479,6 +479,7 @@ async fn load_character_cards(
 ///   - '说话风格' 而非 '语气'
 ///   - '隐藏信息' 而非 '秘密（GM 私有）'
 ///   - 追加 '台词示例' (前 3 条，以 '；' 连接)
+#[allow(clippy::too_many_arguments)]
 fn render_card_text(
     name: &str,
     identity: &str,

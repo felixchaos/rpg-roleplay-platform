@@ -72,7 +72,7 @@ async fn api_skills_import(
     // data URL 格式: "data:...;base64,<data>"
     let data_url_payload;
     if data_url.contains(',') {
-        data_url_payload = data_url.splitn(2, ',').nth(1).unwrap_or("").to_string();
+        data_url_payload = data_url.split_once(',').map(|x| x.1).unwrap_or("").to_string();
         encoded = &data_url_payload;
     }
     if encoded.is_empty() {

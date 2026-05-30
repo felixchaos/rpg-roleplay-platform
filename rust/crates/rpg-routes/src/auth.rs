@@ -476,10 +476,7 @@ async fn api_me(
     headers: HeaderMap,
 ) -> Response {
     let token = token_from_headers(&headers);
-    let user_opt = match user_from_token(&state.db, token.as_deref()).await {
-        Ok(u) => u,
-        Err(_) => None,
-    };
+    let user_opt = user_from_token(&state.db, token.as_deref()).await.unwrap_or_default();
 
     let is_admin = user_opt.as_ref().map(|u| u.role == "admin").unwrap_or(false);
 
@@ -615,7 +612,7 @@ async fn api_login_history(
 
     // login_audit 表真实 schema: (id, username, ip, event, meta jsonb, created_at)
     // 按 username 匹配当前用户,username 存的就是登录时提交的用户名。
-    let rows = match sqlx::query(
+    let rows = sqlx::query(
         r#"
         select id,
                username,
@@ -633,10 +630,7 @@ async fn api_login_history(
     .bind(limit)
     .fetch_all(&state.db)
     .await
-    {
-        Ok(r) => r,
-        Err(_) => vec![],
-    };
+    .unwrap_or_default();
 
     let items: Vec<serde_json::Value> = rows
         .iter()

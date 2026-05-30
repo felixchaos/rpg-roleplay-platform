@@ -426,7 +426,7 @@ pub fn parse_question(text: &str) -> (String, Vec<String>) {
     let delimiter = if text.contains('｜') { '｜' } else { '|' };
     let options: Vec<String> = opts_text
         .split(delimiter)
-        .map(|o| clean_item(o))
+        .map(clean_item)
         .filter(|o| !o.is_empty())
         .take(4)
         .collect();

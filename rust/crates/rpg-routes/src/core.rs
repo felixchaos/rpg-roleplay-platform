@@ -18,7 +18,7 @@ use axum::{
 use futures_util::stream::{Stream, StreamExt};
 use http::HeaderMap;
 use rpg_state::StateEvent;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
 use crate::sse_events::SseStateBusPayload;
@@ -162,20 +162,24 @@ async fn api_state(
         (None, None, None)
     };
 
-    Ok(Json(json!({
-        "ok": true,
-        "state": snapshot.data,
-        "version": snapshot.version,
-        "updated_at": snapshot.updated_at,
-        "user_id": snapshot.user_id,
-        "app": app_info,
-        "models": models_info,
-        "tools": tools_info,
-        "save_id": save_id,
-        "save_title": save_title,
-        "save_updated_at": save_updated_at,
-    }))
-    .into_response())
+    // Python status_payload() 把 state.data 的所有字段平铺到顶层,前端直接
+    // data.player / data.world / data.memory 访问。Rust 必须对齐。
+    let mut payload = match serde_json::to_value(&snapshot.data) {
+        Ok(Value::Object(m)) => m,
+        _ => serde_json::Map::new(),
+    };
+    payload.insert("ok".into(), json!(true));
+    payload.insert("version".into(), json!(snapshot.version));
+    payload.insert("updated_at".into(), json!(snapshot.updated_at));
+    payload.insert("user_id".into(), json!(snapshot.user_id));
+    payload.insert("app".into(), app_info);
+    payload.insert("models".into(), models_info);
+    payload.insert("tools".into(), json!(tools_info));
+    payload.insert("save_id".into(), json!(save_id));
+    payload.insert("save_title".into(), json!(save_title));
+    payload.insert("save_updated_at".into(), json!(save_updated_at));
+
+    Ok(Json(Value::Object(payload)).into_response())
 }
 
 /// GET /api/state_events — 长连 SSE,推送 state 变更事件(对应 Python `task 69`)。

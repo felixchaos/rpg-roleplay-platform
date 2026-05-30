@@ -671,6 +671,7 @@ static META_SENTENCE_RE: Lazy<Regex> = Lazy::new(|| {
 /// 6. identity → 覆盖 player(逐字段,非空才覆盖)
 /// 7. story_intent → player_private.story_intent + worldline.user_variables.story_intent
 /// 8. user_preferences → permissions.mode
+#[allow(clippy::too_many_arguments)]
 pub async fn build_initial_snapshot(
     pool: &PgPool,
     user_id: i64,
@@ -1042,26 +1043,24 @@ pub async fn build_initial_snapshot(
     }
 
     // Bug 5 fix: user_preferences → permissions.mode
-    if let Ok(pref_row) = sqlx::query(
+    if let Ok(Some(row)) = sqlx::query(
         "select preferences from user_preferences where user_id = $1",
     )
     .bind(user_id)
     .fetch_optional(pool)
     .await
     {
-        if let Some(row) = pref_row {
-            if let Ok(prefs) = row.try_get::<Value, _>("preferences") {
-                let default_mode = prefs
-                    .get("perm.default_mode")
-                    .or_else(|| prefs.get("default_perm_mode"))
-                    .and_then(|v| v.as_str());
-                if let Some(mode) = default_mode {
-                    match mode {
-                        "default" | "review" | "full_access" => {
-                            state.data.permissions.mode = mode.to_string();
-                        }
-                        _ => {}
+        if let Ok(prefs) = row.try_get::<Value, _>("preferences") {
+            let default_mode = prefs
+                .get("perm.default_mode")
+                .or_else(|| prefs.get("default_perm_mode"))
+                .and_then(|v| v.as_str());
+            if let Some(mode) = default_mode {
+                match mode {
+                    "default" | "review" | "full_access" => {
+                        state.data.permissions.mode = mode.to_string();
                     }
+                    _ => {}
                 }
             }
         }
@@ -1196,7 +1195,7 @@ async fn apply_script_opening(pool: &PgPool, script_id: i64, data: &mut GameStat
 
     // known_events: "开场：<标题>" + 前两段去元数据后的正文摘要
     let sentences: Vec<&str> = content
-        .split(|c: char| c == '。' || c == '\n')
+        .split(['。', '\n'])
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
@@ -1212,7 +1211,7 @@ async fn apply_script_opening(pool: &PgPool, script_id: i64, data: &mut GameStat
     for s in body_sents.iter().take(2) {
         let truncated = if s.chars().count() > 80 {
             let mut t: String = s.chars().take(77).collect();
-            t.push_str("…");
+            t.push('…');
             t
         } else {
             s.to_string()
@@ -1229,7 +1228,7 @@ async fn apply_script_opening(pool: &PgPool, script_id: i64, data: &mut GameStat
         let truncated = if snippet.chars().count() > 400 {
             let mut t: String = snippet.chars().take(400).collect();
             t = t.trim_end().to_string();
-            t.push_str("…");
+            t.push('…');
             t
         } else {
             snippet.to_string()

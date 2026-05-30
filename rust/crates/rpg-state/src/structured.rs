@@ -112,7 +112,7 @@ pub fn apply_structured_updates(
             .as_ref()
             .and_then(|p| p.get("turn"))
             .and_then(Value::as_i64)
-            .map(|t| t == current_turn as i64)
+            .map(|t| t == current_turn)
             .unwrap_or(false);
         if player_pending_this_turn {
             asking_for_confirm = true;

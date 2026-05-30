@@ -13,7 +13,6 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::Row as _;
 
 use crate::{require_user, AppState, ResponseError};
 

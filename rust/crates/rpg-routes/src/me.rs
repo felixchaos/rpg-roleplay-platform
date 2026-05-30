@@ -332,7 +332,7 @@ fn compute_streaks(
         for &d in dates {
             if d == cur {
                 count += 1;
-                cur = cur - chrono::Duration::days(1);
+                cur -= chrono::Duration::days(1);
             } else if d < cur {
                 break;
             }
@@ -924,7 +924,7 @@ async fn upload_avatar(
     let mut file_name: Option<String> = None;
     let mut file_data: Option<Vec<u8>> = None;
     while let Some(field) = multipart.next_field().await.map_err(|e| {
-        ResponseError::bad_request(&format!("multipart error: {e}"))
+        ResponseError::bad_request(format!("multipart error: {e}"))
     })? {
         let name = field.name().unwrap_or("").to_string();
         let orig_filename = field
@@ -932,7 +932,7 @@ async fn upload_avatar(
             .map(|s| s.to_string())
             .unwrap_or_default();
         let data = field.bytes().await.map_err(|e| {
-            ResponseError::bad_request(&format!("read field error: {e}"))
+            ResponseError::bad_request(format!("read field error: {e}"))
         })?;
         if name == "file" && !data.is_empty() {
             file_name = Some(orig_filename);
@@ -963,7 +963,7 @@ async fn upload_avatar(
 
     let root = avatar_root();
     std::fs::create_dir_all(&root).map_err(|e| {
-        ResponseError::internal(&format!("create dir: {e}"))
+        ResponseError::internal(format!("create dir: {e}"))
     })?;
 
     let ts = std::time::SystemTime::now()
@@ -973,7 +973,7 @@ async fn upload_avatar(
     let safe_name = format!("u{}_{}.{}", user.id, ts, ext);
     let dest = root.join(&safe_name);
     std::fs::write(&dest, &data).map_err(|e| {
-        ResponseError::internal(&format!("write file: {e}"))
+        ResponseError::internal(format!("write file: {e}"))
     })?;
 
     let avatar_url = format!("/api/profile/avatar/file/{safe_name}");

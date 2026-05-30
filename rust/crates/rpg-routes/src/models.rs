@@ -1027,7 +1027,7 @@ async fn api_models_pricing(
             .iter()
             .find(|a| a.id == api_id)
             .and_then(|a| a.models.iter().find(|m| m.id == model_id || m.real_name.as_deref() == Some(&model_id)))
-            .and_then(|_| None::<u32>) // No context_window in ModelEntry; use None
+            .and(None::<u32>) // No context_window in ModelEntry; use None
     };
 
     match pricing {

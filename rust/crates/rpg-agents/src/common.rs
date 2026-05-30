@@ -392,7 +392,7 @@ pub fn state_history_messages(state: &GameState) -> Vec<ChatMessage> {
 }
 
 /// SM-05: 从 markdown 文本里剥离常见秘密段(## 秘密 / ## 隐藏 / ## 元知识 等)
-/// + 句子级元知识关键词,返回 NPC 可见部分。
+/// 以及句子级元知识关键词,返回 NPC 可见部分。
 /// 对应 Python `_strip_secret_sections` + `_strip_meta_knowledge_sentences`。
 pub fn strip_secret_sections(text: &str) -> String {
     if text.is_empty() {

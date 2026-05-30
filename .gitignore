@@ -118,6 +118,8 @@ rpg/docs/api_contract_drift.md
 # ──────────────────────────────────────────────────────────────────
 # 原始 TXT (~14MB)
 *.txt
+# 但 Rust prompt 文件必须入库(include_str! 编译时引用)
+!rust/crates/rpg-agents/src/prompts/*.txt
 # 拆好的 1310 章 markdown (~14MB)
 正文/
 # 大纲 + 设定集

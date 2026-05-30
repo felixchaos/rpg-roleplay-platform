@@ -10,6 +10,7 @@
 //!   - POST /api/uploads/:upload_id/chunk
 //!   - POST /api/uploads/:upload_id/finish
 //!   - POST /api/uploads/:upload_id/cancel
+//!
 //! 该 router 在 `rpg-server/src/main.rs` 通过 `.merge(imports::router())` 挂载。
 //! UPLOAD-001 为误报,无需修复。
 
@@ -199,7 +200,7 @@ async fn api_export_pack(
     // Build in-memory ZIP
     let title = sr.try_get::<String, _>("title").unwrap_or_default();
     let zip_bytes = build_export_zip(&sr, &title, &chapters, &characters, &worldbook)
-        .map_err(|e| ResponseError::internal(e))?;
+        .map_err(ResponseError::internal)?;
 
     let filename = format!(
         "script_{}_pack.zip",

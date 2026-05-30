@@ -89,8 +89,12 @@ fn build_status_payload(
     _user_id_num: i64,
     _db: &sqlx::PgPool,
 ) -> Value {
-    // Core state
-    let mut payload = json!({ "state": state_data });
+    // Python status_payload() 平铺 state.data 的所有字段到顶层(player/world/memory/...),
+    // 前端直接 payload.player 访问。Rust 必须对齐,不能嵌套在 "state" key 下。
+    let mut payload = match state_data {
+        Value::Object(m) => Value::Object(m.clone()),
+        _ => json!({}),
+    };
 
     // App info block — matches Python _payload()["app"]
     let (api_id, model_display, model_real, api_display, ctx_window, capabilities) = {
@@ -366,11 +370,7 @@ async fn api_new(
     if source_kind == "script_card" || source_kind == "user_card" {
         // Re-query to get extra fields (appearance, personality, speech_style)
         // We already have the row but the original match consumed it; query is cheap.
-        let extra_query = if source_kind == "script_card" {
-            "SELECT appearance, personality, speech_style FROM character_cards WHERE id = $1"
-        } else {
-            "SELECT appearance, personality, speech_style FROM character_cards WHERE id = $1"
-        };
+        let extra_query = "SELECT appearance, personality, speech_style FROM character_cards WHERE id = $1";
         let extra_id = source_id.unwrap_or(0);
         if let Ok(Some(extra_row)) = sqlx::query(extra_query)
             .bind(extra_id)
