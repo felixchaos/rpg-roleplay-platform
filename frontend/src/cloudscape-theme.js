@@ -107,6 +107,11 @@ const theme = {
     colorBorderItemFocused: dual(C.accent),
     colorBorderItemSelected: dual(C.accent),          // 表格/卡片选中行描边 → 暖色(原 AWS 蓝)
     colorBorderItemCardHighlighted: dual(C.accent),
+    // 分段控件(SegmentedControl)选中态 → 暖色(原 AWS 蓝)
+    colorBackgroundSegmentActive: dual(C.accent),
+    colorBorderSegmentActive: dual(C.accent),
+    colorTextSegmentActive: dual('#ffffff'),
+    colorBackgroundToggleButtonNormalPressed: dual(C.accentSoft),
 
     // ── 圆角 ────────────────────────────────────────────────
     borderRadiusContainer: '12px',
