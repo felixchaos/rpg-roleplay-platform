@@ -61,9 +61,14 @@ def gather_entity_mentions(chapter_extracts: list) -> dict[tuple[str, str], dict
     return acc
 
 
-def cluster_entities(mentions: dict, *, embedder=None, sim_threshold: float = 0.86) -> list[CanonEntity]:
-    """嵌入粗筛聚簇(同 type 内)。embedder(list[str])->list[vec];None 则退化为精确名归并。"""
-    # 按 type 分组,组内按频次降序贪心聚簇
+def _norm_name(s: str) -> str:
+    return re.sub(r"[\s·_、.\-]", "", (s or "").strip())
+
+
+def cluster_entities(mentions: dict, *, embedder=None, sim_threshold: float = 0.95) -> list[CanonEntity]:
+    """同 type 内**保守**聚簇。LLM 的 canonical_guess 已做实体归一,这里只合并近重串:
+    归一名相等 / 互为子串(如 薇欧拉 ⊂ 薇欧拉小姐);嵌入仅作高阈值(默认 0.95)次级信号
+    且要求首字相同。**绝不靠嵌入把不同人名合并**(0.86 旧阈值会把 14 个角色并成 1)。"""
     by_type: dict[str, list] = defaultdict(list)
     for (name, typ), rec in mentions.items():
         by_type[typ].append(rec)
@@ -77,15 +82,21 @@ def cluster_entities(mentions: dict, *, embedder=None, sim_threshold: float = 0.
                 vecs = embedder([r["name"] for r in recs])
             except Exception:
                 vecs = None
-        clusters: list[dict] = []  # {rep_idx, members:[idx], vec}
+        clusters: list[dict] = []  # {rep_idx, members:[idx]}
         for i, rec in enumerate(recs):
+            ni = _norm_name(rec["name"])
             placed = False
-            if vecs is not None:
-                for cl in clusters:
-                    if _cosine(vecs[i], vecs[cl["rep_idx"]]) >= sim_threshold:
-                        cl["members"].append(i)
-                        placed = True
-                        break
+            for cl in clusters:
+                nr = _norm_name(recs[cl["rep_idx"]]["name"])
+                # 主信号:归一相等 或 互为子串(长度≥2 防单字误并)
+                same = ni == nr or (len(ni) >= 2 and len(nr) >= 2 and (ni in nr or nr in ni))
+                # 次信号:嵌入高相似 且 首字相同(抓"薇欧拉/薇瑟拉"这种变体)
+                if not same and vecs is not None and ni and nr and ni[0] == nr[0]:
+                    same = _cosine(vecs[i], vecs[cl["rep_idx"]]) >= sim_threshold
+                if same:
+                    cl["members"].append(i)
+                    placed = True
+                    break
             if not placed:
                 clusters.append({"rep_idx": i, "members": [i]})
         for cl in clusters:

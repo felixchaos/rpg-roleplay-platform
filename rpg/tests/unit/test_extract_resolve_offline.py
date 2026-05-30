@@ -69,3 +69,20 @@ if __name__ == "__main__":
         if n.startswith("test_") and callable(f):
             f()
     print("OK")
+
+
+def test_cluster_does_not_merge_distinct_names_even_if_embeddings_close():
+    """回归 W1: 旧 0.86 阈值把 14 个不同角色并成 1。不同人名(非子串)即使嵌入接近也不合并。"""
+    from extract.resolve import gather_entity_mentions, cluster_entities
+    from extract.per_chapter import ChapterExtract
+    names = ["林有德", "茜茜", "千寻", "薇欧拉", "薇欧拉小姐", "特蕾西亚", "狐狸"]
+    exs = [ChapterExtract(chapter=1, entities=[{"canonical_guess": n, "type": "character"} for n in names])]
+    m = gather_entity_mentions(exs)
+
+    def close_embedder(ns):  # 全部高度相似(模拟中文人名嵌入坍缩)
+        return [[1.0, 0.01 * i] for i in range(len(ns))]
+
+    canon = cluster_entities(m, embedder=close_embedder, sim_threshold=0.9)
+    # 仅 薇欧拉/薇欧拉小姐(子串)合并 → 6;其余 5 个不同人保留,不因嵌入接近坍缩
+    assert len(canon) == 6, [c.name for c in canon]
+    assert len([c for c in canon if c.type == "character"]) == 6
