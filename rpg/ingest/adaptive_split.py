@@ -15,7 +15,8 @@ from dataclasses import dataclass, field
 from re import Pattern
 
 NUMBER_TOKEN = r"零一二三四五六七八九十百千万〇两\d０-９"
-_NUM_RUN = re.compile(rf"[{NUMBER_TOKEN}]+")
+# 序号抽取:阿拉伯数字 与 中文数字 互斥匹配,避免 "925一大波" 被解析成 921933 等混合数值
+_NUM_RUN = re.compile(r"[\d０-９]+|[零一二三四五六七八九十百千万〇两]+")
 
 # ─── 评分权重 (针对"切分质量"普遍属性,非针对某本书) ─────────────────────────
 SPLIT_SCORE_WEIGHTS = {
@@ -36,7 +37,11 @@ _PRESET_RULES: list[tuple[str, str]] = [
     ("paren_num", rf"^.{{0,10}}[（(]\s*[{NUMBER_TOKEN}]+\s*[)）].*$"),
     ("hua", rf"^.{{0,8}}(?:【\s*第?[{NUMBER_TOKEN}]+话\s*】|第[{NUMBER_TOKEN}]+话).*$"),
     ("juan_zhang", rf"^.{{0,20}}第[{NUMBER_TOKEN}]+卷.*第[{NUMBER_TOKEN}]+[章节].*$"),
+    # 水平分隔符:命中整行 ---/===/***/___/──/━━ 等(4+).split_by_heading_regex 会把分隔符
+    # 之后的第一行非空行提为标题。常见于编辑器导出/某些网文体例(如「我的二战不可能这么萌」)。
+    ("hr_divider", r"^[-=*_─━─]{4,}\s*$"),
 ]
+_DIVIDER_ONLY = re.compile(r"^[-=*_─━─]{4,}\s*$")
 
 _CN_DIGIT = {
     "零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
@@ -181,8 +186,20 @@ def split_by_heading_regex(text: str, regex: Pattern[str]) -> list[dict]:
             chapters.append({"title": "前言", "content": preface, "chapter_number": 1})
     for i, start in enumerate(heading_idx):
         end = heading_idx[i + 1] if i + 1 < len(heading_idx) else len(lines)
-        title = lines[start].strip()[:200]
-        body = "\n".join(lines[start + 1 : end]).strip()
+        raw_title = lines[start].strip()
+        body_start = start + 1
+        if _DIVIDER_ONLY.match(raw_title):
+            # 分隔符行本身不是真标题:跳过随后的空行,把第一行非空内容提为标题
+            while body_start < end and not lines[body_start].strip():
+                body_start += 1
+            if body_start < end:
+                title = lines[body_start].strip()[:200]
+                body_start += 1
+            else:
+                title = ""
+        else:
+            title = raw_title[:200]
+        body = "\n".join(lines[body_start:end]).strip()
         chapters.append({"title": title, "content": body, "chapter_number": len(chapters) + 1})
     return [c for c in chapters if c["content"] or c["title"]]
 
@@ -196,7 +213,16 @@ def structural_score(chapters: list[dict], text: str) -> tuple[float, dict]:
     n = len(chapters)
 
     # 1. 序号连续性 (最强):有序号章里,连续无跳号的占比
-    seqs = [s for s in (extract_seq(c.get("title") or "") for c in chapters) if s is not None]
+    seqs_raw = [s for s in (extract_seq(c.get("title") or "") for c in chapters) if s is not None]
+    # 剔除离群序号:网文标题常含日期/比分等数字(如"08932年第一场雪"=893+"2年..."),
+    # 用 p99 + 安全 buffer 作为上限,防止 span 被极少数离群标题污染。
+    if len(seqs_raw) >= 20:
+        ss_tmp = sorted(seqs_raw)
+        p99 = ss_tmp[int(len(ss_tmp) * 0.99)]
+        cap = max(p99 * 2, n * 2)  # p99 双倍 (容跳号/分卷连号),至少 2n
+        seqs = [s for s in seqs_raw if s <= cap]
+    else:
+        seqs = seqs_raw
     if len(seqs) < 2:
         seq_continuity = 0.3  # 无编号信号 → 中低,不是 0 (可能是合法无编号体例)
     else:

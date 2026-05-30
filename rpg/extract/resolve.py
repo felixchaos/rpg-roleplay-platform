@@ -42,11 +42,19 @@ def _cosine(a, b) -> float:
 
 
 def gather_entity_mentions(chapter_extracts: list) -> dict[tuple[str, str], dict]:
-    """从逐章 ChapterExtract 汇总实体提及。键=(归一名, type)。"""
+    """从逐章 ChapterExtract 汇总实体提及。键=(归一名, type)。
+
+    优先取 full_name(欧美名全套)作 name,canonical_guess 退化兜底。所有 surface/aliases_in_chapter
+    塞进 surfaces 用于 cluster_entities 的别名子串合并。
+    """
     acc: dict[tuple[str, str], dict] = {}
     for ex in chapter_extracts:
         for e in getattr(ex, "entities", []):
-            name = (e.get("canonical_guess") or e.get("surface") or "").strip()
+            full = (e.get("full_name") or "").strip()
+            cg = (e.get("canonical_guess") or "").strip()
+            sfc = (e.get("surface") or "").strip()
+            # 选 name 优先级:full_name > canonical_guess > surface,且取最长(欧美名 "Mulelia Zazbarum" 胜 "Mulelia")
+            name = max([n for n in (full, cg, sfc) if n], key=len, default="")
             typ = (e.get("type") or "character").strip()
             if not name:
                 continue
@@ -55,9 +63,12 @@ def gather_entity_mentions(chapter_extracts: list) -> dict[tuple[str, str], dict
                                        "first_chapter": ex.chapter, "surfaces": set()})
             rec["count"] += 1
             rec["first_chapter"] = min(rec["first_chapter"], ex.chapter)
-            sfc = (e.get("surface") or "").strip()
-            if sfc:
-                rec["surfaces"].add(sfc)
+            for s in (sfc, cg, full):
+                if s:
+                    rec["surfaces"].add(s)
+            for a in (e.get("aliases_in_chapter") or []):
+                if isinstance(a, str) and a.strip():
+                    rec["surfaces"].add(a.strip())
     return acc
 
 
@@ -85,12 +96,19 @@ def cluster_entities(mentions: dict, *, embedder=None, sim_threshold: float = 0.
         clusters: list[dict] = []  # {rep_idx, members:[idx]}
         for i, rec in enumerate(recs):
             ni = _norm_name(rec["name"])
+            ni_surfaces = {_norm_name(s) for s in (rec.get("surfaces") or set()) if s}
             placed = False
             for cl in clusters:
-                nr = _norm_name(recs[cl["rep_idx"]]["name"])
-                # 主信号:归一相等 或 互为子串(长度≥2 防单字误并)
+                rep_rec = recs[cl["rep_idx"]]
+                nr = _norm_name(rep_rec["name"])
+                nr_surfaces = {_norm_name(s) for s in (rep_rec.get("surfaces") or set()) if s}
+                # 主信号:归一相等 / 互为子串(长度≥2 防单字误并)
                 same = ni == nr or (len(ni) >= 2 and len(nr) >= 2 and (ni in nr or nr in ni))
-                # 次信号:嵌入高相似 且 首字相同(抓"薇欧拉/薇瑟拉"这种变体)
+                # 别名信号:本实体的某 surface 与对端 name/surfaces 相交(欧美全名↔昵称 + 跨语言别名靠这条)
+                if not same and ni_surfaces and (nr in ni_surfaces or ni in nr_surfaces
+                                                  or (ni_surfaces & nr_surfaces)):
+                    same = True
+                # 次信号:嵌入高相似 且 首字相同(同语言变体如"薇欧拉/薇瑟拉")
                 if not same and vecs is not None and ni and nr and ni[0] == nr[0]:
                     same = _cosine(vecs[i], vecs[cl["rep_idx"]]) >= sim_threshold
                 if same:

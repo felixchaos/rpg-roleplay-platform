@@ -15,7 +15,7 @@ from extract.llm import ExtractLLM
 # 每章输出 JSON schema(给模型看的契约)
 _SCHEMA_HINT = """{
   "story_time": {"label": "本章故事时间(短语)", "relative_marker": "相对上章的时序线索", "era": "<纪元,必须照抄给定纪元,严禁改写>"},
-  "entities": [{"surface": "文中称呼", "canonical_guess": "规范名(优先匹配已知实体)", "type": "character|faction|location|item", "status": "linked|proposed", "evidence": "≤20字依据"}],
+  "entities": [{"surface": "文中称呼", "full_name": "本人最完整的正式名(欧美名 = 名+姓全套,如 Mulelia Zazbarum;若文中已知则填写,否则同 surface)", "canonical_guess": "规范名(优先匹配已知实体)", "aliases_in_chapter": ["本章用到的其他称呼/昵称/半名/译名(如 ['Mulelia','小蕾'])"], "type": "character|faction|location|item", "status": "linked|proposed", "evidence": "≤20字依据"}],
   "events": [{"summary": "事件一句话", "participants": ["实体名"], "location": "地点", "importance": 0-100, "causal_refs": ["前置事件描述"]}],
   "relationships": [{"from": "实体A", "to": "实体B", "kind": "敌对|盟友|上下级|亲属|...", "evidence": "≤20字"}],
   "concepts": [{"name": "概念/设定/力量体系名", "gloss": "≤30字解释", "evidence": "≤20字"}],
@@ -45,6 +45,9 @@ def build_system(era: str, power_system: list[str] | None = None) -> str:
         "【提取要求】entities 优先匹配下方已知实体词表(status=linked),文中新出现的标 proposed;"
         "concepts 必须尽量抽全(力量体系/组织设定/专有名词/世界规则),不要留空;"
         "events 给本章局部 importance(0-100),不要做跨章全局排序。\n"
+        "【欧美人名铁律】凡角色为欧美名(包含字母或音译,如 Mulelia/林菲尔德/伊莎贝拉·路德维希):full_name **必须** 是"
+        "正式的全套姓+名(若本章用 'Mulelia' 但作者之前已揭示她叫 'Mulelia Zazbarum',则 full_name 写完整全名);"
+        "本章里出现的所有别称(昵称/半名/敬称/外号/译名)塞进 aliases_in_chapter。**严禁** 把全名和昵称当作两个实体输出。\n"
         "严格按此 schema 输出:\n" + _SCHEMA_HINT
     )
 

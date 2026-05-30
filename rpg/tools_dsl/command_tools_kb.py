@@ -27,15 +27,17 @@ def _save_ctx(db, save_id: int, user_id: int) -> dict | None:
     ).fetchone()
     if not row:
         return None
-    # 进度 + 元知识:从 game_sessions 设置取(无则默认严格进度=0 / none)
+    # 进度 + 元知识:从 game_sessions 设置取(无则默认严格进度=1 / none)
+    # 关键:绝不返 progress_chapter=None,_reveal_clause 会因此放行全部实体导致剧透
     sess = db.execute(
         "select turn, worldline, model_name from game_sessions where save_id=%s", (save_id,)
     ).fetchone()
-    progress = None
+    progress = 1
     mode = "none"
     if sess and isinstance(sess.get("worldline"), dict):
         wl = sess["worldline"]
-        progress = wl.get("progress_chapter")
+        raw = wl.get("progress_chapter")
+        progress = int(raw) if isinstance(raw, (int, float)) and raw >= 1 else 1
         mode = wl.get("foreknowledge_mode") or "none"
     return {"script_id": row["script_id"], "commit_id": row["active_commit_id"],
             "progress_chapter": progress, "mode": mode}
