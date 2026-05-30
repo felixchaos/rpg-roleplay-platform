@@ -4,9 +4,13 @@
 > **作者种子 + LLM 自举词表 + 逐章固定-schema 三元组(批量五折) + 两层消歧聚合 + 真向量**。
 > 产出喂 Phase B 的规范层 KB(`docs/design/BC_kb_schema_worldtree.md`)。
 >
-> 现有锚点:`chapter_fact_indexer.build_chapter_facts()`(要替换的入口)、
-> `chapter_facts` 表(复用为逐章原始三元组落地)、`script_import.py` 4e(调用点)、
-> `import_jobs` 表(v9/v12 已有,提取作业状态持久化)。
+> ⚠️ **入口已读码修正(见 AUDIT_ground_truth.md §3)**:平台提取入口是
+> **`knowledge.sync_script_knowledge`**(`session.py:250`,import 后台异步 rebuild),
+> 它逐章直调 **`_chunks._upsert_chapter_fact` → `chapter_fact_indexer._extract_fact`**
+> (`_chunks.py:8` import 同一关键词函数)写 postgres `chapter_facts`。
+> **`build_chapter_facts` 是离线单本 CLI(读 `正文/*.md` 写 SQLite),平台不用,别动它。**
+> 要替换的真编排:`knowledge/_sync.py` + `_chunks.py` + 废掉对 `_extract_fact` 的依赖;
+> 调用点 `script_import.py:360`。复用 `chapter_facts` 表落逐章三元组、`import_jobs`(v9/v12)作业状态。
 
 ---
 
@@ -126,9 +130,11 @@ script_chapters(已切净, exclude_from_extraction=false 的章)
 
 ## 8. 落地改动清单
 - **新建** `rpg/extract/seed.py`(Pass 0 种子+自举)、`rpg/extract/per_chapter.py`(Pass 1 + batch)、`rpg/extract/resolve.py`(Pass 2 消歧聚合)、`rpg/extract/embed.py`(Pass 3)、`rpg/extract/graph_export.py`(Pass 4)
-- **改** `chapter_fact_indexer.py` — `build_chapter_facts` 内部改调新管线;**删** `_extract_fact`/`_rank_terms`/`_load_world`/`KEY_CHAPTER_TIME_LABELS` 等关键词逻辑 + 对 `indexes/world.json` 的依赖
-- **改** `retrieval.py` — `bm25_search` 旁加 `vector_search`(pgvector),GM context 用混合
-- **改** `script_import.py` 4e — 调新提取作业(挂 import_jobs,异步)
+- **改** `platform_app/knowledge/_chunks.py` — `_upsert_chapter_fact` 不再调 `_extract_fact`(删 `:8` import),改调新管线产出的三元组;**改** `knowledge/_sync.py` 编排;**改** `knowledge/session.py::sync_script_knowledge`(真入口)挂新提取作业
+- **改** `knowledge/_utils.py::_worldbook_seed_entries` / `_sync.py` — 删 `indexes/world.json` 路径2兼容,worldbook 改由 Pass2 社区摘要产出
+- **离线 CLI** `chapter_fact_indexer.py`(`build_chapter_facts`/`_extract_fact`/`_rank_terms`/`_load_world`):平台已不依赖后,可整体退役或仅留本地调试;**删平台对它的 import**
+- **改** `retrieval.py` — `bm25_search`(SQLite LIKE,仅默认书)旁加 `vector_search`(postgres pgvector on `document_chunks.embedding`),GM context 用混合检索
+- **改** `script_import.py:360` 调用点 — 接新提取作业(挂 import_jobs,异步)
 - **新表**(Phase B 篇详述):`kb_canon_entities` / `script_worldlines` / `script_worldline_nodes`;`worldbook_entries.insertion_position` 增 `'constant'`/`'vector'`;`script_chapters`/`chapter_facts` 复用
 - **采用**:LlamaIndex PropertyGraphIndex 当 Pass 2 社区摘要 + 图脚手架(消歧层自建)
 
