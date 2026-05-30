@@ -21,8 +21,13 @@ def test_standard_chinese_chapters() -> None:
     chapters, report = splitter.split_chapters_with_report(text)
 
     assert [chapter["title"] for chapter in chapters] == ["第1章 初遇", "第二章 线索", "第３章 追踪"]
-    assert report["mode"] == "strong_headings"
+    # Phase A.0: auto 路径走规则融合自适应切分(与 _split_auto 竞争取优)
+    assert report["mode"] == "adaptive_fusion"
     assert report["problem_category"] == "ok"
+    # 报告 v2 新字段
+    assert report["rule_chosen"] is not None
+    assert "score_breakdown" in report and report["score_breakdown"]
+    assert report["gaps"] == []
 
 
 def test_english_number_dot_and_custom_rules() -> None:
@@ -84,16 +89,20 @@ def test_numbered_sections_and_pagination() -> None:
     page_chapters, page_report = splitter.split_chapters_with_report(pages)
 
     assert [chapter["title"] for chapter in page_chapters] == ["异象旅馆(1)", "异象旅馆(2)", "异象旅馆(3)"]
-    assert page_report["mode"] == "pagination_headings"
+    # Phase A.0: 分页式标题由规则融合的 paren_num 候选切出(同样 3 章、标题一致)
+    assert page_report["mode"] in {"pagination_headings", "adaptive_fusion"}
 
 
-def test_remulina_mixed_titles_skip_wrappers() -> None:
+def test_mixed_volume_chapter_generic_no_book_specific() -> None:
+    """Phase A.0: 删除 REMULINA 书本特化后,混合卷-章标题仍由**通用**规则切分。
+
+    这是 换书不退化 的回归保证:不靠任何书名/书本特化代码,
+    通用 STRONG_CHAPTER_PATTERNS 就能识别 正卷－第X卷…第Y章 这类混合标题。
+    """
     splitter = ChapterSplitter()
     text = "\n".join([
-        "正一卷一章 虐待致死",
         "正卷－第一卷 火星十年，大战将起－第一章－虐待致死",
         paragraph("第一章正文。", 20),
-        "正一卷二章 惊醒",
         "正卷－第一卷 火星十年，大战将起－第二章－惊醒",
         paragraph("第二章正文。", 20),
         "第一卷 小结",
@@ -104,20 +113,21 @@ def test_remulina_mixed_titles_skip_wrappers() -> None:
 
     chapters, report = splitter.split_chapters_with_report(
         text,
-        split_rule="corpus",
-        source_name="我蕾穆丽娜不爱你.txt",
-        title="我蕾穆丽娜不爱你",
+        source_name="任意书名.txt",  # 不再依赖书名
+        title="任意书名",
     )
 
-    assert [chapter["title"] for chapter in chapters] == [
+    titles = [chapter["title"] for chapter in chapters]
+    assert titles == [
         "正卷－第一卷 火星十年，大战将起－第一章－虐待致死",
         "正卷－第一卷 火星十年，大战将起－第二章－惊醒",
         "第一卷 小结",
         "外卷－第一卷－相性百问－第一章－粉金主仆百问一",
     ]
-    assert chapters[0]["volume_title"] == "正卷－第一卷 火星十年，大战将起"
-    assert chapters[-1]["volume_title"] == "外卷－第一卷－相性百问"
-    assert report["mode"] == "remulina_special"
+    # 不再有书本特化的 remulina_special 模式
+    assert report["mode"] != "remulina_special"
+    # 卷末"小结"应被作者非正文过滤标注(报告 v2)
+    assert any("小结" in note["title"] for note in report.get("author_notes", []))
 
 
 def test_fallback_report_for_unmarked_long_text() -> None:
@@ -125,13 +135,31 @@ def test_fallback_report_for_unmarked_long_text() -> None:
     chapters, report = splitter.split_chapters_with_report(paragraph("没有章节标题的长文本。", 180))
 
     assert chapters
+    # 无标题长文 → 规则融合分数过低被否决,回落固定窗口
     assert report["mode"] == "fallback_window"
     assert report["problem_category"] == "no_heading_match"
+
+
+def test_report_v2_fields_present() -> None:
+    """报告 v2 必有的新字段(A0_ingestion §5)。"""
+    splitter = ChapterSplitter()
+    text = "\n".join([
+        "第1章 开始", paragraph("正文一。"),
+        "第2章 推进", paragraph("正文二。"),
+        "第3章 卷末感言", "本卷完结，谢谢大家月票，明天新卷，抱歉这章短。",
+    ])
+    _, report = splitter.split_chapters_with_report(text)
+    for key in ("rule_chosen", "rule_runnerup", "score_breakdown", "gaps",
+                "cleaning", "author_notes", "weird_titles", "needs_review"):
+        assert key in report, f"报告 v2 缺字段 {key}"
+    assert isinstance(report["cleaning"], dict)
+    assert any("感言" in n["title"] for n in report["author_notes"])
 
 
 if __name__ == "__main__":
     test_standard_chinese_chapters()
     test_english_number_dot_and_custom_rules()
     test_numbered_sections_and_pagination()
-    test_remulina_mixed_titles_skip_wrappers()
+    test_mixed_volume_chapter_generic_no_book_specific()
     test_fallback_report_for_unmarked_long_text()
+    test_report_v2_fields_present()

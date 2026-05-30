@@ -250,37 +250,40 @@ def structural_score(chapters: list[dict], text: str) -> tuple[float, dict]:
 
 
 # ─── 规则融合 ────────────────────────────────────────────────────────────────
-def _outlier_threshold(sizes: list[int]) -> float:
-    n = len(sizes)
-    if n < 2:
-        return float("inf")
-    mean_sz = sum(sizes) / n
-    var = sum((x - mean_sz) ** 2 for x in sizes) / n
-    return mean_sz + 2 * (var ** 0.5)
+# 一个正常网文章节顶天 ~8k 字。超过此且远高于均值,才疑似"多章粘连"漏切。
+# 防止近似均匀的章长里,某章略大就被误判离群(那样会把正文行误拆)。
+_MIN_OUTLIER_CHARS = 12000
+_HARD_OUTLIER_CHARS = 50000  # 绝对超长 (对齐 chapter_splitter._post_process)
 
 
 def fuse(best: list[dict], text: str) -> tuple[list[dict], list[dict]]:
     """主切 + 离群超长块递归找漏切子章 + 编号对账。
 
     返回 (fused_chapters, gaps)。gaps = [{after_chapter, expected_index, recovered}]。
+    离群判定:HARD 绝对超长,或(统计离群 mean+2σ 且 远大于 median 且 超 _MIN_OUTLIER_CHARS)。
+    递归子切只在子切分**结构性评分够好**时才采纳,否则保留原块(不乱拆正文)。
     """
     if not best:
         return [], []
     sizes = [len(c.get("content") or "") for c in best]
-    thresh = _outlier_threshold(sizes)
-    HARD = 50000  # 绝对超长阈值 (对齐 chapter_splitter._post_process)
+    n = len(sizes)
+    mean_sz = sum(sizes) / n
+    median = sorted(sizes)[n // 2]
+    std = (sum((x - mean_sz) ** 2 for x in sizes) / n) ** 0.5
+    stat_thresh = mean_sz + 2 * std
 
     fused: list[dict] = []
     for ch in best:
         body = ch.get("content") or ""
-        is_outlier = len(body) > min(thresh, HARD) or len(body) > HARD
+        L = len(body)
+        is_outlier = L > _HARD_OUTLIER_CHARS or (
+            L > stat_thresh and L > max(2 * median, _MIN_OUTLIER_CHARS)
+        )
         sub: list[dict] = []
         if is_outlier:
-            # 对离群超长块递归套候选规则找漏切子章 (递归用 build_candidate_rules,
-            # 比固定套某条 others 更稳:块内可能是另一种 marker)
             block_text = (ch.get("title", "") + "\n" + body) if ch.get("title") else body
             sub = _recover_subchapters(block_text)
-        if sub and len(sub) > 1:
+        if len(sub) > 1:
             for s in sub:
                 s["volume_title"] = ch.get("volume_title", "")
                 fused.append(s)
@@ -307,13 +310,21 @@ def fuse(best: list[dict], text: str) -> tuple[list[dict], list[dict]]:
 
 
 def _recover_subchapters(block_text: str) -> list[dict]:
-    """对单个离群超长块,用候选规则里能切出最多子章的那条再切。"""
+    """对单个离群超长块,用候选规则再切找漏切子章。
+
+    **按结构性评分选优,非按子章数**(按数量会让贪婪规则乱拆正文);
+    丢弃空内容碎片;只在最优子切分质量够好(score >= 0.5)时采纳,否则返 [] 保留原块。
+    """
     best_sub: list[dict] = []
+    best_score = 0.0
     for rule in build_candidate_rules(block_text):
-        sub = split_by_heading_regex(block_text, rule.regex)
-        if len(sub) > len(best_sub):
-            best_sub = sub
-    return best_sub
+        sub = [c for c in split_by_heading_regex(block_text, rule.regex) if (c.get("content") or "").strip()]
+        if len(sub) <= 1:
+            continue
+        score, _ = structural_score(sub, block_text)
+        if score > best_score:
+            best_score, best_sub = score, sub
+    return best_sub if best_score >= 0.5 else []
 
 
 # ─── 主入口 ──────────────────────────────────────────────────────────────────

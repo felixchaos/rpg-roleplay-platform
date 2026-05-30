@@ -62,7 +62,7 @@ class ChapterSplitter:
         "custom_pattern": "自定义规则",
         "numbered_sections": "篇章小节",
         "pagination_headings": "分页标题",
-        "remulina_special": "蕾穆丽娜规则",
+        "adaptive_fusion": "规则融合自适应",
         "rule_chapter_cn": "中文章节规则",
         "rule_corpus": "语料章节规则",
         "rule_chapter_en": "英文章节规则",
@@ -74,19 +74,8 @@ class ChapterSplitter:
         "quality_fallback_window": "质量兜底窗口",
     }
 
-    REMULINA_FULL_TITLE_RE = re.compile(
-        rf"^(?:(?:正卷|外卷)[－-](?:第|正)?[{NUMBER_TOKEN}]+卷.*?(?:第[{NUMBER_TOKEN}]+[章节]|第[{NUMBER_TOKEN}]+节|尾章).*)$"
-    )
-    REMULINA_STANDALONE_TITLE_RE = re.compile(
-        rf"^(?:第[{NUMBER_TOKEN}]+卷\s+小结|正[{NUMBER_TOKEN}]+卷(?:角色歌|\s+尾章)\s*.*|第[{NUMBER_TOKEN}]+[章节]\s+.*|第[{NUMBER_TOKEN}]+节\s+.*|正[{NUMBER_TOKEN}]+卷[{NUMBER_TOKEN}]+[章节]\s+.*)$"
-    )
-    REMULINA_WRAPPER_TITLE_RE = re.compile(
-        rf"^(?:正[{NUMBER_TOKEN}]+卷(?:角色歌|\s+尾章|[{NUMBER_TOKEN}]+[章节])\s+.*|第[{NUMBER_TOKEN}]+[章节]\s+.*|第[{NUMBER_TOKEN}]+节\s+.*)$"
-    )
-    REMULINA_VOLUME_KEY_RE = re.compile(rf"^(正卷|外卷)[－-](?:第|正)?([{NUMBER_TOKEN}]+)卷")
-    REMULINA_WRAPPER_VOLUME_KEY_RE = re.compile(rf"^正([{NUMBER_TOKEN}]+)卷")
-    REMULINA_BARE_VOLUME_TITLE_RE = re.compile(rf"^(?:正卷|外卷)[－-](?:第|正)?[{NUMBER_TOKEN}]+卷$")
-    REMULINA_CHAPTER_BOUNDARY_RE = re.compile(rf"[－-](?:第[{NUMBER_TOKEN}]+[章节]|第[{NUMBER_TOKEN}]+节|尾章)(?:[－-]|\s+)")
+    # (Phase A.0) 已删除 REMULINA_* 书本特化硬编码 — 反模式。
+    # auto 切分改走 ingest.adaptive_split 规则融合自适应,换任意网文不退化。
 
     def decode_bytes(self, content: bytes) -> tuple[str, str]:
         for encoding in ("utf-8", "utf-8-sig", "gb18030", "gbk", "big5"):
@@ -96,48 +85,23 @@ class ChapterSplitter:
                 continue
         return content.decode("utf-8", errors="ignore"), "utf-8(ignore)"
 
-    # task 43/47: \u76d7\u7248\u7f51\u7ad9\u5e38\u89c1\u7684\u7248\u6743\u5ba3\u4f20/\u6c34\u5370\u884c,\u62c6\u4e66\u65f6\u6bb5\u843d\u7ea7\u79fb\u9664\u3002
-    # \u8fd9\u4e9b\u6587\u672c\u88ab\u8bc6\u522b\u6210"\u4e8b\u4ef6" / \u5199\u8fdb character_cards.name / \u51fa\u73b0\u5728 chapter_facts.events,
-    # \u4e25\u91cd\u6c61\u67d3 GM \u4e0a\u4e0b\u6587 + \u72b6\u6001\u9762\u677f"\u672c\u8f6e\u5df2\u77e5\u4e8b\u4ef6"\u3002
-    PIRATE_PROMO_PATTERNS = [
-        re.compile(r"\u5543\u4e66\u5c0f\u8bf4[\u7f51\u7ad9]?|KenShu\.?CC?|kenshu\.cc", re.IGNORECASE),
-        re.compile(r"\u4ee5\u4e0b\u662f.{0,12}\u5c0f\u8bf4[\u7f51\u7ad9].{0,30}(\u6536\u96c6|\u6574\u7406|\u91c7\u96c6)"),
-        re.compile(r"\u7248\u6743\u5f52.{0,30}(\u4f5c\u8005|\u51fa\u7248\u793e|\u6240\u6709)"),
-        re.compile(r"\u672c\u4e66.{0,12}(\u8f6c\u8f7d|\u642c\u8fd0|\u76d7\u7248|\u9996\u53d1|\u8fde\u8f7d)\u4e8e"),
-        re.compile(r"(\u66f4\u591a|\u6700\u65b0)\u7ae0\u8282.{0,20}(\u8bf7|\u5c3d\u5728|\u8bbf\u95ee|\u767b\u9646|\u767b\u5f55)"),
-        re.compile(r"^[ \t]*(www|http|https?:)[\w./:%?=&-]+", re.IGNORECASE | re.MULTILINE),
-        re.compile(r"(\u6536\u85cf\u672c\u7ad9|\u672c\u7ad9|\u7b14\u8da3|UU \u770b\u4e66|UC \u6d4f\u89c8\u5668|\u5fae\u4fe1\u516c\u4f17\u53f7).{0,40}(\u83b7\u53d6|\u8ffd\u4e66|\u66f4\u65b0|\u9605\u8bfb)"),
-        re.compile(r"PS[:\uff1a].{0,80}(\u63a8\u8350|\u6708\u7968|\u8ba2\u9605|\u6253\u8d4f)"),
-    ]
-
-    def _strip_pirate_promo(self, text: str) -> str:
-        """\u9010\u884c\u8fc7\u6ee4\u76d7\u7248\u7f51\u7ad9\u5ba3\u4f20 / \u6c34\u5370 / \u63a8\u5e7f\u6587\u672c,\u4fdd\u7559\u6b63\u6587\u3002
-
-        \u7b56\u7565:\u6bcf\u4e00\u884c\u5355\u72ec\u68c0\u67e5,\u547d\u4e2d PIRATE_PROMO_PATTERNS \u4efb\u4e00\u6761\u5219\u4e22\u5f03,\u5176\u5b83\u884c\u4fdd\u7559\u3002
-        \u7136\u540e\u538b\u7f29\u591a\u4f59\u7a7a\u884c,\u907f\u514d\u5220\u9664\u540e\u7559\u4e0b\u5927\u6bb5\u7a7a\u767d\u3002
-        """
-        if not text:
-            return text
-        lines = text.split("\n")
-        kept: list[str] = []
-        for line in lines:
-            if any(p.search(line) for p in self.PIRATE_PROMO_PATTERNS):
-                continue
-            kept.append(line)
-        # \u538b\u7f29\u8fde\u7eed 3 \u4e2a\u4ee5\u4e0a\u7a7a\u884c\u4e3a 2 \u4e2a,\u4fdd\u7559\u6bb5\u843d\u5206\u9694
-        result = "\n".join(kept)
-        result = re.sub(r"\n{3,}", "\n\n", result)
-        return result
-
-    def clean_text(self, text: str) -> str:
+    def _normalize_encoding(self, text: str) -> str:
+        """\u7f16\u7801/\u6362\u884c/\u5168\u89d2\u7a7a\u683c\u5f52\u4e00 (\u4e0d\u542b\u5e7f\u544a\u6e05\u6d17)\u3002\u5e7f\u544a\u6e05\u6d17\u4ea4 ingest.sanitize\u3002"""
         normalized = text.replace("\r\n", "\n").replace("\r", "\n").replace("\ufeff", "")
         normalized = normalized.replace("\u3000", "  ")
         normalized = re.sub(r"[ \t]+\n", "\n", normalized)
         normalized = re.sub(r"\n{4,}", "\n\n\n", normalized)
-        # task 43/47: \u5728\u5207\u7ae0\u524d\u8fc7\u6ee4\u76d7\u7248\u7f51\u7ad9\u5ba3\u4f20,\u6240\u6709\u4e0b\u6e38 (chapter_facts /
-        # character_cards / worldbook / chunks) \u90fd\u62ff\u5230\u5e72\u51c0\u6587\u672c
-        normalized = self._strip_pirate_promo(normalized)
-        return normalized.strip()
+        return normalized
+
+    def _strip_pirate_promo(self, text: str) -> str:
+        """(Phase A.0) \u59d4\u6258 ingest.sanitize \u2014 \u53d6\u4ee3\u539f 8 \u6761\u5f31\u6b63\u5219,\u65b0\u7248\u542b\u4e71\u7801\u68c0\u6d4b\u3002"""
+        from ingest.sanitize import sanitize_corpus_text
+        return sanitize_corpus_text(text)
+
+    def clean_text(self, text: str) -> str:
+        """\u7f16\u7801\u5f52\u4e00 + \u5e7f\u544a/\u4e71\u7801\u6e05\u6d17 (text-only \u5165\u53e3)\u3002\u5e26\u62a5\u544a\u7684\u6e05\u6d17\u89c1 split_chapters_with_report\u3002"""
+        from ingest.sanitize import sanitize_corpus_text
+        return sanitize_corpus_text(self._normalize_encoding(text)).strip()
 
     def split_chapters(
         self,
@@ -166,8 +130,12 @@ class ChapterSplitter:
         source_name: str = "",
         title: str = "",
     ) -> tuple[list[dict], dict]:
-        cleaned = self.clean_text(text)
-        chapters, split_mode = self._split_chapters_internal(
+        # Phase A.0: 编码归一 → 广告/乱码清洗(带报告) → 规则融合切分 → 三道过滤 → 报告 v2
+        normalized = self._normalize_encoding(text)
+        from ingest.sanitize import sanitize_corpus
+        cleaned, cleaning_report = sanitize_corpus(normalized)
+        cleaned = cleaned.strip()
+        chapters, split_mode, adaptive_report = self._split_chapters_internal(
             cleaned,
             split_rule=(split_rule or "auto").strip() or "auto",
             custom_pattern=custom_pattern or "",
@@ -175,8 +143,13 @@ class ChapterSplitter:
             title=title or "",
         )
         chapters = self._post_process_chapters(chapters)
+        # 三道过滤之 作者非正文 + 怪标题 (广告/乱码已在 sanitize_corpus 完成)
+        from ingest.filters import annotate_weird_titles, filter_non_content
+        filter_non_content(chapters)
+        annotate_weird_titles(chapters)
         report = self._build_split_report(chapters=chapters, split_mode=split_mode, source_text=cleaned)
         report["split_rule"] = split_rule or "auto"
+        self._augment_report_v2(report, chapters, cleaning_report, adaptive_report)
         return chapters, report
 
     def _split_chapters_internal(
@@ -185,37 +158,57 @@ class ChapterSplitter:
         *,
         split_rule: str,
         custom_pattern: str,
-        source_name: str,
-        title: str,
-    ) -> tuple[list[dict], str]:
+        source_name: str,  # noqa: ARG002 — 保留 API 兼容(旧 REMULINA 用,现不用)
+        title: str,  # noqa: ARG002
+    ) -> tuple[list[dict], str, dict | None]:
+        """返回 (chapters, split_mode, adaptive_report|None)。
+
+        用户显式选规则 (custom / 预设) → 走该规则;否则 auto → 规则融合自适应切分。
+        """
         if not text.strip():
-            return [], "empty"
+            return [], "empty", None
 
-        if self._should_use_remulina_special(text, split_rule, source_name, title):
-            remulina = self._split_remulina_novel(text)
-            if remulina:
-                return remulina, "remulina_special"
-
+        # 用户显式自定义规则
         if split_rule == "custom":
             pattern = self.build_custom_pattern(custom_pattern)
             if pattern:
                 chapters = self._flatten_volumes(self._split_with_volumes(text, pattern))
                 if chapters:
-                    return chapters, "custom_pattern"
+                    return chapters, "custom_pattern", None
 
+        # 用户显式选了某条预设规则
         if split_rule in self.RULE_PATTERNS:
             chapters = self._flatten_volumes(self._split_with_volumes(text, self.RULE_PATTERNS[split_rule].pattern))
             processed = self._post_process_chapters(chapters)
             if processed and self._has_reasonable_chapter_quality(processed):
-                return processed, f"rule_{split_rule}"
+                return processed, f"rule_{split_rule}", None
 
-        chapters, mode = self._split_auto(text)
-        if split_rule in {"auto", "corpus", ""} and mode in {"fallback_window", "quality_fallback_window"}:
-            corpus = self._flatten_volumes(self._split_with_volumes(text, self.RULE_PATTERNS["corpus"].pattern))
-            processed = self._post_process_chapters(corpus)
-            if len(processed) > len(chapters) and self._has_reasonable_chapter_quality(processed):
-                return processed, "rule_corpus"
-        return chapters, mode
+        # auto → 规则融合自适应切分 与 既有 _split_auto 检测器(分页/篇章小节/弱标题/
+        # 固定窗口)**按结构性评分竞争取优**。既保留 _split_auto 的通用能力(换书不退化),
+        # 又用 adaptive 的候选库+评分+漏切回收补强。两者都跑(import 一次性,成本可接受)。
+        from ingest.adaptive_split import adaptive_split, structural_score
+
+        adaptive_chapters, adaptive_report = adaptive_split(text)
+        adaptive_score = float((adaptive_report.get("rule_chosen") or {}).get("score", 0.0))
+        adaptive_ok = (
+            len(adaptive_chapters) > 1
+            and adaptive_score >= 0.5
+            and self._has_reasonable_chapter_quality(adaptive_chapters)
+        )
+
+        auto_chapters, auto_mode = self._split_auto(text)
+        auto_score = structural_score(auto_chapters, text)[0] if len(auto_chapters) > 1 else 0.0
+        auto_ok = bool(auto_chapters) and self._has_reasonable_chapter_quality(auto_chapters)
+
+        # adaptive 多章且分数不低于 auto → 采纳 adaptive;否则若 auto 可靠用 auto
+        if adaptive_ok and adaptive_score >= auto_score:
+            return adaptive_chapters, "adaptive_fusion", adaptive_report
+        if auto_ok:
+            return auto_chapters, auto_mode, adaptive_report
+        if adaptive_ok:
+            return adaptive_chapters, "adaptive_fusion", adaptive_report
+        # 都不可靠 → 用 auto 的兜底结果(通常 fallback_window)
+        return (auto_chapters or adaptive_chapters), (auto_mode if auto_chapters else "adaptive_fusion"), adaptive_report
 
     def _split_auto(self, text: str) -> tuple[list[dict], str]:
         lines = text.split("\n")
@@ -381,93 +374,6 @@ class ChapterSplitter:
                 item["chapter_number"] = len(chapters) + 1
                 chapters.append(item)
         return chapters
-
-    def _should_use_remulina_special(self, text: str, split_rule: str, source_name: str, title: str) -> bool:
-        if split_rule and split_rule not in {"auto", "chapter_cn", "corpus"}:
-            return False
-        markers = f"{source_name}\n{title}"
-        if re.search(r"我蕾穆丽娜不爱你|我穆蕾莉娅不爱你|皆虚皆允", markers):
-            return True
-        matches = re.findall(rf"^\s*正卷[－-]第[{NUMBER_TOKEN}]+卷.*?第[{NUMBER_TOKEN}]+[章节]", text, flags=re.MULTILINE)
-        return len(matches) >= 5 and "第一卷 小结" in text
-
-    def _split_remulina_novel(self, text: str) -> list[dict]:
-        lines = text.split("\n")
-        markers: list[dict] = []
-        for idx, line in enumerate(lines):
-            trimmed = line.strip()
-            if not trimmed:
-                continue
-            is_full_title = bool(self.REMULINA_FULL_TITLE_RE.match(trimmed))
-            is_standalone_title = bool(self.REMULINA_STANDALONE_TITLE_RE.match(trimmed))
-            if not is_full_title and not is_standalone_title:
-                continue
-            if self.REMULINA_WRAPPER_TITLE_RE.match(trimmed) and self._has_upcoming_remulina_full_title(lines, idx + 1):
-                continue
-            markers.append({"title": trimmed, "line_idx": idx})
-
-        if not markers:
-            return []
-
-        volumes_by_key: dict[str, dict] = {}
-        ordered_keys: list[str] = []
-        untitled = {"title": "", "chapters": []}
-        current_volume_key: str | None = None
-
-        for index, marker in enumerate(markers):
-            explicit_volume = self._extract_remulina_volume_meta(marker["title"])
-            if explicit_volume:
-                key, volume_title = explicit_volume
-                if key not in volumes_by_key:
-                    volumes_by_key[key] = {"title": volume_title, "chapters": []}
-                    ordered_keys.append(key)
-                elif self._should_upgrade_remulina_volume_title(volumes_by_key[key]["title"], volume_title):
-                    volumes_by_key[key]["title"] = volume_title
-                current_volume_key = key
-
-            start_line = marker["line_idx"] + 1
-            end_line = markers[index + 1]["line_idx"] if index + 1 < len(markers) else len(lines)
-            body = "\n".join(lines[start_line:end_line]).strip()
-            if not body:
-                continue
-
-            target = volumes_by_key[current_volume_key] if current_volume_key else untitled
-            target["chapters"].append({"title": marker["title"], "content": body})
-
-        volumes = [volumes_by_key[key] for key in ordered_keys if volumes_by_key[key]["chapters"]]
-        if untitled["chapters"]:
-            volumes.insert(0, untitled)
-        return self._flatten_volumes(volumes)
-
-    def _has_upcoming_remulina_full_title(self, lines: list[str], start_idx: int, lookahead: int = 3) -> bool:
-        seen = 0
-        for idx in range(start_idx, len(lines)):
-            trimmed = lines[idx].strip()
-            if not trimmed:
-                continue
-            if self.REMULINA_FULL_TITLE_RE.match(trimmed):
-                return True
-            seen += 1
-            if seen >= lookahead:
-                break
-        return False
-
-    def _extract_remulina_volume_meta(self, title: str) -> tuple[str, str] | None:
-        full_title = self.REMULINA_VOLUME_KEY_RE.match(title)
-        if full_title:
-            volume_type, volume_number = full_title.groups()
-            chapter_boundary = self.REMULINA_CHAPTER_BOUNDARY_RE.search(title)
-            volume_title = title[: chapter_boundary.start()].strip() if chapter_boundary else title.strip()
-            return f"{volume_type}-{volume_number}卷", volume_title or f"{volume_type}－第{volume_number}卷"
-
-        wrapper = self.REMULINA_WRAPPER_VOLUME_KEY_RE.match(title)
-        if wrapper:
-            volume_number = wrapper.group(1)
-            return f"正卷-{volume_number}卷", f"正卷－第{volume_number}卷"
-        return None
-
-    def _should_upgrade_remulina_volume_title(self, existing: str, candidate: str) -> bool:
-        return bool(self.REMULINA_BARE_VOLUME_TITLE_RE.match(existing)) and len(candidate) > len(existing)
 
     def _collect_pagination_headings(self, lines: list[str]) -> list[int]:
         candidates: list[tuple[int, str, int]] = []
@@ -709,7 +615,7 @@ class ChapterSplitter:
             "numbered_sections": 0.86,
             "strong_headings": 0.88,
             "pagination_headings": 0.78,
-            "remulina_special": 0.9,
+            "adaptive_fusion": 0.88,
             "custom_pattern": 0.72,
             "rule_chapter_cn": 0.82,
             "rule_corpus": 0.8,
@@ -730,8 +636,8 @@ class ChapterSplitter:
             reasons.append("检测到分页式标题，已按同名连续页码切分")
         if split_mode == "numbered_sections":
             reasons.append("检测到篇章标题下的独立小节编号，已按小节编号切分")
-        if split_mode == "remulina_special":
-            reasons.append("检测到蕾穆丽娜旧项目混合卷章标题，已跳过重复包装标题")
+        if split_mode == "adaptive_fusion":
+            reasons.append("规则融合自适应切分：候选规则结构性评分选优 + 离群块漏切回收")
         if split_mode.startswith("rule_") or split_mode == "custom_pattern":
             reasons.append("按用户选择的旧项目规则切分")
 
@@ -782,6 +688,59 @@ class ChapterSplitter:
             "abnormal_chapter_numbers": sorted(set(short_numbers + long_numbers))[:80],
             "reasons": reasons,
         }
+
+    def _augment_report_v2(
+        self,
+        report: dict,
+        chapters: list[dict],
+        cleaning_report: dict,
+        adaptive_report: dict | None,
+    ) -> None:
+        """报告 v2:把规则融合 + 清洗 + 三道过滤的结果并进报告 (A0_ingestion §5)。
+
+        不静默删:author_notes / weird_titles / gaps 全部上报,供复核 UI 逐条裁决。
+        """
+        ar = adaptive_report or {}
+        report["rule_chosen"] = ar.get("rule_chosen")
+        report["rule_runnerup"] = ar.get("rule_runnerup")
+        report["score_breakdown"] = ar.get("score_breakdown", {})
+        gaps = ar.get("gaps", []) or []
+        report["gaps"] = gaps
+        report["cleaning"] = cleaning_report or {}
+
+        author_notes = [
+            {
+                "chapter_index": c.get("chapter_number"),
+                "title": c.get("title", ""),
+                "reason": c.get("_note_reason", ""),
+            }
+            for c in chapters
+            if c.get("is_author_note")
+        ]
+        weird_titles = [
+            {
+                "chapter_index": c.get("chapter_number"),
+                "title": c.get("title", ""),
+                "title_confidence": c.get("title_confidence", 1.0),
+                "content_descriptor": c.get("content_descriptor", ""),
+            }
+            for c in chapters
+            if float(c.get("title_confidence", 1.0)) < 0.6
+        ]
+        report["author_notes"] = author_notes
+        report["weird_titles"] = weird_titles
+
+        n = max(1, len(chapters))
+        unrecovered = [g for g in gaps if not g.get("recovered")]
+        report["needs_review"] = bool(
+            unrecovered
+            or len(author_notes) / n > 0.3
+            or len(weird_titles) / n > 0.2
+        )
+
+        # 清理章节里的内部临时字段(_note_reason),保留入库列字段
+        for c in chapters:
+            c.pop("_note_reason", None)
 
     def _classify_split_problem(
         self,
