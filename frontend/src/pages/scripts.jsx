@@ -495,7 +495,10 @@ function ScriptsListView() {
               ? <CSStatusIndicator type="success">干净</CSStatusIndicator>
               : <CSStatusIndicator type="warning">{s.import_report.problem_label}</CSStatusIndicator>
           ) },
-          { id: 'confidence', header: '置信度', cell: (s) => <ConfidenceBar value={s.import_report?.confidence || 0} /> },
+          { id: 'saves', header: '存档', cell: (s) => {
+            const n = platSaves.filter((x) => x.script_id === s.id).length;
+            return n > 0 ? <CSBadge color="green">{n} 个存档</CSBadge> : <CSBox color="text-status-inactive">—</CSBox>;
+          } },
           { id: 'actions', header: '操作', cell: (s) => (
             <CSSpaceBetween direction="horizontal" size="xs">
               <CSButton variant="inline-link" iconName="caret-right-filled" disabled={busyId === s.id} onClick={() => onPlay(s)}>开始</CSButton>
