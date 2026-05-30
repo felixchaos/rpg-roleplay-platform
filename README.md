@@ -13,6 +13,8 @@
 
 </div>
 
+![RPG Roleplay — live game console](./docs/assets/hero.png)
+
 ---
 
 ## What it is

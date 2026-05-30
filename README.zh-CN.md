@@ -13,6 +13,8 @@
 
 </div>
 
+![RPG Roleplay — 实时游戏控制台](./docs/assets/hero.png)
+
 ---
 
 ## 这是什么
