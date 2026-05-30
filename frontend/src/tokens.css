@@ -139,9 +139,13 @@ input:focus, textarea:focus, select:focus {
 }
 textarea { resize: vertical; }
 
-/* link */
-a { color: var(--text-quiet); text-decoration: none; border-bottom: 1px solid var(--line); padding-bottom: 1px; }
-a:hover { color: var(--text); border-bottom-color: var(--line-strong); }
+/* link —— 不给裸 <a> 全局底边线:会泄漏到 Cloudscape SideNavigation / TopNavigation /
+   表格 inline-link 等所有 <a>,产生「莫名其妙的白色横线」。需要下划线效果的内容链接
+   显式用 .pl-textlink 或 inline style。Cloudscape 链接走自身样式。 */
+a { color: var(--text-quiet); text-decoration: none; }
+a:hover { color: var(--text); }
+.pl-textlink { border-bottom: 1px solid var(--line); padding-bottom: 1px; }
+.pl-textlink:hover { border-bottom-color: var(--line-strong); }
 
 /* scrollbars */
 ::-webkit-scrollbar { width: 8px; height: 8px; }

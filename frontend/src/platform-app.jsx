@@ -3656,19 +3656,23 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
             ariaLabel="全部功能"
             onItemClick={({ detail }) => { const m = CS_MODULES.find((x) => x.id === detail.id); if (m) { setPage(m.pages[0]); location.hash = '#' + m.pages[0]; } }}
           >
-            ☰ 全部功能
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, lineHeight: 1 }}>
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true" style={{ display: 'block' }}>
+                <rect x="0" y="0" width="6" height="6" rx="1.2" />
+                <rect x="8" y="0" width="6" height="6" rx="1.2" />
+                <rect x="0" y="8" width="6" height="6" rx="1.2" />
+                <rect x="8" y="8" width="6" height="6" rx="1.2" />
+              </svg>
+              全部功能
+            </span>
           </CSButtonDropdown>
         </div>
-        {/* 中右:搜索 + 全局工具 + 账号 */}
+        {/* 中右:全局工具 + 账号(搜索统一走命令面板,不再放内联搜索框,避免重复) */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <CSTopNavigation
             identity={{ href: '#profile', title: '', onFollow: (e) => { e.preventDefault(); setPage('profile'); } }}
-            search={
-              <div onClick={() => setSearchOpen(true)} style={{ cursor: 'pointer' }}>
-                <CSInput type="search" placeholder="搜索剧本 / 存档 / 角色 · ⌘K" value="" readOnly ariaLabel="搜索" />
-              </div>
-            }
             utilities={[
+              { type: 'button', iconName: 'search', title: '搜索 (⌘K)', ariaLabel: '搜索', disableUtilityCollapse: true, onClick: () => setSearchOpen(true) },
               { type: 'button', iconName: 'settings', title: '设置', ariaLabel: '设置', disableUtilityCollapse: true, onClick: () => { setPage('settings'); location.hash = '#settings'; } },
               { type: 'button', iconName: 'refresh', title: '刷新', ariaLabel: '刷新平台数据', disableUtilityCollapse: true, onClick: _csRefresh },
               {
