@@ -353,6 +353,12 @@ def ensure_registered() -> None:
         register_anchor_tools()
     except Exception as exc:
         log.warning(f"[command_tools_register] anchors 工具注册失败: {exc}")
+    # Phase D: GM 知识库查询/写工具(读 kb_canon∪live / 写 kb_* 世界树 delta)
+    try:
+        from tools_dsl.command_tools_kb import register_kb_tools
+        register_kb_tools()
+    except Exception as exc:
+        log.warning(f"[command_tools_register] kb 工具注册失败: {exc}")
     # task 68/72 — 给已注册工具打 intent_keywords + side_effect_topics 标签,
     # 供 ui_describe 模糊匹配 + dispatcher 状态变更广播。
     try:
