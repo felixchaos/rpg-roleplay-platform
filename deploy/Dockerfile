@@ -1,67 +1,64 @@
 # ============================================================
-# 多阶段构建: rpg-server
-# Stage 1 (builder): rust:1.83 — cargo build --release
-# Stage 2 (runtime): debian-slim + ca-certs
+# RPG Roleplay — Python (FastAPI/uvicorn) 生产镜像
+# Stage 1 (frontend): node:20 — vite build → frontend/dist
+# Stage 2 (runtime):  python:3.14-slim — pip install + uvicorn
+#
+# 注意:main 分支已切回 Python 产品线(rust/ 归档在 archive/rust-migration)。
+# 旧的 Rust 版 Dockerfile 保留在该归档分支。
 # ============================================================
 
-# ─── Stage 1: Builder ────────────────────────────────────────────────────────
-FROM rust:1.83-slim-bookworm AS builder
+# ─── Stage 1: 构建前端 dist ──────────────────────────────────────────────────
+# 前端是 Vite ESM,必须先 build 产出 frontend/dist(打包后的 /assets/*.js);
+# 后端 app.py 同源挂载 frontend/dist。
+FROM node:20-slim AS frontend
 
-# 安装编译依赖
+WORKDIR /build/frontend
+# 先复制 lockfile 利用 layer cache
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
+
+# ─── Stage 2: Python 运行时 ──────────────────────────────────────────────────
+FROM python:3.14-slim AS runtime
+
+# 运行时库 + 编译依赖兜底(Python 3.14 较新,个别包可能无预编译 wheel)。
+# libpq-dev/gcc 用于 pip 编译;运行时 psycopg-binary 自带 libpq。
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config \
-    libssl-dev \
-    libpq-dev \
+        ca-certificates curl gcc libpq-dev python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /build
-
-# 先复制 Cargo 清单,利用 layer cache 缓存依赖编译
-# 只要 Cargo.toml/Cargo.lock 不变,依赖层不会重建
-COPY rust/Cargo.toml rust/Cargo.lock ./
-COPY rust/crates ./crates/
-
-# 构建所有依赖(产生缓存层)——先创建空 main 占位,再完整构建
-# 注: sqlx 需要 DATABASE_URL 或 offline 模式
-ENV SQLX_OFFLINE=true
-
-# 完整构建 release 二进制
-RUN cargo build --release --bin rpg-server
-
-# ─── Stage 2: Runtime ────────────────────────────────────────────────────────
-FROM debian:bookworm-slim AS runtime
-
-# 安装运行时必要库
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    libssl3 \
-    libpq5 \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# 创建非 root 运行用户
+# 非 root 运行
 RUN groupadd -r rpg && useradd -r -g rpg -s /bin/false rpg
 
 WORKDIR /app
 
-# 从 builder 拷贝二进制
-COPY --from=builder /build/target/release/rpg-server /app/rpg-server
+# 先装依赖(利用 layer cache:requirements 不变则跳过)
+COPY rpg/requirements.txt /app/rpg/requirements.txt
+RUN pip install --no-cache-dir -r /app/rpg/requirements.txt
 
-# 拷贝 sqlx migrations(如果有)
-COPY --from=builder /build/crates/rpg-db/migrations /app/migrations 2>/dev/null || true
+# 后端代码
+COPY rpg/ /app/rpg/
+# 前端源 + 从 stage 1 拷入构建产物 dist
+COPY frontend/ /app/frontend/
+COPY --from=frontend /build/frontend/dist /app/frontend/dist
 
-RUN chmod +x /app/rpg-server && chown rpg:rpg /app/rpg-server
-
+RUN chown -R rpg:rpg /app
 USER rpg
 
-# 服务端口
+# app.py 的 import 用裸模块名(from app / from core.config),工作目录必须在 rpg/
+WORKDIR /app/rpg
+
 EXPOSE 7860
 
-# 健康检查(使用 /readyz)
-HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -sf http://localhost:7860/readyz || exit 1
+# 健康检查:/api/state 始终 200(匿名也返回基础状态)
+HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -sf http://localhost:7860/api/state || exit 1
 
-# 优雅 shutdown: Docker stop 发送 SIGTERM,Axum 的 with_graceful_shutdown 监听并 drain
+# Docker stop → SIGTERM → uvicorn 优雅 drain
 STOPSIGNAL SIGTERM
 
-ENTRYPOINT ["/app/rpg-server"]
+# 单 worker + 高 async 并发(LLM-latency-bound + BYOK,这个量级足够;
+# 真实负载涨了再上多 worker + Redis 共享 state)。
+CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860", "--no-access-log"]

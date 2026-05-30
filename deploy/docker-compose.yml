@@ -83,7 +83,7 @@ services:
 
   # ─── 4. rpg-server — Axum 后端 ────────────────────────────────────────────
   backend:
-    image: rpg-server:latest
+    image: rpg-app:latest
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -97,13 +97,21 @@ services:
     ports:
       - "7860:7860"
     environment:
-      # DATABASE_URL 指向 pgbouncer:6432 而非 postgres 直连
+      # DATABASE_URL 指向 pgbouncer:6432 而非 postgres 直连(psycopg 接受 postgres:// 前缀)
       DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:-changeme}@pgbouncer:6432/rpg
       REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379
+      # ── 多用户隔离(生产必须!)─────────────────────────────────────────
+      # local/desktop/self_hosted 模式会把所有人当匿名 uid 0 共享一份 state。
+      # 生产必须设非 local 模式 + 强制鉴权,否则 100 用户全部串档 = 灾难。
+      RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-multiuser}
+      RPG_REQUIRE_AUTH: ${RPG_REQUIRE_AUTH:-1}
+      # DB 连接池:100 用户峰值并发写,10 偏小,调 25(pgbouncer 在前再兜一层)
+      RPG_DB_POOL_MAX: ${RPG_DB_POOL_MAX:-25}
       # 服务器配置
       RPG_PORT: "7860"
       RPG_HOST: "0.0.0.0"
-      RPG_CORS_ORIGINS: ${RPG_CORS_ORIGINS:-http://localhost:5173}
+      # CORS:同源服务(Python 挂 frontend/dist),设成你的真实域名
+      RPG_CORS_ORIGINS: ${RPG_CORS_ORIGINS:-https://play.stellatrix.icu}
       RPG_COOKIE_SAMESITE: ${RPG_COOKIE_SAMESITE:-lax}
       RPG_COOKIE_SECURE: ${RPG_COOKIE_SECURE:-1}
       # 限流 / 超时 / 请求体
@@ -111,21 +119,17 @@ services:
       RPG_REQUEST_TIMEOUT_SECS: ${RPG_REQUEST_TIMEOUT_SECS:-30}
       RPG_BODY_LIMIT_BYTES: ${RPG_BODY_LIMIT_BYTES:-2097152}
       RPG_UPLOAD_BODY_LIMIT_BYTES: ${RPG_UPLOAD_BODY_LIMIT_BYTES:-52428800}
-      # AI / LLM
+      # AI / LLM(env key 仅作 admin/本地回退;普通用户走 BYOK 各自加密 key)
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       EMBED_BASE_URL: ${EMBED_BASE_URL}
       EMBED_MODEL: ${EMBED_MODEL:-text-embedding-004}
       EMBED_API_KEY: ${EMBED_API_KEY}
-      # 迁移控制
-      RPG_SKIP_AUTO_MIGRATE: ${RPG_SKIP_AUTO_MIGRATE:-0}
-      # Tracing
-      RUST_LOG: ${RUST_LOG:-rpg_server=info,tower_http=warn}
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:7860/readyz || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:7860/api/state || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 40s
     networks:
       - rpg-net
 

@@ -125,3 +125,6 @@ rpg/docs/api_contract_drift.md
 # 大纲 + 设定集
 大纲/
 设定集/
+
+# requirements.txt 是代码依赖清单,不是小说原文 — 白名单
+!rpg/requirements.txt
