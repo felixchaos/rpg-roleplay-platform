@@ -26,6 +26,8 @@ import CSFileUpload from '@cloudscape-design/components/file-upload';
 import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSProgressBar from '@cloudscape-design/components/progress-bar';
+import CSCards from '@cloudscape-design/components/cards';
+import CSTextFilter from '@cloudscape-design/components/text-filter';
 
 function ScriptPreviewModal({ open, busy, data, rule, onClose, onRetryRule, onConfirm }) {
   if (!open) return null;
@@ -146,8 +148,114 @@ const SPLIT_RULES = [
 function ScriptsPage({ subPage = "list" }) {
   return (
     <div className="pl-stack">
-      {subPage === "import" ? <ScriptsImportView /> : <ScriptsListView />}
+      {subPage === "import" ? <ScriptsImportView />
+        : subPage === "library" ? <ScriptsLibraryView />
+        : <ScriptsListView />}
     </div>
+  );
+}
+
+/* 在线剧本库 — 浏览并导入其他用户公开分享的剧本。
+   GET /api/scripts/public · POST /api/scripts/public/{id}/clone */
+function ScriptsLibraryView() {
+  const [items, setItems] = useStatePL([]);
+  const [loading, setLoading] = useStatePL(true);
+  const [q, setQ] = useStatePL("");
+  const [cloningId, setCloningId] = useStatePL(null);
+  const [importedIds, setImportedIds] = useStatePL({}); // 本会话内已导入的 source id
+
+  const reload = React.useCallback(async (query) => {
+    setLoading(true);
+    try {
+      const r = await window.api.scripts.publicList(query ? { q: query } : undefined);
+      setItems(Array.isArray(r?.items) ? r.items : []);
+    } catch (e) {
+      window.__apiToast?.("加载公开剧本失败", { kind: "danger", detail: e?.message });
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffectPL(() => { reload(""); }, [reload]);
+
+  const onSearch = () => reload(q);
+
+  const onClone = async (s) => {
+    setCloningId(s.id);
+    try {
+      const r = await window.api.scripts.cloneFromPublic(s.id);
+      if (r && r.ok === false) throw new Error(r.error || "导入失败");
+      window.toast?.("已导入到我的剧本", {
+        kind: "ok",
+        detail: `${s.title} · script #${r?.script_id ?? "?"}`,
+        duration: 3000,
+      });
+      setImportedIds((m) => ({ ...m, [s.id]: true }));
+      setItems((arr) => arr.map((x) => x.id === s.id ? { ...x, clone_count: (x.clone_count || 0) + 1 } : x));
+      try { window.dispatchEvent(new CustomEvent("rpg-scripts-updated")); } catch (_) {}
+    } catch (e) {
+      window.__apiToast?.("导入失败", { kind: "danger", detail: e?.message || String(e) });
+    } finally {
+      setCloningId(null);
+    }
+  };
+
+  return (
+    <CSSpaceBetween size="l">
+      <CSHeader
+        variant="h1"
+        counter={`(${items.length})`}
+        description="浏览其他用户公开分享的剧本,一键导入到自己的账户(含章节 / 角色卡 / 世界书)。"
+        actions={<CSButton iconName="refresh" onClick={() => reload(q)}>刷新</CSButton>}
+      >在线剧本库</CSHeader>
+
+      <CSCards
+        items={items}
+        loading={loading}
+        loadingText="加载公开剧本…"
+        trackBy="id"
+        cardsPerRow={[{ cards: 1 }, { minWidth: 480, cards: 2 }, { minWidth: 920, cards: 3 }]}
+        filter={
+          <div style={{ minWidth: 320 }}>
+            <CSTextFilter filteringText={q} filteringPlaceholder="搜索公开剧本标题 / 简介…"
+              onChange={({ detail }) => setQ(detail.filteringText)}
+              onDelayedChange={onSearch} />
+          </div>
+        }
+        empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>
+          {loading ? '加载中…' : (q ? '没有匹配的公开剧本' : '还没有公开分享的剧本。在「我的剧本」里把某本设为公开,它就会出现在这里。')}
+        </CSBox>}
+        cardDefinition={{
+          header: (s) => (
+            <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
+              <CSBox key="t" variant="h3" padding="n">{s.title}</CSBox>
+              {(s.mine || importedIds[s.id]) && <CSBadge key="b" color="green">{s.mine ? '我的' : '已导入'}</CSBadge>}
+            </CSSpaceBetween>
+          ),
+          sections: [
+            { id: 'author', content: (s) => (
+              <CSBox fontSize="body-s" color="text-body-secondary">由 {s.author || s.author_username || '匿名'} 分享</CSBox>
+            ) },
+            { id: 'stats', content: (s) => (
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSBadge key="ch">{(s.chapter_count || 0).toLocaleString()} 章</CSBadge>
+                <CSBadge key="wd">{((s.word_count || 0) / 10000).toFixed(0)} 万字</CSBadge>
+                <CSBadge key="cl" color="grey">{s.clone_count || 0} 次导入</CSBadge>
+              </CSSpaceBetween>
+            ) },
+            { id: 'desc', content: (s) => s.description
+              ? <CSBox color="text-body-secondary">{s.description}</CSBox> : null },
+            { id: 'actions', content: (s) => (
+              (s.mine || importedIds[s.id])
+                ? <CSButton disabled iconName="check">{s.mine ? '我的剧本' : '已导入'}</CSButton>
+                : <CSButton variant="primary" iconName="download"
+                    loading={cloningId === s.id} disabled={!!cloningId}
+                    onClick={() => onClone(s)}>导入到我的剧本</CSButton>
+            ) },
+          ],
+        }}
+      />
+    </CSSpaceBetween>
   );
 }
 
@@ -320,6 +428,7 @@ function ScriptsListView() {
       { id: 'overrides', text: '剧本覆盖设定', iconName: 'edit' },
       { id: 'review', text: 'KB 复核 — 提取结果', iconName: 'status-info' },
       { id: 'embed', text: embedText, iconName: fullyDone ? 'status-positive' : 'gen-ai', disabled: !!running },
+      { id: 'visibility', text: s.is_public ? '取消公开分享' : '公开分享到剧本库', iconName: s.is_public ? 'lock-private' : 'share' },
       { id: 'export', text: '导出剧本包 (zip)', iconName: 'download', disabled: exportingId === s.id },
       { id: 'delete', text: '删除剧本', iconName: 'remove', disabled: busyId === s.id },
     ];
@@ -330,7 +439,20 @@ function ScriptsListView() {
     else if (id === 'review') setReviewScript(s);
     else if (id === 'embed') triggerEmbed(s.id);
     else if (id === 'export') onExportPack(s);
+    else if (id === 'visibility') onToggleVisibility(s);
     else if (id === 'delete') onDelete(s);
+  };
+  const onToggleVisibility = async (s) => {
+    const next = !s.is_public;
+    if (next && !confirm(`把剧本「${s.title}」公开分享到在线剧本库?\n其他用户将能浏览并导入它的章节 / 角色卡 / 世界书。`)) return;
+    try {
+      const r = await window.api.scripts.setVisibility(s.id, next);
+      if (r && r.ok === false) throw new Error(r.error || '操作失败');
+      window.__apiToast?.(next ? '已公开分享' : '已取消公开', { kind: 'ok', duration: 2000 });
+      setScripts((arr) => arr.map((x) => x.id === s.id ? { ...x, is_public: next } : x));
+    } catch (e) {
+      window.__apiToast?.('操作失败', { kind: 'danger', detail: e?.message });
+    }
   };
   const onPlay = (s) => {
     // Codex P0-2 修复:有 sv 走 ContinuePicker(继续真实存档);没 sv 弹 NewGameModal 走原子建档流。
@@ -1181,4 +1303,4 @@ function ImportEstimateView({ estimate, rule, onCancel, onConfirm }) {
   );
 }
 
-export { ScriptsPage, ScriptsListView, ChaptersModal, OverridesModal, ScriptsImportView, ImportJobBanner, ImportJobResult, ImportEstimateView, ScriptPreviewModal, ConfidenceBar };
+export { ScriptsPage, ScriptsListView, ScriptsLibraryView, ChaptersModal, OverridesModal, ScriptsImportView, ImportJobBanner, ImportJobResult, ImportEstimateView, ScriptPreviewModal, ConfidenceBar };

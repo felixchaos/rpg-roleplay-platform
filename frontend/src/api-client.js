@@ -302,6 +302,11 @@
         a.click();
         setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
       },
+      // 在线剧本库:公开分享 / 浏览 / 导入
+      setVisibility: (sid, isPublic) => POST(`${API_PREFIX}/scripts/` + sid + "/visibility", { is_public: !!isPublic }),
+      publicList: (q) => GET(`${API_PREFIX}/scripts/public`, q),
+      publicGet: (sid) => GET(`${API_PREFIX}/scripts/public/` + sid),
+      cloneFromPublic: (sid) => POST(`${API_PREFIX}/scripts/public/` + sid + "/clone", {}),
     },
 
     // ---------- Saves & branches ----------

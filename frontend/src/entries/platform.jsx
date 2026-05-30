@@ -102,7 +102,7 @@ function PlatformApp() {
   else if (page === 'me-settings') body = <MePage subPage="settings" />;
   else if (page === 'scripts') body = <ScriptsPage subPage="list" />;
   else if (page === 'scripts-import') body = <ScriptsPage subPage="import" />;
-  else if (page === 'scripts-library') body = <ComingSoon title="在线剧本库" desc="浏览并导入其他用户公开分享的剧本。后端开发中。" />;
+  else if (page === 'scripts-library') body = <ScriptsPage subPage="library" />;
   else if (page === 'scripts-editor') body = <ComingSoon title="剧本编辑器" desc="整页章节编辑器(重命名/拆分/合并/重切分)。从弹窗迁移中。" />;
   else if (page === 'scripts-settings') body = <ComingSoon title="剧本设置" desc="剧本级设定覆盖(script_overrides)。迁移中。" />;
   else if (page === 'modules') body = <ModulesPage />;
