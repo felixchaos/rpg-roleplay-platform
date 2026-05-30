@@ -55,6 +55,11 @@ const theme = {
     colorBackgroundDropdownItemDefault: dual(C.panel),
     colorBackgroundDropdownItemHover: dual(C.panel2),
     colorBackgroundDropdownItemSelected: dual(C.accentSoft),
+    // 下拉/弹出层表面(awsui_dropdown-content-wrapper / popover)→ 暖色,
+    // 否则落到 Cloudscape 暗色默认 #161d26 蓝灰。
+    colorBackgroundPopover: dual(C.panel),
+    colorBackgroundDropdownItemDimmed: dual(C.panel),
+    colorBackgroundDropdownItemFilterMatch: dual(C.accentSoft),
     colorBackgroundItemSelected: dual(C.accentSoft),
     colorBackgroundCellShaded: dual(C.panel2),
     colorBackgroundButtonNormalDefault: dual(C.panel2),

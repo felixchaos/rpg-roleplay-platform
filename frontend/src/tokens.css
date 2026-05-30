@@ -139,6 +139,17 @@ input:focus, textarea:focus, select:focus {
 }
 textarea { resize: vertical; }
 
+/* Cloudscape 下拉 / 弹出层表面强制暖色。
+   applyTheme 的 colorBackgroundDropdownItemDefault 变量带上下文后缀(如 -qmc033),
+   部分场景(ButtonDropdown / Select 菜单)没被覆盖到,仍是 AWS 暗色蓝灰 #161d26。
+   直接按 class 锁表面背景,稳过 token 后缀差异。 */
+[class*="awsui_dropdown-content-wrapper"],
+[class*="awsui_options-list"],
+[class*="awsui_popover-body"],
+[class*="awsui_popover-content"] {
+  background-color: #211f1d !important;
+}
+
 /* link —— 不给裸 <a> 全局底边线:会泄漏到 Cloudscape SideNavigation / TopNavigation /
    表格 inline-link 等所有 <a>,产生「莫名其妙的白色横线」。需要下划线效果的内容链接
    显式用 .pl-textlink 或 inline style。Cloudscape 链接走自身样式。 */
