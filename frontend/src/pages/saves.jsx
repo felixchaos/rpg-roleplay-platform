@@ -15,6 +15,27 @@ import {
   Btn, Badge, KeyValue, StatusIndicator, ConfirmDialog, Flashbar, useFlash,
   Field as UiField, Select as UiSelect, TextInput as UiInput,
 } from '../ui/kit.jsx';
+// Cloudscape 原生组件(内容迁移,统一基线对齐)
+import CSHeader from '@cloudscape-design/components/header';
+import CSTable from '@cloudscape-design/components/table';
+import CSContainer from '@cloudscape-design/components/container';
+import CSSpaceBetween from '@cloudscape-design/components/space-between';
+import CSButton from '@cloudscape-design/components/button';
+import CSBox from '@cloudscape-design/components/box';
+import CSBadge from '@cloudscape-design/components/badge';
+import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
+import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
+import CSTabs from '@cloudscape-design/components/tabs';
+import CSTextFilter from '@cloudscape-design/components/text-filter';
+import CSSelect from '@cloudscape-design/components/select';
+import CSModal from '@cloudscape-design/components/modal';
+import CSInput from '@cloudscape-design/components/input';
+
+const _SAVE_SORT_OPTS = [
+  { value: 'played', label: '最近游玩' },
+  { value: 'name', label: '名称' },
+  { value: 'created', label: '创建时间' },
+];
 
 const _AWAPI = () => (window.__API_BASE || '');
 
@@ -247,19 +268,6 @@ function SavesListView() {
     setDeleting(false);
   };
 
-  const headerActions = (
-    <>
-      <input ref={importInputRef} type="file" accept=".zip,.json,.tar.gz" style={{ display: 'none' }}
-        onChange={(e) => { onImportFile(e.target.files?.[0]); e.target.value = ''; }} />
-      <Btn onClick={() => importInputRef.current?.click()} icon={<Icon name="upload" size={13} />}>导入存档</Btn>
-      <Btn onClick={() => setCreateOpen(true)} icon={<Icon name="plus" size={13} />}>新建存档</Btn>
-      <Btn variant="primary" disabled={!saves.length} icon={<Icon name="play" size={13} />} onClick={() => window.__openContinue?.(saves[0])}>进入当前游戏</Btn>
-    </>
-  );
-
-  // 把标题 + 操作喂给统一顶栏(不再各页自渲染标题栏)
-  useShellChrome({ title: '存档目录', subtitle: `${saves.length} 个存档`, actions: headerActions }, [saves.length]);
-
   // 搜索 + 排序
   const visibleSaves = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -278,124 +286,132 @@ function SavesListView() {
     return sorted;
   }, [saves, scripts, query, sortBy]);
 
+  const scriptTitle = (s) => (scripts.find((x) => x.id === s.script_id)?.title || '未知剧本');
+
   return (
-    <div className="pl-stack" style={{ maxWidth: 'none' }} data-cap-anchor="saves.list">
-      <Flashbar items={flash.items} />
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <div className="pl-sec-tools" style={{ width: '100%', justifyContent: 'flex-start' }}>
-            <div className="aw-search" style={{ maxWidth: 320, flex: '0 1 320px' }}>
-              <Icon name="search" size={13} />
-              <input className="aw-search-input" placeholder="搜索存档 / 剧本…" value={query} onChange={(e) => setQuery(e.target.value)} />
-              {query && <button className="aw-search-clear" onClick={() => setQuery('')} aria-label="清除">✕</button>}
+    <CSSpaceBetween size="l">
+      <CSHeader
+        variant="h1"
+        counter={`(${saves.length})`}
+        description="选择存档查看详情、调整设置或继续游戏。"
+        actions={
+          <CSSpaceBetween direction="horizontal" size="xs">
+            <input ref={importInputRef} type="file" accept=".zip,.json,.tar.gz" style={{ display: 'none' }}
+              onChange={(e) => { onImportFile(e.target.files?.[0]); e.target.value = ''; }} />
+            <CSButton iconName="upload" onClick={() => importInputRef.current?.click()}>导入存档</CSButton>
+            <CSButton iconName="add-plus" onClick={() => setCreateOpen(true)}>新建存档</CSButton>
+            <CSButton variant="primary" iconName="caret-right-filled" disabled={!saves.length}
+              onClick={() => window.__openContinue?.(saves[0])}>进入当前游戏</CSButton>
+          </CSSpaceBetween>
+        }
+      >存档目录</CSHeader>
+
+      <CSTable
+        variant="container"
+        selectionType="single"
+        trackBy="id"
+        selectedItems={selected ? [selected] : []}
+        onSelectionChange={({ detail }) => { const s = detail.selectedItems[0]; if (s) { setSelectedId(s.id); setTab('overview'); setRenaming(false); } }}
+        onRowClick={({ detail }) => { setSelectedId(detail.item.id); setTab('overview'); setRenaming(false); }}
+        filter={
+          <CSSpaceBetween direction="horizontal" size="xs">
+            <div style={{ minWidth: 280 }}>
+              <CSTextFilter filteringText={query} filteringPlaceholder="搜索存档 / 剧本…"
+                onChange={({ detail }) => setQuery(detail.filteringText)} />
             </div>
-            <UiSelect value={sortBy} onChange={setSortBy} options={[
-              { value: 'played', label: '最近游玩' },
-              { value: 'name', label: '名称' },
-              { value: 'created', label: '创建时间' },
-            ]} />
-          </div>
-        </div>
-        {visibleSaves.length === 0 ? (
-          <div className="aw-empty">{query ? '没有匹配的存档。' : '还没有存档。点右上「新建存档」开始你的第一段冒险。'}</div>
-        ) : (
-          <table className="pl-table">
-            <thead><tr>
-              <th>存档</th><th>剧本</th><th>玩家</th><th style={{ textAlign: 'right' }}>节点</th>
-              <th>最后游玩</th><th>状态</th><th></th>
-            </tr></thead>
-            <tbody>
-              {visibleSaves.map((s) => {
-                const sc = scripts.find((x) => x.id === s.script_id);
-                return (
-                  <tr key={s.id} className={selectedId === s.id ? 'sel' : ''} style={{ cursor: 'pointer' }}
-                    onClick={() => { setSelectedId(s.id); setTab('overview'); setRenaming(false); }}>
-                    <td><strong>{s.title}</strong></td>
-                    <td className="muted">{sc?.title || '未知剧本'}</td>
-                    <td className="muted">{s._raw?.player_name || '—'}</td>
-                    <td style={{ textAlign: 'right' }}>{s.branch_count}</td>
-                    <td className="muted">{s.last_played_at}</td>
-                    <td>{s.current ? <Badge tone="ok">在玩</Badge> : <span className="muted-2">未激活</span>}</td>
-                    <td className="pl-table-actions" onClick={(e) => e.stopPropagation()}>
-                      <Btn size="sm" variant="primary" onClick={() => window.__openContinue?.(s)}>继续</Btn>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </section>
+            <CSSelect selectedOption={_SAVE_SORT_OPTS.find((o) => o.value === sortBy)}
+              options={_SAVE_SORT_OPTS} onChange={({ detail }) => setSortBy(detail.selectedOption.value)} />
+          </CSSpaceBetween>
+        }
+        columnDefinitions={[
+          { id: 'title', header: '存档', cell: (s) => <CSBox fontWeight="bold">{s.title}</CSBox> },
+          { id: 'script', header: '剧本', cell: (s) => scriptTitle(s) },
+          { id: 'player', header: '玩家', cell: (s) => s._raw?.player_name || '—' },
+          { id: 'nodes', header: '节点', cell: (s) => s.branch_count },
+          { id: 'played', header: '最后游玩', cell: (s) => s.last_played_at },
+          { id: 'status', header: '状态', cell: (s) => s.current ? <CSBadge color="green">在玩</CSBadge> : <CSStatusIndicator type="stopped">未激活</CSStatusIndicator> },
+          { id: 'go', header: '', cell: (s) => <CSButton variant="inline-link" iconName="caret-right-filled" onClick={() => window.__openContinue?.(s)}>继续</CSButton> },
+        ]}
+        items={visibleSaves}
+        empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? '没有匹配的存档' : '还没有存档,点右上「新建存档」开始'}</CSBox>}
+      />
 
       {selected && (
-        <section className="pl-sec" data-cap-anchor="saves.detail">
-          <div className="pl-sec-head">
-            {renaming ? (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1 }}>
-                <UiInput value={renameVal} onChange={setRenameVal} />
-                <Btn variant="primary" onClick={doRename}>保存</Btn>
-                <Btn variant="link" onClick={() => setRenaming(false)}>取消</Btn>
-              </div>
-            ) : (
-              <>
-                <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  {selected.title}
-                  {selected.current && <Badge tone="ok">在玩</Badge>}
-                </h2>
-                <div className="pl-sec-tools">
-                  <button className="iconbtn" data-tip="收起详情" aria-label="收起" onClick={() => setSelectedId(null)}>
-                    <Icon name="close" size={14} />
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-          <Tabs active={tab} onChange={setTab} tabs={[
-            { id: 'overview', label: '概览' },
-            { id: 'settings', label: '设置' },
-            { id: 'branches', label: '分支', badge: selected.branch_count },
-          ]} />
-          <div style={{ padding: '2px 2px 4px' }}>
-            {tab === 'overview' && (
-              <div>
-                <KeyValue cols={4} items={[
-                  { label: '剧本', value: selScript?.title || '未知' },
-                  { label: '玩家', value: selected._raw?.player_name || <span className="aw-muted">未设定</span> },
-                  { label: '回合', value: selected._raw?.turn != null ? `第 ${selected._raw.turn} 回合` : '—' },
-                  { label: '状态', value: selected.current
-                      ? <StatusIndicator type="ok">当前存档</StatusIndicator>
-                      : <StatusIndicator type="pending">未激活</StatusIndicator> },
-                  { label: '分支节点', value: `${selected.branch_count} 个` },
-                  { label: '故事时间', value: selected._raw?.world_time || <span className="aw-muted">—</span> },
-                  { label: '最后游玩', value: selected.last_played_at },
-                  { label: '创建于', value: selected.created_ts ? new Date(selected.created_ts).toLocaleString('zh-CN') : '—' },
-                ]} />
-                <div style={{ marginTop: 14, padding: '11px 13px', background: 'var(--bg-deep)', border: '1px solid var(--line-soft)', borderRadius: 8 }}>
-                  <div className="aw-muted" style={{ fontSize: 11.5, marginBottom: 5 }}>最新片段</div>
-                  <p style={{ color: 'var(--text-quiet)', fontSize: 13, lineHeight: 1.6, margin: 0 }}>
+        <CSContainer
+          header={
+            <CSHeader
+              variant="h2"
+              actions={!renaming &&
+                <CSSpaceBetween direction="horizontal" size="xs">
+                  <CSButton variant="primary" iconName="caret-right-filled" onClick={() => window.__openContinue?.(selected)}>继续游戏</CSButton>
+                  {!selected.current && <CSButton onClick={() => onActivate(selected)}>设为当前</CSButton>}
+                  <CSButton onClick={() => { setRenameVal(selected.title); setRenaming(true); }}>重命名</CSButton>
+                  <CSButton onClick={() => window.open(window.api.saves.exportUrl(selected.id), '_blank')}>导出</CSButton>
+                  <CSButton onClick={() => setDeleteTarget(selected)}>删除</CSButton>
+                </CSSpaceBetween>
+              }
+            >
+              {renaming
+                ? <CSSpaceBetween direction="horizontal" size="xs">
+                    <CSInput value={renameVal} onChange={({ detail }) => setRenameVal(detail.value)} />
+                    <CSButton variant="primary" onClick={doRename}>保存</CSButton>
+                    <CSButton variant="link" onClick={() => setRenaming(false)}>取消</CSButton>
+                  </CSSpaceBetween>
+                : selected.title}
+            </CSHeader>
+          }
+        >
+          <CSTabs
+            activeTabId={tab}
+            onChange={({ detail }) => setTab(detail.activeTabId)}
+            tabs={[
+              { id: 'overview', label: '概览', content: (
+                <CSSpaceBetween size="m">
+                  <CSKeyValuePairs columns={4} items={[
+                    { label: '剧本', value: scriptTitle(selected) },
+                    { label: '玩家', value: selected._raw?.player_name || '未设定' },
+                    { label: '回合', value: selected._raw?.turn != null ? `第 ${selected._raw.turn} 回合` : '—' },
+                    { label: '状态', value: selected.current ? <CSStatusIndicator type="success">当前存档</CSStatusIndicator> : <CSStatusIndicator type="stopped">未激活</CSStatusIndicator> },
+                    { label: '分支节点', value: `${selected.branch_count} 个` },
+                    { label: '故事时间', value: selected._raw?.world_time || '—' },
+                    { label: '最后游玩', value: selected.last_played_at },
+                    { label: '创建于', value: selected.created_ts ? new Date(selected.created_ts).toLocaleString('zh-CN') : '—' },
+                  ]} />
+                  <CSBox variant="p" color="text-body-secondary">
                     {selected._raw?.snippet || selected._raw?.last_message || '（暂无最新片段，进入游戏后会自动同步。）'}
-                  </p>
-                </div>
-                <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginTop: 14 }}>
-                  <Btn variant="primary" icon={<Icon name="play" size={13} />} onClick={() => window.__openContinue?.(selected)}>继续游戏</Btn>
-                  {!selected.current && <Btn onClick={() => onActivate(selected)}>设为当前</Btn>}
-                  <Btn onClick={() => { setRenameVal(selected.title); setRenaming(true); }}>重命名</Btn>
-                  <Btn onClick={() => window.open(window.api.saves.exportUrl(selected.id), '_blank')}>导出</Btn>
-                  <Btn variant="danger" onClick={() => setDeleteTarget(selected)}>删除</Btn>
-                </div>
-              </div>
-            )}
-            {tab === 'settings' && <SaveSettingsForm saveId={selected.id} flash={flash} />}
-            {tab === 'branches' && <SaveBranchList save={selected} />}
-          </div>
-        </section>
+                  </CSBox>
+                </CSSpaceBetween>
+              ) },
+              { id: 'settings', label: '设置', content: <SaveSettingsForm saveId={selected.id} flash={flash} /> },
+              { id: 'branches', label: '分支', content: <SaveBranchList save={selected} /> },
+            ]}
+          />
+        </CSContainer>
       )}
 
       <NewGameModal open={createOpen} onClose={() => setCreateOpen(false)} onConfirm={onCreate} />
-      <ConfirmDialog open={!!deleteTarget} title="删除存档" danger loading={deleting}
-        body={deleteTarget ? `确定删除存档「${deleteTarget.title}」？此操作不可撤销(但磁盘 commit 文件仍可恢复)。` : ''}
-        confirmLabel="确认删除" onConfirm={confirmDelete} onCancel={() => setDeleteTarget(null)} />
-    </div>
+      <CSModal
+        visible={!!deleteTarget}
+        header="删除存档"
+        onDismiss={() => setDeleteTarget(null)}
+        footer={
+          <CSBox float="right">
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSButton variant="link" onClick={() => setDeleteTarget(null)}>取消</CSButton>
+              <CSButton variant="primary" loading={deleting} onClick={confirmDelete}>确认删除</CSButton>
+            </CSSpaceBetween>
+          </CSBox>
+        }
+      >
+        {deleteTarget ? `确定删除存档「${deleteTarget.title}」？此操作不可撤销(但磁盘 commit 文件仍可恢复)。` : ''}
+      </CSModal>
+
+      {flash.items.length > 0 && (
+        <div style={{ position: 'fixed', top: 64, right: 20, zIndex: 9999, maxWidth: 360 }}>
+          <Flashbar items={flash.items} />
+        </div>
+      )}
+    </CSSpaceBetween>
   );
 }
 
