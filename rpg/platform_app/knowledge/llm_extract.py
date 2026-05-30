@@ -24,6 +24,8 @@ def run_llm_extraction(
     model: str = "gemini-3.5-flash",
     api_id: str = "vertex_ai",
     sample_chapters: int | None = None,
+    chapter_min: int | None = None,
+    chapter_max: int | None = None,
     progress_cb: Callable[[str, dict], None] | None = None,
     confirmed: bool = False,
     max_book_usd: float = 10.0,
@@ -78,6 +80,7 @@ def run_llm_extraction(
         user_id=user_id, author_era=author_era,
         author_power_system=author_power_system, author_worldlines=author_worldlines,
         model=model, api_id=api_id, sample_chapters=sample_chapters,
+        chapter_min=chapter_min, chapter_max=chapter_max,
         progress_cb=progress_cb,
     )
 

@@ -557,6 +557,13 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         """,
         "create index if not exists idx_extraction_quota_user on extraction_quota(user_id, period)",
     ]),
+    (22, "lazy_incremental_extraction_markers", [
+        # v22: Phase G/W5 懒/增量提取。提取按玩家进度切片(过进度的反正被防剧透过滤,
+        # 急切全书提取浪费)。extracted_through_chapter=已提取到的最大章;extraction_seeded=
+        # Pass0 种子/纪元是否已做(只做一次)。
+        "alter table scripts add column if not exists extracted_through_chapter integer not null default 0",
+        "alter table scripts add column if not exists extraction_seeded boolean not null default false",
+    ]),
 ]
 
 
