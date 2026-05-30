@@ -53,6 +53,11 @@ function parsePageFromHash() {
   const ids = [
     ...((PL_NAV || []).filter((i) => i.id).map((i) => i.id)),
     'me', 'me-edit', 'me-settings', 'saves-branches', 'scripts-import', 'cards-npc',
+    // 新 IA 子页(Cloudscape 迁移后):剧本 / 开始游戏 / 设置&账户 各模块的左栏子页
+    'scripts-library', 'scripts-editor', 'scripts-settings', 'play-settings',
+    'settings-models', 'settings-modelparams', 'settings-modules', 'settings-memory',
+    'settings-permissions', 'settings-deploy', 'settings-danger',
+    'usage', 'plugins', 'mcp', 'skills', 'apis',
   ];
   if (!ids.includes(hash)) return null;
   if (raw !== hash) {

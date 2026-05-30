@@ -30,6 +30,17 @@ export default defineConfig(({ mode }) => {
       },
     },
 
+    // vite preview(服务 dist 构建,稳定无 dep 优化抖动)同样代理 /api
+    preview: {
+      port: 5173,
+      proxy: {
+        '/api': {
+          target: 'http://localhost:7860',
+          changeOrigin: true,
+        },
+      },
+    },
+
     build: {
       cssCodeSplit: true,
       reportCompressedSize: true,
