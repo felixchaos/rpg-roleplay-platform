@@ -228,11 +228,26 @@ class TestMaybeTrigger(unittest.TestCase):
         return _make_state()
 
     def test_no_llm_caller_skips(self):
+        """harness 适配后:enable_llm=False 显式禁用,llm_caller=None 时跳过。"""
         from agents.black_swan_agent import maybe_trigger
         state = self._make_minimal_state()
-        result = maybe_trigger(state, user_id=1, save_id=1, llm_caller=None)
+        result = maybe_trigger(
+            state, user_id=1, save_id=1,
+            llm_caller=None, enable_llm=False,
+        )
         self.assertFalse(result["triggered"])
-        self.assertIn("test mode", result["reason"])
+        self.assertIn("harness disabled", result["reason"])
+
+    def test_anonymous_user_disables_harness(self):
+        """user_id=0 (匿名) 时即便 enable_llm=True 也不调 harness,避免外部依赖。"""
+        from agents.black_swan_agent import maybe_trigger
+        state = self._make_minimal_state()
+        result = maybe_trigger(
+            state, user_id=0, save_id=1,
+            llm_caller=None, enable_llm=True,
+        )
+        self.assertFalse(result["triggered"])
+        self.assertIn("harness disabled", result["reason"])
 
     def test_noop_proposal_short_circuits(self):
         from agents.black_swan_agent import maybe_trigger

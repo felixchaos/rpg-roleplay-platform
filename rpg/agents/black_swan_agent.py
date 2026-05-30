@@ -304,6 +304,95 @@ def dispatch_event(
     return results
 
 
+# ─── Harness LLM caller ─────────────────────────────────────────
+
+_SWAN_SYSTEM_PROMPT = """\
+你是 RPG 世界事件子代理。你的唯一任务是在玩家闲置/转场时,提出一个符合
+当前现实切片(snapshot)的"黑天鹅事件",可能让世界在玩家不发声时也产生
+合理变化。
+
+铁律:
+1. **只使用 snapshot.active_npcs 里的 NPC**;不要捏造新角色。
+2. **只使用 snapshot.current_location 或其子区域**;不要瞬移到其它 phase 的地点。
+3. **不能违反 snapshot.locked_variables**(玩家用 /set 锁住的硬约束)。
+4. **不能与 snapshot.recent_events 重复**。
+5. 若无合适事件,event_kind 填 "no_op"。
+
+必须通过 propose_black_swan_event 工具输出,不要写自然语言。
+"""
+
+
+def _build_swan_user_prompt(snapshot: dict,
+                            prev_failure: list[tuple[str, bool, str]] | None) -> str:
+    """组装 swan agent 的 user prompt:snapshot + 上次失败的 validator 反馈。"""
+    import json as _json
+    parts = [
+        "## 当前现实切片",
+        _json.dumps(snapshot, ensure_ascii=False, indent=2),
+    ]
+    if prev_failure:
+        parts.extend([
+            "",
+            "## 上一次提议被拒原因(请避免重复):",
+        ])
+        for name, passed, reason in prev_failure:
+            if not passed:
+                parts.append(f"- [{name}] {reason}")
+    parts.extend([
+        "",
+        "请提出一个**单一**黑天鹅事件,使用 propose_black_swan_event 工具输出。",
+    ])
+    return "\n".join(parts)
+
+
+def _make_harness_caller(
+    *,
+    user_id: int,
+    api_id_override: str | None = None,
+    model_override: str | None = None,
+) -> Callable[..., dict] | None:
+    """返回一个 callable(snapshot, schema, prev_failure=None) -> proposal_dict,
+    内部走 agents._harness.call_agent_json。
+
+    出问题(无凭证/import 失败)→ 返回 None,maybe_trigger 跳过。
+    """
+    try:
+        from agents._harness import call_agent_json, resolve_api_and_model
+    except Exception:
+        return None
+
+    api_id, model = resolve_api_and_model(
+        user_id,
+        api_pref_key="black_swan_agent.api_id",
+        model_pref_key="black_swan_agent.model_real_name",
+        api_id_override=api_id_override,
+        model_override=model_override,
+    )
+
+    def _call(snapshot: dict, schema: dict,
+              prev_failure: list[tuple[str, bool, str]] | None = None) -> dict:
+        user_prompt = _build_swan_user_prompt(snapshot, prev_failure)
+        text, _usage = call_agent_json(
+            api_id=api_id,
+            model=model,
+            system_prompt=_SWAN_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            user_id=user_id,
+            tool_schema=schema if api_id == "anthropic" else None,
+            max_tokens=600,
+            timeout_sec=20,
+        )
+        # text 来自 tool_use input JSON(anthropic)或 JSON 字符串(其它通道)
+        try:
+            import json as _json
+            obj = _json.loads(text) if text else {}
+            return obj if isinstance(obj, dict) else {}
+        except Exception:
+            return {}
+
+    return _call
+
+
 # ─── 入口: maybe_trigger ─────────────────────────────────────────
 
 def maybe_trigger(
@@ -314,8 +403,17 @@ def maybe_trigger(
     script_id: int | None = None,
     max_retries: int = 2,
     llm_caller: Any | None = None,
+    api_id_override: str | None = None,
+    model_override: str | None = None,
+    enable_llm: bool = True,
 ) -> dict:
     """post-GM hook 调用入口。
+
+    LLM 调用优先级(harness 适配):
+    1. 显式传入 `llm_caller` 回调 → 使用回调(兼容老 caller / 测试)
+    2. `enable_llm=True` 且 user_id 有 → 内部走 `agents._harness.call_agent_json`
+       走 Anthropic native tool_use(用 proposal_tool_schema 作 input_schema 强校验)
+    3. `enable_llm=False` 或无凭证 → 直接跳过(no llm)
 
     返回结果 dict:
       - triggered: bool (是否成功产生 + dispatch 了 black swan event)
@@ -327,13 +425,23 @@ def maybe_trigger(
     """
     snapshot = reality_snapshot(state, script_id)
 
-    # 无 LLM 调用器 → 跳过 (允许测试时禁用)
-    if llm_caller is None:
+    # 选定 LLM 通道:外部 callable 优先,否则使用 harness 自调,enable_llm=False 跳过
+    effective_caller = llm_caller
+    harness_used = False
+    if effective_caller is None and enable_llm and user_id:
+        effective_caller = _make_harness_caller(
+            user_id=user_id,
+            api_id_override=api_id_override,
+            model_override=model_override,
+        )
+        harness_used = effective_caller is not None
+    if effective_caller is None:
         return {
             "triggered": False,
-            "reason": "no llm_caller provided (test mode or disabled)",
+            "reason": "no llm_caller and harness disabled or unavailable",
             "snapshot": snapshot,
         }
+    llm_caller = effective_caller  # below loop uses llm_caller name
 
     # 加载 script overrides (Layer 3a 需要)
     script_overrides = None
@@ -397,6 +505,7 @@ def maybe_trigger(
                 "dispatch_results": dispatch_results,
                 "retries": attempt,
                 "snapshot": snapshot,
+                "harness_used": harness_used,
             }
         # Layer 4: retry feedback — loop continues
 
