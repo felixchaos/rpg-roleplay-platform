@@ -3479,12 +3479,12 @@ const CS_MODULES = [
       { text: '剧本设置', href: '#scripts-settings' },
     ] },
   { id: 'play', label: '开始游戏', group: '游玩',
-    pages: ['saves', 'saves-branches', 'cards', 'cards-npc', 'modules', 'play-settings'],
+    // NPC 角色卡已移入「剧本」详情面板(NPC 卡属于具体剧本),不再在开始游戏出现。
+    pages: ['saves', 'saves-branches', 'cards', 'modules', 'play-settings'],
     sub: [
       { text: '存档目录', href: '#saves' },
       { text: '分支树', href: '#saves-branches' },
       { text: '用户角色卡', href: '#cards' },
-      { text: 'NPC 角色卡', href: '#cards-npc' },
       { text: '冒险模组', href: '#modules' },
       { text: '游戏设置', href: '#play-settings' },
     ] },

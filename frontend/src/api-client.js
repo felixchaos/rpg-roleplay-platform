@@ -264,6 +264,8 @@
       resplit: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/resplit`, body),
       chapterFacts: (sid, q) => GET(`${API_PREFIX}/scripts/${sid}/chapter-facts`, q),
       worldbook: (sid) => GET(`${API_PREFIX}/scripts/${sid}/worldbook`),
+      // 时间线:阶段 + 各阶段代表性 story-time 锚点(复用 birthpoints 端点)
+      timeline: (sid) => GET(`${API_PREFIX}/scripts/${sid}/birthpoints`),
       knowledgeSync: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/knowledge/sync`, body || {}),
       importStatus: (sid) => GET(`${API_PREFIX}/scripts/${sid}/import-status`),
       importBudget: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/import-budget`, body || {}),

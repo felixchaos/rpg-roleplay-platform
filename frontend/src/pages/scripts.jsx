@@ -28,6 +28,7 @@ import CSAlert from '@cloudscape-design/components/alert';
 import CSProgressBar from '@cloudscape-design/components/progress-bar';
 import CSCards from '@cloudscape-design/components/cards';
 import CSTextFilter from '@cloudscape-design/components/text-filter';
+import CSTabs from '@cloudscape-design/components/tabs';
 
 function ScriptPreviewModal({ open, busy, data, rule, onClose, onRetryRule, onConfirm }) {
   if (!open) return null;
@@ -155,6 +156,158 @@ function ScriptsPage({ subPage = "list" }) {
   );
 }
 
+/* 剧本详情面板 —— 选中某剧本后在列表下方展开(对齐存档页结构)。
+   Tabs:概览 / 参数(overrides) / 世界观(worldbook) / NPC 角色卡 / 时间线。
+   世界书 / NPC 卡 / 时间线按需懒加载。 */
+function ScriptDetailPanel({ script: s, savesCount, embedStatus,
+  onPlay, onChapters, onReview, onEmbed, onExport, onToggleVisibility, onDelete, onEditOverrides }) {
+  const [tab, setTab] = useStatePL('overview');
+  const [wb, setWb] = useStatePL(null);
+  const [npc, setNpc] = useStatePL(null);
+  const [tl, setTl] = useStatePL(null);
+  const [ov, setOv] = useStatePL(null);
+  const [loading, setLoading] = useStatePL(false);
+
+  useEffectPL(() => { setWb(null); setNpc(null); setTl(null); setOv(null); setTab('overview'); }, [s.id]);
+
+  useEffectPL(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (tab === 'world' && wb == null) {
+          setLoading(true);
+          const r = await window.api.scripts.worldbook(s.id);
+          if (!cancelled) setWb(Array.isArray(r) ? r : (r?.items || r?.entries || []));
+        } else if (tab === 'npc' && npc == null) {
+          setLoading(true);
+          const r = await window.api.cards.scriptList(s.id);
+          if (!cancelled) setNpc(Array.isArray(r) ? r : (r?.items || r?.cards || []));
+        } else if (tab === 'timeline' && tl == null) {
+          setLoading(true);
+          const r = await window.api.scripts.timeline(s.id);
+          if (!cancelled) setTl(r?.phases || []);
+        } else if (tab === 'params' && ov == null) {
+          setLoading(true);
+          const r = await window.api.scripts.getOverrides(s.id);
+          if (!cancelled) setOv(r?.data ?? r ?? {});
+        }
+      } catch (_) {
+        if (!cancelled) { if (tab === 'world') setWb([]); else if (tab === 'npc') setNpc([]); else if (tab === 'timeline') setTl([]); else if (tab === 'params') setOv({}); }
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [tab, s.id]);
+
+  const es = embedStatus[s.id];
+  const embedLabel = (() => {
+    if (!es) return '未建立';
+    const done = es.chunks.done + es.cards.done + es.worldbook.done;
+    const all = es.chunks.total + es.cards.total + es.worldbook.total;
+    if (es.running) return `向量化中 ${all ? Math.round(done / all * 100) : 0}%`;
+    return all > 0 && done >= all ? `已建索引(${all} 项)` : '未建立';
+  })();
+
+  return (
+    <CSContainer header={
+      <CSHeader variant="h2"
+        actions={
+          <CSSpaceBetween direction="horizontal" size="xs">
+            <CSButton variant="primary" iconName="caret-right-filled" onClick={() => onPlay(s)}>开始游戏</CSButton>
+            <CSButton iconName="file" onClick={() => onChapters(s)}>查看章节</CSButton>
+            <CSButton iconName="status-info" onClick={() => onReview(s)}>KB 复核</CSButton>
+            <CSButtonDropdown expandToViewport
+              items={[
+                { id: 'embed', text: es?.running ? '向量化中…' : '建立向量索引', iconName: 'gen-ai', disabled: !!es?.running },
+                { id: 'export', text: '导出剧本包 (zip)', iconName: 'download' },
+                { id: 'visibility', text: s.is_public ? '取消公开分享' : '公开分享到剧本库', iconName: s.is_public ? 'lock-private' : 'share' },
+                { id: 'delete', text: '删除剧本', iconName: 'remove' },
+              ]}
+              onItemClick={({ detail }) => {
+                const id = detail.id;
+                if (id === 'embed') onEmbed(s);
+                else if (id === 'export') onExport(s);
+                else if (id === 'visibility') onToggleVisibility(s);
+                else if (id === 'delete') onDelete(s);
+              }}>更多</CSButtonDropdown>
+          </CSSpaceBetween>
+        }
+      >{s.title}</CSHeader>
+    }>
+      <CSTabs activeTabId={tab} onChange={({ detail }) => setTab(detail.activeTabId)} tabs={[
+        { id: 'overview', label: '概览', content: (
+          <CSKeyValuePairs columns={4} items={[
+            { label: '章节', value: (s.chapter_count || 0).toLocaleString() },
+            { label: '字数', value: `${((s.word_count || 0) / 10000).toFixed(1)} 万` },
+            { label: '切分模式', value: s.import_report?.mode_label || '—' },
+            { label: '切分置信度', value: s.import_report?.confidence != null ? `${Math.round(s.import_report.confidence * 100)}%` : '—' },
+            { label: '存档数', value: `${savesCount} 个` },
+            { label: '向量索引', value: embedLabel },
+            { label: '公开分享', value: s.is_public ? <CSStatusIndicator type="success">已公开</CSStatusIndicator> : <CSStatusIndicator type="stopped">未公开</CSStatusIndicator> },
+            { label: '剧本 ID', value: <span className="mono">{s.uid}</span> },
+          ]} />
+        ) },
+        { id: 'params', label: '参数', content: (
+          <CSSpaceBetween size="s">
+            <CSBox color="text-body-secondary" fontSize="body-s">剧本覆盖设定(script_overrides):覆盖默认设定,供 GM 读取。</CSBox>
+            <pre style={{ margin: 0, padding: '10px 12px', background: 'var(--bg-deep)', border: '1px solid var(--line-soft)', borderRadius: 8, fontSize: 12.5, lineHeight: 1.55, maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+              {ov ? JSON.stringify(ov, null, 2) : (loading ? '加载中…' : '{}')}
+            </pre>
+            <CSButton iconName="edit" onClick={() => onEditOverrides(s)}>编辑覆盖设定</CSButton>
+          </CSSpaceBetween>
+        ) },
+        { id: 'world', label: '世界观', content: (
+          <CSTable variant="embedded" loading={loading && wb == null} loadingText="加载世界书…"
+            items={wb || []} trackBy="id"
+            columnDefinitions={[
+              { id: 'kw', header: '关键词 / 条目', cell: (e) => <CSBox fontWeight="bold">{e.keyword || e.title || e.name || e.key || '—'}</CSBox> },
+              { id: 'content', header: '内容', cell: (e) => <CSBox color="text-body-secondary">{String(e.content || e.text || e.description || e.value || '').slice(0, 220)}</CSBox> },
+            ]}
+            empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>暂无世界书条目。提取 / 建立向量索引后会生成。</CSBox>} />
+        ) },
+        { id: 'npc', label: 'NPC 角色卡', content: (
+          <CSCards loading={loading && npc == null} loadingText="加载 NPC 角色卡…"
+            items={npc || []} trackBy="id"
+            cardsPerRow={[{ cards: 1 }, { minWidth: 420, cards: 2 }, { minWidth: 820, cards: 3 }]}
+            cardDefinition={{
+              header: (c) => <CSBox variant="h3" padding="n">{c.name || '未命名'}</CSBox>,
+              sections: [
+                { id: 'role', content: (c) => <CSBadge>{c.identity || c.role || 'NPC'}</CSBadge> },
+                { id: 'bio', content: (c) => <CSBox color="text-body-secondary">{String(c.appearance || c.personality || c.summary || c.description || '').slice(0, 160) || '—'}</CSBox> },
+              ],
+            }}
+            empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>该剧本暂无 NPC 角色卡。提取 / 导入后会生成。</CSBox>} />
+        ) },
+        { id: 'timeline', label: '时间线', content: (
+          (loading && tl == null)
+            ? <CSBox color="text-body-secondary">加载中…</CSBox>
+            : (!tl || tl.length === 0)
+              ? <CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>暂无时间线锚点。提取后会生成阶段 / story-time 锚点。</CSBox>
+              : <CSSpaceBetween size="l">
+                  {tl.map((p, i) => (
+                    <div key={i}>
+                      <CSBox variant="h4" padding="n">{p.phase_label} <CSBox display="inline" color="text-status-inactive" fontSize="body-s">第 {p.chapter_min}–{p.chapter_max} 章</CSBox></CSBox>
+                      {p.summary && <CSBox color="text-body-secondary" fontSize="body-s">{p.summary}</CSBox>}
+                      <CSSpaceBetween size="xxs">
+                        {(p.anchors || []).map((a) => {
+                          const label = (a.story_time_label || '').trim();
+                          const summary = String(a.sample_summary || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+                          return (
+                            <CSBox key={a.anchor_id} fontSize="body-s">
+                              <span className="mono" style={{ color: 'var(--accent)' }}>{label || `第 ${a.chapter_min}–${a.chapter_max} 章`}</span>
+                              {summary ? ` · ${summary}${summary.length >= 80 ? '…' : ''}` : ''}
+                            </CSBox>
+                          );
+                        })}
+                      </CSSpaceBetween>
+                    </div>
+                  ))}
+                </CSSpaceBetween>
+        ) },
+      ]} />
+    </CSContainer>
+  );
+}
+
 /* 在线剧本库 — 浏览并导入其他用户公开分享的剧本。
    GET /api/scripts/public · POST /api/scripts/public/{id}/clone */
 function ScriptsLibraryView() {
@@ -279,6 +432,9 @@ function ScriptsListView() {
   const [overridesScript, setOverridesScript] = useStatePL(null);
   // task 51: vector embedding 状态 per script (key: script_id → {running, chunks, cards, worldbook, model})
   const [embedStatus, setEmbedStatus] = useStatePL({});
+  // 选中行 + 搜索(对齐存档页:选中 → 下方详情面板)
+  const [selectedId, setSelectedId] = useStatePL(null);
+  const [query, setQuery] = useStatePL("");
 
   // task 51: 触发某 script 的向量化(GET status 也走这里 polling)
   const triggerEmbed = React.useCallback(async (sid) => {
@@ -455,11 +611,16 @@ function ScriptsListView() {
     }
   };
   const onPlay = (s) => {
-    // Codex P0-2 修复:有 sv 走 ContinuePicker(继续真实存档);没 sv 弹 NewGameModal 走原子建档流。
+    // 有存档 → 直接进入(__openContinue 现已直接启动新标签);无 → 走建档向导
     const sv = platSaves.find(x => x.script_id === s.id);
     if (sv) window.__openContinue?.(sv);
     else setNewModalScriptId(s.id);
   };
+
+  const visibleScripts = query
+    ? scripts.filter((s) => (`${s.title} ${s.uid}`).toLowerCase().includes(query.toLowerCase()))
+    : scripts;
+  const selected = scripts.find((x) => x.id === selectedId) || null;
 
   return (
     <CSSpaceBetween size="l">
@@ -479,10 +640,20 @@ function ScriptsListView() {
       <CSTable
         variant="container"
         trackBy="id"
+        selectionType="single"
         loadingText="加载剧本…"
         loading={!loaded}
-        items={scripts}
-        empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>还没有剧本,点右上「导入剧本」开始。</CSBox>}
+        items={visibleScripts}
+        selectedItems={selected ? [selected] : []}
+        onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedId(x.id); }}
+        onRowClick={({ detail }) => setSelectedId(detail.item.id)}
+        filter={
+          <div style={{ minWidth: 300 }}>
+            <CSTextFilter filteringText={query} filteringPlaceholder="搜索剧本标题…"
+              onChange={({ detail }) => setQuery(detail.filteringText)} />
+          </div>
+        }
+        empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? '没有匹配的剧本' : '还没有剧本,点右上「导入剧本」开始。'}</CSBox>}
         columnDefinitions={[
           { id: 'title', header: '剧本', cell: (s) => (
             <div><CSBox fontWeight="bold">{s.title}</CSBox><CSBox fontSize="body-s" color="text-body-secondary">{s.uid} · 更新 {s.updated_at}</CSBox></div>
@@ -499,15 +670,27 @@ function ScriptsListView() {
             const n = platSaves.filter((x) => x.script_id === s.id).length;
             return n > 0 ? <CSBadge color="green">{n} 个存档</CSBadge> : <CSBox color="text-status-inactive">—</CSBox>;
           } },
-          { id: 'actions', header: '操作', cell: (s) => (
-            <CSSpaceBetween direction="horizontal" size="xs">
-              <CSButton variant="inline-link" iconName="caret-right-filled" disabled={busyId === s.id} onClick={() => onPlay(s)}>开始</CSButton>
-              <CSButtonDropdown expandToViewport variant="inline-icon" ariaLabel="更多操作"
-                items={rowActions(s)} onItemClick={({ detail }) => onRowAction(s, detail.id)} />
-            </CSSpaceBetween>
-          ) },
+          { id: 'public', header: '分享', cell: (s) => s.is_public ? <CSStatusIndicator type="success">已公开</CSStatusIndicator> : <CSBox color="text-status-inactive">—</CSBox> },
+          { id: 'go', header: '', cell: (s) => <CSButton variant="inline-link" iconName="caret-right-filled" disabled={busyId === s.id} onClick={() => onPlay(s)}>开始</CSButton> },
         ]}
       />
+
+      {selected && (
+        <ScriptDetailPanel
+          script={selected}
+          savesCount={platSaves.filter((x) => x.script_id === selected.id).length}
+          embedStatus={embedStatus}
+          onPlay={onPlay}
+          onChapters={setChaptersOpen}
+          onReview={setReviewScript}
+          onEmbed={(s) => triggerEmbed(s.id)}
+          onExport={onExportPack}
+          onToggleVisibility={onToggleVisibility}
+          onDelete={onDelete}
+          onEditOverrides={setOverridesScript}
+        />
+      )}
+
       <ChaptersModal script={chaptersOpen} onClose={() => setChaptersOpen(null)} onChanged={reload} />
       <OverridesModal script={overridesScript} onClose={() => setOverridesScript(null)} />
       {reviewScript && (
