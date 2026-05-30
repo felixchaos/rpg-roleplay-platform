@@ -1,8 +1,6 @@
 """platform_app.api._deps — 跨 router 共享的 dependency / helper。"""
 from __future__ import annotations
 
-import os
-
 from fastapi import HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse as BaseJSONResponse

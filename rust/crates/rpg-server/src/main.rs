@@ -932,6 +932,7 @@ async fn main() -> Result<()> {
         stop_events: DashMap::new(),
         run_ids: DashMap::new(),
         console_conversations: DashMap::new(),
+        console_pending_confirmations: DashMap::new(),
         chunk_uploads: DashMap::new(),
         health_cache: DashMap::new(),
         config: config.clone(),

@@ -12,6 +12,7 @@
 //!   timeline_anchors / context_runs / save_phase_digests,共一个 tx;runtime 切换在 tx 外。
 
 use chrono::Utc;
+use serde_json::json;
 use sqlx::{PgPool, Row};
 
 use crate::error::{PlatformError, PlatformResult};
@@ -21,20 +22,7 @@ use super::helpers::{commit_state, unlink_branch_state, MAIN_REF};
 use super::refs::{
     find_or_create_ref_for_commit, set_save_active, upsert_ref, write_checkout,
 };
-use super::tree_ops::{collect_ids, round_start_node};
-
-/// `rollback_to_message` 的统计返回。
-#[derive(Debug, Clone, Default)]
-pub struct RollbackStats {
-    pub target_commit_id: i64,
-    pub restored_turn: i32,
-    pub messages: i64,
-    pub timeline_anchors: i64,
-    pub context_runs: i64,
-    pub phase_digests_truncated: i64,
-    pub phase_digests_dropped: i64,
-    pub trash_ref_id: Option<i64>,
-}
+use super::tree_ops::{collect_ids, round_start_node, tree, TreeResult};
 
 /// Python `delete_subtree(user_id, node_id)` —— 删除以 node_id 为根的整棵子树。
 ///
@@ -45,12 +33,12 @@ pub struct RollbackStats {
 /// 4. 若 active commit 在被删集合中,回退到 parent commit + 重建 main ref + 写 checkout + 通知 runtime
 /// 5. 子树各 state_path 文件做 unlink_branch_state(state_dir 内才删)
 ///
-/// 返回删除的 commit 数。
+/// 返回完整 tree 结构(对齐 Python delete_subtree 行为)。
 pub async fn delete_subtree(
     pool: &PgPool,
     user_id: i64,
     node_id: i64,
-) -> PlatformResult<usize> {
+) -> PlatformResult<TreeResult> {
     let node = commit_for_user(pool, user_id, node_id)
         .await?
         .ok_or_else(|| PlatformError::forbidden("无权访问该分支节点"))?;
@@ -61,7 +49,8 @@ pub async fn delete_subtree(
     let save_id = node.save_id;
     let ids = collect_ids(pool, node.id).await?;
     if ids.is_empty() {
-        return Ok(0);
+        // 空子树,直接返回当前 tree 状态
+        return tree(pool, user_id, save_id).await;
     }
 
     // 收集要 unlink 的文件路径(在删之前查)。
@@ -122,6 +111,7 @@ pub async fn delete_subtree(
     tx.commit().await?;
 
     // active 回退
+    let mut runtime_opt = None;
     if active_deleted {
         if let Some(parent) = fallback {
             let r =
@@ -129,7 +119,7 @@ pub async fn delete_subtree(
             set_save_active(pool, save_id, parent.id, Some(r.id)).await?;
             write_checkout(pool, user_id, save_id, Some(r.id), parent.id).await?;
             let state_snapshot = commit_state(Some(&parent.state_snapshot), &parent.state_path);
-            crate::runtime::activate_state_snapshot(
+            let rt = crate::runtime::activate_state_snapshot(
                 pool,
                 user_id,
                 save_id,
@@ -139,6 +129,7 @@ pub async fn delete_subtree(
                 Some(r.id),
             )
             .await?;
+            runtime_opt = Some(rt);
         }
     }
 
@@ -147,7 +138,17 @@ pub async fn delete_subtree(
         unlink_branch_state(&p);
     }
 
-    Ok(deleted.rows_affected() as usize)
+    let deleted_count = deleted.rows_affected() as usize;
+    let mut result = tree(pool, user_id, save_id).await?;
+    result.ok = true;
+    if let Some(rt) = runtime_opt {
+        result.game_url = Some(rt.game_url.clone());
+        result.runtime = Some(rt);
+    }
+    // 兼容旧字段:deleted_count 暂不在 TreeResult 里,通过 trash_ref 传递也不合适,
+    // 但 Python delete_subtree 本身不返回 deleted_count,只返回 tree()。
+    let _ = deleted_count; // suppressed, Python doesn't return this
+    Ok(result)
 }
 
 /// Python `rollback_to_message(user_id, save_id, message_index)`(task 116c)。
@@ -162,12 +163,13 @@ pub async fn delete_subtree(
 /// - `save_phase_digests`:turn_start>=deleted_turn 整行删;否则 truncate turn_end
 ///
 /// 配合:为当前 commit 建 trash ref 留痕;切 active + write_checkout + runtime。
+/// 返回完整 tree 结构(对齐 Python rollback_to_message 行为)。
 pub async fn rollback_to_message(
     pool: &PgPool,
     user_id: i64,
     save_id: i64,
     message_index: i64,
-) -> PlatformResult<RollbackStats> {
+) -> PlatformResult<TreeResult> {
     if message_index < 0 {
         return Err(PlatformError::validation("message_index 不能小于 0"));
     }
@@ -336,7 +338,7 @@ pub async fn rollback_to_message(
     write_checkout(pool, user_id, save_id, new_ref_id, target.id).await?;
 
     let target_state = commit_state(Some(&target.state_snapshot), &target.state_path);
-    crate::runtime::activate_state_snapshot(
+    let rt = crate::runtime::activate_state_snapshot(
         pool,
         user_id,
         save_id,
@@ -347,16 +349,27 @@ pub async fn rollback_to_message(
     )
     .await?;
 
-    Ok(RollbackStats {
-        target_commit_id: target.id,
-        restored_turn: if target_turn >= 0 { target_turn } else { -1 },
-        messages: n_msgs,
-        timeline_anchors: n_anchors,
-        context_runs: n_runs,
-        phase_digests_truncated: phase_fixed,
-        phase_digests_dropped: phase_dropped,
-        trash_ref_id,
-    })
+    let restored_turn_val = if target_turn >= 0 { target_turn } else { -1 };
+
+    // trash_ref:把 trash_ref_id 包装成 JSON(对齐 Python expose(trash_ref))。
+    let trash_ref_json = trash_ref_id.map(|id| json!({ "id": id, "save_id": save_id }));
+
+    let mut result = tree(pool, user_id, save_id).await?;
+    result.ok = true;
+    result.active_commit_id = Some(target.id);
+    result.active_branch_node_id = Some(target.id);
+    result.restored_turn = Some(restored_turn_val);
+    result.deleted = Some(json!({
+        "messages": n_msgs,
+        "timeline_anchors": n_anchors,
+        "context_runs": n_runs,
+        "phase_digests_truncated": phase_fixed,
+        "phase_digests_dropped": phase_dropped,
+    }));
+    result.trash_ref = trash_ref_json;
+    result.game_url = Some(rt.game_url.clone());
+    result.runtime = Some(rt);
+    Ok(result)
 }
 
 #[cfg(test)]

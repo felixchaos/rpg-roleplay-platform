@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import threading
 
 from platform_app.db.connection import connect

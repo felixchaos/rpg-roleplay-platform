@@ -34,7 +34,7 @@ impl ContextProvider for RulesProvider {
     async fn collect(
         &self,
         state_data: &GameStateData,
-        _manifest: &Manifest,
+        manifest: &Manifest,
         demand: &Demand,
         _services: &ProviderServices,
     ) -> ContextResult<ContextContribution> {
@@ -55,8 +55,65 @@ impl ContextProvider for RulesProvider {
         };
         lines.push(format!("【规则集】{}", label));
 
-        // TODO: game_policy.gm_prompt_constraints — 等 rpg-rules-bridge 提供。
-        // policy_constraints 暂时空。
+        // G3: game_policy.gm_prompt_constraints — 根据 manifest.kind 内联策略约束段。
+        // 对应 Python game_policy.py:
+        //   module_adventure → ModuleAdventurePolicy.gm_prompt_constraints
+        //   novel_adaptation → NovelAdaptationPolicy.gm_prompt_constraints
+        //   freeform / 其他  → FreeformPolicy.gm_prompt_constraints
+        let policy_constraints: Vec<String> = match manifest.kind.as_str() {
+            "module_adventure" => {
+                // 场景事实快照 + 数据层级指南(不含"GM 不得 X"行为约束)
+                let enc = &state_data.encounter;
+                let room_enemies: Vec<String> = state_data
+                    .scene
+                    .extra
+                    .get("current_room")
+                    .and_then(|v| v.get("enemies"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|e| {
+                                e.get("name")
+                                    .or_else(|| e.get("id"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("?")
+                                    .to_string()
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let enemy_str = if room_enemies.is_empty() {
+                    "空".to_string()
+                } else {
+                    format!("[{}]", room_enemies.join("、"))
+                };
+                vec![
+                    "【场景事实快照】".to_string(),
+                    format!("- 当前房间 enemies = {}", enemy_str),
+                    format!("- encounter.active = {}", if enc.active { "是" } else { "否" }),
+                    String::new(),
+                    "【数据层级 — 真相源 vs 参考】".to_string(),
+                    "- state / scene / encounter / dice_log / player_character / active_entities = **当前事实真相源**".to_string(),
+                    "  这些是 RulesEngine / 模组数据写入的硬事实,GM 必须以此为准。".to_string(),
+                    "- 知识检索 (retrieved_context / 章节摘要 / 角色卡库 / 世界书) = **风格与背景参考**".to_string(),
+                    "  仅用于补叙事色彩,不能覆盖 state 当前位置 / 当前 HP / 当前敌人。".to_string(),
+                ]
+            }
+            "novel_adaptation" => vec![
+                "【数据层级 — 真相源 vs 参考】".to_string(),
+                "- state.player / state.world / state.relationships / state.memory = **当前事实**".to_string(),
+                "- 知识检索 (章节原文 / 角色卡 / 世界书) = **风格与背景参考**,".to_string(),
+                "  补充氛围 / 用词 / 设定细节,但不覆盖 state 当前时刻 / 地点 / 关系。".to_string(),
+            ],
+            _ => vec![
+                "【数据层级 — 真相源 vs 参考】".to_string(),
+                "- state.* = 当前事实;检索内容仅作参考,不覆盖 state。".to_string(),
+            ],
+        };
+        if !policy_constraints.is_empty() {
+            lines.push(String::new());
+            lines.extend(policy_constraints);
+        }
 
         // Only emit PC block when pc.name is non-empty (matching Python `if pc:` check).
         // Empty PlayerCharacter (all zeros/empty strings) is falsy — skip to avoid

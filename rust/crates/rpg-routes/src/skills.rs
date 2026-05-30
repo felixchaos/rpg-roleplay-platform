@@ -106,7 +106,31 @@ async fn api_skills_import(
         .map_err(|e| ResponseError::bad_request(e.to_string()))?;
 
     // SKILLS-IMPORT-RESPONSE-MISMATCH: 返回 {ok, skill: {...}, tools: [...]}
-    // tools 对应 Python tool_payload(); Rust 侧暂返回空列表占位
+    // 注册到 tool_registry 并返回真实 tools 列表(对应 Python tool_payload())
+    {
+        let mut reg = s.tool_registry.write();
+        reg.register(rpg_tools_dsl::tool_registry::ToolDefinition {
+            id: imported.id.clone(),
+            name: imported.name.clone(),
+            kind: rpg_tools_dsl::tool_registry::ToolKind::Skill,
+            enabled: imported.enabled,
+            meta: serde_json::Value::Null,
+        });
+    }
+    let tools: Vec<serde_json::Value> = {
+        let reg = s.tool_registry.read();
+        reg.list()
+            .into_iter()
+            .map(|t| {
+                serde_json::json!({
+                    "id": t.id,
+                    "name": t.name,
+                    "kind": t.kind,
+                    "enabled": t.enabled,
+                })
+            })
+            .collect()
+    };
     Ok(Json(json!({
         "ok": true,
         "skill": {
@@ -115,7 +139,7 @@ async fn api_skills_import(
             "path": imported.path,
             "enabled": imported.enabled,
         },
-        "tools": [],
+        "tools": tools,
     }))
     .into_response())
 }

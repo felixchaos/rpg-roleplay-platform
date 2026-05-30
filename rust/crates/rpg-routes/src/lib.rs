@@ -94,6 +94,9 @@ pub struct AppStateInner {
     pub run_ids: DashMap<UserId, u64>,
     /// 控制台助手对话(简版:全内存)。Vec<(role, text)>。
     pub console_conversations: DashMap<String, Vec<ConsoleMessage>>,
+    /// 控制台助手 pending confirmations。key = "{user_id}:{conv_id}:{call_id}"
+    /// value = {call_id, tool_name, server_id, arguments, destructive}
+    pub console_pending_confirmations: DashMap<String, serde_json::Value>,
     /// 分片上传缓存:`upload_id → ChunkUploadState`。由 `uploads.rs` 写入。
     pub chunk_uploads: DashMap<String, ChunkUploadState>,
     /// 模型健康缓存:`(api_id, model_id) → {status, latency_ms, checked_at, error}`。
@@ -164,6 +167,7 @@ impl AppState {
             stop_events: DashMap::new(),
             run_ids: DashMap::new(),
             console_conversations: DashMap::new(),
+            console_pending_confirmations: DashMap::new(),
             chunk_uploads: DashMap::new(),
             health_cache: DashMap::new(),
             config: Arc::new(AppConfig::default()),

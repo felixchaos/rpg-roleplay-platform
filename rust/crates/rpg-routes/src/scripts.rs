@@ -2,10 +2,22 @@
 //!
 //! 对应 Python: `rpg/platform_app/api/scripts.py` (574 行)。
 //! Service: `rpg_platform::script_import`、`rpg_platform::library`。
+//!
+//! # 审计注:UPLOAD-001 — 误报
+//! 审计报告称"Upload chunked file endpoints missing",但这些端点已在
+//! `crates/rpg-routes/src/imports.rs` 的 `router()` 中注册:
+//!   - POST /api/uploads/init
+//!   - POST /api/uploads/:upload_id/chunk
+//!   - POST /api/uploads/:upload_id/finish
+//!   - POST /api/uploads/:upload_id/cancel
+//! 该 router 在 `rpg-server/src/main.rs` 通过 `.merge(imports::router())` 挂载。
+//! UPLOAD-001 为误报,无需修复。
 
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
-    http::HeaderMap,
+    http::{header, HeaderMap, StatusCode},
+    response::Response,
     routing::{get, post},
     Json, Router,
 };
@@ -123,13 +135,16 @@ async fn api_import_status_get(
 
 // ── GET /api/scripts/{script_id}/export-pack ─────────────────────────────────
 //
-// 返回剧本完整 JSON 包:script meta + chapters + character_cards + worldbook_entries。
+// 返回剧本 ZIP 包,对应 Python 行为:
+//   manifest.json + chapters.jsonl + character_cards.jsonl + worldbook_entries.jsonl
+// Content-Type: application/zip
+// Content-Disposition: attachment; filename=script_pack.zip
 
 async fn api_export_pack(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(script_id): Path<i64>,
-) -> Result<Json<Value>, ResponseError> {
+) -> Result<Response<Body>, ResponseError> {
     let user = require_user(&state, &headers).await?;
 
     let script_row = sqlx::query(
@@ -143,7 +158,14 @@ async fn api_export_pack(
     .map_err(|e| ResponseError::internal(e.to_string()))?;
 
     let Some(sr) = script_row else {
-        return Ok(Json(json!({"ok": false, "error": "无权访问该剧本"})));
+        // Return a JSON error for auth failures (not a ZIP)
+        let body = serde_json::to_vec(&json!({"ok": false, "error": "无权访问该剧本"}))
+            .unwrap_or_default();
+        return Ok(Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap());
     };
 
     let chapters = sqlx::query(
@@ -174,25 +196,85 @@ async fn api_export_pack(
     .await
     .map_err(|e| ResponseError::internal(e.to_string()))?;
 
-    Ok(Json(json!({
-        "ok": true,
-        "script": {
-            "id": sr.try_get::<i64, _>("id").unwrap_or(0),
-            "title": sr.try_get::<String, _>("title").unwrap_or_default(),
-            "description": sr.try_get::<String, _>("description").unwrap_or_default(),
-            "chapter_count": sr.try_get::<i32, _>("chapter_count").unwrap_or(0),
-            "word_count": sr.try_get::<i32, _>("word_count").unwrap_or(0),
-            "created_at": sr.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok(),
-            "updated_at": sr.try_get::<chrono::DateTime<chrono::Utc>, _>("updated_at").ok(),
-        },
-        "chapters": chapters.iter().map(|r| json!({
+    // Build in-memory ZIP
+    let title = sr.try_get::<String, _>("title").unwrap_or_default();
+    let zip_bytes = build_export_zip(&sr, &title, &chapters, &characters, &worldbook)
+        .map_err(|e| ResponseError::internal(e))?;
+
+    let filename = format!(
+        "script_{}_pack.zip",
+        sr.try_get::<i64, _>("id").unwrap_or(script_id)
+    );
+    let disposition = format!("attachment; filename=\"{}\"", filename);
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/zip")
+        .header(header::CONTENT_DISPOSITION, disposition)
+        .body(Body::from(zip_bytes))
+        .unwrap())
+}
+
+/// Build the export ZIP in memory.
+/// Layout:
+///   manifest.json           — pack metadata
+///   chapters.jsonl          — one JSON object per line
+///   character_cards.jsonl   — one JSON object per line
+///   worldbook_entries.jsonl — one JSON object per line
+fn build_export_zip(
+    sr: &sqlx::postgres::PgRow,
+    title: &str,
+    chapters: &[sqlx::postgres::PgRow],
+    characters: &[sqlx::postgres::PgRow],
+    worldbook: &[sqlx::postgres::PgRow],
+) -> Result<Vec<u8>, String> {
+    use std::io::Write as _;
+    use zip::{write::FileOptions, ZipWriter};
+
+    let buf = std::io::Cursor::new(Vec::new());
+    let mut zip = ZipWriter::new(buf);
+    let options = FileOptions::<()>::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    // manifest.json
+    let manifest = json!({
+        "version": "1",
+        "kind": "script_pack",
+        "title": title,
+        "script_id": sr.try_get::<i64, _>("id").unwrap_or(0),
+        "chapter_count": sr.try_get::<i32, _>("chapter_count").unwrap_or(0),
+        "word_count": sr.try_get::<i32, _>("word_count").unwrap_or(0),
+    });
+    zip.start_file("manifest.json", options)
+        .map_err(|e| e.to_string())?;
+    zip.write_all(
+        serde_json::to_string_pretty(&manifest)
+            .unwrap_or_default()
+            .as_bytes(),
+    )
+    .map_err(|e| e.to_string())?;
+
+    // chapters.jsonl
+    zip.start_file("chapters.jsonl", options)
+        .map_err(|e| e.to_string())?;
+    for r in chapters {
+        let obj = json!({
             "chapter_index": r.try_get::<i32, _>("chapter_index").unwrap_or(0),
             "title": r.try_get::<String, _>("title").unwrap_or_default(),
             "volume_title": r.try_get::<String, _>("volume_title").unwrap_or_default(),
             "content": r.try_get::<String, _>("content").unwrap_or_default(),
             "word_count": r.try_get::<i32, _>("word_count").unwrap_or(0),
-        })).collect::<Vec<_>>(),
-        "character_cards": characters.iter().map(|r| json!({
+        });
+        let mut line = serde_json::to_string(&obj).unwrap_or_default();
+        line.push('\n');
+        zip.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+    }
+
+    // character_cards.jsonl
+    zip.start_file("character_cards.jsonl", options)
+        .map_err(|e| e.to_string())?;
+    for r in characters {
+        let obj = json!({
             "name": r.try_get::<String, _>("name").unwrap_or_default(),
             "identity": r.try_get::<String, _>("identity").unwrap_or_default(),
             "appearance": r.try_get::<String, _>("appearance").unwrap_or_default(),
@@ -203,16 +285,31 @@ async fn api_export_pack(
             "sample_dialogue": r.try_get::<Value, _>("sample_dialogue").unwrap_or(json!([])),
             "enabled": r.try_get::<bool, _>("enabled").unwrap_or(true),
             "priority": r.try_get::<i32, _>("priority").unwrap_or(100),
-        })).collect::<Vec<_>>(),
-        "worldbook_entries": worldbook.iter().map(|r| json!({
+        });
+        let mut line = serde_json::to_string(&obj).unwrap_or_default();
+        line.push('\n');
+        zip.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+    }
+
+    // worldbook_entries.jsonl
+    zip.start_file("worldbook_entries.jsonl", options)
+        .map_err(|e| e.to_string())?;
+    for r in worldbook {
+        let obj = json!({
             "title": r.try_get::<String, _>("title").unwrap_or_default(),
             "content": r.try_get::<String, _>("content").unwrap_or_default(),
             "keys": r.try_get::<Value, _>("keys").unwrap_or(json!([])),
             "priority": r.try_get::<i32, _>("priority").unwrap_or(50),
             "enabled": r.try_get::<bool, _>("enabled").unwrap_or(true),
             "insertion_position": r.try_get::<String, _>("insertion_position").unwrap_or_default(),
-        })).collect::<Vec<_>>(),
-    })))
+        });
+        let mut line = serde_json::to_string(&obj).unwrap_or_default();
+        line.push('\n');
+        zip.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+    }
+
+    let cursor = zip.finish().map_err(|e| e.to_string())?;
+    Ok(cursor.into_inner())
 }
 
 // ── GET /api/scripts ─────────────────────────────────────────────────────────

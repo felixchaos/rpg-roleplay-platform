@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import re
 import secrets
-from typing import Any, Callable, Optional, cast
+from collections.abc import Callable
+from typing import Any, cast
 
 # ─── Layer 1: 现实切片 ────────────────────────────────────────────
 
@@ -342,7 +343,7 @@ def maybe_trigger(
             from state.core import _load_script_overrides
             all_overrides = _load_script_overrides()
             # 找含当前 phase 的 override
-            for key, ov in all_overrides.items():
+            for _key, ov in all_overrides.items():
                 rules = (ov.get('phase_inference') or {}).get('rules') or []
                 if any(r.get('phase') == snapshot['current_phase'] for r in rules):
                     script_overrides = ov

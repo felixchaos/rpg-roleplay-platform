@@ -92,13 +92,17 @@ async fn api_branches_tree(
         .await
         .map_err(|e| ResponseError::forbidden(e.to_string()))?;
 
-    // Python 返回 raw branches.tree() 结果，保持原行为
+    // 完整对齐 Python tree() 返回格式
     Ok(Json(json!({
         "ok": result.ok,
         "save_id": result.save_id,
+        "save": result.save,
         "nodes": result.nodes,
+        "refs": result.refs,
         "active_commit_id": result.active_commit_id,
+        "active_branch_node_id": result.active_branch_node_id,
         "active_ref_id": result.active_ref_id,
+        "page": result.page,
     })))
 }
 
@@ -165,9 +169,17 @@ async fn api_branches_continue(
     Ok(Json(json!({
         "ok": result.ok,
         "save_id": result.save_id,
+        "save": result.save,
         "nodes": result.nodes,
+        "refs": result.refs,
         "active_commit_id": result.active_commit_id,
+        "active_branch_node_id": result.active_branch_node_id,
         "active_ref_id": result.active_ref_id,
+        "page": result.page,
+        "runtime": result.runtime,
+        "game_url": result.game_url,
+        "runtime_url": result.runtime_url,
+        "active_ref": result.active_ref,
     })))
 }
 
@@ -189,9 +201,16 @@ async fn api_branches_activate(
     Ok(Json(json!({
         "ok": result.ok,
         "save_id": result.save_id,
+        "save": result.save,
         "nodes": result.nodes,
+        "refs": result.refs,
         "active_commit_id": result.active_commit_id,
+        "active_branch_node_id": result.active_branch_node_id,
         "active_ref_id": result.active_ref_id,
+        "page": result.page,
+        "runtime": result.runtime,
+        "game_url": result.game_url,
+        "runtime_url": result.runtime_url,
     })))
 }
 
@@ -206,13 +225,22 @@ async fn api_branches_delete(
     let node_id = parse_i64_field(&body.node_id, "node_id")?
         .ok_or_else(|| ResponseError::bad_request("node_id 不是整数"))?;
 
-    let deleted = rpg_platform::branches::deletion::delete_subtree(&state.db, user.id.into(), node_id)
+    let result = rpg_platform::branches::deletion::delete_subtree(&state.db, user.id.into(), node_id)
         .await
         .map_err(|e| ResponseError::bad_request(e.to_string()))?;
 
     Ok(Json(json!({
-        "ok": true,
-        "deleted_count": deleted,
+        "ok": result.ok,
+        "save_id": result.save_id,
+        "save": result.save,
+        "nodes": result.nodes,
+        "refs": result.refs,
+        "active_commit_id": result.active_commit_id,
+        "active_branch_node_id": result.active_branch_node_id,
+        "active_ref_id": result.active_ref_id,
+        "page": result.page,
+        "runtime": result.runtime,
+        "game_url": result.game_url,
     })))
 }
 
@@ -232,17 +260,25 @@ async fn api_branches_rollback(
     let message_index = parse_i64_field(&body.message_index, "message_index")?
         .ok_or_else(|| ResponseError::bad_request("save_id 和 message_index 都必须是整数"))?;
 
-    let stats =
+    let result =
         rpg_platform::branches::deletion::rollback_to_message(&state.db, user.id.into(), save_id, message_index)
             .await
             .map_err(|e| ResponseError::bad_request(e.to_string()))?;
 
     Ok(Json(json!({
-        "ok": true,
-        "target_commit_id": stats.target_commit_id,
-        "restored_turn": stats.restored_turn,
-        "messages": stats.messages,
-        "timeline_anchors": stats.timeline_anchors,
-        "context_runs": stats.context_runs,
+        "ok": result.ok,
+        "save_id": result.save_id,
+        "save": result.save,
+        "nodes": result.nodes,
+        "refs": result.refs,
+        "active_commit_id": result.active_commit_id,
+        "active_branch_node_id": result.active_branch_node_id,
+        "active_ref_id": result.active_ref_id,
+        "page": result.page,
+        "runtime": result.runtime,
+        "game_url": result.game_url,
+        "restored_turn": result.restored_turn,
+        "deleted": result.deleted,
+        "trash_ref": result.trash_ref,
     })))
 }

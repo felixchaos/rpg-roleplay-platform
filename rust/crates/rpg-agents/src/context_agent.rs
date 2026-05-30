@@ -153,7 +153,20 @@ impl ContextAgent {
             }
         };
 
-        let demand = parse_demand(&raw).unwrap_or_default();
+        let mut demand = parse_demand(&raw).unwrap_or_default();
+
+        // G8: Demand resolver fallback — 若 LLM 没有填充 retrieval_query,
+        // 从 state 拼接兜底查询串:location + current_objective + user_input。
+        // 对应 Python context_agent.py 的 fallback_retrieval_query 逻辑。
+        if demand.retrieval_query.is_empty() {
+            let loc = &state.data.player.current_location;
+            let obj = &state.data.memory.current_objective;
+            let mut parts: Vec<&str> = Vec::new();
+            if !loc.is_empty() { parts.push(loc.as_str()); }
+            if !obj.is_empty() { parts.push(obj.as_str()); }
+            if !input.user_input.is_empty() { parts.push(input.user_input.as_str()); }
+            demand.retrieval_query = parts.join(" ");
+        }
 
         // 2) Provider 调度。直接传 typed GameStateData — rpg-context 内部统一处理
         let manifest: RcManifest = resolve_content_pack(&state.data, self.default_script_id);

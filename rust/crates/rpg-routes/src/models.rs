@@ -522,9 +522,11 @@ async fn api_models(
 /// 对应 Python `api_models_health_refresh_all`:遍历所有 enabled API 的 enabled
 /// model,对每个有注册 backend 的条目发起后台 probe(fire-and-forget)。
 /// 可选 body `{"api_id": "..."}` 限定只扫描单一 API。
+/// 安全:非 admin 用户只能 probe 自己配置过 key 的 provider(对齐 Python 逻辑)。
 #[tracing::instrument(skip_all)]
 async fn api_models_health_refresh_all(
     State(s): State<AppState>,
+    headers: HeaderMap,
     body: Option<Json<Value>>,
 ) -> impl IntoResponse {
     let only_api_id: Option<String> = body
@@ -532,6 +534,30 @@ async fn api_models_health_refresh_all(
         .and_then(|Json(v)| v.get("api_id"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+
+    // P1-models-health-refresh-all-no-user-check: 对齐 Python 权限逻辑。
+    // 取当前用户以判断是否 admin;非 admin 用户构建可探测的 api_id 白名单。
+    let user_opt = require_user(&s, &headers).await.ok();
+    let is_admin = user_opt.as_ref().map(|u| u.role == "admin").unwrap_or(false);
+    // 非 admin:预取该用户的 credential 列表,只允许探测自己配置过 key 的 provider
+    let user_credential_api_ids: Option<std::collections::HashSet<String>> = if !is_admin {
+        if let Some(ref user) = user_opt {
+            rpg_platform::users::list_credentials(&s.db, user.id)
+                .await
+                .ok()
+                .map(|creds| {
+                    creds
+                        .into_iter()
+                        .filter(|c| c.has_credential)
+                        .map(|c| c.api_id)
+                        .collect()
+                })
+        } else {
+            Some(std::collections::HashSet::new())
+        }
+    } else {
+        None // admin:无限制
+    };
 
     let catalog = catalog_snapshot(&s);
     let router = s.llm_router.read();
@@ -544,6 +570,12 @@ async fn api_models_health_refresh_all(
         }
         if let Some(ref filter) = only_api_id {
             if &api.id != filter {
+                continue;
+            }
+        }
+        // 非 admin:跳过该用户没有配置凭证的 API,避免烧服务器凭证
+        if let Some(ref allowed) = user_credential_api_ids {
+            if !allowed.contains(&api.id) {
                 continue;
             }
         }
@@ -853,10 +885,12 @@ async fn api_models_diff(
 ///
 /// 对应 Python `api_models_probe`:对指定 api_id + model 发一条最小请求,
 /// 验证可用性 + 测延迟。返回 `{ok, latency_ms, error}`。
-/// 权限:有 backend 注册 = admin 已配凭证;普通 user 无 backend 则 403。
+/// 权限:admin 可测任何 provider;普通 user 必须先在「个人主页 → API 凭证」中配置
+/// 该 provider 的 key 才能测试(对齐 Python 逻辑)。
 #[tracing::instrument(skip_all)]
 async fn api_models_probe(
     State(s): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<ModelsProbeRequest>,
 ) -> Result<Response, ResponseError> {
     let api_id = body.api_id.unwrap_or_default();
@@ -867,6 +901,24 @@ async fn api_models_probe(
     }
     if model_id.is_empty() {
         return Err(ResponseError::bad_request("model required"));
+    }
+
+    // P1-models-probe-user-credentials: 对齐 Python 权限逻辑。
+    // admin 可测任何 provider;非 admin 必须先配置自己的 key。
+    let user_opt = require_user(&s, &headers).await.ok();
+    if let Some(ref user) = user_opt {
+        if user.role != "admin" {
+            // 检查该用户是否在 user_api_credentials 表里配置了该 api_id 的 key。
+            let cred_result = rpg_platform::users::list_credentials(&s.db, user.id).await;
+            let has_user_cred = cred_result
+                .map(|creds| creds.iter().any(|c| c.api_id == api_id && c.has_credential))
+                .unwrap_or(false);
+            if !has_user_cred {
+                return Err(ResponseError::forbidden(
+                    "需要先在「个人主页 → API 凭证」中配置该 provider 的 key 才能测试",
+                ));
+            }
+        }
     }
 
     let backend = {

@@ -915,13 +915,15 @@ pub(crate) async fn api_chat(
     // SSE 活跃连接 gauge +1(guard drop 时 -1)。
     let sse_guard = SseConnectionGuard::new("chat");
 
+    // game-chat-06: extract attachments before message field moves body
+    let raw_attachments: Vec<Value> = body.attachments.unwrap_or_default();
     let message = body
         .message
         .or(body.text)
         .unwrap_or_default()
         .trim()
         .to_string();
-    if message.is_empty() {
+    if message.is_empty() && raw_attachments.is_empty() {
         let (err_tx, err_rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(4);
         let _ = err_tx.send(Ok(named_sse_event("hello", hello_payload(&user_id)))).await;
         let _ = err_tx.send(Ok(named_sse_event(
@@ -1024,14 +1026,104 @@ pub(crate) async fn api_chat(
         let usage_reasoning: i32 = 0;
         let mut interrupted = false;
 
-        // ── Phase 1: Player Directives ──────────────────────────────
-        // game-chat-06 TODO: Python handles attachments via _save_attachments + _message_with_attachments.
-        // Also handles /command short-circuit (e.g. /set → directive parse → tool dispatcher → early return).
-        // Currently Rust only runs regex-based apply_player_directives; attachment support and
-        // command_agent / ToolDispatcher integration pending rpg-tools-dsl readiness.
+        // ── Phase 1: Player Directives + Attachments ────────────────
+        // game-chat-06: save attachments to library, then build message_for_model.
+        let message_for_model: String = if raw_attachments.is_empty() {
+            message.clone()
+        } else {
+            use rpg_platform::library::UploadItem;
+            let upload_items: Vec<UploadItem> = raw_attachments
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let name = v
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or(&format!("attachment-{}", i + 1))
+                        .to_string();
+                    let mime_type = v
+                        .get("type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("application/octet-stream")
+                        .to_string();
+                    // frontend may send base64 or data_url
+                    let base64 = v
+                        .get("base64")
+                        .and_then(|b| b.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let data_url = v
+                        .get("data_url")
+                        .or_else(|| v.get("dataUrl"))
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    UploadItem { name, mime_type, base64, data_url }
+                })
+                .collect();
+
+            let saved_paths: Vec<(String, String, usize)> =
+                match rpg_platform::library::upload(
+                    &db,
+                    user_id_i64,
+                    "chat_attachments",
+                    upload_items.clone(),
+                )
+                .await
+                {
+                    Ok(listing) => listing
+                        .entries
+                        .iter()
+                        .zip(upload_items.iter())
+                        .map(|(entry, orig)| {
+                            (
+                                orig.name.clone(),
+                                entry.path.clone(),
+                                entry.size as usize,
+                            )
+                        })
+                        .collect(),
+                    Err(e) => {
+                        tracing::warn!("[chat] attachment upload failed: {e}");
+                        Vec::new()
+                    }
+                };
+
+            // Build message_for_model = message + 【用户附件】 block
+            let mut lines: Vec<String> = Vec::new();
+            lines.push(if message.is_empty() {
+                "请参考本轮附件。".to_string()
+            } else {
+                message.clone()
+            });
+            if !saved_paths.is_empty() {
+                lines.push(String::new());
+                lines.push("【用户附件】".to_string());
+                for (name, path, _size) in &saved_paths {
+                    let mime = raw_attachments
+                        .iter()
+                        .find(|v| {
+                            v.get("name").and_then(|n| n.as_str()) == Some(name.as_str())
+                        })
+                        .and_then(|v| v.get("type"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("unknown");
+                    let is_image = mime.starts_with("image/");
+                    lines.push(format!("- {} ({}) -> {}", name, mime, path));
+                    if is_image {
+                        lines.push(
+                            "  图片已上传；当前文本管线先记录附件，后续多模态模型接入后可作为视觉输入。"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            lines.join("\n")
+        };
+
         {
             let mut st = state_handle.write();
-            let _ = rpg_state::apply_player_directives(&mut st, &message);
+            let _ = rpg_state::apply_player_directives(&mut st, &message_for_model);
             rpg_state::expire_stale_gm_questions(&mut st, None, "chat_new_turn");
         }
 
@@ -1042,11 +1134,10 @@ pub(crate) async fn api_chat(
         ))).await;
 
         // 2a. 从 DB 取当前用户活跃存档的 script_id + save_id
-        // game-chat-05: add is_active = true filter to match Python behavior
+        // 取最近更新的存档(game_saves 表无 is_active 列)
         use sqlx::Row as _;
         let save_row_chat = sqlx::query(
             "SELECT id, script_id FROM game_saves WHERE user_id = $1 \
-             AND is_active = true \
              ORDER BY updated_at DESC LIMIT 1",
         )
         .bind(user_id_i64)
@@ -1081,7 +1172,7 @@ pub(crate) async fn api_chat(
                 let mut parts: Vec<&str> = Vec::new();
                 if !loc.is_empty() { parts.push(loc.as_str()); }
                 if !obj.is_empty() { parts.push(obj.as_str()); }
-                parts.push(&message);
+                parts.push(&message_for_model);
                 parts.join(" ")
             };
             match rpg_retrieval::bm25_search(
@@ -1112,7 +1203,7 @@ pub(crate) async fn api_chat(
             };
             let bundle = rpg_context::build_context_bundle(
                 &state_data,
-                &message,
+                &message_for_model,
                 &retrieved,
                 None, Some(sid), chat_book_id, None, None, chat_save_id, Some(chat_services),
             ).await;
@@ -1155,7 +1246,7 @@ pub(crate) async fn api_chat(
         // This ensures the LLM sees the user message in history context.
         {
             let mut st = state_handle.write();
-            st.append_history("user", &message);
+            st.append_history("user", &message_for_model);
         }
 
         // ── Phase 4: GM Response ────────────────────────────────────
@@ -1176,7 +1267,7 @@ pub(crate) async fn api_chat(
         let step_state = std::sync::Arc::new(
             tokio::sync::RwLock::new(state_handle.read().clone()),
         );
-        let mut event_stream = gm.step(message.clone(), step_state.clone()).await;
+        let mut event_stream = gm.step(message_for_model.clone(), step_state.clone()).await;
 
         // 消费 GmEvent 流
         loop {
@@ -1300,7 +1391,7 @@ pub(crate) async fn api_chat(
                 if sid > 0 && parent > 0 {
                     if let Err(e) = rpg_platform::branches::runtime::record_runtime_turn(
                         &db, user_id_i64, sid, parent, ref_id,
-                        &message, &full, &state_val, "",
+                        &message_for_model, &full, &state_val, "",
                     ).await {
                         tracing::warn!(error = %e, "record_runtime_turn 失败(非阻塞)");
                     }

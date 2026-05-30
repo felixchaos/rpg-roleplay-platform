@@ -12,7 +12,6 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-import os
 import re
 import shutil
 import sys
@@ -862,6 +861,7 @@ def _redact_catalog(catalog: dict[str, Any], is_admin: bool) -> dict[str, Any]:
     所有角色都能看到 has_credential 字段（布尔），便于前端过滤掉没配 key 的 API。
     """
     import copy
+
     import model_probe
     result = copy.deepcopy(catalog)
     for api in result.get("apis", []):

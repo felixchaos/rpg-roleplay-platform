@@ -58,7 +58,7 @@ def load_all_overrides_by_key() -> dict[str, dict]:
             """
         ).fetchall()
     for row in rows:
-        sid = row["id"] if hasattr(row, "__getitem__") else row[0]
+        _sid = row["id"] if hasattr(row, "__getitem__") else row[0]
         title = row["title"] if hasattr(row, "__getitem__") else row[1]
         data = row["data"] if hasattr(row, "__getitem__") else row[2]
         if not data:

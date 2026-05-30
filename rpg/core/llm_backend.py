@@ -11,8 +11,6 @@
 """
 from __future__ import annotations
 
-from typing import Optional
-
 
 def detect_default_api() -> str:
     """启动时检测可用 backend: 优先 vertex_ai (SA 文件), 然后 anthropic (env key)."""
@@ -28,9 +26,9 @@ def detect_default_api() -> str:
 
 
 def resolve_preferred_model(
-    user_id: Optional[int],
+    user_id: int | None,
     pref_key: str = "set_parser.model_real_name",
-) -> Optional[str]:
+) -> str | None:
     """从用户偏好推断该用户应该用的 model。
 
     Args:
@@ -59,9 +57,9 @@ def resolve_preferred_model(
 
 
 def resolve_preferred_api(
-    user_id: Optional[int],
+    user_id: int | None,
     pref_key: str = "set_parser.api_id",
-) -> Optional[str]:
+) -> str | None:
     """从用户偏好推断该用户应该用的 API provider。
 
     Args:

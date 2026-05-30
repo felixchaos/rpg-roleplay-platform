@@ -4,74 +4,197 @@
 //! 完成度: `tree` / `collect_ids` 主路径,`resolve_commit_id_by_message` / `round_start_node` TODO。
 
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use serde_json::Value;
+use sqlx::{Column, PgPool, Row};
 
 use crate::error::PlatformResult;
+use crate::runtime::UserRuntime;
 
 use super::commits::BranchCommit;
+use super::refs::BranchRef;
 
-/// GET /api/branches/tree 的回包结构。
+/// 分页信息(对应 Python tree() 返回的 page 字段)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TreePage {
+    pub limit: i64,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+}
+
+/// GET /api/branches/tree 的回包结构 —— 完整对齐 Python tree() 返回。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreeResult {
     pub ok: bool,
     pub save_id: i64,
+    /// 完整 game_saves 行(对应 Python `result["save"]`)。
+    pub save: Option<Value>,
     pub nodes: Vec<BranchCommit>,
+    /// branch_refs 行列表(对应 Python `result["refs"]`)。
+    pub refs: Vec<BranchRef>,
     pub active_commit_id: Option<i64>,
+    /// 与 active_commit_id 同值(Python 兼容字段)。
+    pub active_branch_node_id: Option<i64>,
     pub active_ref_id: Option<i64>,
     pub total: usize,
+    pub page: TreePage,
+    /// runtime 信息(activate_state_snapshot 返回值),部分端点填充。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<UserRuntime>,
+    /// game_url 快捷字段(来自 runtime)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_url: Option<String>,
+    /// runtime_url 快捷字段(来自 runtime,Python continue_from/activate_node 用)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_url: Option<String>,
+    /// active_ref 快捷字段(Python continue_from 用)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_ref: Option<Value>,
+    /// 回滚专属:restored_turn。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restored_turn: Option<i32>,
+    /// 回滚专属:deleted 统计。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<Value>,
+    /// 回滚专属:trash_ref。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trash_ref: Option<Value>,
 }
 
-/// Python `tree(user_id, save_id, limit, cursor)` 的主路径(不分页,后续可加 cursor)。
+/// Python `tree(user_id, save_id, limit, cursor)` 的主路径。
+///
+/// 返回完整格式,对齐 Python tree() 返回:save / nodes / refs / page / active_commit_id 等。
 pub async fn tree(
     pool: &PgPool,
     user_id: i64,
     save_id: i64,
 ) -> PlatformResult<TreeResult> {
-    // 校验 save 归属
+    // 校验 save 归属,同时取完整 save 行。
     // 列名:game_saves 用 `active_branch_ref_id`(V001 schema 对齐 Python),
     // 别写成 `active_ref_id`(那是 user_runtime 表的列,W5 排查多次踩过)。
-    let active: Option<(Option<i64>, Option<i64>)> = sqlx::query_as(
-        "select active_commit_id, active_branch_ref_id from game_saves where id = $1 and user_id = $2",
+    let save_row = sqlx::query(
+        "select * from game_saves where id = $1 and user_id = $2",
     )
     .bind(save_id)
     .bind(user_id)
     .fetch_optional(pool)
     .await?;
 
-    let (active_commit_id, active_ref_id) = match active {
-        Some((c, r)) => (c, r),
+    let save_row = match save_row {
+        Some(r) => r,
         None => {
             return Ok(TreeResult {
                 ok: false,
                 save_id,
+                save: None,
                 nodes: Vec::new(),
+                refs: Vec::new(),
                 active_commit_id: None,
+                active_branch_node_id: None,
                 active_ref_id: None,
                 total: 0,
+                page: TreePage { limit: 1000, next_cursor: None, has_more: false },
+                runtime: None,
+                game_url: None,
+                runtime_url: None,
+                active_ref: None,
+                restored_turn: None,
+                deleted: None,
+                trash_ref: None,
             });
         }
     };
 
+    // 把 save row 序列化为 serde_json::Value(对齐 Python expose(save))。
+    let active_commit_id: Option<i64> = save_row
+        .try_get::<Option<i64>, _>("active_commit_id")
+        .unwrap_or(None)
+        .or_else(|| save_row.try_get::<Option<i64>, _>("active_branch_node_id").ok().flatten());
+    let active_ref_id: Option<i64> = save_row
+        .try_get::<Option<i64>, _>("active_branch_ref_id")
+        .ok()
+        .flatten();
+
+    let save_value = row_to_value(&save_row);
+
+    const PAGE_LIMIT: i64 = 1000;
     let rows = sqlx::query(
         r#"
         select * from branch_commits
          where save_id = $1
          order by turn_index asc, id asc
+         limit $2
         "#,
+    )
+    .bind(save_id)
+    .bind(PAGE_LIMIT + 1)
+    .fetch_all(pool)
+    .await?;
+
+    let has_more = rows.len() as i64 > PAGE_LIMIT;
+    let visible_rows = if has_more { &rows[..PAGE_LIMIT as usize] } else { &rows[..] };
+    let nodes: Vec<BranchCommit> = visible_rows.iter().filter_map(|r| BranchCommit::from_row(r).ok()).collect();
+    let next_cursor = if has_more {
+        visible_rows.last().and_then(|r| r.try_get::<i64, _>("id").ok()).map(|id| id.to_string())
+    } else {
+        None
+    };
+    let total = nodes.len();
+
+    // 查 refs
+    let ref_rows = sqlx::query(
+        "select * from branch_refs where save_id = $1",
     )
     .bind(save_id)
     .fetch_all(pool)
     .await?;
-    let nodes: Vec<BranchCommit> = rows.iter().filter_map(|r| BranchCommit::from_row(r).ok()).collect();
-    let total = nodes.len();
+    let refs: Vec<BranchRef> = ref_rows.iter().filter_map(|r| BranchRef::from_row(r).ok()).collect();
+
     Ok(TreeResult {
         ok: true,
         save_id,
+        save: save_value,
         nodes,
+        refs,
         active_commit_id,
+        active_branch_node_id: active_commit_id,
         active_ref_id,
         total,
+        page: TreePage {
+            limit: PAGE_LIMIT,
+            next_cursor,
+            has_more,
+        },
+        runtime: None,
+        game_url: None,
+        runtime_url: None,
+        active_ref: None,
+        restored_turn: None,
+        deleted: None,
+        trash_ref: None,
     })
+}
+
+/// 把 PgRow 转为 serde_json::Value(列名→值的 map),用于 expose(save)。
+fn row_to_value(row: &sqlx::postgres::PgRow) -> Option<Value> {
+    let mut map = serde_json::Map::new();
+    for col in row.columns() {
+        let name = col.name();
+        // 按常见类型顺序尝试
+        if let Ok(v) = row.try_get::<Option<i64>, _>(name) {
+            map.insert(name.to_string(), v.map(Value::from).unwrap_or(Value::Null));
+        } else if let Ok(v) = row.try_get::<Option<i32>, _>(name) {
+            map.insert(name.to_string(), v.map(Value::from).unwrap_or(Value::Null));
+        } else if let Ok(v) = row.try_get::<Option<bool>, _>(name) {
+            map.insert(name.to_string(), v.map(Value::from).unwrap_or(Value::Null));
+        } else if let Ok(v) = row.try_get::<Option<String>, _>(name) {
+            map.insert(name.to_string(), v.map(Value::from).unwrap_or(Value::Null));
+        } else if let Ok(v) = row.try_get::<Option<Value>, _>(name) {
+            map.insert(name.to_string(), v.unwrap_or(Value::Null));
+        } else {
+            map.insert(name.to_string(), Value::Null);
+        }
+    }
+    Some(Value::Object(map))
 }
 
 /// Python `collect_ids(db, node_id)` —— 收集 node_id 子树所有 id(用于 delete_subtree)。

@@ -18,7 +18,7 @@ use http::HeaderMap;
 use serde::Deserialize;
 use serde_json::json;
 
-use rpg_platform::users as users_svc;
+use rpg_platform::{library, users as users_svc};
 
 use crate::{require_user, AppState, ResponseError};
 
@@ -105,11 +105,44 @@ async fn api_platform(
     let user = require_user(&s, &headers).await?;
     tracing::Span::current().record("user_id", tracing::field::display(&user.id));
 
-    // TODO: 等 rpg_platform::workspace::overview(user, &s.db) 实装后替换此 stub
-    let workspace = json!({
-        "saves": [],
-        "scripts": [],
-        "library": {},
+    // API-001: 用真实数据填充 workspace(saves / scripts / library)。
+    // 对应 Python platform_for(user) → workspace.overview(user)。
+    let saves = rpg_platform::save_io::list_saves_for_user(&s.db, user.id)
+        .await
+        .unwrap_or_default();
+    let saves_json: Vec<serde_json::Value> = saves
+        .iter()
+        .take(50)
+        .map(|sv| {
+            serde_json::json!({
+                "id": sv.id,
+                "script_id": sv.script_id,
+                "title": sv.title,
+                "updated_at": sv.updated_at,
+            })
+        })
+        .collect();
+
+    let scripts = rpg_platform::library::list_scripts(&s.db, user.id.into())
+        .await
+        .unwrap_or_default();
+    let scripts_json: Vec<serde_json::Value> = scripts
+        .iter()
+        .take(50)
+        .map(|sc| serde_json::to_value(sc).unwrap_or_default())
+        .collect();
+
+    let library_entries = library::list_dir(&s.db, user.id.into(), "", None, None)
+        .await
+        .map(|l| l.entries)
+        .unwrap_or_default();
+
+    let workspace = serde_json::json!({
+        "saves": saves_json,
+        "scripts": scripts_json,
+        "library": {
+            "entries": library_entries,
+        },
     });
 
     // 从 tool_registry 取已注册工具列表

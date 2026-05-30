@@ -38,7 +38,7 @@ pub async fn continue_from(
     set_save_active(pool, save_id, active_commit_id, active_ref_id).await?;
     write_checkout(pool, user_id, save_id, active_ref_id, active_commit_id).await?;
 
-    runtime::activate_state_snapshot(
+    let rt = runtime::activate_state_snapshot(
         pool,
         user_id,
         save_id,
@@ -49,7 +49,15 @@ pub async fn continue_from(
     )
     .await?;
 
-    tree(pool, user_id, save_id).await
+    let mut result = tree(pool, user_id, save_id).await?;
+    result.ok = true;
+    result.game_url = Some(rt.game_url.clone());
+    result.runtime_url = Some(rt.game_url.clone());
+    result.active_ref = serde_json::to_value(&r).ok();
+    result.active_branch_node_id = Some(active_commit_id);
+    result.active_commit_id = Some(active_commit_id);
+    result.runtime = Some(rt);
+    Ok(result)
 }
 
 /// Python `activate_node(user_id, node_id)` —— 把当前活跃分支移到 node_id。
@@ -71,7 +79,7 @@ pub async fn activate_node(
     let active_ref_id = Some(r.id);
     set_save_active(pool, save_id, node.id, active_ref_id).await?;
     write_checkout(pool, user_id, save_id, active_ref_id, node.id).await?;
-    runtime::activate_state_snapshot(
+    let rt = runtime::activate_state_snapshot(
         pool,
         user_id,
         save_id,
@@ -81,7 +89,14 @@ pub async fn activate_node(
         active_ref_id,
     )
     .await?;
-    tree(pool, user_id, save_id).await
+    let mut result = tree(pool, user_id, save_id).await?;
+    result.ok = true;
+    result.game_url = Some(rt.game_url.clone());
+    result.runtime_url = Some(rt.game_url.clone());
+    result.active_branch_node_id = Some(node_id);
+    result.active_commit_id = Some(node_id);
+    result.runtime = Some(rt);
+    Ok(result)
 }
 
 /// Python `activate_save(user_id, save_id)` —— 切到 save 的当前活跃 commit。
@@ -165,7 +180,7 @@ pub async fn activate_save(
     let active_ref_id = Some(r.id);
     set_save_active(pool, save_id, commit.id, active_ref_id).await?;
     write_checkout(pool, user_id, save_id, active_ref_id, commit.id).await?;
-    runtime::activate_state_snapshot(
+    let rt = runtime::activate_state_snapshot(
         pool,
         user_id,
         save_id,
@@ -176,7 +191,13 @@ pub async fn activate_save(
     )
     .await?;
 
-    tree(pool, user_id, save_id).await
+    let mut result = tree(pool, user_id, save_id).await?;
+    result.ok = true;
+    result.game_url = Some(rt.game_url.clone());
+    result.active_commit_id = Some(commit.id);
+    result.active_branch_node_id = Some(commit.id);
+    result.runtime = Some(rt);
+    Ok(result)
 }
 
 fn random_hex(n: usize) -> String {

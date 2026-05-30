@@ -16,7 +16,6 @@ Design notes:
 """
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from core.config import phase_turn_threshold as _phase_turn_threshold

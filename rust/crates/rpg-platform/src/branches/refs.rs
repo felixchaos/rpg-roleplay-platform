@@ -30,7 +30,7 @@ pub struct BranchRef {
 }
 
 impl BranchRef {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
+    pub(crate) fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
         Ok(BranchRef {
             id: row.try_get("id")?,
             save_id: row.try_get("save_id")?,
