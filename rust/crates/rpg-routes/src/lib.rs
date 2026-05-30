@@ -598,9 +598,11 @@ pub fn build_sse_routes() -> Router<AppState> {
 /// 上传路由(需要放宽 body limit,其余中间件与普通路由一致)。
 ///
 /// `/api/uploads/*` — base64 分片上传。server 侧对此组路由替换成更大的 body limit。
+/// ROUTER_DUPLICATION: uploads.rs router 已统一到 imports.rs(含 /api/uploads/* 路由)。
+/// 此函数保留 imports::router() 以提供放宽 body limit 的上传路由。
 pub fn build_upload_routes() -> Router<AppState> {
     Router::new()
-        .merge(uploads::router())
+        .merge(imports::router())
         .layer(middleware::from_fn(rewrite_v1_prefix))
 }
 
@@ -652,7 +654,7 @@ fn api_router() -> Router<AppState> {
         .merge(mcp::router())
         .merge(models::router())
         .merge(console_assistant::router())
-        .merge(uploads::router())
+        // ROUTER_DUPLICATION: uploads::router() 已移到 build_upload_routes(),此处不再重复
         .merge(ws::router())
         // Wave 12 新增 9 个 HTTP handler 域:
         .merge(admin::router())

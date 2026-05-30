@@ -253,10 +253,25 @@ fn catalog_with_selected_response(s: &AppState, is_admin: bool) -> Value {
     let selected = build_selected_value(&catalog);
     let catalog_value = serde_json::to_value(&catalog).unwrap_or(json!({}));
     let redacted = redact_catalog(catalog_value, is_admin);
+    // MODELS-1: 添加 state 字段(与 Python _payload(user) 一致)
+    // 包含当前选中模型的详细信息
+    let state = if let Some((api, model)) = catalog.selected_model() {
+        let real = model.real_name.clone().unwrap_or_else(|| model.id.clone());
+        json!({
+            "model": model.display_name,
+            "model_real_name": real,
+            "api": api.display_name,
+            "api_id": api.id,
+            "capabilities": model.capabilities,
+        })
+    } else {
+        json!({})
+    };
     json!({
         "ok": true,
         "models": redacted,
         "selected": selected,
+        "state": state,
     })
 }
 
@@ -985,6 +1000,7 @@ async fn api_models_probe(
 ///
 /// 对应 Python `api_models_pricing`:查询单个模型的定价(USD per 1k tokens)。
 /// 先查 catalog 内联定价,找不到则回落 builtin 价格表。
+/// MODELS-2: 已验证 — 接受 query params(api_id, model),与前端 pricing(q) 一致。
 #[tracing::instrument(skip_all)]
 async fn api_models_pricing(
     State(s): State<AppState>,
@@ -1127,6 +1143,7 @@ async fn api_models_report(
     }))
 }
 
+/// MODELS-3: 已验证 — 接受 query params(api_id, model),与前端 capabilities(q) 一致。
 #[tracing::instrument(skip_all)]
 async fn api_models_capabilities(
     State(s): State<AppState>,

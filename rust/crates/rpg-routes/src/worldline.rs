@@ -39,6 +39,8 @@ async fn persist_worldline_variable(s: &AppState, headers: &HeaderMap, key: &str
     .flatten()
     .and_then(|r| sqlx::Row::try_get::<i64, _>(&r, "id").ok());
     let Some(sid) = session_id else { return };
+    // WORLDLINE-DB-PERSIST-TIMING: DB 持久化失败时静默 warn(与 Python 行为一致)。
+    // Python 也不会因 DB 写入失败而中断响应,state 内存中的值仍然有效。
     if let Err(e) = rpg_platform::runtime::worldline::set_user_worldline_variable(
         &s.db, sid, key, value, "user", true, None,
     )
@@ -101,9 +103,10 @@ pub struct WorldlineVariableRemoveRequest {
 
 /// POST /api/worldline/variable — 设置世界线变量
 ///
-/// 写到 state.worldline.user_variables.{key} = value。
-/// Python 端还会同步写 platform_knowledge.worldline_variable 表(用于 DB
-/// 持久化),Rust 翻译期暂略。
+/// WORLDLINE-DISPATCHER-MISMATCH: 设计差异,行为一致。
+/// Python 走 dispatch_ui_tool,Rust 直接操作 state_store + DB persist — 最终效果相同。
+///
+/// 写到 state.worldline.user_variables.{key} = value + DB 持久化。
 #[tracing::instrument(skip_all)]
 async fn api_worldline_variable(
     State(s): State<AppState>,

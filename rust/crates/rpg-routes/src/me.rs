@@ -162,9 +162,23 @@ async fn get_profile(
     profile.insert("bio".to_string(), json!(user.bio));
     profile.insert("role".to_string(), json!(user.role));
 
+    // ME-PROFILE-01: 返回顶层 preferences 字段(前端依赖)
+    let prefs_row = sqlx::query(
+        "select preferences from user_preferences where user_id = $1",
+    )
+    .bind(user.id)
+    .fetch_optional(&s.db)
+    .await
+    .ok()
+    .flatten();
+    let prefs: Value = prefs_row
+        .and_then(|r| r.try_get::<Value, _>("preferences").ok())
+        .unwrap_or(Value::Object(Default::default()));
+
     Ok(Json(json!({
         "ok": true,
         "profile": Value::Object(profile),
+        "preferences": prefs,
     }))
     .into_response())
 }
@@ -423,6 +437,10 @@ async fn get_preference(
 }
 
 /// POST /api/me/preference — 更新或合并界面偏好
+///
+/// ME-PREF-01 / ME-PROFILE-02 / AUTH-PROFILE-EXTRAS-01:
+/// 已验证:Rust 统一写 user_preferences 表(与前端读取一致)。
+/// Python 有 api/me.py 和 frontend_routes.py 双路由冲突,Rust 合并为单一权威实现。
 async fn set_preference(
     State(s): State<AppState>,
     headers: HeaderMap,

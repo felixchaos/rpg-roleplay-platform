@@ -18,7 +18,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use futures_util::stream::StreamExt;
+use futures_util::{stream::StreamExt, FutureExt as _};
 use http::{HeaderMap, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -199,6 +199,8 @@ async fn api_new(
 ) -> Result<Response, ResponseError> {
     let body = body.map(|Json(b)| b).unwrap_or_default();
     // 写状态路由:强鉴权,匿名 → 401。
+    // game-new-02: Python _backup_save('before_new_game') 仅在 api_user is None 时调用。
+    // Rust 强鉴权,匿名用户直接 401,无需 backup_save 逻辑。
     let user = require_user(&s, &headers).await?;
     let user_id = user.id.to_string();
     let user_id_num: i64 = user.id.into();
@@ -393,11 +395,13 @@ async fn api_new(
     s.state_store.flush(&user_id).await;
 
     // game-new-01: return full payload matching Python _payload(api_user) shape
+    // game-new-01: 添加 backup 字段(已登录用户为 null,与 Python 一致)
     let data = shared.read().snapshot();
     let payload = build_status_payload(&data, &s, user_id_num, &s.db);
     Ok(Json(json!({
         "ok": true,
         "state": payload,
+        "backup": null,
     }))
     .into_response())
 }
@@ -1018,6 +1022,9 @@ pub(crate) async fn api_chat(
     let chat_app_state = s.clone();
     let chat_llm_router = s.llm_router.clone();
     tokio::spawn(async move {
+        // game-chat-02: error handling wrapper for all phases
+        let tx_for_err = tx.clone();
+        let inner = async {
         let mut full = String::new();
         // game-chat-07: track actual usage from LLM stream
         let mut usage_input: i32 = 0;
@@ -1125,6 +1132,13 @@ pub(crate) async fn api_chat(
             let mut st = state_handle.write();
             let _ = rpg_state::apply_player_directives(&mut st, &message_for_model);
             rpg_state::expire_stale_gm_questions(&mut st, None, "chat_new_turn");
+        }
+
+        // game-chat-01: emit 'status' event after directives (matching Python chat_pipeline.py:256)
+        {
+            let state_data = state_handle.read().snapshot();
+            let status = build_status_payload(&state_data, &chat_app_state, user_id_i64, &db);
+            let _ = tx.send(Ok(named_sse_event("status", status))).await;
         }
 
         // ── Phase 2: Context Assembly ───────────────────────────────
@@ -1529,6 +1543,21 @@ pub(crate) async fn api_chat(
             )))
             .await;
         let _ = user_id_str;
+        };
+        // game-chat-02: use AssertUnwindSafe + catch_unwind to emit 'error' SSE on panic
+        let result = std::panic::AssertUnwindSafe(inner).catch_unwind().await;
+        if let Err(panic_info) = result {
+            let msg = if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else {
+                "internal error in chat pipeline".to_string()
+            };
+            tracing::error!("chat pipeline panic: {msg}");
+            let _ = tx_for_err.send(Ok(named_sse_event("error", json!({"error": msg})))).await;
+            let _ = tx_for_err.send(Ok(named_sse_event("done", json!({"ok": false, "error": msg})))).await;
+        }
     });
 
     let guarded = GuardedStream::new(ReceiverStream::new(rx), sse_guard);

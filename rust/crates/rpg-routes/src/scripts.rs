@@ -999,14 +999,18 @@ async fn api_script_chapters(
         .iter()
         .map(|r| {
             let ci = r.try_get::<i32,_>("chapter_index").unwrap_or_default();
+            // SCRIPTS-003: 列表响应中 content 截断到 ~200 字符(与 Python 一致)
+            let full_content = r.try_get::<String,_>("content").unwrap_or_default();
+            let truncated: String = full_content.chars().take(200).collect();
             json!({
                 "id": r.try_get::<i64,_>("id").unwrap_or_default(),
                 "chapter_index": ci,
+                // SCRIPTS-004: index 是 chapter_index 的兼容别名,保留
                 "index": ci,
                 "title": r.try_get::<String,_>("title").unwrap_or_default(),
                 "volume_title": r.try_get::<String,_>("volume_title").unwrap_or_default(),
                 "word_count": r.try_get::<i32,_>("word_count").unwrap_or_default(),
-                "content": r.try_get::<String,_>("content").unwrap_or_default(),
+                "content": truncated,
             })
         })
         .collect();
@@ -1241,12 +1245,13 @@ async fn api_script_character_card(
         return Ok(Json(json!({"ok": false, "error": "无权访问该剧本"})));
     }
 
+    // SCRIPTS-007: 单卡查询不过滤 enabled,允许查看已禁用的卡(与 Python get_character_card 一致)
     let row = sqlx::query(
         r#"
         select id, script_id, name, identity, appearance, personality,
                speech_style, aliases, sample_dialogue, priority, enabled, created_at
         from character_cards
-        where id = $1 and script_id = $2 and enabled = true
+        where id = $1 and script_id = $2
         "#,
     )
     .bind(card_id)
@@ -1330,7 +1335,34 @@ async fn api_script_upsert_character_card(
     };
 
     let new_id = row.map(|r| r.try_get::<i64, _>("id").unwrap_or(0)).unwrap_or(0);
-    Ok(Json(json!({"ok": true, "id": new_id})))
+    // SCRIPTS-005: 返回完整 card 对象(与 Python 一致),不仅仅是 id
+    let card_row = sqlx::query(
+        "SELECT id, script_id, name, identity, appearance, personality, \
+         speech_style, aliases, sample_dialogue, priority, enabled, created_at \
+         FROM character_cards WHERE id = $1",
+    )
+    .bind(new_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+    let card = match card_row {
+        Some(r) => json!({
+            "id": r.try_get::<i64,_>("id").unwrap_or_default(),
+            "script_id": r.try_get::<i64,_>("script_id").unwrap_or_default(),
+            "name": r.try_get::<String,_>("name").unwrap_or_default(),
+            "identity": r.try_get::<String,_>("identity").unwrap_or_default(),
+            "appearance": r.try_get::<String,_>("appearance").unwrap_or_default(),
+            "personality": r.try_get::<String,_>("personality").unwrap_or_default(),
+            "speech_style": r.try_get::<String,_>("speech_style").unwrap_or_default(),
+            "aliases": r.try_get::<Value,_>("aliases").unwrap_or(json!([])),
+            "sample_dialogue": r.try_get::<Value,_>("sample_dialogue").unwrap_or(json!([])),
+            "priority": r.try_get::<i32,_>("priority").unwrap_or(100),
+            "enabled": r.try_get::<bool,_>("enabled").unwrap_or(true),
+            "created_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>,_>("created_at").unwrap_or_default(),
+        }),
+        None => json!({"id": new_id}),
+    };
+    Ok(Json(json!({"ok": true, "id": new_id, "card": card})))
 }
 
 // ── POST /api/scripts/{script_id}/character-cards/{card_id}/delete ────
@@ -1846,7 +1878,11 @@ async fn api_script_recommend_identity(
 
 #[derive(Deserialize)]
 struct MergeBody {
-    first_index: i32,
+    // SCRIPTS-001: 后端同时兼容前端发的 {first, second} 和原有 {first_index, separator}
+    first_index: Option<i32>,
+    first: Option<i32>,
+    #[allow(dead_code)]
+    second: Option<i32>, // 前端发 second 但实际总是 first+1,仅用于兼容反序列化
     separator: Option<String>,
 }
 
@@ -1872,7 +1908,9 @@ async fn api_chapter_merge(
         return Err(ResponseError::forbidden("无权访问该剧本"));
     }
 
-    let first_index = body.first_index;
+    // SCRIPTS-001: 兼容 first_index(原协议)和 first(前端协议)
+    let first_index = body.first_index.or(body.first)
+        .ok_or_else(|| ResponseError::bad_request("需要 first_index 或 first"))?;
     let second_index = first_index + 1;
     let separator = body.separator.as_deref().unwrap_or("\n\n");
 
@@ -1961,10 +1999,17 @@ async fn api_chapter_merge(
     .await
     .map_err(|e| ResponseError::internal(e.to_string()))?;
 
+    // SCRIPTS-008: 返回包含合并后章节的完整响应(与 Python 一致)
     Ok(Json(json!({
         "ok": true,
         "merged_into": first_index,
         "new_chapter_count": new_count,
+        "chapter": {
+            "id": a_id,
+            "chapter_index": first_index,
+            "index": first_index,
+            "word_count": merged_wc,
+        },
     })))
 }
 
@@ -2099,7 +2144,9 @@ async fn api_chapter_update(
 
 #[derive(Deserialize)]
 struct SplitBody {
-    split_at: i64,
+    // SCRIPTS-002: 兼容前端发 offset 和原有 split_at
+    split_at: Option<i64>,
+    offset: Option<i64>,
     new_title: Option<String>,
 }
 
@@ -2111,7 +2158,10 @@ async fn api_chapter_split(
 ) -> Result<Json<Value>, ResponseError> {
     let user = require_user(&state, &headers).await?;
 
-    if body.split_at <= 0 {
+    // SCRIPTS-002: 兼容 split_at 和 offset
+    let split_at_val = body.split_at.or(body.offset)
+        .ok_or_else(|| ResponseError::bad_request("需要 split_at 或 offset"))?;
+    if split_at_val <= 0 {
         return Err(ResponseError::bad_request("split_at 必须 > 0"));
     }
 
@@ -2150,7 +2200,7 @@ async fn api_chapter_split(
     let content: String = ch.try_get("content").unwrap_or_default();
     let vol_title: String = ch.try_get("volume_title").unwrap_or_default();
     let confidence: f64 = ch.try_get("confidence").unwrap_or(0.0);
-    let split_at = body.split_at as usize;
+    let split_at = split_at_val as usize;
 
     // split_at is a character position
     let char_len = content.chars().count();

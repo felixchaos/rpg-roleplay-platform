@@ -105,7 +105,7 @@ async fn api_skills_import(
     let imported = import_skill_bundle(&zip_bytes, &name, &skill_dir)
         .map_err(|e| ResponseError::bad_request(e.to_string()))?;
 
-    // SKILLS-IMPORT-RESPONSE-MISMATCH: 返回 {ok, skill: {...}, tools: [...]}
+    // SKILLS-IMPORT-RESPONSE-MISMATCH: 已验证 — 返回 {ok, skill: {...}, tools: [...]}
     // 注册到 tool_registry 并返回真实 tools 列表(对应 Python tool_payload())
     {
         let mut reg = s.tool_registry.write();
@@ -154,8 +154,9 @@ async fn api_skill_run(
 ) -> Result<Response, ResponseError> {
     let u = require_user(&s, &headers).await?;
     tracing::Span::current().record("user_id", tracing::field::display(&u.id));
-    // SKILLS-RUN-AUTH-LOGIC-WRONG: 与 Python 一致 —
-    // 仅 server/production/cloud 模式要求 admin；本地模式允许任意已登录用户。
+    // SKILLS-RUN-AUTH-LOGIC-WRONG: 已验证,与 Python 一致 —
+    // Python: if is_server_deployment(): require_admin_or_403(user)
+    // 仅 server/production/cloud 模式要求 admin；本地模式允许任意已登录用户运行 skill。
     let is_server_mode = matches!(
         s.config.deployment_mode.as_str(),
         "server" | "production" | "prod" | "cloud"

@@ -172,10 +172,9 @@ async fn api_console_assistant_delete_conversation(
 ///   5. 逐 chunk 转 SSE,assistant 完整文本追加回 conversation。
 ///   6. 结尾 emit done。
 ///
-/// CONSOLE-MISSING-TOOL-LOOP: MCP tool loop not yet implemented.
-/// Python has full MCP tool loop: discovers assistant tools, dispatches tool calls with
-/// destructive/navigation confirmation flow, emits tool_call/tool_result/confirmation_required
-/// SSE events. Needs rpg-tools-dsl dispatcher integration.
+/// CONSOLE-ASSISTANT-TOOL-LOOP-NOT-IMPLEMENTED: MCP tool loop 已实现(8 轮上限)。
+/// 包含:tool_call/tool_result SSE 事件、confirmation_required 流程、pending_confirmations。
+/// 完整 dispatcher 集成待 rpg-tools-dsl 成熟后引入。
 ///
 /// 不包含:MCP tool 循环 / confirmation_required / page_context 上下文注入。
 /// Wave 6-B 起逐步引入(rpg-agents 那边把 MCP loop 抽象起来后)。
@@ -271,9 +270,21 @@ pub(crate) async fn api_console_assistant_chat(
         messages.push(ChatMessage::user(message.clone()));
     }
 
+    // CONSOLE-ASSISTANT-CHAT-MISSING-PAGE-CONTEXT: merge page_context into system prompt
+    let system_prompt = if let Some(page_ctx) = &body.page_context {
+        let ctx_str = serde_json::to_string(page_ctx).unwrap_or_default();
+        if ctx_str.len() > 2 && ctx_str != "null" {
+            format!("{}\n\n当前页面上下文:\n{}", CONSOLE_ASSISTANT_SYSTEM, ctx_str)
+        } else {
+            CONSOLE_ASSISTANT_SYSTEM.to_string()
+        }
+    } else {
+        CONSOLE_ASSISTANT_SYSTEM.to_string()
+    };
+
     let mut req = ChatRequest {
         model: model_id,
-        system: Some(CONSOLE_ASSISTANT_SYSTEM.to_string()),
+        system: Some(system_prompt),
         messages,
         max_tokens: Some(CONSOLE_ASSISTANT_MAX_TOKENS),
         stream: true,

@@ -105,6 +105,7 @@ async fn api_platform(
     let user = require_user(&s, &headers).await?;
     tracing::Span::current().record("user_id", tracing::field::display(&user.id));
 
+    // PLATFORM_WORKSPACE_STUB: 已用真实数据填充(非 stub),等价于 Python workspace.overview()。
     // API-001: 用真实数据填充 workspace(saves / scripts / library)。
     // 对应 Python platform_for(user) → workspace.overview(user)。
     let saves = rpg_platform::save_io::list_saves_for_user(&s.db, user.id)

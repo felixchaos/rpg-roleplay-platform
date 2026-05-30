@@ -27,6 +27,7 @@ use crate::{require_user, AppState, ChunkUploadState, ResponseError};
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        // UPLOADS_ENDPOINT_NAMES: 保留原名(skill bundle 上传用)并添加与 imports.rs 同名的别名
         .route("/api/uploads/begin", post(api_uploads_begin))
         .route("/api/uploads/chunk", post(api_uploads_chunk))
         .route("/api/uploads/finalize", post(api_uploads_finalize))

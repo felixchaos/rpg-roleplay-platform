@@ -16,7 +16,7 @@
 use std::convert::Infallible;
 
 use axum::{
-    extract::{Multipart, Path, Query, State},
+    extract::{FromRequest, Path, Query, State},
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse,
@@ -26,6 +26,7 @@ use axum::{
 };
 use futures_util::stream;
 use http::HeaderMap;
+use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -96,53 +97,63 @@ async fn api_uploads_init(
     })))
 }
 
-// ── POST /api/uploads/{upload_id}/chunk — multipart ─────────────────────────
+// ── POST /api/uploads/{upload_id}/chunk ──────────────────────────────────────
+//
+// UPLOADS_BODY_MISMATCH: 前端发 JSON {chunk_index, base64}(与 uploads.rs 协议一致），
+// 同时兼容 multipart（旧协议）。优先尝试 JSON 解析,失败再 fallback multipart。
+
+#[derive(Debug, Deserialize)]
+struct ChunkJsonBody {
+    chunk_index: usize,
+    base64: String,
+    #[allow(dead_code)]
+    total_chunks: Option<usize>,
+}
 
 async fn api_uploads_chunk(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(upload_id): Path<String>,
-    mut multipart: Multipart,
+    body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ResponseError> {
     let user = require_user(&state, &headers).await?;
 
-    let mut chunk_index: Option<usize> = None;
-    let mut blob: Option<Vec<u8>> = None;
+    // 尝试 JSON 解析(前端走 base64 协议)
+    let (chunk_index, blob) = if let Ok(json_body) = serde_json::from_slice::<ChunkJsonBody>(&body) {
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(json_body.base64.as_bytes())
+            .map_err(|e| ResponseError::bad_request(format!("base64 decode: {e}")))?;
+        (json_body.chunk_index, decoded)
+    } else {
+        // Fallback: multipart
+        let mut mp = axum::extract::Multipart::from_request(
+            axum::http::Request::builder()
+                .header("content-type", headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("multipart/form-data"))
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+            &state,
+        ).await.map_err(|e| ResponseError::bad_request(e.to_string()))?;
 
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| ResponseError::bad_request(e.to_string()))?
-    {
-        let field_name = field.name().unwrap_or("").to_string();
-        match field_name.as_str() {
-            "chunk_index" => {
-                let txt = field
-                    .text()
-                    .await
-                    .map_err(|e| ResponseError::bad_request(e.to_string()))?;
-                let idx = txt
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|_| ResponseError::bad_request("chunk_index 必须是非负整数"))?;
-                chunk_index = Some(idx);
-            }
-            "file" | "chunk" | "data" => {
-                let bytes = field
-                    .bytes()
-                    .await
-                    .map_err(|e| ResponseError::bad_request(e.to_string()))?;
-                blob = Some(bytes.to_vec());
-            }
-            _ => {
-                // 忽略其它字段
+        let mut cidx: Option<usize> = None;
+        let mut data: Option<Vec<u8>> = None;
+        while let Some(field) = mp.next_field().await.map_err(|e| ResponseError::bad_request(e.to_string()))? {
+            let field_name = field.name().unwrap_or("").to_string();
+            match field_name.as_str() {
+                "chunk_index" => {
+                    let txt = field.text().await.map_err(|e| ResponseError::bad_request(e.to_string()))?;
+                    cidx = Some(txt.trim().parse::<usize>().map_err(|_| ResponseError::bad_request("chunk_index 必须是非负整数"))?);
+                }
+                "file" | "chunk" | "data" => {
+                    let bytes = field.bytes().await.map_err(|e| ResponseError::bad_request(e.to_string()))?;
+                    data = Some(bytes.to_vec());
+                }
+                _ => {}
             }
         }
-    }
-
-    let chunk_index =
-        chunk_index.ok_or_else(|| ResponseError::bad_request("缺少 chunk_index 字段"))?;
-    let blob = blob.ok_or_else(|| ResponseError::bad_request("缺少 file/chunk/data 字段"))?;
+        let cidx = cidx.ok_or_else(|| ResponseError::bad_request("缺少 chunk_index 字段"))?;
+        let data = data.ok_or_else(|| ResponseError::bad_request("缺少 file/chunk/data 字段"))?;
+        (cidx, data)
+    };
 
     let meta = upload_svc::put_chunk(user.id.into(), &upload_id, chunk_index, &blob)
         .map_err(|e| ResponseError::bad_request(e.to_string()))?;

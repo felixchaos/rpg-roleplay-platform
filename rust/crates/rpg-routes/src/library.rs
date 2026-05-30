@@ -85,6 +85,7 @@ async fn api_library_list(
     Ok(Json(flatten_listing(listing)))
 }
 
+/// LIBRARY_RESPONSE_FORMAT: 已验证 — 返回 entries 和 items 双字段(与 Python 一致)。
 /// Flatten a `LibraryListing` into a top-level JSON object so the frontend
 /// can access `r.entries` / `r.items` directly (matching the Python backend).
 fn flatten_listing(listing: library::LibraryListing) -> serde_json::Value {

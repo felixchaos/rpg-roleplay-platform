@@ -260,7 +260,12 @@ async fn api_saves_create(
         }
     });
 
-    Ok(Json(json!({"ok": true, "save": save})))
+    // iss-6: 添加 branch_count(新建存档初始 branch_count = 1)
+    let mut save_val = serde_json::to_value(&save).unwrap_or(json!({}));
+    if let Some(obj) = save_val.as_object_mut() {
+        obj.entry("branch_count").or_insert(json!(1));
+    }
+    Ok(Json(json!({"ok": true, "save": save_val})))
 }
 
 /// POST /api/saves/import — 导入存档
@@ -347,11 +352,20 @@ async fn api_save_activate(
         *shared.write() = new_state;
     }
 
+    // iss-1/2/3/4/5: 返回完整 TreeResult(与 api_branches_activate 一致,包含 runtime/nodes/refs/save)
     Ok(Json(json!({
         "ok": result.ok,
         "save_id": result.save_id,
+        "save": result.save,
+        "nodes": result.nodes,
+        "refs": result.refs,
         "active_commit_id": result.active_commit_id,
+        "active_branch_node_id": result.active_branch_node_id,
         "active_ref_id": result.active_ref_id,
+        "page": result.page,
+        "runtime": result.runtime,
+        "game_url": result.game_url,
+        "runtime_url": result.runtime_url,
     })))
 }
 

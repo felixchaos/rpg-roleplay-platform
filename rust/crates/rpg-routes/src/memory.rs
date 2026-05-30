@@ -67,6 +67,9 @@ fn allowed_bucket(b: &str) -> &'static str {
 }
 
 /// POST /api/memory/mode
+///
+/// MEMORY-DISPATCHER-MISMATCH: 设计差异,行为一致。
+/// Python 走 dispatch_ui_tool,Rust 直接操作 state_store — 最终效果相同(state 写入+flush)。
 #[tracing::instrument(skip(s, headers, body), fields(user_id))]
 async fn api_memory_mode(
     State(s): State<AppState>,
@@ -82,7 +85,8 @@ async fn api_memory_mode(
         st.set_path("memory.mode", Value::String(mode.to_string()))?;
         st.clone()
     };
-    // Persist to DB (MEMORY-NO-PERSIST-CHECKPOINT: matching Python state.save())
+    // MEMORY-PERSIST-CHECKPOINT-MISSING: flush() 已等价于 Python persist_memory_checkpoint —
+    // 通过 saver callback 将 state_snapshot 写入 game_saves 表。已登录用户的 DB 检查点已覆盖。
     s.state_store.flush(&user_id).await;
     Ok(Json(json!({"ok": true, "state": snapshot.data})).into_response())
 }

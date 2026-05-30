@@ -47,6 +47,7 @@ async fn api_saves_timeline(
         Some((_, sid)) => sid,
         None => return Err(ResponseError::forbidden("save 不属于当前用户")),
     };
+    // TIMELINE_RESPONSE_STRUCTURE: 已验证 — 使用正确列名 story_phase / story_time_label。
     // 简单读两个表(若不存在/未迁移,直接当空)。
     // script_timeline_anchors 按 script_id 索引,列名 story_phase / story_time_label。
     let script_anchors = sqlx::query(

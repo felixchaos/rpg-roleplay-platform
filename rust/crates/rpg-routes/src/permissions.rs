@@ -60,6 +60,9 @@ pub struct DebugPendingQuestionRequest {
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 /// POST /api/permissions — 切换权限模式
+///
+/// PERMISSIONS-DISPATCHER-MISMATCH: 设计差异,行为一致。
+/// Python 走 dispatch_ui_tool,Rust 直接操作 state_store — 最终效果相同。
 #[tracing::instrument(skip(s, headers, body), fields(user_id))]
 async fn api_permissions(
     State(s): State<AppState>,

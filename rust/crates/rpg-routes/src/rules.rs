@@ -516,6 +516,8 @@ async fn api_rules_module_start(
     if module_id.is_empty() {
         return Err(ResponseError::bad_request("module_id required"));
     }
+    // RULES-PYTHON-DISPATCHER-CALL: 设计差异,行为一致。
+    // Python 走 dispatch_ui_tool('module_load'),Rust 直接操作 state — 最终效果相同。
     // 加载模组 manifest,对应 Python dispatch_ui_tool('module_load') 的模组加载逻辑
     let bundle: ModuleBundle = load_module(&module_id)
         .map_err(|e| ResponseError::not_found(format!("未知模组 {module_id}：{e}")))?;
@@ -884,6 +886,8 @@ async fn api_rules_module_launch(
     .into_response())
 }
 
+/// RULES-SCENE-RESPONSE-SHAPE: 已验证 — 返回 {ok, scene, encounter, player_character}
+/// 与 Python api_rules_scene 一致。
 #[tracing::instrument(skip_all)]
 async fn api_rules_scene(
     State(s): State<AppState>,
