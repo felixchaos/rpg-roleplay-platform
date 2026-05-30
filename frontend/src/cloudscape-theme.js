@@ -1,7 +1,7 @@
 // Cloudscape 暖色暗主题 —— 把项目 tokens.css 的暖灰暗色板映射到 Cloudscape 设计令牌。
 // 强制 Dark visual mode,再用 applyTheme 覆盖颜色/字体/圆角令牌为暖色。
 // 这样得到「AWS 控制台架构 + 你的暖色主题」。
-import { applyMode, Mode } from '@cloudscape-design/global-styles';
+import { applyMode, Mode, applyDensity, Density } from '@cloudscape-design/global-styles';
 import { applyTheme } from '@cloudscape-design/components/theming';
 
 // 暖色板(对齐 src/tokens.css)
@@ -31,6 +31,19 @@ const theme = {
     // 字体:沿用项目现有中文字体 + serif 叙事标题
     fontFamilyBase: "'Noto Sans SC', system-ui, -apple-system, sans-serif",
     fontFamilyHeading: "'Noto Serif SC', 'Noto Sans SC', serif",
+
+    // ── 字号阶梯整体调小(中文 + Cloudscape 默认偏大,挤压密度)──────────
+    fontSizeBodyM: '13px', lineHeightBodyM: '19px',
+    fontSizeBodyS: '12px', lineHeightBodyS: '16px',
+    fontSizeHeadingXl: '19px', lineHeightHeadingXl: '25px',   // 页面标题 H1
+    fontSizeHeadingL: '16px', lineHeightHeadingL: '21px',     // 容器标题 H2
+    fontSizeHeadingM: '14px', lineHeightHeadingM: '19px',     // 卡片/区块 H3
+    fontSizeHeadingS: '13px', lineHeightHeadingS: '18px',
+    fontSizeHeadingXs: '12.5px', lineHeightHeadingXs: '17px',
+    fontSizeDisplayL: '28px', lineHeightDisplayL: '34px',
+    fontSizeFormLabel: '12.5px', lineHeightFormLabel: '17px',
+    fontSizeTabs: '13px', lineHeightTabs: '18px',
+    fontSizeKeyValuePairsLabel: '11.5px', lineHeightKeyValuePairsLabel: '16px',
 
     // ── 背景层 ──────────────────────────────────────────────
     colorBackgroundLayoutMain: dual(C.bg),
@@ -107,6 +120,7 @@ let _reset = null;
 
 export function installWarmTheme() {
   applyMode(Mode.Dark);
+  applyDensity(Density.Compact); // 紧凑密度:更小行高/内边距,提升信息密度
   try {
     const r = applyTheme({ theme });
     _reset = r && r.reset;

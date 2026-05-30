@@ -3206,31 +3206,50 @@ function AuthPage() {
 /* ── Cloudscape shell(AWS 控制台架构 + 暖色主题)─────────────────────────
    与旧 PlatformShell 同 props 接口,entry 直接替换。复用 ToastStack /
    ContinuePicker / UnifiedSearch / useReactiveUser / usePlatformData。 */
-function _csNavItems() {
-  return [
-    { type: 'link', text: '主页', href: '#profile' },
-    { type: 'expandable-link-group', text: '剧本', href: '#scripts', items: [
-      { type: 'link', text: '剧本管理', href: '#scripts' },
-      { type: 'link', text: '导入剧本', href: '#scripts-import' },
-    ] },
-    { type: 'link', text: '冒险模组', href: '#modules' },
-    { type: 'expandable-link-group', text: '开始游戏', href: '#saves', items: [
-      { type: 'link', text: '存档目录', href: '#saves' },
-      { type: 'link', text: '分支树', href: '#saves-branches' },
-    ] },
-    { type: 'expandable-link-group', text: '角色卡', href: '#cards', items: [
-      { type: 'link', text: '用户角色卡', href: '#cards' },
-      { type: 'link', text: 'NPC 角色卡', href: '#cards-npc' },
-    ] },
-    { type: 'link', text: '库', href: '#library' },
-    { type: 'divider' },
-    { type: 'link', text: '设置', href: '#settings' },
-    { type: 'link', text: '用量', href: '#usage' },
-    { type: 'link', text: '插件', href: '#plugins' },
-    { type: 'link', text: 'MCP', href: '#mcp' },
-    { type: 'link', text: 'Skill', href: '#skills' },
-    { type: 'link', text: 'API', href: '#apis' },
-  ];
+/* AWS 式 IA:模块(=服务)注册表。左侧栏只显示「当前模块」的子页;
+   全局模块切换走顶部「全部功能」菜单(类似 AWS 的服务列表)。 */
+const CS_MODULES = [
+  { id: 'home',     label: '主页',     group: '工作台', pages: ['profile'],
+    sub: [{ text: '概览', href: '#profile' }] },
+  { id: 'scripts',  label: '剧本',     group: '工作台', pages: ['scripts', 'scripts-import'],
+    sub: [{ text: '剧本管理', href: '#scripts' }, { text: '导入剧本', href: '#scripts-import' }] },
+  { id: 'modules',  label: '冒险模组', group: '工作台', pages: ['modules'],
+    sub: [{ text: '模组库', href: '#modules' }] },
+  { id: 'play',     label: '开始游戏', group: '工作台', pages: ['saves', 'saves-branches'],
+    sub: [{ text: '存档目录', href: '#saves' }, { text: '分支树', href: '#saves-branches' }] },
+  { id: 'cards',    label: '角色卡',   group: '工作台', pages: ['cards', 'cards-npc'],
+    sub: [{ text: '用户角色卡', href: '#cards' }, { text: 'NPC 角色卡', href: '#cards-npc' }] },
+  { id: 'library',  label: '库',       group: '工作台', pages: ['library'],
+    sub: [{ text: '资产库', href: '#library' }] },
+  { id: 'settings', label: '设置',     group: '配置',   pages: ['settings'],
+    sub: [{ text: '用户偏好', href: '#settings' }] },
+  { id: 'usage',    label: '用量',     group: '配置',   pages: ['usage'],
+    sub: [{ text: '用量统计', href: '#usage' }] },
+  { id: 'plugins',  label: '插件',     group: '配置',   pages: ['plugins'],
+    sub: [{ text: '已装插件', href: '#plugins' }] },
+  { id: 'mcp',      label: 'MCP',      group: '配置',   pages: ['mcp'],
+    sub: [{ text: 'MCP 服务器', href: '#mcp' }] },
+  { id: 'skills',   label: 'Skill',    group: '配置',   pages: ['skills'],
+    sub: [{ text: 'Skill 包', href: '#skills' }] },
+  { id: 'apis',     label: 'API',      group: '配置',   pages: ['apis'],
+    sub: [{ text: 'API 指令', href: '#apis' }] },
+  { id: 'me',       label: '个人主页', group: '账户',   pages: ['me', 'me-edit', 'me-settings'],
+    sub: [{ text: '概览', href: '#me' }, { text: '编辑资料', href: '#me-edit' }, { text: '用户设置', href: '#me-settings' }] },
+];
+
+function _csActiveModule(page) {
+  return CS_MODULES.find((m) => m.pages.includes(page)) || CS_MODULES[0];
+}
+
+// 顶部「全部功能」菜单(按 group 分组)
+function _csSwitcherItems() {
+  const groups = [];
+  CS_MODULES.forEach((m) => {
+    let g = groups.find((x) => x.text === m.group);
+    if (!g) { g = { text: m.group, items: [] }; groups.push(g); }
+    g.items.push({ id: m.id, text: m.label });
+  });
+  return groups;
 }
 
 async function _csRefresh() {
@@ -3280,6 +3299,9 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
             </div>
           }
           utilities={[
+            { type: 'menu-dropdown', text: '全部功能', iconName: 'menu', ariaLabel: '全部功能', expandableGroups: false,
+              items: _csSwitcherItems(),
+              onItemClick: ({ detail }) => { const m = CS_MODULES.find((x) => x.id === detail.id); if (m) { setPage(m.pages[0]); location.hash = '#' + m.pages[0]; } } },
             { type: 'button', iconName: 'refresh', title: '刷新', ariaLabel: '刷新平台数据', onClick: _csRefresh },
             { type: 'button', iconName: 'gen-ai', text: '助手', ariaLabel: '控制台助手', onClick: onToggleAssistant },
             {
@@ -3310,10 +3332,10 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
         toolsWidth={380}
         navigation={
           <CSSideNavigation
-            header={{ text: '工作台', href: '#profile' }}
+            header={{ text: _csActiveModule(page).label, href: '#' + _csActiveModule(page).pages[0] }}
             activeHref={'#' + page}
             onFollow={(e) => { e.preventDefault(); const id = (e.detail.href || '').slice(1); if (id) { setPage(id); location.hash = '#' + id; } }}
-            items={_csNavItems()}
+            items={_csActiveModule(page).sub.map((s) => ({ type: 'link', text: s.text, href: s.href }))}
           />
         }
         content={
