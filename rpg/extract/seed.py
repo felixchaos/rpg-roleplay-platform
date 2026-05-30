@@ -70,7 +70,13 @@ def bootstrap_vocab(llm: ExtractLLM, chapters: list[dict], *, sample: int = 12,
             era_hints[eh] = era_hints.get(eh, 0) + 1
     # 按频次排序取词表
     out = {k: [n for n, _ in sorted(v.items(), key=lambda x: -x[1])] for k, v in agg.items()}
-    out["era_hint"] = max(era_hints, key=era_hints.get) if era_hints else ""
+    # 纪元共识门:只在至少 2 个采样章节提到同一个 era_hint 时才采用,
+    # 防止某一章孤本误读(如 LLM 把"2930"读成"2927")污染全书。
+    sorted_eras = sorted(era_hints.items(), key=lambda x: -x[1])
+    if sorted_eras and sorted_eras[0][1] >= max(2, len(idxs) // 4):
+        out["era_hint"] = sorted_eras[0][0]
+    else:
+        out["era_hint"] = ""
     return out
 
 

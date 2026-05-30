@@ -128,6 +128,10 @@ def create_save(
         script = db.execute("select * from scripts where id = %s and owner_id = %s", (script_id, user_id)).fetchone()
         if not script:
             raise ValueError("无权访问该剧本")
+        # 复核闸:KB 提取/复核未完成的剧本不允许开局,避免 GM 拿到错章节/未审实体/未消歧别名
+        # 直接喂玩家(治"复核机制完全孤立于导入流程"的架构裂缝)。重切后会自动回 unreviewed。
+        if (script.get("review_status") or "unreviewed") == "unreviewed":
+            raise ValueError("剧本尚未通过 KB 复核,请先在剧本复核页 (script-review) 检查实体/时间线/世界观无误后点击「标记已复核」")
         snapshot = _build_initial_snapshot(user_id, script_id, new_card, character, birthpoint=birthpoint, identity=identity, story_intent=story_intent)
         save = db.execute(
             """

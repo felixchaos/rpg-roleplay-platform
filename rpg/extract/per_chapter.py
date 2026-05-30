@@ -14,6 +14,7 @@ from extract.llm import ExtractLLM
 
 # 每章输出 JSON schema(给模型看的契约)
 _SCHEMA_HINT = """{
+  "chapter_summary": "本章主线 1-3 句话浓缩(>=30 字 <=150 字),含核心冲突/转折/谁做了什么。绝不照抄原文,绝不堆细节。",
   "story_time": {"label": "本章故事时间(短语)", "relative_marker": "相对上章的时序线索", "era": "<纪元,必须照抄给定纪元,严禁改写>"},
   "entities": [{"surface": "文中称呼", "full_name": "本人最完整的正式名(欧美名 = 名+姓全套,如 Mulelia Zazbarum;若文中已知则填写,否则同 surface)", "canonical_guess": "规范名(优先匹配已知实体)", "aliases_in_chapter": ["本章用到的其他称呼/昵称/半名/译名(如 ['Mulelia','小蕾'])"], "type": "character|faction|location|item", "status": "linked|proposed", "evidence": "≤20字依据"}],
   "events": [{"summary": "事件一句话", "participants": ["实体名"], "location": "地点", "importance": 0-100, "causal_refs": ["前置事件描述"]}],
@@ -26,6 +27,7 @@ _SCHEMA_HINT = """{
 @dataclass
 class ChapterExtract:
     chapter: int
+    chapter_summary: str = ""
     story_time: dict = field(default_factory=dict)
     entities: list = field(default_factory=list)
     events: list = field(default_factory=list)
@@ -88,6 +90,7 @@ def extract_chapter(llm: ExtractLLM, chapter_num: int, chapter_text: str, *, era
         st["era"] = era
     return ChapterExtract(
         chapter=chapter_num,
+        chapter_summary=str(data.get("chapter_summary") or "")[:400],
         story_time=st if isinstance(st, dict) else {"era": era},
         entities=[e for e in (data.get("entities") or []) if isinstance(e, dict)],
         events=[e for e in (data.get("events") or []) if isinstance(e, dict)],

@@ -765,7 +765,25 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
             ).fetchall()
         seed = "\n".join(c["content"] for c in chapters)[:8000]
 
+    # 读取新提取管线已落库的纪元(若存在),作为铁律塞进 prompt,治 _stage_worldbook 独立 LLM
+    # 凭空编"哥本哈根研究所 2927年创立"这种带具体年份的 hallucination
+    era_lock = ""
+    with connect() as db:
+        era_row = db.execute(
+            "select content from worldbook_entries "
+            "where script_id=%s and title='纪元' and metadata->>'source'='extracted' limit 1",
+            (script_id,),
+        ).fetchone()
+        if era_row and era_row.get("content"):
+            era_lock = str(era_row["content"])[:200]
+    era_iron_rule = (
+        f"【纪元铁律】{era_lock}\n严禁在 content 中编造具体的创立年/事件年份;"
+        "若必须提及年代,只能引用上述纪元,**绝不写真实历史年份**(1927/1935/1940 等)。\n"
+        if era_lock else
+        "【纪元约束】不要在 content 中编造具体年份(避免幻觉);只描述背景/角色/地理/势力关系。\n"
+    )
     prompt = (
+        era_iron_rule +
         "根据下面的章节摘要和高频实体，提取重要的世界观条目（地点/势力/概念），返回严格 JSON 数组：\n"
         "[{\"name\":\"...\",\"keys\":[\"关键词1\",\"关键词2\"],\"content\":\"≤200字解释\",\"priority\":80}]\n"
         "数量上限 20。\n\n" + seed

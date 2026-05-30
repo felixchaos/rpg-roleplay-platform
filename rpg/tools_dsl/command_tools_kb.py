@@ -115,8 +115,8 @@ def _t_lookup_timeline(user_id: int, args: dict) -> str:
         ctx = _save_ctx(db, save_id, user_id)
         if not ctx:
             return "失败: 无权访问该存档"
-        sql = ("select story_time_label, chapter_min, chapter_max from script_timeline_anchors "
-               "where script_id=%s")
+        sql = ("select story_time_label, chapter_min, chapter_max, sample_summary "
+               "from script_timeline_anchors where script_id=%s")
         a = [ctx["script_id"]]
         if ctx["progress_chapter"] is not None:
             sql += " and chapter_min <= %s"

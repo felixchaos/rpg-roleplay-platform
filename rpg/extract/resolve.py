@@ -182,31 +182,54 @@ def _count_by_type(canon: list[CanonEntity]) -> dict:
 
 # ── 时间线增量聚合(不全局排序) ─────────────────────────────────────────────
 def build_timeline(db, script_id: int, chapter_extracts: list) -> int:
-    """事件按章节顺序增量,产出 script_timeline_anchors(值来自 story_time 而非标题)。"""
+    """事件按章节顺序增量,产出 script_timeline_anchors(值来自 story_time 而非标题)。
+
+    每段收集成员章节的 chapter_summary 拼接成 sample_summary(分段),让 GM 拉时间线
+    得到结构化摘要而不是 raw event 碎片。
+    """
     # 按 story_time.label 聚合连续章节段
     segments: list[dict] = []
     for ex in sorted(chapter_extracts, key=lambda e: e.chapter):
         label = (ex.story_time or {}).get("label", "").strip()
         if not label:
             continue
+        summary = (getattr(ex, "chapter_summary", "") or "").strip()
         if segments and segments[-1]["label"] == label:
             segments[-1]["chapter_max"] = ex.chapter
+            if summary:
+                segments[-1]["summaries"].append((ex.chapter, summary))
         else:
-            segments.append({"label": label, "chapter_min": ex.chapter, "chapter_max": ex.chapter})
+            segments.append({
+                "label": label, "chapter_min": ex.chapter, "chapter_max": ex.chapter,
+                "summaries": [(ex.chapter, summary)] if summary else [],
+            })
     written = 0
     for seg in segments:
+        # 每段取首 + 中 + 末三个 summary 拼接(避免过长 + 给 GM 段头/段中/段尾的脉络)
+        sums = seg.get("summaries") or []
+        if sums:
+            picks = [sums[0]]
+            if len(sums) >= 3:
+                picks.append(sums[len(sums) // 2])
+            if len(sums) >= 2:
+                picks.append(sums[-1])
+            sample_summary = " / ".join(f"第{ch}章:{s}" for ch, s in picks)[:1900]
+        else:
+            sample_summary = ""
         db.execute(
             """
             insert into script_timeline_anchors(script_id, story_phase, story_time_label,
-              chapter_min, chapter_max, chapter_count, confidence)
-            values (%s, %s, %s, %s, %s, %s, %s)
+              chapter_min, chapter_max, chapter_count, sample_summary, confidence)
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
             on conflict(script_id, story_phase, story_time_label) do update set
               chapter_min=least(script_timeline_anchors.chapter_min, excluded.chapter_min),
               chapter_max=greatest(script_timeline_anchors.chapter_max, excluded.chapter_max),
+              sample_summary=case when length(excluded.sample_summary) > 0
+                then excluded.sample_summary else script_timeline_anchors.sample_summary end,
               updated_at=now()
             """,
             (script_id, "", seg["label"], seg["chapter_min"], seg["chapter_max"],
-             seg["chapter_max"] - seg["chapter_min"] + 1, 0.7),
+             seg["chapter_max"] - seg["chapter_min"] + 1, sample_summary, 0.7),
         )
         written += 1
     return written

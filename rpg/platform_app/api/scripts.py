@@ -738,7 +738,8 @@ async def api_update_script_overrides(request: Request, script_id: int, user=Dep
 # ── Phase E: 可视化复核(只读图 + god 编辑)─────────────────────────────────
 def _owned_script(db, script_id: int, user_id: int):
     return db.execute(
-        "select id, title, import_report from scripts where id=%s and owner_id=%s",
+        "select id, title, import_report, review_status, reviewed_at "
+        "from scripts where id=%s and owner_id=%s",
         (script_id, user_id),
     ).fetchone()
 
@@ -781,7 +782,11 @@ async def api_script_graph(script_id: int, user=Depends(require_user)):
             "cleaning": report.get("cleaning", {}),
         }
     return json_response({
-        "ok": True, "script": {"id": script_id, "title": s["title"]},
+        "ok": True, "script": {
+            "id": script_id, "title": s["title"],
+            "review_status": s.get("review_status") or "unreviewed",
+            "reviewed_at": s.get("reviewed_at"),
+        },
         "entities": [dict(e) for e in entities],
         "worldlines": [dict(w) for w in worldlines],
         "nodes": [dict(n) for n in nodes],
@@ -853,3 +858,34 @@ async def api_patch_canon(request: Request, script_id: int, user=Depends(require
             n = db.execute("delete from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, lk)).rowcount
             return json_response({"ok": True, "deleted": n})
         return json_response({"ok": False, "error": f"未知 op: {op}"}, status_code=400)
+
+
+@router.post("/api/scripts/{script_id}/mark-reviewed")
+async def api_script_mark_reviewed(script_id: int, user=Depends(require_user)):
+    """Phase E.1 复核状态机:owner 复核完点这个,scripts.review_status='reviewed'。
+
+    解锁开局闸——之后建档接口才会接受这本剧本。重切(resplit)会 reset 回 unreviewed。
+    """
+    with connect() as db:
+        if not _owned_script(db, script_id, user["id"]):
+            return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+        db.execute(
+            "update scripts set review_status='reviewed', reviewed_at=now(), updated_at=now() "
+            "where id=%s",
+            (script_id,),
+        )
+    return json_response({"ok": True, "review_status": "reviewed"})
+
+
+@router.post("/api/scripts/{script_id}/unmark-reviewed")
+async def api_script_unmark_reviewed(script_id: int, user=Depends(require_user)):
+    """owner 重新打开复核(回 unreviewed)。"""
+    with connect() as db:
+        if not _owned_script(db, script_id, user["id"]):
+            return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+        db.execute(
+            "update scripts set review_status='unreviewed', reviewed_at=null, updated_at=now() "
+            "where id=%s",
+            (script_id,),
+        )
+    return json_response({"ok": True, "review_status": "unreviewed"})

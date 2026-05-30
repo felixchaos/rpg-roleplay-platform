@@ -593,6 +593,15 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "alter table scripts add column if not exists clone_count integer not null default 0",
         "create index if not exists idx_scripts_public on scripts(is_public, published_at desc) where is_public",
     ]),
+    (26, "scripts_review_status", [
+        # v26: KB 复核状态机。导入完成后 scripts.review_status='unreviewed';
+        # 用户经过 script-review 复核(PATCH /canon 或 显式 mark-reviewed)→ 'reviewed';
+        # 开局接口前置校验:'reviewed' 才允许建档。治"复核机制完全孤立于导入流程"的架构裂缝。
+        # 已存在剧本默认 'reviewed'(不打扰存量数据);新导入剧本默认 'unreviewed'(由 import_script 显式写)。
+        "alter table scripts add column if not exists review_status text not null default 'reviewed'",
+        "alter table scripts add column if not exists reviewed_at timestamptz",
+        "create index if not exists idx_scripts_review_status on scripts(owner_id, review_status)",
+    ]),
 ]
 
 

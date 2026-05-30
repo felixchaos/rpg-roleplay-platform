@@ -74,11 +74,21 @@ async def api_create_save(request: Request, user=Depends(require_user)):
     birthpoint = body.get("birthpoint") if isinstance(body.get("birthpoint"), dict) else None
     identity = body.get("identity") if isinstance(body.get("identity"), dict) else None
     story_intent = str(body.get("story_intent") or "").strip() or None
-    return json_response({"ok": True, "save": workspace.create_save(
-        user["id"], script_id, body.get("title", ""),
-        new_card=new_card, character=character,
-        birthpoint=birthpoint, identity=identity, story_intent=story_intent,
-    )})
+    try:
+        save = workspace.create_save(
+            user["id"], script_id, body.get("title", ""),
+            new_card=new_card, character=character,
+            birthpoint=birthpoint, identity=identity, story_intent=story_intent,
+        )
+    except ValueError as exc:
+        # 复核闸/权限校验等业务级错误 → 400(带 review_status,前端能引导用户去复核页)
+        msg = str(exc)
+        out = {"ok": False, "error": msg}
+        if "复核" in msg:
+            out["needs_review"] = True
+            out["script_id"] = script_id
+        return json_response(out, status_code=400)
+    return json_response({"ok": True, "save": save})
 
 
 @router.get("/api/branches/{save_id}")

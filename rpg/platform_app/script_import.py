@@ -136,8 +136,9 @@ def import_script(
     with connect() as db:
         script = db.execute(
             """
-            insert into scripts(owner_id, title, description, source_path, chapter_count, word_count, import_report)
-            values (%s, %s, %s, %s, %s, %s, %s)
+            insert into scripts(owner_id, title, description, source_path, chapter_count, word_count,
+                                 import_report, review_status)
+            values (%s, %s, %s, %s, %s, %s, %s, 'unreviewed')
             returning *
             """,
             (user_id, script_title, description, str(target_path.relative_to(BASE)), len(chapters), total_words, Jsonb(report)),
@@ -699,8 +700,10 @@ def resplit_script(
                     for i, c in enumerate(chapters, start=1)
                 ],
             )
+        # 重切后章节边界变了 → KB 与新边界对不上 → 强制回 unreviewed,用户须重过复核
         db.execute(
-            "update scripts set chapter_count = %s, word_count = %s, import_report = %s, updated_at = now() where id = %s",
+            "update scripts set chapter_count = %s, word_count = %s, import_report = %s, "
+            "review_status = 'unreviewed', reviewed_at = null, updated_at = now() where id = %s",
             (len(chapters), total_words, Jsonb({**report, "encoding": encoding, "resplit": True}), script_id),
         )
     return {
@@ -708,6 +711,7 @@ def resplit_script(
         "chapter_count": len(chapters), "word_count": total_words,
         "report": report,
         "knowledge_stale": True,  # 提示前端需要再触发一次 sync
+        "review_status": "unreviewed",
     }
 
 
