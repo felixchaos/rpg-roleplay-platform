@@ -279,12 +279,23 @@
     // hint
     const hint = el.getAttribute("data-cap-hint") || "";
 
+    // 敏感字段脱敏:password 类型 或 key/name/label 命中敏感词 → 绝不外传明文。
+    // ui_atlas 会被塞进 LLM system prompt 发往模型提供商,明文 API key/SMTP/验证码密钥会泄露(CWE-200)。
+    const SENSITIVE_RE = /(pass|pwd|secret|token|api[\s_-]*key|apikey|credential|captcha|smtp|private[\s_-]*key|密码|密钥|令牌)/i;
+    const sensitive =
+      type === "password" ||
+      SENSITIVE_RE.test(key) ||
+      SENSITIVE_RE.test(nameAttr) ||
+      SENSITIVE_RE.test(labelText);
+    let safeValue = value;
+    if (sensitive) safeValue = value ? "[REDACTED]" : "";
+
     return {
       form_id: inferFieldFormId(el),
       key,
       label: labelText || capField || ariaLabel || nameAttr || key,
       type,
-      value,
+      value: safeValue,
       ...(options !== undefined ? { options } : {}),
       required,
       ...(hint ? { hint } : {}),

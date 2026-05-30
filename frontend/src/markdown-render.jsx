@@ -35,6 +35,23 @@ const INLINE_RULES = [
   { re: /\[([^\]\n]+?)\]\(([^)\s]+)\)/g, tag: "a" },
 ];
 
+// scheme 白名单:只放行 http/https/mailto/tel + 站内相对/锚点。
+// 其余(javascript:/data:/vbscript: 等)一律视为不安全 → 渲染纯文本不带 href(CWE-79)。
+function safeUrl(url) {
+  if (!url) return null;
+  // 去掉控制字符/空白/零宽字符,防 "java\tscript:" / 零宽绕过
+  // eslint-disable-next-line no-control-regex
+  const cleaned = String(url)
+    .replace(/[\u0000-\u0020\u007f-\u00a0\u200b-\u200f\u2028\u2029\ufeff]/g, "")
+    .trim();
+  if (!cleaned) return null;
+  // 带 scheme 的(形如 "xxx:")必须命中白名单;相对路径/锚点(无 scheme)放行
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(cleaned)) {
+    return /^(https?|mailto|tel):/i.test(cleaned) ? cleaned : null;
+  }
+  return cleaned;
+}
+
 function renderInline(text, keyPrefix) {
   // 找出所有 match,按位置排序,non-overlap
   const hits = [];
@@ -69,9 +86,15 @@ function renderInline(text, keyPrefix) {
     if (h.start > cur) out.push(text.slice(cur, h.start));
     const k = `${keyPrefix}-${kid++}`;
     if (h.tag === "a") {
-      out.push(React.createElement("a", {
-        key: k, href: h.href, target: "_blank", rel: "noopener noreferrer",
-      }, h.text));
+      const href = safeUrl(h.href);
+      if (href) {
+        out.push(React.createElement("a", {
+          key: k, href, target: "_blank", rel: "noopener noreferrer",
+        }, h.text));
+      } else {
+        // 不安全 scheme(javascript:/data: 等)→ 降级为纯文本,绝不进 href
+        out.push(h.text);
+      }
     } else {
       out.push(React.createElement(h.tag, { key: k }, h.text));
     }

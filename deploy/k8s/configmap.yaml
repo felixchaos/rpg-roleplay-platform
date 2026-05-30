@@ -6,6 +6,10 @@ metadata:
   name: rpg-server-config
   namespace: rpg
 data:
+  # 部署鉴权:server 模式 + 强制鉴权(fail-closed)。
+  # 缺这两项时 deployment_mode() 默认 "local" → 匿名可达 admin 路由(CWE-306)。
+  RPG_DEPLOYMENT_MODE: "server"
+  RPG_REQUIRE_AUTH: "1"
   RPG_PORT: "7860"
   RPG_HOST: "0.0.0.0"
   RPG_RATE_LIMIT_PER_MIN: "100"

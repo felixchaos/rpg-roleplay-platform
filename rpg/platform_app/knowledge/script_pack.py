@@ -24,7 +24,22 @@ from platform_app.db import connect
 
 FORMAT_VERSION = 1
 CHUNKS_VERSION = 1  # chunks 序列化格式版本; 未来改变字段时递增
-MAX_ZIP_BYTES = 50 * 1024 * 1024  # 50 MB
+MAX_ZIP_BYTES = 50 * 1024 * 1024  # 50 MB(压缩态上限)
+MAX_EXPANDED_BYTES = 500 * 1024 * 1024  # 解压后总量上限,防 zip 炸弹(CWE-409)
+MAX_MEMBER_BYTES = 200 * 1024 * 1024  # 单成员解压上限
+MAX_JSONL_ROWS = 500_000  # 单个 JSONL 行数上限,防 materialize 打爆内存
+
+
+def _safe_member_read(zf: zipfile.ZipFile, name: str) -> bytes:
+    """有界解压单个成员:ZipInfo 预检 + 实读上限,双重防谎报 header 的炸弹。"""
+    info = zf.getinfo(name)
+    if info.file_size > MAX_MEMBER_BYTES:
+        raise ValueError(f"成员解压后过大: {name}")
+    with zf.open(name) as fh:
+        data = fh.read(MAX_MEMBER_BYTES + 1)
+    if len(data) > MAX_MEMBER_BYTES:
+        raise ValueError(f"成员解压超限: {name}")
+    return data
 
 
 # ── Export ────────────────────────────────────────────────────────────────────
@@ -190,9 +205,16 @@ def import_script_pack(zip_bytes: bytes, user_id: int) -> dict[str, Any]:
             if name.startswith("/") or ".." in parts:
                 raise ValueError(f"zip-slip attempt detected: {name!r}")
 
+        # 解压前总量预检(CWE-409): 防小压缩包炸出超大内存占用
+        declared_total = sum(i.file_size for i in zf.infolist())
+        if declared_total > MAX_EXPANDED_BYTES:
+            raise ValueError(
+                f"pack expands too large (max {MAX_EXPANDED_BYTES // 1024 // 1024}MB)"
+            )
+
         # 3. 读 manifest
         try:
-            manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+            manifest = json.loads(_safe_member_read(zf, "manifest.json").decode("utf-8"))
         except KeyError as exc:
             raise ValueError("missing manifest.json in pack") from exc
 
@@ -204,7 +226,7 @@ def import_script_pack(zip_bytes: bytes, user_id: int) -> dict[str, Any]:
 
         # 4. 读各文件
         try:
-            script_data = json.loads(zf.read("script.json").decode("utf-8"))
+            script_data = json.loads(_safe_member_read(zf, "script.json").decode("utf-8"))
         except KeyError as exc:
             raise ValueError("missing script.json in pack") from exc
 
@@ -215,7 +237,7 @@ def import_script_pack(zip_bytes: bytes, user_id: int) -> dict[str, Any]:
         docs = _read_jsonl(zf, "documents.jsonl")
 
         try:
-            overrides: dict = json.loads(zf.read("overrides.json").decode("utf-8"))
+            overrides: dict = json.loads(_safe_member_read(zf, "overrides.json").decode("utf-8"))
         except KeyError:
             overrides = {}
 
@@ -544,14 +566,17 @@ def _dump_jsonl(rows: list[dict]) -> str:
 
 def _read_jsonl(zf: zipfile.ZipFile, name: str) -> list[dict]:
     try:
-        text = zf.read(name).decode("utf-8")
+        text = _safe_member_read(zf, name).decode("utf-8")
     except KeyError:
         return []
-    return [
-        json.loads(line)
-        for line in text.split("\n")
-        if line.strip()
-    ]
+    rows: list[dict] = []
+    for line in text.split("\n"):
+        if not line.strip():
+            continue
+        if len(rows) >= MAX_JSONL_ROWS:  # 防超长 JSONL materialize 打爆内存(CWE-409)
+            raise ValueError(f"{name}: JSONL 行数超限(max {MAX_JSONL_ROWS})")
+        rows.append(json.loads(line))
+    return rows
 
 
 def _dump_script_row(row: dict) -> str:
