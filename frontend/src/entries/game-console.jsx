@@ -464,10 +464,15 @@ function App() {
           const stripOps = (txt) => {
             if (!txt) return txt;
             let out = txt;
+            // 1. fenced code blocks wrapping ops array/object
             out = out.replace(/```(?:json)?\s*(\[\s*\{[\s\S]*?"op"\s*:[\s\S]*?\}\s*\])\s*```/gi, '');
             out = out.replace(/```(?:json)?\s*(\{\s*"op"\s*:[\s\S]*?\})\s*```/gi, '');
-            out = out.replace(/\n*\[\s*\{\s*"op"\s*:[\s\S]*?\}\s*\](?=\s*$)/g, '');
+            // 2. bare JSON ops array at end of text
+            out = out.replace(/\n*\[\s*\{[\s\S]*?"op"\s*:[\s\S]*?\}\s*\](?=\s*$)/g, '');
+            // 3. bare JSON ops object(s) at end of text
             out = out.replace(/\n*\{\s*"op"\s*:[\s\S]*?\}(?=\s*$)/gm, '');
+            // 4. bare JSON ops array/object anywhere in text (GM sometimes puts ops mid-response)
+            out = out.replace(/\n*\[\s*\n*\s*\{\s*\n*\s*"op"\s*:\s*"[^"]*"[\s\S]*?\}\s*\n*\s*\]/g, '');
             return out.trimEnd();
           };
           setHistory((h) => {
