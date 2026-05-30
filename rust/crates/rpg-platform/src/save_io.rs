@@ -529,16 +529,15 @@ pub async fn write_state_snapshot(
         tx.rollback().await?;
         return Err(PlatformError::forbidden("无权写入该存档"));
     }
-    // upsert runtime_checkouts 时间戳(worker_id 记当前进程,便于排障)。
+    // upsert runtime_checkouts 时间戳。
+    // 注:runtime_checkouts 没有 worker_id 列,ON CONFLICT 用 (user_id, save_id)。
     let _ = sqlx::query(
-        "insert into runtime_checkouts(save_id, user_id, worker_id, updated_at) \
-         values ($1, $2, $3, now()) \
-         on conflict(save_id) do update set updated_at = now(), \
-           worker_id = excluded.worker_id, user_id = excluded.user_id",
+        "insert into runtime_checkouts(user_id, save_id, updated_at) \
+         values ($1, $2, now()) \
+         on conflict(user_id, save_id) do update set updated_at = now()",
     )
-    .bind(save_id)
     .bind(user_id)
-    .bind(crate::cluster::WORKER_ID.as_str())
+    .bind(save_id)
     .execute(&mut *tx)
     .await;
     tx.commit().await?;
