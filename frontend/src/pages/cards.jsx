@@ -62,7 +62,7 @@ function CardGrid({ cards, onEdit, kind, filter, empty, onDeleted, onDuplicate, 
       window.__apiToast?.("NPC 卡在剧本管理页面删除", { kind: "warn", duration: 2400 });
       return;
     }
-    if (!window.confirm(`确认删除角色卡「${c.name}」？该操作无法撤销。`)) return;
+    if (!await window.__confirm({ title: '删除角色卡', message: `确认删除角色卡「${c.name}」?该操作无法撤销。`, danger: true, confirmText: '删除' })) return;
     try {
       await window.api.cards.myDelete(c.id);
       window.__apiToast?.("已删除 " + c.name, { kind: "ok" });

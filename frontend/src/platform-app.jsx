@@ -33,6 +33,7 @@ import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import CSBadge from '@cloudscape-design/components/badge';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSTextarea from '@cloudscape-design/components/textarea';
+import CSModal from '@cloudscape-design/components/modal';
 
 const PL_NAV = [
   { section: "工作台" },
@@ -244,6 +245,53 @@ function ToastStack() {
     </div>
   );
   return createPortal(node, document.body);
+}
+
+/* DialogHost — 全局 Promise 化的 Cloudscape 弹窗,接管浏览器原生 confirm/prompt。
+   用法: await window.__confirm({title, message, danger, confirmText})  → bool
+         await window.__prompt({title, label, default, confirmText})    → string|null */
+function DialogHost() {
+  const [dlg, setDlg] = useStatePL(null);
+  useEffectPL(() => {
+    window.__confirm = (o = {}) => new Promise((resolve) => setDlg({
+      type: 'confirm', resolve,
+      title: o.title || '确认', message: o.message || '',
+      danger: !!o.danger, confirmText: o.confirmText || '确认',
+    }));
+    window.__prompt = (o = {}) => new Promise((resolve) => setDlg({
+      type: 'prompt', resolve,
+      title: o.title || '输入', label: o.label || '', value: o.default || '',
+      confirmText: o.confirmText || '确认',
+    }));
+    return () => { delete window.__confirm; delete window.__prompt; };
+  }, []);
+  if (!dlg) return null;
+  const close = (val) => { try { dlg.resolve(val); } catch (_) {} setDlg(null); };
+  const cancelVal = dlg.type === 'prompt' ? null : false;
+  const okVal = dlg.type === 'prompt' ? (dlg.value || '') : true;
+  return (
+    <CSModal
+      visible
+      onDismiss={() => close(cancelVal)}
+      header={dlg.title}
+      footer={
+        <CSBox float="right">
+          <CSSpaceBetween direction="horizontal" size="xs">
+            <CSButton variant="link" onClick={() => close(cancelVal)}>取消</CSButton>
+            <CSButton variant="primary" onClick={() => close(okVal)}>{dlg.confirmText}</CSButton>
+          </CSSpaceBetween>
+        </CSBox>
+      }
+    >
+      {dlg.type === 'confirm'
+        ? <CSBox>{dlg.message}</CSBox>
+        : <CSFormField label={dlg.label}>
+            <CSInput value={dlg.value} autoFocus
+              onChange={({ detail }) => setDlg((d) => ({ ...d, value: detail.value }))}
+              onKeyDown={({ detail }) => { if (detail.key === 'Enter') close(dlg.value || ''); }} />
+          </CSFormField>}
+    </CSModal>
+  );
 }
 
 /* ---------------------------- useAutoSave ----------------------- */
@@ -3659,6 +3707,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
       />
 
       <ToastStack />
+      <DialogHost />
       <ContinuePicker open={continueState.open} save={continueState.save} focusedNodeId={continueState.nodeId}
         onClose={() => setContinueState({ open: false, save: null, nodeId: null })} />
       <UnifiedSearch open={searchOpen} onClose={() => setSearchOpen(false)} setPage={setPage} />

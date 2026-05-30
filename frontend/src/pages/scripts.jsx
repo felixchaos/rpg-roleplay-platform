@@ -515,7 +515,7 @@ function ScriptsListView() {
   }, [reload]);
 
   const onDelete = async (s) => {
-    if (!confirm(`确定删除剧本「${s.title}」？相关存档与索引也会清理。`)) return;
+    if (!await window.__confirm({ title: '删除剧本', message: `确定删除剧本「${s.title}」?相关存档与索引也会一并清理。`, danger: true, confirmText: '删除' })) return;
     setBusyId(s.id);
     try {
       await window.api.scripts.delete(s.id);
@@ -600,7 +600,7 @@ function ScriptsListView() {
   };
   const onToggleVisibility = async (s) => {
     const next = !s.is_public;
-    if (next && !confirm(`把剧本「${s.title}」公开分享到在线剧本库?\n其他用户将能浏览并导入它的章节 / 角色卡 / 世界书。`)) return;
+    if (next && !await window.__confirm({ title: '公开分享到剧本库', message: `把剧本「${s.title}」公开分享?其他用户将能浏览并导入它的章节 / 角色卡 / 世界书。`, confirmText: '公开分享' })) return;
     try {
       const r = await window.api.scripts.setVisibility(s.id, next);
       if (r && r.ok === false) throw new Error(r.error || '操作失败');
@@ -853,7 +853,7 @@ function ChaptersModal({ script, onClose, onChanged }) {
   const cur = chapters[activeIdx];
   const onRename = async () => {
     if (!cur) return;
-    const t = prompt("新标题", cur.title || "");
+    const t = await window.__prompt({ title: '重命名章节', label: '新标题', default: cur.title || '' });
     if (!t || t === cur.title) return;
     try {
       await window.api.scripts.updateChapter(script.id, cur.index ?? activeIdx, { title: t });
@@ -864,7 +864,7 @@ function ChaptersModal({ script, onClose, onChanged }) {
   };
   const onMergeNext = async () => {
     if (!cur || activeIdx >= chapters.length - 1) return;
-    if (!confirm(`合并第 ${activeIdx + 1} 章和第 ${activeIdx + 2} 章？`)) return;
+    if (!await window.__confirm({ title: '合并章节', message: `合并第 ${activeIdx + 1} 章和第 ${activeIdx + 2} 章?`, confirmText: '合并' })) return;
     try {
       await window.api.scripts.mergeChapter(script.id, { first: cur.index ?? activeIdx, second: (chapters[activeIdx + 1]?.index ?? (activeIdx + 1)) });
       window.__apiToast?.("已合并", { kind: "ok" });
@@ -874,7 +874,7 @@ function ChaptersModal({ script, onClose, onChanged }) {
   };
   const onSplit = async () => {
     if (!cur) return;
-    const pos = prompt("从该章第几字处拆分？", "");
+    const pos = await window.__prompt({ title: '拆分本章', label: '从该章第几字处拆分?', default: '' });
     const n = parseInt(pos, 10);
     if (!n || n < 1) return;
     try {

@@ -59,7 +59,7 @@ export function ScriptReview({ scriptId }) {
     if (r.ok) { setEditing(null); reload(); } else { setErr(r.error || '保存失败'); }
   };
   const delEntity = async (lk) => {
-    if (!window.confirm(`删除实体「${lk}」?`)) return;
+    if (!(window.__confirm ? await window.__confirm({ title: '删除实体', message: `删除实体「${lk}」?`, danger: true, confirmText: '删除' }) : window.confirm(`删除实体「${lk}」?`))) return;
     const r = await patchCanon(scriptId, { op: 'delete_entity', logical_key: lk });
     if (r.ok) reload(); else setErr(r.error || '删除失败');
   };
