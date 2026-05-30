@@ -30,6 +30,12 @@ import CSTextFilter from '@cloudscape-design/components/text-filter';
 import CSSelect from '@cloudscape-design/components/select';
 import CSModal from '@cloudscape-design/components/modal';
 import CSInput from '@cloudscape-design/components/input';
+import CSWizard from '@cloudscape-design/components/wizard';
+import CSFormField from '@cloudscape-design/components/form-field';
+import CSTextarea from '@cloudscape-design/components/textarea';
+import CSSegmentedControl from '@cloudscape-design/components/segmented-control';
+import CSColumnLayout from '@cloudscape-design/components/column-layout';
+import CSAlert from '@cloudscape-design/components/alert';
 
 const _SAVE_SORT_OPTS = [
   { value: 'played', label: '最近游玩' },
@@ -1558,229 +1564,144 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   /* ── step labels ── */
   const stepLabels = ["剧本", "角色", "出生点", "初始身份", "剧情期望"];
 
-  const node = (
-    <div className="pl-modal-backdrop" onClick={onClose}>
-      <div className="pl-modal" onClick={e => e.stopPropagation()} style={{ width: "min(660px, 100%)" }}>
-        {/* header */}
-        <header className="pl-modal-head">
-          <div style={{ minWidth: 0 }}>
-            <div className="pl-modal-eyebrow">新游戏 · {stepLabels[step]}</div>
-            <h2 className="pl-modal-title" style={{ fontSize: 18 }}>
-              {step === 0 && "选择剧本与存档名称"}
-              {step === 1 && "选择扮演角色"}
-              {step === 2 && "选择出生点"}
-              {step === 3 && "设定初始身份"}
-              {step === 4 && "剧情走向期望（可跳过）"}
-            </h2>
-          </div>
-          <button className="iconbtn" onClick={onClose} data-tip="关闭"><Icon name="close" size={14} /></button>
-        </header>
+  const scriptOpts = scripts.map(sc => ({ value: String(sc.id), label: sc.title }));
 
-        {/* progress bar */}
-        <WizardProgress step={step} total={TOTAL_STEPS} />
+  const step0Content = (
+    <CSSpaceBetween size="l">
+      {loading && <CSBox color="text-body-secondary"><Icon name="spinner" size={13} className="spin" /> 正在加载剧本 / 角色…</CSBox>}
+      {!loading && scripts.length === 0 && (
+        <CSAlert type="warning" header="还没有任何剧本">
+          先去 <a href="#scripts-import" onClick={onClose}>剧本 / 导入</a> 上传一部,然后再回来新建存档。
+        </CSAlert>
+      )}
+      <CSColumnLayout columns={2}>
+        <CSFormField label="存档名称" constraintText="必填">
+          <CSInput value={title} onChange={({ detail }) => setTitle(detail.value)}
+            onKeyDown={({ detail }) => { if (detail.key === 'Enter' && canNext) goNext(); }} autoFocus />
+        </CSFormField>
+        <CSFormField label="剧本" constraintText="必填">
+          <CSSelect
+            selectedOption={scriptOpts.find(o => o.value === scriptId) || null}
+            options={scriptOpts}
+            disabled={!scripts.length}
+            placeholder={scripts.length ? '选择剧本' : '（先导入一部剧本）'}
+            onChange={({ detail }) => {
+              const v = detail.selectedOption.value;
+              setScriptId(v);
+              setBirthpoint(null);
+              try { if (v) localStorage.setItem('newgame.lastScriptId', v); } catch (_) {}
+            }}
+          />
+        </CSFormField>
+      </CSColumnLayout>
+    </CSSpaceBetween>
+  );
 
-        {/* step content — scrollable */}
-        <div className="pl-modal-form">
-          {/* ══ Step 0: Title + Script ══ */}
-          {step === 0 && (
-            <>
-              {loading && (
-                <div className="muted" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-                  <Icon name="spinner" size={13} className="spin" /> 正在加载剧本 / 角色…
-                </div>
-              )}
-              {!loading && scripts.length === 0 && (
-                <div style={{ padding: "10px 12px", border: "1px solid var(--danger-soft)", borderRadius: 6, background: "var(--danger-soft)", color: "var(--danger)", fontSize: 13 }}>
-                  你还没有任何剧本。先去 <a href="#scripts-import" onClick={onClose}>剧本 / 导入</a> 上传一部，然后再回来新建存档。
-                </div>
-              )}
-              <div className="pl-import-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
-                <div className="pl-field">
-                  <label>存档名称 <span className="pl-field-req">*</span></label>
-                  <input
-                    value={title}
-                    onChange={e => setTitle(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter" && canNext) goNext(); }}
-                    autoFocus
-                  />
-                </div>
-                <div className="pl-field">
-                  <label>剧本 <span className="pl-field-req">*</span></label>
-                  <select
-                    value={scriptId}
-                    onChange={e => {
-                      const v = e.target.value;
-                      setScriptId(v);
-                      setBirthpoint(null); // reset birthpoint when script changes
-                      try { if (v) localStorage.setItem("newgame.lastScriptId", v); } catch (_) {}
-                    }}
-                    disabled={!scripts.length}
-                  >
-                    {scripts.length === 0
-                      ? <option value="">（先导入一部剧本）</option>
-                      : scripts.map(sc => <option key={sc.id} value={String(sc.id)}>{sc.title}</option>)}
-                  </select>
-                </div>
+  const step1Content = (
+    <CSSpaceBetween size="l">
+      <CSFormField label="扮演角色"
+        description={allRoleOptions.length === 0 ? '你还没有玩家身份 / 用户角色卡,自动切到「新建角色卡」。' : undefined}>
+        <CSSegmentedControl
+          selectedId={roleMode}
+          options={[
+            { id: 'existing', text: '使用现有', disabled: allRoleOptions.length === 0 },
+            { id: 'new', text: '新建角色卡' },
+          ]}
+          onChange={({ detail }) => setRoleMode(detail.selectedId)}
+        />
+      </CSFormField>
+      {roleMode === 'existing' && allRoleOptions.length > 0 && (
+        <div className="pl-newgame-cards">
+          {allRoleOptions.map(c => (
+            <label key={c.key} className={`pl-newgame-card ${pickedCard === c.key ? 'active' : ''}`}>
+              <input type="radio" checked={pickedCard === c.key} onChange={() => setPickedCard(c.key)} />
+              <div className="pl-newgame-card-avatar serif">{c.name.slice(0, 1)}</div>
+              <div className="pl-newgame-card-body">
+                <strong>{c.name}</strong>
+                <span className="muted-2" style={{ fontSize: 11.5 }}>
+                  {c.subtitle} · {c.kind === 'persona' ? '玩家身份' : '角色卡'}
+                </span>
               </div>
-            </>
-          )}
-
-          {/* ══ Step 1: Character ══ */}
-          {step === 1 && (
-            <>
-              <div className="pl-field">
-                <label>扮演角色</label>
-                <div className="seg" style={{ display: "flex" }}>
-                  <button
-                    className={roleMode === "existing" ? "active" : ""}
-                    onClick={() => setRoleMode("existing")}
-                    disabled={allRoleOptions.length === 0}
-                  >
-                    <Icon name="cards" size={12} /> 使用现有
-                  </button>
-                  <button
-                    className={roleMode === "new" ? "active" : ""}
-                    onClick={() => setRoleMode("new")}
-                  >
-                    <Icon name="plus" size={12} /> 新建角色卡
-                  </button>
-                </div>
-                {allRoleOptions.length === 0 && (
-                  <span className="pl-hint">你还没有玩家身份 / 用户角色卡，自动切到「新建角色卡」。</span>
-                )}
-              </div>
-              {roleMode === "existing" && allRoleOptions.length > 0 && (
-                <div className="pl-newgame-cards">
-                  {allRoleOptions.map(c => (
-                    <label key={c.key} className={`pl-newgame-card ${pickedCard === c.key ? "active" : ""}`}>
-                      <input type="radio" checked={pickedCard === c.key} onChange={() => setPickedCard(c.key)} />
-                      <div className="pl-newgame-card-avatar serif">{c.name.slice(0, 1)}</div>
-                      <div className="pl-newgame-card-body">
-                        <strong>{c.name}</strong>
-                        <span className="muted-2" style={{ fontSize: 11.5 }}>
-                          {c.subtitle} · {c.kind === "persona" ? "玩家身份" : "角色卡"}
-                        </span>
-                      </div>
-                      {c.pinned && <span className="pill accent" style={{ fontSize: 10.5 }}><Icon name="pin" size={9} /> 默认</span>}
-                    </label>
-                  ))}
-                  <a className="pl-newgame-card pl-newgame-card-link" href="#cards" onClick={onClose}>
-                    <Icon name="folder" size={14} />
-                    <span>前往角色卡库管理 →</span>
-                  </a>
-                </div>
-              )}
-              {roleMode === "new" && (
-                <div className="pl-import-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
-                  <div className="pl-field">
-                    <label>姓名 <span className="pl-field-req">*</span></label>
-                    <input value={newCardName} onChange={e => setNewCardName(e.target.value)} />
-                  </div>
-                  <div className="pl-field">
-                    <label>身份 / 角色</label>
-                    <input value={newCardRole} onChange={e => setNewCardRole(e.target.value)} />
-                  </div>
-                  <div className="pl-field" style={{ gridColumn: "1 / -1" }}>
-                    <label>
-                      设定
-                      <span className="muted-2" style={{ textTransform: "none", letterSpacing: 0, marginLeft: 6, fontSize: 11 }}>
-                        创建后会自动加入角色卡库
-                      </span>
-                    </label>
-                    <textarea rows={2} value={newCardBg} onChange={e => setNewCardBg(e.target.value)} />
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* ══ Step 2: Birthpoint ══ */}
-          {step === 2 && (
-            <BirthpointStep
-              scriptId={scriptId}
-              birthpoint={birthpoint}
-              setBirthpoint={setBirthpoint}
-            />
-          )}
-
-          {/* ══ Step 3: Identity ══ */}
-          {step === 3 && (
-            <IdentityStep
-              scriptId={scriptId}
-              birthpoint={birthpoint}
-              pickedCard={pickedCard}
-              allRoleOptions={allRoleOptions}
-              identity={identity}
-              setIdentity={(id) => setIdentity(id)}
-            />
-          )}
-
-          {/* ══ Step 4: Story Intent ══ */}
-          {step === 4 && (
-            <div>
-              <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
-                告诉 GM 你希望的剧情走向。哪些设定是 NPC 知道的？哪些是你的秘密？哪些是你希望 GM 优先发展的方向？
-                <br /><span className="muted-2" style={{ fontSize: 11 }}>此项可选，留空跳过。填写后存入存档，GM 每轮都能参考。</span>
-              </p>
-              <div className="pl-field">
-                <label>剧情期望 / 秘密分配</label>
-                <textarea
-                  rows={6}
-                  style={{ resize: "vertical" }}
-                  placeholder={"例：\n- 林晓芸知道原著剧情，但绝口不提，NPC 不知道她是穿越者\n- 希望 GM 优先推进与林有德的相遇\n- 不希望出现过于血腥的场面"}
-                  value={storyIntent}
-                  onChange={e => setStoryIntent(e.target.value)}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* custom identity "use this" sets _custom flag */}
-          {/* (IdentityStep handles it internally via applyCustom) */}
-
-          {/* inline submission error */}
-          {submitErr && <InlineErr msg={"创建失败：" + submitErr} />}
+              {c.pinned && <span className="pill accent" style={{ fontSize: 10.5 }}><Icon name="pin" size={9} /> 默认</span>}
+            </label>
+          ))}
+          <a className="pl-newgame-card pl-newgame-card-link" href="#cards" onClick={onClose}>
+            <Icon name="folder" size={14} /><span>前往角色卡库管理 →</span>
+          </a>
         </div>
+      )}
+      {roleMode === 'new' && (
+        <CSColumnLayout columns={2}>
+          <CSFormField label="姓名" constraintText="必填">
+            <CSInput value={newCardName} onChange={({ detail }) => setNewCardName(detail.value)} />
+          </CSFormField>
+          <CSFormField label="身份 / 角色">
+            <CSInput value={newCardRole} onChange={({ detail }) => setNewCardRole(detail.value)} />
+          </CSFormField>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <CSFormField label="设定" description="创建后会自动加入角色卡库">
+              <CSTextarea rows={2} value={newCardBg} onChange={({ detail }) => setNewCardBg(detail.value)} />
+            </CSFormField>
+          </div>
+        </CSColumnLayout>
+      )}
+    </CSSpaceBetween>
+  );
 
-        {/* footer */}
-        <footer className="pl-modal-foot">
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {step === 0 && (
-              <span className="muted-2" style={{ fontSize: 11 }}>
-                <Icon name="info" size={10} /> 共 {TOTAL_STEPS} 步
-              </span>
-            )}
-            {step === 2 && !birthpoint && (
-              <span className="muted-2" style={{ fontSize: 11 }}>
-                <Icon name="info" size={10} /> 请选择一个出生点
-              </span>
-            )}
-            {step === 3 && !identity && (
-              <span className="muted-2" style={{ fontSize: 11 }}>
-                <Icon name="info" size={10} /> 请选择或填写初始身份
-              </span>
-            )}
-            {step === 4 && (
-              <span className="muted-2" style={{ fontSize: 11 }}>
-                <Icon name="info" size={10} /> 可跳过，留空即可
-              </span>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn ghost" onClick={step === 0 ? onClose : goPrev}>
-              {step === 0 ? "取消" : <><Icon name="chevron_left" size={11} /> 上一步</>}
-            </button>
-            {step < TOTAL_STEPS - 1 ? (
-              <button className="btn primary" onClick={goNext} disabled={!canNext}>
-                下一步 <Icon name="chevron_right" size={11} />
-              </button>
-            ) : (
-              <button className="btn primary" onClick={handleSubmit} disabled={!canSubmit}>
-                <Icon name="check" size={12} /> {submitting ? "正在创建…" : "创建并进入"}
-              </button>
-            )}
-          </div>
-        </footer>
+  const step4Content = (
+    <CSSpaceBetween size="m">
+      <CSBox color="text-body-secondary" fontSize="body-s">
+        告诉 GM 你希望的剧情走向。哪些设定是 NPC 知道的?哪些是你的秘密?哪些是你希望 GM 优先发展的方向?
+        此项可选,留空跳过。填写后存入存档,GM 每轮都能参考。
+      </CSBox>
+      <CSFormField label="剧情期望 / 秘密分配">
+        <CSTextarea
+          rows={6}
+          placeholder={"例:\n- 林晓芸知道原著剧情,但绝口不提,NPC 不知道她是穿越者\n- 希望 GM 优先推进与林有德的相遇\n- 不希望出现过于血腥的场面"}
+          value={storyIntent}
+          onChange={({ detail }) => setStoryIntent(detail.value)}
+        />
+      </CSFormField>
+    </CSSpaceBetween>
+  );
+
+  const wizSteps = [
+    { title: '选择剧本与存档名称', content: step0Content },
+    { title: '选择扮演角色', content: step1Content },
+    { title: '选择出生点', content: <BirthpointStep scriptId={scriptId} birthpoint={birthpoint} setBirthpoint={setBirthpoint} /> },
+    { title: '设定初始身份', content: <IdentityStep scriptId={scriptId} birthpoint={birthpoint} pickedCard={pickedCard} allRoleOptions={allRoleOptions} identity={identity} setIdentity={(id) => setIdentity(id)} /> },
+    { title: '剧情走向期望', isOptional: true, content: step4Content },
+  ].map((s, i) => ({
+    ...s,
+    errorText: (submitErr && i === TOTAL_STEPS - 1) ? ('创建失败:' + submitErr) : undefined,
+  }));
+
+  const node = (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'var(--bg, #1a1817)', overflow: 'auto' }}>
+      <div style={{ maxWidth: 1040, margin: '0 auto', padding: '32px 24px 64px' }}>
+        <CSWizard
+          steps={wizSteps}
+          activeStepIndex={step}
+          isLoadingNextStep={submitting}
+          submitButtonText={submitting ? '正在创建…' : '创建并进入'}
+          onCancel={onClose}
+          onSubmit={() => { if (canSubmit) handleSubmit(); }}
+          onNavigate={({ detail }) => {
+            const target = detail.requestedStepIndex;
+            // 前进时校验当前步;后退随意
+            if (target > step && !stepValid[step]) return;
+            setStep(target);
+          }}
+          i18nStrings={{
+            stepNumberLabel: (n) => `第 ${n} 步`,
+            collapsedStepsLabel: (n, total) => `第 ${n} 步 / 共 ${total} 步`,
+            cancelButton: '取消',
+            previousButton: '上一步',
+            nextButton: '下一步',
+            submitButton: submitting ? '正在创建…' : '创建并进入',
+            optional: '可选',
+          }}
+        />
       </div>
     </div>
   );
