@@ -106,6 +106,7 @@ function PlatformApp() {
         setPage={go}
         assistantOpen={assistantOpen}
         onOpenAssistant={() => setAssistantOpen(true)}
+        onToggleAssistant={() => setAssistantOpen((v) => !v)}
         assistant={
           <ConsoleAssistantPanel
             open={assistantOpen}

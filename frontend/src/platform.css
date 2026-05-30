@@ -250,6 +250,34 @@
 .pl-topbar .pl-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
 .pl-topbar-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
+/* ── 统一顶栏(Phase 0) ─────────────────────────────────────────────── */
+.pl-topbar-unified { gap: 16px; }
+.pl-topbar-lead { min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.pl-crumbs { display: flex; gap: 6px; font-size: 12px; color: var(--muted); margin-bottom: 2px; flex-wrap: wrap; }
+.pl-crumb { display: inline-flex; gap: 6px; align-items: center; }
+.pl-crumb-link { background: none; border: none; color: var(--text-quiet); cursor: pointer; font: inherit; font-size: 12px; padding: 0; }
+.pl-crumb-link:hover { color: var(--accent); text-decoration: underline; }
+.pl-crumb-sep { color: var(--muted-3); }
+.pl-topbar-titles { min-width: 0; }
+.pl-topbar-titles h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-topbar-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.pl-topbar-actions { display: flex; align-items: center; gap: 8px; }
+/* 页面操作与全局工具之间一条分隔线 */
+.pl-topbar-right > .pl-topbar-tools { padding-left: 12px; border-left: 1px solid var(--line); }
+.pl-topbar-right > .pl-topbar-tools:first-child { padding-left: 0; border-left: none; }
+
+/* 助手开关 — VS Code 式顶栏切换按钮 */
+.pl-assistant-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  box-sizing: border-box; height: 30px; padding: 0 11px;
+  font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
+  border: 1px solid var(--line-strong); border-radius: 7px;
+  background: var(--panel-2); color: var(--text-quiet);
+  transition: background .14s, border-color .14s, color .14s;
+}
+.pl-assistant-toggle:hover { background: var(--panel-3); color: var(--text); }
+.pl-assistant-toggle.on { background: var(--accent-soft); border-color: var(--accent-edge); color: var(--accent); }
+
 .pl-content { padding: 24px; overflow: auto; }
 .pl-stack { display: grid; gap: 20px; max-width: 1280px; }
 

@@ -7,7 +7,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { Icon } from '../game-icons.jsx';
-import { ConfirmModal } from '../platform-app.jsx';
+import { ConfirmModal, useShellChrome } from '../platform-app.jsx';
 import { BranchGraph } from '../branch-graph.jsx';
 import { NewGameWizard } from './new-game-wizard.jsx';
 import {
@@ -255,6 +255,9 @@ function SavesListView() {
     </>
   );
 
+  // 把标题 + 操作喂给统一顶栏(不再各页自渲染标题栏)
+  useShellChrome({ title: '存档目录', subtitle: `${saves.length} 个存档`, actions: headerActions }, [saves.length]);
+
   const list = (
     <ResourceList items={saves} selectedId={selectedId}
       onSelect={(s) => { setSelectedId(s.id); setTab('overview'); setRenaming(false); }}
@@ -324,9 +327,6 @@ function SavesListView() {
   return (
     <div className="pl-stack" data-cap-anchor="saves.list">
       <Flashbar items={flash.items} />
-      <PageHeader title="存档目录" counter={saves.length}
-        description="选择左侧存档查看详情、调整设置或继续游戏。"
-        actions={headerActions} />
       <SplitLayout list={list} detail={detail} detailOpen={!!selected}
         onCloseDetail={() => setSelectedId(null)} />
       <NewGameModal open={createOpen} onClose={() => setCreateOpen(false)} onConfirm={onCreate} />

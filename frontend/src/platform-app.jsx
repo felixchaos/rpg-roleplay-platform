@@ -49,6 +49,18 @@ const PL_TITLES = {
   apis:     ["API",      "稳定功能指令与版本化接口"],
 };
 
+/* ── 统一顶栏 chrome:页面把 title/breadcrumb/actions 喂给唯一的 topbar,
+   不再各页自渲染一条标题栏(消除顶栏割裂)。 */
+const ShellChromeCtx = React.createContext({ set: () => {}, clear: () => {} });
+function useShellChrome(chrome, deps = []) {
+  const ctx = React.useContext(ShellChromeCtx);
+  React.useEffect(() => {
+    ctx.set(chrome);
+    return () => ctx.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
 /* ---------------------------- GENERIC MODALS ------------------- */
 function PromptModal({ open, eyebrow, title, fields = [], submitLabel = "确认", danger = false, hint, onClose, onConfirm, busy = false }) {
   const [values, setValues] = useStatePL({});
@@ -309,12 +321,24 @@ window.__publishUser = publishUser;
 // task 55: 新增 assistant slot + assistantOpen/onOpenAssistant。
 // 助手现在挤压式布局,折叠时 cap-root 自身 display:none,展开时 360px 自动腾位;
 // 折叠态 TopBar 右上角显示"展开助手"图标按钮。
-function PlatformShell({ page, setPage, children, assistant, assistantOpen, onOpenAssistant }) {
+function PlatformShell({ page, setPage, children, assistant, assistantOpen, onOpenAssistant, onToggleAssistant }) {
   const platform = usePlatformData();  // task 45：响应式拿真 platform（mock baseline 替换后能重渲）
   const reactiveUser = useReactiveUser();   // task 13：左侧用户栏即时同步
   const [title, subtitle] = PL_TITLES[page] || ["平台", ""];
   const [continueState, setContinueState] = useStatePL({ open: false, save: null, nodeId: null });
   const [searchOpen, setSearchOpen] = useStatePL(false);
+  // 统一顶栏:页面通过 useShellChrome 注入 title/breadcrumb/actions
+  const [chrome, setChromeState] = useStatePL({});
+  const chromeApi = React.useMemo(() => ({
+    set: (c) => setChromeState(c || {}),
+    clear: () => setChromeState({}),
+  }), []);
+  // 切页时清空上一页注入的 chrome,避免标题/操作残留
+  React.useEffect(() => { setChromeState({}); }, [page]);
+  const dispTitle = chrome.title || title;
+  const dispSub = chrome.subtitle !== undefined ? chrome.subtitle : subtitle;
+  const crumbs = chrome.breadcrumb;
+  const pageActions = chrome.actions;
 
   React.useEffect(() => {
     window.__openContinue = (save, nodeId) => setContinueState({ open: true, save: save || platform.saves[0], nodeId: nodeId || null });
@@ -492,46 +516,56 @@ function PlatformShell({ page, setPage, children, assistant, assistantOpen, onOp
         </div>
       </aside>
       <main className="pl-main">
-        <header className="pl-topbar">
-          <div>
-            <h1>{title}</h1>
-            <div className="pl-sub">{subtitle}</div>
-          </div>
-          <div className="pl-topbar-tools">
-            <button className="btn ghost" onClick={() => window.__openContinue?.(platform.saves[0])}>
-              <Icon name="play" size={12} /> 进入游戏
-            </button>
-            {/* task 55: 助手折叠时显示展开按钮;展开后由侧栏头部 ✕ 关闭。
-                用 spark 图标 (现有 SVG, 角色卡里也用),title 写"展开控制台助手"。 */}
-            {!assistantOpen && onOpenAssistant && (
-              <button className="iconbtn" data-tip="展开控制台助手"
-                      aria-label="展开控制台助手"
-                      onClick={onOpenAssistant}>
-                <Icon name="sparkle" size={14} />
-              </button>
+        <header className="pl-topbar pl-topbar-unified">
+          <div className="pl-topbar-lead">
+            {crumbs && crumbs.length > 0 && (
+              <nav className="pl-crumbs">
+                {crumbs.map((b, i) => (
+                  <span key={i} className="pl-crumb">
+                    {b.onClick ? <button className="pl-crumb-link" onClick={b.onClick}>{b.label}</button> : <span>{b.label}</span>}
+                    {i < crumbs.length - 1 && <span className="pl-crumb-sep">/</span>}
+                  </span>
+                ))}
+              </nav>
             )}
-            <button className="iconbtn" data-tip="搜索 · ⌘K" onClick={() => setSearchOpen(true)}>
-              <Icon name="search" size={14} />
-            </button>
-            <button className="iconbtn" data-tip="刷新平台数据" onClick={async () => {
-              // task 50：之前是 dead button。刷新 /api/platform + /api/saves + /api/scripts
-              // 并通过 data-loader 事件让订阅 usePlatformData 的组件 re-render。
-              try {
-                window.__apiToast?.("正在刷新…", { kind: "info", duration: 1200 });
-                if (window.__refreshPlatform) await window.__refreshPlatform();
-                else {
-                  const p = await window.api.platform.info();
-                  window.MOCK_PLATFORM = p && p.platform ? p.platform : (p || window.MOCK_PLATFORM);
-                  window.dispatchEvent(new CustomEvent("rpg-data-ready"));
+            <div className="pl-topbar-titles">
+              <h1>{dispTitle}</h1>
+              {dispSub ? <div className="pl-sub">{dispSub}</div> : null}
+            </div>
+          </div>
+          <div className="pl-topbar-right">
+            {pageActions ? <div className="pl-topbar-actions">{pageActions}</div> : null}
+            <div className="pl-topbar-tools">
+              <button className="iconbtn" data-tip="搜索 · ⌘K" aria-label="搜索" onClick={() => setSearchOpen(true)}>
+                <Icon name="search" size={14} />
+              </button>
+              <button className="iconbtn" data-tip="刷新平台数据" aria-label="刷新" onClick={async () => {
+                try {
+                  window.__apiToast?.("正在刷新…", { kind: "info", duration: 1200 });
+                  if (window.__refreshPlatform) await window.__refreshPlatform();
+                  else {
+                    const p = await window.api.platform.info();
+                    window.MOCK_PLATFORM = p && p.platform ? p.platform : (p || window.MOCK_PLATFORM);
+                    window.dispatchEvent(new CustomEvent("rpg-data-ready"));
+                  }
+                  window.__apiToast?.("已刷新", { kind: "ok", duration: 1600 });
+                } catch (e) {
+                  window.__apiToast?.("刷新失败", { kind: "danger", detail: e?.message });
                 }
-                window.__apiToast?.("已刷新", { kind: "ok", duration: 1600 });
-              } catch (e) {
-                window.__apiToast?.("刷新失败", { kind: "danger", detail: e?.message });
-              }
-            }}><Icon name="refresh" size={14} /></button>
+              }}><Icon name="refresh" size={14} /></button>
+              {/* VS Code 式:顶栏开关,点击展开/收起右侧控制台助手栏 */}
+              <button className={`pl-assistant-toggle ${assistantOpen ? "on" : ""}`}
+                      data-tip={assistantOpen ? "收起控制台助手" : "展开控制台助手"}
+                      aria-label="控制台助手" aria-pressed={!!assistantOpen}
+                      onClick={onToggleAssistant || onOpenAssistant}>
+                <Icon name="sparkle" size={14} /> <span>助手</span>
+              </button>
+            </div>
           </div>
         </header>
-        <div className="pl-content">{children}</div>
+        <ShellChromeCtx.Provider value={chromeApi}>
+          <div className="pl-content">{children}</div>
+        </ShellChromeCtx.Provider>
       </main>
       {/* task 55: 助手作为第 3 个 grid 列;折叠时 cap-root display:none 不占位 */}
       {assistant}
@@ -3164,7 +3198,7 @@ function AuthPage() {
 // ScriptsPage / SavesPage / CardsPage / SettingsPage / BranchesPage / ContinuePicker /
 // NewGameModal / ConfidenceBar 现在分别在 pages/scripts.jsx / saves.jsx / cards.jsx /
 // settings.jsx 中定义并自己 Object.assign(window, ...)；这里不再列出，避免 ReferenceError。
-export { PlatformShell, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData };
+export { PlatformShell, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData, useShellChrome };
 
 // ──────────────────────────────────────────────────────────────────
 // 以下函数本体已拆分到 pages/cards.jsx / pages/saves.jsx /
