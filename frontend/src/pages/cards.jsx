@@ -19,6 +19,14 @@ import CSTextFilter from '@cloudscape-design/components/text-filter';
 import CSSegmentedControl from '@cloudscape-design/components/segmented-control';
 import CSSelect from '@cloudscape-design/components/select';
 import CSAlert from '@cloudscape-design/components/alert';
+import CSTable from '@cloudscape-design/components/table';
+import CSContainer from '@cloudscape-design/components/container';
+import CSTabs from '@cloudscape-design/components/tabs';
+import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
+import CSFormField from '@cloudscape-design/components/form-field';
+import CSInput from '@cloudscape-design/components/input';
+import CSTextarea from '@cloudscape-design/components/textarea';
+import CSColumnLayout from '@cloudscape-design/components/column-layout';
 
 const USER_CARDS = [
   { id: "uc1", name: "顾承砚", role: "漂流的史官", tone: "—", origin: "雾港未尽 · 默认主角",
@@ -181,9 +189,9 @@ function UserCardsView() {
   const [cards, setCards] = useStatePL(IS_ANON ? USER_CARDS : []);
   const [filter, setFilter] = useStatePL("all");
   const [q, setQ] = useStatePL("");
-  const [edit, setEdit] = useStatePL(null);
   const [adding, setAdding] = useStatePL(false);
   const [importing, setImporting] = useStatePL(false);
+  const [selectedId, setSelectedId] = useStatePL(null);
 
   const reload = React.useCallback(async () => {
     try {
@@ -221,7 +229,7 @@ function UserCardsView() {
     try {
       await window.api.cards.myUpsert(vals);
       window.__apiToast?.(adding ? "已新增" : "已保存", { kind: "ok" });
-      setEdit(null); setAdding(false);
+      setAdding(false);
       reload();
     } catch (e) {
       window.__apiToast?.("保存失败", { kind: "danger", detail: e?.message });
@@ -246,6 +254,27 @@ function UserCardsView() {
   let filtered = cards;
   if (filter === "pinned") filtered = filtered.filter(c => c.pinned);
   if (q) filtered = filtered.filter(c => (c.name + c.role + c.bio + (c.tags || []).join(" ")).toLowerCase().includes(q.toLowerCase()));
+
+  const selected = cards.find((x) => x.id === selectedId) || null;
+  const onDuplicate = async (c) => {
+    try {
+      const src = c._raw || {};
+      const body = { ...src, id: undefined, slug: undefined, name: (src.name || c.name) + " 副本" };
+      await window.api.cards.myUpsert(body);
+      window.__apiToast?.("已复制", { kind: "ok" });
+      reload();
+    } catch (e) { window.__apiToast?.("复制失败", { kind: "danger", detail: e?.message }); }
+  };
+  const onDeleteCard = async (c) => {
+    if (!await window.__confirm({ title: '删除角色卡', message: `确认删除角色卡「${c.name}」?该操作无法撤销。`, danger: true, confirmText: '删除' })) return;
+    try {
+      await window.api.cards.myDelete(c.id);
+      window.__apiToast?.("已删除 " + c.name, { kind: "ok" });
+      setSelectedId(null);
+      setCards(cs => cs.filter(x => x.id !== c.id)); reload();
+    } catch (e) { window.__apiToast?.("删除失败", { kind: "danger", detail: e?.message }); }
+  };
+
   return (
     <>
       <CSSpaceBetween size="l">
@@ -260,8 +289,15 @@ function UserCardsView() {
             </CSSpaceBetween>
           }
         >用户角色卡</CSHeader>
-        <CardGrid cards={filtered} onEdit={setEdit} kind="user"
-          empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>还没有用户角色卡,点右上「新增角色卡」开始。</CSBox>}
+
+        <CSTable
+          variant="container"
+          trackBy="id"
+          selectionType="single"
+          items={filtered}
+          selectedItems={selected ? [selected] : []}
+          onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedId(x.id); }}
+          onRowClick={({ detail }) => setSelectedId(detail.item.id)}
           filter={
             <CSSpaceBetween direction="horizontal" size="xs">
               <div style={{ minWidth: 260 }}>
@@ -273,29 +309,129 @@ function UserCardsView() {
                 onChange={({ detail }) => setFilter(detail.selectedId)} />
             </CSSpaceBetween>
           }
-          onDeleted={(c) => { setCards(cs => cs.filter(x => x.id !== c.id)); reload(); }}
-          onDuplicate={async (c) => {
-            try {
-              const src = c._raw || {};
-              const body = { ...src, id: undefined, slug: undefined, name: (src.name || c.name) + " 副本" };
-              await window.api.cards.myUpsert(body);
-              window.__apiToast?.("已复制", { kind: "ok" });
-              reload();
-            } catch (e) { window.__apiToast?.("复制失败", { kind: "danger", detail: e?.message }); }
-          }}
+          empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{q ? '没有匹配的角色卡' : '还没有用户角色卡,点右上「新增角色卡」开始。'}</CSBox>}
+          columnDefinitions={[
+            { id: 'name', header: '角色卡', cell: (c) => (
+              <div><CSBox fontWeight="bold">{c.name}</CSBox><CSBox fontSize="body-s" color="text-body-secondary">{c.role !== '—' ? c.role : (c.bio || '').slice(0, 40)}</CSBox></div>
+            ) },
+            { id: 'tags', header: '标签', cell: (c) => (c.tags?.length
+              ? <CSSpaceBetween direction="horizontal" size="xxs">{c.tags.slice(0, 4).map((t) => <CSBadge key={t}>{t}</CSBadge>)}</CSSpaceBetween>
+              : <CSBox color="text-status-inactive">—</CSBox>) },
+            { id: 'uses', header: '使用', cell: (c) => `${c.uses} 次` },
+            { id: 'updated', header: '更新', cell: (c) => c.updated },
+          ]}
         />
+
+        {selected && (
+          <CardDetailPanel
+            card={selected}
+            kind="user"
+            onSave={async (vals) => { await onSaveCard({ ...(selected._raw?.id ? { id: selected._raw.id } : { id: selected.id }), ...vals }); }}
+            onDuplicate={() => onDuplicate(selected)}
+            onDelete={() => onDeleteCard(selected)}
+          />
+        )}
       </CSSpaceBetween>
-      {(edit || adding) && (
+      {adding && (
         <CardEditModal
-          card={edit?._raw || edit}
-          isNew={adding}
+          card={null}
+          isNew
           kind="user"
-          onClose={() => { setEdit(null); setAdding(false); }}
+          onClose={() => setAdding(false)}
           onSave={onSaveCard}
         />
       )}
       <TavernImportModal open={importing} onClose={() => setImporting(false)} onConfirm={onImport} />
     </>
+  );
+}
+
+/* 角色卡详情面板 —— 选中后在列表下方展开(对齐剧本/存档)。
+   Tabs:角色信息(KeyValuePairs)/ 设定(只读展示)/ 角色设置(内联编辑表单)。 */
+function CardDetailPanel({ card, kind, onSave, onDuplicate, onDelete }) {
+  const raw = card._raw || card;
+  const [tab, setTab] = useStatePL('info');
+  const [form, setForm] = useStatePL(null);
+  const [saving, setSaving] = useStatePL(false);
+  useEffectPL(() => {
+    setTab('info');
+    setForm({
+      name: raw.name || '', identity: raw.identity || raw.role || '',
+      personality: raw.personality || '', appearance: raw.appearance || '',
+      speech_style: raw.speech_style || '', secrets: raw.secrets || '',
+      tags: Array.isArray(raw.tags) ? raw.tags.join(', ') : '',
+    });
+  }, [card.id]);
+  const u = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const doSave = async () => {
+    if (!form?.name?.trim()) { window.__apiToast?.('姓名必填', { kind: 'warn' }); return; }
+    setSaving(true);
+    try {
+      await onSave({
+        name: form.name.trim(), identity: form.identity.trim(),
+        personality: form.personality.trim(), appearance: form.appearance.trim(),
+        speech_style: form.speech_style.trim(), secrets: form.secrets.trim(),
+        tags: (form.tags || '').split(',').map((s) => s.trim()).filter(Boolean),
+      });
+    } finally { setSaving(false); }
+  };
+  const setting = (label, value) => value
+    ? <div><CSBox variant="awsui-key-label">{label}</CSBox><CSBox color="text-body-secondary" variant="p">{value}</CSBox></div>
+    : null;
+
+  return (
+    <CSContainer header={
+      <CSHeader variant="h2"
+        actions={
+          <CSSpaceBetween direction="horizontal" size="xs">
+            <CSButton variant="primary" iconName="check" loading={saving} onClick={doSave}>保存</CSButton>
+            <CSButton iconName="copy" onClick={onDuplicate}>复制为新卡</CSButton>
+            {kind === 'user' && <CSButton href={window.api.cards.exportTavern(card.id)} target="_blank" iconName="download">导出</CSButton>}
+            <CSButton iconName="remove" onClick={onDelete}>删除</CSButton>
+          </CSSpaceBetween>
+        }
+      >{card.name}</CSHeader>
+    }>
+      <CSTabs activeTabId={tab} onChange={({ detail }) => setTab(detail.activeTabId)} tabs={[
+        { id: 'info', label: '角色信息', content: (
+          <CSKeyValuePairs columns={4} items={[
+            { label: '身份', value: raw.identity || raw.role || '—' },
+            { label: '来源', value: card.origin || '通用' },
+            { label: '使用次数', value: `${card.uses || 0} 次` },
+            { label: '更新', value: card.updated || '—' },
+            { label: '标签', value: (Array.isArray(raw.tags) && raw.tags.length) ? raw.tags.join(' · ') : '—' },
+            { label: '卡 ID', value: <span className="mono">{card.id}</span> },
+          ]} />
+        ) },
+        { id: 'setting', label: '设定', content: (
+          <CSSpaceBetween size="m">
+            {setting('外貌', raw.appearance)}
+            {setting('性格', raw.personality)}
+            {setting('语气 / 说话风格', raw.speech_style)}
+            {setting('当前状态', raw.current_status)}
+            {setting('关键秘密', raw.secrets)}
+            {!(raw.appearance || raw.personality || raw.speech_style || raw.current_status || raw.secrets) &&
+              <CSBox color="text-status-inactive">暂无设定,切到「角色设置」补充。</CSBox>}
+          </CSSpaceBetween>
+        ) },
+        { id: 'edit', label: '角色设置', content: form && (
+          <CSSpaceBetween size="l">
+            <CSColumnLayout columns={2}>
+              <CSFormField label="姓名" constraintText="必填"><CSInput value={form.name} onChange={({ detail }) => u('name', detail.value)} /></CSFormField>
+              <CSFormField label="身份"><CSInput value={form.identity} onChange={({ detail }) => u('identity', detail.value)} /></CSFormField>
+            </CSColumnLayout>
+            <CSFormField label="性格 / 设定"><CSTextarea rows={3} value={form.personality} onChange={({ detail }) => u('personality', detail.value)} /></CSFormField>
+            <CSColumnLayout columns={2}>
+              <CSFormField label="外貌"><CSTextarea rows={2} value={form.appearance} onChange={({ detail }) => u('appearance', detail.value)} /></CSFormField>
+              <CSFormField label="语气 / 说话风格"><CSTextarea rows={2} value={form.speech_style} onChange={({ detail }) => u('speech_style', detail.value)} /></CSFormField>
+            </CSColumnLayout>
+            <CSFormField label="关键秘密"><CSTextarea rows={2} value={form.secrets} onChange={({ detail }) => u('secrets', detail.value)} /></CSFormField>
+            <CSFormField label="标签" description="逗号分隔"><CSInput value={form.tags} onChange={({ detail }) => u('tags', detail.value)} /></CSFormField>
+            <CSBox><CSButton variant="primary" iconName="check" loading={saving} onClick={doSave}>保存</CSButton></CSBox>
+          </CSSpaceBetween>
+        ) },
+      ]} />
+    </CSContainer>
   );
 }
 
