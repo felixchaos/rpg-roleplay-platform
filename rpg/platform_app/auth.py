@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 import threading
@@ -123,7 +124,31 @@ def admin_unlock(ip: str, username: str) -> None:
     _write_audit(username, ip, "admin_unlock", {})
 
 
-def register(username: str, password: str, display_name: str = "") -> dict[str, Any]:
+def _bootstrap_admin_allowed(setup_token: str | None) -> bool:
+    """首用户(空 users 表)能否被授予 admin。
+
+    - 本地/非鉴权模式:允许(单用户桌面场景,无引导风险)。
+    - server/强制鉴权模式:必须配置 RPG_SETUP_TOKEN 且请求携带匹配令牌,
+      否则首用户仅为普通 user —— 杜绝公网首注册抢 admin(CWE-269)。
+    """
+    from core.config import effective_auth_required
+    from core.config import setup_token as _cfg_setup_token
+    if not effective_auth_required():
+        return True
+    configured = (_cfg_setup_token() or "").strip()
+    provided = (setup_token or "").strip()
+    if not configured or not provided:
+        return False
+    return secrets.compare_digest(provided, configured)
+
+
+def register(
+    username: str,
+    password: str,
+    display_name: str = "",
+    *,
+    setup_token: str | None = None,
+) -> dict[str, Any]:
     init_db()
     username = normalize_username(username)
     if not username:
@@ -131,7 +156,8 @@ def register(username: str, password: str, display_name: str = "") -> dict[str, 
     if len(password or "") < MIN_PASSWORD_LENGTH:
         raise ValueError(f"密码至少 {MIN_PASSWORD_LENGTH} 位")
     with connect() as db:
-        role = "admin" if db.execute("select count(*) as count from users").fetchone()["count"] == 0 else "user"
+        is_first = db.execute("select count(*) as count from users").fetchone()["count"] == 0
+        role = "admin" if (is_first and _bootstrap_admin_allowed(setup_token)) else "user"
         try:
             row = db.execute(
                 """
@@ -146,6 +172,11 @@ def register(username: str, password: str, display_name: str = "") -> dict[str, 
         return dict(row)
 
 
+def _hash_token(token: str) -> str:
+    """session token → sha256 hex(DB 只存哈希,不存明文)。"""
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
 def login(username: str, password: str, *, ip: str = "") -> tuple[dict[str, Any], str]:
     """登录，带速率限制 + 失败审计"""
     init_db()
@@ -158,9 +189,10 @@ def login(username: str, password: str, *, ip: str = "") -> tuple[dict[str, Any]
             raise ValueError("用户名或密码错误")
         token = secrets.token_urlsafe(32)
         expires_at = datetime.now() + timedelta(days=SESSION_DAYS)
+        # 安全:DB 只存 token 的 sha256 哈希,不存可直接使用的明文(拖库不得有效会话)
         db.execute(
-            "insert into sessions(token, user_id, expires_at) values (%s, %s, %s)",
-            (token, row["id"], expires_at),
+            "insert into sessions(token, token_hash, user_id, expires_at) values (%s, %s, %s, %s)",
+            ("", _hash_token(token), row["id"], expires_at),
         )
         _record_login_success(ip, normalized)
         return dict(row), token
@@ -171,7 +203,8 @@ def logout(token: str | None) -> None:
         return
     init_db()
     with connect() as db:
-        db.execute("delete from sessions where token = %s", (token,))
+        db.execute("delete from sessions where token_hash = %s or (token <> '' and token = %s)",
+                   (_hash_token(token), token))
 
 
 def user_from_token(token: str | None) -> dict[str, Any] | None:
@@ -179,13 +212,15 @@ def user_from_token(token: str | None) -> dict[str, Any] | None:
         return None
     init_db()
     with connect() as db:
+        # 按哈希查找(过渡期兼容历史明文 token 行)
         row = db.execute(
             """
             select users.* from sessions
             join users on users.id = sessions.user_id
-            where sessions.token = %s and sessions.expires_at > now()
+            where (sessions.token_hash = %s or (sessions.token <> '' and sessions.token = %s))
+              and sessions.expires_at > now()
             """,
-            (token,),
+            (_hash_token(token), token),
         ).fetchone()
         return dict(row) if row else None
 

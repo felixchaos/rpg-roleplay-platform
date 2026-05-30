@@ -13,11 +13,12 @@ services:
     environment:
       POSTGRES_DB: rpg
       POSTGRES_USER: rpg
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?必须设 POSTGRES_PASSWORD(勿用弱口令)}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # 仅绑本机:防 LAN/云直连绕过应用鉴权(CWE-200)。容器间走 rpg-net 不受影响。
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rpg -d rpg"]
       interval: 10s
@@ -48,9 +49,9 @@ services:
       PGBOUNCER_SERVER_IDLE_TIMEOUT: "600"
       PGBOUNCER_AUTH_TYPE: md5
       POSTGRESQL_USERNAME: rpg
-      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:?必须设 POSTGRES_PASSWORD(勿用弱口令)}
     ports:
-      - "6432:6432"
+      - "127.0.0.1:6432:6432"
     volumes:
       # 可选:挂载自定义 pgbouncer.ini(覆盖 env 设置)
       - ./pgbouncer.ini:/bitnami/pgbouncer/conf/pgbouncer.ini:ro
@@ -68,13 +69,13 @@ services:
     image: redis:7-alpine
     container_name: rpg-redis
     restart: unless-stopped
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-changeme}
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:?必须设 REDIS_PASSWORD(勿用弱口令)}
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?必须设 REDIS_PASSWORD(勿用弱口令)}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -98,8 +99,12 @@ services:
       - "7860:7860"
     environment:
       # DATABASE_URL 指向 pgbouncer:6432 而非 postgres 直连(psycopg 接受 postgres:// 前缀)
-      DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:-changeme}@pgbouncer:6432/rpg
-      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379
+      DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:?必须设 POSTGRES_PASSWORD(勿用弱口令)}@pgbouncer:6432/rpg
+      REDIS_URL: redis://:${REDIS_PASSWORD:?必须设 REDIS_PASSWORD(勿用弱口令)}@redis:6379
+      # ── 用户 API key 加密主密钥(生产必须!从 secret 注入,绝不放数据卷)──────
+      # 32 字节 hex(openssl rand -hex 32)。泄露=所有用户 API key 可解密。
+      # 不设则后端多用户模式【拒绝启动】(crypto 安全闸),绝不自动在数据盘生成。
+      RPG_MASTER_KEY: ${RPG_MASTER_KEY:?必须设 RPG_MASTER_KEY=<openssl rand -hex 32> 以保护用户 API key}
       # ── 多用户隔离(生产必须!)─────────────────────────────────────────
       # local/desktop/self_hosted 模式会把所有人当匿名 uid 0 共享一份 state。
       # 生产必须设非 local 模式 + 强制鉴权,否则 100 用户全部串档 = 灾难。
@@ -107,6 +112,8 @@ services:
       RPG_REQUIRE_AUTH: ${RPG_REQUIRE_AUTH:-1}
       # DB 连接池:100 用户峰值并发写,10 偏小,调 25(pgbouncer 在前再兜一层)
       RPG_DB_POOL_MAX: ${RPG_DB_POOL_MAX:-25}
+      # uvicorn worker 数(6核默认 4,吃满多核;停止信号经 cluster DB 表跨 worker 安全)
+      RPG_WORKERS: ${RPG_WORKERS:-4}
       # 服务器配置
       RPG_PORT: "7860"
       RPG_HOST: "0.0.0.0"

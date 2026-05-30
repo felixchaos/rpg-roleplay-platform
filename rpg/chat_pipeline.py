@@ -296,16 +296,30 @@ async def run_context_phase(
     # 通过参数注入可被测试 monkeypatch (test_set_persists_on_gm_failure 模拟 504)。
     # 调用方传 app.run_context_agent → 那里被 patch 时这里能拿到 patched 版本。
     _rca = run_context_agent_fn or run_context_agent
-    for item in _rca(
+    # task: harness 适配统一 — 不再透传 llm_curator 回调；
+    # 由 context_agent 内部走 agents._harness.call_agent_json,
+    # 用 sub_gm 当前 backend 的 api_id+model 作 override(provider 透明 +
+    # Anthropic 强 schema)。旧 llm_curator 参数仍保留兼容外部测试 monkeypatch。
+    _sub_api = getattr(sub_gm, "api_id", None)
+    _sub_backend = getattr(sub_gm, "_backend", None)
+    _sub_model = getattr(_sub_backend, "model_name", None) if _sub_backend else None
+    # task: context_agent async 化 — context_agent 内部是同步 generator,
+    # 中间穿插 ThreadPoolExecutor + time.sleep 轮询 LLM 结果,会阻塞 asyncio
+    # event loop ~2-5s,期间 SSE chunks 全部停吐。
+    # 折中:不改 context_agent 内部签名(测试 / 老 caller 仍可同步 for-iter),
+    # 在 chat_pipeline 用 asyncio.to_thread + thread-safe queue 桥接,让 event loop
+    # 在 LLM 调用期间仍能 schedule 其它 SSE 事件(比如 timeline guard / GM stream 前置)。
+    async for item in _bridge_sync_generator_to_async(
+        _rca,
         state, message_for_model,
         stop_requested=stop_event.is_set,
-        llm_curator=sub_gm.curate_context,
         user_id=api_user["id"] if api_user else None,
         script_id=active_script_id(api_user),
+        api_id_override=_sub_api,
+        model_override=_sub_model,
     ):
         if item["type"] == "step":
             yield ("agent", item["step"])
-            await asyncio.sleep(0)
         elif item["type"] == "stopped":
             state.set_last_context_agent({"status": "stopped", "steps": item.get("steps", [])})
             yield ("done", {"status": payload_fn(api_user), "interrupted": True})
@@ -729,91 +743,35 @@ async def run_gm_phase(
 
     ctx.response = response
 
-    # 时间线 user_set 跳跃叙事检测
-    try:
-        from agents.timeline_narrative_guard import (
-            detect_time_jump_violations,
-            record_violations_to_audit,
-        )
-        if response.strip():
-            _tj_violations = detect_time_jump_violations(response, state)
-            if _tj_violations:
-                record_violations_to_audit(state, _tj_violations)
-                yield ("agent", {
-                    "phase": "timeline_guard",
-                    "message": f"GM 时间跳跃叙事检测到 {len(_tj_violations)} 处禁词(穿越/醒来/拨回 等过渡叙事)",
-                    "status": "warning",
-                    "elapsed_ms": 0,
-                    "violations": [
-                        {"label": v.get("pattern_label"), "match": v.get("match")}
-                        for v in _tj_violations
-                    ],
-                })
-    except Exception as _tj_err:
-        log.warning(f"[chat] timeline_narrative_guard 检测失败: {_tj_err}")
+    # 并行执行 GM 后处理三项(timeline_guard / black_swan / extractor):
+    # - 均只读 response + state,互相无依赖
+    # - timeline_guard 同步 regex(<50ms)
+    # - black_swan 异步 LLM(3-8s,可选)
+    # - extractor 异步 LLM(2-5s)
+    # - asyncio.gather + to_thread 让总延迟 = max(三者) ≈ 减一次 LLM RTT
+    # - 等齐后按固定顺序 yield SSE step,保前端 UI 时间线稳定
+    _post_results = await _run_post_gm_parallel(
+        response=response, state=state, api_user=api_user, ctx=ctx,
+        active_script_id=active_script_id,
+        is_extractor_enabled=is_extractor_enabled,
+    )
 
-    # sprint 5: 黑天鹅子代理 post-GM hook (默认关闭,RPG_ENABLE_BLACK_SWAN=1 开启)
-    try:
-        from core.config import enable_black_swan as _enable_black_swan
-        if _enable_black_swan():
-            from agents.black_swan_agent import maybe_trigger as _maybe_trigger
-            _swan_result = _maybe_trigger(
-                state,
-                user_id=int(api_user.get("id")) if api_user else 0,
-                save_id=ctx.early_active_save_id or 0,
-                script_id=active_script_id(api_user),
-                llm_caller=None,  # MVP: hook 就位但不实际 call LLM (避免外部依赖)
-            )
-            if _swan_result.get("triggered"):
-                from datetime import datetime as _dt
-                _audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
-                _audit.append({
-                    "ts": _dt.now().isoformat(timespec="seconds"),
-                    "kind": "black_swan_triggered",
-                    "source": "black_swan_agent",
-                    "hint": (_swan_result.get("proposal") or {}).get("summary", "")[:200],
-                    "turn": state.data.get("turn", 0),
-                })
-                if len(_audit) > 200:
-                    state.data["permissions"]["audit_log"] = _audit[-200:]
-    except Exception as _swan_err:
-        log.warning(f"[black_swan] failed silently: {_swan_err}")
+    # 按固定顺序 yield 三组 SSE step(保前端时间线稳定)
+    _tj_violations = _post_results.get("timeline_violations") or []
+    if _tj_violations:
+        yield ("agent", {
+            "phase": "timeline_guard",
+            "message": f"GM 时间跳跃叙事检测到 {len(_tj_violations)} 处禁词(穿越/醒来/拨回 等过渡叙事)",
+            "status": "warning",
+            "elapsed_ms": 0,
+            "violations": [
+                {"label": v.get("pattern_label"), "match": v.get("match")}
+                for v in _tj_violations
+            ],
+        })
 
-    # task 62 / 65 / 69: extractor 第二步
-    extractor_active = False
-    try:
-        if is_extractor_enabled(api_user) and response.strip():
-            extractor_active = True
-            from agents import extractor as _extractor
-            extractor_ops = _extractor.extract_state_ops(
-                narrative_text=response,
-                state_data=state.data,
-                user_id=int(api_user.get("id")) if api_user else None,
-                timeout_sec=15,
-            )
-            if extractor_ops:
-                response_with_ops = response + "\n\n```json\n" + json.dumps(extractor_ops, ensure_ascii=False) + "\n```"
-            else:
-                response_with_ops = response
-        else:
-            response_with_ops = response
-    except Exception as exc:
-        log.warning(f"[chat] extractor pipeline failed: {exc}; falling back to single-step")
-        try:
-            from datetime import datetime as _dt
-            audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
-            audit.append({
-                "ts": _dt.now().isoformat(timespec="seconds"),
-                "kind": "extractor_error",
-                "source": "extractor",
-                "hint": f"GM 第二步失败：{type(exc).__name__}: {str(exc)[:200]}",
-                "turn": state.data.get("turn", 0),
-            })
-            if len(audit) > 200:
-                state.data["permissions"]["audit_log"] = audit[-200:]
-        except Exception:
-            pass
-        response_with_ops = response
+    response_with_ops = _post_results.get("response_with_ops") or response
+    extractor_active = bool(_post_results.get("extractor_active"))
 
     # task 87 Phase 6: 设置 chat write context,让 state.apply_state_write_typed 拿到
     # user/save/trace,把 GM JSON op 直调 apply_state_write 路径转 dispatcher 工具调用。
@@ -887,6 +845,178 @@ async def run_gm_phase(
 # ---------------------------------------------------------------------------
 # Phase 5: 持久化 record_turn + save + DB + done
 # ---------------------------------------------------------------------------
+
+
+async def _bridge_sync_generator_to_async(
+    sync_gen_fn: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> AsyncIterator[dict[str, Any]]:
+    """把同步 generator 桥接成 async iterator,中途 LLM 调用不阻塞 event loop。
+
+    实现:
+    1. 在 ThreadPool 里跑 sync generator
+    2. thread 内每 yield 一个 item,用 loop.call_soon_threadsafe 投到 asyncio.Queue
+    3. async 端 await queue.get() 拿 item;SENTINEL 表示 generator 结束
+    4. thread 异常通过 _Error wrapper 传回 async 端再抛
+
+    用于 context_agent.run_context_agent 这种同步 generator + 内部阻塞调用
+    (curator LLM 调用通过 ThreadPoolExecutor 等结果),让 chat_pipeline 的
+    event loop 在 LLM 等待期间仍可调度其它协程。
+    """
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+    SENTINEL = object()
+
+    class _Error:
+        __slots__ = ("exc",)
+        def __init__(self, exc: BaseException) -> None:
+            self.exc = exc
+
+    def _run_in_thread() -> None:
+        try:
+            for item in sync_gen_fn(*args, **kwargs):
+                loop.call_soon_threadsafe(queue.put_nowait, item)
+        except BaseException as exc:  # noqa: BLE001
+            loop.call_soon_threadsafe(queue.put_nowait, _Error(exc))
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+
+    # 用 asyncio.to_thread 跑 wrapper,task 在 generator 结束/异常后自然完成
+    runner = asyncio.create_task(asyncio.to_thread(_run_in_thread))
+    try:
+        while True:
+            item = await queue.get()
+            if item is SENTINEL:
+                break
+            if isinstance(item, _Error):
+                raise item.exc
+            yield item
+    finally:
+        # 确保 thread 退出(generator 不应该泄漏)
+        try:
+            await runner
+        except Exception:
+            pass
+
+
+async def _run_post_gm_parallel(
+    *,
+    response: str,
+    state: GameState,
+    api_user: dict[str, Any] | None,
+    ctx: PipelineContext,
+    active_script_id: Callable[[dict[str, Any] | None], int | None],
+    is_extractor_enabled: Callable[[dict[str, Any] | None], bool],
+) -> dict[str, Any]:
+    """并行跑 GM 后处理三项,返回 {timeline_violations, response_with_ops, extractor_active}。
+
+    三项均只读 GM 完整 response + state(不修改),所以 asyncio.gather 安全。
+    State mutation(audit_log append)在 worker 内部完成,但每个 worker 写不同
+    audit kind,无冲突;Python GIL 保护单条 append 原子性。
+
+    任何 worker 抛异常 → log + 返回该 worker 的中性值,不影响其它 worker。
+    """
+    if not response.strip():
+        return {"timeline_violations": [], "response_with_ops": response, "extractor_active": False}
+
+    user_id_int = int(api_user.get("id")) if api_user else None
+
+    async def _worker_timeline_guard() -> list[dict[str, Any]]:
+        try:
+            from agents.timeline_narrative_guard import (
+                detect_time_jump_violations,
+                record_violations_to_audit,
+            )
+            violations = await asyncio.to_thread(detect_time_jump_violations, response, state)
+            if violations:
+                await asyncio.to_thread(record_violations_to_audit, state, violations)
+            return violations
+        except Exception as exc:
+            log.warning(f"[chat] timeline_narrative_guard 检测失败: {exc}")
+            return []
+
+    async def _worker_black_swan() -> None:
+        try:
+            from core.config import enable_black_swan as _enable_black_swan
+            if not _enable_black_swan():
+                return
+            from agents.black_swan_agent import maybe_trigger as _maybe_trigger
+            _sub_gm = getattr(ctx, "sub_gm", None)
+            _swan_api = getattr(_sub_gm, "api_id", None) if _sub_gm else None
+            _swan_backend = getattr(_sub_gm, "_backend", None) if _sub_gm else None
+            _swan_model = getattr(_swan_backend, "model_name", None) if _swan_backend else None
+            result = await asyncio.to_thread(
+                _maybe_trigger,
+                state,
+                user_id=user_id_int or 0,
+                save_id=ctx.early_active_save_id or 0,
+                script_id=active_script_id(api_user),
+                api_id_override=_swan_api,
+                model_override=_swan_model,
+                enable_llm=bool(api_user),
+            )
+            if result.get("triggered"):
+                from datetime import datetime as _dt
+                audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                audit.append({
+                    "ts": _dt.now().isoformat(timespec="seconds"),
+                    "kind": "black_swan_triggered",
+                    "source": "black_swan_agent",
+                    "hint": (result.get("proposal") or {}).get("summary", "")[:200],
+                    "turn": state.data.get("turn", 0),
+                })
+                if len(audit) > 200:
+                    state.data["permissions"]["audit_log"] = audit[-200:]
+        except Exception as exc:
+            log.warning(f"[black_swan] failed silently: {exc}")
+
+    async def _worker_extractor() -> tuple[bool, str]:
+        """返回 (extractor_active, response_with_ops)。"""
+        try:
+            if not is_extractor_enabled(api_user):
+                return False, response
+            from agents import extractor as _extractor
+            ops = await asyncio.to_thread(
+                _extractor.extract_state_ops,
+                narrative_text=response,
+                state_data=state.data,
+                user_id=user_id_int,
+                timeout_sec=15,
+            )
+            if ops:
+                return True, response + "\n\n```json\n" + json.dumps(ops, ensure_ascii=False) + "\n```"
+            return True, response
+        except Exception as exc:
+            log.warning(f"[chat] extractor pipeline failed: {exc}; falling back to single-step")
+            try:
+                from datetime import datetime as _dt
+                audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                audit.append({
+                    "ts": _dt.now().isoformat(timespec="seconds"),
+                    "kind": "extractor_error",
+                    "source": "extractor",
+                    "hint": f"GM 第二步失败:{type(exc).__name__}: {str(exc)[:200]}",
+                    "turn": state.data.get("turn", 0),
+                })
+                if len(audit) > 200:
+                    state.data["permissions"]["audit_log"] = audit[-200:]
+            except Exception:
+                pass
+            return False, response
+
+    # 并行执行,gather return_exceptions=False 但每个 worker 内部已 try/except,不会抛
+    tg_result, _swan_unused, ex_result = await asyncio.gather(
+        _worker_timeline_guard(),
+        _worker_black_swan(),
+        _worker_extractor(),
+    )
+    extractor_active, response_with_ops = ex_result
+    return {
+        "timeline_violations": tg_result,
+        "response_with_ops": response_with_ops,
+        "extractor_active": extractor_active,
+    }
 
 
 async def persist_turn_phase(

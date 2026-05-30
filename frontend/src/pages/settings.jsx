@@ -6,10 +6,60 @@ import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { Icon } from '../game-icons.jsx';
 import { ConfirmModal, SettingsToggle, useAutoSave, usePlatformData, fmtN } from '../platform-app.jsx';
+import { getCaps as _getCapsImported } from '../components/catalog-helpers.js';
+// Cloudscape 原生组件(内容迁移,统一基线对齐)
+import CSContainer from '@cloudscape-design/components/container';
+import CSHeader from '@cloudscape-design/components/header';
+import CSSpaceBetween from '@cloudscape-design/components/space-between';
+import CSFormField from '@cloudscape-design/components/form-field';
+import CSInput from '@cloudscape-design/components/input';
+import CSSelect from '@cloudscape-design/components/select';
+import CSBox from '@cloudscape-design/components/box';
+import CSButton from '@cloudscape-design/components/button';
+import CSToggle from '@cloudscape-design/components/toggle';
+import CSAlert from '@cloudscape-design/components/alert';
+import CSTable from '@cloudscape-design/components/table';
+import CSBadge from '@cloudscape-design/components/badge';
+import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
+import CSColumnLayout from '@cloudscape-design/components/column-layout';
+import CSExpandableSection from '@cloudscape-design/components/expandable-section';
+
+/* ── 设置页 Cloudscape 统一 primitives(取代 pl-set-group / pl-set-row) ──
+   SetGroup = Container + Header(h2)  ·  SetRow = FormField(label 上 / 控件下)。
+   各 section 用这两个套,保证全站基线对齐、间距一致。 */
+function SetGroup({ title, description, actions, children }) {
+  return (
+    <CSContainer header={<CSHeader variant="h2" description={description} actions={actions}>{title}</CSHeader>}>
+      <CSSpaceBetween size="l">{children}</CSSpaceBetween>
+    </CSContainer>
+  );
+}
+function SetRow({ label, description, children }) {
+  return (
+    <CSFormField label={label} description={description}>
+      {children}
+    </CSFormField>
+  );
+}
+/* 简单 <select> → CSSelect 适配:options 为 [{value,label}] */
+function SetSelect({ value, options, onChange, disabled }) {
+  const sel = options.find((o) => o.value === value) || null;
+  return (
+    <CSSelect
+      selectedOption={sel}
+      options={options}
+      disabled={disabled}
+      onChange={({ detail }) => onChange(detail.selectedOption.value)}
+    />
+  );
+}
 
 /* ---------------------------- SETTINGS ------------------------- */
-function SettingsPage() {
-  const [section, setSection] = useStatePL("preferences");
+function SettingsPage({ section: sectionProp } = {}) {
+  // 新 IA:section 由模块左栏(路由)驱动。传入 sectionProp 时隐藏内部导航。
+  const [sectionState, setSection] = useStatePL("preferences");
+  const external = !!sectionProp;
+  const section = sectionProp || sectionState;
   const SECTIONS = [
     { id: "preferences", label: "偏好",       icon: "settings" },
     { id: "models",      label: "API 设置",   icon: "sparkle" },
@@ -36,37 +86,31 @@ function SettingsPage() {
     window.addEventListener("cap-navigate-subsection", handler);
     return () => window.removeEventListener("cap-navigate-subsection", handler);
   }, []);
+  const sectionLabel = (SECTIONS.find((s) => s.id === section) || {}).label || '设置';
   return (
-    <div className="pl-stack">
-      <section className="pl-sec" data-cap-anchor="settings">
-        <div className="pl-settings-grid">
-          <div className="pl-set-nav">
-            {SECTIONS.map(s => (
-              <button
-                key={s.id}
-                className={`pl-set-nav-item ${section === s.id ? "active" : ""} ${s.id === "danger" ? "danger" : ""}`}
-                onClick={() => setSection(s.id)}
-                data-tip={`${s.label} 设置`}
-                data-tip-pos="right"
-              >
-                <Icon name={s.icon} size={15} />
-                <span>{s.label}</span>
-              </button>
-            ))}
-          </div>
-          <div className="pl-set-body">
-            {section === "preferences" && <><PrefSection /><ExtractorSection /><ClarifySection /></>}
-            {section === "models" && <ModelsSection />}
-            {section === "modelparams" && <ModelParamsSection />}
-            {section === "modules" && <ModuleModelsSection />}
-            {section === "memory" && <MemorySection />}
-            {section === "permissions" && <PermSection />}
-            {section === "deploy" && <DeploySection />}
-            {section === "danger" && <DangerSection />}
-          </div>
-        </div>
-      </section>
-    </div>
+    <CSSpaceBetween size="l">
+      {!external && (
+        <CSHeader variant="h1">设置</CSHeader>
+      )}
+      {!external && (
+        <CSSpaceBetween direction="horizontal" size="xs">
+          {SECTIONS.map((s) => (
+            <CSButton key={s.id} variant={section === s.id ? 'primary' : 'normal'} onClick={() => setSection(s.id)}>
+              {s.label}
+            </CSButton>
+          ))}
+        </CSSpaceBetween>
+      )}
+      {external && <CSHeader variant="h1">{sectionLabel}</CSHeader>}
+      {section === "preferences" && <><PrefSection /><ExtractorSection /><ClarifySection /></>}
+      {section === "models" && <ModelsSection />}
+      {section === "modelparams" && <ModelParamsSection />}
+      {section === "modules" && <ModuleModelsSection />}
+      {section === "memory" && <MemorySection />}
+      {section === "permissions" && <PermSection />}
+      {section === "deploy" && <DeploySection />}
+      {section === "danger" && <DangerSection />}
+    </CSSpaceBetween>
   );
 }
 
@@ -94,33 +138,27 @@ function PrefSection() {
     return () => { cancelled = true; };
   }, []);
   return (
-    <div className="pl-set-group" data-cap-anchor="settings.preferences">
-      <h3>偏好</h3>
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>界面语言</strong><div className="muted">UI 文案与默认正文语言。</div></div>
-        <div className="pl-set-control">
-          <select value={interfaceLang} onChange={(e) => { setInterfaceLang(e.target.value); save("ui_language", e.target.value); }}>
-            <option value="zh-CN">简体中文</option>
-            <option value="zh-TW">繁體中文</option>
-            <option value="en">English (Beta)</option>
-          </select>
-        </div>
-      </div>
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>叙述字体</strong><div className="muted">GM 正文使用宋体增加书卷感；UI 仍为黑体。</div></div>
-        <div className="pl-set-control" style={{flexDirection: "row", alignItems: "center", display: "flex", gap: 8}}>
-          <SettingsToggle on={serif} set={(v) => { setSerif(v); save("serif", v); }} />
-          <span className="muted" style={{fontSize: 12}}>{serif ? "宋体（Noto Serif SC）" : "黑体"}</span>
-        </div>
-      </div>
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>自动存档</strong><div className="muted">每个回合结束写回一次存档与备份。</div></div>
-        <div className="pl-set-control" style={{flexDirection: "row", alignItems: "center", display: "flex", gap: 8}}>
-          <SettingsToggle on={auto} set={(v) => { setAuto(v); save("autosave", v); }} />
-          <span className="muted" style={{fontSize: 12}}>{auto ? "开启 · 每回合一次" : "关闭"}</span>
-        </div>
-      </div>
-    </div>
+    <SetGroup title="偏好">
+      <SetRow label="界面语言" description="UI 文案与默认正文语言。">
+        <SetSelect value={interfaceLang}
+          options={[
+            { value: 'zh-CN', label: '简体中文' },
+            { value: 'zh-TW', label: '繁體中文' },
+            { value: 'en', label: 'English (Beta)' },
+          ]}
+          onChange={(v) => { setInterfaceLang(v); save("ui_language", v); }} />
+      </SetRow>
+      <SetRow label="叙述字体" description="GM 正文使用宋体增加书卷感；UI 仍为黑体。">
+        <CSToggle checked={serif} onChange={({ detail }) => { setSerif(detail.checked); save("serif", detail.checked); }}>
+          {serif ? "宋体（Noto Serif SC）" : "黑体"}
+        </CSToggle>
+      </SetRow>
+      <SetRow label="自动存档" description="每个回合结束写回一次存档与备份。">
+        <CSToggle checked={auto} onChange={({ detail }) => { setAuto(detail.checked); save("autosave", detail.checked); }}>
+          {auto ? "开启 · 每回合一次" : "关闭"}
+        </CSToggle>
+      </SetRow>
+    </SetGroup>
   );
 }
 
@@ -180,61 +218,43 @@ function ExtractorSection() {
     seen.add(aid);
   }
   return (
-    <div className="pl-set-group">
-      <h3>叙事提取器（GM 第二步）</h3>
-      <div className="pl-set-row">
-        <div className="pl-set-label">
-          <strong>启用</strong>
-          <div className="muted">
-            把 GM 拆成两步：主模型纯叙事，便宜模型读叙事+state 输出结构化 ops。
-            错误率比单步低 ~5×，成本约 +20%。
-          </div>
-        </div>
-        <div className="pl-set-control" style={{flexDirection: "row", alignItems: "center", display: "flex", gap: 8}}>
-          <SettingsToggle on={enabled} set={(v) => { setEnabled(v); save("enabled", v); }} />
-          <span className="muted" style={{fontSize: 12}}>{enabled ? "开启（两步式 GM）" : "关闭（单步 GM，向后兼容）"}</span>
-        </div>
-      </div>
-      <div className="pl-set-row">
-        <div className="pl-set-label">
-          <strong>提取器 API</strong>
-          <div className="muted">Anthropic 走 native tool_use（最稳）；Vertex 走 response_mime_type=application/json；其它走 OpenAI 兼容 response_format。</div>
-        </div>
-        <div className="pl-set-control">
-          <select disabled={!enabled} value={apiId} onChange={(e) => { setApiId(e.target.value); save("api_id", e.target.value); }}>
-            {apiOptions.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-          </select>
-        </div>
-      </div>
-      <div className="pl-set-row">
-        <div className="pl-set-label">
-          <strong>提取器模型</strong>
-          <div className="muted">推荐当代旗舰的便宜档：gemini-3.5-flash / claude-haiku-4 / gpt-5.5-nano / qwen-3.7-flash 等。</div>
-        </div>
-        <div className="pl-set-control">
-          {modelList.length === 0 ? (
-            <input
-              type="text"
-              disabled={!enabled}
-              value={modelRealName}
-              placeholder="gemini-3.5-flash"
-              onChange={(e) => { setModelRealName(e.target.value); save("model_real_name", e.target.value); }}
-            />
-          ) : (
-            <select disabled={!enabled} value={modelRealName} onChange={(e) => { setModelRealName(e.target.value); save("model_real_name", e.target.value); }}>
-              {!modelList.some(m => (m.real_name || m.id) === modelRealName) && (
-                <option value={modelRealName}>{modelRealName}（未在当前 API 列表）</option>
-              )}
-              {modelList.map(m => (
-                <option key={m.real_name || m.id} value={m.real_name || m.id}>
-                  {m.display_name || m.real_name || m.id}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-      </div>
-    </div>
+    <SetGroup title="叙事提取器（GM 第二步）">
+      <SetRow label="启用" description="把 GM 拆成两步：主模型纯叙事，便宜模型读叙事+state 输出结构化 ops。错误率比单步低 ~5×，成本约 +20%。">
+        <CSToggle checked={enabled} onChange={({ detail }) => { setEnabled(detail.checked); save("enabled", detail.checked); }}>
+          {enabled ? "开启（两步式 GM）" : "关闭（单步 GM，向后兼容）"}
+        </CSToggle>
+      </SetRow>
+      <SetRow label="提取器 API" description="Anthropic 走 native tool_use（最稳）；Vertex 走 response_mime_type=application/json；其它走 OpenAI 兼容 response_format。">
+        <SetSelect
+          disabled={!enabled}
+          value={apiId}
+          options={apiOptions.map(o => ({ value: o.id, label: o.name }))}
+          onChange={(val) => { setApiId(val); save("api_id", val); }}
+        />
+      </SetRow>
+      <SetRow label="提取器模型" description="推荐当代旗舰的便宜档：gemini-3.5-flash / claude-haiku-4 / gpt-5.5-nano / qwen-3.7-flash 等。">
+        {modelList.length === 0 ? (
+          <CSInput
+            disabled={!enabled}
+            value={modelRealName}
+            placeholder="gemini-3.5-flash"
+            onChange={({ detail }) => { setModelRealName(detail.value); save("model_real_name", detail.value); }}
+          />
+        ) : (
+          <SetSelect
+            disabled={!enabled}
+            value={modelRealName}
+            options={[
+              ...(!modelList.some(m => (m.real_name || m.id) === modelRealName)
+                ? [{ value: modelRealName, label: `${modelRealName}（未在当前 API 列表）` }]
+                : []),
+              ...modelList.map(m => ({ value: m.real_name || m.id, label: m.display_name || m.real_name || m.id })),
+            ]}
+            onChange={(val) => { setModelRealName(val); save("model_real_name", val); }}
+          />
+        )}
+      </SetRow>
+    </SetGroup>
   );
 }
 
@@ -276,17 +296,9 @@ function ClarifySection() {
   };
 
   return (
-    <div className="pl-set-group">
-      <h3>Curator 反问阈值</h3>
-      <div className="pl-set-row">
-        <div className="pl-set-label">
-          <strong>反问阈值</strong>
-          <div className="muted">
-            confidence 低于此值时 curator 跳过主 GM 直接询问玩家。
-            0 = 永不主动问，1 = 永远先问。
-          </div>
-        </div>
-        <div className="pl-set-control" style={{flexDirection: "row", alignItems: "center", display: "flex", gap: 8}}>
+    <SetGroup title="Curator 反问阈值">
+      <SetRow label="反问阈值" description="confidence 低于此值时 curator 跳过主 GM 直接询问玩家。0 = 永不主动问，1 = 永远先问。">
+        <div style={{flexDirection: "row", alignItems: "center", display: "flex", gap: 8}}>
           <input
             type="range"
             min={0}
@@ -313,8 +325,8 @@ function ClarifySection() {
             {threshold.toFixed(2)}（默认 {DEFAULT.toFixed(2)}）
           </span>
         </div>
-      </div>
-    </div>
+      </SetRow>
+    </SetGroup>
   );
 }
 
@@ -489,79 +501,79 @@ function ModelsSection() {
   };
   const toggleExpand = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
 
+  const enabledTotal = apis.reduce((a, x) => a + x.models.filter(m => m.enabled).length, 0);
+  const totalModels = apis.reduce((a, x) => a + x.models.length, 0);
+
   return (
-    <div className="pl-set-group" data-cap-anchor="settings.models">
-      <h3>API 设置 <span className="muted-2" style={{fontSize: 12, fontWeight: 400, letterSpacing: 0, marginLeft: 8, textTransform: "none"}}>{apis.reduce((a, x) => a + x.models.filter(m => m.enabled).length, 0)} / {apis.reduce((a, x) => a + x.models.length, 0)} 个模型已启用</span></h3>
-      <div className="pl-api-tree">
+    <SetGroup
+      title="API 设置"
+      description={`${enabledTotal} / ${totalModels} 个模型已启用`}
+      data-cap-anchor="settings.models"
+    >
+      <CSSpaceBetween size="m">
         {apis.map(api => {
           const visibleCount = api.models.filter(m => m.visible !== false).length;
           const enabledCount = api.models.filter(m => m.enabled && m.visible !== false).length;
           const hiddenCount = api.models.length - visibleCount;
+          const statusType = api.enabled && api.status === "online" ? "success"
+            : api.enabled ? "warning" : "stopped";
+          const statusLabel = api.enabled ? api.status : "已禁用";
           return (
-            <div key={api.id} className={`pl-api-card ${api.enabled ? "" : "disabled"}`}>
-              {/* 原来是 <button>，但 SettingsToggle 自身也是 <button>，浏览器会
-                  报 "<button> cannot appear as a descendant of <button>" + 点
-                  toggle 还会冒泡触发展开。改为 <div role="button"> + key/tab 支持。 */}
-              <div className="pl-api-card-head" role="button" tabIndex={0}
-                onClick={() => toggleExpand(api.id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    toggleExpand(api.id);
-                  }
-                }}>
-                <Icon name={expanded[api.id] ? "chevron_down" : "chevron_right"} size={13} />
-                <div className="pl-api-card-icon"><Icon name="sparkle" size={14} /></div>
-                <div className="pl-api-card-title">
-                  <strong>{api.name}</strong>
-                  <span className="muted-2 mono">{api.id}</span>
-                </div>
-                <div className="pl-api-card-meta">
-                  <span className={`pill ${api.enabled && api.status === "online" ? "ok" : api.enabled ? "warn" : ""}`}>
-                    <span className={`dot ${api.enabled && api.status === "online" ? "ok" : api.enabled ? "warn" : ""}`} />
-                    {api.enabled ? api.status : "已禁用"}
+            <CSExpandableSection
+              key={api.id}
+              variant="container"
+              expanded={!!expanded[api.id]}
+              onChange={() => toggleExpand(api.id)}
+              header={
+                <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
+                  <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
+                    <strong>{api.name}</strong>
+                    <CSBox color="text-status-inactive" fontSize="body-s" display="inline">
+                      <span className="mono">{api.id}</span>
+                    </CSBox>
+                    <CSStatusIndicator type={statusType}>{statusLabel}</CSStatusIndicator>
+                    <CSBox color="text-status-inactive" fontSize="body-s" display="inline">
+                      {enabledCount} / {visibleCount} 启用{hiddenCount > 0 ? ` · 隐藏 ${hiddenCount}` : ""}
+                    </CSBox>
+                  </CSSpaceBetween>
+                  <span onClick={e => e.stopPropagation()}>
+                    <SettingsToggle on={api.enabled} set={() => toggleApi(api.id)} />
                   </span>
-                  <span className="muted-2 mono">
-                    {enabledCount} / {visibleCount} 启用{hiddenCount > 0 ? ` · 隐藏 ${hiddenCount}` : ""}
-                  </span>
-                </div>
-                <SettingsToggle on={api.enabled} set={() => toggleApi(api.id)} />
-              </div>
-              <div className="pl-api-card-sub">
-                <div className="pl-api-card-info">
-                  <div><span className="muted-2">Base URL</span><span className="mono">{api.base_url}</span></div>
-                  <div><span className="muted-2">API Key</span><span className="mono">{api.key_set ? "•••• " + api.key_hint : "未配置"}</span></div>
-                  <div><span className="muted-2">连接</span><span>{api.proxy || "直连"}</span></div>
-                </div>
-              </div>
-              {expanded[api.id] && (
-                <div className="pl-api-card-body">
-                  <ApiModelsList api={api}
-                    onToggleModel={(mId) => toggleModel(api.id, mId)}
-                    onRenameModel={(mId, display) => renameModel(api.id, mId, display)}
-                  />
-                  <div className="pl-api-card-add">
-                    <button className="btn ghost" onClick={() => setVisibilityApi(api.id)} data-tip="管理哪些模型显示在列表里">
-                      <Icon name="eye" size={12} /> 编辑显示
-                    </button>
-                    <button className="btn ghost" onClick={() => setValidateApi(api.id)} data-tip="嗅探可用模型并比对当前列表">
-                      <Icon name="refresh" size={12} /> 校验连接
-                    </button>
-                    <button className="btn ghost" onClick={() => setEditingApi(api.id)} data-tip="修改 Base URL / Key / 代理">
-                      <Icon name="edit" size={12} /> 编辑 API
-                    </button>
+                </CSSpaceBetween>
+              }
+            >
+              <CSSpaceBetween size="m">
+                <CSColumnLayout columns={3} variant="text-grid">
+                  <div>
+                    <CSBox color="text-label" fontWeight="bold">Base URL</CSBox>
+                    <CSBox color="text-body-secondary"><span className="mono">{api.base_url}</span></CSBox>
                   </div>
-                </div>
-              )}
-            </div>
+                  <div>
+                    <CSBox color="text-label" fontWeight="bold">API Key</CSBox>
+                    <CSBox color="text-body-secondary"><span className="mono">{api.key_set ? "•••• " + api.key_hint : "未配置"}</span></CSBox>
+                  </div>
+                  <div>
+                    <CSBox color="text-label" fontWeight="bold">连接</CSBox>
+                    <CSBox color="text-body-secondary">{api.proxy || "直连"}</CSBox>
+                  </div>
+                </CSColumnLayout>
+                <ApiModelsList api={api}
+                  onToggleModel={(mId) => toggleModel(api.id, mId)}
+                  onRenameModel={(mId, display) => renameModel(api.id, mId, display)}
+                />
+                <CSSpaceBetween direction="horizontal" size="xs">
+                  <CSButton variant="normal" iconName="view-full" onClick={() => setVisibilityApi(api.id)}>编辑显示</CSButton>
+                  <CSButton variant="normal" iconName="refresh" onClick={() => setValidateApi(api.id)}>校验连接</CSButton>
+                  <CSButton variant="normal" iconName="edit" onClick={() => setEditingApi(api.id)}>编辑 API</CSButton>
+                </CSSpaceBetween>
+              </CSSpaceBetween>
+            </CSExpandableSection>
           );
         })}
-        <button className="pl-api-add" onClick={() => setAddingApi(true)} data-tip="新增 API 供应商">
-          <Icon name="plus" size={14} />
-          <span>新增 API 供应商</span>
-          <span className="muted-2" style={{marginLeft: "auto", fontSize: 11}}>OpenAI · Anthropic · Google · 自定义</span>
-        </button>
-      </div>
+        <CSButton iconName="add-plus" onClick={() => setAddingApi(true)}>
+          新增 API 供应商
+        </CSButton>
+      </CSSpaceBetween>
       <EditApiModal
         open={!!editingApi || addingApi}
         api={apis.find(a => a.id === editingApi)}
@@ -619,7 +631,7 @@ function ModelsSection() {
       />
       {/* Wave 11-C: 10 provider typed 凭证配置 */}
       <ProviderConfigSection />
-    </div>
+    </SetGroup>
   );
 }
 
@@ -1047,7 +1059,7 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
 
   // helpers to normalize capabilities (Wave 11.5-A: 复用 components/catalog-helpers.js,
   // 老 array / 新 typed object 两种 shape 都兼容)
-  const getCaps = window.getCaps;
+  const getCaps = window.getCaps || _getCapsImported;
 
   const filtered = visibleModels.filter(m => {
     if (q) {
@@ -1152,54 +1164,52 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
           {filtersActive && <button className="btn ghost" onClick={() => { setQ(""); setCapFilter(null); setStatusFilter("all"); }}>清除筛选</button>}
         </div>
       ) : (
-        <table className="pl-table pl-model-table">
-          <colgroup>
-            <col className="c-health" />
-            <col className="c-name" />
-            <col className="c-caps" />
-            <col className="c-price" />
-            <col className="c-ctx" />
-            <col style={{width: 70}} />
-            <col className="c-toggle" />
-          </colgroup>
-          <thead>
-            <tr>
-              <th className="c-health"></th>
-              <th className="c-name">显示名 / Model</th>
-              <th className="c-caps">能力</th>
-              <th className="c-price">价格 /M</th>
-              <th className="c-ctx">上下文</th>
-              <th style={{fontSize: 11}}>来源</th>
-              <th className="c-toggle"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map(m => {
-              const isDeprecated = !!m.deprecated_at;
-              return (
-              <tr key={m.id} className={`${m.enabled ? "" : "pl-model-disabled"}${isDeprecated ? " pl-model-deprecated" : ""}`}>
-                <td className="c-health">
-                  <HealthDot health={m.health} />
-                </td>
-                <td className="c-name">
-                  <ModelNameCell m={m} onRename={(v) => onRenameModel?.(m.id, v)} deprecated={isDeprecated} />
-                </td>
-                <td className="c-caps">
-                  <div style={{display: "flex", gap: 4, flexWrap: "wrap"}}>
-                    {getCaps(m).map(c => (
-                      <span key={c} className="pl-cap-tag" data-tip={CAP_LABEL[c] || c}>{CAP_LABEL[c] || c}</span>
-                    ))}
-                  </div>
-                </td>
-                <td className="c-price mono muted">
+        <CSTable
+          variant="embedded"
+          trackBy="id"
+          items={visible}
+          columnDefinitions={[
+            {
+              id: "health",
+              header: "",
+              width: 32,
+              cell: (m) => <HealthDot health={m.health} />,
+            },
+            {
+              id: "name",
+              header: "显示名 / Model",
+              cell: (m) => <ModelNameCell m={m} onRename={(v) => onRenameModel?.(m.id, v)} deprecated={!!m.deprecated_at} />,
+            },
+            {
+              id: "caps",
+              header: "能力",
+              cell: (m) => (
+                <div style={{display: "flex", gap: 4, flexWrap: "wrap"}}>
+                  {getCaps(m).map(c => (
+                    <span key={c} className="pl-cap-tag" data-tip={CAP_LABEL[c] || c}>{CAP_LABEL[c] || c}</span>
+                  ))}
+                </div>
+              ),
+            },
+            {
+              id: "price",
+              header: "价格 /M",
+              cell: (m) => (
+                <span className="mono muted">
                   {/* Wave 11-C: 优先展示 typed ModelInfo pricing(per million),兼容旧 price 字符串 */}
                   {m.input_cost_per_million != null
                     ? <span data-tip={`输入 $${m.input_cost_per_million}/M · 输出 $${m.output_cost_per_million ?? "?"}/M`}>
                         {fmtPrice(m.input_cost_per_million)} / {fmtPrice(m.output_cost_per_million)}
                       </span>
                     : (m.price || "—")}
-                </td>
-                <td className="c-ctx mono muted">
+                </span>
+              ),
+            },
+            {
+              id: "context",
+              header: "上下文",
+              cell: (m) => (
+                <span className="mono muted">
                   {/* Wave 11-C: 优先展示 typed context_window,兼容旧 context 字符串 */}
                   {m.context_window != null ? fmtCtx(m.context_window) : (m.context || "—")}
                   {m.max_output_tokens != null && (
@@ -1207,28 +1217,40 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
                       ↑{fmtCtx(m.max_output_tokens)}
                     </div>
                   )}
-                </td>
-                <td className="muted-2" style={{fontSize: 11}}>
-                  {/* Wave 11-C: catalog 数据来源 */}
-                  {m.source ? (
-                    <span className="pl-cap-tag" data-tip={`数据来源: ${sourceLabel(m.source)}`} style={{fontSize: 10}}>
-                      {sourceLabel(m.source)}
-                    </span>
-                  ) : "—"}
-                  {isDeprecated && (
-                    <span className="pl-cap-tag" data-tip={`已弃用: ${m.deprecated_at}`} style={{marginLeft: 2, color: "var(--warn)", fontSize: 10, borderColor: "var(--warn)"}}>
-                      弃用
-                    </span>
-                  )}
-                </td>
-                <td className="c-toggle">
-                  <SettingsToggle on={m.enabled} set={() => onToggleModel(m.id)} />
-                </td>
-              </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                </span>
+              ),
+            },
+            {
+              id: "source",
+              header: "来源",
+              width: 70,
+              cell: (m) => {
+                const isDeprecated = !!m.deprecated_at;
+                return (
+                  <span style={{fontSize: 11}} className="muted-2">
+                    {/* Wave 11-C: catalog 数据来源 */}
+                    {m.source ? (
+                      <span className="pl-cap-tag" data-tip={`数据来源: ${sourceLabel(m.source)}`} style={{fontSize: 10}}>
+                        {sourceLabel(m.source)}
+                      </span>
+                    ) : "—"}
+                    {isDeprecated && (
+                      <span className="pl-cap-tag" data-tip={`已弃用: ${m.deprecated_at}`} style={{marginLeft: 2, color: "var(--warn)", fontSize: 10, borderColor: "var(--warn)"}}>
+                        弃用
+                      </span>
+                    )}
+                  </span>
+                );
+              },
+            },
+            {
+              id: "toggle",
+              header: "",
+              width: 48,
+              cell: (m) => <SettingsToggle on={m.enabled} set={() => onToggleModel(m.id)} />,
+            },
+          ]}
+        />
       )}
       {hasMore && (
         <button className="pl-model-more" onClick={() => setShowAll(true)} data-tip={`展开全部 ${sorted.length} 个匹配模型`}>
@@ -1597,31 +1619,33 @@ function ProviderConfigSection() {
   };
 
   return (
-    <div className="pl-set-group" data-cap-anchor="settings.providers">
-      <h3>10 Provider 凭证配置</h3>
-      <div className="muted" style={{fontSize: 12, marginBottom: 12}}>
-        API key 加密存储在用户凭证表中，不在 catalog 明文保存。base_url 支持中转站覆盖。
-      </div>
-      {PROVIDERS_CONFIG.map(p => {
-        const cred = creds[p.id] || {};
-        const isSaving = !!saving[p.id];
-        return (
-          <ProviderCard
-            key={p.id}
-            provider={p}
-            cred={cred}
-            isSaving={isSaving}
-            agentPlatformJson={agentPlatformJson}
-            agentPlatformError={agentPlatformError}
-            alibabaMode={alibabaMode}
-            onSaveKey={saveKey}
-            onAgentPlatformFile={handleAgentPlatformFile}
-            onSaveAgentPlatform={saveAgentPlatform}
-            onAlibabaMode={(v) => { setAlibabaMode(v); window.api.models.upsertApi({ api_id: "AlibabaQwen", base_url: v === "openai_compat" ? "https://dashscope.aliyuncs.com/compatible-mode/v1" : "https://dashscope.aliyuncs.com/api/v1" }).catch(() => {}); }}
-          />
-        );
-      })}
-    </div>
+    <SetGroup
+      title="供应商凭证（BYOK）"
+      description="API key 加密存储在用户凭证表中，不在 catalog 明文保存。base_url 支持中转站覆盖。"
+      data-cap-anchor="settings.providers"
+    >
+      <CSSpaceBetween size="m">
+        {PROVIDERS_CONFIG.map(p => {
+          const cred = creds[p.id] || {};
+          const isSaving = !!saving[p.id];
+          return (
+            <ProviderCard
+              key={p.id}
+              provider={p}
+              cred={cred}
+              isSaving={isSaving}
+              agentPlatformJson={agentPlatformJson}
+              agentPlatformError={agentPlatformError}
+              alibabaMode={alibabaMode}
+              onSaveKey={saveKey}
+              onAgentPlatformFile={handleAgentPlatformFile}
+              onSaveAgentPlatform={saveAgentPlatform}
+              onAlibabaMode={(v) => { setAlibabaMode(v); window.api.models.upsertApi({ api_id: "AlibabaQwen", base_url: v === "openai_compat" ? "https://dashscope.aliyuncs.com/compatible-mode/v1" : "https://dashscope.aliyuncs.com/api/v1" }).catch(() => {}); }}
+            />
+          );
+        })}
+      </CSSpaceBetween>
+    </SetGroup>
   );
 }
 
@@ -1633,110 +1657,136 @@ function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPla
   // Agent Platform 走专用 UI
   if (p.special === "agent_platform") {
     return (
-      <div className="pl-set-row" style={{flexDirection: "column", alignItems: "stretch", paddingBottom: 16}}>
-        <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
-          <div>
-            <strong>{p.name}</strong>
-            <div className="muted" style={{fontSize: 12}}>{p.note}</div>
-          </div>
-          {cred.has_key && <span className="pill ok" style={{fontSize: 11}}><span className="dot ok" />已配置</span>}
-        </div>
-        <div style={{marginTop: 8, display: "flex", gap: 8, alignItems: "center"}}>
-          <label className="btn ghost" style={{cursor: "pointer", position: "relative"}}>
-            <Icon name="upload" size={12} /> 选择 JSON 文件
-            <input
-              type="file"
-              accept="application/json,.json"
-              style={{position: "absolute", opacity: 0, width: 0, height: 0}}
-              onChange={(e) => onAgentPlatformFile(e.target.files?.[0] || null)}
-            />
-          </label>
-          {agentPlatformJson && (
-            <span className="muted" style={{fontSize: 12}}>
-              <Icon name="check" size={11} style={{color: "var(--ok)"}} /> {agentPlatformJson.client_email}
-            </span>
-          )}
-        </div>
-        {agentPlatformError && <div className="muted" style={{color: "var(--danger)", fontSize: 12, marginTop: 4}}>{agentPlatformError}</div>}
-        {agentPlatformJson && !agentPlatformError && (
-          <div style={{marginTop: 8, display: "flex", gap: 8, alignItems: "center"}}>
-            <div className="muted" style={{fontSize: 12}}>
-              project_id: <span className="mono">{agentPlatformJson.project_id}</span>
+      <CSContainer>
+        <CSSpaceBetween size="s">
+          <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
+            <div>
+              <CSBox fontWeight="bold">{p.name}</CSBox>
+              <CSBox color="text-body-secondary" fontSize="body-s">{p.note}</CSBox>
             </div>
-            <button className="btn primary" disabled={isSaving} onClick={onSaveAgentPlatform} style={{height: 28}}>
-              {isSaving ? "保存中…" : <><Icon name="check" size={12} /> 保存凭证</>}
-            </button>
-          </div>
-        )}
-      </div>
+            {cred.has_key && <CSStatusIndicator type="success">已配置</CSStatusIndicator>}
+          </CSSpaceBetween>
+          <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
+            <label className="btn ghost" style={{cursor: "pointer", position: "relative"}}>
+              <Icon name="upload" size={12} /> 选择 JSON 文件
+              <input
+                type="file"
+                accept="application/json,.json"
+                style={{position: "absolute", opacity: 0, width: 0, height: 0}}
+                onChange={(e) => onAgentPlatformFile(e.target.files?.[0] || null)}
+              />
+            </label>
+            {agentPlatformJson && (
+              <CSBox color="text-status-success" fontSize="body-s">
+                <Icon name="check" size={11} /> {agentPlatformJson.client_email}
+              </CSBox>
+            )}
+          </CSSpaceBetween>
+          {agentPlatformError && (
+            <CSAlert type="error">{agentPlatformError}</CSAlert>
+          )}
+          {agentPlatformJson && !agentPlatformError && (
+            <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
+              <CSBox color="text-body-secondary" fontSize="body-s">
+                project_id: <span className="mono">{agentPlatformJson.project_id}</span>
+              </CSBox>
+              <CSButton variant="primary" loading={isSaving} disabled={isSaving} onClick={onSaveAgentPlatform}>
+                保存凭证
+              </CSButton>
+            </CSSpaceBetween>
+          )}
+        </CSSpaceBetween>
+      </CSContainer>
     );
   }
 
   // 阿里 DashScope 带 mode toggle
   if (p.special === "alibaba_qwen") {
     return (
-      <div className="pl-set-row" style={{flexDirection: "column", alignItems: "stretch", paddingBottom: 16}}>
-        <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
-          <div>
-            <strong>{p.name}</strong>
-            <div className="muted" style={{fontSize: 12}}>{p.note}</div>
-          </div>
-          {cred.has_key && <span className="pill ok" style={{fontSize: 11}}><span className="dot ok" />已配置</span>}
-        </div>
-        <div style={{marginTop: 8, display: "flex", gap: 8, alignItems: "center"}}>
-          <div className="seg" style={{display: "flex"}}>
-            <button className={alibabaMode === "openai_compat" ? "active" : ""} onClick={() => onAlibabaMode("openai_compat")} data-tip="OpenAI-compat 兼容模式（推荐）">OpenAI-compat</button>
-            <button className={alibabaMode === "native" ? "active" : ""} onClick={() => onAlibabaMode("native")} data-tip="DashScope native 协议（HMAC 签名 + 原生 streaming）">Native DashScope</button>
-          </div>
-          <span className="muted-2 mono" style={{fontSize: 11}}>
-            {alibabaMode === "openai_compat" ? "/compatible-mode/v1" : "/api/v1"}
-          </span>
-        </div>
-        <div style={{marginTop: 8, display: "flex", gap: 8, alignItems: "flex-end"}}>
-          <div style={{flex: 1}}>
-            <label style={{fontSize: 11, color: "var(--text-quiet)", display: "block", marginBottom: 4}}>API Key</label>
-            <input type="password" value={keyVal} onChange={(e) => setKeyVal(e.target.value)}
-              placeholder={cred.has_key ? "留空保留原 key" : "sk-…"} autoComplete="new-password"
-              style={{width: "100%"}} />
-          </div>
-          <button className="btn primary" disabled={isSaving || (!keyVal.trim() && !baseVal)} onClick={() => onSaveKey(p.id, keyVal, baseVal)} style={{height: 34, flexShrink: 0}}>
-            {isSaving ? "保存中…" : "保存"}
-          </button>
-        </div>
-      </div>
+      <CSContainer>
+        <CSSpaceBetween size="s">
+          <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
+            <div>
+              <CSBox fontWeight="bold">{p.name}</CSBox>
+              <CSBox color="text-body-secondary" fontSize="body-s">{p.note}</CSBox>
+            </div>
+            {cred.has_key && <CSStatusIndicator type="success">已配置</CSStatusIndicator>}
+          </CSSpaceBetween>
+          <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
+            <div className="seg" style={{display: "flex"}}>
+              <button className={alibabaMode === "openai_compat" ? "active" : ""} onClick={() => onAlibabaMode("openai_compat")} data-tip="OpenAI-compat 兼容模式（推荐）">OpenAI-compat</button>
+              <button className={alibabaMode === "native" ? "active" : ""} onClick={() => onAlibabaMode("native")} data-tip="DashScope native 协议（HMAC 签名 + 原生 streaming）">Native DashScope</button>
+            </div>
+            <CSBox color="text-status-inactive" fontSize="body-s">
+              <span className="mono">{alibabaMode === "openai_compat" ? "/compatible-mode/v1" : "/api/v1"}</span>
+            </CSBox>
+          </CSSpaceBetween>
+          <CSSpaceBetween direction="horizontal" size="xs" alignItems="flex-end">
+            <CSFormField label="API Key" stretch>
+              <CSInput
+                type="password"
+                value={keyVal}
+                onChange={({ detail }) => setKeyVal(detail.value)}
+                placeholder={cred.has_key ? "留空保留原 key" : "sk-…"}
+                autoComplete="new-password"
+              />
+            </CSFormField>
+            <CSButton
+              variant="primary"
+              loading={isSaving}
+              disabled={isSaving || (!keyVal.trim() && !baseVal)}
+              onClick={() => onSaveKey(p.id, keyVal, baseVal)}
+            >
+              保存
+            </CSButton>
+          </CSSpaceBetween>
+        </CSSpaceBetween>
+      </CSContainer>
     );
   }
 
-  // OpenRouter 带 base_url hint
+  // OpenRouter 带 base_url hint（及其它普通 provider）
   return (
-    <div className="pl-set-row" style={{flexDirection: "column", alignItems: "stretch", paddingBottom: 16}}>
-      <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
-        <div>
-          <strong>{p.name}</strong>
-          {p.note && <div className="muted" style={{fontSize: 12, marginTop: 2}}>{p.note}</div>}
-        </div>
-        {cred.has_key && <span className="pill ok" style={{fontSize: 11}}><span className="dot ok" />已配置</span>}
-      </div>
-      <div style={{marginTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, alignItems: "flex-end"}}>
-        <div>
-          <label style={{fontSize: 11, color: "var(--text-quiet)", display: "block", marginBottom: 4}}>API Key</label>
-          <input type="password" value={keyVal} onChange={(e) => setKeyVal(e.target.value)}
-            placeholder={cred.has_key ? "留空保留原 key" : (p.keyEnv ? p.keyEnv : "sk-…")}
-            autoComplete="new-password" />
-        </div>
-        <div>
-          <label style={{fontSize: 11, color: "var(--text-quiet)", display: "block", marginBottom: 4}}>
-            Base URL
-            {p.special === "openrouter" && <span className="muted-2" style={{marginLeft: 4}}>中转站可改</span>}
-          </label>
-          <input className="mono" value={baseVal} onChange={(e) => setBaseVal(e.target.value)}
-            placeholder={p.defaultBase || "https://…"} />
-        </div>
-        <button className="btn primary" disabled={isSaving || (!keyVal.trim() && baseVal === (cred.base_url || p.defaultBase || ""))} onClick={() => onSaveKey(p.id, keyVal, baseVal)} style={{height: 34, marginTop: 2}}>
-          {isSaving ? "保存中…" : "保存"}
-        </button>
-      </div>
-    </div>
+    <CSContainer>
+      <CSSpaceBetween size="s">
+        <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
+          <div>
+            <CSBox fontWeight="bold">{p.name}</CSBox>
+            {p.note && <CSBox color="text-body-secondary" fontSize="body-s">{p.note}</CSBox>}
+          </div>
+          {cred.has_key && <CSStatusIndicator type="success">已配置</CSStatusIndicator>}
+        </CSSpaceBetween>
+        <CSSpaceBetween direction="horizontal" size="xs" alignItems="flex-end">
+          <CSFormField label="API Key" stretch>
+            <CSInput
+              type="password"
+              value={keyVal}
+              onChange={({ detail }) => setKeyVal(detail.value)}
+              placeholder={cred.has_key ? "留空保留原 key" : (p.keyEnv ? p.keyEnv : "sk-…")}
+              autoComplete="new-password"
+            />
+          </CSFormField>
+          <CSFormField
+            label={p.special === "openrouter" ? "Base URL（中转站可改）" : "Base URL"}
+            stretch
+          >
+            <CSInput
+              value={baseVal}
+              onChange={({ detail }) => setBaseVal(detail.value)}
+              placeholder={p.defaultBase || "https://…"}
+            />
+          </CSFormField>
+          <CSButton
+            variant="primary"
+            loading={isSaving}
+            disabled={isSaving || (!keyVal.trim() && baseVal === (cred.base_url || p.defaultBase || ""))}
+            onClick={() => onSaveKey(p.id, keyVal, baseVal)}
+          >
+            保存
+          </CSButton>
+        </CSSpaceBetween>
+      </CSSpaceBetween>
+    </CSContainer>
   );
 }
 
@@ -1780,19 +1830,14 @@ function ModelParamsSection() {
   };
 
   return (
-    <div className="pl-set-group" data-cap-anchor="settings.modelparams">
-      <h3>模型设置 <span className="muted-2" style={{fontSize: 12, fontWeight: 400, letterSpacing: 0, marginLeft: 8, textTransform: "none"}}>采样参数 · 影响所有 API 调用</span></h3>
-
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>预设</strong><div className="muted">快速切换一组常用参数；选『自定义』后下方修改不会被覆盖。</div></div>
-        <div className="pl-set-control">
-          <div className="seg" style={{display: "flex"}}>
-            {PRESETS.map(p => (
-              <button key={p} className={preset === p ? "active" : ""} onClick={() => applyPreset(p)}>{p}</button>
-            ))}
-          </div>
-        </div>
-      </div>
+    <SetGroup title="模型设置" description="采样参数 · 影响所有 API 调用">
+      <SetRow label="预设" description="快速切换一组常用参数；选『自定义』后下方修改不会被覆盖。">
+        <CSSpaceBetween direction="horizontal" size="xs">
+          {PRESETS.map(p => (
+            <CSButton key={p} variant={preset === p ? "primary" : "normal"} onClick={() => applyPreset(p)}>{p}</CSButton>
+          ))}
+        </CSSpaceBetween>
+      </SetRow>
 
       <ParamSlider label="Temperature" desc="越高越随机；0 = 确定性最强；建议 0.4 - 1.0"
         value={params.temperature} min={0} max={2} step={0.05} unit=""
@@ -1818,59 +1863,46 @@ function ModelParamsSection() {
         value={params.presence_penalty} min={-2} max={2} step={0.05} unit=""
         onChange={(v) => { setPreset("自定义"); u("presence_penalty", v); }} />
 
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>最大输出 Tokens</strong><div className="muted">单轮回复的最长长度；过短会被截断。</div></div>
-        <div className="pl-set-control">
-          <input type="number" min={64} max={8192} step={64} value={params.max_tokens}
-            onChange={(e) => u("max_tokens", Number(e.target.value))} className="mono" style={{width: 120, textAlign: "right"}} />
-        </div>
-      </div>
+      <SetRow label="最大输出 Tokens" description="单轮回复的最长长度；过短会被截断。">
+        <CSInput type="number" value={String(params.max_tokens)}
+          onChange={({ detail }) => u("max_tokens", Number(detail.value))} />
+      </SetRow>
 
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>上下文窗口</strong><div className="muted">每次请求携带的上限；超过会自动截断历史与召回。</div></div>
-        <div className="pl-set-control">
-          <select value={params.context_size} onChange={(e) => u("context_size", Number(e.target.value))}>
-            <option value={4096}>4K</option>
-            <option value={8192}>8K</option>
-            <option value={16384}>16K</option>
-            <option value={32768}>32K</option>
-            <option value={65536}>64K</option>
-            <option value={131072}>128K</option>
-            <option value={1048576}>1M</option>
-          </select>
-        </div>
-      </div>
+      <SetRow label="上下文窗口" description="每次请求携带的上限；超过会自动截断历史与召回。">
+        <SetSelect
+          value={String(params.context_size)}
+          options={[
+            { value: "4096",    label: "4K" },
+            { value: "8192",    label: "8K" },
+            { value: "16384",   label: "16K" },
+            { value: "32768",   label: "32K" },
+            { value: "65536",   label: "64K" },
+            { value: "131072",  label: "128K" },
+            { value: "1048576", label: "1M" },
+          ]}
+          onChange={(val) => u("context_size", Number(val))}
+        />
+      </SetRow>
 
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>随机种子（Seed）</strong><div className="muted">同一种子 + 同样输入 → 可复现输出；-1 = 每次随机。</div></div>
-        <div className="pl-set-control">
-          <input type="number" value={params.seed} onChange={(e) => u("seed", Number(e.target.value))}
-            className="mono" style={{width: 140, textAlign: "right"}} placeholder="-1" />
-        </div>
-      </div>
+      <SetRow label="随机种子（Seed）" description="同一种子 + 同样输入 → 可复现输出；-1 = 每次随机。">
+        <CSInput type="number" value={String(params.seed)}
+          onChange={({ detail }) => u("seed", Number(detail.value))}
+          placeholder="-1" />
+      </SetRow>
 
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>停止序列（Stop）</strong><div className="muted">遇到这些字符串时立刻停止生成；用 <span className="mono">|</span> 分隔多条。</div></div>
-        <div className="pl-set-control">
-          <input value={params.stop} onChange={(e) => u("stop", e.target.value)}
-            className="mono" placeholder="例：玩家:|系统:" />
-        </div>
-      </div>
+      <SetRow label="停止序列（Stop）" description="遇到这些字符串时立刻停止生成；用 | 分隔多条。">
+        <CSInput value={params.stop} onChange={({ detail }) => u("stop", detail.value)}
+          placeholder="例：玩家:|系统:" />
+      </SetRow>
 
-      <div className="pl-set-row">
-        <div className="pl-set-label">
-          <strong>NSFW · 成人内容</strong>
-          <div className="muted">控制 GM 是否生成或描写涉及性 / 暴力等敏感内容。所有模式下未成年角色性化描写都会被拦截。</div>
-        </div>
-        <div className="pl-set-control">
-          <div className="seg" style={{display: "flex"}}>
-            <button className={nsfw.mode === "block" ? "active" : ""} onClick={() => setNsfw(n => ({ ...n, mode: "block" }))} data-tip="完全拒绝">禁止</button>
-            <button className={nsfw.mode === "soft" ? "active" : ""} onClick={() => setNsfw(n => ({ ...n, mode: "soft" }))} data-tip="允许暗示，避免露骨">含蓄</button>
-            <button className={nsfw.mode === "open" ? "active" : ""} onClick={() => setNsfw(n => ({ ...n, mode: "open" }))} data-tip="允许成人内容，含警示">开放</button>
-            <button className={nsfw.mode === "explicit" ? "active" : ""} onClick={() => setNsfw(n => ({ ...n, mode: "explicit" }))} data-tip="不加修饰，需账号成年验证">露骨</button>
-          </div>
-        </div>
-      </div>
+      <SetRow label="NSFW · 成人内容" description="控制 GM 是否生成或描写涉及性 / 暴力等敏感内容。所有模式下未成年角色性化描写都会被拦截。">
+        <CSSpaceBetween direction="horizontal" size="xs">
+          <CSButton variant={nsfw.mode === "block" ? "primary" : "normal"} onClick={() => setNsfw(n => ({ ...n, mode: "block" }))}>禁止</CSButton>
+          <CSButton variant={nsfw.mode === "soft" ? "primary" : "normal"} onClick={() => setNsfw(n => ({ ...n, mode: "soft" }))}>含蓄</CSButton>
+          <CSButton variant={nsfw.mode === "open" ? "primary" : "normal"} onClick={() => setNsfw(n => ({ ...n, mode: "open" }))}>开放</CSButton>
+          <CSButton variant={nsfw.mode === "explicit" ? "primary" : "normal"} onClick={() => setNsfw(n => ({ ...n, mode: "explicit" }))}>露骨</CSButton>
+        </CSSpaceBetween>
+      </SetRow>
 
       {nsfw.mode !== "block" && (
         <ParamSlider label="NSFW 强度（Bias）" desc="0 = 仅在玩家明确请求时；1 = 允许 GM 主动推进。仅在『开放 / 露骨』下生效。"
@@ -1878,60 +1910,40 @@ function ModelParamsSection() {
           onChange={(v) => setNsfw(n => ({ ...n, intensity: v }))} />
       )}
 
-      <div className="pl-set-row">
-        <div className="pl-set-label">
-          <strong>NSFW 额外约束</strong>
-          <div className="muted">附加到系统提示词；用于补充禁线、年龄校验、剧情前置条件。</div>
-        </div>
-        <div className="pl-set-control">
-          <textarea rows={2} value={nsfw.extra_prompt}
-            onChange={(e) => setNsfw(n => ({ ...n, extra_prompt: e.target.value }))}
-            style={{width: "100%"}}
-            placeholder="例：所有角色需在 18 岁以上 · 禁止血腥极端化描写" />
-        </div>
-      </div>
+      <SetRow label="NSFW 额外约束" description="附加到系统提示词；用于补充禁线、年龄校验、剧情前置条件。">
+        <CSInput value={nsfw.extra_prompt}
+          onChange={({ detail }) => setNsfw(n => ({ ...n, extra_prompt: detail.value }))}
+          placeholder="例：所有角色需在 18 岁以上 · 禁止血腥极端化描写" />
+      </SetRow>
 
-      <div className="pl-set-row">
-        <div className="pl-set-label">
-          <strong>高级 · Mirostat</strong>
-          <div className="muted">动态调整采样温度；对部分本地模型有效。</div>
-        </div>
-        <div className="pl-set-control" style={{display: "flex", alignItems: "center", gap: 10}}>
-          <SettingsToggle on={advanced} set={setAdvanced} />
-          <span className="muted" style={{fontSize: 12}}>{advanced ? "已开启" : "关闭"}</span>
-        </div>
-      </div>
+      <SetRow label="高级 · Mirostat" description="动态调整采样温度；对部分本地模型有效。">
+        <CSToggle checked={advanced} onChange={({ detail }) => setAdvanced(detail.checked)}>
+          {advanced ? "已开启" : "关闭"}
+        </CSToggle>
+      </SetRow>
 
       {advanced && (
         <>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>Mirostat 模式</strong><div className="muted">0 = 关闭 · 1 = v1 · 2 = v2。</div></div>
-            <div className="pl-set-control">
-              <div className="seg" style={{display: "flex"}}>
-                {["off", "v1", "v2"].map(m => (
-                  <button key={m} className={params.mirostat_mode === m ? "active" : ""}
-                    onClick={() => u("mirostat_mode", m)}>{m === "off" ? "关闭" : m}</button>
-                ))}
-              </div>
-            </div>
-          </div>
+          <SetRow label="Mirostat 模式" description="0 = 关闭 · 1 = v1 · 2 = v2。">
+            <CSSpaceBetween direction="horizontal" size="xs">
+              {["off", "v1", "v2"].map(m => (
+                <CSButton key={m} variant={params.mirostat_mode === m ? "primary" : "normal"}
+                  onClick={() => u("mirostat_mode", m)}>{m === "off" ? "关闭" : m}</CSButton>
+              ))}
+            </CSSpaceBetween>
+          </SetRow>
           <ParamSlider label="Mirostat τ (tau)" desc="目标困惑度；5 较常用" value={params.mirostat_tau} min={0} max={10} step={0.1} unit="" onChange={(v) => u("mirostat_tau", v)} />
           <ParamSlider label="Mirostat η (eta)" desc="学习率" value={params.mirostat_eta} min={0} max={1} step={0.01} unit="" onChange={(v) => u("mirostat_eta", v)} />
         </>
       )}
 
-      <div className="pl-set-row" style={{borderBottom: 0}}>
-        <div className="pl-set-label">
-          <strong>预览 JSON</strong>
-          <div className="muted">发送给 API 的实际采样参数。</div>
-        </div>
-        <div className="pl-set-control">
-          <pre className="mono" style={{
-            margin: 0, padding: "10px 12px",
-            background: "var(--bg-deep)", border: "1px solid var(--line-soft)",
-            borderRadius: "var(--r-2)", fontSize: 11, lineHeight: 1.6, color: "var(--text-quiet)",
-            overflow: "auto", maxHeight: 180,
-          }}>
+      <SetRow label="预览 JSON" description="发送给 API 的实际采样参数。">
+        <pre className="mono" style={{
+          margin: 0, padding: "10px 12px",
+          background: "var(--bg-deep)", border: "1px solid var(--line-soft)",
+          borderRadius: "var(--r-2)", fontSize: 11, lineHeight: 1.6, color: "var(--text-quiet)",
+          overflow: "auto", maxHeight: 180,
+        }}>
 {JSON.stringify({
   temperature: params.temperature,
   top_p: params.top_p,
@@ -1946,28 +1958,24 @@ function ModelParamsSection() {
   nsfw: nsfw.mode === "block" ? null : { mode: nsfw.mode, intensity: nsfw.intensity, extra: nsfw.extra_prompt },
   ...(advanced ? { mirostat_mode: params.mirostat_mode, mirostat_tau: params.mirostat_tau, mirostat_eta: params.mirostat_eta } : {})
 }, null, 2)}
-          </pre>
-        </div>
-      </div>
-    </div>
+        </pre>
+      </SetRow>
+    </SetGroup>
   );
 }
 
 function ParamSlider({ label, desc, value, min, max, step, unit, onChange }) {
   return (
-    <div className="pl-set-row">
-      <div className="pl-set-label">
-        <strong>{label}</strong>
-        <div className="muted">{desc}</div>
-      </div>
-      <div className="pl-set-control pl-param-slider">
+    <SetRow label={label} description={desc}>
+      <div style={{display: "flex", alignItems: "center", gap: 8}}>
         <input type="range" min={min} max={max} step={step} value={value}
-          onChange={(e) => onChange(Number(e.target.value))} />
+          onChange={(e) => onChange(Number(e.target.value))}
+          style={{flex: 1, minWidth: 120}} />
         <input type="number" min={min} max={max} step={step} value={value}
           onChange={(e) => onChange(Number(e.target.value))}
           className="mono" style={{width: 70, textAlign: "right"}} />
       </div>
-    </div>
+    </SetRow>
   );
 }
 
@@ -2122,27 +2130,20 @@ function ModuleModelsSection() {
   };
 
   return (
-    <div className="pl-set-group" data-cap-anchor="settings.models.modules">
-      <h3>
-        按模块分配模型
-        <span className="muted-2" style={{fontSize: 12, fontWeight: 400, letterSpacing: 0, marginLeft: 8, textTransform: "none"}}>
-          每个 LLM 子模块独立选模型 · 留空 = 跟随主 GM
+    <SetGroup
+      title="按模块分配模型"
+      description="每个 LLM 子模块独立选模型 · 留空 = 跟随主 GM"
+      actions={
+        <CSButton variant="normal" disabled={savingId === "__all__"} onClick={resetAll}>
+          重置全部为默认
+        </CSButton>
+      }
+    >
+      <CSBox>
+        <span className="muted" style={{fontSize: 12}}>
+          主 GM 在『API 设置』里改;其它模块未覆盖时复用主 GM。模型列表来自 model_catalog.json,标灰的是供应商关闭/禁用的模型。
         </span>
-      </h3>
-      <div className="pl-set-row" style={{borderBottom: 0, paddingBottom: 0}}>
-        <div className="pl-set-label" style={{maxWidth: "100%"}}>
-          <div className="muted" style={{fontSize: 12}}>
-            主 GM 在『API 设置』里改;其它模块未覆盖时复用主 GM。模型列表来自 model_catalog.json,
-            标灰的是供应商关闭/禁用的模型。
-          </div>
-        </div>
-        <div className="pl-set-control" style={{display: "flex", justifyContent: "flex-end"}}>
-          <button className="btn ghost" disabled={savingId === "__all__"} onClick={resetAll}
-            data-tip="清空所有 *_model_override / *_api_id / *_model_real_name key">
-            <Icon name="refresh" size={12} /> 重置全部为默认
-          </button>
-        </div>
-      </div>
+      </CSBox>
       <div style={{overflowX: "auto"}}>
         <table className="pl-table" style={{width: "100%", fontSize: 13, marginTop: 8}}>
           <colgroup>
@@ -2219,10 +2220,12 @@ function ModuleModelsSection() {
           </tbody>
         </table>
       </div>
-      <div className="muted" style={{fontSize: 11, marginTop: 10}}>
-        改动通过 POST /api/me/preference 即时保存。后端各模块在下次调用时按 user_preferences 重选 backend。
-      </div>
-    </div>
+      <CSBox>
+        <span className="muted" style={{fontSize: 11}}>
+          改动通过 POST /api/me/preference 即时保存。后端各模块在下次调用时按 user_preferences 重选 backend。
+        </span>
+      </CSBox>
+    </SetGroup>
   );
 }
 
@@ -2247,27 +2250,20 @@ function MemorySection() {
     return () => { cancelled = true; };
   }, []);
   return (
-    <div className="pl-set-group" data-cap-anchor="settings.memory">
-      <h3>记忆系统</h3>
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>默认召回深度</strong><div className="muted">每轮从原文检索的最大段数。</div></div>
-        <div className="pl-set-control">
-          <input type="number" value={recallDepth} min={2} max={20} onChange={(e) => { setRecallDepth(Number(e.target.value)); save("召回深度", Number(e.target.value)); }} />
-        </div>
-      </div>
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>固定记忆上限</strong><div className="muted">超出后旧条目会自动转入事实库。</div></div>
-        <div className="pl-set-control">
-          <input type="number" value={pinnedLimit} min={5} max={80} onChange={(e) => { setPinnedLimit(Number(e.target.value)); save("固定记忆上限", Number(e.target.value)); }} />
-        </div>
-      </div>
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>历史摘要窗口</strong><div className="muted">最近 N 个回合压缩为摘要喂入。</div></div>
-        <div className="pl-set-control">
-          <input type="number" value={summaryWindow} min={3} max={20} onChange={(e) => { setSummaryWindow(Number(e.target.value)); save("摘要窗口", Number(e.target.value)); }} />
-        </div>
-      </div>
-    </div>
+    <SetGroup title="记忆系统">
+      <SetRow label="默认召回深度" description="每轮从原文检索的最大段数(2–20)。">
+        <CSInput type="number" value={String(recallDepth)}
+          onChange={({ detail }) => { setRecallDepth(detail.value); const n = Number(detail.value); if (detail.value !== '' && n >= 2 && n <= 20) save("召回深度", n); }} />
+      </SetRow>
+      <SetRow label="固定记忆上限" description="超出后旧条目会自动转入事实库(5–80)。">
+        <CSInput type="number" value={String(pinnedLimit)}
+          onChange={({ detail }) => { setPinnedLimit(detail.value); const n = Number(detail.value); if (detail.value !== '' && n >= 5 && n <= 80) save("固定记忆上限", n); }} />
+      </SetRow>
+      <SetRow label="历史摘要窗口" description="最近 N 个回合压缩为摘要喂入(3–20)。">
+        <CSInput type="number" value={String(summaryWindow)}
+          onChange={({ detail }) => { setSummaryWindow(detail.value); const n = Number(detail.value); if (detail.value !== '' && n >= 3 && n <= 20) save("摘要窗口", n); }} />
+      </SetRow>
+    </SetGroup>
   );
 }
 
@@ -2302,38 +2298,31 @@ function PermSection() {
     save("high_risk_whitelist", next);
   };
   return (
-    <div className="pl-set-group" data-cap-anchor="settings.permissions">
-      <h3>写入权限</h3>
-      <div className="pl-set-row">
-        <div className="pl-set-label">
-          <strong>默认权限模式</strong>
-          <div className="muted">新建存档时使用的默认权限。可在游戏内随时切换。</div>
-        </div>
-        <div className="pl-set-control">
-          <select value={defaultMode} onChange={(e) => { setDefaultMode(e.target.value); save("default_mode", e.target.value); }}>
-            <option value="default">默认权限 · 全部写回需要确认</option>
-            <option value="review">自动审查 · 低风险通过，高风险询问</option>
-            <option value="full_access">完全访问 · 仅重大世界线变更弹窗</option>
-          </select>
-        </div>
-      </div>
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>高风险白名单</strong><div className="muted">即便处于『完全访问』，这些字段仍会非阻塞弹窗。点击切换。</div></div>
-        <div className="pl-set-control">
-          <div className="pl-rules">
-            {_HIGH_RISK_ALL.map(field => (
-              <span
-                key={field}
-                className={`pl-rule-chip ${highRiskWhitelist.includes(field) ? "active" : ""}`}
-                style={{cursor: "pointer", userSelect: "none"}}
-                onClick={() => toggleWhitelist(field)}
-              >{field}</span>
-            ))}
-          </div>
-        </div>
-      </div>
+    <SetGroup title="写入权限">
+      <SetRow label="默认权限模式" description="新建存档时使用的默认权限。可在游戏内随时切换。">
+        <SetSelect
+          value={defaultMode}
+          options={[
+            { value: "default",     label: "默认权限 · 全部写回需要确认" },
+            { value: "review",      label: "自动审查 · 低风险通过，高风险询问" },
+            { value: "full_access", label: "完全访问 · 仅重大世界线变更弹窗" },
+          ]}
+          onChange={(val) => { setDefaultMode(val); save("default_mode", val); }}
+        />
+      </SetRow>
+      <SetRow label="高风险白名单" description="即便处于『完全访问』，这些字段仍会非阻塞弹窗。点击切换。">
+        <CSSpaceBetween direction="horizontal" size="xs">
+          {_HIGH_RISK_ALL.map(field => (
+            <CSButton
+              key={field}
+              variant={highRiskWhitelist.includes(field) ? "primary" : "normal"}
+              onClick={() => toggleWhitelist(field)}
+            >{field}</CSButton>
+          ))}
+        </CSSpaceBetween>
+      </SetRow>
       <AuditLogView />
-    </div>
+    </SetGroup>
   );
 }
 
@@ -2387,85 +2376,80 @@ function AuditLogView() {
 
   return (
     <>
-      <div className="pl-set-row" style={{borderTop: "1px solid var(--pl-line, #eee)", paddingTop: 16, marginTop: 16}}>
-        <div className="pl-set-label">
-          <strong>审计日志</strong>
-          <div className="muted">
-            最近 200 条 state 写入/拒绝/解析失败记录（per 存档）。
-            没有活跃存档时为空。
-          </div>
-        </div>
-        <div className="pl-set-control" style={{display: "flex", alignItems: "center", gap: 8}}>
-          <button className="pl-btn small" onClick={refresh} disabled={loading}>
+      <SetRow
+        label="审计日志"
+        description="最近 200 条 state 写入/拒绝/解析失败记录（per 存档）。没有活跃存档时为空。"
+      >
+        <CSSpaceBetween direction="horizontal" size="s">
+          <CSButton variant="normal" onClick={refresh} disabled={loading}>
             {loading ? "拉取中…" : "刷新"}
-          </button>
-          {error && <span className="muted" style={{color: "var(--pl-danger, #c00)", fontSize: 12}}>{error}</span>}
-        </div>
-      </div>
-      <div className="pl-set-row" style={{flexDirection: "column", alignItems: "stretch"}}>
-        <div className="pl-rules" style={{flexWrap: "wrap", gap: 6, marginBottom: 8}}>
+          </CSButton>
+          {error && <CSAlert type="error">{error}</CSAlert>}
+        </CSSpaceBetween>
+      </SetRow>
+      <SetRow label="过滤类型" description="">
+        <CSSpaceBetween direction="horizontal" size="xs">
           {kinds.map(k => {
             const meta = KIND_META[k];
             const count = k === "all" ? entries.length : entries.filter(e => e.kind === k).length;
             return (
-              <span
+              <CSButton
                 key={k}
-                className={`pl-rule-chip ${kindFilter === k ? "active" : ""}`}
+                variant={kindFilter === k ? "primary" : "normal"}
                 onClick={() => setKindFilter(k)}
-                style={{cursor: "pointer", userSelect: "none"}}
                 title={meta?.desc || ""}
               >
                 {k === "all" ? "全部" : (meta?.label || k)} · {count}
-              </span>
+              </CSButton>
             );
           })}
+        </CSSpaceBetween>
+      </SetRow>
+      {!hasState ? (
+        <CSAlert type="info">当前没有活跃存档，进入游戏后产生的审计会出现在这里。</CSAlert>
+      ) : filtered.length === 0 ? (
+        <CSAlert type="info">
+          {entries.length === 0 ? "暂无审计条目。" : `当前过滤（${kindFilter}）下无条目。`}
+        </CSAlert>
+      ) : (
+        <div style={{maxHeight: 360, overflowY: "auto", border: "1px solid var(--pl-line, #eee)", borderRadius: 6}}>
+          <table className="pl-table" style={{width: "100%", fontSize: 12, borderCollapse: "collapse"}}>
+            <thead>
+              <tr style={{background: "var(--pl-bg-soft, #f7f7f9)"}}>
+                <th style={{textAlign: "left", padding: "6px 8px", width: 130}}>时间</th>
+                <th style={{textAlign: "left", padding: "6px 8px", width: 90}}>类型</th>
+                <th style={{textAlign: "left", padding: "6px 8px", width: 80}}>来源</th>
+                <th style={{textAlign: "left", padding: "6px 8px"}}>详情</th>
+                <th style={{textAlign: "right", padding: "6px 8px", width: 50}}>回合</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((e, idx) => {
+                const meta = KIND_META[e.kind] || { label: e.kind, color: "var(--muted, #888)", desc: "" };
+                const detail = e.path
+                  ? `${e.path} = ${typeof e.value === "string" ? e.value : JSON.stringify(e.value)}`
+                  : (e.raw_spec || e.hint || "—");
+                return (
+                  <tr key={idx} style={{borderTop: "1px solid var(--pl-line, #eee)"}}>
+                    <td style={{padding: "4px 8px", fontFamily: "ui-monospace, monospace"}}>{(e.ts || "").replace("T", " ")}</td>
+                    <td style={{padding: "4px 8px"}}>
+                      <span className="pl-rule-chip" style={{fontSize: 11, color: meta.color, borderColor: meta.color}}>{meta.label}</span>
+                    </td>
+                    <td style={{padding: "4px 8px"}} className="muted">{e.source || "—"}</td>
+                    <td style={{padding: "4px 8px", wordBreak: "break-word"}}>
+                      <div>{detail}</div>
+                      {e.hint && e.path && (
+                        <div className="muted" style={{fontSize: 11, marginTop: 2}}>· {e.hint}</div>
+                      )}
+                    </td>
+                    <td style={{padding: "4px 8px", textAlign: "right"}} className="muted">{e.turn ?? "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
-        {!hasState ? (
-          <div className="muted" style={{fontSize: 12, padding: "8px 0"}}>当前没有活跃存档，进入游戏后产生的审计会出现在这里。</div>
-        ) : filtered.length === 0 ? (
-          <div className="muted" style={{fontSize: 12, padding: "8px 0"}}>
-            {entries.length === 0 ? "暂无审计条目。" : `当前过滤（${kindFilter}）下无条目。`}
-          </div>
-        ) : (
-          <div style={{maxHeight: 360, overflowY: "auto", border: "1px solid var(--pl-line, #eee)", borderRadius: 6}}>
-            <table className="pl-table" style={{width: "100%", fontSize: 12, borderCollapse: "collapse"}}>
-              <thead>
-                <tr style={{background: "var(--pl-bg-soft, #f7f7f9)"}}>
-                  <th style={{textAlign: "left", padding: "6px 8px", width: 130}}>时间</th>
-                  <th style={{textAlign: "left", padding: "6px 8px", width: 90}}>类型</th>
-                  <th style={{textAlign: "left", padding: "6px 8px", width: 80}}>来源</th>
-                  <th style={{textAlign: "left", padding: "6px 8px"}}>详情</th>
-                  <th style={{textAlign: "right", padding: "6px 8px", width: 50}}>回合</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((e, idx) => {
-                  const meta = KIND_META[e.kind] || { label: e.kind, color: "var(--muted, #888)", desc: "" };
-                  const detail = e.path
-                    ? `${e.path} = ${typeof e.value === "string" ? e.value : JSON.stringify(e.value)}`
-                    : (e.raw_spec || e.hint || "—");
-                  return (
-                    <tr key={idx} style={{borderTop: "1px solid var(--pl-line, #eee)"}}>
-                      <td style={{padding: "4px 8px", fontFamily: "ui-monospace, monospace"}}>{(e.ts || "").replace("T", " ")}</td>
-                      <td style={{padding: "4px 8px"}}>
-                        <span className="pl-rule-chip" style={{fontSize: 11, color: meta.color, borderColor: meta.color}}>{meta.label}</span>
-                      </td>
-                      <td style={{padding: "4px 8px"}} className="muted">{e.source || "—"}</td>
-                      <td style={{padding: "4px 8px", wordBreak: "break-word"}}>
-                        <div>{detail}</div>
-                        {e.hint && e.path && (
-                          <div className="muted" style={{fontSize: 11, marginTop: 2}}>· {e.hint}</div>
-                        )}
-                      </td>
-                      <td style={{padding: "4px 8px", textAlign: "right"}} className="muted">{e.turn ?? "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      )}
     </>
   );
 }
@@ -2551,93 +2535,83 @@ function DeploySection() {
   }, []);
 
   return (
-    <div className="pl-set-group" data-cap-anchor="settings.deploy">
-      <h3>部署</h3>
-      <div className="pl-set-row" style={{background: "var(--pl-bg-soft, #f7f7f9)", borderRadius: 6, padding: "6px 10px", marginBottom: 8}}>
-        <div className="muted" style={{fontSize: 12}}>
-          <strong>注意：</strong>监听地址、CORS 来源等网络级配置保存后需要重启服务才能生效。SMTP 和 CAPTCHA 凭证立即生效。
-        </div>
-      </div>
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>监听地址</strong><div className="muted">仅本机访问可用 127.0.0.1。重启生效。</div></div>
-        <div className="pl-set-control"><input value={listenAddr} className="mono" onChange={(e) => { setListenAddr(e.target.value); saveDeployConfig({ listen_address: e.target.value }); }} /></div>
-      </div>
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>CORS 来源</strong><div className="muted">逗号分隔；使用 * 允许全部。重启生效。</div></div>
-        <div className="pl-set-control"><input value={corsOrigins} className="mono" onChange={(e) => { setCorsOrigins(e.target.value); saveDeployConfig({ cors_origins: e.target.value }); }} /></div>
-      </div>
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>上传上限</strong><div className="muted">单文件最大字节数。重启生效。</div></div>
-        <div className="pl-set-control"><input value={uploadLimit} onChange={(e) => { setUploadLimit(e.target.value); saveDeployConfig({ upload_limit: e.target.value }); }} /></div>
-      </div>
+    <SetGroup title="部署">
+      <CSAlert type="warning">
+        <strong>注意：</strong>监听地址、CORS 来源等网络级配置保存后需要重启服务才能生效。SMTP 和 CAPTCHA 凭证立即生效。
+      </CSAlert>
+      <SetRow label="监听地址" description="仅本机访问可用 127.0.0.1。重启生效。">
+        <CSInput value={listenAddr} onChange={({ detail }) => { setListenAddr(detail.value); saveDeployConfig({ listen_address: detail.value }); }} />
+      </SetRow>
+      <SetRow label="CORS 来源" description="逗号分隔；使用 * 允许全部。重启生效。">
+        <CSInput value={corsOrigins} onChange={({ detail }) => { setCorsOrigins(detail.value); saveDeployConfig({ cors_origins: detail.value }); }} />
+      </SetRow>
+      <SetRow label="上传上限" description="单文件最大字节数。重启生效。">
+        <CSInput value={uploadLimit} onChange={({ detail }) => { setUploadLimit(detail.value); saveDeployConfig({ upload_limit: detail.value }); }} />
+      </SetRow>
 
-      <div className="pl-set-row">
-        <div className="pl-set-label">
-          <strong>SMTP 邮件服务器</strong>
-          <div className="muted">用于注册验证、找回密码、订阅通知。关闭则使用本地占位邮件。</div>
-        </div>
-        <div className="pl-set-control" style={{display: "flex", alignItems: "center", gap: 10}}>
-          <SettingsToggle on={smtpEnabled} set={(v) => { setSmtpEnabled(v); saveDeployConfig({ smtp_enabled: v }); }} />
-          <span className="muted" style={{fontSize: 12}}>{smtpEnabled ? "已启用" : "未启用"}</span>
-        </div>
-      </div>
+      <SetRow label="SMTP 邮件服务器" description="用于注册验证、找回密码、订阅通知。关闭则使用本地占位邮件。">
+        <CSToggle checked={smtpEnabled} onChange={({ detail }) => { setSmtpEnabled(detail.checked); saveDeployConfig({ smtp_enabled: detail.checked }); }}>
+          {smtpEnabled ? "已启用" : "未启用"}
+        </CSToggle>
+      </SetRow>
       {smtpEnabled && (
         <>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>预设</strong><div className="muted">快速填充常见服务商参数；选择后可继续微调。</div></div>
-            <div className="pl-set-control">
-              <select value="custom" onChange={(e) => {
+          <SetRow label="预设" description="快速填充常见服务商参数；选择后可继续微调。">
+            <SetSelect
+              value="custom"
+              options={[
+                { value: "custom",   label: "自定义" },
+                { value: "gmail",    label: "Gmail（smtp.gmail.com:587 · STARTTLS）" },
+                { value: "qq",       label: "QQ 邮箱（smtp.qq.com:465 · SSL）" },
+                { value: "163",      label: "163 邮箱（smtp.163.com:465 · SSL）" },
+                { value: "aws",      label: "AWS SES（email-smtp.us-east-1.amazonaws.com:587）" },
+                { value: "resend",   label: "Resend（smtp.resend.com:587）" },
+                { value: "sendgrid", label: "SendGrid（smtp.sendgrid.net:587）" },
+              ]}
+              onChange={(val) => {
                 const PRESETS = {
-                  gmail: { smtp_host: "smtp.gmail.com", smtp_port: "587", smtp_tls: "starttls" },
-                  qq:    { smtp_host: "smtp.qq.com",    smtp_port: "465", smtp_tls: "ssl" },
-                  "163": { smtp_host: "smtp.163.com",   smtp_port: "465", smtp_tls: "ssl" },
-                  aws:   { smtp_host: "email-smtp.us-east-1.amazonaws.com", smtp_port: "587", smtp_tls: "starttls" },
-                  resend:    { smtp_host: "smtp.resend.com",     smtp_port: "587", smtp_tls: "starttls" },
-                  sendgrid:  { smtp_host: "smtp.sendgrid.net",   smtp_port: "587", smtp_tls: "starttls" },
+                  gmail:    { smtp_host: "smtp.gmail.com",                          smtp_port: "587", smtp_tls: "starttls" },
+                  qq:       { smtp_host: "smtp.qq.com",                             smtp_port: "465", smtp_tls: "ssl" },
+                  "163":    { smtp_host: "smtp.163.com",                            smtp_port: "465", smtp_tls: "ssl" },
+                  aws:      { smtp_host: "email-smtp.us-east-1.amazonaws.com",      smtp_port: "587", smtp_tls: "starttls" },
+                  resend:   { smtp_host: "smtp.resend.com",                         smtp_port: "587", smtp_tls: "starttls" },
+                  sendgrid: { smtp_host: "smtp.sendgrid.net",                       smtp_port: "587", smtp_tls: "starttls" },
                 };
-                const p = PRESETS[e.target.value];
+                const p = PRESETS[val];
                 if (p) { setSmtpHost(p.smtp_host); setSmtpPort(p.smtp_port); setSmtpTls(p.smtp_tls); saveDeployConfig(p); }
-              }}>
-                <option value="custom">自定义</option>
-                <option value="gmail">Gmail（smtp.gmail.com:587 · STARTTLS）</option>
-                <option value="qq">QQ 邮箱（smtp.qq.com:465 · SSL）</option>
-                <option value="163">163 邮箱（smtp.163.com:465 · SSL）</option>
-                <option value="aws">AWS SES（email-smtp.us-east-1.amazonaws.com:587）</option>
-                <option value="resend">Resend（smtp.resend.com:587）</option>
-                <option value="sendgrid">SendGrid（smtp.sendgrid.net:587）</option>
-              </select>
+              }}
+            />
+          </SetRow>
+          <SetRow label="主机 & 端口" description="协议安全：587 推荐 STARTTLS、465 推荐 SSL。">
+            <div style={{display: "grid", gridTemplateColumns: "1fr 90px 110px", gap: 6}}>
+              <CSInput value={smtpHost} placeholder="主机" onChange={({ detail }) => { setSmtpHost(detail.value); saveDeployConfig({ smtp_host: detail.value }); }} />
+              <CSInput value={smtpPort} placeholder="端口" onChange={({ detail }) => { setSmtpPort(detail.value); saveDeployConfig({ smtp_port: detail.value }); }} />
+              <SetSelect
+                value={smtpTls}
+                options={[
+                  { value: "none",     label: "明文" },
+                  { value: "starttls", label: "STARTTLS" },
+                  { value: "ssl",      label: "SSL / TLS" },
+                ]}
+                onChange={(val) => { setSmtpTls(val); saveDeployConfig({ smtp_tls: val }); }}
+              />
             </div>
-          </div>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>主机 & 端口</strong><div className="muted">协议安全：587 推荐 STARTTLS、465 推荐 SSL。</div></div>
-            <div className="pl-set-control" style={{display: "grid", gridTemplateColumns: "1fr 90px 110px", gap: 6}}>
-              <input className="mono" value={smtpHost} placeholder="主机" onChange={(e) => { setSmtpHost(e.target.value); saveDeployConfig({ smtp_host: e.target.value }); }} />
-              <input className="mono" value={smtpPort} placeholder="端口" onChange={(e) => { setSmtpPort(e.target.value); saveDeployConfig({ smtp_port: e.target.value }); }} />
-              <select value={smtpTls} onChange={(e) => { setSmtpTls(e.target.value); saveDeployConfig({ smtp_tls: e.target.value }); }}>
-                <option value="none">明文</option>
-                <option value="starttls">STARTTLS</option>
-                <option value="ssl">SSL / TLS</option>
-              </select>
+          </SetRow>
+          <SetRow label="认证" description="应用专用密码 / API Key。">
+            <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6}}>
+              <CSInput value={smtpUser} placeholder="用户名" onChange={({ detail }) => { setSmtpUser(detail.value); saveDeployConfig({ smtp_user: detail.value }); }} />
+              <CSInput type="password" value={smtpPass} placeholder="密码 / API Key" onChange={({ detail }) => { setSmtpPass(detail.value); saveDeployConfig({ smtp_pass: detail.value }); }} />
             </div>
-          </div>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>认证</strong><div className="muted">应用专用密码 / API Key。</div></div>
-            <div className="pl-set-control" style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6}}>
-              <input className="mono" value={smtpUser} placeholder="用户名" onChange={(e) => { setSmtpUser(e.target.value); saveDeployConfig({ smtp_user: e.target.value }); }} />
-              <input className="mono" type="password" value={smtpPass} placeholder="密码 / API Key" onChange={(e) => { setSmtpPass(e.target.value); saveDeployConfig({ smtp_pass: e.target.value }); }} />
+          </SetRow>
+          <SetRow label="发件地址" description="收件人看到的发件人；建议使用域名邮箱。">
+            <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6}}>
+              <CSInput value={smtpFromName} placeholder="发件人名称" onChange={({ detail }) => { setSmtpFromName(detail.value); saveDeployConfig({ smtp_from_name: detail.value }); }} />
+              <CSInput value={smtpFromEmail} placeholder="发件人邮箱" onChange={({ detail }) => { setSmtpFromEmail(detail.value); saveDeployConfig({ smtp_from_email: detail.value }); }} />
             </div>
-          </div>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>发件地址</strong><div className="muted">收件人看到的发件人；建议使用域名邮箱。</div></div>
-            <div className="pl-set-control" style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6}}>
-              <input value={smtpFromName} placeholder="发件人名称" onChange={(e) => { setSmtpFromName(e.target.value); saveDeployConfig({ smtp_from_name: e.target.value }); }} />
-              <input className="mono" value={smtpFromEmail} placeholder="发件人邮箱" onChange={(e) => { setSmtpFromEmail(e.target.value); saveDeployConfig({ smtp_from_email: e.target.value }); }} />
-            </div>
-          </div>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>测试发送</strong><div className="muted">立即向当前账户邮箱发送一封测试邮件。</div></div>
-            <div className="pl-set-control" style={{display: "flex", gap: 8, alignItems: "center"}}>
-              <button className="btn ghost" disabled={smtpTesting} onClick={async () => {
+          </SetRow>
+          <SetRow label="测试发送" description="立即向当前账户邮箱发送一封测试邮件。">
+            <CSSpaceBetween direction="horizontal" size="s">
+              <CSButton variant="normal" disabled={smtpTesting} onClick={async () => {
                 setSmtpTesting(true);
                 window.toast?.("正在发送测试邮件…", { kind: "info", duration: 1200 });
                 let ok = false;
@@ -2652,112 +2626,86 @@ function DeploySection() {
                 setSmtpLastTestOk(ok);
                 window.toast?.(ok ? "测试邮件已发送" : "测试失败", { kind: ok ? "ok" : "danger", duration: 3000 });
               }}>
-                {smtpTesting ? <><Icon name="spinner" size={12} className="spin" /> 发送中</> : <><Icon name="send" size={12} /> 发送测试邮件</>}
-              </button>
+                {smtpTesting ? "发送中…" : "发送测试邮件"}
+              </CSButton>
               <span className="muted-2" style={{fontSize: 11}}>
                 {smtpLastTestAt
                   ? `最近测试：${window.__fmt?.ago(smtpLastTestAt) || smtpLastTestAt} · ${smtpLastTestOk ? "成功" : "失败"}`
                   : "尚未测试"}
               </span>
-            </div>
-          </div>
+            </CSSpaceBetween>
+          </SetRow>
         </>
       )}
 
-      <div className="pl-set-row">
-        <div className="pl-set-label">
-          <strong>人机验证（CAPTCHA）</strong>
-          <div className="muted">用于注册 / 找回密码 / 登录失败重试。生产环境建议开启。</div>
-        </div>
-        <div className="pl-set-control">
-          <div className="seg" style={{display: "flex"}}>
-            <button className={captchaProvider === "off" ? "active" : ""} onClick={() => { setCaptchaProvider("off"); saveDeployConfig({ captcha_provider: "off" }); }}>关闭</button>
-            <button className={captchaProvider === "recaptcha" ? "active" : ""} onClick={() => { setCaptchaProvider("recaptcha"); saveDeployConfig({ captcha_provider: "recaptcha" }); }}>Google reCAPTCHA</button>
-            <button className={captchaProvider === "turnstile" ? "active" : ""} onClick={() => { setCaptchaProvider("turnstile"); saveDeployConfig({ captcha_provider: "turnstile" }); }}>Cloudflare Turnstile</button>
-            <button className={captchaProvider === "hcaptcha" ? "active" : ""} onClick={() => { setCaptchaProvider("hcaptcha"); saveDeployConfig({ captcha_provider: "hcaptcha" }); }}>hCaptcha</button>
-          </div>
-        </div>
-      </div>
+      <SetRow label="人机验证（CAPTCHA）" description="用于注册 / 找回密码 / 登录失败重试。生产环境建议开启。">
+        <CSSpaceBetween direction="horizontal" size="xs">
+          <CSButton variant={captchaProvider === "off" ? "primary" : "normal"} onClick={() => { setCaptchaProvider("off"); saveDeployConfig({ captcha_provider: "off" }); }}>关闭</CSButton>
+          <CSButton variant={captchaProvider === "recaptcha" ? "primary" : "normal"} onClick={() => { setCaptchaProvider("recaptcha"); saveDeployConfig({ captcha_provider: "recaptcha" }); }}>Google reCAPTCHA</CSButton>
+          <CSButton variant={captchaProvider === "turnstile" ? "primary" : "normal"} onClick={() => { setCaptchaProvider("turnstile"); saveDeployConfig({ captcha_provider: "turnstile" }); }}>Cloudflare Turnstile</CSButton>
+          <CSButton variant={captchaProvider === "hcaptcha" ? "primary" : "normal"} onClick={() => { setCaptchaProvider("hcaptcha"); saveDeployConfig({ captcha_provider: "hcaptcha" }); }}>hCaptcha</CSButton>
+        </CSSpaceBetween>
+      </SetRow>
       {captchaProvider === "recaptcha" && (
         <>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>reCAPTCHA 版本</strong><div className="muted">v2 弹窗式 · v3 无感打分；建议 v3。</div></div>
-            <div className="pl-set-control">
-              <div className="seg" style={{display: "flex"}}>
-                {/* task 56 修 dead button: 之前 3 个按钮无 onClick，纯静态 */}
-                <button className={recaptchaVer === "v3" ? "active" : ""} onClick={() => { setRecaptchaVer("v3"); saveDeployConfig({ recaptcha_ver: "v3" }); }}>v3 (推荐)</button>
-                <button className={recaptchaVer === "v2c" ? "active" : ""} onClick={() => { setRecaptchaVer("v2c"); saveDeployConfig({ recaptcha_ver: "v2c" }); }}>v2 Checkbox</button>
-                <button className={recaptchaVer === "v2i" ? "active" : ""} onClick={() => { setRecaptchaVer("v2i"); saveDeployConfig({ recaptcha_ver: "v2i" }); }}>v2 Invisible</button>
-              </div>
-            </div>
-          </div>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>Site Key</strong><div className="muted">公开密钥 · 嵌入前端。</div></div>
-            <div className="pl-set-control"><input className="mono" value={recaptchaSiteKey} placeholder="6L···Y9" onChange={(e) => { setRecaptchaSiteKey(e.target.value); saveDeployConfig({ recaptcha_site_key: e.target.value }); }} /></div>
-          </div>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>Secret Key</strong><div className="muted">私密 · 仅服务器使用。</div></div>
-            <div className="pl-set-control"><input className="mono" type="password" value={recaptchaSecretKey} placeholder="6L···Z3" onChange={(e) => { setRecaptchaSecretKey(e.target.value); saveDeployConfig({ recaptcha_secret_key: e.target.value }); }} /></div>
-          </div>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>v3 通过分数</strong><div className="muted">低于此分数视为机器人；0.5 为推荐起点。</div></div>
-            <div className="pl-set-control"><input type="number" value={recaptchaScore} min={0} max={1} step={0.05} className="mono" style={{width: 100}} onChange={(e) => { setRecaptchaScore(Number(e.target.value)); saveDeployConfig({ recaptcha_score: Number(e.target.value) }); }} /></div>
-          </div>
+          <SetRow label="reCAPTCHA 版本" description="v2 弹窗式 · v3 无感打分；建议 v3。">
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSButton variant={recaptchaVer === "v3" ? "primary" : "normal"} onClick={() => { setRecaptchaVer("v3"); saveDeployConfig({ recaptcha_ver: "v3" }); }}>v3 (推荐)</CSButton>
+              <CSButton variant={recaptchaVer === "v2c" ? "primary" : "normal"} onClick={() => { setRecaptchaVer("v2c"); saveDeployConfig({ recaptcha_ver: "v2c" }); }}>v2 Checkbox</CSButton>
+              <CSButton variant={recaptchaVer === "v2i" ? "primary" : "normal"} onClick={() => { setRecaptchaVer("v2i"); saveDeployConfig({ recaptcha_ver: "v2i" }); }}>v2 Invisible</CSButton>
+            </CSSpaceBetween>
+          </SetRow>
+          <SetRow label="Site Key" description="公开密钥 · 嵌入前端。">
+            <CSInput value={recaptchaSiteKey} placeholder="6L···Y9" onChange={({ detail }) => { setRecaptchaSiteKey(detail.value); saveDeployConfig({ recaptcha_site_key: detail.value }); }} />
+          </SetRow>
+          <SetRow label="Secret Key" description="私密 · 仅服务器使用。">
+            <CSInput type="password" value={recaptchaSecretKey} placeholder="6L···Z3" onChange={({ detail }) => { setRecaptchaSecretKey(detail.value); saveDeployConfig({ recaptcha_secret_key: detail.value }); }} />
+          </SetRow>
+          <SetRow label="v3 通过分数" description="低于此分数视为机器人；0.5 为推荐起点。">
+            <CSInput type="number" value={String(recaptchaScore)}
+              onChange={({ detail }) => { setRecaptchaScore(Number(detail.value)); saveDeployConfig({ recaptcha_score: Number(detail.value) }); }} />
+          </SetRow>
         </>
       )}
       {captchaProvider === "turnstile" && (
         <>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>Site Key</strong><div className="muted">来自 Cloudflare Dashboard → Turnstile。</div></div>
-            <div className="pl-set-control"><input className="mono" value={turnstileSiteKey} placeholder="0x4A···AAAA" onChange={(e) => { setTurnstileSiteKey(e.target.value); saveDeployConfig({ turnstile_site_key: e.target.value }); }} /></div>
-          </div>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>Secret Key</strong><div className="muted">仅服务器使用。</div></div>
-            <div className="pl-set-control"><input className="mono" type="password" value={turnstileSecretKey} placeholder="0x4A···AAAA" onChange={(e) => { setTurnstileSecretKey(e.target.value); saveDeployConfig({ turnstile_secret_key: e.target.value }); }} /></div>
-          </div>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>Widget 模式</strong><div className="muted">非交互式适合大多数场景；交互式给可疑用户加挑战。</div></div>
-            <div className="pl-set-control">
-              <div className="seg" style={{display: "flex"}}>
-                {/* task 56 修 dead button: turnstile widget mode 3 个按钮无 onClick */}
-                <button className={turnstileMode === "non_interactive" ? "active" : ""} onClick={() => { setTurnstileMode("non_interactive"); saveDeployConfig({ turnstile_mode: "non_interactive" }); }}>非交互式</button>
-                <button className={turnstileMode === "interactive" ? "active" : ""} onClick={() => { setTurnstileMode("interactive"); saveDeployConfig({ turnstile_mode: "interactive" }); }}>交互式</button>
-                <button className={turnstileMode === "invisible" ? "active" : ""} onClick={() => { setTurnstileMode("invisible"); saveDeployConfig({ turnstile_mode: "invisible" }); }}>隐式</button>
-              </div>
-            </div>
-          </div>
+          <SetRow label="Site Key" description="来自 Cloudflare Dashboard → Turnstile。">
+            <CSInput value={turnstileSiteKey} placeholder="0x4A···AAAA" onChange={({ detail }) => { setTurnstileSiteKey(detail.value); saveDeployConfig({ turnstile_site_key: detail.value }); }} />
+          </SetRow>
+          <SetRow label="Secret Key" description="仅服务器使用。">
+            <CSInput type="password" value={turnstileSecretKey} placeholder="0x4A···AAAA" onChange={({ detail }) => { setTurnstileSecretKey(detail.value); saveDeployConfig({ turnstile_secret_key: detail.value }); }} />
+          </SetRow>
+          <SetRow label="Widget 模式" description="非交互式适合大多数场景；交互式给可疑用户加挑战。">
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSButton variant={turnstileMode === "non_interactive" ? "primary" : "normal"} onClick={() => { setTurnstileMode("non_interactive"); saveDeployConfig({ turnstile_mode: "non_interactive" }); }}>非交互式</CSButton>
+              <CSButton variant={turnstileMode === "interactive" ? "primary" : "normal"} onClick={() => { setTurnstileMode("interactive"); saveDeployConfig({ turnstile_mode: "interactive" }); }}>交互式</CSButton>
+              <CSButton variant={turnstileMode === "invisible" ? "primary" : "normal"} onClick={() => { setTurnstileMode("invisible"); saveDeployConfig({ turnstile_mode: "invisible" }); }}>隐式</CSButton>
+            </CSSpaceBetween>
+          </SetRow>
         </>
       )}
       {captchaProvider === "hcaptcha" && (
         <>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>Site Key</strong></div>
-            <div className="pl-set-control"><input className="mono" value={hcaptchaSiteKey} placeholder="xxxxxxxx-xxxx-xxxx" onChange={(e) => { setHcaptchaSiteKey(e.target.value); saveDeployConfig({ hcaptcha_site_key: e.target.value }); }} /></div>
-          </div>
-          <div className="pl-set-row">
-            <div className="pl-set-label"><strong>Secret Key</strong></div>
-            <div className="pl-set-control"><input className="mono" type="password" value={hcaptchaSecretKey} placeholder="0x···" onChange={(e) => { setHcaptchaSecretKey(e.target.value); saveDeployConfig({ hcaptcha_secret_key: e.target.value }); }} /></div>
-          </div>
+          <SetRow label="Site Key">
+            <CSInput value={hcaptchaSiteKey} placeholder="xxxxxxxx-xxxx-xxxx" onChange={({ detail }) => { setHcaptchaSiteKey(detail.value); saveDeployConfig({ hcaptcha_site_key: detail.value }); }} />
+          </SetRow>
+          <SetRow label="Secret Key">
+            <CSInput type="password" value={hcaptchaSecretKey} placeholder="0x···" onChange={({ detail }) => { setHcaptchaSecretKey(detail.value); saveDeployConfig({ hcaptcha_secret_key: detail.value }); }} />
+          </SetRow>
         </>
       )}
       {captchaProvider !== "off" && (
-        <div className="pl-set-row" style={{borderBottom: 0}}>
-          <div className="pl-set-label">
-            <strong>触发位置</strong>
-            <div className="muted">勾选需要校验的功能；登录失败 3 次后默认强制。</div>
-          </div>
-          <div className="pl-set-control">
-            <div className="pl-rules">
-              <span className="pl-rule-chip active">注册</span>
-              <span className="pl-rule-chip active">找回密码</span>
-              <span className="pl-rule-chip active">登录重试</span>
-              <span className="pl-rule-chip">每次登录</span>
-              <span className="pl-rule-chip">API Key 创建</span>
-            </div>
-          </div>
-        </div>
+        <SetRow label="触发位置" description="勾选需要校验的功能；登录失败 3 次后默认强制。">
+          <CSSpaceBetween direction="horizontal" size="xs">
+            <CSButton variant="primary">注册</CSButton>
+            <CSButton variant="primary">找回密码</CSButton>
+            <CSButton variant="primary">登录重试</CSButton>
+            <CSButton variant="normal">每次登录</CSButton>
+            <CSButton variant="normal">API Key 创建</CSButton>
+          </CSSpaceBetween>
+        </SetRow>
       )}
-    </div>
+    </SetGroup>
   );
 }
 
@@ -2767,16 +2715,13 @@ function DangerSection() {
   const { saves = [] } = usePlatformData();
   const nSaves = saves.length;
   return (
-    <div className="pl-set-group" data-cap-anchor="settings.danger">
-      <h3 className="danger">高危操作</h3>
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>清空所有存档</strong><div className="muted">会保留剧本与库，但删除所有进度和分支。</div></div>
-        <div className="pl-set-control"><button className="btn danger" onClick={() => setConfirm("clear")}><Icon name="trash" size={12} /> 清空存档</button></div>
-      </div>
-      <div className="pl-set-row">
-        <div className="pl-set-label"><strong>重置平台数据</strong><div className="muted">删除剧本、存档、库与设置，恢复到首次安装状态。</div></div>
-        <div className="pl-set-control"><button className="btn danger" onClick={() => setConfirm("reset")}><Icon name="trash" size={12} /> 完全重置</button></div>
-      </div>
+    <SetGroup title="高危操作">
+      <SetRow label="清空所有存档" description="会保留剧本与库，但删除所有进度和分支。">
+        <CSButton variant="normal" onClick={() => setConfirm("clear")}>清空存档</CSButton>
+      </SetRow>
+      <SetRow label="重置平台数据" description="删除剧本、存档、库与设置，恢复到首次安装状态。">
+        <CSButton variant="normal" onClick={() => setConfirm("reset")}>完全重置</CSButton>
+      </SetRow>
       <ConfirmModal
         open={confirm === "clear"}
         title="清空所有存档？"
@@ -2814,7 +2759,7 @@ function DangerSection() {
           });
         }}
       />
-    </div>
+    </SetGroup>
   );
 }
 

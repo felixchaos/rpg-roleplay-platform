@@ -1,0 +1,202 @@
+/* === AWS-console-style component kit — 基于 tokens.css 暖色暗主题 ============ */
+/* 类名前缀 aw-。所有颜色走 CSS 变量,跟随既有主题。 */
+
+/* 统一控件高度 — AWS 的协调感来自所有控件同高、同基线 */
+:root { --aw-h: 34px; --aw-h-sm: 28px; }
+
+.aw-muted { color: var(--muted); }
+
+/* ── 按钮 ──────────────────────────────────────────────────────────────── */
+.aw-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  box-sizing: border-box; height: var(--aw-h);
+  font: inherit; font-size: 13px; line-height: 1; font-weight: 500;
+  padding: 0 14px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--line-strong); background: var(--panel-2); color: var(--text);
+  transition: background .14s, border-color .14s, opacity .14s;
+  white-space: nowrap; vertical-align: middle;
+}
+.aw-btn:hover:not(:disabled) { background: var(--panel-3); border-color: var(--muted-2); }
+.aw-btn:disabled { opacity: .45; cursor: not-allowed; }
+.aw-btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.aw-btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, #000); border-color: color-mix(in srgb, var(--accent) 86%, #000); }
+.aw-btn-danger { background: var(--panel-2); border-color: var(--line-strong); color: var(--danger); }
+.aw-btn-danger:hover:not(:disabled) { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
+.aw-btn-link { background: transparent; border-color: transparent; color: var(--text-quiet); padding: 0 8px; }
+.aw-btn-link:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
+.aw-btn-sm { height: var(--aw-h-sm); padding: 0 10px; font-size: 12px; }
+.aw-btn-full { width: 100%; }
+.aw-btn-ic { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; flex: none; }
+.aw-btn-ic svg { width: 100%; height: 100%; }
+
+.aw-spin {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent;
+  display: inline-block; animation: aw-spin .7s linear infinite;
+}
+@keyframes aw-spin { to { transform: rotate(360deg); } }
+
+/* ── Badge / Status ───────────────────────────────────────────────────── */
+.aw-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 500; border: 1px solid var(--line-strong); color: var(--text-quiet); background: var(--panel-2); }
+.aw-badge-ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-soft); }
+.aw-badge-warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.aw-badge-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: var(--danger-soft); }
+.aw-badge-info { color: var(--info); border-color: color-mix(in srgb, var(--info) 40%, transparent); background: var(--info-soft); }
+
+.aw-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-quiet); }
+.aw-status-dot { font-size: 9px; line-height: 1; }
+.aw-status-ok .aw-status-dot { color: var(--ok); }
+.aw-status-error .aw-status-dot { color: var(--danger); }
+.aw-status-warn .aw-status-dot { color: var(--warn); }
+.aw-status-info .aw-status-dot { color: var(--info); }
+.aw-status-pending .aw-status-dot, .aw-status-loading .aw-status-dot { color: var(--muted); }
+
+/* ── KeyValue ─────────────────────────────────────────────────────────── */
+.aw-kv { display: grid; grid-template-columns: repeat(var(--aw-kv-cols, 2), minmax(0,1fr)); gap: 11px 24px; }
+.aw-kv-label { font-size: 11.5px; color: var(--muted); margin-bottom: 3px; }
+.aw-kv-value { font-size: 13.5px; color: var(--text); }
+
+/* ── 表单零件 ──────────────────────────────────────────────────────────── */
+.aw-field { display: flex; flex-direction: column; gap: 6px; }
+.aw-field-label { font-size: 12.5px; color: var(--text-quiet); font-weight: 500; }
+.aw-field-hint { font-size: 11.5px; color: var(--muted); }
+.aw-field-error { font-size: 11.5px; color: var(--danger); }
+
+.aw-input {
+  box-sizing: border-box; height: var(--aw-h);
+  font: inherit; font-size: 13px; color: var(--text);
+  background: var(--bg-deep); border: 1px solid var(--line-strong); border-radius: 7px;
+  padding: 0 11px; width: 100%; transition: border-color .14s, box-shadow .14s;
+}
+.aw-input::placeholder { color: var(--muted-2); }
+.aw-input:focus { outline: none; border-color: var(--accent-edge); box-shadow: 0 0 0 3px var(--accent-soft); }
+.aw-textarea { height: auto; resize: vertical; min-height: 80px; line-height: 1.5; padding: 9px 11px; }
+
+.aw-select-wrap { position: relative; }
+.aw-select { appearance: none; padding-right: 30px; cursor: pointer; }
+.aw-select-chevron { position: absolute; right: 11px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--muted); font-size: 11px; }
+
+.aw-toggle { display: inline-flex; align-items: center; gap: 9px; background: none; border: none; cursor: pointer; padding: 0; color: var(--text-quiet); font: inherit; font-size: 13px; }
+.aw-toggle-track { width: 38px; height: 22px; border-radius: 999px; background: var(--panel-3); border: 1px solid var(--line-strong); position: relative; transition: background .16s, border-color .16s; flex: none; }
+.aw-toggle-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: transform .16s, background .16s; }
+.aw-toggle.on .aw-toggle-track { background: var(--accent-soft); border-color: var(--accent-edge); }
+.aw-toggle.on .aw-toggle-knob { transform: translateX(16px); background: var(--accent); }
+.aw-toggle:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── 页头 + 面包屑 ──────────────────────────────────────────────────────── */
+.aw-pagehead { margin-bottom: 20px; }
+.aw-crumbs { display: flex; gap: 6px; font-size: 12px; color: var(--muted); margin-bottom: 8px; flex-wrap: wrap; }
+.aw-crumb { display: inline-flex; gap: 6px; align-items: center; }
+.aw-crumb-link { background: none; border: none; color: var(--text-quiet); cursor: pointer; font: inherit; font-size: 12px; padding: 0; }
+.aw-crumb-link:hover { color: var(--accent); text-decoration: underline; }
+.aw-crumb-sep { color: var(--muted-3); }
+.aw-pagehead-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.aw-pagehead-title { font-size: 22px; font-weight: 600; color: var(--text); margin: 0; display: flex; align-items: baseline; gap: 10px; }
+.aw-pagehead-counter { font-size: 14px; color: var(--muted); font-weight: 400; }
+.aw-pagehead-desc { font-size: 13px; color: var(--muted); margin: 5px 0 0; }
+.aw-pagehead-actions { display: flex; gap: 9px; flex: none; }
+
+/* ── 列表 + 详情分栏 ────────────────────────────────────────────────────── */
+/* 全宽全高页面容器:填满内容区,不留大片空白(对齐 AWS 控制台密度)。
+   高度 = 视口 - 顶栏(72px) - .pl-content 上下 padding(24*2)。顶栏高度固定。 */
+.aw-page { display: flex; flex-direction: column; height: calc(100vh - 72px - 48px); min-height: 360px; max-width: none; }
+.aw-page > .aw-split { flex: 1; min-height: 0; }
+@media (max-width: 1100px) { .aw-page { height: calc(100vh - 72px - 32px); } }
+
+.aw-split { display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); gap: 12px; }
+.aw-split-open { grid-template-columns: 300px 1fr; }
+.aw-split-list { min-height: 0; overflow: auto; }
+.aw-split-detail { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; min-height: 0; overflow: auto; }
+.aw-split-close { position: absolute; top: 12px; right: 12px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 4px; border-radius: 6px; }
+.aw-split-close:hover { background: var(--panel-3); color: var(--text); }
+@media (max-width: 980px) { .aw-split-open { grid-template-columns: 260px 1fr; } }
+@media (max-width: 760px) { .aw-split-open { grid-template-columns: 1fr; } }
+
+/* 列表工具条:搜索 + 排序 */
+.aw-list-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+.aw-search { position: relative; flex: 1; display: flex; align-items: center; }
+.aw-search > svg { position: absolute; left: 10px; color: var(--muted); pointer-events: none; }
+.aw-search-input {
+  box-sizing: border-box; height: var(--aw-h); width: 100%;
+  font: inherit; font-size: 13px; color: var(--text);
+  background: var(--bg-deep); border: 1px solid var(--line-strong); border-radius: 7px;
+  padding: 0 30px 0 30px;
+}
+.aw-search-input::placeholder { color: var(--muted-2); }
+.aw-search-input:focus { outline: none; border-color: var(--accent-edge); box-shadow: 0 0 0 3px var(--accent-soft); }
+.aw-search-clear { position: absolute; right: 8px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 3px; }
+.aw-search-clear:hover { color: var(--text); }
+.aw-list-toolbar .aw-select-wrap { flex: none; min-width: 120px; }
+
+.aw-rlist { display: flex; flex-direction: column; gap: 5px; }
+.aw-rlist-item { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; color: var(--text); font: inherit; transition: border-color .14s, background .14s; }
+.aw-rlist-item:hover { border-color: var(--line-strong); background: var(--panel-2); }
+.aw-rlist-item.sel { border-color: var(--accent-edge); background: var(--accent-soft); }
+.aw-empty { padding: 40px 20px; text-align: center; color: var(--muted); font-size: 13px; border: 1px dashed var(--line-strong); border-radius: 12px; }
+
+/* ── Tabs ─────────────────────────────────────────────────────────────── */
+.aw-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+.aw-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; font: inherit; font-size: 13.5px; padding: 9px 14px; margin-bottom: -1px; display: inline-flex; align-items: center; gap: 7px; }
+.aw-tab:hover { color: var(--text-quiet); }
+.aw-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.aw-tab-badge { font-size: 11px; background: var(--panel-3); color: var(--muted); border-radius: 999px; padding: 1px 7px; }
+
+/* ── 分组表单容器 ──────────────────────────────────────────────────────── */
+.aw-section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 16px; overflow: hidden; }
+.aw-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); }
+.aw-section-title { font-size: 14.5px; font-weight: 600; color: var(--text); margin: 0; }
+.aw-section-desc { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+.aw-section-actions { display: flex; gap: 8px; flex: none; }
+.aw-section-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 13px; }
+.aw-section.dense .aw-section-body { padding: 14px 18px; gap: 12px; }
+.aw-section-foot { padding: 12px 18px; border-top: 1px solid var(--line-soft); background: var(--bg-deep); display: flex; justify-content: flex-end; gap: 9px; }
+
+/* ── 全页向导 ──────────────────────────────────────────────────────────── */
+.aw-wizard { display: grid; grid-template-columns: 240px 1fr; gap: 22px; align-items: start; }
+.aw-wizard-rail { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.aw-wizard-step-btn { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; padding: 9px 11px; border-radius: 9px; color: var(--muted); font: inherit; font-size: 13px; }
+.aw-wizard-step-btn:disabled { cursor: default; }
+.aw-wizard-step.active .aw-wizard-step-btn { background: var(--accent-soft); color: var(--text); }
+.aw-wizard-step.done .aw-wizard-step-btn { color: var(--text-quiet); }
+.aw-wizard-step-no { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line-strong); display: inline-flex; align-items: center; justify-content: center; font-size: 11.5px; flex: none; }
+.aw-wizard-step.active .aw-wizard-step-no { border-color: var(--accent); color: var(--accent); }
+.aw-wizard-step.done .aw-wizard-step-no { background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 50%, transparent); color: var(--ok); }
+.aw-wizard-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; min-height: 320px; display: flex; flex-direction: column; }
+.aw-wizard-content { padding: 22px 24px; flex: 1; }
+.aw-wizard-title { font-size: 17px; font-weight: 600; margin: 0 0 18px; color: var(--text); }
+.aw-wizard-foot { display: flex; align-items: center; justify-content: space-between; padding: 14px 24px; border-top: 1px solid var(--line-soft); }
+.aw-wizard-foot-right { display: flex; gap: 9px; margin-left: auto; }
+@media (max-width: 760px) { .aw-wizard { grid-template-columns: 1fr; } .aw-wizard-rail { flex-direction: row; overflow-x: auto; } }
+
+/* ── 抽屉 ──────────────────────────────────────────────────────────────── */
+.aw-drawer-root { position: fixed; inset: 0; z-index: 200; }
+.aw-drawer-scrim { position: absolute; inset: 0; background: rgba(0,0,0,.45); animation: aw-fade .16s ease; }
+.aw-drawer { position: absolute; top: 0; right: 0; height: 100%; width: min(var(--aw-drawer-w, 480px), 92vw); background: var(--panel); border-left: 1px solid var(--line-strong); display: flex; flex-direction: column; animation: aw-slide-in .18s ease; box-shadow: -16px 0 40px rgba(0,0,0,.3); }
+.aw-drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line-soft); }
+.aw-drawer-title { font-size: 15px; font-weight: 600; margin: 0; color: var(--text); }
+.aw-drawer-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 15px; padding: 4px; border-radius: 6px; }
+.aw-drawer-close:hover { background: var(--panel-3); color: var(--text); }
+.aw-drawer-body { padding: 20px; overflow-y: auto; flex: 1; }
+.aw-drawer-foot { padding: 14px 20px; border-top: 1px solid var(--line-soft); display: flex; justify-content: flex-end; gap: 9px; }
+@keyframes aw-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes aw-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── 确认弹窗 ──────────────────────────────────────────────────────────── */
+.aw-confirm-root { position: fixed; inset: 0; z-index: 240; display: flex; align-items: center; justify-content: center; }
+.aw-confirm-scrim { position: absolute; inset: 0; background: rgba(0,0,0,.5); }
+.aw-confirm { position: relative; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 14px; padding: 22px 24px; width: min(420px, 92vw); box-shadow: 0 20px 60px rgba(0,0,0,.4); animation: aw-pop .16s ease; }
+.aw-confirm-title { font-size: 15.5px; font-weight: 600; margin: 0 0 10px; color: var(--text); }
+.aw-confirm-body { font-size: 13px; color: var(--text-quiet); line-height: 1.55; margin-bottom: 18px; }
+.aw-confirm-foot { display: flex; justify-content: flex-end; gap: 9px; }
+@keyframes aw-pop { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+
+/* ── 顶部横幅 Flashbar ─────────────────────────────────────────────────── */
+.aw-flashbar { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.aw-flash { display: flex; align-items: flex-start; gap: 10px; padding: 11px 14px; border-radius: 10px; font-size: 13px; border: 1px solid var(--line-strong); background: var(--panel-2); color: var(--text-quiet); }
+.aw-flash-ic { flex: none; font-size: 12px; margin-top: 1px; }
+.aw-flash-content { flex: 1; }
+.aw-flash-x { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px; }
+.aw-flash-success { border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-soft); color: var(--ok); }
+.aw-flash-error { border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: var(--danger-soft); color: var(--danger); }
+.aw-flash-warn { border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); color: var(--warn); }
+.aw-flash-info { border-color: color-mix(in srgb, var(--info) 40%, transparent); background: var(--info-soft); color: var(--info); }

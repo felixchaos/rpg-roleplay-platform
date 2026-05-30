@@ -151,6 +151,12 @@ def _db_write_runtime(payload: dict[str, Any]) -> None:
                 Jsonb(md or {}),
             ),
         )
+        # 无感自动存档语义:runtime 指向某存档即视为"正在游玩",刷新其最后游玩时间
+        if save_id:
+            db.execute(
+                "update game_saves set last_played_at = now() where id = %s",
+                (int(save_id),),
+            )
 
 
 # ── 公共 API ───────────────────────────────────────────────────────

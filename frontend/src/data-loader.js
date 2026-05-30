@@ -182,6 +182,9 @@ function normalizeSave(s) {
     script_id: s.script_id || (s.script && s.script.id),
     branch_count: s.branch_count || s.branches || 0,
     updated_at: fmtAgo(s.updated_at) || s.updated_at_human || "—",
+    last_played_at: fmtAgo(s.last_played_at || s.updated_at) || "—",
+    last_played_ts: s.last_played_at || s.updated_at || null,  // 原始时间戳,供排序
+    created_ts: s.created_at || null,
     current: !!s.current,
     _raw: s,
   };

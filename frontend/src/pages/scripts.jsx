@@ -8,6 +8,24 @@ import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL,
 import { Icon } from '../game-icons.jsx';
 import { PromptModal, usePlatformData, fmtBytes, fmtN } from '../platform-app.jsx';
 import { NewGameModal } from './saves.jsx';
+import { ScriptReview } from './script-review.jsx';
+// Cloudscape 原生组件(内容迁移,统一基线对齐)
+import CSHeader from '@cloudscape-design/components/header';
+import CSTable from '@cloudscape-design/components/table';
+import CSContainer from '@cloudscape-design/components/container';
+import CSSpaceBetween from '@cloudscape-design/components/space-between';
+import CSButton from '@cloudscape-design/components/button';
+import CSButtonDropdown from '@cloudscape-design/components/button-dropdown';
+import CSBox from '@cloudscape-design/components/box';
+import CSBadge from '@cloudscape-design/components/badge';
+import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
+import CSFormField from '@cloudscape-design/components/form-field';
+import CSInput from '@cloudscape-design/components/input';
+import CSSelect from '@cloudscape-design/components/select';
+import CSFileUpload from '@cloudscape-design/components/file-upload';
+import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
+import CSAlert from '@cloudscape-design/components/alert';
+import CSProgressBar from '@cloudscape-design/components/progress-bar';
 
 function ScriptPreviewModal({ open, busy, data, rule, onClose, onRetryRule, onConfirm }) {
   if (!open) return null;
@@ -284,102 +302,103 @@ function ScriptsListView() {
   // task 52：之前 onPreview 只 alert 第一章前 400 字，章节多了无法浏览/编辑。
   // 改成开 ChaptersModal —— 真正展示章节列表 + 内容预览 + 重命名 + 重切分。
   const [chaptersOpen, setChaptersOpen] = useStatePL(null); // script row
+  const [reviewScript, setReviewScript] = useStatePL(null); // Phase E.1: KB 复核 modal
+
+  // 每行操作下拉项 + 向量化状态(task 51)
+  const rowActions = (s) => {
+    const es = embedStatus[s.id];
+    const totalDone = es ? (es.chunks.done + es.cards.done + es.worldbook.done) : 0;
+    const totalAll = es ? (es.chunks.total + es.cards.total + es.worldbook.total) : 0;
+    const pct = totalAll > 0 ? Math.round((totalDone / totalAll) * 100) : 0;
+    const fullyDone = es && !es.running && totalAll > 0 && totalDone >= totalAll;
+    const running = es && es.running;
+    const embedText = running ? `向量化中 ${pct}%`
+      : fullyDone ? `已建索引(${totalAll} 项)`
+      : "建立向量索引";
+    return [
+      { id: 'chapters', text: '查看章节 / 重切分', iconName: 'file' },
+      { id: 'overrides', text: '剧本覆盖设定', iconName: 'edit' },
+      { id: 'review', text: 'KB 复核 — 提取结果', iconName: 'status-info' },
+      { id: 'embed', text: embedText, iconName: fullyDone ? 'status-positive' : 'gen-ai', disabled: !!running },
+      { id: 'export', text: '导出剧本包 (zip)', iconName: 'download', disabled: exportingId === s.id },
+      { id: 'delete', text: '删除剧本', iconName: 'remove', disabled: busyId === s.id },
+    ];
+  };
+  const onRowAction = (s, id) => {
+    if (id === 'chapters') setChaptersOpen(s);
+    else if (id === 'overrides') setOverridesScript(s);
+    else if (id === 'review') setReviewScript(s);
+    else if (id === 'embed') triggerEmbed(s.id);
+    else if (id === 'export') onExportPack(s);
+    else if (id === 'delete') onDelete(s);
+  };
+  const onPlay = (s) => {
+    // Codex P0-2 修复:有 sv 走 ContinuePicker(继续真实存档);没 sv 弹 NewGameModal 走原子建档流。
+    const sv = platSaves.find(x => x.script_id === s.id);
+    if (sv) window.__openContinue?.(sv);
+    else setNewModalScriptId(s.id);
+  };
 
   return (
-    <section className="pl-sec" data-cap-anchor="scripts.list">
-      <div className="pl-sec-head">
-        <h2>已有剧本 <span className="muted-2">{scripts.length} 个</span></h2>
-        <div className="pl-sec-tools">
-          <button className="btn ghost" onClick={() => importPackRef.current?.click()} disabled={importPackBusy} data-tip="从 zip pack 导入完整剧本（含章节/角色卡/世界书）">
-            {importPackBusy ? <Icon name="spinner" size={12} className="spin" /> : <Icon name="download" size={12} />} {importPackBusy ? "导入中…" : "导入剧本包"}
-          </button>
-          <input ref={importPackRef} type="file" accept=".zip" style={{display:"none"}} onChange={(e) => onImportPackFile(e.target.files?.[0])} />
-          <a className="btn primary" href="#scripts-import" data-tip="导入新剧本">
-            <Icon name="upload" size={12} /> 导入剧本
-          </a>
-        </div>
-      </div>
-      <table className="pl-table">
-        <thead><tr><th>剧本</th><th>章节</th><th>字数</th><th>切分</th><th>异常</th><th>置信度</th><th></th></tr></thead>
-        <tbody>
-          {scripts.map(s => (
-            <tr key={s.id}>
-              <td>
-                <div className="pl-title-cell">
-                  <strong>{s.title}</strong>
-                  <span className="muted-2 mono">{s.uid} · 更新 {s.updated_at}</span>
-                </div>
-              </td>
-              <td className="mono">{(s.chapter_count || 0).toLocaleString()}</td>
-              <td className="mono">{((s.word_count || 0) / 10000).toFixed(1)} 万</td>
-              <td className="muted">{s.import_report?.mode_label || "—"}</td>
-              <td>
-                {(!s.import_report?.problem_label || s.import_report.problem_label === "未发现明显异常") ? (
-                  <span className="pill ok"><span className="dot ok" /> 干净</span>
-                ) : (
-                  <span className="pill warn"><span className="dot warn" /> {s.import_report.problem_label}</span>
-                )}
-              </td>
-              <td><ConfidenceBar value={s.import_report?.confidence || 0} /></td>
-              <td className="pl-table-actions">
-                <button className="iconbtn" data-tip="基于此剧本继续游戏" disabled={busyId === s.id}
-                  onClick={() => {
-                    // Codex P0-2 修复:旧代码没存档时传 fake {id:null,...},ContinuePicker.confirm 直接跳页不建档。
-                    // 现在拆两条:有 sv 走 ContinuePicker (继续真实存档);没 sv 弹 NewGameModal 走原子建档流。
-                    const sv = platSaves.find(x => x.script_id === s.id);
-                    if (sv) {
-                      window.__openContinue?.(sv);
-                    } else {
-                      setNewModalScriptId(s.id);
-                    }
-                  }}>
-                  <Icon name="play" size={13} />
-                </button>
-                <button className="iconbtn" data-tip="查看章节 / 重切分" onClick={() => setChaptersOpen(s)}><Icon name="eye" size={13} /></button>
-                <button className="iconbtn" data-tip="剧本覆盖设定 (overrides)" onClick={() => setOverridesScript(s)}>
-                  <Icon name="edit" size={13} />
-                </button>
-                {/* task 51: 向量化按钮 — 触发 Vertex text-embedding-004 + pgvector
-                    pipeline。进度从 embedStatus[s.id] 拿,显示 "建立向量索引" /
-                    "向量化中 N%" / "已建索引"。 */}
-                {(() => {
-                  const es = embedStatus[s.id];
-                  const totalDone = es ? (es.chunks.done + es.cards.done + es.worldbook.done) : 0;
-                  const totalAll = es ? (es.chunks.total + es.cards.total + es.worldbook.total) : 0;
-                  const pct = totalAll > 0 ? Math.round((totalDone / totalAll) * 100) : 0;
-                  const fullyDone = es && !es.running && totalAll > 0 && totalDone >= totalAll;
-                  const running = es && es.running;
-                  const tip = running ? `向量化中 ${pct}%(${totalDone}/${totalAll})`
-                    : fullyDone ? `已建索引 ${totalAll} 项(Vertex ${es.model || "text-embedding-004"})`
-                    : "建立向量索引 — 提醒:需 Vertex API 凭证配置,跑全书 chunks + 角色卡 + 世界书";
-                  return (
-                    <button
-                      className={`iconbtn ${fullyDone ? "ok" : ""}`}
-                      data-tip={tip}
-                      disabled={running}
-                      onClick={() => !running && triggerEmbed(s.id)}
-                    >
-                      {running
-                        ? <Icon name="spinner" size={13} className="spin" />
-                        : fullyDone
-                          ? <Icon name="check" size={13} />
-                          : <Icon name="sparkle" size={13} />}
-                    </button>
-                  );
-                })()}
-                <button className="iconbtn" data-tip="导出剧本包 (zip)" disabled={exportingId === s.id} onClick={() => onExportPack(s)}>
-                  {exportingId === s.id ? <Icon name="spinner" size={13} className="spin" /> : <Icon name="download" size={13} />}
-                </button>
-                <button className="iconbtn danger" data-tip="删除剧本" onClick={() => onDelete(s)} disabled={busyId === s.id}>
-                  <Icon name="trash" size={13} />
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <CSSpaceBetween size="l">
+      <CSHeader
+        variant="h1"
+        counter={`(${scripts.length})`}
+        description="管理已导入的剧本:查看章节、覆盖设定、建立向量索引或导出剧本包。"
+        actions={
+          <CSSpaceBetween direction="horizontal" size="xs">
+            <input ref={importPackRef} type="file" accept=".zip" style={{ display: 'none' }} onChange={(e) => onImportPackFile(e.target.files?.[0])} />
+            <CSButton iconName="download" loading={importPackBusy} onClick={() => importPackRef.current?.click()}>导入剧本包</CSButton>
+            <CSButton variant="primary" iconName="upload" href="#scripts-import">导入剧本</CSButton>
+          </CSSpaceBetween>
+        }
+      >剧本管理</CSHeader>
+
+      <CSTable
+        variant="container"
+        trackBy="id"
+        loadingText="加载剧本…"
+        loading={!loaded}
+        items={scripts}
+        empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>还没有剧本,点右上「导入剧本」开始。</CSBox>}
+        columnDefinitions={[
+          { id: 'title', header: '剧本', cell: (s) => (
+            <div><CSBox fontWeight="bold">{s.title}</CSBox><CSBox fontSize="body-s" color="text-body-secondary">{s.uid} · 更新 {s.updated_at}</CSBox></div>
+          ) },
+          { id: 'chapters', header: '章节', cell: (s) => (s.chapter_count || 0).toLocaleString() },
+          { id: 'words', header: '字数', cell: (s) => `${((s.word_count || 0) / 10000).toFixed(1)} 万` },
+          { id: 'mode', header: '切分', cell: (s) => s.import_report?.mode_label || '—' },
+          { id: 'problem', header: '异常', cell: (s) => (
+            (!s.import_report?.problem_label || s.import_report.problem_label === '未发现明显异常')
+              ? <CSStatusIndicator type="success">干净</CSStatusIndicator>
+              : <CSStatusIndicator type="warning">{s.import_report.problem_label}</CSStatusIndicator>
+          ) },
+          { id: 'confidence', header: '置信度', cell: (s) => <ConfidenceBar value={s.import_report?.confidence || 0} /> },
+          { id: 'actions', header: '操作', cell: (s) => (
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSButton variant="inline-link" iconName="caret-right-filled" disabled={busyId === s.id} onClick={() => onPlay(s)}>开始</CSButton>
+              <CSButtonDropdown expandToViewport variant="inline-icon" ariaLabel="更多操作"
+                items={rowActions(s)} onItemClick={({ detail }) => onRowAction(s, detail.id)} />
+            </CSSpaceBetween>
+          ) },
+        ]}
+      />
       <ChaptersModal script={chaptersOpen} onClose={() => setChaptersOpen(null)} onChanged={reload} />
       <OverridesModal script={overridesScript} onClose={() => setOverridesScript(null)} />
+      {reviewScript && (
+        <div className="pl-modal-backdrop" onClick={() => setReviewScript(null)}>
+          <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{ width: "min(900px, 100%)", maxHeight: "85vh", overflow: "auto" }}>
+            <header className="pl-modal-head">
+              <div>
+                <div className="pl-modal-eyebrow">KB 复核 · 提取结果</div>
+                <h2 className="pl-modal-title">{reviewScript.title || `剧本 ${reviewScript.id}`}</h2>
+              </div>
+              <button className="iconbtn" onClick={() => setReviewScript(null)} data-tip="关闭"><Icon name="close" size={14} /></button>
+            </header>
+            <ScriptReview scriptId={reviewScript.id} />
+          </div>
+        </div>
+      )}
       {/* Codex P0-2 修复:基于此剧本"新建存档"流。无现成 save 时弹这个 modal,
           走 window.__createAndEnterSave 原子流 (POST /api/saves → activate → 跳页),
           不再走 ContinuePicker 假 save 跳过建档的旧路径。 */}
@@ -394,7 +413,7 @@ function ScriptsListView() {
           });
         }}
       />
-    </section>
+    </CSSpaceBetween>
   );
 }
 
@@ -976,8 +995,10 @@ function ScriptsImportView() {
     setJob(null);
   };
 
+  const ruleOpt = SPLIT_RULES.find(r => r.id === rule) || SPLIT_RULES[0];
+
   return (
-    <>
+    <CSSpaceBetween size="l">
       {/* Persistent job banner — visible even after page refresh */}
       {job && job.status !== "done" && job.status !== "cancelled" && (
         <ImportJobBanner job={job} onCancel={cancelJob} />
@@ -986,72 +1007,63 @@ function ScriptsImportView() {
         <ImportJobResult job={job} onDismiss={dismissJob} onReuse={() => { setJob(null); setEstimate(null); }} />
       )}
 
-      <section className="pl-sec" data-cap-anchor="scripts.import">
-        <div className="pl-sec-head">
-          <h2>导入剧本</h2>
-          <div className="pl-sec-tools">
-            <span className="muted-2" style={{fontSize: 11.5}}>支持 TXT · MD · 最大 50MB</span>
+      <CSContainer
+        header={
+          <CSHeader
+            variant="h1"
+            description="支持 TXT · MD · 最大 50MB · 先预算章节切分 / Token / 成本,再决定是否导入。整个过程后台运行,刷新不影响。"
+          >导入剧本</CSHeader>
+        }
+      >
+        <CSSpaceBetween size="l">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+            <CSFormField label="标题" description="留空将使用文件名">
+              <CSInput value={title} onChange={({ detail }) => setTitle(detail.value)} placeholder="留空将使用文件名" />
+            </CSFormField>
+            <CSFormField label="切分规则">
+              <CSSelect selectedOption={{ value: ruleOpt.id, label: ruleOpt.label }}
+                options={SPLIT_RULES.map(r => ({ value: r.id, label: r.label }))}
+                onChange={({ detail }) => setRule(detail.selectedOption.value)} />
+            </CSFormField>
+            <CSFormField label="自定义正则或模板" description="仅在『自定义』规则下生效">
+              <CSInput value={pattern} onChange={({ detail }) => setPattern(detail.value)}
+                disabled={rule !== 'custom'} placeholder="例:^第[一二三四五六七八九十百千]+章" />
+            </CSFormField>
           </div>
-        </div>
-        <div className="pl-import">
-          <div className="pl-import-grid">
-            <div className="pl-field">
-              <label>标题</label>
-              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="留空将使用文件名" />
-            </div>
-            <div className="pl-field">
-              <label>切分规则</label>
-              <div className="pl-rules">
-                {SPLIT_RULES.map(r => (
-                  <button key={r.id}
-                    className={`pl-rule-chip ${rule === r.id ? "active" : ""}`}
-                    onClick={() => setRule(r.id)}>
-                    {r.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="pl-field">
-              <label>自定义正则或模板</label>
-              <input
-                value={pattern} onChange={(e) => setPattern(e.target.value)}
-                disabled={rule !== "custom"}
-                placeholder="例:^第[一二三四五六七八九十百千]+章" />
-              <span className="pl-hint">仅在『自定义』下生效。</span>
-            </div>
-          </div>
-          <div
-            className={`pl-drop ${dragOver ? "active" : ""} ${selectedFile ? "has-file" : ""}`}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={onDrop}
-          >
-            <Icon name="upload" size={20} style={{color: "var(--muted)"}} />
-            <strong>{selectedFile ? selectedFile.name : "把 TXT / MD 拖到这里"}</strong>
-            <span>
-              {selectedFile
-                ? <>已选择 · {fmtBytes(selectedFile.size)} · <a href="#" onClick={(e) => { e.preventDefault(); setSelectedFile(null); }}>移除</a></>
-                : <>或 <a href="#" onClick={(e) => { e.preventDefault(); fileInputRef.current?.click(); }}>选择本地文件</a> · 先预算章节切分 / Token / 成本，再决定是否导入</>
-              }
-            </span>
-            <input ref={fileInputRef} type="file" accept=".txt,.md" style={{display: "none"}}
-              onChange={(e) => onPickFile(e.target.files?.[0])} />
-          </div>
-          <div className="pl-import-foot">
-            <span className="muted-2" style={{fontSize: 11.5}}>
-              整个过程在后台运行，支持页面刷新；除非取消，导入不会被打断。
-            </span>
-            <div style={{display: "flex", gap: 6}}>
-              <button className="btn ghost" onClick={() => setEstimate(null)} disabled={previewBusy || !estimate}>清空预算</button>
-              <button className="btn primary" onClick={startEstimate} disabled={previewBusy || !!job}>
-                <Icon name="eye" size={12} /> {previewBusy ? "计算预算中…" : "预览章节切分"}
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
 
-      {/* Estimate / preview section (no inline modal) */}
+          <CSFormField label="剧本文件" description="把 TXT / MD 拖到这里,或点击选择本地文件">
+            <CSFileUpload
+              value={selectedFile ? [selectedFile] : []}
+              onChange={({ detail }) => {
+                const f = detail.value?.[0];
+                if (f) onPickFile(f); else setSelectedFile(null);
+              }}
+              accept=".txt,.md"
+              showFileSize
+              constraintText="支持 TXT · MD · 最大 50MB"
+              i18nStrings={{
+                uploadButtonText: () => '选择文件',
+                dropzoneText: () => '把 TXT / MD 拖到这里',
+                removeFileAriaLabel: (i) => `移除文件 ${i + 1}`,
+                limitShowFewer: '收起',
+                limitShowMore: '展开',
+                errorIconAriaLabel: '错误',
+              }}
+            />
+          </CSFormField>
+
+          <CSBox float="right">
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSButton onClick={() => setEstimate(null)} disabled={previewBusy || !estimate}>清空预算</CSButton>
+              <CSButton variant="primary" iconName="search" loading={previewBusy} disabled={!!job} onClick={startEstimate}>
+                {previewBusy ? '计算预算中…' : '预览章节切分'}
+              </CSButton>
+            </CSSpaceBetween>
+          </CSBox>
+        </CSSpaceBetween>
+      </CSContainer>
+
+      {/* Estimate / preview section */}
       {estimate && !job && (
         <ImportEstimateView
           estimate={estimate}
@@ -1060,7 +1072,7 @@ function ScriptsImportView() {
           onConfirm={startImport}
         />
       )}
-    </>
+    </CSSpaceBetween>
   );
 }
 
@@ -1068,51 +1080,35 @@ function ImportJobBanner({ job, onCancel }) {
   const overallProgress = job.stages.reduce((a, s) => a + s.progress, 0) / job.stages.length;
   const elapsed = Math.round((Date.now() - job.started_at) / 1000);
   return (
-    <section className="pl-sec">
-      <div className="pl-import-job">
-        <div className="pl-import-job-head">
-          <div className="pl-import-job-title">
-            <span className="dot accent pulse" />
-            <strong className="serif">正在导入 · {job.title}</strong>
-            <span className="muted-2 mono">job {job.id} · 已用 {elapsed}s</span>
-          </div>
-          <div style={{display: "flex", gap: 6, alignItems: "center"}}>
-            <span className="muted-2" style={{fontSize: 11}}>页面刷新不影响 · 任务在后台运行</span>
-            <button className="btn ghost" onClick={onCancel} data-tip="终止任务">
-              <Icon name="stop" size={12} /> 取消导入
-            </button>
-          </div>
-        </div>
-        <div className="pl-import-progress-bar">
-          <div className="pl-import-progress-fill" style={{width: (overallProgress * 100).toFixed(1) + "%"}} />
-        </div>
-        <div className="pl-import-stages">
-          {job.stages.map((s, i) => (
-            <div key={s.id} className={`pl-import-stage pl-import-stage-${s.status}`}>
-              <div className="pl-import-stage-num mono">
-                {s.status === "done" ? <Icon name="check" size={11} /> : s.status === "running" ? <Icon name="spinner" size={11} className="spin" /> : String(i + 1).padStart(2, "0")}
+    <CSContainer
+      header={
+        <CSHeader
+          variant="h2"
+          description={`job ${job.id} · 已用 ${elapsed}s · 页面刷新不影响,任务在后台运行`}
+          actions={<CSButton iconName="close" onClick={onCancel}>取消导入</CSButton>}
+        >
+          <CSStatusIndicator type="in-progress">正在导入 · {job.title}</CSStatusIndicator>
+        </CSHeader>
+      }
+    >
+      <CSSpaceBetween size="m">
+        <CSProgressBar value={overallProgress * 100} label="整体进度" />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+          {job.stages.map((s, i) => {
+            const type = s.status === 'done' ? 'success' : s.status === 'running' ? 'in-progress' : 'pending';
+            const meta = s.status === 'running' ? `${Math.round(s.progress * 100)}%`
+              : s.status === 'done' ? `${fmtN(s.tokens_used)} tok`
+              : `~${fmtN(s.tokens_est)} tok`;
+            return (
+              <div key={s.id}>
+                <CSStatusIndicator type={type}>{String(i + 1).padStart(2, '0')} · {s.label}</CSStatusIndicator>
+                <CSBox fontSize="body-s" color="text-body-secondary">{s.hint} · {meta}</CSBox>
               </div>
-              <div className="pl-import-stage-body">
-                <div className="pl-import-stage-name">
-                  <strong>{s.label}</strong>
-                  <span className="muted-2" style={{fontSize: 11}}>{s.hint}</span>
-                </div>
-                <div className="pl-import-stage-meta">
-                  <span className="mono muted-2" style={{fontSize: 11}}>
-                    {s.status === "running" ? `${Math.round(s.progress * 100)}%` :
-                     s.status === "done" ? `${fmtN(s.tokens_used)} tok` :
-                     `~${fmtN(s.tokens_est)} tok`}
-                  </span>
-                  {s.status === "running" && (
-                    <div className="pl-import-mini-bar"><div style={{width: (s.progress * 100) + "%"}} /></div>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
-      </div>
-    </section>
+      </CSSpaceBetween>
+    </CSContainer>
   );
 }
 
@@ -1120,89 +1116,68 @@ function ImportJobResult({ job, onDismiss, onReuse }) {
   const ok = job.status === "done";
   const totalTokens = job.stages.reduce((a, s) => a + (s.tokens_used || 0), 0);
   return (
-    <section className="pl-sec">
-      <div className={`pl-import-job pl-import-job-${ok ? "done" : "cancelled"}`}>
-        <div className="pl-import-job-head">
-          <div className="pl-import-job-title">
-            <span className={`dot ${ok ? "ok" : "warn"}`} />
-            <strong className="serif">
-              {ok ? "导入完成" : "已取消"} · {job.title}
-            </strong>
-            <span className="muted-2 mono">{ok ? `${fmtN(totalTokens)} tok 实际消耗` : `job ${job.id}`}</span>
-          </div>
-          <div style={{display: "flex", gap: 6}}>
-            {ok && <a className="btn primary" href="#scripts" onClick={onDismiss}><Icon name="arrow_right" size={12} /> 去剧本管理查看</a>}
-            <button className="btn ghost" onClick={onReuse}>{ok ? "再导入一份" : "重试"}</button>
-            <button className="iconbtn" onClick={onDismiss} data-tip="隐藏"><Icon name="close" size={12} /></button>
-          </div>
-        </div>
-      </div>
-    </section>
+    <CSAlert
+      type={ok ? 'success' : 'warning'}
+      dismissible
+      onDismiss={onDismiss}
+      header={`${ok ? '导入完成' : '已取消'} · ${job.title}`}
+      action={
+        <CSSpaceBetween direction="horizontal" size="xs">
+          {ok && <CSButton variant="primary" href="#scripts" onClick={onDismiss}>去剧本管理查看</CSButton>}
+          <CSButton onClick={onReuse}>{ok ? '再导入一份' : '重试'}</CSButton>
+        </CSSpaceBetween>
+      }
+    >
+      {ok ? `${fmtN(totalTokens)} tok 实际消耗` : `job ${job.id}`}
+    </CSAlert>
   );
 }
 
 function ImportEstimateView({ estimate, rule, onCancel, onConfirm }) {
   return (
-    <section className="pl-sec">
-      <div className="pl-sec-head">
-        <h2>导入预算 <span className="muted-2">『{estimate.file.name}』 · {SPLIT_RULES.find(r => r.id === rule)?.label}</span></h2>
-        <div className="pl-sec-tools">
-          <button className="btn ghost" onClick={onCancel}>取消</button>
-          <button className="btn primary" onClick={onConfirm}>
-            <Icon name="check" size={12} /> 确认导入（后台运行）
-          </button>
-        </div>
-      </div>
-      <div className="pl-import" style={{borderStyle: "solid"}}>
-        <div className="pl-validate-stat-row">
-          <div className="pl-validate-stat">
-            <span className="pl-stat-label">章节</span>
-            <span className="pl-stat-value" style={{fontSize: 20}}>{estimate.chapters}</span>
-          </div>
-          <div className="pl-validate-stat">
-            <span className="pl-stat-label">字数</span>
-            <span className="pl-stat-value" style={{fontSize: 20}}>{(estimate.words / 10000).toFixed(1)}<span style={{fontSize: 12, color: "var(--muted)", marginLeft: 3}}>万</span></span>
-          </div>
-          <div className="pl-validate-stat">
-            <span className="pl-stat-label">预估 Token</span>
-            <span className="pl-stat-value" style={{fontSize: 20}}>{fmtN(estimate.totalTokens)}</span>
-          </div>
-          <div className="pl-validate-stat">
-            <span className="pl-stat-label">预估成本</span>
-            <span className="pl-stat-value" style={{fontSize: 20, color: "var(--accent)"}}>${estimate.cost.toFixed(2)}</span>
-          </div>
-          <div className="pl-validate-stat">
-            <span className="pl-stat-label">预计耗时</span>
-            <span className="pl-stat-value" style={{fontSize: 20}}>{Math.round(estimate.totalSec / 60)}<span style={{fontSize: 12, color: "var(--muted)", marginLeft: 3}}>分钟</span></span>
-          </div>
-        </div>
-        <div className="muted-2" style={{fontSize: 11, padding: "4px 2px"}}>
-          使用模型：<span className="mono">{estimate.model}</span> · 实际消耗取决于章节文本长度 · 后台运行，刷新不影响
-        </div>
-        <table className="pl-table" style={{margin: 0}}>
-          <thead><tr><th style={{width: 36}}>#</th><th>阶段</th><th>说明</th><th style={{textAlign: "right"}}>预估 Token</th><th style={{textAlign: "right"}}>预计耗时</th></tr></thead>
-          <tbody>
-            {estimate.stages.map((s, i) => (
-              <tr key={s.id}>
-                <td className="mono muted-2">{String(i + 1).padStart(2, "0")}</td>
-                <td><strong style={{fontFamily: "var(--font-serif)", fontSize: 14}}>{s.label}</strong></td>
-                <td className="muted">{s.hint}</td>
-                <td className="mono" style={{textAlign: "right"}}>{fmtN(s.tokens_est)}</td>
-                <td className="mono" style={{textAlign: "right"}}>{s.time_est_sec < 60 ? s.time_est_sec + "s" : Math.round(s.time_est_sec / 60) + "min"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <CSContainer
+      header={
+        <CSHeader
+          variant="h2"
+          description={`『${estimate.file.name}』 · ${SPLIT_RULES.find(r => r.id === rule)?.label} · 使用模型 ${estimate.model} · 实际消耗取决于章节文本长度`}
+          actions={
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSButton onClick={onCancel}>取消</CSButton>
+              <CSButton variant="primary" iconName="check" onClick={onConfirm}>确认导入(后台运行)</CSButton>
+            </CSSpaceBetween>
+          }
+        >导入预算</CSHeader>
+      }
+    >
+      <CSSpaceBetween size="l">
+        <CSKeyValuePairs columns={5} items={[
+          { label: '章节', value: String(estimate.chapters) },
+          { label: '字数', value: `${(estimate.words / 10000).toFixed(1)} 万` },
+          { label: '预估 Token', value: fmtN(estimate.totalTokens) },
+          { label: '预估成本', value: <CSBox color="text-status-info" fontWeight="bold">${estimate.cost.toFixed(2)}</CSBox> },
+          { label: '预计耗时', value: `${Math.round(estimate.totalSec / 60)} 分钟` },
+        ]} />
+        <CSTable
+          variant="embedded"
+          items={estimate.stages}
+          trackBy="id"
+          columnDefinitions={[
+            { id: 'n', header: '#', cell: (s) => estimate.stages.indexOf(s) + 1, width: 50 },
+            { id: 'label', header: '阶段', cell: (s) => <CSBox fontWeight="bold">{s.label}</CSBox> },
+            { id: 'hint', header: '说明', cell: (s) => s.hint },
+            { id: 'tok', header: '预估 Token', cell: (s) => fmtN(s.tokens_est) },
+            { id: 'time', header: '预计耗时', cell: (s) => s.time_est_sec < 60 ? s.time_est_sec + 's' : Math.round(s.time_est_sec / 60) + 'min' },
+          ]}
+        />
         {estimate.warnings?.length > 0 && (
-          <div style={{padding: 10, background: "var(--warn-soft)", border: "1px solid rgba(212, 179, 102, 0.32)", borderRadius: 6, fontSize: 12}}>
-            <div className="muted-2" style={{fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.14em", marginBottom: 4}}>注意</div>
-            {estimate.warnings.map((w, i) => <div key={i} style={{paddingLeft: 14, position: "relative"}}>
-              <span style={{position: "absolute", left: 0}}>•</span> {w}
-            </div>)}
-          </div>
+          <CSAlert type="warning" header="注意">
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {estimate.warnings.map((w, i) => <li key={i}>{w}</li>)}
+            </ul>
+          </CSAlert>
         )}
-      </div>
-    </section>
+      </CSSpaceBetween>
+    </CSContainer>
   );
 }
 

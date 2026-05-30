@@ -228,11 +228,26 @@ class TestMaybeTrigger(unittest.TestCase):
         return _make_state()
 
     def test_no_llm_caller_skips(self):
+        """harness 适配后:enable_llm=False 显式禁用,llm_caller=None 时跳过。"""
         from agents.black_swan_agent import maybe_trigger
         state = self._make_minimal_state()
-        result = maybe_trigger(state, user_id=1, save_id=1, llm_caller=None)
+        result = maybe_trigger(
+            state, user_id=1, save_id=1,
+            llm_caller=None, enable_llm=False,
+        )
         self.assertFalse(result["triggered"])
-        self.assertIn("test mode", result["reason"])
+        self.assertIn("harness disabled", result["reason"])
+
+    def test_anonymous_user_disables_harness(self):
+        """user_id=0 (匿名) 时即便 enable_llm=True 也不调 harness,避免外部依赖。"""
+        from agents.black_swan_agent import maybe_trigger
+        state = self._make_minimal_state()
+        result = maybe_trigger(
+            state, user_id=0, save_id=1,
+            llm_caller=None, enable_llm=True,
+        )
+        self.assertFalse(result["triggered"])
+        self.assertIn("harness disabled", result["reason"])
 
     def test_noop_proposal_short_circuits(self):
         from agents.black_swan_agent import maybe_trigger
@@ -310,6 +325,65 @@ class TestRunValidators(unittest.TestCase):
         self.assertIn("3c_hard_constraints", names)
         self.assertIn("3d_timeline_anchor", names)
         self.assertIn("3e_independent_critic", names)
+
+
+# ── handle_introspection_tool ────────────────────────────────────────────────
+
+class TestHandleIntrospectionTool(unittest.TestCase):
+    def _snapshot(self):
+        return {
+            "active_npcs": [
+                {"id": "npc1", "name": "蕾穆丽娜"},
+                {"id": "npc2", "name": "扎兹巴鲁姆"},
+            ],
+            "locked_variables": {"主角身份": "斯雷因", "阵营": "中立"},
+        }
+
+    def test_check_npc_active_found(self):
+        from agents.black_swan_agent import handle_introspection_tool
+        result = handle_introspection_tool("check_npc_active", {"npc_id": "npc1"}, self._snapshot())
+        self.assertTrue(result["active"])
+        self.assertIn("npc1", result["available_ids"])
+        self.assertEqual(result["active_count"], 2)
+
+    def test_check_npc_active_not_found(self):
+        from agents.black_swan_agent import handle_introspection_tool
+        result = handle_introspection_tool("check_npc_active", {"npc_id": "ghost"}, self._snapshot())
+        self.assertFalse(result["active"])
+        self.assertIn("npc1", result["available_ids"])
+
+    def test_check_locked_var_exists(self):
+        from agents.black_swan_agent import handle_introspection_tool
+        result = handle_introspection_tool("check_locked_var", {"key": "主角身份"}, self._snapshot())
+        self.assertTrue(result["exists"])
+        self.assertTrue(result["locked"])
+        self.assertEqual(result["value"], "斯雷因")
+        self.assertIn("主角身份", result["all_keys"])
+
+    def test_check_locked_var_not_exists(self):
+        from agents.black_swan_agent import handle_introspection_tool
+        result = handle_introspection_tool("check_locked_var", {"key": "不存在的key"}, self._snapshot())
+        self.assertFalse(result["exists"])
+        self.assertFalse(result["locked"])
+        self.assertEqual(result["value"], "")
+
+    def test_unknown_tool_returns_error(self):
+        from agents.black_swan_agent import handle_introspection_tool
+        result = handle_introspection_tool("unknown_tool", {}, self._snapshot())
+        self.assertIn("error", result)
+        self.assertIn("unknown_tool", result["error"])
+
+    def test_introspection_tools_schema_structure(self):
+        from agents.black_swan_agent import introspection_tools_schema
+        snap = {"active_npcs": [], "locked_variables": {}}
+        tools = introspection_tools_schema(snap)
+        self.assertEqual(len(tools), 2)
+        names = [t["name"] for t in tools]
+        self.assertIn("check_npc_active", names)
+        self.assertIn("check_locked_var", names)
+        for t in tools:
+            self.assertIn("input_schema", t)
+            self.assertIn("description", t)
 
 
 if __name__ == "__main__":

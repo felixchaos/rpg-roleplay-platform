@@ -173,14 +173,17 @@ def compact_phase(
         script_anchor=script_anchor,
     )
 
-    # ── LLM 调用 ─────────────────────────────────────────────
-    api_id_used = api_id_override or "vertex_ai"
-    backend, model_name = _build_backend(
-        _backend, model_override=model_override, api_id_override=api_id_override,
-        user_id=user_id,
+    # ── LLM 调用 (harness 适配: 三通道 anthropic/vertex/openai_compat) ───
+    api_id_used, model_name = _resolve_api_and_model(
+        user_id, api_id_override=api_id_override, model_override=model_override,
     )
     try:
-        digest = _call_llm_with_retry(backend, _SYSTEM_PROMPT, user_prompt)
+        digest, phase_usage = _call_llm_with_retry(
+            _SYSTEM_PROMPT, user_prompt,
+            api_id=api_id_used, model=model_name, user_id=user_id,
+            save_id=save_id, phase_index=phase_index,
+            _backend_inject=_backend,
+        )
     except Exception as exc:
         return {
             "error": f"{type(exc).__name__}: {exc}",
@@ -190,22 +193,10 @@ def compact_phase(
             "commit_count": len(commits),
         }
 
-    # 记 usage（background worker；user_id 可能为 None，有则写，无则跳过）
-    try:
-        phase_usage = getattr(backend, "last_usage", None) or {}
-        if phase_usage and user_id:
-            from platform_app.usage import record_usage as _rec
-            _rec(
-                user_id=user_id,
-                save_id=save_id,
-                context_run_id=None,
-                api_id=api_id_used,
-                model_real_name=model_name,
-                usage=phase_usage,
-                metadata={"kind": "phase_digest", "phase_index": phase_index},
-            )
-    except Exception:
-        pass
+    # 注: usage 在 _harness.call_agent_json 内部已自动 record(agent_kind="phase_digest"),
+    # 这里不需要再调 record_usage,避免双计费。phase_index 信息丢失可接受
+    # (token_usage.metadata 仍保留 kind="phase_digest" + save_id + user_id 用于聚合)。
+    _ = phase_usage  # noqa: F841 — 保留变量名供 legacy backend 路径返
 
     # 规范化字段 (LLM 偶尔会缺字段)
     digest = _normalize_digest(digest)
@@ -424,28 +415,21 @@ def _truncate(text: str, n: int) -> str:
 # ────────────────────────────────────────────────────────────
 
 
-def _build_backend(
-    injected: Any,
-    *,
-    model_override: str | None,
-    api_id_override: str | None,
+def _resolve_api_and_model(
     user_id: int | None,
-) -> tuple[Any, str]:
-    """返回 (backend, model_name) 。
-
-    优先级: 注入 > model_override + api_id_override > 默认 vertex_ai/gemini-3.5-flash。
-    返回的 backend 必须实现 .call_structured(system, messages, max_tokens) → str。
-    """
-    if injected is not None:
-        return injected, getattr(injected, "model_name", "<injected>")
-
-    api_id = api_id_override or "vertex_ai"
-    model = model_override or "gemini-3.5-flash"
-    if api_id == "vertex_ai":
-        from agents.gm import _VertexBackend
-        return _VertexBackend(model=model), model
-    # 不支持的 backend: 抛错,让调用方知道。
-    raise ValueError(f"phase_digest_agent 暂只支持 vertex_ai (传入 api_id={api_id!r})")
+    *,
+    api_id_override: str | None,
+    model_override: str | None,
+) -> tuple[str, str]:
+    """优先级: override > user_preferences("phase_digest.*") > 默认 vertex_ai/gemini-3.5-flash。"""
+    from agents._harness import resolve_api_and_model
+    return resolve_api_and_model(
+        user_id,
+        api_pref_key="phase_digest.api_id",
+        model_pref_key="phase_digest.model_real_name",
+        api_id_override=api_id_override,
+        model_override=model_override,
+    )
 
 
 # ────────────────────────────────────────────────────────────
@@ -456,29 +440,86 @@ def _build_backend(
 _JSON_FENCE = re.compile(r"```(?:json)?\s*\n?\s*(\{[\s\S]*?\})\s*\n?```", re.MULTILINE)
 
 
-def _call_llm_with_retry(backend: Any, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-    """call_structured + 一次重试 + 解析。
+def _call_llm_with_retry(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    api_id: str,
+    model: str,
+    user_id: int | None,
+    save_id: int | None = None,
+    phase_index: int | None = None,
+    _backend_inject: Any = None,
+) -> tuple[dict[str, Any], dict]:
+    """走 agents._harness.call_agent_json,一次重试后强抛。
 
-    重试逻辑:
-      - 首次: 走 backend.call_structured (Vertex 的 call_structured 已经设了
-              response_mime_type=application/json + temperature=0.1)
-      - 重试: 同样接口,但调用方 (我们) 在 system prompt 里追加一段"上次输出
-              不是 valid JSON,请严格按 schema 重输出"的提醒,温度逻辑由 backend
-              内部控制(call_structured 已经设了较低温度)。
+    返回 (parsed_dict, usage_dict)。
+
+    - 三通道 dispatch 由 _harness 负责:anthropic / vertex_ai / openai_compat。
+    - retry 在 system prompt 后追加"上次失败"提醒,温度由各 provider call_structured / response_format 设。
+    - `_backend_inject`:测试注入,任意实现 call_structured(system, messages, max_tokens) 的对象,
+       传入则**短路 _harness**,直接走注入对象(保持旧测试 monkeypatch 行为)。
     """
-    messages = [{"role": "user", "content": user_prompt}]
+    # 测试旁路:旧测试注入了 Mock backend,直接走 call_structured 路径
+    if _backend_inject is not None:
+        return _legacy_backend_retry(_backend_inject, system_prompt, user_prompt)
+
+    from agents._harness import call_agent_json
+
+    _last_err: Exception | None = None
     # 第一次
+    try:
+        text, usage = call_agent_json(
+            api_id=api_id, model=model,
+            system_prompt=system_prompt, user_prompt=user_prompt,
+            user_id=user_id,
+            tool_schema=None,  # phase_digest 输出体长,文本 JSON 模式即可
+            max_tokens=2400,
+            agent_kind="phase_digest",
+            save_id=save_id,
+            metadata_extra={"phase_index": phase_index} if phase_index is not None else None,
+        )
+        parsed = _parse_json(text)
+        if parsed is not None:
+            return parsed, usage
+    except Exception as exc:
+        _last_err = exc
+
+    # 第二次
+    repaired_system = (
+        system_prompt + "\n\n【重要】上一次输出无法解析为 JSON。请严格按上文的"
+        "JSON schema 重新输出,不要 markdown,不要解释,直接以 `{` 开始。"
+    )
+    text2, usage2 = call_agent_json(
+        api_id=api_id, model=model,
+        system_prompt=repaired_system, user_prompt=user_prompt,
+        user_id=user_id,
+        tool_schema=None,
+        max_tokens=2400,
+    )
+    parsed2 = _parse_json(text2)
+    if parsed2 is not None:
+        return parsed2, usage2
+
+    raise ValueError(
+        f"LLM 输出两次都不是合法 JSON。第一次异常: {_last_err}; "
+        f"第二次输出片段: {(text2 or '')[:200]!r}"
+    )
+
+
+def _legacy_backend_retry(backend: Any, system_prompt: str,
+                          user_prompt: str) -> tuple[dict[str, Any], dict]:
+    """测试注入 backend 时的回退路径,保留旧 call_structured 协议。"""
+    messages = [{"role": "user", "content": user_prompt}]
+    _last_err: Exception | None = None
     try:
         text = backend.call_structured(system_prompt, messages, max_tokens=2400)
         parsed = _parse_json(text)
         if parsed is not None:
-            return parsed
+            return parsed, dict(getattr(backend, "last_usage", None) or {})
     except Exception as exc:
         _last_err = exc
-    else:
-        _last_err = ValueError("first call: not valid JSON")
 
-    # 第二次: 在 system prompt 后追加一句"上次失败"的提醒
     repaired_system = (
         system_prompt + "\n\n【重要】上一次输出无法解析为 JSON。请严格按上文的"
         "JSON schema 重新输出,不要 markdown,不要解释,直接以 `{` 开始。"
@@ -486,7 +527,7 @@ def _call_llm_with_retry(backend: Any, system_prompt: str, user_prompt: str) -> 
     text2 = backend.call_structured(repaired_system, messages, max_tokens=2400)
     parsed2 = _parse_json(text2)
     if parsed2 is not None:
-        return parsed2
+        return parsed2, dict(getattr(backend, "last_usage", None) or {})
 
     raise ValueError(
         f"LLM 输出两次都不是合法 JSON。第一次异常: {_last_err}; "

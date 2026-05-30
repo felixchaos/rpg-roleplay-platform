@@ -10,6 +10,29 @@ import { MODELS_DATA } from './pages/settings.jsx';
 // platform-app 之前留了返回 null 的 stub 遮蔽它们 → "继续游戏"/"新建存档" 全失效。
 // PlatformShell(本文件)直接渲染这两个组件,必须从真实现 import,不能用 stub。
 import { ContinuePicker, NewGameModal } from './pages/saves.jsx';
+// Cloudscape shell(AWS 控制台架构 + 暖色主题)
+import CSTopNavigation from '@cloudscape-design/components/top-navigation';
+import CSAppLayout from '@cloudscape-design/components/app-layout';
+import CSSideNavigation from '@cloudscape-design/components/side-navigation';
+import CSInput from '@cloudscape-design/components/input';
+import CSButtonDropdown from '@cloudscape-design/components/button-dropdown';
+// Cloudscape 内容迁移(me/profile/library/modules/extensions 等页)
+import CSContainer from '@cloudscape-design/components/container';
+import CSHeader from '@cloudscape-design/components/header';
+import CSSpaceBetween from '@cloudscape-design/components/space-between';
+import CSFormField from '@cloudscape-design/components/form-field';
+import CSSelect from '@cloudscape-design/components/select';
+import CSToggle from '@cloudscape-design/components/toggle';
+import CSBox from '@cloudscape-design/components/box';
+import CSButton from '@cloudscape-design/components/button';
+import CSTable from '@cloudscape-design/components/table';
+import CSCards from '@cloudscape-design/components/cards';
+import CSColumnLayout from '@cloudscape-design/components/column-layout';
+import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
+import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
+import CSBadge from '@cloudscape-design/components/badge';
+import CSAlert from '@cloudscape-design/components/alert';
+import CSTextarea from '@cloudscape-design/components/textarea';
 
 const PL_NAV = [
   { section: "工作台" },
@@ -48,6 +71,18 @@ const PL_TITLES = {
   skills:   ["Skill",    "本地部署可导入 Skill 包"],
   apis:     ["API",      "稳定功能指令与版本化接口"],
 };
+
+/* ── 统一顶栏 chrome:页面把 title/breadcrumb/actions 喂给唯一的 topbar,
+   不再各页自渲染一条标题栏(消除顶栏割裂)。 */
+const ShellChromeCtx = React.createContext({ set: () => {}, clear: () => {} });
+function useShellChrome(chrome, deps = []) {
+  const ctx = React.useContext(ShellChromeCtx);
+  React.useEffect(() => {
+    ctx.set(chrome);
+    return () => ctx.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
 
 /* ---------------------------- GENERIC MODALS ------------------- */
 function PromptModal({ open, eyebrow, title, fields = [], submitLabel = "确认", danger = false, hint, onClose, onConfirm, busy = false }) {
@@ -309,12 +344,24 @@ window.__publishUser = publishUser;
 // task 55: 新增 assistant slot + assistantOpen/onOpenAssistant。
 // 助手现在挤压式布局,折叠时 cap-root 自身 display:none,展开时 360px 自动腾位;
 // 折叠态 TopBar 右上角显示"展开助手"图标按钮。
-function PlatformShell({ page, setPage, children, assistant, assistantOpen, onOpenAssistant }) {
+function PlatformShell({ page, setPage, children, assistant, assistantOpen, onOpenAssistant, onToggleAssistant }) {
   const platform = usePlatformData();  // task 45：响应式拿真 platform（mock baseline 替换后能重渲）
   const reactiveUser = useReactiveUser();   // task 13：左侧用户栏即时同步
   const [title, subtitle] = PL_TITLES[page] || ["平台", ""];
   const [continueState, setContinueState] = useStatePL({ open: false, save: null, nodeId: null });
   const [searchOpen, setSearchOpen] = useStatePL(false);
+  // 统一顶栏:页面通过 useShellChrome 注入 title/breadcrumb/actions
+  const [chrome, setChromeState] = useStatePL({});
+  const chromeApi = React.useMemo(() => ({
+    set: (c) => setChromeState(c || {}),
+    clear: () => setChromeState({}),
+  }), []);
+  // 切页时清空上一页注入的 chrome,避免标题/操作残留
+  React.useEffect(() => { setChromeState({}); }, [page]);
+  const dispTitle = chrome.title || title;
+  const dispSub = chrome.subtitle !== undefined ? chrome.subtitle : subtitle;
+  const crumbs = chrome.breadcrumb;
+  const pageActions = chrome.actions;
 
   React.useEffect(() => {
     window.__openContinue = (save, nodeId) => setContinueState({ open: true, save: save || platform.saves[0], nodeId: nodeId || null });
@@ -492,46 +539,56 @@ function PlatformShell({ page, setPage, children, assistant, assistantOpen, onOp
         </div>
       </aside>
       <main className="pl-main">
-        <header className="pl-topbar">
-          <div>
-            <h1>{title}</h1>
-            <div className="pl-sub">{subtitle}</div>
-          </div>
-          <div className="pl-topbar-tools">
-            <button className="btn ghost" onClick={() => window.__openContinue?.(platform.saves[0])}>
-              <Icon name="play" size={12} /> 进入游戏
-            </button>
-            {/* task 55: 助手折叠时显示展开按钮;展开后由侧栏头部 ✕ 关闭。
-                用 spark 图标 (现有 SVG, 角色卡里也用),title 写"展开控制台助手"。 */}
-            {!assistantOpen && onOpenAssistant && (
-              <button className="iconbtn" data-tip="展开控制台助手"
-                      aria-label="展开控制台助手"
-                      onClick={onOpenAssistant}>
-                <Icon name="sparkle" size={14} />
-              </button>
+        <header className="pl-topbar pl-topbar-unified">
+          <div className="pl-topbar-lead">
+            {crumbs && crumbs.length > 0 && (
+              <nav className="pl-crumbs">
+                {crumbs.map((b, i) => (
+                  <span key={i} className="pl-crumb">
+                    {b.onClick ? <button className="pl-crumb-link" onClick={b.onClick}>{b.label}</button> : <span>{b.label}</span>}
+                    {i < crumbs.length - 1 && <span className="pl-crumb-sep">/</span>}
+                  </span>
+                ))}
+              </nav>
             )}
-            <button className="iconbtn" data-tip="搜索 · ⌘K" onClick={() => setSearchOpen(true)}>
-              <Icon name="search" size={14} />
-            </button>
-            <button className="iconbtn" data-tip="刷新平台数据" onClick={async () => {
-              // task 50：之前是 dead button。刷新 /api/platform + /api/saves + /api/scripts
-              // 并通过 data-loader 事件让订阅 usePlatformData 的组件 re-render。
-              try {
-                window.__apiToast?.("正在刷新…", { kind: "info", duration: 1200 });
-                if (window.__refreshPlatform) await window.__refreshPlatform();
-                else {
-                  const p = await window.api.platform.info();
-                  window.MOCK_PLATFORM = p && p.platform ? p.platform : (p || window.MOCK_PLATFORM);
-                  window.dispatchEvent(new CustomEvent("rpg-data-ready"));
+            <div className="pl-topbar-titles">
+              <h1>{dispTitle}</h1>
+              {dispSub ? <div className="pl-sub">{dispSub}</div> : null}
+            </div>
+          </div>
+          <div className="pl-topbar-right">
+            {pageActions ? <div className="pl-topbar-actions">{pageActions}</div> : null}
+            <div className="pl-topbar-tools">
+              <button className="iconbtn" data-tip="搜索 · ⌘K" aria-label="搜索" onClick={() => setSearchOpen(true)}>
+                <Icon name="search" size={14} />
+              </button>
+              <button className="iconbtn" data-tip="刷新平台数据" aria-label="刷新" onClick={async () => {
+                try {
+                  window.__apiToast?.("正在刷新…", { kind: "info", duration: 1200 });
+                  if (window.__refreshPlatform) await window.__refreshPlatform();
+                  else {
+                    const p = await window.api.platform.info();
+                    window.MOCK_PLATFORM = p && p.platform ? p.platform : (p || window.MOCK_PLATFORM);
+                    window.dispatchEvent(new CustomEvent("rpg-data-ready"));
+                  }
+                  window.__apiToast?.("已刷新", { kind: "ok", duration: 1600 });
+                } catch (e) {
+                  window.__apiToast?.("刷新失败", { kind: "danger", detail: e?.message });
                 }
-                window.__apiToast?.("已刷新", { kind: "ok", duration: 1600 });
-              } catch (e) {
-                window.__apiToast?.("刷新失败", { kind: "danger", detail: e?.message });
-              }
-            }}><Icon name="refresh" size={14} /></button>
+              }}><Icon name="refresh" size={14} /></button>
+              {/* VS Code 式:顶栏开关,点击展开/收起右侧控制台助手栏 */}
+              <button className={`pl-assistant-toggle ${assistantOpen ? "on" : ""}`}
+                      data-tip={assistantOpen ? "收起控制台助手" : "展开控制台助手"}
+                      aria-label="控制台助手" aria-pressed={!!assistantOpen}
+                      onClick={onToggleAssistant || onOpenAssistant}>
+                <Icon name="sparkle" size={14} /> <span>助手</span>
+              </button>
+            </div>
           </div>
         </header>
-        <div className="pl-content">{children}</div>
+        <ShellChromeCtx.Provider value={chromeApi}>
+          <div className="pl-content">{children}</div>
+        </ShellChromeCtx.Provider>
       </main>
       {/* task 55: 助手作为第 3 个 grid 列;折叠时 cap-root display:none 不占位 */}
       {assistant}
@@ -823,12 +880,12 @@ const ME_ACHIEVEMENTS = [
 
 function MePage({ subPage = "overview" }) {
   return (
-    <div className="pl-stack">
+    <CSSpaceBetween size="l">
       <MeSubNav active={subPage} />
       {subPage === "overview" && <MeOverview />}
       {subPage === "edit" && <MeEditProfile />}
       {subPage === "settings" && <MeUserSettings />}
-    </div>
+    </CSSpaceBetween>
   );
 }
 
@@ -839,13 +896,17 @@ function MeSubNav({ active }) {
     { id: "settings", label: "用户设置", hash: "#me-settings" },
   ];
   return (
-    <div className="pl-me-subnav">
+    <CSSpaceBetween direction="horizontal" size="xs">
       {tabs.map(t => (
-        <a key={t.id} href={t.hash} className={`pl-me-subnav-item ${active === t.id ? "active" : ""}`}>
+        <CSButton
+          key={t.id}
+          variant={active === t.id ? "primary" : "normal"}
+          href={t.hash}
+        >
           {t.label}
-        </a>
+        </CSButton>
       ))}
-    </div>
+    </CSSpaceBetween>
   );
 }
 
@@ -910,101 +971,110 @@ function MeOverview() {
   const playHoursLabel = (playMinutesTotal == null) ? "—" : (playMinutesTotal / 60).toFixed(1);
 
   return (
-    <>
-      <section className="pl-sec">
-        <div className="pl-me-hero">
-          <div className="pl-me-avatar">{user.display_name.slice(0, 1)}</div>
-          <div className="pl-me-hero-body">
-            <div className="pl-me-name">
-              <h2>{user.display_name}</h2>
-              <span className="pill"><span className="dot ok pulse" /> 在线</span>
-              <span className="pill accent">{user.role === "admin" ? "管理员" : user.role}</span>
+    <CSSpaceBetween size="l">
+      {/* Hero section */}
+      <CSContainer>
+        <CSSpaceBetween size="m">
+          <CSSpaceBetween direction="horizontal" size="m">
+            <div className="pl-me-avatar">{user.display_name.slice(0, 1)}</div>
+            <div style={{flex: 1}}>
+              <CSSpaceBetween size="xs">
+                <CSBox variant="h2">
+                  {user.display_name}
+                  <span className="pill" style={{marginLeft: 8}}><span className="dot ok pulse" /> 在线</span>
+                  <span className="pill accent" style={{marginLeft: 6}}>{user.role === "admin" ? "管理员" : user.role}</span>
+                </CSBox>
+                <CSBox color="text-body-secondary" fontSize="body-s">
+                  <span><Icon name="user" size={11} /> @{user.username}</span>
+                  <span className="mono" style={{marginLeft: 12}}>uid {user.uid}</span>
+                  <span style={{marginLeft: 12}}><Icon name="history" size={11} /> 注册于 {regAt} · 上次登录 {lastLoginAgo}</span>
+                </CSBox>
+                <CSBox>{user.bio || "暂无简介。"}</CSBox>
+              </CSSpaceBetween>
             </div>
-            <div className="pl-me-meta muted">
-              <span><Icon name="user" size={11} /> @{user.username}</span>
-              <span className="mono">uid {user.uid}</span>
-              <span><Icon name="history" size={11} /> 注册于 {regAt} · 上次登录 {lastLoginAgo}</span>
-            </div>
-            <p className="pl-me-bio serif">{user.bio || "暂无简介。"}</p>
-          </div>
-          <div className="pl-me-hero-actions">
-            <a className="btn ghost" href="#me-edit" data-tip="修改账户信息"><Icon name="edit" size={12} /> 编辑资料</a>
-            <a className="btn ghost" href="#me-settings" data-tip="用户设置"><Icon name="settings" size={12} /> 用户设置</a>
-          </div>
-        </div>
-      </section>
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSButton href="#me-edit" iconName="edit">编辑资料</CSButton>
+              <CSButton href="#me-settings" iconName="settings">用户设置</CSButton>
+            </CSSpaceBetween>
+          </CSSpaceBetween>
+        </CSSpaceBetween>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-stat-row">
-          <div className="pl-stat">
-            <span className="pl-stat-label">游玩时长</span>
-            <span className="pl-stat-value">{playHoursLabel}{playMinutesTotal != null && <span style={{fontSize: 14, color: "var(--muted)", marginLeft: 4}}>h</span>}</span>
-            <span className="pl-stat-foot">{playMinutesWeek != null ? `本周 +${(playMinutesWeek / 60).toFixed(1)}h` : "暂无统计"}</span>
+      {/* Stat row */}
+      <CSContainer>
+        <CSColumnLayout columns={5} variant="text-grid">
+          <div>
+            <CSBox variant="awsui-key-label">游玩时长</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">
+              {playHoursLabel}{playMinutesTotal != null && <span style={{fontSize: 14, color: "var(--muted)", marginLeft: 4}}>h</span>}
+            </CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{playMinutesWeek != null ? `本周 +${(playMinutesWeek / 60).toFixed(1)}h` : "暂无统计"}</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">回合数</span>
-            <span className="pl-stat-value">{totalRounds != null ? totalRounds.toLocaleString() : "—"}</span>
-            <span className="pl-stat-foot">分布在 {saves.length} 个存档</span>
+          <div>
+            <CSBox variant="awsui-key-label">回合数</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{totalRounds != null ? totalRounds.toLocaleString() : "—"}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">分布在 {saves.length} 个存档</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">创建分支</span>
-            <span className="pl-stat-value">{branchesCount != null ? branchesCount : "—"}</span>
-            <span className="pl-stat-foot">{maxDepth ? `最深 ${maxDepth} 层` : "—"}</span>
+          <div>
+            <CSBox variant="awsui-key-label">创建分支</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{branchesCount != null ? branchesCount : "—"}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{maxDepth ? `最深 ${maxDepth} 层` : "—"}</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">导入剧本</span>
-            <span className="pl-stat-value">{importedScripts != null ? importedScripts : "—"}</span>
-            <span className="pl-stat-foot">{importedWords ? `共 ${fmtCN(importedWords)}字` : "—"}</span>
+          <div>
+            <CSBox variant="awsui-key-label">导入剧本</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{importedScripts != null ? importedScripts : "—"}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{importedWords ? `共 ${fmtCN(importedWords)}字` : "—"}</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">连续登录</span>
-            <span className="pl-stat-value">{loginStreak != null ? loginStreak : "—"}<span style={{fontSize: 14, color: "var(--muted)", marginLeft: 4}}>天</span></span>
-            <span className="pl-stat-foot">{longestStreak ? `最长 ${longestStreak} 天` : "—"}</span>
+          <div>
+            <CSBox variant="awsui-key-label">连续登录</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">
+              {loginStreak != null ? loginStreak : "—"}<span style={{fontSize: 14, color: "var(--muted)", marginLeft: 4}}>天</span>
+            </CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{longestStreak ? `最长 ${longestStreak} 天` : "—"}</CSBox>
           </div>
-        </div>
-      </section>
+        </CSColumnLayout>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>成就 <span className="muted-2">{unlockedCount} / {ACHIEVEMENTS.length} 已解锁</span></h2></div>
-        {ACHIEVEMENTS.length === 0 && (
-          <div className="muted-2" style={{padding: "20px 0", textAlign: "center", fontSize: 13, lineHeight: 1.7}}>
-            成就系统尚未上线。<br />
-            <span className="muted">后端接通成就 API 后此处会自动显示。</span>
-          </div>
-        )}
-        <div className="pl-achv-grid">
-          {ACHIEVEMENTS.map(a => (
-            <div key={a.id} className={`pl-achv ${a.unlocked ? "unlocked" : "locked"}`}>
-              <div className="pl-achv-mark"><Icon name={a.unlocked ? "check" : "lock"} size={a.unlocked ? 16 : 14} /></div>
-              <div className="pl-achv-body">
-                <strong>{a.name}</strong>
-                <span className="pl-achv-desc muted">{a.desc}</span>
-                {a.unlocked ? (
-                  <span className="muted-2 mono" style={{fontSize: 10.5}}>解锁于 {a.at}</span>
-                ) : (
-                  <div className="pl-achv-progress">
-                    <div className="pl-achv-bar"><div className="pl-achv-fill" style={{width: (a.progress / a.target * 100).toFixed(0) + "%"}} /></div>
-                    <span className="muted-2 mono" style={{fontSize: 10.5}}>{a.progress.toLocaleString()} / {a.target.toLocaleString()}</span>
-                  </div>
-                )}
+      {/* 成就 */}
+      <CSContainer header={<CSHeader variant="h2">成就 <span className="muted-2">{unlockedCount} / {ACHIEVEMENTS.length} 已解锁</span></CSHeader>}>
+        {ACHIEVEMENTS.length === 0 ? (
+          <CSBox color="text-body-secondary" textAlign="center" padding="l">
+            成就系统尚未上线。后端接通成就 API 后此处会自动显示。
+          </CSBox>
+        ) : (
+          <CSColumnLayout columns={4} variant="text-grid">
+            {ACHIEVEMENTS.map(a => (
+              <div key={a.id} className={`pl-achv ${a.unlocked ? "unlocked" : "locked"}`}>
+                <div className="pl-achv-mark"><Icon name={a.unlocked ? "check" : "lock"} size={a.unlocked ? 16 : 14} /></div>
+                <div className="pl-achv-body">
+                  <strong>{a.name}</strong>
+                  <span className="pl-achv-desc muted">{a.desc}</span>
+                  {a.unlocked ? (
+                    <span className="muted-2 mono" style={{fontSize: 10.5}}>解锁于 {a.at}</span>
+                  ) : (
+                    <div className="pl-achv-progress">
+                      <div className="pl-achv-bar"><div className="pl-achv-fill" style={{width: (a.progress / a.target * 100).toFixed(0) + "%"}} /></div>
+                      <span className="muted-2 mono" style={{fontSize: 10.5}}>{a.progress.toLocaleString()} / {a.target.toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-      </section>
+            ))}
+          </CSColumnLayout>
+        )}
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>最近活动</h2>
-          <div className="pl-sec-tools">
-            <div className="seg" style={{flexShrink: 0}}>
-              <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button>
-              <button className={filter === "回合" ? "active" : ""} onClick={() => setFilter("回合")}>回合</button>
-              <button className={filter === "分支" ? "active" : ""} onClick={() => setFilter("分支")}>分支</button>
-              <button className={filter === "剧本" ? "active" : ""} onClick={() => setFilter("剧本")}>剧本</button>
-            </div>
-          </div>
-        </div>
+      {/* 最近活动 */}
+      <CSContainer header={
+        <CSHeader variant="h2" actions={
+          <CSSpaceBetween direction="horizontal" size="xs">
+            <CSButton variant={filter === "all" ? "primary" : "normal"} onClick={() => setFilter("all")}>全部</CSButton>
+            <CSButton variant={filter === "回合" ? "primary" : "normal"} onClick={() => setFilter("回合")}>回合</CSButton>
+            <CSButton variant={filter === "分支" ? "primary" : "normal"} onClick={() => setFilter("分支")}>分支</CSButton>
+            <CSButton variant={filter === "剧本" ? "primary" : "normal"} onClick={() => setFilter("剧本")}>剧本</CSButton>
+          </CSSpaceBetween>
+        }>最近活动</CSHeader>
+      }>
         <ol className="pl-activity">
           {filteredActivity.map((a, i) => (
             <li key={i}>
@@ -1023,15 +1093,15 @@ function MeOverview() {
           ))}
           {/* task 48：登录态此列表为空，后端无活动接口 → 给明确空态文案 */}
           {filteredActivity.length === 0 && (
-            <div className="pl-model-empty">
+            <CSBox color="text-body-secondary" textAlign="center" padding="l">
               {ACTIVITY.length === 0
                 ? "活动日志接口未上线，登录玩游戏后这里会显示真实回合/分支/导入记录。"
                 : "未找到此分类的活动"}
-            </div>
+            </CSBox>
           )}
         </ol>
-      </section>
-    </>
+      </CSContainer>
+    </CSSpaceBetween>
   );
 }
 
@@ -1164,112 +1234,116 @@ function MeEditProfile() {
     }
   };
   return (
-    <div className="pl-me-form-stack">
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>头像</h2>
-        </div>
-        <div className="pl-me-avatar-row">
-          <div className="pl-me-avatar large">{form.display_name.slice(0, 1)}</div>
-          <div className="pl-me-avatar-actions">
-            <p className="muted" style={{fontSize: 12, margin: 0}}>支持 PNG / JPG / WEBP，建议 512×512。最大 2 MB。</p>
-            <div style={{display: "flex", gap: 6, marginTop: 8}}>
-              <button className="btn ghost" onClick={() => setUploadOpen(true)}><Icon name="upload" size={12} /> 上传新头像</button>
-              <button className="btn ghost" onClick={() => setResetAvatarOpen(true)}><Icon name="trash" size={12} /> 使用默认</button>
+    <CSSpaceBetween size="l">
+      {/* 头像 */}
+      <CSContainer header={<CSHeader variant="h2">头像</CSHeader>}>
+        <CSSpaceBetween size="m">
+          <div className="pl-me-avatar-row">
+            <div className="pl-me-avatar large">{form.display_name.slice(0, 1)}</div>
+            <div className="pl-me-avatar-actions">
+              <CSBox color="text-body-secondary" fontSize="body-s">支持 PNG / JPG / WEBP，建议 512×512。最大 2 MB。</CSBox>
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSButton iconName="upload" onClick={() => setUploadOpen(true)}>上传新头像</CSButton>
+                <CSButton iconName="remove" onClick={() => setResetAvatarOpen(true)}>使用默认</CSButton>
+              </CSSpaceBetween>
             </div>
           </div>
-        </div>
-      </section>
+        </CSSpaceBetween>
+      </CSContainer>
 
-      <section className="pl-sec" data-cap-anchor="settings.profile">
-        <div className="pl-sec-head"><h2>基本资料</h2></div>
-        <div className="pl-form-grid-2">
-          <Field label="显示名" hint="出现在游戏和评论里">
-            <input value={form.display_name} onChange={(e) => u("display_name", e.target.value)} />
+      {/* 基本资料 */}
+      <CSContainer header={<CSHeader variant="h2">基本资料</CSHeader>} data-cap-anchor="settings.profile">
+        <CSSpaceBetween size="l">
+          <div className="pl-form-grid-2">
+            <Field label="显示名" hint="出现在游戏和评论里">
+              <CSInput value={form.display_name} onChange={({ detail }) => u("display_name", detail.value)} />
+            </Field>
+            <Field label="代词">
+              <CSSelect
+                selectedOption={[{value:"她/她",label:"她/她"},{value:"他/他",label:"他/他"},{value:"TA/TA",label:"TA/TA"},{value:"不公开",label:"不公开"}].find(o => o.value === form.pronouns) || null}
+                options={[{value:"她/她",label:"她/她"},{value:"他/他",label:"他/他"},{value:"TA/TA",label:"TA/TA"},{value:"不公开",label:"不公开"}]}
+                onChange={({ detail }) => u("pronouns", detail.selectedOption.value)}
+              />
+            </Field>
+            <Field label="用户名" hint="登录用，6 个月可改一次" required>
+              <CSInput value={form.username} onChange={({ detail }) => u("username", detail.value)} />
+            </Field>
+            <Field label="真实姓名" hint="仅自己可见">
+              <CSInput value={form.real_name} onChange={({ detail }) => u("real_name", detail.value)} />
+            </Field>
+            <Field label="性别">
+              <CSSpaceBetween direction="horizontal" size="xs">
+                {[{v: "female", l: "女"}, {v: "male", l: "男"}, {v: "other", l: "其他"}, {v: "unspecified", l: "不公开"}].map(o => (
+                  <CSButton key={o.v} variant={form.gender === o.v ? "primary" : "normal"} onClick={() => u("gender", o.v)}>{o.l}</CSButton>
+                ))}
+              </CSSpaceBetween>
+            </Field>
+            <Field label="生日">
+              <CSInput type="date" value={form.birthday} onChange={({ detail }) => u("birthday", detail.value)} />
+            </Field>
+            <Field label="所在地">
+              <CSInput value={form.location} onChange={({ detail }) => u("location", detail.value)} placeholder="例：上海" />
+            </Field>
+            <Field label="个人网站">
+              <CSInput value={form.website} onChange={({ detail }) => u("website", detail.value)} placeholder="https://..." />
+            </Field>
+          </div>
+          <Field label="简介" hint="280 字以内">
+            <CSTextarea
+              rows={3}
+              value={form.bio}
+              onChange={({ detail }) => u("bio", detail.value)}
+            />
+            <CSBox color="text-body-secondary" fontSize="body-s" textAlign="right">{form.bio.length} / 280</CSBox>
           </Field>
-          <Field label="代词">
-            <select value={form.pronouns} onChange={(e) => u("pronouns", e.target.value)}>
-              <option value="她/她">她/她</option>
-              <option value="他/他">他/他</option>
-              <option value="TA/TA">TA/TA</option>
-              <option value="不公开">不公开</option>
-            </select>
-          </Field>
-          <Field label="用户名" hint="登录用，6 个月可改一次" required>
-            <input className="mono" value={form.username} onChange={(e) => u("username", e.target.value)} />
-          </Field>
-          <Field label="真实姓名" hint="仅自己可见">
-            <input value={form.real_name} onChange={(e) => u("real_name", e.target.value)} />
-          </Field>
-          <Field label="性别">
-            <div className="seg" style={{display: "flex"}}>
-              {[{v: "female", l: "女"}, {v: "male", l: "男"}, {v: "other", l: "其他"}, {v: "unspecified", l: "不公开"}].map(o => (
-                <button key={o.v} className={form.gender === o.v ? "active" : ""} onClick={() => u("gender", o.v)}>{o.l}</button>
-              ))}
-            </div>
-          </Field>
-          <Field label="生日">
-            <input type="date" value={form.birthday} onChange={(e) => u("birthday", e.target.value)} />
-          </Field>
-          <Field label="所在地">
-            <input value={form.location} onChange={(e) => u("location", e.target.value)} placeholder="例：上海" />
-          </Field>
-          <Field label="个人网站">
-            <input className="mono" value={form.website} onChange={(e) => u("website", e.target.value)} placeholder="https://..." />
-          </Field>
-        </div>
-        <Field label="简介" hint="280 字以内">
-          <textarea value={form.bio} onChange={(e) => u("bio", e.target.value)} rows={3} maxLength={280} />
-          <div className="muted-2 mono" style={{fontSize: 10.5, textAlign: "right"}}>{form.bio.length} / 280</div>
-        </Field>
-      </section>
+        </CSSpaceBetween>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>联系方式</h2></div>
+      {/* 联系方式 */}
+      <CSContainer header={<CSHeader variant="h2">联系方式</CSHeader>}>
         <div className="pl-form-grid-2">
           <Field label="邮箱" hint="已验证" required>
-            <div className="pl-inline-field">
-              <input value={form.email} onChange={(e) => u("email", e.target.value)} />
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSInput value={form.email} onChange={({ detail }) => u("email", detail.value)} />
               <span className="pill ok"><span className="dot ok" /> 已验证</span>
-            </div>
+            </CSSpaceBetween>
           </Field>
           <Field label="手机" hint="用于二次验证">
-            <div className="pl-inline-field">
-              <input className="mono" value={form.phone} onChange={(e) => u("phone", e.target.value)} />
-              <button className="btn ghost" style={{height: 30}} onClick={onSendSms}>发送验证码</button>
-            </div>
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSInput value={form.phone} onChange={({ detail }) => u("phone", detail.value)} />
+              <CSButton onClick={onSendSms}>发送验证码</CSButton>
+            </CSSpaceBetween>
           </Field>
         </div>
-      </section>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>本地化</h2></div>
+      {/* 本地化 */}
+      <CSContainer header={<CSHeader variant="h2">本地化</CSHeader>}>
         <div className="pl-form-grid-2">
           <Field label="界面语言">
-            <select value={form.language} onChange={(e) => u("language", e.target.value)}>
-              <option value="zh-CN">简体中文</option>
-              <option value="zh-TW">繁體中文</option>
-              <option value="en">English (Beta)</option>
-              <option value="ja">日本語</option>
-            </select>
+            <CSSelect
+              selectedOption={[{value:"zh-CN",label:"简体中文"},{value:"zh-TW",label:"繁體中文"},{value:"en",label:"English (Beta)"},{value:"ja",label:"日本語"}].find(o => o.value === form.language) || null}
+              options={[{value:"zh-CN",label:"简体中文"},{value:"zh-TW",label:"繁體中文"},{value:"en",label:"English (Beta)"},{value:"ja",label:"日本語"}]}
+              onChange={({ detail }) => u("language", detail.selectedOption.value)}
+            />
           </Field>
           <Field label="时区">
-            <select value={form.timezone} onChange={(e) => u("timezone", e.target.value)}>
-              <option value="Asia/Shanghai">UTC+8 · 上海</option>
-              <option value="Asia/Tokyo">UTC+9 · 东京</option>
-              <option value="UTC">UTC</option>
-              <option value="America/Los_Angeles">UTC-8 · 洛杉矶</option>
-            </select>
+            <CSSelect
+              selectedOption={[{value:"Asia/Shanghai",label:"UTC+8 · 上海"},{value:"Asia/Tokyo",label:"UTC+9 · 东京"},{value:"UTC",label:"UTC"},{value:"America/Los_Angeles",label:"UTC-8 · 洛杉矶"}].find(o => o.value === form.timezone) || null}
+              options={[{value:"Asia/Shanghai",label:"UTC+8 · 上海"},{value:"Asia/Tokyo",label:"UTC+9 · 东京"},{value:"UTC",label:"UTC"},{value:"America/Los_Angeles",label:"UTC-8 · 洛杉矶"}]}
+              onChange={({ detail }) => u("timezone", detail.selectedOption.value)}
+            />
           </Field>
         </div>
-      </section>
+      </CSContainer>
 
-      <div className="pl-me-form-foot">
-        <a className="btn ghost" href="#me">取消</a>
-        <button className="btn primary" onClick={onSave} disabled={saving}>
-          <Icon name="check" size={12} /> {saving ? "保存中…" : "保存资料"}
-        </button>
-      </div>
+      {/* 保存按钮行 */}
+      <CSSpaceBetween direction="horizontal" size="xs">
+        <CSButton href="#me">取消</CSButton>
+        <CSButton variant="primary" onClick={onSave} loading={saving}>
+          {saving ? "保存中…" : "保存资料"}
+        </CSButton>
+      </CSSpaceBetween>
 
       <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp"
         style={{display: "none"}} onChange={(e) => onAvatarPick(e.target.files?.[0])} />
@@ -1300,7 +1374,7 @@ function MeEditProfile() {
         onClose={() => setSmsOpen(false)}
         onConfirm={onVerifySms}
       />
-    </div>
+    </CSSpaceBetween>
   );
 }
 
@@ -1459,126 +1533,134 @@ function MeUserSettings() {
   useEffectPL(() => { onSavePreference("ads_track", adsTrack); }, [adsTrack]);
 
   return (
-    <div className="pl-me-form-stack" data-cap-anchor="me.settings">
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>隐私 · 公开范围</h2></div>
-        <SettingRow
-          title="公开个人主页"
-          desc="开启后，其他用户可以通过 @用户名 查看你的成就墙和最近活动。"
-          control={<SettingsToggle on={publicProfile} set={tog(setPublicProfile, "公开主页")} />}
-        />
-        <SettingRow
-          title="允许搜索"
-          desc="允许通过显示名或用户名在平台内搜索找到你。"
-          control={<SettingsToggle on={searchable} set={tog(setSearchable, "允许搜索")} />}
-        />
-        <SettingRow
-          title="资料字段可见性"
-          desc="逐项控制谁能看到你的真实姓名、所在地、生日等。"
-          control={<button className="btn ghost" onClick={() => setVisibilityOpen(true)}>逐项配置</button>}
-        />
-      </section>
+    <CSSpaceBetween size="l" data-cap-anchor="me.settings">
+      {/* 隐私 · 公开范围 */}
+      <CSContainer header={<CSHeader variant="h2">隐私 · 公开范围</CSHeader>}>
+        <CSSpaceBetween size="l">
+          <SettingRow
+            title="公开个人主页"
+            desc="开启后，其他用户可以通过 @用户名 查看你的成就墙和最近活动。"
+            control={<SettingsToggle on={publicProfile} set={tog(setPublicProfile, "公开主页")} />}
+          />
+          <SettingRow
+            title="允许搜索"
+            desc="允许通过显示名或用户名在平台内搜索找到你。"
+            control={<SettingsToggle on={searchable} set={tog(setSearchable, "允许搜索")} />}
+          />
+          <SettingRow
+            title="资料字段可见性"
+            desc="逐项控制谁能看到你的真实姓名、所在地、生日等。"
+            control={<CSButton onClick={() => setVisibilityOpen(true)}>逐项配置</CSButton>}
+          />
+        </CSSpaceBetween>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>数据共享 · 合规</h2></div>
-        <SettingRow
-          title="匿名用量统计"
-          desc="把按钮点击 / 页面停留时长（不含剧本内容）匿名上报给团队，用于改进体验。"
-          control={<SettingsToggle on={shareUsage} set={tog(setShareUsage, "匿名用量")} />}
-        />
-        <SettingRow
-          title="崩溃 / 错误报告"
-          desc="出现错误时上传堆栈信息和最近一次操作。剧本内容不会被上传。"
-          control={<SettingsToggle on={shareCrash} set={tog(setShareCrash, "崩溃报告")} />}
-        />
-        <SettingRow
-          title="个性化推荐"
-          desc="基于你的剧本与角色卡向你推荐 Skill 和 MCP。"
-          control={<SettingsToggle on={adsTrack} set={tog(setAdsTrack, "个性化推荐")} />}
-        />
-        <SettingRow
-          title="GDPR / 个人信息保护合规"
-          desc="本平台不向第三方分享你的剧本内容、玩家变量或私聊。详见隐私政策。"
-          control={<a className="btn ghost" href="#" onClick={(e) => { e.preventDefault(); setPolicyOpen(true); }} data-tip="查看隐私政策全文"><Icon name="file" size={12} /> 隐私政策</a>}
-        />
-      </section>
+      {/* 数据共享 · 合规 */}
+      <CSContainer header={<CSHeader variant="h2">数据共享 · 合规</CSHeader>}>
+        <CSSpaceBetween size="l">
+          <SettingRow
+            title="匿名用量统计"
+            desc="把按钮点击 / 页面停留时长（不含剧本内容）匿名上报给团队，用于改进体验。"
+            control={<SettingsToggle on={shareUsage} set={tog(setShareUsage, "匿名用量")} />}
+          />
+          <SettingRow
+            title="崩溃 / 错误报告"
+            desc="出现错误时上传堆栈信息和最近一次操作。剧本内容不会被上传。"
+            control={<SettingsToggle on={shareCrash} set={tog(setShareCrash, "崩溃报告")} />}
+          />
+          <SettingRow
+            title="个性化推荐"
+            desc="基于你的剧本与角色卡向你推荐 Skill 和 MCP。"
+            control={<SettingsToggle on={adsTrack} set={tog(setAdsTrack, "个性化推荐")} />}
+          />
+          <SettingRow
+            title="GDPR / 个人信息保护合规"
+            desc="本平台不向第三方分享你的剧本内容、玩家变量或私聊。详见隐私政策。"
+            control={<CSButton iconName="file-open" onClick={(e) => { e.preventDefault(); setPolicyOpen(true); }}>隐私政策</CSButton>}
+          />
+        </CSSpaceBetween>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>账号 · 安全</h2></div>
-        <SettingRow
-          title="修改密码"
-          desc="建议每 90 天更换一次，至少 12 位字符 + 大小写 + 数字。"
-          control={<button className="btn ghost" onClick={() => setPwOpen(true)}><Icon name="lock" size={12} /> 修改密码</button>}
-        />
-        <SettingRow
-          title="二次验证（2FA）"
-          desc="通过 Authenticator App 或手机短信进行二次验证。"
-          control={
-            <div style={{display: "flex", alignItems: "center", gap: 10}}>
-              {twofa && <span className="pill ok"><span className="dot ok" /> Authenticator</span>}
-              <SettingsToggle on={twofa} set={tog(setTwofa, "二次验证")} />
-            </div>
-          }
-        />
-        {(() => {
-          // task 49：原 desc 写死 "3 个登录会话 · 12 分钟前 / 14 次登录"。改成
-          // 真实派生：sessions.length + 最近一条 last_seen_at；30 天内 login_ok 次数。
-          const nSess = sessions.length;
-          const cur = sessions.find(s => s.current) || sessions[0];
-          const sessDesc = nSess === 0
-            ? "尚未拉取活跃会话。"
-            : `当前 ${nSess} 个登录会话${cur ? ` · 最近：${cur.device}${cur.ts ? " · " + cur.ts : ""}` : ""}。`;
-          const cutoff = Date.now() - 30 * 86400_000;
-          const okIn30d = loginHistory.filter(h => {
-            if (h.result !== "ok") return false;
-            try { return new Date(h.at).getTime() >= cutoff; } catch { return false; }
-          }).length;
-          const blocked = loginHistory.filter(h => h.result !== "ok").length;
-          const histDesc = loginHistory.length === 0
-            ? "尚未拉取登录历史。"
-            : `最近 30 天 ${okIn30d} 次成功登录${blocked ? `，${blocked} 次被拦截` : "，无异常 IP"}。`;
-          return <>
-            <SettingRow
-              title="活跃会话"
-              desc={sessDesc}
-              control={<button className="btn ghost" onClick={() => setSessionsOpen(true)}><Icon name="eye" size={12} /> 查看会话</button>}
-            />
-            <SettingRow
-              title="登录历史"
-              desc={histDesc}
-              control={<button className="btn ghost" onClick={() => setHistoryOpen(true)}><Icon name="history" size={12} /> 查看日志</button>}
-            />
-          </>;
-        })()}
-      </section>
+      {/* 账号 · 安全 */}
+      <CSContainer header={<CSHeader variant="h2">账号 · 安全</CSHeader>}>
+        <CSSpaceBetween size="l">
+          <SettingRow
+            title="修改密码"
+            desc="建议每 90 天更换一次，至少 12 位字符 + 大小写 + 数字。"
+            control={<CSButton iconName="lock-private" onClick={() => setPwOpen(true)}>修改密码</CSButton>}
+          />
+          <SettingRow
+            title="二次验证（2FA）"
+            desc="通过 Authenticator App 或手机短信进行二次验证。"
+            control={
+              <CSSpaceBetween direction="horizontal" size="xs">
+                {twofa && <span className="pill ok"><span className="dot ok" /> Authenticator</span>}
+                <SettingsToggle on={twofa} set={tog(setTwofa, "二次验证")} />
+              </CSSpaceBetween>
+            }
+          />
+          {(() => {
+            // task 49：原 desc 写死 "3 个登录会话 · 12 分钟前 / 14 次登录"。改成
+            // 真实派生：sessions.length + 最近一条 last_seen_at；30 天内 login_ok 次数。
+            const nSess = sessions.length;
+            const cur = sessions.find(s => s.current) || sessions[0];
+            const sessDesc = nSess === 0
+              ? "尚未拉取活跃会话。"
+              : `当前 ${nSess} 个登录会话${cur ? ` · 最近：${cur.device}${cur.ts ? " · " + cur.ts : ""}` : ""}。`;
+            const cutoff = Date.now() - 30 * 86400_000;
+            const okIn30d = loginHistory.filter(h => {
+              if (h.result !== "ok") return false;
+              try { return new Date(h.at).getTime() >= cutoff; } catch { return false; }
+            }).length;
+            const blocked = loginHistory.filter(h => h.result !== "ok").length;
+            const histDesc = loginHistory.length === 0
+              ? "尚未拉取登录历史。"
+              : `最近 30 天 ${okIn30d} 次成功登录${blocked ? `，${blocked} 次被拦截` : "，无异常 IP"}。`;
+            return <>
+              <SettingRow
+                title="活跃会话"
+                desc={sessDesc}
+                control={<CSButton iconName="visibility-on" onClick={() => setSessionsOpen(true)}>查看会话</CSButton>}
+              />
+              <SettingRow
+                title="登录历史"
+                desc={histDesc}
+                control={<CSButton iconName="status-info" onClick={() => setHistoryOpen(true)}>查看日志</CSButton>}
+              />
+            </>;
+          })()}
+        </CSSpaceBetween>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>通知</h2></div>
+      {/* 通知 */}
+      <CSContainer header={<CSHeader variant="h2">通知</CSHeader>}>
         <SettingRow
           title="邮件通知"
           desc="重要安全事件、订阅变更、长时间未登录提醒。"
           control={<SettingsToggle on={emailNotif} set={tog(setEmailNotif, "邮件通知")} />}
         />
-      </section>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>数据所有权</h2></div>
-        <SettingRow
-          title="导出我的数据"
-          desc="打包导出全部剧本、存档、记忆、库资产、用量记录。生成后通过邮件发送下载链接。"
-          control={<button className="btn ghost" onClick={() => setExportOpen(true)}><Icon name="download" size={12} /> 申请导出</button>}
-        />
-        <SettingRow
-          title="停用账号"
-          desc="停用后无法登录，剧本和存档保留 90 天，期间可随时恢复。"
-          control={<button className="btn danger" onClick={() => setConfirmDeact(true)}>停用账号</button>}
-        />
-        <SettingRow
-          title="永久删除账号"
-          desc="立刻删除全部账号信息、剧本、存档、库资产，无法恢复。"
-          control={<button className="btn danger" onClick={() => setConfirmDelete(true)}><Icon name="trash" size={12} /> 删除账号</button>}
-        />
-      </section>
+      {/* 数据所有权 */}
+      <CSContainer header={<CSHeader variant="h2">数据所有权</CSHeader>}>
+        <CSSpaceBetween size="l">
+          <SettingRow
+            title="导出我的数据"
+            desc="打包导出全部剧本、存档、记忆、库资产、用量记录。生成后通过邮件发送下载链接。"
+            control={<CSButton iconName="download" onClick={() => setExportOpen(true)}>申请导出</CSButton>}
+          />
+          <SettingRow
+            title="停用账号"
+            desc="停用后无法登录，剧本和存档保留 90 天，期间可随时恢复。"
+            control={<CSButton variant="normal" onClick={() => setConfirmDeact(true)}>停用账号</CSButton>}
+          />
+          <SettingRow
+            title="永久删除账号"
+            desc="立刻删除全部账号信息、剧本、存档、库资产，无法恢复。"
+            control={<CSButton variant="normal" iconName="remove" onClick={() => setConfirmDelete(true)}>删除账号</CSButton>}
+          />
+        </CSSpaceBetween>
+      </CSContainer>
 
       <ConfirmModal
         open={confirmDeact}
@@ -1758,32 +1840,23 @@ function MeUserSettings() {
           </div>
         </div>
       )}
-    </div>
+    </CSSpaceBetween>
   );
 }
 
 function Field({ label, hint, required, children }) {
   return (
-    <div className="pl-field">
-      <label>
-        {label}
-        {required && <span className="pl-field-req">*</span>}
-        {hint && <span className="muted-2" style={{textTransform: "none", letterSpacing: 0, marginLeft: 6}}>{hint}</span>}
-      </label>
+    <CSFormField label={<>{label}{required && <span style={{ color: 'var(--accent)', marginLeft: 2 }}>*</span>}</>} description={hint}>
       {children}
-    </div>
+    </CSFormField>
   );
 }
 
 function SettingRow({ title, desc, control }) {
   return (
-    <div className="pl-setting-row">
-      <div className="pl-setting-label">
-        <strong>{title}</strong>
-        <p className="muted">{desc}</p>
-      </div>
-      <div className="pl-setting-control">{control}</div>
-    </div>
+    <CSFormField label={title} description={desc}>
+      {control}
+    </CSFormField>
   );
 }
 
@@ -1802,122 +1875,138 @@ function ProfilePage() {
   const wordWan = wordTotal > 0 ? (wordTotal / 10000).toFixed(0) : "—";
   const branchAgg = realSaves.reduce((a, s) => a + (Number(s && s.branch_count) || 0), 0) || (stats?.branches ?? null);
   return (
-    <div className="pl-stack">
-      <section className="pl-sec">
-        <div className="pl-stat-row">
-          <div className="pl-stat">
-            <span className="pl-stat-label">剧本</span>
-            <span className="pl-stat-value">{realScripts.length}</span>
-            <span className="pl-stat-foot">{wordTotal > 0 ? `共 ${wordWan} 万字` : "未导入剧本"}</span>
+    <CSSpaceBetween size="l">
+      {/* 4 stat 卡 */}
+      <CSContainer>
+        <CSColumnLayout columns={4} variant="text-grid">
+          <div>
+            <CSBox variant="awsui-key-label">剧本</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{realScripts.length}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{wordTotal > 0 ? `共 ${wordWan} 万字` : "未导入剧本"}</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">存档</span>
-            <span className="pl-stat-value">{realSaves.length}</span>
-            <span className="pl-stat-foot">{realSaves[0]?.updated_at ? `最近：${realSaves[0].updated_at}` : "尚未创建存档"}</span>
+          <div>
+            <CSBox variant="awsui-key-label">存档</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{realSaves.length}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{realSaves[0]?.updated_at ? `最近：${realSaves[0].updated_at}` : "尚未创建存档"}</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">分支节点</span>
-            <span className="pl-stat-value">{fmtN(branchAgg)}</span>
-            <span className="pl-stat-foot">{realSaves.length ? `来自 ${realSaves.length} 个存档` : "—"}</span>
+          <div>
+            <CSBox variant="awsui-key-label">分支节点</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{fmtN(branchAgg)}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{realSaves.length ? `来自 ${realSaves.length} 个存档` : "—"}</CSBox>
           </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">库资产</span>
-            <span className="pl-stat-value">{fmtN(stats?.assets)}</span>
-            <span className="pl-stat-foot">用量详见 <a href="#usage" style={{borderBottom: "1px dotted var(--muted-2)"}}>用量页</a></span>
+          <div>
+            <CSBox variant="awsui-key-label">库资产</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{fmtN(stats?.assets)}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">用量详见 <a href="#usage" style={{borderBottom: "1px dotted var(--muted-2)"}}>用量页</a></CSBox>
           </div>
-        </div>
-      </section>
+        </CSColumnLayout>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>账号</h2>
-          <div className="pl-sec-tools"><a className="btn ghost" href="#me-edit" data-tip="跳转到个人主页 / 编辑资料"><Icon name="edit" size={12} /> 编辑资料</a></div>
-        </div>
-        <div className="pl-set-row">
-          <div className="pl-set-label">
-            <strong>{user.display_name}</strong>
-            <div className="muted">@{user.username} · {user.role} · uid {user.uid}</div>
-            <p className="muted" style={{margin: "10px 0 0", fontSize: 13}}>{user.bio}</p>
-          </div>
-          <div className="pl-set-control">
-            <div className="pl-stat-row" style={{gridTemplateColumns: "1fr 1fr"}}>
-              <div className="pl-stat" style={{padding: "10px 12px"}}>
-                <span className="pl-stat-label">数据库</span>
-                <span className="mono" style={{fontSize: 13, color: "var(--text)"}}>
-                  {database.driver} · <span className={database.ok ? "ok" : "danger"}>{database.ok ? "online" : "offline"}</span>
-                </span>
-              </div>
-              <div className="pl-stat" style={{padding: "10px 12px"}}>
-                <span className="pl-stat-label">API 版本</span>
-                <span className="mono" style={{fontSize: 13, color: "var(--text)"}}>v1 · stable</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+      {/* 账号 section */}
+      <CSContainer header={
+        <CSHeader variant="h2" actions={<CSButton href="#me-edit" iconName="edit">编辑资料</CSButton>}>
+          账号
+        </CSHeader>
+      }>
+        <CSKeyValuePairs
+          columns={2}
+          items={[
+            {
+              label: "用户",
+              value: (
+                <CSSpaceBetween size="xxs">
+                  <CSBox fontWeight="bold">{user.display_name}</CSBox>
+                  <CSBox color="text-body-secondary" fontSize="body-s">@{user.username} · {user.role} · uid {user.uid}</CSBox>
+                  {user.bio && <CSBox color="text-body-secondary" fontSize="body-s">{user.bio}</CSBox>}
+                </CSSpaceBetween>
+              ),
+            },
+            {
+              label: "数据库",
+              value: (
+                <CSBox>
+                  <span className="mono">{database.driver}</span>
+                  <CSStatusIndicator type={database.ok ? "success" : "error"} style={{marginLeft: 8}}>
+                    {database.ok ? "online" : "offline"}
+                  </CSStatusIndicator>
+                </CSBox>
+              ),
+            },
+            {
+              label: "API 版本",
+              value: <span className="mono">v1 · stable</span>,
+            },
+          ]}
+        />
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>最近游玩 <span className="muted-2">按上次操作时间</span></h2>
-          <div className="pl-sec-tools">
-            <a className="btn ghost" href="#saves" title="存档目录"><Icon name="play" size={12} /> 全部存档</a>
-          </div>
-        </div>
+      {/* 最近游玩 */}
+      <CSContainer header={
+        <CSHeader variant="h2" actions={<CSButton href="#saves" iconName="caret-right-filled">全部存档</CSButton>}>
+          最近游玩 <span className="muted-2" style={{fontWeight: "normal"}}>按上次操作时间</span>
+        </CSHeader>
+      }>
         {realSaves.length === 0 ? (
-          <div className="pl-empty" style={{padding: "28px 16px", textAlign: "center", color: "var(--muted)"}}>
-            <div style={{fontFamily: "var(--font-serif)", fontSize: 14, color: "var(--text)", marginBottom: 8}}>
-              还没有任何存档
-            </div>
-            <div style={{fontSize: 13, marginBottom: 12}}>
-              去「剧本」页选一本剧本开始新游戏，存档会自动出现在这里。
-            </div>
-            <a className="btn primary" href="#saves-scripts" style={{display: "inline-flex", alignItems: "center", gap: 6}}>
-              <Icon name="bookmark" size={12} /> 去剧本页
-            </a>
-          </div>
+          <CSBox textAlign="center" color="text-body-secondary" padding="l">
+            <CSSpaceBetween size="s">
+              <CSBox>还没有任何存档</CSBox>
+              <CSBox fontSize="body-s">去「剧本」页选一本剧本开始新游戏，存档会自动出现在这里。</CSBox>
+              <CSButton href="#saves-scripts" iconName="file">去剧本页</CSButton>
+            </CSSpaceBetween>
+          </CSBox>
         ) : (
-          <table className="pl-table">
-            <thead><tr><th>剧本 / 存档</th><th>进度</th><th>上次游玩</th><th></th></tr></thead>
-            <tbody>
-              {realSaves.map(s => {
-                // task 12：以前用 hard-coded mock branchLabel + Math.floor(s.id*137...)。
-                // 真实数据里没有这些字段，全部移除；只显示后端真给出的字段，缺则 —。
-                const script = realScripts.find(sc => sc && sc.id === s.script_id);
-                return (
-                  <tr key={s.id}>
-                    <td>
-                      <div className="pl-title-cell">
-                        <strong>{s.title || `存档 #${s.id}`}</strong>
-                        <span className="muted-2 mono">{script?.title || "—"}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div style={{display: "grid", gap: 2}}>
-                        <span className="mono">{Number(s.branch_count) || 0} 分支节点</span>
-                      </div>
-                    </td>
-                    <td className="muted">
-                      {s.current && <span className="pill accent" style={{marginRight: 6}}><span className="dot accent pulse" /> 在玩</span>}
-                      {s.updated_at || "—"}
-                    </td>
-                    <td style={{textAlign: "right"}}>
-                      <button className="btn primary" onClick={() => window.__openContinue?.(s)} title="继续游戏"
-                        style={{height: 26, padding: "0 10px", fontSize: 12}}>
-                        <Icon name="play" size={11} /> 继续
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <CSTable
+            columnDefinitions={[
+              {
+                id: "title",
+                header: "剧本 / 存档",
+                cell: s => {
+                  const script = realScripts.find(sc => sc && sc.id === s.script_id);
+                  return (
+                    <div className="pl-title-cell">
+                      <strong>{s.title || `存档 #${s.id}`}</strong>
+                      <span className="muted-2 mono">{script?.title || "—"}</span>
+                    </div>
+                  );
+                },
+              },
+              {
+                id: "progress",
+                header: "进度",
+                cell: s => <span className="mono">{Number(s.branch_count) || 0} 分支节点</span>,
+              },
+              {
+                id: "last",
+                header: "上次游玩",
+                cell: s => (
+                  <span className="muted">
+                    {s.current && <span className="pill accent" style={{marginRight: 6}}><span className="dot accent pulse" /> 在玩</span>}
+                    {s.updated_at || "—"}
+                  </span>
+                ),
+              },
+              {
+                id: "action",
+                header: "",
+                cell: s => (
+                  <CSButton variant="primary" iconName="caret-right-filled"
+                    onClick={() => window.__openContinue?.(s)}>
+                    继续
+                  </CSButton>
+                ),
+              },
+            ]}
+            items={realSaves}
+            trackBy="id"
+            empty={<CSBox color="text-body-secondary" textAlign="center">暂无存档</CSBox>}
+          />
         )}
-      </section>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head"><h2>最近资源</h2></div>
+      {/* 最近资源 */}
+      <CSContainer header={<CSHeader variant="h2">最近资源</CSHeader>}>
         {Array.isArray(recent_assets) && recent_assets.length > 0 ? (
-          <div className="pl-lib-grid">
+          <CSColumnLayout columns={4} variant="text-grid">
             {recent_assets.map((a, i) => (
               <div key={`asset-${i}`} className="pl-lib-tile">
                 <div className="pl-lib-tile-icon">
@@ -1927,13 +2016,14 @@ function ProfilePage() {
                 <div className="pl-lib-tile-meta">{fmtBytes(a.size || 0)} · {a.at || "—"}</div>
               </div>
             ))}
-          </div>
+          </CSColumnLayout>
         ) : (
-          <div className="muted" style={{padding: "20px 8px", fontSize: 13, textAlign: "center"}}>
+          <CSBox color="text-body-secondary" textAlign="center" padding="l">
             文件库还没有内容。<a href="#library" style={{borderBottom: "1px dotted var(--muted-2)"}}>上传资源 →</a>
-          </div>
+          </CSBox>
         )}
-      </section>
+      </CSContainer>
+
       <PromptModal
         open={editOpen}
         eyebrow="编辑资料"
@@ -1973,7 +2063,7 @@ function ProfilePage() {
           }
         }}
       />
-    </div>
+    </CSSpaceBetween>
   );
 }
 
@@ -2033,58 +2123,86 @@ function ModulesPage() {
   };
 
   return (
-    <div className="pl-stack">
-      <section className="pl-sec" data-cap-anchor="modules">
-        <div className="pl-sec-head">
-          <h2>5E 兼容冒险模组 <span className="muted-2">{modules.length} 个</span></h2>
-          <div className="pl-sec-tools">
-            <span className="muted-2 mono" style={{fontSize:11}}>5E compatible / 五版规则兼容</span>
-          </div>
-        </div>
-        {errorMsg ? <p className="muted-2" style={{color:"var(--danger)"}}>{errorMsg}</p> : null}
+    <CSSpaceBetween size="l">
+      {errorMsg && (
+        <CSAlert type="error" dismissible={false}>{errorMsg}</CSAlert>
+      )}
+      <CSContainer header={
+        <CSHeader
+          variant="h2"
+          counter={loaded ? `(${modules.length})` : undefined}
+          description="5E compatible / 五版规则兼容"
+        >
+          5E 兼容冒险模组
+        </CSHeader>
+      }>
         {!loaded ? (
-          <p className="muted-2">加载中…</p>
-        ) : modules.length === 0 ? (
-          <div className="pl-empty">
-            <p>当前没有内置冒险模组。模组数据位于 <code>rpg/modules/</code> 目录。</p>
-          </div>
+          <CSBox color="text-body-secondary" textAlign="center" padding="l">加载中…</CSBox>
         ) : (
-          <table className="pl-table">
-            <thead><tr><th>模组</th><th>规则集</th><th>等级</th><th>预计时长</th><th></th></tr></thead>
-            <tbody>
-              {modules.map(m => {
-                const ruleset = m.ruleset || {};
-                return (
-                  <tr key={m.id}>
-                    <td>
-                      <div className="pl-title-cell">
-                        <strong>{m.name_cn || m.name}</strong>
-                        <span className="muted-2 mono">{m.id}</span>
-                        {m.tagline ? <span className="muted-2" style={{fontStyle:"italic",marginTop:3}}>{m.tagline}</span> : null}
-                      </div>
-                    </td>
-                    <td><span className="pill ok"><span className="dot ok" /> {ruleset.public_label || "5E compatible"}</span></td>
-                    <td className="mono">{(m.level_range || []).join("-") || "—"}</td>
-                    <td className="muted">{m.estimated_minutes ? `${m.estimated_minutes} 分钟` : "—"}</td>
-                    <td>
-                      <button className="btn primary" disabled={busyId === m.id} onClick={() => startModule(m)}>
-                        {busyId === m.id ? "启动中…" : "开始模组"}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <CSTable
+            columnDefinitions={[
+              {
+                id: "module",
+                header: "模组",
+                cell: m => (
+                  <div className="pl-title-cell">
+                    <strong>{m.name_cn || m.name}</strong>
+                    <span className="muted-2 mono">{m.id}</span>
+                    {m.tagline ? <span className="muted-2" style={{fontStyle:"italic",marginTop:3}}>{m.tagline}</span> : null}
+                  </div>
+                ),
+              },
+              {
+                id: "ruleset",
+                header: "规则集",
+                cell: m => {
+                  const ruleset = m.ruleset || {};
+                  return <CSStatusIndicator type="success">{ruleset.public_label || "5E compatible"}</CSStatusIndicator>;
+                },
+              },
+              {
+                id: "level",
+                header: "等级",
+                cell: m => <span className="mono">{(m.level_range || []).join("-") || "—"}</span>,
+              },
+              {
+                id: "duration",
+                header: "预计时长",
+                cell: m => <span className="muted">{m.estimated_minutes ? `${m.estimated_minutes} 分钟` : "—"}</span>,
+              },
+              {
+                id: "action",
+                header: "",
+                cell: m => (
+                  <CSButton
+                    variant="primary"
+                    loading={busyId === m.id}
+                    onClick={() => startModule(m)}
+                  >
+                    {busyId === m.id ? "启动中…" : "开始模组"}
+                  </CSButton>
+                ),
+              },
+            ]}
+            items={modules}
+            trackBy="id"
+            empty={
+              <CSBox textAlign="center" color="text-body-secondary" padding="l">
+                当前没有内置冒险模组。模组数据位于 <code>rpg/modules/</code> 目录。
+              </CSBox>
+            }
+          />
         )}
-        <div className="muted-2" style={{marginTop:12,fontSize:12,padding:"8px 10px",background:"var(--pl-panel-2,#1c1c1c)",borderRadius:6}}>
+      </CSContainer>
+      <CSContainer>
+        <CSBox color="text-body-secondary" fontSize="body-s">
           本页所有模组使用原创地名、角色、怪物。规则层为 5E-compatible（五版规则兼容），
           不引入任何官方 Dungeons &amp; Dragons 商标或非 SRD IP。LLM 仅负责叙事，所有掷骰、
           检定、战斗、HP/AC 计算由确定性 RulesEngine 完成；GM 直写 HP/AC/initiative
           会被 State Gate 拒绝。
-        </div>
-      </section>
-    </div>
+        </CSBox>
+      </CSContainer>
+    </CSSpaceBetween>
   );
 }
 
@@ -2177,69 +2295,180 @@ function LibraryPage() {
     window.open(u, "_blank");
   };
 
-  return (
-    <div className="pl-stack">
-      <section className="pl-sec" data-cap-anchor="library">
-        <div className="pl-lib-bar">
-          <div className="pl-crumb">
-            <a href="#" onClick={(e) => { e.preventDefault(); setPath(""); }}>库</a>
-            {(path || "").split("/").filter(Boolean).map((seg, i, arr) => (
-              <React.Fragment key={i}>
-                <span className="pl-crumb-sep">/</span>
-                <a href="#" onClick={(e) => { e.preventDefault(); setPath(arr.slice(0, i + 1).join("/")); }}>{seg}</a>
-              </React.Fragment>
-            ))}
-            {!path && <><span className="pl-crumb-sep">/</span><span className="pl-crumb-current">默认工作区</span></>}
-          </div>
-          <div className="seg" title="切换视图">
-            <button className={view === "list" ? "active" : ""} onClick={() => setView("list")} title="表格视图"><Icon name="list" size={11} /> 表格</button>
-            <button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} title="网格视图"><Icon name="grid" size={11} /> 网格</button>
-          </div>
-          <button className="btn ghost" onClick={() => setMkdirOpen(true)} title="新建文件夹"><Icon name="plus" size={12} /> 新建文件夹</button>
-          <button className="btn primary" onClick={() => fileInputRef.current?.click()} title="上传文件 / 图片 / 压缩包">
-            <Icon name="upload" size={12} /> 上传
-          </button>
-          <input ref={fileInputRef} type="file" style={{display: "none"}}
-            onChange={(e) => onUploadFile(e.target.files?.[0])} />
-        </div>
+  // breadcrumb path segments
+  const pathSegments = (path || "").split("/").filter(Boolean);
 
+  return (
+    <CSSpaceBetween size="l">
+      {/* hidden file input for upload */}
+      <input ref={fileInputRef} type="file" style={{display: "none"}}
+        onChange={(e) => onUploadFile(e.target.files?.[0])} />
+
+      <CSContainer header={
+        <CSHeader
+          variant="h2"
+          counter={`(${rows.length})`}
+          description={
+            <CSSpaceBetween size="xs" direction="horizontal">
+              <CSButton variant="inline-link" onClick={() => setPath("")}>库</CSButton>
+              {pathSegments.map((seg, i, arr) => (
+                <React.Fragment key={`seg-${i}`}>
+                  <span className="muted-2">/</span>
+                  <CSButton variant="inline-link" onClick={() => setPath(arr.slice(0, i + 1).join("/"))}>{seg}</CSButton>
+                </React.Fragment>
+              ))}
+              {!path && <span className="muted-2">/ 默认工作区</span>}
+            </CSSpaceBetween>
+          }
+          actions={
+            <CSSpaceBetween size="xs" direction="horizontal">
+              <CSButton
+                variant={view === "list" ? "primary" : "normal"}
+                iconName="list"
+                onClick={() => setView("list")}
+              >表格</CSButton>
+              <CSButton
+                variant={view === "grid" ? "primary" : "normal"}
+                iconName="grid"
+                onClick={() => setView("grid")}
+              >网格</CSButton>
+              <CSButton iconName="add-plus" onClick={() => setMkdirOpen(true)}>新建文件夹</CSButton>
+              <CSButton variant="primary" iconName="upload" onClick={() => fileInputRef.current?.click()}>上传</CSButton>
+            </CSSpaceBetween>
+          }
+        >
+          资产库
+        </CSHeader>
+      }>
         {view === "list" ? (
-          <div className="pl-lib-list">
-            <div className="pl-lib-row head">
-              <div></div><div>名称</div><div>类型</div><div>大小</div><div>修改时间</div><div></div>
-            </div>
-            {rows.map((r, i) => (
-              <div key={i} className="pl-lib-row">
-                <div className={`pl-lib-icon ${r.kind}`}><Icon name={LIB_ICON[r.kind] || "file"} size={16} /></div>
-                <div className="pl-lib-name" title={r.name}
-                  onClick={() => { if (r.kind === "folder") setPath(r.path || r.name); }}
-                  style={{cursor: r.kind === "folder" ? "pointer" : "default"}}>{r.name}</div>
-                <div className="muted">{r.kind}</div>
-                <div className="mono muted">{r.kind === "folder" ? `${r.items || 0} 项` : fmtBytes(r.size)}</div>
-                <div className="muted">{r.at}</div>
-                <div className="pl-table-actions">
-                  <button className="iconbtn" data-tip="下载" onClick={() => onDownload(r)} disabled={r.kind === "folder"}>
-                    <Icon name="download" size={13} />
-                  </button>
-                  <button className="iconbtn" data-tip="删除" onClick={() => setDeleteTarget(r)}><Icon name="trash" size={13} /></button>
-                </div>
-              </div>
-            ))}
-          </div>
+          <CSTable
+            columnDefinitions={[
+              {
+                id: "icon",
+                header: "",
+                width: 40,
+                cell: r => <Icon name={LIB_ICON[r.kind] || "file"} size={16} />,
+              },
+              {
+                id: "name",
+                header: "名称",
+                cell: r => (
+                  <span
+                    title={r.name}
+                    onClick={() => { if (r.kind === "folder") setPath(r.path || r.name); }}
+                    style={{cursor: r.kind === "folder" ? "pointer" : "default", color: r.kind === "folder" ? "var(--color-text-link-default)" : undefined}}
+                  >
+                    {r.name}
+                  </span>
+                ),
+              },
+              {
+                id: "kind",
+                header: "类型",
+                cell: r => <span className="muted">{r.kind}</span>,
+              },
+              {
+                id: "size",
+                header: "大小",
+                cell: r => <span className="mono muted">{r.kind === "folder" ? `${r.items || 0} 项` : fmtBytes(r.size)}</span>,
+              },
+              {
+                id: "at",
+                header: "修改时间",
+                cell: r => <span className="muted">{r.at}</span>,
+              },
+              {
+                id: "actions",
+                header: "",
+                cell: r => (
+                  <CSSpaceBetween size="xs" direction="horizontal">
+                    <CSButton
+                      variant="inline-icon"
+                      iconName="download"
+                      disabled={r.kind === "folder"}
+                      onClick={() => onDownload(r)}
+                      ariaLabel="下载"
+                    />
+                    <CSButton
+                      variant="inline-icon"
+                      iconName="remove"
+                      onClick={() => setDeleteTarget(r)}
+                      ariaLabel="删除"
+                    />
+                  </CSSpaceBetween>
+                ),
+              },
+            ]}
+            items={rows}
+            trackBy="name"
+            empty={
+              <CSBox textAlign="center" color="text-body-secondary" padding="l">
+                当前目录为空
+              </CSBox>
+            }
+          />
         ) : (
-          <div className="pl-lib-grid">
-            {rows.map((r, i) => (
-              <div key={i} className="pl-lib-tile" title={r.name}
-                onClick={() => { if (r.kind === "folder") setPath(r.path || r.name); }}
-                style={{cursor: r.kind === "folder" ? "pointer" : "default"}}>
-                <div className="pl-lib-tile-icon"><Icon name={LIB_ICON[r.kind] || "file"} size={28} /></div>
-                <div className="pl-lib-tile-name">{r.name}</div>
-                <div className="pl-lib-tile-meta">{r.kind === "folder" ? `${r.items || 0} 项` : fmtBytes(r.size)} · {r.at}</div>
-              </div>
-            ))}
-          </div>
+          <CSCards
+            cardDefinition={{
+              header: r => (
+                <span
+                  onClick={() => { if (r.kind === "folder") setPath(r.path || r.name); }}
+                  style={{cursor: r.kind === "folder" ? "pointer" : "default"}}
+                  title={r.name}
+                >
+                  {r.name}
+                </span>
+              ),
+              sections: [
+                {
+                  id: "icon",
+                  content: r => (
+                    <div style={{textAlign: "center", padding: "8px 0"}}>
+                      <Icon name={LIB_ICON[r.kind] || "file"} size={28} />
+                    </div>
+                  ),
+                },
+                {
+                  id: "meta",
+                  content: r => (
+                    <CSBox color="text-body-secondary" fontSize="body-s">
+                      {r.kind === "folder" ? `${r.items || 0} 项` : fmtBytes(r.size)} · {r.at}
+                    </CSBox>
+                  ),
+                },
+                {
+                  id: "actions",
+                  content: r => (
+                    <CSSpaceBetween size="xs" direction="horizontal">
+                      <CSButton
+                        variant="inline-icon"
+                        iconName="download"
+                        disabled={r.kind === "folder"}
+                        onClick={() => onDownload(r)}
+                        ariaLabel="下载"
+                      />
+                      <CSButton
+                        variant="inline-icon"
+                        iconName="remove"
+                        onClick={() => setDeleteTarget(r)}
+                        ariaLabel="删除"
+                      />
+                    </CSSpaceBetween>
+                  ),
+                },
+              ],
+            }}
+            cardsPerRow={[{ cards: 2 }, { minWidth: 600, cards: 4 }, { minWidth: 900, cards: 6 }]}
+            items={rows}
+            trackBy="name"
+            empty={
+              <CSBox textAlign="center" color="text-body-secondary" padding="l">
+                当前目录为空
+              </CSBox>
+            }
+          />
         )}
-      </section>
+      </CSContainer>
 
       <PromptModal
         open={mkdirOpen}
@@ -2268,7 +2497,7 @@ function LibraryPage() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => onDelete(deleteTarget)}
       />
-    </div>
+    </CSSpaceBetween>
   );
 }
 
@@ -2404,195 +2633,241 @@ function UsagePage() {
   const costSeriesVals = bucketSeries.map(b => Number(b.cost_usd || 0));
 
   return (
-    <div className="pl-stack">
-      <section className="pl-sec" data-cap-anchor="usage">
-        <div className="pl-sec-head">
-          <h2>
-            用量 <span className="muted-2">最近 {USAGE_RANGES.find(r => r.id === range)?.label}</span>
-            {loading && <span className="muted-2" style={{marginLeft: 8, fontSize: 11}}>加载中…</span>}
-            {err && <span className="danger" style={{marginLeft: 8, fontSize: 11}}>{err}</span>}
-          </h2>
-          <div className="pl-sec-tools">
-            <div className="seg">
+    <CSSpaceBetween size="l">
+      {err && <CSAlert type="error" dismissible={false}>{err}</CSAlert>}
+
+      {/* 统计卡 */}
+      <CSContainer header={
+        <CSHeader
+          variant="h2"
+          description={loading ? "加载中…" : undefined}
+          actions={
+            <CSSpaceBetween size="xs" direction="horizontal">
               {USAGE_RANGES.map(r => (
-                <button key={r.id} className={range === r.id ? "active" : ""} onClick={() => setRange(r.id)} title={`查看最近 ${r.label} 用量`}>
+                <CSButton
+                  key={r.id}
+                  variant={range === r.id ? "primary" : "normal"}
+                  onClick={() => setRange(r.id)}
+                >
                   {r.label}
-                </button>
+                </CSButton>
               ))}
-            </div>
-            <button className="iconbtn" data-tip="刷新" onClick={() => setTick(t => t + 1)}><Icon name="refresh" size={14} /></button>
+              <CSButton iconName="refresh" variant="icon" onClick={() => setTick(t => t + 1)} ariaLabel="刷新" />
+            </CSSpaceBetween>
+          }
+        >
+          用量 <span style={{fontWeight: "normal", fontSize: "0.85em", color: "var(--color-text-body-secondary)"}}>最近 {USAGE_RANGES.find(r => r.id === range)?.label}</span>
+        </CSHeader>
+      }>
+        <CSColumnLayout columns={5} variant="text-grid">
+          <div>
+            <CSBox variant="awsui-key-label">请求数</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{fmtN(totalTurns)}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{totalTurns ? `日均 ${Math.round(totalTurns / days)}` : "—"}</CSBox>
           </div>
-        </div>
+          <div>
+            <CSBox variant="awsui-key-label">Token 输入</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{fmtN(totalTokIn)}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{totalTokOut ? `输出 ${fmtN(totalTokOut)} · 比 1 : ${(totalTokIn / Math.max(1, totalTokOut)).toFixed(1)}` : "输出 —"}</CSBox>
+          </div>
+          <div>
+            <CSBox variant="awsui-key-label">成本</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">${totalCost.toFixed(2)}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">本窗口累计</CSBox>
+          </div>
+          <div>
+            <CSBox variant="awsui-key-label">平均延迟</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">—</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">后端未记录</CSBox>
+          </div>
+          <div>
+            <CSBox variant="awsui-key-label">错误率</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">—</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">后端未记录</CSBox>
+          </div>
+        </CSColumnLayout>
+      </CSContainer>
 
-        <div className="pl-stat-row">
-          <div className="pl-stat">
-            <span className="pl-stat-label">请求数</span>
-            <span className="pl-stat-value">{fmtN(totalTurns)}</span>
-            <span className="pl-stat-foot">{totalTurns ? `日均 ${Math.round(totalTurns / days)}` : "—"}</span>
-          </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">Token 输入</span>
-            <span className="pl-stat-value">{fmtN(totalTokIn)}</span>
-            <span className="pl-stat-foot">{totalTokOut ? `输出 ${fmtN(totalTokOut)} · 比 1 : ${(totalTokIn / Math.max(1, totalTokOut)).toFixed(1)}` : "输出 —"}</span>
-          </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">成本</span>
-            <span className="pl-stat-value">${totalCost.toFixed(2)}</span>
-            <span className="pl-stat-foot">本窗口累计</span>
-          </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">平均延迟</span>
-            <span className="pl-stat-value">—</span>
-            <span className="pl-stat-foot">后端未记录</span>
-          </div>
-          <div className="pl-stat">
-            <span className="pl-stat-label">错误率</span>
-            <span className="pl-stat-value">—</span>
-            <span className="pl-stat-foot">后端未记录</span>
-          </div>
-        </div>
-      </section>
-
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>趋势 <span className="muted-2">每日聚合</span></h2>
-        </div>
+      {/* 趋势图（保留原生 SVG Spark 自绘） */}
+      <CSContainer header={<CSHeader variant="h2" description="每日聚合">趋势</CSHeader>}>
         {bucketSeries.length === 0 ? (
-          <div className="pl-model-empty">{loading ? "加载中…" : "近期没有用量记录"}</div>
+          <CSBox textAlign="center" color="text-body-secondary" padding="l">
+            {loading ? "加载中…" : "近期没有用量记录"}
+          </CSBox>
         ) : (
-          <div className="pl-usage-charts">
-            <div className="pl-usage-chart">
-              <div className="pl-usage-chart-head">
-                <span className="pl-stat-label">请求</span>
-                <span className="mono" style={{fontSize: 12, color: "var(--text-quiet)"}}>{fmtN(reqSeriesVals.reduce((a, x) => a + x, 0))}</span>
+          <CSColumnLayout columns={2} variant="text-grid">
+            <div>
+              <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
+                <CSBox variant="awsui-key-label">请求</CSBox>
+                <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>{fmtN(reqSeriesVals.reduce((a, x) => a + x, 0))}</span>
               </div>
               <Spark values={reqSeriesVals} color="var(--accent)" />
             </div>
-            <div className="pl-usage-chart">
-              <div className="pl-usage-chart-head">
-                <span className="pl-stat-label">成本 $</span>
-                <span className="mono" style={{fontSize: 12, color: "var(--text-quiet)"}}>${costSeriesVals.reduce((a, x) => a + x, 0).toFixed(2)}</span>
+            <div>
+              <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
+                <CSBox variant="awsui-key-label">成本 $</CSBox>
+                <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>${costSeriesVals.reduce((a, x) => a + x, 0).toFixed(2)}</span>
               </div>
               <Spark values={costSeriesVals} color="var(--ok)" />
             </div>
-          </div>
+          </CSColumnLayout>
         )}
-      </section>
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>按 API 拆分</h2>
-        </div>
-        {byApi.length === 0 ? (
-          <div className="pl-model-empty">{loading ? "加载中…" : "暂无调用记录"}</div>
-        ) : (
-          <table className="pl-table">
-            <thead>
-              <tr>
-                <th>API</th>
-                <th>请求</th>
-                <th>Token (入 / 出)</th>
-                <th>成本</th>
-                <th>占比</th>
-              </tr>
-            </thead>
-            <tbody>
-              {byApi.map(r => (
-                <tr key={r.id}>
-                  <td><strong style={{fontFamily: "var(--font-serif)", fontSize: 13.5}}>{r.id}</strong></td>
-                  <td className="mono">{fmtN(r.requests)}</td>
-                  <td className="mono"><span className="muted">{fmtN(r.tokens_in)}</span> <span className="muted-2">/</span> {fmtN(r.tokens_out)}</td>
-                  <td className="mono">${r.cost.toFixed(2)}</td>
-                  <td>
-                    <div style={{display: "flex", alignItems: "center", gap: 8}}>
-                      <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--line-soft)", overflow: "hidden"}}>
-                        <div style={{width: (totalTurns ? r.requests / totalTurns * 100 : 0) + "%", height: "100%", background: "var(--accent)"}} />
-                      </div>
-                      <span className="muted-2 mono" style={{fontSize: 11}}>{totalTurns ? Math.round(r.requests / totalTurns * 100) : 0}%</span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+      {/* 按 API 拆分 */}
+      <CSContainer header={<CSHeader variant="h2">按 API 拆分</CSHeader>}>
+        <CSTable
+          columnDefinitions={[
+            {
+              id: "api",
+              header: "API",
+              cell: r => <strong style={{fontFamily: "var(--font-serif)", fontSize: 13.5}}>{r.id}</strong>,
+            },
+            {
+              id: "requests",
+              header: "请求",
+              cell: r => <span className="mono">{fmtN(r.requests)}</span>,
+            },
+            {
+              id: "tokens",
+              header: "Token (入 / 出)",
+              cell: r => <span className="mono"><span className="muted">{fmtN(r.tokens_in)}</span> <span className="muted-2">/</span> {fmtN(r.tokens_out)}</span>,
+            },
+            {
+              id: "cost",
+              header: "成本",
+              cell: r => <span className="mono">${r.cost.toFixed(2)}</span>,
+            },
+            {
+              id: "pct",
+              header: "占比",
+              cell: r => (
+                <div style={{display: "flex", alignItems: "center", gap: 8}}>
+                  <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--color-background-control-default)", overflow: "hidden"}}>
+                    <div style={{width: (totalTurns ? r.requests / totalTurns * 100 : 0) + "%", height: "100%", background: "var(--color-text-accent)"}} />
+                  </div>
+                  <span className="muted-2 mono" style={{fontSize: 11}}>{totalTurns ? Math.round(r.requests / totalTurns * 100) : 0}%</span>
+                </div>
+              ),
+            },
+          ]}
+          items={byApi}
+          trackBy="id"
+          empty={
+            <CSBox textAlign="center" color="text-body-secondary" padding="l">
+              {loading ? "加载中…" : "暂无调用记录"}
+            </CSBox>
+          }
+        />
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>Top 模型 <span className="muted-2">按请求数</span></h2>
-        </div>
-        {byModel.length === 0 ? (
-          <div className="pl-model-empty">{loading ? "加载中…" : "暂无调用记录"}</div>
-        ) : (
-          <table className="pl-table">
-            <thead>
-              <tr>
-                <th style={{width: 30}}>#</th>
-                <th>模型</th>
-                <th>API</th>
-                <th>请求</th>
-                <th>Token (入 / 出)</th>
-                <th>成本</th>
-                <th>占比</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...byModel].sort((a, b) => Number(b.turns || 0) - Number(a.turns || 0)).map((m, i) => (
-                <tr key={`${m.api_id}/${m.model}`}>
-                  <td className="mono muted-2">{String(i + 1).padStart(2, "0")}</td>
-                  <td>
-                    <div className="pl-title-cell">
-                      <strong style={{fontSize: 13.5}}>{m.model}</strong>
-                    </div>
-                  </td>
-                  <td className="muted">{m.api_id}</td>
-                  <td className="mono">{fmtN(Number(m.turns || 0))}</td>
-                  <td className="mono"><span className="muted">{fmtN(Number(m.input_tokens || 0))}</span> <span className="muted-2">/</span> {fmtN(Number(m.output_tokens || 0))}</td>
-                  <td className="mono">${Number(m.cost_usd || 0).toFixed(2)}</td>
-                  <td>
-                    <div style={{display: "flex", alignItems: "center", gap: 8}}>
-                      <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--line-soft)", overflow: "hidden"}}>
-                        <div style={{width: (totalTurns ? Number(m.turns || 0) / totalTurns * 100 : 0) + "%", height: "100%", background: "var(--accent)"}} />
-                      </div>
-                      <span className="muted-2 mono" style={{fontSize: 11}}>{totalTurns ? Math.round(Number(m.turns || 0) / totalTurns * 100) : 0}%</span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+      {/* Top 模型 */}
+      <CSContainer header={<CSHeader variant="h2" description="按请求数">Top 模型</CSHeader>}>
+        <CSTable
+          columnDefinitions={[
+            {
+              id: "rank",
+              header: "#",
+              width: 40,
+              cell: m => <span className="mono muted-2">{String((m._rank ?? 0) + 1).padStart(2, "0")}</span>,
+            },
+            {
+              id: "model",
+              header: "模型",
+              cell: m => <strong style={{fontSize: 13.5}}>{m.model}</strong>,
+            },
+            {
+              id: "api",
+              header: "API",
+              cell: m => <span className="muted">{m.api_id}</span>,
+            },
+            {
+              id: "requests",
+              header: "请求",
+              cell: m => <span className="mono">{fmtN(Number(m.turns || 0))}</span>,
+            },
+            {
+              id: "tokens",
+              header: "Token (入 / 出)",
+              cell: m => <span className="mono"><span className="muted">{fmtN(Number(m.input_tokens || 0))}</span> <span className="muted-2">/</span> {fmtN(Number(m.output_tokens || 0))}</span>,
+            },
+            {
+              id: "cost",
+              header: "成本",
+              cell: m => <span className="mono">${Number(m.cost_usd || 0).toFixed(2)}</span>,
+            },
+            {
+              id: "pct",
+              header: "占比",
+              cell: m => (
+                <div style={{display: "flex", alignItems: "center", gap: 8}}>
+                  <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--color-background-control-default)", overflow: "hidden"}}>
+                    <div style={{width: (totalTurns ? Number(m.turns || 0) / totalTurns * 100 : 0) + "%", height: "100%", background: "var(--color-text-accent)"}} />
+                  </div>
+                  <span className="muted-2 mono" style={{fontSize: 11}}>{totalTurns ? Math.round(Number(m.turns || 0) / totalTurns * 100) : 0}%</span>
+                </div>
+              ),
+            },
+          ]}
+          items={[...byModel].sort((a, b) => Number(b.turns || 0) - Number(a.turns || 0)).map((m, i) => ({ ...m, _rank: i }))}
+          trackBy={m => `${m.api_id}/${m.model}`}
+          empty={
+            <CSBox textAlign="center" color="text-body-secondary" padding="l">
+              {loading ? "加载中…" : "暂无调用记录"}
+            </CSBox>
+          }
+        />
+      </CSContainer>
 
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>最近请求</h2>
-          <div className="pl-sec-tools">
-            <span className="muted-2" style={{fontSize: 11.5}}>显示最近 20 条 · GET /api/me/usage</span>
-          </div>
-        </div>
-        {recent.length === 0 ? (
-          <div className="pl-model-empty">{loading ? "加载中…" : "暂无最近调用"}</div>
-        ) : (
-          <div className="pl-api">
-            <div className="pl-usage-log-row head">
-              <div>时间</div><div>API</div><div>模型</div><div style={{textAlign: "right"}}>Token in / out</div><div style={{textAlign: "right"}}>成本</div><div style={{textAlign: "right"}}>上下文</div>
-            </div>
-            {recent.map((r, i) => (
-              <div key={i} className="pl-usage-log-row">
-                <div className="mono">{r.at ? (window.__fmt?.ago(r.at) || r.at) : "—"}</div>
-                <div className="muted">{r.api_id}</div>
-                <div className="mono" style={{fontSize: 11.5}}>{r.model}</div>
-                <div className="mono" style={{textAlign: "right"}}><span className="muted">{fmtN(Number(r.input_tokens || 0))}</span> <span className="muted-2">/</span> {fmtN(Number(r.output_tokens || 0))}</div>
-                <div className="mono" style={{textAlign: "right"}}>${Number(r.cost_usd || 0).toFixed(3)}</div>
-                <div className="mono" style={{textAlign: "right"}}>{Number(r.context_used || 0)} / {Number(r.context_max || 0)}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-    </div>
+      {/* 最近请求 */}
+      <CSContainer header={
+        <CSHeader variant="h2" description="显示最近 20 条 · GET /api/me/usage">
+          最近请求
+        </CSHeader>
+      }>
+        <CSTable
+          columnDefinitions={[
+            {
+              id: "at",
+              header: "时间",
+              cell: r => <span className="mono">{r.at ? (window.__fmt?.ago(r.at) || r.at) : "—"}</span>,
+            },
+            {
+              id: "api",
+              header: "API",
+              cell: r => <span className="muted">{r.api_id}</span>,
+            },
+            {
+              id: "model",
+              header: "模型",
+              cell: r => <span className="mono" style={{fontSize: 11.5}}>{r.model}</span>,
+            },
+            {
+              id: "tokens",
+              header: "Token in / out",
+              cell: r => <span className="mono"><span className="muted">{fmtN(Number(r.input_tokens || 0))}</span> <span className="muted-2">/</span> {fmtN(Number(r.output_tokens || 0))}</span>,
+            },
+            {
+              id: "cost",
+              header: "成本",
+              cell: r => <span className="mono">${Number(r.cost_usd || 0).toFixed(3)}</span>,
+            },
+            {
+              id: "ctx",
+              header: "上下文",
+              cell: r => <span className="mono">{Number(r.context_used || 0)} / {Number(r.context_max || 0)}</span>,
+            },
+          ]}
+          items={recent}
+          trackBy={r => `${r.at || ""}/${r.api_id || ""}/${r.model || ""}/${r.input_tokens || ""}`}
+          empty={
+            <CSBox textAlign="center" color="text-body-secondary" padding="l">
+              {loading ? "加载中…" : "暂无最近调用"}
+            </CSBox>
+          }
+        />
+      </CSContainer>
+    </CSSpaceBetween>
   );
 }
 
@@ -2681,36 +2956,51 @@ function CapPage({ kind }) {
     setReloadTick(t => t + 1);
   };
 
+  const emptyMsg = kind === "mcp"
+    ? "尚未配置 MCP 服务器。点击「新增服务器」添加。"
+    : kind === "skills"
+    ? "尚未导入 Skill 包。点击「导入 Skill」上传。"
+    : "暂无插件。";
+
   return (
-    <div className="pl-stack">
-      <section className="pl-sec">
-        <div className="pl-sec-head">
-          <h2>
-            {kind === "plugins" ? "插件" : kind === "mcp" ? "MCP 服务器" : "Skill 包"}
-            <span className="muted-2">
-              {loading ? "加载中…" : err ? `加载失败：${err}` : `${items.length} 项 · ${items.filter(i => i.on).length} 已启用`}
-            </span>
-          </h2>
-          <div className="pl-sec-tools">
-            <button className="btn ghost" title="重新校验所有项目" onClick={onValidateAll} disabled={loading}>
-              <Icon name="refresh" size={12} /> 校验
-            </button>
-            <button className="btn primary" onClick={() => setAddOpen(true)}
-              title={kind === "mcp" ? "添加一个 MCP 服务器（stdio 或 HTTP）" : kind === "skills" ? "从本地导入 Skill 包" : "添加一个平台插件"}>
-              <Icon name="plus" size={12} /> {kind === "mcp" ? "新增服务器" : kind === "skills" ? "导入 Skill" : "新增插件"}
-            </button>
-          </div>
-        </div>
-        {!loading && items.length === 0 && !err && (
-          <div className="pl-model-empty" style={{padding: "32px 16px"}}>
-            <Icon name="info" size={18} />
-            <div>{kind === "mcp" ? "尚未配置 MCP 服务器。点击「新增服务器」添加。" : kind === "skills" ? "尚未导入 Skill 包。点击「导入 Skill」上传。" : "暂无插件。"}</div>
+    <CSSpaceBetween size="l">
+      {err && <CSAlert type="error" dismissible={false}>加载失败：{err}</CSAlert>}
+      <CSContainer header={
+        <CSHeader
+          variant="h2"
+          counter={loading ? undefined : `(${items.length} 项 · ${items.filter(i => i.on).length} 已启用)`}
+          actions={
+            <CSSpaceBetween size="xs" direction="horizontal">
+              <CSButton
+                iconName="refresh"
+                onClick={onValidateAll}
+                loading={loading}
+              >
+                校验
+              </CSButton>
+              <CSButton
+                variant="primary"
+                iconName="add-plus"
+                onClick={() => setAddOpen(true)}
+              >
+                {kind === "mcp" ? "新增服务器" : kind === "skills" ? "导入 Skill" : "新增插件"}
+              </CSButton>
+            </CSSpaceBetween>
+          }
+        >
+          {kind === "plugins" ? "插件" : kind === "mcp" ? "MCP 服务器" : "Skill 包"}
+        </CSHeader>
+      }>
+        {loading && items.length === 0 ? (
+          <CSBox textAlign="center" color="text-body-secondary" padding="l">加载中…</CSBox>
+        ) : items.length === 0 ? (
+          <CSBox textAlign="center" color="text-body-secondary" padding="l">{emptyMsg}</CSBox>
+        ) : (
+          <div className="pl-cap-grid">
+            {items.map((it, i) => <CapCard key={it.id || i} {...it} kind={kind} onChanged={() => setReloadTick(t => t + 1)} />)}
           </div>
         )}
-        <div className="pl-cap-grid">
-          {items.map((it, i) => <CapCard key={it.id || i} {...it} kind={kind} onChanged={() => setReloadTick(t => t + 1)} />)}
-        </div>
-      </section>
+      </CSContainer>
       <PromptModal
         open={addOpen}
         eyebrow={kind === "mcp" ? "新增 MCP 服务器" : kind === "skills" ? "导入 Skill" : "新增插件"}
@@ -2770,7 +3060,7 @@ function CapPage({ kind }) {
           }
         }}
       />
-    </div>
+    </CSSpaceBetween>
   );
 }
 
@@ -3164,7 +3454,189 @@ function AuthPage() {
 // ScriptsPage / SavesPage / CardsPage / SettingsPage / BranchesPage / ContinuePicker /
 // NewGameModal / ConfidenceBar 现在分别在 pages/scripts.jsx / saves.jsx / cards.jsx /
 // settings.jsx 中定义并自己 Object.assign(window, ...)；这里不再列出，避免 ReferenceError。
-export { PlatformShell, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData };
+/* ── Cloudscape shell(AWS 控制台架构 + 暖色主题)─────────────────────────
+   与旧 PlatformShell 同 props 接口,entry 直接替换。复用 ToastStack /
+   ContinuePicker / UnifiedSearch / useReactiveUser / usePlatformData。 */
+/* AWS 式 IA:模块(=服务)注册表。左侧栏只显示「当前模块」的子页;
+   全局模块切换走顶部「全部功能」菜单(类似 AWS 的服务列表)。 */
+const CS_MODULES = [
+  { id: 'scripts', label: '剧本', group: '创作',
+    pages: ['scripts', 'scripts-import', 'scripts-library', 'scripts-editor', 'scripts-settings'],
+    sub: [
+      { text: '我的剧本', href: '#scripts' },
+      { text: '上传剧本', href: '#scripts-import' },
+      { text: '在线剧本库', href: '#scripts-library' },
+      { text: '剧本编辑器', href: '#scripts-editor' },
+      { text: '剧本设置', href: '#scripts-settings' },
+    ] },
+  { id: 'play', label: '开始游戏', group: '游玩',
+    pages: ['saves', 'saves-branches', 'cards', 'cards-npc', 'modules', 'play-settings'],
+    sub: [
+      { text: '存档目录', href: '#saves' },
+      { text: '分支树', href: '#saves-branches' },
+      { text: '用户角色卡', href: '#cards' },
+      { text: 'NPC 角色卡', href: '#cards-npc' },
+      { text: '冒险模组', href: '#modules' },
+      { text: '游戏设置', href: '#play-settings' },
+    ] },
+  { id: 'account', label: '设置 & 账户', group: '系统',
+    pages: ['me', 'me-edit', 'me-settings', 'profile', 'settings', 'settings-models',
+      'settings-modelparams', 'settings-modules', 'settings-memory', 'settings-permissions',
+      'settings-deploy', 'settings-danger'],
+    sub: [
+      { text: '个人主页', href: '#me' },
+      { text: '编辑资料', href: '#me-edit' },
+      { text: '隐私与安全', href: '#me-settings' },
+      { text: '偏好', href: '#settings' },
+      { text: 'API 与模型', href: '#settings-models' },
+      { text: '模型参数', href: '#settings-modelparams' },
+      { text: '模块模型', href: '#settings-modules' },
+      { text: '记忆', href: '#settings-memory' },
+      { text: '权限', href: '#settings-permissions' },
+      { text: '部署', href: '#settings-deploy' },
+      { text: '高危操作', href: '#settings-danger' },
+    ] },
+  { id: 'library', label: '库', group: '系统', pages: ['library'],
+    sub: [{ text: '资产库', href: '#library' }] },
+  { id: 'extensions', label: '扩展', group: '系统', pages: ['plugins', 'mcp', 'skills', 'apis', 'usage'],
+    sub: [
+      { text: '插件', href: '#plugins' },
+      { text: 'MCP', href: '#mcp' },
+      { text: 'Skill', href: '#skills' },
+      { text: '开发接口', href: '#apis' },
+      { text: '用量', href: '#usage' },
+    ] },
+];
+
+function _csActiveModule(page) {
+  return CS_MODULES.find((m) => m.pages.includes(page)) || CS_MODULES[0];
+}
+
+// 顶部「全部功能」菜单(按 group 分组)
+function _csSwitcherItems() {
+  const groups = [];
+  CS_MODULES.forEach((m) => {
+    let g = groups.find((x) => x.text === m.group);
+    if (!g) { g = { text: m.group, items: [] }; groups.push(g); }
+    g.items.push({ id: m.id, text: m.label });
+  });
+  return groups;
+}
+
+async function _csRefresh() {
+  try {
+    window.__apiToast?.('正在刷新…', { kind: 'info', duration: 1200 });
+    if (window.__refreshPlatform) await window.__refreshPlatform();
+    else {
+      const p = await window.api.platform.info();
+      window.MOCK_PLATFORM = p && p.platform ? p.platform : (p || window.MOCK_PLATFORM);
+      window.dispatchEvent(new CustomEvent('rpg-data-ready'));
+    }
+    window.__apiToast?.('已刷新', { kind: 'ok', duration: 1600 });
+  } catch (e) { window.__apiToast?.('刷新失败', { kind: 'danger', detail: e?.message }); }
+}
+
+function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, onToggleAssistant }) {
+  const platform = usePlatformData();
+  const reactiveUser = useReactiveUser();
+  const [continueState, setContinueState] = useStatePL({ open: false, save: null, nodeId: null });
+  const [searchOpen, setSearchOpen] = useStatePL(false);
+  const [navOpen, setNavOpen] = useStatePL(true);
+  const [chrome, setChromeState] = useStatePL({});
+  const chromeApi = React.useMemo(() => ({ set: (c) => setChromeState(c || {}), clear: () => setChromeState({}) }), []);
+  void chrome;
+  useEffectPL(() => { setChromeState({}); }, [page]);
+
+  useEffectPL(() => {
+    window.__openContinue = (save, nodeId) => setContinueState({ open: true, save: save || platform.saves[0], nodeId: nodeId || null });
+    return () => { delete window.__openContinue; };
+  }, [platform.saves]);
+
+  const onUserMenu = ({ detail }) => {
+    const id = detail.id;
+    if (id === 'signout') {
+      (async () => { try { await window.api?.auth?.logout?.(); } catch (_) {} location.replace('Login.html'); })();
+    } else { setPage(id); location.hash = '#' + id; }
+  };
+
+  return (
+    <>
+      <div id="pl-cs-topnav" className="pl-cs-topbar"
+        style={{ position: 'sticky', top: 0, zIndex: 1002, display: 'flex', alignItems: 'center', background: '#131211' }}>
+        {/* 左:logo + 全部功能(AWS 把服务菜单放左侧) */}
+        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, paddingLeft: 18, paddingRight: 6, gap: 14, height: 40 }}>
+          <a href="#profile" onClick={(e) => { e.preventDefault(); setPage('profile'); }}
+            style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 16, fontWeight: 600, color: '#ebe7df', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+            RPG Roleplay
+          </a>
+          <CSButtonDropdown
+            items={_csSwitcherItems()}
+            expandToViewport
+            ariaLabel="全部功能"
+            onItemClick={({ detail }) => { const m = CS_MODULES.find((x) => x.id === detail.id); if (m) { setPage(m.pages[0]); location.hash = '#' + m.pages[0]; } }}
+          >
+            ☰ 全部功能
+          </CSButtonDropdown>
+        </div>
+        {/* 中右:搜索 + 全局工具 + 账号 */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <CSTopNavigation
+            identity={{ href: '#profile', title: '', onFollow: (e) => { e.preventDefault(); setPage('profile'); } }}
+            search={
+              <div onClick={() => setSearchOpen(true)} style={{ cursor: 'pointer' }}>
+                <CSInput type="search" placeholder="搜索剧本 / 存档 / 角色 · ⌘K" value="" readOnly ariaLabel="搜索" />
+              </div>
+            }
+            utilities={[
+              { type: 'button', iconName: 'settings', title: '设置', ariaLabel: '设置', disableUtilityCollapse: true, onClick: () => { setPage('settings'); location.hash = '#settings'; } },
+              { type: 'button', iconName: 'refresh', title: '刷新', ariaLabel: '刷新平台数据', disableUtilityCollapse: true, onClick: _csRefresh },
+              {
+                type: 'menu-dropdown',
+                text: reactiveUser.display_name || '未命名',
+                description: `@${reactiveUser.username || '—'} · ${reactiveUser.role || ''}`,
+                iconName: 'user-profile',
+                items: [
+                  { id: 'me', text: '个人主页' },
+                  { id: 'me-edit', text: '编辑资料' },
+                  { id: 'me-settings', text: '用户设置' },
+                  { id: 'signout', text: '登出' },
+                ],
+                onItemClick: onUserMenu,
+              },
+            ]}
+          />
+        </div>
+      </div>
+
+      <CSAppLayout
+        headerSelector="#pl-cs-topnav"
+        navigationOpen={navOpen}
+        onNavigationChange={({ detail }) => setNavOpen(detail.open)}
+        toolsHide
+        navigation={
+          <CSSideNavigation
+            header={{ text: _csActiveModule(page).label, href: '#' + _csActiveModule(page).pages[0] }}
+            activeHref={'#' + page}
+            onFollow={(e) => { e.preventDefault(); const id = (e.detail.href || '').slice(1); if (id) { setPage(id); location.hash = '#' + id; } }}
+            items={_csActiveModule(page).sub.map((s) => ({ type: 'link', text: s.text, href: s.href }))}
+          />
+        }
+        content={
+          <ShellChromeCtx.Provider value={chromeApi}>
+            {children}
+          </ShellChromeCtx.Provider>
+        }
+      />
+
+      <ToastStack />
+      <ContinuePicker open={continueState.open} save={continueState.save} focusedNodeId={continueState.nodeId}
+        onClose={() => setContinueState({ open: false, save: null, nodeId: null })} />
+      <UnifiedSearch open={searchOpen} onClose={() => setSearchOpen(false)} setPage={setPage} />
+    </>
+  );
+}
+
+export { PlatformShell, PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData, useShellChrome };
 
 // ──────────────────────────────────────────────────────────────────
 // 以下函数本体已拆分到 pages/cards.jsx / pages/saves.jsx /

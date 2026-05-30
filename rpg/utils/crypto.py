@@ -44,14 +44,30 @@ def _get_master_key() -> bytes:
         except ValueError:
             return _stretch_to_32(raw.encode("utf-8"))
 
-    # 本地模式回退：从文件读已生成的 key
+    # ── 安全闸:生产/多用户模式绝不允许自动落盘主密钥 ──────────────────────
+    # 否则 master.key 会生成在数据卷上,与 DB 同盘 → 拖库即同时拿到密文+主密钥,
+    # 加密形同虚设。生产必须从环境变量(密钥管理/secret,不在数据卷)注入 RPG_MASTER_KEY。
+    _production = False
+    try:
+        from core.config import require_auth as _require_auth
+        _production = _require_auth()
+    except Exception:
+        _production = False
+    if _production:
+        raise RuntimeError(
+            f"[CRYPTO·安全] 生产/多用户模式下未设置 {_MASTER_KEY_ENV} 环境变量。"
+            f"拒绝启动:绝不在数据卷上自动生成主密钥(否则拖库即可解密所有用户 API key)。"
+            f"请从 secret 管理注入 RPG_MASTER_KEY=<32字节hex>。"
+        )
+
+    # 本地模式回退:从文件读已生成的 key(仅 RPG_REQUIRE_AUTH!=1 的本地/开发)
     if _FALLBACK_KEY_FILE.exists():
         try:
             return bytes.fromhex(_FALLBACK_KEY_FILE.read_text(encoding="utf-8").strip())
         except Exception:
             pass
 
-    # 首次使用：生成新 key 并落盘（仅本地模式合理；服务器部署必须显式设置）
+    # 首次使用(仅本地模式):生成新 key 并落盘
     _FALLBACK_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
     key = secrets.token_bytes(32)
     _FALLBACK_KEY_FILE.write_text(key.hex(), encoding="utf-8")

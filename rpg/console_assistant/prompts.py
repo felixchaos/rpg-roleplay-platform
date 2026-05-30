@@ -1,7 +1,14 @@
 """console_assistant.prompts — system prompt 构建。"""
 from __future__ import annotations
 
+import re
 from typing import Any
+
+# 敏感字段名/类型:渲染进 system prompt 前兜底脱敏(前端 ui-atlas 已脱敏,这里双保险,CWE-200)
+_SENSITIVE_FIELD_RE = re.compile(
+    r"(pass|pwd|secret|token|api[\s_-]*key|apikey|credential|captcha|smtp|private[\s_-]*key|密码|密钥|令牌)",
+    re.IGNORECASE,
+)
 
 _SYSTEM_PROMPT = """你是 RPG Platform 的侧栏控制台助手。不是游戏 GM, 不写故事、不推剧情。
 帮用户管理平台资源 (存档/角色卡/persona/剧本/设置/MCP)。
@@ -153,6 +160,13 @@ def _render_ui_atlas_for_llm(atlas: dict[str, Any]) -> str:
             key = fld.get("key") or fld.get("label") or "?"
             ftype = fld.get("type") or "text"
             val = fld.get("value")
+            # 兜底脱敏:即使上游误传明文,也不写进发往模型的 prompt
+            if val not in (None, "") and (
+                ftype == "password"
+                or _SENSITIVE_FIELD_RE.search(str(key))
+                or _SENSITIVE_FIELD_RE.search(str(fld.get("label") or ""))
+            ):
+                val = "[REDACTED]"
             req = " *" if fld.get("required") else ""
             opts = fld.get("options")
             opt_brief = ""

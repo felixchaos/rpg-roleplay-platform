@@ -7,6 +7,18 @@ import { createPortal } from 'react-dom';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { Icon } from '../game-icons.jsx';
 import { fmtBytes } from '../platform-app.jsx';
+// Cloudscape 原生组件(内容迁移,统一基线对齐)
+import CSHeader from '@cloudscape-design/components/header';
+import CSCards from '@cloudscape-design/components/cards';
+import CSSpaceBetween from '@cloudscape-design/components/space-between';
+import CSButton from '@cloudscape-design/components/button';
+import CSButtonDropdown from '@cloudscape-design/components/button-dropdown';
+import CSBox from '@cloudscape-design/components/box';
+import CSBadge from '@cloudscape-design/components/badge';
+import CSTextFilter from '@cloudscape-design/components/text-filter';
+import CSSegmentedControl from '@cloudscape-design/components/segmented-control';
+import CSSelect from '@cloudscape-design/components/select';
+import CSAlert from '@cloudscape-design/components/alert';
 
 const USER_CARDS = [
   { id: "uc1", name: "顾承砚", role: "漂流的史官", tone: "—", origin: "雾港未尽 · 默认主角",
@@ -42,18 +54,9 @@ function CardsPage({ subPage = "user" }) {
   );
 }
 
-function CardGrid({ cards, onEdit, kind, onDeleted, onDuplicate, onPromoteToUser }) {
-  // task 50：之前每张卡片的 "更多" 按钮都是 dead button。现在打开一个下拉菜单，
-  // 内含 导出 PNG / 导出 SillyTavern JSON / 复制 ID / 删除（user_card 走真后端）。
-  const [openMenuId, setOpenMenuId] = useStatePL(null);
-  const closeMenu = () => setOpenMenuId(null);
-  useEffectPL(() => {
-    if (!openMenuId) return;
-    const h = (e) => { if (!e.target.closest?.(".pl-card-menu")) closeMenu(); };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, [openMenuId]);
-
+function CardGrid({ cards, onEdit, kind, filter, empty, onDeleted, onDuplicate, onPromoteToUser }) {
+  // task 50：每张卡片的「更多」走 Cloudscape ButtonDropdown,
+  // 内含 导出 PNG / 导出 SillyTavern JSON / 复制 ID / 转用户卡 / 复制为新卡 / 删除。
   const handleDelete = async (c) => {
     if (kind === "npc") {
       window.__apiToast?.("NPC 卡在剧本管理页面删除", { kind: "warn", duration: 2400 });
@@ -104,84 +107,70 @@ function CardGrid({ cards, onEdit, kind, onDeleted, onDuplicate, onPromoteToUser
     }
   };
 
+  const menuItems = (c) => {
+    if (kind === 'npc') {
+      return [
+        { id: 'promote', text: '转为用户角色卡', iconName: 'add-plus' },
+        { id: 'copyid', text: '复制 ID', iconName: 'copy' },
+        { id: 'delete', text: '删除', iconName: 'remove' },
+      ];
+    }
+    return [
+      { id: 'png', text: '导出 PNG(带卡数据)', href: window.api.cards.exportPng(c.id), external: true, iconName: 'file' },
+      { id: 'tavern', text: '导出 SillyTavern JSON', href: window.api.cards.exportTavern(c.id), external: true, iconName: 'download' },
+      { id: 'copyid', text: '复制 ID', iconName: 'copy' },
+      ...(onDuplicate ? [{ id: 'dup', text: '复制为新卡', iconName: 'copy' }] : []),
+      { id: 'delete', text: '删除', iconName: 'remove' },
+    ];
+  };
+  const onMenu = (c, id) => {
+    if (id === 'copyid') copyId(c);
+    else if (id === 'dup') onDuplicate?.(c);
+    else if (id === 'delete') handleDelete(c);
+    else if (id === 'promote') promoteNpcToUserCard(c);
+    // png / tavern 由 ButtonDropdown href 自动打开新标签,无需 onMenu 处理
+  };
+
   return (
-    <div className="pl-cards-grid">
-      {cards.map(c => (
-        <div key={c.id} className="pl-card-card" style={{position: "relative"}}>
-          <div className="pl-card-head">
-            <div className="pl-card-avatar serif">{c.name.slice(0, 1)}</div>
-            <div className="pl-card-id">
-              <strong>{c.name}</strong>
-              <span className="muted-2 mono">{c.id}</span>
-            </div>
-            <button className="iconbtn" data-tip="编辑" onClick={() => onEdit(c)}><Icon name="edit" size={12} /></button>
-            <div style={{position: "relative"}}>
-              <button className="iconbtn" data-tip="更多操作"
-                onClick={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === c.id ? null : c.id); }}>
-                <Icon name="more" size={12} />
-              </button>
-              {openMenuId === c.id && (
-                <div className="pl-card-menu" onClick={(e) => e.stopPropagation()}
-                  style={{position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 20,
-                    /* 修 CSS：原 var(--surface) 在 tokens.css 未定义，回退透明
-                       → 下拉菜单叠在 bio 文字上看起来是乱码。改用真实存在的 panel-2。 */
-                    background: "var(--panel-2)", color: "var(--text)",
-                    border: "1px solid var(--line-strong)", borderRadius: 6,
-                    padding: 4, minWidth: 184, boxShadow: "0 6px 20px rgba(0,0,0,0.45)"}}>
-                  {kind !== "npc" && (
-                    <a className="btn ghost" href={window.api.cards.exportPng(c.id)} target="_blank" rel="noopener"
-                      style={{display: "flex", justifyContent: "flex-start", gap: 8, width: "100%", padding: "6px 10px"}}
-                      onClick={closeMenu}>
-                      <Icon name="image" size={12} /> 导出 PNG（带卡数据）
-                    </a>
-                  )}
-                  {kind !== "npc" && (
-                    <a className="btn ghost" href={window.api.cards.exportTavern(c.id)} target="_blank" rel="noopener"
-                      style={{display: "flex", justifyContent: "flex-start", gap: 8, width: "100%", padding: "6px 10px"}}
-                      onClick={closeMenu}>
-                      <Icon name="download" size={12} /> 导出 SillyTavern JSON
-                    </a>
-                  )}
-                  {kind === "npc" && (
-                    <button className="btn ghost" style={{display: "flex", justifyContent: "flex-start", gap: 8, width: "100%", padding: "6px 10px"}}
-                      onClick={() => { closeMenu(); promoteNpcToUserCard(c); }}>
-                      <Icon name="cards" size={12} /> 转为用户角色卡
-                    </button>
-                  )}
-                  <button className="btn ghost" style={{display: "flex", justifyContent: "flex-start", gap: 8, width: "100%", padding: "6px 10px"}}
-                    onClick={() => { closeMenu(); copyId(c); }}>
-                    <Icon name="link" size={12} /> 复制 ID
-                  </button>
-                  {onDuplicate && (
-                    <button className="btn ghost" style={{display: "flex", justifyContent: "flex-start", gap: 8, width: "100%", padding: "6px 10px"}}
-                      onClick={() => { closeMenu(); onDuplicate(c); }}>
-                      <Icon name="copy" size={12} /> 复制为新卡
-                    </button>
-                  )}
-                  <button className="btn ghost danger" style={{display: "flex", justifyContent: "flex-start", gap: 8, width: "100%", padding: "6px 10px", color: "var(--danger)"}}
-                    onClick={() => { closeMenu(); handleDelete(c); }}>
-                    <Icon name="trash" size={12} /> 删除
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="pl-card-meta">
-            <span className="muted">{c.role}</span>
-            {c.tone && c.tone !== "—" && <span className="pill">{c.tone}</span>}
-            {c.pinned && <span className="pill accent"><Icon name="pin" size={9} /> 已置顶</span>}
-          </div>
-          <p className="pl-card-bio serif">{c.bio}</p>
-          <div className="pl-card-tags">
-            {c.tags.map(t => <span key={t} className="pl-cap-tag">{t}</span>)}
-          </div>
-          <div className="pl-card-foot">
-            <span className="muted-2">{kind === "npc" ? c.save : c.origin}</span>
-            <span className="muted-2 mono">{c.uses} 次使用 · {c.updated}</span>
-          </div>
-        </div>
-      ))}
-    </div>
+    <CSCards
+      items={cards}
+      trackBy="id"
+      filter={filter}
+      empty={empty}
+      cardsPerRow={[{ cards: 1 }, { minWidth: 420, cards: 2 }, { minWidth: 820, cards: 3 }]}
+      cardDefinition={{
+        header: (c) => (
+          <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
+            <CSBox key="name" variant="h3" padding="n">{c.name}</CSBox>
+            {c.pinned && <CSBadge key="pin" color="blue">已置顶</CSBadge>}
+          </CSSpaceBetween>
+        ),
+        sections: [
+          { id: 'meta', content: (c) => (
+            <CSSpaceBetween direction="horizontal" size="xs">
+              {c.role && c.role !== '—' && <CSBadge key="role">{c.role}</CSBadge>}
+              {c.tone && c.tone !== '—' && <CSBadge key="tone" color="grey">{c.tone}</CSBadge>}
+            </CSSpaceBetween>
+          ) },
+          { id: 'bio', content: (c) => <CSBox color="text-body-secondary">{c.bio || '—'}</CSBox> },
+          { id: 'tags', content: (c) => (c.tags?.length
+            ? <CSSpaceBetween direction="horizontal" size="xxs">{c.tags.map((t) => <CSBadge key={t}>{t}</CSBadge>)}</CSSpaceBetween>
+            : null) },
+          { id: 'foot', content: (c) => (
+            <CSBox fontSize="body-s" color="text-status-inactive">
+              {(kind === 'npc' ? c.save : c.origin)} · {c.uses} 次使用 · {c.updated}
+            </CSBox>
+          ) },
+          { id: 'actions', content: (c) => (
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSButton variant="inline-link" iconName="edit" onClick={() => onEdit(c)}>编辑</CSButton>
+              <CSButtonDropdown variant="inline-icon" ariaLabel="更多操作" expandToViewport
+                items={menuItems(c)} onItemClick={({ detail }) => onMenu(c, detail.id)} />
+            </CSSpaceBetween>
+          ) },
+        ],
+      }}
+    />
   );
 }
 
@@ -259,27 +248,31 @@ function UserCardsView() {
   if (q) filtered = filtered.filter(c => (c.name + c.role + c.bio + (c.tags || []).join(" ")).toLowerCase().includes(q.toLowerCase()));
   return (
     <>
-      <section className="pl-sec" data-cap-anchor="cards.user">
-        <div className="pl-sec-head">
-          <h2>用户角色卡 <span className="muted-2">{cards.length} 个 · 跨剧本 / 跨存档共享</span></h2>
-          <div className="pl-sec-tools">
-            <div className="pl-model-search" style={{flex: "1 1 160px", maxWidth: 240}}>
-              <Icon name="search" size={12} />
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索名称 / 身份 / 标签" />
-            </div>
-            <div className="seg">
-              <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button>
-              <button className={filter === "pinned" ? "active" : ""} onClick={() => setFilter("pinned")}>置顶</button>
-            </div>
-            <button className="btn ghost" onClick={() => setImporting(true)} data-tip="支持 SillyTavern PNG / JSON / 粘贴">
-              <Icon name="download" size={12} /> 导入酒馆卡
-            </button>
-            <button className="btn primary" onClick={() => setAdding(true)} data-tip="新增角色卡">
-              <Icon name="plus" size={12} /> 新增角色卡
-            </button>
-          </div>
-        </div>
+      <CSSpaceBetween size="l">
+        <CSHeader
+          variant="h1"
+          counter={`(${cards.length})`}
+          description="跨剧本 / 跨存档共享的用户角色卡。"
+          actions={
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSButton iconName="download" onClick={() => setImporting(true)}>导入酒馆卡</CSButton>
+              <CSButton variant="primary" iconName="add-plus" onClick={() => setAdding(true)}>新增角色卡</CSButton>
+            </CSSpaceBetween>
+          }
+        >用户角色卡</CSHeader>
         <CardGrid cards={filtered} onEdit={setEdit} kind="user"
+          empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>还没有用户角色卡,点右上「新增角色卡」开始。</CSBox>}
+          filter={
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <div style={{ minWidth: 260 }}>
+                <CSTextFilter filteringText={q} filteringPlaceholder="搜索名称 / 身份 / 标签"
+                  onChange={({ detail }) => setQ(detail.filteringText)} />
+              </div>
+              <CSSegmentedControl selectedId={filter}
+                options={[{ id: 'all', text: '全部' }, { id: 'pinned', text: '置顶' }]}
+                onChange={({ detail }) => setFilter(detail.selectedId)} />
+            </CSSpaceBetween>
+          }
           onDeleted={(c) => { setCards(cs => cs.filter(x => x.id !== c.id)); reload(); }}
           onDuplicate={async (c) => {
             try {
@@ -291,7 +284,7 @@ function UserCardsView() {
             } catch (e) { window.__apiToast?.("复制失败", { kind: "danger", detail: e?.message }); }
           }}
         />
-      </section>
+      </CSSpaceBetween>
       {(edit || adding) && (
         <CardEditModal
           card={edit?._raw || edit}
@@ -537,43 +530,39 @@ function NpcCardsView() {
       .toLowerCase().includes(q.toLowerCase())
   );
 
+  const saveOpts = allSaves.map((s) => ({ value: s, label: s === 'all' ? '所有剧本' : s }));
   return (
     <>
-      <section className="pl-sec" data-cap-anchor="cards.npc">
-        <div className="pl-sec-head">
-          <h2>NPC 角色卡 <span className="muted-2">{cards.length} 个 · 按存档分组{loading ? " · 加载中…" : ""}</span></h2>
-          <div className="pl-sec-tools">
-            <div className="pl-model-search" style={{flex: "1 1 160px", maxWidth: 240}}>
-              <Icon name="search" size={12} />
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索 NPC" />
-            </div>
-            <select value={saveFilter} onChange={(e) => setSaveFilter(e.target.value)} style={{height: 28, fontSize: 12, padding: "0 10px", width: "auto"}} disabled={loading}>
-              {allSaves.map(s => <option key={s} value={s}>{s === "all" ? "所有剧本" : s}</option>)}
-            </select>
-            <button className="btn primary" onClick={() => setAdding(true)} data-tip="新增 NPC 角色卡">
-              <Icon name="plus" size={12} /> 新增 NPC
-            </button>
-          </div>
-        </div>
-        {error && (
-          <div className="pl-auth-error" style={{margin: "12px 0", padding: "10px 14px", border: "1px solid var(--danger,#c0392b)", borderRadius: 6, fontSize: 13}}>
-            {error}
-          </div>
-        )}
-        {!loading && cards.length === 0 && !error && (
-          <div className="muted-2" style={{padding: "40px 12px", textAlign: "center", fontSize: 13, lineHeight: 1.7}}>
-            你的剧本里还没有任何 NPC 角色卡。<br />
-            <span className="muted">点击右上『新增 NPC』开始创建，或先去『剧本 / 导入』上传一部含角色设定的剧本。</span>
-          </div>
-        )}
-        {!loading && cards.length > 0 && (
-          <CardGrid cards={filtered} onEdit={setEdit} kind="npc"
-            onPromoteToUser={() => {
-              // 迁移到 user_card 后通知用户角色卡列表刷新（如果当前 mounted）
-              try { window.dispatchEvent(new CustomEvent("rpg-user-cards-updated")); } catch (_) {}
-            }} />
-        )}
-      </section>
+      <CSSpaceBetween size="l">
+        <CSHeader
+          variant="h1"
+          counter={`(${cards.length})`}
+          description={`从剧本提取的 NPC 角色卡,按存档分组。${loading ? ' 加载中…' : ''}`}
+          actions={<CSButton variant="primary" iconName="add-plus" onClick={() => setAdding(true)}>新增 NPC</CSButton>}
+        >NPC 角色卡</CSHeader>
+        {error && <CSAlert type="error" header="加载失败">{error}</CSAlert>}
+        <CardGrid cards={filtered} onEdit={setEdit} kind="npc"
+          empty={
+            <CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>
+              {loading ? '加载中…' : <>你的剧本里还没有任何 NPC 角色卡。<br />点右上「新增 NPC」创建,或先去「剧本 / 上传剧本」导入含角色设定的剧本。</>}
+            </CSBox>
+          }
+          filter={
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <div style={{ minWidth: 240 }}>
+                <CSTextFilter filteringText={q} filteringPlaceholder="搜索 NPC"
+                  onChange={({ detail }) => setQ(detail.filteringText)} />
+              </div>
+              <CSSelect selectedOption={saveOpts.find((o) => o.value === saveFilter)}
+                options={saveOpts} disabled={loading}
+                onChange={({ detail }) => setSaveFilter(detail.selectedOption.value)} />
+            </CSSpaceBetween>
+          }
+          onPromoteToUser={() => {
+            // 迁移到 user_card 后通知用户角色卡列表刷新(如果当前 mounted)
+            try { window.dispatchEvent(new CustomEvent("rpg-user-cards-updated")); } catch (_) {}
+          }} />
+      </CSSpaceBetween>
       {(edit || adding) && (
         <CardEditModal
           card={edit?._raw || edit}

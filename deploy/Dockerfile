@@ -59,6 +59,9 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=3 \
 # Docker stop → SIGTERM → uvicorn 优雅 drain
 STOPSIGNAL SIGTERM
 
-# 单 worker + 高 async 并发(LLM-latency-bound + BYOK,这个量级足够;
-# 真实负载涨了再上多 worker + Redis 共享 state)。
-CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860", "--no-access-log"]
+# 多 worker(吃满多核;6核默认 4 worker)。SSE 停止跨 worker 安全:platform_app.cluster
+# 用 DB stop_signals 表做共享停止信号(in-process Event 是快路径)。
+# 池预算:生产 DATABASE_URL 走 pgbouncer(事务池),RPG_DB_POOL_MAX × RPG_WORKERS 只是
+#   到 pgbouncer 的廉价客户端连接(pgbouncer 复用到少量 postgres 连接);25×4 经 pgbouncer 无压。
+# exec 让 uvicorn 直接收 SIGTERM(优雅 drain),env 可调 worker 数。
+CMD ["/bin/sh", "-c", "exec python -m uvicorn app:app --host 0.0.0.0 --port 7860 --no-access-log --workers ${RPG_WORKERS:-4}"]

@@ -102,7 +102,17 @@ def run_context_agent(
     script_id: int | None = None,
     book_id: int | None = None,
     save_id: int | None = None,  # task 107E: 给 RuntimePhaseDigestProvider 用
+    api_id_override: str | None = None,
+    model_override: str | None = None,
 ) -> Generator[dict[str, Any], None, None]:
+    """Demand Resolver + ContextProvider 调度。
+
+    LLM 调用优先级(harness 适配):
+    1. 显式传入 `llm_curator` 回调 → 使用回调(兼容老 caller / 测试 monkeypatch)
+    2. 传入 `api_id_override`+`model_override` → 内部走 `_harness.call_agent_json`
+       (provider 透明 + Anthropic 强 schema + 统一 retry 降级)
+    3. 上述都没 → 本地确定性规则,curator_plan 仅含 directives 信息
+    """
     stop_requested = stop_requested or (lambda: False)
     started = time.time()
     steps: list[dict[str, Any]] = []
@@ -125,7 +135,11 @@ def run_context_agent(
         steps[-1] = yield_step["step"]
         return True
 
-    mode = "llm_structured" if llm_curator else "local_fallback"
+    use_harness = (llm_curator is None) and bool(api_id_override or user_id)
+    mode = (
+        "llm_structured" if llm_curator
+        else ("harness_structured" if use_harness else "local_fallback")
+    )
     yield step(
         "prompt",
         f"加载上下文子代理运行提示（模式：{mode}）。",
@@ -159,6 +173,7 @@ def run_context_agent(
         return
 
     curator_plan: dict[str, Any] = {}
+    task_prompt_text = _curator_task_prompt(state, user_input, directives)
     if llm_curator:
         yield step(
             "llm_curator",
@@ -170,7 +185,7 @@ def run_context_agent(
         )
         llm_text = _call_llm_curator(
             llm_curator,
-            _curator_task_prompt(state, user_input, directives),
+            task_prompt_text,
             stop_requested,
         )
         if llm_text is None:
@@ -187,16 +202,53 @@ def run_context_agent(
             raw=llm_text,
             plan=curator_plan,
         )
+    elif use_harness:
+        yield step(
+            "llm_curator",
+            f"经统一 harness 调 curator（api={api_id_override or 'auto'}, model={model_override or 'auto'}）。",
+            "running",
+            request_isolated=True,
+            expected_output="json",
+            shared_with_main_gm=False,
+            transport="agent_harness",
+        )
+        try:
+            llm_text = _call_curator_via_harness(
+                user_id=user_id,
+                api_id_override=api_id_override,
+                model_override=model_override,
+                system_prompt=AGENT_PROMPT,
+                user_prompt=task_prompt_text,
+                stop_requested=stop_requested,
+            )
+        except _CuratorStopped:
+            yield {"type": "stopped", "steps": steps}
+            return
+        if llm_text is None:
+            curator_plan = _local_fallback_plan(directives, user_input,
+                                                reason="harness 调用失败，降级到本地规则。")
+            yield step(
+                "llm_curator",
+                "harness 调用失败，降级到本地规则。",
+                "done",
+                plan=curator_plan,
+                fallback=True,
+            )
+        else:
+            curator_plan = _parse_curator_json(llm_text)
+            target = _normalize_timeline_target(curator_plan.get("timeline_target", ""))
+            if target and not directives and not is_set:
+                state.request_time_jump(target, user_input)
+            yield step(
+                "llm_curator",
+                curator_plan.get("intent") or "大模型子代理已完成上下文判断。",
+                "done",
+                raw=llm_text,
+                plan=curator_plan,
+            )
     else:
-        curator_plan = {
-            "intent": "本地规则解析",
-            "timeline_target": directives[0].target if directives else "",
-            "retrieval_query": user_input,
-            "must_include": [],
-            "risk_flags": ["未启用大模型子代理，仅使用确定性规则。"],
-            "reason": "没有传入 llm_curator。",
-            "rule_candidate_actions": [],
-        }
+        curator_plan = _local_fallback_plan(directives, user_input,
+                                            reason="没有传入 llm_curator 且未指定 api_id_override。")
 
     # 5E-compatible：当前为模组场景时，补一份本地关键词回退的 rule_candidate_actions。
     # LLM 已返回 rule_candidate_actions 时优先用它，否则用本地匹配确保规则层不会缺动作。
@@ -403,6 +455,115 @@ def _curator_task_prompt(state, user_input: str, directives: list[Any]) -> str:
 
 def _is_set_command(text: str) -> bool:
     return bool(re.match(r"^\s*/(?:set|设定|设置)\s+", text or "", re.I))
+
+
+class _CuratorStopped(Exception):
+    """用户主动停止 curator,通过异常打断调用链。"""
+
+
+def _local_fallback_plan(directives: list[Any], user_input: str, *,
+                         reason: str = "") -> dict[str, Any]:
+    return {
+        "intent": "本地规则解析",
+        "timeline_target": getattr(directives[0], "target", "") if directives else "",
+        "retrieval_query": user_input,
+        "must_include": [],
+        "risk_flags": ["未启用大模型子代理，仅使用确定性规则。"],
+        "reason": reason or "没有可用的 LLM 通道。",
+        "rule_candidate_actions": [],
+    }
+
+
+_CURATOR_TOOL_SCHEMA = {
+    "name": "emit_curator_plan",
+    "description": "把本轮 RPG 的 Demand Ledger 输出为结构化对象。",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "intent": {"type": "string"},
+            "active_goal": {"type": "string"},
+            "hard_constraints": {"type": "array", "items": {"type": "string"}},
+            "soft_preferences": {"type": "array", "items": {"type": "string"}},
+            "target_entities": {"type": "array", "items": {"type": "string"}},
+            "target_location": {"type": "string"},
+            "target_time": {"type": "string"},
+            "timeline_target": {"type": "string"},
+            "retrieval_query": {"type": "string"},
+            "retrieval_plan": {
+                "type": "object",
+                "properties": {
+                    "must_include": {"type": "array", "items": {"type": "string"}},
+                    "should_include": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+            "candidate_actions": {"type": "array", "items": {"type": "string"}},
+            "rule_candidate_actions": {
+                "type": "array",
+                "items": {"type": "object"},
+            },
+            "acceptance": {"type": "array", "items": {"type": "string"}},
+            "risk_flags": {"type": "array", "items": {"type": "string"}},
+            "confidence": {"type": "number"},
+            "clarifying_question": {"type": "string"},
+            "reason": {"type": "string"},
+        },
+        "required": ["intent", "retrieval_query", "confidence"],
+    },
+}
+
+
+def _call_curator_via_harness(
+    *,
+    user_id: int | None,
+    api_id_override: str | None,
+    model_override: str | None,
+    system_prompt: str,
+    user_prompt: str,
+    stop_requested: Callable[[], bool],
+) -> str | None:
+    """走统一 agent harness 调 curator。
+
+    优先级:override > user_preferences("context_agent.api_id"/"model_real_name")> 默认。
+    返回原始文本(JSON);失败/超时返回 None;stop_requested 触发抛 _CuratorStopped。
+    """
+    from agents._harness import call_agent_json, resolve_api_and_model
+
+    api_id, model = resolve_api_and_model(
+        user_id,
+        api_pref_key="context_agent.api_id",
+        model_pref_key="context_agent.model_real_name",
+        api_id_override=api_id_override,
+        model_override=model_override,
+    )
+
+    def _do_call() -> str:
+        text, _usage = call_agent_json(
+            api_id=api_id,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            user_id=user_id,
+            tool_schema=_CURATOR_TOOL_SCHEMA,  # 三通道都启用强 schema
+            max_tokens=1200,
+            timeout_sec=30,
+            agent_kind="curator",
+        )
+        return text or ""
+
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="curator-harness")
+    future = executor.submit(_do_call)
+    try:
+        while not future.done():
+            if stop_requested():
+                future.cancel()
+                raise _CuratorStopped()
+            time.sleep(0.03)
+        try:
+            return future.result()
+        except Exception:
+            return None
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _call_llm_curator(

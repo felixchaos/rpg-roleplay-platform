@@ -23,8 +23,15 @@ router = APIRouter()
 @router.post("/api/auth/register")
 async def api_register(request: Request):
     body = await request.json()
+    # 首管理员引导令牌:body.setup_token 优先,其次 X-Setup-Token 头(server 模式才生效)
+    setup_token = body.get("setup_token") or request.headers.get("X-Setup-Token")
     try:
-        user = _auth.register(body.get("username", ""), body.get("password", ""), body.get("display_name", ""))
+        user = _auth.register(
+            body.get("username", ""),
+            body.get("password", ""),
+            body.get("display_name", ""),
+            setup_token=setup_token,
+        )
         workspace.ensure_default(user["id"])
         user, token = _auth.login(body.get("username", ""), body.get("password", ""))
         response = json_response({"ok": True, "user": public_user(user), "platform": platform_for(user)})

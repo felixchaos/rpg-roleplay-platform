@@ -39,8 +39,10 @@ RLIMIT_FSIZE_BYTES = 16 * 1024 * 1024 # 单文件最大 16 MB
 RLIMIT_NOFILE = 64                    # open files
 
 
-# 环境变量白名单：只传这些，其他全砍掉
-_ENV_ALLOW = {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "HOME", "TMPDIR", "USER", "SHELL"}
+# 环境变量白名单：只传这些，其他全砍掉。
+# 不含 HOME/USER/SHELL —— 防 skill 顺 $HOME 读 ~/.ssh、~/.aws、shell rc 等宿主敏感文件
+# (CWE-668)。HOME 由 run_skill_command 显式指向临时 workdir。
+_ENV_ALLOW = {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR"}
 
 
 def _build_env(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -138,6 +140,8 @@ def run_skill_command(
 
         env = _build_env(extra_env)
         env["SKILL_WORKDIR"] = str(workdir)
+        # HOME 指向临时工作目录,而非宿主用户家目录(隔离 ~/.ssh / ~/.aws / shell rc)
+        env["HOME"] = str(workdir)
 
         start = time.monotonic()
         try:

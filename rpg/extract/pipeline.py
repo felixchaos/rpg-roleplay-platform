@@ -27,6 +27,8 @@ def run_extraction(
     model: str = "gemini-3.5-flash",
     api_id: str = "vertex_ai",
     sample_chapters: int | None = None,
+    chapter_min: int | None = None,
+    chapter_max: int | None = None,
     seed_sample: int = 12,
     progress_cb: Callable[[str, dict], None] | None = None,
 ) -> dict[str, Any]:
@@ -48,16 +50,21 @@ def run_extraction(
                 pass
 
     # 读可提取章节(短连接,立即释放)— 用 content_descriptor 优先于怪标题
+    # chapter_min/max 支持懒/增量提取的切片(W5)
     with connect() as db:
-        rows = db.execute(
-            """
-            select chapter_index, title, content, content_descriptor
-            from script_chapters
-            where script_id = %s and exclude_from_extraction = false
-            order by chapter_index
-            """,
-            (script_id,),
-        ).fetchall()
+        sql = (
+            "select chapter_index, title, content, content_descriptor from script_chapters "
+            "where script_id = %s and exclude_from_extraction = false"
+        )
+        args: list = [script_id]
+        if chapter_min is not None:
+            sql += " and chapter_index >= %s"
+            args.append(chapter_min)
+        if chapter_max is not None:
+            sql += " and chapter_index <= %s"
+            args.append(chapter_max)
+        sql += " order by chapter_index"
+        rows = db.execute(sql, tuple(args)).fetchall()
         chapters = [dict(r) for r in rows]
     if sample_chapters:
         chapters = chapters[:sample_chapters]
