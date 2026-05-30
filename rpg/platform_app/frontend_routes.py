@@ -544,7 +544,10 @@ async def api_models_visibility(request: Request):
     Previously wrote only to model_entries.enabled, which diverged from the
     catalog JSON on restart when DB was unavailable.
     """
-    require_user(request)
+    # 全局模型目录写操作:与同级 /api/models/* 一致,须管理员(CWE-862)。
+    user = require_user(request)
+    if user.get("role") != "admin":
+        return _bad("需要管理员权限", status=403)
     body = await request.json() or {}
     api_id = body.get("api_id") or body.get("api")
     model_real_name = body.get("model") or body.get("real_name")

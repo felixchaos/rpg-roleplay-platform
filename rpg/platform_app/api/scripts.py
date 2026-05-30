@@ -11,6 +11,22 @@ from ._deps import json_response, require_user
 router = APIRouter()
 
 
+def _safe_zip_read(zf, name: str, max_bytes: int) -> bytes:
+    """有界解压单个 ZIP 成员,防 zip 炸弹(CWE-409)。
+
+    1) 先用 ZipInfo.file_size 预检(挡诚实的炸弹,免解压);
+    2) 再以 max_bytes+1 上限流式读取(挡谎报 header 的炸弹,实读超限即拒)。
+    """
+    info = zf.getinfo(name)
+    if info.file_size > max_bytes:
+        raise ValueError(f"成员解压后过大: {name}")
+    with zf.open(name) as fh:
+        data = fh.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError(f"成员解压超限: {name}")
+    return data
+
+
 @router.get("/api/scripts")
 async def api_scripts(limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
     from .. import workspace
@@ -399,16 +415,28 @@ async def api_scripts_batch_import(request: Request, user=Depends(require_user))
 
     imported = []
     failed = []
+    max_per = script_import.MAX_SCRIPT_UPLOAD_BYTES
+    max_total = max_per * 50  # 解压后总量上限,防 zip 炸弹累加打爆内存
     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
         names = [n for n in zf.namelist() if n.lower().endswith((".txt", ".md"))]
         if len(names) > 50:
             return json_response({"ok": False, "error": "ZIP 最多包含 50 个文件"}, status_code=400)
+        # 解压前用 ZipInfo.file_size 预检总量(CWE-409),超限直接拒,不进读取循环
+        declared_total = sum(zf.getinfo(n).file_size for n in names)
+        if declared_total > max_total:
+            return json_response(
+                {"ok": False, "error": f"ZIP 解压后总大小超限(max {max_total // 1024 // 1024}MB)"},
+                status_code=400,
+            )
+        read_total = 0
         for name in names:
             try:
-                content = zf.read(name)
-                if len(content) > script_import.MAX_SCRIPT_UPLOAD_BYTES:
-                    failed.append({"name": name, "error": "too large"})
-                    continue
+                content = _safe_zip_read(zf, name, max_per)
+                read_total += len(content)
+                if read_total > max_total:
+                    return json_response(
+                        {"ok": False, "error": "ZIP 实际解压总量超限"}, status_code=400
+                    )
                 import base64 as _b64
                 result = script_import.import_script(
                     user["id"],

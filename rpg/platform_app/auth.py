@@ -124,7 +124,31 @@ def admin_unlock(ip: str, username: str) -> None:
     _write_audit(username, ip, "admin_unlock", {})
 
 
-def register(username: str, password: str, display_name: str = "") -> dict[str, Any]:
+def _bootstrap_admin_allowed(setup_token: str | None) -> bool:
+    """首用户(空 users 表)能否被授予 admin。
+
+    - 本地/非鉴权模式:允许(单用户桌面场景,无引导风险)。
+    - server/强制鉴权模式:必须配置 RPG_SETUP_TOKEN 且请求携带匹配令牌,
+      否则首用户仅为普通 user —— 杜绝公网首注册抢 admin(CWE-269)。
+    """
+    from core.config import effective_auth_required
+    from core.config import setup_token as _cfg_setup_token
+    if not effective_auth_required():
+        return True
+    configured = (_cfg_setup_token() or "").strip()
+    provided = (setup_token or "").strip()
+    if not configured or not provided:
+        return False
+    return secrets.compare_digest(provided, configured)
+
+
+def register(
+    username: str,
+    password: str,
+    display_name: str = "",
+    *,
+    setup_token: str | None = None,
+) -> dict[str, Any]:
     init_db()
     username = normalize_username(username)
     if not username:
@@ -132,7 +156,8 @@ def register(username: str, password: str, display_name: str = "") -> dict[str, 
     if len(password or "") < MIN_PASSWORD_LENGTH:
         raise ValueError(f"密码至少 {MIN_PASSWORD_LENGTH} 位")
     with connect() as db:
-        role = "admin" if db.execute("select count(*) as count from users").fetchone()["count"] == 0 else "user"
+        is_first = db.execute("select count(*) as count from users").fetchone()["count"] == 0
+        role = "admin" if (is_first and _bootstrap_admin_allowed(setup_token)) else "user"
         try:
             row = db.execute(
                 """

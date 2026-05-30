@@ -69,6 +69,33 @@ def master_key() -> str | None:
 def admin_password() -> str | None:
     return os.getenv("RPG_ADMIN_PASSWORD")
 
+def setup_token() -> str | None:
+    """一次性首管理员引导令牌。server 模式下,首次注册须携带与此匹配的令牌才授予 admin。"""
+    return os.getenv("RPG_SETUP_TOKEN")
+
+
+# 部署模式集合(与 app.py 保持一致;未知模式 fail-closed)
+_SERVER_MODES = {"server", "production", "prod", "cloud"}
+_LOCAL_MODES = {"local", "desktop", "self_hosted", "self-hosted"}
+
+
+def effective_auth_required() -> bool:
+    """是否强制鉴权(等价 app.py:_api_auth_required,集中一处供 register 等使用)。
+
+    优先级:RPG_REQUIRE_AUTH=1/0 → RPG_DEPLOYMENT_MODE(server/local) → 未知模式 fail-closed。
+    """
+    explicit = require_auth_raw().strip()
+    if explicit == "1":
+        return True
+    if explicit == "0":
+        return False
+    mode = deployment_mode().strip().lower()
+    if mode in _SERVER_MODES:
+        return True
+    if mode in _LOCAL_MODES:
+        return False
+    return True
+
 # ── 应用标题 ─────────────────────────────────────────────────────────────
 def app_title() -> str:
     return os.getenv("RPG_APP_TITLE", "RPG Roleplay")
