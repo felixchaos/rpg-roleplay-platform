@@ -52,8 +52,9 @@ rpg_env/
 .webnovel/observability/*.jsonl
 
 # ──────────────────────────────────────────────────────────────────
-#  Rust crate 运行时产物（platform_data 分片暂存）
+#  Rust 运行时产物（platform_data 分片暂存 + state 文件）
 # ──────────────────────────────────────────────────────────────────
+rust/platform_data/
 rust/crates/rpg-platform/platform_data/
 
 # ──────────────────────────────────────────────────────────────────
