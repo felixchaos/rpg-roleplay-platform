@@ -7,7 +7,7 @@
 //! Service: `rpg_platform::{users, user_cards, tavern_cards, usage}`
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Multipart, Path, Query, State},
     http::{header, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -885,40 +885,137 @@ async fn test_credential(
 
 // ─── /api/profile/* ──────────────────────────────────────────────────────────
 
-/// POST /api/profile/avatar — stub 501
+/// 头像存储根目录 — 对应 Python `_UPLOAD_ROOT = platform_data/avatars`。
+fn avatar_root() -> std::path::PathBuf {
+    let base = std::env::var("RPG_PLATFORM_DATA_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("platform_data"));
+    base.join("avatars")
+}
+
+/// POST /api/profile/avatar — 上传头像文件
 async fn upload_avatar(
     State(s): State<AppState>,
     headers: HeaderMap,
+    mut multipart: Multipart,
 ) -> Result<Response, ResponseError> {
-    let _user = require_user(&s, &headers).await?;
-    Ok((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({"ok": false, "error": "not yet implemented"})),
+    let user = require_user(&s, &headers).await?;
+
+    // 解析 multipart，找 file 字段。
+    let mut file_name: Option<String> = None;
+    let mut file_data: Option<Vec<u8>> = None;
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        ResponseError::bad_request(&format!("multipart error: {e}"))
+    })? {
+        let name = field.name().unwrap_or("").to_string();
+        let orig_filename = field
+            .file_name()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let data = field.bytes().await.map_err(|e| {
+            ResponseError::bad_request(&format!("read field error: {e}"))
+        })?;
+        if name == "file" && !data.is_empty() {
+            file_name = Some(orig_filename);
+            file_data = Some(data.to_vec());
+        }
+    }
+
+    let orig_filename = file_name.unwrap_or_default();
+    let data = file_data.ok_or_else(|| ResponseError::bad_request("请选择文件"))?;
+    if orig_filename.is_empty() {
+        return Err(ResponseError::bad_request("请选择文件"));
+    }
+
+    // 校验扩展名。
+    let ext = std::path::Path::new(&orig_filename)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp") {
+        return Err(ResponseError::bad_request("仅支持 PNG / JPG / WEBP"));
+    }
+
+    // 大小限制 2 MB。
+    if data.len() > 2 * 1024 * 1024 {
+        return Err(ResponseError::bad_request("文件超过 2 MB"));
+    }
+
+    let root = avatar_root();
+    std::fs::create_dir_all(&root).map_err(|e| {
+        ResponseError::internal(&format!("create dir: {e}"))
+    })?;
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let safe_name = format!("u{}_{}.{}", user.id, ts, ext);
+    let dest = root.join(&safe_name);
+    std::fs::write(&dest, &data).map_err(|e| {
+        ResponseError::internal(&format!("write file: {e}"))
+    })?;
+
+    let avatar_url = format!("/api/profile/avatar/file/{safe_name}");
+    sqlx::query(
+        "update users set avatar_url = $1, updated_at = now() where id = $2",
     )
-        .into_response())
+    .bind(&avatar_url)
+    .bind(user.id)
+    .execute(&s.db)
+    .await?;
+
+    Ok(Json(json!({"ok": true, "avatar_url": avatar_url})).into_response())
 }
 
-/// POST /api/profile/avatar/reset — stub 501
+/// POST /api/profile/avatar/reset — 清除自定义头像
 async fn reset_avatar(
     State(s): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ResponseError> {
-    let _user = require_user(&s, &headers).await?;
-    Ok((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({"ok": false, "error": "not yet implemented"})),
+    let user = require_user(&s, &headers).await?;
+    sqlx::query(
+        "update users set avatar_url = null, updated_at = now() where id = $1",
     )
-        .into_response())
+    .bind(user.id)
+    .execute(&s.db)
+    .await?;
+    Ok(Json(json!({"ok": true})).into_response())
 }
 
-/// GET /api/profile/avatar/file/:name — stub 501
+/// GET /api/profile/avatar/file/:name — 返回头像文件
 async fn avatar_file(
-    Path(_name): Path<String>,
+    Path(name): Path<String>,
 ) -> impl IntoResponse {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({"ok": false, "error": "not yet implemented"})),
-    )
+    // 安全校验:禁止路径穿越。
+    if name.contains('/') || name.contains('\\') || name.starts_with('.') {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
+    let path = avatar_root().join(&name);
+    match std::fs::read(&path) {
+        Ok(data) => {
+            let ext = std::path::Path::new(&name)
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let mime = match ext.as_str() {
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "webp" => "image/webp",
+                _ => "application/octet-stream",
+            };
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, mime)],
+                data,
+            )
+                .into_response()
+        }
+        Err(_) => (StatusCode::NOT_FOUND, "not found").into_response(),
+    }
 }
 
 /// POST /api/profile/visibility
@@ -941,17 +1038,44 @@ async fn profile_visibility(
 
 // ─── /api/account/* ──────────────────────────────────────────────────────────
 
-/// POST /api/account/export — stub 501
+/// POST /api/account/export — 记录导出申请(对应 Python:插行到 account_exports 表)
 async fn account_export(
     State(s): State<AppState>,
     headers: HeaderMap,
+    body: Option<Json<Value>>,
 ) -> Result<Response, ResponseError> {
-    let _user = require_user(&s, &headers).await?;
-    Ok((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({"ok": false, "error": "not yet implemented"})),
+    let user = require_user(&s, &headers).await?;
+    let body = body.map(|b| b.0).unwrap_or_default();
+    let scope = body.get("scope").and_then(|v| v.as_str()).unwrap_or("all");
+    let format = body.get("format").and_then(|v| v.as_str()).unwrap_or("zip");
+    let email = body.get("email").and_then(|v| v.as_str()).unwrap_or("");
+
+    // 确保表存在(idempotent DDL)。
+    sqlx::query(
+        r#"create table if not exists account_exports (
+            id bigint generated by default as identity primary key,
+            user_id bigint not null references users(id) on delete cascade,
+            scope text default 'all',
+            format text default 'zip',
+            email text,
+            status text default 'pending',
+            created_at timestamptz not null default now()
+        )"#,
     )
-        .into_response())
+    .execute(&s.db)
+    .await?;
+
+    sqlx::query(
+        "insert into account_exports(user_id, scope, format, email) values ($1, $2, $3, $4)",
+    )
+    .bind(user.id)
+    .bind(scope)
+    .bind(format)
+    .bind(email)
+    .execute(&s.db)
+    .await?;
+
+    Ok(Json(json!({"ok": true, "message": "导出申请已记录，完成后会邮件通知"})).into_response())
 }
 
 /// POST /api/account/deactivate

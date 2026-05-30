@@ -12,7 +12,6 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
-
 use crate::{require_user, AppState, ResponseError};
 
 // ── 公开 router ──────────────────────────────────────────────────────────────
@@ -103,38 +102,464 @@ async fn api_scripts(
     })))
 }
 
-// ── POST /api/scripts/import (stub — 大流水线) ───────────────────────────────
+// ── POST /api/scripts/import ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ImportBody {
+    file: Option<Value>,
+    upload_id: Option<String>,
+    split_rule: Option<String>,
+    custom_pattern: Option<String>,
+    title: Option<String>,
+}
 
 async fn api_import_script(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(_body): Json<Value>,
+    Json(body): Json<ImportBody>,
 ) -> Result<Json<Value>, ResponseError> {
-    require_user(&state, &headers).await?;
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    let user = require_user(&state, &headers).await?;
+
+    let upload_id = body.upload_id.as_deref().unwrap_or("").trim();
+    let split_rule = body.split_rule.as_deref().unwrap_or("auto");
+    let custom_pattern = body.custom_pattern.as_deref().unwrap_or("");
+    let title = body.title.as_deref().unwrap_or("");
+
+    // Determine the import source
+    let source = if !upload_id.is_empty() {
+        let name = body.file
+            .as_ref()
+            .and_then(|f| f.get("name"))
+            .and_then(|v| v.as_str());
+        rpg_platform::script_import::ImportSource::Upload {
+            upload_id,
+            name,
+        }
+    } else if let Some(file_val) = &body.file {
+        let name = file_val.get("name").and_then(|v| v.as_str()).unwrap_or("script.txt");
+        let b64 = file_val
+            .get("base64")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ResponseError::bad_request("请提供 file.base64 或 upload_id"))?;
+        use base64::Engine as _;
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| ResponseError::bad_request(format!("base64 解码失败: {e}")))?;
+        rpg_platform::script_import::ImportSource::Bytes { name, raw }
+    } else {
+        return Ok(Json(json!({"ok": false, "error": "请提供 file 或 upload_id"})));
+    };
+
+    // No embedding client in AppState — pass None (will skip background embed)
+    let result = rpg_platform::script_import::import_script(
+        &state.db,
+        user.id.into(),
+        source,
+        split_rule,
+        custom_pattern,
+        title,
+        None, // embedding_client
+    )
+    .await
+    .map_err(|e| ResponseError::bad_request(e.to_string()))?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "script": {
+            "id": result.script_id,
+            "title": result.title,
+            "chapter_count": result.chapter_count,
+            "word_count": result.word_count,
+        },
+        "report": {
+            "mode": result.report.mode,
+            "mode_label": result.report.mode_label,
+            "confidence": result.report.confidence,
+            "chapter_count": result.report.chapter_count,
+            "total_words": result.report.total_words,
+            "average_words": result.report.average_words,
+            "min_words": result.report.min_words,
+            "max_words": result.report.max_words,
+            "split_rule": result.report.split_rule,
+            "reasons": result.report.reasons,
+            "encoding": result.encoding,
+            "source_path": result.source_path,
+        },
+        "knowledge": {
+            "ok": true,
+            "job_id": result.knowledge_job_id,
+            "status": "pending",
+            "async": true,
+        },
+        "preview": result.preview.iter().map(|p| json!({
+            "chapter_index": p.chapter_index,
+            "title": p.title,
+            "volume_title": p.volume_title,
+            "word_count": p.word_count,
+            "content_preview": p.content_preview,
+        })).collect::<Vec<_>>(),
+    })))
 }
 
-// ── POST /api/scripts/batch-import (stub) ────────────────────────────────────
+// ── POST /api/scripts/batch-import ───────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct BatchImportBody {
+    file: Option<Value>,
+    split_rule: Option<String>,
+}
 
 async fn api_scripts_batch_import(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(_body): Json<Value>,
+    Json(body): Json<BatchImportBody>,
 ) -> Result<Json<Value>, ResponseError> {
-    require_user(&state, &headers).await?;
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    let user = require_user(&state, &headers).await?;
+
+    let file_val = body.file.as_ref()
+        .ok_or_else(|| ResponseError::bad_request("缺 file"))?;
+    let b64 = file_val.get("base64").and_then(|v| v.as_str())
+        .ok_or_else(|| ResponseError::bad_request("缺 file.base64"))?;
+
+    use base64::Engine as _;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| ResponseError::bad_request(format!("base64 解码失败: {e}")))?;
+
+    // Phase 1: Extract all file contents synchronously
+    let file_entries = {
+        use std::io::Read;
+        let cursor = std::io::Cursor::new(&raw);
+        let mut archive = zip::ZipArchive::new(cursor)
+            .map_err(|_| ResponseError::bad_request("不是合法 ZIP 文件"))?;
+
+        let names: Vec<String> = (0..archive.len())
+            .filter_map(|i| {
+                let f = archive.by_index(i).ok()?;
+                let name = f.name().to_string();
+                if name.to_lowercase().ends_with(".txt") || name.to_lowercase().ends_with(".md") {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if names.len() > 50 {
+            return Ok(Json(json!({"ok": false, "error": "ZIP 最多包含 50 个文件"})));
+        }
+
+        let mut entries: Vec<(String, Result<Vec<u8>, String>)> = Vec::new();
+        for name in names {
+            let result = (|| {
+                let mut file = archive.by_name(&name).map_err(|e| e.to_string())?;
+                let mut buf = Vec::new();
+                file.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+                Ok(buf)
+            })();
+            entries.push((name, result));
+        }
+        entries
+    }; // archive dropped here
+
+    // Phase 2: Import each file (async)
+    let split_rule = body.split_rule.as_deref().unwrap_or("auto");
+    let mut imported = Vec::new();
+    let mut failed = Vec::new();
+
+    for (name, content_result) in &file_entries {
+        let content = match content_result {
+            Ok(c) => c,
+            Err(e) => {
+                failed.push(json!({"name": name, "error": e}));
+                continue;
+            }
+        };
+
+        if content.len() > rpg_platform::script_import::max_script_upload_bytes() {
+            failed.push(json!({"name": name, "error": "too large"}));
+            continue;
+        }
+
+        let short_name = name.rsplit('/').next().unwrap_or(name);
+        let source = rpg_platform::script_import::ImportSource::Bytes {
+            name: short_name,
+            raw: content.clone(),
+        };
+
+        match rpg_platform::script_import::import_script(
+            &state.db,
+            user.id.into(),
+            source,
+            split_rule,
+            "",
+            "",
+            None,
+        )
+        .await
+        {
+            Ok(result) => {
+                imported.push(json!({"name": name, "script_id": result.script_id}));
+            }
+            Err(e) => {
+                let msg: String = e.to_string().chars().take(200).collect();
+                failed.push(json!({"name": name, "error": msg}));
+            }
+        }
+    }
+
+    let total = file_entries.len();
+    let succeeded = imported.len();
+
+    Ok(Json(json!({
+        "ok": true,
+        "imported": imported,
+        "failed": failed,
+        "total": total,
+        "succeeded": succeeded,
+    })))
 }
 
-// ── POST /api/scripts/import-pack (stub) ─────────────────────────────────────
+// ── POST /api/scripts/import-pack ────────────────────────────────────────────
+
+const MAX_PACK_ZIP_BYTES: usize = 200 * 1024 * 1024; // 200MB
 
 async fn api_import_script_pack(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, ResponseError> {
-    let _ = body;
-    require_user(&state, &headers).await?;
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    let user = require_user(&state, &headers).await?;
+
+    if body.is_empty() {
+        return Err(ResponseError::bad_request("empty request body"));
+    }
+    if body.len() > MAX_PACK_ZIP_BYTES {
+        return Err(ResponseError::bad_request(format!(
+            "file too large (max {}MB)",
+            MAX_PACK_ZIP_BYTES / 1024 / 1024
+        )));
+    }
+
+    // Phase 1: Extract all data synchronously (no borrows across await)
+    let pack = extract_pack_from_zip(&body)?;
+
+    // Phase 2: Write to DB
+    let script_row = sqlx::query(
+        r#"
+        INSERT INTO scripts (owner_id, title, description, source_path,
+                             chapter_count, word_count)
+        VALUES ($1, $2, $3, '', $4, $5)
+        RETURNING id
+        "#,
+    )
+    .bind::<i64>(user.id.into())
+    .bind(&pack.title)
+    .bind(&pack.description)
+    .bind(pack.chapters.len() as i32)
+    .bind(pack.word_count)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    let new_script_id: i64 = script_row.try_get("id")
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    for ch in &pack.chapters {
+        let ci = ch.get("chapter_index").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        let ch_title = ch.get("title").and_then(|v| v.as_str()).unwrap_or("");
+        let content = ch.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        let wc = ch.get("word_count").and_then(|v| v.as_i64()).unwrap_or(content.chars().count() as i64) as i32;
+        let vol = ch.get("volume_title").and_then(|v| v.as_str()).unwrap_or("");
+        let marker = ch.get("source_marker").and_then(|v| v.as_str()).unwrap_or("");
+        let conf = ch.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+        sqlx::query(
+            r#"
+            INSERT INTO script_chapters(
+                script_id, chapter_index, title, content, word_count,
+                volume_title, source_marker, confidence
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(new_script_id)
+        .bind(ci)
+        .bind(ch_title)
+        .bind(content)
+        .bind(wc)
+        .bind(vol)
+        .bind(marker)
+        .bind(conf)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+    }
+
+    let mut warnings: Vec<String> = Vec::new();
+
+    for card in &pack.cards {
+        if let Err(e) = sqlx::query(
+            r#"
+            INSERT INTO character_cards(script_id, name, identity, appearance, personality,
+                                        speech_style, aliases, sample_dialogue, priority, enabled)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "#,
+        )
+        .bind(new_script_id)
+        .bind(card.get("name").and_then(|v| v.as_str()).unwrap_or(""))
+        .bind(card.get("identity").and_then(|v| v.as_str()).unwrap_or(""))
+        .bind(card.get("appearance").and_then(|v| v.as_str()).unwrap_or(""))
+        .bind(card.get("personality").and_then(|v| v.as_str()).unwrap_or(""))
+        .bind(card.get("speech_style").and_then(|v| v.as_str()).unwrap_or(""))
+        .bind(card.get("aliases").unwrap_or(&json!([])))
+        .bind(card.get("sample_dialogue").unwrap_or(&json!([])))
+        .bind(card.get("priority").and_then(|v| v.as_i64()).unwrap_or(100) as i32)
+        .bind(card.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true))
+        .execute(&state.db)
+        .await
+        {
+            warnings.push(format!("character_card import error: {}", e));
+        }
+    }
+
+    for wb in &pack.worldbook {
+        if let Err(e) = sqlx::query(
+            r#"
+            INSERT INTO worldbook_entries(script_id, title, content, keys, priority, enabled)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#,
+        )
+        .bind(new_script_id)
+        .bind(wb.get("title").and_then(|v| v.as_str()).unwrap_or(""))
+        .bind(wb.get("content").and_then(|v| v.as_str()).unwrap_or(""))
+        .bind(wb.get("keys").unwrap_or(&json!([])))
+        .bind(wb.get("priority").and_then(|v| v.as_i64()).unwrap_or(50) as i32)
+        .bind(wb.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true))
+        .execute(&state.db)
+        .await
+        {
+            warnings.push(format!("worldbook import error: {}", e));
+        }
+    }
+
+    if let Some(ref overrides_data) = pack.overrides {
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO script_overrides(script_id, data)
+            VALUES ($1, $2)
+            ON CONFLICT(script_id) DO UPDATE SET data = $2, updated_at = now()
+            "#,
+        )
+        .bind(new_script_id)
+        .bind(overrides_data)
+        .execute(&state.db)
+        .await;
+    }
+
+    Ok(Json(json!({
+        "ok": true,
+        "script_id": new_script_id,
+        "warnings": warnings,
+    })))
+}
+
+/// All data extracted from a script pack ZIP (fully owned, no borrows).
+struct PackData {
+    title: String,
+    description: String,
+    word_count: i64,
+    chapters: Vec<Value>,
+    cards: Vec<Value>,
+    worldbook: Vec<Value>,
+    overrides: Option<Value>,
+}
+
+/// Synchronously extract all needed data from a ZIP pack.
+fn extract_pack_from_zip(body: &[u8]) -> Result<PackData, ResponseError> {
+    use std::io::Read;
+
+    let cursor = std::io::Cursor::new(body);
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| ResponseError::bad_request(format!("not a valid zip file: {e}")))?;
+
+    // zip-slip defense
+    for i in 0..archive.len() {
+        let f = archive.by_index(i)
+            .map_err(|e| ResponseError::bad_request(e.to_string()))?;
+        let name = f.name().replace('\\', "/");
+        if name.starts_with('/') || name.split('/').any(|p| p == "..") {
+            return Err(ResponseError::bad_request(format!(
+                "zip-slip attempt detected: {name}"
+            )));
+        }
+    }
+
+    // Read manifest.json (validate it exists)
+    {
+        let mut f = archive.by_name("manifest.json")
+            .map_err(|_| ResponseError::bad_request("missing manifest.json in pack"))?;
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf)
+            .map_err(|e| ResponseError::bad_request(e.to_string()))?;
+        let _manifest: Value = serde_json::from_slice(&buf)
+            .map_err(|e| ResponseError::bad_request(format!("invalid manifest.json: {e}")))?;
+    }
+
+    // Read script.json
+    let script_data: Value = {
+        let mut f = archive.by_name("script.json")
+            .map_err(|_| ResponseError::bad_request("missing script.json in pack"))?;
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf)
+            .map_err(|e| ResponseError::bad_request(e.to_string()))?;
+        serde_json::from_slice(&buf)
+            .map_err(|e| ResponseError::bad_request(format!("invalid script.json: {e}")))?
+    };
+
+    let chapters = read_jsonl_entry(&mut archive, "chapters.jsonl")?;
+    let cards = read_jsonl_entry(&mut archive, "character_cards.jsonl").unwrap_or_default();
+    let worldbook = read_jsonl_entry(&mut archive, "worldbook.jsonl").unwrap_or_default();
+
+    let overrides: Option<Value> = archive.by_name("overrides.json").ok().and_then(|mut f| {
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf).ok()?;
+        serde_json::from_slice(&buf).ok()
+    });
+
+    let title = script_data.get("title").and_then(|v| v.as_str()).unwrap_or("Imported script").to_string();
+    let description = script_data.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let word_count: i64 = chapters.iter()
+        .map(|c| c.get("word_count").and_then(|v| v.as_i64()).unwrap_or(0))
+        .sum();
+
+    Ok(PackData { title, description, word_count, chapters, cards, worldbook, overrides })
+}
+
+fn read_jsonl_entry<R: std::io::Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    name: &str,
+) -> Result<Vec<Value>, ResponseError> {
+    use std::io::Read;
+    let mut f = match archive.by_name(name) {
+        Ok(f) => f,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf)
+        .map_err(|e| ResponseError::bad_request(e.to_string()))?;
+    let text = String::from_utf8_lossy(&buf);
+    let mut items = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(line) {
+            items.push(v);
+        }
+    }
+    Ok(items)
 }
 
 // ── POST /api/scripts/preview ────────────────────────────────────────────────
@@ -1085,66 +1510,606 @@ async fn api_script_recommend_identity(
     Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
 }
 
-// ── POST /api/scripts/{script_id}/chapters/merge (stub) ──────────────────────
+// ── POST /api/scripts/{script_id}/chapters/merge ────────────────────────────
+
+#[derive(Deserialize)]
+struct MergeBody {
+    first_index: i32,
+    separator: Option<String>,
+}
 
 async fn api_chapter_merge(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(_script_id): Path<i64>,
-    Json(_body): Json<Value>,
+    Path(script_id): Path<i64>,
+    Json(body): Json<MergeBody>,
 ) -> Result<Json<Value>, ResponseError> {
-    require_user(&state, &headers).await?;
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    let user = require_user(&state, &headers).await?;
+
+    // Verify ownership
+    let owned = sqlx::query_scalar::<_, i64>(
+        "SELECT 1::bigint FROM scripts WHERE id = $1 AND owner_id = $2",
+    )
+    .bind(script_id)
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    if owned.is_none() {
+        return Err(ResponseError::forbidden("无权访问该剧本"));
+    }
+
+    let first_index = body.first_index;
+    let second_index = first_index + 1;
+    let separator = body.separator.as_deref().unwrap_or("\n\n");
+
+    // Fetch both chapters
+    let a = sqlx::query(
+        "SELECT id, content FROM script_chapters WHERE script_id = $1 AND chapter_index = $2",
+    )
+    .bind(script_id)
+    .bind(first_index)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    let b = sqlx::query(
+        "SELECT id, content FROM script_chapters WHERE script_id = $1 AND chapter_index = $2",
+    )
+    .bind(script_id)
+    .bind(second_index)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    let (a, b) = match (a, b) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return Err(ResponseError::bad_request(
+            format!("需要章节 {} 和 {} 都存在", first_index, second_index)
+        )),
+    };
+
+    let a_id: i64 = a.try_get("id").unwrap_or_default();
+    let b_id: i64 = b.try_get("id").unwrap_or_default();
+    let a_content: String = a.try_get("content").unwrap_or_default();
+    let b_content: String = b.try_get("content").unwrap_or_default();
+
+    let merged_content = format!("{}{}{}", a_content, separator, b_content);
+    let merged_wc = merged_content.chars().count() as i32;
+
+    // Update first chapter with merged content
+    sqlx::query(
+        "UPDATE script_chapters SET content = $1, word_count = $2, updated_at = now() WHERE id = $3",
+    )
+    .bind(&merged_content)
+    .bind(merged_wc)
+    .bind(a_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    // Delete second chapter
+    sqlx::query("DELETE FROM script_chapters WHERE id = $1")
+        .bind(b_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    // Shift subsequent chapters down by 1
+    sqlx::query(
+        "UPDATE script_chapters SET chapter_index = chapter_index - 1, updated_at = now() \
+         WHERE script_id = $1 AND chapter_index > $2",
+    )
+    .bind(script_id)
+    .bind(second_index)
+    .execute(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    // Update scripts.chapter_count and word_count
+    let stats = sqlx::query(
+        "SELECT count(*)::bigint AS n, coalesce(sum(word_count),0)::bigint AS w FROM script_chapters WHERE script_id = $1",
+    )
+    .bind(script_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    let new_count: i64 = stats.try_get("n").unwrap_or(0);
+    let new_words: i64 = stats.try_get("w").unwrap_or(0);
+
+    sqlx::query(
+        "UPDATE scripts SET chapter_count = $1, word_count = $2, updated_at = now() WHERE id = $3",
+    )
+    .bind(new_count as i32)
+    .bind(new_words)
+    .bind(script_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "merged_into": first_index,
+        "new_chapter_count": new_count,
+    })))
 }
 
-// ── POST /api/scripts/{script_id}/chapters/{chapter_index} (stub) ────────────
+// ── POST /api/scripts/{script_id}/chapters/{chapter_index} ──────────────────
+
+#[derive(Deserialize)]
+struct ChapterUpdateBody {
+    title: Option<String>,
+    content: Option<String>,
+    volume_title: Option<String>,
+}
 
 async fn api_chapter_update(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((_script_id, _chapter_index)): Path<(i64, i32)>,
-    Json(_body): Json<Value>,
+    Path((script_id, chapter_index)): Path<(i64, i32)>,
+    Json(body): Json<ChapterUpdateBody>,
 ) -> Result<Json<Value>, ResponseError> {
-    require_user(&state, &headers).await?;
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    let user = require_user(&state, &headers).await?;
+
+    // Verify ownership
+    let owned = sqlx::query_scalar::<_, i64>(
+        "SELECT 1::bigint FROM scripts WHERE id = $1 AND owner_id = $2",
+    )
+    .bind(script_id)
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    if owned.is_none() {
+        return Err(ResponseError::forbidden("无权访问该剧本"));
+    }
+
+    if body.title.is_none() && body.content.is_none() && body.volume_title.is_none() {
+        return Err(ResponseError::bad_request("没有要更新的字段"));
+    }
+
+    // Build dynamic SET clause with positional parameters
+    let title_val = body.title.as_ref().map(|t| {
+        let truncated: String = t.chars().take(200).collect();
+        truncated
+    });
+    let content_val = body.content.clone();
+    let volume_title_val = body.volume_title.as_ref().map(|v| {
+        let truncated: String = v.chars().take(200).collect();
+        truncated
+    });
+
+    let mut param_idx: usize = 3; // $1 = script_id, $2 = chapter_index
+    let mut query_parts = Vec::new();
+    if title_val.is_some() {
+        query_parts.push(format!("title = ${}", param_idx));
+        param_idx += 1;
+    }
+    if content_val.is_some() {
+        query_parts.push(format!("content = ${}", param_idx));
+        param_idx += 1;
+        query_parts.push(format!("word_count = ${}", param_idx));
+        param_idx += 1;
+    }
+    if volume_title_val.is_some() {
+        query_parts.push(format!("volume_title = ${}", param_idx));
+        let _ = param_idx; // suppress unused warning for last increment
+    }
+    query_parts.push("updated_at = now()".to_string());
+
+    let sql = format!(
+        "UPDATE script_chapters SET {} \
+         WHERE script_id = $1 AND chapter_index = $2 \
+         RETURNING id, chapter_index, title, volume_title, word_count, content",
+        query_parts.join(", ")
+    );
+
+    let mut q = sqlx::query(&sql)
+        .bind(script_id)
+        .bind(chapter_index);
+
+    if let Some(ref t) = title_val {
+        q = q.bind(t);
+    }
+    if let Some(ref c) = content_val {
+        q = q.bind(c);
+        q = q.bind(c.chars().count() as i32);
+    }
+    if let Some(ref v) = volume_title_val {
+        q = q.bind(v);
+    }
+
+    let row = q
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    let row = match row {
+        Some(r) => r,
+        None => return Err(ResponseError::bad_request(format!("章节 {} 不存在", chapter_index))),
+    };
+
+    // Sync scripts.word_count
+    let total: i64 = sqlx::query_scalar(
+        "SELECT coalesce(sum(word_count),0)::bigint FROM script_chapters WHERE script_id = $1",
+    )
+    .bind(script_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+
+    sqlx::query("UPDATE scripts SET word_count = $1, updated_at = now() WHERE id = $2")
+        .bind(total)
+        .bind(script_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    let ci = row.try_get::<i32,_>("chapter_index").unwrap_or_default();
+    Ok(Json(json!({
+        "ok": true,
+        "chapter": {
+            "id": row.try_get::<i64,_>("id").unwrap_or_default(),
+            "chapter_index": ci,
+            "index": ci,
+            "title": row.try_get::<String,_>("title").unwrap_or_default(),
+            "volume_title": row.try_get::<String,_>("volume_title").unwrap_or_default(),
+            "word_count": row.try_get::<i32,_>("word_count").unwrap_or_default(),
+            "content": row.try_get::<String,_>("content").unwrap_or_default(),
+        },
+    })))
 }
 
-// ── POST /api/scripts/{script_id}/chapters/{chapter_index}/split (stub) ───────
+// ── POST /api/scripts/{script_id}/chapters/{chapter_index}/split ─────────────
+
+#[derive(Deserialize)]
+struct SplitBody {
+    split_at: i64,
+    new_title: Option<String>,
+}
 
 async fn api_chapter_split(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((_script_id, _chapter_index)): Path<(i64, i32)>,
-    Json(_body): Json<Value>,
+    Path((script_id, chapter_index)): Path<(i64, i32)>,
+    Json(body): Json<SplitBody>,
 ) -> Result<Json<Value>, ResponseError> {
-    require_user(&state, &headers).await?;
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    let user = require_user(&state, &headers).await?;
+
+    if body.split_at <= 0 {
+        return Err(ResponseError::bad_request("split_at 必须 > 0"));
+    }
+
+    // Verify ownership
+    let owned = sqlx::query_scalar::<_, i64>(
+        "SELECT 1::bigint FROM scripts WHERE id = $1 AND owner_id = $2",
+    )
+    .bind(script_id)
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    if owned.is_none() {
+        return Err(ResponseError::forbidden("无权访问该剧本"));
+    }
+
+    // Fetch the chapter to split
+    let ch = sqlx::query(
+        "SELECT id, title, content, volume_title, confidence FROM script_chapters \
+         WHERE script_id = $1 AND chapter_index = $2",
+    )
+    .bind(script_id)
+    .bind(chapter_index)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    let ch = match ch {
+        Some(r) => r,
+        None => return Err(ResponseError::bad_request(format!("章节 {} 不存在", chapter_index))),
+    };
+
+    let ch_id: i64 = ch.try_get("id").unwrap_or_default();
+    let ch_title: String = ch.try_get("title").unwrap_or_default();
+    let content: String = ch.try_get("content").unwrap_or_default();
+    let vol_title: String = ch.try_get("volume_title").unwrap_or_default();
+    let confidence: f64 = ch.try_get("confidence").unwrap_or(0.0);
+    let split_at = body.split_at as usize;
+
+    // split_at is a character position
+    let char_len = content.chars().count();
+    if split_at >= char_len {
+        return Err(ResponseError::bad_request(format!(
+            "split_at ({}) 超过章节长度 ({})",
+            split_at, char_len
+        )));
+    }
+
+    // Split the content at the character boundary
+    let left_text: String = content.chars().take(split_at).collect();
+    let right_text: String = content.chars().skip(split_at).collect();
+
+    let new_title = body.new_title.as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let t: String = s.chars().take(200).collect();
+            t
+        })
+        .unwrap_or_else(|| format!("{}（下）", ch_title));
+
+    // Shift subsequent chapters up by 1 (make room)
+    sqlx::query(
+        "UPDATE script_chapters SET chapter_index = chapter_index + 1, updated_at = now() \
+         WHERE script_id = $1 AND chapter_index > $2",
+    )
+    .bind(script_id)
+    .bind(chapter_index)
+    .execute(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    // Update original chapter with left half
+    sqlx::query(
+        "UPDATE script_chapters SET content = $1, word_count = $2, updated_at = now() WHERE id = $3",
+    )
+    .bind(&left_text)
+    .bind(left_text.chars().count() as i32)
+    .bind(ch_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    // Insert right half as new chapter
+    sqlx::query(
+        r#"
+        INSERT INTO script_chapters(
+            script_id, chapter_index, title, content, word_count,
+            volume_title, source_marker, confidence
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        "#,
+    )
+    .bind(script_id)
+    .bind(chapter_index + 1)
+    .bind(&new_title)
+    .bind(&right_text)
+    .bind(right_text.chars().count() as i32)
+    .bind(&vol_title)
+    .bind("manual_split")
+    .bind(confidence)
+    .execute(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    // Update scripts.chapter_count
+    let cnt: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM script_chapters WHERE script_id = $1",
+    )
+    .bind(script_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+
+    sqlx::query("UPDATE scripts SET chapter_count = $1, updated_at = now() WHERE id = $2")
+        .bind(cnt as i32)
+        .bind(script_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "split_at": body.split_at,
+        "new_chapter_count": cnt,
+    })))
 }
 
-// ── POST /api/scripts/{script_id}/resplit (stub) ─────────────────────────────
+// ── POST /api/scripts/{script_id}/resplit ────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ResplitBody {
+    split_rule: Option<String>,
+    custom_pattern: Option<String>,
+}
 
 async fn api_script_resplit(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(_script_id): Path<i64>,
-    Json(_body): Json<Value>,
+    Path(script_id): Path<i64>,
+    Json(body): Json<ResplitBody>,
 ) -> Result<Json<Value>, ResponseError> {
-    require_user(&state, &headers).await?;
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    let user = require_user(&state, &headers).await?;
+
+    let split_rule = body.split_rule.as_deref().unwrap_or("auto");
+    let custom_pattern = body.custom_pattern.as_deref().unwrap_or("");
+
+    // Verify ownership and get source_path
+    let script_row = sqlx::query(
+        "SELECT id, title, source_path FROM scripts WHERE id = $1 AND owner_id = $2",
+    )
+    .bind(script_id)
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    let script_row = match script_row {
+        Some(r) => r,
+        None => return Err(ResponseError::forbidden("无权访问该剧本")),
+    };
+
+    let source_path: String = script_row.try_get::<String,_>("source_path").unwrap_or_default();
+    if source_path.trim().is_empty() {
+        return Err(ResponseError::bad_request("剧本源文件路径丢失"));
+    }
+
+    // Resolve the file path
+    let script_root = rpg_platform::script_import::script_root();
+    let base = script_root.parent().unwrap_or(std::path::Path::new("."));
+    let p = if std::path::Path::new(&source_path).is_absolute() {
+        std::path::PathBuf::from(&source_path)
+    } else {
+        base.join(&source_path)
+    };
+
+    if !p.exists() {
+        return Err(ResponseError::bad_request("剧本源文件不存在，无法重切"));
+    }
+
+    let raw = std::fs::read(&p)
+        .map_err(|e| ResponseError::internal(format!("读取源文件失败: {e}")))?;
+
+    // Validate custom pattern
+    if split_rule.trim() == "custom" {
+        if custom_pattern.trim().is_empty() {
+            return Err(ResponseError::bad_request("split_rule=custom 时必须提供 custom_pattern"));
+        }
+        if rpg_platform::script_import::splitter::build_custom_pattern(custom_pattern).is_none() {
+            return Err(ResponseError::bad_request("custom_pattern 不是合法/安全正则"));
+        }
+    }
+
+    // Decode + split
+    let (text, encoding) = rpg_platform::script_import::splitter::decode_bytes(&raw);
+    let (chapters, report) =
+        rpg_platform::script_import::splitter::split_chapters_with_report(&text, split_rule, custom_pattern);
+
+    if chapters.is_empty() {
+        return Err(ResponseError::bad_request("重切结果为空"));
+    }
+
+    let total_words: i64 = chapters.iter().map(|c| c.content.chars().count() as i64).sum();
+
+    // Delete existing chapters and re-insert
+    sqlx::query("DELETE FROM script_chapters WHERE script_id = $1")
+        .bind(script_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    for (idx, ch) in chapters.iter().enumerate() {
+        let chapter_index = (idx + 1) as i32;
+        let title_trunc: String = ch.title.chars().take(200).collect();
+        let vol_trunc: String = ch.volume_title.chars().take(200).collect();
+        let content_len = ch.content.chars().count() as i32;
+
+        sqlx::query(
+            r#"
+            INSERT INTO script_chapters(
+                script_id, chapter_index, title, content, word_count,
+                volume_title, source_marker, confidence
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(script_id)
+        .bind(chapter_index)
+        .bind(if title_trunc.is_empty() {
+            format!("第{}章", chapter_index)
+        } else {
+            title_trunc
+        })
+        .bind(&ch.content)
+        .bind(content_len)
+        .bind(vol_trunc)
+        .bind(&ch.source_marker)
+        .bind(report.confidence)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+    }
+
+    // Update scripts metadata
+    let report_json = json!({
+        "mode": report.mode,
+        "mode_label": report.mode_label,
+        "confidence": report.confidence,
+        "chapter_count": report.chapter_count,
+        "total_words": report.total_words,
+        "average_words": report.average_words,
+        "min_words": report.min_words,
+        "max_words": report.max_words,
+        "split_rule": report.split_rule,
+        "reasons": report.reasons,
+        "encoding": encoding,
+        "resplit": true,
+    });
+
+    sqlx::query(
+        "UPDATE scripts SET chapter_count = $1, word_count = $2, import_report = $3, updated_at = now() WHERE id = $4",
+    )
+    .bind(chapters.len() as i32)
+    .bind(total_words)
+    .bind(&report_json)
+    .bind(script_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "script_id": script_id,
+        "chapter_count": chapters.len(),
+        "word_count": total_words,
+        "report": {
+            "mode": report.mode,
+            "mode_label": report.mode_label,
+            "confidence": report.confidence,
+            "chapter_count": report.chapter_count,
+            "total_words": report.total_words,
+            "average_words": report.average_words,
+            "min_words": report.min_words,
+            "max_words": report.max_words,
+            "split_rule": report.split_rule,
+            "reasons": report.reasons,
+        },
+        "knowledge_stale": true,
+    })))
 }
 
-// ── GET /api/scripts/{script_id}/embed (stub) ────────────────────────────────
+// ── GET /api/scripts/{script_id}/embed ───────────────────────────────────────
 
 async fn api_script_embed_get(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(_script_id): Path<i64>,
+    Path(script_id): Path<i64>,
 ) -> Result<Json<Value>, ResponseError> {
-    require_user(&state, &headers).await?;
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    let user = require_user(&state, &headers).await?;
+
+    let owned = sqlx::query_scalar::<_, i64>(
+        "SELECT 1::bigint FROM scripts WHERE id = $1 AND owner_id = $2",
+    )
+    .bind(script_id)
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    if owned.is_none() {
+        return Ok(Json(json!({"ok": false, "error": "无权访问该剧本"})));
+    }
+
+    // Query embed status from DB (same as embed/status)
+    let status = rpg_platform::knowledge::embedding::embed_status(&state.db, script_id)
+        .await
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "status": {
+            "running": status.running,
+            "chunks": {"done": status.embedded_chunks, "total": status.total_chunks},
+            "cards": {"done": status.embedded_cards, "total": status.total_cards},
+            "worldbook": {"done": status.embedded_worldbook, "total": status.total_worldbook},
+        },
+    })))
 }
 
-// ── POST /api/scripts/{script_id}/embed (stub) ───────────────────────────────
+// ── POST /api/scripts/{script_id}/embed ─────────────────────────────────────
 
 async fn api_script_embed_post(
     State(state): State<AppState>,
@@ -1154,7 +2119,7 @@ async fn api_script_embed_post(
     let user = require_user(&state, &headers).await?;
 
     let owned = sqlx::query_scalar::<_, i64>(
-        "SELECT 1 FROM scripts WHERE id = $1 AND owner_id = $2",
+        "SELECT 1::bigint FROM scripts WHERE id = $1 AND owner_id = $2",
     )
     .bind(script_id)
     .bind(user.id)
@@ -1166,11 +2131,16 @@ async fn api_script_embed_post(
         return Ok(Json(json!({"ok": false, "error": "无权访问该剧本"})));
     }
 
-    // embed 触发:暂 stub
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    // No embedding_client in AppState — return a graceful "not configured" response
+    // Per Python: if _get_vertex_client() is None, return this message
+    Ok(Json(json!({
+        "ok": true,
+        "status": "pending",
+        "message": "embedding pipeline not configured",
+    })))
 }
 
-// ── GET /api/scripts/{script_id}/embed/status (stub) ─────────────────────────
+// ── GET /api/scripts/{script_id}/embed/status ───────────────────────────────
 
 async fn api_script_embed_status(
     State(state): State<AppState>,
@@ -1180,7 +2150,7 @@ async fn api_script_embed_status(
     let user = require_user(&state, &headers).await?;
 
     let owned = sqlx::query_scalar::<_, i64>(
-        "SELECT 1 FROM scripts WHERE id = $1 AND owner_id = $2",
+        "SELECT 1::bigint FROM scripts WHERE id = $1 AND owner_id = $2",
     )
     .bind(script_id)
     .bind(user.id)
@@ -1192,5 +2162,17 @@ async fn api_script_embed_status(
         return Ok(Json(json!({"ok": false, "error": "无权访问该剧本"})));
     }
 
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    let status = rpg_platform::knowledge::embedding::embed_status(&state.db, script_id)
+        .await
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "status": {
+            "running": status.running,
+            "chunks": {"done": status.embedded_chunks, "total": status.total_chunks},
+            "cards": {"done": status.embedded_cards, "total": status.total_cards},
+            "worldbook": {"done": status.embedded_worldbook, "total": status.total_worldbook},
+        },
+    })))
 }

@@ -3053,6 +3053,7 @@ dependencies = [
  "tracing",
  "ts-rs",
  "uuid",
+ "zip",
 ]
 
 [[package]]

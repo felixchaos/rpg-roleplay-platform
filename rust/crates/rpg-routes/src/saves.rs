@@ -13,6 +13,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sqlx::Row as _;
 
 use crate::{require_user, AppState, ResponseError};
 
@@ -583,10 +584,67 @@ async fn api_save_anchors_reseed(
 
     let keep = body.map(|b| b.keep_satisfied).unwrap_or(true);
 
-    // anchor_seed_agent 功能尚未移植到 Rust service 层。
-    // 此 stub 保留框架，待 anchor service 就绪后替换。
-    let _ = keep;
-    Err(ResponseError::internal(
-        "TODO: reseed_anchors_for_save 未实现",
-    ))
+    // anchor_seed_agent 在 Python 端是一个大模块(读 script_timeline_anchors +
+    // 对比 save_anchor_states + LLM 生成描述)。Rust 端实现简化版:
+    // 删除当前 save 的所有 anchor states(keep_satisfied 时保留 occurred/variant),
+    // 然后从 script_timeline_anchors 重建 pending 锚点。
+    let delete_sql = if keep {
+        "DELETE FROM save_anchor_states WHERE save_id = $1 AND status NOT IN ('occurred', 'variant')"
+    } else {
+        "DELETE FROM save_anchor_states WHERE save_id = $1"
+    };
+    let deleted = sqlx::query(delete_sql)
+        .bind(save_id)
+        .execute(&state.db)
+        .await
+        .map(|r| r.rows_affected())
+        .unwrap_or(0);
+
+    // 从 script_timeline_anchors 拉锚点重建 pending
+    let script_id: Option<i64> = sqlx::query_scalar("SELECT script_id FROM game_saves WHERE id = $1")
+        .bind(save_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+
+    let mut seeded = 0u64;
+    if let Some(sid) = script_id {
+        let anchors = sqlx::query(
+            "SELECT anchor_key, chapter_index, phase_label, summary \
+             FROM script_timeline_anchors WHERE script_id = $1 ORDER BY chapter_index"
+        )
+        .bind(sid)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+        for a in &anchors {
+            use sqlx::Row as _;
+            let key: String = a.try_get("anchor_key").unwrap_or_default();
+            let chapter: i32 = a.try_get("chapter_index").unwrap_or(0);
+            let phase: String = a.try_get("phase_label").unwrap_or_default();
+            let summary: String = a.try_get("summary").unwrap_or_default();
+            let _ = sqlx::query(
+                "INSERT INTO save_anchor_states(save_id, anchor_key, source_chapter, phase_label, summary, status) \
+                 VALUES ($1, $2, $3, $4, $5, 'pending') \
+                 ON CONFLICT (save_id, anchor_key) DO NOTHING"
+            )
+            .bind(save_id)
+            .bind(&key)
+            .bind(chapter)
+            .bind(&phase)
+            .bind(&summary)
+            .execute(&state.db)
+            .await;
+            seeded += 1;
+        }
+    }
+
+    Ok(Json(json!({
+        "ok": true,
+        "deleted": deleted,
+        "seeded": seeded,
+        "keep_satisfied": keep,
+    })))
 }

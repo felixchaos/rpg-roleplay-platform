@@ -11,7 +11,7 @@ use axum::{
     Json, Router,
 };
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use sqlx::Row;
 
 use crate::{
@@ -39,6 +39,164 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/sessions/revoke-all", post(api_revoke_all_sessions))
         .route("/api/auth/sms-code", post(api_sms_code))
         .route("/api/auth/sms-verify", post(api_sms_verify))
+}
+
+// ── workspace helpers ─────────────────────────────────────────────────────────
+
+/// 对应 Python `workspace.ensure_default(user_id)`:
+/// 确保用户至少有一个默认剧本和对应存档。
+/// 新用户注册/登录后调用,幂等(已有则跳过)。
+async fn ensure_default(pool: &sqlx::PgPool, user_id: i64) {
+    const BASE_TITLE: &str = "《我蕾穆丽娜不爱你》";
+
+    // 取或建默认剧本。
+    let script_id: i64 = match sqlx::query(
+        "select id from scripts where owner_id = $1 order by id limit 1",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(Some(row)) => row.try_get("id").unwrap_or(0),
+        Ok(None) => {
+            match sqlx::query(
+                "insert into scripts(owner_id, title, description, source_path) \
+                 values ($1, $2, $3, $4) returning id",
+            )
+            .bind(user_id)
+            .bind(BASE_TITLE)
+            .bind("柏林 RPG 默认剧本")
+            .bind("rpg/indexes")
+            .fetch_one(pool)
+            .await
+            {
+                Ok(row) => row.try_get("id").unwrap_or(0),
+                Err(e) => {
+                    tracing::warn!("ensure_default: create script failed: {e}");
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("ensure_default: query script failed: {e}");
+            return;
+        }
+    };
+
+    if script_id == 0 {
+        return;
+    }
+
+    // 取或建默认存档。
+    let save_exists = sqlx::query(
+        "select id from game_saves where user_id = $1 and script_id = $2 order by id limit 1",
+    )
+    .bind(user_id)
+    .bind(script_id)
+    .fetch_optional(pool)
+    .await
+    .map(|r| r.is_some())
+    .unwrap_or(false);
+
+    if !save_exists {
+        if let Err(e) = sqlx::query(
+            "insert into game_saves(user_id, script_id, title, state_path, state_snapshot) \
+             values ($1, $2, $3, $4, $5::jsonb)",
+        )
+        .bind(user_id)
+        .bind(script_id)
+        .bind("当前自动存档")
+        .bind("")
+        .bind("{}")
+        .execute(pool)
+        .await
+        {
+            tracing::warn!("ensure_default: create save failed: {e}");
+        }
+    }
+}
+
+/// 对应 Python `platform_for(user)`:
+/// 构建注册/登录响应中的 `platform` 字段(scripts + saves + settings)。
+async fn platform_for(pool: &sqlx::PgPool, user_id: i64) -> Value {
+    // 剧本列表(最新 50 条)。
+    let scripts: Vec<Value> = sqlx::query(
+        "select id, owner_id, title, description, source_path, \
+         chapter_count, word_count, updated_at \
+         from scripts where owner_id = $1 order by updated_at desc, id desc limit 50",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map(|rows| {
+        rows.iter()
+            .map(|r| {
+                json!({
+                    "id": r.try_get::<i64, _>("id").unwrap_or(0),
+                    "owner_id": r.try_get::<i64, _>("owner_id").unwrap_or(0),
+                    "title": r.try_get::<String, _>("title").unwrap_or_default(),
+                    "description": r.try_get::<String, _>("description").unwrap_or_default(),
+                    "source_path": r.try_get::<String, _>("source_path").unwrap_or_default(),
+                    "chapter_count": r.try_get::<i32, _>("chapter_count").unwrap_or(0),
+                    "word_count": r.try_get::<i32, _>("word_count").unwrap_or(0),
+                    "updated_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")
+                        .unwrap_or(None)
+                        .map(|d| d.to_rfc3339()),
+                })
+            })
+            .collect()
+    })
+    .unwrap_or_default();
+
+    // 存档列表(最新 50 条)。
+    let saves: Vec<Value> = sqlx::query(
+        "select id, user_id, script_id, title, state_path, updated_at \
+         from game_saves where user_id = $1 order by updated_at desc, id desc limit 50",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map(|rows| {
+        rows.iter()
+            .map(|r| {
+                json!({
+                    "id": r.try_get::<i64, _>("id").unwrap_or(0),
+                    "user_id": r.try_get::<i64, _>("user_id").unwrap_or(0),
+                    "script_id": r.try_get::<i64, _>("script_id").unwrap_or(0),
+                    "title": r.try_get::<String, _>("title").unwrap_or_default(),
+                    "state_path": r.try_get::<String, _>("state_path").unwrap_or_default(),
+                    "updated_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")
+                        .unwrap_or(None)
+                        .map(|d| d.to_rfc3339()),
+                })
+            })
+            .collect()
+    })
+    .unwrap_or_default();
+
+    // 用户设置。
+    let settings: serde_json::Map<String, Value> = sqlx::query(
+        "select key, value from settings where user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map(|rows| {
+        rows.iter()
+            .filter_map(|r| {
+                let key = r.try_get::<String, _>("key").ok()?;
+                let value = r.try_get::<Value, _>("value").unwrap_or(Value::Null);
+                Some((key, value))
+            })
+            .collect()
+    })
+    .unwrap_or_default();
+
+    json!({
+        "scripts": scripts,
+        "saves": saves,
+        "settings": settings,
+    })
 }
 
 /// GET /api/auth/schema —— 返回登录/注册表单的字段定义,供前端 Login 页动态渲染。
@@ -191,8 +349,6 @@ async fn api_register(
         }
     };
 
-    // TODO: workspace::ensure_default(user.id) — rpg_platform::workspace 模块暂未暴露此函数
-
     let (user, token) = match login(&state.db, &username, &password, "").await {
         Ok(pair) => pair,
         Err(e) => {
@@ -208,15 +364,18 @@ async fn api_register(
         }
     };
 
+    // 确保用户有默认剧本/存档 — 对应 Python workspace.ensure_default。
+    ensure_default(&state.db, user.id.0).await;
+
     let is_https = request_is_https(&headers, &uri);
     let cookie = build_session_set_cookie(&token, SESSION_DAYS * 86400, is_https);
 
-    // platform_for(user) — rpg_platform 暂未暴露等价函数;返回 null + TODO
-    // TODO: 补 platform payload(rpg_platform::workspace::platform_for)
+    // 构建 platform payload — 对应 Python platform_for(user)。
+    let platform = platform_for(&state.db, user.id.0).await;
     let resp_body = json!({
         "ok": true,
         "user": public_user(&user),
-        "platform": null,
+        "platform": platform,
     });
 
     (
@@ -267,16 +426,18 @@ async fn api_login(
         }
     };
 
-    // TODO: workspace::ensure_default(user.id) — rpg_platform::workspace 模块暂未暴露此函数
+    // 确保用户有默认剧本/存档 — 对应 Python workspace.ensure_default。
+    ensure_default(&state.db, user.id.0).await;
 
     let is_https = request_is_https(&headers, &uri);
     let cookie = build_session_set_cookie(&token, SESSION_DAYS * 86400, is_https);
 
-    // TODO: 补 platform payload(rpg_platform::workspace::platform_for)
+    // 构建 platform payload — 对应 Python platform_for(user)。
+    let platform = platform_for(&state.db, user.id.0).await;
     let resp_body = json!({
         "ok": true,
         "user": public_user(&user),
-        "platform": null,
+        "platform": platform,
     });
 
     (

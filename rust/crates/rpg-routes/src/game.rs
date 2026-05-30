@@ -1280,8 +1280,33 @@ pub(crate) async fn api_chat(
             }
         }
 
-        // TODO: record_runtime_turn — 需要 parent_commit_id / ref_id 等分支上下文,
-        // 当前 handler 未持有,留后续 Wave 接入。
+        // record_runtime_turn — 写 branch_commit,对齐 Python record_turn。
+        {
+            use sqlx::Row as _;
+            let state_val = state_handle.read().snapshot();
+            if let Ok(Some(save_row)) = sqlx::query(
+                "SELECT id, active_commit_id, active_branch_ref_id FROM game_saves \
+                 WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1",
+            )
+            .bind(user_id_i64)
+            .fetch_optional(&db)
+            .await
+            {
+                let sid: i64 = save_row.try_get("id").unwrap_or(0);
+                let parent: i64 = save_row.try_get::<Option<i64>, _>("active_commit_id")
+                    .unwrap_or(None).unwrap_or(0);
+                let ref_id: Option<i64> = save_row.try_get::<Option<i64>, _>("active_branch_ref_id")
+                    .unwrap_or(None);
+                if sid > 0 && parent > 0 {
+                    if let Err(e) = rpg_platform::branches::runtime::record_runtime_turn(
+                        &db, user_id_i64, sid, parent, ref_id,
+                        &message, &full, &state_val, "",
+                    ).await {
+                        tracing::warn!(error = %e, "record_runtime_turn 失败(非阻塞)");
+                    }
+                }
+            }
+        }
 
         // 持久化到 DB — 对齐 Python state.save() + _persist_runtime_checkpoint。
         chat_app_state.state_store.flush(&user_id_str).await;
