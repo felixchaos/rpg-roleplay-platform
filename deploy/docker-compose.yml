@@ -100,6 +100,10 @@ services:
       # DATABASE_URL 指向 pgbouncer:6432 而非 postgres 直连(psycopg 接受 postgres:// 前缀)
       DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:-changeme}@pgbouncer:6432/rpg
       REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379
+      # ── 用户 API key 加密主密钥(生产必须!从 secret 注入,绝不放数据卷)──────
+      # 32 字节 hex(openssl rand -hex 32)。泄露=所有用户 API key 可解密。
+      # 不设则后端多用户模式【拒绝启动】(crypto 安全闸),绝不自动在数据盘生成。
+      RPG_MASTER_KEY: ${RPG_MASTER_KEY:?必须设 RPG_MASTER_KEY=<openssl rand -hex 32> 以保护用户 API key}
       # ── 多用户隔离(生产必须!)─────────────────────────────────────────
       # local/desktop/self_hosted 模式会把所有人当匿名 uid 0 共享一份 state。
       # 生产必须设非 local 模式 + 强制鉴权,否则 100 用户全部串档 = 灾难。
