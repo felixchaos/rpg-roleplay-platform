@@ -15,6 +15,7 @@ import CSTopNavigation from '@cloudscape-design/components/top-navigation';
 import CSAppLayout from '@cloudscape-design/components/app-layout';
 import CSSideNavigation from '@cloudscape-design/components/side-navigation';
 import CSInput from '@cloudscape-design/components/input';
+import CSButtonDropdown from '@cloudscape-design/components/button-dropdown';
 
 const PL_NAV = [
   { section: "工作台" },
@@ -3310,35 +3311,54 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
 
   return (
     <>
-      <div id="pl-cs-topnav" style={{ position: 'sticky', top: 0, zIndex: 1002 }}>
-        <CSTopNavigation
-          identity={{ href: '#profile', title: 'RPG Roleplay', onFollow: (e) => { e.preventDefault(); setPage('profile'); } }}
-          search={
-            <div onClick={() => setSearchOpen(true)} style={{ cursor: 'pointer' }}>
-              <CSInput type="search" placeholder="搜索剧本 / 存档 / 角色 · ⌘K" value="" readOnly ariaLabel="搜索" />
-            </div>
-          }
-          utilities={[
-            { type: 'menu-dropdown', text: '全部功能', iconName: 'menu', ariaLabel: '全部功能', expandableGroups: false,
-              items: _csSwitcherItems(),
-              onItemClick: ({ detail }) => { const m = CS_MODULES.find((x) => x.id === detail.id); if (m) { setPage(m.pages[0]); location.hash = '#' + m.pages[0]; } } },
-            { type: 'button', iconName: 'refresh', title: '刷新', ariaLabel: '刷新平台数据', onClick: _csRefresh },
-            { type: 'button', iconName: 'gen-ai', text: '助手', ariaLabel: '控制台助手', onClick: onToggleAssistant },
-            {
-              type: 'menu-dropdown',
-              text: reactiveUser.display_name || '未命名',
-              description: `@${reactiveUser.username || '—'} · ${reactiveUser.role || ''}`,
-              iconName: 'user-profile',
-              items: [
-                { id: 'me', text: '个人主页' },
-                { id: 'me-edit', text: '编辑资料' },
-                { id: 'me-settings', text: '用户设置' },
-                { id: 'signout', text: '登出' },
-              ],
-              onItemClick: onUserMenu,
-            },
-          ]}
-        />
+      <div id="pl-cs-topnav" className="pl-cs-topbar"
+        style={{ position: 'sticky', top: 0, zIndex: 1002, display: 'flex', alignItems: 'center', background: '#131211' }}>
+        {/* 左:logo + 全部功能(AWS 把服务菜单放左侧) */}
+        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, paddingLeft: 18, paddingRight: 6, gap: 14, height: 40 }}>
+          <a href="#profile" onClick={(e) => { e.preventDefault(); setPage('profile'); }}
+            style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 16, fontWeight: 600, color: '#ebe7df', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+            RPG Roleplay
+          </a>
+          <CSButtonDropdown
+            items={_csSwitcherItems()}
+            expandToViewport
+            ariaLabel="全部功能"
+            onItemClick={({ detail }) => { const m = CS_MODULES.find((x) => x.id === detail.id); if (m) { setPage(m.pages[0]); location.hash = '#' + m.pages[0]; } }}
+          >
+            ☰ 全部功能
+          </CSButtonDropdown>
+        </div>
+        {/* 中右:搜索 + 全局工具 + 账号 */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <CSTopNavigation
+            identity={{ href: '#profile', title: '', onFollow: (e) => { e.preventDefault(); setPage('profile'); } }}
+            search={
+              <div onClick={() => setSearchOpen(true)} style={{ cursor: 'pointer' }}>
+                <CSInput type="search" placeholder="搜索剧本 / 存档 / 角色 · ⌘K" value="" readOnly ariaLabel="搜索" />
+              </div>
+            }
+            utilities={[
+              { type: 'button', iconName: 'notification', title: '通知', ariaLabel: '通知', badge: false },
+              { type: 'button', iconName: 'status-info', title: '帮助', ariaLabel: '帮助' },
+              { type: 'button', iconName: 'settings', title: '设置', ariaLabel: '设置', onClick: () => { setPage('settings'); location.hash = '#settings'; } },
+              { type: 'button', iconName: 'refresh', title: '刷新', ariaLabel: '刷新平台数据', onClick: _csRefresh },
+              { type: 'button', iconName: 'gen-ai', text: '助手', ariaLabel: '控制台助手', onClick: onToggleAssistant },
+              {
+                type: 'menu-dropdown',
+                text: reactiveUser.display_name || '未命名',
+                description: `@${reactiveUser.username || '—'} · ${reactiveUser.role || ''}`,
+                iconName: 'user-profile',
+                items: [
+                  { id: 'me', text: '个人主页' },
+                  { id: 'me-edit', text: '编辑资料' },
+                  { id: 'me-settings', text: '用户设置' },
+                  { id: 'signout', text: '登出' },
+                ],
+                onItemClick: onUserMenu,
+              },
+            ]}
+          />
+        </div>
       </div>
 
       <CSAppLayout
