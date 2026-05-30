@@ -518,6 +518,22 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         end $$;
         """,
     ]),
+    (19, "kb_canon_embedding_dim_768", [
+        # v19: 对齐现网嵌入。设计原写 BGE-M3(1024),但平台实际可用的是
+        # Vertex text-embedding-004(768 维,knowledge.embedding 已封装)。
+        # 自托管 BGE-M3 未部署 → 改用 768 复用现有嵌入栈(更省、已 live)。表为空,安全 alter。
+        """
+        do $$
+        begin
+          if exists (select 1 from pg_extension where extname = 'vector')
+             and exists (select 1 from information_schema.columns
+                         where table_name='kb_canon_entities' and column_name='embedding') then
+            execute 'alter table kb_canon_entities drop column embedding';
+            execute 'alter table kb_canon_entities add column embedding vector(768)';
+          end if;
+        end $$;
+        """,
+    ]),
 ]
 
 
