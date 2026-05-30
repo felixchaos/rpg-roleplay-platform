@@ -358,6 +358,19 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         """,
         "create index if not exists idx_script_overrides_updated on script_overrides(updated_at)",
     ]),
+    (17, "ingestion_chapter_quality_columns", [
+        # v17: Stage -1 摄入清洗 (Phase A.0)。给 script_chapters 加摄入质量列,
+        # 让规则融合自适应切分 + 三道过滤的结果可落库并被提取/复核消费。
+        #   is_author_note          — 作者非正文 (卷末通知/感言/请假等,抓 ~21.5% 污染)
+        #   exclude_from_extraction — 不喂提取/不当剧情章 (默认 = is_author_note)
+        #   title_confidence        — 标题可信度 0-1 (怪标题玩梗 → 低)
+        #   content_descriptor      — 标题不可信时用的内容描述符 (下游提取/时间线用它,非原标题)
+        "alter table script_chapters add column if not exists is_author_note boolean not null default false",
+        "alter table script_chapters add column if not exists exclude_from_extraction boolean not null default false",
+        "alter table script_chapters add column if not exists title_confidence real not null default 1.0",
+        "alter table script_chapters add column if not exists content_descriptor text not null default ''",
+        "create index if not exists idx_script_chapters_extractable on script_chapters(script_id) where exclude_from_extraction = false",
+    ]),
 ]
 
 
