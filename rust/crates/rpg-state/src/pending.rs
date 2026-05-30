@@ -192,31 +192,34 @@ pub fn reject_pending_write(
 
 /// GM 询问入队 — 对应 Python `add_pending_question`。
 ///
-/// `options` None 时不再调 Python `_parse_question` 拆"｜"分隔的 inline 选项 —
-/// 那段语义复杂且在 LLM 现代 JSON 协议下基本不再用,等真正需要再回头补。
+/// P1-12: `options` None 时调 `parse_question()` 拆 "|" / "｜" 分隔的 inline 选项,
+/// 与 Python 行为完全对齐。
 pub fn add_pending_question(
     state: &mut GameState,
     text: &str,
     source: &str,
     options: Option<Vec<String>>,
 ) -> bool {
-    let question = clean_item(text);
+    let (question, opts) = if let Some(explicit_opts) = options {
+        // Explicit options provided — clean each one, matching Python branch.
+        let cleaned: Vec<String> = explicit_opts
+            .into_iter()
+            .filter_map(|o| {
+                let c = clean_item(&o);
+                if c.is_empty() { None } else { Some(c) }
+            })
+            .take(4)
+            .collect();
+        (clean_item(text), cleaned)
+    } else {
+        // No options → parse inline pipe-delimited options from question text.
+        // Mirrors Python: question, parsed_options = _parse_question(text)
+        let (q, parsed) = parse_question(text);
+        (q, parsed)
+    };
     if question.is_empty() {
         return false;
     }
-    let opts: Vec<String> = options
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|o| {
-            let cleaned = clean_item(&o);
-            if cleaned.is_empty() {
-                None
-            } else {
-                Some(cleaned)
-            }
-        })
-        .take(4)
-        .collect();
     // 先把 state.turn 取出,避免后面同时 mutable+immutable borrow。
     let turn = state.turn();
     let arr = &mut state.data.permissions.pending_questions;

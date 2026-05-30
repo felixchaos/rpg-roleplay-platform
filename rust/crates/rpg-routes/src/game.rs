@@ -52,6 +52,24 @@ impl rpg_agents::gm::ToolCallRouter for McpToolRouter {
         tool: &str,
         arguments: serde_json::Value,
     ) -> rpg_agents::gm::ToolCallResult {
+        // P0-17: Check if tool_name is in dispatcher registry first.
+        // If server_id == "dispatcher" or registry has the tool -> route to dispatcher.
+        // Otherwise -> mcp_broker as before.
+        // TODO(wave2): wire real ToolDispatcher when ready. For now, all tools
+        // go through mcp_broker; this comment marks the routing decision point.
+        //
+        // if server_id == rpg_tools_dsl::DISPATCHER_SENTINEL
+        //     || self.dispatcher_registry.has(tool)
+        // {
+        //     let envelope = rpg_tools_dsl::ToolCallEnvelope { ... };
+        //     let result = self.dispatcher_registry.dispatch_sync(envelope);
+        //     return rpg_agents::gm::ToolCallResult {
+        //         ok: result.ok,
+        //         result: Some(result.result),
+        //         error: result.error,
+        //     };
+        // }
+
         // McpBroker.call_tool 返回 Value (含 ok / error 字段),不是 Result
         let resp = self.broker.call_tool(server_id, tool, arguments, 30).await;
         let ok = resp.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -83,11 +101,11 @@ type SseResponse = Result<Sse<GuardedStream<ReceiverStream<Result<Event, Infalli
 /// Contains: state snapshot + app info + models catalog + save metadata.
 /// Used by: `/api/state`, `/api/new`, `/api/save`, `/api/opening` done event,
 /// `/api/chat` status/done events.
-fn build_status_payload(
+async fn build_status_payload(
     state_data: &Value,
     app_state: &AppState,
-    _user_id_num: i64,
-    _db: &sqlx::PgPool,
+    user_id_num: i64,
+    db: &sqlx::PgPool,
 ) -> Value {
     // Python status_payload() 平铺 state.data 的所有字段到顶层(player/world/memory/...),
     // 前端直接 payload.player 访问。Rust 必须对齐,不能嵌套在 "state" key 下。
@@ -132,10 +150,55 @@ fn build_status_payload(
         payload["models"] = cat_val;
     }
 
+    // P0-16: suggestions — Python calls state.suggestions() which builds contextual
+    // action suggestions. Port the full logic later; for now emit empty array so the
+    // frontend key exists and RESETTABLE_KEYS clearing works correctly.
+    if payload.get("suggestions").is_none() {
+        payload["suggestions"] = json!([]);
+    }
+
+    // P0-16: content_pack stub — Python resolves from context_providers; Rust side
+    // doesn't have that wired yet. Emit a minimal freeform stub so the frontend
+    // doesn't crash on missing content_pack.
+    if payload.get("content_pack").is_none() {
+        payload["content_pack"] = json!({
+            "kind": "freeform",
+            "context_providers": [],
+            "ruleset": "none",
+        });
+    }
+
+    // P0-16: user_id — frontend may reference it for display / permission checks.
+    payload["user_id"] = json!(user_id_num);
+
+    // P0-16: save_id / save_title / save_updated_at — query from game_saves table,
+    // matching Python _payload() lines 837-856.
+    {
+        use sqlx::Row as _;
+        if let Ok(Some(row)) = sqlx::query(
+            "SELECT id, title, updated_at FROM game_saves \
+             WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1",
+        )
+        .bind(user_id_num)
+        .fetch_optional(db)
+        .await
+        {
+            let sid: i64 = row.try_get("id").unwrap_or(0);
+            let title: String = row.try_get("title").unwrap_or_default();
+            payload["save_id"] = json!(sid);
+            payload["save_title"] = json!(title);
+            // updated_at comes as a chrono type from sqlx; try NaiveDateTime first,
+            // then fall back to String.
+            if let Ok(ts) = row.try_get::<chrono::NaiveDateTime, _>("updated_at") {
+                payload["save_updated_at"] = json!(ts.and_utc().to_rfc3339());
+            } else if let Ok(ts) = row.try_get::<String, _>("updated_at") {
+                payload["save_updated_at"] = json!(ts);
+            }
+        }
+    }
+
     payload
 }
-
-// build_status_payload_with_save removed — save metadata query deferred to future wave
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -391,13 +454,34 @@ async fn api_new(
         }
     }
 
-    // game-new-04: flush state to DB (matching Python _persist_runtime_checkpoint)
-    s.state_store.flush(&user_id).await;
+    // P0-8: 确保用户有 game_saves 行再 flush(否则 write_active_state_snapshot
+    // 找不到 save_id,flush 变 no-op,state 丢失)。
+    // 调 ensure_default 幂等创建默认 script + save(含 seed_tree)。
+    crate::auth::ensure_default(&s.db, user_id_num).await;
+
+    // P1-14: 拿到实际 save_id,把 state_snapshot 直接写入该行。
+    // 这比依赖 flush(经 resolve_active_save_id)更可靠:
+    // flush 路径有 user_runtime 查询 + 回落逻辑,新建存档刚建好时
+    // user_runtime 还没登记 save_id,可能选错存档。
+    let snapshot = shared.read().snapshot();
+    if let Some(save_id) = rpg_platform::save_io::resolve_active_save_id(
+        &s.db,
+        user.id,
+    ).await {
+        let _ = rpg_platform::save_io::write_state_snapshot(
+            &s.db,
+            user.id,
+            save_id,
+            &snapshot,
+        ).await;
+    } else {
+        // 兜底:ensure_default 失败(极端情况),走 flush 路径
+        s.state_store.flush(&user_id).await;
+    }
 
     // game-new-01: return full payload matching Python _payload(api_user) shape
     // game-new-01: 添加 backup 字段(已登录用户为 null,与 Python 一致)
-    let data = shared.read().snapshot();
-    let payload = build_status_payload(&data, &s, user_id_num, &s.db);
+    let payload = build_status_payload(&snapshot, &s, user_id_num, &s.db).await;
     Ok(Json(json!({
         "ok": true,
         "state": payload,
@@ -443,7 +527,7 @@ pub(crate) async fn api_opening(
     // 没 backend → 老 stub 路径(同旧行为)。
     if backend_opt.is_none() {
         let state_data = shared.read().snapshot();
-        let status_payload = build_status_payload(&state_data, &s, user_id_num, &s.db);
+        let status_payload = build_status_payload(&state_data, &s, user_id_num, &s.db).await;
         let _ = tx.send(Ok(named_sse_event("hello", hello_payload(&user_id)))).await;
         let _ = tx.send(Ok(named_sse_event(
             "stage",
@@ -604,7 +688,7 @@ pub(crate) async fn api_opening(
         // game-sse-06: emit 'status' event after context assembly (matches Python line 163)
         {
             let state_data = state_handle.read().snapshot();
-            let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db);
+            let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db).await;
             let _ = tx.send(Ok(named_sse_event("status", status))).await;
         }
 
@@ -628,7 +712,7 @@ pub(crate) async fn api_opening(
                         tracing::warn!(error = %e, "opening: 无法获取 LLM backend");
                         // stub fallback — game-sse-03: use full payload
                         let state_data = state_handle.read().snapshot();
-                        let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db);
+                        let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db).await;
                         let _ = tx.send(Ok(named_sse_event("stage", json!({"phase":"done"})))).await;
                         let _ = tx.send(Ok(named_sse_event("token", json!({"text":""})))).await;
                         let _ = tx.send(Ok(named_sse_event(
@@ -648,7 +732,7 @@ pub(crate) async fn api_opening(
             Ok(_) => {
                 tracing::warn!("opening: GM 返回空文本,走 stub fallback");
                 let state_data = state_handle.read().snapshot();
-                let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db);
+                let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db).await;
                 let _ = tx.send(Ok(named_sse_event("stage", json!({"phase":"done"})))).await;
                 let _ = tx.send(Ok(named_sse_event("token", json!({"text":""})))).await;
                 let _ = tx.send(Ok(named_sse_event(
@@ -660,7 +744,7 @@ pub(crate) async fn api_opening(
             Err(e) => {
                 tracing::warn!(error = %e, "opening: GM generate_opening 失败,走 stub fallback");
                 let state_data = state_handle.read().snapshot();
-                let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db);
+                let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db).await;
                 let _ = tx.send(Ok(named_sse_event("stage", json!({"phase":"done"})))).await;
                 let _ = tx.send(Ok(named_sse_event("token", json!({"text":""})))).await;
                 let _ = tx.send(Ok(named_sse_event(
@@ -672,6 +756,8 @@ pub(crate) async fn api_opening(
         };
 
         // ── Phase 5: 解析结构化更新 + 写 history ───────────────────────
+        // P0-6: strip JSON state-op fences before persisting to history
+        let visible_opening = rpg_state::strip_json_state_ops(&opening_text);
         {
             let mut st = state_handle.write();
             // 结构化 ops 提取 + 应用(对齐 Python state.apply_structured_updates)
@@ -679,7 +765,8 @@ pub(crate) async fn api_opening(
             if let Err(e) = rpg_state::apply_structured_updates(&mut st, &opening_text) {
                 tracing::warn!(error = %e, "opening: apply_structured_updates 失败");
             }
-            st.append_history("assistant", &opening_text);
+            // P0-6: use visible_opening (stripped of JSON ops) for history
+            st.append_history("assistant", &visible_opening);
             st.increment_turn();
         }
 
@@ -691,14 +778,14 @@ pub(crate) async fn api_opening(
         let _ = tx
             .send(Ok(named_sse_event("stage", json!({"phase":"done"}))))
             .await;
-        // 一次性发完整文本(gm.generate_opening 不是 stream)
+        // P0-6: send stripped text to frontend
         let _ = tx
-            .send(Ok(named_sse_event("token", json!({"text": opening_text}))))
+            .send(Ok(named_sse_event("token", json!({"text": visible_opening}))))
             .await;
 
         // done — game-sse-03: full status payload matching Python _payload()
         let state_data = state_handle.read().snapshot();
-        let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db);
+        let status = build_status_payload(&state_data, &app_state_clone, user_id_num_clone, &db).await;
         let _ = tx
             .send(Ok(named_sse_event(
                 "done",
@@ -993,7 +1080,7 @@ pub(crate) async fn api_chat(
     // 无 backend → stub fallback:只 emit 一个空 chunk + done。
     let Some(backend) = backend_opt else {
         let state_after = shared.read().snapshot();
-        let status = build_status_payload(&state_after, &s, user.id.into(), &db);
+        let status = build_status_payload(&state_after, &s, user.id.into(), &db).await;
         let actual = rpg_platform::usage::UsageBreakdown {
             input_tokens: est_input.clamp(0, i32::MAX as i64) as i32,
             output_tokens: 0,
@@ -1029,8 +1116,9 @@ pub(crate) async fn api_chat(
         // game-chat-07: track actual usage from LLM stream
         let mut usage_input: i32 = 0;
         let mut usage_output: i32 = 0;
-        let usage_cached: i32 = 0;
-        let usage_reasoning: i32 = 0;
+        // P1-8: made mutable so GmEvent::Usage can update them with actual values
+        let mut usage_cached: i32 = 0;
+        let mut usage_reasoning: i32 = 0;
         let mut interrupted = false;
 
         // ── Phase 1: Player Directives + Attachments ────────────────
@@ -1137,9 +1225,17 @@ pub(crate) async fn api_chat(
         // game-chat-01: emit 'status' event after directives (matching Python chat_pipeline.py:256)
         {
             let state_data = state_handle.read().snapshot();
-            let status = build_status_payload(&state_data, &chat_app_state, user_id_i64, &db);
+            let status = build_status_payload(&state_data, &chat_app_state, user_id_i64, &db).await;
             let _ = tx.send(Ok(named_sse_event("status", status))).await;
         }
+
+        // P2-1: agent event before context assembly
+        let _ = tx.send(Ok(named_sse_event("agent", json!({
+            "phase": "context_agent",
+            "message": "正在组装上下文。",
+            "status": "running",
+            "elapsed_ms": 0,
+        })))).await;
 
         // ── Phase 2: Context Assembly ───────────────────────────────
         let _ = tx.send(Ok(named_sse_event(
@@ -1329,6 +1425,14 @@ pub(crate) async fn api_chat(
         }
 
         // ── Phase 4: GM Response ────────────────────────────────────
+        // P2-1: agent event before GM generation
+        let _ = tx.send(Ok(named_sse_event("agent", json!({
+            "phase": "main_gm",
+            "message": "主 GM 正在读取上下文并生成正文。",
+            "status": "running",
+            "elapsed_ms": 0,
+        })))).await;
+
         let _ = tx.send(Ok(named_sse_event(
             "stage",
             json!({"phase":"generating","label":"GM 正在回应…"}),
@@ -1375,9 +1479,9 @@ pub(crate) async fn api_chat(
                         }
                         rpg_agents::gm::GmEvent::ToolCall { server_id, tool, arguments } => {
                             let _ = tx.send(Ok(named_sse_event("tool_call", json!({
-                                "tool": tool,
                                 "server_id": server_id,
-                                "args": arguments,
+                                "tool": tool,
+                                "arguments": arguments,
                             })))).await;
                         }
                         rpg_agents::gm::GmEvent::ToolResult { ok, result, error } => {
@@ -1395,8 +1499,44 @@ pub(crate) async fn api_chat(
                             })))).await;
                         }
                         rpg_agents::gm::GmEvent::StateOps { ops } => {
+                            // P0-4 + P0-5: Route ops through state_op_map before applying.
+                            // For each op, check if a dispatcher tool mapping exists.
+                            // TODO(wave2): when ToolDispatcher is fully wired, create
+                            // ToolCallEnvelope and dispatch through it; only fall back to
+                            // raw apply_op if no tool mapping exists. For now: apply_op is
+                            // done inside gm.step(), but we log the tool mapping here.
+                            for op_value in &ops {
+                                let path = op_value.get("path")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let value = op_value.get("value")
+                                    .cloned()
+                                    .unwrap_or(Value::Null);
+                                let op_kind = op_value.get("op")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("set");
+                                if let Some((tool_name, tool_args)) =
+                                    rpg_tools_dsl::map_op_to_tool(path, &value, op_kind)
+                                {
+                                    tracing::info!(
+                                        tool = %tool_name,
+                                        args = %tool_args,
+                                        path = %path,
+                                        "P0-4: state op mapped to dispatcher tool \
+                                         (apply_op used as fallback)"
+                                    );
+                                    // TODO(wave2): route through dispatcher when wired
+                                    // let envelope = rpg_tools_dsl::DispatchEnvelope::new(
+                                    //     user_id_i64, &tool_name, tool_args,
+                                    //     rpg_tools_dsl::Origin::LlmChat,
+                                    // );
+                                    // dispatcher.dispatch(&envelope, Some(&mut state));
+                                }
+                            }
+
+                            let items = rpg_state::ops_to_items(&ops);
                             let _ = tx.send(Ok(named_sse_event("updates", json!({
-                                "ops": ops,
+                                "items": items,
                             })))).await;
                         }
                         rpg_agents::gm::GmEvent::GuardViolations { violations } => {
@@ -1413,11 +1553,38 @@ pub(crate) async fn api_chat(
                                 "demand": demand,
                             })))).await;
                         }
+                        rpg_agents::gm::GmEvent::Usage {
+                            input_tokens,
+                            output_tokens,
+                            cache_read,
+                            reasoning_tokens,
+                        } => {
+                            // P1-8: Use actual LLM-reported usage instead of text-length estimate.
+                            usage_input = input_tokens as i32;
+                            usage_output = output_tokens as i32;
+                            usage_cached = cache_read as i32;
+                            usage_reasoning = reasoning_tokens as i32;
+                            tracing::info!(
+                                input_tokens,
+                                output_tokens,
+                                cache_read,
+                                reasoning_tokens,
+                                "P1-8: actual LLM usage received"
+                            );
+                        }
                         rpg_agents::gm::GmEvent::Done => break,
                     }
                 }
             }
         }
+
+        // P2-1: agent event after generation
+        let _ = tx.send(Ok(named_sse_event("agent", json!({
+            "phase": "done",
+            "message": "GM 生成完毕,正在持久化。",
+            "status": "done",
+            "elapsed_ms": 0,
+        })))).await;
 
         // step() 内部已通过 extractor + apply_op 更新了 step_state;
         // 把变更同步回 parking_lot state_handle。
@@ -1428,9 +1595,19 @@ pub(crate) async fn api_chat(
 
         // ── Phase 5: Persist ────────────────────────────────────────
         if !full.is_empty() {
-            // game-chat-07: estimate usage from accumulated narrative text
-            usage_output = rpg_platform::usage::estimate_input_tokens(&full).clamp(0, i32::MAX as i64) as i32;
-            usage_input = est_input.clamp(0, i32::MAX as i64) as i32;
+            // P1-8: Only fall back to text-length estimation if no actual usage
+            // was received from GmEvent::Usage (which is populated by the LLM backend).
+            if usage_output == 0 {
+                usage_output = rpg_platform::usage::estimate_input_tokens(&full)
+                    .clamp(0, i32::MAX as i64) as i32;
+            }
+            if usage_input == 0 {
+                usage_input = est_input.clamp(0, i32::MAX as i64) as i32;
+            }
+
+            // P0-6: strip JSON state-op fences before persisting to history
+            // (apply_structured_updates uses raw text to extract ops first)
+            let visible_response = rpg_state::strip_json_state_ops(&full);
 
             let mut st = state_handle.write();
             // 结构化更新(【…】tags + ```json``` ops)
@@ -1438,7 +1615,8 @@ pub(crate) async fn api_chat(
                 tracing::warn!(error = %e, "Phase 5: apply_structured_updates 部分失败");
             }
             // game-chat-04: only append assistant history (user already appended before Phase 4)
-            st.append_history("assistant", &full);
+            // P0-6: use visible_response (stripped of JSON ops) for history
+            st.append_history("assistant", &visible_response);
             st.increment_turn();
             // Gap 6: clear revealed_this_turn flag (matches Python record_turn behavior).
             // The /reveal directive sets this flag for one-shot GM visibility; must clear after each turn.
@@ -1480,6 +1658,57 @@ pub(crate) async fn api_chat(
 
         // 持久化到 DB — 对齐 Python state.save() + _persist_runtime_checkpoint。
         chat_app_state.state_store.flush(&user_id_str).await;
+
+        // P0-9: persist_chat_turn — insert user + assistant messages into DB.
+        // Matches Python _persist_chat_turn -> record_turn_messages -> _db_insert_turn_messages.
+        // Uses `messages` table (via game_sessions). If no session exists yet, skip silently.
+        if !full.is_empty() {
+            let visible_for_db = rpg_state::strip_json_state_ops(&full);
+            let turn_index = {
+                let st = state_handle.read();
+                st.data.turn as i32
+            };
+            // Find session_id for this save
+            if let Some(save_id) = chat_save_id {
+                let session_id: Option<i64> = sqlx::query_scalar(
+                    "SELECT id FROM game_sessions WHERE save_id = $1 \
+                     ORDER BY updated_at DESC LIMIT 1",
+                )
+                .bind(save_id)
+                .fetch_optional(&db)
+                .await
+                .ok()
+                .flatten();
+
+                if let Some(sess_id) = session_id {
+                    // Insert user message
+                    let _ = sqlx::query(
+                        "INSERT INTO messages(session_id, save_id, turn, role, content, metadata) \
+                         VALUES ($1, $2, $3, 'user', $4, '{}'::jsonb)",
+                    )
+                    .bind(sess_id)
+                    .bind(save_id)
+                    .bind(turn_index)
+                    .bind(&message_for_model)
+                    .execute(&db)
+                    .await;
+
+                    // Insert assistant message (visible_content in content field)
+                    let _ = sqlx::query(
+                        "INSERT INTO messages(session_id, save_id, turn, role, content, metadata) \
+                         VALUES ($1, $2, $3, 'assistant', $4, '{}'::jsonb)",
+                    )
+                    .bind(sess_id)
+                    .bind(save_id)
+                    .bind(turn_index)
+                    .bind(&visible_for_db)
+                    .execute(&db)
+                    .await;
+                } else {
+                    tracing::debug!("P0-9: no game_session for save_id={save_id}, skip persist_chat_turn");
+                }
+            }
+        }
 
         let state_after = state_handle.read().snapshot();
 
@@ -1535,7 +1764,7 @@ pub(crate) async fn api_chat(
         let _ = tx.send(Ok(named_sse_event("usage", usage_payload.clone()))).await;
 
         // game-sse-03: done event uses full status payload
-        let status = build_status_payload(&state_after, &chat_app_state, user_id_i64, &db);
+        let status = build_status_payload(&state_after, &chat_app_state, user_id_i64, &db).await;
         let _ = tx
             .send(Ok(named_sse_event(
                 "done",
@@ -1555,8 +1784,8 @@ pub(crate) async fn api_chat(
                 "internal error in chat pipeline".to_string()
             };
             tracing::error!("chat pipeline panic: {msg}");
-            let _ = tx_for_err.send(Ok(named_sse_event("error", json!({"error": msg})))).await;
-            let _ = tx_for_err.send(Ok(named_sse_event("done", json!({"ok": false, "error": msg})))).await;
+            let _ = tx_for_err.send(Ok(named_sse_event("error", json!({"message": msg})))).await;
+            let _ = tx_for_err.send(Ok(named_sse_event("done", json!({"ok": false, "message": msg})))).await;
         }
     });
 
@@ -1649,11 +1878,27 @@ async fn api_save(
         // Arc 快照(snapshot 重建一次后返回,仅 inc refcount)。
         st.snapshot()
     };
-    // 落库(read-through cache 的写回端)。saver 未注入(纯内存)→ false,不影响响应。
-    let _persisted = s.state_store.flush(&user_id).await;
-    // game-save-01: state field uses full payload matching Python _payload()
+    // P0-8/P1-14: 确保用户有 game_saves 行(否则 flush 变 no-op)。
     let user_id_num: i64 = user.id.into();
-    let payload = build_status_payload(&data, &s, user_id_num, &s.db);
+    crate::auth::ensure_default(&s.db, user_id_num).await;
+
+    // P1-14: 直接解析 active save_id 写入 state_snapshot,比 flush 更可靠
+    if let Some(save_id) = rpg_platform::save_io::resolve_active_save_id(
+        &s.db,
+        user.id,
+    ).await {
+        let _ = rpg_platform::save_io::write_state_snapshot(
+            &s.db,
+            user.id,
+            save_id,
+            &data,
+        ).await;
+    } else {
+        // 兜底:经 saver 闭包走 flush(纯内存 → false,不影响响应)
+        let _persisted = s.state_store.flush(&user_id).await;
+    }
+    // game-save-01: state field uses full payload matching Python _payload()
+    let payload = build_status_payload(&data, &s, user_id_num, &s.db).await;
     Ok(Json(json!({
         "ok": true,
         "state": payload,

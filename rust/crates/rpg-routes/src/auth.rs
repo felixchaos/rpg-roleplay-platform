@@ -46,7 +46,7 @@ pub fn router() -> Router<AppState> {
 /// 对应 Python `workspace.ensure_default(user_id)`:
 /// 确保用户至少有一个默认剧本和对应存档。
 /// 新用户注册/登录后调用,幂等(已有则跳过)。
-async fn ensure_default(pool: &sqlx::PgPool, user_id: i64) {
+pub(crate) async fn ensure_default(pool: &sqlx::PgPool, user_id: i64) {
     const BASE_TITLE: &str = "《我蕾穆丽娜不爱你》";
 
     // 取或建默认剧本。
@@ -88,31 +88,63 @@ async fn ensure_default(pool: &sqlx::PgPool, user_id: i64) {
     }
 
     // 取或建默认存档。
-    let save_exists = sqlx::query(
+    let save_row = sqlx::query(
         "select id from game_saves where user_id = $1 and script_id = $2 order by id limit 1",
     )
     .bind(user_id)
     .bind(script_id)
     .fetch_optional(pool)
-    .await
-    .map(|r| r.is_some())
-    .unwrap_or(false);
+    .await;
 
-    if !save_exists {
-        if let Err(e) = sqlx::query(
-            "insert into game_saves(user_id, script_id, title, state_path, state_snapshot) \
-             values ($1, $2, $3, $4, $5::jsonb)",
-        )
-        .bind(user_id)
-        .bind(script_id)
-        .bind("当前自动存档")
-        .bind("")
-        .bind("{}")
-        .execute(pool)
-        .await
-        {
-            tracing::warn!("ensure_default: create save failed: {e}");
+    let save_id: Option<i64> = match save_row {
+        Ok(Some(row)) => row.try_get("id").ok(),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!("ensure_default: query save failed: {e}");
+            return;
         }
+    };
+
+    if save_id.is_some() {
+        return; // 已有存档,跳过
+    }
+
+    // 构建初始 state snapshot(对齐 Python _read_state_snapshot → GameState.new())
+    let snapshot = {
+        let state = rpg_state::GameState::new(user_id.to_string());
+        serde_json::to_value(&state.data).unwrap_or_else(|_| serde_json::json!({}))
+    };
+
+    let new_save_id: i64 = match sqlx::query(
+        "insert into game_saves(user_id, script_id, title, state_path, state_snapshot) \
+         values ($1, $2, $3, $4, $5) returning id",
+    )
+    .bind(user_id)
+    .bind(script_id)
+    .bind("当前自动存档")
+    .bind("")
+    .bind(&snapshot)
+    .fetch_one(pool)
+    .await
+    {
+        Ok(row) => row.try_get("id").unwrap_or(0),
+        Err(e) => {
+            tracing::warn!("ensure_default: create save failed: {e}");
+            return;
+        }
+    };
+
+    if new_save_id == 0 {
+        return;
+    }
+
+    // seed_tree: 建 branch_commits root + branch_refs main(对齐 Python branches.seed_tree)
+    if let Err(e) = rpg_platform::branches::seed::seed_tree(pool, new_save_id, "").await {
+        tracing::warn!(
+            save_id = new_save_id,
+            error = %e,
+            "ensure_default: seed_tree failed"
+        );
     }
 }
 

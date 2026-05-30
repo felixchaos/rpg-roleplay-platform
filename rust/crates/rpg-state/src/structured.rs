@@ -547,6 +547,81 @@ pub fn extract_json_state_ops(text: &str) -> (Vec<Value>, String) {
     (ops, stripped_parts.concat())
 }
 
+/// Return player-facing narrative text without JSON state-op fences.
+///
+/// Corresponds to Python `strip_json_state_ops(text)`.
+pub fn strip_json_state_ops(text: &str) -> String {
+    extract_json_state_ops(text).1.trim().to_string()
+}
+
+/// Convert raw JSON state ops into human-readable item descriptions.
+///
+/// Each op is `{"op": "set", "path": "...", "value": ...}` or
+/// `{"op": "append", ...}` or `{"op": "question", "question": "..."}`.
+/// Returns a `Vec<String>` of readable labels matching Python's
+/// `apply_structured_updates` return format.
+pub fn ops_to_items(ops: &[Value]) -> Vec<String> {
+    ops.iter()
+        .filter_map(|op| {
+            let obj = op.as_object()?;
+            let kind = obj.get("op").and_then(|v| v.as_str()).unwrap_or("set");
+            match kind {
+                "question" => {
+                    let q = obj.get("question").and_then(|v| v.as_str()).unwrap_or("?");
+                    Some(format!("GM 询问: {q}"))
+                }
+                "hypothesis" => {
+                    let h = obj
+                        .get("hypothesis")
+                        .or_else(|| obj.get("value"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("...");
+                    Some(format!("推测: {h}"))
+                }
+                "confirm_hypothesis" | "reject_hypothesis" => {
+                    let id = obj.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                    let verb = if kind == "confirm_hypothesis" {
+                        "确认"
+                    } else {
+                        "否决"
+                    };
+                    Some(format!("{verb}推测 #{id}"))
+                }
+                _ => {
+                    // set / append / overwrite / merge / delete
+                    let path = obj.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                    let value = obj.get("value");
+                    let value_summary = match value {
+                        Some(Value::String(s)) => {
+                            let truncated: String = s.chars().take(40).collect();
+                            if s.chars().count() > 40 {
+                                format!("{truncated}...")
+                            } else {
+                                truncated
+                            }
+                        }
+                        Some(v) => {
+                            let s = v.to_string();
+                            let truncated: String = s.chars().take(40).collect();
+                            if s.chars().count() > 40 {
+                                format!("{truncated}...")
+                            } else {
+                                truncated
+                            }
+                        }
+                        None => String::new(),
+                    };
+                    if value_summary.is_empty() {
+                        Some(format!("{kind} {path}"))
+                    } else {
+                        Some(format!("{kind} {path} = {value_summary}"))
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
 fn has_op_key(v: &Value) -> bool {
     let Some(obj) = v.as_object() else {
         return false;

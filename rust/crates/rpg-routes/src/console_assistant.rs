@@ -26,10 +26,476 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio_stream::wrappers::ReceiverStream;
 
-use rpg_llm::pipeline::{ChatChunk, ChatMessage, ChatRequest, WireChatChunk};
+use rpg_llm::pipeline::{ChatChunk, ChatMessage, ChatRequest, ToolSchema, WireChatChunk};
 
 use crate::sse_metrics::{GuardedStream, SseConnectionGuard};
 use crate::{hello_payload, named_sse_event, require_user, AppState, ConsoleMessage, ResponseError};
+
+// ── stub tool executors (P0-10) ─────────────────────────────────────────────
+
+/// Stub tool executor: routes tool calls to existing Rust functions.
+///
+/// Returns `(ok: bool, result: Value)`.
+async fn execute_console_tool(
+    s: &AppState,
+    user_id: rpg_core::UserId,
+    tool_name: &str,
+    args: &Value,
+) -> (bool, Value) {
+    match tool_name {
+        "list_saves" | "list_my_saves" => {
+            match rpg_platform::save_io::list_saves_for_user(&s.db, user_id).await {
+                Ok(saves) => {
+                    let items: Vec<Value> = saves
+                        .iter()
+                        .map(|s| serde_json::to_value(s).unwrap_or(json!({})))
+                        .collect();
+                    (true, json!({"saves": items, "count": items.len()}))
+                }
+                Err(e) => (false, json!({"error": e.to_string()})),
+            }
+        }
+        "create_save" => {
+            let script_id = args
+                .get("script_id")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let title = args
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("新存档")
+                .to_string();
+            if script_id == 0 {
+                return (false, json!({"error": "script_id 必填"}));
+            }
+            let snapshot = rpg_platform::save_io::build_initial_snapshot(
+                &s.db,
+                user_id.into(),
+                script_id,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+            match rpg_platform::save_io::create_save(&s.db, user_id, script_id, &title, &snapshot)
+                .await
+            {
+                Ok(save) => {
+                    let val = serde_json::to_value(&save).unwrap_or(json!({}));
+                    (true, json!({"save": val}))
+                }
+                Err(e) => (false, json!({"error": e.to_string()})),
+            }
+        }
+        "activate_save" => {
+            let save_id = args.get("save_id").and_then(|v| v.as_i64()).unwrap_or(0);
+            if save_id == 0 {
+                return (false, json!({"error": "save_id 必填"}));
+            }
+            match rpg_platform::branches::activation::activate_save(
+                &s.db,
+                user_id.into(),
+                save_id,
+            )
+            .await
+            {
+                Ok(result) => (true, json!({"ok": result.ok, "save_id": result.save_id})),
+                Err(e) => (false, json!({"error": e.to_string()})),
+            }
+        }
+        "rename_save" => {
+            let save_id = args.get("save_id").and_then(|v| v.as_i64()).unwrap_or(0);
+            let title = args
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if save_id == 0 || title.is_empty() {
+                return (false, json!({"error": "save_id 和 title 必填"}));
+            }
+            match sqlx::query("UPDATE game_saves SET title = $1, updated_at = now() WHERE id = $2 AND user_id = $3")
+                .bind(&title)
+                .bind(save_id)
+                .bind(i64::from(user_id))
+                .execute(&s.db)
+                .await
+            {
+                Ok(r) => {
+                    if r.rows_affected() > 0 {
+                        (true, json!({"ok": true, "title": title}))
+                    } else {
+                        (false, json!({"error": "存档不存在或无权操作"}))
+                    }
+                }
+                Err(e) => (false, json!({"error": e.to_string()})),
+            }
+        }
+        "delete_save" => {
+            let save_id = args.get("save_id").and_then(|v| v.as_i64()).unwrap_or(0);
+            if save_id == 0 {
+                return (false, json!({"error": "save_id 必填"}));
+            }
+            match rpg_platform::save_io::delete_save(&s.db, user_id, save_id).await {
+                Ok(_) => (true, json!({"ok": true})),
+                Err(e) => (false, json!({"error": e.to_string()})),
+            }
+        }
+        "list_models" | "list_available_models" => {
+            let router = s.llm_router.read();
+            let cat = router
+                .catalog()
+                .map(|c| serde_json::to_value(c).unwrap_or(json!({})))
+                .unwrap_or(json!({}));
+            (true, json!({"models": cat}))
+        }
+        "set_model" | "select_model" => {
+            let api_id = args
+                .get("api_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let model_id = args
+                .get("model_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if api_id.is_empty() || model_id.is_empty() {
+                return (false, json!({"error": "api_id 和 model_id 必填"}));
+            }
+            // Mutate catalog selected, mirroring models.rs api_models_select
+            let mut router = s.llm_router.write();
+            if let Some(cat) = router.catalog().cloned() {
+                let mut new_cat = cat;
+                new_cat.selected = rpg_llm::Selected {
+                    api_id: api_id.clone(),
+                    model_id: model_id.clone(),
+                };
+                router.set_catalog(new_cat);
+                (true, json!({"ok": true, "api_id": api_id, "model_id": model_id}))
+            } else {
+                (false, json!({"error": "模型目录未初始化"}))
+            }
+        }
+        _ => (false, json!({"error": format!("未知工具: {tool_name}")})),
+    }
+}
+
+// ── console tool definitions (P0-10) ────────────────────────────────────────
+
+/// Hardcoded tool schemas for console assistant stub tools.
+/// These will be superseded by the real dispatcher registry when it's integrated.
+fn builtin_console_tool_schemas() -> Vec<ToolSchema> {
+    vec![
+        ToolSchema {
+            name: "list_saves".into(),
+            description: "列出当前用户的所有存档。".into(),
+            input_schema: json!({"type": "object", "properties": {}, "required": []}),
+            server_id: Some("console".into()),
+        },
+        ToolSchema {
+            name: "create_save".into(),
+            description: "创建新存档。需要 script_id 和 title。".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "script_id": {"type": "integer", "description": "剧本 ID"},
+                    "title": {"type": "string", "description": "存档标题"}
+                },
+                "required": ["script_id", "title"]
+            }),
+            server_id: Some("console".into()),
+        },
+        ToolSchema {
+            name: "activate_save".into(),
+            description: "激活指定存档为当前运行时。".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "save_id": {"type": "integer", "description": "存档 ID"}
+                },
+                "required": ["save_id"]
+            }),
+            server_id: Some("console".into()),
+        },
+        ToolSchema {
+            name: "rename_save".into(),
+            description: "重命名存档。".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "save_id": {"type": "integer", "description": "存档 ID"},
+                    "title": {"type": "string", "description": "新标题"}
+                },
+                "required": ["save_id", "title"]
+            }),
+            server_id: Some("console".into()),
+        },
+        ToolSchema {
+            name: "delete_save".into(),
+            description: "删除指定存档 (destructive, 需确认)。".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "save_id": {"type": "integer", "description": "存档 ID"}
+                },
+                "required": ["save_id"]
+            }),
+            server_id: Some("console".into()),
+        },
+        ToolSchema {
+            name: "list_models".into(),
+            description: "列出所有可用模型和 API。".into(),
+            input_schema: json!({"type": "object", "properties": {}, "required": []}),
+            server_id: Some("console".into()),
+        },
+        ToolSchema {
+            name: "select_model".into(),
+            description: "切换当前选用的 LLM 模型。".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "api_id": {"type": "string", "description": "API 标识"},
+                    "model_id": {"type": "string", "description": "模型标识"}
+                },
+                "required": ["api_id", "model_id"]
+            }),
+            server_id: Some("console".into()),
+        },
+    ]
+}
+
+/// Tools marked as destructive (require confirmation before execution).
+const DESTRUCTIVE_TOOLS: &[&str] = &["delete_save", "delete_saves"];
+
+fn is_destructive_tool(name: &str) -> bool {
+    DESTRUCTIVE_TOOLS.contains(&name)
+}
+
+// ── collect tool schemas (P0-11) ────────────────────────────────────────────
+
+/// Build the full tool list for the console assistant ChatRequest.
+///
+/// Sources:
+///   1. Builtin console tools (saves, models) — hardcoded schemas
+///   2. MCP tools from mcp_broker.discover_all_tools()
+///
+/// When the dispatcher registry lands in AppState, also add:
+///   3. Dispatcher tools via list_for_origin("console_assistant")
+fn collect_console_tools(s: &AppState) -> Vec<ToolSchema> {
+    let mut tools = builtin_console_tool_schemas();
+
+    // MCP tools from running servers
+    for entry in s.mcp_broker.discover_all_tools() {
+        let description = entry
+            .schema
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let input_schema = entry
+            .schema
+            .get("inputSchema")
+            .or_else(|| entry.schema.get("input_schema"))
+            .cloned()
+            .unwrap_or(json!({"type": "object", "properties": {}}));
+        tools.push(ToolSchema {
+            name: entry.qualified_name,
+            description,
+            input_schema,
+            server_id: Some(entry.server_id),
+        });
+    }
+
+    tools
+}
+
+// ── richer system prompt (P2-14) ────────────────────────────────────────────
+
+/// Build a rich system prompt including tool descriptions, page context, and save info.
+fn build_rich_system_prompt(
+    s: &AppState,
+    user_id: rpg_core::UserId,
+    page_context: Option<&Value>,
+    tools: &[ToolSchema],
+) -> String {
+    let mut prompt = CONSOLE_ASSISTANT_SYSTEM_RICH.to_string();
+
+    // Append available tool summary
+    if !tools.is_empty() {
+        prompt.push_str("\n\n可用工具:");
+        for t in tools {
+            let destructive_marker = if is_destructive_tool(&t.name) {
+                " [destructive, 需确认]"
+            } else {
+                ""
+            };
+            prompt.push_str(&format!(
+                "\n  - {}{}: {}",
+                t.name, destructive_marker, t.description
+            ));
+        }
+    }
+
+    // Current model info
+    {
+        let router = s.llm_router.read();
+        if let Some(cat) = router.catalog() {
+            prompt.push_str(&format!("\n\n当前模型: {}", cat.selected.model_id));
+        }
+    }
+
+    // Page context
+    if let Some(ctx) = page_context {
+        let ctx_str = serde_json::to_string(ctx).unwrap_or_default();
+        if ctx_str.len() > 2 && ctx_str != "null" {
+            prompt.push_str("\n\n当前页面上下文:");
+            if let Some(tab) = ctx.get("tab").and_then(|v| v.as_str()) {
+                prompt.push_str(&format!("\n  tab = {tab}"));
+            }
+            if let Some(save_id) = ctx.get("save_id") {
+                prompt.push_str(&format!("\n  save_id = {save_id}"));
+            }
+            if let Some(script_id) = ctx.get("script_id") {
+                prompt.push_str(&format!("\n  script_id = {script_id}"));
+            }
+            if let Some(note) = ctx.get("note").and_then(|v| v.as_str()) {
+                prompt.push_str(&format!("\n  note = {note}"));
+            }
+            // UI atlas
+            if let Some(atlas) = ctx.get("ui_atlas") {
+                if atlas.is_object() {
+                    let has_forms = atlas
+                        .get("forms")
+                        .and_then(|v| v.as_array())
+                        .map(|a| !a.is_empty())
+                        .unwrap_or(false);
+                    let has_modals = atlas
+                        .get("open_modals")
+                        .and_then(|v| v.as_array())
+                        .map(|a| !a.is_empty())
+                        .unwrap_or(false);
+                    if has_forms || has_modals {
+                        prompt.push_str(&render_ui_atlas_for_llm(atlas));
+                    }
+                }
+            }
+        }
+    } else {
+        prompt.push_str("\n\n当前页面: 未知。");
+    }
+
+    // Active save info (non-blocking: only uses cached state, won't load from DB)
+    let user_id_str = user_id.to_string();
+    if let Some(state_ref) = s.state_store.get(&user_id_str) {
+        let state = state_ref.read();
+        let state_val = serde_json::to_value(&*state).unwrap_or(json!({}));
+        if let Some(save_id) = state_val.get("save_id") {
+            prompt.push_str(&format!("\n\n当前激活存档 save_id = {save_id}"));
+        }
+        if let Some(title) = state_val.get("save_title").and_then(|v| v.as_str()) {
+            prompt.push_str(&format!(" (标题: {title})"));
+        }
+    }
+
+    prompt
+}
+
+/// Render UI atlas to LLM-friendly compact text (port of Python _render_ui_atlas_for_llm).
+fn render_ui_atlas_for_llm(atlas: &Value) -> String {
+    let mut lines = vec![String::new(), "ui_atlas (当前页面结构):".to_string()];
+
+    if let Some(page) = atlas.get("page").and_then(|v| v.as_str()) {
+        let label = atlas
+            .get("page_label")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let suffix = if label.is_empty() {
+            String::new()
+        } else {
+            format!(" ({label})")
+        };
+        lines.push(format!("  page = {page}{suffix}"));
+    }
+
+    if let Some(modals) = atlas.get("open_modals").and_then(|v| v.as_array()) {
+        if !modals.is_empty() {
+            let modal_strs: Vec<String> = modals
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| format!("\"{s}\"")))
+                .collect();
+            lines.push(format!("  open_modals = [{}]", modal_strs.join(", ")));
+        }
+    }
+
+    if let Some(forms) = atlas.get("forms").and_then(|v| v.as_array()) {
+        for f in forms.iter().take(5) {
+            let fid = f
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let title = f
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            lines.push(format!("  form '{fid}' ({title}):"));
+
+            if let Some(fields) = f.get("fields").and_then(|v| v.as_array()) {
+                for fld in fields.iter().take(20) {
+                    let key = fld
+                        .get("key")
+                        .or_else(|| fld.get("label"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
+                    let ftype = fld
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("text");
+                    let required = if fld
+                        .get("required")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    {
+                        " *"
+                    } else {
+                        ""
+                    };
+                    let val = fld.get("value");
+                    let val_str = match val {
+                        Some(v) if !v.is_null() && v.as_str().map(|s| !s.is_empty()).unwrap_or(true) => {
+                            format!(" = {v}")
+                        }
+                        _ => String::new(),
+                    };
+                    lines.push(format!("    - {key}{required} ({ftype}){val_str}"));
+                }
+            }
+
+            if let Some(actions) = f.get("top_actions").and_then(|v| v.as_array()) {
+                for act in actions.iter().take(6) {
+                    let lbl = act
+                        .get("label")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
+                    let disabled = if act
+                        .get("disabled")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    {
+                        " [disabled]"
+                    } else {
+                        ""
+                    };
+                    lines.push(format!("    -> button '{lbl}'{disabled}"));
+                }
+            }
+        }
+    }
+
+    lines.join("\n")
+}
 
 type SseResponse = Result<Sse<GuardedStream<ReceiverStream<Result<Event, Infallible>>>>, ResponseError>;
 
@@ -270,22 +736,22 @@ pub(crate) async fn api_console_assistant_chat(
         messages.push(ChatMessage::user(message.clone()));
     }
 
-    // CONSOLE-ASSISTANT-CHAT-MISSING-PAGE-CONTEXT: merge page_context into system prompt
-    let system_prompt = if let Some(page_ctx) = &body.page_context {
-        let ctx_str = serde_json::to_string(page_ctx).unwrap_or_default();
-        if ctx_str.len() > 2 && ctx_str != "null" {
-            format!("{}\n\n当前页面上下文:\n{}", CONSOLE_ASSISTANT_SYSTEM, ctx_str)
-        } else {
-            CONSOLE_ASSISTANT_SYSTEM.to_string()
-        }
-    } else {
-        CONSOLE_ASSISTANT_SYSTEM.to_string()
-    };
+    // P0-11: collect tool definitions for ChatRequest
+    let tools = collect_console_tools(&s);
+
+    // P2-14: build rich system prompt with tool descriptions, page context, save info
+    let system_prompt = build_rich_system_prompt(
+        &s,
+        user.id,
+        body.page_context.as_ref(),
+        &tools,
+    );
 
     let mut req = ChatRequest {
         model: model_id,
         system: Some(system_prompt),
         messages,
+        tools, // P0-11: send tool definitions to LLM
         max_tokens: Some(CONSOLE_ASSISTANT_MAX_TOKENS),
         stream: true,
         ..Default::default()
@@ -368,8 +834,9 @@ pub(crate) async fn api_console_assistant_chat(
                 break 'outer;
             }
 
-            // 处理每个 tool call
+            // 处理每个 tool call — P0-10 stub executors + P0-12 destructive confirmation
             let mut tool_results: Vec<ChatMessage> = Vec::new();
+            let mut hit_destructive = false;
             for tc_chunk in &tool_calls_this_round {
                 if let ChatChunk::ToolCall { id, name, input } = tc_chunk {
                     // 解析 server_id:tool_name (qualified: "server__tool")
@@ -387,13 +854,59 @@ pub(crate) async fn api_console_assistant_chat(
                         "args": input,
                     })))).await;
 
-                    // 调用 MCP broker
-                    let result = s_for_task
-                        .mcp_broker
-                        .call_tool(server_id, tool_name, input.clone(), 30)
-                        .await;
+                    // P0-12: destructive confirmation gate
+                    if is_destructive_tool(tool_name) {
+                        let pending_key = format!("{user_id_for_task}:{conv_id_for_task}:{id}");
+                        let pending_info = json!({
+                            "call_id": id,
+                            "tool": tool_name,
+                            "server_id": server_id,
+                            "arguments": input,
+                            "destructive": true,
+                        });
+                        s_for_task.console_pending_confirmations.insert(
+                            pending_key,
+                            pending_info,
+                        );
 
-                    let ok = result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                        // Emit confirmation_required SSE event
+                        let _ = tx.send(Ok(named_sse_event("confirmation_required", json!({
+                            "call_id": id,
+                            "tool": tool_name,
+                            "args": input,
+                            "description": format!("确认执行 {tool_name}?"),
+                            "destructive": true,
+                        })))).await;
+
+                        // Tell LLM the tool is pending confirmation
+                        let pending_text = format!(
+                            "[工具 {tool_name} 需要用户确认才能执行,等待 approve/reject]"
+                        );
+                        tool_results.push(ChatMessage::tool_result(id.clone(), pending_text));
+                        hit_destructive = true;
+                        break; // stop processing further tool calls this round
+                    }
+
+                    // P0-10: route to stub executor or MCP broker
+                    let (ok, result) = if server_id.is_empty() || server_id == "console" {
+                        // Try builtin stub executor first
+                        execute_console_tool(
+                            &s_for_task,
+                            user_id_for_task,
+                            tool_name,
+                            input,
+                        )
+                        .await
+                    } else {
+                        // MCP broker for external tools
+                        let r = s_for_task
+                            .mcp_broker
+                            .call_tool(server_id, tool_name, input.clone(), 30)
+                            .await;
+                        let mcp_ok = r.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                        (mcp_ok, r)
+                    };
+
                     let result_text = serde_json::to_string(&result).unwrap_or_default();
 
                     // 发送 tool_result SSE 事件
@@ -403,25 +916,17 @@ pub(crate) async fn api_console_assistant_chat(
                         "result": result,
                     })))).await;
 
-                    // 存储 pending confirmation key（用于 confirm endpoint 查找）
-                    let pending_key = format!("{user_id_for_task}:{conv_id_for_task}:{id}");
-                    s_for_task.console_pending_confirmations.insert(
-                        pending_key,
-                        json!({
-                            "call_id": id,
-                            "tool": tool_name,
-                            "server_id": server_id,
-                            "arguments": input,
-                            "result": result,
-                        }),
-                    );
-
                     tool_results.push(ChatMessage::tool_result(id.clone(), result_text));
                 }
             }
 
             // 把 tool results 追加进下一轮的 messages
             req.messages.extend(tool_results);
+
+            // P0-12: if a destructive tool was hit, break the loop — wait for user confirmation
+            if hit_destructive {
+                break 'outer;
+            }
         }
 
         // 收集 pending_confirmations 列表
@@ -441,11 +946,27 @@ pub(crate) async fn api_console_assistant_chat(
     Ok(Sse::new(GuardedStream::new(ReceiverStream::new(rx), guard)).keep_alive(KeepAlive::default()))
 }
 
-/// console_assistant 用的 system prompt(简化版)。
-const CONSOLE_ASSISTANT_SYSTEM: &str = "你是 RPG 控制台侧栏助手,帮玩家操作存档、查阅设定、解释规则。回答简明,优先用要点。";
+/// P2-14: 丰富版 system prompt — 移植自 Python console_assistant/prompts.py。
+/// 取代旧版简化版 CONSOLE_ASSISTANT_SYSTEM。
+const CONSOLE_ASSISTANT_SYSTEM_RICH: &str = r#"你是 RPG Platform 的侧栏控制台助手。不是游戏 GM, 不写故事、不推剧情。
+帮用户管理平台资源 (存档/角色卡/persona/剧本/设置/MCP)。
 
-/// console_assistant max_tokens。
-const CONSOLE_ASSISTANT_MAX_TOKENS: u32 = 600;
+工具都在 tools 列表里, description 写满了细节和示例 — 直接用。
+看到用户意图就调对应的工具, 不要绕弯。
+
+几条硬规则:
+1. 需要用户做选择时用结构化方式,不要裸列选项。
+2. 禁止自己编造 required 字段的值。用户没说就先问。
+3. "查看/列出/看看" → 直接调 list_* 工具,不要 navigate。
+4. "建角色卡" 是平台资产,跟"改剧情里玩家名"不同。
+5. 用户用相对指代时,直接用最近的/最新的,不要再问。
+6. tool_result 是唯一真相,禁止编造动作完成叙述。
+7. 删除/批量 destructive 前先 list 拿真实 ID,禁止凭猜测填 ID。
+
+中文, 简洁。"#;
+
+/// console_assistant max_tokens (P1-18: 600 → 1200)。
+const CONSOLE_ASSISTANT_MAX_TOKENS: u32 = 1200;
 
 /// POST /api/console_assistant/confirm — SSE(Wave 6-A:真接 LLM 续写)
 ///
@@ -537,9 +1058,14 @@ pub(crate) async fn api_console_assistant_confirm(
                 "approved": true,
             })))).await;
 
-            // 实际调用 MCP broker
-            let result = s.mcp_broker.call_tool(&server_id, &tool_name, arguments, 30).await;
-            let ok = result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            // P0-10: route to stub executor or MCP broker
+            let (ok, result) = if server_id.is_empty() || server_id == "console" {
+                execute_console_tool(&s, user.id, &tool_name, &arguments).await
+            } else {
+                let r = s.mcp_broker.call_tool(&server_id, &tool_name, arguments, 30).await;
+                let mcp_ok = r.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                (mcp_ok, r)
+            };
 
             // 发送 tool_result SSE 事件
             let _ = tx.send(Ok(named_sse_event("tool_result", json!({
@@ -599,10 +1125,22 @@ pub(crate) async fn api_console_assistant_confirm(
     if messages.is_empty() {
         messages.push(ChatMessage::user(decision_text.clone()));
     }
+
+    // P0-11: collect tool definitions for confirm path too
+    let tools = collect_console_tools(&s);
+    // P2-14: rich system prompt for confirm path
+    let system_prompt = build_rich_system_prompt(
+        &s,
+        user.id,
+        body.page_context.as_ref(),
+        &tools,
+    );
+
     let mut req = ChatRequest {
         model: model_id,
-        system: Some(CONSOLE_ASSISTANT_SYSTEM.to_string()),
+        system: Some(system_prompt),
         messages,
+        tools, // P0-11: include tool definitions
         max_tokens: Some(CONSOLE_ASSISTANT_MAX_TOKENS),
         stream: true,
         ..Default::default()
@@ -777,7 +1315,7 @@ mod tests {
     /// system prompt 与 max_tokens 常量保活。
     #[test]
     fn test_console_assistant_constants_alive() {
-        assert!(!CONSOLE_ASSISTANT_SYSTEM.is_empty());
+        assert!(!CONSOLE_ASSISTANT_SYSTEM_RICH.is_empty());
         const { assert!(CONSOLE_ASSISTANT_MAX_TOKENS > 0) };
     }
 }

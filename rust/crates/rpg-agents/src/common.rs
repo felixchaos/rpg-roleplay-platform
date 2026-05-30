@@ -322,6 +322,69 @@ pub async fn stream_text(
     Ok(s.boxed())
 }
 
+/// P1-8: Like `stream_text`, but also captures `ChatChunk::Usage` into a shared handle.
+///
+/// Returns `(text_stream, usage_handle)`. After the stream is fully consumed,
+/// `usage_handle.lock().await` contains the LLM-reported actual token usage
+/// (if the backend emitted a Usage chunk; otherwise stays `None`).
+pub async fn stream_text_with_usage(
+    llm: SharedLlm,
+    system: &str,
+    messages: &[ChatMessage],
+    max_tokens: usize,
+) -> AgentResult<(
+    BoxStream<'static, AgentResult<String>>,
+    Arc<tokio::sync::Mutex<Option<Usage>>>,
+)> {
+    let mut req = base_request(llm.as_ref(), system, messages, max_tokens);
+    req.stream = true;
+    let llm_clone = llm.clone();
+    let usage_slot: Arc<tokio::sync::Mutex<Option<Usage>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
+    let usage_writer = usage_slot.clone();
+    let (tx, rx) = tokio::sync::mpsc::channel::<AgentResult<String>>(16);
+    let handle = tokio::spawn(async move {
+        let mut stream = match llm_clone.stream_chat(req).await {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = tx.send(Err(AgentError::Llm(e.to_string()))).await;
+                return;
+            }
+        };
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(ChatChunk::Text(t)) => {
+                    if tx.send(Ok(t)).await.is_err() {
+                        return;
+                    }
+                }
+                Ok(ChatChunk::Usage(u)) => {
+                    *usage_writer.lock().await = Some(u);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    let _ = tx.send(Err(AgentError::Llm(e.to_string()))).await;
+                    return;
+                }
+            }
+        }
+    });
+    let guard = AbortOnDrop(handle);
+    let s = futures::stream::unfold(
+        (rx, guard),
+        |(mut rx, guard)| async move {
+            match rx.recv().await {
+                Some(item) => Some((item, (rx, guard))),
+                None => {
+                    drop(guard);
+                    None
+                }
+            }
+        },
+    );
+    Ok((s.boxed(), usage_slot))
+}
+
 /// native tool_use 入口。把 stream_chat 的 Text + ToolCall + Usage 合并成
 /// 一次 ToolCallResponse。
 pub async fn call_with_tools(

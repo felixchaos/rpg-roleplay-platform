@@ -22,11 +22,18 @@ use serde_json::Value;
 
 use crate::common::{
     call_text, call_with_tools, state_history_messages, state_short_summary, stream_text,
-    AgentResult, ChatMessage, GameState, SharedLlm, ToolSchema,
+    stream_text_with_usage,
+    AgentResult, ChatMessage, GameState, SharedLlm, ToolSchema, Usage,
 };
 use rpg_state::{apply_op, Op};
 use serde_json::json;
 use crate::context_agent::{ContextAgent, ContextAgentInput, Demand};
+
+/// Return type for streaming responses that also capture token usage.
+type StreamWithUsage = (
+    BoxStream<'static, AgentResult<String>>,
+    Arc<tokio::sync::Mutex<Option<Usage>>>,
+);
 use rpg_context::ContextContribution;
 use crate::extractor::{ExtractorAgent, ExtractorInput, ExtractorOutput};
 use crate::timeline_narrative_guard::{
@@ -79,6 +86,13 @@ pub enum GmEvent {
     StateOps { ops: Vec<Value> },
     /// 时间线 guard 触发的违规。
     GuardViolations { violations: Vec<Violation> },
+    /// P1-8: LLM 返回的实际 token 用量(来自 ChatChunk::Usage)。
+    Usage {
+        input_tokens: u32,
+        output_tokens: u32,
+        cache_read: u32,
+        reasoning_tokens: u32,
+    },
     /// 一轮结束。
     Done,
 }
@@ -144,7 +158,8 @@ impl Default for GmConfig {
         Self {
             default_max_tokens: DEFAULT_MAX_TOKENS,
             opening_max_tokens: OPENING_MAX_TOKENS,
-            max_tool_iterations: 3,
+            // P1-7: raised from 3 to 8 to allow deeper tool-use chains
+            max_tool_iterations: 8,
         }
     }
 }
@@ -274,6 +289,26 @@ impl GameMaster {
         .await
     }
 
+    /// P1-8: Like `respond_stream` but also captures LLM-reported token usage.
+    #[tracing::instrument(skip(self, state, retrieved), fields(action = "respond_stream_with_usage"))]
+    pub async fn respond_stream_with_usage(
+        &self,
+        user_input: &str,
+        retrieved: &str,
+        state: &GameState,
+    ) -> AgentResult<StreamWithUsage> {
+        let system = self.build_system(state).await;
+        let mut messages = state_history_messages(state);
+        messages.push(ChatMessage::user(self.turn_message(user_input, state, retrieved)));
+        stream_text_with_usage(
+            self.llm.clone(),
+            &system,
+            &messages,
+            self.config.default_max_tokens,
+        )
+        .await
+    }
+
     // ── 高层 step:一站式流式回路 ───────────────────────────
 
     /// 一次完整的 GM step:
@@ -313,16 +348,16 @@ impl GameMaster {
                 }
             };
 
-            // 2. respond_stream 累积叙事
+            // 2. respond_stream 累积叙事 (P1-8: with usage capture)
             // 重新读 state(curator 可能因为 clarifying_question 直接中止;
             // 本骨架不分支,直接进 GM)。
             let snapshot = state.read().await.clone();
             let mut narrative = String::new();
             match s
-                .respond_stream(&user_input, &retrieved, &snapshot)
+                .respond_stream_with_usage(&user_input, &retrieved, &snapshot)
                 .await
             {
-                Ok(mut stream) => {
+                Ok((mut stream, usage_slot)) => {
                     while let Some(chunk_res) = stream.next().await {
                         match chunk_res {
                             Ok(chunk) => {
@@ -339,6 +374,15 @@ impl GameMaster {
                                 break;
                             }
                         }
+                    }
+                    // P1-8: emit Usage event if the backend reported actual token counts
+                    if let Some(u) = usage_slot.lock().await.take() {
+                        tx.send(GmEvent::Usage {
+                            input_tokens: u.input_tokens,
+                            output_tokens: u.output_tokens,
+                            cache_read: u.cache_read,
+                            reasoning_tokens: u.reasoning_tokens,
+                        }).ok();
                     }
                 }
                 Err(e) => {

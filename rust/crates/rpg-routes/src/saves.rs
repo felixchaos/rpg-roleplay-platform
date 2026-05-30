@@ -85,6 +85,10 @@ async fn api_saves_list(
     Query(q): Query<PaginationQuery>,
 ) -> Result<impl IntoResponse, ResponseError> {
     let user = require_user(&state, &headers).await?;
+
+    // P0-7: 确保用户至少有默认存档(对齐 Python workspace.saves() 的 ensure_default)
+    crate::auth::ensure_default(&state.db, user.id.into()).await;
+
     let saves = rpg_platform::save_io::list_saves_for_user(&state.db, user.id)
         .await
         .map_err(ResponseError::from)?;

@@ -96,7 +96,8 @@ pub use script_overrides::{
 pub use state::{default_state, GameState, StateError, CURRENT_SCHEMA_VERSION};
 pub use store::{SharedState, StateStore};
 pub use structured::{
-    apply_structured_updates, extract_json_state_ops, StructuredError, UpdateResult,
+    apply_structured_updates, extract_json_state_ops, ops_to_items, strip_json_state_ops,
+    StructuredError, UpdateResult,
 };
 pub use timeline_jump::{
     clean_time_value, confirm_time_jump, is_time_key, looks_like_time_value,
