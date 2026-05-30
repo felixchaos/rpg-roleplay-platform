@@ -133,17 +133,6 @@ function PlatformApp() {
       <PlatformShellCS
         page={page}
         setPage={go}
-        assistantOpen={assistantOpen}
-        onToggleAssistant={() => setAssistantOpen((v) => !v)}
-        assistant={
-          <div className="pl-cs-tools">
-            <ConsoleAssistantPanel
-              open={true}
-              onClose={() => setAssistantOpen(false)}
-              pageContext={{ tab: 'platform.' + page }}
-            />
-          </div>
-        }
       >
         {body}
       </PlatformShellCS>

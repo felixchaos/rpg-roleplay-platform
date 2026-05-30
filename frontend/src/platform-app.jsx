@@ -3338,11 +3338,8 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
               </div>
             }
             utilities={[
-              { type: 'button', iconName: 'notification', title: '通知', ariaLabel: '通知', badge: false },
-              { type: 'button', iconName: 'status-info', title: '帮助', ariaLabel: '帮助' },
-              { type: 'button', iconName: 'settings', title: '设置', ariaLabel: '设置', onClick: () => { setPage('settings'); location.hash = '#settings'; } },
-              { type: 'button', iconName: 'refresh', title: '刷新', ariaLabel: '刷新平台数据', onClick: _csRefresh },
-              { type: 'button', iconName: 'gen-ai', text: '助手', ariaLabel: '控制台助手', onClick: onToggleAssistant },
+              { type: 'button', iconName: 'settings', title: '设置', ariaLabel: '设置', disableUtilityCollapse: true, onClick: () => { setPage('settings'); location.hash = '#settings'; } },
+              { type: 'button', iconName: 'refresh', title: '刷新', ariaLabel: '刷新平台数据', disableUtilityCollapse: true, onClick: _csRefresh },
               {
                 type: 'menu-dropdown',
                 text: reactiveUser.display_name || '未命名',
@@ -3365,11 +3362,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
         headerSelector="#pl-cs-topnav"
         navigationOpen={navOpen}
         onNavigationChange={({ detail }) => setNavOpen(detail.open)}
-        toolsHide={!assistant}
-        toolsOpen={!!assistantOpen}
-        onToolsChange={({ detail }) => { if (!detail.open && assistantOpen && onToggleAssistant) onToggleAssistant(); }}
-        tools={assistant}
-        toolsWidth={380}
+        toolsHide
         navigation={
           <CSSideNavigation
             header={{ text: _csActiveModule(page).label, href: '#' + _csActiveModule(page).pages[0] }}
