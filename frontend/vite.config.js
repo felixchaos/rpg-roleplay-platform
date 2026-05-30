@@ -20,6 +20,50 @@ export default defineConfig(({ mode }) => {
     // classic runtime 用 React.createElement 替代 automatic 的 _jsx()。
     plugins: [react({ jsxRuntime: 'classic' })],
 
+    // ── 永久根治 dev 黑屏 ────────────────────────────────────────────────
+    // 根因:Cloudscape 每个组件是独立子入口,Vite 默认懒发现依赖;运行中遇到
+    // 没预打包过的新组件导入 → 中途 re-optimize + 强制整页 reload,页面卡在
+    // reload 空窗 = 黑屏(日志 "new dependencies optimized... reloading")。
+    // 解法:把全部用到的子入口一次性列进 optimizeDeps.include,启动时全部预打包,
+    // 运行中不再 re-optimize。新增组件时把对应子路径加到这里即可。
+    optimizeDeps: {
+      include: [
+        'react', 'react-dom', 'react-dom/client',
+        '@cloudscape-design/global-styles',
+        '@cloudscape-design/components/theming',
+        '@cloudscape-design/components/alert',
+        '@cloudscape-design/components/app-layout',
+        '@cloudscape-design/components/badge',
+        '@cloudscape-design/components/box',
+        '@cloudscape-design/components/button',
+        '@cloudscape-design/components/button-dropdown',
+        '@cloudscape-design/components/cards',
+        '@cloudscape-design/components/column-layout',
+        '@cloudscape-design/components/container',
+        '@cloudscape-design/components/expandable-section',
+        '@cloudscape-design/components/file-upload',
+        '@cloudscape-design/components/form-field',
+        '@cloudscape-design/components/header',
+        '@cloudscape-design/components/input',
+        '@cloudscape-design/components/key-value-pairs',
+        '@cloudscape-design/components/modal',
+        '@cloudscape-design/components/progress-bar',
+        '@cloudscape-design/components/segmented-control',
+        '@cloudscape-design/components/select',
+        '@cloudscape-design/components/side-navigation',
+        '@cloudscape-design/components/space-between',
+        '@cloudscape-design/components/split-panel',
+        '@cloudscape-design/components/status-indicator',
+        '@cloudscape-design/components/table',
+        '@cloudscape-design/components/tabs',
+        '@cloudscape-design/components/text-filter',
+        '@cloudscape-design/components/textarea',
+        '@cloudscape-design/components/toggle',
+        '@cloudscape-design/components/top-navigation',
+        '@cloudscape-design/components/wizard',
+      ],
+    },
+
     server: {
       port: 5173,
       proxy: {
