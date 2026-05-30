@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import re
 
-# ─── 整行判定为广告 → 删除整行 (port AD_LINE_TESTS) ──────────────────────────
+# ─── 整行判定为广告 → 删除整行 ───────────────────────────────────────────────
+# port 自 sanitize.ts AD_LINE_TESTS + 合并原 chapter_splitter._strip_pirate_promo
+# 的盗版站规则(啃书/KenShu/版权归/转载于 等),确保清洗强度不弱于旧实现。
 AD_LINE_TESTS: list[re.Pattern] = [
     re.compile(r"https?://\S+", re.I),
     re.compile(r"www\.[A-Za-z0-9_.:/?=&%\-]+", re.I),
@@ -25,6 +27,14 @@ AD_LINE_TESTS: list[re.Pattern] = [
     re.compile(r"蔷薇后花园|黑沼泽俱乐部"),
     re.compile(r"AV片源|AVCAR|avcar", re.I),
     re.compile(r"广告"),
+    # —— 合并自原 _strip_pirate_promo(勿丢) ——
+    re.compile(r"啃书小说[网站]?|KenShu\.?CC?|kenshu\.cc", re.I),
+    re.compile(r"以下是.{0,12}小说[网站].{0,30}(?:收集|整理|采集)"),
+    re.compile(r"版权归.{0,30}(?:作者|出版社|所有)"),
+    re.compile(r"本书.{0,12}(?:转载|搬运|盗版|首发|连载)于"),
+    re.compile(r"(?:更多|最新)章节.{0,20}(?:请|尽在|访问|登陆|登录)"),
+    re.compile(r"(?:收藏本站|本站|笔趣|UU\s*看书|UC\s*浏览器|微信公众号).{0,40}(?:获取|追书|更新|阅读)"),
+    re.compile(r"PS[:：].{0,80}(?:推荐|月票|订阅|打赏)"),
 ]
 
 # ─── 行内删除匹配片段 (保留行本身) (port INLINE_CLEANERS) ────────────────────
