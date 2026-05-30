@@ -13,8 +13,13 @@ import '../worldbook-status-toast.js';
 import '../ui-atlas.js';
 import '../console-assistant-navigation.jsx';
 
+// Cloudscape 设计系统 + 暖色主题(UI 底座)
+import '@cloudscape-design/global-styles/index.css';
+import { installWarmTheme } from '../cloudscape-theme.js';
+installWarmTheme();
+
 // 组件模块 — named import(ESM 自动拉入传递依赖)
-import { PlatformShell, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, PL_NAV } from '../platform-app.jsx';
+import { PlatformShell, PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, PL_NAV } from '../platform-app.jsx';
 import { SavesPage } from '../pages/saves.jsx';
 import { ScriptsPage } from '../pages/scripts.jsx';
 import { CardsPage } from '../pages/cards.jsx';
@@ -101,22 +106,23 @@ function PlatformApp() {
 
   return (
     <>
-      <PlatformShell
+      <PlatformShellCS
         page={page}
         setPage={go}
         assistantOpen={assistantOpen}
-        onOpenAssistant={() => setAssistantOpen(true)}
         onToggleAssistant={() => setAssistantOpen((v) => !v)}
         assistant={
-          <ConsoleAssistantPanel
-            open={assistantOpen}
-            onClose={() => setAssistantOpen(false)}
-            pageContext={{ tab: 'platform.' + page }}
-          />
+          <div className="pl-cs-tools">
+            <ConsoleAssistantPanel
+              open={true}
+              onClose={() => setAssistantOpen(false)}
+              pageContext={{ tab: 'platform.' + page }}
+            />
+          </div>
         }
       >
         {body}
-      </PlatformShell>
+      </PlatformShellCS>
     </>
   );
 }

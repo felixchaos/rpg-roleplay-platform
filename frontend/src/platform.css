@@ -278,6 +278,12 @@
 .pl-assistant-toggle:hover { background: var(--panel-3); color: var(--text); }
 .pl-assistant-toggle.on { background: var(--accent-soft); border-color: var(--accent-edge); color: var(--accent); }
 
+/* 助手挂进 Cloudscape AppLayout 的 tools 抽屉:中和 cap-root 自带的定位/宽度 */
+.pl-cs-tools { height: 100%; }
+.pl-cs-tools .cap-root { position: static; height: 100%; width: 100%; border-left: none; box-shadow: none; }
+.pl-cs-tools .cap-root.cap-closed { width: 100%; }
+.pl-cs-tools .cap-resize-handle { display: none; }
+
 .pl-content { padding: 24px; overflow: auto; }
 .pl-stack { display: grid; gap: 20px; max-width: 1280px; }
 

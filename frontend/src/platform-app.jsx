@@ -10,6 +10,11 @@ import { MODELS_DATA } from './pages/settings.jsx';
 // platform-app 之前留了返回 null 的 stub 遮蔽它们 → "继续游戏"/"新建存档" 全失效。
 // PlatformShell(本文件)直接渲染这两个组件,必须从真实现 import,不能用 stub。
 import { ContinuePicker, NewGameModal } from './pages/saves.jsx';
+// Cloudscape shell(AWS 控制台架构 + 暖色主题)
+import CSTopNavigation from '@cloudscape-design/components/top-navigation';
+import CSAppLayout from '@cloudscape-design/components/app-layout';
+import CSSideNavigation from '@cloudscape-design/components/side-navigation';
+import CSInput from '@cloudscape-design/components/input';
 
 const PL_NAV = [
   { section: "工作台" },
@@ -3198,7 +3203,135 @@ function AuthPage() {
 // ScriptsPage / SavesPage / CardsPage / SettingsPage / BranchesPage / ContinuePicker /
 // NewGameModal / ConfidenceBar 现在分别在 pages/scripts.jsx / saves.jsx / cards.jsx /
 // settings.jsx 中定义并自己 Object.assign(window, ...)；这里不再列出，避免 ReferenceError。
-export { PlatformShell, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData, useShellChrome };
+/* ── Cloudscape shell(AWS 控制台架构 + 暖色主题)─────────────────────────
+   与旧 PlatformShell 同 props 接口,entry 直接替换。复用 ToastStack /
+   ContinuePicker / UnifiedSearch / useReactiveUser / usePlatformData。 */
+function _csNavItems() {
+  return [
+    { type: 'link', text: '主页', href: '#profile' },
+    { type: 'expandable-link-group', text: '剧本', href: '#scripts', items: [
+      { type: 'link', text: '剧本管理', href: '#scripts' },
+      { type: 'link', text: '导入剧本', href: '#scripts-import' },
+    ] },
+    { type: 'link', text: '冒险模组', href: '#modules' },
+    { type: 'expandable-link-group', text: '开始游戏', href: '#saves', items: [
+      { type: 'link', text: '存档目录', href: '#saves' },
+      { type: 'link', text: '分支树', href: '#saves-branches' },
+    ] },
+    { type: 'expandable-link-group', text: '角色卡', href: '#cards', items: [
+      { type: 'link', text: '用户角色卡', href: '#cards' },
+      { type: 'link', text: 'NPC 角色卡', href: '#cards-npc' },
+    ] },
+    { type: 'link', text: '库', href: '#library' },
+    { type: 'divider' },
+    { type: 'link', text: '设置', href: '#settings' },
+    { type: 'link', text: '用量', href: '#usage' },
+    { type: 'link', text: '插件', href: '#plugins' },
+    { type: 'link', text: 'MCP', href: '#mcp' },
+    { type: 'link', text: 'Skill', href: '#skills' },
+    { type: 'link', text: 'API', href: '#apis' },
+  ];
+}
+
+async function _csRefresh() {
+  try {
+    window.__apiToast?.('正在刷新…', { kind: 'info', duration: 1200 });
+    if (window.__refreshPlatform) await window.__refreshPlatform();
+    else {
+      const p = await window.api.platform.info();
+      window.MOCK_PLATFORM = p && p.platform ? p.platform : (p || window.MOCK_PLATFORM);
+      window.dispatchEvent(new CustomEvent('rpg-data-ready'));
+    }
+    window.__apiToast?.('已刷新', { kind: 'ok', duration: 1600 });
+  } catch (e) { window.__apiToast?.('刷新失败', { kind: 'danger', detail: e?.message }); }
+}
+
+function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, onToggleAssistant }) {
+  const platform = usePlatformData();
+  const reactiveUser = useReactiveUser();
+  const [continueState, setContinueState] = useStatePL({ open: false, save: null, nodeId: null });
+  const [searchOpen, setSearchOpen] = useStatePL(false);
+  const [navOpen, setNavOpen] = useStatePL(true);
+  const [chrome, setChromeState] = useStatePL({});
+  const chromeApi = React.useMemo(() => ({ set: (c) => setChromeState(c || {}), clear: () => setChromeState({}) }), []);
+  void chrome;
+  useEffectPL(() => { setChromeState({}); }, [page]);
+
+  useEffectPL(() => {
+    window.__openContinue = (save, nodeId) => setContinueState({ open: true, save: save || platform.saves[0], nodeId: nodeId || null });
+    return () => { delete window.__openContinue; };
+  }, [platform.saves]);
+
+  const onUserMenu = ({ detail }) => {
+    const id = detail.id;
+    if (id === 'signout') {
+      (async () => { try { await window.api?.auth?.logout?.(); } catch (_) {} location.replace('Login.html'); })();
+    } else { setPage(id); location.hash = '#' + id; }
+  };
+
+  return (
+    <>
+      <div id="pl-cs-topnav" style={{ position: 'sticky', top: 0, zIndex: 1002 }}>
+        <CSTopNavigation
+          identity={{ href: '#profile', title: 'RPG Roleplay', onFollow: (e) => { e.preventDefault(); setPage('profile'); } }}
+          search={
+            <div onClick={() => setSearchOpen(true)} style={{ cursor: 'pointer' }}>
+              <CSInput type="search" placeholder="搜索剧本 / 存档 / 角色 · ⌘K" value="" readOnly ariaLabel="搜索" />
+            </div>
+          }
+          utilities={[
+            { type: 'button', iconName: 'refresh', title: '刷新', ariaLabel: '刷新平台数据', onClick: _csRefresh },
+            { type: 'button', iconName: 'gen-ai', text: '助手', ariaLabel: '控制台助手', onClick: onToggleAssistant },
+            {
+              type: 'menu-dropdown',
+              text: reactiveUser.display_name || '未命名',
+              description: `@${reactiveUser.username || '—'} · ${reactiveUser.role || ''}`,
+              iconName: 'user-profile',
+              items: [
+                { id: 'me', text: '个人主页' },
+                { id: 'me-edit', text: '编辑资料' },
+                { id: 'me-settings', text: '用户设置' },
+                { id: 'signout', text: '登出' },
+              ],
+              onItemClick: onUserMenu,
+            },
+          ]}
+        />
+      </div>
+
+      <CSAppLayout
+        headerSelector="#pl-cs-topnav"
+        navigationOpen={navOpen}
+        onNavigationChange={({ detail }) => setNavOpen(detail.open)}
+        toolsHide={!assistant}
+        toolsOpen={!!assistantOpen}
+        onToolsChange={({ detail }) => { if (!detail.open && assistantOpen && onToggleAssistant) onToggleAssistant(); }}
+        tools={assistant}
+        toolsWidth={380}
+        navigation={
+          <CSSideNavigation
+            header={{ text: '工作台', href: '#profile' }}
+            activeHref={'#' + page}
+            onFollow={(e) => { e.preventDefault(); const id = (e.detail.href || '').slice(1); if (id) { setPage(id); location.hash = '#' + id; } }}
+            items={_csNavItems()}
+          />
+        }
+        content={
+          <ShellChromeCtx.Provider value={chromeApi}>
+            {children}
+          </ShellChromeCtx.Provider>
+        }
+      />
+
+      <ToastStack />
+      <ContinuePicker open={continueState.open} save={continueState.save} focusedNodeId={continueState.nodeId}
+        onClose={() => setContinueState({ open: false, save: null, nodeId: null })} />
+      <UnifiedSearch open={searchOpen} onClose={() => setSearchOpen(false)} setPage={setPage} />
+    </>
+  );
+}
+
+export { PlatformShell, PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData, useShellChrome };
 
 // ──────────────────────────────────────────────────────────────────
 // 以下函数本体已拆分到 pages/cards.jsx / pages/saves.jsx /
