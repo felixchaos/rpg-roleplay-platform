@@ -50,18 +50,169 @@ pub fn router() -> Router<AppState> {
         // embed (stub)
         .route("/api/scripts/:script_id/embed", get(api_script_embed_get).post(api_script_embed_post))
         .route("/api/scripts/:script_id/embed/status", get(api_script_embed_status))
-        // import 状态 (stub)
-        .route("/api/scripts/:script_id/import-budget", get(api_stub_get))
-        .route("/api/scripts/:script_id/import-pipeline", get(api_stub_get))
-        .route("/api/scripts/:script_id/import-status", get(api_stub_get))
-        // export-pack (stub)
-        .route("/api/scripts/:script_id/export-pack", get(api_stub_get))
+        // import 状态
+        .route("/api/scripts/:script_id/import-budget", get(api_import_status_get))
+        .route("/api/scripts/:script_id/import-pipeline", get(api_import_status_get))
+        .route("/api/scripts/:script_id/import-status", get(api_import_status_get))
+        // export-pack
+        .route("/api/scripts/:script_id/export-pack", get(api_export_pack))
 }
 
-// ── 通用 stub helper ─────────────────────────────────────────────────────────
+// ── GET /api/scripts/{script_id}/import-{budget,pipeline,status} ────────────
+//
+// 三个路由复用同一个 handler:查 import_jobs 表取最近一条 job。
 
-async fn api_stub_get() -> Json<Value> {
-    Json(json!({"ok": false, "error": "not yet implemented"}))
+async fn api_import_status_get(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(script_id): Path<i64>,
+) -> Result<Json<Value>, ResponseError> {
+    let user = require_user(&state, &headers).await?;
+
+    let owned = sqlx::query_scalar::<_, i64>(
+        "select 1::bigint from scripts where id = $1 and owner_id = $2",
+    )
+    .bind(script_id)
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    if owned.is_none() {
+        return Ok(Json(json!({"ok": false, "error": "无权访问该剧本"})));
+    }
+
+    let row = sqlx::query(
+        r#"
+        SELECT job_id, status, stage, stage_progress, stage_total,
+               overall_progress, overall_total, budget_estimate, usage_actual,
+               stages, error, started_at, finished_at, created_at, kind
+        FROM import_jobs
+        WHERE script_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(script_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    match row {
+        None => Ok(Json(json!({"ok": true, "status": "none"}))),
+        Some(r) => Ok(Json(json!({
+            "ok": true,
+            "job_id": r.try_get::<String, _>("job_id").unwrap_or_default(),
+            "status": r.try_get::<String, _>("status").unwrap_or_default(),
+            "stage": r.try_get::<String, _>("stage").unwrap_or_default(),
+            "stage_progress": r.try_get::<i32, _>("stage_progress").unwrap_or(0),
+            "stage_total": r.try_get::<i32, _>("stage_total").unwrap_or(0),
+            "overall_progress": r.try_get::<i32, _>("overall_progress").unwrap_or(0),
+            "overall_total": r.try_get::<i32, _>("overall_total").unwrap_or(5),
+            "budget_estimate": r.try_get::<Value, _>("budget_estimate").unwrap_or(json!({})),
+            "usage_actual": r.try_get::<Value, _>("usage_actual").unwrap_or(json!({})),
+            "stages": r.try_get::<Value, _>("stages").unwrap_or(json!([])),
+            "error": r.try_get::<String, _>("error").unwrap_or_default(),
+            "started_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("started_at").unwrap_or_default(),
+            "finished_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("finished_at").unwrap_or_default(),
+            "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok(),
+            "kind": r.try_get::<String, _>("kind").unwrap_or_default(),
+        }))),
+    }
+}
+
+// ── GET /api/scripts/{script_id}/export-pack ─────────────────────────────────
+//
+// 返回剧本完整 JSON 包:script meta + chapters + character_cards + worldbook_entries。
+
+async fn api_export_pack(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(script_id): Path<i64>,
+) -> Result<Json<Value>, ResponseError> {
+    let user = require_user(&state, &headers).await?;
+
+    let script_row = sqlx::query(
+        "SELECT id, title, description, source_path, chapter_count, word_count, created_at, updated_at \
+         FROM scripts WHERE id = $1 AND owner_id = $2",
+    )
+    .bind(script_id)
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    let Some(sr) = script_row else {
+        return Ok(Json(json!({"ok": false, "error": "无权访问该剧本"})));
+    };
+
+    let chapters = sqlx::query(
+        "SELECT chapter_index, title, volume_title, content, word_count \
+         FROM script_chapters WHERE script_id = $1 ORDER BY chapter_index",
+    )
+    .bind(script_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    let characters = sqlx::query(
+        "SELECT name, identity, appearance, personality, speech_style, \
+                current_status, secrets, sample_dialogue, enabled, priority \
+         FROM character_cards WHERE script_id = $1 ORDER BY priority DESC",
+    )
+    .bind(script_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    let worldbook = sqlx::query(
+        "SELECT title, content, keys, priority, enabled, insertion_position \
+         FROM worldbook_entries WHERE script_id = $1 ORDER BY priority DESC",
+    )
+    .bind(script_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "script": {
+            "id": sr.try_get::<i64, _>("id").unwrap_or(0),
+            "title": sr.try_get::<String, _>("title").unwrap_or_default(),
+            "description": sr.try_get::<String, _>("description").unwrap_or_default(),
+            "chapter_count": sr.try_get::<i32, _>("chapter_count").unwrap_or(0),
+            "word_count": sr.try_get::<i32, _>("word_count").unwrap_or(0),
+            "created_at": sr.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok(),
+            "updated_at": sr.try_get::<chrono::DateTime<chrono::Utc>, _>("updated_at").ok(),
+        },
+        "chapters": chapters.iter().map(|r| json!({
+            "chapter_index": r.try_get::<i32, _>("chapter_index").unwrap_or(0),
+            "title": r.try_get::<String, _>("title").unwrap_or_default(),
+            "volume_title": r.try_get::<String, _>("volume_title").unwrap_or_default(),
+            "content": r.try_get::<String, _>("content").unwrap_or_default(),
+            "word_count": r.try_get::<i32, _>("word_count").unwrap_or(0),
+        })).collect::<Vec<_>>(),
+        "character_cards": characters.iter().map(|r| json!({
+            "name": r.try_get::<String, _>("name").unwrap_or_default(),
+            "identity": r.try_get::<String, _>("identity").unwrap_or_default(),
+            "appearance": r.try_get::<String, _>("appearance").unwrap_or_default(),
+            "personality": r.try_get::<String, _>("personality").unwrap_or_default(),
+            "speech_style": r.try_get::<String, _>("speech_style").unwrap_or_default(),
+            "current_status": r.try_get::<String, _>("current_status").unwrap_or_default(),
+            "secrets": r.try_get::<String, _>("secrets").unwrap_or_default(),
+            "sample_dialogue": r.try_get::<Value, _>("sample_dialogue").unwrap_or(json!([])),
+            "enabled": r.try_get::<bool, _>("enabled").unwrap_or(true),
+            "priority": r.try_get::<i32, _>("priority").unwrap_or(100),
+        })).collect::<Vec<_>>(),
+        "worldbook_entries": worldbook.iter().map(|r| json!({
+            "title": r.try_get::<String, _>("title").unwrap_or_default(),
+            "content": r.try_get::<String, _>("content").unwrap_or_default(),
+            "keys": r.try_get::<Value, _>("keys").unwrap_or(json!([])),
+            "priority": r.try_get::<i32, _>("priority").unwrap_or(50),
+            "enabled": r.try_get::<bool, _>("enabled").unwrap_or(true),
+            "insertion_position": r.try_get::<String, _>("insertion_position").unwrap_or_default(),
+        })).collect::<Vec<_>>(),
+    })))
 }
 
 // ── GET /api/scripts ─────────────────────────────────────────────────────────
@@ -1032,34 +1183,99 @@ async fn api_script_upsert_character_card(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(script_id): Path<i64>,
-    Json(_body): Json<Value>,
+    Json(body): Json<Value>,
 ) -> Result<Json<Value>, ResponseError> {
     let user = require_user(&state, &headers).await?;
-    let _ = (state, script_id, user);
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    // 验证归属
+    let owned = sqlx::query_scalar::<_, i64>("select 1::bigint from scripts where id = $1 and owner_id = $2")
+        .bind(script_id).bind(user.id).fetch_optional(&state.db).await
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+    if owned.is_none() { return Ok(Json(json!({"ok": false, "error": "无权访问该剧本"}))); }
+
+    let card_id = body.get("id").and_then(|v| v.as_i64());
+    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
+    if name.is_empty() { return Err(ResponseError::bad_request("name 必填")); }
+
+    let identity = body.get("identity").and_then(|v| v.as_str()).unwrap_or("");
+    let appearance = body.get("appearance").and_then(|v| v.as_str()).unwrap_or("");
+    let personality = body.get("personality").and_then(|v| v.as_str()).unwrap_or("");
+    let speech_style = body.get("speech_style").and_then(|v| v.as_str()).unwrap_or("");
+    let secrets = body.get("secrets").and_then(|v| v.as_str()).unwrap_or("");
+    let priority = body.get("priority").and_then(|v| v.as_i64()).unwrap_or(100) as i32;
+    let enabled = body.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+
+    let row = if let Some(cid) = card_id {
+        // UPDATE
+        sqlx::query(
+            "UPDATE character_cards SET name=$1, identity=$2, appearance=$3, personality=$4, \
+             speech_style=$5, secrets=$6, priority=$7, enabled=$8 \
+             WHERE id=$9 AND script_id=$10 RETURNING id"
+        )
+        .bind(name).bind(identity).bind(appearance).bind(personality)
+        .bind(speech_style).bind(secrets).bind(priority).bind(enabled)
+        .bind(cid).bind(script_id)
+        .fetch_optional(&state.db).await
+        .map_err(|e| ResponseError::internal(e.to_string()))?
+    } else {
+        // INSERT — book_id 用 0(无 books 表外键依赖时)
+        Some(sqlx::query(
+            "INSERT INTO character_cards(book_id, script_id, name, identity, appearance, personality, \
+             speech_style, secrets, priority, enabled) \
+             VALUES (0, $1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id"
+        )
+        .bind(script_id).bind(name).bind(identity).bind(appearance).bind(personality)
+        .bind(speech_style).bind(secrets).bind(priority).bind(enabled)
+        .fetch_one(&state.db).await
+        .map_err(|e| ResponseError::internal(e.to_string()))?)
+    };
+
+    let new_id = row.map(|r| r.try_get::<i64, _>("id").unwrap_or(0)).unwrap_or(0);
+    Ok(Json(json!({"ok": true, "id": new_id})))
 }
 
-// ── POST /api/scripts/{script_id}/character-cards/{card_id}/delete (stub) ────
+// ── POST /api/scripts/{script_id}/character-cards/{card_id}/delete ────
 
 async fn api_script_delete_character_card(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((_script_id, _card_id)): Path<(i64, i64)>,
+    Path((script_id, card_id)): Path<(i64, i64)>,
 ) -> Result<Json<Value>, ResponseError> {
-    require_user(&state, &headers).await?;
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    let user = require_user(&state, &headers).await?;
+    let owned = sqlx::query_scalar::<_, i64>("select 1::bigint from scripts where id = $1 and owner_id = $2")
+        .bind(script_id).bind(user.id).fetch_optional(&state.db).await
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+    if owned.is_none() { return Err(ResponseError::forbidden("无权访问该剧本")); }
+
+    let deleted = sqlx::query("DELETE FROM character_cards WHERE id = $1 AND script_id = $2")
+        .bind(card_id).bind(script_id)
+        .execute(&state.db).await
+        .map(|r| r.rows_affected())
+        .unwrap_or(0);
+
+    Ok(Json(json!({"ok": true, "deleted": deleted > 0})))
 }
 
-// ── POST /api/scripts/{script_id}/character-cards/{card_id}/enabled (stub) ───
+// ── POST /api/scripts/{script_id}/character-cards/{card_id}/enabled ───
 
 async fn api_script_card_enabled(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((_script_id, _card_id)): Path<(i64, i64)>,
-    Json(_body): Json<Value>,
+    Path((script_id, card_id)): Path<(i64, i64)>,
+    Json(body): Json<Value>,
 ) -> Result<Json<Value>, ResponseError> {
-    require_user(&state, &headers).await?;
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    let user = require_user(&state, &headers).await?;
+    let owned = sqlx::query_scalar::<_, i64>("select 1::bigint from scripts where id = $1 and owner_id = $2")
+        .bind(script_id).bind(user.id).fetch_optional(&state.db).await
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+    if owned.is_none() { return Err(ResponseError::forbidden("无权访问该剧本")); }
+
+    let enabled = body.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+    sqlx::query("UPDATE character_cards SET enabled = $1 WHERE id = $2 AND script_id = $3")
+        .bind(enabled).bind(card_id).bind(script_id)
+        .execute(&state.db).await
+        .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    Ok(Json(json!({"ok": true, "card_id": card_id, "enabled": enabled})))
 }
 
 // ── GET /api/scripts/{script_id}/worldbook ───────────────────────────────────
@@ -1506,8 +1722,24 @@ async fn api_script_recommend_identity(
         return Ok(Json(json!({"ok": false, "error": "无权访问该剧本"})));
     }
 
-    // LLM 推荐身份:stub — 依赖 console_assistant dispatch,暂未移植
-    Ok(Json(json!({"ok": false, "error": "not yet implemented"})))
+    // 简化实现:取前 3 张启用的角色卡 name/identity 作为推荐(不调 LLM)
+    let cards = sqlx::query(
+        "SELECT name, identity FROM character_cards \
+         WHERE script_id = $1 AND enabled = true \
+         ORDER BY priority DESC \
+         LIMIT 3",
+    )
+    .bind(script_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| ResponseError::internal(e.to_string()))?;
+
+    let recommendations: Vec<Value> = cards.iter().map(|r| json!({
+        "name": r.try_get::<String, _>("name").unwrap_or_default(),
+        "identity": r.try_get::<String, _>("identity").unwrap_or_default(),
+    })).collect();
+
+    Ok(Json(json!({"ok": true, "recommendations": recommendations})))
 }
 
 // ── POST /api/scripts/{script_id}/chapters/merge ────────────────────────────
