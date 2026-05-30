@@ -304,3 +304,40 @@ async def api_save_anchors_reseed(request: Request, save_id: int, user=Depends(r
             {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
             status_code=500,
         )
+
+
+# ── Phase F/W6: 创建引导 + 游戏内设置(读 schema/设置,写 apply 锁死 enforcement)──
+@router.get("/api/saves/{save_id}/settings")
+async def api_save_settings_get(save_id: int, user=Depends(require_user)):
+    """读当前存档设置 + 字段 schema(前端向导/设置面板用)。"""
+    from gm_serving import settings as _set
+    with connect() as db:
+        owned = db.execute(
+            "select 1 from game_saves where id=%s and user_id=%s", (save_id, user["id"]),
+        ).fetchone()
+        if not owned:
+            return json_response({"ok": False, "error": "无权访问该存档"}, status_code=403)
+        current = _set.read_settings(db, save_id)
+    return json_response({"ok": True, "settings": current, "schema": _set.schema()})
+
+
+@router.patch("/api/saves/{save_id}/settings")
+async def api_save_settings_patch(request: Request, save_id: int, user=Depends(require_user)):
+    """写设置(apply_settings:建档可设锁死项,游戏中锁死项拒改+非法值拒)。
+
+    Body: {"updates": {...}, "is_create": bool}
+    """
+    from gm_serving import settings as _set
+    with connect() as db:
+        owned = db.execute(
+            "select 1 from game_saves where id=%s and user_id=%s", (save_id, user["id"]),
+        ).fetchone()
+        if not owned:
+            return json_response({"ok": False, "error": "无权访问该存档"}, status_code=403)
+        try:
+            body = await request.json()
+        except Exception:
+            return json_response({"ok": False, "error": "body 必须是合法 JSON"}, status_code=400)
+        updates = body.get("updates") if isinstance(body.get("updates"), dict) else {}
+        res = _set.apply_settings(db, save_id, updates, is_create=bool(body.get("is_create")))
+    return json_response({"ok": True, **res})
