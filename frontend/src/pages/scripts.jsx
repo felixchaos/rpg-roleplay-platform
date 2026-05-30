@@ -8,6 +8,7 @@ import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL,
 import { Icon } from '../game-icons.jsx';
 import { PromptModal, usePlatformData, fmtBytes, fmtN } from '../platform-app.jsx';
 import { NewGameModal } from './saves.jsx';
+import { ScriptReview } from './script-review.jsx';
 
 function ScriptPreviewModal({ open, busy, data, rule, onClose, onRetryRule, onConfirm }) {
   if (!open) return null;
@@ -284,6 +285,7 @@ function ScriptsListView() {
   // task 52：之前 onPreview 只 alert 第一章前 400 字，章节多了无法浏览/编辑。
   // 改成开 ChaptersModal —— 真正展示章节列表 + 内容预览 + 重命名 + 重切分。
   const [chaptersOpen, setChaptersOpen] = useStatePL(null); // script row
+  const [reviewScript, setReviewScript] = useStatePL(null); // Phase E.1: KB 复核 modal
 
   return (
     <section className="pl-sec" data-cap-anchor="scripts.list">
@@ -339,6 +341,9 @@ function ScriptsListView() {
                 <button className="iconbtn" data-tip="剧本覆盖设定 (overrides)" onClick={() => setOverridesScript(s)}>
                   <Icon name="edit" size={13} />
                 </button>
+                <button className="iconbtn" data-tip="KB 复核 — 提取的规范实体/世界线/摄入质量" onClick={() => setReviewScript(s)}>
+                  <Icon name="info" size={13} />
+                </button>
                 {/* task 51: 向量化按钮 — 触发 Vertex text-embedding-004 + pgvector
                     pipeline。进度从 embedStatus[s.id] 拿,显示 "建立向量索引" /
                     "向量化中 N%" / "已建索引"。 */}
@@ -380,6 +385,20 @@ function ScriptsListView() {
       </table>
       <ChaptersModal script={chaptersOpen} onClose={() => setChaptersOpen(null)} onChanged={reload} />
       <OverridesModal script={overridesScript} onClose={() => setOverridesScript(null)} />
+      {reviewScript && (
+        <div className="pl-modal-backdrop" onClick={() => setReviewScript(null)}>
+          <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{ width: "min(900px, 100%)", maxHeight: "85vh", overflow: "auto" }}>
+            <header className="pl-modal-head">
+              <div>
+                <div className="pl-modal-eyebrow">KB 复核 · 提取结果</div>
+                <h2 className="pl-modal-title">{reviewScript.title || `剧本 ${reviewScript.id}`}</h2>
+              </div>
+              <button className="iconbtn" onClick={() => setReviewScript(null)} data-tip="关闭"><Icon name="close" size={14} /></button>
+            </header>
+            <ScriptReview scriptId={reviewScript.id} />
+          </div>
+        </div>
+      )}
       {/* Codex P0-2 修复:基于此剧本"新建存档"流。无现成 save 时弹这个 modal,
           走 window.__createAndEnterSave 原子流 (POST /api/saves → activate → 跳页),
           不再走 ContinuePicker 假 save 跳过建档的旧路径。 */}
