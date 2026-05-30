@@ -296,12 +296,20 @@ async def run_context_phase(
     # 通过参数注入可被测试 monkeypatch (test_set_persists_on_gm_failure 模拟 504)。
     # 调用方传 app.run_context_agent → 那里被 patch 时这里能拿到 patched 版本。
     _rca = run_context_agent_fn or run_context_agent
+    # task: harness 适配统一 — 不再透传 llm_curator 回调；
+    # 由 context_agent 内部走 agents._harness.call_agent_json,
+    # 用 sub_gm 当前 backend 的 api_id+model 作 override(provider 透明 +
+    # Anthropic 强 schema)。旧 llm_curator 参数仍保留兼容外部测试 monkeypatch。
+    _sub_api = getattr(sub_gm, "api_id", None)
+    _sub_backend = getattr(sub_gm, "_backend", None)
+    _sub_model = getattr(_sub_backend, "model_name", None) if _sub_backend else None
     for item in _rca(
         state, message_for_model,
         stop_requested=stop_event.is_set,
-        llm_curator=sub_gm.curate_context,
         user_id=api_user["id"] if api_user else None,
         script_id=active_script_id(api_user),
+        api_id_override=_sub_api,
+        model_override=_sub_model,
     ):
         if item["type"] == "step":
             yield ("agent", item["step"])
@@ -757,12 +765,20 @@ async def run_gm_phase(
         from core.config import enable_black_swan as _enable_black_swan
         if _enable_black_swan():
             from agents.black_swan_agent import maybe_trigger as _maybe_trigger
+            # task: harness 适配 — black_swan_agent 自带 _harness 通道,
+            # 沿用 sub_gm 的 api_id/model(便宜模型),不再需要 caller 注入 llm_caller。
+            _sub_gm = getattr(ctx, "sub_gm", None)
+            _swan_api = getattr(_sub_gm, "api_id", None) if _sub_gm else None
+            _swan_backend = getattr(_sub_gm, "_backend", None) if _sub_gm else None
+            _swan_model = getattr(_swan_backend, "model_name", None) if _swan_backend else None
             _swan_result = _maybe_trigger(
                 state,
                 user_id=int(api_user.get("id")) if api_user else 0,
                 save_id=ctx.early_active_save_id or 0,
                 script_id=active_script_id(api_user),
-                llm_caller=None,  # MVP: hook 就位但不实际 call LLM (避免外部依赖)
+                api_id_override=_swan_api,
+                model_override=_swan_model,
+                enable_llm=bool(api_user),  # 匿名 user 不调外部 LLM
             )
             if _swan_result.get("triggered"):
                 from datetime import datetime as _dt
