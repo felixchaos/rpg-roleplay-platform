@@ -159,7 +159,7 @@ def _anthropic_tool_use(
     resp = client.messages.create(
         model=model,
         max_tokens=max_tokens,
-        system=system_prompt,
+        system=_anthropic_cached_system(system_prompt),
         messages=[{"role": "user", "content": user_prompt}],
         tools=[tool_schema],
         tool_choice={"type": "tool", "name": tool_name},
@@ -195,7 +195,9 @@ def _anthropic_json_text(
     resp = client.messages.create(
         model=model,
         max_tokens=max_tokens,
-        system=system_prompt + "\n\n严格只输出 JSON,不要 markdown 围栏,不要解释。",
+        system=_anthropic_cached_system(
+            system_prompt + "\n\n严格只输出 JSON,不要 markdown 围栏,不要解释。"
+        ),
         messages=[{"role": "user", "content": user_prompt}],
     )
     usage = _anthropic_usage(resp)
@@ -204,6 +206,26 @@ def _anthropic_json_text(
         if getattr(block, "type", None) == "text":
             parts.append(block.text or "")
     return "".join(parts), usage
+
+
+def _anthropic_cached_system(system_prompt: str) -> Any:
+    """把 system prompt 包成 cache_control=ephemeral 的 block 列表。
+
+    Anthropic prompt caching 规则:
+    - system 改为 list of blocks,在长 block 末尾加 cache_control={"type":"ephemeral"}
+    - 命中条件:同一 prefix 在 5 分钟内重复请求(对 agent 多次同 prompt 的场景非常划算)
+    - 不足 1024 tokens 时不会缓存(但 API 不会报错,只是不省钱)
+    - 节省 25% 输入成本(cached tokens 按 0.1× 计价)
+
+    长度 < 200 字符的极短 prompt 不值得 cache(走原 string 路径)。
+    """
+    if not system_prompt or len(system_prompt) < 200:
+        return system_prompt
+    return [{
+        "type": "text",
+        "text": system_prompt,
+        "cache_control": {"type": "ephemeral"},
+    }]
 
 
 def _anthropic_usage(resp: Any) -> dict:
@@ -516,4 +538,133 @@ def resolve_api_and_model(
     return api_id, model
 
 
-__all__ = ["call_agent_json", "resolve_api_and_model"]
+def call_agent_tool_loop(
+    api_id: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    user_id: int | None,
+    *,
+    tools: list[dict],
+    terminal_tool_name: str,
+    tool_handler: "Callable[[str, dict], str | dict]",
+    max_iterations: int = 4,
+    max_tokens: int = 1024,
+    agent_kind: str | None = None,
+    save_id: int | None = None,
+    context_run_id: int | None = None,
+) -> "tuple[dict | None, dict, list[dict]]":
+    """Anthropic native multi-turn tool use 循环。返回 (terminal_tool_args, usage, trace)。
+
+    trace 是 [(tool_name, args, result), ...] 让 caller 审计 LLM 中间动作。
+    达 max_iterations 仍未调 terminal_tool → 返 (None, usage, trace)。
+
+    非 anthropic provider:暂不支持,抛 NotImplementedError。
+    """
+    from typing import Callable as _Callable  # noqa: F401 (used above for annotation)
+
+    if api_id != "anthropic":
+        raise NotImplementedError(
+            f"call_agent_tool_loop 仅支持 anthropic provider,当前: {api_id}"
+        )
+
+    from anthropic import Anthropic
+    from platform_app.user_credentials import resolve_api_key
+
+    result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
+    key = result.get("key")
+    if not key:
+        raise RuntimeError("找不到 Anthropic API Key for agent tool_loop")
+
+    client = Anthropic(api_key=key)
+
+    messages: list[dict] = [{"role": "user", "content": user_prompt}]
+    trace: list[dict] = []
+    cumulative_usage: dict = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cached_input_tokens": 0,
+        "reasoning_tokens": 0,
+        "total_tokens": 0,
+    }
+
+    for _iteration in range(max_iterations):
+        resp = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=_anthropic_cached_system(system_prompt),
+            messages=messages,
+            tools=tools,
+            tool_choice={"type": "auto"},
+        )
+        # 累计 usage
+        u = _anthropic_usage(resp)
+        for k in cumulative_usage:
+            cumulative_usage[k] += u.get(k, 0)
+
+        # 检查 content blocks
+        tool_uses = [b for b in resp.content if getattr(b, "type", None) == "tool_use"]
+
+        # 是否调了 terminal tool
+        for block in tool_uses:
+            if block.name == terminal_tool_name:
+                _maybe_record_usage(
+                    user_id=user_id, save_id=save_id, context_run_id=context_run_id,
+                    api_id=api_id, model=model, usage=cumulative_usage,
+                    agent_kind=agent_kind, metadata_extra=None,
+                )
+                return block.input or {}, cumulative_usage, trace
+
+        # 没有任何 tool_use → LLM 只返了文本,终止
+        if not tool_uses:
+            break
+
+        # 处理 non-terminal tool_use blocks,构造 tool_result 回应
+        assistant_content = [
+            _block_to_dict(b) for b in resp.content
+        ]
+        messages.append({"role": "assistant", "content": assistant_content})
+
+        tool_results = []
+        for block in tool_uses:
+            raw_result = tool_handler(block.name, block.input or {})
+            if isinstance(raw_result, dict):
+                result_text = json.dumps(raw_result, ensure_ascii=False)
+            else:
+                result_text = str(raw_result)
+            trace.append({"tool_name": block.name, "args": block.input or {}, "result": result_text})
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": result_text,
+            })
+        messages.append({"role": "user", "content": tool_results})
+
+    _maybe_record_usage(
+        user_id=user_id, save_id=save_id, context_run_id=context_run_id,
+        api_id=api_id, model=model, usage=cumulative_usage,
+        agent_kind=agent_kind, metadata_extra=None,
+    )
+    return None, cumulative_usage, trace
+
+
+def _block_to_dict(block: Any) -> dict:
+    """把 Anthropic SDK content block 对象序列化为 dict(用于 messages history)。"""
+    btype = getattr(block, "type", None)
+    if btype == "text":
+        return {"type": "text", "text": block.text or ""}
+    if btype == "tool_use":
+        return {
+            "type": "tool_use",
+            "id": block.id,
+            "name": block.name,
+            "input": block.input or {},
+        }
+    # 其它类型 fallback
+    try:
+        return dict(block)
+    except Exception:
+        return {"type": str(btype)}
+
+
+__all__ = ["call_agent_json", "call_agent_tool_loop", "resolve_api_and_model"]

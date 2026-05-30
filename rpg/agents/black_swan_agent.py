@@ -12,9 +12,12 @@
 """
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 from typing import Any, Callable, Optional, cast
+
+log = logging.getLogger(__name__)
 
 # ─── Layer 1: 现实切片 ────────────────────────────────────────────
 
@@ -304,6 +307,55 @@ def dispatch_event(
     return results
 
 
+# ─── Introspection tools (multi-turn tool loop 自检工具) ────────────
+
+def introspection_tools_schema(snapshot: dict) -> list[dict]:
+    """LLM 可在 propose 前调用的自检工具。"""
+    return [
+        {
+            "name": "check_npc_active",
+            "description": "查询某 NPC 是否在当前 phase 活跃。返回 active=true/false + 在场 NPC 列表。",
+            "input_schema": {
+                "type": "object",
+                "required": ["npc_id"],
+                "properties": {"npc_id": {"type": "string"}},
+            },
+        },
+        {
+            "name": "check_locked_var",
+            "description": "查询某个 locked variable 的当前值。返回 locked/value/exists。",
+            "input_schema": {
+                "type": "object",
+                "required": ["key"],
+                "properties": {"key": {"type": "string"}},
+            },
+        },
+    ]
+
+
+def handle_introspection_tool(name: str, args: dict, snapshot: dict) -> dict:
+    """处理 introspection 工具调用,返回 dict(JSON-serializable)。"""
+    if name == "check_npc_active":
+        target = args.get("npc_id") or ""
+        npcs = snapshot.get("active_npcs", []) or []
+        ids = [n.get("id") for n in npcs]
+        return {
+            "active": target in ids,
+            "available_ids": ids,
+            "active_count": len(ids),
+        }
+    if name == "check_locked_var":
+        key = args.get("key") or ""
+        locked = snapshot.get("locked_variables") or {}
+        return {
+            "exists": key in locked,
+            "locked": key in locked,
+            "value": locked.get(key, ""),
+            "all_keys": list(locked.keys()),
+        }
+    return {"error": f"unknown tool: {name}"}
+
+
 # ─── Harness LLM caller ─────────────────────────────────────────
 
 _SWAN_SYSTEM_PROMPT = """\
@@ -350,10 +402,12 @@ def _make_harness_caller(
     user_id: int,
     api_id_override: str | None = None,
     model_override: str | None = None,
+    use_tool_loop: bool = True,
 ) -> Callable[..., dict] | None:
-    """返回一个 callable(snapshot, schema, prev_failure=None) -> proposal_dict,
-    内部走 agents._harness.call_agent_json。
+    """返回一个 callable(snapshot, schema, prev_failure=None) -> proposal_dict。
 
+    use_tool_loop=True + anthropic provider → multi-turn tool loop(LLM 可先自检再 propose)。
+    其它 provider 或 use_tool_loop=False → 单次 call_agent_json。
     出问题(无凭证/import 失败)→ 返回 None,maybe_trigger 跳过。
     """
     try:
@@ -369,8 +423,10 @@ def _make_harness_caller(
         model_override=model_override,
     )
 
-    def _call(snapshot: dict, schema: dict,
-              prev_failure: list[tuple[str, bool, str]] | None = None) -> dict:
+    def _call_single_shot(
+        snapshot: dict, schema: dict,
+        prev_failure: list[tuple[str, bool, str]] | None = None,
+    ) -> dict:
         user_prompt = _build_swan_user_prompt(snapshot, prev_failure)
         text, _usage = call_agent_json(
             api_id=api_id,
@@ -391,7 +447,43 @@ def _make_harness_caller(
         except Exception:
             return {}
 
-    return _call
+    # tool_loop 仅 anthropic 支持
+    if use_tool_loop and api_id == "anthropic":
+        def _call_loop(
+            snapshot: dict, schema: dict,
+            prev_failure: list[tuple[str, bool, str]] | None = None,
+        ) -> dict:
+            user_prompt = _build_swan_user_prompt(snapshot, prev_failure)
+            intro_tools = introspection_tools_schema(snapshot)
+            all_tools = intro_tools + [schema]
+            try:
+                from agents._harness import call_agent_tool_loop
+                args, _usage, _trace = call_agent_tool_loop(
+                    api_id=api_id,
+                    model=model,
+                    system_prompt=(
+                        _SWAN_SYSTEM_PROMPT
+                        + "\n\n你可以在提议前先调用 check_npc_active / check_locked_var"
+                          " 自检,确认无误后再调 propose_black_swan_event 提交最终事件。"
+                    ),
+                    user_prompt=user_prompt,
+                    user_id=user_id,
+                    tools=all_tools,
+                    terminal_tool_name=schema["name"],
+                    tool_handler=lambda name, a: handle_introspection_tool(name, a, snapshot),
+                    max_iterations=4,
+                    max_tokens=800,
+                    agent_kind="black_swan",
+                )
+                return args or {"event_kind": "no_op", "summary": ""}
+            except Exception as exc:
+                log.warning(f"[black_swan] tool_loop failed, fallback to single-shot: {exc}")
+                return _call_single_shot(snapshot, schema, prev_failure)
+
+        return _call_loop
+
+    # 非 anthropic 或 use_tool_loop=False → 原单次 call
+    return _call_single_shot
 
 
 # ─── 入口: maybe_trigger ─────────────────────────────────────────
