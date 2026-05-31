@@ -36,11 +36,16 @@ RPG Roleplay 把一本长篇小说扔进一个自托管的 LLM 驱动的 RPG 运
 | **LLM 路由**(Anthropic 原生 / OpenAI Responses / Vertex Gemini / OpenAI 兼容) | ✅ 稳定 — 流式 + 工具调用 + 多模态 |
 | **Postgres + pgvector** 存储, v39+ 版本化迁移, 启动时自动加咨询锁顺序执行 | ✅ 稳定 |
 | **Vite + React 18**, JSDoc 类型注解, 多页面入口 | ✅ 稳定 |
-| **可分支存档** — commit / ref / checkout 像 Git 一样工作 | 🟡 关键路径已通, merge / 清理 / 删除仍是骨架 |
-| **剧本包** — 用户上传 ZIP 含 script + chapters + facts + cards | 🟡 导入可用, 共享面在做 |
-| **Provider 目录** — 列了 10 家, 能力 metadata 已暴露给 UI | 🟡 6 家接了真后端, 4 家暂时只在目录里 |
-| **Web UI** — React 客户端, 3 个页面入口(Login / Platform / Game Console) | 🟡 核心循环 feature complete, 视觉打磨进行中 |
-| **公开部署 / 商业 license** | ❌ 还没 — 见[公测预约](https://play.stellatrix.icu) |
+| **可分支存档** — commit / ref / checkout 像 Git 一样工作 + 硬删 30 天宽限队列 | ✅ 稳定 |
+| **剧本导入** — TXT / ZIP 上传, 7 种章节切分, 自动抽角色卡 + 世界书 + 时间线 + 向量索引 | ✅ 稳定 |
+| **SillyTavern V2/V3 导入** — 角色卡(PNG tEXt / JSON) + 聊天记录(JSONL → 新存档) | ✅ 稳定 |
+| **Provider 目录** — 10 家(Anthropic / OpenAI / Vertex / Google AI Studio / DeepSeek / DashScope / Hunyuan / MiMo / xAI / OpenRouter), BYOK 加密存储(AES-256-GCM HKDF per-user-per-api), 实时模型嗅探 | ✅ 稳定 |
+| **i18n** — 简体中文 + 英文, ~2000 keys, UI 全覆盖(设置 / 登录 / 平台 / 游戏 / 管理) | ✅ 稳定 |
+| **帮助系统** — 应用内 HelpDrawer, 27 个模块文档 | ✅ 稳定 |
+| **合规套件** — 18+ 启动页, AGPL 法律横幅, 反馈通道 + NSFW 预审, AUP/DMCA/CSAM 管理 runbook | ✅ 稳定 |
+| **认证 + 注册** — 邀请码闸, 邮件验证(Resend), Argon2id 登录时 rehash, 忘记密码, 两步注册 | ✅ 稳定 |
+| **账号生命周期** — 软停用, 请求删除(30 天宽限), 数据导出, 硬删 cron | ✅ 稳定 |
+| **许可证** | ✅ AGPL-3.0-or-later (本仓库) + 双授权商用 — 联系 <legal@stellatrix.icu> |
 
 ## 快速开始
 

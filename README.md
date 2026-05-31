@@ -36,11 +36,16 @@ RPG Roleplay drops a long-form novel into a self-hosted, LLM-driven RPG runtime:
 | **LLM routing** (Anthropic native, OpenAI Responses, Vertex Gemini, OpenAI-compatible) | ✅ Stable, streaming + tool-use + multimodal |
 | **Postgres + pgvector storage**, v39+ versioned migrations, auto-apply on boot under advisory lock | ✅ Stable |
 | **Vite + React 18**, JSDoc type annotations, multi-page entries | ✅ Stable |
-| **Branchable saves** — commit / ref / checkout work like Git | 🟡 Critical path only; merge / cleanup / deletion are stubs |
-| **Script pack** — user-uploaded ZIPs with script + chapters + facts + cards | 🟡 Import works, sharing surface in progress |
-| **Provider catalog** — 10 providers listed, capability metadata exposed to UI | 🟡 6 wired to a real backend, 4 catalog-only for now |
-| **Web UI** — React client, 3 page entries (Login / Platform / Game Console) | 🟡 Feature-complete for core loop, polish ongoing |
-| **Public deployment / commercial license** | ❌ Not yet — see [waitlist](https://play.stellatrix.icu) |
+| **Branchable saves** — commit / ref / checkout work like Git, hard-delete with 30-day grace queue | ✅ Stable |
+| **Script ingestion** — TXT / ZIP upload, 7 chapter splitters, auto-extract character cards + worldbook + timeline, vector index | ✅ Stable |
+| **SillyTavern V2/V3 import** — character cards (PNG tEXt / JSON) + chat history (JSONL → new save) | ✅ Stable |
+| **Provider catalog** — 10 providers (Anthropic / OpenAI / Vertex / Google AI Studio / DeepSeek / DashScope / Hunyuan / MiMo / xAI / OpenRouter), BYOK encrypted at-rest (AES-256-GCM HKDF per-user-per-api), live model sniffing | ✅ Stable |
+| **i18n** — zh-CN + en, ~2000 keys, full UI coverage (settings / login / platform / game / admin) | ✅ Stable |
+| **Help system** — in-app HelpDrawer with 27 module docs | ✅ Stable |
+| **Compliance suite** — adult-content splash gate, AGPL legal banner, feedback channel with NSFW pre-moderation, AUP/DMCA/CSAM admin runbooks | ✅ Stable |
+| **Auth + registration** — invite-code gate, email verification (Resend), Argon2id with rehash-on-login, forgot-password, two-step register | ✅ Stable |
+| **Account lifecycle** — soft deactivate, request-delete (30-day grace), data export, hard-delete cron | ✅ Stable |
+| **License** | ✅ AGPL-3.0-or-later (this repo) + commercial dual-license available — contact <legal@stellatrix.icu> |
 
 ## Quick start
 
