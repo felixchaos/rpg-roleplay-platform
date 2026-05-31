@@ -4,6 +4,7 @@ import * as React from 'react';
 import * as ReactDOM from 'react-dom/client';
 
 import '../api-client.js';
+import '../i18n/index.js';
 import { LoginApp } from '../login-app.jsx';
 
 const __mount = () => {
