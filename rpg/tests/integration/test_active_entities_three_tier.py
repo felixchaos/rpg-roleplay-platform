@@ -283,10 +283,12 @@ class FrontendPanelCharactersStructure(unittest.TestCase):
         self.assertGreater(idx, 0)
         end = PANELS_JSX.find("\nfunction ", idx + 1)
         body = PANELS_JSX[idx:end if end > 0 else len(PANELS_JSX)]
+        import re
         self.assertNotIn("onPromote", body,
             "CharacterCard 不应再有 onPromote prop")
-        self.assertNotIn("onEdit", body,
-            "CharacterCard 不应再有 onEdit prop")
+        # 用 \b...\b 边界匹配 onEdit 但放过合法 prop onEditStatus
+        self.assertIsNone(re.search(r'\bonEdit\b(?!Status)', body),
+            "CharacterCard 不应再有 onEdit prop (onEditStatus 合法)")
 
 
 class PlatformStillHasPromote(unittest.TestCase):
