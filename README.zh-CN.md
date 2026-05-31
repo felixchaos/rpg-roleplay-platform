@@ -44,25 +44,52 @@ RPG Roleplay 把一本长篇小说扔进一个自托管的 LLM 驱动的 RPG 运
 
 ## 快速开始
 
+> **技术栈说明**: 后端是 Python / FastAPI / uvicorn（非 Rust）。下方架构图为历史/规划状态，当前可运行代码在 `rpg/` 目录下。
+
 ```bash
 git clone https://github.com/felixchaos/rpg-roleplay-platform.git
 cd rpg-roleplay-platform
 
-# 1. Postgres(pgvector)+ pgbouncer + redis
-docker compose -f deploy/docker-compose.yml up -d postgres pgbouncer redis
+# 1. 装 Postgres + pgvector（macOS；Ubuntu 改用 apt install postgresql-16 postgresql-16-pgvector）
+brew install postgresql pgvector
+brew services start postgresql
 
-# 2. 后端 — axum 跑在 :7860, 首次启动自动跑完 24 个迁移
-cp deploy/.env.example .env   # 最低需要填 ANTHROPIC_API_KEY
-cargo run -p rpg-server
+# 2. 创 rpg 用户 + 库
+psql postgres -c "CREATE USER rpg WITH PASSWORD 'rpg_dev';"
+psql postgres -c "CREATE DATABASE rpg OWNER rpg;"
+psql -U rpg -d rpg -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql -U rpg -d rpg -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
-# 3. 前端 — vite 跑在 :5173, /api 代理到 :7860
-cd frontend && npm install && npm run dev
+# 3. 装 Python 依赖
+#    !! 重要：在 rpg/ 子目录内运行，不是仓库根 !!
+cd rpg/
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
 
-# 4. 打开登录页(这是多页 Vite 构建,不是 SPA)
+# 4. 配 .env
+#    若 rpg/.env.example 不存在，从 deploy/test-server/.env.example 复制
+cp .env.example .env   # 或: cp ../deploy/test-server/.env.example .env
+$EDITOR .env           # 填 DATABASE_URL、RPG_MASTER_KEY、RESEND_API_KEY 等
+
+# 5. 首次跑 migration（fresh DB 必须用 full，不能用 up）
+#    !! 必须在 rpg/ 目录下运行（模块查找依赖工作目录）!!
+.venv/bin/python -m platform_app.migrate full
+
+# 6. 起后端
+.venv/bin/uvicorn app:app --port 7860 --reload   # 开发模式
+# 或一键起全栈（postgres + backend + frontend）:
+# cd .. && ./scripts/dev.sh start
+
+# 7. 起前端（另开终端）
+cd ../frontend && npm install && npm run dev
+
+# 8. 打开登录页（这是多页 Vite 构建，不是 SPA）
 open http://localhost:5173/Login.html
 ```
 
-进 Login 注册账号, 然后跳到 `Platform.html`(剧本库 / 角色卡 / 设置) 或 `Game Console.html`(实际游戏画面).
+进 Login 注册账号, 然后跳到 `Platform.html`（剧本库 / 角色卡 / 设置）或 `Game Console.html`（实际游戏画面）。
+
+> **生产部署**: 完整裸机 runbook（systemd、PgBouncer 接法、migration 陷阱、本地数据红线）见 [deploy/bare-metal/README.md](./deploy/bare-metal/README.md)。
 
 ## 架构
 

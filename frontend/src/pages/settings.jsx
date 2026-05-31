@@ -26,6 +26,7 @@ import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import CSColumnLayout from '@cloudscape-design/components/column-layout';
 import CSExpandableSection from '@cloudscape-design/components/expandable-section';
 import CSModal from '@cloudscape-design/components/modal';
+import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 
 /* ── 设置页 Cloudscape 统一 primitives(取代 pl-set-group / pl-set-row) ──
    SetGroup = Container + Header(h2)  ·  SetRow = FormField(label 上 / 控件下)。
@@ -1044,7 +1045,7 @@ function VisibilityModal({ open, api, onClose, onConfirm }) {
                     const caps = getCaps(m);
                     return (<>
                       {caps.slice(0, 2).map(c => (
-                        <span key={c} className="pl-cap-tag">{CAP_LABEL[c] || c}</span>
+                        <span key={c} className="pl-cap-tag">{t('settings.capabilities.' + c, { defaultValue: CAP_LABEL[c] || c })}</span>
                       ))}
                       {caps.length > 2 && <span className="muted-2" style={{fontSize: 11}}>+{caps.length - 2}</span>}
                     </>);
@@ -1351,9 +1352,9 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
               key={c}
               className={`pl-cap-tag clickable ${capFilter === c ? "active" : ""}`}
               onClick={() => setCapFilter(capFilter === c ? null : c)}
-              data-tip={`筛选含『${CAP_LABEL[c] || c}』能力的模型`}
+              data-tip={`筛选含『${t('settings.capabilities.' + c, { defaultValue: CAP_LABEL[c] || c })}』能力的模型`}
             >
-              {CAP_LABEL[c] || c}
+              {t('settings.capabilities.' + c, { defaultValue: CAP_LABEL[c] || c })}
             </button>
           ))}
           {capFilter && (
@@ -1398,7 +1399,7 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
               cell: (m) => (
                 <div style={{display: "flex", gap: 4, flexWrap: "wrap"}}>
                   {getCaps(m).map(c => (
-                    <span key={c} className="pl-cap-tag" data-tip={CAP_LABEL[c] || c}>{CAP_LABEL[c] || c}</span>
+                    <span key={c} className="pl-cap-tag" data-tip={t('settings.capabilities.' + c, { defaultValue: CAP_LABEL[c] || c })}>{t('settings.capabilities.' + c, { defaultValue: CAP_LABEL[c] || c })}</span>
                   ))}
                 </div>
               ),

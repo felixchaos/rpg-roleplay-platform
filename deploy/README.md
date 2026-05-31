@@ -1,5 +1,30 @@
 # RPG Server — 生产部署指南
 
+## 部署方式选择
+
+| 方式 | 适用场景 | 文档 |
+|------|---------|------|
+| **裸机 / VPS** | 单机、中小流量、无 Docker | [deploy/bare-metal/README.md](./bare-metal/README.md) ← **推荐起点** |
+| **Docker Compose** | 本地开发、测试服 | 本文档 §快速启动 + [test-server/README.md](./test-server/README.md) |
+| **Kubernetes** | 多副本水平扩展、高可用 | 本文档 §Kubernetes 部署 |
+
+> 新部署请先看 [bare-metal/README.md](./bare-metal/README.md)。它涵盖：Python/uvicorn 启动、PgBouncer 分离（migration 直连 5432，运行时走 6432）、systemd service、数据红线、升级流程。
+
+---
+
+## ⚠️ PgBouncer 与 Migration 注意事项
+
+**migration 不能走 PgBouncer**。`platform_app.migrate` 内部使用 `pg_advisory_lock`，
+而 PgBouncer transaction 模式不支持会话级特性（advisory lock / `LISTEN` / `SET`）。
+
+- **跑 migration 时**：`DATABASE_URL` 必须指向直连 Postgres 5432
+- **运行时 uvicorn**：`DATABASE_URL` 可走 PgBouncer 6432（事务级连接池）
+
+若 Docker Compose 的 `DATABASE_URL` 指向 pgbouncer:6432，启动前请先用直连跑一次 `migrate full`，
+或确保 `RPG_SKIP_AUTO_MIGRATE=1` 且 docker exec 进容器用直连 URL 跑 migrate。
+
+---
+
 ## 架构概览
 
 ```

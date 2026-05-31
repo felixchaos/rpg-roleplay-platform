@@ -44,25 +44,52 @@ RPG Roleplay drops a long-form novel into a self-hosted, LLM-driven RPG runtime:
 
 ## Quick start
 
+> **Stack note**: the backend is Python / FastAPI / uvicorn (not Rust). The architecture diagram below is aspirational/legacy — the live codebase lives in `rpg/`.
+
 ```bash
 git clone https://github.com/felixchaos/rpg-roleplay-platform.git
 cd rpg-roleplay-platform
 
-# 1. Postgres (pgvector) + pgbouncer + redis
-docker compose -f deploy/docker-compose.yml up -d postgres pgbouncer redis
+# 1. Install Postgres + pgvector (macOS example; Ubuntu: apt install postgresql-16 postgresql-16-pgvector)
+brew install postgresql pgvector
+brew services start postgresql
 
-# 2. Backend — axum on :7860, runs 24 migrations on first boot
-cp deploy/.env.example .env   # fill ANTHROPIC_API_KEY at minimum
-cargo run -p rpg-server
+# 2. Create rpg user + database
+psql postgres -c "CREATE USER rpg WITH PASSWORD 'rpg_dev';"
+psql postgres -c "CREATE DATABASE rpg OWNER rpg;"
+psql -U rpg -d rpg -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql -U rpg -d rpg -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
-# 3. Frontend — vite on :5173, proxies /api → :7860
-cd frontend && npm install && npm run dev
+# 3. Install Python dependencies
+#    !! IMPORTANT: run from rpg/ sub-directory, not the repo root !!
+cd rpg/
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
 
-# 4. Open the login page (it's a multi-page Vite build, not a single SPA)
+# 4. Configure .env
+#    No rpg/.env.example yet? Copy from deploy/test-server/.env.example
+cp .env.example .env   # or: cp ../deploy/test-server/.env.example .env
+$EDITOR .env           # set DATABASE_URL, RPG_MASTER_KEY, RESEND_API_KEY etc.
+
+# 5. Run migrations — fresh DB requires "full", not "up"
+#    !! Must run from rpg/ directory (module resolution depends on cwd) !!
+.venv/bin/python -m platform_app.migrate full
+
+# 6. Start the backend
+.venv/bin/uvicorn app:app --port 7860 --reload   # dev
+# Or use the one-shot script (starts postgres + backend + frontend):
+# cd .. && ./scripts/dev.sh start
+
+# 7. Start the frontend (separate terminal)
+cd ../frontend && npm install && npm run dev
+
+# 8. Open the login page (multi-page Vite build, not a SPA)
 open http://localhost:5173/Login.html
 ```
 
 You'll land on the Login page, create a user, then bounce to `Platform.html` (library + cards + scripts) or `Game Console.html` (the actual gameplay screen).
+
+> **Production deployment**: see [deploy/bare-metal/README.md](./deploy/bare-metal/README.md) for a complete bare-metal runbook (systemd, PgBouncer wiring, migration pitfalls, data red-lines).
 
 ## Architecture
 

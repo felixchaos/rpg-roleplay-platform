@@ -22,8 +22,14 @@ def init_db(force: bool = False) -> None:
     schema lock 撞死锁。现在请求路径只读 _DB_INITED flag 立即返回，DDL 只在
     module load / 显式 reset 时跑一次。force=True 用于运维强制重新跑 migration。
 
-    生产部署：设置 RPG_SKIP_AUTO_MIGRATE=1，由 CI/deploy 脚本提前运行
-    `python -m platform_app.migrate up`，让 worker 进程永远不碰 DDL（更快、更安全）。
+    生产部署（推荐）：设置 RPG_SKIP_AUTO_MIGRATE=1，由 deploy 脚本提前手动跑：
+      - 首次部署 fresh DB:  python -m platform_app.migrate full   ← 必须 full，不能 up
+      - 后续升级有历史 DB:  python -m platform_app.migrate up
+      详见 platform_app/migrate.py 顶部注释和 deploy/bare-metal/README.md §5/§11。
+
+    !! migration 不走 PgBouncer（transaction 池不支持 pg_advisory_lock）!!
+       DATABASE_URL 跑 migrate 时应指向直连 5432；运行时 uvicorn 才走 PgBouncer 6432。
+
     若 schema 落后于代码里登记的 MIGRATIONS 列表，init_db 会 fail-fast。
     """
     global _DB_INITED

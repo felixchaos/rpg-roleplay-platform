@@ -19,6 +19,34 @@ from schemas.models import (
 router = APIRouter()
 
 
+def _inject_pricing(catalog: dict[str, Any]) -> dict[str, Any]:
+    """task 57 follow-up: 把 _STATIC_PRICING 里的 input/output/context 注入每个 model,
+    让 settings #models 表格价格/上下文/来源三列有数据。
+    字段: input_cost_per_million, output_cost_per_million, context_window, source。
+    只在 model 本身没有这些字段时才注入(不覆盖 catalog 已有值)。
+    """
+    import model_probe
+    for api in catalog.get("apis", []):
+        api_id = api.get("id", "")
+        for m in api.get("models", []):
+            # 如果 catalog 里已有 typed 字段就跳过
+            if m.get("input_cost_per_million") is not None:
+                continue
+            real = m.get("real_name") or m.get("id")
+            if not real:
+                continue
+            pricing = model_probe.get_pricing(api_id, real)
+            if not pricing:
+                continue
+            m["input_cost_per_million"] = pricing.get("input")
+            m["output_cost_per_million"] = pricing.get("output")
+            if m.get("context_window") is None and pricing.get("context"):
+                m["context_window"] = pricing.get("context")
+            if not m.get("source"):
+                m["source"] = pricing.get("source", "static")
+    return catalog
+
+
 def _inject_health(catalog: dict[str, Any]) -> dict[str, Any]:
     """task 42: 把 model_probe._HEALTH_CACHE 的状态合并到每个 model.health 字段。
     UI 据此显示可用/不可达/未校验,picker 灰掉 err 项。"""
@@ -48,9 +76,10 @@ async def api_models(
     catalog = load_model_catalog()
     is_admin = bool(api_user and api_user.get("role") == "admin")
     redacted = _redact_catalog(catalog, is_admin)
+    enriched = _inject_pricing(redacted)
     return JSONResponse({
         "ok": True,
-        "models": _inject_health(redacted),
+        "models": _inject_health(enriched),
         "selected": selected_model(catalog),
     })
 

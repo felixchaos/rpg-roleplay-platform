@@ -3,16 +3,31 @@ migrate.py — 独立数据库迁移 CLI
 
 用法（CI/deploy 脚本）：
   python -m platform_app.migrate status        # 看当前 schema 版本和待应用列表
-  python -m platform_app.migrate up            # 应用所有待应用 migration
-  python -m platform_app.migrate baseline      # 仅跑基线 CREATE TABLE（首次部署）
-  python -m platform_app.migrate full          # baseline + up + pgvector（等价旧 init_db）
+  python -m platform_app.migrate up            # 应用所有待应用 migration（增量升级）
+  python -m platform_app.migrate baseline      # 仅跑基线 CREATE TABLE（首次部署，低层调用）
+  python -m platform_app.migrate full          # baseline + up + pgvector（首次 fresh DB 推荐）
   python -m platform_app.migrate check         # 仅做版本检查，落后则 exit(1)
+
+!! 必须在 rpg/ 目录下运行（模块查找依赖工作目录），不是仓库根 !!
+  正确: cd rpg/ && .venv/bin/python -m platform_app.migrate full
+  错误: python -m platform_app.migrate full  # 从仓库根跑 → ModuleNotFoundError
+
+生产部署最佳实践：
+  - 首次部署（fresh DB）:  .venv/bin/python -m platform_app.migrate full
+  - 后续升级（已有 DB）:   .venv/bin/python -m platform_app.migrate up
+  - 升级前备份:            pg_dump -Fc rpg > backup-pre-migrate-$(date +%F).dump
+  - worker 跳过自动迁移:   设 RPG_SKIP_AUTO_MIGRATE=1，由 deploy 脚本提前跑 migrate
+
+!! migration 必须走直连 Postgres（5432），不能走 PgBouncer（6432）!!
+  PgBouncer transaction 模式不支持 pg_advisory_lock（此 CLI 内部用了 advisory lock）。
+  DATABASE_URL 应指向 postgresql://user:pass@127.0.0.1:5432/rpg（直连）跑 migrate，
+  运行时 uvicorn 才走 PgBouncer 6432。
 
 设计要点：
 - 整个迁移过程包裹 pg_advisory_lock，串行化多进程并发部署
 - 设置 lock_timeout 防止 ALTER TABLE 撞到长事务无限等
 - 与运行时 `init_db()` 共用同一套 MIGRATIONS 列表（platform_app.db）
-- 推荐生产部署：CI 跑 `migrate full`，worker 设 `RPG_SKIP_AUTO_MIGRATE=1`
+- up 子命令要求 migration_history 表已存在；fresh DB 必须先跑 full
 """
 from __future__ import annotations
 

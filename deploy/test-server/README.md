@@ -1,5 +1,8 @@
 # RPG Roleplay 测试服 — ECS06 部署 Runbook
 
+> **仅限测试服（Docker on ECS06）。**
+> 寻找裸机生产部署指引？见 [../bare-metal/README.md](../bare-metal/README.md)。
+
 > 域名:`rpg-roleplay.stellatrix.icu`
 > IP 白名单:`154.29.152.100`(三层防护)
 > SSL:Cloudflare orange-cloud + CF Origin certificate(15 年)
