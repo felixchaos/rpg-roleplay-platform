@@ -404,7 +404,7 @@ function PanelMemory({ state, density }) {
               if (!t) return;
               // bucket=pinned(后端 Pydantic 字段名,旧版误用 kind 被 extra='ignore' 吞掉
               // 实际全落 notes 桶,等于固定记忆按钮一直在加到笔记 — 现修)
-              try { await window.api.game.memoryAdd({ bucket: "pinned", text: t }); window.__apiToast?.("已添加", { kind: "ok" }); }
+              try { await window.api.game.memoryAdd({ bucket: "pinned", text: t }); try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {} window.__apiToast?.("已添加", { kind: "ok" }); }
               catch (e) { window.__apiToast?.("添加失败", { kind: "danger", detail: e?.message }); }
             }}>
             <Icon name="plus" />
@@ -418,7 +418,7 @@ function PanelMemory({ state, density }) {
               <button className="iconbtn" data-tip="解除"
                 onClick={async () => {
                   if (!confirm("解除固定记忆？")) return;
-                  try { await window.api.game.memoryRemove({ bucket: "pinned", index: i }); window.__apiToast?.("已解除", { kind: "ok" }); }
+                  try { await window.api.game.memoryRemove({ bucket: "pinned", index: i }); try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {} window.__apiToast?.("已解除", { kind: "ok" }); }
                   catch (e) { window.__apiToast?.("操作失败", { kind: "danger", detail: e?.message }); }
                 }}>
                 <Icon name="close" size={12} />
@@ -441,7 +441,7 @@ function PanelMemory({ state, density }) {
             onClick={async () => {
               const t = prompt("新增玩家笔记", "");
               if (!t) return;
-              try { await window.api.game.memoryAdd({ bucket: "notes", text: t }); window.__apiToast?.("已添加", { kind: "ok" }); }
+              try { await window.api.game.memoryAdd({ bucket: "notes", text: t }); try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {} window.__apiToast?.("已添加", { kind: "ok" }); }
               catch (e) { window.__apiToast?.("添加失败", { kind: "danger", detail: e?.message }); }
             }}>
             <Icon name="plus" />
@@ -454,7 +454,7 @@ function PanelMemory({ state, density }) {
               <button className="iconbtn" data-tip="删除笔记"
                 onClick={async () => {
                   if (!confirm("删除这条笔记？")) return;
-                  try { await window.api.game.memoryRemove({ bucket: "notes", index: i }); window.__apiToast?.("已删除", { kind: "ok" }); }
+                  try { await window.api.game.memoryRemove({ bucket: "notes", index: i }); try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {} window.__apiToast?.("已删除", { kind: "ok" }); }
                   catch (e) { window.__apiToast?.("操作失败", { kind: "danger", detail: e?.message }); }
                 }}>
                 <Icon name="close" size={12} />
@@ -481,11 +481,15 @@ function InlineEditField({ value, placeholder, emptyLabel, onSubmit, busy }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value || "");
   React.useEffect(() => { if (!editing) setDraft(value || ""); }, [value, editing]);
+  const submittingRef = React.useRef(false);
   const commit = async () => {
+    if (submittingRef.current) return;
     const t = (draft || "").trim();
     if (!t || t === (value || "")) { setEditing(false); return; }
+    submittingRef.current = true;
     try { await onSubmit(t); setEditing(false); }
     catch (e) { window.__apiToast?.("保存失败", { kind: "danger", detail: e?.message }); }
+    finally { setTimeout(() => { submittingRef.current = false; }, 100); }
   };
   if (!editing) {
     return (
@@ -527,6 +531,7 @@ function PanelWorldbook({ state }) {
   // 这里仅 toast 反馈,刷新由 game-state-refresh / state polling 处理(同 memory 模式)。
   const setField = (key, label) => async (value) => {
     await window.api.game.worldSet({ key, value });
+    try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
     window.__apiToast?.(label + " 已更新 → " + value, { kind: "ok", duration: 1800 });
   };
   return (
@@ -779,6 +784,7 @@ function PanelCharacters({ state }) {
                 onDelete={async () => {
                   if (!confirm(`删除与「${name}」的关系条目?`)) return;
                   try { await window.api.game.relationshipDelete({ character: name });
+                    try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
                     window.__apiToast?.("已删除", { kind: "ok" }); }
                   catch (e) { window.__apiToast?.("删除失败", { kind: "danger", detail: e?.message }); }
                 }}

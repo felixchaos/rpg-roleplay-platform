@@ -49,7 +49,7 @@ from typing import Any, Literal
 
 Scope = Literal["global", "user", "script", "save"]
 Origin = Literal[
-    "llm_chat", "llm_set", "ui_button", "mcp_call", "api_direct",
+    "llm_chat", "llm_chat_json_op", "llm_set", "ui_button", "mcp_call", "api_direct",
     # task 48: 侧栏控制台助手 — 独立 origin，子集介于 ui_button 与 llm_chat 之间。
     # 拥有 user 级 mutate 工具(activate/rename/create_*)和 destructive 工具(需二次确认),
     # 但不能 inject_pending_question / set_permission_mode / approve_pending_write 这些 UI-only 工具。
@@ -322,8 +322,8 @@ class ToolDispatcher:
                     f"trace_id={env.trace_id} 已执行过相同 ({env.tool}, args)",
                 )
             seen.add(sig)
-        # 9) destructive 工具不能从 llm_chat origin 调
-        if spec.destructive and env.origin == "llm_chat":
+        # 9) destructive 工具不能从 llm_chat / autonomous_agent origin 调
+        if spec.destructive and env.origin in ("llm_chat", "autonomous_agent"):
             raise DispatchError(
                 "destructive_blocked",
                 f"破坏性工具 {env.tool} 不允许从 llm_chat 调用 (需 ui_button 显式审批)",
@@ -342,6 +342,9 @@ class ToolDispatcher:
             elif spec.scope == "script":
                 text = spec.executor(env.user_id, env.script_id, env.args, state)
             else:  # save
+                # dispatcher 自动注入 env.save_id 到 args,让 executor 不必依赖 state._save_id
+                if env.save_id is not None and "save_id" not in env.args:
+                    env.args["save_id"] = env.save_id
                 text = spec.executor(state, env.args)
             # task 109b: 工具可以返 dict (e.g. ui_set_field 返 __ui_action__ payload);
             # dict 默认 ok=True, 由上层 console_assistant 解释 __ui_action__ 转 SSE

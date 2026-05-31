@@ -19,7 +19,6 @@ def _state_schema_layer(state, chars: dict[str, Any]) -> str:
     """
     p = state.data.get("player", {}) or {}
     w = state.data.get("world", {}) or {}
-    state.data.get("memory", {}) or {}
     rels = state.data.get("relationships", {}) or {}
     worldline = state.data.get("worldline", {}) or {}
 

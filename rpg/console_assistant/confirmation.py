@@ -27,10 +27,16 @@ def _resolve_pending(
         conv = user_bucket.get(conversation_id)
         if not conv:
             return None, None, f"conversation {conversation_id} 不存在或不属于当前用户"
-        pending = conv.get("pending_confirmations", {}).pop(call_id, None)
+        pending = conv.get("pending_confirmations", {}).get(call_id)
     if not pending:
         return conv, None, f"call_id={call_id} 没有 pending 记录"
     return conv, pending, None
+
+
+def _pop_pending(conv: dict[str, Any], call_id: str) -> None:
+    """dispatch 完成后才真正删除 pending 记录,避免 dispatch 异常时永久丢失。"""
+    with _state._lock:
+        conv.get("pending_confirmations", {}).pop(call_id, None)
 
 
 def apply_confirmation(
@@ -51,6 +57,7 @@ def apply_confirmation(
     decision_norm = decision.strip().lower()
 
     if decision_norm == "reject":
+        _pop_pending(conv, call_id)
         conv["messages"].append({
             "role": "assistant",
             "content": f"[确认拒绝] 工具 {pending['tool']} (call_id={call_id}) 已被用户拒绝, 未执行。",
@@ -68,6 +75,7 @@ def apply_confirmation(
         call_id=call_id,
         state_provider=state_provider,
     )
+    _pop_pending(conv, call_id)
     conv["messages"].append({
         "role": "assistant",
         "content": _format_tool_result_for_llm(call_id, result),
@@ -116,6 +124,7 @@ def apply_confirmation_stream(
     })
 
     if decision_norm == "reject":
+        _pop_pending(conv, call_id)
         reject_note = (
             f"[确认拒绝] 工具 {pending['tool']} (call_id={call_id}) "
             f"已被用户拒绝, 未执行。"
@@ -147,6 +156,7 @@ def apply_confirmation_stream(
             call_id=call_id,
             state_provider=state_provider,
         )
+        _pop_pending(conv, call_id)
         # task 57 navigate 哨兵识别
         result_str = result.result or ""
         if isinstance(result_str, str) and result_str.startswith("NAVIGATE:"):

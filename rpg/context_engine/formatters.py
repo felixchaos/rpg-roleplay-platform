@@ -130,8 +130,9 @@ def _format_card(name: str, card: dict[str, Any]) -> str:
         f"当前状态：{card.get('current_status') or '未记录'}",
     ]
     # v28: 背景(出场前关键经历 / 动机)非空才输出,避免空字段占行噪声
-    if card.get("background"):
-        lines.append(f"背景：{card.get('background')}")
+    bg = card.get("background") or ""
+    if bg:
+        lines.append(f"背景：{bg}")
     if card.get("secrets"):
         lines.append(f"隐藏信息：{card.get('secrets')}")
     if sample:

@@ -100,13 +100,16 @@ async def api_memory_remove(
         _resolve_persist_target,
     )
     body_dict = body.model_dump(exclude_none=True)
+    index = body_dict.get("index")
+    if index is None or (isinstance(index, int) and index < 0):
+        return JSONResponse({"ok": False, "error": "index 必须是非负整数"}, status_code=400)
     state = _ensure_loaded(api_user)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(
         tool_name="remove_memory_item",
         args={
             "bucket": body_dict.get("bucket", "notes"),
-            "index": int(body_dict.get("index", -1)),
+            "index": int(index),
         },
         user_id=int(api_user.get("id")) if api_user else 0,
         save_id=_resolve_persist_target(api_user)[1] or 0,

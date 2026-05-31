@@ -395,7 +395,7 @@ def execute_tool(state: Any, name: str, args: dict) -> str:
             if not (timeline.get("pending_jump")):
                 return "reject_time_jump 失败: 没有待确认的 pending_jump"
             state.reject_time_jump(reason)
-            return f"时间跳跃已拒绝 ({reason})"
+            return f"已撤销时间跳跃: {reason}"
         if name == "set_player_name":
             v = (args.get("name") or "").strip()
             if not v:

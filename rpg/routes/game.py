@@ -95,7 +95,7 @@ async def api_new(
     state.setup_player(name, role, background)
     if source_meta:
         state.data["player"]["source_kind"] = source_kind
-        state.data["player"]["source_id"] = int(source_meta["id"])
+        state.data["player"]["source_id"] = int(source_meta.get("id") or 0)
         for field in ("appearance", "personality", "speech_style"):
             if source_meta.get(field):
                 state.data["player"][field] = source_meta[field]
@@ -180,6 +180,7 @@ async def api_opening(
             yield _sse("done", {"status": _payload(api_user)})
         except Exception as exc:
             yield _sse("error", {"message": str(exc), "partial": text})
+            yield _sse("done", {"interrupted": True, "status": _payload(api_user)})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
@@ -581,6 +582,7 @@ async def api_chat(
                 duration_ms=int((time.time() - _chat_start_time) * 1000),
             )
             yield _sse("error", {"message": str(exc), "partial": pipeline_ctx.response or response})
+            yield _sse("done", {"interrupted": True, "status": _payload(api_user)})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 

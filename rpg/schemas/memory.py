@@ -15,4 +15,4 @@ class MemoryAddRequest(_BaseRequest):
 
 class MemoryRemoveRequest(_BaseRequest):
     bucket: str | None = "notes"
-    index: int | None = -1
+    index: int | None = None

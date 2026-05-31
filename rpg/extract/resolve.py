@@ -194,7 +194,7 @@ def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=No
         canon_repo.upsert_canon_entity(
             db, script_id, c.logical_key, name=c.name, type=c.type, aliases=c.aliases,
             summary=c.summary, first_revealed_chapter=c.first_revealed_chapter,
-            public_knowledge=(c.importance > public_threshold and c.first_revealed_chapter <= 1),
+            public_knowledge=(c.importance > public_threshold and c.first_revealed_chapter == 1),
             importance=c.importance,
         )
         written += 1
@@ -244,7 +244,7 @@ def sync_character_cards_from_canon(db, script_id: int, character_canon: list[Ca
             )
             values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'npc', 'extracted', 'script',
                     %s, true)
-            on conflict on constraint uq_character_cards_npc_name do update set
+            on conflict(script_id, name) where card_type = 'npc' do update set
               full_name = case when length(excluded.full_name) > 0
                                then excluded.full_name else character_cards.full_name end,
               aliases = excluded.aliases,

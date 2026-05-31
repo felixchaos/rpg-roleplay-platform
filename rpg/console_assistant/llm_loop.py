@@ -67,7 +67,7 @@ def _run_llm_loop(
         pending_summary = "(等待用户对以下调用做出 approve/reject 决定:\n" + json.dumps(
             list(conv["pending_confirmations"].values())[:3], ensure_ascii=False, indent=2,
         ) + "\n)"
-        extra_pending_note.append({"role": "system", "content": pending_summary})
+        extra_pending_note.append({"role": "user", "content": pending_summary})
 
     pending_for_this_turn: list[dict[str, Any]] = []
 
@@ -123,7 +123,6 @@ def _run_llm_loop(
     try:
         messages_for_backend = _to_backend_messages(conv["messages"]) + [
             {"role": m["role"], "content": m["content"]} for m in extra_pending_note
-            if m["role"] in ("user", "assistant")
         ]
         assistant_text_acc = ""
         for ev in backend.stream_with_mcp_loop(
