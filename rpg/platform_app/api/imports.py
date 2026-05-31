@@ -280,6 +280,18 @@ async def api_script_import_pipeline(request: Request, script_id: int, user=Depe
             enable_worldbook=bool(body.get("enable_worldbook", True)),
             budget=body.get("budget") or {},
         ))
+    except import_pipeline.MissingUserCredentialError as exc:
+        return json_response({
+            "ok": False,
+            "code": "credentials_required",
+            "error_key": "credentials_required",
+            "needs_credentials": True,
+            "api_id": exc.api_id,
+            "model": exc.model,
+            "credential_api_id": exc.credential_api_id,
+            "settings_hash": "settings-models",
+            "error": str(exc),
+        }, status_code=400)
     except ValueError as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 

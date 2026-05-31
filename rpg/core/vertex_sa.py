@@ -1,9 +1,7 @@
 """core.vertex_sa — 共享 Vertex Service Account 加载器。
 
-优先链: user BYOK SA (user_api_credentials, api_id='AgentPlatform')
-        → GOOGLE_APPLICATION_CREDENTIALS env
-        → rpg/vertex_sa.json
-        → None
+生产鉴权模式下只允许 user BYOK SA。服务器全局 SA 仅保留给本地/匿名开发模式，
+避免任何登录用户的模型调用 fallback 到平台凭证。
 """
 from __future__ import annotations
 
@@ -25,10 +23,14 @@ def load_sa_credentials(
 ) -> tuple[Any, str | None]:
     """返回 (google.oauth2.service_account.Credentials, project_id) 或 (None, None)。
 
-    优先级:
-    1. user_id 非 None → 从 user_api_credentials 取用户上传的 SA JSON (BYOK)
-    2. GOOGLE_APPLICATION_CREDENTIALS 环境变量指向的文件
-    3. rpg/vertex_sa.json (服务器全局 SA)
+    生产鉴权模式:
+      1. user_id 非 None → 从 user_api_credentials 取用户上传的 SA JSON (BYOK)
+      2. 无用户 SA → 直接 None,绝不 fallback 服务器全局 SA
+
+    本地/匿名开发模式:
+      1. user BYOK SA
+      2. GOOGLE_APPLICATION_CREDENTIALS 环境变量指向的文件
+      3. rpg/vertex_sa.json
     """
     from google.oauth2 import service_account
 
@@ -47,9 +49,19 @@ def load_sa_credentials(
                 log.debug("[vertex_sa] user %s: loaded BYOK SA (project=%s)", user_id, sa.get("project_id"))
                 return credentials, sa.get("project_id")
         except Exception as exc:
-            log.warning("[vertex_sa] user %s BYOK SA load failed: %s; falling back to global SA", user_id, exc)
+            log.warning("[vertex_sa] user %s BYOK SA load failed: %s", user_id, exc)
 
-    # 2. 全局 SA (env 或文件)
+    try:
+        from core.config import require_auth as _require_auth
+        if _require_auth():
+            log.debug("[vertex_sa] auth mode: no user BYOK SA; global SA fallback disabled (user_id=%s)", user_id)
+            return None, None
+    except Exception:
+        # 配置读取失败时按更保守的生产策略处理。
+        log.warning("[vertex_sa] require_auth check failed; global SA fallback disabled", exc_info=True)
+        return None, None
+
+    # 2. 本地/匿名开发模式可用全局 SA (env 或文件)
     sa_file: Path | None = None
     env_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
     if env_path and Path(env_path).exists():

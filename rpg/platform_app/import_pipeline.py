@@ -45,6 +45,16 @@ _POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="import-pipe")
 _RUNNING: dict[str, threading.Thread] = {}  # job_id → thread
 
 
+class MissingUserCredentialError(ValueError):
+    """Raised when a paid/user-scoped LLM pipeline has no user credential."""
+
+    def __init__(self, api_id: str, model: str, credential_api_id: str):
+        self.api_id = api_id
+        self.model = model
+        self.credential_api_id = credential_api_id
+        super().__init__("需要先配置自己的 API Key 后才能继续知识流水线")
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  预算预估（不入库，仅估算）
 # ══════════════════════════════════════════════════════════════════════
@@ -194,6 +204,8 @@ def schedule_full_import(
 ) -> dict[str, Any]:
     """启动一次完整拆书流水线，返回 job_id。"""
     init_db()
+    api_id, model = _resolve_extractor_llm(user_id)
+    _require_user_llm_credential(user_id, api_id, model)
     # 去重 + 限流（同 script 已有 running 任务直接返回那个 job）
     with connect() as db:
         existing = db.execute(
@@ -466,13 +478,58 @@ def _resolve_extractor_llm(user_id: int) -> tuple[str, str]:
     返回 (api_id, model)。
     """
     from agents._harness import resolve_api_and_model
-    return resolve_api_and_model(
+    api_id, model = resolve_api_and_model(
         user_id,
         api_pref_key="extractor.api_id",
         model_pref_key="extractor.model_real_name",
         default_api="vertex_ai",
         default_model="gemini-3.5-flash",
     )
+    return _normalize_llm_api_id(api_id), model
+
+
+def _normalize_llm_api_id(api_id: str) -> str:
+    """Normalize legacy/UI provider ids to backend catalog ids."""
+    value = (api_id or "").strip()
+    if value in {"vertex", "vertex_ai", "agent_platform", "AgentPlatform"}:
+        return "vertex_ai"
+    return value
+
+
+def _credential_api_id_for(api_id: str) -> str:
+    return "AgentPlatform" if api_id == "vertex_ai" else api_id
+
+
+def _api_kind(api_id: str) -> str:
+    try:
+        from model_registry import find_api, load_model_catalog
+        api = find_api(load_model_catalog(), api_id) or {}
+        return str(api.get("kind") or api_id)
+    except Exception:
+        return api_id
+
+
+def _has_user_llm_credential(user_id: int | None, api_id: str) -> bool:
+    if not user_id:
+        return False
+    if _api_kind(api_id) == "vertex_ai" or api_id == "vertex_ai":
+        try:
+            from core.vertex_sa import has_user_sa
+            return has_user_sa(int(user_id), "AgentPlatform")
+        except Exception:
+            return False
+    try:
+        from platform_app.user_credentials import get_credential
+        cred = get_credential(int(user_id), api_id)
+        return bool(cred and cred.get("key"))
+    except Exception:
+        return False
+
+
+def _require_user_llm_credential(user_id: int, api_id: str, model: str) -> None:
+    """Production import pipeline must use user-scoped credentials only."""
+    if not _has_user_llm_credential(user_id, api_id):
+        raise MissingUserCredentialError(api_id, model, _credential_api_id_for(api_id))
 
 
 def _stage_story_phase_llm(ctl: JobController, user_id: int, script_id: int) -> None:

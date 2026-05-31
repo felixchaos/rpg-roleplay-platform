@@ -36,6 +36,18 @@ import CSTextFilter from '@cloudscape-design/components/text-filter';
 import CSTabs from '@cloudscape-design/components/tabs';
 import CSPagination from '@cloudscape-design/components/pagination';
 
+const PENDING_IMPORT_PIPELINE_KEY = "rpg.import.pendingPipeline";
+
+function isCredentialsRequiredError(err) {
+  const payload = err?.payload || {};
+  return (
+    err?.code === "credentials_required"
+    || payload.code === "credentials_required"
+    || payload.error_key === "credentials_required"
+    || payload.needs_credentials === true
+  );
+}
+
 function ScriptPreviewModal({ open, busy, data, rule, onClose, onRetryRule, onConfirm }) {
   const { t } = useTranslation();
   if (!open) return null;
@@ -1137,6 +1149,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
   const [importPercent, setImportPercent] = useStatePL(0);
   const [selectedFile, setSelectedFile] = useStatePL(null);
   const [dragOver, setDragOver] = useStatePL(false);
+  const [pendingPipeline, setPendingPipeline] = useStatePL(null);
   const fileInputRef = React.useRef(null);
   const tickRef = React.useRef(null);
 
@@ -1157,6 +1170,27 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
     if (job) localStorage.setItem("rpg.import.job", JSON.stringify(job));
     else localStorage.removeItem("rpg.import.job");
   }, [job]);
+
+  React.useEffect(() => {
+    try {
+      const cached = localStorage.getItem(PENDING_IMPORT_PIPELINE_KEY);
+      if (!cached) return;
+      const item = JSON.parse(cached);
+      if (item && item.script_id) setPendingPipeline(item);
+    } catch {}
+  }, []);
+
+  const persistPendingPipeline = useCallbackPL((item) => {
+    if (!item || !item.script_id) return;
+    const payload = { ...item, updated_at: Date.now() };
+    setPendingPipeline(payload);
+    try { localStorage.setItem(PENDING_IMPORT_PIPELINE_KEY, JSON.stringify(payload)); } catch {}
+  }, []);
+
+  const clearPendingPipeline = useCallbackPL(() => {
+    setPendingPipeline(null);
+    try { localStorage.removeItem(PENDING_IMPORT_PIPELINE_KEY); } catch {}
+  }, []);
 
   // task 39: real job 必须轮询后端拿真实进度。之前 job.real=true 直接 return 没轮询,
   // 所以 UI 永远卡 0%/0s,直到用户手动刷新页面才能看到剧本已 import 完。
@@ -1271,6 +1305,82 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
     onProgress?.({ stage: "finish", done: totalChunks, total: totalChunks, percent: 100 });
     await window.api.uploads.finish(uploadId, {});
     return uploadId;
+  };
+
+  const buildRunningStages = (baseStages) => {
+    const source = Array.isArray(baseStages) && baseStages.length
+      ? baseStages
+      : IMPORT_STAGES.map(s => ({
+          id: s.id,
+          label: t(s.labelKey),
+          hint: t(s.hintKey),
+          tokens_est: s.tok_per_chap * 100,
+          time_est_sec: Math.round((s.tok_per_chap * 100) / 800),
+        }));
+    return source.map((s, i) => ({
+      ...s,
+      status: i === 0 ? "running" : "pending",
+      progress: 0,
+      tokens_used: 0,
+      started_at: i === 0 ? Date.now() : null,
+      done_at: null,
+    }));
+  };
+
+  const goApiSettings = () => {
+    if (pendingPipeline) persistPendingPipeline(pendingPipeline);
+    window.location.hash = "settings-models";
+  };
+
+  const resumePendingPipeline = async () => {
+    if (!pendingPipeline?.script_id || importBusy) return;
+    setImportBusy(true);
+    setImportPercent(5);
+    setImportProgress(t('scripts.import.pipeline_resuming'));
+    try {
+      const resp = await window.api.scripts.importPipeline(pendingPipeline.script_id, {
+        enable_cards: true,
+        enable_worldbook: true,
+        budget: pendingPipeline.budget || {},
+      });
+      if (!resp || resp.ok === false || !resp.job_id) {
+        throw new Error((resp && (resp.error || resp.detail)) || t('scripts.import.api_fail'));
+      }
+      const stages = buildRunningStages(pendingPipeline.stages);
+      setJob({
+        id: resp.job_id,
+        file: pendingPipeline.file || { name: pendingPipeline.file_name || pendingPipeline.title || "script" },
+        title: pendingPipeline.title || pendingPipeline.file_name || "script",
+        script_id: pendingPipeline.script_id,
+        mode: pendingPipeline.mode || "",
+        stages,
+        currentStage: 0,
+        totalTokens: pendingPipeline.totalTokens || stages.reduce((a, s) => a + (s.tokens_est || 0), 0),
+        status: "running",
+        started_at: Date.now(),
+        real: true,
+      });
+      clearPendingPipeline();
+      setImportPercent(100);
+      window.__apiToast?.(t('scripts.import.pipeline_resumed'), { kind: "ok", duration: 2600 });
+    } catch (e) {
+      if (isCredentialsRequiredError(e)) {
+        const payload = e?.payload || {};
+        persistPendingPipeline({ ...pendingPipeline, api_id: payload.api_id, model: payload.model, credential_api_id: payload.credential_api_id });
+        window.__apiToast?.(t('scripts.import.api_key_required_title'), {
+          kind: "warn",
+          detail: t('scripts.import.api_key_required_toast'),
+          duration: 5000,
+        });
+      } else {
+        const detail = (e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || t('scripts.toast.unknown_error');
+        window.__apiToast?.(t('scripts.import.pipeline_resume_fail'), { kind: "danger", detail, duration: 5000 });
+      }
+    } finally {
+      setImportBusy(false);
+      setImportPercent(0);
+      setImportProgress("");
+    }
   };
 
   const startEstimate = async () => {
@@ -1413,26 +1523,62 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
         // 后面 chat 上下文严重缺失。优先用 imp_ job_id 跟踪进度(完整 5-stage),
         // ks_ job_id 是降级 fallback。
         let pipelineJobId = null;
+        let pipelinePaused = null;
         try {
           setImportPercent(92);
           setImportProgress(t('scripts.import.import_pipeline'));
           const pipelineResp = await window.api.scripts.importPipeline(sc.id, {
             enable_cards: true,
             enable_worldbook: true,
+            budget: estimate,
           });
           if (pipelineResp && pipelineResp.ok !== false) {
             pipelineJobId = pipelineResp.job_id;
           }
         } catch (e) {
-          // pipeline 启动失败不致命,fallback 用 ks_ job_id 至少能看到 facts/chunks 进度
-          console.warn("import-pipeline failed to start:", e);
+          if (isCredentialsRequiredError(e)) {
+            const payload = e?.payload || {};
+            const createdTitle = sc.title || title || estimate.file.name;
+            const modeLabel = (() => { const _r = SPLIT_RULES.find(r => r.id === rule); return _r ? t(_r.labelKey) : rule; })();
+            pipelinePaused = {
+              script_id: sc.id,
+              title: createdTitle,
+              file: estimate.file,
+              file_name: estimate.file?.name || createdTitle,
+              mode: modeLabel,
+              stages: estimate.stages,
+              totalTokens: estimate.totalTokens,
+              budget: estimate,
+              api_id: payload.api_id,
+              model: payload.model,
+              credential_api_id: payload.credential_api_id,
+              reason: "credentials_required",
+              created_at: Date.now(),
+            };
+            persistPendingPipeline(pipelinePaused);
+            window.__apiToast?.(t('scripts.import.api_key_required_title'), {
+              kind: "warn",
+              detail: t('scripts.import.api_key_required_toast'),
+              duration: 6000,
+            });
+          } else {
+            // pipeline 启动失败不致命,fallback 用 ks_ job_id 至少能看到 facts/chunks 进度
+            console.warn("import-pipeline failed to start:", e);
+          }
         }
-        const stages = estimate.stages.map((s, i) => ({
-          ...s,
-          status: i === 0 ? "running" : "pending",
-          progress: 0, tokens_used: 0,
-          started_at: i === 0 ? Date.now() : null, done_at: null,
-        }));
+        if (pipelinePaused) {
+          setImportPercent(100);
+          setJob(null);
+          setEstimate(null);
+          try { window.dispatchEvent(new CustomEvent("rpg-scripts-updated")); } catch (_) {}
+          window.toast && window.toast(t('scripts.toast.import_ok'), {
+            kind: "ok",
+            detail: t('scripts.import.import_ok_needs_api', { id: sc.id, title: sc.title || "" }),
+            duration: 5000,
+          });
+          return;
+        }
+        const stages = buildRunningStages(estimate.stages);
         const j = {
           id: pipelineJobId
             || (importResp.knowledge && importResp.knowledge.job_id)
@@ -1509,6 +1655,27 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
           {jobRunning && <ImportJobBanner job={job} onCancel={cancelJob} />}
           {job && (job.status === 'done' || job.status === 'cancelled') && (
             <ImportJobResult job={job} onDismiss={dismissJob} onReuse={() => { setJob(null); setEstimate(null); }} />
+          )}
+          {pendingPipeline && !jobRunning && (
+            <CSAlert
+              type="warning"
+              header={t('scripts.import.api_key_required_title')}
+              action={
+                <CSSpaceBetween direction="horizontal" size="xs">
+                  <CSButton onClick={resumePendingPipeline} loading={importBusy} disabled={importBusy}>
+                    {t('scripts.import.resume_pipeline')}
+                  </CSButton>
+                  <CSButton variant="primary" iconName="settings" onClick={goApiSettings}>
+                    {t('scripts.import.go_api_settings')}
+                  </CSButton>
+                </CSSpaceBetween>
+              }
+            >
+              {t('scripts.import.api_key_required_body', {
+                title: pendingPipeline.title || pendingPipeline.file_name || t('scripts.import.unnamed'),
+                provider: pendingPipeline.credential_api_id || pendingPipeline.api_id || 'API',
+              })}
+            </CSAlert>
           )}
 
           <CSContainer header={<CSHeader variant="h2" description={t('scripts.import.basic_desc')}>{t('scripts.import.basic_title')}</CSHeader>}>

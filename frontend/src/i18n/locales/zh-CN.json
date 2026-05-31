@@ -1110,6 +1110,15 @@
       "stage_timeline": "时间线建立",
       "stage_timeline_hint": "事件锚点 + 章节映射",
       "no_upload_id": "后端未返回 upload_id",
+      "api_key_required_title": "需要配置 API Key",
+      "api_key_required_body": "《{{title}}》已完成基础导入。人物卡、世界书、时间线等模型步骤必须使用你自己的 {{provider}} 凭据；配置后回到本页继续知识流水线。",
+      "api_key_required_toast": "基础导入已保留；配置 API Key 后可继续模型知识流水线。",
+      "go_api_settings": "去配置 API Key",
+      "resume_pipeline": "继续知识流水线",
+      "pipeline_resuming": "正在继续知识流水线…",
+      "pipeline_resumed": "知识流水线已继续",
+      "pipeline_resume_fail": "继续失败",
+      "import_ok_needs_api": "已建立剧本 #{{id}} · {{title}} · 需要配置 API Key 后继续人物卡/世界书/时间线",
       "api_fail": "导入接口返回失败"
     },
     "editor": {

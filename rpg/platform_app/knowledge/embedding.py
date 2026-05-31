@@ -49,7 +49,7 @@ EMBED_MODEL = DEFAULT_EMBED_MODEL
 
 def _resolve_embed_config(user_id: int | None) -> tuple[str, str, str, str]:
     """返回 (api_id, model, api_key, base_url_override)。
-    优先链:user_preferences embed.* → env 兜底 → vertex SA。
+    生产鉴权模式下 env 兜底会被 resolve_api_key 禁止，只接受用户级凭证。
     """
     if user_id:
         try:
@@ -68,7 +68,7 @@ def _resolve_embed_config(user_id: int | None) -> tuple[str, str, str, str]:
 def _get_vertex_client(user_id: int | None = None):
     """返回 Vertex genai Client，按 user_id 走 BYOK 优先链。
 
-    缓存键包含 user_id，用户级 SA 与全局 SA 互不干扰。
+    生产鉴权模式下 load_sa_credentials 会禁用服务器全局 SA fallback。
     """
     cache_key = f"client:{user_id}"
     if cache_key in _VERTEX_CLIENT_CACHE:
@@ -452,7 +452,7 @@ def embed_script(user_id: int, script_id: int) -> dict[str, Any]:
         raise ValueError("无权访问该剧本")
     if _EMBED_QUEUE_RUNNING.get(script_id):
         return {"ok": True, "already_running": True, "status": embed_status(script_id)}
-    # 检查 embedding provider 是否可用:用户 BYOK 或系统 vertex SA 至少有一个
+    # 检查 embedding provider 是否可用：生产鉴权模式必须有用户 BYOK/API key。
     _api_id, _model, _api_key, _base_url = _resolve_embed_config(user_id)
     _provider_ok = (
         (_api_id in _VERTEX_API_IDS and _get_vertex_client(user_id=user_id) is not None)
@@ -463,7 +463,7 @@ def embed_script(user_id: int, script_id: int) -> dict[str, Any]:
             "ok": False,
             "error": (
                 f"未配置 {_api_id} embedding 凭证 · "
-                "请在「设置 → API 设置」添加对应 API key，或在服务器配置 vertex_sa.json"
+                "请在「设置 → API 设置」添加对应 API key"
             ),
         }
     _EMBED_QUEUE_RUNNING[script_id] = True

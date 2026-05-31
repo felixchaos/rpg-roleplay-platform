@@ -255,7 +255,7 @@ def _list_vertex_models(api: dict[str, Any], user_id: int | None = None) -> list
     if creds is None or project_id is None:
         raise RuntimeError(
             "未找到 Vertex Service Account。"
-            "请在「设置 → Agent Platform」上传 SA JSON，或在服务器配置 vertex_sa.json。"
+            "请在「设置 → Agent Platform」上传自己的 SA JSON。"
         )
     client = genai.Client(vertexai=True, project=project_id, location="global", credentials=creds)
     models = []

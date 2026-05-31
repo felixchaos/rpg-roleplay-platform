@@ -73,11 +73,11 @@ def call_agent_json(
     elif api_id == "vertex_ai":
         if tool_schema:
             text, usage = _vertex_function_call(
-                model, system_prompt, user_prompt, tool_schema, max_tokens,
+                model, system_prompt, user_prompt, user_id, tool_schema, max_tokens,
             )
         else:
             text, usage = _vertex_structured(
-                model, system_prompt, user_prompt, max_tokens,
+                model, system_prompt, user_prompt, user_id, max_tokens,
             )
     else:
         # OpenAI 兼容:openai / siliconflow / dashscope / qwen 等
@@ -251,11 +251,12 @@ def _vertex_structured(
     model: str,
     system_prompt: str,
     user_prompt: str,
+    user_id: int | None,
     max_tokens: int,
 ) -> tuple[str, dict]:
     """Vertex call_structured 已设了 response_mime_type=application/json。"""
     from agents.gm import _VertexBackend
-    backend = _VertexBackend(model=model)
+    backend = _VertexBackend(model=model, user_id=user_id)
     text = backend.call_structured(
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
@@ -269,6 +270,7 @@ def _vertex_function_call(
     model: str,
     system_prompt: str,
     user_prompt: str,
+    user_id: int | None,
     tool_schema: dict,
     max_tokens: int,
 ) -> tuple[str, dict]:
@@ -281,7 +283,7 @@ def _vertex_function_call(
     返回 (tool.args 序列化 JSON, usage_dict)。
     """
     from agents.gm import _VertexBackend
-    backend = _VertexBackend(model=model)
+    backend = _VertexBackend(model=model, user_id=user_id)
     from google.genai import types
 
     fn_decl = types.FunctionDeclaration(

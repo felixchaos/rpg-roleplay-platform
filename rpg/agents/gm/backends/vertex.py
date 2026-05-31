@@ -32,14 +32,13 @@ class _VertexBackend:
         """初始化 Vertex AI backend。
 
         凭证优先链:
-          1. user_id 非 None → 用户 BYOK SA (user_api_credentials api_id='AgentPlatform')
-          2. GOOGLE_APPLICATION_CREDENTIALS env → 对应 SA 文件
-          3. rpg/vertex_sa.json (服务器全局 SA)
-          4. 三者均无 → RuntimeError
+          1. 生产鉴权模式 user_id 非 None → 用户 BYOK SA (user_api_credentials api_id='AgentPlatform')
+          2. 本地/匿名开发模式 → GOOGLE_APPLICATION_CREDENTIALS 或 rpg/vertex_sa.json
+          3. 无可用凭证 → RuntimeError
 
         Args:
             model: Vertex 模型名称（real_name）。
-            user_id: 当前用户 ID，用于取 BYOK SA；None 时走全局 SA。
+            user_id: 当前用户 ID，用于取 BYOK SA；None 仅在本地/匿名开发模式可走全局 SA。
         """
         from google import genai
         from core.vertex_sa import load_sa_credentials
@@ -50,8 +49,7 @@ class _VertexBackend:
         if credentials is None or project_id is None:
             raise RuntimeError(
                 "未找到 Vertex AI Service Account。"
-                "请在「设置 → API & 模型 → Agent Platform」上传 SA JSON 文件，"
-                "或在服务器配置 vertex_sa.json / GOOGLE_APPLICATION_CREDENTIALS。"
+                "请在「设置 → API & 模型 → Agent Platform」上传自己的 SA JSON 文件。"
             )
 
         self.client = genai.Client(

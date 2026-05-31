@@ -1110,6 +1110,15 @@
       "stage_timeline": "Timeline Building",
       "stage_timeline_hint": "Event anchors + chapter mapping",
       "no_upload_id": "Backend did not return upload_id",
+      "api_key_required_title": "API Key Required",
+      "api_key_required_body": "Basic import for '{{title}}' is complete. Model steps such as character cards, worldbook, and timeline must use your own {{provider}} credential; configure it, then return here to continue the knowledge pipeline.",
+      "api_key_required_toast": "Basic import was saved. Configure an API key to continue the model knowledge pipeline.",
+      "go_api_settings": "Configure API Key",
+      "resume_pipeline": "Continue Pipeline",
+      "pipeline_resuming": "Continuing knowledge pipeline…",
+      "pipeline_resumed": "Knowledge pipeline resumed",
+      "pipeline_resume_fail": "Resume failed",
+      "import_ok_needs_api": "Script #{{id}} · {{title}} created. Configure an API key to continue character cards/worldbook/timeline.",
       "api_fail": "Import API returned failure"
     },
     "editor": {
