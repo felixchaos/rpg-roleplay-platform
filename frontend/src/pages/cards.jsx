@@ -805,7 +805,7 @@ function CardEditModal({ card, isNew, kind, onClose, onSave }) {
                     <CSInput value={form.identity} onChange={({ detail }) => u('identity', detail.value)} />
                   </CSFormField>
                   <CSFormField label="别名" description="逗号分隔,GM 据此识别同一角色的多种称呼">
-                    <CSInput value={form.aliases} onChange={({ detail }) => u('aliases', detail.value)} placeholder="如:小卡, 卡卡, the captain" />
+                    <CSInput value={form.aliases} onChange={({ detail }) => u('aliases', detail.value)} />
                   </CSFormField>
                   <CSFormField label="标签" description="逗号分隔">
                     <CSInput value={form.tags} onChange={({ detail }) => u('tags', detail.value)} />
@@ -826,8 +826,7 @@ function CardEditModal({ card, isNew, kind, onClose, onSave }) {
                 <CSSpaceBetween size="l">
                   <CSFormField label="关键秘密" description="GM 可见,不会直接暴露给其他角色"><CSTextarea rows={3} value={form.secrets} onChange={({ detail }) => u('secrets', detail.value)} /></CSFormField>
                   <CSFormField label="示例对话" description="每行一句,帮助 GM 模仿口吻">
-                    <CSTextarea rows={4} value={form.sample_dialogue} onChange={({ detail }) => u('sample_dialogue', detail.value)}
-                      placeholder={'"我从不打没把握的仗。"\n"……让我考虑一下。"'} />
+                    <CSTextarea rows={4} value={form.sample_dialogue} onChange={({ detail }) => u('sample_dialogue', detail.value)} />
                   </CSFormField>
                 </CSSpaceBetween>
               </CSContainer>

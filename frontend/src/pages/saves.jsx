@@ -1645,7 +1645,6 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
       <CSFormField label="剧情期望 / 秘密分配">
         <CSTextarea
           rows={6}
-          placeholder={"例:\n- 林晓芸知道原著剧情,但绝口不提,NPC 不知道她是穿越者\n- 希望 GM 优先推进与林有德的相遇\n- 不希望出现过于血腥的场面"}
           value={storyIntent}
           onChange={({ detail }) => setStoryIntent(detail.value)}
         />
