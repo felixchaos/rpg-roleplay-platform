@@ -1249,7 +1249,7 @@ function MeEditProfile() {
     location: user._raw?.location || "",
     website: user._raw?.website || "",
     bio: user.bio || "",
-    pronouns: user._raw?.pronouns || "她/她",
+    pronouns: user._raw?.pronouns || "",
     language: user._raw?.language || "zh-CN",
     timezone: user._raw?.timezone || "Asia/Shanghai",
   });
@@ -1260,21 +1260,24 @@ function MeEditProfile() {
   };
   const [uploadOpen, setUploadOpen] = useStatePL(false);
   const [resetAvatarOpen, setResetAvatarOpen] = useStatePL(false);
-  const [smsOpen, setSmsOpen] = useStatePL(false);
   const [saving, setSaving] = useStatePL(false);
   const avatarInputRef = React.useRef(null);
 
-  // Hydrate from /api/me/profile.
+  // 从 /api/me/profile 拉真实资料(后端合并了 profile_extras:邮箱/手机/真名/性别/
+  // 生日/所在地/网站/代词/语言/时区)。只取表单已知字段,避免把 stats 等无关键污染进 form。
+  const _FORM_KEYS = ["display_name", "username", "email", "phone", "real_name",
+    "gender", "birthday", "location", "website", "bio", "pronouns", "language", "timezone"];
   useEffectPL(() => {
     (async () => {
       try {
         const p = await window.api.account.profile();
-        if (p && p.profile) {
-          setForm(f => ({ ...f, ...p.profile }));
-        } else if (p && typeof p === "object") {
-          setForm(f => ({ ...f, ...p }));
-        }
-      } catch (_) {}
+        const src = (p && (p.profile || p.user)) || p || {};
+        const picked = {};
+        for (const k of _FORM_KEYS) if (src[k] != null) picked[k] = src[k];
+        if (Object.keys(picked).length) setForm(f => ({ ...f, ...picked }));
+      } catch (e) {
+        window.__apiToast?.("加载资料失败,请检查网络后重试", { kind: "danger", detail: e?.message, duration: 3000 });
+      }
     })();
   }, []);
 
@@ -1340,29 +1343,6 @@ function MeEditProfile() {
     }
   };
 
-  const onSendSms = async () => {
-    if (!form.phone) {
-      window.__apiToast?.("请先填写手机号", { kind: "danger" });
-      return;
-    }
-    try {
-      await window.api.auth.smsCode(form.phone);
-      window.__apiToast?.("验证码已发送", { kind: "ok" });
-      setSmsOpen(true);
-    } catch (e) {
-      window.__apiToast?.("发送失败", { kind: "danger", detail: e?.message });
-    }
-  };
-
-  const onVerifySms = async (vals) => {
-    try {
-      await window.api.auth.smsVerify({ phone: form.phone, code: vals?.code });
-      window.__apiToast?.("已验证", { kind: "ok" });
-      setSmsOpen(false);
-    } catch (e) {
-      window.__apiToast?.("验证失败", { kind: "danger", detail: e?.message });
-    }
-  };
   return (
     <CSSpaceBetween size="l">
       {/* 头像 */}
@@ -1432,17 +1412,11 @@ function MeEditProfile() {
       {/* 联系方式 */}
       <CSContainer header={<CSHeader variant="h2">联系方式</CSHeader>}>
         <div className="pl-form-grid-2">
-          <Field label="邮箱" hint="已验证" required>
-            <CSSpaceBetween direction="horizontal" size="xs">
-              <CSInput value={form.email} onChange={({ detail }) => u("email", detail.value)} />
-              <span className="pill ok"><span className="dot ok" /> 已验证</span>
-            </CSSpaceBetween>
+          <Field label="邮箱" hint="用于通知与找回密码">
+            <CSInput value={form.email} onChange={({ detail }) => u("email", detail.value)} placeholder="you@example.com" />
           </Field>
-          <Field label="手机" hint="用于二次验证">
-            <CSSpaceBetween direction="horizontal" size="xs">
-              <CSInput value={form.phone} onChange={({ detail }) => u("phone", detail.value)} />
-              <CSButton onClick={onSendSms}>发送验证码</CSButton>
-            </CSSpaceBetween>
+          <Field label="手机" hint="选填，仅自己可见">
+            <CSInput value={form.phone} onChange={({ detail }) => u("phone", detail.value)} placeholder="选填" />
           </Field>
         </div>
       </CSContainer>
@@ -1491,18 +1465,6 @@ function MeEditProfile() {
         body={<>将删除当前头像，使用由显示名首字生成的占位头像。</>}
         confirmLabel="恢复默认"
         onClose={() => setResetAvatarOpen(false)} onConfirm={onResetAvatar}
-      />
-      <PromptModal
-        open={smsOpen}
-        eyebrow="手机验证"
-        title="输入 6 位验证码"
-        hint={`验证码已发送到 ${form.phone} · 30 秒后可重发`}
-        fields={[
-          { key: "code", label: "验证码", required: true, mono: true, placeholder: "6 位数字" },
-        ]}
-        submitLabel="验证"
-        onClose={() => setSmsOpen(false)}
-        onConfirm={onVerifySms}
       />
     </CSSpaceBetween>
   );
@@ -1995,7 +1957,6 @@ function ProfilePage() {
   const platform = usePlatformData();  // task 45：响应式 platform，登录后真实数据自动注入
   const { database = {}, stats = {}, scripts = [], saves = [], recent_assets = [] } = platform;
   const user = useReactiveUser();  // task 13: 保存资料后即时同步显示名/简介
-  const [editOpen, setEditOpen] = useStatePL(false);
   // task 12：以真实数组长度为最权威源；data-loader 已把 stats.* 改为
   // 真实值/null，但这里再做一层兜底，避免设计预览模式 (offline) 残留的 mock 12 漏到 UI。
   const fmtN = (n) => (n == null ? "—" : (typeof n === "number" ? n.toLocaleString() : String(n)));
@@ -2004,10 +1965,47 @@ function ProfilePage() {
   const wordTotal = realScripts.reduce((a, s) => a + (Number(s && s.word_count) || 0), 0);
   const wordWan = wordTotal > 0 ? (wordTotal / 10000).toFixed(0) : "—";
   const branchAgg = realSaves.reduce((a, s) => a + (Number(s && s.branch_count) || 0), 0) || (stats?.branches ?? null);
+  // 工作台首页:问候 + 快速操作。身份资料(名字/简介/角色)归「个人主页」,这里不再重复。
+  const lastSave = realSaves[0] || null;
+  const hour = (() => { try { return new Date().getHours(); } catch (_) { return 12; } })();
+  const greeting = hour < 5 ? "夜深了" : hour < 11 ? "早上好" : hour < 14 ? "中午好" : hour < 18 ? "下午好" : "晚上好";
+  const lastScript = lastSave ? realScripts.find(sc => sc && sc.id === lastSave.script_id) : null;
   return (
     <CSSpaceBetween size="l">
-      {/* 4 stat 卡 */}
-      <CSContainer>
+      {/* 欢迎 Hero + 快速操作 */}
+      <div style={{
+        background: "linear-gradient(135deg, var(--panel-2,#282623) 0%, var(--panel,#211f1d) 100%)",
+        border: "1px solid var(--line-soft,#2a2724)", borderRadius: 14, padding: "26px 28px",
+      }}>
+        <div style={{ fontSize: 13, color: "var(--accent,#c96442)", fontWeight: 600, letterSpacing: ".04em", marginBottom: 6 }}>
+          {greeting}，{user.display_name || "旅行者"}
+        </div>
+        <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 23, fontWeight: 600, color: "var(--text,#ebe7df)", marginBottom: 6 }}>
+          继续你的故事，或开启新的旅程
+        </div>
+        <div style={{ fontSize: 13.5, color: "var(--text-quiet,#a8a195)", marginBottom: 18, lineHeight: 1.6 }}>
+          {realScripts.length === 0
+            ? "还没有剧本。先去「剧本」页导入一部长篇,平台会自动切章、提取世界观与角色卡。"
+            : (realSaves.length === 0
+                ? `已导入 ${realScripts.length} 部剧本。挑一本开启你的第一个存档吧。`
+                : `你有 ${realSaves.length} 个存档、${realScripts.length} 部剧本在等你。`)}
+        </div>
+        <CSSpaceBetween direction="horizontal" size="xs">
+          {lastSave ? (
+            <CSButton variant="primary" iconName="caret-right-filled" onClick={() => window.__openContinue?.(lastSave)}>
+              继续《{lastSave.title || lastScript?.title || "上次存档"}》
+            </CSButton>
+          ) : (
+            <CSButton variant="primary" iconName="add-plus" href="#scripts">浏览剧本</CSButton>
+          )}
+          <CSButton iconName="folder" href="#scripts">剧本库</CSButton>
+          <CSButton iconName="user-profile" href="#cards">用户角色卡</CSButton>
+          <CSButton iconName="settings" href="#settings">设置</CSButton>
+        </CSSpaceBetween>
+      </div>
+
+      {/* 平台资源概览 */}
+      <CSContainer header={<CSHeader variant="h2">平台资源</CSHeader>}>
         <CSColumnLayout columns={4} variant="text-grid">
           <div>
             <CSBox variant="awsui-key-label">剧本</CSBox>
@@ -2032,30 +2030,16 @@ function ProfilePage() {
         </CSColumnLayout>
       </CSContainer>
 
-      {/* 账号 section */}
-      <CSContainer header={
-        <CSHeader variant="h2" actions={<CSButton href="#me-edit" iconName="edit">编辑资料</CSButton>}>
-          账号
-        </CSHeader>
-      }>
+      {/* 系统状态(身份资料见「个人主页」,此处不重复) */}
+      <CSContainer header={<CSHeader variant="h2">系统状态</CSHeader>}>
         <CSKeyValuePairs
-          columns={2}
+          columns={3}
           items={[
-            {
-              label: "用户",
-              value: (
-                <CSSpaceBetween size="xxs">
-                  <CSBox fontWeight="bold">{user.display_name}</CSBox>
-                  <CSBox color="text-body-secondary" fontSize="body-s">@{user.username} · {user.role} · uid {user.uid}</CSBox>
-                  {user.bio && <CSBox color="text-body-secondary" fontSize="body-s">{user.bio}</CSBox>}
-                </CSSpaceBetween>
-              ),
-            },
             {
               label: "数据库",
               value: (
                 <CSBox>
-                  <span className="mono">{database.driver}</span>
+                  <span className="mono">{database.driver || "—"}</span>
                   <CSStatusIndicator type={database.ok ? "success" : "error"} style={{marginLeft: 8}}>
                     {database.ok ? "online" : "offline"}
                   </CSStatusIndicator>
@@ -2065,6 +2049,16 @@ function ProfilePage() {
             {
               label: "API 版本",
               value: <span className="mono">v1 · stable</span>,
+            },
+            {
+              label: "账号",
+              value: (
+                <CSBox>
+                  @{user.username || "—"} · {user.role || "user"}
+                  {" · "}
+                  <a href="#me" style={{ color: "var(--accent,#c96442)", borderBottom: "1px dotted var(--muted-2)" }}>个人主页 →</a>
+                </CSBox>
+              ),
             },
           ]}
         />
@@ -2154,45 +2148,6 @@ function ProfilePage() {
         )}
       </CSContainer>
 
-      <PromptModal
-        open={editOpen}
-        eyebrow="编辑资料"
-        title={user.display_name}
-        hint="POST /api/profile"
-        fields={[
-          { key: "display_name", label: "显示名", required: true, default: user.display_name },
-          { key: "bio", label: "简介", type: "textarea", default: user.bio, rows: 4 },
-          { key: "timezone", label: "时区", type: "select", default: "Asia/Shanghai",
-            options: [
-              { value: "Asia/Shanghai", label: "UTC+8 · 上海" },
-              { value: "UTC", label: "UTC" },
-              { value: "America/Los_Angeles", label: "UTC-8 · 洛杉矶" },
-            ] },
-        ]}
-        submitLabel="保存"
-        onClose={() => setEditOpen(false)}
-        onConfirm={async (vals) => {
-          // task 51：原 onConfirm = setEditOpen(false) 纯关闭，用户改了名字提交后
-          // 完全没保存。真打 POST /api/profile，成功后触发 me 数据 refresh。
-          try {
-            await window.api.account.saveProfile({
-              display_name: vals.display_name,
-              bio: vals.bio,
-              timezone: vals.timezone,
-            });
-            window.__apiToast?.("已保存", { kind: "ok", duration: 1500 });
-            setEditOpen(false);
-            // 触发 useReactiveUser 重新拉一次
-            try {
-              const me = await window.api.auth.me();
-              if (me && me.user) window.__USER_STATE = me.user;
-              window.dispatchEvent(new CustomEvent("rpg-data-ready"));
-            } catch (_) {}
-          } catch (e) {
-            window.__apiToast?.("保存失败", { kind: "danger", detail: e?.message });
-          }
-        }}
-      />
     </CSSpaceBetween>
   );
 }

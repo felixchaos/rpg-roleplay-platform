@@ -335,29 +335,9 @@ async def api_save_preference(request: Request):
     return json_response({"ok": True, "preferences": prefs})
 
 
-@router.get("/api/me/profile")
-async def api_me_profile(request: Request):
-    user = require_user(request)
-    _ensure_profile_extras_table()
-    with connect() as db:
-        row = db.execute(
-            "select * from profile_extras where user_id = %s",
-            (user["id"],),
-        ).fetchone()
-    extras = expose(row) if row else {}
-    extras.pop("user_id", None)
-    return json_response({
-        "ok": True,
-        "profile": {
-            "id": user["id"],
-            "username": user["username"],
-            "display_name": user.get("display_name") or "",
-            "bio": user.get("bio") or "",
-            "role": user.get("role"),
-            "avatar_url": user.get("avatar_url"),
-            **extras,
-        },
-    })
+# 注:GET /api/me/profile 已统一到 platform_app/api/me.py(返回 user+profile+extras+
+# 偏好+用量+凭证,超集)。此处原有的重复路由会被 platform_router(先挂载)遮蔽,
+# 已删除以消除路由冲突。
 
 
 # ------------------------------------------------------------

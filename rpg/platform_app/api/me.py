@@ -13,9 +13,11 @@ router = APIRouter()
 # ── 个人主页 ────────────────────────────────────────────────────────
 @router.get("/api/me/profile")
 async def api_my_profile(user=Depends(require_user)):
-    """个人主页一次拉全：账户 + 用量摘要 + 凭证清单 + 偏好"""
+    """个人主页一次拉全：账户 + 扩展资料 + 用量摘要 + 凭证清单 + 偏好"""
     from .. import usage as usage_mod
     from .. import user_credentials
+    from ..frontend_routes import _ensure_profile_extras_table
+    _ensure_profile_extras_table()
     with connect() as db:
         prefs_row = db.execute(
             "select preferences, updated_at from user_preferences where user_id = %s",
@@ -27,9 +29,20 @@ async def api_my_profile(user=Depends(require_user)):
         script_count = db.execute(
             "select count(*) as n from scripts where owner_id = %s", (user["id"],)
         ).fetchone()
+        extras_row = db.execute(
+            "select * from profile_extras where user_id = %s", (user["id"],)
+        ).fetchone()
+    # 合并 profile_extras 的扩展字段(真名/性别/生日/所在地/网站/代词/语言/时区/邮箱/手机)
+    extras = dict(extras_row) if extras_row else {}
+    for drop in ("user_id", "visibility", "preferences", "updated_at"):
+        extras.pop(drop, None)
+    user_public = {k: v for k, v in user.items() if k != "password_hash"}
+    user_public.update({k: v for k, v in extras.items() if v is not None})
     return json_response({
         "ok": True,
-        "user": {k: v for k, v in user.items() if k != "password_hash"},
+        "user": user_public,
+        # profile 别名:编辑资料页直接读 .profile,与 frontend_routes 旧形状兼容
+        "profile": user_public,
         "stats": {
             "saves": int(save_count["n"]) if save_count else 0,
             "scripts": int(script_count["n"]) if script_count else 0,
