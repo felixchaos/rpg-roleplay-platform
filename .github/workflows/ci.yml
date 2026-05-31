@@ -62,7 +62,7 @@ jobs:
 
       - name: Run pytest
         working-directory: rpg
-        run: pytest tests/ -x --tb=short -q
+        run: pytest tests/ --tb=short -q --maxfail=20
 
   frontend:
     runs-on: ubuntu-latest

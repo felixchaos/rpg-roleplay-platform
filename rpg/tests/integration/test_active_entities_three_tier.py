@@ -221,12 +221,12 @@ class FrontendPanelCharactersStructure(unittest.TestCase):
     """game-panels.jsx 的 PanelCharacters / CharacterCard / PANEL_TABS 结构。"""
 
     def test_panel_tabs_cards_label_is_renamed_to_persons(self):
-        # cards tab 的 id 保持稳定 (路由 / 兼容),只改 label
-        m = re.search(r'\{\s*id:\s*"cards"\s*,\s*label:\s*"([^"]+)"', PANELS_JSX)
-        self.assertIsNotNone(m, "PANEL_TABS 应有 id='cards' 条目")
-        label = m.group(1)
-        self.assertEqual(label, "人物",
-            f"cards tab label 应是'人物' (不再是'角色卡'),实际: {label}")
+        # cards tab 的 id 保持稳定 (路由 / 兼容)
+        # i18n 化后 label 走 labelKey,文本在 i18n locales(zh-CN: 人物)
+        m = re.search(r'\{\s*id:\s*"cards"\s*,\s*labelKey:\s*"([^"]+)"', PANELS_JSX)
+        self.assertIsNotNone(m, "PANEL_TABS 应有 id='cards' 条目带 labelKey")
+        self.assertEqual(m.group(1), "game.tabs.cards",
+            f"cards tab labelKey 应是 game.tabs.cards,实际: {m.group(1)}")
 
     def test_panel_characters_reads_active_entities(self):
         # 找 PanelCharacters 函数体
