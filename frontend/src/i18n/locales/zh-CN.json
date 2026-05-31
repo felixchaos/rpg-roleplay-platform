@@ -80,6 +80,8 @@
       "usage_detail": "完整明细见",
       "usage_page": "用量页",
       "key_set_hint": "已设置",
+      "base_url_label": "接口地址",
+      "key_label": "密钥",
       "delete_key_title": "删除 API Key",
       "delete_key_confirm": "删除「{{name}}」的 API Key?该供应商的模型将不再可用。",
       "delete_key_btn": "删除",
@@ -1993,7 +1995,17 @@
       "tag_imported": "导入",
       "tag_tavern": "酒馆",
       "parse_pending_hint": "文件大小 {{size}} KB · MIME: {{mime}} · 自动解析未启用,请手动填写字段。",
-      "parse_pending_first_mes": "（请手动填写开场白）"
+      "parse_pending_first_mes": "（请手动填写开场白）",
+      "type_card": "角色卡",
+      "type_chat": "聊天记录",
+      "chat_hint": "上传 SillyTavern 聊天记录（.jsonl）以新建存档，可继续这段对话。",
+      "chat_btn_file": "选择 .jsonl 文件",
+      "chat_parse_fail": "JSONL 解析失败，请确保是合法的 SillyTavern 聊天导出文件。",
+      "chat_preview_label": "聊天记录导入预览",
+      "chat_preview_stats": "{{msgs}} 条消息 · 玩家：{{user}}",
+      "chat_new_save_hint": "将创建新存档并把所有消息写入历史，可从聊天结束处继续游戏。",
+      "chat_btn_confirm": "导入为新存档",
+      "chat_footer_hint": "POST /api/v1/me/chats/import-tavern · 导入的存档出现在存档页"
     },
     "editor": {
       "modal_title_new": "新增",
@@ -2067,7 +2079,8 @@
       "npc_delete_hint": "NPC 卡在剧本管理页面删除",
       "npc_load_fail": "加载 NPC 角色卡失败",
       "load_fail_header": "加载失败",
-      "name_required": "姓名必填"
+      "name_required": "姓名必填",
+      "chat_imported": "聊天记录已导入 — 已创建新存档"
     },
     "confirm": {
       "delete_title": "删除角色卡",

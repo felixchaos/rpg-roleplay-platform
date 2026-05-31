@@ -485,6 +485,11 @@
       scriptEnabled: (sid, cid, on) => POST(`${API_PREFIX}/scripts/` + sid + "/character-cards/" + cid + "/enabled", { enabled: !!on }),
     },
 
+    // ---------- Chat history (SillyTavern JSONL import) ----------
+    chats: {
+      importTavern: (body) => POST(`${API_PREFIX}/me/chats/import-tavern`, body),
+    },
+
     // ---------- Library / files ----------
     library: {
       list: (q) => GET(`${API_PREFIX}/library`, q),

@@ -13,7 +13,6 @@ from core.logging import get_logger
 log = get_logger(__name__)
 
 BASE = Path(__file__).parent.parent.parent  # rpg/agents/gm/ → rpg/
-SA_FILE = BASE / "vertex_sa.json"
 
 # ── 柏林宇宙世界数据 (向后兼容 — 测试通过 agents.gm._WORLD 访问) ──────────────
 _WORLD_FILE = BASE / "indexes" / "world.json"
@@ -232,8 +231,8 @@ class GameMaster:
         if kind == "anthropic":
             self._backend = _AnthropicBackend(model=model, user_id=user_id)
         elif kind == "vertex_ai":
-            # Vertex 用 service account JSON，不走 user_credentials（暂时保持原逻辑）
-            self._backend = _VertexBackend(model=model)
+            # 传 user_id → load_sa_credentials 优先走用户 BYOK SA
+            self._backend = _VertexBackend(model=model, user_id=user_id)
         elif kind in {"openai", "openai_compat"}:
             base_url = (api or {}).get("base_url") or ""
             env_key = (api or {}).get("credential_env") or "OPENAI_API_KEY"
@@ -242,8 +241,10 @@ class GameMaster:
                 display_kind=api_id, user_id=user_id, api_id=api_id,
             )
         else:
-            if SA_FILE.exists():
-                self._backend = _VertexBackend(model=model)
+            from core.vertex_sa import load_sa_credentials as _lsa
+            _creds, _ = _lsa(user_id)
+            if _creds is not None:
+                self._backend = _VertexBackend(model=model, user_id=user_id)
             else:
                 log.warning(f"[GM] 未知 kind={kind}，降级到 Anthropic")
                 self._backend = _AnthropicBackend(user_id=user_id)

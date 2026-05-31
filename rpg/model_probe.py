@@ -223,10 +223,16 @@ def list_remote_models(api_id: str, force_refresh: bool = False, user_id: int | 
     kind = api.get("kind") or api_id
     try:
         if kind == "vertex_ai":
-            # Vertex 用 service account JSON，没法 per-user 隔离；服务器模式拒绝
+            # 服务器模式：只有用户上传了 BYOK SA 才允许探测；否则拒绝（避免烧服务器 SA）
             if _require_user_credential():
-                return {"ok": False, "error": "服务器模式下 Vertex AI 探测仅限 admin 通过本地工具调用", "models": []}
-            models = _list_vertex_models(api)
+                from core.vertex_sa import has_user_sa
+                if not has_user_sa(user_id):
+                    return {
+                        "ok": False,
+                        "error": "服务器模式下需先在「设置 → API & 模型 → Agent Platform」上传 Service Account JSON",
+                        "models": [],
+                    }
+            models = _list_vertex_models(api, user_id=user_id)
         elif kind == "anthropic":
             models = _list_anthropic_models(api, user_id=user_id)
         elif kind in {"openai", "openai_compat"}:
@@ -240,21 +246,18 @@ def list_remote_models(api_id: str, force_refresh: bool = False, user_id: int | 
     return {"ok": True, "models": models, "cached": False}
 
 
-def _list_vertex_models(api: dict[str, Any]) -> list[dict[str, Any]]:
+def _list_vertex_models(api: dict[str, Any], user_id: int | None = None) -> list[dict[str, Any]]:
+    """列出 Vertex 可用 Gemini 模型。user_id 非 None 时优先使用用户 BYOK SA。"""
     from google import genai
-    from google.oauth2 import service_account
-    sa_path = BASE / (api.get("credential_ref") or "vertex_sa.json").lstrip("/")
-    if not Path(api.get("credential_ref") or "").is_absolute():
-        sa_path = BASE / Path(api.get("credential_ref") or "vertex_sa.json").name
-    if not sa_path.exists():
-        # 兜底直接试已知位置
-        sa_path = BASE / "vertex_sa.json"
-    with open(sa_path) as f:
-        sa_info = json.load(f)
-    creds = service_account.Credentials.from_service_account_info(
-        sa_info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
-    )
-    client = genai.Client(vertexai=True, project=sa_info["project_id"], location="global", credentials=creds)
+    from core.vertex_sa import load_sa_credentials
+
+    creds, project_id = load_sa_credentials(user_id)
+    if creds is None or project_id is None:
+        raise RuntimeError(
+            "未找到 Vertex Service Account。"
+            "请在「设置 → Agent Platform」上传 SA JSON，或在服务器配置 vertex_sa.json。"
+        )
+    client = genai.Client(vertexai=True, project=project_id, location="global", credentials=creds)
     models = []
     for m in client.models.list():
         full = getattr(m, "name", "") or ""
@@ -428,13 +431,26 @@ def _probe_error_message(status_detail: str) -> str:
 
 def probe_availability(api_id: str, model_real_name: str | None = None, timeout_sec: int = 15, user_id: int | None = None) -> dict[str, Any]:
     # 服务器模式强制：必须有 user-scoped 凭证才能真实发请求（避免烧服务端凭证）
-    if _require_user_credential() and not _has_user_credential(user_id, api_id):
-        return {
-            "ok": False,
-            "api_id": api_id,
-            "latency_ms": 0,
-            "error": "需要在「个人主页 → API 凭证」中配置该 provider 的 key 才能发探测请求",
-        }
+    if _require_user_credential():
+        # vertex_ai BYOK 存在 "AgentPlatform" 这个 api_id 下，需要特殊处理
+        from model_registry import find_api, load_model_catalog as _lmc
+        _kind = (find_api(_lmc(), api_id) or {}).get("kind", api_id)
+        if _kind == "vertex_ai":
+            from core.vertex_sa import has_user_sa
+            if not has_user_sa(user_id):
+                return {
+                    "ok": False,
+                    "api_id": api_id,
+                    "latency_ms": 0,
+                    "error": "服务器模式下需先在「设置 → Agent Platform」上传 Service Account JSON 才能探测 Vertex AI",
+                }
+        elif not _has_user_credential(user_id, api_id):
+            return {
+                "ok": False,
+                "api_id": api_id,
+                "latency_ms": 0,
+                "error": "需要在「个人主页 → API 凭证」中配置该 provider 的 key 才能发探测请求",
+            }
     """发一条最小请求验证 (api_id, model) 是否真的能调用。
 
     Returns:

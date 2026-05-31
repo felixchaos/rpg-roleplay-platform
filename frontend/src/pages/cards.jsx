@@ -513,7 +513,18 @@ function UserCardsView() {
 
   const onImport = async (payload) => {
     try {
-      if (payload?.file) {
+      if (payload?.type === "card" && payload.file) {
+        await window.api.cards.importTavern(payload.file);
+      } else if (payload?.type === "card_json" && payload.json_string) {
+        await window.api.cards.importJson({ json_string: payload.json_string });
+      } else if (payload?.type === "chat" && payload.jsonl) {
+        const title = payload.charName ? `[酒馆导入] ${payload.charName}` : undefined;
+        await window.api.chats.importTavern({ jsonl: payload.jsonl, title });
+        window.__apiToast?.(t('cards.toast.chat_imported'), { kind: "ok" });
+        setImporting(false);
+        return;
+      } else if (payload?.file) {
+        // legacy fallback
         await window.api.cards.importTavern(payload.file);
       } else if (payload?.json) {
         await window.api.cards.importJson({ json: payload.json });
@@ -697,22 +708,30 @@ function CardDetailPanel({ card, kind, onSave, onDuplicate, onDelete }) {
 
 function TavernImportModal({ open, onClose, onConfirm }) {
   const { t } = useTranslation();
+  // importType: "card" | "chat"
+  const [importType, setImportType] = useStatePL("card");
   const [mode, setMode] = useStatePL("file");
   const [json, setJson] = useStatePL("");
   const [files, setFiles] = useStatePL([]);
   const [dragOver, setDragOver] = useStatePL(false);
   const [parseError, setParseError] = useStatePL(null);
   const [parsed, setParsed] = useStatePL(null);
+  // chat-specific
+  const [chatText, setChatText] = useStatePL("");
+  const [chatFile, setChatFile] = useStatePL(null);
+  const [chatParsed, setChatParsed] = useStatePL(null);
+  const [chatError, setChatError] = useStatePL(null);
 
   React.useEffect(() => {
     if (!open) return;
-    setMode("file"); setJson(""); setFiles([]); setParseError(null); setParsed(null);
+    setImportType("card"); setMode("file"); setJson(""); setFiles([]);
+    setParseError(null); setParsed(null);
+    setChatText(""); setChatFile(null); setChatParsed(null); setChatError(null);
   }, [open]);
 
   const handleFiles = (list) => {
     const arr = [...list].slice(0, 8);
     setFiles(arr);
-    // show real file info; no fake parse — backend parse endpoint not yet connected
     if (arr[0]) {
       const f = arr[0];
       const sizeKb = (f.size / 1024).toFixed(1);
@@ -724,7 +743,7 @@ function TavernImportModal({ open, onClose, onConfirm }) {
         tags: [t('cards.import.tag_imported')],
         first_mes: t('cards.import.parse_pending_first_mes'),
         example_count: 0,
-        _manualOnly: true,
+        _file: f,
       });
     }
   };
@@ -747,6 +766,7 @@ function TavernImportModal({ open, onClose, onConfirm }) {
         tags: obj.tags || obj.data?.tags || [],
         first_mes: obj.first_mes || obj.data?.first_mes || "—",
         example_count: (obj.mes_example || obj.data?.mes_example || "").split(/<START>/).filter(Boolean).length,
+        _jsonString: json,
       });
     } catch (e) {
       setParseError(t('cards.import.parse_fail', { msg: e.message }));
@@ -754,11 +774,54 @@ function TavernImportModal({ open, onClose, onConfirm }) {
     }
   };
 
+  // chat tab: read .jsonl file
+  const handleChatFile = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setChatFile(f); setChatError(null); setChatParsed(null);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target.result;
+      // quick local preview: count lines, extract header
+      try {
+        const lines = text.split('\n').filter(l => l.trim());
+        const header = JSON.parse(lines[0] || '{}');
+        const msgCount = lines.slice(1).filter(l => l.trim()).length;
+        setChatParsed({
+          charName: header.character_name || header.char_name || f.name.replace(/\.jsonl?$/i, ""),
+          userName: header.user_name || "User",
+          msgCount,
+          sizeKb: (f.size / 1024).toFixed(1),
+          _text: text,
+        });
+      } catch {
+        setChatError(t('cards.import.chat_parse_fail'));
+      }
+    };
+    reader.readAsText(f);
+  };
+
+  const doConfirmCard = () => {
+    if (!parsed) return;
+    if (parsed._file) {
+      onConfirm({ type: "card", file: parsed._file });
+    } else if (parsed._jsonString) {
+      onConfirm({ type: "card_json", json_string: parsed._jsonString });
+    }
+  };
+
+  const doConfirmChat = () => {
+    if (!chatParsed?._text) return;
+    onConfirm({ type: "chat", jsonl: chatParsed._text, charName: chatParsed.charName });
+  };
+
   if (!open) return null;
-  const canSubmit = parsed && !parseError;
+  const canSubmitCard = parsed && !parseError;
+  const canSubmitChat = chatParsed && !chatError;
+
   const node = (
     <div className="pl-modal-backdrop" onClick={onClose}>
-      <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(620px, 100%)"}}>
+      <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(640px, 100%)"}}>
         <header className="pl-modal-head">
           <div>
             <div className="pl-modal-eyebrow">{t('cards.import.modal_eyebrow')}</div>
@@ -767,99 +830,160 @@ function TavernImportModal({ open, onClose, onConfirm }) {
           <button className="iconbtn" onClick={onClose} data-tip={t('cards.import.btn_close')}><Icon name="close" size={14} /></button>
         </header>
         <div className="pl-modal-form">
+          {/* top-level type switcher */}
           <div className="seg" style={{display: "flex"}}>
-            <button className={mode === "file" ? "active" : ""} onClick={() => setMode("file")}>
-              <Icon name="upload" size={12} /> {t('cards.import.tab_file')}
+            <button className={importType === "card" ? "active" : ""} onClick={() => setImportType("card")}>
+              <Icon name="user" size={12} /> {t('cards.import.type_card')}
             </button>
-            <button className={mode === "paste" ? "active" : ""} onClick={() => setMode("paste")}>
-              <Icon name="file" size={12} /> {t('cards.import.tab_paste')}
+            <button className={importType === "chat" ? "active" : ""} onClick={() => setImportType("chat")}>
+              <Icon name="chat" size={12} /> {t('cards.import.type_chat')}
             </button>
           </div>
-          {mode === "file" && (
+
+          {/* ── Card import ─────────────────────────────────────────── */}
+          {importType === "card" && (
             <>
-              <div
-                className={`pl-drop ${dragOver ? "drop-active" : ""}`}
-                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={onDrop}
-                style={{padding: "32px 16px", cursor: "pointer"}}
-                onClick={() => document.getElementById("tavern-file-input")?.click()}
-              >
-                <Icon name="upload" size={24} style={{color: dragOver ? "var(--accent)" : "var(--muted)"}} />
-                <strong style={{color: dragOver ? "var(--accent)" : "var(--text)"}}>
-                  {dragOver ? t('cards.import.drop_release') : t('cards.import.drop_hint')}
-                </strong>
-                <span>{t('cards.import.drop_formats')}</span>
-                <input id="tavern-file-input" type="file" accept=".png,.json,.webp" multiple
-                  style={{display: "none"}} onChange={(e) => handleFiles(e.target.files)} />
+              <div className="seg" style={{display: "flex"}}>
+                <button className={mode === "file" ? "active" : ""} onClick={() => setMode("file")}>
+                  <Icon name="upload" size={12} /> {t('cards.import.tab_file')}
+                </button>
+                <button className={mode === "paste" ? "active" : ""} onClick={() => setMode("paste")}>
+                  <Icon name="file" size={12} /> {t('cards.import.tab_paste')}
+                </button>
               </div>
-              {files.length > 0 && (
-                <div style={{display: "grid", gap: 4}}>
-                  {files.map((f, i) => (
-                    <div key={i} style={{
-                      display: "flex", alignItems: "center", gap: 8,
-                      padding: "6px 10px", borderRadius: 4,
-                      background: "var(--bg-deep)", fontSize: 12,
-                    }}>
-                      <Icon name={f.name.endsWith(".png") || f.name.endsWith(".webp") ? "image" : "file"} size={12} style={{color: "var(--accent)"}} />
-                      <span className="mono" style={{flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}}>{f.name}</span>
-                      <span className="muted-2 mono" style={{fontSize: 11}}>{fmtBytes(f.size)}</span>
+              {mode === "file" && (
+                <>
+                  <div
+                    className={`pl-drop ${dragOver ? "drop-active" : ""}`}
+                    onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={onDrop}
+                    style={{padding: "32px 16px", cursor: "pointer"}}
+                    onClick={() => document.getElementById("tavern-file-input")?.click()}
+                  >
+                    <Icon name="upload" size={24} style={{color: dragOver ? "var(--accent)" : "var(--muted)"}} />
+                    <strong style={{color: dragOver ? "var(--accent)" : "var(--text)"}}>
+                      {dragOver ? t('cards.import.drop_release') : t('cards.import.drop_hint')}
+                    </strong>
+                    <span>{t('cards.import.drop_formats')}</span>
+                    <input id="tavern-file-input" type="file" accept=".png,.json,.webp" multiple
+                      style={{display: "none"}} onChange={(e) => handleFiles(e.target.files)} />
+                  </div>
+                  {files.length > 0 && (
+                    <div style={{display: "grid", gap: 4}}>
+                      {files.map((f, i) => (
+                        <div key={i} style={{
+                          display: "flex", alignItems: "center", gap: 8,
+                          padding: "6px 10px", borderRadius: 4,
+                          background: "var(--bg-deep)", fontSize: 12,
+                        }}>
+                          <Icon name={f.name.endsWith(".png") || f.name.endsWith(".webp") ? "image" : "file"} size={12} style={{color: "var(--accent)"}} />
+                          <span className="mono" style={{flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}}>{f.name}</span>
+                          <span className="muted-2 mono" style={{fontSize: 11}}>{fmtBytes(f.size)}</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+                </>
+              )}
+              {mode === "paste" && (
+                <>
+                  <div className="pl-field">
+                    <label>{t('cards.import.paste_label')}</label>
+                    <textarea rows={10} value={json} onChange={(e) => setJson(e.target.value)}
+                      className="mono" style={{fontSize: 11.5}}
+                      placeholder={'{\n  "name": "...",\n  "description": "...",\n  "first_mes": "...",\n  "tags": []\n}'} />
+                  </div>
+                  <button className="btn ghost" onClick={tryParseJson} disabled={!json.trim()} style={{width: "fit-content"}}>
+                    <Icon name="check" size={12} /> {t('cards.import.btn_parse')}
+                  </button>
+                  {parseError && (
+                    <div className="pl-validate-step" style={{color: "var(--danger)", borderColor: "rgba(200, 103, 93, 0.32)", background: "var(--danger-soft)"}}>
+                      <Icon name="warn" size={12} /> {parseError}
+                    </div>
+                  )}
+                </>
+              )}
+              {parsed && (
+                <div className="pl-import" style={{borderStyle: "solid", gap: 8, padding: "12px 14px"}}>
+                  <div className="muted-2" style={{fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.14em"}}>{t('cards.import.preview_label')} · {parsed.format}</div>
+                  <div className="pl-card-head" style={{margin: 0}}>
+                    <div className="pl-card-avatar serif">{parsed.name.slice(0, 1)}</div>
+                    <div className="pl-card-id" style={{flex: 1}}>
+                      <strong>{parsed.name}</strong>
+                      <span className="muted-2" style={{fontSize: 11.5}}>{t('cards.import.preview_stats', { dialogues: parsed.example_count, tags: parsed.tags?.length || 0 })}</span>
+                    </div>
+                  </div>
+                  <p className="pl-card-bio serif" style={{margin: 0, WebkitLineClamp: 2}}>{parsed.description}</p>
+                  <div style={{padding: 8, background: "var(--bg-deep)", borderRadius: 4, fontFamily: "var(--font-serif)", fontSize: 12.5, color: "var(--text-quiet)", borderLeft: "2px solid var(--accent-edge)"}}>
+                    <span className="muted-2 mono" style={{fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.14em", display: "block", marginBottom: 4}}>{t('cards.import.first_mes_label')}</span>
+                    {parsed.first_mes}
+                  </div>
+                  {parsed.tags?.length > 0 && (
+                    <div className="pl-card-tags">
+                      {parsed.tags.map(tg => <span key={tg} className="pl-cap-tag">{tg}</span>)}
+                    </div>
+                  )}
                 </div>
               )}
             </>
           )}
-          {mode === "paste" && (
+
+          {/* ── Chat import ─────────────────────────────────────────── */}
+          {importType === "chat" && (
             <>
-              <div className="pl-field">
-                <label>{t('cards.import.paste_label')}</label>
-                <textarea rows={10} value={json} onChange={(e) => setJson(e.target.value)}
-                  className="mono" style={{fontSize: 11.5}}
-                  placeholder={'{\n  "name": "...",\n  "description": "...",\n  "first_mes": "...",\n  "tags": []\n}'} />
+              <div className="pl-field" style={{display: "flex", flexDirection: "column", gap: 8}}>
+                <label style={{fontSize: 12.5}}>{t('cards.import.chat_hint')}</label>
+                <label className="btn ghost" style={{width: "fit-content", cursor: "pointer"}}>
+                  <Icon name="upload" size={12} /> {t('cards.import.chat_btn_file')}
+                  <input type="file" accept=".jsonl,.json" style={{display: "none"}} onChange={handleChatFile} />
+                </label>
+                {chatFile && (
+                  <div style={{display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 4, background: "var(--bg-deep)", fontSize: 12}}>
+                    <Icon name="file" size={12} style={{color: "var(--accent)"}} />
+                    <span className="mono" style={{flex: 1}}>{chatFile.name}</span>
+                    <span className="muted-2 mono" style={{fontSize: 11}}>{fmtBytes(chatFile.size)}</span>
+                  </div>
+                )}
+                {chatError && (
+                  <div className="pl-validate-step" style={{color: "var(--danger)", borderColor: "rgba(200, 103, 93, 0.32)", background: "var(--danger-soft)"}}>
+                    <Icon name="warn" size={12} /> {chatError}
+                  </div>
+                )}
               </div>
-              <button className="btn ghost" onClick={tryParseJson} disabled={!json.trim()} style={{width: "fit-content"}}>
-                <Icon name="check" size={12} /> {t('cards.import.btn_parse')}
-              </button>
-              {parseError && (
-                <div className="pl-validate-step" style={{color: "var(--danger)", borderColor: "rgba(200, 103, 93, 0.32)", background: "var(--danger-soft)"}}>
-                  <Icon name="warn" size={12} /> {parseError}
+              {chatParsed && (
+                <div className="pl-import" style={{borderStyle: "solid", gap: 8, padding: "12px 14px"}}>
+                  <div className="muted-2" style={{fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.14em"}}>{t('cards.import.chat_preview_label')}</div>
+                  <div className="pl-card-head" style={{margin: 0}}>
+                    <div className="pl-card-avatar serif">{chatParsed.charName.slice(0, 1)}</div>
+                    <div className="pl-card-id" style={{flex: 1}}>
+                      <strong>{chatParsed.charName}</strong>
+                      <span className="muted-2" style={{fontSize: 11.5}}>{t('cards.import.chat_preview_stats', { msgs: chatParsed.msgCount, user: chatParsed.userName })}</span>
+                    </div>
+                  </div>
+                  <div style={{fontSize: 12, color: "var(--text-quiet)", padding: "6px 10px", background: "var(--bg-deep)", borderRadius: 4}}>
+                    <Icon name="info" size={11} /> {t('cards.import.chat_new_save_hint')}
+                  </div>
                 </div>
               )}
             </>
-          )}
-          {parsed && (
-            <div className="pl-import" style={{borderStyle: "solid", gap: 8, padding: "12px 14px"}}>
-              <div className="muted-2" style={{fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.14em"}}>{t('cards.import.preview_label')} · {parsed.format}</div>
-              <div className="pl-card-head" style={{margin: 0}}>
-                <div className="pl-card-avatar serif">{parsed.name.slice(0, 1)}</div>
-                <div className="pl-card-id" style={{flex: 1}}>
-                  <strong>{parsed.name}</strong>
-                  <span className="muted-2" style={{fontSize: 11.5}}>{t('cards.import.preview_stats', { dialogues: parsed.example_count, tags: parsed.tags.length })}</span>
-                </div>
-              </div>
-              <p className="pl-card-bio serif" style={{margin: 0, WebkitLineClamp: 2}}>{parsed.description}</p>
-              <div style={{padding: 8, background: "var(--bg-deep)", borderRadius: 4, fontFamily: "var(--font-serif)", fontSize: 12.5, color: "var(--text-quiet)", borderLeft: "2px solid var(--accent-edge)"}}>
-                <span className="muted-2 mono" style={{fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.14em", display: "block", marginBottom: 4}}>{t('cards.import.first_mes_label')}</span>
-                {parsed.first_mes}
-              </div>
-              {parsed.tags?.length > 0 && (
-                <div className="pl-card-tags">
-                  {parsed.tags.map(tg => <span key={tg} className="pl-cap-tag">{tg}</span>)}
-                </div>
-              )}
-            </div>
           )}
         </div>
         <footer className="pl-modal-foot">
           <span className="muted-2" style={{fontSize: 11.5}}>
-            <Icon name="info" size={11} /> {t('cards.import.footer_hint')}
+            <Icon name="info" size={11} /> {importType === "chat" ? t('cards.import.chat_footer_hint') : t('cards.import.footer_hint')}
           </span>
           <div style={{display: "flex", gap: 8}}>
             <button className="btn ghost" onClick={onClose}>{t('cards.import.btn_cancel')}</button>
-            <button className="btn primary" onClick={onConfirm} disabled={!canSubmit}>
-              <Icon name="check" size={12} /> {t('cards.import.btn_confirm', { count: files.length > 1 ? files.length : 0 })}
-            </button>
+            {importType === "card" ? (
+              <button className="btn primary" onClick={doConfirmCard} disabled={!canSubmitCard}>
+                <Icon name="check" size={12} /> {t('cards.import.btn_confirm', { count: files.length > 1 ? files.length : 0 })}
+              </button>
+            ) : (
+              <button className="btn primary" onClick={doConfirmChat} disabled={!canSubmitChat}>
+                <Icon name="check" size={12} /> {t('cards.import.chat_btn_confirm')}
+              </button>
+            )}
           </div>
         </footer>
       </div>

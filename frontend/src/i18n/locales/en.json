@@ -80,6 +80,8 @@
       "usage_detail": "Full details on",
       "usage_page": "usage page",
       "key_set_hint": "configured",
+      "base_url_label": "Base URL",
+      "key_label": "Key",
       "delete_key_title": "Delete API Key",
       "delete_key_confirm": "Delete the API Key for \"{{name}}\"? Its models will no longer be available.",
       "delete_key_btn": "Delete",
@@ -1993,7 +1995,17 @@
       "tag_imported": "Imported",
       "tag_tavern": "Tavern",
       "parse_pending_hint": "File size: {{size}} KB · MIME: {{mime}} · Auto-parse not enabled — please fill in fields manually.",
-      "parse_pending_first_mes": "(Please fill in the opening message manually)"
+      "parse_pending_first_mes": "(Please fill in the opening message manually)",
+      "type_card": "Character Card",
+      "type_chat": "Chat History",
+      "chat_hint": "Upload a SillyTavern chat file (.jsonl) to create a new save you can continue playing.",
+      "chat_btn_file": "Select .jsonl file",
+      "chat_parse_fail": "Failed to parse JSONL file — make sure it is a valid SillyTavern chat export.",
+      "chat_preview_label": "Chat Import Preview",
+      "chat_preview_stats": "{{msgs}} messages · Player: {{user}}",
+      "chat_new_save_hint": "A new save will be created with all messages imported as history. You can continue from where this chat left off.",
+      "chat_btn_confirm": "Import as New Save",
+      "chat_footer_hint": "POST /api/v1/me/chats/import-tavern · Imported save appears in your Saves page"
     },
     "editor": {
       "modal_title_new": "New",
@@ -2067,7 +2079,8 @@
       "npc_delete_hint": "NPC cards are deleted from the script management page",
       "npc_load_fail": "Failed to load NPC cards",
       "load_fail_header": "Load failed",
-      "name_required": "Name is required"
+      "name_required": "Name is required",
+      "chat_imported": "Chat history imported — new save created"
     },
     "confirm": {
       "delete_title": "Delete Character Card",

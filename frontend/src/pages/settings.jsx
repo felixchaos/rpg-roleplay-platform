@@ -739,8 +739,8 @@ function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, on
       <CSHeader variant="h2"
         description={<span style={{ display: 'inline-flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <span className="mono">{api.id}</span>
-          <span style={{ color: 'var(--muted)' }}>Base URL: <span className="mono">{api.base_url || '—'}</span></span>
-          <span style={{ color: 'var(--muted)' }}>Key: <span className="mono">•••• {api.key_hint || t('settings.models.key_set_hint')}</span></span>
+          <span style={{ color: 'var(--muted)' }}>{t('settings.models.base_url_label')}: <span className="mono">{api.base_url || '—'}</span></span>
+          <span style={{ color: 'var(--muted)' }}>{t('settings.models.key_label')}: <span className="mono">•••• {api.key_hint || t('settings.models.key_set_hint')}</span></span>
         </span>}
         actions={
           <CSSpaceBetween direction="horizontal" size="xs">
@@ -858,7 +858,7 @@ function EditApiModal({ open, api, isNew, onClose, onConfirm }) {
   if (!open) return null;
 
   const provOptions = [
-    ...PROVIDERS_CONFIG.map((p) => ({ value: p.id, label: p.name, description: p.defaultBase || undefined })),
+    ...PROVIDERS_CONFIG.filter((p) => !p.hidden_in_edit_modal).map((p) => ({ value: p.id, label: p.name, description: p.defaultBase || undefined })),
     { value: CUSTOM, label: t('settings.edit_api.custom_provider'), description: t('settings.edit_api.custom_provider_desc') },
   ];
   const onPickProvider = (val) => {
@@ -868,7 +868,20 @@ function EditApiModal({ open, api, isNew, onClose, onConfirm }) {
     if (p) setForm((f) => ({ ...f, id: p.id, name: p.name, base_url: p.defaultBase || "" }));
   };
   const isCustom = provider === CUSTOM;
-  const canSubmit = !!form.id && !!form.name && !!form.base_url && (isNew ? !!form.api_key.trim() : true);
+  // Agent Platform (vertex_ai / AgentPlatform) 走 SA JSON — 不需要 base_url，api_key 是 JSON 字符串
+  const selectedProviderCfg = PROVIDERS_CONFIG.find((x) => x.id === provider);
+  const isAgentPlatform = selectedProviderCfg?.special === 'agent_platform' || api?.kind === 'vertex_ai';
+  // SA JSON 校验: 必须能 parse 且含三个必要字段
+  const _saJsonValid = (() => {
+    if (!isAgentPlatform || !form.api_key.trim()) return false;
+    try {
+      const sa = JSON.parse(form.api_key.trim());
+      return !!(sa.client_email && sa.private_key && sa.project_id);
+    } catch { return false; }
+  })();
+  const canSubmit = isAgentPlatform
+    ? (!!form.id && !!form.name && (isNew ? _saJsonValid : true))
+    : (!!form.id && !!form.name && !!form.base_url && (isNew ? !!form.api_key.trim() : true));
 
   return (
     <CSModal
@@ -909,14 +922,44 @@ function EditApiModal({ open, api, isNew, onClose, onConfirm }) {
         )}
         {(provider || !isNew) && (
           <>
-            <CSFormField label={t('settings.edit_api.base_url')}>
-              <CSInput value={form.base_url} onChange={({ detail }) => setForm((f) => ({ ...f, base_url: detail.value }))} placeholder="https://api.openai.com/v1" />
-            </CSFormField>
-            <CSFormField label={t('settings.edit_api.api_key')} description={api?.key_set ? t('settings.edit_api.api_key_desc_set', { hint: api.key_hint || t('settings.models.key_set_hint') }) : t('settings.edit_api.api_key_desc_new')}>
-              <CSInput type="password" value={form.api_key}
-                onChange={({ detail }) => setForm((f) => ({ ...f, api_key: detail.value }))}
-                placeholder={api?.key_set ? t('settings.edit_api.api_key_placeholder_keep') : "sk-…"} autoComplete="new-password" />
-            </CSFormField>
+            {/* Agent Platform (Vertex SA JSON) 模式: 隐藏 base_url, api_key 改为 SA JSON textarea */}
+            {isAgentPlatform ? (
+              <CSFormField
+                label="Service Account JSON"
+                description={api?.key_set ? `已配置 SA (${api.key_hint || '已加密'})，留空保持不变` : '请粘贴 Google Cloud Service Account JSON 文件内容'}
+              >
+                <textarea
+                  rows={6}
+                  value={form.api_key}
+                  onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value }))}
+                  placeholder={'{"type": "service_account", "project_id": "...", "client_email": "...", "private_key": "-----BEGIN RSA PRIVATE KEY-----\\n..."}'}
+                  style={{ width: '100%', fontFamily: 'monospace', fontSize: '12px', resize: 'vertical', padding: '8px', boxSizing: 'border-box' }}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                {form.api_key.trim() && !_saJsonValid && (
+                  <div style={{ color: 'var(--color-text-status-error, #d91515)', fontSize: '12px', marginTop: '4px' }}>
+                    JSON 格式错误或缺少必填字段 (project_id / client_email / private_key)
+                  </div>
+                )}
+                {_saJsonValid && (
+                  <div style={{ color: 'var(--color-text-status-success, #1a7e3c)', fontSize: '12px', marginTop: '4px' }}>
+                    SA JSON 有效 · project: {(() => { try { return JSON.parse(form.api_key).project_id; } catch { return ''; } })()}
+                  </div>
+                )}
+              </CSFormField>
+            ) : (
+              <>
+                <CSFormField label={t('settings.edit_api.base_url')}>
+                  <CSInput value={form.base_url} onChange={({ detail }) => setForm((f) => ({ ...f, base_url: detail.value }))} placeholder="https://api.openai.com/v1" />
+                </CSFormField>
+                <CSFormField label={t('settings.edit_api.api_key')} description={api?.key_set ? t('settings.edit_api.api_key_desc_set', { hint: api.key_hint || t('settings.models.key_set_hint') }) : t('settings.edit_api.api_key_desc_new')}>
+                  <CSInput type="password" value={form.api_key}
+                    onChange={({ detail }) => setForm((f) => ({ ...f, api_key: detail.value }))}
+                    placeholder={api?.key_set ? t('settings.edit_api.api_key_placeholder_keep') : "sk-…"} autoComplete="new-password" />
+                </CSFormField>
+              </>
+            )}
             <CSFormField label={t('settings.edit_api.connection')}>
               <CSSelect
                 selectedOption={{ value: form.proxy, label: form.proxy }}
@@ -1709,17 +1752,17 @@ const PROVIDERS_CONFIG = [
     keyEnv: "DEEPSEEK_API_KEY",
   },
   {
-    id: "XAi",          name: "xAI / Grok",     kind: "openai_compat",
+    id: "XAi",          name: "xAI (Grok)",     kind: "openai_compat",
     defaultBase: "https://api.x.ai/v1",
     keyEnv: "XAI_API_KEY",
   },
   {
-    id: "XiaomiMimo",   name: "Xiaomi MiMo",    kind: "openai_compat",
+    id: "XiaomiMimo",   name: "MiMo (Xiaomi)",  kind: "openai_compat",
     defaultBase: "https://chat.d.xiaomi.net/ai/api/v1",
     keyEnv: "XIAOMI_MIMO_API_KEY",
   },
   {
-    id: "TencentHunyuan", name: "腾讯 Hunyuan", kind: "openai_compat",
+    id: "TencentHunyuan", name: "Hunyuan (Tencent)", kind: "openai_compat",
     defaultBase: "https://api.hunyuan.cloud.tencent.com/v1",
     keyEnv: "TENCENT_HUNYUAN_API_KEY",
   },
@@ -1738,10 +1781,12 @@ const PROVIDERS_CONFIG = [
     defaultBase: "",
     keyEnv: "",
     special: "agent_platform",
+    // 用户级 SA 已真接通 (vertex.py / embedding.py / model_probe 全部走用户 SA)
+    // EditApiModal 检测 special === 'agent_platform' 时自动隐藏 base_url + api_key 改 SA JSON textarea
     note: "上传 Service Account JSON（含 client_email / private_key / project_id）",
   },
   {
-    id: "AlibabaQwen",  name: "阿里 DashScope / Qwen", kind: "native",
+    id: "AlibabaQwen",  name: "DashScope (Qwen)", kind: "native",
     defaultBase: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     keyEnv: "DASHSCOPE_API_KEY",
     special: "alibaba_qwen",
@@ -1876,6 +1921,11 @@ function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPla
     return (
       <CSContainer>
         <CSSpaceBetween size="s">
+          {p.unavailable && (
+            <CSAlert type="warning" header={t('settings.providers.sa.unavailable_title')}>
+              {t('settings.providers.sa.unavailable_desc')}
+            </CSAlert>
+          )}
           <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
             <div>
               <CSBox fontWeight="bold">{p.name}</CSBox>
@@ -1939,7 +1989,7 @@ function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPla
             </CSBox>
           </CSSpaceBetween>
           <CSSpaceBetween direction="horizontal" size="xs" alignItems="flex-end">
-            <CSFormField label="API Key" stretch>
+            <CSFormField label={t('settings.edit_api.api_key')} stretch>
               <CSInput
                 type="password"
                 value={keyVal}
@@ -1974,7 +2024,7 @@ function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPla
           {cred.has_key && <CSStatusIndicator type="success">{t('settings.providers.configured')}</CSStatusIndicator>}
         </CSSpaceBetween>
         <CSSpaceBetween key="form" direction="horizontal" size="xs" alignItems="flex-end">
-          <CSFormField label="API Key" stretch>
+          <CSFormField label={t('settings.edit_api.api_key')} stretch>
             <CSInput
               type="password"
               value={keyVal}
@@ -1984,7 +2034,7 @@ function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPla
             />
           </CSFormField>
           <CSFormField
-            label={p.special === "openrouter" ? t('settings.providers.base_url_relay') : "Base URL"}
+            label={p.special === "openrouter" ? t('settings.providers.base_url_relay') : t('settings.providers.base_url')}
             stretch
           >
             <CSInput
@@ -2261,14 +2311,14 @@ function ModuleModelsSection() {
   const { t } = useTranslation();
   const MODULES = [
     { id: "gm",            label: "主 GM",                  shape: "flat", apiKey: "gm.api_id",                     modelKey: "gm.model_real_name",                     tip: "玩家对话主响应模型。在『API 设置』里选当前模型,这里只展示。" },
-    { id: "sub_agent",     label: "Sub-GM (Context Agent)", shape: "dict", overrideKey: "sub_agent_model_override", tip: "整理玩家意图 + 检索计划的子代理;空 = 跟主 GM 共享实例。" },
-    { id: "set_parser",    label: "Command Agent",          shape: "flat", apiKey: "set_parser.api_id",             modelKey: "set_parser.model_real_name",             tip: "/set 命令自然语言解析子代理。" },
-    { id: "console",       label: "Console Assistant",      shape: "dict", overrideKey: "console_assistant_model_override", tip: "侧栏控制台助手专用模型;空 = 跟主 GM。" },
-    { id: "extractor",     label: "Extractor",              shape: "flat", apiKey: "extractor.api_id",              modelKey: "extractor.model_real_name",              tip: "GM 叙事二次解析抽 ops (两步式 GM 第二步)。" },
-    { id: "card_gen",      label: "Character Card Generator", shape: "flat", apiKey: "character_card_generator.api_id", modelKey: "character_card_generator.model_real_name", tip: "侧栏创意工具:生成 / 微调角色卡。" },
-    { id: "critic",        label: "Critic (一致性评分)",    shape: "flat", apiKey: "critic.api_id",                 modelKey: "critic.model_real_name",                 tip: "角色卡生成的一致性评分子代理 (0-1 阈值 0.6)。" },
-    { id: "verifier",      label: "Acceptance Verifier",    shape: "flat", apiKey: "acceptance_verifier.api_id",    modelKey: "acceptance_verifier.model_real_name",    tip: "GM 输出是否满足 curator 设置的 acceptance 条件。" },
-    { id: "embedder",      label: "Embedding (RAG 检索)",   shape: "flat", apiKey: "embedder.api_id",               modelKey: "embedder.model_real_name",               tip: "向量嵌入模型，用于 RAG 召回；空 = 跟主 GM（若主 GM 支持 embedding）。" },
+    { id: "sub_agent",     label: "上下文子代理",           shape: "dict", overrideKey: "sub_agent_model_override", tip: "整理玩家意图 + 检索计划的子代理;空 = 跟主 GM 共享实例。" },
+    { id: "set_parser",    label: "指令解析代理",           shape: "flat", apiKey: "set_parser.api_id",             modelKey: "set_parser.model_real_name",             tip: "/set 命令自然语言解析子代理。" },
+    { id: "console",       label: "控制台助手",             shape: "dict", overrideKey: "console_assistant_model_override", tip: "侧栏控制台助手专用模型;空 = 跟主 GM。" },
+    { id: "extractor",     label: "叙事提取器",             shape: "flat", apiKey: "extractor.api_id",              modelKey: "extractor.model_real_name",              tip: "GM 叙事二次解析抽 ops (两步式 GM 第二步)。" },
+    { id: "card_gen",      label: "角色卡生成器",           shape: "flat", apiKey: "character_card_generator.api_id", modelKey: "character_card_generator.model_real_name", tip: "侧栏创意工具:生成 / 微调角色卡。" },
+    { id: "critic",        label: "一致性评分",             shape: "flat", apiKey: "critic.api_id",                 modelKey: "critic.model_real_name",                 tip: "角色卡生成的一致性评分子代理 (0-1 阈值 0.6)。" },
+    { id: "verifier",      label: "接受条件验证",           shape: "flat", apiKey: "acceptance_verifier.api_id",    modelKey: "acceptance_verifier.model_real_name",    tip: "GM 输出是否满足 curator 设置的 acceptance 条件。" },
+    { id: "embedder",      label: "向量嵌入 (RAG)",         shape: "flat", apiKey: "embedder.api_id",               modelKey: "embedder.model_real_name",               tip: "向量嵌入模型，用于 RAG 召回；空 = 跟主 GM（若主 GM 支持 embedding）。" },
   ];
 
   const [prefs, setPrefs] = useStatePL({});

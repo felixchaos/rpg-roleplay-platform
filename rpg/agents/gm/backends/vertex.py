@@ -25,33 +25,45 @@ def _is_retryable_vertex(exc: Exception) -> bool:
     return False
 
 BASE = Path(__file__).parent.parent.parent.parent  # rpg/agents/gm/backends/ → rpg/
-SA_FILE = BASE / "vertex_sa.json"
 
 
 class _VertexBackend:
-    def __init__(self, model: str = "gemini-3.5-flash"):
+    def __init__(self, model: str = "gemini-3.5-flash", user_id: int | None = None):
+        """初始化 Vertex AI backend。
+
+        凭证优先链:
+          1. user_id 非 None → 用户 BYOK SA (user_api_credentials api_id='AgentPlatform')
+          2. GOOGLE_APPLICATION_CREDENTIALS env → 对应 SA 文件
+          3. rpg/vertex_sa.json (服务器全局 SA)
+          4. 三者均无 → RuntimeError
+
+        Args:
+            model: Vertex 模型名称（real_name）。
+            user_id: 当前用户 ID，用于取 BYOK SA；None 时走全局 SA。
+        """
         from google import genai
-        from google.oauth2 import service_account
+        from core.vertex_sa import load_sa_credentials
 
-        if not SA_FILE.exists():
-            raise FileNotFoundError(f"找不到服务账户文件：{SA_FILE}")
+        self.user_id = user_id
+        credentials, project_id = load_sa_credentials(user_id)
 
-        with open(SA_FILE) as f:
-            sa_info = json.load(f)
+        if credentials is None or project_id is None:
+            raise RuntimeError(
+                "未找到 Vertex AI Service Account。"
+                "请在「设置 → API & 模型 → Agent Platform」上传 SA JSON 文件，"
+                "或在服务器配置 vertex_sa.json / GOOGLE_APPLICATION_CREDENTIALS。"
+            )
 
-        credentials = service_account.Credentials.from_service_account_info(
-            sa_info,
-            scopes=["https://www.googleapis.com/auth/cloud-platform"],
-        )
         self.client = genai.Client(
             vertexai=True,
-            project=sa_info["project_id"],
+            project=project_id,
             location="global",
             credentials=credentials,
         )
         self.model_name = model
         self._genai = genai
-        log.info(f"[GM] Vertex AI (google-genai) · {model} @ global")
+        sa_src = f"user={user_id}" if user_id else "global"
+        log.info(f"[GM] Vertex AI (google-genai) · {model} @ global (SA: {sa_src})")
 
     def call(self, system: str, messages: list[dict], max_tokens: int) -> str:
         from google.genai import types

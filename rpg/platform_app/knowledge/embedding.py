@@ -65,39 +65,35 @@ def _resolve_embed_config(user_id: int | None) -> tuple[str, str, str, str]:
     return DEFAULT_EMBED_API_ID, DEFAULT_EMBED_MODEL, os.environ.get("EMBED_API_KEY", ""), ""
 
 
-def _get_vertex_client():
-    """复用 GameMaster vertex backend 的 client (共享 vertex_sa.json 凭证)。
-    放 cache 避免每次重新 init Google SDK。"""
-    if "client" in _VERTEX_CLIENT_CACHE:
-        return _VERTEX_CLIENT_CACHE["client"]
+def _get_vertex_client(user_id: int | None = None):
+    """返回 Vertex genai Client，按 user_id 走 BYOK 优先链。
+
+    缓存键包含 user_id，用户级 SA 与全局 SA 互不干扰。
+    """
+    cache_key = f"client:{user_id}"
+    if cache_key in _VERTEX_CLIENT_CACHE:
+        return _VERTEX_CLIENT_CACHE[cache_key]
     try:
         from google import genai
-        import json
-        from pathlib import Path
+        from core.vertex_sa import load_sa_credentials
 
-        # 找 vertex_sa.json:env > rpg/ > project root
-        sa_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or ""
-        if not sa_path or not os.path.exists(sa_path):
-            for p in [
-                Path(__file__).resolve().parents[2] / "vertex_sa.json",   # rpg/
-                Path(__file__).resolve().parents[3] / "vertex_sa.json",   # project root
-            ]:
-                if p.exists():
-                    sa_path = str(p)
-                    break
-        if not sa_path or not os.path.exists(sa_path):
-            log.warning("[embedding] vertex_sa.json not found")
-            _VERTEX_CLIENT_CACHE["client"] = None
+        credentials, project_id = load_sa_credentials(user_id)
+        if credentials is None or project_id is None:
+            log.warning("[embedding] no Vertex SA available (user_id=%s)", user_id)
+            _VERTEX_CLIENT_CACHE[cache_key] = None
             return None
-        with open(sa_path) as f:
-            sa = json.load(f)
         # Vertex AI text-embedding 走 location='us-central1' 比 global 稳定
-        client = genai.Client(vertexai=True, project=sa["project_id"], location="us-central1")
-        _VERTEX_CLIENT_CACHE["client"] = client
+        client = genai.Client(
+            vertexai=True, project=project_id, location="us-central1",
+            credentials=credentials,
+        )
+        _VERTEX_CLIENT_CACHE[cache_key] = client
+        sa_src = f"user={user_id}" if user_id else "global"
+        log.debug("[embedding] vertex client init ok (SA: %s, project=%s)", sa_src, project_id)
         return client
     except Exception as e:
         log.warning("[embedding] vertex client init failed: %s", e)
-        _VERTEX_CLIENT_CACHE["client"] = None
+        _VERTEX_CLIENT_CACHE[cache_key] = None
         return None
 
 
@@ -110,9 +106,9 @@ _OPENAI_API_IDS = {"openai", "openai_compat"}
 _COHERE_API_IDS = {"cohere"}
 
 
-def _embed_via_vertex(model: str, texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]] | None:
-    """调 Vertex genai SDK。model 为空时回退 DEFAULT_EMBED_MODEL。"""
-    client = _get_vertex_client()
+def _embed_via_vertex(model: str, texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT", user_id: int | None = None) -> list[list[float]] | None:
+    """调 Vertex genai SDK。model 为空时回退 DEFAULT_EMBED_MODEL。user_id 用于 BYOK SA 优先链。"""
+    client = _get_vertex_client(user_id=user_id)
     if client is None:
         return None
     try:
@@ -183,22 +179,25 @@ def _embed_provider_dispatch(
     texts: list[str],
     base_url: str = "",
     task_type: str = "RETRIEVAL_DOCUMENT",
+    user_id: int | None = None,
 ) -> list[list[float]] | None:
-    """根据 api_id 分发到对应 provider SDK。不识别 → 降级 vertex + warn。"""
+    """根据 api_id 分发到对应 provider SDK。不识别 → 降级 vertex + warn。
+    user_id 传给 Vertex 路径以走 BYOK SA 优先链。
+    """
     if api_id in _VERTEX_API_IDS:
-        return _embed_via_vertex(model, texts, task_type=task_type)
+        return _embed_via_vertex(model, texts, task_type=task_type, user_id=user_id)
     if api_id in _OPENAI_API_IDS:
         if not api_key:
             log.warning("[embedding] openai api_id but no api_key; falling back to vertex")
-            return _embed_via_vertex(model or DEFAULT_EMBED_MODEL, texts, task_type=task_type)
+            return _embed_via_vertex(model or DEFAULT_EMBED_MODEL, texts, task_type=task_type, user_id=user_id)
         return _embed_via_openai(model, api_key, texts, base_url=base_url)
     if api_id in _COHERE_API_IDS:
         if not api_key:
             log.warning("[embedding] cohere api_id but no api_key; falling back to vertex")
-            return _embed_via_vertex(DEFAULT_EMBED_MODEL, texts, task_type=task_type)
+            return _embed_via_vertex(DEFAULT_EMBED_MODEL, texts, task_type=task_type, user_id=user_id)
         return _embed_via_cohere(model, api_key, texts)
     log.warning("[embedding] unknown api_id=%r; falling back to vertex", api_id)
-    return _embed_via_vertex(DEFAULT_EMBED_MODEL, texts, task_type=task_type)
+    return _embed_via_vertex(DEFAULT_EMBED_MODEL, texts, task_type=task_type, user_id=user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +211,7 @@ def _embed_batch(texts: list[str], user_id: int | None = None) -> list[list[floa
     if not texts:
         return []
     api_id, model, api_key, base_url = _resolve_embed_config(user_id)
-    return _embed_provider_dispatch(api_id, model, api_key, texts, base_url=base_url)
+    return _embed_provider_dispatch(api_id, model, api_key, texts, base_url=base_url, user_id=user_id)
 
 
 def embed_query(
@@ -238,7 +237,7 @@ def embed_query(
         api_id, model = force_api_id, force_model
     else:
         api_id, model, api_key, base_url = _resolve_embed_config(user_id)
-    vecs = _embed_provider_dispatch(api_id, model, api_key, [text], base_url=base_url, task_type="RETRIEVAL_QUERY")
+    vecs = _embed_provider_dispatch(api_id, model, api_key, [text], base_url=base_url, task_type="RETRIEVAL_QUERY", user_id=user_id)
     if not vecs:
         log.warning("[embedding] embed_query returned no vectors")
         return None
@@ -456,7 +455,7 @@ def embed_script(user_id: int, script_id: int) -> dict[str, Any]:
     # 检查 embedding provider 是否可用:用户 BYOK 或系统 vertex SA 至少有一个
     _api_id, _model, _api_key, _base_url = _resolve_embed_config(user_id)
     _provider_ok = (
-        (_api_id in _VERTEX_API_IDS and _get_vertex_client() is not None)
+        (_api_id in _VERTEX_API_IDS and _get_vertex_client(user_id=user_id) is not None)
         or (_api_id not in _VERTEX_API_IDS and bool(_api_key))
     )
     if not _provider_ok:
