@@ -24,6 +24,7 @@ from tools_dsl.command_dispatcher import (
     ToolSpec,
     get_registry,
 )
+from config.glossary import load_glossary as _load_glossary
 
 # ────────────────────────────────────────────────────────────
 # 工具 → (intent_keywords, side_effect_topics) 标签表
@@ -150,7 +151,7 @@ _INPUT_EXAMPLES: dict[str, list[dict[str, Any]]] = {
     ],
     "generate_character_card_draft": [
         {"brief": "20 岁女法师, 流亡贵族", "kind": "user"},
-        {"brief": "薇瑟帝国郡主, 源血脉者, 前世记忆", "kind": "user", "script_id": 9803},
+        {"brief": f"{_load_glossary().get('world_terms', {}).get('realm_main', '[REALM_NAME]')}郡主, 源血脉者, 前世记忆", "kind": "user", "script_id": 9803},
     ],
     "refine_character_card_draft": [
         {"previous_draft": {"name": "晓星", "personality": "开朗"},
@@ -256,7 +257,7 @@ _FIELD_HINTS: dict[str, dict[str, Any]] = {
         "options": ["20 岁女法师,流亡贵族",
                     "15 岁少年剑士,失忆穿越者",
                     "中性向魔女,无限魔力",
-                    "薇瑟帝国郡主,源血脉者"],
+                    f"{_load_glossary().get('world_terms', {}).get('realm_main', '[REALM_NAME]')}郡主,源血脉者"],
         "free_text_ok": True,
         "placeholder": "或自由描述",
     },

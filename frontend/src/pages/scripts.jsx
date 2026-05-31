@@ -584,7 +584,10 @@ function ScriptsListView() {
     if (!await window.__confirm({ title: t('scripts.confirm.delete_title'), message: t('scripts.confirm.delete_msg', { title: s.title }), danger: true, confirmText: t('common.delete') })) return;
     setBusyId(s.id);
     try {
-      await window.api.scripts.delete(s.id);
+      const result = await window.api.scripts.delete(s.id);
+      if (!result || result.ok !== true || result.deleted !== true) {
+        throw new Error(result?.error || result?.detail || t('scripts.toast.delete_fail'));
+      }
       window.__apiToast?.(t('scripts.toast.deleted'), { kind: "ok" });
       reload();
     } catch (e) {

@@ -3646,7 +3646,7 @@ function AuthPage() {
           {mode === "register" && (
             <div className="pl-field">
               <label>显示名</label>
-              <input placeholder="例：晓卡"
+              <input placeholder="例：用户名"
                 value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
             </div>
           )}

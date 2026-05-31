@@ -45,7 +45,7 @@ window.__guessKind = function () { return guessKind.apply(null, arguments); };
 // ----------------------------------------------------------
 //  Hydrators
 // ----------------------------------------------------------
-// 把 mock 的 admin 用户名（"晓卡 @yanling · admin"）抹成中性匿名占位，
+// 把 mock 的 admin 用户名抹成中性匿名占位，
 // 防止真没登录的页面看到 mock 用户误以为已经登录。任何依赖 platform.user
 // 判断登录态的 UI 都应该转用 window.RPG_AUTH.authed。
 function anonymizeUser(u) {

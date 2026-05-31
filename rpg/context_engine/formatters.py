@@ -6,6 +6,7 @@ from typing import Any
 
 from context_engine._utils import _preview
 from context_engine.loaders import _load_worldbook_db
+from config.glossary import load_glossary
 
 
 def _player_card(state, chars: dict[str, Any]) -> dict[str, str]:
@@ -80,23 +81,42 @@ def _worldbook_entries(world: dict[str, Any], state) -> list[dict[str, Any]]:
     power = world.get("power_system", {})
     current_berlin = world.get("current_berlin", {})
     return [
-        _wb("berlin_pressure", "柏林战时暗流", ["柏林", "战役", "大西洋", "军事顾问"], 96,
-            f"柏林处于战时前夕：{current_berlin.get('atmosphere', '')} 风险等级：{current_berlin.get('risk_level', '')}。在场势力包括："
+        # Worldbook entries use glossary for IP-specific titles/keys.
+        # Edit rpg/config/novel_glossary.json (gitignored) to change names.
+        _wb_from_glossary("berlin_pressure", 96,
+            f"{_gloss('worldbook_entries.berlin_pressure.title')}",
+            _gloss_keys("berlin_pressure"),
+            f"{_gloss('worldbook_entries.berlin_pressure.title').replace(' ', '')}处于战时前夕："
+            f"{current_berlin.get('atmosphere', '')} 风险等级：{current_berlin.get('risk_level', '')}。在场势力包括："
             + "；".join(current_berlin.get("power_presence", []))),
-        _wb("toulouse", "图卢兹失守", ["图卢兹", "失守", "地联溃败", "反扑"], 88,
+        _wb_from_glossary("toulouse", 88,
+            _gloss("worldbook_entries.toulouse.title"),
+            _gloss_keys("toulouse"),
             world.get("current_situation", "")),
-        _wb("visar", "薇瑟帝国与 Aldnoal", ["薇瑟", "帝国", "aldnoal", "Aldnoah", "烈锋"], 86,
-            f"{factions.get('薇瑟帝国', '')}。aldnoal：{concepts.get('aldnoal', '')}。烈锋实验：{concepts.get('烈锋实验', '')}"),
-        _wb("earth_federation", "地联势力差异", ["地联", "太平洋方面", "大西洋方面", "伊奈帆"], 82,
+        _wb_from_glossary("realm_main_entry", 86,
+            _gloss("worldbook_entries.realm_main_entry.title"),
+            _gloss_keys("realm_main_entry"),
+            f"{factions.get(_gloss('world_terms.realm_main'), '')}。"
+            f"{_gloss('world_terms.tech_keyword')}：{concepts.get(_gloss('world_terms.tech_keyword'), '')}。"
+            f"{_gloss('faction_map_keys.forge_experiment')}：{concepts.get(_gloss('faction_map_keys.forge_experiment'), '')}"),
+        _wb_from_glossary("earth_fed", 82,
+            _gloss("worldbook_entries.earth_fed.title"),
+            _gloss_keys("earth_fed"),
             f"大西洋方面：{factions.get('地联大西洋方面', '')}。太平洋方面：{factions.get('地联太平洋方面', '')}。"),
-        _wb("snake_network", "蛇信情报网", ["蛇信", "薛克", "监视"], 80,
-            factions.get("蛇信", "")),
-        _wb("troyard_branch", "特洛耶德欧洲分支", ["特洛耶德", "赫克勒斯", "旧楼", "烈锋实验"], 78,
+        _wb_from_glossary("intel_net", 80,
+            _gloss("worldbook_entries.intel_net.title"),
+            _gloss_keys("intel_net"),
+            factions.get(_gloss("world_terms.intel_network"), "")),
+        _wb_from_glossary("person2_branch", 78,
+            _gloss("worldbook_entries.person2_branch.title"),
+            _gloss_keys("person2_branch"),
             factions.get("特洛耶德家族欧洲分支", "")),
-        _wb("power_scale", "战力体系", ["魔力", "渊戮", "顶王", "烈锋", "甲胄骑士"], 76,
-            f"薇瑟战力：{'、'.join(power.get('visar_empire', {}).get('levels', []))}。"
+        _wb_from_glossary("power_scale", 76,
+            _gloss("worldbook_entries.power_scale.title"),
+            _gloss_keys("power_scale"),
+            f"{_gloss('world_terms.realm_main')}战力：{'、'.join(power.get('visar_empire', {}).get('levels', []))}。"
             f"地联战力：{'、'.join(power.get('earth_federation', {}).get('levels', []))}。"
-            "玩家的魔力∞是世界规则之外变量，但仍需要通过剧情摸索控制方式。"),
+            f"玩家的{_gloss('world_terms.magic_system')}∞是世界规则之外变量，但仍需要通过剧情摸索控制方式。"),
         _wb("player_resources", "玩家当前资源", ["资源", "特殊小队", "整备班", "甲胄骑士", "权限"], 90,
             "；".join(state.data.get("memory", {}).get("resources", [])) or "暂无明确可支配资源。"),
     ]
@@ -111,6 +131,27 @@ def _wb(entry_id: str, title: str, keys: list[str], priority: int, text: str) ->
         "priority": priority,
         "text": text,
     }
+
+
+# --- Glossary-aware helpers (IP-name indirection) ---
+
+def _gloss(key: str, default: str = "") -> str:
+    """Dot-path accessor into novel_glossary; falls back to default."""
+    from config.glossary import get_term
+    return get_term(key, default)
+
+
+def _gloss_keys(entry_id: str) -> list[str]:
+    """Return the keys list for a named worldbook entry from the glossary."""
+    from config.glossary import load_glossary as _load_g
+    g = _load_g()
+    return list(g.get("worldbook_entries", {}).get(entry_id, {}).get("keys", []))
+
+
+def _wb_from_glossary(entry_id: str, priority: int, title: str,
+                      keys: list[str], text: str) -> dict[str, Any]:
+    """Like _wb but title/keys come from the glossary-backed helpers."""
+    return _wb(entry_id, title, keys, priority, text)
 
 
 def _format_card(name: str, card: dict[str, Any]) -> str:

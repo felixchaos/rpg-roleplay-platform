@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from timeline_index import ensure_timeline_schema
+from config.glossary import get_concept_seeds, get_location_seeds, get_npc_name_seeds
 
 BASE = Path(__file__).parent
 _OVERRIDES_DIR = BASE / "modules" / "_script_overrides"
@@ -66,16 +67,11 @@ EVENT_KEYWORDS = [
     "保护", "启动", "交涉", "拒绝", "答应", "怀疑", "安排", "撤走", "清空", "突破",
 ]
 
-LOCATION_SEEDS = [
-    "地球", "火星", "薇瑟帝国", "地球联邦", "柏林", "图卢兹", "布鲁塞尔", "欧洲", "非洲",
-    "乌里克欧兹", "北城旧宅", "内城旧楼", "哈布斯堡庄园", "皇宫", "基地", "地下基地",
-    "太平洋", "大西洋", "月球", "轨道", "登陆城", "居所", "宴会厅", "小会议室",
-]
+# IP-specific seeds loaded from config/novel_glossary.json (gitignored).
+# Do NOT hardcode novel names here; edit novel_glossary.json instead.
+LOCATION_SEEDS: list[str] = get_location_seeds()
 
-CONCEPT_SEEDS = [
-    "aldnoal", "Aldnoal", "aldnoal遗命权限", "烈锋", "渊戮", "顶王", "魔力", "蛇信",
-    "调令伪造", "特洛耶德", "薇瑟帝国", "地联", "大西洋方面", "太平洋方面",
-]
+CONCEPT_SEEDS: list[str] = get_concept_seeds()
 
 KEY_CHAPTER_TIME_LABELS = {
     1309: "图卢兹失守前夜，柏林宴会",
@@ -372,7 +368,8 @@ def _known_names(chars: dict[str, Any]) -> dict[str, str]:
         names[name] = name
         for alias in card.get("aliases") or []:
             names[alias] = name
-    names.update({name: name for name in ["蕾穆丽娜", "雷利加利亚", "赫克勒斯", "扎兹巴鲁姆", "黎骨月", "爱乌", "韵子", "莱艾", "艾瑟依拉姆", "迪卡亚", "路易威斯"]})
+    # NPC name seeds loaded from glossary (IP-private); no hardcoded names.
+    names.update({name: name for name in get_npc_name_seeds()})
     return names
 
 

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from core.logging import get_logger
 from timeline_index import bootstrap_timeline_from_summaries, timeline_filter_for_label
+from config.glossary import get_leak_filter_tokens
 
 log = get_logger(__name__)
 
@@ -235,12 +236,9 @@ def _is_default_mumu_script(script_id: int | None) -> bool:
 # 复制了默认柏林剧情的 label（如"图卢兹失守后次日，柏林内城"）到导入剧本的行上。
 # 数据迁移修不掉所有历史脏数据，retrieve 时再防一道——非默认 script 读到的 fact
 # 如果 story_time_label 含柏林 token，就抹掉这个字段，避免泄漏到 GM 上下文。
-_DEFAULT_NOVEL_LEAK_TOKENS = (
-    "柏林", "图卢兹", "哈布斯堡", "蛇信", "薇瑟", "扎兹巴鲁姆",
-    "蕾穆丽娜", "斯雷因", "伊奈帆", "甲胄骑士", "Kataphrakt",
-    "调令伪造", "娅赛兰", "韵子", "黎骨月", "迪卡亚",
-    "赫克勒斯", "特洛耶德", "薛克",
-)
+# IP terms loaded from config/novel_glossary.json (gitignored) or .example.json.
+# Do NOT hardcode novel-specific names here; edit novel_glossary.json instead.
+_DEFAULT_NOVEL_LEAK_TOKENS = get_leak_filter_tokens()
 
 
 def _strip_default_novel_leakage(text: str) -> str:

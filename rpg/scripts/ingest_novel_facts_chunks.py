@@ -3,8 +3,10 @@
 import json
 import sqlite3
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "/Volumes/我的电脑/我穆蕾莉娅不爱你/我蕾穆丽娜不爱你/rpg")
+REPO_ROOT = Path(__file__).resolve().parents[2]  # rpg/scripts/X.py → repo root
+sys.path.insert(0, str(REPO_ROOT / "rpg"))
 
 from psycopg.types.json import Jsonb  # noqa: E402
 
@@ -12,7 +14,7 @@ from platform_app.db import connect, init_db  # noqa: E402
 
 SCRIPT_ID = 9803
 USER_ID = 7268
-SQLITE_PATH = "/Volumes/我的电脑/我穆蕾莉娅不爱你/我蕾穆丽娜不爱你/.webnovel/chapter_facts.db"
+SQLITE_PATH = str(REPO_ROOT / ".webnovel" / "chapter_facts.db")
 
 
 def main():

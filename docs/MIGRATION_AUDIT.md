@@ -2,7 +2,7 @@
 
 Audit performed against `main` at commit `2e2d3326` (post-Wave 14.3). The codebase is the result of a Python → Rust rewrite that culminated in Wave 14 ("stub 清零, 全部 0 个 'not yet implemented'"). Several module-header docstrings still describe "骨架/skeleton" status that no longer matches the code body — when in doubt, **read the function, not the module header**.
 
-Workspace: 15 crates, 24 migrations, ~552 `#[test]` annotations, 43 ts-rs types. All paths below are relative to repo root `/Volumes/我的电脑/我穆蕾莉娅不爱你/我蕾穆丽娜不爱你/`.
+Workspace: 15 crates, 24 migrations, ~552 `#[test]` annotations, 43 ts-rs types. All paths below are relative to `<repo-root>/`.
 
 ---
 
