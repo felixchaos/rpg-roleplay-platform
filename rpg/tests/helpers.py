@@ -57,7 +57,13 @@ def register_user(client, username: str | None = None, password: str = "Test1234
     uname = username or integtest_username()
     resp = client.post(
         "/api/v1/auth/register",
-        json={"username": uname, "password": password, "display_name": "integ"},
+        json={
+            "username": uname,
+            "password": password,
+            "display_name": "integ",
+            "terms_accepted": True,
+            "age_confirmed": True,
+        },
     )
     return {
         "username": uname,

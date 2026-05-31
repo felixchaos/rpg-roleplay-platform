@@ -284,6 +284,35 @@
     admin: {
       deploymentConfig: () => GET(`${API_PREFIX}/admin/deployment-config`),
       saveDeploymentConfig: (body) => POST(`${API_PREFIX}/admin/deployment-config`, body),
+      smtpTest: () => POST(`${API_PREFIX}/admin/smtp/test`, {}),
+      // 用户管理
+      users: (params) => GET(`${API_PREFIX}/admin/users`, params),
+      updateUser: (id, body) => PATCH(`${API_PREFIX}/admin/users/${id}`, body),
+      deactivateUser: (id) => POST(`${API_PREFIX}/admin/users/${id}/deactivate`, {}),
+      reactivateUser: (id) => POST(`${API_PREFIX}/admin/users/${id}/reactivate`, {}),
+      forceLogout: (id) => POST(`${API_PREFIX}/admin/users/${id}/force-logout`, {}),
+      // 全局用量
+      globalUsage: (params) => GET(`${API_PREFIX}/admin/usage`, params),
+      // 审计日志
+      auditLog: (params) => GET(`${API_PREFIX}/admin/audit`, params),
+      // 系统健康
+      health: () => GET(`${API_PREFIX}/admin/health`),
+      // 系统日志
+      logs: (params) => GET(`${API_PREFIX}/admin/logs`, params),
+      // 注册与邀请
+      registration: () => GET(`${API_PREFIX}/admin/registration`),
+      saveRegistration: (body) => POST(`${API_PREFIX}/admin/registration`, body),
+      inviteCodes: (params) => GET(`${API_PREFIX}/admin/invite-codes`, params),
+      createInviteCodes: (body) => POST(`${API_PREFIX}/admin/invite-codes`, body),
+      deleteInviteCode: (code) => POST(`${API_PREFIX}/admin/invite-codes/${encodeURIComponent(code)}/delete`, {}),
+      // 安全配置
+      securityConfig: () => GET(`${API_PREFIX}/admin/security-config`),
+      saveSecurityConfig: (body) => POST(`${API_PREFIX}/admin/security-config`, body),
+      // 维护模式
+      maintenance: () => GET(`${API_PREFIX}/admin/maintenance`),
+      saveMaintenance: (body) => POST(`${API_PREFIX}/admin/maintenance`, body),
+      // 服务重启
+      restart: () => POST(`${API_PREFIX}/admin/restart`, {}),
     },
 
     // ---------- Scripts ----------

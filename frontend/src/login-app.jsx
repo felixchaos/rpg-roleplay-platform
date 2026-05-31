@@ -29,7 +29,48 @@ function __resolveNextOrDefault() {
 
 /// 渲染单个表单字段。`field` 形如:
 ///   { key, label, type, required, autocomplete, placeholder, min_length, max_length }
+/// 当 type === 'boolean' 时渲染为 checkbox。
 function SchemaField({ field, value, onChange }) {
+  if (field.type === 'boolean') {
+    // 为 terms_accepted 字段注入带链接的 label;其余 boolean 字段用纯文本
+    // 法律文档正本托管在 landing 站(play.stellatrix.icu/legal/),软件内不复制以避免双权威。
+    // landing 的 legal/ 已发布 v1.2 双语 6 篇:privacy/terms/acceptable-use/cookie/dmca/adult-content-disclaimer
+    const _legalBase = 'https://play.stellatrix.icu/legal';
+    const _legalLang = (typeof navigator !== 'undefined' && /^en/i.test(navigator.language || '')) ? 'en' : 'zh-CN';
+    const labelNode = field.key === 'terms_accepted' ? (
+      <span>
+        我已阅读并同意{' '}
+        <a href={`${_legalBase}/terms-of-service.${_legalLang}.html`} target="_blank" rel="noopener noreferrer"
+           style={{color: 'var(--accent)'}}>《服务条款》</a>
+        {'、'}
+        <a href={`${_legalBase}/privacy-policy.${_legalLang}.html`} target="_blank" rel="noopener noreferrer"
+           style={{color: 'var(--accent)'}}>《隐私政策》</a>
+        {'、'}
+        <a href={`${_legalBase}/acceptable-use-policy.${_legalLang}.html`} target="_blank" rel="noopener noreferrer"
+           style={{color: 'var(--accent)'}}>《可接受使用政策》</a>
+        {' 及 '}
+        <a href={`${_legalBase}/adult-content-disclaimer.${_legalLang}.html`} target="_blank" rel="noopener noreferrer"
+           style={{color: 'var(--accent)'}}>《成人内容声明》</a>
+        {field.required && <span className="pl-field-req">*</span>}
+      </span>
+    ) : (
+      <span>{field.label}{field.required && <span className="pl-field-req">*</span>}</span>
+    );
+    return (
+      <div className="pl-field" style={{flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 6}}>
+        <input
+          id={field.key}
+          type="checkbox"
+          checked={!!value}
+          onChange={(e) => onChange(e.target.checked)}
+          style={{marginTop: 3, flexShrink: 0, accentColor: 'var(--accent)'}}
+        />
+        <label htmlFor={field.key} style={{fontWeight: 'normal', cursor: 'pointer', fontSize: 13}}>
+          {labelNode}
+        </label>
+      </div>
+    );
+  }
   return (
     <div className="pl-field">
       <label htmlFor={field.key}>
@@ -95,6 +136,12 @@ function LoginApp() {
 
   const setField = (k, v) => setValues((prev) => ({ ...prev, [k]: v }));
 
+  // 后端 error_key → 友好文案映射
+  const CONSENT_ERRORS = {
+    'auth.terms_not_accepted': '请阅读并同意《服务条款》和《隐私政策》',
+    'auth.age_not_confirmed': '请确认你已年满 13 周岁(13-18 岁用户须监护人同意)',
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     if (busy) return;
@@ -102,6 +149,15 @@ function LoginApp() {
 
     // 必填校验(前端 + 后端会再校验一次)
     for (const f of fields) {
+      if (f.type === 'boolean') {
+        // checkbox: 必填时要求勾选
+        if (f.required && !values[f.key]) {
+          const friendly = CONSENT_ERRORS[f.key] || `请勾选"${f.label}"`;
+          setErr(friendly);
+          return;
+        }
+        continue;
+      }
       const v = (values[f.key] || '').trim();
       if (f.required && !v) {
         setErr(`请填写${f.label}`);
@@ -117,6 +173,11 @@ function LoginApp() {
     try {
       const body = {};
       for (const f of fields) {
+        if (f.type === 'boolean') {
+          // boolean 字段：必填直接发；可选且未勾选则跳过
+          if (f.required || values[f.key]) body[f.key] = !!values[f.key];
+          continue;
+        }
         const v = (values[f.key] || '').trim();
         // 可选字段空值不发,让后端兜底
         if (!f.required && !v) continue;
@@ -132,7 +193,13 @@ function LoginApp() {
       setNotice(mode === 'register' ? '注册成功,正在进入…' : '登录成功');
       setTimeout(() => location.replace(__resolveNextOrDefault()), 200);
     } catch (e) {
-      setErr(e?.message || '请求失败');
+      // 后端返回 error_key 时展示对应文案
+      const errKey = e?.detail?.error_key || e?.error_key;
+      if (errKey && CONSENT_ERRORS[errKey]) {
+        setErr(CONSENT_ERRORS[errKey]);
+      } else {
+        setErr(e?.message || '请求失败');
+      }
     } finally {
       setBusy(false);
     }

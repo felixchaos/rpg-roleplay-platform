@@ -10,6 +10,16 @@ import { MODELS_DATA } from './pages/settings.jsx';
 // platform-app 之前留了返回 null 的 stub 遮蔽它们 → "继续游戏"/"新建存档" 全失效。
 // PlatformShell(本文件)直接渲染这两个组件,必须从真实现 import,不能用 stub。
 import { ContinuePicker, NewGameModal } from './pages/saves.jsx';
+import {
+  AdminUsersPage,
+  AdminGlobalUsagePage,
+  AdminAuditPage,
+  AdminHealthPage,
+  AdminLogsPage,
+  AdminRegistrationPage,
+  AdminSecurityPage,
+  AdminMaintenancePage,
+} from './pages/admin.jsx';
 // Cloudscape shell(AWS 控制台架构 + 暖色主题)
 import CSTopNavigation from '@cloudscape-design/components/top-navigation';
 import CSAppLayout from '@cloudscape-design/components/app-layout';
@@ -67,6 +77,14 @@ const PL_TITLES = {
   "me-settings": ["个人主页 / 用户设置", "隐私、合规、安全、数据所有权"],
   settings: ["设置",     "用户偏好、API 与模型、记忆与权限"],
   "admin-deploy": ["系统管理 / 部署配置", "监听地址、CORS、SMTP、CAPTCHA(站点级,需管理员)"],
+  "admin-users":        ["系统管理 / 用户管理",  "用户列表、角色分配、封禁与会话管理"],
+  "admin-usage":        ["系统管理 / 全局用量",  "全平台 Token 消耗与成本总览"],
+  "admin-audit":        ["系统管理 / 审计日志",  "管理员操作记录与安全事件"],
+  "admin-health":       ["系统管理 / 系统健康",  "数据库、内存、磁盘与进程状态"],
+  "admin-logs":         ["系统管理 / 系统日志",  "运行时日志查看与下载"],
+  "admin-registration": ["系统管理 / 注册与邀请","注册开关、邀请码管理"],
+  "admin-security":     ["系统管理 / 安全配置",  "IP 黑名单、速率限制、密码策略"],
+  "admin-maintenance":  ["系统管理 / 维护模式",  "维护模式开关与全局公告"],
   usage:    ["用量",     "调用量、Token 消耗、成本、延迟、错误率"],
   plugins:  ["插件",     "已启用的平台插件"],
   mcp:      ["MCP",      "本地或服务器侧 MCP 服务器"],
@@ -503,7 +521,17 @@ function UnifiedSearch({ open, onClose, setPage }) {
     { id: "permissions", label: "权限",        parent: "设置",     hash: "settings", keywords: "permission write structured" },
     { id: "danger",      label: "高危",        parent: "设置",     hash: "settings", keywords: "danger reset delete" },
     // 部署配置已拆到「系统管理」,仅 admin 可见
-    ...(isAdmin ? [{ id: "deploy", label: "部署配置", parent: "系统管理", hash: "admin-deploy", keywords: "host port cors upload deploy admin" }] : []),
+    ...(isAdmin ? [
+      { id: "deploy",        label: "部署配置",   parent: "系统管理", hash: "admin-deploy",        keywords: "host port cors upload deploy admin" },
+      { id: "admin-users",   label: "用户管理",   parent: "系统管理", hash: "admin-users",        keywords: "users ban role deactivate admin" },
+      { id: "admin-usage",   label: "全局用量",   parent: "系统管理", hash: "admin-usage",        keywords: "global usage token cost admin" },
+      { id: "admin-audit",   label: "审计日志",   parent: "系统管理", hash: "admin-audit",        keywords: "audit log admin action" },
+      { id: "admin-health",  label: "系统健康",   parent: "系统管理", hash: "admin-health",       keywords: "health db memory disk process" },
+      { id: "admin-logs",    label: "系统日志",   parent: "系统管理", hash: "admin-logs",         keywords: "logs system stderr stdout" },
+      { id: "admin-reg",     label: "注册与邀请", parent: "系统管理", hash: "admin-registration", keywords: "registration invite code signup" },
+      { id: "admin-sec",     label: "安全配置",   parent: "系统管理", hash: "admin-security",     keywords: "ip blocklist rate limit password policy" },
+      { id: "admin-maint",   label: "维护模式",   parent: "系统管理", hash: "admin-maintenance",  keywords: "maintenance mode announcement restart" },
+    ] : []),
   ];
 
   const scripts = platform.scripts.map(s => ({
@@ -3663,9 +3691,18 @@ const CS_MODULES = [
   // 系统管理:仅 admin 角色可见/可访问(adminOnly)。部署配置等站点级设置从用户
   // 「设置 & 账户」中拆出,独立成网站管理功能页,三道鉴权(菜单隐藏 + 路由 AdminGuard + 后端 403)。
   { id: 'admin', label: '系统管理', group: '管理', adminOnly: true,
-    pages: ['admin-deploy'],
+    pages: ['admin-deploy', 'admin-users', 'admin-usage', 'admin-audit',
+            'admin-health', 'admin-logs', 'admin-registration', 'admin-security', 'admin-maintenance'],
     sub: [
-      { text: '部署配置', href: '#admin-deploy' },
+      { text: '部署配置',   href: '#admin-deploy' },
+      { text: '用户管理',   href: '#admin-users' },
+      { text: '全局用量',   href: '#admin-usage' },
+      { text: '审计日志',   href: '#admin-audit' },
+      { text: '系统健康',   href: '#admin-health' },
+      { text: '系统日志',   href: '#admin-logs' },
+      { text: '注册与邀请', href: '#admin-registration' },
+      { text: '安全配置',   href: '#admin-security' },
+      { text: '维护模式',   href: '#admin-maintenance' },
     ] },
   { id: 'library', label: '库', group: '系统', pages: ['library'],
     sub: [{ text: '资产库', href: '#library' }] },
@@ -3917,7 +3954,10 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
   );
 }
 
-export { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData, useShellChrome, ResizableSplit, AdminGuard, isAdminPage };
+export { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData, useShellChrome, ResizableSplit, AdminGuard, isAdminPage,
+  AdminUsersPage, AdminGlobalUsagePage, AdminAuditPage, AdminHealthPage,
+  AdminLogsPage, AdminRegistrationPage, AdminSecurityPage, AdminMaintenancePage,
+};
 
 // ──────────────────────────────────────────────────────────────────
 // 以下函数本体已拆分到 pages/cards.jsx / pages/saves.jsx /

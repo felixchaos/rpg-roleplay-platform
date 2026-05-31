@@ -4,6 +4,7 @@
 
 import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Icon } from '../game-icons.jsx';
 import { ConfirmModal, SettingsToggle, useAutoSave, usePlatformData, fmtN, ResizableSplit } from '../platform-app.jsx';
 import { getCaps as _getCapsImported } from '../components/catalog-helpers.js';
@@ -59,6 +60,7 @@ function SetSelect({ value, options, onChange, disabled }) {
 /* ---------------------------- SETTINGS ------------------------- */
 function SettingsPage({ section: sectionProp } = {}) {
   // 新 IA:section 由模块左栏(路由)驱动。传入 sectionProp 时隐藏内部导航。
+  const { t } = useTranslation();
   const [sectionState, setSection] = useStatePL("preferences");
   const external = !!sectionProp;
   const section = sectionProp || sectionState;
@@ -92,7 +94,7 @@ function SettingsPage({ section: sectionProp } = {}) {
   return (
     <CSSpaceBetween size="l">
       {!external && (
-        <CSHeader variant="h1">设置</CSHeader>
+        <CSHeader variant="h1">{t('settings.title')}</CSHeader>
       )}
       {!external && (
         <CSSpaceBetween direction="horizontal" size="xs">
@@ -118,6 +120,7 @@ function SettingsPage({ section: sectionProp } = {}) {
 
 function PrefSection() {
   // task 52：从 user_preferences 拉真实初值，改动直接 patch /api/me/preference。
+  const { t } = useTranslation();
   const [interfaceLang, setInterfaceLang] = useStatePL("zh-CN");
   const [serif, setSerif] = useStatePL(true);
   const [auto, setAuto] = useStatePL(true);
@@ -140,7 +143,7 @@ function PrefSection() {
     return () => { cancelled = true; };
   }, []);
   return (
-    <SetGroup title="偏好">
+    <SetGroup title={t('settings.preferences.title')}>
       <SetRow label="界面语言" description="UI 文案与默认正文语言。">
         <SetSelect value={interfaceLang}
           options={[
@@ -148,7 +151,7 @@ function PrefSection() {
             { value: 'zh-TW', label: '繁體中文' },
             { value: 'en', label: 'English (Beta)' },
           ]}
-          onChange={(v) => { setInterfaceLang(v); save("ui_language", v); }} />
+          onChange={(v) => { setInterfaceLang(v); save("ui_language", v); import('../i18n/index.js').then(m => m.changeLanguage(v)); }} />
       </SetRow>
       <SetRow label="叙述字体" description="GM 正文使用宋体增加书卷感；UI 仍为黑体。">
         <CSToggle checked={serif} onChange={({ detail }) => { setSerif(detail.checked); save("serif", detail.checked); }}>
@@ -333,6 +336,7 @@ function ClarifySection() {
 }
 
 function ModelsSection() {
+  const { t } = useTranslation();
   // task 51：登录态零 mock。原 useState(MODELS_DATA) 首屏闪过 OpenAI/Anthropic/
   // Google/通义千问/DeepSeek/OpenRouter (35 模型)/local 七个假供应商和它们
   // 的假"key_hint = ·sk-…c024"。改成登录用户初始 []；匿名访客（设计预览）
@@ -570,8 +574,8 @@ function ModelsSection() {
         variant="h1"
         counter={`(${configuredApis.length})`}
         description="只显示已配置 API Key 的供应商。Key 加密存储在用户凭证表,不在服务端明文保存,也不回显。"
-        actions={<CSButton variant="primary" iconName="add-plus" onClick={() => setAddingApi(true)}>添加 API Key</CSButton>}
-      >API Key</CSHeader>
+        actions={<CSButton variant="primary" iconName="add-plus" onClick={() => setAddingApi(true)}>{t('settings.models.add_key')}</CSButton>}
+      >{t('settings.models.title')}</CSHeader>
 
       {configuredApis.length === 0 ? (
         <CSContainer>

@@ -1,0 +1,16 @@
+{
+  "settings": {
+    "title": "设置",
+    "preferences": {
+      "title": "偏好"
+    },
+    "models": {
+      "title": "API Key",
+      "add_key": "添加 API Key",
+      "validate_btn": "校验连接"
+    },
+    "modelparams": {
+      "title": "模型设置"
+    }
+  }
+}

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "selected": {
     "api_id": "anthropic",
-    "model_id": "claude-sonnet-4-6"
+    "model_id": "claude-opus-4-7"
   },
   "apis": [
     {

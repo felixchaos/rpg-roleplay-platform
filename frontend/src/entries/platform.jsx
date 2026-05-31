@@ -19,7 +19,10 @@ import { installWarmTheme } from '../cloudscape-theme.js';
 installWarmTheme();
 
 // 组件模块 — named import(ESM 自动拉入传递依赖)
-import { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, PL_NAV, AdminGuard } from '../platform-app.jsx';
+import { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, PL_NAV, AdminGuard,
+  AdminUsersPage, AdminGlobalUsagePage, AdminAuditPage, AdminHealthPage,
+  AdminLogsPage, AdminRegistrationPage, AdminSecurityPage, AdminMaintenancePage,
+} from '../platform-app.jsx';
 import { SavesPage } from '../pages/saves.jsx';
 import { ScriptsPage } from '../pages/scripts.jsx';
 import { CardsPage } from '../pages/cards.jsx';
@@ -58,6 +61,8 @@ function parsePageFromHash() {
     'scripts-library', 'scripts-editor', 'scripts-settings', 'play-settings',
     'settings-models', 'settings-modelparams', 'settings-modules', 'settings-memory',
     'settings-permissions', 'settings-danger', 'admin-deploy',
+    'admin-users', 'admin-usage', 'admin-audit', 'admin-health',
+    'admin-logs', 'admin-registration', 'admin-security', 'admin-maintenance',
     'usage', 'plugins', 'mcp', 'skills', 'apis',
   ];
   if (!ids.includes(hash)) return null;
@@ -126,6 +131,14 @@ function PlatformApp() {
   else if (page === 'settings-permissions') body = <SettingsPage section="permissions" />;
   else if (page === 'settings-danger') body = <SettingsPage section="danger" />;
   else if (page === 'admin-deploy') body = <AdminGuard><SettingsPage section="deploy" /></AdminGuard>;
+  else if (page === 'admin-users')        body = <AdminGuard><AdminUsersPage /></AdminGuard>;
+  else if (page === 'admin-usage')        body = <AdminGuard><AdminGlobalUsagePage /></AdminGuard>;
+  else if (page === 'admin-audit')        body = <AdminGuard><AdminAuditPage /></AdminGuard>;
+  else if (page === 'admin-health')       body = <AdminGuard><AdminHealthPage /></AdminGuard>;
+  else if (page === 'admin-logs')         body = <AdminGuard><AdminLogsPage /></AdminGuard>;
+  else if (page === 'admin-registration') body = <AdminGuard><AdminRegistrationPage /></AdminGuard>;
+  else if (page === 'admin-security')     body = <AdminGuard><AdminSecurityPage /></AdminGuard>;
+  else if (page === 'admin-maintenance')  body = <AdminGuard><AdminMaintenancePage /></AdminGuard>;
   else if (page === 'usage') body = <UsagePage />;
   else if (page === 'plugins') body = <CapPage kind="plugins" />;
   else if (page === 'mcp') body = <CapPage kind="mcp" />;

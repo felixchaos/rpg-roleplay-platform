@@ -36,6 +36,14 @@ async def api_register(request: Request):
             status_code=429,
             headers={"Retry-After": str(rl.retry_after_sec)},
         )
+    # 合规校验：服务条款 + 年龄确认（本轮只校验，不写 DB）
+    # TODO(R-phase): persist terms_accepted_at + age_confirmed to users table when migration unlocked
+    terms_accepted = bool(body.get("terms_accepted"))
+    age_confirmed = bool(body.get("age_confirmed"))
+    if not terms_accepted:
+        raise HTTPException(400, detail={"error_key": "auth.terms_not_accepted", "message": "请阅读并同意《服务条款》和《隐私政策》"})
+    if not age_confirmed:
+        raise HTTPException(400, detail={"error_key": "auth.age_not_confirmed", "message": "请确认你已年满 13 周岁(13-18 岁用户须监护人同意)"})
     # 首管理员引导令牌:body.setup_token 优先,其次 X-Setup-Token 头(server 模式才生效)
     setup_token = body.get("setup_token") or request.headers.get("X-Setup-Token")
     try:
@@ -154,6 +162,8 @@ async def api_auth_schema():
             {"key": "username", "label": "用户名", "type": "text", "required": True},
             {"key": "display_name", "label": "昵称(可选)", "type": "text", "required": False},
             {"key": "password", "label": "密码", "type": "password", "required": True, "min_length": pw_min},
+            {"key": "terms_accepted", "type": "boolean", "required": True, "label": "我已阅读并同意《服务条款》和《隐私政策》"},
+            {"key": "age_confirmed", "type": "boolean", "required": True, "label": "我已年满 13 周岁,如未满 18 周岁已征得监护人同意"},
         ],
         "notes": notes,
     })

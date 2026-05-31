@@ -1,0 +1,18 @@
+{
+  "scripts":        { "title": "剧本管理",   "file": "scripts.md" },
+  "cards":          { "title": "卡牌管理",   "file": "cards.md" },
+  "saves":          { "title": "存档管理",   "file": "saves.md" },
+  "memory":         { "title": "记忆管理",   "file": "memory.md" },
+  "settings-models":{ "title": "模型配置",   "file": "settings-models.md" },
+  "settings-params":{ "title": "参数调节",   "file": "settings-params.md" },
+  "modules":        { "title": "模块管理",   "file": "modules.md" },
+  "worldbook":      { "title": "世界书",     "file": "worldbook.md" },
+  "characters":     { "title": "角色管理",   "file": "characters.md" },
+  "timeline":       { "title": "时间线",     "file": "timeline.md" },
+  "input":          { "title": "输入面板",   "file": "input.md" },
+  "branches":       { "title": "分支管理",   "file": "branches.md" },
+  "admin":          { "title": "管理后台",   "file": "admin.md" },
+  "wizard":         { "title": "新建向导",   "file": "wizard.md" },
+  "review":         { "title": "内容复核",   "file": "review.md" },
+  "mcp":            { "title": "MCP 工具",   "file": "mcp.md" }
+}

@@ -1,0 +1,16 @@
+{
+  "settings": {
+    "title": "Settings",
+    "preferences": {
+      "title": "Preferences"
+    },
+    "models": {
+      "title": "API Keys",
+      "add_key": "Add API Key",
+      "validate_btn": "Test Connection"
+    },
+    "modelparams": {
+      "title": "Model Settings"
+    }
+  }
+}
