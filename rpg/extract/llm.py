@@ -75,6 +75,7 @@ class ExtractLLM:
                 self.api_id, model_real, usage,
                 metadata={"source": "extract", "script_id": self.script_id,
                           "algorithm": self.algorithm},
+                scenario="extract",
             )
         except Exception:
             pass  # 记账失败绝不阻塞提取主流程

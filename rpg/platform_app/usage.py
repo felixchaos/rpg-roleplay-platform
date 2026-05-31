@@ -51,8 +51,12 @@ def record_usage(
     context_used: int = 0,
     context_max: int = 0,
     metadata: dict[str, Any] | None = None,
+    scenario: str = "chat",
 ) -> dict[str, Any]:
-    """把一轮 backend.last_usage 写入 token_usage 表"""
+    """把一轮 backend.last_usage 写入 token_usage 表。
+
+    scenario 枚举: chat / opening / extract / embedding / assistant / tool
+    """
     init_db()
     cost = compute_cost(api_id, model_real_name, usage or {})
     with connect() as db:
@@ -61,9 +65,9 @@ def record_usage(
             insert into token_usage(
               user_id, save_id, context_run_id, api_id, model_real_name,
               input_tokens, output_tokens, cached_input_tokens, reasoning_tokens, total_tokens,
-              cost_usd, context_used, context_max, metadata
+              cost_usd, context_used, context_max, metadata, scenario
             )
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             returning *
             """,
             (
@@ -77,6 +81,7 @@ def record_usage(
                 int(context_used),
                 int(context_max),
                 Jsonb(metadata or {}),
+                scenario,
             ),
         ).fetchone()
     return expose(row) or {}
@@ -114,10 +119,25 @@ def aggregate_usage(user_id: int, days: int = 30) -> dict[str, Any]:
             """,
             (user_id, days),
         ).fetchall()
+        by_scenario = db.execute(
+            """
+            select scenario,
+                   sum(input_tokens) as input_tokens,
+                   sum(output_tokens) as output_tokens,
+                   sum(cached_input_tokens) as cached_input_tokens,
+                   sum(cost_usd) as cost_usd,
+                   count(*) as turns
+            from token_usage
+            where user_id = %s and created_at >= now() - (interval '1 day' * %s)
+            group by scenario
+            order by cost_usd desc
+            """,
+            (user_id, days),
+        ).fetchall()
         recent = db.execute(
             """
             select created_at, api_id, model_real_name, input_tokens, output_tokens,
-                   cost_usd, context_used, context_max
+                   cost_usd, context_used, context_max, scenario
             from token_usage
             where user_id = %s
             order by id desc
@@ -140,6 +160,17 @@ def aggregate_usage(user_id: int, days: int = 30) -> dict[str, Any]:
             }
             for r in by_model
         ],
+        "by_scenario": [
+            {
+                "scenario": r["scenario"],
+                "input_tokens": int(r["input_tokens"]),
+                "output_tokens": int(r["output_tokens"]),
+                "cached_input_tokens": int(r["cached_input_tokens"]),
+                "cost_usd": float(r["cost_usd"]),
+                "turns": int(r["turns"]),
+            }
+            for r in by_scenario
+        ],
         "recent_turns": [
             {
                 "at": str(r["created_at"]),
@@ -150,6 +181,7 @@ def aggregate_usage(user_id: int, days: int = 30) -> dict[str, Any]:
                 "cost_usd": float(r["cost_usd"]),
                 "context_used": int(r["context_used"]),
                 "context_max": int(r["context_max"]),
+                "scenario": r["scenario"] if "scenario" in r.keys() else "chat",
             }
             for r in recent
         ],

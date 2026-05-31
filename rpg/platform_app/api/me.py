@@ -414,13 +414,21 @@ async def api_import_tavern_card(request: Request, user=Depends(require_user)):
     """
     body = await request.json()
     from .. import tavern_cards, user_cards
+    # 上传 payload 总长上限（防止 JSON 层吞超大 base64 OOM）
+    _MAX_IMPORT_PAYLOAD_BYTES = 16 * 1024 * 1024
     try:
         if body.get("png_base64"):
             import base64 as _b64
+            png_b64 = body["png_base64"]
+            if not isinstance(png_b64, str) or len(png_b64) > _MAX_IMPORT_PAYLOAD_BYTES:
+                raise ValueError(f"png_base64 过大或非字符串（上限 {_MAX_IMPORT_PAYLOAD_BYTES} 字节）")
             try:
-                blob = _b64.b64decode(body["png_base64"], validate=True)
+                blob = _b64.b64decode(png_b64, validate=True)
             except Exception as exc:
                 raise ValueError(f"png_base64 不合法：{exc}") from exc
+            # 双保险：解码后再次校验大小（与 parse_png_card 内部 _MAX_PNG_BYTES 同步）
+            if len(blob) > 10 * 1024 * 1024:
+                raise ValueError("PNG 文件过大（解码后最大 10MB）")
             v2 = tavern_cards.parse_png_card(blob)
         elif body.get("json") is not None:
             v2 = tavern_cards.parse_card(body["json"])

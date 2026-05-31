@@ -9,6 +9,8 @@ from schemas._common import _BaseRequest
 class ModelsSelectRequest(_BaseRequest):
     api_id: str | None = ""
     model_id: str | None = ""
+    # A1: 如果提供 save_id，写存档级 session_model 而不动全局 catalog
+    save_id: int | None = None
 
 
 class ModelsUpsertApiRequest(_BaseRequest):

@@ -5,7 +5,7 @@ import os
 import secrets
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from psycopg.errors import UniqueViolation
@@ -188,8 +188,10 @@ def login(username: str, password: str, *, ip: str = "") -> tuple[dict[str, Any]
             _record_login_fail(ip, normalized)
             raise ValueError("用户名或密码错误")
         token = secrets.token_urlsafe(32)
-        expires_at = datetime.now() + timedelta(days=SESSION_DAYS)
+        # 使用 timezone-aware UTC 时间, 避免 server 本地时区漂移 session 过期
+        expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
         # 安全:DB 只存 token 的 sha256 哈希,不存可直接使用的明文(拖库不得有效会话)
+        # 注: token 列保留为 '' 兼容老 schema, 后续 migration 删除该列
         db.execute(
             "insert into sessions(token, token_hash, user_id, expires_at) values (%s, %s, %s, %s)",
             ("", _hash_token(token), row["id"], expires_at),
@@ -203,8 +205,9 @@ def logout(token: str | None) -> None:
         return
     init_db()
     with connect() as db:
-        db.execute("delete from sessions where token_hash = %s or (token <> '' and token = %s)",
-                   (_hash_token(token), token))
+        # 仅按 token_hash 删除。旧的明文 token 兼容分支已废弃 — 拖库后不允许重放。
+        # 历史明文行需运维一次性清空（update sessions set token='' where token<>''）。
+        db.execute("delete from sessions where token_hash = %s", (_hash_token(token),))
 
 
 def user_from_token(token: str | None) -> dict[str, Any] | None:
@@ -212,15 +215,15 @@ def user_from_token(token: str | None) -> dict[str, Any] | None:
         return None
     init_db()
     with connect() as db:
-        # 按哈希查找(过渡期兼容历史明文 token 行)
+        # 仅按 token_hash 查找。旧明文行已不接受 — 拖库后历史 token 立即失效。
         row = db.execute(
             """
             select users.* from sessions
             join users on users.id = sessions.user_id
-            where (sessions.token_hash = %s or (sessions.token <> '' and sessions.token = %s))
+            where sessions.token_hash = %s
               and sessions.expires_at > now()
             """,
-            (_hash_token(token), token),
+            (_hash_token(token),),
         ).fetchone()
         return dict(row) if row else None
 

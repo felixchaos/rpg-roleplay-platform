@@ -181,6 +181,7 @@ def extract_state_ops(
                     model_real_name=model,
                     usage=last_usage,
                     metadata={"kind": "extractor"},
+                    scenario="extract",
                 )
     except Exception:
         pass

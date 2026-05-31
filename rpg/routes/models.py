@@ -30,11 +30,13 @@ def _inject_health(catalog: dict[str, Any]) -> dict[str, Any]:
             health = model_probe.get_health(api_id, real) if real else None
             if health:
                 m["health"] = health.get("status") or "untested"
+                m["health_status_detail"] = health.get("status_detail") or health.get("status") or "untested"
                 m["health_latency_ms"] = health.get("latency_ms")
                 m["health_checked_at"] = health.get("checked_at")
                 m["health_error"] = health.get("error") or ""
             else:
                 m["health"] = "untested"
+                m["health_status_detail"] = "untested"
     return catalog
 
 
@@ -125,13 +127,45 @@ async def api_models_select(
     from app import (
         _gm_by_user,
         _payload,
+        _state_by_user,
         _state_lock,
+        _user_key,
         select_model,
         selected_model,
     )
     body_dict = body.model_dump(exclude_none=True)
-    catalog = select_model(body_dict.get("api_id", ""), body_dict.get("model_id", ""))
-    # 切换模型后清掉所有用户的 GM 缓存，下次会用新模型重建
+    api_id = body_dict.get("api_id", "")
+    model_id = body_dict.get("model_id", "")
+    save_id = body.save_id  # int | None
+
+    # A1: 存档级 session_model — 只写当前用户的 state，不动全局 catalog，不清其他用户 GM 缓存
+    if save_id is not None:
+        uid = _user_key(api_user)
+        with _state_lock:
+            state = _state_by_user.get(uid)
+            if state is not None:
+                state.set_session_model(model_id, api_id)
+            # 清掉该用户的 GM 缓存，_ensure_loaded 重建时会读 session_model
+            _gm_by_user.pop(uid, None)
+        # 同步持久化到 DB（走 state_repository 的 runtime_checkouts）
+        try:
+            from state_repository import persist_session_model
+            persist_session_model(save_id=save_id, model_id=model_id, api_id=api_id,
+                                  user_id=api_user["id"] if api_user else None)
+        except Exception:
+            pass  # 持久化失败不影响本次切换（内存已生效）
+        catalog = selected_model()
+        return JSONResponse({
+            "ok": True,
+            "scope": "save",
+            "save_id": save_id,
+            "model_id": model_id,
+            "api_id": api_id,
+            "selected": catalog,
+        })
+
+    # 全局切换（admin settings 页）— 维持原逻辑，清所有 GM 缓存
+    catalog = select_model(api_id, model_id)
     with _state_lock:
         _gm_by_user.clear()
     return JSONResponse({"ok": True, "models": catalog, "selected": selected_model(catalog), "state": _payload(api_user)})

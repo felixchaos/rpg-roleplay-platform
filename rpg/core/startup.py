@@ -153,10 +153,34 @@ async def _file_not_found_handler(request: Request, exc: FileNotFoundError):
     return JSONResponse({"ok": False, "error": str(exc) or "not found"}, status_code=404)
 
 
+async def _internal_error_handler(request: Request, exc: Exception):
+    """兜底 500 handler — 避免 FastAPI/Starlette 默认行为把堆栈+SQL 泄漏给前端。
+
+    完整 traceback 写到服务端日志（含 request_id 便于追查），返回给前端只有通用错误码。
+    """
+    request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex
+    log.exception("unhandled exception in request %s: %s", request_id, type(exc).__name__)
+    return JSONResponse(
+        {"ok": False, "error": "internal server error", "request_id": request_id, "code": "E_INTERNAL"},
+        status_code=500,
+        headers={"X-Request-ID": request_id, "Cache-Control": "no-store"},
+    )
+
+
 # ── Middleware ────────────────────────────────────────────────────────────
+
+# 安全 headers 默认值（HTML/static 资源加；JSON API 不强加 CSP, 避免破坏 fetch 路径）
+_DEFAULT_HTML_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "SAMEORIGIN",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+
 
 async def api_contract_middleware(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    request.state.request_id = request_id  # 让 _internal_error_handler 能拿到
     original_path = request.scope.get("path", "")
     prefix = f"/api/v{API_VERSION}"
     if original_path == prefix:
@@ -177,6 +201,16 @@ async def api_contract_middleware(request: Request, call_next):
         response.headers["X-API-Version"] = API_VERSION
         response.headers["X-Request-ID"] = request_id
         response.headers.setdefault("Vary", "Origin")
+    else:
+        # 非 /api 路径（HTML/JS/CSS/static）默认加安全 headers
+        for k, v in _DEFAULT_HTML_SECURITY_HEADERS.items():
+            response.headers.setdefault(k, v)
+        # HSTS 仅当请求是 https 时加（避免 http dev server 困惑）
+        if request.url.scheme == "https":
+            response.headers.setdefault(
+                "Strict-Transport-Security",
+                "max-age=31536000; includeSubDomains",
+            )
     return response
 
 
@@ -187,13 +221,24 @@ def configure_app(app: FastAPI) -> None:
 
     lifespan 须在 FastAPI(lifespan=lifespan, ...) 构造时传入，不在此处注册。
     """
-    # CORS
+    # CORS — 注意: allow_credentials=True 时 allow_headers 必须明确枚举（Fetch 规范不允许 *）
+    # 旧实现 allow_headers=["*"] + credentials=True 严格浏览器下静默失败
+    _allowed_request_headers = [
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+        "X-Request-ID",
+        "X-API-Version",
+        "Accept",
+        "Accept-Language",
+        "Origin",
+    ]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_origins,
         allow_credentials=_allow_credentials,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["*"],
+        allow_headers=(["*"] if not _allow_credentials else _allowed_request_headers),
         expose_headers=["X-API-Version", "X-Request-ID"],
         max_age=_cors_max_age(),
     )
@@ -211,3 +256,5 @@ def configure_app(app: FastAPI) -> None:
     app.add_exception_handler(JSONDecodeError, _json_decode_handler)
     app.add_exception_handler(PermissionError, _permission_handler)
     app.add_exception_handler(FileNotFoundError, _file_not_found_handler)
+    # 兜底 Exception handler — 必须最后注册（具体异常优先匹配）
+    app.add_exception_handler(Exception, _internal_error_handler)

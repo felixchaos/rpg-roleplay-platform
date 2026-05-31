@@ -109,10 +109,12 @@ def _maybe_record_usage(
     usage: dict,
     agent_kind: str | None,
     metadata_extra: dict | None,
+    scenario: str = "tool",
 ) -> None:
     """内部自动 record_usage,失败静默(不影响主流程)。
 
     触发条件:user_id + agent_kind 都非空,且 usage 含至少一个 token 计数。
+    scenario 默认 "tool"（harness 调用均为内部工具 agent）。
     """
     if not user_id or not agent_kind or not usage:
         return
@@ -126,7 +128,7 @@ def _maybe_record_usage(
         record_usage(
             user_id=user_id, save_id=save_id, context_run_id=context_run_id,
             api_id=api_id, model_real_name=model,
-            usage=usage, metadata=meta,
+            usage=usage, metadata=meta, scenario=scenario,
         )
     except Exception as exc:
         log.warning(f"[_harness] record_usage 失败(忽略): {exc}")

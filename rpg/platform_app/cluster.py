@@ -14,6 +14,7 @@ worker_id：每个 uvicorn 进程启动时分配一个 UUID，用来区分谁在
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 import socket
@@ -24,12 +25,26 @@ from .db import connect, init_db
 WORKER_ID = f"{socket.gethostname()}-{os.getpid()}-{secrets.token_hex(4)}"
 
 
+def _stable_lock_id(job_key: str) -> int:
+    """job_key → 稳定 int8 advisory lock id (跨进程一致)。
+
+    旧实现 abs(hash(key)) 受 Python 默认 hash 随机化影响,
+    不同 worker 同一 key 算出不同 lock_id, 互不排斥, advisory lock 形同虚设。
+    用 sha256 取前 8 字节转 signed int8 (PG bigint range)。
+    """
+    digest = hashlib.sha256(job_key.encode("utf-8")).digest()[:8]
+    return int.from_bytes(digest, "big", signed=True)
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  Stop signal: 跨进程取消正在跑的 chat
 # ══════════════════════════════════════════════════════════════════════
+# 注: user_id 加 FK + cascade, 防止用户被删后 stop_signals 残留孤儿行。
+# run_id 仍是 bigint, 但 cluster.py 内 request_stop 调用方应保证 run_id
+# 跨 worker 唯一（chat handler 应改用 UUID-based run_id 或 sequence）。
 _STOP_TABLE_DDL = """
 create table if not exists stop_signals (
-  user_id bigint not null,
+  user_id bigint not null references users(id) on delete cascade,
   run_id bigint not null,
   requested_at timestamptz not null default now(),
   primary key (user_id, run_id)
@@ -102,17 +117,17 @@ def cleanup_old_stop_signals(max_age_sec: int = 3600) -> int:
 def try_acquire_job_lock(job_key: str, worker_id: str = WORKER_ID) -> bool:
     """非阻塞 advisory lock。返回 False = 已被其他 worker 占。
 
-    PostgreSQL pg_try_advisory_lock 接 int。把 job_key 哈希到 int8。
+    用 sha256 派生稳定 int8 lock_id (跨进程一致), 不再受 PYTHONHASHSEED 影响。
     """
     init_db()
-    lock_id = abs(hash(job_key)) % (2**31)
+    lock_id = _stable_lock_id(job_key)
     with connect() as db:
         row = db.execute("select pg_try_advisory_lock(%s) as ok", (lock_id,)).fetchone()
     return bool(row and row["ok"])
 
 
 def release_job_lock(job_key: str) -> None:
-    lock_id = abs(hash(job_key)) % (2**31)
+    lock_id = _stable_lock_id(job_key)
     try:
         with connect() as db:
             db.execute("select pg_advisory_unlock(%s)", (lock_id,))

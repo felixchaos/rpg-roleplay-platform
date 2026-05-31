@@ -756,6 +756,12 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         # 部分唯一索引:每个 (save, character) 同时只能有一个 current binding
         "create unique index if not exists ux_save_char_id_one_current on save_character_identities(save_id, character_kind, character_ref) where is_current",
     ]),
+    (30, "token_usage_scenario", [
+        # v30: token_usage 加场景标识。前端 Usage 页按 chat/extract/embedding/assistant/tool/opening 拆账。
+        # 旧数据默认 'chat'（历史语义最接近；chat 是最主要的调用场景）。
+        "alter table token_usage add column if not exists scenario text not null default 'chat'",
+        "create index if not exists idx_token_usage_scenario on token_usage(user_id, scenario, created_at desc)",
+    ]),
 ]
 
 

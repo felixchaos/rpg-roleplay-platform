@@ -54,7 +54,7 @@ async def api_state_events(
     """
     import asyncio as _asyncio
 
-    from state_event_bus import subscribe, unsubscribe
+    from state_event_bus import TooManySubscribers, subscribe, unsubscribe
 
     user_id = int((api_user or {}).get("id") or 0)
     if not user_id:
@@ -64,7 +64,15 @@ async def api_state_events(
             status_code=401,
         )
 
-    queue = subscribe(user_id)
+    try:
+        queue = subscribe(user_id)
+    except TooManySubscribers as exc:
+        # 429: 单用户 SSE 上限保护, 防止 DoS
+        return StreamingResponse(
+            iter([f"event: error\ndata: {json.dumps({'message': str(exc), 'code': 'E_TOO_MANY_SUBSCRIBERS'}, ensure_ascii=False)}\n\n"]),
+            media_type="text/event-stream",
+            status_code=429,
+        )
 
     async def _gen():
         try:

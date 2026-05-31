@@ -711,10 +711,17 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
             if uid == 0:
                 _state_mtime_by_user[uid] = SAVE_FILE.stat().st_mtime_ns if SAVE_FILE.exists() else 0
         if uid not in _gm_by_user:
-            model = selected_model()
+            # A1: 优先读当前存档的 session_model，fallback 到全局 catalog selected
+            _current_state = _state_by_user.get(uid)
+            _session = _current_state.get_session_model() if _current_state else None
+            if _session:
+                _gm_model_id, _gm_api_id = _session
+            else:
+                model = selected_model()
+                _gm_model_id, _gm_api_id = model["real_name"], model["api_id"]
             _gm_by_user[uid] = GameMaster(
-                api_id=model["api_id"],
-                model=model["real_name"],
+                api_id=_gm_api_id,
+                model=_gm_model_id,
                 user_id=api_user["id"] if api_user else None,
             )
         return _state_by_user[uid]
@@ -1011,6 +1018,7 @@ def _build_usage_payload(
                 usage=last_usage,
                 context_used=ctx_used,
                 context_max=ctx_max,
+                scenario="chat",
             )
         return {
             "model": gm._backend.model_name,

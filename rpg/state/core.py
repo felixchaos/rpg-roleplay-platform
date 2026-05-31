@@ -319,7 +319,11 @@ DEFAULT_STATE = {
     },
     "turn": 0,
     "is_new": True,
-    "created_at": ""
+    "created_at": "",
+    # A1: 会话级模型覆盖。仅当游戏内 ModelPicker 切换时写入（不动全局 catalog）。
+    # 结构：{"model_id": "...", "api_id": "..."} 或 {} 表示未设置。
+    # GM 取模型时优先这里，fallback 到全局 catalog selected。
+    "session_model": {}
 }
 
 MAX_HISTORY_TURNS = 6  # 保留最近6轮（12条消息）
@@ -721,6 +725,8 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             "summary": self.short_summary(),
             "history": self.chat_history(),
             "suggestions": self.suggestions(),
+            # A1: 存档级模型覆盖，前端 ModelPicker 据此显示当前选中状态
+            "session_model": dict(self.data.get("session_model") or {}),
         }}
 
     def suggestions(self) -> list[str]:
@@ -1119,6 +1125,22 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         locked = self._user_locked_fields()
         if path not in locked:
             locked.append(path)
+
+    # ── A1: 会话级模型覆盖 ───────────────────────────────────────
+    def set_session_model(self, model_id: str, api_id: str) -> None:
+        """写入当前存档的 session_model（游戏内 ModelPicker 专用）。不影响全局 catalog。"""
+        self.data["session_model"] = {"model_id": str(model_id), "api_id": str(api_id)}
+
+    def clear_session_model(self) -> None:
+        """清除当前存档的 session_model，回退到全局 catalog 默认。"""
+        self.data["session_model"] = {}
+
+    def get_session_model(self) -> tuple[str, str] | None:
+        """返回 (model_id, api_id) 若存在 session_model，否则 None。"""
+        sm = self.data.get("session_model") or {}
+        if sm.get("model_id") and sm.get("api_id"):
+            return (str(sm["model_id"]), str(sm["api_id"]))
+        return None
 
     def request_time_jump(self, target: str, raw: str):
         target = clean_time_value(target)

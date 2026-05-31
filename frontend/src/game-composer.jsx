@@ -263,6 +263,8 @@ function AttachMenu({ onPick, onClose, triggerRef }) {
 }
 
 function ModelPopover({ current, onPick, align = "left", gameState, onClose, triggerRef }) {
+  // A1: 取当前存档 id（从 /api/state 的 gameState.save_id）用于存档级模型切换
+  const saveId = (gameState && gameState.save_id != null) ? gameState.save_id : null;
   const menuRef = useRefC(null);
   React.useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose && onClose(); };
@@ -355,27 +357,38 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
     return (order[a.health] ?? 4) - (order[b.health] ?? 4);
   });
 
-  // 当前选中：优先 catalog.selected.{api_id,model_id}，回退 gameState.app
+  // A1: 当前选中优先级：存档 session_model > catalog.selected > gameState.app（全局回退）
+  const _sessionModel = gameState && gameState.session_model;
   const selected = (catalog && catalog.selected) || {};
-  const selectedKey = selected.api_id && selected.model_id
-    ? `${selected.api_id}::${selected.model_id}`
-    : (gameState && gameState.app
-        ? `${gameState.app.api_id || ""}::${gameState.app.model_real_name || ""}`
-        : "");
+  const selectedKey = (_sessionModel && _sessionModel.api_id && _sessionModel.model_id)
+    ? `${_sessionModel.api_id}::${_sessionModel.model_id}`
+    : (selected.api_id && selected.model_id
+        ? `${selected.api_id}::${selected.model_id}`
+        : (gameState && gameState.app
+            ? `${gameState.app.api_id || ""}::${gameState.app.model_real_name || ""}`
+            : ""));
 
   const pickModel = async (item) => {
     // M5: 记录调用前的选中态，失败时回滚
     const prevSelectedKey = selectedKey;
     setBusy(true); setErr("");
+    // A1: 游戏内 picker 带 save_id → 存档级切换，不动全局 catalog
+    const isSaveScope = saveId != null;
     try {
       const r = await window.api.models.select({
         api_id: item.api_id,
         model_id: item.real_name,
+        ...(isSaveScope ? { save_id: saveId } : {}),
       });
       if (r && r.ok === false) throw new Error(r.error || r.detail || "切换模型失败");
-      window.__apiToast?.(`已切到 ${item.label}`, { kind: "ok", duration: 1800 });
-      // 通知 Game Console 重新拉 /api/state，让标签同步
-      try { window.dispatchEvent(new CustomEvent("game-state-refresh")); } catch (_) {}
+      if (isSaveScope) {
+        window.__apiToast?.(`已切换当前存档 GM 模型为 ${item.label}（不影响其他存档）`, { kind: "ok", duration: 2800 });
+        // 存档级切换：不广播 game-state-refresh（避免干扰其他 tab/存档）
+      } else {
+        window.__apiToast?.(`已切到 ${item.label}`, { kind: "ok", duration: 1800 });
+        // 全局切换：通知所有 tab 同步
+        try { window.dispatchEvent(new CustomEvent("game-state-refresh")); } catch (_) {}
+      }
       onPick && onPick(item.id);
     } catch (e) {
       const msg = String(e?.message || e);

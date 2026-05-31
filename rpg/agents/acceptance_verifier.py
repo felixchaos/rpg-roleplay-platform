@@ -219,6 +219,7 @@ def verify_acceptance_llm(
                     model_real_name=model,
                     usage=v_usage,
                     metadata={"kind": "verifier"},
+                    scenario="tool",
                 )
     except Exception:
         pass

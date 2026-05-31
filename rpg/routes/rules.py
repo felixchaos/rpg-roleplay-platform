@@ -47,6 +47,14 @@ async def api_rules_module_start(
     )
     body_dict = body.model_dump(exclude_none=True)
     module_id = str(body_dict.get("module_id") or "ash_mine").strip()
+    # 安全：module_id 必须是合法 slug — 仅允许 [a-zA-Z0-9_-]，禁止任何分隔符或 ..
+    import re as _re
+    if not _re.fullmatch(r"[A-Za-z0-9_-]{1,64}", module_id):
+        raise HTTPException(status_code=400, detail="module_id 仅允许 [A-Za-z0-9_-] 且长度 1-64")
+    # 进一步用 registry 验证模组真实存在（与 /launch 保持一致）
+    import modules as _rules_module_registry
+    if not _rules_module_registry.load_module(module_id):
+        raise HTTPException(status_code=404, detail=f"模组不存在: {module_id}")
     character_overrides = body_dict.get("character") or None
 
     state = _ensure_loaded(api_user)
@@ -62,13 +70,14 @@ async def api_rules_module_start(
         raise HTTPException(status_code=400, detail=d_result.error or "module_load 失败")
     state.save()
     _persist_runtime_checkpoint(state, api_user)
-    # 从模组 opening.md 读取开场白
+    # 从模组 opening.md 读取开场白（path traversal 防御：必须在 modules/ 内）
     opening = ""
     try:
         from pathlib import Path as _Path
-        _modules_dir = _Path(__file__).resolve().parent.parent / "modules"
-        _opening_file = _modules_dir / module_id / "opening.md"
-        if _opening_file.exists():
+        _modules_dir = (_Path(__file__).resolve().parent.parent / "modules").resolve()
+        _opening_file = (_modules_dir / module_id / "opening.md").resolve()
+        # 验证解析后路径仍在 modules/ 下，杜绝 ../../ 跳出
+        if _modules_dir in _opening_file.parents and _opening_file.exists():
             opening = _opening_file.read_text(encoding="utf-8")
     except Exception:
         pass

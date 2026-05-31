@@ -10,6 +10,70 @@ from console_assistant.prompts import build_system_prompt
 from console_assistant.tools import dispatch_assistant_tool, get_tool_spec, list_assistant_tools
 from tools_dsl.command_dispatcher import ToolCallEnvelope, ToolResult
 
+# 安全: navigate_to_setting 的目标必须在白名单内, 避免任意字符串经 SSE 传到前端
+# 后再被解析为 url/open_redirect。同步前端 console-assistant-navigation.jsx 的 MAP。
+_NAV_TARGETS_WHITELIST = frozenset({
+    "models", "models.add_api", "models.pricing",
+    "rules", "rules.modules",
+    "memory", "memory.add",
+    "skills",
+    "permissions",
+    "library",
+    "saves",
+    "scripts",
+    "tools", "mcp",
+    "settings", "settings.profile", "settings.security",
+    "platform.home", "platform.usage",
+    "console.assistant",
+})
+
+
+def _validate_owned_save_id(user_id: int, save_id: Any) -> int | None:
+    """归属校验: page_context.save_id 必须属于当前 user_id, 否则置 None。
+
+    旧实现直接信前端传上来的 save_id, 攻击者可改 save_id 让 LLM 操作他人存档
+    （`get_game_state` / 后续 destructive 工具）。
+    """
+    if save_id is None:
+        return None
+    try:
+        sid = int(save_id)
+    except (TypeError, ValueError):
+        return None
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select 1 from game_saves where id = %s and user_id = %s",
+                (sid, int(user_id)),
+            ).fetchone()
+        return sid if row else None
+    except Exception:
+        # DB 故障时保守: 不放行外部 save_id
+        return None
+
+
+def _validate_owned_script_id(user_id: int, script_id: Any) -> int | None:
+    """同 _validate_owned_save_id, 校验 scripts.owner_id。"""
+    if script_id is None:
+        return None
+    try:
+        sid = int(script_id)
+    except (TypeError, ValueError):
+        return None
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select 1 from scripts where id = %s and owner_id = %s",
+                (sid, int(user_id)),
+            ).fetchone()
+        return sid if row else None
+    except Exception:
+        return None
+
 
 def _sse_event(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -71,16 +135,9 @@ def _run_llm_loop(
 
     pending_for_this_turn: list[dict[str, Any]] = []
 
-    page_save_id = (page_context or {}).get("save_id")
-    page_script_id = (page_context or {}).get("script_id")
-    try:
-        page_save_id = int(page_save_id) if page_save_id is not None else None
-    except (TypeError, ValueError):
-        page_save_id = None
-    try:
-        page_script_id = int(page_script_id) if page_script_id is not None else None
-    except (TypeError, ValueError):
-        page_script_id = None
+    # 安全: 不再信前端任意传入的 save_id/script_id, 必须经过归属校验
+    page_save_id = _validate_owned_save_id(user_id, (page_context or {}).get("save_id"))
+    page_script_id = _validate_owned_script_id(user_id, (page_context or {}).get("script_id"))
 
     def _router(server_id: str, tool_name: str, arguments: dict) -> dict[str, Any]:
         spec = get_tool_spec(tool_name)
@@ -167,6 +224,14 @@ def _run_llm_loop(
                         reason = (reason or "").strip()
                     except Exception:
                         target, reason = payload.strip(), ""
+                    # 白名单校验: 防止 LLM 被诱导发出任意 target 字符串
+                    # (open_redirect / 前端 XSS / 路由欺骗)
+                    if target not in _NAV_TARGETS_WHITELIST:
+                        # 不在白名单的 target 静默丢弃, 不发 navigation_required 事件
+                        target = ""
+                    # reason 严格净化: 去控制字符 + 截断 80, 防止 SSE 数据被前端 innerHTML 时 XSS
+                    if reason:
+                        reason = "".join(ch for ch in reason if ch.isprintable())[:80]
                     if target:
                         yield _sse_event("navigation_required", {
                             "target": target,
@@ -264,8 +329,18 @@ def _run_llm_loop(
                     model_real_name=getattr(backend, "model_name", "unknown"),
                     usage=usage,
                     metadata={"kind": "console"},
+                    scenario="assistant",
                 )
         except Exception:
             pass
     except Exception as exc:
-        yield _sse_event("error", {"message": f"{type(exc).__name__}: {exc}"})
+        # 错误脱敏: 完整 exception 写后台日志, 对前端只暴露通用 message + code
+        # 防止泄漏 Python 异常类型 / 文件路径 / DB SQL 片段 / API key 片段
+        import logging
+        logging.getLogger("console_assistant").exception(
+            "llm loop failed: %s", type(exc).__name__,
+        )
+        yield _sse_event("error", {
+            "message": "助手内部错误，请稍后重试",
+            "code": "E_LLM_LOOP",
+        })

@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from routes._deps_fastapi import get_current_admin, get_current_user
+from routes._deps_fastapi import get_current_admin
 from schemas._common import COMMON_ERROR_RESPONSES, ErrorResponse, GenericOkResponse
 from schemas.skills import SkillRunRequest, SkillsImportRequest
 
@@ -31,22 +31,23 @@ async def api_skills_import(
 async def api_skill_run(
     body: SkillRunRequest,
     skill_id: str,
-    api_user: dict[str, Any] | None = Depends(get_current_user),
+    api_user: dict[str, Any] = Depends(get_current_admin),
 ) -> JSONResponse:
     """在沙箱里跑某个 imported skill。
 
     Body: {"cmd": ["bash", "script.sh", "arg1"], "stdin": "...", "timeout_sec": 30}
 
-    安全：admin only；本地匿名也允许（开发场景）。
+    安全：admin only。local 模式下也强制要求 admin —— 不再做匿名豁免，避免
+    "本地未鉴权 + cmd 可任意" 的 RCE 链。
     """
-    from app import _api_auth_required
-    if _api_auth_required() and (not api_user or api_user.get("role") != "admin"):
-        return JSONResponse({"ok": False, "error": "需要管理员权限"}, status_code=403)
-
     body_dict = body.model_dump(exclude_none=True)
     cmd = body_dict.get("cmd") or body_dict.get("command")
     if not isinstance(cmd, list) or not cmd:
         return JSONResponse({"ok": False, "error": "cmd 必须是非空 list"}, status_code=400)
+    if not all(isinstance(x, str) for x in cmd):
+        return JSONResponse({"ok": False, "error": "cmd 所有元素必须是字符串"}, status_code=400)
+    if len(cmd) > 64 or any(len(x) > 4096 for x in cmd):
+        return JSONResponse({"ok": False, "error": "cmd 元素或长度超限"}, status_code=400)
 
     # 找 skill_id 对应的目录
     from tools_dsl.tool_registry import list_imported_skills

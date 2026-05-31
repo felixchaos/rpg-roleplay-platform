@@ -111,17 +111,48 @@ def _v1_to_v2(card: dict[str, Any]) -> dict[str, Any]:
 # ── PNG tEXt chunk 解析 ──────────────────────────────────────────────
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
+# 安全上限：zlib 解压后单个 chunk 最多 4MB；总 chunk 长度 8MB；防止压缩炸弹 OOM。
+_MAX_PNG_BYTES = 10 * 1024 * 1024
+_MAX_ZTXT_DECOMPRESSED = 4 * 1024 * 1024
+_MAX_CHUNK_LENGTH = 8 * 1024 * 1024
+
+
+def _safe_zlib_decompress(compressed: bytes, max_size: int) -> bytes:
+    """流式解压并在累计字节超限时立刻终止，防止 zlib 炸弹。"""
+    decomp = zlib.decompressobj()
+    out = bytearray()
+    # 切块喂入，每喂一段就检查累计大小
+    chunk_size = 65536
+    pos = 0
+    while pos < len(compressed):
+        out += decomp.decompress(compressed[pos:pos + chunk_size], max_size - len(out))
+        if len(out) >= max_size and decomp.unconsumed_tail:
+            raise ValueError(f"zTXt 解压超过上限 {max_size} 字节（疑似 zlib 炸弹）")
+        pos += chunk_size
+    out += decomp.flush()
+    if len(out) > max_size:
+        raise ValueError(f"zTXt 解压超过上限 {max_size} 字节")
+    return bytes(out)
+
 
 def parse_png_card(blob: bytes) -> dict[str, Any]:
-    """从 PNG 文件读 tEXt/zTXt chunk 中的 chara 数据。"""
+    """从 PNG 文件读 tEXt/zTXt chunk 中的 chara 数据。
+
+    硬限：blob ≤ 10MB；单 chunk length ≤ 8MB；zTXt 解压后 ≤ 4MB。
+    超限直接 ValueError，避免 worker OOM。
+    """
     if not blob.startswith(PNG_SIGNATURE):
         raise ValueError("不是合法 PNG 文件")
+    if len(blob) > _MAX_PNG_BYTES:
+        raise ValueError(f"PNG 文件过大（最大 {_MAX_PNG_BYTES // (1024*1024)}MB）")
     offset = 8
     text_chunks: dict[str, str] = {}
     while offset < len(blob):
         if offset + 8 > len(blob):
             break
         length = struct.unpack(">I", blob[offset:offset + 4])[0]
+        if length > _MAX_CHUNK_LENGTH:
+            raise ValueError(f"PNG chunk 长度超过上限 {_MAX_CHUNK_LENGTH}")
         chunk_type = blob[offset + 4:offset + 8].decode("ascii", errors="replace")
         body = blob[offset + 8:offset + 8 + length]
         offset += 12 + length  # 4 type + length + 4 CRC
@@ -136,7 +167,11 @@ def parse_png_card(blob: bytes) -> dict[str, Any]:
                     key, _, rest = body.partition(b"\x00")
                     # rest[0] 是 compression method（0=deflate），rest[1:] 是压缩数据
                     compressed = rest[1:] if len(rest) > 1 else b""
-                    text_chunks[key.decode("latin-1")] = zlib.decompress(compressed).decode("utf-8", errors="replace")
+                    raw = _safe_zlib_decompress(compressed, _MAX_ZTXT_DECOMPRESSED)
+                    text_chunks[key.decode("latin-1")] = raw.decode("utf-8", errors="replace")
+            except ValueError:
+                # 解压炸弹/异常长度等：上抛让调用方拒绝整个文件
+                raise
             except Exception:
                 continue
     # SillyTavern 通常用 key="chara" 或 "ccv3"

@@ -1,6 +1,7 @@
 """console_assistant.tools — 工具表 + dispatcher 入口。"""
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -10,6 +11,37 @@ from tools_dsl.command_dispatcher import (
     ToolResult,
     get_registry,
 )
+
+# 进程级 dispatcher 单例 — 关键：旧实现每次 dispatch 都 new ToolDispatcher,
+# 导致 _rate_buckets / _trace_seen 全为空, MAX_CALLS_PER_USER_PER_SECOND=20
+# 和 trace 去重保护完全失效。单例后限流和 trace_seen 才真正生效。
+# 注意: state_provider 会随每次请求变化, 因此把 state_provider 改成 per-call
+# 通过 ToolCallEnvelope 注入路径（如果 dispatcher 支持），否则用一个动态包装。
+_DISPATCHER_SINGLETON: ToolDispatcher | None = None
+_DISPATCHER_LOCK = threading.Lock()
+_CURRENT_STATE_PROVIDER: Callable[[ToolCallEnvelope], Any] | None = None
+
+
+def _state_provider_proxy(env: ToolCallEnvelope) -> Any:
+    """thread-local 不可用（FastAPI 跨线程），用 contextvars 也复杂；
+    单例 dispatcher 通过这个 proxy 拿到当前请求绑定的 state_provider。
+    每次 dispatch_assistant_tool 调用前在锁内 set 当前 provider, 调完清空。
+    """
+    if _CURRENT_STATE_PROVIDER is None:
+        return None
+    return _CURRENT_STATE_PROVIDER(env)
+
+
+def _get_dispatcher() -> ToolDispatcher:
+    global _DISPATCHER_SINGLETON
+    if _DISPATCHER_SINGLETON is None:
+        with _DISPATCHER_LOCK:
+            if _DISPATCHER_SINGLETON is None:
+                _DISPATCHER_SINGLETON = ToolDispatcher(
+                    registry=get_registry(),
+                    state_provider=_state_provider_proxy,
+                )
+    return _DISPATCHER_SINGLETON
 
 
 def list_assistant_tools() -> list[dict[str, Any]]:
@@ -79,11 +111,12 @@ def dispatch_assistant_tool(
     call_id: str,
     state_provider: Callable[[ToolCallEnvelope], Any] | None = None,
 ) -> ToolResult:
-    """统一入口:把一次工具调用包装成 ToolCallEnvelope 走 dispatcher。"""
-    dispatcher = ToolDispatcher(
-        registry=get_registry(),
-        state_provider=state_provider or (lambda env: None),
-    )
+    """统一入口:把一次工具调用包装成 ToolCallEnvelope 走 dispatcher (单例)。
+
+    单例化后 dispatcher 内部的 _rate_buckets / _trace_seen 才真正跨调用生效。
+    state_provider 通过 _DISPATCHER_LOCK 在 set/dispatch/clear 三段中临时注入。
+    """
+    global _CURRENT_STATE_PROVIDER
     env = ToolCallEnvelope(
         user_id=user_id,
         save_id=save_id,
@@ -95,4 +128,10 @@ def dispatch_assistant_tool(
         call_id=call_id,
         depth=1,
     )
-    return dispatcher.dispatch_sync(env)
+    dispatcher = _get_dispatcher()
+    with _DISPATCHER_LOCK:
+        _CURRENT_STATE_PROVIDER = state_provider or (lambda _env: None)
+        try:
+            return dispatcher.dispatch_sync(env)
+        finally:
+            _CURRENT_STATE_PROVIDER = None

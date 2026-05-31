@@ -345,6 +345,70 @@ def diff_catalog(api_id: str, user_id: int | None = None) -> dict[str, Any]:
 # ══════════════════════════════════════════════════════════════════════
 #  可用性嗅探（发一条最小请求）
 # ══════════════════════════════════════════════════════════════════════
+
+# status_detail 枚举：
+#   ok          — 探测成功，模型可用
+#   degraded    — 探测成功但延迟高 / 响应异常（预留，暂未触发）
+#   key_expired — HTTP 401，API key 失效或未授权
+#   forbidden   — HTTP 403，API key 无权限访问该模型
+#   err         — 5xx / 网络错误 / timeout / 其他未知错误
+#   untested    — 从未探测过（健康缓存中的初始值）
+
+def _classify_probe_error(exc: Exception, err_str: str) -> str:
+    """把异常分类为 status_detail 枚举值。
+
+    各 SDK 的 HTTP 错误报法不同，统一按字符串匹配兜底。
+    """
+    err_lower = err_str.lower()
+    # Anthropic SDK: anthropic.AuthenticationError (status_code=401)
+    # OpenAI SDK: openai.AuthenticationError
+    # httpx: HTTPStatusError with status_code
+    cls_name = type(exc).__name__.lower()
+
+    # 优先检查异常类名
+    if "authentication" in cls_name or "unauthorized" in cls_name:
+        return "key_expired"
+    if "permission" in cls_name or "forbidden" in cls_name:
+        return "forbidden"
+
+    # 再检查 status_code 属性（openai/anthropic SDK 都有）
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None:
+        # httpx.HTTPStatusError.response.status_code
+        resp = getattr(exc, "response", None)
+        if resp is not None:
+            status_code = getattr(resp, "status_code", None)
+    if status_code is not None:
+        if status_code == 401:
+            return "key_expired"
+        if status_code == 403:
+            return "forbidden"
+        if isinstance(status_code, int) and 500 <= status_code < 600:
+            return "err"
+
+    # 字符串关键词兜底
+    if "401" in err_str or "authentication" in err_lower or "invalid api key" in err_lower or "unauthorized" in err_lower:
+        return "key_expired"
+    if "403" in err_str or "forbidden" in err_lower or "permission denied" in err_lower:
+        return "forbidden"
+    if any(kw in err_lower for kw in ("timeout", "timed out", "connection", "network", "unreachable")):
+        return "err"
+
+    return "err"
+
+
+def _probe_error_message(status_detail: str) -> str:
+    """status_detail → 用户可读说明（中文）。"""
+    return {
+        "key_expired": "API key 已失效或未授权，请在「个人主页 → API 凭证」更新密钥",
+        "forbidden": "API key 无权限访问该模型，请检查账号权限或模型授权",
+        "err": "探测失败（供应商故障或网络不可达），可稍后重试",
+        "degraded": "模型响应异常，功能可能受限",
+        "ok": "",
+        "untested": "尚未探测",
+    }.get(status_detail, "未知错误")
+
+
 def probe_availability(api_id: str, model_real_name: str | None = None, timeout_sec: int = 15, user_id: int | None = None) -> dict[str, Any]:
     # 服务器模式强制：必须有 user-scoped 凭证才能真实发请求（避免烧服务端凭证）
     if _require_user_credential() and not _has_user_credential(user_id, api_id):
@@ -394,6 +458,7 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
         latency = int((time.monotonic() - start) * 1000)
         result = {
             "ok": True,
+            "status_detail": "ok",
             "latency_ms": latency,
             "response_text": (text or "")[:80],
             "model_used": model_real_name,
@@ -401,20 +466,26 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
         }
         # task 42: 写 health cache 让 /api/models 能 surface 状态
         _HEALTH_CACHE[(api_id, model_real_name)] = {
-            "status": "ok", "latency_ms": latency,
+            "status": "ok", "status_detail": "ok",
+            "latency_ms": latency,
             "checked_at": time.time(), "error": "",
         }
         return result
     except Exception as exc:
         latency_ms = int((time.monotonic() - start) * 1000)
         err = str(exc)[:200]
+        status_detail = _classify_probe_error(exc, err)
+        # 兼容旧 status 字段：key_expired/forbidden 也标 status="err"
         _HEALTH_CACHE[(api_id, model_real_name)] = {
-            "status": "err", "latency_ms": latency_ms,
+            "status": "err", "status_detail": status_detail,
+            "latency_ms": latency_ms,
             "checked_at": time.time(), "error": err,
         }
         return {
             "ok": False,
+            "status_detail": status_detail,
             "error": err,
+            "error_detail": _probe_error_message(status_detail),
             "latency_ms": latency_ms,
             "model_used": model_real_name,
             "api_id": api_id,

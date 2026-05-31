@@ -2700,6 +2700,17 @@ function UsagePage() {
   const totalCost = Number(totals.cost_usd || 0);
   const totalCachedIn = Number(totals.cached_input_tokens || 0);
 
+  // A3: by_scenario — 后端有该字段时渲染；没有时整个区块不渲染（向后兼容）
+  const byScenario = (data && data.by_scenario) || null; // null = 旧 API，不渲染
+  const SCENARIO_META = {
+    chat:      { label: "对话", icon: "💬" },
+    opening:   { label: "开场", icon: "🎬" },
+    extract:   { label: "提取", icon: "🔍" },
+    embedding: { label: "向量化", icon: "📐" },
+    assistant: { label: "助手", icon: "🤖" },
+    tool:      { label: "工具", icon: "🔧" },
+  };
+
   // 按 API 聚合（后端只提供 by_model，自己按 api_id 汇总）
   const byApi = useMemoPL(() => {
     const map = new Map();
@@ -2787,6 +2798,41 @@ function UsagePage() {
           </div>
         </CSColumnLayout>
       </CSContainer>
+
+      {/* A3: 按场景拆分 — 仅后端返回 by_scenario 时渲染，向后兼容旧 API */}
+      {byScenario && Object.keys(byScenario).length > 0 && (() => {
+        const scenarioKeys = Object.keys(byScenario);
+        const scenarioTotalTurns = scenarioKeys.reduce((s, k) => s + Number(byScenario[k]?.turns || 0), 0) || 1;
+        return (
+          <CSContainer header={<CSHeader variant="h2" description="按场景统计本窗口请求分布">按场景拆分</CSHeader>}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+              {scenarioKeys.map(key => {
+                const meta = SCENARIO_META[key] || { label: key, icon: "📊" };
+                const sc = byScenario[key] || {};
+                const turns = Number(sc.turns || 0);
+                const cost = Number(sc.cost_usd || 0);
+                const pct = Math.round(turns / scenarioTotalTurns * 100);
+                return (
+                  <div key={key} style={{
+                    padding: '12px 14px', borderRadius: 6,
+                    background: 'var(--color-background-container-content, rgba(255,255,255,0.03))',
+                    border: '1px solid var(--color-border-divider-default, rgba(255,255,255,0.08))',
+                  }}>
+                    <div style={{ fontSize: 18, marginBottom: 4 }}>{meta.icon}</div>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-label, #aaa)', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{meta.label}</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--font-mono,monospace)' }}>{fmtN(turns)}</div>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-body-secondary)' }}>${cost.toFixed(3)}</div>
+                    <div style={{ marginTop: 6, height: 3, borderRadius: 999, background: 'var(--color-background-control-default, #333)', overflow: 'hidden' }}>
+                      <div style={{ width: pct + '%', height: '100%', background: 'var(--color-text-accent, #d4a45e)', borderRadius: 999 }} />
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--color-text-body-secondary)', marginTop: 3 }}>{pct}% 占比</div>
+                  </div>
+                );
+              })}
+            </div>
+          </CSContainer>
+        );
+      })()}
 
       {/* 趋势图（保留原生 SVG Spark 自绘） */}
       <CSContainer header={<CSHeader variant="h2" description="每日聚合">趋势</CSHeader>}>

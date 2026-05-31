@@ -798,10 +798,23 @@ def cancel_upload(user_id: int, upload_id: str) -> dict[str, Any]:
 
 
 def _upload_dir(user_id: int, upload_id: str) -> Path:
-    # 安全：upload_id 必须以 up_<user_id>_ 开头，防止越权访问别人的分片
-    if not upload_id.startswith(f"up_{user_id}_"):
+    """安全：upload_id 必须以 up_<user_id>_ 开头 + 严格 slug 校验 + 解析后路径必须在用户分片根下。
+
+    旧实现只看前缀，攻击者传 ``up_1_../../user_2/up_2_secret`` 可越权读/删他人分片目录。
+    """
+    import re as _re
+    # 1) slug 校验：禁止任何分隔符 / 控制字符 / ..
+    if not _re.fullmatch(r"up_\d+_[A-Za-z0-9_-]{1,64}", upload_id):
+        raise ValueError("upload_id 格式非法")
+    # 2) 前缀必须对应当前 user_id
+    if not upload_id.startswith(f"up_{int(user_id)}_"):
         raise ValueError("无权访问该 upload_id")
-    return UPLOAD_CHUNK_ROOT / f"user_{user_id}" / upload_id
+    # 3) 解析后路径必须在该用户的分片根下（双保险，防止 OS 层符号链接欺骗）
+    user_root = (UPLOAD_CHUNK_ROOT / f"user_{int(user_id)}").resolve()
+    candidate = (user_root / upload_id).resolve()
+    if user_root != candidate and user_root not in candidate.parents:
+        raise ValueError("upload_id 路径越界")
+    return candidate
 
 
 def _read_meta(user_dir: Path) -> dict[str, Any]:

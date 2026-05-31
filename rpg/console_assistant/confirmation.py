@@ -18,7 +18,12 @@ from tools_dsl.command_dispatcher import ToolCallEnvelope
 def _resolve_pending(
     *, user_id: int, conversation_id: str, call_id: str, decision: str,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
-    """共享步骤:校验 + pop pending。返回 (conv, pending, error_msg)。"""
+    """check-and-claim 原子化:在锁内同时校验+pop, 防止双 approve 导致 destructive tool 跑两次。
+
+    旧实现锁内只 get、锁外 dispatch 后才 pop, 形成 TOCTOU 窗口。
+    新实现：拿到锁就 pop, 返回 pending 副本; dispatch 失败时由调用方决定是否回填
+    （目前 dispatch 失败也算"已消费"，避免无限重试 destructive 操作）。
+    """
     decision_norm = (decision or "").strip().lower()
     if decision_norm not in {"approve", "reject"}:
         return None, None, f"decision 非法: {decision!r} (允许 approve/reject)"
@@ -27,16 +32,16 @@ def _resolve_pending(
         conv = user_bucket.get(conversation_id)
         if not conv:
             return None, None, f"conversation {conversation_id} 不存在或不属于当前用户"
-        pending = conv.get("pending_confirmations", {}).get(call_id)
+        # 原子 pop：第二个 approve 拿到 None 直接返回错误
+        pending = conv.get("pending_confirmations", {}).pop(call_id, None)
     if not pending:
-        return conv, None, f"call_id={call_id} 没有 pending 记录"
+        return conv, None, f"call_id={call_id} 没有 pending 记录或已被消费"
     return conv, pending, None
 
 
 def _pop_pending(conv: dict[str, Any], call_id: str) -> None:
-    """dispatch 完成后才真正删除 pending 记录,避免 dispatch 异常时永久丢失。"""
-    with _state._lock:
-        conv.get("pending_confirmations", {}).pop(call_id, None)
+    """[已废弃] pop 已合并入 _resolve_pending 的原子段，保留 no-op 防止旧路径残留。"""
+    return None
 
 
 def apply_confirmation(
@@ -157,9 +162,10 @@ def apply_confirmation_stream(
             state_provider=state_provider,
         )
         _pop_pending(conv, call_id)
-        # task 57 navigate 哨兵识别
+        # task 57 navigate 哨兵识别（白名单 + reason 净化, 同 llm_loop）
         result_str = result.result or ""
         if isinstance(result_str, str) and result_str.startswith("NAVIGATE:"):
+            from console_assistant.llm_loop import _NAV_TARGETS_WHITELIST
             payload = result_str[len("NAVIGATE:"):]
             try:
                 target, _, reason = payload.partition("|")
@@ -167,6 +173,10 @@ def apply_confirmation_stream(
                 reason = (reason or "").strip()
             except Exception:
                 target, reason = payload.strip(), ""
+            if target not in _NAV_TARGETS_WHITELIST:
+                target = ""
+            if reason:
+                reason = "".join(ch for ch in reason if ch.isprintable())[:80]
             if target:
                 yield _sse_event("navigation_required", {
                     "target": target, "reason": reason, "dirty_check": True,

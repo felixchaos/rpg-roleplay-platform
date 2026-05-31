@@ -302,6 +302,48 @@ def repository_status() -> dict[str, Any]:
     return status
 
 
+# ── A1: 存档级 session_model 持久化 ──────────────────────────────
+def persist_session_model(
+    save_id: int,
+    model_id: str,
+    api_id: str,
+    user_id: int | None = None,
+) -> None:
+    """把 session_model 写入 runtime_checkouts 的 state_snapshot.session_model 字段。
+
+    这是一个轻量补丁：只更新 JSONB 里的 session_model 字段，不触发完整 commit。
+    runtime_checkouts 是 working-tree（chat 路径实时写的缓冲区），本函数直接 patch 它。
+    如果 runtime_checkouts 不存在或 DB 不可用，静默失败（内存已生效，重启后 fallback 到全局）。
+    """
+    if not save_id or not model_id or not api_id:
+        return
+    try:
+        init_db()
+        with connect() as db:
+            # 找到当前 save 的 runtime_checkout
+            row = db.execute(
+                """
+                select rc.id, rc.state_snapshot
+                from runtime_checkouts rc
+                join user_runtime ur on ur.checkout_id = rc.id
+                where rc.save_id = %s
+                  and (%s is null or ur.user_id = %s)
+                limit 1
+                """,
+                (int(save_id), user_id, user_id),
+            ).fetchone()
+            if not row:
+                return
+            snap = _ensure_dict(row.get("state_snapshot") or {})
+            snap["session_model"] = {"model_id": model_id, "api_id": api_id}
+            db.execute(
+                "update runtime_checkouts set state_snapshot = %s where id = %s",
+                (json.dumps(snap, ensure_ascii=False), int(row["id"])),
+            )
+    except Exception:
+        pass  # 轻量补丁失败不影响主流程
+
+
 # ── 工具 ──────────────────────────────────────────────────────────
 def _ensure_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):

@@ -337,8 +337,14 @@ function ModelsSection() {
   // Google/通义千问/DeepSeek/OpenRouter (35 模型)/local 七个假供应商和它们
   // 的假"key_hint = ·sk-…c024"。改成登录用户初始 []；匿名访客（设计预览）
   // 仍可看到 MODELS_DATA 作为 demo。
+  // A5: 正常登录用户首屏显示 skeleton 占位（不展示 mock 数据），fetch 完成后
+  // setLoading(false)；仅 URL ?demo=1 或匿名访客才使用 MODELS_DATA。
+  const IS_DEMO = new URLSearchParams(location.search).get('demo') === '1';
   const IS_ANON_M = !(window.RPG_AUTH && window.RPG_AUTH.authed);
-  const [apis, setApis] = useStatePL(IS_ANON_M ? MODELS_DATA : []);
+  const useMock = IS_ANON_M || IS_DEMO;
+  const [apis, setApis] = useStatePL(useMock ? MODELS_DATA : []);
+  // A5: loading 初始 true 对登录用户，false 对 demo/anon（已有 mock 数据）
+  const [apisLoading, setApisLoading] = useStatePL(!useMock);
   const [expanded, setExpanded] = useStatePL({ openai: true, anthropic: true });
   const [editingApi, setEditingApi] = useStatePL(null);
   const [addingApi, setAddingApi] = useStatePL(false);
@@ -365,6 +371,8 @@ function ModelsSection() {
             health_error: h.error || "",
             health_latency_ms: h.latency_ms,
             health_checked_at: h.checked_at,
+            // A4: status_detail 由后端 model_probe 区分 401 → key_expired / forbidden
+            health_status_detail: h.status_detail || m.health_status_detail || undefined,
           };
         }),
       })));
@@ -405,6 +413,7 @@ function ModelsSection() {
 
   // Hydrate from backend /api/models + 并行拉 /api/me/credentials 合并 key_set/key_hint
   useEffectPL(() => {
+    if (useMock) return; // A5: demo/anon 模式不 fetch，直接用 MODELS_DATA
     (async () => {
       try {
         // task 52：之前只看 catalog 的 credential_ref/env，user-level key
@@ -452,13 +461,18 @@ function ModelsSection() {
                 health_error: m.health_error || "",
                 health_latency_ms: m.health_latency_ms,
                 health_checked_at: m.health_checked_at,
+                // A4: status_detail 字段（后端 model_probe 区分 key_expired / forbidden）
+                health_status_detail: m.status_detail || m.health_status_detail || undefined,
               })),
             };
           }));
         }
       } catch (_) {}
+      finally {
+        setApisLoading(false); // A5: fetch 完成（含出错）后关闭 loading
+      }
     })();
-  }, []);
+  }, [useMock]);
 
   const toggleApi = async (id) => {
     setApis(arr => arr.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a));
@@ -531,6 +545,24 @@ function ModelsSection() {
       }}
     />
   ) : null;
+
+  // A5: skeleton 占位 — 登录用户首次进入时，fetch 完成前不展示表格
+  if (apisLoading) {
+    return (
+      <CSSpaceBetween size="l">
+        <CSHeader variant="h1" description="只显示已配置 API Key 的供应商。Key 加密存储在用户凭证表,不在服务端明文保存,也不回显。">API Key</CSHeader>
+        {[1, 2, 3].map(i => (
+          <CSContainer key={i}>
+            <CSSpaceBetween size="s">
+              {[1, 2].map(j => (
+                <div key={j} style={{ height: 18, borderRadius: 4, background: 'var(--color-background-control-disabled, #3a3a3a)', opacity: 0.5 + j * 0.15, width: j === 1 ? '40%' : '70%' }} />
+              ))}
+            </CSSpaceBetween>
+          </CSContainer>
+        ))}
+      </CSSpaceBetween>
+    );
+  }
 
   return (
     <CSSpaceBetween size="l">
@@ -917,7 +949,7 @@ function VisibilityModal({ open, api, onClose, onConfirm }) {
           ) : filtered.map(m => (
             <label key={m.id} className={`pl-vis-row ${selected.has(m.id) ? "on" : ""}`}>
               <input type="checkbox" checked={selected.has(m.id)} onChange={() => toggle(m.id)} />
-              <HealthDot health={m.health} />
+              <HealthDot health={m.health} statusDetail={m.health_status_detail} />
               <div className="pl-vis-row-body">
                 <strong>{m.display}</strong>
                 <span className="muted-2 mono">{m.real_name}</span>
@@ -1094,7 +1126,7 @@ function ValidateModal({ open, api, onClose, onConfirm }) {
                   {toRemoveList.map(m => (
                     <li key={m.id || m.real_name} className={removeIds.has(m.id || m.real_name) ? "marked" : ""}>
                       <input type="checkbox" checked={removeIds.has(m.id || m.real_name)} onChange={() => toggleRemove(m.id || m.real_name)} />
-                      <HealthDot health={m.health} />
+                      <HealthDot health={m.health} statusDetail={m.health_status_detail} />
                       <div style={{display: "grid", gap: 1, minWidth: 0, flex: 1}}>
                         <strong>{m.display || m.name || m.real_name}</strong>
                         <span className="muted-2 mono">{m.real_name || m.id}</span>
@@ -1262,7 +1294,13 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
               id: "health",
               header: "",
               width: 32,
-              cell: (m) => <HealthDot health={m.health} />,
+              // A4: 传 statusDetail；无字段时 undefined → 向后兼容
+              cell: (m) => (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <HealthDot health={m.health} statusDetail={m.health_status_detail} />
+                  <StatusDetailBadge statusDetail={m.health_status_detail} />
+                </span>
+              ),
             },
             {
               id: "name",
@@ -1411,16 +1449,58 @@ function ModelNameCell({ m, onRename, deprecated }) {
   );
 }
 
-function HealthDot({ health }) {
+// A4: status_detail 徽标 — 如后端返回 key_expired / forbidden，展示对应橙/红徽标
+function StatusDetailBadge({ statusDetail }) {
+  const [expanded, setExpanded] = useStatePL(false);
+  if (!statusDetail) return null;
+  if (statusDetail === 'key_expired') {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+        <span
+          className="pl-cap-tag"
+          style={{ background: 'rgba(200,100,0,0.15)', color: 'var(--warn,#d4823c)', borderColor: 'var(--warn,#d4823c)', cursor: 'pointer', fontSize: 10.5 }}
+          onClick={() => setExpanded(e => !e)}
+          data-tip="点击查看详情"
+        >
+          密钥已失效
+        </span>
+        {expanded && (
+          <span style={{ fontSize: 11, color: 'var(--warn,#d4823c)', background: 'rgba(200,100,0,0.10)', padding: '2px 6px', borderRadius: 4 }}>
+            请更新此供应商的 API key
+          </span>
+        )}
+      </span>
+    );
+  }
+  if (statusDetail === 'forbidden') {
+    return (
+      <span
+        className="pl-cap-tag"
+        style={{ background: 'rgba(200,40,40,0.12)', color: 'var(--danger,#d44)', borderColor: 'var(--danger,#d44)', fontSize: 10.5 }}
+        data-tip="API key 无权限访问此模型"
+      >
+        无权限
+      </span>
+    );
+  }
+  return null;
+}
+
+function HealthDot({ health, statusDetail }) {
   const map = {
     ok:       { color: "ok",      label: "可达 · 最近 200" },
     degraded: { color: "warn",    label: "降级 · 延迟偏高或限流" },
     err:      { color: "danger",  label: "不可达 · 超时 / 4xx / 5xx" },
     untested: { color: "muted-2", label: "未测试 · 点击 API 校验" },
   };
+  // A4: status_detail 优先覆盖 label
+  const detail = statusDetail; // 向后兼容：没有字段则 undefined
+  const labelSuffix = detail === 'key_expired' ? ' · 密钥已失效'
+    : detail === 'forbidden' ? ' · 无权限'
+    : '';
   const v = map[health] || map.untested;
   return (
-    <span className="pl-health" data-tip={v.label}>
+    <span className="pl-health" data-tip={v.label + labelSuffix}>
       <span className={`dot ${v.color}`} />
     </span>
   );

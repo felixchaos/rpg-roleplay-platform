@@ -44,12 +44,28 @@ class StateEvent:
 # user_id → set of subscriber queues
 _SUBSCRIBERS: dict[int, set[asyncio.Queue[StateEvent]]] = defaultdict(set)
 _QUEUE_MAX = 64
+# 安全: 单用户最多并发 SSE 订阅数。防止单用户开无限 SSE 连接吃光 fd/内存（DoS）。
+MAX_SUBSCRIBERS_PER_USER = 10
+
+
+class TooManySubscribers(Exception):
+    """订阅者超过 per-user 上限。"""
 
 
 def subscribe(user_id: int) -> asyncio.Queue[StateEvent]:
-    """SSE endpoint 调,拿一个新队列。endpoint 退出时务必 unsubscribe。"""
+    """SSE endpoint 调,拿一个新队列。endpoint 退出时务必 unsubscribe。
+
+    超过 MAX_SUBSCRIBERS_PER_USER 上限时抛 TooManySubscribers, 路由层应
+    返回 429 而不是继续累积。
+    """
+    bucket = _SUBSCRIBERS[user_id]
+    if len(bucket) >= MAX_SUBSCRIBERS_PER_USER:
+        raise TooManySubscribers(
+            f"user {user_id} 已达 SSE 订阅上限 ({MAX_SUBSCRIBERS_PER_USER}), "
+            "请关掉旧标签页再重试"
+        )
     q: asyncio.Queue[StateEvent] = asyncio.Queue(maxsize=_QUEUE_MAX)
-    _SUBSCRIBERS[user_id].add(q)
+    bucket.add(q)
     return q
 
 
@@ -93,4 +109,6 @@ __all__ = [
     "emit",
     "subscriber_count",
     "reset_for_tests",
+    "TooManySubscribers",
+    "MAX_SUBSCRIBERS_PER_USER",
 ]

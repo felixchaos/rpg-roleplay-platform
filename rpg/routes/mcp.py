@@ -110,15 +110,19 @@ async def api_mcp_runtime(
     api_user: dict[str, Any] | None = Depends(get_current_user),
 ) -> JSONResponse:
     """MCP 运行时状态 + per-user 调用审计。
-    - 普通用户：拿不到 stderr（可能含 token/路径），audit_log 只看自己的
-    - admin：full stderr + 全部用户的 audit_log
+    - 普通用户：只看 running 数量与每条的 alive/tools_count，不暴露 server_id / server_info / stderr
+    - admin：full stderr + server_info + 全部用户的 audit_log
     """
     is_admin = bool(api_user and api_user.get("role") == "admin")
     import mcp_broker
     payload = mcp_broker.status()
     if not is_admin:
+        # 普通用户脱敏：屏蔽 server 标识与实现细节，避免情报收集
+        _PUBLIC_FIELDS = {"alive", "tools_count"}
+        sanitized = []
         for entry in payload.get("running") or []:
-            entry.pop("last_stderr", None)
+            sanitized.append({k: v for k, v in entry.items() if k in _PUBLIC_FIELDS})
+        payload["running"] = sanitized
     # P0 #3：附 audit_log，让管理员能查跨用户 MCP 调用
     try:
         audit = mcp_broker.get_audit_log(
@@ -134,32 +138,36 @@ async def api_mcp_runtime(
 @router.post("/api/mcp/tool/call", response_model=GenericOkResponse, responses={**COMMON_ERROR_RESPONSES, 403: {"model": ErrorResponse}})
 async def api_mcp_tool_call(
     body: McpToolCallRequest,
-    api_user: dict[str, Any] | None = Depends(get_current_user),
+    api_user: dict[str, Any] = Depends(get_current_admin),
 ) -> JSONResponse:
     """前端或主 GM 调用 MCP 工具的统一入口。
 
-    安全：MCP server 配置目前是全局共享，调用任意工具等于以服务进程身份执行。
-    在多用户/服务器模式下只允许 admin；本地匿名模式才允许任意调用。
-    后续要让 MCP server 支持 per-user 注册再放宽。
+    安全：MCP server 配置全局共享，调用任意工具 = 以服务进程身份执行。
+    强制 admin（local 模式同样要求），不再做匿名豁免——避免本地端口被探测出 RCE。
+    后续要让 MCP server 支持 per-user 注册再考虑放宽。
     """
-    from app import _api_auth_required
-    if _api_auth_required() and (not api_user or api_user.get("role") != "admin"):
-        return JSONResponse({"ok": False, "error": "MCP 工具调用目前仅限管理员（per-user 注册待支持）"}, status_code=403)
     body_dict = body.model_dump(exclude_none=True)
+    timeout = int(body_dict.get("timeout", 30))
+    if timeout < 1 or timeout > 120:
+        return JSONResponse({"ok": False, "error": "timeout 必须在 1-120 秒之间"}, status_code=400)
     import mcp_broker
     return JSONResponse(mcp_broker.call_tool(
         body_dict.get("server_id", ""),
         body_dict.get("tool", ""),
         body_dict.get("arguments", {}) or {},
-        timeout=int(body_dict.get("timeout", 30)),
+        timeout=timeout,
         user_id=api_user["id"] if api_user else None,
     ))
 
 
 @router.get("/api/mcp/tools")
 async def api_mcp_tools(
-    api_user: dict[str, Any] | None = Depends(get_current_user),
+    api_user: dict[str, Any] = Depends(get_current_admin),
 ) -> JSONResponse:
-    """列出所有已启动 server 的工具清单（前端加号菜单/Skill 选择面板用）。"""
+    """列出所有已启动 server 的工具清单（前端加号菜单/Skill 选择面板用）。
+
+    限 admin：普通用户列出全部 MCP server+tool 名字+schema 等同于情报收集。
+    前端"加号菜单"也按 admin 角色控制可见性。
+    """
     import mcp_broker
     return JSONResponse({"ok": True, "tools": mcp_broker.discover_all_tools()})

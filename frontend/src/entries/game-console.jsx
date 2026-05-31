@@ -97,6 +97,62 @@ function App() {
   const t = TWEAK_DEFAULTS;
   const openTweaks = () => window.postMessage({ type: '__activate_edit_mode' }, '*');
 
+  // A2: 多 tab 冲突检测 — BroadcastChannel
+  // 同一 origin 内不同 tab 打开同一 save_id 时，后进者收到 banner 警告。
+  const [tabConflictBanner, setTabConflictBanner] = useState(null); // null | { conflictTabId }
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return; // 不支持的环境静默跳过
+    const tabId = crypto.randomUUID();
+    const ch = new BroadcastChannel('rpg-game-tabs');
+
+    // 读当前 save_id（mount 时可能还没有，之后靠 activeSave 监听补广播）
+    const getSaveId = () => {
+      // 从 URL 参数 or window.RPG_AUTH 拿 save_id
+      try {
+        const params = new URLSearchParams(location.search);
+        return params.get('save') || params.get('save_id') || null;
+      } catch (_) { return null; }
+    };
+
+    let currentSaveId = getSaveId();
+
+    const broadcast = (type) => {
+      if (!currentSaveId) return;
+      ch.postMessage({ type, save_id: currentSaveId, tab_id: tabId, ts: Date.now() });
+    };
+
+    // mount 广播
+    broadcast('mounted');
+
+    // 心跳：让晚打开的 tab 发现已有其他实例
+    const heartbeatId = setInterval(() => broadcast('heartbeat'), 30000);
+
+    ch.onmessage = (ev) => {
+      const { type, save_id, tab_id } = ev.data || {};
+      if (!save_id || !tab_id || tab_id === tabId) return; // 忽略自己
+      if (!currentSaveId || save_id !== currentSaveId) return; // 不同存档不冲突
+
+      if (type === 'mounted' || type === 'heartbeat') {
+        // 另一个 tab 打开了同一存档
+        setTabConflictBanner({ conflictTabId: tab_id });
+        // 同时回告知对方我们也在
+        if (type === 'mounted') broadcast('heartbeat');
+      } else if (type === 'unmounted') {
+        // 冲突的那个 tab 已关闭，隐藏 banner
+        setTabConflictBanner((prev) => {
+          if (prev && prev.conflictTabId === tab_id) return null;
+          return prev;
+        });
+      }
+    };
+
+    return () => {
+      clearInterval(heartbeatId);
+      broadcast('unmounted');
+      ch.close();
+    };
+  }, []); // 仅 mount/unmount 一次；save_id 变化通过 activeSave effect 处理
+
   const IS_ANON = !(window.RPG_AUTH && window.RPG_AUTH.authed);
   const EMPTY_STATE = {
     player: { name: '', role: '', background: '', current_location: '' },
@@ -760,6 +816,27 @@ function App() {
 
   return (
     <div className="gc-shell" style={{ ...rootStyle, '--gc-rail-w': gcRailW + 'px' }}>
+      {/* A2: 多 tab 冲突 banner */}
+      {tabConflictBanner && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 10000,
+          background: 'rgba(200,130,0,0.93)', color: '#fff',
+          padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 12,
+          fontSize: 13, boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+        }}>
+          <span style={{ flex: 1 }}>
+            ⚠️ 已在另一窗口打开此存档，<strong>继续在此操作可能导致存档冲突</strong>
+          </span>
+          <button
+            style={{ padding: '4px 12px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.5)', background: 'transparent', color: '#fff', cursor: 'pointer', fontSize: 12 }}
+            onClick={() => setTabConflictBanner(null)}
+          >继续</button>
+          <button
+            style={{ padding: '4px 12px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.5)', background: 'rgba(0,0,0,0.2)', color: '#fff', cursor: 'pointer', fontSize: 12 }}
+            onClick={() => window.close()}
+          >关闭此窗口</button>
+        </div>
+      )}
       {mountStage >= 2 && <GameToastStack />}
       {mountStage >= 1 ? <LeftRail
         resizeHandle={<div className="gc-rail-resize-handle" title="拖动调整宽度 · 双击恢复默认" {...gcRailDragProps} />}

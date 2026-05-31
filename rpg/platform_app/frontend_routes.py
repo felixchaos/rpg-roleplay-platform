@@ -68,9 +68,14 @@ async def api_change_password(request: Request):
             (hash_password(next_pw), user["id"]),
         )
         # Optional: revoke all OTHER sessions (keep current cookie).
+        # 用 token_hash 而非明文 token — 新会话 token=''，旧查法对新会话全部静默失效。
         token = request.cookies.get(SESSION_COOKIE)
         if token:
-            db.execute("delete from sessions where user_id = %s and token <> %s", (user["id"], token))
+            from .auth import _hash_token
+            db.execute(
+                "delete from sessions where user_id = %s and token_hash <> %s",
+                (user["id"], _hash_token(token)),
+            )
     return json_response({"ok": True, "message": "密码已修改"})
 
 
@@ -131,11 +136,13 @@ async def api_login_history(request: Request):
 async def api_list_sessions(request: Request):
     user = require_user(request)
     init_db()
-    cur_token = request.cookies.get(SESSION_COOKIE)
+    from .auth import _hash_token
+    cur_token = request.cookies.get(SESSION_COOKIE) or ""
+    cur_hash = _hash_token(cur_token) if cur_token else ""
     with connect() as db:
         rows = db.execute(
             """
-            select token, user_id, created_at, expires_at
+            select token_hash, user_id, created_at, expires_at
             from sessions
             where user_id = %s and expires_at > now()
             order by created_at desc
@@ -144,14 +151,16 @@ async def api_list_sessions(request: Request):
         ).fetchall()
     out = []
     for r in rows:
-        token = r["token"]
+        thash = r["token_hash"] or ""
+        # 显示用哈希后 12 位作为可见 session ID（仅前端展示用）
+        display_id = thash[-12:] if thash else ""
         out.append({
-            "id": token[-12:],  # truncated, never expose the full token
-            "session_id": token[-12:],
+            "id": display_id,
+            "session_id": display_id,
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
             "expires_at": r["expires_at"].isoformat() if r["expires_at"] else None,
             "last_seen_at": r["created_at"].isoformat() if r["created_at"] else None,
-            "current": token == cur_token,
+            "current": bool(cur_hash) and thash == cur_hash,
         })
     return json_response({"ok": True, "sessions": out})
 
@@ -164,12 +173,14 @@ async def api_revoke_session(request: Request):
     if not sid:
         return _bad("缺少 session_id")
     init_db()
+    from .auth import _hash_token
     cur_token = request.cookies.get(SESSION_COOKIE) or ""
+    cur_hash = _hash_token(cur_token) if cur_token else ""
     with connect() as db:
-        # match by suffix (we exposed only last 12 chars)
+        # 用 token_hash 后缀匹配前端显示的 12 位 ID；当前会话不能被自我吊销
         deleted = db.execute(
-            "delete from sessions where user_id = %s and token like %s and token <> %s returning token",
-            (user["id"], f"%{sid}", cur_token),
+            "delete from sessions where user_id = %s and token_hash like %s and token_hash <> %s returning token_hash",
+            (user["id"], f"%{sid}", cur_hash),
         ).fetchone()
     return json_response({"ok": True, "deleted": bool(deleted)})
 
@@ -178,11 +189,13 @@ async def api_revoke_session(request: Request):
 async def api_revoke_all_sessions(request: Request):
     user = require_user(request)
     init_db()
+    from .auth import _hash_token
     cur_token = request.cookies.get(SESSION_COOKIE) or ""
+    cur_hash = _hash_token(cur_token) if cur_token else ""
     with connect() as db:
         n = db.execute(
-            "delete from sessions where user_id = %s and token <> %s",
-            (user["id"], cur_token),
+            "delete from sessions where user_id = %s and token_hash <> %s",
+            (user["id"], cur_hash),
         ).statusmessage
     return json_response({"ok": True, "result": n})
 

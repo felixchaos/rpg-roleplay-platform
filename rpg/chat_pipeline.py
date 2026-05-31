@@ -490,6 +490,7 @@ async def run_rules_phase(
                 model_real_name=sub_gm._backend.model_name,
                 usage=sub_usage,
                 metadata={"kind": "sub_agent", "phase": "context_curator"},
+                scenario="tool",
             )
     except Exception:
         pass
