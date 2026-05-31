@@ -23,6 +23,7 @@ import CSBadge from '@cloudscape-design/components/badge';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import CSColumnLayout from '@cloudscape-design/components/column-layout';
 import CSExpandableSection from '@cloudscape-design/components/expandable-section';
+import CSModal from '@cloudscape-design/components/modal';
 
 /* ── 设置页 Cloudscape 统一 primitives(取代 pl-set-group / pl-set-row) ──
    SetGroup = Container + Header(h2)  ·  SetRow = FormField(label 上 / 控件下)。
@@ -767,69 +768,89 @@ function AddModelModal({ open, api, onClose, onConfirm }) {
 }
 
 function EditApiModal({ open, api, isNew, onClose, onConfirm }) {
-  // task 51：原 form field 是 key_hint，但 onConfirm 上层读的是 payload.api_key
-  // → 用户在密码框输入的 key 永远不会被发到后端。改成统一 api_key 字段；
-  // key_hint 只用于回显已存的密钥尾 4 位（后端用 list_credentials 返回）。
+  // 新增时供应商走下拉(从 PROVIDERS_CONFIG 选,自动带出 base_url);选「自定义」可手填。
+  // 编辑时供应商固定,只改 base_url / key。key 写入后不回显。
+  const CUSTOM = '__custom__';
+  const [provider, setProvider] = useStatePL('');   // 选中的 provider id(新增用)
   const [form, setForm] = useStatePL({ id: "", name: "", base_url: "", api_key: "", proxy: "直连" });
   React.useEffect(() => {
-    if (open) {
-      if (isNew) setForm({ id: "", name: "", base_url: "", api_key: "", proxy: "直连" });
-      else if (api) setForm({ id: api.id, name: api.name, base_url: api.base_url, api_key: "", proxy: api.proxy || "直连" });
-    }
+    if (!open) return;
+    if (isNew) { setProvider(''); setForm({ id: "", name: "", base_url: "", api_key: "", proxy: "直连" }); }
+    else if (api) { setProvider(api.id); setForm({ id: api.id, name: api.name, base_url: api.base_url, api_key: "", proxy: api.proxy || "直连" }); }
   }, [open, api, isNew]);
   if (!open) return null;
+
+  const provOptions = [
+    ...PROVIDERS_CONFIG.map((p) => ({ value: p.id, label: p.name, description: p.defaultBase || undefined })),
+    { value: CUSTOM, label: '自定义(OpenAI 兼容)', description: '手动填写 ID / Base URL' },
+  ];
+  const onPickProvider = (val) => {
+    setProvider(val);
+    if (val === CUSTOM) { setForm((f) => ({ ...f, id: "", name: "", base_url: "" })); return; }
+    const p = PROVIDERS_CONFIG.find((x) => x.id === val);
+    if (p) setForm((f) => ({ ...f, id: p.id, name: p.name, base_url: p.defaultBase || "" }));
+  };
+  const isCustom = provider === CUSTOM;
+  const canSubmit = !!form.id && !!form.name && !!form.base_url && (isNew ? !!form.api_key.trim() : true);
+
   return (
-    <div className="pl-modal-backdrop" onClick={onClose}>
-      <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(520px, 100%)"}}>
-        <header className="pl-modal-head">
-          <div>
-            <div className="pl-modal-eyebrow">{isNew ? "新增" : "编辑"} API 供应商</div>
-            <h2 className="pl-modal-title">{isNew ? "添加一个新供应商" : api?.name}</h2>
-          </div>
-          <button className="iconbtn" onClick={onClose} data-tip="关闭"><Icon name="close" size={14} /></button>
-        </header>
-        <div className="pl-modal-form">
-          <div className="pl-import-grid" style={{gridTemplateColumns: "1fr 1fr"}}>
-            <div className="pl-field">
-              <label>ID <span className="muted-2" style={{textTransform: "none", letterSpacing: 0, marginLeft: 6}}>唯一</span></label>
-              <input className="mono" value={form.id} onChange={(e) => setForm(f => ({ ...f, id: e.target.value }))} placeholder="例：openai" disabled={!isNew} />
-            </div>
-            <div className="pl-field">
-              <label>显示名</label>
-              <input value={form.name} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} placeholder="例：OpenAI" />
-            </div>
-          </div>
-          <div className="pl-field">
-            <label>Base URL</label>
-            <input className="mono" value={form.base_url} onChange={(e) => setForm(f => ({ ...f, base_url: e.target.value }))} placeholder="https://api.openai.com/v1" />
-          </div>
-          <div className="pl-field">
-            <label>API Key <span className="muted-2" style={{textTransform: "none", letterSpacing: 0, marginLeft: 6}}>{api?.key_set ? `已有：${api.key_hint || "•••• 已设置"}（留空 = 保留原值）` : "写入后不再回显"}</span></label>
-            <input type="password" value={form.api_key} onChange={(e) => setForm(f => ({ ...f, api_key: e.target.value }))} placeholder={api?.key_set ? "留空保持当前 key 不变" : "sk-..."} autoComplete="new-password" />
-          </div>
-          <div className="pl-field">
-            <label>连接方式</label>
-            <select value={form.proxy} onChange={(e) => setForm(f => ({ ...f, proxy: e.target.value }))}>
-              <option value="直连">直连</option>
-              <option value="HTTP 代理">HTTP 代理</option>
-              <option value="局域网">局域网 / 本地</option>
-            </select>
-          </div>
-        </div>
-        <footer className="pl-modal-foot">
-          <span className="muted-2" style={{fontSize: 11.5}}>
-            <Icon name="info" size={11} /> POST 到 <span className="mono">/api/v1/models/api</span>
-          </span>
-          <div style={{display: "flex", gap: 8}}>
-            <button className="btn ghost" onClick={onClose}>取消</button>
-            <button className="btn primary" disabled={!form.id || !form.name || !form.base_url}
-              onClick={() => onConfirm(form)}>
-              <Icon name="check" size={12} /> {isNew ? "添加" : "保存"}
-            </button>
-          </div>
-        </footer>
-      </div>
-    </div>
+    <CSModal
+      visible
+      onDismiss={onClose}
+      header={isNew ? "添加 API Key" : `编辑 · ${api?.name || ''}`}
+      footer={
+        <CSBox float="right">
+          <CSSpaceBetween direction="horizontal" size="xs">
+            <CSButton variant="link" onClick={onClose}>取消</CSButton>
+            <CSButton variant="primary" disabled={!canSubmit} onClick={() => onConfirm(form)}>{isNew ? "添加" : "保存"}</CSButton>
+          </CSSpaceBetween>
+        </CSBox>
+      }
+    >
+      <CSSpaceBetween size="l">
+        {isNew && (
+          <CSFormField label="供应商" description="选择一个支持的供应商,自动带出 Base URL;选「自定义」可手填。">
+            <CSSelect
+              selectedOption={provOptions.find((o) => o.value === provider) || null}
+              options={provOptions}
+              placeholder="选择供应商…"
+              filteringType="auto"
+              onChange={({ detail }) => onPickProvider(detail.selectedOption.value)}
+            />
+          </CSFormField>
+        )}
+        {(isCustom || !isNew) && (
+          <CSColumnLayout columns={2}>
+            <CSFormField label="ID" description="唯一标识">
+              <CSInput value={form.id} disabled={!isNew}
+                onChange={({ detail }) => setForm((f) => ({ ...f, id: detail.value }))} placeholder="例:openai" />
+            </CSFormField>
+            <CSFormField label="显示名">
+              <CSInput value={form.name} onChange={({ detail }) => setForm((f) => ({ ...f, name: detail.value }))} placeholder="例:OpenAI" />
+            </CSFormField>
+          </CSColumnLayout>
+        )}
+        {(provider || !isNew) && (
+          <>
+            <CSFormField label="Base URL">
+              <CSInput value={form.base_url} onChange={({ detail }) => setForm((f) => ({ ...f, base_url: detail.value }))} placeholder="https://api.openai.com/v1" />
+            </CSFormField>
+            <CSFormField label="API Key" description={api?.key_set ? `已有:•••• ${api.key_hint || '已设置'}(留空 = 保留原值)` : '写入后不再回显,加密存储在用户凭证表'}>
+              <CSInput type="password" value={form.api_key}
+                onChange={({ detail }) => setForm((f) => ({ ...f, api_key: detail.value }))}
+                placeholder={api?.key_set ? "留空保持当前 key 不变" : "sk-…"} autoComplete="new-password" />
+            </CSFormField>
+            <CSFormField label="连接方式">
+              <CSSelect
+                selectedOption={{ value: form.proxy, label: form.proxy }}
+                options={[{ value: '直连', label: '直连' }, { value: 'HTTP 代理', label: 'HTTP 代理' }, { value: '局域网', label: '局域网 / 本地' }]}
+                onChange={({ detail }) => setForm((f) => ({ ...f, proxy: detail.selectedOption.value }))}
+              />
+            </CSFormField>
+          </>
+        )}
+      </CSSpaceBetween>
+    </CSModal>
   );
 }
 
