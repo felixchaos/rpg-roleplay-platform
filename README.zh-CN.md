@@ -97,41 +97,37 @@ open http://localhost:5173/Login.html
 ## 架构
 
 ```
-┌─ 浏览器 ─────────────────────────────────────────────────────┐
-│ React 18 + Vite + JS（ESM 多入口）                            │
-│ Login.html · Platform.html · Game Console.html               │
-│ Cloudscape Design System · api-client.js · i18n              │
-└────────────────────┬─────────────────────────────────────────┘
-                     │
-┌─ uvicorn :7860 ────▼─────────────────────────────────────────┐
-│ FastAPI · Python 3.12 · async/asyncio.to_thread              │
-│ ┌── platform_app/ ──┐ ┌── agents/ ──┐ ┌── tools_dsl/ ──┐   │
-│ │ auth / saves /    │ │ gm/master + │ │ tool_registry + │   │
-│ │ branches / cards/ │ │ context /   │ │ MCP / Skill     │   │
-│ │ scripts / admin / │ │ extractor / │ │ executor        │   │
-│ │ feedback / policy │ │ black_swan/ │ └─────────────────┘   │
-│ └───────────────────┘ │ verifier    │                        │
-│                        └─────────────┘                        │
-│ ┌── state/ ──────────┐ ┌── retrieval ┐ ┌── knowledge/ ──┐   │
-│ │ GameState +        │ │ BM25-lite + │ │ chapter_indexer │   │
-│ │ op 协议            │ │ pgvector    │ │ embeddings      │   │
-│ └────────────────────┘ └─────────────┘ └─────────────────┘   │
-└────────┬─────────────────────────┬──────────────────────────┘
-         │ psycopg                 │ httpx
-         ▼                         ▼
-┌────────────────────┐  ┌──────────────────────────────────────┐
-│ pgbouncer:6432 +   │  │ LLM 厂家                             │
-│ Postgres + pgvector│  │ Anthropic / OpenAI / Vertex /        │
-│ v39+ 迁移          │  │ DeepSeek / DashScope (Qwen) /        │
-│                    │  │ Hunyuan / MiMo / xAI / OpenRouter    │
-└────────────────────┘  └──────────────────────────────────────┘
-         │
-         ▼
-┌────────────────────┐
-│ Redis :6379         │
-│ session/缓存/       │
-│ 限流                │
-└────────────────────┘
+┌─ 浏览器 ────────────────────────────────────────────────────
+│  React 18 + Vite + JS（ESM 多入口）
+│  Login.html · Platform.html · Game Console.html
+│  Cloudscape Design System · api-client.js · i18n
+└────────────────────────────────┬───────────────────────────
+                                 │ fetch / SSE
+┌─ uvicorn :7860 ────────────────▼───────────────────────────
+│  FastAPI · Python 3.12 · async + asyncio.to_thread
+│
+│  platform_app/   auth · saves · branches · cards ·
+│                  scripts · admin · feedback · policy
+│
+│  agents/         gm/master · context · extractor ·
+│                  black_swan · verifier
+│
+│  tools_dsl/      tool_registry · MCP · Skill · executor
+│
+│  state/          GameState · op 协议
+│  retrieval/      BM25-lite · pgvector
+│  knowledge/      chapter_indexer · embeddings
+└───────────────┬──────────────────────────┬─────────────────
+                │ psycopg                  │ httpx
+                ▼                          ▼
+┌────────────────────────────┐   ┌────────────────────────────
+│  pgbouncer :6432           │   │  LLM 厂家(BYOK)
+│  Postgres 16 + pgvector    │   │  Anthropic · OpenAI ·
+│  v39+ 迁移                 │   │  Vertex(Gemini)·
+│                            │   │  DeepSeek · DashScope ·
+│  Redis :6379               │   │  Hunyuan · MiMo · xAI ·
+│  会话 · 缓存 · 限流        │   │  OpenRouter
+└────────────────────────────┘   └────────────────────────────
 ```
 
 FastAPI 后端，~30+ 个路由模块 / agents / state mixin，~1k pytest 用例。

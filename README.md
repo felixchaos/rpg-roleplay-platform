@@ -97,41 +97,37 @@ You'll land on the Login page, create a user, then bounce to `Platform.html` (li
 ## Architecture
 
 ```
-┌─ browser ────────────────────────────────────────────────────┐
-│ React 18 + Vite + JS (ESM multi-page)                        │
-│ Login.html · Platform.html · Game Console.html               │
-│ Cloudscape Design System · api-client.js · i18n              │
-└────────────────────┬─────────────────────────────────────────┘
-                     │
-┌─ uvicorn :7860 ────▼─────────────────────────────────────────┐
-│ FastAPI · Python 3.12 · async/asyncio.to_thread              │
-│ ┌── platform_app/ ──┐ ┌── agents/ ──┐ ┌── tools_dsl/ ──┐   │
-│ │ auth / saves /    │ │ gm/master + │ │ tool_registry + │   │
-│ │ branches / cards/ │ │ context /   │ │ MCP / Skill     │   │
-│ │ scripts / admin / │ │ extractor / │ │ executor        │   │
-│ │ feedback / policy │ │ black_swan/ │ └─────────────────┘   │
-│ └───────────────────┘ │ verifier    │                        │
-│                        └─────────────┘                        │
-│ ┌── state/ ──────────┐ ┌── retrieval ┐ ┌── knowledge/ ──┐   │
-│ │ GameState +        │ │ BM25-lite + │ │ chapter_indexer │   │
-│ │ op protocol        │ │ pgvector    │ │ embeddings      │   │
-│ └────────────────────┘ └─────────────┘ └─────────────────┘   │
-└────────┬─────────────────────────┬──────────────────────────┘
-         │ psycopg                 │ httpx
-         ▼                         ▼
-┌────────────────────┐  ┌──────────────────────────────────────┐
-│ pgbouncer:6432 +   │  │ LLM providers                        │
-│ Postgres + pgvector│  │ Anthropic / OpenAI / Vertex /        │
-│ v39+ migrations    │  │ DeepSeek / DashScope (Qwen) /        │
-│                    │  │ Hunyuan / MiMo / xAI / OpenRouter    │
-└────────────────────┘  └──────────────────────────────────────┘
-         │
-         ▼
-┌────────────────────┐
-│ Redis :6379         │
-│ session/cache/      │
-│ rate-limit          │
-└────────────────────┘
+┌─ browser ──────────────────────────────────────────────────┐
+│  React 18 + Vite + JS (ESM multi-page)                     │
+│  Login.html · Platform.html · Game Console.html            │
+│  Cloudscape Design System · api-client.js · i18n           │
+└───────────────────────────────┬────────────────────────────┘
+                                │ fetch / SSE
+┌─ uvicorn :7860 ───────────────▼────────────────────────────┐
+│  FastAPI · Python 3.12 · async + asyncio.to_thread         │
+│                                                            │
+│  platform_app/   auth · saves · branches · cards ·         │
+│                  scripts · admin · feedback · policy       │
+│                                                            │
+│  agents/         gm/master · context · extractor ·         │
+│                  black_swan · verifier                     │
+│                                                            │
+│  tools_dsl/      tool_registry · MCP · Skill · executor    │
+│                                                            │
+│  state/          GameState · op protocol                   │
+│  retrieval/      BM25-lite · pgvector                      │
+│  knowledge/      chapter_indexer · embeddings              │
+└───────────────┬──────────────────────────┬─────────────────┘
+                │ psycopg                  │ httpx
+                ▼                          ▼
+┌────────────────────────────┐   ┌────────────────────────────┐
+│  pgbouncer :6432           │   │  LLM providers (BYOK)      │
+│  Postgres 16 + pgvector    │   │  Anthropic · OpenAI ·      │
+│  v39+ migrations           │   │  Vertex (Gemini) ·         │
+│                            │   │  DeepSeek · DashScope ·    │
+│  Redis :6379               │   │  Hunyuan · MiMo · xAI ·    │
+│  session · cache · ratelim │   │  OpenRouter                │
+└────────────────────────────┘   └────────────────────────────┘
 ```
 
 FastAPI backend with ~30+ route modules / agents / state mixins, ~1k pytest cases.
