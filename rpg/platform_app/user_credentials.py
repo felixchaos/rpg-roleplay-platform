@@ -159,9 +159,16 @@ def resolve_api_key(user_id: int | None, api_id: str, env_fallback: str = "") ->
     2. 本地未登录 + 环境变量（仅 RPG_REQUIRE_AUTH != 1 时允许）
 
     返回 {"key": "...", "source": "user_db" | "env" | "none", "base_url_override": "..."}
+
+    内部使用 request-scoped cache（core.request_cache.get_api_cred_cached），
+    同一请求内相同 (user_id, api_id) 只查一次 DB；非请求上下文行为不变。
     """
     if user_id:
-        cred = get_credential(user_id, api_id)
+        try:
+            from core.request_cache import get_api_cred_cached
+            cred = get_api_cred_cached(int(user_id), api_id)
+        except Exception:
+            cred = get_credential(user_id, api_id)
         if cred and cred.get("key"):
             return {"key": cred["key"], "source": "user_db", "base_url_override": cred.get("base_url_override", "")}
 

@@ -316,6 +316,11 @@ async def api_contract_middleware(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     request.state.request_id = request_id  # 让 _internal_error_handler 能拿到
     _request_id_var.set(request_id)  # 可观测性: SSE stream + to_thread 子线程均可读取
+
+    # Request-scoped DB cache: 每个请求独立 dict,避免跨请求污染。
+    # ContextVar 的 copy-on-write 语义保证不同请求互不干扰。
+    from core.request_cache import reset_request_caches as _reset_caches
+    _reset_caches()
     original_path = request.scope.get("path", "")
     prefix = f"/api/v{API_VERSION}"
     if original_path == prefix:

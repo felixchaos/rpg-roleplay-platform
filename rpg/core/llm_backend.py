@@ -39,23 +39,19 @@ def resolve_preferred_model(
                   不同 agent 使用不同命名空间，如:
                   - command_agent: "set_parser.model_real_name"
                   - extractor:     "extractor.model_real_name"
+
+    内部使用 request-scoped cache（core.request_cache），一个请求内
+    相同 user_id 只查一次 DB；非请求上下文每次直接查。
     """
     if not user_id:
         return None
     try:
-        from platform_app.db import connect, init_db
+        from core.request_cache import get_user_prefs_cached
 
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "select preferences from user_preferences where user_id = %s",
-                (int(user_id),),
-            ).fetchone()
-        if row and isinstance(row.get("preferences"), dict):
-            return row["preferences"].get(pref_key) or None
+        prefs = get_user_prefs_cached(int(user_id))
+        return prefs.get(pref_key) or None
     except Exception:
         return None
-    return None
 
 
 def resolve_preferred_api(
@@ -70,23 +66,19 @@ def resolve_preferred_api(
                   不同 agent 使用不同命名空间，如:
                   - command_agent: "set_parser.api_id"
                   - extractor:     "extractor.api_id"
+
+    内部使用 request-scoped cache，同一请求内 user_id 相同时复用
+    preferences dict，不重复 SELECT。
     """
     if not user_id:
         return None
     try:
-        from platform_app.db import connect, init_db
+        from core.request_cache import get_user_prefs_cached
 
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "select preferences from user_preferences where user_id = %s",
-                (int(user_id),),
-            ).fetchone()
-        if row and isinstance(row.get("preferences"), dict):
-            return row["preferences"].get(pref_key) or None
+        prefs = get_user_prefs_cached(int(user_id))
+        return prefs.get(pref_key) or None
     except Exception:
         return None
-    return None
 
 
 __all__ = [
