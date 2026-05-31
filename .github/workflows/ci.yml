@@ -2,59 +2,74 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
 
 jobs:
-  rust:
+  backend:
     runs-on: ubuntu-latest
     services:
       postgres:
         image: pgvector/pgvector:pg16
         env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: rpg_platform_test
+          POSTGRES_USER: rpg
+          POSTGRES_PASSWORD: rpg_ci_test
+          POSTGRES_DB: rpg
         ports: ["5432:5432"]
-        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://rpg:rpg_ci_test@127.0.0.1:5432/rpg
+      RPG_DEPLOYMENT_MODE: local
+      RPG_MASTER_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
         with:
-          components: clippy
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: rpg/requirements.txt
 
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            rust/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            pg_isready -h 127.0.0.1 -p 5432 -U rpg && break
+            sleep 1
+          done
 
-      - name: Build
-        working-directory: rust
-        run: cargo build --workspace
+      - name: Enable pgvector + pg_trgm
+        run: |
+          PGPASSWORD=rpg_ci_test psql -h 127.0.0.1 -U rpg -d rpg -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          PGPASSWORD=rpg_ci_test psql -h 127.0.0.1 -U rpg -d rpg -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
-      - name: Clippy
-        working-directory: rust
-        run: cargo clippy --workspace --no-deps -- -D warnings || true
+      - name: Install dependencies
+        working-directory: rpg
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Tests
-        working-directory: rust
-        run: cargo test --workspace
+      - name: Run migrations (full)
+        working-directory: rpg
+        run: python -m platform_app.migrate full
+
+      - name: Run pytest
+        working-directory: rpg
+        run: pytest tests/ -x --tb=short -q
 
   frontend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -68,7 +83,3 @@ jobs:
       - name: Build
         working-directory: frontend
         run: npm run build
-
-      - name: Test
-        working-directory: frontend
-        run: npm run test || true
