@@ -10,6 +10,7 @@ import { Icon } from '../game-icons.jsx';
 import { ConfirmModal, useShellChrome, ResizableSplit } from '../platform-app.jsx';
 import { BranchGraph } from '../branch-graph.jsx';
 import { NewGameWizard } from './new-game-wizard.jsx';
+import { CardSheet, CardEditFields, cardFormInit, cardFormPayload } from './cards.jsx';
 import {
   PageHeader, SplitLayout, ResourceList, Tabs, FormSection,
   Btn, Badge, KeyValue, StatusIndicator, ConfirmDialog, Flashbar, useFlash,
@@ -36,6 +37,7 @@ import CSTextarea from '@cloudscape-design/components/textarea';
 import CSSegmentedControl from '@cloudscape-design/components/segmented-control';
 import CSColumnLayout from '@cloudscape-design/components/column-layout';
 import CSAlert from '@cloudscape-design/components/alert';
+import CSExpandableSection from '@cloudscape-design/components/expandable-section';
 
 const _SAVE_SORT_OPTS = [
   { value: 'played', label: '最近游玩' },
@@ -308,7 +310,7 @@ function SavesListView() {
             <input key="upload-input" ref={importInputRef} type="file" accept=".zip,.json,.tar.gz" style={{ display: 'none' }}
               onChange={(e) => { onImportFile(e.target.files?.[0]); e.target.value = ''; }} />
             <CSButton key="btn-import" iconName="upload" onClick={() => importInputRef.current?.click()}>导入存档</CSButton>
-            <CSButton key="btn-new" iconName="add-plus" onClick={() => setCreateOpen(true)}>新建存档</CSButton>
+            <CSButton key="btn-new" iconName="add-plus" onClick={() => setCreateOpen(true)}>开始新游戏</CSButton>
             <CSButton key="btn-continue" variant="primary" iconName="caret-right-filled" disabled={!saves.length}
               onClick={() => window.__openContinue?.(saves[0])}>进入当前游戏</CSButton>
           </CSSpaceBetween>
@@ -345,7 +347,7 @@ function SavesListView() {
           { id: 'go', header: '', cell: (s) => <CSButton variant="inline-link" iconName="caret-right-filled" onClick={() => window.__openContinue?.(s)}>继续</CSButton> },
         ]}
         items={visibleSaves}
-        empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? '没有匹配的存档' : '还没有存档,点右上「新建存档」开始'}</CSBox>}
+        empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? '没有匹配的存档' : '还没有存档,点右上「开始新游戏」开始'}</CSBox>}
       />
       );
       const savesDetailEl = selected ? (
@@ -1314,200 +1316,111 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
   };
 
   const noIdentity = !identity;
+  // 暖色面板样式(与角色档 CardSheet 一致)
+  const panel = {
+    background: 'var(--panel-2, #282623)', border: '1px solid var(--line-soft, #2a2724)',
+    borderRadius: 12, padding: '14px 16px',
+  };
+  const labelEyebrow = { fontSize: 11, letterSpacing: '.06em', color: 'var(--accent, #c96442)', fontWeight: 600, textTransform: 'uppercase' };
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      {/* 说明 + 当前状态 */}
-      <div className="muted-2" style={{ fontSize: 12, lineHeight: 1.55 }}>
-        身份卡是叠加在角色卡之上的「定位 overlay」(穿越者 / 卧底 / 流亡贵族 …),
-        和具体姓名外貌无关。可不选 — 此时直接使用所选角色「<strong style={{ color: "var(--fg)" }}>{pickedName}</strong>」开局。
-      </div>
+    <CSSpaceBetween size="m">
+      {/* 说明 */}
+      <CSBox color="text-body-secondary" fontSize="body-s">
+        身份卡是叠加在角色卡之上的「定位 overlay」(穿越者 / 卧底 / 流亡贵族 …),和具体姓名外貌无关。
+        可不选 —— 直接使用所选角色「<strong style={{ color: 'var(--text, #ebe7df)' }}>{pickedName}</strong>」开局。
+      </CSBox>
 
-      {/* 当前选择展示 */}
+      {/* 当前选择 */}
       <div style={{
-        padding: "10px 14px",
-        border: noIdentity ? "1px dashed var(--line)" : "1px solid var(--accent-edge)",
-        background: noIdentity ? "transparent" : "var(--accent-soft)",
-        borderRadius: "var(--r-3, 8px)",
-        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+        ...panel,
+        borderColor: noIdentity ? 'var(--line-soft, #2a2724)' : 'var(--accent, #c96442)',
+        background: noIdentity ? 'var(--panel-2, #282623)' : 'var(--accent-soft, rgba(201,100,66,.12))',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
       }}>
         {noIdentity ? (
-          <span className="muted" style={{ fontSize: 12.5 }}>
-            <Icon name="check" size={11} /> 当前:不挂身份 overlay,直接使用「{pickedName}」
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-quiet, #c8c2b7)', fontSize: 13 }}>
+            <Icon name="check" size={13} /> 当前未挂身份卡 —— 直接使用「<strong style={{ color: 'var(--text, #ebe7df)' }}>{pickedName}</strong>」开局
+          </div>
         ) : (
-          <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span className="pill accent" style={{ fontSize: 10.5 }}>
-                {identity._from === "ai" ? "AI 生成" : "手动"}
-              </span>
-              {identity.name && (
-                <strong style={{ fontFamily: "var(--font-serif)", fontSize: 13.5 }}>
-                  {identity.name}
-                </strong>
-              )}
-              {identity.role && (
-                <span style={{ fontSize: 12.5 }}>{identity.role}</span>
-              )}
+          <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <CSBadge color={identity._from === 'ai' ? 'blue' : 'grey'}>{identity._from === 'ai' ? 'AI 生成' : '手动'}</CSBadge>
+              {identity.name && <strong style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 15, color: 'var(--text, #ebe7df)' }}>{identity.name}</strong>}
+              {identity.role && <span style={{ fontSize: 13, color: 'var(--text-quiet, #c8c2b7)' }}>{identity.role}</span>}
             </div>
-            {identity.background && (
-              <span className="muted-2" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
-                {identity.background}
-              </span>
-            )}
+            {identity.background && <span style={{ fontSize: 12.5, lineHeight: 1.6, color: 'var(--muted, #968f85)' }}>{identity.background}</span>}
           </div>
         )}
-        {!noIdentity && (
-          <button
-            className="btn btn-ghost"
-            style={{ fontSize: 11.5, flexShrink: 0 }}
-            onClick={clearIdentity}
-            type="button"
-          >
-            <Icon name="close" size={11} /> 清除
-          </button>
-        )}
+        {!noIdentity && <CSButton iconName="close" variant="inline-link" onClick={clearIdentity}>清除</CSButton>}
       </div>
 
-      {/* AI 生成 (opt-in) */}
-      <div style={{
-        border: "1px solid var(--line-soft)",
-        borderRadius: "var(--r-3, 8px)",
-        padding: "10px 14px",
-        display: "grid", gap: 8,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ display: "grid", gap: 1 }}>
-            <span style={{ fontSize: 13 }}>让 AI 生成身份候选</span>
-            <span className="muted-2" style={{ fontSize: 11 }}>
-              基于剧本 + 出生点 + 所选角色卡,生成 4 个差异化身份。
-            </span>
+      {/* AI 生成 */}
+      <div style={{ ...panel, display: 'grid', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ display: 'grid', gap: 3 }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text, #ebe7df)' }}>让 AI 生成身份候选</span>
+            <span style={{ fontSize: 12, color: 'var(--muted, #968f85)' }}>基于剧本 + 出生点 + 所选角色卡,生成 4 个差异化身份。</span>
           </div>
-          <button
-            className="btn"
-            type="button"
-            onClick={fetchAiRecs}
-            disabled={recsLoading}
-            style={{ flexShrink: 0 }}
-          >
-            {recsLoading
-              ? (<><Icon name="spinner" size={11} className="spin" /> 生成中…</>)
-              : (recs.length > 0 ? (<><Icon name="refresh" size={11} /> 重新生成</>) : (<><Icon name="sparkles" size={11} /> 生成身份</>))}
-          </button>
+          <CSButton iconName={recs.length > 0 ? 'refresh' : 'gen-ai'} loading={recsLoading} disabled={recsLoading} onClick={fetchAiRecs}>
+            {recs.length > 0 ? '重新生成' : '生成身份'}
+          </CSButton>
         </div>
-        <InlineErr msg={recsErr} />
+        {recsErr && <CSAlert type="error">{recsErr}</CSAlert>}
         {recs.length > 0 && (
-          <div style={{ display: "grid", gap: 6, marginTop: 4 }}>
+          <CSColumnLayout columns={2}>
             {recs.map((rec, i) => {
-              const isSelected = identity && identity._from === "ai"
-                && identity.name === rec.name && identity.role === rec.role;
+              const isSelected = identity && identity._from === 'ai' && identity.name === rec.name && identity.role === rec.role;
               return (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => pickRec(rec)}
-                  style={{
-                    textAlign: "left",
-                    padding: "9px 12px",
-                    border: isSelected ? "1px solid var(--accent-edge)" : "1px solid var(--line-soft)",
-                    borderRadius: "var(--r-3, 8px)",
-                    background: isSelected ? "var(--accent-soft)" : "transparent",
-                    cursor: "pointer",
-                    display: "grid", gap: 3,
-                    transition: "border-color 0.12s, background 0.12s",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    {rec.name && (
-                      <strong style={{ fontFamily: "var(--font-serif)", fontSize: 13.5 }}>
-                        {rec.name}
-                      </strong>
-                    )}
-                    {rec.role && (
-                      <span className="pill" style={{ fontSize: 10.5 }}>{rec.role}</span>
-                    )}
-                    {isSelected && <span className="pill accent" style={{ fontSize: 10.5, marginLeft: "auto" }}>已选</span>}
+                <button key={i} type="button" onClick={() => pickRec(rec)} style={{
+                  textAlign: 'left', padding: '11px 13px', cursor: 'pointer',
+                  border: isSelected ? '1px solid var(--accent, #c96442)' : '1px solid var(--line-soft, #2a2724)',
+                  borderRadius: 10, background: isSelected ? 'var(--accent-soft, rgba(201,100,66,.12))' : 'var(--panel, #211f1d)',
+                  display: 'grid', gap: 5, transition: 'border-color .12s, background .12s',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {rec.name && <strong style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 14, color: 'var(--text, #ebe7df)' }}>{rec.name}</strong>}
+                    {rec.role && <CSBadge>{rec.role}</CSBadge>}
+                    {isSelected && <span style={{ marginLeft: 'auto' }}><CSBadge color="green">已选</CSBadge></span>}
                   </div>
-                  {rec.background && (
-                    <span className="muted-2" style={{ fontSize: 11.5, lineHeight: 1.5 }}>{rec.background}</span>
-                  )}
+                  {rec.background && <span style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--muted, #968f85)' }}>{rec.background}</span>}
                 </button>
               );
             })}
-          </div>
+          </CSColumnLayout>
         )}
       </div>
 
-      {/* 手动创建 (折叠) */}
-      <div style={{
-        border: "1px solid var(--line-soft)",
-        borderRadius: "var(--r-3, 8px)",
-        overflow: "hidden",
-      }}>
-        <button
-          type="button"
-          onClick={() => setCustomOpen(v => !v)}
-          style={{
-            width: "100%", textAlign: "left",
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            gap: 10, padding: "9px 14px",
-            background: customOpen ? "var(--panel-2)" : "transparent",
-            border: "none", cursor: "pointer",
-            borderBottom: customOpen ? "1px solid var(--line-soft)" : "none",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Icon name={customOpen ? "chevron_down" : "chevron_right"} size={11} style={{ color: "var(--muted)" }} />
-            <span style={{ fontSize: 13 }}>手动创建身份卡</span>
-          </div>
-          {identity && identity._from === "custom" && (
-            <span className="pill accent" style={{ fontSize: 10.5 }}>已填写</span>
-          )}
-        </button>
-        {customOpen && (
-          <div style={{ padding: "10px 14px", display: "grid", gap: 10 }}>
-            <div className="pl-import-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
-              <div className="pl-field">
-                <label>代号 / 化名 <span className="muted-2" style={{ fontSize: 10.5 }}>(可选)</span></label>
-                <input
-                  value={customName}
-                  onChange={e => setCustomName(e.target.value)}
-                  placeholder="留空则用角色卡的名字"
-                />
-              </div>
-              <div className="pl-field">
-                <label>身份定位 <span className="pl-field-req">*</span></label>
-                <input
-                  value={customRole}
-                  onChange={e => setCustomRole(e.target.value)}
-                  placeholder="例:穿越者公主 / 卧底 / 流亡贵族"
-                />
-              </div>
-              <div className="pl-field" style={{ gridColumn: "1 / -1" }}>
-                <label>身份背景 / 动机</label>
-                <textarea
-                  rows={2}
-                  value={customBg}
-                  onChange={e => setCustomBg(e.target.value)}
-                  placeholder="这个身份在剧本世界中的来历、动机、与核心事件的关联"
-                />
-              </div>
+      {/* 手动创建 */}
+      <CSExpandableSection
+        variant="container"
+        headerText="手动创建身份卡"
+        headerActions={identity && identity._from === 'custom' ? <CSBadge color="green">已填写</CSBadge> : undefined}
+        expanded={customOpen}
+        onChange={({ detail }) => setCustomOpen(detail.expanded)}
+      >
+        <CSSpaceBetween size="l">
+          <CSColumnLayout columns={2}>
+            <CSFormField label="代号 / 化名" description="可选,留空则用角色卡的名字">
+              <CSInput value={customName} onChange={({ detail }) => setCustomName(detail.value)} placeholder="例:阿芜" />
+            </CSFormField>
+            <CSFormField label="身份定位" constraintText="与背景至少填一项">
+              <CSInput value={customRole} onChange={({ detail }) => setCustomRole(detail.value)} placeholder="例:穿越者公主 / 卧底 / 流亡贵族" />
+            </CSFormField>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <CSFormField label="身份背景 / 动机">
+                <CSTextarea rows={3} value={customBg} onChange={({ detail }) => setCustomBg(detail.value)}
+                  placeholder="这个身份在剧本世界中的来历、动机、与核心事件的关联" />
+              </CSFormField>
             </div>
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button
-                className="btn"
-                type="button"
-                onClick={applyCustom}
-                disabled={!customRole.trim() && !customBg.trim()}
-                title={(!customRole.trim() && !customBg.trim()) ? "身份定位或背景至少填一项" : ""}
-              >
-                <Icon name="check" size={12} /> 使用此身份卡
-              </button>
-            </div>
+          </CSColumnLayout>
+          <div style={{ textAlign: 'right' }}>
+            <CSButton variant="primary" iconName="check" onClick={applyCustom}
+              disabled={!customRole.trim() && !customBg.trim()}>使用此身份卡</CSButton>
           </div>
-        )}
-      </div>
-    </div>
+        </CSSpaceBetween>
+      </CSExpandableSection>
+    </CSSpaceBetween>
   );
 }
 
@@ -1528,9 +1441,11 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   // ── Step 2 state ─────────────────────────────────────────────
   const [roleMode, setRoleMode] = useStatePL("existing");
   const [pickedCard, setPickedCard] = useStatePL("");
-  const [newCardName, setNewCardName] = useStatePL("");
-  const [newCardRole, setNewCardRole] = useStatePL("");
-  const [newCardBg, setNewCardBg] = useStatePL("");
+  // 新建角色卡:复用 cards.jsx 的完整字段表单(与「新建用户角色卡」对齐)
+  const [newCardForm, setNewCardForm] = useStatePL(() => cardFormInit(null));
+  const uNewCard = (k, v) => setNewCardForm(f => ({ ...f, [k]: v }));
+  // 角色卡预览(只读 CardSheet)
+  const [previewCard, setPreviewCard] = useStatePL(null);
 
   // ── Step 3 state ─────────────────────────────────────────────
   const [birthpoint, setBirthpoint] = useStatePL(null);
@@ -1550,7 +1465,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
     if (!open) return;
     // reset transient state
     setTitle(""); setSubmitErr(""); setSubmitting(false); setLoading(true);
-    setNewCardName(""); setNewCardRole(""); setNewCardBg("");
+    setNewCardForm(cardFormInit(null)); setPreviewCard(null);
     setBirthpoint(null); setIdentity(null); setStoryIntent("");
     (async () => {
       let scList = [];
@@ -1616,7 +1531,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
 
   // 各必填模块完成校验(单页:不再按步骤 gating,只用于概要 + 创建按钮)
   const step1Valid = title.trim() && scriptId;
-  const step2Valid = (roleMode === "existing" && pickedCard) || (roleMode === "new" && newCardName.trim());
+  const step2Valid = (roleMode === "existing" && pickedCard) || (roleMode === "new" && newCardForm.name.trim());
   const step3Valid = !!birthpoint;
   // v29: 身份卡是可选 overlay,留空 = 直接使用所选角色卡(不再硬卡 identity 必填)
   const step4Valid = true;
@@ -1624,18 +1539,26 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const handleSubmit = async () => {
     setSubmitErr(""); setSubmitting(true);
     try {
-      const picked = allRoleOptions.find(o => o.key === pickedCard);
+      // 新建角色卡:走与「新建用户角色卡」完全相同的创建路径(myUpsert),
+      // 落库后当作"现有卡"使用,确保所有字段一致持久化。
+      let picked = allRoleOptions.find(o => o.key === pickedCard);
+      let charId = roleMode === "existing" && picked ? (picked.id || picked.slug || null) : null;
+      let charKind = roleMode === "existing" && picked ? picked.kind : null;
+      if (roleMode === "new") {
+        const r = await window.api.cards.myUpsert(cardFormPayload(newCardForm));
+        const created = r && r.card;
+        if (!created || !(created.id || created.slug)) throw new Error("角色卡创建失败");
+        charId = created.id || created.slug;
+        charKind = "user_card";
+      }
       const payload = {
         title: title.trim(),
         script_id: parseInt(scriptId, 10),
-        character_id: roleMode === "existing" && picked ? (picked.id || picked.slug || null) : null,
-        character_kind: roleMode === "existing" && picked ? picked.kind : null,
-        new_card: roleMode === "new" ? {
-          name: newCardName.trim(),
-          role: newCardRole.trim(),
-          background: newCardBg.trim(),
-        } : null,
-        role_mode: roleMode,
+        character_id: charId,
+        character_kind: charKind,
+        new_card: null,
+        // 新建卡已转成真实 user_card,统一按 existing 处理
+        role_mode: roleMode === "new" ? "existing" : roleMode,
         birthpoint: birthpoint || null,
         // v29: 透传 source (custom|ai) 给后端落库 identity_cards.source;identity=null 表示不挂 overlay
         identity: identity ? {
@@ -1684,7 +1607,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const step1Content = (
     // Cloudscape SpaceBetween 内部用 React.Children.map 加间距,条件渲染的 children 需要稳定 key
     <CSSpaceBetween key="step1" size="l">
-      <CSFormField key="mode" label="扮演角色"
+      <CSFormField key="mode" label="选择角色"
         description={allRoleOptions.length === 0 ? '你还没有玩家身份 / 用户角色卡,自动切到「新建角色卡」。' : undefined}>
         <CSSegmentedControl
           selectedId={roleMode}
@@ -1707,7 +1630,13 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
                   {c.subtitle} · {c.kind === 'persona' ? '玩家身份' : '角色卡'}
                 </span>
               </div>
-              {c.pinned && <span className="pill accent" style={{ fontSize: 10.5 }}><Icon name="pin" size={9} /> 默认</span>}
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                {c.pinned && <span className="pill accent" style={{ fontSize: 10.5 }}><Icon name="pin" size={9} /> 默认</span>}
+                <button type="button" className="btn btn-ghost" style={{ fontSize: 11.5, padding: '4px 10px' }}
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); openPreview(c); }}>
+                  <Icon name="eye" size={11} /> 预览
+                </button>
+              </div>
             </label>
           ))}
           <a className="pl-newgame-card pl-newgame-card-link" href="#cards" onClick={onClose}>
@@ -1716,19 +1645,12 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
         </div>
       )}
       {roleMode === 'new' && (
-        <CSColumnLayout key="new-card" columns={2}>
-          <CSFormField label="姓名" constraintText="必填">
-            <CSInput value={newCardName} onChange={({ detail }) => setNewCardName(detail.value)} />
-          </CSFormField>
-          <CSFormField label="身份 / 角色">
-            <CSInput value={newCardRole} onChange={({ detail }) => setNewCardRole(detail.value)} />
-          </CSFormField>
-          <div style={{ gridColumn: '1 / -1' }}>
-            <CSFormField label="设定" description="创建后会自动加入角色卡库">
-              <CSTextarea rows={2} value={newCardBg} onChange={({ detail }) => setNewCardBg(detail.value)} />
-            </CSFormField>
-          </div>
-        </CSColumnLayout>
+        <div key="new-card">
+          <CSBox color="text-body-secondary" fontSize="body-s" padding={{ bottom: 's' }}>
+            字段与「角色卡 · 新建用户角色卡」一致;创建并进入时会自动加入你的角色卡库。
+          </CSBox>
+          <CardEditFields form={newCardForm} u={uNewCard} kind="user" />
+        </div>
       )}
     </CSSpaceBetween>
   );
@@ -1761,21 +1683,30 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   // 右侧概要:必填项完成度 + 已选摘要 + 创建按钮
   const reqRows = [
     { label: '存档名称与剧本', ok: step1Valid },
-    { label: '扮演角色', ok: step2Valid },
+    { label: '选择角色', ok: step2Valid },
     { label: '出生点', ok: step3Valid },
-    { label: '初始身份', ok: step4Valid },
+    { label: '角色初始身份卡（可选）', ok: step4Valid },
   ];
   const allValid = step1Valid && step2Valid && step3Valid && step4Valid;
   const pickedRoleName = roleMode === 'new'
-    ? (newCardName.trim() || '新建角色')
+    ? (newCardForm.name.trim() || '新建角色')
     : (allRoleOptions.find(o => o.key === pickedCard)?.name || '—');
+
+  // 角色卡预览:从原始 personas / userCards 取完整对象供 CardSheet 渲染
+  const openPreview = (opt) => {
+    const full = opt.kind === 'persona'
+      ? personas.find(p => String(p.id || p.slug) === String(opt.id || opt.slug))
+      : userCards.find(c => String(c.id || c.slug) === String(opt.id || opt.slug));
+    const card = full || { name: opt.name, identity: opt.subtitle };
+    setPreviewCard({ card: { ...card, identity: card.identity || card.role || opt.subtitle }, name: opt.name });
+  };
 
   const node = (
     <div style={{ position: 'fixed', top: 53, left: 0, right: 0, bottom: 0, zIndex: 1000, background: 'var(--bg, #1a1817)', overflow: 'auto' }}>
       {/* 顶部栏:标题 + 取消(位于平台顶栏下方,保留平台导航) */}
       <div style={{ position: 'sticky', top: 0, zIndex: 3, background: '#131211', borderBottom: '1px solid #36322d' }}>
         <div style={{ maxWidth: 1240, margin: '0 auto', padding: '13px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-          <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600, color: '#ebe7df' }}>新建存档</div>
+          <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600, color: '#ebe7df' }}>开始新游戏</div>
           <CSButton iconName="close" variant="link" onClick={onClose}>取消</CSButton>
         </div>
       </div>
@@ -1790,18 +1721,18 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
               )}
               {!loading && scripts.length === 0 && (
                 <CSAlert key="no-scripts" type="warning" header="还没有任何剧本">
-                  先去 <a href="#scripts-import" onClick={onClose}>剧本 / 导入</a> 上传一部,然后再回来新建存档。
+                  先去 <a href="#scripts-import" onClick={onClose}>剧本 / 导入</a> 上传一部,然后再回来开始新游戏。
                 </CSAlert>
               )}
               {/* Cloudscape SpaceBetween 内部用 React.Children.map 加间距,需要 child 显式 key */}
               <CSContainer key="basic" header={secHeader('基本信息', '给存档起名,并选择要游玩的剧本。')}>{sec_basic}</CSContainer>
-              <CSContainer key="role" header={secHeader('扮演角色', '选择已有玩家身份 / 角色卡,或新建一个。')}>{step1Content}</CSContainer>
+              <CSContainer key="role" header={secHeader('选择角色', '选择已有玩家身份 / 角色卡,或新建一个。')}>{step1Content}</CSContainer>
               <CSContainer key="birthpoint" header={secHeader('出生点', scriptId ? '选择故事开局的时间锚点。' : '先在「基本信息」选好剧本。')}>
                 {scriptId
                   ? <BirthpointStep key="birthpoint-step" scriptId={scriptId} birthpoint={birthpoint} setBirthpoint={setBirthpoint} />
                   : <CSBox key="birthpoint-empty" color="text-body-secondary" fontSize="body-s">请先选择剧本。</CSBox>}
               </CSContainer>
-              <CSContainer key="identity" header={secHeader('初始身份', '基于出生点与所选角色推荐,或自定义。')}>
+              <CSContainer key="identity" header={secHeader('角色初始身份卡', '可选的「定位 overlay」:基于出生点与所选角色推荐,或自定义。')}>
                 <IdentityStep key="identity-step" scriptId={scriptId} birthpoint={birthpoint} pickedCard={pickedCard} allRoleOptions={allRoleOptions} identity={identity} setIdentity={(id) => setIdentity(id)} />
               </CSContainer>
               <CSContainer key="intent" header={secHeader('剧情期望', '告诉 GM 你希望的剧情走向 / 秘密分配。', true)}>{step4Content}</CSContainer>
@@ -1823,7 +1754,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
                   { label: '剧本', value: scriptOpts.find(o => o.value === scriptId)?.label || '—' },
                   { label: '角色', value: pickedRoleName },
                   { label: '出生点', value: birthpoint?.story_time_label || '—' },
-                  { label: '初始身份', value: identity?.name || '—' },
+                  { label: '身份卡', value: identity?.name || identity?.role || '—' },
                 ]} />
                 {submitErr && <CSAlert key="err" type="error">{submitErr}</CSAlert>}
                 <div key="btns" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1838,6 +1769,17 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
           </div>
         </div>
       </div>
+
+      {/* 角色卡预览(只读) */}
+      <CSModal
+        visible={!!previewCard}
+        onDismiss={() => setPreviewCard(null)}
+        header={`角色卡预览 · ${previewCard?.name || ''}`}
+        size="medium"
+        footer={<div style={{ textAlign: 'right' }}><CSButton variant="primary" onClick={() => setPreviewCard(null)}>关闭</CSButton></div>}
+      >
+        {previewCard && <CardSheet card={previewCard.card} kind="user" />}
+      </CSModal>
     </div>
   );
   return createPortal(node, document.body);

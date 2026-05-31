@@ -1005,4 +1005,4 @@ function CardEditModal({ card, isNew, kind, onClose, onSave }) {
   return createPortal(node, document.body);
 }
 
-export { CardsPage, CardGrid, UserCardsView, NpcCardsView, CardEditModal, TavernImportModal, CardSheet, cardSnippet };
+export { CardsPage, CardGrid, UserCardsView, NpcCardsView, CardEditModal, TavernImportModal, CardSheet, cardSnippet, CardEditFields, cardFormInit, cardFormPayload };
