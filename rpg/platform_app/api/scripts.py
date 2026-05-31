@@ -240,6 +240,10 @@ async def api_script_recommend_identity(request: Request, script_id: int, user=D
             payload = {"ok": False, "error": "无法解析推荐结果", "raw": str(result.result)[:200]}
         if not result.ok:
             return json_response({"ok": False, "error": result.error or "工具执行失败"}, status_code=500)
+        # v27: 工具自报 ok=false (LLM 调用失败/上下文不足等) 也要让前端拿到 500,
+        # 否则 fetch.r.ok 看到 200 会走"无推荐"分支,无法区分"系统问题"vs"用户没填上下文"。
+        if isinstance(payload, dict) and payload.get("ok") is False:
+            return json_response(payload, status_code=502)
         return json_response(payload)
     except Exception as exc:
         return json_response(

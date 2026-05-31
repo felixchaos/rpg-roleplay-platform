@@ -118,8 +118,11 @@ def create_save(
     birthpoint = {"phase_label": str, "anchor_id": int, "chapter_min": int,
                   "chapter_max": int, "story_time_label": str}
                  —— 入场选出生点，写入 world.timeline / world.time
-    identity  = {"name": str, "role": str, "background": str}
-                 —— 入场选初始身份，直接 setup_player（覆盖 character_card 默认值）
+    identity  = {"name"?: str, "role"?: str, "background"?: str, "source"?: "custom"|"ai"}
+                 —— v27: 可选「身份卡」overlay。**不** 覆盖 player.name/role(那些来自角色卡)。
+                 落库:insert identity_cards 行 + save_character_identities 绑定;
+                 运行时副本写到 player.identity overlay + player.identity_role_desc(兼容字段)。
+                 留空(或全字段都空)= 没身份,直接用角色卡。
 
     无 new_card / character / birthpoint / identity 时退回到旧行为（空白快照）。
     """
@@ -141,6 +144,69 @@ def create_save(
             """,
             (user_id, script_id, title.strip() or "新存档", str(SAVE_FILE), Jsonb(snapshot)),
         ).fetchone()
+        # v27: 持久化身份卡 + 角色↔身份绑定。身份卡是 save 级独立实体,不修改角色卡行。
+        # 注意:仅当 identity 至少有 role 或 background 才落库;否则视为"没身份,直接用角色卡"。
+        if isinstance(identity, dict):
+            id_name = str(identity.get("name") or "").strip()
+            id_role = str(identity.get("role") or "").strip()
+            id_bg = str(identity.get("background") or "").strip()
+            id_source = str(identity.get("source") or "custom").strip() or "custom"
+            if id_source not in ("custom", "ai"):
+                id_source = "custom"
+            if id_role or id_bg or id_name:
+                ic_row = db.execute(
+                    """
+                    insert into identity_cards(save_id, name, role, background, source)
+                    values (%s, %s, %s, %s, %s)
+                    returning id
+                    """,
+                    (save["id"], id_name, id_role, id_bg, id_source),
+                ).fetchone()
+                identity_card_id = int(ic_row["id"]) if ic_row else None
+                if identity_card_id is not None:
+                    # 把 id 回写到 state_snapshot.player.identity.id,便于运行时定位 canonical 行
+                    try:
+                        snap = save.get("state_snapshot") or {}
+                        if isinstance(snap, dict):
+                            player = snap.setdefault("player", {})
+                            overlay = player.setdefault("identity", {})
+                            overlay["id"] = identity_card_id
+                            db.execute(
+                                "update game_saves set state_snapshot = %s where id = %s",
+                                (Jsonb(snap), save["id"]),
+                            )
+                            save["state_snapshot"] = snap
+                    except Exception:
+                        pass
+                    # 角色↔身份绑定。character_ref 取所选角色卡的 id/slug;若是新建分支
+                    # (new_card),写占位 'inline' 表示就地新建角色,身份直接挂存档。
+                    char_kind = ""
+                    char_ref = ""
+                    if isinstance(new_card, dict):
+                        char_kind = "new_card"
+                        char_ref = "inline"
+                    elif isinstance(character, dict):
+                        char_kind = str(character.get("kind") or "").strip()
+                        cid = character.get("id")
+                        if cid is not None:
+                            char_ref = str(cid)
+                        else:
+                            char_ref = str(character.get("slug") or "")
+                    if char_kind and char_ref:
+                        try:
+                            db.execute(
+                                """
+                                insert into save_character_identities
+                                  (save_id, character_kind, character_ref, identity_id, is_current)
+                                values (%s, %s, %s, %s, true)
+                                """,
+                                (save["id"], char_kind, char_ref, identity_card_id),
+                            )
+                        except Exception as _bind_err:
+                            log.warning(
+                                f"[identity] bind failed save={save['id']} "
+                                f"char={char_kind}:{char_ref} id={identity_card_id}: {_bind_err}"
+                            )
     branches.seed_tree(save["id"], str(SAVE_FILE))
     # task 136: 新存档创建后异步 seed 世界线收束锚点。
     # 800 章 × 5 events 量级,放后台不阻塞 UI;失败也不影响存档创建。
@@ -351,36 +417,44 @@ def _build_initial_snapshot(
         except Exception:
             pass
 
-    # 入场选初始身份：**逐字段** merge,只覆盖非空字段。
-    # task 126: 用户选了角色卡(已写 name=杭雁菱) → Step 4 又选了 LLM 推荐身份
-    # (可能 name="" role="穿越者") → 不能因为 identity.name=="" 就把 player.name 抹成"无名者"。
-    # task 137: identity.background 是"入场身份描述"(局外观察者/穿越者等定位说明),
-    # 不能覆盖 user_card 的 personality/appearance 等详细设定。
-    # 改为存入 player.identity_role_desc 单独字段,供 short_summary 作为"入场定位"显示。
+    # v27: 入场初始身份。身份卡是「角色卡之上的定位 overlay」,*不再覆盖* player.name/role —
+    # 那两个字段永远来自角色卡(身份脱离角色,无关具体人物)。
+    # - identity.role/background → state_snapshot.player.identity 子对象 (overlay 运行时副本) +
+    #   player.identity_role_desc (state/core short_summary 读的旧字段,保持兼容)
+    # - identity.name 视为「代号/化名」,仅作为 identity.name_label 记录;玩家姓名仍是角色卡名字
+    # - 没传 identity 时,player 完全等同于角色卡(用户明确接受此默认)
+    # - 数据库侧:身份卡作为独立行存进 identity_cards 表 + save_character_identities 绑定,
+    #   见 create_save() 在 insert game_saves 之后的处理
     if isinstance(identity, dict):
         try:
-            id_name = str(identity.get("name") or "").strip()
+            id_name_label = str(identity.get("name") or "").strip()
             id_role = str(identity.get("role") or "").strip()
             id_background = str(identity.get("background") or "").strip()
+            id_source = str(identity.get("source") or "custom").strip() or "custom"
             player = state.data.setdefault("player", {})
-            # 只覆盖 name/role 非空字段;为空时保留角色卡已写入的值
-            if id_name:
-                player["name"] = id_name
-            if id_role:
-                player["role"] = id_role
-            # identity.background 不覆盖角色卡的 personality/background，
-            # 改为存到独立字段 identity_role_desc（入场定位描述）
+            overlay: dict[str, Any] = {
+                "name_label": id_name_label,
+                "role": id_role,
+                "background": id_background,
+                "source": id_source,
+            }
+            player["identity"] = overlay
             if id_background:
                 player["identity_role_desc"] = id_background
-            # 兜底:如果一直空(没角色卡也没身份),才用占位
-            if not player.get("name"):
-                player["name"] = "无名者"
-            if not player.get("role"):
-                player["role"] = "未指定"
-            if not player.get("background"):
-                player["background"] = "（无背景）"
         except Exception:
             pass
+
+    # 兜底:角色卡也没传时占位(保留旧行为,避免下游 NPE)
+    try:
+        player = state.data.setdefault("player", {})
+        if not player.get("name"):
+            player["name"] = "无名者"
+        if not player.get("role"):
+            player["role"] = "未指定"
+        if not player.get("background"):
+            player["background"] = "（无背景）"
+    except Exception:
+        pass
 
     if story_intent:
         try:
