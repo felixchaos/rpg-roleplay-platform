@@ -59,14 +59,9 @@ def run_llm_extraction(
             raise ValueError("无权访问该剧本")
         book_id = _ensure_book(db, script)["id"]
 
-        # 跑前预算
-        # arc 模式:估算按 ~target_arcs * (3 章/弧输入 + 1 输出)/章成本计;
-        # per_chapter 模式:估算照 chapters * (in+out)
-        if algorithm == "arc":
-            n_calls = target_arcs
-            est = estimate(db, script_id, model=model, sample_chapters=n_calls)  # 估算粗,arc 每 call 较单章贵
-        else:
-            est = estimate(db, script_id, model=model, sample_chapters=sample_chapters)
+        # 跑前预算(算法感知,arc/per_chapter 分开估)
+        est = estimate(db, script_id, model=model, algorithm=algorithm,
+                       target_arcs=target_arcs, sample_chapters=sample_chapters)
         if not est.get("ok"):
             return {"ok": False, "error": est.get("error", "无可提取章节")}
 

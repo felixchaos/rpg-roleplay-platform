@@ -23,6 +23,51 @@ async def api_script_knowledge_sync(script_id: int, user=Depends(require_user)):
     return json_response({"ok": True, "knowledge": {"job_id": job_id, "status": "pending", "async": True}})
 
 
+@router.post("/api/scripts/{script_id}/llm-extract/estimate")
+async def api_script_llm_extract_estimate(request: Request, script_id: int, user=Depends(require_user)):
+    """跑前预算(不触发实际提取)。前端在用户点「跑提取」前预览成本/时间用。
+
+    Body 同 /llm-extract(全可选,只影响估算):
+      {algorithm, model, target_arcs, sample_chapters, batch_discount}
+
+    返回:
+      {
+        "ok": true,
+        "algorithm": "arc",
+        "model": "deepseek-v4-flash",
+        "model_tier": "flash",
+        "chapters": 1166,           # 可提取总章
+        "arcs": 38,                 # arc 模式下实际弧数(target_arcs 受 5/80 钳后)
+        "est_input_tokens": 334400,
+        "est_output_tokens": 134400,
+        "est_usd": 0.087,
+        "note": "约 $0.09(38 弧 × deepseek-v4-flash)。"
+      }
+    """
+    # 校验 owner
+    with connect() as db:
+        owned = db.execute("select 1 from scripts where id=%s and owner_id=%s",
+                           (script_id, user["id"])).fetchone()
+    if not owned:
+        return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    from extract.budget import estimate
+    with connect() as db:
+        est = estimate(
+            db, script_id,
+            model=str(body.get("model") or "deepseek-v4-flash"),
+            algorithm=str(body.get("algorithm") or "arc"),
+            target_arcs=int(body.get("target_arcs") or 40),
+            sample_chapters=body.get("sample_chapters"),
+            batch_discount=bool(body.get("batch_discount")),
+        )
+    return json_response(est, status_code=200 if est.get("ok") else 400)
+
+
 @router.post("/api/scripts/{script_id}/llm-extract")
 async def api_script_llm_extract(request: Request, script_id: int, user=Depends(require_user)):
     """触发 LLM 提取(默认弧段算法,~2 分钟 1166 章)。同步执行(阻塞调用方),适合 UI 显式触发。

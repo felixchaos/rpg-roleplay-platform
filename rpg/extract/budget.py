@@ -29,16 +29,28 @@ _SEED_PER_CALL_INPUT = 2800
 _SEED_PER_CALL_OUTPUT = 1200
 # 嵌入(Vertex text-embedding-004)≈ 平台承担/极廉,不计入 BYOK 报价
 
+# 弧段算法每弧估算(实测 deepseek-v4-flash 二战书 40 弧):
+#   输入 ≈ 3 章正文(各 2500 字)+ 词表 ~2400 字 ≈ ~7000-8000 tok
+#   输出 ≈ 弧级 ChapterExtract schema ~3000 tok(弧主线 + 全实体 + events + concepts)
+_PER_ARC_INPUT = 8000
+_PER_ARC_OUTPUT = 3000
+
 
 def _model_price(model: str) -> dict:
     return MODEL_PRICING.get(model, MODEL_PRICING["gemini-3.5-flash"])
 
 
 def estimate(db, script_id: int, *, model: str = "gemini-3.5-flash",
-             sample_chapters: int | None = None, batch_discount: bool = False) -> dict:
+             sample_chapters: int | None = None, batch_discount: bool = False,
+             algorithm: str = "per_chapter", target_arcs: int = 40) -> dict:
     """估算一次提取的成本(确定性,跑前可知)。
 
+    algorithm:
+      'per_chapter': 每章 1 LLM(老算法,1166 章 ≈ $1.4 / deepseek-v4-flash)。
+      'arc'        : 每弧 1 LLM(新算法,40 弧 ≈ $0.05)。
     sample_chapters: 只提前 N 章(懒/增量提取场景);None=全可提取章。
+                     arc 模式下忽略(弧段算法必须看全书等分)。
+    target_arcs: arc 模式下的目标弧数(默认 40,split_arcs 会按 min/max 钳)。
     batch_discount: Batch API 五折(若接)。
     """
     row = db.execute(
@@ -46,15 +58,26 @@ def estimate(db, script_id: int, *, model: str = "gemini-3.5-flash",
         (script_id,),
     ).fetchone()
     total = int(row["c"]) if row else 0
-    chapters = min(total, sample_chapters) if sample_chapters else total
-    if chapters <= 0:
+    if total <= 0:
         return {"ok": False, "error": "无可提取章节", "chapters": 0}
 
     price = _model_price(model)
-    seed_calls = min(_SEED_SAMPLE, chapters)
 
-    in_tok = chapters * _PER_CH_INPUT + seed_calls * _SEED_PER_CALL_INPUT
-    out_tok = chapters * _PER_CH_OUTPUT + seed_calls * _SEED_PER_CALL_OUTPUT
+    if algorithm == "arc":
+        # 弧数 ≈ target_arcs 但受 min_arc_size=5 / max_arc_size=80 钳(对齐 split_arcs)
+        n_arcs = max(1, min(total // 5, max((total + 79) // 80, total // max(5, total // target_arcs))))
+        seed_calls = min(_SEED_SAMPLE, total)
+        in_tok = n_arcs * _PER_ARC_INPUT + seed_calls * _SEED_PER_CALL_INPUT
+        out_tok = n_arcs * _PER_ARC_OUTPUT + seed_calls * _SEED_PER_CALL_OUTPUT
+        unit_label = f"{n_arcs} 弧"
+        chapters = total
+    else:
+        chapters = min(total, sample_chapters) if sample_chapters else total
+        seed_calls = min(_SEED_SAMPLE, chapters)
+        in_tok = chapters * _PER_CH_INPUT + seed_calls * _SEED_PER_CALL_INPUT
+        out_tok = chapters * _PER_CH_OUTPUT + seed_calls * _SEED_PER_CALL_OUTPUT
+        unit_label = f"{chapters} 章"
+        n_arcs = 0
 
     usd = (in_tok / 1_000_000) * price["in"] + (out_tok / 1_000_000) * price["out"]
     if batch_discount:
@@ -63,16 +86,18 @@ def estimate(db, script_id: int, *, model: str = "gemini-3.5-flash",
     return {
         "ok": True,
         "script_id": script_id,
+        "algorithm": algorithm,
         "model": model,
         "model_tier": price["tier"],
         "chapters": chapters,
         "total_extractable": total,
+        "arcs": n_arcs if algorithm == "arc" else None,
         "est_input_tokens": in_tok,
         "est_output_tokens": out_tok,
         "est_usd": round(usd, 3),
         "batch_discount": batch_discount,
         "note": (
-            f"约 ${round(usd,2)}(用你自己的 {model} key 付费)。"
+            f"约 ${round(usd,2)}({unit_label} × {model})。"
             + ("⚠️ frontier 档,建议换 flash/haiku" if price["tier"] == "frontier" else "")
         ),
     }
