@@ -48,7 +48,9 @@ def _register_legacy_command_tools() -> None:
     """把 command_tools.COMMAND_TOOLS 全部注册为 save 级工具。
     各工具的 destructive 与 origin 按业务语义微调。"""
     # destructive 标记: 不允许 llm_chat 直接调,但允许 llm_set (用户明确意图)
-    destructive_names = {"set_player_name", "set_player_role", "set_player_background"}
+    # v28+sidebar: delete_relationship 是删除条目,标 destructive 防 llm_chat 随手清掉
+    destructive_names = {"set_player_name", "set_player_role", "set_player_background",
+                         "delete_relationship"}
     registry = get_registry()
     for tool in COMMAND_TOOLS:
         name = tool["name"]

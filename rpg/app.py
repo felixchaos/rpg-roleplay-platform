@@ -451,6 +451,7 @@ from routes.game import router as game_router
 from routes.mcp import router as mcp_router
 from routes.models import router as models_router
 from routes.rules import router as rules_router
+from routes.sidebar import router as sidebar_router
 from routes.skills import router as skills_router
 from routes.timeline import router as timeline_router
 from routes.worldline import router as worldline_router
@@ -463,6 +464,7 @@ app.include_router(worldline_router)
 app.include_router(rules_router)
 app.include_router(timeline_router)
 app.include_router(console_assistant_router)
+app.include_router(sidebar_router)
 
 # 同源 mount frontend 静态文件 — dev/prod 都需要 (cookie SameSite=lax 跨 origin 5173↔7860 会丢)
 # 必须在所有具体路由之后 mount,否则会拦截 /api/* 和 /

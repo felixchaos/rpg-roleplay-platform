@@ -179,6 +179,32 @@ COMMAND_TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "delete_relationship",
+        "description": '删除玩家与某 NPC 的关系条目(整条移除,不是清空)。侧栏点 × 删关系卡时调。',
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "character": {"type": "string", "description": "要删除的 NPC 名字"},
+            },
+            "required": ["character"],
+        },
+    },
+    {
+        "name": "set_timeline_phase",
+        "description": (
+            '设置世界线当前 phase 标签(world.timeline.current_phase)。'
+            '会被记入 user_locked_fields,后续 update_time 不再用 _phase_for_time 推断覆盖。'
+            '用户在侧栏直接选/输 phase 时调。'
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "phase": {"type": "string", "description": "phase 标签,如 '柏林暗流篇/月球时期'"},
+            },
+            "required": ["phase"],
+        },
+    },
+    {
         "name": "set_main_quest",
         "description": "设置主线任务文本。",
         "input_schema": {
@@ -395,6 +421,28 @@ def execute_tool(state: Any, name: str, args: dict) -> str:
                 return "set_relationship 失败: character 或 status 为空"
             state.update_relationship(ch, st)
             return f"关系 {ch} → {st}"
+        if name == "delete_relationship":
+            ch = (args.get("character") or "").strip()
+            if not ch:
+                return "delete_relationship 失败: character 为空"
+            rels = state.data.setdefault("relationships", {})
+            if ch not in rels:
+                return f"delete_relationship: {ch} 不在 relationships(无需删)"
+            del rels[ch]
+            return f"关系已删除: {ch}"
+        if name == "set_timeline_phase":
+            phase = (args.get("phase") or "").strip()
+            if not phase:
+                return "set_timeline_phase 失败: phase 为空"
+            timeline = state.data.setdefault("world", {}).setdefault("timeline", {})
+            old = timeline.get("current_phase", "")
+            timeline["current_phase"] = phase
+            # 走现成 mark_user_locked,后续 update_time / _phase_for_time 不再覆盖
+            try:
+                state.mark_user_locked("world.timeline.current_phase")
+            except Exception:
+                pass
+            return f"timeline.current_phase: {old or '∅'} → {phase}"
         if name == "set_main_quest":
             v = (args.get("text") or "").strip()
             if not v:
