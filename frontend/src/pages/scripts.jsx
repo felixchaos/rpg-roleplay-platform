@@ -7,6 +7,7 @@ import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { Icon } from '../game-icons.jsx';
 import { PromptModal, usePlatformData, fmtBytes, fmtN, ResizableSplit } from '../platform-app.jsx';
+import { CardEditModal } from './cards.jsx';
 import { NewGameModal } from './saves.jsx';
 import { ScriptReview } from './script-review.jsx';
 // Cloudscape 原生组件(内容迁移,统一基线对齐)
@@ -170,6 +171,7 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
   const [tl, setTl] = useStatePL(null);
   const [ov, setOv] = useStatePL(null);
   const [loading, setLoading] = useStatePL(false);
+  const [npcEdit, setNpcEdit] = useStatePL(null); // { card, isNew } | null — NPC 卡编辑(复用 CardEditModal)
 
   useEffectPL(() => { setWb(null); setNpc(null); setTl(null); setOv(null); setTab('overview'); }, [s.id]);
 
@@ -270,15 +272,42 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
         { id: 'npc', label: 'NPC 角色卡', content: (
           <CSCards loading={loading && npc == null} loadingText="加载 NPC 角色卡…"
             items={npc || []} trackBy="id"
-            cardsPerRow={[{ cards: 1 }, { minWidth: 420, cards: 2 }, { minWidth: 820, cards: 3 }]}
+            cardsPerRow={[{ cards: 1 }, { minWidth: 480, cards: 2 }]}
+            header={
+              <CSHeader counter={`(${(npc || []).length})`}
+                actions={<CSButton iconName="add-plus" onClick={() => setNpcEdit({ card: null, isNew: true })}>新增 NPC 卡</CSButton>}>
+                NPC 角色卡
+              </CSHeader>
+            }
             cardDefinition={{
-              header: (c) => <CSBox variant="h3" padding="n">{c.name || '未命名'}</CSBox>,
+              header: (c) => (
+                <CSBox variant="h3" padding="n">
+                  {c.name || '未命名'}
+                  {c.full_name && c.full_name !== c.name && (
+                    <CSBox display="inline" color="text-status-inactive" fontSize="body-s" padding={{ left: 'xs' }}>{c.full_name}</CSBox>
+                  )}
+                </CSBox>
+              ),
               sections: [
-                { id: 'role', content: (c) => <CSBadge>{c.identity || c.role || 'NPC'}</CSBadge> },
-                { id: 'bio', content: (c) => <CSBox color="text-body-secondary">{String(c.appearance || c.personality || c.summary || c.description || '').slice(0, 160) || '—'}</CSBox> },
+                { id: 'meta', content: (c) => (
+                  <CSSpaceBetween direction="horizontal" size="xs">
+                    <CSBadge>{c.identity || c.role || 'NPC'}</CSBadge>
+                    {c.first_revealed_chapter > 1 && <CSBadge color="blue">📖 第 {c.first_revealed_chapter} 章</CSBadge>}
+                    {c.importance != null && <CSBadge color="grey">重要度 {c.importance}</CSBadge>}
+                    {c.enabled === false && <CSStatusIndicator type="stopped">已禁用</CSStatusIndicator>}
+                  </CSSpaceBetween>
+                ) },
+                { id: 'bio', content: (c) => (
+                  <CSBox color="text-body-secondary" fontSize="body-s">
+                    {String(c.background || c.appearance || c.personality || c.summary || c.description || '').slice(0, 180) || '—'}
+                  </CSBox>
+                ) },
+                { id: 'act', content: (c) => (
+                  <CSButton variant="inline-link" iconName="edit" onClick={() => setNpcEdit({ card: c, isNew: false })}>查看 / 编辑</CSButton>
+                ) },
               ],
             }}
-            empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>该剧本暂无 NPC 角色卡。提取 / 导入后会生成。</CSBox>} />
+            empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>该剧本暂无 NPC 角色卡。提取 / 导入后会生成,也可点「新增 NPC 卡」手建。</CSBox>} />
         ) },
         { id: 'timeline', label: '时间线', content: (
           (loading && tl == null)
@@ -310,6 +339,24 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
           <KbExtractPanel script={s} onDone={onExtractDone} />
         ) },
       ]} />
+      {npcEdit && (
+        <CardEditModal
+          card={npcEdit.card}
+          isNew={npcEdit.isNew}
+          kind="npc"
+          onClose={() => setNpcEdit(null)}
+          onSave={async (payload) => {
+            try {
+              await window.api.cards.scriptUpsert(s.id, payload);
+              window.__apiToast?.(npcEdit.isNew ? '已新增 NPC 卡' : '已保存 NPC 卡', { kind: 'ok' });
+              setNpcEdit(null);
+              setNpc(null); // 触发 NPC 列表重新拉取
+            } catch (e) {
+              window.__apiToast?.('保存失败', { kind: 'danger', detail: e?.message });
+            }
+          }}
+        />
+      )}
     </CSContainer>
   );
 }

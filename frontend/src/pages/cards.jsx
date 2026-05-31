@@ -30,6 +30,152 @@ import CSColumnLayout from '@cloudscape-design/components/column-layout';
 import CSToggle from '@cloudscape-design/components/toggle';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 
+/* ── v28 统一 CharacterCardDTO 编辑套件(NPC / PC / persona 三态共用) ──────
+   后端合并三张表为 character_cards 多态表,所有读卡 API 返回同一 DTO。
+   字段:name/full_name/identity/aliases/background/appearance/personality/
+   speech_style/current_status/secrets/sample_dialogue/importance/
+   first_revealed_chapter/token_budget/priority/enabled/scope/tags。 */
+const _asLines = (v) => Array.isArray(v)
+  ? v.map((x) => (typeof x === 'string' ? x : (x && (x.content || x.text)) || '')).filter(Boolean).join('\n')
+  : (v || '');
+const _asCsv = (v) => Array.isArray(v) ? v.join(', ') : (v || '');
+
+function cardFormInit(card) {
+  const c = card || {};
+  return {
+    name: c.name || '',
+    full_name: c.full_name || '',
+    identity: c.identity || c.role || '',
+    aliases: _asCsv(c.aliases),
+    tags: _asCsv(c.tags),
+    background: c.background || '',
+    appearance: c.appearance || '',
+    personality: c.personality || '',
+    speech_style: c.speech_style || '',
+    current_status: c.current_status || '',
+    secrets: c.secrets || '',
+    sample_dialogue: _asLines(c.sample_dialogue),
+    importance: c.importance ?? 100,
+    first_revealed_chapter: c.first_revealed_chapter ?? 1,
+    token_budget: c.token_budget ?? 450,
+    priority: c.priority ?? 100,
+    enabled: c.enabled ?? true,
+    scope: c.scope || 'private',
+  };
+}
+
+function cardFormPayload(form, card) {
+  const t = (s) => (s || '').trim();
+  return {
+    ...(card && card.id ? { id: card.id } : {}),
+    name: t(form.name),
+    full_name: t(form.full_name),
+    identity: t(form.identity),
+    aliases: t(form.aliases).split(',').map((s) => s.trim()).filter(Boolean),
+    tags: t(form.tags).split(',').map((s) => s.trim()).filter(Boolean),
+    background: t(form.background),
+    appearance: t(form.appearance),
+    personality: t(form.personality),
+    speech_style: t(form.speech_style),
+    current_status: t(form.current_status),
+    secrets: t(form.secrets),
+    sample_dialogue: t(form.sample_dialogue).split('\n').map((s) => s.trim()).filter(Boolean),
+    importance: Number(form.importance) || 100,
+    first_revealed_chapter: Number(form.first_revealed_chapter) || 1,
+    token_budget: Number(form.token_budget) || 450,
+    priority: Number(form.priority) || 100,
+    enabled: !!form.enabled,
+    scope: form.scope || 'private',
+  };
+}
+
+const _SCOPE_OPTS_NPC = [
+  { value: 'script', label: '剧本内(随剧本)' },
+  { value: 'private', label: '私有(仅自己可见)' },
+  { value: 'public', label: '公开(可分享)' },
+];
+const _SCOPE_OPTS_USER = [
+  { value: 'private', label: '私有(仅自己可见)' },
+  { value: 'public', label: '公开(可分享)' },
+];
+
+// 共享字段组(EC2 区块)。kind: 'npc' | 'user' | 'persona'
+function CardEditFields({ form, u, kind = 'user' }) {
+  const isNpc = kind === 'npc';
+  const scopeOpts = isNpc ? _SCOPE_OPTS_NPC : _SCOPE_OPTS_USER;
+  const h2 = (t, d) => <CSHeader variant="h2" description={d}>{t}</CSHeader>;
+  return (
+    <CSSpaceBetween size="l">
+      <CSContainer header={h2('基本信息', '姓名必填;全名为欧美式全名,别名/标签逗号分隔。')}>
+        <CSColumnLayout columns={2}>
+          <CSFormField label="姓名" constraintText="必填">
+            <CSInput value={form.name} onChange={({ detail }) => u('name', detail.value)} autoFocus />
+          </CSFormField>
+          <CSFormField label="全名 (full name)" description="欧美式全名,留空则与姓名同">
+            <CSInput value={form.full_name} onChange={({ detail }) => u('full_name', detail.value)} />
+          </CSFormField>
+          <CSFormField label="身份 / 职位">
+            <CSInput value={form.identity} onChange={({ detail }) => u('identity', detail.value)} />
+          </CSFormField>
+          <CSFormField label="别名" description="逗号分隔,GM 据此识别同一角色的多种称呼">
+            <CSInput value={form.aliases} onChange={({ detail }) => u('aliases', detail.value)} />
+          </CSFormField>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <CSFormField label="标签" description="逗号分隔">
+              <CSInput value={form.tags} onChange={({ detail }) => u('tags', detail.value)} />
+            </CSFormField>
+          </div>
+        </CSColumnLayout>
+      </CSContainer>
+
+      <CSContainer header={h2('人物画像', '前史 / 外貌 / 性格 / 语气 / 当前状态。')}>
+        <CSSpaceBetween size="l">
+          <CSFormField label="前史 / 背景" description="角色登场前的来历"><CSTextarea rows={3} value={form.background} onChange={({ detail }) => u('background', detail.value)} /></CSFormField>
+          <CSFormField label="外貌"><CSTextarea rows={2} value={form.appearance} onChange={({ detail }) => u('appearance', detail.value)} /></CSFormField>
+          <CSFormField label="性格 / 设定"><CSTextarea rows={3} value={form.personality} onChange={({ detail }) => u('personality', detail.value)} /></CSFormField>
+          <CSFormField label="语气 / 说话风格"><CSTextarea rows={2} value={form.speech_style} onChange={({ detail }) => u('speech_style', detail.value)} /></CSFormField>
+          <CSFormField label="当前状态" description="开局时的处境 / 心境"><CSTextarea rows={2} value={form.current_status} onChange={({ detail }) => u('current_status', detail.value)} /></CSFormField>
+        </CSSpaceBetween>
+      </CSContainer>
+
+      <CSContainer header={h2('剧情与对话', '关键秘密仅 GM 可见;示例对话每行一句。')}>
+        <CSSpaceBetween size="l">
+          <CSFormField label="关键秘密" description="GM 可见,不会直接暴露给其他角色"><CSTextarea rows={3} value={form.secrets} onChange={({ detail }) => u('secrets', detail.value)} /></CSFormField>
+          <CSFormField label="示例对话" description="每行一句,帮助 GM 模仿口吻"><CSTextarea rows={4} value={form.sample_dialogue} onChange={({ detail }) => u('sample_dialogue', detail.value)} /></CSFormField>
+        </CSSpaceBetween>
+      </CSContainer>
+
+      <CSContainer header={h2('注入参数', '控制该卡在上下文里的注入预算 / 优先级 / 重要度 / 可见范围。')}>
+        <CSColumnLayout columns={2}>
+          <CSFormField label="重要度" description="0–100,越高越优先被检索注入">
+            <CSInput type="number" value={String(form.importance)} onChange={({ detail }) => u('importance', detail.value)} />
+          </CSFormField>
+          {isNpc && (
+            <CSFormField label="首次揭示章节" description="第几章首次登场(章节闸)">
+              <CSInput type="number" value={String(form.first_revealed_chapter)} onChange={({ detail }) => u('first_revealed_chapter', detail.value)} />
+            </CSFormField>
+          )}
+          <CSFormField label="Token 预算" description="注入上下文的最大 token(默认 450)">
+            <CSInput type="number" value={String(form.token_budget)} onChange={({ detail }) => u('token_budget', detail.value)} />
+          </CSFormField>
+          <CSFormField label="优先级" description="数值越大越优先注入(默认 100)">
+            <CSInput type="number" value={String(form.priority)} onChange={({ detail }) => u('priority', detail.value)} />
+          </CSFormField>
+          <CSFormField label="可见范围">
+            <CSSelect selectedOption={scopeOpts.find((o) => o.value === form.scope) || scopeOpts[0]}
+              options={scopeOpts} onChange={({ detail }) => u('scope', detail.selectedOption.value)} />
+          </CSFormField>
+          <CSFormField label="启用">
+            <CSToggle checked={!!form.enabled} onChange={({ detail }) => u('enabled', detail.checked)}>
+              {form.enabled ? '已启用' : '已禁用'}
+            </CSToggle>
+          </CSFormField>
+        </CSColumnLayout>
+      </CSContainer>
+    </CSSpaceBetween>
+  );
+}
+
 const USER_CARDS = [
   { id: "uc1", name: "顾承砚", role: "漂流的史官", tone: "—", origin: "雾港未尽 · 默认主角",
     bio: "南陵旧学世家出身，因雾港事件获得在三个王朝间穿越的能力。能记录但难以改变。",
@@ -363,29 +509,21 @@ function CardDetailPanel({ card, kind, onSave, onDuplicate, onDelete }) {
   const [saving, setSaving] = useStatePL(false);
   useEffectPL(() => {
     setTab('info');
-    setForm({
-      name: raw.name || '', identity: raw.identity || raw.role || '',
-      personality: raw.personality || '', appearance: raw.appearance || '',
-      speech_style: raw.speech_style || '', secrets: raw.secrets || '',
-      tags: Array.isArray(raw.tags) ? raw.tags.join(', ') : '',
-    });
+    setForm(cardFormInit(raw));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.id]);
   const u = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const doSave = async () => {
     if (!form?.name?.trim()) { window.__apiToast?.('姓名必填', { kind: 'warn' }); return; }
     setSaving(true);
-    try {
-      await onSave({
-        name: form.name.trim(), identity: form.identity.trim(),
-        personality: form.personality.trim(), appearance: form.appearance.trim(),
-        speech_style: form.speech_style.trim(), secrets: form.secrets.trim(),
-        tags: (form.tags || '').split(',').map((s) => s.trim()).filter(Boolean),
-      });
-    } finally { setSaving(false); }
+    try { await onSave(cardFormPayload(form, card)); }
+    finally { setSaving(false); }
   };
   const setting = (label, value) => value
     ? <div><CSBox variant="awsui-key-label">{label}</CSBox><CSBox color="text-body-secondary" variant="p">{value}</CSBox></div>
     : null;
+  const fullName = raw.full_name && raw.full_name !== raw.name ? raw.full_name : null;
+  const chapterGate = (kind === 'npc' && raw.first_revealed_chapter > 1) ? raw.first_revealed_chapter : null;
 
   return (
     <CSContainer header={
@@ -398,43 +536,40 @@ function CardDetailPanel({ card, kind, onSave, onDuplicate, onDelete }) {
             <CSButton iconName="remove" onClick={onDelete}>删除</CSButton>
           </CSSpaceBetween>
         }
-      >{card.name}</CSHeader>
+      >{card.name}{fullName && <CSBox display="inline" color="text-status-inactive" fontSize="body-s" padding={{ left: 's' }}>{fullName}</CSBox>}</CSHeader>
     }>
       <CSTabs activeTabId={tab} onChange={({ detail }) => setTab(detail.activeTabId)} tabs={[
         { id: 'info', label: '角色信息', content: (
           <CSKeyValuePairs columns={4} items={[
-            { label: '身份', value: raw.identity || raw.role || '—' },
-            { label: '来源', value: card.origin || '通用' },
-            { label: '使用次数', value: `${card.uses || 0} 次` },
-            { label: '更新', value: card.updated || '—' },
+            { label: '身份 / 职位', value: raw.identity || raw.role || '—' },
+            ...(fullName ? [{ label: '全名', value: fullName }] : []),
+            { label: '类型', value: ({ npc: 'NPC', pc: '玩家卡', persona: '玩家身份' })[raw.card_type] || (kind === 'npc' ? 'NPC' : '用户卡') },
+            { label: '来源', value: ({ extracted: 'LLM 提取', user: '用户', persona: '身份', platform: '平台' })[raw.source] || card.origin || '通用' },
+            { label: '重要度', value: raw.importance != null ? String(raw.importance) : '—' },
+            ...(chapterGate ? [{ label: '章节闸', value: <CSStatusIndicator type="info">📖 第 {chapterGate} 章揭示</CSStatusIndicator> }] : []),
+            { label: '可见范围', value: ({ script: '剧本内', private: '私有', public: '公开' })[raw.scope] || '—' },
+            { label: '状态', value: raw.enabled === false ? <CSStatusIndicator type="stopped">已禁用</CSStatusIndicator> : <CSStatusIndicator type="success">启用</CSStatusIndicator> },
             { label: '标签', value: (Array.isArray(raw.tags) && raw.tags.length) ? raw.tags.join(' · ') : '—' },
+            { label: '更新', value: card.updated || '—' },
             { label: '卡 ID', value: <span className="mono">{card.id}</span> },
           ]} />
         ) },
         { id: 'setting', label: '设定', content: (
           <CSSpaceBetween size="m">
+            {setting('前史 / 背景', raw.background)}
             {setting('外貌', raw.appearance)}
             {setting('性格', raw.personality)}
             {setting('语气 / 说话风格', raw.speech_style)}
             {setting('当前状态', raw.current_status)}
             {setting('关键秘密', raw.secrets)}
-            {!(raw.appearance || raw.personality || raw.speech_style || raw.current_status || raw.secrets) &&
+            {setting('示例对话', _asLines(raw.sample_dialogue))}
+            {!(raw.background || raw.appearance || raw.personality || raw.speech_style || raw.current_status || raw.secrets || (raw.sample_dialogue && raw.sample_dialogue.length)) &&
               <CSBox color="text-status-inactive">暂无设定,切到「角色设置」补充。</CSBox>}
           </CSSpaceBetween>
         ) },
         { id: 'edit', label: '角色设置', content: form && (
           <CSSpaceBetween size="l">
-            <CSColumnLayout columns={2}>
-              <CSFormField label="姓名" constraintText="必填"><CSInput value={form.name} onChange={({ detail }) => u('name', detail.value)} /></CSFormField>
-              <CSFormField label="身份"><CSInput value={form.identity} onChange={({ detail }) => u('identity', detail.value)} /></CSFormField>
-            </CSColumnLayout>
-            <CSFormField label="性格 / 设定"><CSTextarea rows={3} value={form.personality} onChange={({ detail }) => u('personality', detail.value)} /></CSFormField>
-            <CSColumnLayout columns={2}>
-              <CSFormField label="外貌"><CSTextarea rows={2} value={form.appearance} onChange={({ detail }) => u('appearance', detail.value)} /></CSFormField>
-              <CSFormField label="语气 / 说话风格"><CSTextarea rows={2} value={form.speech_style} onChange={({ detail }) => u('speech_style', detail.value)} /></CSFormField>
-            </CSColumnLayout>
-            <CSFormField label="关键秘密"><CSTextarea rows={2} value={form.secrets} onChange={({ detail }) => u('secrets', detail.value)} /></CSFormField>
-            <CSFormField label="标签" description="逗号分隔"><CSInput value={form.tags} onChange={({ detail }) => u('tags', detail.value)} /></CSFormField>
+            <CardEditFields form={form} u={u} kind={kind} />
             <CSBox><CSButton variant="primary" iconName="check" loading={saving} onClick={doSave}>保存</CSButton></CSBox>
           </CSSpaceBetween>
         ) },
@@ -725,59 +860,18 @@ function NpcCardsView() {
    appearance / personality / speech_style / current_status / secrets /
    sample_dialogue / token_budget / priority / enabled / scope。 */
 function CardEditModal({ card, isNew, kind, onClose, onSave }) {
-  const asLines = (v) => Array.isArray(v) ? v.join("\n") : (v || "");
-  const asCsv = (v) => Array.isArray(v) ? v.join(", ") : (v || "");
-  const [form, setForm] = useStatePL({
-    name: card?.name || "",
-    identity: card?.identity || "",
-    aliases: asCsv(card?.aliases),
-    tags: asCsv(card?.tags),
-    appearance: card?.appearance || "",
-    personality: card?.personality || "",
-    speech_style: card?.speech_style || "",
-    current_status: card?.current_status || "",
-    secrets: card?.secrets || "",
-    sample_dialogue: asLines(card?.sample_dialogue),
-    token_budget: card?.token_budget ?? 450,
-    priority: card?.priority ?? 100,
-    enabled: card?.enabled ?? true,
-    scope: card?.scope || "private",
-  });
+  const [form, setForm] = useStatePL(() => cardFormInit(card));
   const [submitting, setSubmitting] = useStatePL(false);
   const u = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const nameOk = !!form.name.trim();
 
-  const buildPayload = () => ({
-    ...(card?.id ? { id: card.id } : {}),
-    name: form.name.trim(),
-    identity: form.identity.trim(),
-    aliases: (form.aliases || "").split(",").map(s => s.trim()).filter(Boolean),
-    tags: (form.tags || "").split(",").map(s => s.trim()).filter(Boolean),
-    appearance: form.appearance.trim(),
-    personality: form.personality.trim(),
-    speech_style: form.speech_style.trim(),
-    current_status: form.current_status.trim(),
-    secrets: form.secrets.trim(),
-    sample_dialogue: (form.sample_dialogue || "").split("\n").map(s => s.trim()).filter(Boolean),
-    token_budget: Number(form.token_budget) || 450,
-    priority: Number(form.priority) || 100,
-    enabled: !!form.enabled,
-    scope: form.scope || "private",
-  });
-
   const doSave = async () => {
     if (!nameOk || submitting) return;
     setSubmitting(true);
-    try { await onSave?.(buildPayload()); }
+    try { await onSave?.(cardFormPayload(form, card)); }
     catch (_) { /* 父级 onSaveCard 已 toast */ }
     finally { setSubmitting(false); }
   };
-
-  const secHeader = (text, desc) => <CSHeader variant="h2" description={desc}>{text}</CSHeader>;
-  const scopeOpts = [
-    { value: 'private', label: '私有(仅自己可见)' },
-    { value: 'public', label: '公开(可分享)' },
-  ];
 
   const node = (
     <div style={{ position: 'fixed', top: 53, left: 0, right: 0, bottom: 0, zIndex: 1000, background: 'var(--bg, #1a1817)', overflow: 'auto' }}>
@@ -793,64 +887,9 @@ function CardEditModal({ card, isNew, kind, onClose, onSave }) {
 
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '20px 24px 80px' }}>
         <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-          {/* 左:模块平铺 */}
+          {/* 左:共享字段组(NPC/PC/persona 三态统一) */}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <CSSpaceBetween size="l">
-              <CSContainer header={secHeader('基本信息', '姓名必填;别名 / 标签用逗号分隔。')}>
-                <CSColumnLayout columns={2}>
-                  <CSFormField label="姓名" constraintText="必填">
-                    <CSInput value={form.name} onChange={({ detail }) => u('name', detail.value)} autoFocus />
-                  </CSFormField>
-                  <CSFormField label="身份">
-                    <CSInput value={form.identity} onChange={({ detail }) => u('identity', detail.value)} />
-                  </CSFormField>
-                  <CSFormField label="别名" description="逗号分隔,GM 据此识别同一角色的多种称呼">
-                    <CSInput value={form.aliases} onChange={({ detail }) => u('aliases', detail.value)} />
-                  </CSFormField>
-                  <CSFormField label="标签" description="逗号分隔">
-                    <CSInput value={form.tags} onChange={({ detail }) => u('tags', detail.value)} />
-                  </CSFormField>
-                </CSColumnLayout>
-              </CSContainer>
-
-              <CSContainer header={secHeader('人物画像', '外貌 / 性格 / 语气 / 当前状态。')}>
-                <CSSpaceBetween size="l">
-                  <CSFormField label="外貌"><CSTextarea rows={2} value={form.appearance} onChange={({ detail }) => u('appearance', detail.value)} /></CSFormField>
-                  <CSFormField label="性格 / 设定"><CSTextarea rows={3} value={form.personality} onChange={({ detail }) => u('personality', detail.value)} /></CSFormField>
-                  <CSFormField label="语气 / 说话风格"><CSTextarea rows={2} value={form.speech_style} onChange={({ detail }) => u('speech_style', detail.value)} /></CSFormField>
-                  <CSFormField label="当前状态" description="开局时的处境 / 心境"><CSTextarea rows={2} value={form.current_status} onChange={({ detail }) => u('current_status', detail.value)} /></CSFormField>
-                </CSSpaceBetween>
-              </CSContainer>
-
-              <CSContainer header={secHeader('剧情与对话', '关键秘密仅 GM 可见;示例对话每行一句。')}>
-                <CSSpaceBetween size="l">
-                  <CSFormField label="关键秘密" description="GM 可见,不会直接暴露给其他角色"><CSTextarea rows={3} value={form.secrets} onChange={({ detail }) => u('secrets', detail.value)} /></CSFormField>
-                  <CSFormField label="示例对话" description="每行一句,帮助 GM 模仿口吻">
-                    <CSTextarea rows={4} value={form.sample_dialogue} onChange={({ detail }) => u('sample_dialogue', detail.value)} />
-                  </CSFormField>
-                </CSSpaceBetween>
-              </CSContainer>
-
-              <CSContainer header={secHeader('注入参数', '控制该卡在上下文里的注入预算 / 优先级 / 可见范围。')}>
-                <CSColumnLayout columns={2}>
-                  <CSFormField label="Token 预算" description="注入上下文的最大 token(默认 450)">
-                    <CSInput type="number" value={String(form.token_budget)} onChange={({ detail }) => u('token_budget', detail.value)} />
-                  </CSFormField>
-                  <CSFormField label="优先级" description="数值越大越优先注入(默认 100)">
-                    <CSInput type="number" value={String(form.priority)} onChange={({ detail }) => u('priority', detail.value)} />
-                  </CSFormField>
-                  <CSFormField label="可见范围">
-                    <CSSelect selectedOption={scopeOpts.find(o => o.value === form.scope) || scopeOpts[0]}
-                      options={scopeOpts} onChange={({ detail }) => u('scope', detail.selectedOption.value)} />
-                  </CSFormField>
-                  <CSFormField label="启用">
-                    <CSToggle checked={!!form.enabled} onChange={({ detail }) => u('enabled', detail.checked)}>
-                      {form.enabled ? '已启用' : '已禁用'}
-                    </CSToggle>
-                  </CSFormField>
-                </CSColumnLayout>
-              </CSContainer>
-            </CSSpaceBetween>
+            <CardEditFields form={form} u={u} kind={kind} />
           </div>
 
           {/* 右:概要 + 保存(sticky) */}
