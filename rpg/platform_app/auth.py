@@ -72,6 +72,8 @@ _FAIL_LOCK = threading.Lock()
 import logging as _logging
 _log = _logging.getLogger(__name__)
 
+_PENDING_REGISTER_UA_PREFIX = "rpg-pending-register:v1:"
+
 
 class RateLimited(Exception):
     """登录被速率限制时抛出"""
@@ -242,6 +244,21 @@ def register(
     if calc_age(birthday) < 18:
         raise ValueError("你必须年满 18 周岁才能注册")
 
+    pending_payload = {
+        "username": username,
+        "password_hash": hash_password(password),
+        "display_name": (display_name or username).strip(),
+        "birthday": birthday.isoformat(),
+        "terms_accepted": terms_accepted,
+        "age_confirmed": age_confirmed,
+        "invite_code": invite_code,
+        "allow_admin": _bootstrap_admin_allowed(setup_token),
+        "ip": ip or "",
+        "ua": ua or "",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    pending_json = _encode_pending_register(pending_payload)
+
     with connect() as db:
         # ── REG-04: 查 banned_users ───────────────────────────────────────────
         banned = db.execute(
@@ -287,22 +304,10 @@ def register(
               (email, code_hash, purpose, expires_at, ip, ua)
             values (%s, %s, 'register', %s, %s, %s)
             """,
-            (email_norm, code_h, expires_at, ip or "", ua or ""),
+            (email_norm, code_h, expires_at, ip or "", pending_json),
         )
 
-    # ── 临时存注册数据到 verif 行的 ua 字段太窄，改用进程内 dict ──────────────
-    # 这里把 pending 注册参数序列化到全局缓存（不跨 worker），多 worker 下须改 Redis
-    import json as _json
-    _PENDING_REGISTER[email_norm] = _json.dumps({
-        "username": username,
-        "password_hash": hash_password(password),
-        "display_name": (display_name or username).strip(),
-        "birthday": birthday.isoformat(),
-        "terms_accepted": terms_accepted,
-        "age_confirmed": age_confirmed,
-        "invite_code": invite_code,
-        "setup_token": setup_token,
-    })
+    _PENDING_REGISTER[email_norm] = pending_json
 
     # ── 发验证码邮件 ──────────────────────────────────────────────────────────
     from .email import send_verification_email, EmailSendError
@@ -320,6 +325,43 @@ def register(
 
 # 进程内 pending 注册缓存（多 worker 须改 Redis）
 _PENDING_REGISTER: dict[str, str] = {}
+
+
+def _encode_pending_register(payload: dict[str, Any]) -> str:
+    import json as _json
+    return _PENDING_REGISTER_UA_PREFIX + _json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _decode_pending_register(raw: str | None) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    import json as _json
+    text = str(raw)
+    if text.startswith(_PENDING_REGISTER_UA_PREFIX):
+        text = text[len(_PENDING_REGISTER_UA_PREFIX):]
+    try:
+        payload = _json.loads(text)
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if not payload.get("username") or not payload.get("password_hash") or not payload.get("birthday"):
+        return None
+    return payload
+
+
+def _row_get(row, key: str, default=None):
+    try:
+        return row[key]
+    except Exception:
+        try:
+            return row.get(key, default)
+        except Exception:
+            return default
 
 
 def _check_invite_code(db, invite_code: str | None) -> None:
@@ -370,7 +412,6 @@ def confirm_email_verification(email: str, code: str) -> tuple[dict[str, Any], s
     Returns:
         (user_dict, session_token)
     """
-    import json as _json
     email_norm = normalize_email(email)
     init_db()
 
@@ -394,19 +435,18 @@ def confirm_email_verification(email: str, code: str) -> tuple[dict[str, Any], s
         if not verify_email_code(code, verif["code_hash"]):
             raise ValueError("验证码错误")
 
-        # 标记已使用
-        db.execute(
-            "update email_verifications set used_at = now() where id = %s",
-            (verif["id"],),
-        )
-
-        # 取 pending 注册参数
+        # 取 pending 注册参数。优先读进程缓存；若部署重启导致缓存丢失，
+        # 从 email_verifications.ua 中恢复，保证验证码窗口内仍可完成注册。
         pending_json = _PENDING_REGISTER.pop(email_norm, None)
-        if not pending_json:
+        pending = _decode_pending_register(pending_json) or _decode_pending_register(_row_get(verif, "ua"))
+        if not pending:
             raise ValueError("注册会话已过期，请重新注册")
 
-        pending = _json.loads(pending_json)
-        allow_admin = _bootstrap_admin_allowed(pending.get("setup_token"))
+        allow_admin = (
+            bool(pending.get("allow_admin"))
+            if "allow_admin" in pending
+            else _bootstrap_admin_allowed(pending.get("setup_token"))
+        )
 
         from datetime import date as _date, timezone as _tz
         birthday = _date.fromisoformat(pending["birthday"])
@@ -467,6 +507,12 @@ def confirm_email_verification(email: str, code: str) -> tuple[dict[str, Any], s
                 "update invite_codes set used_by = %s, used_at = now() where code = %s and used_by is null",
                 (user["id"], invite_code),
             )
+
+        # 标记验证码已使用。放在用户创建之后，避免 pending 恢复失败时吞掉有效验证码。
+        db.execute(
+            "update email_verifications set used_at = now() where id = %s",
+            (verif["id"],),
+        )
 
         # 颁 session
         token = secrets.token_urlsafe(32)
@@ -623,12 +669,29 @@ def resend_verification_code(email: str, ip: str = "") -> None:
         raise ValueError(f"发送太频繁，请 {wait} 秒后再试")
     _RESEND_LAST[email_norm] = now
 
-    # 检查是否有有效 pending 记录（没有则不重发）
-    if email_norm not in _PENDING_REGISTER:
-        raise ValueError("注册会话已过期，请重新注册")
-
     init_db()
     with connect() as db:
+        pending = _decode_pending_register(_PENDING_REGISTER.get(email_norm))
+        if not pending:
+            verif = db.execute(
+                """
+                select * from email_verifications
+                where lower(email) = %s
+                  and purpose = 'register'
+                  and used_at is null
+                  and expires_at > now()
+                order by created_at desc
+                limit 1
+                """,
+                (email_norm,),
+            ).fetchone()
+            pending = _decode_pending_register(_row_get(verif, "ua") if verif else None)
+        if not pending:
+            raise ValueError("注册会话已过期，请重新注册")
+
+        pending_json = _encode_pending_register(pending)
+        _PENDING_REGISTER[email_norm] = pending_json
+
         # 废弃旧记录，发新验证码
         db.execute(
             "update email_verifications set used_at = now() where lower(email) = %s and used_at is null and purpose = 'register'",
@@ -639,8 +702,8 @@ def resend_verification_code(email: str, ip: str = "") -> None:
         from datetime import timezone as _tz, timedelta as _td
         expires_at = datetime.now(_tz.utc) + _td(minutes=10)
         db.execute(
-            "insert into email_verifications (email, code_hash, purpose, expires_at, ip) values (%s, %s, 'register', %s, %s)",
-            (email_norm, code_h, expires_at, ip or ""),
+            "insert into email_verifications (email, code_hash, purpose, expires_at, ip, ua) values (%s, %s, 'register', %s, %s, %s)",
+            (email_norm, code_h, expires_at, ip or "", pending_json),
         )
 
     from .email import send_verification_email, EmailSendError

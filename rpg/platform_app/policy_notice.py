@@ -202,7 +202,7 @@ def dispatch_notice(db, notice_id: str) -> dict:
         batch = recipients[batch_start: batch_start + _BATCH_SIZE]
         for addr, lang in batch:
             is_zh = lang.lower().startswith("zh")
-            subject, body = _build_email(slug, new_version, summary, effective_at_str, is_zh)
+            subject, body, html = _build_email_payload(slug, new_version, summary, effective_at_str, is_zh)
             try:
                 resp = httpx.post(
                     "https://api.resend.com/emails",
@@ -215,6 +215,7 @@ def dispatch_notice(db, notice_id: str) -> dict:
                         "to": [addr],
                         "subject": subject,
                         "text": body,
+                        "html": html,
                     },
                     timeout=10,
                 )
@@ -323,3 +324,35 @@ def _build_email(
         )
 
     return subject, body
+
+
+def _build_email_payload(
+    slug: str,
+    new_version: str,
+    summary: str,
+    effective_at_str: str,
+    is_zh: bool,
+) -> tuple[str, str, str]:
+    """返回 (subject, text body, html body)。"""
+    from platform_app.email import build_policy_notice_email
+
+    names = _POLICY_NAMES.get(slug, {"zh-CN": slug, "en": slug})
+    name_zh = names["zh-CN"]
+    name_en = names["en"]
+    url = f"{LANDING_BASE}/{slug}.html"
+
+    try:
+        dt = datetime.fromisoformat(effective_at_str)
+        effective_display = dt.strftime("%Y-%m-%d %H:%M UTC")
+    except ValueError:
+        effective_display = effective_at_str
+
+    return build_policy_notice_email(
+        name_zh=name_zh,
+        name_en=name_en,
+        new_version=new_version,
+        summary=summary,
+        effective_display=effective_display,
+        url=url,
+        is_zh=is_zh,
+    )
