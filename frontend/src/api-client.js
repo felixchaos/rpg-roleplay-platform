@@ -44,10 +44,14 @@
   let _AUTH_REDIRECT_ARMED = true;
 
   // ---- core fetch helpers ------------------------------------
+  function timeoutSignal(ms) {
+    return AbortSignal.timeout(ms);
+  }
+
   async function _send(path, opts) {
     const url = (path.startsWith("http") ? path : BASE + path);
     // Default 15 s timeout; caller may pass opts.signal to override.
-    const defaultSignal = AbortSignal.timeout(15000);
+    const defaultSignal = timeoutSignal(15000);
     const init = Object.assign(
       {
         credentials: "include",
@@ -130,10 +134,10 @@
     }
     return _send(p, { method: "GET" });
   };
-  const POST = (path, body) => _send(path, { method: "POST", body: body || {} });
-  const PATCH = (path, body) => _send(path, { method: "PATCH", body: body || {} });
-  const PUT = (path, body) => _send(path, { method: "PUT", body: body || {} });
-  const DEL = (path, body) => _send(path, { method: "DELETE", body: body || {} });
+  const POST = (path, body, opts) => _send(path, Object.assign({ method: "POST", body: body || {} }, opts || {}));
+  const PATCH = (path, body, opts) => _send(path, Object.assign({ method: "PATCH", body: body || {} }, opts || {}));
+  const PUT = (path, body, opts) => _send(path, Object.assign({ method: "PUT", body: body || {} }, opts || {}));
+  const DEL = (path, body, opts) => _send(path, Object.assign({ method: "DELETE", body: body || {} }, opts || {}));
 
   // ---- SSE helper for /api/chat & /api/opening ---------------
   // Posts a JSON body and parses the streaming response into
@@ -354,8 +358,8 @@
     // ---------- Scripts ----------
     scripts: {
       list: () => GET(`${API_PREFIX}/scripts`),
-      preview: (body) => POST(`${API_PREFIX}/scripts/preview`, body),
-      importScript: (body) => POST(`${API_PREFIX}/scripts/import`, body),
+      preview: (body) => POST(`${API_PREFIX}/scripts/preview`, body, { signal: timeoutSignal(90000) }),
+      importScript: (body) => POST(`${API_PREFIX}/scripts/import`, body, { signal: timeoutSignal(90000) }),
       delete: (sid) => POST(`${API_PREFIX}/scripts/` + sid + "/delete", {}),
       chapters: (sid, q) => GET(`${API_PREFIX}/scripts/` + sid + "/chapters", q),
       updateChapter: (sid, idx, body) => POST(`${API_PREFIX}/scripts/${sid}/chapters/${idx}`, body),
@@ -509,7 +513,7 @@
     // 后端 /api/uploads/{id}/chunk 要 JSON {chunk_index, base64}（不是 multipart）。
     // 这里把 chunk 重写成读 Blob → base64 → JSON POST。
     uploads: {
-      init: (body) => POST(`${API_PREFIX}/uploads/init`, body),
+      init: (body) => POST(`${API_PREFIX}/uploads/init`, body, { signal: timeoutSignal(30000) }),
       chunk: async (id, chunk, index) => {
         const base64 = await new Promise((resolve, reject) => {
           const r = new FileReader();
@@ -521,9 +525,9 @@
           r.onerror = () => reject(r.error || new Error("分片读取失败"));
           r.readAsDataURL(chunk);
         });
-        return POST(`${API_PREFIX}/uploads/` + id + "/chunk", { chunk_index: Number(index) || 0, base64 });
+        return POST(`${API_PREFIX}/uploads/` + id + "/chunk", { chunk_index: Number(index) || 0, base64 }, { signal: timeoutSignal(60000) });
       },
-      finish: (id, body) => POST(`${API_PREFIX}/uploads/` + id + "/finish", body || {}),
+      finish: (id, body) => POST(`${API_PREFIX}/uploads/` + id + "/finish", body || {}, { signal: timeoutSignal(60000) }),
       cancel: (id) => POST(`${API_PREFIX}/uploads/` + id + "/cancel", {}),
     },
 
