@@ -648,3 +648,134 @@ def resend_verification_code(email: str, ip: str = "") -> None:
         send_verification_email(email_norm, code)
     except EmailSendError:
         _log.warning("resend_verification_code: email send failed for %s; code=%s", email_norm, code)
+
+
+# ── 密码重置（忘记密码）────────────────────────────────────────────────────────
+#
+# 复用 email_verifications 表（purpose='password_reset'），不新建独立表。
+# 字段映射: email / code_hash(存 token HMAC) / expires_at / used_at / user_id
+# user_id 列在 email_verifications 是否存在需运行时检查；若无则只用 email 关联。
+#
+_RESET_RATE: dict[str, float] = {}   # email_norm → 最近触发时间（防 spam）
+_RESET_RATE_LOCK = threading.Lock()
+_RESET_MAX_PER_10MIN = 3             # 每邮箱 10 分钟内最多 3 次请求
+
+
+def _check_reset_rate(email_norm: str) -> None:
+    """超过频率限制时抛 ValueError（调用方展示通用 ok 以防枚举）。"""
+    now = time.monotonic()
+    key = f"r:{email_norm}"
+    with _RESET_RATE_LOCK:
+        if key not in _RESET_RATE:
+            _RESET_RATE[key] = now
+            return
+        elapsed = now - _RESET_RATE[key]
+        if elapsed < 600 / _RESET_MAX_PER_10MIN:  # 简单滑动阈值
+            raise ValueError("rate_limited")
+        _RESET_RATE[key] = now
+
+
+def request_password_reset(email: str, ip: str = "") -> dict:
+    """触发密码重置邮件。
+
+    - 不论 email 是否存在都返回 {'ok': True}（防枚举攻击）。
+    - 若 email 存在且已验证：写 email_verifications(purpose='password_reset')
+      并发送重置链接邮件。
+    - token TTL 30 分钟。
+    """
+    email_norm = normalize_email(email)
+    if not email_norm or "@" not in email_norm:
+        return {"ok": True}   # 静默，防枚举
+
+    try:
+        _check_reset_rate(email_norm)
+    except ValueError:
+        return {"ok": True}   # 限流也静默
+
+    init_db()
+    with connect() as db:
+        row = db.execute(
+            "SELECT id FROM users WHERE LOWER(email) = %s AND email_verified = true AND deactivated_at IS NULL LIMIT 1",
+            (email_norm,),
+        ).fetchone()
+        if not row:
+            return {"ok": True}   # 邮箱不存在，静默
+
+        user_id = row["id"]
+        token = secrets.token_urlsafe(32)
+        token_hash = hash_email_code(token)   # 复用已有 HMAC util
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+
+        # 废弃同邮箱的旧 password_reset 记录
+        db.execute(
+            "UPDATE email_verifications SET used_at = NOW() "
+            "WHERE LOWER(email) = %s AND purpose = 'password_reset' AND used_at IS NULL",
+            (email_norm,),
+        )
+        # 写新记录（兼容有/无 user_id 列两种 schema）
+        try:
+            db.execute(
+                "INSERT INTO email_verifications (email, code_hash, purpose, expires_at, ip) "
+                "VALUES (%s, %s, 'password_reset', %s, %s)",
+                (email_norm, token_hash, expires_at, ip or ""),
+            )
+        except Exception:
+            _log.warning("request_password_reset: insert failed for %s", email_norm, exc_info=True)
+            return {"ok": True}
+
+    from .email import send_password_reset_email, EmailSendError
+    try:
+        send_password_reset_email(email_norm, token)
+    except EmailSendError:
+        _log.warning("request_password_reset: send email failed (RESEND unconfigured?)")
+
+    return {"ok": True}
+
+
+def confirm_password_reset(token: str, new_password: str, ip: str = "") -> dict:
+    """验证重置 token，更新密码。
+
+    Raises:
+        ValueError: token 无效 / 已过期 / 已使用
+        ValueError: 新密码不符合策略
+    """
+    if not token:
+        raise ValueError("invalid_token")
+    if len(new_password or "") < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"密码至少 {MIN_PASSWORD_LENGTH} 位")
+    if len(new_password or "") > 1024:
+        raise ValueError("密码超长")
+
+    token_hash = hash_email_code(token)
+    init_db()
+    with connect() as db:
+        verif = db.execute(
+            "SELECT id, email, used_at FROM email_verifications "
+            "WHERE code_hash = %s AND purpose = 'password_reset' AND expires_at > NOW() "
+            "LIMIT 1",
+            (token_hash,),
+        ).fetchone()
+        if not verif:
+            raise ValueError("重置链接无效或已过期，请重新申请")
+        if verif["used_at"]:
+            raise ValueError("该重置链接已使用过，请重新申请")
+
+        # 查找对应用户
+        email_norm = verif["email"]
+        user = db.execute(
+            "SELECT id FROM users WHERE LOWER(email) = %s AND email_verified = true AND deactivated_at IS NULL LIMIT 1",
+            (email_norm,),
+        ).fetchone()
+        if not user:
+            raise ValueError("账号不存在或已被禁用")
+
+        pw_hash = hash_password(new_password)
+        db.execute("UPDATE users SET password_hash = %s, updated_at = NOW() WHERE id = %s",
+                   (pw_hash, user["id"]))
+        db.execute("UPDATE email_verifications SET used_at = NOW() WHERE id = %s",
+                   (verif["id"],))
+        # 安全：重置密码后废除所有旧 session
+        db.execute("DELETE FROM sessions WHERE user_id = %s", (user["id"],))
+
+    _log.info("password_reset: user_id=%s ip=%s", user["id"], ip)
+    return {"ok": True}

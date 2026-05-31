@@ -30,6 +30,13 @@
       "autosave_on": "Enabled · Once per turn",
       "autosave_off": "Disabled"
     },
+    "black_swan": {
+      "title": "Black Swan Events",
+      "enable": "Enable",
+      "enable_desc": "GM may inject unexpected world events to break narrative predictability (sprint 5 Black Swan agent). Disable for a calm, predictable narrative.",
+      "enable_on": "Enabled",
+      "enable_off": "Disabled (calm narrative)"
+    },
     "extractor": {
       "title": "Narrative Extractor (GM Step 2)",
       "enable": "Enable",
@@ -1256,7 +1263,21 @@
       "resend_ok": "Code resent, please check your email",
       "resend_fail": "Resend failed",
       "sent_notice": "Verification code sent to {{mask}}. Please verify within 10 minutes."
-    }
+    },
+    "forgot_email": "Registered Email",
+    "forgot_email_required": "Please enter a valid email address",
+    "forgot_desc": "Enter your registered email and we will send a password reset link (valid for 30 minutes).",
+    "forgot_send": "Send Reset Email",
+    "forgot_sent": "If that email is registered and verified, a reset link has been sent. Please check your inbox.",
+    "forgot_back_to_login": "← Back to Login",
+    "reset_desc": "Enter a new password (at least 8 characters).",
+    "reset_new_pw": "New Password",
+    "reset_confirm": "Confirm New Password",
+    "reset_submit": "Set New Password",
+    "reset_pw_mismatch": "Passwords do not match",
+    "reset_success": "Password reset. Redirecting to login…",
+    "reset_token_invalid_or_expired": "Reset link is invalid or expired. Please request a new one.",
+    "reset_token_used": "This reset link has already been used. Please request a new one."
   },
   "saves": {
     "list": {
@@ -1457,7 +1478,10 @@
       "card_create_fail": "Character card creation failed",
       "preview_title": "Card Preview · {{name}}",
       "preview_close": "Close",
-      "new_role_default": "New character"
+      "new_role_default": "New character",
+      "birthpoints_empty": "No starting point anchors available",
+      "birthpoints_empty_hint": "The script has no birthpoint anchors yet. Please wait for backend processing to complete, then retry.",
+      "retry": "Retry"
     },
     "identity": {
       "intro": "The identity card is a positioning overlay on top of the character card (time-traveler / undercover / exiled noble…) — unrelated to name or appearance. Optional — leave blank to play as \"{{name}}\" directly.",
@@ -1967,7 +1991,9 @@
       "mock_desc": "Imported from Tavern card · includes dialogue examples and tags.",
       "mock_first_mes": "(opening message example)",
       "tag_imported": "Imported",
-      "tag_tavern": "Tavern"
+      "tag_tavern": "Tavern",
+      "parse_pending_hint": "File size: {{size}} KB · MIME: {{mime}} · Auto-parse not enabled — please fill in fields manually.",
+      "parse_pending_first_mes": "(Please fill in the opening message manually)"
     },
     "editor": {
       "modal_title_new": "New",

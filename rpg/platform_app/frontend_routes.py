@@ -35,26 +35,7 @@ from .security import hash_password, verify_password
 
 router = APIRouter()
 
-# P2-1: SMS 端点 per-phone 速率限制
-# sms-code: 每分钟最多 1 次; sms-verify: 每分钟最多 5 次
-_SMS_CODE_BUCKETS: dict[str, list[float]] = {}   # phone → [时间戳...]
-_SMS_VERIFY_BUCKETS: dict[str, list[float]] = {} # phone → [时间戳...]
-_SMS_LOCK = threading.Lock()
-_SMS_CODE_MAX = 1
-_SMS_VERIFY_MAX = 5
-_SMS_WINDOW = 60.0  # 1 分钟
-
-
-def _check_sms_rate(buckets: dict, phone: str, max_count: int) -> bool:
-    """检查并记录 SMS 频率。超限返回 False，否则记录并返回 True。"""
-    now = time.monotonic()
-    with _SMS_LOCK:
-        bucket = buckets.setdefault(phone, [])
-        bucket[:] = [t for t in bucket if now - t < _SMS_WINDOW]
-        if len(bucket) >= max_count:
-            return False
-        bucket.append(now)
-        return True
+# 历史 SMS stub 已删除 (上线前清理 — 接入真实 SMS 网关需重新设计 OTP 流程)
 
 
 # ------------------------------------------------------------
@@ -224,38 +205,6 @@ async def api_revoke_all_sessions(request: Request):
         ).statusmessage
     return json_response({"ok": True, "result": n})
 
-
-# TODO_BEFORE_PRODUCTION: 此为 demo stub，接入真实 SMS 网关前必须替换
-@router.post("/api/auth/sms-code")
-async def api_sms_code(request: Request):
-    """Stub: we don't actually have an SMS gateway. Pretend success."""
-    require_user(request)
-    body = await request.json()
-    phone = (body.get("phone") or "").strip()
-    if not phone:
-        return _bad("请提供手机号")
-    # P2-1: per-phone 限流，每分钟最多 1 次
-    if not _check_sms_rate(_SMS_CODE_BUCKETS, phone, _SMS_CODE_MAX):
-        return _bad("发送验证码过于频繁，请 60 秒后再试", 429)
-    # TODO_BEFORE_PRODUCTION: 此为 demo stub，接入真实 SMS 网关前必须替换
-    return json_response({"ok": True, "message": "验证码已发送（演示）", "expires_in_sec": 60})
-
-
-# TODO_BEFORE_PRODUCTION: 此为 demo stub，接入真实 SMS 网关前必须替换
-@router.post("/api/auth/sms-verify")
-async def api_sms_verify(request: Request):
-    """Stub: accept any 4-6 digit code for demo purposes."""
-    require_user(request)
-    body = await request.json()
-    phone = (body.get("phone") or "").strip()
-    code = (body.get("code") or "").strip()
-    if not code.isdigit() or not (4 <= len(code) <= 6):
-        return _bad("验证码无效")
-    # P2-1: per-phone 限流，每分钟最多 5 次
-    if not _check_sms_rate(_SMS_VERIFY_BUCKETS, phone, _SMS_VERIFY_MAX):
-        return _bad("验证尝试过于频繁，请稍后再试", 429)
-    # TODO_BEFORE_PRODUCTION: 此为 demo stub，接入真实 SMS 网关前必须替换
-    return json_response({"ok": True, "verified": True})
 
 
 # ------------------------------------------------------------

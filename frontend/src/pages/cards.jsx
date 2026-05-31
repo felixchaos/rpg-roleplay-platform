@@ -712,18 +712,20 @@ function TavernImportModal({ open, onClose, onConfirm }) {
   const handleFiles = (list) => {
     const arr = [...list].slice(0, 8);
     setFiles(arr);
-    // mock: parse first file
+    // show real file info; no fake parse — backend parse endpoint not yet connected
     if (arr[0]) {
-      setTimeout(() => {
-        setParsed({
-          name: arr[0].name.replace(/\.(png|json|webp)$/i, "").replace(/[_-]/g, " "),
-          format: arr[0].name.match(/\.png$/i) ? "SillyTavern · PNG v2" : "SillyTavern · JSON",
-          description: t('cards.import.mock_desc'),
-          tags: [t('cards.import.tag_imported'), t('cards.import.tag_tavern')],
-          first_mes: t('cards.import.mock_first_mes'),
-          example_count: 4,
-        });
-      }, 400);
+      const f = arr[0];
+      const sizeKb = (f.size / 1024).toFixed(1);
+      const fmt = f.name.match(/\.png$/i) ? "SillyTavern · PNG v2" : f.name.match(/\.json$/i) ? "SillyTavern · JSON" : f.type || "unknown";
+      setParsed({
+        name: f.name.replace(/\.(png|json|webp)$/i, "").replace(/[_-]/g, " "),
+        format: fmt,
+        description: t('cards.import.parse_pending_hint', { size: sizeKb, mime: f.type || "—" }),
+        tags: [t('cards.import.tag_imported')],
+        first_mes: t('cards.import.parse_pending_first_mes'),
+        example_count: 0,
+        _manualOnly: true,
+      });
     }
   };
 

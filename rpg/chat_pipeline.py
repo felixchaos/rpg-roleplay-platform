@@ -587,6 +587,7 @@ async def run_gm_phase(
     current_run_id_fn: Callable[[dict[str, Any] | None], int],
     is_stop_requested_global: Callable[[dict[str, Any] | None, int], bool],
     is_extractor_enabled: Callable[[dict[str, Any] | None], bool],
+    is_black_swan_enabled: Callable[[dict[str, Any] | None], bool] | None = None,
     acceptance_verifier_mode: Callable[[dict[str, Any] | None], str],
     verify_acceptance: Callable[..., list[str]],
     active_script_id: Callable[[dict[str, Any] | None], int | None],
@@ -765,6 +766,7 @@ async def run_gm_phase(
         response=response, state=state, api_user=api_user, ctx=ctx,
         active_script_id=active_script_id,
         is_extractor_enabled=is_extractor_enabled,
+        is_black_swan_enabled=is_black_swan_enabled,
     )
 
     # 按固定顺序 yield 三组 SSE step(保前端时间线稳定)
@@ -933,6 +935,7 @@ async def _run_post_gm_parallel(
     ctx: PipelineContext,
     active_script_id: Callable[[dict[str, Any] | None], int | None],
     is_extractor_enabled: Callable[[dict[str, Any] | None], bool],
+    is_black_swan_enabled: Callable[[dict[str, Any] | None], bool] | None = None,
 ) -> dict[str, Any]:
     """并行跑 GM 后处理三项,返回 {timeline_violations, response_with_ops, extractor_active}。
 
@@ -963,9 +966,15 @@ async def _run_post_gm_parallel(
 
     async def _worker_black_swan() -> None:
         try:
-            from core.config import enable_black_swan as _enable_black_swan
-            if not _enable_black_swan():
-                return
+            # 优先走 user-pref callable(app.py 注入);未注入时退回 env-var。
+            if is_black_swan_enabled is not None:
+                if not is_black_swan_enabled(api_user):
+                    log.debug("[black_swan] disabled by user pref, skipping")
+                    return
+            else:
+                from core.config import enable_black_swan as _enable_black_swan
+                if not _enable_black_swan():
+                    return
             from agents.black_swan_agent import maybe_trigger as _maybe_trigger
             _sub_gm = getattr(ctx, "sub_gm", None)
             _swan_api = getattr(_sub_gm, "api_id", None) if _sub_gm else None

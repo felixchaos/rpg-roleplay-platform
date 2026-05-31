@@ -291,6 +291,21 @@ def _is_extractor_enabled(api_user: dict | None) -> bool:
     return bool(prefs.get("extractor.enabled"))
 
 
+def _is_black_swan_enabled(api_user: dict | None) -> bool:
+    """黑天鹅子代理开关：user_preferences["black_swan.enabled"]。
+
+    优先级：user_pref > env-var(RPG_ENABLE_BLACK_SWAN) > default False。
+    旧账号 prefs 为空时退回 env-var，保持向后兼容；用户主动关则覆盖 env-var。
+    """
+    from core.config import enable_black_swan as _env_default
+    prefs = _get_user_preferences_cached(api_user)
+    pref_val = prefs.get("black_swan.enabled")
+    if pref_val is None:
+        # 未显式设置 → 退回 env-var
+        return _env_default()
+    return bool(pref_val)
+
+
 def _clarify_threshold(api_user: dict | None) -> float:
     """task 85：用户偏好 curator.confidence_threshold —— curator confidence 低于
     此值时跳过主 GM 直接询问玩家（task 80 routing）。默认 0.5；非法 / 越界值

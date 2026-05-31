@@ -30,6 +30,13 @@
       "autosave_on": "开启 · 每回合一次",
       "autosave_off": "关闭"
     },
+    "black_swan": {
+      "title": "黑天鹅事件",
+      "enable": "启用",
+      "enable_desc": "GM 在非预期时刻插入打破叙事预期的随机世界事件（sprint 5 黑天鹅子代理）。关闭后叙事保持平稳，不会触发主动事件。",
+      "enable_on": "已开启",
+      "enable_off": "已关闭（平稳叙事）"
+    },
     "extractor": {
       "title": "叙事提取器（GM 第二步）",
       "enable": "启用",
@@ -1256,7 +1263,21 @@
       "resend_ok": "验证码已重发，请查收邮件",
       "resend_fail": "重发失败",
       "sent_notice": "验证码已发送到 {{mask}}，请在 10 分钟内完成验证"
-    }
+    },
+    "forgot_email": "注册邮箱",
+    "forgot_email_required": "请填写有效的邮箱地址",
+    "forgot_desc": "输入你的注册邮箱，我们将发送密码重置链接（30 分钟内有效）。",
+    "forgot_send": "发送重置邮件",
+    "forgot_sent": "若该邮箱已注册且已验证，重置链接已发送，请查收邮件。",
+    "forgot_back_to_login": "← 返回登录",
+    "reset_desc": "请输入新密码（至少 8 位）。",
+    "reset_new_pw": "新密码",
+    "reset_confirm": "确认新密码",
+    "reset_submit": "设置新密码",
+    "reset_pw_mismatch": "两次输入的密码不一致",
+    "reset_success": "密码已重置，正在跳转登录…",
+    "reset_token_invalid_or_expired": "重置链接无效或已过期，请重新申请",
+    "reset_token_used": "该重置链接已使用过，请重新申请"
   },
   "saves": {
     "list": {
@@ -1457,7 +1478,10 @@
       "card_create_fail": "角色卡创建失败",
       "preview_title": "角色卡预览 · {{name}}",
       "preview_close": "关闭",
-      "new_role_default": "新建角色"
+      "new_role_default": "新建角色",
+      "birthpoints_empty": "暂无出生点锚点",
+      "birthpoints_empty_hint": "剧本未生成出生点锚点,请等候后端处理完成或点击重试。",
+      "retry": "重试"
     },
     "identity": {
       "intro": "身份卡是叠加在角色卡之上的「定位 overlay」（穿越者 / 卧底 / 流亡贵族 …），和具体姓名外貌无关。可不选 —— 直接使用所选角色「{{name}}」开局。",
@@ -1967,7 +1991,9 @@
       "mock_desc": "从酒馆角色卡导入 · 含对话示例和标签。",
       "mock_first_mes": "（开场白示例）",
       "tag_imported": "导入",
-      "tag_tavern": "酒馆"
+      "tag_tavern": "酒馆",
+      "parse_pending_hint": "文件大小 {{size}} KB · MIME: {{mime}} · 自动解析未启用,请手动填写字段。",
+      "parse_pending_first_mes": "（请手动填写开场白）"
     },
     "editor": {
       "modal_title_new": "新增",

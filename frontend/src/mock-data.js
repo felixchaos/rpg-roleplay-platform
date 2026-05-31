@@ -151,10 +151,10 @@ window.MOCK_RUN_STEPS = [
 
 window.MOCK_PLATFORM = {
   user: {
-    username: "yanling",
-    display_name: "晓卡",
+    username: "demo_user",
+    display_name: "Demo 体验用户",
     role: "admin",
-    uid: "u_2f7a1c0d",
+    uid: "demo_preview",
     bio: "做长篇拆书 RPG，主要测试中文叙事。",
   },
   database: { driver: "PostgreSQL", url: "postgresql://localhost/rpg", ok: true },

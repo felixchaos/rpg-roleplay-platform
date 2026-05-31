@@ -164,6 +164,40 @@ async def api_admin_login_unlock(request: Request, admin=Depends(_require_admin)
     return json_response({"ok": True, "unlocked": {"username": username or None, "ip": ip or None}})
 
 
+@router.post("/api/auth/forgot-password")
+async def api_forgot_password(request: Request):
+    """触发密码重置邮件。总是返回 {'ok': True}（防枚举攻击）。"""
+    body = await request.json()
+    email = (body.get("email") or "").strip()
+    ip = _client_ip(request)
+    # 即使 email 格式错误也静默返回 ok，防止枚举
+    result = _auth.request_password_reset(email, ip=ip)
+    return json_response(result)
+
+
+@router.post("/api/auth/reset-password")
+async def api_reset_password(request: Request):
+    """验证密码重置 token，设置新密码。"""
+    body = await request.json()
+    token = (body.get("token") or "").strip()
+    new_password = body.get("password") or ""
+    ip = _client_ip(request)
+    if not token or not new_password:
+        raise HTTPException(400, detail={"error_key": "auth.invalid_payload", "message": "参数不完整"})
+    try:
+        result = _auth.confirm_password_reset(token, new_password, ip=ip)
+        return json_response(result)
+    except ValueError as exc:
+        msg = str(exc)
+        if "invalid_token" in msg or "无效或已过期" in msg:
+            raise HTTPException(400, detail={"error_key": "auth.reset_token_invalid_or_expired",
+                                             "message": "重置链接无效或已过期，请重新申请"})
+        if "已使用" in msg:
+            raise HTTPException(400, detail={"error_key": "auth.reset_token_used",
+                                             "message": "该重置链接已使用过"})
+        raise HTTPException(400, detail={"error_key": "auth.reset_fail", "message": msg})
+
+
 @router.get("/api/auth/schema")
 async def api_auth_schema():
     """登录/注册表单的字段定义,前端 login-app.jsx 据此动态渲染。

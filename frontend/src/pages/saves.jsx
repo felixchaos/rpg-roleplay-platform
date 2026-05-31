@@ -1125,11 +1125,12 @@ function BirthpointStep({ scriptId, birthpoint, setBirthpoint }) {
   const [phases, setPhases] = React.useState([]);
   const [loadingBP, setLoadingBP] = React.useState(true);
   const [bpErr, setBpErr] = React.useState("");
+  const [bpEmpty, setBpEmpty] = React.useState(false);
   const [openPhase, setOpenPhase] = React.useState(null); // accordion state
 
-  React.useEffect(() => {
+  const fetchBirthpoints = React.useCallback(() => {
     if (!scriptId) return;
-    setLoadingBP(true); setBpErr("");
+    setLoadingBP(true); setBpErr(""); setBpEmpty(false);
     (async () => {
       try {
         const r = await fetch(
@@ -1143,24 +1144,49 @@ function BirthpointStep({ scriptId, birthpoint, setBirthpoint }) {
           // auto-open first phase
           setOpenPhase(data.phases[0].phase_label);
         } else {
-          // backend not ready yet — use mock
-          setPhases(MOCK_BIRTHPOINTS_PHASES);
-          setOpenPhase(MOCK_BIRTHPOINTS_PHASES[0].phase_label);
+          // backend returned empty — show empty state, do not fall back to mock
+          setPhases([]);
+          setBpEmpty(true);
         }
       } catch (_) {
-        // backend not ready — use mock, no error shown (silent fallback)
-        setPhases(MOCK_BIRTHPOINTS_PHASES);
-        setOpenPhase(MOCK_BIRTHPOINTS_PHASES[0].phase_label);
+        // fetch failed — show empty state, do not fall back to mock
+        setPhases([]);
+        setBpEmpty(true);
       } finally {
         setLoadingBP(false);
       }
     })();
   }, [scriptId]);
 
+  React.useEffect(() => { fetchBirthpoints(); }, [fetchBirthpoints]);
+
   if (loadingBP) {
     return (
       <div className="muted" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "16px 0" }}>
         <Icon name="spinner" size={13} className="spin" /> {t('saves.birthpoint.loading')}
+      </div>
+    );
+  }
+
+  if (bpEmpty) {
+    return (
+      <div style={{ textAlign: "center", padding: "20px 0" }}>
+        <p style={{ color: "var(--text-status-inactive, var(--muted))", marginBottom: 6 }}>
+          {t('saves.new_game.birthpoints_empty')}
+        </p>
+        <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 14 }}>
+          {t('saves.new_game.birthpoints_empty_hint')}
+        </p>
+        <button
+          onClick={fetchBirthpoints}
+          style={{
+            fontSize: 12, padding: "4px 14px",
+            border: "1px solid var(--line)", borderRadius: 6,
+            background: "var(--panel-2)", cursor: "pointer", color: "inherit",
+          }}
+        >
+          {t('saves.new_game.retry')}
+        </button>
       </div>
     );
   }

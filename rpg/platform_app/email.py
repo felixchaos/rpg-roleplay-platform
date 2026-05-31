@@ -69,3 +69,42 @@ def send_verification_email(to: str, code: str, lang: str = "zh-CN") -> None:
     )
     if resp.status_code >= 400:
         raise EmailSendError(f"Resend API {resp.status_code}: {resp.text[:300]}")
+
+
+def send_password_reset_email(to: str, token: str, lang: str = "zh-CN") -> None:
+    """向 `to` 发送密码重置链接邮件。
+
+    Args:
+        to:    收件人邮箱（已规范化）
+        token: 32 字节 urlsafe token 明文（不存 DB，只发邮件）
+        lang:  语言偏好，以 'zh' 开头则中文优先
+    """
+    if not RESEND_API_KEY:
+        raise EmailSendError(
+            "RESEND_API_KEY not configured — password reset email cannot be sent"
+        )
+
+    base = os.environ.get("PUBLIC_BASE_URL", "https://rpg-roleplay.stellatrix.icu")
+    link = f"{base}/Login.html#reset?token={token}"
+    subject = "重置你的密码 / Reset your password"
+    body_zh = (
+        f"点击以下链接重置你的 Stellatrix RPG 密码（30 分钟内有效）：\n{link}\n\n"
+        "如果这不是你本人的操作，请忽略此邮件。你的密码不会被更改。"
+    )
+    body_en = (
+        f"Click the link below to reset your Stellatrix RPG password (valid for 30 minutes):\n{link}\n\n"
+        "If you did not request this, ignore this email. Your password will not be changed."
+    )
+    text = body_zh + "\n---\n" + body_en
+
+    resp = httpx.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={"from": RESEND_FROM, "to": [to], "subject": subject, "text": text},
+        timeout=10,
+    )
+    if resp.status_code >= 400:
+        raise EmailSendError(f"Resend API {resp.status_code}: {resp.text[:300]}")

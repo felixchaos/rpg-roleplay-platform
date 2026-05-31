@@ -696,21 +696,37 @@ function ScriptsListView() {
 
   const selected = scripts.find((x) => x.id === selectedId) || null;
 
+  // [内部] 前缀 = 开发中占位剧本,显示"敬请期待"而非常规详情
+  const isInternalPlaceholder = (s) => s && typeof s.title === 'string' && s.title.startsWith('[内部]');
+
   const detailEl = selected ? (
-    <ScriptDetailPanel
-      script={selected}
-      savesCount={platSaves.filter((x) => x.script_id === selected.id).length}
-      embedStatus={embedStatus}
-      onPlay={onPlay}
-      onChapters={setChaptersOpen}
-      onReview={setReviewScript}
-      onExtractDone={reload}
-      onEmbed={(s) => triggerEmbed(s.id)}
-      onExport={onExportPack}
-      onToggleVisibility={onToggleVisibility}
-      onDelete={onDelete}
-      onEditOverrides={setOverridesScript}
-    />
+    isInternalPlaceholder(selected) ? (
+      <CSContainer header={<CSHeader variant="h2">{selected.title}</CSHeader>}>
+        <div style={{ padding: '36px 20px', textAlign: 'center' }}>
+          <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.7 }}>🚧</div>
+          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>敬请期待</div>
+          <div style={{ fontSize: 13.5, color: 'var(--muted)', maxWidth: 480, margin: '0 auto 8px' }}>
+            我们正在开发 D&amp;D 5E 规则模组容器，提供骰子裁定 / 法术 / 物品 / 角色升级 / 战斗回合等结构化游玩。
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--muted-2)', marginTop: 16 }}>预计公测后开放 · 如有建议请通过右上"提交反馈"告知我们</div>
+        </div>
+      </CSContainer>
+    ) : (
+      <ScriptDetailPanel
+        script={selected}
+        savesCount={platSaves.filter((x) => x.script_id === selected.id).length}
+        embedStatus={embedStatus}
+        onPlay={onPlay}
+        onChapters={setChaptersOpen}
+        onReview={setReviewScript}
+        onExtractDone={reload}
+        onEmbed={(s) => triggerEmbed(s.id)}
+        onExport={onExportPack}
+        onToggleVisibility={onToggleVisibility}
+        onDelete={onDelete}
+        onEditOverrides={setOverridesScript}
+      />
+    )
   ) : null;
 
   const tableEl = (
@@ -732,22 +748,37 @@ function ScriptsListView() {
       }
       columnDefinitions={[
         { id: 'title', header: t('scripts.my.col_script'), cell: (s) => (
-          <div><CSBox fontWeight="bold">{s.title}</CSBox><CSBox fontSize="body-s" color="text-body-secondary">{s.uid} · {t('scripts.my.updated')} {s.updated_at}</CSBox></div>
+          isInternalPlaceholder(s) ? (
+            <div style={{ opacity: 0.55 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <CSBox fontWeight="bold" color="text-status-inactive">{s.title}</CSBox>
+                <CSBadge color="grey">敬请期待</CSBadge>
+              </div>
+              <CSBox fontSize="body-s" color="text-status-inactive">{s.uid} · 开发中功能预告，暂不可用</CSBox>
+            </div>
+          ) : (
+            <div><CSBox fontWeight="bold">{s.title}</CSBox><CSBox fontSize="body-s" color="text-body-secondary">{s.uid} · {t('scripts.my.updated')} {s.updated_at}</CSBox></div>
+          )
         ) },
-        { id: 'chapters', header: t('scripts.my.chapters'), cell: (s) => (s.chapter_count || 0).toLocaleString() },
-        { id: 'words', header: t('scripts.my.words'), cell: (s) => `${((s.word_count || 0) / 10000).toFixed(1)} ${t('scripts.my.wan')}` },
-        { id: 'mode', header: t('scripts.my.split_mode'), cell: (s) => s.import_report?.mode_label || '—' },
-        { id: 'problem', header: t('scripts.my.problem'), cell: (s) => (
-          (!s.import_report?.problem_label || s.import_report.problem_label === t('scripts.my.no_problem'))
+        { id: 'chapters', header: t('scripts.my.chapters'), cell: (s) => isInternalPlaceholder(s) ? <CSBox color="text-status-inactive">—</CSBox> : (s.chapter_count || 0).toLocaleString() },
+        { id: 'words', header: t('scripts.my.words'), cell: (s) => isInternalPlaceholder(s) ? <CSBox color="text-status-inactive">—</CSBox> : `${((s.word_count || 0) / 10000).toFixed(1)} ${t('scripts.my.wan')}` },
+        { id: 'mode', header: t('scripts.my.split_mode'), cell: (s) => isInternalPlaceholder(s) ? <CSBox color="text-status-inactive">—</CSBox> : (s.import_report?.mode_label || '—') },
+        { id: 'problem', header: t('scripts.my.problem'), cell: (s) => isInternalPlaceholder(s)
+          ? <CSStatusIndicator type="pending">开发中</CSStatusIndicator>
+          : ((!s.import_report?.problem_label || s.import_report.problem_label === t('scripts.my.no_problem'))
             ? <CSStatusIndicator type="success">{t('scripts.my.clean')}</CSStatusIndicator>
-            : <CSStatusIndicator type="warning">{s.import_report.problem_label}</CSStatusIndicator>
-        ) },
+            : <CSStatusIndicator type="warning">{s.import_report.problem_label}</CSStatusIndicator>)
+        },
         { id: 'saves', header: t('scripts.my.saves'), cell: (s) => {
+          if (isInternalPlaceholder(s)) return <CSBox color="text-status-inactive">—</CSBox>;
           const n = platSaves.filter((x) => x.script_id === s.id).length;
           return n > 0 ? <CSBadge color="green">{t('scripts.my.saves_count', { n })}</CSBadge> : <CSBox color="text-status-inactive">—</CSBox>;
         } },
         { id: 'public', header: t('scripts.my.share'), cell: (s) => s.is_public ? <CSStatusIndicator type="success">{t('scripts.my.is_public')}</CSStatusIndicator> : <CSBox color="text-status-inactive">—</CSBox> },
-        { id: 'go', header: '', cell: (s) => <CSButton variant="inline-link" iconName="caret-right-filled" disabled={busyId === s.id} onClick={() => onPlay(s)}>{t('scripts.my.play')}</CSButton> },
+        { id: 'go', header: '', cell: (s) => isInternalPlaceholder(s)
+          ? <CSButton variant="inline-link" iconName="status-pending" disabled>{t('scripts.my.play')}</CSButton>
+          : <CSButton variant="inline-link" iconName="caret-right-filled" disabled={busyId === s.id} onClick={() => onPlay(s)}>{t('scripts.my.play')}</CSButton>
+        },
       ]}
     />
   );

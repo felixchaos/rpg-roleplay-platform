@@ -95,7 +95,7 @@ function SchemaField({ field, value, onChange }) {
 
 function LoginApp() {
   const { t } = useTranslation();
-  const [mode, setMode] = useState('login');     // 'login' | 'register' | 'verify'
+  const [mode, setMode] = useState('login');     // 'login' | 'register' | 'verify' | 'forgot' | 'reset'
   const [schema, setSchema] = useState(null);    // { login: [...], register: [...], notes: {...} }
   const [schemaErr, setSchemaErr] = useState('');
   const [values, setValues] = useState({});      // {[fieldKey]: string}
@@ -107,6 +107,11 @@ function LoginApp() {
   const [pendingEmailRaw, setPendingEmailRaw] = useState(''); // real email for API calls
   const [verifyCode, setVerifyCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);   // seconds remaining
+  // forgot/reset state
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [resetToken, setResetToken] = useState('');
+  const [resetPw, setResetPw] = useState('');
+  const [resetPwConfirm, setResetPwConfirm] = useState('');
 
   // 1) 已登录直接走开 — 不要让用户重复登录
   useEffect(() => {
@@ -136,6 +141,21 @@ function LoginApp() {
       }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  // 2b) 检测邮件链接中的 #reset?token=... 跳转重置模式
+  useEffect(() => {
+    try {
+      const hash = location.hash; // e.g. #reset?token=abc123
+      if (hash.startsWith('#reset')) {
+        const qs = new URLSearchParams(hash.slice(hash.indexOf('?') + 1));
+        const tok = qs.get('token') || '';
+        if (tok) {
+          setResetToken(tok);
+          setMode('reset');
+        }
+      }
+    } catch (_) {}
   }, []);
 
   const fields = mode === 'verify' ? [] : (schema?.[mode] || []);
@@ -213,6 +233,70 @@ function LoginApp() {
       }
     } catch (e) {
       setErr(e?.message || t('auth.request_fail'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleForgot = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    const email = forgotEmail.trim();
+    if (!email || !email.includes('@')) {
+      setErr(t('auth.forgot_email_required'));
+      return;
+    }
+    setBusy(true);
+    setErr(''); setNotice('');
+    try {
+      const base = window.__API_BASE || '';
+      await fetch(`${base}/api/auth/forgot-password`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({email}),
+      });
+      // 不论结果都显示成功(防枚举)
+      setNotice(t('auth.forgot_sent'));
+    } catch (_) {
+      setNotice(t('auth.forgot_sent'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleReset = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    if (resetPw.length < (schema?.notes?.min_password_length || 8)) {
+      setErr(t('auth.field_min_length', { label: t('auth.reset_new_pw'), min: schema?.notes?.min_password_length || 8 }));
+      return;
+    }
+    if (resetPw !== resetPwConfirm) {
+      setErr(t('auth.reset_pw_mismatch'));
+      return;
+    }
+    setBusy(true);
+    setErr(''); setNotice('');
+    try {
+      const base = window.__API_BASE || '';
+      const r = await fetch(`${base}/api/auth/reset-password`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({token: resetToken, password: resetPw}),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        setNotice(t('auth.reset_success'));
+        setTimeout(() => { setMode('login'); setErr(''); setNotice(''); }, 1800);
+      } else {
+        const errKey = j.error_key || (j.detail && j.detail.error_key);
+        if (errKey === 'auth.reset_token_used') setErr(t('auth.reset_token_used'));
+        else setErr(t('auth.reset_token_invalid_or_expired'));
+      }
+    } catch (_) {
+      setErr(t('auth.reset_token_invalid_or_expired'));
     } finally {
       setBusy(false);
     }
@@ -314,7 +398,7 @@ function LoginApp() {
           </div>
         </div>
 
-        {mode !== 'verify' && (
+        {mode !== 'verify' && mode !== 'forgot' && mode !== 'reset' && (
           <div className="pl-auth-tabs" role="tablist">
             <button type="button" role="tab"
                     className={mode === 'login' ? 'active' : ''}
@@ -379,8 +463,90 @@ function LoginApp() {
           </form>
         )}
 
+        {/* ── 忘记密码表单 ─────────────────────────────────────────── */}
+        {mode === 'forgot' && (
+          <form className="pl-auth-form" onSubmit={handleForgot}>
+            <div style={{fontSize: 13, color: 'var(--muted)', marginBottom: 8}}>
+              {t('auth.forgot_desc')}
+            </div>
+            <div className="pl-field">
+              <label htmlFor="forgot_email">{t('auth.forgot_email')}</label>
+              <input
+                id="forgot_email"
+                type="email"
+                autoComplete="email"
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+                autoFocus
+              />
+            </div>
+            {err && (
+              <div className="pl-auth-error" role="alert"
+                   style={{color: 'var(--danger)', fontSize: 12.5, padding: '4px 0'}}>{err}</div>
+            )}
+            {notice && (
+              <div className="pl-auth-notice" role="status" aria-live="polite"
+                   style={{color: 'var(--muted)', fontSize: 12.5, padding: '4px 0',
+                           borderLeft: '2px solid var(--accent)', paddingLeft: 8}}>{notice}</div>
+            )}
+            <button type="submit" className="btn primary" disabled={busy}
+                    style={{justifyContent: 'center', height: 34, opacity: busy ? 0.7 : 1}}>
+              {busy ? t('auth.submitting') : t('auth.forgot_send')}
+            </button>
+            <div className="pl-auth-foot">
+              <button type="button" style={{background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 13, padding: 0}}
+                      onClick={() => { setMode('login'); setErr(''); setNotice(''); }}>
+                {t('auth.forgot_back_to_login')}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* ── 重置密码表单 ─────────────────────────────────────────── */}
+        {mode === 'reset' && (
+          <form className="pl-auth-form" onSubmit={handleReset}>
+            <div style={{fontSize: 13, color: 'var(--muted)', marginBottom: 8}}>
+              {t('auth.reset_desc')}
+            </div>
+            <div className="pl-field">
+              <label htmlFor="reset_pw">{t('auth.reset_new_pw')}</label>
+              <input
+                id="reset_pw"
+                type="password"
+                autoComplete="new-password"
+                value={resetPw}
+                onChange={(e) => setResetPw(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="pl-field">
+              <label htmlFor="reset_pw_confirm">{t('auth.reset_confirm')}</label>
+              <input
+                id="reset_pw_confirm"
+                type="password"
+                autoComplete="new-password"
+                value={resetPwConfirm}
+                onChange={(e) => setResetPwConfirm(e.target.value)}
+              />
+            </div>
+            {err && (
+              <div className="pl-auth-error" role="alert"
+                   style={{color: 'var(--danger)', fontSize: 12.5, padding: '4px 0'}}>{err}</div>
+            )}
+            {notice && (
+              <div className="pl-auth-notice" role="status" aria-live="polite"
+                   style={{color: 'var(--muted)', fontSize: 12.5, padding: '4px 0',
+                           borderLeft: '2px solid var(--accent)', paddingLeft: 8}}>{notice}</div>
+            )}
+            <button type="submit" className="btn primary" disabled={busy}
+                    style={{justifyContent: 'center', height: 34, opacity: busy ? 0.7 : 1}}>
+              {busy ? t('auth.submitting') : t('auth.reset_submit')}
+            </button>
+          </form>
+        )}
+
         {/* ── 登录 / 注册表单 ────────────────────────────────────────── */}
-        {mode !== 'verify' && <form className="pl-auth-form" onSubmit={submit}>
+        {mode !== 'verify' && mode !== 'forgot' && mode !== 'reset' && <form className="pl-auth-form" onSubmit={submit}>
           {schemaErr && (
             <div className="pl-auth-error"
                  style={{color: 'var(--danger)', fontSize: 12.5, padding: '4px 0'}}>
@@ -435,7 +601,9 @@ function LoginApp() {
             <a href="#"
                onClick={(e) => {
                  e.preventDefault();
-                 setNotice(t('auth.forgot_notice'));
+                 setForgotEmail('');
+                 setErr(''); setNotice('');
+                 setMode('forgot');
                }}
                style={{borderBottom: 0, color: 'var(--muted)', cursor: 'pointer'}}>{t('auth.forget_password')}</a>
           </div>
