@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -25,6 +26,10 @@ from core.logging import get_logger
 from state import GameState, strip_json_state_ops
 
 log = get_logger(__name__)
+
+# W1 容量优化: RPG_POSTPROC_MODE=async (默认) → GM 流完即入队 Phase 4, 不阻塞 worker。
+# RPG_POSTPROC_MODE=sync → 旧行为 (后处理阻塞主路径, 测试/debug 用)。
+_POSTPROC_MODE = os.environ.get("RPG_POSTPROC_MODE", "async").lower()
 
 # ---------------------------------------------------------------------------
 # Pipeline context: 在 phase 之间传递的可变状态
@@ -754,6 +759,49 @@ async def run_gm_phase(
         await asyncio.sleep(0)
 
     ctx.response = response
+
+    # ── W1 容量优化: fire-and-forget 模式 ──────────────────────────────────
+    # async 模式(默认): GM 流完后立刻入队 Phase 4 任务,不等 LLM 后处理,
+    # 直接 return。主 worker async slot 在此释放。容量 25 → ~55 并发回合。
+    # sync 模式: 保留旧行为(后处理阻塞主路径, 供测试/debug 用)。
+    if _POSTPROC_MODE != "sync":
+        _is_bs = (is_black_swan_enabled(api_user) if is_black_swan_enabled is not None else False)
+        try:
+            from platform_app.db import connect as _pp_connect
+            from platform_app.postproc_queue import enqueue_postproc as _enqueue
+            _sub_gm_ref = getattr(ctx, "sub_gm", None)
+            _pp_api_id = getattr(_sub_gm_ref, "api_id", None) if _sub_gm_ref else None
+            _pp_backend = getattr(_sub_gm_ref, "_backend", None) if _sub_gm_ref else None
+            _pp_model = getattr(_pp_backend, "model_name", None) if _pp_backend else None
+            _curator_plan = (ctx.agent_result or {}).get("curator_plan", {}) or {}
+            with _pp_connect() as _pp_db:
+                _enqueued = _enqueue(
+                    _pp_db,
+                    user_id=ctx.persist_user_id or (int(api_user["id"]) if api_user else 0),
+                    save_id=ctx.active_save_id or ctx.early_active_save_id or 0,
+                    commit_id=None,
+                    player_input=ctx.message_for_model,
+                    gm_output=response,
+                    api_user=api_user,
+                    is_bs_enabled=_is_bs,
+                    script_id=active_script_id(api_user),
+                    api_id_override=_pp_api_id,
+                    model_override=_pp_model,
+                    curator_plan=_curator_plan,
+                )
+            log.info("[chat] fire-and-forget: enqueued %d postproc tasks", _enqueued)
+        except Exception as _enq_err:
+            log.warning("[chat] postproc enqueue failed (falling back to sync): %s", _enq_err)
+            # enqueue 失败时降级到同步后处理,避免彻底丢失 extractor 等
+            _POSTPROC_FALLBACK = True
+        else:
+            _POSTPROC_FALLBACK = False
+
+        if not _POSTPROC_FALLBACK:
+            # 不等后处理,直接设 ctx._updates 让 phase 5 能正常落档
+            ctx._updates = ctx.directive_updates[:]
+            return
+    # ── 同步后处理路径 (sync 模式 or enqueue 失败降级) ─────────────────────
 
     # 并行执行 GM 后处理三项(timeline_guard / black_swan / extractor):
     # - 均只读 response + state,互相无依赖

@@ -354,6 +354,81 @@ sudo systemctl list-timers rpg-cron.timer
 
 ---
 
+## §7.5 Postproc Worker（异步后处理）
+
+W1 容量优化：用户聊天回合的 Phase 4 后处理（extractor / black_swan / digest / verifier）
+转 fire-and-forget，主 worker GM 流完即释放。后处理由独立 systemd service 异步执行。
+
+**并发回合容量：25 → ~55（回合延迟 35s → 15s）**
+
+### ⚠️ DATABASE_URL 必须直连 5432
+
+postproc 用 LISTEN/NOTIFY（会话级），transaction pool PgBouncer 不支持。
+worker 启动时若检测到 `:6432` 会立即崩溃并打印明确报错，防止静默错误。
+
+### 7.5.1 创建 systemd service
+
+```bash
+sudo tee /etc/systemd/system/rpg-postproc.service <<'EOF'
+[Unit]
+Description=RPG Post-processing Worker (async chat phase 4)
+After=postgresql.service
+PartOf=rpg-backend.service
+
+[Service]
+Type=simple
+User=rpg
+Group=rpg
+WorkingDirectory=/opt/rpg-roleplay/rpg
+# 直连 5432！LISTEN/NOTIFY 不能过 PgBouncer 6432
+Environment="DATABASE_URL=postgresql://rpg:PASSWORD@127.0.0.1:5432/rpg"
+EnvironmentFile=/opt/rpg-roleplay/rpg/.env
+ExecStart=/opt/rpg-roleplay/rpg/.venv/bin/python -m rpg.scripts.run_postproc_worker
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now rpg-postproc
+sudo systemctl status rpg-postproc
+```
+
+> 注意：`Environment="DATABASE_URL=..."` 那行必须写直连 5432 地址，
+> 即使 `EnvironmentFile` 里的 DATABASE_URL 是 6432 也会被上面一行覆盖。
+
+### 7.5.2 查看日志
+
+```bash
+sudo journalctl -u rpg-postproc -f
+```
+
+### 7.5.3 env flag — 切换同步/异步模式
+
+在主后端 `.env` 或 `rpg-backend.service` 的 `Environment=` 里设置：
+
+| 值 | 行为 |
+|----|------|
+| `RPG_POSTPROC_MODE=async`（默认）| GM 流完即入队，worker 立刻释放，容量 ~55 并发回合 |
+| `RPG_POSTPROC_MODE=sync` | 旧行为，后处理阻塞主路径，用于 debug / 测试 |
+
+### 7.5.4 副本扩展（高峰期）
+
+SKIP LOCKED 防抢，可安全同时起多个 postproc 实例：
+
+```bash
+# 使用 systemd instance template（先创建 rpg-postproc@.service 同内容副本）
+sudo cp /etc/systemd/system/rpg-postproc.service /etc/systemd/system/rpg-postproc@.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now rpg-postproc@1 rpg-postproc@2
+```
+
+---
+
 ## §8. nginx 反代 + SSL
 
 ### 8.1 Let's Encrypt（公网域名）
@@ -480,7 +555,8 @@ DATABASE_URL=postgresql://rpg:CHANGE_ME@127.0.0.1:5432/rpg \
 .venv/bin/python -m platform_app.migrate status
 
 sudo systemctl restart rpg-backend
-sudo systemctl status rpg-backend
+sudo systemctl restart rpg-postproc   # W1: 异步后处理 worker 也需重启
+sudo systemctl status rpg-backend rpg-postproc
 ```
 
 ---

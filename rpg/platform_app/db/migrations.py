@@ -1073,6 +1073,29 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "alter table scripts add column if not exists embed_api_id text not null default ''",
         "alter table scripts add column if not exists embed_model text not null default ''",
     ]),
+    (39, "chat_postproc_tasks", [
+        # W1 容量优化：Phase 4 后处理(extractor/black_swan/phase_digest/verifier)
+        # 转 fire-and-forget，主 worker GM 流完即释放，后处理由独立 systemd service 异步执行。
+        """
+        create table if not exists chat_postproc_tasks (
+          id bigserial primary key,
+          user_id bigint not null references users(id) on delete cascade,
+          save_id text not null,
+          commit_id bigint,
+          task_kind text not null,
+          payload jsonb not null default '{}',
+          status text not null default 'pending',
+          attempts int not null default 0,
+          scheduled_at timestamptz not null default now(),
+          started_at timestamptz,
+          completed_at timestamptz,
+          error_message text,
+          created_at timestamptz not null default now()
+        )
+        """,
+        "create index if not exists idx_postproc_due on chat_postproc_tasks(status, scheduled_at) where status in ('pending', 'failed')",
+        "create index if not exists idx_postproc_user on chat_postproc_tasks(user_id, save_id)",
+    ]),
 ]
 
 
