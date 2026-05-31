@@ -7,7 +7,7 @@ import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { Icon } from '../game-icons.jsx';
 import { PromptModal, usePlatformData, fmtBytes, fmtN, ResizableSplit } from '../platform-app.jsx';
-import { CardEditModal } from './cards.jsx';
+import { CardEditModal, cardSnippet } from './cards.jsx';
 import { NewGameModal } from './saves.jsx';
 import { ScriptReview } from './script-review.jsx';
 // Cloudscape 原生组件(内容迁移,统一基线对齐)
@@ -281,26 +281,31 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
             }
             cardDefinition={{
               header: (c) => (
-                <CSBox variant="h3" padding="n">
-                  {c.name || '未命名'}
-                  {c.full_name && c.full_name !== c.name && (
-                    <CSBox display="inline" color="text-status-inactive" fontSize="body-s" padding={{ left: 'xs' }}>{c.full_name}</CSBox>
-                  )}
-                </CSBox>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+                  <CSBox variant="h3" padding="n">
+                    {c.name || '未命名'}
+                    {c.full_name && c.full_name !== c.name && (
+                      <CSBox display="inline" color="text-status-inactive" fontSize="body-s" padding={{ left: 'xs' }}>{c.full_name}</CSBox>
+                    )}
+                  </CSBox>
+                  {c.enabled === false && <CSStatusIndicator type="stopped">已禁用</CSStatusIndicator>}
+                </div>
               ),
               sections: [
+                { id: 'identity', content: (c) => (
+                  <CSBox color="text-label" fontSize="body-s" fontWeight="bold">{c.identity || c.role || 'NPC'}</CSBox>
+                ) },
                 { id: 'meta', content: (c) => (
-                  <CSSpaceBetween direction="horizontal" size="xs">
-                    <CSBadge>{c.identity || c.role || 'NPC'}</CSBadge>
-                    {c.first_revealed_chapter > 1 && <CSBadge color="blue">📖 第 {c.first_revealed_chapter} 章</CSBadge>}
-                    {c.importance != null && <CSBadge color="grey">重要度 {c.importance}</CSBadge>}
-                    {c.enabled === false && <CSStatusIndicator type="stopped">已禁用</CSStatusIndicator>}
-                  </CSSpaceBetween>
+                  ((c.first_revealed_chapter > 1) || (c.importance != null) || (Array.isArray(c.aliases) && c.aliases.length)) ? (
+                    <CSSpaceBetween direction="horizontal" size="xxs">
+                      {c.first_revealed_chapter > 1 && <CSBadge color="blue">📖 第 {c.first_revealed_chapter} 章</CSBadge>}
+                      {c.importance != null && <CSBadge color="grey">重要度 {c.importance}</CSBadge>}
+                      {Array.isArray(c.aliases) && c.aliases.slice(0, 3).map((a) => <CSBadge key={a}>{a}</CSBadge>)}
+                    </CSSpaceBetween>
+                  ) : null
                 ) },
                 { id: 'bio', content: (c) => (
-                  <CSBox color="text-body-secondary" fontSize="body-s">
-                    {String(c.background || c.appearance || c.personality || c.summary || c.description || '').slice(0, 180) || '—'}
-                  </CSBox>
+                  <CSBox color="text-body-secondary" fontSize="body-s">{cardSnippet(c, 200) || '—'}</CSBox>
                 ) },
                 { id: 'act', content: (c) => (
                   <CSButton variant="inline-link" iconName="edit" onClick={() => setNpcEdit({ card: c, isNew: false })}>查看 / 编辑</CSButton>

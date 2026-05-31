@@ -176,6 +176,83 @@ function CardEditFields({ form, u, kind = 'user' }) {
   );
 }
 
+const _CARD_TYPE_LABEL = { npc: 'NPC', pc: '玩家卡', persona: '玩家身份' };
+const _SCOPE_LABEL = { script: '剧本内', private: '私有', public: '公开' };
+const _SOURCE_LABEL = { extracted: 'LLM 提取', user: '用户', persona: '身份', platform: '平台' };
+
+// 短摘要(NPC 卡面用):取最有信息量的字段前 N 字,原样不解析
+function cardSnippet(c, n = 160) {
+  const raw = (c && c._raw) || c || {};
+  const s = String(raw.background || raw.appearance || raw.personality || raw.current_status || raw.summary || raw.description || '').trim();
+  return s ? (s.length > n ? s.slice(0, n) + '…' : s) : '';
+}
+
+/* 只读角色档展示(设定 tab / 详情用)。纯展示 DTO 结构化字段,不做任何文本解析。 */
+function CardSheet({ card, kind = 'user' }) {
+  const raw = (card && card._raw) || card || {};
+  const fullName = raw.full_name && raw.full_name !== raw.name ? raw.full_name : null;
+  const aliases = Array.isArray(raw.aliases) ? raw.aliases : [];
+  const tags = Array.isArray(raw.tags) ? raw.tags : [];
+  const dialogues = Array.isArray(raw.sample_dialogue) ? raw.sample_dialogue : [];
+  const chapterGate = (kind === 'npc' && raw.first_revealed_chapter > 1) ? raw.first_revealed_chapter : null;
+  const para = (label, value) => value ? (
+    <div>
+      <CSBox variant="awsui-key-label" padding={{ bottom: 'xxxs' }}>{label}</CSBox>
+      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, color: 'var(--text)' }}>{value}</div>
+    </div>
+  ) : null;
+  const hasBody = raw.background || raw.appearance || raw.personality || raw.speech_style || raw.current_status || raw.secrets || dialogues.length;
+
+  return (
+    <CSSpaceBetween size="l">
+      {/* 顶部:身份 + 徽章 */}
+      <CSSpaceBetween size="xs">
+        {(raw.identity || fullName) && (
+          <CSBox fontSize="heading-s">
+            {raw.identity || '—'}
+            {fullName && <CSBox display="inline" color="text-status-inactive" fontSize="body-s" padding={{ left: 's' }}>{fullName}</CSBox>}
+          </CSBox>
+        )}
+        <CSSpaceBetween direction="horizontal" size="xs">
+          <CSBadge color="grey">{_CARD_TYPE_LABEL[raw.card_type] || (kind === 'npc' ? 'NPC' : '用户卡')}</CSBadge>
+          {raw.source && <CSBadge>{_SOURCE_LABEL[raw.source] || raw.source}</CSBadge>}
+          {chapterGate && <CSBadge color="blue">📖 第 {chapterGate} 章揭示</CSBadge>}
+          {raw.importance != null && <CSBadge color="grey">重要度 {raw.importance}</CSBadge>}
+          <CSBadge color="grey">{_SCOPE_LABEL[raw.scope] || '私有'}</CSBadge>
+          {raw.enabled === false && <CSStatusIndicator type="stopped">已禁用</CSStatusIndicator>}
+        </CSSpaceBetween>
+        {aliases.length > 0 && (
+          <CSBox fontSize="body-s" color="text-body-secondary">别名:{aliases.join(' · ')}</CSBox>
+        )}
+        {tags.length > 0 && (
+          <CSSpaceBetween direction="horizontal" size="xxs">{tags.map((t) => <CSBadge key={t}>{t}</CSBadge>)}</CSSpaceBetween>
+        )}
+      </CSSpaceBetween>
+
+      {/* 主体:各结构化字段原样分段 */}
+      {para('前史 / 背景', raw.background)}
+      {para('外貌', raw.appearance)}
+      {para('性格 / 设定', raw.personality)}
+      {para('语气 / 说话风格', raw.speech_style)}
+      {para('当前状态', raw.current_status)}
+      {para('关键秘密', raw.secrets)}
+      {dialogues.length > 0 && (
+        <div>
+          <CSBox variant="awsui-key-label" padding={{ bottom: 'xxxs' }}>示例对话</CSBox>
+          <CSSpaceBetween size="xxs">
+            {dialogues.map((d, i) => (
+              <CSBox key={i} color="text-body-secondary" fontSize="body-s">
+                {typeof d === 'string' ? d : `${d.role ? d.role + ': ' : ''}${d.content || ''}`}
+              </CSBox>
+            ))}
+          </CSSpaceBetween>
+        </div>
+      )}
+      {!hasBody && <CSBox color="text-status-inactive">暂无设定,切到「角色设置」补充。</CSBox>}
+    </CSSpaceBetween>
+  );
+}
+
 const USER_CARDS = [
   { id: "uc1", name: "顾承砚", role: "漂流的史官", tone: "—", origin: "雾港未尽 · 默认主角",
     bio: "南陵旧学世家出身，因雾港事件获得在三个王朝间穿越的能力。能记录但难以改变。",
@@ -554,19 +631,7 @@ function CardDetailPanel({ card, kind, onSave, onDuplicate, onDelete }) {
             { label: '卡 ID', value: <span className="mono">{card.id}</span> },
           ]} />
         ) },
-        { id: 'setting', label: '设定', content: (
-          <CSSpaceBetween size="m">
-            {setting('前史 / 背景', raw.background)}
-            {setting('外貌', raw.appearance)}
-            {setting('性格', raw.personality)}
-            {setting('语气 / 说话风格', raw.speech_style)}
-            {setting('当前状态', raw.current_status)}
-            {setting('关键秘密', raw.secrets)}
-            {setting('示例对话', _asLines(raw.sample_dialogue))}
-            {!(raw.background || raw.appearance || raw.personality || raw.speech_style || raw.current_status || raw.secrets || (raw.sample_dialogue && raw.sample_dialogue.length)) &&
-              <CSBox color="text-status-inactive">暂无设定,切到「角色设置」补充。</CSBox>}
-          </CSSpaceBetween>
-        ) },
+        { id: 'setting', label: '设定', content: <CardSheet card={card} kind={kind} /> },
         { id: 'edit', label: '角色设置', content: form && (
           <CSSpaceBetween size="l">
             <CardEditFields form={form} u={u} kind={kind} />
@@ -919,4 +984,4 @@ function CardEditModal({ card, isNew, kind, onClose, onSave }) {
   return createPortal(node, document.body);
 }
 
-export { CardsPage, CardGrid, UserCardsView, NpcCardsView, CardEditModal, TavernImportModal };
+export { CardsPage, CardGrid, UserCardsView, NpcCardsView, CardEditModal, TavernImportModal, CardSheet, cardSnippet };
