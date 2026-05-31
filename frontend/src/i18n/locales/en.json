@@ -1250,6 +1250,7 @@
   },
   "auth": {
     "login_tab": "Log In",
+    "login_code_tab": "Email Code",
     "register_tab": "Register",
     "subtitle": "Novel splitting · RPG continuation · Multi-user creative platform",
     "login_btn": "Log In",
@@ -1293,6 +1294,21 @@
       "resend_ok": "Code resent, please check your email",
       "resend_fail": "Resend failed",
       "sent_notice": "Verification code sent to {{mask}}. Please verify within 10 minutes."
+    },
+    "login_code": {
+      "desc": "Enter your verified email and we will send a one-time sign-in code.",
+      "email_label": "Email",
+      "email_required": "Please enter a valid email address",
+      "send_btn": "Send Code",
+      "sending": "Sending…",
+      "send_fail": "Failed to send code",
+      "sent_notice": "Code sent to {{mask}}. Sign-in starts automatically after 6 digits.",
+      "code_label": "Login Code",
+      "verify_btn": "Log In",
+      "verifying": "Signing in…",
+      "verify_ok": "Verified! Redirecting…",
+      "verify_fail": "Email code login failed",
+      "back": "← Change email"
     },
     "forgot_email": "Registered Email",
     "forgot_email_required": "Please enter a valid email address",

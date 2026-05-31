@@ -1250,6 +1250,7 @@
   },
   "auth": {
     "login_tab": "登录",
+    "login_code_tab": "邮箱验证码",
     "register_tab": "注册",
     "subtitle": "长篇小说拆书 · RPG 续写 · 多用户创作平台",
     "login_btn": "登录",
@@ -1293,6 +1294,21 @@
       "resend_ok": "验证码已重发，请查收邮件",
       "resend_fail": "重发失败",
       "sent_notice": "验证码已发送到 {{mask}}，请在 10 分钟内完成验证"
+    },
+    "login_code": {
+      "desc": "输入已验证邮箱，我们会发送一次性登录验证码。",
+      "email_label": "邮箱",
+      "email_required": "请填写有效的邮箱地址",
+      "send_btn": "发送验证码",
+      "sending": "发送中…",
+      "send_fail": "验证码发送失败",
+      "sent_notice": "验证码已发送到 {{mask}}，输入满 6 位后会自动登录。",
+      "code_label": "登录验证码",
+      "verify_btn": "登录",
+      "verifying": "登录中…",
+      "verify_ok": "验证成功，正在进入…",
+      "verify_fail": "验证码登录失败",
+      "back": "← 修改邮箱"
     },
     "forgot_email": "注册邮箱",
     "forgot_email_required": "请填写有效的邮箱地址",

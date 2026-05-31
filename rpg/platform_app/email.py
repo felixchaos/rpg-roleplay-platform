@@ -228,6 +228,57 @@ def send_verification_email(to: str, code: str, lang: str = "zh-CN") -> None:
     _send_resend(to, subject, text, html)
 
 
+def build_login_code_email(code: str, lang: str = "zh-CN") -> tuple[str, str, str]:
+    is_zh = lang.lower().startswith("zh")
+    subject = (
+        "你的登录验证码 / Your login code"
+        if is_zh
+        else "Your login code — Stellatrix RPG"
+    )
+    text = (
+        f"你的 Stellatrix RPG 登录验证码是：{code}\n\n"
+        "10 分钟内有效。\n"
+        "如非你本人操作，请忽略此邮件。\n\n"
+        "---\n"
+        f"Your Stellatrix RPG login code: {code}\n\n"
+        "Valid for 10 minutes. Ignore if you did not request this."
+    )
+    lead = (
+        "请输入以下 6 位验证码完成登录。验证码会在 <strong style=\"color:#ebe7df;\">10 分钟</strong>后失效。"
+        if is_zh
+        else "Enter this 6-digit code to sign in. It expires in <strong style=\"color:#ebe7df;\">10 minutes</strong>."
+    )
+    main = f"""
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="sr-panel" style="width:100%;background:#1a1817;border:1px solid #36322d;border-radius:8px;">
+        <tr><td style="padding:22px 14px;">
+          <div class="sr-code" style="color:#ebe7df;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:34px;line-height:1.2;font-weight:600;letter-spacing:.32em;text-align:center;">{escape(code)}</div>
+        </td></tr>
+      </table>
+    """
+    secondary = """
+      <div style="height:18px;line-height:18px;">&nbsp;</div>
+      <div class="sr-muted" style="color:#968f85;font-size:13px;line-height:1.65;">
+        该验证码只能用于登录 RPG Roleplay，请不要转发给任何人。<br>
+        This code only signs in to RPG Roleplay. Never forward it to anyone.
+      </div>
+    """
+    html = _render_email(
+        preheader=f"登录验证码 {code}，10 分钟内有效",
+        eyebrow="Login Code",
+        title="你的登录验证码" if is_zh else "Your login code",
+        lead_html=lead,
+        main_html=main,
+        secondary_html=secondary,
+    )
+    return subject, text, html
+
+
+def send_login_code_email(to: str, code: str, lang: str = "zh-CN") -> None:
+    """Send a one-time login code."""
+    subject, text, html = build_login_code_email(code, lang)
+    _send_resend(to, subject, text, html)
+
+
 def build_password_reset_email(to: str, token: str, lang: str = "zh-CN") -> tuple[str, str, str]:
     is_zh = lang.lower().startswith("zh")
     link = f"{_public_base_url()}/Login.html#reset?token={token}"

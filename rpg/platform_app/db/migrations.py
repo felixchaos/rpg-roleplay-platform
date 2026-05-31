@@ -1096,6 +1096,25 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "create index if not exists idx_postproc_due on chat_postproc_tasks(status, scheduled_at) where status in ('pending', 'failed')",
         "create index if not exists idx_postproc_user on chat_postproc_tasks(user_id, save_id)",
     ]),
+    (40, "entity_embedding_columns", [
+        # embedding.py tracks progress across document chunks, character cards,
+        # and worldbook entries. Older v10 only added vector columns to chunks,
+        # so /scripts/{id}/embed/status crashed on fresh production imports.
+        "alter table document_chunks add column if not exists embedded_at timestamptz",
+        "alter table character_cards add column if not exists embedded_at timestamptz",
+        "alter table worldbook_entries add column if not exists embedded_at timestamptz",
+        """
+        do $$
+        begin
+          if exists (select 1 from pg_extension where extname = 'vector') then
+            execute 'alter table character_cards add column if not exists embedding_vec vector(768)';
+            execute 'alter table worldbook_entries add column if not exists embedding_vec vector(768)';
+            execute 'create index if not exists idx_character_cards_embedding_hnsw on character_cards using hnsw (embedding_vec vector_cosine_ops)';
+            execute 'create index if not exists idx_worldbook_entries_embedding_hnsw on worldbook_entries using hnsw (embedding_vec vector_cosine_ops)';
+          end if;
+        end $$;
+        """,
+    ]),
 ]
 
 

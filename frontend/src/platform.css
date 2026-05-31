@@ -1817,6 +1817,40 @@
 }
 .pl-auth-tabs button.active { background: var(--panel-2); color: var(--text); }
 .pl-auth-foot { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; color: var(--muted); }
+.pl-otp {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+.pl-otp-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.01;
+  border: 0;
+  padding: 0;
+  z-index: 2;
+  cursor: text;
+}
+.pl-otp-box {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-deep);
+  color: var(--text);
+  font: 600 22px/1 var(--font-mono);
+}
+.pl-otp:focus-within .pl-otp-box {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+.pl-otp-box.filled {
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
 
 /* continue picker modal — task 109: backdrop 必须给右侧助手浮窗让位,
    否则用户在 modal 里时无法跟助手交互, 助手存在感为 0。 */

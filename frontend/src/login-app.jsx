@@ -93,9 +93,60 @@ function SchemaField({ field, value, onChange }) {
   );
 }
 
+function OtpInput({ value, onChange, onComplete, length = 6, disabled = false, autoFocus = false, label }) {
+  const inputRef = React.useRef(null);
+  const completeRef = React.useRef('');
+  const clean = String(value || '').replace(/\D/g, '').slice(0, length);
+
+  React.useEffect(() => {
+    if (!autoFocus) return;
+    const timer = setTimeout(() => inputRef.current?.focus(), 0);
+    return () => clearTimeout(timer);
+  }, [autoFocus]);
+
+  React.useEffect(() => {
+    if (clean.length === length && clean !== completeRef.current) {
+      completeRef.current = clean;
+      onComplete?.(clean);
+    }
+    if (clean.length < length) completeRef.current = '';
+  }, [clean, length, onComplete]);
+
+  return (
+    <div className="pl-otp" onClick={() => inputRef.current?.focus()}>
+      <input
+        ref={inputRef}
+        className="pl-otp-input"
+        aria-label={label}
+        type="text"
+        inputMode="numeric"
+        pattern={`\\d{${length}}`}
+        maxLength={length}
+        autoComplete="one-time-code"
+        value={clean}
+        disabled={disabled}
+        onChange={(e) => onChange(String(e.target.value || '').replace(/\D/g, '').slice(0, length))}
+        onPaste={(e) => {
+          const pasted = e.clipboardData?.getData('text') || '';
+          const next = pasted.replace(/\D/g, '').slice(0, length);
+          if (next) {
+            e.preventDefault();
+            onChange(next);
+          }
+        }}
+      />
+      {Array.from({ length }).map((_, i) => (
+        <div key={i} className={`pl-otp-box ${clean[i] ? 'filled' : ''}`}>
+          {clean[i] || ''}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function LoginApp() {
   const { t } = useTranslation();
-  const [mode, setMode] = useState('login');     // 'login' | 'register' | 'verify' | 'forgot' | 'reset'
+  const [mode, setMode] = useState('login');     // 'login' | 'code-login' | 'register' | 'verify' | 'forgot' | 'reset'
   const [schema, setSchema] = useState(null);    // { login: [...], register: [...], notes: {...} }
   const [schemaErr, setSchemaErr] = useState('');
   const [values, setValues] = useState({});      // {[fieldKey]: string}
@@ -107,6 +158,11 @@ function LoginApp() {
   const [pendingEmailRaw, setPendingEmailRaw] = useState(''); // real email for API calls
   const [verifyCode, setVerifyCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);   // seconds remaining
+  // passwordless login state
+  const [loginCodeEmail, setLoginCodeEmail] = useState('');
+  const [loginCodeEmailMask, setLoginCodeEmailMask] = useState('');
+  const [loginCodeSent, setLoginCodeSent] = useState(false);
+  const [loginCode, setLoginCode] = useState('');
   // forgot/reset state
   const [forgotEmail, setForgotEmail] = useState('');
   const [resetToken, setResetToken] = useState('');
@@ -158,7 +214,7 @@ function LoginApp() {
     } catch (_) {}
   }, []);
 
-  const fields = mode === 'verify' ? [] : (schema?.[mode] || []);
+  const fields = ['verify', 'code-login', 'forgot', 'reset'].includes(mode) ? [] : (schema?.[mode] || []);
   const minPw = schema?.notes?.min_password_length || 8;
   const inviteOnly = !!schema?.notes?.invite_only;
 
@@ -180,8 +236,36 @@ function LoginApp() {
     return () => clearTimeout(t);
   }, [resendCooldown]);
 
+  const requestLoginCode = async (email, { resend = false } = {}) => {
+    const cleanEmail = String(email || '').trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setErr(t('auth.login_code.email_required'));
+      return;
+    }
+    setBusy(true);
+    setErr(''); setNotice('');
+    try {
+      const j = await window.api.auth.loginCodeRequest({ email: cleanEmail });
+      if (!j || j.ok === false) throw new Error(j?.error || t('auth.login_code.send_fail'));
+      setLoginCodeEmail(cleanEmail);
+      setLoginCodeEmailMask(j.email_mask || cleanEmail);
+      setLoginCodeSent(true);
+      setLoginCode('');
+      setResendCooldown(60);
+      setNotice(resend ? t('auth.verify.resend_ok') : t('auth.login_code.sent_notice', { mask: j.email_mask || cleanEmail }));
+    } catch (e) {
+      setErr(e?.message || t('auth.login_code.send_fail'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleResend = async () => {
     if (resendCooldown > 0 || busy) return;
+    if (mode === 'code-login') {
+      await requestLoginCode(loginCodeEmail, { resend: true });
+      return;
+    }
     setBusy(true);
     setErr('');
     try {
@@ -206,10 +290,10 @@ function LoginApp() {
     }
   };
 
-  const handleVerify = async (e) => {
-    e.preventDefault();
+  const handleVerify = async (e, codeOverride) => {
+    e?.preventDefault?.();
     if (busy) return;
-    const code = verifyCode.trim();
+    const code = String(codeOverride ?? verifyCode).trim();
     if (code.length !== 6 || !/^\d{6}$/.test(code)) {
       setErr(t('auth.verify.code_invalid'));
       return;
@@ -233,6 +317,28 @@ function LoginApp() {
       }
     } catch (e) {
       setErr(e?.message || t('auth.request_fail'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleLoginCodeVerify = async (e, codeOverride) => {
+    e?.preventDefault?.();
+    if (busy) return;
+    const code = String(codeOverride ?? loginCode).trim();
+    if (code.length !== 6 || !/^\d{6}$/.test(code)) {
+      setErr(t('auth.verify.code_invalid'));
+      return;
+    }
+    setBusy(true);
+    setErr(''); setNotice('');
+    try {
+      const j = await window.api.auth.loginCodeVerify({ email: loginCodeEmail, code });
+      if (!j || j.ok === false) throw new Error(j?.error || t('auth.login_code.verify_fail'));
+      setNotice(t('auth.login_code.verify_ok'));
+      setTimeout(() => location.replace(__resolveNextOrDefault()), 200);
+    } catch (e) {
+      setErr(e?.message || t('auth.login_code.verify_fail'));
     } finally {
       setBusy(false);
     }
@@ -405,6 +511,10 @@ function LoginApp() {
                     aria-selected={mode === 'login'}
                     onClick={() => { setMode('login'); setErr(''); setNotice(''); }}>{t('auth.login_tab')}</button>
             <button type="button" role="tab"
+                    className={mode === 'code-login' ? 'active' : ''}
+                    aria-selected={mode === 'code-login'}
+                    onClick={() => { setMode('code-login'); setErr(''); setNotice(''); }}>{t('auth.login_code_tab')}</button>
+            <button type="button" role="tab"
                     className={mode === 'register' ? 'active' : ''}
                     aria-selected={mode === 'register'}
                     onClick={() => { setMode('register'); setErr(''); setNotice(''); }}
@@ -421,18 +531,13 @@ function LoginApp() {
             </div>
             <div className="pl-field">
               <label htmlFor="verify_code">{t('auth.verify.code_label')}</label>
-              <input
-                id="verify_code"
-                type="text"
-                inputMode="numeric"
-                pattern="\d{6}"
-                maxLength={6}
-                placeholder="000000"
+              <OtpInput
                 value={verifyCode}
-                onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                onChange={setVerifyCode}
+                onComplete={(code) => handleVerify(null, code)}
+                disabled={busy}
                 autoFocus
-                autoComplete="one-time-code"
-                style={{letterSpacing: '0.3em', fontSize: 20, textAlign: 'center'}}
+                label={t('auth.verify.code_label')}
               />
             </div>
             {err && (
@@ -460,6 +565,77 @@ function LoginApp() {
                 {resendCooldown > 0 ? t('auth.verify.resend_cooldown', { s: resendCooldown }) : t('auth.verify.resend')}
               </button>
             </div>
+          </form>
+        )}
+
+        {/* ── 邮箱验证码登录 ─────────────────────────────────────────── */}
+        {mode === 'code-login' && (
+          <form className="pl-auth-form" onSubmit={(e) => loginCodeSent ? handleLoginCodeVerify(e) : (e.preventDefault(), requestLoginCode(loginCodeEmail))}>
+            {!loginCodeSent ? (
+              <>
+                <div style={{fontSize: 13, color: 'var(--muted)', marginBottom: 8}}>
+                  {t('auth.login_code.desc')}
+                </div>
+                <div className="pl-field">
+                  <label htmlFor="login_code_email">{t('auth.login_code.email_label')}</label>
+                  <input
+                    id="login_code_email"
+                    type="email"
+                    autoComplete="email"
+                    value={loginCodeEmail}
+                    onChange={(e) => setLoginCodeEmail(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{fontSize: 13, color: 'var(--muted)', marginBottom: 8}}>
+                  {t('auth.verify.sent_to')} <strong>{loginCodeEmailMask}</strong>{t('auth.verify.expires')}
+                </div>
+                <div className="pl-field">
+                  <label htmlFor="login_code">{t('auth.login_code.code_label')}</label>
+                  <OtpInput
+                    value={loginCode}
+                    onChange={setLoginCode}
+                    onComplete={(code) => handleLoginCodeVerify(null, code)}
+                    disabled={busy}
+                    autoFocus
+                    label={t('auth.login_code.code_label')}
+                  />
+                </div>
+              </>
+            )}
+            {err && (
+              <div className="pl-auth-error" role="alert"
+                   style={{color: 'var(--danger)', fontSize: 12.5, padding: '4px 0'}}>{err}</div>
+            )}
+            {notice && (
+              <div className="pl-auth-notice" role="status" aria-live="polite"
+                   style={{color: 'var(--muted)', fontSize: 12.5, padding: '4px 0',
+                           borderLeft: '2px solid var(--accent)', paddingLeft: 8}}>{notice}</div>
+            )}
+            <button type="submit" className="btn primary"
+                    disabled={busy || (loginCodeSent ? loginCode.length !== 6 : !loginCodeEmail.trim())}
+                    style={{justifyContent: 'center', height: 34, opacity: busy ? 0.7 : 1}}>
+              {busy
+                ? (loginCodeSent ? t('auth.login_code.verifying') : t('auth.login_code.sending'))
+                : (loginCodeSent ? t('auth.login_code.verify_btn') : t('auth.login_code.send_btn'))}
+            </button>
+            {loginCodeSent && (
+              <div className="pl-auth-foot" style={{justifyContent: 'space-between'}}>
+                <button type="button" style={{background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 13, padding: 0}}
+                        onClick={() => { setLoginCodeSent(false); setLoginCode(''); setErr(''); setNotice(''); }}>
+                  {t('auth.login_code.back')}
+                </button>
+                <button type="button"
+                        disabled={resendCooldown > 0 || busy}
+                        style={{background: 'none', border: 'none', color: resendCooldown > 0 ? 'var(--muted)' : 'var(--accent)', cursor: resendCooldown > 0 ? 'default' : 'pointer', fontSize: 13, padding: 0}}
+                        onClick={handleResend}>
+                  {resendCooldown > 0 ? t('auth.verify.resend_cooldown', { s: resendCooldown }) : t('auth.verify.resend')}
+                </button>
+              </div>
+            )}
           </form>
         )}
 
@@ -546,7 +722,7 @@ function LoginApp() {
         )}
 
         {/* ── 登录 / 注册表单 ────────────────────────────────────────── */}
-        {mode !== 'verify' && mode !== 'forgot' && mode !== 'reset' && <form className="pl-auth-form" onSubmit={submit}>
+        {mode !== 'verify' && mode !== 'code-login' && mode !== 'forgot' && mode !== 'reset' && <form className="pl-auth-form" onSubmit={submit}>
           {schemaErr && (
             <div className="pl-auth-error"
                  style={{color: 'var(--danger)', fontSize: 12.5, padding: '4px 0'}}>

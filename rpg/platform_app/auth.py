@@ -172,6 +172,14 @@ def _write_audit(username: str, ip: str, event: str, meta: dict[str, Any]) -> No
         _logging.getLogger(__name__).warning("audit write failed", exc_info=True)
 
 
+def _mask_email(email: str) -> str:
+    email_norm = normalize_email(email)
+    if "@" not in email_norm:
+        return ""
+    local_part, domain_part = email_norm.split("@", 1)
+    return (local_part[:1] or "*") + "***@" + domain_part
+
+
 def admin_unlock(ip: str, username: str) -> None:
     """admin 手动解锁某个用户/IP（暴露给 /api/admin/login/unlock 用）"""
     key = _bucket_key(ip, username)
@@ -315,11 +323,7 @@ def register(
     except EmailSendError:
         _log.warning("send_verification_email failed (RESEND unconfigured?); code=%s", code)
 
-    # email mask: u***@example.com
-    local_part, domain_part = email_norm.split("@", 1)
-    mask = local_part[0] + "***@" + domain_part
-
-    return {"ok": True, "pending_verify": True, "email_mask": mask}
+    return {"ok": True, "pending_verify": True, "email_mask": _mask_email(email_norm)}
 
 
 # 进程内 pending 注册缓存（多 worker 须改 Redis）
@@ -528,6 +532,152 @@ def confirm_email_verification(email: str, code: str) -> tuple[dict[str, Any], s
 def _hash_token(token: str) -> str:
     """session token → sha256 hex(DB 只存哈希,不存明文)。"""
     return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def _issue_session(db, user_id: int) -> str:
+    active_count = db.execute(
+        "select count(*) as n from sessions where user_id = %s and expires_at > now()",
+        (user_id,),
+    ).fetchone()["n"]
+    if active_count >= 20:
+        db.execute(
+            """
+            delete from sessions where id in (
+              select id from sessions
+              where user_id = %s and expires_at > now()
+              order by created_at asc
+              limit %s
+            )
+            """,
+            (user_id, int(active_count) - 19),
+        )
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
+    db.execute(
+        "insert into sessions(token, token_hash, user_id, expires_at) values (%s, %s, %s, %s)",
+        ("", _hash_token(token), user_id, expires_at),
+    )
+    return token
+
+
+def request_login_code(email: str, *, ip: str = "", ua: str = "") -> dict[str, Any]:
+    """Send a one-time email code for passwordless login.
+
+    The request path is intentionally non-enumerating: unknown or unverified
+    emails still return ok, but no email is sent.
+    """
+    email_norm = normalize_email(email)
+    if not email_norm or "@" not in email_norm:
+        raise ValueError("请填写有效的邮箱地址")
+    _check_rate_limit(ip, email_norm)
+
+    init_db()
+    user_id: int | None = None
+    with connect() as db:
+        row = db.execute(
+            """
+            select id from users
+            where lower(email) = %s
+              and email_verified = true
+              and deactivated_at is null
+            limit 1
+            """,
+            (email_norm,),
+        ).fetchone()
+        if not row:
+            return {"ok": True, "pending_verify": True, "email_mask": _mask_email(email_norm)}
+
+        recent = db.execute(
+            """
+            select created_at from email_verifications
+            where lower(email) = %s
+              and purpose = 'login'
+            order by created_at desc
+            limit 1
+            """,
+            (email_norm,),
+        ).fetchone()
+        if recent:
+            created = recent["created_at"]
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - created).total_seconds()
+            if elapsed < 60:
+                raise ValueError(f"发送太频繁，请 {int(60 - elapsed) + 1} 秒后再试")
+
+        user_id = int(row["id"])
+        code = generate_email_code(6)
+        code_h = hash_email_code(code)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+        db.execute(
+            "update email_verifications set used_at = now() "
+            "where lower(email) = %s and purpose = 'login' and used_at is null",
+            (email_norm,),
+        )
+        db.execute(
+            """
+            insert into email_verifications
+              (email, code_hash, user_id, purpose, expires_at, ip, ua)
+            values (%s, %s, %s, 'login', %s, %s, %s)
+            """,
+            (email_norm, code_h, user_id, expires_at, ip or "", ua or ""),
+        )
+
+    from .email import send_login_code_email, EmailSendError
+    try:
+        send_login_code_email(email_norm, code)
+    except EmailSendError:
+        _log.warning("send_login_code_email failed (RESEND unconfigured?); code=%s", code)
+
+    return {"ok": True, "pending_verify": True, "email_mask": _mask_email(email_norm)}
+
+
+def confirm_login_code(email: str, code: str, *, ip: str = "") -> tuple[dict[str, Any], str]:
+    email_norm = normalize_email(email)
+    if not email_norm or "@" not in email_norm:
+        raise ValueError("请填写有效的邮箱地址")
+    code = (code or "").strip()
+    if len(code) != 6 or not code.isdigit():
+        raise ValueError("请输入 6 位数字验证码")
+    _check_rate_limit(ip, email_norm)
+
+    init_db()
+    with connect() as db:
+        verif = db.execute(
+            """
+            select * from email_verifications
+            where lower(email) = %s
+              and purpose = 'login'
+              and used_at is null
+              and expires_at > now()
+            order by created_at desc
+            limit 1
+            """,
+            (email_norm,),
+        ).fetchone()
+        if not verif or not verify_email_code(code, verif["code_hash"]):
+            _record_login_fail(ip, email_norm)
+            raise ValueError("验证码错误或已过期")
+
+        row = db.execute(
+            """
+            select * from users
+            where id = %s
+              and lower(email) = %s
+              and email_verified = true
+              and deactivated_at is null
+            limit 1
+            """,
+            (verif["user_id"], email_norm),
+        ).fetchone()
+        if not row:
+            _record_login_fail(ip, email_norm)
+            raise ValueError("验证码错误或已过期")
+
+        token = _issue_session(db, int(row["id"]))
+        db.execute("update email_verifications set used_at = now() where id = %s", (verif["id"],))
+        _record_login_success(ip, email_norm)
+        return dict(row), token
 
 
 def login(username: str, password: str, *, ip: str = "") -> tuple[dict[str, Any], str]:

@@ -236,6 +236,8 @@
     auth: {
       register: (body) => POST(`${API_PREFIX}/auth/register`, body),
       login: (body) => POST(`${API_PREFIX}/auth/login`, body),
+      loginCodeRequest: (body) => POST(`${API_PREFIX}/auth/login-code/request`, body),
+      loginCodeVerify: (body) => POST(`${API_PREFIX}/auth/login-code/verify`, body),
       logout: () => POST(`${API_PREFIX}/auth/logout`, {}),
       me: () => GET(`${API_PREFIX}/auth/me`),
       // Frontend wishlist – mapped to new endpoints we will add.

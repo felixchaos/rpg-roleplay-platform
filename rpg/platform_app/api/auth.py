@@ -121,6 +121,46 @@ async def api_login(request: Request):
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 
 
+@router.post("/api/auth/login-code/request")
+async def api_login_code_request(request: Request):
+    """Request a one-time email code for passwordless login."""
+    body = await request.json()
+    ip = _client_ip(request)
+    ua = request.headers.get("user-agent", "")
+    try:
+        result = _auth.request_login_code(body.get("email", ""), ip=ip, ua=ua)
+        return json_response(result)
+    except _auth.RateLimited as rl:
+        return json_response(
+            {"ok": False, "error": f"请求频率过高，请 {rl.retry_after_sec} 秒后再试"},
+            status_code=429,
+            headers={"Retry-After": str(rl.retry_after_sec)},
+        )
+    except ValueError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@router.post("/api/auth/login-code/verify")
+async def api_login_code_verify(request: Request):
+    """Verify a one-time email code and issue a session cookie."""
+    body = await request.json()
+    ip = _client_ip(request)
+    try:
+        user, token = _auth.confirm_login_code(body.get("email", ""), body.get("code", ""), ip=ip)
+        workspace.ensure_default(user["id"])
+        response = json_response({"ok": True, "user": public_user(user), "platform": platform_for(user)})
+        _set_session_cookie(response, request, token)
+        return response
+    except _auth.RateLimited as rl:
+        return json_response(
+            {"ok": False, "error": f"请求频率过高，请 {rl.retry_after_sec} 秒后再试"},
+            status_code=429,
+            headers={"Retry-After": str(rl.retry_after_sec)},
+        )
+    except ValueError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=400)
+
+
 # 保留 request：logout 需要读 cookies 并设置 delete_cookie
 @router.post("/api/auth/logout")
 async def api_logout(request: Request):
