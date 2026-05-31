@@ -795,7 +795,11 @@ def put_chunk(user_id: int, upload_id: str, chunk_index: int, blob: bytes) -> di
 
 
 def finish_upload(user_id: int, upload_id: str) -> dict[str, Any]:
-    """所有块到齐后，拼成最终文件并清理。返回 file_item 可直接喂 import_script。"""
+    """所有块到齐后，拼成最终文件。
+
+    注意：这里不能删除 upload 目录。后续 preview/import 仍会用 upload_id 消费
+    payload.bin；真正消费成功后由 _consume_upload_chunks(peek=False) 清理。
+    """
     user_dir = _upload_dir(user_id, upload_id)
     meta = _read_meta(user_dir)
     if meta["received_chunks"] != meta["total_chunks"]:
@@ -803,21 +807,25 @@ def finish_upload(user_id: int, upload_id: str) -> dict[str, Any]:
     if meta["received_bytes"] != meta["total_bytes"]:
         raise ValueError(f"字节不匹配：收到 {meta['received_bytes']} ≠ 声明 {meta['total_bytes']}")
     # 拼装
-    import base64 as _b64
-    import shutil as _shutil
-    out = bytearray()
+    payload_path = user_dir / "payload.bin"
+    total_size = 0
+    with open(payload_path, "wb") as out:
+        for i in range(meta["total_chunks"]):
+            p = user_dir / f"chunk_{i:04d}.bin"
+            if not p.exists():
+                raise ValueError(f"缺失 chunk {i}")
+            data = p.read_bytes()
+            total_size += len(data)
+            out.write(data)
     for i in range(meta["total_chunks"]):
-        p = user_dir / f"chunk_{i:04d}.bin"
-        if not p.exists():
-            raise ValueError(f"缺失 chunk {i}")
-        out.extend(p.read_bytes())
-    # 先构造完整 file_item（含 base64 编码），再清理磁盘
-    file_item = {"name": meta["filename"], "base64": _b64.b64encode(out).decode("ascii")}
-    _shutil.rmtree(user_dir, ignore_errors=True)
+        (user_dir / f"chunk_{i:04d}.bin").unlink(missing_ok=True)
+    meta["status"] = "finished"
+    meta["finished_at"] = _t.time()
+    meta["payload_bytes"] = total_size
+    (user_dir / "meta.json").write_text(_json.dumps(meta), encoding="utf-8")
     return {
         "ok": True, "upload_id": upload_id, "filename": meta["filename"],
-        "size": len(out),
-        "file_item": file_item,
+        "size": total_size,
     }
 
 
@@ -1016,16 +1024,21 @@ def split_chapter(user_id: int, script_id: int, chapter_index: int,
 
 
 def _consume_upload_chunks(user_id: int | None, upload_id: str, peek: bool = False) -> bytes:
-    """preview/import 时拼装已上传的分片。peek=True 不删原文件。"""
+    """preview/import 时读取已上传文件。peek=True 不删原文件。"""
     if not user_id:
         raise ValueError("缺 user_id")
     user_dir = _upload_dir(user_id, upload_id)
     meta = _read_meta(user_dir)
     if meta["received_chunks"] != meta["total_chunks"]:
         raise ValueError("分片未齐，无法消费")
-    out = bytearray()
-    for i in range(meta["total_chunks"]):
-        out.extend((user_dir / f"chunk_{i:04d}.bin").read_bytes())
+    payload_path = user_dir / "payload.bin"
+    if payload_path.exists():
+        out = payload_path.read_bytes()
+    else:
+        out = bytearray()
+        for i in range(meta["total_chunks"]):
+            out.extend((user_dir / f"chunk_{i:04d}.bin").read_bytes())
+        out = bytes(out)
     if not peek:
         import shutil
         shutil.rmtree(user_dir, ignore_errors=True)
