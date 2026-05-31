@@ -55,20 +55,55 @@ def cmd_prune_audit(db) -> dict:
     return result
 
 
+def cmd_policy_dispatch(db) -> dict:
+    """扫描并发送待发政策变更通知邮件 (DOC-02/AUP-03)."""
+    from rpg.cron.policy_notice import run_dispatch_due
+    result = run_dispatch_due(db)
+    logger.info("policy_dispatch: %s", result)
+    _write_audit(db, "cron.policy_dispatch", result)
+    return result
+
+
+def cmd_policy_activate(db) -> dict:
+    """激活 effective_at 已到的政策版本 (DOC-02/AUP-03)."""
+    from rpg.cron.policy_notice import run_activate_due
+    result = run_activate_due(db)
+    logger.info("policy_activate: %s", result)
+    _write_audit(db, "cron.policy_activate", result)
+    return result
+
+
+def cmd_prune_feedback(db) -> dict:
+    """删 24 月前的反馈行,保留 nsfw_terminate 证据 (FB-09)."""
+    from rpg.cron.prune_feedback import run_prune_feedback
+    result = run_prune_feedback(db)
+    logger.info("prune_feedback: %s", result)
+    _write_audit(db, "cron.prune_feedback", result)
+    return result
+
+
 COMMANDS = {
     "hard_delete": cmd_hard_delete,
     "prune_audit": cmd_prune_audit,
+    "policy_dispatch": cmd_policy_dispatch,
+    "policy_activate": cmd_policy_activate,
+    "prune_feedback": cmd_prune_feedback,
 }
+
+_ALL_COMMAND_NAMES = "|".join(COMMANDS.keys())
 
 
 def main(argv: list[str] | None = None) -> None:
     args = (argv or sys.argv)[1:]
     if not args:
-        print("Usage: python -m rpg.scripts.run_cron <hard_delete|prune_audit|all>", file=sys.stderr)
+        print(
+            f"Usage: python -m rpg.scripts.run_cron <{_ALL_COMMAND_NAMES}|all>",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     cmd = args[0].strip().lower()
-    if cmd not in ("hard_delete", "prune_audit", "all"):
+    if cmd not in (*COMMANDS, "all"):
         print(f"Unknown command: {cmd!r}", file=sys.stderr)
         sys.exit(1)
 

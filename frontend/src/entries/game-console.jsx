@@ -21,6 +21,7 @@ import { RightPanel, PANEL_TABS } from '../game-panels.jsx';
 import ModelPicker from '../components/ModelPicker.jsx';
 // AGE-02: splash gate
 import AdultSplash from '../components/AdultSplash.jsx';
+import { ErrorBoundary } from '../components/ErrorBoundary.jsx';
 const SPLASH_VERSION = 'v1.0-2026-05-31';
 
 // density preset + narrative font init（等价原 HTML 非 babel inline script）
@@ -1001,7 +1002,11 @@ function App() {
   );
 }
 
-const __mount = () => ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+const __mount = () => ReactDOM.createRoot(document.getElementById('root')).render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);
 const __gateThenMount = (info) => {
   const offline = new URLSearchParams(location.search).has('offline');
   if (info && info.online && !info.authed && !offline) {

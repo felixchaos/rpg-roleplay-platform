@@ -38,6 +38,7 @@ import CSSegmentedControl from '@cloudscape-design/components/segmented-control'
 import CSColumnLayout from '@cloudscape-design/components/column-layout';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSExpandableSection from '@cloudscape-design/components/expandable-section';
+import CSPagination from '@cloudscape-design/components/pagination';
 
 const _SAVE_SORT_OPTS = [
   { value: 'played', label: '最近游玩' },
@@ -178,6 +179,8 @@ function SavesListView() {
   const [renameVal, setRenameVal] = useStatePL('');
   const [query, setQuery] = useStatePL('');
   const [sortBy, setSortBy] = useStatePL('played'); // played | name | created
+  const [savePage, setSavePage] = useStatePL(1);
+  const SAVE_PAGE_SIZE = 50;
   const flash = useFlash();
   const importInputRef = React.useRef(null);
 
@@ -294,6 +297,12 @@ function SavesListView() {
     return sorted;
   }, [saves, scripts, query, sortBy]);
 
+  // 分页切片(每页 50 条)
+  const savePageCount = Math.max(1, Math.ceil(visibleSaves.length / SAVE_PAGE_SIZE));
+  const pagedSaves = visibleSaves.slice((savePage - 1) * SAVE_PAGE_SIZE, savePage * SAVE_PAGE_SIZE);
+  // 过滤条件变化时重置到第 1 页
+  React.useEffect(() => { setSavePage(1); }, [query, sortBy]);
+
   const scriptTitle = (s) => (scripts.find((x) => x.id === s.script_id)?.title || '未知剧本');
 
   return (
@@ -346,8 +355,13 @@ function SavesListView() {
           { id: 'status', header: '状态', cell: (s) => s.current ? <CSBadge color="green">在玩</CSBadge> : <CSStatusIndicator type="stopped">未激活</CSStatusIndicator> },
           { id: 'go', header: '', cell: (s) => <CSButton variant="inline-link" iconName="caret-right-filled" onClick={() => window.__openContinue?.(s)}>继续</CSButton> },
         ]}
-        items={visibleSaves}
+        items={pagedSaves}
         empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? '没有匹配的存档' : '还没有存档,点右上「开始新游戏」开始'}</CSBox>}
+        pagination={
+          savePageCount > 1
+            ? <CSPagination currentPageIndex={savePage} pagesCount={savePageCount} onChange={({ detail }) => setSavePage(detail.currentPageIndex)} />
+            : undefined
+        }
       />
       );
       const savesDetailEl = selected ? (

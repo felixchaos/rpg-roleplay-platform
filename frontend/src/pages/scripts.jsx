@@ -33,6 +33,7 @@ import CSSegmentedControl from '@cloudscape-design/components/segmented-control'
 import CSCards from '@cloudscape-design/components/cards';
 import CSTextFilter from '@cloudscape-design/components/text-filter';
 import CSTabs from '@cloudscape-design/components/tabs';
+import CSPagination from '@cloudscape-design/components/pagination';
 
 function ScriptPreviewModal({ open, busy, data, rule, onClose, onRetryRule, onConfirm }) {
   if (!open) return null;
@@ -493,6 +494,8 @@ function ScriptsListView() {
   // 选中行 + 搜索(对齐存档页:选中 → 下方详情面板)
   const [selectedId, setSelectedId] = useStatePL(null);
   const [query, setQuery] = useStatePL("");
+  const [scriptPage, setScriptPage] = useStatePL(1);
+  const SCRIPT_PAGE_SIZE = 50;
 
   // task 51: 触发某 script 的向量化(GET status 也走这里 polling)
   const triggerEmbed = React.useCallback(async (sid) => {
@@ -679,6 +682,13 @@ function ScriptsListView() {
   const visibleScripts = query
     ? scripts.filter((s) => (`${s.title} ${s.uid}`).toLowerCase().includes(query.toLowerCase()))
     : scripts;
+
+  // 分页切片(每页 50 条)
+  const scriptPageCount = Math.max(1, Math.ceil(visibleScripts.length / SCRIPT_PAGE_SIZE));
+  const pagedScripts = visibleScripts.slice((scriptPage - 1) * SCRIPT_PAGE_SIZE, scriptPage * SCRIPT_PAGE_SIZE);
+  // 查询变化时重置到第 1 页
+  React.useEffect(() => { setScriptPage(1); }, [query]);
+
   const selected = scripts.find((x) => x.id === selectedId) || null;
 
   const detailEl = selected ? (
@@ -705,11 +715,16 @@ function ScriptsListView() {
       selectionType="single"
       loadingText="加载剧本…"
       loading={!loaded}
-      items={visibleScripts}
+      items={pagedScripts}
       selectedItems={selected ? [selected] : []}
       onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedId(x.id); }}
       onRowClick={({ detail }) => setSelectedId(detail.item.id)}
       empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? '没有匹配的剧本' : '还没有剧本,点右上「导入剧本」开始。'}</CSBox>}
+      pagination={
+        scriptPageCount > 1
+          ? <CSPagination currentPageIndex={scriptPage} pagesCount={scriptPageCount} onChange={({ detail }) => setScriptPage(detail.currentPageIndex)} />
+          : undefined
+      }
       columnDefinitions={[
         { id: 'title', header: '剧本', cell: (s) => (
           <div><CSBox fontWeight="bold">{s.title}</CSBox><CSBox fontSize="body-s" color="text-body-secondary">{s.uid} · 更新 {s.updated_at}</CSBox></div>

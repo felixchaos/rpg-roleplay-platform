@@ -2160,3 +2160,225 @@ export function AdminMaintenancePage() {
     </CSSpaceBetween>
   );
 }
+
+/* ─────────────────────────────────────────────────────────────────
+   AdminFeedbackPage — 反馈审查队列 (FB-03)
+   ───────────────────────────────────────────────────────────────── */
+export function AdminFeedbackPage() {
+  const [items, setItems]           = React.useState([]);
+  const [loading, setLoading]       = React.useState(true);
+  const [err, setErr]               = React.useState(null);
+  const [statusFilter, setStatusFilter] = React.useState({ value: 'unreviewed', label: '待审核' });
+  const [detailModal, setDetailModal]   = React.useState(null); // feedback item
+  const [actionBusy, setActionBusy]     = React.useState(false);
+  const [actionErr, setActionErr]       = React.useState(null);
+  const [terminateReason, setTerminateReason] = React.useState('');
+
+  const statusOptions = [
+    { value: 'unreviewed', label: '待审核' },
+    { value: 'reviewed',   label: '已审核' },
+    { value: 'all',        label: '全部'   },
+  ];
+
+  const load = React.useCallback(async (filter) => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await fetch(
+        `/api/admin/feedback?status=${encodeURIComponent(filter)}&limit=50`,
+        { credentials: 'include' },
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+      setItems(data.items || []);
+    } catch (e) {
+      setErr(e?.message || '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => { load(statusFilter.value); }, [statusFilter.value]);
+
+  async function doDecision(feedbackId, decision, notes) {
+    setActionBusy(true);
+    setActionErr(null);
+    try {
+      const res = await fetch(`/api/admin/feedback/${feedbackId}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ decision, notes: notes || '' }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+      window.toast?.('操作成功', { kind: 'ok' });
+      setDetailModal(null);
+      setTerminateReason('');
+      load(statusFilter.value);
+    } catch (e) {
+      setActionErr(e?.message || '操作失败');
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  const decisionBadge = (d) => {
+    if (!d) return <CSBadge color="grey">待审核</CSBadge>;
+    if (d === 'ok') return <CSBadge color="green">OK</CSBadge>;
+    if (d === 'nsfw_terminate') return <CSBadge color="red">终止</CSBadge>;
+    if (d === 'spam') return <CSBadge color="severity-medium">垃圾</CSBadge>;
+    return <CSBadge color="grey">{d}</CSBadge>;
+  };
+
+  return (
+    <CSSpaceBetween size="l">
+      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+
+      <CSContainer
+        header={
+          <CSHeader
+            variant="h2"
+            description="用户提交的反馈审查队列，标记 OK / NSFW终止 / 垃圾"
+            actions={
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSSelect
+                  selectedOption={statusFilter}
+                  options={statusOptions}
+                  onChange={({ detail }) => setStatusFilter(detail.selectedOption)}
+                />
+                <CSButton iconName="refresh" onClick={() => load(statusFilter.value)} loading={loading}>
+                  刷新
+                </CSButton>
+              </CSSpaceBetween>
+            }
+          >
+            反馈审查
+          </CSHeader>
+        }
+      >
+        <CSTable
+          loading={loading}
+          loadingText="加载中…"
+          trackBy="id"
+          items={items}
+          empty={
+            <CSBox textAlign="center" color="inherit">
+              <CSBox padding={{ bottom: 's' }} variant="p" color="inherit">暂无反馈数据</CSBox>
+            </CSBox>
+          }
+          columnDefinitions={[
+            { id: 'id',      header: 'ID',       cell: (f) => f.id },
+            { id: 'user',    header: '用户',      cell: (f) => f.username || '—' },
+            { id: 'ts',      header: '提交时间',   cell: (f) => fmtTime(f.created_at) },
+            { id: 'status',  header: '状态',      cell: (f) => decisionBadge(f.review_decision) },
+            {
+              id: 'preview', header: '内容摘要',
+              cell: (f) => (
+                <span style={{ maxWidth: 300, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {(f.free_text || '').slice(0, 80) || '（空）'}
+                </span>
+              ),
+            },
+            {
+              id: 'actions', header: '操作',
+              cell: (f) => (
+                <CSButton variant="inline-link" onClick={() => { setDetailModal(f); setActionErr(null); setTerminateReason(''); }}>
+                  查看 / 处理
+                </CSButton>
+              ),
+            },
+          ]}
+        />
+      </CSContainer>
+
+      {/* ── 详情 + 操作 Modal ── */}
+      {detailModal && (
+        <CSModal
+          visible
+          size="large"
+          onDismiss={() => !actionBusy && setDetailModal(null)}
+          header={`反馈 #${detailModal.id} — ${detailModal.username}`}
+          footer={
+            !detailModal.review_decision ? (
+              <CSBox float="right">
+                <CSSpaceBetween direction="horizontal" size="xs">
+                  <CSButton variant="link" disabled={actionBusy} onClick={() => setDetailModal(null)}>取消</CSButton>
+                  <CSButton variant="normal" loading={actionBusy} onClick={() => doDecision(detailModal.id, 'spam')}>
+                    标垃圾
+                  </CSButton>
+                  <CSButton variant="primary" loading={actionBusy} onClick={() => doDecision(detailModal.id, 'ok')}>
+                    标 OK
+                  </CSButton>
+                  <CSButton
+                    variant="primary"
+                    iconName="status-warning"
+                    loading={actionBusy}
+                    disabled={!terminateReason.trim()}
+                    onClick={() => doDecision(detailModal.id, 'nsfw_terminate', terminateReason)}
+                  >
+                    终止账号 (NSFW)
+                  </CSButton>
+                </CSSpaceBetween>
+              </CSBox>
+            ) : (
+              <CSBox float="right">
+                <CSButton variant="link" onClick={() => setDetailModal(null)}>关闭</CSButton>
+              </CSBox>
+            )
+          }
+        >
+          <CSSpaceBetween size="m">
+            {actionErr && <CSAlert type="error">{actionErr}</CSAlert>}
+
+            <CSBox>
+              <strong>提交时间：</strong>{fmtTime(detailModal.created_at)}
+              {'　'}
+              <strong>状态：</strong>{decisionBadge(detailModal.review_decision)}
+              {detailModal.reviewed_at && (
+                <span>{'　'}<strong>审核时间：</strong>{fmtTime(detailModal.reviewed_at)}</span>
+              )}
+            </CSBox>
+
+            <CSBox>
+              <strong>自由文本：</strong>
+              <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--color-background-container-content)', padding: 8, borderRadius: 4 }}>
+                {detailModal.free_text || '（空）'}
+              </pre>
+            </CSBox>
+
+            {Array.isArray(detailModal.excerpts) && detailModal.excerpts.length > 0 && (
+              <CSBox>
+                <strong>节选（{detailModal.excerpts.length} 段）：</strong>
+                {detailModal.excerpts.map((ex, i) => (
+                  <CSBox key={i} padding={{ top: 'xs' }}>
+                    <CSBadge color="grey">session: {ex.session_id}</CSBadge>
+                    {' '}range: {ex.range}
+                    <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: 4, background: 'var(--color-background-container-content)', padding: 8, borderRadius: 4 }}>
+                      {ex.plaintext}
+                    </pre>
+                  </CSBox>
+                ))}
+              </CSBox>
+            )}
+
+            {!detailModal.review_decision && (
+              <CSFormField
+                label="终止理由（终止账号(NSFW)时必填）"
+                description="该理由会写入 account_delete_queue，请简明说明违规内容"
+              >
+                <CSTextarea
+                  value={terminateReason}
+                  onChange={({ detail }) => setTerminateReason(detail.value)}
+                  placeholder="如: 提交了含露骨 NSFW 内容的节选…"
+                  rows={3}
+                  disabled={actionBusy}
+                />
+              </CSFormField>
+            )}
+          </CSSpaceBetween>
+        </CSModal>
+      )}
+    </CSSpaceBetween>
+  );
+}

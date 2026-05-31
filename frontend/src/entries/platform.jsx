@@ -22,6 +22,7 @@ installWarmTheme();
 import { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, PL_NAV, AdminGuard,
   AdminUsersPage, AdminGlobalUsagePage, AdminAuditPage, AdminHealthPage,
   AdminLogsPage, AdminRegistrationPage, AdminSecurityPage, AdminMaintenancePage,
+  AdminDmcaTakedownsPage, AdminDmcaStrikesPage, AdminCsamReportsPage, AdminAupActionsPage,
 } from '../platform-app.jsx';
 import { SavesPage } from '../pages/saves.jsx';
 import { ScriptsPage } from '../pages/scripts.jsx';
@@ -30,6 +31,7 @@ import { SettingsPage } from '../pages/settings.jsx';
 
 // AGE-02: splash gate
 import AdultSplash from '../components/AdultSplash.jsx';
+import { ErrorBoundary } from '../components/ErrorBoundary.jsx';
 const SPLASH_VERSION = 'v1.0-2026-05-31';
 
 // ── 挂载 ──
@@ -67,6 +69,7 @@ function parsePageFromHash() {
     'settings-permissions', 'settings-danger', 'admin-deploy',
     'admin-users', 'admin-usage', 'admin-audit', 'admin-health',
     'admin-logs', 'admin-registration', 'admin-security', 'admin-maintenance',
+    'admin-dmca-takedowns', 'admin-dmca-strikes', 'admin-csam-reports', 'admin-aup-actions',
     'usage', 'plugins', 'mcp', 'skills', 'apis',
   ];
   if (!ids.includes(hash)) return null;
@@ -151,7 +154,11 @@ function PlatformApp() {
   else if (page === 'admin-logs')         body = <AdminGuard><AdminLogsPage /></AdminGuard>;
   else if (page === 'admin-registration') body = <AdminGuard><AdminRegistrationPage /></AdminGuard>;
   else if (page === 'admin-security')     body = <AdminGuard><AdminSecurityPage /></AdminGuard>;
-  else if (page === 'admin-maintenance')  body = <AdminGuard><AdminMaintenancePage /></AdminGuard>;
+  else if (page === 'admin-maintenance')      body = <AdminGuard><AdminMaintenancePage /></AdminGuard>;
+  else if (page === 'admin-dmca-takedowns')   body = <AdminGuard><AdminDmcaTakedownsPage /></AdminGuard>;
+  else if (page === 'admin-dmca-strikes')     body = <AdminGuard><AdminDmcaStrikesPage /></AdminGuard>;
+  else if (page === 'admin-csam-reports')     body = <AdminGuard><AdminCsamReportsPage /></AdminGuard>;
+  else if (page === 'admin-aup-actions')      body = <AdminGuard><AdminAupActionsPage /></AdminGuard>;
   else if (page === 'usage') body = <UsagePage />;
   else if (page === 'plugins') body = <CapPage kind="plugins" />;
   else if (page === 'mcp') body = <CapPage kind="mcp" />;
@@ -178,7 +185,11 @@ function PlatformApp() {
 }
 
 const __mount = () =>
-  ReactDOM.createRoot(document.getElementById('root')).render(<PlatformApp />);
+  ReactDOM.createRoot(document.getElementById('root')).render(
+    <ErrorBoundary>
+      <PlatformApp />
+    </ErrorBoundary>
+  );
 const __gateThenMount = (info) => {
   const offline = new URLSearchParams(location.search).has('offline');
   if (info && info.online && !info.authed && !offline) {
