@@ -1234,8 +1234,10 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
   const [customRole, setCustomRole] = React.useState("");
   const [customBg, setCustomBg] = React.useState("");
 
-  // fetch recommendations when step mounts (scriptId + birthpoint + character)
+  // 单页模式:出生点 / 角色变化时重新拉推荐(出生点是 AI 推荐的关键输入)。
+  // 未选出生点时不请求,显示提示。
   React.useEffect(() => {
+    if (!birthpoint) { setRecs([]); setRecsErr(""); setRecsLoading(false); return; }
     setRecsLoading(true); setRecsErr("");
     const picked = allRoleOptions ? allRoleOptions.find(o => o.key === pickedCard) : null;
     const args = {
@@ -1279,7 +1281,8 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
         setRecsLoading(false);
       }
     })();
-  }, []); // only on mount of this step
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scriptId, birthpoint && birthpoint.anchor_id, pickedCard]);
 
   const applyCustom = () => {
     if (!customName.trim()) return;
@@ -1288,6 +1291,11 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
+      {!birthpoint && (
+        <CSBox color="text-body-secondary" fontSize="body-s">
+          先在上方「出生点」选好开局位置,这里会据此生成 AI 推荐身份;你也可以直接用下方「自定义身份」。
+        </CSBox>
+      )}
       {/* recommendation area */}
       {recsLoading && (
         <div className="muted" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "12px 0" }}>
@@ -1419,16 +1427,11 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
    MAIN WIZARD COMPONENT
    ============================================================ */
 function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
-  const TOTAL_STEPS = 5;
-
   // ── shared data ──────────────────────────────────────────────
   const [scripts, setScripts] = useStatePL([]);
   const [personas, setPersonas] = useStatePL([]);
   const [userCards, setUserCards] = useStatePL([]);
   const [loading, setLoading] = useStatePL(true);
-
-  // ── wizard navigation ────────────────────────────────────────
-  const [step, setStep] = useStatePL(0); // 0-indexed (0..3)
 
   // ── Step 1 state ─────────────────────────────────────────────
   const [title, setTitle] = useStatePL("");
@@ -1457,8 +1460,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   // ── load data when opened ────────────────────────────────────
   React.useEffect(() => {
     if (!open) return;
-    // reset to step 0 and clear transient state
-    setStep(0);
+    // reset transient state
     setTitle(""); setSubmitErr(""); setSubmitting(false); setLoading(true);
     setNewCardName(""); setNewCardRole(""); setNewCardBg("");
     setBirthpoint(null); setIdentity(null); setStoryIntent("");
@@ -1524,19 +1526,11 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
     })),
   ];
 
-  // per-step validity
+  // 各必填模块完成校验(单页:不再按步骤 gating,只用于概要 + 创建按钮)
   const step1Valid = title.trim() && scriptId;
   const step2Valid = (roleMode === "existing" && pickedCard) || (roleMode === "new" && newCardName.trim());
   const step3Valid = !!birthpoint;
   const step4Valid = !!identity;
-  const step5Valid = true; // optional step, always valid
-
-  const stepValid = [step1Valid, step2Valid, step3Valid, step4Valid, step5Valid];
-  const canNext = !loading && stepValid[step];
-  const canSubmit = !submitting && stepValid[0] && stepValid[1] && stepValid[2] && stepValid[3];
-
-  const goNext = () => { if (canNext && step < TOTAL_STEPS - 1) setStep(s => s + 1); };
-  const goPrev = () => { if (step > 0) setStep(s => s - 1); };
 
   const handleSubmit = async () => {
     setSubmitErr(""); setSubmitting(true);
@@ -1566,40 +1560,29 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
     }
   };
 
-  /* ── step labels ── */
-  const stepLabels = ["剧本", "角色", "出生点", "初始身份", "剧情期望"];
-
+  /* ── EC2 式单页:基本信息区块 ── */
   const scriptOpts = scripts.map(sc => ({ value: String(sc.id), label: sc.title }));
 
-  const step0Content = (
-    <CSSpaceBetween size="l">
-      {loading && <CSBox color="text-body-secondary"><Icon name="spinner" size={13} className="spin" /> 正在加载剧本 / 角色…</CSBox>}
-      {!loading && scripts.length === 0 && (
-        <CSAlert type="warning" header="还没有任何剧本">
-          先去 <a href="#scripts-import" onClick={onClose}>剧本 / 导入</a> 上传一部,然后再回来新建存档。
-        </CSAlert>
-      )}
-      <CSColumnLayout columns={2}>
-        <CSFormField label="存档名称" constraintText="必填">
-          <CSInput value={title} onChange={({ detail }) => setTitle(detail.value)}
-            onKeyDown={({ detail }) => { if (detail.key === 'Enter' && canNext) goNext(); }} autoFocus />
-        </CSFormField>
-        <CSFormField label="剧本" constraintText="必填">
-          <CSSelect
-            selectedOption={scriptOpts.find(o => o.value === scriptId) || null}
-            options={scriptOpts}
-            disabled={!scripts.length}
-            placeholder={scripts.length ? '选择剧本' : '（先导入一部剧本）'}
-            onChange={({ detail }) => {
-              const v = detail.selectedOption.value;
-              setScriptId(v);
-              setBirthpoint(null);
-              try { if (v) localStorage.setItem('newgame.lastScriptId', v); } catch (_) {}
-            }}
-          />
-        </CSFormField>
-      </CSColumnLayout>
-    </CSSpaceBetween>
+  const sec_basic = (
+    <CSColumnLayout columns={2}>
+      <CSFormField label="存档名称" constraintText="必填">
+        <CSInput value={title} onChange={({ detail }) => setTitle(detail.value)} autoFocus />
+      </CSFormField>
+      <CSFormField label="剧本" constraintText="必填">
+        <CSSelect
+          selectedOption={scriptOpts.find(o => o.value === scriptId) || null}
+          options={scriptOpts}
+          disabled={!scripts.length}
+          placeholder={scripts.length ? '选择剧本' : '（先导入一部剧本）'}
+          onChange={({ detail }) => {
+            const v = detail.selectedOption.value;
+            setScriptId(v);
+            setBirthpoint(null);
+            try { if (v) localStorage.setItem('newgame.lastScriptId', v); } catch (_) {}
+          }}
+        />
+      </CSFormField>
+    </CSColumnLayout>
   );
 
   const step1Content = (
@@ -1670,43 +1653,90 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
     </CSSpaceBetween>
   );
 
-  const wizSteps = [
-    { title: '选择剧本与存档名称', content: step0Content },
-    { title: '选择扮演角色', content: step1Content },
-    { title: '选择出生点', content: <BirthpointStep scriptId={scriptId} birthpoint={birthpoint} setBirthpoint={setBirthpoint} /> },
-    { title: '设定初始身份', content: <IdentityStep scriptId={scriptId} birthpoint={birthpoint} pickedCard={pickedCard} allRoleOptions={allRoleOptions} identity={identity} setIdentity={(id) => setIdentity(id)} /> },
-    { title: '剧情走向期望', isOptional: true, content: step4Content },
-  ].map((s, i) => ({
-    ...s,
-    errorText: (submitErr && i === TOTAL_STEPS - 1) ? ('创建失败:' + submitErr) : undefined,
-  }));
+  // 区块标题:h2 + 说明,可选项加「· 可选」标
+  const secHeader = (text, desc, optional) => (
+    <CSHeader variant="h2" description={desc}>
+      {text}{optional ? <CSBox variant="span" color="text-status-inactive" fontSize="body-s"> · 可选</CSBox> : null}
+    </CSHeader>
+  );
+
+  // 右侧概要:必填项完成度 + 已选摘要 + 创建按钮
+  const reqRows = [
+    { label: '存档名称与剧本', ok: step1Valid },
+    { label: '扮演角色', ok: step2Valid },
+    { label: '出生点', ok: step3Valid },
+    { label: '初始身份', ok: step4Valid },
+  ];
+  const allValid = step1Valid && step2Valid && step3Valid && step4Valid;
+  const pickedRoleName = roleMode === 'new'
+    ? (newCardName.trim() || '新建角色')
+    : (allRoleOptions.find(o => o.key === pickedCard)?.name || '—');
 
   const node = (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'var(--bg, #1a1817)', overflow: 'auto' }}>
-      <div style={{ maxWidth: 1040, margin: '0 auto', padding: '32px 24px 64px' }}>
-        <CSWizard
-          steps={wizSteps}
-          activeStepIndex={step}
-          isLoadingNextStep={submitting}
-          submitButtonText={submitting ? '正在创建…' : '创建并进入'}
-          onCancel={onClose}
-          onSubmit={() => { if (canSubmit) handleSubmit(); }}
-          onNavigate={({ detail }) => {
-            const target = detail.requestedStepIndex;
-            // 前进时校验当前步;后退随意
-            if (target > step && !stepValid[step]) return;
-            setStep(target);
-          }}
-          i18nStrings={{
-            stepNumberLabel: (n) => `第 ${n} 步`,
-            collapsedStepsLabel: (n, total) => `第 ${n} 步 / 共 ${total} 步`,
-            cancelButton: '取消',
-            previousButton: '上一步',
-            nextButton: '下一步',
-            submitButton: submitting ? '正在创建…' : '创建并进入',
-            optional: '可选',
-          }}
-        />
+    <div style={{ position: 'fixed', top: 53, left: 0, right: 0, bottom: 0, zIndex: 1000, background: 'var(--bg, #1a1817)', overflow: 'auto' }}>
+      {/* 顶部栏:标题 + 取消(位于平台顶栏下方,保留平台导航) */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 3, background: '#131211', borderBottom: '1px solid #36322d' }}>
+        <div style={{ maxWidth: 1240, margin: '0 auto', padding: '13px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+          <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600, color: '#ebe7df' }}>新建存档</div>
+          <CSButton iconName="close" variant="link" onClick={onClose}>取消</CSButton>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1240, margin: '0 auto', padding: '20px 24px 80px' }}>
+        <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+          {/* 左:各模块平铺 */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <CSSpaceBetween size="l">
+              {loading && (
+                <CSBox color="text-body-secondary"><Icon name="spinner" size={13} className="spin" /> 正在加载剧本 / 角色…</CSBox>
+              )}
+              {!loading && scripts.length === 0 && (
+                <CSAlert type="warning" header="还没有任何剧本">
+                  先去 <a href="#scripts-import" onClick={onClose}>剧本 / 导入</a> 上传一部,然后再回来新建存档。
+                </CSAlert>
+              )}
+              <CSContainer header={secHeader('基本信息', '给存档起名,并选择要游玩的剧本。')}>{sec_basic}</CSContainer>
+              <CSContainer header={secHeader('扮演角色', '选择已有玩家身份 / 角色卡,或新建一个。')}>{step1Content}</CSContainer>
+              <CSContainer header={secHeader('出生点', scriptId ? '选择故事开局的时间锚点。' : '先在「基本信息」选好剧本。')}>
+                {scriptId
+                  ? <BirthpointStep scriptId={scriptId} birthpoint={birthpoint} setBirthpoint={setBirthpoint} />
+                  : <CSBox color="text-body-secondary" fontSize="body-s">请先选择剧本。</CSBox>}
+              </CSContainer>
+              <CSContainer header={secHeader('初始身份', '基于出生点与所选角色推荐,或自定义。')}>
+                <IdentityStep scriptId={scriptId} birthpoint={birthpoint} pickedCard={pickedCard} allRoleOptions={allRoleOptions} identity={identity} setIdentity={(id) => setIdentity(id)} />
+              </CSContainer>
+              <CSContainer header={secHeader('剧情期望', '告诉 GM 你希望的剧情走向 / 秘密分配。', true)}>{step4Content}</CSContainer>
+            </CSSpaceBetween>
+          </div>
+
+          {/* 右:概要 + 创建(sticky) */}
+          <div style={{ width: 320, flexShrink: 0, position: 'sticky', top: 72 }}>
+            <CSContainer header={<CSHeader variant="h2">概要</CSHeader>}>
+              <CSSpaceBetween size="m">
+                <CSSpaceBetween size="xs">
+                  {reqRows.map(r => (
+                    <CSStatusIndicator key={r.label} type={r.ok ? 'success' : 'pending'}>{r.label}</CSStatusIndicator>
+                  ))}
+                </CSSpaceBetween>
+                <CSKeyValuePairs columns={1} items={[
+                  { label: '存档名称', value: title.trim() || '—' },
+                  { label: '剧本', value: scriptOpts.find(o => o.value === scriptId)?.label || '—' },
+                  { label: '角色', value: pickedRoleName },
+                  { label: '出生点', value: birthpoint?.story_time_label || '—' },
+                  { label: '初始身份', value: identity?.name || '—' },
+                ]} />
+                {submitErr && <CSAlert type="error">{submitErr}</CSAlert>}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <CSButton variant="primary" disabled={!allValid || submitting} loading={submitting}
+                    onClick={() => { if (allValid) handleSubmit(); }}>
+                    {submitting ? '正在创建…' : '创建并进入'}
+                  </CSButton>
+                  <CSButton variant="link" onClick={onClose}>取消</CSButton>
+                </div>
+              </CSSpaceBetween>
+            </CSContainer>
+          </div>
+        </div>
       </div>
     </div>
   );
