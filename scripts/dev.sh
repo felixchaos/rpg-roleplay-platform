@@ -32,9 +32,18 @@ _pid_on_port() {
 _kill_on_port() {
   local pid; pid="$(_pid_on_port "$1")"
   [ -n "$pid" ] || return 0
-  echo "  · 杀掉旧进程 :$1 (pid=$pid)"
+  echo "  · graceful stop :$1 (pid=$pid)"
+  # SIGTERM 让进程 (uvicorn / vite) 关 SSE / db connection / file watchers
+  kill -15 "$pid" 2>/dev/null
+  local i; for i in 1 2 3 4 5; do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 1
+  done
+  echo "  · force kill :$1 (pid=$pid) — graceful 5s 超时"
   kill -9 "$pid" 2>/dev/null
-  sleep 1
+  sleep 0.5
+  # 子进程 (uvicorn reloader 的 worker / vite 的 esbuild) 也要清
+  pkill -9 -P "$pid" 2>/dev/null
 }
 
 _color() { printf '\033[%sm%s\033[0m' "$1" "$2"; }
@@ -76,45 +85,78 @@ check_frontend() {
 }
 
 # ── 启动 ───────────────────────────────────────────────────────────
+# 后端: uvicorn --reload 监听 .py 改动自动重启 worker,无需手动 restart
+# 前端: npm run dev (vite) 内置 HMR,改 jsx 自动热更新页面不刷新
 start_backend() {
   if [ -n "$(_pid_on_port $BACKEND_PORT)" ]; then
     echo "  $(_warn) backend :$BACKEND_PORT 已运行 — 跳过 (用 restart 强重启)"
     return 0
   fi
-  echo "  · 启动 backend → $BACKEND_LOG"
+  if [ ! -x "$RPG_DIR/.venv/bin/uvicorn" ]; then
+    echo "  $(_bad) .venv/bin/uvicorn 不存在 — 先 cd rpg && python -m venv .venv && .venv/bin/pip install -r requirements.txt"
+    return 1
+  fi
+  echo "  · 启动 backend (uvicorn --reload,改 .py 自动重启) → $BACKEND_LOG"
   (
     cd "$RPG_DIR"
-    nohup .venv/bin/python app.py > "$BACKEND_LOG" 2>&1 &
+    # --reload 监控 . (rpg/) 下所有 .py 改动
+    # --reload-exclude 跳过测试 / 节点产物,避免误触发(尤其 .venv 大量 .py)
+    # 注意: uvicorn --reload 不支持 workers > 1,DEV 单 worker 是正确配置
+    nohup .venv/bin/uvicorn app:app \
+      --host 127.0.0.1 \
+      --port "$BACKEND_PORT" \
+      --reload \
+      --reload-dir . \
+      --reload-exclude '.venv/*' \
+      --reload-exclude 'tests/*' \
+      --reload-exclude '__pycache__/*' \
+      --reload-exclude '*.pyc' \
+      --reload-exclude 'platform_data/*' \
+      --log-level info \
+      > "$BACKEND_LOG" 2>&1 &
     echo "$!" > "$LOG_DIR/backend.pid"
   )
-  # 等到 200 或 12s timeout
-  local i; for i in $(seq 1 24); do
+  # 等到 200 或 12s timeout (reload 模式启动比直跑 python app.py 慢一点)
+  local i; for i in $(seq 1 30); do
     sleep 0.5
     local code; code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$BACKEND_PORT/" 2>/dev/null)
-    [ "$code" = "200" ] && { echo "  $(_ok) backend ready in ~${i}*0.5s"; return 0; }
+    [ "$code" = "200" ] && { echo "  $(_ok) backend ready in ~${i}*0.5s (改 rpg/*.py 自动重启)"; return 0; }
   done
-  echo "  $(_bad) backend 12s 内没起来,看 $BACKEND_LOG"
+  echo "  $(_bad) backend 15s 内没起来,看 $BACKEND_LOG"
   tail -10 "$BACKEND_LOG" | sed 's/^/    /'
   return 1
 }
 
+# vite dev server: 真正 HMR,改 jsx/css 不刷新页面就热替换
+# 与原 python -m http.server 的区别:
+#   - 原:静态文件服务器,改文件后必须手动 F5
+#   - 现:vite,改文件自动 HMR (不刷新);改 vite.config 才需要 dev 重启
 start_frontend() {
   if [ -n "$(_pid_on_port $FRONTEND_PORT)" ]; then
     echo "  $(_warn) frontend :$FRONTEND_PORT 已运行 — 跳过 (用 restart 强重启)"
     return 0
   fi
-  echo "  · 启动 frontend static server → $FRONTEND_LOG"
+  if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
+    echo "  $(_warn) frontend/node_modules 缺失 — 自动 npm install (首次约 30-60s)"
+    ( cd "$FRONTEND_DIR" && npm install ) || {
+      echo "  $(_bad) npm install 失败"; return 1
+    }
+  fi
+  echo "  · 启动 frontend (vite,HMR 自动热更新) → $FRONTEND_LOG"
   (
     cd "$FRONTEND_DIR"
-    nohup python3 -m http.server "$FRONTEND_PORT" --bind 127.0.0.1 > "$FRONTEND_LOG" 2>&1 &
+    # --host 127.0.0.1 限本地;--port 跟旧约定 5173;--strictPort 端口被占报错而不是自动找空闲
+    nohup npm run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT" --strictPort > "$FRONTEND_LOG" 2>&1 &
     echo "$!" > "$LOG_DIR/frontend.pid"
   )
-  local i; for i in $(seq 1 12); do
+  # vite 冷启动比 python http.server 慢 (要做 deps 预编译),给 20s
+  local i; for i in $(seq 1 40); do
     sleep 0.5
     local code; code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$FRONTEND_PORT/Platform.html" 2>/dev/null)
-    [ "$code" = "200" ] && { echo "  $(_ok) frontend ready in ~${i}*0.5s"; return 0; }
+    [ "$code" = "200" ] && { echo "  $(_ok) frontend ready in ~${i}*0.5s (改 jsx/css 自动 HMR)"; return 0; }
   done
-  echo "  $(_bad) frontend 6s 内没起来,看 $FRONTEND_LOG"
+  echo "  $(_bad) frontend 20s 内没起来,看 $FRONTEND_LOG"
+  tail -15 "$FRONTEND_LOG" | sed 's/^/    /'
   return 1
 }
 
@@ -130,12 +172,16 @@ cmd_status() {
 }
 
 cmd_start() {
-  echo "─── 启动 dev 环境 ───"
+  echo "─── 启动 dev 环境 (热重载已开启) ───"
   check_postgres || { echo "$(_bad) Postgres 没起,先解决。"; exit 1; }
   start_backend  || exit 1
   start_frontend || exit 1
   echo ""
   echo "$(_ok) 全部就绪 →  http://127.0.0.1:$FRONTEND_PORT/Platform.html"
+  echo ""
+  echo "  $(_color 36 "·") 改 rpg/*.py    → uvicorn 自动重启 (1-3s)"
+  echo "  $(_color 36 "·") 改 frontend/   → vite HMR 自动热更新 (无需刷新)"
+  echo "  $(_color 36 "·") 看实时日志    → $0 logs [backend|frontend]"
 }
 
 cmd_stop() {
