@@ -73,8 +73,11 @@ def extract_arc(llm: ExtractLLM, arc: list[dict], *, era: str,
                 power_system: list[str] | None = None,
                 known_entities: list[str] | None = None,
                 k_picks: int = 3, per_chapter_chars: int = 2500,
-                max_tokens: int = 4000) -> Any:
+                max_tokens: int = 5500) -> Any:
     """LLM 抽一个弧。复用 per_chapter.extract_chapter 的 schema(章 → 弧的语义升维)。
+
+    v28: identity/background 进 entity schema 后,弧级实体集更易撑爆原 4000 上限
+    (弧含 3 代表章 + 弧角色全集,密度高于单章),提到 5500。
 
     返回 ChapterExtract,其中:
       chapter = 弧首章 chapter_index(用作 first_revealed_chapter)

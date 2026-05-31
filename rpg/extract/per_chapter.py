@@ -89,9 +89,10 @@ def build_user(chapter_text: str, *, known_entities: list[str] | None = None,
 def extract_chapter(llm: ExtractLLM, chapter_num: int, chapter_text: str, *, era: str,
                     power_system: list[str] | None = None, known_entities: list[str] | None = None,
                     prev_summary: str = "", title_descriptor: str = "",
-                    max_tokens: int = 3500) -> ChapterExtract:
-    # 默认 3500:schema 新增 chapter_summary + entity 的 full_name/aliases_in_chapter 字段
-    # 后,实测 haiku 单章输出 ~2400-2800 tokens(原 2000 会被截在 events 中段导致 JSON 解析失败)
+                    max_tokens: int = 4500) -> ChapterExtract:
+    # 默认 4500:v28 schema 再加 entity.identity (≤40 字) / background (≤120 字) 后,
+    # 每个 character entity 多 ~60 token;10+ 角色密集章实测吃满 3500 会再次截尾。
+    # 原历史:chapter_summary + full_name/aliases_in_chapter 已把基线从 2000 抬到 3500。
     system = build_system(era, power_system)
     user = build_user(chapter_text, known_entities=known_entities,
                       prev_summary=prev_summary, title_descriptor=title_descriptor)

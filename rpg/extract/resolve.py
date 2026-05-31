@@ -252,8 +252,13 @@ def sync_character_cards_from_canon(db, script_id: int, character_canon: list[Ca
                               then excluded.identity else character_cards.identity end,
               background = case when length(excluded.background) > 0
                                 then excluded.background else character_cards.background end,
-              first_revealed_chapter = excluded.first_revealed_chapter,
-              importance = excluded.importance,
+              -- 重抽时:取更早的首次出场章节、保留更高的 importance(防 LLM 偶尔漏抽某章而回退)
+              first_revealed_chapter = case
+                when character_cards.first_revealed_chapter = 0 then excluded.first_revealed_chapter
+                when excluded.first_revealed_chapter = 0 then character_cards.first_revealed_chapter
+                else least(character_cards.first_revealed_chapter, excluded.first_revealed_chapter)
+              end,
+              importance = greatest(character_cards.importance, excluded.importance),
               row_version = character_cards.row_version + 1,
               updated_at = now()
             """,
