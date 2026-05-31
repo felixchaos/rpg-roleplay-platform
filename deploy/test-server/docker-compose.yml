@@ -1,0 +1,187 @@
+version: "3.9"
+
+# RPG Roleplay 测试服 — ECS06
+# 域名:rpg-roleplay.stellatrix.icu
+# 访问控制:CF orange-cloud + IP 白名单(154.29.152.100)
+#
+# 相对于生产 docker-compose.yml 的差异:
+#   - 加 nginx 反代(SSL 终端 + IP 白名单 + 静态 frontend 服务)
+#   - CORS_ORIGINS 改为 rpg-roleplay.stellatrix.icu
+#   - 不暴露 backend:7860 到主机端口(只在 docker 网络内,nginx 反代)
+#   - 单 worker(测试体量 1-2 用户)+ 较低限流
+#   - 默认日志拉到 stdout 不写文件(方便 docker logs)
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: rpg-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rpg
+      POSTGRES_USER: rpg
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?必须设 POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # 仅绑本机,防 LAN 直连
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rpg -d rpg"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rpg-net
+
+  pgbouncer:
+    image: bitnami/pgbouncer:1.22.1
+    container_name: rpg-pgbouncer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGBOUNCER_DATABASE: rpg
+      PGBOUNCER_HOST: postgres
+      PGBOUNCER_PORT: 5432
+      PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_MAX_CLIENT_CONN: "200"
+      PGBOUNCER_DEFAULT_POOL_SIZE: "10"
+      PGBOUNCER_MIN_POOL_SIZE: "2"
+      PGBOUNCER_AUTH_TYPE: md5
+      POSTGRESQL_USERNAME: rpg
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:?必须设 POSTGRES_PASSWORD}
+    volumes:
+      - ../pgbouncer.ini:/bitnami/pgbouncer/conf/pgbouncer.ini:ro
+      - ../userlist.txt:/bitnami/pgbouncer/conf/userlist.txt:ro
+    networks:
+      - rpg-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: rpg-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:?必须设 REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?必须设 REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - rpg-net
+
+  backend:
+    image: rpg-app:test
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    container_name: rpg-backend
+    restart: unless-stopped
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    # 不暴露主机端口:nginx 走 docker 内网反代
+    expose:
+      - "7860"
+    environment:
+      DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:?}@pgbouncer:6432/rpg
+      REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379
+
+      # 加密主密钥 — 拒绝启动如缺
+      RPG_MASTER_KEY: ${RPG_MASTER_KEY:?必须设 RPG_MASTER_KEY=$(openssl rand -hex 32)}
+
+      RPG_DEPLOYMENT_MODE: multiuser
+      RPG_REQUIRE_AUTH: "1"
+      RPG_DB_POOL_MAX: "10"
+      RPG_WORKERS: "1"
+      RPG_ENV: "prod"
+
+      RPG_PORT: "7860"
+      RPG_HOST: "0.0.0.0"
+
+      # 反代识别 + HSTS 反代修正(B7 sonnet 实现)
+      RPG_TRUSTED_PROXIES: "127.0.0.1,172.16.0.0/12,10.0.0.0/8"
+
+      RPG_CORS_ORIGINS: "https://rpg-roleplay.stellatrix.icu"
+      RPG_COOKIE_SAMESITE: "lax"
+      RPG_COOKIE_SECURE: "1"
+
+      RPG_RATE_LIMIT_PER_MIN: "60"
+      RPG_REQUEST_TIMEOUT_SECS: "30"
+      RPG_BODY_LIMIT_BYTES: "2097152"
+      RPG_UPLOAD_BODY_LIMIT_BYTES: "52428800"
+
+      # 邮件(B12 注册验证码)— 测试服阶段 Resend 同 landing 复用
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      RESEND_FROM: ${RESEND_FROM:-Stellatrix Labs <noreply@stellatrix.icu>}
+
+      # 反馈 NSFW 预审(T8)— 可选
+      OPENAI_MODERATION_API_KEY: ${OPENAI_MODERATION_API_KEY}
+
+      # 注册闸:首个 setup_token,首次注册者拿 admin
+      RPG_SETUP_TOKEN: ${RPG_SETUP_TOKEN}
+
+      # admin 默认 LLM 配置(普通用户走 BYOK)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      EMBED_BASE_URL: ${EMBED_BASE_URL}
+      EMBED_MODEL: ${EMBED_MODEL:-text-embedding-004}
+      EMBED_API_KEY: ${EMBED_API_KEY}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7860/api/state || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    networks:
+      - rpg-net
+
+  cron:
+    image: rpg-app:test
+    container_name: rpg-cron
+    restart: unless-stopped
+    command:
+      - "/bin/sh"
+      - "-c"
+      - "while true; do python -m rpg.scripts.run_cron all; sleep 86400; done"
+    depends_on:
+      pgbouncer:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:?}@pgbouncer:6432/rpg
+      RPG_MASTER_KEY: ${RPG_MASTER_KEY:?}
+      RPG_DEPLOYMENT_MODE: multiuser
+      RESEND_API_KEY: ${RESEND_API_KEY}
+    networks:
+      - rpg-net
+
+  # ─── 6. nginx — SSL 终端 + IP 白名单 + 反代 ───────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: rpg-nginx
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      # 测试服只开 443(CF orange-cloud → 源站 HTTPS),不开 80
+      - "443:443"
+      # 备用 80 → 强制 301 跳转 443(CF 已经在前面做了,这里防裸 IP 访问)
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx-rpg-roleplay.conf:/etc/nginx/conf.d/rpg-roleplay.conf:ro
+      - ./certs:/etc/nginx/certs:ro  # 挂 CF Origin cert
+    networks:
+      - rpg-net
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  rpg-net:
+    driver: bridge
