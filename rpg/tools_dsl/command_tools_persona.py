@@ -51,7 +51,7 @@ def _t_delete_persona(user_id: int, args: dict) -> str:
         init_db()
         with connect() as db:
             row = db.execute(
-                "delete from user_personas where id = %s and user_id = %s returning id",
+                "delete from character_cards where id = %s and user_id = %s and card_type = 'persona' returning id",
                 (int(pid), user_id),
             ).fetchone()
             if not row:
@@ -95,7 +95,7 @@ def _t_delete_character_card(user_id: int, args: dict) -> str:
         init_db()
         with connect() as db:
             row = db.execute(
-                "delete from user_character_cards where id = %s and user_id = %s returning id",
+                "delete from character_cards where id = %s and user_id = %s and card_type = 'pc' returning id",
                 (int(cid), user_id),
             ).fetchone()
             if not row:

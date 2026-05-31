@@ -288,7 +288,7 @@ def _layer1_reality_slice(
 
             # user 自创卡名单 (查重补充)
             user_rows = db.execute(
-                "select name from user_character_cards where user_id = %s limit 200",
+                "select name from character_cards where user_id = %s and card_type = 'pc' limit 200",
                 (user_id,),
             ).fetchall() or []
             slice_["user_card_names"] = [r["name"] for r in user_rows if r.get("name")]

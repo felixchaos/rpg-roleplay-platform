@@ -607,6 +607,119 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         # est_usd_spent 是跑前估算,实际 LLM 用量按 token 流水累计为 actual,可对账估算误差。
         "alter table extraction_quota add column if not exists actual_usd_spent numeric(10,4) not null default 0",
     ]),
+    (28, "character_cards_polymorphic_merge", [
+        # v28: 三张卡片表合一 — character_cards 升为多态表。
+        #
+        # 背景:之前 NPC(character_cards) / PC(user_character_cards) / persona(user_personas)
+        # 三张分立表字段不齐,前端无法用同一组件渲染;extract 链路 NPC 缺 background/full_name,
+        # PC/persona 缺章节闸 + 重要度。统一后所有卡走同一 schema + 同一 DTO。
+        #
+        # 字段决策:
+        #   card_type ∈ ('npc','pc','persona') 区分形态
+        #   source    ∈ ('extracted','user','persona','platform') 区分来源
+        #   NPC 必有 script_id(原约束)、user_id 必为 NULL
+        #   PC/persona 必有 user_id、script_id 可为 NULL(跨剧本)
+        #   persona.role(身份定位)迁移成 identity(语义相同)
+        #   user_personas.background 直接进新列;user_character_cards 没有 background → 留空
+        #   first_revealed_chapter:NPC 由 resolve 写,PC/persona 默认 1(开局即可见)
+        #   importance:NPC 由 resolve 写,PC/persona 默认 100(玩家主角满)
+        # ----------------------------------------------------------------------
+        # 1) character_cards 加列
+        "alter table character_cards add column if not exists user_id bigint references users(id) on delete cascade",
+        "alter table character_cards add column if not exists slug text not null default ''",
+        "alter table character_cards add column if not exists full_name text not null default ''",
+        "alter table character_cards add column if not exists background text not null default ''",
+        "alter table character_cards add column if not exists avatar_path text not null default ''",
+        "alter table character_cards add column if not exists tags jsonb not null default '[]'::jsonb",
+        "alter table character_cards add column if not exists card_type text not null default 'npc'",
+        "alter table character_cards add column if not exists source text not null default 'extracted'",
+        "alter table character_cards add column if not exists scope text not null default 'script'",
+        "alter table character_cards add column if not exists is_default boolean not null default false",
+        "alter table character_cards add column if not exists first_revealed_chapter integer not null default 0",
+        "alter table character_cards add column if not exists importance integer not null default 0",
+        "alter table character_cards add column if not exists row_version bigint not null default 1",
+        "alter table character_cards add column if not exists public_id uuid not null default gen_random_uuid()",
+        # 2) book_id / script_id 改 nullable (PC/persona 不挂剧本/书)
+        "alter table character_cards alter column book_id drop not null",
+        "alter table character_cards alter column script_id drop not null",
+        # 3) 旧 unique(script_id, name) → partial unique by card_type
+        # 注意 Postgres 自动命名是 <table>_<col1>_<col2>_key
+        "alter table character_cards drop constraint if exists character_cards_script_id_name_key",
+        "create unique index if not exists uq_character_cards_npc_name "
+        "on character_cards(script_id, name) where card_type = 'npc'",
+        "create unique index if not exists uq_character_cards_user_slug "
+        "on character_cards(user_id, slug, card_type) where card_type in ('pc', 'persona')",
+        # 4) CHECK 约束:类型枚举 + 必填字段保证
+        "alter table character_cards drop constraint if exists character_cards_card_type_check",
+        "alter table character_cards add constraint character_cards_card_type_check "
+        "check (card_type in ('npc','pc','persona'))",
+        "alter table character_cards drop constraint if exists character_cards_source_check",
+        "alter table character_cards add constraint character_cards_source_check "
+        "check (source in ('extracted','user','persona','platform'))",
+        "alter table character_cards drop constraint if exists character_cards_ownership_check",
+        "alter table character_cards add constraint character_cards_ownership_check "
+        "check ((card_type = 'npc' and script_id is not null) or "
+        "       (card_type in ('pc','persona') and user_id is not null))",
+        # 5) 数据搬迁:user_character_cards → character_cards (card_type='pc')
+        #    user_character_cards 无 background,留空。无 first_revealed_chapter/importance,默认 1/100。
+        """
+        insert into character_cards(
+          user_id, slug, name, aliases, identity, appearance, personality, speech_style,
+          current_status, secrets, sample_dialogue, tags, metadata, token_budget, priority,
+          enabled, scope, card_type, source, public_id, row_version,
+          first_revealed_chapter, importance, full_name, background, avatar_path,
+          created_at, updated_at
+        )
+        select
+          ucc.user_id, ucc.slug, ucc.name, ucc.aliases, ucc.identity, ucc.appearance,
+          ucc.personality, ucc.speech_style, ucc.current_status, ucc.secrets,
+          ucc.sample_dialogue, ucc.tags, ucc.metadata, ucc.token_budget, ucc.priority,
+          ucc.enabled, ucc.scope, 'pc', 'user', ucc.public_id, ucc.row_version,
+          1, 100, '', '', '',
+          ucc.created_at, ucc.updated_at
+        from user_character_cards ucc
+        where not exists (
+          select 1 from character_cards cc
+          where cc.user_id = ucc.user_id
+            and cc.slug = ucc.slug
+            and cc.card_type = 'pc'
+        )
+        """,
+        # 6) 数据搬迁:user_personas → character_cards (card_type='persona')
+        #    role → identity (语义=身份定位);background 直接进。
+        """
+        insert into character_cards(
+          user_id, slug, name, identity, background, appearance, personality, avatar_path,
+          tags, metadata, is_default, card_type, source, public_id, row_version,
+          first_revealed_chapter, importance, full_name, scope,
+          created_at, updated_at
+        )
+        select
+          up.user_id, up.slug, up.name, up.role, up.background, up.appearance,
+          up.personality, up.avatar_path, up.tags, up.metadata, up.is_default,
+          'persona', 'persona', up.public_id, up.row_version,
+          1, 100, '', 'private',
+          up.created_at, up.updated_at
+        from user_personas up
+        where not exists (
+          select 1 from character_cards cc
+          where cc.user_id = up.user_id
+            and cc.slug = up.slug
+            and cc.card_type = 'persona'
+        )
+        """,
+        # 7) drop 旧表(数据已搬走)
+        "drop table if exists user_character_cards",
+        "drop table if exists user_personas",
+        # 8) 索引:per-user 卡查询 + persona default 唯一
+        "create index if not exists idx_character_cards_user "
+        "on character_cards(user_id, card_type, enabled, priority desc) "
+        "where user_id is not null",
+        "create unique index if not exists uq_character_cards_persona_default "
+        "on character_cards(user_id) where card_type = 'persona' and is_default = true",
+        "create index if not exists idx_character_cards_script_type "
+        "on character_cards(script_id, card_type) where script_id is not null",
+    ]),
 ]
 
 

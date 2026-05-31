@@ -116,14 +116,14 @@ def _fetch_character_card(card_id: int, kind: str, user_id: int) -> dict[str, An
         with connect() as db:
             if kind == "persona":
                 row = db.execute(
-                    "select name, role, background, appearance, personality "
-                    "from user_personas where id = %s and user_id = %s",
+                    "select name, identity as role, background, appearance, personality "
+                    "from character_cards where id = %s and user_id = %s and card_type = 'persona'",
                     (card_id, user_id),
                 ).fetchone()
             elif kind == "user_card":
                 row = db.execute(
                     "select name, identity, appearance, personality "
-                    "from user_character_cards where id = %s and user_id = %s",
+                    "from character_cards where id = %s and user_id = %s and card_type = 'pc'",
                     (card_id, user_id),
                 ).fetchone()
             elif kind == "script_card":

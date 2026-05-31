@@ -240,7 +240,8 @@ def run_arc_extraction(
         return _embed_batch(names) or []
 
     with connect() as db:
-        stats = R.resolve_and_write(db, script_id, extracts, embedder=embedder)
+        # v28: 传 book_id → resolve_and_write 同步 NPC canon 进 character_cards 表
+        stats = R.resolve_and_write(db, script_id, extracts, embedder=embedder, book_id=book_id)
         tl = R.build_timeline(db, script_id, extracts)
         wb = R.build_constant_worldbook(db, script_id, book_id, seed)
 

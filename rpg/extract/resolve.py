@@ -27,6 +27,11 @@ class CanonEntity:
     first_revealed_chapter: int = 0
     importance: int = 0
     summary: str = ""
+    # v28: 与玩家 PC 角色卡字段对齐(character_cards 多态合并)。
+    # 仅 type='character' 才有意义;其它类型为空。
+    full_name: str = ""
+    identity: str = ""
+    background: str = ""
 
 
 def _slug(name: str) -> str:
@@ -46,6 +51,8 @@ def gather_entity_mentions(chapter_extracts: list) -> dict[tuple[str, str], dict
 
     优先取 full_name(欧美名全套)作 name,canonical_guess 退化兜底。所有 surface/aliases_in_chapter
     塞进 surfaces 用于 cluster_entities 的别名子串合并。
+
+    v28:同步累计 identity / background 候选(取最长非空),full_name 保留独立列(character_cards.full_name)。
     """
     acc: dict[tuple[str, str], dict] = {}
     for ex in chapter_extracts:
@@ -60,7 +67,8 @@ def gather_entity_mentions(chapter_extracts: list) -> dict[tuple[str, str], dict
                 continue
             key = (name, typ)
             rec = acc.setdefault(key, {"name": name, "type": typ, "count": 0,
-                                       "first_chapter": ex.chapter, "surfaces": set()})
+                                       "first_chapter": ex.chapter, "surfaces": set(),
+                                       "full_name": "", "identity": "", "background": ""})
             rec["count"] += 1
             rec["first_chapter"] = min(rec["first_chapter"], ex.chapter)
             for s in (sfc, cg, full):
@@ -69,6 +77,15 @@ def gather_entity_mentions(chapter_extracts: list) -> dict[tuple[str, str], dict
             for a in (e.get("aliases_in_chapter") or []):
                 if isinstance(a, str) and a.strip():
                     rec["surfaces"].add(a.strip())
+            # v28: full_name / identity / background 取最长(信息量更大的胜出)
+            if full and len(full) > len(rec["full_name"]):
+                rec["full_name"] = full
+            ident = (e.get("identity") or "").strip()
+            if ident and len(ident) > len(rec["identity"]):
+                rec["identity"] = ident
+            bg = (e.get("background") or "").strip()
+            if bg and len(bg) > len(rec["background"]):
+                rec["background"] = bg
     return acc
 
 
@@ -122,11 +139,16 @@ def cluster_entities(mentions: dict, *, embedder=None, sim_threshold: float = 0.
             rep = max(members, key=lambda r: r["count"])
             aliases = sorted({s for m in members for s in m["surfaces"]} |
                              {m["name"] for m in members} - {rep["name"]})
+            # v28: full_name / identity / background 跨成员取最长非空(信息量最大的胜出)
+            full_name = max((m.get("full_name", "") for m in members), key=len, default="")
+            identity = max((m.get("identity", "") for m in members), key=len, default="")
+            background = max((m.get("background", "") for m in members), key=len, default="")
             canon.append(CanonEntity(
                 logical_key=_slug(rep["name"]),
                 name=rep["name"], type=typ, aliases=aliases,
                 first_revealed_chapter=min(m["first_chapter"] for m in members),
                 importance=sum(m["count"] for m in members),
+                full_name=full_name, identity=identity, background=background,
             ))
     # logical_key 去重(不同 type 撞名时加后缀)
     seen: dict[str, int] = {}
@@ -140,8 +162,15 @@ def cluster_entities(mentions: dict, *, embedder=None, sim_threshold: float = 0.
 
 
 def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=None,
-                      public_threshold: int = 0) -> dict:
-    """完整 Pass2:消歧 → 写 kb_canon_entities。返回统计。"""
+                      public_threshold: int = 0, book_id: int | None = None) -> dict:
+    """完整 Pass2:消歧 → 写 kb_canon_entities + 同步 NPC 角色卡到 character_cards。
+
+    v28: 新增 character_cards 同步。把 type='character' 的 canon entity 落进 character_cards
+    (card_type='npc', source='extracted'),这样前端 NPC 卡片视图能直接看到提取出来的角色,
+    字段与 PC/persona 完全对齐(由 v28 多态合并保证)。
+
+    book_id 可不传(从 books 表按 script_id 反查),传则直接用。
+    """
     mentions = gather_entity_mentions(chapter_extracts)
     canon = cluster_entities(mentions, embedder=embedder)
     # 概念也进规范实体(type=concept),从各章 concepts 汇总
@@ -169,8 +198,71 @@ def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=No
             importance=c.importance,
         )
         written += 1
+
+    # v28: 同步 character 类 canon → character_cards 表(NPC 角色卡)
+    character_canon = [c for c in canon if c.type == "character"]
+    npc_cards_written = sync_character_cards_from_canon(db, script_id, character_canon, book_id=book_id)
+
     return {"mentions": len(mentions), "entities_written": written,
-            "by_type": _count_by_type(canon)}
+            "by_type": _count_by_type(canon),
+            "npc_cards_written": npc_cards_written}
+
+
+def sync_character_cards_from_canon(db, script_id: int, character_canon: list[CanonEntity],
+                                    *, book_id: int | None = None) -> int:
+    """把 type='character' 的 CanonEntity 同步进 character_cards(card_type='npc')。
+
+    v28 后 character_cards 是多态表(npc/pc/persona 三态合一),NPC 行约束:
+      - card_type='npc', source='extracted', scope='script'
+      - user_id=NULL, script_id 必填
+      - (script_id, name) 在 NPC 内唯一(partial unique index)
+
+    upsert:同名 NPC 覆盖 identity/background/full_name/importance 等提取字段,
+    保留人工编辑过的 token_budget/priority/enabled 等(NOT TOUCHED in EXCLUDED)。
+    """
+    if not character_canon:
+        return 0
+    if book_id is None:
+        row = db.execute("select id from books where script_id = %s", (script_id,)).fetchone()
+        if not row:
+            return 0  # 无 book → 不写(import 链路应已建 book,缺失说明未走通)
+        book_id = int(row["id"])
+
+    written = 0
+    for c in character_canon:
+        # INSERT … ON CONFLICT DO UPDATE 一把搞定:
+        #   新行 → 插入提取字段
+        #   旧行 → 用 LLM 新抽的覆盖 aliases/first_revealed_chapter/importance,
+        #          identity/background/full_name 仅在 EXCLUDED 非空时覆盖(避免空字符串
+        #          把用户已编辑过的内容刷没)
+        db.execute(
+            """
+            insert into character_cards(
+              book_id, script_id, name, full_name, aliases, identity, background,
+              first_revealed_chapter, importance, card_type, source, scope,
+              metadata, enabled
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'npc', 'extracted', 'script',
+                    %s, true)
+            on conflict on constraint uq_character_cards_npc_name do update set
+              full_name = case when length(excluded.full_name) > 0
+                               then excluded.full_name else character_cards.full_name end,
+              aliases = excluded.aliases,
+              identity = case when length(excluded.identity) > 0
+                              then excluded.identity else character_cards.identity end,
+              background = case when length(excluded.background) > 0
+                                then excluded.background else character_cards.background end,
+              first_revealed_chapter = excluded.first_revealed_chapter,
+              importance = excluded.importance,
+              row_version = character_cards.row_version + 1,
+              updated_at = now()
+            """,
+            (book_id, script_id, c.name, c.full_name, Jsonb(c.aliases),
+             c.identity, c.background, c.first_revealed_chapter, c.importance,
+             Jsonb({"source": "extracted", "logical_key": c.logical_key})),
+        )
+        written += 1
+    return written
 
 
 def _count_by_type(canon: list[CanonEntity]) -> dict:

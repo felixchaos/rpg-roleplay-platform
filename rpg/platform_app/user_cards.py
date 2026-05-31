@@ -2,10 +2,14 @@
 user_cards.py — 用户级 persona / character card CRUD
 
 两个独立资源：
-- user_personas        玩家自己的多个身份，可在任何剧本/存档里选
-- user_character_cards 用户自创的 NPC 卡，可挂到任何剧本/检索时与剧本卡合并
+- persona (card_type='persona')  玩家自己的多个身份，可在任何剧本/存档里选
+- user_card (card_type='pc')     用户自创的 PC 卡，可挂到任何剧本/检索时与剧本卡合并
 
+v28 migration: user_personas 和 user_character_cards 已合并入 character_cards 多态表。
 所有接口严格按 user_id 隔离。
+
+返回格式: 统一 CharacterCardDTO(rpg/platform_app/api/_card_dto.py)。
+  - persona 行额外携带 role 字段(= identity),兼容老前端 .role 访问。
 """
 from __future__ import annotations
 
@@ -14,7 +18,9 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from .db import connect, expose, init_db
+from platform_app.api._card_dto import card_to_dto
+
+from .db import connect, init_db
 
 _SLUG_RE = re.compile(r"[^0-9A-Za-z_一-鿿]+")
 
@@ -36,31 +42,34 @@ def _normalize_list(value: Any) -> list[Any]:
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  USER PERSONAS（玩家身份卡）
+#  USER PERSONAS（玩家身份卡，card_type='persona'）
 # ══════════════════════════════════════════════════════════════════════
 def list_personas(user_id: int) -> dict[str, Any]:
     init_db()
     with connect() as db:
         rows = db.execute(
-            "select * from user_personas where user_id = %s order by is_default desc, updated_at desc, id desc",
+            "select * from character_cards where user_id = %s and card_type = 'persona' "
+            "order by is_default desc, updated_at desc, id desc",
             (user_id,),
         ).fetchall()
-    return {"ok": True, "items": [expose(r) for r in rows], "total": len(rows)}
+    items = [card_to_dto(r, persona_role_alias=True) for r in rows]
+    return {"ok": True, "items": items, "total": len(items)}
 
 
 def get_persona(user_id: int, persona_id: int) -> dict[str, Any] | None:
     init_db()
     with connect() as db:
         row = db.execute(
-            "select * from user_personas where id = %s and user_id = %s",
+            "select * from character_cards where id = %s and user_id = %s and card_type = 'persona'",
             (persona_id, user_id),
         ).fetchone()
-    return expose(row) if row else None
+    return card_to_dto(row, persona_role_alias=True) if row else None
 
 
 def upsert_persona(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     """创建或更新 persona。payload 至少要有 name；其他字段可选。
     可传 id 强制更新某条；否则按 slug 决定 insert/update。
+    payload.role 兼容老前端:写到 identity 列。
     """
     init_db()
     name = (payload.get("name") or "").strip()
@@ -72,7 +81,7 @@ def upsert_persona(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
 
     fields = {
         "name": name,
-        "role": (payload.get("role") or "").strip(),
+        "identity": (payload.get("role") or payload.get("identity") or "").strip(),
         "background": (payload.get("background") or "").strip(),
         "appearance": (payload.get("appearance") or "").strip(),
         "personality": (payload.get("personality") or "").strip(),
@@ -84,74 +93,84 @@ def upsert_persona(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
 
     with connect() as db:
         if persona_id:
-            # 确保归属再 update
             owned = db.execute(
-                "select 1 from user_personas where id = %s and user_id = %s",
+                "select 1 from character_cards where id = %s and user_id = %s and card_type = 'persona'",
                 (int(persona_id), user_id),
             ).fetchone()
             if not owned:
                 raise ValueError("persona 不存在或无权访问")
             db.execute(
                 """
-                update user_personas set
-                  name = %(name)s, slug = %(slug)s, role = %(role)s,
+                update character_cards set
+                  name = %(name)s, slug = %(slug)s, identity = %(identity)s,
                   background = %(background)s, appearance = %(appearance)s,
                   personality = %(personality)s, avatar_path = %(avatar_path)s,
                   tags = %(tags)s, metadata = %(metadata)s, is_default = %(is_default)s,
                   row_version = row_version + 1, updated_at = now()
-                where id = %(id)s and user_id = %(user_id)s
+                where id = %(id)s and user_id = %(user_id)s and card_type = 'persona'
                 """,
                 {**fields, "slug": slug, "id": int(persona_id), "user_id": user_id},
             )
-            row = db.execute("select * from user_personas where id = %s", (int(persona_id),)).fetchone()
+            row = db.execute(
+                "select * from character_cards where id = %s and card_type = 'persona'",
+                (int(persona_id),),
+            ).fetchone()
         else:
-            # 按 (user_id, slug) upsert
+            # partial unique index uq_character_cards_user_slug 谓词:
+            #   where card_type in ('pc','persona')
+            # ON CONFLICT 必须显式同样的 WHERE 子句才能匹配该索引。
             row = db.execute(
                 """
-                insert into user_personas(
-                  user_id, slug, name, role, background, appearance,
+                insert into character_cards(
+                  user_id, slug, card_type, source, scope,
+                  first_revealed_chapter, importance,
+                  name, identity, background, appearance,
                   personality, avatar_path, tags, metadata, is_default
                 ) values (
-                  %(user_id)s, %(slug)s, %(name)s, %(role)s, %(background)s, %(appearance)s,
+                  %(user_id)s, %(slug)s, 'persona', 'persona', 'private',
+                  1, 100,
+                  %(name)s, %(identity)s, %(background)s, %(appearance)s,
                   %(personality)s, %(avatar_path)s, %(tags)s, %(metadata)s, %(is_default)s
                 )
-                on conflict(user_id, slug) do update set
-                  name = excluded.name, role = excluded.role,
+                on conflict(user_id, slug, card_type) where card_type in ('pc','persona')
+                do update set
+                  name = excluded.name, identity = excluded.identity,
                   background = excluded.background, appearance = excluded.appearance,
                   personality = excluded.personality, avatar_path = excluded.avatar_path,
                   tags = excluded.tags, metadata = excluded.metadata,
                   is_default = excluded.is_default,
-                  row_version = user_personas.row_version + 1, updated_at = now()
+                  row_version = character_cards.row_version + 1, updated_at = now()
                 returning *
                 """,
                 {**fields, "user_id": user_id, "slug": slug},
             ).fetchone()
 
-        # 只允许一个默认 persona：其他全部清零
+        # 只允许一个默认 persona:其他全部清零(unique partial index 已强制,但这里也清掉运行时残留)
         if is_default and row:
             db.execute(
-                "update user_personas set is_default = false where user_id = %s and id <> %s",
+                "update character_cards set is_default = false "
+                "where user_id = %s and card_type = 'persona' and id <> %s",
                 (user_id, int(row["id"])),
             )
-    return expose(row) or {}
+    return card_to_dto(row, persona_role_alias=True) or {}
 
 
 def delete_persona(user_id: int, persona_id: int) -> dict[str, Any]:
     init_db()
     with connect() as db:
         cur = db.execute(
-            "delete from user_personas where id = %s and user_id = %s returning id",
+            "delete from character_cards where id = %s and user_id = %s and card_type = 'persona' returning id",
             (persona_id, user_id),
         ).fetchone()
     return {"ok": True, "deleted": bool(cur), "id": persona_id}
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  USER CHARACTER CARDS（用户自创 NPC 卡）
+#  USER CHARACTER CARDS(用户自创 PC 卡, card_type='pc')
 # ══════════════════════════════════════════════════════════════════════
 def list_user_cards(user_id: int, q: str | None = None, enabled_only: bool = False) -> dict[str, Any]:
     init_db()
-    where = ["user_id = %s"]
+    where = ["user_id = %s", "card_type = 'pc'"]
     params: list[Any] = [user_id]
     if enabled_only:
         where.append("enabled = true")
@@ -161,21 +180,22 @@ def list_user_cards(user_id: int, q: str | None = None, enabled_only: bool = Fal
         params.extend([like, like])
     with connect() as db:
         rows = db.execute(
-            f"select * from user_character_cards where {' and '.join(where)} "
+            f"select * from character_cards where {' and '.join(where)} "
             "order by priority desc, updated_at desc, id desc",
             tuple(params),
         ).fetchall()
-    return {"ok": True, "items": [expose(r) for r in rows], "total": len(rows)}
+    items = [card_to_dto(r) for r in rows]
+    return {"ok": True, "items": items, "total": len(items)}
 
 
 def get_user_card(user_id: int, card_id: int) -> dict[str, Any] | None:
     init_db()
     with connect() as db:
         row = db.execute(
-            "select * from user_character_cards where id = %s and user_id = %s",
+            "select * from character_cards where id = %s and user_id = %s and card_type = 'pc'",
             (card_id, user_id),
         ).fetchone()
-    return expose(row) if row else None
+    return card_to_dto(row) if row else None
 
 
 def upsert_user_card(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -189,8 +209,10 @@ def upsert_user_card(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     fields = {
         "name": name,
         "slug": slug,
+        "full_name": (payload.get("full_name") or "").strip(),
         "aliases": Jsonb(_normalize_list(payload.get("aliases"))),
         "identity": (payload.get("identity") or "").strip(),
+        "background": (payload.get("background") or "").strip(),
         "appearance": (payload.get("appearance") or "").strip(),
         "personality": (payload.get("personality") or "").strip(),
         "speech_style": (payload.get("speech_style") or "").strip(),
@@ -201,6 +223,7 @@ def upsert_user_card(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         "metadata": Jsonb(payload.get("metadata") or {}),
         "token_budget": int(payload.get("token_budget") or 450),
         "priority": int(payload.get("priority") or 100),
+        "importance": int(payload.get("importance") or 100),  # PC 默认 100,前端高级页可调
         "enabled": bool(payload.get("enabled", True)),
         "scope": str(payload.get("scope") or "private").strip(),
     }
@@ -208,85 +231,92 @@ def upsert_user_card(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     with connect() as db:
         if card_id:
             owned = db.execute(
-                "select 1 from user_character_cards where id = %s and user_id = %s",
+                "select 1 from character_cards where id = %s and user_id = %s and card_type = 'pc'",
                 (int(card_id), user_id),
             ).fetchone()
             if not owned:
                 raise ValueError("card 不存在或无权访问")
             db.execute(
                 """
-                update user_character_cards set
-                  name=%(name)s, slug=%(slug)s, aliases=%(aliases)s,
-                  identity=%(identity)s, appearance=%(appearance)s,
-                  personality=%(personality)s, speech_style=%(speech_style)s,
-                  current_status=%(current_status)s, secrets=%(secrets)s,
-                  sample_dialogue=%(sample_dialogue)s, tags=%(tags)s, metadata=%(metadata)s,
+                update character_cards set
+                  name=%(name)s, slug=%(slug)s, full_name=%(full_name)s, aliases=%(aliases)s,
+                  identity=%(identity)s, background=%(background)s,
+                  appearance=%(appearance)s, personality=%(personality)s,
+                  speech_style=%(speech_style)s, current_status=%(current_status)s,
+                  secrets=%(secrets)s, sample_dialogue=%(sample_dialogue)s,
+                  tags=%(tags)s, metadata=%(metadata)s,
                   token_budget=%(token_budget)s, priority=%(priority)s,
-                  enabled=%(enabled)s, scope=%(scope)s,
+                  importance=%(importance)s, enabled=%(enabled)s, scope=%(scope)s,
                   row_version = row_version + 1, updated_at = now()
-                where id = %(id)s and user_id = %(user_id)s
+                where id = %(id)s and user_id = %(user_id)s and card_type = 'pc'
                 """,
                 {**fields, "id": int(card_id), "user_id": user_id},
             )
-            row = db.execute("select * from user_character_cards where id = %s", (int(card_id),)).fetchone()
+            row = db.execute(
+                "select * from character_cards where id = %s and card_type = 'pc'",
+                (int(card_id),),
+            ).fetchone()
         else:
             row = db.execute(
                 """
-                insert into user_character_cards(
-                  user_id, slug, name, aliases, identity, appearance, personality,
+                insert into character_cards(
+                  user_id, slug, card_type, source, first_revealed_chapter,
+                  name, full_name, aliases, identity, background, appearance, personality,
                   speech_style, current_status, secrets, sample_dialogue,
-                  tags, metadata, token_budget, priority, enabled, scope
+                  tags, metadata, token_budget, priority, importance, enabled, scope
                 ) values (
-                  %(user_id)s, %(slug)s, %(name)s, %(aliases)s, %(identity)s, %(appearance)s,
-                  %(personality)s, %(speech_style)s, %(current_status)s, %(secrets)s,
-                  %(sample_dialogue)s, %(tags)s, %(metadata)s, %(token_budget)s,
-                  %(priority)s, %(enabled)s, %(scope)s
+                  %(user_id)s, %(slug)s, 'pc', 'user', 1,
+                  %(name)s, %(full_name)s, %(aliases)s, %(identity)s, %(background)s,
+                  %(appearance)s, %(personality)s,
+                  %(speech_style)s, %(current_status)s, %(secrets)s, %(sample_dialogue)s,
+                  %(tags)s, %(metadata)s, %(token_budget)s, %(priority)s,
+                  %(importance)s, %(enabled)s, %(scope)s
                 )
-                on conflict(user_id, slug) do update set
-                  name=excluded.name, aliases=excluded.aliases,
-                  identity=excluded.identity, appearance=excluded.appearance,
-                  personality=excluded.personality, speech_style=excluded.speech_style,
-                  current_status=excluded.current_status, secrets=excluded.secrets,
-                  sample_dialogue=excluded.sample_dialogue,
+                on conflict(user_id, slug, card_type) where card_type in ('pc','persona')
+                do update set
+                  name=excluded.name, full_name=excluded.full_name, aliases=excluded.aliases,
+                  identity=excluded.identity, background=excluded.background,
+                  appearance=excluded.appearance, personality=excluded.personality,
+                  speech_style=excluded.speech_style, current_status=excluded.current_status,
+                  secrets=excluded.secrets, sample_dialogue=excluded.sample_dialogue,
                   tags=excluded.tags, metadata=excluded.metadata,
                   token_budget=excluded.token_budget, priority=excluded.priority,
-                  enabled=excluded.enabled, scope=excluded.scope,
-                  row_version = user_character_cards.row_version + 1, updated_at = now()
+                  importance=excluded.importance, enabled=excluded.enabled, scope=excluded.scope,
+                  row_version = character_cards.row_version + 1, updated_at = now()
                 returning *
                 """,
                 {**fields, "user_id": user_id},
             ).fetchone()
-    return expose(row) or {}
+    return card_to_dto(row) or {}
 
 
 def delete_user_card(user_id: int, card_id: int) -> dict[str, Any]:
     init_db()
     with connect() as db:
         cur = db.execute(
-            "delete from user_character_cards where id = %s and user_id = %s returning id",
+            "delete from character_cards where id = %s and user_id = %s and card_type = 'pc' returning id",
             (card_id, user_id),
         ).fetchone()
     return {"ok": True, "deleted": bool(cur), "id": card_id}
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  检索辅助：合并 script-level + user-level
+#  检索辅助:合并 script-level + user-level
 # ══════════════════════════════════════════════════════════════════════
 def user_cards_for_retrieval(user_id: int, names: list[str]) -> list[dict[str, Any]]:
-    """按角色名（含 aliases）匹配用户级 NPC 卡，给 context_engine 用。"""
+    """按角色名(含 aliases)匹配用户级 PC 卡,给 context_engine 用。"""
     if not user_id or not names:
         return []
     init_db()
     name_lc = [n.lower() for n in names if n]
     with connect() as db:
-        # 拉出当前用户所有 enabled 卡，本地过滤匹配（卡数量少，直接 in-memory）
         rows = db.execute(
-            "select * from user_character_cards where user_id = %s and enabled = true",
+            "select * from character_cards where user_id = %s and card_type = 'pc' and enabled = true",
             (user_id,),
         ).fetchall()
     out = []
     for r in rows:
-        card = expose(r) or {}
+        card = card_to_dto(r) or {}
         candidates = [card.get("name", "").lower()] + [str(a).lower() for a in (card.get("aliases") or [])]
         if any(n in candidates or any(n in c or c in n for c in candidates) for n in name_lc):
             out.append(card)

@@ -13,10 +13,11 @@ from typing import Any
 from extract.llm import ExtractLLM
 
 # 每章输出 JSON schema(给模型看的契约)
+# v28: entities 加 identity / background,与玩家 PC 角色卡字段对齐 → 同套 schema 渲染
 _SCHEMA_HINT = """{
   "chapter_summary": "本章主线 1-3 句话浓缩(>=30 字 <=150 字),含核心冲突/转折/谁做了什么。绝不照抄原文,绝不堆细节。",
   "story_time": {"label": "本章故事时间(短语)", "relative_marker": "相对上章的时序线索", "era": "<纪元,必须照抄给定纪元,严禁改写>"},
-  "entities": [{"surface": "文中称呼", "full_name": "本人最完整的正式名(欧美名 = 名+姓全套,如 Mulelia Zazbarum;若文中已知则填写,否则同 surface)", "canonical_guess": "规范名(优先匹配已知实体)", "aliases_in_chapter": ["本章用到的其他称呼/昵称/半名/译名(如 ['Mulelia','小蕾'])"], "type": "character|faction|location|item", "status": "linked|proposed", "evidence": "≤20字依据"}],
+  "entities": [{"surface": "文中称呼", "full_name": "本人最完整的正式名(欧美名 = 名+姓全套,如 Mulelia Zazbarum;若文中已知则填写,否则同 surface)", "canonical_guess": "规范名(优先匹配已知实体)", "aliases_in_chapter": ["本章用到的其他称呼/昵称/半名/译名(如 ['Mulelia','小蕾'])"], "identity": "≤40字身份定位/职位/阵营(如:北境蜂巢主管/异端审判庭检察官/林家二少爷;非 character 类留空)", "background": "≤120字本章可见前史摘要(此实体出场前的关键经历或当下处境/出身/动机;只抽本章直接揭露或暗示的,不要编造;非 character 类留空)", "type": "character|faction|location|item", "status": "linked|proposed", "evidence": "≤20字依据"}],
   "events": [{"summary": "事件一句话", "participants": ["实体名"], "location": "地点", "importance": 0-100, "causal_refs": ["前置事件描述"]}],
   "relationships": [{"from": "实体A", "to": "实体B", "kind": "敌对|盟友|上下级|亲属|...", "evidence": "≤20字"}],
   "concepts": [{"name": "概念/设定/力量体系名", "gloss": "≤30字解释", "evidence": "≤20字"}],
@@ -60,6 +61,10 @@ def build_system(era: str, power_system: list[str] | None = None) -> str:
         "【欧美人名铁律】凡角色为欧美名(包含字母或音译,如 Mulelia/林菲尔德/伊莎贝拉·路德维希):full_name **必须** 是"
         "正式的全套姓+名(若本章用 'Mulelia' 但作者之前已揭示她叫 'Mulelia Zazbarum',则 full_name 写完整全名);"
         "本章里出现的所有别称(昵称/半名/敬称/外号/译名)塞进 aliases_in_chapter。**严禁** 把全名和昵称当作两个实体输出。\n"
+        "【角色卡字段铁律】entity.type=character 时,identity / background 两个字段必须抽:\n"
+        "  identity = 此角色在本作世界里的身份/职位/阵营定位(尽量短,不重复 name)\n"
+        "  background = 角色出场前的关键经历 / 当下处境 / 出身或动机摘要(只抽本章可观察到或明确暗示的,严禁编造文本没有的设定)\n"
+        "  本章不揭示则字段留空字符串,不要写 '未知' 或 'N/A'。type ≠ character 的实体两个字段必须留空。\n"
         "严格按此 schema 输出:\n" + _SCHEMA_HINT
     )
 

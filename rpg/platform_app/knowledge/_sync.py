@@ -86,25 +86,39 @@ def _backfill_chapters_from_local_source(db, script: dict[str, Any]) -> int:
 
 
 def _sync_character_cards(db, book: dict[str, Any], script: dict[str, Any], chars: dict[str, Any]) -> int:
+    """v28: character_cards 多态化后,显式声明 card_type='npc', source='platform'。
+    on conflict 改为 partial unique (uq_character_cards_npc_name)。
+    新增 background / full_name / first_revealed_chapter / importance 字段(可空)。
+    """
     count = 0
     for name, card in chars.items():
         db.execute(
             """
             insert into character_cards(
-              book_id, script_id, name, aliases, identity, appearance, personality,
-              speech_style, current_status, secrets, sample_dialogue, token_budget,
-              priority, enabled, metadata
+              book_id, script_id, name, full_name, aliases, identity, background,
+              appearance, personality, speech_style, current_status, secrets,
+              sample_dialogue, first_revealed_chapter, importance,
+              token_budget, priority, enabled, metadata,
+              card_type, source, scope
             )
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true, %s)
-            on conflict(script_id, name) do update set
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true, %s,
+                    'npc', 'platform', 'script')
+            on conflict on constraint uq_character_cards_npc_name do update set
+              full_name = case when length(excluded.full_name) > 0
+                               then excluded.full_name else character_cards.full_name end,
               aliases = excluded.aliases,
-              identity = excluded.identity,
+              identity = case when length(excluded.identity) > 0
+                              then excluded.identity else character_cards.identity end,
+              background = case when length(excluded.background) > 0
+                                then excluded.background else character_cards.background end,
               appearance = excluded.appearance,
               personality = excluded.personality,
               speech_style = excluded.speech_style,
               current_status = excluded.current_status,
               secrets = excluded.secrets,
               sample_dialogue = excluded.sample_dialogue,
+              first_revealed_chapter = greatest(character_cards.first_revealed_chapter, excluded.first_revealed_chapter),
+              importance = greatest(character_cards.importance, excluded.importance),
               row_version = character_cards.row_version + 1,
               updated_at = now()
             """,
@@ -112,14 +126,18 @@ def _sync_character_cards(db, book: dict[str, Any], script: dict[str, Any], char
                 book["id"],
                 script["id"],
                 name,
+                (card.get("full_name") or "").strip(),
                 Jsonb(card.get("aliases") or []),
                 card.get("identity") or "",
+                (card.get("background") or "").strip(),
                 card.get("appearance") or "",
                 card.get("personality") or "",
                 card.get("speech_style") or "",
                 card.get("current_status") or "",
                 card.get("secrets") or "",
                 Jsonb(card.get("sample_dialogue") or []),
+                int(card.get("first_revealed_chapter") or 0),
+                int(card.get("importance") or 0),
                 int(card.get("token_budget") or 450),
                 int(card.get("priority") or 100),
                 Jsonb({"source": "indexes/characters.json"}),

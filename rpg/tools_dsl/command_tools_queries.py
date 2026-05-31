@@ -147,8 +147,8 @@ def _t_list_my_personas(user_id: int, args: dict) -> str:
         init_db()
         with connect() as db:
             rows = db.execute(
-                "select id, name, role, personality, is_default "
-                "from user_personas where user_id = %s "
+                "select id, name, identity as role, personality, is_default "
+                "from character_cards where user_id = %s and card_type = 'persona' "
                 "order by updated_at desc limit 30",
                 (user_id,),
             ).fetchall() or []
@@ -164,7 +164,7 @@ def _t_list_my_character_cards(user_id: int, args: dict) -> str:
         with connect() as db:
             rows = db.execute(
                 "select id, name, identity, personality, enabled "
-                "from user_character_cards where user_id = %s "
+                "from character_cards where user_id = %s and card_type = 'pc' "
                 "order by updated_at desc limit 50",
                 (user_id,),
             ).fetchall() or []

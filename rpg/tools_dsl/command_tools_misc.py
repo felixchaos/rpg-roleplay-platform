@@ -313,8 +313,8 @@ def _t_get_my_stats(user_id: int, args: dict) -> str:
                 "select "
                 "(select count(*) from game_saves where user_id = %s) as save_count, "
                 "(select count(*) from scripts where owner_id = %s) as script_count, "
-                "(select count(*) from user_personas where user_id = %s) as persona_count, "
-                "(select count(*) from user_character_cards where user_id = %s) as card_count",
+                "(select count(*) from character_cards where user_id = %s and card_type = 'persona') as persona_count, "
+                "(select count(*) from character_cards where user_id = %s and card_type = 'pc') as card_count",
                 (user_id, user_id, user_id, user_id),
             ).fetchone()
         return json.dumps(dict(row or {}), ensure_ascii=False, default=str, indent=2)
