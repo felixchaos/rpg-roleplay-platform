@@ -655,7 +655,7 @@ def _selfheal_player_from_save_snapshot(state: GameState, api_user: dict[str, An
         pass
 
 
-def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
+def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = True) -> GameState:
     """加载当前用户的游戏状态。多用户安全：按 user_id 隔离。
 
     优先走 state_repository（DB 权威源 + 按 user 隔离 + JSON 镜像兜底）。
@@ -725,7 +725,7 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
             _lru_set(_state_by_user, uid, state)
             if uid == 0:
                 _lru_set(_state_mtime_by_user, uid, SAVE_FILE.stat().st_mtime_ns if SAVE_FILE.exists() else 0)
-        if uid not in _gm_by_user:
+        if ensure_gm and uid not in _gm_by_user:
             # A1: 优先级链(高→低):
             #   1. save 级 session_model
             #   2. user_preferences.gm.api_id / gm.model_real_name  ← 补
@@ -851,7 +851,7 @@ def _backup_save(reason: str) -> str | None:
 
 
 def _payload(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
-    state = _ensure_loaded(api_user)
+    state = _ensure_loaded(api_user, ensure_gm=False)
     model_catalog = load_model_catalog()
     model = selected_model(model_catalog)
     is_admin = bool(api_user and api_user.get("role") == "admin")
