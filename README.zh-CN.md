@@ -45,7 +45,7 @@ RPG Roleplay 把一本长篇小说扔进一个自托管的 LLM 驱动的 RPG 运
 | **合规套件** — 18+ 启动页, AGPL 法律横幅, 反馈通道 + NSFW 预审, AUP/DMCA/CSAM 管理 runbook | ✅ 稳定 |
 | **认证 + 注册** — 邀请码闸, 邮件验证(Resend), Argon2id 登录时 rehash, 忘记密码, 两步注册 | ✅ 稳定 |
 | **账号生命周期** — 软停用, 请求删除(30 天宽限), 数据导出, 硬删 cron | ✅ 稳定 |
-| **许可证** | ✅ AGPL-3.0-or-later (本仓库) + 双授权商用 — 联系 <legal@stellatrix.icu> |
+| **许可证** | ✅ AGPL-3.0-or-later (本仓库) + 双授权商用 — 联系 <chaosai31@gmail.com> |
 
 ## 快速开始
 
@@ -240,7 +240,7 @@ FastAPI 后端，~30+ 个路由模块 / agents / state mixin，~1k pytest 用例
 
 **为什么 AGPL?** RPG Roleplay 是服务端应用。AGPL 确保任何把它作为公开服务运营的人,必须开放其修改后的源代码给用户 — 即使作为 SaaS 使用,引擎也保持开放。
 
-**商用 / 闭源** 可通过单独的双授权协议获取。联系 <legal@stellatrix.icu>。
+**商用 / 闭源** 可通过单独的双授权协议获取。联系 <chaosai31@gmail.com>。
 
 ---
 

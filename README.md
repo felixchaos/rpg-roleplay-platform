@@ -45,7 +45,7 @@ RPG Roleplay drops a long-form novel into a self-hosted, LLM-driven RPG runtime:
 | **Compliance suite** — adult-content splash gate, AGPL legal banner, feedback channel with NSFW pre-moderation, AUP/DMCA/CSAM admin runbooks | ✅ Stable |
 | **Auth + registration** — invite-code gate, email verification (Resend), Argon2id with rehash-on-login, forgot-password, two-step register | ✅ Stable |
 | **Account lifecycle** — soft deactivate, request-delete (30-day grace), data export, hard-delete cron | ✅ Stable |
-| **License** | ✅ AGPL-3.0-or-later (this repo) + commercial dual-license available — contact <legal@stellatrix.icu> |
+| **License** | ✅ AGPL-3.0-or-later (this repo) + commercial dual-license available — contact <chaosai31@gmail.com> |
 
 ## Quick start
 
@@ -240,7 +240,7 @@ Licensed under the **GNU Affero General Public License v3.0 or later** (AGPL-3.0
 
 **Why AGPL?** RPG Roleplay is a server-side application. AGPL ensures any operator running it as a public service must also make their modified source available to users — keeping the engine open even when used as a SaaS.
 
-**Commercial / closed-source use** is available under a separate dual-license. Contact <legal@stellatrix.icu>.
+**Commercial / closed-source use** is available under a separate dual-license. Contact <chaosai31@gmail.com>.
 
 ---
 
