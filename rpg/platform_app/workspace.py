@@ -16,25 +16,27 @@ from .security import public_user
 
 log = get_logger(__name__)
 
-BASE_TITLE = "《我蕾穆丽娜不爱你》"
-
 
 def ensure_default(user_id: int) -> None:
+    """Maintain existing save runtime state without creating demo content.
+
+    Production users must be able to have an empty script list. Older builds
+    seeded a default novel whenever the list was empty, which made successful
+    deletes appear to re-create the same script on the next authenticated
+    request.
+    """
     init_db()
     with connect() as db:
-        script = db.execute("select * from scripts where owner_id = %s order by id limit 1", (user_id,)).fetchone()
-        if not script:
-            script = db.execute(
-                """
-                insert into scripts(owner_id, title, description, source_path)
-                values (%s, %s, %s, %s)
-                returning *
-                """,
-                (user_id, BASE_TITLE, "柏林 RPG 默认剧本", "rpg/indexes"),
-            ).fetchone()
         save = db.execute(
-            "select * from game_saves where user_id = %s and script_id = %s order by id limit 1",
-            (user_id, script["id"]),
+            """
+            select gs.*
+            from game_saves gs
+            join scripts s on s.id = gs.script_id
+            where gs.user_id = %s and s.owner_id = %s
+            order by gs.id
+            limit 1
+            """,
+            (user_id, user_id),
         ).fetchone()
     # P0 修复:不再自动创建名为「当前自动存档」的引导存档。
     # 自动存档是「每个存档每回合无感提交」的能力,不是一个独立槽位。
@@ -547,7 +549,7 @@ def _apply_script_opening(state: Any, user_id: int, script_id: int) -> None:
     所以这里不能只 limit 1，要扫前 N 章选第一个『有 inline meta 或显著正文』的章节。
     """
     # 任何 save（不论 script 有无导入章节）都先 scrub DEFAULT_STATE 的柏林硬编码：
-    # 用户选择了某个 script（不论是 5E 模组容器还是空白容器），就不该再继承《我蕾穆丽娜不爱你》
+    # 用户选择了某个 script（不论是 5E 模组容器还是空白容器），就不该再继承默认小说
     # 的开场地点/事件/目标。原代码把 scrub 放在 `if not rows: return` 之后，导致 chapter_count=0
     # 的 script（例如 5E 模组容器）创建的新存档全部带柏林污染。
     _scrub_berlin_default(state)
