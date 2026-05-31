@@ -36,7 +36,10 @@ async def api_scripts(limit: int | None = None, cursor: str | None = None, user=
 @router.post("/api/scripts/import")
 async def api_import_script(request: Request, user=Depends(require_user)):
     body = await request.json()
+    from .. import import_pipeline
     try:
+        if body.get("require_llm_credentials"):
+            import_pipeline.require_user_llm_credential(user["id"])
         # task 17: 之前漏传 upload_id，分片上传走完后端拿不到 raw → "请提供 file 或 upload_id"。
         # 现在透传 body.upload_id，单次 POST + 分片两条路径都能工作。
         return json_response({
@@ -50,6 +53,18 @@ async def api_import_script(request: Request, user=Depends(require_user)):
                 upload_id=str(body.get("upload_id") or ""),
             ),
         })
+    except import_pipeline.MissingUserCredentialError as exc:
+        return json_response({
+            "ok": False,
+            "code": "credentials_required",
+            "error_key": "credentials_required",
+            "needs_credentials": True,
+            "api_id": exc.api_id,
+            "model": exc.model,
+            "credential_api_id": exc.credential_api_id,
+            "settings_hash": "settings-models",
+            "error": str(exc),
+        }, status_code=400)
     except ValueError as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 

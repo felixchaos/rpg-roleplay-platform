@@ -36,6 +36,7 @@ import CSTextFilter from '@cloudscape-design/components/text-filter';
 import CSTabs from '@cloudscape-design/components/tabs';
 import CSPagination from '@cloudscape-design/components/pagination';
 
+const PENDING_IMPORT_KEY = "rpg.import.pendingImport";
 const PENDING_IMPORT_PIPELINE_KEY = "rpg.import.pendingPipeline";
 
 function isCredentialsRequiredError(err) {
@@ -1149,6 +1150,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
   const [importPercent, setImportPercent] = useStatePL(0);
   const [selectedFile, setSelectedFile] = useStatePL(null);
   const [dragOver, setDragOver] = useStatePL(false);
+  const [pendingImport, setPendingImport] = useStatePL(null);
   const [pendingPipeline, setPendingPipeline] = useStatePL(null);
   const fileInputRef = React.useRef(null);
   const tickRef = React.useRef(null);
@@ -1173,11 +1175,28 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
 
   React.useEffect(() => {
     try {
+      const cachedImport = localStorage.getItem(PENDING_IMPORT_KEY);
+      if (cachedImport) {
+        const item = JSON.parse(cachedImport);
+        if (item && item.upload_id) setPendingImport(item);
+      }
       const cached = localStorage.getItem(PENDING_IMPORT_PIPELINE_KEY);
       if (!cached) return;
       const item = JSON.parse(cached);
       if (item && item.script_id) setPendingPipeline(item);
     } catch {}
+  }, []);
+
+  const persistPendingImport = useCallbackPL((item) => {
+    if (!item || !item.upload_id) return;
+    const payload = { ...item, updated_at: Date.now() };
+    setPendingImport(payload);
+    try { localStorage.setItem(PENDING_IMPORT_KEY, JSON.stringify(payload)); } catch {}
+  }, []);
+
+  const clearPendingImport = useCallbackPL(() => {
+    setPendingImport(null);
+    try { localStorage.removeItem(PENDING_IMPORT_KEY); } catch {}
   }, []);
 
   const persistPendingPipeline = useCallbackPL((item) => {
@@ -1328,6 +1347,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
   };
 
   const goApiSettings = () => {
+    if (pendingImport) persistPendingImport(pendingImport);
     if (pendingPipeline) persistPendingPipeline(pendingPipeline);
     window.location.hash = "settings-models";
   };
@@ -1513,6 +1533,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
           title: title || selectedFile.name.replace(/\.(txt|md)$/i, ""),
           split_rule: rule || "auto",
           custom_pattern: pattern || "",
+          require_llm_credentials: true,
         });
         if (!importResp || importResp.ok === false) {
           throw new Error((importResp && (importResp.error || importResp.detail)) || t('scripts.import.api_fail'));
@@ -1607,6 +1628,33 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
           duration: 3000,
         });
       } catch (e) {
+        if (isCredentialsRequiredError(e)) {
+          const payload = e?.payload || {};
+          const draftTitle = title || selectedFile.name.replace(/\.(txt|md)$/i, "");
+          persistPendingImport({
+            upload_id: uploadId,
+            title: draftTitle,
+            file: estimate?.file || { name: selectedFile.name, size: selectedFile.size },
+            file_name: estimate?.file?.name || selectedFile.name,
+            split_rule: rule || "auto",
+            custom_pattern: pattern || "",
+            stages: estimate?.stages || [],
+            totalTokens: estimate?.totalTokens || 0,
+            budget: estimate || {},
+            api_id: payload.api_id,
+            model: payload.model,
+            credential_api_id: payload.credential_api_id,
+            reason: "credentials_required",
+            created_at: Date.now(),
+          });
+          setJob(null);
+          window.__apiToast?.(t('scripts.import.api_key_required_title'), {
+            kind: "warn",
+            detail: t('scripts.import.api_key_required_preimport_toast'),
+            duration: 7000,
+          });
+          return;
+        }
         // 取消任何已经初始化的 upload，让服务器释放临时块
         if (uploadId) { try { await window.api.uploads.cancel(uploadId); } catch (_) {} }
         const detail = (e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || t('scripts.toast.unknown_error');
@@ -1627,6 +1675,82 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
       return;
     }
     window.__apiToast?.(t('scripts.toast.select_file_first'), { kind: "warn" });
+  };
+
+  const resumePendingImport = async () => {
+    if (!pendingImport?.upload_id || importBusy) return;
+    setImportBusy(true);
+    setImportPercent(80);
+    setImportProgress(t('scripts.import.import_creating'));
+    try {
+      const importResp = await window.api.scripts.importScript({
+        upload_id: pendingImport.upload_id,
+        title: pendingImport.title || pendingImport.file_name || "",
+        split_rule: pendingImport.split_rule || "auto",
+        custom_pattern: pendingImport.custom_pattern || "",
+        require_llm_credentials: true,
+      });
+      if (!importResp || importResp.ok === false) {
+        throw new Error((importResp && (importResp.error || importResp.detail)) || t('scripts.import.api_fail'));
+      }
+      const sc = importResp.script || {};
+      setImportPercent(92);
+      setImportProgress(t('scripts.import.import_pipeline'));
+      const pipelineResp = await window.api.scripts.importPipeline(sc.id, {
+        enable_cards: true,
+        enable_worldbook: true,
+        budget: pendingImport.budget || {},
+      });
+      if (!pipelineResp || pipelineResp.ok === false || !pipelineResp.job_id) {
+        throw new Error((pipelineResp && (pipelineResp.error || pipelineResp.detail)) || t('scripts.import.api_fail'));
+      }
+      const baseStages = pendingImport.stages || pendingImport.budget?.stages || [];
+      const stages = buildRunningStages(baseStages);
+      setJob({
+        id: pipelineResp.job_id,
+        file: pendingImport.file || { name: pendingImport.file_name || pendingImport.title || "script" },
+        title: sc.title || pendingImport.title || pendingImport.file_name || "script",
+        script_id: sc.id,
+        mode: (() => { const _r = SPLIT_RULES.find(r => r.id === (pendingImport.split_rule || "auto")); return _r ? t(_r.labelKey) : (pendingImport.split_rule || "auto"); })(),
+        stages,
+        currentStage: 0,
+        totalTokens: pendingImport.totalTokens || stages.reduce((a, s) => a + (s.tokens_est || 0), 0),
+        status: "running",
+        started_at: Date.now(),
+        real: true,
+      });
+      clearPendingImport();
+      clearPendingPipeline();
+      setImportPercent(100);
+      try { window.dispatchEvent(new CustomEvent("rpg-scripts-updated")); } catch (_) {}
+      window.toast && window.toast(t('scripts.toast.import_ok'), {
+        kind: "ok",
+        detail: t('scripts.toast.import_ok_detail', { id: sc.id, title: sc.title || "" }),
+        duration: 3000,
+      });
+    } catch (e) {
+      if (isCredentialsRequiredError(e)) {
+        const payload = e?.payload || {};
+        persistPendingImport({
+          ...pendingImport,
+          api_id: payload.api_id,
+          model: payload.model,
+          credential_api_id: payload.credential_api_id,
+        });
+        window.__apiToast?.(t('scripts.import.api_key_required_title'), {
+          kind: "warn",
+          detail: t('scripts.import.api_key_required_preimport_toast'),
+          duration: 6000,
+        });
+      } else {
+        const detail = (e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || t('scripts.toast.unknown_error');
+        window.__apiToast?.(t('scripts.toast.import_fail'), { kind: "danger", detail, duration: 5000 });
+      }
+    } finally {
+      setImportBusy(false);
+      setImportProgress("");
+      setImportPercent(0);
+    }
   };
 
   const cancelJob = async () => {
@@ -1655,6 +1779,27 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
           {jobRunning && <ImportJobBanner job={job} onCancel={cancelJob} />}
           {job && (job.status === 'done' || job.status === 'cancelled') && (
             <ImportJobResult job={job} onDismiss={dismissJob} onReuse={() => { setJob(null); setEstimate(null); }} />
+          )}
+          {pendingImport && !jobRunning && (
+            <CSAlert
+              type="warning"
+              header={t('scripts.import.api_key_required_title')}
+              action={
+                <CSSpaceBetween direction="horizontal" size="xs">
+                  <CSButton onClick={resumePendingImport} loading={importBusy} disabled={importBusy}>
+                    {t('scripts.import.resume_import')}
+                  </CSButton>
+                  <CSButton variant="primary" iconName="settings" onClick={goApiSettings}>
+                    {t('scripts.import.go_api_settings')}
+                  </CSButton>
+                </CSSpaceBetween>
+              }
+            >
+              {t('scripts.import.api_key_required_preimport_body', {
+                title: pendingImport.title || pendingImport.file_name || t('scripts.import.unnamed'),
+                provider: pendingImport.credential_api_id || pendingImport.api_id || 'API',
+              })}
+            </CSAlert>
           )}
           {pendingPipeline && !jobRunning && (
             <CSAlert

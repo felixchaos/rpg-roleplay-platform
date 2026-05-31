@@ -204,8 +204,7 @@ def schedule_full_import(
 ) -> dict[str, Any]:
     """启动一次完整拆书流水线，返回 job_id。"""
     init_db()
-    api_id, model = _resolve_extractor_llm(user_id)
-    _require_user_llm_credential(user_id, api_id, model)
+    require_user_llm_credential(user_id)
     # 去重 + 限流（同 script 已有 running 任务直接返回那个 job）
     with connect() as db:
         existing = db.execute(
@@ -498,6 +497,17 @@ def _normalize_llm_api_id(api_id: str) -> str:
 
 def _credential_api_id_for(api_id: str) -> str:
     return "AgentPlatform" if api_id == "vertex_ai" else api_id
+
+
+def require_user_llm_credential(user_id: int) -> dict[str, str]:
+    """Preflight paid LLM work before any import writes user-visible data."""
+    api_id, model = _resolve_extractor_llm(user_id)
+    _require_user_llm_credential(user_id, api_id, model)
+    return {
+        "api_id": api_id,
+        "model": model,
+        "credential_api_id": _credential_api_id_for(api_id),
+    }
 
 
 def _api_kind(api_id: str) -> str:

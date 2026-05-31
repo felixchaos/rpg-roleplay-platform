@@ -431,23 +431,13 @@ function ModelsSection() {
     } catch (_) {}
   }, []);
 
-  // 自动 probe + 定期 poll health cache,UI 总能看到最新可达状态。
+  // 用户 API Key 页只展示当前用户真实保存的凭据。这里不能自动 sweep 全局 catalog,
+  // 否则会把服务端/其他用户的 health cache 显示成“用户已配置”。
   useEffectPL(() => {
-    let cancelled = false;
-    const tick = async () => {
-      if (cancelled) return;
-      await refreshHealthFromCache();
-    };
-    // 进入页面立即 fire 一次 sweep + poll;之后每 8s poll cache 拿最新结果
-    (async () => {
-      await triggerHealthSweep();
-      // 等 1s 让 sweep 至少推一两条结果,然后第一次拉
-      await new Promise(r => setTimeout(r, 1500));
-      await tick();
-    })();
-    const iv = setInterval(tick, 8000);
-    return () => { cancelled = true; clearInterval(iv); };
-  }, [refreshHealthFromCache, triggerHealthSweep]);
+    if (useMock) return;
+    void refreshHealthFromCache;
+    void triggerHealthSweep;
+  }, [useMock, refreshHealthFromCache, triggerHealthSweep]);
 
   // Hydrate from backend /api/models + 并行拉 /api/me/credentials 合并 key_set/key_hint
   useEffectPL(() => {
@@ -467,6 +457,7 @@ function ModelsSection() {
           credMap[c.api_id || c.id] = {
             has_key: !!c.has_credential || !!c.has_key || !!c.key_hint,
             key_hint: c.key_hint || "",
+            enabled: c.enabled !== false,
             base_url_override: c.base_url_override || "",
           };
         }
@@ -481,10 +472,10 @@ function ModelsSection() {
               id: aid,
               name: api.display_name || api.name,
               base_url: api.base_url || "",
-              key_set: cred.has_key || !!api.credential_ref || !!api.credential_env,
-              key_hint: cred.key_hint || api.key_hint || "—",
-              status: api.enabled ? "online" : "offline",
-              enabled: !!api.enabled,
+              key_set: !!cred.has_key,
+              key_hint: cred.key_hint || t('settings.models.key_set_hint'),
+              status: cred.enabled === false ? "disabled" : "configured",
+              enabled: cred.enabled !== false,
               proxy: api.proxy || "direct",
               models: (api.models || api.entries || []).map(m => ({
                 id: m.real_name || m.id,
@@ -503,7 +494,7 @@ function ModelsSection() {
                 health_status_detail: m.status_detail || m.health_status_detail || undefined,
               })),
             };
-          }));
+          }).filter(api => api.key_set));
         }
       } catch (_) {}
       finally {
@@ -639,7 +630,7 @@ function ModelsSection() {
               { id: 'models', header: t('settings.models.col_models'), cell: (a) => `${a.models.filter(m => m.enabled).length} / ${a.models.length}` },
               { id: 'status', header: t('settings.models.col_status'), cell: (a) => (
                 a.enabled
-                  ? <CSStatusIndicator type={a.status === 'online' ? 'success' : 'warning'}>{a.status}</CSStatusIndicator>
+                  ? <CSStatusIndicator type="success">{t('settings.providers.configured')}</CSStatusIndicator>
                   : <CSStatusIndicator type="stopped">{t('settings.models.status_disabled')}</CSStatusIndicator>
               ) },
               { id: 'go', header: '', cell: (a) => (
@@ -686,7 +677,7 @@ function ModelsSection() {
           } catch (e) {
             window.__apiToast?.(t('settings.edit_api.save_fail'), { kind: "danger", detail: e?.message });
           }
-          if (addingApi) {
+          if (addingApi && payload.api_key && payload.api_key.trim()) {
             setApis(arr => [...arr, { ...payload, models: [], enabled: true, status: "untested", key_set: !!payload.api_key }]);
           } else {
             setApis(arr => arr.map(a => a.id === editingApi ? { ...a, ...payload, key_set: a.key_set || !!payload.api_key } : a));
