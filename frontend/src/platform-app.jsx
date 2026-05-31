@@ -3,6 +3,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Icon } from './game-icons.jsx';
 import { useResizable, ResizeHandle } from './responsive.jsx';
 import { MODELS_DATA } from './pages/settings.jsx';
@@ -53,57 +54,62 @@ import CSAlert from '@cloudscape-design/components/alert';
 import CSTextarea from '@cloudscape-design/components/textarea';
 import CSModal from '@cloudscape-design/components/modal';
 
-const PL_NAV = [
-  { section: "工作台" },
-  { id: "profile",  label: "主页",     icon: "home" },
-  { id: "scripts",  label: "剧本",     icon: "book" },
-  { id: "modules",  label: "冒险模组", icon: "spark" },
-  { id: "saves",    label: "开始游戏", icon: "play" },
-  { id: "cards",    label: "角色卡",   icon: "cards" },
-  { id: "library",  label: "库",       icon: "folder" },
-  { section: "配置" },
-  { id: "settings", label: "设置",     icon: "settings" },
-  { id: "usage",    label: "用量",     icon: "usage" },
-  { id: "plugins",  label: "插件",     icon: "plug" },
-  { id: "mcp",      label: "MCP",      icon: "diamond" },
-  { id: "skills",   label: "Skill",    icon: "spark" },
-  { id: "apis",     label: "API",      icon: "braces" },
+// PL_NAV is kept as a static array; labels are translated at render time via getPLNav(t)
+const getPLNav = (t) => [
+  { section: t('platform.nav.section_workspace') },
+  { id: "profile",  label: t('platform.nav.profile'),  icon: "home" },
+  { id: "scripts",  label: t('platform.nav.scripts'),  icon: "book" },
+  { id: "modules",  label: t('platform.nav.modules'),  icon: "spark" },
+  { id: "saves",    label: t('platform.nav.saves'),    icon: "play" },
+  { id: "cards",    label: t('platform.nav.cards'),    icon: "cards" },
+  { id: "library",  label: t('platform.nav.library'),  icon: "folder" },
+  { section: t('platform.nav.section_config') },
+  { id: "settings", label: t('platform.nav.settings'), icon: "settings" },
+  { id: "usage",    label: t('platform.nav.usage'),    icon: "usage" },
+  { id: "plugins",  label: t('platform.nav.plugins'),  icon: "plug" },
+  { id: "mcp",      label: "MCP",                       icon: "diamond" },
+  { id: "skills",   label: "Skill",                     icon: "spark" },
+  { id: "apis",     label: "API",                        icon: "braces" },
 ];
+// Static fallback for consumers that call PL_NAV directly (exports)
+const PL_NAV = getPLNav((k) => k);
 
-const PL_TITLES = {
-  profile:  ["主页",     "账号、平台状态和最近资源"],
-  scripts:  ["剧本",     "管理已导入的剧本"],
-  "scripts-import": ["剧本 / 导入", "上传 TXT/MD，自动识别章节切分"],
-  modules:  ["冒险模组", "5E compatible · 五版规则兼容 · 原创规则模组"],
-  saves:    ["开始游戏", "存档目录与分支树"],
-  "saves-branches": ["开始游戏 / 分支", "可拖动的思维导图，查看分支并继续"],
-  cards:    ["角色卡",   "全局用户角色卡库"],
-  "cards-npc": ["角色卡 / NPC", "存档内 NPC 角色卡，跨存档共享"],
-  library:  ["库",       "上传、整理、下载多媒体与文档资产"],
-  me:          ["个人主页",       "资料、成就、近期活动"],
-  "me-edit":   ["个人主页 / 编辑资料", "账户信息、联系方式、本地化"],
-  "me-settings": ["个人主页 / 用户设置", "隐私、合规、安全、数据所有权"],
-  settings: ["设置",     "用户偏好、API 与模型、记忆与权限"],
-  "admin-deploy": ["系统管理 / 部署配置", "监听地址、CORS、SMTP、CAPTCHA(站点级,需管理员)"],
-  "admin-users":        ["系统管理 / 用户管理",  "用户列表、角色分配、封禁与会话管理"],
-  "admin-usage":        ["系统管理 / 全局用量",  "全平台 Token 消耗与成本总览"],
-  "admin-audit":        ["系统管理 / 审计日志",  "管理员操作记录与安全事件"],
-  "admin-health":       ["系统管理 / 系统健康",  "数据库、内存、磁盘与进程状态"],
-  "admin-logs":         ["系统管理 / 系统日志",  "运行时日志查看与下载"],
-  "admin-registration": ["系统管理 / 注册与邀请","注册开关、邀请码管理"],
-  "admin-security":     ["系统管理 / 安全配置",  "IP 黑名单、速率限制、密码策略"],
-  "admin-maintenance":        ["系统管理 / 维护模式",      "维护模式开关与全局公告"],
-  "admin-dmca-takedowns":     ["系统管理 / 下架通知队列",  "DMCA 下架请求受理与处置记录"],
-  "admin-dmca-strikes":       ["系统管理 / 累犯处置",      "Strike 累积与账号限制管理"],
-  "admin-csam-reports":       ["系统管理 / CSAM 举报",     "儿童性虐待材料举报队列与处置"],
-  "admin-aup-actions":        ["系统管理 / AUP 用户行动",  "违反服务条款账号暂停 / 解封 / 终止"],
-  "admin-feedback":           ["系统管理 / 反馈审查",      "查看用户提交的反馈，做出决定"],
-  usage:    ["用量",     "调用量、Token 消耗、成本、延迟、错误率"],
-  plugins:  ["插件",     "已启用的平台插件"],
-  mcp:      ["MCP",      "本地或服务器侧 MCP 服务器"],
-  skills:   ["Skill",    "本地部署可导入 Skill 包"],
-  apis:     ["API",      "稳定功能指令与版本化接口"],
-};
+const getPLTitles = (t) => ({
+  profile:  [t('platform.nav.profile'),  t('platform.nav.profile_sub')],
+  scripts:  [t('platform.nav.scripts'),  t('platform.nav.scripts_sub')],
+  "scripts-import": [t('platform.nav.scripts_import'), t('platform.nav.scripts_import_sub')],
+  modules:  [t('platform.nav.modules'),  t('platform.nav.modules_sub')],
+  saves:    [t('platform.nav.saves'),    t('platform.nav.saves_sub')],
+  "saves-branches": [t('platform.nav.saves_branches'), t('platform.nav.saves_branches_sub')],
+  cards:    [t('platform.nav.cards'),    t('platform.nav.cards_sub')],
+  "cards-npc": [t('platform.nav.cards_npc'), t('platform.nav.cards_npc_sub')],
+  library:  [t('platform.nav.library'),  t('platform.nav.library_sub')],
+  me:          [t('platform.nav.me'),         t('platform.nav.me_sub')],
+  "me-edit":   [t('platform.nav.me_edit'),    t('platform.nav.me_edit_sub')],
+  "me-settings": [t('platform.nav.me_settings'), t('platform.nav.me_settings_sub')],
+  settings: [t('platform.nav.settings'),  t('platform.nav.settings_sub')],
+  "admin-deploy": [t('platform.nav.admin_deploy'), t('platform.nav.admin_deploy_sub')],
+  "admin-users":        [t('platform.nav.admin_users'),        t('platform.nav.admin_users_sub')],
+  "admin-usage":        [t('platform.nav.admin_usage'),        t('platform.nav.admin_usage_sub')],
+  "admin-audit":        [t('platform.nav.admin_audit'),        t('platform.nav.admin_audit_sub')],
+  "admin-health":       [t('platform.nav.admin_health'),       t('platform.nav.admin_health_sub')],
+  "admin-logs":         [t('platform.nav.admin_logs'),         t('platform.nav.admin_logs_sub')],
+  "admin-registration": [t('platform.nav.admin_registration'), t('platform.nav.admin_registration_sub')],
+  "admin-security":     [t('platform.nav.admin_security'),     t('platform.nav.admin_security_sub')],
+  "admin-maintenance":     [t('platform.nav.admin_maintenance'),     t('platform.nav.admin_maintenance_sub')],
+  "admin-dmca-takedowns":  [t('platform.nav.admin_dmca_takedowns'), t('platform.nav.admin_dmca_takedowns_sub')],
+  "admin-dmca-strikes":    [t('platform.nav.admin_dmca_strikes'),   t('platform.nav.admin_dmca_strikes_sub')],
+  "admin-csam-reports":    [t('platform.nav.admin_csam_reports'),   t('platform.nav.admin_csam_reports_sub')],
+  "admin-aup-actions":     [t('platform.nav.admin_aup_actions'),    t('platform.nav.admin_aup_actions_sub')],
+  "admin-feedback":        [t('platform.nav.admin_feedback'),       t('platform.nav.admin_feedback_sub')],
+  usage:    [t('platform.nav.usage'),    t('platform.nav.usage_sub')],
+  plugins:  [t('platform.nav.plugins'),  t('platform.nav.plugins_sub')],
+  mcp:      ["MCP",   t('platform.nav.mcp_sub')],
+  skills:   ["Skill", t('platform.nav.skills_sub')],
+  apis:     ["API",   t('platform.nav.apis_sub')],
+});
+// Static fallback for exports
+const PL_TITLES = getPLTitles((k) => k);
 
 // 编辑资料表单的已知字段列表（提升到模块顶层避免每次渲染重建）
 const _FORM_KEYS = ["display_name", "username", "email", "phone", "real_name",
@@ -497,6 +503,7 @@ function useReactiveUser() {
 // publishUser 不再挂到 window，内部模块通过直接调用 publishUser 函数访问
 
 function UnifiedSearch({ open, onClose, setPage }) {
+  const { t: tSearch } = useTranslation();
   const [q, setQ] = useStatePL("");
   const [activeIdx, setActiveIdx] = useStatePL(0);
   const searchUser = useReactiveUser();
@@ -522,46 +529,48 @@ function UnifiedSearch({ open, onClose, setPage }) {
   const platform = usePlatformData();  // task 45
 
   const pages = [
-    { id: "profile",  label: "主页",      kind: "page", icon: "home",     keywords: "home dashboard" },
-    { id: "me",       label: "个人主页",   kind: "page", icon: "user",     keywords: "me profile account" },
-    { id: "me-edit",  label: "个人主页 / 编辑资料", kind: "page", icon: "edit", keywords: "edit profile avatar" },
-    { id: "me-settings", label: "个人主页 / 用户设置", kind: "page", icon: "settings", keywords: "privacy security 2fa" },
-    { id: "scripts",  label: "剧本",      kind: "page", icon: "book",     keywords: "scripts import" },
-    { id: "cards",    label: "角色卡",     kind: "page", icon: "cards",    keywords: "characters card user npc" },
-    { id: "cards-npc", label: "角色卡 / NPC", kind: "page", icon: "cards",   keywords: "npc characters" },
-    { id: "saves",    label: "开始游戏",   kind: "page", icon: "play",     keywords: "saves continue" },
-    { id: "saves-branches", label: "开始游戏 / 分支", kind: "page", icon: "branch",   keywords: "branches tree fork" },
-    { id: "library",  label: "库",        kind: "page", icon: "folder",   keywords: "library files assets" },
-    { id: "settings", label: "设置",      kind: "page", icon: "settings", keywords: "settings preferences" },
-    { id: "usage",    label: "用量",      kind: "page", icon: "usage",    keywords: "usage tokens cost" },
-    { id: "plugins",  label: "插件",      kind: "page", icon: "plug",     keywords: "plugins extensions" },
-    { id: "mcp",      label: "MCP",       kind: "page", icon: "diamond",  keywords: "mcp server" },
-    { id: "skills",   label: "Skill",     kind: "page", icon: "spark",    keywords: "skills hooks" },
-    { id: "apis",     label: "API",       kind: "page", icon: "braces",   keywords: "api endpoints" },
+    { id: "profile",  label: tSearch('platform.nav.profile'),         kind: "page", icon: "home",     keywords: "home dashboard" },
+    { id: "me",       label: tSearch('platform.nav.me'),              kind: "page", icon: "user",     keywords: "me profile account" },
+    { id: "me-edit",  label: tSearch('platform.nav.me_edit_full'),    kind: "page", icon: "edit",     keywords: "edit profile avatar" },
+    { id: "me-settings", label: tSearch('platform.nav.me_settings_full'), kind: "page", icon: "settings", keywords: "privacy security 2fa" },
+    { id: "scripts",  label: tSearch('platform.nav.scripts'),         kind: "page", icon: "book",     keywords: "scripts import" },
+    { id: "cards",    label: tSearch('platform.nav.cards'),           kind: "page", icon: "cards",    keywords: "characters card user npc" },
+    { id: "cards-npc", label: tSearch('platform.nav.cards_npc_full'), kind: "page", icon: "cards",   keywords: "npc characters" },
+    { id: "saves",    label: tSearch('platform.nav.saves'),           kind: "page", icon: "play",     keywords: "saves continue" },
+    { id: "saves-branches", label: tSearch('platform.nav.saves_branches_full'), kind: "page", icon: "branch", keywords: "branches tree fork" },
+    { id: "library",  label: tSearch('platform.nav.library'),         kind: "page", icon: "folder",   keywords: "library files assets" },
+    { id: "settings", label: tSearch('platform.nav.settings'),        kind: "page", icon: "settings", keywords: "settings preferences" },
+    { id: "usage",    label: tSearch('platform.nav.usage'),           kind: "page", icon: "usage",    keywords: "usage tokens cost" },
+    { id: "plugins",  label: tSearch('platform.nav.plugins'),         kind: "page", icon: "plug",     keywords: "plugins extensions" },
+    { id: "mcp",      label: "MCP",                                    kind: "page", icon: "diamond",  keywords: "mcp server" },
+    { id: "skills",   label: "Skill",                                  kind: "page", icon: "spark",    keywords: "skills hooks" },
+    { id: "apis",     label: "API",                                    kind: "page", icon: "braces",   keywords: "api endpoints" },
   ];
 
+  const adminLabel = tSearch('platform.nav.admin');
+  const settingsLabel = tSearch('platform.nav.settings');
   const settingsItems = [
-    { id: "preferences", label: "偏好",        parent: "设置",     hash: "settings", keywords: "language font density theme" },
-    { id: "models",      label: "模型 / API",   parent: "设置",     hash: "settings", keywords: "openai anthropic models api" },
-    { id: "memory",      label: "记忆",        parent: "设置",     hash: "settings", keywords: "memory recall context" },
-    { id: "permissions", label: "权限",        parent: "设置",     hash: "settings", keywords: "permission write structured" },
-    { id: "danger",      label: "高危",        parent: "设置",     hash: "settings", keywords: "danger reset delete" },
+    { id: "preferences", label: tSearch('platform.nav.settings_preferences'), parent: settingsLabel, hash: "settings", keywords: "language font density theme" },
+    { id: "models",      label: tSearch('platform.nav.settings_models'),       parent: settingsLabel, hash: "settings", keywords: "openai anthropic models api" },
+    { id: "memory",      label: tSearch('platform.nav.settings_memory'),       parent: settingsLabel, hash: "settings", keywords: "memory recall context" },
+    { id: "permissions", label: tSearch('platform.nav.settings_permissions'),  parent: settingsLabel, hash: "settings", keywords: "permission write structured" },
+    { id: "danger",      label: tSearch('platform.nav.settings_danger'),       parent: settingsLabel, hash: "settings", keywords: "danger reset delete" },
     // 部署配置已拆到「系统管理」,仅 admin 可见
     ...(isAdmin ? [
-      { id: "deploy",        label: "部署配置",   parent: "系统管理", hash: "admin-deploy",        keywords: "host port cors upload deploy admin" },
-      { id: "admin-users",   label: "用户管理",   parent: "系统管理", hash: "admin-users",        keywords: "users ban role deactivate admin" },
-      { id: "admin-usage",   label: "全局用量",   parent: "系统管理", hash: "admin-usage",        keywords: "global usage token cost admin" },
-      { id: "admin-audit",   label: "审计日志",   parent: "系统管理", hash: "admin-audit",        keywords: "audit log admin action" },
-      { id: "admin-health",  label: "系统健康",   parent: "系统管理", hash: "admin-health",       keywords: "health db memory disk process" },
-      { id: "admin-logs",    label: "系统日志",   parent: "系统管理", hash: "admin-logs",         keywords: "logs system stderr stdout" },
-      { id: "admin-reg",     label: "注册与邀请", parent: "系统管理", hash: "admin-registration", keywords: "registration invite code signup" },
-      { id: "admin-sec",     label: "安全配置",   parent: "系统管理", hash: "admin-security",     keywords: "ip blocklist rate limit password policy" },
-      { id: "admin-maint",   label: "维护模式",   parent: "系统管理", hash: "admin-maintenance",      keywords: "maintenance mode announcement restart" },
-      { id: "admin-dmca-td", label: "下架通知队列", parent: "系统管理", hash: "admin-dmca-takedowns", keywords: "dmca takedown notice copyright admin" },
-      { id: "admin-dmca-sk", label: "累犯处置",     parent: "系统管理", hash: "admin-dmca-strikes",   keywords: "dmca strike repeat offender admin" },
-      { id: "admin-csam",    label: "CSAM 举报",    parent: "系统管理", hash: "admin-csam-reports",   keywords: "csam report child abuse admin" },
-      { id: "admin-aup",      label: "AUP 用户行动", parent: "系统管理", hash: "admin-aup-actions",  keywords: "aup suspend ban terminate policy admin" },
-      { id: "admin-feedback", label: "反馈审查",     parent: "系统管理", hash: "admin-feedback",     keywords: "feedback review user report admin" },
+      { id: "deploy",        label: tSearch('platform.nav.admin_deploy'),        parent: adminLabel, hash: "admin-deploy",        keywords: "host port cors upload deploy admin" },
+      { id: "admin-users",   label: tSearch('platform.nav.admin_users'),         parent: adminLabel, hash: "admin-users",         keywords: "users ban role deactivate admin" },
+      { id: "admin-usage",   label: tSearch('platform.nav.admin_usage'),         parent: adminLabel, hash: "admin-usage",         keywords: "global usage token cost admin" },
+      { id: "admin-audit",   label: tSearch('platform.nav.admin_audit'),         parent: adminLabel, hash: "admin-audit",         keywords: "audit log admin action" },
+      { id: "admin-health",  label: tSearch('platform.nav.admin_health'),        parent: adminLabel, hash: "admin-health",        keywords: "health db memory disk process" },
+      { id: "admin-logs",    label: tSearch('platform.nav.admin_logs'),          parent: adminLabel, hash: "admin-logs",          keywords: "logs system stderr stdout" },
+      { id: "admin-reg",     label: tSearch('platform.nav.admin_registration'),  parent: adminLabel, hash: "admin-registration",  keywords: "registration invite code signup" },
+      { id: "admin-sec",     label: tSearch('platform.nav.admin_security'),      parent: adminLabel, hash: "admin-security",      keywords: "ip blocklist rate limit password policy" },
+      { id: "admin-maint",   label: tSearch('platform.nav.admin_maintenance'),   parent: adminLabel, hash: "admin-maintenance",   keywords: "maintenance mode announcement restart" },
+      { id: "admin-dmca-td", label: tSearch('platform.nav.admin_dmca_takedowns'),parent: adminLabel, hash: "admin-dmca-takedowns",keywords: "dmca takedown notice copyright admin" },
+      { id: "admin-dmca-sk", label: tSearch('platform.nav.admin_dmca_strikes'),  parent: adminLabel, hash: "admin-dmca-strikes",  keywords: "dmca strike repeat offender admin" },
+      { id: "admin-csam",    label: tSearch('platform.nav.admin_csam_reports'),  parent: adminLabel, hash: "admin-csam-reports",  keywords: "csam report child abuse admin" },
+      { id: "admin-aup",     label: tSearch('platform.nav.admin_aup_actions'),   parent: adminLabel, hash: "admin-aup-actions",   keywords: "aup suspend ban terminate policy admin" },
+      { id: "admin-feedback",label: tSearch('platform.nav.admin_feedback'),      parent: adminLabel, hash: "admin-feedback",      keywords: "feedback review user report admin" },
     ] : []),
   ];
 
@@ -646,7 +655,17 @@ function UnifiedSearch({ open, onClose, setPage }) {
 
   const groups = {};
   const order = ["page", "script", "save", "character", "world", "memory", "model", "api", "library"];
-  const labels = { page: "页面", script: "剧本", save: "存档", character: "角色卡", world: "世界书", memory: "记忆", model: "模型", api: "API 供应商", library: "库文件" };
+  const labels = {
+    page: tSearch('platform.search.category_pages'),
+    script: tSearch('platform.search.category_scripts'),
+    save: tSearch('platform.search.category_saves'),
+    character: tSearch('platform.search.category_cards'),
+    world: tSearch('platform.search.category_worldbook'),
+    memory: tSearch('platform.search.category_memories'),
+    model: tSearch('platform.search.category_models'),
+    api: tSearch('platform.search.category_apis'),
+    library: tSearch('platform.search.category_library'),
+  };
   filtered.forEach(it => {
     const key = it.kind === "page" && it.parent ? "page" : it.kind;
     (groups[key] = groups[key] || []).push(it);
@@ -685,7 +704,7 @@ function UnifiedSearch({ open, onClose, setPage }) {
             ref={inputRef}
             value={q}
             onChange={(e) => { setQ(e.target.value); setActiveIdx(0); }}
-            placeholder="搜索页面、剧本、存档、角色卡、世界书、记忆、模型、库文件、设置…"
+            placeholder={tSearch('platform.search.placeholder')}
           />
           <span className="pl-search-kbd">
             <span className="kbd">Esc</span>
@@ -694,12 +713,12 @@ function UnifiedSearch({ open, onClose, setPage }) {
         <div className="pl-search-body">
           {!q && (
             <div className="pl-search-empty">
-              <div className="muted-2" style={{fontSize: 11, textTransform: "uppercase", letterSpacing: "0.14em", padding: "10px 16px 6px"}}>建议</div>
+              <div className="muted-2" style={{fontSize: 11, textTransform: "uppercase", letterSpacing: "0.14em", padding: "10px 16px 6px"}}>{tSearch('platform.search.suggestions')}</div>
               {pages.slice(0, 6).map((p, i) => (
                 <button key={p.id} className={`pl-search-row ${i === 0 ? "active" : ""}`} onClick={() => pick(p)}>
                   <span className="pl-search-icon"><Icon name={p.icon} size={14} /></span>
                   <span className="pl-search-label">{p.label}</span>
-                  <span className="pl-search-meta muted-2">页面</span>
+                  <span className="pl-search-meta muted-2">{tSearch('platform.search.category_pages')}</span>
                 </button>
               ))}
             </div>
@@ -3676,84 +3695,88 @@ function AuthPage() {
    ContinuePicker / UnifiedSearch / useReactiveUser / usePlatformData。 */
 /* AWS 式 IA:模块(=服务)注册表。左侧栏只显示「当前模块」的子页;
    全局模块切换走顶部「全部功能」菜单(类似 AWS 的服务列表)。 */
-const CS_MODULES = [
-  { id: 'scripts', label: '剧本', group: '创作',
+const getCSModules = (t) => [
+  { id: 'scripts', label: t('platform.nav.scripts'), group: t('platform.nav.group_create'),
     pages: ['scripts', 'scripts-import', 'scripts-library', 'scripts-editor', 'scripts-settings'],
     sub: [
-      { text: '我的剧本', href: '#scripts' },
-      { text: '在线剧本库', href: '#scripts-library' },
-      { text: '剧本编辑器', href: '#scripts-editor' },
-      { text: '剧本设置', href: '#scripts-settings' },
+      { text: t('platform.nav.cs_my_scripts'),      href: '#scripts' },
+      { text: t('platform.nav.cs_scripts_library'), href: '#scripts-library' },
+      { text: t('platform.nav.cs_scripts_editor'),  href: '#scripts-editor' },
+      { text: t('platform.nav.cs_scripts_settings'),href: '#scripts-settings' },
     ] },
-  { id: 'play', label: '开始游戏', group: '游玩',
+  { id: 'play', label: t('platform.nav.saves'), group: t('platform.nav.group_play'),
     // NPC 角色卡已移入「剧本」详情面板(NPC 卡属于具体剧本),不再在开始游戏出现。
     pages: ['saves', 'saves-branches', 'cards', 'modules', 'play-settings'],
     sub: [
-      { text: '存档目录', href: '#saves' },
-      { text: '分支树', href: '#saves-branches' },
-      { text: '用户角色卡', href: '#cards' },
-      { text: '冒险模组', href: '#modules' },
-      { text: '游戏设置', href: '#play-settings' },
+      { text: t('platform.nav.cs_saves'),          href: '#saves' },
+      { text: t('platform.nav.cs_branches'),        href: '#saves-branches' },
+      { text: t('platform.nav.cs_user_cards'),      href: '#cards' },
+      { text: t('platform.nav.modules'),            href: '#modules' },
+      { text: t('platform.nav.cs_play_settings'),   href: '#play-settings' },
     ] },
-  { id: 'account', label: '设置 & 账户', group: '系统',
+  { id: 'account', label: t('platform.nav.account'), group: t('platform.nav.group_system'),
     pages: ['me', 'me-edit', 'me-settings', 'settings', 'settings-models',
       'settings-modelparams', 'settings-modules', 'settings-memory', 'settings-permissions',
       'settings-danger'],
     sub: [
-      { text: '个人主页', href: '#me' },
-      { text: '编辑资料', href: '#me-edit' },
-      { text: '隐私与安全', href: '#me-settings' },
-      { text: '偏好', href: '#settings' },
-      { text: 'API 与模型', href: '#settings-models' },
-      { text: '模型参数', href: '#settings-modelparams' },
-      { text: '模块模型', href: '#settings-modules' },
-      { text: '记忆', href: '#settings-memory' },
-      { text: '权限', href: '#settings-permissions' },
-      { text: '高危操作', href: '#settings-danger' },
+      { text: t('platform.nav.me'),                  href: '#me' },
+      { text: t('platform.nav.me_edit'),              href: '#me-edit' },
+      { text: t('platform.nav.me_settings'),          href: '#me-settings' },
+      { text: t('platform.nav.settings_preferences'), href: '#settings' },
+      { text: t('platform.nav.settings_models'),      href: '#settings-models' },
+      { text: t('platform.nav.settings_modelparams'), href: '#settings-modelparams' },
+      { text: t('platform.nav.settings_modules'),     href: '#settings-modules' },
+      { text: t('platform.nav.settings_memory'),      href: '#settings-memory' },
+      { text: t('platform.nav.settings_permissions'), href: '#settings-permissions' },
+      { text: t('platform.nav.settings_danger'),      href: '#settings-danger' },
     ] },
   // 系统管理:仅 admin 角色可见/可访问(adminOnly)。部署配置等站点级设置从用户
   // 「设置 & 账户」中拆出,独立成网站管理功能页,三道鉴权(菜单隐藏 + 路由 AdminGuard + 后端 403)。
-  { id: 'admin', label: '系统管理', group: '管理', adminOnly: true,
+  { id: 'admin', label: t('platform.nav.admin'), group: t('platform.nav.group_admin'), adminOnly: true,
     pages: ['admin-deploy', 'admin-users', 'admin-usage', 'admin-audit',
             'admin-health', 'admin-logs', 'admin-registration', 'admin-security', 'admin-maintenance',
             'admin-dmca-takedowns', 'admin-dmca-strikes', 'admin-csam-reports', 'admin-aup-actions',
             'admin-feedback'],
     sub: [
-      { text: '部署配置',       href: '#admin-deploy' },
-      { text: '用户管理',       href: '#admin-users' },
-      { text: '全局用量',       href: '#admin-usage' },
-      { text: '审计日志',       href: '#admin-audit' },
-      { text: '系统健康',       href: '#admin-health' },
-      { text: '系统日志',       href: '#admin-logs' },
-      { text: '注册与邀请',     href: '#admin-registration' },
-      { text: '安全配置',       href: '#admin-security' },
-      { text: '维护模式',       href: '#admin-maintenance' },
-      { text: '下架通知队列',   href: '#admin-dmca-takedowns' },
-      { text: '累犯处置',       href: '#admin-dmca-strikes' },
-      { text: 'CSAM 举报',      href: '#admin-csam-reports' },
-      { text: 'AUP 用户行动',   href: '#admin-aup-actions' },
-      { text: '反馈审查',       href: '#admin-feedback' },
+      { text: t('platform.nav.admin_deploy'),          href: '#admin-deploy' },
+      { text: t('platform.nav.admin_users'),           href: '#admin-users' },
+      { text: t('platform.nav.admin_usage'),           href: '#admin-usage' },
+      { text: t('platform.nav.admin_audit'),           href: '#admin-audit' },
+      { text: t('platform.nav.admin_health'),          href: '#admin-health' },
+      { text: t('platform.nav.admin_logs'),            href: '#admin-logs' },
+      { text: t('platform.nav.admin_registration'),    href: '#admin-registration' },
+      { text: t('platform.nav.admin_security'),        href: '#admin-security' },
+      { text: t('platform.nav.admin_maintenance'),     href: '#admin-maintenance' },
+      { text: t('platform.nav.admin_dmca_takedowns'),  href: '#admin-dmca-takedowns' },
+      { text: t('platform.nav.admin_dmca_strikes'),    href: '#admin-dmca-strikes' },
+      { text: t('platform.nav.admin_csam_reports'),    href: '#admin-csam-reports' },
+      { text: t('platform.nav.admin_aup_actions'),     href: '#admin-aup-actions' },
+      { text: t('platform.nav.admin_feedback'),        href: '#admin-feedback' },
     ] },
-  { id: 'library', label: '库', group: '系统', pages: ['library'],
-    sub: [{ text: '资产库', href: '#library' }] },
-  { id: 'extensions', label: '扩展', group: '系统', pages: ['plugins', 'mcp', 'skills', 'apis', 'usage'],
+  { id: 'library', label: t('platform.nav.library'), group: t('platform.nav.group_system'), pages: ['library'],
+    sub: [{ text: t('platform.nav.cs_asset_library'), href: '#library' }] },
+  { id: 'extensions', label: t('platform.nav.extensions'), group: t('platform.nav.group_system'), pages: ['plugins', 'mcp', 'skills', 'apis', 'usage'],
     sub: [
-      { text: '插件', href: '#plugins' },
-      { text: 'MCP', href: '#mcp' },
-      { text: 'Skill', href: '#skills' },
-      { text: '开发接口', href: '#apis' },
-      { text: '用量', href: '#usage' },
+      { text: t('platform.nav.plugins'),  href: '#plugins' },
+      { text: 'MCP',                       href: '#mcp' },
+      { text: 'Skill',                     href: '#skills' },
+      { text: t('platform.nav.cs_dev_api'),href: '#apis' },
+      { text: t('platform.nav.usage'),     href: '#usage' },
     ] },
 ];
+// Static CS_MODULES for consumers outside React (ADMIN_PAGES set)
+const CS_MODULES = getCSModules((k) => k);
 
-function _csActiveModule(page) {
-  return CS_MODULES.find((m) => m.pages.includes(page)) || CS_MODULES[0];
+function _csActiveModule(page, modules) {
+  const mods = modules || CS_MODULES;
+  return mods.find((m) => m.pages.includes(page)) || mods[0];
 }
 
 // 顶部「全部功能」菜单(按 group 分组)。adminOnly 模块仅 admin 角色可见。
-function _csSwitcherItems(isAdmin) {
+function _csSwitcherItems(isAdmin, modules) {
+  const mods = modules || CS_MODULES;
   const groups = [];
-  CS_MODULES.forEach((m) => {
+  mods.forEach((m) => {
     if (m.adminOnly && !isAdmin) return;
     let g = groups.find((x) => x.text === m.group);
     if (!g) { g = { text: m.group, items: [] }; groups.push(g); }
@@ -3810,6 +3833,8 @@ async function _csRefresh() {
 }
 
 function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, onToggleAssistant }) {
+  const { t } = useTranslation();
+  const csModules = React.useMemo(() => getCSModules(t), [t]);
   const platform = usePlatformData();
   const reactiveUser = useReactiveUser();
   const [continueState, setContinueState] = useStatePL({ open: false, save: null, nodeId: null });
@@ -3941,10 +3966,10 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
             RPG Roleplay
           </a>
           <CSButtonDropdown
-            items={_csSwitcherItems(reactiveUser.role === 'admin')}
+            items={_csSwitcherItems(reactiveUser.role === 'admin', csModules)}
             expandToViewport
-            ariaLabel="全部功能"
-            onItemClick={({ detail }) => { const m = CS_MODULES.find((x) => x.id === detail.id); if (m) { setPage(m.pages[0]); location.hash = '#' + m.pages[0]; } }}
+            ariaLabel={t('platform.menu.all_modules')}
+            onItemClick={({ detail }) => { const m = csModules.find((x) => x.id === detail.id); if (m) { setPage(m.pages[0]); location.hash = '#' + m.pages[0]; } }}
           >
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, lineHeight: 1 }}>
               <svg width="13" height="13" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true" style={{ display: 'block' }}>
@@ -3953,7 +3978,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
                 <rect x="0" y="8" width="6" height="6" rx="1.2" />
                 <rect x="8" y="8" width="6" height="6" rx="1.2" />
               </svg>
-              全部功能
+              {t('platform.menu.all_modules')}
             </span>
           </CSButtonDropdown>
         </div>
@@ -3962,22 +3987,22 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
           <CSTopNavigation
             identity={{ href: '#profile', title: '', onFollow: (e) => { e.preventDefault(); setPage('profile'); } }}
             utilities={[
-              { type: 'button', iconName: 'search', title: '搜索 (⌘K)', ariaLabel: '搜索', disableUtilityCollapse: true, onClick: () => setSearchOpen(true) },
-              { type: 'button', iconName: 'settings', title: '设置', ariaLabel: '设置', disableUtilityCollapse: true, onClick: () => { setPage('settings'); location.hash = '#settings'; } },
-              { type: 'button', iconName: 'status-info', title: helpSlugForPage ? `当前页帮助 (${helpSlugForPage})` : '帮助', ariaLabel: '帮助', disableUtilityCollapse: true, onClick: () => { if (window.__openHelp) window.__openHelp(helpSlugForPage || 'intro'); } },
-              { type: 'button', iconName: 'refresh', title: '刷新', ariaLabel: '刷新平台数据', disableUtilityCollapse: true, onClick: _csRefresh },
+              { type: 'button', iconName: 'search', title: t('platform.menu.search_title'), ariaLabel: t('platform.menu.search_title'), disableUtilityCollapse: true, onClick: () => setSearchOpen(true) },
+              { type: 'button', iconName: 'settings', title: t('platform.nav.settings'), ariaLabel: t('platform.nav.settings'), disableUtilityCollapse: true, onClick: () => { setPage('settings'); location.hash = '#settings'; } },
+              { type: 'button', iconName: 'status-info', title: helpSlugForPage ? `${t('platform.menu.help_current')} (${helpSlugForPage})` : t('platform.menu.help'), ariaLabel: t('platform.menu.help'), disableUtilityCollapse: true, onClick: () => { if (window.__openHelp) window.__openHelp(helpSlugForPage || 'intro'); } },
+              { type: 'button', iconName: 'refresh', title: t('common.refresh'), ariaLabel: t('platform.menu.refresh_aria'), disableUtilityCollapse: true, onClick: _csRefresh },
               {
                 type: 'menu-dropdown',
-                text: reactiveUser.display_name || '未命名',
+                text: reactiveUser.display_name || t('platform.menu.unnamed'),
                 description: `@${reactiveUser.username || '—'} · ${reactiveUser.role || ''}`,
                 iconName: 'user-profile',
                 items: [
-                  { id: 'me', text: '个人主页' },
-                  { id: 'me-edit', text: '编辑资料' },
-                  { id: 'me-settings', text: '用户设置' },
-                  { id: 'feedback', text: '提交反馈' },
-                  { id: 'help', text: '帮助文档' },
-                  { id: 'signout', text: '登出' },
+                  { id: 'me', text: t('platform.nav.me') },
+                  { id: 'me-edit', text: t('platform.nav.me_edit') },
+                  { id: 'me-settings', text: t('platform.nav.me_settings') },
+                  { id: 'feedback', text: t('platform.menu.feedback') },
+                  { id: 'help', text: t('platform.menu.help') },
+                  { id: 'signout', text: t('platform.menu.logout') },
                 ],
                 onItemClick: onUserMenu,
               },
@@ -3996,10 +4021,10 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
         toolsHide
         navigation={
           <CSSideNavigation
-            header={{ text: _csActiveModule(page).label, href: '#' + _csActiveModule(page).pages[0] }}
+            header={{ text: _csActiveModule(page, csModules).label, href: '#' + _csActiveModule(page, csModules).pages[0] }}
             activeHref={'#' + page}
             onFollow={(e) => { e.preventDefault(); const id = (e.detail.href || '').slice(1); if (id) { setPage(id); location.hash = '#' + id; } }}
-            items={_csActiveModule(page).sub.map((s) => ({ type: 'link', text: s.text, href: s.href }))}
+            items={_csActiveModule(page, csModules).sub.map((s) => ({ type: 'link', text: s.text, href: s.href }))}
           />
         }
         content={

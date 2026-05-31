@@ -1118,109 +1118,112 @@ export function AdminSecurityPage() {
     <CSSpaceBetween size="l">
       {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
       {loading
-        ? <CSBox color="inherit">加载中…</CSBox>
+        ? <CSBox key="loading" color="inherit">加载中…</CSBox>
         : !draft
-          ? <CSBox textAlign="center" color="inherit">暂无配置数据</CSBox>
-          : (
-            <>
-              <CSContainer header={<CSHeader variant="h2">速率限制</CSHeader>}>
-                <CSAlert type="info">速率限制参数修改后需重启服务才能生效。</CSAlert>
-                <CSSpaceBetween size="m">
-                  <CSColumnLayout columns={3} variant="text-grid">
-                    <CSFormField label="每 IP 最大请求数">
-                      <CSInput
-                        type="number"
-                        value={String(d.rate_limit?.max_per_ip ?? '')}
-                        onChange={({ detail }) => upd('rate_limit.max_per_ip', Number(detail.value))}
-                      />
-                    </CSFormField>
-                    <CSFormField label="每用户最大请求数">
-                      <CSInput
-                        type="number"
-                        value={String(d.rate_limit?.max_per_user ?? '')}
-                        onChange={({ detail }) => upd('rate_limit.max_per_user', Number(detail.value))}
-                      />
-                    </CSFormField>
-                    <CSFormField label="时间窗口（分钟）">
-                      <CSInput
-                        type="number"
-                        value={String(d.rate_limit?.window_minutes ?? '')}
-                        onChange={({ detail }) => upd('rate_limit.window_minutes', Number(detail.value))}
-                      />
-                    </CSFormField>
-                  </CSColumnLayout>
-                </CSSpaceBetween>
-              </CSContainer>
-
-              <CSContainer header={<CSHeader variant="h2">密码策略</CSHeader>}>
-                <CSSpaceBetween size="m">
-                  <CSColumnLayout columns={2} variant="text-grid">
-                    <CSFormField label="最小长度">
-                      <CSInput
-                        type="number"
-                        value={String(d.password?.min_length ?? '')}
-                        onChange={({ detail }) => upd('password.min_length', Number(detail.value))}
-                      />
-                    </CSFormField>
-                    <CSFormField label="需要数字">
-                      <CSToggle
-                        checked={!!d.password?.require_digit}
-                        onChange={({ detail }) => upd('password.require_digit', detail.checked)}
-                      >
-                        {d.password?.require_digit ? '是' : '否'}
-                      </CSToggle>
-                    </CSFormField>
-                  </CSColumnLayout>
-                </CSSpaceBetween>
-              </CSContainer>
-
-              <CSContainer header={<CSHeader variant="h2">Session 策略</CSHeader>}>
-                <CSFormField label="Session 超时（天）">
-                  <CSInput
-                    type="number"
-                    value={String(d.session?.timeout_days ?? '')}
-                    onChange={({ detail }) => upd('session.timeout_days', Number(detail.value))}
-                    style={{ maxWidth: 200 }}
-                  />
-                </CSFormField>
-              </CSContainer>
-
-              <CSContainer header={<CSHeader variant="h2">登录锁定策略</CSHeader>}>
-                <CSColumnLayout columns={2} variant="text-grid">
-                  <CSFormField label="失败次数阈值">
-                    <CSInput
-                      type="number"
-                      value={String(d.lockout?.max_attempts ?? '')}
-                      onChange={({ detail }) => upd('lockout.max_attempts', Number(detail.value))}
-                    />
-                  </CSFormField>
-                  <CSFormField label="锁定时长（分钟）">
-                    <CSInput
-                      type="number"
-                      value={String(d.lockout?.lockout_minutes ?? '')}
-                      onChange={({ detail }) => upd('lockout.lockout_minutes', Number(detail.value))}
-                    />
-                  </CSFormField>
-                </CSColumnLayout>
-              </CSContainer>
-
-              <CSContainer header={<CSHeader variant="h2">IP 黑名单</CSHeader>}>
-                <CSFormField label="每行一个 IP 或 CIDR（如 192.168.1.0/24）">
-                  <CSTextarea
-                    value={Array.isArray(d.ip_blocklist) ? d.ip_blocklist.join('\n') : (d.ip_blocklist || '')}
-                    onChange={({ detail }) => upd('ip_blocklist', detail.value.split('\n').map((s) => s.trim()).filter(Boolean))}
-                    rows={6}
-                    placeholder="192.168.1.1&#10;10.0.0.0/8"
-                  />
-                </CSFormField>
-              </CSContainer>
-
-              <CSBox float="right">
-                <CSButton variant="primary" loading={saving} onClick={save}>保存安全配置</CSButton>
-              </CSBox>
-            </>
-          )
-      }
+          ? <CSBox key="empty" textAlign="center" color="inherit">暂无配置数据</CSBox>
+          : null}
+      {!loading && draft && (
+        <CSContainer key="rate-limit" header={<CSHeader variant="h2">速率限制</CSHeader>}>
+          <CSAlert type="info">速率限制参数修改后需重启服务才能生效。</CSAlert>
+          <CSSpaceBetween size="m">
+            <CSColumnLayout columns={3} variant="text-grid">
+              <CSFormField label="每 IP 最大请求数">
+                <CSInput
+                  type="number"
+                  value={String(d.rate_limit?.max_per_ip ?? '')}
+                  onChange={({ detail }) => upd('rate_limit.max_per_ip', Number(detail.value))}
+                />
+              </CSFormField>
+              <CSFormField label="每用户最大请求数">
+                <CSInput
+                  type="number"
+                  value={String(d.rate_limit?.max_per_user ?? '')}
+                  onChange={({ detail }) => upd('rate_limit.max_per_user', Number(detail.value))}
+                />
+              </CSFormField>
+              <CSFormField label="时间窗口（分钟）">
+                <CSInput
+                  type="number"
+                  value={String(d.rate_limit?.window_minutes ?? '')}
+                  onChange={({ detail }) => upd('rate_limit.window_minutes', Number(detail.value))}
+                />
+              </CSFormField>
+            </CSColumnLayout>
+          </CSSpaceBetween>
+        </CSContainer>
+      )}
+      {!loading && draft && (
+        <CSContainer key="password" header={<CSHeader variant="h2">密码策略</CSHeader>}>
+          <CSSpaceBetween size="m">
+            <CSColumnLayout columns={2} variant="text-grid">
+              <CSFormField label="最小长度">
+                <CSInput
+                  type="number"
+                  value={String(d.password?.min_length ?? '')}
+                  onChange={({ detail }) => upd('password.min_length', Number(detail.value))}
+                />
+              </CSFormField>
+              <CSFormField label="需要数字">
+                <CSToggle
+                  checked={!!d.password?.require_digit}
+                  onChange={({ detail }) => upd('password.require_digit', detail.checked)}
+                >
+                  {d.password?.require_digit ? '是' : '否'}
+                </CSToggle>
+              </CSFormField>
+            </CSColumnLayout>
+          </CSSpaceBetween>
+        </CSContainer>
+      )}
+      {!loading && draft && (
+        <CSContainer key="session" header={<CSHeader variant="h2">Session 策略</CSHeader>}>
+          <CSFormField label="Session 超时（天）">
+            <CSInput
+              type="number"
+              value={String(d.session?.timeout_days ?? '')}
+              onChange={({ detail }) => upd('session.timeout_days', Number(detail.value))}
+              style={{ maxWidth: 200 }}
+            />
+          </CSFormField>
+        </CSContainer>
+      )}
+      {!loading && draft && (
+        <CSContainer key="lockout" header={<CSHeader variant="h2">登录锁定策略</CSHeader>}>
+          <CSColumnLayout columns={2} variant="text-grid">
+            <CSFormField label="失败次数阈值">
+              <CSInput
+                type="number"
+                value={String(d.lockout?.max_attempts ?? '')}
+                onChange={({ detail }) => upd('lockout.max_attempts', Number(detail.value))}
+              />
+            </CSFormField>
+            <CSFormField label="锁定时长（分钟）">
+              <CSInput
+                type="number"
+                value={String(d.lockout?.lockout_minutes ?? '')}
+                onChange={({ detail }) => upd('lockout.lockout_minutes', Number(detail.value))}
+              />
+            </CSFormField>
+          </CSColumnLayout>
+        </CSContainer>
+      )}
+      {!loading && draft && (
+        <CSContainer key="ip-blocklist" header={<CSHeader variant="h2">IP 黑名单</CSHeader>}>
+          <CSFormField label="每行一个 IP 或 CIDR（如 192.168.1.0/24）">
+            <CSTextarea
+              value={Array.isArray(d.ip_blocklist) ? d.ip_blocklist.join('\n') : (d.ip_blocklist || '')}
+              onChange={({ detail }) => upd('ip_blocklist', detail.value.split('\n').map((s) => s.trim()).filter(Boolean))}
+              rows={6}
+              placeholder="192.168.1.1&#10;10.0.0.0/8"
+            />
+          </CSFormField>
+        </CSContainer>
+      )}
+      {!loading && draft && (
+        <CSBox key="save-btn" float="right">
+          <CSButton variant="primary" loading={saving} onClick={save}>保存安全配置</CSButton>
+        </CSBox>
+      )}
     </CSSpaceBetween>
   );
 }
@@ -1372,18 +1375,16 @@ export function AdminDmcaTakedownsPage() {
               cell: (r) => (
                 <CSSpaceBetween direction="horizontal" size="xs">
                   {r.status === 'open' && (
-                    <>
-                      <CSButton variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'takedown' }); setActionReason(''); }}>下架</CSButton>
-                      <CSButton variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'reject' }); setActionReason(''); }}>拒绝</CSButton>
-                    </>
+                    <CSButton key="takedown" variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'takedown' }); setActionReason(''); }}>下架</CSButton>
+                  )}
+                  {r.status === 'open' && (
+                    <CSButton key="reject" variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'reject' }); setActionReason(''); }}>拒绝</CSButton>
                   )}
                   {r.status === 'closed' && (
-                    <>
-                      <CSButton variant="inline-link" onClick={() => { setCounterModal(r); setCounterNotes(''); }}>录入反通知</CSButton>
-                    </>
+                    <CSButton key="counter" variant="inline-link" onClick={() => { setCounterModal(r); setCounterNotes(''); }}>录入反通知</CSButton>
                   )}
                   {r.status === 'counter_received' && r.restore_after && new Date(r.restore_after) <= new Date() && (
-                    <CSButton variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'restore' }); setActionReason('反通知期满，无禁令，恢复内容'); }}>恢复</CSButton>
+                    <CSButton key="restore" variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'restore' }); setActionReason('反通知期满，无禁令，恢复内容'); }}>恢复</CSButton>
                   )}
                 </CSSpaceBetween>
               ),
