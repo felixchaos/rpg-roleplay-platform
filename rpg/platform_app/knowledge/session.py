@@ -304,7 +304,8 @@ def sync_script_knowledge(user_id: int, script_id: int, *, rebuild: bool = False
             # 否则旧的(污染版)残留,UPSERT 只更新同名行,新角色加进来但旧垃圾还在。
             db.execute("delete from documents where script_id = %s", (script_id,))
             db.execute("delete from chapter_facts where script_id = %s", (script_id,))
-            db.execute("delete from character_cards where script_id = %s", (script_id,))
+            # v28: 多态后只清 NPC 行;PC/persona 当前虽不挂 script_id,但显式过滤防回归
+            db.execute("delete from character_cards where script_id = %s and card_type = 'npc'", (script_id,))
             db.execute("delete from worldbook_entries where script_id = %s", (script_id,))
 
         chapters = db.execute(

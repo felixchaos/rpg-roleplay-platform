@@ -26,7 +26,7 @@ gm_provisional active_entity 路径,而不是创建持久卡片。
       非 Anthropic backend (Vertex/OpenAI) 走 JSON mode,prompt 显式贴 schema。
 
   Layer 3 — 5 个 validator
-      3a  姓名查重: name 不在 character_cards(本剧本) + user_character_cards(本用户)
+      3a  姓名查重: name 不在 character_cards 本剧本 NPC + 本用户 PC(v28 同表 card_type 区分)
       3b  phase 一致: phase_availability 含目标 phase (若有 phase 数据)
       3c  跨 phase token 黑名单: 全文不出现其他 phase 的专有 token
               (token 来源: worldbook key + 一个 baseline 关键词表)
@@ -219,7 +219,7 @@ def _layer1_reality_slice(
         "target_phase": target_phase or "",
         "script_id": script_id,
         "existing_npc_names": [],     # 本剧本所有 NPC
-        "user_card_names": [],         # 本用户所有 user_character_cards
+        "user_card_names": [],         # 本用户所有 PC 卡(character_cards where card_type='pc')
         "phase_reference_cards": [],   # 本 phase 的 3-5 张样卡
         "worldbook_keys": [],          # 本剧本 worldbook 关键词
         "other_phase_tokens": [],      # 其他 phase 的专有 token (黑名单)

@@ -624,8 +624,11 @@ async def api_search(request: Request):
                 {"id": r["id"], "label": r["title"], "href": "Platform.html#saves"} for r in saves
             ]})
         try:
+            # v28: character_cards 多态后 owner_user_id 列已不存在(改名 user_id);
+            # 全局搜索仅搜自己的 PC 卡 + persona(NPC 卡按 script_id 隔离,不属于"我的"维度)。
             cards = db.execute(
-                "select id, name from character_cards where owner_user_id = %s and name ilike %s limit 8",
+                "select id, name from character_cards "
+                "where user_id = %s and card_type in ('pc','persona') and name ilike %s limit 8",
                 (user["id"], pattern),
             ).fetchall()
             if cards:

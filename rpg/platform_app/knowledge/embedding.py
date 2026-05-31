@@ -147,12 +147,14 @@ def embed_status(script_id: int) -> dict[str, Any]:
             "select count(*) as c from document_chunks where script_id = %s and embedding_vec is not null",
             (script_id,),
         ).fetchone()["c"]
+        # v28: 多态后 embed 进度只统计 NPC 行(PC/persona 不参与剧本检索嵌入)
         cards_total = db.execute(
-            "select count(*) as c from character_cards where script_id = %s",
+            "select count(*) as c from character_cards where script_id = %s and card_type = 'npc'",
             (script_id,),
         ).fetchone()["c"]
         cards_done = db.execute(
-            "select count(*) as c from character_cards where script_id = %s and embedding_vec is not null",
+            "select count(*) as c from character_cards "
+            "where script_id = %s and card_type = 'npc' and embedding_vec is not null",
             (script_id,),
         ).fetchone()["c"]
         wb_total = db.execute(
@@ -222,6 +224,7 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
               from character_cards cc
               join script_chapters sc on sc.script_id = cc.script_id
               where cc.script_id = %s
+                and cc.card_type = 'npc'           -- v28: 章节边界回填只对 NPC 行
                 and sc.content like '%%' || cc.name || '%%'
               group by cc.id
             )
@@ -231,6 +234,7 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
             from char_first_last cfl
             where cc.id = cfl.cc_id
               and cc.first_chapter is null
+              and cc.card_type = 'npc'
             """,
             (script_id,),
         )
@@ -245,7 +249,7 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
     with connect() as db:
         cards = db.execute(
             "select id, name, identity, personality, appearance from character_cards "
-            "where script_id = %s and embedding_vec is null",
+            "where script_id = %s and card_type = 'npc' and embedding_vec is null",
             (script_id,),
         ).fetchall()
     if cards:

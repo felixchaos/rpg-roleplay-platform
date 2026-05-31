@@ -4,9 +4,9 @@ tavern_cards.py — SillyTavern V1/V2 角色卡 import/export 兼容
 支持：
 - 导入 V1 (扁平 JSON) 和 V2 (spec_v2 + data 三层) 格式
 - 导入 PNG 嵌入卡：解析 tEXt chunk 的 "chara" 关键字（V2 也用 "ccv3" / "chara"）
-- 导出本人 user_character_cards / user_personas 为 V2 JSON
+- 导出本人 PC 卡 / persona 为 V2 JSON(v28: 均落 character_cards 表,card_type 区分)
 
-字段映射（V2 data → user_character_cards）：
+字段映射（V2 data → character_cards card_type='pc'）：
   name              → name
   description       → identity
   personality       → personality
@@ -146,9 +146,9 @@ def parse_png_card(blob: bytes) -> dict[str, Any]:
     raise ValueError("PNG 不包含 chara/ccv3 tEXt chunk")
 
 
-# ── 映射到我方 user_character_cards ──────────────────────────────────
+# ── 映射到我方 PC 卡(character_cards, card_type='pc')───────────────
 def tavern_to_user_card(card_v2: dict[str, Any]) -> dict[str, Any]:
-    """V2 → user_character_cards.upsert_user_card() 的 payload。"""
+    """V2 → user_cards.upsert_user_card() 的 payload(v28: 落 character_cards 表 card_type='pc')。"""
     d = card_v2["data"]
     # mes_example 切第一条对话作为 sample_dialogue
     samples: list[str] = []
@@ -196,7 +196,7 @@ def tavern_to_user_card(card_v2: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# ── 导出：user_character_cards → V2 JSON ─────────────────────────────
+# ── 导出:PC 卡(character_cards card_type='pc') → V2 JSON ────────────
 def write_png_card(v2_card: dict[str, Any], template_png: bytes | None = None) -> bytes:
     """把 V2 卡 JSON 嵌入 PNG 的 tEXt chara chunk。
 

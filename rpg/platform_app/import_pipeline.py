@@ -562,7 +562,9 @@ def _stage_entities(ctl: JobController, script_id: int, user_id: int) -> list[di
         ).fetchall()
         existing_names = set()
         for r in db.execute(
-            "select name, aliases from character_cards where script_id = %s",
+            # v28: 显式 card_type='npc' 过滤,虽然 PC/persona 当前没 script_id 不会被命中,
+            # 但避免未来加跨表用法时静默污染候选词表
+            "select name, aliases from character_cards where script_id = %s and card_type = 'npc'",
             (script_id,),
         ).fetchall():
             existing_names.add(r["name"])
