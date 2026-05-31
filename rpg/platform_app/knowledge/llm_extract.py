@@ -104,19 +104,38 @@ def run_llm_extraction(
             progress_cb=progress_cb,
         )
 
-    # 跑后记账(配额 + 估算花费)
+    # 跑后记账(配额 + 估算花费 + 实测花费)
     if result.get("ok"):
         with connect() as db:
+            # 聚合本次本 script 产生的 token_usage 行 → 实际 USD 花费
+            actual_row = db.execute(
+                "select coalesce(sum(cost_usd),0) as actual, "
+                "coalesce(sum(input_tokens),0) as in_tok, "
+                "coalesce(sum(output_tokens),0) as out_tok, "
+                "count(*) as calls "
+                "from token_usage where user_id=%s "
+                "and (metadata->>'script_id')::bigint = %s "
+                "and created_at > now() - interval '10 minutes'",
+                (user_id, script_id),
+            ).fetchone()
+            actual_usd = float(actual_row["actual"]) if actual_row else 0.0
             db.execute(
                 """
-                insert into extraction_quota(user_id, period, books_extracted, est_usd_spent)
-                values (%s, %s, 1, %s)
+                insert into extraction_quota(user_id, period, books_extracted, est_usd_spent, actual_usd_spent)
+                values (%s, %s, 1, %s, %s)
                 on conflict(user_id, period) do update set
                   books_extracted = extraction_quota.books_extracted + 1,
                   est_usd_spent = extraction_quota.est_usd_spent + excluded.est_usd_spent,
+                  actual_usd_spent = extraction_quota.actual_usd_spent + excluded.actual_usd_spent,
                   updated_at = now()
                 """,
-                (user_id, period, est["est_usd"]),
+                (user_id, period, est["est_usd"], actual_usd),
             )
         result["estimate"] = est
+        result["actual_usage"] = {
+            "usd": round(actual_usd, 4),
+            "input_tokens": int(actual_row["in_tok"]) if actual_row else 0,
+            "output_tokens": int(actual_row["out_tok"]) if actual_row else 0,
+            "llm_calls": int(actual_row["calls"]) if actual_row else 0,
+        }
     return result

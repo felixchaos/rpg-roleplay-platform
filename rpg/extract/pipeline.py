@@ -73,7 +73,8 @@ def run_extraction(
         return {"ok": False, "error": "无可提取章节"}
 
     # —— 以下 Pass0/Pass1 全程不持有 DB 连接 ——
-    llm = ExtractLLM(model=model, api_id=api_id, user_id=user_id)
+    llm = ExtractLLM(model=model, api_id=api_id, user_id=user_id,
+                     script_id=script_id, algorithm="per_chapter")
 
     # Pass 0:种子 + 自举词表
     _emit("seed", {"chapters": len(chapters)})

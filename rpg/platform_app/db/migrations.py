@@ -602,6 +602,11 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "alter table scripts add column if not exists reviewed_at timestamptz",
         "create index if not exists idx_scripts_review_status on scripts(owner_id, review_status)",
     ]),
+    (27, "extraction_quota_actual_usd", [
+        # v27: extraction_quota 增加 actual_usd_spent(实测花费,从 token_usage 聚合)
+        # est_usd_spent 是跑前估算,实际 LLM 用量按 token 流水累计为 actual,可对账估算误差。
+        "alter table extraction_quota add column if not exists actual_usd_spent numeric(10,4) not null default 0",
+    ]),
 ]
 
 

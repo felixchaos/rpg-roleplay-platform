@@ -23,6 +23,87 @@ async def api_script_knowledge_sync(script_id: int, user=Depends(require_user)):
     return json_response({"ok": True, "knowledge": {"job_id": job_id, "status": "pending", "async": True}})
 
 
+@router.get("/api/scripts/{script_id}/llm-extract/usage")
+async def api_script_llm_extract_usage(script_id: int, days: int = 30, user=Depends(require_user)):
+    """查询本剧本累计 LLM 提取用量(从 token_usage 聚合)。
+
+    days: 回溯时长(默认 30 天)。
+    返回:
+      {
+        "ok": true,
+        "script_id": ...,
+        "total_calls": 42,                # 累计 LLM 调用次数
+        "input_tokens": 350000,
+        "output_tokens": 140000,
+        "cost_usd": 0.092,
+        "by_model": [
+          {"api_id":"deepseek","model_real_name":"deepseek-v4-flash","calls":40,
+           "input_tokens":...,"output_tokens":...,"cost_usd":...}
+        ],
+        "recent_calls": [
+          {"created_at":...,"api_id":...,"model_real_name":...,
+           "input_tokens":...,"output_tokens":...,"cost_usd":...,"algorithm":...}
+        ]
+      }
+    """
+    with connect() as db:
+        owned = db.execute("select 1 from scripts where id=%s and owner_id=%s",
+                           (script_id, user["id"])).fetchone()
+        if not owned:
+            return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+        # 汇总
+        tot = db.execute(
+            "select coalesce(sum(input_tokens),0) in_tok, "
+            "coalesce(sum(output_tokens),0) out_tok, "
+            "coalesce(sum(cost_usd),0) cost, count(*) calls "
+            "from token_usage where user_id=%s "
+            "and (metadata->>'script_id')::bigint = %s "
+            "and created_at > now() - (%s || ' days')::interval",
+            (user["id"], script_id, str(int(days))),
+        ).fetchone()
+        # 按模型分组
+        by_model_rows = db.execute(
+            "select api_id, model_real_name, "
+            "coalesce(sum(input_tokens),0) in_tok, coalesce(sum(output_tokens),0) out_tok, "
+            "coalesce(sum(cost_usd),0) cost, count(*) calls "
+            "from token_usage where user_id=%s and (metadata->>'script_id')::bigint = %s "
+            "and created_at > now() - (%s || ' days')::interval "
+            "group by api_id, model_real_name order by cost desc",
+            (user["id"], script_id, str(int(days))),
+        ).fetchall()
+        # 最近 10 次
+        recent = db.execute(
+            "select created_at, api_id, model_real_name, input_tokens, output_tokens, "
+            "cost_usd, metadata->>'algorithm' as algorithm "
+            "from token_usage where user_id=%s and (metadata->>'script_id')::bigint = %s "
+            "and created_at > now() - (%s || ' days')::interval "
+            "order by created_at desc limit 10",
+            (user["id"], script_id, str(int(days))),
+        ).fetchall()
+    return json_response({
+        "ok": True,
+        "script_id": script_id,
+        "days": int(days),
+        "total_calls": int(tot["calls"]) if tot else 0,
+        "input_tokens": int(tot["in_tok"]) if tot else 0,
+        "output_tokens": int(tot["out_tok"]) if tot else 0,
+        "cost_usd": float(tot["cost"]) if tot else 0.0,
+        "by_model": [
+            {"api_id": r["api_id"], "model_real_name": r["model_real_name"],
+             "calls": int(r["calls"]), "input_tokens": int(r["in_tok"]),
+             "output_tokens": int(r["out_tok"]), "cost_usd": float(r["cost"])}
+            for r in by_model_rows
+        ],
+        "recent_calls": [
+            {"created_at": str(r["created_at"]), "api_id": r["api_id"],
+             "model_real_name": r["model_real_name"],
+             "input_tokens": int(r["input_tokens"]), "output_tokens": int(r["output_tokens"]),
+             "cost_usd": float(r["cost_usd"]), "algorithm": r["algorithm"]}
+            for r in recent
+        ],
+    })
+
+
 @router.post("/api/scripts/{script_id}/llm-extract/estimate")
 async def api_script_llm_extract_estimate(request: Request, script_id: int, user=Depends(require_user)):
     """跑前预算(不触发实际提取)。前端在用户点「跑提取」前预览成本/时间用。

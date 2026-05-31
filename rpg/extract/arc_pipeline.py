@@ -154,7 +154,8 @@ def run_arc_extraction(
     _emit("arc_split", {"chapters": len(chapters), "arcs": len(arcs)})
 
     # 3) Pass 0 — 种子(同 per_chapter 走法,12 章采样)
-    llm = ExtractLLM(model=model, api_id=api_id, user_id=user_id)
+    llm = ExtractLLM(model=model, api_id=api_id, user_id=user_id,
+                     script_id=script_id, algorithm="arc")
     _emit("seed", {"sample": min(seed_sample, len(chapters))})
     seed = build_seed(
         llm, chapters, author_era=author_era,
