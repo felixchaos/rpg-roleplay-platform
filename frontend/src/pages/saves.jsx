@@ -295,32 +295,37 @@ function SavesListView() {
   const scriptTitle = (s) => (scripts.find((x) => x.id === s.script_id)?.title || '未知剧本');
 
   return (
+    // CSSpaceBetween 的每个 child 都需要 key(Cloudscape InternalSpaceBetween 用 flattenChildren + map 渲染,
+    // 无 key 时 wrapper div key 全为 undefined → React 报 unique key warning)
     <CSSpaceBetween size="l">
       <CSHeader
+        key="header"
         variant="h1"
         counter={`(${saves.length})`}
         description="选择存档查看详情、调整设置或继续游戏。"
         actions={
           <CSSpaceBetween direction="horizontal" size="xs">
-            <input ref={importInputRef} type="file" accept=".zip,.json,.tar.gz" style={{ display: 'none' }}
+            <input key="upload-input" ref={importInputRef} type="file" accept=".zip,.json,.tar.gz" style={{ display: 'none' }}
               onChange={(e) => { onImportFile(e.target.files?.[0]); e.target.value = ''; }} />
-            <CSButton iconName="upload" onClick={() => importInputRef.current?.click()}>导入存档</CSButton>
-            <CSButton iconName="add-plus" onClick={() => setCreateOpen(true)}>新建存档</CSButton>
-            <CSButton variant="primary" iconName="caret-right-filled" disabled={!saves.length}
+            <CSButton key="btn-import" iconName="upload" onClick={() => importInputRef.current?.click()}>导入存档</CSButton>
+            <CSButton key="btn-new" iconName="add-plus" onClick={() => setCreateOpen(true)}>新建存档</CSButton>
+            <CSButton key="btn-continue" variant="primary" iconName="caret-right-filled" disabled={!saves.length}
               onClick={() => window.__openContinue?.(saves[0])}>进入当前游戏</CSButton>
           </CSSpaceBetween>
         }
       >存档目录</CSHeader>
 
-      <CSSpaceBetween direction="horizontal" size="xs">
-        <div style={{ minWidth: 280 }}>
+      <CSSpaceBetween key="toolbar" direction="horizontal" size="xs">
+        <div key="filter" style={{ minWidth: 280 }}>
           <CSTextFilter filteringText={query} filteringPlaceholder="搜索存档 / 剧本…"
             onChange={({ detail }) => setQuery(detail.filteringText)} />
         </div>
-        <CSSelect selectedOption={_SAVE_SORT_OPTS.find((o) => o.value === sortBy)}
+        <CSSelect key="sort" selectedOption={_SAVE_SORT_OPTS.find((o) => o.value === sortBy)}
           options={_SAVE_SORT_OPTS} onChange={({ detail }) => setSortBy(detail.selectedOption.value)} />
       </CSSpaceBetween>
 
+      {/* table + detail:Cloudscape SpaceBetween 在 React 18 会 flatten Fragment 导致 children 失 key,
+          所以不用 Fragment 包,直接把 IIFE 返回的单一 element 加上 key */}
       {(() => {
       const savesTableEl = (
       <CSTable
@@ -396,20 +401,21 @@ function SavesListView() {
         </CSContainer>
       ) : null;
       return selected
-        ? <ResizableSplit storageKey="saves" top={savesTableEl} bottom={savesDetailEl} />
-        : savesTableEl;
+        ? <ResizableSplit key="table-area" storageKey="saves" top={savesTableEl} bottom={savesDetailEl} />
+        : React.cloneElement(savesTableEl, { key: 'table-area' });
       })()}
 
-      <NewGameModal open={createOpen} onClose={() => setCreateOpen(false)} onConfirm={onCreate} />
+      <NewGameModal key="new-modal" open={createOpen} onClose={() => setCreateOpen(false)} onConfirm={onCreate} />
       <CSModal
+        key="delete-modal"
         visible={!!deleteTarget}
         header="删除存档"
         onDismiss={() => setDeleteTarget(null)}
         footer={
           <CSBox float="right">
             <CSSpaceBetween direction="horizontal" size="xs">
-              <CSButton variant="link" onClick={() => setDeleteTarget(null)}>取消</CSButton>
-              <CSButton variant="primary" loading={deleting} onClick={confirmDelete}>确认删除</CSButton>
+              <CSButton key="cancel" variant="link" onClick={() => setDeleteTarget(null)}>取消</CSButton>
+              <CSButton key="confirm" variant="primary" loading={deleting} onClick={confirmDelete}>确认删除</CSButton>
             </CSSpaceBetween>
           </CSBox>
         }
@@ -418,7 +424,7 @@ function SavesListView() {
       </CSModal>
 
       {flash.items.length > 0 && (
-        <div style={{ position: 'fixed', top: 64, right: 20, zIndex: 9999, maxWidth: 360 }}>
+        <div key="flashbar" style={{ position: 'fixed', top: 64, right: 20, zIndex: 9999, maxWidth: 360 }}>
           <Flashbar items={flash.items} />
         </div>
       )}
@@ -1728,12 +1734,14 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   );
 
   const step4Content = (
+    // Cloudscape InternalSpaceBetween 用 flattenChildren+map(child=>createElement('div',{key},child)),
+    // 子元素没 key 时 wrapper div 的 key 全是 undefined → React 报「Each child should have a unique key」
     <CSSpaceBetween key="step4" size="m">
-      <CSBox color="text-body-secondary" fontSize="body-s">
+      <CSBox key="intro" color="text-body-secondary" fontSize="body-s">
         告诉 GM 你希望的剧情走向。哪些设定是 NPC 知道的?哪些是你的秘密?哪些是你希望 GM 优先发展的方向?
         此项可选,留空跳过。填写后存入存档,GM 每轮都能参考。
       </CSBox>
-      <CSFormField label="剧情期望 / 秘密分配">
+      <CSFormField key="textarea" label="剧情期望 / 秘密分配">
         <CSTextarea
           rows={6}
           value={storyIntent}
@@ -1778,10 +1786,10 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
           <div style={{ flex: 1, minWidth: 0 }}>
             <CSSpaceBetween size="l">
               {loading && (
-                <CSBox color="text-body-secondary"><Icon name="spinner" size={13} className="spin" /> 正在加载剧本 / 角色…</CSBox>
+                <CSBox key="loading" color="text-body-secondary"><Icon name="spinner" size={13} className="spin" /> 正在加载剧本 / 角色…</CSBox>
               )}
               {!loading && scripts.length === 0 && (
-                <CSAlert type="warning" header="还没有任何剧本">
+                <CSAlert key="no-scripts" type="warning" header="还没有任何剧本">
                   先去 <a href="#scripts-import" onClick={onClose}>剧本 / 导入</a> 上传一部,然后再回来新建存档。
                 </CSAlert>
               )}
@@ -1800,24 +1808,25 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
             </CSSpaceBetween>
           </div>
 
-          {/* 右:概要 + 创建(sticky) */}
+          {/* 右:概要 + 创建(sticky)
+              CSSpaceBetween 内部 flattenChildren+map, 每个 child 需要 key 否则 wrapper key 为 undefined */}
           <div style={{ width: 320, flexShrink: 0, position: 'sticky', top: 72 }}>
             <CSContainer header={<CSHeader variant="h2">概要</CSHeader>}>
               <CSSpaceBetween size="m">
-                <CSSpaceBetween size="xs">
+                <CSSpaceBetween key="status" size="xs">
                   {reqRows.map(r => (
                     <CSStatusIndicator key={r.label} type={r.ok ? 'success' : 'pending'}>{r.label}</CSStatusIndicator>
                   ))}
                 </CSSpaceBetween>
-                <CSKeyValuePairs columns={1} items={[
+                <CSKeyValuePairs key="kv" columns={1} items={[
                   { label: '存档名称', value: title.trim() || '—' },
                   { label: '剧本', value: scriptOpts.find(o => o.value === scriptId)?.label || '—' },
                   { label: '角色', value: pickedRoleName },
                   { label: '出生点', value: birthpoint?.story_time_label || '—' },
                   { label: '初始身份', value: identity?.name || '—' },
                 ]} />
-                {submitErr && <CSAlert type="error">{submitErr}</CSAlert>}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {submitErr && <CSAlert key="err" type="error">{submitErr}</CSAlert>}
+                <div key="btns" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <CSButton variant="primary" disabled={!allValid || submitting} loading={submitting}
                     onClick={() => { if (allValid) handleSubmit(); }}>
                     {submitting ? '正在创建…' : '创建并进入'}
