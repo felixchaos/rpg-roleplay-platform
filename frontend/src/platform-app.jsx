@@ -3564,7 +3564,7 @@ const CS_MODULES = [
       { text: '游戏设置', href: '#play-settings' },
     ] },
   { id: 'account', label: '设置 & 账户', group: '系统',
-    pages: ['me', 'me-edit', 'me-settings', 'profile', 'settings', 'settings-models',
+    pages: ['me', 'me-edit', 'me-settings', 'settings', 'settings-models',
       'settings-modelparams', 'settings-modules', 'settings-memory', 'settings-permissions',
       'settings-danger'],
     sub: [
@@ -3708,12 +3708,15 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
     } else { setPage(id); location.hash = '#' + id; }
   };
 
+  // 独立页(无侧栏):欢迎页就是登陆后的工作台首页,不归任何模块,整页铺满
+  const standalone = page === 'profile';
   return (
     <>
       <div id="pl-cs-topnav" className="pl-cs-topbar"
         style={{ position: 'sticky', top: 0, zIndex: 1002, display: 'flex', alignItems: 'center', background: '#131211' }}>
         {/* 左:折叠按钮 + logo + 全部功能(AWS 把服务菜单放左侧) */}
         <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, paddingLeft: 14, paddingRight: 6, gap: 12, height: 40 }}>
+          {!standalone && (
           <button
             onClick={() => setNavOpen((v) => !v)}
             aria-label={navOpen ? '折叠侧栏' : '展开侧栏'}
@@ -3726,6 +3729,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
               <path d="M2 4h12M2 8h12M2 12h12" />
             </svg>
           </button>
+          )}
           <a href="#profile" onClick={(e) => { e.preventDefault(); setPage('profile'); }}
             style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 16, fontWeight: 600, color: '#ebe7df', textDecoration: 'none', whiteSpace: 'nowrap' }}>
             RPG Roleplay
@@ -3775,6 +3779,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
 
       <CSAppLayout
         headerSelector="#pl-cs-topnav"
+        navigationHide={standalone}
         navigationOpen={navOpen}
         onNavigationChange={({ detail }) => setNavOpen(detail.open)}
         navigationTriggerHide
