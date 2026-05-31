@@ -27,7 +27,7 @@ RPG Roleplay 把一本长篇小说扔进一个自托管的 LLM 驱动的 RPG 运
 
 > 下面这张表是真实状态，不是 marketing。
 > ✅ = 跑通测试,作者本人在生产里用着。
-> 🟡 = 代码在,毛刺还有 — 看 [docs/MIGRATION_AUDIT.md](./docs/MIGRATION_AUDIT.md) 拿 file:line 级清单。
+> 🟡 = 代码在,毛刺还有。
 > ❌ = 在 roadmap 上,还没做。
 
 | 层 | 状态 |
@@ -87,7 +87,7 @@ open http://localhost:5173/Login.html
 
 进 Login 注册账号, 然后跳到 `Platform.html`（剧本库 / 角色卡 / 设置）或 `Game Console.html`（实际游戏画面）。
 
-> **生产部署**: 完整裸机 runbook（systemd、PgBouncer 接法、migration 陷阱、本地数据红线）见 [deploy/bare-metal/README.md](./deploy/bare-metal/README.md)。
+> **生产部署**: 见 `deploy/` 下的 Docker / 裸机部署模板。
 
 ## 架构
 
@@ -231,7 +231,7 @@ FastAPI 后端，~30+ 个路由模块 / agents / state mixin，~1k pytest 用例
 
 ## 贡献
 
-这是一个开源项目 — 欢迎按 [CONTRIBUTING.md](./CONTRIBUTING.md) 贡献（TBD）. 现在可以提 issue 或在[落地页](https://play.stellatrix.icu)预约公测. 每个 Wave 的发布记录见 [CHANGELOG.md](./CHANGELOG.md).
+这是一个开源项目 — 欢迎贡献。现在可以提 issue,或在[落地页](https://play.stellatrix.icu)预约公测。
 
 ## 许可证
 

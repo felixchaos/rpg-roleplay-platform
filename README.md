@@ -27,7 +27,7 @@ RPG Roleplay drops a long-form novel into a self-hosted, LLM-driven RPG runtime:
 
 > The table below is the actual state, not marketing.
 > ✅ = tests pass and the feature is used in production by the author.
-> 🟡 = the code is there, rough edges remain — see [docs/MIGRATION_AUDIT.md](./docs/MIGRATION_AUDIT.md) for file:line specifics.
+> 🟡 = the code is there, rough edges remain.
 > ❌ = planned but not built.
 
 | Layer | Status |
@@ -87,7 +87,7 @@ open http://localhost:5173/Login.html
 
 You'll land on the Login page, create a user, then bounce to `Platform.html` (library + cards + scripts) or `Game Console.html` (the actual gameplay screen).
 
-> **Production deployment**: see [deploy/bare-metal/README.md](./deploy/bare-metal/README.md) for a complete bare-metal runbook (systemd, PgBouncer wiring, migration pitfalls, data red-lines).
+> **Production deployment**: see `deploy/` for Docker / bare-metal templates.
 
 ## Architecture
 
@@ -231,7 +231,7 @@ A full annotated example lives in `deploy/.env.example`.
 
 ## Contributing
 
-This is an open-source project — contributions welcome under [CONTRIBUTING.md](./CONTRIBUTING.md) (TBD). For now, please file issues, follow the [landing page](https://play.stellatrix.icu) for the public release window, and see [CHANGELOG.md](./CHANGELOG.md) for what's shipped per wave.
+This is an open-source project — contributions welcome. For now, please file issues and follow the [landing page](https://play.stellatrix.icu) for the public release window.
 
 ## License
 
