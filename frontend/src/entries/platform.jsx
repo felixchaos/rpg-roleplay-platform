@@ -23,6 +23,7 @@ import { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePa
   AdminUsersPage, AdminGlobalUsagePage, AdminAuditPage, AdminHealthPage,
   AdminLogsPage, AdminRegistrationPage, AdminSecurityPage, AdminMaintenancePage,
   AdminDmcaTakedownsPage, AdminDmcaStrikesPage, AdminCsamReportsPage, AdminAupActionsPage,
+  AdminFeedbackPage,
 } from '../platform-app.jsx';
 import { SavesPage } from '../pages/saves.jsx';
 import { ScriptsPage } from '../pages/scripts.jsx';
@@ -70,6 +71,7 @@ function parsePageFromHash() {
     'admin-users', 'admin-usage', 'admin-audit', 'admin-health',
     'admin-logs', 'admin-registration', 'admin-security', 'admin-maintenance',
     'admin-dmca-takedowns', 'admin-dmca-strikes', 'admin-csam-reports', 'admin-aup-actions',
+    'admin-feedback',
     'usage', 'plugins', 'mcp', 'skills', 'apis',
   ];
   if (!ids.includes(hash)) return null;
@@ -159,6 +161,7 @@ function PlatformApp() {
   else if (page === 'admin-dmca-strikes')     body = <AdminGuard><AdminDmcaStrikesPage /></AdminGuard>;
   else if (page === 'admin-csam-reports')     body = <AdminGuard><AdminCsamReportsPage /></AdminGuard>;
   else if (page === 'admin-aup-actions')      body = <AdminGuard><AdminAupActionsPage /></AdminGuard>;
+  else if (page === 'admin-feedback')         body = <AdminGuard><AdminFeedbackPage /></AdminGuard>;
   else if (page === 'usage') body = <UsagePage />;
   else if (page === 'plugins') body = <CapPage kind="plugins" />;
   else if (page === 'mcp') body = <CapPage kind="mcp" />;

@@ -23,7 +23,10 @@ import {
   AdminDmcaStrikesPage,
   AdminCsamReportsPage,
   AdminAupActionsPage,
+  AdminFeedbackPage,
 } from './pages/admin.jsx';
+import PolicyNoticeBanner from './components/PolicyNoticeBanner.jsx';
+import { FeedbackDrawer } from './components/FeedbackDrawer.jsx';
 // Cloudscape shell(AWS 控制台架构 + 暖色主题)
 import CSTopNavigation from '@cloudscape-design/components/top-navigation';
 import CSAppLayout from '@cloudscape-design/components/app-layout';
@@ -93,6 +96,7 @@ const PL_TITLES = {
   "admin-dmca-strikes":       ["系统管理 / 累犯处置",      "Strike 累积与账号限制管理"],
   "admin-csam-reports":       ["系统管理 / CSAM 举报",     "儿童性虐待材料举报队列与处置"],
   "admin-aup-actions":        ["系统管理 / AUP 用户行动",  "违反服务条款账号暂停 / 解封 / 终止"],
+  "admin-feedback":           ["系统管理 / 反馈审查",      "查看用户提交的反馈，做出决定"],
   usage:    ["用量",     "调用量、Token 消耗、成本、延迟、错误率"],
   plugins:  ["插件",     "已启用的平台插件"],
   mcp:      ["MCP",      "本地或服务器侧 MCP 服务器"],
@@ -542,7 +546,8 @@ function UnifiedSearch({ open, onClose, setPage }) {
       { id: "admin-dmca-td", label: "下架通知队列", parent: "系统管理", hash: "admin-dmca-takedowns", keywords: "dmca takedown notice copyright admin" },
       { id: "admin-dmca-sk", label: "累犯处置",     parent: "系统管理", hash: "admin-dmca-strikes",   keywords: "dmca strike repeat offender admin" },
       { id: "admin-csam",    label: "CSAM 举报",    parent: "系统管理", hash: "admin-csam-reports",   keywords: "csam report child abuse admin" },
-      { id: "admin-aup",     label: "AUP 用户行动", parent: "系统管理", hash: "admin-aup-actions",    keywords: "aup suspend ban terminate policy admin" },
+      { id: "admin-aup",      label: "AUP 用户行动", parent: "系统管理", hash: "admin-aup-actions",  keywords: "aup suspend ban terminate policy admin" },
+      { id: "admin-feedback", label: "反馈审查",     parent: "系统管理", hash: "admin-feedback",     keywords: "feedback review user report admin" },
     ] : []),
   ];
 
@@ -3705,7 +3710,8 @@ const CS_MODULES = [
   { id: 'admin', label: '系统管理', group: '管理', adminOnly: true,
     pages: ['admin-deploy', 'admin-users', 'admin-usage', 'admin-audit',
             'admin-health', 'admin-logs', 'admin-registration', 'admin-security', 'admin-maintenance',
-            'admin-dmca-takedowns', 'admin-dmca-strikes', 'admin-csam-reports', 'admin-aup-actions'],
+            'admin-dmca-takedowns', 'admin-dmca-strikes', 'admin-csam-reports', 'admin-aup-actions',
+            'admin-feedback'],
     sub: [
       { text: '部署配置',       href: '#admin-deploy' },
       { text: '用户管理',       href: '#admin-users' },
@@ -3720,6 +3726,7 @@ const CS_MODULES = [
       { text: '累犯处置',       href: '#admin-dmca-strikes' },
       { text: 'CSAM 举报',      href: '#admin-csam-reports' },
       { text: 'AUP 用户行动',   href: '#admin-aup-actions' },
+      { text: '反馈审查',       href: '#admin-feedback' },
     ] },
   { id: 'library', label: '库', group: '系统', pages: ['library'],
     sub: [{ text: '资产库', href: '#library' }] },
@@ -3803,9 +3810,16 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
   const [searchOpen, setSearchOpen] = useStatePL(false);
   const [navOpen, setNavOpen] = useStatePL(true);
   const [chrome, setChromeState] = useStatePL({});
+  const [feedbackOpen, setFeedbackOpen] = useStatePL(false);
   const chromeApi = React.useMemo(() => ({ set: (c) => setChromeState(c || {}), clear: () => setChromeState({}) }), []);
   void chrome;
   useEffectPL(() => { setChromeState({}); }, [page]);
+
+  // 暴露全局 window.__openFeedback，供控制台或其他模块快捷打开反馈抽屉
+  useEffectPL(() => {
+    window.__openFeedback = () => setFeedbackOpen(true);
+    return () => { delete window.__openFeedback; };
+  }, []);
 
 
   useEffectPL(() => {
@@ -3867,6 +3881,8 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
     const id = detail.id;
     if (id === 'signout') {
       (async () => { try { await window.api?.auth?.logout?.(); } catch (_) {} location.replace('Login.html'); })();
+    } else if (id === 'feedback') {
+      setFeedbackOpen(true);
     } else { setPage(id); location.hash = '#' + id; }
   };
 
@@ -3874,6 +3890,8 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
   const standalone = page === 'profile';
   return (
     <>
+      <PolicyNoticeBanner />
+      <FeedbackDrawer open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
       <div id="pl-cs-topnav" className="pl-cs-topbar"
         style={{ position: 'sticky', top: 0, zIndex: 1002, display: 'flex', alignItems: 'center', background: '#131211' }}>
         {/* 左:折叠按钮 + logo + 全部功能(AWS 把服务菜单放左侧) */}
@@ -3930,6 +3948,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
                   { id: 'me', text: '个人主页' },
                   { id: 'me-edit', text: '编辑资料' },
                   { id: 'me-settings', text: '用户设置' },
+                  { id: 'feedback', text: '提交反馈' },
                   { id: 'signout', text: '登出' },
                 ],
                 onItemClick: onUserMenu,
@@ -3975,6 +3994,7 @@ export { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePa
   AdminUsersPage, AdminGlobalUsagePage, AdminAuditPage, AdminHealthPage,
   AdminLogsPage, AdminRegistrationPage, AdminSecurityPage, AdminMaintenancePage,
   AdminDmcaTakedownsPage, AdminDmcaStrikesPage, AdminCsamReportsPage, AdminAupActionsPage,
+  AdminFeedbackPage,
 };
 
 // ──────────────────────────────────────────────────────────────────

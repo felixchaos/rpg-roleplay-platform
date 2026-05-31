@@ -1,4 +1,4 @@
-"""platform_app.api.feedback — FB-01/02/03/07/08 反馈提交与管理接口。
+"""platform_app.api.feedback — FB-01/02/03/04/07/08 反馈提交与管理接口。
 
 路由:
   POST   /api/feedback                        — 用户提交反馈 (FB-01)
@@ -7,6 +7,13 @@
   POST   /api/me/feedback/delete-all          — 用户撤销所有 (FB-08)
   GET    /api/admin/feedback                  — admin 审查队列 (FB-03)
   POST   /api/admin/feedback/{id}/decision    — admin 标记 ok|nsfw_terminate|spam (FB-03)
+
+FB-04 NSFW 预审:
+  POST /api/feedback 在写 DB 前调用 moderation.moderate_feedback()。
+  - auto_reject (CSAM): 立刻终止账号 + 写 nsfw_terminate 行(不存原文)。
+  - manual_review: 写入但在 excerpts_jsonb.__moderation__ 附加 verdict 摘要。
+  - pass: 正常写入，附加低分摘要供 admin 参考。
+  - API key 缺失: 全量 manual_review 降级（不拦截）。
 
 consent_token 设计:
   前端把当时展示给用户的同意文案做 SHA256 (hex)，随请求带上。
@@ -22,6 +29,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..db import connect
+from ..moderation import moderate_feedback
 from ._deps import _client_ip, json_response, require_user
 
 router = APIRouter()
@@ -81,6 +89,81 @@ async def submit_feedback(request: Request, user=Depends(require_user)):
         if not isinstance(ex, dict):
             raise HTTPException(status_code=400, detail=f"excerpts[{i}] 须为对象")
 
+    # ── FB-04 NSFW 预审 ────────────────────────────────────────────────────────
+    # 只在反馈通道生效；不影响 GM / 对话 / 记忆等主数据流（成人内容产品允许 NSFW）。
+    moderation_text = free_text + "\n" + excerpts_raw
+    verdict = await moderate_feedback(moderation_text)
+
+    if verdict.action == "auto_reject":
+        # CSAM 红线：不存原文，只存 verdict 摘要；立刻终止账号。
+        from ..dmca import queue_account_termination
+
+        _csam_summary = json.dumps(
+            {"__moderation__": {"action": "auto_reject", "categories": verdict.categories}},
+            ensure_ascii=False,
+        )
+        with connect() as db:
+            db.execute(
+                """
+                insert into feedback
+                  (user_id, free_text, excerpts_jsonb, consent_token, ua, app_version, ip,
+                   reviewed_at, review_decision)
+                values (%s, %s, %s::jsonb, %s, %s, %s, %s, now(), 'nsfw_terminate')
+                """,
+                (
+                    user["id"],
+                    "[CSAM filter triggered — content not stored]",
+                    _csam_summary,
+                    consent_token,
+                    ua,
+                    app_version,
+                    ip,
+                ),
+            )
+            queue_account_termination(
+                db,
+                user["id"],
+                reason=f"feedback CSAM filter (auto_reject): categories={verdict.categories}",
+            )
+            db.execute(
+                """
+                insert into feedback_consent_log
+                  (user_id, consent_text_hash, app_version, ip)
+                values (%s, %s, %s, %s)
+                """,
+                (user["id"], consent_token, app_version, ip),
+            )
+        log.error(
+            "feedback auto_reject CSAM: user_id=%s categories=%s",
+            user["id"],
+            verdict.categories,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error_key": "feedback.nsfw_terminate",
+                "message": (
+                    "反馈内容违反 AUP §2.J 红线，账号已终止；"
+                    "30 天内可下载数据。详情见 legal/acceptable-use-policy。"
+                ),
+            },
+        )
+
+    # manual_review 或 pass：写入，把 moderation verdict 附加进 excerpts_jsonb
+    # 用 __moderation__ key（双下划线前缀，不计为用户提交的 excerpt）。
+    excerpts_with_verdict: list = list(excerpts)  # 浅拷贝，不改用户原始列表
+    _verdict_meta: dict = {
+        "__moderation__": {
+            "action": verdict.action,
+            "categories": verdict.categories,
+            # 只保留非零得分，降低存储量
+            "scores": {k: round(v, 4) for k, v in verdict.scores.items() if v > 0.001},
+        }
+    }
+    # 以独立对象追加到 excerpts 数组末尾；admin UI 可识别 __moderation__ key 单独展示
+    excerpts_with_verdict.append(_verdict_meta)
+    excerpts_raw_final = json.dumps(excerpts_with_verdict, ensure_ascii=False)
+
     with connect() as db:
         # 写 feedback 行
         row = db.execute(
@@ -93,7 +176,7 @@ async def submit_feedback(request: Request, user=Depends(require_user)):
             (
                 user["id"],
                 free_text,
-                excerpts_raw,
+                excerpts_raw_final,
                 consent_token,
                 ua,
                 app_version,
@@ -112,7 +195,12 @@ async def submit_feedback(request: Request, user=Depends(require_user)):
             (user["id"], consent_token, app_version, ip),
         )
 
-    log.info("feedback submitted: id=%s user_id=%s", feedback_id, user["id"])
+    log.info(
+        "feedback submitted: id=%s user_id=%s moderation=%s",
+        feedback_id,
+        user["id"],
+        verdict.action,
+    )
     return json_response({"ok": True, "feedback_id": feedback_id})
 
 
