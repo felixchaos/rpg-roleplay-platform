@@ -568,6 +568,39 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         # v23: 会话令牌哈希化(安全)。不在 DB 存明文 session token,存 sha256(token);
         # 按 hash 查找/删除。修复部分环境 token_hash NOT NULL 但 login 未填的漂移,
         # 并统一到"哈希存储"(拖库不直接拿到可用 session token)。
+        "alter table sessions add column if not exists id bigint",
+        "create sequence if not exists sessions_id_seq as bigint",
+        "alter sequence sessions_id_seq owned by sessions.id",
+        "alter table sessions alter column id set default nextval('sessions_id_seq')",
+        "update sessions set id = nextval('sessions_id_seq') where id is null",
+        "select setval('sessions_id_seq', greatest((select coalesce(max(id), 0) from sessions), 1), true)",
+        "alter table sessions alter column id set not null",
+        """
+        do $$
+        declare
+          pk_name text;
+          pk_cols text[];
+        begin
+          select c.conname, array_agg(a.attname order by k.ord)
+            into pk_name, pk_cols
+          from pg_constraint c
+          join unnest(c.conkey) with ordinality as k(attnum, ord) on true
+          join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum
+          where c.conrelid = 'sessions'::regclass and c.contype = 'p'
+          group by c.conname;
+
+          if pk_name is not null and pk_cols <> array['id']::text[] then
+            execute format('alter table sessions drop constraint %I', pk_name);
+          end if;
+
+          if not exists (
+            select 1 from pg_constraint
+            where conrelid = 'sessions'::regclass and contype = 'p'
+          ) then
+            alter table sessions add constraint sessions_pkey primary key (id);
+          end if;
+        end $$;
+        """,
         "alter table sessions add column if not exists token_hash text",
         # 容错:历史/漂移环境可能 NOT NULL 且无默认 → 放开,改由代码填哈希
         "alter table sessions alter column token_hash drop not null",
@@ -576,6 +609,7 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "update sessions set token_hash = encode(digest(token, 'sha256'), 'hex') "
         "where token_hash is null and coalesce(token,'') <> '' and exists "
         "(select 1 from pg_extension where extname='pgcrypto')",
+        "update sessions set token = '' where coalesce(token, '') <> ''",
         "create index if not exists idx_sessions_token_hash2 on sessions(token_hash)",
     ]),
     (24, "save_last_played_at", [
