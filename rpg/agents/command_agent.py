@@ -123,8 +123,13 @@ def parse_set_command(
     # 模型偏好与 set_parser 共享(用户在前端 preferences 里设的同一项)。
     # 默认 backend: Vertex Gemini (与 GM 一致;部署里 vertex_sa.json 已配),
     # 而不是 Anthropic — 多数本地部署没配 ANTHROPIC_API_KEY,导致 401 → fallback。
-    api_id = api_id_override or _resolve_preferred_api(user_id) or _detect_default_api()
-    model = model_override or _resolve_preferred_model(user_id) or _default_model_for_api(api_id)
+    try:
+        from core.llm_backend import first_user_model
+        user_default = first_user_model(user_id)
+    except Exception:
+        user_default = None
+    api_id = api_id_override or _resolve_preferred_api(user_id) or (user_default[0] if user_default else None) or _detect_default_api()
+    model = model_override or _resolve_preferred_model(user_id) or (user_default[1] if user_default else None) or _default_model_for_api(api_id)
 
     user_prompt = _build_user_prompt(set_text, state_data)
 

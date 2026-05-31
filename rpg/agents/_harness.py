@@ -524,19 +524,23 @@ def resolve_api_and_model(
     避免用户重复配 5 个命名空间。
     """
     from core.llm_backend import (
+        first_user_model as _first_user_model,
         resolve_preferred_api as _resolve_api,
         resolve_preferred_model as _resolve_model,
     )
+    user_default = _first_user_model(user_id)
     api_id = (
         api_id_override
         or _resolve_api(user_id, pref_key=api_pref_key)
         or _resolve_api(user_id, pref_key="agent.api_id")
+        or (user_default[0] if user_default else None)
         or default_api
     )
     model = (
         model_override
         or _resolve_model(user_id, pref_key=model_pref_key)
         or _resolve_model(user_id, pref_key="agent.model_real_name")
+        or (user_default[1] if user_default else None)
         or default_model
     )
     return api_id, model

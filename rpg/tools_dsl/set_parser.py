@@ -142,8 +142,13 @@ def parse_set_directive(
     if not set_text or not set_text.strip():
         return []
 
-    api_id = api_id_override or _resolve_preferred_api(user_id) or "vertex_ai"
-    model = model_override or _resolve_preferred_model(user_id) or "gemini-3.5-flash"
+    try:
+        from core.llm_backend import first_user_model
+        user_default = first_user_model(user_id)
+    except Exception:
+        user_default = None
+    api_id = api_id_override or _resolve_preferred_api(user_id) or (user_default[0] if user_default else None) or "vertex_ai"
+    model = model_override or _resolve_preferred_model(user_id) or (user_default[1] if user_default else None) or "gemini-3.5-flash"
 
     try:
         # 复用 extractor 的 backend dispatcher（同 schema 同协议同 fallback）

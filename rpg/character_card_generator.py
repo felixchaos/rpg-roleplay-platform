@@ -460,6 +460,15 @@ def _select_backend(user_id: int | None, role: str = "generator"):
     """
     api_id = _resolve_preferred_api(user_id, role)
     model = _resolve_preferred_model(user_id, role)
+    if not (api_id and model):
+        try:
+            from core.llm_backend import first_user_model
+            user_default = first_user_model(user_id)
+        except Exception:
+            user_default = None
+        if user_default:
+            api_id = api_id or user_default[0]
+            model = model or user_default[1]
     if api_id and model:
         try:
             from agents.gm import GameMaster

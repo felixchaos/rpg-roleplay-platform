@@ -742,11 +742,16 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = 
                     if _uid_int:
                         try:
                             from rpg.core.llm_backend import (
+                                first_user_model,
                                 resolve_preferred_api,
                                 resolve_preferred_model,
                             )
                             _pref_api = resolve_preferred_api(_uid_int, "gm.api_id")
                             _pref_model = resolve_preferred_model(_uid_int, "gm.model_real_name")
+                            if not (_pref_api and _pref_model):
+                                _user_default = first_user_model(_uid_int)
+                                if _user_default:
+                                    _pref_api, _pref_model = _user_default
                         except Exception as _e:
                             log.warning(f"[ensure_loaded] pref resolve failed: {_e}")
                 if _pref_api and _pref_model:
@@ -1846,9 +1851,18 @@ def _resolve_console_assistant_backend(api_user: dict[str, Any] | None):
         except Exception:
             pass
     if not api_id or not model_real:
-        model = selected_model()
-        api_id = api_id or model.get("api_id")
-        model_real = model_real or model.get("real_name")
+        try:
+            from core.llm_backend import first_user_model
+            user_default = first_user_model(int(api_user["id"])) if api_user and api_user.get("id") else None
+        except Exception:
+            user_default = None
+        if user_default:
+            api_id = api_id or user_default[0]
+            model_real = model_real or user_default[1]
+        else:
+            model = selected_model()
+            api_id = api_id or model.get("api_id")
+            model_real = model_real or model.get("real_name")
     # 用 GameMaster 构造 backend, 再借用其 ._backend
     gm = GameMaster(
         api_id=str(api_id) if api_id is not None else api_id,

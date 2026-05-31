@@ -2367,8 +2367,8 @@ function ParamSlider({ label, desc, value, min, max, step, unit, onChange }) {
      {api_id, model};未配置 = 跟主 GM。删除该 dict (POST {key, value: null}) 即
      "重置为跟随主 GM"。其它模块用扁平 *.api_id / *.model_real_name 两个 key。
 
-   下拉里展示所有 catalog.apis[*].models[*],格式 "<api_id> · <real_name>",
-   disabled (model.enabled === false) 仍显示但禁选。 */
+   下拉只展示当前用户已配置 API Key 且远端同步后的模型。不能显示全局
+   selected_model / 服务端 Vertex,否则会把未上传的凭证伪装成可用模型。 */
 function ModuleModelsSection() {
   const { t } = useTranslation();
   const MODULES = [
@@ -2385,15 +2385,24 @@ function ModuleModelsSection() {
 
   const [prefs, setPrefs] = useStatePL({});
   const [catalog, setCatalog] = useStatePL({ apis: [], selected: null });
+  const [credentialApiIds, setCredentialApiIds] = useStatePL(new Set());
   const [savingId, setSavingId] = useStatePL(null);
 
   const reload = React.useCallback(async () => {
     try {
-      const [profile, models] = await Promise.all([
+      const [profile, models, creds] = await Promise.all([
         window.api.account.profile(),
         window.api.models.list().catch(() => ({})),
+        window.api.credentials.list().catch(() => ({ items: [] })),
       ]);
       setPrefs((profile && profile.preferences) || {});
+      const ids = new Set();
+      for (const c of (creds?.items || creds?.credentials || [])) {
+        if (c.enabled === false) continue;
+        if (!(c.has_credential || c.has_key || c.key_hint)) continue;
+        ids.add(catalogApiIdForCredential(c.api_id || c.id));
+      }
+      setCredentialApiIds(ids);
       const apis = models?.models?.apis ?? (Array.isArray(models?.apis) ? models.apis : []) ?? [];
       const sel = models?.models?.selected ?? models?.selected ?? null;
       setCatalog({ apis: Array.isArray(apis) ? apis : [], selected: sel });
@@ -2405,20 +2414,22 @@ function ModuleModelsSection() {
   const flatModels = useMemoPL(() => {
     const out = [];
     for (const api of (catalog.apis || [])) {
-      const aid = api.api_id || api.id;
+      const aid = catalogApiIdForCredential(api.api_id || api.id);
+      if (!credentialApiIds.has(aid)) continue;
       const mods = api.models || api.entries || [];
       for (const m of mods) {
+        if (m.enabled === false) continue;
         out.push({
           api_id: aid,
           real_name: m.real_name || m.id,
           display: m.display_name || m.real_name || m.id,
-          enabled: m.enabled !== false,
+          enabled: true,
           capabilities: m.capabilities || m.caps || [],
         });
       }
     }
     return out;
-  }, [catalog]);
+  }, [catalog, credentialApiIds]);
 
   // 按模块的 capsFilter 过滤(embedder 只显示 embedding 能力的条目)
   const modelsForModule = (mod) => {
@@ -2428,20 +2439,26 @@ function ModuleModelsSection() {
   };
 
   const mainCurrent = useMemoPL(() => {
-    // 用户偏好优先,否则取 catalog selected
     const a = prefs["gm.api_id"];
     const m = prefs["gm.model_real_name"];
-    if (a && m) return { api_id: a, real_name: m };
-    if (catalog.selected) return { api_id: catalog.selected.api_id, real_name: catalog.selected.model_id || catalog.selected.real_name };
+    if (a && m && flatModels.some(x => x.api_id === catalogApiIdForCredential(a) && x.real_name === m)) {
+      return { api_id: catalogApiIdForCredential(a), real_name: m };
+    }
+    if (flatModels.length) return { api_id: flatModels[0].api_id, real_name: flatModels[0].real_name };
     return null;
-  }, [prefs, catalog]);
+  }, [prefs, flatModels]);
 
   /** 返回当前模块"生效中"的 {api_id, real_name} 或 null = 跟主 GM */
   const currentFor = (mod) => {
     if (mod.shape === "dict") {
       const v = prefs[mod.overrideKey];
       if (v && typeof v === "object" && (v.api_id || v.model)) {
-        return { api_id: v.api_id || mainCurrent?.api_id, real_name: v.model || mainCurrent?.real_name };
+        const api_id = catalogApiIdForCredential(v.api_id || mainCurrent?.api_id);
+        const real_name = v.model || mainCurrent?.real_name;
+        if (flatModels.some(x => x.api_id === api_id && x.real_name === real_name)) {
+          return { api_id, real_name };
+        }
+        return null;
       }
       return null;
     }
@@ -2451,7 +2468,14 @@ function ModuleModelsSection() {
     if (mod.id === "gm") {
       return mainCurrent;
     }
-    if (a || m) return { api_id: a || mainCurrent?.api_id, real_name: m || mainCurrent?.real_name };
+    if (a || m) {
+      const api_id = catalogApiIdForCredential(a || mainCurrent?.api_id);
+      const real_name = m || mainCurrent?.real_name;
+      if (flatModels.some(x => x.api_id === api_id && x.real_name === real_name)) {
+        return { api_id, real_name };
+      }
+      return null;
+    }
     return null;
   };
 
@@ -2470,7 +2494,7 @@ function ModuleModelsSection() {
       } else {
         const sep = value.indexOf("/");
         if (sep < 0) return;
-        const api_id = value.slice(0, sep);
+        const api_id = catalogApiIdForCredential(value.slice(0, sep));
         const real_name = value.slice(sep + 1);
         if (mod.shape === "dict") {
           calls.push(window.api.account.preferences({ [mod.overrideKey]: { api_id, model: real_name } }));
@@ -2546,12 +2570,12 @@ function ModuleModelsSection() {
               const value = (mod.shape === "dict")
                 ? (() => {
                     const v = prefs[mod.overrideKey];
-                    return v && (v.api_id || v.model) ? `${v.api_id || ""}/${v.model || ""}` : "__inherit__";
+                    return v && (v.api_id || v.model) ? `${catalogApiIdForCredential(v.api_id || "")}/${v.model || ""}` : "__inherit__";
                   })()
                 : (mod.id === "gm")
                   ? (cur ? `${cur.api_id}/${cur.real_name}` : "")
                   : ((prefs[mod.apiKey] || prefs[mod.modelKey])
-                      ? `${prefs[mod.apiKey] || ""}/${prefs[mod.modelKey] || ""}`
+                      ? `${catalogApiIdForCredential(prefs[mod.apiKey] || "")}/${prefs[mod.modelKey] || ""}`
                       : "__inherit__");
               return (
                 <tr key={mod.id} style={{borderTop: "1px solid var(--pl-line, #eee)"}}>
@@ -2596,7 +2620,8 @@ function ModuleModelsSection() {
                         <CSSelect
                           selectedOption={selectedOpt}
                           options={opts}
-                          disabled={savingId === mod.id || savingId === "__all__" || mod.id === "gm"}
+                          placeholder={flatModels.length ? undefined : "请先在 API 设置添加并同步模型"}
+                          disabled={savingId === mod.id || savingId === "__all__" || flatModels.length === 0}
                           onChange={({ detail }) => handleChange(mod, detail.selectedOption.value)}
                         />
                       );
