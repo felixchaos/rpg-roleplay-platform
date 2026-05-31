@@ -163,7 +163,7 @@ function ScriptsPage({ subPage = "list" }) {
    Tabs:概览 / 参数(overrides) / 世界观(worldbook) / NPC 角色卡 / 时间线。
    世界书 / NPC 卡 / 时间线按需懒加载。 */
 function ScriptDetailPanel({ script: s, savesCount, embedStatus,
-  onPlay, onChapters, onReview, onExtract, onEmbed, onExport, onToggleVisibility, onDelete, onEditOverrides }) {
+  onPlay, onChapters, onReview, onExtractDone, onEmbed, onExport, onToggleVisibility, onDelete, onEditOverrides }) {
   const [tab, setTab] = useStatePL('overview');
   const [wb, setWb] = useStatePL(null);
   const [npc, setNpc] = useStatePL(null);
@@ -220,7 +220,6 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
             <CSButton iconName="status-info" onClick={() => onReview(s)}>KB 复核</CSButton>
             <CSButtonDropdown expandToViewport
               items={[
-                { id: 'extract', text: '重新提取 KB(LLM)', iconName: 'gen-ai' },
                 { id: 'embed', text: es?.running ? '向量化中…' : '建立向量索引', iconName: 'search', disabled: !!es?.running },
                 { id: 'export', text: '导出剧本包 (zip)', iconName: 'download' },
                 { id: 'visibility', text: s.is_public ? '取消公开分享' : '公开分享到剧本库', iconName: s.is_public ? 'lock-private' : 'share' },
@@ -228,8 +227,7 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
               ]}
               onItemClick={({ detail }) => {
                 const id = detail.id;
-                if (id === 'extract') onExtract(s);
-                else if (id === 'embed') onEmbed(s);
+                if (id === 'embed') onEmbed(s);
                 else if (id === 'export') onExport(s);
                 else if (id === 'visibility') onToggleVisibility(s);
                 else if (id === 'delete') onDelete(s);
@@ -307,6 +305,9 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
                     </div>
                   ))}
                 </CSSpaceBetween>
+        ) },
+        { id: 'extract', label: '知识提取', content: (
+          <KbExtractPanel script={s} onDone={onExtractDone} />
         ) },
       ]} />
     </CSContainer>
@@ -572,7 +573,6 @@ function ScriptsListView() {
   // 改成开 ChaptersModal —— 真正展示章节列表 + 内容预览 + 重命名 + 重切分。
   const [chaptersOpen, setChaptersOpen] = useStatePL(null); // script row
   const [reviewScript, setReviewScript] = useStatePL(null); // Phase E.1: KB 复核 modal
-  const [extractScript, setExtractScript] = useStatePL(null); // LLM 知识提取 modal
 
   // 每行操作下拉项 + 向量化状态(task 51)
   const rowActions = (s) => {
@@ -636,7 +636,7 @@ function ScriptsListView() {
       onPlay={onPlay}
       onChapters={setChaptersOpen}
       onReview={setReviewScript}
-      onExtract={setExtractScript}
+      onExtractDone={reload}
       onEmbed={(s) => triggerEmbed(s.id)}
       onExport={onExportPack}
       onToggleVisibility={onToggleVisibility}
@@ -704,9 +704,6 @@ function ScriptsListView() {
         : tableEl}
 
       <ChaptersModal script={chaptersOpen} onClose={() => setChaptersOpen(null)} onChanged={reload} />
-      {extractScript && (
-        <KbExtractModal script={extractScript} onClose={() => setExtractScript(null)} onDone={reload} />
-      )}
       <OverridesModal script={overridesScript} onClose={() => setOverridesScript(null)} />
       {reviewScript && (
         <div className="pl-modal-backdrop" onClick={() => setReviewScript(null)}>
@@ -1522,7 +1519,7 @@ function _stageIndicator(status) {
   return 'pending';
 }
 
-function KbExtractModal({ script, onClose, onDone }) {
+function KbExtractPanel({ script, onDone }) {
   const sid = script.id;
   const [algorithm, setAlgorithm] = useStatePL('arc');
   const [model, setModel] = useStatePL('deepseek-v4-flash');
@@ -1637,20 +1634,13 @@ function KbExtractModal({ script, onClose, onDone }) {
   };
 
   return (
-    <CSModal visible onDismiss={onClose} size="large"
-      header={`LLM 知识提取 · ${script.title || ('剧本 ' + sid)}`}
-      footer={
-        <CSBox float="right">
-          <CSSpaceBetween direction="horizontal" size="xs">
-            {phase === 'running' && <CSButton onClick={doCancel}>取消任务</CSButton>}
-            <CSButton variant="link" onClick={onClose}>{phase === 'done' ? '关闭' : '关闭(后台继续)'}</CSButton>
-            {phase === 'config' && <CSButton onClick={doEstimate} loading={estimating}>预估成本</CSButton>}
-            {(phase === 'config' || phase === 'error') && <CSButton variant="primary" onClick={doStart}>开始提取</CSButton>}
-          </CSSpaceBetween>
-        </CSBox>
-      }>
-      <CSSpaceBetween size="l">
-        {err && <CSAlert type="error">{err}</CSAlert>}
+    <CSSpaceBetween size="l">
+      <CSSpaceBetween direction="horizontal" size="xs">
+        {phase === 'config' && <CSButton onClick={doEstimate} loading={estimating}>预估成本</CSButton>}
+        {(phase === 'config' || phase === 'error') && <CSButton variant="primary" iconName="gen-ai" onClick={doStart}>开始提取</CSButton>}
+        {phase === 'running' && <CSButton onClick={doCancel}>取消任务</CSButton>}
+      </CSSpaceBetween>
+      {err && <CSAlert type="error">{err}</CSAlert>}
 
         {(phase === 'config' || phase === 'error') && (
           <CSSpaceBetween size="l">
@@ -1738,8 +1728,7 @@ function KbExtractModal({ script, onClose, onDone }) {
           </CSSpaceBetween>
         )}
       </CSSpaceBetween>
-    </CSModal>
   );
 }
 
-export { ScriptsPage, ScriptsListView, ScriptsLibraryView, ChaptersModal, OverridesModal, ScriptsImportView, ImportJobBanner, ImportJobResult, ImportEstimateView, ScriptPreviewModal, ConfidenceBar, KbExtractModal };
+export { ScriptsPage, ScriptsListView, ScriptsLibraryView, ChaptersModal, OverridesModal, ScriptsImportView, ImportJobBanner, ImportJobResult, ImportEstimateView, ScriptPreviewModal, ConfidenceBar, KbExtractPanel };
