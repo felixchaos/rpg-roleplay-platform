@@ -65,7 +65,8 @@ const PL_TITLES = {
   me:          ["个人主页",       "资料、成就、近期活动"],
   "me-edit":   ["个人主页 / 编辑资料", "账户信息、联系方式、本地化"],
   "me-settings": ["个人主页 / 用户设置", "隐私、合规、安全、数据所有权"],
-  settings: ["设置",     "用户偏好、部署参数、API 与模型"],
+  settings: ["设置",     "用户偏好、API 与模型、记忆与权限"],
+  "admin-deploy": ["系统管理 / 部署配置", "监听地址、CORS、SMTP、CAPTCHA(站点级,需管理员)"],
   usage:    ["用量",     "调用量、Token 消耗、成本、延迟、错误率"],
   plugins:  ["插件",     "已启用的平台插件"],
   mcp:      ["MCP",      "本地或服务器侧 MCP 服务器"],
@@ -714,6 +715,8 @@ function PlatformShell({ page, setPage, children, assistant, assistantOpen, onOp
 function UnifiedSearch({ open, onClose, setPage }) {
   const [q, setQ] = useStatePL("");
   const [activeIdx, setActiveIdx] = useStatePL(0);
+  const searchUser = useReactiveUser();
+  const isAdmin = searchUser && searchUser.role === 'admin';
   const inputRef = React.useRef(null);
   React.useEffect(() => {
     if (open) { setQ(""); setActiveIdx(0); setTimeout(() => inputRef.current?.focus(), 30); }
@@ -745,8 +748,9 @@ function UnifiedSearch({ open, onClose, setPage }) {
     { id: "models",      label: "模型 / API",   parent: "设置",     hash: "settings", keywords: "openai anthropic models api" },
     { id: "memory",      label: "记忆",        parent: "设置",     hash: "settings", keywords: "memory recall context" },
     { id: "permissions", label: "权限",        parent: "设置",     hash: "settings", keywords: "permission write structured" },
-    { id: "deploy",      label: "部署",        parent: "设置",     hash: "settings", keywords: "host port cors upload" },
     { id: "danger",      label: "高危",        parent: "设置",     hash: "settings", keywords: "danger reset delete" },
+    // 部署配置已拆到「系统管理」,仅 admin 可见
+    ...(isAdmin ? [{ id: "deploy", label: "部署配置", parent: "系统管理", hash: "admin-deploy", keywords: "host port cors upload deploy admin" }] : []),
   ];
 
   const scripts = platform.scripts.map(s => ({
@@ -3588,7 +3592,7 @@ const CS_MODULES = [
   { id: 'account', label: '设置 & 账户', group: '系统',
     pages: ['me', 'me-edit', 'me-settings', 'profile', 'settings', 'settings-models',
       'settings-modelparams', 'settings-modules', 'settings-memory', 'settings-permissions',
-      'settings-deploy', 'settings-danger'],
+      'settings-danger'],
     sub: [
       { text: '个人主页', href: '#me' },
       { text: '编辑资料', href: '#me-edit' },
@@ -3599,8 +3603,14 @@ const CS_MODULES = [
       { text: '模块模型', href: '#settings-modules' },
       { text: '记忆', href: '#settings-memory' },
       { text: '权限', href: '#settings-permissions' },
-      { text: '部署', href: '#settings-deploy' },
       { text: '高危操作', href: '#settings-danger' },
+    ] },
+  // 系统管理:仅 admin 角色可见/可访问(adminOnly)。部署配置等站点级设置从用户
+  // 「设置 & 账户」中拆出,独立成网站管理功能页,三道鉴权(菜单隐藏 + 路由 AdminGuard + 后端 403)。
+  { id: 'admin', label: '系统管理', group: '管理', adminOnly: true,
+    pages: ['admin-deploy'],
+    sub: [
+      { text: '部署配置', href: '#admin-deploy' },
     ] },
   { id: 'library', label: '库', group: '系统', pages: ['library'],
     sub: [{ text: '资产库', href: '#library' }] },
@@ -3618,15 +3628,50 @@ function _csActiveModule(page) {
   return CS_MODULES.find((m) => m.pages.includes(page)) || CS_MODULES[0];
 }
 
-// 顶部「全部功能」菜单(按 group 分组)
-function _csSwitcherItems() {
+// 顶部「全部功能」菜单(按 group 分组)。adminOnly 模块仅 admin 角色可见。
+function _csSwitcherItems(isAdmin) {
   const groups = [];
   CS_MODULES.forEach((m) => {
+    if (m.adminOnly && !isAdmin) return;
     let g = groups.find((x) => x.text === m.group);
     if (!g) { g = { text: m.group, items: [] }; groups.push(g); }
     g.items.push({ id: m.id, text: m.label });
   });
   return groups;
+}
+
+// 某个 page 是否属于 adminOnly 模块(供路由层 AdminGuard 判定)。
+const ADMIN_PAGES = new Set(CS_MODULES.filter((m) => m.adminOnly).flatMap((m) => m.pages));
+function isAdminPage(page) { return ADMIN_PAGES.has(page); }
+
+/* 路由级管理员守卫:非 admin 直接敲 admin hash 时,不渲染内容,显示拒绝面板。
+   防线一:顶部菜单已隐藏入口;防线二:此守卫;防线三:后端 /admin/* 返回 403。
+   用户数据(role)在 mount 前已由 data-loader 注入,首屏即可判定;未就绪时短暂 loading。 */
+function AdminGuard({ children }) {
+  const u = useReactiveUser();
+  const role = u && u.role;
+  if (!role) {
+    return (
+      <div style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--muted,#8c857a)' }}>正在校验权限…</div>
+    );
+  }
+  if (role !== 'admin') {
+    return (
+      <div style={{ maxWidth: 560, margin: '64px auto', textAlign: 'center' }}>
+        <div style={{ fontSize: 30, marginBottom: 14, opacity: 0.7 }}>🔒</div>
+        <div style={{ fontSize: 17, fontWeight: 600, color: 'var(--text,#ebe7df)', marginBottom: 8 }}>需要管理员权限</div>
+        <div style={{ fontSize: 13.5, lineHeight: 1.7, color: 'var(--text-quiet,#a8a195)' }}>
+          系统管理(部署配置等站点级设置)仅平台管理员可访问。<br />
+          当前账号角色为 <strong style={{ color: 'var(--text,#ebe7df)' }}>{role}</strong>。如需权限请联系管理员。
+        </div>
+        <div style={{ marginTop: 22 }}>
+          <a href="#profile" onClick={(e) => { e.preventDefault(); location.hash = '#profile'; }}
+            style={{ color: 'var(--accent,#c96442)', textDecoration: 'none', fontSize: 13.5 }}>← 返回主页</a>
+        </div>
+      </div>
+    );
+  }
+  return children;
 }
 
 async function _csRefresh() {
@@ -3712,7 +3757,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
             RPG Roleplay
           </a>
           <CSButtonDropdown
-            items={_csSwitcherItems()}
+            items={_csSwitcherItems(reactiveUser.role === 'admin')}
             expandToViewport
             ariaLabel="全部功能"
             onItemClick={({ detail }) => { const m = CS_MODULES.find((x) => x.id === detail.id); if (m) { setPage(m.pages[0]); location.hash = '#' + m.pages[0]; } }}
@@ -3785,7 +3830,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
   );
 }
 
-export { PlatformShell, PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData, useShellChrome, ResizableSplit };
+export { PlatformShell, PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData, useShellChrome, ResizableSplit, AdminGuard, isAdminPage };
 
 // ──────────────────────────────────────────────────────────────────
 // 以下函数本体已拆分到 pages/cards.jsx / pages/saves.jsx /

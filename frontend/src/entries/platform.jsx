@@ -19,7 +19,7 @@ import { installWarmTheme } from '../cloudscape-theme.js';
 installWarmTheme();
 
 // 组件模块 — named import(ESM 自动拉入传递依赖)
-import { PlatformShell, PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, PL_NAV } from '../platform-app.jsx';
+import { PlatformShell, PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, PL_NAV, AdminGuard } from '../platform-app.jsx';
 import { SavesPage } from '../pages/saves.jsx';
 import { ScriptsPage } from '../pages/scripts.jsx';
 import { CardsPage } from '../pages/cards.jsx';
@@ -46,7 +46,8 @@ const TWEAK_DEFAULTS = {
   accent: 'terracotta',
 };
 
-const HASH_ALIASES = { branches: 'saves-branches' };
+// settings-deploy 已拆到系统管理模块,旧链接重定向到 admin-deploy
+const HASH_ALIASES = { branches: 'saves-branches', 'settings-deploy': 'admin-deploy' };
 function parsePageFromHash() {
   const raw = location.hash.replace('#', '');
   const hash = HASH_ALIASES[raw] || raw;
@@ -56,7 +57,7 @@ function parsePageFromHash() {
     // 新 IA 子页(Cloudscape 迁移后):剧本 / 开始游戏 / 设置&账户 各模块的左栏子页
     'scripts-library', 'scripts-editor', 'scripts-settings', 'play-settings',
     'settings-models', 'settings-modelparams', 'settings-modules', 'settings-memory',
-    'settings-permissions', 'settings-deploy', 'settings-danger',
+    'settings-permissions', 'settings-danger', 'admin-deploy',
     'usage', 'plugins', 'mcp', 'skills', 'apis',
   ];
   if (!ids.includes(hash)) return null;
@@ -123,8 +124,8 @@ function PlatformApp() {
   else if (page === 'settings-modules') body = <SettingsPage section="modules" />;
   else if (page === 'settings-memory') body = <SettingsPage section="memory" />;
   else if (page === 'settings-permissions') body = <SettingsPage section="permissions" />;
-  else if (page === 'settings-deploy') body = <SettingsPage section="deploy" />;
   else if (page === 'settings-danger') body = <SettingsPage section="danger" />;
+  else if (page === 'admin-deploy') body = <AdminGuard><SettingsPage section="deploy" /></AdminGuard>;
   else if (page === 'usage') body = <UsagePage />;
   else if (page === 'plugins') body = <CapPage kind="plugins" />;
   else if (page === 'mcp') body = <CapPage kind="mcp" />;

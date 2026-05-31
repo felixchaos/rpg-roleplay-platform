@@ -132,7 +132,7 @@ function targetToPageId(target) {
     "settings.modelparams": "settings",
     "settings.memory": "settings",
     "settings.permissions": "settings",
-    "settings.deploy": "settings",
+    "settings.deploy": "admin-deploy",
     "settings.danger": "settings",
     "settings.profile": "me-edit",
     "settings.api": "settings",
