@@ -49,9 +49,12 @@ def _fetch_script_info(script_id: int, user_id: int) -> dict[str, Any] | None:
 
 
 def _fetch_phase_digest(script_id: int, phase: str) -> str:
-    """按 story_phase 模糊匹配, 拉 phase_digests / chapter_facts summary。
+    """按 story_phase 拉前 5 章 chapter_facts.summary 拼成阶段概要。
 
-    返回空字符串表示没拿到 (软降级)。
+    返回空字符串表示没拿到 (软降级);此时 _build_system_prompt 不会附【阶段剧情参考】段。
+
+    历史 bug: 旧版 SELECT 不存在的列 fact_text / chapter_index → 异常被 except 静默吞掉 →
+    LLM 永远拿不到剧本信息 → 推荐永远跑到 fallback。chapter_facts 实际列名是 chapter/summary。
     """
     if not phase:
         return ""
@@ -59,20 +62,33 @@ def _fetch_phase_digest(script_id: int, phase: str) -> str:
         from platform_app.db import connect, init_db
         init_db()
         with connect() as db:
-            # 先查 save_phase_digests (汇总更好, 但要 save_id — 这里按 script 查全局摘要)
-            # 实际上 save_phase_digests 是 save 级的, 无 script 直接索引;
-            # 退而查 chapter_facts 按 story_phase 模糊匹配, 取前 3 条 sample
             rows = db.execute(
-                "select summary from chapter_facts "
+                "select chapter, title, summary from chapter_facts "
                 "where script_id = %s and story_phase ilike %s "
-                "order by chapter limit 5",
+                "  and coalesce(summary, '') <> '' "
+                "order by chapter asc limit 5",
                 (script_id, f"%{phase[:30]}%"),
             ).fetchall() or []
-        if rows:
-            return " | ".join(r["summary"][:120] for r in rows if r.get("summary"))[:800]
+        if not rows:
+            return ""
+        parts: list[str] = []
+        for r in rows:
+            ch = r.get("chapter")
+            title = (r.get("title") or "").strip()
+            summ = (r.get("summary") or "").strip()
+            if not summ:
+                continue
+            head = ""
+            if ch is not None:
+                head = f"第{ch}章"
+                if title:
+                    head += f"《{title}》"
+            elif title:
+                head = f"《{title}》"
+            parts.append(f"[{head}] {summ[:160]}" if head else summ[:160])
+        return "\n".join(parts)[:1600]
     except Exception:
-        pass
-    return ""
+        return ""
 
 
 def _fetch_anchor_info(script_id: int, phase: str, label: str) -> str:
@@ -319,21 +335,10 @@ def _normalize_recommendation(item: Any) -> dict[str, str]:
     }
 
 
-def _fallback_recommendations(n: int) -> list[dict[str, str]]:
-    """LLM 失败时返回通用模板 (1-2 条)。"""
-    templates = [
-        {
-            "name": "",
-            "role": "剧本主角",
-            "background": "基于剧本设定推演的默认主角视角, 与核心事件直接相关的亲历者。",
-        },
-        {
-            "name": "",
-            "role": "局外观察者",
-            "background": "以旁观者身份卷入剧本事件, 掌握独特视角与信息, 逐渐成为关键参与方。",
-        },
-    ]
-    return templates[:max(1, min(n, 2))]
+# 注:v27 删除了 _fallback_recommendations。LLM 失败时不再返回硬编码模板,
+# 而是显式报错给上层,让 UI 引导用户走"直接用角色卡"或"手动自定义身份"两条路径。
+# 历史模板是"剧本主角"+"局外观察者",在前端表现为永远固定两个建议 → 用户体验等同于推荐
+# 完全失效。删除是为了暴露真实的 LLM/数据问题(否则 fallback 永远兜底,bug 不会冒头)。
 
 
 # ────────────────────────────────────────────────────────────
@@ -342,7 +347,12 @@ def _fallback_recommendations(n: int) -> list[dict[str, str]]:
 
 
 def _t_recommend_player_identity(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
-    """推荐初始身份 — script 级工具, executor 签名 (user_id, script_id, args, state)。"""
+    """推荐初始身份 — script 级工具, executor 签名 (user_id, script_id, args, state)。
+
+    返回值约定:
+      成功: {"ok": true, "recommendations": [{name, role, background}, ...]}
+      失败: {"ok": false, "error": "<真实错误描述>"}  ← UI 应展示并引导用户改走自定义
+    """
     # 参数解析
     sid = script_id or args.get("script_id")
     if not sid:
@@ -395,13 +405,20 @@ def _t_recommend_player_identity(user_id: int, script_id: int | None, args: dict
     # 4) 调 LLM
     raw_recs = _call_llm_emit_identities(user_id=user_id, system=system, n=n)
 
-    # 5) 处理结果
-    if raw_recs and isinstance(raw_recs, list) and len(raw_recs) > 0:
-        recommendations = [_normalize_recommendation(r) for r in raw_recs[:6]]
-    else:
-        # fallback — 不崩, 返模板
-        recommendations = _fallback_recommendations(n)
+    # 5) 处理结果 — v27: 失败显式报错,不再兜模板
+    if not (raw_recs and isinstance(raw_recs, list) and len(raw_recs) > 0):
+        # 区分两类失败:1) backend 选择/调用失败(返 None) 2) 返了但空 list
+        detail = "LLM 未返回任何推荐"
+        if raw_recs is None:
+            detail = "LLM 调用失败 (后端未配置/网络错误/响应解析失败)"
+        elif isinstance(raw_recs, list) and len(raw_recs) == 0:
+            detail = "LLM 返回了空列表,可能是上下文不足或模型拒答"
+        return json.dumps(
+            {"ok": False, "error": f"身份推荐失败: {detail}。请使用手动创建身份卡或直接使用所选角色卡。"},
+            ensure_ascii=False,
+        )
 
+    recommendations = [_normalize_recommendation(r) for r in raw_recs[:6]]
     return json.dumps(
         {"ok": True, "recommendations": recommendations},
         ensure_ascii=False,

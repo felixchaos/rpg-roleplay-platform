@@ -1234,122 +1234,212 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
   const [customRole, setCustomRole] = React.useState("");
   const [customBg, setCustomBg] = React.useState("");
 
-  // 单页模式:出生点 / 角色变化时重新拉推荐(出生点是 AI 推荐的关键输入)。
-  // 未选出生点时不请求,显示提示。
-  React.useEffect(() => {
-    if (!birthpoint) { setRecs([]); setRecsErr(""); setRecsLoading(false); return; }
-    setRecsLoading(true); setRecsErr("");
-    const picked = allRoleOptions ? allRoleOptions.find(o => o.key === pickedCard) : null;
+  const pickedRole = allRoleOptions ? allRoleOptions.find(o => o.key === pickedCard) : null;
+  const pickedName = pickedRole?.name || "(未选角色)";
+
+  const fetchAiRecs = React.useCallback(async () => {
+    if (!scriptId) {
+      setRecsErr("请先选择剧本");
+      return;
+    }
+    setRecsLoading(true); setRecsErr(""); setRecs([]);
     const args = {
-      script_id: scriptId ? parseInt(scriptId, 10) : undefined,
-      birthpoint_phase: birthpoint ? birthpoint.phase_label : undefined,
-      birthpoint_label: birthpoint ? birthpoint.story_time_label : undefined,
-      character_card_id: picked ? (picked.id || null) : null,
-      character_card_kind: picked ? picked.kind : null,
+      birthpoint_phase: birthpoint ? birthpoint.phase_label : "",
+      birthpoint_label: birthpoint ? birthpoint.story_time_label : "",
+      character_card_id: pickedRole ? (pickedRole.id || null) : null,
+      character_card_kind: pickedRole ? pickedRole.kind : null,
       n: 4,
     };
-    (async () => {
-      try {
-        // task 123: 改调专用 endpoint (替代之前的 /api/console_assistant/tool 404)
-        const r = await fetch(
-          `${window.__API_BASE || ""}/api/scripts/${args.script_id}/recommend-identity`,
-          {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify({
-              birthpoint_phase: args.birthpoint_phase || "",
-              birthpoint_label: args.birthpoint_label || "",
-              character_card_id: args.character_card_id,
-              character_card_kind: args.character_card_kind,
-              n: args.n || 4,
-            }),
-          }
-        );
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        const data = await r.json();
-        if (data && Array.isArray(data.recommendations) && data.recommendations.length > 0) {
-          setRecs(data.recommendations);
-        } else {
-          setRecsErr((data && data.error) || "后端未返回推荐,请使用自定义身份。");
-          setRecs([]);
+    try {
+      const r = await fetch(
+        `${window.__API_BASE || ""}/api/scripts/${parseInt(scriptId, 10)}/recommend-identity`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify(args),
         }
-      } catch (e) {
-        setRecsErr("推荐加载失败：" + (e.message || "网络错误") + "。请使用下方自定义身份。");
-        setRecs([]);
-      } finally {
-        setRecsLoading(false);
+      );
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        // 502 (LLM 失败) / 500 (工具失败) / 403 (无权) 一律显示后端真实错误
+        const msg = (data && data.error) || `请求失败 (HTTP ${r.status})`;
+        setRecsErr(msg);
+        return;
       }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scriptId, birthpoint && birthpoint.anchor_id, pickedCard]);
+      if (data && Array.isArray(data.recommendations) && data.recommendations.length > 0) {
+        setRecs(data.recommendations);
+      } else {
+        setRecsErr("后端未返回任何推荐。请改用手动创建或直接使用角色卡。");
+      }
+    } catch (e) {
+      setRecsErr("网络/解析错误: " + (e.message || String(e)));
+    } finally {
+      setRecsLoading(false);
+    }
+  }, [scriptId, birthpoint, pickedRole]);
+
+  const pickRec = (rec) => {
+    setIdentity({
+      name: rec.name || "",
+      role: rec.role || "",
+      background: rec.background || "",
+      source: "ai",
+      _from: "ai",
+    });
+  };
 
   const applyCustom = () => {
-    if (!customName.trim()) return;
-    setIdentity({ name: customName.trim(), role: customRole.trim(), background: customBg.trim(), _custom: true });
+    // 身份本体最少要 role 或 background 之一,否则等同于"空身份"
+    const role = customRole.trim();
+    const bg = customBg.trim();
+    if (!role && !bg) return;
+    setIdentity({
+      name: customName.trim(),
+      role,
+      background: bg,
+      source: "custom",
+      _from: "custom",
+    });
   };
+
+  const clearIdentity = () => {
+    setIdentity(null);
+  };
+
+  const noIdentity = !identity;
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      {!birthpoint && (
-        <CSBox color="text-body-secondary" fontSize="body-s">
-          先在上方「出生点」选好开局位置,这里会据此生成 AI 推荐身份;你也可以直接用下方「自定义身份」。
-        </CSBox>
-      )}
-      {/* recommendation area */}
-      {recsLoading && (
-        <div className="muted" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "12px 0" }}>
-          <Icon name="spinner" size={13} className="spin" /> 正在生成身份推荐…
-        </div>
-      )}
-      <InlineErr msg={recsErr} />
-      {!recsLoading && recs.length > 0 && (
-        <div style={{ display: "grid", gap: 6 }}>
-          <div className="pl-modal-section-label" style={{ paddingTop: 0 }}>AI 推荐身份</div>
-          {recs.map((rec, i) => {
-            const isSelected = identity && identity.name === rec.name && identity.role === rec.role;
-            return (
-              <button
-                key={i}
-                onClick={() => setIdentity({ name: rec.name, role: rec.role, background: rec.background || "" })}
-                style={{
-                  textAlign: "left",
-                  padding: "10px 14px",
-                  border: isSelected ? "1px solid var(--accent-edge)" : "1px solid var(--line-soft)",
-                  borderRadius: "var(--r-3, 8px)",
-                  background: isSelected ? "var(--accent-soft)" : "transparent",
-                  cursor: "pointer",
-                  display: "grid", gap: 3,
-                  transition: "border-color 0.12s, background 0.12s",
-                }}
-                onMouseEnter={e => { if (!isSelected) e.currentTarget.style.borderColor = "var(--line)"; e.currentTarget.style.background = isSelected ? "var(--accent-soft)" : "var(--panel-2)"; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = isSelected ? "var(--accent-edge)" : "var(--line-soft)"; e.currentTarget.style.background = isSelected ? "var(--accent-soft)" : "transparent"; }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <strong style={{ fontFamily: "var(--font-serif)", fontSize: 13.5, letterSpacing: "0.02em" }}>
-                    {rec.name}
-                  </strong>
-                  {rec.role && (
-                    <span className="pill" style={{ fontSize: 10.5 }}>{rec.role}</span>
-                  )}
-                  {isSelected && <span className="pill accent" style={{ fontSize: 10.5, marginLeft: "auto" }}>已选</span>}
-                </div>
-                {rec.background && (
-                  <span className="muted-2" style={{ fontSize: 11.5, lineHeight: 1.5 }}>{rec.background}</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {/* 说明 + 当前状态 */}
+      <div className="muted-2" style={{ fontSize: 12, lineHeight: 1.55 }}>
+        身份卡是叠加在角色卡之上的「定位 overlay」(穿越者 / 卧底 / 流亡贵族 …),
+        和具体姓名外貌无关。可不选 — 此时直接使用所选角色「<strong style={{ color: "var(--fg)" }}>{pickedName}</strong>」开局。
+      </div>
 
-      {/* custom identity accordion */}
+      {/* 当前选择展示 */}
+      <div style={{
+        padding: "10px 14px",
+        border: noIdentity ? "1px dashed var(--line)" : "1px solid var(--accent-edge)",
+        background: noIdentity ? "transparent" : "var(--accent-soft)",
+        borderRadius: "var(--r-3, 8px)",
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+      }}>
+        {noIdentity ? (
+          <span className="muted" style={{ fontSize: 12.5 }}>
+            <Icon name="check" size={11} /> 当前:不挂身份 overlay,直接使用「{pickedName}」
+          </span>
+        ) : (
+          <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span className="pill accent" style={{ fontSize: 10.5 }}>
+                {identity._from === "ai" ? "AI 生成" : "手动"}
+              </span>
+              {identity.name && (
+                <strong style={{ fontFamily: "var(--font-serif)", fontSize: 13.5 }}>
+                  {identity.name}
+                </strong>
+              )}
+              {identity.role && (
+                <span style={{ fontSize: 12.5 }}>{identity.role}</span>
+              )}
+            </div>
+            {identity.background && (
+              <span className="muted-2" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+                {identity.background}
+              </span>
+            )}
+          </div>
+        )}
+        {!noIdentity && (
+          <button
+            className="btn btn-ghost"
+            style={{ fontSize: 11.5, flexShrink: 0 }}
+            onClick={clearIdentity}
+            type="button"
+          >
+            <Icon name="close" size={11} /> 清除
+          </button>
+        )}
+      </div>
+
+      {/* AI 生成 (opt-in) */}
+      <div style={{
+        border: "1px solid var(--line-soft)",
+        borderRadius: "var(--r-3, 8px)",
+        padding: "10px 14px",
+        display: "grid", gap: 8,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ display: "grid", gap: 1 }}>
+            <span style={{ fontSize: 13 }}>让 AI 生成身份候选</span>
+            <span className="muted-2" style={{ fontSize: 11 }}>
+              基于剧本 + 出生点 + 所选角色卡,生成 4 个差异化身份。
+            </span>
+          </div>
+          <button
+            className="btn"
+            type="button"
+            onClick={fetchAiRecs}
+            disabled={recsLoading}
+            style={{ flexShrink: 0 }}
+          >
+            {recsLoading
+              ? (<><Icon name="spinner" size={11} className="spin" /> 生成中…</>)
+              : (recs.length > 0 ? (<><Icon name="refresh" size={11} /> 重新生成</>) : (<><Icon name="sparkles" size={11} /> 生成身份</>))}
+          </button>
+        </div>
+        <InlineErr msg={recsErr} />
+        {recs.length > 0 && (
+          <div style={{ display: "grid", gap: 6, marginTop: 4 }}>
+            {recs.map((rec, i) => {
+              const isSelected = identity && identity._from === "ai"
+                && identity.name === rec.name && identity.role === rec.role;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => pickRec(rec)}
+                  style={{
+                    textAlign: "left",
+                    padding: "9px 12px",
+                    border: isSelected ? "1px solid var(--accent-edge)" : "1px solid var(--line-soft)",
+                    borderRadius: "var(--r-3, 8px)",
+                    background: isSelected ? "var(--accent-soft)" : "transparent",
+                    cursor: "pointer",
+                    display: "grid", gap: 3,
+                    transition: "border-color 0.12s, background 0.12s",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {rec.name && (
+                      <strong style={{ fontFamily: "var(--font-serif)", fontSize: 13.5 }}>
+                        {rec.name}
+                      </strong>
+                    )}
+                    {rec.role && (
+                      <span className="pill" style={{ fontSize: 10.5 }}>{rec.role}</span>
+                    )}
+                    {isSelected && <span className="pill accent" style={{ fontSize: 10.5, marginLeft: "auto" }}>已选</span>}
+                  </div>
+                  {rec.background && (
+                    <span className="muted-2" style={{ fontSize: 11.5, lineHeight: 1.5 }}>{rec.background}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 手动创建 (折叠) */}
       <div style={{
         border: "1px solid var(--line-soft)",
         borderRadius: "var(--r-3, 8px)",
         overflow: "hidden",
       }}>
         <button
+          type="button"
           onClick={() => setCustomOpen(v => !v)}
           style={{
             width: "100%", textAlign: "left",
@@ -1362,9 +1452,9 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
         >
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Icon name={customOpen ? "chevron_down" : "chevron_right"} size={11} style={{ color: "var(--muted)" }} />
-            <span style={{ fontSize: 13 }}>自定义身份</span>
+            <span style={{ fontSize: 13 }}>手动创建身份卡</span>
           </div>
-          {identity && identity._custom && (
+          {identity && identity._from === "custom" && (
             <span className="pill accent" style={{ fontSize: 10.5 }}>已填写</span>
           )}
         </button>
@@ -1372,50 +1462,42 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
           <div style={{ padding: "10px 14px", display: "grid", gap: 10 }}>
             <div className="pl-import-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
               <div className="pl-field">
-                <label>姓名 <span className="pl-field-req">*</span></label>
+                <label>代号 / 化名 <span className="muted-2" style={{ fontSize: 10.5 }}>(可选)</span></label>
                 <input
                   value={customName}
                   onChange={e => setCustomName(e.target.value)}
-                  placeholder="角色名"
+                  placeholder="留空则用角色卡的名字"
                 />
               </div>
               <div className="pl-field">
-                <label>身份 / 角色</label>
+                <label>身份定位 <span className="pl-field-req">*</span></label>
                 <input
                   value={customRole}
                   onChange={e => setCustomRole(e.target.value)}
-                  placeholder="例：穿越者公主"
+                  placeholder="例:穿越者公主 / 卧底 / 流亡贵族"
                 />
               </div>
               <div className="pl-field" style={{ gridColumn: "1 / -1" }}>
-                <label>背景设定</label>
+                <label>身份背景 / 动机</label>
                 <textarea
                   rows={2}
                   value={customBg}
                   onChange={e => setCustomBg(e.target.value)}
-                  placeholder="简述角色背景（可留空）"
+                  placeholder="这个身份在剧本世界中的来历、动机、与核心事件的关联"
                 />
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button
                 className="btn"
+                type="button"
                 onClick={applyCustom}
-                disabled={!customName.trim()}
+                disabled={!customRole.trim() && !customBg.trim()}
+                title={(!customRole.trim() && !customBg.trim()) ? "身份定位或背景至少填一项" : ""}
               >
-                <Icon name="check" size={12} /> 使用此身份
+                <Icon name="check" size={12} /> 使用此身份卡
               </button>
             </div>
-            {identity && identity._custom && (
-              <div style={{
-                padding: "8px 10px",
-                background: "var(--accent-soft)", border: "1px solid var(--accent-edge)",
-                borderRadius: 6, fontSize: 12.5,
-              }}>
-                已选：<strong>{identity.name}</strong>
-                {identity.role ? ` · ${identity.role}` : ""}
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -1530,7 +1612,8 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const step1Valid = title.trim() && scriptId;
   const step2Valid = (roleMode === "existing" && pickedCard) || (roleMode === "new" && newCardName.trim());
   const step3Valid = !!birthpoint;
-  const step4Valid = !!identity;
+  // v29: 身份卡是可选 overlay,留空 = 直接使用所选角色卡(不再硬卡 identity 必填)
+  const step4Valid = true;
 
   const handleSubmit = async () => {
     setSubmitErr(""); setSubmitting(true);
@@ -1548,7 +1631,13 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
         } : null,
         role_mode: roleMode,
         birthpoint: birthpoint || null,
-        identity: identity ? { name: identity.name, role: identity.role, background: identity.background } : null,
+        // v29: 透传 source (custom|ai) 给后端落库 identity_cards.source;identity=null 表示不挂 overlay
+        identity: identity ? {
+          name: identity.name || "",
+          role: identity.role || "",
+          background: identity.background || "",
+          source: identity.source || "custom",
+        } : null,
         story_intent: storyIntent.trim() || null,
       };
       const res = onConfirm?.(payload);
