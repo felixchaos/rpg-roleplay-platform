@@ -197,6 +197,23 @@ cmd_restart() {
   cmd_start
 }
 
+# 单独重启子组件 — 跟另一个 session 协作时只重启出问题的那一半
+cmd_restart_backend() {
+  echo "─── 只重启 backend ───"
+  _kill_on_port $BACKEND_PORT
+  rm -f "$LOG_DIR/backend.pid"
+  start_backend || exit 1
+  echo "$(_ok) backend 重启 — frontend 不动"
+}
+
+cmd_restart_frontend() {
+  echo "─── 只重启 frontend ───"
+  _kill_on_port $FRONTEND_PORT
+  rm -f "$LOG_DIR/frontend.pid"
+  start_frontend || exit 1
+  echo "$(_ok) frontend 重启 — backend 不动"
+}
+
 cmd_logs() {
   local which="${1:-backend}"
   case "$which" in
@@ -208,10 +225,12 @@ cmd_logs() {
 
 # ── main ───────────────────────────────────────────────────────────
 case "${1:-status}" in
-  start)   cmd_start ;;
-  stop)    cmd_stop ;;
-  restart) cmd_restart ;;
-  status)  cmd_status ;;
-  logs)    cmd_logs "${2:-backend}" ;;
-  *)       echo "usage: $0 {start|stop|restart|status|logs [backend|frontend]}"; exit 1 ;;
+  start)             cmd_start ;;
+  stop)              cmd_stop ;;
+  restart)           cmd_restart ;;
+  restart-backend)   cmd_restart_backend ;;
+  restart-frontend)  cmd_restart_frontend ;;
+  status)            cmd_status ;;
+  logs)              cmd_logs "${2:-backend}" ;;
+  *)                 echo "usage: $0 {start|stop|restart|restart-backend|restart-frontend|status|logs [backend|frontend]}"; exit 1 ;;
 esac
