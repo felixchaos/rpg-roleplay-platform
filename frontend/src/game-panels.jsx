@@ -402,7 +402,9 @@ function PanelMemory({ state, density }) {
             onClick={async () => {
               const t = prompt("新增固定记忆", "");
               if (!t) return;
-              try { await window.api.game.memoryAdd({ kind: "pinned", text: t }); window.__apiToast?.("已添加", { kind: "ok" }); }
+              // bucket=pinned(后端 Pydantic 字段名,旧版误用 kind 被 extra='ignore' 吞掉
+              // 实际全落 notes 桶,等于固定记忆按钮一直在加到笔记 — 现修)
+              try { await window.api.game.memoryAdd({ bucket: "pinned", text: t }); window.__apiToast?.("已添加", { kind: "ok" }); }
               catch (e) { window.__apiToast?.("添加失败", { kind: "danger", detail: e?.message }); }
             }}>
             <Icon name="plus" />
@@ -416,7 +418,7 @@ function PanelMemory({ state, density }) {
               <button className="iconbtn" data-tip="解除"
                 onClick={async () => {
                   if (!confirm("解除固定记忆？")) return;
-                  try { await window.api.game.memoryRemove({ kind: "pinned", index: i, text: t }); window.__apiToast?.("已解除", { kind: "ok" }); }
+                  try { await window.api.game.memoryRemove({ bucket: "pinned", index: i }); window.__apiToast?.("已解除", { kind: "ok" }); }
                   catch (e) { window.__apiToast?.("操作失败", { kind: "danger", detail: e?.message }); }
                 }}>
                 <Icon name="close" size={12} />
@@ -439,14 +441,26 @@ function PanelMemory({ state, density }) {
             onClick={async () => {
               const t = prompt("新增玩家笔记", "");
               if (!t) return;
-              try { await window.api.game.memoryAdd({ kind: "note", text: t }); window.__apiToast?.("已添加", { kind: "ok" }); }
+              try { await window.api.game.memoryAdd({ bucket: "notes", text: t }); window.__apiToast?.("已添加", { kind: "ok" }); }
               catch (e) { window.__apiToast?.("添加失败", { kind: "danger", detail: e?.message }); }
             }}>
             <Icon name="plus" />
           </button>
         </div>
         <ul className="gp-flat-list">
-          {(m.notes || []).map((t, i) => (<li key={i}><span>{t}</span></li>))}
+          {(m.notes || []).map((t, i) => (
+            <li key={i} style={{display: "flex", alignItems: "center", gap: 6}}>
+              <span style={{flex: 1}}>{t}</span>
+              <button className="iconbtn" data-tip="删除笔记"
+                onClick={async () => {
+                  if (!confirm("删除这条笔记？")) return;
+                  try { await window.api.game.memoryRemove({ bucket: "notes", index: i }); window.__apiToast?.("已删除", { kind: "ok" }); }
+                  catch (e) { window.__apiToast?.("操作失败", { kind: "danger", detail: e?.message }); }
+                }}>
+                <Icon name="close" size={12} />
+              </button>
+            </li>
+          ))}
         </ul>
       </div>
 
@@ -461,20 +475,84 @@ function PanelMemory({ state, density }) {
   );
 }
 
+// ── 通用 inline editor:click-to-edit 文本字段 ────────────────────
+// 用于 PanelWorldbook 的 time/weather/location 和 PanelCharacters 的关系状态
+function InlineEditField({ value, placeholder, emptyLabel, onSubmit, busy }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value || "");
+  React.useEffect(() => { if (!editing) setDraft(value || ""); }, [value, editing]);
+  const commit = async () => {
+    const t = (draft || "").trim();
+    if (!t || t === (value || "")) { setEditing(false); return; }
+    try { await onSubmit(t); setEditing(false); }
+    catch (e) { window.__apiToast?.("保存失败", { kind: "danger", detail: e?.message }); }
+  };
+  if (!editing) {
+    return (
+      <span style={{cursor: "pointer", display: "inline-flex", gap: 4, alignItems: "center"}}
+            onClick={() => setEditing(true)}
+            title="点击编辑">
+        <span>{value || (emptyLabel || "—")}</span>
+        <Icon name="edit" size={10} style={{opacity: 0.4}} />
+      </span>
+    );
+  }
+  return (
+    <input className="gp-inline-input" autoFocus disabled={busy}
+      value={draft}
+      placeholder={placeholder || ""}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") commit();
+        else if (e.key === "Escape") { setDraft(value || ""); setEditing(false); }
+      }}
+      style={{
+        background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.2)",
+        borderRadius: 4, padding: "2px 6px", color: "inherit", font: "inherit",
+        minWidth: 80, maxWidth: 260,
+      }}
+    />
+  );
+}
+
 function PanelWorldbook({ state }) {
   // task 33：兜底 world / player / worldline.constraints 缺失
   const w = (state && state.world) || {};
   const p = (state && state.player) || {};
+  const tl = (w && w.timeline) || {};
   const constraints = Array.isArray(state && state.worldline && state.worldline.constraints)
     ? state.worldline.constraints : [];
+  // 任意字段写后由 dispatch_ui_tool 自动 _persist_runtime_checkpoint + 回 state;
+  // 这里仅 toast 反馈,刷新由 game-state-refresh / state polling 处理(同 memory 模式)。
+  const setField = (key, label) => async (value) => {
+    await window.api.game.worldSet({ key, value });
+    window.__apiToast?.(label + " 已更新 → " + value, { kind: "ok", duration: 1800 });
+  };
   return (
     <div className="gp-stack">
       <div className="gp-section">
-        <div className="section-head"><h3>地点 · 时刻</h3></div>
+        <div className="section-head">
+          <h3>地点 · 时刻</h3>
+          <span className="muted-2" style={{fontSize: 11}}>点击字段直接修改</span>
+        </div>
         <div className="gp-kv">
-          <div className="gp-row"><span className="gp-label">所在</span><span>{p.current_location || "—"}</span></div>
-          <div className="gp-row"><span className="gp-label">时刻</span><span>{w.time || "—"}</span></div>
-          <div className="gp-row"><span className="gp-label">天气</span><span>{w.weather || "—"}</span></div>
+          <div className="gp-row"><span className="gp-label">所在</span>
+            <InlineEditField value={p.current_location} emptyLabel="—"
+              placeholder="位置(如 柏林·夏洛滕堡)"
+              onSubmit={setField("location", "位置")} /></div>
+          <div className="gp-row"><span className="gp-label">时刻</span>
+            <InlineEditField value={w.time} emptyLabel="—"
+              placeholder="时间(如 1935 春·清晨)"
+              onSubmit={setField("time", "时间")} /></div>
+          <div className="gp-row"><span className="gp-label">天气</span>
+            <InlineEditField value={w.weather} emptyLabel="—"
+              placeholder="天气(如 细雨/晴)"
+              onSubmit={setField("weather", "天气")} /></div>
+          <div className="gp-row"><span className="gp-label">阶段</span>
+            <InlineEditField value={tl.current_phase} emptyLabel="—"
+              placeholder="时间线阶段(如 柏林暗流篇)"
+              onSubmit={setField("phase", "阶段")} /></div>
         </div>
       </div>
       <div className="gp-section">
@@ -543,8 +621,10 @@ function _entityTypeLabel(kind, source) {
   return "—";
 }
 
-function CharacterCard({ name, info, subtitle }) {
+function CharacterCard({ name, info, subtitle, onEditStatus, onDelete }) {
   // info: { tone | disposition, note?, role? }
+  // 可选 props: onEditStatus(newValue)/onDelete() — 仅 relationships 区传入,
+  //            on-stage/pinned 不传,保持原本只读语义。
   const dispLabel = info.tone || info.disposition || "—";
   const toneColor = _toneColorOfDisposition(dispLabel);
   const onDragStart = (e) => {
@@ -561,7 +641,18 @@ function CharacterCard({ name, info, subtitle }) {
         <div style={{minWidth: 0, flex: 1}}>
           <div className="gp-card-name">{name}</div>
           <div className="gp-card-tone">
-            <span className={`pill ${toneColor}`}><span className={`dot ${toneColor}`} />{dispLabel}</span>
+            {onEditStatus ? (
+              // 关系区:click-to-edit 状态文本(替代静态 pill)
+              <span className={`pill ${toneColor}`} style={{paddingRight: 6}}>
+                <span className={`dot ${toneColor}`} />
+                <InlineEditField value={dispLabel === "—" ? "" : dispLabel}
+                  placeholder="状态(如 信任/警惕/敌意)"
+                  emptyLabel="设状态"
+                  onSubmit={onEditStatus} />
+              </span>
+            ) : (
+              <span className={`pill ${toneColor}`}><span className={`dot ${toneColor}`} />{dispLabel}</span>
+            )}
             {subtitle ? <span className="muted-2 mono" style={{marginLeft: 6, fontSize: 11}}>{subtitle}</span> : null}
           </div>
         </div>
@@ -577,6 +668,12 @@ function CharacterCard({ name, info, subtitle }) {
           }}>
           <Icon name="at" size={14} />
         </button>
+        {onDelete ? (
+          <button className="iconbtn" data-tip="删除关系" data-tip-pos="below"
+            onClick={onDelete}>
+            <Icon name="close" size={12} />
+          </button>
+        ) : null}
       </div>
       {(info.note || info.role) ? (
         <p className="gp-card-note">{info.note || info.role}</p>
@@ -668,15 +765,40 @@ function PanelCharacters({ state }) {
         </div>
         {relEntries.length === 0 ? (
           <div className="muted-2" style={{padding: "12px 4px", fontSize: 12.5, lineHeight: 1.7}}>
-            暂无明确关系。GM 输出含『关系：X -&gt; Y』结构化标签时会自动写入这里。
+            暂无明确关系。GM 输出含『关系:X -&gt; Y』结构化标签时会自动写入这里;
+            玩家也可点下方"+"手动建立。
           </div>
         ) : (
           <div className="gp-cards">
             {relEntries.map(({ name, info }) => (
-              <CharacterCard key={name} name={name} info={info} />
+              <CharacterCard key={name} name={name} info={info}
+                onEditStatus={async (status) => {
+                  await window.api.game.relationshipSet({ character: name, status });
+                  window.__apiToast?.(`关系 ${name} → ${status}`, { kind: "ok", duration: 1500 });
+                }}
+                onDelete={async () => {
+                  if (!confirm(`删除与「${name}」的关系条目?`)) return;
+                  try { await window.api.game.relationshipDelete({ character: name });
+                    window.__apiToast?.("已删除", { kind: "ok" }); }
+                  catch (e) { window.__apiToast?.("删除失败", { kind: "danger", detail: e?.message }); }
+                }}
+              />
             ))}
           </div>
         )}
+        {/* 手动添加关系入口 */}
+        <button className="iconbtn" style={{marginTop: 8, fontSize: 12, padding: "4px 10px", width: "auto"}}
+          onClick={async () => {
+            const ch = prompt("NPC 名字", "");
+            if (!ch) return;
+            const st = prompt(`「${ch}」的关系状态(如 信任/警惕/敌意)`, "中立");
+            if (!st) return;
+            try { await window.api.game.relationshipSet({ character: ch.trim(), status: st.trim() });
+              window.__apiToast?.(`关系 ${ch} → ${st}`, { kind: "ok" }); }
+            catch (e) { window.__apiToast?.("添加失败", { kind: "danger", detail: e?.message }); }
+          }}>
+          <Icon name="plus" size={12} /> 添加关系
+        </button>
       </div>
 
       {/* 已固定角色卡 — 只在有时显示,避免空区污染 */}

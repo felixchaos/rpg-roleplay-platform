@@ -262,14 +262,14 @@ def _t_get_chapter_facts(user_id: int, script_id: int | None, args: dict, state:
         with connect() as db:
             if chapter_index is None:
                 rows = db.execute(
-                    "select chapter_index, fact_text from chapter_facts "
-                    "where script_id = %s order by chapter_index limit 200",
+                    "select chapter, title, summary from chapter_facts "
+                    "where script_id = %s order by chapter limit 200",
                     (int(sid),),
                 ).fetchall() or []
             else:
                 rows = db.execute(
-                    "select chapter_index, fact_text from chapter_facts "
-                    "where script_id = %s and chapter_index = %s",
+                    "select chapter, title, summary from chapter_facts "
+                    "where script_id = %s and chapter = %s",
                     (int(sid), int(chapter_index)),
                 ).fetchall() or []
         return json.dumps([dict(r) for r in rows[:50]], ensure_ascii=False, indent=2)

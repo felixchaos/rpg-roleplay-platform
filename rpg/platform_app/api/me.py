@@ -204,6 +204,89 @@ async def api_my_stats(request: Request, user=Depends(require_user)):
     })
 
 
+@router.get("/api/me/activity")
+async def api_my_activity(limit: int = 25, user=Depends(require_user)):
+    """个人主页「最近活动」时间线：聚合真实事件，按时间倒序返回最近 limit 条。
+
+    数据源（全部真实表，禁止编造）:
+      - 回合: branch_nodes (role='gm'，每回合一条) join game_saves
+      - 分支: branch_nodes 中 fork 出的兄弟节点（同 parent 的非首个 child）
+      - 剧本: scripts 导入记录
+    """
+    limit = max(1, min(int(limit or 25), 100))
+    events: list[dict] = []
+    with connect() as db:
+        # 回合：GM 节点 = 一回合完成
+        for r in db.execute(
+            """
+            select b.turn_index, b.summary, b.created_at, b.save_id, s.title as save_title
+            from branch_nodes b join game_saves s on s.id = b.save_id
+            where s.user_id = %s and b.role = 'gm'
+            order by b.created_at desc limit %s
+            """,
+            (user["id"], limit),
+        ).fetchall():
+            save_title = r["save_title"] or "未命名存档"
+            events.append({
+                "type": "turn", "tag": "回合", "icon": "play",
+                "text": f"在《{save_title}》推进到第 {int(r['turn_index'])} 回合",
+                "sub": (r["summary"] or "")[:60],
+                "ts": r["created_at"].isoformat() if r["created_at"] else None,
+                "save_id": r["save_id"],
+            })
+        # 分支：同一 parent 下 fork 出的兄弟（非首个 child 即为新开分支）
+        for r in db.execute(
+            """
+            with sib as (
+              select b.id, b.save_id, b.turn_index, b.created_at, b.parent_id,
+                     s.title as save_title,
+                     row_number() over (partition by b.parent_id order by b.created_at, b.id) as rn,
+                     count(*) over (partition by b.parent_id) as cnt
+              from branch_nodes b join game_saves s on s.id = b.save_id
+              where s.user_id = %s and b.parent_id is not null
+            )
+            select save_id, turn_index, created_at, save_title
+            from sib where cnt > 1 and rn > 1
+            order by created_at desc limit %s
+            """,
+            (user["id"], limit),
+        ).fetchall():
+            save_title = r["save_title"] or "未命名存档"
+            events.append({
+                "type": "branch", "tag": "分支", "icon": "branch",
+                "text": f"在《{save_title}》第 {int(r['turn_index'])} 回合开辟新分支",
+                "sub": "",
+                "ts": r["created_at"].isoformat() if r["created_at"] else None,
+                "save_id": r["save_id"],
+            })
+        # 剧本导入
+        for r in db.execute(
+            """
+            select id, title, chapter_count, word_count, created_at
+            from scripts where owner_id = %s
+            order by created_at desc limit %s
+            """,
+            (user["id"], limit),
+        ).fetchall():
+            wc = int(r["word_count"] or 0)
+            cc = int(r["chapter_count"] or 0)
+            parts = []
+            if cc:
+                parts.append(f"{cc} 章")
+            if wc:
+                parts.append(f"{wc / 10000:.1f} 万字" if wc >= 10000 else f"{wc} 字")
+            events.append({
+                "type": "script", "tag": "剧本", "icon": "book",
+                "text": f"导入剧本《{r['title'] or '未命名'}》",
+                "sub": " · ".join(parts),
+                "ts": r["created_at"].isoformat() if r["created_at"] else None,
+                "script_id": r["id"],
+            })
+    events = [e for e in events if e["ts"]]
+    events.sort(key=lambda e: e["ts"], reverse=True)
+    return json_response({"ok": True, "activity": events[:limit]})
+
+
 @router.post("/api/me/preference")
 async def api_set_preference(request: Request, user=Depends(require_user)):
     """更新或合并界面偏好（主题/字号/默认模型...）"""

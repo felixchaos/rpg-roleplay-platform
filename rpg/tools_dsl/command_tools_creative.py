@@ -63,13 +63,13 @@ def _fetch_phase_digest(script_id: int, phase: str) -> str:
             # 实际上 save_phase_digests 是 save 级的, 无 script 直接索引;
             # 退而查 chapter_facts 按 story_phase 模糊匹配, 取前 3 条 sample
             rows = db.execute(
-                "select fact_text from chapter_facts "
+                "select summary from chapter_facts "
                 "where script_id = %s and story_phase ilike %s "
-                "order by chapter_index limit 5",
+                "order by chapter limit 5",
                 (script_id, f"%{phase[:30]}%"),
             ).fetchall() or []
         if rows:
-            return " | ".join(r["fact_text"][:120] for r in rows if r.get("fact_text"))[:800]
+            return " | ".join(r["summary"][:120] for r in rows if r.get("summary"))[:800]
     except Exception:
         pass
     return ""

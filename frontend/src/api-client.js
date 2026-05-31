@@ -227,6 +227,7 @@
       usage: (days) => GET(`${API_PREFIX}/me/usage`, days ? { days } : undefined),
       usageTimeline: (days, group_by) => GET(`${API_PREFIX}/me/usage/timeline`, { days: days || 30, group_by: group_by || "day" }),
       stats: () => GET(`${API_PREFIX}/me/stats`),
+      activity: (limit) => GET(`${API_PREFIX}/me/activity`, limit ? { limit } : undefined),
       preferences: (body) => POST(`${API_PREFIX}/me/preference`, body),
       personas: {
         list: () => GET(`${API_PREFIX}/me/personas`),
@@ -499,6 +500,10 @@
       permissions: (body) => POST(`${API_PREFIX}/permissions`, body),
       pendingWrite: (body) => POST(`${API_PREFIX}/permissions/pending-write`, body),
       clearQuestions: (body) => POST(`${API_PREFIX}/questions/clear`, body || {}),
+      // 侧栏 inline-edit(运行时状态镜像 + 用户直接修改)
+      relationshipSet: (body) => POST(`${API_PREFIX}/relationships/set`, body),
+      relationshipDelete: (body) => POST(`${API_PREFIX}/relationships/delete`, body),
+      worldSet: (body) => POST(`${API_PREFIX}/world/set`, body),
     },
 
     // ---------- Worldline ----------

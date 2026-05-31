@@ -990,9 +990,10 @@ const ME_ACHIEVEMENTS = [
 ];
 
 function MePage({ subPage = "overview" }) {
+  // 顶部 概览/编辑资料/用户设置 子导航已移除 —— 与侧栏「设置 & 账户」的
+  // 个人主页 / 编辑资料 / 隐私与安全 完全重复,统一交给侧栏。
   return (
     <CSSpaceBetween size="l">
-      <MeSubNav active={subPage} />
       {subPage === "overview" && <MeOverview />}
       {subPage === "edit" && <MeEditProfile />}
       {subPage === "settings" && <MeUserSettings />}
@@ -1000,26 +1001,6 @@ function MePage({ subPage = "overview" }) {
   );
 }
 
-function MeSubNav({ active }) {
-  const tabs = [
-    { id: "overview", label: "概览",     hash: "#me" },
-    { id: "edit",     label: "编辑资料", hash: "#me-edit" },
-    { id: "settings", label: "用户设置", hash: "#me-settings" },
-  ];
-  return (
-    <CSSpaceBetween direction="horizontal" size="xs">
-      {tabs.map(t => (
-        <CSButton
-          key={t.id}
-          variant={active === t.id ? "primary" : "normal"}
-          href={t.hash}
-        >
-          {t.label}
-        </CSButton>
-      ))}
-    </CSSpaceBetween>
-  );
-}
 
 function MeOverview() {
   const { stats: platStats = {}, saves = [] } = usePlatformData();  // task 45：响应式 platform
@@ -1029,8 +1010,19 @@ function MeOverview() {
   // 进行了第 312 回合』『破雾之刻』『千言不渝』等）。后端暂无活动/成就接口，改成空态文案。
   // 匿名访客可见 mock 用作 designer offline preview。
   const IS_ANON = !(window.RPG_AUTH && window.RPG_AUTH.authed);
-  const ACTIVITY = IS_ANON ? ME_ACTIVITY : [];
-  const ACHIEVEMENTS = IS_ANON ? ME_ACHIEVEMENTS : [];
+  // 最近活动:登录态拉真实 /api/me/activity(回合/分支/剧本),匿名用 mock 作 designer preview
+  const [meActivity, setMeActivity] = useStatePL(null);
+  useEffectPL(() => {
+    if (IS_ANON) return;
+    let cancelled = false;
+    (async () => {
+      try { const r = await window.api.account.activity(); if (!cancelled) setMeActivity((r && r.activity) || []); }
+      catch (_) { if (!cancelled) setMeActivity([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [IS_ANON, saves.length]);
+  const ACTIVITY = IS_ANON ? ME_ACTIVITY : (meActivity || []);
+  // 成就在 meStats 拉到后派生(见下方 ACHIEVEMENTS)
   // task 49：之前 totalRounds = saves.reduce(* 7)、playHours = totalRounds*1.2/60 等
   // 全是凭空乘的伪派生；现在拉真后端 /api/me/stats。后端没真数据的字段（playMinutes）
   // 显式为 null，UI 显示 "—"。
@@ -1047,7 +1039,6 @@ function MeOverview() {
     return () => { cancelled = true; };
   }, [IS_ANON, saves.length]);
   const filteredActivity = filter === "all" ? ACTIVITY : ACTIVITY.filter(a => a.tag === filter);
-  const unlockedCount = ACHIEVEMENTS.filter(a => a.unlocked).length;
   const fmtCN = (n) => {
     if (n == null) return "—";
     if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, "") + " 万";
@@ -1081,6 +1072,36 @@ function MeOverview() {
   const playMinutesWeek = meStats?.play_minutes_week;
   const playHoursLabel = (playMinutesTotal == null) ? "—" : (playMinutesTotal / 60).toFixed(1);
 
+  // 成就:从真实统计派生(里程碑式,带进度条)。匿名态用 mock 预览。
+  // 每条由 /api/me/stats 的真实数字驱动,达标即解锁,未达标显示进度。
+  const ACHIEVEMENTS = IS_ANON ? ME_ACHIEVEMENTS : (() => {
+    const v = {
+      saves: saves.length || meStats?.saves_count || 0,
+      rounds: totalRounds || 0,
+      branches: branchesCount || 0,
+      depth: maxDepth || 0,
+      scripts: importedScripts || 0,
+      words: importedWords || 0,
+      streak: loginStreak || 0,
+    };
+    const mk = (id, name, desc, value, target) => ({
+      id, name, desc, target,
+      progress: Math.min(value, target),
+      unlocked: value >= target,
+    });
+    return [
+      mk("first_save", "初次启程", "创建第一个存档", v.saves, 1),
+      mk("turns_100", "破雾之刻", "累计推进 100 回合", v.rounds, 100),
+      mk("turns_1k", "千回百转", "累计推进 1,000 回合", v.rounds, 1000),
+      mk("branch_5", "命运分叉", "开辟 5 条故事分支", v.branches, 5),
+      mk("depth_10", "平行世界", "分支树最深达 10 层", v.depth, 10),
+      mk("scripts_3", "藏书初成", "导入 3 部剧本", v.scripts, 3),
+      mk("words_1m", "字海泛舟", "导入累计满 100 万字", v.words, 1000000),
+      mk("streak_7", "笔耕不辍", "连续登录 7 天", v.streak, 7),
+    ];
+  })();
+  const unlockedCount = ACHIEVEMENTS.filter(a => a.unlocked).length;
+
   return (
     <CSSpaceBetween size="l">
       {/* Hero section */}
@@ -1103,10 +1124,6 @@ function MeOverview() {
                 <CSBox>{user.bio || "暂无简介。"}</CSBox>
               </CSSpaceBetween>
             </div>
-            <CSSpaceBetween direction="horizontal" size="xs">
-              <CSButton href="#me-edit" iconName="edit">编辑资料</CSButton>
-              <CSButton href="#me-settings" iconName="settings">用户设置</CSButton>
-            </CSSpaceBetween>
           </CSSpaceBetween>
         </CSSpaceBetween>
       </CSContainer>
@@ -1161,7 +1178,7 @@ function MeOverview() {
                   <strong>{a.name}</strong>
                   <span className="pl-achv-desc muted">{a.desc}</span>
                   {a.unlocked ? (
-                    <span className="muted-2 mono" style={{fontSize: 10.5}}>解锁于 {a.at}</span>
+                    <span className="muted-2 mono" style={{fontSize: 10.5}}>{a.at ? `解锁于 ${a.at}` : "✓ 已达成"}</span>
                   ) : (
                     <div className="pl-achv-progress">
                       <div className="pl-achv-bar"><div className="pl-achv-fill" style={{width: (a.progress / a.target * 100).toFixed(0) + "%"}} /></div>
@@ -1195,19 +1212,21 @@ function MeOverview() {
               </div>
               <div className="pl-activity-body">
                 <div className="pl-activity-text">{a.text}</div>
+                {a.sub ? <div className="pl-activity-sub muted-2" style={{fontSize: 12, marginTop: 2}}>{a.sub}</div> : null}
                 <div className="pl-activity-meta">
                   <span className="pill" style={{fontSize: 10.5}}>{a.tag}</span>
-                  <span className="muted-2 mono" style={{fontSize: 11}}>{a.ts}</span>
+                  <span className="muted-2 mono" style={{fontSize: 11}}>{/^\d{4}-\d{2}-\d{2}T/.test(a.ts || "") ? fmtAgo(a.ts) : a.ts}</span>
                 </div>
               </div>
             </li>
           ))}
-          {/* task 48：登录态此列表为空，后端无活动接口 → 给明确空态文案 */}
           {filteredActivity.length === 0 && (
             <CSBox color="text-body-secondary" textAlign="center" padding="l">
-              {ACTIVITY.length === 0
-                ? "活动日志接口未上线，登录玩游戏后这里会显示真实回合/分支/导入记录。"
-                : "未找到此分类的活动"}
+              {meActivity === null && !IS_ANON
+                ? "正在加载活动…"
+                : (ACTIVITY.length === 0
+                    ? "暂无活动。开始游戏、开辟分支或导入剧本后,这里会显示真实记录。"
+                    : "未找到此分类的活动")}
             </CSBox>
           )}
         </ol>
