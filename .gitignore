@@ -175,3 +175,25 @@ rpg/docs/api_contract_drift.md
 # ──────────────────────────────────────────────────────────────────
 rpg/config/novel_glossary.json
 rpg/config/*.private.json
+
+# ──────────────────────────────────────────────────────────────────
+#  开源 repo 不含的本地工作文档 (恢复自 274b45cb6 删除 commit,本地保留)
+# ──────────────────────────────────────────────────────────────────
+/AUDIT_CHECKLIST.md
+/ARCH_107_DUAL_TIMELINE_DESIGN.md
+/CHANGELOG.md
+/CONTRIBUTING.md
+/deploy/README.md
+/deploy/bare-metal/README.md
+/deploy/test-server/README.md
+/docs/KB_ARCHITECTURE_PLAN.md
+/docs/MIGRATION_AUDIT.md
+/docs/NEXT_PHASE_PLAN.md
+/docs/design/
+/docs/runbooks/
+/frontend/TYPESCRIPT.md
+/frontend/src/types/README.md
+/rpg/BACKEND_API_CONTRACT.md
+/rpg/CLAUDE_CODE_AUDIT_REPORT.md
+/rpg/README.md
+/rpg/docs/README.md
