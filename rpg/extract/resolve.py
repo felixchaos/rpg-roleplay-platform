@@ -241,6 +241,13 @@ def build_constant_worldbook(db, script_id: int, book_id: int, seed) -> int:
 
     book_id 必填(worldbook 按 book 归属)。constant 条目每轮无条件常驻注入(治 1935)。
     """
+    # 清旧:此 script 之前任何路径(_stage_worldbook 等)写入的非 extracted 条目作废,
+    # 防新旧两套常驻骨架同时喂 GM 造成自相矛盾(如旧"哥本哈根 2927"和新纪元打架)。
+    db.execute(
+        "delete from worldbook_entries where script_id=%s "
+        "and (metadata->>'source' is null or metadata->>'source' <> 'extracted')",
+        (script_id,),
+    )
     entries = []
     if getattr(seed, "era", ""):
         entries.append(("纪元", f"本作纪元固定为「{seed.era}」。所有时间表述以此为准,绝不套用现实世界年代。"))

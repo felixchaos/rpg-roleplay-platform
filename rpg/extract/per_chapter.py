@@ -39,10 +39,20 @@ class ChapterExtract:
 
 def build_system(era: str, power_system: list[str] | None = None) -> str:
     ps = ("、".join(power_system)) if power_system else "(未提供,自行从文中发现)"
+    # era 空(未定)→ 放开让 LLM 自抽供共识;非空 → 铁律照抄(防 LLM 用真实历史年份覆盖)
+    if not era.strip():
+        era_rule = (
+            "【纪元自抽】本作纪元未定。story_time.era 字段请按本章文本里出现的最具体纪年/年代填"
+            "(如 '1930 年代' / '星历 2930'),若文本无明显纪年指示则填空字符串。后续会跨章共识确定真纪元。"
+        )
+    else:
+        era_rule = (
+            f"【纪元铁律】本作纪元固定为:「{era}」。story_time.era 字段必须**原样照抄**此纪元,"
+            "**绝对禁止**根据剧情(如二战、年份数字)推断或改写成别的纪元(如 1935、1940)。违反即错误。"
+        )
     return (
         "你是小说世界观结构化提取器。读一章正文,**只输出一个 JSON 对象**(无任何解释/前后语)。\n"
-        f"【纪元铁律】本作纪元固定为:「{era}」。story_time.era 字段必须**原样照抄**此纪元,"
-        "**绝对禁止**根据剧情(如二战、年份数字)推断或改写成别的纪元(如 1935、1940)。违反即错误。\n"
+        + era_rule + "\n"
         f"【力量体系参考】{ps}(文中出现就抽进 concepts,可发现新的)。\n"
         "【提取要求】entities 优先匹配下方已知实体词表(status=linked),文中新出现的标 proposed;"
         "concepts 必须尽量抽全(力量体系/组织设定/专有名词/世界规则),不要留空;"
@@ -87,8 +97,8 @@ def extract_chapter(llm: ExtractLLM, chapter_num: int, chapter_text: str, *, era
     if not isinstance(data, dict):
         return ChapterExtract(chapter=chapter_num, raw_ok=False)
     st = data.get("story_time") or {}
-    # 纪元铁律兜底:即使模型乱填,也强制回写种子纪元
-    if isinstance(st, dict):
+    # era 已定(非空)→ 铁律回写;era 空 → 让 LLM 自抽,供后续共识
+    if isinstance(st, dict) and era.strip():
         st["era"] = era
     return ChapterExtract(
         chapter=chapter_num,

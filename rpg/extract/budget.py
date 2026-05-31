@@ -10,6 +10,8 @@ from __future__ import annotations
 MODEL_PRICING: dict[str, dict] = {
     "gemini-3.5-flash": {"in": 0.10, "out": 0.40, "tier": "flash"},
     "gemini-2.5-flash": {"in": 0.075, "out": 0.30, "tier": "flash"},
+    "deepseek-v4-flash": {"in": 0.10, "out": 0.40, "tier": "flash"},  # 官方 V4 flash
+    "deepseek-v4-pro":   {"in": 0.30, "out": 1.20, "tier": "flash"},  # 官方 V4 pro
     "claude-haiku-4-5": {"in": 0.80, "out": 4.00, "tier": "haiku"},
     # 仅作对比警示——不建议全程用:
     "claude-sonnet-4-6": {"in": 3.00, "out": 15.00, "tier": "frontier"},

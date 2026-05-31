@@ -30,6 +30,7 @@ def run_extraction(
     chapter_min: int | None = None,
     chapter_max: int | None = None,
     seed_sample: int = 12,
+    concurrency: int = 10,
     progress_cb: Callable[[str, dict], None] | None = None,
 ) -> dict[str, Any]:
     """端到端提取。chapters 从 script_chapters 读(exclude_from_extraction=false)。
@@ -79,24 +80,53 @@ def run_extraction(
     seed = build_seed(llm, chapters, author_era=author_era,
                       author_power_system=author_power_system,
                       author_worldlines=author_worldlines, sample=min(seed_sample, len(chapters)))
-    era = seed.era or author_era or "未知纪元"
+    era = (seed.era or author_era or "").strip()  # 空字符串=未定
 
-    # Pass 1:逐章提取(滚动梗概给时序连续)
-    _emit("per_chapter", {"total": len(chapters)})
-    extracts = []
-    prev_summary = ""
-    for i, ch in enumerate(chapters):
-        ex = extract_chapter(
-            llm, ch["chapter_index"], ch.get("content") or "", era=era,
-            power_system=seed.power_system, known_entities=seed.entity_vocab,
-            prev_summary=prev_summary, title_descriptor=ch.get("content_descriptor") or "",
-        )
-        extracts.append(ex)
-        # 滚动梗概 = 本章首个事件
-        if ex.events:
-            prev_summary = ex.events[0].get("summary", "")
-        if progress_cb and (i + 1) % 20 == 0:
-            _emit("per_chapter", {"done": i + 1, "total": len(chapters)})
+    # Pass 1:逐章提取(高并发,放弃滚动 prev_summary 时序 hint 换吞吐)
+    # 1166 章串行 ~6h;concurrency=50 → ~5min。瓶颈是 LLM RTT(~18s/章)+API 限流。
+    _emit("per_chapter", {"total": len(chapters), "concurrency": concurrency})
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    extracts_dict: dict[int, Any] = {}
+    done_count = [0]
+    done_lock = threading.Lock()
+
+    def _one(idx: int, ch: dict):
+        # 用空 prev_summary(并发下章序不保证) + 单章 5 次重试容 429/网络抖
+        for attempt in range(5):
+            try:
+                ex = extract_chapter(
+                    llm, ch["chapter_index"], ch.get("content") or "", era=era,
+                    power_system=seed.power_system, known_entities=seed.entity_vocab,
+                    prev_summary="", title_descriptor=ch.get("content_descriptor") or "",
+                )
+                return idx, ex
+            except Exception as exc:
+                if attempt == 4:
+                    return idx, None
+                # 指数退避(0.5s, 1s, 2s, 4s) — 让 429 缓解
+                import time as _t
+                _t.sleep(0.5 * (2 ** attempt))
+        return idx, None
+
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = [pool.submit(_one, i, ch) for i, ch in enumerate(chapters)]
+        for f in as_completed(futures):
+            try:
+                idx, ex = f.result()
+                if ex is not None:
+                    extracts_dict[idx] = ex
+            except Exception:
+                pass
+            with done_lock:
+                done_count[0] += 1
+                if progress_cb and done_count[0] % 20 == 0:
+                    _emit("per_chapter", {"done": done_count[0], "total": len(chapters)})
+
+    # 按原始章节顺序还原
+    extracts = [extracts_dict[i] for i in range(len(chapters)) if i in extracts_dict]
+    _emit("per_chapter", {"done": done_count[0], "total": len(chapters),
+                          "succeeded": len(extracts), "failed": len(chapters) - len(extracts)})
 
     # Pass 2:消歧聚合 → 规范层(短连接,写完即释放)
     _emit("resolve", {"extracts": len(extracts)})

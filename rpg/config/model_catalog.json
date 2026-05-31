@@ -100,6 +100,42 @@
       ]
     },
     {
+      "id": "deepseek",
+      "display_name": "DeepSeek (official)",
+      "kind": "openai_compat",
+      "enabled": true,
+      "credential_ref": "",
+      "credential_env": "DEEPSEEK_API_KEY",
+      "base_url": "https://api.deepseek.com/v1",
+      "models": [
+        {
+          "id": "deepseek-v4-flash",
+          "real_name": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "tools",
+            "json_mode"
+          ]
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "real_name": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "tools",
+            "json_mode",
+            "reasoning"
+          ]
+        }
+      ]
+    },
+    {
       "id": "doubao",
       "display_name": "Doubao",
       "kind": "openai_compat",
