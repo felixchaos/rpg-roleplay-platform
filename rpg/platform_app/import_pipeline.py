@@ -770,8 +770,7 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
     era_lock = ""
     with connect() as db:
         era_row = db.execute(
-            "select content from worldbook_entries "
-            "where script_id=%s and title='纪元' and metadata->>'source'='extracted' limit 1",
+            "select content from worldbook_entries where script_id=%s and title='纪元' limit 1",
             (script_id,),
         ).fetchone()
         if era_row and era_row.get("content"):

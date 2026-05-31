@@ -252,12 +252,14 @@ def build_constant_worldbook(db, script_id: int, book_id: int, seed) -> int:
     for title, content in entries:
         db.execute(
             """
-            insert into worldbook_entries(book_id, script_id, title, content, keys, priority, insertion_position, enabled)
-            values (%s, %s, %s, %s, %s, %s, 'constant', true)
+            insert into worldbook_entries(book_id, script_id, title, content, keys, priority, insertion_position, enabled, metadata)
+            values (%s, %s, %s, %s, %s, %s, 'constant', true, %s)
             on conflict(script_id, title) do update set
-              content=excluded.content, insertion_position='constant', updated_at=now()
+              content=excluded.content, insertion_position='constant',
+              metadata=excluded.metadata, updated_at=now()
             """,
-            (book_id, script_id, title, content, Jsonb([]), 100),
+            (book_id, script_id, title, content, Jsonb([]), 100,
+             Jsonb({"source": "extracted"})),
         )
         written += 1
     return written
