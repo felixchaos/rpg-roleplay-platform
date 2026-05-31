@@ -12,6 +12,7 @@ import '../state-event-bridge.js';
 import '../worldbook-status-toast.js';
 import '../ui-atlas.js';
 import '../console-assistant-navigation.jsx';
+import '../i18n/index.js';   // 初始化 i18next + 接 interfaceLang
 
 // Cloudscape 设计系统 + 暖色主题(UI 底座)
 import '@cloudscape-design/global-styles/index.css';

@@ -27,6 +27,7 @@ import {
 } from './pages/admin.jsx';
 import PolicyNoticeBanner from './components/PolicyNoticeBanner.jsx';
 import { FeedbackDrawer } from './components/FeedbackDrawer.jsx';
+import HelpDrawerRoot from './components/HelpDrawer.jsx';
 // Cloudscape shell(AWS 控制台架构 + 暖色主题)
 import CSTopNavigation from '@cloudscape-design/components/top-navigation';
 import CSAppLayout from '@cloudscape-design/components/app-layout';
@@ -505,6 +506,19 @@ function UnifiedSearch({ open, onClose, setPage }) {
     if (open) { setQ(""); setActiveIdx(0); setTimeout(() => inputRef.current?.focus(), 30); }
   }, [open]);
 
+  // Fix 2: 接后端 /api/search — 300ms debounce,401 时静默兜底空数组
+  const [apiResults, setApiResults] = useStatePL({ groups: [] });
+  useEffectPL(() => {
+    if (!q || q.length < 1) { setApiResults({ groups: [] }); return; }
+    const t = setTimeout(() => {
+      fetch(`/api/search?q=${encodeURIComponent(q)}&scope=all`, { credentials: 'include' })
+        .then(r => r.ok ? r.json() : { groups: [] })
+        .then(data => setApiResults(data && Array.isArray(data.groups) ? data : { groups: [] }))
+        .catch(() => setApiResults({ groups: [] }));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
   const platform = usePlatformData();  // task 45
 
   const pages = [
@@ -565,20 +579,27 @@ function UnifiedSearch({ open, onClose, setPage }) {
     hash: "saves",
   }));
 
-  // task 48：原硬编码 3 个角色 + 3 条世界书。改为：登录态空（暂无跨剧本搜索接口），
-  // 匿名态保留示例（designer offline）。如果未来 backend 上线全文搜索，可改成 GET /api/search?q=
-  const IS_ANON_SEARCH = !(window.RPG_AUTH && window.RPG_AUTH.authed);
-  const characters = IS_ANON_SEARCH ? [
-    { id: "c1", label: "沈知微", sub: "雾港·医师 · 信任", kind: "character", icon: "cards", keywords: "shen zhiwei" },
-    { id: "c2", label: "韩司直", sub: "南陵·巡检 · 戒备", kind: "character", icon: "cards", keywords: "han sizhi" },
-    { id: "c3", label: "阿衡",   sub: "灯塔守人之女 · 亲近", kind: "character", icon: "cards", keywords: "aheng" },
-  ] : [];
-
-  const worldbook = IS_ANON_SEARCH ? [
-    { id: "wb1", label: "雾港事件",          sub: "光绪十三年沉船 142 人", kind: "world", icon: "world", keywords: "fog port event" },
-    { id: "wb2", label: "残页·光绪十三年",   sub: "可推断时间 · 剩 1 次", kind: "world", icon: "quote", keywords: "fragment guangxu" },
-    { id: "wb3", label: "黑铁怀表",          sub: "停在三时四十二分", kind: "world", icon: "history", keywords: "iron watch" },
-  ] : [];
+  // Fix 2: 用户数据从 /api/search 后端取,此处不再硬编码角色卡/世界书/记忆静态数据
+  const _apiKindMeta = {
+    scripts:   { kind: "script",    icon: "book",    hash: "scripts" },
+    saves:     { kind: "save",      icon: "play",    hash: "saves" },
+    cards:     { kind: "character", icon: "cards",   hash: "cards" },
+    npc_cards: { kind: "character", icon: "cards",   hash: "cards-npc" },
+    worldbook: { kind: "world",     icon: "world",   hash: "scripts" },
+    memories:  { kind: "memory",    icon: "pin",     hash: "settings" },
+  };
+  const apiItems = (apiResults.groups || []).flatMap(g => {
+    const meta = _apiKindMeta[g.kind] || { kind: g.kind, icon: "file", hash: "profile" };
+    return (g.items || []).map((item, i) => ({
+      id: `api-${g.kind}-${item.id ?? i}`,
+      label: item.label || item.name || String(item.id),
+      sub: item.sub || undefined,
+      kind: meta.kind,
+      icon: meta.icon,
+      hash: meta.hash,
+      keywords: "",
+    }));
+  });
 
   const models = [];
   MODELS_DATA.forEach(api => {
@@ -599,24 +620,9 @@ function UnifiedSearch({ open, onClose, setPage }) {
     hash: "settings",
   }));
 
-  // task 48：固定记忆从真 state.memory.pinned 派生（暂无全局搜索接口）
-  const memories = (() => {
-    const pinned = (platform && platform.state && Array.isArray(platform.state.memory?.pinned)) ? platform.state.memory.pinned : [];
-    return pinned.slice(0, 8).map((m, i) => {
-      const text = typeof m === "string" ? m : (m?.text || JSON.stringify(m));
-      return { id: `mem-${i}`, label: text.slice(0, 60), kind: "memory", icon: "pin", sub: "固定记忆" };
-    });
-  })();
-
-  // task 48：library 改读真 platform.recent_assets；匿名才回退示例
+  // task 48: library 读真 platform.recent_assets(未纳入 /api/search,保留本地派生)
   const lib = (() => {
     const recent = (platform && Array.isArray(platform.recent_assets)) ? platform.recent_assets : [];
-    if (recent.length === 0 && IS_ANON_SEARCH) {
-      return [
-        { id: "f1", label: "雾港全景.png",      sub: "2.3 MB · 今天", kind: "library", icon: "image", hash: "library" },
-        { id: "f2", label: "光绪十三年残页扫描.zip", sub: "17.5 MB · 昨天", kind: "library", icon: "folder", hash: "library" },
-      ];
-    }
     return recent.slice(0, 8).map((f, i) => ({
       id: `f-${f.id || i}`, label: f.name || f.path,
       sub: `${window.__fmt?.bytes ? window.__fmt.bytes(f.size || 0) : (f.size || 0) + " B"} · ${window.__fmt?.ago ? window.__fmt.ago(f.updated_at) : ""}`,
@@ -624,10 +630,10 @@ function UnifiedSearch({ open, onClose, setPage }) {
     }));
   })();
 
+  // Fix 2: allItems = 静态导航(pages + settings + models + apis) + 后端搜索结果(apiItems) + library
   const allItems = [
-    ...pages, ...settingsItems, ...scripts, ...saves,
-    ...characters, ...worldbook, ...models.slice(0, 8), ...apis,
-    ...memories, ...lib,
+    ...pages, ...settingsItems, ...models.slice(0, 8), ...apis,
+    ...apiItems, ...lib,
   ];
 
   const lower = q.toLowerCase();
@@ -3877,21 +3883,41 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
     return () => { delete window.__openContinue; };
   }, [platform.saves]);
 
+  // 页面 → 帮助 slug 映射(slug 对应 frontend/help/__index.json 中的键)
+  const PAGE_HELP_SLUG = {
+    scripts: 'scripts', 'scripts-import': 'scripts',
+    cards: 'cards', 'cards-npc': 'cards',
+    saves: 'saves', 'saves-branches': 'saves',
+    settings: 'settings-models',
+    'settings-models': 'settings-models',
+    'settings-modelparams': 'settings-modelparams',
+    'settings-modules': 'settings-modules',
+    'settings-memory': 'settings-memory',
+    'admin-users': 'admin',
+    profile: 'intro',
+    me: 'intro',
+  };
+  const helpSlugForPage = PAGE_HELP_SLUG[page] || null;
+
   const onUserMenu = ({ detail }) => {
     const id = detail.id;
     if (id === 'signout') {
       (async () => { try { await window.api?.auth?.logout?.(); } catch (_) {} location.replace('Login.html'); })();
     } else if (id === 'feedback') {
       setFeedbackOpen(true);
+    } else if (id === 'help') {
+      if (window.__openHelp) window.__openHelp(helpSlugForPage || 'intro');
     } else { setPage(id); location.hash = '#' + id; }
   };
 
   // 独立页(无侧栏):欢迎页就是登陆后的工作台首页,不归任何模块,整页铺满
   const standalone = page === 'profile';
+
   return (
     <>
       <PolicyNoticeBanner />
       <FeedbackDrawer open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+      <HelpDrawerRoot />
       <div id="pl-cs-topnav" className="pl-cs-topbar"
         style={{ position: 'sticky', top: 0, zIndex: 1002, display: 'flex', alignItems: 'center', background: '#131211' }}>
         {/* 左:折叠按钮 + logo + 全部功能(AWS 把服务菜单放左侧) */}
@@ -3938,6 +3964,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
             utilities={[
               { type: 'button', iconName: 'search', title: '搜索 (⌘K)', ariaLabel: '搜索', disableUtilityCollapse: true, onClick: () => setSearchOpen(true) },
               { type: 'button', iconName: 'settings', title: '设置', ariaLabel: '设置', disableUtilityCollapse: true, onClick: () => { setPage('settings'); location.hash = '#settings'; } },
+              { type: 'button', iconName: 'status-info', title: helpSlugForPage ? `当前页帮助 (${helpSlugForPage})` : '帮助', ariaLabel: '帮助', disableUtilityCollapse: true, onClick: () => { if (window.__openHelp) window.__openHelp(helpSlugForPage || 'intro'); } },
               { type: 'button', iconName: 'refresh', title: '刷新', ariaLabel: '刷新平台数据', disableUtilityCollapse: true, onClick: _csRefresh },
               {
                 type: 'menu-dropdown',
@@ -3949,6 +3976,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
                   { id: 'me-edit', text: '编辑资料' },
                   { id: 'me-settings', text: '用户设置' },
                   { id: 'feedback', text: '提交反馈' },
+                  { id: 'help', text: '帮助文档' },
                   { id: 'signout', text: '登出' },
                 ],
                 onItemClick: onUserMenu,

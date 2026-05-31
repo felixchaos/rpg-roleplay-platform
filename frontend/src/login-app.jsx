@@ -14,6 +14,7 @@
 
 import React from 'react';
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 
 const __DEFAULT_NEXT = 'Platform.html';
 
@@ -31,6 +32,7 @@ function __resolveNextOrDefault() {
 ///   { key, label, type, required, autocomplete, placeholder, min_length, max_length }
 /// 当 type === 'boolean' 时渲染为 checkbox。
 function SchemaField({ field, value, onChange }) {
+  const { t } = useTranslation();
   if (field.type === 'boolean') {
     // 为 terms_accepted 字段注入带链接的 label;其余 boolean 字段用纯文本
     // 法律文档正本托管在 landing 站(play.stellatrix.icu/legal/),软件内不复制以避免双权威。
@@ -39,18 +41,18 @@ function SchemaField({ field, value, onChange }) {
     const _legalLang = (typeof navigator !== 'undefined' && /^en/i.test(navigator.language || '')) ? 'en' : 'zh-CN';
     const labelNode = field.key === 'terms_accepted' ? (
       <span>
-        我已阅读并同意{' '}
+        {t('auth.terms_agree')}{' '}
         <a href={`${_legalBase}/terms-of-service.${_legalLang}.html`} target="_blank" rel="noopener noreferrer"
-           style={{color: 'var(--accent)'}}>《服务条款》</a>
+           style={{color: 'var(--accent)'}}>{t('auth.terms_of_service')}</a>
         {'、'}
         <a href={`${_legalBase}/privacy-policy.${_legalLang}.html`} target="_blank" rel="noopener noreferrer"
-           style={{color: 'var(--accent)'}}>《隐私政策》</a>
+           style={{color: 'var(--accent)'}}>{t('auth.privacy_policy')}</a>
         {'、'}
         <a href={`${_legalBase}/acceptable-use-policy.${_legalLang}.html`} target="_blank" rel="noopener noreferrer"
-           style={{color: 'var(--accent)'}}>《可接受使用政策》</a>
-        {' 及 '}
+           style={{color: 'var(--accent)'}}>{t('auth.acceptable_use')}</a>
+        {' '}{t('auth.terms_and')}{' '}
         <a href={`${_legalBase}/adult-content-disclaimer.${_legalLang}.html`} target="_blank" rel="noopener noreferrer"
-           style={{color: 'var(--accent)'}}>《成人内容声明》</a>
+           style={{color: 'var(--accent)'}}>{t('auth.adult_disclaimer')}</a>
         {field.required && <span className="pl-field-req">*</span>}
       </span>
     ) : (
@@ -92,6 +94,7 @@ function SchemaField({ field, value, onChange }) {
 }
 
 function LoginApp() {
+  const { t } = useTranslation();
   const [mode, setMode] = useState('login');     // 'login' | 'register' | 'verify'
   const [schema, setSchema] = useState(null);    // { login: [...], register: [...], notes: {...} }
   const [schemaErr, setSchemaErr] = useState('');
@@ -129,7 +132,7 @@ function LoginApp() {
         const j = await r.json();
         if (!cancelled) setSchema(j);
       } catch (e) {
-        if (!cancelled) setSchemaErr(e?.message || '无法加载表单定义');
+        if (!cancelled) setSchemaErr(e?.message || t('auth.schema_fail'));
       }
     })();
     return () => { cancelled = true; };
@@ -141,10 +144,13 @@ function LoginApp() {
 
   const setField = (k, v) => setValues((prev) => ({ ...prev, [k]: v }));
 
-  // 后端 error_key → 友好文案映射
+  // 后端 error_key → 友好文案映射(后端 400 时查 'auth.*' key)
+  // 前端 field key → 同样文案(前端预校验 boolean 字段时查 'terms_accepted' / 'age_confirmed')
   const CONSENT_ERRORS = {
-    'auth.terms_not_accepted': '请阅读并同意《服务条款》和《隐私政策》',
-    'auth.age_not_confirmed': '请确认你已年满 18 周岁',
+    'auth.terms_not_accepted': t('auth.terms_not_accepted'),
+    'auth.age_not_confirmed': t('auth.age_not_confirmed'),
+    'terms_accepted': t('auth.terms_not_accepted'),
+    'age_confirmed': t('auth.age_not_confirmed'),
   };
 
   // 倒计时 effect
@@ -168,13 +174,13 @@ function LoginApp() {
       });
       const j = await r.json();
       if (j.ok) {
-        setNotice('验证码已重发，请查收邮件');
+        setNotice(t('auth.verify.resend_ok'));
         setResendCooldown(60);
       } else {
-        setErr(j.error || '重发失败');
+        setErr(j.error || t('auth.verify.resend_fail'));
       }
     } catch (e) {
-      setErr(e?.message || '重发失败');
+      setErr(e?.message || t('auth.verify.resend_fail'));
     } finally {
       setBusy(false);
     }
@@ -185,7 +191,7 @@ function LoginApp() {
     if (busy) return;
     const code = verifyCode.trim();
     if (code.length !== 6 || !/^\d{6}$/.test(code)) {
-      setErr('请输入 6 位数字验证码');
+      setErr(t('auth.verify.code_invalid'));
       return;
     }
     setBusy(true);
@@ -200,13 +206,13 @@ function LoginApp() {
       });
       const j = await r.json();
       if (j.ok) {
-        setNotice('验证成功，正在进入…');
+        setNotice(t('auth.verify.verify_ok'));
         setTimeout(() => location.replace(__resolveNextOrDefault()), 300);
       } else {
-        setErr(j.error || '验证失败');
+        setErr(j.error || t('auth.verify.verify_fail'));
       }
     } catch (e) {
-      setErr(e?.message || '请求失败');
+      setErr(e?.message || t('auth.request_fail'));
     } finally {
       setBusy(false);
     }
@@ -222,7 +228,7 @@ function LoginApp() {
       if (f.type === 'boolean') {
         // checkbox: 必填时要求勾选
         if (f.required && !values[f.key]) {
-          const friendly = CONSENT_ERRORS[f.key] || `请勾选"${f.label}"`;
+          const friendly = CONSENT_ERRORS[f.key] || t('auth.checkbox_fallback', { label: f.label });
           setErr(friendly);
           return;
         }
@@ -230,11 +236,11 @@ function LoginApp() {
       }
       const v = (values[f.key] || '').trim();
       if (f.required && !v) {
-        setErr(`请填写${f.label}`);
+        setErr(t('auth.field_required', { label: f.label }));
         return;
       }
       if (f.min_length && v.length > 0 && v.length < f.min_length) {
-        setErr(`${f.label}至少 ${f.min_length} 位`);
+        setErr(t('auth.field_min_length', { label: f.label, min: f.min_length }));
         return;
       }
     }
@@ -264,17 +270,17 @@ function LoginApp() {
           body: JSON.stringify(body),
         });
         const j = await r.json();
-        if (!j.ok) throw new Error(j.error || '注册失败');
+        if (!j.ok) throw new Error(j.error || t('auth.register_fail'));
         // 两步流程：进入验证码步骤
         setPendingEmail(j.email_mask || body.email || '');
         setPendingEmailRaw(body.email || '');
         setVerifyCode('');
         setResendCooldown(60);
         setMode('verify');
-        setNotice(`验证码已发送到 ${j.email_mask}，请在 10 分钟内完成验证`);
+        setNotice(t('auth.verify.sent_notice', { mask: j.email_mask }));
       } else {
         await window.api.auth.login(body);
-        setNotice('登录成功');
+        setNotice(t('auth.login_ok'));
         setTimeout(() => location.replace(__resolveNextOrDefault()), 200);
       }
     } catch (e) {
@@ -283,7 +289,7 @@ function LoginApp() {
       if (errKey && CONSENT_ERRORS[errKey]) {
         setErr(CONSENT_ERRORS[errKey]);
       } else {
-        setErr(e?.message || '请求失败');
+        setErr(e?.message || t('auth.request_fail'));
       }
     } finally {
       setBusy(false);
@@ -304,7 +310,7 @@ function LoginApp() {
           </div>
           <div>
             <h1>RPG Roleplay</h1>
-            <div className="pl-auth-sub">长篇小说拆书 · RPG 续写 · 多用户创作平台</div>
+            <div className="pl-auth-sub">{t('auth.subtitle')}</div>
           </div>
         </div>
 
@@ -313,13 +319,13 @@ function LoginApp() {
             <button type="button" role="tab"
                     className={mode === 'login' ? 'active' : ''}
                     aria-selected={mode === 'login'}
-                    onClick={() => { setMode('login'); setErr(''); setNotice(''); }}>登录</button>
+                    onClick={() => { setMode('login'); setErr(''); setNotice(''); }}>{t('auth.login_tab')}</button>
             <button type="button" role="tab"
                     className={mode === 'register' ? 'active' : ''}
                     aria-selected={mode === 'register'}
                     onClick={() => { setMode('register'); setErr(''); setNotice(''); }}
                     disabled={inviteOnly}
-                    data-tip={inviteOnly ? '当前部署为邀请制,注册关闭' : undefined}>注册</button>
+                    data-tip={inviteOnly ? t('auth.invite_only_tip') : undefined}>{t('auth.register_tab')}</button>
           </div>
         )}
 
@@ -327,10 +333,10 @@ function LoginApp() {
         {mode === 'verify' && (
           <form className="pl-auth-form" onSubmit={handleVerify}>
             <div style={{fontSize: 13, color: 'var(--muted)', marginBottom: 8}}>
-              验证码已发送至 <strong>{pendingEmail}</strong>，10 分钟内有效。
+              {t('auth.verify.sent_to')} <strong>{pendingEmail}</strong>{t('auth.verify.expires')}
             </div>
             <div className="pl-field">
-              <label htmlFor="verify_code">验证码</label>
+              <label htmlFor="verify_code">{t('auth.verify.code_label')}</label>
               <input
                 id="verify_code"
                 type="text"
@@ -356,18 +362,18 @@ function LoginApp() {
             )}
             <button type="submit" className="btn primary" disabled={busy || verifyCode.length !== 6}
                     style={{justifyContent: 'center', height: 34, opacity: busy ? 0.7 : 1}}>
-              {busy ? '验证中…' : '完成验证'}
+              {busy ? t('auth.verify.verifying') : t('auth.verify.verify_btn')}
             </button>
             <div className="pl-auth-foot" style={{justifyContent: 'space-between'}}>
               <button type="button" style={{background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 13, padding: 0}}
                       onClick={() => { setMode('register'); setErr(''); setNotice(''); }}>
-                ← 返回修改
+                {t('auth.verify.back')}
               </button>
               <button type="button"
                       disabled={resendCooldown > 0 || busy}
                       style={{background: 'none', border: 'none', color: resendCooldown > 0 ? 'var(--muted)' : 'var(--accent)', cursor: resendCooldown > 0 ? 'default' : 'pointer', fontSize: 13, padding: 0}}
                       onClick={handleResend}>
-                {resendCooldown > 0 ? `重发 (${resendCooldown}s)` : '重新发送'}
+                {resendCooldown > 0 ? t('auth.verify.resend_cooldown', { s: resendCooldown }) : t('auth.verify.resend')}
               </button>
             </div>
           </form>
@@ -378,13 +384,13 @@ function LoginApp() {
           {schemaErr && (
             <div className="pl-auth-error"
                  style={{color: 'var(--danger)', fontSize: 12.5, padding: '4px 0'}}>
-              表单加载失败:{schemaErr}
+              {t('auth.schema_err')}{schemaErr}
             </div>
           )}
 
           {!schema && !schemaErr && (
             <div style={{color: 'var(--muted)', fontSize: 12.5, padding: '4px 0'}}>
-              正在加载…
+              {t('auth.schema_loading')}
             </div>
           )}
 
@@ -411,27 +417,27 @@ function LoginApp() {
 
           <button type="submit" className="btn primary" disabled={busy || !schema}
                   style={{justifyContent: 'center', height: 34, opacity: busy ? 0.7 : 1}}>
-            {busy ? '正在提交…' : (mode === 'login' ? '登录' : '创建账号')}
+            {busy ? t('auth.submitting') : (mode === 'login' ? t('auth.login_btn') : t('auth.register_btn'))}
           </button>
 
           <div className="pl-auth-foot">
             <span>
               {schema?.notes?.first_user_is_admin
-                ? '首个注册用户会成为管理员。'
+                ? t('auth.first_admin')
                 : ''}
               {schema?.notes?.invite_only
-                ? '当前部署为邀请制,请联系管理员获取账号。'
+                ? t('auth.invite_only_note')
                 : ''}
               {!schema?.notes?.invite_only && !schema?.notes?.first_user_is_admin
-                ? `密码至少 ${minPw} 位。`
+                ? t('auth.min_password', { min: minPw })
                 : ''}
             </span>
             <a href="#"
                onClick={(e) => {
                  e.preventDefault();
-                 setNotice('请联系管理员重置密码(暂未提供自助找回流程)');
+                 setNotice(t('auth.forgot_notice'));
                }}
-               style={{borderBottom: 0, color: 'var(--muted)', cursor: 'pointer'}}>忘记密码</a>
+               style={{borderBottom: 0, color: 'var(--muted)', cursor: 'pointer'}}>{t('auth.forget_password')}</a>
           </div>
         </form>}
       </div>

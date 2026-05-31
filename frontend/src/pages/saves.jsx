@@ -1340,13 +1340,13 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
   return (
     <CSSpaceBetween size="m">
       {/* 说明 */}
-      <CSBox color="text-body-secondary" fontSize="body-s">
+      <CSBox key="intro" color="text-body-secondary" fontSize="body-s">
         身份卡是叠加在角色卡之上的「定位 overlay」(穿越者 / 卧底 / 流亡贵族 …),和具体姓名外貌无关。
         可不选 —— 直接使用所选角色「<strong style={{ color: 'var(--text, #ebe7df)' }}>{pickedName}</strong>」开局。
       </CSBox>
 
       {/* 当前选择 */}
-      <div style={{
+      <div key="current-identity" style={{
         ...panel,
         borderColor: noIdentity ? 'var(--line-soft, #2a2724)' : 'var(--accent, #c96442)',
         background: noIdentity ? 'var(--panel-2, #282623)' : 'var(--accent-soft, rgba(201,100,66,.12))',
@@ -1370,7 +1370,7 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
       </div>
 
       {/* AI 生成 */}
-      <div style={{ ...panel, display: 'grid', gap: 12 }}>
+      <div key="ai-gen" style={{ ...panel, display: 'grid', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ display: 'grid', gap: 3 }}>
             <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text, #ebe7df)' }}>让 AI 生成身份候选</span>
@@ -1406,7 +1406,7 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
       </div>
 
       {/* 手动创建 */}
-      <CSExpandableSection
+      <CSExpandableSection key="manual"
         variant="container"
         headerText="手动创建身份卡"
         headerActions={identity && identity._from === 'custom' ? <CSBadge color="green">已填写</CSBadge> : undefined}

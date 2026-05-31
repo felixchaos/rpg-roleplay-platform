@@ -269,6 +269,10 @@
         upsert: (body) => POST(`${API_PREFIX}/me/personas`, body),
         remove: (id) => POST(`${API_PREFIX}/me/personas/` + encodeURIComponent(id) + "/delete", {}),
       },
+      // 账户注销流程 (30 天宽限期)
+      requestDelete: () => POST(`/api/account/request-delete`, {}),
+      cancelDelete: () => POST(`/api/account/cancel-delete`, {}),
+      deleteStatus: () => GET(`/api/account/delete-status`),
     },
 
     // ---------- Platform meta ----------
@@ -313,6 +317,38 @@
       saveMaintenance: (body) => POST(`${API_PREFIX}/admin/maintenance`, body),
       // 服务重启
       restart: () => POST(`${API_PREFIX}/admin/restart`, {}),
+      // DMCA Takedowns
+      dmcaTakedowns: {
+        list: ({ status, limit } = {}) => GET(`/api/admin/dmca/takedowns`, { status: status || 'open', limit: limit || 50 }),
+        create: (body) => POST(`/api/admin/dmca/takedowns`, body),
+        action: (id, body) => POST(`/api/admin/dmca/takedowns/${id}/action`, body),
+        counter: (id, body) => POST(`/api/admin/dmca/takedowns/${id}/counter`, body),
+      },
+      // DMCA Strikes
+      dmcaStrikes: {
+        list: () => GET(`/api/admin/dmca/strikes`),
+        increment: (userId, body) => POST(`/api/admin/dmca/strikes/${userId}/increment`, body),
+      },
+      // CSAM Reports
+      csamReports: {
+        list: () => GET(`/api/admin/csam/reports`),
+        decision: (id, body) => POST(`/api/admin/csam/reports/${id}/decision`, body),
+      },
+      // AUP 用户操作 (suspend / unsuspend / terminate)
+      suspendUser: (userId, body) => POST(`/api/admin/users/${userId}/suspend`, body),
+      unsuspendUser: (userId) => POST(`/api/admin/users/${userId}/unsuspend`, {}),
+      terminateUser: (userId, body) => POST(`/api/admin/users/${userId}/terminate`, body),
+      // Feedback 管理
+      feedback: {
+        list: ({ status } = {}) => GET(`/api/admin/feedback`, status ? { status } : undefined),
+        decision: (id, body) => POST(`/api/admin/feedback/${id}/decision`, body),
+      },
+      // Policy notices
+      policy: {
+        notices: () => GET(`/api/admin/policy/notices`),
+        dispatch: (id) => POST(`/api/admin/policy/notices/${id}/dispatch`, {}),
+        activate: (id) => POST(`/api/admin/policy/notices/${id}/activate`, {}),
+      },
     },
 
     // ---------- Scripts ----------

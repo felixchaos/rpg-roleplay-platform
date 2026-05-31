@@ -12,6 +12,7 @@ import '../state-event-bridge.js';
 import '../worldbook-status-toast.js';
 import '../ui-atlas.js';
 import '../console-assistant-navigation.jsx';
+import '../i18n/index.js';   // 初始化 i18next + 接 interfaceLang
 
 // 组件模块 — named import
 import { useResizable } from '../responsive.jsx';
