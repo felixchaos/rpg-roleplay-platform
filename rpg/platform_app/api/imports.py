@@ -151,62 +151,78 @@ async def api_script_llm_extract_estimate(request: Request, script_id: int, user
 
 @router.post("/api/scripts/{script_id}/llm-extract")
 async def api_script_llm_extract(request: Request, script_id: int, user=Depends(require_user)):
-    """触发 LLM 提取(默认弧段算法,~2 分钟 1166 章)。同步执行(阻塞调用方),适合 UI 显式触发。
+    """异步调度 LLM 提取。**立即返回 job_id**,真活在后台线程跑。
+
+    复用 import_jobs 表 + 同一个 SSE 流端点(`/api/scripts/import-jobs/{job_id}/stream`)
+    与 import_pipeline (kind='full_pipeline')共存,kind='llm_extract' 区分。
 
     Body(全可选):
       {
         "algorithm": "arc"|"per_chapter",      # 默认 arc
         "model": "deepseek-v4-flash",
         "api_id": "deepseek",
-        "target_arcs": 40,                      # arc 模式弧数目标
-        "concurrency": 15,                      # 并发
-        "author_era": "",                       # 作者给定纪元(空=Pass0自抽)
+        "target_arcs": 40,
+        "concurrency": 15,
+        "author_era": "",
         "author_power_system": ["..."],
-        "sample_chapters": null,                # per_chapter 模式限前 N 章
-        "confirmed": false,                     # 超 max_book_usd 时需 true 才跑
-        "max_book_usd": 10.0
+        "sample_chapters": null,
+        "confirmed": true,                     # 调度路径默认 true(同步路径默认 false)
+        "max_book_usd": 10.0,
+        "sync": false                          # 显式 true 走老的同步阻塞(适合脚本/admin)
       }
 
-    返回:成功 → 提取统计;成本超阈值 → {needs_confirm: true, estimate};未授权 → 403。
-    完成后会自动把 script.review_status 重置为 unreviewed(KB 数据变更,需重审)。
+    返回(异步,默认):
+      {"ok": true, "job_id": "llm_36267_xxx", "reused": false, "async": true}
+      前端拿 job_id 用 streamImport(job_id, handlers) 接 SSE 看进度。
+    返回(sync=true):
+      与之前同步版本一致:{"ok": true, "algorithm": "arc_rag", "arcs": 40, ...} 阻塞 ~2 分钟
     """
     body = {}
     try:
         body = await request.json()
     except Exception:
         pass
+    sync = bool(body.get("sync"))
     try:
-        from platform_app.knowledge.llm_extract import run_llm_extraction
-        result = run_llm_extraction(
-            user["id"], script_id,
-            algorithm=str(body.get("algorithm") or "arc"),
-            author_era=str(body.get("author_era") or ""),
-            author_power_system=body.get("author_power_system") or None,
-            model=str(body.get("model") or "deepseek-v4-flash"),
-            api_id=str(body.get("api_id") or "deepseek"),
-            target_arcs=int(body.get("target_arcs") or 40),
-            concurrency=int(body.get("concurrency") or 15),
-            sample_chapters=body.get("sample_chapters"),
-            chapter_min=body.get("chapter_min"),
-            chapter_max=body.get("chapter_max"),
-            confirmed=bool(body.get("confirmed")),
-            max_book_usd=float(body.get("max_book_usd") or 10.0),
-        )
-        # 提取完成 → 把剧本重置回 unreviewed(KB 内容刚换,需重过复核闸)
-        if result.get("ok"):
-            with connect() as db:
-                db.execute(
-                    "update scripts set review_status='unreviewed', reviewed_at=null, "
-                    "updated_at=now() where id=%s and owner_id=%s",
-                    (script_id, user["id"]),
-                )
-            result["review_status"] = "unreviewed"
-        status = 200 if (result.get("ok") or result.get("needs_confirm")) else 400
-        if result.get("error") and "无权" in str(result.get("error")):
-            status = 403
-        return json_response(result, status_code=status)
+        if sync:
+            # 老同步路径(脚本/调试用)
+            from platform_app.knowledge.llm_extract import run_llm_extraction
+            result = run_llm_extraction(
+                user["id"], script_id,
+                algorithm=str(body.get("algorithm") or "arc"),
+                author_era=str(body.get("author_era") or ""),
+                author_power_system=body.get("author_power_system") or None,
+                model=str(body.get("model") or "deepseek-v4-flash"),
+                api_id=str(body.get("api_id") or "deepseek"),
+                target_arcs=int(body.get("target_arcs") or 40),
+                concurrency=int(body.get("concurrency") or 15),
+                sample_chapters=body.get("sample_chapters"),
+                chapter_min=body.get("chapter_min"),
+                chapter_max=body.get("chapter_max"),
+                confirmed=bool(body.get("confirmed")),
+                max_book_usd=float(body.get("max_book_usd") or 10.0),
+            )
+            if result.get("ok"):
+                with connect() as db:
+                    db.execute(
+                        "update scripts set review_status='unreviewed', reviewed_at=null, "
+                        "updated_at=now() where id=%s and owner_id=%s",
+                        (script_id, user["id"]),
+                    )
+                result["review_status"] = "unreviewed"
+            status = 200 if (result.get("ok") or result.get("needs_confirm")) else 400
+            if result.get("error") and "无权" in str(result.get("error")):
+                status = 403
+            return json_response(result, status_code=status)
+
+        # 默认:异步调度,立刻返回 job_id
+        from extract.job_runner import schedule_llm_extraction
+        result = schedule_llm_extraction(user["id"], script_id, options=body)
+        return json_response({**result, "async": True}, status_code=200)
     except ValueError as exc:
-        return json_response({"ok": False, "error": str(exc)}, status_code=403)
+        msg = str(exc)
+        status = 403 if "无权" in msg else 409 if "在跑" in msg else 400
+        return json_response({"ok": False, "error": msg}, status_code=status)
 
 
 @router.get("/api/scripts/{script_id}/import-status")
