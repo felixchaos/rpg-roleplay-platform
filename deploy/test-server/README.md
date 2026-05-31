@@ -1,10 +1,10 @@
-# RPG Roleplay 测试服 — ECS06 部署 Runbook
+# RPG Roleplay 测试服 — 部署 Runbook
 
-> **仅限测试服（Docker on ECS06）。**
+> **仅限测试服（Docker on <YOUR_SERVER_HOST>）。**
 > 寻找裸机生产部署指引？见 [../bare-metal/README.md](../bare-metal/README.md)。
 
-> 域名:`rpg-roleplay.stellatrix.icu`
-> IP 白名单:`154.29.152.100`(三层防护)
+> 域名:`<YOUR_DOMAIN>`
+> IP 白名单:`<YOUR_WHITELIST_IP>`(三层防护)
 > SSL:Cloudflare orange-cloud + CF Origin certificate(15 年)
 > 主仓库:`/opt/rpg-roleplay/`
 
@@ -14,11 +14,11 @@
 
 | 层 | 位置 | 规则 | 失效后果 |
 |---|---|---|---|
-| L1 边缘 | **Cloudflare WAF Firewall Rule** | `http.host eq "rpg-roleplay.stellatrix.icu" and not ip.src eq 154.29.152.100` → block | 流量根本到不了源站 |
-| L2 网络 | **ECS06 iptables/ufw** | 443/80 INPUT 只 ACCEPT CF IP 段 | 防"绕过 CF 直打源站 IP" |
-| L3 应用 | **nginx `if ($remote_addr != "154.29.152.100") return 451`** | 兜底返 451 | 防 CF WAF 配错 |
+| L1 边缘 | **Cloudflare WAF Firewall Rule** | `http.host eq "<YOUR_DOMAIN>" and not ip.src eq <YOUR_WHITELIST_IP>` → block | 流量根本到不了源站 |
+| L2 网络 | **<YOUR_SERVER_HOST> iptables/ufw** | 443/80 INPUT 只 ACCEPT CF IP 段 | 防"绕过 CF 直打源站 IP" |
+| L3 应用 | **nginx `if ($remote_addr != "<YOUR_WHITELIST_IP>") return 451`** | 兜底返 451 | 防 CF WAF 配错 |
 
-L3 已在 `nginx-rpg-roleplay.conf` 配死;L1/L2 需要在 ECS06 + Cloudflare dashboard 配。
+L3 已在 `nginx-rpg-roleplay.conf` 配死;L1/L2 需要在 <YOUR_SERVER_HOST> + Cloudflare dashboard 配。
 
 ---
 
@@ -43,8 +43,8 @@ $EDITOR .env
 
 ### 3.1 DNS 记录
 - 类型:`A`
-- 名称:`rpg-roleplay`
-- 值:**ECS06 公网 IP**
+- 名称:`<YOUR_DOMAIN 子域名>`
+- 值:**<YOUR_SERVER_IP>**
 - Proxy status:🟧 **Proxied**(orange-cloud)
 - TTL:Auto
 
@@ -58,7 +58,7 @@ $EDITOR .env
 - 下载得到:
   - `*.stellatrix.icu` certificate(public)
   - `*.stellatrix.icu` private key
-- 命名保存到 ECS06:
+- 命名保存到服务器:
   - `/opt/rpg-roleplay/certs/rpg-roleplay.cert.pem`
   - `/opt/rpg-roleplay/certs/rpg-roleplay.key.pem`
   - 权限:`chmod 644 cert.pem`, `chmod 600 key.pem`
@@ -68,7 +68,7 @@ $EDITOR .env
 - Rule name:`rpg-roleplay-ip-allowlist`
 - Expression:
   ```
-  (http.host eq "rpg-roleplay.stellatrix.icu" and not ip.src eq 154.29.152.100)
+  (http.host eq "<YOUR_DOMAIN>" and not ip.src eq <YOUR_WHITELIST_IP>)
   ```
 - Action:`Block`
 - Order:置顶
@@ -78,11 +78,11 @@ $EDITOR .env
 
 ---
 
-## §4. ECS06 准备(SSH 上 ECS06)
+## §4. 服务器准备(SSH 上服务器)
 
 ```bash
 # 系统更新 + 装 docker + 装 ufw
-ssh ubuntu@ECS06_IP
+ssh ubuntu@<YOUR_SERVER_IP>
 sudo apt update && sudo apt install -y docker.io docker-compose-plugin ufw curl
 sudo systemctl enable --now docker
 
@@ -126,7 +126,7 @@ sudo chmod 644 deploy/test-server/certs/rpg-roleplay.cert.pem
 sudo chmod 600 deploy/test-server/certs/rpg-roleplay.key.pem
 
 # 3. 拷 .env(从本地用 scp/sftp 上传,确保权限)
-# scp -i ~/.ssh/ecs06_id deploy/test-server/.env ubuntu@ECS06:/opt/rpg-roleplay/deploy/test-server/.env
+# scp -i ~/.ssh/your_key deploy/test-server/.env ubuntu@<YOUR_SERVER_IP>:/opt/rpg-roleplay/deploy/test-server/.env
 chmod 600 deploy/test-server/.env
 
 # 4. 构建 + 起
@@ -143,18 +143,18 @@ docker compose logs -f backend
 ## §6. 首次 admin 注册
 
 ```bash
-# 6.1 在白名单 IP(154.29.152.100)上访问:
-#   https://rpg-roleplay.stellatrix.icu/
+# 6.1 在白名单 IP(<YOUR_WHITELIST_IP>)上访问:
+#   https://<YOUR_DOMAIN>/
 #   → 应显示 Login.html(不是 451)
 #
 # 6.2 从 Login 页 → 注册:
 #   - 填用户名 / 密码 / 邮箱 / 生日 / 勾选条款 + 年龄
 #   - 同时在 form 里把 setup_token 字段填上(同 .env RPG_SETUP_TOKEN)
-#   - 提交后会收 Resend 邮件验证码(从 noreply@stellatrix.icu 发)
+#   - 提交后会收 Resend 邮件验证码(从 <YOUR_FROM_EMAIL> 发)
 #   - 验证码输入后第一个账号自动拿 admin
 #
 # 6.3 admin 注册完成后,**立刻**:
-ssh ubuntu@ECS06
+ssh ubuntu@<YOUR_SERVER_IP>
 cd /opt/rpg-roleplay/deploy/test-server/
 # 编辑 .env 把 RPG_SETUP_TOKEN= 改为空
 nano .env
@@ -166,17 +166,17 @@ docker compose up -d --no-deps backend  # 只重启 backend 加载新 env
 ## §7. 健康检查 / 验证
 
 ```bash
-# 在 ECS06 上:
+# 在服务器上:
 docker compose ps                              # 6 容器 healthy
 curl -k https://localhost/api/state            # 应返 JSON
 curl https://localhost/api/state               # 不传 CF-Connecting-IP 应被 nginx 拦 451
 
-# 在白名单 IP(154.29.152.100)主机上:
-curl https://rpg-roleplay.stellatrix.icu/api/state   # 200
-curl -v https://rpg-roleplay.stellatrix.icu/         # 看 HTTP 200 + index.html
+# 在白名单 IP(<YOUR_WHITELIST_IP>)主机上:
+curl https://<YOUR_DOMAIN>/api/state   # 200
+curl -v https://<YOUR_DOMAIN>/         # 看 HTTP 200 + index.html
 
 # 在任意非白名单 IP:
-curl https://rpg-roleplay.stellatrix.icu/            # CF WAF 直接 block(看不到)
+curl https://<YOUR_DOMAIN>/            # CF WAF 直接 block(看不到)
 ```
 
 ---
@@ -220,7 +220,7 @@ docker compose exec -T postgres pg_dump -U rpg -Fc rpg > backup-$(date +%F).dump
 
 | 症状 | 原因 | 解 |
 |---|---|---|
-| 浏览器超时 | CF DNS 还没 propagate(常见 5min)| `dig rpg-roleplay.stellatrix.icu` 确认 |
+| 浏览器超时 | CF DNS 还没 propagate(常见 5min)| `dig <YOUR_DOMAIN>` 确认 |
 | 浏览器 451 | 不是从白名单 IP 来 | 用白名单 IP / 看 CF WAF 规则是否生效 |
 | 浏览器 502 | backend 还没 ready | `docker compose logs -f backend` 看启动 |
 | 注册收不到验证码 | RESEND_API_KEY 未配 或 DNS SPF/DKIM 未设 | 看 backend log;邮件落垃圾箱;Resend dashboard 看投递 |

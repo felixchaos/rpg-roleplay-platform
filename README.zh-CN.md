@@ -32,23 +32,21 @@ RPG Roleplay 把一本长篇小说扔进一个自托管的 LLM 驱动的 RPG 运
 
 | 层 | 状态 |
 |---|---|
-| **Rust 核心游戏循环**(state, op, scene, 骰子, 5E 核心, 遭遇, 物品栏, 检索, agents) | ✅ 稳定 |
+| **Python 核心游戏循环**(state, op, scene, 骰子, 5E 核心, 遭遇, 物品栏, 检索, agents) | ✅ 稳定 |
 | **LLM 路由**(Anthropic 原生 / OpenAI Responses / Vertex Gemini / OpenAI 兼容) | ✅ 稳定 — 流式 + 工具调用 + 多模态 |
-| **Postgres + pgvector** 存储, 24 个版本化迁移, 启动时自动加咨询锁顺序执行 | ✅ 稳定 |
-| **ts-rs 端到端类型** — 43 个 Rust 类型自动桥接到 TypeScript, Vite 代理至 axum | ✅ 稳定 |
+| **Postgres + pgvector** 存储, v39+ 版本化迁移, 启动时自动加咨询锁顺序执行 | ✅ 稳定 |
+| **Vite + React 18**, JSDoc 类型注解, 多页面入口 | ✅ 稳定 |
 | **可分支存档** — commit / ref / checkout 像 Git 一样工作 | 🟡 关键路径已通, merge / 清理 / 删除仍是骨架 |
 | **剧本包** — 用户上传 ZIP 含 script + chapters + facts + cards | 🟡 导入可用, 共享面在做 |
 | **Provider 目录** — 列了 10 家, 能力 metadata 已暴露给 UI | 🟡 6 家接了真后端, 4 家暂时只在目录里 |
-| **Web UI** — 类型化 React 客户端, 3 个页面入口(Login / Platform / Game Console) | 🟡 核心循环 feature complete, 视觉打磨进行中 |
+| **Web UI** — React 客户端, 3 个页面入口(Login / Platform / Game Console) | 🟡 核心循环 feature complete, 视觉打磨进行中 |
 | **公开部署 / 商业 license** | ❌ 还没 — 见[公测预约](https://play.stellatrix.icu) |
 
 ## 快速开始
 
-> **技术栈说明**: 后端是 Python / FastAPI / uvicorn（非 Rust）。下方架构图为历史/规划状态，当前可运行代码在 `rpg/` 目录下。
-
 ```bash
-git clone https://github.com/felixchaos/rpg-roleplay-platform.git
-cd rpg-roleplay-platform
+git clone https://github.com/stellatrix-labs/rpg-roleplay.git
+cd rpg-roleplay
 
 # 1. 装 Postgres + pgvector（macOS；Ubuntu 改用 apt install postgresql-16 postgresql-16-pgvector）
 brew install postgresql pgvector
@@ -94,43 +92,44 @@ open http://localhost:5173/Login.html
 ## 架构
 
 ```
-                 ┌────────────────────────── 浏览器 ──────────────────────────┐
-                 │ React 18 + Vite + TypeScript                              │
-                 │ Login.html · Platform.html · Game Console.html            │
-                 │ 43 个 ts-rs 类型 · 手写 api-client · SSE/WS 桥接           │
-                 └────────────────────────┬──────────────────────────────────┘
-                                          │ /api → 7860
-                                          ▼
-                 ┌────────────────────────── axum (:7860) ───────────────────┐
-                 │ 27 个路由模块 · 单一 AppState · governor 限流 + body 上限 │
-                 │ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌────────┐ │
-                 │ │ rpg-platform│ │  rpg-agents │ │  rpg-llm    │ │rpg-rules│ │
-                 │ │ auth/saves/ │ │ GM + 9 个   │ │ router +    │ │ D&D 5E  │ │
-                 │ │ branches/   │ │ 子 agent    │ │ 4 个后端 +  │ │ + JSON  │ │
-                 │ │ runtime     │ │             │ │ 成本登记表  │ │ 模块    │ │
-                 │ └─────────────┘ └─────────────┘ └─────────────┘ └────────┘ │
-                 │ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌────────┐ │
-                 │ │  rpg-state  │ │ rpg-context │ │rpg-retrieval│ │rpg-tools│ │
-                 │ │GameState +  │ │ 可插拔      │ │ BM25-lite + │ │MCP +   │ │
-                 │ │ op 协议     │ │ providers   │ │ pgvector    │ │ skill  │ │
-                 │ └─────────────┘ └─────────────┘ └─────────────┘ └────────┘ │
-                 └────────────┬────────────────────────┬────────────────────┘
-                              │ sqlx                   │ http
-                              ▼                        ▼
-                  ┌───────────────────────┐  ┌──────────────────────────────┐
-                  │ pgbouncer (:6432) +   │  │  LLM 厂家                    │
-                  │ Postgres + pgvector   │  │  Anthropic · OpenAI · Vertex │
-                  │ 24 个迁移             │  │  + 6 个 OpenAI 兼容后端     │
-                  └───────────────────────┘  └──────────────────────────────┘
-                              │
-                              ▼
-                  ┌───────────────────────┐
-                  │  Redis (:6379)        │
-                  │  限流 · 缓存          │
-                  └───────────────────────┘
+┌─ 浏览器 ─────────────────────────────────────────────────────┐
+│ React 18 + Vite + JS（ESM 多入口）                            │
+│ Login.html · Platform.html · Game Console.html               │
+│ Cloudscape Design System · api-client.js · i18n              │
+└────────────────────┬─────────────────────────────────────────┘
+                     │
+┌─ uvicorn :7860 ────▼─────────────────────────────────────────┐
+│ FastAPI · Python 3.12 · async/asyncio.to_thread              │
+│ ┌── platform_app/ ──┐ ┌── agents/ ──┐ ┌── tools_dsl/ ──┐   │
+│ │ auth / saves /    │ │ gm/master + │ │ tool_registry + │   │
+│ │ branches / cards/ │ │ context /   │ │ MCP / Skill     │   │
+│ │ scripts / admin / │ │ extractor / │ │ executor        │   │
+│ │ feedback / policy │ │ black_swan/ │ └─────────────────┘   │
+│ └───────────────────┘ │ verifier    │                        │
+│                        └─────────────┘                        │
+│ ┌── state/ ──────────┐ ┌── retrieval ┐ ┌── knowledge/ ──┐   │
+│ │ GameState +        │ │ BM25-lite + │ │ chapter_indexer │   │
+│ │ op 协议            │ │ pgvector    │ │ embeddings      │   │
+│ └────────────────────┘ └─────────────┘ └─────────────────┘   │
+└────────┬─────────────────────────┬──────────────────────────┘
+         │ psycopg                 │ httpx
+         ▼                         ▼
+┌────────────────────┐  ┌──────────────────────────────────────┐
+│ pgbouncer:6432 +   │  │ LLM 厂家                             │
+│ Postgres + pgvector│  │ Anthropic / OpenAI / Vertex /        │
+│ v39+ 迁移          │  │ DeepSeek / DashScope (Qwen) /        │
+│                    │  │ Hunyuan / MiMo / xAI / OpenRouter    │
+└────────────────────┘  └──────────────────────────────────────┘
+         │
+         ▼
+┌────────────────────┐
+│ Redis :6379         │
+│ session/缓存/       │
+│ 限流                │
+└────────────────────┘
 ```
 
-15 个 Rust crate, 约 7.2 万行代码, 552 个 `#[test]` / `#[tokio::test]`.
+FastAPI 后端，~30+ 个路由模块 / agents / state mixin，~1k pytest 用例。
 
 ## LLM 厂家
 
@@ -141,17 +140,17 @@ open http://localhost:5173/Login.html
 | Google Vertex (Gemini) | ✅ | ✅ | ✅ | ✅ | — |
 | OpenRouter | ✅ | ✅(OpenAI 兼容) | 部分 | — | — |
 | DeepSeek | ✅ | ✅(OpenAI 兼容) | 部分 | — | — |
-| xAI | ✅ | ✅(OpenAI 兼容) | 部分 | — | — |
-| 小米 MiMo | ✅ | ✅(OpenAI 兼容) | 部分 | — | — |
-| 腾讯混元 | ✅ | ✅(OpenAI 兼容) | 部分 | — | — |
-| 阿里 Qwen | 仅目录 | — | — | — | — |
+| xAI (Grok) | ✅ | ✅(OpenAI 兼容) | 部分 | — | — |
+| MiMo（小米）| ✅ | ✅(OpenAI 兼容) | 部分 | — | — |
+| Hunyuan（腾讯混元）| ✅ | ✅(OpenAI 兼容) | 部分 | — | — |
+| DashScope（通义千问）| 仅目录 | — | — | — | — |
 | Google AI Studio | 仅目录 | — | — | — | — |
 
-加一家 provider = `model_catalog/src/providers/` 里多一个文件 +(若是新协议)`rpg-llm` 里多一个 `LlmBackend` 实现. 选模型 / 能力过滤 / token 计费这些都是自动的.
+加一家 provider = `rpg/config/model_catalog.json` 里多一个条目 +(若是新协议)`rpg/agents/gm/backends/` 里多一个后端实现. 选模型 / 能力过滤 / token 计费这些都是自动的.
 
 ## 技术栈
 
-`Rust 1.83+` · `axum` · `sqlx` · `pgvector` · `pgbouncer` · `Redis` · `tokio` · `tower-governor` · `ts-rs` · `React 18` · `Vite` · `TypeScript`
+`Python 3.12+` · `FastAPI` · `uvicorn` · `psycopg` · `pgvector` · `pgbouncer` · `Redis` · `React 18` · `Vite` · `Cloudscape Design System`
 
 ## 为什么不是 SillyTavern / Risu / KoboldCpp?
 
@@ -168,8 +167,8 @@ open http://localhost:5173/Login.html
 | 引擎状态 | 对话历史 | 类型化 `GameState` + op 协议 + D&D 5E 核心 |
 | 世界书 | YAML / JSON 文件 | 数据库条目 + 语义激活 |
 | 多用户 | 单机应用 | 鉴权 + 用户级 runtime + 配额 |
-| 技术栈 | Node + 原生 HTML/CSS | Rust + axum + sqlx + pgvector + 类型化 React |
-| 测试 | 多为临时 | 15 个 crate 累计 552 个 `#[test]` |
+| 技术栈 | Node + 原生 HTML/CSS | Python + FastAPI + pgvector + React |
+| 测试 | 多为临时 | ~1k pytest 用例 |
 
 故事是一个角色 → 用 SillyTavern。故事是一整个**世界** → 用 RPG Roleplay。两边都吃同一份 V2 卡格式,横移成本几乎为零.
 
@@ -186,7 +185,6 @@ open http://localhost:5173/Login.html
 | `RPG_RATE_LIMIT_PER_MIN` | 按 IP 的 token bucket | 可选 |
 | `RPG_REQUEST_TIMEOUT_SECS` | 非流式响应超时 | 可选 |
 | `RPG_SKIP_AUTO_MIGRATE=1` | 跳过启动时自动迁移 | 可选 |
-| `RUST_LOG` | 日志层级 `info,rpg_server=debug,sqlx=warn` 之类 | 可选 |
 
 完整带注释的样例在 `deploy/.env.example`.
 
@@ -194,33 +192,46 @@ open http://localhost:5173/Login.html
 
 ```
 .
-├── rust/                        # 后端 workspace, 15 个 crate
-│   └── crates/
-│       ├── rpg-server/          # 二进制入口, axum 跑在 :7860
-│       ├── rpg-routes/          # 27 个路由模块
-│       ├── rpg-platform/        # 鉴权 · 存档 · 分支 · runtime · script-pack
-│       ├── rpg-agents/          # GM + 9 个子 agent
-│       ├── rpg-llm/             # 4 个后端 + LlmRouter + 成本登记表
-│       ├── rpg-state/           # GameState + op 协议
-│       ├── rpg-rules/           # D&D 5E 核心 + JSON 模块加载器
-│       ├── rpg-context/         # 可插拔 context provider
-│       ├── rpg-retrieval/       # BM25-lite + pgvector
-│       ├── rpg-db/              # sqlx + 24 个 sql 迁移
-│       ├── rpg-schemas/         # ts-rs 领域类型
-│       ├── rpg-tools-dsl/       # 工具登记表 + MCP broker
-│       └── model_catalog/       # 10 家 provider, 能力 metadata
+├── rpg/                       # 后端（Python 3.12+）
+│   ├── app.py                 # FastAPI · uvicorn :7860
+│   ├── platform_app/          # 鉴权 / 存档 / 分支 / scripts / cards / admin
+│   │   ├── api/               # FastAPI 路由模块
+│   │   ├── db/migrations.py   # 版本化迁移 + 自动应用
+│   │   ├── knowledge/         # chapter indexer / canon repo
+│   │   ├── tavern_cards.py    # SillyTavern V2 PNG/JSON 导入
+│   │   └── crypto.py          # AES-256-GCM HKDF 按用户密钥
+│   ├── agents/
+│   │   ├── gm/master.py       # 主 GM（流式 SSE）
+│   │   ├── gm/backends/       # Anthropic / OpenAI / Vertex / OpenAI-compat
+│   │   ├── context_agent.py
+│   │   ├── extractor.py
+│   │   ├── black_swan_agent.py
+│   │   └── acceptance_verifier.py
+│   ├── state/                 # GameState + op 协议
+│   ├── tools_dsl/             # 工具登记表 + MCP broker
+│   ├── retrieval.py           # BM25-lite + pgvector
+│   ├── chat_pipeline.py       # Phase 0-4 编排
+│   └── tests/                 # pytest 用例
 │
-├── frontend/                    # React 18 + Vite, 3 个 HTML 入口
+├── frontend/                  # React 18 + Vite（多页 ESM）
 │   ├── Login.html · Platform.html · Game Console.html
-│   └── src/types/rust/          # 43 个 ts-rs 生成类型
+│   └── src/
+│       ├── pages/             # settings/scripts/cards/saves/admin
+│       ├── components/        # HelpDrawer/AdultSplash/FeedbackDrawer
+│       ├── i18n/              # zh-CN + en
+│       └── api-client.js
 │
-├── deploy/                      # Dockerfile · docker-compose · k8s
-└── rpg/modules/ash_mine/        # 唯一一个 ship 出去的示例剧本
+├── deploy/
+│   ├── bare-metal/README.md   # 生产裸机 runbook
+│   ├── test-server/           # 测试环境模板
+│   └── Dockerfile / docker-compose.yml
+│
+└── docs/                      # 架构设计文档
 ```
 
 ## 贡献
 
-私有仓库, 开发中, 暂不接受外部 PR. 公测后会按 [CONTRIBUTING.md](./CONTRIBUTING.md) 开放贡献. 现在可以提 issue 或在[落地页](https://play.stellatrix.icu)预约公测. 每个 Wave 的发布记录见 [CHANGELOG.md](./CHANGELOG.md).
+这是一个开源项目 — 欢迎按 [CONTRIBUTING.md](./CONTRIBUTING.md) 贡献（TBD）. 现在可以提 issue 或在[落地页](https://play.stellatrix.icu)预约公测. 每个 Wave 的发布记录见 [CHANGELOG.md](./CHANGELOG.md).
 
 ## 许可证
 

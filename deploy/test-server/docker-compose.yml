@@ -1,12 +1,12 @@
 version: "3.9"
 
-# RPG Roleplay 测试服 — ECS06
-# 域名:rpg-roleplay.stellatrix.icu
-# 访问控制:CF orange-cloud + IP 白名单(154.29.152.100)
+# RPG Roleplay 测试服
+# 域名:<YOUR_DOMAIN>
+# 访问控制:CF orange-cloud + IP 白名单(<YOUR_WHITELIST_IP>)
 #
 # 相对于生产 docker-compose.yml 的差异:
 #   - 加 nginx 反代(SSL 终端 + IP 白名单 + 静态 frontend 服务)
-#   - CORS_ORIGINS 改为 rpg-roleplay.stellatrix.icu
+#   - CORS_ORIGINS 改为 <YOUR_DOMAIN>
 #   - 不暴露 backend:7860 到主机端口(只在 docker 网络内,nginx 反代)
 #   - 单 worker(测试体量 1-2 用户)+ 较低限流
 #   - 默认日志拉到 stdout 不写文件(方便 docker logs)
@@ -106,7 +106,7 @@ services:
       # 反代识别 + HSTS 反代修正(B7 sonnet 实现)
       RPG_TRUSTED_PROXIES: "127.0.0.1,172.16.0.0/12,10.0.0.0/8"
 
-      RPG_CORS_ORIGINS: "https://rpg-roleplay.stellatrix.icu"
+      RPG_CORS_ORIGINS: "https://<YOUR_DOMAIN>"
       RPG_COOKIE_SAMESITE: "lax"
       RPG_COOKIE_SECURE: "1"
 
