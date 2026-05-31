@@ -680,42 +680,20 @@ async def run_gm_phase(
     # 现在世界线收束 (task 136) 还会再叠 mark_anchor_satisfied / record_anchor_variant,
     # 8 是平衡值: 够 GM 串完整轮工具流, 又不至于死循环烧 token。
 
-    # P0-2: respond_stream_with_tools 是同步 generator,通过 queue.Queue + executor 桥接异步化
-    import queue as _queue
+    # P0-2: respond_stream_with_tools 是同步 generator,通过 _bridge_sync_generator_to_async 桥接。
+    # stop_event 透传给 GM:客户端断开时 bridge.finally 设置 event,GM stream 循环检查后早退。
+    import threading as _threading
+    _gm_stop = _threading.Event()
 
-    _gm_q: _queue.Queue = _queue.Queue()
-    _GM_SENTINEL = object()
-
-    def _run_gm_stream():
-        try:
-            for _ev in gm.respond_stream_with_tools(
-                message_for_model, bundle["prompt"], state,
-                tools=unified_tools, max_iterations=8,
-                tool_call_router=gm_tool_router,
-            ):
-                _gm_q.put(_ev)
-        except Exception as _exc:
-            _gm_q.put(_exc)
-        finally:
-            _gm_q.put(_GM_SENTINEL)
-
-    _gm_executor_task = asyncio.get_event_loop().run_in_executor(None, _run_gm_stream)
-
-    async def _gm_event_iter():
-        while True:
-            try:
-                _item = _gm_q.get_nowait()
-            except _queue.Empty:
-                await asyncio.sleep(0)
-                continue
-            if _item is _GM_SENTINEL:
-                break
-            if isinstance(_item, Exception):
-                raise _item
-            yield _item
-        await _gm_executor_task
-
-    async for event in _gm_event_iter():
+    async for event in _bridge_sync_generator_to_async(
+        lambda: gm.respond_stream_with_tools(
+            message_for_model, bundle["prompt"], state,
+            tools=unified_tools, max_iterations=8,
+            tool_call_router=gm_tool_router,
+            stop_event=_gm_stop,
+        ),
+        stop_event=_gm_stop,
+    ):
         if stop_event.is_set() or run_id != current_run_id_fn(api_user) or is_stop_requested_global(api_user, run_id):
             if response.strip():
                 response += "\n\n【本轮已被玩家打断】"
@@ -881,24 +859,35 @@ async def run_gm_phase(
 
 
 async def _bridge_sync_generator_to_async(
-    sync_gen_fn: Callable[..., Any],
+    gen_factory: Callable[[], Any],
     *args: Any,
+    stop_event=None,
     **kwargs: Any,
 ) -> AsyncIterator[dict[str, Any]]:
     """把同步 generator 桥接成 async iterator,中途 LLM 调用不阻塞 event loop。
+
+    gen_factory: 无参 callable 返回 sync generator。
+                 若有额外位置/关键字参数,透传给 gen_factory(*args, **kwargs)。
+                 推荐用 lambda 包装好后不传 args/kwargs。
+    stop_event:  threading.Event;SSE 断开时由 bridge finally 设置,
+                 让 sync generator 内部循环提前 break。未传时内部新建。
 
     实现:
     1. 在 ThreadPool 里跑 sync generator
     2. thread 内每 yield 一个 item,用 loop.call_soon_threadsafe 投到 asyncio.Queue
     3. async 端 await queue.get() 拿 item;SENTINEL 表示 generator 结束
     4. thread 异常通过 _Error wrapper 传回 async 端再抛
+    5. finally 设置 stop_event,通知 sync 端早退
 
     用于 context_agent.run_context_agent 这种同步 generator + 内部阻塞调用
     (curator LLM 调用通过 ThreadPoolExecutor 等结果),让 chat_pipeline 的
     event loop 在 LLM 等待期间仍可调度其它协程。
     """
+    import threading as _threading
+    if stop_event is None:
+        stop_event = _threading.Event()
     loop = asyncio.get_running_loop()
-    queue: asyncio.Queue = asyncio.Queue()
+    aqueue: asyncio.Queue = asyncio.Queue()
     SENTINEL = object()
 
     class _Error:
@@ -908,25 +897,28 @@ async def _bridge_sync_generator_to_async(
 
     def _run_in_thread() -> None:
         try:
-            for item in sync_gen_fn(*args, **kwargs):
-                loop.call_soon_threadsafe(queue.put_nowait, item)
+            for item in gen_factory(*args, **kwargs):
+                if stop_event.is_set():
+                    break
+                loop.call_soon_threadsafe(aqueue.put_nowait, item)
         except BaseException as exc:  # noqa: BLE001
-            loop.call_soon_threadsafe(queue.put_nowait, _Error(exc))
+            loop.call_soon_threadsafe(aqueue.put_nowait, _Error(exc))
         finally:
-            loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+            loop.call_soon_threadsafe(aqueue.put_nowait, SENTINEL)
 
     # 用 asyncio.to_thread 跑 wrapper,task 在 generator 结束/异常后自然完成
     runner = asyncio.create_task(asyncio.to_thread(_run_in_thread))
     try:
         while True:
-            item = await queue.get()
+            item = await aqueue.get()
             if item is SENTINEL:
                 break
             if isinstance(item, _Error):
                 raise item.exc
             yield item
     finally:
-        # 确保 thread 退出(generator 不应该泄漏)
+        # SSE 断开 / 异常 / 正常完成:通知 sync 端早退
+        stop_event.set()
         try:
             await runner
         except Exception:

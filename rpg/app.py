@@ -483,6 +483,14 @@ def _lru_set(d: OrderedDict, k, v, maxsize: int = _LRU_MAXSIZE) -> None:
         d.popitem(last=False)
 
 
+def _lru_get(d: OrderedDict, k, default=None):
+    """LRU 读取: 命中时 move_to_end 更新热度,避免活跃用户被驱逐。"""
+    if k in d:
+        d.move_to_end(k)
+        return d[k]
+    return default
+
+
 _state_by_user: OrderedDict[int, GameState] = OrderedDict()  # key = api_user["id"] 或 0 (anonymous local)
 # 记录每个 cached state 对应的 (save_id, commit_id) tuple。
 # 真相源 = branch_commits[user_runtime.active_commit_id].state_snapshot。
@@ -509,27 +517,27 @@ def _get_run_state(api_user: dict[str, Any] | None) -> tuple[int, Event]:
     with _run_lock:
         if uid not in _stop_events_by_user:
             _lru_set(_stop_events_by_user, uid, Event())
-        _lru_set(_run_id_by_user, uid, _run_id_by_user.get(uid, 0) + 1)
-        _stop_events_by_user[uid].clear()
-        return _run_id_by_user[uid], _stop_events_by_user[uid]
+        _lru_set(_run_id_by_user, uid, _lru_get(_run_id_by_user, uid, 0) + 1)
+        _lru_get(_stop_events_by_user, uid).clear()
+        return _lru_get(_run_id_by_user, uid), _lru_get(_stop_events_by_user, uid)
 
 
 def _current_run_id(api_user: dict[str, Any] | None) -> int:
-    return _run_id_by_user.get(_user_key(api_user), 0)
+    return _lru_get(_run_id_by_user, _user_key(api_user), 0)
 
 
 def _stop_user(api_user: dict[str, Any] | None) -> None:
     """同时设置进程内信号 + DB 跨进程信号，多 worker 部署也能 stop 到正确的请求。"""
     uid = _user_key(api_user)
     with _run_lock:
-        ev = _stop_events_by_user.get(uid)
+        ev = _lru_get(_stop_events_by_user, uid)
         if ev:
             ev.set()
     # 跨进程：写 DB stop_signals
     if api_user:
         try:
             from platform_app.cluster import request_stop
-            current_run = _run_id_by_user.get(uid, 0)
+            current_run = _lru_get(_run_id_by_user, uid, 0)
             if current_run:
                 request_stop(int(api_user["id"]), current_run)
         except Exception:
@@ -539,7 +547,7 @@ def _stop_user(api_user: dict[str, Any] | None) -> None:
 def _is_stop_requested_global(api_user: dict[str, Any] | None, run_id: int) -> bool:
     """合并检查：进程内 event + DB 跨进程信号。"""
     uid = _user_key(api_user)
-    ev = _stop_events_by_user.get(uid)
+    ev = _lru_get(_stop_events_by_user, uid)
     if ev and ev.is_set():
         return True
     if api_user:
@@ -640,11 +648,11 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
     """
     uid = _user_key(api_user)
     with _state_lock:
-        cached = _state_by_user.get(uid)
+        cached = _lru_get(_state_by_user, uid)
         # 匿名模式下还要看 SAVE_FILE mtime（兼容旧行为）
         if uid == 0:
             current_mtime = SAVE_FILE.stat().st_mtime_ns if SAVE_FILE.exists() else 0
-            if cached is None or current_mtime != _state_mtime_by_user.get(uid, 0):
+            if cached is None or current_mtime != _lru_get(_state_mtime_by_user, uid, 0):
                 cached = None
         # 缓存一致性自检:cached state 对应的 (save_id, commit_id) 必须等于
         # 当前 user_runtime 的 (save_id, active_commit_id)。任一不同就失效。
@@ -659,8 +667,8 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
                     or _rt.get("active_branch_node_id")
                     or 0
                 )
-                _cached_save = int(_state_save_id_by_user.get(uid) or 0)
-                _cached_commit = int(_state_commit_id_by_user.get(uid) or 0)
+                _cached_save = int(_lru_get(_state_save_id_by_user, uid) or 0)
+                _cached_commit = int(_lru_get(_state_commit_id_by_user, uid) or 0)
                 save_drift = _rt_save and _cached_save and _rt_save != _cached_save
                 commit_drift = _rt_commit and _cached_commit and _rt_commit != _cached_commit
                 if save_drift or commit_drift:
@@ -704,7 +712,7 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
                 _lru_set(_state_mtime_by_user, uid, SAVE_FILE.stat().st_mtime_ns if SAVE_FILE.exists() else 0)
         if uid not in _gm_by_user:
             # A1: 优先读当前存档的 session_model，fallback 到全局 catalog selected
-            _current_state = _state_by_user.get(uid)
+            _current_state = _lru_get(_state_by_user, uid)
             _session = _current_state.get_session_model() if _current_state else None
             if _session:
                 _gm_model_id, _gm_api_id = _session
@@ -716,7 +724,7 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
                 model=_gm_model_id,
                 user_id=api_user["id"] if api_user else None,
             ))
-        return _state_by_user[uid]
+        return _lru_get(_state_by_user, uid)
 
 
 def _invalidate_user_cache(api_user: dict[str, Any] | None) -> None:
@@ -748,7 +756,7 @@ def _get_sub_gm(api_user: dict[str, Any] | None) -> GameMaster:
     """
     uid = _user_key(api_user)
     # 快路径：缓存命中无需取锁的 _get_gm 重入
-    cached = _sub_gm_by_user.get(uid)
+    cached = _lru_get(_sub_gm_by_user, uid)
     if cached is not None:
         return cached
     # 注意：_get_gm/_ensure_loaded 内部会取 _state_lock；这里必须先释放再调，
@@ -793,7 +801,7 @@ def _get_sub_gm(api_user: dict[str, Any] | None) -> GameMaster:
     with _state_lock:
         if uid not in _sub_gm_by_user:
             _lru_set(_sub_gm_by_user, uid, sub)
-        return _sub_gm_by_user[uid]
+        return _lru_get(_sub_gm_by_user, uid)
 
 
 def _backup_save(reason: str) -> str | None:

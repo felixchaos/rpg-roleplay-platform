@@ -384,11 +384,14 @@ class GameMaster:
         messages = [{"role": "user", "content": self._turn_message(_OPENING_PROMPT, state, retrieved_context)}]
         return self._backend.call(system, messages, max_tokens=600)
 
-    def generate_opening_stream(self, state, retrieved_context: str = "") -> Iterator[str]:
+    def generate_opening_stream(self, state, retrieved_context: str = "", *, stop_event=None) -> Iterator[str]:
         self._active_state = state
         system   = self._build_system()
         messages = [{"role": "user", "content": self._turn_message(_OPENING_PROMPT, state, retrieved_context)}]
-        yield from self._backend.stream(system, messages, max_tokens=600)
+        for chunk in self._backend.stream(system, messages, max_tokens=600):
+            if stop_event is not None and stop_event.is_set():
+                return  # SSE 客户端已断开,提前退出
+            yield chunk
 
     # ── 主响应 ────────────────────────────────────────────────────
     def respond(self, user_input: str, retrieved_context: str, state) -> str:
@@ -415,6 +418,7 @@ class GameMaster:
         max_iterations: int = 3,
         max_tokens: int = 800,
         tool_call_router: Any = None,
+        stop_event=None,
     ) -> Iterator[dict[str, Any]]:
         """带 MCP 工具循环的流式响应。
 
@@ -431,6 +435,8 @@ class GameMaster:
         """
         if not tools:
             for chunk in self.respond_stream(user_input, retrieved_context, state):
+                if stop_event is not None and stop_event.is_set():
+                    return
                 yield {"type": "text", "text": chunk}
             return
 
@@ -456,10 +462,14 @@ class GameMaster:
         accumulated_text = ""  # 用于把 assistant 回合拼回 messages
 
         for _iteration in range(max_iterations):
+            if stop_event is not None and stop_event.is_set():
+                return
             buffer = ""
             in_tool = False
             tool_invoked = False
             for chunk in self._backend.stream(system, messages, max_tokens=max_tokens):
+                if stop_event is not None and stop_event.is_set():
+                    return
                 buffer += chunk
                 while True:
                     if not in_tool:

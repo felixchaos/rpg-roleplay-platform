@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import queue
+import threading
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -13,37 +14,48 @@ from schemas._common import COMMON_ERROR_RESPONSES, GenericOkResponse, OkRespons
 from schemas.game import ChatEstimateRequest, ChatRequest, NewGameRequest
 
 
-async def _bridge_sync_generator_to_async(sync_gen_fn, *args, **kwargs):
-    """在 to_thread 里跑同步 generator,通过 queue.Queue 把 chunk 异步传回。
+async def _bridge_sync_generator_to_async(gen_factory, stop_event: threading.Event | None = None):
+    """跑同步 generator,SSE 取消时设置 stop_event 让 generator 早退。
 
-    sentinel = None 表示 generator 结束或抛异常。异常通过 Exception 实例传回后重抛。
+    gen_factory: 无参 callable,返回 sync generator (内部可持有 stop_event 引用检查)。
+    stop_event:  外部传入的 threading.Event;未传时内部新建一个。
+    SSE 客户端断开 / 异常 / 正常完成时 finally 均会 set(),确保 sync 端早退。
     """
+    if stop_event is None:
+        stop_event = threading.Event()
     q: queue.Queue = queue.Queue()
     SENTINEL = object()
 
-    def _run():
+    def _runner():
         try:
-            for item in sync_gen_fn(*args, **kwargs):
+            for item in gen_factory():
+                if stop_event.is_set():
+                    break
                 q.put(item)
         except Exception as exc:
             q.put(exc)
         finally:
             q.put(SENTINEL)
 
-    task = asyncio.get_event_loop().run_in_executor(None, _run)
-    while True:
-        # 轮询 queue,避免 blocking get 占用 event loop
-        try:
-            item = q.get_nowait()
-        except queue.Empty:
-            await asyncio.sleep(0)
-            continue
-        if item is SENTINEL:
-            break
-        if isinstance(item, Exception):
-            raise item
-        yield item
-    await task  # 确保 executor 线程已结束
+    loop = asyncio.get_running_loop()
+    fut = loop.run_in_executor(None, _runner)
+    try:
+        while True:
+            # 轮询 queue,避免 blocking get 占用 event loop
+            try:
+                item = q.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0)
+                continue
+            if item is SENTINEL:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield item
+    finally:
+        # SSE 客户端断开 / 异常 / 正常完成都通知 sync 端早退
+        stop_event.set()
+        await fut
 
 router = APIRouter()
 
@@ -203,8 +215,11 @@ async def api_opening(
         text = ""
         try:
             # P0-1: generate_opening_stream 是同步 generator,通过 bridge 异步化
+            # stop_event 在 SSE 断开时由 bridge finally 设置,让 sync generator 提前退出
+            _opening_stop = threading.Event()
             async for chunk in _bridge_sync_generator_to_async(
-                gm.generate_opening_stream, state, retrieved_context=bundle["prompt"]
+                lambda: gm.generate_opening_stream(state, retrieved_context=bundle["prompt"], stop_event=_opening_stop),
+                stop_event=_opening_stop,
             ):
                 text += chunk
                 yield _sse("token", {"text": chunk})

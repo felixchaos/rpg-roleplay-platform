@@ -240,6 +240,48 @@ def _migrate_mcp_catalog(data: dict[str, Any]) -> dict[str, Any]:
 _MCP_CMD_WHITELIST = {"python3", "python", "node", "npx"}
 _MCP_CMD_SAFE_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,32}$")
 
+# P1-3 SEC: npx 专项 args 校验 ─────────────────────────────────────────────
+# 允许的包名：@modelcontextprotocol/<slug> 或普通小写短名
+_MCP_NPX_PACKAGE_RE = re.compile(
+    r"^(@modelcontextprotocol/[a-z0-9][a-z0-9\-]{0,63}|[a-z][a-z0-9\-]{1,32})$"
+)
+# 禁止的 flag —— 可用于下载任意包或执行任意命令
+_MCP_NPX_FORBIDDEN_FLAGS = {
+    "--package", "-p",
+    "--call", "-c",
+    "--ignore-existing",
+    "-y", "--yes",
+}
+
+
+def _validate_npx_args(args: list[str]) -> None:
+    """npx 调用必须是 npx <package> [sub-args …].
+
+    规则：
+    - args[0] 必须是包名（匹配白名单正则），不能是 flag。
+    - 任意位置出现禁用 flag（--package / -p / -c / --call 等）立即拒绝。
+    - 允许包名后跟子命令字符串（传给该包内部），但禁止 -- 后跟 shell 分隔。
+    """
+    if not args:
+        raise ValueError("npx 至少需要 1 个参数（包名）")
+    pkg = args[0]
+    if pkg.startswith("-"):
+        raise ValueError(
+            f"npx 第一个参数必须是包名，不能是 flag: {pkg!r}"
+        )
+    if not _MCP_NPX_PACKAGE_RE.match(pkg):
+        raise ValueError(
+            f"npx 包名不在白名单（要求 @modelcontextprotocol/<slug> 或 [a-z][a-z0-9-]{{1,32}}）: {pkg!r}"
+        )
+    for arg in args:
+        # 精确匹配（如 --package）或前缀匹配（如 --package=evil）
+        if arg in _MCP_NPX_FORBIDDEN_FLAGS or any(
+            arg.startswith(f"{flag}=") for flag in _MCP_NPX_FORBIDDEN_FLAGS
+        ):
+            raise ValueError(
+                f"npx 禁用 flag: {arg!r}（该 flag 可下载并执行任意代码）"
+            )
+
 
 def _normalize_mcp_server(server: dict[str, Any]) -> dict[str, Any]:
     server_id = _slugify(str(server.get("id") or server.get("display_name") or "mcp_server"))
@@ -256,6 +298,9 @@ def _normalize_mcp_server(server: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"MCP server command 不能包含路径分隔符: {command!r}")
         if command not in _MCP_CMD_WHITELIST and not _MCP_CMD_SAFE_RE.match(command):
             raise ValueError(f"MCP server command 不合法（仅允许白名单或 [a-zA-Z0-9_-]{{1,32}}）: {command!r}")
+        # P1-3 SEC: npx 专项 args 校验 — 防止 npx evil-package / -p / -c 绕过
+        if command == "npx":
+            _validate_npx_args([str(a) for a in args])
     return {
         "id": server_id,
         "display_name": str(server.get("display_name") or server_id).strip(),
