@@ -41,7 +41,13 @@ def schedule_llm_extraction(user_id: int, script_id: int,
     options = dict(options or {})
 
     with connect() as db:
-        # 去重:同 (user, script, kind=llm_extract) 有 pending/running 则复用
+        # 校验 owner(防止越权调度别人剧本)
+        owned = db.execute("select 1 from scripts where id=%s and owner_id=%s",
+                           (script_id, user_id)).fetchone()
+        if not owned:
+            raise ValueError("无权访问该剧本")
+
+        # 去重 + per-user 并发上限:先查活跃任务
         existing = db.execute(
             "select job_id from import_jobs "
             "where user_id=%s and script_id=%s and kind='llm_extract' "
@@ -51,7 +57,6 @@ def schedule_llm_extraction(user_id: int, script_id: int,
         if existing:
             return {"ok": True, "job_id": existing["job_id"], "reused": True}
 
-        # per-user 并发上限(此 kind 内)
         active = db.execute(
             "select count(*) as n from import_jobs where user_id=%s "
             "and kind='llm_extract' and status in ('pending','running')",
@@ -60,20 +65,35 @@ def schedule_llm_extraction(user_id: int, script_id: int,
         if int(active["n"] if active else 0) >= 1:
             raise ValueError("您已有 1 个 LLM 提取任务在跑,请等其完成或取消")
 
-        # 校验 owner(防止越权调度别人剧本)
-        owned = db.execute("select 1 from scripts where id=%s and owner_id=%s",
-                           (script_id, user_id)).fetchone()
-        if not owned:
-            raise ValueError("无权访问该剧本")
-
+        # 原子写入:利用 v13 unique partial index (user_id, script_id, kind)
+        # where status in ('pending','running') 防止 TOCTOU 竞态。
+        # 若并发两个请求同时通过上面的 SELECT 检查,只有一个 INSERT 会成功,
+        # 另一个命中 ON CONFLICT DO NOTHING,RETURNING 为空,调用方再查一遍复用。
         job_id = f"llm_{script_id}_{secrets.token_hex(6)}"
-        db.execute(
-            "insert into import_jobs(job_id, user_id, script_id, kind, status, stage, "
-            "overall_total, stages, budget_estimate) "
-            "values (%s, %s, %s, 'llm_extract', 'pending', 'pending', %s, %s, %s)",
+        row = db.execute(
+            """
+            insert into import_jobs(job_id, user_id, script_id, kind, status, stage,
+              overall_total, stages, budget_estimate)
+            values (%s, %s, %s, 'llm_extract', 'pending', 'pending', %s, %s, %s)
+            on conflict (user_id, script_id, kind)
+              where status in ('pending','running')
+            do nothing
+            returning job_id
+            """,
             (job_id, user_id, script_id, len(_STAGES), Jsonb(_STAGES),
              Jsonb({"options": options})),
-        )
+        ).fetchone()
+        if row is None:
+            # 并发写入竞争失败:复用已存在的任务
+            dup = db.execute(
+                "select job_id from import_jobs "
+                "where user_id=%s and script_id=%s and kind='llm_extract' "
+                "and status in ('pending','running') order by id desc limit 1",
+                (user_id, script_id),
+            ).fetchone()
+            if dup:
+                return {"ok": True, "job_id": dup["job_id"], "reused": True}
+            raise RuntimeError("无法创建也无法找到活跃的 llm_extract 任务")
 
     th = threading.Thread(
         target=_run, args=(job_id, user_id, script_id, options), daemon=True,

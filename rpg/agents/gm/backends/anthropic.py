@@ -4,12 +4,27 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from collections.abc import Iterator
 from typing import Any
+
+import httpx
 
 from core.logging import get_logger
 
 log = get_logger(__name__)
+
+# P1-1: 最多重试 1 次,仅对 timeout / 5xx 错误
+_MAX_RETRIES = 1
+
+
+def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, httpx.TimeoutException):
+        return True
+    from anthropic import APIStatusError
+    if isinstance(exc, APIStatusError) and exc.status_code >= 500:
+        return True
+    return False
 
 
 class _AnthropicBackend:
@@ -23,18 +38,34 @@ class _AnthropicBackend:
         key = result.get("key") or os.environ.get("EMBED_API_KEY")
         if not key:
             raise ValueError("找不到 Anthropic API Key（用户未配置且无环境变量）")
-        self.client = Anthropic(api_key=key)
+        self.client = Anthropic(
+            api_key=key,
+            timeout=httpx.Timeout(120.0, connect=10.0),
+        )
         self.model_name = model
         self.last_usage: dict[str, int] = {}
         log.info(f"[GM] Anthropic · {self.model_name} (key from {result.get('source', 'env')})")
 
     def call(self, system: str, messages: list[dict], max_tokens: int) -> str:
-        resp = self.client.messages.create(
-            model=self.model_name,
-            max_tokens=max_tokens,
-            system=system,
-            messages=messages,
-        )
+        last_exc: Exception | None = None
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                resp = self.client.messages.create(
+                    model=self.model_name,
+                    max_tokens=max_tokens,
+                    system=system,
+                    messages=messages,
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                if attempt < _MAX_RETRIES and _is_retryable(exc):
+                    log.warning(f"[anthropic] call attempt {attempt+1} failed ({exc}), retrying…")
+                    time.sleep(1.0)
+                    continue
+                raise
+        else:
+            raise last_exc  # type: ignore[misc]
         usage = getattr(resp, "usage", None)
         if usage:
             self.last_usage = {

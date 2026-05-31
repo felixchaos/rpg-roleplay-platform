@@ -679,11 +679,43 @@ async def run_gm_phase(
     #   update_state -> list_pending_anchors -> set_pending_question -> 写正文
     # 现在世界线收束 (task 136) 还会再叠 mark_anchor_satisfied / record_anchor_variant,
     # 8 是平衡值: 够 GM 串完整轮工具流, 又不至于死循环烧 token。
-    for event in gm.respond_stream_with_tools(
-        message_for_model, bundle["prompt"], state,
-        tools=unified_tools, max_iterations=8,
-        tool_call_router=gm_tool_router,
-    ):
+
+    # P0-2: respond_stream_with_tools 是同步 generator,通过 queue.Queue + executor 桥接异步化
+    import queue as _queue
+
+    _gm_q: _queue.Queue = _queue.Queue()
+    _GM_SENTINEL = object()
+
+    def _run_gm_stream():
+        try:
+            for _ev in gm.respond_stream_with_tools(
+                message_for_model, bundle["prompt"], state,
+                tools=unified_tools, max_iterations=8,
+                tool_call_router=gm_tool_router,
+            ):
+                _gm_q.put(_ev)
+        except Exception as _exc:
+            _gm_q.put(_exc)
+        finally:
+            _gm_q.put(_GM_SENTINEL)
+
+    _gm_executor_task = asyncio.get_event_loop().run_in_executor(None, _run_gm_stream)
+
+    async def _gm_event_iter():
+        while True:
+            try:
+                _item = _gm_q.get_nowait()
+            except _queue.Empty:
+                await asyncio.sleep(0)
+                continue
+            if _item is _GM_SENTINEL:
+                break
+            if isinstance(_item, Exception):
+                raise _item
+            yield _item
+        await _gm_executor_task
+
+    async for event in _gm_event_iter():
         if stop_event.is_set() or run_id != current_run_id_fn(api_user) or is_stop_requested_global(api_user, run_id):
             if response.strip():
                 response += "\n\n【本轮已被玩家打断】"

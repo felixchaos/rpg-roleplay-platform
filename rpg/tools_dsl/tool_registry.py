@@ -237,6 +237,10 @@ def _migrate_mcp_catalog(data: dict[str, Any]) -> dict[str, Any]:
     return catalog
 
 
+_MCP_CMD_WHITELIST = {"python3", "python", "node", "npx"}
+_MCP_CMD_SAFE_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,32}$")
+
+
 def _normalize_mcp_server(server: dict[str, Any]) -> dict[str, Any]:
     server_id = _slugify(str(server.get("id") or server.get("display_name") or "mcp_server"))
     args = server.get("args") or []
@@ -245,11 +249,18 @@ def _normalize_mcp_server(server: dict[str, Any]) -> dict[str, Any]:
     env = server.get("env") or {}
     if not isinstance(env, dict):
         env = {}
+    command = str(server.get("command") or "").strip()
+    # P1-2 SEC: command 白名单 + 安全字符集校验（禁止 / 和 ..）
+    if command:
+        if "/" in command or ".." in command:
+            raise ValueError(f"MCP server command 不能包含路径分隔符: {command!r}")
+        if command not in _MCP_CMD_WHITELIST and not _MCP_CMD_SAFE_RE.match(command):
+            raise ValueError(f"MCP server command 不合法（仅允许白名单或 [a-zA-Z0-9_-]{{1,32}}）: {command!r}")
     return {
         "id": server_id,
         "display_name": str(server.get("display_name") or server_id).strip(),
         "transport": str(server.get("transport") or "stdio").strip(),
-        "command": str(server.get("command") or "").strip(),
+        "command": command,
         "args": [str(item) for item in args],
         "env": {str(k): str(v) for k, v in env.items()},
         "enabled": bool(server.get("enabled", False)),
@@ -390,6 +401,11 @@ def _decode_upload(item: dict[str, Any]) -> bytes:
 
 
 def _extract_skill_zip(data: bytes, target: Path) -> None:
+    """解压 Skill zip 包到 target 目录。
+
+    P1-1 SEC: 使用流式读写 + 实际写入字节计数，不依赖可伪造的 info.file_size。
+    """
+    _CHUNK = 65536
     zip_path = target / "_upload.zip"
     zip_path.write_bytes(data)
     try:
@@ -398,7 +414,7 @@ def _extract_skill_zip(data: bytes, target: Path) -> None:
             if not skill_members:
                 return
             root_prefix = str(Path(skill_members[0]).parent)
-            total_size = 0
+            total_written = 0
             extracted_count = 0
             for info in zf.infolist():
                 member = info.filename
@@ -406,15 +422,25 @@ def _extract_skill_zip(data: bytes, target: Path) -> None:
                 if member_path.is_absolute() or ".." in member_path.parts or member.endswith("/"):
                     continue
                 extracted_count += 1
-                total_size += int(info.file_size or 0)
-                if extracted_count > MAX_SKILL_FILES or total_size > MAX_SKILL_UNPACKED_BYTES:
-                    raise ValueError("Skill 压缩包展开后过大")
+                if extracted_count > MAX_SKILL_FILES:
+                    raise ValueError("Skill 压缩包文件数超限")
                 relative = member_path
                 if root_prefix not in {"", "."} and str(member_path).startswith(root_prefix + "/"):
                     relative = Path(str(member_path)[len(root_prefix) + 1:])
                 out_path = target / relative
                 out_path.parent.mkdir(parents=True, exist_ok=True)
-                out_path.write_bytes(zf.read(info))
+                # 流式写入，按实际写入字节计数，防止 zip 炸弹（info.file_size 可伪造）
+                with zf.open(info) as src, open(out_path, "wb") as dst:
+                    while True:
+                        chunk = src.read(_CHUNK)
+                        if not chunk:
+                            break
+                        total_written += len(chunk)
+                        if total_written > MAX_SKILL_UNPACKED_BYTES:
+                            dst.close()
+                            out_path.unlink(missing_ok=True)
+                            raise ValueError("Skill 压缩包展开后超过大小限制")
+                        dst.write(chunk)
     finally:
         zip_path.unlink(missing_ok=True)
 

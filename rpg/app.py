@@ -17,6 +17,7 @@ import re
 import shutil
 import sys
 import time
+from collections import OrderedDict
 from pathlib import Path
 from threading import Event, Lock
 from typing import Any
@@ -234,15 +235,25 @@ def _verify_acceptance(
     return llm_unmet
 
 
-def _is_set_parser_enabled(api_user: dict | None) -> bool:
-    """task 77：用户偏好 set_parser.enabled = true 时开启 /set 自然语言解析子代理。
-    默认 false（向后兼容：detect_set_directive 简单 path=value 仍工作）。
-    """
+# P0-3: 单请求用户偏好缓存 — 用 request_id contextvar 做 key,同一请求内只查一次 DB。
+# cache 在请求结束后由 api_chat/api_opening 调用 _clear_prefs_cache 清理。
+import contextvars as _contextvars
+_prefs_cache_var: _contextvars.ContextVar[dict] = _contextvars.ContextVar(
+    "_prefs_cache", default=None  # type: ignore[assignment]
+)
+
+
+def _get_user_preferences_cached(api_user: dict | None) -> dict:
+    """查一次 DB 取全量偏好并 cache 在当前 request ContextVar 中。"""
     if not api_user:
-        return False
+        return {}
     uid = api_user.get("id")
     if not uid:
-        return False
+        return {}
+    cache = _prefs_cache_var.get(None)
+    if cache is not None and cache.get("__uid__") == uid:
+        return cache
+    prefs: dict = {}
     try:
         from platform_app.db import connect
         with connect() as db:
@@ -251,33 +262,33 @@ def _is_set_parser_enabled(api_user: dict | None) -> bool:
                 (int(uid),),
             ).fetchone()
         if row and isinstance(row.get("preferences"), dict):
-            return bool(row["preferences"].get("set_parser.enabled"))
+            prefs = row["preferences"]
     except Exception:
-        return False
-    return False
+        pass
+    cache = {"__uid__": uid, **prefs}
+    _prefs_cache_var.set(cache)
+    return cache
+
+
+def _clear_prefs_cache() -> None:
+    """请求结束时清掉当前 context 的偏好缓存。"""
+    _prefs_cache_var.set(None)  # type: ignore[arg-type]
+
+
+def _is_set_parser_enabled(api_user: dict | None) -> bool:
+    """task 77：用户偏好 set_parser.enabled = true 时开启 /set 自然语言解析子代理。
+    默认 false（向后兼容：detect_set_directive 简单 path=value 仍工作）。
+    """
+    prefs = _get_user_preferences_cached(api_user)
+    return bool(prefs.get("set_parser.enabled"))
 
 
 def _is_extractor_enabled(api_user: dict | None) -> bool:
     """task 62：用户偏好 extractor.enabled = true 时开启 GM-extractor 第二步。
     默认 false（保持向后兼容，单步 GM 流程不变）。
     """
-    if not api_user:
-        return False
-    uid = api_user.get("id")
-    if not uid:
-        return False
-    try:
-        from platform_app.db import connect
-        with connect() as db:
-            row = db.execute(
-                "select preferences from user_preferences where user_id = %s",
-                (int(uid),),
-            ).fetchone()
-        if row and isinstance(row.get("preferences"), dict):
-            return bool(row["preferences"].get("extractor.enabled"))
-    except Exception:
-        return False
-    return False
+    prefs = _get_user_preferences_cached(api_user)
+    return bool(prefs.get("extractor.enabled"))
 
 
 def _clarify_threshold(api_user: dict | None) -> float:
@@ -288,34 +299,21 @@ def _clarify_threshold(api_user: dict | None) -> float:
     default = 0.5
     if not api_user:
         return default
-    uid = api_user.get("id")
-    if not uid:
+    prefs = _get_user_preferences_cached(api_user)
+    raw = prefs.get("curator.confidence_threshold")
+    if raw is None:
         return default
     try:
-        from platform_app.db import connect
-        with connect() as db:
-            row = db.execute(
-                "select preferences from user_preferences where user_id = %s",
-                (int(uid),),
-            ).fetchone()
-        if row and isinstance(row.get("preferences"), dict):
-            raw = row["preferences"].get("curator.confidence_threshold")
-            if raw is None:
-                return default
-            try:
-                val = float(raw)
-            except (TypeError, ValueError):
-                return default
-            if val != val:  # NaN
-                return default
-            if val < 0.0:
-                return 0.0
-            if val > 1.0:
-                return 1.0
-            return val
-    except Exception:
+        val = float(raw)
+    except (TypeError, ValueError):
         return default
-    return default
+    if val != val:  # NaN
+        return default
+    if val < 0.0:
+        return 0.0
+    if val > 1.0:
+        return 1.0
+    return val
 
 
 def _acceptance_verifier_mode(api_user: dict | None) -> str:
@@ -327,24 +325,12 @@ def _acceptance_verifier_mode(api_user: dict | None) -> str:
     default = "rule"
     if not api_user:
         return default
-    uid = api_user.get("id")
-    if not uid:
-        return default
-    try:
-        from platform_app.db import connect
-        with connect() as db:
-            row = db.execute(
-                "select preferences from user_preferences where user_id = %s",
-                (int(uid),),
-            ).fetchone()
-        if row and isinstance(row.get("preferences"), dict):
-            val = row["preferences"].get("acceptance_verifier.mode")
-            if isinstance(val, str):
-                v = val.strip().lower()
-                if v in ("rule", "llm", "hybrid"):
-                    return v
-    except Exception:
-        return default
+    prefs = _get_user_preferences_cached(api_user)
+    val = prefs.get("acceptance_verifier.mode")
+    if isinstance(val, str):
+        v = val.strip().lower()
+        if v in ("rule", "llm", "hybrid"):
+            return v
     return default
 
 
@@ -484,24 +470,37 @@ from platform_app.db import init_db as _bootstrap_init_db  # noqa: F401  (lifesp
 _startup_auth_banner()
 
 
-_state_by_user: dict[int, GameState] = {}     # key = api_user["id"] 或 0 (anonymous local)
+# P1-2: 全局用户缓存改用 OrderedDict + LRU 上限,防止无界内存增长
+_LRU_MAXSIZE = 512
+
+
+def _lru_set(d: OrderedDict, k, v, maxsize: int = _LRU_MAXSIZE) -> None:
+    """写入 OrderedDict,超过 maxsize 则逐出最旧条目(FIFO/LRU)。"""
+    if k in d:
+        d.move_to_end(k)
+    d[k] = v
+    while len(d) > maxsize:
+        d.popitem(last=False)
+
+
+_state_by_user: OrderedDict[int, GameState] = OrderedDict()  # key = api_user["id"] 或 0 (anonymous local)
 # 记录每个 cached state 对应的 (save_id, commit_id) tuple。
 # 真相源 = branch_commits[user_runtime.active_commit_id].state_snapshot。
 # 用户在别处切了 save / commit 之后,_ensure_loaded 拿当前 user_runtime
 # (save_id, commit_id) 跟这里的值比对;**任一不同** → 缓存失效重新加载。
 # 之前只比 save_id 导致"同 save 内换 commit 缓存命中读旧 state"。
-_state_save_id_by_user: dict[int, int] = {}
-_state_commit_id_by_user: dict[int, int] = {}
-_gm_by_user: dict[int, GameMaster] = {}
+_state_save_id_by_user: OrderedDict[int, int] = OrderedDict()
+_state_commit_id_by_user: OrderedDict[int, int] = OrderedDict()
+_gm_by_user: OrderedDict[int, GameMaster] = OrderedDict()
 # B4: 子代理使用独立 GameMaster 实例，独立模型 / 独立 usage / 独立日志
-_sub_gm_by_user: dict[int, GameMaster] = {}
-_state_mtime_by_user: dict[int, int] = {}
+_sub_gm_by_user: OrderedDict[int, GameMaster] = OrderedDict()
+_state_mtime_by_user: OrderedDict[int, int] = OrderedDict()
 _state_lock = Lock()
 _run_lock = Lock()
 # 多用户安全：每个 user 独立的 run_id / stop_event。
 # 全局 _run_id/_stop_event 会让一个用户的 /api/stop 打断所有其他用户正在跑的 chat。
-_run_id_by_user: dict[int, int] = {}
-_stop_events_by_user: dict[int, Event] = {}
+_run_id_by_user: OrderedDict[int, int] = OrderedDict()
+_stop_events_by_user: OrderedDict[int, Event] = OrderedDict()
 
 
 def _get_run_state(api_user: dict[str, Any] | None) -> tuple[int, Event]:
@@ -509,8 +508,8 @@ def _get_run_state(api_user: dict[str, Any] | None) -> tuple[int, Event]:
     uid = _user_key(api_user)
     with _run_lock:
         if uid not in _stop_events_by_user:
-            _stop_events_by_user[uid] = Event()
-        _run_id_by_user[uid] = _run_id_by_user.get(uid, 0) + 1
+            _lru_set(_stop_events_by_user, uid, Event())
+        _lru_set(_run_id_by_user, uid, _run_id_by_user.get(uid, 0) + 1)
         _stop_events_by_user[uid].clear()
         return _run_id_by_user[uid], _stop_events_by_user[uid]
 
@@ -679,11 +678,11 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
                     or 0
                 )
                 if _new_save_id:
-                    _state_save_id_by_user[uid] = _new_save_id
+                    _lru_set(_state_save_id_by_user, uid, _new_save_id)
                 else:
                     _state_save_id_by_user.pop(uid, None)
                 if _new_commit_id:
-                    _state_commit_id_by_user[uid] = _new_commit_id
+                    _lru_set(_state_commit_id_by_user, uid, _new_commit_id)
                 else:
                     _state_commit_id_by_user.pop(uid, None)
             except Exception:
@@ -700,9 +699,9 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
                     _selfheal_player_from_save_snapshot(state, api_user)
                 except Exception as exc:
                     log.warning(f"[ensure_loaded] selfheal failed: {exc}")
-            _state_by_user[uid] = state
+            _lru_set(_state_by_user, uid, state)
             if uid == 0:
-                _state_mtime_by_user[uid] = SAVE_FILE.stat().st_mtime_ns if SAVE_FILE.exists() else 0
+                _lru_set(_state_mtime_by_user, uid, SAVE_FILE.stat().st_mtime_ns if SAVE_FILE.exists() else 0)
         if uid not in _gm_by_user:
             # A1: 优先读当前存档的 session_model，fallback 到全局 catalog selected
             _current_state = _state_by_user.get(uid)
@@ -712,11 +711,11 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
             else:
                 model = selected_model()
                 _gm_model_id, _gm_api_id = model["real_name"], model["api_id"]
-            _gm_by_user[uid] = GameMaster(
+            _lru_set(_gm_by_user, uid, GameMaster(
                 api_id=_gm_api_id,
                 model=_gm_model_id,
                 user_id=api_user["id"] if api_user else None,
-            )
+            ))
         return _state_by_user[uid]
 
 
@@ -792,7 +791,8 @@ def _get_sub_gm(api_user: dict[str, Any] | None) -> GameMaster:
         log.info(f"[SUB-AGENT] uid={uid} 复用主 GM api={main_gm.api_id}")
     # 写回缓存时取锁，但这里不会再 reenter
     with _state_lock:
-        _sub_gm_by_user.setdefault(uid, sub)
+        if uid not in _sub_gm_by_user:
+            _lru_set(_sub_gm_by_user, uid, sub)
         return _sub_gm_by_user[uid]
 
 

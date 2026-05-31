@@ -15,6 +15,7 @@ import csv
 import io
 import json
 import os
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,27 @@ from .db import connect, expose, init_db
 from .security import hash_password, verify_password
 
 router = APIRouter()
+
+# P2-1: SMS 端点 per-phone 速率限制
+# sms-code: 每分钟最多 1 次; sms-verify: 每分钟最多 5 次
+_SMS_CODE_BUCKETS: dict[str, list[float]] = {}   # phone → [时间戳...]
+_SMS_VERIFY_BUCKETS: dict[str, list[float]] = {} # phone → [时间戳...]
+_SMS_LOCK = threading.Lock()
+_SMS_CODE_MAX = 1
+_SMS_VERIFY_MAX = 5
+_SMS_WINDOW = 60.0  # 1 分钟
+
+
+def _check_sms_rate(buckets: dict, phone: str, max_count: int) -> bool:
+    """检查并记录 SMS 频率。超限返回 False，否则记录并返回 True。"""
+    now = time.monotonic()
+    with _SMS_LOCK:
+        bucket = buckets.setdefault(phone, [])
+        bucket[:] = [t for t in bucket if now - t < _SMS_WINDOW]
+        if len(bucket) >= max_count:
+            return False
+        bucket.append(now)
+        return True
 
 
 # ------------------------------------------------------------
@@ -152,8 +174,8 @@ async def api_list_sessions(request: Request):
     out = []
     for r in rows:
         thash = r["token_hash"] or ""
-        # 显示用哈希后 12 位作为可见 session ID（仅前端展示用）
-        display_id = thash[-12:] if thash else ""
+        # P1-2 方案B: 使用前 24 位作为可见 session ID（96 bit，碰撞概率极低），替代原 12 位
+        display_id = thash[:24] if thash else ""
         out.append({
             "id": display_id,
             "session_id": display_id,
@@ -176,11 +198,14 @@ async def api_revoke_session(request: Request):
     from .auth import _hash_token
     cur_token = request.cookies.get(SESSION_COOKIE) or ""
     cur_hash = _hash_token(cur_token) if cur_token else ""
+    # P1-2 方案B: sid 已是前 24 位前缀，用 startswith 精确前缀匹配代替后缀 LIKE 碰撞
+    if len(sid) != 24 or not all(c in "0123456789abcdef" for c in sid):
+        return _bad("无效的 session_id 格式")
     with connect() as db:
-        # 用 token_hash 后缀匹配前端显示的 12 位 ID；当前会话不能被自我吊销
+        # 用 token_hash 前 24 位前缀精确匹配；当前会话不能被自我吊销
         deleted = db.execute(
-            "delete from sessions where user_id = %s and token_hash like %s and token_hash <> %s returning token_hash",
-            (user["id"], f"%{sid}", cur_hash),
+            "delete from sessions where user_id = %s and left(token_hash, 24) = %s and token_hash <> %s returning token_hash",
+            (user["id"], sid, cur_hash),
         ).fetchone()
     return json_response({"ok": True, "deleted": bool(deleted)})
 
@@ -200,6 +225,7 @@ async def api_revoke_all_sessions(request: Request):
     return json_response({"ok": True, "result": n})
 
 
+# TODO_BEFORE_PRODUCTION: 此为 demo stub，接入真实 SMS 网关前必须替换
 @router.post("/api/auth/sms-code")
 async def api_sms_code(request: Request):
     """Stub: we don't actually have an SMS gateway. Pretend success."""
@@ -208,18 +234,27 @@ async def api_sms_code(request: Request):
     phone = (body.get("phone") or "").strip()
     if not phone:
         return _bad("请提供手机号")
-    # In a real deployment plug in an SMS provider here.
+    # P2-1: per-phone 限流，每分钟最多 1 次
+    if not _check_sms_rate(_SMS_CODE_BUCKETS, phone, _SMS_CODE_MAX):
+        return _bad("发送验证码过于频繁，请 60 秒后再试", 429)
+    # TODO_BEFORE_PRODUCTION: 此为 demo stub，接入真实 SMS 网关前必须替换
     return json_response({"ok": True, "message": "验证码已发送（演示）", "expires_in_sec": 60})
 
 
+# TODO_BEFORE_PRODUCTION: 此为 demo stub，接入真实 SMS 网关前必须替换
 @router.post("/api/auth/sms-verify")
 async def api_sms_verify(request: Request):
     """Stub: accept any 4-6 digit code for demo purposes."""
     require_user(request)
     body = await request.json()
+    phone = (body.get("phone") or "").strip()
     code = (body.get("code") or "").strip()
     if not code.isdigit() or not (4 <= len(code) <= 6):
         return _bad("验证码无效")
+    # P2-1: per-phone 限流，每分钟最多 5 次
+    if not _check_sms_rate(_SMS_VERIFY_BUCKETS, phone, _SMS_VERIFY_MAX):
+        return _bad("验证尝试过于频繁，请稍后再试", 429)
+    # TODO_BEFORE_PRODUCTION: 此为 demo stub，接入真实 SMS 网关前必须替换
     return json_response({"ok": True, "verified": True})
 
 
@@ -277,38 +312,14 @@ async def api_avatar_file(name: str):
 
 
 def _ensure_profile_extras_table() -> None:
-    init_db()
-    with connect() as db:
-        db.execute(
-            """
-            create table if not exists profile_extras (
-              user_id bigint primary key references users(id) on delete cascade,
-              real_name text default '',
-              gender text default 'unspecified',
-              birthday text default '',
-              location text default '',
-              website text default '',
-              pronouns text default '',
-              language text default 'zh-CN',
-              timezone text default 'Asia/Shanghai',
-              email text default '',
-              phone text default '',
-              visibility jsonb not null default '{}'::jsonb,
-              preferences jsonb not null default '{}'::jsonb,
-              updated_at timestamptz not null default now()
-            )
-            """
-        )
-        db.execute(
-            "alter table users add column if not exists avatar_url text"
-        )
+    # v33 migration 已建表，懒创建废弃。保留空函数避免 me.py / platform.py 的导入报错。
+    pass
 
 
 @router.post("/api/profile/visibility")
 async def api_profile_visibility(request: Request):
     user = require_user(request)
     body = await request.json() or {}
-    _ensure_profile_extras_table()
     from psycopg.types.json import Jsonb
     with connect() as db:
         db.execute(
@@ -327,7 +338,6 @@ async def api_profile_visibility(request: Request):
 async def api_save_preference(request: Request):
     user = require_user(request)
     body = await request.json() or {}
-    _ensure_profile_extras_table()
     from psycopg.types.json import Jsonb
     # Merge over existing preferences
     with connect() as db:

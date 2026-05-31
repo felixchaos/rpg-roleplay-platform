@@ -1,6 +1,8 @@
 """game.py — 游戏核心流程路由 (new / opening / chat / stop / save)。"""
 from __future__ import annotations
 
+import asyncio
+import queue
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -9,6 +11,39 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from routes._deps_fastapi import get_current_user
 from schemas._common import COMMON_ERROR_RESPONSES, GenericOkResponse, OkResponse, StateResponse
 from schemas.game import ChatEstimateRequest, ChatRequest, NewGameRequest
+
+
+async def _bridge_sync_generator_to_async(sync_gen_fn, *args, **kwargs):
+    """在 to_thread 里跑同步 generator,通过 queue.Queue 把 chunk 异步传回。
+
+    sentinel = None 表示 generator 结束或抛异常。异常通过 Exception 实例传回后重抛。
+    """
+    q: queue.Queue = queue.Queue()
+    SENTINEL = object()
+
+    def _run():
+        try:
+            for item in sync_gen_fn(*args, **kwargs):
+                q.put(item)
+        except Exception as exc:
+            q.put(exc)
+        finally:
+            q.put(SENTINEL)
+
+    task = asyncio.get_event_loop().run_in_executor(None, _run)
+    while True:
+        # 轮询 queue,避免 blocking get 占用 event loop
+        try:
+            item = q.get_nowait()
+        except queue.Empty:
+            await asyncio.sleep(0)
+            continue
+        if item is SENTINEL:
+            break
+        if isinstance(item, Exception):
+            raise item
+        yield item
+    await task  # 确保 executor 线程已结束
 
 router = APIRouter()
 
@@ -104,7 +139,8 @@ async def api_new(
     _invalidate_user_cache(api_user)
     uid = _user_key(api_user)
     with _state_lock:
-        _state_by_user[uid] = state
+        from app import _lru_set as _lru_set_inner
+        _lru_set_inner(_state_by_user, uid, state)
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "backup": backup, "state": _payload(api_user)})
 
@@ -131,8 +167,6 @@ async def api_opening(
         # task 121a: 4 阶段 stage 事件让前端能显示 thinking pill,避免 5-15s 无反馈
         yield _sse("stage", {"phase": "retrieving", "label": "翻阅剧本设定中…"})
         # 修(task 117):走 phase 算法路径 — 不硬编码"第一章"。
-        # retrieve_context 内部消费 state.world.timeline.current_phase / save.active_phase_index
-        # 来限定 chapter window;空 state 时 fallback 到 phase 0 的 chapter_range,适用任意小说。
         script_id = _active_script_id(api_user)
         if script_id:
             world = state.data.get("world", {}) or {}
@@ -147,24 +181,31 @@ async def api_opening(
             ]
             query = " ".join(p for p in query_parts if p).strip() or "开场"
         else:
-            # 无 script_id 时的通用 fallback — 避免硬编码特定剧本关键词污染检索结果
             query = "开场"
-        ctx = retrieve_context(
-            query,
-            state=state,
-            user_id=api_user["id"] if api_user else None,
-            script_id=script_id,
-        )
-        state.set_last_retrieval(ctx)
-        # task 107E: 把 save_id 透传给 context_engine, 让 runtime_phase_digests provider 工作
-        _, _save_id_for_ctx = _resolve_persist_target(api_user)
+
+        # P0-1: retrieve_context + build_context_bundle 包进 to_thread,不阻塞 event loop
+        def _retrieve_and_build():
+            _ctx = retrieve_context(
+                query,
+                state=state,
+                user_id=api_user["id"] if api_user else None,
+                script_id=script_id,
+            )
+            state.set_last_retrieval(_ctx)
+            _, _save_id_for_ctx = _resolve_persist_target(api_user)
+            _bundle = _build_turn_context(state, query, _ctx, script_id=script_id, save_id=_save_id_for_ctx)
+            return _bundle
+
         yield _sse("stage", {"phase": "building_context", "label": "组装上下文…"})
-        bundle = _build_turn_context(state, query, ctx, script_id=script_id, save_id=_save_id_for_ctx)
+        bundle = await asyncio.to_thread(_retrieve_and_build)
         yield _sse("status", _payload(api_user))
         yield _sse("stage", {"phase": "generating", "label": "GM 构思开场中…"})
         text = ""
         try:
-            for chunk in gm.generate_opening_stream(state, retrieved_context=bundle["prompt"]):
+            # P0-1: generate_opening_stream 是同步 generator,通过 bridge 异步化
+            async for chunk in _bridge_sync_generator_to_async(
+                gm.generate_opening_stream, state, retrieved_context=bundle["prompt"]
+            ):
                 text += chunk
                 yield _sse("token", {"text": chunk})
             opening = text

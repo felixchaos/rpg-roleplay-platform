@@ -162,7 +162,7 @@ def cluster_entities(mentions: dict, *, embedder=None, sim_threshold: float = 0.
 
 
 def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=None,
-                      public_threshold: int = 0, book_id: int | None = None) -> dict:
+                      public_threshold: int = 3, book_id: int | None = None) -> dict:
     """完整 Pass2:消歧 → 写 kb_canon_entities + 同步 NPC 角色卡到 character_cards。
 
     v28: 新增 character_cards 同步。把 type='character' 的 canon entity 落进 character_cards
@@ -196,6 +196,10 @@ def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=No
             summary=c.summary, first_revealed_chapter=c.first_revealed_chapter,
             public_knowledge=(c.importance > public_threshold and c.first_revealed_chapter == 1),
             importance=c.importance,
+            # v33: full_name / identity / background 透传到 canon 层
+            full_name=c.full_name,
+            identity=c.identity,
+            background=c.background,
         )
         written += 1
 
@@ -341,9 +345,9 @@ def build_constant_worldbook(db, script_id: int, book_id: int, seed) -> int:
     # 清旧:此 script 之前任何路径(_stage_worldbook 等)写入的非 extracted 条目作废,
     # 防新旧两套常驻骨架同时喂 GM 造成自相矛盾(如旧"哥本哈根 2927"和新纪元打架)。
     db.execute(
-        "delete from worldbook_entries where script_id=%s "
+        "delete from worldbook_entries where script_id=%s and book_id=%s "
         "and (metadata->>'source' is null or metadata->>'source' <> 'extracted')",
-        (script_id,),
+        (script_id, book_id),
     )
     entries = []
     if getattr(seed, "era", ""):

@@ -73,12 +73,16 @@ def run_extraction(
         return {"ok": False, "error": "无可提取章节"}
 
     # —— 以下 Pass0/Pass1 全程不持有 DB 连接 ——
+    # P2-1: seed 阶段用独立 ExtractLLM(algorithm="seed"),使记账标签正确;
+    #        逐章提取复用另一个 llm(algorithm="per_chapter"),互不污染。
+    llm_seed = ExtractLLM(model=model, api_id=api_id, user_id=user_id,
+                          script_id=script_id, algorithm="seed")
     llm = ExtractLLM(model=model, api_id=api_id, user_id=user_id,
                      script_id=script_id, algorithm="per_chapter")
 
     # Pass 0:种子 + 自举词表
     _emit("seed", {"chapters": len(chapters)})
-    seed = build_seed(llm, chapters, author_era=author_era,
+    seed = build_seed(llm_seed, chapters, author_era=author_era,
                       author_power_system=author_power_system,
                       author_worldlines=author_worldlines, sample=min(seed_sample, len(chapters)))
     era = (seed.era or author_era or "").strip()  # 空字符串=未定

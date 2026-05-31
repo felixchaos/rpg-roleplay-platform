@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,18 @@ from typing import Any
 from core.logging import get_logger
 
 log = get_logger(__name__)
+
+# P1-1: 最多重试 1 次,仅对 timeout / 5xx 错误
+_MAX_RETRIES = 1
+_VERTEX_TIMEOUT_SECONDS = 120
+
+
+def _is_retryable_vertex(exc: Exception) -> bool:
+    name = type(exc).__name__
+    # google.api_core.exceptions.DeadlineExceeded / ServiceUnavailable / InternalServerError
+    if any(k in name for k in ("Deadline", "Unavailable", "InternalServer", "Timeout")):
+        return True
+    return False
 
 BASE = Path(__file__).parent.parent.parent.parent  # rpg/agents/gm/backends/ → rpg/
 SA_FILE = BASE / "vertex_sa.json"
@@ -50,12 +63,26 @@ class _VertexBackend:
             max_output_tokens=max(max_tokens, 2048),  # thinking 模型需要足够 budget
             temperature=0.9,
             thinking_config=types.ThinkingConfig(thinking_budget=0),  # 禁用 thinking，纯生成
+            http_options=types.HttpOptions(timeout=_VERTEX_TIMEOUT_SECONDS * 1000),
         )
-        resp = self.client.models.generate_content(
-            model=self.model_name,
-            contents=contents,
-            config=config,
-        )
+        last_exc: Exception | None = None
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                resp = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=config,
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                if attempt < _MAX_RETRIES and _is_retryable_vertex(exc):
+                    log.warning(f"[vertex] call attempt {attempt+1} failed ({exc}), retrying…")
+                    time.sleep(1.0)
+                    continue
+                raise
+        else:
+            raise last_exc  # type: ignore[misc]
         self._capture_usage(resp)
         return resp.text.strip()
 

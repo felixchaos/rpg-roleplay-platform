@@ -10,8 +10,10 @@ lifespan 需在 FastAPI() 构造时传入:
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from json import JSONDecodeError
 from typing import TYPE_CHECKING
 
@@ -30,6 +32,23 @@ if TYPE_CHECKING:
     pass
 
 log = get_logger(__name__)
+
+# ── 可观测性: request_id ContextVar ─────────────────────────────────────────
+# contextvars 会跨 asyncio.to_thread 传播,SSE stream 子线程也能拿到 request_id。
+_request_id_var: ContextVar[str] = ContextVar("request_id", default="")
+
+
+class RequestIdFilter(logging.Filter):
+    """将当前 ContextVar 中的 request_id 注入 LogRecord。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
+        record.request_id = _request_id_var.get() or "-"  # type: ignore[attr-defined]
+        return True
+
+
+def get_request_id() -> str:
+    """供业务代码读取当前 request_id。"""
+    return _request_id_var.get() or "-"
 
 # ── API 版本（与 app.py 保持一致）────────────────────────────────────────
 API_VERSION = "1"
@@ -194,6 +213,7 @@ _DEFAULT_HTML_SECURITY_HEADERS = {
 async def api_contract_middleware(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     request.state.request_id = request_id  # 让 _internal_error_handler 能拿到
+    _request_id_var.set(request_id)  # 可观测性: SSE stream + to_thread 子线程均可读取
     original_path = request.scope.get("path", "")
     prefix = f"/api/v{API_VERSION}"
     if original_path == prefix:
@@ -271,3 +291,7 @@ def configure_app(app: FastAPI) -> None:
     app.add_exception_handler(FileNotFoundError, _file_not_found_handler)
     # 兜底 Exception handler — 必须最后注册（具体异常优先匹配）
     app.add_exception_handler(Exception, _internal_error_handler)
+
+    # 可观测性: 把 RequestIdFilter 挂到 root logger,让所有子 logger 日志都带 request_id
+    _rid_filter = RequestIdFilter()
+    logging.getLogger().addFilter(_rid_filter)

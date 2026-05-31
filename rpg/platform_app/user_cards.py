@@ -158,12 +158,13 @@ def upsert_persona(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
             except _pg_errors.UniqueViolation:
                 raise ValueError("slug 已被使用, 请换一个")
 
-        # 只允许一个默认 persona:其他全部清零(unique partial index 已强制,但这里也清掉运行时残留)
+        # 原子置默认：单条 UPDATE 将同用户所有 persona 的 is_default 设为 (id = 目标id)，
+        # 消除先清零再置位的并发竞争窗口。
         if is_default and row:
             db.execute(
-                "update character_cards set is_default = false "
-                "where user_id = %s and card_type = 'persona' and id <> %s",
-                (user_id, int(row["id"])),
+                "update character_cards set is_default = (id = %s)"
+                " where user_id = %s and card_type = 'persona'",
+                (int(row["id"]), user_id),
             )
     return card_to_dto(row, persona_role_alias=True) or {}
 

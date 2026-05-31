@@ -131,10 +131,20 @@ async def api_auth_schema():
     """
     pw_min = _auth.MIN_PASSWORD_LENGTH
     from ..db import connect, init_db
+    from core.config import effective_auth_required
     init_db()
     with connect() as db:
         user_count = db.execute("select count(*) as n from users").fetchone()["n"]
     first_user_is_admin = int(user_count) == 0
+    notes: dict = {
+        "min_password_length": pw_min,
+        "max_password_length": 1024,
+        "invite_only": False,
+    }
+    # P2-3: 仅本地/非鉴权模式（effective_auth_required=False）才透出 first_user_is_admin
+    # server 模式下隐藏该字段，防止泄露首注册可抢 admin 的信息（CWE-200）
+    if not effective_auth_required():
+        notes["first_user_is_admin"] = first_user_is_admin
     return json_response({
         "login": [
             {"key": "username", "label": "用户名", "type": "text", "required": True},
@@ -145,10 +155,5 @@ async def api_auth_schema():
             {"key": "display_name", "label": "昵称(可选)", "type": "text", "required": False},
             {"key": "password", "label": "密码", "type": "password", "required": True, "min_length": pw_min},
         ],
-        "notes": {
-            "min_password_length": pw_min,
-            "max_password_length": 1024,
-            "invite_only": False,
-            "first_user_is_admin": first_user_is_admin,
-        },
+        "notes": notes,
     })

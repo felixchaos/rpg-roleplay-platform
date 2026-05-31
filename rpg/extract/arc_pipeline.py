@@ -157,11 +157,15 @@ def run_arc_extraction(
     _emit("arc_split", {"chapters": len(chapters), "arcs": len(arcs)})
 
     # 3) Pass 0 — 种子(同 per_chapter 走法,12 章采样)
+    # P2-1: seed 阶段用独立 ExtractLLM(algorithm="seed"),使记账标签正确;
+    #        弧段提取复用另一个 llm(algorithm="arc"),互不污染。
+    llm_seed = ExtractLLM(model=model, api_id=api_id, user_id=user_id,
+                          script_id=script_id, algorithm="seed")
     llm = ExtractLLM(model=model, api_id=api_id, user_id=user_id,
                      script_id=script_id, algorithm="arc")
     _emit("seed", {"sample": min(seed_sample, len(chapters))})
     seed = build_seed(
-        llm, chapters, author_era=author_era,
+        llm_seed, chapters, author_era=author_era,
         author_power_system=author_power_system,
         author_worldlines=author_worldlines, sample=min(seed_sample, len(chapters)),
     )

@@ -38,20 +38,31 @@ _CANON_COLS = ("logical_key", "name", "aliases", "type", "summary", "attrs",
 def upsert_canon_entity(db, script_id: int, logical_key: str, *, name: str, type: str,
                         aliases: list | None = None, summary: str = "", attrs: dict | None = None,
                         first_revealed_chapter: int = 0, public_knowledge: bool = False,
-                        importance: int = 0, metadata: dict | None = None) -> dict:
+                        importance: int = 0, metadata: dict | None = None,
+                        full_name: str = "", identity: str = "", background: str = "") -> dict:
+    # v34: full_name / identity / background 进规范层 KB,GM 服务可从同一处取(不再依赖
+    # character_cards 才能拿身份/背景)。空串语义=不覆盖旧值(case when 保留已有)。
     return db.execute(
         """
         insert into kb_canon_entities(script_id, logical_key, name, aliases, type, summary, attrs,
-          first_revealed_chapter, public_knowledge, importance, metadata)
-        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+          first_revealed_chapter, public_knowledge, importance, metadata,
+          full_name, identity, background)
+        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, %s,%s,%s)
         on conflict(script_id, logical_key) do update set
           name=excluded.name, aliases=excluded.aliases, type=excluded.type, summary=excluded.summary,
           attrs=excluded.attrs, first_revealed_chapter=excluded.first_revealed_chapter,
-          public_knowledge=excluded.public_knowledge, importance=excluded.importance, metadata=excluded.metadata
+          public_knowledge=excluded.public_knowledge, importance=excluded.importance, metadata=excluded.metadata,
+          full_name = case when length(excluded.full_name) > 0
+                           then excluded.full_name else kb_canon_entities.full_name end,
+          identity = case when length(excluded.identity) > 0
+                          then excluded.identity else kb_canon_entities.identity end,
+          background = case when length(excluded.background) > 0
+                            then excluded.background else kb_canon_entities.background end
         returning *
         """,
         (script_id, logical_key, name, Jsonb(aliases or []), type, summary, Jsonb(attrs or {}),
-         first_revealed_chapter, public_knowledge, importance, Jsonb(metadata or {})),
+         first_revealed_chapter, public_knowledge, importance, Jsonb(metadata or {}),
+         full_name or "", identity or "", background or ""),
     ).fetchone()
 
 

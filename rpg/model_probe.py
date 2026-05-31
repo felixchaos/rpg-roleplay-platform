@@ -146,11 +146,28 @@ _LIST_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}  # api_id -> (ts
 # 让 GET /api/models 能 inject health 字段,UI 显示模型可达性。
 # value: {"status": "ok|err", "latency_ms": int, "checked_at": float, "error": str}
 _HEALTH_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+# P1-3: _HEALTH_CACHE TTL — 超过 300s 的条目视为过期,重新探测
+_HEALTH_CACHE_TTL = 300.0
+
+
+def _health_cache_get(api_id: str, real_name: str) -> dict[str, Any] | None:
+    """读 cache;超过 TTL 返回 None(触发重新探测)。"""
+    entry = _HEALTH_CACHE.get((api_id, real_name))
+    if entry is None:
+        return None
+    if time.time() - entry.get("_cached_at", 0) > _HEALTH_CACHE_TTL:
+        return None
+    return entry
+
+
+def _health_cache_set(api_id: str, real_name: str, val: dict[str, Any]) -> None:
+    """写 cache,自动附加时间戳。"""
+    _HEALTH_CACHE[(api_id, real_name)] = {**val, "_cached_at": time.time()}
 
 
 def get_health(api_id: str, real_name: str) -> dict[str, Any] | None:
     """读最近一次 probe 结果。前端 /api/models 用它注入 health 字段。"""
-    return _HEALTH_CACHE.get((api_id, real_name))
+    return _health_cache_get(api_id, real_name)
 
 
 def all_health() -> dict[str, dict[str, Any]]:
@@ -465,22 +482,22 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
             "api_id": api_id,
         }
         # task 42: 写 health cache 让 /api/models 能 surface 状态
-        _HEALTH_CACHE[(api_id, model_real_name)] = {
+        _health_cache_set(api_id, model_real_name, {
             "status": "ok", "status_detail": "ok",
             "latency_ms": latency,
             "checked_at": time.time(), "error": "",
-        }
+        })
         return result
     except Exception as exc:
         latency_ms = int((time.monotonic() - start) * 1000)
         err = str(exc)[:200]
         status_detail = _classify_probe_error(exc, err)
         # 兼容旧 status 字段：key_expired/forbidden 也标 status="err"
-        _HEALTH_CACHE[(api_id, model_real_name)] = {
+        _health_cache_set(api_id, model_real_name, {
             "status": "err", "status_detail": status_detail,
             "latency_ms": latency_ms,
             "checked_at": time.time(), "error": err,
-        }
+        })
         return {
             "ok": False,
             "status_detail": status_detail,

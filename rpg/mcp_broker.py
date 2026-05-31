@@ -154,6 +154,10 @@ class MCPServerConn:
         with self._id_lock:
             req_id = self._next_id
             self._next_id += 1
+        # P2: _pending 上限，超过则拒绝新请求，防止无限堆积
+        with self._pending_lock:
+            if len(self._pending) >= _MAX_PENDING:
+                raise RuntimeError(f"MCP server {self.server_id} 待处理请求已达上限 {_MAX_PENDING}，拒绝新请求")
         payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
         self._write(payload)
         deadline = time.monotonic() + timeout
@@ -183,16 +187,24 @@ class MCPServerConn:
             self.proc.stdin.flush()
 
     def _reader_loop(self) -> None:
-        """从 stdout 逐行读 JSON-RPC 响应。"""
+        """从 stdout 逐行读 JSON-RPC 响应。
+
+        P0-2 REL: 使用 readline(limit) 防止超大行 OOM。
+        readline() 不含 \\n 时表示截断（行超限），此时丢弃该行。
+        """
+        import io
         assert self.proc and self.proc.stdout
+        reader = io.BufferedReader(self.proc.stdout, buffer_size=65536)  # type: ignore[arg-type]
+        _limit = MAX_RESPONSE_BYTES + 1
         while not self._closed:
             try:
-                line = self.proc.stdout.readline()
+                line = reader.readline(_limit)
             except Exception:
                 break
             if not line:
                 break  # EOF
-            if len(line) > MAX_RESPONSE_BYTES:
+            # 若读到 _limit 字节仍无 \n，说明行超限 → 丢弃
+            if len(line) >= _limit:
                 continue
             try:
                 msg = json.loads(line.decode("utf-8", errors="replace"))
@@ -318,9 +330,14 @@ HEALTH_CHECK_INTERVAL = 30  # 秒
 MAX_CONSECUTIVE_FAILURES = 2
 
 
+_MAX_PENDING = 1024  # P2: _pending dict 最大请求数上限
+
+
 def _health_loop():
     """每 30s 对所有 alive 的 MCP server 跑一次 tools/list 探活。
     连续 2 次失败 → 尝试重启进程。
+
+    P2: 重启使用指数 backoff，sleep min(60, 2**N) 秒。
     """
     while not _HEALTH_STOP.is_set():
         try:
@@ -329,11 +346,16 @@ def _health_loop():
             for _sid, conn in servers:
                 if _HEALTH_STOP.is_set():
                     break
+                failures = getattr(conn, "_consecutive_failures", 0)
                 if not conn.is_alive():
                     conn._health = "down"
-                    conn._consecutive_failures = getattr(conn, "_consecutive_failures", 0) + 1
+                    conn._consecutive_failures = failures + 1
                     if conn._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                        # 重启
+                        # P2: 指数 backoff，最大 60s
+                        backoff = min(60, 2 ** conn._consecutive_failures)
+                        _HEALTH_STOP.wait(backoff)
+                        if _HEALTH_STOP.is_set():
+                            break
                         try:
                             conn.stop()
                             ok = conn.start()
@@ -350,8 +372,13 @@ def _health_loop():
                     conn._last_ping_at = time.time()
                 except Exception:
                     conn._health = "unresponsive"
-                    conn._consecutive_failures = getattr(conn, "_consecutive_failures", 0) + 1
+                    conn._consecutive_failures = failures + 1
                     if conn._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                        # P2: 指数 backoff，最大 60s
+                        backoff = min(60, 2 ** conn._consecutive_failures)
+                        _HEALTH_STOP.wait(backoff)
+                        if _HEALTH_STOP.is_set():
+                            break
                         try:
                             conn.stop()
                             ok = conn.start()
@@ -418,14 +445,19 @@ def call_tool(server_id: str, tool_name: str, arguments: dict[str, Any], timeout
     - 调用方（gm.py / context_agent.py）需要往下透传 user_id；老调用站点
       没传 user_id 不会报错（兼容），只是 audit 里看到 user_id=None
     """
+    # P0-3 REL: 不持锁调 start_server（start_server 内部自己持锁，避免死锁）
     with _LOCK:
         conn = _RUNNING.get(server_id)
-        if not conn or not conn.is_alive():
-            start_result = start_server(server_id)
-            if not start_result["ok"]:
-                _audit_call(server_id, tool_name, user_id, False, start_result.get("error", "start failed"))
-                return {"ok": False, "error": start_result.get("error", "无法启动 server")}
-            conn = _RUNNING[server_id]
+    if not conn or not conn.is_alive():
+        start_result = start_server(server_id)  # start_server 内部已持 _LOCK，不能在锁内调用
+        if not start_result["ok"]:
+            _audit_call(server_id, tool_name, user_id, False, start_result.get("error", "start failed"))
+            return {"ok": False, "error": start_result.get("error", "无法启动 server")}
+        with _LOCK:
+            conn = _RUNNING.get(server_id)
+        if not conn:
+            _audit_call(server_id, tool_name, user_id, False, "start_server 未写入 _RUNNING")
+            return {"ok": False, "error": "无法获取 server 连接"}
     try:
         result = conn.call_tool(tool_name, arguments or {}, timeout=timeout)
         _audit_call(server_id, tool_name, user_id, True)

@@ -3,13 +3,31 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Iterator
 from typing import Any
+
+import httpx
 
 from agents.gm.helpers import _openai_text_marker_loop
 from core.logging import get_logger
 
 log = get_logger(__name__)
+
+# P1-1: 最多重试 1 次,仅对 timeout / 5xx 错误
+_MAX_RETRIES = 1
+
+
+def _is_retryable_openai(exc: Exception) -> bool:
+    if isinstance(exc, httpx.TimeoutException):
+        return True
+    try:
+        from openai import APIStatusError
+        if isinstance(exc, APIStatusError) and exc.status_code >= 500:
+            return True
+    except ImportError:
+        pass
+    return False
 
 
 class _OpenAICompatBackend:
@@ -36,7 +54,10 @@ class _OpenAICompatBackend:
             raise ValueError(f"找不到 {api_id or display_kind} 的 API Key（用户未配置且无环境变量 {env_key}）")
         # 用户覆盖了 base_url 的话优先用用户的
         effective_base = result.get("base_url_override") or base_url
-        kwargs: dict[str, Any] = {"api_key": key}
+        kwargs: dict[str, Any] = {
+            "api_key": key,
+            "timeout": httpx.Timeout(120.0, connect=10.0),
+        }
         if effective_base:
             kwargs["base_url"] = effective_base
         self.client = OpenAI(**kwargs)
@@ -54,12 +75,25 @@ class _OpenAICompatBackend:
         return out
 
     def call(self, system: str, messages: list[dict], max_tokens: int) -> str:
-        resp = self.client.chat.completions.create(
-            model=self.model_name,
-            messages=self._to_messages(system, messages),
-            max_tokens=max_tokens,
-            temperature=0.9,
-        )
+        last_exc: Exception | None = None
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                resp = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=self._to_messages(system, messages),
+                    max_tokens=max_tokens,
+                    temperature=0.9,
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                if attempt < _MAX_RETRIES and _is_retryable_openai(exc):
+                    log.warning(f"[openai_compat] call attempt {attempt+1} failed ({exc}), retrying…")
+                    time.sleep(1.0)
+                    continue
+                raise
+        else:
+            raise last_exc  # type: ignore[misc]
         self._capture_usage(resp)
         return (resp.choices[0].message.content or "").strip()
 

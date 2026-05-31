@@ -796,6 +796,86 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         end $$;
         """,
     ]),
+    (33, "profile_extras_and_perf_indexes", [
+        # v33-1 (P0-1): profile_extras 正式进 migration，废弃懒创建。
+        # 字段严格对齐 frontend_routes._ensure_profile_extras_table 实际定义。
+        """
+        create table if not exists profile_extras (
+          user_id    bigint primary key references users(id) on delete cascade,
+          real_name  text not null default '',
+          gender     text not null default 'unspecified',
+          birthday   text not null default '',
+          location   text not null default '',
+          website    text not null default '',
+          pronouns   text not null default '',
+          language   text not null default 'zh-CN',
+          timezone   text not null default 'Asia/Shanghai',
+          email      text not null default '',
+          phone      text not null default '',
+          visibility    jsonb not null default '{}'::jsonb,
+          preferences   jsonb not null default '{}'::jsonb,
+          updated_at timestamptz not null default now()
+        )
+        """,
+        # v33-2 (P0-2): token_usage covering index，消除 usage 页 index scan + heap fetch。
+        """
+        create index if not exists idx_token_usage_user_time_cover
+          on token_usage(user_id, created_at desc)
+          include (input_tokens, output_tokens, cost_usd, total_tokens,
+                   scenario, model_real_name, api_id)
+        """,
+        # v33-3 (P0-3): runtime_checkouts 按用户+时间倒序查找，补覆盖索引。
+        """
+        create index if not exists idx_runtime_checkouts_user_updated
+          on runtime_checkouts(user_id, updated_at desc)
+        """,
+        # v33-4 (P1-1): save_phase_digests — 按 save_id+status+phase_index 查询。
+        """
+        create index if not exists idx_save_phase_digests_save_status
+          on save_phase_digests(save_id, status, phase_index desc)
+        """,
+        # v33-5 (P2-1): save_phase_digests — 按 save_id+phase_label+status 查询。
+        """
+        create index if not exists idx_save_phase_digests_save_label
+          on save_phase_digests(save_id, phase_label, status)
+        """,
+        # v33-6 (P1-2): worldbook_entries constant 插入项快速过滤。
+        """
+        create index if not exists idx_worldbook_constant
+          on worldbook_entries(script_id, priority desc)
+          where insertion_position = 'constant' and enabled = true
+        """,
+        # v33-7 (P2-2): kb_canon_entities 按规范化名字查找。
+        """
+        create index if not exists idx_kb_canon_entities_name
+          on kb_canon_entities(script_id, lower(name))
+        """,
+        # v33-8 (P2): character_cards 用户自有卡按类型+时间排序。
+        """
+        create index if not exists idx_character_cards_user_type_updated
+          on character_cards(user_id, card_type, updated_at desc)
+          where user_id is not null
+        """,
+    ]),
+    (34, "kb_canon_entities_full_name_identity_background", [
+        # v34: kb_canon_entities 补 full_name / identity / background 列,
+        # 与 character_cards 多态表字段对齐(v28 已在 character_cards 侧加了论,
+        # 这里补 canon 层,让 resolve.py 的 upsert_canon_entity 能透传提取字段)。
+        "alter table kb_canon_entities add column if not exists full_name text not null default ''",
+        "alter table kb_canon_entities add column if not exists identity text not null default ''",
+        "alter table kb_canon_entities add column if not exists background text not null default ''",
+    ]),
+    (35, "users_deactivated_at_and_public_id", [
+        # v35-1 (P1-1): users 表加 deactivated_at 列,支持账号停用过滤。
+        # frontend_routes.api_account_deactivate 已写此列,auth.login/user_from_token 已加 IS NULL 过滤。
+        "alter table users add column if not exists deactivated_at timestamptz",
+        # v35-2: users 加 public_id (UUID),对外暴露非自增 ID。
+        # security.public_user() 已引用此列,新 DB 不报错,老 DB 需补列。
+        "alter table users add column if not exists public_id uuid not null default gen_random_uuid()",
+        "alter table users add column if not exists row_version bigint not null default 1",
+        # 索引:加速按停用状态过滤
+        "create index if not exists idx_users_deactivated_at on users(deactivated_at) where deactivated_at is not null",
+    ]),
 ]
 
 

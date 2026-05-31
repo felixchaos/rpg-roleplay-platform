@@ -41,6 +41,20 @@ MIN_PASSWORD_LENGTH = _min_password_length()
 LOGIN_MAX_FAILS = _login_max_fails()
 LOGIN_LOCKOUT_SEC = _login_lockout_sec()
 LOGIN_WINDOW_SEC = _login_window_sec()  # 5min 内累计失败计数
+
+# P2-5 修复: 维护双独立 bucket，防止组合 key "ip|username" 可被任一维度绕过
+# per-IP: 30次/10min; per-username: 5次/10min
+_IP_MAX_FAILS = 30
+_IP_WINDOW_SEC = 600  # 10min
+_USER_MAX_FAILS = 5
+_USER_WINDOW_SEC = 600  # 10min
+
+_FAIL_BUCKETS_IP: dict[str, list[float]] = {}    # key=ip → [失败时间戳...]
+_FAIL_BUCKETS_USER: dict[str, list[float]] = {}  # key=username → [失败时间戳...]
+_LOCKED_UNTIL_IP: dict[str, float] = {}          # ip → 解锁时间
+_LOCKED_UNTIL_USER: dict[str, float] = {}        # username → 解锁时间
+
+# 兼容旧接口: _FAIL_BUCKETS/_LOCKED_UNTIL 保留但不再用于登录
 _FAIL_BUCKETS: dict[str, list[float]] = {}  # key="ip|username" → [失败时间戳...]
 _LOCKED_UNTIL: dict[str, float] = {}        # key → 解锁时间
 _FAIL_LOCK = threading.Lock()
@@ -62,43 +76,62 @@ def _bucket_key(ip: str, username: str) -> str:
 
 
 def _check_rate_limit(ip: str, username: str) -> None:
+    # P2-5: 双独立 bucket — per-IP 和 per-username 任一超阈值即拒绝
     # 多 worker 部署下此速率限制不安全（每个 worker 独立内存，不共享）
     _log.debug("rate_limit check: ip=%s username=%s (in-process, unsafe under multi-worker)", ip, username)
-    key = _bucket_key(ip, username)
+    ip_key = ip or "-"
+    user_key = (username or "").lower()
     now = time.monotonic()
     with _FAIL_LOCK:
-        # 已锁定？
-        unlock_at = _LOCKED_UNTIL.get(key)
-        if unlock_at and now < unlock_at:
-            raise RateLimited(int(unlock_at - now), key)
-        elif unlock_at:
-            _LOCKED_UNTIL.pop(key, None)
-        # 清理窗口外的失败记录
-        bucket = _FAIL_BUCKETS.get(key, [])
-        bucket = [t for t in bucket if now - t < LOGIN_WINDOW_SEC]
-        _FAIL_BUCKETS[key] = bucket
+        # 检查 IP 锁定
+        unlock_ip = _LOCKED_UNTIL_IP.get(ip_key)
+        if unlock_ip and now < unlock_ip:
+            raise RateLimited(int(unlock_ip - now), f"ip:{ip_key}")
+        elif unlock_ip:
+            _LOCKED_UNTIL_IP.pop(ip_key, None)
+        # 检查 username 锁定
+        unlock_user = _LOCKED_UNTIL_USER.get(user_key)
+        if unlock_user and now < unlock_user:
+            raise RateLimited(int(unlock_user - now), f"user:{user_key}")
+        elif unlock_user:
+            _LOCKED_UNTIL_USER.pop(user_key, None)
+        # 清理窗口外记录（只读，不计数）
+        _FAIL_BUCKETS_IP[ip_key] = [t for t in _FAIL_BUCKETS_IP.get(ip_key, []) if now - t < _IP_WINDOW_SEC]
+        _FAIL_BUCKETS_USER[user_key] = [t for t in _FAIL_BUCKETS_USER.get(user_key, []) if now - t < _USER_WINDOW_SEC]
 
 
 def _record_login_fail(ip: str, username: str) -> int:
-    """记录一次失败。返回当前窗口内累计失败次数。超阈值会被锁定。"""
-    key = _bucket_key(ip, username)
+    """记录一次失败。返回 username bucket 内累计失败次数。超阈值会被锁定。"""
+    # P2-5: 分别记录 per-IP 和 per-username bucket
+    ip_key = ip or "-"
+    user_key = (username or "").lower()
     now = time.monotonic()
     with _FAIL_LOCK:
-        bucket = _FAIL_BUCKETS.setdefault(key, [])
-        bucket.append(now)
-        bucket[:] = [t for t in bucket if now - t < LOGIN_WINDOW_SEC]
-        count = len(bucket)
-        if count >= LOGIN_MAX_FAILS:
-            _LOCKED_UNTIL[key] = now + LOGIN_LOCKOUT_SEC
+        # per-IP bucket
+        ip_bucket = _FAIL_BUCKETS_IP.setdefault(ip_key, [])
+        ip_bucket.append(now)
+        ip_bucket[:] = [t for t in ip_bucket if now - t < _IP_WINDOW_SEC]
+        if len(ip_bucket) >= _IP_MAX_FAILS:
+            _LOCKED_UNTIL_IP[ip_key] = now + LOGIN_LOCKOUT_SEC
+        # per-username bucket
+        user_bucket = _FAIL_BUCKETS_USER.setdefault(user_key, [])
+        user_bucket.append(now)
+        user_bucket[:] = [t for t in user_bucket if now - t < _USER_WINDOW_SEC]
+        count = len(user_bucket)
+        if count >= _USER_MAX_FAILS:
+            _LOCKED_UNTIL_USER[user_key] = now + LOGIN_LOCKOUT_SEC
     _write_audit(username, ip, "login_fail", {"count": count})
     return count
 
 
 def _record_login_success(ip: str, username: str) -> None:
-    key = _bucket_key(ip, username)
+    ip_key = ip or "-"
+    user_key = (username or "").lower()
     with _FAIL_LOCK:
-        _FAIL_BUCKETS.pop(key, None)
-        _LOCKED_UNTIL.pop(key, None)
+        _FAIL_BUCKETS_IP.pop(ip_key, None)
+        _LOCKED_UNTIL_IP.pop(ip_key, None)
+        _FAIL_BUCKETS_USER.pop(user_key, None)
+        _LOCKED_UNTIL_USER.pop(user_key, None)
     _write_audit(username, ip, "login_ok", {})
 
 
@@ -217,13 +250,37 @@ def login(username: str, password: str, *, ip: str = "") -> tuple[dict[str, Any]
     normalized = normalize_username(username)
     _check_rate_limit(ip, normalized)  # 锁定中直接抛 RateLimited
     with connect() as db:
-        row = db.execute("select * from users where username = %s", (normalized,)).fetchone()
+        # P1-1: 加 deactivated_at IS NULL 过滤，停用账号不允许登录
+        row = db.execute(
+            "select * from users where username = %s and deactivated_at is null",
+            (normalized,),
+        ).fetchone()
         if not row or not verify_password(password, row["password_hash"]):
             _record_login_fail(ip, normalized)
             raise ValueError("用户名或密码错误")
         token = secrets.token_urlsafe(32)
         # 使用 timezone-aware UTC 时间, 避免 server 本地时区漂移 session 过期
         expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
+
+        # P2-2: 并发会话上限 20，超出时驱逐最旧的会话
+        active_count = db.execute(
+            "select count(*) as n from sessions where user_id = %s and expires_at > now()",
+            (row["id"],),
+        ).fetchone()["n"]
+        if active_count >= 20:
+            evict_count = int(active_count) - 19
+            db.execute(
+                """
+                delete from sessions where id in (
+                  select id from sessions
+                  where user_id = %s and expires_at > now()
+                  order by created_at asc
+                  limit %s
+                )
+                """,
+                (row["id"], evict_count),
+            )
+
         # 安全:DB 只存 token 的 sha256 哈希,不存可直接使用的明文(拖库不得有效会话)
         # 注: token 列保留为 '' 兼容老 schema, 后续 migration 删除该列
         db.execute(
@@ -250,12 +307,14 @@ def user_from_token(token: str | None) -> dict[str, Any] | None:
     init_db()
     with connect() as db:
         # 仅按 token_hash 查找。旧明文行已不接受 — 拖库后历史 token 立即失效。
+        # P1-1: 加 users.deactivated_at IS NULL，停用账号的 token 立即失效
         row = db.execute(
             """
             select users.* from sessions
             join users on users.id = sessions.user_id
             where sessions.token_hash = %s
               and sessions.expires_at > now()
+              and users.deactivated_at is null
             """,
             (_hash_token(token),),
         ).fetchone()
