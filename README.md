@@ -5,8 +5,8 @@
 **Self-hostable LLM RPG engine that turns a novel into a playable world.**
 
 [![status](https://img.shields.io/badge/status-private%20beta-orange)](https://play.stellatrix.icu)
-[![rust](https://img.shields.io/badge/rust-1.83%2B-orange)](#)
-[![license](https://img.shields.io/badge/license-Proprietary-lightgrey)](./LICENSE)
+[![python](https://img.shields.io/badge/python-3.12%2B-blue)](#)
+[![license](https://img.shields.io/badge/license-AGPL--3.0-blue)](./LICENSE)
 [![waitlist](https://img.shields.io/badge/waitlist-open-success)](https://play.stellatrix.icu)
 
 [Landing & waitlist](https://play.stellatrix.icu) · [中文 README](./README.zh-CN.md)
@@ -224,11 +224,11 @@ This is a private repository in active development; external PRs aren't accepted
 
 ## License
 
-Proprietary. All rights reserved. See [LICENSE](./LICENSE).
+Licensed under the **GNU Affero General Public License v3.0 or later** (AGPL-3.0-or-later). See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
 
-A future public release is planned under a dual-license model — AGPL-3.0 for non-commercial / community use, plus a separate commercial license for closed-source or SaaS deployments. Until that release, this repository is private and not currently accepting external use.
+**Why AGPL?** RPG Roleplay is a server-side application. AGPL ensures any operator running it as a public service must also make their modified source available to users — keeping the engine open even when used as a SaaS.
 
-For licensing inquiries: <felixchaos@stellatrix.icu>
+**Commercial / closed-source use** is available under a separate dual-license. Contact <legal@stellatrix.icu>.
 
 ---
 

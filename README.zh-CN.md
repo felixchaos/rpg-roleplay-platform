@@ -5,8 +5,8 @@
 **把一本小说装进可玩世界的自托管 LLM 角色扮演引擎.**
 
 [![status](https://img.shields.io/badge/status-private%20beta-orange)](https://play.stellatrix.icu)
-[![rust](https://img.shields.io/badge/rust-1.83%2B-orange)](#)
-[![license](https://img.shields.io/badge/license-Proprietary-lightgrey)](./LICENSE)
+[![python](https://img.shields.io/badge/python-3.12%2B-blue)](#)
+[![license](https://img.shields.io/badge/license-AGPL--3.0-blue)](./LICENSE)
 [![waitlist](https://img.shields.io/badge/waitlist-open-success)](https://play.stellatrix.icu)
 
 [落地页 / 公测预约](https://play.stellatrix.icu) · [English README](./README.md)
@@ -222,13 +222,13 @@ open http://localhost:5173/Login.html
 
 私有仓库, 开发中, 暂不接受外部 PR. 公测后会按 [CONTRIBUTING.md](./CONTRIBUTING.md) 开放贡献. 现在可以提 issue 或在[落地页](https://play.stellatrix.icu)预约公测. 每个 Wave 的发布记录见 [CHANGELOG.md](./CHANGELOG.md).
 
-## 许可
+## 许可证
 
-闭源, 保留所有权利. 详见 [LICENSE](./LICENSE).
+本项目采用 **GNU Affero General Public License v3.0 或更新版本**(AGPL-3.0-or-later)。详见 [LICENSE](./LICENSE) 和 [NOTICE](./NOTICE)。
 
-未来公开发布时计划采用双重授权 — AGPL-3.0 用于非商业 / 社区用途, 另有独立商业 license 用于闭源 / SaaS 部署. 在那之前仓库私有, 暂不开放外部使用.
+**为什么 AGPL?** RPG Roleplay 是服务端应用。AGPL 确保任何把它作为公开服务运营的人,必须开放其修改后的源代码给用户 — 即使作为 SaaS 使用,引擎也保持开放。
 
-授权咨询: <felixchaos@stellatrix.icu>
+**商用 / 闭源** 可通过单独的双授权协议获取。联系 <legal@stellatrix.icu>。
 
 ---
 

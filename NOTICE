@@ -1,0 +1,85 @@
+RPG Roleplay
+Copyright (C) 2026 Stellatrix Labs
+
+This product is licensed under the GNU AGPL v3.0 (see LICENSE).
+
+This product includes software developed by third parties:
+
+============================================================
+Backend (Python)
+============================================================
+
+anthropic
+  Copyright Anthropic, PBC
+  Licensed under the MIT License
+  https://github.com/anthropics/anthropic-sdk-python
+
+google-genai
+  Copyright Google LLC
+  Licensed under the Apache License, Version 2.0
+  https://github.com/googleapis/python-genai
+
+google-auth
+  Copyright Google LLC
+  Licensed under the Apache License, Version 2.0
+  https://github.com/googleapis/google-auth-library-python
+
+openai (Python SDK)
+  Copyright OpenAI
+  Licensed under the Apache License, Version 2.0
+  https://github.com/openai/openai-python
+
+fastapi / starlette
+  Copyright Sebastian Ramirez
+  Licensed under the MIT License
+  https://github.com/tiangolo/fastapi
+
+uvicorn
+  Copyright Tom Christie / Encode
+  Licensed under the BSD License
+  https://github.com/encode/uvicorn
+
+psycopg / psycopg-binary
+  Copyright Daniele Varrazzo
+  Licensed under the LGPL 3.0
+  https://github.com/psycopg/psycopg
+
+cryptography
+  Copyright The cryptography developers
+  Licensed under the Apache License, Version 2.0 / BSD
+  https://github.com/pyca/cryptography
+
+argon2-cffi
+  Copyright Hynek Schlawack
+  Licensed under the MIT License
+  https://github.com/hynek/argon2-cffi
+
+============================================================
+Frontend (React / Cloudscape)
+============================================================
+
+@cloudscape-design/components
+@cloudscape-design/global-styles
+  Copyright Amazon.com, Inc. or its affiliates
+  Licensed under the Apache License, Version 2.0
+  https://github.com/cloudscape-design/components
+
+react / react-dom
+  Copyright Meta Platforms, Inc. and affiliates
+  Licensed under the MIT License
+  https://github.com/facebook/react
+
+vite
+  Copyright Yuxi (Evan) You and Vite contributors
+  Licensed under the MIT License
+  https://github.com/vitejs/vite
+
+i18next / react-i18next
+  Copyright i18next
+  Licensed under the MIT License
+  https://github.com/i18next/i18next
+
+============================================================
+
+For the full text of each license, see the project page of each package.
+Generated NOTICE.full (via pip-licenses + license-checker) is in deploy/ on releases.
