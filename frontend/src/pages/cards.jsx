@@ -5,6 +5,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Icon } from '../game-icons.jsx';
 import { fmtBytes, ResizableSplit } from '../platform-app.jsx';
 // Cloudscape 原生组件(内容迁移,统一基线对齐)
@@ -66,21 +67,21 @@ function cardFormInit(card) {
 }
 
 function cardFormPayload(form, card) {
-  const t = (s) => (s || '').trim();
+  const trim = (s) => (s || '').trim();
   return {
     ...(card && card.id ? { id: card.id } : {}),
-    name: t(form.name),
-    full_name: t(form.full_name),
-    identity: t(form.identity),
-    aliases: t(form.aliases).split(',').map((s) => s.trim()).filter(Boolean),
-    tags: t(form.tags).split(',').map((s) => s.trim()).filter(Boolean),
-    background: t(form.background),
-    appearance: t(form.appearance),
-    personality: t(form.personality),
-    speech_style: t(form.speech_style),
-    current_status: t(form.current_status),
-    secrets: t(form.secrets),
-    sample_dialogue: t(form.sample_dialogue).split('\n').map((s) => s.trim()).filter(Boolean),
+    name: trim(form.name),
+    full_name: trim(form.full_name),
+    identity: trim(form.identity),
+    aliases: trim(form.aliases).split(',').map((s) => s.trim()).filter(Boolean),
+    tags: trim(form.tags).split(',').map((s) => s.trim()).filter(Boolean),
+    background: trim(form.background),
+    appearance: trim(form.appearance),
+    personality: trim(form.personality),
+    speech_style: trim(form.speech_style),
+    current_status: trim(form.current_status),
+    secrets: trim(form.secrets),
+    sample_dialogue: trim(form.sample_dialogue).split('\n').map((s) => s.trim()).filter(Boolean),
     importance: Number(form.importance) || 100,
     first_revealed_chapter: Number(form.first_revealed_chapter) || 1,
     token_budget: Number(form.token_budget) || 450,
@@ -90,84 +91,92 @@ function cardFormPayload(form, card) {
   };
 }
 
-const _SCOPE_OPTS_NPC = [
-  { value: 'script', label: '剧本内(随剧本)' },
-  { value: 'private', label: '私有(仅自己可见)' },
-  { value: 'public', label: '公开(可分享)' },
-];
-const _SCOPE_OPTS_USER = [
-  { value: 'private', label: '私有(仅自己可见)' },
-  { value: 'public', label: '公开(可分享)' },
-];
-
 // 共享字段组(EC2 区块)。kind: 'npc' | 'user' | 'persona'
 function CardEditFields({ form, u, kind = 'user' }) {
+  const { t } = useTranslation();
   const isNpc = kind === 'npc';
-  const scopeOpts = isNpc ? _SCOPE_OPTS_NPC : _SCOPE_OPTS_USER;
+  const scopeOpts = isNpc
+    ? [
+        { value: 'script', label: t('cards.editor.scope_script') },
+        { value: 'private', label: t('cards.editor.scope_private') },
+        { value: 'public', label: t('cards.editor.scope_public') },
+      ]
+    : [
+        { value: 'private', label: t('cards.editor.scope_private') },
+        { value: 'public', label: t('cards.editor.scope_public') },
+      ];
   return (
     <CSSpaceBetween size="l">
-      <CSExpandableSection variant="container" defaultExpanded headerText="基本信息" headerDescription="姓名必填;全名为欧美式全名,别名/标签逗号分隔。">
+      <CSExpandableSection variant="container" defaultExpanded
+        headerText={t('cards.editor.section_basic')}
+        headerDescription={t('cards.editor.section_basic_desc')}>
         <CSColumnLayout columns={2}>
-          <CSFormField label="姓名" constraintText="必填">
+          <CSFormField label={t('cards.editor.name')} constraintText={t('cards.editor.name_required')}>
             <CSInput value={form.name} onChange={({ detail }) => u('name', detail.value)} autoFocus />
           </CSFormField>
-          <CSFormField label="全名 (full name)" description="欧美式全名,留空则与姓名同">
+          <CSFormField label={t('cards.editor.full_name')} description={t('cards.editor.full_name_desc')}>
             <CSInput value={form.full_name} onChange={({ detail }) => u('full_name', detail.value)} />
           </CSFormField>
-          <CSFormField label="身份 / 职位">
+          <CSFormField label={t('cards.editor.identity')}>
             <CSInput value={form.identity} onChange={({ detail }) => u('identity', detail.value)} />
           </CSFormField>
-          <CSFormField label="别名" description="逗号分隔,GM 据此识别同一角色的多种称呼">
+          <CSFormField label={t('cards.editor.aliases')} description={t('cards.editor.aliases_desc')}>
             <CSInput value={form.aliases} onChange={({ detail }) => u('aliases', detail.value)} />
           </CSFormField>
           <div style={{ gridColumn: '1 / -1' }}>
-            <CSFormField label="标签" description="逗号分隔">
+            <CSFormField label={t('cards.editor.tags')} description={t('cards.editor.tags_desc')}>
               <CSInput value={form.tags} onChange={({ detail }) => u('tags', detail.value)} />
             </CSFormField>
           </div>
         </CSColumnLayout>
       </CSExpandableSection>
 
-      <CSExpandableSection variant="container" defaultExpanded headerText="人物画像" headerDescription="前史 / 外貌 / 性格 / 语气 / 当前状态。">
+      <CSExpandableSection variant="container" defaultExpanded
+        headerText={t('cards.editor.section_profile')}
+        headerDescription={t('cards.editor.section_profile_desc')}>
         <CSSpaceBetween size="l">
-          <CSFormField label="前史 / 背景" description="角色登场前的来历"><CSTextarea rows={3} value={form.background} onChange={({ detail }) => u('background', detail.value)} /></CSFormField>
-          <CSFormField label="外貌"><CSTextarea rows={2} value={form.appearance} onChange={({ detail }) => u('appearance', detail.value)} /></CSFormField>
-          <CSFormField label="性格 / 设定"><CSTextarea rows={3} value={form.personality} onChange={({ detail }) => u('personality', detail.value)} /></CSFormField>
-          <CSFormField label="语气 / 说话风格"><CSTextarea rows={2} value={form.speech_style} onChange={({ detail }) => u('speech_style', detail.value)} /></CSFormField>
-          <CSFormField label="当前状态" description="开局时的处境 / 心境"><CSTextarea rows={2} value={form.current_status} onChange={({ detail }) => u('current_status', detail.value)} /></CSFormField>
+          <CSFormField label={t('cards.editor.background')} description={t('cards.editor.background_desc')}><CSTextarea rows={3} value={form.background} onChange={({ detail }) => u('background', detail.value)} /></CSFormField>
+          <CSFormField label={t('cards.editor.appearance')}><CSTextarea rows={2} value={form.appearance} onChange={({ detail }) => u('appearance', detail.value)} /></CSFormField>
+          <CSFormField label={t('cards.editor.personality')}><CSTextarea rows={3} value={form.personality} onChange={({ detail }) => u('personality', detail.value)} /></CSFormField>
+          <CSFormField label={t('cards.editor.speech_style')}><CSTextarea rows={2} value={form.speech_style} onChange={({ detail }) => u('speech_style', detail.value)} /></CSFormField>
+          <CSFormField label={t('cards.editor.current_status')} description={t('cards.editor.current_status_desc')}><CSTextarea rows={2} value={form.current_status} onChange={({ detail }) => u('current_status', detail.value)} /></CSFormField>
         </CSSpaceBetween>
       </CSExpandableSection>
 
-      <CSExpandableSection variant="container" defaultExpanded headerText="剧情与对话" headerDescription="关键秘密仅 GM 可见;示例对话每行一句。">
+      <CSExpandableSection variant="container" defaultExpanded
+        headerText={t('cards.editor.section_story')}
+        headerDescription={t('cards.editor.section_story_desc')}>
         <CSSpaceBetween size="l">
-          <CSFormField label="关键秘密" description="GM 可见,不会直接暴露给其他角色"><CSTextarea rows={3} value={form.secrets} onChange={({ detail }) => u('secrets', detail.value)} /></CSFormField>
-          <CSFormField label="示例对话" description="每行一句,帮助 GM 模仿口吻"><CSTextarea rows={4} value={form.sample_dialogue} onChange={({ detail }) => u('sample_dialogue', detail.value)} /></CSFormField>
+          <CSFormField label={t('cards.editor.secrets')} description={t('cards.editor.secrets_desc')}><CSTextarea rows={3} value={form.secrets} onChange={({ detail }) => u('secrets', detail.value)} /></CSFormField>
+          <CSFormField label={t('cards.editor.sample_dialogue')} description={t('cards.editor.sample_dialogue_desc')}><CSTextarea rows={4} value={form.sample_dialogue} onChange={({ detail }) => u('sample_dialogue', detail.value)} /></CSFormField>
         </CSSpaceBetween>
       </CSExpandableSection>
 
-      <CSExpandableSection variant="container" defaultExpanded headerText="注入参数" headerDescription="控制该卡在上下文里的注入预算 / 优先级 / 重要度 / 可见范围。">
+      <CSExpandableSection variant="container" defaultExpanded
+        headerText={t('cards.editor.section_inject')}
+        headerDescription={t('cards.editor.section_inject_desc')}>
         <CSColumnLayout columns={2}>
-          <CSFormField label="重要度" description="0–100,越高越优先被检索注入">
+          <CSFormField label={t('cards.editor.importance')} description={t('cards.editor.importance_desc')}>
             <CSInput type="number" value={String(form.importance)} onChange={({ detail }) => u('importance', detail.value)} />
           </CSFormField>
           {isNpc && (
-            <CSFormField label="首次揭示章节" description="第几章首次登场(章节闸)">
+            <CSFormField label={t('cards.editor.first_revealed_chapter')} description={t('cards.editor.first_revealed_chapter_desc')}>
               <CSInput type="number" value={String(form.first_revealed_chapter)} onChange={({ detail }) => u('first_revealed_chapter', detail.value)} />
             </CSFormField>
           )}
-          <CSFormField label="Token 预算" description="注入上下文的最大 token(默认 450)">
+          <CSFormField label={t('cards.editor.token_budget')} description={t('cards.editor.token_budget_desc')}>
             <CSInput type="number" value={String(form.token_budget)} onChange={({ detail }) => u('token_budget', detail.value)} />
           </CSFormField>
-          <CSFormField label="优先级" description="数值越大越优先注入(默认 100)">
+          <CSFormField label={t('cards.editor.priority')} description={t('cards.editor.priority_desc')}>
             <CSInput type="number" value={String(form.priority)} onChange={({ detail }) => u('priority', detail.value)} />
           </CSFormField>
-          <CSFormField label="可见范围">
+          <CSFormField label={t('cards.editor.scope')}>
             <CSSelect selectedOption={scopeOpts.find((o) => o.value === form.scope) || scopeOpts[0]}
               options={scopeOpts} onChange={({ detail }) => u('scope', detail.selectedOption.value)} />
           </CSFormField>
-          <CSFormField label="启用">
+          <CSFormField label={t('cards.editor.enabled')}>
             <CSToggle checked={!!form.enabled} onChange={({ detail }) => u('enabled', detail.checked)}>
-              {form.enabled ? '已启用' : '已禁用'}
+              {form.enabled ? t('cards.editor.enabled_on') : t('cards.editor.enabled_off')}
             </CSToggle>
           </CSFormField>
         </CSColumnLayout>
@@ -175,10 +184,6 @@ function CardEditFields({ form, u, kind = 'user' }) {
     </CSSpaceBetween>
   );
 }
-
-const _CARD_TYPE_LABEL = { npc: 'NPC', pc: '玩家卡', persona: '玩家身份' };
-const _SCOPE_LABEL = { script: '剧本内', private: '私有', public: '公开' };
-const _SOURCE_LABEL = { extracted: 'LLM 提取', user: '用户', persona: '身份', platform: '平台' };
 
 // 短摘要(NPC 卡面用):取最有信息量的字段前 N 字,原样不解析
 function cardSnippet(c, n = 160) {
@@ -189,6 +194,7 @@ function cardSnippet(c, n = 160) {
 
 /* 只读角色档展示(设定 tab / 详情用)。纯展示 DTO 结构化字段,不做任何文本解析。 */
 function CardSheet({ card, kind = 'user' }) {
+  const { t } = useTranslation();
   const raw = (card && card._raw) || card || {};
   const fullName = raw.full_name && raw.full_name !== raw.name ? raw.full_name : null;
   const aliases = Array.isArray(raw.aliases) ? raw.aliases : [];
@@ -198,6 +204,23 @@ function CardSheet({ card, kind = 'user' }) {
   const initial = (raw.name || '?').trim().slice(0, 1);
   const hasBody = raw.background || raw.appearance || raw.personality || raw.speech_style || raw.current_status || raw.secrets || dialogues.length;
 
+  const cardTypeLabel = {
+    npc: t('cards.detail.type_npc'),
+    pc: t('cards.detail.type_pc'),
+    persona: t('cards.detail.type_persona'),
+  };
+  const scopeLabel = {
+    script: t('cards.detail.scope_script'),
+    private: t('cards.detail.scope_private'),
+    public: t('cards.detail.scope_public'),
+  };
+  const sourceLabel = {
+    extracted: t('cards.detail.source_extracted'),
+    user: t('cards.detail.source_user'),
+    persona: t('cards.detail.source_persona'),
+    platform: t('cards.detail.source_platform'),
+  };
+
   const block = (label, value) => value ? (
     <div style={{ background: 'var(--panel-2, #282623)', border: '1px solid var(--line-soft, #2a2724)', borderRadius: 10, padding: '12px 16px' }}>
       <div style={{ fontSize: 11, letterSpacing: '.08em', color: 'var(--accent, #c96442)', fontWeight: 600, marginBottom: 7, textTransform: 'uppercase' }}>{label}</div>
@@ -206,14 +229,14 @@ function CardSheet({ card, kind = 'user' }) {
   ) : null;
 
   const attrs = [
-    { label: '类型', value: _CARD_TYPE_LABEL[raw.card_type] || (kind === 'npc' ? 'NPC' : '用户卡') },
-    { label: '来源', value: _SOURCE_LABEL[raw.source] || '通用' },
-    { label: '重要度', value: raw.importance != null ? String(raw.importance) : '—' },
-    ...(chapterGate ? [{ label: '首次揭示', value: `第 ${chapterGate} 章` }] : []),
-    { label: '可见范围', value: _SCOPE_LABEL[raw.scope] || '私有' },
-    { label: '状态', value: raw.enabled === false ? <CSStatusIndicator type="stopped">禁用</CSStatusIndicator> : <CSStatusIndicator type="success">启用</CSStatusIndicator> },
-    { label: 'Token 预算', value: String(raw.token_budget ?? 450) },
-    { label: '优先级', value: String(raw.priority ?? 100) },
+    { label: t('cards.detail.type'), value: cardTypeLabel[raw.card_type] || (kind === 'npc' ? t('cards.detail.type_npc') : t('cards.detail.type_user')) },
+    { label: t('cards.detail.source'), value: sourceLabel[raw.source] || t('cards.detail.source_generic') },
+    { label: t('cards.detail.importance'), value: raw.importance != null ? String(raw.importance) : '—' },
+    ...(chapterGate ? [{ label: t('cards.detail.first_revealed'), value: t('cards.detail.chapter_n', { n: chapterGate }) }] : []),
+    { label: t('cards.detail.scope'), value: scopeLabel[raw.scope] || t('cards.detail.scope_private') },
+    { label: t('cards.detail.status'), value: raw.enabled === false ? <CSStatusIndicator type="stopped">{t('cards.detail.status_disabled')}</CSStatusIndicator> : <CSStatusIndicator type="success">{t('cards.detail.status_enabled')}</CSStatusIndicator> },
+    { label: t('cards.detail.token_budget'), value: String(raw.token_budget ?? 450) },
+    { label: t('cards.detail.priority'), value: String(raw.priority ?? 100) },
   ];
 
   return (
@@ -225,7 +248,7 @@ function CardSheet({ card, kind = 'user' }) {
           fontFamily: "'Noto Serif SC', serif", fontSize: 24, fontWeight: 600 }}>{initial}</div>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 19, fontWeight: 600, color: 'var(--text, #ebe7df)' }}>
-            {raw.name || '未命名'}
+            {raw.name || t('cards.detail.unnamed')}
             {fullName && <span style={{ fontSize: 13, color: 'var(--muted, #968f85)', marginLeft: 8, fontStyle: 'italic' }}>{fullName}</span>}
           </div>
           {raw.identity && <div style={{ fontSize: 13.5, color: 'var(--text-quiet, #c8c2b7)', marginTop: 3 }}>{raw.identity}</div>}
@@ -233,7 +256,7 @@ function CardSheet({ card, kind = 'user' }) {
             <div style={{ marginTop: 9 }}>
               <CSSpaceBetween direction="horizontal" size="xxs">
                 {aliases.map((a) => <CSBadge key={'a' + a}>{a}</CSBadge>)}
-                {tags.map((t) => <CSBadge key={'t' + t} color="green">{t}</CSBadge>)}
+                {tags.map((tg) => <CSBadge key={'t' + tg} color="green">{tg}</CSBadge>)}
               </CSSpaceBetween>
             </div>
           )}
@@ -248,15 +271,15 @@ function CardSheet({ card, kind = 'user' }) {
       {/* 档案正文:各字段独立面板 */}
       {hasBody ? (
         <CSSpaceBetween size="s">
-          {block('前史 / 背景', raw.background)}
-          {block('外貌', raw.appearance)}
-          {block('性格 / 设定', raw.personality)}
-          {block('语气 / 说话风格', raw.speech_style)}
-          {block('当前状态', raw.current_status)}
-          {block('关键秘密', raw.secrets)}
+          {block(t('cards.detail.background'), raw.background)}
+          {block(t('cards.detail.appearance'), raw.appearance)}
+          {block(t('cards.detail.personality'), raw.personality)}
+          {block(t('cards.detail.speech_style'), raw.speech_style)}
+          {block(t('cards.detail.current_status'), raw.current_status)}
+          {block(t('cards.detail.secrets'), raw.secrets)}
           {dialogues.length > 0 && (
             <div style={{ background: 'var(--panel-2, #282623)', border: '1px solid var(--line-soft, #2a2724)', borderRadius: 10, padding: '12px 16px' }}>
-              <div style={{ fontSize: 11, letterSpacing: '.08em', color: 'var(--accent, #c96442)', fontWeight: 600, marginBottom: 8, textTransform: 'uppercase' }}>示例对话</div>
+              <div style={{ fontSize: 11, letterSpacing: '.08em', color: 'var(--accent, #c96442)', fontWeight: 600, marginBottom: 8, textTransform: 'uppercase' }}>{t('cards.detail.sample_dialogue')}</div>
               <CSSpaceBetween size="xs">
                 {dialogues.map((d, i) => (
                   <div key={i} style={{ borderLeft: '2px solid var(--accent-soft, rgba(201,100,66,.4))', paddingLeft: 10, color: 'var(--text-quiet, #c8c2b7)', fontSize: 13, lineHeight: 1.6 }}>
@@ -268,7 +291,7 @@ function CardSheet({ card, kind = 'user' }) {
           )}
         </CSSpaceBetween>
       ) : (
-        <CSBox color="text-status-inactive">暂无设定,切到「角色设置」补充。</CSBox>
+        <CSBox color="text-status-inactive">{t('cards.empty.no_settings')}</CSBox>
       )}
     </CSSpaceBetween>
   );
@@ -309,32 +332,37 @@ function CardsPage({ subPage = "user" }) {
 }
 
 function CardGrid({ cards, onEdit, kind, filter, empty, onDeleted, onDuplicate, onPromoteToUser }) {
+  const { t } = useTranslation();
   // task 50：每张卡片的「更多」走 Cloudscape ButtonDropdown,
   // 内含 导出 PNG / 导出 SillyTavern JSON / 复制 ID / 转用户卡 / 复制为新卡 / 删除。
   const handleDelete = async (c) => {
     if (kind === "npc") {
-      window.__apiToast?.("NPC 卡在剧本管理页面删除", { kind: "warn", duration: 2400 });
+      window.__apiToast?.(t('cards.toast.npc_delete_hint'), { kind: "warn", duration: 2400 });
       return;
     }
-    if (!await window.__confirm({ title: '删除角色卡', message: `确认删除角色卡「${c.name}」?该操作无法撤销。`, danger: true, confirmText: '删除' })) return;
+    if (!await window.__confirm({ title: t('cards.confirm.delete_title'), message: t('cards.confirm.delete_message', { name: c.name }), danger: true, confirmText: t('cards.confirm.delete_btn') })) return;
     try {
       await window.api.cards.myDelete(c.id);
-      window.__apiToast?.("已删除 " + c.name, { kind: "ok" });
+      window.__apiToast?.(t('cards.toast.deleted', { name: c.name }), { kind: "ok" });
       onDeleted && onDeleted(c);
     } catch (e) {
-      window.__apiToast?.("删除失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('cards.toast.delete_fail'), { kind: "danger", detail: e?.message });
     }
   };
   const copyId = async (c) => {
-    try { await navigator.clipboard.writeText(String(c.id)); window.__apiToast?.("已复制 ID", { kind: "ok", duration: 1500 }); }
-    catch { window.__apiToast?.("复制失败", { kind: "danger" }); }
+    try {
+      await navigator.clipboard.writeText(String(c.id));
+      window.__apiToast?.(t('cards.toast.id_copied'), { kind: "ok", duration: 1500 });
+    } catch {
+      window.__apiToast?.(t('cards.toast.copy_fail'), { kind: "danger" });
+    }
   };
 
   // NPC 卡 → user_card 一键迁移。复用 game-panels 同一套 saveAsUserCard 数据 shape。
   const promoteNpcToUserCard = async (c) => {
     const raw = c._raw || c;
     const body = {
-      name: c.name || raw.name || "未命名",
+      name: c.name || raw.name || t('cards.detail.unnamed'),
       identity: c.role || raw.identity || raw.role || "—",
       appearance: raw.appearance || c.bio || "",
       personality: raw.personality || "",
@@ -342,7 +370,7 @@ function CardGrid({ cards, onEdit, kind, filter, empty, onDeleted, onDuplicate, 
       current_status: raw.current_status || "",
       secrets: raw.secrets || "",
       sample_dialogue: Array.isArray(raw.sample_dialogue) ? raw.sample_dialogue : [],
-      tags: Array.isArray(c.tags) && c.tags.length ? [...c.tags, "源自 NPC"] : ["源自 NPC"],
+      tags: Array.isArray(c.tags) && c.tags.length ? [...c.tags, t('cards.list.tag_from_npc')] : [t('cards.list.tag_from_npc')],
       metadata: {
         source: "npc_promote",
         source_script_id: c.script_id || null,
@@ -352,29 +380,29 @@ function CardGrid({ cards, onEdit, kind, filter, empty, onDeleted, onDuplicate, 
     };
     try {
       const r = await window.api.cards.myUpsert(body);
-      if (r && r.ok === false) throw new Error(r.error || r.detail || "迁移失败");
-      window.__apiToast?.(`已迁移为用户角色卡：${body.name}`,
-        { kind: "ok", duration: 2200, detail: "现可在『角色卡 / 用户角色卡』中使用" });
+      if (r && r.ok === false) throw new Error(r.error || r.detail || t('cards.toast.promote_fail'));
+      window.__apiToast?.(t('cards.toast.promoted', { name: body.name }),
+        { kind: "ok", duration: 2200, detail: t('cards.toast.promoted_detail') });
       if (onPromoteToUser) onPromoteToUser(r?.card || body);
     } catch (e) {
-      window.__apiToast?.("迁移失败", { kind: "danger", detail: e?.message || String(e) });
+      window.__apiToast?.(t('cards.toast.promote_fail'), { kind: "danger", detail: e?.message || String(e) });
     }
   };
 
   const menuItems = (c) => {
     if (kind === 'npc') {
       return [
-        { id: 'promote', text: '转为用户角色卡', iconName: 'add-plus' },
-        { id: 'copyid', text: '复制 ID', iconName: 'copy' },
-        { id: 'delete', text: '删除', iconName: 'remove' },
+        { id: 'promote', text: t('cards.list.menu_promote'), iconName: 'add-plus' },
+        { id: 'copyid', text: t('cards.list.menu_copy_id'), iconName: 'copy' },
+        { id: 'delete', text: t('cards.list.menu_delete'), iconName: 'remove' },
       ];
     }
     return [
-      { id: 'png', text: '导出 PNG(带卡数据)', href: window.api.cards.exportPng(c.id), external: true, iconName: 'file' },
-      { id: 'tavern', text: '导出 SillyTavern JSON', href: window.api.cards.exportTavern(c.id), external: true, iconName: 'download' },
-      { id: 'copyid', text: '复制 ID', iconName: 'copy' },
-      ...(onDuplicate ? [{ id: 'dup', text: '复制为新卡', iconName: 'copy' }] : []),
-      { id: 'delete', text: '删除', iconName: 'remove' },
+      { id: 'png', text: t('cards.list.menu_export_png'), href: window.api.cards.exportPng(c.id), external: true, iconName: 'file' },
+      { id: 'tavern', text: t('cards.list.menu_export_tavern'), href: window.api.cards.exportTavern(c.id), external: true, iconName: 'download' },
+      { id: 'copyid', text: t('cards.list.menu_copy_id'), iconName: 'copy' },
+      ...(onDuplicate ? [{ id: 'dup', text: t('cards.list.menu_duplicate'), iconName: 'copy' }] : []),
+      { id: 'delete', text: t('cards.list.menu_delete'), iconName: 'remove' },
     ];
   };
   const onMenu = (c, id) => {
@@ -396,7 +424,7 @@ function CardGrid({ cards, onEdit, kind, filter, empty, onDeleted, onDuplicate, 
         header: (c) => (
           <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
             <CSBox key="name" variant="h3" padding="n">{c.name}</CSBox>
-            {c.pinned && <CSBadge key="pin" color="blue">已置顶</CSBadge>}
+            {c.pinned && <CSBadge key="pin" color="blue">{t('cards.list.pinned')}</CSBadge>}
           </CSSpaceBetween>
         ),
         sections: [
@@ -408,17 +436,17 @@ function CardGrid({ cards, onEdit, kind, filter, empty, onDeleted, onDuplicate, 
           ) },
           { id: 'bio', content: (c) => <CSBox color="text-body-secondary">{c.bio || '—'}</CSBox> },
           { id: 'tags', content: (c) => (c.tags?.length
-            ? <CSSpaceBetween direction="horizontal" size="xxs">{c.tags.map((t) => <CSBadge key={t}>{t}</CSBadge>)}</CSSpaceBetween>
+            ? <CSSpaceBetween direction="horizontal" size="xxs">{c.tags.map((tg) => <CSBadge key={tg}>{tg}</CSBadge>)}</CSSpaceBetween>
             : null) },
           { id: 'foot', content: (c) => (
             <CSBox fontSize="body-s" color="text-status-inactive">
-              {(kind === 'npc' ? c.save : c.origin)} · {c.uses} 次使用 · {c.updated}
+              {(kind === 'npc' ? c.save : c.origin)} · {t('cards.list.uses_count', { count: c.uses })} · {c.updated}
             </CSBox>
           ) },
           { id: 'actions', content: (c) => (
             <CSSpaceBetween direction="horizontal" size="xs">
-              <CSButton variant="inline-link" iconName="edit" onClick={() => onEdit(c)}>编辑</CSButton>
-              <CSButtonDropdown variant="inline-icon" ariaLabel="更多操作" expandToViewport
+              <CSButton variant="inline-link" iconName="edit" onClick={() => onEdit(c)}>{t('cards.list.btn_edit')}</CSButton>
+              <CSButtonDropdown variant="inline-icon" ariaLabel={t('cards.list.more_actions')} expandToViewport
                 items={menuItems(c)} onItemClick={({ detail }) => onMenu(c, detail.id)} />
             </CSSpaceBetween>
           ) },
@@ -429,6 +457,7 @@ function CardGrid({ cards, onEdit, kind, filter, empty, onDeleted, onDuplicate, 
 }
 
 function UserCardsView() {
+  const { t } = useTranslation();
   // task 47：登录态零 mock。原 useState(USER_CARDS) 初始就显示 顾承砚/沈知微/阿衡/无名旅人
   // 这套示例卡片，reload 拿到真数据再覆盖。匿名时 reload 失败仍保留 USER_CARDS（designer offline）。
   const IS_ANON = !(window.RPG_AUTH && window.RPG_AUTH.authed);
@@ -449,7 +478,7 @@ function UserCardsView() {
           name: c.name,
           role: c.identity || c.role || "—",
           tone: c.tone || "—",
-          origin: c.origin || "通用",
+          origin: c.origin || t('cards.list.origin_generic'),
           bio: c.description || c.summary || c.bio || c.personality || c.current_status || c.appearance || "",
           tags: c.tags || [],
           pinned: !!c.pinned,
@@ -459,7 +488,7 @@ function UserCardsView() {
         })));
       }
     } catch (_) {}
-  }, []);
+  }, [t]);
   useEffectPL(() => { reload(); }, [reload]);
   // 监听 NPC 迁移事件 → 自动刷新用户角色卡列表，
   // 让用户切到用户卡 tab 就能看到刚迁移过来的卡。
@@ -474,11 +503,11 @@ function UserCardsView() {
   const onSaveCard = async (vals) => {
     try {
       await window.api.cards.myUpsert(vals);
-      window.__apiToast?.(adding ? "已新增" : "已保存", { kind: "ok" });
+      window.__apiToast?.(adding ? t('cards.toast.added') : t('cards.toast.saved'), { kind: "ok" });
       setAdding(false);
       reload();
     } catch (e) {
-      window.__apiToast?.("保存失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('cards.toast.save_fail'), { kind: "danger", detail: e?.message });
     }
   };
 
@@ -489,11 +518,11 @@ function UserCardsView() {
       } else if (payload?.json) {
         await window.api.cards.importJson({ json: payload.json });
       }
-      window.__apiToast?.("已导入", { kind: "ok" });
+      window.__apiToast?.(t('cards.toast.imported'), { kind: "ok" });
       setImporting(false);
       reload();
     } catch (e) {
-      window.__apiToast?.("导入失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('cards.toast.import_fail'), { kind: "danger", detail: e?.message });
     }
   };
 
@@ -505,20 +534,20 @@ function UserCardsView() {
   const onDuplicate = async (c) => {
     try {
       const src = c._raw || {};
-      const body = { ...src, id: undefined, slug: undefined, name: (src.name || c.name) + " 副本" };
+      const body = { ...src, id: undefined, slug: undefined, name: (src.name || c.name) + t('cards.list.duplicate_suffix') };
       await window.api.cards.myUpsert(body);
-      window.__apiToast?.("已复制", { kind: "ok" });
+      window.__apiToast?.(t('cards.toast.duplicated'), { kind: "ok" });
       reload();
-    } catch (e) { window.__apiToast?.("复制失败", { kind: "danger", detail: e?.message }); }
+    } catch (e) { window.__apiToast?.(t('cards.toast.duplicate_fail'), { kind: "danger", detail: e?.message }); }
   };
   const onDeleteCard = async (c) => {
-    if (!await window.__confirm({ title: '删除角色卡', message: `确认删除角色卡「${c.name}」?该操作无法撤销。`, danger: true, confirmText: '删除' })) return;
+    if (!await window.__confirm({ title: t('cards.confirm.delete_title'), message: t('cards.confirm.delete_message', { name: c.name }), danger: true, confirmText: t('cards.confirm.delete_btn') })) return;
     try {
       await window.api.cards.myDelete(c.id);
-      window.__apiToast?.("已删除 " + c.name, { kind: "ok" });
+      window.__apiToast?.(t('cards.toast.deleted', { name: c.name }), { kind: "ok" });
       setSelectedId(null);
       setCards(cs => cs.filter(x => x.id !== c.id)); reload();
-    } catch (e) { window.__apiToast?.("删除失败", { kind: "danger", detail: e?.message }); }
+    } catch (e) { window.__apiToast?.(t('cards.toast.delete_fail'), { kind: "danger", detail: e?.message }); }
   };
 
   const detailEl = selected ? (
@@ -540,16 +569,16 @@ function UserCardsView() {
       selectedItems={selected ? [selected] : []}
       onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedId(x.id); }}
       onRowClick={({ detail }) => setSelectedId(detail.item.id)}
-      empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{q ? '没有匹配的角色卡' : '还没有用户角色卡,点右上「新增角色卡」开始。'}</CSBox>}
+      empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{q ? t('cards.empty.no_match') : t('cards.empty.no_user_cards')}</CSBox>}
       columnDefinitions={[
-        { id: 'name', header: '角色卡', cell: (c) => (
+        { id: 'name', header: t('cards.list.col_card'), cell: (c) => (
           <div><CSBox fontWeight="bold">{c.name}</CSBox><CSBox fontSize="body-s" color="text-body-secondary">{c.role !== '—' ? c.role : (c.bio || '').slice(0, 40)}</CSBox></div>
         ) },
-        { id: 'tags', header: '标签', cell: (c) => (c.tags?.length
-          ? <CSSpaceBetween direction="horizontal" size="xxs">{c.tags.slice(0, 4).map((t) => <CSBadge key={t}>{t}</CSBadge>)}</CSSpaceBetween>
+        { id: 'tags', header: t('cards.list.col_tags'), cell: (c) => (c.tags?.length
+          ? <CSSpaceBetween direction="horizontal" size="xxs">{c.tags.slice(0, 4).map((tg) => <CSBadge key={tg}>{tg}</CSBadge>)}</CSSpaceBetween>
           : <CSBox color="text-status-inactive">—</CSBox>) },
-        { id: 'uses', header: '使用', cell: (c) => `${c.uses} 次` },
-        { id: 'updated', header: '更新', cell: (c) => c.updated },
+        { id: 'uses', header: t('cards.list.col_uses'), cell: (c) => t('cards.list.uses_count', { count: c.uses }) },
+        { id: 'updated', header: t('cards.list.col_updated'), cell: (c) => c.updated },
       ]}
     />
   );
@@ -560,22 +589,22 @@ function UserCardsView() {
         <CSHeader
           variant="h1"
           counter={`(${cards.length})`}
-          description="跨剧本 / 跨存档共享的用户角色卡。"
+          description={t('cards.list.user_cards_desc')}
           actions={
             <CSSpaceBetween direction="horizontal" size="xs">
-              <CSButton iconName="download" onClick={() => setImporting(true)}>导入酒馆卡</CSButton>
-              <CSButton variant="primary" iconName="add-plus" onClick={() => setAdding(true)}>新增角色卡</CSButton>
+              <CSButton iconName="download" onClick={() => setImporting(true)}>{t('cards.import.btn_import')}</CSButton>
+              <CSButton variant="primary" iconName="add-plus" onClick={() => setAdding(true)}>{t('cards.list.btn_add')}</CSButton>
             </CSSpaceBetween>
           }
-        >用户角色卡</CSHeader>
+        >{t('cards.list.user_cards_title')}</CSHeader>
 
         <CSSpaceBetween direction="horizontal" size="xs">
           <div style={{ minWidth: 260 }}>
-            <CSTextFilter filteringText={q} filteringPlaceholder="搜索名称 / 身份 / 标签"
+            <CSTextFilter filteringText={q} filteringPlaceholder={t('cards.list.search_placeholder')}
               onChange={({ detail }) => setQ(detail.filteringText)} />
           </div>
           <CSSegmentedControl selectedId={filter}
-            options={[{ id: 'all', text: '全部' }, { id: 'pinned', text: '置顶' }]}
+            options={[{ id: 'all', text: t('cards.list.filter_all') }, { id: 'pinned', text: t('cards.list.filter_pinned') }]}
             onChange={({ detail }) => setFilter(detail.selectedId)} />
         </CSSpaceBetween>
 
@@ -601,6 +630,7 @@ function UserCardsView() {
 /* 角色卡详情面板 —— 选中后在列表下方展开(对齐剧本/存档)。
    Tabs:角色信息(KeyValuePairs)/ 设定(只读展示)/ 角色设置(内联编辑表单)。 */
 function CardDetailPanel({ card, kind, onSave, onDuplicate, onDelete }) {
+  const { t } = useTranslation();
   const raw = card._raw || card;
   const [tab, setTab] = useStatePL('info');
   const [form, setForm] = useStatePL(null);
@@ -612,51 +642,52 @@ function CardDetailPanel({ card, kind, onSave, onDuplicate, onDelete }) {
   }, [card.id]);
   const u = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const doSave = async () => {
-    if (!form?.name?.trim()) { window.__apiToast?.('姓名必填', { kind: 'warn' }); return; }
+    if (!form?.name?.trim()) { window.__apiToast?.(t('cards.toast.name_required'), { kind: 'warn' }); return; }
     setSaving(true);
     try { await onSave(cardFormPayload(form, card)); }
     finally { setSaving(false); }
   };
-  const setting = (label, value) => value
-    ? <div><CSBox variant="awsui-key-label">{label}</CSBox><CSBox color="text-body-secondary" variant="p">{value}</CSBox></div>
-    : null;
   const fullName = raw.full_name && raw.full_name !== raw.name ? raw.full_name : null;
   const chapterGate = (kind === 'npc' && raw.first_revealed_chapter > 1) ? raw.first_revealed_chapter : null;
+
+  const cardTypeLabel = { npc: t('cards.detail.type_npc'), pc: t('cards.detail.type_pc'), persona: t('cards.detail.type_persona') };
+  const sourceLabel = { extracted: t('cards.detail.source_extracted'), user: t('cards.detail.source_user'), persona: t('cards.detail.source_persona'), platform: t('cards.detail.source_platform') };
+  const scopeLabel = { script: t('cards.detail.scope_script'), private: t('cards.detail.scope_private'), public: t('cards.detail.scope_public') };
 
   return (
     <CSContainer header={
       <CSHeader variant="h2"
         actions={
           <CSSpaceBetween direction="horizontal" size="xs">
-            <CSButton variant="primary" iconName="check" loading={saving} onClick={doSave}>保存</CSButton>
-            <CSButton iconName="copy" onClick={onDuplicate}>复制为新卡</CSButton>
-            {kind === 'user' && <CSButton href={window.api.cards.exportTavern(card.id)} target="_blank" iconName="download">导出</CSButton>}
-            <CSButton iconName="remove" onClick={onDelete}>删除</CSButton>
+            <CSButton variant="primary" iconName="check" loading={saving} onClick={doSave}>{t('cards.detail.btn_save')}</CSButton>
+            <CSButton iconName="copy" onClick={onDuplicate}>{t('cards.detail.btn_duplicate')}</CSButton>
+            {kind === 'user' && <CSButton href={window.api.cards.exportTavern(card.id)} target="_blank" iconName="download">{t('cards.detail.btn_export')}</CSButton>}
+            <CSButton iconName="remove" onClick={onDelete}>{t('cards.detail.btn_delete')}</CSButton>
           </CSSpaceBetween>
         }
       >{card.name}{fullName && <CSBox display="inline" color="text-status-inactive" fontSize="body-s" padding={{ left: 's' }}>{fullName}</CSBox>}</CSHeader>
     }>
       <CSTabs activeTabId={tab} onChange={({ detail }) => setTab(detail.activeTabId)} tabs={[
-        { id: 'info', label: '角色信息', content: (
+        { id: 'info', label: t('cards.detail.tab_info'), content: (
           <CSKeyValuePairs columns={4} items={[
-            { label: '身份 / 职位', value: raw.identity || raw.role || '—' },
-            ...(fullName ? [{ label: '全名', value: fullName }] : []),
-            { label: '类型', value: ({ npc: 'NPC', pc: '玩家卡', persona: '玩家身份' })[raw.card_type] || (kind === 'npc' ? 'NPC' : '用户卡') },
-            { label: '来源', value: ({ extracted: 'LLM 提取', user: '用户', persona: '身份', platform: '平台' })[raw.source] || card.origin || '通用' },
-            { label: '重要度', value: raw.importance != null ? String(raw.importance) : '—' },
-            ...(chapterGate ? [{ label: '章节闸', value: <CSStatusIndicator type="info">📖 第 {chapterGate} 章揭示</CSStatusIndicator> }] : []),
-            { label: '可见范围', value: ({ script: '剧本内', private: '私有', public: '公开' })[raw.scope] || '—' },
-            { label: '状态', value: raw.enabled === false ? <CSStatusIndicator type="stopped">已禁用</CSStatusIndicator> : <CSStatusIndicator type="success">启用</CSStatusIndicator> },
-            { label: '标签', value: (Array.isArray(raw.tags) && raw.tags.length) ? raw.tags.join(' · ') : '—' },
-            { label: '更新', value: card.updated || '—' },
-            { label: '卡 ID', value: <span className="mono">{card.id}</span> },
+            { label: t('cards.detail.identity'), value: raw.identity || raw.role || '—' },
+            ...(fullName ? [{ label: t('cards.detail.full_name'), value: fullName }] : []),
+            { label: t('cards.detail.type'), value: cardTypeLabel[raw.card_type] || (kind === 'npc' ? t('cards.detail.type_npc') : t('cards.detail.type_user')) },
+            { label: t('cards.detail.source'), value: sourceLabel[raw.source] || card.origin || t('cards.detail.source_generic') },
+            { label: t('cards.detail.importance'), value: raw.importance != null ? String(raw.importance) : '—' },
+            ...(chapterGate ? [{ label: t('cards.detail.chapter_gate'), value: <CSStatusIndicator type="info">📖 {t('cards.detail.chapter_n', { n: chapterGate })}</CSStatusIndicator> }] : []),
+            { label: t('cards.detail.scope'), value: scopeLabel[raw.scope] || '—' },
+            { label: t('cards.detail.status'), value: raw.enabled === false ? <CSStatusIndicator type="stopped">{t('cards.detail.status_disabled')}</CSStatusIndicator> : <CSStatusIndicator type="success">{t('cards.detail.status_enabled')}</CSStatusIndicator> },
+            { label: t('cards.detail.tags_label'), value: (Array.isArray(raw.tags) && raw.tags.length) ? raw.tags.join(' · ') : '—' },
+            { label: t('cards.detail.updated'), value: card.updated || '—' },
+            { label: t('cards.detail.card_id'), value: <span className="mono">{card.id}</span> },
           ]} />
         ) },
-        { id: 'setting', label: '设定', content: <CardSheet card={card} kind={kind} /> },
-        { id: 'edit', label: '角色设置', content: form && (
+        { id: 'setting', label: t('cards.detail.tab_setting'), content: <CardSheet card={card} kind={kind} /> },
+        { id: 'edit', label: t('cards.detail.tab_edit'), content: form && (
           <CSSpaceBetween size="l">
             <CardEditFields form={form} u={u} kind={kind} />
-            <CSBox><CSButton variant="primary" iconName="check" loading={saving} onClick={doSave}>保存</CSButton></CSBox>
+            <CSBox><CSButton variant="primary" iconName="check" loading={saving} onClick={doSave}>{t('cards.detail.btn_save')}</CSButton></CSBox>
           </CSSpaceBetween>
         ) },
       ]} />
@@ -665,6 +696,7 @@ function CardDetailPanel({ card, kind, onSave, onDuplicate, onDelete }) {
 }
 
 function TavernImportModal({ open, onClose, onConfirm }) {
+  const { t } = useTranslation();
   const [mode, setMode] = useStatePL("file");
   const [json, setJson] = useStatePL("");
   const [files, setFiles] = useStatePL([]);
@@ -686,9 +718,9 @@ function TavernImportModal({ open, onClose, onConfirm }) {
         setParsed({
           name: arr[0].name.replace(/\.(png|json|webp)$/i, "").replace(/[_-]/g, " "),
           format: arr[0].name.match(/\.png$/i) ? "SillyTavern · PNG v2" : "SillyTavern · JSON",
-          description: "从酒馆角色卡导入 · 设定文本约 1240 字，含 4 个对话示例和 6 个标签。",
-          tags: ["导入", "酒馆"],
-          first_mes: "「你是谁？」她抬起头，目光在你脸上停了一会儿。",
+          description: t('cards.import.mock_desc'),
+          tags: [t('cards.import.tag_imported'), t('cards.import.tag_tavern')],
+          first_mes: t('cards.import.mock_first_mes'),
           example_count: 4,
         });
       }, 400);
@@ -704,8 +736,8 @@ function TavernImportModal({ open, onClose, onConfirm }) {
     setParseError(null);
     try {
       const obj = JSON.parse(json);
-      const name = obj.name || obj.char_name || obj.data?.name || "未命名";
-      const desc = obj.description || obj.data?.description || "无描述";
+      const name = obj.name || obj.char_name || obj.data?.name || t('cards.detail.unnamed');
+      const desc = obj.description || obj.data?.description || t('cards.import.no_desc');
       setParsed({
         name,
         format: obj.spec ? `${obj.spec} · ${obj.spec_version || "v1"}` : "SillyTavern · JSON",
@@ -715,7 +747,7 @@ function TavernImportModal({ open, onClose, onConfirm }) {
         example_count: (obj.mes_example || obj.data?.mes_example || "").split(/<START>/).filter(Boolean).length,
       });
     } catch (e) {
-      setParseError("JSON 解析失败：" + e.message);
+      setParseError(t('cards.import.parse_fail', { msg: e.message }));
       setParsed(null);
     }
   };
@@ -727,18 +759,18 @@ function TavernImportModal({ open, onClose, onConfirm }) {
       <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(620px, 100%)"}}>
         <header className="pl-modal-head">
           <div>
-            <div className="pl-modal-eyebrow">导入酒馆角色卡</div>
-            <h2 className="pl-modal-title">支持 SillyTavern / Chub / TavernAI 格式</h2>
+            <div className="pl-modal-eyebrow">{t('cards.import.modal_eyebrow')}</div>
+            <h2 className="pl-modal-title">{t('cards.import.modal_title')}</h2>
           </div>
-          <button className="iconbtn" onClick={onClose} data-tip="关闭"><Icon name="close" size={14} /></button>
+          <button className="iconbtn" onClick={onClose} data-tip={t('cards.import.btn_close')}><Icon name="close" size={14} /></button>
         </header>
         <div className="pl-modal-form">
           <div className="seg" style={{display: "flex"}}>
             <button className={mode === "file" ? "active" : ""} onClick={() => setMode("file")}>
-              <Icon name="upload" size={12} /> 上传文件
+              <Icon name="upload" size={12} /> {t('cards.import.tab_file')}
             </button>
             <button className={mode === "paste" ? "active" : ""} onClick={() => setMode("paste")}>
-              <Icon name="file" size={12} /> 粘贴 JSON
+              <Icon name="file" size={12} /> {t('cards.import.tab_paste')}
             </button>
           </div>
           {mode === "file" && (
@@ -753,9 +785,9 @@ function TavernImportModal({ open, onClose, onConfirm }) {
               >
                 <Icon name="upload" size={24} style={{color: dragOver ? "var(--accent)" : "var(--muted)"}} />
                 <strong style={{color: dragOver ? "var(--accent)" : "var(--text)"}}>
-                  {dragOver ? "松手以导入" : "把角色卡拖到这里"}
+                  {dragOver ? t('cards.import.drop_release') : t('cards.import.drop_hint')}
                 </strong>
-                <span>支持 .png（嵌入元数据）/ .json / .webp · 单次最多 8 个</span>
+                <span>{t('cards.import.drop_formats')}</span>
                 <input id="tavern-file-input" type="file" accept=".png,.json,.webp" multiple
                   style={{display: "none"}} onChange={(e) => handleFiles(e.target.files)} />
               </div>
@@ -779,13 +811,13 @@ function TavernImportModal({ open, onClose, onConfirm }) {
           {mode === "paste" && (
             <>
               <div className="pl-field">
-                <label>粘贴角色卡 JSON</label>
+                <label>{t('cards.import.paste_label')}</label>
                 <textarea rows={10} value={json} onChange={(e) => setJson(e.target.value)}
                   className="mono" style={{fontSize: 11.5}}
-                  placeholder='{\n  "name": "沈知微",\n  "description": "...",\n  "first_mes": "...",\n  "tags": ["医师"]\n}' />
+                  placeholder={'{\n  "name": "...",\n  "description": "...",\n  "first_mes": "...",\n  "tags": []\n}'} />
               </div>
               <button className="btn ghost" onClick={tryParseJson} disabled={!json.trim()} style={{width: "fit-content"}}>
-                <Icon name="check" size={12} /> 解析并预览
+                <Icon name="check" size={12} /> {t('cards.import.btn_parse')}
               </button>
               {parseError && (
                 <div className="pl-validate-step" style={{color: "var(--danger)", borderColor: "rgba(200, 103, 93, 0.32)", background: "var(--danger-soft)"}}>
@@ -796,22 +828,22 @@ function TavernImportModal({ open, onClose, onConfirm }) {
           )}
           {parsed && (
             <div className="pl-import" style={{borderStyle: "solid", gap: 8, padding: "12px 14px"}}>
-              <div className="muted-2" style={{fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.14em"}}>解析预览 · {parsed.format}</div>
+              <div className="muted-2" style={{fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.14em"}}>{t('cards.import.preview_label')} · {parsed.format}</div>
               <div className="pl-card-head" style={{margin: 0}}>
                 <div className="pl-card-avatar serif">{parsed.name.slice(0, 1)}</div>
                 <div className="pl-card-id" style={{flex: 1}}>
                   <strong>{parsed.name}</strong>
-                  <span className="muted-2" style={{fontSize: 11.5}}>{parsed.example_count} 段对话示例 · {parsed.tags.length} 个标签</span>
+                  <span className="muted-2" style={{fontSize: 11.5}}>{t('cards.import.preview_stats', { dialogues: parsed.example_count, tags: parsed.tags.length })}</span>
                 </div>
               </div>
               <p className="pl-card-bio serif" style={{margin: 0, WebkitLineClamp: 2}}>{parsed.description}</p>
               <div style={{padding: 8, background: "var(--bg-deep)", borderRadius: 4, fontFamily: "var(--font-serif)", fontSize: 12.5, color: "var(--text-quiet)", borderLeft: "2px solid var(--accent-edge)"}}>
-                <span className="muted-2 mono" style={{fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.14em", display: "block", marginBottom: 4}}>开场白</span>
+                <span className="muted-2 mono" style={{fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.14em", display: "block", marginBottom: 4}}>{t('cards.import.first_mes_label')}</span>
                 {parsed.first_mes}
               </div>
               {parsed.tags?.length > 0 && (
                 <div className="pl-card-tags">
-                  {parsed.tags.map(t => <span key={t} className="pl-cap-tag">{t}</span>)}
+                  {parsed.tags.map(tg => <span key={tg} className="pl-cap-tag">{tg}</span>)}
                 </div>
               )}
             </div>
@@ -819,12 +851,12 @@ function TavernImportModal({ open, onClose, onConfirm }) {
         </div>
         <footer className="pl-modal-foot">
           <span className="muted-2" style={{fontSize: 11.5}}>
-            <Icon name="info" size={11} /> POST /api/v1/characters/import · 导入后可在用户角色卡库编辑
+            <Icon name="info" size={11} /> {t('cards.import.footer_hint')}
           </span>
           <div style={{display: "flex", gap: 8}}>
-            <button className="btn ghost" onClick={onClose}>取消</button>
+            <button className="btn ghost" onClick={onClose}>{t('cards.import.btn_cancel')}</button>
             <button className="btn primary" onClick={onConfirm} disabled={!canSubmit}>
-              <Icon name="check" size={12} /> 导入 {files.length > 1 ? `${files.length} 个` : ""}
+              <Icon name="check" size={12} /> {t('cards.import.btn_confirm', { count: files.length > 1 ? files.length : 0 })}
             </button>
           </div>
         </footer>
@@ -835,6 +867,7 @@ function TavernImportModal({ open, onClose, onConfirm }) {
 }
 
 function NpcCardsView() {
+  const { t } = useTranslation();
   // task 47：之前完全用硬编码 NPC_CARDS（韩司直/童守人/税吏甲/陈渡海/尚书令），
   // 跟登录用户的真实剧本毫无关系。改成跨所有用户剧本聚合
   // /api/scripts/{id}/character-cards，按真实存档分组。
@@ -860,10 +893,10 @@ function NpcCardsView() {
           const arr = Array.isArray(r) ? r : (r?.items || r?.cards || []);
           return arr.map(c => ({
             id: String(c.id),
-            name: c.name || "未命名",
+            name: c.name || t('cards.detail.unnamed'),
             role: c.identity || c.role || "—",
-            tone: c.tone || "中立",
-            save: s.title || `剧本 #${s.id}`,
+            tone: c.tone || t('cards.list.tone_neutral'),
+            save: s.title || t('cards.list.script_n', { id: s.id }),
             script_id: s.id,
             bio: c.appearance || c.personality || c.summary || c.description || "",
             tags: Array.isArray(c.tags) ? c.tags : [],
@@ -876,7 +909,7 @@ function NpcCardsView() {
       }));
       setCards(lists.flat());
     } catch (e) {
-      setError(e?.message || "加载 NPC 角色卡失败");
+      setError(e?.message || t('cards.toast.npc_load_fail'));
       // 匿名 / API 不可达 → 兜底到 mock（designer offline preview）
       if (!(window.RPG_AUTH && window.RPG_AUTH.authed)) {
         setCards((NPC_CARDS || []).map(c => ({ ...c, script_id: null })));
@@ -884,7 +917,7 @@ function NpcCardsView() {
         setCards([]);
       }
     } finally { setLoading(false); }
-  }, []);
+  }, [t]);
   React.useEffect(() => { reload(); }, [reload]);
 
   const allSaves = ["all", ...new Set(cards.map(c => c.save))];
@@ -895,27 +928,27 @@ function NpcCardsView() {
       .toLowerCase().includes(q.toLowerCase())
   );
 
-  const saveOpts = allSaves.map((s) => ({ value: s, label: s === 'all' ? '所有剧本' : s }));
+  const saveOpts = allSaves.map((s) => ({ value: s, label: s === 'all' ? t('cards.list.all_scripts') : s }));
   return (
     <>
       <CSSpaceBetween size="l">
         <CSHeader
           variant="h1"
           counter={`(${cards.length})`}
-          description={`从剧本提取的 NPC 角色卡,按存档分组。${loading ? ' 加载中…' : ''}`}
-          actions={<CSButton variant="primary" iconName="add-plus" onClick={() => setAdding(true)}>新增 NPC</CSButton>}
-        >NPC 角色卡</CSHeader>
-        {error && <CSAlert type="error" header="加载失败">{error}</CSAlert>}
+          description={`${t('cards.list.npc_cards_desc')}${loading ? ' ' + t('cards.list.loading') : ''}`}
+          actions={<CSButton variant="primary" iconName="add-plus" onClick={() => setAdding(true)}>{t('cards.list.btn_add_npc')}</CSButton>}
+        >{t('cards.list.npc_cards_title')}</CSHeader>
+        {error && <CSAlert type="error" header={t('cards.toast.load_fail_header')}>{error}</CSAlert>}
         <CardGrid cards={filtered} onEdit={setEdit} kind="npc"
           empty={
             <CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>
-              {loading ? '加载中…' : <>你的剧本里还没有任何 NPC 角色卡。<br />点右上「新增 NPC」创建,或先去「剧本 / 上传剧本」导入含角色设定的剧本。</>}
+              {loading ? t('cards.list.loading') : <>{t('cards.empty.no_npc_cards')}<br />{t('cards.empty.no_npc_hint')}</>}
             </CSBox>
           }
           filter={
             <CSSpaceBetween direction="horizontal" size="xs">
               <div style={{ minWidth: 240 }}>
-                <CSTextFilter filteringText={q} filteringPlaceholder="搜索 NPC"
+                <CSTextFilter filteringText={q} filteringPlaceholder={t('cards.list.search_npc_placeholder')}
                   onChange={({ detail }) => setQ(detail.filteringText)} />
               </div>
               <CSSelect selectedOption={saveOpts.find((o) => o.value === saveFilter)}
@@ -946,6 +979,7 @@ function NpcCardsView() {
    appearance / personality / speech_style / current_status / secrets /
    sample_dialogue / token_budget / priority / enabled / scope。 */
 function CardEditModal({ card, isNew, kind, onClose, onSave }) {
+  const { t } = useTranslation();
   const [form, setForm] = useStatePL(() => cardFormInit(card));
   const [submitting, setSubmitting] = useStatePL(false);
   const u = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -965,9 +999,9 @@ function CardEditModal({ card, isNew, kind, onClose, onSave }) {
       <div style={{ position: 'sticky', top: 0, zIndex: 3, background: '#131211', borderBottom: '1px solid #36322d' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto', padding: '13px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
           <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600, color: '#ebe7df' }}>
-            {isNew ? '新增' : '编辑'}{kind === 'user' ? '用户角色卡' : 'NPC 角色卡'}
+            {isNew ? t('cards.editor.modal_title_new') : t('cards.editor.modal_title_edit')}{kind === 'user' ? t('cards.editor.kind_user') : t('cards.editor.kind_npc')}
           </div>
-          <CSButton iconName="close" variant="link" onClick={onClose}>取消</CSButton>
+          <CSButton iconName="close" variant="link" onClick={onClose}>{t('cards.editor.btn_cancel')}</CSButton>
         </div>
       </div>
 
@@ -980,20 +1014,20 @@ function CardEditModal({ card, isNew, kind, onClose, onSave }) {
 
           {/* 右:概要 + 保存(sticky) */}
           <div style={{ width: 300, flexShrink: 0, position: 'sticky', top: 72 }}>
-            <CSContainer header={<CSHeader variant="h2">概要</CSHeader>}>
+            <CSContainer header={<CSHeader variant="h2">{t('cards.editor.summary_title')}</CSHeader>}>
               <CSSpaceBetween size="m">
-                <CSStatusIndicator type={nameOk ? 'success' : 'pending'}>姓名(必填)</CSStatusIndicator>
+                <CSStatusIndicator type={nameOk ? 'success' : 'pending'}>{t('cards.editor.name_required_status')}</CSStatusIndicator>
                 <CSKeyValuePairs columns={1} items={[
-                  { label: '姓名', value: form.name.trim() || '—' },
-                  { label: '身份', value: form.identity.trim() || '—' },
-                  { label: '可见范围', value: form.scope === 'public' ? '公开' : '私有' },
-                  { label: '状态', value: form.enabled ? '启用' : '禁用' },
+                  { label: t('cards.editor.name'), value: form.name.trim() || '—' },
+                  { label: t('cards.editor.identity'), value: form.identity.trim() || '—' },
+                  { label: t('cards.editor.scope'), value: form.scope === 'public' ? t('cards.detail.scope_public') : t('cards.detail.scope_private') },
+                  { label: t('cards.editor.enabled'), value: form.enabled ? t('cards.editor.enabled_on') : t('cards.editor.enabled_off') },
                 ]} />
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <CSButton variant="primary" disabled={!nameOk || submitting} loading={submitting} onClick={doSave}>
-                    {isNew ? '创建' : '保存'}
+                    {isNew ? t('cards.editor.btn_create') : t('cards.editor.btn_save')}
                   </CSButton>
-                  <CSButton variant="link" onClick={onClose}>取消</CSButton>
+                  <CSButton variant="link" onClick={onClose}>{t('cards.editor.btn_cancel')}</CSButton>
                 </div>
               </CSSpaceBetween>
             </CSContainer>

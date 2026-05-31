@@ -89,7 +89,7 @@
 
 步骤 3. 参数会即时保存，无需手动确认。
 
-<!-- TODO: 截图 settings-modelparams 参数滑块 -->
+![模型参数滑块界面](./screenshots/settings-modelparams-sliders.png)
 
 ### 任务 2：查看实际发送的参数
 

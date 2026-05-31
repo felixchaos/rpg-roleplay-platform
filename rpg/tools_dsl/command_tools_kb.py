@@ -97,7 +97,7 @@ def _t_search_canon(user_id: int, args: dict) -> str:
         ctx = _save_ctx(db, save_id, user_id)
         if not ctx:
             return "失败: 无权访问该存档"
-        qv = embed_query(query)
+        qv = embed_query(query, user_id=user_id)
         if not qv:
             return "检索不可用(嵌入服务未就绪)"
         hits = search_canon_by_vector(db, ctx["script_id"], qv, top_k=k,

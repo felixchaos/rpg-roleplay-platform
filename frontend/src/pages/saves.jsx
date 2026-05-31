@@ -6,6 +6,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Icon } from '../game-icons.jsx';
 import { ConfirmModal, useShellChrome, ResizableSplit } from '../platform-app.jsx';
 import { BranchGraph } from '../branch-graph.jsx';
@@ -40,10 +41,10 @@ import CSAlert from '@cloudscape-design/components/alert';
 import CSExpandableSection from '@cloudscape-design/components/expandable-section';
 import CSPagination from '@cloudscape-design/components/pagination';
 
-const _SAVE_SORT_OPTS = [
-  { value: 'played', label: '最近游玩' },
-  { value: 'name', label: '名称' },
-  { value: 'created', label: '创建时间' },
+const _saveSortOpts = (t) => [
+  { value: 'played', label: t('saves.list.sort_played') },
+  { value: 'name', label: t('saves.list.sort_name') },
+  { value: 'created', label: t('saves.list.sort_created') },
 ];
 
 const _AWAPI = () => (window.__API_BASE || '');
@@ -51,6 +52,7 @@ const _AWAPI = () => (window.__API_BASE || '');
 /* 就地设置表单(取代「游戏设置」弹窗向导)— 一屏展示全部字段,直接 PATCH。
    建档锁死项由后端 enforce:is_create=false 时被拒,前端用 flash 提示。 */
 function SaveSettingsForm({ saveId, flash }) {
+  const { t } = useTranslation();
   const [schema, setSchema] = useStatePL(null);
   const [vals, setVals] = useStatePL({});
   const [init, setInit] = useStatePL({});
@@ -67,14 +69,14 @@ function SaveSettingsForm({ saveId, flash }) {
           const v = {};
           (d.schema.fields || []).forEach((f) => { v[f.key] = (d.settings && d.settings[f.key]) ?? f.default; });
           setVals(v); setInit(v);
-        } else setErr(d.error || '加载设置失败');
+        } else setErr(d.error || t('saves.settings_form.load_err'));
       })
       .catch((e) => { if (!c) setErr(String(e)); });
     return () => { c = true; };
   }, [saveId]);
 
-  if (err) return <div className="aw-empty">加载失败:{err}</div>;
-  if (!schema) return <div className="aw-empty">加载设置…</div>;
+  if (err) return <div className="aw-empty">{t('saves.settings_form.load_fail', { err })}</div>;
+  if (!schema) return <div className="aw-empty">{t('saves.settings_form.loading')}</div>;
   const fields = schema.fields || [];
   const dirty = JSON.stringify(vals) !== JSON.stringify(init);
 
@@ -93,18 +95,18 @@ function SaveSettingsForm({ saveId, flash }) {
       if (r.applied !== undefined) {
         setInit(vals);
         const rej = r.rejected && Object.keys(r.rejected);
-        if (rej && rej.length) flash.warn(`已保存,但 ${rej.join('/')} 为建档锁死项,未改`);
-        else flash.ok('设置已保存');
-      } else flash.err(r.error || '保存失败');
+        if (rej && rej.length) flash.warn(t('saves.settings_form.save_locked_warn', { fields: rej.join('/') }));
+        else flash.ok(t('saves.settings_form.save_ok'));
+      } else flash.err(r.error || t('saves.settings_form.save_fail'));
     } catch (e) { flash.err(String(e)); }
     setSaving(false);
   };
 
   return (
     <FormSection
-      title="游戏设置"
-      description="元知识 / 引导 / 防剧透。建档锁死项(世界线/身份)在游戏中只读。"
-      footer={<Btn variant="primary" disabled={!dirty} loading={saving} onClick={save}>保存设置</Btn>}
+      title={t('saves.settings_form.title')}
+      description={t('saves.settings_form.description')}
+      footer={<Btn variant="primary" disabled={!dirty} loading={saving} onClick={save}>{t('saves.settings_form.btn_save')}</Btn>}
     >
       {fields.map((f) => (
         <UiField key={f.key} label={f.label} hint={f.help}>
@@ -120,6 +122,7 @@ function SaveSettingsForm({ saveId, flash }) {
 
 /* 就地分支节点列表(取代跳页 / 弹窗)。 */
 function SaveBranchList({ save }) {
+  const { t } = useTranslation();
   const [nodes, setNodes] = useStatePL(null);
   useEffectPL(() => {
     let c = false; setNodes(null);
@@ -139,17 +142,17 @@ function SaveBranchList({ save }) {
     return () => { c = true; };
   }, [save.id]);
 
-  if (!nodes) return <div className="aw-empty">加载分支…</div>;
-  if (!nodes.length) return <div className="aw-empty">还没有分支节点,进入游戏后会自动生成。</div>;
+  if (!nodes) return <div className="aw-empty">{t('saves.branches.loading')}</div>;
+  if (!nodes.length) return <div className="aw-empty">{t('saves.branches.empty')}</div>;
   return (
-    <FormSection title="分支节点" description={`${nodes.length} 个节点`}
-      actions={<Btn size="sm" onClick={() => { location.hash = 'saves-branches'; }}>打开完整分支树</Btn>}>
+    <FormSection title={t('saves.branches.title')} description={t('saves.branches.node_count', { n: nodes.length })}
+      actions={<Btn size="sm" onClick={() => { location.hash = 'saves-branches'; }}>{t('saves.branches.btn_open_tree')}</Btn>}>
       <div className="aw-rlist">
         {nodes.map((n) => (
           <div key={n.id} className="aw-rlist-item" style={{ cursor: 'default' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
               <span>{n.summary}</span>
-              {n.current ? <Badge tone="ok">当前</Badge> : <span className="aw-muted" style={{ fontSize: 12 }}>#{n.turn}</span>}
+              {n.current ? <Badge tone="ok">{t('saves.branches.current_badge')}</Badge> : <span className="aw-muted" style={{ fontSize: 12 }}>#{n.turn}</span>}
             </div>
           </div>
         ))}
@@ -168,6 +171,7 @@ function SavesPage({ subPage = "list" }) {
 }
 
 function SavesListView() {
+  const { t } = useTranslation();
   const [saves, setSaves] = useStatePL([]);
   const [scripts, setScripts] = useStatePL([]);
   const [selectedId, setSelectedId] = useStatePL(null);
@@ -232,7 +236,7 @@ function SavesListView() {
       if (created && created.ok === false) {
         throw new Error(created.error || created.detail || '后端拒绝创建');
       }
-      flash.ok('已创建存档');
+      flash.ok(t('saves.toast.created'));
       setCreateOpen(false);
       reload();
       try { window.dispatchEvent(new CustomEvent('rpg-saves-updated')); } catch (_) {}
@@ -242,40 +246,40 @@ function SavesListView() {
         window.__openContinue?.({ ...save, ...window.__normalizeSave?.(save) });
       }
     } catch (e) {
-      flash.err('创建失败:' + (e?.message || ''));
+      flash.err(t('saves.toast.create_fail', { err: e?.message || '' }));
       throw e; // 让 NewGameModal 接住,显示 inline 错误
     }
   };
 
   const onActivate = async (s) => {
-    try { await window.api.saves.activate(s.id); flash.ok('已设为当前存档'); reload(); }
-    catch (e) { flash.err('切换失败:' + (e?.message || '')); }
+    try { await window.api.saves.activate(s.id); flash.ok(t('saves.toast.activated')); reload(); }
+    catch (e) { flash.err(t('saves.toast.activate_fail', { err: e?.message || '' })); }
   };
   const onImportFile = async (file) => {
     if (!file) return;
     try {
-      flash.info(`正在导入 ${file.name}…`);
+      flash.info(t('saves.toast.importing', { name: file.name }));
       const r = await window.api.saves.importFile(file);
       if (r && r.ok === false) throw new Error(r.error || r.detail || '后端拒绝导入');
-      flash.ok('存档已导入');
+      flash.ok(t('saves.toast.imported'));
       reload();
-    } catch (e) { flash.err('导入失败:' + (e?.message || '')); }
+    } catch (e) { flash.err(t('saves.toast.import_fail', { err: e?.message || '' })); }
   };
   const doRename = async () => {
-    const t = renameVal.trim();
-    if (!t || !selected || t === selected.title) { setRenaming(false); return; }
+    const val = renameVal.trim();
+    if (!val || !selected || val === selected.title) { setRenaming(false); return; }
     try {
-      await window.api.saves.rename(selected.id, t);
-      flash.ok('已重命名'); setRenaming(false); reload();
-    } catch (e) { flash.err('重命名失败:' + (e?.message || '')); }
+      await window.api.saves.rename(selected.id, val);
+      flash.ok(t('saves.toast.renamed')); setRenaming(false); reload();
+    } catch (e) { flash.err(t('saves.toast.rename_fail', { err: e?.message || '' })); }
   };
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
       await window.api.saves.remove(deleteTarget.id);
-      flash.ok('已删除'); setDeleteTarget(null); setSelectedId(null); reload();
-    } catch (e) { flash.err('删除失败:' + (e?.message || '')); }
+      flash.ok(t('saves.toast.deleted')); setDeleteTarget(null); setSelectedId(null); reload();
+    } catch (e) { flash.err(t('saves.toast.delete_fail', { err: e?.message || '' })); }
     setDeleting(false);
   };
 
@@ -303,7 +307,8 @@ function SavesListView() {
   // 过滤条件变化时重置到第 1 页
   React.useEffect(() => { setSavePage(1); }, [query, sortBy]);
 
-  const scriptTitle = (s) => (scripts.find((x) => x.id === s.script_id)?.title || '未知剧本');
+  const scriptTitle = (s) => (scripts.find((x) => x.id === s.script_id)?.title || t('saves.list.unknown_script'));
+  const saveSortOpts = _saveSortOpts(t);
 
   return (
     // CSSpaceBetween 的每个 child 都需要 key(Cloudscape InternalSpaceBetween 用 flattenChildren + map 渲染,
@@ -313,26 +318,26 @@ function SavesListView() {
         key="header"
         variant="h1"
         counter={`(${saves.length})`}
-        description="选择存档查看详情、调整设置或继续游戏。"
+        description={t('saves.list.description')}
         actions={
           <CSSpaceBetween direction="horizontal" size="xs">
             <input key="upload-input" ref={importInputRef} type="file" accept=".zip,.json,.tar.gz" style={{ display: 'none' }}
               onChange={(e) => { onImportFile(e.target.files?.[0]); e.target.value = ''; }} />
-            <CSButton key="btn-import" iconName="upload" onClick={() => importInputRef.current?.click()}>导入存档</CSButton>
-            <CSButton key="btn-new" iconName="add-plus" onClick={() => setCreateOpen(true)}>开始新游戏</CSButton>
+            <CSButton key="btn-import" iconName="upload" onClick={() => importInputRef.current?.click()}>{t('saves.list.btn_import')}</CSButton>
+            <CSButton key="btn-new" iconName="add-plus" onClick={() => setCreateOpen(true)}>{t('saves.list.btn_new')}</CSButton>
             <CSButton key="btn-continue" variant="primary" iconName="caret-right-filled" disabled={!saves.length}
-              onClick={() => window.__openContinue?.(saves[0])}>进入当前游戏</CSButton>
+              onClick={() => window.__openContinue?.(saves[0])}>{t('saves.list.btn_continue')}</CSButton>
           </CSSpaceBetween>
         }
-      >存档目录</CSHeader>
+      >{t('saves.list.title')}</CSHeader>
 
       <CSSpaceBetween key="toolbar" direction="horizontal" size="xs">
         <div key="filter" style={{ minWidth: 280 }}>
-          <CSTextFilter filteringText={query} filteringPlaceholder="搜索存档 / 剧本…"
+          <CSTextFilter filteringText={query} filteringPlaceholder={t('saves.list.search_placeholder')}
             onChange={({ detail }) => setQuery(detail.filteringText)} />
         </div>
-        <CSSelect key="sort" selectedOption={_SAVE_SORT_OPTS.find((o) => o.value === sortBy)}
-          options={_SAVE_SORT_OPTS} onChange={({ detail }) => setSortBy(detail.selectedOption.value)} />
+        <CSSelect key="sort" selectedOption={saveSortOpts.find((o) => o.value === sortBy)}
+          options={saveSortOpts} onChange={({ detail }) => setSortBy(detail.selectedOption.value)} />
       </CSSpaceBetween>
 
       {/* table + detail:Cloudscape SpaceBetween 在 React 18 会 flatten Fragment 导致 children 失 key,
@@ -347,16 +352,16 @@ function SavesListView() {
         onSelectionChange={({ detail }) => { const s = detail.selectedItems[0]; if (s) { setSelectedId(s.id); setTab('overview'); setRenaming(false); } }}
         onRowClick={({ detail }) => { setSelectedId(detail.item.id); setTab('overview'); setRenaming(false); }}
         columnDefinitions={[
-          { id: 'title', header: '存档', cell: (s) => <CSBox fontWeight="bold">{s.title}</CSBox> },
-          { id: 'script', header: '剧本', cell: (s) => scriptTitle(s) },
-          { id: 'player', header: '玩家', cell: (s) => s._raw?.player_name || '—' },
-          { id: 'nodes', header: '节点', cell: (s) => s.branch_count },
-          { id: 'played', header: '最后游玩', cell: (s) => s.last_played_at },
-          { id: 'status', header: '状态', cell: (s) => s.current ? <CSBadge color="green">在玩</CSBadge> : <CSStatusIndicator type="stopped">未激活</CSStatusIndicator> },
-          { id: 'go', header: '', cell: (s) => <CSButton variant="inline-link" iconName="caret-right-filled" onClick={() => window.__openContinue?.(s)}>继续</CSButton> },
+          { id: 'title', header: t('saves.list.col_save'), cell: (s) => <CSBox fontWeight="bold">{s.title}</CSBox> },
+          { id: 'script', header: t('saves.list.col_script'), cell: (s) => scriptTitle(s) },
+          { id: 'player', header: t('saves.list.col_player'), cell: (s) => s._raw?.player_name || '—' },
+          { id: 'nodes', header: t('saves.list.col_nodes'), cell: (s) => s.branch_count },
+          { id: 'played', header: t('saves.list.col_played'), cell: (s) => s.last_played_at },
+          { id: 'status', header: t('saves.list.col_status'), cell: (s) => s.current ? <CSBadge color="green">{t('saves.list.status_active')}</CSBadge> : <CSStatusIndicator type="stopped">{t('saves.list.status_inactive')}</CSStatusIndicator> },
+          { id: 'go', header: '', cell: (s) => <CSButton variant="inline-link" iconName="caret-right-filled" onClick={() => window.__openContinue?.(s)}>{t('saves.list.continue_btn')}</CSButton> },
         ]}
         items={pagedSaves}
-        empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? '没有匹配的存档' : '还没有存档,点右上「开始新游戏」开始'}</CSBox>}
+        empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? t('saves.list.empty_filtered') : t('saves.list.empty_no_saves')}</CSBox>}
         pagination={
           savePageCount > 1
             ? <CSPagination currentPageIndex={savePage} pagesCount={savePageCount} onChange={({ detail }) => setSavePage(detail.currentPageIndex)} />
@@ -371,19 +376,19 @@ function SavesListView() {
               variant="h2"
               actions={!renaming &&
                 <CSSpaceBetween direction="horizontal" size="xs">
-                  <CSButton variant="primary" iconName="caret-right-filled" onClick={() => window.__openContinue?.(selected)}>继续游戏</CSButton>
-                  {!selected.current && <CSButton onClick={() => onActivate(selected)}>设为当前</CSButton>}
-                  <CSButton onClick={() => { setRenameVal(selected.title); setRenaming(true); }}>重命名</CSButton>
-                  <CSButton onClick={() => window.open(window.api.saves.exportUrl(selected.id), '_blank')}>导出</CSButton>
-                  <CSButton onClick={() => setDeleteTarget(selected)}>删除</CSButton>
+                  <CSButton variant="primary" iconName="caret-right-filled" onClick={() => window.__openContinue?.(selected)}>{t('saves.detail.btn_continue')}</CSButton>
+                  {!selected.current && <CSButton onClick={() => onActivate(selected)}>{t('saves.detail.btn_activate')}</CSButton>}
+                  <CSButton onClick={() => { setRenameVal(selected.title); setRenaming(true); }}>{t('saves.detail.btn_rename')}</CSButton>
+                  <CSButton onClick={() => window.open(window.api.saves.exportUrl(selected.id), '_blank')}>{t('saves.detail.btn_export')}</CSButton>
+                  <CSButton onClick={() => setDeleteTarget(selected)}>{t('saves.detail.btn_delete')}</CSButton>
                 </CSSpaceBetween>
               }
             >
               {renaming
                 ? <CSSpaceBetween direction="horizontal" size="xs">
                     <CSInput value={renameVal} onChange={({ detail }) => setRenameVal(detail.value)} />
-                    <CSButton variant="primary" onClick={doRename}>保存</CSButton>
-                    <CSButton variant="link" onClick={() => setRenaming(false)}>取消</CSButton>
+                    <CSButton variant="primary" onClick={doRename}>{t('saves.detail.btn_save')}</CSButton>
+                    <CSButton variant="link" onClick={() => setRenaming(false)}>{t('saves.detail.btn_cancel')}</CSButton>
                   </CSSpaceBetween>
                 : selected.title}
             </CSHeader>
@@ -393,25 +398,25 @@ function SavesListView() {
             activeTabId={tab}
             onChange={({ detail }) => setTab(detail.activeTabId)}
             tabs={[
-              { id: 'overview', label: '概览', content: (
+              { id: 'overview', label: t('saves.detail.tab_overview'), content: (
                 <CSSpaceBetween size="m">
                   <CSKeyValuePairs columns={4} items={[
-                    { label: '剧本', value: scriptTitle(selected) },
-                    { label: '玩家', value: selected._raw?.player_name || '未设定' },
-                    { label: '回合', value: selected._raw?.turn != null ? `第 ${selected._raw.turn} 回合` : '—' },
-                    { label: '状态', value: selected.current ? <CSStatusIndicator type="success">当前存档</CSStatusIndicator> : <CSStatusIndicator type="stopped">未激活</CSStatusIndicator> },
-                    { label: '分支节点', value: `${selected.branch_count} 个` },
-                    { label: '故事时间', value: selected._raw?.world_time || '—' },
-                    { label: '最后游玩', value: selected.last_played_at },
-                    { label: '创建于', value: selected.created_ts ? new Date(selected.created_ts).toLocaleString('zh-CN') : '—' },
+                    { label: t('saves.detail.kv_script'), value: scriptTitle(selected) },
+                    { label: t('saves.detail.kv_player'), value: selected._raw?.player_name || t('saves.detail.kv_player_unset') },
+                    { label: t('saves.detail.kv_turn'), value: selected._raw?.turn != null ? t('saves.detail.kv_turn_val', { n: selected._raw.turn }) : '—' },
+                    { label: t('saves.detail.kv_status'), value: selected.current ? <CSStatusIndicator type="success">{t('saves.detail.kv_status_current')}</CSStatusIndicator> : <CSStatusIndicator type="stopped">{t('saves.list.status_inactive')}</CSStatusIndicator> },
+                    { label: t('saves.detail.kv_branches'), value: t('saves.detail.kv_branches_val', { n: selected.branch_count }) },
+                    { label: t('saves.detail.kv_world_time'), value: selected._raw?.world_time || '—' },
+                    { label: t('saves.detail.kv_played'), value: selected.last_played_at },
+                    { label: t('saves.detail.kv_created'), value: selected.created_ts ? new Date(selected.created_ts).toLocaleString('zh-CN') : '—' },
                   ]} />
                   <CSBox variant="p" color="text-body-secondary">
-                    {selected._raw?.snippet || selected._raw?.last_message || '（暂无最新片段，进入游戏后会自动同步。）'}
+                    {selected._raw?.snippet || selected._raw?.last_message || t('saves.detail.snippet_empty')}
                   </CSBox>
                 </CSSpaceBetween>
               ) },
-              { id: 'settings', label: '设置', content: <SaveSettingsForm saveId={selected.id} flash={flash} /> },
-              { id: 'branches', label: '分支', content: <SaveBranchList save={selected} /> },
+              { id: 'settings', label: t('saves.detail.tab_settings'), content: <SaveSettingsForm saveId={selected.id} flash={flash} /> },
+              { id: 'branches', label: t('saves.detail.tab_branches'), content: <SaveBranchList save={selected} /> },
             ]}
           />
         </CSContainer>
@@ -425,18 +430,18 @@ function SavesListView() {
       <CSModal
         key="delete-modal"
         visible={!!deleteTarget}
-        header="删除存档"
+        header={t('saves.confirm.delete_title')}
         onDismiss={() => setDeleteTarget(null)}
         footer={
           <CSBox float="right">
             <CSSpaceBetween direction="horizontal" size="xs">
-              <CSButton key="cancel" variant="link" onClick={() => setDeleteTarget(null)}>取消</CSButton>
-              <CSButton key="confirm" variant="primary" loading={deleting} onClick={confirmDelete}>确认删除</CSButton>
+              <CSButton key="cancel" variant="link" onClick={() => setDeleteTarget(null)}>{t('saves.confirm.btn_cancel')}</CSButton>
+              <CSButton key="confirm" variant="primary" loading={deleting} onClick={confirmDelete}>{t('saves.confirm.btn_confirm')}</CSButton>
             </CSSpaceBetween>
           </CSBox>
         }
       >
-        {deleteTarget ? `确定删除存档「${deleteTarget.title}」？此操作不可撤销(但磁盘 commit 文件仍可恢复)。` : ''}
+        {deleteTarget ? t('saves.confirm.delete_body', { title: deleteTarget.title }) : ''}
       </CSModal>
 
       {flash.items.length > 0 && (
@@ -479,6 +484,7 @@ const BRANCH_LABELS = {
 };
 
 function BranchesPage() {
+  const { t } = useTranslation();
   // 用户要求"git ui 在 vscode 底部终端里的那个" — 改用 BranchGraph 组件 (VSCode Git Graph 风格)。
   // 旧版是自由拖拽 SVG (140×40 矩形 + 贝塞尔曲线),信息密度低、交互复杂、不像 git tool。
   // 新版用 swimlane 算法:每行一个 commit,左侧固定 column 分支线,右侧 message + ref pills + 操作。
@@ -531,7 +537,7 @@ function BranchesPage() {
         active_commit_id: r.active_commit_id || r.active_branch_node_id || null,
       } : null);
     } catch (e) {
-      setTreeError(e?.message || "加载失败");
+      setTreeError(e?.message || t('saves.branches.load_fail', { err: '' }));
       setTreePayload(null);
     } finally {
       setTreeLoading(false);
@@ -542,10 +548,10 @@ function BranchesPage() {
   const onActivate = async (commitId) => {
     try {
       await window.api.branches.activate({ save_id: selectedSave, commit_id: commitId, node_id: commitId });
-      window.__apiToast?.("已切到该分支", { kind: "ok" });
+      window.__apiToast?.(t('saves.branches.toast_activated'), { kind: "ok" });
       reloadTree();
     } catch (e) {
-      window.__apiToast?.("切换失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('saves.branches.toast_activate_fail'), { kind: "danger", detail: e?.message });
     }
   };
 
@@ -563,11 +569,11 @@ function BranchesPage() {
     const cid = deleteTarget.commit_id ?? deleteTarget.id;
     try {
       await window.api.branches.delete({ save_id: selectedSave, node_id: cid, commit_id: cid });
-      window.__apiToast?.("已删除子树", { kind: "ok" });
+      window.__apiToast?.(t('saves.branches.toast_deleted'), { kind: "ok" });
       setDeleteTarget(null);
       reloadTree();
     } catch (e) {
-      window.__apiToast?.("删除失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('saves.branches.toast_delete_fail'), { kind: "danger", detail: e?.message });
     }
   };
 
@@ -577,21 +583,21 @@ function BranchesPage() {
       <div className="pl-stack">
         <section className="pl-sec" data-cap-anchor="saves.branches">
           <div className="pl-sec-head">
-            <h2>分支图 <span className="muted-2">暂无存档</span></h2>
+            <h2>{t('saves.branches.page_title')} <span className="muted-2">{t('saves.branches.no_saves_title')}</span></h2>
           </div>
           <div className="pl-empty" style={{padding: "32px 24px", textAlign: "center", color: "var(--muted)"}}>
             <div style={{marginBottom: 12, fontFamily: "var(--font-serif)", fontSize: 15, color: "var(--text)"}}>
-              你还没有任何存档
+              {t('saves.branches.no_saves_body')}
             </div>
             <div style={{marginBottom: 16, fontSize: 13}}>
-              先去「剧本」页选一本剧本开始新游戏,存档建立后才会出现分支图。
+              {t('saves.branches.no_saves_hint')}
             </div>
             <div style={{display: "inline-flex", gap: 8}}>
               <button className="btn primary" onClick={() => window.location.hash = "saves-scripts"}>
-                <Icon name="bookmark" size={12} /> 去选剧本
+                <Icon name="bookmark" size={12} /> {t('saves.branches.no_saves_btn_scripts')}
               </button>
               <button className="btn ghost" onClick={() => window.location.hash = "saves-list"}>
-                <Icon name="list" size={12} /> 存档列表
+                <Icon name="list" size={12} /> {t('saves.branches.no_saves_btn_list')}
               </button>
             </div>
           </div>
@@ -608,9 +614,9 @@ function BranchesPage() {
       <section className="pl-sec" data-cap-anchor="saves.branches">
         <div className="pl-sec-head">
           <h2>
-            分支图{" "}
+            {t('saves.branches.page_title')}{" "}
             <span className="muted-2">
-              {nodeCount} commits · {refCount} refs · 一个存档一个 git 系统
+              {t('saves.branches.page_subtitle', { commits: nodeCount, refs: refCount })}
             </span>
           </h2>
           <div className="pl-sec-tools">
@@ -618,20 +624,20 @@ function BranchesPage() {
               style={{height: 28, fontSize: 12, padding: "0 10px"}}>
               {saves.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
             </select>
-            <button className="btn ghost" onClick={reloadTree}><Icon name="refresh" size={12} /> 刷新</button>
+            <button className="btn ghost" onClick={reloadTree}><Icon name="refresh" size={12} /> {t('saves.branches.btn_refresh')}</button>
             <button className="btn primary"
               disabled={!selectedSave}
               onClick={() => window.__openContinue?.(saves.find(s => s.id === selectedSave))}>
-              <Icon name="play" size={12} /> 进入当前分支
+              <Icon name="play" size={12} /> {t('saves.branches.btn_enter')}
             </button>
           </div>
         </div>
         <div style={{padding: "8px 0"}}>
           {treeLoading && (
-            <div className="muted-2" style={{padding: "16px", fontSize: 12.5}}>加载中…</div>
+            <div className="muted-2" style={{padding: "16px", fontSize: 12.5}}>{t('saves.branches.loading_tree')}</div>
           )}
           {!treeLoading && treeError && (
-            <div className="muted-2" style={{padding: "16px", fontSize: 12.5, color: "var(--danger)"}}>加载失败：{treeError}</div>
+            <div className="muted-2" style={{padding: "16px", fontSize: 12.5, color: "var(--danger)"}}>{t('saves.branches.load_fail', { err: treeError })}</div>
           )}
           {!treeLoading && !treeError && treePayload && (
             <BranchGraph
@@ -646,21 +652,21 @@ function BranchesPage() {
           )}
         </div>
         <div className="muted-2" style={{padding: "6px 4px 0", fontSize: 11, fontFamily: "var(--font-mono)"}}>
-          列(swimlane) = 分支轨道  ·  ○ = commit dot (圆环 = HEAD/active)  ·  虚线 = 已删除子树
+          {t('saves.branches.legend')}
         </div>
       </section>
       <ConfirmModal
         open={!!deleteTarget}
-        title={`删除 commit #${deleteTarget?.commit_id ?? deleteTarget?.id} 及其子树？`}
+        title={t('saves.branches.delete_title', { id: deleteTarget?.commit_id ?? deleteTarget?.id })}
         body={
           <>
-            将删除 <strong>{deleteTarget?.summary || deleteTarget?.message || `节点 #${deleteTarget?.commit_id ?? deleteTarget?.id}`}</strong>
-            {" "}及以它为起点的<strong>所有下游分支</strong>。
-            此操作在本存档中不可恢复。
+            {t('saves.branches.delete_body_suffix')} <strong>{deleteTarget?.summary || deleteTarget?.message || t('saves.branches.delete_body_node', { id: deleteTarget?.commit_id ?? deleteTarget?.id })}</strong>
+            {" "}
+            {t('saves.branches.delete_body_irrev')}
             <div style={{marginTop: 8, fontSize: 12, color: "var(--muted)"}}>POST /api/branches/delete</div>
           </>
         }
-        danger confirmLabel="删除整棵子树"
+        danger confirmLabel={t('saves.branches.delete_confirm_label')}
         onClose={() => setDeleteTarget(null)}
         onConfirm={onDeleteConfirmed}
       />
@@ -670,6 +676,7 @@ function BranchesPage() {
 
 /* ---------------------------- CONTINUE PICKER ------------------ */
 function ContinuePicker({ open, save, focusedNodeId, onClose }) {
+  const { t } = useTranslation();
   // task 45：原来 allSaves = window.MOCK_PLATFORM.saves —— 登录用户看不到自己的真存档
   // （只看到 mock 的 4 条假 save id=11/12/13/14）。改用 /api/saves 实时拉真存档。
   // 匿名访客（designer preview）才回退到 MOCK_PLATFORM。
@@ -788,7 +795,7 @@ function ContinuePicker({ open, save, focusedNodeId, onClose }) {
     const targetSaveId = pickedSave?.id;
     if (!targetSaveId) {
       // 完全没存档信息,不要带着旧 runtime 进 Game Console
-      window.__apiToast?.("没选目标存档", { kind: "danger", duration: 2400 });
+      window.__apiToast?.(t('saves.toast.no_target_save'), { kind: "danger", duration: 2400 });
       return;
     }
     try {
@@ -806,7 +813,7 @@ function ContinuePicker({ open, save, focusedNodeId, onClose }) {
         await window.api.saves.activate(targetSaveId);
       }
     } catch (e) {
-      window.__apiToast?.("切换分支失败", { kind: "danger", detail: e?.message, duration: 3000 });
+      window.__apiToast?.(t('saves.toast.branch_activate_fail'), { kind: "danger", detail: e?.message, duration: 3000 });
       return;  // 不要带着旧 runtime 进去
     }
     location.href = "Game Console.html";
@@ -819,21 +826,20 @@ function ContinuePicker({ open, save, focusedNodeId, onClose }) {
         <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(620px, 100%)"}}>
           <header className="pl-modal-head">
             <div>
-              <div className="pl-modal-eyebrow">继续游戏 · 第 1 / 2 步</div>
-              <h2 className="pl-modal-title">选择一个存档</h2>
+              <div className="pl-modal-eyebrow">{t('saves.continue.step1_eyebrow')}</div>
+              <h2 className="pl-modal-title">{t('saves.continue.step1_title')}</h2>
             </div>
-            <button className="iconbtn" onClick={onClose} data-tip="关闭"><Icon name="close" size={14} /></button>
+            <button className="iconbtn" onClick={onClose} data-tip={t('saves.continue.close_tip')}><Icon name="close" size={14} /></button>
           </header>
           <div className="pl-save-picker">
             {savesLoading && (
               <div className="muted-2" style={{padding: "20px 12px", textAlign: "center", fontSize: 13}}>
-                正在加载真实存档列表…
+                {t('saves.continue.loading_saves')}
               </div>
             )}
             {!savesLoading && allSaves.length === 0 && (
               <div className="muted-2" style={{padding: "20px 12px", textAlign: "center", fontSize: 13, lineHeight: 1.7}}>
-                你还没有任何真实存档。<br />
-                点击下面『开始新游戏』基于导入剧本（或默认剧本）创建。
+                {t('saves.continue.no_saves')}
               </div>
             )}
             {allSaves.map(s => (
@@ -845,10 +851,10 @@ function ContinuePicker({ open, save, focusedNodeId, onClose }) {
                 <div className="pl-save-pick-body">
                   <div className="pl-save-pick-title">
                     {s.title}
-                    {s.current && <span className="pill accent" style={{marginLeft: 8, fontSize: 10.5}}><span className="dot accent pulse" /> 在玩</span>}
+                    {s.current && <span className="pill accent" style={{marginLeft: 8, fontSize: 10.5}}><span className="dot accent pulse" /> {t('saves.continue.playing_pill')}</span>}
                   </div>
                   <div className="pl-save-pick-meta muted-2 mono">
-                    {s.branch_count} 节点 · {s.updated_at}
+                    {t('saves.continue.node_meta', { n: s.branch_count, date: s.updated_at })}
                   </div>
                 </div>
               </button>
@@ -857,20 +863,20 @@ function ContinuePicker({ open, save, focusedNodeId, onClose }) {
               onClick={() => setNewOpen(true)}>
               <div className="pl-save-pick-mark"><Icon name="plus" size={14} /></div>
               <div className="pl-save-pick-body">
-                <div className="pl-save-pick-title">开始新游戏</div>
-                <div className="pl-save-pick-meta muted-2">基于剧本创建一个新存档，从开场开始</div>
+                <div className="pl-save-pick-title">{t('saves.continue.new_game_title')}</div>
+                <div className="pl-save-pick-meta muted-2">{t('saves.continue.new_game_desc')}</div>
               </div>
               <Icon name="chevron_right" size={14} style={{color: "var(--muted-2)"}} />
             </button>
           </div>
           <footer className="pl-modal-foot">
             <span className="muted-2" style={{fontSize: 11.5}}>
-              <Icon name="info" size={11} /> 双击存档直接进入分支选择
+              <Icon name="info" size={11} /> {t('saves.continue.hint_dblclick')}
             </span>
             <div style={{display: "flex", gap: 8}}>
-              <button className="btn ghost" onClick={onClose}>取消</button>
+              <button className="btn ghost" onClick={onClose}>{t('saves.continue.btn_cancel')}</button>
               <button className="btn primary" onClick={() => setStep("branch")} disabled={!pickedSave}>
-                选择分支 <Icon name="arrow_right" size={12} />
+                {t('saves.continue.btn_next')} <Icon name="arrow_right" size={12} />
               </button>
             </div>
           </footer>
@@ -897,25 +903,25 @@ function ContinuePicker({ open, save, focusedNodeId, onClose }) {
         <header className="pl-modal-head">
           <div>
             <div className="pl-modal-eyebrow">
-              <button className="pl-back-btn" onClick={() => setStep("save")} data-tip="返回存档选择">
-                <Icon name="chevron_left" size={11} /> 第 2 / 2 步
+              <button className="pl-back-btn" onClick={() => setStep("save")} data-tip={t('saves.continue.step2_back_tip')}>
+                <Icon name="chevron_left" size={11} /> {t('saves.continue.step2_back')}
               </button>
             </div>
-            <h2 className="pl-modal-title">{pickedSave?.title || "选择继续节点"}</h2>
+            <h2 className="pl-modal-title">{pickedSave?.title || t('saves.continue.step2_fallback_title')}</h2>
           </div>
-          <button className="iconbtn" onClick={onClose} data-tip="关闭"><Icon name="close" size={14} /></button>
+          <button className="iconbtn" onClick={onClose} data-tip={t('saves.continue.close_tip')}><Icon name="close" size={14} /></button>
         </header>
 
         {/* task 45：真分支树。loading 时显示加载提示；空时显示空态（新账号还没存档的常见情况） */}
         {branchLoading && (
           <div className="muted-2" style={{padding: "20px 24px", textAlign: "center", fontSize: 13}}>
-            正在加载存档分支树...
+            {t('saves.continue.loading_branches')}
           </div>
         )}
         {!branchLoading && nodes.length === 0 && (
           <div className="muted-2" style={{padding: "32px 24px", textAlign: "center", fontSize: 13, lineHeight: 1.7}}>
-            该存档还没有任何分支节点。<br />
-            <span className="muted">点击下方『继续游戏』直接进入 root 开局，先玩起来就会自动生成节点。</span>
+            {t('saves.continue.no_branch_nodes')}<br />
+            <span className="muted">{t('saves.continue.no_branch_hint')}</span>
           </div>
         )}
         {!branchLoading && lastExit && (
@@ -923,11 +929,11 @@ function ContinuePicker({ open, save, focusedNodeId, onClose }) {
                   onClick={() => setPickedNode(lastExit.id)} style={{textAlign: "left"}}>
             <div className="pl-modal-hero-mark">
               <span className="dot accent pulse" />
-              <span className="mono">上次退出</span>
+              <span className="mono">{t('saves.continue.last_exit_label')}</span>
             </div>
             <div className="pl-modal-hero-body">
-              <div className="pl-modal-hero-title">分支 {lastExit.branch} · {BRANCH_LABELS[lastExit.branch]?.name || "默认线"}</div>
-              <div className="pl-modal-hero-summary serif">#{String(lastExit.id).padStart(2,"0")} · {lastExit.summary}</div>
+              <div className="pl-modal-hero-title">{t('saves.continue.branch_label', { branch: lastExit.branch })} · {BRANCH_LABELS[lastExit.branch]?.name || t('saves.continue.branch_default')}</div>
+              <div className="pl-modal-hero-summary serif">#{String(lastExit.id).padStart(2,"00")} · {lastExit.summary}</div>
               <div className="pl-modal-hero-meta muted-2 mono">turn {lastExit.turn_index ?? "?"} · {lastExit.kind || "round"}</div>
             </div>
             <div className="pl-modal-hero-radio">
@@ -937,7 +943,7 @@ function ContinuePicker({ open, save, focusedNodeId, onClose }) {
         )}
 
         {!branchLoading && nodes.length > 1 && (
-          <div className="pl-modal-section-label">或从其它节点开始 <span className="muted-2" style={{marginLeft: 6, fontSize: 11, textTransform: "none", letterSpacing: 0}}>从中段节点继续将自动新建分叉</span></div>
+          <div className="pl-modal-section-label">{t('saves.continue.more_nodes_label')} <span className="muted-2" style={{marginLeft: 6, fontSize: 11, textTransform: "none", letterSpacing: 0}}>{t('saves.continue.more_nodes_hint')}</span></div>
         )}
 
         <div className="pl-modal-branches">
@@ -952,8 +958,8 @@ function ContinuePicker({ open, save, focusedNodeId, onClose }) {
                   <div className="pl-modal-branch-title">
                     #{String(n.id).padStart(2, "0")} · {n.summary}
                     {hasChildren && (
-                      <span className="pill" data-tip="此节点已有后续，从这里继续会创建新分叉" style={{marginLeft: 8, fontSize: 10.5, color: "var(--warn)", borderColor: "rgba(212, 179, 102, 0.32)", background: "var(--warn-soft)"}}>
-                        <Icon name="fork" size={9} /> 中段 · 将分叉
+                      <span className="pill" data-tip={t('saves.continue.fork_tip')} style={{marginLeft: 8, fontSize: 10.5, color: "var(--warn)", borderColor: "rgba(212, 179, 102, 0.32)", background: "var(--warn-soft)"}}>
+                        <Icon name="fork" size={9} /> {t('saves.continue.fork_pill')}
                       </span>
                     )}
                   </div>
@@ -975,7 +981,7 @@ function ContinuePicker({ open, save, focusedNodeId, onClose }) {
                       </>
                     ) : (
                       <span className="muted-2 mono" style={{fontSize: 10.5}}>
-                        {n.kind === "root" ? "存档起点" : `turn ${n.turn_index}`}
+                        {n.kind === "root" ? t('saves.continue.save_root') : `turn ${n.turn_index}`}
                       </span>
                     )}
                   </div>
@@ -989,13 +995,13 @@ function ContinuePicker({ open, save, focusedNodeId, onClose }) {
           <span className="muted-2" style={{fontSize: 11.5}}>
             <Icon name="info" size={11} />{" "}
             {isFork
-              ? <>选中 <strong>#{String(picked.id).padStart(2,"0")}</strong> 不是当前分支末端，进入后会<strong style={{color: "var(--warn)"}}>新建分叉</strong>，原分支保留</>
-              : <>选中 <strong>#{String(picked?.id || 0).padStart(2,"0")}</strong> 是当前分支末端，将<strong>继续</strong>同一分支</>}
+              ? t('saves.continue.info_fork', { id: String(picked.id).padStart(2, "0") })
+              : t('saves.continue.info_continue', { id: String(picked?.id || 0).padStart(2, "0") })}
           </span>
           <div style={{display: "flex", gap: 8}}>
-            <button className="btn ghost" onClick={() => setStep("save")}>上一步</button>
+            <button className="btn ghost" onClick={() => setStep("save")}>{t('saves.continue.btn_prev')}</button>
             <button className="btn primary" onClick={confirm} disabled={pickedNode == null}>
-              <Icon name="play" size={12} /> {isFork ? "新建分叉并进入" : "继续游戏"}
+              <Icon name="play" size={12} /> {isFork ? t('saves.continue.btn_fork') : t('saves.continue.btn_continue')}
             </button>
           </div>
         </footer>
@@ -1115,6 +1121,7 @@ function InlineErr({ msg }) {
    Step 3: 出生点选择
    ============================================================ */
 function BirthpointStep({ scriptId, birthpoint, setBirthpoint }) {
+  const { t } = useTranslation();
   const [phases, setPhases] = React.useState([]);
   const [loadingBP, setLoadingBP] = React.useState(true);
   const [bpErr, setBpErr] = React.useState("");
@@ -1153,7 +1160,7 @@ function BirthpointStep({ scriptId, birthpoint, setBirthpoint }) {
   if (loadingBP) {
     return (
       <div className="muted" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "16px 0" }}>
-        <Icon name="spinner" size={13} className="spin" /> 正在加载出生点…
+        <Icon name="spinner" size={13} className="spin" /> {t('saves.birthpoint.loading')}
       </div>
     );
   }
@@ -1193,7 +1200,7 @@ function BirthpointStep({ scriptId, birthpoint, setBirthpoint }) {
                 </span>
               </div>
               <span className="muted-2" style={{ fontSize: 11, whiteSpace: "nowrap", flexShrink: 0 }}>
-                第 {phase.chapter_min}–{phase.chapter_max} 章 · {phase.chapter_count} 章
+                {t('saves.birthpoint.chapter_range', { min: phase.chapter_min, max: phase.chapter_max, count: phase.chapter_count })}
               </span>
             </button>
 
@@ -1230,7 +1237,9 @@ function BirthpointStep({ scriptId, birthpoint, setBirthpoint }) {
                         )}
                       </div>
                       <span className="muted-2" style={{ fontSize: 10.5, whiteSpace: "nowrap", alignSelf: "center" }}>
-                        第 {anchor.chapter_min}{anchor.chapter_max !== anchor.chapter_min ? `–${anchor.chapter_max}` : ""} 章
+                        {anchor.chapter_max !== anchor.chapter_min
+                          ? t('saves.birthpoint.chapter_range_short', { min: anchor.chapter_min, max: anchor.chapter_max })
+                          : t('saves.birthpoint.chapter_single', { min: anchor.chapter_min })}
                       </span>
                     </label>
                   );
@@ -1248,6 +1257,7 @@ function BirthpointStep({ scriptId, birthpoint, setBirthpoint }) {
    Step 4: 初始身份
    ============================================================ */
 function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identity, setIdentity }) {
+  const { t } = useTranslation();
   const [recs, setRecs] = React.useState([]);
   const [recsLoading, setRecsLoading] = React.useState(false);
   const [recsErr, setRecsErr] = React.useState("");
@@ -1257,11 +1267,11 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
   const [customBg, setCustomBg] = React.useState("");
 
   const pickedRole = allRoleOptions ? allRoleOptions.find(o => o.key === pickedCard) : null;
-  const pickedName = pickedRole?.name || "(未选角色)";
+  const pickedName = pickedRole?.name || t('saves.identity.no_card_selected');
 
   const fetchAiRecs = React.useCallback(async () => {
     if (!scriptId) {
-      setRecsErr("请先选择剧本");
+      setRecsErr(t('saves.identity.no_script'));
       return;
     }
     setRecsLoading(true); setRecsErr(""); setRecs([]);
@@ -1285,17 +1295,17 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
         // 502 (LLM 失败) / 500 (工具失败) / 403 (无权) 一律显示后端真实错误
-        const msg = (data && data.error) || `请求失败 (HTTP ${r.status})`;
+        const msg = (data && data.error) || t('saves.identity.ai_req_fail', { status: r.status });
         setRecsErr(msg);
         return;
       }
       if (data && Array.isArray(data.recommendations) && data.recommendations.length > 0) {
         setRecs(data.recommendations);
       } else {
-        setRecsErr("后端未返回任何推荐。请改用手动创建或直接使用角色卡。");
+        setRecsErr(t('saves.identity.ai_empty'));
       }
     } catch (e) {
-      setRecsErr("网络/解析错误: " + (e.message || String(e)));
+      setRecsErr(t('saves.identity.ai_net_err', { err: e.message || String(e) }));
     } finally {
       setRecsLoading(false);
     }
@@ -1341,8 +1351,7 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
     <CSSpaceBetween size="m">
       {/* 说明 */}
       <CSBox key="intro" color="text-body-secondary" fontSize="body-s">
-        身份卡是叠加在角色卡之上的「定位 overlay」(穿越者 / 卧底 / 流亡贵族 …),和具体姓名外貌无关。
-        可不选 —— 直接使用所选角色「<strong style={{ color: 'var(--text, #ebe7df)' }}>{pickedName}</strong>」开局。
+        {t('saves.identity.intro', { name: pickedName })}
       </CSBox>
 
       {/* 当前选择 */}
@@ -1354,30 +1363,30 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
       }}>
         {noIdentity ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-quiet, #c8c2b7)', fontSize: 13 }}>
-            <Icon name="check" size={13} /> 当前未挂身份卡 —— 直接使用「<strong style={{ color: 'var(--text, #ebe7df)' }}>{pickedName}</strong>」开局
+            <Icon name="check" size={13} /> {t('saves.identity.no_identity', { name: pickedName })}
           </div>
         ) : (
           <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <CSBadge color={identity._from === 'ai' ? 'blue' : 'grey'}>{identity._from === 'ai' ? 'AI 生成' : '手动'}</CSBadge>
+              <CSBadge color={identity._from === 'ai' ? 'blue' : 'grey'}>{identity._from === 'ai' ? t('saves.identity.badge_ai') : t('saves.identity.badge_manual')}</CSBadge>
               {identity.name && <strong style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 15, color: 'var(--text, #ebe7df)' }}>{identity.name}</strong>}
               {identity.role && <span style={{ fontSize: 13, color: 'var(--text-quiet, #c8c2b7)' }}>{identity.role}</span>}
             </div>
             {identity.background && <span style={{ fontSize: 12.5, lineHeight: 1.6, color: 'var(--muted, #968f85)' }}>{identity.background}</span>}
           </div>
         )}
-        {!noIdentity && <CSButton iconName="close" variant="inline-link" onClick={clearIdentity}>清除</CSButton>}
+        {!noIdentity && <CSButton iconName="close" variant="inline-link" onClick={clearIdentity}>{t('saves.identity.btn_clear')}</CSButton>}
       </div>
 
       {/* AI 生成 */}
       <div key="ai-gen" style={{ ...panel, display: 'grid', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ display: 'grid', gap: 3 }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text, #ebe7df)' }}>让 AI 生成身份候选</span>
-            <span style={{ fontSize: 12, color: 'var(--muted, #968f85)' }}>基于剧本 + 出生点 + 所选角色卡,生成 4 个差异化身份。</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text, #ebe7df)' }}>{t('saves.identity.ai_title')}</span>
+            <span style={{ fontSize: 12, color: 'var(--muted, #968f85)' }}>{t('saves.identity.ai_desc')}</span>
           </div>
           <CSButton iconName={recs.length > 0 ? 'refresh' : 'gen-ai'} loading={recsLoading} disabled={recsLoading} onClick={fetchAiRecs}>
-            {recs.length > 0 ? '重新生成' : '生成身份'}
+            {recs.length > 0 ? t('saves.identity.btn_regen') : t('saves.identity.btn_gen')}
           </CSButton>
         </div>
         {recsErr && <CSAlert type="error">{recsErr}</CSAlert>}
@@ -1395,7 +1404,7 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {rec.name && <strong style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 14, color: 'var(--text, #ebe7df)' }}>{rec.name}</strong>}
                     {rec.role && <CSBadge>{rec.role}</CSBadge>}
-                    {isSelected && <span style={{ marginLeft: 'auto' }}><CSBadge color="green">已选</CSBadge></span>}
+                    {isSelected && <span style={{ marginLeft: 'auto' }}><CSBadge color="green">{t('saves.identity.badge_selected')}</CSBadge></span>}
                   </div>
                   {rec.background && <span style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--muted, #968f85)' }}>{rec.background}</span>}
                 </button>
@@ -1408,29 +1417,29 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
       {/* 手动创建 */}
       <CSExpandableSection key="manual"
         variant="container"
-        headerText="手动创建身份卡"
-        headerActions={identity && identity._from === 'custom' ? <CSBadge color="green">已填写</CSBadge> : undefined}
+        headerText={t('saves.identity.manual_title')}
+        headerActions={identity && identity._from === 'custom' ? <CSBadge color="green">{t('saves.identity.badge_filled')}</CSBadge> : undefined}
         expanded={customOpen}
         onChange={({ detail }) => setCustomOpen(detail.expanded)}
       >
         <CSSpaceBetween size="l">
           <CSColumnLayout columns={2}>
-            <CSFormField label="代号 / 化名" description="可选,留空则用角色卡的名字">
-              <CSInput value={customName} onChange={({ detail }) => setCustomName(detail.value)} placeholder="例:阿芜" />
+            <CSFormField label={t('saves.identity.field_alias')} description={t('saves.identity.field_alias_desc')}>
+              <CSInput value={customName} onChange={({ detail }) => setCustomName(detail.value)} placeholder={t('saves.identity.field_alias_placeholder')} />
             </CSFormField>
-            <CSFormField label="身份定位" constraintText="与背景至少填一项">
-              <CSInput value={customRole} onChange={({ detail }) => setCustomRole(detail.value)} placeholder="例:穿越者公主 / 卧底 / 流亡贵族" />
+            <CSFormField label={t('saves.identity.field_role')} constraintText={t('saves.identity.field_role_constraint')}>
+              <CSInput value={customRole} onChange={({ detail }) => setCustomRole(detail.value)} placeholder={t('saves.identity.field_role_placeholder')} />
             </CSFormField>
             <div style={{ gridColumn: '1 / -1' }}>
-              <CSFormField label="身份背景 / 动机">
+              <CSFormField label={t('saves.identity.field_bg')}>
                 <CSTextarea rows={3} value={customBg} onChange={({ detail }) => setCustomBg(detail.value)}
-                  placeholder="这个身份在剧本世界中的来历、动机、与核心事件的关联" />
+                  placeholder={t('saves.identity.field_bg_placeholder')} />
               </CSFormField>
             </div>
           </CSColumnLayout>
           <div style={{ textAlign: 'right' }}>
             <CSButton variant="primary" iconName="check" onClick={applyCustom}
-              disabled={!customRole.trim() && !customBg.trim()}>使用此身份卡</CSButton>
+              disabled={!customRole.trim() && !customBg.trim()}>{t('saves.identity.btn_apply')}</CSButton>
           </div>
         </CSSpaceBetween>
       </CSExpandableSection>
@@ -1442,6 +1451,7 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
    MAIN WIZARD COMPONENT
    ============================================================ */
 function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
+  const { t } = useTranslation();
   // ── shared data ──────────────────────────────────────────────
   const [scripts, setScripts] = useStatePL([]);
   const [personas, setPersonas] = useStatePL([]);
@@ -1524,8 +1534,8 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
         const sc = scList.find(x => String(x.id) === pickId);
         const scTitle = (sc && (sc.title || "").replace(/^《|》$/g, "")) || "";
         if (scTitle) setTitle(`${scTitle} · 新档`);
-        else setTitle("新游戏");
-      } catch (_) { setTitle("新游戏"); }
+        else setTitle(t('saves.new_game.page_title'));
+      } catch (_) { setTitle(t('saves.new_game.page_title')); }
       setLoading(false);
     })();
   }, [open]);
@@ -1535,11 +1545,11 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const allRoleOptions = [
     ...personas.map(p => ({
       key: `persona:${p.id || p.slug}`, kind: "persona", id: p.id || null, slug: p.slug || "",
-      name: p.name || "未命名", subtitle: p.role || "玩家身份", pinned: !!p.is_default,
+      name: p.name || t('platform.menu.unnamed'), subtitle: p.role || t('saves.new_game.card_kind_persona'), pinned: !!p.is_default,
     })),
     ...userCards.map(c => ({
       key: `user:${c.id || c.slug}`, kind: "user_card", id: c.id || null, slug: c.slug || "",
-      name: c.name || "未命名", subtitle: c.identity || "用户角色卡", pinned: false,
+      name: c.name || t('platform.menu.unnamed'), subtitle: c.identity || t('saves.new_game.card_kind_user'), pinned: false,
     })),
   ];
 
@@ -1561,7 +1571,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
       if (roleMode === "new") {
         const r = await window.api.cards.myUpsert(cardFormPayload(newCardForm));
         const created = r && r.card;
-        if (!created || !(created.id || created.slug)) throw new Error("角色卡创建失败");
+        if (!created || !(created.id || created.slug)) throw new Error(t('saves.new_game.card_create_fail'));
         charId = created.id || created.slug;
         charKind = "user_card";
       }
@@ -1586,7 +1596,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
       const res = onConfirm?.(payload);
       if (res && typeof res.then === "function") await res;
     } catch (e) {
-      setSubmitErr((e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || "创建失败");
+      setSubmitErr((e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || t('saves.new_game.create_fail'));
     } finally {
       setSubmitting(false);
     }
@@ -1598,15 +1608,15 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const sec_basic = (
     // Cloudscape Container 内部 SpaceBetween 包 [header, children],期望 children 顶层有 key
     <CSColumnLayout key="sec_basic" columns={2}>
-      <CSFormField label="存档名称" constraintText="必填">
+      <CSFormField label={t('saves.new_game.field_save_name')} constraintText={t('saves.new_game.field_save_name_req')}>
         <CSInput value={title} onChange={({ detail }) => setTitle(detail.value)} autoFocus />
       </CSFormField>
-      <CSFormField label="剧本" constraintText="必填">
+      <CSFormField label={t('saves.new_game.field_script')} constraintText={t('saves.new_game.field_script_req')}>
         <CSSelect
           selectedOption={scriptOpts.find(o => o.value === scriptId) || null}
           options={scriptOpts}
           disabled={!scripts.length}
-          placeholder={scripts.length ? '选择剧本' : '（先导入一部剧本）'}
+          placeholder={scripts.length ? t('saves.new_game.field_script_placeholder') : t('saves.new_game.field_script_no_scripts')}
           onChange={({ detail }) => {
             const v = detail.selectedOption.value;
             setScriptId(v);
@@ -1621,13 +1631,13 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const step1Content = (
     // Cloudscape SpaceBetween 内部用 React.Children.map 加间距,条件渲染的 children 需要稳定 key
     <CSSpaceBetween key="step1" size="l">
-      <CSFormField key="mode" label="选择角色"
-        description={allRoleOptions.length === 0 ? '你还没有玩家身份 / 用户角色卡,自动切到「新建角色卡」。' : undefined}>
+      <CSFormField key="mode" label={t('saves.new_game.role_mode_label')}
+        description={allRoleOptions.length === 0 ? t('saves.new_game.role_mode_empty') : undefined}>
         <CSSegmentedControl
           selectedId={roleMode}
           options={[
-            { id: 'existing', text: '使用现有', disabled: allRoleOptions.length === 0 },
-            { id: 'new', text: '新建角色卡' },
+            { id: 'existing', text: t('saves.new_game.role_mode_existing'), disabled: allRoleOptions.length === 0 },
+            { id: 'new', text: t('saves.new_game.role_mode_new') },
           ]}
           onChange={({ detail }) => setRoleMode(detail.selectedId)}
         />
@@ -1641,27 +1651,27 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
               <div className="pl-newgame-card-body">
                 <strong>{c.name}</strong>
                 <span className="muted-2" style={{ fontSize: 11.5 }}>
-                  {c.subtitle} · {c.kind === 'persona' ? '玩家身份' : '角色卡'}
+                  {c.subtitle} · {c.kind === 'persona' ? t('saves.new_game.card_kind_persona') : t('saves.new_game.card_kind_user')}
                 </span>
               </div>
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                {c.pinned && <span className="pill accent" style={{ fontSize: 10.5 }}><Icon name="pin" size={9} /> 默认</span>}
+                {c.pinned && <span className="pill accent" style={{ fontSize: 10.5 }}><Icon name="pin" size={9} /> {t('saves.new_game.card_default_pill')}</span>}
                 <button type="button" className="btn btn-ghost" style={{ fontSize: 11.5, padding: '4px 10px' }}
                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); openPreview(c); }}>
-                  <Icon name="eye" size={11} /> 预览
+                  <Icon name="eye" size={11} /> {t('saves.new_game.card_preview_btn')}
                 </button>
               </div>
             </label>
           ))}
           <a className="pl-newgame-card pl-newgame-card-link" href="#cards" onClick={onClose}>
-            <Icon name="folder" size={14} /><span>前往角色卡库管理 →</span>
+            <Icon name="folder" size={14} /><span>{t('saves.new_game.card_library_link')}</span>
           </a>
         </div>
       )}
       {roleMode === 'new' && (
         <div key="new-card">
           <CSBox color="text-body-secondary" fontSize="body-s" padding={{ bottom: 's' }}>
-            字段与「角色卡 · 新建用户角色卡」一致;创建并进入时会自动加入你的角色卡库。
+            {t('saves.new_game.new_card_desc')}
           </CSBox>
           <CardEditFields form={newCardForm} u={uNewCard} kind="user" />
         </div>
@@ -1674,10 +1684,9 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
     // 子元素没 key 时 wrapper div 的 key 全是 undefined → React 报「Each child should have a unique key」
     <CSSpaceBetween key="step4" size="m">
       <CSBox key="intro" color="text-body-secondary" fontSize="body-s">
-        告诉 GM 你希望的剧情走向。哪些设定是 NPC 知道的?哪些是你的秘密?哪些是你希望 GM 优先发展的方向?
-        此项可选,留空跳过。填写后存入存档,GM 每轮都能参考。
+        {t('saves.new_game.intent_desc')}
       </CSBox>
-      <CSFormField key="textarea" label="剧情期望 / 秘密分配">
+      <CSFormField key="textarea" label={t('saves.new_game.intent_label')}>
         <CSTextarea
           rows={6}
           value={storyIntent}
@@ -1690,20 +1699,20 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   // 区块标题:h2 + 说明,可选项加「· 可选」标
   const secHeader = (text, desc, optional) => (
     <CSHeader variant="h2" description={desc}>
-      {text}{optional ? <CSBox variant="span" color="text-status-inactive" fontSize="body-s"> · 可选</CSBox> : null}
+      {text}{optional ? <CSBox variant="span" color="text-status-inactive" fontSize="body-s">{t('saves.new_game.sec_optional')}</CSBox> : null}
     </CSHeader>
   );
 
   // 右侧概要:必填项完成度 + 已选摘要 + 创建按钮
   const reqRows = [
-    { label: '存档名称与剧本', ok: step1Valid },
-    { label: '选择角色', ok: step2Valid },
-    { label: '出生点', ok: step3Valid },
-    { label: '角色初始身份卡（可选）', ok: step4Valid },
+    { label: t('saves.new_game.req_save_script'), ok: step1Valid },
+    { label: t('saves.new_game.req_role'), ok: step2Valid },
+    { label: t('saves.new_game.req_birthpoint'), ok: step3Valid },
+    { label: t('saves.new_game.req_identity'), ok: step4Valid },
   ];
   const allValid = step1Valid && step2Valid && step3Valid && step4Valid;
   const pickedRoleName = roleMode === 'new'
-    ? (newCardForm.name.trim() || '新建角色')
+    ? (newCardForm.name.trim() || t('saves.new_game.new_role_default'))
     : (allRoleOptions.find(o => o.key === pickedCard)?.name || '—');
 
   // 角色卡预览:从原始 personas / userCards 取完整对象供 CardSheet 渲染
@@ -1720,8 +1729,8 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
       {/* 顶部栏:标题 + 取消(位于平台顶栏下方,保留平台导航) */}
       <div style={{ position: 'sticky', top: 0, zIndex: 3, background: '#131211', borderBottom: '1px solid #36322d' }}>
         <div style={{ maxWidth: 1240, margin: '0 auto', padding: '13px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-          <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600, color: '#ebe7df' }}>开始新游戏</div>
-          <CSButton iconName="close" variant="link" onClick={onClose}>取消</CSButton>
+          <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600, color: '#ebe7df' }}>{t('saves.new_game.page_title')}</div>
+          <CSButton iconName="close" variant="link" onClick={onClose}>{t('saves.new_game.btn_cancel')}</CSButton>
         </div>
       </div>
 
@@ -1731,32 +1740,32 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
           <div style={{ flex: 1, minWidth: 0 }}>
             <CSSpaceBetween size="l">
               {loading && (
-                <CSBox key="loading" color="text-body-secondary"><Icon name="spinner" size={13} className="spin" /> 正在加载剧本 / 角色…</CSBox>
+                <CSBox key="loading" color="text-body-secondary"><Icon name="spinner" size={13} className="spin" /> {t('saves.new_game.loading')}</CSBox>
               )}
               {!loading && scripts.length === 0 && (
-                <CSAlert key="no-scripts" type="warning" header="还没有任何剧本">
-                  先去 <a href="#scripts-import" onClick={onClose}>剧本 / 导入</a> 上传一部,然后再回来开始新游戏。
+                <CSAlert key="no-scripts" type="warning" header={t('saves.new_game.no_scripts_title')}>
+                  {t('saves.new_game.no_scripts_body')} <a href="#scripts-import" onClick={onClose}>{t('saves.new_game.no_scripts_link')}</a> {t('saves.new_game.no_scripts_suffix')}
                 </CSAlert>
               )}
               {/* Cloudscape SpaceBetween 内部用 React.Children.map 加间距,需要 child 显式 key */}
-              <CSContainer key="basic" header={secHeader('基本信息', '给存档起名,并选择要游玩的剧本。')}>{sec_basic}</CSContainer>
-              <CSContainer key="role" header={secHeader('选择角色', '选择已有玩家身份 / 角色卡,或新建一个。')}>{step1Content}</CSContainer>
-              <CSContainer key="birthpoint" header={secHeader('出生点', scriptId ? '选择故事开局的时间锚点。' : '先在「基本信息」选好剧本。')}>
+              <CSContainer key="basic" header={secHeader(t('saves.new_game.sec_basic_title'), t('saves.new_game.sec_basic_desc'))}>{sec_basic}</CSContainer>
+              <CSContainer key="role" header={secHeader(t('saves.new_game.sec_role_title'), t('saves.new_game.sec_role_desc'))}>{step1Content}</CSContainer>
+              <CSContainer key="birthpoint" header={secHeader(t('saves.new_game.sec_birthpoint_title'), scriptId ? t('saves.new_game.sec_birthpoint_desc_ready') : t('saves.new_game.sec_birthpoint_desc_wait'))}>
                 {scriptId
                   ? <BirthpointStep key="birthpoint-step" scriptId={scriptId} birthpoint={birthpoint} setBirthpoint={setBirthpoint} />
-                  : <CSBox key="birthpoint-empty" color="text-body-secondary" fontSize="body-s">请先选择剧本。</CSBox>}
+                  : <CSBox key="birthpoint-empty" color="text-body-secondary" fontSize="body-s">{t('saves.new_game.sec_birthpoint_empty')}</CSBox>}
               </CSContainer>
-              <CSContainer key="identity" header={secHeader('角色初始身份卡', '可选的「定位 overlay」:基于出生点与所选角色推荐,或自定义。')}>
+              <CSContainer key="identity" header={secHeader(t('saves.new_game.sec_identity_title'), t('saves.new_game.sec_identity_desc'))}>
                 <IdentityStep key="identity-step" scriptId={scriptId} birthpoint={birthpoint} pickedCard={pickedCard} allRoleOptions={allRoleOptions} identity={identity} setIdentity={(id) => setIdentity(id)} />
               </CSContainer>
-              <CSContainer key="intent" header={secHeader('剧情期望', '告诉 GM 你希望的剧情走向 / 秘密分配。', true)}>{step4Content}</CSContainer>
+              <CSContainer key="intent" header={secHeader(t('saves.new_game.sec_intent_title'), t('saves.new_game.sec_intent_desc'), true)}>{step4Content}</CSContainer>
             </CSSpaceBetween>
           </div>
 
           {/* 右:概要 + 创建(sticky)
               CSSpaceBetween 内部 flattenChildren+map, 每个 child 需要 key 否则 wrapper key 为 undefined */}
           <div style={{ width: 320, flexShrink: 0, position: 'sticky', top: 72 }}>
-            <CSContainer header={<CSHeader variant="h2">概要</CSHeader>}>
+            <CSContainer header={<CSHeader variant="h2">{t('saves.new_game.summary_title')}</CSHeader>}>
               <CSSpaceBetween size="m">
                 <CSSpaceBetween key="status" size="xs">
                   {reqRows.map(r => (
@@ -1764,19 +1773,19 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
                   ))}
                 </CSSpaceBetween>
                 <CSKeyValuePairs key="kv" columns={1} items={[
-                  { label: '存档名称', value: title.trim() || '—' },
-                  { label: '剧本', value: scriptOpts.find(o => o.value === scriptId)?.label || '—' },
-                  { label: '角色', value: pickedRoleName },
-                  { label: '出生点', value: birthpoint?.story_time_label || '—' },
-                  { label: '身份卡', value: identity?.name || identity?.role || '—' },
+                  { label: t('saves.new_game.summary_save_name'), value: title.trim() || '—' },
+                  { label: t('saves.new_game.summary_script'), value: scriptOpts.find(o => o.value === scriptId)?.label || '—' },
+                  { label: t('saves.new_game.summary_role'), value: pickedRoleName },
+                  { label: t('saves.new_game.summary_birthpoint'), value: birthpoint?.story_time_label || '—' },
+                  { label: t('saves.new_game.summary_identity'), value: identity?.name || identity?.role || '—' },
                 ]} />
                 {submitErr && <CSAlert key="err" type="error">{submitErr}</CSAlert>}
                 <div key="btns" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <CSButton variant="primary" disabled={!allValid || submitting} loading={submitting}
                     onClick={() => { if (allValid) handleSubmit(); }}>
-                    {submitting ? '正在创建…' : '创建并进入'}
+                    {submitting ? t('saves.new_game.btn_creating') : t('saves.new_game.btn_create')}
                   </CSButton>
-                  <CSButton variant="link" onClick={onClose}>取消</CSButton>
+                  <CSButton variant="link" onClick={onClose}>{t('saves.new_game.btn_cancel_link')}</CSButton>
                 </div>
               </CSSpaceBetween>
             </CSContainer>
@@ -1788,9 +1797,9 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
       <CSModal
         visible={!!previewCard}
         onDismiss={() => setPreviewCard(null)}
-        header={`角色卡预览 · ${previewCard?.name || ''}`}
+        header={t('saves.new_game.preview_title', { name: previewCard?.name || '' })}
         size="medium"
-        footer={<div style={{ textAlign: 'right' }}><CSButton variant="primary" onClick={() => setPreviewCard(null)}>关闭</CSButton></div>}
+        footer={<div style={{ textAlign: 'right' }}><CSButton variant="primary" onClick={() => setPreviewCard(null)}>{t('saves.new_game.preview_close')}</CSButton></div>}
       >
         {previewCard && <CardSheet card={previewCard.card} kind="user" />}
       </CSModal>

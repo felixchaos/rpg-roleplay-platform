@@ -711,14 +711,34 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None) -> GameState:
             if uid == 0:
                 _lru_set(_state_mtime_by_user, uid, SAVE_FILE.stat().st_mtime_ns if SAVE_FILE.exists() else 0)
         if uid not in _gm_by_user:
-            # A1: 优先读当前存档的 session_model，fallback 到全局 catalog selected
+            # A1: 优先级链(高→低):
+            #   1. save 级 session_model
+            #   2. user_preferences.gm.api_id / gm.model_real_name  ← 补
+            #   3. 全局 catalog selected_model()
             _current_state = _lru_get(_state_by_user, uid)
             _session = _current_state.get_session_model() if _current_state else None
             if _session:
                 _gm_model_id, _gm_api_id = _session
             else:
-                model = selected_model()
-                _gm_model_id, _gm_api_id = model["real_name"], model["api_id"]
+                # 尝试从 user_preferences 读 gm.* 偏好
+                _pref_api = _pref_model = None
+                if api_user:
+                    _uid_int = api_user.get("user_id") or api_user.get("id")
+                    if _uid_int:
+                        try:
+                            from rpg.core.llm_backend import (
+                                resolve_preferred_api,
+                                resolve_preferred_model,
+                            )
+                            _pref_api = resolve_preferred_api(_uid_int, "gm.api_id")
+                            _pref_model = resolve_preferred_model(_uid_int, "gm.model_real_name")
+                        except Exception as _e:
+                            log.warning(f"[ensure_loaded] pref resolve failed: {_e}")
+                if _pref_api and _pref_model:
+                    _gm_api_id, _gm_model_id = _pref_api, _pref_model
+                else:
+                    model = selected_model()
+                    _gm_model_id, _gm_api_id = model["real_name"], model["api_id"]
             _lru_set(_gm_by_user, uid, GameMaster(
                 api_id=_gm_api_id,
                 model=_gm_model_id,

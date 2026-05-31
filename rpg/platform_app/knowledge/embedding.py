@@ -5,26 +5,31 @@
 - 实体层(character_cards.embedding_vec, worldbook_entries.embedding_vec):
   角色/世界书条目的向量,GM 提到人名时按向量找完整卡片
 
-embedding model: Google `text-embedding-004` (768 维,多语言含中文)
+embedding model: Google `text-embedding-004` (768 维,多语言含中文) — 默认
+BYOK: 用户可在 user_preferences 设置 embed.api_id / embed.model_real_name,
+      并在 user_api_credentials 保存对应 provider 的 API key,覆盖系统默认。
 batch size: 100 chunks/请求(API 限 250,留 buffer)
 存储: pgvector(已 brew install + CREATE EXTENSION)
 查询: `embedding_vec <=> query_vec` cosine distance + ivfflat 索引
 
 入口:
-- `embed_query(text)` → str(vector) 给 `_search._embed_query` 用
+- `embed_query(text, user_id)` → str(vector) 给 `_search._embed_query` 用
 - `embed_script(script_id, user_id)` → 后台 batch embed 全书 chunks + cards + worldbook
 - `embed_status(script_id)` → 进度查询
 """
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from typing import Any
 
 log = logging.getLogger(__name__)
 
-EMBED_MODEL = "text-embedding-004"
+# 系统默认 embedding 配置(env 可覆盖,用户 BYOK 优先于 env)
+DEFAULT_EMBED_MODEL = os.environ.get("EMBED_MODEL", "text-embedding-004")
+DEFAULT_EMBED_API_ID = os.environ.get("EMBED_API_ID", "vertex")
 EMBED_DIM = 768
 # Vertex text-embedding-004 限制:**单请求总 token ≤ 20000**(不是 250 项)。
 # 中文 chunk 平均 ~200 token,100 项已经超过 20K → 400 INVALID_ARGUMENT。
@@ -38,6 +43,27 @@ PER_CHUNK_CHAR_LIMIT = 1200
 _VERTEX_CLIENT_CACHE: dict[str, Any] = {}
 _EMBED_QUEUE_RUNNING: dict[int, bool] = {}  # script_id → 是否在跑
 
+# 向后兼容:保留 EMBED_MODEL 常量名(外部模块如 extract/ 直接引用它)
+EMBED_MODEL = DEFAULT_EMBED_MODEL
+
+
+def _resolve_embed_config(user_id: int | None) -> tuple[str, str, str, str]:
+    """返回 (api_id, model, api_key, base_url_override)。
+    优先链:user_preferences embed.* → env 兜底 → vertex SA。
+    """
+    if user_id:
+        try:
+            from core.llm_backend import resolve_preferred_api, resolve_preferred_model
+            from platform_app.user_credentials import resolve_api_key
+            api_id = resolve_preferred_api(user_id, "embed.api_id") or DEFAULT_EMBED_API_ID
+            model = resolve_preferred_model(user_id, "embed.model_real_name") or DEFAULT_EMBED_MODEL
+            cred = resolve_api_key(user_id, api_id, env_fallback=os.environ.get("EMBED_API_KEY", ""))
+            return api_id, model, cred.get("key", ""), cred.get("base_url_override", "")
+        except Exception as exc:
+            log.debug("[embedding] resolve_embed_config failed for user %s: %s", user_id, exc)
+    # 无 user_id 或解析失败:纯 env 兜底
+    return DEFAULT_EMBED_API_ID, DEFAULT_EMBED_MODEL, os.environ.get("EMBED_API_KEY", ""), ""
+
 
 def _get_vertex_client():
     """复用 GameMaster vertex backend 的 client (共享 vertex_sa.json 凭证)。
@@ -47,7 +73,6 @@ def _get_vertex_client():
     try:
         from google import genai
         import json
-        import os
         from pathlib import Path
 
         # 找 vertex_sa.json:env > rpg/ > project root
@@ -76,58 +101,138 @@ def _get_vertex_client():
         return None
 
 
-def _embed_batch(texts: list[str]) -> list[list[float]] | None:
-    """调 Vertex text-embedding-004,返 768 维向量列表。失败返 None。"""
-    if not texts:
-        return []
+# ---------------------------------------------------------------------------
+# Provider dispatch
+# ---------------------------------------------------------------------------
+
+_VERTEX_API_IDS = {"vertex", "google", "vertex_ai"}
+_OPENAI_API_IDS = {"openai", "openai_compat"}
+_COHERE_API_IDS = {"cohere"}
+
+
+def _embed_via_vertex(model: str, texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]] | None:
+    """调 Vertex genai SDK。model 为空时回退 DEFAULT_EMBED_MODEL。"""
     client = _get_vertex_client()
     if client is None:
         return None
     try:
         from google.genai import types
-        # Vertex embedding API 一次接受 list[str],返回 list[ContentEmbedding]
         resp = client.models.embed_content(
-            model=EMBED_MODEL,
+            model=model or DEFAULT_EMBED_MODEL,
             contents=texts,
             config=types.EmbedContentConfig(
-                task_type="RETRIEVAL_DOCUMENT",  # 文档侧用 RETRIEVAL_DOCUMENT,查询侧用 RETRIEVAL_QUERY
+                task_type=task_type,
                 output_dimensionality=EMBED_DIM,
             ),
         )
         return [list(e.values) for e in resp.embeddings]
     except Exception as e:
-        log.warning("[embedding] batch embed failed (%d items): %s", len(texts), e)
+        log.warning("[embedding] vertex embed failed (%d items): %s", len(texts), e)
         return None
 
 
-def embed_query(text: str) -> str | None:
+def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str = "") -> list[list[float]] | None:
+    """OpenAI 兼容 embeddings API。base_url 为空则走官方 https://api.openai.com/v1。"""
+    import urllib.request
+    import urllib.error
+    import json as _json
+    effective_url = (base_url.rstrip("/") if base_url else "https://api.openai.com/v1") + "/embeddings"
+    payload = _json.dumps({"model": model, "input": texts, "encoding_format": "float"}).encode()
+    req = urllib.request.Request(
+        effective_url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = _json.loads(resp.read())
+        items = sorted(data["data"], key=lambda x: x["index"])
+        return [item["embedding"] for item in items]
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        log.warning("[embedding] openai embed failed: %s %s", e.code, body[:200])
+        return None
+    except Exception as e:
+        log.warning("[embedding] openai embed failed: %s", e)
+        return None
+
+
+def _embed_via_cohere(model: str, api_key: str, texts: list[str]) -> list[list[float]] | None:
+    """Cohere embed API v2。"""
+    try:
+        import cohere  # type: ignore
+        co = cohere.Client(api_key)
+        resp = co.embed(texts=texts, model=model, input_type="search_document")
+        return [list(e) for e in resp.embeddings]
+    except ImportError:
+        log.warning("[embedding] cohere SDK not installed; pip install cohere")
+        return None
+    except Exception as e:
+        log.warning("[embedding] cohere embed failed: %s", e)
+        return None
+
+
+def _embed_provider_dispatch(
+    api_id: str,
+    model: str,
+    api_key: str,
+    texts: list[str],
+    base_url: str = "",
+    task_type: str = "RETRIEVAL_DOCUMENT",
+) -> list[list[float]] | None:
+    """根据 api_id 分发到对应 provider SDK。不识别 → 降级 vertex + warn。"""
+    if api_id in _VERTEX_API_IDS:
+        return _embed_via_vertex(model, texts, task_type=task_type)
+    if api_id in _OPENAI_API_IDS:
+        if not api_key:
+            log.warning("[embedding] openai api_id but no api_key; falling back to vertex")
+            return _embed_via_vertex(model or DEFAULT_EMBED_MODEL, texts, task_type=task_type)
+        return _embed_via_openai(model, api_key, texts, base_url=base_url)
+    if api_id in _COHERE_API_IDS:
+        if not api_key:
+            log.warning("[embedding] cohere api_id but no api_key; falling back to vertex")
+            return _embed_via_vertex(DEFAULT_EMBED_MODEL, texts, task_type=task_type)
+        return _embed_via_cohere(model, api_key, texts)
+    log.warning("[embedding] unknown api_id=%r; falling back to vertex", api_id)
+    return _embed_via_vertex(DEFAULT_EMBED_MODEL, texts, task_type=task_type)
+
+
+# ---------------------------------------------------------------------------
+# Public helpers
+# ---------------------------------------------------------------------------
+
+def _embed_batch(texts: list[str], user_id: int | None = None) -> list[list[float]] | None:
+    """调 embedding provider,返向量列表。失败返 None。
+    user_id 非 None 时走 BYOK 优先链,否则走系统默认 vertex SA。
+    """
+    if not texts:
+        return []
+    api_id, model, api_key, base_url = _resolve_embed_config(user_id)
+    return _embed_provider_dispatch(api_id, model, api_key, texts, base_url=base_url)
+
+
+def embed_query(text: str, user_id: int | None = None) -> str | None:
     """task 51: query 文本 → 768 维向量字符串。
     `_search._embed_query` 的 production 实现。失败返 None 自动 fallback ILIKE。
 
-    与 _embed_batch 区别:task_type=RETRIEVAL_QUERY(更适合 query 侧),只 embed 1 个。
+    user_id 非 None 时优先使用用户 BYOK 配置(embed.api_id / embed.model_real_name)。
+    与 _embed_batch 区别:task_type=RETRIEVAL_QUERY(更适合 query 侧)。
     """
     text = (text or "").strip()
     if not text:
         return None
-    client = _get_vertex_client()
-    if client is None:
+    api_id, model, api_key, base_url = _resolve_embed_config(user_id)
+    vecs = _embed_provider_dispatch(api_id, model, api_key, [text], base_url=base_url, task_type="RETRIEVAL_QUERY")
+    if not vecs:
+        log.warning("[embedding] embed_query returned no vectors")
         return None
-    try:
-        from google.genai import types
-        resp = client.models.embed_content(
-            model=EMBED_MODEL,
-            contents=[text],
-            config=types.EmbedContentConfig(
-                task_type="RETRIEVAL_QUERY",
-                output_dimensionality=EMBED_DIM,
-            ),
-        )
-        vec = list(resp.embeddings[0].values)
-        # pgvector 接受 "[v1,v2,...]" 字符串
-        return "[" + ",".join(f"{v:.6f}" for v in vec) + "]"
-    except Exception as e:
-        log.warning("[embedding] embed_query failed: %s", e)
-        return None
+    vec = vecs[0]
+    # pgvector 接受 "[v1,v2,...]" 字符串
+    return "[" + ",".join(f"{v:.6f}" for v in vec) + "]"
 
 
 def _vec_literal(v: list[float]) -> str:
@@ -193,7 +298,7 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
             break
 
         texts = [r["content"][:PER_CHUNK_CHAR_LIMIT] for r in rows]  # 见模块顶 PER_CHUNK_CHAR_LIMIT 注释
-        vecs = _embed_batch(texts)
+        vecs = _embed_batch(texts, user_id=user_id)
         if vecs is None:
             log.warning("[embedding] batch failed, sleeping 30s then retry")
             time.sleep(30)
@@ -260,7 +365,7 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
                 f"{c['name']}。{c.get('identity') or ''}。{(c.get('personality') or '')[:1000]}。{(c.get('appearance') or '')[:500]}"
                 for c in batch
             ]
-            vecs = _embed_batch(texts)
+            vecs = _embed_batch(texts, user_id=user_id)
             if vecs is None:
                 continue
             with connect() as db:
@@ -285,7 +390,7 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
                 f"{w['title']}。{(w.get('content') or '')[:2000]}"
                 for w in batch
             ]
-            vecs = _embed_batch(texts)
+            vecs = _embed_batch(texts, user_id=user_id)
             if vecs is None:
                 continue
             with connect() as db:
@@ -317,10 +422,19 @@ def embed_script(user_id: int, script_id: int) -> dict[str, Any]:
         raise ValueError("无权访问该剧本")
     if _EMBED_QUEUE_RUNNING.get(script_id):
         return {"ok": True, "already_running": True, "status": embed_status(script_id)}
-    if _get_vertex_client() is None:
+    # 检查 embedding provider 是否可用:用户 BYOK 或系统 vertex SA 至少有一个
+    _api_id, _model, _api_key, _base_url = _resolve_embed_config(user_id)
+    _provider_ok = (
+        (_api_id in _VERTEX_API_IDS and _get_vertex_client() is not None)
+        or (_api_id not in _VERTEX_API_IDS and bool(_api_key))
+    )
+    if not _provider_ok:
         return {
             "ok": False,
-            "error": "未连接 Vertex AI · 请先在 .env 配置 vertex_sa.json 或在「设置 → API 设置」启用 Vertex",
+            "error": (
+                f"未配置 {_api_id} embedding 凭证 · "
+                "请在「设置 → API 设置」添加对应 API key，或在服务器配置 vertex_sa.json"
+            ),
         }
     _EMBED_QUEUE_RUNNING[script_id] = True
     threading.Thread(target=_embed_chunks_loop, args=(script_id, user_id), daemon=True).start()

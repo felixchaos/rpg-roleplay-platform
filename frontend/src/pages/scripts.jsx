@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Icon } from '../game-icons.jsx';
 import { PromptModal, usePlatformData, fmtBytes, fmtN, ResizableSplit } from '../platform-app.jsx';
 import { CardEditModal, cardSnippet } from './cards.jsx';
@@ -36,41 +37,42 @@ import CSTabs from '@cloudscape-design/components/tabs';
 import CSPagination from '@cloudscape-design/components/pagination';
 
 function ScriptPreviewModal({ open, busy, data, rule, onClose, onRetryRule, onConfirm }) {
+  const { t } = useTranslation();
   if (!open) return null;
   return (
     <div className="pl-modal-backdrop" onClick={onClose}>
       <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(720px, 100%)"}}>
         <header className="pl-modal-head">
           <div>
-            <div className="pl-modal-eyebrow">章节切分预览 · {rule || "自动识别"}</div>
-            <h2 className="pl-modal-title">{busy ? "正在切分…" : (data?.title || "未命名")}</h2>
+            <div className="pl-modal-eyebrow">{t('scripts.import.preview_eyebrow')} · {rule || t('scripts.import.rule_auto')}</div>
+            <h2 className="pl-modal-title">{busy ? t('scripts.import.preview_splitting') : (data?.title || t('scripts.import.unnamed'))}</h2>
           </div>
-          <button className="iconbtn" onClick={onClose} data-tip="关闭"><Icon name="close" size={14} /></button>
+          <button className="iconbtn" onClick={onClose} data-tip={t('common.close')}><Icon name="close" size={14} /></button>
         </header>
         {busy ? (
           <div className="pl-validate-progress">
-            <div className="pl-validate-step done"><span className="dot ok" /> 1 / 3 · 读取文件并标准化换行</div>
-            <div className="pl-validate-step done"><span className="dot ok" /> 2 / 3 · 嗅探章节标题模式</div>
-            <div className="pl-validate-step running"><Icon name="spinner" size={12} className="spin" /> 3 / 3 · 切分章节并统计字数…</div>
+            <div className="pl-validate-step done"><span className="dot ok" /> {t('scripts.import.preview_step1')}</div>
+            <div className="pl-validate-step done"><span className="dot ok" /> {t('scripts.import.preview_step2')}</div>
+            <div className="pl-validate-step running"><Icon name="spinner" size={12} className="spin" /> {t('scripts.import.preview_step3')}</div>
           </div>
         ) : data ? (
           <>
             <div className="pl-validate-result" style={{flex: "0 0 auto"}}>
               <div className="pl-validate-stat-row">
                 <div className="pl-validate-stat">
-                  <span className="pl-stat-label">章节</span>
+                  <span className="pl-stat-label">{t('scripts.my.chapters')}</span>
                   <span className="pl-stat-value" style={{fontSize: 20}}>{data.chapter_count}</span>
                 </div>
                 <div className="pl-validate-stat">
-                  <span className="pl-stat-label">字数</span>
-                  <span className="pl-stat-value" style={{fontSize: 20}}>{(data.word_count / 10000).toFixed(1)}<span style={{fontSize: 12, color: "var(--muted)", marginLeft: 3}}>万</span></span>
+                  <span className="pl-stat-label">{t('scripts.my.words')}</span>
+                  <span className="pl-stat-value" style={{fontSize: 20}}>{(data.word_count / 10000).toFixed(1)}<span style={{fontSize: 12, color: "var(--muted)", marginLeft: 3}}>{t('scripts.my.wan')}</span></span>
                 </div>
                 <div className="pl-validate-stat">
-                  <span className="pl-stat-label">置信度</span>
+                  <span className="pl-stat-label">{t('scripts.import.confidence')}</span>
                   <span className="pl-stat-value" style={{fontSize: 20, color: data.confidence >= 0.85 ? "var(--ok)" : "var(--warn)"}}>{Math.round(data.confidence * 100)}<span style={{fontSize: 12, marginLeft: 2}}>%</span></span>
                 </div>
                 <div className="pl-validate-stat">
-                  <span className="pl-stat-label">异常</span>
+                  <span className="pl-stat-label">{t('scripts.import.problem')}</span>
                   <span className="pl-stat-value" style={{fontSize: 13, lineHeight: 1.5, fontFamily: "var(--font-sans)", color: data.problem_kind === "ok" ? "var(--ok)" : "var(--warn)"}}>{data.problem_label}</span>
                 </div>
               </div>
@@ -86,7 +88,7 @@ function ScriptPreviewModal({ open, busy, data, rule, onClose, onRetryRule, onCo
             </div>
             <div style={{overflowY: "auto", overflowX: "hidden", minHeight: 0, flex: "1 1 auto", border: "1px solid var(--line-soft)", borderRadius: "var(--r-2)"}}>
               <table className="pl-table" style={{margin: 0}}>
-                <thead><tr><th style={{width: 50}}>#</th><th>章节标题</th><th>卷</th><th style={{textAlign: "right"}}>字数</th></tr></thead>
+                <thead><tr><th style={{width: 50}}>#</th><th>{t('scripts.import.col_title')}</th><th>{t('scripts.import.col_volume')}</th><th style={{textAlign: "right"}}>{t('scripts.my.words')}</th></tr></thead>
                 <tbody>
                   {data.preview.map(p => (
                     <tr key={p.idx} style={{background: p.ok ? "transparent" : "var(--warn-soft)"}}>
@@ -106,17 +108,17 @@ function ScriptPreviewModal({ open, busy, data, rule, onClose, onRetryRule, onCo
         ) : null}
         <footer className="pl-modal-foot">
           <span className="muted-2" style={{fontSize: 11.5}}>
-            <Icon name="info" size={11} /> 仅展示前 {data?.preview?.length || 0} 章 · 完整切分见导入后剧本目录 · POST /api/v1/scripts/import
+            <Icon name="info" size={11} /> {t('scripts.import.preview_footer', { count: data?.preview?.length || 0 })}
           </span>
           <div style={{display: "flex", gap: 8}}>
-            <button className="btn ghost" onClick={onClose}>取消</button>
+            <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
             {!busy && (
               <>
-                <button className="btn ghost" onClick={() => onRetryRule?.("chapter_cn")} data-tip="尝试不同的切分规则">
-                  <Icon name="refresh" size={12} /> 换规则重试
+                <button className="btn ghost" onClick={() => onRetryRule?.("chapter_cn")} data-tip={t('scripts.import.retry_tip')}>
+                  <Icon name="refresh" size={12} /> {t('scripts.import.retry_rule')}
                 </button>
                 <button className="btn primary" onClick={onConfirm} disabled={!data}>
-                  <Icon name="check" size={12} /> 确认导入
+                  <Icon name="check" size={12} /> {t('scripts.import.confirm_import')}
                 </button>
               </>
             )}
@@ -142,13 +144,13 @@ function ConfidenceBar({ value }) {
 
 /* ---------------------------- SCRIPTS -------------------------- */
 const SPLIT_RULES = [
-  { id: "auto",       label: "自动识别" },
-  { id: "corpus",     label: "语料章节" },
-  { id: "chapter_cn", label: "中文章节" },
-  { id: "chapter_en", label: "英文章节" },
-  { id: "number_dot", label: "数字点号" },
-  { id: "paren_num",  label: "括号编号" },
-  { id: "custom",     label: "自定义" },
+  { id: "auto",       labelKey: "scripts.import.rule_auto" },
+  { id: "corpus",     labelKey: "scripts.import.rule_corpus" },
+  { id: "chapter_cn", labelKey: "scripts.import.rule_chapter_cn" },
+  { id: "chapter_en", labelKey: "scripts.import.rule_chapter_en" },
+  { id: "number_dot", labelKey: "scripts.import.rule_number_dot" },
+  { id: "paren_num",  labelKey: "scripts.import.rule_paren_num" },
+  { id: "custom",     labelKey: "scripts.import.rule_custom" },
 ];
 
 function ScriptsPage({ subPage = "list" }) {
@@ -166,6 +168,7 @@ function ScriptsPage({ subPage = "list" }) {
    世界书 / NPC 卡 / 时间线按需懒加载。 */
 function ScriptDetailPanel({ script: s, savesCount, embedStatus,
   onPlay, onChapters, onReview, onExtractDone, onEmbed, onExport, onToggleVisibility, onDelete, onEditOverrides }) {
+  const { t } = useTranslation();
   const [tab, setTab] = useStatePL('overview');
   const [wb, setWb] = useStatePL(null);
   const [npc, setNpc] = useStatePL(null);
@@ -206,11 +209,11 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
 
   const es = embedStatus[s.id];
   const embedLabel = (() => {
-    if (!es) return '未建立';
+    if (!es) return t('scripts.my.embed_none');
     const done = es.chunks.done + es.cards.done + es.worldbook.done;
     const all = es.chunks.total + es.cards.total + es.worldbook.total;
-    if (es.running) return `向量化中 ${all ? Math.round(done / all * 100) : 0}%`;
-    return all > 0 && done >= all ? `已建索引(${all} 项)` : '未建立';
+    if (es.running) return t('scripts.my.embed_running', { pct: all ? Math.round(done / all * 100) : 0 });
+    return all > 0 && done >= all ? t('scripts.my.embed_done', { n: all }) : t('scripts.my.embed_none');
   })();
 
   return (
@@ -218,15 +221,15 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
       <CSHeader variant="h2"
         actions={
           <CSSpaceBetween direction="horizontal" size="xs">
-            <CSButton variant="primary" iconName="caret-right-filled" onClick={() => onPlay(s)}>开始游戏</CSButton>
-            <CSButton iconName="file" onClick={() => onChapters(s)}>查看章节</CSButton>
-            <CSButton iconName="status-info" onClick={() => onReview(s)}>KB 复核</CSButton>
+            <CSButton variant="primary" iconName="caret-right-filled" onClick={() => onPlay(s)}>{t('scripts.my.play_game')}</CSButton>
+            <CSButton iconName="file" onClick={() => onChapters(s)}>{t('scripts.my.view_chapters')}</CSButton>
+            <CSButton iconName="status-info" onClick={() => onReview(s)}>{t('scripts.my.kb_review')}</CSButton>
             <CSButtonDropdown expandToViewport
               items={[
-                { id: 'embed', text: es?.running ? '向量化中…' : '建立向量索引', iconName: 'search', disabled: !!es?.running },
-                { id: 'export', text: '导出剧本包 (zip)', iconName: 'download' },
-                { id: 'visibility', text: s.is_public ? '取消公开分享' : '公开分享到剧本库', iconName: s.is_public ? 'lock-private' : 'share' },
-                { id: 'delete', text: '删除剧本', iconName: 'remove' },
+                { id: 'embed', text: es?.running ? t('scripts.my.embedding') : t('scripts.my.embed_start'), iconName: 'search', disabled: !!es?.running },
+                { id: 'export', text: t('scripts.my.action_export'), iconName: 'download' },
+                { id: 'visibility', text: s.is_public ? t('scripts.my.action_unpublish') : t('scripts.my.action_publish'), iconName: s.is_public ? 'lock-private' : 'share' },
+                { id: 'delete', text: t('scripts.my.action_delete'), iconName: 'remove' },
               ]}
               onItemClick={({ detail }) => {
                 const id = detail.id;
@@ -234,62 +237,62 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
                 else if (id === 'export') onExport(s);
                 else if (id === 'visibility') onToggleVisibility(s);
                 else if (id === 'delete') onDelete(s);
-              }}>更多</CSButtonDropdown>
+              }}>{t('scripts.my.more')}</CSButtonDropdown>
           </CSSpaceBetween>
         }
       >{s.title}</CSHeader>
     }>
       <CSTabs activeTabId={tab} onChange={({ detail }) => setTab(detail.activeTabId)} tabs={[
-        { id: 'overview', label: '概览', content: (
+        { id: 'overview', label: t('scripts.editor.tab_overview'), content: (
           <CSKeyValuePairs columns={4} items={[
-            { label: '章节', value: (s.chapter_count || 0).toLocaleString() },
-            { label: '字数', value: `${((s.word_count || 0) / 10000).toFixed(1)} 万` },
-            { label: '切分模式', value: s.import_report?.mode_label || '—' },
-            { label: '切分置信度', value: s.import_report?.confidence != null ? `${Math.round(s.import_report.confidence * 100)}%` : '—' },
-            { label: '存档数', value: `${savesCount} 个` },
-            { label: '向量索引', value: embedLabel },
-            { label: '公开分享', value: s.is_public ? <CSStatusIndicator type="success">已公开</CSStatusIndicator> : <CSStatusIndicator type="stopped">未公开</CSStatusIndicator> },
-            { label: '剧本 ID', value: <span className="mono">{s.uid}</span> },
+            { label: t('scripts.my.chapters'), value: (s.chapter_count || 0).toLocaleString() },
+            { label: t('scripts.my.words'), value: `${((s.word_count || 0) / 10000).toFixed(1)} ${t('scripts.my.wan')}` },
+            { label: t('scripts.editor.split_mode'), value: s.import_report?.mode_label || '—' },
+            { label: t('scripts.editor.split_confidence'), value: s.import_report?.confidence != null ? `${Math.round(s.import_report.confidence * 100)}%` : '—' },
+            { label: t('scripts.editor.saves_count'), value: t('scripts.editor.saves_n', { n: savesCount }) },
+            { label: t('scripts.editor.embed_index'), value: embedLabel },
+            { label: t('scripts.my.share'), value: s.is_public ? <CSStatusIndicator type="success">{t('scripts.my.is_public')}</CSStatusIndicator> : <CSStatusIndicator type="stopped">{t('scripts.editor.not_public')}</CSStatusIndicator> },
+            { label: t('scripts.editor.script_id'), value: <span className="mono">{s.uid}</span> },
           ]} />
         ) },
-        { id: 'params', label: '参数', content: (
+        { id: 'params', label: t('scripts.editor.tab_params'), content: (
           <CSSpaceBetween size="s">
-            <CSBox color="text-body-secondary" fontSize="body-s">剧本覆盖设定(script_overrides):覆盖默认设定,供 GM 读取。</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{t('scripts.editor.overrides_desc')}</CSBox>
             <pre style={{ margin: 0, padding: '10px 12px', background: 'var(--bg-deep)', border: '1px solid var(--line-soft)', borderRadius: 8, fontSize: 12.5, lineHeight: 1.55, maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-              {ov ? JSON.stringify(ov, null, 2) : (loading ? '加载中…' : '{}')}
+              {ov ? JSON.stringify(ov, null, 2) : (loading ? t('common.loading') : '{}')}
             </pre>
-            <CSButton iconName="edit" onClick={() => onEditOverrides(s)}>编辑覆盖设定</CSButton>
+            <CSButton iconName="edit" onClick={() => onEditOverrides(s)}>{t('scripts.editor.edit_overrides')}</CSButton>
           </CSSpaceBetween>
         ) },
-        { id: 'world', label: '世界观', content: (
-          <CSTable variant="embedded" loading={loading && wb == null} loadingText="加载世界书…"
+        { id: 'world', label: t('scripts.editor.tab_world'), content: (
+          <CSTable variant="embedded" loading={loading && wb == null} loadingText={t('scripts.editor.loading_worldbook')}
             items={wb || []} trackBy="id"
             columnDefinitions={[
-              { id: 'kw', header: '关键词 / 条目', cell: (e) => <CSBox fontWeight="bold">{e.keyword || e.title || e.name || e.key || '—'}</CSBox> },
-              { id: 'content', header: '内容', cell: (e) => <CSBox color="text-body-secondary">{String(e.content || e.text || e.description || e.value || '').slice(0, 220)}</CSBox> },
+              { id: 'kw', header: t('scripts.editor.wb_col_kw'), cell: (e) => <CSBox fontWeight="bold">{e.keyword || e.title || e.name || e.key || '—'}</CSBox> },
+              { id: 'content', header: t('scripts.editor.wb_col_content'), cell: (e) => <CSBox color="text-body-secondary">{String(e.content || e.text || e.description || e.value || '').slice(0, 220)}</CSBox> },
             ]}
-            empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>暂无世界书条目。提取 / 建立向量索引后会生成。</CSBox>} />
+            empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{t('scripts.editor.wb_empty')}</CSBox>} />
         ) },
-        { id: 'npc', label: 'NPC 角色卡', content: (
-          <CSCards loading={loading && npc == null} loadingText="加载 NPC 角色卡…"
+        { id: 'npc', label: t('scripts.editor.tab_npc'), content: (
+          <CSCards loading={loading && npc == null} loadingText={t('scripts.editor.loading_npc')}
             items={npc || []} trackBy="id"
             cardsPerRow={[{ cards: 1 }, { minWidth: 480, cards: 2 }]}
             header={
               <CSHeader counter={`(${(npc || []).length})`}
-                actions={<CSButton iconName="add-plus" onClick={() => setNpcEdit({ card: null, isNew: true })}>新增 NPC 卡</CSButton>}>
-                NPC 角色卡
+                actions={<CSButton iconName="add-plus" onClick={() => setNpcEdit({ card: null, isNew: true })}>{t('scripts.editor.add_npc')}</CSButton>}>
+                {t('scripts.editor.tab_npc')}
               </CSHeader>
             }
             cardDefinition={{
               header: (c) => (
                 <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
                   <CSBox variant="h3" padding="n">
-                    {c.name || '未命名'}
+                    {c.name || t('scripts.editor.unnamed_npc')}
                     {c.full_name && c.full_name !== c.name && (
                       <CSBox display="inline" color="text-status-inactive" fontSize="body-s" padding={{ left: 'xs' }}>{c.full_name}</CSBox>
                     )}
                   </CSBox>
-                  {c.enabled === false && <CSStatusIndicator type="stopped">已禁用</CSStatusIndicator>}
+                  {c.enabled === false && <CSStatusIndicator type="stopped">{t('common.disabled')}</CSStatusIndicator>}
                 </div>
               ),
               sections: [
@@ -299,8 +302,8 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
                 { id: 'meta', content: (c) => (
                   ((c.first_revealed_chapter > 1) || (c.importance != null) || (Array.isArray(c.aliases) && c.aliases.length)) ? (
                     <CSSpaceBetween direction="horizontal" size="xxs">
-                      {c.first_revealed_chapter > 1 && <CSBadge color="blue">📖 第 {c.first_revealed_chapter} 章</CSBadge>}
-                      {c.importance != null && <CSBadge color="grey">重要度 {c.importance}</CSBadge>}
+                      {c.first_revealed_chapter > 1 && <CSBadge color="blue">{t('scripts.editor.npc_chapter', { n: c.first_revealed_chapter })}</CSBadge>}
+                      {c.importance != null && <CSBadge color="grey">{t('scripts.editor.npc_importance', { n: c.importance })}</CSBadge>}
                       {Array.isArray(c.aliases) && c.aliases.slice(0, 3).map((a) => <CSBadge key={a}>{a}</CSBadge>)}
                     </CSSpaceBetween>
                   ) : null
@@ -309,21 +312,21 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
                   <CSBox color="text-body-secondary" fontSize="body-s">{cardSnippet(c, 200) || '—'}</CSBox>
                 ) },
                 { id: 'act', content: (c) => (
-                  <CSButton variant="inline-link" iconName="edit" onClick={() => setNpcEdit({ card: c, isNew: false })}>查看 / 编辑</CSButton>
+                  <CSButton variant="inline-link" iconName="edit" onClick={() => setNpcEdit({ card: c, isNew: false })}>{t('scripts.editor.view_edit')}</CSButton>
                 ) },
               ],
             }}
-            empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>该剧本暂无 NPC 角色卡。提取 / 导入后会生成,也可点「新增 NPC 卡」手建。</CSBox>} />
+            empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{t('scripts.editor.npc_empty')}</CSBox>} />
         ) },
-        { id: 'timeline', label: '时间线', content: (
+        { id: 'timeline', label: t('scripts.editor.tab_timeline'), content: (
           (loading && tl == null)
-            ? <CSBox color="text-body-secondary">加载中…</CSBox>
+            ? <CSBox color="text-body-secondary">{t('common.loading')}</CSBox>
             : (!tl || tl.length === 0)
-              ? <CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>暂无时间线锚点。提取后会生成阶段 / story-time 锚点。</CSBox>
+              ? <CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{t('scripts.editor.timeline_empty')}</CSBox>
               : <CSSpaceBetween size="l">
                   {tl.map((p, i) => (
                     <div key={i}>
-                      <CSBox variant="h4" padding="n">{p.phase_label} <CSBox display="inline" color="text-status-inactive" fontSize="body-s">第 {p.chapter_min}–{p.chapter_max} 章</CSBox></CSBox>
+                      <CSBox variant="h4" padding="n">{p.phase_label} <CSBox display="inline" color="text-status-inactive" fontSize="body-s">{t('scripts.editor.chapter_range', { min: p.chapter_min, max: p.chapter_max })}</CSBox></CSBox>
                       {p.summary && <CSBox color="text-body-secondary" fontSize="body-s">{p.summary}</CSBox>}
                       <CSSpaceBetween size="xxs">
                         {(p.anchors || []).map((a) => {
@@ -331,7 +334,7 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
                           const summary = String(a.sample_summary || '').replace(/\s+/g, ' ').trim().slice(0, 80);
                           return (
                             <CSBox key={a.anchor_id} fontSize="body-s">
-                              <span className="mono" style={{ color: 'var(--accent)' }}>{label || `第 ${a.chapter_min}–${a.chapter_max} 章`}</span>
+                              <span className="mono" style={{ color: 'var(--accent)' }}>{label || t('scripts.editor.chapter_range', { min: a.chapter_min, max: a.chapter_max })}</span>
                               {summary ? ` · ${summary}${summary.length >= 80 ? '…' : ''}` : ''}
                             </CSBox>
                           );
@@ -341,7 +344,7 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
                   ))}
                 </CSSpaceBetween>
         ) },
-        { id: 'extract', label: '知识提取', content: (
+        { id: 'extract', label: t('scripts.editor.tab_extract'), content: (
           <KbExtractPanel script={s} onDone={onExtractDone} />
         ) },
       ]} />
@@ -354,11 +357,11 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
           onSave={async (payload) => {
             try {
               await window.api.cards.scriptUpsert(s.id, payload);
-              window.__apiToast?.(npcEdit.isNew ? '已新增 NPC 卡' : '已保存 NPC 卡', { kind: 'ok' });
+              window.__apiToast?.(npcEdit.isNew ? t('scripts.toast.npc_added') : t('scripts.toast.npc_saved'), { kind: 'ok' });
               setNpcEdit(null);
               setNpc(null); // 触发 NPC 列表重新拉取
             } catch (e) {
-              window.__apiToast?.('保存失败', { kind: 'danger', detail: e?.message });
+              window.__apiToast?.(t('scripts.toast.save_fail'), { kind: 'danger', detail: e?.message });
             }
           }}
         />
@@ -370,6 +373,7 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
 /* 在线剧本库 — 浏览并导入其他用户公开分享的剧本。
    GET /api/scripts/public · POST /api/scripts/public/{id}/clone */
 function ScriptsLibraryView() {
+  const { t } = useTranslation();
   const [items, setItems] = useStatePL([]);
   const [loading, setLoading] = useStatePL(true);
   const [q, setQ] = useStatePL("");
@@ -382,7 +386,7 @@ function ScriptsLibraryView() {
       const r = await window.api.scripts.publicList(query ? { q: query } : undefined);
       setItems(Array.isArray(r?.items) ? r.items : []);
     } catch (e) {
-      window.__apiToast?.("加载公开剧本失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('scripts.public.load_fail'), { kind: "danger", detail: e?.message });
       setItems([]);
     } finally {
       setLoading(false);
@@ -396,8 +400,8 @@ function ScriptsLibraryView() {
     setCloningId(s.id);
     try {
       const r = await window.api.scripts.cloneFromPublic(s.id);
-      if (r && r.ok === false) throw new Error(r.error || "导入失败");
-      window.toast?.("已导入到我的剧本", {
+      if (r && r.ok === false) throw new Error(r.error || t('scripts.toast.import_fail'));
+      window.toast?.(t('scripts.public.clone_ok'), {
         kind: "ok",
         detail: `${s.title} · script #${r?.script_id ?? "?"}`,
         duration: 3000,
@@ -406,7 +410,7 @@ function ScriptsLibraryView() {
       setItems((arr) => arr.map((x) => x.id === s.id ? { ...x, clone_count: (x.clone_count || 0) + 1 } : x));
       try { window.dispatchEvent(new CustomEvent("rpg-scripts-updated")); } catch (_) {}
     } catch (e) {
-      window.__apiToast?.("导入失败", { kind: "danger", detail: e?.message || String(e) });
+      window.__apiToast?.(t('scripts.toast.import_fail'), { kind: "danger", detail: e?.message || String(e) });
     } finally {
       setCloningId(null);
     }
@@ -417,52 +421,52 @@ function ScriptsLibraryView() {
       <CSHeader
         variant="h1"
         counter={`(${items.length})`}
-        description="浏览其他用户公开分享的剧本,一键导入到自己的账户(含章节 / 角色卡 / 世界书)。"
-        actions={<CSButton iconName="refresh" onClick={() => reload(q)}>刷新</CSButton>}
-      >在线剧本库</CSHeader>
+        description={t('scripts.public.description')}
+        actions={<CSButton iconName="refresh" onClick={() => reload(q)}>{t('common.refresh')}</CSButton>}
+      >{t('scripts.public.title')}</CSHeader>
 
       <CSCards
         items={items}
         loading={loading}
-        loadingText="加载公开剧本…"
+        loadingText={t('scripts.public.loading')}
         trackBy="id"
         cardsPerRow={[{ cards: 1 }, { minWidth: 480, cards: 2 }, { minWidth: 920, cards: 3 }]}
         filter={
           <div style={{ minWidth: 320 }}>
-            <CSTextFilter filteringText={q} filteringPlaceholder="搜索公开剧本标题 / 简介…"
+            <CSTextFilter filteringText={q} filteringPlaceholder={t('scripts.public.search_placeholder')}
               onChange={({ detail }) => setQ(detail.filteringText)}
               onDelayedChange={onSearch} />
           </div>
         }
         empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>
-          {loading ? '加载中…' : (q ? '没有匹配的公开剧本' : '还没有公开分享的剧本。在「我的剧本」里把某本设为公开,它就会出现在这里。')}
+          {loading ? t('common.loading') : (q ? t('scripts.public.empty_search') : t('scripts.public.empty'))}
         </CSBox>}
         cardDefinition={{
           header: (s) => (
             <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
               <CSBox key="t" variant="h3" padding="n">{s.title}</CSBox>
-              {(s.mine || importedIds[s.id]) && <CSBadge key="b" color="green">{s.mine ? '我的' : '已导入'}</CSBadge>}
+              {(s.mine || importedIds[s.id]) && <CSBadge key="b" color="green">{s.mine ? t('scripts.public.mine_badge') : t('scripts.public.imported_badge')}</CSBadge>}
             </CSSpaceBetween>
           ),
           sections: [
             { id: 'author', content: (s) => (
-              <CSBox fontSize="body-s" color="text-body-secondary">由 {s.author || s.author_username || '匿名'} 分享</CSBox>
+              <CSBox fontSize="body-s" color="text-body-secondary">{t('scripts.public.shared_by', { author: s.author || s.author_username || t('scripts.public.anon') })}</CSBox>
             ) },
             { id: 'stats', content: (s) => (
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSBadge key="ch">{(s.chapter_count || 0).toLocaleString()} 章</CSBadge>
-                <CSBadge key="wd">{((s.word_count || 0) / 10000).toFixed(0)} 万字</CSBadge>
-                <CSBadge key="cl" color="grey">{s.clone_count || 0} 次导入</CSBadge>
+                <CSBadge key="ch">{t('scripts.public.stat_chapters', { n: (s.chapter_count || 0).toLocaleString() })}</CSBadge>
+                <CSBadge key="wd">{t('scripts.public.stat_words', { n: ((s.word_count || 0) / 10000).toFixed(0) })}</CSBadge>
+                <CSBadge key="cl" color="grey">{t('scripts.public.stat_clones', { n: s.clone_count || 0 })}</CSBadge>
               </CSSpaceBetween>
             ) },
             { id: 'desc', content: (s) => s.description
               ? <CSBox color="text-body-secondary">{s.description}</CSBox> : null },
             { id: 'actions', content: (s) => (
               (s.mine || importedIds[s.id])
-                ? <CSButton disabled iconName="check">{s.mine ? '我的剧本' : '已导入'}</CSButton>
+                ? <CSButton disabled iconName="check">{s.mine ? t('scripts.public.is_mine') : t('scripts.public.imported_badge')}</CSButton>
                 : <CSButton variant="primary" iconName="download"
                     loading={cloningId === s.id} disabled={!!cloningId}
-                    onClick={() => onClone(s)}>导入到我的剧本</CSButton>
+                    onClick={() => onClone(s)}>{t('scripts.public.import_btn')}</CSButton>
             ) },
           ],
         }}
@@ -475,6 +479,7 @@ function ScriptsListView() {
   // task 19: 永远以 /api/scripts 真实回包为准；空列表也覆盖 mock，不再混 MOCK_PLATFORM.scripts。
   // task 51：之前 onClick 里用了 `platform?.saves` 但 ScriptsListView 没拿过 platform，
   // 永远是 ReferenceError → 整个按钮 throw 后被 React 静默吞掉 → 用户点了无反应。
+  const { t } = useTranslation();
   const { saves: platSaves = [] } = usePlatformData();
   const [scripts, setScripts] = useStatePL([]);
   const [loaded, setLoaded] = useStatePL(false);
@@ -505,13 +510,13 @@ function ScriptsListView() {
       });
       const j = await r.json();
       if (j.ok === false) {
-        window.__apiToast?.("向量化失败", { kind: "danger", detail: j.error || "未知错误", duration: 5000 });
+        window.__apiToast?.(t('scripts.toast.embed_fail'), { kind: "danger", detail: j.error || t('scripts.toast.unknown_error'), duration: 5000 });
         return;
       }
-      window.toast?.("已启动向量化", { kind: "ok", detail: "Vertex text-embedding-004 后台跑,可在按钮上看进度", duration: 3000 });
+      window.toast?.(t('scripts.toast.embed_started'), { kind: "ok", detail: t('scripts.toast.embed_started_detail'), duration: 3000 });
       setEmbedStatus(s => ({ ...s, [sid]: j.status }));
     } catch (e) {
-      window.__apiToast?.("向量化失败", { kind: "danger", detail: String(e), duration: 3000 });
+      window.__apiToast?.(t('scripts.toast.embed_fail'), { kind: "danger", detail: String(e), duration: 3000 });
     }
   }, []);
 
@@ -527,7 +532,7 @@ function ScriptsListView() {
           if (j.ok && j.status) {
             setEmbedStatus(s => ({ ...s, [sid]: j.status }));
             if (!j.status.running) {
-              window.toast?.("向量化完成", {
+              window.toast?.(t('scripts.toast.embed_done'), {
                 kind: "ok",
                 detail: `chunks ${j.status.chunks.done} · cards ${j.status.cards.done} · worldbook ${j.status.worldbook.done}`,
                 duration: 4000,
@@ -576,14 +581,14 @@ function ScriptsListView() {
   }, [reload]);
 
   const onDelete = async (s) => {
-    if (!await window.__confirm({ title: '删除剧本', message: `确定删除剧本「${s.title}」?相关存档与索引也会一并清理。`, danger: true, confirmText: '删除' })) return;
+    if (!await window.__confirm({ title: t('scripts.confirm.delete_title'), message: t('scripts.confirm.delete_msg', { title: s.title }), danger: true, confirmText: t('common.delete') })) return;
     setBusyId(s.id);
     try {
       await window.api.scripts.delete(s.id);
-      window.__apiToast?.("已删除", { kind: "ok" });
+      window.__apiToast?.(t('scripts.toast.deleted'), { kind: "ok" });
       reload();
     } catch (e) {
-      window.__apiToast?.("删除失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('scripts.toast.delete_fail'), { kind: "danger", detail: e?.message });
     } finally {
       setBusyId(null);
     }
@@ -594,17 +599,17 @@ function ScriptsListView() {
     setImportPackBusy(true);
     try {
       const result = await window.api.scripts.importPack(file);
-      if (result && result.ok === false) throw new Error(result.error || result.detail || "导入失败");
+      if (result && result.ok === false) throw new Error(result.error || result.detail || t('scripts.toast.import_fail'));
       const sid = result?.script_id;
       const warnings = result?.warnings;
       window.__apiToast?.(
-        "剧本包导入成功",
-        { kind: "ok", detail: warnings?.length ? `警告: ${warnings.join("; ")}` : (sid ? `script #${sid}` : "") }
+        t('scripts.toast.pack_import_ok'),
+        { kind: "ok", detail: warnings?.length ? t('scripts.toast.pack_warnings', { msg: warnings.join("; ") }) : (sid ? `script #${sid}` : "") }
       );
       reload();
     } catch (e) {
-      const detail = e?.payload?.detail || e?.message || "未知错误";
-      window.__apiToast?.("导入失败", { kind: "danger", detail });
+      const detail = e?.payload?.detail || e?.message || t('scripts.toast.unknown_error');
+      window.__apiToast?.(t('scripts.toast.import_fail'), { kind: "danger", detail });
     } finally {
       setImportPackBusy(false);
       if (importPackRef.current) importPackRef.current.value = "";
@@ -616,9 +621,9 @@ function ScriptsListView() {
     try {
       const filename = (s.title || "script").replace(/[\\/:*?"<>|]/g, "_") + "_pack.zip";
       await window.api.scripts.exportPack(s.id, filename);
-      window.__apiToast?.("导出成功", { kind: "ok", detail: filename });
+      window.__apiToast?.(t('scripts.toast.export_ok'), { kind: "ok", detail: filename });
     } catch (e) {
-      window.__apiToast?.("导出失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('scripts.toast.export_fail'), { kind: "danger", detail: e?.message });
     } finally {
       setExportingId(null);
     }
@@ -638,17 +643,17 @@ function ScriptsListView() {
     const pct = totalAll > 0 ? Math.round((totalDone / totalAll) * 100) : 0;
     const fullyDone = es && !es.running && totalAll > 0 && totalDone >= totalAll;
     const running = es && es.running;
-    const embedText = running ? `向量化中 ${pct}%`
-      : fullyDone ? `已建索引(${totalAll} 项)`
-      : "建立向量索引";
+    const embedText = running ? t('scripts.my.embed_running', { pct })
+      : fullyDone ? t('scripts.my.embed_done', { n: totalAll })
+      : t('scripts.my.embed_start');
     return [
-      { id: 'chapters', text: '查看章节 / 重切分', iconName: 'file' },
-      { id: 'overrides', text: '剧本覆盖设定', iconName: 'edit' },
-      { id: 'review', text: 'KB 复核 — 提取结果', iconName: 'status-info' },
+      { id: 'chapters', text: t('scripts.my.action_chapters'), iconName: 'file' },
+      { id: 'overrides', text: t('scripts.my.action_overrides'), iconName: 'edit' },
+      { id: 'review', text: t('scripts.my.action_review'), iconName: 'status-info' },
       { id: 'embed', text: embedText, iconName: fullyDone ? 'status-positive' : 'gen-ai', disabled: !!running },
-      { id: 'visibility', text: s.is_public ? '取消公开分享' : '公开分享到剧本库', iconName: s.is_public ? 'lock-private' : 'share' },
-      { id: 'export', text: '导出剧本包 (zip)', iconName: 'download', disabled: exportingId === s.id },
-      { id: 'delete', text: '删除剧本', iconName: 'remove', disabled: busyId === s.id },
+      { id: 'visibility', text: s.is_public ? t('scripts.my.action_unpublish') : t('scripts.my.action_publish'), iconName: s.is_public ? 'lock-private' : 'share' },
+      { id: 'export', text: t('scripts.my.action_export'), iconName: 'download', disabled: exportingId === s.id },
+      { id: 'delete', text: t('scripts.my.action_delete'), iconName: 'remove', disabled: busyId === s.id },
     ];
   };
   const onRowAction = (s, id) => {
@@ -662,14 +667,14 @@ function ScriptsListView() {
   };
   const onToggleVisibility = async (s) => {
     const next = !s.is_public;
-    if (next && !await window.__confirm({ title: '公开分享到剧本库', message: `把剧本「${s.title}」公开分享?其他用户将能浏览并导入它的章节 / 角色卡 / 世界书。`, confirmText: '公开分享' })) return;
+    if (next && !await window.__confirm({ title: t('scripts.confirm.publish_title'), message: t('scripts.confirm.publish_msg', { title: s.title }), confirmText: t('scripts.confirm.publish_btn') })) return;
     try {
       const r = await window.api.scripts.setVisibility(s.id, next);
-      if (r && r.ok === false) throw new Error(r.error || '操作失败');
-      window.__apiToast?.(next ? '已公开分享' : '已取消公开', { kind: 'ok', duration: 2000 });
+      if (r && r.ok === false) throw new Error(r.error || t('scripts.toast.op_fail'));
+      window.__apiToast?.(next ? t('scripts.toast.published') : t('scripts.toast.unpublished'), { kind: 'ok', duration: 2000 });
       setScripts((arr) => arr.map((x) => x.id === s.id ? { ...x, is_public: next } : x));
     } catch (e) {
-      window.__apiToast?.('操作失败', { kind: 'danger', detail: e?.message });
+      window.__apiToast?.(t('scripts.toast.op_fail'), { kind: 'danger', detail: e?.message });
     }
   };
   const onPlay = (s) => {
@@ -713,57 +718,58 @@ function ScriptsListView() {
       variant="container"
       trackBy="id"
       selectionType="single"
-      loadingText="加载剧本…"
+      loadingText={t('scripts.my.loading')}
       loading={!loaded}
       items={pagedScripts}
       selectedItems={selected ? [selected] : []}
       onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedId(x.id); }}
       onRowClick={({ detail }) => setSelectedId(detail.item.id)}
-      empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? '没有匹配的剧本' : '还没有剧本,点右上「导入剧本」开始。'}</CSBox>}
+      empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? t('scripts.my.empty_search') : t('scripts.my.empty')}</CSBox>}
       pagination={
         scriptPageCount > 1
           ? <CSPagination currentPageIndex={scriptPage} pagesCount={scriptPageCount} onChange={({ detail }) => setScriptPage(detail.currentPageIndex)} />
           : undefined
       }
       columnDefinitions={[
-        { id: 'title', header: '剧本', cell: (s) => (
-          <div><CSBox fontWeight="bold">{s.title}</CSBox><CSBox fontSize="body-s" color="text-body-secondary">{s.uid} · 更新 {s.updated_at}</CSBox></div>
+        { id: 'title', header: t('scripts.my.col_script'), cell: (s) => (
+          <div><CSBox fontWeight="bold">{s.title}</CSBox><CSBox fontSize="body-s" color="text-body-secondary">{s.uid} · {t('scripts.my.updated')} {s.updated_at}</CSBox></div>
         ) },
-        { id: 'chapters', header: '章节', cell: (s) => (s.chapter_count || 0).toLocaleString() },
-        { id: 'words', header: '字数', cell: (s) => `${((s.word_count || 0) / 10000).toFixed(1)} 万` },
-        { id: 'mode', header: '切分', cell: (s) => s.import_report?.mode_label || '—' },
-        { id: 'problem', header: '异常', cell: (s) => (
-          (!s.import_report?.problem_label || s.import_report.problem_label === '未发现明显异常')
-            ? <CSStatusIndicator type="success">干净</CSStatusIndicator>
+        { id: 'chapters', header: t('scripts.my.chapters'), cell: (s) => (s.chapter_count || 0).toLocaleString() },
+        { id: 'words', header: t('scripts.my.words'), cell: (s) => `${((s.word_count || 0) / 10000).toFixed(1)} ${t('scripts.my.wan')}` },
+        { id: 'mode', header: t('scripts.my.split_mode'), cell: (s) => s.import_report?.mode_label || '—' },
+        { id: 'problem', header: t('scripts.my.problem'), cell: (s) => (
+          (!s.import_report?.problem_label || s.import_report.problem_label === t('scripts.my.no_problem'))
+            ? <CSStatusIndicator type="success">{t('scripts.my.clean')}</CSStatusIndicator>
             : <CSStatusIndicator type="warning">{s.import_report.problem_label}</CSStatusIndicator>
         ) },
-        { id: 'saves', header: '存档', cell: (s) => {
+        { id: 'saves', header: t('scripts.my.saves'), cell: (s) => {
           const n = platSaves.filter((x) => x.script_id === s.id).length;
-          return n > 0 ? <CSBadge color="green">{n} 个存档</CSBadge> : <CSBox color="text-status-inactive">—</CSBox>;
+          return n > 0 ? <CSBadge color="green">{t('scripts.my.saves_count', { n })}</CSBadge> : <CSBox color="text-status-inactive">—</CSBox>;
         } },
-        { id: 'public', header: '分享', cell: (s) => s.is_public ? <CSStatusIndicator type="success">已公开</CSStatusIndicator> : <CSBox color="text-status-inactive">—</CSBox> },
-        { id: 'go', header: '', cell: (s) => <CSButton variant="inline-link" iconName="caret-right-filled" disabled={busyId === s.id} onClick={() => onPlay(s)}>开始</CSButton> },
+        { id: 'public', header: t('scripts.my.share'), cell: (s) => s.is_public ? <CSStatusIndicator type="success">{t('scripts.my.is_public')}</CSStatusIndicator> : <CSBox color="text-status-inactive">—</CSBox> },
+        { id: 'go', header: '', cell: (s) => <CSButton variant="inline-link" iconName="caret-right-filled" disabled={busyId === s.id} onClick={() => onPlay(s)}>{t('scripts.my.play')}</CSButton> },
       ]}
     />
   );
 
   return (
     <CSSpaceBetween size="l">
+      {/* hidden file input lives outside SpaceBetween so it doesn't create a 27px slot-div */}
+      <input ref={importPackRef} type="file" accept=".zip" style={{ display: 'none' }} onChange={(e) => onImportPackFile(e.target.files?.[0])} />
       <CSHeader
         variant="h1"
         counter={`(${scripts.length})`}
-        description="管理已导入的剧本:查看章节、覆盖设定、建立向量索引或导出剧本包。"
+        description={t('scripts.my.description')}
         actions={
           <CSSpaceBetween direction="horizontal" size="xs">
-            <input ref={importPackRef} type="file" accept=".zip" style={{ display: 'none' }} onChange={(e) => onImportPackFile(e.target.files?.[0])} />
-            <CSButton iconName="download" loading={importPackBusy} onClick={() => importPackRef.current?.click()}>导入剧本包</CSButton>
-            <CSButton variant="primary" iconName="upload" onClick={() => setImportOpen(true)}>导入剧本</CSButton>
+            <CSButton iconName="download" loading={importPackBusy} onClick={() => importPackRef.current?.click()}>{t('scripts.my.import_pack')}</CSButton>
+            <CSButton variant="primary" iconName="upload" onClick={() => setImportOpen(true)}>{t('scripts.my.import_script')}</CSButton>
           </CSSpaceBetween>
         }
-      >剧本管理</CSHeader>
+      >{t('scripts.my.title')}</CSHeader>
 
       <div style={{ maxWidth: 360 }}>
-        <CSTextFilter filteringText={query} filteringPlaceholder="搜索剧本标题…"
+        <CSTextFilter filteringText={query} filteringPlaceholder={t('scripts.my.search_placeholder')}
           onChange={({ detail }) => setQuery(detail.filteringText)} />
       </div>
 
@@ -776,8 +782,8 @@ function ScriptsListView() {
         <div style={{ position: 'fixed', top: 53, left: 0, right: 0, bottom: 0, zIndex: 1000, background: 'var(--bg, #1a1817)', overflow: 'auto' }}>
           <div style={{ position: 'sticky', top: 0, zIndex: 3, background: '#131211', borderBottom: '1px solid #36322d' }}>
             <div style={{ maxWidth: 1240, margin: '0 auto', padding: '13px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-              <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600, color: '#ebe7df' }}>导入剧本</div>
-              <CSButton iconName="close" variant="link" onClick={() => { setImportOpen(false); reload(); }}>关闭</CSButton>
+              <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600, color: '#ebe7df' }}>{t('scripts.my.import_script')}</div>
+              <CSButton iconName="close" variant="link" onClick={() => { setImportOpen(false); reload(); }}>{t('common.close')}</CSButton>
             </div>
           </div>
           <div style={{ maxWidth: 1240, margin: '0 auto', padding: '20px 24px 80px' }}>
@@ -791,10 +797,10 @@ function ScriptsListView() {
           <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{ width: "min(900px, 100%)", maxHeight: "85vh", overflow: "auto" }}>
             <header className="pl-modal-head">
               <div>
-                <div className="pl-modal-eyebrow">KB 复核 · 提取结果</div>
-                <h2 className="pl-modal-title">{reviewScript.title || `剧本 ${reviewScript.id}`}</h2>
+                <div className="pl-modal-eyebrow">{t('scripts.review.eyebrow')}</div>
+                <h2 className="pl-modal-title">{reviewScript.title || t('scripts.review.script_id', { id: reviewScript.id })}</h2>
               </div>
-              <button className="iconbtn" onClick={() => setReviewScript(null)} data-tip="关闭"><Icon name="close" size={14} /></button>
+              <button className="iconbtn" onClick={() => setReviewScript(null)} data-tip={t('common.close')}><Icon name="close" size={14} /></button>
             </header>
             <ScriptReview scriptId={reviewScript.id} />
           </div>
@@ -821,6 +827,7 @@ function ScriptsListView() {
 /* B3: overrides editor — GET/POST /api/v1/scripts/{id}/overrides (JSONB)。
    显示当前 script_overrides 的 raw JSON，支持 edit/save。 */
 function OverridesModal({ script, onClose }) {
+  const { t } = useTranslation();
   const [raw, setRaw] = useStatePL("");
   const [loading, setLoading] = useStatePL(false);
   const [saving, setSaving] = useStatePL(false);
@@ -836,7 +843,7 @@ function OverridesModal({ script, onClose }) {
         const data = r?.data ?? r ?? {};
         setRaw(JSON.stringify(data, null, 2));
       } catch (e) {
-        setErr(e?.message || "加载失败");
+        setErr(e?.message || t('scripts.editor.load_fail'));
         setRaw("{}");
       } finally {
         setLoading(false);
@@ -849,16 +856,16 @@ function OverridesModal({ script, onClose }) {
   const onSave = async () => {
     let parsed;
     try { parsed = JSON.parse(raw); } catch (e) {
-      window.__apiToast?.("JSON 格式错误", { kind: "danger", detail: e.message });
+      window.__apiToast?.(t('scripts.editor.json_error'), { kind: "danger", detail: e.message });
       return;
     }
     setSaving(true);
     try {
       await window.api.scripts.saveOverrides(script.id, parsed);
-      window.__apiToast?.("已保存", { kind: "ok" });
+      window.__apiToast?.(t('scripts.toast.saved'), { kind: "ok" });
       setDirty(false);
     } catch (e) {
-      window.__apiToast?.("保存失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('scripts.toast.save_fail'), { kind: "danger", detail: e?.message });
     } finally {
       setSaving(false);
     }
@@ -872,17 +879,17 @@ function OverridesModal({ script, onClose }) {
       <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(700px, 96vw)", maxHeight: "90vh", display: "flex", flexDirection: "column"}}>
         <header className="pl-modal-head">
           <div>
-            <div className="pl-modal-eyebrow">剧本覆盖设定 (overrides) · {script.title}</div>
-            <h2 className="pl-modal-title">{loading ? "加载中…" : "script_overrides JSONB"}</h2>
+            <div className="pl-modal-eyebrow">{t('scripts.editor.overrides_eyebrow')} · {script.title}</div>
+            <h2 className="pl-modal-title">{loading ? t('common.loading') : "script_overrides JSONB"}</h2>
           </div>
-          <button className="iconbtn" onClick={onClose} data-tip="关闭"><Icon name="close" size={14} /></button>
+          <button className="iconbtn" onClick={onClose} data-tip={t('common.close')}><Icon name="close" size={14} /></button>
         </header>
         {err && <div style={{padding: "8px 16px", color: "var(--danger)", fontSize: 13}}>{err}</div>}
         {!loading && (
           <div style={{flex: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: "0 16px 0"}}>
             <div style={{fontSize: 11.5, color: "var(--muted-2)", marginBottom: 6, paddingTop: 12}}>
-              直接编辑 JSON 对象。字段含义由后端解释；不认识的 key 会被保留。
-              {!jsonValid && <span style={{color: "var(--danger)", marginLeft: 8}}>⚠ JSON 格式错误，无法保存</span>}
+              {t('scripts.editor.overrides_hint')}
+              {!jsonValid && <span style={{color: "var(--danger)", marginLeft: 8}}>{t('scripts.editor.json_invalid')}</span>}
             </div>
             <textarea
               value={raw}
@@ -903,9 +910,9 @@ function OverridesModal({ script, onClose }) {
             GET/POST /api/v1/scripts/{script.id}/overrides
           </span>
           <div style={{display: "flex", gap: 8}}>
-            <button className="btn ghost" onClick={onClose}>关闭</button>
+            <button className="btn ghost" onClick={onClose}>{t('common.close')}</button>
             <button className="btn primary" onClick={onSave} disabled={saving || !dirty || !jsonValid}>
-              {saving ? <><Icon name="spinner" size={12} className="spin" /> 保存中…</> : <><Icon name="check" size={12} /> 保存</>}
+              {saving ? <><Icon name="spinner" size={12} className="spin" /> {t('scripts.editor.saving')}</> : <><Icon name="check" size={12} /> {t('common.save')}</>}
             </button>
           </div>
         </footer>
@@ -923,6 +930,7 @@ function OverridesModal({ script, onClose }) {
    - POST /api/scripts/{id}/resplit 整本重切（rule+pattern）
    全部 BE wrappers 已存，但 FE 之前无入口。 */
 function ChaptersModal({ script, onClose, onChanged }) {
+  const { t } = useTranslation();
   const [chapters, setChapters] = useStatePL([]);
   const [loading, setLoading] = useStatePL(false);
   const [err, setErr] = useStatePL("");
@@ -938,7 +946,7 @@ function ChaptersModal({ script, onClose, onChanged }) {
         const r = await window.api.scripts.chapters(script.id, { limit: 1000, offset: 0 });
         const list = (r && (r.chapters || r.items)) || [];
         setChapters(list);
-      } catch (e) { setErr(e?.message || "拉取失败"); }
+      } catch (e) { setErr(e?.message || t('scripts.editor.fetch_fail')); }
       finally { setLoading(false); }
     })();
   }, [script?.id, reloadTick]);
@@ -946,62 +954,62 @@ function ChaptersModal({ script, onClose, onChanged }) {
   const cur = chapters[activeIdx];
   const onRename = async () => {
     if (!cur) return;
-    const t = await window.__prompt({ title: '重命名章节', label: '新标题', default: cur.title || '' });
-    if (!t || t === cur.title) return;
+    const newTitle = await window.__prompt({ title: t('scripts.editor.rename_title'), label: t('scripts.editor.rename_label'), default: cur.title || '' });
+    if (!newTitle || newTitle === cur.title) return;
     try {
-      await window.api.scripts.updateChapter(script.id, cur.index ?? activeIdx, { title: t });
-      window.__apiToast?.("已重命名", { kind: "ok" });
+      await window.api.scripts.updateChapter(script.id, cur.index ?? activeIdx, { title: newTitle });
+      window.__apiToast?.(t('scripts.toast.renamed'), { kind: "ok" });
       setReloadTick(x => x + 1);
       onChanged && onChanged();
-    } catch (e) { window.__apiToast?.("失败", { kind: "danger", detail: e?.message }); }
+    } catch (e) { window.__apiToast?.(t('scripts.toast.op_fail'), { kind: "danger", detail: e?.message }); }
   };
   const onMergeNext = async () => {
     if (!cur || activeIdx >= chapters.length - 1) return;
-    if (!await window.__confirm({ title: '合并章节', message: `合并第 ${activeIdx + 1} 章和第 ${activeIdx + 2} 章?`, confirmText: '合并' })) return;
+    if (!await window.__confirm({ title: t('scripts.editor.merge_title'), message: t('scripts.editor.merge_msg', { a: activeIdx + 1, b: activeIdx + 2 }), confirmText: t('scripts.editor.merge_btn') })) return;
     try {
       await window.api.scripts.mergeChapter(script.id, { first: cur.index ?? activeIdx, second: (chapters[activeIdx + 1]?.index ?? (activeIdx + 1)) });
-      window.__apiToast?.("已合并", { kind: "ok" });
+      window.__apiToast?.(t('scripts.toast.merged'), { kind: "ok" });
       setReloadTick(x => x + 1);
       onChanged && onChanged();
-    } catch (e) { window.__apiToast?.("失败", { kind: "danger", detail: e?.message }); }
+    } catch (e) { window.__apiToast?.(t('scripts.toast.op_fail'), { kind: "danger", detail: e?.message }); }
   };
   const onSplit = async () => {
     if (!cur) return;
-    const pos = await window.__prompt({ title: '拆分本章', label: '从该章第几字处拆分?', default: '' });
+    const pos = await window.__prompt({ title: t('scripts.editor.split_title'), label: t('scripts.editor.split_label'), default: '' });
     const n = parseInt(pos, 10);
     if (!n || n < 1) return;
     try {
       await window.api.scripts.splitChapter(script.id, cur.index ?? activeIdx, { offset: n });
-      window.__apiToast?.("已拆分", { kind: "ok" });
+      window.__apiToast?.(t('scripts.toast.split'), { kind: "ok" });
       setReloadTick(x => x + 1);
       onChanged && onChanged();
-    } catch (e) { window.__apiToast?.("失败", { kind: "danger", detail: e?.message }); }
+    } catch (e) { window.__apiToast?.(t('scripts.toast.op_fail'), { kind: "danger", detail: e?.message }); }
   };
   const onResplit = async (vals) => {
     try {
       await window.api.scripts.resplit(script.id, { split_rule: vals.rule || "auto", custom_pattern: vals.pattern || "" });
-      window.__apiToast?.("已重切分", { kind: "ok" });
+      window.__apiToast?.(t('scripts.toast.resplit'), { kind: "ok" });
       setResplitOpen(false);
       setReloadTick(x => x + 1);
       onChanged && onChanged();
-    } catch (e) { window.__apiToast?.("重切分失败", { kind: "danger", detail: e?.message }); }
+    } catch (e) { window.__apiToast?.(t('scripts.toast.resplit_fail'), { kind: "danger", detail: e?.message }); }
   };
   return (
     <div className="pl-modal-backdrop" onClick={onClose}>
       <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(960px, 96vw)", maxHeight: "90vh", display: "flex", flexDirection: "column"}}>
         <header className="pl-modal-head">
           <div>
-            <div className="pl-modal-eyebrow">章节管理 · {script.title}</div>
-            <h2 className="pl-modal-title">{loading ? "加载中…" : `共 ${chapters.length} 章 · 第 ${activeIdx + 1} 章`}</h2>
+            <div className="pl-modal-eyebrow">{t('scripts.editor.chapters_eyebrow')} · {script.title}</div>
+            <h2 className="pl-modal-title">{loading ? t('common.loading') : t('scripts.editor.chapters_title', { total: chapters.length, cur: activeIdx + 1 })}</h2>
           </div>
           <div style={{display: "flex", gap: 6}}>
-            <button className="btn ghost" onClick={() => setResplitOpen(true)} title="整本重切（按新规则）"><Icon name="refresh" size={12} /> 整本重切</button>
-            <button className="iconbtn" onClick={onClose} data-tip="关闭"><Icon name="close" size={14} /></button>
+            <button className="btn ghost" onClick={() => setResplitOpen(true)} title={t('scripts.editor.resplit_tip')}><Icon name="refresh" size={12} /> {t('scripts.editor.resplit_btn')}</button>
+            <button className="iconbtn" onClick={onClose} data-tip={t('common.close')}><Icon name="close" size={14} /></button>
           </div>
         </header>
-        {err && <div className="pl-model-empty" style={{padding: "16px"}}><span className="danger">加载失败：{err}</span></div>}
+        {err && <div className="pl-model-empty" style={{padding: "16px"}}><span className="danger">{t('scripts.editor.load_fail_detail', { err })}</span></div>}
         {!err && chapters.length === 0 && !loading && (
-          <div className="pl-model-empty" style={{padding: "24px"}}>该剧本暂无章节。试试「整本重切」更换切分规则。</div>
+          <div className="pl-model-empty" style={{padding: "24px"}}>{t('scripts.editor.chapters_empty')}</div>
         )}
         {chapters.length > 0 && (
           <div style={{display: "grid", gridTemplateColumns: "220px 1fr", gap: 0, flex: 1, minHeight: 0}}>
@@ -1016,7 +1024,7 @@ function ChaptersModal({ script, onClose, onChanged }) {
                   onClick={() => setActiveIdx(i)}>
                   <span className="muted-2 mono" style={{minWidth: 36, fontSize: 11}}>#{String(i + 1).padStart(3, "0")}</span>
                   <span style={{overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textAlign: "left", fontSize: 12.5}}>
-                    {c.title || "未命名"}
+                    {c.title || t('scripts.editor.unnamed_chapter')}
                   </span>
                 </button>
               ))}
@@ -1024,18 +1032,18 @@ function ChaptersModal({ script, onClose, onChanged }) {
             <div style={{overflow: "auto", padding: 16, maxHeight: 480}}>
               {cur && <>
                 <div style={{display: "flex", alignItems: "center", gap: 8, marginBottom: 12}}>
-                  <strong style={{fontSize: 15}}>{cur.title || "未命名"}</strong>
-                  <span className="muted-2 mono" style={{fontSize: 11}}>{(cur.content || "").length.toLocaleString()} 字</span>
+                  <strong style={{fontSize: 15}}>{cur.title || t('scripts.editor.unnamed_chapter')}</strong>
+                  <span className="muted-2 mono" style={{fontSize: 11}}>{(cur.content || "").length.toLocaleString()} {t('scripts.my.char_unit')}</span>
                   <div style={{marginLeft: "auto", display: "flex", gap: 6}}>
-                    <button className="btn ghost" onClick={onRename}><Icon name="edit" size={12} /> 重命名</button>
-                    <button className="btn ghost" onClick={onSplit}><Icon name="branch" size={12} /> 拆分本章</button>
+                    <button className="btn ghost" onClick={onRename}><Icon name="edit" size={12} /> {t('scripts.editor.rename_btn')}</button>
+                    <button className="btn ghost" onClick={onSplit}><Icon name="branch" size={12} /> {t('scripts.editor.split_chapter_btn')}</button>
                     {activeIdx < chapters.length - 1 && (
-                      <button className="btn ghost" onClick={onMergeNext}><Icon name="link" size={12} /> 合并下一章</button>
+                      <button className="btn ghost" onClick={onMergeNext}><Icon name="link" size={12} /> {t('scripts.editor.merge_next_btn')}</button>
                     )}
                   </div>
                 </div>
                 <pre style={{whiteSpace: "pre-wrap", fontFamily: "var(--font-serif)", fontSize: 13.5, lineHeight: 1.7, margin: 0}}>
-                  {(cur.content || "").slice(0, 4000)}{cur.content && cur.content.length > 4000 ? "\n\n…（截断显示前 4000 字）" : ""}
+                  {(cur.content || "").slice(0, 4000)}{cur.content && cur.content.length > 4000 ? t('scripts.editor.content_truncated') : ""}
                 </pre>
               </>}
             </div>
@@ -1045,25 +1053,25 @@ function ChaptersModal({ script, onClose, onChanged }) {
           <span className="muted-2" style={{fontSize: 11.5}}>
             <Icon name="info" size={11} /> GET /api/scripts/{script.id}/chapters · POST /chapters/{`{idx}`} / merge / split / resplit
           </span>
-          <button className="btn ghost" onClick={onClose}>关闭</button>
+          <button className="btn ghost" onClick={onClose}>{t('common.close')}</button>
         </footer>
       </div>
       <PromptModal
         open={resplitOpen}
-        eyebrow="整本重切"
-        title={`${script.title} · 用新规则重切`}
+        eyebrow={t('scripts.editor.resplit_btn')}
+        title={`${script.title} · ${t('scripts.editor.resplit_prompt_title')}`}
         hint="POST /api/scripts/{id}/resplit"
         fields={[
-          { key: "rule", label: "切分规则", type: "select", default: "auto",
+          { key: "rule", label: t('scripts.import.field_rule'), type: "select", default: "auto",
             options: [
-              { value: "auto",     label: "auto · 自动识别" },
-              { value: "blank",    label: "blank · 空行分章" },
-              { value: "marker",   label: "marker · 第X章" },
-              { value: "regex",    label: "regex · 自定义" },
+              { value: "auto",     label: t('scripts.editor.resplit_rule_auto') },
+              { value: "blank",    label: t('scripts.editor.resplit_rule_blank') },
+              { value: "marker",   label: t('scripts.editor.resplit_rule_marker') },
+              { value: "regex",    label: t('scripts.editor.resplit_rule_regex') },
             ] },
-          { key: "pattern", label: "自定义正则", placeholder: "rule=regex 时填，例：^第[一二三四五六七八九十百千]+章" },
+          { key: "pattern", label: t('scripts.import.field_custom_regex'), placeholder: t('scripts.import.field_custom_regex_placeholder') },
         ]}
-        submitLabel="开始重切"
+        submitLabel={t('scripts.editor.resplit_submit')}
         onClose={() => setResplitOpen(false)}
         onConfirm={onResplit}
       />
@@ -1072,16 +1080,17 @@ function ChaptersModal({ script, onClose, onChanged }) {
 }
 
 const IMPORT_STAGES = [
-  { id: "split",    label: "拆章节",     hint: "按规则切分原文",            tok_per_chap: 0 },
-  { id: "save",     label: "入库",       hint: "写入剧本表 + 全文索引",     tok_per_chap: 0 },
-  { id: "extract",  label: "人物提取",   hint: "扫描章节，发现角色名 + 关系", tok_per_chap: 120 },
-  { id: "card",     label: "人设卡生成", hint: "为每个识别角色合成卡片",     tok_per_chap: 60 },
-  { id: "world",    label: "世界书建立", hint: "地点 / 时代 / 设定词条",     tok_per_chap: 90 },
-  { id: "timeline", label: "时间线建立", hint: "事件锚点 + 章节映射",        tok_per_chap: 40 },
+  { id: "split",    labelKey: "scripts.import.stage_split",    hintKey: "scripts.import.stage_split_hint",    tok_per_chap: 0 },
+  { id: "save",     labelKey: "scripts.import.stage_save",     hintKey: "scripts.import.stage_save_hint",     tok_per_chap: 0 },
+  { id: "extract",  labelKey: "scripts.import.stage_extract",  hintKey: "scripts.import.stage_extract_hint",  tok_per_chap: 120 },
+  { id: "card",     labelKey: "scripts.import.stage_card",     hintKey: "scripts.import.stage_card_hint",     tok_per_chap: 60 },
+  { id: "world",    labelKey: "scripts.import.stage_world",    hintKey: "scripts.import.stage_world_hint",    tok_per_chap: 90 },
+  { id: "timeline", labelKey: "scripts.import.stage_timeline", hintKey: "scripts.import.stage_timeline_hint", tok_per_chap: 40 },
 ];
 
 function ScriptsImportView({ embedded = false, onClose } = {}) {
   void onClose;
+  const { t } = useTranslation();
   const [rule, setRule] = useStatePL("auto");
   const [pattern, setPattern] = useStatePL("");
   const [title, setTitle] = useStatePL("");
@@ -1131,11 +1140,11 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
             stages: j.stages.map(s => ({ ...s, status: "done", progress: 1, tokens_used: s.tokens_est, done_at: Date.now() })),
             knowledge_result: jb.usage_actual?.result || null,
           } : j);
-          window.toast?.("剧本导入完成", { kind: "ok", detail: `script #${jb.script_id}`, duration: 2400 });
+          window.toast?.(t('scripts.import.result_done'), { kind: "ok", detail: `script #${jb.script_id}`, duration: 2400 });
           try { window.dispatchEvent(new CustomEvent("rpg-scripts-updated")); } catch (_) {}
         } else if (jb.status === "error" || jb.status === "failed") {
-          setJob(j => j ? { ...j, status: "cancelled", finished_at: Date.now(), error: jb.error || "导入失败" } : j);
-          window.__apiToast?.("导入失败", { kind: "danger", detail: jb.error || "未知错误", duration: 4000 });
+          setJob(j => j ? { ...j, status: "cancelled", finished_at: Date.now(), error: jb.error || t('scripts.toast.import_fail') } : j);
+          window.__apiToast?.(t('scripts.toast.import_fail'), { kind: "danger", detail: jb.error || t('scripts.toast.unknown_error'), duration: 4000 });
         }
       } catch (_) { /* 单次失败不影响下一次轮询 */ }
     };
@@ -1189,7 +1198,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
   const onPickFile = (file) => {
     if (!file) return;
     if (file.size > 50 * 1024 * 1024) {
-      window.__apiToast?.("文件过大", { kind: "danger", detail: "最大 50MB", duration: 2400 });
+      window.__apiToast?.(t('scripts.import.file_too_large'), { kind: "danger", detail: t('scripts.import.file_max_size'), duration: 2400 });
       return;
     }
     setSelectedFile(file);
@@ -1211,7 +1220,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
       const idx = s.indexOf(",");
       resolve(idx >= 0 ? s.slice(idx + 1) : s);
     };
-    r.onerror = () => reject(r.error || new Error("文件读取失败"));
+    r.onerror = () => reject(r.error || new Error(t('scripts.import.file_read_fail')));
     r.readAsDataURL(file);
   });
 
@@ -1224,8 +1233,8 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
         file: null, chapters: 0, words: 0,
         stages: [], totalTokens: 0, totalSec: 0, cost: 0,
         model: "—",
-        warnings: ["请先选择本地剧本文件再生成预算。"],
-        previewError: "未选择文件",
+        warnings: [t('scripts.import.warn_no_file')],
+        previewError: t('scripts.import.no_file_selected'),
       });
       setPreviewBusy(false);
       return;
@@ -1242,14 +1251,14 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
       };
       result = await window.api.scripts.preview(body);
     } catch (e) {
-      const detail = (e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || "未知错误";
-      window.__apiToast?.("预览失败", { kind: "danger", detail, duration: 5000 });
+      const detail = (e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || t('scripts.toast.unknown_error');
+      window.__apiToast?.(t('scripts.toast.preview_fail'), { kind: "danger", detail, duration: 5000 });
       setEstimate({
         file: { name: selectedFile.name, size: selectedFile.size, chapters: 0, words: 0 },
         chapters: 0, words: 0,
         stages: [], totalTokens: 0, totalSec: 0, cost: 0,
         model: "—",
-        warnings: [`预览失败：${detail}`],
+        warnings: [t('scripts.import.preview_fail_detail', { detail })],
         previewError: detail,
       });
       setPreviewBusy(false);
@@ -1259,7 +1268,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
     const chapters = Number(result.total_chapters) || (Array.isArray(result.preview) ? result.preview.length : 0);
     const words = Number(result.total_words) || 0;
     const stages = IMPORT_STAGES.map(s => ({
-      id: s.id, label: s.label, hint: s.hint,
+      id: s.id, label: t(s.labelKey), hint: t(s.hintKey),
       tokens_est: s.tok_per_chap * Math.max(chapters, 1),
       time_est_sec: Math.round(s.tok_per_chap * Math.max(chapters, 1) / 800),
     }));
@@ -1300,7 +1309,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
           total_chunks: totalChunks,
         });
         uploadId = init.upload_id || init.id;
-        if (!uploadId) throw new Error("后端未返回 upload_id");
+        if (!uploadId) throw new Error(t('scripts.import.no_upload_id'));
         for (let i = 0; i < totalChunks; i++) {
           const blob = selectedFile.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
           await window.api.uploads.chunk(uploadId, blob, i);
@@ -1313,7 +1322,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
           custom_pattern: pattern || "",
         });
         if (!importResp || importResp.ok === false) {
-          throw new Error((importResp && (importResp.error || importResp.detail)) || "导入接口返回失败");
+          throw new Error((importResp && (importResp.error || importResp.detail)) || t('scripts.import.api_fail'));
         }
         const sc = importResp.script || {};
         // task 41: importScript 只跑简化 sync (facts/chunks),没跑 LLM cards/worldbook。
@@ -1346,7 +1355,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
           file: estimate.file,
           title: sc.title || title || estimate.file.name,
           script_id: sc.id,
-          mode: SPLIT_RULES.find(r => r.id === rule)?.label,
+          mode: (() => { const _r = SPLIT_RULES.find(r => r.id === rule); return _r ? t(_r.labelKey) : rule; })(),
           stages, currentStage: 0,
           totalTokens: estimate.totalTokens,
           status: "running",
@@ -1357,19 +1366,19 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
         setEstimate(null);
         // 通知外部 ScriptsPage 刷新真实列表（task 19 联动）
         try { window.dispatchEvent(new CustomEvent("rpg-scripts-updated")); } catch (_) {}
-        window.toast && window.toast("导入成功", {
+        window.toast && window.toast(t('scripts.toast.import_ok'), {
           kind: "ok",
           // Codex #8:不假装"向量库"。后端 _embed_query() 是 stub (返回 None),
           // pgvector 查询自动退化到 ILIKE 关键字匹配 + 章节摘要召回。
           // 文案如实表达,避免用户误以为已建立完整向量库。
-          detail: `已建立剧本 #${sc.id} · ${sc.title || ""} · 基础知识库 (关键字 + 章节摘要) 后台同步中`,
+          detail: t('scripts.toast.import_ok_detail', { id: sc.id, title: sc.title || "" }),
           duration: 3000,
         });
       } catch (e) {
         // 取消任何已经初始化的 upload，让服务器释放临时块
         if (uploadId) { try { await window.api.uploads.cancel(uploadId); } catch (_) {} }
-        const detail = (e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || "未知错误";
-        window.__apiToast?.("导入失败", { kind: "danger", detail, duration: 5000 });
+        const detail = (e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || t('scripts.toast.unknown_error');
+        window.__apiToast?.(t('scripts.toast.import_fail'), { kind: "danger", detail, duration: 5000 });
         // 关键：不要建 fake job 让用户误以为在跑
         setJob(null);
         // estimate 保留，以便用户修改设置后重试
@@ -1378,10 +1387,10 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
     }
     // 没选文件：仅在 isMockEstimate（明确示例）下允许 demo job
     if (estimate && estimate.isMockEstimate) {
-      window.__apiToast?.("仅示例预算，未上传文件", { kind: "warn", detail: "请选择本地文件后再确认导入", duration: 3000 });
+      window.__apiToast?.(t('scripts.toast.mock_warn'), { kind: "warn", detail: t('scripts.toast.mock_warn_detail'), duration: 3000 });
       return;
     }
-    window.__apiToast?.("请先选择本地文件", { kind: "warn" });
+    window.__apiToast?.(t('scripts.toast.select_file_first'), { kind: "warn" });
   };
 
   const cancelJob = async () => {
@@ -1390,7 +1399,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
       try { await window.api.scripts.jobCancel(job.id); } catch (e) {}
     }
     setJob(j => ({ ...j, status: "cancelled", cancelled_at: Date.now() }));
-    window.toast?.("已取消导入任务", { kind: "warn", detail: "job " + job.id, duration: 2400 });
+    window.toast?.(t('scripts.toast.import_cancelled'), { kind: "warn", detail: "job " + job.id, duration: 2400 });
   };
 
   const dismissJob = () => {
@@ -1398,6 +1407,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
   };
 
   const ruleOpt = SPLIT_RULES.find(r => r.id === rule) || SPLIT_RULES[0];
+  const ruleLabel = t(ruleOpt.labelKey);
   const fileName = (selectedFile && selectedFile.name) || (estimate && estimate.file && estimate.file.name) || null;
   const jobRunning = job && job.status !== 'done' && job.status !== 'cancelled';
 
@@ -1411,26 +1421,26 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
             <ImportJobResult job={job} onDismiss={dismissJob} onReuse={() => { setJob(null); setEstimate(null); }} />
           )}
 
-          <CSContainer header={<CSHeader variant="h2" description="给剧本起名并选择章节切分规则。">基本信息</CSHeader>}>
+          <CSContainer header={<CSHeader variant="h2" description={t('scripts.import.basic_desc')}>{t('scripts.import.basic_title')}</CSHeader>}>
             <CSColumnLayout columns={2}>
-              <CSFormField label="标题" description="留空将使用文件名">
-                <CSInput value={title} onChange={({ detail }) => setTitle(detail.value)} placeholder="留空将使用文件名" />
+              <CSFormField label={t('scripts.import.field_title')} description={t('scripts.import.field_title_desc')}>
+                <CSInput value={title} onChange={({ detail }) => setTitle(detail.value)} placeholder={t('scripts.import.field_title_desc')} />
               </CSFormField>
-              <CSFormField label="切分规则">
-                <CSSelect selectedOption={{ value: ruleOpt.id, label: ruleOpt.label }}
-                  options={SPLIT_RULES.map(r => ({ value: r.id, label: r.label }))}
+              <CSFormField label={t('scripts.import.field_rule')}>
+                <CSSelect selectedOption={{ value: ruleOpt.id, label: ruleLabel }}
+                  options={SPLIT_RULES.map(r => ({ value: r.id, label: t(r.labelKey) }))}
                   onChange={({ detail }) => setRule(detail.selectedOption.value)} />
               </CSFormField>
               <div style={{ gridColumn: '1 / -1' }}>
-                <CSFormField label="自定义正则或模板" description="仅在『自定义』规则下生效">
+                <CSFormField label={t('scripts.import.field_custom_regex')} description={t('scripts.import.field_custom_regex_desc')}>
                   <CSInput value={pattern} onChange={({ detail }) => setPattern(detail.value)}
-                    disabled={rule !== 'custom'} placeholder="例:^第[一二三四五六七八九十百千]+章" />
+                    disabled={rule !== 'custom'} placeholder={t('scripts.import.field_custom_regex_placeholder')} />
                 </CSFormField>
               </div>
             </CSColumnLayout>
           </CSContainer>
 
-          <CSContainer header={<CSHeader variant="h2" description="拖入或选择 TXT / MD,最大 50MB。">剧本文件</CSHeader>}>
+          <CSContainer header={<CSHeader variant="h2" description={t('scripts.import.file_desc')}>{t('scripts.import.file_title')}</CSHeader>}>
             <CSFileUpload
               value={selectedFile ? [selectedFile] : []}
               onChange={({ detail }) => {
@@ -1439,14 +1449,14 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
               }}
               accept=".txt,.md"
               showFileSize
-              constraintText="支持 TXT · MD · 最大 50MB"
+              constraintText={t('scripts.import.file_constraint')}
               i18nStrings={{
-                uploadButtonText: () => '选择文件',
-                dropzoneText: () => '把 TXT / MD 拖到这里',
-                removeFileAriaLabel: (i) => `移除文件 ${i + 1}`,
-                limitShowFewer: '收起',
-                limitShowMore: '展开',
-                errorIconAriaLabel: '错误',
+                uploadButtonText: () => t('scripts.import.file_btn'),
+                dropzoneText: () => t('scripts.import.file_drop'),
+                removeFileAriaLabel: (i) => t('scripts.import.file_remove', { i: i + 1 }),
+                limitShowFewer: t('scripts.import.file_collapse'),
+                limitShowMore: t('scripts.import.file_expand'),
+                errorIconAriaLabel: t('scripts.import.file_error'),
               }}
             />
           </CSContainer>
@@ -1459,32 +1469,32 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
 
       {/* 右:概要 + 主操作(sticky) */}
       <div style={{ width: 320, flexShrink: 0, position: 'sticky', top: 72 }}>
-        <CSContainer header={<CSHeader variant="h2">概要</CSHeader>}>
+        <CSContainer header={<CSHeader variant="h2">{t('scripts.import.summary_title')}</CSHeader>}>
           <CSSpaceBetween size="m">
             <CSKeyValuePairs columns={1} items={[
-              { label: '文件', value: fileName || '—' },
-              { label: '切分规则', value: ruleOpt.label },
+              { label: t('scripts.import.summary_file'), value: fileName || '—' },
+              { label: t('scripts.import.field_rule'), value: ruleLabel },
               ...(estimate ? [
-                { label: '章节', value: String(estimate.chapters) },
-                { label: '字数', value: `${(estimate.words / 10000).toFixed(1)} 万` },
-                { label: '预估成本', value: <CSBox color="text-status-info" fontWeight="bold">${estimate.cost.toFixed(2)}</CSBox> },
-                { label: '预计耗时', value: `${Math.round(estimate.totalSec / 60)} 分钟` },
+                { label: t('scripts.my.chapters'), value: String(estimate.chapters) },
+                { label: t('scripts.my.words'), value: `${(estimate.words / 10000).toFixed(1)} ${t('scripts.my.wan')}` },
+                { label: t('scripts.import.est_cost'), value: <CSBox color="text-status-info" fontWeight="bold">${estimate.cost.toFixed(2)}</CSBox> },
+                { label: t('scripts.import.est_time'), value: t('scripts.import.est_time_val', { min: Math.round(estimate.totalSec / 60) }) },
               ] : []),
             ]} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {!estimate && (
                 <CSButton variant="primary" iconName="search" loading={previewBusy} disabled={!selectedFile || !!job} onClick={startEstimate}>
-                  {previewBusy ? '计算预算中…' : '预览章节切分'}
+                  {previewBusy ? t('scripts.import.calculating') : t('scripts.import.preview_split')}
                 </CSButton>
               )}
               {estimate && !job && (
                 <>
-                  <CSButton variant="primary" iconName="check" onClick={startImport}>确认导入(后台运行)</CSButton>
-                  <CSButton onClick={() => setEstimate(null)}>重新预算</CSButton>
+                  <CSButton variant="primary" iconName="check" onClick={startImport}>{t('scripts.import.confirm_import_bg')}</CSButton>
+                  <CSButton onClick={() => setEstimate(null)}>{t('scripts.import.re_estimate')}</CSButton>
                 </>
               )}
-              {jobRunning && <CSBox color="text-body-secondary" fontSize="body-s">导入进行中,可关闭窗口稍后回来。</CSBox>}
-              {onClose && <CSButton variant="link" onClick={onClose}>关闭</CSButton>}
+              {jobRunning && <CSBox color="text-body-secondary" fontSize="body-s">{t('scripts.import.importing_bg')}</CSBox>}
+              {onClose && <CSButton variant="link" onClick={onClose}>{t('common.close')}</CSButton>}
             </div>
           </CSSpaceBetween>
         </CSContainer>
@@ -1494,6 +1504,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
 }
 
 function ImportJobBanner({ job, onCancel }) {
+  const { t } = useTranslation();
   const overallProgress = job.stages.reduce((a, s) => a + s.progress, 0) / job.stages.length;
   const elapsed = Math.round((Date.now() - job.started_at) / 1000);
   return (
@@ -1501,15 +1512,15 @@ function ImportJobBanner({ job, onCancel }) {
       header={
         <CSHeader
           variant="h2"
-          description={`job ${job.id} · 已用 ${elapsed}s · 页面刷新不影响,任务在后台运行`}
-          actions={<CSButton iconName="close" onClick={onCancel}>取消导入</CSButton>}
+          description={t('scripts.import.banner_desc', { id: job.id, elapsed })}
+          actions={<CSButton iconName="close" onClick={onCancel}>{t('scripts.import.cancel_import')}</CSButton>}
         >
-          <CSStatusIndicator type="in-progress">正在导入 · {job.title}</CSStatusIndicator>
+          <CSStatusIndicator type="in-progress">{t('scripts.import.importing')} · {job.title}</CSStatusIndicator>
         </CSHeader>
       }
     >
       <CSSpaceBetween size="m">
-        <CSProgressBar value={overallProgress * 100} label="整体进度" />
+        <CSProgressBar value={overallProgress * 100} label={t('scripts.import.overall_progress')} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
           {job.stages.map((s, i) => {
             const type = s.status === 'done' ? 'success' : s.status === 'running' ? 'in-progress' : 'pending';
@@ -1530,6 +1541,7 @@ function ImportJobBanner({ job, onCancel }) {
 }
 
 function ImportJobResult({ job, onDismiss, onReuse }) {
+  const { t } = useTranslation();
   const ok = job.status === "done";
   const totalTokens = job.stages.reduce((a, s) => a + (s.tokens_used || 0), 0);
   return (
@@ -1537,42 +1549,45 @@ function ImportJobResult({ job, onDismiss, onReuse }) {
       type={ok ? 'success' : 'warning'}
       dismissible
       onDismiss={onDismiss}
-      header={`${ok ? '导入完成' : '已取消'} · ${job.title}`}
+      header={`${ok ? t('scripts.import.result_done') : t('scripts.import.result_cancelled')} · ${job.title}`}
       action={
         <CSSpaceBetween direction="horizontal" size="xs">
-          {ok && <CSButton variant="primary" href="#scripts" onClick={onDismiss}>去剧本管理查看</CSButton>}
-          <CSButton onClick={onReuse}>{ok ? '再导入一份' : '重试'}</CSButton>
+          {ok && <CSButton variant="primary" href="#scripts" onClick={onDismiss}>{t('scripts.import.go_manage')}</CSButton>}
+          <CSButton onClick={onReuse}>{ok ? t('scripts.import.import_another') : t('scripts.import.retry')}</CSButton>
         </CSSpaceBetween>
       }
     >
-      {ok ? `${fmtN(totalTokens)} tok 实际消耗` : `job ${job.id}`}
+      {ok ? t('scripts.import.tok_consumed', { n: fmtN(totalTokens) }) : `job ${job.id}`}
     </CSAlert>
   );
 }
 
 function ImportEstimateView({ estimate, rule, onCancel, onConfirm, hideActions = false }) {
+  const { t } = useTranslation();
+  const ruleEntry = SPLIT_RULES.find(r => r.id === rule);
+  const ruleLabel = ruleEntry ? t(ruleEntry.labelKey) : rule;
   return (
     <CSContainer
       header={
         <CSHeader
           variant="h2"
-          description={`『${estimate.file.name}』 · ${SPLIT_RULES.find(r => r.id === rule)?.label} · 使用模型 ${estimate.model} · 实际消耗取决于章节文本长度`}
+          description={t('scripts.import.estimate_desc', { file: estimate.file.name, rule: ruleLabel, model: estimate.model })}
           actions={hideActions ? undefined : (
             <CSSpaceBetween direction="horizontal" size="xs">
-              <CSButton onClick={onCancel}>取消</CSButton>
-              <CSButton variant="primary" iconName="check" onClick={onConfirm}>确认导入(后台运行)</CSButton>
+              <CSButton onClick={onCancel}>{t('common.cancel')}</CSButton>
+              <CSButton variant="primary" iconName="check" onClick={onConfirm}>{t('scripts.import.confirm_import_bg')}</CSButton>
             </CSSpaceBetween>
           )}
-        >章节切分预算</CSHeader>
+        >{t('scripts.import.estimate_title')}</CSHeader>
       }
     >
       <CSSpaceBetween size="l">
         <CSKeyValuePairs columns={5} items={[
-          { label: '章节', value: String(estimate.chapters) },
-          { label: '字数', value: `${(estimate.words / 10000).toFixed(1)} 万` },
-          { label: '预估 Token', value: fmtN(estimate.totalTokens) },
-          { label: '预估成本', value: <CSBox color="text-status-info" fontWeight="bold">${estimate.cost.toFixed(2)}</CSBox> },
-          { label: '预计耗时', value: `${Math.round(estimate.totalSec / 60)} 分钟` },
+          { label: t('scripts.my.chapters'), value: String(estimate.chapters) },
+          { label: t('scripts.my.words'), value: `${(estimate.words / 10000).toFixed(1)} ${t('scripts.my.wan')}` },
+          { label: t('scripts.import.est_tokens'), value: fmtN(estimate.totalTokens) },
+          { label: t('scripts.import.est_cost'), value: <CSBox color="text-status-info" fontWeight="bold">${estimate.cost.toFixed(2)}</CSBox> },
+          { label: t('scripts.import.est_time'), value: t('scripts.import.est_time_val', { min: Math.round(estimate.totalSec / 60) }) },
         ]} />
         <CSTable
           variant="embedded"
@@ -1580,14 +1595,14 @@ function ImportEstimateView({ estimate, rule, onCancel, onConfirm, hideActions =
           trackBy="id"
           columnDefinitions={[
             { id: 'n', header: '#', cell: (s) => estimate.stages.indexOf(s) + 1, width: 50 },
-            { id: 'label', header: '阶段', cell: (s) => <CSBox fontWeight="bold">{s.label}</CSBox> },
-            { id: 'hint', header: '说明', cell: (s) => s.hint },
-            { id: 'tok', header: '预估 Token', cell: (s) => fmtN(s.tokens_est) },
-            { id: 'time', header: '预计耗时', cell: (s) => s.time_est_sec < 60 ? s.time_est_sec + 's' : Math.round(s.time_est_sec / 60) + 'min' },
+            { id: 'label', header: t('scripts.import.stage_col'), cell: (s) => <CSBox fontWeight="bold">{s.label}</CSBox> },
+            { id: 'hint', header: t('scripts.import.hint_col'), cell: (s) => s.hint },
+            { id: 'tok', header: t('scripts.import.est_tokens'), cell: (s) => fmtN(s.tokens_est) },
+            { id: 'time', header: t('scripts.import.est_time'), cell: (s) => s.time_est_sec < 60 ? s.time_est_sec + 's' : Math.round(s.time_est_sec / 60) + 'min' },
           ]}
         />
         {estimate.warnings?.length > 0 && (
-          <CSAlert type="warning" header="注意">
+          <CSAlert type="warning" header={t('scripts.import.warnings_header')}>
             <ul style={{ margin: 0, paddingLeft: 18 }}>
               {estimate.warnings.map((w, i) => <li key={i}>{w}</li>)}
             </ul>
@@ -1602,12 +1617,12 @@ function ImportEstimateView({ estimate, rule, onCancel, onConfirm, hideActions =
    后端 POST /scripts/{id}/llm-extract 立即返 job_id,kind='llm_extract',
    复用 streamImport SSE。4 阶段:seed / arc_extract(或 per_chapter)/ resolve / embed。
    完成后剧本 review_status 自动重置为 unreviewed(需复核)。 */
-const _EXTRACT_STAGE_LABELS = {
-  seed: '种子词表 (Pass 0)',
-  arc_extract: '弧段提取 (Pass 1)',
-  per_chapter: '逐章提取 (Pass 1)',
-  resolve: '实体消歧聚合 (Pass 2)',
-  embed: '嵌入入库 (Pass 3)',
+const _EXTRACT_STAGE_LABEL_KEYS = {
+  seed: 'scripts.review.stage_seed',
+  arc_extract: 'scripts.review.stage_arc_extract',
+  per_chapter: 'scripts.review.stage_per_chapter',
+  resolve: 'scripts.review.stage_resolve',
+  embed: 'scripts.review.stage_embed',
 };
 function _stageIndicator(status) {
   if (status === 'done') return 'success';
@@ -1617,6 +1632,7 @@ function _stageIndicator(status) {
 }
 
 function KbExtractPanel({ script, onDone }) {
+  const { t } = useTranslation();
   const sid = script.id;
   const [algorithm, setAlgorithm] = useStatePL('arc');
   const [model, setModel] = useStatePL('deepseek-v4-flash');
@@ -1671,7 +1687,7 @@ function KbExtractPanel({ script, onDone }) {
       const r = await window.api.scripts.llmExtractEstimate(sid, cfgBody());
       setEstimate(r);
     } catch (e) {
-      setErr((e && (e.payload?.error || e.message)) || '预估失败');
+      setErr((e && (e.payload?.error || e.message)) || t('scripts.review.estimate_fail'));
     } finally { setEstimating(false); }
   };
 
@@ -1682,7 +1698,7 @@ function KbExtractPanel({ script, onDone }) {
       on_message: (jb) => { if (jb && typeof jb === 'object') setJob({ ...jb, job_id: jb.job_id || jb.id || jobId }); },
       on_done: () => {
         setPhase('done');
-        window.__apiToast?.('KB 提取完成', { kind: 'ok', detail: '剧本已重置为「待复核」', duration: 3200 });
+        window.__apiToast?.(t('scripts.review.extract_done'), { kind: 'ok', detail: t('scripts.review.extract_done_detail'), duration: 3200 });
         try { window.dispatchEvent(new CustomEvent('rpg-scripts-updated')); } catch (_) {}
         onDone && onDone();
       },
@@ -1696,11 +1712,11 @@ function KbExtractPanel({ script, onDone }) {
       const r = await window.api.scripts.llmExtract(sid, { ...cfgBody(), confirmed: true });
       const jid = r && (r.job_id || r.id);
       if (jid) startStream(jid);
-      else { setErr((r && r.error) || '调度失败'); setPhase('error'); }
+      else { setErr((r && r.error) || t('scripts.review.dispatch_fail')); setPhase('error'); }
     } catch (e) {
       const p = (e && e.payload) || {};
       if (p.job_id) { startStream(p.job_id); return; } // 409 复用已在跑的任务
-      setErr(p.error || (e && e.message) || '调度失败');
+      setErr(p.error || (e && e.message) || t('scripts.review.dispatch_fail'));
       setPhase('error');
     }
   };
@@ -1708,7 +1724,7 @@ function KbExtractPanel({ script, onDone }) {
   const doCancel = async () => {
     const jid = job && job.job_id;
     if (!jid) return;
-    try { await window.api.scripts.jobCancel(jid); window.__apiToast?.('已请求取消(收尾时生效)', { kind: 'warn', duration: 2400 }); } catch (_) {}
+    try { await window.api.scripts.jobCancel(jid); window.__apiToast?.(t('scripts.review.cancel_requested'), { kind: 'warn', duration: 2400 }); } catch (_) {}
   };
 
   const stages = (job && Array.isArray(job.stages)) ? job.stages : [];
@@ -1720,9 +1736,9 @@ function KbExtractPanel({ script, onDone }) {
   const currentApi = apis.find(a => (a.api_id || a.id) === apiId) || null;
   const modelList = (currentApi && (currentApi.models || currentApi.entries)) || [];
   const apiOptions = apis.map(a => ({ value: a.api_id || a.id, label: a.display_name || a.name || (a.api_id || a.id) }));
-  if (apiId && !apiOptions.some(o => o.value === apiId)) apiOptions.unshift({ value: apiId, label: apiId + '(未在模型管理)' });
+  if (apiId && !apiOptions.some(o => o.value === apiId)) apiOptions.unshift({ value: apiId, label: apiId + t('scripts.review.api_not_in_mgr') });
   const modelOptions = modelList.map(m => ({ value: m.real_name || m.id, label: m.display_name || m.real_name || m.id }));
-  if (model && !modelOptions.some(o => o.value === model)) modelOptions.unshift({ value: model, label: model + '(自定义)' });
+  if (model && !modelOptions.some(o => o.value === model)) modelOptions.unshift({ value: model, label: model + t('scripts.review.model_custom') });
   const onPickApi = (v) => {
     setApiId(v);
     const a = apis.find(x => (x.api_id || x.id) === v);
@@ -1733,95 +1749,94 @@ function KbExtractPanel({ script, onDone }) {
   return (
     <CSSpaceBetween size="l">
       <CSSpaceBetween direction="horizontal" size="xs">
-        {phase === 'config' && <CSButton onClick={doEstimate} loading={estimating}>预估成本</CSButton>}
-        {(phase === 'config' || phase === 'error') && <CSButton variant="primary" iconName="gen-ai" onClick={doStart}>开始提取</CSButton>}
-        {phase === 'running' && <CSButton onClick={doCancel}>取消任务</CSButton>}
+        {phase === 'config' && <CSButton onClick={doEstimate} loading={estimating}>{t('scripts.review.estimate_cost')}</CSButton>}
+        {(phase === 'config' || phase === 'error') && <CSButton variant="primary" iconName="gen-ai" onClick={doStart}>{t('scripts.review.start_extract')}</CSButton>}
+        {phase === 'running' && <CSButton onClick={doCancel}>{t('scripts.review.cancel_job')}</CSButton>}
       </CSSpaceBetween>
       {err && <CSAlert type="error">{err}</CSAlert>}
 
         {(phase === 'config' || phase === 'error') && (
           <CSSpaceBetween size="l">
             <CSBox color="text-body-secondary" fontSize="body-s">
-              重新跑全书 LLM 知识提取(种子词表 → 弧段/逐章提取 → 实体消歧 → 嵌入入库)。
-              后台异步执行,可关闭窗口稍后回来看。完成后剧本会标记为「待复核」。
+              {t('scripts.review.desc')}
             </CSBox>
-            <CSFormField label="算法">
+            <CSFormField label={t('scripts.review.algorithm')}>
               <CSSegmentedControl selectedId={algorithm}
-                options={[{ id: 'arc', text: '弧段 (arc,推荐)' }, { id: 'per_chapter', text: '逐章 (per_chapter)' }]}
+                options={[{ id: 'arc', text: t('scripts.review.algo_arc') }, { id: 'per_chapter', text: t('scripts.review.algo_per_chapter') }]}
                 onChange={({ detail }) => setAlgorithm(detail.selectedId)} />
             </CSFormField>
             <CSColumnLayout columns={2}>
-              <CSFormField label="Provider" description="来自模型管理(已配置的 API)">
+              <CSFormField label="Provider" description={t('scripts.review.provider_desc')}>
                 <CSSelect
                   selectedOption={apiOptions.find(o => o.value === apiId) || (apiId ? { value: apiId, label: apiId } : null)}
                   options={apiOptions}
-                  placeholder="选择供应商"
-                  empty="模型管理里还没有配置 API"
+                  placeholder={t('scripts.review.provider_placeholder')}
+                  empty={t('scripts.review.provider_empty')}
                   onChange={({ detail }) => onPickApi(detail.selectedOption.value)}
                 />
               </CSFormField>
-              <CSFormField label="模型" description="该 Provider 下已配置的模型">
+              <CSFormField label={t('scripts.review.model')} description={t('scripts.review.model_desc')}>
                 <CSSelect
                   selectedOption={modelOptions.find(o => o.value === model) || (model ? { value: model, label: model } : null)}
                   options={modelOptions}
-                  placeholder="选择模型"
-                  empty="该供应商暂无可选模型"
+                  placeholder={t('scripts.review.model_placeholder')}
+                  empty={t('scripts.review.model_empty')}
                   onChange={({ detail }) => setModel(detail.selectedOption.value)}
                 />
               </CSFormField>
               {algorithm === 'arc' && (
-                <CSFormField label="弧数目标" description="5–80,受后端钳制"><CSInput type="number" value={targetArcs} onChange={({ detail }) => setTargetArcs(detail.value)} /></CSFormField>
+                <CSFormField label={t('scripts.review.target_arcs')} description={t('scripts.review.target_arcs_desc')}><CSInput type="number" value={targetArcs} onChange={({ detail }) => setTargetArcs(detail.value)} /></CSFormField>
               )}
-              <CSFormField label="LLM 并发"><CSInput type="number" value={concurrency} onChange={({ detail }) => setConcurrency(detail.value)} /></CSFormField>
-              <CSFormField label="作者纪元(可选)" description="留空自动推断"><CSInput value={authorEra} onChange={({ detail }) => setAuthorEra(detail.value)} /></CSFormField>
-              <CSFormField label="成本硬上限 (USD)"><CSInput type="number" value={maxUsd} onChange={({ detail }) => setMaxUsd(detail.value)} /></CSFormField>
+              <CSFormField label={t('scripts.review.concurrency')}><CSInput type="number" value={concurrency} onChange={({ detail }) => setConcurrency(detail.value)} /></CSFormField>
+              <CSFormField label={t('scripts.review.author_era')} description={t('scripts.review.author_era_desc')}><CSInput value={authorEra} onChange={({ detail }) => setAuthorEra(detail.value)} /></CSFormField>
+              <CSFormField label={t('scripts.review.max_usd')}><CSInput type="number" value={maxUsd} onChange={({ detail }) => setMaxUsd(detail.value)} /></CSFormField>
             </CSColumnLayout>
 
             {estimate && estimate.ok !== false && (
-              <CSAlert type="info" header="成本预估">
+              <CSAlert type="info" header={t('scripts.review.cost_estimate')}>
                 <CSKeyValuePairs columns={4} items={[
-                  { label: '预计成本', value: estimate.est_usd != null ? `$${Number(estimate.est_usd).toFixed(3)}` : '—' },
-                  { label: '弧数', value: estimate.arcs != null ? String(estimate.arcs) : '—' },
-                  { label: '输入 tokens', value: estimate.est_input_tokens != null ? Number(estimate.est_input_tokens).toLocaleString() : '—' },
-                  { label: '输出 tokens', value: estimate.est_output_tokens != null ? Number(estimate.est_output_tokens).toLocaleString() : '—' },
+                  { label: t('scripts.import.est_cost'), value: estimate.est_usd != null ? `$${Number(estimate.est_usd).toFixed(3)}` : '—' },
+                  { label: t('scripts.review.arcs'), value: estimate.arcs != null ? String(estimate.arcs) : '—' },
+                  { label: t('scripts.review.input_tokens'), value: estimate.est_input_tokens != null ? Number(estimate.est_input_tokens).toLocaleString() : '—' },
+                  { label: t('scripts.review.output_tokens'), value: estimate.est_output_tokens != null ? Number(estimate.est_output_tokens).toLocaleString() : '—' },
                 ]} />
                 {estimate.note && <CSBox fontSize="body-s" color="text-body-secondary" padding={{ top: 'xs' }}>{estimate.note}</CSBox>}
               </CSAlert>
             )}
-            {estimate && estimate.ok === false && <CSAlert type="warning">{estimate.error || estimate.note || '无法预估'}</CSAlert>}
+            {estimate && estimate.ok === false && <CSAlert type="warning">{estimate.error || estimate.note || t('scripts.review.cannot_estimate')}</CSAlert>}
           </CSSpaceBetween>
         )}
 
         {(phase === 'running' || phase === 'done') && (
           <CSSpaceBetween size="m">
             <CSProgressBar value={overallTotal ? Math.round(overall / overallTotal * 100) : 0}
-              label="总进度" additionalInfo={`阶段 ${overall} / ${overallTotal}`}
+              label={t('scripts.review.overall_progress')} additionalInfo={t('scripts.review.stage_info', { cur: overall, total: overallTotal })}
               status={phase === 'done' ? 'success' : 'in-progress'} />
             <CSSpaceBetween size="xs">
               {stages.map((st) => (
                 <div key={st.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <CSStatusIndicator type={_stageIndicator(st.status)}>
-                    {st.label || _EXTRACT_STAGE_LABELS[st.id] || st.id}
+                    {st.label || (_EXTRACT_STAGE_LABEL_KEYS[st.id] ? t(_EXTRACT_STAGE_LABEL_KEYS[st.id]) : st.id)}
                   </CSStatusIndicator>
                   {st.stage_total ? <CSBox fontSize="body-s" color="text-body-secondary">{st.stage_progress || 0} / {st.stage_total}</CSBox> : null}
                 </div>
               ))}
-              {stages.length === 0 && <CSBox color="text-body-secondary" fontSize="body-s">正在调度任务…</CSBox>}
+              {stages.length === 0 && <CSBox color="text-body-secondary" fontSize="body-s">{t('scripts.review.dispatching')}</CSBox>}
             </CSSpaceBetween>
             {job && job.budget_estimate && job.budget_estimate.arcs ? (
-              <CSBox fontSize="body-s" color="text-body-secondary">切分为 {job.budget_estimate.arcs} 弧</CSBox>
+              <CSBox fontSize="body-s" color="text-body-secondary">{t('scripts.review.split_arcs', { n: job.budget_estimate.arcs })}</CSBox>
             ) : null}
             {usage && (
-              <CSAlert type={phase === 'done' ? 'success' : 'info'} header="用量">
+              <CSAlert type={phase === 'done' ? 'success' : 'info'} header={t('scripts.review.usage')}>
                 <CSKeyValuePairs columns={4} items={[
-                  { label: '花费', value: usage.usd != null ? `$${Number(usage.usd).toFixed(3)}` : '—' },
-                  { label: '输入 tokens', value: usage.input_tokens != null ? Number(usage.input_tokens).toLocaleString() : '—' },
-                  { label: '输出 tokens', value: usage.output_tokens != null ? Number(usage.output_tokens).toLocaleString() : '—' },
-                  { label: 'LLM 调用', value: usage.llm_calls != null ? String(usage.llm_calls) : '—' },
+                  { label: t('scripts.review.spent'), value: usage.usd != null ? `$${Number(usage.usd).toFixed(3)}` : '—' },
+                  { label: t('scripts.review.input_tokens'), value: usage.input_tokens != null ? Number(usage.input_tokens).toLocaleString() : '—' },
+                  { label: t('scripts.review.output_tokens'), value: usage.output_tokens != null ? Number(usage.output_tokens).toLocaleString() : '—' },
+                  { label: t('scripts.review.llm_calls'), value: usage.llm_calls != null ? String(usage.llm_calls) : '—' },
                 ]} />
               </CSAlert>
             )}
-            {phase === 'done' && <CSAlert type="success">提取完成,KB 已更新;剧本已标记「待复核」,可在「KB 复核」检查。</CSAlert>}
+            {phase === 'done' && <CSAlert type="success">{t('scripts.review.extract_complete')}</CSAlert>}
           </CSSpaceBetween>
         )}
       </CSSpaceBetween>

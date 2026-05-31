@@ -2,6 +2,7 @@
    8 个页面组件，全部通过 window.api.admin.* 从后端获取数据，禁止 mock/硬编码示例数据。 */
 
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import CSContainer from '@cloudscape-design/components/container';
 import CSHeader from '@cloudscape-design/components/header';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
@@ -30,6 +31,7 @@ function fmtTime(iso) {
    页面 1：AdminUsersPage — 用户管理
    ───────────────────────────────────────────────────────────────── */
 export function AdminUsersPage() {
+  const { t } = useTranslation();
   const [users, setUsers] = React.useState([]);
   const [total, setTotal] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
@@ -37,8 +39,8 @@ export function AdminUsersPage() {
   const [page, setPage] = React.useState(1);
   const limit = 20;
   const [search, setSearch] = React.useState('');
-  const [roleFilter, setRoleFilter] = React.useState({ value: '', label: '全部角色' });
-  const [statusFilter, setStatusFilter] = React.useState({ value: '', label: '全部状态' });
+  const [roleFilter, setRoleFilter] = React.useState({ value: '', label: t('admin_page.users.role_all') });
+  const [statusFilter, setStatusFilter] = React.useState({ value: '', label: t('admin_page.users.status_all') });
 
   // 确认 modal 状态
   const [confirmModal, setConfirmModal] = React.useState(null); // { action, user, title, body }
@@ -61,7 +63,7 @@ export function AdminUsersPage() {
         setTotal(res.total || (res.users || res.items || res || []).length);
       }
     } catch (e) {
-      if (!cancelled) setErr(e?.message || '加载失败');
+      if (!cancelled) setErr(e?.message || t('admin_page.common.load_fail'));
     } finally {
       if (!cancelled) setLoading(false);
     }
@@ -84,7 +86,7 @@ export function AdminUsersPage() {
           setTotal(res.total || (res.users || res.items || res || []).length);
         }
       } catch (e) {
-        if (!cancelled) setErr(e?.message || '加载失败');
+        if (!cancelled) setErr(e?.message || t('admin_page.common.load_fail'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -102,49 +104,49 @@ export function AdminUsersPage() {
       else if (action === 'force-logout') await window.api.admin.forceLogout(user.id);
       else if (action === 'set-admin') await window.api.admin.updateUser(user.id, { role: 'admin' });
       else if (action === 'set-user') await window.api.admin.updateUser(user.id, { role: 'user' });
-      window.toast?.('操作成功', { kind: 'ok' });
+      window.toast?.(t('admin_page.common.op_ok'), { kind: 'ok' });
       setConfirmModal(null);
       load(page);
     } catch (e) {
-      window.toast?.('操作失败: ' + (e?.message || '未知错误'), { kind: 'danger' });
+      window.toast?.(t('admin_page.common.op_fail') + ': ' + (e?.message || t('common.unknown')), { kind: 'danger' });
     } finally {
       setActionBusy(false);
     }
   }
 
   const roleOptions = [
-    { value: '', label: '全部角色' },
-    { value: 'admin', label: '管理员' },
-    { value: 'user', label: '普通用户' },
+    { value: '', label: t('admin_page.users.role_all') },
+    { value: 'admin', label: t('admin_page.users.role_admin') },
+    { value: 'user', label: t('admin_page.users.role_user') },
   ];
   const statusOptions = [
-    { value: '', label: '全部状态' },
-    { value: 'active', label: '活跃' },
-    { value: 'deactivated', label: '已停用' },
+    { value: '', label: t('admin_page.users.status_all') },
+    { value: 'active', label: t('admin_page.users.status_active') },
+    { value: 'deactivated', label: t('admin_page.users.status_deactivated') },
   ];
 
   return (
     <CSSpaceBetween size="l">
-      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      {err && <CSAlert type="error" header={t('admin_page.common.load_fail')}>{err}</CSAlert>}
       <CSContainer
         header={
           <CSHeader
             variant="h2"
-            description="用户列表、角色分配、封禁与会话管理"
+            description={t('admin_page.users.description')}
             actions={
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton iconName="refresh" onClick={() => load(page)} loading={loading}>刷新</CSButton>
+                <CSButton iconName="refresh" onClick={() => load(page)} loading={loading}>{t('admin_page.common.refresh')}</CSButton>
               </CSSpaceBetween>
             }
           >
-            用户管理
+            {t('admin_page.users.title')}
           </CSHeader>
         }
       >
         <CSSpaceBetween size="m">
           <CSSpaceBetween direction="horizontal" size="xs">
             <CSInput
-              placeholder="搜索用户名或显示名…"
+              placeholder={t('admin_page.users.search_placeholder')}
               value={search}
               onChange={({ detail }) => setSearch(detail.value)}
               onKeyDown={({ detail }) => { if (detail.key === 'Enter') { setPage(1); load(1); } }}
@@ -163,40 +165,40 @@ export function AdminUsersPage() {
           </CSSpaceBetween>
           <CSTable
             loading={loading}
-            loadingText="加载中…"
+            loadingText={t('admin_page.common.loading')}
             trackBy="id"
             items={users}
             empty={
               <CSBox textAlign="center" color="inherit">
-                <CSBox padding={{ bottom: 's' }} variant="p" color="inherit">暂无用户数据</CSBox>
+                <CSBox padding={{ bottom: 's' }} variant="p" color="inherit">{t('admin_page.users.empty')}</CSBox>
               </CSBox>
             }
             columnDefinitions={[
-              { id: 'username', header: '用户名', cell: (u) => u.username || u.name || '—' },
-              { id: 'display_name', header: '显示名', cell: (u) => u.display_name || '—' },
+              { id: 'username', header: t('admin_page.users.col_username'), cell: (u) => u.username || u.name || '—' },
+              { id: 'display_name', header: t('admin_page.users.col_display_name'), cell: (u) => u.display_name || '—' },
               {
-                id: 'role', header: '角色',
+                id: 'role', header: t('admin_page.users.col_role'),
                 cell: (u) => u.role === 'admin'
-                  ? <CSBadge color="severity-medium">管理员</CSBadge>
-                  : <CSBadge color="grey">普通用户</CSBadge>,
+                  ? <CSBadge color="severity-medium">{t('admin_page.users.role_admin')}</CSBadge>
+                  : <CSBadge color="grey">{t('admin_page.users.role_user')}</CSBadge>,
               },
               {
-                id: 'status', header: '状态',
+                id: 'status', header: t('admin_page.users.col_status'),
                 cell: (u) => u.deactivated_at
-                  ? <CSStatusIndicator type="stopped">已停用</CSStatusIndicator>
-                  : <CSStatusIndicator type="success">已激活</CSStatusIndicator>,
+                  ? <CSStatusIndicator type="stopped">{t('admin_page.users.status_stopped')}</CSStatusIndicator>
+                  : <CSStatusIndicator type="success">{t('admin_page.users.status_active_label')}</CSStatusIndicator>,
               },
-              { id: 'last_login', header: '最后登录', cell: (u) => fmtTime(u.last_login_at || u.last_login) },
+              { id: 'last_login', header: t('admin_page.users.col_last_login'), cell: (u) => fmtTime(u.last_login_at || u.last_login) },
               {
-                id: 'token_30d', header: '30天Token',
+                id: 'token_30d', header: t('admin_page.users.col_token_30d'),
                 cell: (u) => typeof u.token_usage_30d === 'number' ? u.token_usage_30d.toLocaleString() : '—',
               },
               {
-                id: 'sessions', header: '活跃Session',
+                id: 'sessions', header: t('admin_page.users.col_sessions'),
                 cell: (u) => typeof u.active_session_count === 'number' ? u.active_session_count : '—',
               },
               {
-                id: 'actions', header: '操作',
+                id: 'actions', header: t('admin_page.common.actions'),
                 cell: (u) => {
                   const isSelf = me && (me.id === u.id || me.username === u.username);
                   return (
@@ -207,48 +209,48 @@ export function AdminUsersPage() {
                           disabled={isSelf}
                           onClick={() => setConfirmModal({
                             action: 'deactivate', user: u,
-                            title: `停用 ${u.username}？`,
-                            body: '停用后该用户无法登录，但数据保留。可随时恢复。',
+                            title: t('admin_page.users.confirm_deactivate_title', { name: u.username }),
+                            body: t('admin_page.users.confirm_deactivate_body'),
                           })}
-                        >停用</CSButton>
+                        >{t('admin_page.users.deactivate')}</CSButton>
                       )}
                       {u.deactivated_at && (
                         <CSButton
                           variant="inline-link"
                           onClick={() => setConfirmModal({
                             action: 'reactivate', user: u,
-                            title: `恢复 ${u.username}？`,
-                            body: '恢复后该用户可正常登录。',
+                            title: t('admin_page.users.confirm_reactivate_title', { name: u.username }),
+                            body: t('admin_page.users.confirm_reactivate_body'),
                           })}
-                        >恢复</CSButton>
+                        >{t('admin_page.users.reactivate')}</CSButton>
                       )}
                       <CSButton
                         variant="inline-link"
                         onClick={() => setConfirmModal({
                           action: 'force-logout', user: u,
-                          title: `强制下线 ${u.username}？`,
-                          body: '该用户的所有 Session 将立即失效，需重新登录。',
+                          title: t('admin_page.users.confirm_force_logout_title', { name: u.username }),
+                          body: t('admin_page.users.confirm_force_logout_body'),
                         })}
-                      >强制下线</CSButton>
+                      >{t('admin_page.users.force_logout')}</CSButton>
                       {u.role === 'user' && !isSelf && (
                         <CSButton
                           variant="inline-link"
                           onClick={() => setConfirmModal({
                             action: 'set-admin', user: u,
-                            title: `提升 ${u.username} 为管理员？`,
-                            body: '该用户将获得系统管理权限。',
+                            title: t('admin_page.users.confirm_set_admin_title', { name: u.username }),
+                            body: t('admin_page.users.confirm_set_admin_body'),
                           })}
-                        >升为管理员</CSButton>
+                        >{t('admin_page.users.set_admin')}</CSButton>
                       )}
                       {u.role === 'admin' && !isSelf && (
                         <CSButton
                           variant="inline-link"
                           onClick={() => setConfirmModal({
                             action: 'set-user', user: u,
-                            title: `降级 ${u.username} 为普通用户？`,
-                            body: '该用户将失去系统管理权限。',
+                            title: t('admin_page.users.confirm_set_user_title', { name: u.username }),
+                            body: t('admin_page.users.confirm_set_user_body'),
                           })}
-                        >降为普通用户</CSButton>
+                        >{t('admin_page.users.set_user')}</CSButton>
                       )}
                     </CSSpaceBetween>
                   );
@@ -257,9 +259,9 @@ export function AdminUsersPage() {
             ]}
             pagination={
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton disabled={page <= 1} onClick={() => setPage(p => p - 1)}>上一页</CSButton>
-                <CSBox padding="xs">第 {page} 页，共约 {Math.ceil(total / limit)} 页</CSBox>
-                <CSButton disabled={users.length < limit} onClick={() => setPage(p => p + 1)}>下一页</CSButton>
+                <CSButton disabled={page <= 1} onClick={() => setPage(p => p - 1)}>{t('admin_page.common.prev_page')}</CSButton>
+                <CSBox padding="xs">{t('admin_page.common.page_info', { page, total: Math.ceil(total / limit) })}</CSBox>
+                <CSButton disabled={users.length < limit} onClick={() => setPage(p => p + 1)}>{t('admin_page.common.next_page')}</CSButton>
               </CSSpaceBetween>
             }
           />
@@ -274,8 +276,8 @@ export function AdminUsersPage() {
           footer={
             <CSBox float="right">
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton variant="link" disabled={actionBusy} onClick={() => setConfirmModal(null)}>取消</CSButton>
-                <CSButton variant="primary" loading={actionBusy} onClick={doAction}>确认</CSButton>
+                <CSButton variant="link" disabled={actionBusy} onClick={() => setConfirmModal(null)}>{t('admin_page.common.cancel')}</CSButton>
+                <CSButton variant="primary" loading={actionBusy} onClick={doAction}>{t('admin_page.common.confirm')}</CSButton>
               </CSSpaceBetween>
             </CSBox>
           }
@@ -291,16 +293,17 @@ export function AdminUsersPage() {
    页面 2：AdminGlobalUsagePage — 全局用量
    ───────────────────────────────────────────────────────────────── */
 export function AdminGlobalUsagePage() {
+  const { t } = useTranslation();
   const [data, setData] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
-  const [days, setDays] = React.useState({ value: '30', label: '最近 30 天' });
+  const [days, setDays] = React.useState({ value: '30', label: t('admin_page.usage.days_30') });
 
   const daysOptions = [
-    { value: '7', label: '最近 7 天' },
-    { value: '14', label: '最近 14 天' },
-    { value: '30', label: '最近 30 天' },
-    { value: '90', label: '最近 90 天' },
+    { value: '7', label: t('admin_page.usage.days_7') },
+    { value: '14', label: t('admin_page.usage.days_14') },
+    { value: '30', label: t('admin_page.usage.days_30') },
+    { value: '90', label: t('admin_page.usage.days_90') },
   ];
 
   React.useEffect(() => {
@@ -312,7 +315,7 @@ export function AdminGlobalUsagePage() {
         const res = await window.api.admin.globalUsage({ days: Number(days.value) });
         if (!cancelled) setData(res);
       } catch (e) {
-        if (!cancelled) setErr(e?.message || '加载失败');
+        if (!cancelled) setErr(e?.message || t('admin_page.common.load_fail'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -328,13 +331,13 @@ export function AdminGlobalUsagePage() {
 
   return (
     <CSSpaceBetween size="l">
-      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      {err && <CSAlert type="error" header={t('admin_page.common.load_fail')}>{err}</CSAlert>}
 
       <CSContainer
         header={
           <CSHeader
             variant="h2"
-            description="全平台 Token 消耗与成本总览"
+            description={t('admin_page.usage.description')}
             actions={
               <CSSelect
                 selectedOption={days}
@@ -343,41 +346,41 @@ export function AdminGlobalUsagePage() {
               />
             }
           >
-            全局用量
+            {t('admin_page.usage.title')}
           </CSHeader>
         }
       >
         {loading
-          ? <CSBox color="inherit">加载中…</CSBox>
+          ? <CSBox color="inherit">{t('admin_page.common.loading')}</CSBox>
           : !data
-            ? <CSBox color="inherit" textAlign="center">暂无用量数据</CSBox>
+            ? <CSBox color="inherit" textAlign="center">{t('admin_page.usage.empty')}</CSBox>
             : (
               <CSKeyValuePairs
                 columns={3}
                 items={[
-                  { label: '总请求数', value: (summary.total_requests || 0).toLocaleString() },
-                  { label: '总 Token（入+出）', value: (summary.total_tokens || 0).toLocaleString() },
-                  { label: '总成本 (USD)', value: typeof summary.total_cost === 'number' ? `$${summary.total_cost.toFixed(4)}` : '—' },
+                  { label: t('admin_page.usage.kv_requests'), value: (summary.total_requests || 0).toLocaleString() },
+                  { label: t('admin_page.usage.kv_tokens'), value: (summary.total_tokens || 0).toLocaleString() },
+                  { label: t('admin_page.usage.kv_cost'), value: typeof summary.total_cost === 'number' ? `$${summary.total_cost.toFixed(4)}` : '—' },
                 ]}
               />
             )
         }
       </CSContainer>
 
-      <CSContainer header={<CSHeader variant="h2">按用户</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('admin_page.usage.by_user')}</CSHeader>}>
         <CSTable
           loading={loading}
-          loadingText="加载中…"
+          loadingText={t('admin_page.common.loading')}
           trackBy="user_id"
           items={byUser}
-          empty={<CSBox textAlign="center" color="inherit">暂无数据</CSBox>}
+          empty={<CSBox textAlign="center" color="inherit">{t('admin_page.usage.empty_generic')}</CSBox>}
           columnDefinitions={[
-            { id: 'rank', header: '#', cell: (_, idx) => idx + 1, width: 50 },
-            { id: 'username', header: '用户名', cell: (u) => u.username || u.user_id || '—' },
-            { id: 'tokens', header: 'Token 消耗', cell: (u) => (u.tokens || 0).toLocaleString() },
-            { id: 'cost', header: '成本 (USD)', cell: (u) => typeof u.cost === 'number' ? `$${u.cost.toFixed(4)}` : '—' },
+            { id: 'rank', header: t('admin_page.usage.col_rank'), cell: (_, idx) => idx + 1, width: 50 },
+            { id: 'username', header: t('admin_page.usage.col_username'), cell: (u) => u.username || u.user_id || '—' },
+            { id: 'tokens', header: t('admin_page.usage.col_tokens'), cell: (u) => (u.tokens || 0).toLocaleString() },
+            { id: 'cost', header: t('admin_page.usage.col_cost'), cell: (u) => typeof u.cost === 'number' ? `$${u.cost.toFixed(4)}` : '—' },
             {
-              id: 'pct', header: '占比',
+              id: 'pct', header: t('admin_page.usage.col_pct'),
               cell: (u) => {
                 const pct = summary.total_tokens > 0 ? Math.round((u.tokens / summary.total_tokens) * 100) : 0;
                 return (
@@ -394,26 +397,26 @@ export function AdminGlobalUsagePage() {
         />
       </CSContainer>
 
-      <CSContainer header={<CSHeader variant="h2">按 API</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('admin_page.usage.by_api')}</CSHeader>}>
         <CSTable
           loading={loading}
-          loadingText="加载中…"
+          loadingText={t('admin_page.common.loading')}
           trackBy="api_id"
           items={byApi}
-          empty={<CSBox textAlign="center" color="inherit">暂无数据</CSBox>}
+          empty={<CSBox textAlign="center" color="inherit">{t('admin_page.usage.empty_generic')}</CSBox>}
           columnDefinitions={[
-            { id: 'api_id', header: 'API', cell: (a) => a.api_id || a.api || '—' },
-            { id: 'tokens', header: 'Token', cell: (a) => (a.tokens || 0).toLocaleString() },
-            { id: 'cost', header: '成本 (USD)', cell: (a) => typeof a.cost === 'number' ? `$${a.cost.toFixed(4)}` : '—' },
+            { id: 'api_id', header: t('admin_page.usage.col_api'), cell: (a) => a.api_id || a.api || '—' },
+            { id: 'tokens', header: t('admin_page.usage.col_token'), cell: (a) => (a.tokens || 0).toLocaleString() },
+            { id: 'cost', header: t('admin_page.usage.col_cost'), cell: (a) => typeof a.cost === 'number' ? `$${a.cost.toFixed(4)}` : '—' },
           ]}
         />
       </CSContainer>
 
-      <CSContainer header={<CSHeader variant="h2">按天趋势</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('admin_page.usage.by_day')}</CSHeader>}>
         {loading
-          ? <CSBox color="inherit">加载中…</CSBox>
+          ? <CSBox color="inherit">{t('admin_page.common.loading')}</CSBox>
           : byDay.length === 0
-            ? <CSBox textAlign="center" color="inherit">暂无数据</CSBox>
+            ? <CSBox textAlign="center" color="inherit">{t('admin_page.usage.empty_generic')}</CSBox>
             : (
               <CSSpaceBetween size="xs">
                 {byDay.map((d) => {
@@ -440,17 +443,18 @@ export function AdminGlobalUsagePage() {
    页面 3：AdminAuditPage — 审计日志
    ───────────────────────────────────────────────────────────────── */
 export function AdminAuditPage() {
+  const { t } = useTranslation();
   const [items, setItems] = React.useState([]);
   const [total, setTotal] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
   const [page, setPage] = React.useState(1);
   const limit = 50;
-  const [actionFilter, setActionFilter] = React.useState({ value: '', label: '全部操作' });
+  const [actionFilter, setActionFilter] = React.useState({ value: '', label: t('admin_page.audit.filter_all') });
   const [expandedDetail, setExpandedDetail] = React.useState(null);
 
   const actionOptions = [
-    { value: '', label: '全部操作' },
+    { value: '', label: t('admin_page.audit.filter_all') },
     { value: 'user', label: 'user.*' },
     { value: 'config', label: 'config.*' },
     { value: 'maintenance', label: 'maintenance.*' },
@@ -471,7 +475,7 @@ export function AdminAuditPage() {
           setTotal(res.total || (res.items || res.logs || res || []).length);
         }
       } catch (e) {
-        if (!cancelled) setErr(e?.message || '加载失败');
+        if (!cancelled) setErr(e?.message || t('admin_page.common.load_fail'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -481,12 +485,12 @@ export function AdminAuditPage() {
 
   return (
     <CSSpaceBetween size="l">
-      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      {err && <CSAlert type="error" header={t('admin_page.common.load_fail')}>{err}</CSAlert>}
       <CSContainer
         header={
           <CSHeader
             variant="h2"
-            description="管理员操作记录与安全事件"
+            description={t('admin_page.audit.description')}
             actions={
               <CSSelect
                 selectedOption={actionFilter}
@@ -495,27 +499,27 @@ export function AdminAuditPage() {
               />
             }
           >
-            审计日志
+            {t('admin_page.audit.title')}
           </CSHeader>
         }
       >
         <CSSpaceBetween size="m">
           <CSTable
             loading={loading}
-            loadingText="加载中…"
+            loadingText={t('admin_page.common.loading')}
             trackBy="id"
             items={items}
-            empty={<CSBox textAlign="center" color="inherit">暂无审计记录</CSBox>}
+            empty={<CSBox textAlign="center" color="inherit">{t('admin_page.audit.empty')}</CSBox>}
             columnDefinitions={[
-              { id: 'created_at', header: '时间', cell: (r) => fmtTime(r.created_at || r.timestamp) },
-              { id: 'operator', header: '操作者', cell: (r) => r.operator || r.user || r.username || '—' },
+              { id: 'created_at', header: t('admin_page.audit.col_time'), cell: (r) => fmtTime(r.created_at || r.timestamp) },
+              { id: 'operator', header: t('admin_page.audit.col_operator'), cell: (r) => r.operator || r.user || r.username || '—' },
               {
-                id: 'action_type', header: '操作类型',
+                id: 'action_type', header: t('admin_page.audit.col_action_type'),
                 cell: (r) => <CSBadge color="blue">{r.action_type || r.action || '—'}</CSBadge>,
               },
-              { id: 'target', header: '目标', cell: (r) => r.target || r.resource || '—' },
+              { id: 'target', header: t('admin_page.audit.col_target'), cell: (r) => r.target || r.resource || '—' },
               {
-                id: 'detail', header: '详情',
+                id: 'detail', header: t('admin_page.audit.col_detail'),
                 cell: (r) => {
                   const key = r.id || r.created_at;
                   const raw = r.detail || r.meta || r.extra;
@@ -525,20 +529,20 @@ export function AdminAuditPage() {
                   return (
                     <div>
                       <CSButton variant="inline-link" onClick={() => setExpandedDetail(isExpanded ? null : key)}>
-                        {isExpanded ? '收起' : '展开'}
+                        {isExpanded ? t('admin_page.common.collapse') : t('admin_page.common.expand')}
                       </CSButton>
                       {isExpanded && <pre style={{ fontSize: 11, maxWidth: 400, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '4px 0 0' }}>{str}</pre>}
                     </div>
                   );
                 },
               },
-              { id: 'ip', header: 'IP', cell: (r) => r.ip || r.ip_address || '—' },
+              { id: 'ip', header: t('admin_page.audit.col_ip'), cell: (r) => r.ip || r.ip_address || '—' },
             ]}
             pagination={
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton disabled={page <= 1} onClick={() => setPage(p => p - 1)}>上一页</CSButton>
-                <CSBox padding="xs">第 {page} 页</CSBox>
-                <CSButton disabled={items.length < limit} onClick={() => setPage(p => p + 1)}>下一页</CSButton>
+                <CSButton disabled={page <= 1} onClick={() => setPage(p => p - 1)}>{t('admin_page.common.prev_page')}</CSButton>
+                <CSBox padding="xs">{t('admin_page.common.page_simple', { page })}</CSBox>
+                <CSButton disabled={items.length < limit} onClick={() => setPage(p => p + 1)}>{t('admin_page.common.next_page')}</CSButton>
               </CSSpaceBetween>
             }
           />
@@ -552,6 +556,7 @@ export function AdminAuditPage() {
    页面 4：AdminHealthPage — 系统健康
    ───────────────────────────────────────────────────────────────── */
 export function AdminHealthPage() {
+  const { t } = useTranslation();
   const [data, setData] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
@@ -567,7 +572,7 @@ export function AdminHealthPage() {
       setData(res);
       setLastUpdate(new Date());
     } catch (e) {
-      setErr(e?.message || '加载失败');
+      setErr(e?.message || t('admin_page.common.load_fail'));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -594,54 +599,54 @@ export function AdminHealthPage() {
 
   return (
     <CSSpaceBetween size="l">
-      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      {err && <CSAlert type="error" header={t('admin_page.common.load_fail')}>{err}</CSAlert>}
       <CSContainer
         header={
           <CSHeader
             variant="h2"
-            description="数据库、内存、磁盘与进程状态（每 30 秒自动刷新）"
+            description={t('admin_page.health.description')}
             actions={
               <CSSpaceBetween direction="horizontal" size="xs">
                 {lastUpdate && (
                   <CSBox color="text-body-secondary" variant="small">
-                    最后更新：{lastUpdate.toLocaleTimeString('zh-CN', { hour12: false })}
+                    {t('admin_page.health.last_update', { time: lastUpdate.toLocaleTimeString('zh-CN', { hour12: false }) })}
                   </CSBox>
                 )}
-                <CSButton iconName="refresh" loading={refreshing} onClick={() => fetchHealth(true)}>刷新</CSButton>
+                <CSButton iconName="refresh" loading={refreshing} onClick={() => fetchHealth(true)}>{t('admin_page.common.refresh')}</CSButton>
               </CSSpaceBetween>
             }
           >
-            系统健康
+            {t('admin_page.health.title')}
           </CSHeader>
         }
       >
         {loading && !data
-          ? <CSBox color="inherit">加载中…</CSBox>
+          ? <CSBox color="inherit">{t('admin_page.common.loading')}</CSBox>
           : !data
-            ? <CSBox textAlign="center" color="inherit">暂无健康数据</CSBox>
+            ? <CSBox textAlign="center" color="inherit">{t('admin_page.health.empty')}</CSBox>
             : (
               <CSColumnLayout columns={2} variant="text-grid">
                 <div>
                   <CSSpaceBetween size="s">
                     <div>
-                      <strong>数据库</strong>
+                      <strong>{t('admin_page.health.db_title')}</strong>
                       <div>
                         <CSStatusIndicator type={db.ok === false ? 'error' : 'success'}>
-                          {db.ok === false ? '连接失败' : '连通正常'}
+                          {db.ok === false ? t('admin_page.health.db_fail') : t('admin_page.health.db_ok')}
                         </CSStatusIndicator>
                         {typeof db.latency_ms === 'number' && (
                           <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--color-text-body-secondary)' }}>
-                            延迟 {db.latency_ms} ms
+                            {t('admin_page.health.db_latency', { ms: db.latency_ms })}
                           </span>
                         )}
                       </div>
                     </div>
                     <div>
-                      <strong>内存</strong>
+                      <strong>{t('admin_page.health.mem_title')}</strong>
                       <div>
                         {typeof mem.rss_mb === 'number'
                           ? <CSStatusIndicator type="success">RSS {mem.rss_mb} MB</CSStatusIndicator>
-                          : <CSStatusIndicator type="pending">无数据</CSStatusIndicator>
+                          : <CSStatusIndicator type="pending">{t('admin_page.health.mem_no_data')}</CSStatusIndicator>
                         }
                       </div>
                     </div>
@@ -650,25 +655,25 @@ export function AdminHealthPage() {
                 <div>
                   <CSSpaceBetween size="s">
                     <div>
-                      <strong>磁盘</strong>
+                      <strong>{t('admin_page.health.disk_title')}</strong>
                       <div>
                         {diskPct !== null
                           ? <CSStatusIndicator type={diskPct > 90 ? 'warning' : 'success'}>
-                              已用 {diskPct}%
+                              {t('admin_page.health.disk_used', { pct: diskPct })}
                             </CSStatusIndicator>
-                          : <CSStatusIndicator type="pending">无数据</CSStatusIndicator>
+                          : <CSStatusIndicator type="pending">{t('admin_page.health.disk_no_data')}</CSStatusIndicator>
                         }
                       </div>
                     </div>
                     <div>
-                      <strong>进程</strong>
+                      <strong>{t('admin_page.health.proc_title')}</strong>
                       <div>
                         {proc.pid
                           ? <CSStatusIndicator type="success">
                               PID {proc.pid}
-                              {proc.uptime_s && <span style={{ marginLeft: 8, fontSize: 12 }}>运行 {Math.round(proc.uptime_s / 60)} 分钟</span>}
+                              {proc.uptime_s && <span style={{ marginLeft: 8, fontSize: 12 }}>{t('admin_page.health.proc_uptime', { min: Math.round(proc.uptime_s / 60) })}</span>}
                             </CSStatusIndicator>
-                          : <CSStatusIndicator type="pending">无数据</CSStatusIndicator>
+                          : <CSStatusIndicator type="pending">{t('admin_page.health.proc_no_data')}</CSStatusIndicator>
                         }
                       </div>
                     </div>
@@ -686,20 +691,21 @@ export function AdminHealthPage() {
    页面 5：AdminLogsPage — 系统日志
    ───────────────────────────────────────────────────────────────── */
 export function AdminLogsPage() {
+  const { t } = useTranslation();
   const [lines, setLines] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
-  const [linesCount, setLinesCount] = React.useState({ value: '100', label: '100 行' });
-  const [levelFilter, setLevelFilter] = React.useState({ value: '', label: '全部级别' });
+  const [linesCount, setLinesCount] = React.useState({ value: '100', label: t('admin_page.logs.lines_100') });
+  const [levelFilter, setLevelFilter] = React.useState({ value: '', label: t('admin_page.logs.level_all') });
 
   const linesOptions = [
-    { value: '50', label: '50 行' },
-    { value: '100', label: '100 行' },
-    { value: '200', label: '200 行' },
-    { value: '500', label: '500 行' },
+    { value: '50', label: t('admin_page.logs.lines_50') },
+    { value: '100', label: t('admin_page.logs.lines_100') },
+    { value: '200', label: t('admin_page.logs.lines_200') },
+    { value: '500', label: t('admin_page.logs.lines_500') },
   ];
   const levelOptions = [
-    { value: '', label: '全部级别' },
+    { value: '', label: t('admin_page.logs.level_all') },
     { value: 'ERROR', label: 'ERROR' },
     { value: 'WARN', label: 'WARN' },
     { value: 'INFO', label: 'INFO' },
@@ -712,7 +718,7 @@ export function AdminLogsPage() {
       const res = await window.api.admin.logs({ lines: Number(linesCount.value) });
       setLines(res.lines || res || []);
     } catch (e) {
-      setErr(e?.message || '加载失败');
+      setErr(e?.message || t('admin_page.common.load_fail'));
     } finally {
       setLoading(false);
     }
@@ -727,7 +733,7 @@ export function AdminLogsPage() {
         const res = await window.api.admin.logs({ lines: Number(linesCount.value) });
         if (!cancelled) setLines(res.lines || res || []);
       } catch (e) {
-        if (!cancelled) setErr(e?.message || '加载失败');
+        if (!cancelled) setErr(e?.message || t('admin_page.common.load_fail'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -762,12 +768,12 @@ export function AdminLogsPage() {
 
   return (
     <CSSpaceBetween size="l">
-      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      {err && <CSAlert type="error" header={t('admin_page.common.load_fail')}>{err}</CSAlert>}
       <CSContainer
         header={
           <CSHeader
             variant="h2"
-            description="运行时日志查看与下载"
+            description={t('admin_page.logs.description')}
             actions={
               <CSSpaceBetween direction="horizontal" size="xs">
                 <CSSelect
@@ -780,19 +786,19 @@ export function AdminLogsPage() {
                   options={levelOptions}
                   onChange={({ detail }) => setLevelFilter(detail.selectedOption)}
                 />
-                <CSButton iconName="download" onClick={handleDownload} disabled={!lines.length}>下载</CSButton>
-                <CSButton iconName="refresh" onClick={fetchLogs} loading={loading}>刷新</CSButton>
+                <CSButton iconName="download" onClick={handleDownload} disabled={!lines.length}>{t('admin_page.common.download')}</CSButton>
+                <CSButton iconName="refresh" onClick={fetchLogs} loading={loading}>{t('admin_page.common.refresh')}</CSButton>
               </CSSpaceBetween>
             }
           >
-            系统日志
+            {t('admin_page.logs.title')}
           </CSHeader>
         }
       >
         {loading
-          ? <CSBox color="inherit">加载中…</CSBox>
+          ? <CSBox color="inherit">{t('admin_page.common.loading')}</CSBox>
           : filtered.length === 0
-            ? <CSBox textAlign="center" color="inherit">暂无日志数据</CSBox>
+            ? <CSBox textAlign="center" color="inherit">{t('admin_page.logs.empty')}</CSBox>
             : (
               <pre style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6, height: 500, overflowY: 'auto', margin: 0, padding: 8, background: 'var(--color-background-container-content, #fff)', borderRadius: 4 }}>
                 {filtered.map((line, i) => {
@@ -816,6 +822,7 @@ export function AdminLogsPage() {
    页面 6：AdminRegistrationPage — 注册与邀请
    ───────────────────────────────────────────────────────────────── */
 export function AdminRegistrationPage() {
+  const { t } = useTranslation();
   const [regConfig, setRegConfig] = React.useState(null);
   const [inviteCodes, setInviteCodes] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
@@ -828,9 +835,9 @@ export function AdminRegistrationPage() {
   const [deleting, setDeleting] = React.useState(false);
 
   const modeOptions = [
-    { value: 'open', label: '开放注册' },
-    { value: 'invite', label: '仅邀请' },
-    { value: 'closed', label: '关闭注册' },
+    { value: 'open', label: t('admin_page.registration.mode_open') },
+    { value: 'invite', label: t('admin_page.registration.mode_invite') },
+    { value: 'closed', label: t('admin_page.registration.mode_closed') },
   ];
 
   React.useEffect(() => {
@@ -848,7 +855,7 @@ export function AdminRegistrationPage() {
           setInviteCodes(codes.items || codes.codes || codes || []);
         }
       } catch (e) {
-        if (!cancelled) setErr(e?.message || '加载失败');
+        if (!cancelled) setErr(e?.message || t('admin_page.common.load_fail'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -862,9 +869,9 @@ export function AdminRegistrationPage() {
       const next = { ...regConfig, ...patch };
       await window.api.admin.saveRegistration(next);
       setRegConfig(next);
-      window.toast?.('注册配置已保存', { kind: 'ok' });
+      window.toast?.(t('admin_page.registration.save_ok'), { kind: 'ok' });
     } catch (e) {
-      window.toast?.('保存失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.registration.save_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setSavingReg(false);
     }
@@ -878,12 +885,12 @@ export function AdminRegistrationPage() {
         expires_days: Number(createForm.expires_days),
         note: createForm.note || undefined,
       });
-      window.toast?.('邀请码已生成', { kind: 'ok' });
+      window.toast?.(t('admin_page.registration.create_ok'), { kind: 'ok' });
       setCreateModal(false);
       const codes = await window.api.admin.inviteCodes();
       setInviteCodes(codes.items || codes.codes || codes || []);
     } catch (e) {
-      window.toast?.('生成失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.registration.create_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setCreating(false);
     }
@@ -893,12 +900,12 @@ export function AdminRegistrationPage() {
     setDeleting(true);
     try {
       await window.api.admin.deleteInviteCode(code);
-      window.toast?.('邀请码已删除', { kind: 'ok' });
+      window.toast?.(t('admin_page.registration.delete_ok'), { kind: 'ok' });
       setDeleteTarget(null);
       const codes = await window.api.admin.inviteCodes();
       setInviteCodes(codes.items || codes.codes || codes || []);
     } catch (e) {
-      window.toast?.('删除失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.registration.delete_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setDeleting(false);
     }
@@ -906,16 +913,16 @@ export function AdminRegistrationPage() {
 
   return (
     <CSSpaceBetween size="l">
-      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      {err && <CSAlert type="error" header={t('admin_page.common.load_fail')}>{err}</CSAlert>}
 
-      <CSContainer header={<CSHeader variant="h2">注册配置</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('admin_page.registration.config_title')}</CSHeader>}>
         {loading
-          ? <CSBox color="inherit">加载中…</CSBox>
+          ? <CSBox color="inherit">{t('admin_page.common.loading')}</CSBox>
           : !regConfig
-            ? <CSBox textAlign="center" color="inherit">暂无配置数据</CSBox>
+            ? <CSBox textAlign="center" color="inherit">{t('admin_page.registration.empty')}</CSBox>
             : (
               <CSSpaceBetween size="m">
-                <CSFormField label="注册模式">
+                <CSFormField label={t('admin_page.registration.field_mode')}>
                   <CSSpaceBetween direction="horizontal" size="xs">
                     {modeOptions.map((opt) => (
                       <CSButton
@@ -929,20 +936,20 @@ export function AdminRegistrationPage() {
                     ))}
                   </CSSpaceBetween>
                 </CSFormField>
-                <CSFormField label="邮箱验证">
+                <CSFormField label={t('admin_page.registration.field_email_verify')}>
                   <CSToggle
                     checked={!!regConfig.email_verification}
                     onChange={({ detail }) => saveReg({ email_verification: detail.checked })}
                   >
-                    {regConfig.email_verification ? '已开启' : '已关闭'}
+                    {regConfig.email_verification ? t('admin_page.common.toggle_on') : t('admin_page.common.toggle_off')}
                   </CSToggle>
                 </CSFormField>
-                <CSFormField label="自动审批">
+                <CSFormField label={t('admin_page.registration.field_auto_approve')}>
                   <CSToggle
                     checked={!!regConfig.auto_approve}
                     onChange={({ detail }) => saveReg({ auto_approve: detail.checked })}
                   >
-                    {regConfig.auto_approve ? '已开启' : '已关闭'}
+                    {regConfig.auto_approve ? t('admin_page.common.toggle_on') : t('admin_page.common.toggle_off')}
                   </CSToggle>
                 </CSFormField>
               </CSSpaceBetween>
@@ -954,38 +961,38 @@ export function AdminRegistrationPage() {
         header={
           <CSHeader
             variant="h2"
-            description="管理邀请码，控制受邀注册"
+            description={t('admin_page.registration.invite_description')}
             actions={
-              <CSButton variant="primary" onClick={() => setCreateModal(true)}>生成邀请码</CSButton>
+              <CSButton variant="primary" onClick={() => setCreateModal(true)}>{t('admin_page.registration.invite_create_btn')}</CSButton>
             }
           >
-            邀请码管理
+            {t('admin_page.registration.invite_title')}
           </CSHeader>
         }
       >
         <CSTable
           loading={loading}
-          loadingText="加载中…"
+          loadingText={t('admin_page.common.loading')}
           trackBy="code"
           items={inviteCodes}
-          empty={<CSBox textAlign="center" color="inherit">暂无邀请码</CSBox>}
+          empty={<CSBox textAlign="center" color="inherit">{t('admin_page.registration.invite_empty')}</CSBox>}
           columnDefinitions={[
-            { id: 'code', header: '邀请码', cell: (c) => <code>{c.code}</code> },
-            { id: 'note', header: '备注', cell: (c) => c.note || '—' },
+            { id: 'code', header: t('admin_page.registration.col_code'), cell: (c) => <code>{c.code}</code> },
+            { id: 'note', header: t('admin_page.registration.col_note'), cell: (c) => c.note || '—' },
             {
-              id: 'status', header: '状态',
+              id: 'status', header: t('admin_page.registration.col_status'),
               cell: (c) => c.used_by
-                ? <CSBadge color="grey">已使用 @{c.used_by}</CSBadge>
+                ? <CSBadge color="grey">{t('admin_page.registration.status_used', { user: c.used_by })}</CSBadge>
                 : c.expired_at && new Date(c.expired_at) < new Date()
-                  ? <CSBadge color="red">已过期</CSBadge>
-                  : <CSBadge color="green">可用</CSBadge>,
+                  ? <CSBadge color="red">{t('admin_page.registration.status_expired')}</CSBadge>
+                  : <CSBadge color="green">{t('admin_page.registration.status_available')}</CSBadge>,
             },
-            { id: 'expires', header: '过期时间', cell: (c) => fmtTime(c.expires_at || c.expired_at) },
-            { id: 'created', header: '创建时间', cell: (c) => fmtTime(c.created_at) },
+            { id: 'expires', header: t('admin_page.registration.col_expires'), cell: (c) => fmtTime(c.expires_at || c.expired_at) },
+            { id: 'created', header: t('admin_page.common.created_at'), cell: (c) => fmtTime(c.created_at) },
             {
-              id: 'actions', header: '操作',
+              id: 'actions', header: t('admin_page.common.actions'),
               cell: (c) => !c.used_by
-                ? <CSButton variant="inline-link" onClick={() => setDeleteTarget(c.code)}>删除</CSButton>
+                ? <CSButton variant="inline-link" onClick={() => setDeleteTarget(c.code)}>{t('common.delete')}</CSButton>
                 : null,
             },
           ]}
@@ -996,36 +1003,36 @@ export function AdminRegistrationPage() {
         <CSModal
           visible
           onDismiss={() => !creating && setCreateModal(false)}
-          header="生成邀请码"
+          header={t('admin_page.registration.create_modal_title')}
           footer={
             <CSBox float="right">
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton variant="link" disabled={creating} onClick={() => setCreateModal(false)}>取消</CSButton>
-                <CSButton variant="primary" loading={creating} onClick={handleCreateCodes}>生成</CSButton>
+                <CSButton variant="link" disabled={creating} onClick={() => setCreateModal(false)}>{t('admin_page.common.cancel')}</CSButton>
+                <CSButton variant="primary" loading={creating} onClick={handleCreateCodes}>{t('admin_page.registration.create_btn')}</CSButton>
               </CSSpaceBetween>
             </CSBox>
           }
         >
           <CSSpaceBetween size="m">
-            <CSFormField label="数量（1-10）">
+            <CSFormField label={t('admin_page.registration.create_field_count')}>
               <CSInput
                 type="number"
                 value={createForm.count}
                 onChange={({ detail }) => setCreateForm((f) => ({ ...f, count: detail.value }))}
               />
             </CSFormField>
-            <CSFormField label="过期天数">
+            <CSFormField label={t('admin_page.registration.create_field_expires')}>
               <CSSelect
-                selectedOption={{ value: createForm.expires_days, label: `${createForm.expires_days} 天` }}
-                options={[7, 14, 30, 90, 180, 365].map((d) => ({ value: String(d), label: `${d} 天` }))}
+                selectedOption={{ value: createForm.expires_days, label: t('admin_page.registration.expires_days', { d: createForm.expires_days }) }}
+                options={[7, 14, 30, 90, 180, 365].map((d) => ({ value: String(d), label: t('admin_page.registration.expires_days', { d }) }))}
                 onChange={({ detail }) => setCreateForm((f) => ({ ...f, expires_days: detail.selectedOption.value }))}
               />
             </CSFormField>
-            <CSFormField label="备注（可选）">
+            <CSFormField label={t('admin_page.registration.create_field_note')}>
               <CSInput
                 value={createForm.note}
                 onChange={({ detail }) => setCreateForm((f) => ({ ...f, note: detail.value }))}
-                placeholder="说明用途…"
+                placeholder={t('admin_page.registration.create_note_placeholder')}
               />
             </CSFormField>
           </CSSpaceBetween>
@@ -1036,17 +1043,17 @@ export function AdminRegistrationPage() {
         <CSModal
           visible
           onDismiss={() => !deleting && setDeleteTarget(null)}
-          header="删除邀请码"
+          header={t('admin_page.registration.delete_modal_title')}
           footer={
             <CSBox float="right">
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton variant="link" disabled={deleting} onClick={() => setDeleteTarget(null)}>取消</CSButton>
-                <CSButton variant="primary" loading={deleting} onClick={() => handleDelete(deleteTarget)}>删除</CSButton>
+                <CSButton variant="link" disabled={deleting} onClick={() => setDeleteTarget(null)}>{t('admin_page.common.cancel')}</CSButton>
+                <CSButton variant="primary" loading={deleting} onClick={() => handleDelete(deleteTarget)}>{t('admin_page.registration.delete_btn')}</CSButton>
               </CSSpaceBetween>
             </CSBox>
           }
         >
-          <CSBox>确定删除邀请码 <code>{deleteTarget}</code> 吗？删除后无法撤销。</CSBox>
+          <CSBox>{t('admin_page.registration.delete_confirm_body', { code: deleteTarget })}</CSBox>
         </CSModal>
       )}
     </CSSpaceBetween>
@@ -1057,6 +1064,7 @@ export function AdminRegistrationPage() {
    页面 7：AdminSecurityPage — 安全配置
    ───────────────────────────────────────────────────────────────── */
 export function AdminSecurityPage() {
+  const { t } = useTranslation();
   const [config, setConfig] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
@@ -1075,7 +1083,7 @@ export function AdminSecurityPage() {
           setDraft(JSON.parse(JSON.stringify(res)));
         }
       } catch (e) {
-        if (!cancelled) setErr(e?.message || '加载失败');
+        if (!cancelled) setErr(e?.message || t('admin_page.common.load_fail'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -1104,9 +1112,9 @@ export function AdminSecurityPage() {
     try {
       await window.api.admin.saveSecurityConfig(draft);
       setConfig(draft);
-      window.toast?.('安全配置已保存', { kind: 'ok' });
+      window.toast?.(t('admin_page.security.save_ok'), { kind: 'ok' });
     } catch (e) {
-      window.toast?.('保存失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.security.save_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setSaving(false);
     }
@@ -1116,32 +1124,32 @@ export function AdminSecurityPage() {
 
   return (
     <CSSpaceBetween size="l">
-      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      {err && <CSAlert type="error" header={t('admin_page.common.load_fail')}>{err}</CSAlert>}
       {loading
-        ? <CSBox key="loading" color="inherit">加载中…</CSBox>
+        ? <CSBox key="loading" color="inherit">{t('admin_page.common.loading')}</CSBox>
         : !draft
-          ? <CSBox key="empty" textAlign="center" color="inherit">暂无配置数据</CSBox>
+          ? <CSBox key="empty" textAlign="center" color="inherit">{t('admin_page.security.empty')}</CSBox>
           : null}
       {!loading && draft && (
-        <CSContainer key="rate-limit" header={<CSHeader variant="h2">速率限制</CSHeader>}>
-          <CSAlert type="info">速率限制参数修改后需重启服务才能生效。</CSAlert>
+        <CSContainer key="rate-limit" header={<CSHeader variant="h2">{t('admin_page.security.rate_limit_title')}</CSHeader>}>
+          <CSAlert type="info">{t('admin_page.security.rate_limit_notice')}</CSAlert>
           <CSSpaceBetween size="m">
             <CSColumnLayout columns={3} variant="text-grid">
-              <CSFormField label="每 IP 最大请求数">
+              <CSFormField label={t('admin_page.security.field_max_per_ip')}>
                 <CSInput
                   type="number"
                   value={String(d.rate_limit?.max_per_ip ?? '')}
                   onChange={({ detail }) => upd('rate_limit.max_per_ip', Number(detail.value))}
                 />
               </CSFormField>
-              <CSFormField label="每用户最大请求数">
+              <CSFormField label={t('admin_page.security.field_max_per_user')}>
                 <CSInput
                   type="number"
                   value={String(d.rate_limit?.max_per_user ?? '')}
                   onChange={({ detail }) => upd('rate_limit.max_per_user', Number(detail.value))}
                 />
               </CSFormField>
-              <CSFormField label="时间窗口（分钟）">
+              <CSFormField label={t('admin_page.security.field_window_min')}>
                 <CSInput
                   type="number"
                   value={String(d.rate_limit?.window_minutes ?? '')}
@@ -1153,22 +1161,22 @@ export function AdminSecurityPage() {
         </CSContainer>
       )}
       {!loading && draft && (
-        <CSContainer key="password" header={<CSHeader variant="h2">密码策略</CSHeader>}>
+        <CSContainer key="password" header={<CSHeader variant="h2">{t('admin_page.security.password_title')}</CSHeader>}>
           <CSSpaceBetween size="m">
             <CSColumnLayout columns={2} variant="text-grid">
-              <CSFormField label="最小长度">
+              <CSFormField label={t('admin_page.security.field_min_length')}>
                 <CSInput
                   type="number"
                   value={String(d.password?.min_length ?? '')}
                   onChange={({ detail }) => upd('password.min_length', Number(detail.value))}
                 />
               </CSFormField>
-              <CSFormField label="需要数字">
+              <CSFormField label={t('admin_page.security.field_require_digit')}>
                 <CSToggle
                   checked={!!d.password?.require_digit}
                   onChange={({ detail }) => upd('password.require_digit', detail.checked)}
                 >
-                  {d.password?.require_digit ? '是' : '否'}
+                  {d.password?.require_digit ? t('admin_page.security.digit_yes') : t('admin_page.security.digit_no')}
                 </CSToggle>
               </CSFormField>
             </CSColumnLayout>
@@ -1176,8 +1184,8 @@ export function AdminSecurityPage() {
         </CSContainer>
       )}
       {!loading && draft && (
-        <CSContainer key="session" header={<CSHeader variant="h2">Session 策略</CSHeader>}>
-          <CSFormField label="Session 超时（天）">
+        <CSContainer key="session" header={<CSHeader variant="h2">{t('admin_page.security.session_title')}</CSHeader>}>
+          <CSFormField label={t('admin_page.security.field_session_timeout')}>
             <CSInput
               type="number"
               value={String(d.session?.timeout_days ?? '')}
@@ -1188,16 +1196,16 @@ export function AdminSecurityPage() {
         </CSContainer>
       )}
       {!loading && draft && (
-        <CSContainer key="lockout" header={<CSHeader variant="h2">登录锁定策略</CSHeader>}>
+        <CSContainer key="lockout" header={<CSHeader variant="h2">{t('admin_page.security.lockout_title')}</CSHeader>}>
           <CSColumnLayout columns={2} variant="text-grid">
-            <CSFormField label="失败次数阈值">
+            <CSFormField label={t('admin_page.security.field_max_attempts')}>
               <CSInput
                 type="number"
                 value={String(d.lockout?.max_attempts ?? '')}
                 onChange={({ detail }) => upd('lockout.max_attempts', Number(detail.value))}
               />
             </CSFormField>
-            <CSFormField label="锁定时长（分钟）">
+            <CSFormField label={t('admin_page.security.field_lockout_minutes')}>
               <CSInput
                 type="number"
                 value={String(d.lockout?.lockout_minutes ?? '')}
@@ -1208,8 +1216,8 @@ export function AdminSecurityPage() {
         </CSContainer>
       )}
       {!loading && draft && (
-        <CSContainer key="ip-blocklist" header={<CSHeader variant="h2">IP 黑名单</CSHeader>}>
-          <CSFormField label="每行一个 IP 或 CIDR（如 192.168.1.0/24）">
+        <CSContainer key="ip-blocklist" header={<CSHeader variant="h2">{t('admin_page.security.ip_blocklist_title')}</CSHeader>}>
+          <CSFormField label={t('admin_page.security.field_ip_blocklist')}>
             <CSTextarea
               value={Array.isArray(d.ip_blocklist) ? d.ip_blocklist.join('\n') : (d.ip_blocklist || '')}
               onChange={({ detail }) => upd('ip_blocklist', detail.value.split('\n').map((s) => s.trim()).filter(Boolean))}
@@ -1221,7 +1229,7 @@ export function AdminSecurityPage() {
       )}
       {!loading && draft && (
         <CSBox key="save-btn" float="right">
-          <CSButton variant="primary" loading={saving} onClick={save}>保存安全配置</CSButton>
+          <CSButton variant="primary" loading={saving} onClick={save}>{t('admin_page.security.save_btn')}</CSButton>
         </CSBox>
       )}
     </CSSpaceBetween>
@@ -1232,10 +1240,11 @@ export function AdminSecurityPage() {
    页面 9：AdminDmcaTakedownsPage — DMCA 下架队列
    ───────────────────────────────────────────────────────────────── */
 export function AdminDmcaTakedownsPage() {
+  const { t } = useTranslation();
   const [items, setItems] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
-  const [statusFilter, setStatusFilter] = React.useState({ value: 'open', label: '待处理' });
+  const [statusFilter, setStatusFilter] = React.useState({ value: 'open', label: t('admin_page.dmca_takedowns.status_open') });
   const [actionModal, setActionModal] = React.useState(null); // { item, action }
   const [actionReason, setActionReason] = React.useState('');
   const [actionBusy, setActionBusy] = React.useState(false);
@@ -1249,12 +1258,12 @@ export function AdminDmcaTakedownsPage() {
   const [counterBusy, setCounterBusy] = React.useState(false);
 
   const statusOptions = [
-    { value: 'open', label: '待处理' },
-    { value: 'counter_received', label: '已收反通知' },
-    { value: 'closed', label: '已下架' },
-    { value: 'restored', label: '已恢复' },
-    { value: 'rejected', label: '已拒绝' },
-    { value: 'all', label: '全部' },
+    { value: 'open', label: t('admin_page.dmca_takedowns.status_open') },
+    { value: 'counter_received', label: t('admin_page.dmca_takedowns.status_counter') },
+    { value: 'closed', label: t('admin_page.dmca_takedowns.status_closed') },
+    { value: 'restored', label: t('admin_page.dmca_takedowns.status_restored') },
+    { value: 'rejected', label: t('admin_page.dmca_takedowns.status_rejected') },
+    { value: 'all', label: t('admin_page.dmca_takedowns.status_all') },
   ];
 
   const load = React.useCallback(async () => {
@@ -1264,7 +1273,7 @@ export function AdminDmcaTakedownsPage() {
       const res = await window.api.admin.dmcaTakedowns({ status: statusFilter.value });
       setItems(res.takedowns || res || []);
     } catch (e) {
-      setErr(e?.message || '加载失败');
+      setErr(e?.message || t('admin_page.common.load_fail'));
     } finally {
       setLoading(false);
     }
@@ -1279,12 +1288,12 @@ export function AdminDmcaTakedownsPage() {
       await window.api.admin.dmcaTakedownAction(actionModal.item.id, {
         action: actionModal.action, reason: actionReason,
       });
-      window.toast?.('操作成功', { kind: 'ok' });
+      window.toast?.(t('admin_page.dmca_takedowns.op_ok'), { kind: 'ok' });
       setActionModal(null);
       setActionReason('');
       load();
     } catch (e) {
-      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.dmca_takedowns.op_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setActionBusy(false);
     }
@@ -1294,12 +1303,12 @@ export function AdminDmcaTakedownsPage() {
     setCreating(true);
     try {
       await window.api.admin.dmcaTakedownCreate(createForm);
-      window.toast?.('通知已录入', { kind: 'ok' });
+      window.toast?.(t('admin_page.dmca_takedowns.create_ok'), { kind: 'ok' });
       setCreateModal(false);
       setCreateForm({ complainant_name: '', complainant_email: '', infringing_url: '', original_work_desc: '' });
       load();
     } catch (e) {
-      window.toast?.('录入失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.dmca_takedowns.create_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setCreating(false);
     }
@@ -1310,12 +1319,12 @@ export function AdminDmcaTakedownsPage() {
     setCounterBusy(true);
     try {
       await window.api.admin.dmcaTakedownCounter(counterModal.id, { notes: counterNotes });
-      window.toast?.('反通知已录入，10 天计时开始', { kind: 'ok' });
+      window.toast?.(t('admin_page.dmca_takedowns.counter_ok'), { kind: 'ok' });
       setCounterModal(null);
       setCounterNotes('');
       load();
     } catch (e) {
-      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.common.op_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setCounterBusy(false);
     }
@@ -1323,11 +1332,11 @@ export function AdminDmcaTakedownsPage() {
 
   function statusBadge(s) {
     const map = {
-      open: ['red', '待处理'],
-      counter_received: ['blue', '已收反通知'],
-      closed: ['grey', '已下架'],
-      restored: ['green', '已恢复'],
-      rejected: ['severity-low', '已拒绝'],
+      open: ['red', t('admin_page.dmca_takedowns.status_open')],
+      counter_received: ['blue', t('admin_page.dmca_takedowns.status_counter')],
+      closed: ['grey', t('admin_page.dmca_takedowns.status_closed')],
+      restored: ['green', t('admin_page.dmca_takedowns.status_restored')],
+      rejected: ['severity-low', t('admin_page.dmca_takedowns.status_rejected')],
     };
     const [color, label] = map[s] || ['grey', s];
     return <CSBadge color={color}>{label}</CSBadge>;
@@ -1335,12 +1344,12 @@ export function AdminDmcaTakedownsPage() {
 
   return (
     <CSSpaceBetween size="l">
-      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      {err && <CSAlert type="error" header={t('admin_page.common.load_fail')}>{err}</CSAlert>}
       <CSContainer
         header={
           <CSHeader
             variant="h2"
-            description="DMCA 下架通知队列管理（DM-01..04）"
+            description={t('admin_page.dmca_takedowns.description')}
             actions={
               <CSSpaceBetween direction="horizontal" size="xs">
                 <CSSelect
@@ -1348,43 +1357,43 @@ export function AdminDmcaTakedownsPage() {
                   options={statusOptions}
                   onChange={({ detail }) => setStatusFilter(detail.selectedOption)}
                 />
-                <CSButton variant="primary" onClick={() => setCreateModal(true)}>录入通知</CSButton>
-                <CSButton iconName="refresh" onClick={load} loading={loading}>刷新</CSButton>
+                <CSButton variant="primary" onClick={() => setCreateModal(true)}>{t('admin_page.dmca_takedowns.create_btn')}</CSButton>
+                <CSButton iconName="refresh" onClick={load} loading={loading}>{t('admin_page.common.refresh')}</CSButton>
               </CSSpaceBetween>
             }
           >
-            DMCA 下架队列
+            {t('admin_page.dmca_takedowns.title')}
           </CSHeader>
         }
       >
         <CSTable
           loading={loading}
-          loadingText="加载中…"
+          loadingText={t('admin_page.common.loading')}
           trackBy="id"
           items={items}
-          empty={<CSBox textAlign="center" color="inherit">暂无记录</CSBox>}
+          empty={<CSBox textAlign="center" color="inherit">{t('admin_page.dmca_takedowns.empty')}</CSBox>}
           columnDefinitions={[
-            { id: 'id', header: 'ID', cell: (r) => `#${r.id}`, width: 60 },
-            { id: 'complainant', header: '举报人', cell: (r) => `${r.complainant_name || '—'} <${r.complainant_email || '—'}>` },
-            { id: 'url', header: '涉嫌内容 URL', cell: (r) => <a href={r.infringing_url} target="_blank" rel="noopener noreferrer" style={{ wordBreak: 'break-all' }}>{r.infringing_url}</a> },
-            { id: 'status', header: '状态', cell: (r) => statusBadge(r.status) },
-            { id: 'restore_after', header: '可恢复时间', cell: (r) => r.restore_after ? fmtTime(r.restore_after) : '—' },
-            { id: 'created_at', header: '录入时间', cell: (r) => fmtTime(r.created_at) },
+            { id: 'id', header: t('admin_page.dmca_takedowns.col_id'), cell: (r) => `#${r.id}`, width: 60 },
+            { id: 'complainant', header: t('admin_page.dmca_takedowns.col_complainant'), cell: (r) => `${r.complainant_name || '—'} <${r.complainant_email || '—'}>` },
+            { id: 'url', header: t('admin_page.dmca_takedowns.col_url'), cell: (r) => <a href={r.infringing_url} target="_blank" rel="noopener noreferrer" style={{ wordBreak: 'break-all' }}>{r.infringing_url}</a> },
+            { id: 'status', header: t('admin_page.dmca_takedowns.col_status'), cell: (r) => statusBadge(r.status) },
+            { id: 'restore_after', header: t('admin_page.dmca_takedowns.col_restore_after'), cell: (r) => r.restore_after ? fmtTime(r.restore_after) : '—' },
+            { id: 'created_at', header: t('admin_page.dmca_takedowns.col_created_at'), cell: (r) => fmtTime(r.created_at) },
             {
-              id: 'actions', header: '操作',
+              id: 'actions', header: t('admin_page.common.actions'),
               cell: (r) => (
                 <CSSpaceBetween direction="horizontal" size="xs">
                   {r.status === 'open' && (
-                    <CSButton key="takedown" variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'takedown' }); setActionReason(''); }}>下架</CSButton>
+                    <CSButton key="takedown" variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'takedown' }); setActionReason(''); }}>{t('admin_page.dmca_takedowns.btn_takedown')}</CSButton>
                   )}
                   {r.status === 'open' && (
-                    <CSButton key="reject" variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'reject' }); setActionReason(''); }}>拒绝</CSButton>
+                    <CSButton key="reject" variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'reject' }); setActionReason(''); }}>{t('admin_page.dmca_takedowns.btn_reject')}</CSButton>
                   )}
                   {r.status === 'closed' && (
-                    <CSButton key="counter" variant="inline-link" onClick={() => { setCounterModal(r); setCounterNotes(''); }}>录入反通知</CSButton>
+                    <CSButton key="counter" variant="inline-link" onClick={() => { setCounterModal(r); setCounterNotes(''); }}>{t('admin_page.dmca_takedowns.btn_counter')}</CSButton>
                   )}
                   {r.status === 'counter_received' && r.restore_after && new Date(r.restore_after) <= new Date() && (
-                    <CSButton key="restore" variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'restore' }); setActionReason('反通知期满，无禁令，恢复内容'); }}>恢复</CSButton>
+                    <CSButton key="restore" variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'restore' }); setActionReason(t('admin_page.dmca_takedowns.restore_default_reason')); }}>{t('admin_page.dmca_takedowns.btn_restore')}</CSButton>
                   )}
                 </CSSpaceBetween>
               ),
@@ -1393,81 +1402,81 @@ export function AdminDmcaTakedownsPage() {
         />
       </CSContainer>
 
-      {/* 录入通知 Modal */}
+      {/* create notice modal */}
       {createModal && (
         <CSModal
           visible
           onDismiss={() => !creating && setCreateModal(false)}
-          header="录入 DMCA 通知"
+          header={t('admin_page.dmca_takedowns.create_modal_title')}
           footer={
             <CSBox float="right">
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton variant="link" disabled={creating} onClick={() => setCreateModal(false)}>取消</CSButton>
-                <CSButton variant="primary" loading={creating} onClick={doCreate}>提交</CSButton>
+                <CSButton variant="link" disabled={creating} onClick={() => setCreateModal(false)}>{t('admin_page.common.cancel')}</CSButton>
+                <CSButton variant="primary" loading={creating} onClick={doCreate}>{t('admin_page.common.submit')}</CSButton>
               </CSSpaceBetween>
             </CSBox>
           }
         >
           <CSSpaceBetween size="m">
-            <CSFormField label="举报人姓名 *">
+            <CSFormField label={t('admin_page.dmca_takedowns.field_complainant_name')}>
               <CSInput value={createForm.complainant_name} onChange={({ detail }) => setCreateForm((f) => ({ ...f, complainant_name: detail.value }))} />
             </CSFormField>
-            <CSFormField label="举报人邮箱 *">
+            <CSFormField label={t('admin_page.dmca_takedowns.field_complainant_email')}>
               <CSInput value={createForm.complainant_email} onChange={({ detail }) => setCreateForm((f) => ({ ...f, complainant_email: detail.value }))} type="email" />
             </CSFormField>
-            <CSFormField label="涉嫌侵权内容 URL *">
+            <CSFormField label={t('admin_page.dmca_takedowns.field_infringing_url')}>
               <CSInput value={createForm.infringing_url} onChange={({ detail }) => setCreateForm((f) => ({ ...f, infringing_url: detail.value }))} placeholder="https://play.stellatrix.icu/..." />
             </CSFormField>
-            <CSFormField label="原始作品描述">
+            <CSFormField label={t('admin_page.dmca_takedowns.field_original_work')}>
               <CSTextarea value={createForm.original_work_desc} onChange={({ detail }) => setCreateForm((f) => ({ ...f, original_work_desc: detail.value }))} rows={3} />
             </CSFormField>
           </CSSpaceBetween>
         </CSModal>
       )}
 
-      {/* 执行操作 Modal */}
+      {/* action modal */}
       {actionModal && (
         <CSModal
           visible
           onDismiss={() => !actionBusy && setActionModal(null)}
-          header={`确认操作：${actionModal.action === 'takedown' ? '下架' : actionModal.action === 'restore' ? '恢复' : '拒绝'}`}
+          header={t('admin_page.dmca_takedowns.action_modal_title', { action: actionModal.action === 'takedown' ? t('admin_page.dmca_takedowns.action_takedown_label') : actionModal.action === 'restore' ? t('admin_page.dmca_takedowns.action_restore_label') : t('admin_page.dmca_takedowns.action_reject_label') })}
           footer={
             <CSBox float="right">
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton variant="link" disabled={actionBusy} onClick={() => setActionModal(null)}>取消</CSButton>
-                <CSButton variant="primary" loading={actionBusy} onClick={doAction}>确认</CSButton>
+                <CSButton variant="link" disabled={actionBusy} onClick={() => setActionModal(null)}>{t('admin_page.common.cancel')}</CSButton>
+                <CSButton variant="primary" loading={actionBusy} onClick={doAction}>{t('admin_page.common.confirm')}</CSButton>
               </CSSpaceBetween>
             </CSBox>
           }
         >
           <CSSpaceBetween size="m">
-            <CSBox>记录 #{actionModal.item.id} — {actionModal.item.infringing_url}</CSBox>
-            <CSFormField label="原因（必填）">
-              <CSTextarea value={actionReason} onChange={({ detail }) => setActionReason(detail.value)} rows={3} placeholder="填写操作原因，将记录入审计日志…" />
+            <CSBox>{t('admin_page.dmca_takedowns.action_record_label', { id: actionModal.item.id, url: actionModal.item.infringing_url })}</CSBox>
+            <CSFormField label={t('admin_page.dmca_takedowns.action_reason_label')}>
+              <CSTextarea value={actionReason} onChange={({ detail }) => setActionReason(detail.value)} rows={3} placeholder={t('admin_page.dmca_takedowns.action_reason_placeholder')} />
             </CSFormField>
           </CSSpaceBetween>
         </CSModal>
       )}
 
-      {/* 录入反通知 Modal */}
+      {/* counter notice modal */}
       {counterModal && (
         <CSModal
           visible
           onDismiss={() => !counterBusy && setCounterModal(null)}
-          header="录入反通知"
+          header={t('admin_page.dmca_takedowns.counter_modal_title')}
           footer={
             <CSBox float="right">
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton variant="link" disabled={counterBusy} onClick={() => setCounterModal(null)}>取消</CSButton>
-                <CSButton variant="primary" loading={counterBusy} onClick={doCounter}>提交</CSButton>
+                <CSButton variant="link" disabled={counterBusy} onClick={() => setCounterModal(null)}>{t('admin_page.common.cancel')}</CSButton>
+                <CSButton variant="primary" loading={counterBusy} onClick={doCounter}>{t('admin_page.common.submit')}</CSButton>
               </CSSpaceBetween>
             </CSBox>
           }
         >
           <CSSpaceBetween size="m">
-            <CSAlert type="info">录入后系统将自动设置 10 天恢复计时。请确保已将反通知转发给原举报人。</CSAlert>
-            <CSFormField label="反通知备注">
-              <CSTextarea value={counterNotes} onChange={({ detail }) => setCounterNotes(detail.value)} rows={3} placeholder="反通知摘要、接收时间等…" />
+            <CSAlert type="info">{t('admin_page.dmca_takedowns.counter_info')}</CSAlert>
+            <CSFormField label={t('admin_page.dmca_takedowns.counter_notes_label')}>
+              <CSTextarea value={counterNotes} onChange={({ detail }) => setCounterNotes(detail.value)} rows={3} placeholder={t('admin_page.dmca_takedowns.counter_notes_placeholder')} />
             </CSFormField>
           </CSSpaceBetween>
         </CSModal>
@@ -1480,6 +1489,7 @@ export function AdminDmcaTakedownsPage() {
    页面 10：AdminDmcaStrikesPage — Strike 管理
    ───────────────────────────────────────────────────────────────── */
 export function AdminDmcaStrikesPage() {
+  const { t } = useTranslation();
   const [users, setUsers] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
@@ -1495,7 +1505,7 @@ export function AdminDmcaStrikesPage() {
       const res = await window.api.admin.dmcaStrikes();
       setUsers(res.users || []);
     } catch (e) {
-      setErr(e?.message || '加载失败');
+      setErr(e?.message || t('admin_page.common.load_fail'));
     } finally {
       setLoading(false);
     }
@@ -1509,15 +1519,15 @@ export function AdminDmcaStrikesPage() {
     try {
       const res = await window.api.admin.dmcaStrikeIncrement(strikeModal.user_id, { reason: strikeReason });
       if (res.terminate) {
-        window.toast?.(`Strike 已添加（共 ${res.strike_count} 次），账户已自动终止`, { kind: 'danger', duration: 8000 });
+        window.toast?.(t('admin_page.dmca_strikes.strike_added_terminated', { count: res.strike_count }), { kind: 'danger', duration: 8000 });
       } else {
-        window.toast?.(`Strike 已添加（共 ${res.strike_count}/${3} 次）`, { kind: 'ok' });
+        window.toast?.(t('admin_page.dmca_strikes.strike_added_ok', { count: res.strike_count }), { kind: 'ok' });
       }
       setStrikeModal(null);
       setStrikeReason('');
       load();
     } catch (e) {
-      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.dmca_strikes.op_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setStrikeBusy(false);
     }
@@ -1531,38 +1541,38 @@ export function AdminDmcaStrikesPage() {
 
   return (
     <CSSpaceBetween size="l">
-      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      {err && <CSAlert type="error" header={t('admin_page.common.load_fail')}>{err}</CSAlert>}
       <CSContainer
         header={
           <CSHeader
             variant="h2"
-            description="DMCA 累犯记录（3 次触发账户终止）"
-            actions={<CSButton iconName="refresh" onClick={load} loading={loading}>刷新</CSButton>}
+            description={t('admin_page.dmca_strikes.description')}
+            actions={<CSButton iconName="refresh" onClick={load} loading={loading}>{t('admin_page.common.refresh')}</CSButton>}
           >
-            Strike 记录
+            {t('admin_page.dmca_strikes.title')}
           </CSHeader>
         }
       >
         <CSTable
           loading={loading}
-          loadingText="加载中…"
+          loadingText={t('admin_page.common.loading')}
           trackBy="user_id"
           items={users}
-          empty={<CSBox textAlign="center" color="inherit">暂无 Strike 记录</CSBox>}
+          empty={<CSBox textAlign="center" color="inherit">{t('admin_page.dmca_strikes.empty')}</CSBox>}
           columnDefinitions={[
-            { id: 'username', header: '用户名', cell: (u) => u.username || `uid:${u.user_id}` },
+            { id: 'username', header: t('admin_page.dmca_strikes.col_username'), cell: (u) => u.username || `uid:${u.user_id}` },
             {
-              id: 'count', header: 'Strike 数',
+              id: 'count', header: t('admin_page.dmca_strikes.col_count'),
               cell: (u) => <CSBadge color={strikeBadgeColor(u.strike_count)}>{u.strike_count} / 3</CSBadge>,
             },
             {
-              id: 'history', header: '历史记录',
+              id: 'history', header: t('admin_page.dmca_strikes.col_history'),
               cell: (u) => {
                 const isExp = expanded === u.user_id;
                 return (
                   <div>
                     <CSButton variant="inline-link" onClick={() => setExpanded(isExp ? null : u.user_id)}>
-                      {isExp ? '收起' : '展开'}
+                      {isExp ? t('admin_page.common.collapse') : t('admin_page.common.expand')}
                     </CSButton>
                     {isExp && (
                       <ul style={{ margin: '4px 0 0', paddingLeft: 16, fontSize: 12 }}>
@@ -1576,13 +1586,13 @@ export function AdminDmcaStrikesPage() {
               },
             },
             {
-              id: 'actions', header: '操作',
+              id: 'actions', header: t('admin_page.common.actions'),
               cell: (u) => u.strike_count < 3 && (
                 <CSButton
                   variant="inline-link"
                   onClick={() => { setStrikeModal({ user_id: u.user_id, username: u.username }); setStrikeReason(''); }}
                 >
-                  +Strike
+                  {t('admin_page.dmca_strikes.btn_add')}
                 </CSButton>
               ),
             },
@@ -1594,24 +1604,24 @@ export function AdminDmcaStrikesPage() {
         <CSModal
           visible
           onDismiss={() => !strikeBusy && setStrikeModal(null)}
-          header={`添加 Strike — ${strikeModal.username}`}
+          header={t('admin_page.dmca_strikes.strike_modal_title', { name: strikeModal.username })}
           footer={
             <CSBox float="right">
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton variant="link" disabled={strikeBusy} onClick={() => setStrikeModal(null)}>取消</CSButton>
-                <CSButton variant="primary" loading={strikeBusy} onClick={doStrike}>确认添加</CSButton>
+                <CSButton variant="link" disabled={strikeBusy} onClick={() => setStrikeModal(null)}>{t('admin_page.common.cancel')}</CSButton>
+                <CSButton variant="primary" loading={strikeBusy} onClick={doStrike}>{t('admin_page.dmca_strikes.strike_confirm_btn')}</CSButton>
               </CSSpaceBetween>
             </CSBox>
           }
         >
           <CSSpaceBetween size="m">
-            <CSAlert type="warning">添加 Strike 后，若达到 3 次将自动触发账户终止流程，请谨慎操作。</CSAlert>
-            <CSFormField label="原因（必填，关联 Takedown ID）">
+            <CSAlert type="warning">{t('admin_page.dmca_strikes.strike_warning')}</CSAlert>
+            <CSFormField label={t('admin_page.dmca_strikes.strike_reason_label')}>
               <CSTextarea
                 value={strikeReason}
                 onChange={({ detail }) => setStrikeReason(detail.value)}
                 rows={3}
-                placeholder="如：DMCA 下架记录 #42，合规通知已验证"
+                placeholder={t('admin_page.dmca_strikes.strike_reason_placeholder')}
               />
             </CSFormField>
           </CSSpaceBetween>
@@ -1625,23 +1635,24 @@ export function AdminDmcaStrikesPage() {
    页面 11：AdminCsamReportsPage — CSAM 举报管理
    ───────────────────────────────────────────────────────────────── */
 export function AdminCsamReportsPage() {
+  const { t } = useTranslation();
   const [reports, setReports] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
-  const [statusFilter, setStatusFilter] = React.useState({ value: 'pending', label: '待决定' });
+  const [statusFilter, setStatusFilter] = React.useState({ value: 'pending', label: t('admin_page.csam.status_pending') });
   const [decisionModal, setDecisionModal] = React.useState(null); // report item
   const [decisionForm, setDecisionForm] = React.useState({ decision: '', notes: '' });
   const [deciding, setDeciding] = React.useState(false);
 
   const statusOptions = [
-    { value: 'pending', label: '待决定' },
-    { value: 'decided', label: '已决定' },
-    { value: 'all', label: '全部' },
+    { value: 'pending', label: t('admin_page.csam.status_pending') },
+    { value: 'decided', label: t('admin_page.csam.status_decided') },
+    { value: 'all', label: t('admin_page.csam.status_all') },
   ];
   const decisionOptions = [
-    { value: 'founded', label: '成立（founded）— 触发上报流程' },
-    { value: 'escalate', label: '升级（escalate）— 需更高级别确认' },
-    { value: 'unfounded', label: '不成立（unfounded）— 关闭' },
+    { value: 'founded', label: t('admin_page.csam.decision_founded') },
+    { value: 'escalate', label: t('admin_page.csam.decision_escalate') },
+    { value: 'unfounded', label: t('admin_page.csam.decision_unfounded') },
   ];
 
   const load = React.useCallback(async () => {
@@ -1651,7 +1662,7 @@ export function AdminCsamReportsPage() {
       const res = await window.api.admin.csamReports({ status: statusFilter.value });
       setReports(res.reports || []);
     } catch (e) {
-      setErr(e?.message || '加载失败');
+      setErr(e?.message || t('admin_page.common.load_fail'));
     } finally {
       setLoading(false);
     }
@@ -1664,35 +1675,36 @@ export function AdminCsamReportsPage() {
     setDeciding(true);
     try {
       await window.api.admin.csamDecision(decisionModal.id, decisionForm);
-      window.toast?.('决定已记录', { kind: 'ok' });
+      window.toast?.(t('admin_page.csam.decided_ok'), { kind: 'ok' });
       setDecisionModal(null);
       setDecisionForm({ decision: '', notes: '' });
       load();
     } catch (e) {
-      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.csam.op_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setDeciding(false);
     }
   }
 
   function decisionBadge(d) {
-    const map = { founded: ['red', '成立'], escalate: ['blue', '已升级'], unfounded: ['grey', '不成立'] };
+    const map = {
+      founded: ['red', t('admin_page.csam.badge_founded')],
+      escalate: ['blue', t('admin_page.csam.badge_escalate')],
+      unfounded: ['grey', t('admin_page.csam.badge_unfounded')],
+    };
     const [color, label] = map[d] || ['grey', d || '—'];
     return <CSBadge color={color}>{label}</CSBadge>;
   }
 
   return (
     <CSSpaceBetween size="l">
-      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
-      <CSAlert type="warning">
-        CSAM 举报涉及极度敏感内容，请严格遵守 <code>docs/runbooks/csam.md</code> 规程。
-        处理人须限制知情范围，不得直接查看内容本体。
-      </CSAlert>
+      {err && <CSAlert type="error" header={t('admin_page.common.load_fail')}>{err}</CSAlert>}
+      <CSAlert type="warning">{t('admin_page.csam.warning')}</CSAlert>
       <CSContainer
         header={
           <CSHeader
             variant="h2"
-            description="CSAM 内容举报记录与决定（CSAM-01..04）"
+            description={t('admin_page.csam.description')}
             actions={
               <CSSpaceBetween direction="horizontal" size="xs">
                 <CSSelect
@@ -1700,36 +1712,36 @@ export function AdminCsamReportsPage() {
                   options={statusOptions}
                   onChange={({ detail }) => setStatusFilter(detail.selectedOption)}
                 />
-                <CSButton iconName="refresh" onClick={load} loading={loading}>刷新</CSButton>
+                <CSButton iconName="refresh" onClick={load} loading={loading}>{t('admin_page.common.refresh')}</CSButton>
               </CSSpaceBetween>
             }
           >
-            CSAM 举报
+            {t('admin_page.csam.title')}
           </CSHeader>
         }
       >
         <CSTable
           loading={loading}
-          loadingText="加载中…"
+          loadingText={t('admin_page.common.loading')}
           trackBy="id"
           items={reports}
-          empty={<CSBox textAlign="center" color="inherit">暂无举报记录</CSBox>}
+          empty={<CSBox textAlign="center" color="inherit">{t('admin_page.csam.empty')}</CSBox>}
           columnDefinitions={[
-            { id: 'id', header: 'ID', cell: (r) => `#${r.id}`, width: 60 },
-            { id: 'reported_user', header: '被举报用户', cell: (r) => r.reported_username || `uid:${r.reported_user_id}` || '—' },
-            { id: 'content_url', header: '内容', cell: (r) => r.content_url || '（描述见详情）' },
-            { id: 'status', header: '状态', cell: (r) => r.status === 'pending' ? <CSBadge color="red">待决定</CSBadge> : <CSBadge color="grey">已决定</CSBadge> },
-            { id: 'decision', header: '决定', cell: (r) => r.decision ? decisionBadge(r.decision) : '—' },
-            { id: 'cybertip', header: 'CyberTip ID', cell: (r) => r.cybertip_report_id || '—' },
-            { id: 'created_at', header: '举报时间', cell: (r) => fmtTime(r.created_at) },
+            { id: 'id', header: t('admin_page.csam.col_id'), cell: (r) => `#${r.id}`, width: 60 },
+            { id: 'reported_user', header: t('admin_page.csam.col_reported_user'), cell: (r) => r.reported_username || `uid:${r.reported_user_id}` || '—' },
+            { id: 'content_url', header: t('admin_page.csam.col_content'), cell: (r) => r.content_url || t('admin_page.csam.content_no_url') },
+            { id: 'status', header: t('admin_page.csam.col_status'), cell: (r) => r.status === 'pending' ? <CSBadge color="red">{t('admin_page.csam.badge_pending')}</CSBadge> : <CSBadge color="grey">{t('admin_page.csam.badge_decided')}</CSBadge> },
+            { id: 'decision', header: t('admin_page.csam.col_decision'), cell: (r) => r.decision ? decisionBadge(r.decision) : '—' },
+            { id: 'cybertip', header: t('admin_page.csam.col_cybertip'), cell: (r) => r.cybertip_report_id || '—' },
+            { id: 'created_at', header: t('admin_page.csam.col_created_at'), cell: (r) => fmtTime(r.created_at) },
             {
-              id: 'actions', header: '操作',
+              id: 'actions', header: t('admin_page.common.actions'),
               cell: (r) => r.status === 'pending' && (
                 <CSButton
                   variant="inline-link"
                   onClick={() => { setDecisionModal(r); setDecisionForm({ decision: '', notes: '' }); }}
                 >
-                  标记决定
+                  {t('admin_page.csam.btn_decide')}
                 </CSButton>
               ),
             },
@@ -1741,33 +1753,31 @@ export function AdminCsamReportsPage() {
         <CSModal
           visible
           onDismiss={() => !deciding && setDecisionModal(null)}
-          header={`标记决定 — 举报 #${decisionModal.id}`}
+          header={t('admin_page.csam.decision_modal_title', { id: decisionModal.id })}
           footer={
             <CSBox float="right">
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton variant="link" disabled={deciding} onClick={() => setDecisionModal(null)}>取消</CSButton>
-                <CSButton variant="primary" loading={deciding} disabled={!decisionForm.decision} onClick={doDecision}>确认</CSButton>
+                <CSButton variant="link" disabled={deciding} onClick={() => setDecisionModal(null)}>{t('admin_page.common.cancel')}</CSButton>
+                <CSButton variant="primary" loading={deciding} disabled={!decisionForm.decision} onClick={doDecision}>{t('admin_page.common.confirm')}</CSButton>
               </CSSpaceBetween>
             </CSBox>
           }
         >
           <CSSpaceBetween size="m">
-            <CSAlert type="warning">
-              选择"成立"后，请立即按 csam.md 流程向 NCMEC CyberTipline 上报，并暂停被举报账户。
-            </CSAlert>
-            <CSFormField label="决定 *">
+            <CSAlert type="warning">{t('admin_page.csam.decision_warning')}</CSAlert>
+            <CSFormField label={t('admin_page.csam.decision_field')}>
               <CSSelect
-                selectedOption={decisionOptions.find((o) => o.value === decisionForm.decision) || { value: '', label: '请选择…' }}
+                selectedOption={decisionOptions.find((o) => o.value === decisionForm.decision) || { value: '', label: t('admin_page.csam.decision_select_placeholder') }}
                 options={decisionOptions}
                 onChange={({ detail }) => setDecisionForm((f) => ({ ...f, decision: detail.selectedOption.value }))}
               />
             </CSFormField>
-            <CSFormField label="备注">
+            <CSFormField label={t('admin_page.csam.notes_field')}>
               <CSTextarea
                 value={decisionForm.notes}
                 onChange={({ detail }) => setDecisionForm((f) => ({ ...f, notes: detail.value }))}
                 rows={3}
-                placeholder="决定依据、CyberTipline 报告 ID 等…"
+                placeholder={t('admin_page.csam.notes_placeholder')}
               />
             </CSFormField>
           </CSSpaceBetween>
@@ -1781,6 +1791,7 @@ export function AdminCsamReportsPage() {
    页面 12：AdminAupActionsPage — AUP 账户暂停 / 解封 / 终止
    ───────────────────────────────────────────────────────────────── */
 export function AdminAupActionsPage() {
+  const { t } = useTranslation();
   const [search, setSearch] = React.useState('');
   const [users, setUsers] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
@@ -1802,7 +1813,7 @@ export function AdminAupActionsPage() {
       const res = await window.api.admin.users({ search, limit: 20 });
       setUsers(res.users || []);
     } catch (e) {
-      setErr(e?.message || '搜索失败');
+      setErr(e?.message || t('admin_page.aup.search_fail'));
     } finally {
       setLoading(false);
     }
@@ -1815,12 +1826,12 @@ export function AdminAupActionsPage() {
       const body = { reason: suspendForm.reason };
       if (suspendForm.duration_days) body.duration_days = Number(suspendForm.duration_days);
       await window.api.admin.suspendUser(suspendModal.id, body);
-      window.toast?.('账户已暂停', { kind: 'ok' });
+      window.toast?.(t('admin_page.aup.suspend_ok'), { kind: 'ok' });
       setSuspendModal(null);
       setSuspendForm({ reason: '', duration_days: '' });
       doSearch();
     } catch (e) {
-      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.common.op_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setSuspendBusy(false);
     }
@@ -1831,11 +1842,11 @@ export function AdminAupActionsPage() {
     setUnsuspendBusy(true);
     try {
       await window.api.admin.unsuspendUser(unsuspendModal.id);
-      window.toast?.('账户已解封', { kind: 'ok' });
+      window.toast?.(t('admin_page.aup.unsuspend_ok'), { kind: 'ok' });
       setUnsuspendModal(null);
       doSearch();
     } catch (e) {
-      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.common.op_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setUnsuspendBusy(false);
     }
@@ -1846,12 +1857,12 @@ export function AdminAupActionsPage() {
     setTerminateBusy(true);
     try {
       await window.api.admin.terminateUser(terminateModal.id, { reason: terminateReason });
-      window.toast?.('账户已永久终止', { kind: 'ok', duration: 6000 });
+      window.toast?.(t('admin_page.aup.terminate_ok'), { kind: 'ok', duration: 6000 });
       setTerminateModal(null);
       setTerminateReason('');
       doSearch();
     } catch (e) {
-      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.common.op_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setTerminateBusy(false);
     }
@@ -1859,47 +1870,47 @@ export function AdminAupActionsPage() {
 
   return (
     <CSSpaceBetween size="l">
-      {err && <CSAlert type="error" header="错误">{err}</CSAlert>}
+      {err && <CSAlert type="error" header={t('admin_page.aup.error_title')}>{err}</CSAlert>}
 
       <CSContainer
         header={
-          <CSHeader variant="h2" description="AUP 暂停、解封、永久终止（AUP-01..03）">
-            AUP 账户处置
+          <CSHeader variant="h2" description={t('admin_page.aup.description')}>
+            {t('admin_page.aup.title')}
           </CSHeader>
         }
       >
         <CSSpaceBetween size="m">
-          <CSAlert type="info">搜索用户后，可对其执行暂停（临时）、解封或永久终止操作。终止操作不可逆。</CSAlert>
+          <CSAlert type="info">{t('admin_page.aup.info')}</CSAlert>
           <CSSpaceBetween direction="horizontal" size="xs">
             <CSInput
-              placeholder="搜索用户名或显示名…"
+              placeholder={t('admin_page.aup.search_placeholder')}
               value={search}
               onChange={({ detail }) => setSearch(detail.value)}
               onKeyDown={({ detail }) => { if (detail.key === 'Enter') doSearch(); }}
               type="search"
             />
-            <CSButton onClick={doSearch} loading={loading}>搜索</CSButton>
+            <CSButton onClick={doSearch} loading={loading}>{t('admin_page.aup.search_btn')}</CSButton>
           </CSSpaceBetween>
 
           {users.length > 0 && (
             <CSTable
               loading={loading}
-              loadingText="加载中…"
+              loadingText={t('admin_page.common.loading')}
               trackBy="id"
               items={users}
-              empty={<CSBox textAlign="center" color="inherit">无结果</CSBox>}
+              empty={<CSBox textAlign="center" color="inherit">{t('admin_page.aup.no_results')}</CSBox>}
               columnDefinitions={[
-                { id: 'username', header: '用户名', cell: (u) => u.username },
-                { id: 'display_name', header: '显示名', cell: (u) => u.display_name || '—' },
+                { id: 'username', header: t('admin_page.aup.col_username'), cell: (u) => u.username },
+                { id: 'display_name', header: t('admin_page.aup.col_display_name'), cell: (u) => u.display_name || '—' },
                 {
-                  id: 'status', header: '状态',
+                  id: 'status', header: t('admin_page.aup.col_status'),
                   cell: (u) => u.deactivated_at
-                    ? <CSStatusIndicator type="stopped">已暂停/停用</CSStatusIndicator>
-                    : <CSStatusIndicator type="success">正常</CSStatusIndicator>,
+                    ? <CSStatusIndicator type="stopped">{t('admin_page.aup.status_suspended')}</CSStatusIndicator>
+                    : <CSStatusIndicator type="success">{t('admin_page.aup.status_active')}</CSStatusIndicator>,
                 },
-                { id: 'ban_reason', header: '封禁原因', cell: (u) => u.ban_reason || '—' },
+                { id: 'ban_reason', header: t('admin_page.aup.col_ban_reason'), cell: (u) => u.ban_reason || '—' },
                 {
-                  id: 'actions', header: '操作',
+                  id: 'actions', header: t('admin_page.common.actions'),
                   cell: (u) => (
                     <CSSpaceBetween direction="horizontal" size="xs">
                       {!u.deactivated_at && (
@@ -1907,17 +1918,17 @@ export function AdminAupActionsPage() {
                           variant="inline-link"
                           onClick={() => { setSuspendModal(u); setSuspendForm({ reason: '', duration_days: '' }); }}
                         >
-                          暂停
+                          {t('admin_page.aup.btn_suspend')}
                         </CSButton>
                       )}
                       {u.deactivated_at && (
-                        <CSButton variant="inline-link" onClick={() => setUnsuspendModal(u)}>解封</CSButton>
+                        <CSButton variant="inline-link" onClick={() => setUnsuspendModal(u)}>{t('admin_page.aup.btn_unsuspend')}</CSButton>
                       )}
                       <CSButton
                         variant="inline-link"
                         onClick={() => { setTerminateModal(u); setTerminateReason(''); }}
                       >
-                        永久终止
+                        {t('admin_page.aup.btn_terminate')}
                       </CSButton>
                     </CSSpaceBetween>
                   ),
@@ -1928,86 +1939,84 @@ export function AdminAupActionsPage() {
         </CSSpaceBetween>
       </CSContainer>
 
-      {/* 暂停 Modal */}
+      {/* suspend modal */}
       {suspendModal && (
         <CSModal
           visible
           onDismiss={() => !suspendBusy && setSuspendModal(null)}
-          header={`暂停账户 — ${suspendModal.username}`}
+          header={t('admin_page.aup.suspend_modal_title', { name: suspendModal.username })}
           footer={
             <CSBox float="right">
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton variant="link" disabled={suspendBusy} onClick={() => setSuspendModal(null)}>取消</CSButton>
-                <CSButton variant="primary" loading={suspendBusy} disabled={!suspendForm.reason} onClick={doSuspend}>确认暂停</CSButton>
+                <CSButton variant="link" disabled={suspendBusy} onClick={() => setSuspendModal(null)}>{t('admin_page.common.cancel')}</CSButton>
+                <CSButton variant="primary" loading={suspendBusy} disabled={!suspendForm.reason} onClick={doSuspend}>{t('admin_page.aup.suspend_confirm_btn')}</CSButton>
               </CSSpaceBetween>
             </CSBox>
           }
         >
           <CSSpaceBetween size="m">
-            <CSFormField label="暂停原因 *">
+            <CSFormField label={t('admin_page.aup.suspend_reason_label')}>
               <CSTextarea
                 value={suspendForm.reason}
                 onChange={({ detail }) => setSuspendForm((f) => ({ ...f, reason: detail.value }))}
                 rows={3}
-                placeholder="违规行为描述，将通过邮件告知用户…"
+                placeholder={t('admin_page.aup.suspend_reason_placeholder')}
               />
             </CSFormField>
-            <CSFormField label="暂停天数（留空 = 无限期）">
+            <CSFormField label={t('admin_page.aup.suspend_days_label')}>
               <CSInput
                 type="number"
                 value={suspendForm.duration_days}
                 onChange={({ detail }) => setSuspendForm((f) => ({ ...f, duration_days: detail.value }))}
-                placeholder="如：7、30、90"
+                placeholder={t('admin_page.aup.suspend_days_placeholder')}
               />
             </CSFormField>
           </CSSpaceBetween>
         </CSModal>
       )}
 
-      {/* 解封 Modal */}
+      {/* unsuspend modal */}
       {unsuspendModal && (
         <CSModal
           visible
           onDismiss={() => !unsuspendBusy && setUnsuspendModal(null)}
-          header={`解封账户 — ${unsuspendModal.username}`}
+          header={t('admin_page.aup.unsuspend_modal_title', { name: unsuspendModal.username })}
           footer={
             <CSBox float="right">
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton variant="link" disabled={unsuspendBusy} onClick={() => setUnsuspendModal(null)}>取消</CSButton>
-                <CSButton variant="primary" loading={unsuspendBusy} onClick={doUnsuspend}>确认解封</CSButton>
+                <CSButton variant="link" disabled={unsuspendBusy} onClick={() => setUnsuspendModal(null)}>{t('admin_page.common.cancel')}</CSButton>
+                <CSButton variant="primary" loading={unsuspendBusy} onClick={doUnsuspend}>{t('admin_page.aup.unsuspend_confirm_btn')}</CSButton>
               </CSSpaceBetween>
             </CSBox>
           }
         >
-          <CSBox>确认解封账户 <strong>{unsuspendModal.username}</strong>？解封后该用户可正常登录。</CSBox>
+          <CSBox>{t('admin_page.aup.unsuspend_confirm', { name: unsuspendModal.username })}</CSBox>
         </CSModal>
       )}
 
-      {/* 终止 Modal */}
+      {/* terminate modal */}
       {terminateModal && (
         <CSModal
           visible
           onDismiss={() => !terminateBusy && setTerminateModal(null)}
-          header={`永久终止账户 — ${terminateModal.username}`}
+          header={t('admin_page.aup.terminate_modal_title', { name: terminateModal.username })}
           footer={
             <CSBox float="right">
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton variant="link" disabled={terminateBusy} onClick={() => setTerminateModal(null)}>取消</CSButton>
-                <CSButton variant="primary" loading={terminateBusy} disabled={!terminateReason} onClick={doTerminate}>确认终止（不可逆）</CSButton>
+                <CSButton variant="link" disabled={terminateBusy} onClick={() => setTerminateModal(null)}>{t('admin_page.common.cancel')}</CSButton>
+                <CSButton variant="primary" loading={terminateBusy} disabled={!terminateReason} onClick={doTerminate}>{t('admin_page.aup.terminate_confirm_btn')}</CSButton>
               </CSSpaceBetween>
             </CSBox>
           }
         >
           <CSSpaceBetween size="m">
-            <CSAlert type="error">
-              永久终止将撤销所有 Session、写入封禁名单，且无法撤销。请确认已完成申诉审查程序。
-            </CSAlert>
-            <CSFormField label="终止原因 *">
+            <CSAlert type="error">{t('admin_page.aup.terminate_warning')}</CSAlert>
+            <CSFormField label={t('admin_page.aup.terminate_reason_label')}>
               <CSTextarea
                 value={terminateReason}
                 onChange={({ detail }) => setTerminateReason(detail.value)}
                 rows={3}
-                placeholder="如：AUP 累犯，已完成申诉流程（Ticket #XXXX）"
+                placeholder={t('admin_page.aup.terminate_reason_placeholder')}
               />
             </CSFormField>
           </CSSpaceBetween>
@@ -2021,6 +2030,7 @@ export function AdminAupActionsPage() {
    页面 8：AdminMaintenancePage — 维护模式
    ───────────────────────────────────────────────────────────────── */
 export function AdminMaintenancePage() {
+  const { t } = useTranslation();
   const [config, setConfig] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
@@ -2041,7 +2051,7 @@ export function AdminMaintenancePage() {
           setDraft(JSON.parse(JSON.stringify(res)));
         }
       } catch (e) {
-        if (!cancelled) setErr(e?.message || '加载失败');
+        if (!cancelled) setErr(e?.message || t('admin_page.common.load_fail'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -2055,9 +2065,9 @@ export function AdminMaintenancePage() {
     try {
       await window.api.admin.saveMaintenance(draft);
       setConfig(draft);
-      window.toast?.('维护配置已保存', { kind: 'ok' });
+      window.toast?.(t('admin_page.maintenance.save_ok'), { kind: 'ok' });
     } catch (e) {
-      window.toast?.('保存失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.maintenance.save_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setSaving(false);
     }
@@ -2067,10 +2077,10 @@ export function AdminMaintenancePage() {
     setRestarting(true);
     try {
       await window.api.admin.restart();
-      window.toast?.('重启指令已发送，服务将优雅重载', { kind: 'ok', duration: 5000 });
+      window.toast?.(t('admin_page.maintenance.restart_ok'), { kind: 'ok', duration: 5000 });
       setRestartModal(false);
     } catch (e) {
-      window.toast?.('重启失败: ' + (e?.message || ''), { kind: 'danger' });
+      window.toast?.(t('admin_page.maintenance.restart_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setRestarting(false);
     }
@@ -2080,60 +2090,56 @@ export function AdminMaintenancePage() {
 
   return (
     <CSSpaceBetween size="l">
-      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      {err && <CSAlert type="error" header={t('admin_page.common.load_fail')}>{err}</CSAlert>}
 
-      <CSContainer header={<CSHeader variant="h2" description="开启后所有用户将看到维护公告">维护模式</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2" description={t('admin_page.maintenance.mode_description')}>{t('admin_page.maintenance.mode_title')}</CSHeader>}>
         {loading
-          ? <CSBox color="inherit">加载中…</CSBox>
+          ? <CSBox color="inherit">{t('admin_page.common.loading')}</CSBox>
           : !draft
-            ? <CSBox textAlign="center" color="inherit">暂无配置数据</CSBox>
+            ? <CSBox textAlign="center" color="inherit">{t('admin_page.maintenance.empty')}</CSBox>
             : (
               <CSSpaceBetween size="m">
                 {d.enabled && (
-                  <CSAlert type="warning">
-                    维护模式已开启，所有用户访问时将看到维护公告。请尽快完成维护后关闭。
-                  </CSAlert>
+                  <CSAlert type="warning">{t('admin_page.maintenance.mode_warning')}</CSAlert>
                 )}
-                <CSFormField label="维护模式开关">
+                <CSFormField label={t('admin_page.maintenance.field_toggle')}>
                   <CSToggle
                     checked={!!d.enabled}
                     onChange={({ detail }) => setDraft((prev) => ({ ...prev, enabled: detail.checked }))}
                   >
-                    {d.enabled ? '已开启' : '已关闭'}
+                    {d.enabled ? t('admin_page.common.toggle_on') : t('admin_page.common.toggle_off')}
                   </CSToggle>
                 </CSFormField>
-                <CSFormField label="公告内容（支持多行）">
+                <CSFormField label={t('admin_page.maintenance.field_message')}>
                   <CSTextarea
                     value={d.message || ''}
                     onChange={({ detail }) => setDraft((prev) => ({ ...prev, message: detail.value }))}
                     rows={4}
-                    placeholder="正在进行系统升级维护，预计 XX 分钟后恢复…"
+                    placeholder={t('admin_page.maintenance.message_placeholder')}
                   />
                 </CSFormField>
                 {d.started_at && (
-                  <CSFormField label="维护开始时间">
+                  <CSFormField label={t('admin_page.maintenance.field_started_at')}>
                     <CSBox color="text-body-secondary">{fmtTime(d.started_at)}</CSBox>
                   </CSFormField>
                 )}
                 <CSBox float="right">
-                  <CSButton variant="primary" loading={saving} onClick={save}>保存</CSButton>
+                  <CSButton variant="primary" loading={saving} onClick={save}>{t('common.save')}</CSButton>
                 </CSBox>
               </CSSpaceBetween>
             )
         }
       </CSContainer>
 
-      <CSContainer header={<CSHeader variant="h2" description="发送优雅重载信号到后端服务">服务重启</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2" description={t('admin_page.maintenance.restart_description')}>{t('admin_page.maintenance.restart_title')}</CSHeader>}>
         <CSSpaceBetween size="m">
-          <CSAlert type="warning">
-            重启会短暂中断服务（通常 5-15 秒）。建议在维护模式开启后进行。
-          </CSAlert>
+          <CSAlert type="warning">{t('admin_page.maintenance.restart_warning')}</CSAlert>
           <CSButton
             variant="normal"
             iconName="status-warning"
             onClick={() => setRestartModal(true)}
           >
-            重启服务
+            {t('admin_page.maintenance.restart_btn')}
           </CSButton>
         </CSSpaceBetween>
       </CSContainer>
@@ -2142,20 +2148,17 @@ export function AdminMaintenancePage() {
         <CSModal
           visible
           onDismiss={() => !restarting && setRestartModal(false)}
-          header="确认重启服务"
+          header={t('admin_page.maintenance.restart_modal_title')}
           footer={
             <CSBox float="right">
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton variant="link" disabled={restarting} onClick={() => setRestartModal(false)}>取消</CSButton>
-                <CSButton variant="primary" loading={restarting} onClick={handleRestart}>确认重启</CSButton>
+                <CSButton variant="link" disabled={restarting} onClick={() => setRestartModal(false)}>{t('admin_page.common.cancel')}</CSButton>
+                <CSButton variant="primary" loading={restarting} onClick={handleRestart}>{t('admin_page.maintenance.restart_confirm_btn')}</CSButton>
               </CSSpaceBetween>
             </CSBox>
           }
         >
-          <CSBox>
-            服务将发送优雅重载（SIGTERM/graceful reload）信号，当前进行中的请求会尽量完成。
-            重启期间（约 5-15 秒）新请求可能失败，请确保已通知用户或已开启维护模式。
-          </CSBox>
+          <CSBox>{t('admin_page.maintenance.restart_modal_body')}</CSBox>
         </CSModal>
       )}
     </CSSpaceBetween>
@@ -2166,19 +2169,20 @@ export function AdminMaintenancePage() {
    AdminFeedbackPage — 反馈审查队列 (FB-03)
    ───────────────────────────────────────────────────────────────── */
 export function AdminFeedbackPage() {
+  const { t } = useTranslation();
   const [items, setItems]           = React.useState([]);
   const [loading, setLoading]       = React.useState(true);
   const [err, setErr]               = React.useState(null);
-  const [statusFilter, setStatusFilter] = React.useState({ value: 'unreviewed', label: '待审核' });
+  const [statusFilter, setStatusFilter] = React.useState({ value: 'unreviewed', label: t('admin_page.feedback.status_unreviewed') });
   const [detailModal, setDetailModal]   = React.useState(null); // feedback item
   const [actionBusy, setActionBusy]     = React.useState(false);
   const [actionErr, setActionErr]       = React.useState(null);
   const [terminateReason, setTerminateReason] = React.useState('');
 
   const statusOptions = [
-    { value: 'unreviewed', label: '待审核' },
-    { value: 'reviewed',   label: '已审核' },
-    { value: 'all',        label: '全部'   },
+    { value: 'unreviewed', label: t('admin_page.feedback.status_unreviewed') },
+    { value: 'reviewed',   label: t('admin_page.feedback.status_reviewed') },
+    { value: 'all',        label: t('admin_page.feedback.status_all') },
   ];
 
   const load = React.useCallback(async (filter) => {
@@ -2193,7 +2197,7 @@ export function AdminFeedbackPage() {
       if (!res.ok || !data.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
       setItems(data.items || []);
     } catch (e) {
-      setErr(e?.message || '加载失败');
+      setErr(e?.message || t('admin_page.common.load_fail'));
     } finally {
       setLoading(false);
     }
@@ -2213,34 +2217,34 @@ export function AdminFeedbackPage() {
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
-      window.toast?.('操作成功', { kind: 'ok' });
+      window.toast?.(t('admin_page.feedback.op_ok'), { kind: 'ok' });
       setDetailModal(null);
       setTerminateReason('');
       load(statusFilter.value);
     } catch (e) {
-      setActionErr(e?.message || '操作失败');
+      setActionErr(e?.message || t('admin_page.feedback.op_fail'));
     } finally {
       setActionBusy(false);
     }
   }
 
   const decisionBadge = (d) => {
-    if (!d) return <CSBadge color="grey">待审核</CSBadge>;
+    if (!d) return <CSBadge color="grey">{t('admin_page.feedback.badge_pending')}</CSBadge>;
     if (d === 'ok') return <CSBadge color="green">OK</CSBadge>;
-    if (d === 'nsfw_terminate') return <CSBadge color="red">终止</CSBadge>;
-    if (d === 'spam') return <CSBadge color="severity-medium">垃圾</CSBadge>;
+    if (d === 'nsfw_terminate') return <CSBadge color="red">{t('admin_page.feedback.badge_terminate')}</CSBadge>;
+    if (d === 'spam') return <CSBadge color="severity-medium">{t('admin_page.feedback.badge_spam')}</CSBadge>;
     return <CSBadge color="grey">{d}</CSBadge>;
   };
 
   return (
     <CSSpaceBetween size="l">
-      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      {err && <CSAlert type="error" header={t('admin_page.common.load_fail')}>{err}</CSAlert>}
 
       <CSContainer
         header={
           <CSHeader
             variant="h2"
-            description="用户提交的反馈审查队列，标记 OK / NSFW终止 / 垃圾"
+            description={t('admin_page.feedback.description')}
             actions={
               <CSSpaceBetween direction="horizontal" size="xs">
                 <CSSelect
@@ -2249,43 +2253,43 @@ export function AdminFeedbackPage() {
                   onChange={({ detail }) => setStatusFilter(detail.selectedOption)}
                 />
                 <CSButton iconName="refresh" onClick={() => load(statusFilter.value)} loading={loading}>
-                  刷新
+                  {t('admin_page.common.refresh')}
                 </CSButton>
               </CSSpaceBetween>
             }
           >
-            反馈审查
+            {t('admin_page.feedback.title')}
           </CSHeader>
         }
       >
         <CSTable
           loading={loading}
-          loadingText="加载中…"
+          loadingText={t('admin_page.common.loading')}
           trackBy="id"
           items={items}
           empty={
             <CSBox textAlign="center" color="inherit">
-              <CSBox padding={{ bottom: 's' }} variant="p" color="inherit">暂无反馈数据</CSBox>
+              <CSBox padding={{ bottom: 's' }} variant="p" color="inherit">{t('admin_page.feedback.empty')}</CSBox>
             </CSBox>
           }
           columnDefinitions={[
-            { id: 'id',      header: 'ID',       cell: (f) => f.id },
-            { id: 'user',    header: '用户',      cell: (f) => f.username || '—' },
-            { id: 'ts',      header: '提交时间',   cell: (f) => fmtTime(f.created_at) },
-            { id: 'status',  header: '状态',      cell: (f) => decisionBadge(f.review_decision) },
+            { id: 'id',      header: t('admin_page.feedback.col_id'),      cell: (f) => f.id },
+            { id: 'user',    header: t('admin_page.feedback.col_user'),     cell: (f) => f.username || '—' },
+            { id: 'ts',      header: t('admin_page.feedback.col_ts'),       cell: (f) => fmtTime(f.created_at) },
+            { id: 'status',  header: t('admin_page.feedback.col_status'),   cell: (f) => decisionBadge(f.review_decision) },
             {
-              id: 'preview', header: '内容摘要',
+              id: 'preview', header: t('admin_page.feedback.col_preview'),
               cell: (f) => (
                 <span style={{ maxWidth: 300, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {(f.free_text || '').slice(0, 80) || '（空）'}
+                  {(f.free_text || '').slice(0, 80) || t('admin_page.feedback.detail_empty')}
                 </span>
               ),
             },
             {
-              id: 'actions', header: '操作',
+              id: 'actions', header: t('admin_page.feedback.col_actions'),
               cell: (f) => (
                 <CSButton variant="inline-link" onClick={() => { setDetailModal(f); setActionErr(null); setTerminateReason(''); }}>
-                  查看 / 处理
+                  {t('admin_page.feedback.btn_view')}
                 </CSButton>
               ),
             },
@@ -2293,23 +2297,23 @@ export function AdminFeedbackPage() {
         />
       </CSContainer>
 
-      {/* ── 详情 + 操作 Modal ── */}
+      {/* detail + action modal */}
       {detailModal && (
         <CSModal
           visible
           size="large"
           onDismiss={() => !actionBusy && setDetailModal(null)}
-          header={`反馈 #${detailModal.id} — ${detailModal.username}`}
+          header={t('admin_page.feedback.detail_modal_title', { id: detailModal.id, user: detailModal.username })}
           footer={
             !detailModal.review_decision ? (
               <CSBox float="right">
                 <CSSpaceBetween direction="horizontal" size="xs">
-                  <CSButton variant="link" disabled={actionBusy} onClick={() => setDetailModal(null)}>取消</CSButton>
+                  <CSButton variant="link" disabled={actionBusy} onClick={() => setDetailModal(null)}>{t('admin_page.feedback.btn_cancel')}</CSButton>
                   <CSButton variant="normal" loading={actionBusy} onClick={() => doDecision(detailModal.id, 'spam')}>
-                    标垃圾
+                    {t('admin_page.feedback.btn_spam')}
                   </CSButton>
                   <CSButton variant="primary" loading={actionBusy} onClick={() => doDecision(detailModal.id, 'ok')}>
-                    标 OK
+                    {t('admin_page.feedback.btn_ok')}
                   </CSButton>
                   <CSButton
                     variant="primary"
@@ -2318,13 +2322,13 @@ export function AdminFeedbackPage() {
                     disabled={!terminateReason.trim()}
                     onClick={() => doDecision(detailModal.id, 'nsfw_terminate', terminateReason)}
                   >
-                    终止账号 (NSFW)
+                    {t('admin_page.feedback.btn_terminate_nsfw')}
                   </CSButton>
                 </CSSpaceBetween>
               </CSBox>
             ) : (
               <CSBox float="right">
-                <CSButton variant="link" onClick={() => setDetailModal(null)}>关闭</CSButton>
+                <CSButton variant="link" onClick={() => setDetailModal(null)}>{t('admin_page.feedback.btn_close')}</CSButton>
               </CSBox>
             )
           }
@@ -2333,24 +2337,24 @@ export function AdminFeedbackPage() {
             {actionErr && <CSAlert type="error">{actionErr}</CSAlert>}
 
             <CSBox>
-              <strong>提交时间：</strong>{fmtTime(detailModal.created_at)}
+              <strong>{t('admin_page.feedback.detail_submit_time')}</strong>{fmtTime(detailModal.created_at)}
               {'　'}
-              <strong>状态：</strong>{decisionBadge(detailModal.review_decision)}
+              <strong>{t('admin_page.feedback.detail_status_label')}</strong>{decisionBadge(detailModal.review_decision)}
               {detailModal.reviewed_at && (
-                <span>{'　'}<strong>审核时间：</strong>{fmtTime(detailModal.reviewed_at)}</span>
+                <span>{'　'}<strong>{t('admin_page.feedback.detail_review_time')}</strong>{fmtTime(detailModal.reviewed_at)}</span>
               )}
             </CSBox>
 
             <CSBox>
-              <strong>自由文本：</strong>
+              <strong>{t('admin_page.feedback.detail_free_text')}</strong>
               <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--color-background-container-content)', padding: 8, borderRadius: 4 }}>
-                {detailModal.free_text || '（空）'}
+                {detailModal.free_text || t('admin_page.feedback.detail_empty')}
               </pre>
             </CSBox>
 
             {Array.isArray(detailModal.excerpts) && detailModal.excerpts.length > 0 && (
               <CSBox>
-                <strong>节选（{detailModal.excerpts.length} 段）：</strong>
+                <strong>{t('admin_page.feedback.detail_excerpts', { count: detailModal.excerpts.length })}</strong>
                 {detailModal.excerpts.map((ex, i) => (
                   <CSBox key={i} padding={{ top: 'xs' }}>
                     <CSBadge color="grey">session: {ex.session_id}</CSBadge>
@@ -2365,13 +2369,13 @@ export function AdminFeedbackPage() {
 
             {!detailModal.review_decision && (
               <CSFormField
-                label="终止理由（终止账号(NSFW)时必填）"
-                description="该理由会写入 account_delete_queue，请简明说明违规内容"
+                label={t('admin_page.feedback.terminate_reason_label')}
+                description={t('admin_page.feedback.terminate_reason_desc')}
               >
                 <CSTextarea
                   value={terminateReason}
                   onChange={({ detail }) => setTerminateReason(detail.value)}
-                  placeholder="如: 提交了含露骨 NSFW 内容的节选…"
+                  placeholder={t('admin_page.feedback.terminate_reason_placeholder')}
                   rows={3}
                   disabled={actionBusy}
                 />

@@ -5,49 +5,50 @@ import React from 'react';
 import { useState as useStateC, useRef as useRefC, useEffect as useEffectC } from 'react';
 import { Icon } from './game-icons.jsx';
 import { chatComposerKey } from './responsive.jsx';
+import { useTranslation } from 'react-i18next';
 
 const SLASH_COMMANDS = [
-  { id: "status", trigger: "/status", label: "查看状态摘要", group: "查询", hint: "/status" },
-  { id: "debug", trigger: "/debug", label: "查看上轮检索", group: "查询", hint: "/debug" },
+  { id: "status", trigger: "/status", labelKey: "game.command.status_label", groupKey: "game.command.group_query", hint: "/status" },
+  { id: "debug", trigger: "/debug", labelKey: "game.command.debug_label", groupKey: "game.command.group_query", hint: "/debug" },
   // task 39：用户报告命令菜单缺 /set；后端 state.apply_set_directive 已支持 /set|/设置|/设定。
   // 这是用自然语言强制改一组游戏参数的总入口（位置/时间/timeline.current_phase/
   // worldline.user_variables.X 等都可以一次塞进去），写入即落盘（task 27），优先级高于 GM 自动派生（task 28/36）。
-  { id: "set", trigger: "/set ", label: "强制改参 / 设定（自然语言）", group: "状态写入",
-    hint: "/set 时间=次日清晨；地点=雾港码头；player.name=测试旅人；world.timeline.current_phase=港口黄昏" },
-  { id: "loc", trigger: "/loc ", label: "更新所在位置", group: "状态写入", hint: "/loc <地点>" },
-  { id: "time", trigger: "/time ", label: "推进时间线", group: "状态写入", hint: "/time <时刻>" },
-  { id: "rel", trigger: "/rel ", label: "更新人物关系", group: "状态写入", hint: "/rel <角色> <关系>" },
-  { id: "var", trigger: "/var ", label: "设置世界线变量", group: "状态写入", hint: "/var 变量=值" },
-  { id: "pin", trigger: "/pin ", label: "加入固定记忆", group: "记忆", hint: "/pin <文本>" },
-  { id: "note", trigger: "/note ", label: "玩家笔记", group: "记忆", hint: "/note <文本>" },
-  { id: "memory", trigger: "/memory ", label: "切换记忆模式", group: "模式", hint: "/memory normal|deep|off" },
-  { id: "permission", trigger: "/permission ", label: "切换写入权限", group: "模式", hint: "/permission default|review|full_access" },
-  { id: "save", trigger: "/save", label: "手动存档", group: "工程", hint: "/save" },
-  { id: "retry", trigger: "/retry", label: "重试上一轮 GM 输出", group: "工程", hint: "/retry" },
+  { id: "set", trigger: "/set ", labelKey: "game.command.set_label", groupKey: "game.command.group_state_write",
+    hint: "/set time=dawn; location=harbor; player.name=TestTraveler; world.timeline.current_phase=harbor-dusk" },
+  { id: "loc", trigger: "/loc ", labelKey: "game.command.loc_label", groupKey: "game.command.group_state_write", hint: "/loc <location>" },
+  { id: "time", trigger: "/time ", labelKey: "game.command.time_label", groupKey: "game.command.group_state_write", hint: "/time <time>" },
+  { id: "rel", trigger: "/rel ", labelKey: "game.command.rel_label", groupKey: "game.command.group_state_write", hint: "/rel <character> <status>" },
+  { id: "var", trigger: "/var ", labelKey: "game.command.var_label", groupKey: "game.command.group_state_write", hint: "/var variable=value" },
+  { id: "pin", trigger: "/pin ", labelKey: "game.command.pin_label", groupKey: "game.command.group_memory", hint: "/pin <text>" },
+  { id: "note", trigger: "/note ", labelKey: "game.command.note_label", groupKey: "game.command.group_memory", hint: "/note <text>" },
+  { id: "memory", trigger: "/memory ", labelKey: "game.command.memory_label", groupKey: "game.command.group_mode", hint: "/memory normal|deep|off" },
+  { id: "permission", trigger: "/permission ", labelKey: "game.command.permission_label", groupKey: "game.command.group_mode", hint: "/permission default|review|full_access" },
+  { id: "save", trigger: "/save", labelKey: "game.command.save_label", groupKey: "game.command.group_engineering", hint: "/save" },
+  { id: "retry", trigger: "/retry", labelKey: "game.command.retry_label", groupKey: "game.command.group_engineering", hint: "/retry" },
 ];
 
 const ATTACH_GROUPS = [
   {
-    title: "本地",
+    titleKey: "game.attach.group_local",
     items: [
-      { id: "file", icon: "file", label: "文件 / 文本", hint: "TXT · MD · JSON" },
-      { id: "image", icon: "image", label: "图片", hint: "PNG · JPG · WEBP" },
+      { id: "file", icon: "file", labelKey: "game.attach.item_file", hintKey: "game.attach.item_file_hint" },
+      { id: "image", icon: "image", labelKey: "game.attach.item_image", hintKey: "game.attach.item_image_hint" },
     ],
   },
   {
-    title: "剧本资源",
+    titleKey: "game.attach.group_script",
     items: [
-      { id: "chapter", icon: "book", label: "插入章节", hint: "从剧本目录搜索" },
-      { id: "card", icon: "cards", label: "角色卡", hint: "拖入或搜索" },
-      { id: "world", icon: "world", label: "世界书条目", hint: "全文搜索" },
+      { id: "chapter", icon: "book", labelKey: "game.attach.item_chapter", hintKey: "game.attach.item_chapter_hint" },
+      { id: "card", icon: "cards", labelKey: "game.attach.item_card", hintKey: "game.attach.item_card_hint" },
+      { id: "world", icon: "world", labelKey: "game.attach.item_world", hintKey: "game.attach.item_world_hint" },
     ],
   },
   {
-    title: "能力",
+    titleKey: "game.attach.group_capability",
     items: [
-      { id: "mcp", icon: "diamond", label: "MCP 工具", hint: "本地 / 远程" },
-      { id: "skill", icon: "spark", label: "Skill 包", hint: "本地部署" },
-      { id: "plan", icon: "compass", label: "计划模式", hint: "预演路径不写回" },
+      { id: "mcp", icon: "diamond", labelKey: "game.attach.item_mcp", hintKey: "game.attach.item_mcp_hint" },
+      { id: "skill", icon: "spark", labelKey: "game.attach.item_skill", hintKey: "game.attach.item_skill_hint" },
+      { id: "plan", icon: "compass", labelKey: "game.attach.item_plan", hintKey: "game.attach.item_plan_hint" },
     ],
   },
 ];
@@ -66,15 +67,16 @@ const ATTACH_GROUPS = [
 // task 53：补 read_only 模式（对齐 codex suggest）；id 用后端 normalize 接受的形式。
 // 注意 "review" 对应后端 auto_review；保持 backward-compat。
 const PERMISSION_OPTIONS = [
-  { id: "read_only",   label: "只读 · 纯叙事", desc: "GM 所有写入都需审批；类似 codex suggest", icon: "eye" },
-  { id: "default",     label: "默认权限",     desc: "白名单字段自动；其他需审批", icon: "lock" },
-  { id: "review",      label: "自动审查",     desc: "白名单 + 关系/世界变量自动；其他需审批", icon: "shield" },
-  { id: "full_access", label: "完全访问",     desc: "除硬黑名单外全部自动；类似 codex full-auto", icon: "unlock" },
+  { id: "read_only",   labelKey: "game.permission.read_only_label",   descKey: "game.permission.read_only_desc",   icon: "eye" },
+  { id: "default",     labelKey: "game.permission.default_label",     descKey: "game.permission.default_desc",     icon: "lock" },
+  { id: "review",      labelKey: "game.permission.review_label",      descKey: "game.permission.review_desc",      icon: "shield" },
+  { id: "full_access", labelKey: "game.permission.full_access_label", descKey: "game.permission.full_access_desc", icon: "unlock" },
 ];
 
 // task 53：onApprove/onReject/onAnswer 现在签名是 (it) → 调用方拿 {id, index}
 // 双字段发后端（id 优先；老数据没 id 时走 index 兜底，确保历史 pending 也能清掉）。
 function ConfirmStrip({ pendingWrites, pendingQuestions, onApprove, onReject, onAnswer, onDismiss }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useStateC({});
   // 防御：后端 /api/state 返回的 permissions 可能不带这两个数组（partial state），
   // 没兜底就 .map -> 白屏。task 5 修复点之一。
@@ -102,18 +104,18 @@ function ConfirmStrip({ pendingWrites, pendingQuestions, onApprove, onReject, on
     <div className="gc-confirm-strip">
       <div className="gc-confirm-strip-head">
         <span className="dot warn pulse" />
-        <span>{items.length} 项待确认</span>
+        <span>{t('game.confirm.pending_count', { count: items.length })}</span>
       </div>
       {items.map(it => it.kind === "question" ? (
         <div key={it.key} className="gc-confirm gc-confirm-q">
           <div className="gc-confirm-marker"><Icon name="info" size={12} /></div>
           <div className="gc-confirm-body">
             <div className="gc-confirm-row1">
-              <span className="gc-confirm-tag">GM 询问</span>
+              <span className="gc-confirm-tag">{t('game.confirm.gm_question')}</span>
               {/* task 46：后端 state.add_pending_question 写 {question, options, source, turn}；
                   旧前端读 it.data.text / it.data.choices 永远为空 → UI 显示『GM 询问』但内容为空。
                   双向兼容（question/text 取一，options/choices 取一）。 */}
-              <span className="gc-confirm-text serif">{it.data.question || it.data.text || "（询问内容为空）"}</span>
+              <span className="gc-confirm-text serif">{it.data.question || it.data.text || t('game.confirm.question_empty')}</span>
             </div>
             <div className="gc-confirm-actions">
               {((it.data.options || it.data.choices) || []).map((c, ci) => (
@@ -124,7 +126,7 @@ function ConfirmStrip({ pendingWrites, pendingQuestions, onApprove, onReject, on
               ))}
             </div>
           </div>
-          <button className="iconbtn" onClick={() => onDismiss(handleId(it))} title="不回答"><Icon name="close" size={11} /></button>
+          <button className="iconbtn" onClick={() => onDismiss(handleId(it))} title={t('game.confirm.no_answer_tip')}><Icon name="close" size={11} /></button>
         </div>
       ) : (
         <div key={it.key} className={`gc-confirm gc-confirm-w gc-confirm-risk-${it.data.risk}`}>
@@ -133,13 +135,13 @@ function ConfirmStrip({ pendingWrites, pendingQuestions, onApprove, onReject, on
           </div>
           <div className="gc-confirm-body">
             <div className="gc-confirm-row1">
-              <span className="gc-confirm-tag">写入 · {it.data.risk === "high" ? "高" : it.data.risk === "medium" ? "中" : "低"}</span>
+              <span className="gc-confirm-tag">{it.data.risk === "high" ? t('game.confirm.write_risk_high') : it.data.risk === "medium" ? t('game.confirm.write_risk_medium') : t('game.confirm.write_risk_low')}</span>
               <span className="gc-confirm-diff mono">
                 <span className="gc-confirm-field">{it.data.field}</span>
                 <span className="gc-diff-arrow"><Icon name="arrow_right" size={10} /></span>
                 <span className="gc-diff-to">{formatVal(it.data.to)}</span>
               </span>
-              <button className="gc-confirm-toggle muted-2" onClick={() => tog(it.key)} title="详情">
+              <button className="gc-confirm-toggle muted-2" onClick={() => tog(it.key)} title={t('game.confirm.detail_tip')}>
                 <Icon name={expanded[it.key] ? "chevron_up" : "chevron_down"} size={11} />
               </button>
             </div>
@@ -155,14 +157,14 @@ function ConfirmStrip({ pendingWrites, pendingQuestions, onApprove, onReject, on
             )}
             <div className="gc-confirm-actions">
               <button className="gc-chip-btn gc-chip-primary" onClick={() => onApprove(handleId(it))}>
-                <Icon name="check" size={11} /> 允许
+                <Icon name="check" size={11} /> {t('game.confirm.allow')}
               </button>
               <button className="gc-chip-btn" onClick={() => onReject(handleId(it))}>
-                <Icon name="close" size={11} /> 拒绝
+                <Icon name="close" size={11} /> {t('game.confirm.reject')}
               </button>
             </div>
           </div>
-          <button className="iconbtn" onClick={() => onDismiss(handleId(it))} title="稍后"><Icon name="close" size={11} /></button>
+          <button className="iconbtn" onClick={() => onDismiss(handleId(it))} title={t('game.confirm.later_tip')}><Icon name="close" size={11} /></button>
         </div>
       ))}
     </div>
@@ -177,40 +179,41 @@ function formatVal(v) {
 }
 
 function CommandMenu({ query, onPick, onClose }) {
+  const { t } = useTranslation();
   const q = query.replace(/^\//, "").trim().toLowerCase();
   const filtered = SLASH_COMMANDS.filter(c =>
-    c.trigger.toLowerCase().includes("/" + q) || c.label.includes(query.replace(/^\//, ""))
+    c.trigger.toLowerCase().includes("/" + q) || t(c.labelKey).includes(query.replace(/^\//, ""))
   );
   const groups = {};
-  filtered.forEach(c => { (groups[c.group] = groups[c.group] || []).push(c); });
+  filtered.forEach(c => { (groups[c.groupKey] = groups[c.groupKey] || []).push(c); });
   return (
     <div className="gc-menu gc-cmd-menu">
       <div className="gc-menu-head">
         <Icon name="slash" size={12} />
         <span className="mono">{query || "/"}</span>
-        <span className="muted-2" style={{marginLeft: "auto", fontSize: 11}}>命令</span>
+        <span className="muted-2" style={{marginLeft: "auto", fontSize: 11}}>{t('game.command.title')}</span>
       </div>
       <div className="gc-cmd-cols">
-        {Object.entries(groups).map(([group, items]) => (
-          <div key={group} className="gc-cmd-col">
-            <div className="gc-cmd-group">{group}</div>
+        {Object.entries(groups).map(([groupKey, items]) => (
+          <div key={groupKey} className="gc-cmd-col">
+            <div className="gc-cmd-group">{t(groupKey)}</div>
             {items.map(c => (
               <button key={c.id} className="gc-cmd-item" onClick={() => onPick(c)}>
                 <span className="mono gc-cmd-trigger">{c.trigger.trim()}</span>
-                <span className="gc-cmd-label">{c.label}</span>
+                <span className="gc-cmd-label">{t(c.labelKey)}</span>
                 <span className="muted-2 mono gc-cmd-hint">{c.hint}</span>
               </button>
             ))}
           </div>
         ))}
         {!filtered.length && (
-          <div className="gc-cmd-col empty"><div className="muted">无匹配，按 Esc 关闭</div></div>
+          <div className="gc-cmd-col empty"><div className="muted">{t('game.command.no_match')}</div></div>
         )}
       </div>
       <div className="gc-menu-foot">
-        <span className="kbd">↑↓</span><span className="muted">选择</span>
-        <span className="kbd">⏎</span><span className="muted">确认</span>
-        <span className="kbd">Esc</span><span className="muted">取消</span>
+        <span className="kbd">↑↓</span><span className="muted">{t('game.command.nav_hint')}</span>
+        <span className="kbd">⏎</span><span className="muted">{t('game.command.confirm_hint')}</span>
+        <span className="kbd">Esc</span><span className="muted">{t('game.command.cancel_hint')}</span>
       </div>
     </div>
   );
@@ -233,24 +236,25 @@ function AttachMenu({ onPick, onClose, triggerRef }) {
     };
   }, [onClose, triggerRef]);
 
+  const { t } = useTranslation();
   return (
     <div ref={menuRef} className="gc-menu gc-attach-menu">
       <div className="gc-menu-head">
         <Icon name="plus" size={12} />
-        <span>附加 / 工具</span>
-        <span className="muted-2" style={{marginLeft: "auto", fontSize: 11}}>拖拽到此或选择</span>
+        <span>{t('game.attach.title')}</span>
+        <span className="muted-2" style={{marginLeft: "auto", fontSize: 11}}>{t('game.attach.drag_hint')}</span>
       </div>
       <div className="gc-attach-groups">
         {ATTACH_GROUPS.map(g => (
-          <div key={g.title} className="gc-attach-group">
-            <div className="gc-attach-group-title">{g.title}</div>
+          <div key={g.titleKey} className="gc-attach-group">
+            <div className="gc-attach-group-title">{t(g.titleKey)}</div>
             <div className="gc-attach-items">
               {g.items.map(it => (
                 <button key={it.id} className="gc-attach-item" onClick={() => onPick(it)}>
                   <span className="gc-attach-icon"><Icon name={it.icon} size={16} /></span>
                   <span className="gc-attach-label">
-                    <strong>{it.label}</strong>
-                    <span className="muted-2">{it.hint}</span>
+                    <strong>{t(it.labelKey)}</strong>
+                    <span className="muted-2">{t(it.hintKey)}</span>
                   </span>
                 </button>
               ))}
@@ -263,6 +267,7 @@ function AttachMenu({ onPick, onClose, triggerRef }) {
 }
 
 function ModelPopover({ current, onPick, align = "left", gameState, onClose, triggerRef }) {
+  const { t } = useTranslation();
   // A1: 取当前存档 id（从 /api/state 的 gameState.save_id）用于存档级模型切换
   const saveId = (gameState && gameState.save_id != null) ? gameState.save_id : null;
   const menuRef = useRefC(null);
@@ -329,7 +334,7 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
         let priceLabel = null;
         if (priceIn != null && priceOut != null) {
           if (priceIn === 0 && priceOut === 0) {
-            priceLabel = "免费";
+            priceLabel = t('game.composer.model_price_free');
           } else {
             priceLabel = `$${priceIn.toFixed(2)} / $${priceOut.toFixed(2)} per M`;
           }
@@ -380,12 +385,12 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
         model_id: item.real_name,
         ...(isSaveScope ? { save_id: saveId } : {}),
       });
-      if (r && r.ok === false) throw new Error(r.error || r.detail || "切换模型失败");
+      if (r && r.ok === false) throw new Error(r.error || r.detail || t('game.composer.model_switch_failed'));
       if (isSaveScope) {
-        window.__apiToast?.(`已切换当前存档 GM 模型为 ${item.label}（不影响其他存档）`, { kind: "ok", duration: 2800 });
+        window.__apiToast?.(t('game.composer.model_switched_save', { label: item.label }), { kind: "ok", duration: 2800 });
         // 存档级切换：不广播 game-state-refresh（避免干扰其他 tab/存档）
       } else {
-        window.__apiToast?.(`已切到 ${item.label}`, { kind: "ok", duration: 1800 });
+        window.__apiToast?.(t('game.composer.model_switched', { label: item.label }), { kind: "ok", duration: 1800 });
         // 全局切换：通知所有 tab 同步
         try { window.dispatchEvent(new CustomEvent("game-state-refresh")); } catch (_) {}
       }
@@ -395,10 +400,10 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
       setErr(msg);
       // M5: 尝试触发带重试按钮的 toast，回退到普通 danger toast
       if (window.__apiToast) {
-        window.__apiToast("切换失败，点此重试", {
+        window.__apiToast(t('game.composer.model_switch_failed'), {
           kind: "danger",
           detail: msg,
-          action: { label: "重试", onClick: () => pickModel(item) },
+          action: { label: t('game.composer.retry'), onClick: () => pickModel(item) },
         });
       }
     } finally {
@@ -409,14 +414,14 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
   return (
     <div ref={menuRef} className={`gc-menu gc-pop-menu ${align === "right" ? "gc-menu-right" : ""}`}>
       <div className="gc-menu-head">
-        <Icon name="sparkle" size={12} /><span>模型</span>
-        {busy ? <span className="muted-2" style={{marginLeft: "auto", fontSize: 11}}>切换中…</span> : null}
+        <Icon name="sparkle" size={12} /><span>{t('game.composer.model_placeholder')}</span>
+        {busy ? <span className="muted-2" style={{marginLeft: "auto", fontSize: 11}}>{t('game.composer.model_switching')}</span> : null}
       </div>
       {err ? <div className="muted-2" style={{padding: "6px 10px", fontSize: 11.5, color: "var(--danger)"}}>{err}</div> : null}
       <ul className="gc-pop-list">
         {flat.length === 0 && (
           <li><div style={{padding: "8px 10px", fontSize: 12, color: "var(--muted)"}}>
-            没有可用模型。请到平台『API / 模型』配置后再回来。
+            {t('game.composer.model_none')}
           </div></li>
         )}
         {flat.map((m) => {
@@ -428,17 +433,17 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
             : m.health === "degraded" ? "#e89b3a"
             : m.health === "err" ? "var(--danger)"
             : "var(--muted)";
-          const dotTip = m.health === "ok" ? `可用 · ${m.health_latency_ms}ms`
-            : m.health === "degraded" ? `降级 · ${m.health_latency_ms != null ? m.health_latency_ms + "ms" : "延迟高"}`
-            : m.health === "err" ? `不可达 · ${(m.health_error || "").slice(0, 80)}`
-            : "尚未探活";
+          const dotTip = m.health === "ok" ? `ok · ${m.health_latency_ms}ms`
+            : m.health === "degraded" ? `degraded · ${m.health_latency_ms != null ? m.health_latency_ms + "ms" : "high latency"}`
+            : m.health === "err" ? `unreachable · ${(m.health_error || "").slice(0, 80)}`
+            : "untested";
           return (
             <li key={key}>
               <button
                 onClick={() => !busy && !unavailable && pickModel(m)}
                 className={active ? "active" : ""}
                 disabled={busy || unavailable}
-                title={unavailable ? `不可达:${(m.health_error || "").slice(0, 120)}` : undefined}
+                title={unavailable ? `unreachable:${(m.health_error || "").slice(0, 120)}` : undefined}
                 style={unavailable ? { opacity: 0.45 } : undefined}
               >
                 <div>
@@ -450,7 +455,7 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
                   <strong>{m.label}</strong>
                   <span className="muted-2 mono" style={{marginLeft: 6, fontSize: 11}}>{m.api_label}</span>
                   {unavailable && (
-                    <span className="muted-2" style={{marginLeft: 6, fontSize: 10.5, color: "var(--danger)"}}>不可达</span>
+                    <span className="muted-2" style={{marginLeft: 6, fontSize: 10.5, color: "var(--danger)"}}>unreachable</span>
                   )}
                 </div>
                 {(m.desc || m.priceLabel || m.ctxLabel) ? (
@@ -475,6 +480,7 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
 }
 
 function PermissionPopover({ current, onPick, onClose, triggerRef }) {
+  const { t } = useTranslation();
   const menuRef = useRefC(null);
   React.useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose && onClose(); };
@@ -494,7 +500,7 @@ function PermissionPopover({ current, onPick, onClose, triggerRef }) {
   return (
     <div ref={menuRef} className="gc-menu gc-pop-menu">
       <div className="gc-menu-head">
-        <Icon name="lock" size={12} /><span>LLM 写入权限</span>
+        <Icon name="lock" size={12} /><span>{t('game.composer.perm_title')}</span>
       </div>
       <ul className="gc-pop-list">
         {PERMISSION_OPTIONS.map(p => (
@@ -502,9 +508,9 @@ function PermissionPopover({ current, onPick, onClose, triggerRef }) {
             <button onClick={() => onPick(p.id)} className={p.id === current ? "active" : ""}>
               <div>
                 <Icon name={p.icon} size={12} style={{verticalAlign: "-2px", marginRight: 6, color: "var(--muted)"}} />
-                <strong>{p.label}</strong>
+                <strong>{t(p.labelKey)}</strong>
               </div>
-              <span className="muted" style={{fontSize: 12}}>{p.desc}</span>
+              <span className="muted" style={{fontSize: 12}}>{t(p.descKey)}</span>
               {p.id === current && <Icon name="check" size={14} style={{color: "var(--accent)"}} />}
             </button>
           </li>
@@ -512,7 +518,7 @@ function PermissionPopover({ current, onPick, onClose, triggerRef }) {
       </ul>
       <div className="gc-menu-foot">
         <span className="muted" style={{fontSize: 11.5}}>
-          『完全访问』可覆盖大部分写回，但下一步计划 / 重大设定冲突 / 高风险世界线变更仍会非阻塞弹窗。
+          {t('game.composer.perm_footer')}
         </span>
       </div>
     </div>
@@ -520,11 +526,12 @@ function PermissionPopover({ current, onPick, onClose, triggerRef }) {
 }
 
 function SuggestionRow({ suggestions, onPick }) {
+  const { t } = useTranslation();
   if (!suggestions?.length) return null;
   return (
     <div className="gc-suggestions">
       <div className="gc-suggestions-label muted-2">
-        <Icon name="compass" size={12} /> 基于当前剧情
+        <Icon name="compass" size={12} /> {t('game.composer.based_on_story')}
       </div>
       <div className="gc-suggestions-row">
         {suggestions.map((s, i) => (
@@ -553,6 +560,7 @@ function Composer({
   toggleSlash, togglePlus, toggleModel, togglePerm,
   gameState,   // task 48：透传 game state 拿 relationships，让 @ mention 用真角色
 }) {
+  const { t } = useTranslation();
   const taRef = useRefC(null);
   const plusTriggerRef = useRefC(null);
   const modelTriggerRef = useRefC(null);
@@ -595,11 +603,11 @@ function Composer({
       out.push({ name: n, role: String(role || "") });
     };
     const p = (gameState && gameState.player) || {};
-    if (p.name) push(p.name, (p.role || "玩家") + " · 你");
+    if (p.name) push(p.name, (p.role || t('game.status.player')) + " · 你");
     const rels = (gameState && gameState.relationships) || {};
     for (const [name, info] of Object.entries(rels)) {
       const tone = typeof info === "string" ? info : (info?.tone || "");
-      push(name, tone ? `关系：${tone}` : "");
+      push(name, tone ? `${t('game.characters.relationships')}：${tone}` : "");
     }
     return out;
   })();
@@ -651,7 +659,7 @@ function Composer({
             <div className="gc-cmd-chip">
               <span className="mono">{pickedCommand.trigger.trim()}</span>
               <span className="gc-cmd-chip-label">{pickedCommand.label}</span>
-              <button className="iconbtn" data-tip="移除命令 · 退格" onClick={onClearCommand} style={{width: 18, height: 18}}>
+              <button className="iconbtn" data-tip={t('game.composer.remove_command_tip')} onClick={onClearCommand} style={{width: 18, height: 18}}>
                 <Icon name="close" size={10} />
               </button>
             </div>
@@ -660,10 +668,10 @@ function Composer({
             ref={taRef}
             className={`gc-textarea ${isWriting ? "serif" : ""} gc-textarea-autogrow`}
             placeholder={pickedCommand
-              ? (pickedCommand.hint.replace(pickedCommand.trigger, "").trim() || "回车执行此命令")
+              ? (pickedCommand.hint.replace(pickedCommand.trigger, "").trim() || t('game.composer.placeholder_command'))
               : (isWriting
-              ? "用文字推进剧情。回车换行，⌘ + 回车发送。/ 打开命令，+ 打开附件。"
-              : "推进剧情、提问、或输入 / 命令…")}
+              ? t('game.composer.placeholder_writing')
+              : t('game.composer.placeholder_compact'))}
             rows={1}
             value={text}
             onChange={(e) => {
@@ -703,26 +711,26 @@ function Composer({
         </div>
         <div className="gc-composer-row gc-composer-bottom">
           <div className="gc-composer-left">
-            <button ref={plusTriggerRef} className={`iconbtn ${showPlus ? "active" : ""}`} onClick={togglePlus} data-tip="附件 / 工具 / Skill">
+            <button ref={plusTriggerRef} className={`iconbtn ${showPlus ? "active" : ""}`} onClick={togglePlus} data-tip={t('game.composer.attach_tip')}>
               <Icon name="plus" size={14} />
             </button>
-            <button className={`iconbtn ${showSlash ? "active" : ""}`} onClick={toggleSlash} data-tip="命令 (/)">
+            <button className={`iconbtn ${showSlash ? "active" : ""}`} onClick={toggleSlash} data-tip={t('game.composer.command_tip')}>
               <Icon name="slash" size={14} />
             </button>
             {/* task 130: 一键继续推进 — 玩家被动场景 (昏迷/旁观/过场) 直接让 GM 推一段 */}
             {!running && (
               <button
                 className="gc-pop-trigger"
-                onClick={() => onSendRaw && onSendRaw("（继续推进剧情）")}
-                data-tip="让 GM 推进一段剧情,不开口"
+                onClick={() => onSendRaw && onSendRaw(t('game.composer.continue_text'))}
+                data-tip={t('game.composer.continue_tip')}
                 disabled={!onSendRaw}>
                 <Icon name="play" size={12} />
-                <span>继续</span>
+                <span>{t('game.composer.continue')}</span>
               </button>
             )}
             <button ref={permTriggerRef} className="gc-pop-trigger" onClick={togglePerm}>
               <Icon name={PERMISSION_OPTIONS.find(p => p.id === permission)?.icon || "lock"} size={12} />
-              <span>{PERMISSION_OPTIONS.find(p => p.id === permission)?.label}</span>
+              <span>{t(PERMISSION_OPTIONS.find(p => p.id === permission)?.labelKey || 'game.permission.default_label')}</span>
               <Icon name="chevron_down" size={11} />
             </button>
           </div>
@@ -730,7 +738,7 @@ function Composer({
             <ContextUsage gameState={gameState} />
             <button ref={modelTriggerRef} className="gc-pop-trigger" onClick={toggleModel}>
               <Icon name="sparkle" size={12} />
-              <span className="gc-model-label">{_currentModelLabel(gameState, model)}</span>
+              <span className="gc-model-label">{_currentModelLabel(gameState, model, t)}</span>
               <Icon name="chevron_down" size={11} />
             </button>
             <span className="muted-2" style={{fontSize: 11.5}}>
@@ -738,7 +746,7 @@ function Composer({
             </span>
             {running ? (
               <button className="btn danger" onClick={onStop}>
-                <Icon name="stop" size={12} /> 停止
+                <Icon name="stop" size={12} /> {t('game.composer.stop')}
               </button>
             ) : (
               <button
@@ -746,7 +754,7 @@ function Composer({
                 onClick={onSend}
                 disabled={!text.trim() && !attachments?.length}
               >
-                <Icon name="send" size={12} /> 发送
+                <Icon name="send" size={12} /> {t('game.composer.send')}
               </button>
             )}
           </div>
@@ -765,6 +773,7 @@ function Composer({
 }
 
 function MentionMenu({ chars, query, onPick, onClose }) {
+  const { t } = useTranslation();
   const [idx, setIdx] = useStateC(0);
   React.useEffect(() => { setIdx(0); }, [query]);
   React.useEffect(() => {
@@ -783,8 +792,8 @@ function MentionMenu({ chars, query, onPick, onClose }) {
     <div className="gc-menu gc-mention-menu">
       <div className="gc-menu-head">
         <span style={{color: "var(--accent)"}}>@</span>
-        <span className="muted">提及角色卡</span>
-        <span className="muted-2" style={{marginLeft: "auto", fontSize: 11}}>{query ? `匹配 "${query}"` : "全部"}</span>
+        <span className="muted">{t('game.mention.title')}</span>
+        <span className="muted-2" style={{marginLeft: "auto", fontSize: 11}}>{query ? t('game.mention.match', { query }) : t('game.mention.all')}</span>
       </div>
       <ul className="gc-mention-list">
         {chars.map((c, i) => (
@@ -800,9 +809,9 @@ function MentionMenu({ chars, query, onPick, onClose }) {
         ))}
       </ul>
       <div className="gc-menu-foot">
-        <span className="kbd">↑↓</span><span className="muted">选择</span>
-        <span className="kbd">⏎</span><span className="muted">插入</span>
-        <span className="kbd">Esc</span><span className="muted">关闭</span>
+        <span className="kbd">↑↓</span><span className="muted">{t('game.mention.nav_hint')}</span>
+        <span className="kbd">⏎</span><span className="muted">{t('game.mention.insert_hint')}</span>
+        <span className="kbd">Esc</span><span className="muted">{t('game.mention.close_hint')}</span>
       </div>
     </div>
   );
@@ -810,6 +819,7 @@ function MentionMenu({ chars, query, onPick, onClose }) {
 
 // task 39 收尾：MODEL_OPTIONS 已删，不再 export。
 function ContextBreakdownPanel({ used, cap, onClose, triggerRef }) {
+  const { t } = useTranslation();
   const [data, setData] = useStateC(null);
   const [loading, setLoading] = useStateC(true);
   const panelRef = useRefC(null);
@@ -866,7 +876,7 @@ function ContextBreakdownPanel({ used, cap, onClose, triggerRef }) {
               transform="rotate(-90 10 10)" />
             <circle cx="10" cy="10" r="8" fill="none" stroke="var(--line)" strokeWidth="2.5" />
           </svg>
-          上下文用量
+          {t('game.composer.ctx_usage_title')}
         </span>
         <span className="gc-ctx-breakdown-total">{fmt(total)} / {fmt(limit)} ({pctTxt}%)</span>
       </div>
@@ -878,7 +888,7 @@ function ContextBreakdownPanel({ used, cap, onClose, triggerRef }) {
           ))}
         </div>
       </div>
-      {loading && <div style={{padding:"12px",textAlign:"center",fontSize:12,color:"var(--muted)"}}>加载中…</div>}
+      {loading && <div style={{padding:"12px",textAlign:"center",fontSize:12,color:"var(--muted)"}}>{t('game.composer.ctx_loading')}</div>}
       {!loading && breakdown.length > 0 && (
         <ul className="gc-ctx-breakdown-list">
           {breakdown.map(b => (
@@ -892,13 +902,14 @@ function ContextBreakdownPanel({ used, cap, onClose, triggerRef }) {
         </ul>
       )}
       {!loading && breakdown.length === 0 && (
-        <div style={{padding:"10px 12px",fontSize:12,color:"var(--muted)"}}>暂无数据（发送第一条消息后可见）</div>
+        <div style={{padding:"10px 12px",fontSize:12,color:"var(--muted)"}}>{t('game.composer.ctx_no_data')}</div>
       )}
     </div>
   );
 }
 
 function ContextUsage({ gameState, used: usedProp, cap: capProp }) {
+  const { t } = useTranslation();
   const liveUsed = (gameState && gameState.memory && gameState.memory.last_context
                     && gameState.memory.last_context.estimated_tokens) || 0;
   const liveCap = (gameState && gameState.app && gameState.app.context_window) || 0;
@@ -921,7 +932,7 @@ function ContextUsage({ gameState, used: usedProp, cap: capProp }) {
     <span className={`gc-context-usage gc-context-usage-ring${open ? " active" : ""}`}
       ref={wrapRef}
       onClick={() => setOpen(o => !o)}
-      title="点击查看上下文用量详情">
+      title={t('game.composer.context_usage_tip')}>
       <svg width="20" height="20" viewBox="0 0 20 20" style={{display: "block"}}>
         <circle cx="10" cy="10" r={r} fill="none" stroke="var(--line)" strokeWidth="2" />
         <circle cx="10" cy="10" r={r} fill="none" stroke={color} strokeWidth="2"
@@ -939,9 +950,9 @@ function ContextUsage({ gameState, used: usedProp, cap: capProp }) {
 // 没有就显示『模型』占位符 — 不再 fallback 到 mock label，避免 UI 假装有数据。
 // 若 gameState.app 缺失，多半是没登录 / reloadState 还没回来 / 后端崩；
 // 让占位符肉眼可见才能引导用户去查问题，而不是被 mock 字串骗。
-function _currentModelLabel(gameState, _ignored) {
+function _currentModelLabel(gameState, _ignored, t) {
   if (gameState && gameState.app && gameState.app.model) return gameState.app.model;
-  return "模型";
+  return t ? t('game.composer.model_placeholder') : "Model";
 }
 
 

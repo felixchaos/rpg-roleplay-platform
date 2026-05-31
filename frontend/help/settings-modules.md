@@ -64,7 +64,7 @@
 
 步骤 2. 在列表中找到你想配置的模块行，点击该行最右侧的下拉框。
 
-<!-- TODO: 截图 settings-modules 模块列表 -->
+![模块模型列表](./screenshots/settings-modules-list.png)
 
 步骤 3. 下拉列表会显示所有已配置 API Key 的供应商下的模型（标灰的为已禁用模型，不可选）。选择目标模型。
 

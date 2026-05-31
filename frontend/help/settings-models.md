@@ -1,4 +1,4 @@
-# API 设置（模型配置）
+# API 设置
 
 ## 这页能干嘛
 
@@ -42,7 +42,7 @@
 
 步骤 1. 点击页面右上角「添加 API Key」按钮。
 
-<!-- TODO: 截图 settings-models 添加 API 弹窗 -->
+![添加 API Key 弹窗](./screenshots/settings-models-add-key.png)
 
 步骤 2. 在弹窗的「供应商」下拉中选择你的供应商（如 OpenAI、Anthropic 等）。选择后 Base URL 会自动填入。
 
@@ -60,7 +60,7 @@
 
 步骤 2. 点击详情面板右上角的「校验连接」按钮。
 
-<!-- TODO: 截图 settings-models 校验连接弹窗 -->
+![校验连接弹窗](./screenshots/settings-models-validate.png)
 
 步骤 3. 弹窗向供应商发起嗅探，查询远端可用模型列表，并与本地已有列表对比，显示：
 

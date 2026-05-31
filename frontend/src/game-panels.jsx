@@ -5,22 +5,23 @@
 import React from 'react';
 import { useState, useMemo } from 'react';
 import { Icon } from './game-icons.jsx';
+import { useTranslation } from 'react-i18next';
 
 const PANEL_TABS = [
-  { id: "status", label: "状态", icon: "status" },
-  { id: "rules", label: "5E 规则", icon: "debug" },
-  { id: "memory", label: "记忆", icon: "memory" },
-  { id: "worldbook", label: "世界书", icon: "world" },
+  { id: "status", labelKey: "game.tabs.status", icon: "status" },
+  { id: "rules", labelKey: "game.tabs.rules", icon: "debug" },
+  { id: "memory", labelKey: "game.tabs.memory", icon: "memory" },
+  { id: "worldbook", labelKey: "game.tabs.worldbook", icon: "world" },
   // Codex 评审:tab 改名"人物" — 不再是"完整角色卡库"的镜像,而是三层运行时索引:
   // 当前在场 (active_entities + encounter.combatants) / 关系 (relationships) /
   // 已固定角色卡 (entity.card_id 链接到平台 user_cards)。提升为长期角色卡只能在
   // 平台『角色卡』页操作,游戏内不创建。
-  { id: "cards", label: "人物", icon: "cards" },
-  { id: "timeline", label: "世界线", icon: "timeline" },
-  { id: "context", label: "上下文", icon: "context" },
+  { id: "cards", labelKey: "game.tabs.cards", icon: "cards" },
+  { id: "timeline", labelKey: "game.tabs.timeline", icon: "timeline" },
+  { id: "context", labelKey: "game.tabs.context", icon: "context" },
   // 调试 tab 仅当 localStorage.rpg_devmode === "1" 时启用; 玩家面看不到
   ...(typeof localStorage !== "undefined" && localStorage.getItem("rpg_devmode") === "1"
-      ? [{ id: "debug", label: "调试", icon: "debug" }]
+      ? [{ id: "debug", labelKey: "game.tabs.debug", icon: "debug" }]
       : []),
 ];
 
@@ -59,6 +60,7 @@ function _statusProfileFor(state) {
 }
 
 function ModuleStatusProfile({ state }) {
+  const { t } = useTranslation();
   const pc = (state && state.player_character) || {};
   const scene = (state && state.scene) || {};
   const room = scene.current_room || {};
@@ -71,7 +73,7 @@ function ModuleStatusProfile({ state }) {
   const inventory = Array.isArray(pc.inventory) ? pc.inventory : [];
   const conditions = Array.isArray(pc.conditions) && pc.conditions.length
     ? pc.conditions.join(" · ")
-    : "正常";
+    : t('game.status.condition_normal');
   const hpPct = pc.max_hp > 0 ? Math.max(0, Math.min(100, Math.round(100 * (pc.hp || 0) / pc.max_hp))) : 0;
   const lastRoll = diceLog.length ? diceLog[diceLog.length - 1] : null;
   const liveEnemies = (encounter.combatants || []).filter(c => c && c.side === "enemy" && !c.defeated);
@@ -87,12 +89,12 @@ function ModuleStatusProfile({ state }) {
       {/* 玩家 — 5E 字段 */}
       <div className="gp-section">
         <div className="section-head">
-          <h3>玩家</h3>
+          <h3>{t('game.status.player')}</h3>
           <span className="pill"><span className="dot ok" /> {pc.class_name || "—"}</span>
         </div>
         <div className="gp-kv">
           <div className="gp-row">
-            <span className="gp-label">姓名</span>
+            <span className="gp-label">{t('game.status.name')}</span>
             <strong>
               {pc.name || "—"}
               {pc.level ? ` · Lv${pc.level}` : ""}
@@ -100,15 +102,15 @@ function ModuleStatusProfile({ state }) {
             </strong>
           </div>
           <div className="gp-row">
-            <span className="gp-label">HP</span>
+            <span className="gp-label">{t('game.status.hp')}</span>
             <span className="mono">{pc.hp ?? "—"}/{pc.max_hp ?? "—"} {pc.max_hp > 0 ? `(${hpPct}%)` : ""}</span>
           </div>
           <div className="gp-row">
-            <span className="gp-label">AC</span>
+            <span className="gp-label">{t('game.status.ac')}</span>
             <span className="mono">{pc.ac ?? "—"}</span>
           </div>
           <div className="gp-row">
-            <span className="gp-label">状态</span>
+            <span className="gp-label">{t('game.status.condition')}</span>
             <span>{conditions}</span>
           </div>
         </div>
@@ -117,19 +119,19 @@ function ModuleStatusProfile({ state }) {
       {/* 冒险现场 — 当前房间 + 目标 */}
       <div className="gp-section">
         <div className="section-head">
-          <h3>冒险现场</h3>
+          <h3>{t('game.status.adventure_scene')}</h3>
           {encounter.active
-            ? <span className="pill" style={{color:"var(--danger)"}}><span className="dot" style={{background:"var(--danger)"}}/> 战斗中</span>
-            : <span className="pill ok"><span className="dot ok" /> 探索</span>}
+            ? <span className="pill" style={{color:"var(--danger)"}}><span className="dot" style={{background:"var(--danger)"}}/> {t('game.status.in_combat')}</span>
+            : <span className="pill ok"><span className="dot ok" /> {t('game.status.exploring')}</span>}
         </div>
         <div className="gp-kv">
           <div className="gp-row">
-            <span className="gp-label">位置</span>
+            <span className="gp-label">{t('game.status.position')}</span>
             <strong>{room.name || scene.location_id || "—"}</strong>
           </div>
           {(memory.current_objective || manifest.tagline) ? (
             <div className="gp-row">
-              <span className="gp-label">目标</span>
+              <span className="gp-label">{t('game.status.objective')}</span>
               <span style={{fontStyle:"italic"}}>{memory.current_objective || manifest.tagline}</span>
             </div>
           ) : null}
@@ -143,13 +145,13 @@ function ModuleStatusProfile({ state }) {
       {(room.visible_clues && room.visible_clues.length) ? (
         <div className="gp-section">
           <div className="section-head">
-            <h3>可见线索</h3>
+            <h3>{t('game.status.visible_clues')}</h3>
             <span className="muted-2 mono" style={{fontSize: 11}}>{room.visible_clues.length}</span>
           </div>
           <ul className="gp-flat-list">
             {room.visible_clues.map((c, i) => (
               <li key={c.id || i}>
-                <span>{(c && c.text) || c.id || "线索"}</span>
+                <span>{(c && c.text) || c.id || t('game.status.clue_label')}</span>
               </li>
             ))}
           </ul>
@@ -160,13 +162,13 @@ function ModuleStatusProfile({ state }) {
       {(room.exits && room.exits.length) ? (
         <div className="gp-section">
           <div className="section-head">
-            <h3>出口</h3>
+            <h3>{t('game.status.exits')}</h3>
             <span className="muted-2 mono" style={{fontSize: 11}}>{room.exits.length}</span>
           </div>
           <ul className="gp-flat-list">
             {room.exits.map((ex, i) => (
               <li key={ex.to || i}>
-                <span>{(ex && ex.label) || ex.to || "出口"}</span>
+                <span>{(ex && ex.label) || ex.to || t('game.status.exit_label')}</span>
                 <span className="muted-2 mono" style={{fontSize: 11.5}}>{ex.to || ""}</span>
               </li>
             ))}
@@ -177,16 +179,16 @@ function ModuleStatusProfile({ state }) {
       {/* 资源 — 5E 背包 (player_character.inventory) */}
       <div className="gp-section">
         <div className="section-head">
-          <h3>资源</h3>
-          <span className="muted-2 mono" style={{fontSize: 11}}>{inventory.length} 件</span>
+          <h3>{t('game.status.resources')}</h3>
+          <span className="muted-2 mono" style={{fontSize: 11}}>{t('game.status.items_count', { count: inventory.length })}</span>
         </div>
         {inventory.length === 0 ? (
-          <p className="muted-2" style={{fontSize: 12.5, margin: "4px 0 0"}}>背包为空</p>
+          <p className="muted-2" style={{fontSize: 12.5, margin: "4px 0 0"}}>{t('game.status.backpack_empty')}</p>
         ) : (
           <ul className="gp-flat-list">
             {inventory.map((it, i) => (
               <li key={it.id || it.name || i}>
-                <span>{(it && (it.name || it.id)) || "未命名物品"}</span>
+                <span>{(it && (it.name || it.id)) || t('game.status.unnamed_item')}</span>
                 <span className="muted-2 mono" style={{fontSize: 11.5}}>
                   {(it && it.qty != null) ? `×${it.qty}` : (it && it.quality) || ""}
                 </span>
@@ -200,15 +202,15 @@ function ModuleStatusProfile({ state }) {
       {encounter.active ? (
         <div className="gp-section">
           <div className="section-head">
-            <h3>战斗</h3>
+            <h3>{t('game.status.combat')}</h3>
             <span className="pill" style={{color:"var(--danger)"}}>
-              第 {encounter.round || 1} 回合
+              {t('game.status.round', { round: encounter.round || 1 })}
             </span>
           </div>
           {turnActor ? (
             <div className="gp-kv">
               <div className="gp-row">
-                <span className="gp-label">当前行动</span>
+                <span className="gp-label">{t('game.status.current_action')}</span>
                 <strong>{turnActor.name || turnActor.id || "—"}</strong>
               </div>
             </div>
@@ -217,7 +219,7 @@ function ModuleStatusProfile({ state }) {
             <ul className="gp-flat-list">
               {liveEnemies.map((c, i) => (
                 <li key={c.id || i}>
-                  <span>{c.name || c.id || "敌人"}</span>
+                  <span>{c.name || c.id || t('game.status.enemy')}</span>
                   <span className="muted-2 mono" style={{fontSize: 11.5}}>HP {c.hp ?? "—"}/{c.max_hp ?? "—"}</span>
                 </li>
               ))}
@@ -230,7 +232,7 @@ function ModuleStatusProfile({ state }) {
       {lastRoll ? (
         <div className="gp-section">
           <div className="section-head">
-            <h3>最近裁定</h3>
+            <h3>{t('game.status.last_ruling')}</h3>
             <span className="muted-2 mono" style={{fontSize: 11}}>{lastRoll.kind || "?"}</span>
           </div>
           <div className="gp-kv">
@@ -239,12 +241,12 @@ function ModuleStatusProfile({ state }) {
               <span className="mono">
                 {lastRoll.expression || ""}{lastRoll.total != null ? ` = ${lastRoll.total}` : ""}
                 {lastRoll.dc != null ? ` vs DC ${lastRoll.dc}` : ""}
-                {lastRoll.success === true ? " 成功" : lastRoll.success === false ? " 失败" : ""}
+                {lastRoll.success === true ? t('game.status.roll_success') : lastRoll.success === false ? t('game.status.roll_failure') : ""}
               </span>
             </div>
             {lastRoll.damage ? (
               <div className="gp-row">
-                <span className="gp-label">伤害</span>
+                <span className="gp-label">{t('game.status.damage')}</span>
                 <span className="mono">{
                   typeof lastRoll.damage === "object"
                     ? `${lastRoll.damage.amount ?? "—"} ${lastRoll.damage.type || ""}`.trim()
@@ -254,7 +256,7 @@ function ModuleStatusProfile({ state }) {
             ) : null}
             {lastRoll.reason ? (
               <div className="gp-row">
-                <span className="gp-label">来源</span>
+                <span className="gp-label">{t('game.status.ruling_source')}</span>
                 <span style={{fontSize: 12, fontStyle:"italic"}}>{lastRoll.reason}</span>
               </div>
             ) : null}
@@ -266,6 +268,7 @@ function ModuleStatusProfile({ state }) {
 }
 
 function NovelStatusProfile({ state }) {
+  const { t } = useTranslation();
   // 防御:backend /api/state 在新存档/部分字段缺失时不给出完整结构,
   // 嵌套访问点必须兜底,否则 undefined.x → 白屏(task 5)。
   const p = (state && state.player) || {};
@@ -281,59 +284,59 @@ function NovelStatusProfile({ state }) {
     <div className="gp-stack">
       <div className="gp-section">
         <div className="section-head">
-          <h3>玩家</h3>
+          <h3>{t('game.status.player')}</h3>
           {hasDetail && (
             <button
               className="iconbtn"
               style={{ fontSize: 11, padding: "2px 6px", borderRadius: 4 }}
               onClick={() => setPlayerExpanded(v => !v)}
-              data-tip={playerExpanded ? "收起详情" : "查看完整设定"}
+              data-tip={playerExpanded ? t('game.status.collapse_detail') : t('game.status.expand_detail')}
             >
-              {playerExpanded ? "▲ 收起" : "▼ 详情"}
+              {playerExpanded ? t('game.status.collapse_detail') : t('game.status.expand_detail')}
             </button>
           )}
         </div>
         <div className="gp-kv">
-          <div className="gp-row"><span className="gp-label">姓名</span><strong>{p.name || "—"}</strong></div>
-          <div className="gp-row"><span className="gp-label">身份</span><span>{p.role || "—"}</span></div>
-          <div className="gp-row"><span className="gp-label">所在</span><span>{p.current_location || "—"}</span></div>
+          <div className="gp-row"><span className="gp-label">{t('game.status.name')}</span><strong>{p.name || "—"}</strong></div>
+          <div className="gp-row"><span className="gp-label">{t('game.status.identity')}</span><span>{p.role || "—"}</span></div>
+          <div className="gp-row"><span className="gp-label">{t('game.status.location')}</span><span>{p.current_location || "—"}</span></div>
         </div>
         {playerExpanded && hasDetail && (
           <div className="gp-player-detail" style={{ marginTop: 8 }}>
             {p.appearance && (
               <div style={{ marginBottom: 6 }}>
-                <div className="gp-label" style={{ marginBottom: 2 }}>外貌</div>
+                <div className="gp-label" style={{ marginBottom: 2 }}>{t('game.status.appearance')}</div>
                 <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.appearance}</p>
               </div>
             )}
             {p.personality && (
               <div style={{ marginBottom: 6 }}>
-                <div className="gp-label" style={{ marginBottom: 2 }}>性格 / 设定</div>
+                <div className="gp-label" style={{ marginBottom: 2 }}>{t('game.status.personality')}</div>
                 <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.personality}</p>
               </div>
             )}
             {p.speech_style && (
               <div style={{ marginBottom: 6 }}>
-                <div className="gp-label" style={{ marginBottom: 2 }}>语气</div>
+                <div className="gp-label" style={{ marginBottom: 2 }}>{t('game.status.speech_style')}</div>
                 <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.speech_style}</p>
               </div>
             )}
             {p.background && !p.personality && (
               <div style={{ marginBottom: 6 }}>
-                <div className="gp-label" style={{ marginBottom: 2 }}>背景</div>
+                <div className="gp-label" style={{ marginBottom: 2 }}>{t('game.status.background')}</div>
                 <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.background}</p>
               </div>
             )}
             {p.identity_role_desc && (
               <div style={{ marginBottom: 6 }}>
-                <div className="gp-label" style={{ marginBottom: 2 }}>入场定位</div>
+                <div className="gp-label" style={{ marginBottom: 2 }}>{t('game.status.entry_position')}</div>
                 <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.identity_role_desc}</p>
               </div>
             )}
             {p.secrets && (
               <div style={{ marginBottom: 6, padding: "6px 8px", background: "var(--panel-3)", borderRadius: 6, border: "1px dashed var(--line)" }}>
                 <div className="gp-label" style={{ marginBottom: 2, color: "var(--accent)" }}>
-                  🔒 玩家隐藏知识 — 仅你可见
+                  {t('game.status.secrets_label')}
                 </div>
                 <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6, fontStyle: "italic" }}>{p.secrets}</p>
               </div>
@@ -344,22 +347,22 @@ function NovelStatusProfile({ state }) {
 
       <div className="gp-section">
         <div className="section-head">
-          <h3>当下世界</h3>
-          <span className="pill ok"><span className="dot ok" /> 锁定</span>
+          <h3>{t('game.status.world_now')}</h3>
+          <span className="pill ok"><span className="dot ok" /> {t('game.status.locked')}</span>
         </div>
         <div className="gp-kv">
-          <div className="gp-row"><span className="gp-label">时刻</span><span>{w.time || "—"}</span></div>
-          <div className="gp-row"><span className="gp-label">天气</span><span>{w.weather || "—"}</span></div>
-          <div className="gp-row"><span className="gp-label">事件</span><span>{timeline.current_label || "—"}{timeline.current_phase ? ` · ${timeline.current_phase}` : ""}</span></div>
+          <div className="gp-row"><span className="gp-label">{t('game.status.time')}</span><span>{w.time || "—"}</span></div>
+          <div className="gp-row"><span className="gp-label">{t('game.status.weather')}</span><span>{w.weather || "—"}</span></div>
+          <div className="gp-row"><span className="gp-label">{t('game.status.event')}</span><span>{timeline.current_label || "—"}{timeline.current_phase ? ` · ${timeline.current_phase}` : ""}</span></div>
         </div>
       </div>
 
       <div className="gp-section">
-        <div className="section-head"><h3>身上之物</h3><span className="muted-2 mono" style={{fontSize: 11}}>{inventory.length} 件</span></div>
+        <div className="section-head"><h3>{t('game.status.inventory')}</h3><span className="muted-2 mono" style={{fontSize: 11}}>{t('game.status.items_count', { count: inventory.length })}</span></div>
         <ul className="gp-flat-list">
           {inventory.map((it, i) => (
             <li key={i}>
-              <span>{(it && it.name) || "未命名物品"}</span>
+              <span>{(it && it.name) || t('game.status.unnamed_item')}</span>
               <span className="muted-2" style={{fontSize: 11.5}}>{(it && it.quality) || ""}</span>
             </li>
           ))}
@@ -367,7 +370,7 @@ function NovelStatusProfile({ state }) {
       </div>
 
       <div className="gp-section">
-        <div className="section-head"><h3>本轮已知事件</h3></div>
+        <div className="section-head"><h3>{t('game.status.known_events')}</h3></div>
         <ol className="gp-events">
           {knownEvents.map((e, i) => (<li key={i}>{e}</li>))}
         </ol>
@@ -386,40 +389,41 @@ function PanelStatus({ state }) {
 }
 
 function PanelMemory({ state, density }) {
+  const { t } = useTranslation();
   const m = state.memory;
   return (
     <div className="gp-stack">
       <div className="gp-section">
-        <div className="section-head"><h3>当前目标</h3><span className="pill">主线</span></div>
+        <div className="section-head"><h3>{t('game.memory.current_objective')}</h3><span className="pill">{t('game.memory.main_quest_pill')}</span></div>
         <p className="serif gp-quest">{m.main_quest}</p>
         <p className="muted" style={{fontSize: 13, marginTop: 6}}>{m.current_objective}</p>
       </div>
 
       <div className="gp-section">
         <div className="section-head">
-          <h3>固定记忆<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>本轮上下文必带</span></h3>
-          <button className="iconbtn" data-tip="添加固定记忆" data-tip-pos="below"
+          <h3>{t('game.memory.pinned')}<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{t('game.memory.pinned_subtitle')}</span></h3>
+          <button className="iconbtn" data-tip={t('game.memory.add_pinned_tip')} data-tip-pos="below"
             onClick={async () => {
-              const t = prompt("新增固定记忆", "");
-              if (!t) return;
+              const txt = prompt(t('game.memory.add_pinned_prompt'), "");
+              if (!txt) return;
               // bucket=pinned(后端 Pydantic 字段名,旧版误用 kind 被 extra='ignore' 吞掉
               // 实际全落 notes 桶,等于固定记忆按钮一直在加到笔记 — 现修)
-              try { await window.api.game.memoryAdd({ bucket: "pinned", text: t }); try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {} window.__apiToast?.("已添加", { kind: "ok" }); }
-              catch (e) { window.__apiToast?.("添加失败", { kind: "danger", detail: e?.message }); }
+              try { await window.api.game.memoryAdd({ bucket: "pinned", text: txt }); try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {} window.__apiToast?.(t('game.memory.added_ok'), { kind: "ok" }); }
+              catch (e) { window.__apiToast?.(t('game.memory.add_failed'), { kind: "danger", detail: e?.message }); }
             }}>
             <Icon name="plus" />
           </button>
         </div>
         <ul className="gp-pin-list">
-          {(m.pinned || []).map((t, i) => (
+          {(m.pinned || []).map((item, i) => (
             <li key={i}>
               <span className="gp-pin-mark"><Icon name="pin" size={12} /></span>
-              <span className="serif">{t}</span>
-              <button className="iconbtn" data-tip="解除"
+              <span className="serif">{item}</span>
+              <button className="iconbtn" data-tip={t('game.memory.unpin_tip')}
                 onClick={async () => {
-                  if (!confirm("解除固定记忆？")) return;
-                  try { await window.api.game.memoryRemove({ bucket: "pinned", index: i }); try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {} window.__apiToast?.("已解除", { kind: "ok" }); }
-                  catch (e) { window.__apiToast?.("操作失败", { kind: "danger", detail: e?.message }); }
+                  if (!confirm(t('game.memory.unpin_confirm'))) return;
+                  try { await window.api.game.memoryRemove({ bucket: "pinned", index: i }); try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {} window.__apiToast?.(t('game.memory.unpinned_ok'), { kind: "ok" }); }
+                  catch (e) { window.__apiToast?.(t('game.memory.action_failed'), { kind: "danger", detail: e?.message }); }
                 }}>
                 <Icon name="close" size={12} />
               </button>
@@ -429,33 +433,33 @@ function PanelMemory({ state, density }) {
       </div>
 
       <div className="gp-section">
-        <div className="section-head"><h3>事实库<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>由 GM 提取</span></h3></div>
+        <div className="section-head"><h3>{t('game.memory.facts')}<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{t('game.memory.facts_subtitle')}</span></h3></div>
         <ul className="gp-flat-list">
-          {(m.facts || []).map((t, i) => (<li key={i}><span>{t}</span></li>))}
+          {(m.facts || []).map((item, i) => (<li key={i}><span>{item}</span></li>))}
         </ul>
       </div>
 
       <div className="gp-section">
-        <div className="section-head"><h3>玩家笔记</h3>
-          <button className="iconbtn" data-tip="新增笔记" data-tip-pos="below"
+        <div className="section-head"><h3>{t('game.memory.notes')}</h3>
+          <button className="iconbtn" data-tip={t('game.memory.add_note_tip')} data-tip-pos="below"
             onClick={async () => {
-              const t = prompt("新增玩家笔记", "");
-              if (!t) return;
-              try { await window.api.game.memoryAdd({ bucket: "notes", text: t }); try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {} window.__apiToast?.("已添加", { kind: "ok" }); }
-              catch (e) { window.__apiToast?.("添加失败", { kind: "danger", detail: e?.message }); }
+              const txt = prompt(t('game.memory.add_note_prompt'), "");
+              if (!txt) return;
+              try { await window.api.game.memoryAdd({ bucket: "notes", text: txt }); try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {} window.__apiToast?.(t('game.memory.added_ok'), { kind: "ok" }); }
+              catch (e) { window.__apiToast?.(t('game.memory.add_failed'), { kind: "danger", detail: e?.message }); }
             }}>
             <Icon name="plus" />
           </button>
         </div>
         <ul className="gp-flat-list">
-          {(m.notes || []).map((t, i) => (
+          {(m.notes || []).map((item, i) => (
             <li key={i} style={{display: "flex", alignItems: "center", gap: 6}}>
-              <span style={{flex: 1}}>{t}</span>
-              <button className="iconbtn" data-tip="删除笔记"
+              <span style={{flex: 1}}>{item}</span>
+              <button className="iconbtn" data-tip={t('game.memory.delete_note_tip')}
                 onClick={async () => {
-                  if (!confirm("删除这条笔记？")) return;
-                  try { await window.api.game.memoryRemove({ bucket: "notes", index: i }); try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {} window.__apiToast?.("已删除", { kind: "ok" }); }
-                  catch (e) { window.__apiToast?.("操作失败", { kind: "danger", detail: e?.message }); }
+                  if (!confirm(t('game.memory.delete_note_confirm'))) return;
+                  try { await window.api.game.memoryRemove({ bucket: "notes", index: i }); try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {} window.__apiToast?.(t('game.memory.deleted_ok'), { kind: "ok" }); }
+                  catch (e) { window.__apiToast?.(t('game.memory.action_failed'), { kind: "danger", detail: e?.message }); }
                 }}>
                 <Icon name="close" size={12} />
               </button>
@@ -466,10 +470,10 @@ function PanelMemory({ state, density }) {
 
       <div className="gp-section">
         <div className="section-head">
-          <h3>召回<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>本轮从原文 / RAG / 历史找回的参考资料</span></h3>
-          <span className="pill mono">{(state.memory && state.memory.last_context && state.memory.last_context.retrieval_chunks) || 0} 段</span>
+          <h3>{t('game.memory.retrieval')}<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{t('game.memory.retrieval_subtitle')}</span></h3>
+          <span className="pill mono">{t('game.memory.retrieval_chunks', { count: (state.memory && state.memory.last_context && state.memory.last_context.retrieval_chunks) || 0 })}</span>
         </div>
-        <pre className="gp-quote">{m.last_retrieval || "（暂无召回）"}</pre>
+        <pre className="gp-quote">{m.last_retrieval || t('game.memory.retrieval_empty')}</pre>
       </div>
     </div>
   );
@@ -478,24 +482,25 @@ function PanelMemory({ state, density }) {
 // ── 通用 inline editor:click-to-edit 文本字段 ────────────────────
 // 用于 PanelWorldbook 的 time/weather/location 和 PanelCharacters 的关系状态
 function InlineEditField({ value, placeholder, emptyLabel, onSubmit, busy }) {
+  const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value || "");
   React.useEffect(() => { if (!editing) setDraft(value || ""); }, [value, editing]);
   const submittingRef = React.useRef(false);
   const commit = async () => {
     if (submittingRef.current) return;
-    const t = (draft || "").trim();
-    if (!t || t === (value || "")) { setEditing(false); return; }
+    const v = (draft || "").trim();
+    if (!v || v === (value || "")) { setEditing(false); return; }
     submittingRef.current = true;
-    try { await onSubmit(t); setEditing(false); }
-    catch (e) { window.__apiToast?.("保存失败", { kind: "danger", detail: e?.message }); }
+    try { await onSubmit(v); setEditing(false); }
+    catch (e) { window.__apiToast?.(t('game.inline_edit.save_failed'), { kind: "danger", detail: e?.message }); }
     finally { setTimeout(() => { submittingRef.current = false; }, 100); }
   };
   if (!editing) {
     return (
       <span style={{cursor: "pointer", display: "inline-flex", gap: 4, alignItems: "center"}}
             onClick={() => setEditing(true)}
-            title="点击编辑">
+            title={t('game.inline_edit.click_to_edit')}>
         <span>{value || (emptyLabel || "—")}</span>
         <Icon name="edit" size={10} style={{opacity: 0.4}} />
       </span>
@@ -521,6 +526,7 @@ function InlineEditField({ value, placeholder, emptyLabel, onSubmit, busy }) {
 }
 
 function PanelWorldbook({ state }) {
+  const { t } = useTranslation();
   // task 33：兜底 world / player / worldline.constraints 缺失
   const w = (state && state.world) || {};
   const p = (state && state.player) || {};
@@ -529,44 +535,44 @@ function PanelWorldbook({ state }) {
     ? state.worldline.constraints : [];
   // 任意字段写后由 dispatch_ui_tool 自动 _persist_runtime_checkpoint + 回 state;
   // 这里仅 toast 反馈,刷新由 game-state-refresh / state polling 处理(同 memory 模式)。
-  const setField = (key, label) => async (value) => {
+  const setField = (key, toastMsg) => async (value) => {
     await window.api.game.worldSet({ key, value });
     try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
-    window.__apiToast?.(label + " 已更新 → " + value, { kind: "ok", duration: 1800 });
+    window.__apiToast?.(toastMsg + value, { kind: "ok", duration: 1800 });
   };
   return (
     <div className="gp-stack">
       <div className="gp-section">
         <div className="section-head">
-          <h3>地点 · 时刻</h3>
-          <span className="muted-2" style={{fontSize: 11}}>点击字段直接修改</span>
+          <h3>{t('game.worldbook.location_time')}</h3>
+          <span className="muted-2" style={{fontSize: 11}}>{t('game.worldbook.click_to_edit')}</span>
         </div>
         <div className="gp-kv">
-          <div className="gp-row"><span className="gp-label">所在</span>
+          <div className="gp-row"><span className="gp-label">{t('game.worldbook.location_label')}</span>
             <InlineEditField value={p.current_location} emptyLabel="—"
-              placeholder="位置(如 柏林·夏洛滕堡)"
-              onSubmit={setField("location", "位置")} /></div>
-          <div className="gp-row"><span className="gp-label">时刻</span>
+              placeholder={t('game.worldbook.location_placeholder')}
+              onSubmit={setField("location", t('game.status.location') + " → ")} /></div>
+          <div className="gp-row"><span className="gp-label">{t('game.worldbook.time_label')}</span>
             <InlineEditField value={w.time} emptyLabel="—"
-              placeholder="时间(如 1935 春·清晨)"
-              onSubmit={setField("time", "时间")} /></div>
-          <div className="gp-row"><span className="gp-label">天气</span>
+              placeholder={t('game.worldbook.time_placeholder')}
+              onSubmit={setField("time", t('game.status.time') + " → ")} /></div>
+          <div className="gp-row"><span className="gp-label">{t('game.worldbook.weather_label')}</span>
             <InlineEditField value={w.weather} emptyLabel="—"
-              placeholder="天气(如 细雨/晴)"
-              onSubmit={setField("weather", "天气")} /></div>
-          <div className="gp-row"><span className="gp-label">阶段</span>
+              placeholder={t('game.worldbook.weather_placeholder')}
+              onSubmit={setField("weather", t('game.status.weather') + " → ")} /></div>
+          <div className="gp-row"><span className="gp-label">{t('game.worldbook.phase_label')}</span>
             <InlineEditField value={tl.current_phase} emptyLabel="—"
-              placeholder="时间线阶段(如 柏林暗流篇)"
-              onSubmit={setField("phase", "阶段")} /></div>
+              placeholder={t('game.worldbook.phase_placeholder')}
+              onSubmit={setField("phase", t('game.worldbook.phase_label') + " → ")} /></div>
         </div>
       </div>
       <div className="gp-section">
-        <div className="section-head"><h3>世界规则</h3><span className="muted-2" style={{fontSize: 11}}>{constraints.length} 条约束</span></div>
+        <div className="section-head"><h3>{t('game.worldbook.world_rules')}</h3><span className="muted-2" style={{fontSize: 11}}>{t('game.worldbook.constraints_count', { count: constraints.length })}</span></div>
         <ul className="gp-flat-list">
           {/* task 48：原代码 constraints.map 之后还硬加一行『灯塔不可在天黑前点燃』示例，
               在导入剧本里完全不相关。删掉。空 constraints 时显示空态。 */}
           {constraints.length === 0 && (
-            <li><span className="muted-2">（本剧本暂未配置世界规则）</span></li>
+            <li><span className="muted-2">{t('game.worldbook.no_rules')}</span></li>
           )}
           {constraints.map((c, i) => (
             <li key={i}><span><Icon name="lock" size={12} style={{verticalAlign: "-2px", marginRight: 6}} />{typeof c === "string" ? c : (c?.text || c?.label || JSON.stringify(c))}</span></li>
@@ -574,7 +580,7 @@ function PanelWorldbook({ state }) {
         </ul>
       </div>
       <div className="gp-section">
-        <div className="section-head"><h3>本轮重要词条</h3></div>
+        <div className="section-head"><h3>{t('game.worldbook.keywords')}</h3></div>
         {/* task 48：原硬编码 8 个 chip（雾港/残页/黑铁怀表/沈知微/韩司直/阿衡/北港/灯塔）
             完全不顾当前剧本/state。改为从 state.world.known_events 派生；空就空态。 */}
         <div className="gp-chips">
@@ -582,7 +588,7 @@ function PanelWorldbook({ state }) {
             ? w.known_events.map((ev, i) => (
                 <span key={i} className="gp-chip">{typeof ev === "string" ? ev : (ev?.label || ev?.text || JSON.stringify(ev))}</span>
               ))
-            : <span className="muted-2" style={{fontSize: 12}}>暂无本轮重要词条</span>}
+            : <span className="muted-2" style={{fontSize: 12}}>{t('game.worldbook.keywords_empty')}</span>}
         </div>
       </div>
     </div>
@@ -618,15 +624,16 @@ function _toneColorOfDisposition(disposition) {
   return "";
 }
 
-function _entityTypeLabel(kind, source) {
-  if (kind === "enemy") return "敌人";
-  if (kind === "npc") return "NPC";
-  if (kind === "ally") return "盟友";
-  if (kind === "unknown" && source === "gm_provisional") return "待确认";
+function _entityTypeLabel(kind, source, t) {
+  if (kind === "enemy") return t('game.characters.entity_enemy');
+  if (kind === "npc") return t('game.characters.entity_npc');
+  if (kind === "ally") return t('game.characters.entity_ally');
+  if (kind === "unknown" && source === "gm_provisional") return t('game.characters.entity_unconfirmed');
   return "—";
 }
 
 function CharacterCard({ name, info, subtitle, onEditStatus, onDelete }) {
+  const { t } = useTranslation();
   // info: { tone | disposition, note?, role? }
   // 可选 props: onEditStatus(newValue)/onDelete() — 仅 relationships 区传入,
   //            on-stage/pinned 不传,保持原本只读语义。
@@ -651,8 +658,8 @@ function CharacterCard({ name, info, subtitle, onEditStatus, onDelete }) {
               <span className={`pill ${toneColor}`} style={{paddingRight: 6}}>
                 <span className={`dot ${toneColor}`} />
                 <InlineEditField value={dispLabel === "—" ? "" : dispLabel}
-                  placeholder="状态(如 信任/警惕/敌意)"
-                  emptyLabel="设状态"
+                  placeholder={t('game.characters.status_placeholder')}
+                  emptyLabel={t('game.characters.set_status')}
                   onSubmit={onEditStatus} />
               </span>
             ) : (
@@ -663,18 +670,18 @@ function CharacterCard({ name, info, subtitle, onEditStatus, onDelete }) {
         </div>
         {/* 仅保留 @mention 插入交互;移除『编辑』『转为用户角色卡』按钮 —
             创建 / 提升只在平台『角色卡』页操作 (Codex 评审硬要求)。 */}
-        <button className="iconbtn" data-tip="插入 @角色 到输入框" data-tip-pos="below"
+        <button className="iconbtn" data-tip={t('game.characters.mention_tip')} data-tip-pos="below"
           onClick={() => {
             if (typeof window.__rpgInsertMention === "function") window.__rpgInsertMention(name);
             else if (navigator.clipboard) {
               navigator.clipboard.writeText("@" + name);
-              window.__apiToast?.("@" + name + " 已复制", { kind: "ok", duration: 1500 });
+              window.__apiToast?.(t('game.characters.mention_copied', { name }), { kind: "ok", duration: 1500 });
             }
           }}>
           <Icon name="at" size={14} />
         </button>
         {onDelete ? (
-          <button className="iconbtn" data-tip="删除关系" data-tip-pos="below"
+          <button className="iconbtn" data-tip={t('game.characters.delete_relationship_tip')} data-tip-pos="below"
             onClick={onDelete}>
             <Icon name="close" size={12} />
           </button>
@@ -688,6 +695,7 @@ function CharacterCard({ name, info, subtitle, onEditStatus, onDelete }) {
 }
 
 function PanelCharacters({ state }) {
+  const { t } = useTranslation();
   // ── 数据源 ─────────────────────────────────────────────
   // 1. active_entities: 后端在 enter_room / start_encounter 时同步的运行时索引
   // 2. encounter.combatants: 战斗中 enemy/ally combatants (active_entities 里
@@ -725,8 +733,8 @@ function PanelCharacters({ state }) {
   // 关系:统一规范化
   const normalize = (info) => {
     if (typeof info === "string") return { tone: info, note: "" };
-    if (info && typeof info === "object") return { tone: info.tone || "中立", note: info.note || info.description || "" };
-    return { tone: "中立", note: "" };
+    if (info && typeof info === "object") return { tone: info.tone || t('game.characters.normalize_neutral'), note: info.note || info.description || "" };
+    return { tone: t('game.characters.normalize_neutral'), note: "" };
   };
   const relEntries = Object.entries(relationships).map(([name, info]) => ({ name, info: normalize(info) }));
 
@@ -738,17 +746,17 @@ function PanelCharacters({ state }) {
       {/* 当前在场 */}
       <div className="gp-section">
         <div className="section-head">
-          <h3>当前在场<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>本房间 / 战斗</span></h3>
+          <h3>{t('game.characters.on_stage')}<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{t('game.characters.on_stage_subtitle')}</span></h3>
           <span className="muted-2 mono" style={{fontSize: 11}}>{inScene.length}</span>
         </div>
         {inScene.length === 0 ? (
           <div className="muted-2" style={{padding: "12px 4px", fontSize: 12.5, lineHeight: 1.7}}>
-            本房间暂无在场人物。模组房间的 NPC / 敌人或合法 RulesEngine 触发的 encounter 出现时会自动显示在这里。
+            {t('game.characters.on_stage_empty')}
           </div>
         ) : (
           <div className="gp-cards">
             {inScene.map((e) => {
-              const subtitle = _entityTypeLabel(e.kind, e.source) +
+              const subtitle = _entityTypeLabel(e.kind, e.source, t) +
                 (e.hp != null && e.max_hp != null ? ` · HP ${e.hp}/${e.max_hp}` : "");
               return (
                 <CharacterCard key={e.id}
@@ -765,13 +773,12 @@ function PanelCharacters({ state }) {
       {/* 关系 */}
       <div className="gp-section">
         <div className="section-head">
-          <h3>关系<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>玩家与角色的明确态度</span></h3>
+          <h3>{t('game.characters.relationships')}<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{t('game.characters.relationships_subtitle')}</span></h3>
           <span className="muted-2 mono" style={{fontSize: 11}}>{relEntries.length}</span>
         </div>
         {relEntries.length === 0 ? (
           <div className="muted-2" style={{padding: "12px 4px", fontSize: 12.5, lineHeight: 1.7}}>
-            暂无明确关系。GM 输出含『关系:X -&gt; Y』结构化标签时会自动写入这里;
-            玩家也可点下方"+"手动建立。
+            {t('game.characters.relationships_empty')}
           </div>
         ) : (
           <div className="gp-cards">
@@ -779,14 +786,14 @@ function PanelCharacters({ state }) {
               <CharacterCard key={name} name={name} info={info}
                 onEditStatus={async (status) => {
                   await window.api.game.relationshipSet({ character: name, status });
-                  window.__apiToast?.(`关系 ${name} → ${status}`, { kind: "ok", duration: 1500 });
+                  window.__apiToast?.(t('game.characters.relationship_updated', { name, status }), { kind: "ok", duration: 1500 });
                 }}
                 onDelete={async () => {
-                  if (!confirm(`删除与「${name}」的关系条目?`)) return;
+                  if (!confirm(t('game.characters.delete_relationship_confirm', { name }))) return;
                   try { await window.api.game.relationshipDelete({ character: name });
                     try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
-                    window.__apiToast?.("已删除", { kind: "ok" }); }
-                  catch (e) { window.__apiToast?.("删除失败", { kind: "danger", detail: e?.message }); }
+                    window.__apiToast?.(t('game.characters.deleted_ok'), { kind: "ok" }); }
+                  catch (e) { window.__apiToast?.(t('game.characters.delete_failed'), { kind: "danger", detail: e?.message }); }
                 }}
               />
             ))}
@@ -795,15 +802,15 @@ function PanelCharacters({ state }) {
         {/* 手动添加关系入口 */}
         <button className="iconbtn" style={{marginTop: 8, fontSize: 12, padding: "4px 10px", width: "auto"}}
           onClick={async () => {
-            const ch = prompt("NPC 名字", "");
+            const ch = prompt(t('game.characters.npc_name_prompt'), "");
             if (!ch) return;
-            const st = prompt(`「${ch}」的关系状态(如 信任/警惕/敌意)`, "中立");
+            const st = prompt(t('game.characters.relationship_status_prompt', { name: ch }), t('game.characters.status_default'));
             if (!st) return;
             try { await window.api.game.relationshipSet({ character: ch.trim(), status: st.trim() });
-              window.__apiToast?.(`关系 ${ch} → ${st}`, { kind: "ok" }); }
-            catch (e) { window.__apiToast?.("添加失败", { kind: "danger", detail: e?.message }); }
+              window.__apiToast?.(t('game.characters.relationship_updated', { name: ch, status: st }), { kind: "ok" }); }
+            catch (e) { window.__apiToast?.(t('game.characters.add_failed'), { kind: "danger", detail: e?.message }); }
           }}>
-          <Icon name="plus" size={12} /> 添加关系
+          <Icon name="plus" size={12} /> {t('game.characters.add_relationship')}
         </button>
       </div>
 
@@ -811,7 +818,7 @@ function PanelCharacters({ state }) {
       {pinned.length > 0 ? (
         <div className="gp-section">
           <div className="section-head">
-            <h3>已固定角色卡<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>链接到平台 user_cards</span></h3>
+            <h3>{t('game.characters.pinned_cards')}<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{t('game.characters.pinned_cards_subtitle')}</span></h3>
             <span className="muted-2 mono" style={{fontSize: 11}}>{pinned.length}</span>
           </div>
           <div className="gp-cards">
@@ -819,7 +826,7 @@ function PanelCharacters({ state }) {
               <CharacterCard key={e.id}
                 name={e.name || e.id}
                 info={{ disposition: e.disposition, note: e.role || "", role: e.role }}
-                subtitle={`已固定 · card:${e.card_id}`}
+                subtitle={t('game.characters.pinned_suffix', { card_id: e.card_id })}
               />
             ))}
           </div>
@@ -829,8 +836,7 @@ function PanelCharacters({ state }) {
       {/* 创建 / 提升入口提示 — 引导用户去平台,不在此创建 */}
       <div className="gp-section" style={{background: "transparent", borderTop: "1px dashed var(--line)", marginTop: 4}}>
         <p className="muted-2" style={{fontSize: 12, lineHeight: 1.7, margin: "8px 4px 0"}}>
-          想把某个 NPC 提升为长期『用户角色卡』? 到<strong>『平台 → 角色卡』</strong>页操作。
-          游戏界面只显示运行时实体,不在此创建 / 导出角色卡。
+          {t('game.characters.platform_tip')}<strong>{t('game.characters.platform_link')}</strong>{t('game.characters.platform_tip2')}
         </p>
       </div>
     </div>
@@ -844,6 +850,7 @@ function PanelCharacters({ state }) {
 // task 136h: 世界线收束·锚点 子组件 — 嵌入 PanelTimeline 底部
 // 从 /api/saves/:id/anchors 拉取, 跟 timeline 数据互相独立。
 function WorldlineAnchorsSection({ saveId }) {
+  const { t } = useTranslation();
   const { useEffect, useRef } = React;
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -877,16 +884,16 @@ function WorldlineAnchorsSection({ saveId }) {
   if (error) {
     return (
       <div className="gp-section">
-        <div className="section-head"><h3>世界线收束·锚点</h3></div>
-        <p style={{fontSize: 12.5, color: "var(--danger)", padding: "4px"}}>加载失败: {error}</p>
+        <div className="section-head"><h3>{t('game.timeline.anchors_section')}</h3></div>
+        <p style={{fontSize: 12.5, color: "var(--danger)", padding: "4px"}}>{t('game.timeline.anchors_load_failed', { error })}</p>
       </div>
     );
   }
   if (loading || data === null) {
     return (
       <div className="gp-section">
-        <div className="section-head"><h3>世界线收束·锚点</h3></div>
-        <p className="muted-2" style={{fontSize: 12.5, padding: "4px"}}>正在加载锚点…</p>
+        <div className="section-head"><h3>{t('game.timeline.anchors_section')}</h3></div>
+        <p className="muted-2" style={{fontSize: 12.5, padding: "4px"}}>{t('game.timeline.anchors_loading')}</p>
       </div>
     );
   }
@@ -899,9 +906,9 @@ function WorldlineAnchorsSection({ saveId }) {
   if (total === 0) {
     return (
       <div className="gp-section">
-        <div className="section-head"><h3>世界线收束·锚点</h3></div>
+        <div className="section-head"><h3>{t('game.timeline.anchors_section')}</h3></div>
         <p className="muted-2" style={{fontSize: 12.5, padding: "4px"}}>
-          该存档尚未生成锚点 (剧本可能还在 seed 中, 或没有 chapter_facts)
+          {t('game.timeline.anchors_empty')}
         </p>
       </div>
     );
@@ -915,34 +922,34 @@ function WorldlineAnchorsSection({ saveId }) {
       {/* 总览 */}
       <div className="gp-section">
         <div className="section-head">
-          <h3>世界线收束·锚点</h3>
-          <span className="muted-2 mono" style={{fontSize: 11}}>{total} 个锚点</span>
+          <h3>{t('game.timeline.anchors_section')}</h3>
+          <span className="muted-2 mono" style={{fontSize: 11}}>{t('game.timeline.anchors_total', { count: total })}</span>
         </div>
         <div className="gp-kv" style={{marginBottom: 6}}>
           <div className="gp-row">
-            <span className="gp-label">整体收束</span>
+            <span className="gp-label">{t('game.timeline.convergence_overall')}</span>
             <span className="serif">
-              <span style={{color: "var(--muted-2)"}}>待发生 </span>
+              <span style={{color: "var(--muted-2)"}}>{t('game.timeline.pending_stat')}</span>
               <strong>{summary.pending || 0}</strong>
-              <span style={{color: "var(--muted-2)"}}> · 已发生 </span>
+              <span style={{color: "var(--muted-2)"}}>{t('game.timeline.occurred_stat')}</span>
               <strong style={{color: "var(--ok)"}}>{summary.occurred || 0}</strong>
-              <span style={{color: "var(--muted-2)"}}> · 变体 </span>
+              <span style={{color: "var(--muted-2)"}}>{t('game.timeline.variant_stat')}</span>
               <strong style={{color: "var(--warn)"}}>{summary.variant || 0}</strong>
-              <span style={{color: "var(--muted-2)"}}> · 绕过 </span>
+              <span style={{color: "var(--muted-2)"}}>{t('game.timeline.superseded_stat')}</span>
               <strong style={{color: "var(--danger)"}}>{summary.superseded || 0}</strong>
             </span>
           </div>
           <div className="gp-row">
-            <span className="gp-label">平均偏离度</span>
+            <span className="gp-label">{t('game.timeline.avg_drift')}</span>
             <span className="mono" style={{color: driftColor}}>
               {(summary.avg_drift || 0).toFixed(2)} ({driftPct}%)
             </span>
           </div>
           {summary.fatal_pending > 0 && (
             <div className="gp-row">
-              <span className="gp-label">死神来了·必发生</span>
+              <span className="gp-label">{t('game.timeline.fatal_pending')}</span>
               <span className="mono" style={{color: "var(--danger)", fontWeight: 600}}>
-                {summary.fatal_pending} 待触发
+                {t('game.timeline.fatal_pending_count', { count: summary.fatal_pending })}
               </span>
             </div>
           )}
@@ -952,20 +959,20 @@ function WorldlineAnchorsSection({ saveId }) {
           <div style={{width: driftPct + "%", height: "100%", background: driftColor, transition: "width 0.3s"}} />
         </div>
         <p className="muted-2" style={{fontSize: 11, margin: "4px 0 0"}}>
-          0% = 完全按原著 · 100% = 高度偏离 (GM 会主动收束)
+          {t('game.timeline.drift_hint')}
         </p>
       </div>
 
       {/* 按 phase 分组 */}
       {byPhase.length > 0 && (
         <div className="gp-section">
-          <div className="section-head"><h3>按阶段分布</h3></div>
+          <div className="section-head"><h3>{t('game.timeline.by_phase')}</h3></div>
           <div className="gp-track">
-            {byPhase.map((p, i) => {
-              const pressure = p.convergence_pressure || 0;
+            {byPhase.map((ph, i) => {
+              const pressure = ph.convergence_pressure || 0;
               const pressureColor = pressure >= 0.6 ? "var(--danger)" :
                                     pressure >= 0.3 ? "var(--warn)" : "var(--ok)";
-              const expanded = !!expandedPhase[p.phase_label];
+              const expanded = !!expandedPhase[ph.phase_label];
               return (
                 <div key={i} className="gp-anchor">
                   <div className="gp-anchor-dot" style={{background: pressureColor, border: "2px solid var(--line)"}} />
@@ -973,20 +980,20 @@ function WorldlineAnchorsSection({ saveId }) {
                     <div
                       className="gp-anchor-label"
                       style={{cursor: "pointer"}}
-                      onClick={() => setExpandedPhase(prev => ({...prev, [p.phase_label]: !prev[p.phase_label]}))}
+                      onClick={() => setExpandedPhase(prev => ({...prev, [ph.phase_label]: !prev[ph.phase_label]}))}
                     >
-                      {p.phase_label || "(未分阶段)"}
+                      {ph.phase_label || t('game.timeline.no_phase')}
                       <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>
-                        {p.occurred + p.variant}/{p.total} 已收束
+                        {t('game.timeline.convergence_label', { done: ph.occurred + ph.variant, total: ph.total })}
                       </span>
-                      {p.fatal_pending > 0 && (
+                      {ph.fatal_pending > 0 && (
                         <span className="pill" style={{marginLeft: 6, fontSize: 10, background: "var(--danger)", color: "#fff"}}>
-                          {p.fatal_pending} 必发生
+                          {t('game.timeline.fatal_must', { count: ph.fatal_pending })}
                         </span>
                       )}
                     </div>
                     <div className="gp-anchor-phase" style={{color: "var(--muted-2)", fontSize: 11}}>
-                      drift {p.avg_drift.toFixed(2)} · 收束压力 {Math.round(pressure * 100)}%
+                      {t('game.timeline.drift_pressure', { drift: ph.avg_drift.toFixed(2), pressure: Math.round(pressure * 100) })}
                       {expanded ? " · ▲" : " · ▼"}
                     </div>
                   </div>
@@ -1002,8 +1009,8 @@ function WorldlineAnchorsSection({ saveId }) {
       {recentPending.length > 0 && (
         <div className="gp-section">
           <div className="section-head">
-            <h3>待发生锚点</h3>
-            <span className="muted-2 mono" style={{fontSize: 11}}>top {recentPending.length}</span>
+            <h3>{t('game.timeline.pending_anchors')}</h3>
+            <span className="muted-2 mono" style={{fontSize: 11}}>{t('game.timeline.top_n', { count: recentPending.length })}</span>
           </div>
           <ul className="gp-flat-list">
             {recentPending.map((a, i) => (
@@ -1013,7 +1020,7 @@ function WorldlineAnchorsSection({ saveId }) {
                     ch{a.chapter}
                   </span>
                   {a.is_fatal && (
-                    <span className="pill" style={{fontSize: 10, marginRight: 4, background: "var(--danger)", color: "#fff"}}>必发生</span>
+                    <span className="pill" style={{fontSize: 10, marginRight: 4, background: "var(--danger)", color: "#fff"}}>{t('game.timeline.must_happen')}</span>
                   )}
                   {a.summary || a.anchor_key}
                 </span>
@@ -1030,8 +1037,8 @@ function WorldlineAnchorsSection({ saveId }) {
       {recentOccurred.length > 0 && (
         <div className="gp-section">
           <div className="section-head">
-            <h3>近期已收束</h3>
-            <span className="muted-2 mono" style={{fontSize: 11}}>recent {recentOccurred.length}</span>
+            <h3>{t('game.timeline.occurred_anchors')}</h3>
+            <span className="muted-2 mono" style={{fontSize: 11}}>{t('game.timeline.recent_n', { count: recentOccurred.length })}</span>
           </div>
           <ul className="gp-flat-list">
             {recentOccurred.map((a, i) => {
@@ -1044,7 +1051,7 @@ function WorldlineAnchorsSection({ saveId }) {
                       ch{a.chapter}
                     </span>
                     <span style={{color: statusColor, fontWeight: 600, marginRight: 4}}>
-                      {a.status === "occurred" ? "[原著]" : "[变体]"}
+                      {a.status === "occurred" ? t('game.timeline.original') : t('game.timeline.variant')}
                     </span>
                     {a.summary || a.anchor_key}
                     {a.how_it_happened && (
@@ -1070,6 +1077,7 @@ function WorldlineAnchorsSection({ saveId }) {
 // task 107G: 双时间线 panel — 剧本期望线 + 实际足迹线
 // 从 /api/saves/:id/timeline 按需拉取,saveId 由 state._raw.save_id 提供。
 function PanelTimeline({ state }) {
+  const { t } = useTranslation();
   const { useEffect, useRef } = React;
   const saveId = state && state._raw && state._raw.save_id;
   const [data, setData] = useState(null);    // null = 未加载, {} = 加载中/完毕
@@ -1106,7 +1114,7 @@ function PanelTimeline({ state }) {
       <div className="gp-stack">
         <div className="gp-section">
           <p className="muted-2" style={{fontSize: 12.5, padding: "12px 4px"}}>
-            暂无存档上下文，请先进入游戏后查看时间线。
+            {t('game.timeline.no_save')}
           </p>
         </div>
       </div>
@@ -1119,10 +1127,10 @@ function PanelTimeline({ state }) {
       <div className="gp-stack">
         <div className="gp-section">
           <p style={{fontSize: 12.5, color: "var(--danger)", padding: "12px 4px"}}>
-            加载时间线失败: {error}
+            {t('game.timeline.load_failed', { error })}
           </p>
           <p className="muted-2" style={{fontSize: 11.5, padding: "0 4px"}}>
-            (后端是否运行 / 当前账号是否拥有此存档?)
+            {t('game.timeline.load_failed_hint')}
           </p>
         </div>
       </div>
@@ -1133,7 +1141,7 @@ function PanelTimeline({ state }) {
     return (
       <div className="gp-stack">
         <div className="gp-section">
-          <p className="muted-2" style={{fontSize: 12.5, padding: "12px 4px"}}>正在加载时间线…</p>
+          <p className="muted-2" style={{fontSize: 12.5, padding: "12px 4px"}}>{t('game.timeline.loading')}</p>
         </div>
       </div>
     );
@@ -1153,11 +1161,11 @@ function PanelTimeline({ state }) {
       {/* 剧本期望线 */}
       <div className="gp-section">
         <div className="section-head">
-          <h3>剧本期望线</h3>
-          <span className="muted-2 mono" style={{fontSize: 11}}>{scriptAnchors.length} 锚点</span>
+          <h3>{t('game.timeline.expected')}</h3>
+          <span className="muted-2 mono" style={{fontSize: 11}}>{t('game.timeline.anchors_count', { count: scriptAnchors.length })}</span>
         </div>
         {scriptAnchors.length === 0 ? (
-          <p className="muted-2" style={{fontSize: 12.5, margin: "4px 0 0"}}>此剧本没有预设时间线</p>
+          <p className="muted-2" style={{fontSize: 12.5, margin: "4px 0 0"}}>{t('game.timeline.no_anchors')}</p>
         ) : (
           <div className="gp-track">
             {scriptAnchors.map((a, i) => {
@@ -1180,15 +1188,15 @@ function PanelTimeline({ state }) {
                       color: isPending ? "var(--muted-2)" : undefined,
                       fontWeight: isCurrent ? 600 : undefined,
                     }}>
-                      {a.phase_label || `第${a.chapter_min}章`}
-                      {isCurrent && <span className="pill" style={{marginLeft: 6, fontSize: 10, background: "var(--accent)", color: "#fff"}}>当前</span>}
-                      {isDone && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>已度过</span>}
-                      {isPending && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>待解锁</span>}
+                      {a.phase_label || t('game.timeline.chapter_label', { chapter: a.chapter_min })}
+                      {isCurrent && <span className="pill" style={{marginLeft: 6, fontSize: 10, background: "var(--accent)", color: "#fff"}}>{t('game.timeline.current_pill')}</span>}
+                      {isDone && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>{t('game.timeline.done_label')}</span>}
+                      {isPending && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>{t('game.timeline.pending_label')}</span>}
                     </div>
                     <div className="gp-anchor-phase" style={{color: "var(--muted-2)"}}>
                       {a.story_time_label ? `${a.story_time_label}` : ""}
                       {a.chapter_min != null
-                        ? ` · 第 ${a.chapter_min}${a.chapter_max != null && a.chapter_max !== a.chapter_min ? `–${a.chapter_max}` : ""} 章`
+                        ? ` · ${t('game.timeline.chapter_label', { chapter: a.chapter_min })}${a.chapter_max != null && a.chapter_max !== a.chapter_min ? `–${a.chapter_max}` : ""}`
                         : ""}
                     </div>
                   </div>
@@ -1203,12 +1211,12 @@ function PanelTimeline({ state }) {
       {/* 实际足迹线 */}
       <div className="gp-section">
         <div className="section-head">
-          <h3>实际足迹线</h3>
-          <span className="muted-2 mono" style={{fontSize: 11}}>{savePhases.length} 阶段</span>
+          <h3>{t('game.timeline.footprint')}</h3>
+          <span className="muted-2 mono" style={{fontSize: 11}}>{t('game.timeline.phases_count', { count: savePhases.length })}</span>
         </div>
         {savePhases.length === 0 ? (
           <p className="muted-2" style={{fontSize: 12.5, margin: "4px 0 0"}}>
-            暂无足迹，开始游玩积累历史
+            {t('game.timeline.no_footprint')}
           </p>
         ) : (
           <div className="gp-track">
@@ -1233,7 +1241,7 @@ function PanelTimeline({ state }) {
                         Phase {ph.phase_index}
                       </span>
                       {ph.phase_label || `(turn ${ph.turn_start}–${isOpen ? "…" : ph.turn_end})`}
-                      {isCurrent && <span className="pill" style={{marginLeft: 6, fontSize: 10, background: "var(--accent)", color: "#fff"}}>进行中</span>}
+                      {isCurrent && <span className="pill" style={{marginLeft: 6, fontSize: 10, background: "var(--accent)", color: "#fff"}}>{t('game.timeline.in_progress_pill')}</span>}
                     </div>
                     <div className="gp-anchor-phase" style={{color: "var(--muted-2)"}}>
                       {`turn ${ph.turn_start}–${isOpen ? "…" : ph.turn_end}`}
@@ -1259,7 +1267,7 @@ function PanelTimeline({ state }) {
                     )}
                     {keyEvents.length > 0 && (
                       <div className="muted-2" style={{fontSize: 10.5, marginTop: 2, cursor: "pointer"}}>
-                        {expanded ? "▲ 收起" : `▼ ${keyEvents.length} 个关键事件`}
+                        {expanded ? t('game.timeline.collapse_events') : t('game.timeline.expand_events', { count: keyEvents.length })}
                       </div>
                     )}
                   </div>
@@ -1304,6 +1312,7 @@ function _renderVarValue(v) {
 // 顺序是 state.last_context_agent → state.last_context.debug → 兜底 {}。
 // 这里组件本身只接收 plan + audit_log，由调用方负责挑路径。
 function DemandLedgerPanel({ curator_plan, audit_log }) {
+  const { t } = useTranslation();
   const plan = (curator_plan && typeof curator_plan === "object") ? curator_plan : {};
   const log = Array.isArray(audit_log) ? audit_log : [];
 
@@ -1349,8 +1358,8 @@ function DemandLedgerPanel({ curator_plan, audit_log }) {
   if (!hasAny) {
     return (
       <div className="gp-section">
-        <div className="section-head"><h3>本轮 Curator 决策</h3></div>
-        <div className="empty-line">本轮无 curator 决策（未启用子代理或回退到规则）</div>
+        <div className="section-head"><h3>{t('game.context.curator_title')}</h3></div>
+        <div className="empty-line">{t('game.context.curator_empty')}</div>
       </div>
     );
   }
@@ -1363,20 +1372,20 @@ function DemandLedgerPanel({ curator_plan, audit_log }) {
   return (
     <div className="gp-section">
       <div className="section-head">
-        <h3>本轮 Curator 决策</h3>
-        <span className="muted-2 mono" style={{fontSize: 11}}>demand ledger</span>
+        <h3>{t('game.context.curator_title')}</h3>
+        <span className="muted-2 mono" style={{fontSize: 11}}>{t('game.context.curator_demand')}</span>
       </div>
 
       {/* 意图 + active_goal */}
       {(intent || activeGoal) && (
         <div className="gp-kv" style={{marginBottom: 4}}>
           <div className="gp-row">
-            <span className="gp-label">意图</span>
+            <span className="gp-label">{t('game.context.intent')}</span>
             <span className="serif">{intent || activeGoal}</span>
           </div>
           {activeGoal && activeGoal !== intent && (
             <div className="gp-row">
-              <span className="gp-label">目标</span>
+              <span className="gp-label">{t('game.context.goal')}</span>
               <span style={{color: "var(--text-quiet)"}}>{activeGoal}</span>
             </div>
           )}
@@ -1386,7 +1395,7 @@ function DemandLedgerPanel({ curator_plan, audit_log }) {
       {/* 置信度进度条 */}
       {hasConfidence && (
         <div className="gp-row" style={{display: "grid", gridTemplateColumns: "64px 1fr auto", gap: 8, alignItems: "center"}}>
-          <span className="gp-label">置信度</span>
+          <span className="gp-label">{t('game.context.confidence')}</span>
           <div style={{height: 4, borderRadius: 999, background: "var(--line-soft)", overflow: "hidden"}}>
             <div style={{width: Math.round(confidence * 100) + "%", height: "100%", background: confidenceColor}} />
           </div>
@@ -1397,14 +1406,14 @@ function DemandLedgerPanel({ curator_plan, audit_log }) {
       {/* 澄清问题（confidence 低时常出现，单独提示） */}
       {clarifying && (
         <div className="gp-quote" style={{borderLeftColor: "var(--warn)", fontSize: 12.5}}>
-          <strong className="warn" style={{marginRight: 6}}>需澄清：</strong>{clarifying}
+          <strong className="warn" style={{marginRight: 6}}>{t('game.context.clarify')}</strong>{clarifying}
         </div>
       )}
 
       {/* 硬约束 */}
       {hardConstraints.length > 0 && (
         <div style={{display: "grid", gap: 6}}>
-          <span className="gp-label">硬约束</span>
+          <span className="gp-label">{t('game.context.hard_constraints')}</span>
           <ul className="gp-flat-list">
             {hardConstraints.map((v, i) => {
               const text = typeof v === "string" ? v : (v && (v.text || v.label)) || JSON.stringify(v);
@@ -1424,7 +1433,7 @@ function DemandLedgerPanel({ curator_plan, audit_log }) {
       {/* 软偏好 */}
       {softPreferences.length > 0 && (
         <div style={{display: "grid", gap: 6}}>
-          <span className="gp-label">软偏好</span>
+          <span className="gp-label">{t('game.context.soft_preferences')}</span>
           <ul className="gp-flat-list">
             {softPreferences.map((v, i) => {
               const text = typeof v === "string" ? v : (v && (v.text || v.label)) || JSON.stringify(v);
@@ -1441,7 +1450,7 @@ function DemandLedgerPanel({ curator_plan, audit_log }) {
       {/* 候选动作（编号列表，复用 gp-events 序号样式） */}
       {candidateActions.length > 0 && (
         <div style={{display: "grid", gap: 6}}>
-          <span className="gp-label">候选动作</span>
+          <span className="gp-label">{t('game.context.candidate_actions')}</span>
           <ol className="gp-events">
             {candidateActions.map((v, i) => {
               const text = typeof v === "string" ? v : (v && (v.text || v.label || v.name)) || JSON.stringify(v);
@@ -1454,19 +1463,19 @@ function DemandLedgerPanel({ curator_plan, audit_log }) {
       {/* 验收（含通过/未通过状态） */}
       {acceptance.length > 0 && (
         <div style={{display: "grid", gap: 6}}>
-          <span className="gp-label">验收</span>
+          <span className="gp-label">{t('game.context.acceptance')}</span>
           <ul className="gp-flat-list">
             {acceptance.map((v, i) => {
               const text = typeof v === "string" ? v : (v && (v.text || v.label)) || JSON.stringify(v);
               const unmet = isUnmet(text);
               const mark = unmet
-                ? <span className="danger mono" style={{marginRight: 6, fontWeight: 600}}>[未]</span>
-                : <span className="ok mono" style={{marginRight: 6, fontWeight: 600}}>[过]</span>;
+                ? <span className="danger mono" style={{marginRight: 6, fontWeight: 600}}>{t('game.context.acceptance_unmet_mark')}</span>
+                : <span className="ok mono" style={{marginRight: 6, fontWeight: 600}}>{t('game.context.acceptance_passed_mark')}</span>;
               return (
                 <li key={"ac:" + i}>
                   <span>{mark}{text}</span>
                   <span className={`mono ${unmet ? "danger" : "ok"}`} style={{fontSize: 10.5}}>
-                    {unmet ? "未通过" : "通过"}
+                    {unmet ? t('game.context.acceptance_unmet') : t('game.context.acceptance_passed')}
                   </span>
                 </li>
               );
@@ -1478,7 +1487,7 @@ function DemandLedgerPanel({ curator_plan, audit_log }) {
       {/* 风险标记（黄色 chip） */}
       {riskFlags.length > 0 && (
         <div style={{display: "grid", gap: 6}}>
-          <span className="gp-label">风险标记</span>
+          <span className="gp-label">{t('game.context.risk_flags')}</span>
           <div className="gp-chips">
             {riskFlags.map((v, i) => {
               const text = typeof v === "string" ? v : (v && (v.text || v.label)) || JSON.stringify(v);
@@ -1505,6 +1514,7 @@ function DemandLedgerPanel({ curator_plan, audit_log }) {
 }
 
 function PanelContext({ state }) {
+  const { t } = useTranslation();
   // task 33：真实 /api/state 下 memory.last_context 可能是 undefined / {} / 缺字段，
   // 原代码直读 .tokens_used / .retrieval_chunks / .chapter_refs.map 会触发
   // "Cannot read properties of undefined (reading 'map')"，右侧"上下文"tab 整 panel 崩。
@@ -1527,7 +1537,7 @@ function PanelContext({ state }) {
     <div className="gp-stack">
       <div className="gp-section">
         <div className="section-head">
-          <h3>本轮上下文<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{tokensUsed} tokens</span></h3>
+          <h3>{t('game.context.title')}<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{t('game.context.tokens', { count: tokensUsed })}</span></h3>
           <span className="pill mono">{retrievalChunks} chunks</span>
         </div>
         <ul className="gp-flat-list">
@@ -1535,15 +1545,15 @@ function PanelContext({ state }) {
             <li key={i}><span><Icon name="quote" size={12} style={{verticalAlign: "-2px", marginRight: 6}} />{typeof c === "string" ? c : (c?.title || c?.label || JSON.stringify(c))}</span><span className="muted-2 mono" style={{fontSize: 11}}>0.{84 - i * 7}</span></li>
           ))}
           {chapterRefs.length === 0 && (
-            <li><span className="muted-2">（本轮没有检索到章节引用）</span></li>
+            <li><span className="muted-2">{t('game.context.no_chapter_refs')}</span></li>
           )}
           {/* task 48：原硬编码『固定记忆 · 2 段』和『历史摘要 · 最近 8 回合』改为读 state 真值 */}
           <li>
-            <span><Icon name="memory" size={12} style={{verticalAlign: "-2px", marginRight: 6}} />固定记忆 · {Array.isArray(memory.pinned) ? memory.pinned.length : 0} 段</span>
+            <span><Icon name="memory" size={12} style={{verticalAlign: "-2px", marginRight: 6}} />{t('game.context.pinned_count', { count: Array.isArray(memory.pinned) ? memory.pinned.length : 0 })}</span>
             <span className="muted-2 mono" style={{fontSize: 11}}>—</span>
           </li>
           <li>
-            <span><Icon name="user" size={12} style={{verticalAlign: "-2px", marginRight: 6}} />历史摘要 · {((lastCtx && lastCtx.history_turns) || (state && Array.isArray(state.history) ? Math.floor(state.history.length / 2) : 0))} 回合</span>
+            <span><Icon name="user" size={12} style={{verticalAlign: "-2px", marginRight: 6}} />{t('game.context.history_turns', { count: (lastCtx && lastCtx.history_turns) || (state && Array.isArray(state.history) ? Math.floor(state.history.length / 2) : 0) })}</span>
             <span className="muted-2 mono" style={{fontSize: 11}}>—</span>
           </li>
         </ul>
@@ -1551,11 +1561,11 @@ function PanelContext({ state }) {
       {/* task 86：本轮 Curator 决策（DemandLedger 可视化） */}
       <DemandLedgerPanel curator_plan={curatorPlan} audit_log={auditLog} />
       <div className="gp-section">
-        <div className="section-head"><h3>提示词预览 / 最近召回</h3></div>
+        <div className="section-head"><h3>{t('game.context.retrieval_preview')}</h3></div>
         {/* task 48：原 pre 硬编码『顾承砚 · 漂流的史官 / 北港码头 / 申时三刻 · 霜降前两日 / 雾港事件第二日清晨』
             完全和当前剧本无关。改为读 state.memory.last_retrieval（context_agent + retrieve_context 后写入）。 */}
         <pre className="gp-quote mono" style={{maxHeight: 280, overflow: "auto", whiteSpace: "pre-wrap"}}>
-{(memory.last_retrieval && String(memory.last_retrieval).trim()) || "（暂无召回上下文。发送一轮消息后，这里会显示注入给 GM 的上下文片段。）"}
+{(memory.last_retrieval && String(memory.last_retrieval).trim()) || t('game.context.retrieval_empty')}
         </pre>
       </div>
     </div>
@@ -1563,6 +1573,7 @@ function PanelContext({ state }) {
 }
 
 function PanelDebug({ state }) {
+  const { t } = useTranslation();
   // task 48：原代码全是硬编码（韩司直.tone / 童氏与南陵同源 / model gpt-4o-mini / latency 7.4s）。
   // 改为读 state.memory.last_context_agent.steps 当 SSE 流；state.permissions.audit_log 当权限日志。
   const memory = (state && state.memory) || {};
@@ -1573,9 +1584,9 @@ function PanelDebug({ state }) {
   return (
     <div className="gp-stack">
       <div className="gp-section">
-        <div className="section-head"><h3>子代理步骤</h3><span className="pill mono">最近一轮</span></div>
+        <div className="section-head"><h3>{t('game.debug.agent_steps')}</h3><span className="pill mono">{t('game.debug.latest_round')}</span></div>
         <ul className="gp-sse">
-          {steps.length === 0 && <li><span className="muted-2">（暂无步骤；发一轮消息后会出现 context_agent 各阶段）</span></li>}
+          {steps.length === 0 && <li><span className="muted-2">{t('game.debug.no_steps')}</span></li>}
           {steps.map((s, i) => (
             <li key={i}>
               <span className={`mono ${s.status === "done" ? "ok" : s.status === "stopped" ? "danger" : "accent"}`}>{s.phase || "step"}</span>
@@ -1585,14 +1596,14 @@ function PanelDebug({ state }) {
         </ul>
       </div>
       <div className="gp-section">
-        <div className="section-head"><h3>本轮请求</h3></div>
+        <div className="section-head"><h3>{t('game.debug.current_request')}</h3></div>
         <div className="gp-kv">
           {(() => {
             const ctx = memory.last_context || {};
             const tokens = `in ${ctx.tokens_used || 0}${ctx.tokens_out ? ` · out ${ctx.tokens_out}` : ""}`;
             return (
               <>
-                <div className="gp-row"><span className="gp-label">召回 chunks</span><span className="mono">{ctx.retrieval_chunks || 0}</span></div>
+                <div className="gp-row"><span className="gp-label">{t('game.debug.retrieval_chunks')}</span><span className="mono">{ctx.retrieval_chunks || 0}</span></div>
                 <div className="gp-row"><span className="gp-label">tokens</span><span className="mono">{tokens}</span></div>
                 <div className="gp-row"><span className="gp-label">turn</span><span className="mono">{(state && state.turn) ?? 0}</span></div>
               </>
@@ -1601,9 +1612,9 @@ function PanelDebug({ state }) {
         </div>
       </div>
       <div className="gp-section">
-        <div className="section-head"><h3>权限日志</h3><span className="muted-2 mono" style={{fontSize: 11}}>{audit.length}</span></div>
+        <div className="section-head"><h3>{t('game.debug.permission_log')}</h3><span className="muted-2 mono" style={{fontSize: 11}}>{audit.length}</span></div>
         <ul className="gp-flat-list">
-          {audit.length === 0 && <li><span className="muted-2">（暂无写入审计记录）</span></li>}
+          {audit.length === 0 && <li><span className="muted-2">{t('game.debug.no_audit')}</span></li>}
           {audit.slice(-8).reverse().map((a, i) => (
             <li key={i}>
               <span className={`mono ${a.source === "user:/set" ? "accent" : ""}`}>{a.source || "auto"}</span>
@@ -1620,6 +1631,7 @@ function PanelDebug({ state }) {
 // 内部 ruleset id "dnd5e"，对外文案统一使用 "5E compatible / 五版规则兼容"。
 // 不引入任何官方 Dungeons & Dragons 商标或非 SRD IP。
 function PanelRules({ state }) {
+  const { t } = useTranslation();
   const ruleset = (state && state.ruleset) || {};
   const pc = (state && state.player_character) || {};
   const scene = (state && state.scene) || {};
@@ -1630,7 +1642,7 @@ function PanelRules({ state }) {
   const [errorMsg, setErrorMsg] = useState("");
 
   async function runRules(fnName, ...args) {
-    if (!window.api?.rules) { setErrorMsg("window.api.rules 未注册"); return null; }
+    if (!window.api?.rules) { setErrorMsg(t('game.rules.api_not_registered')); return null; }
     setBusy(true);
     setErrorMsg("");
     try {
@@ -1661,22 +1673,19 @@ function PanelRules({ state }) {
   // 加载模组的入口只在 Platform『冒险模组』页（那里会建新存档，不污染当前剧本）。
   const packKind = contentPack.kind || "freeform";
   if (packKind !== "module_adventure") {
-    const packTitle = packKind === "novel_adaptation" ? "小说改编剧本" : "通用 / freeform 剧本";
+    const packTitle = packKind === "novel_adaptation" ? t('game.rules.novel_pack') : t('game.rules.freeform_pack');
     return (
       <div className="gp-stack">
         <div className="gp-section">
           <div className="section-head">
-            <h3>5E 规则不适用</h3>
+            <h3>{t('game.rules.not_applicable')}</h3>
             <span className="pill"><span className="dot" /> {packTitle}</span>
           </div>
           <p className="gp-bio" style={{margin: "8px 0 0"}}>
-            当前剧本是「<strong>{packTitle}</strong>」，不使用 5E 兼容规则。
-            该 tab 仅在加载了 <code>module_adventure</code> 类型的冒险模组（如灰烬矿坑 / Ash Mine）后才会显示
-            角色卡 / 房间 / 战斗 / 骰子日志等内容。
+            {t('game.rules.not_applicable_desc', { pack: packTitle })}
           </p>
           <p className="muted-2" style={{fontSize: 12.5, marginTop: 10}}>
-            若要尝试 5E 模组，请到平台首页『冒险模组』栏目选择并启动 —— 系统会自动建立一个独立的新存档，
-            不会污染当前剧本。
+            {t('game.rules.try_module_hint')}
           </p>
         </div>
       </div>
@@ -1688,11 +1697,11 @@ function PanelRules({ state }) {
       {/* 模组元信息 */}
       <div className="gp-section">
         <div className="section-head">
-          <h3>冒险模组 · {ruleset.public_label || "5E compatible / 五版规则兼容"}</h3>
-          <span className="pill ok"><span className="dot ok" /> 已加载</span>
+          <h3>{t('game.rules.module_info', { label: ruleset.public_label || "5E compatible / 五版规则兼容" })}</h3>
+          <span className="pill ok"><span className="dot ok" /> {t('game.rules.loaded')}</span>
         </div>
         <div className="gp-kv">
-          <div className="gp-row"><span className="gp-label">模组</span><strong>{(scene.module_manifest||{}).name_cn || (scene.module_manifest||{}).name || scene.module_id}</strong></div>
+          <div className="gp-row"><span className="gp-label">{t('game.rules.module_label')}</span><strong>{(scene.module_manifest||{}).name_cn || (scene.module_manifest||{}).name || scene.module_id}</strong></div>
           <div className="gp-row"><span className="gp-label">tagline</span><span style={{fontStyle:"italic",opacity:0.85}}>{(scene.module_manifest||{}).tagline || "—"}</span></div>
         </div>
         {errorMsg ? <p className="muted-2" style={{color:"var(--danger)",marginTop:6}}>{errorMsg}</p> : null}
@@ -1700,18 +1709,18 @@ function PanelRules({ state }) {
 
       {/* 角色卡 */}
       <div className="gp-section">
-        <div className="section-head"><h3>角色卡</h3>{pc.level ? <span className="pill"><span className="dot" /> Lv {pc.level}</span> : null}</div>
+        <div className="section-head"><h3>{t('game.rules.character_card')}</h3>{pc.level ? <span className="pill"><span className="dot" /> Lv {pc.level}</span> : null}</div>
         <div className="gp-kv">
-          <div className="gp-row"><span className="gp-label">姓名</span><strong>{pc.name || "—"}</strong></div>
-          <div className="gp-row"><span className="gp-label">职业</span><span>{pc.class_name || "—"}</span></div>
-          <div className="gp-row"><span className="gp-label">种族</span><span>{pc.species || "—"}</span></div>
-          <div className="gp-row"><span className="gp-label">HP</span><span>{pc.hp || 0} / {pc.max_hp || 0}
+          <div className="gp-row"><span className="gp-label">{t('game.status.name')}</span><strong>{pc.name || "—"}</strong></div>
+          <div className="gp-row"><span className="gp-label">{t('game.rules.class')}</span><span>{pc.class_name || "—"}</span></div>
+          <div className="gp-row"><span className="gp-label">{t('game.rules.species')}</span><span>{pc.species || "—"}</span></div>
+          <div className="gp-row"><span className="gp-label">{t('game.status.hp')}</span><span>{pc.hp || 0} / {pc.max_hp || 0}
             <span style={{display:"inline-block",width:80,height:6,background:"var(--panel-3)",borderRadius:3,marginLeft:8,verticalAlign:"middle"}}>
               <span style={{display:"block",height:"100%",width:`${hpPct}%`,background:hpPct>50?"var(--green)":hpPct>25?"var(--accent)":"var(--danger)",borderRadius:3}} />
             </span>
           </span></div>
-          <div className="gp-row"><span className="gp-label">AC</span><span>{pc.ac || "—"}</span></div>
-          <div className="gp-row"><span className="gp-label">熟练加值</span><span>+{pc.proficiency_bonus || 0}</span></div>
+          <div className="gp-row"><span className="gp-label">{t('game.status.ac')}</span><span>{pc.ac || "—"}</span></div>
+          <div className="gp-row"><span className="gp-label">{t('game.rules.proficiency_bonus')}</span><span>+{pc.proficiency_bonus || 0}</span></div>
         </div>
         {pc.abilities && Object.keys(pc.abilities).length > 0 ? (
           <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:4,marginTop:6,fontSize:12}}>
@@ -1731,7 +1740,7 @@ function PanelRules({ state }) {
         ) : null}
         {Array.isArray(pc.conditions) && pc.conditions.length ? (
           <div style={{marginTop:6}}>
-            <span className="muted-2" style={{fontSize:11,marginRight:6}}>状态：</span>
+            <span className="muted-2" style={{fontSize:11,marginRight:6}}>{t('game.rules.condition_label')}</span>
             {pc.conditions.map((c,i) => <span key={i} className="pill" style={{marginRight:4}}>{c}</span>)}
           </div>
         ) : null}
@@ -1740,14 +1749,14 @@ function PanelRules({ state }) {
       {/* 当前房间 */}
       {moduleLoaded ? (
         <div className="gp-section">
-          <div className="section-head"><h3>当前房间</h3><span className="muted-2 mono" style={{fontSize:11}}>{scene.location_id}</span></div>
+          <div className="section-head"><h3>{t('game.rules.current_room')}</h3><span className="muted-2 mono" style={{fontSize:11}}>{scene.location_id}</span></div>
           <div className="gp-kv">
-            <div className="gp-row"><span className="gp-label">名称</span><strong>{currentRoom.name || "—"}</strong></div>
+            <div className="gp-row"><span className="gp-label">{t('game.rules.room_name')}</span><strong>{currentRoom.name || "—"}</strong></div>
           </div>
           <p className="gp-bio" style={{whiteSpace:"pre-wrap"}}>{currentRoom.description || ""}</p>
           {Array.isArray(currentRoom.visible_clues) && currentRoom.visible_clues.length ? (
             <div style={{marginTop:6}}>
-              <div className="muted-2" style={{fontSize:11,marginBottom:3}}>可见线索</div>
+              <div className="muted-2" style={{fontSize:11,marginBottom:3}}>{t('game.rules.visible_clues_label')}</div>
               <ul style={{margin:0,paddingLeft:16}}>
                 {currentRoom.visible_clues.map((c,i) => <li key={i} style={{fontSize:12}}>{c.text || c}</li>)}
               </ul>
@@ -1755,7 +1764,7 @@ function PanelRules({ state }) {
           ) : null}
           {Array.isArray(currentRoom.exits) && currentRoom.exits.length ? (
             <div style={{marginTop:6}}>
-              <div className="muted-2" style={{fontSize:11,marginBottom:3}}>出口</div>
+              <div className="muted-2" style={{fontSize:11,marginBottom:3}}>{t('game.rules.exits_label')}</div>
               <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                 {currentRoom.exits.map((e,i) => (
                   <button key={i} disabled={busy} onClick={() => move(e.to)} style={{fontSize:12}}>
@@ -1767,7 +1776,7 @@ function PanelRules({ state }) {
           ) : null}
           {Array.isArray(currentRoom.checks) && currentRoom.checks.length ? (
             <div style={{marginTop:8}}>
-              <div className="muted-2" style={{fontSize:11,marginBottom:3}}>可发起检定</div>
+              <div className="muted-2" style={{fontSize:11,marginBottom:3}}>{t('game.rules.checks_label')}</div>
               <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                 {currentRoom.checks.map((c,i) => (
                   <button key={i} disabled={busy} onClick={() => doAction({
@@ -1778,7 +1787,7 @@ function PanelRules({ state }) {
                     reason: c.fact || c.reveals,
                     sets_flag: c.sets_flag,
                   })} style={{fontSize:12}}>
-                    {c.kind === "saving_throw" ? `${(c.ability||"").toUpperCase()} 豁免 DC ${c.dc}` : `${c.skill} DC ${c.dc}`}
+                    {c.kind === "saving_throw" ? t('game.rules.saving_throw', { ability: (c.ability||"").toUpperCase(), dc: c.dc }) : t('game.rules.skill_check', { skill: c.skill, dc: c.dc })}
                   </button>
                 ))}
               </div>
@@ -1786,14 +1795,14 @@ function PanelRules({ state }) {
           ) : null}
           {(currentRoom.flags || {}).can_short_rest ? (
             <div style={{marginTop:6}}>
-              <button disabled={busy} onClick={() => doAction({kind:"short_rest"})}>短休（花生命骰）</button>
+              <button disabled={busy} onClick={() => doAction({kind:"short_rest"})}>{t('game.rules.short_rest')}</button>
             </div>
           ) : null}
           {Array.isArray(currentRoom.enemies) && currentRoom.enemies.length && !encounter.active ? (
             <div style={{marginTop:8}}>
-              <div className="muted-2" style={{fontSize:11,marginBottom:3}}>遭遇</div>
+              <div className="muted-2" style={{fontSize:11,marginBottom:3}}>{t('game.rules.encounter_label')}</div>
               <button disabled={busy} className="primary" onClick={() => startEncounter(`${scene.location_id}_combat`)} style={{fontSize:12}}>
-                开战！
+                {t('game.rules.start_combat')}
               </button>
             </div>
           ) : null}
@@ -1804,11 +1813,11 @@ function PanelRules({ state }) {
       {encounter.active ? (
         <div className="gp-section">
           <div className="section-head">
-            <h3>战斗中 · 第 {encounter.round} 回合</h3>
-            <span className="pill ok"><span className="dot ok" /> 回合 {encounter.turn_index + 1}/{(encounter.initiative_order||[]).length}</span>
+            <h3>{t('game.rules.combat_title', { round: encounter.round })}</h3>
+            <span className="pill ok"><span className="dot ok" /> {t('game.rules.round_info', { current: encounter.turn_index + 1, total: (encounter.initiative_order||[]).length })}</span>
           </div>
           <div style={{marginTop:6}}>
-            <div className="muted-2" style={{fontSize:11,marginBottom:3}}>先攻顺序</div>
+            <div className="muted-2" style={{fontSize:11,marginBottom:3}}>{t('game.rules.initiative_order')}</div>
             <ol style={{margin:0,paddingLeft:18}}>
               {(encounter.initiative_order||[]).map((o,i) => {
                 const isCurrent = i === encounter.turn_index;
@@ -1816,7 +1825,7 @@ function PanelRules({ state }) {
                 return (
                   <li key={i} style={{fontSize:12,fontWeight:isCurrent?700:400,opacity:comb.defeated?0.5:1}}>
                     {o.name} <span className="muted-2">({o.init}, {comb.side})</span> · HP {comb.hp}/{comb.max_hp}
-                    {comb.defeated ? " (倒下)" : ""}
+                    {comb.defeated ? t('game.rules.defeated') : ""}
                   </li>
                 );
               })}
@@ -1825,13 +1834,13 @@ function PanelRules({ state }) {
           <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:8}}>
             {(encounter.combatants||[]).filter(c => c.side === "enemy" && !c.defeated).map(e => (
               <button key={e.id} disabled={busy} className="primary" onClick={() => doAction({kind:"attack", target: e.id})} style={{fontSize:12}}>
-                攻击 {e.name}
+                {t('game.rules.attack', { name: e.name })}
               </button>
             ))}
-            <button disabled={busy} onClick={nextTurn} style={{fontSize:12}}>下一回合</button>
+            <button disabled={busy} onClick={nextTurn} style={{fontSize:12}}>{t('game.rules.next_turn')}</button>
             {(encounter.combatants||[]).filter(c => c.side === "enemy" && !c.defeated).map(e => (
               <button key={`enemy-${e.id}`} disabled={busy} onClick={() => enemyAttack(e.id)} style={{fontSize:12,background:"var(--panel-3)"}}>
-                让 {e.name} 出招
+                {t('game.rules.let_attack', { name: e.name })}
               </button>
             ))}
           </div>
@@ -1840,9 +1849,9 @@ function PanelRules({ state }) {
 
       {/* 骰子日志 */}
       <div className="gp-section">
-        <div className="section-head"><h3>骰子日志</h3><span className="muted-2 mono" style={{fontSize:11}}>{diceLog.length} 条</span></div>
+        <div className="section-head"><h3>{t('game.rules.dice_log')}</h3><span className="muted-2 mono" style={{fontSize:11}}>{t('game.rules.dice_count', { count: diceLog.length })}</span></div>
         {diceLog.length === 0 ? (
-          <p className="muted-2" style={{fontSize:12}}>尚未掷骰。开始模组并执行检定后将在此显示。</p>
+          <p className="muted-2" style={{fontSize:12}}>{t('game.rules.dice_empty')}</p>
         ) : (
           <ul style={{margin:0,paddingLeft:0,listStyle:"none",maxHeight:240,overflowY:"auto"}}>
             {diceLog.slice().reverse().map((d,i) => (
@@ -1851,15 +1860,15 @@ function PanelRules({ state }) {
                   <strong>{d.kind}</strong>
                   {d.actor ? <span className="muted-2"> · {d.actor}</span> : null}
                   {d.target ? <span className="muted-2"> → {d.target}</span> : null}
-                  {d.success === true ? <span className="pill ok" style={{marginLeft:6}}>成功</span>
-                    : d.success === false ? <span className="pill" style={{marginLeft:6,background:"var(--danger)",color:"#fff"}}>失败</span>
+                  {d.success === true ? <span className="pill ok" style={{marginLeft:6}}>{t('game.rules.success')}</span>
+                    : d.success === false ? <span className="pill" style={{marginLeft:6,background:"var(--danger)",color:"#fff"}}>{t('game.rules.fail')}</span>
                     : null}
                 </div>
                 <div className="muted-2" style={{fontSize:11}}>
                   {d.expression || ""} = [{(d.rolls||[]).join(",")}]{typeof d.modifier === "number" && d.modifier ? ` ${d.modifier>=0?"+":""}${d.modifier}` : ""}
                   {typeof d.total === "number" ? ` → ${d.total}` : ""}
                   {typeof d.dc === "number" ? ` vs DC ${d.dc}` : ""}
-                  {d.damage ? ` · 伤害 ${d.damage.total}` : ""}
+                  {d.damage ? ` · ${t('game.status.damage')} ${d.damage.total}` : ""}
                   {d.reason ? ` · ${d.reason}` : ""}
                 </div>
               </li>
@@ -1872,8 +1881,9 @@ function PanelRules({ state }) {
 }
 
 function RightPanel({ state, activeTab, setActiveTab, sidebarWidth, density, collapsed, onToggle, resizeHandle }) {
+  const { t } = useTranslation();
   const tabs = PANEL_TABS;
-  const active = tabs.find(t => t.id === activeTab) || tabs[0];
+  const active = tabs.find(tab => tab.id === activeTab) || tabs[0];
   let body = null;
   if (activeTab === "status") body = <PanelStatus state={state} panelWidth={sidebarWidth} />;
   else if (activeTab === "rules") body = <PanelRules state={state} />;
@@ -1890,25 +1900,25 @@ function RightPanel({ state, activeTab, setActiveTab, sidebarWidth, density, col
       <div className="gp-panel-inner" style={{width: sidebarWidth}}>
         <header className="gp-panel-head">
           <div className="gp-tabs">
-            <button className="iconbtn gp-collapse-btn" onClick={onToggle} data-tip="折叠面板" data-tip-pos="below">
+            <button className="iconbtn gp-collapse-btn" onClick={onToggle} data-tip={t('game.panel.collapse_tip')} data-tip-pos="below">
               <Icon name="chevron_right" size={14} />
             </button>
             <span className="gp-tabs-sep" />
-            {tabs.map(t => (
+            {tabs.map(tab => (
               <button
-                key={t.id}
-                className={`gp-tab ${activeTab === t.id ? "active" : ""}`}
-                onClick={() => setActiveTab(t.id)}
-                data-tip={t.label}
+                key={tab.id}
+                className={`gp-tab ${activeTab === tab.id ? "active" : ""}`}
+                onClick={() => setActiveTab(tab.id)}
+                data-tip={t(tab.labelKey)}
                 data-tip-pos="below"
-                aria-label={t.label}
+                aria-label={t(tab.labelKey)}
               >
-                <Icon name={t.icon} size={15} />
+                <Icon name={tab.icon} size={15} />
               </button>
             ))}
           </div>
           <div className="gp-panel-title">
-            <h3>{active.label}</h3>
+            <h3>{t(active.labelKey)}</h3>
             <span className="muted-2 mono">{active.id}</span>
           </div>
         </header>

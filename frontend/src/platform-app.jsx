@@ -186,7 +186,7 @@ function ResizableSplit({ top, bottom, storageKey, initialTop = 240, minTop = 96
   };
   return (
     <div className="pl-vsplit">
-      <div className="pl-vsplit-top" style={{ height: topH, overflow: 'auto', borderRadius: 12 }}>{top}</div>
+      <div className="pl-vsplit-top" style={{ maxHeight: topH, overflow: 'auto', borderRadius: 12 }}>{top}</div>
       <div className="pl-vsplit-handle" onMouseDown={onDown} onTouchStart={onTouchStart} role="separator" aria-orientation="horizontal" title="拖动调整列表区高度"
         style={{ height: 16, cursor: 'row-resize', display: 'flex', alignItems: 'center', justifyContent: 'center', touchAction: 'none' }}>
         <div className="pl-vsplit-grip" style={{ width: 56, height: 5, borderRadius: 3, background: 'var(--line-strong, #4a4540)' }} />

@@ -90,7 +90,7 @@
 
 步骤 3. 松开滑块（或输入框失去焦点）后自动保存。
 
-<!-- TODO: 截图 settings-memory 召回行为滑块 -->
+![记忆召回行为设置](./screenshots/settings-memory-recall.png)
 
 ### 任务 2：关闭某个记忆桶
 

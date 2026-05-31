@@ -28,19 +28,10 @@ MAX_SKILL_BYTES = 2 * 1024 * 1024
 MAX_SKILL_FILES = 80
 MAX_SKILL_UNPACKED_BYTES = 4 * 1024 * 1024
 
-DEFAULT_PLUGIN_TOOLS = [
-    {"id": "documents", "name": "Documents", "kind": "plugin", "enabled": True},
-    {"id": "spreadsheets", "name": "Spreadsheets", "kind": "plugin", "enabled": True},
-    {"id": "presentations", "name": "Presentations", "kind": "plugin", "enabled": True},
-    {"id": "browser", "name": "浏览器", "kind": "plugin", "enabled": True},
-    {"id": "chrome", "name": "Chrome", "kind": "plugin", "enabled": True},
-    {"id": "computer-use", "name": "电脑", "kind": "plugin", "enabled": True},
-    {"id": "figma", "name": "Figma", "kind": "plugin", "enabled": True},
-    {"id": "github", "name": "GitHub", "kind": "plugin", "enabled": True},
-    {"id": "cloudflare", "name": "Cloudflare", "kind": "plugin", "enabled": True},
-    {"id": "build-ios-apps", "name": "Build iOS Apps", "kind": "plugin", "enabled": True},
-    {"id": "codex-security", "name": "Codex Security", "kind": "plugin", "enabled": True},
-]
+# 无预置插件 — 旧列表是早期 demo 数据（Documents/Spreadsheets/Chrome 等 Claude connector
+# 风格名称），与 RPG Roleplay 实际功能无关，上线前清空。
+# 若将来接入真实插件市场，在此追加或从 DB/config 动态加载。
+DEFAULT_PLUGIN_TOOLS: list[dict] = []
 
 DEFAULT_MCP_CATALOG = {
     "schema_version": 1,

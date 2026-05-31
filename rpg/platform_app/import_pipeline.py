@@ -455,16 +455,32 @@ def _stage_facts(ctl: JobController, script_id: int, user_id: int) -> int:
     return len(chapters)
 
 
+def _resolve_extractor_llm(user_id: int) -> tuple[str, str]:
+    """解析拆书流水线 LLM 配置。
+
+    优先级:
+      1. user_preferences["extractor.api_id"] / ["extractor.model_real_name"]
+      2. user_preferences["agent.api_id"] / ["agent.model_real_name"]
+      3. 默认: vertex_ai / gemini-3.5-flash
+
+    返回 (api_id, model)。
+    """
+    from agents._harness import resolve_api_and_model
+    return resolve_api_and_model(
+        user_id,
+        api_pref_key="extractor.api_id",
+        model_pref_key="extractor.model_real_name",
+        default_api="vertex_ai",
+        default_model="gemini-3.5-flash",
+    )
+
+
 def _stage_story_phase_llm(ctl: JobController, user_id: int, script_id: int) -> None:
     """facts 完成后，一次 LLM call 把章节范围分到 开端/发展/高潮/结局/番外。
     成功 → 按范围批量 update chapter_facts.story_phase；
     失败/解析不出 → 全部回退 "未明"。
     """
-    try:
-        from agents.gm import GameMaster
-        gm = GameMaster(user_id=user_id)
-    except Exception:
-        return
+    api_id, model = _resolve_extractor_llm(user_id)
 
     with connect() as db:
         rows = db.execute(
@@ -497,14 +513,17 @@ def _stage_story_phase_llm(ctl: JobController, user_id: int, script_id: int) -> 
         f"章节摘要:\n{lines}"
     )
     try:
-        raw = gm._backend.call_structured(
-            system="你是小说剧情分析器,只输出 JSON 数组。",
-            messages=[{"role": "user", "content": prompt}],
+        from agents._harness import call_agent_json
+        raw, last = call_agent_json(
+            api_id, model,
+            "你是小说剧情分析器,只输出 JSON 数组。",
+            prompt,
+            user_id,
             max_tokens=400,
+            agent_kind="import_pipeline",
         )
-        last = getattr(gm._backend, "last_usage", {}) or {}
         from .usage import compute_cost
-        cost = float(compute_cost(gm.api_id, gm._backend.model_name, last))
+        cost = float(compute_cost(api_id, model, last))
         ctl.add_usage(int(last.get("input_tokens", 0)), int(last.get("output_tokens", 0)), cost)
 
         valid = {"开端", "发展", "高潮", "结局", "番外"}
@@ -591,16 +610,11 @@ def _stage_entities(ctl: JobController, script_id: int, user_id: int) -> list[di
 def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: list[dict[str, Any]]) -> int:
     """LLM 给 top N 人物生成人设卡。
 
-    简化：调 GameMaster.call_structured 让模型按 JSON schema 输出。
+    简化：调 call_agent_json 让模型按 JSON schema 输出。
     超时/失败的角色跳过，不阻断整个流水线。
     """
     from . import knowledge
-    try:
-        from agents.gm import GameMaster
-        gm = GameMaster(user_id=user_id)
-    except Exception:
-        # 没配 user 凭证：跳过这阶段
-        return 0
+    api_id, model = _resolve_extractor_llm(user_id)
 
     top_n = 30
     targets = [e for e in entities[:top_n] if e["count"] >= 5]
@@ -674,16 +688,19 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
             + context
         )
         try:
-            raw = gm._backend.call_structured(
-                system="你是角色卡提取器,严格判断 name 是否为真实角色人名。只输出 JSON。",
-                messages=[{"role": "user", "content": prompt}],
+            from agents._harness import call_agent_json
+            raw, last = call_agent_json(
+                api_id, model,
+                "你是角色卡提取器,严格判断 name 是否为真实角色人名。只输出 JSON。",
+                prompt,
+                user_id,
                 max_tokens=700,
+                agent_kind="import_pipeline",
             )
             data = _parse_json(raw)
             # 累 usage(无论是否写卡,LLM 都跑了)
-            last = getattr(gm._backend, "last_usage", {}) or {}
             from .usage import compute_cost
-            cost = float(compute_cost(gm.api_id, gm._backend.model_name, last))
+            cost = float(compute_cost(api_id, model, last))
             ctl.add_usage(int(last.get("input_tokens", 0)), int(last.get("output_tokens", 0)), cost)
             # task 47: LLM 明确说不是人名 → 跳过;identity 为空也判定为假名(双保险)
             if data and data.get("is_character") is not False and (data.get("identity") or "").strip():
@@ -707,11 +724,7 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
 
 def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
     """LLM 从 chapter_facts 摘要 + facts 提取世界观条目入 worldbook_entries。"""
-    try:
-        from agents.gm import GameMaster
-        gm = GameMaster(user_id=user_id)
-    except Exception:
-        return 0
+    api_id, model = _resolve_extractor_llm(user_id)
 
     with connect() as db:
         book_row = db.execute(
@@ -790,14 +803,17 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
         "数量上限 20。\n\n" + seed
     )
     try:
-        raw = gm._backend.call_structured(
-            system="你是世界书编辑，只输出 JSON 数组。",
-            messages=[{"role": "user", "content": prompt}],
+        from agents._harness import call_agent_json
+        raw, last = call_agent_json(
+            api_id, model,
+            "你是世界书编辑，只输出 JSON 数组。",
+            prompt,
+            user_id,
             max_tokens=2000,
+            agent_kind="import_pipeline",
         )
-        last = getattr(gm._backend, "last_usage", {}) or {}
         from .usage import compute_cost
-        cost = float(compute_cost(gm.api_id, gm._backend.model_name, last))
+        cost = float(compute_cost(api_id, model, last))
         ctl.add_usage(int(last.get("input_tokens", 0)), int(last.get("output_tokens", 0)), cost)
         entries = _parse_json(raw) or []
         if not isinstance(entries, list):
