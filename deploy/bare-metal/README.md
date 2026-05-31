@@ -43,7 +43,8 @@ sudo apt install -y \
     git curl build-essential
 ```
 
-> Ubuntu 22.04 默认 Python 3.10；如需 3.12 请先 `add-apt-repository ppa:deadsnakes/ppa`。
+> Ubuntu 22.04 默认 Python 3.10，默认 apt 源也未必有 PostgreSQL 16 / pgvector。
+> 如需 3.12 先加 deadsnakes PPA；如 apt 找不到 `postgresql-16*`，先接入 PostgreSQL PGDG apt 源。
 
 ---
 
@@ -102,6 +103,7 @@ sudo systemctl restart postgresql
 
 ```bash
 sudo mkdir -p /var/backups/rpg
+sudo chown postgres:postgres /var/backups/rpg
 sudo tee /etc/cron.d/rpg-backup <<'EOF'
 # 每天凌晨 02:00 备份
 0 2 * * * postgres pg_dump -Fc rpg > /var/backups/rpg/rpg-$(date +\%F).dump && \
@@ -130,7 +132,7 @@ rpg = host=127.0.0.1 port=5432 dbname=rpg
 [pgbouncer]
 listen_addr = 127.0.0.1
 listen_port = 6432
-auth_type = md5
+auth_type = scram-sha-256
 auth_file = /etc/pgbouncer/userlist.txt
 pool_mode = transaction
 max_client_conn = 1000
@@ -140,6 +142,7 @@ reserve_pool_size = 5
 reserve_pool_timeout = 3
 query_wait_timeout = 30
 server_idle_timeout = 600
+ignore_startup_parameters = extra_float_digits
 log_connections = 0
 log_disconnections = 0
 ```
@@ -147,16 +150,13 @@ log_disconnections = 0
 ### 3.2 /etc/pgbouncer/userlist.txt
 
 ```bash
-# 生成 MD5 hash（格式："md5" + md5(password + username)）
-python3 -c "
-import hashlib, getpass
-u = 'rpg'
-p = getpass.getpass('rpg DB password: ')
-h = hashlib.md5((p+u).encode()).hexdigest()
-print(f'\"rpg\" \"md5{h}\"')
-"
-# 把输出行写入 /etc/pgbouncer/userlist.txt
-sudo nano /etc/pgbouncer/userlist.txt
+# Postgres 16 默认用 SCRAM。直接复用 pg_authid 中的 SCRAM secret。
+sudo -u postgres psql -Atc \
+  "select '\"' || rolname || '\" \"' || rolpassword || '\"' from pg_authid where rolname = 'rpg'" \
+  | sudo tee /etc/pgbouncer/userlist.txt >/dev/null
+
+sudo chown postgres:postgres /etc/pgbouncer/userlist.txt
+sudo chmod 600 /etc/pgbouncer/userlist.txt
 ```
 
 ### 3.3 启动 PgBouncer
@@ -233,22 +233,24 @@ chmod 600 /opt/rpg-roleplay/rpg/.env
 ## §5. 首次 migration（fresh DB）
 
 ```bash
-# 确认 DATABASE_URL 指向直连 5432（不是 6432）
-grep DATABASE_URL /opt/rpg-roleplay/rpg/.env
-
 cd /opt/rpg-roleplay/rpg
 
 # fresh DB 必须用 full，不能用 up
 # full = baseline（CREATE TABLE）+ up（增量 migration）+ pgvector
-.venv/bin/python -m platform_app.migrate full
+DATABASE_URL=postgresql://rpg:CHANGE_ME@127.0.0.1:5432/rpg \
+  .venv/bin/python -m platform_app.migrate full
 
 # 验证：所有 v1..v38 migration 已应用
-.venv/bin/python -m platform_app.migrate status
+DATABASE_URL=postgresql://rpg:CHANGE_ME@127.0.0.1:5432/rpg \
+  .venv/bin/python -m platform_app.migrate status
 ```
 
 > **为什么不能用 `up` 做首次部署？**
-> `up` 假设 `migration_history` 表已存在（由 baseline 创建）。fresh DB 上直接跑 `up`
+> `up` 假设基线表已经存在。fresh DB 上直接跑 `up`
 > 会因为 ALTER TABLE 目标表不存在而失败。`full` 先建基线表再跑增量。
+>
+> `platform_app.migrate` 不自动读取 `rpg/.env`。这里显式把 `DATABASE_URL` 写在命令前，
+> 是为了确保 migration 走直连 5432，而不是运行时 PgBouncer 6432。
 
 ---
 
@@ -277,10 +279,6 @@ User=rpg
 Group=rpg
 WorkingDirectory=/opt/rpg-roleplay/rpg
 
-# 运行时走 PgBouncer 6432（migration 已完成，advisory lock 不再需要）
-Environment="DATABASE_URL=postgresql://rpg:CHANGE_ME@127.0.0.1:6432/rpg"
-# 跳过 worker 自动 migrate（由 deploy 脚本提前跑）
-Environment="RPG_SKIP_AUTO_MIGRATE=1"
 EnvironmentFile=/opt/rpg-roleplay/rpg/.env
 
 ExecStart=/opt/rpg-roleplay/rpg/.venv/bin/uvicorn app:app \
@@ -311,9 +309,9 @@ sudo systemctl enable --now rpg-backend
 sudo systemctl status rpg-backend
 ```
 
-> 把 `CHANGE_ME` 替换成真实 rpg 用户密码。EnvironmentFile 中的 DATABASE_URL 会覆盖
-> `Environment=` 行，请确保 .env 里 DATABASE_URL 也改成了 6432（或删掉 .env 里的那行
-> 让 service 文件里的 `Environment=` 生效）。
+> `.env` 中的运行时 `DATABASE_URL` 应指向 PgBouncer 6432，并设置
+> `RPG_SKIP_AUTO_MIGRATE=1`。首次 migration 只在 §5 命令前临时 inline 直连 5432，
+> 不要把 5432 写进长期运行的 service 环境。
 
 ---
 
@@ -328,8 +326,9 @@ Description=RPG Cron (hard_delete / prune_audit / policy / feedback cleanup)
 Type=oneshot
 User=rpg
 Group=rpg
-WorkingDirectory=/opt/rpg-roleplay/rpg
+WorkingDirectory=/opt/rpg-roleplay
 EnvironmentFile=/opt/rpg-roleplay/rpg/.env
+Environment="PYTHONPATH=/opt/rpg-roleplay:/opt/rpg-roleplay/rpg"
 ExecStart=/opt/rpg-roleplay/rpg/.venv/bin/python -m rpg.scripts.run_cron all
 StandardOutput=journal
 StandardError=journal
@@ -513,7 +512,7 @@ sudo systemctl status rpg-backend
 |------|-----------|------|
 | `platform_app.migrate` → `ModuleNotFoundError` | 在仓库根而非 `rpg/` 目录运行 | `cd rpg/ && .venv/bin/python -m platform_app.migrate ...` |
 | migration 卡或报 `pg_advisory_lock` 错 | DATABASE_URL 指向 PgBouncer 6432 | 改成直连 5432 再跑 migrate |
-| `up` 报"migration_history 不存在" | fresh DB 上用了 `up` | 改用 `full`（首次部署） |
+| `up` 报目标表不存在 / DDL 失败 | fresh DB 上用了 `up` | 改用 `full`（首次部署） |
 | uvicorn 启动报 `psycopg` 找不到 | 从错误 cwd 启动，venv 路径不对 | 确认 WorkingDirectory=/opt/rpg-roleplay/rpg |
 | 5xx 大面积错误 | backend 未起 / DB 连不上 | `journalctl -u rpg-backend -f` 看栈 |
 | SSE 流式响应卡死（长请求无返回） | nginx proxy_buffering 未关 | nginx location /api/ 加 `proxy_buffering off;` |
