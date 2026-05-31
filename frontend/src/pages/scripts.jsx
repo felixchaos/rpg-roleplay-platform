@@ -1152,8 +1152,44 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
   const [dragOver, setDragOver] = useStatePL(false);
   const [pendingImport, setPendingImport] = useStatePL(null);
   const [pendingPipeline, setPendingPipeline] = useStatePL(null);
+  // 拆书流水线 LLM 选择(写入 user prefs.extractor.*,后端 _resolve_extractor_llm 读)
+  const [extractApiId, setExtractApiId] = useStatePL('');
+  const [extractModel, setExtractModel] = useStatePL('');
+  const [extractApis, setExtractApis] = useStatePL([]);
+  const [extractSaving, setExtractSaving] = useStatePL(false);
   const fileInputRef = React.useRef(null);
   const tickRef = React.useRef(null);
+
+  // 拉 catalog + user prefs,预填提取模型选择
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [profile, models] = await Promise.all([
+          window.api.account.profile().catch(() => ({})),
+          window.api.models.list().catch(() => ({})),
+        ]);
+        if (cancelled) return;
+        const list = models?.models?.apis || (Array.isArray(models?.apis) ? models.apis : []) || [];
+        setExtractApis(Array.isArray(list) ? list : []);
+        const p = (profile && profile.preferences) || {};
+        setExtractApiId(p['extractor.api_id'] || 'deepseek');
+        setExtractModel(p['extractor.model_real_name'] || 'deepseek-v4-flash');
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const persistExtractor = async (apiId, model) => {
+    if (!apiId || !model) return;
+    setExtractSaving(true);
+    try {
+      await window.api.account.preferences({
+        'extractor.api_id': apiId,
+        'extractor.model_real_name': model,
+      });
+    } catch (_) {} finally { setExtractSaving(false); }
+  };
 
   // Restore job from localStorage on mount (page-refresh resilient)
   React.useEffect(() => {
@@ -1839,6 +1875,64 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
                     disabled={rule !== 'custom'} placeholder={t('scripts.import.field_custom_regex_placeholder')} />
                 </CSFormField>
               </div>
+            </CSColumnLayout>
+          </CSContainer>
+
+          {/* 拆书流水线 LLM 选择 — 写入 user prefs.extractor.*,可在「设置 → 模块模型」覆盖 */}
+          <CSContainer header={<CSHeader variant="h2" description="提取章节摘要 / 角色卡 / 世界书所用的 LLM。仅在导入这一步生效;玩游戏时的主 GM 在另一处配置。">提取模型</CSHeader>}>
+            <CSColumnLayout columns={2}>
+              <CSFormField label="Provider" description="选择已配置 API key 的 provider。未配置 key 的会在导入开始时弹凭证缺失提示。">
+                <CSSelect
+                  selectedOption={(() => {
+                    const a = extractApis.find(x => (x.api_id || x.id) === extractApiId);
+                    return a ? { value: extractApiId, label: a.display_name || a.name || extractApiId } : (extractApiId ? { value: extractApiId, label: extractApiId } : null);
+                  })()}
+                  options={extractApis.map(a => ({ value: a.api_id || a.id, label: a.display_name || a.name || (a.api_id || a.id) }))}
+                  placeholder="选择 provider"
+                  onChange={({ detail }) => {
+                    const aid = detail.selectedOption.value;
+                    setExtractApiId(aid);
+                    const a = extractApis.find(x => (x.api_id || x.id) === aid);
+                    const m0 = a && (a.models || a.entries || [])[0];
+                    const mid = m0 ? (m0.real_name || m0.id) : '';
+                    if (mid) setExtractModel(mid);
+                    persistExtractor(aid, mid || extractModel);
+                  }}
+                  disabled={extractSaving}
+                />
+              </CSFormField>
+              <CSFormField label="Model" description="建议 deepseek-v4-flash(便宜)或 gemini-3.5-flash(质量稍好)。提取走 JSON 模式所以挑支持 json_mode 的模型。">
+                <CSSelect
+                  selectedOption={(() => {
+                    const a = extractApis.find(x => (x.api_id || x.id) === extractApiId);
+                    const list = (a && (a.models || a.entries)) || [];
+                    const m = list.find(x => (x.real_name || x.id) === extractModel);
+                    return m ? { value: extractModel, label: m.display_name || m.real_name || m.id } : (extractModel ? { value: extractModel, label: extractModel } : null);
+                  })()}
+                  options={(() => {
+                    const a = extractApis.find(x => (x.api_id || x.id) === extractApiId);
+                    const list = (a && (a.models || a.entries)) || [];
+                    return list
+                      .filter(m => {
+                        const caps = m.capabilities || m.caps || [];
+                        // 隐藏 embedding-only 的(那是给 RAG 用,不是给提取用)
+                        return !(caps.length === 1 && caps[0] === 'embedding');
+                      })
+                      .map(m => ({
+                        value: m.real_name || m.id,
+                        label: `${m.display_name || m.real_name || m.id}${m.enabled === false ? ' (禁用)' : ''}`,
+                        disabled: m.enabled === false,
+                      }));
+                  })()}
+                  placeholder="选择模型"
+                  onChange={({ detail }) => {
+                    const mid = detail.selectedOption.value;
+                    setExtractModel(mid);
+                    persistExtractor(extractApiId, mid);
+                  }}
+                  disabled={extractSaving || !extractApiId}
+                />
+              </CSFormField>
             </CSColumnLayout>
           </CSContainer>
 

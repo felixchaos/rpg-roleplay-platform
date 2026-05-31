@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 # 系统默认 embedding 配置(env 可覆盖,用户 BYOK 优先于 env)
 DEFAULT_EMBED_MODEL = os.environ.get("EMBED_MODEL", "text-embedding-004")
-DEFAULT_EMBED_API_ID = os.environ.get("EMBED_API_ID", "vertex")
+DEFAULT_EMBED_API_ID = os.environ.get("EMBED_API_ID", "vertex_ai")
 EMBED_DIM = 768
 # Vertex text-embedding-004 限制:**单请求总 token ≤ 20000**(不是 250 项)。
 # 中文 chunk 平均 ~200 token,100 项已经超过 20K → 400 INVALID_ARGUMENT。

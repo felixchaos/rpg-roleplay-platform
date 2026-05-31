@@ -2380,7 +2380,7 @@ function ModuleModelsSection() {
     { id: "card_gen",      label: "角色卡生成器",           shape: "flat", apiKey: "character_card_generator.api_id", modelKey: "character_card_generator.model_real_name", tip: "侧栏创意工具:生成 / 微调角色卡。" },
     { id: "critic",        label: "一致性评分",             shape: "flat", apiKey: "critic.api_id",                 modelKey: "critic.model_real_name",                 tip: "角色卡生成的一致性评分子代理 (0-1 阈值 0.6)。" },
     { id: "verifier",      label: "接受条件验证",           shape: "flat", apiKey: "acceptance_verifier.api_id",    modelKey: "acceptance_verifier.model_real_name",    tip: "GM 输出是否满足 curator 设置的 acceptance 条件。" },
-    { id: "embedder",      label: "向量嵌入 (RAG)",         shape: "flat", apiKey: "embedder.api_id",               modelKey: "embedder.model_real_name",               tip: "向量嵌入模型，用于 RAG 召回；空 = 跟主 GM（若主 GM 支持 embedding）。" },
+    { id: "embedder",      label: "向量嵌入 (RAG)",         shape: "flat", apiKey: "embed.api_id",                  modelKey: "embed.model_real_name",                  capsFilter: ["embedding"], allowInherit: false, tip: "向量嵌入模型，用于 RAG 召回。仅显示带 embedding 能力的条目（如 Vertex text-embedding-004）。" },
   ];
 
   const [prefs, setPrefs] = useStatePL({});
@@ -2401,7 +2401,7 @@ function ModuleModelsSection() {
   }, []);
   useEffectPL(() => { reload(); }, [reload]);
 
-  // 把所有可选模型扁平成 [{api_id, real_name, display, enabled}]
+  // 把所有可选模型扁平成 [{api_id, real_name, display, enabled, capabilities}]
   const flatModels = useMemoPL(() => {
     const out = [];
     for (const api of (catalog.apis || [])) {
@@ -2413,11 +2413,19 @@ function ModuleModelsSection() {
           real_name: m.real_name || m.id,
           display: m.display_name || m.real_name || m.id,
           enabled: m.enabled !== false,
+          capabilities: m.capabilities || m.caps || [],
         });
       }
     }
     return out;
   }, [catalog]);
+
+  // 按模块的 capsFilter 过滤(embedder 只显示 embedding 能力的条目)
+  const modelsForModule = (mod) => {
+    const need = Array.isArray(mod.capsFilter) ? mod.capsFilter : null;
+    if (!need || need.length === 0) return flatModels;
+    return flatModels.filter(m => need.every(c => (m.capabilities || []).includes(c)));
+  };
 
   const mainCurrent = useMemoPL(() => {
     // 用户偏好优先,否则取 catalog selected
@@ -2567,12 +2575,16 @@ function ModuleModelsSection() {
                     {/* B3: 原生 <select> 改为 CSSelect，视觉与其他 section 一致 */}
                     {(() => {
                       const opts = [];
-                      if (mod.id !== "gm") opts.push({ value: "__inherit__", label: t('settings.modules.follow_main') });
-                      // fallback: 当前 value 不在 catalog 里时补一条
-                      if (value !== "__inherit__" && value && !flatModels.some(m => `${m.api_id}/${m.real_name}` === value)) {
+                      const visibleModels = modelsForModule(mod);
+                      // allowInherit=false 的模块(如 embedder)不给"跟主 GM",必须自己选
+                      if (mod.id !== "gm" && mod.allowInherit !== false) {
+                        opts.push({ value: "__inherit__", label: t('settings.modules.follow_main') });
+                      }
+                      // fallback: 当前 value 不在过滤后的 catalog 里时补一条
+                      if (value !== "__inherit__" && value && !visibleModels.some(m => `${m.api_id}/${m.real_name}` === value)) {
                         opts.push({ value, label: `${value} ${t('settings.modules.not_in_catalog')}` });
                       }
-                      for (const m of flatModels) {
+                      for (const m of visibleModels) {
                         opts.push({
                           value: `${m.api_id}/${m.real_name}`,
                           label: `${m.api_id} · ${m.real_name}${m.enabled ? "" : ` ${t('settings.modules.disabled_model')}`}`,
