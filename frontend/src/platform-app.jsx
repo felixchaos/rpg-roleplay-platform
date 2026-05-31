@@ -3571,7 +3571,6 @@ const CS_MODULES = [
     pages: ['scripts', 'scripts-import', 'scripts-library', 'scripts-editor', 'scripts-settings'],
     sub: [
       { text: '我的剧本', href: '#scripts' },
-      { text: '上传剧本', href: '#scripts-import' },
       { text: '在线剧本库', href: '#scripts-library' },
       { text: '剧本编辑器', href: '#scripts-editor' },
       { text: '剧本设置', href: '#scripts-settings' },

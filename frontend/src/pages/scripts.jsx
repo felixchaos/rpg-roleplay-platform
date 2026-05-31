@@ -573,6 +573,7 @@ function ScriptsListView() {
   // 改成开 ChaptersModal —— 真正展示章节列表 + 内容预览 + 重命名 + 重切分。
   const [chaptersOpen, setChaptersOpen] = useStatePL(null); // script row
   const [reviewScript, setReviewScript] = useStatePL(null); // Phase E.1: KB 复核 modal
+  const [importOpen, setImportOpen] = useStatePL(false); // 导入剧本全页覆盖(替代侧栏 #scripts-import)
 
   // 每行操作下拉项 + 向量化状态(task 51)
   const rowActions = (s) => {
@@ -689,7 +690,7 @@ function ScriptsListView() {
           <CSSpaceBetween direction="horizontal" size="xs">
             <input ref={importPackRef} type="file" accept=".zip" style={{ display: 'none' }} onChange={(e) => onImportPackFile(e.target.files?.[0])} />
             <CSButton iconName="download" loading={importPackBusy} onClick={() => importPackRef.current?.click()}>导入剧本包</CSButton>
-            <CSButton variant="primary" iconName="upload" href="#scripts-import">导入剧本</CSButton>
+            <CSButton variant="primary" iconName="upload" onClick={() => setImportOpen(true)}>导入剧本</CSButton>
           </CSSpaceBetween>
         }
       >剧本管理</CSHeader>
@@ -704,6 +705,19 @@ function ScriptsListView() {
         : tableEl}
 
       <ChaptersModal script={chaptersOpen} onClose={() => setChaptersOpen(null)} onChanged={reload} />
+      {importOpen && (
+        <div style={{ position: 'fixed', top: 53, left: 0, right: 0, bottom: 0, zIndex: 1000, background: 'var(--bg, #1a1817)', overflow: 'auto' }}>
+          <div style={{ position: 'sticky', top: 0, zIndex: 3, background: '#131211', borderBottom: '1px solid #36322d' }}>
+            <div style={{ maxWidth: 1040, margin: '0 auto', padding: '13px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+              <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600, color: '#ebe7df' }}>导入剧本</div>
+              <CSButton iconName="close" variant="link" onClick={() => { setImportOpen(false); reload(); }}>关闭</CSButton>
+            </div>
+          </div>
+          <div style={{ maxWidth: 1040, margin: '0 auto', padding: '20px 24px 80px' }}>
+            <ScriptsImportView embedded onClose={() => { setImportOpen(false); reload(); }} />
+          </div>
+        </div>
+      )}
       <OverridesModal script={overridesScript} onClose={() => setOverridesScript(null)} />
       {reviewScript && (
         <div className="pl-modal-backdrop" onClick={() => setReviewScript(null)}>
@@ -999,7 +1013,8 @@ const IMPORT_STAGES = [
   { id: "timeline", label: "时间线建立", hint: "事件锚点 + 章节映射",        tok_per_chap: 40 },
 ];
 
-function ScriptsImportView() {
+function ScriptsImportView({ embedded = false, onClose } = {}) {
+  void onClose;
   const [rule, setRule] = useStatePL("auto");
   const [pattern, setPattern] = useStatePL("");
   const [title, setTitle] = useStatePL("");
@@ -1330,9 +1345,9 @@ function ScriptsImportView() {
       <CSContainer
         header={
           <CSHeader
-            variant="h1"
+            variant={embedded ? 'h2' : 'h1'}
             description="支持 TXT · MD · 最大 50MB · 先预算章节切分 / Token / 成本,再决定是否导入。整个过程后台运行,刷新不影响。"
-          >导入剧本</CSHeader>
+          >{embedded ? '选择文件 · 章节切分预算' : '导入剧本'}</CSHeader>
         }
       >
         <CSSpaceBetween size="l">
