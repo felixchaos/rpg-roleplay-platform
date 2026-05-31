@@ -249,7 +249,7 @@ async def api_auth_schema():
     """
     pw_min = _auth.MIN_PASSWORD_LENGTH
     from ..db import connect, init_db
-    from core.config import effective_auth_required
+    from core.config import effective_auth_required, setup_token as configured_setup_token
     init_db()
     with connect() as db:
         user_count = db.execute("select count(*) as n from users").fetchone()["n"]
@@ -277,6 +277,16 @@ async def api_auth_schema():
     ]
     if notes["invite_only"]:
         register_fields.insert(0, invite_field)
+    setup_required = effective_auth_required() and first_user_is_admin and bool((configured_setup_token() or "").strip())
+    if setup_required:
+        register_fields.insert(0, {
+            "key": "setup_token",
+            "label": "Setup Token",
+            "type": "password",
+            "required": True,
+            "autocomplete": "one-time-code",
+        })
+        notes["setup_token_required"] = True
 
     return json_response({
         "login": [

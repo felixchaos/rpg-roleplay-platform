@@ -1131,6 +1131,10 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
   const [job, setJob] = useStatePL(null); // { id, status, stages, currentStage, file, ... } | null
   const [estimate, setEstimate] = useStatePL(null);
   const [previewBusy, setPreviewBusy] = useStatePL(false);
+  const [previewProgress, setPreviewProgress] = useStatePL({ value: 0, label: "" });
+  const [importBusy, setImportBusy] = useStatePL(false);
+  const [importProgress, setImportProgress] = useStatePL("");
+  const [importPercent, setImportPercent] = useStatePL(0);
   const [selectedFile, setSelectedFile] = useStatePL(null);
   const [dragOver, setDragOver] = useStatePL(false);
   const fileInputRef = React.useRef(null);
@@ -1236,6 +1240,8 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
       return;
     }
     setSelectedFile(file);
+    setEstimate(null);
+    setPreviewProgress({ value: 0, label: "" });
     if (!title) setTitle(file.name.replace(/\.(txt|md)$/i, ""));
   };
 
@@ -1245,22 +1251,33 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
     if (f) onPickFile(f);
   };
 
-  // task 16: 读 File → 纯 base64（去掉 data URL 前缀），喂给后端 decode_upload()。
-  // 之前发的 {rule, pattern, title, filename, size} 后端 file=None → 必 400 → 静默回退到 fakeFile。
-  const readFileAsBase64 = (file) => new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => {
-      const s = String(r.result || "");
-      const idx = s.indexOf(",");
-      resolve(idx >= 0 ? s.slice(idx + 1) : s);
-    };
-    r.onerror = () => reject(r.error || new Error(t('scripts.import.file_read_fail')));
-    r.readAsDataURL(file);
-  });
+  const uploadFileChunks = async (file, onProgress) => {
+    const CHUNK_SIZE = 1024 * 1024;
+    const totalBytes = file.size;
+    const totalChunks = Math.max(1, Math.ceil(totalBytes / CHUNK_SIZE));
+    onProgress?.({ stage: "init", done: 0, total: totalChunks, percent: 0 });
+    const init = await window.api.uploads.init({
+      filename: file.name,
+      total_bytes: totalBytes,
+      total_chunks: totalChunks,
+    });
+    const uploadId = init.upload_id || init.id;
+    if (!uploadId) throw new Error(t('scripts.import.no_upload_id'));
+    for (let i = 0; i < totalChunks; i++) {
+      const blob = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+      await window.api.uploads.chunk(uploadId, blob, i);
+      onProgress?.({ stage: "chunk", done: i + 1, total: totalChunks, percent: Math.round(((i + 1) / totalChunks) * 100) });
+    }
+    onProgress?.({ stage: "finish", done: totalChunks, total: totalChunks, percent: 100 });
+    await window.api.uploads.finish(uploadId, {});
+    return uploadId;
+  };
 
   const startEstimate = async () => {
+    if (previewBusy || importBusy) return;
     setPreviewBusy(true);
     setEstimate(null);
+    setPreviewProgress({ value: 0, label: t('scripts.import.preview_upload_init') });
     // task 49：不选文件时彻底不出预算（之前给假的 162 章 41 万字）
     if (!selectedFile) {
       setEstimate({
@@ -1271,20 +1288,36 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
         previewError: t('scripts.import.no_file_selected'),
       });
       setPreviewBusy(false);
+      setPreviewProgress({ value: 0, label: "" });
       return;
     }
     // 选了真实文件：必须打真后端；失败就给用户看清楚错误，绝不回退 fakeFile
     let result = null;
+    let uploadId = null;
     try {
-      const base64 = await readFileAsBase64(selectedFile);
+      uploadId = await uploadFileChunks(selectedFile, ({ stage, done, total, percent }) => {
+        if (stage === "init") {
+          setPreviewProgress({ value: 2, label: t('scripts.import.preview_upload_init') });
+        } else if (stage === "chunk") {
+          setPreviewProgress({
+            value: Math.min(80, 2 + Math.round(percent * 0.78)),
+            label: t('scripts.import.preview_upload_progress', { done, total }),
+          });
+        } else if (stage === "finish") {
+          setPreviewProgress({ value: 84, label: t('scripts.import.preview_upload_finish') });
+        }
+      });
+      setPreviewProgress({ value: 90, label: t('scripts.import.preview_analyzing') });
       const body = {
-        file: { name: selectedFile.name, base64 },
+        upload_id: uploadId,
         split_rule: rule || "auto",
         custom_pattern: pattern || "",
         sample_limit: 20,
       };
       result = await window.api.scripts.preview(body);
+      setPreviewProgress({ value: 100, label: t('scripts.import.preview_done') });
     } catch (e) {
+      if (uploadId) { try { await window.api.uploads.cancel(uploadId); } catch (_) {} }
       const detail = (e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || t('scripts.toast.unknown_error');
       window.__apiToast?.(t('scripts.toast.preview_fail'), { kind: "danger", detail, duration: 5000 });
       setEstimate({
@@ -1296,6 +1329,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
         previewError: detail,
       });
       setPreviewBusy(false);
+      setPreviewProgress({ value: 0, label: "" });
       return;
     }
     // 成功路径：用后端真实数字
@@ -1322,6 +1356,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
       preview: result.preview,
       report: result.report,
       warnings,
+      upload_id: uploadId,
     });
     setPreviewBusy(false);
   };
@@ -1331,24 +1366,38 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
     // 之前发的 init 字段 {size, kind, chunk_size} 全不对（后端要 total_bytes/total_chunks）→ 400。
     // 之前任何一步失败仍会创建 fake job 让 UI 假装在跑 → 用户误以为成功。
     // 现在：选了真实文件就必须真传成功；任一步失败 toast 报错并停止，不再造 job。
-    const CHUNK_SIZE = 1024 * 1024;
+    if (importBusy) {
+      window.__apiToast?.(t('scripts.import.import_busy'), { kind: "info" });
+      return;
+    }
     if (selectedFile) {
-      let uploadId = null;
+      if (!estimate || !Array.isArray(estimate.stages)) {
+        window.__apiToast?.(t('scripts.import.preview_required'), { kind: "warn" });
+        return;
+      }
+      let uploadId = estimate.upload_id || null;
+      setImportBusy(true);
+      setImportPercent(0);
+      setImportProgress(uploadId ? t('scripts.import.import_reuse_upload') : t('scripts.import.upload_init'));
       try {
-        const totalBytes = selectedFile.size;
-        const totalChunks = Math.max(1, Math.ceil(totalBytes / CHUNK_SIZE));
-        const init = await window.api.uploads.init({
-          filename: selectedFile.name,
-          total_bytes: totalBytes,
-          total_chunks: totalChunks,
-        });
-        uploadId = init.upload_id || init.id;
-        if (!uploadId) throw new Error(t('scripts.import.no_upload_id'));
-        for (let i = 0; i < totalChunks; i++) {
-          const blob = selectedFile.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-          await window.api.uploads.chunk(uploadId, blob, i);
+        if (!uploadId) {
+          uploadId = await uploadFileChunks(selectedFile, ({ stage, done, total, percent }) => {
+            if (stage === "init") {
+              setImportPercent(2);
+              setImportProgress(t('scripts.import.upload_init'));
+            } else if (stage === "chunk") {
+              setImportPercent(Math.min(70, 2 + Math.round(percent * 0.68)));
+              setImportProgress(t('scripts.import.upload_progress', { done, total }));
+            } else if (stage === "finish") {
+              setImportPercent(74);
+              setImportProgress(t('scripts.import.upload_finish'));
+            }
+          });
+        } else {
+          setImportPercent(75);
         }
-        await window.api.uploads.finish(uploadId, {});
+        setImportPercent(80);
+        setImportProgress(t('scripts.import.import_creating'));
         const importResp = await window.api.scripts.importScript({
           upload_id: uploadId,
           title: title || selectedFile.name.replace(/\.(txt|md)$/i, ""),
@@ -1365,6 +1414,8 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
         // ks_ job_id 是降级 fallback。
         let pipelineJobId = null;
         try {
+          setImportPercent(92);
+          setImportProgress(t('scripts.import.import_pipeline'));
           const pipelineResp = await window.api.scripts.importPipeline(sc.id, {
             enable_cards: true,
             enable_worldbook: true,
@@ -1396,6 +1447,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
           started_at: Date.now(),
           real: true,
         };
+        setImportPercent(100);
         setJob(j);
         setEstimate(null);
         // 通知外部 ScriptsPage 刷新真实列表（task 19 联动）
@@ -1416,6 +1468,10 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
         // 关键：不要建 fake job 让用户误以为在跑
         setJob(null);
         // estimate 保留，以便用户修改设置后重试
+      } finally {
+        setImportBusy(false);
+        setImportProgress("");
+        setImportPercent(0);
       }
       return;
     }
@@ -1517,15 +1573,33 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
             ]} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {!estimate && (
-                <CSButton variant="primary" iconName="search" loading={previewBusy} disabled={!selectedFile || !!job} onClick={startEstimate}>
+                <CSButton variant="primary" iconName="search" loading={previewBusy} disabled={!selectedFile || !!job || importBusy} onClick={startEstimate}>
                   {previewBusy ? t('scripts.import.calculating') : t('scripts.import.preview_split')}
                 </CSButton>
               )}
+              {previewBusy && (
+                <CSProgressBar
+                  value={previewProgress.value || 0}
+                  label={t('scripts.import.preview_progress')}
+                  additionalInfo={previewProgress.label}
+                  status="in-progress"
+                />
+              )}
               {estimate && !job && (
                 <>
-                  <CSButton variant="primary" iconName="check" onClick={startImport}>{t('scripts.import.confirm_import_bg')}</CSButton>
-                  <CSButton onClick={() => setEstimate(null)}>{t('scripts.import.re_estimate')}</CSButton>
+                  <CSButton variant="primary" iconName="check" loading={importBusy} disabled={importBusy} onClick={startImport}>
+                    {importBusy ? t('scripts.import.import_creating') : t('scripts.import.confirm_import_bg')}
+                  </CSButton>
+                  <CSButton disabled={importBusy} onClick={() => setEstimate(null)}>{t('scripts.import.re_estimate')}</CSButton>
                 </>
+              )}
+              {importBusy && (
+                <CSProgressBar
+                  value={importPercent || 0}
+                  label={t('scripts.import.import_progress')}
+                  additionalInfo={importProgress || t('scripts.import.importing_bg')}
+                  status="in-progress"
+                />
               )}
               {jobRunning && <CSBox color="text-body-secondary" fontSize="body-s">{t('scripts.import.importing_bg')}</CSBox>}
               {onClose && <CSButton variant="link" onClick={onClose}>{t('common.close')}</CSButton>}
