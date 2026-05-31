@@ -1653,7 +1653,8 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const scriptOpts = scripts.map(sc => ({ value: String(sc.id), label: sc.title }));
 
   const sec_basic = (
-    <CSColumnLayout columns={2}>
+    // Cloudscape Container 内部 SpaceBetween 包 [header, children],期望 children 顶层有 key
+    <CSColumnLayout key="sec_basic" columns={2}>
       <CSFormField label="存档名称" constraintText="必填">
         <CSInput value={title} onChange={({ detail }) => setTitle(detail.value)} autoFocus />
       </CSFormField>
@@ -1675,8 +1676,9 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   );
 
   const step1Content = (
-    <CSSpaceBetween size="l">
-      <CSFormField label="扮演角色"
+    // Cloudscape SpaceBetween 内部用 React.Children.map 加间距,条件渲染的 children 需要稳定 key
+    <CSSpaceBetween key="step1" size="l">
+      <CSFormField key="mode" label="扮演角色"
         description={allRoleOptions.length === 0 ? '你还没有玩家身份 / 用户角色卡,自动切到「新建角色卡」。' : undefined}>
         <CSSegmentedControl
           selectedId={roleMode}
@@ -1688,7 +1690,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
         />
       </CSFormField>
       {roleMode === 'existing' && allRoleOptions.length > 0 && (
-        <div className="pl-newgame-cards">
+        <div key="existing-cards" className="pl-newgame-cards">
           {allRoleOptions.map(c => (
             <label key={c.key} className={`pl-newgame-card ${pickedCard === c.key ? 'active' : ''}`}>
               <input type="radio" checked={pickedCard === c.key} onChange={() => setPickedCard(c.key)} />
@@ -1708,7 +1710,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
         </div>
       )}
       {roleMode === 'new' && (
-        <CSColumnLayout columns={2}>
+        <CSColumnLayout key="new-card" columns={2}>
           <CSFormField label="姓名" constraintText="必填">
             <CSInput value={newCardName} onChange={({ detail }) => setNewCardName(detail.value)} />
           </CSFormField>
@@ -1726,7 +1728,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   );
 
   const step4Content = (
-    <CSSpaceBetween size="m">
+    <CSSpaceBetween key="step4" size="m">
       <CSBox color="text-body-secondary" fontSize="body-s">
         告诉 GM 你希望的剧情走向。哪些设定是 NPC 知道的?哪些是你的秘密?哪些是你希望 GM 优先发展的方向?
         此项可选,留空跳过。填写后存入存档,GM 每轮都能参考。
@@ -1788,11 +1790,11 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
               <CSContainer key="role" header={secHeader('扮演角色', '选择已有玩家身份 / 角色卡,或新建一个。')}>{step1Content}</CSContainer>
               <CSContainer key="birthpoint" header={secHeader('出生点', scriptId ? '选择故事开局的时间锚点。' : '先在「基本信息」选好剧本。')}>
                 {scriptId
-                  ? <BirthpointStep scriptId={scriptId} birthpoint={birthpoint} setBirthpoint={setBirthpoint} />
-                  : <CSBox color="text-body-secondary" fontSize="body-s">请先选择剧本。</CSBox>}
+                  ? <BirthpointStep key="birthpoint-step" scriptId={scriptId} birthpoint={birthpoint} setBirthpoint={setBirthpoint} />
+                  : <CSBox key="birthpoint-empty" color="text-body-secondary" fontSize="body-s">请先选择剧本。</CSBox>}
               </CSContainer>
               <CSContainer key="identity" header={secHeader('初始身份', '基于出生点与所选角色推荐,或自定义。')}>
-                <IdentityStep scriptId={scriptId} birthpoint={birthpoint} pickedCard={pickedCard} allRoleOptions={allRoleOptions} identity={identity} setIdentity={(id) => setIdentity(id)} />
+                <IdentityStep key="identity-step" scriptId={scriptId} birthpoint={birthpoint} pickedCard={pickedCard} allRoleOptions={allRoleOptions} identity={identity} setIdentity={(id) => setIdentity(id)} />
               </CSContainer>
               <CSContainer key="intent" header={secHeader('剧情期望', '告诉 GM 你希望的剧情走向 / 秘密分配。', true)}>{step4Content}</CSContainer>
             </CSSpaceBetween>
