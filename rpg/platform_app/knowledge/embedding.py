@@ -215,17 +215,29 @@ def _embed_batch(texts: list[str], user_id: int | None = None) -> list[list[floa
     return _embed_provider_dispatch(api_id, model, api_key, texts, base_url=base_url)
 
 
-def embed_query(text: str, user_id: int | None = None) -> str | None:
-    """task 51: query 文本 → 768 维向量字符串。
+def embed_query(
+    text: str,
+    user_id: int | None = None,
+    force_api_id: str | None = None,
+    force_model: str | None = None,
+) -> str | None:
+    """task 51 / P0-fix: query 文本 → 768 维向量字符串。
     `_search._embed_query` 的 production 实现。失败返 None 自动 fallback ILIKE。
 
-    user_id 非 None 时优先使用用户 BYOK 配置(embed.api_id / embed.model_real_name)。
-    与 _embed_batch 区别:task_type=RETRIEVAL_QUERY(更适合 query 侧)。
+    优先级链：
+      1. force_api_id + force_model（召回路径：必须与建库时的 (api_id, model) 完全一致）
+      2. user_id BYOK 配置（ad-hoc query / admin 工具）
+      3. 系统默认 vertex_ai + text-embedding-004
     """
     text = (text or "").strip()
     if not text:
         return None
-    api_id, model, api_key, base_url = _resolve_embed_config(user_id)
+    if force_api_id and force_model:
+        # 严格锁定建库时的 provider（召回侧强制路径）
+        _, _, api_key, base_url = _resolve_embed_config(user_id)
+        api_id, model = force_api_id, force_model
+    else:
+        api_id, model, api_key, base_url = _resolve_embed_config(user_id)
     vecs = _embed_provider_dispatch(api_id, model, api_key, [text], base_url=base_url, task_type="RETRIEVAL_QUERY")
     if not vecs:
         log.warning("[embedding] embed_query returned no vectors")
@@ -284,6 +296,25 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
     """后台线程:遍历 document_chunks 分批调 Vertex,写 embedding_vec。"""
     from ..db import connect
     log.info("[embedding] start chunks: script_id=%s user=%s", script_id, user_id)
+
+    # P0-fix: 拆书开始时立即将 (api_id, model) 绑定到 scripts 表，
+    # 保证召回时能读到确定的向量空间配置。
+    _bind_api_id, _bind_model, _, _ = _resolve_embed_config(user_id)
+    try:
+        with connect() as db:
+            db.execute(
+                "update scripts set embed_api_id = %s, embed_model = %s where id = %s",
+                (_bind_api_id, _bind_model, script_id),
+            )
+        log.info(
+            "[embedding] bound embed meta to script %s: api_id=%s model=%s",
+            script_id, _bind_api_id, _bind_model,
+        )
+        # 使新 meta 立即生效（进程内 cache 失效）
+        from platform_app.knowledge._search import _SCRIPT_EMBED_META_CACHE
+        _SCRIPT_EMBED_META_CACHE.pop(script_id, None)
+    except Exception as exc:
+        log.warning("[embedding] failed to bind embed meta to script %s: %s", script_id, exc)
 
     while True:
         with connect() as db:

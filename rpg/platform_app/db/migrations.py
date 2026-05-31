@@ -1033,6 +1033,12 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "create index if not exists idx_scripts_desc_trgm on scripts using gin (description gin_trgm_ops) where length(description) > 0",
         "create index if not exists idx_cards_name_trgm on character_cards using gin (name gin_trgm_ops)",
     ]),
+    (38, "scripts_embed_metadata", [
+        # 绑定剧本级 embedding 配置：拆书时用哪个 (api_id, model) 建库，召回时强制相同。
+        # 已有剧本留空字符串，召回时 fall back 到系统默认并打警告日志。
+        "alter table scripts add column if not exists embed_api_id text not null default ''",
+        "alter table scripts add column if not exists embed_model text not null default ''",
+    ]),
 ]
 
 

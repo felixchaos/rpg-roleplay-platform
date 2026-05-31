@@ -266,10 +266,10 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
         ) },
         { id: 'world', label: t('scripts.editor.tab_world'), content: (
           <CSTable variant="embedded" loading={loading && wb == null} loadingText={t('scripts.editor.loading_worldbook')}
-            items={wb || []} trackBy="id"
+            items={wb || []} trackBy="id" wrapLines
             columnDefinitions={[
-              { id: 'kw', header: t('scripts.editor.wb_col_kw'), cell: (e) => <CSBox fontWeight="bold">{e.keyword || e.title || e.name || e.key || '—'}</CSBox> },
-              { id: 'content', header: t('scripts.editor.wb_col_content'), cell: (e) => <CSBox color="text-body-secondary">{String(e.content || e.text || e.description || e.value || '').slice(0, 220)}</CSBox> },
+              { id: 'kw', header: t('scripts.editor.wb_col_kw'), width: 200, cell: (e) => <CSBox fontWeight="bold">{e.keyword || e.title || e.name || e.key || '—'}</CSBox> },
+              { id: 'content', header: t('scripts.editor.wb_col_content'), cell: (e) => <CSBox color="text-body-secondary"><span style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{String(e.content || e.text || e.description || e.value || '').slice(0, 220)}</span></CSBox> },
             ]}
             empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{t('scripts.editor.wb_empty')}</CSBox>} />
         ) },
