@@ -53,6 +53,20 @@ class _AnthropicBackend:
             system=system + "\n\n你必须只返回合法 JSON，不能包含 Markdown 代码围栏或解释文字。",
             messages=messages,
         )
+        # 同 call()/stream():把本次 usage 写入 self.last_usage,供 record_usage 取
+        try:
+            usage = getattr(resp, "usage", None)
+            if usage:
+                self.last_usage = {
+                    "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+                    "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+                    "cached_input_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+                }
+                self.last_usage["total_tokens"] = (
+                    self.last_usage["input_tokens"] + self.last_usage["output_tokens"]
+                )
+        except Exception:
+            pass
         return resp.content[0].text.strip()
 
     def stream(self, system: str, messages: list[dict], max_tokens: int) -> Iterator[str]:

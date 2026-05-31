@@ -94,6 +94,7 @@ class _OpenAICompatBackend:
             temperature=0.1,
             response_format={"type": "json_object"},
         )
+        self._capture_usage(resp)
         return (resp.choices[0].message.content or "").strip()
 
     def stream(self, system: str, messages: list[dict], max_tokens: int) -> Iterator[str]:
