@@ -1536,9 +1536,30 @@ function KbExtractModal({ script, onClose, onDone }) {
   const [job, setJob] = useStatePL(null);
   const [phase, setPhase] = useStatePL('config'); // config | running | done | error
   const [err, setErr] = useStatePL('');
+  const [apis, setApis] = useStatePL([]); // 模型管理:已配置的 provider + 模型
   const esRef = React.useRef(null);
 
   React.useEffect(() => () => { try { esRef.current && esRef.current.close && esRef.current.close(); } catch (_) {} }, []);
+
+  // 接入模型管理系统:拉 /api/models,默认套用「叙事提取器」已配的 provider/model
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [profile, models] = await Promise.all([
+          window.api.account.profile().catch(() => ({})),
+          window.api.models.list().catch(() => ({})),
+        ]);
+        if (cancelled) return;
+        const list = models?.models?.apis || (Array.isArray(models?.apis) ? models.apis : []) || [];
+        setApis(Array.isArray(list) ? list : []);
+        const p = (profile && profile.preferences) || {};
+        if (p['extractor.api_id']) setApiId(p['extractor.api_id']);
+        if (p['extractor.model_real_name']) setModel(p['extractor.model_real_name']);
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const cfgBody = () => ({
     algorithm,
@@ -1601,6 +1622,20 @@ function KbExtractModal({ script, onClose, onDone }) {
   const overallTotal = job ? (job.overall_total || 4) : 4;
   const usage = job && job.usage_actual;
 
+  // 模型管理:provider + 模型联动下拉
+  const currentApi = apis.find(a => (a.api_id || a.id) === apiId) || null;
+  const modelList = (currentApi && (currentApi.models || currentApi.entries)) || [];
+  const apiOptions = apis.map(a => ({ value: a.api_id || a.id, label: a.display_name || a.name || (a.api_id || a.id) }));
+  if (apiId && !apiOptions.some(o => o.value === apiId)) apiOptions.unshift({ value: apiId, label: apiId + '(未在模型管理)' });
+  const modelOptions = modelList.map(m => ({ value: m.real_name || m.id, label: m.display_name || m.real_name || m.id }));
+  if (model && !modelOptions.some(o => o.value === model)) modelOptions.unshift({ value: model, label: model + '(自定义)' });
+  const onPickApi = (v) => {
+    setApiId(v);
+    const a = apis.find(x => (x.api_id || x.id) === v);
+    const m0 = a && (a.models || a.entries || [])[0];
+    if (m0) setModel(m0.real_name || m0.id);
+  };
+
   return (
     <CSModal visible onDismiss={onClose} size="large"
       header={`LLM 知识提取 · ${script.title || ('剧本 ' + sid)}`}
@@ -1629,8 +1664,24 @@ function KbExtractModal({ script, onClose, onDone }) {
                 onChange={({ detail }) => setAlgorithm(detail.selectedId)} />
             </CSFormField>
             <CSColumnLayout columns={2}>
-              <CSFormField label="模型 ID"><CSInput value={model} onChange={({ detail }) => setModel(detail.value)} /></CSFormField>
-              <CSFormField label="Provider (api_id)"><CSInput value={apiId} onChange={({ detail }) => setApiId(detail.value)} /></CSFormField>
+              <CSFormField label="Provider" description="来自模型管理(已配置的 API)">
+                <CSSelect
+                  selectedOption={apiOptions.find(o => o.value === apiId) || (apiId ? { value: apiId, label: apiId } : null)}
+                  options={apiOptions}
+                  placeholder="选择供应商"
+                  empty="模型管理里还没有配置 API"
+                  onChange={({ detail }) => onPickApi(detail.selectedOption.value)}
+                />
+              </CSFormField>
+              <CSFormField label="模型" description="该 Provider 下已配置的模型">
+                <CSSelect
+                  selectedOption={modelOptions.find(o => o.value === model) || (model ? { value: model, label: model } : null)}
+                  options={modelOptions}
+                  placeholder="选择模型"
+                  empty="该供应商暂无可选模型"
+                  onChange={({ detail }) => setModel(detail.selectedOption.value)}
+                />
+              </CSFormField>
               {algorithm === 'arc' && (
                 <CSFormField label="弧数目标" description="5–80,受后端钳制"><CSInput type="number" value={targetArcs} onChange={({ detail }) => setTargetArcs(detail.value)} /></CSFormField>
               )}
