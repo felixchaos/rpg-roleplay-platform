@@ -145,8 +145,14 @@ def decode_upload(item: dict[str, Any]) -> bytes:
 
 
 def safe_filename(name: str) -> str:
-    keep = [ch if ch.isalnum() or ch in "._- " or "\u4e00" <= ch <= "\u9fff" else "_" for ch in Path(name).name]
-    return "".join(keep).strip(" ._") or "file.bin"
+    # \u663e\u5f0f\u767d\u540d\u5355: ASCII \u5b57\u6bcd\u6570\u5b57\u3001\u5e38\u89c1\u5206\u9694\u7b26\u3001CJK \u6c49\u5b57; \u5176\u4f59\u66ff\u6362\u4e3a\u4e0b\u5212\u7ebf
+    import re as _re
+    stem = Path(name).name
+    cleaned = _re.sub(r"[^A-Za-z0-9._\- \u4e00-\u9fff]", "_", stem)
+    # \u62d2\u7edd\u4ee5 . \u5f00\u5934\u6216\u5168\u662f . \u7684\u6587\u4ef6\u540d\uff08\u9632\u6b62\u9690\u85cf\u6587\u4ef6/\u76f8\u5bf9\u8def\u5f84\u7a7f\u8d8a\uff09
+    if not _re.search(r"[A-Za-z0-9\u4e00-\u9fff]", cleaned):
+        cleaned = "untitled"
+    return cleaned or "file.bin"
 
 
 def unique_path(path: Path) -> Path:

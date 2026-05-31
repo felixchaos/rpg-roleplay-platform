@@ -64,6 +64,21 @@ async def api_memory_add(
     state = _ensure_loaded(api_user)
     bucket = body_dict.get("bucket", "notes")
     text = body_dict.get("text", "")
+
+    # A6: pinned_max 校验 — 添加 pinned 条目时检查上限
+    if bucket == "pinned" and api_user:
+        from platform_app.settings import get_memory_settings
+        ms = get_memory_settings(int(api_user.get("id", 0)))
+        current_pinned = state.data.get("memory", {}).get("pinned", [])
+        if len(current_pinned) >= ms.pinned_max:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": f"固定记忆已达上限 {ms.pinned_max} 条，请先删除旧条目再添加",
+                },
+                status_code=400,
+            )
+
     # bucket → 对应工具名
     bucket_tool = {
         "facts": "add_memory_fact",

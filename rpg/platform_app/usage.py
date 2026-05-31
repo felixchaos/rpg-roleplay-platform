@@ -87,9 +87,86 @@ def record_usage(
     return expose(row) or {}
 
 
-def aggregate_usage(user_id: int, days: int = 30) -> dict[str, Any]:
+def forecast_daily_burn(user_id: int, days_back: int = 7) -> dict:
+    """基于过去 N 天的平均日消耗，预测当月耗尽阈值。
+
+    返回:
+    {
+      "avg_daily_cost_usd": float,  # 过去 N 天平均日 cost
+      "avg_daily_tokens": int,
+      "projected_30d_cost": float,  # 假设维持当前速率，30 天总 cost
+      "trend_7d_vs_prev_7d_pct": float,  # 速率是涨是跌，正数=涨
+    }
+    """
+    init_db()
+    days_back = max(1, min(int(days_back), 90))
+    with connect() as db:
+        # 当前窗口：group by date
+        current_rows = db.execute(
+            """
+            select date_trunc('day', created_at)::date as d,
+                   sum(cost_usd)::float as day_cost,
+                   sum(total_tokens)::bigint as day_tokens
+            from token_usage
+            where user_id = %s
+              and created_at >= now() - (interval '1 day' * %s)
+              and created_at < now()
+            group by d
+            """,
+            (user_id, days_back),
+        ).fetchall()
+        # 前一窗口（用于 trend）
+        prev_rows = db.execute(
+            """
+            select date_trunc('day', created_at)::date as d,
+                   sum(cost_usd)::float as day_cost
+            from token_usage
+            where user_id = %s
+              and created_at >= now() - (interval '1 day' * %s)
+              and created_at < now() - (interval '1 day' * %s)
+            group by d
+            """,
+            (user_id, days_back * 2, days_back),
+        ).fetchall()
+
+    # 当前窗口平均
+    if current_rows:
+        avg_cost = sum(float(r["day_cost"] or 0) for r in current_rows) / days_back
+        avg_tokens = int(sum(int(r["day_tokens"] or 0) for r in current_rows) / days_back)
+    else:
+        avg_cost = 0.0
+        avg_tokens = 0
+
+    # 前一窗口平均
+    if prev_rows:
+        prev_avg_cost = sum(float(r["day_cost"] or 0) for r in prev_rows) / days_back
+    else:
+        prev_avg_cost = 0.0
+
+    # trend 百分比（当前 vs 前期，基准为前期；前期为 0 时 trend=0）
+    if prev_avg_cost > 0:
+        trend_pct = round((avg_cost - prev_avg_cost) / prev_avg_cost * 100, 1)
+    else:
+        trend_pct = 0.0
+
+    return {
+        "avg_daily_cost_usd": round(avg_cost, 6),
+        "avg_daily_tokens": avg_tokens,
+        "projected_30d_cost": round(avg_cost * 30, 4),
+        "trend_7d_vs_prev_7d_pct": trend_pct,
+    }
+
+
+def aggregate_usage(
+    user_id: int,
+    days: int = 30,
+    recent_offset: int = 0,
+    recent_limit: int = 20,
+) -> dict[str, Any]:
     """汇总：本人 N 天累计 input/output/cost，按模型分组"""
     init_db()
+    recent_offset = max(0, int(recent_offset))
+    recent_limit = max(1, min(int(recent_limit), 100))
     with connect() as db:
         total = db.execute(
             """
@@ -134,17 +211,27 @@ def aggregate_usage(user_id: int, days: int = 30) -> dict[str, Any]:
             """,
             (user_id, days),
         ).fetchall()
+        # B4: 带 offset/limit 的 recent_turns，total 用于前端翻页
+        recent_total_row = db.execute(
+            """
+            select count(*) as n
+            from token_usage
+            where user_id = %s and created_at >= now() - (interval '1 day' * %s)
+            """,
+            (user_id, days),
+        ).fetchone()
         recent = db.execute(
             """
             select created_at, api_id, model_real_name, input_tokens, output_tokens,
                    cost_usd, context_used, context_max, scenario
             from token_usage
-            where user_id = %s
+            where user_id = %s and created_at >= now() - (interval '1 day' * %s)
             order by id desc
-            limit 20
+            limit %s offset %s
             """,
-            (user_id,),
+            (user_id, days, recent_limit, recent_offset),
         ).fetchall()
+    recent_total = int(recent_total_row["n"]) if recent_total_row else 0
     return {
         "ok": True,
         "window_days": days,
@@ -185,6 +272,9 @@ def aggregate_usage(user_id: int, days: int = 30) -> dict[str, Any]:
             }
             for r in recent
         ],
+        "recent_total": recent_total,
+        "recent_offset": recent_offset,
+        "recent_limit": recent_limit,
     }
 
 

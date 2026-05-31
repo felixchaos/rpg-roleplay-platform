@@ -19,7 +19,7 @@ import { installWarmTheme } from '../cloudscape-theme.js';
 installWarmTheme();
 
 // 组件模块 — named import(ESM 自动拉入传递依赖)
-import { PlatformShell, PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, PL_NAV, AdminGuard } from '../platform-app.jsx';
+import { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, PL_NAV, AdminGuard } from '../platform-app.jsx';
 import { SavesPage } from '../pages/saves.jsx';
 import { ScriptsPage } from '../pages/scripts.jsx';
 import { CardsPage } from '../pages/cards.jsx';

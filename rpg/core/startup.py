@@ -76,6 +76,13 @@ def _origin_allowed(origin: str | None) -> bool:
 async def lifespan(app: FastAPI):
     """FastAPI lifespan: startup → yield → shutdown。"""
     # ── startup ──────────────────────────────────────────────────────────
+    # 0. init_db — schema 创建 + migration（lazy import 避免循环依赖）
+    try:
+        from app import _bootstrap_init_db  # type: ignore[import]
+        _bootstrap_init_db()
+    except Exception:
+        log.exception("[startup] init_db failed")
+
     # 1. MCP health loop
     try:
         import mcp_broker
@@ -122,6 +129,12 @@ async def lifespan(app: FastAPI):
         import mcp_broker
         mcp_broker.stop_health_loop()
         mcp_broker.stop_all()
+    except Exception:
+        pass
+
+    try:
+        from platform_app.db.connection import close_pool
+        close_pool()
     except Exception:
         pass
 

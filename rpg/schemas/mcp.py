@@ -1,14 +1,24 @@
 """schemas.mcp — MCP server 管理与工具调用路由请求模型。"""
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from schemas._common import _BaseRequest
 
+_Str256 = Annotated[str, Field(max_length=256)]
+
 
 class McpServerRequest(_BaseRequest):
-    """upsert_mcp_server 直接消费整个 body,字段透传。"""
+    """upsert_mcp_server 直接消费整个 body,字段透传。
+    已知字段加了 max_length=256 约束;其余透传字段仍允许(extra="allow")。
+    """
     model_config = __import__('pydantic').ConfigDict(extra="allow")
+    id: _Str256 | None = None
+    name: _Str256 | None = None
+    command: _Str256 | None = None
+    url: _Str256 | None = None
 
 
 class McpServerEnabledRequest(_BaseRequest):

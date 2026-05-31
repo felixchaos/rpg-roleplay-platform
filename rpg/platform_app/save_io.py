@@ -16,6 +16,18 @@ from .db import connect, expose, init_db
 
 EXPORT_VERSION = 1
 
+MAX_COMMITS = 50000
+MAX_TEXT_BYTES = 65536          # gm_output / player_input / summary 字段
+MAX_SNAPSHOT_JSON_BYTES = 1024 * 1024  # state_snapshot / metadata JSON
+
+
+def _check_json_size(obj: Any, field: str) -> Any:
+    """序列化后检查字节数，超限抛 ValueError。"""
+    import json as _j
+    if len(_j.dumps(obj, ensure_ascii=False).encode()) > MAX_SNAPSHOT_JSON_BYTES:
+        raise ValueError(f"{field} 超过 {MAX_SNAPSHOT_JSON_BYTES} 字节上限")
+    return obj
+
 
 def export_save(user_id: int, save_id: int) -> dict[str, Any]:
     """打包整份存档为 JSON。"""
@@ -112,8 +124,12 @@ def import_save(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         new_save_id = int(new_save["id"])
 
         # 2. 重建 branch_commits（保留 parent 关系，但 ID 重映射）
+        import json as _json_save
+        commits_raw = payload.get("commits") or []
+        if len(commits_raw) > MAX_COMMITS:
+            raise ValueError(f"commits 数量超上限 {MAX_COMMITS}")
         old_to_new: dict[int, int] = {}
-        for c in payload.get("commits") or []:
+        for c in commits_raw:
             old_id = int(c.get("id") or 0)
             old_parent = c.get("parent_id")
             new_parent = old_to_new.get(int(old_parent)) if old_parent else None
@@ -135,13 +151,13 @@ def import_save(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
                     c.get("kind") or "round",
                     c.get("title") or "",
                     c.get("message") or "",
-                    c.get("summary") or "",
+                    (c.get("summary") or "")[:MAX_TEXT_BYTES],
                     c.get("content_preview") or "",
                     "",
-                    c.get("player_input") or "",
-                    c.get("gm_output") or "",
-                    Jsonb(c.get("metadata") or {}),
-                    Jsonb(c.get("state_snapshot") or {}),
+                    (c.get("player_input") or "")[:MAX_TEXT_BYTES],
+                    (c.get("gm_output") or "")[:MAX_TEXT_BYTES],
+                    Jsonb(_check_json_size(c.get("metadata") or {}, "metadata")),
+                    Jsonb(_check_json_size(c.get("state_snapshot") or {}, "state_snapshot")),
                 ),
             ).fetchone()
             old_to_new[old_id] = int(new_commit["id"])

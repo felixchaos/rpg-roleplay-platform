@@ -277,15 +277,29 @@ function injectDemoBanner() {
       "box-shadow:0 2px 6px rgba(0,0,0,0.25)",
       "display:flex", "align-items:center", "justify-content:center", "gap:14px",
     ].join(";");
-    div.innerHTML =
-      '<span><strong>示例数据预览模式</strong>：当前显示的存档 / 角色 / 剧本均为内置示例，不会落库。' +
-      '登录后可创建自己的真实数据。</span>' +
-      '<a href="Login.html" style="color:#ffd591;text-decoration:underline;font-weight:600;">立即登录</a>' +
-      '<button id="rpg-demo-banner-close" style="background:transparent;border:1px solid #ffd591;color:#fff8e1;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;">隐藏</button>';
+    const span = document.createElement("span");
+    const strong = document.createElement("strong");
+    strong.textContent = "示例数据预览模式";
+    span.appendChild(strong);
+    span.appendChild(document.createTextNode("：当前显示的存档 / 角色 / 剧本均为内置示例，不会落库。登录后可创建自己的真实数据。"));
+
+    const link = document.createElement("a");
+    link.href = "Login.html";
+    link.textContent = "立即登录";
+    link.style.cssText = "color:#ffd591;text-decoration:underline;font-weight:600;";
+
+    const closeBtn = document.createElement("button");
+    closeBtn.id = "rpg-demo-banner-close";
+    closeBtn.textContent = "隐藏";
+    closeBtn.style.cssText = "background:transparent;border:1px solid #ffd591;color:#fff8e1;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;";
+
+    div.appendChild(span);
+    div.appendChild(link);
+    div.appendChild(closeBtn);
     document.body.appendChild(div);
     // banner 高度补偿
     document.body.style.paddingTop = (parseFloat(getComputedStyle(document.body).paddingTop) || 0) + 36 + "px";
-    div.querySelector("#rpg-demo-banner-close").addEventListener("click", () => {
+    closeBtn.addEventListener("click", () => {
       div.remove();
       document.body.style.paddingTop = (parseFloat(getComputedStyle(document.body).paddingTop) || 36) - 36 + "px";
     });

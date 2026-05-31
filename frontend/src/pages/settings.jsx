@@ -2396,28 +2396,31 @@ function ModuleModelsSection() {
                     )}
                   </td>
                   <td style={{padding: "8px 8px", verticalAlign: "top"}}>
-                    <select
-                      value={value}
-                      disabled={savingId === mod.id || savingId === "__all__" || (mod.id === "gm")}
-                      onChange={(e) => handleChange(mod, e.target.value)}
-                      style={{width: "100%", maxWidth: 360}}
-                      data-tip={mod.id === "gm" ? "主 GM 在『API 设置』里切换" : "选 (跟主 GM) 等于不覆盖"}
-                    >
-                      {mod.id !== "gm" && <option value="__inherit__">(跟主 GM)</option>}
-                      {/* 如果当前 value 不在 flatModels 里,加一条 fallback */}
-                      {value !== "__inherit__" && value && !flatModels.some(m => `${m.api_id}/${m.real_name}` === value) && (
-                        <option value={value}>{value} (未在 catalog)</option>
-                      )}
-                      {flatModels.map(m => (
-                        <option
-                          key={`${m.api_id}/${m.real_name}`}
-                          value={`${m.api_id}/${m.real_name}`}
-                          disabled={!m.enabled}
-                        >
-                          {m.api_id} · {m.real_name}{m.enabled ? "" : " (已禁用)"}
-                        </option>
-                      ))}
-                    </select>
+                    {/* B3: 原生 <select> 改为 CSSelect，视觉与其他 section 一致 */}
+                    {(() => {
+                      const opts = [];
+                      if (mod.id !== "gm") opts.push({ value: "__inherit__", label: "(跟主 GM)" });
+                      // fallback: 当前 value 不在 catalog 里时补一条
+                      if (value !== "__inherit__" && value && !flatModels.some(m => `${m.api_id}/${m.real_name}` === value)) {
+                        opts.push({ value, label: `${value} (未在 catalog)` });
+                      }
+                      for (const m of flatModels) {
+                        opts.push({
+                          value: `${m.api_id}/${m.real_name}`,
+                          label: `${m.api_id} · ${m.real_name}${m.enabled ? "" : " (已禁用)"}`,
+                          disabled: !m.enabled,
+                        });
+                      }
+                      const selectedOpt = opts.find(o => o.value === value) || null;
+                      return (
+                        <CSSelect
+                          selectedOption={selectedOpt}
+                          options={opts}
+                          disabled={savingId === mod.id || savingId === "__all__" || mod.id === "gm"}
+                          onChange={({ detail }) => handleChange(mod, detail.selectedOption.value)}
+                        />
+                      );
+                    })()}
                   </td>
                 </tr>
               );
@@ -2436,10 +2439,28 @@ function ModuleModelsSection() {
 
 
 function MemorySection() {
-  const save = useAutoSave("记忆", "settings");
+  // A6.2: useAutoSave namespace 改为 "memory" 让 save(k, v) 写 memory.k
+  const save = useAutoSave("记忆", "memory");
+
+  // ── 召回行为字段 ──
   const [recallDepth, setRecallDepth] = useStatePL(6);
-  const [pinnedLimit, setPinnedLimit] = useStatePL(20);
   const [summaryWindow, setSummaryWindow] = useStatePL(8);
+  const [tokenBudget, setTokenBudget] = useStatePL(800);
+  const [autoArchiveAfter, setAutoArchiveAfter] = useStatePL(50);
+
+  // ── 记忆桶配置字段 ──
+  const [pinnedMax, setPinnedMax] = useStatePL(20);
+  const [bucketPinnedEnabled, setBucketPinnedEnabled] = useStatePL(true);
+  const [bucketWorldEnabled, setBucketWorldEnabled] = useStatePL(true);
+  const [bucketCharacterEnabled, setBucketCharacterEnabled] = useStatePL(true);
+
+  // A6.2: loadOrFallback — 读新 key 优先,不存在再读旧 key
+  const loadOrFallback = (p, newKey, oldKey) => {
+    if (p[newKey] !== undefined && p[newKey] !== null) return p[newKey];
+    if (oldKey && p[oldKey] !== undefined && p[oldKey] !== null) return p[oldKey];
+    return undefined;
+  };
+
   useEffectPL(() => {
     let cancelled = false;
     (async () => {
@@ -2447,39 +2468,132 @@ function MemorySection() {
         const r = await window.api.account.profile();
         if (cancelled) return;
         const p = (r && r.preferences) || {};
-        if (p["settings.召回深度"] !== undefined) setRecallDepth(Number(p["settings.召回深度"]));
-        if (p["settings.固定记忆上限"] !== undefined) setPinnedLimit(Number(p["settings.固定记忆上限"]));
-        if (p["settings.摘要窗口"] !== undefined) setSummaryWindow(Number(p["settings.摘要窗口"]));
+        // A6.2: 读新 key，兼容旧中文 key
+        const rd = loadOrFallback(p, "memory.recall_depth", "settings.召回深度");
+        if (rd !== undefined) setRecallDepth(Number(rd));
+        const sw = loadOrFallback(p, "memory.summary_window", "settings.摘要窗口");
+        if (sw !== undefined) setSummaryWindow(Number(sw));
+        // pinned_max 同时对应旧 "settings.固定记忆上限"
+        const pm = loadOrFallback(p, "memory.pinned_max", "settings.固定记忆上限");
+        if (pm !== undefined) setPinnedMax(Number(pm));
+        // 新字段 — 无旧 key
+        if (p["memory.token_budget"] !== undefined) setTokenBudget(Number(p["memory.token_budget"]));
+        if (p["memory.auto_archive_after_turns"] !== undefined) setAutoArchiveAfter(Number(p["memory.auto_archive_after_turns"]));
+        if (typeof p["memory.bucket_pinned_enabled"] === "boolean") setBucketPinnedEnabled(p["memory.bucket_pinned_enabled"]);
+        if (typeof p["memory.bucket_world_enabled"] === "boolean") setBucketWorldEnabled(p["memory.bucket_world_enabled"]);
+        if (typeof p["memory.bucket_character_enabled"] === "boolean") setBucketCharacterEnabled(p["memory.bucket_character_enabled"]);
       } catch (_) {}
     })();
     return () => { cancelled = true; };
   }, []);
+
   return (
-    <SetGroup title="记忆系统">
-      <SetRow label="默认召回深度" description="每轮从原文检索的最大段数(2–20)。">
-        <CSInput type="number" value={String(recallDepth)}
-          onChange={({ detail }) => { setRecallDepth(detail.value); const n = Number(detail.value); if (detail.value !== '' && n >= 2 && n <= 20) save("召回深度", n); }} />
-      </SetRow>
-      <SetRow label="固定记忆上限" description="超出后旧条目会自动转入事实库(5–80)。">
-        <CSInput type="number" value={String(pinnedLimit)}
-          onChange={({ detail }) => { setPinnedLimit(detail.value); const n = Number(detail.value); if (detail.value !== '' && n >= 5 && n <= 80) save("固定记忆上限", n); }} />
-      </SetRow>
-      <SetRow label="历史摘要窗口" description="最近 N 个回合压缩为摘要喂入(3–20)。">
-        <CSInput type="number" value={String(summaryWindow)}
-          onChange={({ detail }) => { setSummaryWindow(detail.value); const n = Number(detail.value); if (detail.value !== '' && n >= 3 && n <= 20) save("摘要窗口", n); }} />
-      </SetRow>
-    </SetGroup>
+    <CSSpaceBetween size="l">
+      {/* A6.3 — 组 1: 召回行为 */}
+      <SetGroup title="记忆 · 召回行为">
+        <SetRow label="默认召回深度" description="每轮从原文检索的最大段数(2–20)。">
+          <div style={{display: "flex", alignItems: "center", gap: 8}}>
+            <input type="range" min={2} max={20} step={1} value={recallDepth}
+              onChange={(e) => setRecallDepth(Number(e.target.value))}
+              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 2 && n <= 20) save("recall_depth", n); }}
+              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 2 && n <= 20) save("recall_depth", n); }}
+              style={{flex: 1, minWidth: 120}} />
+            <input type="number" min={2} max={20} step={1} value={recallDepth}
+              onChange={(e) => setRecallDepth(Number(e.target.value))}
+              onBlur={(e) => { const n = Number(e.target.value); if (n >= 2 && n <= 20) save("recall_depth", n); }}
+              className="mono" style={{width: 70, textAlign: "right"}} />
+          </div>
+        </SetRow>
+        <SetRow label="历史摘要窗口" description="最近 N 个回合压缩为摘要喂入(3–20)。">
+          <div style={{display: "flex", alignItems: "center", gap: 8}}>
+            <input type="range" min={3} max={20} step={1} value={summaryWindow}
+              onChange={(e) => setSummaryWindow(Number(e.target.value))}
+              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 3 && n <= 20) save("summary_window", n); }}
+              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 3 && n <= 20) save("summary_window", n); }}
+              style={{flex: 1, minWidth: 120}} />
+            <input type="number" min={3} max={20} step={1} value={summaryWindow}
+              onChange={(e) => setSummaryWindow(Number(e.target.value))}
+              onBlur={(e) => { const n = Number(e.target.value); if (n >= 3 && n <= 20) save("summary_window", n); }}
+              className="mono" style={{width: 70, textAlign: "right"}} />
+          </div>
+        </SetRow>
+        <SetRow label="每轮注入记忆 token 上限" description="每次请求注入到上下文的记忆内容最大 token 数(200–2000)。">
+          <div style={{display: "flex", alignItems: "center", gap: 8}}>
+            <input type="range" min={200} max={2000} step={50} value={tokenBudget}
+              onChange={(e) => setTokenBudget(Number(e.target.value))}
+              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 200 && n <= 2000) save("token_budget", n); }}
+              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 200 && n <= 2000) save("token_budget", n); }}
+              style={{flex: 1, minWidth: 120}} />
+            <input type="number" min={200} max={2000} step={50} value={tokenBudget}
+              onChange={(e) => setTokenBudget(Number(e.target.value))}
+              onBlur={(e) => { const n = Number(e.target.value); if (n >= 200 && n <= 2000) save("token_budget", n); }}
+              className="mono" style={{width: 70, textAlign: "right"}} />
+          </div>
+        </SetRow>
+        <SetRow label="N 轮后自动归档老记忆" description="超过此回合数的记忆条目自动归档到事实库(10–200)。">
+          <div style={{display: "flex", alignItems: "center", gap: 8}}>
+            <input type="range" min={10} max={200} step={5} value={autoArchiveAfter}
+              onChange={(e) => setAutoArchiveAfter(Number(e.target.value))}
+              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 10 && n <= 200) save("auto_archive_after_turns", n); }}
+              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 10 && n <= 200) save("auto_archive_after_turns", n); }}
+              style={{flex: 1, minWidth: 120}} />
+            <input type="number" min={10} max={200} step={5} value={autoArchiveAfter}
+              onChange={(e) => setAutoArchiveAfter(Number(e.target.value))}
+              onBlur={(e) => { const n = Number(e.target.value); if (n >= 10 && n <= 200) save("auto_archive_after_turns", n); }}
+              className="mono" style={{width: 70, textAlign: "right"}} />
+          </div>
+        </SetRow>
+      </SetGroup>
+
+      {/* A6.3 — 组 2: 记忆桶配置 */}
+      <SetGroup title="记忆 · 记忆桶配置">
+        <SetRow label="固定记忆桶上限" description="固定记忆桶最多保存的条目数(5–100)。超出后旧条目转入事实库。">
+          <CSInput type="number" value={String(pinnedMax)}
+            onChange={({ detail }) => {
+              setPinnedMax(detail.value);
+              const n = Number(detail.value);
+              if (detail.value !== '' && n >= 5 && n <= 100) save("pinned_max", n);
+            }} />
+        </SetRow>
+        <SetRow label="启用固定记忆桶" description="关闭后不再维护固定记忆桶，召回仅走时序桶和角色桶。">
+          <CSToggle checked={bucketPinnedEnabled}
+            onChange={({ detail }) => { setBucketPinnedEnabled(detail.checked); save("bucket_pinned_enabled", detail.checked); }}>
+            {bucketPinnedEnabled ? "开启" : "关闭"}
+          </CSToggle>
+        </SetRow>
+        <SetRow label="启用世界记忆桶" description="关闭后跳过世界观类记忆的检索注入。">
+          <CSToggle checked={bucketWorldEnabled}
+            onChange={({ detail }) => { setBucketWorldEnabled(detail.checked); save("bucket_world_enabled", detail.checked); }}>
+            {bucketWorldEnabled ? "开启" : "关闭"}
+          </CSToggle>
+        </SetRow>
+        <SetRow label="启用角色记忆桶" description="关闭后跳过角色关系类记忆的检索注入。">
+          <CSToggle checked={bucketCharacterEnabled}
+            onChange={({ detail }) => { setBucketCharacterEnabled(detail.checked); save("bucket_character_enabled", detail.checked); }}>
+            {bucketCharacterEnabled ? "开启" : "关闭"}
+          </CSToggle>
+        </SetRow>
+      </SetGroup>
+    </CSSpaceBetween>
   );
 }
 
 const _HIGH_RISK_DEFAULTS = ["timeline.pending_jump", "player.background", "world.constraints"];
 const _HIGH_RISK_ALL = ["timeline.pending_jump", "player.background", "world.constraints", "relationships.*.tone"];
 
+// B1: 自定义白名单输入校验 regex
+const _CUSTOM_WL_RE = /^[a-zA-Z_][a-zA-Z0-9_.*]*$/;
+
 function PermSection() {
   // task 52：从 user_preferences 拉真实值，改动 patch /api/me/preference
   const [defaultMode, setDefaultMode] = useStatePL("review");
   const [highRiskWhitelist, setHighRiskWhitelist] = useStatePL(_HIGH_RISK_DEFAULTS);
+  // B1: 自定义白名单
+  const [customWhitelist, setCustomWhitelist] = useStatePL([]);
+  const [customInput, setCustomInput] = useStatePL("");
+  const [customInputError, setCustomInputError] = useStatePL("");
   const save = useAutoSave("权限", "perm");
+
   useEffectPL(() => {
     let cancelled = false;
     (async () => {
@@ -2491,10 +2605,21 @@ function PermSection() {
         if (v) setDefaultMode(v);
         const wl = p["perm.high_risk_whitelist"];
         if (Array.isArray(wl)) setHighRiskWhitelist(wl);
+        // B1: 读自定义白名单
+        const cwl = p["permissions.custom_whitelist"];
+        if (Array.isArray(cwl)) setCustomWhitelist(cwl);
+        else {
+          // localStorage 兜底
+          try {
+            const stored = localStorage.getItem("perm.custom_whitelist");
+            if (stored) setCustomWhitelist(JSON.parse(stored));
+          } catch (_) {}
+        }
       } catch (_) {}
     })();
     return () => { cancelled = true; };
   }, []);
+
   const toggleWhitelist = (field) => {
     const next = highRiskWhitelist.includes(field)
       ? highRiskWhitelist.filter(f => f !== field)
@@ -2502,6 +2627,36 @@ function PermSection() {
     setHighRiskWhitelist(next);
     save("high_risk_whitelist", next);
   };
+
+  // B1: 保存自定义白名单（尝试后端，兜底 localStorage）
+  const saveCustomWhitelist = async (next) => {
+    setCustomWhitelist(next);
+    try {
+      await window.api.account.preferences({ "permissions.custom_whitelist": next });
+    } catch (_) {
+      // 后端不支持则 localStorage 兜底
+    }
+    try { localStorage.setItem("perm.custom_whitelist", JSON.stringify(next)); } catch (_) {}
+  };
+
+  const addCustomEntry = () => {
+    const val = customInput.trim();
+    if (!val) { setCustomInputError("请输入路径"); return; }
+    if (val.length > 80) { setCustomInputError("长度不能超过 80 字符"); return; }
+    if (!_CUSTOM_WL_RE.test(val)) { setCustomInputError("只允许字母、数字、下划线、点、星号，且须以字母或下划线开头"); return; }
+    if (_HIGH_RISK_ALL.includes(val)) { setCustomInputError("该路径已在硬编码白名单中"); return; }
+    if (customWhitelist.includes(val)) { setCustomInputError("已存在，不能重复添加"); return; }
+    const next = [...customWhitelist, val];
+    saveCustomWhitelist(next);
+    setCustomInput("");
+    setCustomInputError("");
+  };
+
+  const removeCustomEntry = (entry) => {
+    const next = customWhitelist.filter(e => e !== entry);
+    saveCustomWhitelist(next);
+  };
+
   return (
     <SetGroup title="写入权限">
       <SetRow label="默认权限模式" description="新建存档时使用的默认权限。可在游戏内随时切换。">
@@ -2526,6 +2681,53 @@ function PermSection() {
           ))}
         </CSSpaceBetween>
       </SetRow>
+
+      {/* B1: 自定义高风险白名单 */}
+      <SetRow label="自定义高风险白名单" description="添加自定义路径（如 world.weather.severity），即便完全访问模式也会弹窗确认。">
+        <CSSpaceBetween size="s">
+          <div style={{display: "flex", gap: 8, alignItems: "flex-start"}}>
+            <div style={{flex: 1}}>
+              <CSInput
+                value={customInput}
+                placeholder="例如: world.weather.severity"
+                onChange={({ detail }) => { setCustomInput(detail.value); if (customInputError) setCustomInputError(""); }}
+                onKeyDown={(e) => { if (e.detail?.key === "Enter" || e.key === "Enter") addCustomEntry(); }}
+                invalid={!!customInputError}
+              />
+              {customInputError && (
+                <div style={{color: "var(--danger, #c8675d)", fontSize: 12, marginTop: 4}}>{customInputError}</div>
+              )}
+            </div>
+            <CSButton variant="primary" onClick={addCustomEntry}>添加</CSButton>
+          </div>
+          {customWhitelist.length > 0 && (
+            <div style={{display: "flex", flexWrap: "wrap", gap: 6}}>
+              {customWhitelist.map(entry => (
+                <div key={entry} style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  padding: "3px 8px", borderRadius: 4,
+                  background: "var(--bg-deep, #f0f0f2)", border: "1px solid var(--line-soft, #ddd)",
+                  fontSize: 13, fontFamily: "ui-monospace, monospace",
+                }}>
+                  <span>{entry}</span>
+                  <button
+                    onClick={() => removeCustomEntry(entry)}
+                    style={{
+                      border: "none", background: "none", cursor: "pointer",
+                      color: "var(--danger, #c8675d)", fontSize: 14, padding: "0 2px", lineHeight: 1,
+                    }}
+                    title="删除"
+                  >×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {customWhitelist.length === 0 && (
+            <span className="muted" style={{fontSize: 12}}>暂无自定义条目</span>
+          )}
+        </CSSpaceBetween>
+      </SetRow>
+
       <AuditLogView />
     </SetGroup>
   );

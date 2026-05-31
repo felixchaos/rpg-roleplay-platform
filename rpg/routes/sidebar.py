@@ -101,12 +101,15 @@ async def api_relationship_delete(
 
 # ── world 状态编辑 ─────────────────────────────────────────────
 # 前端 key 别名 → 后端 tool name + 参数转换
-_WORLD_KEY_BLACKLIST = {"timeline", "known_events"}  # 复合结构,前端不应直接 set
+_WORLD_KEY_ALLOWLIST = {
+    "time", "weather", "phase", "location", "atmosphere",
+    "season", "region", "calendar",
+}  # 只允许前端直接 set 的 scalar 字段；复合结构（timeline/known_events 等）不在此列
 
 
 def _world_dispatch(key: str, value: str) -> tuple[str, dict[str, Any]]:
     """把前端的 (key, value) 翻译成 (tool_name, args)。返回 (None, {}) 表示拒绝。"""
-    if key in _WORLD_KEY_BLACKLIST:
+    if key not in _WORLD_KEY_ALLOWLIST:
         return "", {}
     if key == "time":
         return "set_world_time", {"target": value}

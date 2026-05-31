@@ -1,9 +1,13 @@
 """schemas.models — 模型目录与 API 管理路由请求模型。"""
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from schemas._common import _BaseRequest
+
+_Str256 = Annotated[str, Field(max_length=256)]
 
 
 class ModelsSelectRequest(_BaseRequest):
@@ -14,8 +18,14 @@ class ModelsSelectRequest(_BaseRequest):
 
 
 class ModelsUpsertApiRequest(_BaseRequest):
-    """upsert_api 直接消费整个 body dict,字段透传即可。"""
+    """upsert_api 直接消费整个 body dict,字段透传即可。
+    已知字段加了 max_length=256 约束;其余透传字段仍允许(extra="allow")。
+    """
     model_config = __import__('pydantic').ConfigDict(extra="allow")
+    api_id: _Str256 | None = None
+    name: _Str256 | None = None
+    base_url: _Str256 | None = None
+    kind: _Str256 | None = None
 
 
 class ModelsUpsertModelRequest(_BaseRequest):

@@ -27,7 +27,21 @@ __pycache__/
 #  secrets — 任何泄露会导致 RCE / 凭证泄露 / 用户数据被解的
 # ──────────────────────────────────────────────────────────────────
 .env
+.env.*
+!.env.example
+# Google / GCP service account JSON（任何匹配的都禁）
 rpg/vertex_sa.json
+**/vertex_sa*.json
+**/service_account*.json
+**/*_sa.json
+**/google_credentials*.json
+**/gcp_credentials*.json
+# 通用凭证文件
+**/credentials.json
+**/secrets.json
+**/*.pem
+**/*.key
+!rpg/tests/**/*.pem
 # AES-GCM 主密钥，泄露 = 所有用户存的 API key 可解
 rpg/platform_data/master.key
 # 用户上传文件 / 分片暂存 / 已导入剧本（私人正文）

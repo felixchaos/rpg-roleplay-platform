@@ -223,8 +223,8 @@ class ToolDispatcher:
         self._rate_buckets: dict[int, list[float]] = {}
         # trace 内去重: trace_id → set of (tool, args_json)
         self._trace_seen: dict[str, set[tuple[str, str]]] = {}
-        # 滚动审计缓冲 (进程级,所有 user)
-        self._recent_audit: list[dict[str, Any]] = []
+        # 滚动审计缓冲: 按 user_id 分桶, 防止单例化后跨用户信息泄漏
+        self._recent_audit: dict[int, list[dict[str, Any]]] = {}
 
     # ── 公共 API ───────────────────────────────────────────
 
@@ -251,8 +251,21 @@ class ToolDispatcher:
             return self._reject(env, exc)
         return self._execute(env, spec)
 
-    def recent_audit(self, limit: int = 50) -> list[dict[str, Any]]:
-        return list(self._recent_audit[-limit:])
+    def recent_audit(self, limit: int = 50, user_id: int | None = None) -> list[dict[str, Any]]:
+        """返回最近的审计记录。
+
+        user_id 参数: admin 视图不传 (返回所有用户最近记录); 普通视图必须传 user_id
+        以确保只返回该用户自身的记录 (防止跨用户泄漏)。
+        """
+        if user_id is not None:
+            bucket = self._recent_audit.get(int(user_id)) or []
+            return list(bucket[-limit:])
+        # admin 视图: 合并所有用户桶, 按 ts 排序后取最近 limit 条
+        all_entries: list[dict[str, Any]] = []
+        for bucket in self._recent_audit.values():
+            all_entries.extend(bucket)
+        all_entries.sort(key=lambda e: e.get("ts", ""))
+        return all_entries[-limit:]
 
     # ── 内部步骤 ───────────────────────────────────────────
 
@@ -388,10 +401,12 @@ class ToolDispatcher:
             "error": error,
             "ok": ok,
         }
-        # 进程级滚动缓冲
-        self._recent_audit.append(audit)
-        if len(self._recent_audit) > RECENT_AUDIT_LIMIT:
-            self._recent_audit = self._recent_audit[-RECENT_AUDIT_LIMIT:]
+        # 进程级滚动缓冲 (按 user_id 分桶)
+        uid = int(env.user_id)
+        user_bucket = self._recent_audit.setdefault(uid, [])
+        user_bucket.append(audit)
+        if len(user_bucket) > RECENT_AUDIT_LIMIT:
+            self._recent_audit[uid] = user_bucket[-RECENT_AUDIT_LIMIT:]
         # state-level audit (save 级工具才有 state)
         try:
             state = self._state_provider(env)
@@ -431,9 +446,11 @@ class ToolDispatcher:
             "reject_kind": exc.kind,
             "detail": exc.detail,
         }
-        self._recent_audit.append(audit)
-        if len(self._recent_audit) > RECENT_AUDIT_LIMIT:
-            self._recent_audit = self._recent_audit[-RECENT_AUDIT_LIMIT:]
+        uid = int(env.user_id)
+        user_bucket = self._recent_audit.setdefault(uid, [])
+        user_bucket.append(audit)
+        if len(user_bucket) > RECENT_AUDIT_LIMIT:
+            self._recent_audit[uid] = user_bucket[-RECENT_AUDIT_LIMIT:]
         return ToolResult(ok=False, error=f"[{exc.kind}] {exc.detail}", audit=audit)
 
     def _rate_ok(self, user_id: int) -> bool:

@@ -23,6 +23,12 @@ from platform_app.api._card_dto import card_to_dto
 from .db import connect, init_db
 
 _SLUG_RE = re.compile(r"[^0-9A-Za-z_一-鿿]+")
+_VALID_SCOPES = {"private", "global", "public"}
+
+
+def _normalize_scope(raw: object) -> str:
+    s = str(raw or "private").strip()
+    return s if s in _VALID_SCOPES else "private"
 
 
 def _slugify(text: str) -> str:
@@ -91,6 +97,7 @@ def upsert_persona(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         "is_default": is_default,
     }
 
+    import psycopg.errors as _pg_errors
     with connect() as db:
         if persona_id:
             owned = db.execute(
@@ -99,51 +106,57 @@ def upsert_persona(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
             ).fetchone()
             if not owned:
                 raise ValueError("persona 不存在或无权访问")
-            db.execute(
-                """
-                update character_cards set
-                  name = %(name)s, slug = %(slug)s, identity = %(identity)s,
-                  background = %(background)s, appearance = %(appearance)s,
-                  personality = %(personality)s, avatar_path = %(avatar_path)s,
-                  tags = %(tags)s, metadata = %(metadata)s, is_default = %(is_default)s,
-                  row_version = row_version + 1, updated_at = now()
-                where id = %(id)s and user_id = %(user_id)s and card_type = 'persona'
-                """,
-                {**fields, "slug": slug, "id": int(persona_id), "user_id": user_id},
-            )
+            try:
+                db.execute(
+                    """
+                    update character_cards set
+                      name = %(name)s, slug = %(slug)s, identity = %(identity)s,
+                      background = %(background)s, appearance = %(appearance)s,
+                      personality = %(personality)s, avatar_path = %(avatar_path)s,
+                      tags = %(tags)s, metadata = %(metadata)s, is_default = %(is_default)s,
+                      row_version = row_version + 1, updated_at = now()
+                    where id = %(id)s and user_id = %(user_id)s and card_type = 'persona'
+                    """,
+                    {**fields, "slug": slug, "id": int(persona_id), "user_id": user_id},
+                )
+            except _pg_errors.UniqueViolation:
+                raise ValueError("slug 已被使用, 请换一个")
             row = db.execute(
-                "select * from character_cards where id = %s and card_type = 'persona'",
-                (int(persona_id),),
+                "select * from character_cards where id = %s and user_id = %s and card_type = 'persona'",
+                (int(persona_id), user_id),
             ).fetchone()
         else:
             # partial unique index uq_character_cards_user_slug 谓词:
             #   where card_type in ('pc','persona')
             # ON CONFLICT 必须显式同样的 WHERE 子句才能匹配该索引。
-            row = db.execute(
-                """
-                insert into character_cards(
-                  user_id, slug, card_type, source, scope,
-                  first_revealed_chapter, importance,
-                  name, identity, background, appearance,
-                  personality, avatar_path, tags, metadata, is_default
-                ) values (
-                  %(user_id)s, %(slug)s, 'persona', 'persona', 'private',
-                  1, 100,
-                  %(name)s, %(identity)s, %(background)s, %(appearance)s,
-                  %(personality)s, %(avatar_path)s, %(tags)s, %(metadata)s, %(is_default)s
-                )
-                on conflict(user_id, slug, card_type) where card_type in ('pc','persona')
-                do update set
-                  name = excluded.name, identity = excluded.identity,
-                  background = excluded.background, appearance = excluded.appearance,
-                  personality = excluded.personality, avatar_path = excluded.avatar_path,
-                  tags = excluded.tags, metadata = excluded.metadata,
-                  is_default = excluded.is_default,
-                  row_version = character_cards.row_version + 1, updated_at = now()
-                returning *
-                """,
-                {**fields, "user_id": user_id, "slug": slug},
-            ).fetchone()
+            try:
+                row = db.execute(
+                    """
+                    insert into character_cards(
+                      user_id, slug, card_type, source, scope,
+                      first_revealed_chapter, importance,
+                      name, identity, background, appearance,
+                      personality, avatar_path, tags, metadata, is_default
+                    ) values (
+                      %(user_id)s, %(slug)s, 'persona', 'persona', 'private',
+                      1, 100,
+                      %(name)s, %(identity)s, %(background)s, %(appearance)s,
+                      %(personality)s, %(avatar_path)s, %(tags)s, %(metadata)s, %(is_default)s
+                    )
+                    on conflict(user_id, slug, card_type) where card_type in ('pc','persona')
+                    do update set
+                      name = excluded.name, identity = excluded.identity,
+                      background = excluded.background, appearance = excluded.appearance,
+                      personality = excluded.personality, avatar_path = excluded.avatar_path,
+                      tags = excluded.tags, metadata = excluded.metadata,
+                      is_default = excluded.is_default,
+                      row_version = character_cards.row_version + 1, updated_at = now()
+                    returning *
+                    """,
+                    {**fields, "user_id": user_id, "slug": slug},
+                ).fetchone()
+            except _pg_errors.UniqueViolation:
+                raise ValueError("slug 已被使用, 请换一个")
 
         # 只允许一个默认 persona:其他全部清零(unique partial index 已强制,但这里也清掉运行时残留)
         if is_default and row:
@@ -225,7 +238,7 @@ def upsert_user_card(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         "priority": int(payload.get("priority") or 100),
         "importance": int(payload.get("importance") or 100),  # PC 默认 100,前端高级页可调
         "enabled": bool(payload.get("enabled", True)),
-        "scope": str(payload.get("scope") or "private").strip(),
+        "scope": _normalize_scope(payload.get("scope")),
     }
 
     with connect() as db:
@@ -253,8 +266,8 @@ def upsert_user_card(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
                 {**fields, "id": int(card_id), "user_id": user_id},
             )
             row = db.execute(
-                "select * from character_cards where id = %s and card_type = 'pc'",
-                (int(card_id),),
+                "select * from character_cards where id = %s and user_id = %s and card_type = 'pc'",
+                (int(card_id), user_id),
             ).fetchone()
         else:
             row = db.execute(

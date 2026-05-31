@@ -46,6 +46,7 @@ async def api_script_llm_extract_usage(script_id: int, days: int = 30, user=Depe
         ]
       }
     """
+    days = max(1, min(int(days or 30), 365))
     with connect() as db:
         owned = db.execute("select 1 from scripts where id=%s and owner_id=%s",
                            (script_id, user["id"])).fetchone()
@@ -58,8 +59,8 @@ async def api_script_llm_extract_usage(script_id: int, days: int = 30, user=Depe
             "coalesce(sum(cost_usd),0) cost, count(*) calls "
             "from token_usage where user_id=%s "
             "and (metadata->>'script_id')::bigint = %s "
-            "and created_at > now() - (%s || ' days')::interval",
-            (user["id"], script_id, str(int(days))),
+            "and created_at > now() - interval '1 day' * %s",
+            (user["id"], script_id, days),
         ).fetchone()
         # 按模型分组
         by_model_rows = db.execute(
@@ -67,18 +68,18 @@ async def api_script_llm_extract_usage(script_id: int, days: int = 30, user=Depe
             "coalesce(sum(input_tokens),0) in_tok, coalesce(sum(output_tokens),0) out_tok, "
             "coalesce(sum(cost_usd),0) cost, count(*) calls "
             "from token_usage where user_id=%s and (metadata->>'script_id')::bigint = %s "
-            "and created_at > now() - (%s || ' days')::interval "
+            "and created_at > now() - interval '1 day' * %s "
             "group by api_id, model_real_name order by cost desc",
-            (user["id"], script_id, str(int(days))),
+            (user["id"], script_id, days),
         ).fetchall()
         # 最近 10 次
         recent = db.execute(
             "select created_at, api_id, model_real_name, input_tokens, output_tokens, "
             "cost_usd, metadata->>'algorithm' as algorithm "
             "from token_usage where user_id=%s and (metadata->>'script_id')::bigint = %s "
-            "and created_at > now() - (%s || ' days')::interval "
+            "and created_at > now() - interval '1 day' * %s "
             "order by created_at desc limit 10",
-            (user["id"], script_id, str(int(days))),
+            (user["id"], script_id, days),
         ).fetchall()
     return json_response({
         "ok": True,

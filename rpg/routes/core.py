@@ -34,6 +34,18 @@ async def index() -> JSONResponse:
     })
 
 
+@router.get("/api/health")
+async def api_health() -> JSONResponse:
+    """Liveness probe — 检查 DB 连通性。无需鉴权，供 k8s/nginx/监控调用。"""
+    try:
+        from platform_app.db import connect
+        with connect() as db:
+            db.execute("SELECT 1")
+        return JSONResponse({"ok": True, "db": "ok"})
+    except Exception as exc:
+        return JSONResponse({"ok": False, "db": "error", "detail": str(exc)[:200]}, status_code=503)
+
+
 @router.get("/api/state")
 async def api_state(
     api_user: dict[str, Any] | None = Depends(get_current_user),

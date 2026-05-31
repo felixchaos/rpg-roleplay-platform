@@ -65,6 +65,23 @@ def _jsonify(value):
     return repr(value)
 
 
+# ReDoS 防护：长度上限 + 禁止嵌套量词模式（(.+)+  (.*)*  ([^x]+)+ 等）
+_NESTED_QUANTIFIER_RE = __import__("re").compile(r"\([^)]*[+*][^)]*\)[+*]")
+
+
+def _validate_custom_pattern(pattern: str) -> None:
+    """校验用户自定义正则，防止 ReDoS。"""
+    import re as _re
+    if len(pattern) > 200:
+        raise ValueError("正则过长（上限 200 字符）")
+    if _NESTED_QUANTIFIER_RE.search(pattern):
+        raise ValueError("custom_pattern 含嵌套量词，可能导致 ReDoS，拒绝")
+    try:
+        _re.compile(pattern)
+    except Exception as exc:
+        raise ValueError(f"custom_pattern 不是合法正则：{exc}") from exc
+
+
 def import_script(
     user_id: int,
     file_item: dict[str, Any] | None = None,
@@ -101,10 +118,7 @@ def import_script(
     if (split_rule or "").strip() == "custom":
         if not (custom_pattern or "").strip():
             raise ValueError("split_rule=custom 时必须提供 custom_pattern")
-        try:
-            __import__("re").compile(custom_pattern)
-        except Exception as exc:
-            raise ValueError(f"custom_pattern 不是合法正则：{exc}") from exc
+        _validate_custom_pattern(custom_pattern)
 
     chapters, report = chapter_splitter.split_chapters_with_report(
         text,  # 传未清洗文本: with_report 内部 _normalize_encoding + sanitize 并计入 cleaning 报告
@@ -575,10 +589,7 @@ def preview_split(
     if (split_rule or "").strip() == "custom":
         if not (custom_pattern or "").strip():
             raise ValueError("split_rule=custom 时必须提供 custom_pattern")
-        try:
-            __import__("re").compile(custom_pattern)
-        except Exception as exc:
-            raise ValueError(f"custom_pattern 不是合法正则：{exc}") from exc
+        _validate_custom_pattern(custom_pattern)
 
     chapters, report = chapter_splitter.split_chapters_with_report(
         text, split_rule=split_rule or "auto",  # 传未清洗文本: with_report 内部清洗并计入 cleaning 报告
@@ -622,12 +633,16 @@ def delete_script(user_id: int, script_id: int, *, force: bool = False) -> dict[
         # 顺手删源文件
         src = (owned.get("source_path") or "").strip()
         if src:
-            p = BASE / src if not Path(src).is_absolute() else Path(src)
-            try:
-                if p.exists() and p.is_file():
-                    p.unlink()
-            except Exception:
-                pass
+            p = (BASE / src).resolve() if not Path(src).is_absolute() else Path(src).resolve()
+            base_resolved = BASE.resolve()
+            if base_resolved not in p.parents and p != base_resolved:
+                pass  # source_path 越界，跳过删除（不 raise，删除失败不应阻塞整体操作）
+            else:
+                try:
+                    if p.exists() and p.is_file():
+                        p.unlink()
+                except Exception:
+                    pass
     return {"ok": True, "deleted": True, "id": script_id, "saves_deleted": save_count if force else 0}
 
 
@@ -654,7 +669,9 @@ def resplit_script(
         src = (script.get("source_path") or "").strip()
         if not src:
             raise ValueError("剧本源文件路径丢失")
-        p = BASE / src if not Path(src).is_absolute() else Path(src)
+        p = (BASE / src).resolve() if not Path(src).is_absolute() else Path(src).resolve()
+        if BASE.resolve() not in p.parents and p != BASE.resolve():
+            raise ValueError("source_path 越界, 拒绝操作")
         if not p.exists():
             raise ValueError("剧本源文件不存在，无法重切")
         raw = p.read_bytes()
@@ -662,10 +679,7 @@ def resplit_script(
     if (split_rule or "").strip() == "custom":
         if not (custom_pattern or "").strip():
             raise ValueError("split_rule=custom 时必须提供 custom_pattern")
-        try:
-            __import__("re").compile(custom_pattern)
-        except Exception as exc:
-            raise ValueError(f"custom_pattern 不是合法正则：{exc}") from exc
+        _validate_custom_pattern(custom_pattern)
 
     text, encoding = chapter_splitter.decode_bytes(raw)
     cleaned = chapter_splitter.clean_text(text)
@@ -679,33 +693,38 @@ def resplit_script(
 
     total_words = sum(len(c.get("content") or "") for c in chapters)
     with connect() as db:
-        db.execute("delete from script_chapters where script_id = %s", (script_id,))
-        with db.cursor() as cur:
-            cur.executemany(
-                """
-                insert into script_chapters(
-                  script_id, chapter_index, title, content, word_count,
-                  volume_title, source_marker, confidence,
-                  is_author_note, exclude_from_extraction, title_confidence, content_descriptor
+        db.execute("SAVEPOINT resplit_save")
+        try:
+            db.execute("delete from script_chapters where script_id = %s", (script_id,))
+            with db.cursor() as cur:
+                cur.executemany(
+                    """
+                    insert into script_chapters(
+                      script_id, chapter_index, title, content, word_count,
+                      volume_title, source_marker, confidence,
+                      is_author_note, exclude_from_extraction, title_confidence, content_descriptor
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        (script_id, i, str(c.get("title") or f"第{i}章")[:200],
+                         str(c.get("content") or ""), len(str(c.get("content") or "")),
+                         str(c.get("volume_title") or ""), str(c.get("source_marker") or ""),
+                         float(report.get("confidence") or 0),
+                         bool(c.get("is_author_note", False)), bool(c.get("exclude_from_extraction", False)),
+                         float(c.get("title_confidence", 1.0)), str(c.get("content_descriptor") or ""))
+                        for i, c in enumerate(chapters, start=1)
+                    ],
                 )
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                [
-                    (script_id, i, str(c.get("title") or f"第{i}章")[:200],
-                     str(c.get("content") or ""), len(str(c.get("content") or "")),
-                     str(c.get("volume_title") or ""), str(c.get("source_marker") or ""),
-                     float(report.get("confidence") or 0),
-                     bool(c.get("is_author_note", False)), bool(c.get("exclude_from_extraction", False)),
-                     float(c.get("title_confidence", 1.0)), str(c.get("content_descriptor") or ""))
-                    for i, c in enumerate(chapters, start=1)
-                ],
+            # 重切后章节边界变了 → KB 与新边界对不上 → 强制回 unreviewed,用户须重过复核
+            db.execute(
+                "update scripts set chapter_count = %s, word_count = %s, import_report = %s, "
+                "review_status = 'unreviewed', reviewed_at = null, updated_at = now() where id = %s",
+                (len(chapters), total_words, Jsonb({**report, "encoding": encoding, "resplit": True}), script_id),
             )
-        # 重切后章节边界变了 → KB 与新边界对不上 → 强制回 unreviewed,用户须重过复核
-        db.execute(
-            "update scripts set chapter_count = %s, word_count = %s, import_report = %s, "
-            "review_status = 'unreviewed', reviewed_at = null, updated_at = now() where id = %s",
-            (len(chapters), total_words, Jsonb({**report, "encoding": encoding, "resplit": True}), script_id),
-        )
+        except Exception:
+            db.execute("ROLLBACK TO SAVEPOINT resplit_save")
+            raise
     return {
         "ok": True, "script_id": script_id,
         "chapter_count": len(chapters), "word_count": total_words,
@@ -747,22 +766,31 @@ def init_upload(user_id: int, filename: str, total_bytes: int, total_chunks: int
 
 def put_chunk(user_id: int, upload_id: str, chunk_index: int, blob: bytes) -> dict[str, Any]:
     """写一块到磁盘。返回累计已收 chunks/bytes。"""
+    import fcntl as _fcntl
     user_dir = _upload_dir(user_id, upload_id)
-    meta = _read_meta(user_dir)
-    if chunk_index < 0 or chunk_index >= meta["total_chunks"]:
-        raise ValueError("chunk_index 越界")
     if len(blob) > MAX_UPLOAD_CHUNK_BYTES:
         raise ValueError(f"chunk 超过 {MAX_UPLOAD_CHUNK_BYTES} 字节")
-    if meta["received_bytes"] + len(blob) > meta["total_bytes"]:
-        raise ValueError("累计字节超过 total_bytes 声明")
-    chunk_path = user_dir / f"chunk_{chunk_index:04d}.bin"
-    if chunk_path.exists():
-        # 幂等：同 chunk_index 重传忽略大小调整
-        meta["received_bytes"] -= chunk_path.stat().st_size
-    chunk_path.write_bytes(blob)
-    meta["received_bytes"] += len(blob)
-    meta["received_chunks"] = sum(1 for _ in user_dir.glob("chunk_*.bin"))
-    (user_dir / "meta.json").write_text(_json.dumps(meta), encoding="utf-8")
+    meta_path = user_dir / "meta.json"
+    with open(meta_path, "r+") as fp:
+        _fcntl.flock(fp.fileno(), _fcntl.LOCK_EX)
+        try:
+            meta = _json.loads(fp.read())
+            if chunk_index < 0 or chunk_index >= meta["total_chunks"]:
+                raise ValueError("chunk_index 越界")
+            if meta["received_bytes"] + len(blob) > meta["total_bytes"]:
+                raise ValueError("累计字节超过 total_bytes 声明")
+            chunk_path = user_dir / f"chunk_{chunk_index:04d}.bin"
+            if chunk_path.exists():
+                # 幂等：同 chunk_index 重传忽略大小调整
+                meta["received_bytes"] -= chunk_path.stat().st_size
+            chunk_path.write_bytes(blob)
+            meta["received_bytes"] += len(blob)
+            meta["received_chunks"] = sum(1 for _ in user_dir.glob("chunk_*.bin"))
+            fp.seek(0)
+            fp.truncate()
+            fp.write(_json.dumps(meta))
+        finally:
+            _fcntl.flock(fp.fileno(), _fcntl.LOCK_UN)
     return meta
 
 
@@ -776,16 +804,20 @@ def finish_upload(user_id: int, upload_id: str) -> dict[str, Any]:
         raise ValueError(f"字节不匹配：收到 {meta['received_bytes']} ≠ 声明 {meta['total_bytes']}")
     # 拼装
     import base64 as _b64
+    import shutil as _shutil
     out = bytearray()
     for i in range(meta["total_chunks"]):
         p = user_dir / f"chunk_{i:04d}.bin"
         if not p.exists():
             raise ValueError(f"缺失 chunk {i}")
         out.extend(p.read_bytes())
+    # 先构造完整 file_item（含 base64 编码），再清理磁盘
+    file_item = {"name": meta["filename"], "base64": _b64.b64encode(out).decode("ascii")}
+    _shutil.rmtree(user_dir, ignore_errors=True)
     return {
         "ok": True, "upload_id": upload_id, "filename": meta["filename"],
         "size": len(out),
-        "file_item": {"name": meta["filename"], "base64": _b64.b64encode(out).decode("ascii")},
+        "file_item": file_item,
     }
 
 

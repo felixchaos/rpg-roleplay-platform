@@ -39,16 +39,24 @@
   const BASE = detectBase();
   window.__API_BASE = BASE;
 
+  // One-shot guard: prevent redirect loop when a 401 fires on a page
+  // that is itself mid-flight (e.g. Login.html calling /api/auth/me).
+  let _AUTH_REDIRECT_ARMED = true;
+
   // ---- core fetch helpers ------------------------------------
   async function _send(path, opts) {
     const url = (path.startsWith("http") ? path : BASE + path);
+    // Default 15 s timeout; caller may pass opts.signal to override.
+    const defaultSignal = AbortSignal.timeout(15000);
     const init = Object.assign(
       {
         credentials: "include",
         headers: { "Accept": "application/json" },
+        signal: defaultSignal,
       },
       opts || {}
     );
+    // opts.signal (if supplied) already overwrote the default above via Object.assign.
     if (init.body && typeof init.body === "object" && !(init.body instanceof FormData)) {
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(init.body);
@@ -68,6 +76,32 @@
     }
     if (!res.ok) {
       const msg = (payload && payload.detail) || (payload && payload.error) || res.statusText;
+
+      // 401 — session expired; redirect once, then still throw so caller knows.
+      if (res.status === 401) {
+        if (_AUTH_REDIRECT_ARMED && !location.pathname.endsWith("Login.html")) {
+          _AUTH_REDIRECT_ARMED = false;
+          try {
+            window.dispatchEvent(new CustomEvent("rpg-auth-expired"));
+          } catch (_) {}
+          location.replace("Login.html?next=" + encodeURIComponent(location.pathname + location.search + location.hash));
+        }
+        // Fall through: throw ApiError so callers that catch can handle it too.
+      }
+
+      // 429 — rate limited; read Retry-After and surface to user.
+      if (res.status === 429) {
+        const retryAfter = res.headers.get("Retry-After");
+        const detail = retryAfter ? ("请求过于频繁，请 " + retryAfter + " 秒后重试") : "请求过于频繁，请稍后重试";
+        try { toast(detail, { kind: "warning", duration: 4000 }); } catch (_) {}
+        throw new ApiError(payload && payload.code, res.status, detail, payload);
+      }
+
+      // 503 — service unavailable.
+      if (res.status === 503) {
+        try { toast("服务暂不可用", { kind: "danger", duration: 3600 }); } catch (_) {}
+      }
+
       throw new ApiError(payload && payload.code, res.status, msg || ("HTTP " + res.status), payload);
     }
     return payload;

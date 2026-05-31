@@ -244,8 +244,7 @@ def _is_set_parser_enabled(api_user: dict | None) -> bool:
     if not uid:
         return False
     try:
-        from platform_app.db import connect, init_db
-        init_db()
+        from platform_app.db import connect
         with connect() as db:
             row = db.execute(
                 "select preferences from user_preferences where user_id = %s",
@@ -268,8 +267,7 @@ def _is_extractor_enabled(api_user: dict | None) -> bool:
     if not uid:
         return False
     try:
-        from platform_app.db import connect, init_db
-        init_db()
+        from platform_app.db import connect
         with connect() as db:
             row = db.execute(
                 "select preferences from user_preferences where user_id = %s",
@@ -294,8 +292,7 @@ def _clarify_threshold(api_user: dict | None) -> float:
     if not uid:
         return default
     try:
-        from platform_app.db import connect, init_db
-        init_db()
+        from platform_app.db import connect
         with connect() as db:
             row = db.execute(
                 "select preferences from user_preferences where user_id = %s",
@@ -334,8 +331,7 @@ def _acceptance_verifier_mode(api_user: dict | None) -> str:
     if not uid:
         return default
     try:
-        from platform_app.db import connect, init_db
-        init_db()
+        from platform_app.db import connect
         with connect() as db:
             row = db.execute(
                 "select preferences from user_preferences where user_id = %s",
@@ -478,15 +474,12 @@ _FRONTEND_ROOT = _Path(__file__).resolve().parent.parent / "frontend"
 # dist 不存在(未 npm run build)时回退源码目录,仅配合 vite dev server (:5173) 用。
 _FRONTEND_DIR = _FRONTEND_ROOT / "dist" if (_FRONTEND_ROOT / "dist").is_dir() else _FRONTEND_ROOT
 if _FRONTEND_DIR.is_dir():
-    app.mount("/", _StaticFiles(directory=str(_FRONTEND_DIR), html=False), name="frontend")
+    # html=True: SPA 深路由（如 /saves/123）返回 index.html 而非 404
+    app.mount("/", _StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="frontend")
 
-# 启动时一次性触发 schema + migration，避免请求路径 DDL 撞锁
-from platform_app.db import init_db as _bootstrap_init_db
-
-try:
-    _bootstrap_init_db()
-except Exception as _e:
-    log.error(f"[启动] init_db 失败：{_e}")
+# 注：init_db 已移到 core.startup.lifespan startup 段（lazy import 避免循环依赖）。
+# 此处保留函数引用，供 lifespan 使用。
+from platform_app.db import init_db as _bootstrap_init_db  # noqa: F401  (lifespan lazy-imports this)
 
 _startup_auth_banner()
 

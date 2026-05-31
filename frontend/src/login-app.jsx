@@ -32,11 +32,12 @@ function __resolveNextOrDefault() {
 function SchemaField({ field, value, onChange }) {
   return (
     <div className="pl-field">
-      <label>
+      <label htmlFor={field.key}>
         {field.label}
         {field.required && <span className="pl-field-req">*</span>}
       </label>
       <input
+        id={field.key}
         type={field.type || 'text'}
         autoComplete={field.autocomplete || undefined}
         placeholder={field.placeholder || undefined}

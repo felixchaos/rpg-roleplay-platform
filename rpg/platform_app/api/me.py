@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Request
 from psycopg.types.json import Jsonb
 
 from ..db import connect
+from ..security import public_user
 from ._deps import SESSION_COOKIE, json_response, require_user
 
 router = APIRouter()
@@ -36,7 +37,7 @@ async def api_my_profile(user=Depends(require_user)):
     extras = dict(extras_row) if extras_row else {}
     for drop in ("user_id", "visibility", "preferences", "updated_at"):
         extras.pop(drop, None)
-    user_public = {k: v for k, v in user.items() if k != "password_hash"}
+    user_public = dict(public_user(user))
     user_public.update({k: v for k, v in extras.items() if v is not None})
     return json_response({
         "ok": True,
@@ -55,10 +56,25 @@ async def api_my_profile(user=Depends(require_user)):
 
 
 @router.get("/api/me/usage")
-async def api_my_usage(days: int = 30, user=Depends(require_user)):
-    """单独的用量明细 API（dashboard 用）"""
+async def api_my_usage(
+    days: int = 30,
+    recent_offset: int = 0,
+    user=Depends(require_user),
+):
+    """单独的用量明细 API（dashboard 用）。
+
+    B2: 返回 forecast 字段（7 天平均日消耗 + 30 天投影 + 趋势百分比）。
+    B4: 支持 recent_offset 分页（limit 固定 20）。
+    """
     from .. import usage as usage_mod
-    return json_response(usage_mod.aggregate_usage(user["id"], days=days))
+    data = usage_mod.aggregate_usage(
+        user["id"],
+        days=days,
+        recent_offset=recent_offset,
+        recent_limit=20,
+    )
+    data["forecast"] = usage_mod.forecast_daily_burn(user["id"], days_back=7)
+    return json_response(data)
 
 
 @router.get("/api/me/usage/timeline")

@@ -277,9 +277,13 @@ async def api_models_pricing(
     api_user: dict[str, Any] | None = Depends(get_current_user),
 ) -> JSONResponse:
     """查询单个模型的定价（USD per million tokens）"""
+    from app import _check_probe_permission
+    api_id = request.query_params.get("api_id", "")
+    blocked = _check_probe_permission(api_user, api_id)
+    if blocked:
+        return blocked
     import model_probe
     from model_registry import find_api, find_model, load_model_catalog
-    api_id = request.query_params.get("api_id", "")
     model_id = request.query_params.get("model", "")
     catalog = load_model_catalog()
     api = find_api(catalog, api_id)
@@ -319,9 +323,13 @@ async def api_models_capabilities(
     api_user: dict[str, Any] | None = Depends(get_current_user),
 ) -> JSONResponse:
     """查询单个模型的能力清单（text/vision/tools/json_mode 等）"""
+    from app import _check_probe_permission
+    api_id = request.query_params.get("api_id", "")
+    blocked = _check_probe_permission(api_user, api_id)
+    if blocked:
+        return blocked
     import model_probe
     from model_registry import find_api, find_model, load_model_catalog
-    api_id = request.query_params.get("api_id", "")
     model_id = request.query_params.get("model", "")
     catalog = load_model_catalog()
     api = find_api(catalog, api_id)

@@ -762,6 +762,40 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "alter table token_usage add column if not exists scenario text not null default 'chat'",
         "create index if not exists idx_token_usage_scenario on token_usage(user_id, scenario, created_at desc)",
     ]),
+    (31, "memories_must_have_owner_check", [
+        # v31: memories 表三 FK 全 nullable — 加 CHECK 约束防止孤儿行（无 user_id 也无 session_id）。
+        # 建议后续把 user_id 改为 NOT NULL，但迁移成本大，本次只加 CHECK 兜底。
+        """
+        alter table memories drop constraint if exists memories_must_have_owner
+        """,
+        """
+        alter table memories add constraint memories_must_have_owner
+          check (user_id is not null or session_id is not null)
+        """,
+    ]),
+    (32, "stop_signals_user_id_fk", [
+        # v32: stop_signals 表由 cluster.py 以 CREATE TABLE IF NOT EXISTS 创建，不带 FK。
+        # 清孤儿行后补 FK，保证 referential integrity。
+        # stop_signals 表可能不存在（cluster.py 懒创建），使用 DO 块安全跳过。
+        """
+        do $$
+        begin
+          if exists (select 1 from information_schema.tables where table_name = 'stop_signals') then
+            -- 清孤儿行
+            delete from stop_signals where user_id not in (select id from users);
+            -- 检测 FK 是否已存在
+            if not exists (
+              select 1 from pg_constraint
+              where conname like 'stop_signals_user_id%' and contype = 'f'
+            ) then
+              execute 'alter table stop_signals
+                add constraint stop_signals_user_id_fkey
+                foreign key (user_id) references users(id) on delete cascade';
+            end if;
+          end if;
+        end $$;
+        """,
+    ]),
 ]
 
 

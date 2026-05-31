@@ -1,7 +1,9 @@
 """schemas.rules — 5E 规则模组与战斗路由请求模型。"""
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from schemas._common import _BaseRequest
 
@@ -22,7 +24,7 @@ class RulesMoveRequest(_BaseRequest):
 
 
 class RulesActionRequest(_BaseRequest):
-    """通用动作,字段由 body.kind 决定,允许任意额外字段。"""
+    """通用动作,字段由 body.kind 决定,允许任意额外字段（skill/ability/target 等动作参数）。"""
     model_config = __import__('pydantic').ConfigDict(extra="allow")
     kind: str | None = None
 
@@ -43,4 +45,4 @@ class RulesEncounterEnemyRequest(_BaseRequest):
 
 
 class RulesSuggestRequest(_BaseRequest):
-    text: str | None = ""
+    text: Annotated[str, Field(max_length=2000)] | None = ""

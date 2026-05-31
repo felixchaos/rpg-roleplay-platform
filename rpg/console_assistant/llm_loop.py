@@ -5,7 +5,7 @@ import json
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from console_assistant.conversations import _trim_messages
+from console_assistant.conversations import _new_call_id, _trim_messages
 from console_assistant.prompts import build_system_prompt
 from console_assistant.tools import dispatch_assistant_tool, get_tool_spec, list_assistant_tools
 from tools_dsl.command_dispatcher import ToolCallEnvelope, ToolResult
@@ -79,16 +79,49 @@ def _sse_event(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _fetch_save_details(user_id: int, save_ids: list[Any]) -> list[dict[str, Any]]:
+    """查 DB 拿 save_id 列表的 title/turn, 供 destructive 确认弹窗展示。
+    DB 故障或 id 无效时静默返回空列表, 不阻塞主流程。
+    """
+    ids = []
+    for x in save_ids:
+        try:
+            ids.append(int(x))
+        except (TypeError, ValueError):
+            pass
+    if not ids:
+        return []
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            placeholders = ", ".join(["%s"] * len(ids))
+            rows = db.execute(
+                f"SELECT id, title, coalesce((state_snapshot->>'turn')::int, 0) AS turn "
+                f"FROM game_saves WHERE id IN ({placeholders}) AND user_id = %s",
+                (*ids, int(user_id)),
+            ).fetchall() or []
+        return [
+            {"id": int(r["id"]), "title": str(r.get("title") or ""), "turn": int(r.get("turn") or 0)}
+            for r in rows
+        ]
+    except Exception:
+        return []
+
+
 def _format_tool_result_for_llm(call_id: str, result: ToolResult) -> str:
-    """ToolResult → LLM-facing 文本。"""
+    """ToolResult → LLM-facing 文本。
+
+    如果 body 含 "--- raw JSON ---" 分隔符, 优先保留分隔符前的 summary 部分
+    (避免截断点落在 JSON 内产生乱码), 否则按原 1500 字符截。
+    """
     head = "OK" if result.ok else "FAIL"
     body = result.result or result.error or ""
+    JSON_MARKER = "--- raw JSON ---"
+    if JSON_MARKER in body:
+        summary, _, _ = body.partition(JSON_MARKER)
+        return f"[tool {call_id} {head}]\n{summary.rstrip()[:1500]}"
     return f"[tool {call_id} {head}]\n{body[:1500]}"
-
-
-def _new_call_id() -> str:
-    import secrets
-    return f"cc-{secrets.token_urlsafe(6)}"
 
 
 def _to_backend_messages(messages: list[dict[str, Any]]) -> list[dict]:
@@ -145,10 +178,20 @@ def _run_llm_loop(
             return {"ok": False, "error": f"未知工具 {tool_name}"}
         call_id = _new_call_id()
         if spec.destructive:
+            args_for_pending = dict(arguments or {})
+            # task 120 UX: 在确认弹窗里显示 title/turn, 不只是 save_id
+            if tool_name == "delete_save":
+                args_for_pending["save_details"] = _fetch_save_details(
+                    user_id, [args_for_pending.get("save_id")],
+                )
+            elif tool_name == "delete_saves":
+                args_for_pending["save_details"] = _fetch_save_details(
+                    user_id, args_for_pending.get("save_ids") or [],
+                )
             pending = {
                 "call_id": call_id,
                 "tool": tool_name,
-                "args": arguments or {},
+                "args": args_for_pending,
                 "save_id": page_save_id,
                 "script_id": page_script_id,
                 "description": spec.description,

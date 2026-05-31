@@ -195,17 +195,18 @@ def apply_confirmation_stream(
         })
         _trim_messages(conv)
 
-    yield from _run_llm_loop(
-        user_id=user_id,
-        conv=conv,
-        page_context=page_context,
-        backend=backend,
-        state_provider=state_provider,
-        trace_id=trace_id,
-        max_iterations=max_iterations,
-        max_tokens=max_tokens,
-    )
-
-    yield _sse_event("done", {
-        "pending_confirmations": list(conv["pending_confirmations"].keys()),
-    })
+    try:
+        yield from _run_llm_loop(
+            user_id=user_id,
+            conv=conv,
+            page_context=page_context,
+            backend=backend,
+            state_provider=state_provider,
+            trace_id=trace_id,
+            max_iterations=max_iterations,
+            max_tokens=max_tokens,
+        )
+    finally:
+        yield _sse_event("done", {
+            "pending_confirmations": list(conv["pending_confirmations"].keys()),
+        })

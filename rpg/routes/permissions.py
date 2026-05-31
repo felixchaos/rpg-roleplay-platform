@@ -168,9 +168,13 @@ async def api_debug_pending_question(
     state = _ensure_loaded(api_user)
     # 把老 text+| 分隔 options 拆成 question + options 列表
     raw_text = body_dict.get("text") or "下一步怎么做？｜选项：继续调查、返回基地、询问同伴"
+    if len(raw_text) > 500:
+        raise HTTPException(status_code=400, detail="text 过长")
     if "｜选项：" in raw_text:
         question, _, opt_str = raw_text.partition("｜选项：")
         options = [s.strip() for s in opt_str.split("、") if s.strip()]
+        if len(options) > 8:
+            options = options[:8]
     else:
         question, options = raw_text, []
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool

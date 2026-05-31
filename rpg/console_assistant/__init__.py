@@ -4,6 +4,8 @@ from console_assistant.conversations import (
     _new_call_id,
     _new_conversation_id,
     _new_trace_id,
+    _test_only_get_conversation_state,
+    _test_only_reset_all_conversations,
     delete_conversation,
     get_conversation_state,
     list_conversations,
@@ -16,6 +18,8 @@ from console_assistant.tools import dispatch_assistant_tool, get_tool_spec, list
 
 __all__ = [
     "new_conversation", "list_conversations", "delete_conversation",
+    "_test_only_get_conversation_state", "_test_only_reset_all_conversations",
+    # backward-compat aliases (keep until all tests updated)
     "get_conversation_state", "reset_all_conversations",
     "build_system_prompt", "list_assistant_tools", "get_tool_spec",
     "dispatch_assistant_tool", "stream_chat",
