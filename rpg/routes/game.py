@@ -164,10 +164,11 @@ async def api_opening(
         yield _sse("stage", {"phase": "generating", "label": "GM 构思开场中…"})
         text = ""
         try:
-            opening = gm.generate_opening(state, retrieved_context=bundle["prompt"])
-            text = opening
+            for chunk in gm.generate_opening_stream(state, retrieved_context=bundle["prompt"]):
+                text += chunk
+                yield _sse("token", {"text": chunk})
+            opening = text
             yield _sse("stage", {"phase": "done", "label": ""})
-            yield _sse("token", {"text": opening})
             state.data["history"].append({"role": "assistant", "content": opening})
             # 让开场也走结构化解析,把【询问玩家】+JSON ops 解析进 pending_questions / state
             try:

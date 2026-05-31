@@ -384,6 +384,12 @@ class GameMaster:
         messages = [{"role": "user", "content": self._turn_message(_OPENING_PROMPT, state, retrieved_context)}]
         return self._backend.call(system, messages, max_tokens=600)
 
+    def generate_opening_stream(self, state, retrieved_context: str = "") -> Iterator[str]:
+        self._active_state = state
+        system   = self._build_system()
+        messages = [{"role": "user", "content": self._turn_message(_OPENING_PROMPT, state, retrieved_context)}]
+        yield from self._backend.stream(system, messages, max_tokens=600)
+
     # ── 主响应 ────────────────────────────────────────────────────
     def respond(self, user_input: str, retrieved_context: str, state) -> str:
         self._active_state = state

@@ -1888,6 +1888,28 @@ function ModelParamsSection() {
     intensity: 0.5,
     extra_prompt: "请避免对未成年角色的任何性化描写。",
   });
+  const [reasoningEffort, setReasoningEffort] = useStatePL("medium");
+  // 从 catalog 获取当前选中模型的 capabilities,用于条件展示 reasoning_effort
+  const [selectedModelCaps, setSelectedModelCaps] = useStatePL([]);
+  useEffectPL(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const models = await window.api.models.list().catch(() => ({}));
+        if (cancelled) return;
+        const sel = models?.models?.selected ?? models?.selected ?? null;
+        if (sel) {
+          // sel.capabilities 可能是 array 或 object
+          const caps = Array.isArray(sel.capabilities)
+            ? sel.capabilities
+            : (sel.capabilities ? Object.keys(sel.capabilities) : []);
+          setSelectedModelCaps(caps);
+        }
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const showReasoningEffort = selectedModelCaps.includes("reasoning");
   const [params, setParams] = useStatePL({
     temperature: 0.78,
     top_p: 0.92,
@@ -1931,6 +1953,19 @@ function ModelParamsSection() {
       <ParamSlider label="Temperature" desc="越高越随机；0 = 确定性最强；建议 0.4 - 1.0"
         value={params.temperature} min={0} max={2} step={0.05} unit=""
         onChange={(v) => { setPreset("自定义"); u("temperature", v); }} />
+
+      {showReasoningEffort && (
+        <SetRow label="Reasoning Effort" description="推理模型（o3 / R1 等）的思考深度；low = 快速省 token，high = 最深思考。">
+          <CSSpaceBetween direction="horizontal" size="xs">
+            {["low", "medium", "high"].map(lv => (
+              <CSButton key={lv} variant={reasoningEffort === lv ? "primary" : "normal"}
+                onClick={() => { setReasoningEffort(lv); save("reasoning_effort", lv); }}>
+                {lv === "low" ? "低 (low)" : lv === "medium" ? "中 (medium)" : "高 (high)"}
+              </CSButton>
+            ))}
+          </CSSpaceBetween>
+        </SetRow>
+      )}
 
       <ParamSlider label="Top-p" desc="累积概率截断；0.9 ~ 0.95 较常用"
         value={params.top_p} min={0} max={1} step={0.01} unit=""
@@ -1996,7 +2031,7 @@ function ModelParamsSection() {
       {nsfw.mode !== "block" && (
         <ParamSlider label="NSFW 强度（Bias）" desc="0 = 仅在玩家明确请求时；1 = 允许 GM 主动推进。仅在『开放 / 露骨』下生效。"
           value={nsfw.intensity} min={0} max={1} step={0.05} unit=""
-          onChange={(v) => setNsfw(n => ({ ...n, intensity: v }))} />
+          onChange={(v) => { setNsfw(n => ({ ...n, intensity: v })); save("nsfw_intensity", v); }} />
       )}
 
       <SetRow label="NSFW 额外约束" description="附加到系统提示词；用于补充禁线、年龄校验、剧情前置条件。">
@@ -2097,6 +2132,7 @@ function ModuleModelsSection() {
     { id: "card_gen",      label: "Character Card Generator", shape: "flat", apiKey: "character_card_generator.api_id", modelKey: "character_card_generator.model_real_name", tip: "侧栏创意工具:生成 / 微调角色卡。" },
     { id: "critic",        label: "Critic (一致性评分)",    shape: "flat", apiKey: "critic.api_id",                 modelKey: "critic.model_real_name",                 tip: "角色卡生成的一致性评分子代理 (0-1 阈值 0.6)。" },
     { id: "verifier",      label: "Acceptance Verifier",    shape: "flat", apiKey: "acceptance_verifier.api_id",    modelKey: "acceptance_verifier.model_real_name",    tip: "GM 输出是否满足 curator 设置的 acceptance 条件。" },
+    { id: "embedder",      label: "Embedding (RAG 检索)",   shape: "flat", apiKey: "embedder.api_id",               modelKey: "embedder.model_real_name",               tip: "向量嵌入模型，用于 RAG 召回；空 = 跟主 GM（若主 GM 支持 embedding）。" },
   ];
 
   const [prefs, setPrefs] = useStatePL({});
@@ -2566,6 +2602,7 @@ function DeploySection() {
   const [listenAddr, setListenAddr] = useStatePL("127.0.0.1:7860");
   const [corsOrigins, setCorsOrigins] = useStatePL("http://127.0.0.1:5173,http://localhost:3000");
   const [uploadLimit, setUploadLimit] = useStatePL("12 MB");
+  const [uploadLimitError, setUploadLimitError] = useStatePL("");
   const [smtpEnabled, setSmtpEnabled] = useStatePL(false);
   const [smtpHost, setSmtpHost] = useStatePL("smtp.example.com");
   const [smtpPort, setSmtpPort] = useStatePL("587");
@@ -2591,6 +2628,8 @@ function DeploySection() {
   const [turnstileSecretKey, setTurnstileSecretKey] = useStatePL("");
   const [hcaptchaSiteKey, setHcaptchaSiteKey] = useStatePL("");
   const [hcaptchaSecretKey, setHcaptchaSecretKey] = useStatePL("");
+  // S2: CAPTCHA 触发位置多选，默认注册/找回密码/登录重试已选中
+  const [captchaTriggers, setCaptchaTriggers] = useStatePL(["register", "password_reset", "login_retry"]);
 
   // 从 backend 拉取已保存的部署配置
   useEffectPL(() => {
@@ -2618,6 +2657,7 @@ function DeploySection() {
         if (c.turnstile_mode) setTurnstileMode(c.turnstile_mode);
         if (c.turnstile_site_key) setTurnstileSiteKey(c.turnstile_site_key);
         if (c.hcaptcha_site_key) setHcaptchaSiteKey(c.hcaptcha_site_key);
+        if (Array.isArray(c.captcha_triggers)) setCaptchaTriggers(c.captcha_triggers);
       } catch (_) {}
     })();
     return () => { cancelled = true; };
@@ -2634,8 +2674,27 @@ function DeploySection() {
       <SetRow label="CORS 来源" description="逗号分隔；使用 * 允许全部。重启生效。">
         <CSInput value={corsOrigins} onChange={({ detail }) => { setCorsOrigins(detail.value); saveDeployConfig({ cors_origins: detail.value }); }} />
       </SetRow>
-      <SetRow label="上传上限" description="单文件最大字节数。重启生效。">
-        <CSInput value={uploadLimit} onChange={({ detail }) => { setUploadLimit(detail.value); saveDeployConfig({ upload_limit: detail.value }); }} />
+      <SetRow label="上传上限" description="单文件最大大小，例如 12MB 或 1GB。重启生效。">
+        <div>
+          <CSInput
+            value={uploadLimit}
+            invalid={!!uploadLimitError}
+            onChange={({ detail }) => {
+              const v = detail.value.trim();
+              setUploadLimit(detail.value);
+              if (!v || /^\d+\s*(MB|GB|KB|B)?$/i.test(v)) {
+                setUploadLimitError("");
+                if (v) saveDeployConfig({ upload_limit: v });
+              } else {
+                setUploadLimitError("格式错误，请输入如 12MB、512KB、1GB");
+              }
+            }}
+            placeholder="例：12MB"
+          />
+          {uploadLimitError && (
+            <div style={{color: "var(--danger)", fontSize: 11.5, marginTop: 4}}>{uploadLimitError}</div>
+          )}
+        </div>
       </SetRow>
 
       <SetRow label="SMTP 邮件服务器" description="用于注册验证、找回密码、订阅通知。关闭则使用本地占位邮件。">
@@ -2786,11 +2845,24 @@ function DeploySection() {
       {captchaProvider !== "off" && (
         <SetRow label="触发位置" description="勾选需要校验的功能；登录失败 3 次后默认强制。">
           <CSSpaceBetween direction="horizontal" size="xs">
-            <CSButton variant="primary">注册</CSButton>
-            <CSButton variant="primary">找回密码</CSButton>
-            <CSButton variant="primary">登录重试</CSButton>
-            <CSButton variant="normal">每次登录</CSButton>
-            <CSButton variant="normal">API Key 创建</CSButton>
+            {[
+              { key: "register",       label: "注册" },
+              { key: "password_reset", label: "找回密码" },
+              { key: "login_retry",    label: "登录重试" },
+              { key: "every_login",    label: "每次登录" },
+              { key: "api_key_create", label: "API Key 创建" },
+            ].map(({ key, label }) => {
+              const active = captchaTriggers.includes(key);
+              return (
+                <CSButton key={key} variant={active ? "primary" : "normal"} onClick={() => {
+                  const next = active
+                    ? captchaTriggers.filter(t => t !== key)
+                    : [...captchaTriggers, key];
+                  setCaptchaTriggers(next);
+                  saveDeployConfig({ captcha_triggers: next });
+                }}>{label}</CSButton>
+              );
+            })}
           </CSSpaceBetween>
         </SetRow>
       )}
@@ -2803,51 +2875,98 @@ function DangerSection() {
   // task 49：原 confirm body 写死 "全部 12 个存档"。改成真实拉 /api/saves 计数。
   const { saves = [] } = usePlatformData();
   const nSaves = saves.length;
+  // S3/S4: 文字二次确认 state
+  const [confirmText, setConfirmText] = useStatePL("");
+  // S5: 清空进度 state
+  const [clearProgress, setClearProgress] = useStatePL(null); // {done, total} | null
+
+  const openConfirm = (which) => { setConfirmText(""); setConfirm(which); };
+  const closeConfirm = () => { setConfirm(null); setConfirmText(""); };
+
   return (
     <SetGroup title="高危操作">
       <SetRow label="清空所有存档" description="会保留剧本与库，但删除所有进度和分支。">
-        <CSButton variant="normal" onClick={() => setConfirm("clear")}>清空存档</CSButton>
+        <CSButton variant="normal" onClick={() => openConfirm("clear")}>清空存档</CSButton>
       </SetRow>
-      <SetRow label="重置平台数据" description="删除剧本、存档、库与设置，恢复到首次安装状态。">
-        <CSButton variant="normal" onClick={() => setConfirm("reset")}>完全重置</CSButton>
+      <SetRow label="重置平台数据" description="后端不支持 UI 一键完全重置，请通过服务器 CLI 执行。">
+        <CSSpaceBetween direction="horizontal" size="s">
+          <CSButton variant="normal" disabled title="完全重置需通过后端 CLI 执行，UI 无法安全完成多表级联清除">完全重置（需 CLI）</CSButton>
+          <span className="muted-2" style={{fontSize: 11}}>
+            在服务器运行：<code style={{userSelect: "all"}}>python -m rpg.platform_app.migrate reset --confirm</code>
+          </span>
+        </CSSpaceBetween>
       </SetRow>
-      <ConfirmModal
-        open={confirm === "clear"}
-        title="清空所有存档？"
-        body={<>这将删除全部 <strong>{nSaves} 个存档</strong> 与对应的分支树，剧本与库保留。该操作无法撤销。</>}
-        danger confirmLabel="清空存档"
-        onClose={() => setConfirm(null)}
-        onConfirm={async () => {
-          // task 51：之前 onConfirm = setConfirm(null) 直接关闭，整个按钮假打。
-          // 后端没有 bulk clear，FE 循环调 saves.remove。
-          setConfirm(null);
-          if (nSaves === 0) { window.__apiToast?.("没有存档可删除", { kind: "info", duration: 1600 }); return; }
-          let ok = 0, fail = 0;
-          window.__apiToast?.(`正在清空 ${nSaves} 个存档…`, { kind: "info", duration: 2000 });
-          for (const s of saves) {
-            try { await window.api.saves.remove(s.id); ok++; } catch (_) { fail++; }
-          }
-          window.__apiToast?.(`清空完成 · 已删 ${ok}${fail ? ` · 失败 ${fail}` : ""}`, { kind: fail ? "warn" : "ok", duration: 3000 });
-          try { window.dispatchEvent(new CustomEvent("rpg-saves-updated")); } catch (_) {}
-        }}
-      />
-      <ConfirmModal
-        open={confirm === "reset"}
-        title="完全重置平台数据？"
-        body={<>这将清除 <strong>所有剧本、存档、库、设置和密钥</strong>，恢复到首次安装状态。该操作无法撤销，且需要重新注册管理员账号。</>}
-        danger confirmLabel="完全重置"
-        onClose={() => setConfirm(null)}
-        onConfirm={() => {
-          // task 51：后端目前没有 bulk reset endpoint（涉及多表 cascade + auth 清空，
-          // 在 UI 里逐一调用 saves.remove + scripts.delete + library.delete 会非常慢且
-          // 容易留下不一致状态）。给用户清晰的指引而不是悄无声息关闭。
-          setConfirm(null);
-          window.__apiToast?.("完全重置请通过后端 CLI 执行", {
-            kind: "warn", duration: 6000,
-            detail: "rpg_env/bin/python -m rpg.platform_app.migrate reset --confirm",
-          });
-        }}
-      />
+
+      {/* S3/S5: 清空存档 Modal — 文字确认 + 进度条 */}
+      {confirm === "clear" && (
+        <div className="pl-modal-backdrop" onClick={closeConfirm}>
+          <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(460px, 100%)"}}>
+            <header className="pl-modal-head">
+              <div>
+                <div className="pl-modal-eyebrow" style={{color: "var(--danger)"}}>高危操作</div>
+                <h2 className="pl-modal-title">清空所有存档？</h2>
+              </div>
+              <button className="iconbtn" onClick={closeConfirm} data-tip="关闭"><Icon name="close" size={14} /></button>
+            </header>
+            <div style={{fontSize: 13.5, lineHeight: 1.65, color: "var(--text-quiet)"}}>
+              这将删除全部 <strong>{nSaves} 个存档</strong> 与对应的分支树，剧本与库保留。该操作无法撤销。
+            </div>
+            <div style={{marginTop: 14}}>
+              <label style={{fontSize: 12.5, color: "var(--text-quiet)", display: "block", marginBottom: 6}}>
+                请输入 <strong style={{color: "var(--danger)"}}>清空</strong> 以确认：
+              </label>
+              <input
+                className="pl-input"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder="清空"
+                autoFocus
+                style={{width: "100%", boxSizing: "border-box"}}
+              />
+            </div>
+            {clearProgress && (
+              <div style={{marginTop: 10, fontSize: 12.5, color: "var(--text-quiet)"}}>
+                已删除 {clearProgress.done} / {clearProgress.total}
+                <div style={{height: 4, background: "var(--bg-deep)", borderRadius: 2, marginTop: 6}}>
+                  <div style={{
+                    height: "100%",
+                    width: `${Math.round(clearProgress.done / clearProgress.total * 100)}%`,
+                    background: "var(--danger)",
+                    borderRadius: 2,
+                    transition: "width 0.2s",
+                  }} />
+                </div>
+              </div>
+            )}
+            <footer className="pl-modal-foot">
+              <span></span>
+              <div style={{display: "flex", gap: 8}}>
+                <button className="btn ghost" onClick={closeConfirm}>取消</button>
+                <button
+                  className="btn danger"
+                  disabled={confirmText !== "清空" || !!clearProgress}
+                  onClick={async () => {
+                    if (nSaves === 0) { window.__apiToast?.("没有存档可删除", { kind: "info", duration: 1600 }); closeConfirm(); return; }
+                    setClearProgress({ done: 0, total: nSaves });
+                    let done = 0, fail = 0;
+                    for (const s of saves) {
+                      try { await window.api.saves.remove(s.id); } catch (_) { fail++; }
+                      done++;
+                      setClearProgress({ done, total: nSaves });
+                    }
+                    setClearProgress(null);
+                    closeConfirm();
+                    window.__apiToast?.(`清空完成 · 已删 ${done - fail}${fail ? ` · 失败 ${fail}` : ""}`, { kind: fail ? "warn" : "ok", duration: 3000 });
+                    try { window.dispatchEvent(new CustomEvent("rpg-saves-updated")); } catch (_) {}
+                  }}
+                >
+                  <Icon name="trash" size={12} /> 清空存档
+                </button>
+              </div>
+            </footer>
+          </div>
+        </div>
+      )}
     </SetGroup>
   );
 }

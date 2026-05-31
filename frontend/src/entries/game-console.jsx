@@ -190,6 +190,9 @@ function App() {
   );
   const [realSaves, setRealSaves] = useState([]);
   const [activeSave, setActiveSave] = useState(null);
+  const [retryFailed, setRetryFailed] = useState(false);
+  // G6: state loaded successfully but player not yet set up (new save pending opening)
+  const [stateLoadedNoPlayer, setStateLoadedNoPlayer] = useState(false);
 
   const PICK_STATE_KEYS = [
     'player','world','relationships','memory','worldline','permissions','suggestions','turn',
@@ -202,6 +205,7 @@ function App() {
     try {
       const data = await window.api.game.state();
       if (data && data.player) {
+        setStateLoadedNoPlayer(false);
         setGame((g) => {
           const next = { ...g };
           for (const k of PICK_STATE_KEYS) {
@@ -228,80 +232,130 @@ function App() {
           const alreadyOpened = sessionStorage.getItem(seenKey);
           if (isFresh && !alreadyOpened) {
             sessionStorage.setItem(seenKey, '1');
-            setTimeout(() => {
+            // G7: 从 800ms 硬延迟改为 requestAnimationFrame,UI 已 mount 直接发请求
+            requestAnimationFrame(() => {
               try {
                 const sse = window.api && window.api.raw && window.api.raw.sseStream;
                 if (!sse) return;
                 let openingText = '';
+                let openingRetried = false;
                 setHistory((h) => {
                   const arr = Array.isArray(h) ? [...h] : [];
                   arr.push({ role: 'assistant', content: '正在为你拉开剧本帷幕…', _opening: true, _thinking: 'starting' });
                   return arr;
                 });
-                sse('/api/v1/opening', {}, {
-                  on_stage: (d) => {
-                    const label = (d && d.label) || '';
-                    const phase = (d && d.phase) || '';
-                    if (!label && phase !== 'done') return;
-                    setHistory((h) => {
-                      const arr = Array.isArray(h) ? [...h] : [];
-                      if (arr.length && arr[arr.length - 1]._opening && !openingText) {
-                        arr[arr.length - 1] = { ...arr[arr.length - 1], content: label || arr[arr.length - 1].content, _thinking: phase };
-                      }
-                      return arr;
-                    });
-                  },
-                  on_token: (d) => {
-                    const tok = (d && d.text) || '';
-                    if (tok) {
-                      openingText += tok;
+                const triggerOpening = () => {
+                  // G8: 开场期间设置 running=true,使 stop 按钮可见可用
+                  setRunState((r) => ({ ...r, running: true, publicStage: 'context', label: '正在拉开帷幕…', detail: '' }));
+                  // G8: 保存 handle 到 runRef.current.sse,使 stop 按钮可中断 opening
+                  const handle = sse('/api/v1/opening', {}, {
+                    on_stage: (d) => {
+                      const label = (d && d.label) || '';
+                      const phase = (d && d.phase) || '';
+                      if (!label && phase !== 'done') return;
                       setHistory((h) => {
                         const arr = Array.isArray(h) ? [...h] : [];
-                        if (arr.length && arr[arr.length - 1].role === 'assistant' && arr[arr.length - 1]._opening) {
-                          arr[arr.length - 1] = { ...arr[arr.length - 1], content: openingText, _thinking: null };
-                        } else {
-                          arr.push({ role: 'assistant', content: openingText, _opening: true });
+                        if (arr.length && arr[arr.length - 1]._opening && !openingText) {
+                          arr[arr.length - 1] = { ...arr[arr.length - 1], content: label || arr[arr.length - 1].content, _thinking: phase };
                         }
                         return arr;
                       });
-                    }
-                  },
-                  on_done: () => {
-                    setTimeout(async () => {
-                      try {
-                        const d2 = await window.api.game.state();
-                        if (d2 && d2.player) {
-                          setGame((g) => {
-                            const next = { ...g };
-                            for (const k of PICK_STATE_KEYS) {
-                              if (k === 'suggestions') { if (d2[k] !== undefined) next[k] = d2[k]; }
-                              else if (d2[k] !== undefined) next[k] = d2[k];
+                    },
+                    on_token: (d) => {
+                      const tok = (d && d.text) || '';
+                      if (tok) {
+                        openingText += tok;
+                        setHistory((h) => {
+                          const arr = Array.isArray(h) ? [...h] : [];
+                          if (arr.length && arr[arr.length - 1].role === 'assistant' && arr[arr.length - 1]._opening) {
+                            arr[arr.length - 1] = { ...arr[arr.length - 1], content: openingText, _thinking: null };
+                          } else {
+                            arr.push({ role: 'assistant', content: openingText, _opening: true });
+                          }
+                          return arr;
+                        });
+                      }
+                    },
+                    on_done: () => {
+                      runRef.current.sse = null;
+                      setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '' }));
+                      setTimeout(async () => {
+                        try {
+                          const d2 = await window.api.game.state();
+                          if (d2 && d2.player) {
+                            setGame((g) => {
+                              const next = { ...g };
+                              for (const k of PICK_STATE_KEYS) {
+                                if (k === 'suggestions') { if (d2[k] !== undefined) next[k] = d2[k]; }
+                                else if (d2[k] !== undefined) next[k] = d2[k];
+                              }
+                              return next;
+                            });
+                          }
+                        } catch (_) {}
+                      }, 300);
+                    },
+                    on_error: () => {
+                      runRef.current.sse = null;
+                      // G9: 断线重试 — 未收到任何 token 时自动重试一次
+                      if (!openingText && !openingRetried) {
+                        // will retry, keep running=true
+                        openingRetried = true;
+                        setTimeout(() => { try { triggerOpening(); } catch (e) { console.warn('[opening] retry error', e); } }, 1000);
+                      } else {
+                        setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '' }));
+                        setHistory((h) => {
+                          const arr = Array.isArray(h) ? [...h] : [];
+                          if (arr.length && arr[arr.length - 1]._opening && arr[arr.length - 1]._thinking) arr.pop();
+                          if (openingText) {
+                            arr.push({ role: 'assistant', content: openingText + '\n\n*[连接断开，内容可能不完整]*', _opening: true });
+                          }
+                          return arr;
+                        });
+                      }
+                    },
+                    onClose: () => {
+                      runRef.current.sse = null;
+                      // G9: onClose 也做同样断线处理
+                      if (!openingText && !openingRetried) {
+                        openingRetried = true;
+                        setTimeout(() => { try { triggerOpening(); } catch (e) { console.warn('[opening] retry (onClose) error', e); } }, 1000);
+                      } else {
+                        setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '' }));
+                        if (openingText) {
+                          setHistory((h) => {
+                            const arr = Array.isArray(h) ? [...h] : [];
+                            const last = arr[arr.length - 1];
+                            if (last && last._opening && last.streaming !== false) {
+                              arr[arr.length - 1] = { ...last, content: (last.content || '') + '\n\n*[连接断开，内容可能不完整]*', _opening: true };
                             }
-                            return next;
+                            return arr;
                           });
                         }
-                      } catch (_) {}
-                    }, 300);
-                  },
-                  on_error: () => {
-                    setHistory((h) => {
-                      const arr = Array.isArray(h) ? [...h] : [];
-                      if (arr.length && arr[arr.length - 1]._opening && arr[arr.length - 1]._thinking) arr.pop();
-                      return arr;
-                    });
-                  },
-                });
+                      }
+                    },
+                  });
+                  // G8: 挂到 runRef,与 chat SSE 保持一致
+                  if (handle && typeof handle === 'object') runRef.current.sse = handle;
+                };
+                triggerOpening();
               } catch (e) { console.warn('[opening] trigger error', e); }
-            }, 800);
+            });
           }
         } catch (_) {}
+      } else if (data && data.save_id != null) {
+        // G6: 存档存在但 player 尚未 setup(新建存档等待开场),标记而非静默降级
+        setStateLoadedNoPlayer(true);
       }
       if (data && data.save_id != null) {
         setActiveSave({ id: data.save_id, title: data.save_title || `存档 #${data.save_id}`, updated_at: data.save_updated_at || '' });
       }
       // 返回是否真正拿到了可玩状态(供 mount 重试判断是否还要再拉一次)。
       return !!(data && data.player);
-    } catch (_) { return false; }
+    } catch (e) {
+      console.warn('[reloadState] error', e);
+      return false;
+    }
   }, []);
 
   const reloadSaves = useCallback(async () => {
@@ -325,12 +379,14 @@ function App() {
     // ("尚未创建存档")。带界限重试直到拿到可玩状态;对 100 并发用户首进游戏的
     // 冷缓存同样有韧性。拿到即停,不过度轮询。
     (async () => {
+      let ok = false;
       for (let i = 0; i < 6 && !cancelled; i++) {
-        const ok = await reloadState();
+        ok = await reloadState();
         await reloadSaves();
         if (ok || cancelled) break;
         await new Promise((r) => setTimeout(r, 400));
       }
+      if (!ok && !cancelled) setRetryFailed(true);
     })();
     return () => { cancelled = true; };
   }, [reloadState, reloadSaves]);
@@ -778,12 +834,33 @@ function App() {
           );
         })()}
         {mountStage >= 1 ? <ChatArea
-          history={history} runState={runState} runStyle={t.runStyle}
+          history={
+            // G6: 存档已加载但 player 还未 setup,显示"等待开场..."占位而非空白
+            (stateLoadedNoPlayer && history.length === 0)
+              ? [{ role: 'assistant', content: '等待开场…', _opening: true, _thinking: 'starting' }]
+              : history
+          } runState={runState} runStyle={t.runStyle}
           narrativeFont={t.narrativeFont} narrativeSize={t.narrativeSize}
           hasError={hasError}
           saveId={(activeSave && activeSave.id) || (game && game._raw && game._raw.save_id) || null}
           onRetry={onRetry} onShowSse={onShowSse}
-        /> : <div className="gc-chat" aria-busy="true" />}
+        /> : (
+          retryFailed ? (
+            <div className="gc-chat" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+              <div style={{ textAlign: 'center', color: 'var(--muted)', lineHeight: 2 }}>
+                <div style={{ marginBottom: 8 }}>无法加载存档，请检查网络或刷新页面。</div>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                  <button className="btn ghost" onClick={() => { setRetryFailed(false); reloadState().then(ok => { if (!ok) setRetryFailed(true); }); reloadSaves(); }}>重试</button>
+                  <button className="btn ghost" onClick={() => { location.href = '/Platform.html#saves'; }}>返回存档列表</button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="gc-chat" aria-busy="true" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--muted)' }}>
+              <span style={{ marginRight: 6 }}>⏳</span>正在初始化…
+            </div>
+          )
+        )}
         <div className="gc-foot-wrap">
           <ConfirmStrip pendingWrites={pendingWrites} pendingQuestions={pendingQuestions} onApprove={onApprove} onReject={onReject} onAnswer={onAnswerQuestion} onDismiss={onDismissConfirm} />
           <Composer

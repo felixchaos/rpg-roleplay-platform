@@ -1250,6 +1250,9 @@ function TopBar({ state, saveUpdatedAt, onOpenTweaks, onOpenSearch, onOpenHistor
   const savedAgo = (saveUpdatedAt && window.__fmt && window.__fmt.ago)
     ? window.__fmt.ago(saveUpdatedAt)
     : (saveUpdatedAt || "—");
+  const scriptName = state?._raw?.save_title || state?.app?.script_name || "";
+  const chapter = state?.app?.current_chapter ? `第${state.app.current_chapter}章` : "";
+  const phase = state?.data?.world?.timeline?.current_phase || state?.app?.current_phase || "";
   return (
     <header className="gc-topbar">
       <div className="gc-topbar-left">
@@ -1259,6 +1262,11 @@ function TopBar({ state, saveUpdatedAt, onOpenTweaks, onOpenSearch, onOpenHistor
           </button>
         )}
         <span className="pill"><span className="dot ok" /> {saveUpdatedAt ? `已存档 · ${savedAgo}` : "尚未保存"}</span>
+      </div>
+      <div className="gc-topbar-center" style={{display:'flex',alignItems:'center',gap:8,flex:1,justifyContent:'center',minWidth:0,fontSize:13,color:'var(--muted)'}}>
+        {scriptName && <span style={{maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{scriptName}</span>}
+        {chapter && <><span>·</span><span>{chapter}</span></>}
+        {phase && <><span>·</span><span style={{color:'var(--text)'}}>{phase}</span></>}
       </div>
       <div className="gc-topbar-right">
         <button className="iconbtn" data-tip="历史回顾" data-tip-pos="below" onClick={onOpenHistory}><Icon name="history" size={14} /></button>

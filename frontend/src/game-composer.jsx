@@ -309,6 +309,30 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
     const mods = api.models || [];
     mods.forEach((m) => {
       if (m && m.enabled !== false) {
+        // 价格 & context 来自 m.pricing（后端 model_probe 注入）
+        const pricing = m.pricing || {};
+        const priceIn = pricing.input != null ? pricing.input : null;
+        const priceOut = pricing.output != null ? pricing.output : null;
+        const ctxRaw = pricing.context != null ? pricing.context : null;
+
+        // 格式化 context window：>= 1M → "1M"，>= 1K → "xxxK"
+        let ctxLabel = null;
+        if (ctxRaw != null && ctxRaw > 0) {
+          if (ctxRaw >= 1000000) ctxLabel = `${Math.round(ctxRaw / 1000000)}M`;
+          else if (ctxRaw >= 1000) ctxLabel = `${Math.round(ctxRaw / 1000)}K`;
+          else ctxLabel = String(ctxRaw);
+        }
+
+        // 格式化价格行："$X / $Y per M" 或 "免费"
+        let priceLabel = null;
+        if (priceIn != null && priceOut != null) {
+          if (priceIn === 0 && priceOut === 0) {
+            priceLabel = "免费";
+          } else {
+            priceLabel = `$${priceIn.toFixed(2)} / $${priceOut.toFixed(2)} per M`;
+          }
+        }
+
         flat.push({
           id: m.id,
           real_name: m.real_name || m.id,
@@ -319,6 +343,8 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
           health: m.health || "untested",
           health_error: m.health_error || "",
           health_latency_ms: m.health_latency_ms,
+          priceLabel,
+          ctxLabel,
         });
       }
     });
@@ -338,6 +364,8 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
         : "");
 
   const pickModel = async (item) => {
+    // M5: 记录调用前的选中态，失败时回滚
+    const prevSelectedKey = selectedKey;
     setBusy(true); setErr("");
     try {
       const r = await window.api.models.select({
@@ -350,8 +378,16 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
       try { window.dispatchEvent(new CustomEvent("game-state-refresh")); } catch (_) {}
       onPick && onPick(item.id);
     } catch (e) {
-      setErr(String(e?.message || e));
-      window.__apiToast?.("切换模型失败", { kind: "danger", detail: String(e?.message || e) });
+      const msg = String(e?.message || e);
+      setErr(msg);
+      // M5: 尝试触发带重试按钮的 toast，回退到普通 danger toast
+      if (window.__apiToast) {
+        window.__apiToast("切换失败，点此重试", {
+          kind: "danger",
+          detail: msg,
+          action: { label: "重试", onClick: () => pickModel(item) },
+        });
+      }
     } finally {
       setBusy(false);
     }
@@ -374,10 +410,13 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
           const key = `${m.api_id}::${m.real_name}`;
           const active = key === selectedKey;
           const unavailable = m.health === "err";
+          // M1: degraded → 橙色
           const dotColor = m.health === "ok" ? "var(--ok)"
+            : m.health === "degraded" ? "#e89b3a"
             : m.health === "err" ? "var(--danger)"
             : "var(--muted)";
           const dotTip = m.health === "ok" ? `可用 · ${m.health_latency_ms}ms`
+            : m.health === "degraded" ? `降级 · ${m.health_latency_ms != null ? m.health_latency_ms + "ms" : "延迟高"}`
             : m.health === "err" ? `不可达 · ${(m.health_error || "").slice(0, 80)}`
             : "尚未探活";
           return (
@@ -401,7 +440,17 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
                     <span className="muted-2" style={{marginLeft: 6, fontSize: 10.5, color: "var(--danger)"}}>不可达</span>
                   )}
                 </div>
-                {m.desc ? <span className="muted" style={{fontSize: 12}}>{m.desc}</span> : null}
+                {(m.desc || m.priceLabel || m.ctxLabel) ? (
+                  <span className="muted" style={{fontSize: 12}}>
+                    {m.desc || null}
+                    {m.priceLabel ? (
+                      <span style={{marginLeft: m.desc ? 6 : 0, opacity: 0.85}}>{m.priceLabel}</span>
+                    ) : null}
+                    {m.ctxLabel ? (
+                      <span style={{marginLeft: (m.desc || m.priceLabel) ? 6 : 0, opacity: 0.7}}>ctx {m.ctxLabel}</span>
+                    ) : null}
+                  </span>
+                ) : null}
                 {active && <Icon name="check" size={14} style={{color: "var(--accent)"}} />}
               </button>
             </li>

@@ -2698,6 +2698,7 @@ function UsagePage() {
   const totalTokIn = Number(totals.input_tokens || 0);
   const totalTokOut = Number(totals.output_tokens || 0);
   const totalCost = Number(totals.cost_usd || 0);
+  const totalCachedIn = Number(totals.cached_input_tokens || 0);
 
   // 按 API 聚合（后端只提供 by_model，自己按 api_id 汇总）
   const byApi = useMemoPL(() => {
@@ -2716,6 +2717,9 @@ function UsagePage() {
 
   const reqSeriesVals = bucketSeries.map(b => Number(b.turns || 0));
   const costSeriesVals = bucketSeries.map(b => Number(b.cost_usd || 0));
+  // U2: token trend series
+  const tokInSeriesVals = bucketSeries.map(b => Number(b.input_tokens || 0));
+  const tokOutSeriesVals = bucketSeries.map(b => Number(b.output_tokens || 0));
 
   return (
     <CSSpaceBetween size="l">
@@ -2760,15 +2764,26 @@ function UsagePage() {
             <CSBox fontSize="display-l" fontWeight="bold">${totalCost.toFixed(2)}</CSBox>
             <CSBox color="text-body-secondary" fontSize="body-s">本窗口累计</CSBox>
           </div>
+          {/* U1: 缓存输入 token */}
           <div>
-            <CSBox variant="awsui-key-label">平均延迟</CSBox>
-            <CSBox fontSize="display-l" fontWeight="bold">—</CSBox>
-            <CSBox color="text-body-secondary" fontSize="body-s">后端未记录</CSBox>
+            <CSBox variant="awsui-key-label">缓存输入 Token</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">{totalCachedIn ? fmtN(totalCachedIn) : "—"}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">
+              {totalTokIn > 0 ? `占输入 ${Math.round(totalCachedIn / totalTokIn * 100)}%` : "—"}
+            </CSBox>
           </div>
+          {/* U1: 缓存节省估算 (cached_input_tokens × pricing.input × 75%) */}
           <div>
-            <CSBox variant="awsui-key-label">错误率</CSBox>
-            <CSBox fontSize="display-l" fontWeight="bold">—</CSBox>
-            <CSBox color="text-body-secondary" fontSize="body-s">后端未记录</CSBox>
+            <CSBox variant="awsui-key-label">缓存节省估算</CSBox>
+            <CSBox fontSize="display-l" fontWeight="bold">
+              {totalCachedIn > 0 && totalTokIn > 0
+                ? `$${(totalCost > 0
+                    ? (totalCachedIn / totalTokIn) * totalCost * 0.75
+                    : 0
+                  ).toFixed(3)}`
+                : "—"}
+            </CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">75% 折扣估算</CSBox>
           </div>
         </CSColumnLayout>
       </CSContainer>
@@ -2780,22 +2795,44 @@ function UsagePage() {
             {loading ? "加载中…" : "近期没有用量记录"}
           </CSBox>
         ) : (
-          <CSColumnLayout columns={2} variant="text-grid">
-            <div>
-              <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
-                <CSBox variant="awsui-key-label">请求</CSBox>
-                <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>{fmtN(reqSeriesVals.reduce((a, x) => a + x, 0))}</span>
+          <CSSpaceBetween size="m">
+            <CSColumnLayout columns={2} variant="text-grid">
+              <div>
+                <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
+                  <CSBox variant="awsui-key-label">请求</CSBox>
+                  <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>{fmtN(reqSeriesVals.reduce((a, x) => a + x, 0))}</span>
+                </div>
+                <Spark values={reqSeriesVals} color="var(--accent)" />
               </div>
-              <Spark values={reqSeriesVals} color="var(--accent)" />
-            </div>
-            <div>
-              <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
-                <CSBox variant="awsui-key-label">成本 $</CSBox>
-                <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>${costSeriesVals.reduce((a, x) => a + x, 0).toFixed(2)}</span>
+              <div>
+                <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
+                  <CSBox variant="awsui-key-label">成本 $</CSBox>
+                  <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>${costSeriesVals.reduce((a, x) => a + x, 0).toFixed(2)}</span>
+                </div>
+                <Spark values={costSeriesVals} color="var(--ok)" />
               </div>
-              <Spark values={costSeriesVals} color="var(--ok)" />
+            </CSColumnLayout>
+            {/* U2: token 趋势 */}
+            <div>
+              <CSBox variant="awsui-key-label" style={{marginBottom: 6}}>Token 趋势</CSBox>
+              <CSColumnLayout columns={2} variant="text-grid">
+                <div>
+                  <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
+                    <span style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>输入 Token</span>
+                    <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>{fmtN(tokInSeriesVals.reduce((a, x) => a + x, 0))}</span>
+                  </div>
+                  <Spark values={tokInSeriesVals} color="#7c9fce" />
+                </div>
+                <div>
+                  <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
+                    <span style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>输出 Token</span>
+                    <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>{fmtN(tokOutSeriesVals.reduce((a, x) => a + x, 0))}</span>
+                  </div>
+                  <Spark values={tokOutSeriesVals} color="#c49b4e" />
+                </div>
+              </CSColumnLayout>
             </div>
-          </CSColumnLayout>
+          </CSSpaceBetween>
         )}
       </CSContainer>
 
@@ -2847,7 +2884,45 @@ function UsagePage() {
       </CSContainer>
 
       {/* Top 模型 */}
-      <CSContainer header={<CSHeader variant="h2" description="按请求数">Top 模型</CSHeader>}>
+      <CSContainer header={
+        <CSHeader
+          variant="h2"
+          description="按请求数"
+          actions={
+            /* U7: 导出 CSV */
+            <CSButton
+              iconName="download"
+              variant="normal"
+              disabled={byModel.length === 0}
+              onClick={() => {
+                const sorted = [...byModel].sort((a, b) => Number(b.turns || 0) - Number(a.turns || 0));
+                const headers = ["排名", "模型", "API", "请求数", "输入Token", "输出Token", "成本"];
+                const rows = sorted.map((m, i) => [
+                  i + 1,
+                  m.model || "",
+                  m.api_id || "",
+                  m.turns || 0,
+                  m.input_tokens || 0,
+                  m.output_tokens || 0,
+                  Number(m.cost_usd || 0).toFixed(4),
+                ]);
+                const csv = [headers, ...rows].map(row =>
+                  row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")
+                ).join("\n");
+                const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a"); a.href = url;
+                a.download = `usage_by_model_${new Date().toISOString().slice(0,10)}.csv`;
+                a.click(); URL.revokeObjectURL(url);
+              }}
+            >
+              导出 CSV
+            </CSButton>
+          }
+        >
+          Top 模型
+        </CSHeader>
+      }>
         <CSTable
           columnDefinitions={[
             {
@@ -2906,7 +2981,43 @@ function UsagePage() {
 
       {/* 最近请求 */}
       <CSContainer header={
-        <CSHeader variant="h2" description="显示最近 20 条 · GET /api/me/usage">
+        <CSHeader
+          variant="h2"
+          description="显示最近 20 条 · GET /api/me/usage"
+          actions={
+            /* U7: 导出 CSV */
+            <CSButton
+              iconName="download"
+              variant="normal"
+              disabled={recent.length === 0}
+              onClick={() => {
+                const headers = ["时间", "API", "模型", "输入Token", "输出Token", "缓存输入", "成本", "上下文used", "上下文max", "存档ID"];
+                const rows = recent.map(r => [
+                  r.at || "",
+                  r.api_id || "",
+                  r.model || "",
+                  r.input_tokens || 0,
+                  r.output_tokens || 0,
+                  r.cached_input_tokens || 0,
+                  Number(r.cost_usd || 0).toFixed(4),
+                  r.context_used || 0,
+                  r.context_max || 0,
+                  r.save_id || r.context_run_id || "",
+                ]);
+                const csv = [headers, ...rows].map(row =>
+                  row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")
+                ).join("\n");
+                const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a"); a.href = url;
+                a.download = `usage_recent_${new Date().toISOString().slice(0,10)}.csv`;
+                a.click(); URL.revokeObjectURL(url);
+              }}
+            >
+              导出 CSV
+            </CSButton>
+          }
+        >
           最近请求
         </CSHeader>
       }>
@@ -2915,7 +3026,19 @@ function UsagePage() {
             {
               id: "at",
               header: "时间",
-              cell: r => <span className="mono">{r.at ? (window.__fmt?.ago(r.at) || r.at) : "—"}</span>,
+              /* U8: 行可点击跳存档 */
+              cell: r => {
+                const saveId = r.save_id || r.context_run_id;
+                const timeStr = r.at ? (window.__fmt?.ago(r.at) || r.at) : "—";
+                return saveId
+                  ? <a
+                      href={`#play?save=${saveId}`}
+                      className="mono"
+                      style={{color: "var(--accent)", textDecoration: "none", cursor: "pointer"}}
+                      title="点击跳转至存档"
+                    >{timeStr}</a>
+                  : <span className="mono">{timeStr}</span>;
+              },
             },
             {
               id: "api",
@@ -2933,14 +3056,35 @@ function UsagePage() {
               cell: r => <span className="mono"><span className="muted">{fmtN(Number(r.input_tokens || 0))}</span> <span className="muted-2">/</span> {fmtN(Number(r.output_tokens || 0))}</span>,
             },
             {
+              /* U1: 缓存输入列 */
+              id: "cached_in",
+              header: "缓存 in",
+              cell: r => <span className="mono muted">{r.cached_input_tokens ? fmtN(Number(r.cached_input_tokens)) : "—"}</span>,
+            },
+            {
               id: "cost",
               header: "成本",
               cell: r => <span className="mono">${Number(r.cost_usd || 0).toFixed(3)}</span>,
             },
             {
+              /* U4: context 进度条 */
               id: "ctx",
               header: "上下文",
-              cell: r => <span className="mono">{Number(r.context_used || 0)} / {Number(r.context_max || 0)}</span>,
+              cell: r => {
+                const used = Number(r.context_used || 0);
+                const max = Number(r.context_max || 0);
+                if (!max) return <span className="mono muted">—</span>;
+                const pct = Math.min(100, Math.round(used / max * 100));
+                const danger = pct >= 90;
+                return (
+                  <div style={{minWidth: 100}}>
+                    <span className="mono" style={{fontSize: 11}}>{fmtN(used)}/{fmtN(max)} ({pct}%)</span>
+                    <div style={{marginTop: 3, height: 3, borderRadius: 999, background: "var(--color-background-control-default)", overflow: "hidden"}}>
+                      <div style={{width: pct + "%", height: "100%", background: danger ? "#d54" : "var(--color-text-accent)", borderRadius: 999}} />
+                    </div>
+                  </div>
+                );
+              },
             },
           ]}
           items={recent}
@@ -3682,6 +3826,20 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
       if (!targetSaveId) { window.__apiToast?.("没有可进入的存档", { kind: "warn", duration: 2400 }); return; }
       // 用户手势内先开空白标签,绕过弹窗拦截
       const gameWin = window.open("about:blank", "_blank");
+      // G1: activate 期间写 loading 骨架,避免黑屏
+      try {
+        if (gameWin && gameWin.document) {
+          gameWin.document.open();
+          gameWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>正在加载存档…</title>
+<style>body{margin:0;background:#121110;color:#c8c2b7;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh}
+.sp{width:36px;height:36px;border:3px solid #333;border-top-color:var(--accent,#c49b4e);border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}</style></head>
+<body><div style="text-align:center"><div class="sp" style="margin:0 auto 18px"></div><p style="opacity:.6;font-size:14px">正在加载存档…</p></div></body></html>`);
+          gameWin.document.close();
+        }
+      } catch (_) {}
+      // G1 helper: escape html for error page
+      const escapeHtml = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
       try {
         if (nodeId != null && nodeId !== "") {
           await window.api.branches.activate({ node_id: nodeId, commit_id: nodeId });
@@ -3689,7 +3847,20 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
           await window.api.saves.activate(targetSaveId);
         }
       } catch (e) {
-        try { if (gameWin) gameWin.close(); } catch (_) {}
+        // G1: 失败时不立即 close 新 tab,改为写错误页
+        try {
+          if (gameWin && gameWin.document) {
+            gameWin.document.open();
+            gameWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>无法打开存档</title>
+<style>body{margin:0;background:#121110;color:#c8c2b7;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh}</style></head>
+<body><div style="text-align:center;padding:80px 20px">
+  <h2 style="color:#d54;margin-bottom:12px">无法打开存档</h2>
+  <p style="opacity:.75;margin-bottom:20px">${escapeHtml(e?.message || "存档已被删除或网络异常")}</p>
+  <p><a href="#saves" style="color:#c49b4e" onclick="window.close();return false;">返回存档列表</a></p>
+</div></body></html>`);
+            gameWin.document.close();
+          }
+        } catch (_) {}
         window.__apiToast?.("切换存档失败", { kind: "danger", detail: e?.message, duration: 3000 });
         return;
       }
