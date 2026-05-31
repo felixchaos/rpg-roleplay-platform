@@ -290,7 +290,6 @@ def register(
         # ── 写 email_verifications (pending) ──────────────────────────────────
         code = generate_email_code(6)
         code_h = hash_email_code(code)
-        from datetime import timezone, timedelta
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 
         # 失效同邮箱之前的未使用记录（防积累），再插入新记录
