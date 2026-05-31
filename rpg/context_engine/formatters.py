@@ -114,15 +114,24 @@ def _wb(entry_id: str, title: str, keys: list[str], priority: int, text: str) ->
 
 
 def _format_card(name: str, card: dict[str, Any]) -> str:
+    """渲染 NPC 卡块给 GM prompt。v28:
+       - 名字行附 full_name(如有,欧美全名);
+       - 在 secrets 前插一行 `背景` = card.background(角色出场前关键经历/动机)。
+    """
     sample = "；".join((card.get("sample_dialogue") or [])[:3])
+    full_name = (card.get("full_name") or "").strip()
+    header = f"【{name}】" if not full_name or full_name == name else f"【{name} / {full_name}】"
     lines = [
-        f"【{name}】",
+        header,
         f"身份：{card.get('identity') or '未知'}",
         f"外貌：{card.get('appearance') or '未记录'}",
         f"性格：{card.get('personality') or '未记录'}",
         f"说话风格：{card.get('speech_style') or '未记录'}",
         f"当前状态：{card.get('current_status') or '未记录'}",
     ]
+    # v28: 背景(出场前关键经历 / 动机)非空才输出,避免空字段占行噪声
+    if card.get("background"):
+        lines.append(f"背景：{card.get('background')}")
     if card.get("secrets"):
         lines.append(f"隐藏信息：{card.get('secrets')}")
     if sample:

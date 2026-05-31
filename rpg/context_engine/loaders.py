@@ -47,19 +47,26 @@ def _load_characters_db(script_id: int | None, book_id: int | None) -> dict[str,
     elif book_id:
         where_clauses.append("book_id = %s")
         params.append(int(book_id))
+    # v28: 显式补 card_type='npc' 过滤(PC/persona 不应进 GM 检索池);
+    # 加 full_name / background / first_revealed_chapter — background 是 v28 核心新增
+    # 给 GM context 看角色前史/出身/动机,first_revealed_chapter 后续可作章节闸。
     sql = (
-        "select name, aliases, identity, appearance, personality, speech_style, "
-        "current_status, secrets, sample_dialogue, token_budget, priority "
+        "select name, full_name, aliases, identity, background, "
+        "appearance, personality, speech_style, current_status, secrets, "
+        "sample_dialogue, token_budget, priority, first_revealed_chapter "
         "from character_cards where " + " and ".join(where_clauses) +
-        " order by priority desc, id asc"
+        " and card_type = 'npc' "
+        "order by priority desc, id asc"
     )
     with connect() as db:
         rows = db.execute(sql, params).fetchall()
     out: dict[str, Any] = {}
     for r in rows:
         out[r["name"]] = {
+            "full_name": r["full_name"] or "",
             "aliases": r["aliases"] or [],
             "identity": r["identity"] or "",
+            "background": r["background"] or "",
             "appearance": r["appearance"] or "",
             "personality": r["personality"] or "",
             "speech_style": r["speech_style"] or "",
@@ -68,6 +75,7 @@ def _load_characters_db(script_id: int | None, book_id: int | None) -> dict[str,
             "sample_dialogue": r["sample_dialogue"] or [],
             "priority": int(r["priority"] or 100),
             "token_budget": int(r["token_budget"] or 450),
+            "first_revealed_chapter": int(r["first_revealed_chapter"] or 0),
         }
     return out
 
