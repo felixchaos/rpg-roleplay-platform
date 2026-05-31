@@ -85,6 +85,55 @@ function useShellChrome(chrome, deps = []) {
   }, deps);
 }
 
+/* ── 页面内「列表↕详情」可拖拽分栏 ───────────────────────────────
+   页面内容流里的上下两栏:上=列表、下=详情,中间一条可拖动的分隔线。
+   - 上栏固定 height=topH + overflow:auto:拖分隔线直接改这个高度(真能拖);
+     内容超出就在容器内滚动,滚动容器加圆角避免直角硬切表格圆角。
+   - 下栏自然高度跟在后面(不强撑视口),整页按需滚动 → 保持 AWS 紧凑密度。
+   - 拖动改 topH,持久化到 localStorage。 */
+function ResizableSplit({ top, bottom, storageKey, initialTop = 240, minTop = 96 }) {
+  const read = () => {
+    if (!storageKey) return initialTop;
+    const v = Number(window.localStorage?.getItem('pl-split-' + storageKey));
+    return v && v > 0 ? v : initialTop;
+  };
+  const [topH, setTopH] = React.useState(read);
+  const onDown = (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const start = topH;
+    const maxTop = Math.round((window.innerHeight || 900) * 0.78);
+    let latest = start;
+    const onMove = (ev) => {
+      let nh = start + (ev.clientY - startY);
+      nh = Math.max(minTop, Math.min(nh, maxTop));
+      latest = nh;
+      setTopH(nh);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      if (storageKey) { try { window.localStorage?.setItem('pl-split-' + storageKey, String(latest)); } catch (_) {} }
+    };
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'row-resize';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+  return (
+    <div className="pl-vsplit">
+      <div className="pl-vsplit-top" style={{ height: topH, overflow: 'auto', borderRadius: 12 }}>{top}</div>
+      <div className="pl-vsplit-handle" onMouseDown={onDown} role="separator" aria-orientation="horizontal" title="拖动调整列表区高度"
+        style={{ height: 16, cursor: 'row-resize', display: 'flex', alignItems: 'center', justifyContent: 'center', touchAction: 'none' }}>
+        <div className="pl-vsplit-grip" style={{ width: 56, height: 5, borderRadius: 3, background: 'var(--line-strong, #4a4540)' }} />
+      </div>
+      <div className="pl-vsplit-bottom">{bottom}</div>
+    </div>
+  );
+}
+
 /* ---------------------------- GENERIC MODALS ------------------- */
 function PromptModal({ open, eyebrow, title, fields = [], submitLabel = "确认", danger = false, hint, onClose, onConfirm, busy = false }) {
   const [values, setValues] = useStatePL({});
@@ -3605,6 +3654,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
   void chrome;
   useEffectPL(() => { setChromeState({}); }, [page]);
 
+
   useEffectPL(() => {
     // 直接启动:激活 runtime(选了节点走 commit 级,否则 save 级)后在新标签页打开
     // Game Console。不再弹 ContinuePicker 二次确认。
@@ -3644,8 +3694,20 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
     <>
       <div id="pl-cs-topnav" className="pl-cs-topbar"
         style={{ position: 'sticky', top: 0, zIndex: 1002, display: 'flex', alignItems: 'center', background: '#131211' }}>
-        {/* 左:logo + 全部功能(AWS 把服务菜单放左侧) */}
-        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, paddingLeft: 18, paddingRight: 6, gap: 14, height: 40 }}>
+        {/* 左:折叠按钮 + logo + 全部功能(AWS 把服务菜单放左侧) */}
+        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, paddingLeft: 14, paddingRight: 6, gap: 12, height: 40 }}>
+          <button
+            onClick={() => setNavOpen((v) => !v)}
+            aria-label={navOpen ? '折叠侧栏' : '展开侧栏'}
+            title={navOpen ? '折叠侧栏' : '展开侧栏'}
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 7, border: 0, background: 'transparent', color: '#c8c2b7', cursor: 'pointer', padding: 0, flexShrink: 0 }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#282623'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+          >
+            <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+              <path d="M2 4h12M2 8h12M2 12h12" />
+            </svg>
+          </button>
           <a href="#profile" onClick={(e) => { e.preventDefault(); setPage('profile'); }}
             style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 16, fontWeight: 600, color: '#ebe7df', textDecoration: 'none', whiteSpace: 'nowrap' }}>
             RPG Roleplay
@@ -3697,6 +3759,8 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
         headerSelector="#pl-cs-topnav"
         navigationOpen={navOpen}
         onNavigationChange={({ detail }) => setNavOpen(detail.open)}
+        navigationTriggerHide
+        navigationWidth={208}
         toolsHide
         navigation={
           <CSSideNavigation
@@ -3722,7 +3786,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
   );
 }
 
-export { PlatformShell, PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData, useShellChrome };
+export { PlatformShell, PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData, useShellChrome, ResizableSplit };
 
 // ──────────────────────────────────────────────────────────────────
 // 以下函数本体已拆分到 pages/cards.jsx / pages/saves.jsx /

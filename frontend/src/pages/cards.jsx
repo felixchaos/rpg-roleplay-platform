@@ -6,7 +6,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { Icon } from '../game-icons.jsx';
-import { fmtBytes } from '../platform-app.jsx';
+import { fmtBytes, ResizableSplit } from '../platform-app.jsx';
 // Cloudscape 原生组件(内容迁移,统一基线对齐)
 import CSHeader from '@cloudscape-design/components/header';
 import CSCards from '@cloudscape-design/components/cards';
@@ -275,6 +275,39 @@ function UserCardsView() {
     } catch (e) { window.__apiToast?.("删除失败", { kind: "danger", detail: e?.message }); }
   };
 
+  const detailEl = selected ? (
+    <CardDetailPanel
+      card={selected}
+      kind="user"
+      onSave={async (vals) => { await onSaveCard({ ...(selected._raw?.id ? { id: selected._raw.id } : { id: selected.id }), ...vals }); }}
+      onDuplicate={() => onDuplicate(selected)}
+      onDelete={() => onDeleteCard(selected)}
+    />
+  ) : null;
+
+  const tableEl = (
+    <CSTable
+      variant="container"
+      trackBy="id"
+      selectionType="single"
+      items={filtered}
+      selectedItems={selected ? [selected] : []}
+      onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedId(x.id); }}
+      onRowClick={({ detail }) => setSelectedId(detail.item.id)}
+      empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{q ? '没有匹配的角色卡' : '还没有用户角色卡,点右上「新增角色卡」开始。'}</CSBox>}
+      columnDefinitions={[
+        { id: 'name', header: '角色卡', cell: (c) => (
+          <div><CSBox fontWeight="bold">{c.name}</CSBox><CSBox fontSize="body-s" color="text-body-secondary">{c.role !== '—' ? c.role : (c.bio || '').slice(0, 40)}</CSBox></div>
+        ) },
+        { id: 'tags', header: '标签', cell: (c) => (c.tags?.length
+          ? <CSSpaceBetween direction="horizontal" size="xxs">{c.tags.slice(0, 4).map((t) => <CSBadge key={t}>{t}</CSBadge>)}</CSSpaceBetween>
+          : <CSBox color="text-status-inactive">—</CSBox>) },
+        { id: 'uses', header: '使用', cell: (c) => `${c.uses} 次` },
+        { id: 'updated', header: '更新', cell: (c) => c.updated },
+      ]}
+    />
+  );
+
   return (
     <>
       <CSSpaceBetween size="l">
@@ -290,47 +323,20 @@ function UserCardsView() {
           }
         >用户角色卡</CSHeader>
 
-        <CSTable
-          variant="container"
-          trackBy="id"
-          selectionType="single"
-          items={filtered}
-          selectedItems={selected ? [selected] : []}
-          onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedId(x.id); }}
-          onRowClick={({ detail }) => setSelectedId(detail.item.id)}
-          filter={
-            <CSSpaceBetween direction="horizontal" size="xs">
-              <div style={{ minWidth: 260 }}>
-                <CSTextFilter filteringText={q} filteringPlaceholder="搜索名称 / 身份 / 标签"
-                  onChange={({ detail }) => setQ(detail.filteringText)} />
-              </div>
-              <CSSegmentedControl selectedId={filter}
-                options={[{ id: 'all', text: '全部' }, { id: 'pinned', text: '置顶' }]}
-                onChange={({ detail }) => setFilter(detail.selectedId)} />
-            </CSSpaceBetween>
-          }
-          empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{q ? '没有匹配的角色卡' : '还没有用户角色卡,点右上「新增角色卡」开始。'}</CSBox>}
-          columnDefinitions={[
-            { id: 'name', header: '角色卡', cell: (c) => (
-              <div><CSBox fontWeight="bold">{c.name}</CSBox><CSBox fontSize="body-s" color="text-body-secondary">{c.role !== '—' ? c.role : (c.bio || '').slice(0, 40)}</CSBox></div>
-            ) },
-            { id: 'tags', header: '标签', cell: (c) => (c.tags?.length
-              ? <CSSpaceBetween direction="horizontal" size="xxs">{c.tags.slice(0, 4).map((t) => <CSBadge key={t}>{t}</CSBadge>)}</CSSpaceBetween>
-              : <CSBox color="text-status-inactive">—</CSBox>) },
-            { id: 'uses', header: '使用', cell: (c) => `${c.uses} 次` },
-            { id: 'updated', header: '更新', cell: (c) => c.updated },
-          ]}
-        />
+        <CSSpaceBetween direction="horizontal" size="xs">
+          <div style={{ minWidth: 260 }}>
+            <CSTextFilter filteringText={q} filteringPlaceholder="搜索名称 / 身份 / 标签"
+              onChange={({ detail }) => setQ(detail.filteringText)} />
+          </div>
+          <CSSegmentedControl selectedId={filter}
+            options={[{ id: 'all', text: '全部' }, { id: 'pinned', text: '置顶' }]}
+            onChange={({ detail }) => setFilter(detail.selectedId)} />
+        </CSSpaceBetween>
 
-        {selected && (
-          <CardDetailPanel
-            card={selected}
-            kind="user"
-            onSave={async (vals) => { await onSaveCard({ ...(selected._raw?.id ? { id: selected._raw.id } : { id: selected.id }), ...vals }); }}
-            onDuplicate={() => onDuplicate(selected)}
-            onDelete={() => onDeleteCard(selected)}
-          />
-        )}
+        {selected
+          ? <ResizableSplit storageKey="cards" top={tableEl} bottom={detailEl} />
+          : tableEl}
+
       </CSSpaceBetween>
       {adding && (
         <CardEditModal

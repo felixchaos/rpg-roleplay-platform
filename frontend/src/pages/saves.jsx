@@ -7,7 +7,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { Icon } from '../game-icons.jsx';
-import { ConfirmModal, useShellChrome } from '../platform-app.jsx';
+import { ConfirmModal, useShellChrome, ResizableSplit } from '../platform-app.jsx';
 import { BranchGraph } from '../branch-graph.jsx';
 import { NewGameWizard } from './new-game-wizard.jsx';
 import {
@@ -312,6 +312,17 @@ function SavesListView() {
         }
       >存档目录</CSHeader>
 
+      <CSSpaceBetween direction="horizontal" size="xs">
+        <div style={{ minWidth: 280 }}>
+          <CSTextFilter filteringText={query} filteringPlaceholder="搜索存档 / 剧本…"
+            onChange={({ detail }) => setQuery(detail.filteringText)} />
+        </div>
+        <CSSelect selectedOption={_SAVE_SORT_OPTS.find((o) => o.value === sortBy)}
+          options={_SAVE_SORT_OPTS} onChange={({ detail }) => setSortBy(detail.selectedOption.value)} />
+      </CSSpaceBetween>
+
+      {(() => {
+      const savesTableEl = (
       <CSTable
         variant="container"
         selectionType="single"
@@ -319,16 +330,6 @@ function SavesListView() {
         selectedItems={selected ? [selected] : []}
         onSelectionChange={({ detail }) => { const s = detail.selectedItems[0]; if (s) { setSelectedId(s.id); setTab('overview'); setRenaming(false); } }}
         onRowClick={({ detail }) => { setSelectedId(detail.item.id); setTab('overview'); setRenaming(false); }}
-        filter={
-          <CSSpaceBetween direction="horizontal" size="xs">
-            <div style={{ minWidth: 280 }}>
-              <CSTextFilter filteringText={query} filteringPlaceholder="搜索存档 / 剧本…"
-                onChange={({ detail }) => setQuery(detail.filteringText)} />
-            </div>
-            <CSSelect selectedOption={_SAVE_SORT_OPTS.find((o) => o.value === sortBy)}
-              options={_SAVE_SORT_OPTS} onChange={({ detail }) => setSortBy(detail.selectedOption.value)} />
-          </CSSpaceBetween>
-        }
         columnDefinitions={[
           { id: 'title', header: '存档', cell: (s) => <CSBox fontWeight="bold">{s.title}</CSBox> },
           { id: 'script', header: '剧本', cell: (s) => scriptTitle(s) },
@@ -341,8 +342,8 @@ function SavesListView() {
         items={visibleSaves}
         empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? '没有匹配的存档' : '还没有存档,点右上「新建存档」开始'}</CSBox>}
       />
-
-      {selected && (
+      );
+      const savesDetailEl = selected ? (
         <CSContainer
           header={
             <CSHeader
@@ -393,7 +394,11 @@ function SavesListView() {
             ]}
           />
         </CSContainer>
-      )}
+      ) : null;
+      return selected
+        ? <ResizableSplit storageKey="saves" top={savesTableEl} bottom={savesDetailEl} />
+        : savesTableEl;
+      })()}
 
       <NewGameModal open={createOpen} onClose={() => setCreateOpen(false)} onConfirm={onCreate} />
       <CSModal

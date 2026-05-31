@@ -150,6 +150,68 @@ textarea { resize: vertical; }
   background-color: #211f1d !important;
 }
 
+/* 隐藏 Cloudscape AppLayout 自带的侧栏折叠/展开触发器(圆形按钮):
+   折叠按钮已自建并放进顶栏品牌名左侧。只隐藏「包含 navigation-toggle 的
+   trigger-wrapper」,不影响 tools / split-panel 的触发器。
+   (navigationTriggerHide 属性在当前 Cloudscape 版本未生效,用 CSS 兜底) */
+[class*="awsui_trigger-wrapper"]:has([class*="awsui_navigation-toggle"]) {
+  display: none !important;
+}
+
+/* 页面内可拖拽分栏(ResizableSplit)的分隔手柄:悬停/拖动时高亮暖色 */
+.pl-vsplit-handle:hover .pl-vsplit-grip,
+.pl-vsplit-handle:active .pl-vsplit-grip {
+  background: var(--accent, #c96442) !important;
+  width: 64px !important;
+}
+
+/* 分栏上栏滚动时:表格列头静止(sticky),只滚动行。
+   Cloudscape 表格内部自带一层 awsui_wrapper(overflow:auto),会和外层
+   .pl-vsplit-top 形成嵌套滚动、让 thead 无法相对外层 sticky;先把内层改成
+   overflow:visible,只保留 .pl-vsplit-top 这一个滚动容器,再把表头钉在顶部。 */
+.pl-vsplit-top [class*="awsui_wrapper"] {
+  overflow: visible !important;
+}
+/* 列头滚动时静止吸顶(搜索/筛选条已移到面板外,面板里只有表格 → top:0 即可) */
+.pl-vsplit-top thead[class*="awsui_thead"] th,
+.pl-vsplit-top thead[class*="awsui_thead"] td {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 5;
+  background-color: #211f1d;
+}
+
+/* ── SideNavigation 项美化 ──────────────────────────────────────
+   Cloudscape 侧栏链接默认是 display:inline、零内边距的「裸文字」,
+   只有文字本身是点击区,观感像没样式、标签挤在一起。
+   做成整行 block + 内边距 + 圆角,悬停/选中有背景,像正经导航行。 */
+[class*="awsui_navigation_"] [class*="awsui_list_l0dv0"] {
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+[class*="awsui_navigation_"] [class*="awsui_list-item_l0dv0"] {
+  margin-bottom: 1px !important;
+}
+[class*="awsui_navigation_"] [class*="awsui_link_l0dv0"] {
+  display: block;
+  padding: 6px 12px;
+  border-radius: 8px;
+  transition: background-color .12s ease;
+}
+[class*="awsui_navigation_"] [class*="awsui_link_l0dv0"]:hover {
+  background-color: #282623;
+}
+[class*="awsui_navigation_"] [class*="awsui_link-active_l0dv0"],
+[class*="awsui_navigation_"] [class*="awsui_link_l0dv0"][aria-current="page"] {
+  background-color: rgba(201, 100, 66, 0.16);
+  font-weight: 600;
+}
+/* 分组标题(header)对齐到同样的左内边距 */
+[class*="awsui_navigation_"] [class*="awsui_header-link_l0dv0"] {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
 /* link —— 不给裸 <a> 全局底边线:会泄漏到 Cloudscape SideNavigation / TopNavigation /
    表格 inline-link 等所有 <a>,产生「莫名其妙的白色横线」。需要下划线效果的内容链接
    显式用 .pl-textlink 或 inline style。Cloudscape 链接走自身样式。 */

@@ -6,7 +6,7 @@
 import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { Icon } from '../game-icons.jsx';
-import { PromptModal, usePlatformData, fmtBytes, fmtN } from '../platform-app.jsx';
+import { PromptModal, usePlatformData, fmtBytes, fmtN, ResizableSplit } from '../platform-app.jsx';
 import { NewGameModal } from './saves.jsx';
 import { ScriptReview } from './script-review.jsx';
 // Cloudscape 原生组件(内容迁移,统一基线对齐)
@@ -622,6 +622,56 @@ function ScriptsListView() {
     : scripts;
   const selected = scripts.find((x) => x.id === selectedId) || null;
 
+  const detailEl = selected ? (
+    <ScriptDetailPanel
+      script={selected}
+      savesCount={platSaves.filter((x) => x.script_id === selected.id).length}
+      embedStatus={embedStatus}
+      onPlay={onPlay}
+      onChapters={setChaptersOpen}
+      onReview={setReviewScript}
+      onEmbed={(s) => triggerEmbed(s.id)}
+      onExport={onExportPack}
+      onToggleVisibility={onToggleVisibility}
+      onDelete={onDelete}
+      onEditOverrides={setOverridesScript}
+    />
+  ) : null;
+
+  const tableEl = (
+    <CSTable
+      variant="container"
+      trackBy="id"
+      selectionType="single"
+      loadingText="加载剧本…"
+      loading={!loaded}
+      items={visibleScripts}
+      selectedItems={selected ? [selected] : []}
+      onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedId(x.id); }}
+      onRowClick={({ detail }) => setSelectedId(detail.item.id)}
+      empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? '没有匹配的剧本' : '还没有剧本,点右上「导入剧本」开始。'}</CSBox>}
+      columnDefinitions={[
+        { id: 'title', header: '剧本', cell: (s) => (
+          <div><CSBox fontWeight="bold">{s.title}</CSBox><CSBox fontSize="body-s" color="text-body-secondary">{s.uid} · 更新 {s.updated_at}</CSBox></div>
+        ) },
+        { id: 'chapters', header: '章节', cell: (s) => (s.chapter_count || 0).toLocaleString() },
+        { id: 'words', header: '字数', cell: (s) => `${((s.word_count || 0) / 10000).toFixed(1)} 万` },
+        { id: 'mode', header: '切分', cell: (s) => s.import_report?.mode_label || '—' },
+        { id: 'problem', header: '异常', cell: (s) => (
+          (!s.import_report?.problem_label || s.import_report.problem_label === '未发现明显异常')
+            ? <CSStatusIndicator type="success">干净</CSStatusIndicator>
+            : <CSStatusIndicator type="warning">{s.import_report.problem_label}</CSStatusIndicator>
+        ) },
+        { id: 'saves', header: '存档', cell: (s) => {
+          const n = platSaves.filter((x) => x.script_id === s.id).length;
+          return n > 0 ? <CSBadge color="green">{n} 个存档</CSBadge> : <CSBox color="text-status-inactive">—</CSBox>;
+        } },
+        { id: 'public', header: '分享', cell: (s) => s.is_public ? <CSStatusIndicator type="success">已公开</CSStatusIndicator> : <CSBox color="text-status-inactive">—</CSBox> },
+        { id: 'go', header: '', cell: (s) => <CSButton variant="inline-link" iconName="caret-right-filled" disabled={busyId === s.id} onClick={() => onPlay(s)}>开始</CSButton> },
+      ]}
+    />
+  );
+
   return (
     <CSSpaceBetween size="l">
       <CSHeader
@@ -637,59 +687,14 @@ function ScriptsListView() {
         }
       >剧本管理</CSHeader>
 
-      <CSTable
-        variant="container"
-        trackBy="id"
-        selectionType="single"
-        loadingText="加载剧本…"
-        loading={!loaded}
-        items={visibleScripts}
-        selectedItems={selected ? [selected] : []}
-        onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedId(x.id); }}
-        onRowClick={({ detail }) => setSelectedId(detail.item.id)}
-        filter={
-          <div style={{ minWidth: 300 }}>
-            <CSTextFilter filteringText={query} filteringPlaceholder="搜索剧本标题…"
-              onChange={({ detail }) => setQuery(detail.filteringText)} />
-          </div>
-        }
-        empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? '没有匹配的剧本' : '还没有剧本,点右上「导入剧本」开始。'}</CSBox>}
-        columnDefinitions={[
-          { id: 'title', header: '剧本', cell: (s) => (
-            <div><CSBox fontWeight="bold">{s.title}</CSBox><CSBox fontSize="body-s" color="text-body-secondary">{s.uid} · 更新 {s.updated_at}</CSBox></div>
-          ) },
-          { id: 'chapters', header: '章节', cell: (s) => (s.chapter_count || 0).toLocaleString() },
-          { id: 'words', header: '字数', cell: (s) => `${((s.word_count || 0) / 10000).toFixed(1)} 万` },
-          { id: 'mode', header: '切分', cell: (s) => s.import_report?.mode_label || '—' },
-          { id: 'problem', header: '异常', cell: (s) => (
-            (!s.import_report?.problem_label || s.import_report.problem_label === '未发现明显异常')
-              ? <CSStatusIndicator type="success">干净</CSStatusIndicator>
-              : <CSStatusIndicator type="warning">{s.import_report.problem_label}</CSStatusIndicator>
-          ) },
-          { id: 'saves', header: '存档', cell: (s) => {
-            const n = platSaves.filter((x) => x.script_id === s.id).length;
-            return n > 0 ? <CSBadge color="green">{n} 个存档</CSBadge> : <CSBox color="text-status-inactive">—</CSBox>;
-          } },
-          { id: 'public', header: '分享', cell: (s) => s.is_public ? <CSStatusIndicator type="success">已公开</CSStatusIndicator> : <CSBox color="text-status-inactive">—</CSBox> },
-          { id: 'go', header: '', cell: (s) => <CSButton variant="inline-link" iconName="caret-right-filled" disabled={busyId === s.id} onClick={() => onPlay(s)}>开始</CSButton> },
-        ]}
-      />
+      <div style={{ maxWidth: 360 }}>
+        <CSTextFilter filteringText={query} filteringPlaceholder="搜索剧本标题…"
+          onChange={({ detail }) => setQuery(detail.filteringText)} />
+      </div>
 
-      {selected && (
-        <ScriptDetailPanel
-          script={selected}
-          savesCount={platSaves.filter((x) => x.script_id === selected.id).length}
-          embedStatus={embedStatus}
-          onPlay={onPlay}
-          onChapters={setChaptersOpen}
-          onReview={setReviewScript}
-          onEmbed={(s) => triggerEmbed(s.id)}
-          onExport={onExportPack}
-          onToggleVisibility={onToggleVisibility}
-          onDelete={onDelete}
-          onEditOverrides={setOverridesScript}
-        />
-      )}
+      {selected
+        ? <ResizableSplit storageKey="scripts" top={tableEl} bottom={detailEl} />
+        : tableEl}
 
       <ChaptersModal script={chaptersOpen} onClose={() => setChaptersOpen(null)} onChanged={reload} />
       <OverridesModal script={overridesScript} onClose={() => setOverridesScript(null)} />

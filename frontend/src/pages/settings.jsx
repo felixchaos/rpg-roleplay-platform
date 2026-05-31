@@ -5,7 +5,7 @@
 import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { Icon } from '../game-icons.jsx';
-import { ConfirmModal, SettingsToggle, useAutoSave, usePlatformData, fmtN } from '../platform-app.jsx';
+import { ConfirmModal, SettingsToggle, useAutoSave, usePlatformData, fmtN, ResizableSplit } from '../platform-app.jsx';
 import { getCaps as _getCapsImported } from '../components/catalog-helpers.js';
 // Cloudscape 原生组件(内容迁移,统一基线对齐)
 import CSContainer from '@cloudscape-design/components/container';
@@ -511,6 +511,27 @@ function ModelsSection() {
   const configuredApis = apis.filter(a => a.key_set);
   const selectedApi = configuredApis.find(a => a.id === selectedApiId) || null;
 
+  const detailEl = selectedApi ? (
+    <ApiDetailPanel
+      api={selectedApi}
+      onEdit={() => setEditingApi(selectedApi.id)}
+      onVisibility={() => setVisibilityApi(selectedApi.id)}
+      onValidate={() => setValidateApi(selectedApi.id)}
+      onToggleModel={(mId) => toggleModel(selectedApi.id, mId)}
+      onRenameModel={(mId, display) => renameModel(selectedApi.id, mId, display)}
+      onDeleteKey={async () => {
+        if (!await window.__confirm({ title: '删除 API Key', message: `删除「${selectedApi.name}」的 API Key?该供应商的模型将不再可用。`, danger: true, confirmText: '删除' })) return;
+        try {
+          await window.api.credentials.set({ api_id: selectedApi.id, api_key: '' });
+          window.__apiToast?.('已删除 API Key', { kind: 'ok' });
+          setSelectedApiId(null);
+          setApis(arr => arr.map(a => a.id === selectedApi.id ? { ...a, key_set: false, key_hint: '—' } : a));
+          if (typeof window.__refreshPlatform === 'function') { try { await window.__refreshPlatform(); } catch (_) {} }
+        } catch (e) { window.__apiToast?.('删除失败', { kind: 'danger', detail: e?.message }); }
+      }}
+    />
+  ) : null;
+
   return (
     <CSSpaceBetween size="l">
       <CSHeader
@@ -530,55 +551,39 @@ function ModelsSection() {
             </CSSpaceBetween>
           </CSBox>
         </CSContainer>
-      ) : (
-        <CSTable
-          variant="container"
-          trackBy="id"
-          selectionType="single"
-          items={configuredApis}
-          selectedItems={selectedApi ? [selectedApi] : []}
-          onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedApiId(x.id); }}
-          onRowClick={({ detail }) => setSelectedApiId(detail.item.id)}
-          columnDefinitions={[
-            { id: 'name', header: '供应商', cell: (a) => (
-              <div><CSBox fontWeight="bold">{a.name}</CSBox><CSBox fontSize="body-s" color="text-body-secondary"><span className="mono">{a.id}</span></CSBox></div>
-            ) },
-            { id: 'key', header: 'API Key', cell: (a) => <span className="mono">•••• {a.key_hint || '已设置'}</span> },
-            { id: 'models', header: '模型', cell: (a) => `${a.models.filter(m => m.enabled).length} / ${a.models.length}` },
-            { id: 'status', header: '状态', cell: (a) => (
-              a.enabled
-                ? <CSStatusIndicator type={a.status === 'online' ? 'success' : 'warning'}>{a.status}</CSStatusIndicator>
-                : <CSStatusIndicator type="stopped">已禁用</CSStatusIndicator>
-            ) },
-            { id: 'go', header: '', cell: (a) => (
-              <span onClick={(e) => e.stopPropagation()}>
-                <SettingsToggle on={a.enabled} set={() => toggleApi(a.id)} />
-              </span>
-            ) },
-          ]}
-        />
-      )}
-
-      {selectedApi && (
-        <ApiDetailPanel
-          api={selectedApi}
-          onEdit={() => setEditingApi(selectedApi.id)}
-          onVisibility={() => setVisibilityApi(selectedApi.id)}
-          onValidate={() => setValidateApi(selectedApi.id)}
-          onToggleModel={(mId) => toggleModel(selectedApi.id, mId)}
-          onRenameModel={(mId, display) => renameModel(selectedApi.id, mId, display)}
-          onDeleteKey={async () => {
-            if (!await window.__confirm({ title: '删除 API Key', message: `删除「${selectedApi.name}」的 API Key?该供应商的模型将不再可用。`, danger: true, confirmText: '删除' })) return;
-            try {
-              await window.api.credentials.set({ api_id: selectedApi.id, api_key: '' });
-              window.__apiToast?.('已删除 API Key', { kind: 'ok' });
-              setSelectedApiId(null);
-              setApis(arr => arr.map(a => a.id === selectedApi.id ? { ...a, key_set: false, key_hint: '—' } : a));
-              if (typeof window.__refreshPlatform === 'function') { try { await window.__refreshPlatform(); } catch (_) {} }
-            } catch (e) { window.__apiToast?.('删除失败', { kind: 'danger', detail: e?.message }); }
-          }}
-        />
-      )}
+      ) : (() => {
+        const apiTableEl = (
+          <CSTable
+            variant="container"
+            trackBy="id"
+            selectionType="single"
+            items={configuredApis}
+            selectedItems={selectedApi ? [selectedApi] : []}
+            onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedApiId(x.id); }}
+            onRowClick={({ detail }) => setSelectedApiId(detail.item.id)}
+            columnDefinitions={[
+              { id: 'name', header: '供应商', cell: (a) => (
+                <div><CSBox fontWeight="bold">{a.name}</CSBox><CSBox fontSize="body-s" color="text-body-secondary"><span className="mono">{a.id}</span></CSBox></div>
+              ) },
+              { id: 'key', header: 'API Key', cell: (a) => <span className="mono">•••• {a.key_hint || '已设置'}</span> },
+              { id: 'models', header: '模型', cell: (a) => `${a.models.filter(m => m.enabled).length} / ${a.models.length}` },
+              { id: 'status', header: '状态', cell: (a) => (
+                a.enabled
+                  ? <CSStatusIndicator type={a.status === 'online' ? 'success' : 'warning'}>{a.status}</CSStatusIndicator>
+                  : <CSStatusIndicator type="stopped">已禁用</CSStatusIndicator>
+              ) },
+              { id: 'go', header: '', cell: (a) => (
+                <span onClick={(e) => e.stopPropagation()}>
+                  <SettingsToggle on={a.enabled} set={() => toggleApi(a.id)} />
+                </span>
+              ) },
+            ]}
+          />
+        );
+        return selectedApi
+          ? <ResizableSplit storageKey="apikey" top={apiTableEl} bottom={detailEl} />
+          : apiTableEl;
+      })()}
 
       <EditApiModal
         open={!!editingApi || addingApi}
@@ -821,7 +826,7 @@ function EditApiModal({ open, api, isNew, onClose, onConfirm }) {
         )}
         {(isCustom || !isNew) && (
           <CSColumnLayout columns={2}>
-            <CSFormField label="ID" description="唯一标识">
+            <CSFormField label="ID（唯一）">
               <CSInput value={form.id} disabled={!isNew}
                 onChange={({ detail }) => setForm((f) => ({ ...f, id: detail.value }))} placeholder="例:openai" />
             </CSFormField>
