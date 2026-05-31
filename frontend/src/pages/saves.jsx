@@ -1783,17 +1783,18 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
                   先去 <a href="#scripts-import" onClick={onClose}>剧本 / 导入</a> 上传一部,然后再回来新建存档。
                 </CSAlert>
               )}
-              <CSContainer header={secHeader('基本信息', '给存档起名,并选择要游玩的剧本。')}>{sec_basic}</CSContainer>
-              <CSContainer header={secHeader('扮演角色', '选择已有玩家身份 / 角色卡,或新建一个。')}>{step1Content}</CSContainer>
-              <CSContainer header={secHeader('出生点', scriptId ? '选择故事开局的时间锚点。' : '先在「基本信息」选好剧本。')}>
+              {/* Cloudscape SpaceBetween 内部用 React.Children.map 加间距,需要 child 显式 key */}
+              <CSContainer key="basic" header={secHeader('基本信息', '给存档起名,并选择要游玩的剧本。')}>{sec_basic}</CSContainer>
+              <CSContainer key="role" header={secHeader('扮演角色', '选择已有玩家身份 / 角色卡,或新建一个。')}>{step1Content}</CSContainer>
+              <CSContainer key="birthpoint" header={secHeader('出生点', scriptId ? '选择故事开局的时间锚点。' : '先在「基本信息」选好剧本。')}>
                 {scriptId
                   ? <BirthpointStep scriptId={scriptId} birthpoint={birthpoint} setBirthpoint={setBirthpoint} />
                   : <CSBox color="text-body-secondary" fontSize="body-s">请先选择剧本。</CSBox>}
               </CSContainer>
-              <CSContainer header={secHeader('初始身份', '基于出生点与所选角色推荐,或自定义。')}>
+              <CSContainer key="identity" header={secHeader('初始身份', '基于出生点与所选角色推荐,或自定义。')}>
                 <IdentityStep scriptId={scriptId} birthpoint={birthpoint} pickedCard={pickedCard} allRoleOptions={allRoleOptions} identity={identity} setIdentity={(id) => setIdentity(id)} />
               </CSContainer>
-              <CSContainer header={secHeader('剧情期望', '告诉 GM 你希望的剧情走向 / 秘密分配。', true)}>{step4Content}</CSContainer>
+              <CSContainer key="intent" header={secHeader('剧情期望', '告诉 GM 你希望的剧情走向 / 秘密分配。', true)}>{step4Content}</CSContainer>
             </CSSpaceBetween>
           </div>
 
