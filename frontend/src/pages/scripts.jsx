@@ -708,12 +708,12 @@ function ScriptsListView() {
       {importOpen && (
         <div style={{ position: 'fixed', top: 53, left: 0, right: 0, bottom: 0, zIndex: 1000, background: 'var(--bg, #1a1817)', overflow: 'auto' }}>
           <div style={{ position: 'sticky', top: 0, zIndex: 3, background: '#131211', borderBottom: '1px solid #36322d' }}>
-            <div style={{ maxWidth: 1040, margin: '0 auto', padding: '13px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+            <div style={{ maxWidth: 1240, margin: '0 auto', padding: '13px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
               <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600, color: '#ebe7df' }}>导入剧本</div>
               <CSButton iconName="close" variant="link" onClick={() => { setImportOpen(false); reload(); }}>关闭</CSButton>
             </div>
           </div>
-          <div style={{ maxWidth: 1040, margin: '0 auto', padding: '20px 24px 80px' }}>
+          <div style={{ maxWidth: 1240, margin: '0 auto', padding: '20px 24px 80px' }}>
             <ScriptsImportView embedded onClose={() => { setImportOpen(false); reload(); }} />
           </div>
         </div>
@@ -1331,42 +1331,39 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
   };
 
   const ruleOpt = SPLIT_RULES.find(r => r.id === rule) || SPLIT_RULES[0];
+  const fileName = (selectedFile && selectedFile.name) || (estimate && estimate.file && estimate.file.name) || null;
+  const jobRunning = job && job.status !== 'done' && job.status !== 'cancelled';
 
   return (
-    <CSSpaceBetween size="l">
-      {/* Persistent job banner — visible even after page refresh */}
-      {job && job.status !== "done" && job.status !== "cancelled" && (
-        <ImportJobBanner job={job} onCancel={cancelJob} />
-      )}
-      {job && (job.status === "done" || job.status === "cancelled") && (
-        <ImportJobResult job={job} onDismiss={dismissJob} onReuse={() => { setJob(null); setEstimate(null); }} />
-      )}
-
-      <CSContainer
-        header={
-          <CSHeader
-            variant={embedded ? 'h2' : 'h1'}
-            description="支持 TXT · MD · 最大 50MB · 先预算章节切分 / Token / 成本,再决定是否导入。整个过程后台运行,刷新不影响。"
-          >{embedded ? '选择文件 · 章节切分预算' : '导入剧本'}</CSHeader>
-        }
-      >
+    <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+      {/* 左:模块平铺 */}
+      <div style={{ flex: 1, minWidth: 0 }}>
         <CSSpaceBetween size="l">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
-            <CSFormField label="标题" description="留空将使用文件名">
-              <CSInput value={title} onChange={({ detail }) => setTitle(detail.value)} placeholder="留空将使用文件名" />
-            </CSFormField>
-            <CSFormField label="切分规则">
-              <CSSelect selectedOption={{ value: ruleOpt.id, label: ruleOpt.label }}
-                options={SPLIT_RULES.map(r => ({ value: r.id, label: r.label }))}
-                onChange={({ detail }) => setRule(detail.selectedOption.value)} />
-            </CSFormField>
-            <CSFormField label="自定义正则或模板" description="仅在『自定义』规则下生效">
-              <CSInput value={pattern} onChange={({ detail }) => setPattern(detail.value)}
-                disabled={rule !== 'custom'} placeholder="例:^第[一二三四五六七八九十百千]+章" />
-            </CSFormField>
-          </div>
+          {jobRunning && <ImportJobBanner job={job} onCancel={cancelJob} />}
+          {job && (job.status === 'done' || job.status === 'cancelled') && (
+            <ImportJobResult job={job} onDismiss={dismissJob} onReuse={() => { setJob(null); setEstimate(null); }} />
+          )}
 
-          <CSFormField label="剧本文件" description="把 TXT / MD 拖到这里,或点击选择本地文件">
+          <CSContainer header={<CSHeader variant="h2" description="给剧本起名并选择章节切分规则。">基本信息</CSHeader>}>
+            <CSColumnLayout columns={2}>
+              <CSFormField label="标题" description="留空将使用文件名">
+                <CSInput value={title} onChange={({ detail }) => setTitle(detail.value)} placeholder="留空将使用文件名" />
+              </CSFormField>
+              <CSFormField label="切分规则">
+                <CSSelect selectedOption={{ value: ruleOpt.id, label: ruleOpt.label }}
+                  options={SPLIT_RULES.map(r => ({ value: r.id, label: r.label }))}
+                  onChange={({ detail }) => setRule(detail.selectedOption.value)} />
+              </CSFormField>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <CSFormField label="自定义正则或模板" description="仅在『自定义』规则下生效">
+                  <CSInput value={pattern} onChange={({ detail }) => setPattern(detail.value)}
+                    disabled={rule !== 'custom'} placeholder="例:^第[一二三四五六七八九十百千]+章" />
+                </CSFormField>
+              </div>
+            </CSColumnLayout>
+          </CSContainer>
+
+          <CSContainer header={<CSHeader variant="h2" description="拖入或选择 TXT / MD,最大 50MB。">剧本文件</CSHeader>}>
             <CSFileUpload
               value={selectedFile ? [selectedFile] : []}
               onChange={({ detail }) => {
@@ -1385,29 +1382,47 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
                 errorIconAriaLabel: '错误',
               }}
             />
-          </CSFormField>
+          </CSContainer>
 
-          <CSBox float="right">
-            <CSSpaceBetween direction="horizontal" size="xs">
-              <CSButton onClick={() => setEstimate(null)} disabled={previewBusy || !estimate}>清空预算</CSButton>
-              <CSButton variant="primary" iconName="search" loading={previewBusy} disabled={!!job} onClick={startEstimate}>
-                {previewBusy ? '计算预算中…' : '预览章节切分'}
-              </CSButton>
-            </CSSpaceBetween>
-          </CSBox>
+          {estimate && !job && (
+            <ImportEstimateView estimate={estimate} rule={rule} hideActions />
+          )}
         </CSSpaceBetween>
-      </CSContainer>
+      </div>
 
-      {/* Estimate / preview section */}
-      {estimate && !job && (
-        <ImportEstimateView
-          estimate={estimate}
-          rule={rule}
-          onCancel={() => setEstimate(null)}
-          onConfirm={startImport}
-        />
-      )}
-    </CSSpaceBetween>
+      {/* 右:概要 + 主操作(sticky) */}
+      <div style={{ width: 320, flexShrink: 0, position: 'sticky', top: 72 }}>
+        <CSContainer header={<CSHeader variant="h2">概要</CSHeader>}>
+          <CSSpaceBetween size="m">
+            <CSKeyValuePairs columns={1} items={[
+              { label: '文件', value: fileName || '—' },
+              { label: '切分规则', value: ruleOpt.label },
+              ...(estimate ? [
+                { label: '章节', value: String(estimate.chapters) },
+                { label: '字数', value: `${(estimate.words / 10000).toFixed(1)} 万` },
+                { label: '预估成本', value: <CSBox color="text-status-info" fontWeight="bold">${estimate.cost.toFixed(2)}</CSBox> },
+                { label: '预计耗时', value: `${Math.round(estimate.totalSec / 60)} 分钟` },
+              ] : []),
+            ]} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {!estimate && (
+                <CSButton variant="primary" iconName="search" loading={previewBusy} disabled={!selectedFile || !!job} onClick={startEstimate}>
+                  {previewBusy ? '计算预算中…' : '预览章节切分'}
+                </CSButton>
+              )}
+              {estimate && !job && (
+                <>
+                  <CSButton variant="primary" iconName="check" onClick={startImport}>确认导入(后台运行)</CSButton>
+                  <CSButton onClick={() => setEstimate(null)}>重新预算</CSButton>
+                </>
+              )}
+              {jobRunning && <CSBox color="text-body-secondary" fontSize="body-s">导入进行中,可关闭窗口稍后回来。</CSBox>}
+              {onClose && <CSButton variant="link" onClick={onClose}>关闭</CSButton>}
+            </div>
+          </CSSpaceBetween>
+        </CSContainer>
+      </div>
+    </div>
   );
 }
 
@@ -1468,20 +1483,20 @@ function ImportJobResult({ job, onDismiss, onReuse }) {
   );
 }
 
-function ImportEstimateView({ estimate, rule, onCancel, onConfirm }) {
+function ImportEstimateView({ estimate, rule, onCancel, onConfirm, hideActions = false }) {
   return (
     <CSContainer
       header={
         <CSHeader
           variant="h2"
           description={`『${estimate.file.name}』 · ${SPLIT_RULES.find(r => r.id === rule)?.label} · 使用模型 ${estimate.model} · 实际消耗取决于章节文本长度`}
-          actions={
+          actions={hideActions ? undefined : (
             <CSSpaceBetween direction="horizontal" size="xs">
               <CSButton onClick={onCancel}>取消</CSButton>
               <CSButton variant="primary" iconName="check" onClick={onConfirm}>确认导入(后台运行)</CSButton>
             </CSSpaceBetween>
-          }
-        >导入预算</CSHeader>
+          )}
+        >章节切分预算</CSHeader>
       }
     >
       <CSSpaceBetween size="l">
