@@ -270,6 +270,10 @@
       importStatus: (sid) => GET(`${API_PREFIX}/scripts/${sid}/import-status`),
       importBudget: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/import-budget`, body || {}),
       importPipeline: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/import-pipeline`, body || {}),
+      // LLM 知识提取(异步 job,复用 import-jobs SSE / streamImport)
+      llmExtract: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/llm-extract`, body || {}),
+      llmExtractEstimate: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/llm-extract/estimate`, body || {}),
+      llmExtractUsage: (sid, days) => GET(`${API_PREFIX}/scripts/${sid}/llm-extract/usage`, days ? { days } : undefined),
       jobStatus: (jobId) => GET(`${API_PREFIX}/scripts/import-jobs/` + jobId),
       jobCancel: (jobId) => POST(`${API_PREFIX}/scripts/import-jobs/` + jobId + "/cancel", {}),
       myJobs: () => GET(`${API_PREFIX}/me/import-jobs`),

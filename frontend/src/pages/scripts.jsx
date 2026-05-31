@@ -26,6 +26,9 @@ import CSFileUpload from '@cloudscape-design/components/file-upload';
 import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSProgressBar from '@cloudscape-design/components/progress-bar';
+import CSModal from '@cloudscape-design/components/modal';
+import CSColumnLayout from '@cloudscape-design/components/column-layout';
+import CSSegmentedControl from '@cloudscape-design/components/segmented-control';
 import CSCards from '@cloudscape-design/components/cards';
 import CSTextFilter from '@cloudscape-design/components/text-filter';
 import CSTabs from '@cloudscape-design/components/tabs';
@@ -160,7 +163,7 @@ function ScriptsPage({ subPage = "list" }) {
    Tabs:概览 / 参数(overrides) / 世界观(worldbook) / NPC 角色卡 / 时间线。
    世界书 / NPC 卡 / 时间线按需懒加载。 */
 function ScriptDetailPanel({ script: s, savesCount, embedStatus,
-  onPlay, onChapters, onReview, onEmbed, onExport, onToggleVisibility, onDelete, onEditOverrides }) {
+  onPlay, onChapters, onReview, onExtract, onEmbed, onExport, onToggleVisibility, onDelete, onEditOverrides }) {
   const [tab, setTab] = useStatePL('overview');
   const [wb, setWb] = useStatePL(null);
   const [npc, setNpc] = useStatePL(null);
@@ -217,14 +220,16 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus,
             <CSButton iconName="status-info" onClick={() => onReview(s)}>KB 复核</CSButton>
             <CSButtonDropdown expandToViewport
               items={[
-                { id: 'embed', text: es?.running ? '向量化中…' : '建立向量索引', iconName: 'gen-ai', disabled: !!es?.running },
+                { id: 'extract', text: '重新提取 KB(LLM)', iconName: 'gen-ai' },
+                { id: 'embed', text: es?.running ? '向量化中…' : '建立向量索引', iconName: 'search', disabled: !!es?.running },
                 { id: 'export', text: '导出剧本包 (zip)', iconName: 'download' },
                 { id: 'visibility', text: s.is_public ? '取消公开分享' : '公开分享到剧本库', iconName: s.is_public ? 'lock-private' : 'share' },
                 { id: 'delete', text: '删除剧本', iconName: 'remove' },
               ]}
               onItemClick={({ detail }) => {
                 const id = detail.id;
-                if (id === 'embed') onEmbed(s);
+                if (id === 'extract') onExtract(s);
+                else if (id === 'embed') onEmbed(s);
                 else if (id === 'export') onExport(s);
                 else if (id === 'visibility') onToggleVisibility(s);
                 else if (id === 'delete') onDelete(s);
@@ -567,6 +572,7 @@ function ScriptsListView() {
   // 改成开 ChaptersModal —— 真正展示章节列表 + 内容预览 + 重命名 + 重切分。
   const [chaptersOpen, setChaptersOpen] = useStatePL(null); // script row
   const [reviewScript, setReviewScript] = useStatePL(null); // Phase E.1: KB 复核 modal
+  const [extractScript, setExtractScript] = useStatePL(null); // LLM 知识提取 modal
 
   // 每行操作下拉项 + 向量化状态(task 51)
   const rowActions = (s) => {
@@ -630,6 +636,7 @@ function ScriptsListView() {
       onPlay={onPlay}
       onChapters={setChaptersOpen}
       onReview={setReviewScript}
+      onExtract={setExtractScript}
       onEmbed={(s) => triggerEmbed(s.id)}
       onExport={onExportPack}
       onToggleVisibility={onToggleVisibility}
@@ -697,6 +704,9 @@ function ScriptsListView() {
         : tableEl}
 
       <ChaptersModal script={chaptersOpen} onClose={() => setChaptersOpen(null)} onChanged={reload} />
+      {extractScript && (
+        <KbExtractModal script={extractScript} onClose={() => setExtractScript(null)} onDone={reload} />
+      )}
       <OverridesModal script={overridesScript} onClose={() => setOverridesScript(null)} />
       {reviewScript && (
         <div className="pl-modal-backdrop" onClick={() => setReviewScript(null)}>
@@ -1494,4 +1504,191 @@ function ImportEstimateView({ estimate, rule, onCancel, onConfirm }) {
   );
 }
 
-export { ScriptsPage, ScriptsListView, ScriptsLibraryView, ChaptersModal, OverridesModal, ScriptsImportView, ImportJobBanner, ImportJobResult, ImportEstimateView, ScriptPreviewModal, ConfidenceBar };
+/* ── LLM 知识提取(异步 job + import-jobs SSE) ─────────────────
+   后端 POST /scripts/{id}/llm-extract 立即返 job_id,kind='llm_extract',
+   复用 streamImport SSE。4 阶段:seed / arc_extract(或 per_chapter)/ resolve / embed。
+   完成后剧本 review_status 自动重置为 unreviewed(需复核)。 */
+const _EXTRACT_STAGE_LABELS = {
+  seed: '种子词表 (Pass 0)',
+  arc_extract: '弧段提取 (Pass 1)',
+  per_chapter: '逐章提取 (Pass 1)',
+  resolve: '实体消歧聚合 (Pass 2)',
+  embed: '嵌入入库 (Pass 3)',
+};
+function _stageIndicator(status) {
+  if (status === 'done') return 'success';
+  if (status === 'running') return 'in-progress';
+  if (status === 'error' || status === 'failed') return 'error';
+  return 'pending';
+}
+
+function KbExtractModal({ script, onClose, onDone }) {
+  const sid = script.id;
+  const [algorithm, setAlgorithm] = useStatePL('arc');
+  const [model, setModel] = useStatePL('deepseek-v4-flash');
+  const [apiId, setApiId] = useStatePL('deepseek');
+  const [targetArcs, setTargetArcs] = useStatePL('40');
+  const [concurrency, setConcurrency] = useStatePL('15');
+  const [authorEra, setAuthorEra] = useStatePL('');
+  const [maxUsd, setMaxUsd] = useStatePL('10');
+  const [estimate, setEstimate] = useStatePL(null);
+  const [estimating, setEstimating] = useStatePL(false);
+  const [job, setJob] = useStatePL(null);
+  const [phase, setPhase] = useStatePL('config'); // config | running | done | error
+  const [err, setErr] = useStatePL('');
+  const esRef = React.useRef(null);
+
+  React.useEffect(() => () => { try { esRef.current && esRef.current.close && esRef.current.close(); } catch (_) {} }, []);
+
+  const cfgBody = () => ({
+    algorithm,
+    model: (model || '').trim() || 'deepseek-v4-flash',
+    api_id: (apiId || '').trim() || 'deepseek',
+    target_arcs: Number(targetArcs) || 40,
+    concurrency: Number(concurrency) || 15,
+    author_era: (authorEra || '').trim(),
+    max_book_usd: Number(maxUsd) || 10,
+  });
+
+  const doEstimate = async () => {
+    setEstimating(true); setEstimate(null); setErr('');
+    try {
+      const r = await window.api.scripts.llmExtractEstimate(sid, cfgBody());
+      setEstimate(r);
+    } catch (e) {
+      setErr((e && (e.payload?.error || e.message)) || '预估失败');
+    } finally { setEstimating(false); }
+  };
+
+  const startStream = (jobId) => {
+    setPhase('running');
+    setJob((j) => j || { kind: 'llm_extract', status: 'running', stages: [], job_id: jobId });
+    esRef.current = window.api.scripts.streamImport(jobId, {
+      on_message: (jb) => { if (jb && typeof jb === 'object') setJob({ ...jb, job_id: jb.job_id || jb.id || jobId }); },
+      on_done: () => {
+        setPhase('done');
+        window.__apiToast?.('KB 提取完成', { kind: 'ok', detail: '剧本已重置为「待复核」', duration: 3200 });
+        try { window.dispatchEvent(new CustomEvent('rpg-scripts-updated')); } catch (_) {}
+        onDone && onDone();
+      },
+      on_error: () => { /* SSE 在 done 后会正常关闭,不当错误处理 */ },
+    });
+  };
+
+  const doStart = async () => {
+    setErr('');
+    try {
+      const r = await window.api.scripts.llmExtract(sid, { ...cfgBody(), confirmed: true });
+      const jid = r && (r.job_id || r.id);
+      if (jid) startStream(jid);
+      else { setErr((r && r.error) || '调度失败'); setPhase('error'); }
+    } catch (e) {
+      const p = (e && e.payload) || {};
+      if (p.job_id) { startStream(p.job_id); return; } // 409 复用已在跑的任务
+      setErr(p.error || (e && e.message) || '调度失败');
+      setPhase('error');
+    }
+  };
+
+  const doCancel = async () => {
+    const jid = job && job.job_id;
+    if (!jid) return;
+    try { await window.api.scripts.jobCancel(jid); window.__apiToast?.('已请求取消(收尾时生效)', { kind: 'warn', duration: 2400 }); } catch (_) {}
+  };
+
+  const stages = (job && Array.isArray(job.stages)) ? job.stages : [];
+  const overall = job ? (job.overall_progress || 0) : 0;
+  const overallTotal = job ? (job.overall_total || 4) : 4;
+  const usage = job && job.usage_actual;
+
+  return (
+    <CSModal visible onDismiss={onClose} size="large"
+      header={`LLM 知识提取 · ${script.title || ('剧本 ' + sid)}`}
+      footer={
+        <CSBox float="right">
+          <CSSpaceBetween direction="horizontal" size="xs">
+            {phase === 'running' && <CSButton onClick={doCancel}>取消任务</CSButton>}
+            <CSButton variant="link" onClick={onClose}>{phase === 'done' ? '关闭' : '关闭(后台继续)'}</CSButton>
+            {phase === 'config' && <CSButton onClick={doEstimate} loading={estimating}>预估成本</CSButton>}
+            {(phase === 'config' || phase === 'error') && <CSButton variant="primary" onClick={doStart}>开始提取</CSButton>}
+          </CSSpaceBetween>
+        </CSBox>
+      }>
+      <CSSpaceBetween size="l">
+        {err && <CSAlert type="error">{err}</CSAlert>}
+
+        {(phase === 'config' || phase === 'error') && (
+          <CSSpaceBetween size="l">
+            <CSBox color="text-body-secondary" fontSize="body-s">
+              重新跑全书 LLM 知识提取(种子词表 → 弧段/逐章提取 → 实体消歧 → 嵌入入库)。
+              后台异步执行,可关闭窗口稍后回来看。完成后剧本会标记为「待复核」。
+            </CSBox>
+            <CSFormField label="算法">
+              <CSSegmentedControl selectedId={algorithm}
+                options={[{ id: 'arc', text: '弧段 (arc,推荐)' }, { id: 'per_chapter', text: '逐章 (per_chapter)' }]}
+                onChange={({ detail }) => setAlgorithm(detail.selectedId)} />
+            </CSFormField>
+            <CSColumnLayout columns={2}>
+              <CSFormField label="模型 ID"><CSInput value={model} onChange={({ detail }) => setModel(detail.value)} /></CSFormField>
+              <CSFormField label="Provider (api_id)"><CSInput value={apiId} onChange={({ detail }) => setApiId(detail.value)} /></CSFormField>
+              {algorithm === 'arc' && (
+                <CSFormField label="弧数目标" description="5–80,受后端钳制"><CSInput type="number" value={targetArcs} onChange={({ detail }) => setTargetArcs(detail.value)} /></CSFormField>
+              )}
+              <CSFormField label="LLM 并发"><CSInput type="number" value={concurrency} onChange={({ detail }) => setConcurrency(detail.value)} /></CSFormField>
+              <CSFormField label="作者纪元(可选)" description="留空自动推断"><CSInput value={authorEra} onChange={({ detail }) => setAuthorEra(detail.value)} /></CSFormField>
+              <CSFormField label="成本硬上限 (USD)"><CSInput type="number" value={maxUsd} onChange={({ detail }) => setMaxUsd(detail.value)} /></CSFormField>
+            </CSColumnLayout>
+
+            {estimate && estimate.ok !== false && (
+              <CSAlert type="info" header="成本预估">
+                <CSKeyValuePairs columns={4} items={[
+                  { label: '预计成本', value: estimate.est_usd != null ? `$${Number(estimate.est_usd).toFixed(3)}` : '—' },
+                  { label: '弧数', value: estimate.arcs != null ? String(estimate.arcs) : '—' },
+                  { label: '输入 tokens', value: estimate.est_input_tokens != null ? Number(estimate.est_input_tokens).toLocaleString() : '—' },
+                  { label: '输出 tokens', value: estimate.est_output_tokens != null ? Number(estimate.est_output_tokens).toLocaleString() : '—' },
+                ]} />
+                {estimate.note && <CSBox fontSize="body-s" color="text-body-secondary" padding={{ top: 'xs' }}>{estimate.note}</CSBox>}
+              </CSAlert>
+            )}
+            {estimate && estimate.ok === false && <CSAlert type="warning">{estimate.error || estimate.note || '无法预估'}</CSAlert>}
+          </CSSpaceBetween>
+        )}
+
+        {(phase === 'running' || phase === 'done') && (
+          <CSSpaceBetween size="m">
+            <CSProgressBar value={overallTotal ? Math.round(overall / overallTotal * 100) : 0}
+              label="总进度" additionalInfo={`阶段 ${overall} / ${overallTotal}`}
+              status={phase === 'done' ? 'success' : 'in-progress'} />
+            <CSSpaceBetween size="xs">
+              {stages.map((st) => (
+                <div key={st.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <CSStatusIndicator type={_stageIndicator(st.status)}>
+                    {st.label || _EXTRACT_STAGE_LABELS[st.id] || st.id}
+                  </CSStatusIndicator>
+                  {st.stage_total ? <CSBox fontSize="body-s" color="text-body-secondary">{st.stage_progress || 0} / {st.stage_total}</CSBox> : null}
+                </div>
+              ))}
+              {stages.length === 0 && <CSBox color="text-body-secondary" fontSize="body-s">正在调度任务…</CSBox>}
+            </CSSpaceBetween>
+            {job && job.budget_estimate && job.budget_estimate.arcs ? (
+              <CSBox fontSize="body-s" color="text-body-secondary">切分为 {job.budget_estimate.arcs} 弧</CSBox>
+            ) : null}
+            {usage && (
+              <CSAlert type={phase === 'done' ? 'success' : 'info'} header="用量">
+                <CSKeyValuePairs columns={4} items={[
+                  { label: '花费', value: usage.usd != null ? `$${Number(usage.usd).toFixed(3)}` : '—' },
+                  { label: '输入 tokens', value: usage.input_tokens != null ? Number(usage.input_tokens).toLocaleString() : '—' },
+                  { label: '输出 tokens', value: usage.output_tokens != null ? Number(usage.output_tokens).toLocaleString() : '—' },
+                  { label: 'LLM 调用', value: usage.llm_calls != null ? String(usage.llm_calls) : '—' },
+                ]} />
+              </CSAlert>
+            )}
+            {phase === 'done' && <CSAlert type="success">提取完成,KB 已更新;剧本已标记「待复核」,可在「KB 复核」检查。</CSAlert>}
+          </CSSpaceBetween>
+        )}
+      </CSSpaceBetween>
+    </CSModal>
+  );
+}
+
+export { ScriptsPage, ScriptsListView, ScriptsLibraryView, ChaptersModal, OverridesModal, ScriptsImportView, ImportJobBanner, ImportJobResult, ImportEstimateView, ScriptPreviewModal, ConfidenceBar, KbExtractModal };
