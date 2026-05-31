@@ -28,6 +28,7 @@ import CSInput from '@cloudscape-design/components/input';
 import CSTextarea from '@cloudscape-design/components/textarea';
 import CSColumnLayout from '@cloudscape-design/components/column-layout';
 import CSToggle from '@cloudscape-design/components/toggle';
+import CSExpandableSection from '@cloudscape-design/components/expandable-section';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 
 /* ── v28 统一 CharacterCardDTO 编辑套件(NPC / PC / persona 三态共用) ──────
@@ -103,10 +104,9 @@ const _SCOPE_OPTS_USER = [
 function CardEditFields({ form, u, kind = 'user' }) {
   const isNpc = kind === 'npc';
   const scopeOpts = isNpc ? _SCOPE_OPTS_NPC : _SCOPE_OPTS_USER;
-  const h2 = (t, d) => <CSHeader variant="h2" description={d}>{t}</CSHeader>;
   return (
     <CSSpaceBetween size="l">
-      <CSContainer header={h2('基本信息', '姓名必填;全名为欧美式全名,别名/标签逗号分隔。')}>
+      <CSExpandableSection variant="container" defaultExpanded headerText="基本信息" headerDescription="姓名必填;全名为欧美式全名,别名/标签逗号分隔。">
         <CSColumnLayout columns={2}>
           <CSFormField label="姓名" constraintText="必填">
             <CSInput value={form.name} onChange={({ detail }) => u('name', detail.value)} autoFocus />
@@ -126,9 +126,9 @@ function CardEditFields({ form, u, kind = 'user' }) {
             </CSFormField>
           </div>
         </CSColumnLayout>
-      </CSContainer>
+      </CSExpandableSection>
 
-      <CSContainer header={h2('人物画像', '前史 / 外貌 / 性格 / 语气 / 当前状态。')}>
+      <CSExpandableSection variant="container" defaultExpanded headerText="人物画像" headerDescription="前史 / 外貌 / 性格 / 语气 / 当前状态。">
         <CSSpaceBetween size="l">
           <CSFormField label="前史 / 背景" description="角色登场前的来历"><CSTextarea rows={3} value={form.background} onChange={({ detail }) => u('background', detail.value)} /></CSFormField>
           <CSFormField label="外貌"><CSTextarea rows={2} value={form.appearance} onChange={({ detail }) => u('appearance', detail.value)} /></CSFormField>
@@ -136,16 +136,16 @@ function CardEditFields({ form, u, kind = 'user' }) {
           <CSFormField label="语气 / 说话风格"><CSTextarea rows={2} value={form.speech_style} onChange={({ detail }) => u('speech_style', detail.value)} /></CSFormField>
           <CSFormField label="当前状态" description="开局时的处境 / 心境"><CSTextarea rows={2} value={form.current_status} onChange={({ detail }) => u('current_status', detail.value)} /></CSFormField>
         </CSSpaceBetween>
-      </CSContainer>
+      </CSExpandableSection>
 
-      <CSContainer header={h2('剧情与对话', '关键秘密仅 GM 可见;示例对话每行一句。')}>
+      <CSExpandableSection variant="container" defaultExpanded headerText="剧情与对话" headerDescription="关键秘密仅 GM 可见;示例对话每行一句。">
         <CSSpaceBetween size="l">
           <CSFormField label="关键秘密" description="GM 可见,不会直接暴露给其他角色"><CSTextarea rows={3} value={form.secrets} onChange={({ detail }) => u('secrets', detail.value)} /></CSFormField>
           <CSFormField label="示例对话" description="每行一句,帮助 GM 模仿口吻"><CSTextarea rows={4} value={form.sample_dialogue} onChange={({ detail }) => u('sample_dialogue', detail.value)} /></CSFormField>
         </CSSpaceBetween>
-      </CSContainer>
+      </CSExpandableSection>
 
-      <CSContainer header={h2('注入参数', '控制该卡在上下文里的注入预算 / 优先级 / 重要度 / 可见范围。')}>
+      <CSExpandableSection variant="container" defaultExpanded headerText="注入参数" headerDescription="控制该卡在上下文里的注入预算 / 优先级 / 重要度 / 可见范围。">
         <CSColumnLayout columns={2}>
           <CSFormField label="重要度" description="0–100,越高越优先被检索注入">
             <CSInput type="number" value={String(form.importance)} onChange={({ detail }) => u('importance', detail.value)} />
@@ -171,7 +171,7 @@ function CardEditFields({ form, u, kind = 'user' }) {
             </CSToggle>
           </CSFormField>
         </CSColumnLayout>
-      </CSContainer>
+      </CSExpandableSection>
     </CSSpaceBetween>
   );
 }
