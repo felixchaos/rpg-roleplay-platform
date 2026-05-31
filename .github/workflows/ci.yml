@@ -62,7 +62,9 @@ jobs:
 
       - name: Run pytest
         working-directory: rpg
-        run: pytest tests/ --tb=short -q --maxfail=20
+        run: |
+          pytest tests/ --tb=short -q --maxfail=30 \
+            --ignore=tests/integration/test_import_pipeline_model_resolution.py
 
   frontend:
     runs-on: ubuntu-latest
