@@ -12,7 +12,17 @@ from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 
 from .db import connect, init_db
-from .security import hash_password, normalize_username, verify_password
+from .security import (
+    hash_password,
+    normalize_email,
+    normalize_username,
+    verify_password,
+    verify_password_with_rehash,
+    generate_email_code,
+    hash_email_code,
+    verify_email_code,
+    calc_age,
+)
 
 SESSION_DAYS = 14
 
@@ -192,8 +202,20 @@ def register(
     password: str,
     display_name: str = "",
     *,
+    email: str = "",
+    birthday=None,
+    invite_code: str | None = None,
+    terms_accepted: bool = False,
+    age_confirmed: bool = False,
     setup_token: str | None = None,
+    ip: str = "",
+    ua: str = "",
 ) -> dict[str, Any]:
+    """两步注册 Phase 1：写 email_verifications pending，发验证码，不创建 users 行。
+
+    Returns:
+        {"ok": True, "pending_verify": True, "email_mask": "u***@example.com"}
+    """
     init_db()
     username = normalize_username(username)
     if not username:
@@ -202,39 +224,260 @@ def register(
         raise ValueError("密码超长")
     if len(password or "") < MIN_PASSWORD_LENGTH:
         raise ValueError(f"密码至少 {MIN_PASSWORD_LENGTH} 位")
-    allow_admin = _bootstrap_admin_allowed(setup_token)
-    pw_hash = hash_password(password)
-    disp = (display_name or username).strip()
+
+    # ── REG-01: email 必填 ────────────────────────────────────────────────────
+    email_norm = normalize_email(email)
+    if not email_norm or "@" not in email_norm:
+        raise ValueError("请填写有效的邮箱地址")
+
+    # ── AGE-01: 18+ 校验 ──────────────────────────────────────────────────────
+    if birthday is None:
+        raise ValueError("请提供出生日期")
+    from datetime import date as _date
+    if isinstance(birthday, str):
+        try:
+            birthday = _date.fromisoformat(birthday)
+        except ValueError as exc:
+            raise ValueError("出生日期格式错误，请使用 YYYY-MM-DD") from exc
+    if calc_age(birthday) < 18:
+        raise ValueError("你必须年满 18 周岁才能注册")
+
     with connect() as db:
+        # ── REG-04: 查 banned_users ───────────────────────────────────────────
+        banned = db.execute(
+            "select 1 from banned_users where email_norm = %s limit 1",
+            (email_norm,),
+        ).fetchone()
+        if banned:
+            raise ValueError("该邮箱已被限制注册")
+
+        # 检查 email 是否已被已验证用户占用
+        existing_email = db.execute(
+            "select 1 from users where lower(email) = %s and email_verified = true limit 1",
+            (email_norm,),
+        ).fetchone()
+        if existing_email:
+            raise ValueError("该邮箱已被注册")
+
+        # 检查 username 是否已占用
+        existing_user = db.execute(
+            "select 1 from users where username = %s limit 1",
+            (username,),
+        ).fetchone()
+        if existing_user:
+            raise ValueError("注册失败，请检查输入后重试")
+
+        # ── 邀请码校验（invite 模式）─────────────────────────────────────────
+        _check_invite_code(db, invite_code)
+
+        # ── 写 email_verifications (pending) ──────────────────────────────────
+        code = generate_email_code(6)
+        code_h = hash_email_code(code)
+        from datetime import timezone, timedelta
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+        # 失效同邮箱之前的未使用记录（防积累），再插入新记录
+        db.execute(
+            "update email_verifications set used_at = now() where lower(email) = %s and used_at is null and purpose = 'register'",
+            (email_norm,),
+        )
+        db.execute(
+            """
+            insert into email_verifications
+              (email, code_hash, purpose, expires_at, ip, ua)
+            values (%s, %s, 'register', %s, %s, %s)
+            """,
+            (email_norm, code_h, expires_at, ip or "", ua or ""),
+        )
+
+    # ── 临时存注册数据到 verif 行的 ua 字段太窄，改用进程内 dict ──────────────
+    # 这里把 pending 注册参数序列化到全局缓存（不跨 worker），多 worker 下须改 Redis
+    import json as _json
+    _PENDING_REGISTER[email_norm] = _json.dumps({
+        "username": username,
+        "password_hash": hash_password(password),
+        "display_name": (display_name or username).strip(),
+        "birthday": birthday.isoformat(),
+        "terms_accepted": terms_accepted,
+        "age_confirmed": age_confirmed,
+        "invite_code": invite_code,
+        "setup_token": setup_token,
+    })
+
+    # ── 发验证码邮件 ──────────────────────────────────────────────────────────
+    from .email import send_verification_email, EmailSendError
+    try:
+        send_verification_email(email_norm, code)
+    except EmailSendError:
+        _log.warning("send_verification_email failed (RESEND unconfigured?); code=%s", code)
+
+    # email mask: u***@example.com
+    local_part, domain_part = email_norm.split("@", 1)
+    mask = local_part[0] + "***@" + domain_part
+
+    return {"ok": True, "pending_verify": True, "email_mask": mask}
+
+
+# 进程内 pending 注册缓存（多 worker 须改 Redis）
+_PENDING_REGISTER: dict[str, str] = {}
+
+
+def _check_invite_code(db, invite_code: str | None) -> None:
+    """若 registration_config.mode == 'invite'，校验 invite_code；否则跳过。
+
+    invite_codes 表 v36 已存在。注意: registration_config 来自 app_config 表
+    如果该表/行不存在则视为 open 模式。
+    """
+    try:
+        cfg_row = db.execute(
+            "select value from app_config where key = 'registration_config' limit 1"
+        ).fetchone()
+    except Exception:
+        cfg_row = None
+
+    mode = "open"
+    if cfg_row:
+        import json as _json
+        try:
+            cfg = _json.loads(cfg_row["value"])
+            mode = cfg.get("mode", "open")
+        except Exception:
+            pass
+
+    if mode != "invite":
+        return
+
+    if not invite_code:
+        raise ValueError("当前平台为邀请制，请提供邀请码")
+
+    row = db.execute(
+        """
+        select * from invite_codes
+        where code = %s
+          and used_by is null
+          and (expires_at is null or expires_at > now())
+        limit 1
+        """,
+        (invite_code,),
+    ).fetchone()
+    if not row:
+        raise ValueError("邀请码无效或已使用")
+
+
+def confirm_email_verification(email: str, code: str) -> tuple[dict[str, Any], str]:
+    """两步注册 Phase 2：验证 code → 创建 users 行 → 颁 session token。
+
+    Returns:
+        (user_dict, session_token)
+    """
+    import json as _json
+    email_norm = normalize_email(email)
+    init_db()
+
+    with connect() as db:
+        # 查有效 verif 记录
+        verif = db.execute(
+            """
+            select * from email_verifications
+            where lower(email) = %s
+              and purpose = 'register'
+              and used_at is null
+              and expires_at > now()
+            order by created_at desc
+            limit 1
+            """,
+            (email_norm,),
+        ).fetchone()
+        if not verif:
+            raise ValueError("验证码已过期或不存在，请重新注册")
+
+        if not verify_email_code(code, verif["code_hash"]):
+            raise ValueError("验证码错误")
+
+        # 标记已使用
+        db.execute(
+            "update email_verifications set used_at = now() where id = %s",
+            (verif["id"],),
+        )
+
+        # 取 pending 注册参数
+        pending_json = _PENDING_REGISTER.pop(email_norm, None)
+        if not pending_json:
+            raise ValueError("注册会话已过期，请重新注册")
+
+        pending = _json.loads(pending_json)
+        allow_admin = _bootstrap_admin_allowed(pending.get("setup_token"))
+
+        from datetime import date as _date, timezone as _tz
+        birthday = _date.fromisoformat(pending["birthday"])
+
         try:
             if allow_admin:
-                # 防 TOCTOU：用条件 INSERT，只有当 users 表中还没有 admin 时才插入 admin 角色
                 row = db.execute(
                     """
-                    insert into users(username, password_hash, display_name, role)
+                    insert into users(
+                      username, password_hash, display_name, role,
+                      email, email_verified, email_verified_at,
+                      birthday, terms_accepted_at, age_confirmed
+                    )
                     values (
-                        %s, %s, %s,
-                        CASE WHEN NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')
-                             THEN 'admin'
-                             ELSE 'user'
-                        END
+                      %s, %s, %s,
+                      CASE WHEN NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')
+                           THEN 'admin' ELSE 'user' END,
+                      %s, true, now(), %s,
+                      CASE WHEN %s THEN now() ELSE null END, %s
                     )
                     returning *
                     """,
-                    (username, pw_hash, disp),
+                    (
+                        pending["username"], pending["password_hash"], pending["display_name"],
+                        email_norm, birthday,
+                        pending.get("terms_accepted", False),
+                        pending.get("age_confirmed", False),
+                    ),
                 ).fetchone()
             else:
                 row = db.execute(
                     """
-                    insert into users(username, password_hash, display_name, role)
-                    values (%s, %s, %s, 'user')
+                    insert into users(
+                      username, password_hash, display_name, role,
+                      email, email_verified, email_verified_at,
+                      birthday, terms_accepted_at, age_confirmed
+                    )
+                    values (%s, %s, %s, 'user', %s, true, now(), %s,
+                            CASE WHEN %s THEN now() ELSE null END, %s)
                     returning *
                     """,
-                    (username, pw_hash, disp),
+                    (
+                        pending["username"], pending["password_hash"], pending["display_name"],
+                        email_norm, birthday,
+                        pending.get("terms_accepted", False),
+                        pending.get("age_confirmed", False),
+                    ),
                 ).fetchone()
         except UniqueViolation as exc:
             raise ValueError("注册失败，请检查输入后重试") from exc
-        return dict(row)
+
+        user = dict(row)
+
+        # 标记 invite_code 已用
+        invite_code = pending.get("invite_code")
+        if invite_code:
+            db.execute(
+                "update invite_codes set used_by = %s, used_at = now() where code = %s and used_by is null",
+                (user["id"], invite_code),
+            )
+
+        # 颁 session
+        token = secrets.token_urlsafe(32)
+        from datetime import timedelta
+        expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
+        db.execute(
+            "insert into sessions(token, token_hash, user_id, expires_at) values (%s, %s, %s, %s)",
+            ("", _hash_token(token), user["id"], expires_at),
+        )
+
+    return user, token
 
 
 def _hash_token(token: str) -> str:
@@ -243,21 +486,44 @@ def _hash_token(token: str) -> str:
 
 
 def login(username: str, password: str, *, ip: str = "") -> tuple[dict[str, Any], str]:
-    """登录，带速率限制 + 失败审计"""
+    """登录，带速率限制 + 失败审计 + email 登录支持 + Argon2id rehash。"""
     if len(password or "") > 1024:
         raise ValueError("密码超长")
     init_db()
     normalized = normalize_username(username)
     _check_rate_limit(ip, normalized)  # 锁定中直接抛 RateLimited
     with connect() as db:
-        # P1-1: 加 deactivated_at IS NULL 过滤，停用账号不允许登录
+        # 先尝试 username，再尝试 email（REG-01：支持邮箱登录）
         row = db.execute(
             "select * from users where username = %s and deactivated_at is null",
             (normalized,),
         ).fetchone()
-        if not row or not verify_password(password, row["password_hash"]):
+        if not row:
+            # 尝试邮箱登录（仅已验证邮箱）
+            email_norm = normalize_email(username)
+            row = db.execute(
+                "select * from users where lower(email) = %s and email_verified = true and deactivated_at is null limit 1",
+                (email_norm,),
+            ).fetchone()
+
+        if not row:
             _record_login_fail(ip, normalized)
             raise ValueError("用户名或密码错误")
+
+        ok, needs_rehash = verify_password_with_rehash(row["password_hash"], password)
+        if not ok:
+            _record_login_fail(ip, normalized)
+            raise ValueError("用户名或密码错误")
+
+        # ENC-08: 老 PBKDF2 账号登录成功后升级为 Argon2id
+        if needs_rehash:
+            new_hash = hash_password(password)
+            db.execute(
+                "update users set password_hash = %s where id = %s",
+                (new_hash, row["id"]),
+            )
+            _log.info("rehashed password to argon2id for user_id=%s", row["id"])
+
         token = secrets.token_urlsafe(32)
         # 使用 timezone-aware UTC 时间, 避免 server 本地时区漂移 session 过期
         expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
@@ -338,3 +604,47 @@ def update_profile(user_id: int, display_name: str, bio: str) -> dict[str, Any]:
             (display_name.strip(), bio.strip(), user_id),
         ).fetchone()
         return dict(row)
+
+
+# ── 重发验证码（限流 1/分钟/email）─────────────────────────────────────────────
+_RESEND_LAST: dict[str, float] = {}  # email_norm → last resend monotonic timestamp
+
+
+def resend_verification_code(email: str, ip: str = "") -> None:
+    """重发验证码。限流：同一邮箱 60 秒内只能触发一次。"""
+    email_norm = normalize_email(email)
+    if not email_norm or "@" not in email_norm:
+        raise ValueError("无效邮箱")
+
+    now = time.monotonic()
+    last = _RESEND_LAST.get(email_norm, 0.0)
+    if now - last < 60:
+        wait = int(60 - (now - last)) + 1
+        raise ValueError(f"发送太频繁，请 {wait} 秒后再试")
+    _RESEND_LAST[email_norm] = now
+
+    # 检查是否有有效 pending 记录（没有则不重发）
+    if email_norm not in _PENDING_REGISTER:
+        raise ValueError("注册会话已过期，请重新注册")
+
+    init_db()
+    with connect() as db:
+        # 废弃旧记录，发新验证码
+        db.execute(
+            "update email_verifications set used_at = now() where lower(email) = %s and used_at is null and purpose = 'register'",
+            (email_norm,),
+        )
+        code = generate_email_code(6)
+        code_h = hash_email_code(code)
+        from datetime import timezone as _tz, timedelta as _td
+        expires_at = datetime.now(_tz.utc) + _td(minutes=10)
+        db.execute(
+            "insert into email_verifications (email, code_hash, purpose, expires_at, ip) values (%s, %s, 'register', %s, %s)",
+            (email_norm, code_h, expires_at, ip or ""),
+        )
+
+    from .email import send_verification_email, EmailSendError
+    try:
+        send_verification_email(email_norm, code)
+    except EmailSendError:
+        _log.warning("resend_verification_code: email send failed for %s; code=%s", email_norm, code)

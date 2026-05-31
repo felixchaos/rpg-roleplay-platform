@@ -909,6 +909,130 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         # users 表加 ban_reason 字段（管理员备注）
         "alter table users add column if not exists ban_reason text not null default ''",
     ]),
+    (37, "compliance_p0_schema", [
+        # ── A. users 表增量 ──────────────────────────────────────────────────
+        # email / 验证状态 / 生日 / 条款确认
+        # 注意: birthday 是 date 类型(不是 text),与 profile_extras.birthday(text) 并存
+        # password_hash 列保留，Argon2id 通过格式前缀区分 argon2id$... vs pbkdf2$...
+        "alter table users add column if not exists email text not null default ''",
+        "alter table users add column if not exists email_verified boolean not null default false",
+        "alter table users add column if not exists email_verified_at timestamptz",
+        "alter table users add column if not exists birthday date",
+        "alter table users add column if not exists terms_accepted_at timestamptz",
+        "alter table users add column if not exists age_confirmed boolean not null default false",
+        # partial unique index: email 唯一但允许多个 '' (历史空值行)
+        """
+        create unique index if not exists idx_users_email_unique
+          on users(lower(email)) where length(email) > 0
+        """,
+
+        # ── B. 邮箱验证表 (REG-02) ───────────────────────────────────────────
+        """
+        create table if not exists email_verifications (
+          id bigserial primary key,
+          email text not null,
+          code_hash text not null,
+          user_id bigint references users(id) on delete cascade,
+          purpose text not null default 'register',
+          expires_at timestamptz not null,
+          used_at timestamptz,
+          created_at timestamptz not null default now(),
+          ip text default '',
+          ua text default ''
+        )
+        """,
+        "create index if not exists idx_email_verif_email on email_verifications(lower(email))",
+        "create index if not exists idx_email_verif_expires on email_verifications(expires_at) where used_at is null",
+
+        # ── C. Splash 启动页 ack (AGE-02) ────────────────────────────────────
+        """
+        create table if not exists splash_acks (
+          user_id bigint not null references users(id) on delete cascade,
+          splash_version text not null,
+          acked_at timestamptz not null default now(),
+          dob_confirmed date,
+          ip text default '',
+          primary key (user_id, splash_version)
+        )
+        """,
+
+        # ── D. 账户硬删队列 (LC-01) ──────────────────────────────────────────
+        """
+        create table if not exists account_delete_queue (
+          user_id bigint primary key references users(id) on delete cascade,
+          requested_at timestamptz not null default now(),
+          scheduled_hard_delete_at timestamptz not null,
+          requested_by_ip text default '',
+          reason text default 'user-requested',
+          completed_at timestamptz
+        )
+        """,
+        "create index if not exists idx_acc_del_due on account_delete_queue(scheduled_hard_delete_at) where completed_at is null",
+
+        # ── E. DMCA 累犯 (DM-04) ─────────────────────────────────────────────
+        """
+        create table if not exists dmca_strikes (
+          user_id bigint primary key references users(id) on delete cascade,
+          strike_count int not null default 0,
+          last_strike_at timestamptz,
+          last_strike_reason text default '',
+          terminated_at timestamptz
+        )
+        """,
+
+        # ── F. 封禁注册表 (REG-04) ────────────────────────────────────────────
+        """
+        create table if not exists banned_users (
+          id bigserial primary key,
+          email_norm text default '',
+          ip text default '',
+          fingerprint_hash text default '',
+          reason text not null default '',
+          banned_at timestamptz not null default now(),
+          source_user_id bigint
+        )
+        """,
+        "create index if not exists idx_banned_email on banned_users(email_norm) where length(email_norm) > 0",
+        "create index if not exists idx_banned_ip on banned_users(ip) where length(ip) > 0",
+
+        # ── G. 反馈相关 (FB-03/07/09) ────────────────────────────────────────
+        """
+        create table if not exists feedback (
+          id bigserial primary key,
+          user_id bigint not null references users(id) on delete cascade,
+          free_text text not null default '',
+          excerpts_jsonb jsonb not null default '[]'::jsonb,
+          consent_token text not null default '',
+          ua text default '',
+          app_version text default '',
+          ip text default '',
+          reviewed_at timestamptz,
+          review_decision text,
+          created_at timestamptz not null default now()
+        )
+        """,
+        "create index if not exists idx_feedback_created on feedback(created_at)",
+        "create index if not exists idx_feedback_unrev on feedback(reviewed_at) where reviewed_at is null",
+        """
+        create table if not exists feedback_consent_log (
+          id bigserial primary key,
+          user_id bigint not null references users(id) on delete cascade,
+          consent_text_hash text not null,
+          app_version text default '',
+          ip text default '',
+          created_at timestamptz not null default now()
+        )
+        """,
+
+        # ── H. trgm 索引补全 ──────────────────────────────────────────────────
+        # pg_trgm 扩展已在 init_db() 中通过 create extension if not exists pg_trgm 安装
+        # 表名 worldbook_entries / scripts / character_cards / memories 均已在 init.py 确认
+        "create index if not exists idx_worldbook_title_trgm on worldbook_entries using gin (title gin_trgm_ops) where length(title) > 0",
+        "create index if not exists idx_worldbook_content_trgm on worldbook_entries using gin (content gin_trgm_ops) where length(content) > 0",
+        "create index if not exists idx_scripts_title_trgm on scripts using gin (title gin_trgm_ops)",
+        "create index if not exists idx_scripts_desc_trgm on scripts using gin (description gin_trgm_ops) where length(description) > 0",
+        "create index if not exists idx_cards_name_trgm on character_cards using gin (name gin_trgm_ops)",
+    ]),
 ]
 
 

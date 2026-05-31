@@ -11,6 +11,7 @@ lifespan 需在 FastAPI() 构造时传入:
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -25,6 +26,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from core.config import (
     cors_max_age as _cors_max_age,
     gzip_min_bytes as _gzip_min_bytes,
+    trusted_proxies as _trusted_proxies,
 )
 from core.logging import get_logger
 
@@ -201,13 +203,113 @@ async def _internal_error_handler(request: Request, exc: Exception):
 
 # ── Middleware ────────────────────────────────────────────────────────────
 
+# dev 模式:RPG_ENV=dev 或 RPG_DEPLOYMENT_MODE=local/desktop/self_hosted
+def _is_dev_mode() -> bool:
+    """True 表示本地开发环境,放宽部分安全策略(如 CSP connect-src、cookie Secure)。"""
+    rpg_env = os.getenv("RPG_ENV", "").strip().lower()
+    if rpg_env == "dev":
+        return True
+    if rpg_env == "prod":
+        return False
+    mode = os.getenv("RPG_DEPLOYMENT_MODE", "local").strip().lower()
+    return mode in _LOCAL_MODES
+
+
+def _build_csp(dev: bool) -> str:
+    """构建 Content-Security-Policy 策略字符串。
+
+    dev 模式:connect-src 放宽以支持 Vite HMR ws://localhost:*。
+    prod 模式:仅允许已知第三方 AI API 端点。
+    """
+    if dev:
+        connect_src = (
+            "'self' ws: wss: http://localhost:* http://127.0.0.1:* "
+            "ws://localhost:* ws://127.0.0.1:* "
+            "api.anthropic.com api.openai.com api.deepseek.com "
+            "dashscope.aliyuncs.com ark.cn-beijing.volces.com "
+            "api.minimax.chat hunyuan.tencentcloudapi.com"
+        )
+    else:
+        connect_src = (
+            "'self' wss: https: "
+            "api.anthropic.com api.openai.com api.deepseek.com "
+            "dashscope.aliyuncs.com ark.cn-beijing.volces.com "
+            "api.minimax.chat hunyuan.tencentcloudapi.com"
+        )
+    directives = [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+        "style-src 'self' 'unsafe-inline' fonts.googleapis.com",
+        "font-src 'self' fonts.gstatic.com",
+        "img-src 'self' data: https:",
+        f"connect-src {connect_src}",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+    ]
+    return "; ".join(directives)
+
+
 # 安全 headers 默认值（HTML/static 资源加；JSON API 不强加 CSP, 避免破坏 fetch 路径）
 _DEFAULT_HTML_SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "SAMEORIGIN",
+    "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
+
+# Cookie 白名单前缀（只允许 rpg_session / rpg.lang 这两种 cookie）
+_ALLOWED_COOKIE_PREFIXES = ("rpg_session", "rpg.lang")
+
+
+def _is_https(request: Request) -> bool:
+    """判断请求是否经由 HTTPS,支持 nginx/CF 反代场景。
+
+    仅当 RPG_TRUSTED_PROXIES 已设置时才信任 X-Forwarded-Proto,防止客户端伪造。
+    """
+    if request.url.scheme == "https":
+        return True
+    if _trusted_proxies():
+        xfp = request.headers.get("x-forwarded-proto", "").lower()
+        return xfp == "https"
+    return False
+
+
+def _harden_set_cookie(header_value: str, is_https: bool) -> str:
+    """强制 Set-Cookie 头带上 Secure/HttpOnly/SameSite=Lax 属性。
+
+    仅处理 rpg_ / rpg. 前缀的 cookie(白名单范围)。
+    """
+    # 解析 cookie 名
+    parts = [p.strip() for p in header_value.split(";")]
+    if not parts:
+        return header_value
+    name_value = parts[0]
+    cookie_name = name_value.split("=", 1)[0].strip()
+    is_allowed = any(
+        cookie_name == allowed or cookie_name.startswith(allowed)
+        for allowed in _ALLOWED_COOKIE_PREFIXES
+    )
+    if not is_allowed:
+        return header_value  # 非白名单 cookie,不干预
+
+    attrs_lower = {p.strip().lower().split("=")[0] for p in parts[1:]}
+    result = list(parts)
+
+    # HttpOnly
+    if "httponly" not in attrs_lower:
+        result.append("HttpOnly")
+    # SameSite=Lax
+    if "samesite" not in attrs_lower:
+        result.append("SameSite=Lax")
+    # Secure(仅 HTTPS 模式)
+    if is_https and "secure" not in attrs_lower:
+        result.append("Secure")
+    # Max-Age=14天(1209600秒),若未设置
+    if "max-age" not in attrs_lower and "expires" not in attrs_lower:
+        result.append("Max-Age=1209600")
+
+    return "; ".join(result)
 
 
 async def api_contract_middleware(request: Request, call_next):
@@ -229,6 +331,20 @@ async def api_contract_middleware(request: Request, call_next):
                 headers={"X-API-Version": API_VERSION, "X-Request-ID": request_id, "Cache-Control": "no-store"},
             )
     response = await call_next(request)
+
+    # ── GPC 确认 ─────────────────────────────────────────────────────────
+    from platform_app.privacy import annotate_gpc
+    annotate_gpc(request, response)
+
+    # ── Cookie 强化 ───────────────────────────────────────────────────────
+    _https = _is_https(request)
+    raw_cookies = response.headers.getlist("set-cookie")
+    if raw_cookies:
+        # MutableHeaders 不支持 multi-value 逐条替换,需先删后加
+        del response.headers["set-cookie"]
+        for cookie_val in raw_cookies:
+            response.headers.append("set-cookie", _harden_set_cookie(cookie_val, _https))
+
     if original_path.startswith("/api"):
         response.headers.setdefault("Cache-Control", "no-store")
         response.headers["X-API-Version"] = API_VERSION
@@ -238,8 +354,11 @@ async def api_contract_middleware(request: Request, call_next):
         # 非 /api 路径（HTML/JS/CSS/static）默认加安全 headers
         for k, v in _DEFAULT_HTML_SECURITY_HEADERS.items():
             response.headers.setdefault(k, v)
-        # HSTS 仅当请求是 https 时加（避免 http dev server 困惑）
-        if request.url.scheme == "https":
+        # CSP 仅加在 HTML 路径上(非 API)
+        _dev = _is_dev_mode()
+        response.headers.setdefault("Content-Security-Policy", _build_csp(_dev))
+        # HSTS — 反代友好,读 X-Forwarded-Proto
+        if _https:
             response.headers.setdefault(
                 "Strict-Transport-Security",
                 "max-age=31536000; includeSubDomains",

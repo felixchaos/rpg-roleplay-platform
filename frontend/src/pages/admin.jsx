@@ -1226,6 +1226,797 @@ export function AdminSecurityPage() {
 }
 
 /* ─────────────────────────────────────────────────────────────────
+   页面 9：AdminDmcaTakedownsPage — DMCA 下架队列
+   ───────────────────────────────────────────────────────────────── */
+export function AdminDmcaTakedownsPage() {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [err, setErr] = React.useState(null);
+  const [statusFilter, setStatusFilter] = React.useState({ value: 'open', label: '待处理' });
+  const [actionModal, setActionModal] = React.useState(null); // { item, action }
+  const [actionReason, setActionReason] = React.useState('');
+  const [actionBusy, setActionBusy] = React.useState(false);
+  const [createModal, setCreateModal] = React.useState(false);
+  const [createForm, setCreateForm] = React.useState({
+    complainant_name: '', complainant_email: '', infringing_url: '', original_work_desc: '',
+  });
+  const [creating, setCreating] = React.useState(false);
+  const [counterModal, setCounterModal] = React.useState(null); // item
+  const [counterNotes, setCounterNotes] = React.useState('');
+  const [counterBusy, setCounterBusy] = React.useState(false);
+
+  const statusOptions = [
+    { value: 'open', label: '待处理' },
+    { value: 'counter_received', label: '已收反通知' },
+    { value: 'closed', label: '已下架' },
+    { value: 'restored', label: '已恢复' },
+    { value: 'rejected', label: '已拒绝' },
+    { value: 'all', label: '全部' },
+  ];
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await window.api.admin.dmcaTakedowns({ status: statusFilter.value });
+      setItems(res.takedowns || res || []);
+    } catch (e) {
+      setErr(e?.message || '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [statusFilter.value]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  async function doAction() {
+    if (!actionModal) return;
+    setActionBusy(true);
+    try {
+      await window.api.admin.dmcaTakedownAction(actionModal.item.id, {
+        action: actionModal.action, reason: actionReason,
+      });
+      window.toast?.('操作成功', { kind: 'ok' });
+      setActionModal(null);
+      setActionReason('');
+      load();
+    } catch (e) {
+      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function doCreate() {
+    setCreating(true);
+    try {
+      await window.api.admin.dmcaTakedownCreate(createForm);
+      window.toast?.('通知已录入', { kind: 'ok' });
+      setCreateModal(false);
+      setCreateForm({ complainant_name: '', complainant_email: '', infringing_url: '', original_work_desc: '' });
+      load();
+    } catch (e) {
+      window.toast?.('录入失败: ' + (e?.message || ''), { kind: 'danger' });
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function doCounter() {
+    if (!counterModal) return;
+    setCounterBusy(true);
+    try {
+      await window.api.admin.dmcaTakedownCounter(counterModal.id, { notes: counterNotes });
+      window.toast?.('反通知已录入，10 天计时开始', { kind: 'ok' });
+      setCounterModal(null);
+      setCounterNotes('');
+      load();
+    } catch (e) {
+      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+    } finally {
+      setCounterBusy(false);
+    }
+  }
+
+  function statusBadge(s) {
+    const map = {
+      open: ['red', '待处理'],
+      counter_received: ['blue', '已收反通知'],
+      closed: ['grey', '已下架'],
+      restored: ['green', '已恢复'],
+      rejected: ['severity-low', '已拒绝'],
+    };
+    const [color, label] = map[s] || ['grey', s];
+    return <CSBadge color={color}>{label}</CSBadge>;
+  }
+
+  return (
+    <CSSpaceBetween size="l">
+      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      <CSContainer
+        header={
+          <CSHeader
+            variant="h2"
+            description="DMCA 下架通知队列管理（DM-01..04）"
+            actions={
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSSelect
+                  selectedOption={statusFilter}
+                  options={statusOptions}
+                  onChange={({ detail }) => setStatusFilter(detail.selectedOption)}
+                />
+                <CSButton variant="primary" onClick={() => setCreateModal(true)}>录入通知</CSButton>
+                <CSButton iconName="refresh" onClick={load} loading={loading}>刷新</CSButton>
+              </CSSpaceBetween>
+            }
+          >
+            DMCA 下架队列
+          </CSHeader>
+        }
+      >
+        <CSTable
+          loading={loading}
+          loadingText="加载中…"
+          trackBy="id"
+          items={items}
+          empty={<CSBox textAlign="center" color="inherit">暂无记录</CSBox>}
+          columnDefinitions={[
+            { id: 'id', header: 'ID', cell: (r) => `#${r.id}`, width: 60 },
+            { id: 'complainant', header: '举报人', cell: (r) => `${r.complainant_name || '—'} <${r.complainant_email || '—'}>` },
+            { id: 'url', header: '涉嫌内容 URL', cell: (r) => <a href={r.infringing_url} target="_blank" rel="noopener noreferrer" style={{ wordBreak: 'break-all' }}>{r.infringing_url}</a> },
+            { id: 'status', header: '状态', cell: (r) => statusBadge(r.status) },
+            { id: 'restore_after', header: '可恢复时间', cell: (r) => r.restore_after ? fmtTime(r.restore_after) : '—' },
+            { id: 'created_at', header: '录入时间', cell: (r) => fmtTime(r.created_at) },
+            {
+              id: 'actions', header: '操作',
+              cell: (r) => (
+                <CSSpaceBetween direction="horizontal" size="xs">
+                  {r.status === 'open' && (
+                    <>
+                      <CSButton variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'takedown' }); setActionReason(''); }}>下架</CSButton>
+                      <CSButton variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'reject' }); setActionReason(''); }}>拒绝</CSButton>
+                    </>
+                  )}
+                  {r.status === 'closed' && (
+                    <>
+                      <CSButton variant="inline-link" onClick={() => { setCounterModal(r); setCounterNotes(''); }}>录入反通知</CSButton>
+                    </>
+                  )}
+                  {r.status === 'counter_received' && r.restore_after && new Date(r.restore_after) <= new Date() && (
+                    <CSButton variant="inline-link" onClick={() => { setActionModal({ item: r, action: 'restore' }); setActionReason('反通知期满，无禁令，恢复内容'); }}>恢复</CSButton>
+                  )}
+                </CSSpaceBetween>
+              ),
+            },
+          ]}
+        />
+      </CSContainer>
+
+      {/* 录入通知 Modal */}
+      {createModal && (
+        <CSModal
+          visible
+          onDismiss={() => !creating && setCreateModal(false)}
+          header="录入 DMCA 通知"
+          footer={
+            <CSBox float="right">
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSButton variant="link" disabled={creating} onClick={() => setCreateModal(false)}>取消</CSButton>
+                <CSButton variant="primary" loading={creating} onClick={doCreate}>提交</CSButton>
+              </CSSpaceBetween>
+            </CSBox>
+          }
+        >
+          <CSSpaceBetween size="m">
+            <CSFormField label="举报人姓名 *">
+              <CSInput value={createForm.complainant_name} onChange={({ detail }) => setCreateForm((f) => ({ ...f, complainant_name: detail.value }))} />
+            </CSFormField>
+            <CSFormField label="举报人邮箱 *">
+              <CSInput value={createForm.complainant_email} onChange={({ detail }) => setCreateForm((f) => ({ ...f, complainant_email: detail.value }))} type="email" />
+            </CSFormField>
+            <CSFormField label="涉嫌侵权内容 URL *">
+              <CSInput value={createForm.infringing_url} onChange={({ detail }) => setCreateForm((f) => ({ ...f, infringing_url: detail.value }))} placeholder="https://play.stellatrix.icu/..." />
+            </CSFormField>
+            <CSFormField label="原始作品描述">
+              <CSTextarea value={createForm.original_work_desc} onChange={({ detail }) => setCreateForm((f) => ({ ...f, original_work_desc: detail.value }))} rows={3} />
+            </CSFormField>
+          </CSSpaceBetween>
+        </CSModal>
+      )}
+
+      {/* 执行操作 Modal */}
+      {actionModal && (
+        <CSModal
+          visible
+          onDismiss={() => !actionBusy && setActionModal(null)}
+          header={`确认操作：${actionModal.action === 'takedown' ? '下架' : actionModal.action === 'restore' ? '恢复' : '拒绝'}`}
+          footer={
+            <CSBox float="right">
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSButton variant="link" disabled={actionBusy} onClick={() => setActionModal(null)}>取消</CSButton>
+                <CSButton variant="primary" loading={actionBusy} onClick={doAction}>确认</CSButton>
+              </CSSpaceBetween>
+            </CSBox>
+          }
+        >
+          <CSSpaceBetween size="m">
+            <CSBox>记录 #{actionModal.item.id} — {actionModal.item.infringing_url}</CSBox>
+            <CSFormField label="原因（必填）">
+              <CSTextarea value={actionReason} onChange={({ detail }) => setActionReason(detail.value)} rows={3} placeholder="填写操作原因，将记录入审计日志…" />
+            </CSFormField>
+          </CSSpaceBetween>
+        </CSModal>
+      )}
+
+      {/* 录入反通知 Modal */}
+      {counterModal && (
+        <CSModal
+          visible
+          onDismiss={() => !counterBusy && setCounterModal(null)}
+          header="录入反通知"
+          footer={
+            <CSBox float="right">
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSButton variant="link" disabled={counterBusy} onClick={() => setCounterModal(null)}>取消</CSButton>
+                <CSButton variant="primary" loading={counterBusy} onClick={doCounter}>提交</CSButton>
+              </CSSpaceBetween>
+            </CSBox>
+          }
+        >
+          <CSSpaceBetween size="m">
+            <CSAlert type="info">录入后系统将自动设置 10 天恢复计时。请确保已将反通知转发给原举报人。</CSAlert>
+            <CSFormField label="反通知备注">
+              <CSTextarea value={counterNotes} onChange={({ detail }) => setCounterNotes(detail.value)} rows={3} placeholder="反通知摘要、接收时间等…" />
+            </CSFormField>
+          </CSSpaceBetween>
+        </CSModal>
+      )}
+    </CSSpaceBetween>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   页面 10：AdminDmcaStrikesPage — Strike 管理
+   ───────────────────────────────────────────────────────────────── */
+export function AdminDmcaStrikesPage() {
+  const [users, setUsers] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [err, setErr] = React.useState(null);
+  const [strikeModal, setStrikeModal] = React.useState(null); // { user_id, username }
+  const [strikeReason, setStrikeReason] = React.useState('');
+  const [strikeBusy, setStrikeBusy] = React.useState(false);
+  const [expanded, setExpanded] = React.useState(null); // user_id
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await window.api.admin.dmcaStrikes();
+      setUsers(res.users || []);
+    } catch (e) {
+      setErr(e?.message || '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  async function doStrike() {
+    if (!strikeModal) return;
+    setStrikeBusy(true);
+    try {
+      const res = await window.api.admin.dmcaStrikeIncrement(strikeModal.user_id, { reason: strikeReason });
+      if (res.terminate) {
+        window.toast?.(`Strike 已添加（共 ${res.strike_count} 次），账户已自动终止`, { kind: 'danger', duration: 8000 });
+      } else {
+        window.toast?.(`Strike 已添加（共 ${res.strike_count}/${3} 次）`, { kind: 'ok' });
+      }
+      setStrikeModal(null);
+      setStrikeReason('');
+      load();
+    } catch (e) {
+      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+    } finally {
+      setStrikeBusy(false);
+    }
+  }
+
+  function strikeBadgeColor(count) {
+    if (count >= 3) return 'red';
+    if (count === 2) return 'severity-medium';
+    return 'severity-low';
+  }
+
+  return (
+    <CSSpaceBetween size="l">
+      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      <CSContainer
+        header={
+          <CSHeader
+            variant="h2"
+            description="DMCA 累犯记录（3 次触发账户终止）"
+            actions={<CSButton iconName="refresh" onClick={load} loading={loading}>刷新</CSButton>}
+          >
+            Strike 记录
+          </CSHeader>
+        }
+      >
+        <CSTable
+          loading={loading}
+          loadingText="加载中…"
+          trackBy="user_id"
+          items={users}
+          empty={<CSBox textAlign="center" color="inherit">暂无 Strike 记录</CSBox>}
+          columnDefinitions={[
+            { id: 'username', header: '用户名', cell: (u) => u.username || `uid:${u.user_id}` },
+            {
+              id: 'count', header: 'Strike 数',
+              cell: (u) => <CSBadge color={strikeBadgeColor(u.strike_count)}>{u.strike_count} / 3</CSBadge>,
+            },
+            {
+              id: 'history', header: '历史记录',
+              cell: (u) => {
+                const isExp = expanded === u.user_id;
+                return (
+                  <div>
+                    <CSButton variant="inline-link" onClick={() => setExpanded(isExp ? null : u.user_id)}>
+                      {isExp ? '收起' : '展开'}
+                    </CSButton>
+                    {isExp && (
+                      <ul style={{ margin: '4px 0 0', paddingLeft: 16, fontSize: 12 }}>
+                        {(u.strikes || []).map((s) => (
+                          <li key={s.id}><code>{fmtTime(s.created_at)}</code> — {s.reason}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              },
+            },
+            {
+              id: 'actions', header: '操作',
+              cell: (u) => u.strike_count < 3 && (
+                <CSButton
+                  variant="inline-link"
+                  onClick={() => { setStrikeModal({ user_id: u.user_id, username: u.username }); setStrikeReason(''); }}
+                >
+                  +Strike
+                </CSButton>
+              ),
+            },
+          ]}
+        />
+      </CSContainer>
+
+      {strikeModal && (
+        <CSModal
+          visible
+          onDismiss={() => !strikeBusy && setStrikeModal(null)}
+          header={`添加 Strike — ${strikeModal.username}`}
+          footer={
+            <CSBox float="right">
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSButton variant="link" disabled={strikeBusy} onClick={() => setStrikeModal(null)}>取消</CSButton>
+                <CSButton variant="primary" loading={strikeBusy} onClick={doStrike}>确认添加</CSButton>
+              </CSSpaceBetween>
+            </CSBox>
+          }
+        >
+          <CSSpaceBetween size="m">
+            <CSAlert type="warning">添加 Strike 后，若达到 3 次将自动触发账户终止流程，请谨慎操作。</CSAlert>
+            <CSFormField label="原因（必填，关联 Takedown ID）">
+              <CSTextarea
+                value={strikeReason}
+                onChange={({ detail }) => setStrikeReason(detail.value)}
+                rows={3}
+                placeholder="如：DMCA 下架记录 #42，合规通知已验证"
+              />
+            </CSFormField>
+          </CSSpaceBetween>
+        </CSModal>
+      )}
+    </CSSpaceBetween>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   页面 11：AdminCsamReportsPage — CSAM 举报管理
+   ───────────────────────────────────────────────────────────────── */
+export function AdminCsamReportsPage() {
+  const [reports, setReports] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [err, setErr] = React.useState(null);
+  const [statusFilter, setStatusFilter] = React.useState({ value: 'pending', label: '待决定' });
+  const [decisionModal, setDecisionModal] = React.useState(null); // report item
+  const [decisionForm, setDecisionForm] = React.useState({ decision: '', notes: '' });
+  const [deciding, setDeciding] = React.useState(false);
+
+  const statusOptions = [
+    { value: 'pending', label: '待决定' },
+    { value: 'decided', label: '已决定' },
+    { value: 'all', label: '全部' },
+  ];
+  const decisionOptions = [
+    { value: 'founded', label: '成立（founded）— 触发上报流程' },
+    { value: 'escalate', label: '升级（escalate）— 需更高级别确认' },
+    { value: 'unfounded', label: '不成立（unfounded）— 关闭' },
+  ];
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await window.api.admin.csamReports({ status: statusFilter.value });
+      setReports(res.reports || []);
+    } catch (e) {
+      setErr(e?.message || '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [statusFilter.value]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  async function doDecision() {
+    if (!decisionModal || !decisionForm.decision) return;
+    setDeciding(true);
+    try {
+      await window.api.admin.csamDecision(decisionModal.id, decisionForm);
+      window.toast?.('决定已记录', { kind: 'ok' });
+      setDecisionModal(null);
+      setDecisionForm({ decision: '', notes: '' });
+      load();
+    } catch (e) {
+      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+    } finally {
+      setDeciding(false);
+    }
+  }
+
+  function decisionBadge(d) {
+    const map = { founded: ['red', '成立'], escalate: ['blue', '已升级'], unfounded: ['grey', '不成立'] };
+    const [color, label] = map[d] || ['grey', d || '—'];
+    return <CSBadge color={color}>{label}</CSBadge>;
+  }
+
+  return (
+    <CSSpaceBetween size="l">
+      {err && <CSAlert type="error" header="加载失败">{err}</CSAlert>}
+      <CSAlert type="warning">
+        CSAM 举报涉及极度敏感内容，请严格遵守 <code>docs/runbooks/csam.md</code> 规程。
+        处理人须限制知情范围，不得直接查看内容本体。
+      </CSAlert>
+      <CSContainer
+        header={
+          <CSHeader
+            variant="h2"
+            description="CSAM 内容举报记录与决定（CSAM-01..04）"
+            actions={
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSSelect
+                  selectedOption={statusFilter}
+                  options={statusOptions}
+                  onChange={({ detail }) => setStatusFilter(detail.selectedOption)}
+                />
+                <CSButton iconName="refresh" onClick={load} loading={loading}>刷新</CSButton>
+              </CSSpaceBetween>
+            }
+          >
+            CSAM 举报
+          </CSHeader>
+        }
+      >
+        <CSTable
+          loading={loading}
+          loadingText="加载中…"
+          trackBy="id"
+          items={reports}
+          empty={<CSBox textAlign="center" color="inherit">暂无举报记录</CSBox>}
+          columnDefinitions={[
+            { id: 'id', header: 'ID', cell: (r) => `#${r.id}`, width: 60 },
+            { id: 'reported_user', header: '被举报用户', cell: (r) => r.reported_username || `uid:${r.reported_user_id}` || '—' },
+            { id: 'content_url', header: '内容', cell: (r) => r.content_url || '（描述见详情）' },
+            { id: 'status', header: '状态', cell: (r) => r.status === 'pending' ? <CSBadge color="red">待决定</CSBadge> : <CSBadge color="grey">已决定</CSBadge> },
+            { id: 'decision', header: '决定', cell: (r) => r.decision ? decisionBadge(r.decision) : '—' },
+            { id: 'cybertip', header: 'CyberTip ID', cell: (r) => r.cybertip_report_id || '—' },
+            { id: 'created_at', header: '举报时间', cell: (r) => fmtTime(r.created_at) },
+            {
+              id: 'actions', header: '操作',
+              cell: (r) => r.status === 'pending' && (
+                <CSButton
+                  variant="inline-link"
+                  onClick={() => { setDecisionModal(r); setDecisionForm({ decision: '', notes: '' }); }}
+                >
+                  标记决定
+                </CSButton>
+              ),
+            },
+          ]}
+        />
+      </CSContainer>
+
+      {decisionModal && (
+        <CSModal
+          visible
+          onDismiss={() => !deciding && setDecisionModal(null)}
+          header={`标记决定 — 举报 #${decisionModal.id}`}
+          footer={
+            <CSBox float="right">
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSButton variant="link" disabled={deciding} onClick={() => setDecisionModal(null)}>取消</CSButton>
+                <CSButton variant="primary" loading={deciding} disabled={!decisionForm.decision} onClick={doDecision}>确认</CSButton>
+              </CSSpaceBetween>
+            </CSBox>
+          }
+        >
+          <CSSpaceBetween size="m">
+            <CSAlert type="warning">
+              选择"成立"后，请立即按 csam.md 流程向 NCMEC CyberTipline 上报，并暂停被举报账户。
+            </CSAlert>
+            <CSFormField label="决定 *">
+              <CSSelect
+                selectedOption={decisionOptions.find((o) => o.value === decisionForm.decision) || { value: '', label: '请选择…' }}
+                options={decisionOptions}
+                onChange={({ detail }) => setDecisionForm((f) => ({ ...f, decision: detail.selectedOption.value }))}
+              />
+            </CSFormField>
+            <CSFormField label="备注">
+              <CSTextarea
+                value={decisionForm.notes}
+                onChange={({ detail }) => setDecisionForm((f) => ({ ...f, notes: detail.value }))}
+                rows={3}
+                placeholder="决定依据、CyberTipline 报告 ID 等…"
+              />
+            </CSFormField>
+          </CSSpaceBetween>
+        </CSModal>
+      )}
+    </CSSpaceBetween>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   页面 12：AdminAupActionsPage — AUP 账户暂停 / 解封 / 终止
+   ───────────────────────────────────────────────────────────────── */
+export function AdminAupActionsPage() {
+  const [search, setSearch] = React.useState('');
+  const [users, setUsers] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+  const [suspendModal, setSuspendModal] = React.useState(null); // user
+  const [suspendForm, setSuspendForm] = React.useState({ reason: '', duration_days: '' });
+  const [suspendBusy, setSuspendBusy] = React.useState(false);
+  const [unsuspendModal, setUnsuspendModal] = React.useState(null); // user
+  const [unsuspendBusy, setUnsuspendBusy] = React.useState(false);
+  const [terminateModal, setTerminateModal] = React.useState(null); // user
+  const [terminateReason, setTerminateReason] = React.useState('');
+  const [terminateBusy, setTerminateBusy] = React.useState(false);
+
+  async function doSearch() {
+    if (!search.trim()) return;
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await window.api.admin.users({ search, limit: 20 });
+      setUsers(res.users || []);
+    } catch (e) {
+      setErr(e?.message || '搜索失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function doSuspend() {
+    if (!suspendModal) return;
+    setSuspendBusy(true);
+    try {
+      const body = { reason: suspendForm.reason };
+      if (suspendForm.duration_days) body.duration_days = Number(suspendForm.duration_days);
+      await window.api.admin.suspendUser(suspendModal.id, body);
+      window.toast?.('账户已暂停', { kind: 'ok' });
+      setSuspendModal(null);
+      setSuspendForm({ reason: '', duration_days: '' });
+      doSearch();
+    } catch (e) {
+      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+    } finally {
+      setSuspendBusy(false);
+    }
+  }
+
+  async function doUnsuspend() {
+    if (!unsuspendModal) return;
+    setUnsuspendBusy(true);
+    try {
+      await window.api.admin.unsuspendUser(unsuspendModal.id);
+      window.toast?.('账户已解封', { kind: 'ok' });
+      setUnsuspendModal(null);
+      doSearch();
+    } catch (e) {
+      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+    } finally {
+      setUnsuspendBusy(false);
+    }
+  }
+
+  async function doTerminate() {
+    if (!terminateModal) return;
+    setTerminateBusy(true);
+    try {
+      await window.api.admin.terminateUser(terminateModal.id, { reason: terminateReason });
+      window.toast?.('账户已永久终止', { kind: 'ok', duration: 6000 });
+      setTerminateModal(null);
+      setTerminateReason('');
+      doSearch();
+    } catch (e) {
+      window.toast?.('操作失败: ' + (e?.message || ''), { kind: 'danger' });
+    } finally {
+      setTerminateBusy(false);
+    }
+  }
+
+  return (
+    <CSSpaceBetween size="l">
+      {err && <CSAlert type="error" header="错误">{err}</CSAlert>}
+
+      <CSContainer
+        header={
+          <CSHeader variant="h2" description="AUP 暂停、解封、永久终止（AUP-01..03）">
+            AUP 账户处置
+          </CSHeader>
+        }
+      >
+        <CSSpaceBetween size="m">
+          <CSAlert type="info">搜索用户后，可对其执行暂停（临时）、解封或永久终止操作。终止操作不可逆。</CSAlert>
+          <CSSpaceBetween direction="horizontal" size="xs">
+            <CSInput
+              placeholder="搜索用户名或显示名…"
+              value={search}
+              onChange={({ detail }) => setSearch(detail.value)}
+              onKeyDown={({ detail }) => { if (detail.key === 'Enter') doSearch(); }}
+              type="search"
+            />
+            <CSButton onClick={doSearch} loading={loading}>搜索</CSButton>
+          </CSSpaceBetween>
+
+          {users.length > 0 && (
+            <CSTable
+              loading={loading}
+              loadingText="加载中…"
+              trackBy="id"
+              items={users}
+              empty={<CSBox textAlign="center" color="inherit">无结果</CSBox>}
+              columnDefinitions={[
+                { id: 'username', header: '用户名', cell: (u) => u.username },
+                { id: 'display_name', header: '显示名', cell: (u) => u.display_name || '—' },
+                {
+                  id: 'status', header: '状态',
+                  cell: (u) => u.deactivated_at
+                    ? <CSStatusIndicator type="stopped">已暂停/停用</CSStatusIndicator>
+                    : <CSStatusIndicator type="success">正常</CSStatusIndicator>,
+                },
+                { id: 'ban_reason', header: '封禁原因', cell: (u) => u.ban_reason || '—' },
+                {
+                  id: 'actions', header: '操作',
+                  cell: (u) => (
+                    <CSSpaceBetween direction="horizontal" size="xs">
+                      {!u.deactivated_at && (
+                        <CSButton
+                          variant="inline-link"
+                          onClick={() => { setSuspendModal(u); setSuspendForm({ reason: '', duration_days: '' }); }}
+                        >
+                          暂停
+                        </CSButton>
+                      )}
+                      {u.deactivated_at && (
+                        <CSButton variant="inline-link" onClick={() => setUnsuspendModal(u)}>解封</CSButton>
+                      )}
+                      <CSButton
+                        variant="inline-link"
+                        onClick={() => { setTerminateModal(u); setTerminateReason(''); }}
+                      >
+                        永久终止
+                      </CSButton>
+                    </CSSpaceBetween>
+                  ),
+                },
+              ]}
+            />
+          )}
+        </CSSpaceBetween>
+      </CSContainer>
+
+      {/* 暂停 Modal */}
+      {suspendModal && (
+        <CSModal
+          visible
+          onDismiss={() => !suspendBusy && setSuspendModal(null)}
+          header={`暂停账户 — ${suspendModal.username}`}
+          footer={
+            <CSBox float="right">
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSButton variant="link" disabled={suspendBusy} onClick={() => setSuspendModal(null)}>取消</CSButton>
+                <CSButton variant="primary" loading={suspendBusy} disabled={!suspendForm.reason} onClick={doSuspend}>确认暂停</CSButton>
+              </CSSpaceBetween>
+            </CSBox>
+          }
+        >
+          <CSSpaceBetween size="m">
+            <CSFormField label="暂停原因 *">
+              <CSTextarea
+                value={suspendForm.reason}
+                onChange={({ detail }) => setSuspendForm((f) => ({ ...f, reason: detail.value }))}
+                rows={3}
+                placeholder="违规行为描述，将通过邮件告知用户…"
+              />
+            </CSFormField>
+            <CSFormField label="暂停天数（留空 = 无限期）">
+              <CSInput
+                type="number"
+                value={suspendForm.duration_days}
+                onChange={({ detail }) => setSuspendForm((f) => ({ ...f, duration_days: detail.value }))}
+                placeholder="如：7、30、90"
+              />
+            </CSFormField>
+          </CSSpaceBetween>
+        </CSModal>
+      )}
+
+      {/* 解封 Modal */}
+      {unsuspendModal && (
+        <CSModal
+          visible
+          onDismiss={() => !unsuspendBusy && setUnsuspendModal(null)}
+          header={`解封账户 — ${unsuspendModal.username}`}
+          footer={
+            <CSBox float="right">
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSButton variant="link" disabled={unsuspendBusy} onClick={() => setUnsuspendModal(null)}>取消</CSButton>
+                <CSButton variant="primary" loading={unsuspendBusy} onClick={doUnsuspend}>确认解封</CSButton>
+              </CSSpaceBetween>
+            </CSBox>
+          }
+        >
+          <CSBox>确认解封账户 <strong>{unsuspendModal.username}</strong>？解封后该用户可正常登录。</CSBox>
+        </CSModal>
+      )}
+
+      {/* 终止 Modal */}
+      {terminateModal && (
+        <CSModal
+          visible
+          onDismiss={() => !terminateBusy && setTerminateModal(null)}
+          header={`永久终止账户 — ${terminateModal.username}`}
+          footer={
+            <CSBox float="right">
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSButton variant="link" disabled={terminateBusy} onClick={() => setTerminateModal(null)}>取消</CSButton>
+                <CSButton variant="primary" loading={terminateBusy} disabled={!terminateReason} onClick={doTerminate}>确认终止（不可逆）</CSButton>
+              </CSSpaceBetween>
+            </CSBox>
+          }
+        >
+          <CSSpaceBetween size="m">
+            <CSAlert type="error">
+              永久终止将撤销所有 Session、写入封禁名单，且无法撤销。请确认已完成申诉审查程序。
+            </CSAlert>
+            <CSFormField label="终止原因 *">
+              <CSTextarea
+                value={terminateReason}
+                onChange={({ detail }) => setTerminateReason(detail.value)}
+                rows={3}
+                placeholder="如：AUP 累犯，已完成申诉流程（Ticket #XXXX）"
+              />
+            </CSFormField>
+          </CSSpaceBetween>
+        </CSModal>
+      )}
+    </CSSpaceBetween>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
    页面 8：AdminMaintenancePage — 维护模式
    ───────────────────────────────────────────────────────────────── */
 export function AdminMaintenancePage() {

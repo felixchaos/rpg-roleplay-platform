@@ -28,6 +28,10 @@ import { ScriptsPage } from '../pages/scripts.jsx';
 import { CardsPage } from '../pages/cards.jsx';
 import { SettingsPage } from '../pages/settings.jsx';
 
+// AGE-02: splash gate
+import AdultSplash from '../components/AdultSplash.jsx';
+const SPLASH_VERSION = 'v1.0-2026-05-31';
+
 // ── 挂载 ──
 
 function ComingSoon({ title, desc }) {
@@ -76,6 +80,15 @@ function PlatformApp() {
   const t = TWEAK_DEFAULTS;
   const [page, setPage] = useState(parsePageFromHash() || t.startPage || 'profile');
   const [assistantOpen, setAssistantOpen] = useState(false);
+  // AGE-02: null = loading, true = need splash, false = no splash needed
+  const [splashNeeded, setSplashNeeded] = useState(null);
+
+  useEffect(() => {
+    fetch('/api/me/splash/status', { credentials: 'same-origin' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((j) => { setSplashNeeded(j ? !j.acked : false); })
+      .catch(() => { setSplashNeeded(false); });
+  }, []);
 
   useEffect(() => {
     const bus = window.__capBus || (window.__capBus = new EventTarget());
@@ -154,6 +167,12 @@ function PlatformApp() {
       >
         {body}
       </PlatformShellCS>
+      {splashNeeded && (
+        <AdultSplash
+          splashVersion={SPLASH_VERSION}
+          onAcked={() => setSplashNeeded(false)}
+        />
+      )}
     </>
   );
 }

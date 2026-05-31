@@ -92,13 +92,18 @@ function SchemaField({ field, value, onChange }) {
 }
 
 function LoginApp() {
-  const [mode, setMode] = useState('login');     // 'login' | 'register'
+  const [mode, setMode] = useState('login');     // 'login' | 'register' | 'verify'
   const [schema, setSchema] = useState(null);    // { login: [...], register: [...], notes: {...} }
   const [schemaErr, setSchemaErr] = useState('');
   const [values, setValues] = useState({});      // {[fieldKey]: string}
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [notice, setNotice] = useState('');
+  // verify step state
+  const [pendingEmail, setPendingEmail] = useState('');      // masked email for display
+  const [pendingEmailRaw, setPendingEmailRaw] = useState(''); // real email for API calls
+  const [verifyCode, setVerifyCode] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);   // seconds remaining
 
   // 1) 已登录直接走开 — 不要让用户重复登录
   useEffect(() => {
@@ -130,7 +135,7 @@ function LoginApp() {
     return () => { cancelled = true; };
   }, []);
 
-  const fields = schema?.[mode] || [];
+  const fields = mode === 'verify' ? [] : (schema?.[mode] || []);
   const minPw = schema?.notes?.min_password_length || 8;
   const inviteOnly = !!schema?.notes?.invite_only;
 
@@ -139,7 +144,72 @@ function LoginApp() {
   // 后端 error_key → 友好文案映射
   const CONSENT_ERRORS = {
     'auth.terms_not_accepted': '请阅读并同意《服务条款》和《隐私政策》',
-    'auth.age_not_confirmed': '请确认你已年满 13 周岁(13-18 岁用户须监护人同意)',
+    'auth.age_not_confirmed': '请确认你已年满 18 周岁',
+  };
+
+  // 倒计时 effect
+  React.useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
+
+  const handleResend = async () => {
+    if (resendCooldown > 0 || busy) return;
+    setBusy(true);
+    setErr('');
+    try {
+      const base = window.__API_BASE || '';
+      const r = await fetch(`${base}/api/v1/auth/resend-code`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({email: pendingEmailRaw}),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        setNotice('验证码已重发，请查收邮件');
+        setResendCooldown(60);
+      } else {
+        setErr(j.error || '重发失败');
+      }
+    } catch (e) {
+      setErr(e?.message || '重发失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleVerify = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    const code = verifyCode.trim();
+    if (code.length !== 6 || !/^\d{6}$/.test(code)) {
+      setErr('请输入 6 位数字验证码');
+      return;
+    }
+    setBusy(true);
+    setErr(''); setNotice('');
+    try {
+      const base = window.__API_BASE || '';
+      const r = await fetch(`${base}/api/v1/auth/verify-email`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({email: pendingEmailRaw, code}),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        setNotice('验证成功，正在进入…');
+        setTimeout(() => location.replace(__resolveNextOrDefault()), 300);
+      } else {
+        setErr(j.error || '验证失败');
+      }
+    } catch (e) {
+      setErr(e?.message || '请求失败');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const submit = async (e) => {
@@ -186,12 +256,27 @@ function LoginApp() {
       }
 
       if (mode === 'register') {
-        await window.api.auth.register(body);
+        const base = window.__API_BASE || '';
+        const r = await fetch(`${base}/api/v1/auth/register`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || '注册失败');
+        // 两步流程：进入验证码步骤
+        setPendingEmail(j.email_mask || body.email || '');
+        setPendingEmailRaw(body.email || '');
+        setVerifyCode('');
+        setResendCooldown(60);
+        setMode('verify');
+        setNotice(`验证码已发送到 ${j.email_mask}，请在 10 分钟内完成验证`);
       } else {
         await window.api.auth.login(body);
+        setNotice('登录成功');
+        setTimeout(() => location.replace(__resolveNextOrDefault()), 200);
       }
-      setNotice(mode === 'register' ? '注册成功,正在进入…' : '登录成功');
-      setTimeout(() => location.replace(__resolveNextOrDefault()), 200);
     } catch (e) {
       // 后端返回 error_key 时展示对应文案
       const errKey = e?.detail?.error_key || e?.error_key;
@@ -223,20 +308,73 @@ function LoginApp() {
           </div>
         </div>
 
-        <div className="pl-auth-tabs" role="tablist">
-          <button type="button" role="tab"
-                  className={mode === 'login' ? 'active' : ''}
-                  aria-selected={mode === 'login'}
-                  onClick={() => { setMode('login'); setErr(''); setNotice(''); }}>登录</button>
-          <button type="button" role="tab"
-                  className={mode === 'register' ? 'active' : ''}
-                  aria-selected={mode === 'register'}
-                  onClick={() => { setMode('register'); setErr(''); setNotice(''); }}
-                  disabled={inviteOnly}
-                  data-tip={inviteOnly ? '当前部署为邀请制,注册关闭' : undefined}>注册</button>
-        </div>
+        {mode !== 'verify' && (
+          <div className="pl-auth-tabs" role="tablist">
+            <button type="button" role="tab"
+                    className={mode === 'login' ? 'active' : ''}
+                    aria-selected={mode === 'login'}
+                    onClick={() => { setMode('login'); setErr(''); setNotice(''); }}>登录</button>
+            <button type="button" role="tab"
+                    className={mode === 'register' ? 'active' : ''}
+                    aria-selected={mode === 'register'}
+                    onClick={() => { setMode('register'); setErr(''); setNotice(''); }}
+                    disabled={inviteOnly}
+                    data-tip={inviteOnly ? '当前部署为邀请制,注册关闭' : undefined}>注册</button>
+          </div>
+        )}
 
-        <form className="pl-auth-form" onSubmit={submit}>
+        {/* ── 验证码步骤 ─────────────────────────────────────────────── */}
+        {mode === 'verify' && (
+          <form className="pl-auth-form" onSubmit={handleVerify}>
+            <div style={{fontSize: 13, color: 'var(--muted)', marginBottom: 8}}>
+              验证码已发送至 <strong>{pendingEmail}</strong>，10 分钟内有效。
+            </div>
+            <div className="pl-field">
+              <label htmlFor="verify_code">验证码</label>
+              <input
+                id="verify_code"
+                type="text"
+                inputMode="numeric"
+                pattern="\d{6}"
+                maxLength={6}
+                placeholder="000000"
+                value={verifyCode}
+                onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                autoFocus
+                autoComplete="one-time-code"
+                style={{letterSpacing: '0.3em', fontSize: 20, textAlign: 'center'}}
+              />
+            </div>
+            {err && (
+              <div className="pl-auth-error" role="alert"
+                   style={{color: 'var(--danger)', fontSize: 12.5, padding: '4px 0'}}>{err}</div>
+            )}
+            {notice && (
+              <div className="pl-auth-notice" role="status" aria-live="polite"
+                   style={{color: 'var(--muted)', fontSize: 12.5, padding: '4px 0',
+                           borderLeft: '2px solid var(--accent)', paddingLeft: 8}}>{notice}</div>
+            )}
+            <button type="submit" className="btn primary" disabled={busy || verifyCode.length !== 6}
+                    style={{justifyContent: 'center', height: 34, opacity: busy ? 0.7 : 1}}>
+              {busy ? '验证中…' : '完成验证'}
+            </button>
+            <div className="pl-auth-foot" style={{justifyContent: 'space-between'}}>
+              <button type="button" style={{background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 13, padding: 0}}
+                      onClick={() => { setMode('register'); setErr(''); setNotice(''); }}>
+                ← 返回修改
+              </button>
+              <button type="button"
+                      disabled={resendCooldown > 0 || busy}
+                      style={{background: 'none', border: 'none', color: resendCooldown > 0 ? 'var(--muted)' : 'var(--accent)', cursor: resendCooldown > 0 ? 'default' : 'pointer', fontSize: 13, padding: 0}}
+                      onClick={handleResend}>
+                {resendCooldown > 0 ? `重发 (${resendCooldown}s)` : '重新发送'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* ── 登录 / 注册表单 ────────────────────────────────────────── */}
+        {mode !== 'verify' && <form className="pl-auth-form" onSubmit={submit}>
           {schemaErr && (
             <div className="pl-auth-error"
                  style={{color: 'var(--danger)', fontSize: 12.5, padding: '4px 0'}}>
@@ -295,7 +433,7 @@ function LoginApp() {
                }}
                style={{borderBottom: 0, color: 'var(--muted)', cursor: 'pointer'}}>忘记密码</a>
           </div>
-        </form>
+        </form>}
       </div>
     </div>
   );

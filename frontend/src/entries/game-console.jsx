@@ -19,6 +19,9 @@ import { LeftRail, TopBar, ChatArea, HistoryDrawer, SearchDrawer, GameToastStack
 import { Composer, ConfirmStrip } from '../game-composer.jsx';
 import { RightPanel, PANEL_TABS } from '../game-panels.jsx';
 import ModelPicker from '../components/ModelPicker.jsx';
+// AGE-02: splash gate
+import AdultSplash from '../components/AdultSplash.jsx';
+const SPLASH_VERSION = 'v1.0-2026-05-31';
 
 // density preset + narrative font init（等价原 HTML 非 babel inline script）
 (function () {
@@ -196,6 +199,14 @@ function App() {
   const [showSearchDrawer, setShowSearchDrawer] = useState(false);
   const [showInGameSettings, setShowInGameSettings] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  // AGE-02: null = loading, true = need splash, false = no splash needed
+  const [splashNeeded, setSplashNeeded] = useState(null);
+  useEffect(() => {
+    fetch('/api/me/splash/status', { credentials: 'same-origin' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((j) => { setSplashNeeded(j ? !j.acked : false); })
+      .catch(() => { setSplashNeeded(false); });
+  }, []);
   const _railResize = useResizable({
     storageKey: 'gc.rail.w', defaultSize: 240, min: 180, max: 360, side: 'left',
     cssVar: '--gc-rail-w',
@@ -836,6 +847,9 @@ function App() {
             onClick={() => window.close()}
           >关闭此窗口</button>
         </div>
+      )}
+      {splashNeeded && (
+        <AdultSplash splashVersion={SPLASH_VERSION} onAcked={() => setSplashNeeded(false)} />
       )}
       {mountStage >= 2 && <GameToastStack />}
       {mountStage >= 1 ? <LeftRail

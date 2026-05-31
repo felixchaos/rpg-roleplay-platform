@@ -16,6 +16,7 @@ from psycopg.types.json import Jsonb
 
 from platform_app.db import connect
 from platform_app.api._deps import require_user, _client_ip, json_response
+from platform_app.dmca import increment_strike, queue_account_termination
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -773,3 +774,384 @@ async def admin_restart(
         "ok": True,
         "message": "重启信号已发送，服务将在当前请求完成后重载",
     })
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 3.1 DMCA 下架队列
+# 依赖表 dmca_takedowns（v37 迁移创建）
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/admin/dmca/takedowns")
+async def admin_dmca_list(
+    status: str = "open",
+    limit: int = 50,
+    admin=Depends(_require_admin),
+):
+    limit = max(1, min(200, limit))
+    with connect() as db:
+        rows = db.execute(
+            """
+            select id, complainant_name, complainant_email, infringing_url,
+                   original_work_desc, status, notes,
+                   counter_received_at, restore_after,
+                   created_at, actioned_at, actioned_by
+            from dmca_takedowns
+            where (%s = 'all' or status = %s)
+            order by created_at desc
+            limit %s
+            """,
+            (status, status, limit),
+        ).fetchall()
+    return json_response({"takedowns": [dict(r) for r in rows]})
+
+
+@router.post("/api/admin/dmca/takedowns")
+async def admin_dmca_create(
+    request: Request,
+    admin=Depends(_require_admin),
+):
+    body = await request.json()
+    ip = _client_ip(request)
+
+    required = ("complainant_name", "complainant_email", "infringing_url")
+    for f in required:
+        if not body.get(f):
+            raise HTTPException(status_code=400, detail=f"缺少必填字段: {f}")
+
+    with connect() as db:
+        row = db.execute(
+            """
+            insert into dmca_takedowns
+              (complainant_name, complainant_email, infringing_url,
+               original_work_desc, status, created_by, created_at)
+            values (%s, %s, %s, %s, 'open', %s, now())
+            returning id
+            """,
+            (
+                body["complainant_name"],
+                body["complainant_email"],
+                body["infringing_url"],
+                body.get("original_work_desc", ""),
+                admin.get("id"),
+            ),
+        ).fetchone()
+        takedown_id = row["id"] if row else None
+        _write_audit(db, admin, "dmca.takedown.create",
+                     target_type="dmca_takedown", target_id=str(takedown_id),
+                     details=body, ip=ip)
+
+    return json_response({"ok": True, "id": takedown_id})
+
+
+@router.post("/api/admin/dmca/takedowns/{takedown_id}/action")
+async def admin_dmca_action(
+    request: Request,
+    takedown_id: int,
+    admin=Depends(_require_admin),
+):
+    body = await request.json()
+    ip = _client_ip(request)
+    action = body.get("action")
+    reason = body.get("reason", "")
+
+    if action not in ("takedown", "restore", "reject"):
+        raise HTTPException(status_code=400, detail="action 须为 takedown|restore|reject")
+
+    status_map = {"takedown": "closed", "restore": "restored", "reject": "rejected"}
+    new_status = status_map[action]
+
+    with connect() as db:
+        result = db.execute(
+            """
+            update dmca_takedowns
+            set status = %s, notes = coalesce(notes,'') || %s,
+                actioned_at = now(), actioned_by = %s
+            where id = %s
+            returning id
+            """,
+            (new_status, f"\n[{action}] {reason}", admin.get("id"), takedown_id),
+        ).fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="下架记录不存在")
+        _write_audit(db, admin, f"dmca.takedown.{action}",
+                     target_type="dmca_takedown", target_id=str(takedown_id),
+                     details={"reason": reason, "new_status": new_status}, ip=ip)
+
+    return json_response({"ok": True, "status": new_status})
+
+
+@router.post("/api/admin/dmca/takedowns/{takedown_id}/counter")
+async def admin_dmca_counter(
+    request: Request,
+    takedown_id: int,
+    admin=Depends(_require_admin),
+):
+    """录入反通知，自动计算 10 天后可恢复时间。"""
+    body = await request.json()
+    ip = _client_ip(request)
+
+    with connect() as db:
+        result = db.execute(
+            """
+            update dmca_takedowns
+            set counter_received_at = now(),
+                restore_after = now() + interval '10 days',
+                notes = coalesce(notes,'') || %s,
+                status = 'counter_received'
+            where id = %s
+            returning id
+            """,
+            (f"\n[counter-notice] {body.get('notes', '')}", takedown_id),
+        ).fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="下架记录不存在")
+        _write_audit(db, admin, "dmca.takedown.counter_notice",
+                     target_type="dmca_takedown", target_id=str(takedown_id),
+                     details=body, ip=ip)
+
+    return json_response({"ok": True, "restore_after": "now() + 10 days"})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 3.2 DMCA Strike 管理
+# 依赖表 dmca_strikes（v37 迁移创建）
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/admin/dmca/strikes")
+async def admin_dmca_strikes_list(
+    admin=Depends(_require_admin),
+):
+    with connect() as db:
+        rows = db.execute(
+            """
+            select ds.id, ds.user_id, u.username, ds.reason, ds.created_at
+            from dmca_strikes ds
+            join users u on u.id = ds.user_id
+            order by ds.created_at desc
+            limit 200
+            """,
+        ).fetchall()
+
+        # 按用户聚合
+        by_user: dict = {}
+        for r in rows:
+            uid = r["user_id"]
+            if uid not in by_user:
+                by_user[uid] = {
+                    "user_id": uid,
+                    "username": r["username"],
+                    "strike_count": 0,
+                    "strikes": [],
+                }
+            by_user[uid]["strike_count"] += 1
+            by_user[uid]["strikes"].append({
+                "id": r["id"],
+                "reason": r["reason"],
+                "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+            })
+
+    return json_response({"users": list(by_user.values())})
+
+
+@router.post("/api/admin/dmca/strikes/{user_id}/increment")
+async def admin_dmca_strike_increment(
+    request: Request,
+    user_id: int,
+    admin=Depends(_require_admin),
+):
+    body = await request.json()
+    ip = _client_ip(request)
+    reason = body.get("reason", "")
+    if not reason:
+        raise HTTPException(status_code=400, detail="reason 不能为空")
+
+    with connect() as db:
+        result = increment_strike(db, user_id, reason)
+
+        _write_audit(db, admin, "dmca.strike.increment",
+                     target_type="user", target_id=str(user_id),
+                     details={"reason": reason, "strike_count": result["strike_count"]}, ip=ip)
+
+        if result["terminate"]:
+            terminate_reason = (
+                f"DMCA 累犯 {result['strike_count']} 次，已达终止阈值。最近原因: {reason}"
+            )
+            queue_account_termination(db, user_id, terminate_reason)
+            _write_audit(db, admin, "dmca.auto_terminate",
+                         target_type="user", target_id=str(user_id),
+                         details={"strike_count": result["strike_count"], "reason": terminate_reason},
+                         ip=ip)
+
+    return json_response(result)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 3.3 CSAM 举报管理
+# 依赖表 csam_reports（v37 迁移创建）
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/admin/csam/reports")
+async def admin_csam_list(
+    status: str = "pending",
+    limit: int = 50,
+    admin=Depends(_require_admin),
+):
+    limit = max(1, min(200, limit))
+    with connect() as db:
+        rows = db.execute(
+            """
+            select r.id, r.reporter_id, r.reported_user_id,
+                   r.content_url, r.description, r.status,
+                   r.decision, r.decision_notes, r.cybertip_report_id,
+                   r.created_at, r.decided_at, r.decided_by,
+                   u.username as reported_username
+            from csam_reports r
+            left join users u on u.id = r.reported_user_id
+            where (%s = 'all' or r.status = %s)
+            order by r.created_at desc
+            limit %s
+            """,
+            (status, status, limit),
+        ).fetchall()
+    return json_response({"reports": [dict(r) for r in rows]})
+
+
+@router.post("/api/admin/csam/reports/{report_id}/decision")
+async def admin_csam_decision(
+    request: Request,
+    report_id: int,
+    admin=Depends(_require_admin),
+):
+    body = await request.json()
+    ip = _client_ip(request)
+    decision = body.get("decision")
+    notes = body.get("notes", "")
+
+    if decision not in ("founded", "unfounded", "escalate"):
+        raise HTTPException(status_code=400, detail="decision 须为 founded|unfounded|escalate")
+
+    with connect() as db:
+        result = db.execute(
+            """
+            update csam_reports
+            set decision = %s, decision_notes = %s, status = %s,
+                decided_at = now(), decided_by = %s
+            where id = %s
+            returning id, reported_user_id
+            """,
+            (decision, notes, "decided", admin.get("id"), report_id),
+        ).fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="举报记录不存在")
+
+        _write_audit(db, admin, f"csam.decision.{decision}",
+                     target_type="csam_report", target_id=str(report_id),
+                     details={"decision": decision, "notes": notes}, ip=ip)
+
+    return json_response({"ok": True, "decision": decision})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 3.4 AUP 账户暂停 / 解封 / 终止
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post("/api/admin/users/{user_id}/suspend")
+async def admin_suspend_user(
+    request: Request,
+    user_id: int,
+    admin=Depends(_require_admin),
+):
+    body = await request.json()
+    ip = _client_ip(request)
+    reason = body.get("reason", "")
+    duration_days = body.get("duration_days")  # None = 无限期
+
+    if not reason:
+        raise HTTPException(status_code=400, detail="reason 不能为空")
+
+    suspend_until = None
+    if duration_days is not None:
+        try:
+            duration_days = int(duration_days)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="duration_days 须为整数")
+
+    with connect() as db:
+        if duration_days is not None:
+            db.execute(
+                """
+                update users
+                set deactivated_at = now(),
+                    ban_reason = %s,
+                    suspended_until = now() + (%s || ' days')::interval
+                where id = %s
+                """,
+                (reason, str(duration_days), user_id),
+            )
+        else:
+            db.execute(
+                "update users set deactivated_at = now(), ban_reason = %s where id = %s",
+                (reason, user_id),
+            )
+        # 撤销所有活跃 Session
+        result = db.execute(
+            "delete from sessions where user_id = %s returning token",
+            (user_id,),
+        ).fetchall()
+        sessions_revoked = len(result)
+        _write_audit(db, admin, "aup.suspend",
+                     target_type="user", target_id=str(user_id),
+                     details={"reason": reason, "duration_days": duration_days,
+                               "sessions_revoked": sessions_revoked}, ip=ip)
+
+    return json_response({"ok": True, "sessions_revoked": sessions_revoked})
+
+
+@router.post("/api/admin/users/{user_id}/unsuspend")
+async def admin_unsuspend_user(
+    request: Request,
+    user_id: int,
+    admin=Depends(_require_admin),
+):
+    ip = _client_ip(request)
+    with connect() as db:
+        db.execute(
+            """
+            update users
+            set deactivated_at = null, ban_reason = '', suspended_until = null
+            where id = %s
+            """,
+            (user_id,),
+        )
+        _write_audit(db, admin, "aup.unsuspend",
+                     target_type="user", target_id=str(user_id),
+                     details={}, ip=ip)
+
+    return json_response({"ok": True})
+
+
+@router.post("/api/admin/users/{user_id}/terminate")
+async def admin_terminate_user(
+    request: Request,
+    user_id: int,
+    admin=Depends(_require_admin),
+):
+    """永久终止账户：写 banned_users + account_delete_queue，撤销所有 Session。"""
+    body = await request.json()
+    ip = _client_ip(request)
+    reason = body.get("reason", "")
+
+    if not reason:
+        raise HTTPException(status_code=400, detail="reason 不能为空")
+
+    # 管理员不能终止自己
+    if admin.get("id") == user_id:
+        raise HTTPException(status_code=400, detail="不允许终止自己的账户")
+
+    with connect() as db:
+        queue_account_termination(db, user_id, reason)
+        _write_audit(db, admin, "aup.terminate",
+                     target_type="user", target_id=str(user_id),
+                     details={"reason": reason}, ip=ip)
+
+    return json_response({"ok": True})

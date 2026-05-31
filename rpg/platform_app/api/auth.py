@@ -23,8 +23,10 @@ router = APIRouter()
 # 保留 request：register/login/logout 是认证类 endpoint，本身处理 cookie/IP
 @router.post("/api/auth/register")
 async def api_register(request: Request):
+    """Phase 1 注册：校验字段 → 发验证码 → 返回 pending_verify。不创建 users 行。"""
     body = await request.json()
     ip = _client_ip(request)
+    ua = request.headers.get("user-agent", "")
     from ..security import normalize_username
     normalized_username = normalize_username(body.get("username", ""))
     # IP 速率限制：复用登录的速率限制，防止枚举/暴力注册
@@ -36,32 +38,66 @@ async def api_register(request: Request):
             status_code=429,
             headers={"Retry-After": str(rl.retry_after_sec)},
         )
-    # 合规校验：服务条款 + 年龄确认（本轮只校验，不写 DB）
-    # TODO(R-phase): persist terms_accepted_at + age_confirmed to users table when migration unlocked
+    # 合规校验：服务条款 + 年龄确认
     terms_accepted = bool(body.get("terms_accepted"))
     age_confirmed = bool(body.get("age_confirmed"))
     if not terms_accepted:
         raise HTTPException(400, detail={"error_key": "auth.terms_not_accepted", "message": "请阅读并同意《服务条款》和《隐私政策》"})
     if not age_confirmed:
-        raise HTTPException(400, detail={"error_key": "auth.age_not_confirmed", "message": "请确认你已年满 13 周岁(13-18 岁用户须监护人同意)"})
+        raise HTTPException(400, detail={"error_key": "auth.age_not_confirmed", "message": "请确认你已年满 18 周岁"})
     # 首管理员引导令牌:body.setup_token 优先,其次 X-Setup-Token 头(server 模式才生效)
     setup_token = body.get("setup_token") or request.headers.get("X-Setup-Token")
     try:
-        user = _auth.register(
+        result = _auth.register(
             body.get("username", ""),
             body.get("password", ""),
             body.get("display_name", ""),
+            email=body.get("email", ""),
+            birthday=body.get("birthday"),
+            invite_code=body.get("invite_code"),
+            terms_accepted=terms_accepted,
+            age_confirmed=age_confirmed,
             setup_token=setup_token,
+            ip=ip,
+            ua=ua,
         )
+        return json_response(result)
+    except ValueError as exc:
+        _auth._record_login_fail(ip, normalized_username)
+        return json_response({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@router.post("/api/auth/verify-email")
+async def api_verify_email(request: Request):
+    """Phase 2 注册：验证 6 位码 → 创建用户行 → 颁 session cookie。"""
+    body = await request.json()
+    email = body.get("email", "")
+    code = body.get("code", "").strip()
+    if not email or not code:
+        return json_response({"ok": False, "error": "email 和 code 不能为空"}, status_code=400)
+    try:
+        user, token = _auth.confirm_email_verification(email, code)
         workspace.ensure_default(user["id"])
-        user, token = _auth.login(body.get("username", ""), body.get("password", ""))
         response = json_response({"ok": True, "user": public_user(user), "platform": platform_for(user)})
         _set_session_cookie(response, request, token)
         return response
-    except ValueError:
-        # 模糊提示，避免用户名枚举（不区分"用户名已存在"与其它注册失败）
-        _auth._record_login_fail(ip, normalized_username)
-        return json_response({"ok": False, "error": "注册失败，请检查输入后重试"}, status_code=400)
+    except ValueError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@router.post("/api/auth/resend-code")
+async def api_resend_code(request: Request):
+    """重发验证码（限流 1/分钟/email）。"""
+    body = await request.json()
+    email = body.get("email", "")
+    ip = _client_ip(request)
+    if not email:
+        return json_response({"ok": False, "error": "email 不能为空"}, status_code=400)
+    try:
+        _auth.resend_verification_code(email, ip=ip)
+        return json_response({"ok": True, "message": "验证码已重发，请查收邮件"})
+    except ValueError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=429)
 
 
 # 保留 request：login 需要 _client_ip(request) 用于速率限制
@@ -153,17 +189,26 @@ async def api_auth_schema():
     # server 模式下隐藏该字段，防止泄露首注册可抢 admin 的信息（CWE-200）
     if not effective_auth_required():
         notes["first_user_is_admin"] = first_user_is_admin
+    # 邀请码字段：invite 模式时必填
+    invite_field = {"key": "invite_code", "label": "邀请码", "type": "text", "required": notes["invite_only"]}
+    register_fields = [
+        {"key": "username", "label": "用户名", "type": "text", "required": True},
+        {"key": "display_name", "label": "昵称(可选)", "type": "text", "required": False},
+        {"key": "email", "label": "邮箱", "type": "email", "required": True, "autocomplete": "email"},
+        {"key": "birthday", "label": "出生日期", "type": "date", "required": True,
+         "placeholder": "YYYY-MM-DD", "note": "必须年满 18 周岁"},
+        {"key": "password", "label": "密码", "type": "password", "required": True, "min_length": pw_min},
+        {"key": "terms_accepted", "type": "boolean", "required": True, "label": "我已阅读并同意《服务条款》和《隐私政策》"},
+        {"key": "age_confirmed", "type": "boolean", "required": True, "label": "我已年满 18 周岁"},
+    ]
+    if notes["invite_only"]:
+        register_fields.insert(0, invite_field)
+
     return json_response({
         "login": [
-            {"key": "username", "label": "用户名", "type": "text", "required": True},
+            {"key": "username", "label": "用户名或邮箱", "type": "text", "required": True},
             {"key": "password", "label": "密码", "type": "password", "required": True, "min_length": pw_min},
         ],
-        "register": [
-            {"key": "username", "label": "用户名", "type": "text", "required": True},
-            {"key": "display_name", "label": "昵称(可选)", "type": "text", "required": False},
-            {"key": "password", "label": "密码", "type": "password", "required": True, "min_length": pw_min},
-            {"key": "terms_accepted", "type": "boolean", "required": True, "label": "我已阅读并同意《服务条款》和《隐私政策》"},
-            {"key": "age_confirmed", "type": "boolean", "required": True, "label": "我已年满 13 周岁,如未满 18 周岁已征得监护人同意"},
-        ],
+        "register": register_fields,
         "notes": notes,
     })

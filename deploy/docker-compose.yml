@@ -140,6 +140,28 @@ services:
     networks:
       - rpg-net
 
+  # ─── 5. cron — 账号硬删 + 审计日志清理 ──────────────────────────────────────
+  cron:
+    image: rpg-app:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: rpg-cron
+    restart: unless-stopped
+    command:
+      - "/bin/sh"
+      - "-c"
+      - "while true; do python -m rpg.scripts.run_cron all; sleep 86400; done"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:?必须设 POSTGRES_PASSWORD(勿用弱口令)}@pgbouncer:6432/rpg
+      RPG_MASTER_KEY: ${RPG_MASTER_KEY:?必须设 RPG_MASTER_KEY}
+      RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-multiuser}
+    networks:
+      - rpg-net
+
 volumes:
   postgres_data:
   redis_data:
