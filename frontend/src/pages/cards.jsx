@@ -195,60 +195,81 @@ function CardSheet({ card, kind = 'user' }) {
   const tags = Array.isArray(raw.tags) ? raw.tags : [];
   const dialogues = Array.isArray(raw.sample_dialogue) ? raw.sample_dialogue : [];
   const chapterGate = (kind === 'npc' && raw.first_revealed_chapter > 1) ? raw.first_revealed_chapter : null;
-  const para = (label, value) => value ? (
-    <div>
-      <CSBox variant="awsui-key-label" padding={{ bottom: 'xxxs' }}>{label}</CSBox>
-      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, color: 'var(--text)' }}>{value}</div>
+  const initial = (raw.name || '?').trim().slice(0, 1);
+  const hasBody = raw.background || raw.appearance || raw.personality || raw.speech_style || raw.current_status || raw.secrets || dialogues.length;
+
+  const block = (label, value) => value ? (
+    <div style={{ background: 'var(--panel-2, #282623)', border: '1px solid var(--line-soft, #2a2724)', borderRadius: 10, padding: '12px 16px' }}>
+      <div style={{ fontSize: 11, letterSpacing: '.08em', color: 'var(--accent, #c96442)', fontWeight: 600, marginBottom: 7, textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.72, color: 'var(--text, #ebe7df)', fontSize: 13.5 }}>{value}</div>
     </div>
   ) : null;
-  const hasBody = raw.background || raw.appearance || raw.personality || raw.speech_style || raw.current_status || raw.secrets || dialogues.length;
+
+  const attrs = [
+    { label: '类型', value: _CARD_TYPE_LABEL[raw.card_type] || (kind === 'npc' ? 'NPC' : '用户卡') },
+    { label: '来源', value: _SOURCE_LABEL[raw.source] || '通用' },
+    { label: '重要度', value: raw.importance != null ? String(raw.importance) : '—' },
+    ...(chapterGate ? [{ label: '首次揭示', value: `第 ${chapterGate} 章` }] : []),
+    { label: '可见范围', value: _SCOPE_LABEL[raw.scope] || '私有' },
+    { label: '状态', value: raw.enabled === false ? <CSStatusIndicator type="stopped">禁用</CSStatusIndicator> : <CSStatusIndicator type="success">启用</CSStatusIndicator> },
+    { label: 'Token 预算', value: String(raw.token_budget ?? 450) },
+    { label: '优先级', value: String(raw.priority ?? 100) },
+  ];
 
   return (
     <CSSpaceBetween size="l">
-      {/* 顶部:身份 + 徽章 */}
-      <CSSpaceBetween size="xs">
-        {(raw.identity || fullName) && (
-          <CSBox fontSize="heading-s">
-            {raw.identity || '—'}
-            {fullName && <CSBox display="inline" color="text-status-inactive" fontSize="body-s" padding={{ left: 's' }}>{fullName}</CSBox>}
-          </CSBox>
-        )}
-        <CSSpaceBetween direction="horizontal" size="xs">
-          <CSBadge color="grey">{_CARD_TYPE_LABEL[raw.card_type] || (kind === 'npc' ? 'NPC' : '用户卡')}</CSBadge>
-          {raw.source && <CSBadge>{_SOURCE_LABEL[raw.source] || raw.source}</CSBadge>}
-          {chapterGate && <CSBadge color="blue">📖 第 {chapterGate} 章揭示</CSBadge>}
-          {raw.importance != null && <CSBadge color="grey">重要度 {raw.importance}</CSBadge>}
-          <CSBadge color="grey">{_SCOPE_LABEL[raw.scope] || '私有'}</CSBadge>
-          {raw.enabled === false && <CSStatusIndicator type="stopped">已禁用</CSStatusIndicator>}
-        </CSSpaceBetween>
-        {aliases.length > 0 && (
-          <CSBox fontSize="body-s" color="text-body-secondary">别名:{aliases.join(' · ')}</CSBox>
-        )}
-        {tags.length > 0 && (
-          <CSSpaceBetween direction="horizontal" size="xxs">{tags.map((t) => <CSBadge key={t}>{t}</CSBadge>)}</CSSpaceBetween>
-        )}
-      </CSSpaceBetween>
-
-      {/* 主体:各结构化字段原样分段 */}
-      {para('前史 / 背景', raw.background)}
-      {para('外貌', raw.appearance)}
-      {para('性格 / 设定', raw.personality)}
-      {para('语气 / 说话风格', raw.speech_style)}
-      {para('当前状态', raw.current_status)}
-      {para('关键秘密', raw.secrets)}
-      {dialogues.length > 0 && (
-        <div>
-          <CSBox variant="awsui-key-label" padding={{ bottom: 'xxxs' }}>示例对话</CSBox>
-          <CSSpaceBetween size="xxs">
-            {dialogues.map((d, i) => (
-              <CSBox key={i} color="text-body-secondary" fontSize="body-s">
-                {typeof d === 'string' ? d : `${d.role ? d.role + ': ' : ''}${d.content || ''}`}
-              </CSBox>
-            ))}
-          </CSSpaceBetween>
+      {/* 头部:头像首字 + 名 + 身份 + 别名/标签 */}
+      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+        <div style={{ width: 52, height: 52, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'var(--accent-soft, rgba(201,100,66,.16))', color: 'var(--accent, #c96442)',
+          fontFamily: "'Noto Serif SC', serif", fontSize: 24, fontWeight: 600 }}>{initial}</div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 19, fontWeight: 600, color: 'var(--text, #ebe7df)' }}>
+            {raw.name || '未命名'}
+            {fullName && <span style={{ fontSize: 13, color: 'var(--muted, #968f85)', marginLeft: 8, fontStyle: 'italic' }}>{fullName}</span>}
+          </div>
+          {raw.identity && <div style={{ fontSize: 13.5, color: 'var(--text-quiet, #c8c2b7)', marginTop: 3 }}>{raw.identity}</div>}
+          {(aliases.length > 0 || tags.length > 0) && (
+            <div style={{ marginTop: 9 }}>
+              <CSSpaceBetween direction="horizontal" size="xxs">
+                {aliases.map((a) => <CSBadge key={'a' + a}>{a}</CSBadge>)}
+                {tags.map((t) => <CSBadge key={'t' + t} color="green">{t}</CSBadge>)}
+              </CSSpaceBetween>
+            </div>
+          )}
         </div>
+      </div>
+
+      {/* 属性条 */}
+      <div style={{ background: 'var(--panel, #211f1d)', border: '1px solid var(--line-soft, #2a2724)', borderRadius: 10, padding: '12px 16px' }}>
+        <CSKeyValuePairs columns={4} items={attrs} />
+      </div>
+
+      {/* 档案正文:各字段独立面板 */}
+      {hasBody ? (
+        <CSSpaceBetween size="s">
+          {block('前史 / 背景', raw.background)}
+          {block('外貌', raw.appearance)}
+          {block('性格 / 设定', raw.personality)}
+          {block('语气 / 说话风格', raw.speech_style)}
+          {block('当前状态', raw.current_status)}
+          {block('关键秘密', raw.secrets)}
+          {dialogues.length > 0 && (
+            <div style={{ background: 'var(--panel-2, #282623)', border: '1px solid var(--line-soft, #2a2724)', borderRadius: 10, padding: '12px 16px' }}>
+              <div style={{ fontSize: 11, letterSpacing: '.08em', color: 'var(--accent, #c96442)', fontWeight: 600, marginBottom: 8, textTransform: 'uppercase' }}>示例对话</div>
+              <CSSpaceBetween size="xs">
+                {dialogues.map((d, i) => (
+                  <div key={i} style={{ borderLeft: '2px solid var(--accent-soft, rgba(201,100,66,.4))', paddingLeft: 10, color: 'var(--text-quiet, #c8c2b7)', fontSize: 13, lineHeight: 1.6 }}>
+                    {typeof d === 'string' ? d : `${d.role ? d.role + ':' : ''}${d.content || ''}`}
+                  </div>
+                ))}
+              </CSSpaceBetween>
+            </div>
+          )}
+        </CSSpaceBetween>
+      ) : (
+        <CSBox color="text-status-inactive">暂无设定,切到「角色设置」补充。</CSBox>
       )}
-      {!hasBody && <CSBox color="text-status-inactive">暂无设定,切到「角色设置」补充。</CSBox>}
     </CSSpaceBetween>
   );
 }
