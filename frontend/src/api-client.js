@@ -555,6 +555,7 @@
       visibility: (body) => POST(`${API_PREFIX}/models/visibility`, body),
       validate: (body) => POST(`${API_PREFIX}/models/validate`, body),
       remote: (q) => GET(`${API_PREFIX}/models/remote`, q),
+      syncRemote: (body) => POST(`${API_PREFIX}/models/remote/sync`, body),
       diff: (q) => GET(`${API_PREFIX}/models/diff`, q),
       probe: (body) => POST(`${API_PREFIX}/models/probe`, body),
       pricing: () => GET(`${API_PREFIX}/models/pricing`),

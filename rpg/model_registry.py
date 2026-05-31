@@ -16,6 +16,48 @@ from psycopg.types.json import Jsonb
 BASE = Path(__file__).parent
 MODEL_CONFIG_FILE = BASE / "config" / "model_catalog.json"
 
+_API_ID_ALIASES = {
+    "OpenAI": "openai",
+    "openai": "openai",
+    "OpenRouter": "openrouter",
+    "openrouter": "openrouter",
+    "DeepSeek": "deepseek",
+    "deepseek": "deepseek",
+    "Anthropic": "anthropic",
+    "anthropic": "anthropic",
+    "AlibabaQwen": "dashscope",
+    "DashScope": "dashscope",
+    "dashscope": "dashscope",
+    "TencentHunyuan": "hunyuan",
+    "Hunyuan": "hunyuan",
+    "hunyuan": "hunyuan",
+    "XiaomiMimo": "xiaomi_mimo",
+    "MiMo": "xiaomi_mimo",
+    "xiaomi_mimo": "xiaomi_mimo",
+    "SiliconFlow": "siliconflow",
+    "siliconflow": "siliconflow",
+    "MiniMax": "minimax",
+    "minimax": "minimax",
+    "Doubao": "doubao",
+    "doubao": "doubao",
+    "AgentPlatform": "vertex_ai",
+    "agent_platform": "vertex_ai",
+    "vertex": "vertex_ai",
+    "vertex_ai": "vertex_ai",
+}
+
+
+def normalize_api_id(api_id: str | None) -> str:
+    value = str(api_id or "").strip()
+    if not value:
+        return ""
+    return _API_ID_ALIASES.get(value) or _API_ID_ALIASES.get(value.lower()) or value
+
+
+def default_api_for(api_id: str | None) -> dict[str, Any] | None:
+    target = normalize_api_id(api_id)
+    return next((copy.deepcopy(api) for api in DEFAULT_MODEL_CATALOG["apis"] if normalize_api_id(api.get("id")) == target), None)
+
 DEFAULT_MODEL_CATALOG: dict[str, Any] = {
     "schema_version": 1,
     "selected": {
@@ -84,6 +126,16 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
                 {"id": "google/gemini-3.5-flash",   "real_name": "google/gemini-3.5-flash",   "display_name": "Gemini 3.5 Flash", "enabled": True,
                  "capabilities": ["text", "streaming", "image_input", "tools", "json_mode"]},
             ],
+        },
+        {
+            "id": "deepseek",
+            "display_name": "DeepSeek",
+            "kind": "openai_compat",
+            "enabled": False,
+            "credential_env": "DEEPSEEK_API_KEY",
+            "base_url": "https://api.deepseek.com/v1",
+            # 真实可访问模型必须用当前用户 API Key 调 /models 后写入；这里不放静态假清单。
+            "models": [],
         },
         {
             "id": "siliconflow",
@@ -225,20 +277,20 @@ def select_model(api_id: str, model_id: str) -> dict[str, Any]:
 
 def upsert_api(api_data: dict[str, Any]) -> dict[str, Any]:
     catalog = load_model_catalog()
-    api_id = str(api_data.get("api_id") or api_data.get("id") or "").strip()
+    api_id = normalize_api_id(api_data.get("api_id") or api_data.get("id"))
     if not api_id:
         raise ValueError("API id 不能为空")
     api = find_api(catalog, api_id)
-    normalized = copy.deepcopy(api) if api else {"id": api_id, "models": []}
+    normalized = copy.deepcopy(api) if api else (default_api_for(api_id) or {"id": api_id, "models": []})
     normalized["id"] = api_id
     if not api:
         normalized.update({
             "display_name": str(api_data.get("display_name") or api_data.get("name") or api_id).strip(),
-            "kind": str(api_data.get("kind") or api_id).strip(),
+            "kind": str(api_data.get("kind") or normalized.get("kind") or api_id).strip(),
             "enabled": bool(api_data.get("enabled", True)),
-            "credential_ref": api_data.get("credential_ref", ""),
-            "credential_env": api_data.get("credential_env", ""),
-            "base_url": api_data.get("base_url", ""),
+            "credential_ref": api_data.get("credential_ref", normalized.get("credential_ref", "")),
+            "credential_env": api_data.get("credential_env", normalized.get("credential_env", "")),
+            "base_url": api_data.get("base_url", normalized.get("base_url", "")),
         })
     else:
         if "display_name" in api_data or "name" in api_data:
@@ -263,6 +315,7 @@ def upsert_api(api_data: dict[str, Any]) -> dict[str, Any]:
 
 def upsert_model(api_id: str, model_data: dict[str, Any]) -> dict[str, Any]:
     catalog = load_model_catalog()
+    api_id = normalize_api_id(api_id)
     api = find_api(catalog, api_id)
     if not api:
         raise ValueError(f"未知 API：{api_id}")
@@ -319,7 +372,8 @@ def delete_model(api_id: str, model_id: str) -> dict[str, Any]:
 
 
 def find_api(catalog: dict[str, Any], api_id: str | None) -> dict[str, Any] | None:
-    return next((api for api in catalog.get("apis", []) if api.get("id") == api_id), None)
+    target = normalize_api_id(api_id)
+    return next((api for api in catalog.get("apis", []) if normalize_api_id(api.get("id")) == target), None)
 
 
 def find_model(api: dict[str, Any] | None, model_id: str | None) -> dict[str, Any] | None:
@@ -342,9 +396,30 @@ def _migrate_catalog(data: dict[str, Any]) -> dict[str, Any]:
     catalog = copy.deepcopy(DEFAULT_MODEL_CATALOG)
     if isinstance(data, dict):
         if isinstance(data.get("apis"), list) and data["apis"]:
-            catalog["apis"] = data["apis"]
+            by_id = {normalize_api_id(api.get("id")): api for api in catalog["apis"]}
+            order = [normalize_api_id(api.get("id")) for api in catalog["apis"]]
+            for raw_api in data["apis"]:
+                if not isinstance(raw_api, dict):
+                    continue
+                api_id = normalize_api_id(raw_api.get("id") or raw_api.get("api_id"))
+                if not api_id:
+                    continue
+                base = by_id.get(api_id) or {"id": api_id, "models": []}
+                merged = {**copy.deepcopy(base), **copy.deepcopy(raw_api), "id": api_id}
+                if base.get("kind") and merged.get("kind") not in {"openai", "openai_compat", "anthropic", "vertex_ai"}:
+                    merged["kind"] = base.get("kind")
+                if base.get("base_url") and not merged.get("base_url"):
+                    merged["base_url"] = base.get("base_url")
+                if not isinstance(merged.get("models"), list):
+                    merged["models"] = []
+                by_id[api_id] = merged
+                if api_id not in order:
+                    order.append(api_id)
+            catalog["apis"] = [by_id[api_id] for api_id in order if api_id in by_id]
         if isinstance(data.get("selected"), dict):
-            catalog["selected"] = data["selected"]
+            selected = dict(data["selected"])
+            selected["api_id"] = normalize_api_id(selected.get("api_id"))
+            catalog["selected"] = selected
     catalog["schema_version"] = 1
     _backfill_model_capabilities(catalog)
     selected = selected_model_without_migration(catalog)
@@ -434,6 +509,11 @@ def _save_model_catalog_to_db(catalog: dict[str, Any], db=None) -> None:
 
 def _write_model_catalog_rows(db, catalog: dict[str, Any]) -> None:
     catalog = _migrate_catalog(catalog)
+    keep_api_ids = [
+        normalize_api_id(api.get("id"))
+        for api in catalog.get("apis", [])
+        if normalize_api_id(api.get("id"))
+    ]
     db.execute(
         """
         insert into app_config(key, value)
@@ -500,3 +580,8 @@ def _write_model_catalog_rows(db, catalog: dict[str, Any]) -> None:
                 "delete from model_entries where api_id = %s and model_id <> all(%s)",
                 (api["id"], keep_model_ids),
             )
+    if keep_api_ids:
+        db.execute(
+            "delete from model_apis where api_id <> all(%s)",
+            (keep_api_ids,),
+        )

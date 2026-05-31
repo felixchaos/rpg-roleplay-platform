@@ -28,6 +28,40 @@ import CSExpandableSection from '@cloudscape-design/components/expandable-sectio
 import CSModal from '@cloudscape-design/components/modal';
 import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 
+const API_ID_ALIASES = {
+  OpenAI: "openai",
+  OpenRouter: "openrouter",
+  DeepSeek: "deepseek",
+  Anthropic: "anthropic",
+  AlibabaQwen: "dashscope",
+  DashScope: "dashscope",
+  TencentHunyuan: "hunyuan",
+  Hunyuan: "hunyuan",
+  XiaomiMimo: "xiaomi_mimo",
+  MiMo: "xiaomi_mimo",
+  SiliconFlow: "siliconflow",
+  MiniMax: "minimax",
+  Doubao: "doubao",
+  AgentPlatform: "AgentPlatform",
+  agent_platform: "AgentPlatform",
+  vertex: "AgentPlatform",
+  vertex_ai: "AgentPlatform",
+};
+
+function normalizeApiId(id) {
+  const value = String(id || "").trim();
+  return API_ID_ALIASES[value] || API_ID_ALIASES[value.toLowerCase()] || value;
+}
+
+function credentialApiIdForCatalog(apiId) {
+  return apiId === "vertex_ai" ? "AgentPlatform" : normalizeApiId(apiId);
+}
+
+function catalogApiIdForCredential(apiId) {
+  const normalized = normalizeApiId(apiId);
+  return normalized === "AgentPlatform" ? "vertex_ai" : normalized;
+}
+
 /* ── 设置页 Cloudscape 统一 primitives(取代 pl-set-group / pl-set-row) ──
    SetGroup = Container + Header(h2)  ·  SetRow = FormField(label 上 / 控件下)。
    各 section 用这两个套,保证全站基线对齐、间距一致。 */
@@ -389,119 +423,114 @@ function ModelsSection() {
   const [visibilityApi, setVisibilityApi] = useStatePL(null);
   const [validateApi, setValidateApi] = useStatePL(null);
   const [selectedApiId, setSelectedApiId] = useStatePL(null);
+  const autoSyncedRef = React.useRef(new Set());
 
-  // task 42: 用 health cache 把所有 model 的 health 字段刷新成最新状态。
-  // 不重新 probe,只读 backend 内存 cache。轻量,可频繁 poll。
-  const refreshHealthFromCache = React.useCallback(async () => {
+  const mapModel = React.useCallback((m) => ({
+    id: m.real_name || m.id,
+    display: m.display_name || m.real_name || m.id,
+    real_name: m.real_name || m.id,
+    enabled: m.enabled !== false,
+    visible: m.hidden !== true,
+    capabilities: m.capabilities || {},
+    health: m.health || "untested",
+    health_error: m.health_error || "",
+    health_latency_ms: m.health_latency_ms,
+    health_checked_at: m.health_checked_at,
+    health_status_detail: m.status_detail || m.health_status_detail || undefined,
+  }), []);
+
+  const loadConfiguredApis = useCallbackPL(async () => {
+    const [data, creds] = await Promise.all([
+      window.api.models.list(),
+      window.api.credentials.list().catch(() => ({ items: [] })),
+    ]);
+    const credMap = {};
+    for (const c of (creds?.items || creds?.credentials || [])) {
+      const cid = normalizeApiId(c.api_id || c.id);
+      credMap[cid] = {
+        has_key: !!c.has_credential || !!c.has_key || !!c.key_hint,
+        key_hint: c.key_hint || "",
+        enabled: c.enabled !== false,
+        base_url_override: c.base_url_override || "",
+      };
+    }
+    const list = data?.models?.apis || data?.apis || [];
+    const rows = Array.isArray(list) ? list.map(api => {
+      const catalogId = catalogApiIdForCredential(api.api_id || api.id);
+      const credentialId = credentialApiIdForCatalog(catalogId);
+      const cred = credMap[credentialId] || credMap[normalizeApiId(catalogId)] || {};
+      return {
+        id: catalogId,
+        credential_id: credentialId,
+        name: api.display_name || api.name || catalogId,
+        base_url: api.base_url || "",
+        key_set: !!cred.has_key,
+        key_hint: cred.key_hint || t('settings.models.key_set_hint'),
+        status: cred.enabled === false ? "disabled" : "configured",
+        connectivity: { status: "untested" },
+        enabled: cred.enabled !== false,
+        proxy: api.proxy || "direct",
+        models: (api.models || api.entries || []).map(mapModel),
+      };
+    }).filter(api => api.key_set) : [];
+    setApis(rows);
+    return rows;
+  }, [mapModel, t]);
+
+  const syncRemoteModels = useCallbackPL(async (api, opts = {}) => {
+    if (!api) return null;
+    const apiId = catalogApiIdForCredential(api.id);
+    setApis(arr => arr.map(a => a.id === apiId ? {
+      ...a,
+      connectivity: { ...(a.connectivity || {}), status: "checking", error: "" },
+    } : a));
+    const started = performance.now();
     try {
-      const base = (typeof window !== "undefined" && window.__API_BASE) || "";
-      const r = await fetch(`${base}/api/models/health`, { credentials: "include" });
-      const j = await r.json();
-      const hmap = (j && j.health) || {};
-      setApis(arr => arr.map(api => ({
-        ...api,
-        models: api.models.map(m => {
-          const h = hmap[`${api.id}::${m.real_name || m.id}`];
-          if (!h) return m;
-          return {
-            ...m,
-            health: h.status || "untested",
-            health_error: h.error || "",
-            health_latency_ms: h.latency_ms,
-            health_checked_at: h.checked_at,
-            // A4: status_detail 由后端 model_probe 区分 401 → key_expired / forbidden
-            health_status_detail: h.status_detail || m.health_status_detail || undefined,
-          };
-        }),
-      })));
-    } catch (_) {}
-  }, []);
+      const r = await window.api.models.syncRemote({ api_id: apiId, base_url: api.base_url || "" });
+      if (!r?.ok) throw new Error(r?.error || "remote model sync failed");
+      const elapsed = Math.max(1, Math.round(performance.now() - started));
+      const models = (r.models || []).map(mapModel);
+      setApis(arr => arr.map(a => a.id === apiId ? {
+        ...a,
+        models,
+        status: "configured",
+        connectivity: {
+          status: "ok",
+          latency_ms: elapsed,
+          checked_at: Date.now(),
+          remote_total: r.remote_total ?? models.length,
+          synced: r.synced ?? models.length,
+          error: "",
+        },
+      } : a));
+      if (!opts.silent) {
+        window.__apiToast?.(t('settings.models.sync_ok', { count: models.length }), { kind: "ok", duration: 2200 });
+      }
+      return r;
+    } catch (e) {
+      setApis(arr => arr.map(a => a.id === apiId ? {
+        ...a,
+        connectivity: {
+          status: "err",
+          checked_at: Date.now(),
+          error: e?.message || "sync failed",
+        },
+      } : a));
+      if (!opts.silent) {
+        window.__apiToast?.(t('settings.models.sync_fail'), { kind: "danger", detail: e?.message });
+      }
+      return null;
+    }
+  }, [mapModel, t]);
 
-  // 进入 settings 触发后台 probe sweep,刷一次所有 enabled API 的 health,
-  // probe 是 fire-and-forget,UI 不阻塞;然后定期 poll cache 拉结果。
-  const triggerHealthSweep = React.useCallback(async (apiId) => {
-    try {
-      const base = (typeof window !== "undefined" && window.__API_BASE) || "";
-      const body = apiId ? { api_id: apiId } : {};
-      await fetch(`${base}/api/models/health/refresh-all`, {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    } catch (_) {}
-  }, []);
-
-  // 用户 API Key 页只展示当前用户真实保存的凭据。这里不能自动 sweep 全局 catalog,
-  // 否则会把服务端/其他用户的 health cache 显示成“用户已配置”。
   useEffectPL(() => {
     if (useMock) return;
-    void refreshHealthFromCache;
-    void triggerHealthSweep;
-  }, [useMock, refreshHealthFromCache, triggerHealthSweep]);
-
-  // Hydrate from backend /api/models + 并行拉 /api/me/credentials 合并 key_set/key_hint
-  useEffectPL(() => {
-    if (useMock) return; // A5: demo/anon 模式不 fetch，直接用 MODELS_DATA
     (async () => {
-      try {
-        // task 52：之前只看 catalog 的 credential_ref/env，user-level key
-        // 走 /api/me/credentials 不在 catalog 里。导致用户配过 key 但 UI 仍
-        // 显示"未配置"。并行拉 credentials.list 做 api_id → {has_key, key_hint} 映射。
-        const [data, creds] = await Promise.all([
-          window.api.models.list(),
-          window.api.credentials.list().catch(() => ({ items: [] })),
-        ]);
-        // 后端字段是 has_credential（不是 has_key）；key_hint 一般不返回 → fallback 文案
-        const credMap = {};
-        for (const c of (creds?.items || creds?.credentials || [])) {
-          credMap[c.api_id || c.id] = {
-            has_key: !!c.has_credential || !!c.has_key || !!c.key_hint,
-            key_hint: c.key_hint || "",
-            enabled: c.enabled !== false,
-            base_url_override: c.base_url_override || "",
-          };
-        }
-        // /api/models 返回 {ok, models: {apis:[...]}, selected}。先取嵌套 .models.apis；
-        // 兼容旧扁平 shape 用 data.apis；最后非数组兜底成 []。
-        const list = data?.models?.apis || data?.apis || [];
-        if (Array.isArray(list) && list.length) {
-          setApis(list.map(api => {
-            const aid = api.api_id || api.id;
-            const cred = credMap[aid] || {};
-            return {
-              id: aid,
-              name: api.display_name || api.name,
-              base_url: api.base_url || "",
-              key_set: !!cred.has_key,
-              key_hint: cred.key_hint || t('settings.models.key_set_hint'),
-              status: cred.enabled === false ? "disabled" : "configured",
-              enabled: cred.enabled !== false,
-              proxy: api.proxy || "direct",
-              models: (api.models || api.entries || []).map(m => ({
-                id: m.real_name || m.id,
-                display: m.display_name || m.real_name,
-                real_name: m.real_name,
-                enabled: m.enabled !== false,
-                visible: m.hidden !== true,
-                capabilities: m.capabilities || {},
-                // task 42: 把 backend /api/models 注入的 health 状态透传到 UI,
-                // HealthDot 显示 ok/err/untested 圆点,picker 灰掉 err 项
-                health: m.health || "untested",
-                health_error: m.health_error || "",
-                health_latency_ms: m.health_latency_ms,
-                health_checked_at: m.health_checked_at,
-                // A4: status_detail 字段（后端 model_probe 区分 key_expired / forbidden）
-                health_status_detail: m.status_detail || m.health_status_detail || undefined,
-              })),
-            };
-          }).filter(api => api.key_set));
-        }
-      } catch (_) {}
-      finally {
-        setApisLoading(false); // A5: fetch 完成（含出错）后关闭 loading
-      }
+      try { await loadConfiguredApis(); }
+      catch (_) {}
+      finally { setApisLoading(false); }
     })();
-  }, [useMock]);
+  }, [useMock, loadConfiguredApis]);
 
   const toggleApi = async (id) => {
     setApis(arr => arr.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a));
@@ -554,6 +583,15 @@ function ModelsSection() {
   const configuredApis = apis.filter(a => a.key_set);
   const selectedApi = configuredApis.find(a => a.id === selectedApiId) || null;
 
+  useEffectPL(() => {
+    if (useMock || apisLoading) return;
+    configuredApis.forEach(api => {
+      if (autoSyncedRef.current.has(api.id)) return;
+      autoSyncedRef.current.add(api.id);
+      syncRemoteModels(api, { silent: true });
+    });
+  }, [useMock, apisLoading, configuredApis.map(a => a.id).join("|"), syncRemoteModels]);
+
   const detailEl = selectedApi ? (
     <ApiDetailPanel
       api={selectedApi}
@@ -565,7 +603,7 @@ function ModelsSection() {
       onDeleteKey={async () => {
         if (!await window.__confirm({ title: t('settings.models.delete_key_title'), message: t('settings.models.delete_key_confirm', { name: selectedApi.name }), danger: true, confirmText: t('settings.models.delete_key_btn') })) return;
         try {
-          await window.api.credentials.set({ api_id: selectedApi.id, api_key: '' });
+          await window.api.credentials.set({ api_id: credentialApiIdForCatalog(selectedApi.id), api_key: '' });
           window.__apiToast?.(t('settings.models.delete_key_ok'), { kind: 'ok' });
           setSelectedApiId(null);
           setApis(arr => arr.map(a => a.id === selectedApi.id ? { ...a, key_set: false, key_hint: '—' } : a));
@@ -628,11 +666,32 @@ function ModelsSection() {
               ) },
               { id: 'key', header: 'API Key', cell: (a) => <span className="mono">•••• {a.key_hint || t('settings.models.key_set_hint')}</span> },
               { id: 'models', header: t('settings.models.col_models'), cell: (a) => `${a.models.filter(m => m.enabled).length} / ${a.models.length}` },
-              { id: 'status', header: t('settings.models.col_status'), cell: (a) => (
-                a.enabled
-                  ? <CSStatusIndicator type="success">{t('settings.providers.configured')}</CSStatusIndicator>
-                  : <CSStatusIndicator type="stopped">{t('settings.models.status_disabled')}</CSStatusIndicator>
-              ) },
+              { id: 'connectivity', header: t('settings.models.col_connectivity'), cell: (a) => {
+                const c = a.connectivity || {};
+                const status = a.enabled === false ? "disabled" : (c.status || "untested");
+                const label = status === "checking"
+                  ? t('settings.models.connectivity_checking')
+                  : status === "ok"
+                    ? t('settings.models.connectivity_ok')
+                    : status === "err"
+                      ? t('settings.models.connectivity_err')
+                      : status === "disabled"
+                        ? t('settings.models.status_disabled')
+                        : t('settings.models.connectivity_untested');
+                const type = status === "ok" ? "success" : status === "err" ? "error" : status === "checking" ? "in-progress" : "stopped";
+                return (
+                  <button
+                    type="button"
+                    className="linklike"
+                    title={t('settings.models.connectivity_refresh_tip')}
+                    onClick={(e) => { e.stopPropagation(); syncRemoteModels(a); }}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: 0, border: 0, background: "transparent", cursor: "pointer" }}
+                  >
+                    <CSStatusIndicator type={type}>{label}</CSStatusIndicator>
+                    {c.latency_ms ? <span className="mono muted-2">{c.latency_ms}ms</span> : null}
+                  </button>
+                );
+              } },
               { id: 'go', header: '', cell: (a) => (
                 <span onClick={(e) => e.stopPropagation()}>
                   <SettingsToggle on={a.enabled} set={() => toggleApi(a.id)} />
@@ -652,35 +711,44 @@ function ModelsSection() {
         isNew={addingApi}
         onClose={() => { setEditingApi(null); setAddingApi(false); }}
         onConfirm={async (payload) => {
-          // task 51：之前只调 /api/models/api 并把 api_key 当字段塞进去，但
-          // upsert_api() 根本不接收 api_key（只读 credential_ref/env），
-          // 所以用户在 EditApiModal 输入的 key 永远落不下。
-          // 现在分两步：
-          //   1. /api/models/api 保存 catalog 元数据（display_name / base_url）
-          //   2. /api/me/credentials 保存加密的用户级 API key（如果用户填了）
+          const credentialId = normalizeApiId(payload.id);
+          const catalogId = catalogApiIdForCredential(credentialId);
+          const cfg = PROVIDERS_CONFIG.find((p) => catalogApiIdForCredential(p.id) === catalogId || normalizeApiId(p.id) === credentialId);
+          const kind = catalogId === "vertex_ai"
+            ? "vertex_ai"
+            : catalogId === "anthropic"
+              ? "anthropic"
+              : "openai_compat";
           try {
             await window.api.models.upsertApi({
-              api_id: payload.id,
-              display_name: payload.name,
+              api_id: catalogId,
+              display_name: payload.name || cfg?.name || catalogId,
               base_url: payload.base_url,
+              kind,
               proxy: payload.proxy,
             });
             if (payload.api_key && payload.api_key.trim()) {
               try {
-                await window.api.credentials.set({ api_id: payload.id, api_key: payload.api_key.trim() });
+                await window.api.credentials.set({ api_id: credentialId, api_key: payload.api_key.trim() });
               } catch (e) {
                 window.__apiToast?.(t('settings.edit_api.key_save_fail'), { kind: "warn", detail: e?.message, duration: 4000 });
                 throw e;
               }
             }
             window.__apiToast?.(addingApi ? t('settings.edit_api.add_ok') : t('settings.edit_api.save_ok'), { kind: "ok" });
+            const rows = await loadConfiguredApis();
+            const row = rows.find(a => a.id === catalogId) || {
+              id: catalogId,
+              name: payload.name || cfg?.name || catalogId,
+              base_url: payload.base_url,
+              key_set: true,
+              enabled: true,
+              models: [],
+            };
+            setSelectedApiId(catalogId);
+            await syncRemoteModels(row, { silent: false });
           } catch (e) {
             window.__apiToast?.(t('settings.edit_api.save_fail'), { kind: "danger", detail: e?.message });
-          }
-          if (addingApi && payload.api_key && payload.api_key.trim()) {
-            setApis(arr => [...arr, { ...payload, models: [], enabled: true, status: "untested", key_set: !!payload.api_key }]);
-          } else {
-            setApis(arr => arr.map(a => a.id === editingApi ? { ...a, ...payload, key_set: a.key_set || !!payload.api_key } : a));
           }
           setEditingApi(null); setAddingApi(false);
           // 刷新让真实 key_set / key_hint 由后端权威
@@ -1727,44 +1795,44 @@ const MODELS_DATA = [
 // /** @type {Array<{id: import("../types/rust/catalog/ProviderId").ProviderId, name: string, kind: "openai_compat"|"native", defaultBase: string, keyEnv: string, note?: string, special?: "agent_platform"|"alibaba_qwen"|"openrouter"}>} */
 const PROVIDERS_CONFIG = [
   {
-    id: "OpenAI",       name: "OpenAI",         kind: "openai_compat",
+    id: "openai",       name: "OpenAI",         kind: "openai_compat",
     defaultBase: "https://api.openai.com/v1",
     keyEnv: "OPENAI_API_KEY",
   },
   {
-    id: "OpenRouter",   name: "OpenRouter",     kind: "openai_compat",
+    id: "openrouter",   name: "OpenRouter",     kind: "openai_compat",
     defaultBase: "https://openrouter.ai/api/v1",
     keyEnv: "OPENROUTER_API_KEY",
     special: "openrouter",
     note: "可填中转站 OpenAI-compat 端点（如 https://your-proxy.com/v1），鉴权方式不变（Bearer）",
   },
   {
-    id: "DeepSeek",     name: "DeepSeek",       kind: "openai_compat",
+    id: "deepseek",     name: "DeepSeek",       kind: "openai_compat",
     defaultBase: "https://api.deepseek.com/v1",
     keyEnv: "DEEPSEEK_API_KEY",
   },
   {
-    id: "XAi",          name: "xAI (Grok)",     kind: "openai_compat",
+    id: "xai",          name: "xAI (Grok)",     kind: "openai_compat",
     defaultBase: "https://api.x.ai/v1",
     keyEnv: "XAI_API_KEY",
   },
   {
-    id: "XiaomiMimo",   name: "MiMo (Xiaomi)",  kind: "openai_compat",
+    id: "xiaomi_mimo",   name: "MiMo (Xiaomi)",  kind: "openai_compat",
     defaultBase: "https://chat.d.xiaomi.net/ai/api/v1",
     keyEnv: "XIAOMI_MIMO_API_KEY",
   },
   {
-    id: "TencentHunyuan", name: "Hunyuan (Tencent)", kind: "openai_compat",
+    id: "hunyuan", name: "Hunyuan (Tencent)", kind: "openai_compat",
     defaultBase: "https://api.hunyuan.cloud.tencent.com/v1",
     keyEnv: "TENCENT_HUNYUAN_API_KEY",
   },
   {
-    id: "Anthropic",    name: "Anthropic",      kind: "native",
+    id: "anthropic",    name: "Anthropic",      kind: "native",
     defaultBase: "https://api.anthropic.com",
     keyEnv: "ANTHROPIC_API_KEY",
   },
   {
-    id: "GoogleAIStudio", name: "Google AI Studio", kind: "native",
+    id: "google_ai_studio", name: "Google AI Studio", kind: "native",
     defaultBase: "https://generativelanguage.googleapis.com",
     keyEnv: "GOOGLE_API_KEY",
   },
@@ -1778,7 +1846,7 @@ const PROVIDERS_CONFIG = [
     note: "上传 Service Account JSON（含 client_email / private_key / project_id）",
   },
   {
-    id: "AlibabaQwen",  name: "DashScope (Qwen)", kind: "native",
+    id: "dashscope",  name: "DashScope (Qwen)", kind: "openai_compat",
     defaultBase: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     keyEnv: "DASHSCOPE_API_KEY",
     special: "alibaba_qwen",
@@ -1808,7 +1876,7 @@ function ProviderConfigSection() {
         if (cancelled) return;
         const map = {};
         for (const c of (r?.items || r?.credentials || [])) {
-          const pid = c.api_id || c.id;
+          const pid = normalizeApiId(c.api_id || c.id);
           map[pid] = { has_key: !!c.has_credential || !!c.has_key, key_hint: c.key_hint || "", base_url: c.base_url_override || "" };
         }
         setCreds(map);
@@ -1824,7 +1892,9 @@ function ProviderConfigSection() {
         await window.api.credentials.set({ api_id: providerId, api_key: apiKey.trim() });
       }
       if (baseUrl !== undefined) {
-        await window.api.models.upsertApi({ api_id: providerId, base_url: baseUrl });
+        const cfg = PROVIDERS_CONFIG.find((p) => p.id === providerId);
+        const kind = providerId === "AgentPlatform" ? "vertex_ai" : providerId === "anthropic" ? "anthropic" : "openai_compat";
+        await window.api.models.upsertApi({ api_id: catalogApiIdForCredential(providerId), base_url: baseUrl, kind, display_name: cfg?.name || providerId });
       }
       window.__apiToast?.(t('settings.providers.save_ok'), { kind: "ok", duration: 1800 });
       setCreds(s => ({ ...s, [providerId]: { ...s[providerId], has_key: !!(apiKey?.trim() || s[providerId]?.has_key), base_url: baseUrl ?? s[providerId]?.base_url } }));
@@ -1893,7 +1963,7 @@ function ProviderConfigSection() {
               onSaveKey={saveKey}
               onAgentPlatformFile={handleAgentPlatformFile}
               onSaveAgentPlatform={saveAgentPlatform}
-              onAlibabaMode={(v) => { setAlibabaMode(v); window.api.models.upsertApi({ api_id: "AlibabaQwen", base_url: v === "openai_compat" ? "https://dashscope.aliyuncs.com/compatible-mode/v1" : "https://dashscope.aliyuncs.com/api/v1" }).catch(() => {}); }}
+              onAlibabaMode={(v) => { setAlibabaMode(v); window.api.models.upsertApi({ api_id: "dashscope", kind: "openai_compat", base_url: v === "openai_compat" ? "https://dashscope.aliyuncs.com/compatible-mode/v1" : "https://dashscope.aliyuncs.com/api/v1" }).catch(() => {}); }}
             />
           );
         })}

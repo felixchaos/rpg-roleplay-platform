@@ -32,6 +32,43 @@ _PRIVATE_HOST_PREFIXES = (
     "0.", "localhost", "::1", "fc", "fd", "fe80",
 )
 
+_API_ID_ALIASES = {
+    "OpenAI": "openai",
+    "OpenRouter": "openrouter",
+    "DeepSeek": "deepseek",
+    "Anthropic": "anthropic",
+    "AlibabaQwen": "dashscope",
+    "DashScope": "dashscope",
+    "TencentHunyuan": "hunyuan",
+    "Hunyuan": "hunyuan",
+    "XiaomiMimo": "xiaomi_mimo",
+    "MiMo": "xiaomi_mimo",
+    "SiliconFlow": "siliconflow",
+    "MiniMax": "minimax",
+    "Doubao": "doubao",
+    "AgentPlatform": "AgentPlatform",
+    "agent_platform": "AgentPlatform",
+    "vertex": "AgentPlatform",
+    "vertex_ai": "AgentPlatform",
+}
+
+
+def normalize_api_id(api_id: str) -> str:
+    """Canonicalize UI/provider aliases before storing user credentials."""
+    value = (api_id or "").strip()
+    if not value:
+        return ""
+    return _API_ID_ALIASES.get(value) or _API_ID_ALIASES.get(value.lower()) or value
+
+
+def _credential_aliases(api_id: str) -> list[str]:
+    canonical = normalize_api_id(api_id)
+    aliases = [canonical]
+    for alias, target in _API_ID_ALIASES.items():
+        if target == canonical and alias not in aliases:
+            aliases.append(alias)
+    return aliases
+
 
 def _validate_base_url(url: str) -> None:
     """禁止把 base_url 指向私网/本机，避免 SSRF。"""
@@ -62,7 +99,7 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     本地匿名模式 / admin 设置时调用方传 allow_base_url=True 才能写入。
     """
     init_db()
-    api_id = (api_id or "").strip()
+    api_id = normalize_api_id(api_id)
     if not api_id:
         raise ValueError("api_id 不能为空")
     if not plaintext_key:
@@ -96,12 +133,13 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
 
 def delete_credential(user_id: int, api_id: str) -> dict[str, Any]:
     init_db()
+    canonical = normalize_api_id(api_id)
     with connect() as db:
         db.execute(
-            "delete from user_api_credentials where user_id = %s and api_id = %s",
-            (user_id, api_id),
+            "delete from user_api_credentials where user_id = %s and api_id = any(%s)",
+            (user_id, _credential_aliases(canonical)),
         )
-    return {"ok": True, "deleted": True, "api_id": api_id}
+    return {"ok": True, "deleted": True, "api_id": canonical}
 
 
 def list_credentials(user_id: int) -> dict[str, Any]:
@@ -119,9 +157,14 @@ def list_credentials(user_id: int) -> dict[str, Any]:
             (user_id,),
         ).fetchall()
     items = []
+    seen: set[str] = set()
     for r in rows:
+        api_id = normalize_api_id(r["api_id"])
+        if api_id in seen:
+            continue
+        seen.add(api_id)
         items.append({
-            "api_id": r["api_id"],
+            "api_id": api_id,
             "has_credential": int(r["cipher_len"] or 0) > 0,
             "base_url_override": r["base_url_override"] or "",
             "enabled": bool(r["enabled"]),
@@ -133,21 +176,29 @@ def list_credentials(user_id: int) -> dict[str, Any]:
 def get_credential(user_id: int, api_id: str) -> dict[str, Any] | None:
     """返回包含明文 key 的 dict（调用方负责不写日志/不返回前端）。失败返回 None。"""
     init_db()
+    canonical = normalize_api_id(api_id)
     with connect() as db:
-        row = db.execute(
-            "select * from user_api_credentials where user_id = %s and api_id = %s",
-            (user_id, api_id),
-        ).fetchone()
-    if not row or not row.get("enabled"):
-        return None
-    plaintext = decrypt_api_key(row.get("encrypted_key"), user_id, api_id)
-    if not plaintext:
-        return None
-    return {
-        "api_id": api_id,
-        "key": plaintext,
-        "base_url_override": row.get("base_url_override") or "",
-    }
+        rows = db.execute(
+            """
+            select * from user_api_credentials
+            where user_id = %s and api_id = any(%s)
+            order by (api_id = %s) desc, updated_at desc
+            """,
+            (user_id, _credential_aliases(canonical), canonical),
+        ).fetchall()
+    for row in rows:
+        if not row or not row.get("enabled"):
+            continue
+        stored_api_id = row.get("api_id") or canonical
+        plaintext = decrypt_api_key(row.get("encrypted_key"), user_id, stored_api_id)
+        if not plaintext:
+            continue
+        return {
+            "api_id": canonical,
+            "key": plaintext,
+            "base_url_override": row.get("base_url_override") or "",
+        }
+    return None
 
 
 def resolve_api_key(user_id: int | None, api_id: str, env_fallback: str = "") -> dict[str, Any]:

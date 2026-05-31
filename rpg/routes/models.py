@@ -255,6 +255,89 @@ async def api_models_remote(
     ))
 
 
+@router.post("/api/models/remote/sync")
+async def api_models_remote_sync(
+    request: Request,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
+    """用当前用户的 API Key 拉取供应商真实 /models，并写回 model_entries。
+
+    这是 API Key 页面“可访问模型”的权威来源：静态 catalog 只提供 provider
+    元数据（kind/base_url），不能冒充用户账号实际可访问的模型清单。
+    """
+    from app import _check_probe_permission
+    from model_registry import default_api_for, find_api, load_model_catalog, normalize_api_id, upsert_api
+    import model_probe
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    api_id = normalize_api_id((body or {}).get("api_id", ""))
+    if not api_id:
+        return JSONResponse({"ok": False, "error": "api_id 不能为空"}, status_code=400)
+    blocked = _check_probe_permission(api_user, api_id)
+    if blocked:
+        return blocked
+
+    catalog = load_model_catalog()
+    api = find_api(catalog, api_id) or {}
+    default_api = default_api_for(api_id) or {}
+    meta_api = {**default_api, **api}
+    if default_api.get("kind"):
+        meta_api["kind"] = default_api["kind"]
+    if default_api.get("base_url") and not meta_api.get("base_url"):
+        meta_api["base_url"] = default_api["base_url"]
+    if not meta_api:
+        return JSONResponse({"ok": False, "error": f"api_id 不存在: {api_id}", "models": []}, status_code=404)
+
+    # 先确保 canonical provider 元数据存在；之后 list_remote_models 才能按 kind/base_url 调供应商。
+    api_payload = {
+        "api_id": api_id,
+        "display_name": meta_api.get("display_name") or api_id,
+        "kind": meta_api.get("kind") or api_id,
+        "enabled": True,
+        "credential_ref": meta_api.get("credential_ref", ""),
+        "credential_env": meta_api.get("credential_env", ""),
+        "base_url": (body or {}).get("base_url") or meta_api.get("base_url", ""),
+        "models": list(meta_api.get("models") or []),
+    }
+    upsert_api(api_payload)
+
+    remote = model_probe.list_remote_models(
+        api_id,
+        force_refresh=True,
+        user_id=api_user["id"] if api_user else None,
+    )
+    if not remote.get("ok"):
+        return JSONResponse({**remote, "api_id": api_id, "synced": 0})
+
+    synced_models: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in remote.get("models") or []:
+        real = str(item.get("real_name") or item.get("id") or "").strip()
+        if not real or real in seen:
+            continue
+        seen.add(real)
+        synced_models.append({
+            "id": real,
+            "real_name": real,
+            "display_name": item.get("display_name") or real,
+            "enabled": True,
+            "capabilities": list(item.get("capabilities") or ["text", "streaming"]),
+        })
+
+    saved = upsert_api({**api_payload, "models": synced_models})
+    return JSONResponse({
+        "ok": True,
+        "api_id": api_id,
+        "synced": len(synced_models),
+        "remote_total": len(remote.get("models") or []),
+        "models": synced_models,
+        "catalog": saved,
+    })
+
+
 @router.get("/api/models/diff")
 async def api_models_diff(
     request: Request,
