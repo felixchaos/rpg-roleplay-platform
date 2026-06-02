@@ -131,6 +131,22 @@ def parse_set_command(
     api_id = api_id_override or _resolve_preferred_api(user_id) or (user_default[0] if user_default else None) or _detect_default_api()
     model = model_override or _resolve_preferred_model(user_id) or (user_default[1] if user_default else None) or _default_model_for_api(api_id)
 
+    # BYOK 守卫:解析出的 provider 用户实际不可用(典型:落到默认 vertex_ai 但用户没传 SA,
+    # 或 stale set_parser 偏好指向没配 key 的 provider)→ 回退到用户配过 key 的第一个模型。
+    # 否则 command_agent 抛「未找到 Vertex SA」→ /set 等命令解析整段失败(实测生产日志高频)。
+    if user_id and user_default and api_id and api_id != user_default[0]:
+        try:
+            from platform_app.user_credentials import get_credential
+            if api_id == "vertex_ai":
+                from core.vertex_sa import has_user_sa
+                _usable = has_user_sa(user_id)
+            else:
+                _usable = bool(get_credential(user_id, api_id))
+        except Exception:
+            _usable = True
+        if not _usable:
+            api_id, model = user_default[0], user_default[1]
+
     user_prompt = _build_user_prompt(set_text, state_data)
 
     try:

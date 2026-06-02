@@ -20,6 +20,14 @@ Version scheme: `0.x-waveN[.M]` where `wave` matches the in-repo development cad
 - Main GM output now defaults to a 4K token BYOK budget, with higher user-configurable headroom, so story replies are not cut off by the old strict cap.
 
 ### Fixed
+- Background phase summaries now use the save owner's model credentials, so long-memory compaction no longer falls back to an unconfigured server Vertex account.
+- New-save player origin selection no longer forces an initial identity card; the identity overlay is now truly optional for all origin modes.
+- Game Console openings now convert trailing markdown action lists into the GM choice box and refresh the streamed opening with the cleaned stored state.
+- New-save identity recommendations now surface the backend's real failure reason when the LLM returns `ok:false`, instead of replacing it with a generic empty-result message.
+- Opening messages are now recorded as branch commits, so forking from the first GM opening no longer checks out an empty root state.
+- Game Console curator clarifications now only interrupt the GM when confidence is below the user's threshold, reducing unnecessary choice prompts when the story can continue.
+- Script module rebuild progress is cleared when switching scripts, so an active extraction/rebuild banner from one script no longer appears on another script's detail view.
+- Game Console curator clarification prompts now parse inline `(A)/(B)` options and refresh pending questions during streaming, so users see clickable choices instead of repeated plain-text questions.
 - Script deletion from "My Scripts" now sends the confirmed force-delete flag so scripts with saves are actually removed together with their saves, matching the existing warning text.
 - NPC character-card creation now lets users choose the target script in the add dialog, so adding from the "all scripts" view no longer appears blocked when a user has multiple scripts.
 - Chunked `.txt` / `.md` script import now validates the uploaded filename instead of rejecting valid imports because of the display title.
@@ -51,7 +59,7 @@ Version scheme: `0.x-waveN[.M]` where `wave` matches the in-repo development cad
 
 The Python → Rust migration is functionally complete. Wave 14 closed every
 "not yet implemented" stub in the core game loop. Branches and script-pack
-remain at "critical path only" status.
+remain at "critical path only" status — see [docs/MIGRATION_AUDIT.md](./docs/MIGRATION_AUDIT.md) rows 5 and 6 for file:line specifics.
 
 ### Added
 - Rust core game loop — state, ops, scenes, dice, D&D 5E core, encounters, inventory, retrieval, agents
@@ -61,6 +69,8 @@ remain at "critical path only" status.
 - React 18 + Vite frontend — 3 page entries (Login / Platform / Game Console)
 - Branch saves — commit / ref / checkout work like Git
 - Script pack import — user-uploaded ZIPs with script + chapters + facts + cards
+- `docs/MIGRATION_AUDIT.md` — file:line-level migration audit for AI assistants
+
 ### Changed
 - LICENSE — MIT → Proprietary (AGPL-3.0 + commercial dual-license planned for v1 public release)
 - README rewritten with honest "what works today" status, ASCII architecture diagram, provider matrix, "why not SillyTavern" positioning

@@ -55,16 +55,39 @@ def cleanup_test_users() -> int:
 def register_user(client, username: str | None = None, password: str = "Test12345!") -> dict[str, Any]:
     """注册并返回 (username, password, body)。"""
     uname = username or integtest_username()
+    email = f"{uname}@example.test"
+    code = "123456"
+    from platform_app import auth as _auth
+
+    old_generate_email_code = _auth.generate_email_code
+    _auth.generate_email_code = lambda n_digits=6: code
     resp = client.post(
         "/api/v1/auth/register",
         json={
             "username": uname,
             "password": password,
             "display_name": "integ",
+            "email": email,
+            "birthday": "1990-01-01",
             "terms_accepted": True,
             "age_confirmed": True,
         },
     )
+    _auth.generate_email_code = old_generate_email_code
+    if resp.status_code == 200:
+        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        if body.get("pending_verify"):
+            verify_resp = client.post(
+                "/api/v1/auth/verify-email",
+                json={"email": email, "code": code},
+            )
+            return {
+                "username": uname,
+                "password": password,
+                "status": verify_resp.status_code,
+                "body": verify_resp.json() if verify_resp.headers.get("content-type", "").startswith("application/json") else {},
+                "cookies": dict(verify_resp.cookies),
+            }
     return {
         "username": uname,
         "password": password,

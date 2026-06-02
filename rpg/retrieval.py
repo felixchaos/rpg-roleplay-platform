@@ -179,7 +179,7 @@ def load_summaries_window(chapter_min: int | None, chapter_max: int | None, fall
     return "\n".join(selected[:6])
 
 
-def load_chapter_facts(chapter_min: int | None, chapter_max: int | None, limit: int = 5) -> str:
+def load_chapter_facts(chapter_min: int | None, chapter_max: int | None, limit: int = 12) -> str:
     # task 79: 新存档 world.time 为空 → timeline_filter 没有 anchor → chapter_min/max=None。
     # 之前直接返 "" 导致 GM 收不到任何原著 ChapterFact,凭训练数据瞎编开局
     # (柏林 1914 / Aldnoah / 界冢伊奈帆 等都属于这种幻觉)。
@@ -344,7 +344,7 @@ def _load_anchor_chapter_text(script_id: int, chapter_min: int, chapter_max: int
                 from document_chunks
                 where script_id = %s and chapter_index between %s and %s
                 order by chapter_index asc, chunk_index asc
-                limit 12
+                limit 48
                 """,
                 (int(script_id), int(chapter_min), int(cmax)),
             ).fetchall() or []
@@ -484,11 +484,30 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
         # turn=0 / 空 history → 也走章节原文注入 (用 phase 起始章)
         is_opening = (int(state.data.get("turn", 0) or 0) == 0
                       and not (state.data.get("history") or []))
-        if anchor_min is None and is_opening and (timeline_filter or {}).get("chapter_min"):
+        # 修复 ongoing 回合饥饿:原来只有 is_opening 才从时间线派生 anchor_min,
+        # 正常游戏回合 anchor_min=None → 章节原文整段不注入,GM 每轮只拿 bm25 碎片,
+        # 拿不到当前章节原著正文 → 写不出原著文风/细节。现在任何回合只要有时间线窗口
+        # 都注入当前窗口原文。
+        if anchor_min is None and (timeline_filter or {}).get("chapter_min"):
             anchor_min = int(timeline_filter["chapter_min"])
-            anchor_max = anchor_min  # 只拉锚点 1 章
+            anchor_max = int(timeline_filter.get("chapter_max") or anchor_min)
+        # 兜底:时间线没精确命中章节时,用世界线收束的"进度→章节"窗口(get_progress_window),
+        # 这才是权威的当前进度章节段(ch1..30 等)。保证每轮都注入当前进度的原著正文,
+        # 不再因 timeline 未命中就整段不注入。
+        if anchor_min is None and script_id:
+            try:
+                from agents.anchor_seed_agent import get_progress_window as _gpw
+                _sid2 = _resolve_save_id_from_user(user_id)
+                if _sid2:
+                    _pw = _gpw(_sid2, world_time_label=(world.get("time") or "").strip(),
+                               script_id=int(script_id), window_size=50)
+                    if _pw and _pw.get("chapter_min"):
+                        anchor_min = int(_pw["chapter_min"])
+                        anchor_max = int(_pw.get("chapter_max") or anchor_min)
+            except Exception:
+                pass
         if anchor_min and script_id:
-            anchor_text = _load_anchor_chapter_text(int(script_id), anchor_min, anchor_max, max_chars=2400)
+            anchor_text = _load_anchor_chapter_text(int(script_id), anchor_min, anchor_max, max_chars=9000)
             if anchor_text:
                 # task 131: 明确标记"风格 + 骨架参考,不是必须复现的戏剧强度"
                 parts.append(
@@ -795,7 +814,7 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
         # 2. BM25 章节片段（.webnovel/vectors.db 是 MuMu 原著 chunks，仅默认走）
         snippets = bm25_search(
             user_input,
-            top_k=3,
+            top_k=8,
             chapter_min=timeline_filter.get("chapter_min") if timeline_filter else None,
             chapter_max=timeline_filter.get("chapter_max") if timeline_filter else None,
         )

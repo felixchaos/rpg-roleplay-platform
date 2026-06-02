@@ -72,10 +72,13 @@ def _inject_health(catalog: dict[str, Any]) -> dict[str, Any]:
 async def api_models(
     api_user: dict[str, Any] | None = Depends(get_current_user),
 ) -> JSONResponse:
-    from app import _redact_catalog, load_model_catalog, selected_model
-    catalog = load_model_catalog()
+    from app import _redact_catalog, selected_model
+    from model_registry import load_catalog_for_user
+    # 安全:每用户视图 = 全局菜单 + 该用户私有 overlay(同步模型 / 自建中转站)。
+    _uid = int(api_user["id"]) if api_user and api_user.get("id") else None
+    catalog = load_catalog_for_user(_uid)
     is_admin = bool(api_user and api_user.get("role") == "admin")
-    redacted = _redact_catalog(catalog, is_admin)
+    redacted = _redact_catalog(catalog, is_admin, user_id=_uid)
     enriched = _inject_pricing(redacted)
     return JSONResponse({
         "ok": True,
@@ -321,14 +324,26 @@ async def api_models_remote_sync(
     request: Request,
     api_user: dict[str, Any] | None = Depends(get_current_user),
 ) -> JSONResponse:
-    """用当前用户的 API Key 拉取供应商真实 /models，并写回 model_entries。
+    """用当前用户的 API Key 拉取供应商真实 /models，写进**该用户私有**的 overlay。
 
     这是 API Key 页面“可访问模型”的权威来源：静态 catalog 只提供 provider
     元数据（kind/base_url），不能冒充用户账号实际可访问的模型清单。
+
+    安全(重大事故修复):历史上这里把同步结果写进全局 model_apis/model_entries,
+    导致一个用户的 provider/模型泄露进所有人(含 admin)的模型选择器。现在改为
+    写 user_model_entries(每用户隔离),只在该用户自己的 catalog 视图里 merge。
+    全局菜单只有 admin 能改(/api/models/api)。
     """
     from app import _check_probe_permission
-    from model_registry import default_api_for, find_api, load_model_catalog, normalize_api_id, upsert_api
+    from model_registry import (
+        default_api_for, find_api, load_catalog_for_user, load_model_catalog, normalize_api_id,
+    )
+    from platform_app import user_models
     import model_probe
+
+    user_id = int(api_user["id"]) if api_user and api_user.get("id") else None
+    if not user_id:
+        return JSONResponse({"ok": False, "error": "需要登录"}, status_code=401)
 
     try:
         body = await request.json()
@@ -341,34 +356,42 @@ async def api_models_remote_sync(
     if blocked:
         return blocked
 
+    # provider 元数据解析(不写全局):全局菜单 > default_api 模板 > 用户自建中转站凭证。
     catalog = load_model_catalog()
     api = find_api(catalog, api_id) or {}
     default_api = default_api_for(api_id) or {}
     meta_api = {**default_api, **api}
-    if default_api.get("kind"):
-        meta_api["kind"] = default_api["kind"]
-    if default_api.get("base_url") and not meta_api.get("base_url"):
-        meta_api["base_url"] = default_api["base_url"]
-    if not meta_api:
-        return JSONResponse({"ok": False, "error": f"api_id 不存在: {api_id}", "models": []}, status_code=404)
+    base_url = (body or {}).get("base_url") or meta_api.get("base_url", "")
+    cred_base = ""
+    try:
+        from platform_app.user_credentials import get_credential
+        _cred = get_credential(user_id, api_id)
+        cred_base = (_cred or {}).get("base_url_override") or ""
+    except Exception:
+        cred_base = ""
+    if not base_url:
+        base_url = cred_base
+    # 全局没这个 provider(自建中转站)→ 必须有 base_url 才能调,且按 openai_compat 路由
+    kind = meta_api.get("kind") or ("openai_compat" if base_url else api_id)
+    if not api and not base_url:
+        return JSONResponse(
+            {"ok": False, "error": f"未知 provider「{api_id}」需先在凭证里填写 base_url", "models": []},
+            status_code=400,
+        )
 
-    # 先确保 canonical provider 元数据存在；之后 list_remote_models 才能按 kind/base_url 调供应商。
-    api_payload = {
-        "api_id": api_id,
+    api_meta = {
+        "id": api_id,
         "display_name": meta_api.get("display_name") or api_id,
-        "kind": meta_api.get("kind") or api_id,
-        "enabled": True,
-        "credential_ref": meta_api.get("credential_ref", ""),
+        "kind": kind,
         "credential_env": meta_api.get("credential_env", ""),
-        "base_url": (body or {}).get("base_url") or meta_api.get("base_url", ""),
-        "models": list(meta_api.get("models") or []),
+        "base_url": base_url,
     }
-    upsert_api(api_payload)
 
     remote = model_probe.list_remote_models(
         api_id,
         force_refresh=True,
-        user_id=api_user["id"] if api_user else None,
+        user_id=user_id,
+        api_override=api_meta,
     )
     if not remote.get("ok"):
         return JSONResponse({**remote, "api_id": api_id, "synced": 0})
@@ -388,7 +411,9 @@ async def api_models_remote_sync(
             "capabilities": list(item.get("capabilities") or ["text", "streaming"]),
         })
 
-    saved = upsert_api({**api_payload, "models": synced_models})
+    # 写每用户 overlay(绝不写全局)
+    user_models.replace_synced_models(user_id, api_id, synced_models)
+    saved = load_catalog_for_user(user_id)
     return JSONResponse({
         "ok": True,
         "api_id": api_id,

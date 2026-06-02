@@ -4105,6 +4105,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
         new_card: payload.new_card || null,
         birthpoint: payload.birthpoint || null,
         identity: payload.identity || null,
+        identity_known: payload.identity_known ?? null,
         story_intent: payload.story_intent || null,
         player_origin: payload.player_origin || null,
       });

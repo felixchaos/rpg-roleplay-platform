@@ -345,9 +345,11 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
     if (!menuRef.current || !triggerRef?.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const vh = window.innerHeight || document.documentElement.clientHeight || 600;
-    // 向上展开:可用高度 = trigger 上方空间 - 16px margin,再与 vh-60 取小值防溢出
-    const aboveSpace = Math.min(Math.max(200, rect.top - 16), vh - 60);
-    menuRef.current.style.maxHeight = aboveSpace + "px";
+    // 向上展开:封顶 = min(trigger 上方可用空间-16, 60vh, 480)。
+    // 关键修:之前用 vh-60(≈整屏高)覆盖了 CSS 的 480 上限,导致模型多时 popover
+    // 高到把顶部搜索框顶出视口外、够不到。必须同时受 480/60vh 约束。
+    const aboveSpace = Math.min(rect.top - 16, Math.round(vh * 0.6), 480);
+    menuRef.current.style.maxHeight = Math.max(200, aboveSpace) + "px";
     // 强制 flex column(CSS 类已含,inline 兜底防 specificity 问题)
     menuRef.current.style.display = "flex";
     menuRef.current.style.flexDirection = "column";
@@ -380,6 +382,9 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
   const apis = (catalog && Array.isArray(catalog.apis)) ? catalog.apis : [];
   apis.forEach((api) => {
     if (api && api.enabled === false) return;
+    // BYOK：只显示用户自己配过 key 的 provider（后端按当前用户算 has_credential）。
+    // 否则会把全局默认菜单(Claude/GPT 等用户没 key 的)整个摊开,选了也用不了。
+    if (api && api.has_credential === false) return;
     const mods = api.models || [];
     mods.forEach((m) => {
       if (m && m.enabled !== false) {
@@ -429,16 +434,24 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
     return (order[a.health] ?? 4) - (order[b.health] ?? 4);
   });
 
-  // A1: 当前选中优先级：存档 session_model > catalog.selected > gameState.app（全局回退）
+  // 选中态必须与底部标签(_currentModelLabel)同源,否则会"勾在 A、底部显示 B"。
+  // 优先级:current(localModel,点击后乐观更新) > 存档 session_model > catalog.selected > gameState.app。
   const _sessionModel = gameState && gameState.session_model;
   const selected = (catalog && catalog.selected) || {};
-  const selectedKey = (_sessionModel && _sessionModel.api_id && _sessionModel.model_id)
-    ? `${_sessionModel.api_id}::${_sessionModel.model_id}`
-    : (selected.api_id && selected.model_id
-        ? `${selected.api_id}::${selected.model_id}`
-        : (gameState && gameState.app
-            ? `${gameState.app.api_id || ""}::${gameState.app.model_real_name || ""}`
-            : ""));
+  let selectedKey = "";
+  if (current) {
+    const hit = flat.find((m) => m.id === current || m.real_name === current);
+    if (hit) selectedKey = `${hit.api_id}::${hit.real_name}`;
+  }
+  if (!selectedKey) {
+    if (_sessionModel && _sessionModel.api_id && _sessionModel.model_id) {
+      selectedKey = `${_sessionModel.api_id}::${_sessionModel.model_id}`;
+    } else if (selected.api_id && selected.model_id) {
+      selectedKey = `${selected.api_id}::${selected.model_id}`;
+    } else if (gameState && gameState.app) {
+      selectedKey = `${gameState.app.api_id || ""}::${gameState.app.model_real_name || ""}`;
+    }
+  }
 
   const pickModel = async (item) => {
     // M5: 记录调用前的选中态，失败时回滚

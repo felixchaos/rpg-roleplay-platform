@@ -127,6 +127,38 @@ class NewSaveAppliesNewCard(unittest.TestCase):
         # 玩家字段允许空，但 player dict 必须存在
         self.assertIsInstance(player, dict)
 
+    def test_initial_identity_card_is_optional_for_soul_origin(self):
+        """用户可见回归：玩家出身和初始身份卡解耦，魂穿也能不挂身份卡开局。"""
+        u = register_user(self.client)
+        cookies = u["cookies"]
+        uid = self._user_id(u["username"])
+        script_id = self._create_script(uid, "integtest_optional_identity")
+
+        payload = {
+            "title": "optional identity save",
+            "script_id": script_id,
+            "new_card": {
+                "name": "无身份卡旅人",
+                "role": "魂穿测试者",
+                "background": "验证初始身份卡为空时仍可创建存档。",
+            },
+            "player_origin": "soul",
+            "identity": None,
+            "identity_known": True,
+        }
+        r = self.client.post("/api/v1/saves", json=payload, cookies=cookies)
+        self.assertEqual(r.status_code, 200, r.text[:300])
+        body = r.json()
+        self.assertTrue(body.get("ok"), body)
+        save = body.get("save") or {}
+        snap = save.get("state_snapshot") or {}
+        if isinstance(snap, str):
+            snap = json.loads(snap)
+        player = snap.get("player") or {}
+        self.assertEqual(player.get("player_origin"), "soul")
+        self.assertNotIn("identity", player)
+        self.assertNotIn("identity_known", player)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

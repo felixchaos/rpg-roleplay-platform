@@ -42,6 +42,7 @@ from core.logging import get_logger, setup_default_logging
 from core.startup import configure_app, lifespan
 from model_registry import (
     delete_model,  # noqa: F401
+    load_catalog_for_user,
     load_model_catalog,
     select_model,  # noqa: F401
     selected_model,
@@ -783,6 +784,26 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = 
                 else:
                     model = selected_model()
                     _gm_model_id, _gm_api_id = model["real_name"], model["api_id"]
+            # BYOK 守卫(关键):解析出的 provider 用户实际不可用(stale gm.api_id 偏好
+            # 或全局默认落到 vertex_ai,但用户没传 SA / 没配该 provider key)→ 回退到
+            # 用户配过 key 的第一个模型。否则主 GM 构造即抛"未找到 SA",用户根本玩不了。
+            if api_user and (api_user.get("user_id") or api_user.get("id")):
+                try:
+                    _uid_g = int(api_user.get("user_id") or api_user.get("id"))
+                    from core.llm_backend import first_user_model as _fum
+                    _ud = _fum(_uid_g)
+                    if _ud and _gm_api_id and _gm_api_id != _ud[0]:
+                        from platform_app.user_credentials import get_credential as _gc
+                        if _gm_api_id == "vertex_ai":
+                            from core.vertex_sa import has_user_sa as _hsa
+                            _ok = _hsa(_uid_g)
+                        else:
+                            _ok = bool(_gc(_uid_g, _gm_api_id))
+                        if not _ok:
+                            _gm_api_id, _gm_model_id = _ud
+                            log.info(f"[ensure_loaded] BYOK 守卫:{uid} 模型回退到 {_gm_api_id}/{_gm_model_id}(原解析不可用)")
+                except Exception as _ge:
+                    log.warning(f"[ensure_loaded] BYOK 守卫异常(忽略): {_ge}")
             _lru_set(_gm_by_user, uid, GameMaster(
                 api_id=_gm_api_id,
                 model=_gm_model_id,
@@ -881,7 +902,10 @@ def _backup_save(reason: str) -> str | None:
 
 def _payload(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
     state = _ensure_loaded(api_user, ensure_gm=False)
-    model_catalog = load_model_catalog()
+    # 安全:模型选择器走每用户视图(全局菜单 + 该用户私有 overlay),
+    # 否则一个用户同步的 provider/模型会泄露进所有人的选择器。
+    _uid = int(api_user["id"]) if api_user and api_user.get("id") else None
+    model_catalog = load_catalog_for_user(_uid)
     model = selected_model(model_catalog)
     is_admin = bool(api_user and api_user.get("role") == "admin")
     payload = state.status_payload()
@@ -908,7 +932,8 @@ def _payload(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
     if is_admin:
         payload["app"]["save_file"] = str(SAVE_FILE)
     # catalog 按角色脱敏（普通用户拿不到 credential_ref/credential_env/base_url）
-    payload["models"] = _redact_catalog(model_catalog, is_admin)
+    # has_credential 按当前用户算 → 前端游戏选择器只显示用户配过 key 的 provider
+    payload["models"] = _redact_catalog(model_catalog, is_admin, user_id=_uid)
     payload["tools"] = _redact_tools(tool_payload(), is_admin)
     # task 10：把当前激活存档的 id/title 直接挂在 /api/state 顶层 + state 字段里，
     # Game Console 左侧栏拿来显示「当前存档」，避免回退到 hard-coded mock id=11。
@@ -935,15 +960,49 @@ def _payload(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
     return payload
 
 
-def _redact_catalog(catalog: dict[str, Any], is_admin: bool) -> dict[str, Any]:
+def _user_credentialed_api_ids(user_id: int | None) -> set[str]:
+    """该用户已配置且启用的 provider api_id 集合(BYOK)。
+    vertex_ai 的"凭证"是上传的 SA JSON,单独检测。"""
+    ids: set[str] = set()
+    if not user_id:
+        return ids
+    try:
+        from model_registry import normalize_api_id
+        from platform_app.user_credentials import list_credentials
+        for it in (list_credentials(int(user_id)).get("items") or []):
+            if it.get("has_credential") and it.get("enabled"):
+                ids.add(normalize_api_id(it.get("api_id")))
+    except Exception:
+        pass
+    try:
+        from core.vertex_sa import has_user_sa
+        if has_user_sa(int(user_id)):
+            ids.add("vertex_ai")
+    except Exception:
+        pass
+    return ids
+
+
+def _redact_catalog(catalog: dict[str, Any], is_admin: bool, user_id: int | None = None) -> dict[str, Any]:
     """普通用户拿不到 credential_ref / credential_env / base_url（部署形状信息）。
     所有角色都能看到 has_credential 字段（布尔），便于前端过滤掉没配 key 的 API。
+
+    has_credential 按**当前用户**算(BYOK):用户自己配过该 provider 的 key 才为 true。
+    游戏内模型选择器据此只显示用户能用的 provider,不再把全局菜单整个摊开。
+    服务器模式必须传 user_id;本地匿名模式回退到 env/SA 文件存在性。
     """
     import copy
     import model_probe
+    from model_registry import normalize_api_id
+    from core.config import require_auth as _require_auth
     result = copy.deepcopy(catalog)
+    require_auth = _require_auth()
+    cred_ids = _user_credentialed_api_ids(user_id) if require_auth else set()
     for api in result.get("apis", []):
-        api["has_credential"] = model_probe._credential_present(api)
+        if require_auth:
+            api["has_credential"] = normalize_api_id(api.get("id")) in cred_ids
+        else:
+            api["has_credential"] = model_probe._credential_present(api)
         if not is_admin:
             api.pop("credential_ref", None)
             api.pop("credential_env", None)
@@ -1904,6 +1963,24 @@ def _resolve_console_assistant_backend(api_user: dict[str, Any] | None):
             model = selected_model()
             api_id = api_id or model.get("api_id")
             model_real = model_real or model.get("real_name")
+    # BYOK 守卫(同主 GM):解析出的 provider 用户不可用(stale 偏好/默认落 vertex 但没 SA)
+    # → 回退到用户配过 key 的第一个模型,避免控制台助手构造即失败。
+    if api_user and api_user.get("id"):
+        try:
+            _uid_c = int(api_user["id"])
+            from core.llm_backend import first_user_model as _fum_c
+            _ud_c = _fum_c(_uid_c)
+            if _ud_c and api_id and api_id != _ud_c[0]:
+                from platform_app.user_credentials import get_credential as _gc_c
+                if api_id == "vertex_ai":
+                    from core.vertex_sa import has_user_sa as _hsa_c
+                    _ok_c = _hsa_c(_uid_c)
+                else:
+                    _ok_c = bool(_gc_c(_uid_c, api_id))
+                if not _ok_c:
+                    api_id, model_real = _ud_c
+        except Exception:
+            pass
     # 用 GameMaster 构造 backend, 再借用其 ._backend
     gm = GameMaster(
         api_id=str(api_id) if api_id is not None else api_id,

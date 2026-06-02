@@ -176,20 +176,13 @@ async def api_create_save(request: Request, user=Depends(require_user)):
         player_origin = "soul"
     if player_origin and player_origin not in ("soul", "body", "dual", "native"):
         player_origin = None
-    # identity_known: 开局是否知道身份卡(知道/不知道),与出身正交;肉穿(body)无身份卡 → 忽略。
+    # identity_known: 开局是否知道身份卡(知道/不知道)。没有挂身份卡时没有可感知对象,忽略。
     _ik = body.get("identity_known")
     if _ik is None and isinstance(identity, dict):
         _ik = identity.get("identity_known")
     identity_known = _ik if isinstance(_ik, bool) else None
-    if player_origin == "body":
+    if player_origin == "body" or not identity:
         identity_known = None
-    # gate:非肉穿出身(魂穿/一体双魂/彻底扮演)依赖一个【本地身份】= 身份卡;没挂就不成立。
-    # 前端已禁用创建按钮,这里后端兜底防 API 直接绕过。肉穿(body)整体外来、无需本地身份。
-    if player_origin in ("soul", "dual", "native") and not identity:
-        return json_response(
-            {"ok": False, "error": "「魂穿 / 一体双魂 / 彻底扮演」需要先挂一张身份卡作为本地身份;或把出身改为「肉穿」。"},
-            status_code=400,
-        )
     try:
         save = workspace.create_save(
             user["id"], script_id, body.get("title", ""),

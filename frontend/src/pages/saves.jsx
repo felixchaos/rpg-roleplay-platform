@@ -1503,6 +1503,10 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
         setRecsErr(msg);
         return;
       }
+      if (data && data.ok === false && data.error) {
+        setRecsErr(data.error);
+        return;
+      }
       if (data && Array.isArray(data.recommendations) && data.recommendations.length > 0) {
         setRecs(data.recommendations);
       } else {
@@ -1571,20 +1575,14 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
       {/* 当前选择 */}
       <div key="current-identity" style={{
         ...panel,
-        borderColor: (noIdentity && playerOrigin !== 'body') ? 'var(--warn, #d9822b)' : noIdentity ? 'var(--line-soft, #2a2724)' : 'var(--accent, #c96442)',
-        background: (noIdentity && playerOrigin !== 'body') ? 'rgba(217,130,43,.10)' : noIdentity ? 'var(--panel-2, #282623)' : 'var(--accent-soft, rgba(201,100,66,.12))',
+        borderColor: noIdentity ? 'var(--line-soft, #2a2724)' : 'var(--accent, #c96442)',
+        background: noIdentity ? 'var(--panel-2, #282623)' : 'var(--accent-soft, rgba(201,100,66,.12))',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
       }}>
         {noIdentity ? (
-          playerOrigin !== 'body' ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--warn, #d9822b)', fontSize: 13, lineHeight: 1.5 }}>
-              <Icon name="warn" size={13} /> {t('saves.identity.no_identity_required')}
-            </div>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-quiet, #c8c2b7)', fontSize: 13 }}>
-              <Icon name="check" size={13} /> {t('saves.identity.no_identity', { name: pickedName })}
-            </div>
-          )
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-quiet, #c8c2b7)', fontSize: 13 }}>
+            <Icon name="check" size={13} /> {t('saves.identity.no_identity', { name: pickedName })}
+          </div>
         ) : (
           <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -1669,8 +1667,8 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
           })}
         </div>
 
-        {/* 知道/不知道身份卡 — body 时隐藏 */}
-        {playerOrigin !== 'body' && (
+        {/* 知道/不知道身份卡 — 仅挂了身份卡时有效 */}
+        {identity && playerOrigin !== 'body' && (
           <div style={{ borderTop: '1px solid var(--line-soft, #2a2724)', paddingTop: 10, display: 'grid', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-quiet, #c8c2b7)' }}>{t('saves.identity.identity_known_label')}</span>
@@ -1908,12 +1906,9 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const step1Valid = title.trim() && scriptId;
   const step2Valid = (roleMode === "existing" && pickedCard) || (roleMode === "new" && newCardForm.name.trim());
   const step3Valid = !!birthpoint;
-  // 身份卡是 overlay,但「玩家出身 ≠ 肉穿」时必须挂一张:魂穿(现代灵魂附入本地身体)/
-  // 一体双魂(与原住民本体共魂)/彻底扮演(扮演本地原住民) 都依赖一个【本地身份/本体】,
-  // 没有它这些出身就不成立(用户反馈:不挂身份卡却选魂穿会自相矛盾)。
-  // 肉穿(连人带魂整体外来、无本地身份)可以不挂。
-  const originNeedsIdentity = playerOrigin !== 'body';
-  const step4Valid = !originNeedsIdentity || identity != null;
+  // 身份卡是 overlay,和玩家出身正交。用户可以只选魂穿/肉穿/双魂/原住民定位,
+  // 不挂本地身份卡时直接按角色卡开局。
+  const step4Valid = true;
 
   const handleSubmit = async () => {
     setSubmitErr(""); setSubmitting(true);
@@ -1949,8 +1944,8 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
         story_intent: storyIntent.trim() || null,
         // 独立字段,与 identity 解耦:即使没挂身份卡也要带,后端写到 state.player.player_origin
         player_origin: playerOrigin || 'soul',
-        // body 无身份卡 → 省略 identity_known; 其他传布尔值
-        ...(playerOrigin !== 'body' ? { identity_known: identityKnown } : {}),
+        // 没挂身份卡时无需传 identity_known;该字段只描述"是否知道这张身份卡"。
+        ...(identity && playerOrigin !== 'body' ? { identity_known: identityKnown } : {}),
       };
       const res = onConfirm?.(payload);
       if (res && typeof res.then === "function") await res;

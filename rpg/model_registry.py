@@ -246,6 +246,73 @@ def save_model_catalog(catalog: dict[str, Any]) -> None:
     tmp_file.replace(MODEL_CONFIG_FILE)
 
 
+def apply_user_overlay(catalog: dict[str, Any], user_id: int | None) -> dict[str, Any]:
+    """把某用户私有的 overlay(remote/sync 拉到的本账号可见模型 + 自建中转站)
+    merge 到全局 catalog 之上,返回**新的** catalog。只应用这一个用户的 overlay。
+
+    安全:全局 catalog 永远只含 admin 策展的 provider 菜单。用户的同步模型/
+    自定义 provider 绝不写全局,只在该用户自己的视图里出现。
+
+    - 已在全局菜单里的 provider:用该用户同步到的模型清单**替换**其 models
+      (这是该用户账号实际可访问的模型,权威来源)。
+    - 不在全局菜单里的 api_id(用户自建中转站):从其 user_api_credentials
+      (带 base_url_override)合成一个 openai_compat provider 行追加进去。
+    """
+    if not user_id:
+        return catalog
+    try:
+        from platform_app.user_models import load_overlay
+        overlay = load_overlay(int(user_id))
+    except Exception:
+        overlay = {}
+    if not overlay:
+        return catalog
+    result = copy.deepcopy(catalog)
+    by_id = {normalize_api_id(api.get("id")): api for api in result.get("apis", [])}
+
+    # 自建中转站需要 base_url:从用户凭证取
+    cred_base: dict[str, str] = {}
+    custom_ids = [aid for aid in overlay if normalize_api_id(aid) not in by_id]
+    if custom_ids:
+        try:
+            from platform_app.user_credentials import list_credentials
+            for item in (list_credentials(int(user_id)).get("items") or []):
+                cred_base[normalize_api_id(item.get("api_id"))] = item.get("base_url_override") or ""
+        except Exception:
+            cred_base = {}
+
+    for raw_api_id, models in overlay.items():
+        api_id = normalize_api_id(raw_api_id)
+        existing = by_id.get(api_id)
+        if existing is not None:
+            existing["models"] = list(models)
+            continue
+        # 自建中转站:只有当用户确实配过该 provider 的凭证(带 base_url)才合成,
+        # 避免悬空条目。base_url 来自用户凭证(per-user,已做 SSRF 校验)。
+        base_url = cred_base.get(api_id, "")
+        if not base_url:
+            continue
+        result.setdefault("apis", []).append({
+            "id": api_id,
+            "display_name": api_id,
+            "kind": "openai_compat",
+            "enabled": True,
+            "credential_ref": "",
+            "credential_env": "",
+            "base_url": base_url,
+            "models": list(models),
+            "_custom": True,
+        })
+    return result
+
+
+def load_catalog_for_user(user_id: int | None = None) -> dict[str, Any]:
+    """面向用户的 catalog 视图 = 全局菜单 + 该用户私有 overlay。
+    所有面向单个用户的读取(模型选择器、BYOK 默认模型)都应走这个,
+    而不是裸 load_model_catalog()(那是全局菜单,会跨用户泄露)。"""
+    return apply_user_overlay(load_model_catalog(), user_id)
+
+
 def selected_model(catalog: dict[str, Any] | None = None) -> dict[str, Any]:
     catalog = _migrate_catalog(catalog or load_model_catalog())
     selected = catalog.get("selected") or {}

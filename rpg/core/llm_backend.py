@@ -36,7 +36,7 @@ def first_user_model(user_id: Optional[int], api_id: str | None = None) -> tuple
     if not user_id:
         return None
     try:
-        from model_registry import load_model_catalog, normalize_api_id
+        from model_registry import load_catalog_for_user, normalize_api_id
         from platform_app.db import connect, init_db
 
         target_api = normalize_api_id(api_id) if api_id else ""
@@ -51,7 +51,8 @@ def first_user_model(user_id: Optional[int], api_id: str | None = None) -> tuple
                 (int(user_id),),
             ).fetchall()
         credential_api_ids = {normalize_api_id(row["api_id"]) for row in rows}
-        catalog = load_model_catalog()
+        # 每用户视图:含该用户同步到的模型 + 自建中转站,BYOK 默认才能命中
+        catalog = load_catalog_for_user(int(user_id))
         for api in catalog.get("apis", []):
             aid = normalize_api_id(api.get("id") or api.get("api_id"))
             if target_api and aid != target_api:
@@ -64,6 +65,27 @@ def first_user_model(user_id: Optional[int], api_id: str | None = None) -> tuple
                 real_name = model.get("real_name") or model.get("id")
                 if real_name:
                     return aid, str(real_name)
+        # 兜底:用户有凭证但 provider 既不在全局 catalog、也没同步模型(自定义中转站,
+        # 如 火山口/gg)→ 上面 catalog 循环匹配不到 → 之前返回 None,导致所有 BYOK 守卫
+        # 无从回退、子代理落 vertex 失败。这里用"第一个启用凭证 + 用户 gm 模型偏好"兜底:
+        # 玩家既然在用这个自定义 provider 玩,gm.model_real_name 偏好就是可用的模型名。
+        with connect() as db2:
+            cred = db2.execute(
+                "select api_id from user_api_credentials where user_id=%s and enabled=true "
+                "and length(encrypted_key)>0 order by updated_at desc",
+                (int(user_id),),
+            ).fetchall()
+            pref = db2.execute(
+                "select preferences->>'gm.model_real_name' as m from user_preferences where user_id=%s",
+                (int(user_id),),
+            ).fetchone()
+        pref_model = (pref or {}).get("m") if pref else None
+        for c in cred:
+            aid = normalize_api_id(c["api_id"])
+            if target_api and aid != target_api:
+                continue
+            if pref_model:
+                return aid, str(pref_model)
     except Exception:
         return None
     return None

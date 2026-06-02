@@ -86,6 +86,7 @@ def _active_worldbook(
     if not entries:
         entries = _worldbook_entries(world, state)
     active = []
+    seen_titles: set[str] = set()
     for entry in entries:
         matched = [key for key in entry["keys"] if key and key in scan_text]
         if entry.get("regex"):
@@ -96,8 +97,29 @@ def _active_worldbook(
         entry["matched"] = matched[:5]
         entry["score"] = entry.get("priority", 50) + len(matched) * 6
         active.append(entry)
+        seen_titles.add(str(entry.get("title", "")))
     active.sort(key=lambda x: (x["score"], x.get("priority", 0)), reverse=True)
-    return active[:6]
+    # 常驻基线:纯关键词门控会让 recent text 不含 key 时整个世界书都不注入,
+    # GM 永远拿不到核心世界设定(用户报"世界书完全是摆设")。命中不足 MIN 时,
+    # 用最高 priority 的条目补足,保证每轮至少注入核心设定。
+    # 注:实测部分剧本(如 script 11)的 DB 世界书条目 keys 为空,关键词激活彻底失效,
+    # 这些条目只能靠常驻基线出现 → 基线给厚一点(8 条),配合 10000 字层预算。
+    MIN_CONSTANT = 8
+    if len(active) < MIN_CONSTANT:
+        backfill = [
+            e for e in entries
+            if str(e.get("title", "")) not in seen_titles
+        ]
+        backfill.sort(key=lambda x: x.get("priority", 50), reverse=True)
+        for e in backfill:
+            if len(active) >= MIN_CONSTANT:
+                break
+            e = dict(e)
+            e["matched"] = ["(常驻设定)"]
+            e["score"] = int(e.get("priority", 50))
+            active.append(e)
+            seen_titles.add(str(e.get("title", "")))
+    return active[:10]
 
 
 def _worldbook_entries(world: dict[str, Any], state) -> list[dict[str, Any]]:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from collections.abc import Iterator
@@ -14,7 +15,11 @@ log = get_logger(__name__)
 
 # P1-1: 最多重试 1 次,仅对 timeout / 5xx 错误
 _MAX_RETRIES = 1
-_VERTEX_TIMEOUT_SECONDS = 120
+# 读超时原 120s 太紧,带 reasoning 的 Gemini 长回合常被切断。提到 300s,可用 RPG_GM_TIMEOUT 调。
+try:
+    _VERTEX_TIMEOUT_SECONDS = int(float(os.environ.get("RPG_GM_TIMEOUT", "300")))
+except (TypeError, ValueError):
+    _VERTEX_TIMEOUT_SECONDS = 300
 
 
 def _is_retryable_vertex(exc: Exception) -> bool:

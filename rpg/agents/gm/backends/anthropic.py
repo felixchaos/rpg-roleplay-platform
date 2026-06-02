@@ -72,9 +72,12 @@ class _AnthropicBackend:
                 "Anthropic API key 未配置。请在「设置 → API 设置」添加你自己的 Anthropic API Key。"
                 "(测试服 LLM 调用必须 BYOK,平台不提供共享 key)"
             )
+        # 读超时原 120s 太紧:GM 带 reasoning 的长回合常被中途切断 → 整轮 token 白烧。
+        # 提到 300s,可用 RPG_GM_TIMEOUT 调。
+        _read_to = float(os.environ.get("RPG_GM_TIMEOUT", "300"))
         self.client = Anthropic(
             api_key=key,
-            timeout=httpx.Timeout(120.0, connect=10.0),
+            timeout=httpx.Timeout(_read_to, connect=10.0),
         )
         self.model_name = model
         self.user_id = user_id  # task 141: 给 _thinking_param 用

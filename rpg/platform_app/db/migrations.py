@@ -1345,6 +1345,27 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "alter table feedback add column if not exists admin_reply text",
         "alter table feedback add column if not exists replied_at timestamptz",
     ]),
+    (52, "user_model_entries", [
+        # 安全修复: model_apis/model_entries 是全局共享的 admin 策展菜单。
+        # 用户通过 /api/models/remote/sync 拉到的「自己账号可见模型」必须按用户隔离,
+        # 否则一个用户的 provider/模型会泄露进所有人(含 admin)的模型选择器。
+        # 这张表存每用户的 overlay,只在该用户自己的 catalog 视图里 merge。
+        """
+        create table if not exists user_model_entries (
+          user_id bigint not null references users(id) on delete cascade,
+          api_id text not null,
+          model_id text not null,
+          real_name text not null default '',
+          display_name text not null default '',
+          enabled boolean not null default true,
+          capabilities jsonb not null default '[]'::jsonb,
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now(),
+          primary key (user_id, api_id, model_id)
+        )
+        """,
+        "create index if not exists idx_user_model_entries_user on user_model_entries(user_id, api_id)",
+    ]),
 ]
 
 

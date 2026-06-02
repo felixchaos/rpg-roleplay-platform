@@ -543,6 +543,22 @@ def resolve_api_and_model(
         or (user_default[1] if user_default else None)
         or default_model
     )
+    # BYOK 守卫:解析出的 provider 用户实际不可用(典型:默认 vertex_ai 或 stale 偏好,
+    # 但用户没传 SA / 没配该 provider 的 key)→ 回退到用户配过 key 的第一个模型。
+    # 否则所有 harness 子代理(curator / acceptance / extractor / 黑天鹅)对没 SA 的
+    # 用户都会抛「未找到 Vertex SA」而整段失败。显式 override 不受此守卫影响。
+    if not (api_id_override or model_override) and user_id and user_default and api_id and api_id != user_default[0]:
+        try:
+            from platform_app.user_credentials import get_credential
+            if api_id == "vertex_ai":
+                from core.vertex_sa import has_user_sa
+                _usable = has_user_sa(user_id)
+            else:
+                _usable = bool(get_credential(user_id, api_id))
+        except Exception:
+            _usable = True
+        if not _usable:
+            api_id, model = user_default[0], user_default[1]
     return api_id, model
 
 

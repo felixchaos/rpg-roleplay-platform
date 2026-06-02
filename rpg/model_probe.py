@@ -207,11 +207,20 @@ def _has_user_credential(user_id: int | None, api_id: str) -> bool:
         return False
 
 
-def list_remote_models(api_id: str, force_refresh: bool = False, user_id: int | None = None) -> dict[str, Any]:
+def list_remote_models(
+    api_id: str,
+    force_refresh: bool = False,
+    user_id: int | None = None,
+    api_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """从供应商 SDK 拉取真实可用模型清单。
 
     安全：服务器模式下必须传 user_id，且该 user 必须有 user_api_credentials.api_id 凭证。
     否则禁止调用，防止用服务端凭证（vertex_sa.json / EMBED_API_KEY）替用户付费。
+
+    api_override: 显式 provider 元数据(kind/base_url 等)。用于用户自建中转站——
+    这些 provider 不在全局菜单里(绝不写全局,避免跨用户泄露),由调用方从用户
+    凭证合成后传入。
     """
     # 服务器模式强制：必须有 user-scoped 凭证
     if _require_user_credential() and not _has_user_credential(user_id, api_id):
@@ -224,8 +233,11 @@ def list_remote_models(api_id: str, force_refresh: bool = False, user_id: int | 
             return {"ok": True, "models": cached[1], "cached": True}
 
     from model_registry import find_api, load_model_catalog
-    catalog = load_model_catalog()
-    api = find_api(catalog, api_id)
+    if api_override:
+        api = {**api_override, "id": api_override.get("id") or api_id}
+    else:
+        catalog = load_model_catalog()
+        api = find_api(catalog, api_id)
     if not api:
         return {"ok": False, "error": f"api_id 不存在: {api_id}", "models": []}
 

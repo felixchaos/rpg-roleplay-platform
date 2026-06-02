@@ -32,6 +32,8 @@ def _base_body(username: str) -> dict:
         "username": username,
         "password": "Test12345!",
         "display_name": "consent_test",
+        "email": f"{username}@example.test",
+        "birthday": "1990-01-01",
         "terms_accepted": True,
         "age_confirmed": True,
     }

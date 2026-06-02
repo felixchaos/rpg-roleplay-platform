@@ -363,7 +363,8 @@ def _fire_and_forget_compact(save_id: int, phase_index: int) -> None:
     def _worker() -> None:
         try:
             from agents.phase_digest_agent import compact_phase
-            result = compact_phase(save_id, phase_index)
+            user_id = _load_save_user_id(save_id)
+            result = compact_phase(save_id, phase_index, user_id=user_id)
             err = (result or {}).get("error")
             if err:
                 log.warning(f"[phase_digest async] save {save_id} phase {phase_index} LLM error: {err}")
@@ -389,6 +390,28 @@ def _fire_and_forget_compact(save_id: int, phase_index: int) -> None:
                       f"{type(exc).__name__}: {exc}")
 
     threading.Thread(target=_worker, daemon=True, name=f"compact-{save_id}-{phase_index}").start()
+
+
+def _load_save_user_id(save_id: int) -> int | None:
+    """Return the owner for model/key selection in background phase digest jobs."""
+    try:
+        from platform_app.db import connect, init_db
+
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select user_id from game_saves where id = %s",
+                (save_id,),
+            ).fetchone()
+        if not row or row.get("user_id") is None:
+            return None
+        return int(row["user_id"])
+    except Exception as exc:
+        log.warning(
+            f"[phase_digest async] save {save_id} owner lookup failed: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return None
 
 
 def close_phase(save_id: int, phase_index: int) -> None:

@@ -31,6 +31,22 @@ log = get_logger(__name__)
 # RPG_POSTPROC_MODE=sync → 旧行为 (后处理阻塞主路径, 测试/debug 用)。
 _POSTPROC_MODE = os.environ.get("RPG_POSTPROC_MODE", "async").lower()
 
+
+def _gm_max_iters() -> int:
+    """GM 单轮工具调用上限。原 8 太紧:世界线收束后一轮常需
+    update_state → list_pending_anchors → mark_anchor_satisfied → set_question → 写正文,
+    8 轮经常没串完就被「已达工具上限」硬截,浪费整轮 token。默认提到 16,可用
+    RPG_GM_MAX_ITERS 调。GM 不再需要工具时会自然停,调高只给上限不强制多调。"""
+    try:
+        return max(4, int(os.environ.get("RPG_GM_MAX_ITERS", "16")))
+    except (TypeError, ValueError):
+        return 16
+
+
+def _should_route_to_curator_clarify(confidence: float, threshold: float, clarify: str) -> bool:
+    """Only interrupt the GM when the curator is actually below confidence threshold."""
+    return bool((clarify or "").strip()) and float(confidence) < float(threshold)
+
 # ---------------------------------------------------------------------------
 # Pipeline context: 在 phase 之间传递的可变状态
 # ---------------------------------------------------------------------------
@@ -661,48 +677,27 @@ async def run_rules_phase(
     yield ("context", {"debug": bundle["debug"]})
     yield ("status", payload_fn(api_user))
 
-    # (d) clarify 短路
+    # (d) curator 低 confidence **不再短路**。
+    # 用户 harness 要求:每轮必须先推进剧情,绝不"一上来甩 (A)(B) 菜单回去 + 跳过 GM"。
+    # curator 的 clarifying_question / candidate_actions / risk_flags 已通过 bundle 传给主 GM
+    # 作上下文;主 GM 照常出场推进剧情,回合末再用结构化 question op 给出动作选项
+    # (finalize 阶段 extract_trailing_choice 会确定性兜底,强制任何提问/选项结构化、不入正文)。
     _curator_plan = agent_result.get("curator_plan", {}) or {}
     _confidence = float(_curator_plan.get("confidence") or 1.0)
-    _clarify = (_curator_plan.get("clarifying_question") or "").strip()
-    _confidence_threshold = clarify_threshold(api_user)
-    _route_to_clarify = bool(_clarify) or _confidence < _confidence_threshold
-    if _route_to_clarify and _clarify:
-        try:
-            state.add_pending_question(_clarify, source="curator:clarify")
-        except Exception:
-            pass
+    if _confidence < clarify_threshold(api_user):
         try:
             from datetime import datetime as _dt
             audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
             audit.append({
                 "ts": _dt.now().isoformat(timespec="seconds"),
-                "kind": "clarify_yield",
+                "kind": "curator_low_confidence",
                 "source": "curator",
-                "hint": f"confidence={_confidence:.2f}；curator 主动询问：{_clarify[:160]}",
+                "hint": f"confidence={_confidence:.2f} 偏低,但 GM 仍推进剧情(不再短路反问)",
                 "turn": state.data.get("turn", 0),
             })
-            if len(audit) > 200:
-                state.data["permissions"]["audit_log"] = audit[-200:]
+            state.data["permissions"]["audit_log"] = audit[-200:]
         except Exception:
             pass
-        _q_text = f"【需要先确认】{_clarify}"
-        yield ("token", {"text": _q_text})
-        try:
-            persist_chat_turn(
-                api_user, state, message_for_model, _q_text,
-                persist_user_id=persist_user_id, active_save_id=active_save_id,
-            )
-        except Exception:
-            pass
-        mark_context_run(
-            context_run_id, "done",
-            duration_ms=int((time.time() - ctx.chat_start_time) * 1000),
-        )
-        yield ("status", payload_fn(api_user))
-        yield ("done", {"status": payload_fn(api_user), "interrupted": False, "clarify": True})
-        ctx.early_return = True
-        return
 
 
 # ---------------------------------------------------------------------------
@@ -827,7 +822,7 @@ async def run_gm_phase(
     async for event in _bridge_sync_generator_to_async(
         lambda: gm.respond_stream_with_tools(
             message_for_model, bundle["prompt"], state,
-            tools=unified_tools, max_iterations=8,
+            tools=unified_tools, max_iterations=_gm_max_iters(),
             max_tokens=_max_tokens,
             tool_call_router=gm_tool_router,
             stop_event=_gm_stop,
@@ -1054,7 +1049,7 @@ async def run_gm_phase(
                     _retry_parts: list[str] = []
                     _retry_state_iter = gm.respond_stream_with_tools(
                         _retry_msg, bundle["prompt"], state,
-                        tools=unified_tools, max_iterations=4, max_tokens=_max_tokens,
+                        tools=unified_tools, max_iterations=max(4, _gm_max_iters() // 2), max_tokens=_max_tokens,
                         tool_call_router=gm_tool_router,
                     )
                     for _ev in _retry_state_iter:
@@ -1349,6 +1344,54 @@ async def persist_turn_phase(
     updates = getattr(ctx, "_updates", []) or []
 
     visible_response = strip_json_state_ops(response)
+
+    # harness 强约束(用户): GM 的提问/选项**必须结构化,绝不留在正文**。
+    # 这是确定性兜底 —— 不依赖 GM 听话:把正文尾部的问题/选项块抽进 pending_questions,
+    # 并从正文剥掉。本轮已有 GM 结构化 question op 时只清正文去重,不重复 push。
+    try:
+        from state.parsers import extract_trailing_choice
+        _body, _q, _opts = extract_trailing_choice(visible_response)
+        if len(_opts) >= 2:
+            _perm = state.data.get("permissions") or {}
+            _cur_turn = state.data.get("turn", 0)
+            _has_gm_q = any(
+                q.get("turn") == _cur_turn and str(q.get("source", "")).startswith("gm")
+                for q in (_perm.get("pending_questions") or [])
+            )
+            if not _has_gm_q:
+                state.add_pending_question(_q or "你接下来想怎么做?", source="gm:prose", options=_opts)
+            visible_response = _body
+    except Exception:
+        pass
+
+    # 沉浸感确定性兜底(用户头号反馈):剥掉结尾"旁白向玩家显式提问下一步"的句子
+    # ——只命中明确的决策反问(你接下来想怎么做 / 你打算如何应对 / 请玩家决定 等),
+    # 且必须是旁白行(不在引号内,绝不动角色台词)。不依赖 GM 听提示词。
+    try:
+        import re as _re_imm
+        _q_pat = _re_imm.compile(
+            r"(你|您)[^。！？\n]{0,16}(接下来|下一步|打算|准备|会|想|要不要|是否|如何|怎么)"
+            r"[^。\n]{0,18}(做|办|应对|行动|选择|决定|应付)?[?？]\s*$"
+        )
+        _plead_pat = _re_imm.compile(r"(请|轮到|该)\s*(你|玩家)[^。\n]{0,10}(决定|选择|定夺|行动|出招)")
+        _quote_chars = ("「", "」", "“", "”", "‘", "’", "\"", "『", "』")
+        _ll = visible_response.rstrip().split("\n")
+        _changed = False
+        while _ll:
+            _last = _ll[-1].strip()
+            if not _last:
+                _ll.pop(); continue
+            _in_quote = any(c in _last for c in _quote_chars)
+            if (not _in_quote) and (_q_pat.search(_last) or _plead_pat.search(_last)) and len(_last) <= 60:
+                _ll.pop(); _changed = True; continue
+            break
+        if _changed:
+            _new = "\n".join(_ll).rstrip()
+            if _new:  # 不要把整段删空(防极端情况)
+                visible_response = _new
+    except Exception:
+        pass
+
     # task 128: GM 返回空时不写 history (避免出现"GM 主代理"标题但内容空的诡异消息),
     # 改为 yield error 让用户清楚知道并能重试。常见原因:
     #   · LLM 触发 safety filter (Gemini 对暴力/儿童虐待场景敏感)

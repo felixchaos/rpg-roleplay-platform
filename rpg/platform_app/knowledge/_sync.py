@@ -173,7 +173,14 @@ def _sync_worldbook_entries(db, book: dict[str, Any], script: dict[str, Any], wo
                 script["id"],
                 entry["title"],
                 entry["content"],
-                Jsonb(entry["keys"]),
+                # 兜底:LLM 世界书提取常返回空 keys → 关键词激活彻底失效(全平台 503 条
+                # 都是空 keys)。空时用标题派生(完整标题 + 主段)做 key,保证可被激活。
+                Jsonb(entry.get("keys") or [
+                    k for k in dict.fromkeys([
+                        str(entry.get("title") or "").strip(),
+                        str(entry.get("title") or "").split(" · ")[0].split(" /")[0].split("（")[0].strip(),
+                    ]) if k and len(k) > 1
+                ] or [str(entry.get("title") or "").strip()]),
                 Jsonb(entry.get("regex_keys") or []),
                 entry["priority"],
                 entry["token_budget"],

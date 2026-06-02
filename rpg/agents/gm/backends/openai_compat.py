@@ -64,9 +64,13 @@ class _OpenAICompatBackend:
             )
         # 用户覆盖了 base_url 的话优先用用户的
         effective_base = result.get("base_url_override") or base_url
+        import os as _os
+        # 读超时原 120s 太紧:长回合(deepseek-v4-pro 等)常被中途切断浪费 token。
+        # 提到 300s,可用 RPG_GM_TIMEOUT 调。
+        _read_to = float(_os.environ.get("RPG_GM_TIMEOUT", "300"))
         kwargs: dict[str, Any] = {
             "api_key": key,
-            "timeout": httpx.Timeout(120.0, connect=10.0),
+            "timeout": httpx.Timeout(_read_to, connect=10.0),
         }
         if effective_base:
             kwargs["base_url"] = effective_base
@@ -156,6 +160,18 @@ class _OpenAICompatBackend:
         details = getattr(usage, "prompt_tokens_details", None)
         if details:
             cached = int(getattr(details, "cached_tokens", 0) or 0)
+        # DeepSeek 不走 OpenAI 标准的 prompt_tokens_details,而是顶层
+        # usage.prompt_cache_hit_tokens / prompt_cache_miss_tokens。不读这个字段就会
+        # 把 deepseek 的缓存命中全记成 0 → UI「缓存命中率」永远显示 0(测量 bug,非真失效)。
+        if not cached:
+            cached = int(getattr(usage, "prompt_cache_hit_tokens", 0) or 0)
+        # 某些 provider 把它塞进 model_extra / 原始 dict
+        if not cached:
+            try:
+                _extra = getattr(usage, "model_extra", None) or {}
+                cached = int(_extra.get("prompt_cache_hit_tokens", 0) or 0)
+            except Exception:
+                pass
         reasoning = 0
         comp_details = getattr(usage, "completion_tokens_details", None)
         if comp_details:

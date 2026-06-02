@@ -552,8 +552,8 @@ def _build_initial_snapshot(
     if _po in ("soul", "body", "dual", "native"):
         _pnode = state.data.setdefault("player", {})
         _pnode["player_origin"] = _po
-        # identity_known(开局是否知道身份卡)与出身正交;肉穿无身份卡 → 不写
-        if _po != "body" and isinstance(identity_known, bool):
+        # identity_known 只在实际挂了身份卡时有意义。
+        if _po != "body" and isinstance(identity, dict) and isinstance(identity_known, bool):
             _pnode["identity_known"] = identity_known
 
     # Bug 5 fix: 新建存档时把用户偏好里的 perm.default_mode 注入 state.permissions.mode。
