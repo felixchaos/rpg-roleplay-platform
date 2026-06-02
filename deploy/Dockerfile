@@ -1,6 +1,6 @@
 # ============================================================
 # RPG Roleplay — Python (FastAPI/uvicorn) 生产镜像
-# Stage 1 (frontend): node:20 — vite build → frontend/dist
+# Stage 1 (frontend): node:lts-slim — vite build → frontend/dist
 # Stage 2 (runtime):  python:3.14-slim — pip install + uvicorn
 #
 # 注意:main 分支已切回 Python 产品线(rust/ 归档在 archive/rust-migration)。
@@ -10,7 +10,7 @@
 # ─── Stage 1: 构建前端 dist ──────────────────────────────────────────────────
 # 前端是 Vite ESM,必须先 build 产出 frontend/dist(打包后的 /assets/*.js);
 # 后端 app.py 同源挂载 frontend/dist。
-FROM node:20-slim AS frontend
+FROM node:lts-slim AS frontend
 
 WORKDIR /build/frontend
 # 先复制 lockfile 利用 layer cache
@@ -61,7 +61,7 @@ STOPSIGNAL SIGTERM
 
 # 多 worker(吃满多核;6核默认 4 worker)。SSE 停止跨 worker 安全:platform_app.cluster
 # 用 DB stop_signals 表做共享停止信号(in-process Event 是快路径)。
-# 池预算:生产 DATABASE_URL 走 pgbouncer(事务池),RPG_DB_POOL_MAX × RPG_WORKERS 只是
-#   到 pgbouncer 的廉价客户端连接(pgbouncer 复用到少量 postgres 连接);25×4 经 pgbouncer 无压。
+# 池预算:DATABASE_URL 直连 postgres(无 pgbouncer),RPG_DB_POOL_MAX × RPG_WORKERS 是
+#   真实 postgres 连接数,必须 < postgres max_connections(默认 100);10×4=40 留足余量。
 # exec 让 uvicorn 直接收 SIGTERM(优雅 drain),env 可调 worker 数。
 CMD ["/bin/sh", "-c", "exec python -m uvicorn app:app --host 0.0.0.0 --port 7860 --no-access-log --workers ${RPG_WORKERS:-4}"]

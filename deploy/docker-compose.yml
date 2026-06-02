@@ -1,88 +1,42 @@
-version: "3.9"
-
-# RPG Server — 生产级 docker-compose
-# 架构: postgres(pgvector) → pgbouncer(transaction 模式) → rpg-server
-# redis 独立,用于限流 / session 等后端
+# RPG Roleplay — clean self-host / cloud-native compose
+#
+# One app container (backend = FastAPI + bundled frontend/dist, listens 0.0.0.0:7860),
+# plus its two stateful deps. Services talk over the compose default network by
+# hostname (postgres / redis). No nginx, no pgbouncer.
+#
+# Migrations auto-apply on boot against postgres:5432 directly (advisory lock works
+# on a direct connection — that's why pgbouncer is gone).
 
 services:
-  # ─── 1. Postgres + pgvector ────────────────────────────────────────────────
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.2-pg17-trixie
     container_name: rpg-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: rpg
       POSTGRES_USER: rpg
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?必须设 POSTGRES_PASSWORD(勿用弱口令)}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      # 仅绑本机:防 LAN/云直连绕过应用鉴权(CWE-200)。容器间走 rpg-net 不受影响。
-      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rpg -d rpg"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - rpg-net
 
-  # ─── 2. PgBouncer — 连接池(transaction 模式) ──────────────────────────────
-  pgbouncer:
-    image: bitnami/pgbouncer:1.22.1
-    container_name: rpg-pgbouncer
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      # Bitnami pgbouncer 通过 env 驱动配置
-      PGBOUNCER_DATABASE: rpg
-      PGBOUNCER_HOST: postgres
-      PGBOUNCER_PORT: 5432
-      PGBOUNCER_POOL_MODE: transaction
-      PGBOUNCER_MAX_CLIENT_CONN: "1000"
-      PGBOUNCER_DEFAULT_POOL_SIZE: "20"
-      PGBOUNCER_MIN_POOL_SIZE: "5"
-      PGBOUNCER_RESERVE_POOL_SIZE: "5"
-      PGBOUNCER_RESERVE_POOL_TIMEOUT: "3"
-      PGBOUNCER_SERVER_IDLE_TIMEOUT: "600"
-      PGBOUNCER_AUTH_TYPE: md5
-      POSTGRESQL_USERNAME: rpg
-      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:?必须设 POSTGRES_PASSWORD(勿用弱口令)}
-    ports:
-      - "127.0.0.1:6432:6432"
-    volumes:
-      # 可选:挂载自定义 pgbouncer.ini(覆盖 env 设置)
-      - ./pgbouncer.ini:/bitnami/pgbouncer/conf/pgbouncer.ini:ro
-      - ./userlist.txt:/bitnami/pgbouncer/conf/userlist.txt:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h localhost -p 6432 -U rpg"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - rpg-net
-
-  # ─── 3. Redis — 限流后端 ───────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: rpg-redis
     restart: unless-stopped
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:?必须设 REDIS_PASSWORD(勿用弱口令)}
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD}
     volumes:
       - redis_data:/data
-    ports:
-      - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?必须设 REDIS_PASSWORD(勿用弱口令)}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?set REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
-    networks:
-      - rpg-net
 
-  # ─── 4. rpg-server — Axum 后端 ────────────────────────────────────────────
   backend:
     image: rpg-app:latest
     build:
@@ -91,42 +45,43 @@ services:
     container_name: rpg-backend
     restart: unless-stopped
     depends_on:
-      pgbouncer:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # The only published port. Container listens 0.0.0.0:7860.
     ports:
       - "7860:7860"
     environment:
-      # DATABASE_URL 指向 pgbouncer:6432 而非 postgres 直连(psycopg 接受 postgres:// 前缀)
-      DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:?必须设 POSTGRES_PASSWORD(勿用弱口令)}@pgbouncer:6432/rpg
-      REDIS_URL: redis://:${REDIS_PASSWORD:?必须设 REDIS_PASSWORD(勿用弱口令)}@redis:6379
-      # ── 用户 API key 加密主密钥(生产必须!从 secret 注入,绝不放数据卷)──────
-      # 32 字节 hex(openssl rand -hex 32)。泄露=所有用户 API key 可解密。
-      # 不设则后端多用户模式【拒绝启动】(crypto 安全闸),绝不自动在数据盘生成。
-      RPG_MASTER_KEY: ${RPG_MASTER_KEY:?必须设 RPG_MASTER_KEY=<openssl rand -hex 32> 以保护用户 API key}
-      # ── 多用户隔离(生产必须!)─────────────────────────────────────────
-      # local/desktop/self_hosted 模式会把所有人当匿名 uid 0 共享一份 state。
-      # 生产必须设非 local 模式 + 强制鉴权,否则 100 用户全部串档 = 灾难。
+      # Direct to postgres (no pgbouncer). psycopg accepts the postgres:// prefix.
+      DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/rpg
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
+
+      # API-key encryption master key (multiuser refuses to start without it).
+      # openssl rand -hex 32 — leaking it = all stored user API keys decryptable.
+      RPG_MASTER_KEY: ${RPG_MASTER_KEY:?set RPG_MASTER_KEY=$(openssl rand -hex 32)}
+
       RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-multiuser}
       RPG_REQUIRE_AUTH: ${RPG_REQUIRE_AUTH:-1}
-      # DB 连接池:100 用户峰值并发写,10 偏小,调 25(pgbouncer 在前再兜一层)
-      RPG_DB_POOL_MAX: ${RPG_DB_POOL_MAX:-25}
-      # uvicorn worker 数(6核默认 4,吃满多核;停止信号经 cluster DB 表跨 worker 安全)
+
+      # Direct postgres has no pooler in front, so keep pool_max * workers under
+      # postgres max_connections (default 100). 10 * 4 = 40, room for cron + admin.
+      RPG_DB_POOL_MAX: ${RPG_DB_POOL_MAX:-10}
       RPG_WORKERS: ${RPG_WORKERS:-4}
-      # 服务器配置
+
       RPG_PORT: "7860"
       RPG_HOST: "0.0.0.0"
-      # CORS:同源服务(Python 挂 frontend/dist),设成你的真实域名
+
       RPG_CORS_ORIGINS: ${RPG_CORS_ORIGINS:-https://play.stellatrix.icu}
       RPG_COOKIE_SAMESITE: ${RPG_COOKIE_SAMESITE:-lax}
       RPG_COOKIE_SECURE: ${RPG_COOKIE_SECURE:-1}
-      # 限流 / 超时 / 请求体
+
       RPG_RATE_LIMIT_PER_MIN: ${RPG_RATE_LIMIT_PER_MIN:-100}
       RPG_REQUEST_TIMEOUT_SECS: ${RPG_REQUEST_TIMEOUT_SECS:-30}
       RPG_BODY_LIMIT_BYTES: ${RPG_BODY_LIMIT_BYTES:-2097152}
       RPG_UPLOAD_BODY_LIMIT_BYTES: ${RPG_UPLOAD_BODY_LIMIT_BYTES:-52428800}
-      # AI / LLM(env key 仅作 admin/本地回退;普通用户走 BYOK 各自加密 key)
+
+      # LLM / embeddings (env key = admin/local fallback; users bring their own keys)
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       EMBED_BASE_URL: ${EMBED_BASE_URL}
       EMBED_MODEL: ${EMBED_MODEL:-text-embedding-004}
@@ -137,10 +92,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
-    networks:
-      - rpg-net
 
-  # ─── 5. cron — 账号硬删 + 审计日志清理 ──────────────────────────────────────
+  # Daily account hard-delete + audit-log cleanup.
   cron:
     image: rpg-app:latest
     build:
@@ -153,19 +106,13 @@ services:
       - "-c"
       - "while true; do python -m rpg.scripts.run_cron all; sleep 86400; done"
     depends_on:
-      pgbouncer:
+      postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:?必须设 POSTGRES_PASSWORD(勿用弱口令)}@pgbouncer:6432/rpg
-      RPG_MASTER_KEY: ${RPG_MASTER_KEY:?必须设 RPG_MASTER_KEY}
+      DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/rpg
+      RPG_MASTER_KEY: ${RPG_MASTER_KEY:?set RPG_MASTER_KEY}
       RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-multiuser}
-    networks:
-      - rpg-net
 
 volumes:
   postgres_data:
   redis_data:
-
-networks:
-  rpg-net:
-    driver: bridge
