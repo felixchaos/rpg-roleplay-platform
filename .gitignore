@@ -134,3 +134,6 @@ rpg/config/*.private.json
 
 # copyrighted novel test fixtures — never publish
 .test-fixtures/
+
+# 本项目不用 uv
+uv.lock

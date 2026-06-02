@@ -77,10 +77,6 @@ MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024
 app = FastAPI(title=f"{APP_TITLE} RPG", lifespan=lifespan)
 
 
-_LOCAL_MODES = {"local", "desktop", "self_hosted", "self-hosted"}
-_SERVER_MODES = {"server", "production", "prod", "cloud"}
-
-
 def _deployment_mode() -> str:
     from core.config import deployment_mode as _deployment_mode_cfg
     return _deployment_mode_cfg().strip().lower() or "local"
@@ -374,26 +370,11 @@ def _chat_max_tokens(api_user: dict | None) -> int:
 
 
 def _api_auth_required() -> bool:
-    """鉴权规则（优先级从高到低）：
-      1. RPG_REQUIRE_AUTH=1     → 强制鉴权
-      2. RPG_REQUIRE_AUTH=0     → 强制关闭（仅本地/桌面用，慎用）
-      3. RPG_DEPLOYMENT_MODE in {server,production,prod,cloud}  → 强制鉴权
-      4. RPG_DEPLOYMENT_MODE in {local,desktop,self_hosted}     → 不强制
-      5. 未设置                  → 默认本地模式，不强制
+    """鉴权规则:RPG_REQUIRE_AUTH=1/0 显式覆盖,否则按部署模式(server 强制 / local 不强制)。
+    单一真相源在 core.config.effective_auth_required。
     """
-    from core.config import require_auth_raw as _require_auth_raw
-    explicit = _require_auth_raw().strip()
-    if explicit == "1":
-        return True
-    if explicit == "0":
-        return False
-    mode = _deployment_mode()
-    if mode in _SERVER_MODES:
-        return True
-    if mode in _LOCAL_MODES:
-        return False
-    # 未知部署模式：保守起见，强制鉴权
-    return True
+    from core.config import effective_auth_required as _eff
+    return _eff()
 
 
 def _startup_auth_banner() -> None:
@@ -1351,8 +1332,8 @@ def _check_probe_permission(api_user: dict[str, Any] | None, api_id: str) -> JSO
         return None
     # task 42: local 模式 + server 已配该 provider 凭证 → 允许
     try:
-        from core.config import deployment_mode as _deployment_mode
-        if _deployment_mode() == "local":
+        from core.config import is_local_mode as _is_local_mode
+        if _is_local_mode():
             from model_registry import find_api, load_model_catalog
             api = find_api(load_model_catalog(), api_id)
             if api and api.get("enabled"):

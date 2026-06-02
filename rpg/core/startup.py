@@ -56,9 +56,6 @@ def get_request_id() -> str:
 API_VERSION = "1"
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
-_LOCAL_MODES = {"local", "desktop", "self_hosted", "self-hosted"}
-_SERVER_MODES = {"server", "production", "prod", "cloud"}
-
 
 # ── CORS origins 计算 ────────────────────────────────────────────────────
 
@@ -78,11 +75,6 @@ def _cors_origins() -> tuple[list[str], bool]:
 
 
 _origins, _allow_credentials = _cors_origins()
-
-
-def _deployment_mode() -> str:
-    from core.config import deployment_mode as _deployment_mode_cfg
-    return _deployment_mode_cfg().strip().lower() or "local"
 
 
 def _origin_allowed(origin: str | None) -> bool:
@@ -203,7 +195,7 @@ async def _internal_error_handler(request: Request, exc: Exception):
 
 # ── Middleware ────────────────────────────────────────────────────────────
 
-# dev 模式:RPG_ENV=dev 或 RPG_DEPLOYMENT_MODE=local/desktop/self_hosted
+# dev 模式:RPG_ENV=dev,或部署模式为 local 家族
 def _is_dev_mode() -> bool:
     """True 表示本地开发环境,放宽部分安全策略(如 CSP connect-src、cookie Secure)。"""
     rpg_env = os.getenv("RPG_ENV", "").strip().lower()
@@ -211,8 +203,8 @@ def _is_dev_mode() -> bool:
         return True
     if rpg_env == "prod":
         return False
-    mode = os.getenv("RPG_DEPLOYMENT_MODE", "local").strip().lower()
-    return mode in _LOCAL_MODES
+    from core.config import is_local_mode as _is_local_mode
+    return _is_local_mode()
 
 
 def _build_csp(dev: bool) -> str:

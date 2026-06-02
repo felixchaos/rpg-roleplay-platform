@@ -123,16 +123,8 @@ def _delete_session_cookie(response: BaseJSONResponse, request: Request) -> None
 
 def _auth_required() -> bool:
     """与 ui.py:_api_auth_required 同义，避免循环导入；服务器模式禁止匿名访问。"""
-    from core.config import deployment_mode as _deployment_mode
-    from core.config import require_auth_raw as _require_auth_raw
-
-    explicit = _require_auth_raw().strip()
-    if explicit == "1":
-        return True
-    if explicit == "0":
-        return False
-    mode = _deployment_mode().strip().lower()
-    return mode not in {"local", "desktop", "self_hosted", "self-hosted"}
+    from core.config import effective_auth_required as _eff
+    return _eff()
 
 
 def current_user(request: Request) -> dict | None:

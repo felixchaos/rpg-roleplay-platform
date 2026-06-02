@@ -67,27 +67,36 @@ def setup_token() -> str | None:
     return os.getenv("RPG_SETUP_TOKEN")
 
 
-# 部署模式集合(与 app.py 保持一致;未知模式 fail-closed)
-_SERVER_MODES = {"server", "production", "prod", "cloud"}
-_LOCAL_MODES = {"local", "desktop", "self_hosted", "self-hosted"}
+# ── 部署模式规范化 ────────────────────────────────────────────────────────
+# 部署模式只有两个规范值:"local" 和 "server"。
+#   local  → 单用户本地/桌面:免鉴权、file 存储、放开危险工具(skill 导入 / MCP 写盘)。
+#   server → 多用户服务器:强制鉴权、db 存储、危险工具默认关闭。
+# 兼容旧别名(desktop/self_hosted 归 local;production/prod/cloud 归 server)。
+# 关键安全语义:除已知 local 别名外,一切(含未设/未知值)都判定为 server(fail-closed)。
+_LOCAL_ALIASES = {"local", "desktop", "self_hosted", "self-hosted"}
+
+
+def is_local_mode() -> bool:
+    """部署是否为本地/单用户家族。非 local 别名一律视为 server(fail-closed)。"""
+    return deployment_mode().strip().lower() in _LOCAL_ALIASES
+
+
+def is_server_mode() -> bool:
+    """is_local_mode 的反面;服务器/多用户家族。"""
+    return not is_local_mode()
 
 
 def effective_auth_required() -> bool:
-    """是否强制鉴权(等价 app.py:_api_auth_required,集中一处供 register 等使用)。
+    """是否强制鉴权(集中一处供 register / schema / _deps 等使用)。
 
-    优先级:RPG_REQUIRE_AUTH=1/0 → RPG_DEPLOYMENT_MODE(server/local) → 未知模式 fail-closed。
+    优先级:RPG_REQUIRE_AUTH=1/0 显式覆盖 → 否则按部署模式(server 强制 / local 不强制)。
     """
     explicit = require_auth_raw().strip()
     if explicit == "1":
         return True
     if explicit == "0":
         return False
-    mode = deployment_mode().strip().lower()
-    if mode in _SERVER_MODES:
-        return True
-    if mode in _LOCAL_MODES:
-        return False
-    return True
+    return is_server_mode()
 
 # ── 应用标题 ─────────────────────────────────────────────────────────────
 def app_title() -> str:

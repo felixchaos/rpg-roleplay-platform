@@ -16,8 +16,11 @@ services:
       # you mast set this in production.
       RPG_MASTER_KEY: your_master_key_here
 
-      RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-multiuser}
-      RPG_REQUIRE_AUTH: ${RPG_REQUIRE_AUTH:-1}
+      # 部署模式只有两个规范值:server / local。
+      # server = 多用户:强制鉴权 + db 存储 + 危险工具默认关(本部署用这个)。
+      # local  = 单用户本地:免鉴权 + file 存储。
+      # 非 local 一律按 server 处理(fail-closed),故无需再单设 RPG_REQUIRE_AUTH。
+      RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-server}
 
       RPG_PORT: "7860"
       RPG_HOST: "0.0.0.0"
@@ -58,7 +61,7 @@ services:
     environment:
       DATABASE_URL: postgres://rpg:rpg@postgres:5432/rpg
       RPG_MASTER_KEY: your_master_key_here
-      RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-multiuser}
+      RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-server}
 
   postgres:
     image: pgvector/pgvector:0.8.2-pg17-trixie
