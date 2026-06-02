@@ -1,4 +1,64 @@
 services:
+  backend:
+    image: rpg-app:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: always
+    ports:
+      - "7860:7860"
+    environment:
+      DATABASE_URL: postgres://rpg:rpg@postgres:5432/rpg
+      REDIS_URL: redis://redis:6379
+
+      # API-key encryption master key (multiuser refuses to start without it).
+      # openssl rand -hex 32 — leaking it = all stored user API keys decryptable.
+      RPG_MASTER_KEY: ${RPG_MASTER_KEY:?set RPG_MASTER_KEY=$(openssl rand -hex 32)}
+
+      RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-multiuser}
+      RPG_REQUIRE_AUTH: ${RPG_REQUIRE_AUTH:-1}
+
+      RPG_PORT: "7860"
+      RPG_HOST: "0.0.0.0"
+
+      RPG_CORS_ORIGINS: ${RPG_CORS_ORIGINS:-https://play.stellatrix.icu}
+
+      # LLM / embeddings (env key = admin/local fallback; users bring their own keys)
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # EMBED_BASE_URL: ${EMBED_BASE_URL}
+      # EMBED_MODEL: ${EMBED_MODEL:-text-embedding-004}
+      # EMBED_API_KEY: ${EMBED_API_KEY}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7860/api/state || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Daily account hard-delete + audit-log cleanup.
+  cron:
+    image: rpg-app:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    command:
+      - "/bin/sh"
+      - "-c"
+      - "while true; do python -m rpg.scripts.run_cron all; sleep 86400; done"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://rpg:rpg@postgres:5432/rpg
+      RPG_MASTER_KEY: ${RPG_MASTER_KEY:?set RPG_MASTER_KEY}
+      RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-multiuser}
+
   postgres:
     image: pgvector/pgvector:0.8.2-pg17-trixie
     restart: always
@@ -21,75 +81,6 @@ services:
       test: "valkey-cli ping"
       interval: 5s
       retries: 20
-
-  backend:
-    image: rpg-app:latest
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    restart: always
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    ports:
-      - "7860:7860"
-    environment:
-      # postgres
-      DATABASE_URL: postgres://rpg:rpg@postgres:5432/rpg
-      REDIS_URL: redis://redis:6379
-
-      # API-key encryption master key (multiuser refuses to start without it).
-      # openssl rand -hex 32 — leaking it = all stored user API keys decryptable.
-      RPG_MASTER_KEY: ${RPG_MASTER_KEY:?set RPG_MASTER_KEY=$(openssl rand -hex 32)}
-
-      RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-multiuser}
-      RPG_REQUIRE_AUTH: ${RPG_REQUIRE_AUTH:-1}
-
-      RPG_PORT: "7860"
-      RPG_HOST: "0.0.0.0"
-
-      RPG_CORS_ORIGINS: ${RPG_CORS_ORIGINS:-https://play.stellatrix.icu}
-      RPG_COOKIE_SAMESITE: ${RPG_COOKIE_SAMESITE:-lax}
-      RPG_COOKIE_SECURE: ${RPG_COOKIE_SECURE:-1}
-
-      # RPG_RATE_LIMIT_PER_MIN: ${RPG_RATE_LIMIT_PER_MIN:-100}
-      # RPG_REQUEST_TIMEOUT_SECS: ${RPG_REQUEST_TIMEOUT_SECS:-30}
-      # RPG_BODY_LIMIT_BYTES: ${RPG_BODY_LIMIT_BYTES:-2097152}
-      # RPG_UPLOAD_BODY_LIMIT_BYTES: ${RPG_UPLOAD_BODY_LIMIT_BYTES:-52428800}
-
-      # LLM / embeddings (env key = admin/local fallback; users bring their own keys)
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      EMBED_BASE_URL: ${EMBED_BASE_URL}
-      EMBED_MODEL: ${EMBED_MODEL:-text-embedding-004}
-      EMBED_API_KEY: ${EMBED_API_KEY}
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:7860/api/state || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 40s
-
-  # Daily account hard-delete + audit-log cleanup.
-  cron:
-    image: rpg-app:latest
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    container_name: rpg-cron
-    restart: unless-stopped
-    command:
-      - "/bin/sh"
-      - "-c"
-      - "while true; do python -m rpg.scripts.run_cron all; sleep 86400; done"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgres://rpg:rpg@postgres:5432/rpg
-      RPG_MASTER_KEY: ${RPG_MASTER_KEY:?set RPG_MASTER_KEY}
-      RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-multiuser}
 
 volumes:
   postgres_data:
