@@ -10,12 +10,11 @@
 services:
   postgres:
     image: pgvector/pgvector:0.8.2-pg17-trixie
-    container_name: rpg-postgres
-    restart: unless-stopped
+    restart: always
     environment:
       POSTGRES_DB: rpg
       POSTGRES_USER: rpg
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: rpg
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -25,37 +24,30 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
-    container_name: rpg-redis
-    restart: unless-stopped
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD}
-    volumes:
-      - redis_data:/data
+    restart: always
+    image: valkey/valkey:9.0.1
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?set REDIS_PASSWORD}", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
+      test: "valkey-cli ping"
+      interval: 5s
+      retries: 20
 
   backend:
     image: rpg-app:latest
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    container_name: rpg-backend
-    restart: unless-stopped
+    restart: always
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # The only published port. Container listens 0.0.0.0:7860.
     ports:
       - "7860:7860"
     environment:
-      # Direct to postgres (no pgbouncer). psycopg accepts the postgres:// prefix.
-      DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/rpg
-      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
+      # postgres
+      DATABASE_URL: postgres://rpg:rpg@postgres:5432/rpg
+      REDIS_URL: redis://redis:6379
 
       # API-key encryption master key (multiuser refuses to start without it).
       # openssl rand -hex 32 — leaking it = all stored user API keys decryptable.
@@ -76,10 +68,10 @@ services:
       RPG_COOKIE_SAMESITE: ${RPG_COOKIE_SAMESITE:-lax}
       RPG_COOKIE_SECURE: ${RPG_COOKIE_SECURE:-1}
 
-      RPG_RATE_LIMIT_PER_MIN: ${RPG_RATE_LIMIT_PER_MIN:-100}
-      RPG_REQUEST_TIMEOUT_SECS: ${RPG_REQUEST_TIMEOUT_SECS:-30}
-      RPG_BODY_LIMIT_BYTES: ${RPG_BODY_LIMIT_BYTES:-2097152}
-      RPG_UPLOAD_BODY_LIMIT_BYTES: ${RPG_UPLOAD_BODY_LIMIT_BYTES:-52428800}
+      # RPG_RATE_LIMIT_PER_MIN: ${RPG_RATE_LIMIT_PER_MIN:-100}
+      # RPG_REQUEST_TIMEOUT_SECS: ${RPG_REQUEST_TIMEOUT_SECS:-30}
+      # RPG_BODY_LIMIT_BYTES: ${RPG_BODY_LIMIT_BYTES:-2097152}
+      # RPG_UPLOAD_BODY_LIMIT_BYTES: ${RPG_UPLOAD_BODY_LIMIT_BYTES:-52428800}
 
       # LLM / embeddings (env key = admin/local fallback; users bring their own keys)
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
@@ -109,10 +101,9 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/rpg
+      DATABASE_URL: postgres://rpg:rpg@postgres:5432/rpg
       RPG_MASTER_KEY: ${RPG_MASTER_KEY:?set RPG_MASTER_KEY}
       RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-multiuser}
 
 volumes:
   postgres_data:
-  redis_data:
