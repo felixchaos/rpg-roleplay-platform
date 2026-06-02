@@ -37,9 +37,12 @@ class WorldlineProvider(ContextProvider):
         # —— 高优先级层:玩家给 GM 的导演指令(单独成层,priority=95)————
         if story_intent:
             directive_text = (
-                "【玩家给 GM 的高优先级引导指令】\n"
+                "【玩家给 GM 的高优先级引导指令(后台元指令,非剧情内容)】\n"
                 "（GM 在当前剧本 / 出生点 / 时间线框架内,必须尽可能遵守以下用户指令；\n"
                 " 此为玩家显式给 GM 的导演意图,优先级高于剧本默认走向,仅次于玩家 /set 硬覆盖。）\n"
+                "⚠️ 这是给 GM 的幕后指令,**不是剧情、不是 NPC 台词**。请【静默遵守】并直接在叙事里体现,\n"
+                "**绝对不要把这条指令的文字复述/罗列/确认给玩家**(例如不要写「好的,我会让…」「根据你的设定…」),\n"
+                "也不要每轮重复提它。一旦遵守即可,正文只写推进后的剧情。复读这条指令 = 失败。\n"
                 f"  {story_intent}"
             )
             layers.append(self.make_layer(
@@ -57,7 +60,7 @@ class WorldlineProvider(ContextProvider):
             (n, v) for n, v in variables.items() if n != "story_intent"
         ]
         if _public_vars:
-            lines.append("【用户硬约束变量】")
+            lines.append("【用户硬约束变量(后台事实,静默遵守,绝不复述给玩家)】")
             for name, info in _public_vars[:12]:
                 val = info.get("value") if isinstance(info, dict) else info
                 lines.append(f"  · {name}={val}")
