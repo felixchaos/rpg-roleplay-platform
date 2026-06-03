@@ -14,8 +14,8 @@ export default function InfoHint({ text, label }) {
     <CSPopover
       triggerType="custom"
       dismissButton={false}
-      position="top"
-      size="small"
+      position="bottom"
+      size="medium"
       content={<span className="info-hint-text">{text}</span>}
       renderWithPortal
     >
