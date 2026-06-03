@@ -23,12 +23,18 @@ def _player_card(state, chars: dict[str, Any]) -> dict[str, str]:
     # sample_dialogue 也包含玩家私人语气样本,GM 可借此学语气,但不应该把"卡里
     # 的对白原话"当成 NPC 已知信息 — 暂时保留(GM 一般只学风格,不会复述),
     # 后续可再加 strip。
+    # !! 秘密剥离 !! player.background 是玩家可写字段(/set、老存档可埋"我是穿越者/原著她会
+    # 死"这类秘密段),必须像 short_summary(core.py:726)一样剥掉 `## 秘密/隐藏/元知识` 段
+    # 再注入。原来这里直接用 raw player.background 当"当前状态" → 与 short_summary 不对称,
+    # 把上面注释声称已隔离的玩家秘密又原文放给 GM(实际泄漏路径)。card.* 来自 canon NPC 卡是干净的。
+    from state.core import _strip_secret_sections
+    _bg = _strip_secret_sections(player.get("background") or "")
     text = _format_card(name, {
         "identity": player.get("role") or card.get("identity", ""),
         "appearance": card.get("appearance", ""),
         "personality": card.get("personality", ""),
         "speech_style": card.get("speech_style", ""),
-        "current_status": player.get("background") or card.get("current_status", ""),
+        "current_status": _bg or card.get("current_status", ""),
         # secrets 显式不注入 — 玩家秘密物理隔离
         "sample_dialogue": card.get("sample_dialogue", []),
     })
