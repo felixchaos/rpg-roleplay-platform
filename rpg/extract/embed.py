@@ -49,15 +49,18 @@ def embed_canon_entities(db, script_id: int, *, user_id: int | None = None,
 def search_canon_by_vector(db, script_id: int, query_vec_literal: str, *, top_k: int = 6,
                            progress_chapter: int | None = None) -> list[dict]:
     """pgvector cosine 检索规范实体(进度过滤)。query_vec_literal = embed_query 产物。"""
+    # 显式 ::vector cast(与 platform_app/knowledge/_search.py 一致):pgvector 对 unknown
+    # 字符串字面量的隐式 cast 在部分 pg/pgvector 版本会被拒 → search_canon 工具直接抛错给 GM
+    # (调用点 command_tools_kb._t_search_canon 无 try 兜底)。统一加 cast 求稳。
     sql = (
         "select logical_key, name, type, summary, first_revealed_chapter, "
-        "1 - (embedding <=> %s) as score "
+        "1 - (embedding <=> %s::vector) as score "
         "from kb_canon_entities where script_id = %s and embedding is not null"
     )
     args: list = [query_vec_literal, script_id]
     if progress_chapter is not None:
         sql += " and (first_revealed_chapter <= %s or public_knowledge)"
         args.append(progress_chapter)
-    sql += " order by embedding <=> %s limit %s"
+    sql += " order by embedding <=> %s::vector limit %s"
     args.extend([query_vec_literal, top_k])
     return db.execute(sql, tuple(args)).fetchall()
