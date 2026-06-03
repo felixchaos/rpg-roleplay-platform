@@ -1656,6 +1656,10 @@ def _chat_rule_candidates(
             action.get("target") or action.get("target_id"),
             action.get("move_to") or action.get("to"),
             action.get("trap_id"),
+            # 同回合消耗多个不同物品(如"点火把+喝药剂")时,item_id 必须进去重 key,
+            # 否则两个 consume_item 的其余字段都是 None → key 坍缩 → 第二个物品被静默丢弃。
+            # 非消耗动作 item_id 恒 None,不影响其去重行为。
+            action.get("item_id"),
         )
         if key in seen:
             return
@@ -1704,13 +1708,18 @@ def _apply_chat_rule_candidates(state: GameState, actions: list[dict[str, Any]] 
             continue
         action = dict(raw)
         kind = action.get("kind")
-        if kind not in allowed or kind in consumed_kinds:
+        if kind not in allowed:
+            continue
+        # 每种 kind 每回合至多一次(防双重 attack / skill_check);但 consume_item 例外 ——
+        # 同回合可消耗多个不同物品,按 item_id 而非 kind 去重(否则第二个物品被跳过、不生效)。
+        dedup_key = f"consume_item:{action.get('item_id')}" if kind == "consume_item" else kind
+        if dedup_key in consumed_kinds:
             continue
         out = _execute_rules_action(state, action)
         # 不管 ok / not ok 都记录：失败的也要传给 GM 让它明白发生了什么
         results.append({"action": action, "out": out})
         if out.get("ok"):
-            consumed_kinds.add(kind)
+            consumed_kinds.add(dedup_key)
         # 允许继续找下一种 kind 的候选；只对成功的 kind 占位
     return results
 
