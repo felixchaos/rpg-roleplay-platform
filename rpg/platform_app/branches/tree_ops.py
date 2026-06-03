@@ -126,6 +126,50 @@ def resolve_commit_id_by_message(user_id: int, save_id: int, message_index: int)
         if msg_index < 0:
             return None
         turn_index = msg_index // 2
+        # 多分支修复:前端展示的是**当前活跃分支**的历史,故 message_index 对应的是活跃分支内
+        # 某 turn 的 commit。原实现 `turn_index=%s order by id desc` 是全 save 选,玩家检出
+        # 历史节点开过新分支后,同一 turn 在多条分支都有 commit,会命中 id 最大(常是另一条
+        # 后建分支)的那个 → 从错误分支 fork,历史串档。改为从活跃 commit 沿 parent 链上溯,
+        # 只在活跃分支血缘内定位目标 turn。
+        active = db.execute(
+            "select coalesce(active_commit_id, active_branch_node_id) as cid "
+            "from game_saves where id = %s",
+            (save_id,),
+        ).fetchone()
+        active_cid = int((active or {}).get("cid") or 0)
+        if active_cid:
+            row = db.execute(
+                """
+                with recursive lineage(id, parent_id, turn_index) as (
+                    select id, parent_id, turn_index from branch_commits
+                    where id = %s and save_id = %s
+                    union all
+                    select bc.id, bc.parent_id, bc.turn_index from branch_commits bc
+                    join lineage l on bc.id = l.parent_id
+                )
+                select id from lineage where turn_index = %s order by id desc limit 1
+                """,
+                (active_cid, save_id, turn_index),
+            ).fetchone()
+            if row:
+                return int(row["id"])
+            # 活跃血缘里没有正好等于 target 的 turn(缺口)→ 取血缘内 <= target 的最近一个
+            row = db.execute(
+                """
+                with recursive lineage(id, parent_id, turn_index) as (
+                    select id, parent_id, turn_index from branch_commits
+                    where id = %s and save_id = %s
+                    union all
+                    select bc.id, bc.parent_id, bc.turn_index from branch_commits bc
+                    join lineage l on bc.id = l.parent_id
+                )
+                select id from lineage where turn_index <= %s order by turn_index desc, id desc limit 1
+                """,
+                (active_cid, save_id, turn_index),
+            ).fetchone()
+            if row:
+                return int(row["id"])
+        # 无活跃指针(异常)→ 退回旧的全 save 行为,保证不返 None 阻断功能
         row = db.execute(
             """
             select id from branch_commits
@@ -136,7 +180,6 @@ def resolve_commit_id_by_message(user_id: int, save_id: int, message_index: int)
         ).fetchone()
         if row:
             return int(row["id"])
-        # 兜底:目标 turn 不存在(缺口/异常数据)时,取 turn_index 之下最近的一个 commit。
         row = db.execute(
             """
             select id from branch_commits
@@ -149,13 +192,21 @@ def resolve_commit_id_by_message(user_id: int, save_id: int, message_index: int)
 
 
 def collect_ids(db, node_id: int) -> list[int]:
+    # seen 防环:正常数据下 parent 图无环(id 单调 + parent 指更早 id),但损坏存档 /
+    # legacy 迁移可能产生 parent 指向自身或后代的环 → 原 BFS 会无限循环,而 collect_ids 是
+    # delete_subtree 删除集的唯一来源 → 整个删除 worker 永挂。加 seen 集合幂等截断,代价极小。
+    seen: set[int] = {node_id}
     ids = [node_id]
     queue = [node_id]
     while queue:
         current = queue.pop(0)
         children = [row["id"] for row in db.execute("select id from branch_commits where parent_id = %s", (current,)).fetchall()]
-        ids.extend(children)
-        queue.extend(children)
+        for c in children:
+            if c in seen:
+                continue
+            seen.add(c)
+            ids.append(c)
+            queue.append(c)
     return ids
 
 
