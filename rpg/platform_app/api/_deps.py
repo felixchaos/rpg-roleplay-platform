@@ -140,12 +140,23 @@ def _auth_required() -> bool:
     return _eff()
 
 
+# ensure_default 是「遗留存档 backfill」(补分支树 + runtime 指针),不是每请求都要做的事:
+# 新存档在 workspace.create_save() 创建时已自行 seed_tree,所以 ensure_default 只为存量旧
+# 存档兜底。原实现每个认证请求都跑一个 game_saves⋈scripts JOIN(+有存档时还 seed_tree +
+# 读 runtime 文件),是热路径浪费。用进程内幂等守卫:每用户每进程只 backfill 一次。
+# best-effort(GIL 下 set in/add 原子;多 worker 各跑一次、backfill 幂等,无害,故不上锁)。
+_ENSURED_DEFAULT_USERS: set[int] = set()
+
+
 def current_user(request: Request) -> dict | None:
     try:
         init_db()
         user = auth.user_from_token(request.cookies.get(SESSION_COOKIE))
         if user:
-            workspace.ensure_default(user["id"])
+            uid = int(user["id"])
+            if uid not in _ENSURED_DEFAULT_USERS:
+                workspace.ensure_default(uid)
+                _ENSURED_DEFAULT_USERS.add(uid)
         return user
     except Exception:
         return None
