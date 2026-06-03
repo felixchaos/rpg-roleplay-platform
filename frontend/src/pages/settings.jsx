@@ -2488,7 +2488,7 @@ function ModuleModelsSection() {
         window.api.account.profile(),
         window.api.models.list().catch(() => ({})),
         window.api.credentials.list().catch(() => ({ items: [] })),
-        fetch('/api/v1/me/embedder/status', { credentials: 'include' }).then(r => r.json()).catch(() => null),
+        fetch('/api/me/embedder/status', { credentials: 'include' }).then(r => r.json()).catch(() => null),
       ]);
       setPrefs((profile && profile.preferences) || {});
       const ids = new Set();

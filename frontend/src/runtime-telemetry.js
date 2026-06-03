@@ -89,37 +89,20 @@ window.addEventListener('unhandledrejection', (ev) => {
 });
 
 // ── 错误源 4:ApiError 构造拦截 ───────────────────────────────────────────────
-// api-client.js 在 throw 时构造 ApiError;我们在它定义后做 monkey-patch。
-// 由于 api-client 跟本模块都从 platform-app.jsx import,加载顺序无法保证,
-// 用 ready-or-poll 模式:定时检查 window.ApiError 直到出现,然后包装一次。
-(function wrapApiError() {
-  let tries = 0;
-  const iv = setInterval(() => {
-    tries++;
-    if (window.ApiError && !window.ApiError.__telemetry_wrapped) {
-      const Orig = window.ApiError;
-      function Wrapped(code, status, msg, payload) {
-        const inst = new Orig(code, status, msg, payload);
-        try {
-          _push(_apiFails, MAX_API_FAILS, {
-            t: _now(),
-            code: String(code || ''),
-            status: Number(status) || 0,
-            msg: _trunc(msg),
-            url: (payload && payload.url) || '',
-          });
-        } catch (_) {}
-        return inst;
-      }
-      Wrapped.prototype = Orig.prototype;
-      Wrapped.__telemetry_wrapped = true;
-      window.ApiError = Wrapped;
-      clearInterval(iv);
-    } else if (tries > 50) {
-      clearInterval(iv);  // ApiError 不可用就放弃,不阻塞
-    }
-  }, 100);
-})();
+// api-client.js 在每次构造 ApiError 时回调 window.__onApiError(this)。
+// (旧实现 monkey-patch window.ApiError 无效:api-client 的 throw 用的是它模块内的
+//  闭包类,不是 window.ApiError 全局槽位 → wrapper 永不执行,_apiFails 恒空。)
+window.__onApiError = function (e) {
+  try {
+    _push(_apiFails, MAX_API_FAILS, {
+      t: _now(),
+      code: String((e && e.code) || ''),
+      status: Number(e && e.status) || 0,
+      msg: _trunc(e && e.message),
+      url: (e && e.payload && e.payload.url) || '',
+    });
+  } catch (_) {}
+};
 
 // ── 快照导出 ────────────────────────────────────────────────────────────────
 window.__getRuntimeSnapshot = function (opts) {

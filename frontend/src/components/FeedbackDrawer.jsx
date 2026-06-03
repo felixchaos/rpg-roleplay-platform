@@ -119,8 +119,8 @@ export function FeedbackDrawer({ open, onClose }) {
     (async () => {
       try {
         // 从游戏 state 拉最近对话，适配现有 window.api 结构
-        const state = await window.api?.getState?.();
-        const nodes = state?.branch_nodes || state?.turns || [];
+        const state = await window.api?.game?.state?.();
+        const nodes = state?.history || state?.branch_nodes || state?.turns || [];
         const recent = nodes.slice(-10).filter((n) => n.role === 'gm' || n.role === 'user');
         const turns = recent.slice(-5).map((n, i) => ({
           idx: i,

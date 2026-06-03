@@ -117,6 +117,13 @@
       this.code = code || "error";
       this.status = status;
       this.payload = payload;
+      // telemetry hook:每个 ApiError 构造时回调,让 runtime-telemetry 记录失败 API
+      // (旧实现 monkey-patch window.ApiError 无效——throw 用的是这里的闭包类,不是全局槽位)
+      try {
+        if (typeof window !== "undefined" && typeof window.__onApiError === "function") {
+          window.__onApiError(this);
+        }
+      } catch (_) {}
     }
   }
   window.ApiError = ApiError;

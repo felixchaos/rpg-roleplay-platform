@@ -718,6 +718,18 @@ function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+  // 卸载清理:回合进行中卸载(SPA 导航 / 重挂 / HMR / ErrorBoundary)时,abort 在途
+  // SSE 流 + 清所有计时器,避免孤儿流继续烧 token + 200ms ticker 对已卸载组件 setState。
+  // 只操作 runRef(不 setState),unmount 安全。
+  useEffect(() => () => {
+    const rc = runRef.current;
+    rc.stopped = true;
+    rc.timers.forEach((t) => { try { clearTimeout(t); } catch (_) {} try { clearInterval(t); } catch (_) {} });
+    rc.timers = [];
+    if (rc.doneTimer) { clearTimeout(rc.doneTimer); rc.doneTimer = null; }
+    if (rc.inactivityTimer) { clearTimeout(rc.inactivityTimer); rc.inactivityTimer = null; }
+    if (rc.sse) { try { rc.sse.stop(); } catch (_) {} rc.sse = null; }
+  }, []);
   useEffect(() => {
     if (pickedCommand) return;
     if (text.startsWith('/') && !showSlash) setShowSlash(true);
@@ -730,6 +742,7 @@ function App() {
     runRef.current.timers.forEach((t) => { try { clearInterval(t); } catch (_) {} });
     runRef.current.timers = [];
     if (runRef.current.doneTimer) { clearTimeout(runRef.current.doneTimer); runRef.current.doneTimer = null; }
+    if (runRef.current.inactivityTimer) { clearTimeout(runRef.current.inactivityTimer); runRef.current.inactivityTimer = null; }
     if (runRef.current.sse) { try { runRef.current.sse.stop(); } catch (_) {} runRef.current.sse = null; }
     try { window.api.game.stop(); } catch (_) {}
     setRunState((r) => ({ ...r, running: false, label: '已停止', detail: '', publicStage: null, completedAt: 0, completedElapsed: r.totalElapsed }));
@@ -740,6 +753,16 @@ function App() {
     if (tabConflictBanner) {
       window.__apiToast?.('存档冲突', { kind: 'warn', detail: '已在另一窗口打开此存档，请关闭另一窗口或点"继续"后重试', duration: 4000 });
       return;
+    }
+    // 防重入/防残留:开新一轮前,先 abort 任何在途流与残留计时器。
+    // (规避 onAnswerQuestion / 重新生成 / 连点发送 触发的双流并发——后一个 sse handle
+    //  覆盖前一个,前者永远 stop 不掉 → 既串戏又泄漏。)
+    {
+      const rc = runRef.current;
+      if (rc.sse) { try { rc.sse.stop(); } catch (_) {} rc.sse = null; try { window.api.game.stop(); } catch (_) {} }
+      rc.timers.forEach((t) => { try { clearTimeout(t); } catch (_) {} try { clearInterval(t); } catch (_) {} });
+      rc.timers = [];
+      if (rc.inactivityTimer) { clearTimeout(rc.inactivityTimer); rc.inactivityTimer = null; }
     }
     const ts = new Date().toLocaleTimeString().slice(0, 5);
     const sentAttachments = attachments;
@@ -1281,7 +1304,7 @@ function App() {
         state={game} runState={runState}
         onNew={() => { if (!confirm('新建存档需要选择剧本与角色,将跳到平台『存档目录』走正规创建流。\n\n确认跳转?')) return; window.open('Platform.html#saves-list', '_blank'); }}
         onSave={async () => { try { await window.api.game.saveGame(); window.__apiToast?.('已保存', { kind: 'ok' }); } catch (e) { window.__apiToast?.('保存失败', { kind: 'danger', detail: e?.message }); } }}
-        onSwitchSave={async (sid) => { setMobileNav(false); try { await window.api.saves.activate(sid); reloadState(); } catch (e) { window.__apiToast?.('切换失败', { kind: 'danger', detail: e?.message }); } }}
+        onSwitchSave={async (sid) => { setMobileNav(false); try { if (runRef.current.sse || runState.running) stopRun(); await window.api.saves.activate(sid); reloadState(); } catch (e) { window.__apiToast?.('切换失败', { kind: 'danger', detail: e?.message }); } }}
         onMemoryMode={async (mode) => { setGame((g) => ({ ...g, memory: { ...(g.memory || {}), mode } })); try { await window.api.game.memoryMode(mode); } catch (_) {} }}
         currentSaveId={activeSave?.id ?? null}
         saves={realSaves.length ? realSaves : ((window.RPG_AUTH && window.RPG_AUTH.authed) ? [] : (window.MOCK_PLATFORM?.saves || []))}
