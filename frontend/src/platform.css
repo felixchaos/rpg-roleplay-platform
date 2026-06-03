@@ -18,6 +18,16 @@
     grid-template-columns: 1fr;
   }
   .pl-shell .pl-side:not(.pl-side-mobile-open) { display: none; }
+
+  /* iOS Safari 在表单控件字号 <16px 时聚焦会自动放大页面(jarring,且放大后布局错位)。
+     viewport meta 用的是 width=device-width/可缩放(为可访问性不禁缩放),所以必须靠
+     字号 ≥16px 来抑制聚焦缩放。桌面端字号不受影响(本规则仅 <768px 生效)。
+     用 max() 保证不缩小本就 >16px 的控件。 */
+  input, select, textarea,
+  .pl-field input, .pl-field select, .pl-field textarea,
+  .pl-side-search input, .pl-model-search input, .pl-model-edit-row input {
+    font-size: max(16px, 1rem);
+  }
 }
 
 /* ── 通用拖动手柄 (task 102A) ──────────────────────────── */
