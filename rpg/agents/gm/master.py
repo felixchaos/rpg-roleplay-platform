@@ -339,6 +339,18 @@ class GameMaster:
         """
         world_section = self._world_section_for_active_content()
         from agents.gm.style_harness import render_style_block
+        # style_profile=None → 从当前存档/剧本/用户三层存储解析(Phase 2)。
+        # 全部读失败/无配置 → resolve 返回默认 profile,渲染与 Phase 1 默认一致(零回归)。
+        if style_profile is None:
+            try:
+                from agents.gm.style_config import resolve_for_state
+                style_profile = resolve_for_state(
+                    getattr(self, "user_id", None),
+                    self._active_script_id(),
+                    getattr(self, "_active_state", None),
+                )
+            except Exception:
+                style_profile = None  # 兜底:任何异常都退回默认渲染
         style_block = render_style_block(style_profile)
         # _SYSTEM_BASE intentionally contains literal JSON examples such as
         # {"op": "set", ...}.  Do not run the whole prompt through str.format(),
@@ -348,6 +360,21 @@ class GameMaster:
             .replace("{world_section}", world_section)
             .replace("{style_block}", style_block)
         )
+
+    def _active_script_id(self) -> int | None:
+        """从当前 active state 解出 script_id(content_pack id 形如 'script:N')。无 → None。"""
+        state = getattr(self, "_active_state", None)
+        if state is None:
+            return None
+        try:
+            from context_providers import resolve_content_pack
+            manifest = resolve_content_pack(state) or {}
+            mid = str(manifest.get("id") or "")
+            if mid.startswith("script:"):
+                return int(mid.split(":", 1)[1])
+        except Exception:
+            pass
+        return None
 
     def _world_section_for_active_content(self) -> str:
         """task 80: 通用 RPG 底座 — 从当前 script 的 worldbook_entries 拉高优先级
