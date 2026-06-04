@@ -20,6 +20,7 @@ Version scheme: `0.x-waveN[.M]` where `wave` matches the in-repo development cad
 - Main GM output now defaults to a 4K token BYOK budget, with higher user-configurable headroom, so story replies are not cut off by the old strict cap.
 
 ### Fixed
+- Game Console now turns invalid or expired BYOK API keys into an actionable settings prompt instead of showing only a generic chat failure.
 - Background phase summaries now use the save owner's model credentials, so long-memory compaction no longer falls back to an unconfigured server Vertex account.
 - New-save player origin selection no longer forces an initial identity card; the identity overlay is now truly optional for all origin modes.
 - Game Console openings now convert trailing markdown action lists into the GM choice box and refresh the streamed opening with the cleaned stored state.

@@ -23,6 +23,13 @@ _CLIENT_SAFE_RUNTIME_PREFIXES = (
     "Vertex AI 调用被拒(403)。",
 )
 
+_CLIENT_SAFE_AUTH_MARKERS = (
+    "incorrect api key",
+    "invalid api key",
+    "please pass a valid api key",
+    "401 unauthorized",
+)
+
 
 def _client_safe_error(exc: Exception) -> str:
     """把未预期异常转成对客户端安全的泛化文案 + error_id。
@@ -35,6 +42,14 @@ def _client_safe_error(exc: Exception) -> str:
     if isinstance(exc, RuntimeError) and raw_message.startswith(_CLIENT_SAFE_RUNTIME_PREFIXES):
         _log.warning("[chat] client-safe stream error (error_id=%s): %s", error_id, raw_message)
         return f"{raw_message}\n\n如果已经上传,请重新测试凭证或切换到已配置的模型。(错误码 {error_id})"
+    raw_lower = raw_message.lower()
+    if any(marker in raw_lower for marker in _CLIENT_SAFE_AUTH_MARKERS):
+        _log.warning("[chat] client-safe auth stream error (error_id=%s): %s", error_id, type(exc).__name__)
+        return (
+            "当前模型的 API Key 无效或已过期。"
+            "请到「设置 → API 设置」重新测试凭证，或切换到已配置的模型。"
+            f"(错误码 {error_id})"
+        )
     _log.exception("[chat] unhandled stream error (error_id=%s)", error_id)
     return f"本轮处理出错,请重试(错误码 {error_id})"
 
