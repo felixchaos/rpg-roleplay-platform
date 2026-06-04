@@ -253,7 +253,8 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
             try:
                 return _post(with_dim=False)
             except urllib.error.HTTPError as e2:
-                body = e2.read().decode(errors="replace"); code = e2.code
+                body = e2.read().decode(errors="replace")
+                code = e2.code
             except Exception as e2:
                 log.warning("[embedding] openai embed retry-no-dim failed: %s", e2)
                 return None
