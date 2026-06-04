@@ -9,7 +9,7 @@
 ### 1. 启动开发环境
 
 ```bash
-cd 我蕾穆丽娜不爱你/
+cd rpg-roleplay-platform/
 ./scripts/dev.sh start
 ```
 
