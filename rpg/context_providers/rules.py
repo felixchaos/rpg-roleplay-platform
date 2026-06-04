@@ -48,16 +48,29 @@ class RulesProvider(ContextProvider):
             for ln in policy_constraints:
                 lines.append(ln)
         if pc:
-            lines.append(
-                f"【角色】{pc.get('name')} · Lv {pc.get('level')} {pc.get('class_name', '')} · "
-                f"HP {pc.get('hp')}/{pc.get('max_hp')} · AC {pc.get('ac')} · "
-                f"熟练 +{pc.get('proficiency_bonus', 0)}"
-            )
-            abilities = pc.get("abilities") or {}
-            if abilities:
-                lines.append("  · 属性：" + " ".join(
-                    f"{a.upper()} {abilities.get(a, 10)}" for a in ("str", "dex", "con", "int", "wis", "cha")
-                ))
+            ruleset_id = (ruleset.get("id") or "").lower()
+            if ruleset_id == "coc":
+                lines.append(
+                    f"【调查员】{pc.get('name')} · {pc.get('occupation', '')} · "
+                    f"HP {pc.get('hp')}/{pc.get('max_hp')} · "
+                    f"SAN {pc.get('san', '?')} · LUCK {pc.get('luck', '?')} · MP {pc.get('mp', '?')}"
+                )
+                characteristics = pc.get("characteristics") or {}
+                if characteristics:
+                    lines.append("  · 属性：" + " ".join(
+                        f"{k.upper()} {v}" for k, v in characteristics.items()
+                    ))
+            else:
+                lines.append(
+                    f"【角色】{pc.get('name')} · Lv {pc.get('level')} {pc.get('class_name', '')} · "
+                    f"HP {pc.get('hp')}/{pc.get('max_hp')} · AC {pc.get('ac')} · "
+                    f"熟练 +{pc.get('proficiency_bonus', 0)}"
+                )
+                abilities = pc.get("abilities") or {}
+                if abilities:
+                    lines.append("  · 属性：" + " ".join(
+                        f"{a.upper()} {abilities.get(a, 10)}" for a in ("str", "dex", "con", "int", "wis", "cha")
+                    ))
             if pc.get("conditions"):
                 lines.append(f"  · 状态：{', '.join(pc['conditions'])}")
         # rule_candidate_actions（Demand Resolver 产出）

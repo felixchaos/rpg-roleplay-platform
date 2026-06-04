@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import modules as module_registry
-from rules.dnd5e.character import make_default_character
 from rules_bridge.entity_sync import _entities_from_room, _sync_active_entities_to_scene
 
 
@@ -37,10 +36,26 @@ def start_module(state, module_id: str, character_overrides: dict | None = None)
     start_id = manifest.get("starting_location") or rooms[0].get("id")
     start_room = next((r for r in rooms if r.get("id") == start_id), rooms[0])
 
-    # 初始化或保留角色卡：若已存在角色（有 hp/name）则保留；否则发默认 1 级冒险者
+    # 初始化或保留角色卡：若已存在角色（有 hp/name）则保留；否则发默认角色
     pc = state.data.get("player_character") or {}
     if not pc.get("name") or not pc.get("hp"):
-        char = make_default_character(name=(character_overrides or {}).get("name") or "Cinder", level=1)
+        from rules import get_engine
+        ruleset_id = (manifest.get("ruleset_meta") or {}).get("id", "dnd5e")
+        engine = get_engine(ruleset_id=ruleset_id, mode=(manifest.get("ruleset_meta") or {}).get("mode", ""))
+
+        default_char = manifest.get("default_character") or {}
+        char_name = (character_overrides or {}).get("name") or default_char.get("name") or "Cinder"
+        char = engine.make_default_character(name=char_name, level=1)
+
+        if default_char:
+            char.update({k: v for k, v in default_char.items() if k in ("age", "occupation", "hp", "max_hp", "san", "luck", "mp", "max_mp", "db", "build", "mov", "max_san")})
+            if default_char.get("skills"):
+                char.setdefault("skills", {}).update(default_char["skills"])
+            if default_char.get("characteristics"):
+                char.setdefault("characteristics", {}).update(default_char["characteristics"])
+            if default_char.get("inventory"):
+                char["inventory"] = list(default_char["inventory"])
+
         if character_overrides:
             for k, v in character_overrides.items():
                 if k == "abilities" and isinstance(v, dict):

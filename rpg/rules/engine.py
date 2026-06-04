@@ -64,7 +64,7 @@ class RulesEngine:
     """
 
     def __init__(self, ruleset_id: str = "dnd5e", mode: str = "5e_compatible"):
-        if ruleset_id != "dnd5e":
+        if ruleset_id not in ("dnd5e", "coc"):
             raise ValueError(f"未支持的 ruleset: {ruleset_id}")
         self.ruleset_id = ruleset_id
         self.mode = mode
@@ -240,6 +240,11 @@ _DEFAULT_ENGINE: RulesEngine | None = None
 def get_engine(ruleset_id: str = "dnd5e", mode: str = "5e_compatible") -> RulesEngine:
     """全局规则引擎单例。"""
     global _DEFAULT_ENGINE
-    if _DEFAULT_ENGINE is None or _DEFAULT_ENGINE.ruleset_id != ruleset_id:
+    if _DEFAULT_ENGINE is not None and _DEFAULT_ENGINE.ruleset_id == ruleset_id:
+        return _DEFAULT_ENGINE
+    if ruleset_id == "coc":
+        from .coc.engine import CoCRulesEngine
+        _DEFAULT_ENGINE = CoCRulesEngine(ruleset_id=ruleset_id, mode=mode)
+    else:
         _DEFAULT_ENGINE = RulesEngine(ruleset_id=ruleset_id, mode=mode)
     return _DEFAULT_ENGINE

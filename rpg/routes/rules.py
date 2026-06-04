@@ -128,6 +128,9 @@ async def api_rules_module_launch(
     manifest = bundle.get("manifest") or {}
     title = custom_title or manifest.get("name_cn") or manifest.get("name") or module_id
 
+    ruleset_id = (manifest.get("ruleset_meta") or {}).get("id", "dnd5e")
+    container_title = "[内部] CoC 7E 模组容器" if ruleset_id == "coc" else "[内部] 5E 模组容器"
+
     # 找到（或创建）一个属于本用户的 ad-hoc script，作为模组 save 的 owner script。
     # 模组不依赖小说章节，但 game_saves.script_id 是 NOT NULL 外键 → 必须给个 script。
     # 复用 ad-hoc"模组容器"剧本，避免每次都建新 script row。
@@ -136,14 +139,14 @@ async def api_rules_module_launch(
     with _db_connect() as db:
         scr = db.execute(
             "select id from scripts where owner_id = %s and title = %s",
-            (user_id, "[内部] 5E 模组容器"),
+            (user_id, container_title),
         ).fetchone()
         if scr:
             container_script_id = int(scr["id"])
         else:
             scr = db.execute(
                 "insert into scripts(owner_id, title) values (%s, %s) returning id",
-                (user_id, "[内部] 5E 模组容器"),
+                (user_id, container_title),
             ).fetchone()
             container_script_id = int(scr["id"])
 

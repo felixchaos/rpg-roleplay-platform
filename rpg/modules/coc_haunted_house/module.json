@@ -1,0 +1,24 @@
+{
+  "id": "coc_haunted_house",
+  "kind": "module_adventure",
+  "name": "The Haunted House",
+  "name_cn": "鬼宅疑云",
+  "title": "鬼宅疑云 / The Haunted House",
+  "tagline": "1925年，波士顿近郊的温斯洛老宅传来不可思议的声响…",
+  "tagline_en": "Strange sounds from the old Winslow manor...",
+  "ruleset": "coc_7e",
+  "ruleset_meta": {
+    "id": "coc",
+    "mode": "coc_7e",
+    "public_label": "Call of Cthulhu 7版"
+  },
+  "context_providers": ["module_scene", "module_encounter", "module_worldbook", "rules", "memory"],
+  "retrieval_policy": { "allow_script_retrieval": false, "allow_chapter_facts": false },
+  "gm_policy": { "mode": "adventure_gm", "must_obey_rules_result": true, "no_unverified_hard_state_write": true, "narrate_only_facts": true },
+  "party_size": 1,
+  "starting_location": "foyer",
+  "victory_locations": ["attic"],
+  "estimated_minutes": 40,
+  "tags": ["coc", "horror", "investigation", "single-player"],
+  "notice": "本模组适用 CoC 7E 规则。dc 含义：skill_check 中 dc=0 表示读取角色技能值，dc=40 表示 d100 ≤ 40；saving_throw 中 dc=5/1 表示属性 ×5/×1。"
+}

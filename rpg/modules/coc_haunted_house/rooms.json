@@ -1,0 +1,77 @@
+[
+  {
+    "id": "foyer",
+    "name": "门厅",
+    "name_en": "Entrance Foyer",
+    "description": "温斯洛老宅的门厅阴暗潮湿。水晶吊灯上布满蛛网，空气中弥漫着霉腐味。地板上散落着几封泛黄的信件，通往二楼的楼梯发出令人不安的声响。右侧通往书房，正前方是上楼的阶梯。",
+    "exits": [
+      { "to": "study", "label": "前往书房" },
+      { "to": "attic", "label": "走上二楼阁楼" }
+    ],
+    "visible_clues": [
+      { "id": "scattered_letters", "text": "地板上散落着几封捆绑在一起的信件，收件人是埃德蒙·温斯洛。" }
+    ],
+    "checks": [
+      { "kind": "skill_check", "skill": "spot_hidden", "dc": 0, "reveals": "hidden_diary_page", "fact": "在楼梯踏板下发现一张撕下的日记页，上面用颤抖的笔迹写着：'它在地下室等我…我不能告诉警察…'" },
+      { "kind": "skill_check", "skill": "library_use", "dc": 40, "reveals": "letter_clue", "fact": "整理信件后发现，埃德蒙是一位古物收藏家，最后一封信提到了他从南太平洋带回的'黑色雕像'。" },
+      { "kind": "skill_check", "skill": "psychology", "dc": 0, "reveals": "atmosphere_reading", "fact": "你能感觉到这栋房子弥漫着浓重的恐惧——不仅仅是你的，还有曾经住在这里的人们的。某种不可名状的东西在这里留下了痕迹。" }
+    ],
+    "npcs": [],
+    "enemies": [],
+    "loot": [
+      { "item_id": "flashlight", "name": "手电筒", "description": "门边柜子上找到的一把老旧手电筒，电池还能用" }
+    ],
+    "flags": {}
+  },
+  {
+    "id": "study",
+    "name": "书房",
+    "name_en": "Study",
+    "description": "书房比门厅更加压抑。厚重的天鹅绒窗帘挡住了所有光线。墙边的书架上摆满了古旧书籍和异国收藏品。书桌上有一本打开的日记，旁边是一尊约30厘米高的深色雕像——它的形态让你感到莫名的不安。",
+    "exits": [
+      { "to": "foyer", "label": "返回门厅" },
+      { "to": "attic", "label": "从书房暗梯上阁楼", "requires": "flag:found_diary_key" }
+    ],
+    "visible_clues": [
+      { "id": "diary", "text": "书桌上摊开的日记，最后一页停在三天前。" }
+    ],
+    "checks": [
+      { "kind": "saving_throw", "ability": "pow", "dc": 5, "reveals": "resist_statue", "sets_flag": "resist_idol", "fact": "雕像的存在让你头痛欲裂，脑海中响起低沉的嗡鸣。成功则抵抗住了精神侵袭。" },
+      { "kind": "skill_check", "skill": "occult", "dc": 0, "reveals": "idol_origin", "fact": "你认出这尊雕像刻画的是一种南太平洋原始部落崇拜的深海之神形象。学术界称之为'深潜者之父'——达贡。" },
+      { "kind": "skill_check", "skill": "library_use", "dc": 0, "reveals": "diary_clue", "fact": "日记记载：'雕像会呼吸。我在夜里听见它的心跳。下面有什么东西在回应它。'最后夹层里掉出一把铜钥匙。", "sets_flag": "found_diary_key" }
+    ],
+    "npcs": [],
+    "enemies": [],
+    "loot": [
+      { "item_id": "copper_key", "name": "铜钥匙", "description": "日记夹层中找到的铜质钥匙，上面刻着海浪图案" }
+    ],
+    "flags": {
+      "resist_idol": false
+    }
+  },
+  {
+    "id": "attic",
+    "name": "二楼阁楼",
+    "name_en": "Attic",
+    "description": "阁楼的空气又湿又咸，仿佛置身海底。一扇破裂的天窗透入月光，照亮了地板上用粉笔绘制的巨大圆环。圆环中心是另一尊更大的雕像——与书房那尊一模一样，但它正在缓缓渗出黑色的黏液。角落的阴影里，有东西在移动。",
+    "exits": [
+      { "to": "foyer", "label": "冲下楼" }
+    ],
+    "visible_clues": [
+      { "id": "ritual_circle", "text": "地板上是一个用粉笔绘制的召唤法阵，符号古老而扭曲。" },
+      { "id": "large_idol", "text": "一尊与书房相同的雕像，但尺寸大了数倍，表面有黑色黏液渗出。" }
+    ],
+    "checks": [
+      { "kind": "saving_throw", "ability": "pow", "dc": 1, "reveals": "final_san_check", "fact": "目睹雕像流出活物般的黑色黏液，以及潜藏于阴影中的存在…这是极难 SAN 检定（POW×1）。失败则损失 1/1d6 SAN。" },
+      { "kind": "skill_check", "skill": "cthulhu_mythos", "dc": 5, "reveals": "mythos_reading", "fact": "你依稀认出这些符号与某些禁忌文献中记载的召唤仪式吻合——有人在试图打开一扇不该打开的门。" }
+    ],
+    "npcs": [],
+    "enemies": [
+      { "stat_block_id": "deep_one", "instance_id": "deep_one_1", "name": "深潜者" }
+    ],
+    "loot": [
+      { "item_id": "ritual_diary", "name": "仪式记录", "description": "一本沾满墨水和不明液体的记录本，详细记载了召唤仪式的全过程" }
+    ],
+    "flags": {}
+  }
+]

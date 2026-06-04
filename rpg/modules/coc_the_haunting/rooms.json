@@ -1,0 +1,270 @@
+[
+  {
+    "id": "knott_office",
+    "name": "诺特先生办公室",
+    "name_en": "Mr. Knott's Office",
+    "description": "你坐在诺特先生的对面。这位肥胖的房东不停地用手帕擦着额头上的汗珠。\n\n'那栋房子……我再也租不出去了。上一家租客只住了一周就跑了，连家具都没搬。他们说每晚都能听见墙壁里有东西在刮擦……还有更糟的。'\n\n诺特先生把一把生锈的钥匙推到你面前：'科比特老宅，科普廷阁20号。找到问题的根源，清除它，这房子就是你的了。'\n\n他告诉你可以从几个方向入手：波士顿环球报的旧档案室有科比特生前的社区新闻；市政厅有房产和死亡记录；圣三一教堂的神父多年前曾与科比特有过往来。当然——你也可以直接去老宅看看。",
+    "exits": [
+      { "to": "corbitt_exterior", "label": "直接前往科比特老宅" },
+      { "to": "boston_globe", "label": "去波士顿环球报调查旧新闻" },
+      { "to": "hall_of_records", "label": "去市政厅查阅房产与死亡记录" },
+      { "to": "church", "label": "拜访圣三一教堂" }
+    ],
+    "visible_clues": [
+      { "id": "house_key", "text": "桌面上放着一把生锈的铜钥匙，挂着标签：'科比特老宅 — 科普廷阁20号'" }
+    ],
+    "checks": [
+      { "kind": "skill_check", "skill": "psychology", "dc": 0, "reveals": "knott_guilt", "fact": "诺特先生不仅害怕——他的眼神深处有愧疚。他在隐瞒什么。也许关于这栋房子他还有些话没有说出口。如果逼迫他，他可能会吐露更多。" },
+      { "kind": "skill_check", "skill": "fast_talk", "dc": 0, "reveals": "knott_admits", "fact": "在你的追问下，诺特先生终于承认：三十年前这栋房子里失踪过一个女仆，名叫玛丽亚。案子被压了下去，但邻居们都记得。另外他透露：教堂的马卡里奥神父曾来找过他，要求他永远不要再把房子租出去。" }
+    ],
+    "npcs": [],
+    "enemies": [],
+    "loot": [
+      { "item_id": "rusty_key", "name": "生锈的铜钥匙", "description": "科普廷阁20号老宅前门的钥匙" }
+    ],
+    "flags": {}
+  },
+  {
+    "id": "boston_globe",
+    "name": "波士顿环球报档案室",
+    "name_en": "Boston Globe Archives",
+    "description": "报社档案室弥漫着旧纸和油墨的气味。一位老档案员帮你翻出了关于科普廷阁一带的旧剪报，装在一个泛黄的文件夹里。\n\n你可以自由查阅。这里有社区小报、讣告栏、治安新闻……以及一些被遗忘的惊悚报道。",
+    "exits": [
+      { "to": "knott_office", "label": "返回诺特先生办公室" },
+      { "to": "hall_of_records", "label": "顺路去市政厅" },
+      { "to": "corbitt_exterior", "label": "觉得查够了，直接去老宅" }
+    ],
+    "visible_clues": [
+      { "id": "newspaper_pile", "text": "桌上堆着三叠标注了年份的剪报文件夹：1918-1920、1921-1923、1924-1926" }
+    ],
+    "checks": [
+      { "kind": "skill_check", "skill": "library_use", "dc": 0, "reveals": "corbitt_articles", "fact": "在大量剪报中你找到了关键线索：1923年《波士顿环球报》报道了科比特家中'奇怪的声响'，邻居投诉警察，但警察搜查后未发现异常。另一篇1925年的讣告记载沃尔特·科比特死于'心脏衰竭'——享年72岁。有趣的是，同一周有一篇治安新闻：住在科普廷阁的一位年轻租客因'突发精神错乱'被送进了罗克斯伯里疗养院。" },
+      { "kind": "skill_check", "skill": "spot_hidden", "dc": 0, "reveals": "maria_clue", "fact": "在一份1896年的旧报纸中，你发现了一则豆腐块大小的失踪启事：'玛丽亚·德·索萨，葡萄牙裔女佣，最后一次出现在科普廷阁20号。若有知情者，请联系波士顿教区。'——这正是诺特先生提到的那位失踪女仆。启事再未刊登过第二期。", "sets_flag": "knows_about_maria" },
+      { "kind": "skill_check", "skill": "psychology", "dc": 0, "reveals": "pattern", "fact": "当你把所有剪报按时间排列在地板上时，一个规律浮现了：每过约五到七年，科普廷阁一带就会出现一例'突发精神错乱'的病例。所有病人都被送进了罗克斯伯里疗养院。没有人出院。" }
+    ],
+    "npcs": [],
+    "enemies": [],
+    "loot": [
+      { "item_id": "news_clippings", "name": "科比特相关剪报集", "description": "包含科比特讣告、社区投诉新闻、失踪启事等的剪报文件夹" }
+    ],
+    "flags": {}
+  },
+  {
+    "id": "hall_of_records",
+    "name": "波士顿市政厅 — 档案处",
+    "name_en": "Boston Hall of Records",
+    "description": "市政厅地下档案室灯光昏暗，成排的铁架子上堆着数十年来的房产契书、死亡证明和法庭记录。一位困倦的职员指引你到'科普廷阁'一格——令人意外的是，关于20号的档案出奇地厚。\n\n你可以查阅房产转让记录和死亡证明书。",
+    "exits": [
+      { "to": "knott_office", "label": "返回诺特先生办公室" },
+      { "to": "boston_globe", "label": "去报社交叉验证" },
+      { "to": "church", "label": "顺路去教堂" },
+      { "to": "corbitt_exterior", "label": "查够了，直接去老宅" }
+    ],
+    "visible_clues": [
+      { "id": "thick_folder", "text": "科普廷阁20号的档案文件夹比其他房产厚得多——里面不仅有权属转让，还有警局问询记录" }
+    ],
+    "checks": [
+      { "kind": "skill_check", "skill": "library_use", "dc": 0, "reveals": "property_history", "fact": "房产记录显示：科普廷阁20号建于1852年，科比特家族自1874年起拥有此宅。沃尔特·科比特是最后一任房主。但奇怪的是——1947年有一条'地窖改建'的建筑许可申请，附有地下室平面图。图上标注了'B区——私人礼拜堂'。礼拜堂？在地下室里？" },
+      { "kind": "skill_check", "skill": "law", "dc": 30, "reveals": "court_records", "fact": "你找到一份1924年的警局问询记录。一名巡警在检查科比特老宅噪音投诉后写下：'房屋合法，但地下室有一股强烈的腐烂气味。科比特先生声称是在腌制肉品。我不认可此解释，但无搜查许可。'" },
+      { "kind": "skill_check", "skill": "spot_hidden", "dc": 0, "reveals": "death_cert", "fact": "在翻阅死亡证明时，你发现了科比特的另一面：他的妻子爱丽丝·科比特于1905年去世——死因写的是'意外跌落'。但文件附页上有一个手写的备注，疑似法医的字迹：'淤痕与跌落不符。建议进一步调查。'备注没有后续。" }
+    ],
+    "npcs": [],
+    "enemies": [],
+    "loot": [
+      { "item_id": "basement_plans", "name": "地下室平面图", "description": "1947年建筑许可申请中的地下室平面图副本，标有'私人礼拜堂'区域" }
+    ],
+    "flags": {}
+  },
+  {
+    "id": "church",
+    "name": "圣三一教堂",
+    "name_en": "St. Trinity Church",
+    "description": "圣三一教堂的彩绘玻璃在午后的阳光下投射出斑斓的光影。马卡里奥神父——一位七十多岁的葡萄牙裔老神父——听到你提及科普廷阁20号时，脸色立刻变了。\n\n'我已经为那栋房子的灵魂祈祷了三十年。'他低声说，画了一个十字。'请坐。你想知道什么，我都会告诉你。'" ,
+    "exits": [
+      { "to": "knott_office", "label": "返回诺特先生办公室" },
+      { "to": "hall_of_records", "label": "去市政厅调取记录" },
+      { "to": "corbitt_exterior", "label": "带着祝福去老宅" }
+    ],
+    "visible_clues": [
+      { "id": "father_macario", "text": "马卡里奥神父站在圣坛旁，手中捻着一串磨损的玫瑰念珠。他显然在等着有人来问这栋房子的事" }
+    ],
+    "checks": [
+      { "kind": "skill_check", "skill": "persuade", "dc": 0, "reveals": "father_full_story", "fact": "神父打开心扉，告诉了你一切：'科比特不是自然死亡的——他自己选择了死亡，好让灵魂进入他在地下室建造的'礼拜堂'里。他研究的是亡灵复活术。我警告过他，但他不听。后来……我的侄女玛丽亚去他家做女佣，再也没回来。'他的声音颤抖了。'三十年了。她的尸体就在那栋房子里，我确信。在墙壁里。在地下。所以我才一直阻止别人住进去。'" },
+      { "kind": "skill_check", "skill": "occult", "dc": 0, "reveals": "ritual_method", "fact": "神父带你到教堂档案室，给你看了一本手抄的《驱魔仪轨》——并非教廷认可的版本，而是中世纪民间流传的实用手册。'要消灭复活的亡灵，你需要两样东西。第一是山楂木——圣经时代就用来钉死吸血鬼的木头。第二是仪式场地的彻底破坏。科比特的五芒星法阵是关键。'" },
+      { "kind": "skill_check", "skill": "credit_rating", "dc": 0, "reveals": "church_aid", "fact": "神父感激你的到来。他给你一小瓶圣水和一封教区介绍信——可以让你合法进入罗克斯伯里疗养院，探访那个被科比特老宅逼疯的幸存租客。也许他能告诉你地下室里有什么。" }
+    ],
+    "npcs": [
+      { "id": "father_macario", "name": "马卡里奥神父" }
+    ],
+    "enemies": [],
+    "loot": [
+      { "item_id": "holy_water", "name": "圣水（小瓶）", "description": "被马卡里奥神父祝圣过的圣水。对不死生物造成 1d4 伤害（仅一次）" },
+      { "item_id": "exorcism_manual", "name": "《驱魔仪轨》手抄本", "description": "中世纪民间驱魔指南。记载：亡灵复活的弱点在于'锚定物'——通常是一根埋藏在复活地点下方的尖木桩，用施法者本人的血祝圣。用山楂木桩钉入亡灵心脏可永远消灭之。" }
+    ],
+    "flags": {}
+  },
+  {
+    "id": "corbitt_exterior",
+    "name": "科比特老宅 — 前院",
+    "name_en": "Corbitt House — Exterior",
+    "description": "科普廷阁20号矗立在暮色中，漆皮剥落的维多利亚式外墙像一张苍老的脸。前院的铁栅栏门半开着，石径上覆着青苔。\n\n二楼的窗帘在紧闭的窗户后面轻轻摆动。空气里有股淡淡的腐臭——不是垃圾，是更古老、更深层的东西。一位白发老人站在对面房子的门廊上，专注地看着你。\n\n你可以进去，也可以先和邻居谈谈，或者返回城镇继续调查。",
+    "exits": [
+      { "to": "corbitt_foyer", "label": "用钥匙打开前门" },
+      { "to": "knott_office", "label": "返回诺特先生办公室" },
+      { "to": "boston_globe", "label": "还需要查报纸" },
+      { "to": "hall_of_records", "label": "还需要查房产记录" },
+      { "to": "church", "label": "先去教堂" }
+    ],
+    "visible_clues": [
+      { "id": "neighbor", "text": "对面门廊上站着一位老人——他就是麦卡利斯特先生，可能是最后一个记得科比特的人" },
+      { "id": "basement_window", "text": "地下室有一扇被木板封住的小窗。木板上粉笔写着什么——不像是涂鸦" },
+      { "id": "backyard", "text": "后院泥土有几处异常的凹陷和隆起，像是被反复挖掘过" }
+    ],
+    "checks": [
+      { "kind": "skill_check", "skill": "charm", "dc": 0, "reveals": "mcalister_full", "fact": "麦卡利斯特老先生拉着你坐在他的门廊上，给你讲了他亲眼所见的一切：'科比特从前是个好人，直到他妻子死后。他开始从欧洲买些奇奇怪怪的书。晚上在后院挖土。你能听到他一个人在屋里说话——但屋里没有别人。出殡那天棺材轻得像是空的——是我帮忙抬的，我忘不了那个重量。'"},
+      { "kind": "skill_check", "skill": "spot_hidden", "dc": 0, "reveals": "symbols_meaning", "fact": "木板上的符号是手刻的十字架和一段拉丁文：'MORTUI NON RESURGANT'——'死者不得复生'。不是科比特刻的。是别人来过，试图警告后来者。也许是那个失踪的女仆？也许是神父？不管你进不进去——这栋房子里的问题比你预想的更糟。" },
+      { "kind": "saving_throw", "ability": "pow", "dc": 5, "reveals": "house_watching", "fact": "站在宅前，一种强烈的被注视感笼罩了你——不是来自街道，而是来自楼上那扇窗帘微微晃动的窗户。你确定那扇窗户后面没有人。但你同样确定有东西在看你。" }
+    ],
+    "npcs": [
+      { "id": "old_mcalister", "name": "麦卡利斯特老先生" }
+    ],
+    "enemies": [],
+    "loot": [],
+    "flags": {}
+  },
+  {
+    "id": "corbitt_foyer",
+    "name": "科比特老宅 — 门厅",
+    "name_en": "Corbitt House — Foyer",
+    "description": "前门吱呀一声打开，一股霉腐的空气涌了出来。\n\n门厅昏暗而宽阔。天花板的吊灯上缠着厚厚的蛛网。楼梯通向上层。三条路摆在你面前：左侧是客厅，右侧通往厨房，正前方楼梯上二楼。此外——楼梯底部有一扇通往地下室的小门，但被一把看起来很久没用过的锁锁住了。\n\n墙纸有些地方剥落了，水渍在暗色墙面上形成了扭曲的纹路。地板上有拖痕，从客厅方向一直延伸到地下室门前的旧地毯下。",
+    "exits": [
+      { "to": "corbitt_exterior", "label": "走出前门（可随时离开）" },
+      { "to": "corbitt_living", "label": "去左侧客厅查看" },
+      { "to": "corbitt_kitchen", "label": "去右侧厨房查看" },
+      { "to": "corbitt_upstairs", "label": "上楼探索卧室" },
+      { "to": "corbitt_basement", "label": "打开锁进入地下室", "requires": "flag:has_basement_key" }
+    ],
+    "visible_clues": [
+      { "id": "drag_marks", "text": "地板上有明显的拖拽痕迹，从客厅延伸到地下室门前的地毯下" },
+      { "id": "wall_stains", "text": "墙纸上暗色的水渍似乎在缓慢扩大。空气中有铜锈和旧血的气味" }
+    ],
+    "checks": [
+      { "kind": "skill_check", "skill": "spot_hidden", "dc": 0, "reveals": "trapdoor_found", "fact": "掀开地毯，露出了通往地下室的小活板门。门上有一把老旧的锁。需要一把铜质小钥匙——不是你手里那把大门钥匙。钥匙可能在屋里的某个地方……或者你去的那些调查地点。", "sets_flag": "found_trapdoor" },
+      { "kind": "skill_check", "skill": "listen", "dc": 0, "reveals": "scratching", "fact": "你屏息静听。地下室传来极细微但持续的刮擦声。不是老鼠——节奏过于规律。像是人的指甲在缓慢而坚定地刨着木板。一下。两下。三下。停了。然后又开始了。" },
+      { "kind": "saving_throw", "ability": "pow", "dc": 5, "reveals": "fear_resist", "fact": "站在门厅中央，一股无形的压迫感从四面八方涌来。这座房子在抗拒你的存在。墙壁似乎在向你合拢——不，是你的理智在溶解。你稳住了。" }
+    ],
+    "npcs": [],
+    "enemies": [],
+    "loot": [],
+    "flags": {
+      "found_trapdoor": false,
+      "has_basement_key": false
+    }
+  },
+  {
+    "id": "corbitt_kitchen",
+    "name": "科比特老宅 — 厨房",
+    "name_en": "Corbitt House — Kitchen",
+    "description": "厨房残留着浓郁的腐败气味。水池里堆着未洗的——天知道多久前的——餐盘，上面长了一层灰绿色的霉菌。\n\n最引人注目的是厨房中央的大木桌：桌面上刻满了细密的符号和文字，仿佛有人用指甲一遍又一遍地在木头上写字直到手指流血。\n\n墙角堆着几个空罐头和一瓶标签已经脱落的液体。冰箱嗡嗡作响——这栋房子的电居然没断。你要不要打开冰箱看看？",
+    "exits": [
+      { "to": "corbitt_foyer", "label": "返回门厅" }
+    ],
+    "visible_clues": [
+      { "id": "carved_table", "text": "厨房木桌上密密麻麻刻着疯狂的潦草字迹——重复写着一个拉丁短语" },
+      { "id": "fridge", "text": "冰箱还在运转，发出低沉的嗡嗡声。里面可能有东西" }
+    ],
+    "checks": [
+      { "kind": "skill_check", "skill": "occult", "dc": 0, "reveals": "table_writing", "fact": "桌上的文字是拉丁文：'SANGUIS EST VITA'——'血即是生命'——重复写了上百次。每个'血'字上都沾着褐色指印。符文排列成圆形，中心有一个烧焦的手印。这是一种维持生命力的仪式台——科比特在这里进行过无数次祭献。" },
+      { "kind": "saving_throw", "ability": "pow", "dc": 5, "reveals": "fridge_horror", "fact": "你打开冰箱。第一层架子上整齐排列着六个玻璃瓶——装满了暗红色液体。不是番茄汁。瓶盖上贴着标签，写着六个不同的名字。最远端的标签上赫然写着：'玛丽亚·D.S.'。" },
+      { "kind": "skill_check", "skill": "spot_hidden", "dc": 0, "reveals": "hidden_key_kitchen", "fact": "检查桌面刻痕时，你的手电筒照进桌底——一把小铜钥匙被黏在桌子底面的一团黑色蜡状物中。你剥了下来。这是地下室门上缺少的那把锁的钥匙。", "sets_flag": "has_basement_key" }
+    ],
+    "npcs": [],
+    "enemies": [],
+    "loot": [
+      { "item_id": "basement_key_kitchen", "name": "小铜钥匙", "description": "黏在厨房桌子底面的地下室钥匙", "requires_flag": "has_basement_key" }
+    ],
+    "flags": {}
+  },
+  {
+    "id": "corbitt_living",
+    "name": "科比特老宅 — 客厅与书房",
+    "name_en": "Corbitt House — Living Room & Study",
+    "description": "客厅是所有房间里最像还'有人住'的一间。沙发上没有灰尘——一张用过的毯子搭在靠背上。\n\n书架上塞满了关于神秘学和巫术的书籍。壁炉里堆着纸灰。一架旧钢琴的琴键上摊着一本手写乐谱，但谱线之间不是音符——而是用颤抖笔迹写下的日记。\n\n地上有血迹——不多，但显然是最近的。从沙发滴到书架前，再滴到壁炉边。然后又回到了沙发，仿佛血迹的主人一直在房间里踱步，停不下来。",
+    "exits": [
+      { "to": "corbitt_foyer", "label": "返回门厅" }
+    ],
+    "visible_clues": [
+      { "id": "blood_trail", "text": "地板上的血滴痕迹形成了一条令人不安的往返路径——来回踱步，反复" },
+      { "id": "bookshelf", "text": "书架上满是不祥的收藏：《无名祭祀之书》残页、阿拉伯文炼金术手稿、一本被翻烂的拉丁文《复活术纲要》" },
+      { "id": "piano_journal", "text": "钢琴上摊着一本'乐谱'——其实是手写的日记" }
+    ],
+    "checks": [
+      { "kind": "skill_check", "skill": "library_use", "dc": 0, "reveals": "corbitt_diary_full", "fact": "钢琴上的'乐谱'是科比特的日记。你翻到最重要的几页：'1905年。爱丽丝死了。我爱她比生命更重，所以他们必须付出代价。我已经找到了方法——不是降灵术那种骗局，是真的复活。需要别人的血来交换她。第一次没成功，她没有醒来。我会继续试。'最后几页的笔迹几乎不可辨认：'我现在明白——复活需要我自己先死。我需要一个地下房间。需要法阵。需要血源——源源不断的血。玛丽亚很害怕，但她跑不掉。等我醒来，她就是第一个。'日记的最后一页夹着一把小铜钥匙。", "sets_flag": "has_basement_key" },
+      { "kind": "skill_check", "skill": "occult", "dc": 0, "reveals": "resurrection_knowledge", "fact": "从书架上拼凑出了完整的仪式理论：科比特使用了被教会禁止的'灵魂锚定'术——用自杀将灵魂绑定在地下室的五芒星法阵中，再以活人的血为燃料缓慢重建躯体。三年了。他从棺材里爬了回来。现在需要不断从活人身上汲取生命力才能维持。上一个受害者没有死——他还在疗养院里，永远被困在科比特对他做的事的记忆中。" },
+      { "kind": "saving_throw", "ability": "int", "dc": 5, "reveals": "truth_dawns", "fact": "你把这些线索连在一起时，毛骨悚然的真相终于降临：科比特不仅是一个被妻子之死逼疯的隐士——他成功了。他死而复生了。现在他就住在地下室里，用上一个租客的生命力维持着自己半死不活的躯体。如果没有人阻止，他还会寻找下一个血源。" }
+    ],
+    "npcs": [],
+    "enemies": [],
+    "loot": [
+      { "item_id": "basement_key_living", "name": "小铜钥匙", "description": "科比特日记中夹着的地下室钥匙", "requires_flag": "has_basement_key" },
+      { "item_id": "corbitt_diary", "name": "科比特日记", "description": "记录着复活研究、妻子之死、玛丽亚的命运的疯狂手稿" }
+    ],
+    "flags": {}
+  },
+  {
+    "id": "corbitt_upstairs",
+    "name": "科比特老宅 — 二楼卧室",
+    "name_en": "Corbitt House — Upstairs",
+    "description": "二楼的主卧室比其他地方都更加令人不安——因为它是干净的。\n\n床单整齐地铺着。枕头上有一个头部的凹陷。床头柜上放着一杯水——不烫，但也不凉，仿佛不久前还有人喝过。窗玻璃内侧凝着水珠。\n\n最诡异的是床本身：铁质床架的一侧装着一个铜把手，床板两侧钉着宽皮带扣——这是用来把人固定在床上的。床单上有暗色的小斑点。床头柜抽屉露出一角泛黄的信纸。",
+    "exits": [
+      { "to": "corbitt_foyer", "label": "下楼返回门厅" }
+    ],
+    "visible_clues": [
+      { "id": "restraint_bed", "text": "这是一张改造过的病床。皮带扣内侧沾着干涸的暗色残留——像是反复摩擦过手腕和脚踝。" },
+      { "id": "church_letter_visible", "text": "床头柜抽屉里露出一角印有教堂徽章的旧信纸" }
+    ],
+    "checks": [
+      { "kind": "skill_check", "skill": "spot_hidden", "dc": 0, "reveals": "hawthorn_stake", "fact": "检查床架时你的手指碰到了床板下面一件用布条绑着的硬物。拆开——是一根约三十厘米长、精心削尖的山楂木桩。一端缠绕皮带方便握持。木桩上刻有防御符咒和一行小字：'EGO VOS EXORCIZO, IMMUNDE SPIRITUS'——'我驱逐你，不洁的灵魂'。这是神父留下的，还是科比特自己为了'以防万一'准备的？无论如何，你现在有了对付不死之物的武器。" },
+      { "kind": "skill_check", "skill": "library_use", "dc": 0, "reveals": "church_letter", "fact": "床头柜里的信是圣三一教堂的埃斯特万·马卡里奥神父亲笔写给科比特的。落款日期是科比特死前一周。神父措辞先是请求、后是恳求：'沃尔特，你追随的是地狱之路。我曾为你做过临终告解，你答应过我放弃那些仪式。玛丽亚的失踪已经引起了注意。作为你的神父——也是她的姑父——我恳求你在我不得不采取行动之前收手。看在爱丽丝的份上。'" },
+      { "kind": "skill_check", "skill": "first_aid", "dc": 0, "reveals": "blood_analysis", "fact": "用医学的眼光审视床上的血渍——这不是一个人的血。至少三种不同的血型。而且血渍的层次显示，最近的一次染血不超过一个月。科比特在持续收集血液。他还需要更多。" }
+    ],
+    "npcs": [],
+    "enemies": [],
+    "loot": [
+      { "item_id": "hawthorn_stake", "name": "山楂木尖桩", "description": "藏在床架下的削尖木桩，刻有驱魔符文。对不死生物极其致命。只有刺入科比特心脏才能永久消灭他" },
+      { "item_id": "church_letter", "name": "神父的警告信", "description": "马卡里奥神父给科比特的最后警告。可作为玛丽亚失踪与科比特有关的证据" }
+    ],
+    "flags": {}
+  },
+  {
+    "id": "corbitt_basement",
+    "name": "科比特老宅 — 地下室",
+    "name_en": "Corbitt House — Basement",
+    "description": "铜钥匙在锁孔中嘎吱转动。沉重的活板门被掀开，一股混合着腐肉、铜锈和硫磺的气味扑面而来。\n\n地下室的墙壁上涂满了血字——不是仪式符号，是疯狂的自言自语。'她还睡着''我需要更多''再试一次'——重复写了无数遍。地板上有一个用粉笔和血液绘制的巨大五芒星，每个角上放着一只动物头骨。\n\n房间中央是一张与楼上相同的病床——但皮带已经被挣断了。床上方的天花板上倒悬着褪色的十字架。\n\n角落的阴影里传来湿漉漉的呼吸声。\n\n沃尔特·科比特站在那里。死了三年的尸体，皮肤灰白地绷在骨头上。他穿着下葬时的旧西装——领口上还别着一朵早已枯萎的玫瑰。他看到你时，露出了一种超越了疯狂的笑容——那是纯粹的、报复性的恶意。\n\n他举起了匕首。",
+    "exits": [
+      { "to": "corbitt_foyer", "label": "拼命逃上楼（立即退出遭遇）" },
+      { "to": "corbitt_exterior", "label": "逃出整栋房子", "requires": "flag:escaped_basement" }
+    ],
+    "visible_clues": [
+      { "id": "pentagram", "text": "五芒星正在脉动着幽暗的红色光芒——它仍然在运转" },
+      { "id": "corbitt_appears", "text": "沃尔特·科比特——死了三年的人——站在你面前，右手握着那把曾经属于他妻子的匕首" },
+      { "id": "blood_walls", "text": "墙面上的血字覆盖了每一寸可见的空间，像某种疯狂的自白" }
+    ],
+    "checks": [
+      { "kind": "saving_throw", "ability": "pow", "dc": 1, "reveals": "corbitt_san", "fact": "面对沃尔特·科比特——死而复生的邪术士——这是极难 SAN 检定（POW×1）。成功损失 0 SAN。失败损失 1d6 SAN 并可能触发临时疯狂。" },
+      { "kind": "skill_check", "skill": "occult", "dc": 0, "reveals": "stake_ritual_hint", "fact": "你注意到山楂木桩上刻的符文与五芒星上有部分是镜像——这是专门为破坏这个法阵准备的武器。只要用木桩贯穿科比特的心脏，同时脚踏五芒星的中心点，这个仪式就会瓦解。否则常规武器只能将他击倒——他从法阵中汲取力量，会在 1d10 回合内重生，恢复 1 HP/回合。", "sets_flag": "knows_how_to_kill" },
+      { "kind": "skill_check", "skill": "cthulhu_mythos", "dc": 5, "reveals": "true_nature", "fact": "你认出了这种亡灵的真正性质——不是简单的僵尸。科比特的灵魂被锚定在五芒星法阵中。只要法阵存在，他的躯体就可以无限次再生。要终结他，必须同时满足两个条件：用被祝圣过的尖锐木桩刺穿心脏，并抹除或破坏五芒星的法阵线。否则你只是在拖延一个永恒的存在。" }
+    ],
+    "npcs": [],
+    "enemies": [
+      { "stat_block_id": "walter_corbitt", "instance_id": "corbitt_1", "name": "沃尔特·科比特（亡灵）" }
+    ],
+    "loot": [
+      { "item_id": "ritual_remnants", "name": "仪式残留物", "description": "五芒星上的法器、头骨和科比特下葬时的遗物。销毁这些可以永久终结仪式威胁" }
+    ],
+    "flags": {
+      "escaped_basement": false,
+      "knows_how_to_kill": false
+    }
+  }
+]
