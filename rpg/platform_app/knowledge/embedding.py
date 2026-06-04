@@ -131,6 +131,15 @@ def _resolve_embed_config(user_id: int | None) -> tuple[str, str, str, str]:
             cred = resolve_api_key(user_id, api_id, env_fallback="")
             if cred.get("key"):
                 base_url = cred.get("base_url_override", "") or env_base_url
+                if not base_url:
+                    # 普通用户禁止自填 base_url(SSRF 闸,见 user_credentials.set_credential),
+                    # 从 catalog 取该 provider 官方 base(如 dashscope compatible-mode endpoint),
+                    # 否则 _embed_via_openai 会误连 api.openai.com。
+                    try:
+                        from model_registry import default_api_for
+                        base_url = (default_api_for(api_id) or {}).get("base_url", "") or ""
+                    except Exception:
+                        base_url = ""
                 return api_id, model, cred["key"], base_url
             # user 没自配 — 只 admin/vip 才走平台 env 兜底
             if _is_admin(user_id):
@@ -159,7 +168,6 @@ def _get_vertex_client(user_id: int | None = None):
         return _VERTEX_CLIENT_CACHE[cache_key]
     try:
         from google import genai
-
         from core.vertex_sa import load_sa_credentials
 
         credentials, project_id = load_sa_credentials(user_id, allow_platform_fallback=True)
@@ -208,29 +216,46 @@ def _embed_via_vertex(model: str, texts: list[str], task_type: str = "RETRIEVAL_
 
 
 def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str = "") -> list[list[float]] | None:
-    """OpenAI 兼容 embeddings API。base_url 为空则走官方 https://api.openai.com/v1。"""
-    import json as _json
-    import urllib.error
+    """OpenAI 兼容 embeddings API。base_url 为空则走官方 https://api.openai.com/v1。
+
+    请求 dimensions=EMBED_DIM,让 text-embedding-3 / qwen text-embedding-v3 等可降维模型输出
+    与 DB 向量列(默认 768)一致。模型不支持 dimensions(如 ada-002)时会 400 → 自动去掉
+    dimensions 重试一次。
+    """
     import urllib.request
+    import urllib.error
+    import json as _json
+    global _last_openai_embed_error
     effective_url = (base_url.rstrip("/") if base_url else "https://api.openai.com/v1") + "/embeddings"
-    payload = _json.dumps({"model": model, "input": texts, "encoding_format": "float"}).encode()
-    req = urllib.request.Request(
-        effective_url,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-    try:
+
+    def _post(with_dim: bool) -> list[list[float]]:
+        body = {"model": model, "input": texts, "encoding_format": "float"}
+        if with_dim and EMBED_DIM:
+            body["dimensions"] = EMBED_DIM
+        req = urllib.request.Request(
+            effective_url, data=_json.dumps(body).encode(),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+            method="POST",
+        )
         with urllib.request.urlopen(req, timeout=60) as resp:
             data = _json.loads(resp.read())
         items = sorted(data["data"], key=lambda x: x["index"])
         return [item["embedding"] for item in items]
+
+    try:
+        return _post(with_dim=bool(EMBED_DIM))
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")
         code = e.code
+        # 带 dimensions 被 400 拒(模型不支持降维)→ 去掉 dimensions 重试一次
+        if code == 400 and EMBED_DIM:
+            try:
+                return _post(with_dim=False)
+            except urllib.error.HTTPError as e2:
+                body = e2.read().decode(errors="replace"); code = e2.code
+            except Exception as e2:
+                log.warning("[embedding] openai embed retry-no-dim failed: %s", e2)
+                return None
         # 把裸 HTTP 错误码映射成对用户有意义的描述，存 _last_openai_embed_error 供
         # embedding_preflight / embed_status 读取以便前端引导用户去 RAG 设置。
         if code == 405:
@@ -254,8 +279,7 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
         else:
             friendly = f"向量嵌入请求失败（HTTP {code}）：{body[:200]}"
         log.warning("[embedding] openai embed failed: %s %s | friendly: %s", code, body[:200], friendly)
-        # 把友好描述存到模块级变量，供 embedding_preflight 在 connectivity test 时读取
-        global _last_openai_embed_error
+        # 把友好描述存到模块级变量(global 已在函数顶部声明),供 embedding_preflight 读取
         _last_openai_embed_error = friendly
         return None
     except Exception as e:
@@ -265,9 +289,9 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
 
 def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]] | None:
     """Gemini native embedContent API, avoiding OpenAI-compatible batchEmbed quota."""
-    import json as _json
-    import urllib.error
     import urllib.request
+    import urllib.error
+    import json as _json
 
     if not api_key:
         log.warning("[embedding] gemini api_id but no api_key")
@@ -335,11 +359,6 @@ def _embed_provider_dispatch(
     """
     if api_id in _VERTEX_API_IDS:
         return _embed_via_vertex(model, texts, task_type=task_type, user_id=user_id)
-    if api_id in _OPENAI_API_IDS:
-        if not api_key:
-            log.warning("[embedding] openai api_id but no api_key; falling back to vertex")
-            return _embed_via_vertex(model or DEFAULT_EMBED_MODEL, texts, task_type=task_type, user_id=user_id)
-        return _embed_via_openai(model, api_key, texts, base_url=base_url)
     if api_id in _GEMINI_API_IDS:
         return _embed_via_gemini(model, api_key, texts, task_type=task_type)
     if api_id in _COHERE_API_IDS:
@@ -347,7 +366,15 @@ def _embed_provider_dispatch(
             log.warning("[embedding] cohere api_id but no api_key; falling back to vertex")
             return _embed_via_vertex(DEFAULT_EMBED_MODEL, texts, task_type=task_type, user_id=user_id)
         return _embed_via_cohere(model, api_key, texts)
-    log.warning("[embedding] unknown api_id=%r; falling back to vertex", api_id)
+    # OpenAI 及任何 OpenAI 兼容 provider(openai / openai_compat / dashscope / siliconflow / ...):
+    # 走 /embeddings。dashscope 等 api_id 不在字面集合,但只要带 key + base_url 就按 OpenAI
+    # 兼容协议处理(de-facto 标准,base_url 已由 _resolve_embed_config 从 catalog 取到)。
+    if api_id in _OPENAI_API_IDS or api_key:
+        if not api_key:
+            log.warning("[embedding] openai-compatible api_id=%r but no api_key; falling back to vertex", api_id)
+            return _embed_via_vertex(model or DEFAULT_EMBED_MODEL, texts, task_type=task_type, user_id=user_id)
+        return _embed_via_openai(model, api_key, texts, base_url=base_url)
+    log.warning("[embedding] unknown api_id=%r and no api_key; falling back to vertex", api_id)
     return _embed_via_vertex(DEFAULT_EMBED_MODEL, texts, task_type=task_type, user_id=user_id)
 
 
@@ -544,6 +571,7 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
     daemon thread 异常死亡 / backend 重启后下次 embed_script 不会卡在
     already_running 状态。
     """
+    from ..db import connect
     log.info("[embedding] start chunks: script_id=%s user=%s", script_id, user_id)
     try:
         _embed_chunks_loop_inner(script_id, user_id)
@@ -616,7 +644,7 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
             if _n == 0:
                 break
             with connect() as db:
-                for r, v in zip(rows[:_n], vecs[:_n], strict=False):
+                for r, v in zip(rows[:_n], vecs[:_n]):
                     db.execute(
                         "update document_chunks set embedding_vec = %s::vector, embedded_at = now() where id = %s",
                         (_vec_literal(v), r["id"]),
@@ -624,7 +652,7 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
             continue
 
         with connect() as db:
-            for r, v in zip(rows, vecs, strict=False):
+            for r, v in zip(rows, vecs):
                 db.execute(
                     "update document_chunks set embedding_vec = %s::vector, embedded_at = now() where id = %s",
                     (_vec_literal(v), r["id"]),
@@ -657,7 +685,7 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
             if vecs is None:
                 continue
             with connect() as db:
-                for c, v in zip(batch, vecs, strict=False):
+                for c, v in zip(batch, vecs):
                     db.execute(
                         "update character_cards set embedding_vec = %s::vector, embedded_at = now() where id = %s",
                         (_vec_literal(v), c["id"]),
@@ -682,7 +710,7 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
             if vecs is None:
                 continue
             with connect() as db:
-                for w, v in zip(batch, vecs, strict=False):
+                for w, v in zip(batch, vecs):
                     db.execute(
                         "update worldbook_entries set embedding_vec = %s::vector, embedded_at = now() where id = %s",
                         (_vec_literal(v), w["id"]),

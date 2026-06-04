@@ -370,12 +370,15 @@ function App() {
     return tabs.some((tab) => tab.id === hash) ? hash : fallback;
   };
   const [activeTab, setActiveTab] = useState(() => getRightTabForLocation(t.defaultRightTab || 'status'));
+  // 侧栏折叠状态持久化(localStorage,刷新后保留)。来自 PR #14。
   const [railCollapsed, setRailCollapsed] = useState(() => {
     try { return localStorage.getItem('gc.rail.collapsed') === 'true'; } catch { return false; }
   });
   const [panelCollapsed, setPanelCollapsed] = useState(() => {
     try { return localStorage.getItem('gc.panel.collapsed') === 'true'; } catch { return false; }
   });
+  useEffect(() => { try { localStorage.setItem('gc.rail.collapsed', railCollapsed ? 'true' : 'false'); } catch {} }, [railCollapsed]);
+  useEffect(() => { try { localStorage.setItem('gc.panel.collapsed', panelCollapsed ? 'true' : 'false'); } catch {} }, [panelCollapsed]);
   const [mobileNav, setMobileNav] = useState(false);  // 手机端: 左 rail 改汉堡抽屉的开关
   const [showSlash, setShowSlash] = useState(false);
   const [showPlus, setShowPlus] = useState(false);
@@ -390,9 +393,6 @@ function App() {
   const [splashNeeded, setSplashNeeded] = useState(null);
   // GC 使用须知弹窗（随时可打开）
   const [welcomeGCOpen, setWelcomeGCOpen] = useState(false);
-  // 持久化侧栏折叠状态
-  useEffect(() => { try { localStorage.setItem('gc.rail.collapsed', railCollapsed ? 'true' : 'false'); } catch {} }, [railCollapsed]);
-  useEffect(() => { try { localStorage.setItem('gc.panel.collapsed', panelCollapsed ? 'true' : 'false'); } catch {} }, [panelCollapsed]);
   useEffect(() => {
     fetch('/api/me/splash/status', { credentials: 'same-origin' })
       .then((r) => r.ok ? r.json() : null)
@@ -1155,6 +1155,7 @@ function App() {
   }, [history.length, attachments]);
 
   const onSend = () => {
+    // 选了斜杠命令但没填文字时,也允许直接发送(发命令 trigger)。来自 PR #14。
     if (!text.trim() && !attachments.length && !pickedCommand) return;
     if (runState.running) return;
     setHasError(false);

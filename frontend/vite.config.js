@@ -15,23 +15,22 @@ export default defineConfig(({ mode }) => {
     game_console: resolve(__dirname, 'Game Console.html'),
   };
 
-  // ── SPA history fallback 插件 ──────────────────────────────────────────
-  // Platform 使用 History API 路由(/settings、/saves 等),Vite 的开发服务器默认
-  // 没有 SPA 回退,直接访问这些干净 URL 会返回 404 白屏。
-  // 这个插件在 Vite configureServer 钩子里注入 connect 中间件,把非 /api、非静态
-  // 文件的请求回退到 Platform.html(仅适用于 dev server)。
+  // ── SPA history fallback(仅 dev server)─────────────────────────────
+  // Platform 用 History API 路由(/settings、/saves、/wall 等)。vite dev 默认无
+  // SPA 回退,直接访问/刷新这些干净 URL 会 404 白屏。这里在 configureServer 注入
+  // connect 中间件,把非 /api、非静态文件的请求回退到 Platform.html。
+  // 仅作用于 dev;preview/生产由各自服务器做 history-fallback,不受影响。
+  // (来自社区贡献者 xingzhiyou 的 PR #14)
   function spaHistoryFallbackPlugin() {
     return {
       name: 'spa-history-fallback',
       configureServer(server) {
-        // 在 Vite 内置中间件之前注入,确保根路径 / 也能被拦截
         server.middlewares.use((req, res, next) => {
           const url = req.url || '';
-          // 放过 /api、/assets、Vite 内部路径、带扩展名的路径以及已知的 HTML 入口
           if (
             url.startsWith('/api') ||
             url.startsWith('/assets/') ||
-            url.startsWith('/@') ||          // Vite 内部: /@vite/client, /@react-refresh 等
+            url.startsWith('/@') ||
             url.startsWith('/node_modules/') ||
             /\.\w+(\?|$)/.test(url) ||
             url === '/Login.html' ||
@@ -41,7 +40,6 @@ export default defineConfig(({ mode }) => {
           ) {
             return next();
           }
-          // 其余所有干净 URL（含 /）→ Platform.html
           req.url = '/Platform.html';
           next();
         });
@@ -52,10 +50,7 @@ export default defineConfig(({ mode }) => {
   return {
     // jsxRuntime: 'classic' — 所有 JSX 文件已显式 import React,
     // classic runtime 用 React.createElement 替代 automatic 的 _jsx()。
-    plugins: [
-      react({ jsxRuntime: 'classic' }),
-      spaHistoryFallbackPlugin(),
-    ],
+    plugins: [react({ jsxRuntime: 'classic' }), spaHistoryFallbackPlugin()],
 
     // ── 永久根治 dev 黑屏 ────────────────────────────────────────────────
     // 根因:Cloudscape 每个组件是独立子入口,Vite 默认懒发现依赖;运行中遇到

@@ -2541,7 +2541,25 @@ function ModuleModelsSection() {
   const modelsForModule = (mod) => {
     const need = Array.isArray(mod.capsFilter) ? mod.capsFilter : null;
     if (!need || need.length === 0) return flatModels;
-    return flatModels.filter(m => need.every(c => (m.capabilities || []).includes(c)));
+    let pool = flatModels;
+    // embedder 特例:admin/vip 有平台 Vertex SA 兜底,即使没配 vertex 用户凭证,也应能选
+    // 平台提供的 vertex embedding 模型(否则默认 text-embedding-004 显示「未在 catalog」)。
+    if (mod.id === "embedder" && embedderStatus && embedderStatus.platform_fallback_available) {
+      const seen = new Set(pool.map(m => `${m.api_id}/${m.real_name}`));
+      for (const api of (catalog.apis || [])) {
+        const aid = catalogApiIdForCredential(api.api_id || api.id);
+        if (aid !== "vertex_ai") continue;
+        for (const m of (api.models || api.entries || [])) {
+          const caps = m.capabilities || m.caps || [];
+          if (!caps.includes("embedding")) continue;
+          const key = `${aid}/${m.real_name || m.id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          pool = pool.concat([{ api_id: aid, real_name: m.real_name || m.id, display: m.display_name || m.real_name || m.id, enabled: m.enabled !== false, capabilities: caps }]);
+        }
+      }
+    }
+    return pool.filter(m => need.every(c => (m.capabilities || []).includes(c)));
   };
 
   const mainCurrent = useMemoPL(() => {
@@ -2774,6 +2792,13 @@ function ModuleModelsSection() {
                         />
                       );
                     })()}
+                    {mod.id === "embedder" && (
+                      <div style={{marginTop: 6, fontSize: 11, color: "var(--muted)"}}>
+                        ℹ️ 所有 embedding 统一输出 768 维(与向量库对齐;OpenAI/通义自动降维)。
+                        Anthropic、DeepSeek 无 embedding 接口,故不在此列。
+                        <strong> 切换 embedder 后,已嵌过的剧本需重新嵌入才会用新模型</strong>(旧向量与新模型不互通)。
+                      </div>
+                    )}
                   </td>
                 </tr>
               );

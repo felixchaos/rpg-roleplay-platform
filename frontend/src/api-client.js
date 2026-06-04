@@ -24,13 +24,12 @@
       if (location.protocol === "file:") return "http://127.0.0.1:7860";
       // If we're already on the FastAPI port → same origin.
       if (location.port === "7860") return "";
-      // Static dev server (e.g. python -m http.server) on another port
-      // → cross-origin to backend.
-      // Vite dev server proxies /api to the backend via vite.config.js,
-      // so same-origin requests through the proxy avoid CORS/cookie issues.
-      // Detect Vite by its injected HMR client script rather than guessing port ranges.
+      // vite dev server 已把 /api 代理到后端(见 vite.config.js),走同源代理可避开
+      // 跨域 + Cookie(SameSite)问题。用 vite 注入的 HMR client 脚本判定是否在 vite 下,
+      // 比猜端口可靠;生产构建无此脚本 → 走原逻辑。(来自 PR #14)
       if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
         if (document.querySelector('script[type="module"][src*="/@vite/client"]')) return "";
+        // 静态 dev server(如 python -m http.server)另起端口 → 跨域直连后端。
         return "http://127.0.0.1:7860";
       }
       // Production / hosted: rely on same-origin proxy.
@@ -287,6 +286,11 @@
       usageTimeline: (days, group_by) => GET(`${API_PREFIX}/me/usage/timeline`, { days: days || 30, group_by: group_by || "day" }),
       stats: () => GET(`${API_PREFIX}/me/stats`),
       activity: (limit) => GET(`${API_PREFIX}/me/activity`, limit ? { limit } : undefined),
+      // 成就(见 docs/design/I_achievements.md)
+      achievements: () => GET(`${API_PREFIX}/me/achievements`),
+      achievementsSeen: () => POST(`${API_PREFIX}/me/achievements/seen`, {}),
+      achievementsCatalog: () => GET(`/api/achievements`),  // 公开目录(匿名可拉)
+      publicWall: (username) => GET(`/api/u/${encodeURIComponent(username)}/achievements`),  // 公开成就墙
       preferences: (body) => POST(`${API_PREFIX}/me/preference`, body),
       gmStyleSchema: () => GET(`${API_PREFIX}/gm-style/schema`),
       getGmStyle: () => GET(`${API_PREFIX}/me/gm-style`),
@@ -345,6 +349,13 @@
       saveMaintenance: (body) => POST(`${API_PREFIX}/admin/maintenance`, body),
       // 服务重启
       restart: () => POST(`${API_PREFIX}/admin/restart`, {}),
+      // 成就目录管理(见 docs/design/I_achievements.md)
+      achievements: {
+        list: () => GET(`/api/admin/achievements`),
+        create: (body) => POST(`/api/admin/achievements`, body),
+        update: (id, body) => PUT(`/api/admin/achievements/${encodeURIComponent(id)}`, body),
+        remove: (id) => DEL(`/api/admin/achievements/${encodeURIComponent(id)}`),
+      },
       // DMCA Takedowns
       dmcaTakedowns: {
         list: ({ status, limit } = {}) => GET(`/api/admin/dmca/takedowns`, { status: status || 'open', limit: limit || 50 }),

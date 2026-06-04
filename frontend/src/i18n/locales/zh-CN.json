@@ -656,6 +656,8 @@
       "admin_aup_actions_sub": "违反服务条款账号暂停 / 解封 / 终止",
       "admin_feedback": "反馈审查",
       "admin_feedback_sub": "查看用户提交的反馈，做出决定",
+      "admin_achievements": "成就目录",
+      "admin_achievements_sub": "管理成就定义、规则与分级",
       "cs_my_scripts": "我的剧本",
       "cs_scripts_library": "在线剧本库",
       "cs_scripts_editor": "剧本编辑器",

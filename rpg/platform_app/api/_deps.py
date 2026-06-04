@@ -148,10 +148,25 @@ def _auth_required() -> bool:
 _ENSURED_DEFAULT_USERS: set[int] = set()
 
 
+def _local_default_user() -> dict | None:
+    """本地/自部署免登录模式:取库中第一个用户(按 id)作为隐式登录用户。无则 None。"""
+    try:
+        with connect() as db:
+            row = db.execute("select * from users order by id asc limit 1").fetchone()
+            return dict(row) if row else None
+    except Exception:
+        return None
+
+
 def current_user(request: Request) -> dict | None:
     try:
         init_db()
         user = auth.user_from_token(request.cookies.get(SESSION_COOKIE))
+        # 本地/自部署免登录模式(_auth_required()=False)且无 cookie 时,回退到库里第一个
+        # 用户,让单用户本地部署开箱即用(否则前端 online=true & authed=false 会跳回登录页,
+        # 业务接口也拿不到用户上下文)。服务器模式(_auth_required()=True)绝不走这条路。
+        if user is None and not _auth_required():
+            user = _local_default_user()
         if user:
             uid = int(user["id"])
             if uid not in _ENSURED_DEFAULT_USERS:

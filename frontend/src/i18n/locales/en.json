@@ -570,6 +570,8 @@
       "admin_aup_actions_sub": "Policy violation — suspend / reinstate / terminate account",
       "admin_feedback": "Feedback Review",
       "admin_feedback_sub": "Review user-submitted feedback and make decisions",
+      "admin_achievements": "Achievements",
+      "admin_achievements_sub": "Manage achievement definitions, rules and tiers",
       "cs_my_scripts": "My Scripts",
       "cs_scripts_library": "Online Library",
       "cs_scripts_editor": "Script Editor",

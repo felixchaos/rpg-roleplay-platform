@@ -152,134 +152,90 @@ async def api_my_stats(request: Request, user=Depends(require_user)):
     保留 request：需要读 request.cookies.get(SESSION_COOKIE) 用于 login_audit 查询。
     """
     request.cookies.get(SESSION_COOKIE) or ""
+    # 统计查询统一抽到 achievements.engine.build_stats_snapshot,
+    # 与成就判定共用同一真相,避免两处 SQL 漂移(task 127/128)。
+    from ..achievements import build_stats_snapshot
     with connect() as db:
-        # 剧本汇总
-        sc_row = db.execute(
-            "select coalesce(count(*), 0) as n, "
-            "coalesce(sum(word_count), 0) as words, "
-            "coalesce(sum(chapter_count), 0) as chapters "
-            "from scripts where owner_id = %s",
-            (user["id"],),
-        ).fetchone()
-        # 存档数
-        sv_row = db.execute(
-            "select count(*) as n from game_saves where user_id = %s", (user["id"],)
-        ).fetchone()
-        # 回合数：每个 save 取最大 turn_index 后求和
-        rounds_row = db.execute(
-            """
-            select coalesce(sum(per_save_max), 0) as n from (
-              select max(b.turn_index) as per_save_max
-              from branch_nodes b join game_saves s on s.id = b.save_id
-              where s.user_id = %s
-              group by b.save_id
-            ) t
-            """,
-            (user["id"],),
-        ).fetchone()
-        # 分支节点总数（含主线节点）
-        nodes_row = db.execute(
-            """
-            select count(*) as n
-            from branch_nodes b join game_saves s on s.id = b.save_id
-            where s.user_id = %s
-            """,
-            (user["id"],),
-        ).fetchone()
-        # 分支条数 = 同一父节点下"额外的"子节点（fork 出来的兄弟）
-        # 主线一路接龙时 parent_id 唯一 child 不算分支；
-        # 真正的 fork 是 parent 有 ≥2 个 child，分支数 = sum(siblings - 1)
-        branches_row = db.execute(
-            """
-            select coalesce(sum(extra), 0) as n from (
-              select count(*) - 1 as extra
-              from branch_nodes b join game_saves s on s.id = b.save_id
-              where s.user_id = %s and b.parent_id is not null
-              group by b.parent_id
-              having count(*) > 1
-            ) t
-            """,
-            (user["id"],),
-        ).fetchone()
-        # 最深分支层数：用递归 CTE 算每个 save 的最大深度
-        depth_row = db.execute(
-            """
-            with recursive bn as (
-              select b.id, b.save_id, b.parent_id, 1 as depth
-              from branch_nodes b join game_saves s on s.id = b.save_id
-              where s.user_id = %s and b.parent_id is null
-              union all
-              select c.id, c.save_id, c.parent_id, bn.depth + 1
-              from branch_nodes c join bn on c.parent_id = bn.id
-            )
-            select coalesce(max(depth), 0) as n from bn
-            """,
-            (user["id"],),
-        ).fetchone()
-        # 上次登录：当前 session 之外，最近一次 login_ok
-        last_login_row = db.execute(
-            """
-            select created_at from login_audit
-            where username = %s and event = 'login_ok'
-            order by created_at desc
-            offset 1 limit 1
-            """,
-            (user.get("username"),),
-        ).fetchone()
-        # 取最近 365 天的登录日期集合
-        days_rows = db.execute(
-            """
-            select distinct date_trunc('day', created_at at time zone 'UTC')::date as d
-            from login_audit
-            where username = %s and event = 'login_ok'
-              and created_at >= now() - interval '365 days'
-            order by d desc
-            """,
-            (user.get("username"),),
-        ).fetchall()
-    # 用 Python 算连续登录天数
-    from datetime import date, timedelta
-    login_days = [r["d"] for r in days_rows]
-    today = date.today()
-    streak = 0
-    if login_days and login_days[0] in (today, today - timedelta(days=1)):
-        cur = login_days[0]
-        for d in login_days:
-            if d == cur:
-                streak += 1
-                cur = cur - timedelta(days=1)
-            elif d < cur:
-                break
-    longest = 0
-    if login_days:
-        prev = None
-        run = 0
-        for d in login_days:  # desc 排序
-            if prev is None or (prev - d).days == 1:
-                run += 1
-            else:
-                longest = max(longest, run)
-                run = 1
-            prev = d
-        longest = max(longest, run)
+        snap = build_stats_snapshot(db, user)
     return json_response({
         "ok": True,
         "imported": {
-            "scripts": int(sc_row["n"] or 0),
-            "words": int(sc_row["words"] or 0),
-            "chapters": int(sc_row["chapters"] or 0),
+            "scripts": snap["scripts"],
+            "words": snap["words"],
+            "chapters": snap["chapters"],
         },
-        "saves_count": int(sv_row["n"] or 0),
-        "total_rounds": int(rounds_row["n"] or 0),
-        "branch_nodes": int(nodes_row["n"] or 0),
-        "branches": int(branches_row["n"] or 0),
-        "max_branch_depth": int(depth_row["n"] or 0),
-        "last_login_at": last_login_row["created_at"].isoformat() if last_login_row and last_login_row["created_at"] else None,
-        "login_streak": int(streak),
-        "longest_login_streak": int(longest),
+        "saves_count": snap["saves_count"],
+        "total_rounds": snap["total_rounds"],
+        "branch_nodes": snap["branch_nodes"],
+        "branches": snap["branches"],
+        "max_branch_depth": snap["max_branch_depth"],
+        "last_login_at": snap["last_login_at"],
+        "login_streak": snap["login_streak"],
+        "longest_login_streak": snap["longest_login_streak"],
         # 没有真实数据源的字段：显式 null，由 UI 显示 "—"，禁止编造
         "play_minutes_total": None,
         "play_minutes_week": None,
+    })
+
+
+# ── 成就(见 docs/design/I_achievements.md) ──────────────────────────
+@router.get("/api/achievements")
+async def api_public_achievements():
+    """公开目录:全锁态、隐藏成就打码。匿名预览用此(替代前端 mock)。"""
+    from ..achievements import public_catalog
+    with connect() as db:
+        items = public_catalog(db)
+    return json_response({"ok": True, "items": items})
+
+
+@router.get("/api/me/achievements")
+async def api_my_achievements(user=Depends(require_user)):
+    """用户态:懒评估 + 落新解锁,返回完整列表 + newly_unlocked(给前端弹 toast)。"""
+    from ..achievements import evaluate
+    with connect() as db:
+        result = evaluate(db, user)
+    return json_response({"ok": True, **result})
+
+
+@router.post("/api/me/achievements/seen")
+async def api_my_achievements_seen(user=Depends(require_user)):
+    """标记全部 unseen→seen(看过解锁提示后调)。"""
+    with connect() as db:
+        db.execute(
+            "update user_achievements set seen = true where user_id = %s and seen = false",
+            (user["id"],),
+        )
+    return json_response({"ok": True})
+
+
+@router.get("/api/u/{username}/achievements")
+async def api_public_wall(username: str, viewer=Depends(require_user)):
+    """Phase 3:某用户的公开成就墙。受其「公开个人主页」开关(user_preferences.public_profile)约束;
+    未开启或用户不存在一律 404(不泄露存在性)。需登录查看(server 模式整站已鉴权)。"""
+    from ..achievements import public_wall
+    with connect() as db:
+        u = db.execute(
+            "select id, username, display_name from users where lower(username) = lower(%s)",
+            (username,),
+        ).fetchone()
+        if not u:
+            return json_response({"ok": False, "error": "not found"}, status_code=404)
+        pref_row = db.execute(
+            "select preferences->>'public_profile' as pp from user_preferences where user_id = %s",
+            (u["id"],),
+        ).fetchone()
+        is_public = bool(pref_row and pref_row["pp"] == "true")
+        is_self = bool(viewer and viewer.get("id") == u["id"])
+        if not (is_public or is_self):
+            return json_response({"ok": False, "error": "not found"}, status_code=404)
+        wall = public_wall(db, {"id": u["id"]})
+    return json_response({
+        "ok": True,
+        "username": u["username"],
+        "display_name": u["display_name"],
+        "is_self": is_self,
+        "public": is_public,
+        **wall,
     })
 
 

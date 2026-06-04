@@ -214,13 +214,13 @@ function CommandMenu({ query, onPick, onClose, triggerRef }) {
       document.removeEventListener("mousedown", onOutside, true);
     };
   }, [onClose, triggerRef]);
-  // task 141: max-height 自适应 trigger 上方可用空间,popover 不冲出 viewport 顶
+  // task 141: max-height 自适应 trigger 上方可用空间,popover 不冲出 viewport 顶。
+  // PR #14: 再加 55vh 上限 + resize 响应,防止菜单过高挡住整个界面。
   const calcCmdHeight = React.useCallback(() => {
     if (!menuRef.current || !triggerRef?.current) return;
     const triggerRect = triggerRef.current.getBoundingClientRect();
     const aboveSpace = Math.max(120, triggerRect.top - 16);
-    const maxVh = window.innerHeight * 0.55;
-    menuRef.current.style.maxHeight = Math.min(aboveSpace, maxVh) + "px";
+    menuRef.current.style.maxHeight = Math.min(aboveSpace, window.innerHeight * 0.55) + "px";
     menuRef.current.style.overflowY = "auto";
   }, [triggerRef]);
   React.useLayoutEffect(calcCmdHeight, [calcCmdHeight, query]);
@@ -269,13 +269,12 @@ function CommandMenu({ query, onPick, onClose, triggerRef }) {
 
 function AttachMenu({ onPick, onClose, triggerRef }) {
   const menuRef = useRefC(null);
+  // PR #14: 55vh 上限 + resize,防止菜单过高挡界面。
   const calcHeight = React.useCallback(() => {
     if (!menuRef.current || !triggerRef?.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    const aboveSpace = Math.max(200, rect.top - 16);
-    // 不超过视口 55%，防止菜单过高挡住整个界面
-    const maxVh = window.innerHeight * 0.55;
-    menuRef.current.style.maxHeight = Math.min(aboveSpace, maxVh) + "px";
+    const aboveSpace = Math.max(160, rect.top - 16);
+    menuRef.current.style.maxHeight = Math.min(aboveSpace, window.innerHeight * 0.55) + "px";
     menuRef.current.style.overflowY = "auto";
   }, [triggerRef]);
   React.useLayoutEffect(calcHeight, [calcHeight]);
@@ -448,7 +447,7 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
   });
 
   // 选中态必须与底部标签(_currentModelLabel)同源,否则会"勾在 A、底部显示 B"。
-  // 优先级:current(localModel,点击后乐观更新) > 存档 session_model > gameState.app(反映用户偏好) > catalog.selected(全局默认)。
+  // 优先级:current(localModel,点击后乐观更新) > 存档 session_model > catalog.selected > gameState.app。
   const _sessionModel = gameState && gameState.session_model;
   const selected = (catalog && catalog.selected) || {};
   let selectedKey = "";
@@ -456,14 +455,14 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
     const hit = flat.find((m) => m.id === current || m.real_name === current);
     if (hit) selectedKey = `${hit.api_id}::${hit.real_name}`;
   }
-  if (!selectedKey && _sessionModel && _sessionModel.api_id && _sessionModel.model_id) {
-    selectedKey = `${_sessionModel.api_id}::${_sessionModel.model_id}`;
-  }
-  if (!selectedKey && gameState && gameState.app && gameState.app.api_id) {
-    selectedKey = `${gameState.app.api_id}::${gameState.app.model_real_name || ""}`;
-  }
-  if (!selectedKey && selected.api_id && selected.model_id) {
-    selectedKey = `${selected.api_id}::${selected.model_id}`;
+  if (!selectedKey) {
+    if (_sessionModel && _sessionModel.api_id && _sessionModel.model_id) {
+      selectedKey = `${_sessionModel.api_id}::${_sessionModel.model_id}`;
+    } else if (selected.api_id && selected.model_id) {
+      selectedKey = `${selected.api_id}::${selected.model_id}`;
+    } else if (gameState && gameState.app) {
+      selectedKey = `${gameState.app.api_id || ""}::${gameState.app.model_real_name || ""}`;
+    }
   }
 
   const pickModel = async (item) => {
@@ -704,12 +703,12 @@ function EffortSection({ selectedKey }) {
 function PermissionPopover({ current, onPick, onClose, triggerRef }) {
   const { t } = useTranslation();
   const menuRef = useRefC(null);
+  // PR #14: 55vh 上限 + resize,防止权限菜单过高挡界面。
   const calcPermHeight = React.useCallback(() => {
     if (!menuRef.current || !triggerRef?.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const aboveSpace = Math.max(160, rect.top - 16);
-    const maxVh = window.innerHeight * 0.55;
-    menuRef.current.style.maxHeight = Math.min(aboveSpace, maxVh) + "px";
+    menuRef.current.style.maxHeight = Math.min(aboveSpace, window.innerHeight * 0.55) + "px";
     menuRef.current.style.overflowY = "auto";
   }, [triggerRef]);
   React.useLayoutEffect(calcPermHeight, [calcPermHeight]);
@@ -852,17 +851,17 @@ function Composer({
     return () => window.removeEventListener("rpg-composer-restore", handler);
   }, [setText]);
 
-  // 选择斜杠命令后自动聚焦输入框，让用户可以直接按回车发送或输入参数
+  // PR #14: 选择斜杠命令后自动聚焦输入框,可直接回车发送或继续输入参数。
   React.useEffect(() => {
-    if (pickedCommand) {
-      setTimeout(() => {
-        const ta = taRef.current;
-        if (ta && ta.focus) {
-          ta.focus();
-          try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_) {}
-        }
-      }, 50);
-    }
+    if (!pickedCommand) return;
+    const id = setTimeout(() => {
+      const ta = taRef.current;
+      if (ta && ta.focus) {
+        ta.focus();
+        try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_) {}
+      }
+    }, 50);
+    return () => clearTimeout(id);
   }, [pickedCommand]);
 
   // @ mention picker state

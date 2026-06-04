@@ -1581,6 +1581,21 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
 }
 .pl-achv.unlocked { background: var(--panel); border-color: rgba(126, 184, 142, 0.32); }
 .pl-achv.locked { opacity: 0.62; }
+/* 成就分级:已解锁时左缘点亮 bronze/silver/gold 色，未解锁不强调 */
+.pl-achv.unlocked.tier-bronze { border-left: 2px solid rgba(193, 130, 80, 0.75); }
+.pl-achv.unlocked.tier-silver { border-left: 2px solid rgba(176, 184, 196, 0.85); }
+.pl-achv.unlocked.tier-gold   { border-left: 2px solid rgba(214, 178, 92, 0.95); }
+/* 成就分享卡片 + chips */
+.pl-achv-share-card { border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: linear-gradient(135deg, var(--panel), var(--bg)); }
+.pl-achv-share-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.pl-achv-share-avatar { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: rgba(193,130,80,.18); color: var(--accent, #c18250); font-weight: 700; font-size: 18px; flex: none; }
+.pl-achv-share-avatar.lg { width: 56px; height: 56px; font-size: 24px; }
+.pl-achv-share-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pl-achv-chip { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); min-width: 0; }
+.pl-achv-chip-name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-achv-chip.tier-gold { border-color: rgba(214,178,92,.6); }
+.pl-achv-chip.tier-silver { border-color: rgba(176,184,196,.6); }
+.pl-achv-chip.tier-bronze { border-color: rgba(193,130,80,.5); }
 .pl-achv-mark {
   width: 40px; height: 40px;
   border-radius: 999px;

@@ -2472,3 +2472,170 @@ ${(r.recent_dialog || []).map((m, i) => `  ${i + 1}. [${m.role}@turn ${m.turn ??
     </CSSpaceBetween>
   );
 }
+
+/* ─────────────────────────────────────────────────────────────────
+   页面：AdminAchievementsPage — 成就目录管理(见 docs/design/I_achievements.md)
+   规则走后端 engine.validate_rule 白名单校验;此处为录入/展示。
+   ───────────────────────────────────────────────────────────────── */
+const ACHV_METRICS = [
+  ['saves_count', '存档数'], ['total_rounds', '总回合'], ['branches', '分支条数'],
+  ['branch_nodes', '分支节点'], ['max_branch_depth', '最深分支层'], ['scripts', '导入剧本数'],
+  ['words', '导入字数'], ['chapters', '导入章节'], ['login_streak', '当前连登'],
+  ['longest_login_streak', '最长连登'],
+];
+const ACHV_CATS = ['启程', '叙事', '探索', '收藏', '坚持', '隐藏'];
+const ACHV_TIERS = [['', '无'], ['bronze', 'bronze'], ['silver', 'silver'], ['gold', 'gold']];
+
+function achvSummarizeRule(rule) {
+  try {
+    if (rule && rule.all) return `全部满足 ${rule.all.length} 项`;
+    if (rule && rule.metric) return `${rule.metric} ${rule.op} ${rule.target}`;
+  } catch (_) {}
+  return '—';
+}
+
+export function AdminAchievementsPage() {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
+  const [editing, setEditing] = React.useState(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true); setError(null);
+    try { const r = await window.api.admin.achievements.list(); setItems((r && r.items) || []); }
+    catch (e) { setError(String((e && e.message) || e)); }
+    finally { setLoading(false); }
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+
+  const onDisable = async (id) => {
+    if (!window.confirm(`停用成就「${id}」?已解锁的用户不受影响(成就只增不减)。`)) return;
+    try { await window.api.admin.achievements.remove(id); await load(); }
+    catch (e) { setError(String((e && e.message) || e)); }
+  };
+
+  return (
+    <CSSpaceBetween size="l">
+      {error && <CSAlert type="error" dismissible onDismiss={() => setError(null)}>{error}</CSAlert>}
+      <CSTable
+        loading={loading}
+        items={items}
+        variant="container"
+        header={<CSHeader variant="h1" counter={`(${items.length})`}
+          actions={<CSButton variant="primary" iconName="add-plus"
+            onClick={() => setEditing({ __new: true, category: '启程', tier: 'bronze', enabled: true, hidden: false, sort_order: 0, rule: { metric: 'total_rounds', op: '>=', target: 100 } })}>新建成就</CSButton>}>
+          成就目录</CSHeader>}
+        columnDefinitions={[
+          { id: 'id', header: 'ID', cell: (a) => <span className="mono">{a.id}</span> },
+          { id: 'name', header: '名称', cell: (a) => <>{a.icon ? a.icon + ' ' : ''}{a.name}</> },
+          { id: 'category', header: '类目', cell: (a) => a.category },
+          { id: 'tier', header: '分级', cell: (a) => a.tier || '—' },
+          { id: 'rule', header: '规则', cell: (a) => <span className="mono" style={{ fontSize: 11 }}>{achvSummarizeRule(a.rule)}</span> },
+          { id: 'hidden', header: '隐藏', cell: (a) => a.hidden ? <CSBadge>隐藏</CSBadge> : '—' },
+          { id: 'enabled', header: '状态', cell: (a) => a.enabled ? <CSStatusIndicator type="success">启用</CSStatusIndicator> : <CSStatusIndicator type="stopped">停用</CSStatusIndicator> },
+          {
+            id: 'actions', header: '操作', cell: (a) => (
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSButton variant="inline-link" onClick={() => setEditing({ ...a })}>编辑</CSButton>
+                {a.enabled && <CSButton variant="inline-link" onClick={() => onDisable(a.id)}>停用</CSButton>}
+              </CSSpaceBetween>
+            ),
+          },
+        ]}
+        empty={<CSBox textAlign="center" color="text-body-secondary" padding="l">暂无成就定义</CSBox>}
+      />
+      {editing && <AchvEditModal editing={editing} onClose={() => setEditing(null)} reload={load} />}
+    </CSSpaceBetween>
+  );
+}
+
+function AchvEditModal({ editing, onClose, reload }) {
+  const isNew = !!editing.__new;
+  const rule0 = editing.rule || {};
+  const [f, setF] = React.useState({
+    id: editing.id || '',
+    name: editing.name || '',
+    description: editing.description || '',
+    icon: editing.icon || '',
+    category: editing.category || '启程',
+    tier: editing.tier || '',
+    hidden: !!editing.hidden,
+    enabled: editing.enabled !== false,
+    sort_order: editing.sort_order || 0,
+    advanced: !!rule0.all,
+    metric: rule0.metric || 'total_rounds',
+    op: rule0.op || '>=',
+    target: rule0.target != null ? rule0.target : 0,
+    ruleJson: rule0.all ? JSON.stringify(editing.rule, null, 2) : '',
+  });
+  const set = (k, v) => setF(s => ({ ...s, [k]: v }));
+  const [err, setErr] = React.useState(null);
+  const [saving, setSaving] = React.useState(false);
+
+  const save = async () => {
+    setErr(null);
+    let rule;
+    if (f.advanced) {
+      try { rule = JSON.parse(f.ruleJson); }
+      catch (e) { setErr('规则 JSON 解析失败:' + e.message); return; }
+    } else {
+      rule = { metric: f.metric, op: f.op, target: Number(f.target) };
+    }
+    const body = {
+      name: f.name.trim(), description: f.description.trim(), icon: f.icon.trim() || null,
+      category: f.category, tier: f.tier || null, hidden: f.hidden, enabled: f.enabled,
+      sort_order: Number(f.sort_order) || 0, rule,
+    };
+    setSaving(true);
+    try {
+      if (isNew) { body.id = f.id.trim(); await window.api.admin.achievements.create(body); }
+      else { await window.api.admin.achievements.update(editing.id, body); }
+      onClose(); await reload();
+    } catch (e) { setErr(String((e && e.message) || e)); }
+    finally { setSaving(false); }
+  };
+
+  const metricLabel = (ACHV_METRICS.find(m => m[0] === f.metric) || [f.metric, f.metric])[1];
+  return (
+    <CSModal visible onDismiss={onClose} header={isNew ? '新建成就' : `编辑「${editing.id}」`}
+      footer={<CSBox float="right"><CSSpaceBetween direction="horizontal" size="xs">
+        <CSButton variant="link" onClick={onClose}>取消</CSButton>
+        <CSButton variant="primary" loading={saving} onClick={save}>保存</CSButton>
+      </CSSpaceBetween></CSBox>}>
+      <CSSpaceBetween size="m">
+        {err && <CSAlert type="error">{err}</CSAlert>}
+        {isNew && <CSFormField label="ID(slug,小写字母/数字/下划线,创建后不可改)" description="如 turns_500">
+          <CSInput value={f.id} onChange={e => set('id', e.detail.value)} placeholder="turns_500" /></CSFormField>}
+        <CSColumnLayout columns={2}>
+          <CSFormField label="名称"><CSInput value={f.name} onChange={e => set('name', e.detail.value)} /></CSFormField>
+          <CSFormField label="图标(emoji)"><CSInput value={f.icon} onChange={e => set('icon', e.detail.value)} placeholder="🏆" /></CSFormField>
+        </CSColumnLayout>
+        <CSFormField label="描述(如何获得)"><CSInput value={f.description} onChange={e => set('description', e.detail.value)} /></CSFormField>
+        <CSColumnLayout columns={3}>
+          <CSFormField label="类目"><CSSelect selectedOption={{ value: f.category, label: f.category }}
+            options={ACHV_CATS.map(c => ({ value: c, label: c }))} onChange={e => set('category', e.detail.selectedOption.value)} /></CSFormField>
+          <CSFormField label="分级"><CSSelect selectedOption={{ value: f.tier, label: f.tier || '无' }}
+            options={ACHV_TIERS.map(([v, l]) => ({ value: v, label: l }))} onChange={e => set('tier', e.detail.selectedOption.value)} /></CSFormField>
+          <CSFormField label="排序"><CSInput type="number" value={String(f.sort_order)} onChange={e => set('sort_order', e.detail.value)} /></CSFormField>
+        </CSColumnLayout>
+        <CSFormField label="规则模式"><CSToggle checked={f.advanced} onChange={e => set('advanced', e.detail.checked)}>高级(复合规则 JSON)</CSToggle></CSFormField>
+        {!f.advanced ? (
+          <CSColumnLayout columns={3}>
+            <CSFormField label="指标"><CSSelect selectedOption={{ value: f.metric, label: metricLabel }}
+              options={ACHV_METRICS.map(([v, l]) => ({ value: v, label: l }))} onChange={e => set('metric', e.detail.selectedOption.value)} /></CSFormField>
+            <CSFormField label="算子"><CSSelect selectedOption={{ value: f.op, label: f.op }}
+              options={[{ value: '>=', label: '≥' }, { value: '>', label: '>' }, { value: '==', label: '=' }]} onChange={e => set('op', e.detail.selectedOption.value)} /></CSFormField>
+            <CSFormField label="目标值"><CSInput type="number" value={String(f.target)} onChange={e => set('target', e.detail.value)} /></CSFormField>
+          </CSColumnLayout>
+        ) : (
+          <CSFormField label="规则 JSON" description='复合:{"all":[{"metric":"scripts","op":">=","target":10},{"metric":"words","op":">=","target":10000000}]}'>
+            <CSTextarea value={f.ruleJson} onChange={e => set('ruleJson', e.detail.value)} rows={6} /></CSFormField>
+        )}
+        <CSColumnLayout columns={2}>
+          <CSFormField label="隐藏成就"><CSToggle checked={f.hidden} onChange={e => set('hidden', e.detail.checked)}>未解锁时打码</CSToggle></CSFormField>
+          <CSFormField label="启用"><CSToggle checked={f.enabled} onChange={e => set('enabled', e.detail.checked)}>在前台展示</CSToggle></CSFormField>
+        </CSColumnLayout>
+      </CSSpaceBetween>
+    </CSModal>
+  );
+}

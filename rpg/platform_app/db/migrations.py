@@ -1475,6 +1475,67 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         ")",
         "create index if not exists idx_csam_reports_status on csam_reports(status, created_at desc)",
     ]),
+    (58, "achievements", [
+        # 成就系统(见 docs/design/I_achievements.md)。
+        # achievement_defs = 目录(admin 可编辑);rule 为声明式白名单 jsonb,
+        # 由后端 engine 用纯函数判定,绝不可执行。user_achievements 只记已解锁。
+        "create table if not exists achievement_defs ("
+        "  id text primary key,"
+        "  name text not null,"
+        "  description text not null,"
+        "  icon text,"
+        "  category text not null,"
+        "  tier text,"
+        "  rule jsonb not null,"
+        "  hidden boolean not null default false,"
+        "  sort_order int not null default 0,"
+        "  enabled boolean not null default true,"
+        "  created_at timestamptz not null default now(),"
+        "  updated_at timestamptz not null default now()"
+        ")",
+        "create index if not exists idx_achv_defs_cat on achievement_defs(enabled, category, sort_order)",
+        "create table if not exists user_achievements ("
+        "  user_id bigint not null references users(id) on delete cascade,"
+        "  achievement_id text not null references achievement_defs(id) on delete cascade,"
+        "  unlocked_at timestamptz not null default now(),"
+        "  progress_at_unlock int,"
+        "  seen boolean not null default false,"
+        "  primary key (user_id, achievement_id)"
+        ")",
+        "create index if not exists idx_user_achv_user on user_achievements(user_id)",
+        "create index if not exists idx_user_achv_unseen on user_achievements(user_id) where seen = false",
+        # ── seed 16 条分类目录(全部吃已有 /api/me/stats 数据源) ──
+        "insert into achievement_defs (id, name, description, icon, category, tier, rule, sort_order) values "
+        "('first_save','初次启程','创建第一个存档','🚩','启程','bronze','{\"metric\":\"saves_count\",\"op\":\">=\",\"target\":1}',10),"
+        "('first_turn','落笔成文','推进第一个回合','✍️','启程','bronze','{\"metric\":\"total_rounds\",\"op\":\">=\",\"target\":1}',20),"
+        "('turns_100','破雾之刻','累计推进 100 回合','🌫️','叙事','bronze','{\"metric\":\"total_rounds\",\"op\":\">=\",\"target\":100}',30),"
+        "('turns_1k','千回百转','累计推进 1,000 回合','🔄','叙事','silver','{\"metric\":\"total_rounds\",\"op\":\">=\",\"target\":1000}',40),"
+        "('turns_10k','万语千言','累计推进 10,000 回合','📜','叙事','gold','{\"metric\":\"total_rounds\",\"op\":\">=\",\"target\":10000}',50),"
+        "('branch_5','命运分叉','开辟 5 条故事分支','🌿','探索','bronze','{\"metric\":\"branches\",\"op\":\">=\",\"target\":5}',60),"
+        "('depth_10','平行世界','分支树最深达 10 层','🌌','探索','silver','{\"metric\":\"max_branch_depth\",\"op\":\">=\",\"target\":10}',70),"
+        "('depth_20','多重宇宙','分支树最深达 20 层','🪐','探索','gold','{\"metric\":\"max_branch_depth\",\"op\":\">=\",\"target\":20}',80),"
+        "('scripts_3','藏书初成','导入 3 部剧本','📚','收藏','bronze','{\"metric\":\"scripts\",\"op\":\">=\",\"target\":3}',90),"
+        "('scripts_10','汗牛充栋','导入 10 部剧本','🗄️','收藏','silver','{\"metric\":\"scripts\",\"op\":\">=\",\"target\":10}',100),"
+        "('words_1m','字海泛舟','导入累计满 100 万字','🌊','收藏','silver','{\"metric\":\"words\",\"op\":\">=\",\"target\":1000000}',110),"
+        "('words_10m','著作等身','导入 10 部且累计满 1000 万字','🏛️','收藏','gold','{\"all\":[{\"metric\":\"scripts\",\"op\":\">=\",\"target\":10},{\"metric\":\"words\",\"op\":\">=\",\"target\":10000000}]}',120),"
+        "('chapters_1k','通读千章','导入章节累计满 1000 章','📖','收藏','silver','{\"metric\":\"chapters\",\"op\":\">=\",\"target\":1000}',130),"
+        "('streak_7','笔耕不辍','连续登录 7 天','🖋️','坚持','bronze','{\"metric\":\"login_streak\",\"op\":\">=\",\"target\":7}',140),"
+        "('streak_30','持之以恒','连续登录 30 天','📅','坚持','silver','{\"metric\":\"login_streak\",\"op\":\">=\",\"target\":30}',150),"
+        "('streak_100','风雨无阻','历史最长连登达 100 天','⛰️','坚持','gold','{\"metric\":\"longest_login_streak\",\"op\":\">=\",\"target\":100}',160)"
+        " on conflict (id) do nothing",
+    ]),
+    (59, "achievements_phase2", [
+        # Phase 2:事件/隐藏成就(见 docs/design/I_achievements.md)。
+        # 全部派生自已有表(branch_nodes / save_history_anchors),无新埋点。
+        # hidden=true 的在未解锁时前端打码。
+        "insert into achievement_defs (id, name, description, icon, category, tier, rule, hidden, sort_order) values "
+        "('first_fork','初次分叉','首次开辟一条故事分支','🔀','启程','bronze','{\"metric\":\"branches\",\"op\":\">=\",\"target\":1}',false,25),"
+        "('anchor_10','收束之时','累计记录 10 个历史锚点','⚓','探索','silver','{\"metric\":\"anchors_completed\",\"op\":\">=\",\"target\":10}',false,75),"
+        "('solo_500','长夜独行','在单个存档中推进满 500 回合','🕯️','叙事','gold','{\"metric\":\"max_single_save_rounds\",\"op\":\">=\",\"target\":500}',true,55),"
+        "('night_owl','深夜笔耕','在深夜(0–6 点)累计推进 30 回合','🌙','坚持','silver','{\"metric\":\"night_turns\",\"op\":\">=\",\"target\":30}',true,145),"
+        "('anchor_50','镌刻史册','累计记录 50 个历史锚点','🗿','探索','gold','{\"metric\":\"anchors_completed\",\"op\":\">=\",\"target\":50}',true,85)"
+        " on conflict (id) do nothing",
+    ]),
 ]
 
 

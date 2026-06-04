@@ -117,6 +117,11 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
                  "capabilities": ["text", "streaming", "image_input", "audio_input", "video_input", "file_input", "tools", "json_mode", "reasoning", "code_exec"]},
                 {"id": "gemini-2.5-flash", "real_name": "gemini-2.5-flash", "display_name": "Gemini 2.5 Flash", "enabled": True,
                  "capabilities": ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode"]},
+                # 向量嵌入(RAG)— 768 维,与 DB 向量列原生一致。text-embedding-004 是系统默认。
+                {"id": "text-embedding-004", "real_name": "text-embedding-004", "display_name": "Text Embedding 004 · 默认", "enabled": True,
+                 "capabilities": ["embedding"]},
+                {"id": "text-multilingual-embedding-002", "real_name": "text-multilingual-embedding-002", "display_name": "Multilingual Embedding 002", "enabled": True,
+                 "capabilities": ["embedding"]},
             ],
         },
         {
@@ -148,6 +153,12 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
                  "capabilities": ["text", "streaming", "image_input", "audio_input", "tools", "json_mode", "reasoning", "code_exec", "web_search"]},
                 {"id": "gpt-5.5-thinking", "real_name": "gpt-5.5-thinking", "display_name": "GPT-5.5 Thinking", "enabled": True,
                  "capabilities": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"]},
+                # 向量嵌入(RAG)— 支持 dimensions 降维到 768,与 DB 向量列对齐。
+                # (不收 ada-002:它不支持 dimensions,只能输出 1536 维,放不进 768 列。)
+                {"id": "text-embedding-3-small", "real_name": "text-embedding-3-small", "display_name": "Text Embedding 3 Small", "enabled": True,
+                 "capabilities": ["embedding"]},
+                {"id": "text-embedding-3-large", "real_name": "text-embedding-3-large", "display_name": "Text Embedding 3 Large", "enabled": True,
+                 "capabilities": ["embedding"]},
             ],
         },
         {
@@ -216,6 +227,10 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
                  "capabilities": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"]},
                 {"id": "qwen3.6-flash", "real_name": "qwen3.6-flash", "display_name": "Qwen 3.6 Flash", "enabled": True,
                  "capabilities": ["text", "streaming", "tools", "json_mode"]},
+                # 向量嵌入(RAG)— text-embedding-v3 支持 dimensions 降维到 768,经 compatible-mode
+                # 的 /embeddings(OpenAI 兼容)调用。
+                {"id": "text-embedding-v3", "real_name": "text-embedding-v3", "display_name": "Qwen Text Embedding v3", "enabled": True,
+                 "capabilities": ["embedding"]},
             ],
         },
         {
@@ -258,10 +273,35 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
 }
 
 
+def _ensure_curated_embeddings(catalog: dict[str, Any]) -> dict[str, Any]:
+    """确保每个 provider 带上 DEFAULT_MODEL_CATALOG 里人工策展的 embedding 模型。
+
+    持久化 catalog(DB / 文件)可能是在新增 embedding 条目之前存的,不含它们 →
+    RAG 向量模型选择器会空。这里在 serve 时把 DEFAULT 的 embedding 模型并回去
+    (幂等、按 real_name 去重、只改内存不落库),让新增 embedding 自愈生效。
+    """
+    try:
+        default_by_id = {normalize_api_id(a.get("id")): a for a in DEFAULT_MODEL_CATALOG["apis"]}
+        for api in catalog.get("apis", []):
+            d = default_by_id.get(normalize_api_id(api.get("id")))
+            if not d:
+                continue
+            curated = [m for m in (d.get("models") or []) if "embedding" in (m.get("capabilities") or [])]
+            if not curated:
+                continue
+            have = {(m.get("real_name") or m.get("id")) for m in (api.get("models") or [])}
+            for m in curated:
+                if (m.get("real_name") or m.get("id")) not in have:
+                    api.setdefault("models", []).append(copy.deepcopy(m))
+    except Exception:
+        pass
+    return catalog
+
+
 def load_model_catalog() -> dict[str, Any]:
     db_catalog = _load_model_catalog_from_db()
     if db_catalog:
-        return db_catalog
+        return _ensure_curated_embeddings(db_catalog)
     MODEL_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
     if not MODEL_CONFIG_FILE.exists():
         catalog = copy.deepcopy(DEFAULT_MODEL_CATALOG)
@@ -272,7 +312,7 @@ def load_model_catalog() -> dict[str, Any]:
             data = json.load(f)
     except Exception:
         data = {}
-    return _migrate_catalog(data)
+    return _ensure_curated_embeddings(_migrate_catalog(data))
 
 
 def save_model_catalog(catalog: dict[str, Any]) -> None:
@@ -330,7 +370,16 @@ def apply_user_overlay(catalog: dict[str, Any], user_id: int | None) -> dict[str
             # **不**用空清单覆盖全局好模型,保留全局菜单 —— 否则该用户该 provider 视图
             # 变空,first_user_model 兜底无可用模型可回退。
             if cleaned:
-                existing["models"] = cleaned
+                # 保留全局菜单里该 provider 人工策展的 embedding 模型:模型同步通常只抓
+                # chat 模型(provider 的 /models 多不列 embedding),若被 overlay 直接覆盖,
+                # RAG 向量模型选择器就会空 → 用户配了 key 也选不到 embedding。
+                synced_names = {(m.get("real_name") or m.get("id")) for m in cleaned}
+                curated_embeds = [
+                    m for m in (existing.get("models") or [])
+                    if "embedding" in (m.get("capabilities") or [])
+                    and (m.get("real_name") or m.get("id")) not in synced_names
+                ]
+                existing["models"] = cleaned + curated_embeds
             continue
         # 自建中转站:只有当用户确实配过该 provider 的凭证(带 base_url)才合成,
         # 避免悬空条目。base_url 来自用户凭证(per-user,已做 SSRF 校验)。
