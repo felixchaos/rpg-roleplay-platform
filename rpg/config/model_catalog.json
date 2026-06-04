@@ -64,29 +64,23 @@
         {
           "id": "text-embedding-004",
           "real_name": "text-embedding-004",
-          "display_name": "Text Embedding 004",
+          "display_name": "Google text-embedding-004",
           "enabled": true,
-          "capabilities": [
-            "embedding"
-          ]
+          "capabilities": ["embedding"]
         },
         {
           "id": "text-multilingual-embedding-002",
           "real_name": "text-multilingual-embedding-002",
-          "display_name": "Text Multilingual Embedding 002",
+          "display_name": "Google text-multilingual-embedding-002",
           "enabled": true,
-          "capabilities": [
-            "embedding"
-          ]
+          "capabilities": ["embedding"]
         },
         {
           "id": "gemini-embedding-001",
           "real_name": "gemini-embedding-001",
           "display_name": "Gemini Embedding 001",
           "enabled": true,
-          "capabilities": [
-            "embedding"
-          ]
+          "capabilities": ["embedding"]
         }
       ],
       "credential_env": "",
@@ -295,12 +289,38 @@
     },
     {
       "id": "deepseek",
-      "display_name": "deepseek",
+      "display_name": "DeepSeek (official)",
       "kind": "openai_compat",
       "enabled": false,
       "credential_env": "DEEPSEEK_API_KEY",
       "base_url": "https://api.deepseek.com/v1",
-      "models": [],
+      "models": [
+        {
+          "id": "deepseek-v4-flash",
+          "real_name": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "tools",
+            "json_mode"
+          ]
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "real_name": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "tools",
+            "json_mode",
+            "reasoning"
+          ]
+        }
+      ],
       "credential_ref": ""
     },
     {
