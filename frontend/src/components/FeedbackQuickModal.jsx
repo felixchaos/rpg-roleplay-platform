@@ -18,6 +18,9 @@ import { plNavigate } from '../router.js';
 const CONSENT_TEXT = '我已阅读 AUP §2.J,理解不得包含成人主题节选,同意(此操作记录我的同意)';
 const AUP_LINK = 'https://play.stellatrix.icu/legal/aup#2J';
 const MAX_FREE_TEXT = 10000;
+const QQ_GROUP_NUMBER = '584876566';
+const QQ_JOIN_URL = 'https://qm.qq.com/q/49Dqcr0aw0';
+const QQ_QR_SRC = '/qq-group.jpg';
 
 export function FeedbackQuickModal({ open, onClose }) {
   const [freeText, setFreeText] = React.useState('');
@@ -100,6 +103,16 @@ export function FeedbackQuickModal({ open, onClose }) {
         <CSBox fontSize="body-s" color="text-body-secondary">
           反馈渠道不得包含成人材料;违反按 <a href={AUP_LINK} target="_blank" rel="noopener noreferrer">AUP §2.J</a> 处理。需要附对话节选 / 查看历史请用「查看全部反馈」。
         </CSBox>
+
+        {/* 玩家交流群 — 快速反馈也别丢这条 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', border: '1px solid var(--line, #36322d)', borderRadius: 10, background: 'var(--panel, #211f1d)' }}>
+          <img src={QQ_QR_SRC} alt={`QQ 群二维码 ${QQ_GROUP_NUMBER}`} loading="lazy" style={{ width: 64, height: 64, borderRadius: 8, border: '1px solid var(--line, #36322d)', flexShrink: 0 }} />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>玩家交流群</div>
+            <div style={{ fontSize: 12, color: 'var(--text-quiet, #968f85)', marginTop: 2 }}>想交流玩法 / 即时求助,欢迎加 QQ 群 {QQ_GROUP_NUMBER}。</div>
+          </div>
+          <CSButton variant="normal" iconName="external" href={QQ_JOIN_URL} target="_blank">加入群聊</CSButton>
+        </div>
       </CSSpaceBetween>
     </CSModal>
   );
