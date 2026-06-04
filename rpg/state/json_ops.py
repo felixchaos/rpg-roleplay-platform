@@ -172,3 +172,47 @@ def strip_json_state_ops(text: str) -> str:
     bare_stripped = _strip_bare_json_ops(fenced_stripped)
     final = _strip_trailing_unclosed_ops(bare_stripped)
     return final.strip()
+
+
+# GM 在 native tool_use 前常顺嘴泄漏一句英文"工具预告"元叙述,混进玩家正文,例如:
+#   "The scene has progressed naturally. Let me mark the anchors that have been
+#    satisfied through our gameplay."
+# 这是给模型自己看的、不该出现在叙事里的自言自语。确定性剥离(不靠提示词约束 GM)。
+_META_PREAMBLE_RE = re.compile(
+    r"\b("
+    r"let me (now )?(mark|record|update|note|save|log|set|track|reflect|call|advance)"
+    r"|let'?s (now )?(mark|record|update|note|save|log|set|track|reflect)"
+    r"|i(?:'ll| will| should|'m going to| am going to) (now )?(mark|record|update|note|save|log|set|track|reflect|call)"
+    r"|now,?\s+(let me|i'?ll|i will|i should)\b"
+    r"|the scene has (progressed|advanced)"
+    r"|let me update the (state|anchors?|memor(?:y|ies)|world)"
+    r"|i'?ve (marked|recorded|updated|noted|logged)"
+    r")\b",
+    re.IGNORECASE,
+)
+_QUOTE_CHARS = "「」“”‘’\"『』"
+
+
+def strip_meta_tool_preamble(text: str) -> str:
+    """剥离正文尾部泄漏的英文"工具预告"元叙述。
+
+    只剥满足全部条件的尾段:① 处于正文末尾 ② 以英文(ASCII)为主、不在引号内
+    (绝不动角色英文台词)③ 命中工具预告短语。中文叙事 + 引号内台词不受影响。
+    紧贴中文句末(中文。English meta…)或独立成行两种形态都能处理。
+    """
+    if not text:
+        return text
+    result = text.rstrip()
+    for _ in range(6):  # 可能连续泄漏多句,逐段剥
+        s = result.rstrip()
+        # 候选尾段:从换行 / 中文句末标点 / 串首 之后,到结尾的一段英文(无中文句末标点、无换行)
+        m = re.search(r"(?:[\n。！？…」』”]|^)([ \t]*[A-Za-z][^\n。！？]*?)[ \t]*$", s)
+        if not m:
+            break
+        seg = m.group(1).strip()
+        if not seg or any(q in seg for q in _QUOTE_CHARS):
+            break
+        if not _META_PREAMBLE_RE.search(seg):
+            break
+        result = s[: m.start(1)].rstrip()
+    return result if result.strip() else text.rstrip()

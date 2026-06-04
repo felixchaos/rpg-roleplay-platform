@@ -23,7 +23,7 @@ from typing import Any
 
 from agents.context_agent import run_context_agent
 from core.logging import get_logger
-from state import GameState, strip_json_state_ops
+from state import GameState, strip_json_state_ops, strip_meta_tool_preamble
 
 log = get_logger(__name__)
 
@@ -1494,6 +1494,9 @@ async def persist_turn_phase(
     updates = getattr(ctx, "_updates", []) or []
 
     visible_response = strip_json_state_ops(response)
+    # 确定性兜底:剥掉 GM 在 native tool_use 前泄漏进正文的英文"工具预告"元叙述
+    # (例:"Let me mark the anchors that have been satisfied...")。不依赖 GM 听提示词。
+    visible_response = strip_meta_tool_preamble(visible_response)
 
     # harness 强约束(用户): GM 的提问/选项**必须结构化,绝不留在正文**。
     # 这是确定性兜底 —— 不依赖 GM 听话:把正文尾部的问题/选项块抽进 pending_questions,

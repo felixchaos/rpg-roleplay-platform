@@ -815,6 +815,38 @@ import secrets as _secrets
 import time as _t
 
 
+# ── 跨平台 meta.json 文件锁 ────────────────────────────────────────────────
+# put_chunk 对同一 upload 的 meta.json 做 read-modify-write,需串行化。原实现用
+# fcntl.flock(POSIX 跨进程锁),但 fcntl 是 Linux/macOS 专有,Windows 自托管下
+# `import fcntl` 直接 ImportError → chunk 上传 500。这里按平台分发:
+#   · POSIX:保持 fcntl.flock 跨进程语义(生产 workers≥2 不变)。
+#   · Windows:fcntl 不存在 → 回退进程内 threading.Lock。Windows 自托管通常单进程,
+#     且前端分片是串行 await,跨进程竞争实际不发生,进程内锁足够。
+try:
+    import fcntl as _fcntl
+
+    def _lock_meta_file(fp) -> None:
+        _fcntl.flock(fp.fileno(), _fcntl.LOCK_EX)
+
+    def _unlock_meta_file(fp) -> None:
+        _fcntl.flock(fp.fileno(), _fcntl.LOCK_UN)
+except ImportError:  # Windows:无 fcntl,退化到进程内线程锁
+    import threading as _threading
+
+    _META_FALLBACK_LOCK = _threading.Lock()
+
+    def _lock_meta_file(fp) -> None:
+        _META_FALLBACK_LOCK.acquire()
+
+    def _unlock_meta_file(fp) -> None:
+        # _lock/_unlock 在 put_chunk 的 try/finally 内成对调用(同线程持锁),
+        # 直接 release;极端兜底吞 RuntimeError(从未持锁时)。
+        try:
+            _META_FALLBACK_LOCK.release()
+        except RuntimeError:
+            pass
+
+
 def init_upload(user_id: int, filename: str, total_bytes: int, total_chunks: int) -> dict[str, Any]:
     """开始一次分片上传，返回 upload_id。"""
     if not user_id:
@@ -839,13 +871,12 @@ def init_upload(user_id: int, filename: str, total_bytes: int, total_chunks: int
 
 def put_chunk(user_id: int, upload_id: str, chunk_index: int, blob: bytes) -> dict[str, Any]:
     """写一块到磁盘。返回累计已收 chunks/bytes。"""
-    import fcntl as _fcntl
     user_dir = _upload_dir(user_id, upload_id)
     if len(blob) > MAX_UPLOAD_CHUNK_BYTES:
         raise ValueError(f"chunk 超过 {MAX_UPLOAD_CHUNK_BYTES} 字节")
     meta_path = user_dir / "meta.json"
     with open(meta_path, "r+") as fp:
-        _fcntl.flock(fp.fileno(), _fcntl.LOCK_EX)
+        _lock_meta_file(fp)  # 跨平台:POSIX=fcntl 跨进程锁,Windows=进程内回退(见模块顶部)
         try:
             meta = _json.loads(fp.read())
             if chunk_index < 0 or chunk_index >= meta["total_chunks"]:
@@ -863,7 +894,7 @@ def put_chunk(user_id: int, upload_id: str, chunk_index: int, blob: bytes) -> di
             fp.truncate()
             fp.write(_json.dumps(meta))
         finally:
-            _fcntl.flock(fp.fileno(), _fcntl.LOCK_UN)
+            _unlock_meta_file(fp)
     return meta
 
 

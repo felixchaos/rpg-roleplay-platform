@@ -20,7 +20,7 @@ from state.extractors import (
     _extract_set_time_targets,
     _extract_time_matches,
 )
-from state.json_ops import _extract_json_state_ops, strip_json_state_ops
+from state.json_ops import _extract_json_state_ops, strip_json_state_ops, strip_meta_tool_preamble
 from state.labels import _risk_label, _validation_label
 from state.parsers import (
     _clean_item,
@@ -58,6 +58,7 @@ __all__ = [
     "MAX_HISTORY_TURNS",
     "CURRENT_SCHEMA_VERSION",
     "strip_json_state_ops",
+    "strip_meta_tool_preamble",
     "_extract_json_state_ops",
     "_clean_item",
     "_split_label",
