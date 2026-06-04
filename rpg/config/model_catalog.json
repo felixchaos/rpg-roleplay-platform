@@ -60,6 +60,33 @@
             "tools",
             "json_mode"
           ]
+        },
+        {
+          "id": "text-embedding-004",
+          "real_name": "text-embedding-004",
+          "display_name": "Text Embedding 004",
+          "enabled": true,
+          "capabilities": [
+            "embedding"
+          ]
+        },
+        {
+          "id": "text-multilingual-embedding-002",
+          "real_name": "text-multilingual-embedding-002",
+          "display_name": "Text Multilingual Embedding 002",
+          "enabled": true,
+          "capabilities": [
+            "embedding"
+          ]
+        },
+        {
+          "id": "gemini-embedding-001",
+          "real_name": "gemini-embedding-001",
+          "display_name": "Gemini Embedding 001",
+          "enabled": true,
+          "capabilities": [
+            "embedding"
+          ]
         }
       ],
       "credential_env": "",
