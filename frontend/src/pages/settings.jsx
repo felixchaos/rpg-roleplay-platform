@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { Icon } from '../game-icons.jsx';
 import { ConfirmModal, SettingsToggle, useAutoSave, usePlatformData, useReactiveUser, publishUser, fmtN, ResizableSplit } from '../platform-app.jsx';
 import AgentModelPicker from '../components/AgentModelPicker.jsx';
+import GmStyleEditor from '../components/GmStyleEditor.jsx';
 import { getCaps as _getCapsImported } from '../components/catalog-helpers.js';
 // Cloudscape 原生组件(内容迁移,统一基线对齐)
 import CSContainer from '@cloudscape-design/components/container';
@@ -148,7 +149,7 @@ function SettingsPage({ section: sectionProp } = {}) {
         </CSSpaceBetween>
       )}
       {external && <CSHeader variant="h1">{sectionLabel}</CSHeader>}
-      {section === "preferences" && [<PrefSection key="pref" />, <BlackSwanSection key="bs" />, <ExtractorSection key="ext" />, <ClarifySection key="clar" />]}
+      {section === "preferences" && [<PrefSection key="pref" />, <CSContainer key="gmstyle"><GmStyleEditor scope="user" /></CSContainer>, <BlackSwanSection key="bs" />, <ExtractorSection key="ext" />, <ClarifySection key="clar" />]}
       {section === "models" && <ModelsSection />}
       {section === "modelparams" && <ModelParamsSection />}
       {section === "modules" && <ModuleModelsSection />}

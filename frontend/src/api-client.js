@@ -276,6 +276,9 @@
       stats: () => GET(`${API_PREFIX}/me/stats`),
       activity: (limit) => GET(`${API_PREFIX}/me/activity`, limit ? { limit } : undefined),
       preferences: (body) => POST(`${API_PREFIX}/me/preference`, body),
+      gmStyleSchema: () => GET(`${API_PREFIX}/gm-style/schema`),
+      getGmStyle: () => GET(`${API_PREFIX}/me/gm-style`),
+      setGmStyle: (gm_style) => POST(`${API_PREFIX}/me/gm-style`, { gm_style }),
       personas: {
         list: () => GET(`${API_PREFIX}/me/personas`),
         get: (id) => GET(`${API_PREFIX}/me/personas/` + encodeURIComponent(id)),
@@ -416,6 +419,8 @@
       // B3: script overrides CRUD (JSONB)
       getOverrides: (sid) => GET(`${API_PREFIX}/scripts/` + sid + "/overrides"),
       saveOverrides: (sid, data) => POST(`${API_PREFIX}/scripts/` + sid + "/overrides", { data }),
+      getGmStyle: (sid) => GET(`${API_PREFIX}/scripts/` + sid + "/gm-style"),
+      setGmStyle: (sid, gm_style) => POST(`${API_PREFIX}/scripts/` + sid + "/gm-style", { gm_style }),
       // B2: upload script pack zip — POST /api/v1/scripts/import-pack multipart
       importPack: (file) => {
         const fd = new FormData();

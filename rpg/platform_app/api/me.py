@@ -399,6 +399,54 @@ async def api_set_preference(request: Request, user=Depends(require_user)):
     return json_response({"ok": True, "preferences": dict(row["preferences"]), "updated_at": str(row["updated_at"])})
 
 
+@router.get("/api/gm-style/schema")
+async def api_gm_style_schema(user=Depends(require_user)):
+    """返回 GM 叙事风格 6 旋钮的 key + 默认值,供前端滑块与后端保持同步。"""
+    from agents.gm.style_harness import KNOBS, default_profile
+    return json_response({"ok": True, "knobs": list(KNOBS.keys()), "defaults": default_profile()})
+
+
+@router.get("/api/me/gm-style")
+async def api_get_my_gm_style(user=Depends(require_user)):
+    """读当前用户级 GM 风格默认(用 schema 默认补全未设的旋钮)。"""
+    from agents.gm.style_harness import normalize_profile
+    with connect() as db:
+        row = db.execute(
+            "select preferences from user_preferences where user_id = %s", (user["id"],)
+        ).fetchone()
+    prefs = (row and dict(row["preferences"])) or {}
+    stored = prefs.get("gm_style") if isinstance(prefs.get("gm_style"), dict) else {}
+    return json_response({"ok": True, "gm_style": normalize_profile(stored), "stored": stored})
+
+
+@router.post("/api/me/gm-style")
+async def api_set_my_gm_style(request: Request, user=Depends(require_user)):
+    """写用户级 GM 风格默认。Body: {"gm_style": {旋钮: 0-100}}。只校验已知 6 键。"""
+    from agents.gm.style_harness import validate_patch
+    body = await request.json()
+    try:
+        clean = validate_patch(body.get("gm_style") if "gm_style" in body else body)
+    except ValueError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=400)
+    # patch 合并进 preferences.gm_style(保留其它偏好 + 已设旋钮)
+    with connect() as db:
+        row = db.execute(
+            """
+            insert into user_preferences(user_id, preferences)
+            values (%s, %s)
+            on conflict(user_id) do update set
+              preferences = jsonb_set(
+                coalesce(user_preferences.preferences, '{}'::jsonb), '{gm_style}',
+                coalesce(user_preferences.preferences->'gm_style', '{}'::jsonb) || %s, true),
+              updated_at = now()
+            returning preferences
+            """,
+            (user["id"], Jsonb({"gm_style": clean}), Jsonb(clean)),
+        ).fetchone()
+    saved = dict(row["preferences"]).get("gm_style", {}) if row else clean
+    return json_response({"ok": True, "gm_style": saved})
+
+
 # ── 用户级 API 凭证（加密存储，按用户隔离）──────────────────────────────
 # ── 用户级 persona / character card（独立于剧本存档）─────────────
 @router.get("/api/me/personas")

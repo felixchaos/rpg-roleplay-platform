@@ -61,6 +61,18 @@ def normalize_profile(profile: dict[str, Any] | None) -> dict[str, int]:
     return out
 
 
+def validate_patch(patch: Any) -> dict[str, int]:
+    """校验前端/API 传来的 gm_style patch:只接受已知 6 键、值归一到 0-100 整数,
+    未知键忽略。用于写端点入参清洗。空/非 dict → ValueError。"""
+    if not isinstance(patch, dict):
+        raise ValueError("gm_style 必须是对象(6 个旋钮 key → 0-100 整数)")
+    out: dict[str, int] = {}
+    for k, v in patch.items():
+        if k in KNOBS and v is not None:
+            out[k] = _clamp(v)
+    return out
+
+
 def _lerp(lo: int, hi: int, knob: int) -> int:
     return int(round(lo + (hi - lo) * (knob / 100.0)))
 

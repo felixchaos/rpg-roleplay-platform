@@ -16,6 +16,7 @@ import { WorldbookEditorView } from './script-edit-worldbook.jsx';
 // phase_rebuild_panel: 模块矩阵重做面板
 import { useScriptRebuild, ModuleRebuildPanel } from './script-modules-panel.jsx';
 import AgentModelPicker from '../components/AgentModelPicker.jsx';
+import GmStyleEditor from '../components/GmStyleEditor.jsx';
 import { ModuleStatusCard } from '../components/ModuleStatusCard.jsx';
 import { ModuleMatrixOverview } from '../components/ModuleMatrixOverview.jsx';
 import { RebuildJobBanner } from '../components/RebuildJobBanner.jsx';
@@ -818,6 +819,10 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus, currentUserId,
         { id: 'extract', label: t('scripts.editor.tab_extract'), content: (
           /* KbExtractPanel 现仅承担"一键全量 LLM 抽取"(scope=full);单模块重做下放到上述各 tab */
           <KbExtractPanel script={s} onDone={onExtractDone} />
+        ) },
+        { id: 'gm-style', label: '叙事风格', content: (
+          /* GM 倾向性 6 滑块(剧本级):篇幅/镜头/戏剧密度/心理/悬念/引导,仅 owner 可写 */
+          <GmStyleEditor scope="script" scriptId={s.id} canWrite={!!isOwner} />
         ) },
       ]} />
       </div>

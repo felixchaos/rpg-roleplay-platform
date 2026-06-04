@@ -1085,6 +1085,47 @@ async def api_update_script_overrides(request: Request, script_id: int, user=Dep
     return json_response({"ok": True})
 
 
+@router.get("/api/scripts/{script_id}/gm-style")
+async def api_get_script_gm_style(script_id: int, user=Depends(require_user)):
+    """读剧本级 GM 叙事风格(owner 可读;用默认补全未设旋钮)。"""
+    with connect() as db:
+        owned = db.execute(
+            "SELECT 1 FROM scripts WHERE id = %s AND owner_id = %s", (script_id, user["id"])
+        ).fetchone()
+    if not owned:
+        return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+    from platform_app.knowledge.script_overrides import get_overrides_by_script_id
+    from agents.gm.style_harness import normalize_profile
+    data = get_overrides_by_script_id(script_id) or {}
+    stored = data.get("gm_style") if isinstance(data.get("gm_style"), dict) else {}
+    return json_response({"ok": True, "gm_style": normalize_profile(stored), "stored": stored})
+
+
+@router.post("/api/scripts/{script_id}/gm-style")
+async def api_set_script_gm_style(request: Request, script_id: int, user=Depends(require_user)):
+    """写剧本级 GM 叙事风格(仅 owner)。Body: {"gm_style": {旋钮: 0-100}}。
+    只 merge 进 data.gm_style,不动其它 override 字段。"""
+    with connect() as db:
+        owned = db.execute(
+            "SELECT 1 FROM scripts WHERE id = %s AND owner_id = %s", (script_id, user["id"])
+        ).fetchone()
+    if not owned:
+        return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+    from platform_app.knowledge.script_overrides import get_overrides_by_script_id, upsert_overrides
+    from agents.gm.style_harness import validate_patch
+    body = await request.json()
+    try:
+        clean = validate_patch(body.get("gm_style") if "gm_style" in body else body)
+    except ValueError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=400)
+    data = dict(get_overrides_by_script_id(script_id) or {})
+    cur = dict(data.get("gm_style") if isinstance(data.get("gm_style"), dict) else {})
+    cur.update(clean)
+    data["gm_style"] = cur
+    upsert_overrides(script_id, data)
+    return json_response({"ok": True, "gm_style": cur})
+
+
 # ── Phase E: 可视化复核(只读图 + god 编辑)─────────────────────────────────
 def _owned_script(db, script_id: int, user_id: int):
     return db.execute(
