@@ -1460,7 +1460,7 @@ function BirthpointStep({ scriptId, birthpoint, setBirthpoint }) {
 /* ============================================================
    Step 4: 初始身份
    ============================================================ */
-function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identity, setIdentity, playerOrigin, setPlayerOrigin, identityKnown, setIdentityKnown }) {
+function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identity, setIdentity, playerOrigin, setPlayerOrigin, identityKnown, setIdentityKnown, roleMode, newCardForm }) {
   const { t } = useTranslation();
   const [recs, setRecs] = React.useState([]);
   const [recsLoading, setRecsLoading] = React.useState(false);
@@ -1471,7 +1471,9 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
   const [customBg, setCustomBg] = React.useState("");
 
   const pickedRole = allRoleOptions ? allRoleOptions.find(o => o.key === pickedCard) : null;
-  const pickedName = pickedRole?.name || t('saves.identity.no_card_selected');
+  const pickedName = roleMode === 'new'
+    ? (newCardForm?.name?.trim() || t('saves.identity.no_card_selected'))
+    : (pickedRole?.name || t('saves.identity.no_card_selected'));
 
   const fetchAiRecs = React.useCallback(async () => {
     if (!scriptId) {
@@ -1487,6 +1489,18 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
       player_origin: playerOrigin,  // 'isekai' | 'native' — 给 LLM prompt 决定身份类型
       n: 4,
     };
+    // 新建角色卡时，把用户填的名称传给后端供 LLM 参考
+    // 新建角色卡模式：先把卡片保存到数据库再用真实 ID 传给后端
+    const _newName = (newCardForm?.name || '').trim();
+    if (_newName && !args.character_card_id) {
+      try {
+        const saved = await window.api.cards.myUpsert(cardFormPayload(newCardForm));
+        if (saved?.card?.id) {
+          args.character_card_id = saved.card.id;
+          args.character_card_kind = 'user_card';
+        }
+      } catch (_) { /* 保存失败则放弃传卡，走无卡推荐 */ }
+    }
     try {
       const r = await fetch(
         `${window.__API_BASE || ""}/api/scripts/${parseInt(scriptId, 10)}/recommend-identity`,
@@ -1518,7 +1532,7 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
     } finally {
       setRecsLoading(false);
     }
-  }, [scriptId, birthpoint, pickedRole, playerOrigin]);
+  }, [scriptId, birthpoint, pickedRole, playerOrigin, roleMode, newCardForm]);
 
   const pickRec = (rec) => {
     setIdentity({
@@ -2019,7 +2033,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
             { id: 'existing', text: t('saves.new_game.role_mode_existing'), disabled: allRoleOptions.length === 0 },
             { id: 'new', text: t('saves.new_game.role_mode_new') },
           ]}
-          onChange={({ detail }) => setRoleMode(detail.selectedId)}
+          onChange={({ detail }) => { setRoleMode(detail.selectedId); if (detail.selectedId === 'new') setPickedCard(''); }}
         />
       </CSFormField>
       {roleMode === 'existing' && allRoleOptions.length > 0 && (
@@ -2139,7 +2153,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
                   : <CSBox key="birthpoint-empty" color="text-body-secondary" fontSize="body-s">{t('saves.new_game.sec_birthpoint_empty')}</CSBox>}
               </CSContainer>
               <CSContainer key="identity" header={secHeader(t('saves.new_game.sec_identity_title'), t('saves.new_game.sec_identity_desc'))}>
-                <IdentityStep key="identity-step" scriptId={scriptId} birthpoint={birthpoint} pickedCard={pickedCard} allRoleOptions={allRoleOptions} identity={identity} setIdentity={(id) => setIdentity(id)} playerOrigin={playerOrigin} setPlayerOrigin={(o) => { setPlayerOrigin(o); if (o === 'body') { /* body 无身份卡,identityKnown 设 null */ } else if (identityKnown === null || identityKnown === undefined) { setIdentityKnown(true); } }} identityKnown={identityKnown} setIdentityKnown={setIdentityKnown} />
+                <IdentityStep key="identity-step" scriptId={scriptId} birthpoint={birthpoint} pickedCard={pickedCard} allRoleOptions={allRoleOptions} identity={identity} setIdentity={(id) => setIdentity(id)} playerOrigin={playerOrigin} setPlayerOrigin={(o) => { setPlayerOrigin(o); if (o === 'body') { /* body 无身份卡,identityKnown 设 null */ } else if (identityKnown === null || identityKnown === undefined) { setIdentityKnown(true); } }} identityKnown={identityKnown} setIdentityKnown={setIdentityKnown} roleMode={roleMode} newCardForm={newCardForm} />
               </CSContainer>
               <CSContainer key="intent" header={secHeader(t('saves.new_game.sec_intent_title'), t('saves.new_game.sec_intent_desc'), true)}>{step4Content}</CSContainer>
             </CSSpaceBetween>

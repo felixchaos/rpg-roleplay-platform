@@ -176,6 +176,8 @@ class _VertexBackend:
             config=config,
         )
         self._capture_usage(resp)
+        if resp.text is None:
+            return ""
         return resp.text.strip()
 
     def stream(self, system: str, messages: list[dict], max_tokens: int) -> Iterator[str]:
