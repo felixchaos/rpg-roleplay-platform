@@ -8,10 +8,9 @@
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -198,8 +197,10 @@ class TestMiddlewareIntegration:
 
     def _build_app(self):
         from fastapi import FastAPI
-        from fastapi.responses import HTMLResponse, JSONResponse as _JSONResponse
-        from core.startup import configure_app, lifespan
+        from fastapi.responses import HTMLResponse
+        from fastapi.responses import JSONResponse as _JSONResponse
+
+        from core.startup import configure_app
 
         # 最小 app,不启动 lifespan(避免 DB 依赖)
         mini = FastAPI()

@@ -9,11 +9,9 @@ import unittest
 
 from tests.helpers import (
     cleanup_test_users,
-    integtest_username,
     make_client,
     register_user,
 )
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 辅助
@@ -87,7 +85,7 @@ class SkillsCmdWhitelist(unittest.TestCase):
             cookies=cookies,
         )
         self.assertNotEqual(resp.status_code, 200,
-                            f"P0-1 回归: cmd[0] 含 / 不应被执行")
+                            "P0-1 回归: cmd[0] 含 / 不应被执行")
         if resp.status_code == 400:
             body = resp.json()
             self.assertFalse(body.get("ok"), f"body.ok 应 False: {body}")
@@ -195,7 +193,7 @@ class UploadPathTraversalRejected(unittest.TestCase):
             cookies=cookies,
         )
         self.assertNotEqual(resp.status_code, 200,
-                            f"SEC11 回归: upload finish 含 .. 不应 200")
+                            "SEC11 回归: upload finish 含 .. 不应 200")
 
 
 # ──────────────────────────────────────────────────────────────────────────────

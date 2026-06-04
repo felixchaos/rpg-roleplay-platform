@@ -25,7 +25,7 @@ from __future__ import annotations
 import io
 import json
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from platform_app.db import connect
@@ -237,7 +237,7 @@ def export_script_pack(
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         manifest = {
             "format_version": FORMAT_VERSION,
-            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "exported_at": datetime.now(UTC).isoformat(),
             "script_title": script_dict.get("title"),
             "script_id_origin": script_id,
             "chunks_included": include_chunks,

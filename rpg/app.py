@@ -12,7 +12,6 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-import os
 import re
 import shutil
 import sys
@@ -43,7 +42,6 @@ from core.startup import configure_app, lifespan
 from model_registry import (
     delete_model,  # noqa: F401
     load_catalog_for_user,
-    load_model_catalog,
     select_model,  # noqa: F401
     selected_model,
     upsert_api,  # noqa: F401
@@ -235,6 +233,7 @@ def _verify_acceptance(
 # P0-3: 单请求用户偏好缓存 — 用 request_id contextvar 做 key,同一请求内只查一次 DB。
 # cache 在请求结束后由 api_chat/api_opening 调用 _clear_prefs_cache 清理。
 import contextvars as _contextvars
+
 _prefs_cache_var: _contextvars.ContextVar[dict] = _contextvars.ContextVar(
     "_prefs_cache", default=None  # type: ignore[assignment]
 )
@@ -510,7 +509,9 @@ if _FRONTEND_DIR.is_dir():
 
 # 注：init_db 已移到 core.startup.lifespan startup 段（lazy import 避免循环依赖）。
 # 此处保留函数引用，供 lifespan 使用。
-from platform_app.db import init_db as _bootstrap_init_db  # noqa: F401  (lifespan lazy-imports this)
+from platform_app.db import (
+    init_db as _bootstrap_init_db,  # noqa: F401  (lifespan lazy-imports this)
+)
 
 _startup_auth_banner()
 
@@ -1070,9 +1071,10 @@ def _redact_catalog(catalog: dict[str, Any], is_admin: bool, user_id: int | None
     服务器模式必须传 user_id;本地匿名模式回退到 env/SA 文件存在性。
     """
     import copy
+
     import model_probe
-    from model_registry import normalize_api_id
     from core.config import require_auth as _require_auth
+    from model_registry import normalize_api_id
     result = copy.deepcopy(catalog)
     require_auth = _require_auth()
     cred_ids = _user_credentialed_api_ids(user_id) if require_auth else set()
@@ -1534,13 +1536,13 @@ from rules_bridge import (
     parse_pickup_intent as _rb_parse_pickup_intent,
 )
 from rules_bridge import (
-    pickup_loot_action as _rb_pickup_loot_action,
-)
-from rules_bridge import (
     perform_saving_throw as _rb_saving_throw,
 )
 from rules_bridge import (
     perform_skill_check as _rb_skill_check,
+)
+from rules_bridge import (
+    pickup_loot_action as _rb_pickup_loot_action,
 )
 from rules_bridge import (
     player_attack as _rb_player_attack,

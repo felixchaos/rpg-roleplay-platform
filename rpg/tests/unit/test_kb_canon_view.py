@@ -18,7 +18,9 @@ def _db_or_skip():
 
 def test_anti_spoiler_foreknowledge_and_merge():
     connect = _db_or_skip()
-    from kb import canon_repo as C, live_repo as L, view as V
+    from kb import canon_repo as C
+    from kb import live_repo as L
+    from kb import view as V
 
     with connect() as db:
         uid = db.execute("select id from users order by id limit 1").fetchone()

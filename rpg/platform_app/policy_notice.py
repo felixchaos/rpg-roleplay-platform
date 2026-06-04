@@ -24,11 +24,10 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
-
-from psycopg.types.json import Jsonb
+from datetime import UTC, datetime, timedelta
 
 import httpx
+from psycopg.types.json import Jsonb
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +105,10 @@ def schedule_policy_change(
         raise ValueError(f"未知 slug: {slug!r}")
 
     if effective_at is None:
-        effective_at = datetime.now(timezone.utc) + timedelta(days=NOTICE_LEAD_TIME_DAYS)
+        effective_at = datetime.now(UTC) + timedelta(days=NOTICE_LEAD_TIME_DAYS)
 
     notice_id = str(uuid.uuid4())
-    now_str = datetime.now(timezone.utc).isoformat()
+    now_str = datetime.now(UTC).isoformat()
     record = {
         "id": notice_id,
         "slug": slug,
@@ -191,7 +190,7 @@ def dispatch_notice(db, notice_id: str) -> dict:
             "for notice %s (would send to %d recipients)",
             notice_id, total,
         )
-        notices[idx]["dispatched_at"] = datetime.now(timezone.utc).isoformat()
+        notices[idx]["dispatched_at"] = datetime.now(UTC).isoformat()
         notices[idx]["recipients_total"] = total
         notices[idx]["recipients_sent"] = 0
         _set_config(db, _APP_CONFIG_NOTICES_KEY, notices)
@@ -232,7 +231,7 @@ def dispatch_notice(db, notice_id: str) -> dict:
         if batch_start + _BATCH_SIZE < total:
             time.sleep(_BATCH_SLEEP_S)
 
-    notices[idx]["dispatched_at"] = datetime.now(timezone.utc).isoformat()
+    notices[idx]["dispatched_at"] = datetime.now(UTC).isoformat()
     notices[idx]["recipients_total"] = total
     notices[idx]["recipients_sent"] = sent
     _set_config(db, _APP_CONFIG_NOTICES_KEY, notices)
@@ -260,7 +259,7 @@ def activate_notice(db, notice_id: str) -> dict:
     versions[slug] = new_version
     _set_config(db, _APP_CONFIG_VERSIONS_KEY, versions)
 
-    notices[idx]["activated_at"] = datetime.now(timezone.utc).isoformat()
+    notices[idx]["activated_at"] = datetime.now(UTC).isoformat()
     _set_config(db, _APP_CONFIG_NOTICES_KEY, notices)
 
     logger.info(

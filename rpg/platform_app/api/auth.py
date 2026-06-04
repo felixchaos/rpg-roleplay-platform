@@ -307,11 +307,11 @@ async def api_reset_password(request: Request):
         msg = str(exc)
         if "invalid_token" in msg or "无效或已过期" in msg:
             raise HTTPException(400, detail={"error_key": "auth.reset_token_invalid_or_expired",
-                                             "message": "重置链接无效或已过期，请重新申请"})
+                                             "message": "重置链接无效或已过期，请重新申请"}) from None
         if "已使用" in msg:
             raise HTTPException(400, detail={"error_key": "auth.reset_token_used",
-                                             "message": "该重置链接已使用过"})
-        raise HTTPException(400, detail={"error_key": "auth.reset_fail", "message": msg})
+                                              "message": "该重置链接已使用过"}) from None
+        raise HTTPException(400, detail={"error_key": "auth.reset_fail", "message": msg}) from None
 
 
 @router.get("/api/auth/schema")
@@ -324,8 +324,10 @@ async def api_auth_schema():
     后端是字段的唯一权威源 — 加减字段只改这里,前端零改动。
     """
     pw_min = _auth.MIN_PASSWORD_LENGTH
+    from core.config import effective_auth_required
+    from core.config import setup_token as configured_setup_token
+
     from ..db import connect, init_db
-    from core.config import effective_auth_required, setup_token as configured_setup_token
     init_db()
     with connect() as db:
         user_count = db.execute("select count(*) as n from users").fetchone()["n"]

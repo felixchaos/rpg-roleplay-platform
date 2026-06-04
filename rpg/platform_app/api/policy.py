@@ -12,14 +12,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from platform_app.api._deps import current_user, json_response, require_user
 from platform_app.db import connect
-from platform_app.api._deps import current_user, require_user, json_response
 from platform_app.policy_notice import (
     POLICY_SLUGS,
     activate_notice,
@@ -73,7 +72,7 @@ def policy_slug_status(slug: str):
 @router.get("/api/policy/notices")
 def policy_notices_for_user(request: Request):
     """已登录用户查询 pending 通知(供前端横幅使用)。需要登录。"""
-    user = require_user(request)
+    require_user(request)
 
     with connect() as db:
         notices = list_pending_notices(db)
@@ -99,7 +98,7 @@ class CreateNoticeBody(BaseModel):
     slug: str
     new_version: str
     summary: str
-    effective_at: Optional[str] = None  # ISO-8601; 不传则默认 now+30d
+    effective_at: str | None = None  # ISO-8601; 不传则默认 now+30d
 
 
 @router.post("/api/admin/policy/notices")
@@ -115,9 +114,9 @@ def admin_create_notice(body: CreateNoticeBody, request: Request):
         try:
             effective_at = datetime.fromisoformat(body.effective_at)
             if effective_at.tzinfo is None:
-                effective_at = effective_at.replace(tzinfo=timezone.utc)
+                effective_at = effective_at.replace(tzinfo=UTC)
         except ValueError:
-            raise HTTPException(status_code=400, detail="effective_at 格式无效,需 ISO-8601")
+            raise HTTPException(status_code=400, detail="effective_at 格式无效,需 ISO-8601") from None
 
     with connect() as db:
         record = schedule_policy_change(
@@ -140,7 +139,7 @@ def admin_dispatch_notice(notice_id: str, request: Request):
         try:
             record = dispatch_notice(db, notice_id)
         except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
+            raise HTTPException(status_code=404, detail=str(e)) from e
 
     return json_response({"notice": record})
 
@@ -154,6 +153,6 @@ def admin_activate_notice(notice_id: str, request: Request):
         try:
             record = activate_notice(db, notice_id)
         except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
+            raise HTTPException(status_code=404, detail=str(e)) from e
 
     return json_response({"notice": record})

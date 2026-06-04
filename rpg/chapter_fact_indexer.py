@@ -19,8 +19,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from timeline_index import ensure_timeline_schema
 from config.glossary import get_concept_seeds, get_location_seeds, get_npc_name_seeds
+from timeline_index import ensure_timeline_schema
 
 BASE = Path(__file__).parent
 _OVERRIDES_DIR = BASE / "modules" / "_script_overrides"

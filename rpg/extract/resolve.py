@@ -44,7 +44,7 @@ def _slug(name: str) -> str:
 
 
 def _cosine(a, b) -> float:
-    num = sum(x * y for x, y in zip(a, b))
+    num = sum(x * y for x, y in zip(a, b, strict=False))
     na = sum(x * x for x in a) ** 0.5
     nb = sum(y * y for y in b) ** 0.5
     return num / (na * nb) if na and nb else 0.0
@@ -112,7 +112,7 @@ def cluster_entities(mentions: dict, *, embedder=None, sim_threshold: float = 0.
     归一名相等 / 互为子串(如 薇欧拉 ⊂ 薇欧拉小姐);嵌入仅作高阈值(默认 0.95)次级信号
     且要求首字相同。**绝不靠嵌入把不同人名合并**(0.86 旧阈值会把 14 个角色并成 1)。"""
     by_type: dict[str, list] = defaultdict(list)
-    for (name, typ), rec in mentions.items():
+    for (_name, typ), rec in mentions.items():
         by_type[typ].append(rec)
 
     canon: list[CanonEntity] = []
@@ -211,11 +211,7 @@ def cluster_entities(mentions: dict, *, embedder=None, sim_threshold: float = 0.
             seen[c.logical_key] = 1
     # phase_backend: 通过函数属性暴露 stats(避免改返回类型)
     cluster_method = "embedding+heuristic" if (embedder is not None and not embedder_fallback) else "heuristic"
-    setattr(cluster_entities, "_last_stats", {
-        "embedder_fallback": embedder_fallback,
-        "fallback_reason": fallback_reason,
-        "cluster_method": cluster_method,
-    })
+    cluster_entities._last_stats = {"embedder_fallback": embedder_fallback, "fallback_reason": fallback_reason, "cluster_method": cluster_method}
     return canon
 
 

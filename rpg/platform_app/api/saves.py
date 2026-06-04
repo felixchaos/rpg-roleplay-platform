@@ -5,7 +5,7 @@ import json as _json
 from typing import Any
 from urllib.parse import quote as _quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
 from .. import branches, knowledge, workspace

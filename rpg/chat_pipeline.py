@@ -751,11 +751,11 @@ async def run_rules_phase(
 
 def _apply_gm_json_ops(
     *,
-    state: "GameState",
+    state: GameState,
     response_with_ops: str,
     api_user: dict[str, Any] | None,
     active_script_id: Callable[[dict[str, Any] | None], int | None],
-    ctx: "PipelineContext",
+    ctx: PipelineContext,
     extractor_active: bool,
 ) -> list[str]:
     """把 GM 的 JSON op(set/append/overwrite/question/hypothesis/...)经 ChatWriteContext
@@ -771,7 +771,11 @@ def _apply_gm_json_ops(
 
     from state_write_context import (
         ChatWriteContext,
+    )
+    from state_write_context import (
         clear_context as _clear_write_ctx,
+    )
+    from state_write_context import (
         set_context as _set_write_ctx,
     )
     _json_op_ctx = ChatWriteContext(
@@ -1203,9 +1207,14 @@ async def run_gm_phase(
                     if _retry_response:
                         # 第二稿覆盖第一稿 — 重新 apply_structured_updates
                         import secrets as _ctx_secrets
+
                         from state_write_context import (
                             ChatWriteContext,
+                        )
+                        from state_write_context import (
                             clear_context as _clear_write_ctx,
+                        )
+                        from state_write_context import (
                             set_context as _set_write_ctx,
                         )
                         _retry_ctx = ChatWriteContext(
@@ -1533,10 +1542,13 @@ async def persist_turn_phase(
         while _ll:
             _last = _ll[-1].strip()
             if not _last:
-                _ll.pop(); continue
+                _ll.pop()
+                continue
             _in_quote = any(c in _last for c in _quote_chars)
             if (not _in_quote) and (_q_pat.search(_last) or _plead_pat.search(_last)) and len(_last) <= 60:
-                _ll.pop(); _changed = True; continue
+                _ll.pop()
+                _changed = True
+                continue
             break
         if _changed:
             _new = "\n".join(_ll).rstrip()

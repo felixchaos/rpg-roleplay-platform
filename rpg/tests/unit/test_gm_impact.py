@@ -16,4 +16,6 @@ def test_offband_gate():
 
 
 if __name__ == "__main__":
-    test_levels(); test_offband_gate(); print("OK")
+    test_levels()
+    test_offband_gate()
+    print("OK")

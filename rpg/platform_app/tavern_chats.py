@@ -38,7 +38,7 @@ def parse_chat_jsonl(text: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if len(text.encode("utf-8")) > _MAX_JSONL_BYTES:
         raise ValueError(f"JSONL 文件过大（上限 {_MAX_JSONL_BYTES // (1024*1024)} MB）")
 
-    lines = [l for l in text.splitlines() if l.strip()]
+    lines = [line for line in text.splitlines() if line.strip()]
     if not lines:
         raise ValueError("JSONL 为空")
     if len(lines) > _MAX_LINES:

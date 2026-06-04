@@ -13,8 +13,8 @@ class _JsonRequest:
 
 
 def test_non_admin_cannot_save_unknown_api_credential(monkeypatch):
-    from platform_app.api import me as me_api
     from platform_app import user_credentials
+    from platform_app.api import me as me_api
 
     called = False
 
@@ -36,8 +36,8 @@ def test_non_admin_cannot_save_unknown_api_credential(monkeypatch):
 
 
 def test_non_admin_builtin_api_credential_is_normalized(monkeypatch):
-    from platform_app.api import me as me_api
     from platform_app import user_credentials
+    from platform_app.api import me as me_api
 
     calls: list[tuple] = []
 

@@ -9,7 +9,7 @@ case 4: confirm_email_verification 写入 users 时 terms_accepted_at IS NOT NUL
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -130,19 +130,19 @@ def test_confirm_email_verification_persists_consent_fields(monkeypatch):
         "email": email_norm,
         "code_hash": code_hash,
         "purpose": "register",
-        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+        "expires_at": datetime.now(UTC) + timedelta(minutes=5),
         "used_at": None,
     }
     user_row = {
         "id": 55, "username": "consentuser", "display_name": "consentuser",
         "role": "user", "email": email_norm, "email_verified": True,
-        "email_verified_at": datetime.now(timezone.utc),
+        "email_verified_at": datetime.now(UTC),
         "birthday": date(1995, 6, 15),
         "password_hash": "$argon2id$fake",
-        "public_id": None, "bio": "", "created_at": datetime.now(timezone.utc),
-        "updated_at": datetime.now(timezone.utc), "row_version": 1,
+        "public_id": None, "bio": "", "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC), "row_version": 1,
         "deactivated_at": None, "ban_reason": "",
-        "terms_accepted_at": datetime.now(timezone.utc),
+        "terms_accepted_at": datetime.now(UTC),
         "age_confirmed": True,
     }
 

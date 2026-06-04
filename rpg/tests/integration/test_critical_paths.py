@@ -15,7 +15,6 @@ from tests.helpers import (
     register_user,
 )
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # 辅助：设置 admin 角色
 # ──────────────────────────────────────────────────────────────────────────────
@@ -392,7 +391,7 @@ class ModelsSelectScope(unittest.TestCase):
 
     def test_select_model_without_save_id_is_global(self):
         u = register_user(self.client)
-        cookies = u["cookies"]
+        u["cookies"]
         _promote_admin(u["username"])
         # 重新 login 获取 admin session
         login = login_user(self.client, u["username"], u["password"])
@@ -422,7 +421,7 @@ class ModelsSelectScope(unittest.TestCase):
         # 全局切换不返回 scope 字段 / 或 scope != 'save'
         scope = body.get("scope")
         self.assertNotEqual(scope, "save",
-                            f"A1 回归: 不带 save_id 的 select_model 不应返回 scope='save'")
+                            "A1 回归: 不带 save_id 的 select_model 不应返回 scope='save'")
 
     def test_select_model_with_save_id_is_save_scoped(self):
         u = register_user(self.client)

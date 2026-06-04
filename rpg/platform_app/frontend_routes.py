@@ -15,7 +15,6 @@ import csv
 import io
 import json
 import os
-import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -30,7 +29,7 @@ from .api import (
     json_response,
     require_user,
 )
-from .db import connect, expose, init_db
+from .db import connect, init_db
 from .security import hash_password, verify_password
 
 router = APIRouter()

@@ -45,7 +45,7 @@ class WorldbookFullFailureMarksDoneWithErrors(unittest.TestCase):
             with patch("agents._harness.call_agent_json", side_effect=RuntimeError("boom")):
                 count = ip._stage_worldbook(ctl, user_id=1, script_id=12)
         self.assertEqual(count, 0)
-        self.assertEqual(getattr(ip._stage_worldbook, "_last_count"), 0)
+        self.assertEqual(ip._stage_worldbook._last_count, 0)
         # ctl.update 应该至少被调用过(error + warnings)
         called_keys = set()
         for call_args in ctl.update.call_args_list:

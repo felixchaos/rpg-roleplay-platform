@@ -6,7 +6,8 @@ extracted_through_chapter 标记已提取到哪;extend 幂等(已覆盖则跳过
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from platform_app.db import connect
 

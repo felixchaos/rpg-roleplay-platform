@@ -9,7 +9,7 @@ chapter dict 新增字段:is_author_note / exclude_from_extraction / title_confi
 from __future__ import annotations
 
 import re
-from typing import Callable
+from collections.abc import Callable
 
 # ─── §4.b 作者非正文 ─────────────────────────────────────────────────────────
 # 标题强信号:卷末通知/感言/请假/上架/完本 等
@@ -168,7 +168,7 @@ def annotate_weird_titles(
 
 
 def _cosine(a, b) -> float:
-    num = sum(x * y for x, y in zip(a, b))
+    num = sum(x * y for x, y in zip(a, b, strict=False))
     na = sum(x * x for x in a) ** 0.5
     nb = sum(y * y for y in b) ** 0.5
     if na == 0 or nb == 0:

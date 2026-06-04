@@ -16,8 +16,9 @@
 只回填 scenario='chat' 的行(避免覆盖新数据的正确标签)。
 """
 import argparse
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from platform_app.db import connect, init_db

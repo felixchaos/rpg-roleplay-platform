@@ -13,7 +13,7 @@ def _loot_id(entry: dict) -> str:
 def _room_snapshot(room: dict, taken_loot: set[str] | None = None) -> dict:
     # 已拾取的 loot 不再出现在房间 snapshot 里，防止重新进房刷新可拾取项（重复刷）。
     taken = taken_loot or set()
-    loot = [l for l in (room.get("loot") or []) if _loot_id(l) not in taken]
+    loot = [item for item in (room.get("loot") or []) if _loot_id(item) not in taken]
     return {
         "id": room.get("id"),
         "name": room.get("name"),

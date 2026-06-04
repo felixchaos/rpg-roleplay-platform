@@ -8,7 +8,8 @@
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from platform_app.db import connect
 from platform_app.knowledge._sync import _ensure_book

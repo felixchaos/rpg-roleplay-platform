@@ -98,8 +98,8 @@ async def api_models_health_refresh_all(
     """
     import threading
 
-    from app import _check_probe_permission, load_model_catalog
     import model_probe
+    from app import _check_probe_permission, load_model_catalog
 
     body = {}
     try:
@@ -228,8 +228,9 @@ async def api_models_select(
         from fastapi import HTTPException
         raise HTTPException(status_code=401, detail="未登录")
     try:
-        from platform_app.db import connect as _connect
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect as _connect
         with _connect() as db:
             row = db.execute(
                 "select preferences from user_preferences where user_id = %s",
@@ -256,7 +257,7 @@ async def api_models_select(
             pass
     except Exception as exc:
         from fastapi import HTTPException
-        raise HTTPException(status_code=500, detail=f"prefs 写入失败: {exc}")
+        raise HTTPException(status_code=500, detail=f"prefs 写入失败: {exc}") from exc
     uid = _user_key(api_user)
     with _state_lock:
         _gm_by_user.pop(uid, None)
@@ -334,12 +335,16 @@ async def api_models_remote_sync(
     写 user_model_entries(每用户隔离),只在该用户自己的 catalog 视图里 merge。
     全局菜单只有 admin 能改(/api/models/api)。
     """
+    import model_probe
     from app import _check_probe_permission
     from model_registry import (
-        default_api_for, find_api, load_catalog_for_user, load_model_catalog, normalize_api_id,
+        default_api_for,
+        find_api,
+        load_catalog_for_user,
+        load_model_catalog,
+        normalize_api_id,
     )
     from platform_app import user_models
-    import model_probe
 
     user_id = int(api_user["id"]) if api_user and api_user.get("id") else None
     if not user_id:

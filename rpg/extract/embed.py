@@ -37,7 +37,7 @@ def embed_canon_entities(db, script_id: int, *, user_id: int | None = None,
         if not vecs:
             failed += 1
             continue
-        for r, vec in zip(chunk, vecs):
+        for r, vec in zip(chunk, vecs, strict=False):
             db.execute(
                 "update kb_canon_entities set embedding = %s where id = %s",
                 (_vec_literal(vec), r["id"]),

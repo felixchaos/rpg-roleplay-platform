@@ -1,21 +1,20 @@
 """platform_app.api.admin — /api/admin/* 路由（需 admin 角色）。"""
 from __future__ import annotations
 
-import os
-import sys
 import logging
+import os
 import secrets
 import signal
 import string
+import sys
 import time
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from psycopg.types.json import Jsonb
 
+from platform_app.api._deps import _client_ip, json_response, require_user
 from platform_app.db import connect
-from platform_app.api._deps import require_user, _client_ip, json_response
 from platform_app.dmca import increment_strike, queue_account_termination
 
 router = APIRouter()
@@ -498,16 +497,16 @@ async def admin_logs(
 
     if log_file and os.path.isfile(log_file):
         try:
-            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+            with open(log_file, encoding="utf-8", errors="replace") as f:
                 all_lines = f.readlines()
             # read last lines*3 to filter, then take last `lines`
             tail = all_lines[-(lines * 3):]
             if level:
                 level_up = level.upper()
-                tail = [l for l in tail if level_up in l]
+                tail = [line for line in tail if level_up in line]
             tail = tail[-lines:]
             return json_response({
-                "lines": [l.rstrip("\n") for l in tail],
+                "lines": [line.rstrip("\n") for line in tail],
                 "total_lines": len(tail),
                 "source": "file",
             })
@@ -621,7 +620,6 @@ async def admin_create_invite_codes(
     with connect() as db:
         for _ in range(count):
             code = "".join(secrets.choice(alphabet) for _ in range(8))
-            expires_at = None
             if expires_in_days is not None:
                 db.execute(
                     """
@@ -749,7 +747,7 @@ async def admin_set_maintenance(
     if "maintenance_mode" in body:
         update["maintenance_mode"] = bool(body["maintenance_mode"])
         if update["maintenance_mode"]:
-            update["maintenance_since"] = datetime.now(timezone.utc).isoformat()
+            update["maintenance_since"] = datetime.now(UTC).isoformat()
         else:
             update["maintenance_since"] = None
     if "announcement" in body:
@@ -1078,12 +1076,11 @@ async def admin_suspend_user(
     if not reason:
         raise HTTPException(status_code=400, detail="reason 不能为空")
 
-    suspend_until = None
     if duration_days is not None:
         try:
             duration_days = int(duration_days)
         except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="duration_days 须为整数")
+            raise HTTPException(status_code=400, detail="duration_days 须为整数") from None
 
     with connect() as db:
         if duration_days is not None:

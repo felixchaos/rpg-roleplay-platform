@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -101,6 +100,7 @@ class TestVertexBackend:
         ):
             # 动态重新导入以保证 patch 生效
             import importlib
+
             import agents.gm.backends.vertex as vtx_mod
             importlib.reload(vtx_mod)
             backend = vtx_mod._VertexBackend(model="gemini-3.5-flash", user_id=user_id)
@@ -117,7 +117,9 @@ class TestVertexBackend:
                 "google.oauth2": MagicMock(), "google.oauth2.service_account": MagicMock(),
             }),
         ):
-            import importlib, agents.gm.backends.vertex as vtx_mod
+            import importlib
+
+            import agents.gm.backends.vertex as vtx_mod
             importlib.reload(vtx_mod)
             backend = vtx_mod._VertexBackend(model="gemini-3.5-flash", user_id=42)
         assert backend.user_id == 42
@@ -133,7 +135,9 @@ class TestVertexBackend:
                 "google.oauth2": MagicMock(), "google.oauth2.service_account": MagicMock(),
             }),
         ):
-            import importlib, agents.gm.backends.vertex as vtx_mod
+            import importlib
+
+            import agents.gm.backends.vertex as vtx_mod
             importlib.reload(vtx_mod)
             with pytest.raises(RuntimeError, match="Service Account"):
                 vtx_mod._VertexBackend(model="gemini-3.5-flash", user_id=None)
@@ -203,6 +207,7 @@ class TestEmbeddingVertexByok:
             patch.dict("sys.modules", {"google": MagicMock(), "google.genai": fake_genai}),
         ):
             import importlib
+
             import platform_app.knowledge.embedding as emb_mod
             # 清空 cache 让函数重新初始化
             emb_mod._VERTEX_CLIENT_CACHE.clear()
@@ -217,6 +222,7 @@ class TestEmbeddingVertexByok:
         """无 SA 时 _get_vertex_client 应返回 None，不抛异常。"""
         with patch("core.vertex_sa.load_sa_credentials", return_value=(None, None)):
             import importlib
+
             import platform_app.knowledge.embedding as emb_mod
             emb_mod._VERTEX_CLIENT_CACHE.clear()
             importlib.reload(emb_mod)

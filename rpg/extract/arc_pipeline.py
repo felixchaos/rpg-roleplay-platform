@@ -22,7 +22,8 @@
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from extract import resolve as R
 from extract.embed import embed_canon_entities
@@ -133,6 +134,7 @@ def run_arc_extraction(
     **不在 LLM 调用期间持有 DB 连接**(同 pipeline.py 铁律)。
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from platform_app.db import connect
 
     def _emit(stage, info):

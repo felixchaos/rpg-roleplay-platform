@@ -46,7 +46,7 @@ def cmd_hard_delete(db) -> dict:
 
 
 def cmd_prune_audit(db) -> dict:
-    from cron.prune_audit import run_prune_login_audit, run_prune_admin_audit
+    from cron.prune_audit import run_prune_admin_audit, run_prune_login_audit
     r1 = run_prune_login_audit(db)
     r2 = run_prune_admin_audit(db)
     result = {"login_audit_pruned": r1["pruned"], "admin_audit_pruned": r2["pruned"]}

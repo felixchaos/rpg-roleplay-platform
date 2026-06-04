@@ -6,7 +6,6 @@ from typing import Any
 
 from context_engine._utils import _preview
 from context_engine.loaders import _load_worldbook_db
-from config.glossary import load_glossary
 
 
 def _player_card(state, chars: dict[str, Any]) -> dict[str, str]:

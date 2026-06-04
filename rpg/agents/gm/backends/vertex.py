@@ -55,6 +55,7 @@ class _VertexBackend:
             user_id: 当前用户 ID，用于取 BYOK SA；None 仅在本地/匿名开发模式可走全局 SA。
         """
         from google import genai
+
         from core.vertex_sa import load_sa_credentials
 
         self.user_id = user_id

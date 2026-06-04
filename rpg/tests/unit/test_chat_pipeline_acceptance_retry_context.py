@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 SRC = (Path(__file__).resolve().parents[2] / "chat_pipeline.py").read_text(encoding="utf-8")
 
 

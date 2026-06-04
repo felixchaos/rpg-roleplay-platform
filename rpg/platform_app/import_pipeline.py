@@ -333,7 +333,7 @@ def get_job_status(user_id: int, job_id: str | None = None, script_id: int | Non
                 "where status in ('queued', 'pending', 'running') and id < %s",
                 (cur_id,),
             ).fetchone()
-            job["queue_position"] = int((ahead_row["n"] if ahead_row else 0))
+            job["queue_position"] = int(ahead_row["n"] if ahead_row else 0)
         elif status in ("pending", "running") and job.get("script_id"):
             # 现算 token_usage 累计 — 终态不动(防覆盖正式快照)
             live = db.execute(
@@ -400,7 +400,7 @@ def _run_pipeline(job_id: str, user_id: int, script_id: int, options: dict[str, 
         init_db()
         with connect() as db:
             with _QUEUE_LOCK:
-                pos = _QUEUE_DEPTH - 1  # 本任务自己占了最后一个槽，前面还有 pos 个
+                _QUEUE_DEPTH - 1  # 本任务自己占了最后一个槽，前面还有 pos 个
             db.execute(
                 "update import_jobs set status='queued', updated_at=now() "
                 "where job_id=%s and status not in ('running','done','done_with_errors','failed','cancelled')",
@@ -1191,8 +1191,8 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
         except Exception:
             pass
     # 返 (generated, llm_failures) 让 _run_pipeline 决定是否标 partial
-    setattr(_stage_cards, "_last_llm_failures", llm_failures)
-    setattr(_stage_cards, "_last_targets", len(targets))
+    _stage_cards._last_llm_failures = llm_failures
+    _stage_cards._last_targets = len(targets)
     return generated
 
 
@@ -1316,7 +1316,7 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
                 count += 1
         ctl.update(stage_progress=1)
         # phase_backend: 标记 worldbook 阶段写了多少条 — 0 当作 partial 让上层标 done_with_errors
-        setattr(_stage_worldbook, "_last_count", count)
+        _stage_worldbook._last_count = count
         return count
     except Exception as exc:
         # phase_backend: 不 silent swallow,把 LLM 失败写到 import_jobs.error + warnings
@@ -1338,7 +1338,7 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
             )
         except Exception:
             pass
-        setattr(_stage_worldbook, "_last_count", 0)
+        _stage_worldbook._last_count = 0
         return 0
 
 
@@ -1552,13 +1552,13 @@ def _stage_npc_voices(user_id: int, script_id: int, *, max_npc: int = 20, only_e
             f"已知背景: {r['background'] or '(空)'}\n\n"
             f"原文片段(此 NPC 出场场景,可能不完整):\n"
             + "\n---\n".join(excerpts) + "\n\n"
-            f"严格输出 JSON(无前后文字),字段必填:\n"
-            f"{{\n"
-            f'  "personality": "≤80字性格,用具体形容词+行为倾向(例:平静、戏谑、信息密度高、不轻易动情绪)",\n'
-            f'  "speech_style": "≤80字说话风格,语气+常用词+句式特征(例:称对方为被选中者,尾音常带呢/呐,'
-            f'冷峻陈述穿插戏谑反问)",\n'
-            f'  "sample_dialogue": ["逐字摘原文 2-3 句最有代表性的台词,保留引号"]\n'
-            f"}}"
+            "严格输出 JSON(无前后文字),字段必填:\n"
+            "{\n"
+            '  "personality": "≤80字性格,用具体形容词+行为倾向(例:平静、戏谑、信息密度高、不轻易动情绪)",\n'
+            '  "speech_style": "≤80字说话风格,语气+常用词+句式特征(例:称对方为被选中者,尾音常带呢/呐,'
+            '冷峻陈述穿插戏谑反问)",\n'
+            '  "sample_dialogue": ["逐字摘原文 2-3 句最有代表性的台词,保留引号"]\n'
+            "}"
         )
         try:
             from agents._harness import call_agent_json
@@ -2422,8 +2422,9 @@ def _run_module_rebuild(
                 }
         elif module == "embeddings":
             includes = list(body.get("include") or ["chunks", "cards", "worldbook", "canon"])
-            from .knowledge import embedding as _embed
             from extract.embed import embed_canon_entities
+
+            from .knowledge import embedding as _embed
             counts = {}
             partial_failures = []
             with connect() as db:
@@ -2496,8 +2497,8 @@ def _run_module_rebuild(
                 "update import_jobs set finished_at=now() where job_id=%s", (job_id,),
             )
     except Exception as exc:
-        import traceback as _tb
         import logging as _logging
+        import traceback as _tb
         _logging.getLogger(__name__).exception(
             "_run_module_rebuild %s failed: %s", job_id, exc,
         )

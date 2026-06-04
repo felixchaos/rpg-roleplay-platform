@@ -36,6 +36,8 @@ import re
 
 from core.llm_backend import (
     resolve_preferred_api as _resolve_preferred_api_base,
+)
+from core.llm_backend import (
     resolve_preferred_model as _resolve_preferred_model_base,
 )
 from core.logging import get_logger

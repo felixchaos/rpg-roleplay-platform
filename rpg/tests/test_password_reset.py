@@ -9,11 +9,9 @@
 """
 from __future__ import annotations
 
-import time
 import unittest
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch, call
-
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # 隔离 DB：用 in-memory Mock 替代真实 Postgres
@@ -110,7 +108,7 @@ class TestConfirmPasswordReset(unittest.TestCase):
     """confirm_password_reset 核心流程。"""
 
     def _mock_valid_verif(self, used_at=None, expires_future=True):
-        now = datetime.now(timezone.utc)
+        datetime.now(UTC)
         return _MockRow({
             "id": 99,
             "email": "alice@example.com",
@@ -135,7 +133,7 @@ class TestConfirmPasswordReset(unittest.TestCase):
     def test_already_used_token_raises(self):
         from platform_app import auth as _auth
 
-        verif = self._mock_valid_verif(used_at=datetime.now(timezone.utc))
+        verif = self._mock_valid_verif(used_at=datetime.now(UTC))
         mock_db, _ = _make_db(rows={"verif": verif})
 
         with patch.object(_auth, "connect", return_value=mock_db), \
@@ -181,7 +179,7 @@ class TestResetRateLimit(unittest.TestCase):
         _check_reset_rate("fresh@example.com")  # 不抛异常
 
     def test_rapid_calls_raise(self):
-        from platform_app.auth import _check_reset_rate, _RESET_RATE_LOCK, _RESET_RATE
+        from platform_app.auth import _check_reset_rate
         email = "rapid@example.com"
         _check_reset_rate(email)
         # 立即再次调用，应被限流

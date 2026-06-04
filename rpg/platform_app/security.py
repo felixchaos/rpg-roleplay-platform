@@ -8,7 +8,6 @@ import secrets
 # ── Argon2id (REG-01 / ENC-08) ───────────────────────────────────────────────
 try:
     from argon2 import PasswordHasher
-    from argon2.exceptions import VerifyMismatchError, VerifyMismatchError as _VME
     _ph = PasswordHasher(time_cost=3, memory_cost=64 * 1024, parallelism=1)  # OWASP 2023
     _ARGON2_AVAILABLE = True
 except ImportError:

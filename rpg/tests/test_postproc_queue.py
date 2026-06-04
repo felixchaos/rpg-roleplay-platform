@@ -17,7 +17,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -122,7 +122,7 @@ class TestWorkerRetry(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_task_increments_attempts(self):
         """handler 抛异常 → attempts++ + backoff scheduled_at。"""
-        from scripts.run_postproc_worker import _process_one, TASK_HANDLERS, MAX_ATTEMPTS
+        from scripts.run_postproc_worker import TASK_HANDLERS, _process_one
 
         conn = _make_db()
         row = {
@@ -149,7 +149,7 @@ class TestWorkerRetry(unittest.IsolatedAsyncioTestCase):
 
     async def test_max_attempts_marks_failed(self):
         """attempts >= MAX_ATTEMPTS → status=failed。"""
-        from scripts.run_postproc_worker import _process_one, TASK_HANDLERS, MAX_ATTEMPTS
+        from scripts.run_postproc_worker import MAX_ATTEMPTS, TASK_HANDLERS, _process_one
 
         conn = _make_db()
         row = {
@@ -175,7 +175,7 @@ class TestWorkerRetry(unittest.IsolatedAsyncioTestCase):
 
     async def test_successful_task_marks_done(self):
         """handler 成功 → status=done。"""
-        from scripts.run_postproc_worker import _process_one, TASK_HANDLERS
+        from scripts.run_postproc_worker import TASK_HANDLERS, _process_one
 
         conn = _make_db()
         row = {
@@ -223,7 +223,6 @@ class TestWorkerStartupCheck(unittest.TestCase):
 
     def test_raises_on_pgbouncer_port(self):
         """DATABASE_URL 含 :6432 → RuntimeError。"""
-        import importlib
         import scripts.run_postproc_worker as _w
 
         with patch.dict("os.environ", {"DATABASE_URL": "postgresql://rpg:pw@127.0.0.1:6432/rpg"}):
@@ -257,6 +256,7 @@ class TestChatPipelineFireAndForget(unittest.TestCase):
         """最小化 PipelineContext。"""
         from threading import Event
         from unittest.mock import MagicMock
+
         from chat_pipeline import PipelineContext
 
         state = MagicMock()

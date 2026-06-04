@@ -804,7 +804,7 @@ async def api_export_script_pack(
     try:
         zip_bytes, filename = export_script_pack(script_id, user["id"], include_chunks=include_chunks)
     except PermissionError:
-        raise HTTPException(status_code=403, detail="无权访问该剧本")
+        raise HTTPException(status_code=403, detail="无权访问该剧本") from None
     # 文件名含中文时按 RFC 5987 编码,否则 latin-1 header 报 codec 错
     from urllib.parse import quote as _quote
     ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "script_pack.zip"
@@ -850,7 +850,7 @@ async def api_import_script_pack(request: Request, user=Depends(require_user)):
     try:
         result = import_script_pack(zip_bytes, user["id"])
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return JSONResponse(result)
 
@@ -1097,8 +1097,8 @@ async def api_get_script_gm_style(script_id: int, user=Depends(require_user)):
         ).fetchone()
     if not owned:
         return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
-    from platform_app.knowledge.script_overrides import get_overrides_by_script_id
     from agents.gm.style_harness import normalize_profile
+    from platform_app.knowledge.script_overrides import get_overrides_by_script_id
     data = get_overrides_by_script_id(script_id) or {}
     stored = data.get("gm_style") if isinstance(data.get("gm_style"), dict) else {}
     return json_response({"ok": True, "gm_style": normalize_profile(stored), "stored": stored})
@@ -1114,8 +1114,8 @@ async def api_set_script_gm_style(request: Request, script_id: int, user=Depends
         ).fetchone()
     if not owned:
         return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
-    from platform_app.knowledge.script_overrides import get_overrides_by_script_id, upsert_overrides
     from agents.gm.style_harness import validate_patch
+    from platform_app.knowledge.script_overrides import get_overrides_by_script_id, upsert_overrides
     body = await request.json()
     try:
         clean = validate_patch(body.get("gm_style") if "gm_style" in body else body)

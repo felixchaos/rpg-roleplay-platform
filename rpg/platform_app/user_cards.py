@@ -120,7 +120,7 @@ def upsert_persona(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
                     {**fields, "slug": slug, "id": int(persona_id), "user_id": user_id},
                 )
             except _pg_errors.UniqueViolation:
-                raise ValueError("slug 已被使用, 请换一个")
+                raise ValueError("slug 已被使用, 请换一个") from None
             row = db.execute(
                 "select * from character_cards where id = %s and user_id = %s and card_type = 'persona'",
                 (int(persona_id), user_id),
@@ -156,7 +156,7 @@ def upsert_persona(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
                     {**fields, "user_id": user_id, "slug": slug},
                 ).fetchone()
             except _pg_errors.UniqueViolation:
-                raise ValueError("slug 已被使用, 请换一个")
+                raise ValueError("slug 已被使用, 请换一个") from None
 
         # 原子置默认：单条 UPDATE 将同用户所有 persona 的 is_default 设为 (id = 目标id)，
         # 消除先清零再置位的并发竞争窗口。

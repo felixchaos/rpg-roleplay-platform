@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from platform_app.policy_notice import (
     NOTICE_LEAD_TIME_DAYS,
@@ -32,7 +32,7 @@ def run_dispatch_due(db) -> dict:
     Returns:
         {"dispatched": int, "checked": int}
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     threshold = now + timedelta(days=NOTICE_LEAD_TIME_DAYS)
 
     notices = list_pending_notices(db)
@@ -45,7 +45,7 @@ def run_dispatch_due(db) -> dict:
         try:
             effective_at = datetime.fromisoformat(notice["effective_at"])
             if effective_at.tzinfo is None:
-                effective_at = effective_at.replace(tzinfo=timezone.utc)
+                effective_at = effective_at.replace(tzinfo=UTC)
         except (ValueError, KeyError):
             logger.warning("policy_notice cron: bad effective_at in notice %s", notice.get("id"))
             continue
@@ -72,7 +72,7 @@ def run_activate_due(db) -> dict:
     Returns:
         {"activated": int, "checked": int}
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     notices = list_pending_notices(db)
     checked = len(notices)
@@ -84,7 +84,7 @@ def run_activate_due(db) -> dict:
         try:
             effective_at = datetime.fromisoformat(notice["effective_at"])
             if effective_at.tzinfo is None:
-                effective_at = effective_at.replace(tzinfo=timezone.utc)
+                effective_at = effective_at.replace(tzinfo=UTC)
         except (ValueError, KeyError):
             continue
 

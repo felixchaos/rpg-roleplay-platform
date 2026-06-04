@@ -11,8 +11,8 @@ class ScriptCharacterCardsApi(unittest.TestCase):
         cleanup_test_users()
         cls.client = make_client()
         username = f"integtest_{random_suffix()}@example.test"
-        from platform_app.db import connect
         from platform_app.auth import _issue_session
+        from platform_app.db import connect
 
         with connect() as db:
             owner = db.execute(

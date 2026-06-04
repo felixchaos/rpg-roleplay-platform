@@ -189,7 +189,7 @@ class TestRevealCommand(unittest.TestCase):
         gs = GameState.new()
         gs.data["player"]["name"] = "测试"
         gs.data["player"]["role"] = "测试"
-        updates = gs.apply_player_directives("/reveal 我其实是穿越者")
+        gs.apply_player_directives("/reveal 我其实是穿越者")
         # /reveal 写入 flag
         self.assertEqual(
             gs.data["player_private"]["flags"].get("revealed_this_turn"),

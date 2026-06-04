@@ -10,9 +10,9 @@ import re
 import sqlite3
 from pathlib import Path
 
+from config.glossary import get_leak_filter_tokens
 from core.logging import get_logger
 from timeline_index import bootstrap_timeline_from_summaries, timeline_filter_for_label
-from config.glossary import get_leak_filter_tokens
 
 log = get_logger(__name__)
 
@@ -534,7 +534,7 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
             except (TypeError, ValueError):
                 pass
         # turn=0 / 空 history → 也走章节原文注入 (用 phase 起始章)
-        is_opening = (int(state.data.get("turn", 0) or 0) == 0
+        (int(state.data.get("turn", 0) or 0) == 0
                       and not (state.data.get("history") or []))
         # 修复 ongoing 回合饥饿:原来只有 is_opening 才从时间线派生 anchor_min,
         # 正常游戏回合 anchor_min=None → 章节原文整段不注入,GM 每轮只拿 bm25 碎片,
@@ -751,8 +751,8 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
         # 不再让 GM 看到 12 个平级 token 不知道层级关系。
         try:
             if script_id:
-                from platform_app.db import connect as _connect_tree
                 from kb.canon_repo import _reveal_clause as _rc_fn
+                from platform_app.db import connect as _connect_tree
                 # BUG-2: 层级图注入 kb_canon_entities 时必须按"已揭示集合"过滤,否则
                 # `order by importance desc limit 60` 会把全书后期势力/地点塞给早章玩家 = 剧透。
                 # 复用 canon_repo._reveal_clause(与 Phase D 同语义,单一真源):
@@ -811,7 +811,7 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
                         by_parent.items(),
                         key=lambda kv: -sum(c["imp"] for c in kv[1]),
                     )[:8]
-                    for parent_lk, children in parents_with_children:
+                    for _parent_lk, children in parents_with_children:
                         # parent 信息从任一 child 拿
                         parent_name = children[0]["parent_name"]
                         tree_lines.append(f"\n【{parent_name}】 下辖:")

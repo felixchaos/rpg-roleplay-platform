@@ -7,7 +7,8 @@ constant 骨架 + 实体嵌入)。设计 A_extraction.md。
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from extract import resolve as R
 from extract.embed import embed_canon_entities

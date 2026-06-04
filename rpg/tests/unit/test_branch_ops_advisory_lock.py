@@ -5,7 +5,6 @@ pg_advisory_xact_lock,否则多 tab 并发下会与 record_runtime_turn / persis
 与本目录 test_persist_runtime_no_pointer_regress.py 同风格:用源码断言锁定确定性代码缝
 (锁的 key 表达式 + 在写 game_saves 之前调用),不依赖跑库。
 """
-import re
 import unittest
 from pathlib import Path
 

@@ -20,7 +20,6 @@ model_probe.py — API 探测：远端模型列表 + 可用性 + 定价
 """
 from __future__ import annotations
 
-import json
 import os
 import time
 from pathlib import Path
@@ -267,6 +266,7 @@ def list_remote_models(
 def _list_vertex_models(api: dict[str, Any], user_id: int | None = None) -> list[dict[str, Any]]:
     """列出 Vertex 可用 Gemini 模型。user_id 非 None 时优先使用用户 BYOK SA。"""
     from google import genai
+
     from core.vertex_sa import load_sa_credentials
 
     creds, project_id = load_sa_credentials(user_id)
@@ -314,8 +314,7 @@ def _resolve_provider_key(api: dict[str, Any], user_id: int | None) -> str:
 
 
 def _list_anthropic_models(api: dict[str, Any], user_id: int | None = None) -> list[dict[str, Any]]:
-    from anthropic import Anthropic
-    from anthropic import APIStatusError
+    from anthropic import Anthropic, APIStatusError
     key = _resolve_provider_key(api, user_id)
     base_url = api.get("base_url") or None
     client_kwargs: dict[str, Any] = {"api_key": key}
@@ -477,7 +476,8 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
     # 服务器模式强制：必须有 user-scoped 凭证才能真实发请求（避免烧服务端凭证）
     if _require_user_credential():
         # vertex_ai BYOK 存在 "AgentPlatform" 这个 api_id 下，需要特殊处理
-        from model_registry import find_api, load_model_catalog as _lmc
+        from model_registry import find_api
+        from model_registry import load_model_catalog as _lmc
         _kind = (find_api(_lmc(), api_id) or {}).get("kind", api_id)
         if _kind == "vertex_ai":
             from core.vertex_sa import has_user_sa

@@ -8,9 +8,7 @@
 from __future__ import annotations
 
 import sys
-import types
 from unittest.mock import MagicMock, patch
-
 
 # ── 在 import core.request_cache 之前先 stub 掉 platform_app.db ──────────────
 # request_cache 在 _select_all_prefs 内部 lazy import platform_app.db,
@@ -205,8 +203,8 @@ class TestLlmBackendIntegration:
 
     def test_resolve_preferred_model_cached(self):
         """两次 resolve_preferred_model 同 uid → _select_all_prefs 只调一次。"""
-        import core.request_cache as rc
         import core.llm_backend as lb
+        import core.request_cache as rc
 
         rc.reset_request_caches()
 
@@ -230,8 +228,8 @@ class TestLlmBackendIntegration:
 
     def test_resolve_none_user_id(self):
         """user_id=None 或 0 直接返回 None,不查 DB。"""
-        import core.request_cache as rc
         import core.llm_backend as lb
+        import core.request_cache as rc
 
         rc.reset_request_caches()
         select_count = 0

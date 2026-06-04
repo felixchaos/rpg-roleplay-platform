@@ -22,13 +22,13 @@ contextvars 在 asyncio.to_thread 中的传播:
 from __future__ import annotations
 
 import contextvars
-from typing import Any, Optional
+from typing import Any
 
 # None = 非请求上下文; dict = 请求内缓存容器
-_user_prefs_cache: contextvars.ContextVar[Optional[dict[int, dict]]] = (
+_user_prefs_cache: contextvars.ContextVar[dict[int, dict] | None] = (
     contextvars.ContextVar("_user_prefs_cache", default=None)
 )
-_api_creds_cache: contextvars.ContextVar[Optional[dict[tuple, Any]]] = (
+_api_creds_cache: contextvars.ContextVar[dict[tuple, Any] | None] = (
     contextvars.ContextVar("_api_creds_cache", default=None)
 )
 
@@ -76,7 +76,7 @@ def _select_all_prefs(user_id: int) -> dict:
 
 # ── user_api_credentials ────────────────────────────────────────────────────
 
-def get_api_cred_cached(user_id: int, api_id: str) -> Optional[dict]:
+def get_api_cred_cached(user_id: int, api_id: str) -> dict | None:
     """返回 get_credential(user_id, api_id) 的结果(含明文 key)。
 
     请求内相同 (user_id, api_id) 只查一次;非请求上下文每次查。
@@ -92,7 +92,7 @@ def get_api_cred_cached(user_id: int, api_id: str) -> Optional[dict]:
     return cache[key]
 
 
-def _fetch_cred(user_id: int, api_id: str) -> Optional[dict]:
+def _fetch_cred(user_id: int, api_id: str) -> dict | None:
     """直接调 get_credential,绕过缓存层。"""
     try:
         from platform_app.user_credentials import get_credential  # type: ignore[import]

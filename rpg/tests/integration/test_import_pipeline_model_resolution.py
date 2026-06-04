@@ -12,8 +12,7 @@ from __future__ import annotations
 import sys
 import types
 import unittest
-from unittest.mock import MagicMock, call, patch
-
+from unittest.mock import MagicMock, patch
 
 # ── stub 重量级依赖, 让 import 不报错 ───────────────────────────────────────────
 
@@ -79,7 +78,6 @@ _install_stubs()
 
 # 延迟 import, 确保 stub 已就位
 import importlib
-import sys as _sys
 
 # 在 sys.modules 里用 platform_app.import_pipeline 名称
 # 但文件在 platform_app 包下; 用绝对路径 import

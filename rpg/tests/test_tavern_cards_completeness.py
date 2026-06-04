@@ -5,8 +5,8 @@ tests/test_tavern_cards_completeness.py — 角色卡 V2 spec 完整性 + 往返
 """
 import base64
 import json
-import sys
 import struct
+import sys
 import zlib
 from pathlib import Path
 
@@ -17,13 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from platform_app.tavern_cards import (
     parse_card,
     parse_png_card,
-    write_png_card,
-    _v1_to_v2,
-    _normalize_v2,
     tavern_to_user_card,
     user_card_to_tavern_v2,
+    write_png_card,
 )
-
 
 # ── 完整 V2 字段清单（spec_v2 规范） ─────────────────────────────────
 

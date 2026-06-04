@@ -40,5 +40,8 @@ def test_cheapest_excludes_frontier():
 
 
 if __name__ == "__main__":
-    test_estimate_scales_with_chapters_and_model(); test_sample_chapters_caps()
-    test_zero_chapters(); test_cheapest_excludes_frontier(); print("OK")
+    test_estimate_scales_with_chapters_and_model()
+    test_sample_chapters_caps()
+    test_zero_chapters()
+    test_cheapest_excludes_frontier()
+    print("OK")

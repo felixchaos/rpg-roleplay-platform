@@ -513,8 +513,9 @@ def _persist_invocation_async(env: ToolCallEnvelope, *, ok: bool,
 
     def _do_insert() -> None:
         try:
-            from platform_app.db import connect
             from psycopg.types.json import Jsonb
+
+            from platform_app.db import connect
             with connect() as db:
                 db.execute(
                     """
@@ -550,13 +551,13 @@ def _persist_invocation_async(env: ToolCallEnvelope, *, ok: bool,
 # 线程爆炸,且这些线程与主请求争抢同一 DB 连接池(25/worker)→ 可耗尽连接池阻塞游戏请求。
 # 改为固定 2 个 drain worker 从有界队列消费:并发遥测连接 ≤2,队列满则丢弃(遥测是
 # best-effort),永不阻塞 chat 主路径,也不让积压无界增长(DB 慢/down 时)。
-_TELEMETRY_QUEUE: "_queue.Queue | None" = None
+_TELEMETRY_QUEUE: _queue.Queue | None = None
 _TELEMETRY_LOCK = threading.Lock()
 _TELEMETRY_WORKERS = 2
 _TELEMETRY_QUEUE_MAX = 2000
 
 
-def _telemetry_drain(q: "_queue.Queue") -> None:
+def _telemetry_drain(q: _queue.Queue) -> None:
     while True:
         fn = q.get()
         try:

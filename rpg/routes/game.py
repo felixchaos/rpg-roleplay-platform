@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging as _logging
+import secrets as _secrets
 import threading
 from typing import Any
 
@@ -12,9 +14,6 @@ from routes._deps_fastapi import get_current_user
 from schemas._common import COMMON_ERROR_RESPONSES, GenericOkResponse, OkResponse, StateResponse
 from schemas.game import ChatEstimateRequest, ChatRequest, NewGameRequest
 from state.parsers import _extract_trailing_markdown_options
-
-import logging as _logging
-import secrets as _secrets
 
 _log = _logging.getLogger(__name__)
 
@@ -262,13 +261,13 @@ async def api_opening(
             opening_for_history, opening_options = _extract_trailing_markdown_options(opening)
             state.data["history"].append({"role": "assistant", "content": opening_for_history})
             # 让开场也走结构化解析,把【询问玩家】+JSON ops 解析进 pending_questions / state
-            before_questions = len(((state.data.get("permissions") or {}).get("pending_questions") or []))
+            before_questions = len((state.data.get("permissions") or {}).get("pending_questions") or [])
             try:
                 state.apply_structured_updates(opening_for_history)
             except Exception:
                 import logging as _logging
                 _logging.getLogger(__name__).warning("opening apply_structured_updates failed", exc_info=True)
-            after_questions = len(((state.data.get("permissions") or {}).get("pending_questions") or []))
+            after_questions = len((state.data.get("permissions") or {}).get("pending_questions") or [])
             if opening_options and after_questions == before_questions:
                 state.add_pending_question("你想怎么行动？", source="gm:opening_options", options=opening_options)
             state.save()
@@ -478,8 +477,8 @@ async def api_chat(
         _active_script_id,
         _apply_chat_rule_candidates,
         _build_usage_payload,
-        _chat_rule_candidates,
         _chat_max_tokens,
+        _chat_rule_candidates,
         _clarify_threshold,
         _command_response,
         _current_run_id,

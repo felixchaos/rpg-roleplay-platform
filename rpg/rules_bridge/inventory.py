@@ -122,11 +122,11 @@ def pickup_loot_action(state, item_id: str, location_id: str | None = None,
     room = _current_room(state)
     loot = list(room.get("loot") or [])
     # 按 item_id 精确命中房间 loot
-    target = next((l for l in loot if str(l.get("item_id") or l.get("id") or "") == item_id), None)
+    target = next((item for item in loot if str(item.get("item_id") or item.get("id") or "") == item_id), None)
     if target is None:
         return {"ok": False,
                 "error": f"当前房间没有可拾取的 {item_id!r}",
-                "available": [str(l.get("item_id") or l.get("id") or "") for l in loot]}
+                "available": [str(item.get("item_id") or item.get("id") or "") for item in loot]}
 
     taken = scene.setdefault("taken_loot", [])
     if item_id in taken:
@@ -150,7 +150,7 @@ def pickup_loot_action(state, item_id: str, location_id: str | None = None,
 
     # 标记已拾取（持久）+ 即时从当前房间 snapshot 移除
     taken.append(item_id)
-    room["loot"] = [l for l in loot if str(l.get("item_id") or l.get("id") or "") != item_id]
+    room["loot"] = [item for item in loot if str(item.get("item_id") or item.get("id") or "") != item_id]
 
     grant.setdefault("result", {})["pickup"] = {
         "item_id": item_id, "name": name, "location_id": cur_id,
@@ -183,11 +183,11 @@ def parse_pickup_intent(text: str, state) -> list[dict]:
 
     # 可拾取目标：item_id / name，按名称长度降序，长名优先（防短名遮蔽）
     targets: list[tuple[str, str]] = []  # (match_text_lower, item_id)
-    for l in loot:
-        iid = str(l.get("item_id") or l.get("id") or "").strip()
+    for item in loot:
+        iid = str(item.get("item_id") or item.get("id") or "").strip()
         if not iid or iid in taken:
             continue
-        nm = str(l.get("name") or "").strip()
+        nm = str(item.get("name") or "").strip()
         targets.append((iid.lower(), iid))
         if nm:
             targets.append((nm.lower(), iid))
@@ -208,7 +208,7 @@ def parse_pickup_intent(text: str, state) -> list[dict]:
             continue
         seen.add(hit_id)
         loot_entry = next(
-            (l for l in loot if str(l.get("item_id") or l.get("id") or "") == hit_id), {}
+            (item for item in loot if str(item.get("item_id") or item.get("id") or "") == hit_id), {}
         )
         try:
             qty = int(loot_entry.get("qty") or 1)

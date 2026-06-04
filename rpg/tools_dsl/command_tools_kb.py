@@ -56,8 +56,8 @@ def _int(v):
 
 # ── 查询工具 ─────────────────────────────────────────────────────────────────
 def _t_lookup_entity(user_id: int, args: dict) -> str:
-    from platform_app.db import connect
     from kb import canon_repo, live_repo
+    from platform_app.db import connect
     save_id = _int(args.get("save_id"))
     name = (args.get("name") or args.get("logical_key") or "").strip()
     if not save_id or not name:
@@ -152,8 +152,8 @@ def _excerpt_from_documents(
 
 
 def _t_search_canon(user_id: int, args: dict) -> str:
-    from platform_app.db import connect
     from extract.embed import search_canon_by_vector
+    from platform_app.db import connect
     from platform_app.knowledge.embedding import embed_query
     save_id = _int(args.get("save_id"))
     query = (args.get("query") or "").strip()
@@ -205,8 +205,8 @@ def _t_lookup_timeline(user_id: int, args: dict) -> str:
 
 
 def _t_graph_neighbors(user_id: int, args: dict) -> str:
-    from platform_app.db import connect
     from kb import live_repo
+    from platform_app.db import connect
     save_id = _int(args.get("save_id"))
     entity = (args.get("entity") or "").strip()
     if not save_id or not entity:
@@ -231,8 +231,8 @@ def _require_commit(db, save_id: int, user_id: int):
 
 
 def _t_kb_upsert_entity(user_id: int, args: dict) -> str:
-    from platform_app.db import connect
     from kb import live_repo
+    from platform_app.db import connect
     save_id = _int(args.get("save_id"))
     lk = (args.get("logical_key") or args.get("name") or "").strip()
     if not save_id or not lk:
@@ -252,8 +252,8 @@ def _t_kb_upsert_entity(user_id: int, args: dict) -> str:
 
 
 def _t_kb_record_event(user_id: int, args: dict) -> str:
-    from platform_app.db import connect
     from kb import live_repo
+    from platform_app.db import connect
     save_id = _int(args.get("save_id"))
     summary = (args.get("summary") or "").strip()
     lk = (args.get("logical_key") or summary[:24]).strip()
@@ -273,8 +273,8 @@ def _t_kb_record_event(user_id: int, args: dict) -> str:
 
 
 def _t_kb_set_relationship(user_id: int, args: dict) -> str:
-    from platform_app.db import connect
     from kb import live_repo
+    from platform_app.db import connect
     save_id = _int(args.get("save_id"))
     frm = (args.get("from") or args.get("from_key") or "").strip()
     to = (args.get("to") or args.get("to_key") or "").strip()
@@ -291,8 +291,8 @@ def _t_kb_set_relationship(user_id: int, args: dict) -> str:
 
 
 def _t_kb_set_worldline_var(user_id: int, args: dict) -> str:
-    from platform_app.db import connect
     from kb import live_repo
+    from platform_app.db import connect
     save_id = _int(args.get("save_id"))
     key = (args.get("key") or args.get("logical_key") or "").strip()
     if not save_id or not key or "value" not in args:

@@ -7,8 +7,8 @@ import copy
 import unittest
 from pathlib import Path
 
+from rules_bridge import start_encounter_by_id, start_module
 from state import DEFAULT_STATE, GameState
-from rules_bridge import start_module, start_encounter_by_id
 
 CB = (Path(__file__).resolve().parents[2] / "rules_bridge" / "combat.py").read_text(encoding="utf-8")
 

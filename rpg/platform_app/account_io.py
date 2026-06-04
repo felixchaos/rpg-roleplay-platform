@@ -24,6 +24,7 @@ import io
 import json
 import time
 import zipfile
+from datetime import UTC
 from typing import Any
 
 from psycopg.types.json import Jsonb
@@ -424,7 +425,7 @@ def _run_account_import_job(job_id: str, user_id: int, zip_bytes: bytes) -> None
                        overall_progress=idx)
 
         res = import_account(user_id, zip_bytes, progress=_progress)
-        from datetime import datetime, timezone
+        from datetime import datetime
         ctl.update(
             status="done_with_errors" if res.get("warnings") else "done",
             stage="done", overall_progress=3,
@@ -432,11 +433,11 @@ def _run_account_import_job(job_id: str, user_id: int, zip_bytes: bytes) -> None
             usage_actual={"summary": {"scripts": res.get("scripts", 0),
                                        "saves": res.get("saves", 0),
                                        "cards": res.get("cards", 0)}},
-            finished_at=datetime.now(timezone.utc),
+            finished_at=datetime.now(UTC),
         )
     except Exception as exc:
-        from datetime import datetime, timezone
-        ctl.update(status="failed", error=str(exc)[:500], finished_at=datetime.now(timezone.utc))
+        from datetime import datetime
+        ctl.update(status="failed", error=str(exc)[:500], finished_at=datetime.now(UTC))
     finally:
         if acquired and sem is not None:
             sem.release()

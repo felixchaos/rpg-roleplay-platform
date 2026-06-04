@@ -12,12 +12,12 @@ if TYPE_CHECKING:
     from starlette.responses import Response
 
 
-def parse_gpc(request: "Request") -> bool:
+def parse_gpc(request: Request) -> bool:
     """返回 True 如果请求携带 Sec-GPC: 1 头。"""
     return request.headers.get("sec-gpc") == "1"
 
 
-def annotate_gpc(request: "Request", response: "Response") -> None:
+def annotate_gpc(request: Request, response: Response) -> None:
     """若请求携带 GPC 信号,在 response 中回写确认头。
 
     X-GPC-Acknowledged: 1 告知客户端:我们已收到 GPC 请求且默认不出售/共享数据。

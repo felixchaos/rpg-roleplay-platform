@@ -654,11 +654,13 @@ def _persist_digest(
     # 到不值得保留)。source='system' 标识机器写,跟 gm_generated / player_declared 区分。
     try:
         from agents.save_history import record_history_anchor
+
         # 幂等:同一 phase 可能被多次 compact(/compact 重做 + fire-and-forget + needs_rebuild
         # worker),record_history_anchor 是裸 INSERT 无去重 → 重复「【Phase N 浓缩】」累积,
         # list_recent_history(6) 被这些重复浓缩档挤占,玩家真实创世历史(importance≥60)被挤出
         # 注入窗口。写新档前先删本 phase 的旧 system phase_digest 锚点(只匹配本 phase,安全)。
-        from platform_app.db import connect as _conn, init_db as _initdb
+        from platform_app.db import connect as _conn
+        from platform_app.db import init_db as _initdb
         _initdb()
         with _conn() as _db:
             _db.execute(
@@ -679,7 +681,7 @@ def _persist_digest(
             turn_occurred=turn_end,
             tags=["phase_digest", "compact"],
             characters=[str(c) for c in chars[:10]],
-            locations=[str(l) for l in locs[:5]],
+            locations=[str(loc) for loc in locs[:5]],
             source="system",
             metadata={
                 "phase_index": phase_index,

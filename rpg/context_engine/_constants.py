@@ -12,6 +12,7 @@ WORLD_IDX = BASE / "indexes" / "world.json"
 # 128k / gemini 1M)能吃几十万 token → 小说正文/角色卡/世界书被严重截断,GM 写不出原著
 # 细节与文风、推进缓慢。这里整体放开到能装真正有用的素材;可用 RPG_CTX_SCALE 整体缩放。
 import os as _os
+
 try:
     _CTX_SCALE = max(0.25, float(_os.environ.get("RPG_CTX_SCALE", "1.0")))
 except (TypeError, ValueError):

@@ -18,7 +18,6 @@ endpoints:
 """
 from __future__ import annotations
 
-import json as _json
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -930,7 +929,7 @@ async def api_anchor_add(
         ).fetchone()
         if not new_row:
             return json_response(
-                {"ok": False, "error": f"story_phase+story_time_label 组合已存在"},
+                {"ok": False, "error": "story_phase+story_time_label 组合已存在"},
                 status_code=409,
             )
         after = dict(new_row)

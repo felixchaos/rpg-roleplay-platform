@@ -706,7 +706,7 @@ async def api_import_tavern_chat(request: Request, user=Depends(require_user)):
        "header": {...}, "preview": [first 3 commits]}
     """
     body = await request.json()
-    from .. import tavern_chats, save_io
+    from .. import save_io, tavern_chats
 
     jsonl_text = body.get("jsonl") or ""
     if not isinstance(jsonl_text, str) or not jsonl_text.strip():
@@ -828,7 +828,12 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
         api_id = body.get("api_id", "")
         base_url_override = (body.get("base_url_override") or "").strip()
         if not is_admin:
-            from model_registry import default_api_for, find_api, load_model_catalog, normalize_api_id
+            from model_registry import (
+                default_api_for,
+                find_api,
+                load_model_catalog,
+                normalize_api_id,
+            )
             normalized_api_id = normalize_api_id(api_id)
             catalog = load_model_catalog()
             known = bool(find_api(catalog, normalized_api_id) or default_api_for(normalized_api_id))
@@ -879,6 +884,7 @@ async def api_embedder_status(user=Depends(require_user)):
           - last_error_hint → 上次实际 embed 调用失败的友好描述(如 405 地址不支持)
     """
     import os as _os
+
     from .. import user_credentials
     from ..knowledge.embedding import embedding_preflight
     # task: 享受平台兜底的角色 — admin + vip_user(测试期高级用户)
@@ -931,6 +937,7 @@ async def api_test_credential(
       cached=True 标记结果来自缓存
     """
     import time as _time
+
     from .. import user_credentials
 
     # task: throttle — 同 user+api_id 60s 内复用结果
@@ -952,7 +959,7 @@ async def api_test_credential(
     # 找该 api_id 在 catalog 里的一个 enabled 模型(没传 model 时)
     if not model:
         try:
-            from model_registry import load_model_catalog, find_api, normalize_api_id
+            from model_registry import find_api, load_model_catalog, normalize_api_id
             catalog = load_model_catalog()
             # credential id (AgentPlatform) → catalog id (vertex_ai)
             catalog_api_id = "vertex_ai" if normalize_api_id(api_id) == "AgentPlatform" else api_id

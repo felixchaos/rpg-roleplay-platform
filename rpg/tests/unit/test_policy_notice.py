@@ -15,11 +15,8 @@ Cases:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 # ─────────────────────────── mock db ─────────────────────────────────────────
 
@@ -29,7 +26,7 @@ class MockDb:
     def __init__(self):
         self._store: dict[str, str] = {}  # key -> json str
 
-    def execute(self, sql: str, params=()) -> "MockCursor":
+    def execute(self, sql: str, params=()) -> MockCursor:
         sql_stripped = sql.strip().lower()
 
         if sql_stripped.startswith("select value from app_config"):
@@ -76,24 +73,24 @@ def make_db(**kwargs) -> MockDb:
 
 
 def future_dt(days: int = 31) -> datetime:
-    return datetime.now(timezone.utc) + timedelta(days=days)
+    return datetime.now(UTC) + timedelta(days=days)
 
 
 def past_dt(days: int = 1) -> datetime:
-    return datetime.now(timezone.utc) - timedelta(days=days)
+    return datetime.now(UTC) - timedelta(days=days)
 
 
 # ─────────────────────────── tests ───────────────────────────────────────────
 
+from cron.policy_notice import run_activate_due, run_dispatch_due
 from platform_app.policy_notice import (
+    _build_email,
     activate_notice,
     dispatch_notice,
     get_current_version,
     list_pending_notices,
     schedule_policy_change,
-    _build_email,
 )
-from cron.policy_notice import run_dispatch_due, run_activate_due
 
 
 def test_schedule_creates_pending():
@@ -185,7 +182,7 @@ def test_cron_dispatch_due_triggers_within_30d():
     db = make_db()
     db.set_users([{"email": "u@example.com", "lang": "zh-CN"}])
 
-    soon = datetime.now(timezone.utc) + timedelta(days=29)
+    soon = datetime.now(UTC) + timedelta(days=29)
     schedule_policy_change(db, "privacy-policy", "v1.3", "摘要", effective_at=soon)
 
     with patch("platform_app.email.RESEND_API_KEY", ""):
@@ -199,7 +196,7 @@ def test_cron_dispatch_due_skips_far_future():
     db = make_db()
     db.set_users([{"email": "u@example.com", "lang": "zh-CN"}])
 
-    far = datetime.now(timezone.utc) + timedelta(days=60)
+    far = datetime.now(UTC) + timedelta(days=60)
     schedule_policy_change(db, "privacy-policy", "v1.3", "摘要", effective_at=far)
 
     with patch("platform_app.email.RESEND_API_KEY", ""):
@@ -213,8 +210,8 @@ def test_cron_activate_due_activates_past_effective():
     db = make_db()
     db.set_users([])
 
-    past = datetime.now(timezone.utc) - timedelta(hours=1)
-    record = schedule_policy_change(db, "terms-of-service", "v3.0", "摘要", effective_at=past)
+    past = datetime.now(UTC) - timedelta(hours=1)
+    schedule_policy_change(db, "terms-of-service", "v3.0", "摘要", effective_at=past)
 
     with patch("platform_app.email.RESEND_API_KEY", ""):
         run_dispatch_due(db)  # 会立即发(past < now+30d)
@@ -227,7 +224,7 @@ def test_cron_activate_due_activates_past_effective():
 def test_cron_activate_due_skips_undispatched():
     """effective_at 已过但 dispatched_at IS NULL 的 notice 不应被激活。"""
     db = make_db()
-    past = datetime.now(timezone.utc) - timedelta(hours=1)
+    past = datetime.now(UTC) - timedelta(hours=1)
     schedule_policy_change(db, "terms-of-service", "v3.0", "摘要", effective_at=past)
 
     # 不触发 dispatch
@@ -238,7 +235,7 @@ def test_cron_activate_due_skips_undispatched():
 def test_build_email_zh():
     subject, body = _build_email(
         "privacy-policy", "v1.3", "修订数据保留期",
-        (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
+        (datetime.now(UTC) + timedelta(days=30)).isoformat(),
         is_zh=True,
     )
     assert "隐私政策" in subject
@@ -252,7 +249,7 @@ def test_build_email_zh():
 def test_build_email_en():
     subject, body = _build_email(
         "terms-of-service", "v2.0", "major update",
-        (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
+        (datetime.now(UTC) + timedelta(days=30)).isoformat(),
         is_zh=False,
     )
     assert "Terms of Service" in subject

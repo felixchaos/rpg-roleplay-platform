@@ -4,8 +4,8 @@
 只靠 content_pack.id 会让剧本级旋钮对大多数存档静默失效 → 必须有 _active_save_id
 → game_saves.script_id 的权威兜底。
 """
-import types
 import contextlib
+import types
 
 from agents.gm.master import GameMaster
 

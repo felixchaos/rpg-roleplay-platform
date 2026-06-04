@@ -14,4 +14,6 @@ def test_fingerprint_distinguishes_content_and_counts():
 
 
 if __name__ == "__main__":
-    test_fingerprint_whitespace_invariant(); test_fingerprint_distinguishes_content_and_counts(); print("OK")
+    test_fingerprint_whitespace_invariant()
+    test_fingerprint_distinguishes_content_and_counts()
+    print("OK")

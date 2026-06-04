@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 import os
 import random
 import string
+import sys
 from pathlib import Path
 
 import pytest
@@ -36,7 +36,7 @@ os.environ.setdefault("RPG_REQUIRE_AUTH", "1")
 @pytest.fixture(scope="module")
 def db_conn():
     """返回 psycopg Connection（dict_row）。"""
-    from platform_app.db import init_db, connect
+    from platform_app.db import connect, init_db
     init_db()
     with connect() as db:
         yield db
@@ -181,7 +181,7 @@ def test_user_delete_own_unreviewed(db_conn):
         assert f2 is None
 
         # consent_log 保留
-        cl = db.execute(
+        db.execute(
             "select 1 from feedback_consent_log where user_id = %s", (uid,)
         ).fetchone()
         # consent_log 在本测试未插入（此 case 只测 feedback 删除）

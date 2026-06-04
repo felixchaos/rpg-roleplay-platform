@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -759,7 +758,7 @@ def resplit_script(
         _validate_custom_pattern(custom_pattern)
 
     text, encoding = chapter_splitter.decode_bytes(raw)
-    cleaned = chapter_splitter.clean_text(text)
+    chapter_splitter.clean_text(text)
     chapters, report = chapter_splitter.split_chapters_with_report(
         text, split_rule=split_rule or "auto",  # 传未清洗文本: with_report 内部清洗并计入 cleaning 报告
         custom_pattern=custom_pattern or "",
@@ -817,7 +816,6 @@ def resplit_script(
 import json as _json
 import secrets as _secrets
 import time as _t
-
 
 # ── 跨平台 meta.json 文件锁 ────────────────────────────────────────────────
 # put_chunk 对同一 upload 的 meta.json 做 read-modify-write,需串行化。原实现用

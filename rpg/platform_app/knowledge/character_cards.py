@@ -5,7 +5,7 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from platform_app.api._card_dto import card_page_payload, card_to_dto
-from platform_app.db import connect, expose, init_db, limit_value, page_payload
+from platform_app.db import connect, init_db, limit_value, page_payload
 from platform_app.knowledge._character_cards_repo import (
     _db_delete_character_card,
     _db_get_character_card,

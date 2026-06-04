@@ -12,10 +12,8 @@ from __future__ import annotations
 
 import logging
 import sys
-import types
 import unittest
-from unittest.mock import MagicMock, call, patch
-
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -60,7 +58,6 @@ class TestEmbedRecallConsistency(unittest.TestCase):
 
     def setUp(self):
         # 清理进程内 cache，防止跨 test 污染
-        import importlib
         # 强制重新加载 _search 以清空 module-level cache
         if "platform_app.knowledge._search" in sys.modules:
             mod = sys.modules["platform_app.knowledge._search"]
@@ -174,7 +171,7 @@ class TestEmbedRecallConsistency(unittest.TestCase):
         dispatch_calls = _patch_embed_provider_dispatch(embed_mod, return_vec=[[0.3] * 3])
 
         # user_id=7 理论上有 BYOK cohere，但 force 应覆盖
-        with patch.object(embed_mod, "_resolve_embed_config", return_value=("cohere", "embed-v3", "COHERE_KEY", "")) as mock_resolve:
+        with patch.object(embed_mod, "_resolve_embed_config", return_value=("cohere", "embed-v3", "COHERE_KEY", "")):
             result = embed_mod.embed_query(
                 "hello",
                 user_id=7,

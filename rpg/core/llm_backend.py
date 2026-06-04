@@ -11,8 +11,6 @@
 """
 from __future__ import annotations
 
-from typing import Optional
-
 
 def detect_default_api() -> str:
     """启动时检测可用 backend: 优先 vertex_ai (SA 文件), 然后 anthropic (env key)."""
@@ -27,7 +25,7 @@ def detect_default_api() -> str:
     return "vertex_ai"  # 默认仍兜底 vertex,失败时调用方走 fallback
 
 
-def first_user_model(user_id: Optional[int], api_id: str | None = None) -> tuple[str, str] | None:
+def first_user_model(user_id: int | None, api_id: str | None = None) -> tuple[str, str] | None:
     """Return the first model backed by this user's own credential.
 
     Production must not fall back to the global selected model if the user has
@@ -122,9 +120,9 @@ def first_user_model(user_id: Optional[int], api_id: str | None = None) -> tuple
 
 
 def resolve_preferred_model(
-    user_id: Optional[int],
+    user_id: int | None,
     pref_key: str = "set_parser.model_real_name",
-) -> Optional[str]:
+) -> str | None:
     """从用户偏好推断该用户应该用的 model。
 
     Args:
@@ -149,9 +147,9 @@ def resolve_preferred_model(
 
 
 def resolve_preferred_api(
-    user_id: Optional[int],
+    user_id: int | None,
     pref_key: str = "set_parser.api_id",
-) -> Optional[str]:
+) -> str | None:
     """从用户偏好推断该用户应该用的 API provider。
 
     Args:

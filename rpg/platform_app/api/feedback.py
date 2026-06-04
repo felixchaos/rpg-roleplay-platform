@@ -22,7 +22,6 @@ consent_token 设计:
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 
@@ -71,7 +70,7 @@ async def submit_feedback(request: Request, user=Depends(require_user)):
     try:
         int(consent_token, 16)
     except ValueError:
-        raise HTTPException(status_code=400, detail="consent_token 不是合法的 hex 字符串")
+        raise HTTPException(status_code=400, detail="consent_token 不是合法的 hex 字符串") from None
 
     # ── 校验总长 50KB ─────────────────────────────────────────────────────────
     excerpts_raw = json.dumps(excerpts, ensure_ascii=False)
@@ -365,7 +364,7 @@ async def admin_feedback_decision(
     nsfw_terminate 时走现有 /api/admin/users/{id}/terminate 逻辑。
     """
     body = await request.json()
-    ip = _client_ip(request)
+    _client_ip(request)
     decision = body.get("decision", "")
     notes = body.get("notes", "") or ""
 

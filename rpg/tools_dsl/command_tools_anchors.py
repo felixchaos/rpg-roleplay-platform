@@ -457,8 +457,9 @@ def _t_claim_protagonist_pov(user_id: int, args: dict) -> str:
     save_id = int(save_id_raw)
     explicit_name = (args.get("original_protag_name") or "").strip()
     try:
-        from platform_app.db import connect, init_db
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect, init_db
         init_db()
         with connect() as db:
             if not _own_save(db, save_id, user_id):
@@ -552,8 +553,9 @@ def _t_revoke_protagonist_pov(user_id: int, args: dict) -> str:
     if not name:
         return "失败: original_protag_name 必填"
     try:
-        from platform_app.db import connect, init_db
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect, init_db
         init_db()
         with connect() as db:
             if not _own_save(db, save_id, user_id):

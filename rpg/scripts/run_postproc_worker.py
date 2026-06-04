@@ -77,7 +77,8 @@ async def _handle_phase_digest(payload: dict[str, Any]) -> None:
 async def _handle_acceptance_verifier(payload: dict[str, Any]) -> None:
     """跑 acceptance verifier,把 unmet 写到 audit_log。"""
     try:
-        from app import _acceptance_verifier_mode as _avm, _verify_acceptance as _va
+        from app import _acceptance_verifier_mode as _avm
+        from app import _verify_acceptance as _va
         curator_plan = payload.get("curator_plan") or {}
         acceptance = curator_plan.get("acceptance") or []
         gm_output = payload.get("gm_output") or ""
@@ -204,7 +205,7 @@ async def consume(conn: psycopg.Connection) -> None:
             raw = conn.fileno()
             readable, _, _ = select.select([raw], [], [], POLL_TIMEOUT_SEC)
             if readable:
-                conn.notifies  # consume pending notifies
+                _ = conn.notifies  # consume pending notifies
             continue
 
         for row in rows:
