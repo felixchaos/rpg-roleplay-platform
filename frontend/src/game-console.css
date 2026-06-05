@@ -1477,7 +1477,8 @@
 
 /* ── 移动端：右栏抽屉化 (<768px) ── */
 @media (max-width: 768px) {
-  /* 浮动开关按钮在手机端隐藏，防止误触 */
+  /* 浮动开关按钮在手机端隐藏,防误触 —— 顶栏右侧 .gc-topbar-expand-right(<)
+     在面板收起时即为唯一且足够的入口(topbar 溢出已修,该按钮在手机端可达)。 */
   .gc-float-panel-btn {
     display: none !important;
   }

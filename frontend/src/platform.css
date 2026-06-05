@@ -1535,14 +1535,20 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
   background: var(--panel);
 }
 
-/* 平台资源 2×2 网格（手机端强制双列，不依赖 Cloudscape 响应式） */
+/* 平台资源网格：桌面 4 列(对齐原 Cloudscape columns={4}),手机端塌成 2×2。
+   不依赖 Cloudscape 响应式(它在窄屏会塌成单列 1×4,太长)。 */
 .pl-resources-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
 }
 .pl-resources-grid > div {
   min-width: 0;
+}
+@media (max-width: 600px) {
+  .pl-resources-grid {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .pl-me-avatar {
