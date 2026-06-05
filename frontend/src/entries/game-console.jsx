@@ -1278,6 +1278,11 @@ function App() {
   const onDismissConfirm = (target) => {
     setPendingWrites((arr) => arr.filter(_matchPending(target)));
     setPendingQuestions((arr) => arr.filter(_matchPending(target)));
+    // 关闭后写入 sessionStorage,刷新页面后自动恢复(关闭标签页重置)
+    try {
+      const qKey = `gc.dismiss.q.${target.id ?? ''}`;
+      sessionStorage.setItem(qKey, '1');
+    } catch (_) {}
   };
 
   useEffect(() => {
@@ -1445,7 +1450,10 @@ function App() {
           )
         )}
         <div className="gc-foot-wrap">
-          <ConfirmStrip pendingWrites={pendingWrites} pendingQuestions={pendingQuestions} onApprove={onApprove} onReject={onReject} onAnswer={onAnswerQuestion} onDismiss={onDismissConfirm}
+          <ConfirmStrip pendingWrites={pendingWrites}
+            pendingQuestions={pendingQuestions.filter(q => {
+              try { return !sessionStorage.getItem(`gc.dismiss.q.${q.id ?? ''}`); } catch { return true; }
+            })} onApprove={onApprove} onReject={onReject} onAnswer={onAnswerQuestion} onDismiss={onDismissConfirm}
             clicheNotice={clicheNotice}
             onRetryCliche={() => { setClicheNotice(null); onRetry(); }}
             onDismissCliche={() => setClicheNotice(null)} />
