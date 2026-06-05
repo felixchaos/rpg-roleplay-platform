@@ -55,6 +55,7 @@ from platform_app.branches.commits import (
 # ── deletion ───────────────────────────────────────────────────────────────────
 from platform_app.branches.deletion import (
     delete_subtree,
+    rewind_last_round,
     rollback_to_message,
 )
 
@@ -131,5 +132,5 @@ __all__ = [
     "bootstrap_runtime_binding", "mark_runtime_dirty",
     "persist_runtime_state", "record_runtime_turn",
     # deletion
-    "delete_subtree", "rollback_to_message",
+    "delete_subtree", "rollback_to_message", "rewind_last_round",
 ]
