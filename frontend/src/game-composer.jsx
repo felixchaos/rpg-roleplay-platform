@@ -448,7 +448,7 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
   });
 
   // 选中态必须与底部标签(_currentModelLabel)同源,否则会"勾在 A、底部显示 B"。
-  // 优先级:current(localModel,点击后乐观更新) > 存档 session_model > gameState.app > catalog.selected。
+  // 优先级:current(localModel,点击后乐观更新) > 存档 session_model > catalog.selected > gameState.app。
   const _sessionModel = gameState && gameState.session_model;
   const selected = (catalog && catalog.selected) || {};
   let selectedKey = "";
@@ -459,10 +459,10 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
   if (!selectedKey) {
     if (_sessionModel && _sessionModel.api_id && _sessionModel.model_id) {
       selectedKey = `${_sessionModel.api_id}::${_sessionModel.model_id}`;
-    } else if (gameState && gameState.app && gameState.app.model_real_name) {
-      selectedKey = `${gameState.app.api_id || ""}::${gameState.app.model_real_name || ""}`;
     } else if (selected.api_id && selected.model_id) {
       selectedKey = `${selected.api_id}::${selected.model_id}`;
+    } else if (gameState && gameState.app) {
+      selectedKey = `${gameState.app.api_id || ""}::${gameState.app.model_real_name || ""}`;
     }
   }
 
