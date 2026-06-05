@@ -326,15 +326,20 @@
 .gc-main {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   background: var(--bg);
   overflow: hidden;
+  contain: inline-size;
 }
 .gc-main > * {
   max-width: 100%;
   box-sizing: border-box;
 }
+/* 搜索抽屉：结果行 pill 紧凑不撑宽 */
+.pl-modal-form .pl-setting-row { display: flex; gap: 8px; align-items: flex-start; }
+.pl-modal-form .pill { max-width: 42px; justify-content: center; white-space: nowrap; }
 .gc-topbar {
   /* Bug 1 fix: !important 防止任何 sonnet G 留下的 media query 误把 topbar
      整段 display:none。topbar 是核心导航，永远要可见。 */
@@ -1472,9 +1477,9 @@
 
 /* ── 移动端：右栏抽屉化 (<768px) ── */
 @media (max-width: 768px) {
-  /* 浮动开关按钮始终显示，供用户唤起右栏 */
+  /* 浮动开关按钮在手机端隐藏，防止误触 */
   .gc-float-panel-btn {
-    display: flex !important;
+    display: none !important;
   }
 
   /* ══ 右栏 = 底部 sheet (手机原生重设计,取代"桌面面板搬进侧抽屉") ══
@@ -1598,8 +1603,8 @@
 @media (max-width: 720px) {
   /* 左 rail 已在上面的 768px 块改为汉堡抽屉(position:fixed 脱离文档流),
      这里不再压 56px、不再隐藏 sections。聊天区天然全宽。*/
-  .gc-chat-inner { width: calc(100% - 24px); }
-  .gc-foot-wrap { padding: 0 12px 12px; }
+  .gc-chat-inner { width: calc(100% - 32px); }
+  .gc-foot-wrap { padding: 0 16px 12px; }
   .gc-cmd-menu { width: calc(100vw - 36px); }
   .gc-cmd-cols { grid-template-columns: 1fr; }
   .gc-attach-menu { width: calc(100vw - 36px); }
@@ -1608,13 +1613,18 @@
 
 /* ── 手机界面适配：防止文字/按钮超出显示区域 ──────────────────── */
 @media (max-width: 600px) {
-  .gc-chat-inner { width: calc(100% - 16px); }
-  .gc-foot-wrap { padding: 0 8px 8px; }
+  .gc-chat-inner { width: calc(100% - 32px); }
+  .gc-foot-wrap { padding: 0 16px 8px; }
   .gc-msg-body { word-break: break-word; overflow-wrap: break-word; }
   .gc-msg-gm .gc-msg-body { padding-left: 10px; }
   .gc-msg-player .gc-msg-body { padding: 8px 10px; }
   /* composer 输入框不溢出 */
   .gc-composer { flex-wrap: wrap; }
+  /* 底部操作栏：单行横排，隐藏 Enter 换行切换 */
+  .gc-composer-bottom { flex-wrap: nowrap !important; }
+  .gc-composer-right .muted-2 { display: none !important; }
+  .gc-composer-right .iconbtn.active { display: none !important; }
+  .gc-composer-right { flex-shrink: 0; gap: 6px; }
   .gc-composer textarea,
   .gc-composer input { max-width: 100%; box-sizing: border-box; }
   /* 按钮不要溢出 */

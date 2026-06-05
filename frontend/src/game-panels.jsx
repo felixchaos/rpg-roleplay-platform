@@ -1923,7 +1923,7 @@ function RightPanel({ state, activeTab, setActiveTab, sidebarWidth, density, col
   return (
     <aside className={`gp-panel ${collapsed ? "collapsed" : ""}`} style={{width: collapsed ? 0 : sidebarWidth}} aria-hidden={collapsed}>
       {!collapsed && resizeHandle}
-      <div className="gp-panel-inner" style={{width: sidebarWidth}}>
+      <div className="gp-panel-inner">
         <header className="gp-panel-head">
           <div className="gp-tabs">
             <button className="iconbtn gp-collapse-btn" onClick={onToggle} data-tip={t('game.panel.collapse_tip')} data-tip-pos="below">
