@@ -220,3 +220,99 @@ def rollback_to_message(
     }
     result["trash_ref"] = (expose(trash_ref) if trash_ref else None)
     return result
+
+
+def rewind_last_round(user_id: int, save_id: int) -> dict[str, Any] | None:
+    """反馈#42 — 重写型 /set 专用:把最近一个回合(round)整体软回滚。
+
+    与 rollback_to_message 同策略(移动活跃指针 + trash ref 保活旧回合 + 清理本回合
+    messages/anchors/context_runs/phase_digests),但**不需要 message_index**,固定回滚
+    "当前活跃回合",并额外**返回回退后的状态快照 + 被回滚回合的原始玩家输入**,供 chat
+    pipeline 在纠正后的状态下用原输入重演本轮(避免被纠正的旧叙事留在上下文里让 GM 圆场)。
+
+    无可回滚回合(活跃指针指向根节点 / 缺失)时返回 None,调用方应退化为普通 /set。
+    """
+    init_db()
+    with connect() as db:
+        acquire_save_advisory_lock(db, save_id, user_id)
+        save = db.execute(
+            "select * from game_saves where id = %s and user_id = %s",
+            (save_id, user_id),
+        ).fetchone()
+        if not save:
+            raise ValueError("无权访问该存档,或存档不存在")
+        active_id = save.get("active_commit_id") or save.get("active_branch_node_id")
+        if not active_id:
+            return None
+        cur = db.execute(
+            "select * from branch_commits where id = %s and save_id = %s",
+            (active_id, save_id),
+        ).fetchone()
+        if not cur:
+            return None
+        cur = round_start_node(db, cur)
+        if cur.get("parent_id") is None or str(cur.get("kind") or "") == "root":
+            return None  # 根节点,没有上一轮可回滚
+        parent = db.execute(
+            "select * from branch_commits where id = %s and save_id = %s",
+            (cur["parent_id"], save_id),
+        ).fetchone()
+        if not parent:
+            return None
+
+        deleted_turn = int(cur.get("turn_index") or 0)
+        redo_input = str(cur.get("player_input") or "")
+
+        # 旧回合进 trash ref(可恢复,不硬删 commit)
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        trash_ref = _upsert_ref(
+            db, save_id, f"refs/trash/{ts}-rewrite", cur["id"],
+            active=False, kind="trash",
+        )
+        # 活跃指针软回退到 parent
+        new_ref = _find_or_create_ref_for_commit(db, user_id, parent)
+        _set_save_active(db, save_id, parent["id"], new_ref["id"])
+        _write_checkout(db, user_id, save_id, new_ref["id"], parent["id"])
+
+        # 清理本回合的派生数据(让前端 reload / 历史段重建都看不到被回滚的旧叙事)
+        deleted_messages = db.execute(
+            "delete from messages where save_id = %s and turn >= %s returning id",
+            (save_id, deleted_turn),
+        ).fetchall()
+        deleted_anchors = db.execute(
+            "delete from save_timeline_anchors where save_id = %s and turn_index >= %s returning id",
+            (save_id, deleted_turn),
+        ).fetchall()
+        db.execute(
+            """
+            delete from context_runs
+            where session_id in (select id from game_sessions where save_id = %s)
+              and turn >= %s
+            """,
+            (save_id, deleted_turn),
+        )
+        for ph in db.execute(
+            "select id, turn_start, turn_end from save_phase_digests "
+            "where save_id = %s and turn_end >= %s",
+            (save_id, deleted_turn),
+        ).fetchall():
+            if int(ph["turn_start"]) >= deleted_turn:
+                db.execute("delete from save_phase_digests where id = %s", (ph["id"],))
+            else:
+                db.execute(
+                    "update save_phase_digests set turn_end = %s, updated_at = now() where id = %s",
+                    (deleted_turn - 1, ph["id"]),
+                )
+
+        reverted_state = commit_state(parent)
+
+    return {
+        "ok": True,
+        "reverted_state": reverted_state,
+        "redo_player_input": redo_input,
+        "restored_turn": int(parent.get("turn_index") or 0),
+        "deleted_turn": deleted_turn,
+        "deleted_messages": len(deleted_messages or []),
+        "deleted_anchors": len(deleted_anchors or []),
+        "trash_ref": (expose(trash_ref) if trash_ref else None),
+    }

@@ -920,6 +920,24 @@ function App() {
             return { ...r, rawSteps, publicStage: nextStageId, label: nextLabel, detail: '' };
           });
         },
+        on_rewind: (data) => {
+          // 反馈#42: 重写型 /set —— 后端已回滚上一轮并将以"上一轮的原始输入"在纠正后的状态下
+          // 重演本轮。前端同步抹掉乐观插入的 /set 气泡 + 被回滚的那一轮(assistant+user),换上
+          // 重演用的原始输入气泡,随后到来的 GM token 会开一条新的 assistant 气泡。
+          resetInactivityTimer();
+          logEvent('rewind', data);
+          const replayUser = (data && data.replay_user) || '';
+          setHistory((h) => {
+            const arr = h.slice();
+            if (arr.length && arr[arr.length - 1].role === 'user') arr.pop();        // 乐观的 /set 气泡
+            if (arr.length && arr[arr.length - 1].role === 'assistant') arr.pop();   // 被回滚轮的 GM 回复
+            if (arr.length && arr[arr.length - 1].role === 'user') arr.pop();        // 被回滚轮的玩家输入
+            if (replayUser) arr.push({ role: 'user', content: replayUser, ts });
+            return arr;
+          });
+          openedAssistant = false;
+          window.__apiToast?.('已回滚上一轮，按你的修正重演…', { kind: 'info', duration: 2500 });
+        },
         on_updates: (data) => {
           logEvent('updates', data);
           const stage = data && data.stage;

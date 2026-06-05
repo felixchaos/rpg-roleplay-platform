@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -301,6 +302,46 @@ async def apply_player_directives_phase(
             })
         ctx.early_return = True
         return
+
+    # 反馈#42: 重写型 /set —— 玩家 /set 纠正设定并要求"重新RP/重写/重来/重演"时,旧的
+    # (被纠正的)那轮叙事如果留在上下文里,GM 下一稿只能编借口圆回去或突然改口,破坏沉浸感。
+    # 确定性修复:把上一轮整体软回滚(移活跃指针到父 commit + trash 旧回合 + 清本回合 messages/
+    # anchors/digests),把内存状态退回到上一轮之前,再让下面的 /set 在这个干净基线上应用,最后
+    # 用"上一轮的原始玩家输入"在纠正后的状态下重演本轮(而不是把 /set 文本本身喂给 GM)。
+    _REWRITE_SET_RE = r"重新\s*(rp|演|叙述|描述|生成|回应|回复|来|讲|写|说)|重写|重来|重演|\bredo\b"
+    _set_body_for_rewrite = ""
+    if os.getenv("RPG_REWRITE_SET", "1") != "0":
+        for _p in ("/set", "/设定", "/设置"):
+            if _msg_stripped.startswith(_p):
+                _set_body_for_rewrite = _msg_stripped[len(_p):]
+                break
+    if (_set_body_for_rewrite and ctx.early_active_save_id and api_user
+            and re.search(_REWRITE_SET_RE, _set_body_for_rewrite, re.IGNORECASE)):
+        try:
+            from platform_app.branches.deletion import rewind_last_round
+            _rw = rewind_last_round(int(api_user["id"]), int(ctx.early_active_save_id))
+            _redo = (str((_rw or {}).get("redo_player_input") or "")).strip()
+            # 被回滚轮的原始输入若为空 / 本身又是斜杠命令,放弃重演(退化为普通 /set)
+            if _rw and _redo and not _redo.startswith("/"):
+                # 内存状态整体退回到上一轮之前(含 history/turn/world/memory/...),后面的 /set
+                # 解析与应用都在这个纠正基线上发生。原对象身份保留,下游 phase 持有的引用仍有效。
+                state.data.clear()
+                state.data.update(_rw["reverted_state"])
+                # clear() 抹掉了前面写入的私有键,重新挂回 save_id(history_messages 取 phase digest 要用)
+                if ctx.early_active_save_id:
+                    state.data["_active_save_id"] = int(ctx.early_active_save_id)
+                # 下游 context/GM/persist 改用"原始输入"重演本轮;"/set"文本只在本 phase 用于解析指令
+                ctx.message_for_model = _redo
+                directive_updates.append(
+                    f"/set 重写:已回滚上一轮(turn {_rw.get('deleted_turn')})并按修正后的设定重演本轮"
+                )
+                yield ("rewind", {
+                    "replay_user": _redo,
+                    "restored_turn": _rw.get("restored_turn"),
+                    "reason": "rewrite_set",
+                })
+        except Exception as _rw_err:
+            log.warning(f"[chat] rewrite-set rewind failed, fallback to plain /set: {_rw_err}")
 
     # step 2: /set 工具化路径
     if _is_set_command:
