@@ -1569,6 +1569,7 @@
      改成:rail 默认滑出屏幕左侧,顶栏汉堡(.gc-nav-toggle)唤起,backdrop 点击关闭。
      抽屉里 sections 全部可见,是真正的移动导航而非压缩的桌面侧栏。*/
   .gc-nav-toggle { display: inline-flex !important; }
+  .gc-topbar-expand { display: none !important; }
   .gc-rail {
     position: fixed !important;
     top: 0; left: 0; bottom: 0;
@@ -1584,6 +1585,7 @@
   .gc-rail .gc-rail-section,
   .gc-rail .gc-rail-foot,
   .gc-rail .gc-brand-text { display: revert; }
+  .gc-rail.collapsed .gc-rail-inner { opacity: 1; transform: none; }
   .gc-rail-resize-handle, .gc-rail-collapsed-toggle { display: none !important; }
   /* 打开态:滑入 + 阴影 + 可交互(覆盖 collapsed 的 pointer-events:none) */
   .gc-rail.gc-rail-mobile-open {
