@@ -20,6 +20,7 @@ model_probe.py — API 探测：远端模型列表 + 可用性 + 定价
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -266,7 +267,6 @@ def list_remote_models(
 def _list_vertex_models(api: dict[str, Any], user_id: int | None = None) -> list[dict[str, Any]]:
     """列出 Vertex 可用 Gemini 模型。user_id 非 None 时优先使用用户 BYOK SA。"""
     from google import genai
-
     from core.vertex_sa import load_sa_credentials
 
     creds, project_id = load_sa_credentials(user_id)
@@ -314,43 +314,18 @@ def _resolve_provider_key(api: dict[str, Any], user_id: int | None) -> str:
 
 
 def _list_anthropic_models(api: dict[str, Any], user_id: int | None = None) -> list[dict[str, Any]]:
-    from anthropic import Anthropic, APIStatusError
+    from anthropic import Anthropic
     key = _resolve_provider_key(api, user_id)
-    base_url = api.get("base_url") or None
-    client_kwargs: dict[str, Any] = {"api_key": key}
-    if base_url:
-        client_kwargs["base_url"] = base_url
-    client = Anthropic(**client_kwargs)
-    try:
-        models = []
-        for m in client.models.list():
-            models.append({
-                "id": m.id,
-                "real_name": m.id,
-                "display_name": getattr(m, "display_name", m.id),
-                "created_at": str(getattr(m, "created_at", "")),
-            })
-        return models
-    except (APIStatusError, Exception) as exc:
-        # 如果 Anthropic 端点不支持 /v1/models（如 DeepSeek Anthropic 兼容端点返回 404），
-        # 且该 provider 与某个 OpenAI 兼容端点共享同一 API key（credential_env 含 DEEPSEEK 等），
-        # 则降级到 OpenAI 兼容方式列模型。
-        api_id = (api.get("id") or "").lower()
-        env_name = (api.get("credential_env") or "").upper()
-        is_deepseek_family = "deepseek" in api_id or "DEEPSEEK" in env_name
-        if is_deepseek_family:
-            try:
-                return _list_openai_compat_models({
-                    "id": api.get("id", "deepseek-anthropic"),
-                    "base_url": "https://api.deepseek.com/v1",
-                    "credential_env": api.get("credential_env", "DEEPSEEK_API_KEY"),
-                }, user_id=user_id)
-            except Exception:
-                pass
-        # 对于其他 Anthropic 端点或降级也失败的情况，抛原始异常
-        raise RuntimeError(
-            f"列模型失败（{type(exc).__name__}）: {exc}"
-        ) from exc
+    client = Anthropic(api_key=key)
+    models = []
+    for m in client.models.list():
+        models.append({
+            "id": m.id,
+            "real_name": m.id,
+            "display_name": getattr(m, "display_name", m.id),
+            "created_at": str(getattr(m, "created_at", "")),
+        })
+    return models
 
 
 def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) -> list[dict[str, Any]]:
@@ -476,8 +451,7 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
     # 服务器模式强制：必须有 user-scoped 凭证才能真实发请求（避免烧服务端凭证）
     if _require_user_credential():
         # vertex_ai BYOK 存在 "AgentPlatform" 这个 api_id 下，需要特殊处理
-        from model_registry import find_api
-        from model_registry import load_model_catalog as _lmc
+        from model_registry import find_api, load_model_catalog as _lmc
         _kind = (find_api(_lmc(), api_id) or {}).get("kind", api_id)
         if _kind == "vertex_ai":
             from core.vertex_sa import has_user_sa

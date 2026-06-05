@@ -305,13 +305,7 @@ class GameMaster:
         self._backend: _AnthropicBackend | _VertexBackend | _OpenAICompatBackend
 
         if kind == "anthropic":
-            self._backend = _AnthropicBackend(
-                model=model,
-                user_id=user_id,
-                base_url=(api or {}).get("base_url") or None,
-                credential_env=(api or {}).get("credential_env") or "ANTHROPIC_API_KEY",
-                api_id=api_id or "anthropic",
-            )
+            self._backend = _AnthropicBackend(model=model, user_id=user_id)
         elif kind == "vertex_ai":
             # 传 user_id → load_sa_credentials 优先走用户 BYOK SA
             self._backend = _VertexBackend(model=model, user_id=user_id)

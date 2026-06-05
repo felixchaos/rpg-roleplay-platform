@@ -1842,11 +1842,6 @@ const PROVIDERS_CONFIG = [
     keyEnv: "DEEPSEEK_API_KEY",
   },
   {
-    id: "deepseek-anthropic", name: "DeepSeek (Anthropic)", kind: "native",
-    defaultBase: "https://api.deepseek.com/anthropic",
-    keyEnv: "DEEPSEEK_API_KEY",
-  },
-  {
     id: "xai",          name: "xAI (Grok)",     kind: "openai_compat",
     defaultBase: "https://api.x.ai/v1",
     keyEnv: "XAI_API_KEY",
@@ -1928,7 +1923,7 @@ function ProviderConfigSection() {
       }
       if (baseUrl !== undefined) {
         const cfg = PROVIDERS_CONFIG.find((p) => p.id === providerId);
-        const kind = providerId === "AgentPlatform" ? "vertex_ai" : providerId === "anthropic" ? "anthropic" : providerId === "deepseek-anthropic" ? "anthropic" : "openai_compat";
+        const kind = providerId === "AgentPlatform" ? "vertex_ai" : providerId === "anthropic" ? "anthropic" : "openai_compat";
         await window.api.models.upsertApi({ api_id: catalogApiIdForCredential(providerId), base_url: baseUrl, kind, display_name: cfg?.name || providerId });
       }
       window.__apiToast?.(t('settings.providers.save_ok'), { kind: "ok", duration: 1800 });
