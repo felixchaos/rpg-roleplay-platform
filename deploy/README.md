@@ -23,6 +23,11 @@
 若 Docker Compose 的 `DATABASE_URL` 指向 pgbouncer:6432，启动前请先用直连跑一次 `migrate full`，
 或确保 `RPG_SKIP_AUTO_MIGRATE=1` 且 docker exec 进容器用直连 URL 跑 migrate。
 
+> **pgvector**：`migrate full` 会在跑 versioned migrations *之前* 自动 `create extension if not exists vector`
+> （`pgvector/pgvector:pg16` 镜像里 `rpg` 用户是该库 superuser，建扩展可成功），所以 docker 部署无需
+> 手动建扩展。若用的是无建扩展权限的托管 Postgres，请先以管理员执行 `CREATE EXTENSION vector;` 再迁移，
+> 否则向量列会被静默跳过、语义检索退化为关键词匹配。
+
 ---
 
 ## 架构概览

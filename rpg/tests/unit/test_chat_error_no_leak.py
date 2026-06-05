@@ -29,6 +29,30 @@ class ChatErrorNoLeak(unittest.TestCase):
         self.assertNotIn("/opt/rpg-roleplay", msg)
         self.assertNotIn(".env", msg)
 
+    def test_known_vertex_config_error_is_actionable(self):
+        exc = RuntimeError(
+            "未找到 Vertex AI Service Account。"
+            "请在「设置 → API & 模型 → Agent Platform」上传自己的 SA JSON 文件。"
+        )
+        msg = _client_safe_error(exc)
+        self.assertIn("未找到 Vertex AI Service Account", msg)
+        self.assertIn("Agent Platform", msg)
+        self.assertTrue(re.search(r"[0-9a-f]{8}", msg), "缺 error_id")
+
+    def test_invalid_byok_key_is_actionable_without_raw_sdk_detail(self):
+        exc = RuntimeError(
+            "Error code: 401 - {'error': {'message': 'Incorrect API key provided: 123. "
+            "You can find your API key at https://platform.openai.com/account/api-keys.', "
+            "'type': 'invalid_request_error', 'code': 'invalid_api_key'}}"
+        )
+        msg = _client_safe_error(exc)
+        self.assertIn("API Key 无效或已过期", msg)
+        self.assertIn("API 设置", msg)
+        self.assertNotIn("123", msg)
+        self.assertNotIn("platform.openai.com", msg)
+        self.assertNotIn("invalid_request_error", msg)
+        self.assertTrue(re.search(r"[0-9a-f]{8}", msg), "缺 error_id")
+
     def test_source_no_raw_str_exc_to_client_sse(self):
         # 两处 client-facing SSE error 不应再直传 str(exc)
         self.assertNotIn('_sse("error", {"message": str(exc)', SRC,

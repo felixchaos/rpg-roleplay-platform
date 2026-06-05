@@ -5,7 +5,7 @@ migrate.py — 独立数据库迁移 CLI
   python -m platform_app.migrate status        # 看当前 schema 版本和待应用列表
   python -m platform_app.migrate up            # 应用所有待应用 migration（增量升级）
   python -m platform_app.migrate baseline      # 仅跑基线 CREATE TABLE（首次部署，低层调用）
-  python -m platform_app.migrate full          # baseline + up + pgvector（首次 fresh DB 推荐）
+  python -m platform_app.migrate full          # baseline + pgvector + up（首次 fresh DB 推荐）
   python -m platform_app.migrate check         # 仅做版本检查，落后则 exit(1)
 
 !! 必须在 rpg/ 目录下运行（模块查找依赖工作目录），不是仓库根 !!
@@ -70,9 +70,13 @@ def cmd_baseline(args) -> int:
 def cmd_full(args) -> int:
     with _db._migration_advisory_lock():
         _db._do_init_db()
-        _db._apply_versioned_migrations()
+        # pgvector 必须在 versioned migrations *之前* 启用。v10/v18/v40 等用
+        # `if exists(select 1 from pg_extension where extname='vector')` 条件块建
+        # embedding_vec 向量列；扩展未启时这些块静默跳过，但 migration 仍被标记 applied，
+        # 之后再启扩展也不会回头补列 → fresh DB 向量列永久缺失、语义检索静默退化为 ILIKE。
         pg = _db.try_enable_pgvector()
-    print(f"[ok] 基线 + migration 完成；pgvector: {pg}")
+        _db._apply_versioned_migrations()
+    print(f"[ok] 基线 + pgvector + migration 完成；pgvector: {pg}")
     return cmd_status(args)
 
 
@@ -92,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("status", help="列出 migration 状态").set_defaults(func=cmd_status)
     sub.add_parser("up", help="应用所有待应用 migration").set_defaults(func=cmd_up)
     sub.add_parser("baseline", help="仅跑基线 CREATE TABLE").set_defaults(func=cmd_baseline)
-    sub.add_parser("full", help="baseline + up + pgvector").set_defaults(func=cmd_full)
+    sub.add_parser("full", help="baseline + pgvector + up").set_defaults(func=cmd_full)
     sub.add_parser("check", help="检查 schema 是否落后，落后 exit(1)").set_defaults(func=cmd_check)
     args = p.parse_args(argv)
     return args.func(args)

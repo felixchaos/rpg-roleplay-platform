@@ -159,5 +159,65 @@ class MigrateCliStatusCommand(unittest.TestCase):
         self.assertEqual(rc, 0, "fresh DB 跑 status 必须返回 0（信息性输出）而非 2（连接错）")
 
 
+class PgvectorEnabledBeforeMigrations(unittest.TestCase):
+    """回归:fresh DB 上 pgvector 必须在 versioned migrations *之前* 启用。
+
+    历史 bug:cmd_full / init_db 把 try_enable_pgvector() 排在
+    _apply_versioned_migrations() *之后*。v10/v18/v19/v40 用
+    `if exists(select 1 from pg_extension where extname='vector')` 条件块建 embedding_vec
+    向量列;扩展未启时这些块在 fresh DB 上全部静默跳过,但 migration 仍被标记 applied,
+    之后再启扩展也不回补 → 5 个向量列永久缺失、语义检索静默退化为 ILIKE、/embed/status 崩。
+
+    这两个用例直接断言「baseline → pgvector → migrate」的调用顺序,与运行环境是否已装
+    vector 扩展无关(共享测试库通常已全局装了 vector,端到端建列测试无法暴露顺序问题)。
+    旧顺序会让这两个用例失败。
+    """
+
+    @staticmethod
+    @contextmanager
+    def _noop_lock():
+        yield
+
+    def test_cmd_full_enables_pgvector_before_migrations(self):
+        from platform_app import migrate
+        calls: list[str] = []
+
+        def _enable():
+            calls.append("pgvector")
+            return {"ok": True}
+
+        with patch.object(_db, "_do_init_db", lambda: calls.append("baseline")), \
+             patch.object(_db, "try_enable_pgvector", _enable), \
+             patch.object(_db, "_apply_versioned_migrations", lambda: calls.append("migrate")), \
+             patch.object(_db, "_migration_advisory_lock", self._noop_lock), \
+             patch.object(migrate, "cmd_status", lambda args: 0):
+            rc = migrate.cmd_full(type("A", (), {})())
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            calls, ["baseline", "pgvector", "migrate"],
+            f"cmd_full 必须按 baseline → pgvector → migrate 顺序执行;实际:{calls}",
+        )
+
+    def test_init_db_enables_pgvector_before_migrations(self):
+        from platform_app.db import init as _init
+        calls: list[str] = []
+        saved_flag = _init._DB_INITED
+        try:
+            with patch.object(_init, "_do_init_db", lambda: calls.append("baseline")), \
+                 patch.object(_init, "try_enable_pgvector", lambda: calls.append("pgvector")), \
+                 patch.object(_init, "_apply_versioned_migrations", lambda: calls.append("migrate")), \
+                 patch.object(_init, "_migration_advisory_lock", self._noop_lock), \
+                 patch("core.config.skip_auto_migrate", lambda: False):
+                _init.init_db(force=True)
+        finally:
+            _init._DB_INITED = saved_flag  # 别污染后续测试的 init 短路 flag
+
+        self.assertEqual(
+            calls, ["baseline", "pgvector", "migrate"],
+            f"init_db 必须按 baseline → pgvector → migrate 顺序执行;实际:{calls}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

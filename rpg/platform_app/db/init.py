@@ -45,8 +45,11 @@ def init_db(force: bool = False) -> None:
             # 取 advisory lock，串行化 DDL，防止多 worker / 多进程同时建表撞锁
             with _migration_advisory_lock():
                 _do_init_db()
-                _apply_versioned_migrations()
+                # pgvector 必须在 versioned migrations *之前* 启用（同 migrate.cmd_full）：
+                # 向量列的 `if exists(vector)` 条件块依赖扩展已在，否则静默跳过、migration
+                # 仍被标记 applied、且永不回补 → embedding_vec 列永久缺失。
                 try_enable_pgvector()
+                _apply_versioned_migrations()
         _DB_INITED = True
 
 

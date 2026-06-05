@@ -10,6 +10,7 @@ import { ConfirmModal, SettingsToggle, useAutoSave, usePlatformData, useReactive
 import AgentModelPicker from '../components/AgentModelPicker.jsx';
 import GmStyleEditor from '../components/GmStyleEditor.jsx';
 import { getCaps as _getCapsImported } from '../components/catalog-helpers.js';
+import { plNavigate } from '../router.js';
 // Cloudscape 原生组件(内容迁移,统一基线对齐)
 import CSContainer from '@cloudscape-design/components/container';
 import CSHeader from '@cloudscape-design/components/header';
@@ -855,7 +856,7 @@ function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, on
                   { label: t('settings.models.usage_output_tokens'), value: usage.output_tokens != null ? Number(usage.output_tokens).toLocaleString() : '—' },
                   { label: t('settings.models.usage_cost'), value: usage.cost_usd != null ? `$${Number(usage.cost_usd).toFixed(2)}` : '—' },
                 ]} />
-                <CSBox fontSize="body-s" color="text-body-secondary">{t('settings.models.usage_detail')} <a href="#usage">{t('settings.models.usage_page')}</a>。</CSBox>
+                <CSBox fontSize="body-s" color="text-body-secondary">{t('settings.models.usage_detail')} <a href="/usage" onClick={(e) => { e.preventDefault(); plNavigate('usage'); }}>{t('settings.models.usage_page')}</a>。</CSBox>
               </CSSpaceBetween>
         ) },
       ]} />
@@ -1021,7 +1022,7 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
                   rows={6}
                   value={form.api_key}
                   onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value }))}
-                  placeholder={'{"type": "service_account", "project_id": "...", "client_email": "...", "private_key": "-----BEGIN RSA PRIVATE KEY-----\\n..."}'}
+                  placeholder={'{"type": "service_account", "project_id": "...", "client_email": "...", "private_key": "<PRIVATE_KEY_PEM_WITH_NEWLINES>"}'}
                   style={{ width: '100%', fontFamily: 'monospace', fontSize: '12px', resize: 'vertical', padding: '8px', boxSizing: 'border-box' }}
                   autoComplete="off"
                   spellCheck={false}
@@ -1730,7 +1731,7 @@ const MODELS_DATA = [
   },
   {
     id: "anthropic", name: "Anthropic", base_url: "https://api.anthropic.com/v1",
-    enabled: true, status: "online", key_set: true, key_hint: "·sk-ant-…b211", proxy: "直连",
+    enabled: true, status: "online", key_set: true, key_hint: "·sk-***", proxy: "直连",
     models: [
       { id: "claude-opus-4-7", real_name: "claude-opus-4-7", display: "Claude Opus 4.7 · 长文", capabilities: ["long", "tool-use", "rpg"], enabled: true, price: "$15 / $75", context: "200K", health: "ok", visible: true },
       { id: "claude-sonnet-4-6", real_name: "claude-sonnet-4-6", display: "Claude Sonnet 4.6", capabilities: ["text", "fast"], enabled: true, price: "$3 / $15", context: "200K", health: "ok", visible: true },
@@ -2733,7 +2734,7 @@ function ModuleModelsSection() {
                         {!hasCred && (
                           <div style={{marginTop: 4, fontSize: 11, color: "var(--color-text-status-warning, #d18a00)"}}>
                             ⚠ 该 provider 还没配 API key,
-                            <a href="#" style={{marginLeft: 4}} onClick={(e) => { e.preventDefault(); window.location.hash = 'settings-keys'; }}>去配置 →</a>
+                            <a href="/apis" style={{marginLeft: 4}} onClick={(e) => { e.preventDefault(); plNavigate('apis'); }}>去配置 →</a>
                           </div>
                         )}
                         {/* task: embedder 兜底显式提醒 */}

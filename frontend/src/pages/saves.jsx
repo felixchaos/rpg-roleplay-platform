@@ -147,7 +147,7 @@ function SaveBranchList({ save }) {
   if (!nodes.length) return <div className="aw-empty">{t('saves.branches.empty')}</div>;
   return (
     <FormSection title={t('saves.branches.title')} description={t('saves.branches.node_count', { n: nodes.length })}
-      actions={<Btn size="sm" onClick={() => { location.hash = 'saves-branches'; }}>{t('saves.branches.btn_open_tree')}</Btn>}>
+      actions={<Btn size="sm" onClick={() => { plNavigate('saves-branches'); }}>{t('saves.branches.btn_open_tree')}</Btn>}>
       <div className="aw-rlist">
         {nodes.map((n) => (
           <div key={n.id} className="aw-rlist-item" style={{ cursor: 'default' }}>
@@ -774,7 +774,7 @@ function BranchesPage() {
               <button className="btn primary" onClick={() => plNavigate("scripts")}>
                 <Icon name="bookmark" size={12} /> {t('saves.branches.no_saves_btn_scripts')}
               </button>
-              <button className="btn ghost" onClick={() => window.location.hash = "saves-list"}>
+              <button className="btn ghost" onClick={() => plNavigate("saves")}>
                 <Icon name="list" size={12} /> {t('saves.branches.no_saves_btn_list')}
               </button>
             </div>
@@ -2057,7 +2057,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
               </div>
             </label>
           ))}
-          <a className="pl-newgame-card pl-newgame-card-link" href="#cards" onClick={onClose}>
+          <a className="pl-newgame-card pl-newgame-card-link" href="/cards" onClick={(e) => { e.preventDefault(); onClose && onClose(); plNavigate('cards'); }}>
             <Icon name="folder" size={14} /><span>{t('saves.new_game.card_library_link')}</span>
           </a>
         </div>
@@ -2141,7 +2141,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
               )}
               {!loading && scripts.length === 0 && (
                 <CSAlert key="no-scripts" type="warning" header={t('saves.new_game.no_scripts_title')}>
-                  {t('saves.new_game.no_scripts_body')} <a href="#scripts-import" onClick={onClose}>{t('saves.new_game.no_scripts_link')}</a> {t('saves.new_game.no_scripts_suffix')}
+                  {t('saves.new_game.no_scripts_body')} <a href="/scripts-import" onClick={(e) => { e.preventDefault(); onClose && onClose(); plNavigate('scripts-import'); }}>{t('saves.new_game.no_scripts_link')}</a> {t('saves.new_game.no_scripts_suffix')}
                 </CSAlert>
               )}
               {/* Cloudscape SpaceBetween 内部用 React.Children.map 加间距,需要 child 显式 key */}

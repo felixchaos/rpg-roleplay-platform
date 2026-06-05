@@ -20,7 +20,7 @@
     try {
       // 1. meta tag 优先 — 生产部署可直接设 content="https://api.example.com"
       const metaBase = document.querySelector('meta[name="api-base"]')?.content;
-      if (metaBase != null && metaBase !== "") return metaBase;
+      if (metaBase != null) return metaBase;
       if (location.protocol === "file:") return "http://127.0.0.1:7860";
       // If we're already on the FastAPI port → same origin.
       if (location.port === "7860") return "";

@@ -9,7 +9,14 @@ from platform_app.branches.commits import _state_snapshot_hash
 
 
 def ensure_summaries(db, save_id: int) -> None:
-    rows = db.execute("select * from branch_commits where save_id = %s order by id", (save_id,)).fetchall()
+    # 只取摘要所需的轻量列 —— 绝不 select *,否则会把每个 commit 的
+    # state_snapshot(整局游戏态 jsonb,可达 MB 级)全量拉进内存。该函数在
+    # 每次 tree()(含每次删消息/回滚)都被调用,select * 是"所有操作都慢"的主因。
+    rows = db.execute(
+        "select id, parent_id, turn_index, kind, summary, player_input, gm_output, "
+        "content_preview, title from branch_commits where save_id = %s order by id",
+        (save_id,),
+    ).fetchall()
     by_id = {row["id"]: row for row in rows}
     for row in rows:
         current = row.get("summary") or ""

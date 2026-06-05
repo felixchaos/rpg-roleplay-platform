@@ -236,7 +236,8 @@ chmod 600 /opt/rpg-roleplay/rpg/.env
 cd /opt/rpg-roleplay/rpg
 
 # fresh DB 必须用 full，不能用 up
-# full = baseline（CREATE TABLE）+ up（增量 migration）+ pgvector
+# full = baseline（CREATE TABLE）+ pgvector（启扩展，必须在迁移前）+ up（增量 migration）
+# 注：§2.1/§2.2 已手动建过 vector 扩展；full 内部的 create extension if not exists 是幂等兜底。
 DATABASE_URL=postgresql://rpg:CHANGE_ME@127.0.0.1:5432/rpg \
   .venv/bin/python -m platform_app.migrate full
 

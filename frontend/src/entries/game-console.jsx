@@ -1171,7 +1171,15 @@ function App() {
   const onStop = () => stopRun();
   const onRetry = useCallback(() => {
     if (runState.running) return;
-    const t2 = lastPlayerText && lastPlayerText.trim();
+    // 优先用本轮 lastPlayerText;为空时(刷新后、首轮即失败、lastPlayerText 未及写入)
+    // 从历史里回捞最后一条非空玩家输入,避免"重试本轮"静默无反应。
+    let t2 = (lastPlayerText && lastPlayerText.trim()) || '';
+    if (!t2) {
+      const h = Array.isArray(history) ? history : [];
+      for (let i = h.length - 1; i >= 0; i--) {
+        if (h[i] && h[i].role === 'user' && (h[i].content || '').trim()) { t2 = h[i].content.trim(); break; }
+      }
+    }
     if (!t2) { window.__apiToast?.('没有可重试的输入', { kind: 'warn', duration: 2000 }); return; }
     setHasError(false);
     setHistory((h) => {
@@ -1181,7 +1189,7 @@ function App() {
       return out;
     });
     startRun(t2);
-  }, [lastPlayerText, runState.running]);
+  }, [lastPlayerText, history, runState.running, startRun]);
   // 反馈:每条消息的「重新生成这一轮」(MsgActions 派发 rpg-regenerate 事件,携 message_index)。
   // 做法:fork 到本轮之前(后端 resolve_commit_id_by_message 的 off-by-one 已修正)→ reloadState
   // 把历史截到本轮前 → 用同一条玩家输入 startRun 重走完整 GM 流程。等价于"这一轮换个结果重来"。

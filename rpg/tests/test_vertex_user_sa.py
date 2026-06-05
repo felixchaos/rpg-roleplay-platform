@@ -23,7 +23,7 @@ _FAKE_SA = {
     "type": "service_account",
     "project_id": "test-project-byok",
     "private_key_id": "key-id-123",
-    "private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQ==\n-----END RSA PRIVATE KEY-----\n",
+    "private_key": "<FAKE_PRIVATE_KEY_PEM>",
     "client_email": "byok-sa@test-project-byok.iam.gserviceaccount.com",
     "client_id": "123456789",
     "auth_uri": "https://accounts.google.com/o/oauth2/auth",

@@ -169,7 +169,7 @@ def main():
         if "401" in str(e) or "authentication" in str(e).lower():
             print("[错误] API Key 无效（401）。")
             print("请在项目根目录 .env 文件中设置有效的 ANTHROPIC_API_KEY：")
-            print("  ANTHROPIC_API_KEY=sk-ant-...")
+            print("  ANTHROPIC_API_KEY=<your Anthropic API key>")
         else:
             print(f"[错误] {e}")
         sys.exit(1)

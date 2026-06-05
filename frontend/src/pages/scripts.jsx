@@ -1948,7 +1948,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
   const goApiSettings = () => {
     if (pendingImport) persistPendingImport(pendingImport);
     if (pendingPipeline) persistPendingPipeline(pendingPipeline);
-    window.location.hash = "settings-models";
+    plNavigate("settings-models");
   };
 
   const resumePendingPipeline = async () => {
@@ -2548,7 +2548,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
               type="info"
               header={t('scripts.import.embedder_not_configured_title', { defaultValue: '未配置 RAG / 向量嵌入模型（可选，但建议配置）' })}
               action={
-                <CSButton iconName="settings" variant="primary" onClick={() => { window.location.hash = 'settings-models'; }}>
+                <CSButton iconName="settings" variant="primary" onClick={() => { plNavigate('settings-models'); }}>
                   {t('scripts.import.go_rag_settings', { defaultValue: '去设置 RAG 模型' })}
                 </CSButton>
               }
@@ -2564,7 +2564,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
               type="warning"
               header={t('scripts.import.embedder_error_title', { defaultValue: '向量嵌入配置可能有问题' })}
               action={
-                <CSButton iconName="settings" onClick={() => { window.location.hash = 'settings-models'; }}>
+                <CSButton iconName="settings" onClick={() => { plNavigate('settings-models'); }}>
                   {t('scripts.import.go_rag_settings', { defaultValue: '去 RAG 设置检查' })}
                 </CSButton>
               }
@@ -2889,7 +2889,7 @@ function ImportJobResult({ job, onDismiss, onReuse }) {
       header={`${t(headerKey)} · ${job.title || ''}`}
       action={
         <CSSpaceBetween direction="horizontal" size="xs">
-          {ok && <CSButton variant="primary" href="#scripts" onClick={onDismiss}>{t('scripts.import.go_manage')}</CSButton>}
+          {ok && <CSButton variant="primary" onClick={() => { onDismiss && onDismiss(); plNavigate('scripts'); }}>{t('scripts.import.go_manage')}</CSButton>}
           <CSButton onClick={onReuse}>{ok ? t('scripts.import.import_another') : t('scripts.import.retry')}</CSButton>
         </CSSpaceBetween>
       }

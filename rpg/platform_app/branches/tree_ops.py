@@ -23,9 +23,17 @@ def tree(user_id: int, save_id: int, limit: int | str | None = None, cursor: str
     with connect() as db:
         ensure_summaries(db, save_id)
         save = db.execute("select * from game_saves where id = %s and user_id = %s", (save_id, user_id)).fetchone()
+        # 显式列清单,刻意排除 state_snapshot(整局游戏态 jsonb,可达 MB/commit)。
+        # 前端 tree/分支视图只用 id/parent_id/turn_index/kind/summary/content_preview/
+        # title/object_hash 等轻量字段,从不读 state_snapshot;select * 会把所有 commit
+        # 的快照一并查出并序列化给客户端 → tree() 是"所有操作都慢"的主因。
+        # checkout/激活某 commit 走的是单独的 select *,不受影响。
         rows = db.execute(
             """
-            select * from branch_commits
+            select id, save_id, parent_id, object_hash, tree_hash, turn_index, kind, title,
+                   message, summary, content_preview, state_path, player_input, gm_output,
+                   metadata, created_at, digested_in_phase, digest_at
+            from branch_commits
             where save_id = %s and (%s::bigint is null or id > %s)
             order by id
             limit %s
