@@ -71,7 +71,7 @@ class _VertexBackend:
                 "未找到 Vertex AI Service Account。"
                 "请在「设置 → API & 模型 → Agent Platform」上传自己的 SA JSON 文件。"
             )
-            log.info(f"[GM] Vertex AI unavailable for user={user_id}: missing service account (expected if user has no SA)")
+            log.warning(f"[GM] Vertex AI unavailable for user={user_id}: missing service account")
             return
 
         self.client = genai.Client(
@@ -132,7 +132,7 @@ class _VertexBackend:
         else:
             raise last_exc  # type: ignore[misc]
         self._capture_usage(resp)
-        return (resp.text or "").strip()
+        return resp.text.strip()
 
     def _capture_usage(self, resp) -> None:
         meta = getattr(resp, "usage_metadata", None)
@@ -177,7 +177,9 @@ class _VertexBackend:
             config=config,
         )
         self._capture_usage(resp)
-        return (resp.text or "").strip()
+        if resp.text is None:
+            return ""
+        return resp.text.strip()
 
     def stream(self, system: str, messages: list[dict], max_tokens: int) -> Iterator[str]:
         self._ensure_available()

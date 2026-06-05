@@ -15,8 +15,10 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from ipaddress import ip_address
 from json import JSONDecodeError
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,6 +62,7 @@ def get_request_id() -> str:
 API_VERSION = "1"
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
+_LOOPBACK_ORIGIN_REGEX = r"^https?://(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d{1,5})?$"
 
 # ── CORS origins 计算 ────────────────────────────────────────────────────
 
@@ -84,7 +87,33 @@ _origins, _allow_credentials = _cors_origins()
 def _origin_allowed(origin: str | None) -> bool:
     if not origin:
         return True
-    return "*" in _origins or origin in _origins
+    if "*" in _origins or origin in _origins:
+        return True
+    return _local_loopback_origins_allowed() and _is_loopback_origin(origin)
+
+
+def _local_loopback_origins_allowed() -> bool:
+    from core.config import is_local_mode as _is_local_mode
+    return _is_local_mode()
+
+
+def _is_loopback_origin(origin: str) -> bool:
+    """本地开发/自托管允许 Vite 等前端服务使用任意 loopback 端口。"""
+    try:
+        parsed = urlsplit(origin)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    if parsed.path or parsed.query or parsed.fragment:
+        return False
+    host = parsed.hostname.lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 # ── lifespan (startup / shutdown) ────────────────────────────────────────
@@ -424,6 +453,7 @@ def configure_app(app: FastAPI) -> None:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_origins,
+        allow_origin_regex=(_LOOPBACK_ORIGIN_REGEX if _local_loopback_origins_allowed() else None),
         allow_credentials=_allow_credentials,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=(["*"] if not _allow_credentials else _allowed_request_headers),

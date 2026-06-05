@@ -332,6 +332,9 @@ def _call_llm_emit_identities(
             obj = _parse_json_safely(text)
             if obj and isinstance(obj.get("recommendations"), list):
                 return obj["recommendations"]
+            _log.warning("[identity-gen] %s 返回格式异常 model=%s text=%s",
+                         backend_kind, getattr(backend, "model_name", "?"),
+                         (text or "")[:800])
         except Exception:
             _log.exception("[identity-gen] %s 调用失败 model=%s",
                            backend_kind, getattr(backend, "model_name", "?"))
@@ -445,11 +448,20 @@ def _t_recommend_player_identity(user_id: int, script_id: int | None, args: dict
     phase_digest = _fetch_phase_digest(sid, phase)
     anchor_info = _fetch_anchor_info(sid, phase, label)
     card: dict | None = None
+    card_name_hint = (args.get("character_card_name") or "").strip()
+    card_hint = (args.get("character_card_hint") or "").strip()
+    import logging as _log2
+    _log2.getLogger(__name__).info("[identity-gen] card_id_raw=%s card_name_hint=%s card_hint=%s",
+                                    card_id_raw, card_name_hint, card_hint)
     if card_id_raw is not None:
         try:
             card = _fetch_character_card(int(card_id_raw), card_kind, user_id)
         except Exception:
             card = None
+    elif card_name_hint:
+        # 新建角色卡尚未入库，用前端传来的名称构建虚拟卡片供 prompt 引用
+        card = {"name": card_name_hint, "identity": card_hint}
+        _log2.getLogger(__name__).info("[identity-gen] 使用虚拟卡片: name=%s identity=%s", card_name_hint, card_hint)
 
     # 3) 构建 prompt
     system = _build_system_prompt(

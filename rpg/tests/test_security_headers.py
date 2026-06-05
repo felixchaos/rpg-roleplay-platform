@@ -106,6 +106,30 @@ class TestIsHttps:
             assert _is_https(req) is False
 
 
+class TestOriginAllowed:
+    def test_local_mode_allows_dynamic_loopback_ports(self):
+        """本地 Vite 端口变成 5174/5175 时,带 cookie 的 POST 不应被 Origin 守卫误拦。"""
+        from core import startup
+        with patch("core.startup._local_loopback_origins_allowed", return_value=True), \
+                patch.object(startup, "_origins", ["http://127.0.0.1:7860"]):
+            assert startup._origin_allowed("http://localhost:5174") is True
+            assert startup._origin_allowed("http://127.0.0.1:5175") is True
+            assert startup._origin_allowed("http://[::1]:5176") is True
+
+    def test_local_mode_still_rejects_non_loopback_origins(self):
+        from core import startup
+        with patch("core.startup._local_loopback_origins_allowed", return_value=True), \
+                patch.object(startup, "_origins", ["http://127.0.0.1:7860"]):
+            assert startup._origin_allowed("http://evil.example:5174") is False
+
+    def test_server_mode_keeps_exact_origin_allowlist(self):
+        from core import startup
+        with patch("core.startup._local_loopback_origins_allowed", return_value=False), \
+                patch.object(startup, "_origins", ["https://rpg-roleplay.stellatrix.icu"]):
+            assert startup._origin_allowed("https://rpg-roleplay.stellatrix.icu") is True
+            assert startup._origin_allowed("http://localhost:5174") is False
+
+
 class TestHardenSetCookie:
     def test_adds_httponly(self):
         from core.startup import _harden_set_cookie
