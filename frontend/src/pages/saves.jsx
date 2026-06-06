@@ -1513,6 +1513,8 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
   const [customName, setCustomName] = React.useState("");
   const [customRole, setCustomRole] = React.useState("");
   const [customBg, setCustomBg] = React.useState("");
+  // 反馈#1:从原著 NPC 角色卡里选一个作为主角"失忆的真实身份"(与角色卡不冲突,只是开局不自知)。
+  const [npcCards, setNpcCards] = React.useState([]);
 
   const pickedRole = allRoleOptions ? allRoleOptions.find(o => o.key === pickedCard) : null;
   const pickedName = pickedRole?.name || t('saves.identity.no_card_selected');
@@ -1593,6 +1595,39 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
     setIdentity(null);
   };
 
+  // 反馈#1:拉取该剧本的原著 NPC 角色卡,供「失忆身份」选择。
+  React.useEffect(() => {
+    if (!scriptId) { setNpcCards([]); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const r = await window.api.cards.scriptList(parseInt(scriptId, 10));
+        const list = (r && (r.items || r.cards)) || (Array.isArray(r) ? r : []);
+        if (alive) setNpcCards(Array.isArray(list) ? list : []);
+      } catch (_) { if (alive) setNpcCards([]); }
+    })();
+    return () => { alive = false; };
+  }, [scriptId]);
+
+  // 选一张 NPC 卡当失忆身份:把卡的姓名/定位/背景填进 identity,标记来源 npc_card,
+  // 并默认「不知道身份卡」(失忆)——何时想起由游戏内玩家选择决定。与原 NPC 卡共存,不删除。
+  const pickNpcIdentity = (card) => {
+    if (!card) return;
+    const nm = card.name || card.title || "";
+    const role = card.identity || card.role || card.archetype || card.title || "";
+    const bg = card.background || card.persona || card.summary || card.description || card.bio || "";
+    setIdentity({
+      name: nm,
+      role,
+      background: bg,
+      source: "npc_card",
+      _from: "npc_card",
+      npc_card_id: card.id || card.slug || null,
+      player_origin: playerOrigin,
+    });
+    setIdentityKnown(false);
+  };
+
   // playerOrigin 跟身份卡正交:切换时只同步 identity.player_origin 标记,
   // 不动 role/background 字段(身份卡是 role overlay,穿越者是 meta 设定)
   React.useEffect(() => {
@@ -1631,7 +1666,7 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
         ) : (
           <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <CSBadge color={identity._from === 'ai' ? 'blue' : 'grey'}>{identity._from === 'ai' ? t('saves.identity.badge_ai') : t('saves.identity.badge_manual')}</CSBadge>
+              <CSBadge color={identity._from === 'ai' ? 'blue' : (identity._from === 'npc_card' ? 'red' : 'grey')}>{identity._from === 'ai' ? t('saves.identity.badge_ai') : (identity._from === 'npc_card' ? t('saves.identity.badge_npc') : t('saves.identity.badge_manual'))}</CSBadge>
               {identity.name && <strong style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 15, color: 'var(--text, #ebe7df)' }}>{identity.name}</strong>}
               {identity.role && <span style={{ fontSize: 13, color: 'var(--text-quiet, #c8c2b7)' }}>{identity.role}</span>}
             </div>
@@ -1800,6 +1835,44 @@ function IdentityStep({ scriptId, birthpoint, pickedCard, allRoleOptions, identi
         )}
       </div>
 
+      {/* 反馈#1:从原著角色卡选失忆身份 — 主角占用某 NPC 的真实身份但开局失忆,何时想起由游戏内决定 */}
+      {npcCards.length > 0 && (
+        <div key="npc-pick" style={{ ...panel, display: 'grid', gap: 12 }}>
+          <div style={{ display: 'grid', gap: 3 }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text, #ebe7df)' }}>{t('saves.identity.npc_title')}</span>
+            <span style={{ fontSize: 12, color: 'var(--muted, #968f85)', lineHeight: 1.55 }}>{t('saves.identity.npc_desc')}</span>
+          </div>
+          <CSColumnLayout columns={2}>
+            {npcCards.map((card, i) => {
+              const cid = card.id || card.slug || i;
+              const isSel = identity && identity._from === 'npc_card' && String(identity.npc_card_id) === String(card.id || card.slug);
+              const nm = card.name || card.title || '';
+              const role = card.identity || card.role || card.archetype || '';
+              const bg = card.background || card.persona || card.summary || card.description || card.bio || '';
+              return (
+                <button key={cid} type="button" onClick={() => pickNpcIdentity(card)} style={{
+                  textAlign: 'left', padding: '11px 13px', cursor: 'pointer',
+                  border: isSel ? '1px solid var(--accent, #c96442)' : '1px solid var(--line-soft, #2a2724)',
+                  borderRadius: 10, background: isSel ? 'var(--accent-soft, rgba(201,100,66,.12))' : 'var(--panel, #211f1d)',
+                  display: 'grid', gap: 5, transition: 'border-color .12s, background .12s',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    {nm && <strong style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 14, color: 'var(--text, #ebe7df)' }}>{nm}</strong>}
+                    {role && <span style={{ whiteSpace: 'nowrap' }}><CSBadge>{role}</CSBadge></span>}
+                    {isSel && (
+                      <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
+                        <CSBadge color="green">✓ {t('saves.identity.badge_selected')}</CSBadge>
+                      </span>
+                    )}
+                  </div>
+                  {bg && <span style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--muted, #968f85)', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{bg}</span>}
+                </button>
+              );
+            })}
+          </CSColumnLayout>
+        </div>
+      )}
+
       {/* 手动创建 */}
       <CSExpandableSection key="manual"
         variant="container"
@@ -1878,9 +1951,17 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const [submitting, setSubmitting] = useStatePL(false);
   const [reviewGateBlocked, setReviewGateBlocked] = useStatePL(false);
 
+  // 反馈#4:新游戏表单草稿本地持久化——填到一半切页/关弹窗回来不丢,仅"成功开始游戏"后清空。
+  const NEWGAME_DRAFT_KEY = 'newgame.draft.v1';
+  const draftReadyRef = React.useRef(false);  // 草稿恢复完成前不回写,避免初始 reset 把草稿覆盖
+  const clearNewgameDraft = React.useCallback(() => {
+    try { localStorage.removeItem(NEWGAME_DRAFT_KEY); } catch (_) {}
+  }, []);
+
   // ── load data when opened ────────────────────────────────────
   React.useEffect(() => {
     if (!open) return;
+    draftReadyRef.current = false;  // 反馈#4:恢复完成前禁止回写草稿
     // reset transient state
     setTitle(""); setSubmitErr(""); setSubmitting(false); setReviewGateBlocked(false); setLoading(true); setPlayerOrigin('soul'); setIdentityKnown(true);
     setNewCardForm(cardFormInit(null)); setPreviewCard(null);
@@ -1931,9 +2012,39 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
         if (scTitle) setTitle(`${scTitle} · 新档`);
         else setTitle(t('saves.new_game.page_title'));
       } catch (_) { setTitle(t('saves.new_game.page_title')); }
+      // 反馈#4:在默认值之上覆盖本地草稿——无指定剧本(通用入口)或草稿剧本与本次一致时整体恢复,
+      // 避免在 A 剧本开新游戏却恢复了 B 剧本的草稿。
+      try {
+        const draft = JSON.parse(localStorage.getItem(NEWGAME_DRAFT_KEY) || 'null');
+        const sameScript = !defaultScriptId || (draft && String(draft.scriptId) === String(defaultScriptId));
+        if (draft && typeof draft === 'object' && sameScript) {
+          if (typeof draft.title === 'string') setTitle(draft.title);
+          if (draft.scriptId && scList.some(x => String(x.id) === String(draft.scriptId))) setScriptId(String(draft.scriptId));
+          if (draft.roleMode) setRoleMode(draft.roleMode);
+          if (typeof draft.pickedCard === 'string') setPickedCard(draft.pickedCard);
+          if (draft.newCardForm && typeof draft.newCardForm === 'object') setNewCardForm(draft.newCardForm);
+          if ('birthpoint' in draft) setBirthpoint(draft.birthpoint);
+          if ('identity' in draft) setIdentity(draft.identity);
+          if (draft.playerOrigin) setPlayerOrigin(draft.playerOrigin);
+          if ('identityKnown' in draft) setIdentityKnown(draft.identityKnown);
+          if (typeof draft.storyIntent === 'string') setStoryIntent(draft.storyIntent);
+        }
+      } catch (_) {}
       setLoading(false);
+      draftReadyRef.current = true;  // 反馈#4:此后字段变化才回写草稿
     })();
   }, [open]);
+
+  // 反馈#4:任一表单字段变化即写回草稿(恢复完成后才写,避免初始 reset/默认值覆盖已存草稿)
+  React.useEffect(() => {
+    if (!open || !draftReadyRef.current) return;
+    try {
+      localStorage.setItem(NEWGAME_DRAFT_KEY, JSON.stringify({
+        title, scriptId, roleMode, pickedCard, newCardForm,
+        birthpoint, identity, playerOrigin, identityKnown, storyIntent,
+      }));
+    } catch (_) {}
+  }, [open, title, scriptId, roleMode, pickedCard, newCardForm, birthpoint, identity, playerOrigin, identityKnown, storyIntent]);
 
   if (!open) return null;
 
@@ -2003,6 +2114,8 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
       };
       const res = onConfirm?.(payload);
       if (res && typeof res.then === "function") await res;
+      // 反馈#4:成功开始游戏后才清空本次草稿(关弹窗/切页不清,保证回来能续填)
+      clearNewgameDraft();
     } catch (e) {
       const msg = (e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || t('saves.new_game.create_fail');
       setSubmitErr(msg);

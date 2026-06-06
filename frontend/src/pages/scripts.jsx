@@ -493,9 +493,9 @@ function SharingModeSelector({ script, currentUserId, onChanged }) {
 /* 剧本详情面板 —— 选中某剧本后在列表下方展开(对齐存档页结构)。
    Tabs:概览 / 参数(剧本覆盖设定) / 世界书(worldbook) / 知识库人物 / NPC 角色卡 / 时间线锚点。
    世界书 / NPC 角色卡 / 时间线锚点按需懒加载。 */
-function ScriptDetailPanel({ script: s, savesCount, embedStatus, currentUserId,
+function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatus, currentUserId,
   pendingTab, onPendingTabConsumed,
-  onPlay, onChapters, onReview, onExtractDone, onEmbed, onExport, onToggleVisibility, onDelete, onEditOverrides, onReload }) {
+  onPlay, onContinueSave, onNewGame, onChapters, onReview, onExtractDone, onEmbed, onExport, onToggleVisibility, onDelete, onEditOverrides, onReload }) {
   const { t } = useTranslation();
   const [tab, setTab] = useStatePL('overview');
 
@@ -609,7 +609,27 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus, currentUserId,
       <CSHeader variant="h2"
         actions={
           <CSSpaceBetween direction="horizontal" size="xs">
-            <CSButton variant="primary" iconName="caret-right-filled" disabled={!!playBlock} onClick={() => onPlay(s)}>{t('scripts.my.play_game')}</CSButton>
+            {/* 反馈#3:开始游戏改下拉——可选继续某个存档 / 开新游戏,不再有存档就直接进后台 */}
+            <CSButtonDropdown variant="primary" expandToViewport disabled={!!playBlock}
+              items={[
+                ...(scriptSaves.length ? [{
+                  text: t('scripts.my.play_continue_group'),
+                  items: scriptSaves.map((sv) => ({
+                    id: 'continue:' + sv.id,
+                    text: sv.title || ('#' + sv.id),
+                    iconName: 'caret-right-filled',
+                  })),
+                }] : []),
+                { id: 'new', text: t('scripts.my.play_new_game'), iconName: 'add-plus' },
+              ]}
+              onItemClick={({ detail }) => {
+                if (detail.id === 'new') { onNewGame && onNewGame(s); return; }
+                if (typeof detail.id === 'string' && detail.id.startsWith('continue:')) {
+                  const sv = scriptSaves.find((x) => String(x.id) === detail.id.slice('continue:'.length));
+                  if (sv) onContinueSave && onContinueSave(sv);
+                }
+              }}
+            >{t('scripts.my.play_game')}</CSButtonDropdown>
             <CSButton iconName="file" onClick={() => onChapters(s)}>{t('scripts.my.view_chapters')}</CSButton>
             <CSButton iconName="status-info" onClick={() => onReview(s)}>{t('scripts.my.kb_review')}</CSButton>
             <CSButton iconName="settings" onClick={() => setHistoryOpen(v => !v)}>{t('scripts.version.history_btn')}</CSButton>
@@ -1251,13 +1271,9 @@ function ScriptsListView() {
       window.__apiToast?.(t('scripts.toast.op_fail'), { kind: 'danger', detail: e?.message });
     }
   };
-  const onPlay = async (s) => {
-    // 有存档 → 直接进入(__openContinue 现已直接启动新标签);无 → 走建档向导
-    const sv = platSaves.find(x => x.script_id === s.id);
-    if (sv) {
-      window.__openContinue?.(sv);
-      return;
-    }
+  // 反馈#3:开始游戏不再「有存档就直接进后台」,改成下拉让用户选——继续某个存档 / 开新游戏。
+  const onContinueSave = (sv) => { if (sv) window.__openContinue?.(sv); };
+  const onNewGame = async (s) => {
     const localBlock = scriptPlayBlockReason(s, t);
     if (localBlock) {
       window.__apiToast?.(t('scripts.my.play_block_title'), { kind: 'warn', detail: localBlock, duration: 6500 });
@@ -1276,6 +1292,12 @@ function ScriptsListView() {
     } finally {
       setBusyId(null);
     }
+  };
+  // 兼容:列表行等单按钮入口仍走「有存档继续最近,无则开新」的一键默认
+  const onPlay = async (s) => {
+    const sv = platSaves.find(x => x.script_id === s.id);
+    if (sv) { onContinueSave(sv); return; }
+    await onNewGame(s);
   };
 
   const visibleScripts = query
@@ -1309,11 +1331,14 @@ function ScriptsListView() {
       <ScriptDetailPanel
         script={selected}
         savesCount={platSaves.filter((x) => x.script_id === selected.id).length}
+        scriptSaves={platSaves.filter((x) => x.script_id === selected.id)}
         embedStatus={embedStatus}
         currentUserId={window.RPG_AUTH?.user_id ?? null}
         pendingTab={pendingTab}
         onPendingTabConsumed={() => setPendingTab(null)}
         onPlay={onPlay}
+        onContinueSave={onContinueSave}
+        onNewGame={onNewGame}
         onChapters={setChaptersOpen}
         onReview={setReviewScript}
         onExtractDone={reload}

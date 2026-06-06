@@ -128,8 +128,12 @@ def import_script(
         title=script_title,
     )
     # 用户明确选了某种模式但实际走了另一种，要在报告里标出，并拒绝静默回退。
-    # split_rule=custom 时,realize 出的 mode 是 'custom_pattern',应视为达成(原误判为不匹配 → 假拒绝)。
-    _expected_modes = {split_rule, "auto"}
+    # ⚠️ chapter_splitter 命中命名规则时返回的 mode 带 `rule_` 前缀(如 split_rule=chapter_cn
+    #    → report.mode='rule_chapter_cn',见 chapter_splitter.py:187/212),而早先这里只拿裸名
+    #    {split_rule} 比对 → 任何非 auto 规则恒不匹配被假拒("无法用 X 切分"),用户反馈"除自动外全报禁止"。
+    #    修:把 `rule_<split_rule>` 也算达成;custom 的 realize mode 是 'custom_pattern'。
+    #    真·回退(用户选 chapter_cn 但实际落到 adaptive_fusion/别的规则)仍会被拒,提示换规则或用自动。
+    _expected_modes = {split_rule, f"rule_{split_rule}"}
     if split_rule == "custom":
         _expected_modes.add("custom_pattern")
     if (split_rule or "auto") not in {"", "auto"} and report.get("mode") not in _expected_modes:
