@@ -206,9 +206,24 @@
   align-items: center;
   border-bottom: 1px solid var(--line-soft);
   transition: background var(--m-fast) ease;
+  position: relative;
 }
 .bg-row:last-child { border-bottom: none; }
 .bg-row:hover { background: var(--panel-2); }
+/* 相邻行内容框间细线连接 */
+.bg-row .bg-row-inner {
+  position: relative;
+}
+.bg-row:not(:last-child) .bg-row-inner::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -13px;
+  width: 1px;
+  height: 14px;
+  background: var(--line);
+  transform: translateX(-50%);
+}
 .bg-row.bg-active {
   background: var(--accent-soft);
 }
@@ -221,6 +236,10 @@
   width: 100%;
   min-width: 0;
   padding-right: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--panel);
 }
 .bg-message {
   color: var(--text-quiet);
