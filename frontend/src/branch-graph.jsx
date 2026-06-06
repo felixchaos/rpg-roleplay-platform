@@ -287,6 +287,17 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
             const isActive = cid === activeId;
             return (
               <g key={`d-${cid}`}>
+                {/* 细虚线：连接圆点到右侧的 bg-row-inner 卡片 */}
+                <line
+                  x1={cx + conf.dotR + (isActive ? 3 : 0)}
+                  y1={cy}
+                  x2={graphW}
+                  y2={cy}
+                  stroke="var(--line-soft, #36322d)"
+                  strokeWidth={1}
+                  strokeDasharray="2 2"
+                  opacity={0.4}
+                />
                 <circle cx={cx} cy={cy} r={conf.dotR}
                   fill={n.deleted ? "var(--bg-2)" : color}
                   stroke={isActive ? "var(--text)" : color}

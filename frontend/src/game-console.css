@@ -204,42 +204,52 @@
 .bg-row {
   display: flex;
   align-items: center;
-  border-bottom: 1px solid var(--line-soft);
+  border-bottom: none;
   transition: background var(--m-fast) ease;
-  position: relative;
 }
-.bg-row:last-child { border-bottom: none; }
-.bg-row:hover { background: var(--panel-2); }
-/* 相邻行内容框间细线连接 */
-.bg-row .bg-row-inner {
-  position: relative;
+.bg-row:hover { background: transparent; }
+.bg-row:hover .bg-row-inner {
+  background: var(--panel-2, #211f1d);
+  border-color: var(--line, #36322d);
 }
-.bg-row:not(:last-child) .bg-row-inner::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: -13px;
-  width: 1px;
-  height: 14px;
-  background: var(--line);
-  transform: translateX(-50%);
+.bg-row.bg-active:hover .bg-row-inner {
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 .bg-row.bg-active {
-  background: var(--accent-soft);
+  background: transparent;
 }
-.bg-row.bg-selected { outline: 1px solid var(--accent); outline-offset: -1px; }
+.bg-row.bg-selected { outline: none; }
 .bg-row.bg-deleted { opacity: 0.45; text-decoration: line-through; }
 .bg-row-inner {
   display: flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
+  gap: 8px;
+  width: fit-content;
+  max-width: calc(100% - 12px);
   min-width: 0;
-  padding-right: 8px;
+  padding: 4px 10px;
   border: 1px solid var(--line-soft);
   border-radius: 6px;
-  padding: 4px 8px;
-  background: var(--panel);
+  background: var(--panel-3, var(--panel-2));
+  box-sizing: border-box;
+  height: calc(100% - 8px);
+  margin: 4px 0;
+  transition: border-color var(--m-fast) ease, background var(--m-fast) ease;
+}
+.bg-root.bg-compact .bg-row-inner {
+  height: calc(100% - 4px);
+  margin: 2px 0;
+  border-radius: 4px;
+  padding: 0 6px;
+}
+.bg-row.bg-active .bg-row-inner {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.bg-row.bg-selected .bg-row-inner {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 .bg-message {
   color: var(--text-quiet);
