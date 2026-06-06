@@ -90,7 +90,7 @@ function _fmtTime(ts) {
   } catch (_) { return ""; }
 }
 
-function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate, onContinue, onDelete, onSelect }) {
+function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate, onContinue, onDelete, onSelect, outerStyle }) {
   const rawNodes = (data && data.nodes) || [];
   const refs = (data && data.refs) || [];
   const activeId = data && (data.active_commit_id ?? data.active_id);
@@ -117,7 +117,6 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
   const isCompact = variant === "compact";
   const ROW_H = isCompact ? 22 : 36;
   const DOT_R = isCompact ? 4 : 5;
-  const CARD_GAP = isCompact ? 12 : 24;
   const totalH = sortedDesc.length * ROW_H + 60;
 
   // 用非 passive 的 wheel 事件(可 preventDefault)
@@ -129,16 +128,19 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
     return () => el.removeEventListener('wheel', handler);
   }, []);
 
+  const [zoom, setZoom] = useState(1);
   const onMouseDown = useCallback((e) => {
-    dragRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+    dragRef.current = { startX: e.clientX, startY: e.clientY, panX: pan.x, panY: pan.y };
   }, [pan]);
   const onMouseMove = useCallback((e) => {
     if (!dragRef.current) return;
-    setPan({ x: e.clientX - dragRef.current.x, y: e.clientY - dragRef.current.y });
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    setPan({ x: dragRef.current.panX + dx, y: dragRef.current.panY + dy });
   }, []);
   const onMouseUp = useCallback(() => { dragRef.current = null; }, []);
 
-  // 容器宽度（用于计算 SVG 中心点）
+  // 容器宽度 + 缩放状态
   const [containerW, setContainerW] = useState(400);
   React.useEffect(() => {
     if (!canvasRef.current) return;
@@ -147,6 +149,31 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
     });
     ro.observe(canvasRef.current);
     return () => ro.disconnect();
+  }, []);
+
+  // 缩放/平移：触摸板双指滑动→平移，Pinch→缩放（基于鼠标坐标缩放）
+  const xfRef = React.useRef({ pan: { x: 0, y: 0 }, zoom: 1 });
+  React.useEffect(() => { xfRef.current = { pan, zoom }; }, [pan, zoom]);
+  React.useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const handler = (e) => {
+      e.preventDefault();
+      if (e.ctrlKey) {
+        const { pan: p, zoom: oldZ } = xfRef.current;
+        const newZ = Math.max(0.25, Math.min(3, oldZ - e.deltaY * 0.005));
+        const rect = el.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const ratio = newZ / oldZ;
+        setPan({ x: mx - (mx - p.x) * ratio, y: my - (my - p.y) * ratio });
+        setZoom(newZ);
+      } else {
+        setPan(p => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
+      }
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
   }, []);
 
   if (nodes.length === 0) {
@@ -158,51 +185,51 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
     );
   }
 
-  // 列轨道偏移函数
+  // ── 新列布局：按分支长度排序，短枝在外，长枝在内 ──
   const cx = containerW / 2;
-  function colOffset(colN) {
-    if (colN === 0) return 0;
-    const sign = colN % 2 === 0 ? 1 : -1;
-    return Math.ceil(colN / 2) * (isCompact ? 6 : 12) * sign;
-  }
-
-  // 计算每个 dot 位置（含列轨道上的 x 坐标）
+  const step = isCompact ? 8 : 16;
+  
+  // 1) 计算每个 dot 位置（暂用原始列索引，后面重新分配）
   const dotData = sortedDesc.map(n => {
     const cid = n.commit_id ?? n.id;
     const col = columnOf.get(cid) ?? 0;
     const row = rowMap.get(cid) ?? 0;
     return {
       cid, col, row, y: row * ROW_H + ROW_H / 2,
-      dotX: cx + colOffset(col),
+      dotX: cx, // 暂用中心，后续更新
+      colOff: 0,
       color: _colorForColumn(col),
       node: n, isActive: cid === activeId, isSelected: cid === selectedId,
     };
   });
 
-  // 左右交替：按列索引确定
-  const sideMap = new Map();
-  const colSideCount = {};
-  dotData.forEach((d) => {
-    const col = d.col;
-    if (!colSideCount[col]) colSideCount[col] = 0;
-    if (col === 0) sideMap.set(d.cid, colSideCount[col] % 2 === 0 ? "right" : "left");
-    else sideMap.set(d.cid, colSideCount[col] % 2 === 0 ? "left" : "right");
-    colSideCount[col]++;
-  });
-
-  // 计算每列的垂直范围（连续轨道）
-  const colRanges = {};
+  // 2) 统计每列的节点数，按节点数降序排列（长枝靠近中心）
+  const colStats = {};
   dotData.forEach(d => {
-    if (!colRanges[d.col]) colRanges[d.col] = { minY: d.y, maxY: d.y, color: d.color, dotX: d.dotX };
-    else {
-      if (d.y < colRanges[d.col].minY) colRanges[d.col].minY = d.y;
-      if (d.y > colRanges[d.col].maxY) colRanges[d.col].maxY = d.y;
-    }
+    if (!colStats[d.col]) colStats[d.col] = { count: 0, minY: d.y, maxY: d.y, color: d.color };
+    colStats[d.col].count++;
+    if (d.y < colStats[d.col].minY) colStats[d.col].minY = d.y;
+    if (d.y > colStats[d.col].maxY) colStats[d.col].maxY = d.y;
+  });
+  const sortedCols = Object.keys(colStats).map(Number).sort((a, b) => colStats[b].count - colStats[a].count);
+
+  // 3) 分配物理位置：最长（sortedCols[0]）在中心，下一左一右交替向外
+  const colPosMap = new Map(); // col -> 物理偏移量（px，正=右，负=左）
+  sortedCols.forEach((col, idx) => {
+    const pos = idx === 0 ? 0 : (idx % 2 === 1 ? -Math.ceil(idx / 2) * step : Math.ceil(idx / 2) * step);
+    colPosMap.set(col, pos);
   });
 
-  // 分支线（父子 dot 间 S 形曲线）
+  // 更新 dotData 中的 dotX 和 colOff
+  dotData.forEach(d => {
+    const off = colPosMap.get(d.col) ?? 0;
+    d.dotX = cx + off;
+    d.colOff = off;
+  });
+
+    // 4) 分支线（提前构建，用于曲线遮挡检测）
   const branchEdges = [];
-  const colTracks = [];
+  const curveShadows = [];
   dotData.forEach(d => {
     const pid = d.node.parent_id ?? d.node.parent ?? null;
     if (pid == null) return;
@@ -213,34 +240,85 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
     } else {
       const myX = d.dotX, paX = parentDot.dotX, midY = (d.y + parentDot.y) / 2;
       branchEdges.push({ key: `b-${pid}-${d.cid}`, d: `M ${myX} ${d.y} C ${myX} ${midY}, ${paX} ${midY}, ${paX} ${parentDot.y}`, color: d.color, type: "curve" });
+      const yMin = Math.min(d.y, parentDot.y), yMax = Math.max(d.y, parentDot.y);
+      curveShadows.push({ yMin, yMax, xFrom: myX, xTo: paX });
     }
   });
-  // 每列连续垂直轨道
-  Object.keys(colRanges).forEach(col => {
-    const r = colRanges[col];
-    if (r.minY === r.maxY) return;
-    colTracks.push({ key: `track-${col}`, x: r.dotX, y1: r.minY, y2: r.maxY, color: r.color });
+
+  // 5) & 6) 智能判定卡片位置侧向与动态距离（含曲线遮挡）
+  function curveXAtY(y, cs) {
+    if (y < cs.yMin - 2 || y > cs.yMax + 2) return null;
+    const t = (y - cs.yMin) / (cs.yMax - cs.yMin || 1);
+    return cs.xFrom + (cs.xTo - cs.xFrom) * t;
+  }
+  const CARD_MIN = isCompact ? 10 : 20;
+  const CARD_SAFE = isCompact ? 6 : 12;
+  const finalSides = new Map();
+  const cardGapMap = new Map();
+
+  dotData.forEach((d) => {
+    const activeCols = Object.keys(colStats).map(Number).filter(col => {
+      const s = colStats[col];
+      return s && s.minY - 2 <= d.y && d.y <= s.maxY + 2;
+    });
+    const activeOffsets = activeCols.map(col => colPosMap.get(col) ?? 0);
+    const leftOff = activeOffsets.filter(v => v < 0);
+    const rightOff = activeOffsets.filter(v => v > 0);
+    const maxLeftDist = leftOff.length > 0 ? Math.abs(Math.min(...leftOff)) : 0;
+    const maxRightDist = rightOff.length > 0 ? Math.max(...rightOff) : 0;
+
+    let curveLeft = 0, curveRight = 0;
+    for (const cs of curveShadows) {
+      const cx2 = curveXAtY(d.y, cs);
+      if (cx2 == null) continue;
+      const relX = cx2 - cx;
+      if (relX < curveLeft) curveLeft = relX;
+      if (relX > curveRight) curveRight = relX;
+    }
+    const totalLeft = Math.max(maxLeftDist, Math.abs(curveLeft));
+    const totalRight = Math.max(maxRightDist, curveRight);
+    const gapLeft = Math.max(CARD_MIN, totalLeft + CARD_SAFE);
+    const gapRight = Math.max(CARD_MIN, totalRight + CARD_SAFE);
+
+    let side = d.colOff < 0 ? "left" : "right";
+    if (d.colOff === 0) {
+      if (gapLeft < gapRight) side = "left";
+      else if (gapRight < gapLeft) side = "right";
+      else side = (rowMap.get(d.cid) ?? 0) % 2 === 0 ? "right" : "left";
+    }
+    finalSides.set(d.cid, side);
+    cardGapMap.set(d.cid, side === "right" ? gapRight : gapLeft);
+  });
+
+  // 7) 每列垂直连续轨道
+  const colTracks = [];
+  sortedCols.forEach(col => {
+    const s = colStats[col];
+    const off = colPosMap.get(col) ?? 0;
+    if (s.minY !== s.maxY) {
+      colTracks.push({ key: `track-${col}`, x: cx + off, y1: s.minY - 4, y2: s.maxY + 4, color: s.color });
+    }
   });
 
   return (
     <div ref={canvasRef} className={`bg-canvas ${isCompact ? "bg-compact" : "bg-full"}`}
       onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
-      style={{ cursor: dragRef.current ? "grabbing" : "grab", position: "relative", overflow: "hidden", width: "100%" }}>
+      style={{ cursor: dragRef.current ? "grabbing" : "grab", position: "relative", overflow: "hidden", width: "100%", flex: "1 1 0%", minHeight: 0, overflowY: "auto", ...outerStyle }}>
       {/* 背景网格 */}
       <svg className="bg-grid" style={{ position: "absolute", inset: 0, pointerEvents: "none", opacity: 0.18, width: "100%", height: "100%" }}>
         <defs>
-          <pattern id="bg-grid-sm" width="32" height="32" patternUnits="userSpaceOnUse" patternTransform={`translate(${pan.x},${pan.y})`}>
+          <pattern id="bg-grid-sm" width="32" height="32" patternUnits="userSpaceOnUse" patternTransform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
             <path d="M 32 0 L 0 0 0 32" fill="none" stroke="var(--line)" strokeWidth="0.5" />
           </pattern>
-          <pattern id="bg-grid-lg" width="128" height="128" patternUnits="userSpaceOnUse" patternTransform={`translate(${pan.x},${pan.y})`}>
+          <pattern id="bg-grid-lg" width="128" height="128" patternUnits="userSpaceOnUse" patternTransform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
             <rect width="128" height="128" fill="url(#bg-grid-sm)" />
             <path d="M 128 0 L 0 0 0 128" fill="none" stroke="var(--line)" strokeWidth="1" />
           </pattern>
         </defs>
         <rect width="100%" height="100%" fill="url(#bg-grid-lg)" />
       </svg>
-      {/* 平移层 */}
-      <div style={{ transform: `translate(${pan.x}px, ${pan.y}px)`, position: "relative", width: "100%", minHeight: totalH, paddingTop: 30 }}>
+      {/* 平移 + 缩放层 */}
+      <div style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "0 0", position: "relative", width: "100%", minHeight: totalH, paddingTop: 30 }}>
         {/* SVG 连线层 */}
         <svg style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "visible", width: "100%", height: totalH + 60 }}>
           {/* 列轨道（连续垂直线，分支主干） */}
@@ -257,8 +335,9 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
           ))}
           {/* 连接线：dot → 卡片（动态距离） */}
           {dotData.map(d => {
-            const side = sideMap.get(d.cid);
-            const tx = side === "right" ? d.dotX + CARD_GAP + 40 : d.dotX - CARD_GAP - 40;
+            const side = finalSides.get(d.cid);
+            const gap = cardGapMap.get(d.cid) || 20;
+            const tx = side === "right" ? cx + gap : cx - gap;
             return (
               <line key={`dl-${d.cid}`} x1={d.dotX} y1={d.y} x2={tx} y2={d.y}
                 stroke={d.color} strokeWidth={1.2} strokeDasharray="3 3" opacity={0.35} />
@@ -279,23 +358,25 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
         </svg>
         {/* 卡片 */}
         {dotData.map(d => {
-          const cid = d.cid; const side = sideMap.get(cid);
+          const cid = d.cid;
+          const side = finalSides.get(cid) || "right";
+          const gap = cardGapMap.get(d.cid) || 24;
           const isActive = d.isActive;
           const turnIdx = d.node.turn_index ?? null;
           const message = d.node.summary || d.node.message || d.node.title || `#${cid}`;
           const truncMsg = isCompact && message.length > 20 ? message.slice(0, 20) + "…" : message;
           const nodeRefs = refsByTarget.get(cid) || [];
-          const colOff = colOffset(d.col); // 列偏移量（正=右偏，负=左偏）
           const posStyle = side === "right"
-            ? { left: `calc(50% + ${colOff + CARD_GAP}px)` }
-            : { right: `calc(50% - ${colOff + CARD_GAP}px)` };
+            ? { left: `calc(50% + ${gap}px)` }
+            : { right: `calc(50% + ${gap}px)` };
+          const innerClass = side === "right" ? "bg-card-inner-right" : "bg-card-inner-left";
           return (
             <div key={`card-${cid}`}
               className={`bg-card ${side} ${isActive ? "bg-card-active" : ""} ${d.isSelected ? "bg-card-selected" : ""} ${d.node.deleted ? "bg-deleted" : ""}`}
               style={{ top: d.y - (isCompact ? 10 : 18), ...posStyle, fontSize: isCompact ? 11 : 13, cursor: onSelect ? "pointer" : "default" }}
               onClick={onSelect ? (e) => { e.stopPropagation(); onSelect(cid); } : undefined}
               title={`#${cid}${turnIdx != null ? " · turn " + turnIdx : ""}\n${message}`}>
-              <div className={`bg-card-inner ${side === "right" ? "bg-card-inner-right" : "bg-card-inner-left"}`}>
+              <div className={`bg-card-inner ${innerClass}`}>
                 {nodeRefs.map((r, i) => {
                   const refName = r.name || r.ref_name || "";
                   const refColor = r.is_active ? BG_COLORS[0] : _colorForRef(refName);
