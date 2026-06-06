@@ -793,7 +793,9 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
             #  · 已知 provider 也允许覆盖 base_url(指向自己的中转/代理)。
             # base_url 的 SSRF 防护由下方 set_credential 的 _validate_base_url 兜底
             # (强制 https + 禁私网/本机),不再一刀切拒绝未知 provider。
-            if not known and not base_url_override:
+            # 仅在「真的在设置一个 key」时才要求 base_url;清空 key(api_key='')/纯删除
+            # 不该被这条设置态校验挡住(否则自定义中转站删不掉,报「删除失败」)。
+            if (body.get("api_key") or "").strip() and not known and not base_url_override:
                 raise ValueError("自定义供应商必须填写 Base URL(中转站地址)")
             api_id = normalized_api_id
         result = user_credentials.set_credential(
