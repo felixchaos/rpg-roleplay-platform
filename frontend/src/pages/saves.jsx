@@ -714,6 +714,18 @@ function BranchesPage() {
   // 后端不变(branch_commits + branch_refs);组件抽到 frontend/src/branch-graph.jsx,
   // 游戏内右侧 BranchTreeRail 和这里共用,只换 variant prop (compact / full)。
 
+  // AWS UI 布局导致 #root 从 -24px 开始,body.scrollHeight > viewport 产生多余滚动条
+  useEffectPL(() => {
+    const prev = document.body.style.overflowY;
+    const prevHtml = document.documentElement.style.overflowY;
+    document.body.style.overflowY = 'hidden';
+    document.documentElement.style.overflowY = 'hidden';
+    return () => {
+      document.body.style.overflowY = prev;
+      document.documentElement.style.overflowY = prevHtml;
+    };
+  }, []);
+
   const [saves, setSaves] = useStatePL([]);
   const [selectedSave, setSelectedSave] = useStatePL(undefined);
   const [savesLoaded, setSavesLoaded] = useStatePL(false);
@@ -832,8 +844,8 @@ function BranchesPage() {
   const refCount = (treePayload?.refs || []).length;
 
   return (
-    <div className="pl-stack">
-      <section className="pl-sec" data-cap-anchor="saves.branches">
+    <div className="pl-stack" style={{height: "calc(100vh - 61px)", display: "flex", flexDirection: "column"}}>
+      <section className="pl-sec" data-cap-anchor="saves.branches" style={{flex: 1, display: "flex", flexDirection: "column", minHeight: 0}}>
         <div className="pl-sec-head">
           <h2>
             {t('saves.branches.page_title')}{" "}
@@ -854,7 +866,7 @@ function BranchesPage() {
             </button>
           </div>
         </div>
-        <div style={{padding: "8px 0"}}>
+        <div style={{padding: "8px 0 0", flex: 1, display: "flex", flexDirection: "column", minHeight: 0}}>
           {treeLoading && (
             <div className="muted-2" style={{padding: "16px", fontSize: 12.5}}>{t('saves.branches.loading_tree')}</div>
           )}
@@ -862,19 +874,23 @@ function BranchesPage() {
             <div className="muted-2" style={{padding: "16px", fontSize: 12.5, color: "var(--danger)"}}>{t('saves.branches.load_fail', { err: treeError })}</div>
           )}
           {!treeLoading && !treeError && treePayload && (
-            <BranchGraph
-              data={treePayload}
-              variant="full"
-              selectedId={selectedNodeId}
-              onSelect={setSelectedNodeId}
-              onActivate={onActivate}
-              onContinue={onContinue}
-              onDelete={onDeleteRequest}
-            />
+            <>
+              <div style={{flex: 1, minHeight: 0, display: "flex", flexDirection: "column"}}>
+                <BranchGraph
+                  data={treePayload}
+                  variant="full"
+                  selectedId={selectedNodeId}
+                  onSelect={setSelectedNodeId}
+                  onActivate={onActivate}
+                  onContinue={onContinue}
+                  onDelete={onDeleteRequest}
+                />
+              </div>
+              <div className="muted-2" style={{padding: 0, fontSize: 11, fontFamily: "var(--font-mono)", flexShrink: 0}}>
+                {t('saves.branches.legend')}
+              </div>
+            </>
           )}
-        </div>
-        <div className="muted-2" style={{padding: "6px 4px 0", fontSize: 11, fontFamily: "var(--font-mono)"}}>
-          {t('saves.branches.legend')}
         </div>
       </section>
       <ConfirmModal

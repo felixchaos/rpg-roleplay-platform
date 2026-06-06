@@ -2167,3 +2167,132 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
   .pl-stat { border-right: 0; border-bottom: 1px solid var(--line-soft); }
   .pl-table { font-size: 12px; }
 }
+
+/* ── BranchGraph — 中央树状布局 ────────────────────────────── */
+.bg-canvas {
+  position: relative;
+  width: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.bg-canvas.bg-compact {
+  max-height: 320px;
+  overflow: hidden;
+}
+.bg-canvas.bg-full {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  height: calc(100vh - 220px);
+  min-height: 300px;
+  max-height: 800px;
+}
+
+/* 卡片 */
+.bg-card {
+  position: absolute;
+  white-space: nowrap;
+  z-index: 2;
+}
+.bg-card-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+  background: var(--panel-3, var(--panel-2));
+  transition: border-color var(--m-fast) ease, background var(--m-fast) ease;
+}
+.bg-card-inner-right { flex-direction: row; }
+.bg-card-inner-left { flex-direction: row-reverse; }
+.bg-card-active .bg-card-inner {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.bg-card-selected .bg-card-inner {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.bg-card:hover .bg-card-inner {
+  background: var(--panel-2, #211f1d);
+  border-color: var(--line, #36322d);
+}
+.bg-card-active:hover .bg-card-inner {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.bg-deleted { opacity: 0.45; text-decoration: line-through; }
+
+.bg-message {
+  color: var(--text-quiet);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.bg-card-active .bg-message { color: var(--text); font-weight: 500; }
+
+.bg-meta {
+  font-size: 10px;
+  color: var(--muted-2);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.bg-card-inner-right .bg-meta { margin-left: auto; }
+.bg-card-inner-left .bg-meta { margin-right: auto; }
+
+.bg-ref-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  background: var(--panel-3, var(--panel-2));
+  color: var(--text-quiet);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+.bg-ref-pill.bg-ref-head {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.bg-actions-hover {
+  display: none;
+  gap: 1px;
+  flex-shrink: 0;
+}
+.bg-card:hover .bg-actions-hover { display: inline-flex; }
+.bg-actions-hover .iconbtn {
+  width: 20px; height: 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--muted-2);
+  cursor: pointer;
+}
+.bg-actions-hover .iconbtn:hover { background: var(--panel-3, var(--panel-2)); color: var(--text); border-color: var(--line); }
+
+.bg-empty {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 16px 8px;
+  color: var(--muted-2);
+  text-align: center;
+}
+.bg-empty-text {
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+.bg-empty-compact .bg-empty-text { font-size: 11px; }
+.bg-empty-full {
+  min-height: 200px;
+}
