@@ -2192,6 +2192,8 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
   align-items: center;
   border-bottom: none;
   transition: background var(--m-fast) ease;
+  width: 100%;
+  box-sizing: border-box;
 }
 .bg-row:hover { background: transparent; }
 .bg-row:hover .bg-row-inner {
@@ -2212,7 +2214,7 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
   align-items: center;
   gap: 8px;
   width: fit-content;
-  max-width: calc(100% - 12px);
+  max-width: 100%;
   min-width: 0;
   padding: 4px 10px;
   border: 1px solid var(--line-soft);
