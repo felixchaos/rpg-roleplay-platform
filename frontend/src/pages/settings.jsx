@@ -607,7 +607,9 @@ function ModelsSection() {
       onDeleteKey={async () => {
         if (!await window.__confirm({ title: t('settings.models.delete_key_title'), message: t('settings.models.delete_key_confirm', { name: selectedApi.name }), danger: true, confirmText: t('settings.models.delete_key_btn') })) return;
         try {
-          await window.api.credentials.set({ api_id: credentialApiIdForCatalog(selectedApi.id), api_key: '' });
+          // 删除凭证走真正的 delete 端点(无 Base URL 校验);旧实现用 set({api_key:''})
+          // 会触发「自定义供应商必须填写 Base URL」的设置态校验,导致自定义中转站删不掉。
+          await window.api.credentials.remove({ api_id: credentialApiIdForCatalog(selectedApi.id) });
           window.__apiToast?.(t('settings.models.delete_key_ok'), { kind: 'ok' });
           setSelectedApiId(null);
           setApis(arr => arr.map(a => a.id === selectedApi.id ? { ...a, key_set: false, key_hint: '—' } : a));
@@ -2534,9 +2536,11 @@ function ModuleModelsSection() {
   }, [catalog, credentialApiIds]);
 
   // 按模块的 capsFilter 过滤(embedder 只显示 embedding 能力的条目)
+  // 反馈:按 category 显示——没声明 capsFilter 的都是聊天/LLM 模块,一律排除 embedding 模型
+  //(否则 GM/上下文代理等 chat 选择器会混进 RAG embedding 模型)。
   const modelsForModule = (mod) => {
     const need = Array.isArray(mod.capsFilter) ? mod.capsFilter : null;
-    if (!need || need.length === 0) return flatModels;
+    if (!need || need.length === 0) return flatModels.filter(m => !(m.capabilities || []).includes("embedding"));
     let pool = flatModels;
     // embedder 特例:admin/vip 有平台 Vertex SA 兜底,即使没配 vertex 用户凭证,也应能选
     // 平台提供的 vertex embedding 模型(否则默认 text-embedding-004 显示「未在 catalog」)。

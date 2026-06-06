@@ -183,7 +183,8 @@ def create_save(
             id_role = str(identity.get("role") or "").strip()
             id_bg = str(identity.get("background") or "").strip()
             id_source = str(identity.get("source") or "custom").strip() or "custom"
-            if id_source not in ("custom", "ai"):
+            # 反馈#1:npc_card = 主角占用某原著 NPC 的失忆身份(provenance,与 ai/custom 并列)
+            if id_source not in ("custom", "ai", "npc_card"):
                 id_source = "custom"
             if id_role or id_bg or id_name:
                 ic_row = db.execute(

@@ -4,6 +4,7 @@ import CSHeader from '@cloudscape-design/components/header';
 import CSColumnLayout from '@cloudscape-design/components/column-layout';
 import CSFormField from '@cloudscape-design/components/form-field';
 import CSSelect from '@cloudscape-design/components/select';
+import CSInput from '@cloudscape-design/components/input';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSButton from '@cloudscape-design/components/button';
 
@@ -122,6 +123,30 @@ export default function AgentModelPicker({
     const caps = m.capabilities || m.caps || [];
     return caps.length === 1 && caps[0] === 'embedding';
   };
+  const providerOptions = React.useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const a of apis) {
+      const id = a.api_id || a.id;
+      if (!id || !credApiIds.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ value: id, label: a.display_name || a.name || id });
+    }
+    // 自定义 OpenAI-compatible API 可能只有用户凭证,不在全局模型目录里。
+    for (const id of credApiIds) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ value: id, label: id });
+    }
+    return out;
+  }, [apis, credApiIds]);
+  const modelOptions = modelsOf(apiId)
+    .filter((m) => !isEmbeddingOnly(m))
+    .map((m) => ({
+      value: m.real_name || m.id,
+      label: `${m.display_name || m.real_name || m.id}${m.enabled === false ? ' (禁用)' : ''}`,
+      disabled: m.enabled === false,
+    }));
 
   const body = (
     <>
@@ -140,9 +165,7 @@ export default function AgentModelPicker({
               return a ? { value: apiId, label: a.display_name || a.name || apiId }
                 : (apiId ? { value: apiId, label: apiId + ' (未配 key)' } : null);
             })()}
-            options={apis
-              .filter((a) => credApiIds.has(a.api_id || a.id))
-              .map((a) => ({ value: a.api_id || a.id, label: a.display_name || a.name || (a.api_id || a.id) }))}
+            options={providerOptions}
             placeholder={credApiIds.size === 0 ? '请先配 API key' : '选择 provider'}
             onChange={({ detail }) => {
               const aid = detail.selectedOption.value;
@@ -158,24 +181,38 @@ export default function AgentModelPicker({
             empty="还没配 API key"
           />
         </CSFormField>
-        <CSFormField label="Model">
-          <CSSelect
-            selectedOption={(() => {
-              const m = modelsOf(apiId).find((x) => (x.real_name || x.id) === model);
-              return m ? { value: model, label: m.display_name || m.real_name || m.id }
-                : (model ? { value: model, label: model } : null);
-            })()}
-            options={modelsOf(apiId)
-              .filter((m) => !isEmbeddingOnly(m))
-              .map((m) => ({
-                value: m.real_name || m.id,
-                label: `${m.display_name || m.real_name || m.id}${m.enabled === false ? ' (禁用)' : ''}`,
-                disabled: m.enabled === false,
-              }))}
-            placeholder="选择模型"
-            onChange={({ detail }) => { const mid = detail.selectedOption.value; setModel(mid); persist(apiId, mid); }}
-            disabled={saving || !apiId}
-          />
+        <CSFormField label="Model" description="列表没有你的模型时,直接填写服务商实际 model 名称并保存。">
+          <div style={{ display: 'grid', gap: 8 }}>
+            {modelOptions.length > 0 && (
+              <CSSelect
+                selectedOption={(() => {
+                  const m = modelsOf(apiId).find((x) => (x.real_name || x.id) === model);
+                  return m ? { value: model, label: m.display_name || m.real_name || m.id }
+                    : (model ? { value: model, label: model } : null);
+                })()}
+                options={modelOptions}
+                placeholder="选择模型"
+                onChange={({ detail }) => { const mid = detail.selectedOption.value; setModel(mid); persist(apiId, mid); }}
+                disabled={saving || !apiId}
+              />
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8 }}>
+              <CSInput
+                value={model}
+                placeholder={modelOptions.length ? '或手动填写模型名,例如 gpt-4o-mini' : '填写模型名,例如 gpt-4o-mini'}
+                onChange={({ detail }) => setModel(detail.value)}
+                onBlur={() => { const m = (model || '').trim(); if (apiId && m) persist(apiId, m); }}
+                disabled={saving || !apiId}
+              />
+              <CSButton
+                loading={saving}
+                disabled={saving || !apiId || !(model || '').trim()}
+                onClick={() => persist(apiId, (model || '').trim())}
+              >
+                保存模型名
+              </CSButton>
+            </div>
+          </div>
         </CSFormField>
       </CSColumnLayout>
     </>

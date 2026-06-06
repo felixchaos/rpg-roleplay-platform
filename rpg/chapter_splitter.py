@@ -24,6 +24,8 @@ class SplitPattern:
 class ChapterSplitter:
     """Rule-first TXT chapter splitter with diagnostics."""
 
+    AUTO_CONFIDENCE_THRESHOLD = 0.80
+
     SECTION_MARKER_PATTERN = re.compile(rf"^[（(]\s*([{NUMBER_TOKEN}]{{1,8}})\s*[）)]$")
     PAGINATION_HEADING_PATTERN = re.compile(r"^(.{1,60}?)[（(]\s*([0-9０-９]{1,5})\s*[）)]$")
     ACT_HEADING_PATTERN = re.compile(
@@ -176,7 +178,8 @@ class ChapterSplitter:
                 if chapters:
                     return chapters, "custom_pattern", None
 
-        # 用户显式选了某条预设规则
+        # 用户显式选了某条预设规则：只要质量基本可用就尊重选择。
+        # "低于阈值继续尝试下一种规则"只属于 auto 智能识别，不抢用户手动规则。
         if split_rule in self.RULE_PATTERNS:
             chapters = self._flatten_volumes(self._split_with_volumes(text, self.RULE_PATTERNS[split_rule].pattern))
             processed = self._post_process_chapters(chapters)
@@ -190,25 +193,108 @@ class ChapterSplitter:
 
         adaptive_chapters, adaptive_report = adaptive_split(text)
         adaptive_score = float((adaptive_report.get("rule_chosen") or {}).get("score", 0.0))
-        adaptive_ok = (
-            len(adaptive_chapters) > 1
-            and adaptive_score >= 0.5
-            and self._has_reasonable_chapter_quality(adaptive_chapters)
-        )
 
         auto_chapters, auto_mode = self._split_auto(text)
-        auto_score = structural_score(auto_chapters, text)[0] if len(auto_chapters) > 1 else 0.0
-        auto_ok = bool(auto_chapters) and self._has_reasonable_chapter_quality(auto_chapters)
+        candidates: list[dict] = []
+        candidates.extend([
+            c for c in [
+                self._score_split_candidate(adaptive_chapters, "adaptive_fusion", text, score_hint=adaptive_score),
+                self._score_split_candidate(
+                    auto_chapters,
+                    auto_mode,
+                    text,
+                    score_hint=(structural_score(auto_chapters, text)[0] if len(auto_chapters) > 1 else None),
+                ),
+            ]
+            if c
+        ])
+        for rule_id, rule in self.RULE_PATTERNS.items():
+            mode = f"rule_{rule_id}"
+            if any(c["mode"] == mode for c in candidates):
+                continue
+            rule_chapters = self._flatten_volumes(self._split_with_volumes(text, rule.pattern))
+            candidate = self._score_split_candidate(
+                rule_chapters,
+                mode,
+                text,
+                score_hint=(structural_score(rule_chapters, text)[0] if len(rule_chapters) > 1 else None),
+            )
+            if candidate:
+                candidates.append(candidate)
 
-        # adaptive 多章且分数不低于 auto → 采纳 adaptive;否则若 auto 可靠用 auto
-        if adaptive_ok and adaptive_score >= auto_score:
-            return adaptive_chapters, "adaptive_fusion", adaptive_report
-        if auto_ok:
-            return auto_chapters, auto_mode, adaptive_report
-        if adaptive_ok:
-            return adaptive_chapters, "adaptive_fusion", adaptive_report
+        if candidates:
+            if any(len(c["chapters"]) > 1 for c in candidates):
+                candidates = [
+                    c for c in candidates
+                    if len(c["chapters"]) > 1 or c["mode"] in {"fallback_window", "quality_fallback_window"}
+                ]
+            strong = [c for c in candidates if c["confidence"] >= self.AUTO_CONFIDENCE_THRESHOLD]
+            pool = strong or candidates
+            chosen = max(pool, key=lambda c: (c["confidence"], c["score"], len(c["chapters"])))
+            if strong:
+                for preferred_mode in ("numbered_sections",):
+                    preferred = [c for c in strong if c["mode"] == preferred_mode]
+                    if not preferred:
+                        continue
+                    best_preferred = max(preferred, key=lambda c: (c["score"], c["confidence"]))
+                    if (
+                        best_preferred["score"] >= chosen["score"] - 0.02
+                        and best_preferred["confidence"] >= chosen["confidence"] - 0.03
+                    ):
+                        chosen = best_preferred
+                        break
+            adaptive_report = dict(adaptive_report or {})
+            adaptive_report["auto_selection"] = {
+                "mode": chosen["mode"],
+                "confidence": chosen["confidence"],
+                "score": chosen["score"],
+                "threshold": self.AUTO_CONFIDENCE_THRESHOLD,
+                "used_best_below_threshold": not bool(strong),
+            }
+            adaptive_report["auto_candidates"] = [
+                {
+                    "mode": c["mode"],
+                    "confidence": c["confidence"],
+                    "score": c["score"],
+                    "chapter_count": len(c["chapters"]),
+                }
+                for c in sorted(candidates, key=lambda c: (c["confidence"], c["score"]), reverse=True)[:8]
+            ]
+            return chosen["chapters"], chosen["mode"], adaptive_report
+
         # 都不可靠 → 用 auto 的兜底结果(通常 fallback_window)
-        return (auto_chapters or adaptive_chapters), (auto_mode if auto_chapters else "adaptive_fusion"), adaptive_report
+        fallback = auto_chapters or adaptive_chapters
+        fallback_mode = auto_mode if auto_chapters else "adaptive_fusion"
+        return fallback, fallback_mode, adaptive_report
+
+    def _score_split_candidate(
+        self,
+        chapters: list[dict],
+        mode: str,
+        text: str,
+        *,
+        score_hint: float | None = None,
+    ) -> dict | None:
+        processed = self._post_process_chapters(chapters)
+        if not processed or not self._has_reasonable_chapter_quality(processed):
+            return None
+        if (
+            mode not in {"fallback_window", "quality_fallback_window"}
+            and len(processed) <= 1
+            and len(text) > 5000
+        ):
+            return None
+        from ingest.adaptive_split import structural_score
+
+        score = float(score_hint if score_hint is not None else structural_score(processed, text)[0])
+        report = self._build_split_report(chapters=processed, split_mode=mode, source_text=text)
+        report_conf = float(report.get("confidence") or 0.0)
+        return {
+            "chapters": processed,
+            "mode": mode,
+            "score": round(max(0.0, min(0.99, score)), 4),
+            "confidence": round(max(0.0, min(0.99, min(report_conf, score))), 2),
+        }
 
     def _split_auto(self, text: str) -> tuple[list[dict], str]:
         lines = text.split("\n")
@@ -701,9 +787,24 @@ class ChapterSplitter:
         不静默删:author_notes / weird_titles / gaps 全部上报,供复核 UI 逐条裁决。
         """
         ar = adaptive_report or {}
+        selection = ar.get("auto_selection") or {}
+        if selection.get("confidence") is not None:
+            try:
+                report["confidence"] = round(
+                    min(float(report.get("confidence") or 0.0), float(selection["confidence"])),
+                    2,
+                )
+            except (TypeError, ValueError):
+                pass
+            if selection.get("used_best_below_threshold"):
+                report.setdefault("reasons", []).append(
+                    "所有自动切分规则置信度均低于0.80，已选择当前最高置信度结果"
+                )
         report["rule_chosen"] = ar.get("rule_chosen")
         report["rule_runnerup"] = ar.get("rule_runnerup")
         report["score_breakdown"] = ar.get("score_breakdown", {})
+        report["auto_selection"] = selection or None
+        report["auto_candidates"] = ar.get("auto_candidates", [])
         gaps = ar.get("gaps", []) or []
         report["gaps"] = gaps
         report["cleaning"] = cleaning_report or {}

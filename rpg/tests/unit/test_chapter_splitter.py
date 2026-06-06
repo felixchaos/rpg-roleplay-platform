@@ -138,6 +138,9 @@ def test_fallback_report_for_unmarked_long_text() -> None:
     # 无标题长文 → 规则融合分数过低被否决,回落固定窗口
     assert report["mode"] == "fallback_window"
     assert report["problem_category"] == "no_heading_match"
+    assert report["auto_selection"]["used_best_below_threshold"] is True
+    assert report["auto_selection"]["threshold"] == 0.8
+    assert "已选择当前最高置信度结果" in " ".join(report["reasons"])
 
 
 def test_report_v2_fields_present() -> None:
@@ -150,9 +153,12 @@ def test_report_v2_fields_present() -> None:
     ])
     _, report = splitter.split_chapters_with_report(text)
     for key in ("rule_chosen", "rule_runnerup", "score_breakdown", "gaps",
-                "cleaning", "author_notes", "weird_titles", "needs_review"):
+                "cleaning", "author_notes", "weird_titles", "needs_review",
+                "auto_selection", "auto_candidates"):
         assert key in report, f"报告 v2 缺字段 {key}"
     assert isinstance(report["cleaning"], dict)
+    assert report["auto_selection"]["mode"] == report["mode"]
+    assert report["auto_candidates"]
     assert any("感言" in n["title"] for n in report["author_notes"])
 
 

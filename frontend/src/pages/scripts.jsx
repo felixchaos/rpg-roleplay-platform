@@ -51,6 +51,47 @@ import CSDrawer from '@cloudscape-design/components/drawer';
 const PENDING_IMPORT_KEY = "rpg.import.pendingImport";
 const PENDING_IMPORT_PIPELINE_KEY = "rpg.import.pendingPipeline";
 const IMPORT_JOB_TERMINAL_STATUSES = new Set(["done", "done_with_errors", "partial", "failed", "cancelled"]);
+const ACTIVE_IMPORT_STATUSES = new Set(["queued", "pending", "running", "processing", "importing", "started"]);
+const PLAY_BLOCKING_READINESS_KEYS = new Set(["chunks", "anchors"]);
+
+function readinessLabel(key, t) {
+  return t(`scripts.my.readiness_label_${key}`, { defaultValue: key });
+}
+
+function activeJobPlayBlockReason(payload, t) {
+  const job = payload?.job || payload?.active_job || payload;
+  const status = String(job?.status || payload?.status || "").trim().toLowerCase();
+  if (status && ACTIVE_IMPORT_STATUSES.has(status) && !IMPORT_JOB_TERMINAL_STATUSES.has(status)) {
+    return t('scripts.my.play_block_importing');
+  }
+  if (payload?.active === true && (!status || !IMPORT_JOB_TERMINAL_STATUSES.has(status))) {
+    return t('scripts.my.play_block_importing');
+  }
+  return "";
+}
+
+function scriptPlayBlockReason(script, t) {
+  if (!script) return "";
+  const status = String(
+    script.import_status
+    || script.job_status
+    || script.active_job?.status
+    || script.readiness?.active_job?.status
+    || ""
+  ).trim().toLowerCase();
+  if (status && ACTIVE_IMPORT_STATUSES.has(status) && !IMPORT_JOB_TERMINAL_STATUSES.has(status)) {
+    return t('scripts.my.play_block_importing');
+  }
+  const missing = Array.isArray(script.readiness?.missing) ? script.readiness.missing : [];
+  const blocking = missing.filter((key) => PLAY_BLOCKING_READINESS_KEYS.has(key));
+  if (blocking.length > 0) {
+    return t('scripts.my.play_block_missing', { items: blocking.map((key) => readinessLabel(key, t)).join('、') });
+  }
+  if (Number(script.chapter_count || 0) <= 0) {
+    return t('scripts.my.play_block_missing', { items: readinessLabel('chunks', t) });
+  }
+  return "";
+}
 
 function isCredentialsRequiredError(err) {
   const payload = err?.payload || {};
@@ -180,6 +221,18 @@ const SPLIT_RULES = [
   { id: "paren_num",  labelKey: "scripts.import.rule_paren_num" },
   { id: "custom",     labelKey: "scripts.import.rule_custom" },
 ];
+
+function isExpiredUploadError(e) {
+  const text = [
+    e?.message,
+    e?.error,
+    e?.detail,
+    e?.payload?.error,
+    e?.payload?.detail,
+    e?.payload?.message,
+  ].filter(Boolean).join(" ");
+  return /upload_id.*(不存在|过期|expired|not found)|uploaded file.*(expired|missing)/i.test(text);
+}
 
 function ScriptsPage({ subPage = "list" }) {
   return (
@@ -440,9 +493,9 @@ function SharingModeSelector({ script, currentUserId, onChanged }) {
 /* 剧本详情面板 —— 选中某剧本后在列表下方展开(对齐存档页结构)。
    Tabs:概览 / 参数(剧本覆盖设定) / 世界书(worldbook) / 知识库人物 / NPC 角色卡 / 时间线锚点。
    世界书 / NPC 角色卡 / 时间线锚点按需懒加载。 */
-function ScriptDetailPanel({ script: s, savesCount, embedStatus, currentUserId,
+function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatus, currentUserId,
   pendingTab, onPendingTabConsumed,
-  onPlay, onChapters, onReview, onExtractDone, onEmbed, onExport, onToggleVisibility, onDelete, onEditOverrides, onReload }) {
+  onPlay, onContinueSave, onNewGame, onChapters, onReview, onExtractDone, onEmbed, onExport, onToggleVisibility, onDelete, onEditOverrides, onReload }) {
   const { t } = useTranslation();
   const [tab, setTab] = useStatePL('overview');
 
@@ -541,6 +594,7 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus, currentUserId,
   // phase_rebuild_panel: 7 模块状态 + 估算/重做 SSE 协调器.
   // hook 自己拉 /modules-status,在 active rebuild job 时禁用其他卡按钮 + 顶部 banner 实时进度.
   const rb = useScriptRebuild(s.id);
+  const playBlock = scriptPlayBlockReason(s, t);
 
   return (
     <>
@@ -555,7 +609,27 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus, currentUserId,
       <CSHeader variant="h2"
         actions={
           <CSSpaceBetween direction="horizontal" size="xs">
-            <CSButton variant="primary" iconName="caret-right-filled" onClick={() => onPlay(s)}>{t('scripts.my.play_game')}</CSButton>
+            {/* 反馈#3:开始游戏改下拉——可选继续某个存档 / 开新游戏,不再有存档就直接进后台 */}
+            <CSButtonDropdown variant="primary" expandToViewport disabled={!!playBlock}
+              items={[
+                ...(scriptSaves.length ? [{
+                  text: t('scripts.my.play_continue_group'),
+                  items: scriptSaves.map((sv) => ({
+                    id: 'continue:' + sv.id,
+                    text: sv.title || ('#' + sv.id),
+                    iconName: 'caret-right-filled',
+                  })),
+                }] : []),
+                { id: 'new', text: t('scripts.my.play_new_game'), iconName: 'add-plus' },
+              ]}
+              onItemClick={({ detail }) => {
+                if (detail.id === 'new') { onNewGame && onNewGame(s); return; }
+                if (typeof detail.id === 'string' && detail.id.startsWith('continue:')) {
+                  const sv = scriptSaves.find((x) => String(x.id) === detail.id.slice('continue:'.length));
+                  if (sv) onContinueSave && onContinueSave(sv);
+                }
+              }}
+            >{t('scripts.my.play_game')}</CSButtonDropdown>
             <CSButton iconName="file" onClick={() => onChapters(s)}>{t('scripts.my.view_chapters')}</CSButton>
             <CSButton iconName="status-info" onClick={() => onReview(s)}>{t('scripts.my.kb_review')}</CSButton>
             <CSButton iconName="settings" onClick={() => setHistoryOpen(v => !v)}>{t('scripts.version.history_btn')}</CSButton>
@@ -606,6 +680,11 @@ function ScriptDetailPanel({ script: s, savesCount, embedStatus, currentUserId,
       )}
       {/* phase_rebuild_panel: 活跃重做任务通知条,所有 tab 共享 */}
       <RebuildJobBanner {...rb.bannerProps} />
+      {playBlock && (
+        <CSAlert type="warning" header={t('scripts.my.play_block_title')}>
+          {playBlock}
+        </CSAlert>
+      )}
       {/* phase_rebuild_panel: 估算确认弹窗,所有卡片重做按钮共享 */}
       <RebuildEstimateModal {...rb.modalProps} />
       {/* tab 栏滚下去就消失了用户找不到当前 tab — Cloudscape Tabs 不暴露
@@ -1192,11 +1271,33 @@ function ScriptsListView() {
       window.__apiToast?.(t('scripts.toast.op_fail'), { kind: 'danger', detail: e?.message });
     }
   };
-  const onPlay = (s) => {
-    // 有存档 → 直接进入(__openContinue 现已直接启动新标签);无 → 走建档向导
+  // 反馈#3:开始游戏不再「有存档就直接进后台」,改成下拉让用户选——继续某个存档 / 开新游戏。
+  const onContinueSave = (sv) => { if (sv) window.__openContinue?.(sv); };
+  const onNewGame = async (s) => {
+    const localBlock = scriptPlayBlockReason(s, t);
+    if (localBlock) {
+      window.__apiToast?.(t('scripts.my.play_block_title'), { kind: 'warn', detail: localBlock, duration: 6500 });
+      return;
+    }
+    setBusyId(s.id);
+    try {
+      const active = await window.api.scripts.activeJob(s.id).catch(() => null);
+      const liveBlock = activeJobPlayBlockReason(active, t);
+      if (liveBlock) {
+        window.__apiToast?.(t('scripts.my.play_block_title'), { kind: 'warn', detail: liveBlock, duration: 6500 });
+        await reload();
+        return;
+      }
+      setNewModalScriptId(s.id);
+    } finally {
+      setBusyId(null);
+    }
+  };
+  // 兼容:列表行等单按钮入口仍走「有存档继续最近,无则开新」的一键默认
+  const onPlay = async (s) => {
     const sv = platSaves.find(x => x.script_id === s.id);
-    if (sv) window.__openContinue?.(sv);
-    else setNewModalScriptId(s.id);
+    if (sv) { onContinueSave(sv); return; }
+    await onNewGame(s);
   };
 
   const visibleScripts = query
@@ -1230,11 +1331,14 @@ function ScriptsListView() {
       <ScriptDetailPanel
         script={selected}
         savesCount={platSaves.filter((x) => x.script_id === selected.id).length}
+        scriptSaves={platSaves.filter((x) => x.script_id === selected.id)}
         embedStatus={embedStatus}
         currentUserId={window.RPG_AUTH?.user_id ?? null}
         pendingTab={pendingTab}
         onPendingTabConsumed={() => setPendingTab(null)}
         onPlay={onPlay}
+        onContinueSave={onContinueSave}
+        onNewGame={onNewGame}
         onChapters={setChaptersOpen}
         onReview={setReviewScript}
         onExtractDone={reload}
@@ -1337,10 +1441,30 @@ function ScriptsListView() {
           return n > 0 ? <CSBadge color="green">{t('scripts.my.saves_count', { n })}</CSBadge> : <CSBox color="text-status-inactive">—</CSBox>;
         } },
         { id: 'public', header: t('scripts.my.share'), cell: (s) => s.is_public ? <CSStatusIndicator type="success">{t('scripts.my.is_public')}</CSStatusIndicator> : <CSBox color="text-status-inactive">—</CSBox> },
-        { id: 'go', header: '', cell: (s) => isInternalPlaceholder(s)
-          ? <CSButton variant="inline-link" iconName="status-pending" disabled>{t('scripts.my.play')}</CSButton>
-          : <CSButton variant="inline-link" iconName="caret-right-filled" disabled={busyId === s.id} onClick={() => onPlay(s)}>{t('scripts.my.play')}</CSButton>
-        },
+        { id: 'go', header: '', cell: (s) => {
+          if (isInternalPlaceholder(s)) return <CSButton variant="inline-link" iconName="status-pending" disabled>{t('scripts.my.play')}</CSButton>;
+          const block = scriptPlayBlockReason(s, t);
+          // 反馈#3:列表「开始」也改下拉——选存档继续 / 开新游戏,不再一键直进后台
+          const svs = platSaves.filter((x) => x.script_id === s.id);
+          return (
+            <CSButtonDropdown variant="normal" expandToViewport disabled={busyId === s.id || !!block}
+              items={[
+                ...(svs.length ? [{
+                  text: t('scripts.my.play_continue_group'),
+                  items: svs.map((sv) => ({ id: 'continue:' + sv.id, text: sv.title || ('#' + sv.id), iconName: 'caret-right-filled' })),
+                }] : []),
+                { id: 'new', text: t('scripts.my.play_new_game'), iconName: 'add-plus' },
+              ]}
+              onItemClick={({ detail }) => {
+                if (detail.id === 'new') { onNewGame(s); return; }
+                if (typeof detail.id === 'string' && detail.id.startsWith('continue:')) {
+                  const sv = svs.find((x) => String(x.id) === detail.id.slice('continue:'.length));
+                  if (sv) onContinueSave(sv);
+                }
+              }}
+            >{block ? t('scripts.my.play_blocked') : t('scripts.my.play')}</CSButtonDropdown>
+          );
+        } },
       ]}
     />
   );
@@ -1862,6 +1986,25 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
     try { localStorage.removeItem(PENDING_IMPORT_PIPELINE_KEY); } catch {}
   }, []);
 
+  const cancelUploadQuietly = useCallbackPL((uploadId) => {
+    if (!uploadId) return;
+    try { window.api.uploads.cancel(uploadId).catch(() => {}); } catch (_) {}
+  }, []);
+
+  const discardEstimate = useCallbackPL((notify = false) => {
+    const oldUploadId = estimate?.upload_id;
+    if (oldUploadId) cancelUploadQuietly(oldUploadId);
+    setEstimate(null);
+    setPreviewProgress({ value: 0, label: "" });
+    if (notify) {
+      window.__apiToast?.(t('scripts.import.preview_invalidated'), {
+        kind: "info",
+        detail: t('scripts.import.preview_invalidated_detail'),
+        duration: 2600,
+      });
+    }
+  }, [estimate, cancelUploadQuietly, t]);
+
   // 任务真实进度完全由 ImportJobBanner 内部订阅的 SSE 推上来。
   // wizard 这一层不再:
   //  - 轮询 jobStatus 然后把 stages 全部强写 done (那是撒谎)
@@ -1889,8 +2032,9 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
       window.__apiToast?.(t('scripts.import.file_too_large'), { kind: "danger", detail: t('scripts.import.file_max_size'), duration: 2400 });
       return;
     }
+    discardEstimate(false);
+    clearPendingImport();
     setSelectedFile(file);
-    setEstimate(null);
     setPreviewProgress({ value: 0, label: "" });
     if (!title) setTitle(file.name.replace(/\.(txt|md)$/i, ""));
   };
@@ -2137,13 +2281,41 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
         }
         // ── 阶段 B: 创建剧本 (importScript) — 不写 milestone 数字,只换文案 ──
         setImportProgress(t('scripts.import.import_creating'));
-        const importResp = await window.api.scripts.importScript({
-          upload_id: uploadId,
+        const createScriptFromUpload = (nextUploadId) => window.api.scripts.importScript({
+          upload_id: nextUploadId,
           title: title || selectedFile.name.replace(/\.(txt|md)$/i, ""),
           split_rule: rule || "auto",
           custom_pattern: pattern || "",
           require_llm_credentials: true,
         });
+        const reuploadForExpiredUpload = async () => {
+          setImportProgress(t('scripts.import.upload_expired_retry'));
+          setImportPercent(0);
+          return uploadFileChunks(selectedFile, ({ stage, done, total, percent }) => {
+            if (stage === "init") {
+              setImportPercent(1);
+              setImportProgress(t('scripts.import.upload_init'));
+            } else if (stage === "chunk") {
+              setImportPercent(Math.min(30, Math.round((percent || 0) * 0.30)));
+              setImportProgress(t('scripts.import.upload_progress', { done, total }));
+            } else if (stage === "finish") {
+              setImportPercent(30);
+              setImportProgress(t('scripts.import.upload_finish'));
+            }
+          });
+        };
+        let importResp;
+        try {
+          importResp = await createScriptFromUpload(uploadId);
+        } catch (e) {
+          if (!isExpiredUploadError(e)) throw e;
+          uploadId = await reuploadForExpiredUpload();
+          importResp = await createScriptFromUpload(uploadId);
+        }
+        if (importResp && importResp.ok === false && isExpiredUploadError(importResp)) {
+          uploadId = await reuploadForExpiredUpload();
+          importResp = await createScriptFromUpload(uploadId);
+        }
         if (!importResp || importResp.ok === false) {
           throw new Error((importResp && (importResp.error || importResp.detail)) || t('scripts.import.api_fail'));
         }
@@ -2321,7 +2493,9 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
         require_llm_credentials: true,
       });
       if (!importResp || importResp.ok === false) {
-        throw new Error((importResp && (importResp.error || importResp.detail)) || t('scripts.import.api_fail'));
+        const err = new Error((importResp && (importResp.error || importResp.detail)) || t('scripts.import.api_fail'));
+        err.payload = importResp;
+        throw err;
       }
       const sc = importResp.script || {};
       // 不写 setImportPercent(92):流水线进度由 banner 内部 SSE 接管。
@@ -2373,7 +2547,16 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
         });
       } else {
         const detail = (e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || t('scripts.toast.unknown_error');
+        if (isExpiredUploadError(e)) {
+          clearPendingImport();
+          window.__apiToast?.(t('scripts.import.saved_upload_expired'), {
+            kind: "warning",
+            detail: t('scripts.import.saved_upload_expired_detail'),
+            duration: 7000,
+          });
+        } else {
         window.__apiToast?.(t('scripts.toast.import_fail'), { kind: "danger", detail, duration: 5000 });
+        }
       }
     } finally {
       setImportBusy(false);
@@ -2388,7 +2571,11 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
       try { await window.api.scripts.jobCancel(job.id); } catch (e) {}
     }
     setJob(j => ({ ...j, status: "cancelled", cancelled_at: Date.now() }));
-    window.toast?.(t('scripts.toast.import_cancelled'), { kind: "warn", detail: "job " + job.id, duration: 2400 });
+    window.__apiToast?.(t('scripts.toast.import_cancelled'), {
+      kind: "warning",
+      detail: t('scripts.import.result_cancelled_detail', { id: job.id }),
+      duration: 8000,
+    });
   };
 
   const dismissJob = () => {
@@ -2436,7 +2623,11 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
         ? errored.map(s => (s.id || s.label || '?') + ': ' + (s.error || t('scripts.toast.unknown_error'))).join('; ')
         : (prev.error || '');
       if (prev.status === 'cancelled') {
-        // 取消 toast 在 cancelJob 已发,这里不重复
+        window.__apiToast?.(t('scripts.toast.import_cancelled'), {
+          kind: 'warning',
+          detail: t('scripts.import.result_cancelled_detail', { id: prev.id || prev.job_id || '?' }),
+          duration: 8000,
+        });
       } else if (prev.status === 'failed') {
         window.__apiToast?.(t('scripts.toast.import_fail'), { kind: 'danger', detail: detail || t('scripts.toast.unknown_error'), duration: 5000 });
       } else if (hasErr) {
@@ -2529,11 +2720,18 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
               <CSFormField label={t('scripts.import.field_rule')}>
                 <CSSelect selectedOption={{ value: ruleOpt.id, label: ruleLabel }}
                   options={SPLIT_RULES.map(r => ({ value: r.id, label: t(r.labelKey) }))}
-                  onChange={({ detail }) => setRule(detail.selectedOption.value)} />
+                  onChange={({ detail }) => {
+                    const nextRule = detail.selectedOption.value || "auto";
+                    if (nextRule !== rule) discardEstimate(true);
+                    setRule(nextRule);
+                  }} />
               </CSFormField>
               <div style={{ gridColumn: '1 / -1' }}>
                 <CSFormField label={t('scripts.import.field_custom_regex')} description={t('scripts.import.field_custom_regex_desc')}>
-                  <CSInput value={pattern} onChange={({ detail }) => setPattern(detail.value)}
+                  <CSInput value={pattern} onChange={({ detail }) => {
+                    if (detail.value !== pattern && estimate) discardEstimate(false);
+                    setPattern(detail.value);
+                  }}
                     disabled={rule !== 'custom'} placeholder={t('scripts.import.field_custom_regex_placeholder')} />
                 </CSFormField>
               </div>
@@ -2620,7 +2818,12 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
               value={selectedFile ? [selectedFile] : []}
               onChange={({ detail }) => {
                 const f = detail.value?.[0];
-                if (f) onPickFile(f); else setSelectedFile(null);
+                if (f) onPickFile(f);
+                else {
+                  discardEstimate(false);
+                  clearPendingImport();
+                  setSelectedFile(null);
+                }
               }}
               accept=".txt,.md"
               showFileSize
@@ -2675,7 +2878,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
                   <CSButton variant="primary" iconName="check" loading={importBusy} disabled={importBusy} onClick={startImport}>
                     {importBusy ? t('scripts.import.import_creating') : t('scripts.import.confirm_import_bg')}
                   </CSButton>
-                  <CSButton disabled={importBusy} onClick={() => setEstimate(null)}>{t('scripts.import.re_estimate')}</CSButton>
+                  <CSButton disabled={importBusy} onClick={() => discardEstimate(false)}>{t('scripts.import.re_estimate')}</CSButton>
                 </>
               )}
               {importBusy && (
@@ -2895,7 +3098,7 @@ function ImportJobResult({ job, onDismiss, onReuse }) {
       }
     >
       {ok && t('scripts.import.tok_consumed', { n: fmtN(totalTokens) })}
-      {cancelled && `job ${job.id}`}
+      {cancelled && t('scripts.import.result_cancelled_detail', { id: job.id })}
       {(failed || partial) && (
         <CSSpaceBetween size="xxs">
           <CSBox>{job.error || (errored.length ? `${errored.length} stage(s) failed` : `job ${job.id}`)}</CSBox>

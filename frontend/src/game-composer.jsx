@@ -399,7 +399,8 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
     if (api && api.has_credential === false) return;
     const mods = api.models || [];
     mods.forEach((m) => {
-      if (m && m.enabled !== false) {
+      // 游戏内是聊天/GM 模型切换器,按 category 排除 embedding(RAG)模型——它们不能用于对话。
+      if (m && m.enabled !== false && !(m.capabilities || []).includes("embedding")) {
         // 价格 & context 来自 m.pricing（后端 model_probe 注入）
         const pricing = m.pricing || {};
         const priceIn = pricing.input != null ? pricing.input : null;

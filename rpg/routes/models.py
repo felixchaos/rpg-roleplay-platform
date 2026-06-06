@@ -68,6 +68,31 @@ def _inject_health(catalog: dict[str, Any]) -> dict[str, Any]:
     return catalog
 
 
+def _inject_capabilities(catalog: dict[str, Any]) -> dict[str, Any]:
+    """模型分类权威化:用 model_probe.get_capabilities 重算每个模型的 capabilities,
+    让前端选择器一律按 category(capabilities)过滤,而不是各自硬编码名字。
+
+    为什么读取时重算:用户「同步远端模型」时曾把 capabilities 硬编码成 ['text','streaming']
+    (见 /api/models/remote/sync),导致 text-embedding-* 这类被错标成 chat → embedding 选择器
+    选不到、chat 选择器又混进它。这里以 (api_id, real_name, 已有 caps) 为输入跑权威分类器,
+    名字命中 embedding heuristic 的会补上 'embedding' cap,连存量错标数据也在读取时修正,免重同步。
+    """
+    import model_probe
+    for api in catalog.get("apis", []):
+        api_id = api.get("id", "")
+        for m in api.get("models", []):
+            real = m.get("real_name") or m.get("id")
+            if not real:
+                continue
+            try:
+                m["capabilities"] = model_probe.get_capabilities(
+                    api_id, real, catalog_override=m.get("capabilities") or [],
+                )
+            except Exception:
+                pass
+    return catalog
+
+
 @router.get("/api/models")
 async def api_models(
     api_user: dict[str, Any] | None = Depends(get_current_user),
@@ -79,7 +104,7 @@ async def api_models(
     catalog = load_catalog_for_user(_uid)
     is_admin = bool(api_user and api_user.get("role") == "admin")
     redacted = _redact_catalog(catalog, is_admin, user_id=_uid)
-    enriched = _inject_pricing(redacted)
+    enriched = _inject_capabilities(_inject_pricing(redacted))
     return JSONResponse({
         "ok": True,
         "models": _inject_health(enriched),
@@ -401,6 +426,7 @@ async def api_models_remote_sync(
     if not remote.get("ok"):
         return JSONResponse({**remote, "api_id": api_id, "synced": 0})
 
+    import model_probe as _mp
     synced_models: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in remote.get("models") or []:
@@ -408,12 +434,15 @@ async def api_models_remote_sync(
         if not real or real in seen:
             continue
         seen.add(real)
+        # 模型分类权威化:远端未给 capabilities 时不再硬编码成 chat,改用 get_capabilities
+        # (含 embedding 名字 heuristic),否则 text-embedding-* 会被错标成 chat → RAG 选不到。
+        _caps = _mp.get_capabilities(api_id, real, catalog_override=list(item.get("capabilities") or []))
         synced_models.append({
             "id": real,
             "real_name": real,
             "display_name": item.get("display_name") or real,
             "enabled": True,
-            "capabilities": list(item.get("capabilities") or ["text", "streaming"]),
+            "capabilities": _caps,
         })
 
     # 写每用户 overlay(绝不写全局)
