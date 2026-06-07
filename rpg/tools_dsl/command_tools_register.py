@@ -353,6 +353,12 @@ def ensure_registered() -> None:
         register_kb_tools()
     except Exception as exc:
         log.warning(f"[command_tools_register] kb 工具注册失败: {exc}")
+    # 酒馆 v2: agent 中途建/换角色 + persona + 列/绑剧本(权限门控)
+    try:
+        from tools_dsl.command_tools_tavern import register_tavern_tools
+        register_tavern_tools()
+    except Exception as exc:
+        log.warning(f"[command_tools_register] tavern 工具注册失败: {exc}")
     # task 68/72 — 给已注册工具打 intent_keywords + side_effect_topics 标签,
     # 供 ui_describe 模糊匹配 + dispatcher 状态变更广播。
     try:

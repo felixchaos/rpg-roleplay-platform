@@ -5,52 +5,49 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="api-base" content="" />
   <meta name="api-prefix" content="/api/v1" />
-  <title>RPG Roleplay · 平台</title>
+  <title>RPG Roleplay · 酒馆</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" />
-  <link rel="stylesheet" href="src/tokens.css?v=20260531-warm9" />
-  <link rel="stylesheet" href="src/platform.css?v=20260606-tree2" />
-  <!-- 酒馆内嵌子页(#tavern)复用 Game Console 的 .gc-* 转录/Composer 样式 + tavern 覆盖层。
-       两者均 class-scoped(.gc-* / .tavern-chat),不影响其余 Platform 页面。 -->
+  <!-- CSS 加载序:tokens → platform → game-console → motion → tavern(覆盖) -->
+  <link rel="stylesheet" href="src/tokens.css" />
+  <link rel="stylesheet" href="src/platform.css?v=20260605-grid" />
   <link rel="stylesheet" href="src/game-console.css?v=20260605-sidebar" />
-  <link rel="stylesheet" href="src/tavern.css?v=20260607-tavern2" />
   <link rel="stylesheet" href="src/motion.css" />
-  <link rel="stylesheet" href="src/ui/kit.css?v=20260530-aw1" />
-
-  <!-- Vite: CDN UMD 脚本已移除，改由 @vitejs/plugin-react 处理 JSX + React -->
+  <link rel="stylesheet" href="src/tavern.css?v=20260607-tavern2" />
 </head>
-<body data-screen-label="Platform">
-  <!-- 首屏 splash:JS bundle 下载期间避免白屏,body.platform-mounted 后 fade-out -->
+<body data-screen-label="Tavern">
+  <!-- 首屏 splash:与 Game Console 同款,React mount 时接管 #root。 -->
   <style>
-    #platform-splash {
+    #rpg-game-splash {
       position: fixed; inset: 0; display: flex; flex-direction: column;
       align-items: center; justify-content: center;
       background: var(--bg, #121110); color: var(--text, #c8c2b7);
       font-family: 'Noto Sans SC', system-ui, sans-serif;
       z-index: 1; transition: opacity .25s ease-out;
     }
-    #platform-splash .spinner {
+    #rpg-game-splash .spinner {
       width: 38px; height: 38px;
       border: 3px solid rgba(201, 100, 66, .25);
       border-top-color: var(--accent, #c96442);
       border-radius: 50%;
-      animation: plt-spin .85s linear infinite;
+      animation: rpg-spin .85s linear infinite;
       margin-bottom: 18px;
     }
-    #platform-splash .label { font-size: 14px; opacity: .72; letter-spacing: .04em; }
-    @keyframes plt-spin { to { transform: rotate(360deg); } }
-    body.platform-mounted #platform-splash { opacity: 0; pointer-events: none; }
+    #rpg-game-splash .label { font-size: 14px; opacity: .72; letter-spacing: .04em; }
+    #rpg-game-splash .hint  { font-size: 12px; opacity: .42; margin-top: 8px; max-width: 320px; text-align: center; line-height: 1.6; }
+    @keyframes rpg-spin { to { transform: rotate(360deg); } }
+    body.rpg-mounted #rpg-game-splash { opacity: 0; pointer-events: none; }
   </style>
-  <div id="platform-splash">
+  <div id="rpg-game-splash">
     <div class="spinner" aria-hidden="true"></div>
-    <div class="label">加载中…</div>
+    <div class="label">正在加载酒馆…</div>
+    <div class="hint">拖入一张酒馆角色卡(PNG/JSON)即可开聊,或从左侧选择已有对话。</div>
   </div>
 
   <div id="root"></div>
 
-  <!-- Vite ESM 入口：替代原先多条 text/babel 脚本，按顺序 import 所有依赖并挂载 React 根 -->
-  <script type="module" src="src/entries/platform.jsx"></script>
+  <script type="module" src="src/entries/tavern.jsx"></script>
 </body>
 </html>

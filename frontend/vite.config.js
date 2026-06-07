@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
     login:        resolve(__dirname, 'Login.html'),
     platform:     resolve(__dirname, 'Platform.html'),
     game_console: resolve(__dirname, 'Game Console.html'),
+    tavern:       resolve(__dirname, 'Tavern.html'),
   };
 
   // ── SPA history fallback(仅 dev server)─────────────────────────────
@@ -36,6 +37,7 @@ export default defineConfig(({ mode }) => {
             url === '/Login.html' ||
             url === '/Platform.html' ||
             url === '/Game Console.html' ||
+            url === '/Tavern.html' ||
             url === '/favicon.svg'
           ) {
             return next();

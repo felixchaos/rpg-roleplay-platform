@@ -369,8 +369,13 @@ class ToolDispatcher:
             elif spec.scope == "script":
                 text = spec.executor(env.user_id, env.script_id, env.args, state)
             else:  # save
-                # dispatcher 自动注入 env.save_id 到 args,让 executor 不必依赖 state._save_id
-                if env.save_id is not None and "save_id" not in env.args:
+                # 安全围栏(防 LLM 跨档注入):save 级工具的 save_id 必须恒等于服务端绑定的
+                # env.save_id。**无条件覆盖** args 里任何调用方/LLM 传入的 save_id —— 旧实现
+                # 只在 "save_id" not in args 时注入,LLM 把 save_id 写进 tool args 即可绕过,
+                # 令 worldbook_add / set_tavern_character 等据此向**他人存档**读写(跨用户越权)。
+                # env.save_id 由 chat handler 从已鉴权会话绑定,LLM 不可控,故覆盖是安全且正确的
+                # (save 级语义恒为"当前绑定存档",不存在合法的跨档 save 级调用)。
+                if env.save_id is not None:
                     env.args["save_id"] = env.save_id
                 text = spec.executor(state, env.args)
             # task 109b: 工具可以返 dict (e.g. ui_set_field 返 __ui_action__ payload);

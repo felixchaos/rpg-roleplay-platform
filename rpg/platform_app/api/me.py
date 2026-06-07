@@ -842,8 +842,29 @@ async def api_embedder_status(user=Depends(require_user)):
     # task: 享受平台兜底的角色 — admin + vip_user(测试期高级用户)
     is_admin_user = (user.get("role") or "").lower() in ("admin", "vip_user")
     # 用户自己配了 embedder 任一种 provider?
+    # 先认用户在「RAG 模型」里**实际选中**的 embedder provider(embed.api_id)—— dashscope /
+    # siliconflow 等 OpenAI 兼容 embedding provider 都支持,不能只认死名单,否则用户配了
+    # dashscope key 也会被判「未配置 → 平台兜底」(用户反馈的 bug)。
     user_configured = False
-    for api_id_alias in ("AgentPlatform", "vertex_ai", "openai", "cohere"):
+    _selected_embed_api = ""
+    try:
+        from core.llm_backend import resolve_preferred_api as _resolve_pref
+        _selected_embed_api = (_resolve_pref(user["id"], "embed.api_id") or "").strip()
+    except Exception:
+        _selected_embed_api = ""
+    _aliases: list[str] = []
+    if _selected_embed_api:
+        _aliases.append(_selected_embed_api)
+        try:
+            _aliases.append(user_credentials.normalize_api_id(_selected_embed_api))
+        except Exception:
+            pass
+    _aliases += ["AgentPlatform", "vertex_ai", "openai", "cohere"]
+    _seen: set[str] = set()
+    for api_id_alias in _aliases:
+        if not api_id_alias or api_id_alias in _seen:
+            continue
+        _seen.add(api_id_alias)
         if user_credentials.get_credential(user["id"], api_id_alias):
             user_configured = True
             break

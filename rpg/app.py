@@ -459,6 +459,7 @@ from routes.models import router as models_router
 from routes.rules import router as rules_router
 from routes.sidebar import router as sidebar_router
 from routes.skills import router as skills_router
+from routes.tavern import router as tavern_router
 from routes.timeline import router as timeline_router
 from routes.worldline import router as worldline_router
 
@@ -471,6 +472,7 @@ app.include_router(rules_router)
 app.include_router(timeline_router)
 app.include_router(console_assistant_router)
 app.include_router(sidebar_router)
+app.include_router(tavern_router)
 
 # 同源 mount frontend 静态文件 — dev/prod 都需要 (cookie SameSite=lax 跨 origin 5173↔7860 会丢)
 # 必须在所有具体路由之后 mount,否则会拦截 /api/* 和 /
@@ -986,6 +988,16 @@ def _payload(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
         from platform_app.usage import context_window_for as _ctx_for
         ctx_window = int(_ctx_for(model["api_id"], model["real_name"]) or 0)
+        # 用户在「模型参数」设了上下文窗口(context_size,默认 16K)→ context 圆环分母用
+        # min(模型原生, 用户设定),让圆环反映用户实际使用的窗口,而非模型 200k 原生上限。
+        try:
+            _prefs = _get_user_preferences_cached(api_user) if api_user else {}
+            # 默认 16384 与前端「模型参数」页 context_size 默认一致 → 未显式保存时圆环也跟设置对得上,
+            # 不再显示模型 200k 原生上限造成「圆环与设置不符」。用户调大 context_size 即放大分母。
+            _ucs = int(float(_prefs.get("settings.context_size") or _prefs.get("context_size") or 16384))
+            ctx_window = min(ctx_window, _ucs) if ctx_window else _ucs
+        except Exception:
+            pass
     except Exception:
         ctx_window = 0
     payload["app"] = {
@@ -1065,6 +1077,8 @@ def _redact_catalog(catalog: dict[str, Any], is_admin: bool, user_id: int | None
     import copy
     import model_probe
     from model_registry import normalize_api_id
+    # require_auth() 现已 mode-aware(server 模式 → True),统一按 per-user 账号 key 算 has_credential;
+    # 本地匿名模式 → False → 回退服务器 env/SA 存在性(单用户本机本就该看到服务器凭证)。
     from core.config import require_auth as _require_auth
     result = copy.deepcopy(catalog)
     require_auth = _require_auth()
@@ -1078,6 +1092,21 @@ def _redact_catalog(catalog: dict[str, Any], is_admin: bool, user_id: int | None
             api.pop("credential_ref", None)
             api.pop("credential_env", None)
             api.pop("base_url", None)
+    # per-user 默认模型:全局 catalog.selected 可能指向用户没配 key 的 provider(默认是
+    # anthropic/claude-opus-4-7,而用户只配了 deepseek/vertex)→ 刷新后 UI 会一直显示这个
+    # 用不了的模型。这里在 server 模式把 selected 校正成「用户第一个有凭证的 provider+首模型」,
+    # 让 catalog.selected 始终是用户能用的;用户已自己选过的有效模型不受影响(其 api 在 cred_ids 内)。
+    if require_auth:
+        sel = result.get("selected") or {}
+        if normalize_api_id(sel.get("api_id")) not in cred_ids:
+            for api in result.get("apis", []):
+                if api.get("has_credential") and (api.get("models") or []):
+                    first = api["models"][0]
+                    result["selected"] = {
+                        "api_id": api.get("id"),
+                        "model_id": first.get("id") or first.get("real_name"),
+                    }
+                    break
     return result
 
 
@@ -1236,6 +1265,8 @@ def _build_usage_payload(
             "input_tokens": int(last_usage.get("input_tokens", 0)),
             "output_tokens": int(last_usage.get("output_tokens", 0)),
             "cached_input_tokens": int(last_usage.get("cached_input_tokens", 0)),
+            # Anthropic 缓存写入 tokens(+25% 成本);deepseek/vertex 无此概念恒 0。供缓存 ROI 观测。
+            "cache_creation_input_tokens": int(last_usage.get("cache_creation_input_tokens", 0) or 0),
             "reasoning_tokens": int(last_usage.get("reasoning_tokens", 0)),
             "total_tokens": int(last_usage.get("total_tokens", 0)),
             "finish_reason": str(last_usage.get("finish_reason") or ""),
@@ -1294,7 +1325,12 @@ def _build_turn_context(
 
 
 def _active_script_id(api_user: dict[str, Any] | None) -> int | None:
-    """从 runtime/save 派生当前 script_id，供 context_engine 走 DB 数据。"""
+    """从 runtime/save 派生当前 script_id，供 context_engine 走 DB 数据。
+
+    酒馆 v2(R2):酒馆存档 script_id 列为 NULL,但若玩家在对话中绑定了剧本
+    (state_snapshot.tavern.bound_script_id),回退到该剧本 id —— 这样剧本检索
+    providers / KB 读工具(都靠 script_id)在绑定后自动生效。
+    """
     if not api_user:
         return None
     try:
@@ -1306,10 +1342,20 @@ def _active_script_id(api_user: dict[str, Any] | None) -> int | None:
             return None
         with connect() as db:
             row = db.execute(
-                "select script_id from game_saves where id = %s",
+                "select script_id, state_snapshot from game_saves where id = %s",
                 (save_id,),
             ).fetchone()
-        return int(row["script_id"]) if row and row.get("script_id") else None
+        if not row:
+            return None
+        if row.get("script_id"):
+            return int(row["script_id"])
+        # 无 script_id → 看酒馆绑定剧本
+        snap = row.get("state_snapshot")
+        if isinstance(snap, dict):
+            bsid = ((snap.get("tavern") or {}) if isinstance(snap.get("tavern"), dict) else {}).get("bound_script_id")
+            if bsid:
+                return int(bsid)
+        return None
     except Exception:
         return None
 

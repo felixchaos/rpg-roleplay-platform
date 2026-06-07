@@ -266,6 +266,188 @@ def create_save(
     return expose(save)  # type: ignore[return-value]
 
 
+def _ingest_character_book(save_id: int, character_book: Any) -> int:
+    """SillyTavern 角色卡内嵌世界书(character_book)→ save 级 worldbook overlay(决策3)。
+
+    复用现有 save_worldbook_overlays(kind='addition')基建 —— 检索侧
+    retrieval._load_worldbook_for_retrieval 会自动把它纳入(priority 高的恒进),
+    与剧本无关、save 级,正好契合无剧本的酒馆存档。返回写入条目数。
+    """
+    if not isinstance(character_book, dict):
+        return 0
+    entries = character_book.get("entries")
+    if not isinstance(entries, list) or not entries:
+        return 0
+    rows: list[tuple] = []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        if e.get("enabled") is False:
+            continue
+        content = str(e.get("content") or "").strip()
+        if not content:
+            continue
+        keys = e.get("keys") or e.get("key") or []
+        if isinstance(keys, str):
+            keys = [keys]
+        keys = [str(k).strip() for k in keys if str(k).strip()][:32]
+        title = (str(e.get("comment") or e.get("name") or (keys[0] if keys else "") or "世界书条目")).strip()[:200]
+        # SillyTavern 的 priority 越大越优先(与我们一致);缺省给 60(高于普通 50,
+        # 低于角色卡高优先级层),让角色专属设定较易命中检索。
+        try:
+            priority = int(e.get("priority") if e.get("priority") is not None else 60)
+        except (TypeError, ValueError):
+            priority = 60
+        rows.append((int(save_id), title, content[:16000], Jsonb(keys), priority, 0))
+    if not rows:
+        return 0
+    with connect() as db:
+        for r in rows:
+            db.execute(
+                """
+                insert into save_worldbook_overlays
+                  (save_id, kind, title, content, keys, priority, introduced_turn)
+                values (%s, 'addition', %s, %s, %s, %s, %s)
+                """,
+                r,
+            )
+    return len(rows)
+
+
+def create_tavern_save(
+    user_id: int,
+    character_card_id: int | None,
+    *,
+    persona_card_id: int | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """创建酒馆模式存档(无剧本):玩家与所选 AI 角色卡 1:1 对话。
+
+    复用 game_saves(save_kind='tavern', script_id=NULL)+ branch_commits/messages/
+    advisory-lock 单写者全套基建。写入的 state 形状供 TavernCharacterProvider
+    (context_providers/tavern.py)与 master._SYSTEM_TAVERN 消费;
+    content_pack=DEFAULT_TAVERN_MANIFEST 让整条 GM 管线无剧本运行。
+    路由层(routes/tavern.py)创建后再 activate_save 绑定 runtime。
+
+    酒馆 v2(决策1):character_card_id 可为 None —— 空起手对话,不预设角色,由 agent
+    在对话中用 set_tavern_character 工具自举。此时 tavern.character={},无 first_mes 开场,
+    tavern_character_card_id 列保持 NULL(本就 nullable)。
+    """
+    init_db()
+    import copy as _copy
+
+    from context_providers.registry import DEFAULT_TAVERN_MANIFEST
+
+    from . import user_cards as _ucards
+
+    card: dict[str, Any] | None = None
+    meta: dict[str, Any] = {}
+    if character_card_id is not None:
+        card = _ucards.get_user_card(user_id, int(character_card_id))
+        if not card:
+            raise ValueError("找不到该角色卡(需 card_type='pc' 且属于当前用户)")
+        meta = card.get("metadata") or {}
+
+    # —— persona:显式 → 默认 persona → inline 占位 ——
+    persona_fields: dict[str, Any] = {}
+    resolved_persona_id: int | None = None
+
+    def _persona_to_fields(p: dict) -> dict:
+        return {
+            "name": (p.get("name") or "你"),
+            "role": (p.get("role") or ""),
+            "background": (p.get("background") or ""),
+            "appearance": (p.get("appearance") or ""),
+        }
+
+    if persona_card_id is not None:
+        p = _ucards.get_persona(user_id, int(persona_card_id))
+        if p:
+            persona_fields = _persona_to_fields(p)
+            resolved_persona_id = int(persona_card_id)
+    if not persona_fields:
+        try:
+            personas = _ucards.list_personas(user_id).get("items", [])
+            default_p = next((p for p in personas if p.get("is_default")), None) or (personas[0] if personas else None)
+            if default_p:
+                persona_fields = _persona_to_fields(default_p)
+                resolved_persona_id = int(default_p["id"]) if default_p.get("id") else None
+        except Exception:
+            pass
+    if not persona_fields:
+        persona_fields = {"name": "你"}
+
+    # 空起手:character={};否则投影角色卡字段
+    if card is not None:
+        character_snapshot: dict[str, Any] = {
+            "name": card.get("name") or "角色",
+            "identity": card.get("identity") or "",
+            "background": card.get("background") or "",
+            "appearance": card.get("appearance") or "",
+            "personality": card.get("personality") or "",
+            "speech_style": card.get("speech_style") or "",
+            "current_status": card.get("current_status") or "",
+            "sample_dialogue": card.get("sample_dialogue") or [],
+        }
+    else:
+        character_snapshot = {}
+
+    # —— 初始 snapshot ——
+    try:
+        from state import GameState
+        snapshot: dict[str, Any] = GameState.new().data
+    except Exception:
+        snapshot = {"history": [], "turn": 0}
+    snapshot["content_pack"] = _copy.deepcopy(DEFAULT_TAVERN_MANIFEST)
+    snapshot["player"] = {**(snapshot.get("player") or {}), **persona_fields}
+    snapshot["tavern"] = {
+        "character_card_id": int(character_card_id) if character_card_id is not None else None,
+        "persona_card_id": resolved_persona_id,
+        "character": character_snapshot,
+        "system_prompt": str(meta.get("system_prompt") or ""),
+        "post_history_instructions": str(meta.get("post_history_instructions") or ""),
+        "scenario": str(meta.get("scenario") or ""),
+        "alternate_greetings": meta.get("alternate_greetings") or [],
+        # 酒馆 v2(R2):本对话绑定的剧本 id(None=纯净无剧本)
+        "bound_script_id": None,
+    }
+    # first_mes → 开场 assistant 消息(seed_tree 会把它落成 turn-1 round commit,player_input 为空)
+    # 空起手无角色 → 无 first_mes 开场。
+    first_mes = str(meta.get("first_mes") or "").strip() if card is not None else ""
+    if first_mes:
+        hist = list(snapshot.get("history") or [])
+        hist.append({"role": "assistant", "content": first_mes})
+        snapshot["history"] = hist
+
+    if card is not None:
+        save_title = (title or "").strip() or f"与 {character_snapshot.get('name') or '角色'} 的对话"
+    else:
+        save_title = (title or "").strip() or "新对话"
+
+    with connect() as db:
+        save = db.execute(
+            """
+            insert into game_saves(user_id, script_id, title, state_path, state_snapshot,
+                                   save_kind, tavern_character_card_id, tavern_persona_card_id)
+            values (%s, NULL, %s, %s, %s, 'tavern', %s, %s)
+            returning *
+            """,
+            (user_id, save_title, str(SAVE_FILE), Jsonb(snapshot),
+             int(character_card_id) if character_card_id is not None else None,
+             resolved_persona_id),
+        ).fetchone()
+    branches.seed_tree(save["id"], str(SAVE_FILE))
+    # 决策3:角色卡内嵌世界书 → save 级 worldbook overlay(仅有角色卡时)
+    if card is not None:
+        try:
+            n = _ingest_character_book(save["id"], meta.get("character_book"))
+            if n:
+                log.info(f"[tavern] save={save['id']} ingested {n} character_book entries → worldbook overlay")
+        except Exception as exc:
+            log.warning(f"[tavern] character_book ingest failed save={save['id']}: {type(exc).__name__}: {exc}")
+    return expose(save)  # type: ignore[return-value]
+
+
 def _build_initial_snapshot(
     user_id: int,
     script_id: int,

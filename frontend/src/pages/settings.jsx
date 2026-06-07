@@ -2700,9 +2700,13 @@ function ModuleModelsSection() {
               // 永远 has=false → 误报「该 provider 还没配 API key」。
               // 修:统一查 catalog id。mod.credentialApiId 是 credential id(如 'AgentPlatform'),
               // 转回 catalog id ('vertex_ai') 再查 Set。
-              const credForLookup = mod.credentialApiId
-                ? catalogApiIdForCredential(mod.credentialApiId)
-                : (cur?.api_id || "");
+              // 凭据查询必须按【当前选中模型的 provider】(cur.api_id,已是 catalog id),
+              // 不能用模块写死的 mod.credentialApiId —— embedder 写死 AgentPlatform(→vertex_ai),
+              // 用户改用 dashscope 等其它 embedding provider 时会永远查 vertex → 即便已配 key 也误报
+              // 「该 provider 还没配 API key」(用户反馈的 bug)。优先 cur.api_id,无选中再回退模块默认。
+              const credForLookup = cur?.api_id
+                ? catalogApiIdForCredential(cur.api_id)
+                : (mod.credentialApiId ? catalogApiIdForCredential(mod.credentialApiId) : "");
               const hasCred = !credForLookup || credentialApiIds.has(credForLookup);
               const value = (mod.shape === "dict")
                 ? (() => {

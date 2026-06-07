@@ -556,7 +556,24 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
     # ── 记录对话 ──────────────────────────────────────────────────
     def record_turn(self, player_input: str, gm_response: str):
         self.data["history"].append({"role": "user",      "content": player_input})
-        self.data["history"].append({"role": "assistant", "content": gm_response})
+        _asst = {"role": "assistant", "content": gm_response}
+        # 工具流 + 思考流:本轮 pipeline 累积在 _turn_tool_ops / _turn_reasoning 临时键,这里落到
+        # assistant 历史消息(随 state_snapshot 持久化)→ 重开/刷新聊天后工具调用 + 思考流仍可见。
+        try:
+            _ops = self.data.pop("_turn_tool_ops", None)
+            if _ops:
+                _clean = [{k: v for k, v in o.items() if k != "_pending"}
+                          for o in _ops if isinstance(o, dict)]
+                if _clean:
+                    _asst["tool_ops"] = _clean
+            _rsn = self.data.pop("_turn_reasoning", None)
+            if _rsn:
+                _txt = "".join(x for x in _rsn if isinstance(x, str)).strip()
+                if _txt:
+                    _asst["reasoning"] = _txt
+        except Exception:
+            pass
+        self.data["history"].append(_asst)
         self.data["turn"] += 1
         # task 138: ephemeral reveal 是本回合一次性注入,GM 已经吃过 prompt,
         # 现在清掉避免下一轮自动重注。secrets 仍留在 player_private.secrets 历史里。
@@ -797,6 +814,10 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             "suggestions": self.suggestions(),
             # A1: 存档级模型覆盖，前端 ModelPicker 据此显示当前选中状态
             "session_model": dict(self.data.get("session_model") or {}),
+            # 酒馆模式:把 state.data["tavern"]（AI 角色卡快照 + persona 绑定 + system_prompt 等）
+            # 透到 /api/state 顶层,供 Tavern 前端读角色名/角色卡视图。普通 game 存档无此 key → 空 dict,
+            # 前端按 falsy 兜底,对 Game Console 零影响。
+            "tavern": copy.deepcopy(self.data.get("tavern") or {}),
         }}
 
     def suggestions(self) -> list[str]:

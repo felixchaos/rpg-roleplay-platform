@@ -794,9 +794,17 @@ function Composer({
   showSlash, showPlus, showModel, showPerm,
   toggleSlash, togglePlus, toggleModel, togglePerm,
   gameState,   // task 48：透传 game state 拿 relationships，让 @ mention 用真角色
+  // 酒馆模式复用:可选隐藏左下角的控制按钮 + 自定义占位符。默认 false → Game Console 不受影响。
+  hideSlash = false, hidePermission = false, hideContinue = false, hideAttach = false,
+  placeholder,
 }) {
   const { t } = useTranslation();
   const taRef = useRefC(null);
+  // 发送后(text 被清空)收回自适应高度 → 变回 1 行。onChange 不会因程序性清空触发,故这里补一发。
+  useEffectC(() => {
+    const ta = taRef.current;
+    if (ta && !text) ta.style.height = "auto";
+  }, [text]);
   const plusTriggerRef = useRefC(null);
   const modelTriggerRef = useRefC(null);
   const permTriggerRef = useRefC(null);
@@ -955,9 +963,10 @@ function Composer({
             className={`gc-textarea ${isWriting ? "serif" : ""} gc-textarea-autogrow`}
             placeholder={pickedCommand
               ? (pickedCommand.hint.replace(pickedCommand.trigger, "").trim() || t('game.composer.placeholder_command'))
-              : (isWriting
+              : (placeholder
+              || (isWriting
               ? t(enterToSend ? 'game.composer.placeholder_writing_enter_send' : 'game.composer.placeholder_writing_newline')
-              : t('game.composer.placeholder_compact'))}
+              : t('game.composer.placeholder_compact')))}
             rows={1}
             value={text}
             onChange={(e) => {
@@ -997,14 +1006,18 @@ function Composer({
         </div>
         <div className="gc-composer-row gc-composer-bottom">
           <div className="gc-composer-left">
-            <button ref={plusTriggerRef} className={`iconbtn ${showPlus ? "active" : ""}`} onClick={togglePlus} data-tip={t('game.composer.attach_tip')}>
-              <Icon name="plus" size={14} />
-            </button>
-            <button ref={slashTriggerRef} className={`iconbtn ${showSlash ? "active" : ""}`} onClick={toggleSlash} data-tip={t('game.composer.command_tip')}>
-              <Icon name="slash" size={14} />
-            </button>
+            {!hideAttach && (
+              <button ref={plusTriggerRef} className={`iconbtn ${showPlus ? "active" : ""}`} onClick={togglePlus} data-tip={t('game.composer.attach_tip')}>
+                <Icon name="plus" size={14} />
+              </button>
+            )}
+            {!hideSlash && (
+              <button ref={slashTriggerRef} className={`iconbtn ${showSlash ? "active" : ""}`} onClick={toggleSlash} data-tip={t('game.composer.command_tip')}>
+                <Icon name="slash" size={14} />
+              </button>
+            )}
             {/* task 130: 一键继续推进 — 玩家被动场景 (昏迷/旁观/过场) 直接让 GM 推一段 */}
-            {!running && (
+            {!hideContinue && !running && (
               <button
                 className="gc-pop-trigger"
                 onClick={() => onSendRaw && onSendRaw(t('game.composer.continue_text'))}
@@ -1014,11 +1027,13 @@ function Composer({
                 <span>{t('game.composer.continue')}</span>
               </button>
             )}
-            <button ref={permTriggerRef} className="gc-pop-trigger" onClick={togglePerm}>
-              <Icon name={PERMISSION_OPTIONS.find(p => p.id === permission)?.icon || "lock"} size={12} />
-              <span>{t(PERMISSION_OPTIONS.find(p => p.id === permission)?.labelKey || 'game.permission.default_label')}</span>
-              <Icon name="chevron_down" size={11} />
-            </button>
+            {!hidePermission && (
+              <button ref={permTriggerRef} className="gc-pop-trigger" onClick={togglePerm}>
+                <Icon name={PERMISSION_OPTIONS.find(p => p.id === permission)?.icon || "lock"} size={12} />
+                <span>{t(PERMISSION_OPTIONS.find(p => p.id === permission)?.labelKey || 'game.permission.default_label')}</span>
+                <Icon name="chevron_down" size={11} />
+              </button>
+            )}
           </div>
           <div className="gc-composer-right">
             <ContextUsage gameState={gameState} />
@@ -1245,30 +1260,43 @@ function ContextUsage({ gameState, used: usedProp, cap: capProp }) {
 // Bug fix: 原来 _ignored 完全忽略 local model，导致切换后底部标签不更新直到 reloadState。
 // 用 gameState.models(catalog) 把 model_id 解析为 display_name；找不到就直接显示 id。
 function _currentModelLabel(gameState, localModel, t) {
-  const _resolveFromCatalog = (id) => {
+  const _placeholder = () => (t ? t('game.composer.model_placeholder') : "Model");
+  const catalog = gameState && gameState.models;
+  const apis = (catalog && Array.isArray(catalog.apis)) ? catalog.apis : null;
+  // 把 id 解析成 {label, cred}。cred = 所属 provider 是否已配置 key。
+  // 不在 catalog 里的(自定义模型)按可用处理,直接显示 id。
+  const _resolve = (id) => {
     if (!id) return null;
-    const catalog = gameState && gameState.models;
-    if (catalog && Array.isArray(catalog.apis)) {
-      for (const api of catalog.apis) {
+    if (apis) {
+      for (const api of apis) {
         for (const m of (api.models || [])) {
           if (m.id === id || m.real_name === id) {
-            return m.display_name || m.real_name || m.id;
+            return { label: m.display_name || m.real_name || m.id, cred: api.has_credential !== false };
           }
         }
       }
     }
-    return id;  // fallback: 直接显示 id
+    return { label: id, cred: true };  // 自定义/未在 catalog → 直接显示
   };
-  // 1. 优先用 localModel（pickModel 成功后乐观更新）
-  if (localModel) return _resolveFromCatalog(localModel);
-  // 2. 存档级 session_model（reload 后到来）
+  // catalog 已加载但没有任何「已配置 key」的 provider → 用户无可用模型,
+  // 绝不回退显示一个他用不了的默认模型(否则删光 key 仍显示 Opus,误导)。
+  if (apis && !apis.some((a) => a.has_credential && (a.models || []).length)) return _placeholder();
+  // 解析优先级:localModel(乐观更新) > 存档 session_model > catalog.selected(per-user 默认) > 后端全局 app。
+  // 必须含 catalog.selected —— 否则刷新后掉到 app.model(可能是全局默认 opus)而显示用不了的模型;
+  // 且与 ModelPopover 选中态(selectedKey)同源,避免「勾在 A、底部显示 B」。只显示「有凭证」的那个。
   const sessionModel = gameState && gameState.session_model;
-  if (sessionModel && (sessionModel.model_id || sessionModel.model_real_name)) {
-    return _resolveFromCatalog(sessionModel.model_id || sessionModel.model_real_name);
+  const catSel = catalog && catalog.selected;
+  const candidates = [
+    localModel,
+    sessionModel && (sessionModel.model_id || sessionModel.model_real_name),
+    catSel && (catSel.model_id || catSel.model_real_name),
+    gameState && gameState.app && gameState.app.model,
+  ];
+  for (const id of candidates) {
+    const r = _resolve(id);
+    if (r && r.cred) return r.label;
   }
-  // 3. 后端 gameState 全局回退
-  if (gameState && gameState.app && gameState.app.model) return gameState.app.model;
-  return t ? t('game.composer.model_placeholder') : "Model";
+  return _placeholder();
 }
 
 

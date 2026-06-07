@@ -1,0 +1,363 @@
+/* === Tavern 内嵌子页布局(Platform #tavern)===
+ * 仅描述「子页自身布局」——左两段式子侧栏 + 右主区。
+ * 聊天转录/Composer 的观感由 game-console.css + tavern.css(.gc-* / .tavern-chat)负责,
+ * 这里不重复。所有选择器作用域在 .tvp-root 下,绝不外泄到其余 Platform 页面。
+ *
+ * 全高:AppLayout 已对本页 disableContentPaddings,content 区是无内边距的高度容器。
+ *   .tvp-root 用 height:100% 填满;若父级未给高度,以 100dvh 减顶栏(~40px)兜底。
+ *   内部所有滚动区都用 min-height:0 让 flex 正确收缩。
+ */
+.tvp-root {
+  display: flex;
+  height: 100%;
+  /* 顶栏实测 ~45px(Cloudscape AppLayout 内容区 min-height=100dvh-45px);用 46px 留 1px 安全余量,
+     避免酒馆比可用高度高出几 px → 整页出现微滚动、固定外壳错位。 */
+  min-height: calc(100dvh - 46px);
+  max-height: calc(100dvh - 46px);
+  background: var(--bg, #1a1916);
+  color: var(--text);
+  overflow: hidden;
+}
+
+/* ── 左:两段式子侧栏 ───────────────────────────────────────────── */
+.tvp-side {
+  width: 248px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--panel, #211f1d);
+  min-height: 0;
+}
+
+/* 上段(固定):新建 / 角色卡 / 模型 */
+.tvp-side-top {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.tvp-side-top .tvp-model {
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line-soft, var(--line));
+}
+/* AgentModelPicker bare 在窄侧栏里:两列布局改为单列堆叠,避免挤压 */
+.tvp-side-top .tvp-model [class*="awsui_grid-column"],
+.tvp-side-top .tvp-model > div { min-width: 0; }
+
+/* 下段(滚动):历史对话 */
+.tvp-side-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 8px 16px;
+}
+.tvp-side-list.tvp-drop {
+  outline: 2px dashed var(--accent);
+  outline-offset: -6px;
+  border-radius: 8px;
+}
+.tvp-list-label {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-quiet);
+  padding: 6px 8px 8px;
+  font-weight: 600;
+}
+
+/* ── 右:主区 ──────────────────────────────────────────────────── */
+.tvp-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* chat 视图:slim header + 转录 + composer */
+.tvp-chat-head {
+  flex-shrink: 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+}
+.tvp-chat-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font-size: 14.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.tvp-chat-title:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.tvp-chat-name { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tvp-chat-head-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+
+/* 转录区(.gc-chat 由 game-console.css 控制内部排版)需要在剩余高度里滚动 */
+.tvp-main .gc-chat {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  position: relative;
+}
+
+/* composer footer:贴底,不滚动。去掉顶部那根分隔线(Claude 风:输入框直接浮在底部) */
+.tvp-foot {
+  flex-shrink: 0;
+  background: var(--bg, #1a1916);
+}
+/* 酒馆输入框:默认 1 行,随输入增高,最多 ~5 行后内部滚动(覆盖 writing 模式的 88px 起始高度)。
+   发送清空后由 Composer 的 reset effect 把高度收回 1 行。 */
+.tvp-foot .gc-composer.writing .gc-textarea {
+  min-height: 36px;   /* 1 行(serif 15.5px/1.78 + padding) */
+  max-height: 150px;  /* ~5 行,超出滚动(JS 把 height 设到 scrollHeight,这里 max-height 封顶) */
+}
+
+/* ── cards 视图 ───────────────────────────────────────────────── */
+.tvp-cards-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tvp-cards-bar {
+  flex-shrink: 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+.tvp-cards-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 32px;
+}
+
+/* ── 选择角色面板 ─────────────────────────────────────────────── */
+.tvp-select-wrap { padding: 22px 22px 36px; max-width: 940px; margin: 0 auto; width: 100%; }
+.tvp-select-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 18px;
+}
+.tvp-select-title { font-size: 22px; margin: 0; }
+.tvp-select-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.tvp-select-empty { padding: 36px 8px; text-align: center; line-height: 1.8; }
+.tvp-select-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 12px;
+}
+.tvp-select-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  padding: 14px 14px 16px; text-align: left; cursor: pointer; font: inherit; color: inherit;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 3%, transparent);
+  transition: border-color .12s ease, background .12s ease, transform .08s ease;
+}
+.tvp-select-card:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  transform: translateY(-1px);
+}
+.tvp-select-card:disabled { opacity: 0.55; cursor: default; }
+.tvp-select-avatar {
+  width: 40px; height: 40px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 600; color: #fff; background: var(--accent);
+}
+.tvp-select-name { font-size: 14px; font-weight: 600; line-height: 1.3; }
+.tvp-select-identity {
+  font-size: 12px; line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+@media (max-width: 600px) {
+  .tvp-select-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+}
+
+/* ── 空状态 hero ──────────────────────────────────────────────── */
+.tvp-hero {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.tvp-hero-inner {
+  max-width: 460px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.tvp-hero-mark { font-size: 30px; color: var(--accent); opacity: 0.85; }
+.tvp-hero-title { font-size: 26px; margin: 0; }
+.tvp-hero-sub { margin: 0; font-size: 14px; }
+.tvp-hero-actions { display: flex; gap: 10px; margin-top: 4px; }
+.tvp-hero-drop {
+  margin-top: 8px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px;
+  border: 1.5px dashed var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.tvp-hero-drop:hover,
+.tvp-hero-drop.tvp-drop {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.tvp-hero-drop-sub { font-size: 12px; }
+
+/* ── F1:后台工具流(可折叠、静音后台风)──────────────────────────── */
+.tvp-root .tvp-tools {
+  max-width: 740px;
+  margin: 2px auto 6px;
+  width: 100%;
+}
+.tvp-root .tvp-tools-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-quiet);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 3px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  font-family: inherit;
+}
+.tvp-root .tvp-tools-toggle:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+  border-color: var(--line);
+}
+.tvp-root .tvp-tools-gear { opacity: 0.8; font-size: 12px; }
+.tvp-root .tvp-tools-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 520px;
+}
+.tvp-root .tvp-tools-detail {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tvp-root .tvp-tool-item { display: flex; flex-direction: column; gap: 4px; }
+.tvp-root .tvp-tool-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.tvp-root .tvp-tool-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.tvp-root .tvp-tool-dot.err { background: var(--danger); }
+.tvp-root .tvp-tool-kv {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-quiet);
+  background: color-mix(in srgb, var(--bg, #1a1916) 60%, transparent);
+  border: 1px solid var(--line-soft, var(--line));
+  border-radius: 6px;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.tvp-root .tvp-tool-kv.err { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+.tvp-root .tvp-tool-kv-k {
+  display: inline-block;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-quiet);
+  opacity: 0.7;
+  margin-right: 8px;
+  user-select: none;
+}
+
+/* ── F2:本轮实时秒表 ─────────────────────────────────────────────── */
+.tvp-root .tvp-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-quiet);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.tvp-root .tvp-timer-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: tvp-pulse 1.1s ease-in-out infinite;
+}
+@keyframes tvp-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* ── F2:composer footer meta(秒表终值 + context 圆环)──────────────── */
+.tvp-root .tvp-foot-meta {
+  max-width: 740px;
+  margin: 0 auto;
+  padding: 4px 8px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.tvp-root .tvp-foot-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--text-quiet);
+  font-variant-numeric: tabular-nums;
+}
+.tvp-root .tvp-foot-timer .tvp-timer-dot { animation: none; opacity: 0.5; }
+.tvp-root .tvp-foot-timer.live .tvp-timer-dot { animation: tvp-pulse 1.1s ease-in-out infinite; opacity: 1; }
+.tvp-root .tvp-foot-ctx { display: inline-flex; align-items: center; }
+
+/* ── 适配:窄屏把子侧栏压窄 ───────────────────────────────────── */
+@media (max-width: 880px) {
+  .tvp-side { width: 200px; }
+}

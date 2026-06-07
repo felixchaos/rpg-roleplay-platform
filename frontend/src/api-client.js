@@ -625,6 +625,53 @@
       importTavern: (body) => POST(`${API_PREFIX}/me/chats/import-tavern`, body),
     },
 
+    // ---------- Tavern mode (SillyTavern-style 1:1 character chat) ----------
+    // 注意:酒馆端点挂在 /api/tavern/*(无 /v1 前缀),与上面的 ${API_PREFIX} 不同。
+    // 流式发送复用现有 api.game.chat({message, save_id}) + api.game.stop()。
+    tavern: {
+      // 活跃对话列表(updated_at desc)
+      list: () => GET(`/api/tavern/chats`),
+      // 归档对话列表
+      listArchived: () => GET(`/api/tavern/chats`, { archived: 1 }),
+      // 用一张已有 pc 卡建对话 body {character_card_id, persona_card_id?, title?}
+      create: (body) => POST(`/api/tavern/chats`, body),
+      // 导入酒馆角色卡:File(.png/.json/.webp)→ multipart;否则 JSON body
+      // ({json}/{json_string}/{base64}/{png_base64}) → 建+激活对话
+      importCharacter: (fileOrBody) => {
+        if (fileOrBody instanceof File || fileOrBody instanceof Blob) {
+          const fd = new FormData();
+          fd.append("file", fileOrBody);
+          return _send(`/api/tavern/import-character`, { method: "POST", body: fd, signal: timeoutSignal(60000) });
+        }
+        return POST(`/api/tavern/import-character`, fileOrBody || {});
+      },
+      // 激活某对话(切换对话前必须先激活,/api/chat 才会落到正确的 save)
+      activate: (id) => POST(`/api/tavern/chats/${id}/activate`, {}),
+      // 归档 / 取消归档 body {archived: bool}
+      archive: (id, archived) => PATCH(`/api/tavern/chats/${id}/archive`, { archived: !!archived }),
+      // 重命名 body {title}
+      rename: (id, title) => POST(`/api/tavern/chats/${id}/rename`, { title }),
+      // 类 Claude:按对话内容自动生成标题(后端幂等,仅 title 为空时生成)
+      autotitle: (id) => POST(`/api/tavern/chats/${id}/autotitle`, {}),
+      // 删除对话
+      remove: (id) => DEL(`/api/tavern/chats/${id}`, {}),
+      // 导入 SillyTavern 聊天记录 JSONL:File → multipart;否则 {jsonl, title?}
+      importJsonl: (fileOrBody, title) => {
+        if (fileOrBody instanceof File || fileOrBody instanceof Blob) {
+          const fd = new FormData();
+          fd.append("file", fileOrBody);
+          if (title) fd.append("title", title);
+          return _send(`/api/tavern/chats/import-jsonl`, { method: "POST", body: fd, signal: timeoutSignal(60000) });
+        }
+        if (typeof fileOrBody === "string") {
+          return POST(`/api/tavern/chats/import-jsonl`, { jsonl: fileOrBody, title: title || undefined });
+        }
+        return POST(`/api/tavern/chats/import-jsonl`, fileOrBody || {});
+      },
+      // 导出对话为 JSONL(返回可直接下载的 URL,后端响应是 attachment)
+      exportJsonl: (id) => BASE + `/api/tavern/chats/${id}/export-jsonl`,
+    },
+
     // ---------- Library / files ----------
     library: {
       list: (q) => GET(`${API_PREFIX}/library`, q),

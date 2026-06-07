@@ -1,0 +1,286 @@
+/* === Tavern Mode 覆盖层 ===
+ * 加载序最后:tokens → platform → game-console → motion → tavern.css。
+ * 所有覆盖作用域在 .tavern-chat 根下,绝不影响 Game Console。
+ * 目标:Claude 网页版观感 —— 居中单栏 + 扁平 assistant + 右对齐软气泡。
+ * accent (#c96442) 本就是 Claude 暖色,无需改 token。
+ */
+
+/* ── 居中对话栏(Claude 风:窄居中列 + 大行距 + 充裕留白)──────────────── */
+.tavern-chat .gc-chat { padding-top: 8px; }
+.tavern-chat .gc-chat-inner {
+  max-width: 720px;
+  width: calc(100% - 48px);
+  margin: 0 auto;
+  gap: 30px;
+  padding: 28px 0 16px;
+}
+
+/* assistant(AI 角色)消息:完全扁平 —— 无头像、无名牌、无卡片底/边框,
+   只剩散文本身,像 Claude 网页版的回答。动作图标默认隐,hover 才浮现。 */
+.tavern-chat .gc-msg-gm { display: block; }
+.tavern-chat .gc-msg-gm .gc-msg-body {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--narrative-font, var(--font-serif));
+  font-size: var(--narrative-size, 16.5px);
+  line-height: 1.85;
+  color: var(--text);
+}
+.tavern-chat .gc-msg-gm .gc-msg-actions {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  margin-top: 6px;
+}
+.tavern-chat .gc-msg-gm:hover .gc-msg-actions,
+.tavern-chat .gc-msg-gm:focus-within .gc-msg-actions { opacity: 1; }
+
+/* 玩家(persona)消息:右对齐 + 中性灰软气泡(Claude 用户气泡是中性灰,非橙色)*/
+.tavern-chat .gc-msg-player {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.tavern-chat .gc-msg-player .gc-msg-body {
+  max-width: 80%;
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 18px;
+  padding: 10px 16px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.65;
+}
+.tavern-chat .gc-msg-player .gc-msg-body p { margin: 0; }
+.tavern-chat .gc-msg-player .gc-msg-actions {
+  left: auto; right: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.tavern-chat .gc-msg-player:hover .gc-msg-actions { opacity: 1; }
+
+/* ── 顶栏 ────────────────────────────────────────────────────────── */
+.tv-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg);
+  flex-shrink: 0;
+  min-height: 50px;
+}
+/* 顶栏标题(Claude 风:仅角色名 + 下拉记号,点开两卡抽屉)*/
+.tv-title {
+  display: inline-flex; align-items: center; gap: 5px;
+  flex: 1; min-width: 0;
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14.5px; font-weight: 500;
+  transition: background 0.12s ease;
+}
+.tv-title:hover { background: var(--panel-2); }
+.tv-title-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tv-title-empty {
+  font-family: var(--font-serif);
+  letter-spacing: 0.03em;
+  cursor: default;
+}
+.tv-title-empty:hover { background: none; }
+.tv-header-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.tv-mobile-nav { display: none; }
+
+/* ── 左侧 rail ───────────────────────────────────────────────────── */
+.tv-rail-inner { padding: 0; }
+.tv-rail-head {
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  display: grid; gap: 10px;
+  flex-shrink: 0;
+}
+.tv-rail-brand { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.tv-rail-brand strong { letter-spacing: 0.03em; }
+.tv-new-btn { width: 100%; justify-content: center; }
+
+.tv-rail-list {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding: 8px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.tv-rail-list.drop-active {
+  outline: 2px dashed var(--accent);
+  outline-offset: -6px;
+  background: var(--accent-soft, rgba(201,100,66,0.08));
+}
+.tv-rail-empty {
+  text-align: center; padding: 40px 16px;
+  display: flex; flex-direction: column; align-items: center;
+  font-size: 12.5px;
+}
+
+/* 单条对话行 */
+.tv-chat-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  position: relative;
+  transition: background var(--m-fast, 0.12s) ease;
+}
+.tv-chat-item:hover { background: var(--panel-2); }
+.tv-chat-item.active { background: var(--accent-soft, rgba(201,100,66,0.14)); }
+.tv-chat-avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--panel-3, var(--panel)); color: var(--accent);
+  font-size: 14px; font-weight: 600; flex-shrink: 0;
+}
+.tv-chat-main { flex: 1; min-width: 0; }
+.tv-chat-title-row { display: flex; align-items: baseline; gap: 8px; justify-content: space-between; }
+.tv-chat-title {
+  font-size: 13px; font-weight: 500; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
+}
+/* 类 Claude 原地重命名输入框(双击标题触发) */
+.tv-chat-title-edit {
+  flex: 1; min-width: 0;
+  font-size: 13px; font-weight: 500; color: var(--text);
+  background: var(--bg, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--accent); border-radius: 5px;
+  padding: 1px 6px; outline: none; font-family: inherit;
+}
+.tv-chat-time { font-size: 10.5px; flex-shrink: 0; }
+.tv-chat-snippet {
+  font-size: 11.5px; margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* hover ⋯ 菜单 */
+.tv-chat-menu-wrap { position: relative; flex-shrink: 0; }
+.tv-chat-menu-btn { opacity: 0; width: 24px; height: 24px; }
+.tv-chat-item:hover .tv-chat-menu-btn,
+.tv-chat-item:focus-within .tv-chat-menu-btn { opacity: 1; }
+.tv-menu-scrim { position: fixed; inset: 0; z-index: 1499; }
+.tv-menu {
+  position: absolute; top: 100%; right: 0; z-index: 1500; margin-top: 2px;
+  background: var(--panel); border: 1px solid var(--line-soft);
+  border-radius: 8px; min-width: 140px; overflow: hidden;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  display: flex; flex-direction: column;
+}
+.tv-menu button {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; font-size: 12.5px;
+  background: transparent; border: 0; color: var(--text);
+  cursor: pointer; text-align: left; width: 100%;
+}
+.tv-menu button:hover { background: var(--panel-2); }
+.tv-menu-danger { color: var(--danger) !important; }
+.tv-menu-danger:hover { background: var(--danger-soft) !important; }
+
+/* 归档区 */
+.tv-archived-section { margin-top: 8px; border-top: 1px solid var(--line-soft); padding-top: 6px; }
+.tv-archived-toggle {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; padding: 6px 10px; font-size: 11.5px;
+  color: var(--muted); background: transparent; border: 0; cursor: pointer;
+}
+.tv-archived-toggle:hover { color: var(--text); }
+
+/* ── 转录区内的小空态(理论上 first_mes 已 seed,极少触发)─────────────── */
+.tv-chat-empty {
+  text-align: center; padding: 60px 20px;
+  display: flex; flex-direction: column; align-items: center;
+}
+
+/* ── 新对话 Hero(无激活对话时:居中大标题 + 拖卡入口,仿 Claude 首屏)──── */
+.tv-hero {
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  overflow-y: auto;
+}
+.tv-hero-inner {
+  width: 100%;
+  max-width: 460px;
+  text-align: center;
+  margin-top: -6vh;            /* 略高于正中,呼吸感更像 Claude 首屏 */
+}
+.tv-hero-mark {
+  font-family: var(--font-serif);
+  font-size: 40px;
+  line-height: 1;
+  color: var(--accent);
+  margin-bottom: 18px;
+}
+.tv-hero-title {
+  font-size: 30px;
+  font-weight: 500;
+  color: var(--text);
+  margin: 0 0 8px;
+  letter-spacing: 0.01em;
+}
+.tv-hero-sub {
+  font-size: 14px;
+  margin: 0 0 28px;
+}
+.tv-hero-drop {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 34px 28px;
+  border: 1.5px dashed var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.tv-hero-drop:hover, .tv-hero-drop.drop-active {
+  border-color: var(--accent);
+  background: var(--accent-soft, rgba(201, 100, 66, 0.08));
+}
+.tv-hero-drop-main { font-size: 15px; font-weight: 500; color: var(--text); margin-top: 4px; }
+.tv-hero-drop-sub { font-size: 12px; }
+
+/* ── Composer:居中、更圆润、柔和阴影(对齐对话列宽度)──────────────── */
+.tavern-chat .tv-foot { background: linear-gradient(to top, var(--bg) 60%, transparent); }
+.tavern-chat .gc-composer-wrap { max-width: 720px; }
+.tavern-chat .gc-composer {
+  border-radius: 22px;
+  box-shadow: 0 2px 18px -4px rgba(0, 0, 0, 0.28);
+}
+.tavern-chat .gc-composer .gc-textarea { padding: 14px 16px 4px; }
+
+/* ── 两张卡抽屉 ──────────────────────────────────────────────────── */
+.tv-drawer-backdrop {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0,0,0,0.5);
+  display: flex; justify-content: flex-end;
+}
+.tv-drawer {
+  width: min(560px, 100vw);
+  height: 100%;
+  background: var(--bg);
+  border-left: 1px solid var(--line);
+  display: flex; flex-direction: column;
+  box-shadow: -8px 0 32px rgba(0,0,0,0.4);
+  animation: m-slide-left var(--m-base, 0.2s) var(--m-out, ease) forwards;
+}
+@keyframes m-slide-left { from { transform: translateX(24px); opacity: 0.6; } to { transform: translateX(0); opacity: 1; } }
+.tv-drawer-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--line-soft);
+  flex-shrink: 0;
+}
+.tv-drawer-body { flex: 1; overflow-y: auto; padding: 18px; }
+
+/* ── 移动端 ──────────────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .tavern-chat .tv-rail {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 1600;
+    transform: translateX(-100%);
+    transition: transform var(--m-base, 0.2s) var(--m-inout, ease);
+  }
+  .tavern-chat .tv-rail.gc-rail-mobile-open { transform: translateX(0); }
+  .tv-mobile-nav { display: inline-flex; }
+  .tavern-chat .gc-chat-inner { width: calc(100% - 28px); }
+}

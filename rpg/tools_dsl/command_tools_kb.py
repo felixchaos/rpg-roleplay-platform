@@ -22,11 +22,21 @@ _KB_WRITE_ORIGINS = frozenset({"ui_button", "api_direct", "console_assistant", "
 def _save_ctx(db, save_id: int, user_id: int) -> dict | None:
     """取存档上下文:script_id / active commit_id / 进度 / 元知识模式。"""
     row = db.execute(
-        "select script_id, active_commit_id from game_saves where id=%s and user_id=%s",
+        "select script_id, active_commit_id, state_snapshot from game_saves where id=%s and user_id=%s",
         (save_id, user_id),
     ).fetchone()
     if not row:
         return None
+    # 酒馆 v2(R2):酒馆存档 script_id 列为 NULL,但若玩家绑定了剧本
+    # (state_snapshot.tavern.bound_script_id),用该剧本 id 让 KB 读工具可查原著。
+    if not row.get("script_id"):
+        snap = row.get("state_snapshot")
+        if isinstance(snap, dict):
+            tv = snap.get("tavern") if isinstance(snap.get("tavern"), dict) else {}
+            bsid = (tv or {}).get("bound_script_id")
+            if bsid:
+                row = dict(row)
+                row["script_id"] = int(bsid)
     # 进度 + 元知识:从 game_sessions 设置取(无则默认严格进度=1 / none)
     # 关键:绝不返 progress_chapter=None,_reveal_clause 会因此放行全部实体导致剧透
     sess = db.execute(

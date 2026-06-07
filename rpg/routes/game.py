@@ -456,9 +456,17 @@ async def api_context_breakdown(
             key = "system_prompt"
         cat_tokens[key] = cat_tokens.get(key, 0) + tok
 
-    from app import selected_model
+    from app import _get_user_preferences_cached, selected_model
     model = selected_model()
-    ctx_limit = int(context_window_for(model["api_id"], model["real_name"]) or 1_000_000)
+    ctx_limit = int(context_window_for(model["api_id"], model["real_name"]) or 0)
+    # 与 _payload 的圆环分母一致:min(模型原生, 用户 context_size 默认 16384)。
+    # 不再回退到悬空 1M —— 那是"未配置"假象,且与「模型参数」里的设置不符(用户报的 bug)。
+    try:
+        _prefs = _get_user_preferences_cached(api_user) if api_user else {}
+        _ucs = int(float(_prefs.get("settings.context_size") or _prefs.get("context_size") or 16384))
+        ctx_limit = min(ctx_limit, _ucs) if ctx_limit else _ucs
+    except Exception:
+        ctx_limit = ctx_limit or 16384
 
     breakdown = []
     used_sum = 0
@@ -638,72 +646,79 @@ async def api_chat(
             if pipeline_ctx.early_return:
                 return
 
+            # 酒馆模式(tavern_gm):跳过 GM 专属阶段 —— 世界书/剧本检索(Phase 2.5)与 5E 规则(Phase 3)。
+            # 纯角色扮演不"翻剧本"、不跑规则;绑定剧本后的检索由 context provider 按需触发,不在此前缀强灌。
+            from context_providers.registry import resolve_content_pack as _resolve_cp
+            _is_tavern = (_resolve_cp(state).get("gm_policy") or {}).get("mode") == "tavern_gm"
+
             # Phase 2.5 — task 86/87: 世界书子代理 (确定性, 不调 LLM, ~20ms)
             # 翻阅 phase_digests + chapter_facts + worldbook → 注入 ctx_text。
             # SSE 广播 worldbook_consulting/ready, 前端显示"翻阅设定中"。
-            try:
-                from agents import worldbook_agent
-                script_id_for_wb = _active_script_id(api_user)
-                world = state.data.get("world", {}) or {}
-                memory = state.data.get("memory", {}) or {}
-                cur_phase = str((world.get("timeline") or {}).get("current_phase") or "")
-                cur_time = str(world.get("time") or "")
-                yield _sse("worldbook_consulting", {
-                    "query": message_for_model[:80],
-                    "phase": cur_phase,
-                    "time": cur_time,
-                })
-                wb_query = " ".join(filter(None, [
-                    message_for_model,
-                    str(memory.get("current_objective") or ""),
-                ]))[:300]
-                wb_result = worldbook_agent.consult(
-                    script_id=int(script_id_for_wb or 0),
-                    query=wb_query,
-                    current_phase=cur_phase,
-                    current_time=cur_time,
-                )
-                yield _sse("worldbook_ready", {
-                    "confidence": round(wb_result.confidence, 2),
-                    "sources": wb_result.sources,
-                    "phase": (wb_result.timeline_anchor or {}).get("phase"),
-                    "elapsed_ms": wb_result.elapsed_ms,
-                })
-                if wb_result.confidence > 0:
-                    wb_text = wb_result.to_context_text()
-                    if wb_text:
-                        pipeline_ctx.ctx_text = (pipeline_ctx.ctx_text or "") + "\n\n" + wb_text
-                # 把 confidence + progress_note 也塞 bundle 让 GM prompt 知道是否"翻阅未果"
-                if pipeline_ctx.bundle is None:
-                    pipeline_ctx.bundle = {}
-                pipeline_ctx.bundle.setdefault("worldbook", {})
-                pipeline_ctx.bundle["worldbook"].update({
-                    "confidence": wb_result.confidence,
-                    "progress_note": wb_result.progress_note,
-                    "sources": wb_result.sources,
-                })
-            except Exception as wb_exc:
-                yield _sse("worldbook_ready", {
-                    "confidence": 0.0, "error": f"{type(wb_exc).__name__}: {wb_exc}",
-                })
+            if not _is_tavern:
+                try:
+                    from agents import worldbook_agent
+                    script_id_for_wb = _active_script_id(api_user)
+                    world = state.data.get("world", {}) or {}
+                    memory = state.data.get("memory", {}) or {}
+                    cur_phase = str((world.get("timeline") or {}).get("current_phase") or "")
+                    cur_time = str(world.get("time") or "")
+                    yield _sse("worldbook_consulting", {
+                        "query": message_for_model[:80],
+                        "phase": cur_phase,
+                        "time": cur_time,
+                    })
+                    wb_query = " ".join(filter(None, [
+                        message_for_model,
+                        str(memory.get("current_objective") or ""),
+                    ]))[:300]
+                    wb_result = worldbook_agent.consult(
+                        script_id=int(script_id_for_wb or 0),
+                        query=wb_query,
+                        current_phase=cur_phase,
+                        current_time=cur_time,
+                    )
+                    yield _sse("worldbook_ready", {
+                        "confidence": round(wb_result.confidence, 2),
+                        "sources": wb_result.sources,
+                        "phase": (wb_result.timeline_anchor or {}).get("phase"),
+                        "elapsed_ms": wb_result.elapsed_ms,
+                    })
+                    if wb_result.confidence > 0:
+                        wb_text = wb_result.to_context_text()
+                        if wb_text:
+                            pipeline_ctx.ctx_text = (pipeline_ctx.ctx_text or "") + "\n\n" + wb_text
+                    # 把 confidence + progress_note 也塞 bundle 让 GM prompt 知道是否"翻阅未果"
+                    if pipeline_ctx.bundle is None:
+                        pipeline_ctx.bundle = {}
+                    pipeline_ctx.bundle.setdefault("worldbook", {})
+                    pipeline_ctx.bundle["worldbook"].update({
+                        "confidence": wb_result.confidence,
+                        "progress_note": wb_result.progress_note,
+                        "sources": wb_result.sources,
+                    })
+                except Exception as wb_exc:
+                    yield _sse("worldbook_ready", {
+                        "confidence": 0.0, "error": f"{type(wb_exc).__name__}: {wb_exc}",
+                    })
 
             # Phase 3: 5E rules preflight + rule candidates + clarify 短路
-            async for evt, data in run_rules_phase(
-                pipeline_ctx,
-                payload_fn=_payload,
-                persist_chat_turn=_persist_chat_turn,
-                persist_runtime_checkpoint=_persist_runtime_checkpoint,
-                resolve_persist_target=_resolve_persist_target,
-                mark_context_run=_mark_context_run,
-                clarify_threshold=_clarify_threshold,
-                apply_chat_rule_candidates=_apply_chat_rule_candidates,
-                chat_rule_candidates=_chat_rule_candidates,
-                rule_results_prompt=_rule_results_prompt,
-                platform_knowledge_mod=platform_knowledge,
-            ):
-                yield _sse(evt, data)
-            if pipeline_ctx.early_return:
-                return
+            if not _is_tavern:
+                async for evt, data in run_rules_phase(
+                    pipeline_ctx,
+                    payload_fn=_payload,
+                    persist_chat_turn=_persist_chat_turn,
+                    persist_runtime_checkpoint=_persist_runtime_checkpoint,
+                    resolve_persist_target=_resolve_persist_target,
+                    mark_context_run=_mark_context_run,
+                    clarify_threshold=_clarify_threshold,
+                    apply_chat_rule_candidates=_apply_chat_rule_candidates,
+                    chat_rule_candidates=_chat_rule_candidates,
+                    rule_results_prompt=_rule_results_prompt,
+                    platform_knowledge_mod=platform_knowledge,
+                ):
+                    yield _sse(evt, data)
+                if pipeline_ctx.early_return:
+                    return
 
             # Phase 4: GM 主响应 (token + tool_call + extractor + acceptance)
             async for evt, data in run_gm_phase(

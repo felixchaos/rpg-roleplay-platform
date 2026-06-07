@@ -131,6 +131,7 @@ class _AnthropicBackend:
                 "input_tokens": int(getattr(usage, "input_tokens", 0)),
                 "output_tokens": int(getattr(usage, "output_tokens", 0)),
                 "cached_input_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+                "cache_creation_input_tokens": int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
             }
             self.last_usage["total_tokens"] = self.last_usage["input_tokens"] + self.last_usage["output_tokens"]
         return resp.content[0].text.strip()
@@ -151,6 +152,7 @@ class _AnthropicBackend:
                     "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
                     "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
                     "cached_input_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+                "cache_creation_input_tokens": int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
                 }
                 self.last_usage["total_tokens"] = (
                     self.last_usage["input_tokens"] + self.last_usage["output_tokens"]
@@ -182,6 +184,7 @@ class _AnthropicBackend:
                         "input_tokens": int(getattr(usage, "input_tokens", 0)),
                         "output_tokens": int(getattr(usage, "output_tokens", 0)),
                         "cached_input_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+                "cache_creation_input_tokens": int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
                     }
                     self.last_usage["total_tokens"] = self.last_usage["input_tokens"] + self.last_usage["output_tokens"]
             except Exception:
@@ -266,6 +269,7 @@ class _AnthropicBackend:
                         "input_tokens": int(getattr(usage, "input_tokens", 0)),
                         "output_tokens": int(getattr(usage, "output_tokens", 0)),
                         "cached_input_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+                "cache_creation_input_tokens": int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
                     }
                     self.last_usage["total_tokens"] = self.last_usage["input_tokens"] + self.last_usage["output_tokens"]
             except Exception:
@@ -309,6 +313,10 @@ class _AnthropicBackend:
                 "description": (t.get("description") or "")[:512],
                 "input_schema": schema,
             })
+        # 给 tools 数组末尾加 cache_control breakpoint → 把 system+tools 整段稳定前缀纳入缓存
+        # (tools 定义每轮一致;Anthropic 最多 4 个 breakpoint,这里 system(1)+tools(1),仍有余量)。
+        if anthropic_tools:
+            anthropic_tools[-1] = {**anthropic_tools[-1], "cache_control": {"type": "ephemeral"}}
         if not anthropic_tools:
             for chunk in self.stream(system, messages, max_tokens=max_tokens):
                 yield {"type": "text", "text": chunk}

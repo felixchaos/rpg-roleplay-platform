@@ -210,6 +210,15 @@ def _t_list_scripts(user_id: int, args: dict) -> str:
         return f"失败: {type(exc).__name__}: {exc}"
 
 
+def _user_can_read_script(db, sid: int, user_id: int) -> bool:
+    """剧本读权限:owner 或订阅者。防 LLM 用任意 script_id 跨用户读他人私有剧本(章节/NPC)。"""
+    return db.execute(
+        "select 1 from scripts s where s.id = %s and ("
+        "  s.owner_id = %s or s.id in (select script_id from user_script_subscriptions where user_id = %s))",
+        (int(sid), user_id, user_id),
+    ).fetchone() is not None
+
+
 def _t_get_script_chapters(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
     sid = script_id or args.get("script_id")
     if not sid:
@@ -218,6 +227,8 @@ def _t_get_script_chapters(user_id: int, script_id: int | None, args: dict, stat
         from platform_app.db import connect, init_db
         init_db()
         with connect() as db:
+            if not _user_can_read_script(db, int(sid), user_id):
+                return f"失败 (权限): 剧本 #{int(sid)} 不属于当前用户或未订阅"
             rows = db.execute(
                 "select chapter_index, title, summary from script_chapters "
                 "where script_id = %s order by chapter_index limit 200",
@@ -236,6 +247,8 @@ def _t_list_script_npcs(user_id: int, script_id: int | None, args: dict, state: 
         from platform_app.db import connect, init_db
         init_db()
         with connect() as db:
+            if not _user_can_read_script(db, int(sid), user_id):
+                return f"失败 (权限): 剧本 #{int(sid)} 不属于当前用户或未订阅"
             rows = db.execute(
                 "select id, name, summary from script_character_cards "
                 "where script_id = %s order by name limit 80",

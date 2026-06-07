@@ -1,9 +1,11 @@
 """agents.gm.backends.vertex — Vertex AI (Gemini) backend."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -39,6 +41,46 @@ from ._effort import resolve_budget_tokens as _resolve_budget  # noqa: E402
 def _resolve_thinking_budget(user_id: int | None, model_id: str | None) -> int:
     """Vertex (Gemini 2.5/3.x) thinking_budget — 0 禁用,>0 启用。"""
     return _resolve_budget(user_id, "vertex_ai", model_id or "")
+
+
+# ── 显式上下文缓存(Vertex cachedContent)────────────────────────────────────
+# 实测:Gemini 隐式缓存对本平台 0 命中(cached_content_token_count 恒 0)。显式缓存把
+# system(+tools)这段**稳定大前缀**建成 CachedContent,后续调用以 cached_content 引用 →
+# 前缀按缓存读取价计费(约 -75%),且**单轮内多次工具迭代 + 同会话多轮**都复用同一缓存。
+# 约束(已实测):用 cached_content 时 request **不能**再带 system_instruction / tools /
+# tool_config(必须全在 cache 内,否则 400 INVALID_ARGUMENT)。
+# 默认开;RPG_VERTEX_EXPLICIT_CACHE=0 关闭。TTL 由 RPG_VERTEX_CACHE_TTL(秒,默认 900)。
+def _explicit_cache_enabled() -> bool:
+    return os.getenv("RPG_VERTEX_EXPLICIT_CACHE", "1") != "0"
+
+
+def _cache_ttl_seconds() -> int:
+    try:
+        return max(60, int(float(os.getenv("RPG_VERTEX_CACHE_TTL", "900"))))
+    except (TypeError, ValueError):
+        return 900
+
+
+# Vertex 2.5 显式缓存最小约 1024 token;低于阈值 create 会 400,故粗按字符门控(≈800 token)。
+_CACHE_MIN_CHARS = 2400
+_PREFIX_CACHE: dict[str, tuple[str | None, float]] = {}
+_PREFIX_CACHE_LOCK = threading.Lock()
+_PREFIX_CACHE_MAX = 256
+
+
+def _tools_signature(tools_param) -> str:
+    if not tools_param:
+        return ""
+    try:
+        return json.dumps(
+            [t.model_dump(exclude_none=True) for t in tools_param],
+            ensure_ascii=False, sort_keys=True, default=str,
+        )
+    except Exception:
+        try:
+            return str(tools_param)
+        except Exception:
+            return "tools"
 
 
 class _VertexBackend:
@@ -87,21 +129,70 @@ class _VertexBackend:
         if self.client is None:
             raise RuntimeError(self._unavailable_message)
 
+    def _prefix_cache_name(self, system: str, tools_param=None) -> str | None:
+        """把 system(+tools)前缀建成 / 复用 Vertex CachedContent,返回 cache name 或 None。
+        任意异常 → None(优雅回退到非缓存路径,绝不打断对话)。"""
+        if not _explicit_cache_enabled() or self.client is None:
+            return None
+        try:
+            tools_sig = _tools_signature(tools_param)
+            if len(system or "") + len(tools_sig) < _CACHE_MIN_CHARS:
+                return None  # 前缀太短,低于 Vertex 最小可缓存阈值,建了也会 400
+            key = hashlib.sha256(
+                (self.model_name + "\x00" + (system or "") + "\x00" + tools_sig).encode("utf-8")
+            ).hexdigest()
+            now = time.monotonic()
+            with _PREFIX_CACHE_LOCK:
+                ent = _PREFIX_CACHE.get(key)
+                if ent and ent[1] > now:
+                    return ent[0]
+            # 建缓存(网络调用放锁外)
+            from google.genai import types
+            ttl = _cache_ttl_seconds()
+            cfg_kwargs: dict[str, Any] = {"system_instruction": system, "ttl": f"{ttl}s"}
+            if tools_param:
+                cfg_kwargs["tools"] = tools_param
+            name: str | None = None
+            try:
+                cache = self.client.caches.create(
+                    model=self.model_name,
+                    config=types.CreateCachedContentConfig(**cfg_kwargs),
+                )
+                name = getattr(cache, "name", None)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("[vertex] explicit cache create failed (%s); fallback no-cache", exc)
+            with _PREFIX_CACHE_LOCK:
+                # 成功:缓存到 TTL 前留 30s 余量;失败:短暂(60s)缓存 None 防重试风暴
+                _PREFIX_CACHE[key] = (name, now + (ttl - 30 if name else 60))
+                if len(_PREFIX_CACHE) > _PREFIX_CACHE_MAX:
+                    for k in sorted(_PREFIX_CACHE, key=lambda k: _PREFIX_CACHE[k][1])[: _PREFIX_CACHE_MAX // 2]:
+                        _PREFIX_CACHE.pop(k, None)
+            return name
+        except Exception as exc:  # noqa: BLE001
+            log.debug("[vertex] _prefix_cache_name error (%s)", exc)
+            return None
+
     def call(self, system: str, messages: list[dict], max_tokens: int) -> str:
         self._ensure_available()
         from google.genai import types
 
         contents = self._to_contents(messages, types)
 
-        config = types.GenerateContentConfig(
-            system_instruction=system,
-            max_output_tokens=max(max_tokens, 2048),  # thinking 模型需要足够 budget
-            temperature=0.9,
-            thinking_config=types.ThinkingConfig(  # task 141: 按用户偏好,默认 high=8192
+        _cache_name = self._prefix_cache_name(system)
+        _cfg: dict[str, Any] = {
+            "max_output_tokens": max(max_tokens, 2048),  # thinking 模型需要足够 budget
+            "temperature": 0.9,
+            "thinking_config": types.ThinkingConfig(  # task 141: 按用户偏好,默认 high=8192
                 thinking_budget=_resolve_thinking_budget(self.user_id, self.model_name),
             ),
-            http_options=types.HttpOptions(timeout=_VERTEX_TIMEOUT_SECONDS * 1000),
-        )
+            "http_options": types.HttpOptions(timeout=_VERTEX_TIMEOUT_SECONDS * 1000),
+        }
+        # 显式缓存:命中则以 cached_content 引用前缀(system 在 cache 内,request 不再带 system_instruction)
+        if _cache_name:
+            _cfg["cached_content"] = _cache_name
+        else:
+            _cfg["system_instruction"] = system
+        config = types.GenerateContentConfig(**_cfg)
         last_exc: Exception | None = None
         for attempt in range(_MAX_RETRIES + 1):
             try:
@@ -280,19 +371,30 @@ class _VertexBackend:
 
         tools_param = [types.Tool(function_declarations=fn_decls)]
         contents = self._to_contents(messages, types)
+        # 显式缓存:把 system+tools 这段稳定大前缀建成 CachedContent —— 单轮内多次工具迭代
+        # 与同会话多轮都复用同一缓存(前缀按读取价计费)。命中则 request 不再带 system/tools。
+        _cache_name = self._prefix_cache_name(system, tools_param)
 
         for _iteration in range(max_iterations):
             pending_calls: list[dict[str, Any]] = []
             current_text_parts: list[Any] = []
             current_text_str = ""
 
-            config = types.GenerateContentConfig(
-                system_instruction=system,
-                max_output_tokens=max(max_tokens, 2048),
-                temperature=0.9,
-                tools=tools_param,
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-            )
+            if _cache_name:
+                config = types.GenerateContentConfig(
+                    cached_content=_cache_name,
+                    max_output_tokens=max(max_tokens, 2048),
+                    temperature=0.9,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                )
+            else:
+                config = types.GenerateContentConfig(
+                    system_instruction=system,
+                    max_output_tokens=max(max_tokens, 2048),
+                    temperature=0.9,
+                    tools=tools_param,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                )
             for chunk in self.client.models.generate_content_stream(  # type: ignore[assignment]
                 model=self.model_name, contents=contents, config=config,
             ):

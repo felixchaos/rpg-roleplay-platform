@@ -122,6 +122,31 @@ DEFAULT_FREEFORM_MANIFEST: dict = {
 }
 
 
+DEFAULT_TAVERN_MANIFEST: dict = {
+    "id": "__tavern__",
+    "kind": "tavern",
+    "ruleset": "none",
+    "context_providers": [
+        # 角色卡 + persona + 卡内高优先级 system_prompt(复用 make_layer 高优先级层基建)
+        "tavern_character",
+        # 角色带持久记忆(决策4):记忆/关系 op 仍可写
+        "memory",
+        # 用户硬约束 / 高优先级引导(/set、user_variables)
+        "worldline",
+        # 无剧本:不含 script_phase_anticipation / runtime_phase_digests / 任何 script/anchor provider
+    ],
+    "retrieval_policy": {
+        "allow_script_retrieval": False,
+        "allow_chapter_facts": False,
+    },
+    "gm_policy": {
+        "mode": "tavern_gm",
+        "must_obey_rules_result": False,
+        "no_unverified_hard_state_write": False,
+    },
+}
+
+
 # ── ContentPack Manifest 解析 ────────────────────────────────────
 
 def resolve_content_pack(state, script_id: int | None = None) -> dict:
@@ -135,7 +160,29 @@ def resolve_content_pack(state, script_id: int | None = None) -> dict:
     # 1. state.content_pack 显式指定（最高优先级）
     explicit = data.get("content_pack")
     if isinstance(explicit, dict) and explicit.get("context_providers"):
-        return _normalize_manifest(explicit)
+        normalized = _normalize_manifest(explicit)
+        # 酒馆 v2(R2):绑定剧本后,给 tavern manifest 追加剧本检索 providers
+        # (novel_retrieval / novel_characters / novel_worldbook,与 DEFAULT_NOVEL_MANIFEST
+        # 同款,scoped 到该 script_id)+ 放开 allow_script_retrieval。**主动检索**:只在
+        # agent 查询相关轮触发(provider 吃 demand.retrieval_query),不前缀强灌。
+        gm_mode = (normalized.get("gm_policy") or {}).get("mode")
+        if gm_mode == "tavern_gm":
+            tavern = data.get("tavern") if isinstance(data.get("tavern"), dict) else {}
+            bound_script_id = (tavern or {}).get("bound_script_id")
+            if bound_script_id:
+                merged = copy.deepcopy(normalized)
+                providers = list(merged.get("context_providers") or [])
+                for pid in ("novel_retrieval", "novel_characters", "novel_worldbook"):
+                    if pid not in providers:
+                        providers.append(pid)
+                merged["context_providers"] = providers
+                rp = dict(merged.get("retrieval_policy") or {})
+                rp["allow_script_retrieval"] = True
+                merged["retrieval_policy"] = rp
+                merged["id"] = f"__tavern__:script:{int(bound_script_id)}"
+                # gm_policy.mode 保持 tavern_gm(角色扮演引擎不变,只是多了原著可查)
+                return _normalize_manifest(merged)
+        return normalized
 
     # 2. state.scene.module_manifest（模组开局写入；优先级高于 script）
     scene = data.get("scene") or {}

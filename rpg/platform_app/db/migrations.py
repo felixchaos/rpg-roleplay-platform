@@ -1577,6 +1577,25 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "create index if not exists idx_messages_save_role_created "
         "on messages(save_id, role, created_at, id)",
     ]),
+    # 版本号说明:deploy-prod 生产此前到 v61。v62-64 被 living-world-engine 分支占用
+    # (living_world_save_rag/coarse_world/entity_state,见共享 dev DB),那条线后续会并入
+    # deploy-prod。为避免并入时撞号,酒馆迁移直接用 v65(>= 两边已知最大),留出 62-64 给 living-world。
+    (65, "tavern_mode_saves", [
+        # 酒馆模式:独立的"角色对话"存档(无剧本)。复用 game_saves 一张表 + 区分列,
+        # 不另建并行表 —— 这样 branch_commits/messages/advisory-lock 单写者/save_io
+        # 全部原样复用。script_id 此前 NOT NULL(init.py:110),酒馆存档无剧本,
+        # 故去掉 NOT NULL;用 CHECK 兜底"game 存档仍必须有 script_id"(应用层不变量)。
+        # 已有 game 存档零影响:save_kind 默认 'game' 且 script_id 本就非空 → CHECK 通过。
+        "alter table game_saves alter column script_id drop not null",
+        "alter table game_saves add column if not exists save_kind text not null default 'game'",
+        "alter table game_saves add column if not exists tavern_character_card_id bigint references character_cards(id) on delete set null",
+        "alter table game_saves add column if not exists tavern_persona_card_id bigint references character_cards(id) on delete set null",
+        "alter table game_saves add column if not exists archived_at timestamptz",
+        # add constraint 无 if not exists → 先 drop 再 add 保持幂等(重复运行/已健康均 no-op)
+        "alter table game_saves drop constraint if exists chk_game_save_needs_script",
+        "alter table game_saves add constraint chk_game_save_needs_script check (save_kind <> 'game' or script_id is not null)",
+        "create index if not exists idx_game_saves_kind on game_saves(user_id, save_kind, archived_at, updated_at desc)",
+    ]),
 ]
 
 

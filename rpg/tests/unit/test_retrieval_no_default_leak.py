@@ -52,33 +52,48 @@ class DefaultNovelDetection(unittest.TestCase):
 
 
 class StripDefaultNovelLeakage(unittest.TestCase):
-    """单元：_strip_default_novel_leakage 把柏林 token 行剔除"""
+    """单元：_strip_default_novel_leakage 按 glossary 配置的 leak token 行剔除。
 
-    def test_strips_lines_with_berlin_tokens(self):
+    OSS 化重构后，要过滤的 IP 专名（旧测试硬编码的『图卢兹/柏林/薇瑟/蕾穆丽娜』）
+    不再写在代码里，而是从 config/novel_glossary.json（gitignored 私有，作者机
+    才有）或 config/novel_glossary.example.json（占位符 [CITY_1]/[NPC_1]…）加载，
+    见 retrieval._DEFAULT_NOVEL_LEAK_TOKENS = get_leak_filter_tokens()。
+
+    因此本测试不再硬编码任一本小说的真实地名/人名（在缺私有 glossary 的 checkout
+    上——deploy-prod git 树 / OSS / CI——那些 token 根本不在过滤表里，会误判失败），
+    而是用 get_leak_filter_tokens() 实际返回的 token 驱动，验证确定性的行级剔除逻辑
+    在任何 checkout 上都成立。
+    """
+
+    def setUp(self):
+        self.tokens = list(retrieval._DEFAULT_NOVEL_LEAK_TOKENS)
+        if not self.tokens:
+            self.skipTest("无 leak_filter_tokens 配置（glossary 为空）")
+
+    def test_strips_lines_with_leak_tokens(self):
+        tok = self.tokens[0]
         text = (
             "=== Postgres ChapterFact ===\n"
             "第1章《雾港入夜》｜申时三刻\n"
-            "第4章《## 第三章 次日码头》｜图卢兹失守后次日，柏林内城\n"
+            f"第4章《## 第三章 次日码头》｜含泄漏内容 {tok} 的脏行\n"
             "摘要：次日清晨，黑潮退去...\n"
         )
         out = retrieval._strip_default_novel_leakage(text)
-        # 含『图卢兹』和『柏林』的行被删
-        self.assertNotIn("图卢兹", out)
-        self.assertNotIn("柏林内城", out)
-        # 干净的雾港和摘要保留
+        # 含 leak token 的整行被删
+        self.assertNotIn(tok, out)
+        # 干净的雾港和摘要保留（行级剔除，不误伤无 token 的行）
         self.assertIn("第1章《雾港入夜》", out)
         self.assertIn("次日清晨", out)
 
-    def test_strips_berlin_chunks_block(self):
-        text = (
-            "=== Postgres 原文片段 ===\n"
-            "[第163章片段]\n"
-            "礼花？薇瑟帝国的阅兵式...\n"
-            "蕾穆丽娜在赛亚尔...\n"
-        )
-        out = retrieval._strip_default_novel_leakage(text)
-        for tok in ("薇瑟", "蕾穆丽娜"):
+    def test_strips_every_configured_token_line(self):
+        clean = "第1章《雾港入夜》｜申时三刻"
+        lines = ["=== Postgres 原文片段 ===", clean]
+        for i, tok in enumerate(self.tokens):
+            lines.append(f"[第{163 + i}章片段] 含 {tok} 的脏行")
+        out = retrieval._strip_default_novel_leakage("\n".join(lines))
+        for tok in self.tokens:
             self.assertNotIn(tok, out, f"含『{tok}』的行应被剔除")
+        self.assertIn(clean, out, "无 token 的干净行应保留")
 
     def test_empty_safe(self):
         self.assertEqual(retrieval._strip_default_novel_leakage(""), "")

@@ -192,6 +192,13 @@ def import_save(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
 
     new_title = (save_data.get("title") or "导入存档")[:200]  # 限标题长度,防超长 title
     script_id_raw = save_data.get("script_id")
+    # 酒馆模式(Tavern):save_kind='tavern' 的存档无剧本(script_id=NULL)。CHECK 约束
+    # chk_game_save_needs_script 允许非 game 存档 script_id 为 NULL。必须跳过下面的
+    # script 归属重映射(否则把酒馆存档错挂到用户首个 script,污染酒馆 lane);
+    # save_kind='game'(默认)走原逻辑,零回归。
+    save_kind = str(save_data.get("save_kind") or "game").strip() or "game"
+    is_tavern = save_kind == "tavern"
+    tavern_character_card_id_raw = save_data.get("tavern_character_card_id")
     # 主 save 的 state_snapshot 也必须过大小校验(原仅 per-commit 校验,主 snapshot 漏检):
     # application/json body 导入路径无 _MAX_SAVE_IMPORT_BYTES 上限,构造超大 save.state_snapshot
     # 可绕过端点大小关 + 直插 game_saves 撑 DB/内存。与 per-commit 一致用 _check_json_size。
@@ -201,34 +208,63 @@ def import_save(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         warnings.append("v1 存档包未含 anchor/kb/identity 状态表,建议在游戏内 /reseed 重建锚点")
 
     with connect() as db:
-        # 校验 script_id 归属（用户必须拥有这个剧本，否则用 user 第一个 script 兜底）
+        # 校验 script_id 归属（用户必须拥有这个剧本，否则用 user 第一个 script 兜底）。
+        # 酒馆存档无剧本:整段重映射跳过,script_id 恒 NULL。
         script_id = None
-        if script_id_raw:
-            owned = db.execute(
-                "select 1 from scripts where id = %s and owner_id = %s",
-                (int(script_id_raw), user_id),
-            ).fetchone()
-            if owned:
-                script_id = int(script_id_raw)
-        if script_id is None:
-            row = db.execute(
-                "select id from scripts where owner_id = %s order by id limit 1",
-                (user_id,),
-            ).fetchone()
-            if not row:
-                raise ValueError("当前用户没有剧本，无法导入存档")
-            script_id = int(row["id"])
-            warnings.append(f"原 script_id={script_id_raw} 不在当前账户,改挂到 script_id={script_id}")
+        tavern_character_card_id: int | None = None
+        if is_tavern:
+            # 酒馆角色卡归属校验(best-effort):不属于本人或不存在则置 NULL(FK on delete set null)
+            if tavern_character_card_id_raw:
+                try:
+                    cid = int(tavern_character_card_id_raw)
+                    owned_card = db.execute(
+                        "select 1 from character_cards where id = %s and user_id = %s",
+                        (cid, user_id),
+                    ).fetchone()
+                    if owned_card:
+                        tavern_character_card_id = cid
+                except (TypeError, ValueError):
+                    tavern_character_card_id = None
+        else:
+            if script_id_raw:
+                owned = db.execute(
+                    "select 1 from scripts where id = %s and owner_id = %s",
+                    (int(script_id_raw), user_id),
+                ).fetchone()
+                if owned:
+                    script_id = int(script_id_raw)
+            if script_id is None:
+                row = db.execute(
+                    "select id from scripts where owner_id = %s order by id limit 1",
+                    (user_id,),
+                ).fetchone()
+                if not row:
+                    raise ValueError("当前用户没有剧本，无法导入存档")
+                script_id = int(row["id"])
+                warnings.append(f"原 script_id={script_id_raw} 不在当前账户,改挂到 script_id={script_id}")
 
-        # 1. 新建 save
-        new_save = db.execute(
-            """
-            insert into game_saves(user_id, script_id, title, state_path, state_snapshot)
-            values (%s, %s, %s, %s, %s)
-            returning *
-            """,
-            (user_id, script_id, new_title, "", Jsonb(state_snapshot)),
-        ).fetchone()
+        # 1. 新建 save —— 列清单按 save_kind 条件构造:
+        #    game(默认)保持原始三列形态(byte-for-byte 不变);
+        #    tavern 插 save_kind='tavern' + script_id=NULL + tavern_character_card_id。
+        if is_tavern:
+            new_save = db.execute(
+                """
+                insert into game_saves(user_id, script_id, title, state_path, state_snapshot,
+                                       save_kind, tavern_character_card_id)
+                values (%s, NULL, %s, %s, %s, 'tavern', %s)
+                returning *
+                """,
+                (user_id, new_title, "", Jsonb(state_snapshot), tavern_character_card_id),
+            ).fetchone()
+        else:
+            new_save = db.execute(
+                """
+                insert into game_saves(user_id, script_id, title, state_path, state_snapshot)
+                values (%s, %s, %s, %s, %s)
+                returning *
+                """,
+                (user_id, script_id, new_title, "", Jsonb(state_snapshot)),
+            ).fetchone()
         new_save_id = int(new_save["id"])
 
         # 2. 重建 branch_commits（保留 parent 关系，但 ID 重映射）
@@ -318,4 +354,6 @@ def import_save(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         "state_imported": state_imported,
         "warnings": warnings,
         "script_id": script_id,
+        "save_kind": save_kind,
+        "tavern_character_card_id": tavern_character_card_id,
     }

@@ -30,7 +30,18 @@ def deployment_mode() -> str:
     return os.getenv("RPG_DEPLOYMENT_MODE", "local")
 
 def require_auth() -> bool:
-    return os.getenv("RPG_REQUIRE_AUTH", "0") == "1"
+    """是否强制鉴权。统一委托 effective_auth_required()(认 RPG_DEPLOYMENT_MODE=server)。
+
+    旧实现只看 RPG_REQUIRE_AUTH=="1",于是 server 模式(未显式设 RPG_REQUIRE_AUTH=1)下
+    所有以本函数为闸的门控都误判成「无鉴权」:
+      - 模型目录 has_credential 走服务器级凭证(env key / Vertex SA)而非 per-user 账号 key;
+      - vertex 全局 SA fallback 没被禁(LLM 路径被服务器 SA 兜底);
+      - get_credential 回退到服务器 env key 当作用户凭证(anthropic 泄漏);
+      - base_url http 校验、注册邮箱验证被跳过(server 注册免验证)。
+    委托给 mode-aware 的 effective_auth_required() 后,server 模式一律按强制鉴权处理,
+    本地/桌面模式仍为 False(行为不变);RPG_REQUIRE_AUTH=1/0 显式覆盖仍优先生效。
+    """
+    return effective_auth_required()
 
 def require_auth_raw() -> str:
     """返回 RPG_REQUIRE_AUTH 原始字符串（含空字符串），供需要三态判断的地方使用。"""
@@ -38,6 +49,11 @@ def require_auth_raw() -> str:
 
 def debug_ui() -> bool:
     return bool(os.getenv("RPG_DEBUG_UI"))
+
+def tiered_tools_enabled() -> bool:
+    """阶梯化工具加载:窗口外的工具不直接塞 schema,而是进「目录」由模型 load_tools 按需加载。
+    默认开;RPG_TIERED_TOOLS=0 关闭 → 退回旧的「前 N 个直接发、其余丢弃」截断行为。"""
+    return os.getenv("RPG_TIERED_TOOLS", "1") != "0"
 
 # ── 网络 ─────────────────────────────────────────────────────────────────
 def cors_origins() -> str | None:

@@ -21,6 +21,13 @@ from schemas.rules import (
 
 router = APIRouter()
 
+# 不变量：/api/rules/* 全部是确定性 5E 规则动作（掷骰/战斗/物品/移动），
+# 由 dispatcher 工具落库，叙事由 /api/chat 的 GM 另行渲染。这些端点从不使用
+# GM 对象，因此一律 _ensure_loaded(..., ensure_gm=False)。否则在生产鉴权模式
+# (RPG_REQUIRE_AUTH=1) 下，eager 构造 GameMaster 会对未配置 BYOK key 的用户
+# 抛 400，把确定性动作错误地耦合到 LLM 可用性上（与 /api/v1/state 已有的
+# ensure_gm=False 一致）。
+
 
 @router.get("/api/rules/modules")
 async def api_rules_modules(
@@ -57,7 +64,7 @@ async def api_rules_module_start(
         raise HTTPException(status_code=404, detail=f"模组不存在: {module_id}")
     character_overrides = body_dict.get("character") or None
 
-    state = _ensure_loaded(api_user)
+    state = _ensure_loaded(api_user, ensure_gm=False)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     d_result = dispatch_ui_tool(
         tool_name="module_load",
@@ -174,7 +181,7 @@ async def api_rules_module_launch(
     _invalidate_user_cache(api_user)
 
     # 重新拉 state
-    state = _ensure_loaded(api_user)
+    state = _ensure_loaded(api_user, ensure_gm=False)
     return JSONResponse({
         "ok": True,
         "save_id": save_id,
@@ -191,7 +198,7 @@ async def api_rules_scene(
 ) -> JSONResponse:
     """返回当前 scene / player_character / encounter / dice_log 快照。"""
     from app import _ensure_loaded, _rules_payload
-    state = _ensure_loaded(api_user)
+    state = _ensure_loaded(api_user, ensure_gm=False)
     return JSONResponse({"ok": True, "rules": _rules_payload(state)})
 
 
@@ -214,7 +221,7 @@ async def api_rules_move(
     location_id = str(body_dict.get("to") or "").strip()
     if not location_id:
         raise HTTPException(status_code=400, detail="缺少 to")
-    state = _ensure_loaded(api_user)
+    state = _ensure_loaded(api_user, ensure_gm=False)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     d_result = dispatch_ui_tool(
         tool_name="module_enter_room",
@@ -250,7 +257,7 @@ async def api_rules_action(
         _rules_payload,
     )
     body_dict = body.model_dump(exclude_none=True)
-    state = _ensure_loaded(api_user)
+    state = _ensure_loaded(api_user, ensure_gm=False)
 
     out = _execute_rules_action(state, body_dict)
     if not out.get("ok"):
@@ -284,7 +291,7 @@ async def api_rules_encounter_start(
     if not encounter_id:
         raise HTTPException(status_code=400, detail="缺少 encounter_id")
     seed = body_dict.get("seed")
-    state = _ensure_loaded(api_user)
+    state = _ensure_loaded(api_user, ensure_gm=False)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     args: dict = {"encounter_id": encounter_id}
     from rules.seed_policy import coerce_external_seed
@@ -322,7 +329,7 @@ async def api_rules_encounter_next(
         _resolve_persist_target,
         _rules_payload,
     )
-    state = _ensure_loaded(api_user)
+    state = _ensure_loaded(api_user, ensure_gm=False)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     d_result = dispatch_ui_tool(
         tool_name="combat_next_turn", args={},
@@ -359,7 +366,7 @@ async def api_rules_encounter_enemy(
     attacker_id = str(body_dict.get("attacker_id") or "").strip()
     target_id = str(body_dict.get("target_id") or "player").strip()
     seed = body_dict.get("seed")
-    state = _ensure_loaded(api_user)
+    state = _ensure_loaded(api_user, ensure_gm=False)
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     args: dict = {"attacker_id": attacker_id, "target_id": target_id}
     from rules.seed_policy import coerce_external_seed
@@ -396,5 +403,5 @@ async def api_rules_suggest(
     from rules_bridge import suggest_rule_actions as _rb_suggest_rule_actions
     body_dict = body.model_dump(exclude_none=True)
     text = str(body_dict.get("text") or "")
-    state = _ensure_loaded(api_user)
+    state = _ensure_loaded(api_user, ensure_gm=False)
     return JSONResponse({"ok": True, "actions": _rb_suggest_rule_actions(text, state)})

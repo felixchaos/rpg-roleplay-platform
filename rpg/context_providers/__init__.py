@@ -19,6 +19,7 @@ from . import rules as _rules  # noqa: F401
 # task 107E: 双时间线 provider
 from . import runtime_phase_digests as _rpd  # noqa: F401
 from . import script_phase_anticipation as _spa  # noqa: F401
+from . import tavern as _tavern  # noqa: F401
 from . import worldline as _worldline  # noqa: F401
 from .base import (
     ContextContribution,
@@ -30,6 +31,7 @@ from .registry import (
     DEFAULT_FREEFORM_MANIFEST,
     DEFAULT_MODULE_MANIFEST,
     DEFAULT_NOVEL_MANIFEST,
+    DEFAULT_TAVERN_MANIFEST,
     available_providers,
     get_provider,
     register_provider,
@@ -42,5 +44,6 @@ __all__ = [
     "register_provider", "get_provider", "available_providers",
     "resolve_content_pack",
     "DEFAULT_NOVEL_MANIFEST", "DEFAULT_MODULE_MANIFEST", "DEFAULT_FREEFORM_MANIFEST",
+    "DEFAULT_TAVERN_MANIFEST",
     "run_providers",
 ]

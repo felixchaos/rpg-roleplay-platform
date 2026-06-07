@@ -3990,6 +3990,13 @@ const getCSModules = (t) => [
       { text: t('platform.nav.modules'),            href: '#modules' },
       { text: t('platform.nav.cs_play_settings'),   href: '#play-settings' },
     ] },
+  // 酒馆模式:与「开始游戏」(play)**平级**、同在「游玩/Play」分类下的独立模块
+  // (不再是开始游戏的子项)。页面是 Platform 内嵌子页 #tavern(见 entries/platform.jsx)。
+  { id: 'tavern', label: t('platform.nav.tavern', { defaultValue: '酒馆' }), group: t('platform.nav.group_play'),
+    pages: ['tavern'],
+    sub: [
+      { text: t('platform.nav.tavern', { defaultValue: '酒馆' }), href: '#tavern' },
+    ] },
   { id: 'account', label: t('platform.nav.account'), group: t('platform.nav.group_system'),
     pages: ['me', 'me-edit', 'me-settings', 'settings', 'settings-models',
       'settings-modelparams', 'settings-modules', 'settings-memory', 'settings-permissions',
@@ -4314,8 +4321,9 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
     } else { setPage(id); }
   };
 
-  // 独立页(无侧栏):欢迎页就是登陆后的工作台首页,不归任何模块,整页铺满
-  const standalone = page === 'profile';
+  // 独立页(无全局左导航,整页铺满):欢迎页 + 酒馆(酒馆自带 2 块式侧栏,
+  // 全局左导航会重复;顶部「全部功能」切换器仍可切走)。
+  const standalone = page === 'profile' || page === 'tavern';
 
   return (
     <>
@@ -4425,11 +4433,17 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
         navigationTriggerHide
         navigationWidth={208}
         toolsHide
+        // 酒馆页自带内部布局(两段式子侧栏 + 聊天),需要全幅填满 content 区。
+        disableContentPaddings={page === 'tavern'}
         navigation={
           <CSSideNavigation
             header={{ text: _csActiveModule(page, csModules).label, href: '#' + _csActiveModule(page, csModules).pages[0] }}
             activeHref={'#' + page}
-            onFollow={(e) => { e.preventDefault(); const id = (e.detail.href || '').slice(1); if (id) { setPage(id); } }}
+            onFollow={(e) => {
+              e.preventDefault();
+              const id = (e.detail.href || '').slice(1);
+              if (id) { setPage(id); }
+            }}
             items={_csActiveModule(page, csModules).sub.map((s) => ({ type: 'link', text: s.text, href: s.href }))}
           />
         }

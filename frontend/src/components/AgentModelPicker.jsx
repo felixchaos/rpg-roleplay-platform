@@ -41,6 +41,7 @@ export default function AgentModelPicker({
   const [apiId, setApiId] = useState('');
   const [model, setModel] = useState('');
   const [saving, setSaving] = useState(false);
+  const [customSel, setCustomSel] = useState(false);  // 用户在下拉里显式选了「自定义…」
 
   useEffect(() => {
     let cancelled = false;
@@ -148,6 +149,11 @@ export default function AgentModelPicker({
       disabled: m.enabled === false,
     }));
 
+  // 「自定义」态:用户显式选了自定义,或当前 model 不在该 provider 的目录里(如手填的旧偏好)。
+  const CUSTOM_MODEL = '__custom_model__';
+  const knownModelVals = new Set(modelOptions.map((o) => o.value));
+  const isCustomModel = customSel || (modelOptions.length > 0 && !!model && !knownModelVals.has(model));
+
   const body = (
     <>
       {credApiIds.size === 0 && (
@@ -172,6 +178,7 @@ export default function AgentModelPicker({
               setApiId(aid);
               const m0 = modelsOf(aid).find((m) => m.enabled !== false && !isEmbeddingOnly(m));
               const mid = m0 ? (m0.real_name || m0.id) : '';
+              setCustomSel(false);  // 换 provider 重置「自定义」态
               // 切到「无可用模型」的 provider 时,绝不回写旧 provider 的 model
               // (否则会把 {新api_id, 旧model_real_name} 错配写进 preferences → 后端解析失败)。
               if (mid) { setModel(mid); persist(aid, mid); }
@@ -181,37 +188,47 @@ export default function AgentModelPicker({
             empty="还没配 API key"
           />
         </CSFormField>
-        <CSFormField label="Model" description="列表没有你的模型时,直接填写服务商实际 model 名称并保存。">
+        <CSFormField label="Model" description="列表里没有你的模型时,选「自定义…」手动填写服务商实际 model 名称。">
           <div style={{ display: 'grid', gap: 8 }}>
             {modelOptions.length > 0 && (
               <CSSelect
-                selectedOption={(() => {
-                  const m = modelsOf(apiId).find((x) => (x.real_name || x.id) === model);
-                  return m ? { value: model, label: m.display_name || m.real_name || m.id }
-                    : (model ? { value: model, label: model } : null);
-                })()}
-                options={modelOptions}
+                selectedOption={
+                  isCustomModel
+                    ? { value: CUSTOM_MODEL, label: '自定义…' }
+                    : (() => {
+                        const m = modelsOf(apiId).find((x) => (x.real_name || x.id) === model);
+                        return m ? { value: model, label: m.display_name || m.real_name || m.id }
+                          : (model ? { value: model, label: model } : null);
+                      })()
+                }
+                options={[...modelOptions, { value: CUSTOM_MODEL, label: '自定义…(手动填写模型名)' }]}
                 placeholder="选择模型"
-                onChange={({ detail }) => { const mid = detail.selectedOption.value; setModel(mid); persist(apiId, mid); }}
+                onChange={({ detail }) => {
+                  const mid = detail.selectedOption.value;
+                  if (mid === CUSTOM_MODEL) { setCustomSel(true); }
+                  else { setCustomSel(false); setModel(mid); persist(apiId, mid); }
+                }}
                 disabled={saving || !apiId}
               />
             )}
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8 }}>
-              <CSInput
-                value={model}
-                placeholder={modelOptions.length ? '或手动填写模型名,例如 gpt-4o-mini' : '填写模型名,例如 gpt-4o-mini'}
-                onChange={({ detail }) => setModel(detail.value)}
-                onBlur={() => { const m = (model || '').trim(); if (apiId && m) persist(apiId, m); }}
-                disabled={saving || !apiId}
-              />
-              <CSButton
-                loading={saving}
-                disabled={saving || !apiId || !(model || '').trim()}
-                onClick={() => persist(apiId, (model || '').trim())}
-              >
-                保存模型名
-              </CSButton>
-            </div>
+            {(isCustomModel || modelOptions.length === 0) && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8 }}>
+                <CSInput
+                  value={model}
+                  placeholder="填写模型名,例如 gpt-4o-mini"
+                  onChange={({ detail }) => setModel(detail.value)}
+                  onBlur={() => { const m = (model || '').trim(); if (apiId && m) persist(apiId, m); }}
+                  disabled={saving || !apiId}
+                />
+                <CSButton
+                  loading={saving}
+                  disabled={saving || !apiId || !(model || '').trim()}
+                  onClick={() => persist(apiId, (model || '').trim())}
+                >
+                  保存
+                </CSButton>
+              </div>
+            )}
           </div>
         </CSFormField>
       </CSColumnLayout>

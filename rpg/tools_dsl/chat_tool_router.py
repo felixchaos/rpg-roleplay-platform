@@ -23,9 +23,40 @@ from tools_dsl.command_dispatcher import (
 DISPATCHER_SENTINEL = "dispatcher"
 
 
+# 酒馆 = 基于 harness 的完整 agent(用户决策):**允许「改写只读剧本 canon」以外的所有操作**。
+# 不再像旧设计那样砍掉战斗/物品/模组/锚点/时间线 —— 那些写的是本存档自身状态,是合法的
+# 「世界随对话推进写入 DB」的一部分。只有两类按需丢弃:
+#   · canon 写(kb_*)= 改世界树 KB:绑定只读剧本时禁(不许改原著);无剧本时也无对象 → 丢。
+#   · canon 读(search_canon 等):无绑定剧本时没有原著可读 → 丢;绑定后放开(贴合原著)。
+_TAVERN_CANON_WRITE_SUBSTR = ("kb_",)
+_TAVERN_CANON_READ_SUBSTR = (
+    "search_canon", "lookup_entity", "lookup_timeline", "graph_neighbors",
+    "get_chapter_facts", "get_worldbook",
+)
+
+# agent 自举工具(建/换角色、persona、列/绑剧本)永不被子串匹配误伤 ——
+# tavern_list_scripts / tavern_bind_script 含 "script" 子串,否则可能被规则吞掉。
+_TAVERN_KEEP_PREFIX = ("set_tavern_", "edit_tavern_", "tavern_")
+
+
+def _tavern_drops_tool(name: str, *, bound_script_id: int | None = None) -> bool:
+    n = (name or "").lower()
+    # 酒馆自举工具永远保留
+    if any(n.startswith(p) for p in _TAVERN_KEEP_PREFIX):
+        return False
+    if bound_script_id:
+        # 绑定只读剧本:仅禁「改写 canon」,canon 读 + 其余所有写本档状态的工具全开
+        return any(s in n for s in _TAVERN_CANON_WRITE_SUBSTR)
+    # 无绑定剧本:没有 canon 对象 → canon 读/写工具都丢;其余(world/memory/关系/战斗/物品/模组…)全开
+    return any(s in n for s in (_TAVERN_CANON_WRITE_SUBSTR + _TAVERN_CANON_READ_SUBSTR))
+
+
 def build_unified_tool_list(
     mcp_tools: list[dict[str, Any]] | None,
     origin: str = "llm_chat",
+    *,
+    mode: str | None = None,
+    bound_script_id: int | None = None,
 ) -> list[dict[str, Any]]:
     """合并 MCP 工具列表 + dispatcher 注册表中允许 origin 的工具。
 
@@ -43,6 +74,11 @@ def build_unified_tool_list(
     """
     def _rank(name: str) -> int:
         n = (name or "").lower()
+        # 酒馆自管理工具(建/换角色、persona、改卡、列/绑剧本)是酒馆 agent 的核心能力,必须排最前:
+        # backend 有工具数上限(openai_compat 取前 N),排后面会被截断 → 模型拿不到 schema → 只能
+        # 幻觉式叙述「已修改」而不真正调用。放 -1 保证它们永远落在窗口内。
+        if n.startswith(("set_tavern_", "edit_tavern_", "tavern_")):
+            return -1
         if n.startswith(("search_canon", "lookup_", "graph_neighbors")):
             return 0
         if n.startswith(("kb_", "get_", "list_", "query_")):
@@ -54,6 +90,13 @@ def build_unified_tool_list(
     out: list[dict[str, Any]] = list(mcp_tools or [])
     disp: list[dict[str, Any]] = []
     for spec in get_registry().list_for_origin(origin):
+        if mode == "tavern_gm":
+            if _tavern_drops_tool(spec.name, bound_script_id=bound_script_id):
+                continue
+        # 非酒馆(游戏控制台 freeform/novel)模式:酒馆自管理工具(建/换角色、persona、列/绑剧本)
+        # 在游戏里无意义且会因 _rank=-1 抢占窗口最前。这里丢掉,别污染游戏控制台工具表。
+        elif spec.name.lower().startswith(("set_tavern_", "edit_tavern_", "tavern_")):
+            continue
         disp.append({
             "server_id": DISPATCHER_SENTINEL,
             "name": spec.name,

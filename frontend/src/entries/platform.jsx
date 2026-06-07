@@ -32,6 +32,7 @@ import { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePa
 import { SavesPage } from '../pages/saves.jsx';
 import { ScriptsPage } from '../pages/scripts.jsx';
 import { CardsPage } from '../pages/cards.jsx';
+import TavernPage from '../pages/tavern.jsx';
 import { SettingsPage } from '../pages/settings.jsx';
 import { FeedbackPage } from '../pages/feedback.jsx';
 import { DeviceAuthorizePage } from '../pages/device.jsx';
@@ -77,6 +78,7 @@ const PL_IDS = [
   'admin-dmca-takedowns', 'admin-dmca-strikes', 'admin-csam-reports', 'admin-aup-actions',
   'admin-feedback',
   'usage', 'plugins', 'mcp', 'skills', 'apis', 'feedback', 'device', 'wall',
+  'tavern',
 ];
 function parsePage() {
   return plPathToPage(PL_IDS);
@@ -153,6 +155,7 @@ function PlatformApp() {
   else if (page === 'cards') body = <CardsPage subPage="user" />;
   else if (page === 'cards-npc') body = <CardsPage subPage="npc" />;
   else if (page === 'cards-online') body = <CardsPage subPage="online" />;
+  else if (page === 'tavern') body = <TavernPage />;
   else if (page === 'settings') body = <SettingsPage section="preferences" />;
   else if (page === 'settings-models') body = <SettingsPage section="models" />;
   else if (page === 'settings-modelparams') body = <SettingsPage section="modelparams" />;

@@ -353,7 +353,7 @@ function RunDetailRail({ runState }) {
 }
 
 // ----------------------------- CHAT --------------------------------------
-function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role }) {
+function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, meta }) {
   // task 38：以前 msgIndex / saveId / commitId 全是 undefined，doFork 就发
   // {label} 给后端 → 后端 int(None) 直接 500。现在 NarrativeBlock / PlayerBlock
   // 把 idx + saveId 透传进来，doFork 至少发 {save_id, message_index, label}，
@@ -526,6 +526,7 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role }) {
           <Icon name="trash" size={12} />
         </button>
         <span className="gc-msg-ts mono">{ts}</span>
+        {meta ? <span className="gc-msg-meta mono muted-2" data-tip="本轮用时 / token / 费用">{meta}</span> : null}
       </div>
       <ForkConfirmModal open={forkOpen} text={text} onClose={() => setForkOpen(false)} onConfirm={doFork} />
       <DeleteConfirmModal
@@ -649,19 +650,28 @@ function stripStateOpsForDisplay(text) {
   return stripNarrativeOps(text);
 }
 
-function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, thinking }) {
+// 酒馆模式复用:speakerName/speakerAvatar/tag 可选覆盖默认的 GM/主代理 标签。
+// 不传时与 Game Console 行为完全一致(默认 tag="GM", subtitle="主代理")。
+function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, thinking, speakerName, speakerAvatar, tag, hideMeta, meta }) {
   const displayText = stripStateOpsForDisplay(text);
   // task 90: 用 RpgMarkdown.Block 渲染 markdown (** / # / list / code / link...)
   // window.RpgMarkdown 由 markdown-render.jsx 提供,加载顺序在 game-app.jsx 之前。
   const MdBlock = RpgMarkdown.Block;
+  const tagLabel = tag || "GM";
+  // 酒馆模式显式传 speakerName="" → 隐藏副标题(只显示角色名 tag);
+  // Game Console 不传(undefined)→ 默认"主代理"(零回归)。
+  const subLabel = speakerName === "" ? "" : (speakerName || "主代理");
   // task 121a: thinking 状态显示带 spinner 的 italic 文字,跟正式 narrative 区分
   if (thinking) {
     return (
       <div className="gc-msg gc-msg-gm gc-msg-thinking">
-        <div className="gc-msg-meta">
-          <span className="gc-msg-tag">GM</span>
-          <span className="muted-2" style={{ fontSize: 11.5 }}>正在准备</span>
-        </div>
+        {!hideMeta && (
+          <div className="gc-msg-meta">
+            {speakerAvatar && <span className="gc-msg-avatar serif">{speakerAvatar}</span>}
+            <span className="gc-msg-tag">{tagLabel}</span>
+            <span className="muted-2" style={{ fontSize: 11.5 }}>正在准备</span>
+          </div>
+        )}
         <div className="gc-msg-body" style={{ fontStyle: "italic", color: "var(--text-quiet)", opacity: 0.85 }}>
           <span className="gc-spinner spin" /> {text || "请稍候…"}
         </div>
@@ -670,10 +680,13 @@ function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, think
   }
   return (
     <div className="gc-msg gc-msg-gm">
-      <div className="gc-msg-meta">
-        <span className="gc-msg-tag">GM</span>
-        <span className="muted-2" style={{ fontSize: 11.5 }}>主代理</span>
-      </div>
+      {!hideMeta && (
+        <div className="gc-msg-meta">
+          {speakerAvatar && <span className="gc-msg-avatar serif">{speakerAvatar}</span>}
+          <span className="gc-msg-tag">{tagLabel}</span>
+          {subLabel && <span className="muted-2" style={{ fontSize: 11.5 }}>{subLabel}</span>}
+        </div>
+      )}
       <div className="gc-msg-body serif">
         {MdBlock
           ? <MdBlock text={displayText || ""} streaming={!!streaming} className="rpg-md" />
@@ -682,17 +695,21 @@ function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, think
             )
         }
       </div>
-      {!streaming && <MsgActions text={displayText} ts={ts || "—"} msgIndex={msgIndex} saveId={saveId} commitId={commitId} role="assistant" />}
+      {!streaming && <MsgActions text={displayText} ts={ts || "—"} msgIndex={msgIndex} saveId={saveId} commitId={commitId} role="assistant" meta={meta} />}
     </div>);
 
 }
 
-function PlayerBlock({ text, ts, attachments, msgIndex, saveId, commitId }) {
+// 酒馆模式复用:speakerName/tag 可选覆盖默认「玩家」标签(persona 名等)。
+function PlayerBlock({ text, ts, attachments, msgIndex, saveId, commitId, speakerName, tag, hideMeta }) {
+  const tagLabel = tag || speakerName || "玩家";
   return (
     <div className="gc-msg gc-msg-player">
-      <div className="gc-msg-meta">
-        <span className="gc-msg-tag muted">玩家</span>
-      </div>
+      {!hideMeta && (
+        <div className="gc-msg-meta">
+          <span className="gc-msg-tag muted">{tagLabel}</span>
+        </div>
+      )}
       <div className="gc-msg-body">
         <p>{text}</p>
         {attachments?.length > 0 &&
@@ -1449,4 +1466,4 @@ function TopBar({ state, saveUpdatedAt, onOpenTweaks, onOpenSearch, onOpenHistor
 
 }
 
-export { LeftRail, RunSteps, ThinkingPill, ChatArea, TopBar, HistoryDrawer, SearchDrawer, GameToastStack, GameSettingsModal };
+export { LeftRail, RunSteps, ThinkingPill, ChatArea, NarrativeBlock, PlayerBlock, TopBar, HistoryDrawer, SearchDrawer, GameToastStack, GameSettingsModal };
