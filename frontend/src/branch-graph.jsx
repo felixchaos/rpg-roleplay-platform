@@ -140,6 +140,45 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
   }, []);
   const onMouseUp = useCallback(() => { dragRef.current = null; }, []);
 
+  // ── 触摸事件：单指拖动 + 双指缩放 ──
+  const touchRef = React.useRef({ touching: false, startX: 0, startY: 0, panX: 0, panY: 0, pinchDist: 0, pinchZoom: 1 });
+  const onTouchStart = useCallback((e) => {
+    if (e.touches.length === 2) {
+      // 双指开始：记录初始距离和缩放
+      const [t1, t2] = [e.touches[0], e.touches[1]];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      touchRef.current = { ...touchRef.current, pinchDist: dist, pinchZoom: zoom, panX: pan.x, panY: pan.y };
+    } else if (e.touches.length === 1) {
+      const t = e.touches[0];
+      touchRef.current = { touching: true, startX: t.clientX, startY: t.clientY, panX: pan.x, panY: pan.y, pinchDist: 0, pinchZoom: zoom };
+    }
+  }, [pan, zoom]);
+  const onTouchMove = useCallback((e) => {
+    e.preventDefault();
+    if (e.touches.length === 2 && touchRef.current.pinchDist > 0) {
+      // 双指缩放
+      const [t1, t2] = [e.touches[0], e.touches[1]];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const el = canvasRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const mx = (t1.clientX + t2.clientX) / 2 - rect.left;
+      const my = (t1.clientY + t2.clientY) / 2 - rect.top;
+      const ratio = dist / touchRef.current.pinchDist;
+      const newZ = Math.max(0.25, Math.min(3, touchRef.current.pinchZoom * ratio));
+      const zoomRatio = newZ / (xfRef.current.zoom || 1);
+      setPan({ x: mx - (mx - touchRef.current.panX) * zoomRatio, y: my - (my - touchRef.current.panY) * zoomRatio });
+      setZoom(newZ);
+    } else if (e.touches.length === 1 && touchRef.current.touching) {
+      // 单指拖动
+      const t = e.touches[0];
+      const dx = t.clientX - touchRef.current.startX;
+      const dy = t.clientY - touchRef.current.startY;
+      setPan({ x: touchRef.current.panX + dx, y: touchRef.current.panY + dy });
+    }
+  }, []);
+  const onTouchEnd = useCallback(() => { touchRef.current.touching = false; }, []);
+
   // 容器宽度 + 缩放状态
   const [containerW, setContainerW] = useState(400);
   React.useEffect(() => {
@@ -349,7 +388,8 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
   return (
     <div ref={canvasRef} className={`bg-canvas ${isCompact ? "bg-compact" : "bg-full"}`}
       onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
-      style={{ cursor: dragRef.current ? "grabbing" : "grab", position: "relative", overflow: "hidden", width: "100%", flex: "1 1 0%", minHeight: 0, overflowY: "auto", ...outerStyle }}>
+      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+      style={{ cursor: dragRef.current ? "grabbing" : "grab", position: "relative", overflow: "hidden", width: "100%", flex: "1 1 0%", minHeight: 0, overflowY: "auto", touchAction: "none", ...outerStyle }}>
       {/* 背景网格 */}
       <svg className="bg-grid" style={{ position: "absolute", inset: 0, pointerEvents: "none", opacity: 0.18, width: "100%", height: "100%" }}>
         <defs>
