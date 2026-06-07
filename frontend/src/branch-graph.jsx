@@ -227,7 +227,7 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
     d.colOff = off;
   });
 
-    // 4) 分支线（提前构建，用于曲线遮挡检测）
+  // 4) 分支线（提前构建，含完整贝塞尔控制点用于精确求交）
   const branchEdges = [];
   const curveShadows = [];
   dotData.forEach(d => {
@@ -240,57 +240,18 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
     } else {
       const myX = d.dotX, paX = parentDot.dotX, midY = (d.y + parentDot.y) / 2;
       branchEdges.push({ key: `b-${pid}-${d.cid}`, d: `M ${myX} ${d.y} C ${myX} ${midY}, ${paX} ${midY}, ${paX} ${parentDot.y}`, color: d.color, type: "curve" });
-      const yMin = Math.min(d.y, parentDot.y), yMax = Math.max(d.y, parentDot.y);
-      curveShadows.push({ yMin, yMax, xFrom: myX, xTo: paX });
+      curveShadows.push({
+        yMin: Math.min(d.y, parentDot.y), yMax: Math.max(d.y, parentDot.y),
+        // 完整三次贝塞尔控制点: B(u) = (1-u)³P0 + 3(1-u)²uP1 + 3(1-u)u²P2 + u³P3
+        p0: { x: myX, y: d.y },
+        p1: { x: myX, y: midY },
+        p2: { x: paX, y: midY },
+        p3: { x: paX, y: parentDot.y },
+      });
     }
   });
 
-  // 5) & 6) 智能判定卡片位置侧向与动态距离（含曲线遮挡）
-  function curveXAtY(y, cs) {
-    if (y < cs.yMin - 2 || y > cs.yMax + 2) return null;
-    const t = (y - cs.yMin) / (cs.yMax - cs.yMin || 1);
-    return cs.xFrom + (cs.xTo - cs.xFrom) * t;
-  }
-  const CARD_MIN = isCompact ? 10 : 20;
-  const CARD_SAFE = isCompact ? 6 : 12;
-  const finalSides = new Map();
-  const cardGapMap = new Map();
-
-  dotData.forEach((d) => {
-    const activeCols = Object.keys(colStats).map(Number).filter(col => {
-      const s = colStats[col];
-      return s && s.minY - 2 <= d.y && d.y <= s.maxY + 2;
-    });
-    const activeOffsets = activeCols.map(col => colPosMap.get(col) ?? 0);
-    const leftOff = activeOffsets.filter(v => v < 0);
-    const rightOff = activeOffsets.filter(v => v > 0);
-    const maxLeftDist = leftOff.length > 0 ? Math.abs(Math.min(...leftOff)) : 0;
-    const maxRightDist = rightOff.length > 0 ? Math.max(...rightOff) : 0;
-
-    let curveLeft = 0, curveRight = 0;
-    for (const cs of curveShadows) {
-      const cx2 = curveXAtY(d.y, cs);
-      if (cx2 == null) continue;
-      const relX = cx2 - cx;
-      if (relX < curveLeft) curveLeft = relX;
-      if (relX > curveRight) curveRight = relX;
-    }
-    const totalLeft = Math.max(maxLeftDist, Math.abs(curveLeft));
-    const totalRight = Math.max(maxRightDist, curveRight);
-    const gapLeft = Math.max(CARD_MIN, totalLeft + CARD_SAFE);
-    const gapRight = Math.max(CARD_MIN, totalRight + CARD_SAFE);
-
-    let side = d.colOff < 0 ? "left" : "right";
-    if (d.colOff === 0) {
-      if (gapLeft < gapRight) side = "left";
-      else if (gapRight < gapLeft) side = "right";
-      else side = (rowMap.get(d.cid) ?? 0) % 2 === 0 ? "right" : "left";
-    }
-    finalSides.set(d.cid, side);
-    cardGapMap.set(d.cid, side === "right" ? gapRight : gapLeft);
-  });
-
-  // 7) 每列垂直连续轨道
+  // 5) 每列垂直连续轨道（先构建，供射线检测使用）
   const colTracks = [];
   sortedCols.forEach(col => {
     const s = colStats[col];
@@ -298,6 +259,91 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
     if (s.minY !== s.maxY) {
       colTracks.push({ key: `track-${col}`, x: cx + off, y1: s.minY - 4, y2: s.maxY + 4, color: s.color });
     }
+  });
+
+  // 6) 射线检测判定卡片侧向：求解 B(u) = yp 的根，精确计算交点水平距离
+  /** 求解三次贝塞尔 By(u)=yp 的根 u∈[0,1]，返回交点 x 坐标；无交点返回 null */
+  function solveCurveXAtY(yp, cs) {
+    if (yp < cs.yMin - 2 || yp > cs.yMax + 2) return null;
+    const { p0, p1, p2, p3 } = cs;
+    // By(u) = (1-u)³·p0.y + 3(1-u)²u·p1.y + 3(1-u)u²·p2.y + u³·p3.y
+    function by(u) {
+      const mu = 1 - u;
+      return mu * mu * mu * p0.y + 3 * mu * mu * u * p1.y + 3 * mu * u * u * p2.y + u * u * u * p3.y;
+    }
+    function bx(u) {
+      const mu = 1 - u;
+      return mu * mu * mu * p0.x + 3 * mu * mu * u * p1.x + 3 * mu * u * u * p2.x + u * u * u * p3.x;
+    }
+    const y0 = by(0), y1v = by(1);
+    // 单调时至多一个根；端点同侧则无根
+    if ((y0 - yp) * (y1v - yp) > 0) return null;
+    // 二分法求根（32 次迭代，精度 ~1e-10）
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 32; i++) {
+      const mid = (lo + hi) / 2;
+      if ((by(mid) - yp) * (by(lo) - yp) > 0) lo = mid; else hi = mid;
+    }
+    return bx((lo + hi) / 2);
+  }
+  const CARD_MIN = isCompact ? 10 : 20;
+  const CARD_SAFE = isCompact ? 6 : 12;
+  const finalSides = new Map();
+  const cardGapMap = new Map();
+
+  dotData.forEach((d) => {
+    let leftHits = 0, rightHits = 0;
+    // 左右两侧枝干的水平距离（取最大值，确保卡片越过所有枝干）
+    let maxLeftT = 0, maxRightT = 0;
+    const ox = d.dotX, oy = d.y;
+
+    // 6a) 与垂直轨道线相交
+    for (const t of colTracks) {
+      if (oy >= t.y1 && oy <= t.y2) {
+        const tDist = Math.abs(t.x - ox);
+        if (t.x < ox) { leftHits++; maxLeftT = Math.max(maxLeftT, tDist); }
+        if (t.x > ox) { rightHits++; maxRightT = Math.max(maxRightT, tDist); }
+      }
+    }
+
+    // 6b) 与同列直线分支段相交（垂直线段）
+    for (const e of branchEdges) {
+      if (e.type !== "straight") continue;
+      const minY = Math.min(e.y1, e.y2), maxY = Math.max(e.y1, e.y2);
+      if (oy >= minY && oy <= maxY) {
+        const tDist = Math.abs(e.x1 - ox);
+        if (e.x1 < ox) { leftHits++; maxLeftT = Math.max(maxLeftT, tDist); }
+        if (e.x1 > ox) { rightHits++; maxRightT = Math.max(maxRightT, tDist); }
+      }
+    }
+
+    // 6c) 与跨列贝塞尔曲线精确求交：解 By(u)=yp → Bx(u) → t=|xp-Bx(u)|
+    for (const cs of curveShadows) {
+      const crossX = solveCurveXAtY(oy, cs);
+      if (crossX == null) continue;
+      const tDist = Math.abs(crossX - ox);
+      if (crossX < ox) { leftHits++; maxLeftT = Math.max(maxLeftT, tDist); }
+      if (crossX > ox) { rightHits++; maxRightT = Math.max(maxRightT, tDist); }
+    }
+
+    // 6d) 选取交点最少的方向
+    let side;
+    if (leftHits < rightHits) side = "left";
+    else if (rightHits < leftHits) side = "right";
+    else if (leftHits > 0) {
+      // 两侧都有遮挡且相等 → 优先放对侧（靠近中心）
+      side = d.colOff < 0 ? "right" : d.colOff > 0 ? "left" : ((rowMap.get(d.cid) ?? 0) % 2 === 0 ? "right" : "left");
+    } else {
+      // 两侧都无遮挡（L0/R0）→ 交叉排序
+      side = (rowMap.get(d.cid) ?? 0) % 2 === 0 ? "right" : "left";
+    }
+
+    finalSides.set(d.cid, side);
+
+    // 6e) 动态间距 = 该侧最远枝干距离 + 安全缓冲（确保卡片越过所有枝干）
+    const farthestT = side === "right" ? maxRightT : maxLeftT;
+    const gap = Math.max(CARD_MIN, farthestT + CARD_SAFE);
+    cardGapMap.set(d.cid, gap);
   });
 
   return (
@@ -321,23 +367,26 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
       <div style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "0 0", position: "relative", width: "100%", minHeight: totalH, paddingTop: 30 }}>
         {/* SVG 连线层 */}
         <svg style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "visible", width: "100%", height: totalH + 60 }}>
-          {/* 列轨道（连续垂直线，分支主干） */}
-          {colTracks.map(t => (
-            <line key={t.key} x1={t.x} y1={t.y1} x2={t.x} y2={t.y2}
-              stroke={t.color} strokeWidth={isCompact ? 4 : 6} opacity={0.2} strokeLinecap="round" />
+          {/* 枝干浅色轮廓（宽笔画包裹弯曲部分） */}
+          {/* 枝干浅色轮廓（包裹弯曲部分） */}
+          {branchEdges.map(e => (
+            e.type === "curve"
+              ? <path key={`glow-${e.key}`} d={e.d} stroke={e.color} strokeWidth={isCompact ? 5 : 7} fill="none" opacity={0.15} strokeLinecap="round" />
+              : <line key={`glow-${e.key}`} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
+                  stroke={e.color} strokeWidth={isCompact ? 5 : 7} opacity={0.15} strokeLinecap="round" />
           ))}
-          {/* 分支连线 */}
+          {/* 分支连线（细线覆盖在轮廓上） */}
           {branchEdges.map(e => (
             e.type === "curve"
               ? <path key={e.key} d={e.d} stroke={e.color} strokeWidth={2} fill="none" opacity={0.7} />
               : <line key={e.key} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
                   stroke={e.color} strokeWidth={2} opacity={0.7} />
           ))}
-          {/* 连接线：dot → 卡片（动态距离） */}
+          {/* 连接线：dot → 卡片（从 dot 边缘出发） */}
           {dotData.map(d => {
             const side = finalSides.get(d.cid);
             const gap = cardGapMap.get(d.cid) || 20;
-            const tx = side === "right" ? cx + gap : cx - gap;
+            const tx = side === "right" ? d.dotX + DOT_R + gap : d.dotX - DOT_R - gap;
             return (
               <line key={`dl-${d.cid}`} x1={d.dotX} y1={d.y} x2={tx} y2={d.y}
                 stroke={d.color} strokeWidth={1.2} strokeDasharray="3 3" opacity={0.35} />
@@ -366,9 +415,10 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
           const message = d.node.summary || d.node.message || d.node.title || `#${cid}`;
           const truncMsg = isCompact && message.length > 20 ? message.slice(0, 20) + "…" : message;
           const nodeRefs = refsByTarget.get(cid) || [];
+          // 卡片定位基于节点位置，确保卡片边缘距 dot 边缘 >= gap
           const posStyle = side === "right"
-            ? { left: `calc(50% + ${gap}px)` }
-            : { right: `calc(50% + ${gap}px)` };
+            ? { left: `calc(50% + ${d.colOff + DOT_R + gap}px)` }
+            : { right: `calc(50% + ${-d.colOff + DOT_R + gap}px)` };
           const innerClass = side === "right" ? "bg-card-inner-right" : "bg-card-inner-left";
           return (
             <div key={`card-${cid}`}
