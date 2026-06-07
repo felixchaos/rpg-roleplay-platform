@@ -533,7 +533,7 @@ async def api_tavern_export_jsonl(
     with connect() as db:
         if not _require_tavern_save(db, chat_id, user_id):
             return _bad("无权操作该对话", 403)
-    text = tavern_chats.save_to_chat_jsonl(chat_id)
+    text = tavern_chats.save_to_chat_jsonl(chat_id, user_id=user_id)
     return Response(
         content=text,
         media_type="application/jsonl",

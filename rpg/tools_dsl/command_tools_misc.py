@@ -251,6 +251,17 @@ def _t_get_save_detail(user_id: int, args: dict) -> str:
         return f"失败: {type(exc).__name__}: {exc}"
 
 
+def _user_can_read_script(db, sid: int, user_id: int) -> bool:
+    """剧本读权限:owner 或订阅者。镜像 tavern_bind_script 的校验 —— 防 LLM 用任意
+    script_id 跨用户读取他人私有剧本的章节/世界书/NPC 内容(script 级工具的 sid 可由
+    args 注入,env.script_id 在酒馆/无剧本会话里为 None)。"""
+    return db.execute(
+        "select 1 from scripts s where s.id = %s and ("
+        "  s.owner_id = %s or s.id in (select script_id from user_script_subscriptions where user_id = %s))",
+        (int(sid), user_id, user_id),
+    ).fetchone() is not None
+
+
 def _t_get_chapter_facts(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
     sid = script_id or args.get("script_id")
     chapter_index = args.get("chapter_index")
@@ -260,6 +271,8 @@ def _t_get_chapter_facts(user_id: int, script_id: int | None, args: dict, state:
         from platform_app.db import connect, init_db
         init_db()
         with connect() as db:
+            if not _user_can_read_script(db, int(sid), user_id):
+                return f"失败 (权限): 剧本 #{int(sid)} 不属于当前用户或未订阅"
             if chapter_index is None:
                 rows = db.execute(
                     "select chapter, title, summary from chapter_facts "
@@ -286,6 +299,8 @@ def _t_get_worldbook(user_id: int, script_id: int | None, args: dict, state: Any
         from platform_app.db import connect, init_db
         init_db()
         with connect() as db:
+            if not _user_can_read_script(db, int(sid), user_id):
+                return f"失败 (权限): 剧本 #{int(sid)} 不属于当前用户或未订阅"
             # 真实表名 worldbook_entries(不是 script_worldbook,旧 SQL 用了过期表名)
             # 字段:title / content(不是 key)
             if query:

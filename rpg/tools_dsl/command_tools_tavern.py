@@ -59,7 +59,12 @@ _EDITABLE_CHARACTER_FIELDS = frozenset(_CHARACTER_FIELDS)
 
 def _resolve_user_id(state: Any, args: dict) -> int | None:
     """save 级工具的 executor 只拿到 (state, args),不含 user_id。
-    从 dispatcher 自动注入的 save_id 反查 game_saves.user_id(只读查询,合规)。"""
+    从 save_id 反查 game_saves.user_id(只读查询,合规)。
+
+    安全(关键):args["save_id"] 由 dispatcher 在 save 级分支**无条件覆盖**为已鉴权会话
+    绑定的 env.save_id(command_dispatcher._execute),故此处反查到的 user_id 恒为当前
+    已鉴权用户 —— LLM 即便在 tool args 里塞入异档 save_id 也会被覆盖,无法借此解析到他人
+    user_id 去读写他人卡片。**切勿**改成信任调用方传入的 save_id 而绕开 dispatcher。"""
     save_id = args.get("save_id") or getattr(state, "_save_id", None) \
         or (getattr(state, "data", {}) or {}).get("_active_save_id") \
         or (getattr(state, "data", {}) or {}).get("save_id")

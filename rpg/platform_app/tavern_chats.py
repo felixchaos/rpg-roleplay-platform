@@ -198,9 +198,12 @@ def chat_to_save_payload(
     }
 
 
-def save_to_chat_jsonl(save_id: int) -> str:
+def save_to_chat_jsonl(save_id: int, user_id: int | None = None) -> str:
     """导出存档为 SillyTavern JSONL 聊天记录(决策2:与 parse_chat_jsonl 互为镜像,
     文本无损往返)。
+
+    安全:传 user_id 时在数据层强制归属(where id=%s and user_id=%s),不再仅依赖调用方
+    先行鉴权 —— 防未来新增调用方漏掉 _require_tavern_save 导致泄漏他人对话。
 
     - 第 0 行 header:{"user_name", "character_name", "create_date":""}
       user_name 取 state_snapshot.player.name(兜底 "User");
@@ -213,10 +216,16 @@ def save_to_chat_jsonl(save_id: int) -> str:
 
     init_db()
     with connect() as db:
-        save = db.execute(
-            "select id, title, state_snapshot from game_saves where id = %s",
-            (int(save_id),),
-        ).fetchone()
+        if user_id is not None:
+            save = db.execute(
+                "select id, title, state_snapshot from game_saves where id = %s and user_id = %s",
+                (int(save_id), int(user_id)),
+            ).fetchone()
+        else:
+            save = db.execute(
+                "select id, title, state_snapshot from game_saves where id = %s",
+                (int(save_id),),
+            ).fetchone()
         if not save:
             raise ValueError("存档不存在")
         commits = db.execute(
