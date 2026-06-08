@@ -1605,6 +1605,16 @@
     box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
     pointer-events: auto !important;
   }
+  /* PR#19(xingzhiyou): 抽屉打开时重置桌面折叠态对 inner 的 opacity/transform —— 上面只 revert 了
+     display,桌面规则 .gc-rail.collapsed .gc-rail-inner{opacity:0;transform:translateX(-12px)} 仍生效
+     → 抽屉滑入但内容空白。仅当抽屉显式打开时覆盖,安全。 */
+  .gc-rail.gc-rail-mobile-open .gc-rail-inner {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  /* PR#19(xingzhiyou): 手机端用汉堡(.gc-nav-toggle)唤起抽屉,左栏展开箭头(.gc-topbar-expand)多余且
+     与汉堡并存 → 隐藏。注意只隐藏左栏展开键,右面板键是 .gc-topbar-expand-right(不同类)不受影响。 */
+  .gc-topbar-expand { display: none !important; }
   /* nav 抽屉 backdrop */
   .gc-nav-backdrop {
     display: block;
