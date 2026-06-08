@@ -1408,7 +1408,7 @@ function App() {
       {mountStage >= 1 ? <LeftRail
         resizeHandle={<div className="gc-rail-resize-handle" title="拖动调整宽度 · 双击恢复默认" {...gcRailDragProps} />}
         collapsed={railCollapsed}
-        onToggle={() => setRailCollapsed((c) => !c)}
+        onToggle={() => { setRailCollapsed((c) => !c); setMobileNav(false); }}
         state={game} runState={runState}
         onNew={() => { if (!confirm('新建存档需要选择剧本与角色,将跳到平台『存档目录』走正规创建流。\n\n确认跳转?')) return; window.open('/saves', '_blank'); }}
         onSave={async () => { try { await window.api.game.saveGame(); window.__apiToast?.('已保存', { kind: 'ok' }); } catch (e) { window.__apiToast?.('保存失败', { kind: 'danger', detail: e?.message }); } }}

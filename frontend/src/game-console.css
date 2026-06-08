@@ -1605,6 +1605,14 @@
     box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
     pointer-events: auto !important;
   }
+  /* 抽屉打开时重置 collapsed 对 inner 的 opacity/transform，
+     否则桌面态 .gc-rail.collapsed .gc-rail-inner {opacity:0} 仍生效 → 内容空白 */
+  .gc-rail.gc-rail-mobile-open .gc-rail-inner {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  /* 手机端用汉堡按钮唤起抽屉，右箭头展开按钮多余且干扰，隐藏之 */
+  .gc-topbar-expand { display: none !important; }
   /* nav 抽屉 backdrop */
   .gc-nav-backdrop {
     display: block;
