@@ -146,7 +146,13 @@
   min-height: 0;
   overflow-y: auto;
   position: relative;
+  /* #2 工具调用展开/折叠时历史上移修复:关闭浏览器滚动锚定 —— 否则展开 ToolCallBlock 使其下方
+     内容变高时,浏览器锚到下方元素并增大 scrollTop,把上方历史顶上去。关掉后 scrollTop 不变 →
+     被点的块原地向下展开、上方历史不动。流式置底由 JS 手动处理,不受影响。 */
+  overflow-anchor: none;
 }
+/* 独立入口(tavern-app)转录滚动容器同样关锚定 */
+.tv-chat { overflow-anchor: none; }
 
 /* composer footer:贴底,不滚动。去掉顶部那根分隔线(Claude 风:输入框直接浮在底部) */
 .tvp-foot {
