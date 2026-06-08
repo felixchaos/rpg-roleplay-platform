@@ -690,6 +690,23 @@ def _build_initial_snapshot(
             player["identity"] = overlay
             if id_background:
                 player["identity_role_desc"] = id_background
+            # 迭代(#5 POV 命名):从原著角色(source=npc_card)= 魂穿进该原著人物的身体 → 玩家在世界里
+            # 就是这个人。名字/身份用原著人物(罗辑),原角色卡名作为「灵魂本名」记入 display_name(罗辑(阿米娅))
+            # + aliases,供 UI 显示与提到原卡名时映射回玩家。普通 custom/ai 身份(只是套在卡上的社会定位)
+            # 仍保留角色卡名,不改原设计。
+            if id_source == "npc_card" and id_name_label:
+                _card_name = str(player.get("name") or "").strip()
+                player["name"] = id_name_label  # 罗辑
+                if id_role:
+                    player["role"] = id_role
+                if id_background:
+                    player["background"] = id_background
+                if _card_name and _card_name != id_name_label:
+                    overlay["card_name"] = _card_name           # 阿米娅(灵魂本名)
+                    player["display_name"] = f"{id_name_label}（{_card_name}）"  # 罗辑(阿米娅)
+                    _al = player.setdefault("aliases", [])
+                    if _card_name not in _al:
+                        _al.append(_card_name)
         except Exception:
             pass
 

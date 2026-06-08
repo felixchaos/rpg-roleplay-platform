@@ -96,7 +96,7 @@ function ModuleStatusProfile({ state }) {
           <div className="gp-row">
             <span className="gp-label">{t('game.status.name')}</span>
             <strong>
-              {pc.name || "—"}
+              {pc.display_name || pc.name || "—"}
               {pc.level ? ` · Lv${pc.level}` : ""}
               {pc.class_name ? ` ${pc.class_name}` : ""}
             </strong>
@@ -300,7 +300,7 @@ function NovelStatusProfile({ state }) {
           <div className="gp-row">
             <span className="gp-label">{t('game.status.name')}</span>
             <strong style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <span>{p.name || "—"}</span>
+              <span>{p.display_name || p.name || "—"}</span>
               {(() => {
                 // 老存档兼容：isekai → 按 soul 显示
                 const origin = p.player_origin === 'isekai' ? 'soul' : p.player_origin;
