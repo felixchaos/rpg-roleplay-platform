@@ -22,7 +22,6 @@ from __future__ import annotations
 import copy
 import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -143,33 +142,20 @@ class RetrieveContextSkipsDefaultForImportedScript(unittest.TestCase):
         self.assertNotIn("原著锚点", ctx,
             f"非默认剧本不应输出『原著锚点』；ctx={ctx[:300]!r}")
 
-    def test_default_mumu_script_path_still_includes_default_sources(self):
-        """对照：不传 script_id（或 script_id 解析失败按默认走）→ 仍走原默认 MuMu 路径，
-        即应包含『原著锚点』section。"""
+    def test_missing_script_id_does_not_fall_back_to_local_indexes(self):
+        """DB 化后，缺 script_id 也不能回落到本地 .webnovel / indexes JSON 默认路径。"""
         s = self._state_imported()
         ctx = retrieval.retrieve_context(
             "雾港发生了什么？",
             state=s,
             user_id=None,
-            script_id=None,  # 老 caller / 兼容路径 → is_default=True
+            script_id=None,
         )
-        # 默认路径应有原著锚点 section
-        self.assertIn("原著锚点", ctx,
-            f"默认/兼容路径应保留『原著锚点』section；ctx={ctx[:600]!r}")
-
-    def test_missing_character_index_is_non_fatal(self):
-        """兼容/默认路径缺少 indexes/characters.json 时，角色卡召回应降级为空而不是 500。"""
-        old_idx = retrieval.CHAR_IDX
-        old_aliases = dict(retrieval._CHAR_ALIASES)
-        try:
-            with tempfile.TemporaryDirectory() as td:
-                retrieval.CHAR_IDX = Path(td) / "missing-characters.json"
-                retrieval._CHAR_ALIASES = {}
-                self.assertEqual(retrieval.detect_mentioned_characters("维拉在吗？"), [])
-                self.assertEqual(retrieval.load_character_cards(["维拉"]), "")
-        finally:
-            retrieval.CHAR_IDX = old_idx
-            retrieval._CHAR_ALIASES = old_aliases
+        for header in ("原著锚点", "ChapterFact时间线", "相关原文片段", "最近剧情摘要", "相关角色"):
+            self.assertNotIn(header, ctx,
+                f"缺 script_id 时不应读取本地默认来源『{header}』；ctx={ctx[:600]!r}")
+        self.assertIn("当前导入剧本", ctx,
+            f"缺 script_id 时应按 DB-only/非默认路径降级；ctx={ctx[:300]!r}")
 
 
 if __name__ == "__main__":

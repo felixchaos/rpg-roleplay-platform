@@ -20,7 +20,7 @@ Version scheme: `0.x-waveN[.M]` where `wave` matches the in-repo development cad
 - Main GM output now defaults to a 4K token BYOK budget, with higher user-configurable headroom, so story replies are not cut off by the old strict cap.
 
 ### Fixed
-- Tavern chat now reinforces a stable first-person character perspective and no longer crashes default retrieval when the optional local character index file is missing.
+- Retrieval no longer falls back to legacy local `.webnovel` / `indexes` sources when `script_id` is missing, keeping runtime recall on the database-backed path.
 - Game Console stop signals now use restart-safe run identifiers and ignore stale database stop rows, so old manual-stop requests no longer interrupt later chat generations with "this round was interrupted".
 - New game creation now blocks scripts whose import/rebuild job is still running or whose required chapters/timeline anchors are missing, so users cannot start a setup flow that would stall before selecting a starting point.
 - Agent model selectors now allow manual model names for custom OpenAI-compatible credentials, so users can use providers whose `/models` endpoint is unavailable or incomplete.

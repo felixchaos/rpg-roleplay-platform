@@ -23,41 +23,13 @@ CHAR_IDX = BASE / "indexes" / "characters.json"
 WORLD_IDX= BASE / "indexes" / "world.json"
 SUM_IDX  = BASE / "indexes" / "summaries.json"
 
-# 角色全名 + 别名 → 规范名
+# 旧版默认剧本的本地角色索引已停用；运行期角色卡/世界书走数据库按 script_id scope 读取。
 _CHAR_ALIASES: dict[str, str] = {}   # lazy-loaded
 _TIMELINE_READY = False
 
-def _load_character_index() -> dict:
-    try:
-        with open(CHAR_IDX, encoding="utf-8") as f:
-            data = json.load(f)
-        chars = data.get("characters") if isinstance(data, dict) else None
-        return chars if isinstance(chars, dict) else {}
-    except FileNotFoundError:
-        log.warning("[retrieval] character index missing: %s", CHAR_IDX)
-        return {}
-    except (json.JSONDecodeError, TypeError, OSError) as exc:
-        log.warning("[retrieval] character index unavailable: %s", exc)
-        return {}
-
 def _load_aliases():
     global _CHAR_ALIASES
-    if _CHAR_ALIASES:
-        return
-    chars = _load_character_index()
-    if not chars:
-        _CHAR_ALIASES = {}
-        return
-    # 先建局部 dict 再原子整体赋值给全局。retrieve_context 跑在 to_thread worker 线程,
-    # 两个用户冷启首回合并发时,若直接往全局 dict 边插边被 detect_mentioned_characters
-    # 迭代 → RuntimeError: dictionary changed size during iteration。整体 rebind 后,读方
-    # 看到的要么是空(走 if 提前返回前)要么是完整 dict,绝不会是半建状态。
-    local: dict[str, str] = {}
-    for name, info in chars.items():
-        local[name] = name
-        for alias in info.get("aliases", []):
-            local[alias] = name
-    _CHAR_ALIASES = local
+    _CHAR_ALIASES = {}
 
 
 def detect_mentioned_characters(text: str) -> list[str]:
@@ -71,27 +43,8 @@ def detect_mentioned_characters(text: str) -> list[str]:
 
 
 def load_character_cards(names: list[str]) -> str:
-    """将角色卡格式化为可注入的文本块"""
-    if not names:
-        return ""
-    chars = _load_character_index()
-    if not chars:
-        return ""
-    lines = []
-    for name in names:
-        if name not in chars:
-            continue
-        c = chars[name]
-        sample = "；".join(c.get("sample_dialogue", [])[:3])
-        lines.append(
-            f"【{name}】\n"
-            f"  身份：{c['identity']}\n"
-            f"  性格：{c['personality']}\n"
-            f"  说话风格：{c['speech_style']}\n"
-            f"  当前状态：{c['current_status']}\n"
-            f"  台词示例：{sample}"
-        )
-    return "\n\n".join(lines)
+    """Legacy local character cards are disabled; script-scoped cards come from Postgres."""
+    return ""
 
 
 def _ensure_timeline_ready():
@@ -471,7 +424,7 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
     """
     parts: list[str] = []
     _ensure_timeline_ready()
-    is_default = _is_default_mumu_script(script_id) if script_id else True  # 兼容老 caller 不传 script_id 时按默认走
+    is_default = _is_default_mumu_script(script_id)
     timeline_filter = None
     # BUG-2/BUG-3: 玩家进度 + 元知识模式,函数级缓存供层级图过滤 / entity 召回天花板用。
     # spoiler-safe 默认:progress=1(绝不 None,否则 _reveal_clause 放行全书=剧透)、mode=none。

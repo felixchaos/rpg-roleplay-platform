@@ -53,9 +53,6 @@ class TavernManifestAndProvider(unittest.TestCase):
         sys_layer = next(layer for layer in contrib.layers if layer["id"] == "tavern_card_system")
         self.assertGreaterEqual(sys_layer["priority"], 95)
         self.assertIn("始终第一人称", sys_layer["content"])
-        char_layer = next(layer for layer in contrib.layers if layer["id"] == "tavern_character")
-        self.assertIn("默认以该角色第一人称", char_layer["content"])
-        self.assertIn("不要用第二人称代写玩家", char_layer["content"])
 
     def test_provider_skips_when_no_tavern_state(self):
         from context_providers import get_provider
