@@ -22,6 +22,7 @@ from __future__ import annotations
 import copy
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -155,6 +156,20 @@ class RetrieveContextSkipsDefaultForImportedScript(unittest.TestCase):
         # 默认路径应有原著锚点 section
         self.assertIn("原著锚点", ctx,
             f"默认/兼容路径应保留『原著锚点』section；ctx={ctx[:600]!r}")
+
+    def test_missing_character_index_is_non_fatal(self):
+        """兼容/默认路径缺少 indexes/characters.json 时，角色卡召回应降级为空而不是 500。"""
+        old_idx = retrieval.CHAR_IDX
+        old_aliases = dict(retrieval._CHAR_ALIASES)
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                retrieval.CHAR_IDX = Path(td) / "missing-characters.json"
+                retrieval._CHAR_ALIASES = {}
+                self.assertEqual(retrieval.detect_mentioned_characters("维拉在吗？"), [])
+                self.assertEqual(retrieval.load_character_cards(["维拉"]), "")
+        finally:
+            retrieval.CHAR_IDX = old_idx
+            retrieval._CHAR_ALIASES = old_aliases
 
 
 if __name__ == "__main__":

@@ -27,12 +27,27 @@ SUM_IDX  = BASE / "indexes" / "summaries.json"
 _CHAR_ALIASES: dict[str, str] = {}   # lazy-loaded
 _TIMELINE_READY = False
 
+def _load_character_index() -> dict:
+    try:
+        with open(CHAR_IDX, encoding="utf-8") as f:
+            data = json.load(f)
+        chars = data.get("characters") if isinstance(data, dict) else None
+        return chars if isinstance(chars, dict) else {}
+    except FileNotFoundError:
+        log.warning("[retrieval] character index missing: %s", CHAR_IDX)
+        return {}
+    except (json.JSONDecodeError, TypeError, OSError) as exc:
+        log.warning("[retrieval] character index unavailable: %s", exc)
+        return {}
+
 def _load_aliases():
     global _CHAR_ALIASES
     if _CHAR_ALIASES:
         return
-    with open(CHAR_IDX, encoding="utf-8") as f:
-        chars = json.load(f)["characters"]
+    chars = _load_character_index()
+    if not chars:
+        _CHAR_ALIASES = {}
+        return
     # 先建局部 dict 再原子整体赋值给全局。retrieve_context 跑在 to_thread worker 线程,
     # 两个用户冷启首回合并发时,若直接往全局 dict 边插边被 detect_mentioned_characters
     # 迭代 → RuntimeError: dictionary changed size during iteration。整体 rebind 后,读方
@@ -59,8 +74,9 @@ def load_character_cards(names: list[str]) -> str:
     """将角色卡格式化为可注入的文本块"""
     if not names:
         return ""
-    with open(CHAR_IDX, encoding="utf-8") as f:
-        chars = json.load(f)["characters"]
+    chars = _load_character_index()
+    if not chars:
+        return ""
     lines = []
     for name in names:
         if name not in chars:

@@ -90,7 +90,12 @@ class TavernCharacterProvider(ContextProvider):
         # 注入为只读空间锚点让模型首轮就知道当前所在地，防止位置漂移。
         # 注意:这是静态起始锚点;后续若玩家移动，模型应通过 player.current_location op 更新，
         # 届时状态层的 current_location 优先级高于本层。
-        body = [f"你现在扮演的角色：\n{_fmt_character(character)}"]
+        body = [
+            f"你现在扮演的角色：\n{_fmt_character(character)}",
+            "\n酒馆模式默认视角：你只扮演上面的角色，默认以该角色第一人称回应玩家；"
+            "不要切换成旁白式第三人称来描述自己，也不要用第二人称代写玩家的身体感受、"
+            "心理、动作或台词。玩家说什么/做什么由玩家自己输入；你只回应、观察、追问或表达该角色的反应。",
+        ]
         scenario = (tav.get("scenario") or character.get("scenario") or "").strip()
         if scenario:
             body.append(f"\n初始场景设定（空间锚点，对话开始时的所在地）：{scenario}")
