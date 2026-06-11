@@ -289,8 +289,25 @@ function ModelSheetBody({ gc, onClose }) {
     (async () => {
       try {
         const r = await window.api.models.list();
-        const list = Array.isArray(r) ? r : (r?.models || r?.items || []);
-        if (!dead) setModels(list);
+        // /api/models 返回 {ok, models:{apis:[...], selected:{...}}}
+        const apis = (r && r.models && Array.isArray(r.models.apis))
+          ? r.models.apis
+          : (Array.isArray(r?.apis) ? r.apis : []);
+        const flat = [];
+        for (const api of apis) {
+          if (api.enabled === false) continue;
+          if (api.has_credential === false) continue;
+          const apiId = api.id || api.api_id || '';
+          const mods = Array.isArray(api.models) ? api.models : [];
+          for (const m of mods) {
+            if (m.enabled === false) continue;
+            // 跳过 embedding 等非聊天模型
+            const caps = Array.isArray(m.capabilities) ? m.capabilities : [];
+            if (caps.includes('embedding')) continue;
+            flat.push({ ...m, api_id: apiId, label: m.display_name || m.real_name || m.id });
+          }
+        }
+        if (!dead) setModels(flat);
       } catch (_) { if (!dead) setModels([]); }
     })();
     return () => { dead = true; };
