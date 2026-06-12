@@ -996,7 +996,17 @@ def _resolve_user_default_model_view(api_user: dict[str, Any] | None, model_cata
     return None
 
 
-def _payload(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
+def _payload(api_user: dict[str, Any] | None = None, *, include_catalog: bool = True) -> dict[str, Any]:
+    """游戏状态快照。
+
+    include_catalog=True(默认):带 models(整份每用户模型目录)+ tools —— /api/state、
+    /api/new 等 JSON 引导端点需要,前端据此渲染模型选择器/工具面板。
+    include_catalog=False:**SSE 路径专用**。聊天流每轮要发多次 status/done 事件,前端的
+    on_status/on_done 只读 app/player/permissions/save_*,从不读 models/tools(目录另由
+    /api/models、/api/state 拉)。每轮重复塞整份目录既是流量垃圾(用户看到 xiaomi
+    「待小米发布后填入」等内部占位),又白跑 _redact_catalog 的深拷贝 + has_credential DB
+    查询。SSE 路径关掉,只发轻量状态。
+    """
     state = _ensure_loaded(api_user, ensure_gm=False)
     # 安全:模型选择器走每用户视图(全局菜单 + 该用户私有 overlay),
     # 否则一个用户同步的 provider/模型会泄露进所有人的选择器。
@@ -1050,9 +1060,11 @@ def _payload(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
     if is_admin:
         payload["app"]["save_file"] = str(SAVE_FILE)
     # catalog 按角色脱敏（普通用户拿不到 credential_ref/credential_env/base_url）
-    # has_credential 按当前用户算 → 前端游戏选择器只显示用户配过 key 的 provider
-    payload["models"] = _redact_catalog(model_catalog, is_admin, user_id=_uid)
-    payload["tools"] = _redact_tools(tool_payload(), is_admin)
+    # has_credential 按当前用户算 → 前端游戏选择器只显示用户配过 key 的 provider。
+    # SSE 路径(include_catalog=False)不发整份目录:见 _payload docstring。
+    if include_catalog:
+        payload["models"] = _redact_catalog(model_catalog, is_admin, user_id=_uid)
+        payload["tools"] = _redact_tools(tool_payload(), is_admin)
     # task 10：把当前激活存档的 id/title 直接挂在 /api/state 顶层 + state 字段里，
     # Game Console 左侧栏拿来显示「当前存档」，避免回退到 hard-coded mock id=11。
     try:
@@ -1076,6 +1088,11 @@ def _payload(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
         # 任何 DB 异常都不能让 /api/state 整个 500，缺字段前端有兜底
         pass
     return payload
+
+
+def _payload_sse(api_user: dict[str, Any] | None = None) -> dict[str, Any]:
+    """SSE 专用轻量状态:不带整份模型目录/工具(前端这些事件里用不到,见 _payload)。"""
+    return _payload(api_user, include_catalog=False)
 
 
 def _user_credentialed_api_ids(user_id: int | None) -> set[str]:

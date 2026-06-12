@@ -211,6 +211,7 @@ async def api_opening(
         _ensure_loaded,
         _get_gm,
         _payload,
+        _payload_sse,
         _persist_runtime_checkpoint,
         _resolve_persist_target,
         _sse,
@@ -256,7 +257,7 @@ async def api_opening(
 
         yield _sse("stage", {"phase": "building_context", "label": "组装上下文…"})
         bundle = await asyncio.to_thread(_retrieve_and_build)
-        yield _sse("status", _payload(api_user))
+        yield _sse("status", _payload_sse(api_user))
         yield _sse("stage", {"phase": "generating", "label": "GM 构思开场中…"})
         text = ""
         try:
@@ -298,10 +299,10 @@ async def api_opening(
                     _persist_runtime_checkpoint(state, api_user)
             except Exception:
                 _persist_runtime_checkpoint(state, api_user)
-            yield _sse("done", {"status": _payload(api_user)})
+            yield _sse("done", {"status": _payload_sse(api_user)})
         except Exception as exc:
             yield _sse("error", {"message": _client_safe_error(exc), "partial": text})
-            yield _sse("done", {"interrupted": True, "status": _payload(api_user)})
+            yield _sse("done", {"interrupted": True, "status": _payload_sse(api_user)})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
@@ -527,6 +528,7 @@ async def api_chat(
         _mark_context_run,
         _message_with_attachments,
         _payload,
+        _payload_sse,
         _persist_chat_turn,
         _persist_runtime_checkpoint,
         _resolve_persist_target,
@@ -614,12 +616,12 @@ async def api_chat(
         if command_text:
             if changed:
                 _persist_runtime_checkpoint(state, api_user)
-                yield _sse("status", _payload(api_user))
+                yield _sse("status", _payload_sse(api_user))
             # #13 沉浸感: 斜杠命令回执是确定性后端字符串(非 GM 叙事),不再以
             # token 流出(会被前端当正文累加进主聊天 transcript),改 system_receipt
             # 事件 → 前端 toast。changed=True 时侧栏已由上面的 status 事件刷新。
             yield _sse("system_receipt", {"text": command_text, "changed": changed})
-            yield _sse("done", {"status": _payload(api_user), "interrupted": False, "command": True})
+            yield _sse("done", {"status": _payload_sse(api_user), "interrupted": False, "command": True})
             return
 
         sub_gm = _get_sub_gm(api_user)
@@ -640,7 +642,7 @@ async def api_chat(
                 pipeline_ctx,
                 resolve_persist_target=_resolve_persist_target,
                 persist_runtime_checkpoint=_persist_runtime_checkpoint,
-                payload_fn=_payload,
+                payload_fn=_payload_sse,
                 is_set_parser_enabled=_is_set_parser_enabled,
                 active_script_id=_active_script_id,
             ):
@@ -653,7 +655,7 @@ async def api_chat(
             async for evt, data in run_context_phase(
                 pipeline_ctx,
                 resolve_persist_target=_resolve_persist_target,
-                payload_fn=_payload,
+                payload_fn=_payload_sse,
                 active_script_id=_active_script_id,
                 clarify_threshold=_clarify_threshold,
                 persist_chat_turn=_persist_chat_turn,
@@ -728,7 +730,7 @@ async def api_chat(
             if not _is_tavern:
                 async for evt, data in run_rules_phase(
                     pipeline_ctx,
-                    payload_fn=_payload,
+                    payload_fn=_payload_sse,
                     persist_chat_turn=_persist_chat_turn,
                     persist_runtime_checkpoint=_persist_runtime_checkpoint,
                     resolve_persist_target=_resolve_persist_target,
@@ -746,7 +748,7 @@ async def api_chat(
             # Phase 4: GM 主响应 (token + tool_call + extractor + acceptance)
             async for evt, data in run_gm_phase(
                 pipeline_ctx,
-                payload_fn=_payload,
+                payload_fn=_payload_sse,
                 persist_chat_turn=_persist_chat_turn,
                 mark_context_run=_mark_context_run,
                 current_run_id_fn=_current_run_id,
@@ -765,7 +767,7 @@ async def api_chat(
             # Phase 5: 持久化 + done
             async for evt, data in persist_turn_phase(
                 pipeline_ctx,
-                payload_fn=_payload,
+                payload_fn=_payload_sse,
                 persist_chat_turn=_persist_chat_turn,
                 build_usage_payload=_build_usage_payload,
             ):
@@ -778,7 +780,7 @@ async def api_chat(
                 duration_ms=int((time.time() - _chat_start_time) * 1000),
             )
             yield _sse("error", {"message": _client_safe_error(exc), "partial": pipeline_ctx.response or response})
-            yield _sse("done", {"interrupted": True, "status": _payload(api_user)})
+            yield _sse("done", {"interrupted": True, "status": _payload_sse(api_user)})
 
     async def _stream_with_done_guard():
         # BUGFIX(工具调用后一直转圈):保证任何退出路径(early_return 未发 done / 中途异常 /
@@ -793,7 +795,7 @@ async def api_chat(
         finally:
             if not _done_seen:
                 try:
-                    yield _sse("done", {"status": _payload(api_user), "interrupted": True})
+                    yield _sse("done", {"status": _payload_sse(api_user), "interrupted": True})
                 except Exception:
                     yield _sse("done", {"interrupted": True})
 
