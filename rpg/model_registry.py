@@ -157,8 +157,24 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
             "metadata": {"status": "preview", "note": "MiMo 公共 API 暂未开放，base_url 待小米发布后填入"},
             "models": [],
         },
+        {
+            "id": "google_ai_studio",
+            "display_name": "Google AI Studio (Gemini)",
+            "kind": "openai_compat",
+            "enabled": False,
+            "credential_env": "GOOGLE_API_KEY",
+            # Gemini 的 OpenAI 兼容端点在 /v1beta/openai —— base_url 只到
+            # generativelanguage.googleapis.com 时,SDK 拼成 .../chat/completions 会 404
+            # (用户实测「找不到」)。走兼容层后用户只填自己的 Google AI Studio key 即可。
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "models": [],
+        },
     ],
 }
+
+# 这些 provider 必须存在于 catalog(整条 api)——持久化 catalog 可能在新增它们之前存的,
+# 缺了会导致选择器里没有、GM 调用降级失败(用户实测 Google AI Studio「找不到」)。
+_CURATED_REQUIRED_APIS = {"google_ai_studio"}
 
 
 def _ensure_curated_embeddings(catalog: dict[str, Any]) -> dict[str, Any]:
@@ -186,10 +202,29 @@ def _ensure_curated_embeddings(catalog: dict[str, Any]) -> dict[str, Any]:
     return catalog
 
 
+def _ensure_curated_apis(catalog: dict[str, Any]) -> dict[str, Any]:
+    """确保 _CURATED_REQUIRED_APIS 里的整条 provider 存在于已持久化的 catalog。
+
+    持久化 catalog(DB/文件)可能是在新增某 provider 之前存的 → 选择器里没有它、
+    GM 调用 find_api 返回 None 被降级失败(如 google_ai_studio「找不到」)。这里把缺失
+    的整条 api 从 DEFAULT_MODEL_CATALOG 并回内存(幂等、按 normalize_api_id 去重、不落库)。
+    只补 _CURATED_REQUIRED_APIS 白名单,避免复活管理员有意删除的其它 provider。
+    """
+    try:
+        have = {normalize_api_id(a.get("id")) for a in catalog.get("apis", [])}
+        for d in DEFAULT_MODEL_CATALOG["apis"]:
+            nid = normalize_api_id(d.get("id"))
+            if nid in _CURATED_REQUIRED_APIS and nid not in have:
+                catalog.setdefault("apis", []).append(copy.deepcopy(d))
+    except Exception:
+        pass
+    return catalog
+
+
 def load_model_catalog() -> dict[str, Any]:
     db_catalog = _load_model_catalog_from_db()
     if db_catalog:
-        return _ensure_curated_embeddings(db_catalog)
+        return _ensure_curated_apis(_ensure_curated_embeddings(db_catalog))
     MODEL_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
     if not MODEL_CONFIG_FILE.exists():
         catalog = copy.deepcopy(DEFAULT_MODEL_CATALOG)
@@ -200,7 +235,7 @@ def load_model_catalog() -> dict[str, Any]:
             data = json.load(f)
     except Exception:
         data = {}
-    return _ensure_curated_embeddings(_migrate_catalog(data))
+    return _ensure_curated_apis(_ensure_curated_embeddings(_migrate_catalog(data)))
 
 
 def save_model_catalog(catalog: dict[str, Any]) -> None:

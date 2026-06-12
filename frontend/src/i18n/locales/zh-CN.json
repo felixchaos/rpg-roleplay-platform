@@ -219,6 +219,8 @@
       "direct": "直连",
       "http_proxy": "HTTP 代理",
       "lan": "局域网 / 本地",
+      "proxy_url": "代理地址",
+      "proxy_hint": "本地部署时,该 provider 出站走此代理(如用梯子访问 Google)。需与 API Key 一起保存;仅自托管实例生效。",
       "add_btn": "添加",
       "save_btn": "保存",
       "save_ok": "已保存",

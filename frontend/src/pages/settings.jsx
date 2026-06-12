@@ -443,6 +443,7 @@ function ModelsSection() {
         key_hint: c.key_hint || "",
         enabled: c.enabled !== false,
         base_url_override: c.base_url_override || "",
+        proxy_url: c.proxy_url || "",
       };
     }
     const list = data?.models?.apis || data?.apis || [];
@@ -460,7 +461,8 @@ function ModelsSection() {
         status: cred.enabled === false ? "disabled" : "configured",
         connectivity: { status: "untested" },
         enabled: cred.enabled !== false,
-        proxy: api.proxy || "direct",
+        proxy_url: cred.proxy_url || "",
+        proxy: cred.proxy_url ? "http_proxy" : "direct",
         models: (api.models || api.entries || []).map(mapModel),
       };
     }).filter(api => api.key_set) : [];
@@ -474,7 +476,8 @@ function ModelsSection() {
         base_url: c.base_url_override, key_set: true, key_hint: c.key_hint || '',
         status: c.enabled === false ? "disabled" : "configured",
         connectivity: { status: "untested" }, enabled: c.enabled !== false,
-        proxy: "direct", models: [], _custom: true,
+        proxy_url: c.proxy_url || "",
+        proxy: c.proxy_url ? "http_proxy" : "direct", models: [], _custom: true,
       }));
     const allRows = [...rows, ...customRows];
     setApis(allRows);
@@ -735,11 +738,11 @@ function ModelsSection() {
             // 若管理员新加 provider(addingApi=true)或者改 base_url/proxy 这类全局字段,
             // 才尝试 upsertApi。普通用户不保存未知 api_id,避免后续同步模型报 api_id 不存在。
             const existing = apis.find(a => a.id === catalogId);
+            // proxy(连接方式/代理 URL)现在是 per-user 凭据字段,走 credentials.set,不再塞全局 catalog。
             const needsCatalogWrite = isAdminUser && (
               addingApi
               || !existing
               || (payload.base_url && payload.base_url !== existing.base_url)
-              || (payload.proxy && payload.proxy !== existing.proxy)
             );
             if (needsCatalogWrite) {
               try {
@@ -748,12 +751,11 @@ function ModelsSection() {
                   display_name: payload.name || cfg?.name || catalogId,
                   base_url: payload.base_url,
                   kind,
-                  proxy: payload.proxy,
                 });
               } catch (e) {
                 if (e?.status === 403) {
                   // 普通用户改全局 catalog 被拒,提示但不阻断 key 保存
-                  window.__apiToast?.("提供商配置(base_url/proxy)需管理员修改,你的 API 密钥仍会保存", { kind: "warn", duration: 3500 });
+                  window.__apiToast?.("提供商 base_url 需管理员修改,你的 API 密钥仍会保存", { kind: "warn", duration: 3500 });
                 } else {
                   throw e;
                 }
@@ -761,7 +763,11 @@ function ModelsSection() {
             }
             if (payload.api_key && payload.api_key.trim()) {
               try {
-                await window.api.credentials.set({ api_id: credentialId, api_key: payload.api_key.trim(), base_url_override: payload.base_url || '' });
+                await window.api.credentials.set({
+                  api_id: credentialId, api_key: payload.api_key.trim(),
+                  base_url_override: payload.base_url || '',
+                  proxy: payload.proxy === 'http_proxy' ? (payload.proxy_url || '').trim() : '',
+                });
               } catch (e) {
                 window.__apiToast?.(t('settings.edit_api.key_save_fail'), { kind: "warn", detail: e?.message, duration: 4000 });
                 throw e;
@@ -941,11 +947,11 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
   // 编辑时供应商固定,只改 base_url / key。key 写入后不回显。
   const CUSTOM = '__custom__';
   const [provider, setProvider] = useStatePL('');   // 选中的 provider id(新增用)
-  const [form, setForm] = useStatePL({ id: "", name: "", base_url: "", api_key: "", proxy: "direct" });
+  const [form, setForm] = useStatePL({ id: "", name: "", base_url: "", api_key: "", proxy: "direct", proxy_url: "" });
   React.useEffect(() => {
     if (!open) return;
-    if (isNew) { setProvider(''); setForm({ id: "", name: "", base_url: "", api_key: "", proxy: "direct" }); }
-    else if (api) { setProvider(api.id); setForm({ id: api.id, name: api.name, base_url: api.base_url, api_key: "", proxy: api.proxy || "direct" }); }
+    if (isNew) { setProvider(''); setForm({ id: "", name: "", base_url: "", api_key: "", proxy: "direct", proxy_url: "" }); }
+    else if (api) { setProvider(api.id); setForm({ id: api.id, name: api.name, base_url: api.base_url, api_key: "", proxy: api.proxy || "direct", proxy_url: api.proxy_url || "" }); }
   }, [open, api, isNew]);
   if (!open) return null;
 
@@ -1052,13 +1058,21 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
                 </CSFormField>
               </>
             )}
-            <CSFormField label={t('settings.edit_api.connection')}>
+            <CSFormField label={t('settings.edit_api.connection')}
+              description={form.proxy === 'http_proxy' ? t('settings.edit_api.proxy_hint') : undefined}>
               <CSSelect
                 selectedOption={{ value: form.proxy, label: form.proxy }}
                 options={[{ value: 'direct', label: t('settings.edit_api.direct') }, { value: 'http_proxy', label: t('settings.edit_api.http_proxy') }, { value: 'lan', label: t('settings.edit_api.lan') }]}
                 onChange={({ detail }) => setForm((f) => ({ ...f, proxy: detail.selectedOption.value }))}
               />
             </CSFormField>
+            {form.proxy === 'http_proxy' && (
+              <CSFormField label={t('settings.edit_api.proxy_url')}>
+                <CSInput value={form.proxy_url}
+                  onChange={({ detail }) => setForm((f) => ({ ...f, proxy_url: detail.value }))}
+                  placeholder="http://127.0.0.1:7890" />
+              </CSFormField>
+            )}
           </>
         )}
       </CSSpaceBetween>
@@ -1865,7 +1879,8 @@ const PROVIDERS_CONFIG = [
   },
   {
     id: "google_ai_studio", name: "Google AI Studio", kind: "native",
-    defaultBase: "https://generativelanguage.googleapis.com",
+    // Gemini 的 OpenAI 兼容端点在 /v1beta/openai;少了这段路径会 404「找不到」。
+    defaultBase: "https://generativelanguage.googleapis.com/v1beta/openai",
     keyEnv: "GOOGLE_API_KEY",
   },
   {

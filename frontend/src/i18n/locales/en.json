@@ -133,6 +133,8 @@
       "direct": "Direct",
       "http_proxy": "HTTP Proxy",
       "lan": "LAN / Local",
+      "proxy_url": "Proxy URL",
+      "proxy_hint": "On self-hosted deploys, this provider's outbound calls go through this proxy (e.g. to reach Google via a VPN). Save it together with the API Key; only takes effect on self-hosted instances.",
       "add_btn": "Add",
       "save_btn": "Save",
       "save_ok": "Saved",

@@ -16,6 +16,7 @@ user_credentials.py — 用户级 API key CRUD + 解密读取
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 from psycopg.types.json import Jsonb
@@ -98,12 +99,17 @@ def _validate_base_url(url: str) -> None:
             raise ValueError(f"base_url 解析到私有/本地/保留地址，已拒绝：{host} → {ip_str}")
 
 
-def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_override: str = "", enabled: bool = True, *, allow_base_url: bool = False) -> dict[str, Any]:
+def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_override: str = "", enabled: bool = True, *, allow_base_url: bool = False, proxy: str = "") -> dict[str, Any]:
     """加密保存。空 key 等价于删除该 credential。
 
     安全：base_url_override 是 SSRF 风险源。allow_base_url 默认 False，
     意味着普通用户无法用自己的 key 让服务器访问任意 URL（如 127.0.0.1）。
     本地匿名模式 / admin 设置时调用方传 allow_base_url=True 才能写入。
+
+    proxy: 该 provider 出站走的 HTTP/SOCKS 代理 URL(存进 metadata)。**注意**:代理合法地
+    常是 127.0.0.1(本地梯子),不能用 _validate_base_url 拦私网。SSRF 由「只在本地模式
+    (非 require_auth)才真正使用」兜底(见 openai_compat.py)——托管多用户后端永不使用用户
+    proxy,故存了也无害。这里只做轻量格式校验。
     """
     init_db()
     api_id = normalize_api_id(api_id)
@@ -119,6 +125,10 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
         base_url_override = ""
     elif base_url_override:
         _validate_base_url(base_url_override)
+    proxy = (proxy or "").strip()
+    if proxy and not re.match(r"^(https?|socks5h?)://[^\s/]+", proxy, re.IGNORECASE):
+        raise ValueError("代理地址格式不对 · 形如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080")
+    meta = {"proxy": proxy} if proxy else {}
     encrypted = encrypt_api_key(plaintext_key, user_id, api_id)
     with connect() as db:
         row = db.execute(
@@ -133,7 +143,7 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
               updated_at = now()
             returning id, user_id, api_id, base_url_override, enabled, updated_at
             """,
-            (user_id, api_id, encrypted, base_url_override or "", enabled, Jsonb({})),
+            (user_id, api_id, encrypted, base_url_override or "", enabled, Jsonb(meta)),
         ).fetchone()
     result = {"ok": True, **(expose(row) or {}), "has_credential": True}
 
@@ -192,7 +202,7 @@ def list_credentials(user_id: int) -> dict[str, Any]:
         rows = db.execute(
             """
             select user_id, api_id, base_url_override, enabled, created_at, updated_at,
-                   length(encrypted_key) as cipher_len
+                   metadata, length(encrypted_key) as cipher_len
             from user_api_credentials
             where user_id = %s
             order by api_id
@@ -206,10 +216,12 @@ def list_credentials(user_id: int) -> dict[str, Any]:
         if api_id in seen:
             continue
         seen.add(api_id)
+        _meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
         items.append({
             "api_id": api_id,
             "has_credential": int(r["cipher_len"] or 0) > 0,
             "base_url_override": r["base_url_override"] or "",
+            "proxy_url": (_meta or {}).get("proxy") or "",
             "enabled": bool(r["enabled"]),
             "updated_at": str(r["updated_at"]),
         })
@@ -245,10 +257,12 @@ def get_credential(user_id: int, api_id: str) -> dict[str, Any] | None:
                 break
         if not plaintext:
             continue
+        _meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
         return {
             "api_id": canonical,
             "key": plaintext,
             "base_url_override": row.get("base_url_override") or "",
+            "proxy": (_meta or {}).get("proxy") or "",
         }
     return None
 
@@ -273,7 +287,7 @@ def resolve_api_key(user_id: int | None, api_id: str, env_fallback: str = "") ->
         except Exception:
             cred = get_credential(user_id, api_id)
         if cred and cred.get("key"):
-            return {"key": cred["key"], "source": "user_db", "base_url_override": cred.get("base_url_override", "")}
+            return {"key": cred["key"], "source": "user_db", "base_url_override": cred.get("base_url_override", ""), "proxy": cred.get("proxy", "")}
 
     # 仅未强制鉴权时允许环境变量回退
     from core.config import require_auth as _require_auth

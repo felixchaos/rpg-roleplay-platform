@@ -1142,6 +1142,7 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
             base_url_override=base_url_override,
             enabled=bool(body.get("enabled", True)),
             allow_base_url=True,  # base_url 不再 admin 限定;SSRF 由 _validate_base_url 强制
+            proxy=(body.get("proxy") or "").strip(),  # 出站代理 URL;仅本地模式真正使用(见 openai_compat)
         )
         return json_response(result)
     except ValueError as exc:

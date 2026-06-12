@@ -68,14 +68,22 @@ class _OpenAICompatBackend:
         # 读超时原 120s 太紧:长回合(deepseek-v4-pro 等)常被中途切断浪费 token。
         # 提到 300s,可用 RPG_GM_TIMEOUT 调。
         _read_to = float(_os.environ.get("RPG_GM_TIMEOUT", "300"))
+        # 出站代理:用户在凭据里配的 proxy URL。**仅本地模式(非 require_auth)才真正使用** ——
+        # 托管多用户后端永不使用用户 proxy(防 SSRF:代理合法地可指向 127.0.0.1,无法用「禁私网」
+        # 校验拦截;故把使用面收窄到自托管单用户场景)。本地梯子用户选「HTTP 代理」即生效。
+        _proxy = (result.get("proxy") or "").strip()
+        _client_kwargs: dict[str, Any] = {
+            "timeout": httpx.Timeout(_read_to, connect=10.0), "follow_redirects": False,
+        }
+        if _proxy and not byok_only:
+            _client_kwargs["proxy"] = _proxy
+            log.info(f"[GM] {display_kind} 出站走用户代理 {_proxy}")
         kwargs: dict[str, Any] = {
             "api_key": key,
             "timeout": httpx.Timeout(_read_to, connect=10.0),
             # SEC(H-5): OpenAI SDK 默认 follow_redirects=True → base_url_override(admin/local 可设)
             # 配合 301 可把携 api_key 的请求重定向到内网/元数据。自带不跟随重定向的 http_client。
-            "http_client": httpx.Client(
-                timeout=httpx.Timeout(_read_to, connect=10.0), follow_redirects=False,
-            ),
+            "http_client": httpx.Client(**_client_kwargs),
         }
         if effective_base:
             kwargs["base_url"] = effective_base
