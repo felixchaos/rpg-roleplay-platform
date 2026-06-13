@@ -436,8 +436,8 @@ function App() {
   const gcPanelDragProps = _panelResize.dragHandleProps;
 
   useEffect(() => {
+    // 宽度不足 180 时自动折叠；但不再自动展开——折叠/展开完全由用户控制
     if (gcPanelW < 180 && !panelCollapsed) setPanelCollapsed(true);
-    else if (gcPanelW >= 180 && panelCollapsed && gcPanelW !== 320) setPanelCollapsed(false);
   }, [gcPanelW]);
   useEffect(() => {
     const bus = window.__capBus || (window.__capBus = new EventTarget());
