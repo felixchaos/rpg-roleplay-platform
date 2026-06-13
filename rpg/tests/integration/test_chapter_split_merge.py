@@ -71,6 +71,37 @@ class ChapterSplitMergeUnique(unittest.TestCase):
         self.assertEqual([i for i, _ in rows], [0, 1, 2, 3, 4])
         self.assertEqual(rows[1][1], "C1-" + "x" * 10)    # 合并后内容拼回
 
+    def test_merge_heals_index_gap(self):
+        """用户反馈:有序章 / 序号有缝隙的剧本合并不了。旧实现假设第二章 = first_index+1,
+        缝隙(如 1,2,4,5)时找不到章 → 报「需要章节 X 和 X+1 都存在」。
+        新实现取按序的下一章 + 重排连续。"""
+        from platform_app import script_import as si
+        from platform_app.db import connect
+
+        with connect() as db:
+            sid = int(db.execute(
+                "insert into scripts(owner_id, title) values (%s, %s) returning id",
+                (self.owner_id, "chapter_gap_test"),
+            ).fetchone()["id"])
+            for ci, ttl in [(1, "序章"), (2, "第一章"), (4, "第二章"), (5, "第三章")]:
+                db.execute(
+                    "insert into script_chapters(script_id, chapter_index, title, content) "
+                    "values (%s, %s, %s, %s)", (sid, ci, ttl, "x" * 10),
+                )
+        try:
+            # 前端传 first_index=2, second_index=4(显示相邻的两章,实际序号不相邻)
+            si.merge_chapters(self.owner_id, sid, 2, second_index=4, separator="")
+            with connect() as db:
+                got = [int(r["chapter_index"]) for r in db.execute(
+                    "select chapter_index from script_chapters where script_id = %s "
+                    "order by chapter_index", (sid,),
+                ).fetchall()]
+            self.assertEqual(got, [1, 2, 3])  # 4 章合 1 对 → 3 章,且缝隙自愈为连续
+        finally:
+            with connect() as db:
+                db.execute("delete from script_chapters where script_id = %s", (sid,))
+                db.execute("delete from scripts where id = %s", (sid,))
+
 
 if __name__ == "__main__":
     unittest.main()

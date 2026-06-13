@@ -1084,9 +1084,42 @@ def _restore_from_negative(db, script_id: int, delta: int) -> None:
     )
 
 
+def _renumber_contiguous(db, script_id: int) -> None:
+    """把某剧本所有章节按当前顺序重排成【无缝隙连续】序号,保留原起始基数(0 或 1)。
+    self-heal:历史上 split/merge/过滤可能留下序号缝隙(如 1,2,4,5),会让「按 index 取相邻章」
+    的操作(合并)失败。负区两段式 + 窗口函数一次重排,避免逐行更新瞬时撞 (script_id,chapter_index) 唯一键。"""
+    base_row = db.execute(
+        "select min(chapter_index) as m from script_chapters where script_id = %s", (script_id,),
+    ).fetchone()
+    if not base_row or base_row["m"] is None:
+        return
+    base = int(base_row["m"])
+    # 1) 全挪负区(-1-idx,互不冲突也不与正数冲突)
+    db.execute(
+        "update script_chapters set chapter_index = -1 - chapter_index where script_id = %s",
+        (script_id,),
+    )
+    # 2) 负值降序 = 原 index 升序 → 重排成 base, base+1, …(正数,不与负区冲突)
+    db.execute(
+        """
+        with ordered as (
+          select id, (row_number() over (order by chapter_index desc) - 1 + %s) as new_idx
+          from script_chapters where script_id = %s and chapter_index < 0
+        )
+        update script_chapters c set chapter_index = o.new_idx, updated_at = now()
+        from ordered o where c.id = o.id
+        """,
+        (base, script_id),
+    )
+
+
 def merge_chapters(user_id: int, script_id: int, first_index: int,
-                   *, separator: str = "\n\n") -> dict[str, Any]:
-    """合并 first_index 和 first_index+1 两章。后面所有章节 index 减 1。"""
+                   *, second_index: int | None = None, separator: str = "\n\n") -> dict[str, Any]:
+    """合并两章为一章,随后整本重排成连续序号。
+
+    second_index 缺省时取 first_index 之后【按序的下一章】,而不是假设 first_index+1
+    ——章节序号可能有缝隙(如 1,2,4,5),硬算 +1 会找不到章而合并失败
+    (用户反馈:有序章的剧本合并不了)。"""
     init_db()
     with connect() as db:
         _lock_chapter_struct(db, script_id)
@@ -1099,28 +1132,33 @@ def merge_chapters(user_id: int, script_id: int, first_index: int,
             "select * from script_chapters where script_id = %s and chapter_index = %s",
             (script_id, first_index),
         ).fetchone()
-        b = db.execute(
-            "select * from script_chapters where script_id = %s and chapter_index = %s",
-            (script_id, first_index + 1),
-        ).fetchone()
-        if not a or not b:
-            raise ValueError(f"需要章节 {first_index} 和 {first_index + 1} 都存在")
+        if not a:
+            raise ValueError(f"章节 {first_index} 不存在")
+        if second_index is not None:
+            b = db.execute(
+                "select * from script_chapters where script_id = %s and chapter_index = %s",
+                (script_id, second_index),
+            ).fetchone()
+        else:
+            b = db.execute(
+                "select * from script_chapters where script_id = %s and chapter_index > %s "
+                "order by chapter_index asc limit 1",
+                (script_id, first_index),
+            ).fetchone()
+        if not b or b["id"] == a["id"]:
+            raise ValueError("要合并的相邻章节不存在")
+        # 始终把序号小的当作留存章(内容在前),删除序号大的
+        if int(b["chapter_index"]) < int(a["chapter_index"]):
+            a, b = b, a
 
         merged_content = (a["content"] or "") + separator + (b["content"] or "")
         db.execute(
-            """
-            update script_chapters set
-              content = %s, word_count = %s,
-              updated_at = now()
-            where id = %s
-            """,
+            "update script_chapters set content = %s, word_count = %s, updated_at = now() where id = %s",
             (merged_content, len(merged_content), a["id"]),
         )
         db.execute("delete from script_chapters where id = %s", (b["id"],))
-        # 后续章节 index 全部 -1(负区两段式,避免单条自减瞬时撞唯一键)
-        _shift_to_negative(db, script_id, first_index + 1)
-        _restore_from_negative(db, script_id, -1)
-        # 更新 scripts.chapter_count
+        # 删除后重排为连续序号(顺带 self-heal 任何历史缝隙)
+        _renumber_contiguous(db, script_id)
         cnt = db.execute(
             "select count(*) as n, coalesce(sum(word_count),0) as w from script_chapters where script_id = %s",
             (script_id,),
@@ -1129,7 +1167,7 @@ def merge_chapters(user_id: int, script_id: int, first_index: int,
             "update scripts set chapter_count = %s, word_count = %s, updated_at = now() where id = %s",
             (int(cnt["n"]), int(cnt["w"]), script_id),
         )
-    return {"ok": True, "merged_into": first_index, "new_chapter_count": int(cnt["n"])}
+    return {"ok": True, "merged_into": int(a["chapter_index"]), "new_chapter_count": int(cnt["n"])}
 
 
 def split_chapter(user_id: int, script_id: int, chapter_index: int,

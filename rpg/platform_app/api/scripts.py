@@ -678,11 +678,13 @@ async def api_chapter_update(request: Request, script_id: int, chapter_index: in
 
 @router.post("/api/scripts/{script_id}/chapters/merge")
 async def api_chapter_merge(request: Request, script_id: int, user=Depends(require_user)):
-    """合并 first_index 和 first_index+1 两章。"""
+    """合并 first_index 与其相邻下一章(second_index 显式指定,缺省取按序的下一章)。"""
     body = await request.json()
     try:
+        _second = body.get("second_index")
         return json_response(script_import.merge_chapters(
             user["id"], script_id, int(body.get("first_index") or 0),
+            second_index=(int(_second) if _second is not None else None),
             separator=body.get("separator") or "\n\n",
         ))
     except ValueError as exc:
