@@ -2331,8 +2331,11 @@ def estimate_module_rebuild(
 
     kind, _label, needs_llm = REBUILD_MODULES[module]
     source_pref = str(body.get("source") or body.get("mode") or "").lower()
-    if module == "worldbook" and source_pref == "canon":
-        needs_llm = False
+    # worldbook 默认 canon(零 LLM),仅 source=='llm' 才走 LLM —— 与 runner 对齐。之前只在显式
+    # source=='canon' 才置 False,默认(无 source)被误判需 LLM → 估算显示模型 + 误加 LLM 凭证
+    # prereq,且漏掉「canon 为空」阻断,用户确认后 runner 用 canon 跑必 failed。
+    if module == "worldbook":
+        needs_llm = (source_pref == "llm")
     if module == "canon" and source_pref == "resolve_only":
         needs_llm = False
 
@@ -2382,12 +2385,17 @@ def estimate_module_rebuild(
                 "count": chunks_total,
                 "total": max(chapter_count, 1),
             })
-        if module in {"cards", "worldbook"} and source_pref == "canon" and canon_total == 0:
+        # cards 永远从 canon 重建;worldbook 默认 canon(仅 source=='llm' 走 LLM)。只要「有效
+        # source」是 canon 且 canon 为空,就给**阻断** prereq —— 否则用户确认后 runner 用 canon
+        # 跑必 failed「kb_canon_entities 为空」,前端表现为「点了没反应」(群反馈行者无疆)。
+        _uses_canon = (module == "cards") or (module == "worldbook" and source_pref != "llm")
+        if _uses_canon and canon_total == 0:
             prereqs.append({
                 "key": "canon",
                 "label": "规范实体",
                 "ok": False,
-                "hint": "当前没有规范实体,请先重做「知识库人物」。",
+                "hint": "当前没有规范实体(知识库人物为空),请先重做「知识库人物」"
+                        + ("(或将世界书来源改为 LLM 生成)。" if module == "worldbook" else "。"),
             })
         if needs_llm:
             api_id, llm_model = _resolve_extractor_llm(user_id)
@@ -2431,10 +2439,13 @@ def schedule_module_rebuild(
         raise ValueError(f"unknown module: {module}")
     kind, action_label, needs_llm = REBUILD_MODULES[module]
     if needs_llm:
-        # canon/cards 默认走 LLM;worldbook 看 body.source;cards 也允许零 LLM (canon-only)
+        # canon 默认走 LLM;worldbook **默认 canon(零 LLM)**,仅 source=='llm' 才需 LLM ——
+        # 必须与 _run_module_rebuild 的 `src = source or "canon"` 对齐。否则默认(无 source)的
+        # worldbook 会被误要求 LLM 凭证(没配 key 直接 credentials_required),而 runner 实际走
+        # canon → 表现为「点生成世界书没反应/报错」。
         source_pref = str(body.get("source") or body.get("mode") or "").lower()
-        if module == "worldbook" and source_pref == "canon":
-            needs_llm = False
+        if module == "worldbook":
+            needs_llm = (source_pref == "llm")
         if module == "canon" and source_pref == "resolve_only":
             needs_llm = False
     if needs_llm:
