@@ -2068,6 +2068,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
 
   if (!open) return null;
 
+  // 「使用现有」= 用户自己的卡库(persona + 用户创建/手动迁移的 user_card)。不含本剧本 NPC。
   const allRoleOptions = [
     ...personas.map(p => ({
       key: `persona:${p.id || p.slug}`, kind: "persona", id: p.id || null, slug: p.slug || "",
@@ -2077,20 +2078,25 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
       key: `user:${c.id || c.slug}`, kind: "user_card", id: c.id || null, slug: c.slug || "",
       name: c.name || t('platform.menu.unnamed'), subtitle: c.identity || t('saves.new_game.card_kind_user'), pinned: false,
     })),
-    // 本剧本 NPC:直接扮演(character_kind='script_card');配合「本世界人」出身=你就是这个 NPC。
-    ...scriptNpcCards.map(c => ({
-      key: `npc:${c.id}`, kind: "script_card", id: c.id || null, slug: "",
-      name: c.name || t('platform.menu.unnamed'),
-      subtitle: c.identity || c.role || t('saves.new_game.card_kind_npc', { defaultValue: '本剧本 NPC' }),
-      pinned: false,
-    })),
   ];
+  // 「本剧本 NPC」= 独立分类:直接扮演原著角色(character_kind='script_card');配合自动锁「本世界人」出身。
+  const scriptNpcOptions = scriptNpcCards.map(c => ({
+    key: `npc:${c.id}`, kind: "script_card", id: c.id || null, slug: "",
+    name: c.name || t('platform.menu.unnamed'),
+    subtitle: c.identity || c.role || t('saves.new_game.card_kind_npc', { defaultValue: '本剧本 NPC' }),
+    pinned: false,
+  }));
+  // 解析 pickedCard 用的合集(渲染分两个 tab,但查找统一走这个)。
+  const allSelectableRoles = [...allRoleOptions, ...scriptNpcOptions];
 
   // 各必填模块完成校验(单页:不再按步骤 gating,只用于概要 + 创建按钮)
   const selectedScript = scripts.find(sc => String(sc.id) === String(scriptId)) || null;
   const scriptBlockReason = newGameScriptBlockReason(selectedScript, t);
   const step1Valid = title.trim() && scriptId && !scriptBlockReason;
-  const step2Valid = (roleMode === "existing" && pickedCard) || (roleMode === "new" && newCardForm.name.trim());
+  const _pickedIsNpc = typeof pickedCard === 'string' && pickedCard.startsWith('npc:');
+  const step2Valid = (roleMode === "existing" && pickedCard && !_pickedIsNpc)
+    || (roleMode === "script_npc" && _pickedIsNpc)
+    || (roleMode === "new" && newCardForm.name.trim());
   const step3Valid = !!birthpoint;
   // 身份卡是 overlay,和玩家出身正交。用户可以只选魂穿/肉穿/双魂/原住民定位,
   // 不挂本地身份卡时直接按角色卡开局。
@@ -2107,9 +2113,11 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
       if (liveBlock) throw new Error(liveBlock);
       // 新建角色卡:走与「新建用户角色卡」完全相同的创建路径(myUpsert),
       // 落库后当作"现有卡"使用,确保所有字段一致持久化。
-      let picked = allRoleOptions.find(o => o.key === pickedCard);
-      let charId = roleMode === "existing" && picked ? (picked.id || picked.slug || null) : null;
-      let charKind = roleMode === "existing" && picked ? picked.kind : null;
+      // existing(我的卡库)与 script_npc(本剧本 NPC)都是「选已有卡」,只是来源分类不同;
+      // 统一从 allSelectableRoles 解析,charKind 直接取卡的 kind(user_card/persona/script_card)。
+      let picked = allSelectableRoles.find(o => o.key === pickedCard);
+      let charId = roleMode !== "new" && picked ? (picked.id || picked.slug || null) : null;
+      let charKind = roleMode !== "new" && picked ? picked.kind : null;
       if (roleMode === "new") {
         const r = await window.api.cards.myUpsert(cardFormPayload(newCardForm));
         const created = r && r.card;
@@ -2123,8 +2131,8 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
         character_id: charId,
         character_kind: charKind,
         new_card: null,
-        // 新建卡已转成真实 user_card,统一按 existing 处理
-        role_mode: roleMode === "new" ? "existing" : roleMode,
+        // 后端只认 existing/new:新建卡已转成 user_card、本剧本 NPC 也是选已有卡 → 统一 existing
+        role_mode: roleMode === "new" ? "existing" : "existing",
         birthpoint: birthpoint || null,
         // v29: 透传 source (custom|ai) 给后端落库 identity_cards.source;identity=null 表示不挂 overlay
         identity: identity ? {
@@ -2216,48 +2224,73 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
     </CSSpaceBetween>
   );
 
+  // 单卡渲染(「使用现有」与「本剧本 NPC」两个 tab 共用,避免标记发散)。
+  const roleCardEl = (c) => (
+    <label key={c.key} className={`pl-newgame-card ${pickedCard === c.key ? 'active' : ''}`}>
+      <input type="radio" checked={pickedCard === c.key} onChange={() => setPickedCard(c.key)} />
+      <div className="pl-newgame-card-avatar serif">{c.name.slice(0, 1)}</div>
+      <div className="pl-newgame-card-body">
+        <strong>{c.name}</strong>
+        <span className="muted-2" style={{ fontSize: 11.5 }}>
+          {c.subtitle} · {c.kind === 'persona'
+            ? t('saves.new_game.card_kind_persona')
+            : c.kind === 'script_card'
+              ? t('saves.new_game.card_kind_npc', { defaultValue: '本剧本 NPC' })
+              : t('saves.new_game.card_kind_user')}
+        </span>
+      </div>
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        {c.pinned && <span className="pill accent" style={{ fontSize: 10.5 }}><Icon name="pin" size={9} /> {t('saves.new_game.card_default_pill')}</span>}
+        <button type="button" className="btn btn-ghost" style={{ fontSize: 11.5, padding: '4px 10px' }}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); openPreview(c); }}>
+          <Icon name="eye" size={11} /> {t('saves.new_game.card_preview_btn')}
+        </button>
+      </div>
+    </label>
+  );
+
   const step1Content = (
     // Cloudscape SpaceBetween 内部用 React.Children.map 加间距,条件渲染的 children 需要稳定 key
     <CSSpaceBetween key="step1" size="l">
-      <CSFormField key="mode" label={t('saves.new_game.role_mode_label')}
-        description={allRoleOptions.length === 0 ? t('saves.new_game.role_mode_empty') : undefined}>
+      <CSFormField key="mode" label={t('saves.new_game.role_mode_label')}>
         <CSSegmentedControl
           selectedId={roleMode}
           options={[
             { id: 'existing', text: t('saves.new_game.role_mode_existing'), disabled: allRoleOptions.length === 0 },
+            { id: 'script_npc', text: t('saves.new_game.role_mode_script_npc', { defaultValue: '本剧本 NPC' }), disabled: scriptNpcOptions.length === 0 },
             { id: 'new', text: t('saves.new_game.role_mode_new') },
           ]}
-          onChange={({ detail }) => setRoleMode(detail.selectedId)}
+          onChange={({ detail }) => {
+            const m = detail.selectedId;
+            setRoleMode(m);
+            // 切 tab 时把选中卡同步到该 tab 的来源,避免「选中卡在另一个 tab 里看不见」。
+            if (m === 'script_npc') { if (!_pickedIsNpc && scriptNpcOptions[0]) setPickedCard(scriptNpcOptions[0].key); }
+            else if (m === 'existing') { if (_pickedIsNpc && allRoleOptions[0]) setPickedCard(allRoleOptions[0].key); }
+          }}
         />
       </CSFormField>
       {roleMode === 'existing' && allRoleOptions.length > 0 && (
         <div key="existing-cards" className="pl-newgame-cards">
-          {allRoleOptions.map(c => (
-            <label key={c.key} className={`pl-newgame-card ${pickedCard === c.key ? 'active' : ''}`}>
-              <input type="radio" checked={pickedCard === c.key} onChange={() => setPickedCard(c.key)} />
-              <div className="pl-newgame-card-avatar serif">{c.name.slice(0, 1)}</div>
-              <div className="pl-newgame-card-body">
-                <strong>{c.name}</strong>
-                <span className="muted-2" style={{ fontSize: 11.5 }}>
-                  {c.subtitle} · {c.kind === 'persona'
-                    ? t('saves.new_game.card_kind_persona')
-                    : c.kind === 'script_card'
-                      ? t('saves.new_game.card_kind_npc', { defaultValue: '本剧本 NPC' })
-                      : t('saves.new_game.card_kind_user')}
-                </span>
-              </div>
-              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                {c.pinned && <span className="pill accent" style={{ fontSize: 10.5 }}><Icon name="pin" size={9} /> {t('saves.new_game.card_default_pill')}</span>}
-                <button type="button" className="btn btn-ghost" style={{ fontSize: 11.5, padding: '4px 10px' }}
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); openPreview(c); }}>
-                  <Icon name="eye" size={11} /> {t('saves.new_game.card_preview_btn')}
-                </button>
-              </div>
-            </label>
-          ))}
+          {allRoleOptions.map(roleCardEl)}
           <a className="pl-newgame-card pl-newgame-card-link" href="/cards" onClick={(e) => { e.preventDefault(); onClose && onClose(); plNavigate('cards'); }}>
             <Icon name="folder" size={14} /><span>{t('saves.new_game.card_library_link')}</span>
           </a>
+        </div>
+      )}
+      {roleMode === 'script_npc' && (
+        <div key="script-npc-cards">
+          <CSBox color="text-body-secondary" fontSize="body-s" padding={{ bottom: 'xs' }}>
+            {t('saves.new_game.script_npc_desc', { defaultValue: '直接扮演本剧本里的原著 NPC —— 选定后出身会自动锁为「本世界人」(你就是这个角色本人,GM 严格守世界观)。' })}
+          </CSBox>
+          {scriptNpcOptions.length > 0 ? (
+            <div className="pl-newgame-cards">{scriptNpcOptions.map(roleCardEl)}</div>
+          ) : (
+            <CSBox color="text-status-inactive" fontSize="body-s">
+              {scriptId
+                ? t('saves.new_game.script_npc_empty', { defaultValue: '该剧本暂无 NPC 角色卡(可在剧本编辑器里生成 / 提取人物)。' })
+                : t('saves.new_game.script_npc_pick_script', { defaultValue: '请先在上方选择剧本。' })}
+            </CSBox>
+          )}
         </div>
       )}
       {roleMode === 'new' && (
@@ -2308,7 +2341,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const allValid = step1Valid && step2Valid && step3Valid && step4Valid;
   const pickedRoleName = roleMode === 'new'
     ? (newCardForm.name.trim() || t('saves.new_game.new_role_default'))
-    : (allRoleOptions.find(o => o.key === pickedCard)?.name || '—');
+    : (allSelectableRoles.find(o => o.key === pickedCard)?.name || '—');
 
   // 角色卡预览:从原始 personas / userCards 取完整对象供 CardSheet 渲染
   const openPreview = (opt) => {
@@ -2355,7 +2388,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
                   : <CSBox key="birthpoint-empty" color="text-body-secondary" fontSize="body-s">{t('saves.new_game.sec_birthpoint_empty')}</CSBox>}
               </CSContainer>
               <CSContainer key="identity" header={secHeader(t('saves.new_game.sec_identity_title'), t('saves.new_game.sec_identity_desc'))}>
-                <IdentityStep key="identity-step" scriptId={scriptId} birthpoint={birthpoint} pickedCard={pickedCard} allRoleOptions={allRoleOptions} identity={identity} setIdentity={(id) => setIdentity(id)} playerOrigin={playerOrigin} setPlayerOrigin={(o) => { setPlayerOrigin(o); if (o === 'body') { /* body 无身份卡,identityKnown 设 null */ } else if (identityKnown === null || identityKnown === undefined) { setIdentityKnown(true); } }} identityKnown={identityKnown} setIdentityKnown={setIdentityKnown} />
+                <IdentityStep key="identity-step" scriptId={scriptId} birthpoint={birthpoint} pickedCard={pickedCard} allRoleOptions={allSelectableRoles} identity={identity} setIdentity={(id) => setIdentity(id)} playerOrigin={playerOrigin} setPlayerOrigin={(o) => { setPlayerOrigin(o); if (o === 'body') { /* body 无身份卡,identityKnown 设 null */ } else if (identityKnown === null || identityKnown === undefined) { setIdentityKnown(true); } }} identityKnown={identityKnown} setIdentityKnown={setIdentityKnown} />
               </CSContainer>
               <CSContainer key="intent" header={secHeader(t('saves.new_game.sec_intent_title'), t('saves.new_game.sec_intent_desc'), true)}>{step4Content}</CSContainer>
             </CSSpaceBetween>
