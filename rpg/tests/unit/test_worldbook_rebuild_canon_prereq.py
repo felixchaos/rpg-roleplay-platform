@@ -47,14 +47,18 @@ class EstimateAlignsWorldbookDefaultCanon(unittest.TestCase):
         )
 
 
-class CanonEmptyBlocksEffectiveCanonPath(unittest.TestCase):
-    def test_uses_canon_covers_default_worldbook_and_cards(self):
-        # 有效 canon 路径 = cards 恒为,或 worldbook 非 llm(含默认无 source)
+class CanonEmptyBlocksWorldbookOnly(unittest.TestCase):
+    def test_worldbook_default_canon_empty_blocks(self):
+        # worldbook 默认 canon 且无回退 → canon 为空必须阻断(仅 worldbook,非 llm)
         self.assertRegex(
             PIPELINE,
-            r'_uses_canon = \(module == "cards"\) or \(module == "worldbook" and source_pref != "llm"\)',
+            r'if module == "worldbook" and source_pref != "llm" and canon_total == 0:',
         )
-        self.assertRegex(PIPELINE, r"if _uses_canon and canon_total == 0:")
+
+    def test_cards_not_blocked_on_empty_canon(self):
+        # cards 有 facts 回退(rebuild_cards_from_canon),canon 为空不该被拦 → 不应再把 cards
+        # 纳入 canon 阻断条件。
+        self.assertNotRegex(PIPELINE, r'_uses_canon = \(module == "cards"\)')
 
     def test_old_canon_prereq_required_explicit_source(self):
         self.assertNotRegex(
@@ -62,6 +66,24 @@ class CanonEmptyBlocksEffectiveCanonPath(unittest.TestCase):
             r'if module in \{"cards", "worldbook"\} and source_pref == "canon" and canon_total == 0:',
             "旧的『canon prereq 仅在显式 source==canon』仍在 → 默认 worldbook 漏掉 canon 为空阻断",
         )
+
+
+class EstimateIsHonestAboutCost(unittest.TestCase):
+    def test_tokens_cost_not_hardcoded_zero(self):
+        # 返回必须用计算出的 tokens_est/cost_est 变量,不再写死 0(否则 LLM 操作也显示「免费」)
+        self.assertRegex(PIPELINE, r'"tokens_est": tokens_est')
+        self.assertRegex(PIPELINE, r'"cost_est": cost_est')
+        self.assertNotRegex(PIPELINE, r'"tokens_est": 0,\s*\n\s*"cost_est": 0\.0,')
+
+    def test_llm_paths_estimate_tokens(self):
+        # canon 全量 / worldbook-llm 走真实 token 估算 + get_pricing 算成本
+        self.assertIn("from model_probe import get_pricing", PIPELINE)
+        self.assertRegex(PIPELINE, r"est_in = est_out = 0")
+        self.assertRegex(PIPELINE, r"tokens_est = est_in \+ est_out")
+
+    def test_cards_is_zero_llm(self):
+        # cards = rebuild_cards_from_canon 零 LLM,estimate 必须置 needs_llm=False(显示免费)
+        self.assertRegex(PIPELINE, r'if module == "cards":\s*\n\s*needs_llm = False')
 
 
 class RunnerDefaultsToCanon(unittest.TestCase):

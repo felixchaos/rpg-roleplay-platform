@@ -2328,14 +2328,21 @@ def estimate_module_rebuild(
     affects: list[str] = []
     note = ""
     model: str | None = None
+    tokens_est = 0       # 仅真·chat-LLM 模块(canon 全量 / worldbook-llm)>0;其余为 0 = 真免费
+    cost_est = 0.0
 
     kind, _label, needs_llm = REBUILD_MODULES[module]
     source_pref = str(body.get("source") or body.get("mode") or "").lower()
-    # worldbook 默认 canon(零 LLM),仅 source=='llm' 才走 LLM —— 与 runner 对齐。之前只在显式
-    # source=='canon' 才置 False,默认(无 source)被误判需 LLM → 估算显示模型 + 误加 LLM 凭证
-    # prereq,且漏掉「canon 为空」阻断,用户确认后 runner 用 canon 跑必 failed。
+    # needs_llm 必须反映 runner 的**实际**调用:之前 tokens_est/cost_est 写死 0,所有模块(含真
+    # 烧 LLM 的 canon 全量重抽 / worldbook-llm)都显示「免费」,会误导用户(群反馈)。这里按真实
+    # 路径校正 needs_llm,下方再据此算 token+成本。
+    # - worldbook 默认 canon(零 LLM),仅 source=='llm' 才烧 LLM;
+    # - cards = rebuild_cards_from_canon,**零 LLM**(从 canon/facts 反推),恒免费;
+    # - canon 默认全量 LLM 重抽,resolve_only 是零 LLM。
     if module == "worldbook":
         needs_llm = (source_pref == "llm")
+    if module == "cards":
+        needs_llm = False
     if module == "canon" and source_pref == "resolve_only":
         needs_llm = False
 
@@ -2385,17 +2392,17 @@ def estimate_module_rebuild(
                 "count": chunks_total,
                 "total": max(chapter_count, 1),
             })
-        # cards 永远从 canon 重建;worldbook 默认 canon(仅 source=='llm' 走 LLM)。只要「有效
-        # source」是 canon 且 canon 为空,就给**阻断** prereq —— 否则用户确认后 runner 用 canon
-        # 跑必 failed「kb_canon_entities 为空」,前端表现为「点了没反应」(群反馈行者无疆)。
-        _uses_canon = (module == "cards") or (module == "worldbook" and source_pref != "llm")
-        if _uses_canon and canon_total == 0:
+        # worldbook 默认 canon(零 LLM,从知识库人物建)且**无回退** → canon 为空时硬失败
+        # 「kb_canon_entities 为空」(前端表现为「点了没反应」,群反馈行者无疆)→ 给阻断 prereq。
+        # cards **不在此列**:rebuild_cards_from_canon 在 canon 为空时会退化为 facts 词频(零 LLM),
+        # 不会硬失败,不该被拦。
+        if module == "worldbook" and source_pref != "llm" and canon_total == 0:
             prereqs.append({
                 "key": "canon",
                 "label": "规范实体",
                 "ok": False,
-                "hint": "当前没有规范实体(知识库人物为空),请先重做「知识库人物」"
-                        + ("(或将世界书来源改为 LLM 生成)。" if module == "worldbook" else "。"),
+                "hint": "当前没有规范实体(知识库人物为空),请先重做「知识库人物」,"
+                        "或将世界书来源改为 LLM 生成。",
             })
         if needs_llm:
             api_id, llm_model = _resolve_extractor_llm(user_id)
@@ -2411,6 +2418,33 @@ def estimate_module_rebuild(
                     "credential_api_id": _credential_api_id_for(api_id),
                     "needs_credentials": True,
                 })
+            # 真·chat-LLM 路径才算 token+成本(否则「免费」会撒谎)。粗估,UI 标注≈。
+            #   canon 全量重抽 = 跑全书 chunks(input≈全文,output≈每块结构化产出);
+            #   worldbook-llm = 按 canon 规模的若干次抽取调用。
+            est_in = est_out = 0
+            if module == "canon":
+                with connect() as db:
+                    _chars = _scalar(
+                        db,
+                        "select coalesce(sum(length(text)),0) as c "
+                        "from document_chunks where script_id = %s",
+                    )
+                est_in = int(_chars / 2)            # CJK 粗估 ~2 字/token
+                est_out = int(chunks_total * 200)   # 每块结构化产出
+            elif module == "worldbook":             # 必是 source=='llm'(否则 needs_llm=False)
+                _base = max(canon_total, 20)
+                est_in = _base * 1500
+                est_out = _base * 300
+            if est_in or est_out:
+                tokens_est = est_in + est_out
+                try:
+                    from model_probe import get_pricing
+                    _pr = get_pricing(api_id, llm_model) or {}
+                    _ip = float(_pr.get("input", 0) or 0)
+                    _op = float(_pr.get("output", 0) or 0)
+                    cost_est = round((est_in * _ip + est_out * _op) / 1_000_000, 4)
+                except Exception:
+                    cost_est = 0.0
         note = "该模块将作为后台任务运行,可关闭页面后回来查看进度。"
 
     return {
@@ -2418,8 +2452,10 @@ def estimate_module_rebuild(
         "script_id": script_id,
         "module": module,
         "kind": kind,
-        "tokens_est": 0,
-        "cost_est": 0.0,
+        "tokens_est": tokens_est,
+        "cost_est": cost_est,
+        "est_input_tokens": tokens_est,  # 兼容前端 est_input_tokens 读取
+        "approximate": tokens_est > 0,   # >0 即非免费,UI 可标「≈」
         "model": model,
         "affects": affects,
         "prereqs": prereqs,

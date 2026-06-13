@@ -17,6 +17,7 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
   const ok              = estimate && estimate.ok !== false;
   const tokens          = estimate?.tokens_est ?? estimate?.est_input_tokens;
   const cost            = estimate?.cost_est ?? estimate?.est_usd;
+  const approx          = !!estimate?.approximate;  // LLM 路径=粗略估算,标「≈」避免看着像精确值
   const model           = estimate?.model;
   const affects         = Array.isArray(estimate?.affects) ? estimate.affects : [];
   const prereqs         = Array.isArray(estimate?.prereqs) ? estimate.prereqs : [];
@@ -77,7 +78,7 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
                   {t('modules.estimate.tokens', { defaultValue: 'Tokens' })}
                 </span>
                 <span className={`${s.estimateKVValue} ${isZeroLlm ? s.estimateKVValueFree : ''}`}>
-                  {tokens != null ? Number(tokens).toLocaleString() : '0'}
+                  {tokens != null ? `${approx ? '≈ ' : ''}${Number(tokens).toLocaleString()}` : '0'}
                 </span>
               </div>
               <div className={s.estimateKVItem}>
@@ -85,7 +86,7 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
                   {t('modules.estimate.cost', { defaultValue: '预估成本' })}
                 </span>
                 <span className={`${s.estimateKVValue} ${isZeroLlm ? s.estimateKVValueFree : ''}`}>
-                  {cost != null ? `$${Number(cost).toFixed(3)}` : '$0.000'}
+                  {cost != null ? `${approx ? '≈ ' : ''}$${Number(cost).toFixed(3)}` : '$0.000'}
                 </span>
               </div>
               <div className={s.estimateKVItem}>
