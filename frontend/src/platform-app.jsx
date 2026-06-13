@@ -28,6 +28,7 @@ import {
   AdminFeedbackPage,
   AdminAchievementsPage,
 } from './pages/admin.jsx';
+import Modal from './components/Modal.jsx';
 import PolicyNoticeBanner from './components/PolicyNoticeBanner.jsx';
 import { FeedbackQuickModal } from './components/FeedbackQuickModal.jsx';
 import HelpDrawerRoot from './components/HelpDrawer.jsx';
@@ -3829,29 +3830,21 @@ function CapCard({ id, name, desc, tag, on, status, kind, onChanged, _raw }) {
         </div>
       )}
       {confirmDel && (
-        <div className="pl-modal-backdrop" onClick={() => !delBusy && setConfirmDel(false)}>
-          <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(420px, 100%)"}}>
-            <header className="pl-modal-head">
-              <div>
-                <div className="pl-modal-eyebrow">删除确认</div>
-                <h2 className="pl-modal-title">删除 MCP 服务器</h2>
-              </div>
-              <button className="iconbtn" onClick={() => setConfirmDel(false)} data-tip="关闭" disabled={delBusy}><Icon name="close" size={14} /></button>
-            </header>
-            <div style={{padding: "0 16px 16px", fontSize: 13.5, lineHeight: 1.7}}>
-              确定要删除 <strong>{name}</strong> 吗？此操作不可撤销。
+        <Modal eyebrow="删除确认" title="删除 MCP 服务器" width={420}
+          onClose={() => setConfirmDel(false)} closeDisabled={delBusy}
+          footer={<>
+            <span />
+            <div style={{display: "flex", gap: 8}}>
+              <button className="btn ghost" onClick={() => setConfirmDel(false)} disabled={delBusy}>取消</button>
+              <button className="btn danger" onClick={handleDelete} disabled={delBusy}>
+                {delBusy ? "删除中…" : <><Icon name="trash" size={12} /> 删除</>}
+              </button>
             </div>
-            <footer className="pl-modal-foot">
-              <span />
-              <div style={{display: "flex", gap: 8}}>
-                <button className="btn ghost" onClick={() => setConfirmDel(false)} disabled={delBusy}>取消</button>
-                <button className="btn danger" onClick={handleDelete} disabled={delBusy}>
-                  {delBusy ? "删除中…" : <><Icon name="trash" size={12} /> 删除</>}
-                </button>
-              </div>
-            </footer>
+          </>}>
+          <div style={{padding: "0 16px 16px", fontSize: 13.5, lineHeight: 1.7}}>
+            确定要删除 <strong>{name}</strong> 吗？此操作不可撤销。
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
