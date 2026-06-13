@@ -3626,6 +3626,8 @@ function CapCard({ id, name, desc, tag, on, status, kind, onChanged, _raw }) {
   const [logOpen, setLogOpen] = useStatePL(false);
   const [logText, setLogText] = useStatePL("");
   const [logBusy, setLogBusy] = useStatePL(false);
+  const [confirmDel, setConfirmDel] = useStatePL(false);
+  const [delBusy, setDelBusy] = useStatePL(false);
   React.useEffect(() => { setV(!!on); }, [on]);
   // task 50：toggle 之前只改本地 state，没动后端 → 重新拉数据后状态被冲掉。
   // 现在 MCP/Skill 切换走真后端：MCP /api/mcp/server/enabled，Skill 暂没专用 toggle
@@ -3654,6 +3656,24 @@ function CapCard({ id, name, desc, tag, on, status, kind, onChanged, _raw }) {
       window.__apiToast?.("插件状态由平台管理 · 暂不支持手动切换", { kind: "warn", duration: 2400 });
       setV(true);
     }
+  };
+  // 删除 MCP 服务器
+  const handleDelete = async () => {
+    if (kind !== "mcp") {
+      window.__apiToast?.("暂不支持删除该类型", { kind: "warn", duration: 2000 });
+      setConfirmDel(false);
+      return;
+    }
+    setDelBusy(true);
+    try {
+      await window.api.mcp.remove({ id, server_id: id });
+      window.__apiToast?.(`已删除 ${name}`, { kind: "ok", duration: 1500 });
+      setConfirmDel(false);
+      onChanged && onChanged();
+    } catch (e) {
+      window.__apiToast?.("删除失败", { kind: "danger", detail: e?.message });
+    }
+    setDelBusy(false);
   };
   // task 50：查看日志 → 拉真后端运行时（admin 看到 stderr）。导出 → 下载文本。
   const loadLog = async () => {
@@ -3724,6 +3744,7 @@ function CapCard({ id, name, desc, tag, on, status, kind, onChanged, _raw }) {
         <div style={{display: "flex", gap: 4}}>
           <button className="iconbtn" data-tip="编辑" onClick={() => setEditOpen(true)}><Icon name="edit" size={12} /></button>
           <button className="iconbtn" data-tip="查看日志" onClick={() => setLogOpen(true)}><Icon name="debug" size={12} /></button>
+          {kind === "mcp" && <button className="iconbtn" data-tip="删除" onClick={() => setConfirmDel(true)}><Icon name="trash" size={12} /></button>}
         </div>
       </div>
       <PromptModal
@@ -3807,10 +3828,34 @@ function CapCard({ id, name, desc, tag, on, status, kind, onChanged, _raw }) {
           </div>
         </div>
       )}
+      {confirmDel && (
+        <div className="pl-modal-backdrop" onClick={() => !delBusy && setConfirmDel(false)}>
+          <div className="pl-modal" onClick={(e) => e.stopPropagation()} style={{width: "min(420px, 100%)"}}>
+            <header className="pl-modal-head">
+              <div>
+                <div className="pl-modal-eyebrow">删除确认</div>
+                <h2 className="pl-modal-title">删除 MCP 服务器</h2>
+              </div>
+              <button className="iconbtn" onClick={() => setConfirmDel(false)} data-tip="关闭" disabled={delBusy}><Icon name="close" size={14} /></button>
+            </header>
+            <div style={{padding: "0 16px 16px", fontSize: 13.5, lineHeight: 1.7}}>
+              确定要删除 <strong>{name}</strong> 吗？此操作不可撤销。
+            </div>
+            <footer className="pl-modal-foot">
+              <span />
+              <div style={{display: "flex", gap: 8}}>
+                <button className="btn ghost" onClick={() => setConfirmDel(false)} disabled={delBusy}>取消</button>
+                <button className="btn danger" onClick={handleDelete} disabled={delBusy}>
+                  {delBusy ? "删除中…" : <><Icon name="trash" size={12} /> 删除</>}
+                </button>
+              </div>
+            </footer>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
 const API_ROWS = [
   { m: "GET",  p: "/",                              d: "文字 RPG 主游戏界面",                       group: "主页" },
   { m: "GET",  p: "/app",                           d: "多用户平台 / 创作平台界面",                   group: "主页" },
