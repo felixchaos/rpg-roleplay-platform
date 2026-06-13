@@ -3679,13 +3679,22 @@ function CapCard({ id, name, desc, tag, on, status, kind, onChanged, _raw }) {
     setLogBusy(false);
   };
   React.useEffect(() => { if (logOpen) loadLog(); }, [logOpen]);
-  const editFields = kind === "mcp" ? [
-    { key: "name", label: "名称", required: true, default: name },
-    { key: "transport", label: "传输", type: "select", default: tag === "stdio" ? "stdio" : "http",
-      options: [{ value: "stdio", label: "stdio · 本地命令" }, { value: "http", label: "http · 远程 HTTP" }] },
-    { key: "command", label: "命令 / URL", required: true, mono: true, default: tag === "stdio" ? "uvx my-mcp" : "https://localhost:7300" },
-    { key: "env", label: "环境变量 / Headers", type: "textarea", placeholder: "KEY=VALUE", rows: 3 },
-  ] : kind === "skills" ? [
+  const editFields = kind === "mcp" ? (() => {
+    const rawTransport = (_raw || {}).transport || tag || "stdio";
+    const rawCommand = (_raw || {}).command || "";
+    const rawEnv = (() => { const e = (_raw || {}).env || {}; return Object.keys(e).length ? Object.entries(e).map(([k,v]) => `${k}=${v}`).join("\n") : ""; })();
+    const rawUrl = (_raw || {}).url || "";
+    const rawHeaders = (() => { const h = (_raw || {}).headers || {}; return Object.keys(h).length ? JSON.stringify(h, null, 2) : ""; })();
+    return [
+      { key: "name", label: "名称", required: true, default: name },
+      { key: "transport", label: "传输", type: "select", default: rawTransport,
+        options: [{ value: "stdio", label: "stdio · 本地命令" }, { value: "http", label: "http · 远程 HTTP" }] },
+      { key: "url", label: "URL", mono: true, default: rawUrl, placeholder: "https://example.com/mcp" },
+      { key: "command", label: "命令", mono: true, default: rawCommand, placeholder: "uvx my-mcp" },
+      { key: "headers", label: "Headers (JSON)", type: "textarea", rows: 3, default: rawHeaders, placeholder: '{"Authorization":"Bearer xxx"}' },
+      { key: "env", label: "环境变量", type: "textarea", placeholder: "KEY=VALUE", rows: 3, default: rawEnv },
+    ];
+  })() : kind === "skills" ? [
     { key: "name", label: "显示名", required: true, default: name },
     { key: "version", label: "版本", default: tag },
     { key: "manifest", label: "manifest 配置", type: "textarea", rows: 4,
@@ -3736,8 +3745,14 @@ function CapCard({ id, name, desc, tag, on, status, kind, onChanged, _raw }) {
                 if (m) envObj[m[1].trim()] = m[2];
               }
               const body = { id, server_id: id, name: vals.name || name, transport: vals.transport || tag, enabled: v };
-              if ((vals.transport || tag) === "http") body.url = vals.command;
-              else body.command = vals.command;
+              if ((vals.transport || tag) === "http") {
+                body.url = vals.url || "";
+                body.command = "";
+                try { body.headers = vals.headers ? JSON.parse(vals.headers) : {}; } catch (_) { body.headers = {}; }
+              } else {
+                body.command = vals.command || "";
+                body.url = "";
+              }
               if (Object.keys(envObj).length) body.env = envObj;
               await window.api.mcp.upsert(body);
               window.__apiToast?.("已保存", { kind: "ok", duration: 1500 });

@@ -94,11 +94,11 @@ def _load_mcp_catalog_from_file() -> dict[str, Any]:
             data = json.load(f)
     except Exception:
         data = {}
-    return _migrate_mcp_catalog(data)
+    return _migrate_mcp_catalog(data, validate=False)
 
 
 def save_mcp_catalog(catalog: dict[str, Any]) -> None:
-    catalog = _migrate_mcp_catalog(catalog)
+    # 注意：_save_mcp_catalog_to_db 和 _mirror_mcp_catalog_file 内部会调用 _migrate_mcp_catalog
     _save_mcp_catalog_to_db(catalog)
     _mirror_mcp_catalog_file(catalog)
 
@@ -107,7 +107,7 @@ def _mirror_mcp_catalog_file(catalog: dict[str, Any]) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     tmp_file = MCP_CONFIG_FILE.with_suffix(".json.tmp")
     with open(tmp_file, "w", encoding="utf-8") as f:
-        json.dump(_migrate_mcp_catalog(catalog), f, ensure_ascii=False, indent=2)
+        json.dump(_migrate_mcp_catalog(catalog, validate=False), f, ensure_ascii=False, indent=2)
     tmp_file.replace(MCP_CONFIG_FILE)
 
 
@@ -152,15 +152,32 @@ def validate_mcp_server(server_id: str) -> dict[str, Any]:
     server = next((item for item in catalog["servers"] if item["id"] == server_id), None)
     if not server:
         raise ValueError(f"未知 MCP 服务器：{server_id}")
+
+    transport = server.get("transport", "stdio")
     command = server.get("command", "")
-    resolved = shutil.which(command) if command else None
-    return {
-        "id": server_id,
-        "transport": server.get("transport", "stdio"),
-        "command": command,
-        "command_resolved": resolved,
-        "ready_to_launch": bool(resolved and server.get("transport", "stdio") == "stdio"),
-    }
+    url = server.get("url", "")
+
+    if transport == "http":
+        # HTTP transport: 验证 URL 格式
+        ready_to_launch = bool(url and (url.startswith("http://") or url.startswith("https://")))
+        return {
+            "id": server_id,
+            "transport": "http",
+            "url": url,
+            "command": "",
+            "command_resolved": None,
+            "ready_to_launch": ready_to_launch,
+        }
+    else:
+        # stdio transport: 验证 command 是否存在
+        resolved = shutil.which(command) if command else None
+        return {
+            "id": server_id,
+            "transport": "stdio",
+            "command": command,
+            "command_resolved": resolved,
+            "ready_to_launch": bool(resolved and transport == "stdio"),
+        }
 
 
 def list_imported_skills() -> list[dict[str, Any]]:
@@ -220,10 +237,10 @@ def import_skill_bundle(item: dict[str, Any]) -> dict[str, Any]:
     return skill
 
 
-def _migrate_mcp_catalog(data: dict[str, Any]) -> dict[str, Any]:
+def _migrate_mcp_catalog(data: dict[str, Any], *, validate: bool = True) -> dict[str, Any]:
     catalog = copy.deepcopy(DEFAULT_MCP_CATALOG)
     if isinstance(data, dict) and isinstance(data.get("servers"), list):
-        catalog["servers"] = [_normalize_mcp_server(item) for item in data["servers"]]
+        catalog["servers"] = [_normalize_mcp_server(item, validate=validate) for item in data["servers"]]
     catalog["schema_version"] = 1
     return catalog
 
@@ -290,8 +307,17 @@ def _validate_npx_args(args: list[str]) -> None:
             )
 
 
-def _normalize_mcp_server(server: dict[str, Any]) -> dict[str, Any]:
+def _normalize_mcp_server(server: dict[str, Any], *, validate: bool = True) -> dict[str, Any]:
     server_id = _slugify(str(server.get("id") or server.get("display_name") or "mcp_server"))
+    transport = str(server.get("transport") or "stdio").strip()
+
+    # HTTP transport 配置
+    url = str(server.get("url") or "").strip()
+    headers = server.get("headers") or {}
+    if not isinstance(headers, dict):
+        headers = {}
+
+    # stdio transport 配置
     args = server.get("args") or []
     if isinstance(args, str):
         args = [part for part in args.split(" ") if part]
@@ -299,26 +325,39 @@ def _normalize_mcp_server(server: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(env, dict):
         env = {}
     command = str(server.get("command") or "").strip()
-    # P1-2 SEC: command 白名单 + 安全字符集校验（禁止 / 和 ..）
-    if command:
-        if "/" in command or ".." in command:
-            raise ValueError(f"MCP server command 不能包含路径分隔符: {command!r}")
-        if command not in _MCP_CMD_WHITELIST:
-            raise ValueError(f"MCP server command 不在白名单(仅允许 {sorted(_MCP_CMD_WHITELIST)}): {command!r}")
-        # P1-3 SEC + C-1: 每种命令都校验 args,禁止内联代码执行(npx evil-pkg / python -c / node -e)
-        if command == "npx":
-            _validate_npx_args([str(a) for a in args])
-        else:
-            _validate_interpreter_args(command, [str(a) for a in args])
+
+    # 根据 transport 类型进行不同的验证（validate=False 用于加载已有配置时跳过校验）
+    if transport == "http" and validate:
+        # HTTP transport: 需要 URL，不需要 command
+        if not url:
+            raise ValueError("HTTP transport 的 MCP server 必须提供 url")
+        if not url.startswith(("http://", "https://")):
+            raise ValueError(f"MCP server URL 必须以 http:// 或 https:// 开头: {url!r}")
+    else:
+        # stdio transport: 需要 command，不需要 url
+        # P1-2 SEC: command 白名单 + 安全字符集校验（禁止 / 和 ..）
+        if command:
+            if "/" in command or ".." in command:
+                raise ValueError(f"MCP server command 不能包含路径分隔符: {command!r}")
+            if command not in _MCP_CMD_WHITELIST:
+                raise ValueError(f"MCP server command 不在白名单(仅允许 {sorted(_MCP_CMD_WHITELIST)}): {command!r}")
+            # P1-3 SEC + C-1: 每种命令都校验 args,禁止内联代码执行(npx evil-pkg / python -c / node -e)
+            if command == "npx":
+                _validate_npx_args([str(a) for a in args])
+            else:
+                _validate_interpreter_args(command, [str(a) for a in args])
+
     return {
         "id": server_id,
         "display_name": str(server.get("display_name") or server_id).strip(),
-        "transport": str(server.get("transport") or "stdio").strip(),
+        "transport": transport,
         "command": command,
         "args": [str(item) for item in args],
         "env": {str(k): str(v) for k, v in env.items()},
         "enabled": bool(server.get("enabled", False)),
         "scope": str(server.get("scope") or "local").strip(),
+        "url": url,
+        "headers": {str(k): str(v) for k, v in headers.items()},
     }
 
 
@@ -342,7 +381,10 @@ def _load_mcp_catalog_from_db() -> dict[str, Any] | None:
                         "env": dict(row.get("env") or {}),
                         "enabled": row["enabled"],
                         "scope": row["scope"],
-                    }
+                        "url": (dict(row.get("metadata") or {})).get("url", ""),
+                        "headers": (dict(row.get("metadata") or {})).get("headers", {}),
+                    },
+                    validate=False,
                 )
                 for row in rows
             ],
@@ -356,14 +398,19 @@ def _save_mcp_catalog_to_db(catalog: dict[str, Any]) -> None:
         from platform_app.db import connect, init_db
 
         init_db()
-        catalog = _migrate_mcp_catalog(catalog)
+        catalog = _migrate_mcp_catalog(catalog, validate=False)
         with connect() as db:
             db.execute("delete from mcp_servers")
             for server in catalog.get("servers", []):
+                metadata: dict[str, Any] = {}
+                if server.get("url"):
+                    metadata["url"] = server["url"]
+                if server.get("headers"):
+                    metadata["headers"] = server["headers"]
                 db.execute(
                     """
-                    insert into mcp_servers(server_id, display_name, transport, command, args, env, enabled, scope)
-                    values (%s, %s, %s, %s, %s, %s, %s, %s)
+                    insert into mcp_servers(server_id, display_name, transport, command, args, env, enabled, scope, metadata)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     on conflict(server_id) do update set
                       display_name = excluded.display_name,
                       transport = excluded.transport,
@@ -372,6 +419,7 @@ def _save_mcp_catalog_to_db(catalog: dict[str, Any]) -> None:
                       env = excluded.env,
                       enabled = excluded.enabled,
                       scope = excluded.scope,
+                      metadata = excluded.metadata,
                       updated_at = now()
                     """,
                     (
@@ -383,6 +431,7 @@ def _save_mcp_catalog_to_db(catalog: dict[str, Any]) -> None:
                         Jsonb(dict(server.get("env") or {})),
                         bool(server.get("enabled", False)),
                         server.get("scope") or "local",
+                        Jsonb(metadata),
                     ),
                 )
     except Exception:
