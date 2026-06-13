@@ -346,6 +346,7 @@ export function TavernThinkingBlock({ text, thinking }) {
 export function TavernChatArea({ history, running, saveId, charName, charInitial, charAvatar, personaName, hasError, errorMsg, onRetry, lastMeta, elapsedLabel }) {
   const ref = useRef(null);
   const atBottomRef = useRef(true);
+  const isFirstLoadRef = useRef(true);
   const [showJump, setShowJump] = useState(false);
 
   // 内嵌聊天图片:最后一条助手消息绝对索引 + 图片按消息分发(复用游戏端 hook)
@@ -368,12 +369,15 @@ export function TavernChatArea({ history, running, saveId, charName, charInitial
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
-  // ① 自己刚发(末条=玩家)→ 滚到底;② 否则双守卫:已上滚 或 实时距底>360 → 不跟随(GM 输出完成不拽回)
+  // ① 第一次进入或刷新页面时，强制滚动到最底部; ② 自己刚发(末条=玩家)→ 滚到底; ③ 否则双守卫:已上滚 或 实时距底>360 → 不跟随(GM 输出完成不拽回)
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const last = history && history[history.length - 1];
-    if (last && last.role === 'user') {
+    if (history.length > 0 && isFirstLoadRef.current) {
+      isFirstLoadRef.current = false;
+      atBottomRef.current = true;
+    } else if (last && last.role === 'user') {
       atBottomRef.current = true;
     } else if (!atBottomRef.current || (el.scrollHeight - el.scrollTop - el.clientHeight) > 360) {
       return;

@@ -634,6 +634,7 @@ function ChatView({
   const threadRef = useRef(null);
   const taRef = useRef(null);
   const atBottomRef = useRef(true);
+  const isFirstLoadRef = useRef(true);
   const [showJump, setShowJump] = useState(false);
 
   const charName = (character && character.name) || (activeChat && activeChat.character_name) || '角色';
@@ -651,12 +652,15 @@ function ChatView({
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
-  // ① 自己刚发(末条=玩家)→ 滚到底;② 否则双守卫:已上滚 或 实时距底>360 → 不跟随(输出完成不拽回)
+  // ① 第一次进入或刷新页面时，强制滚动到最底部; ② 自己刚发(末条=玩家)→ 滚到底; ③ 否则双守卫:已上滚 或 实时距底>360 → 不跟随(输出完成不拽回)
   useEffect(() => {
     const el = threadRef.current;
     if (!el) return;
     const last = history && history[history.length - 1];
-    if (last && last.role === 'user') {
+    if (history.length > 0 && isFirstLoadRef.current) {
+      isFirstLoadRef.current = false;
+      atBottomRef.current = true;
+    } else if (last && last.role === 'user') {
       atBottomRef.current = true;
     } else if (!atBottomRef.current || (el.scrollHeight - el.scrollTop - el.clientHeight) > 360) {
       return;

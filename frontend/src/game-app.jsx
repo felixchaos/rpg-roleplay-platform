@@ -998,6 +998,7 @@ function ChatArea({ history, runState, runStyle, narrativeFont, narrativeSize, h
 
   // task 133: Claude 风格自动滚动 — 用户上滚后停止跟随 + 回到底部按钮
   const isAtBottomRef = useRefA(true);
+  const isFirstLoadRef = useRefA(true);
   const [showJumpBtn, setShowJumpBtn] = useStateA(false);
   // 用户滚动时检测是否离开底部
   useEffectA(() => {
@@ -1012,14 +1013,17 @@ function ChatArea({ history, runState, runStyle, narrativeFont, narrativeSize, h
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
-  // 新内容时的滚动策略:① 自己刚发消息(末条=玩家)→ 强制滚到底;② 否则双守卫——
+  // 新内容时的滚动策略:① 第一次进入或刷新页面时，强制滚动到最底部; ② 自己刚发消息(末条=玩家)→ 强制滚到底; ③ 否则双守卫——
   // 用户已上滚(isAtBottom=false) 或 实时距底 >360px(防 ref 时序滞后/iOS 节流)→ 绝不跟随。
   // 这样 GM 输出(含输出完成 running→false)在用户看上文时不会被硬拽回底部。
   useEffectA(() => {
     const el = ref.current;
     if (!el) return;
     const last = history && history[history.length - 1];
-    if (last && last.role === "user") {
+    if (visible.length > 0 && isFirstLoadRef.current) {
+      isFirstLoadRef.current = false;
+      isAtBottomRef.current = true;
+    } else if (last && last.role === "user") {
       isAtBottomRef.current = true;  // 自己发的:跟到底
     } else if (!isAtBottomRef.current || (el.scrollHeight - el.scrollTop - el.clientHeight) > 360) {
       return;  // 用户在看上文 → 不强制跟随

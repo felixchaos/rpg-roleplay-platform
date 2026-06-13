@@ -360,6 +360,7 @@ export function MobileGame(gc) {
   const anyOverlay = leftOpen || rightOpen || !!sheet;
 
   const atBottomRef = useRef(true);
+  const isFirstLoadRef = useRef(true);
   const scrollBottom = useCallback((smooth) => {
     const el = chatRef.current; if (!el) return;
     requestAnimationFrame(() => el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' }));
@@ -372,11 +373,14 @@ export function MobileGame(gc) {
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
   useEffect(() => { scrollBottom(false); }, []);  // 挂载滚底
-  // ① 自己刚发(末条=玩家)→ 滚底;② 否则双守卫:已上滚 或 实时距底>360 → 不跟随(GM 输出完成不拽回)
+  // ① 第一次进入或刷新页面时，强制滚动到最底部; ② 自己刚发(末条=玩家)→ 滚底; ③ 否则双守卫:已上滚 或 实时距底>360 → 不跟随(GM 输出完成不拽回)
   useEffect(() => {
     const el = chatRef.current; if (!el) return;
     const last = history && history[history.length - 1];
-    if (last && last.role === 'user') { atBottomRef.current = true; }
+    if (history.length > 0 && isFirstLoadRef.current) {
+      isFirstLoadRef.current = false;
+      atBottomRef.current = true;
+    } else if (last && last.role === 'user') { atBottomRef.current = true; }
     else if (!atBottomRef.current || (el.scrollHeight - el.scrollTop - el.clientHeight) > 360) { return; }
     scrollBottom(true);
   }, [history.length, running]);
