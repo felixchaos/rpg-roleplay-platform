@@ -1114,12 +1114,17 @@ def _renumber_contiguous(db, script_id: int) -> None:
 
 
 def merge_chapters(user_id: int, script_id: int, first_index: int,
-                   *, second_index: int | None = None, separator: str = "\n\n") -> dict[str, Any]:
+                   *, second_index: int | None = None, keep_title_index: int | None = None,
+                   separator: str = "\n\n") -> dict[str, Any]:
     """合并两章为一章,随后整本重排成连续序号。
 
     second_index 缺省时取 first_index 之后【按序的下一章】,而不是假设 first_index+1
     ——章节序号可能有缝隙(如 1,2,4,5),硬算 +1 会找不到章而合并失败
-    (用户反馈:有序章的剧本合并不了)。"""
+    (用户反馈:有序章的剧本合并不了)。
+
+    keep_title_index 指定保留哪一章的标题(缺省=序号小的那章)。「合并上一章」时传当前章序号,
+    使序章/前言折进第一章后标题仍是「第一章」(用户反馈:没办法合并到第一章)。内容始终按
+    章序拼接(序号小的在前)。"""
     init_db()
     with connect() as db:
         _lock_chapter_struct(db, script_id)
@@ -1150,11 +1155,15 @@ def merge_chapters(user_id: int, script_id: int, first_index: int,
         # 始终把序号小的当作留存章(内容在前),删除序号大的
         if int(b["chapter_index"]) < int(a["chapter_index"]):
             a, b = b, a
+        # 标题:缺省留 a(序号小);keep_title_index 指向 b 时留 b 的标题
+        # (「合并上一章」把前面的序章折进当前章、仍叫当前章标题)。
+        keep_b_title = keep_title_index is not None and int(keep_title_index) == int(b["chapter_index"])
+        new_title = (b["title"] if keep_b_title else a["title"])
 
         merged_content = (a["content"] or "") + separator + (b["content"] or "")
         db.execute(
-            "update script_chapters set content = %s, word_count = %s, updated_at = now() where id = %s",
-            (merged_content, len(merged_content), a["id"]),
+            "update script_chapters set content = %s, word_count = %s, title = %s, updated_at = now() where id = %s",
+            (merged_content, len(merged_content), str(new_title or "")[:200], a["id"]),
         )
         db.execute("delete from script_chapters where id = %s", (b["id"],))
         # 删除后重排为连续序号(顺带 self-heal 任何历史缝隙)

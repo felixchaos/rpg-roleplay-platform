@@ -682,9 +682,11 @@ async def api_chapter_merge(request: Request, script_id: int, user=Depends(requi
     body = await request.json()
     try:
         _second = body.get("second_index")
+        _keep = body.get("keep_title_index")
         return json_response(script_import.merge_chapters(
             user["id"], script_id, int(body.get("first_index") or 0),
             second_index=(int(_second) if _second is not None else None),
+            keep_title_index=(int(_keep) if _keep is not None else None),
             separator=body.get("separator") or "\n\n",
         ))
     except ValueError as exc:

@@ -102,6 +102,38 @@ class ChapterSplitMergeUnique(unittest.TestCase):
                 db.execute("delete from script_chapters where script_id = %s", (sid,))
                 db.execute("delete from scripts where id = %s", (sid,))
 
+    def test_merge_prev_keeps_current_title(self):
+        """用户反馈:序章/前言没办法「合并到第一章」。merge-previous 把前一章折进当前章,
+        keep_title_index 保留当前章标题、内容按时序(前章在前)拼接。"""
+        from platform_app import script_import as si
+        from platform_app.db import connect
+
+        with connect() as db:
+            sid = int(db.execute(
+                "insert into scripts(owner_id, title) values (%s, %s) returning id",
+                (self.owner_id, "chapter_mergeprev_test"),
+            ).fetchone()["id"])
+            for ci, ttl, body in [(1, "序章", "P" * 7), (2, "第一章", "A" * 30), (3, "第二章", "B" * 30)]:
+                db.execute(
+                    "insert into script_chapters(script_id, chapter_index, title, content) "
+                    "values (%s, %s, %s, %s)", (sid, ci, ttl, body),
+                )
+        try:
+            # 在「第一章」(idx2)上合并上一章:把序章(idx1)折进来,保留「第一章」标题
+            si.merge_chapters(self.owner_id, sid, 1, second_index=2, keep_title_index=2, separator="")
+            with connect() as db:
+                rows = [(int(r["chapter_index"]), r["title"], r["content"]) for r in db.execute(
+                    "select chapter_index, title, content from script_chapters where script_id = %s "
+                    "order by chapter_index", (sid,),
+                ).fetchall()]
+            self.assertEqual([i for i, _, _ in rows], [1, 2])
+            self.assertEqual(rows[0][1], "第一章")          # 保留当前章标题
+            self.assertTrue(rows[0][2].startswith("P"))     # 序章内容在前(时序)
+        finally:
+            with connect() as db:
+                db.execute("delete from script_chapters where script_id = %s", (sid,))
+                db.execute("delete from scripts where id = %s", (sid,))
+
 
 if __name__ == "__main__":
     unittest.main()

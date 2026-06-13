@@ -123,6 +123,18 @@ function ChaptersView({ script, onBack }) {
       setReloadTick(x => x + 1);
     } catch (e) { window.__apiToast?.(e?.message || '操作失败', { kind: 'danger' }); }
   };
+  // 合并上一章:把前面那章折进当前章,保留当前章标题(序章/前言折进第一章)。
+  const onMergePrev = async () => {
+    if (!cur || activeIdx <= 0) return;
+    if (!window.confirm(`把第 ${activeIdx} 章合并进当前第 ${activeIdx + 1} 章(保留当前标题)？`)) return;
+    try {
+      const prevCh = chapters[activeIdx - 1];
+      const prevIdx = prevCh ? (prevCh.chapter_index ?? prevCh.index ?? (activeIdx - 1)) : (activeIdx - 1);
+      await window.api.scripts.mergeChapter(script.id, { first_index: prevIdx, second_index: curIdx, keep_title_index: curIdx });
+      window.__apiToast?.('已合并', { kind: 'ok' });
+      setReloadTick(x => x + 1);
+    } catch (e) { window.__apiToast?.(e?.message || '操作失败', { kind: 'danger' }); }
+  };
 
   const onResplit = async () => {
     const rule = window.prompt('重切分规则 (auto/chapter_cn/chapter_en/number_dot)', 'auto');
@@ -194,6 +206,9 @@ function ChaptersView({ script, onBack }) {
                   <span className="mono muted-2" style={{ fontSize: 11 }}>{fmtN(cur.word_count || 0)} 字</span>
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: 7 }}>
                     <button className="pl-pill" style={{ height: 28 }} onClick={onRename}><Icon name="edit" size={13} /> 改名</button>
+                    {activeIdx > 0 && (
+                      <button className="pl-pill" style={{ height: 28 }} onClick={onMergePrev}><Icon name="link" size={13} /> 合并上章</button>
+                    )}
                     {activeIdx < chapters.length - 1 && (
                       <button className="pl-pill" style={{ height: 28 }} onClick={onMergeNext}><Icon name="link" size={13} /> 合并下章</button>
                     )}

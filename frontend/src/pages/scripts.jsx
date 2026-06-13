@@ -1975,6 +1975,19 @@ function ChaptersModal({ script, onClose, onChanged }) {
       onChanged && onChanged();
     } catch (e) { window.__apiToast?.(t('scripts.toast.op_fail'), { kind: "danger", detail: e?.message }); }
   };
+  // 合并上一章:把前面那章折进【当前章】,保留当前章标题(用户反馈:序章/前言没办法合并到第一章)。
+  const onMergePrev = async () => {
+    if (!cur || activeIdx <= 0) return;
+    if (!await window.__confirm({ title: t('scripts.editor.merge_title'), message: t('scripts.editor.merge_prev_msg', { a: activeIdx, b: activeIdx + 1, defaultValue: `把第 ${activeIdx} 章合并进当前的第 ${activeIdx + 1} 章(保留当前章标题)?` }), confirmText: t('scripts.editor.merge_btn') })) return;
+    try {
+      const prevCh = chapters[activeIdx - 1];
+      const prevIdx = prevCh ? (prevCh.chapter_index ?? prevCh.index ?? (activeIdx - 1)) : (activeIdx - 1);
+      await window.api.scripts.mergeChapter(script.id, { first_index: prevIdx, second_index: curIdx, keep_title_index: curIdx });
+      window.__apiToast?.(t('scripts.toast.merged'), { kind: "ok" });
+      setReloadTick(x => x + 1);
+      onChanged && onChanged();
+    } catch (e) { window.__apiToast?.(t('scripts.toast.op_fail'), { kind: "danger", detail: e?.message }); }
+  };
   const onSplit = async () => {
     if (!cur) return;
     const pos = await window.__prompt({ title: t('scripts.editor.split_title'), label: t('scripts.editor.split_label'), default: '' });
@@ -2043,6 +2056,9 @@ function ChaptersModal({ script, onClose, onChanged }) {
                   <div style={{marginLeft: "auto", display: "flex", gap: 6}}>
                     <button className="btn ghost" onClick={onRename}><Icon name="edit" size={12} /> {t('scripts.editor.rename_btn')}</button>
                     <button className="btn ghost" onClick={onSplit}><Icon name="branch" size={12} /> {t('scripts.editor.split_chapter_btn')}</button>
+                    {activeIdx > 0 && (
+                      <button className="btn ghost" onClick={onMergePrev}><Icon name="link" size={12} /> {t('scripts.editor.merge_prev_btn', { defaultValue: '合并上一章' })}</button>
+                    )}
                     {activeIdx < chapters.length - 1 && (
                       <button className="btn ghost" onClick={onMergeNext}><Icon name="link" size={12} /> {t('scripts.editor.merge_next_btn')}</button>
                     )}
