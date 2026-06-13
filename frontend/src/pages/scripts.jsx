@@ -715,7 +715,9 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
   const rb = useScriptRebuild(s.id);
   const playBlock = scriptPlayBlockReason(s, t);
 
-  const genCoverDefaultPrompt = [s.title, s.description].filter(Boolean).slice(0, 2).join('，');
+  // 默认提示词:用剧本简介(描述故事内容,适合作画面参考),而非标题(标题不是画面描述词)。
+  // 无简介则留空,由 MediaStudio 的占位示例引导用户自己写。
+  const genCoverDefaultPrompt = (s.description || '').trim().slice(0, 300);
 
   return (
     <>

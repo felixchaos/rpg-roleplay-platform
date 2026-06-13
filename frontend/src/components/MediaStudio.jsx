@@ -153,7 +153,9 @@ export default function MediaStudio({ open, onClose, target, name, defaultPrompt
         {tab === TAB.GEN && (
           <div>
             <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3}
-              placeholder="描述你想生成的形象，越具体越好"
+              placeholder={kind === 'cover'
+                ? '描述封面画面:场景 / 主角 / 风格，例:暮色城墙上独立的红衣剑客，电影感，水彩插画'
+                : '描述你想生成的形象，越具体越好'}
               style={{ width: '100%', resize: 'vertical', background: 'var(--panel-2)', color: 'var(--text)',
                 border: '1px solid var(--line)', borderRadius: 'var(--r-2)', padding: '10px 12px', fontSize: 13.5, marginBottom: 10 }} />
             <AgentModelPicker prefPrefix="image_gen" fallbackPrefix="gm" capabilityFilter="image_gen" variant="bare"

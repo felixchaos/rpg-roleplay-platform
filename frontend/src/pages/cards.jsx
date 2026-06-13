@@ -1123,6 +1123,7 @@ function CardDetailPanel({ card, kind, onSave, onDuplicate, onDelete }) {
           <CharacterCardHero
             card={{ id: raw.id, name: raw.name, identity: raw.identity || raw.role, appearance: raw.appearance, avatar_path: avatarUrl }}
             editable
+            scriptId={kind === 'npc' ? (raw.script_id || card?._raw?.script_id || null) : null}
             onChanged={(u) => setAvatarUrl(u)}
           />
           {/* 海报下方内联人设图缩略条(仅 persona/pc;无图时不渲染)——点开预览支持裁剪 */}

@@ -261,6 +261,18 @@ async def api_generate_image(request: Request):
             init_db()
             _att_script_id = attach.get("script_id")
             with connect() as db:
+                if not _att_script_id:
+                    # 兜底:NPC 卡(card_type='npc'、user_id=NULL、挂 script_id)未带 script_id 时,
+                    # 从卡自身取并注入 attach —— 让入队鉴权与 worker 写回都走 scripts.owner_id,
+                    # 不再误落到 user_id 分支报 403(剧本 owner 给本剧本 NPC 卡生图本应允许)。
+                    _c = db.execute(
+                        "select user_id, script_id, card_type from character_cards where id = %s",
+                        (int(card_id),),
+                    ).fetchone()
+                    if (_c and _c.get("card_type") == "npc"
+                            and _c.get("script_id") and not _c.get("user_id")):
+                        _att_script_id = int(_c["script_id"])
+                        attach["script_id"] = _att_script_id
                 if _att_script_id:
                     # NPC 卡(user_id=NULL,挂 script_id):owner 走 scripts.owner_id
                     row = db.execute(
