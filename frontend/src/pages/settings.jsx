@@ -2509,6 +2509,9 @@ function ModuleModelsSection() {
   const [savingId, setSavingId] = useStatePL(null);
   // task: embedder 兜底状态 — RAG 模型 section banner 文案要看 admin/user/fallback
   const [embedderStatus, setEmbedderStatus] = useStatePL(null);
+  // 「自定义模型」态:目录里没有用户的模型时,允许手填(provider + model 名),
+  // 与 AgentModelPicker 的 __custom_model__ 行为一致。按模块 id 存草稿 {api_id, model}。
+  const [customDraft, setCustomDraft] = useStatePL({});
 
   const reload = React.useCallback(async () => {
     try {
@@ -2661,6 +2664,42 @@ function ModuleModelsSection() {
     }
   };
 
+  // 「自定义」可选 provider 列表:用户已配 key 的 provider(catalog 显示名 + 仅有凭据的自定义 API)。
+  // 与 AgentModelPicker.providerOptions 同构 —— 自定义模型也得指定 provider。
+  const providerOptions = useMemoPL(() => {
+    const seen = new Set();
+    const out = [];
+    for (const a of (catalog.apis || [])) {
+      const id = catalogApiIdForCredential(a.api_id || a.id);
+      if (!id || !credentialApiIds.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ value: id, label: a.display_name || a.name || id });
+    }
+    for (const id of credentialApiIds) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ value: id, label: id });
+    }
+    return out;
+  }, [catalog, credentialApiIds]);
+
+  // 进入「自定义」态:用当前生效值(或第一个已配 provider)预填草稿。
+  const openCustom = (mod) => {
+    const cur = currentFor(mod);
+    const api_id = cur?.api_id || providerOptions[0]?.value || "";
+    setCustomDraft(d => ({ ...d, [mod.id]: { api_id, model: cur?.real_name || "" } }));
+  };
+  const closeCustom = (modId) => setCustomDraft(d => { const n = { ...d }; delete n[modId]; return n; });
+  // 自定义保存:复用 handleChange 的同一持久化路径(扁平双 key / dict {api_id, model})。
+  // draft 显式传入(覆盖 state 里可能尚未落地的草稿),避免未触碰输入框时拿到 undefined。
+  const saveCustom = async (mod, draft = customDraft[mod.id]) => {
+    const api_id = (draft?.api_id || "").trim();
+    const model = (draft?.model || "").trim();
+    if (!api_id || !model) return;
+    await handleChange(mod, `${api_id}/${model}`);
+    closeCustom(mod.id);
+  };
+
   const resetAll = async () => {
     setSavingId("__all__");
     const keys = [];
@@ -2788,14 +2827,19 @@ function ModuleModelsSection() {
                   <td style={{padding: "8px 8px", verticalAlign: "top"}}>
                     {/* B3: 原生 <select> 改为 CSSelect，视觉与其他 section 一致 */}
                     {(() => {
+                      const CUSTOM = "__custom__";
+                      const draft = customDraft[mod.id];
                       const opts = [];
                       const visibleModels = modelsForModule(mod);
+                      const knownVals = new Set(visibleModels.map(m => `${m.api_id}/${m.real_name}`));
+                      // 已持久化但不在目录里的值 = 手填的自定义模型;打开行进入自定义态编辑。
+                      const isCustomPersisted = !draft && value !== "__inherit__" && !!value && !knownVals.has(value);
                       // allowInherit=false 的模块(如 embedder)不给"跟主 GM",必须自己选
                       if (mod.id !== "gm" && mod.allowInherit !== false) {
                         opts.push({ value: "__inherit__", label: t('settings.modules.follow_main') });
                       }
                       // fallback: 当前 value 不在过滤后的 catalog 里时补一条
-                      if (value !== "__inherit__" && value && !visibleModels.some(m => `${m.api_id}/${m.real_name}` === value)) {
+                      if (value !== "__inherit__" && value && !knownVals.has(value)) {
                         opts.push({ value, label: `${value} ${t('settings.modules.not_in_catalog')}` });
                       }
                       for (const m of visibleModels) {
@@ -2805,15 +2849,58 @@ function ModuleModelsSection() {
                           disabled: !m.enabled,
                         });
                       }
-                      const selectedOpt = opts.find(o => o.value === value) || null;
+                      // 末尾追加「自定义…」,与 AgentModelPicker 一致(目录没有你的模型时手填)
+                      opts.push({ value: CUSTOM, label: "自定义…(手动填写模型名)" });
+                      const inCustom = !!draft || isCustomPersisted;
+                      const selectedOpt = inCustom
+                        ? { value: CUSTOM, label: "自定义…" }
+                        : (opts.find(o => o.value === value) || null);
                       return (
-                        <CSSelect
-                          selectedOption={selectedOpt}
-                          options={opts}
-                          placeholder={flatModels.length ? undefined : "请先在 API 设置添加并同步模型"}
-                          disabled={savingId === mod.id || savingId === "__all__" || flatModels.length === 0}
-                          onChange={({ detail }) => handleChange(mod, detail.selectedOption.value)}
-                        />
+                        <div style={{ display: "grid", gap: 8 }}>
+                          <CSSelect
+                            selectedOption={selectedOpt}
+                            options={opts}
+                            placeholder={flatModels.length ? undefined : "请先在 API 设置添加并同步模型"}
+                            disabled={savingId === mod.id || savingId === "__all__" || flatModels.length === 0}
+                            onChange={({ detail }) => {
+                              const v = detail.selectedOption.value;
+                              if (v === CUSTOM) { openCustom(mod); }
+                              else { closeCustom(mod.id); handleChange(mod, v); }
+                            }}
+                          />
+                          {inCustom && (() => {
+                            const d = draft || { api_id: currentFor(mod)?.api_id || providerOptions[0]?.value || "", model: value && value !== "__inherit__" ? value.slice(value.indexOf("/") + 1) : "" };
+                            const setD = (patch) => setCustomDraft(s => ({ ...s, [mod.id]: { ...d, ...patch } }));
+                            const provSel = providerOptions.find(o => o.value === d.api_id)
+                              || (d.api_id ? { value: d.api_id, label: d.api_id } : null);
+                            return (
+                              <div style={{ display: "grid", gap: 8 }}>
+                                <CSSelect
+                                  selectedOption={provSel}
+                                  options={providerOptions}
+                                  placeholder="选择 provider"
+                                  disabled={savingId === mod.id || providerOptions.length === 0}
+                                  onChange={({ detail }) => setD({ api_id: detail.selectedOption.value })}
+                                />
+                                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8 }}>
+                                  <CSInput
+                                    value={d.model}
+                                    placeholder="填写模型名,例如 gpt-4o-mini"
+                                    disabled={savingId === mod.id || !d.api_id}
+                                    onChange={({ detail }) => setD({ model: detail.value })}
+                                  />
+                                  <CSButton
+                                    loading={savingId === mod.id}
+                                    disabled={savingId === mod.id || !d.api_id || !(d.model || "").trim()}
+                                    onClick={() => saveCustom(mod, d)}
+                                  >
+                                    保存
+                                  </CSButton>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
                       );
                     })()}
                     {mod.id === "embedder" && (

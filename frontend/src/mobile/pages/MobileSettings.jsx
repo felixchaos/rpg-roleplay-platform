@@ -603,6 +603,8 @@ function ModuleModelsSection({ nav }) {
   const [credIds, setCredIds] = useState(new Set());
   const [saving, setSaving] = useState(null);
   const [embedStatus, setEmbedStatus] = useState(null);
+  // 「自定义模型」态:目录里没有用户的模型时,允许手填(provider + model 名),与桌面端/AgentModelPicker 一致。
+  const [customDraft, setCustomDraft] = useState({});
 
   const reload = useCallback(async () => {
     try {
@@ -698,6 +700,39 @@ function ModuleModelsSection({ nav }) {
     } finally { setSaving(null); }
   };
 
+  // 「自定义」可选 provider 列表:用户已配 key 的 provider(catalog 显示名 + 仅有凭据的自定义 API)。
+  const providerOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const a of (catalog.apis || [])) {
+      const id = catId(credId(a.api_id || a.id));
+      if (!id || !credIds.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ value: id, label: a.display_name || a.name || id });
+    }
+    for (const id of credIds) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ value: id, label: id });
+    }
+    return out;
+  }, [catalog, credIds]);
+
+  const openCustom = (mod) => {
+    const cur = currentFor(mod);
+    const api_id = cur?.api_id || providerOptions[0]?.value || '';
+    setCustomDraft(d => ({ ...d, [mod.id]: { api_id, model: cur?.real_name || '' } }));
+  };
+  const closeCustom = (modId) => setCustomDraft(d => { const n = { ...d }; delete n[modId]; return n; });
+  // 自定义保存:复用 handleChange 的同一持久化路径(扁平双 key / dict {api_id, model})。
+  const saveCustom = async (mod, draft = customDraft[mod.id]) => {
+    const api_id = (draft?.api_id || '').trim();
+    const model = (draft?.model || '').trim();
+    if (!api_id || !model) return;
+    await handleChange(mod, `${api_id}/${model}`);
+    closeCustom(mod.id);
+  };
+
   const resetAll = async () => {
     setSaving('__all__');
     const batch = {};
@@ -759,25 +794,80 @@ function ModuleModelsSection({ nav }) {
                 ⚠ 未配置 embedding key，RAG 召回可能降级
               </div>
             )}
-            <select
-              className="pl-input"
-              value={selectVal}
-              disabled={saving===mod.id || saving==='__all__' || flatModels.length===0}
-              onChange={(e) => handleChange(mod, e.target.value)}
-              style={{ fontSize: 13, height: 42 }}
-            >
-              {mod.id!=='gm' && mod.allowInherit!==false && (
-                <option value="__inherit__">跟随主 GM</option>
-              )}
-              {selectVal && selectVal!=='__inherit__' && !visibleModels.some(m => `${m.api_id}/${m.real_name}`===selectVal) && (
-                <option value={selectVal}>{selectVal}（未在 catalog）</option>
-              )}
-              {visibleModels.map(m => (
-                <option key={`${m.api_id}/${m.real_name}`} value={`${m.api_id}/${m.real_name}`}>
-                  {m.api_id} · {m.display}
-                </option>
-              ))}
-            </select>
+            {(() => {
+              const CUSTOM = '__custom__';
+              const draft = customDraft[mod.id];
+              const knownVals = new Set(visibleModels.map(m => `${m.api_id}/${m.real_name}`));
+              // 已持久化但不在目录里的值 = 手填的自定义模型;打开行进入自定义态编辑。
+              const isCustomPersisted = !draft && selectVal!=='__inherit__' && !!selectVal && !knownVals.has(selectVal);
+              const inCustom = !!draft || isCustomPersisted;
+              return (
+                <>
+                  <select
+                    className="pl-input"
+                    value={inCustom ? CUSTOM : selectVal}
+                    disabled={saving===mod.id || saving==='__all__' || flatModels.length===0}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v===CUSTOM) { openCustom(mod); }
+                      else { closeCustom(mod.id); handleChange(mod, v); }
+                    }}
+                    style={{ fontSize: 13, height: 42 }}
+                  >
+                    {mod.id!=='gm' && mod.allowInherit!==false && (
+                      <option value="__inherit__">跟随主 GM</option>
+                    )}
+                    {selectVal && selectVal!=='__inherit__' && !knownVals.has(selectVal) && (
+                      <option value={selectVal}>{selectVal}（未在 catalog）</option>
+                    )}
+                    {visibleModels.map(m => (
+                      <option key={`${m.api_id}/${m.real_name}`} value={`${m.api_id}/${m.real_name}`}>
+                        {m.api_id} · {m.display}
+                      </option>
+                    ))}
+                    <option value={CUSTOM}>自定义…(手动填写模型名)</option>
+                  </select>
+                  {inCustom && (() => {
+                    const d = draft || { api_id: currentFor(mod)?.api_id || providerOptions[0]?.value || '', model: selectVal && selectVal!=='__inherit__' ? selectVal.slice(selectVal.indexOf('/')+1) : '' };
+                    const setD = (patch) => setCustomDraft(s => ({ ...s, [mod.id]: { ...d, ...patch } }));
+                    return (
+                      <div style={{ display:'grid', gap:8, marginTop:8 }}>
+                        <select
+                          className="pl-input"
+                          value={d.api_id}
+                          disabled={saving===mod.id || providerOptions.length===0}
+                          onChange={(e) => setD({ api_id: e.target.value })}
+                          style={{ fontSize: 13, height: 42 }}
+                        >
+                          {providerOptions.length===0 && <option value="">请先在 API 设置配置 key</option>}
+                          {providerOptions.map(o => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                        <div style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:8 }}>
+                          <input
+                            className="pl-input"
+                            value={d.model}
+                            placeholder="填写模型名,例如 gpt-4o-mini"
+                            disabled={saving===mod.id || !d.api_id}
+                            onChange={(e) => setD({ model: e.target.value })}
+                            style={{ fontSize: 13, height: 42 }}
+                          />
+                          <button
+                            className="pl-btn-primary"
+                            disabled={saving===mod.id || !d.api_id || !(d.model||'').trim()}
+                            onClick={() => saveCustom(mod, d)}
+                            style={{ height: 42, fontSize: 13 }}
+                          >
+                            保存
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </>
+              );
+            })()}
           </div>
         );
       })}
