@@ -1743,7 +1743,7 @@ function TopBar({ state, saveUpdatedAt, onOpenTweaks, onOpenSearch, onOpenHistor
         <span className="pill"><span className="dot ok" /> {saveUpdatedAt ? `已存档 · ${savedAgo}` : "尚未保存"}</span>
         {versionSelectEl}
       </div>
-      <div className="gc-topbar-center" style={{display:'flex',alignItems:'center',gap:8,flex:1,justifyContent:'center',minWidth:0,fontSize:13,color:'var(--muted)'}}>
+      <div className="gc-topbar-center">
         {scriptName && <span style={{maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{scriptName}</span>}
         {chapter && <><span>·</span><span>{chapter}</span></>}
         {phase && <><span>·</span><span style={{color:'var(--text)'}}>{phase}</span></>}

@@ -359,7 +359,8 @@
   min-height: 64px;
 }
 .gc-topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; overflow: hidden; }
-.gc-topbar-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.gc-topbar-center { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px; color: var(--muted); white-space: nowrap; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.gc-topbar-right { display: flex; align-items: center; gap: 6px; flex: 1; justify-content: flex-end; }
 .gc-crumbs { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); white-space: nowrap; min-width: 0; overflow: hidden; }
 .gc-crumbs > * { flex-shrink: 0; }
 .gc-crumbs strong { text-overflow: ellipsis; overflow: hidden; }
