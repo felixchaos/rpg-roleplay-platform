@@ -1,14 +1,15 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 
-/* GlobalTaskFloater — 右下角全局「后台任务」浮窗(完全自定义,无 Cloudscape 汇总条)。
+/* GlobalTaskFloater — 右下角全局「后台任务」浮窗(纯自定义,无 Cloudscape 汇总条)。
    数据源:GET /api/me/tasks/active(导入 / 各模块重建 / 生图 统一聚合)。
-   三态(按用户要求):
-     · dot      —— 默认:一个小「⋯」圆点;
-     · stack    —— 鼠标经过 → 卡片堆叠,默认只显示标题;鼠标移到某张卡 → 该卡放大显示
-                   详情(类似 macOS Dock 放大);
-     · expanded —— 点按激活 → 全部卡片展开详情;点浮窗外 → 收回成圆点。
-   如实状态:import 类有真实 overall_progress 进度条;生图只给 spinner + 已用时间。
+   交互(按用户要求):
+     · 默认:一个小「⋯」圆点;
+     · 鼠标经过浮窗 → 卡片堆叠,默认只显示标题;
+     · 鼠标移到某张卡 → 该卡 macOS Dock 式放大显示详情(仅悬停项展开);
+     · 单击某张卡 → 固定(pin)该卡,鼠标移开仍保持放大展开;再次单击/点浮窗外 → 取消固定;
+     · 不固定时移开浮窗 → 收回圆点。无任何汇总信息面板。
+   如实状态:import 类有真实进度条;生图只给 spinner + 已用时间。
    每任务带「取消」按钮——取消只能显式触发,关闭弹窗/页面绝不取消队列。
 */
 
@@ -31,6 +32,7 @@ const CSS = `
   transition:transform .15s ease,box-shadow .15s ease;animation:rpg-tf-in .18s ease;}
 .rpg-tf-card + .rpg-tf-card{margin-top:-3px;}
 .rpg-tf-card.is-mag{transform:scale(1.035);box-shadow:0 12px 30px rgba(0,0,0,.6);position:relative;z-index:4;}
+.rpg-tf-card.is-pinned{border-color:rgba(201,100,66,.6);}
 .rpg-tf-card.is-open{position:relative;z-index:3;}
 @keyframes rpg-tf-in{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
 .rpg-tf-row{display:flex;align-items:center;gap:8px;}
@@ -38,6 +40,7 @@ const CSS = `
   border-radius:50%;animation:rpg-tf-rot .8s linear infinite;flex:none;}
 @keyframes rpg-tf-rot{to{transform:rotate(360deg);}}
 .rpg-tf-name{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;}
+.rpg-tf-pin{flex:none;font-size:11px;opacity:.55;}
 .rpg-tf-cancel{flex:none;background:none;border:none;color:#d98a6e;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:4px;}
 .rpg-tf-cancel:hover{color:#e8a98f;background:rgba(201,100,66,.12);}
 .rpg-tf-detail{overflow:hidden;max-height:0;opacity:0;transition:max-height .2s ease,opacity .18s ease,margin-top .2s ease;}
@@ -67,8 +70,9 @@ export default function GlobalTaskFloater() {
   const { useState, useEffect, useRef } = React;
   const [tasks, setTasks] = useState([]);
   const [fetchedAt, setFetchedAt] = useState(0);
-  const [mode, setMode] = useState('dot');     // 'dot' | 'stack' | 'expanded'
-  const [hoveredId, setHoveredId] = useState(null);
+  const [hovering, setHovering] = useState(false);
+  const [pinnedId, setPinnedId] = useState(null);
+  const [hoveredCardId, setHoveredCardId] = useState(null);
   const [, tick] = useState(0);
   const mounted = useRef(true);
   const prevActive = useRef(new Set());
@@ -137,20 +141,27 @@ export default function GlobalTaskFloater() {
     return () => clearInterval(id);
   }, [active.length]);
 
-  // 无活跃任务 → 复位成圆点
+  // 无活跃任务 → 复位
   useEffect(() => {
-    if (active.length === 0) { setMode('dot'); setHoveredId(null); }
+    if (active.length === 0) { setHovering(false); setPinnedId(null); setHoveredCardId(null); }
   }, [active.length]);
 
-  // 展开态(已激活):点浮窗外 → 收回圆点
+  // 被固定的卡若已结束 → 解除固定
   useEffect(() => {
-    if (mode !== 'expanded') return undefined;
+    if (pinnedId && !active.some((t) => t.id === pinnedId)) setPinnedId(null);
+  }, [tasks, pinnedId]);
+
+  // 有固定卡时:点浮窗外 → 取消固定并收回
+  useEffect(() => {
+    if (!pinnedId) return undefined;
     const onDown = (e) => {
-      if (rootRef.current && !rootRef.current.contains(e.target)) { setMode('dot'); setHoveredId(null); }
+      if (rootRef.current && !rootRef.current.contains(e.target)) {
+        setPinnedId(null); setHovering(false); setHoveredCardId(null);
+      }
     };
     document.addEventListener('mousedown', onDown, true);
     return () => document.removeEventListener('mousedown', onDown, true);
-  }, [mode]);
+  }, [pinnedId]);
 
   if (active.length === 0) return null;
   const portalTarget = typeof document !== 'undefined' ? document.body : null;
@@ -169,10 +180,12 @@ export default function GlobalTaskFloater() {
     }
   };
 
+  const stackVisible = hovering || pinnedId != null;
   const nowMs = Date.now();
+
   const renderCard = (t) => {
-    const open = mode === 'expanded' || (mode === 'stack' && hoveredId === t.id);
-    const mag = mode === 'stack' && hoveredId === t.id;
+    const pinned = pinnedId === t.id;
+    const open = pinned || hoveredCardId === t.id;   // 详情:固定 或 悬停
     const elapsed = fmtElapsed((t.elapsed_sec || 0) + (fetchedAt ? (nowMs - fetchedAt) / 1000 : 0));
     const hasProg = t.progress != null && t.progress_total;
     const pct = hasProg ? Math.max(0, Math.min(100, Math.round((t.progress / t.progress_total) * 100))) : 0;
@@ -183,13 +196,16 @@ export default function GlobalTaskFloater() {
     return (
       <div
         key={t.id}
-        className={`rpg-tf-card${open ? ' is-open' : ''}${mag ? ' is-mag' : ''}`}
-        onMouseEnter={() => { if (mode === 'stack') setHoveredId(t.id); }}
-        onClick={(e) => { e.stopPropagation(); setMode('expanded'); }}
+        className={`rpg-tf-card${open ? ' is-open is-mag' : ''}${pinned ? ' is-pinned' : ''}`}
+        onMouseEnter={() => setHoveredCardId(t.id)}
+        onMouseLeave={() => setHoveredCardId((id) => (id === t.id ? null : id))}
+        onClick={(e) => { e.stopPropagation(); setPinnedId((p) => (p === t.id ? null : t.id)); }}
+        title={pinned ? '已固定，单击取消固定' : '单击固定'}
       >
         <div className="rpg-tf-row">
           <span className="rpg-tf-spin" aria-hidden="true" />
           <span className="rpg-tf-name" title={t.title}>{t.title}</span>
+          {pinned && <span className="rpg-tf-pin" aria-hidden="true">📌</span>}
           {open && t.cancelable && !canceling && (
             <button className="rpg-tf-cancel" onClick={(e) => { e.stopPropagation(); cancelTask(t); }}>取消</button>
           )}
@@ -211,19 +227,19 @@ export default function GlobalTaskFloater() {
     <div
       className="rpg-tf"
       ref={rootRef}
-      onMouseEnter={() => setMode((m) => (m === 'dot' ? 'stack' : m))}
-      onMouseLeave={() => { setHoveredId(null); setMode((m) => (m === 'expanded' ? m : 'dot')); }}
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => { setHovering(false); setHoveredCardId(null); }}
     >
-      {mode === 'dot' ? (
+      {stackVisible ? (
+        active.map(renderCard)
+      ) : (
         <button
           type="button"
           className="rpg-tf-dot"
           aria-label={active.length + ' 个后台任务'}
           title={active.length + ' 个后台任务进行中'}
-          onClick={() => setMode('expanded')}
+          onClick={() => setPinnedId(active[0] ? active[0].id : null)}
         >⋯</button>
-      ) : (
-        active.map(renderCard)
       )}
     </div>
   );
