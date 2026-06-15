@@ -487,9 +487,13 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
   }, []);
 
   // AgentModelPicker 选中变化:① 回填 selectedKey 给 EffortSection;② 通知父组件刷新底部标签。
-  const handlePicked = (apiId, modelReal) => {
+  // source='init' 是「挂载时解析出当前模型」的回声(并非用户换模型)—— 此时只回填 selectedKey,
+  // 【绝不】onPick(=toggleModel 关闭浮层)或刷新,否则浮层一打开就被这条回声立刻关掉(用户反馈:
+  // 点开闪一下「无模型」就消失)。只有 source='user'(用户真的点选/手填)才关闭并刷新。
+  const handlePicked = (apiId, modelReal, source) => {
     if (!apiId || !modelReal) return;
     setSelectedKey(`${apiId}::${modelReal}`);
+    if (source !== 'user') return;
     // 存档级切换也要刷新当前 tab gameState,让底部标签立刻看到新模型。
     try { window.dispatchEvent(new CustomEvent("game-state-refresh")); } catch (_) {}
     onPick && onPick(modelReal);

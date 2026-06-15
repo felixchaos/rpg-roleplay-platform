@@ -296,9 +296,12 @@ function ModelSheetBody({ gc, onClose }) {
   const saveId = (gc.activeSave && gc.activeSave.id)
     || (gc.game && gc.game._raw && gc.game._raw.save_id)
     || null;
-  const onPicked = (apiId, modelReal) => {
+  const onPicked = (apiId, modelReal, source) => {
     if (!apiId || !modelReal) return;
     gc.setModel && gc.setModel({ id: modelReal, api_id: apiId, label: modelReal });
+    // source='init' 是挂载时「当前模型」回声(非用户换模型)—— 只回填底部 chip,绝不关 sheet/弹 toast/刷新,
+    // 否则 sheet 一打开就被这条回声立刻关掉(与桌面 ModelPopover 同一个 bug)。只有 'user' 才收口。
+    if (source !== 'user') return;
     try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
     window.__apiToast?.(`GM 模型 → ${modelReal}`, { kind: 'ok', duration: 1500 });
     onClose();

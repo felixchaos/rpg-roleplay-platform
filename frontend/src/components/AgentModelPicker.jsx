@@ -116,6 +116,7 @@ export default function AgentModelPicker({
   const [reloadTick, setReloadTick] = useState(0);    // 凭据变更后强制重拉(issue #22)
   const [popOpen, setPopOpen] = useState(false);      // variant="popover" 浮层开关
   const [popQuery, setPopQuery] = useState('');       // popover 搜索词
+  const [loaded, setLoaded] = useState(false);        // 模型/凭据首拉是否完成(区分「加载中」与「真的没模型」)
   const popRef = useState(() => React.createRef())[0];
   const popTriggerRef = useState(() => React.createRef())[0];
 
@@ -217,7 +218,9 @@ export default function AgentModelPicker({
         setApiId(chosenApi);
         setModel(chosenModel);
         // 把解析出的当前 provider+model 告知父组件(父拿它提交),与展示完全一致,不依赖 persistOnMount。
-        if (chosenApi && chosenModel) onChange && onChange(chosenApi, chosenModel);
+        // source='init':这是「挂载时解析出的当前模型回声」,不是用户真的换了模型 ——
+        // 游戏内浮层据此【不关闭/不刷新】(否则一打开就被这条回声关掉,见 game-composer / MobileGame)。
+        if (chosenApi && chosenModel) onChange && onChange(chosenApi, chosenModel, 'init');
         // 无偏好时把解析出的一致默认写回(仅当 provider+model 都有效),避免"显示一套、后端用另一套"。
         // persistOnMount 只对 flat shape 有意义(dict/models_select/allowInherit 不在挂载时强写)。
         if (persistOnMount && persistShape === 'flat' && !allowInherit
@@ -229,7 +232,7 @@ export default function AgentModelPicker({
             });
           } catch (_) { /* 静默 */ }
         }
-      } catch (_) {}
+      } catch (_) {} finally { if (!cancelled) setLoaded(true); }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -254,7 +257,7 @@ export default function AgentModelPicker({
           [`${prefPrefix}.model_real_name`]: m,
         });
       }
-      onChange && onChange(aid, m);
+      onChange && onChange(aid, m, 'user');   // 用户真的换了模型 → 浮层据此关闭/刷新
     } catch (_) { /* 静默 */ } finally { setSaving(false); }
   };
 
@@ -272,7 +275,7 @@ export default function AgentModelPicker({
       }
       setInherit(true);
       setCustomSel(false);
-      onChange && onChange(null, null);
+      onChange && onChange(null, null, 'user');
     } catch (_) { /* 静默 */ } finally { setSaving(false); }
   };
 
@@ -495,7 +498,11 @@ export default function AgentModelPicker({
         </div>
         <ul className="amp-pop-list">
           {filtered.length === 0 && (
-            <li className="amp-pop-empty">{q ? `没有匹配「${popQuery}」的模型` : '没有可用模型(先配 API key)'}</li>
+            <li className="amp-pop-empty">{
+              !loaded ? '加载模型中…'
+                : q ? `没有匹配「${popQuery}」的模型`
+                : '没有可用模型(先配 API key)'
+            }</li>
           )}
           {filtered.map((m) => {
             const key = `${m.api_id}::${m.real_name}`;
