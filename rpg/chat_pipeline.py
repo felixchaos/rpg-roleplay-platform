@@ -836,6 +836,29 @@ async def run_rules_phase(
             pass
 
 
+async def _run_anchor_reconcile(ctx: Any, api_user: dict | None, response: str) -> int:
+    """每回合确定性「世界线锚点」兜底判定(task: anchor auto-reconcile)。
+
+    在 GM 本轮工具调用 + JSON op apply 之后跑(GM 自调过的锚点已 occurred、不在 pending),
+    把本回合剧情【明确到达】的 pending 锚点确定性标记 occurred/variant。
+
+    全程不破回合:reconcile 内部已 try/except 吞掉一切异常;这里再包一层兜底。
+    成本门控/保守判定/防剧透/确定性落库全在 reconcile 内部。返回标记数(供 SSE 事件)。
+    """
+    try:
+        _save_id = ctx.active_save_id or ctx.early_active_save_id or 0
+        _user_id = ctx.persist_user_id or (int(api_user["id"]) if api_user else 0)
+        if not _save_id or not _user_id or not (response or "").strip():
+            return 0
+        from gm_serving.anchor_reconcile import reconcile_anchors_for_turn
+        return await asyncio.to_thread(
+            reconcile_anchors_for_turn, int(_save_id), int(_user_id), response,
+        )
+    except Exception as _rec_err:
+        log.warning(f"[chat] anchor reconcile 跳过(不影响回合): {_rec_err}")
+        return 0
+
+
 # ---------------------------------------------------------------------------
 # Phase 4: GM 主响应 (流式 token + tool_call + 后处理 extractor / acceptance)
 # ---------------------------------------------------------------------------
@@ -1255,6 +1278,14 @@ async def run_gm_phase(
             except Exception as _apply_err:
                 log.warning(f"[chat] async apply_structured_updates 失败,退回 directive_updates: {_apply_err}")
                 ctx._updates = ctx.directive_updates[:]
+            # 每回合确定性锚点兜底(GM 自调工具 + JSON op 已 apply,已 occurred 不在 pending)。
+            _rec_marked = await _run_anchor_reconcile(ctx, api_user, response)
+            if _rec_marked:
+                yield ("agent", {
+                    "phase": "anchor_reconcile",
+                    "message": f"世界线锚点确定性兜底:本回合自动标记 {_rec_marked} 个原著锚点已到达",
+                    "status": "done", "elapsed_ms": 0, "marked": _rec_marked,
+                })
             return
     # ── 同步后处理路径 (sync 模式 or enqueue 失败降级) ─────────────────────
 
@@ -1438,6 +1469,16 @@ async def run_gm_phase(
     ctx.response = response
     # 用 ctx.__dict__ 也行,这里直接挂属性
     ctx._updates = updates
+
+    # 每回合确定性锚点兜底(放在 GM 工具 / JSON op apply / acceptance retry 之后跑,
+    # 用最终 response;GM 自调过的锚点已 occurred 不在 pending,天然不重复)。
+    _rec_marked = await _run_anchor_reconcile(ctx, api_user, response)
+    if _rec_marked:
+        yield ("agent", {
+            "phase": "anchor_reconcile",
+            "message": f"世界线锚点确定性兜底:本回合自动标记 {_rec_marked} 个原著锚点已到达",
+            "status": "done", "elapsed_ms": 0, "marked": _rec_marked,
+        })
 
 
 # ---------------------------------------------------------------------------
