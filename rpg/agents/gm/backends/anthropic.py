@@ -62,11 +62,13 @@ class _AnthropicBackend:
         except Exception:
             byok_only = True  # 配置读不到时按更保守的生产策略
         env_fb = "" if (byok_only and user_id) else "ANTHROPIC_API_KEY"
+        # ANTHROPIC_API_KEY 的 env 回退已由 resolve_api_key(env_fallback) 在非 byok_only 下完成,
+        # 不再重复 os.environ 取一次。仅 EMBED_API_KEY 是 resolve_api_key 不覆盖的历史遗留二次回退。
         result = resolve_api_key(user_id, "anthropic", env_fallback=env_fb)
         key = result.get("key")
         if not key and not byok_only:
             # 仅本地/匿名开发模式才看 EMBED_API_KEY 这种历史遗留 fallback
-            key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("EMBED_API_KEY")
+            key = os.environ.get("EMBED_API_KEY")
         if not key:
             raise ValueError(
                 "Anthropic API key 未配置。请在「设置 → API 设置」添加你自己的 Anthropic API Key。"

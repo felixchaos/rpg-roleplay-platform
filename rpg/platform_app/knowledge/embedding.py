@@ -569,8 +569,8 @@ def embed_query(
         log.warning("[embedding] embed_query returned no vectors")
         return None
     vec = vecs[0]
-    # pgvector 接受 "[v1,v2,...]" 字符串
-    return "[" + ",".join(f"{v:.6f}" for v in vec) + "]"
+    # pgvector 接受 "[v1,v2,...]" 字符串。单一真源 _vec_literal(模块级,call-time 解析)。
+    return _vec_literal(vec)
 
 
 def _vec_literal(v: list[float]) -> str:

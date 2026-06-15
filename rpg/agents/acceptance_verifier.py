@@ -27,6 +27,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from core.llm_backend import (
+    DEFAULT_FALLBACK_API as _DEFAULT_FALLBACK_API,
+    DEFAULT_FALLBACK_MODEL as _DEFAULT_FALLBACK_MODEL,
+)
 from core.logging import get_logger
 
 log = get_logger(__name__)
@@ -180,13 +184,13 @@ def verify_acceptance_llm(
         api_id_override
         or _resolve_preferred_verifier_api(user_id)
         or _extractor._resolve_preferred_extractor_api(user_id)
-        or "vertex_ai"
+        or _DEFAULT_FALLBACK_API
     )
     model = (
         model_override
         or _resolve_preferred_verifier_model(user_id)
         or _extractor._resolve_preferred_extractor_model(user_id)
-        or "gemini-3.5-flash"
+        or _DEFAULT_FALLBACK_MODEL
     )
 
     user_prompt = _build_user_prompt(acceptance, response_text, updates or [])

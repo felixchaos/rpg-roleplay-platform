@@ -185,12 +185,13 @@ def _ensure_curated_embeddings(catalog: dict[str, Any]) -> dict[str, Any]:
     (幂等、按 real_name 去重、只改内存不落库),让新增 embedding 自愈生效。
     """
     try:
+        from model_probe import is_embedding_model  # lazy: model_probe imports model_registry
         default_by_id = {normalize_api_id(a.get("id")): a for a in DEFAULT_MODEL_CATALOG["apis"]}
         for api in catalog.get("apis", []):
             d = default_by_id.get(normalize_api_id(api.get("id")))
             if not d:
                 continue
-            curated = [m for m in (d.get("models") or []) if "embedding" in (m.get("capabilities") or [])]
+            curated = [m for m in (d.get("models") or []) if is_embedding_model(m)]
             if not curated:
                 continue
             have = {(m.get("real_name") or m.get("id")) for m in (api.get("models") or [])}
@@ -294,10 +295,11 @@ def apply_user_overlay(catalog: dict[str, Any], user_id: int | None) -> dict[str
                 # 保留全局菜单里该 provider 人工策展的 embedding 模型:模型同步通常只抓
                 # chat 模型(provider 的 /models 多不列 embedding),若被 overlay 直接覆盖,
                 # RAG 向量模型选择器就会空 → 用户配了 key 也选不到 embedding。
+                from model_probe import is_embedding_model  # lazy: model_probe imports model_registry
                 synced_names = {(m.get("real_name") or m.get("id")) for m in cleaned}
                 curated_embeds = [
                     m for m in (existing.get("models") or [])
-                    if "embedding" in (m.get("capabilities") or [])
+                    if is_embedding_model(m)
                     and (m.get("real_name") or m.get("id")) not in synced_names
                 ]
                 existing["models"] = cleaned + curated_embeds
@@ -456,6 +458,36 @@ def delete_model(api_id: str, model_id: str) -> dict[str, Any]:
 def find_api(catalog: dict[str, Any], api_id: str | None) -> dict[str, Any] | None:
     target = normalize_api_id(api_id)
     return next((api for api in catalog.get("apis", []) if normalize_api_id(api.get("id")) == target), None)
+
+
+def base_url_for(api_id: str | None) -> str:
+    """从 live catalog 取该 provider 的 base_url（OpenAI 兼容兜底用）。
+
+    单一真源:_harness / extractor / command_agent 三处 _api_base_url 字节级重复 →
+    统一收到这里。异常或缺失返回空串(调用方据此判断"未知 base_url")。
+
+    注意:与 embedding.py 用 default_api_for(静态 DEFAULT 模板)取 base_url 数据源不同
+    —— 那处是【有意】防误连 api.openai.com,不走 live catalog,不收编到此。
+    """
+    try:
+        api = find_api(load_model_catalog(), api_id)
+        return api.get("base_url", "") if api else ""
+    except Exception:
+        return ""
+
+
+def api_kind(api_id: str | None) -> str:
+    """从 live catalog 取该 provider 的 kind;缺失/异常时退回 api_id 本身。
+
+    等价于散落各处的 `(api or {}).get("kind") or api_id`。纯查表 —— 不含
+    master.py 的中转站特判(catalog 无该 api 但用户凭证带 base_url_override →
+    强制 openai_compat),那是本函数的超集,保留在 GameMaster 构造一层。
+    """
+    try:
+        api = find_api(load_model_catalog(), api_id) or {}
+        return str(api.get("kind") or api_id)
+    except Exception:
+        return str(api_id)
 
 
 def find_model(api: dict[str, Any] | None, model_id: str | None) -> dict[str, Any] | None:

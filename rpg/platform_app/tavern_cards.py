@@ -36,6 +36,8 @@ import struct
 import zlib
 from typing import Any
 
+from core.llm_backend import DEFAULT_FALLBACK_API, DEFAULT_FALLBACK_MODEL
+
 
 # 标签 → 字段映射。同时覆盖两类 label：
 #   · 叶子标签（W++ 的 Age/Occupation、扁平 colon 的「身份/外貌」）
@@ -510,8 +512,8 @@ def llm_structure_description(
         user_id,
         api_pref_key="card_import.api_id",
         model_pref_key="card_import.model_real_name",
-        default_api="vertex_ai",
-        default_model="gemini-3.5-flash",
+        default_api=DEFAULT_FALLBACK_API,
+        default_model=DEFAULT_FALLBACK_MODEL,
         api_id_override=api_id_override or None,
         model_override=model_override or None,
     )

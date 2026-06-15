@@ -4,6 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from core.llm_backend import DEFAULT_FALLBACK_API, DEFAULT_FALLBACK_MODEL
+
 from .. import script_import
 from ..db import connect
 from ._deps import json_response, require_user
@@ -320,8 +322,8 @@ async def api_script_import_budget(request: Request, script_id: int, user=Depend
         enable_cards=bool(body.get("enable_cards", True)),
         enable_worldbook=bool(body.get("enable_worldbook", True)),
         cards_top_n=int(body.get("cards_top_n", 30)),
-        model_api_id=body.get("model_api_id") or "vertex_ai",
-        model_real_name=body.get("model_real_name") or "gemini-3.5-flash",
+        model_api_id=body.get("model_api_id") or DEFAULT_FALLBACK_API,
+        model_real_name=body.get("model_real_name") or DEFAULT_FALLBACK_MODEL,
     ))
 
 

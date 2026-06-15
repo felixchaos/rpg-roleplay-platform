@@ -837,18 +837,11 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = 
             if api_user and (api_user.get("user_id") or api_user.get("id")):
                 try:
                     _uid_g = int(api_user.get("user_id") or api_user.get("id"))
-                    from core.llm_backend import first_user_model as _fum
-                    _ud = _fum(_uid_g)
-                    if _ud and _gm_api_id and _gm_api_id != _ud[0]:
-                        from platform_app.user_credentials import get_credential as _gc
-                        if _gm_api_id == "vertex_ai":
-                            from core.vertex_sa import has_user_sa as _hsa
-                            _ok = _hsa(_uid_g)
-                        else:
-                            _ok = bool(_gc(_uid_g, _gm_api_id))
-                        if not _ok:
-                            _gm_api_id, _gm_model_id = _ud
-                            log.info(f"[ensure_loaded] BYOK 守卫:{uid} 模型回退到 {_gm_api_id}/{_gm_model_id}(原解析不可用)")
+                    from core.llm_backend import guard_byok_usable as _guard_byok
+                    _new_api, _new_model = _guard_byok(_uid_g, _gm_api_id, _gm_model_id)
+                    if (_new_api, _new_model) != (_gm_api_id, _gm_model_id):
+                        _gm_api_id, _gm_model_id = _new_api, _new_model
+                        log.info(f"[ensure_loaded] BYOK 守卫:{uid} 模型回退到 {_gm_api_id}/{_gm_model_id}(原解析不可用)")
                 except Exception as _ge:
                     log.warning(f"[ensure_loaded] BYOK 守卫异常(忽略): {_ge}")
             _lru_set(_gm_by_user, uid, GameMaster(
@@ -2216,17 +2209,8 @@ def _resolve_console_assistant_backend(api_user: dict[str, Any] | None):
     if api_user and api_user.get("id"):
         try:
             _uid_c = int(api_user["id"])
-            from core.llm_backend import first_user_model as _fum_c
-            _ud_c = _fum_c(_uid_c)
-            if _ud_c and api_id and api_id != _ud_c[0]:
-                from platform_app.user_credentials import get_credential as _gc_c
-                if api_id == "vertex_ai":
-                    from core.vertex_sa import has_user_sa as _hsa_c
-                    _ok_c = _hsa_c(_uid_c)
-                else:
-                    _ok_c = bool(_gc_c(_uid_c, api_id))
-                if not _ok_c:
-                    api_id, model_real = _ud_c
+            from core.llm_backend import guard_byok_usable as _guard_byok_c
+            api_id, model_real = _guard_byok_c(_uid_c, api_id, model_real)
         except Exception:
             pass
     # 用 GameMaster 构造 backend, 再借用其 ._backend

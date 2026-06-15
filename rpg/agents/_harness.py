@@ -499,12 +499,9 @@ def _openai_usage(u: dict) -> dict:
 
 
 def _api_base_url(api_id: str) -> str:
-    try:
-        from model_registry import find_api, load_model_catalog
-        api = find_api(load_model_catalog(), api_id)
-        return api.get("base_url", "") if api else ""
-    except Exception:
-        return ""
+    # 薄委托 → model_registry.base_url_for(单一真源:live catalog 取 base_url,异常返空)。
+    from model_registry import base_url_for
+    return base_url_for(api_id)
 
 
 # ── 模型偏好解析(给三个 agent 的 api_id/model 优先级解析共用)──────
@@ -514,8 +511,8 @@ def resolve_api_and_model(
     *,
     api_pref_key: str,
     model_pref_key: str,
-    default_api: str = "vertex_ai",
-    default_model: str = "gemini-3.5-flash",
+    default_api: str | None = None,
+    default_model: str | None = None,
     api_id_override: str | None = None,
     model_override: str | None = None,
 ) -> tuple[str, str]:
@@ -533,10 +530,16 @@ def resolve_api_and_model(
     避免用户重复配 5 个命名空间。
     """
     from core.llm_backend import (
+        DEFAULT_FALLBACK_API as _DEFAULT_FALLBACK_API,
+        DEFAULT_FALLBACK_MODEL as _DEFAULT_FALLBACK_MODEL,
         first_user_model as _first_user_model,
+        guard_byok_usable as _guard_byok_usable,
         resolve_preferred_api as _resolve_api,
         resolve_preferred_model as _resolve_model,
     )
+    # 兜底默认统一引用 catalog.selected 对齐的常量(消除散落 'vertex_ai'/'gemini-3.5-flash' 漂移)。
+    default_api = default_api or _DEFAULT_FALLBACK_API
+    default_model = default_model or _DEFAULT_FALLBACK_MODEL
     user_default = _first_user_model(user_id)
     api_id = (
         api_id_override
@@ -556,19 +559,10 @@ def resolve_api_and_model(
     # 但用户没传 SA / 没配该 provider 的 key)→ 回退到用户配过 key 的第一个模型。
     # 否则所有 harness 子代理(curator / acceptance / extractor / 黑天鹅)对没 SA 的
     # 用户都会抛「未找到 Vertex SA」而整段失败。显式 override 不受此守卫影响。
-    if not (api_id_override or model_override) and user_id and user_default and api_id and api_id != user_default[0]:
-        try:
-            from platform_app.user_credentials import get_credential
-            if api_id == "vertex_ai":
-                from core.vertex_sa import has_user_sa
-                _usable = has_user_sa(user_id)
-            else:
-                _usable = bool(get_credential(user_id, api_id))
-        except Exception:
-            _usable = True
-        if not _usable:
-            api_id, model = user_default[0], user_default[1]
-    return api_id, model
+    return _guard_byok_usable(
+        user_id, api_id, model,
+        allow_override=bool(api_id_override or model_override),
+    )
 
 
 def call_agent_tool_loop(

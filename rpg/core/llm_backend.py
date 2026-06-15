@@ -14,6 +14,19 @@ from __future__ import annotations
 from typing import Optional
 
 
+# 全局「便宜 vertex 默认」单一真源 —— 各调用点(command_agent / set_parser / _harness /
+# extractor / acceptance_verifier / import_pipeline / tavern_cards / GameMaster …)的兜底
+# 默认统一引用这两个常量,消除 2.5/3.5 漂移。
+#
+# 值 = 项目现行『当前默认』(model_probe.py:58 标注 gemini-3.5-flash『2026-05-19 当前默认』,
+# 且全部姊妹调用点的硬编码兜底都是它)。**故意不读 DEFAULT_MODEL_CATALOG["selected"]**:那是
+# 「全局 selected_model」模板(live DB 里是 anthropic/claude-opus-4-7),语义=平台默认主模型,
+# 与这里的「便宜 vertex 子代理兜底」是两个不同概念。把兜底锚到 selected 会让最后兜底随主模型
+# 漂成 2.5/opus,与 gemini-3.5-flash 的现行默认不一致(即上一轮引入的 blocker)。
+DEFAULT_FALLBACK_API = "vertex_ai"
+DEFAULT_FALLBACK_MODEL = "gemini-3.5-flash"
+
+
 def detect_default_api() -> str:
     """启动时检测可用 backend: 优先 vertex_ai (SA 文件), 然后 anthropic (env key)."""
     import os as _os
@@ -217,9 +230,95 @@ def resolve_preferred_api(
         return None
 
 
+def _provider_usable_strict(user_id: int, api_id: str) -> bool:
+    """三态核心:用户是否实际可用此 provider(有自己配的凭证)。
+
+    单一真源(上提自 import_pipeline._has_user_llm_credential):
+      · vertex_ai(含 kind=vertex_ai 的别名)→ 用户上传过 BYOK Service Account
+      · 其它 → user_api_credentials 里有非空 key
+
+    **不吞异常**:可用性可被确定时返回 True/False;凭证/SA 校验发生瞬时异常(DB 连接、
+    解密失败等)时**向上抛**,代表「不可判定」。由调用方决定如何处理这一第三态:
+      · user_can_use_provider(公开 bool 包装)→ 捕获后返回 False(保守拦截,沿用旧契约,
+        供 model_probe / import_pipeline 薄委托)。
+      · guard_byok_usable(BYOK 守卫)→ 捕获后保留已解析模型(不回退),与被收编的原四处
+        内联守卫语义一致(可用性判定本身出错时不回退)。
+    """
+    from model_registry import api_kind
+    # vertex:直接查凭证(不经 has_user_sa,它会把异常吞成 False、抹掉「不可判定」第三态)。
+    if api_kind(api_id) == "vertex_ai" or api_id == "vertex_ai":
+        from platform_app.user_credentials import get_credential
+        cred = get_credential(int(user_id), "AgentPlatform")
+        return bool(cred and cred.get("key"))
+    from platform_app.user_credentials import get_credential
+    cred = get_credential(int(user_id), api_id)
+    return bool(cred and cred.get("key"))
+
+
+def user_can_use_provider(user_id: Optional[int], api_id: str) -> bool:
+    """该用户是否实际可用此 provider(有自己配的凭证)。公开 bool 契约。
+
+    薄包装 _provider_usable_strict:任何异常(含「不可判定」第三态)视为 → False
+    (保守:宁可触发回退也不放行不可用 provider)。供 model_probe / import_pipeline
+    的薄委托,以及不需要区分「不可判定」的调用方使用。
+    """
+    if not user_id:
+        return False
+    try:
+        return _provider_usable_strict(int(user_id), api_id)
+    except Exception:
+        return False
+
+
+def guard_byok_usable(
+    user_id: Optional[int],
+    api_id: str | None,
+    model: str | None,
+    *,
+    allow_override: bool = False,
+) -> tuple[str, str]:
+    """BYOK 守卫:解析出的 (api_id, model) 用户实际不可用时,回退到用户配过 key 的第一个模型。
+
+    收编四处逐字内联守卫(app.py 主 GM / app.py 控制台助手 / _harness 子代理 /
+    command_agent /set)。语义:
+      · allow_override=True(调用方显式传了 override)→ 不触发守卫,原样返回。
+      · 否则:有 user_id + 有 user_default(first_user_model) + api_id 与 user_default 不同
+        + 该 provider 用户不可用(user_can_use_provider)→ 返回 user_default。
+      · 其余情况原样返回 (api_id, model)。
+
+    返回值始终是 (str, str)。
+    """
+    api_id = str(api_id or "")
+    model = str(model or "")
+    if allow_override:
+        return api_id, model
+    if not (user_id and api_id):
+        return api_id, model
+    user_default = first_user_model(user_id)
+    if not user_default:
+        return api_id, model
+    if api_id == user_default[0]:
+        return api_id, model
+    # 与原四处内联守卫一致:可用性判定本身出错时**不**回退(保守保留已解析模型)。
+    # 这里必须调三态核心 _provider_usable_strict —— 它在「不可判定」时**抛**,使下面的
+    # except 真正生效(usable=True → 不回退)。若改调 user_can_use_provider,后者已把异常
+    # 吞成 False,except 永不触发=死代码,且会把瞬时异常误判为「不可用」而回退,违反契约。
+    try:
+        usable = _provider_usable_strict(int(user_id), api_id)
+    except Exception:
+        usable = True
+    if not usable:
+        return user_default[0], user_default[1]
+    return api_id, model
+
+
 __all__ = [
+    "DEFAULT_FALLBACK_API",
+    "DEFAULT_FALLBACK_MODEL",
     "detect_default_api",
     "first_user_model",
     "resolve_preferred_model",
     "resolve_preferred_api",
+    "user_can_use_provider",
+    "guard_byok_usable",
 ]

@@ -44,3 +44,14 @@ def normalize_api_id(api_id: str | None) -> str:
     if not value:
         return ""
     return _API_ID_ALIASES.get(value) or _API_ID_ALIASES.get(value.lower()) or value
+
+
+def credential_storage_api_id(api_id: str) -> str:
+    """canonical api_id → 凭证寻址 api_id（与 normalize_api_id **方向相反**)。
+
+    ⚠️ 职责独立、不可与 normalize_api_id 合并:normalize 是 别名→canonical,
+    本函数是 canonical→AgentPlatform 凭证存储键(Vertex 的 BYOK SA 存在
+    user_api_credentials 的 "AgentPlatform" 行下,而非 "vertex_ai")。
+    其它 provider 凭证存储键即 canonical 本身。
+    """
+    return "AgentPlatform" if api_id == "vertex_ai" else api_id

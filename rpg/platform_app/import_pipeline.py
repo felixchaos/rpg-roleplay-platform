@@ -26,6 +26,8 @@ from psycopg.types.json import Jsonb
 
 from .db import connect, expose, init_db
 from .perms import script_owned
+from core.llm_backend import DEFAULT_FALLBACK_API, DEFAULT_FALLBACK_MODEL
+from model_aliases import credential_storage_api_id, normalize_api_id
 
 # ── 阶段定义 ────────────────────────────────────────────────────────
 # v29 (一站完成): wizard 末尾 chain LLM extract + 嵌入 → 用户上传后所有模块齐备
@@ -93,8 +95,8 @@ def estimate_budget(
     enable_cards: bool = True,
     enable_worldbook: bool = True,
     cards_top_n: int = 30,
-    model_api_id: str = "vertex_ai",
-    model_real_name: str = "gemini-3.5-flash",
+    model_api_id: str = DEFAULT_FALLBACK_API,
+    model_real_name: str = DEFAULT_FALLBACK_MODEL,
 ) -> dict[str, Any]:
     """开始导入前的预算。
 
@@ -802,22 +804,16 @@ def _resolve_extractor_llm(user_id: int) -> tuple[str, str]:
         user_id,
         api_pref_key="extractor.api_id",
         model_pref_key="extractor.model_real_name",
-        default_api="vertex_ai",
-        default_model="gemini-3.5-flash",
+        default_api=DEFAULT_FALLBACK_API,
+        default_model=DEFAULT_FALLBACK_MODEL,
     )
-    return _normalize_llm_api_id(api_id), model
-
-
-def _normalize_llm_api_id(api_id: str) -> str:
-    """Normalize legacy/UI provider ids to backend catalog ids."""
-    value = (api_id or "").strip()
-    if value in {"vertex", "vertex_ai", "agent_platform", "AgentPlatform"}:
-        return "vertex_ai"
-    return value
+    # 别名→canonical 统一走全量别名表(原 _normalize_llm_api_id 只覆盖 vertex 残缺子集)。
+    return normalize_api_id(api_id), model
 
 
 def _credential_api_id_for(api_id: str) -> str:
-    return "AgentPlatform" if api_id == "vertex_ai" else api_id
+    # 薄委托:canonical→凭证寻址(Vertex 存 "AgentPlatform" 行)。与 normalize_api_id 方向相反。
+    return credential_storage_api_id(api_id)
 
 
 def require_user_llm_credential(user_id: int) -> dict[str, str]:
@@ -831,30 +827,10 @@ def require_user_llm_credential(user_id: int) -> dict[str, str]:
     }
 
 
-def _api_kind(api_id: str) -> str:
-    try:
-        from model_registry import find_api, load_model_catalog
-        api = find_api(load_model_catalog(), api_id) or {}
-        return str(api.get("kind") or api_id)
-    except Exception:
-        return api_id
-
-
 def _has_user_llm_credential(user_id: int | None, api_id: str) -> bool:
-    if not user_id:
-        return False
-    if _api_kind(api_id) == "vertex_ai" or api_id == "vertex_ai":
-        try:
-            from core.vertex_sa import has_user_sa
-            return has_user_sa(int(user_id), "AgentPlatform")
-        except Exception:
-            return False
-    try:
-        from platform_app.user_credentials import get_credential
-        cred = get_credential(int(user_id), api_id)
-        return bool(cred and cred.get("key"))
-    except Exception:
-        return False
+    # 薄委托 → core.llm_backend.user_can_use_provider(单一真源:vertex→BYOK SA / 其它→用户 key)。
+    from core.llm_backend import user_can_use_provider
+    return user_can_use_provider(user_id, api_id)
 
 
 def _require_user_llm_credential(user_id: int, api_id: str, model: str) -> None:

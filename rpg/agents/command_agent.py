@@ -134,18 +134,8 @@ def parse_set_command(
     # BYOK 守卫:解析出的 provider 用户实际不可用(典型:落到默认 vertex_ai 但用户没传 SA,
     # 或 stale set_parser 偏好指向没配 key 的 provider)→ 回退到用户配过 key 的第一个模型。
     # 否则 command_agent 抛「未找到 Vertex SA」→ /set 等命令解析整段失败(实测生产日志高频)。
-    if user_id and user_default and api_id and api_id != user_default[0]:
-        try:
-            from platform_app.user_credentials import get_credential
-            if api_id == "vertex_ai":
-                from core.vertex_sa import has_user_sa
-                _usable = has_user_sa(user_id)
-            else:
-                _usable = bool(get_credential(user_id, api_id))
-        except Exception:
-            _usable = True
-        if not _usable:
-            api_id, model = user_default[0], user_default[1]
+    from core.llm_backend import guard_byok_usable as _guard_byok_usable
+    api_id, model = _guard_byok_usable(user_id, api_id, model)
 
     user_prompt = _build_user_prompt(set_text, state_data)
 
@@ -252,13 +242,13 @@ def _call_openai_compat_tools(
     api_id: str, model: str, user_prompt: str, user_id: int | None, timeout_sec: int
 ) -> list[dict]:
     """OpenAI 兼容 JSON mode。"""
-    from agents.extractor import _api_base_url
+    from model_registry import base_url_for
     from platform_app.user_credentials import resolve_api_key
     cred = resolve_api_key(user_id, api_id)
     key = cred.get("key")
     if not key:
         raise RuntimeError(f"无 {api_id} 凭证 for command_agent")
-    base_url = cred.get("base_url_override") or _api_base_url(api_id)
+    base_url = cred.get("base_url_override") or base_url_for(api_id)
     if not base_url:
         raise RuntimeError(f"未知 base_url for {api_id}")
     import urllib.request
@@ -357,7 +347,8 @@ def _coerce_calls(parsed: Any) -> list[dict]:
 def _default_model_for_api(api_id: str) -> str:
     if api_id == "anthropic":
         return "claude-haiku-4-5-20251001"
-    return "gemini-3.5-flash"
+    from core.llm_backend import DEFAULT_FALLBACK_MODEL
+    return DEFAULT_FALLBACK_MODEL
 
 
 def _resolve_preferred_model(user_id: int | None) -> str | None:

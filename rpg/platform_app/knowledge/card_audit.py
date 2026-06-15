@@ -88,7 +88,6 @@ def _resolve_audit_model(user_id: int, api_id: str, model: str) -> tuple[str, st
     三步都拿不到 → 返回空,由调用方的凭证预检转 credentials_required 引导用户去配,绝不回落到
     某个写死的便宜档。
     """
-    from platform_app import import_pipeline
     from core.llm_backend import (
         first_user_model,
         resolve_preferred_api,
@@ -104,7 +103,8 @@ def _resolve_audit_model(user_id: int, api_id: str, model: str) -> tuple[str, st
         if fu:
             api_id = api_id or fu[0]
             model = model or fu[1]
-    return import_pipeline._normalize_llm_api_id(api_id) if api_id else "", model
+    from model_aliases import normalize_api_id
+    return normalize_api_id(api_id) if api_id else "", model
 
 
 def audit_character_cards(user_id: int, script_id: int, api_id: str = "", model: str = "",

@@ -501,42 +501,22 @@ def _select_backend(user_id: int | None, role: str = "generator"):
 
 def _resolve_preferred_model(user_id: int | None, role: str) -> str | None:
     """role = 'generator' → character_card_generator.model_real_name;
-    role = 'critic'   → critic.model_real_name。"""
-    if not user_id:
-        return None
+    role = 'critic'   → critic.model_real_name。
+
+    薄委托 → core.llm_backend.resolve_preferred_model:统一走 request cache +
+    _model_in_catalog 失效校验(偏好模型已下线/不在用户 catalog 时回退,不返回 stale
+    模型 —— 本批次修的 bug)。返回契约不变(model 字符串或 None);命名空间键不变。
+    """
+    from core.llm_backend import resolve_preferred_model
     key = "critic.model_real_name" if role == "critic" else "character_card_generator.model_real_name"
-    try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "select preferences from user_preferences where user_id = %s",
-                (int(user_id),),
-            ).fetchone()
-        if row and isinstance(row.get("preferences"), dict):
-            return row["preferences"].get(key) or None
-    except Exception:
-        return None
-    return None
+    return resolve_preferred_model(user_id, pref_key=key)
 
 
 def _resolve_preferred_api(user_id: int | None, role: str) -> str | None:
-    if not user_id:
-        return None
+    """薄委托 → core.llm_backend.resolve_preferred_api。失效校验同上;命名空间键不变。"""
+    from core.llm_backend import resolve_preferred_api
     key = "critic.api_id" if role == "critic" else "character_card_generator.api_id"
-    try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "select preferences from user_preferences where user_id = %s",
-                (int(user_id),),
-            ).fetchone()
-        if row and isinstance(row.get("preferences"), dict):
-            return row["preferences"].get(key) or None
-    except Exception:
-        return None
-    return None
+    return resolve_preferred_api(user_id, pref_key=key)
 
 
 def _parse_json_safely(text: str) -> dict | None:

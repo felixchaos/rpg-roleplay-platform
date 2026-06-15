@@ -35,6 +35,8 @@ import json
 import re
 
 from core.llm_backend import (
+    DEFAULT_FALLBACK_API as _DEFAULT_FALLBACK_API,
+    DEFAULT_FALLBACK_MODEL as _DEFAULT_FALLBACK_MODEL,
     resolve_preferred_api as _resolve_preferred_api_base,
     resolve_preferred_model as _resolve_preferred_model_base,
 )
@@ -151,8 +153,8 @@ def extract_state_ops(
     if not narrative_text or not narrative_text.strip():
         return []
 
-    api_id = api_id_override or _resolve_preferred_extractor_api(user_id) or "vertex_ai"
-    model = model_override or _resolve_preferred_extractor_model(user_id) or "gemini-3.5-flash"
+    api_id = api_id_override or _resolve_preferred_extractor_api(user_id) or _DEFAULT_FALLBACK_API
+    model = model_override or _resolve_preferred_extractor_model(user_id) or _DEFAULT_FALLBACK_MODEL
 
     try:
         text, backend_ref = _call_extractor_backend(
@@ -388,10 +390,6 @@ def _call_openai_compat_json_mode(
 
 
 def _api_base_url(api_id: str) -> str:
-    """从 catalog 拿 base_url 做 OpenAI-compat 兜底。"""
-    try:
-        from model_registry import find_api, load_model_catalog
-        api = find_api(load_model_catalog(), api_id)
-        return api.get("base_url", "") if api else ""
-    except Exception:
-        return ""
+    """从 live catalog 拿 base_url 做 OpenAI-compat 兜底。薄委托 → model_registry.base_url_for(单一真源)。"""
+    from model_registry import base_url_for
+    return base_url_for(api_id)

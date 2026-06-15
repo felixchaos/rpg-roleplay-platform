@@ -143,12 +143,19 @@ def parse_set_directive(
         return []
 
     try:
-        from core.llm_backend import first_user_model
+        from core.llm_backend import (
+            DEFAULT_FALLBACK_API,
+            DEFAULT_FALLBACK_MODEL,
+            first_user_model,
+        )
         user_default = first_user_model(user_id)
     except Exception:
         user_default = None
-    api_id = api_id_override or _resolve_preferred_api(user_id) or (user_default[0] if user_default else None) or "vertex_ai"
-    model = model_override or _resolve_preferred_model(user_id) or (user_default[1] if user_default else None) or "gemini-3.5-flash"
+        # import 失败时的硬编码兜底必须与 core.llm_backend.DEFAULT_FALLBACK_MODEL 同值
+        # (现行『当前默认』gemini-3.5-flash),否则又制造 2.5/3.5 漂移。
+        DEFAULT_FALLBACK_API, DEFAULT_FALLBACK_MODEL = "vertex_ai", "gemini-3.5-flash"
+    api_id = api_id_override or _resolve_preferred_api(user_id) or (user_default[0] if user_default else None) or DEFAULT_FALLBACK_API
+    model = model_override or _resolve_preferred_model(user_id) or (user_default[1] if user_default else None) or DEFAULT_FALLBACK_MODEL
 
     try:
         # 复用 extractor 的 backend dispatcher（同 schema 同协议同 fallback）
@@ -168,36 +175,17 @@ def parse_set_directive(
 
 
 def _resolve_preferred_model(user_id: int | None) -> str | None:
-    if not user_id:
-        return None
-    try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "select preferences from user_preferences where user_id = %s",
-                (user_id,),
-            ).fetchone()
-        if row and isinstance(row.get("preferences"), dict):
-            return row["preferences"].get("set_parser.model_real_name") or None
-    except Exception:
-        return None
-    return None
+    """薄委托 → core.llm_backend.resolve_preferred_model(set_parser 命名空间)。
+
+    收编原裸 SQL 副本:统一走 request cache + _model_in_catalog 失效校验
+    —— 偏好里的模型已下线/迁移(不在用户 catalog)时回退到 first_user_model,
+    不再返回 stale 模型(本批次修的 bug)。返回契约不变(model 字符串或 None)。
+    """
+    from core.llm_backend import resolve_preferred_model
+    return resolve_preferred_model(user_id, pref_key="set_parser.model_real_name")
 
 
 def _resolve_preferred_api(user_id: int | None) -> str | None:
-    if not user_id:
-        return None
-    try:
-        from platform_app.db import connect, init_db
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "select preferences from user_preferences where user_id = %s",
-                (user_id,),
-            ).fetchone()
-        if row and isinstance(row.get("preferences"), dict):
-            return row["preferences"].get("set_parser.api_id") or None
-    except Exception:
-        return None
-    return None
+    """薄委托 → core.llm_backend.resolve_preferred_api(set_parser 命名空间)。失效校验同上。"""
+    from core.llm_backend import resolve_preferred_api
+    return resolve_preferred_api(user_id, pref_key="set_parser.api_id")
