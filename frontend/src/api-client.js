@@ -446,11 +446,22 @@
       worldbookDelete: (sid, eid) => DEL(`${API_PREFIX}/scripts/${sid}/worldbook/${eid}`, {}),
       // 批量:body={entry_ids:[...], action:'delete'|'enable'|'disable'|'set_priority', priority?}
       worldbookBatch: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/worldbook/batch`, body),
+      // canon 实体(MD 编辑器):list/get 读 + upsert(有 logical_key → PUT,否则 POST)/delete
+      canonList: (sid) => GET(`${API_PREFIX}/scripts/${sid}/canon-entities`),
+      canonGet: (sid, key) => GET(`${API_PREFIX}/scripts/${sid}/canon-entities/${encodeURIComponent(key)}`),
+      canonUpsert: (sid, body) => (body && body.logical_key
+        ? PUT(`${API_PREFIX}/scripts/${sid}/canon-entities/${encodeURIComponent(body.logical_key)}`, body)
+        : POST(`${API_PREFIX}/scripts/${sid}/canon-entities`, body)),
+      canonDelete: (sid, key) => DEL(`${API_PREFIX}/scripts/${sid}/canon-entities/${encodeURIComponent(key)}`, {}),
       // 出生点(玩家选择从哪个章节起场)
       birthpoints: (sid) => GET(`${API_PREFIX}/scripts/${sid}/birthpoints`),
       // 真实剧本时间线锚点(script_timeline_anchors,LLM 抽出的 story-time 段,
       // 之前 typo 调成了 birthpoints,因此时间线 tab 永远空)
       timeline: (sid) => GET(`${API_PREFIX}/scripts/${sid}/timeline`),
+      // 时间线锚点(MD 编辑器):update/create/delete(读取走 timeline()）
+      anchorUpdate: (sid, anchorId, body) => PUT(`${API_PREFIX}/scripts/${sid}/anchors/${anchorId}`, body),
+      anchorCreate: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/anchors`, body),
+      anchorDelete: (sid, anchorId) => DEL(`${API_PREFIX}/scripts/${sid}/anchors/${anchorId}`, {}),
       // knowledgeSync / importBudget 前端不再调用:
       // - knowledge/sync 是后端 import 内部 fallback,不该 UI 触发
       // - import-budget 字段格式跟前端不兼容,Wizard 用本地 preview 估算

@@ -48,6 +48,8 @@ import { useBreakpoint } from '../responsive.jsx';
 // AGE-02: splash gate
 import AdultSplash from '../components/AdultSplash.jsx';
 import { ErrorBoundary } from '../components/ErrorBoundary.jsx';
+// VSCode 风 MD 编辑器:CodeMirror 6(~2-3MB)首次引入 React.lazy 懒加载,绝不进首屏主 bundle。
+const LazyMdEditorPage = React.lazy(() => import('../pages/md-editor.jsx'));
 const SPLASH_VERSION = 'v1.0-2026-05-31';
 
 // ── 挂载 ──
@@ -97,7 +99,7 @@ const PL_IDS = [
   'admin-dmca-takedowns', 'admin-dmca-strikes', 'admin-csam-reports', 'admin-aup-actions',
   'admin-feedback',
   'usage', 'plugins', 'mcp', 'skills', 'apis', 'feedback', 'device', 'wall',
-  'tavern',
+  'tavern', 'md-editor',
 ];
 function parsePage() {
   return plPathToPage(PL_IDS);
@@ -210,6 +212,11 @@ function PlatformApp() {
   else if (page === 'apis') body = <CapPage kind="apis" />;
   else if (page === 'feedback') body = <FeedbackPage />;
   else if (page === 'device') body = <DeviceAuthorizePage />;
+  else if (page === 'md-editor') body = (
+    <React.Suspense fallback={<section className="pl-sec"><div style={{ padding: 40, color: 'var(--muted)' }}>加载编辑器…</div></section>}>
+      <LazyMdEditorPage />
+    </React.Suspense>
+  );
   else body = <ProfilePage />;
 
   return (

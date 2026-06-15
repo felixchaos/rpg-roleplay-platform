@@ -472,12 +472,21 @@ async def api_worldbook_update(
 ):
     """编辑 worldbook entry，写 commit kind=worldbook_edit。
 
-    body: {title?, content?, priority?, enabled?, tags?}
+    body: {title?, content?, priority?, enabled?, tags?, keys?, regex_keys?,
+           character_filter?, scene_filter?, token_budget?, sticky_turns?,
+           cooldown_turns?, probability?, insertion_position?}
+    （keys/regex_keys/character_filter/scene_filter 为 jsonb 字符串数组列）
     """
     try:
         body = await request.json()
     except Exception:
         return json_response({"ok": False, "error": "body 必须是合法 JSON"}, status_code=400)
+
+    _WB_COLS = (
+        "id, title, content, priority, enabled, metadata, "
+        "keys, regex_keys, character_filter, scene_filter, "
+        "token_budget, sticky_turns, cooldown_turns, probability, insertion_position"
+    )
 
     with connect() as db:
         try:
@@ -486,7 +495,7 @@ async def api_worldbook_update(
             return json_response({"ok": False, "error": str(exc)}, status_code=403)
 
         before_row = db.execute(
-            "SELECT id, title, content, priority, enabled, metadata FROM worldbook_entries WHERE id = %s AND script_id = %s",
+            f"SELECT {_WB_COLS} FROM worldbook_entries WHERE id = %s AND script_id = %s",
             (entry_id, script_id),
         ).fetchone()
         if not before_row:
@@ -495,16 +504,25 @@ async def api_worldbook_update(
         before = dict(before_row)
 
         sets, args = [], []
-        for col in ("title", "content"):
+        for col in ("title", "content", "insertion_position"):
             if col in body:
                 sets.append(f"{col}=%s")
                 args.append(str(body[col]))
-        if "priority" in body:
-            sets.append("priority=%s")
-            args.append(int(body["priority"]))
+        for col in ("priority", "token_budget", "sticky_turns", "cooldown_turns"):
+            if col in body:
+                sets.append(f"{col}=%s")
+                args.append(int(body[col]))
+        if "probability" in body:
+            sets.append("probability=%s")
+            args.append(float(body["probability"]))
         if "enabled" in body:
             sets.append("enabled=%s")
             args.append(bool(body["enabled"]))
+        # jsonb 字符串数组列(与 init.py 实际 schema 一致):keys/regex_keys/character_filter/scene_filter
+        for col in ("keys", "regex_keys", "character_filter", "scene_filter"):
+            if col in body and isinstance(body[col], list):
+                sets.append(f"{col}=%s")
+                args.append(Jsonb([str(x) for x in body[col]]))
         if "tags" in body and isinstance(body["tags"], list):
             # tags 存进 metadata.tags
             meta = dict(before.get("metadata") or {})
@@ -523,7 +541,7 @@ async def api_worldbook_update(
         )
 
         after_row = db.execute(
-            "SELECT id, title, content, priority, enabled, metadata FROM worldbook_entries WHERE id = %s",
+            f"SELECT {_WB_COLS} FROM worldbook_entries WHERE id = %s",
             (entry_id,),
         ).fetchone()
         after = dict(after_row)
@@ -553,7 +571,10 @@ async def api_worldbook_add(
 ):
     """新建 worldbook entry，写 commit kind=worldbook_add。
 
-    body: {title, content, priority?, enabled?, tags?}
+    body: {title, content, priority?, enabled?, tags?, keys?, regex_keys?,
+           character_filter?, scene_filter?, token_budget?, sticky_turns?,
+           cooldown_turns?, probability?, insertion_position?}
+    （keys/regex_keys/character_filter/scene_filter 为 jsonb 字符串数组列）
     """
     try:
         body = await request.json()
@@ -564,6 +585,9 @@ async def api_worldbook_add(
     content = str(body.get("content") or "")
     if not title:
         return json_response({"ok": False, "error": "缺少 title"}, status_code=400)
+
+    def _strlist(v: Any) -> list[str]:
+        return [str(x) for x in v] if isinstance(v, list) else []
 
     with connect() as db:
         try:
@@ -585,15 +609,28 @@ async def api_worldbook_add(
         new_row = db.execute(
             """
             INSERT INTO worldbook_entries
-              (book_id, script_id, title, content, priority, enabled, metadata)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, title, content, priority, enabled, metadata
+              (book_id, script_id, title, content, priority, enabled, metadata,
+               keys, regex_keys, character_filter, scene_filter,
+               token_budget, sticky_turns, cooldown_turns, probability, insertion_position)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, title, content, priority, enabled, metadata,
+                      keys, regex_keys, character_filter, scene_filter,
+                      token_budget, sticky_turns, cooldown_turns, probability, insertion_position
             """,
             (
                 book_id, script_id, title, content,
                 int(body.get("priority") or 50),
                 bool(body.get("enabled", True)),
                 Jsonb(meta),
+                Jsonb(_strlist(body.get("keys"))),
+                Jsonb(_strlist(body.get("regex_keys"))),
+                Jsonb(_strlist(body.get("character_filter"))),
+                Jsonb(_strlist(body.get("scene_filter"))),
+                int(body.get("token_budget") or 600),
+                int(body.get("sticky_turns") or 0),
+                int(body.get("cooldown_turns") or 0),
+                float(body["probability"]) if body.get("probability") is not None else 100.0,
+                str(body.get("insertion_position") or "worldbook"),
             ),
         ).fetchone()
         after = dict(new_row)
@@ -776,12 +813,20 @@ async def api_canon_update(
 ):
     """编辑 canon entity，写 commit kind=canon_edit。
 
-    body: {summary?, identity?, background?, parent_logical_key?, entity_subtype?, importance?}
+    body: {summary?, identity?, background?, parent_logical_key?, entity_subtype?,
+           importance?, aliases?, attrs?, first_revealed_chapter?, public_knowledge?}
+    （aliases 为 jsonb 字符串数组,attrs 为 jsonb 开放对象）
     """
     try:
         body = await request.json()
     except Exception:
         return json_response({"ok": False, "error": "body 必须是合法 JSON"}, status_code=400)
+
+    _CANON_COLS = (
+        "id, logical_key, name, full_name, type, entity_subtype, parent_logical_key, "
+        "summary, identity, background, aliases, attrs, "
+        "first_revealed_chapter, public_knowledge, importance, created_at"
+    )
 
     with connect() as db:
         try:
@@ -790,11 +835,7 @@ async def api_canon_update(
             return json_response({"ok": False, "error": str(exc)}, status_code=403)
 
         before_row = db.execute(
-            """
-            SELECT id, logical_key, name, summary, identity, background,
-                   parent_logical_key, entity_subtype, importance
-            FROM kb_canon_entities WHERE script_id = %s AND logical_key = %s
-            """,
+            f"SELECT {_CANON_COLS} FROM kb_canon_entities WHERE script_id = %s AND logical_key = %s",
             (script_id, logical_key),
         ).fetchone()
         if not before_row:
@@ -809,6 +850,20 @@ async def api_canon_update(
         if "importance" in body:
             sets.append("importance=%s")
             args.append(int(body["importance"]))
+        if "first_revealed_chapter" in body:
+            sets.append("first_revealed_chapter=%s")
+            args.append(int(body["first_revealed_chapter"]))
+        if "public_knowledge" in body:
+            sets.append("public_knowledge=%s")
+            args.append(bool(body["public_knowledge"]))
+        if "aliases" in body and isinstance(body["aliases"], list):
+            # aliases 为 jsonb 字符串数组
+            sets.append("aliases=%s")
+            args.append(Jsonb([str(x) for x in body["aliases"]]))
+        if "attrs" in body and isinstance(body["attrs"], dict):
+            # attrs 为 jsonb 开放对象,原样写回
+            sets.append("attrs=%s")
+            args.append(Jsonb(body["attrs"]))
 
         if not sets:
             return json_response({"ok": False, "error": "无可更新字段"}, status_code=400)
@@ -820,11 +875,7 @@ async def api_canon_update(
         )
 
         after_row = db.execute(
-            """
-            SELECT id, logical_key, name, summary, identity, background,
-                   parent_logical_key, entity_subtype, importance
-            FROM kb_canon_entities WHERE script_id = %s AND logical_key = %s
-            """,
+            f"SELECT {_CANON_COLS} FROM kb_canon_entities WHERE script_id = %s AND logical_key = %s",
             (script_id, logical_key),
         ).fetchone()
         after = dict(after_row)
@@ -848,7 +899,10 @@ async def api_canon_add(
 ):
     """新增 canon entity，写 commit kind=canon_add。
 
-    body: {logical_key, name, type, summary?, identity?, background?, entity_subtype?, importance?}
+    body: {logical_key, name, type, summary?, identity?, background?, entity_subtype?,
+           parent_logical_key?, importance?, full_name?, aliases?, attrs?,
+           first_revealed_chapter?, public_knowledge?}
+    （aliases 为 jsonb 字符串数组,attrs 为 jsonb 开放对象）
     """
     try:
         body = await request.json()
@@ -864,6 +918,11 @@ async def api_canon_add(
             status_code=400,
         )
 
+    aliases = body.get("aliases")
+    aliases_jsonb = Jsonb([str(x) for x in aliases]) if isinstance(aliases, list) else Jsonb([])
+    attrs = body.get("attrs")
+    attrs_jsonb = Jsonb(attrs) if isinstance(attrs, dict) else Jsonb({})
+
     with connect() as db:
         try:
             _require_owner(db, script_id, user["id"])
@@ -873,21 +932,29 @@ async def api_canon_add(
         new_row = db.execute(
             """
             INSERT INTO kb_canon_entities
-              (script_id, logical_key, name, type, summary, identity, background,
-               entity_subtype, parent_logical_key, importance)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+              (script_id, logical_key, name, full_name, type, summary, identity, background,
+               entity_subtype, parent_logical_key, importance,
+               aliases, attrs, first_revealed_chapter, public_knowledge)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (script_id, logical_key) DO NOTHING
-            RETURNING id, logical_key, name, type, summary, identity, background,
-                      entity_subtype, parent_logical_key, importance
+            RETURNING id, logical_key, name, full_name, type, summary, identity, background,
+                      entity_subtype, parent_logical_key, importance,
+                      aliases, attrs, first_revealed_chapter, public_knowledge, created_at
             """,
             (
-                script_id, logical_key, name, entity_type,
+                script_id, logical_key, name,
+                str(body.get("full_name") or ""),
+                entity_type,
                 str(body.get("summary") or ""),
                 str(body.get("identity") or ""),
                 str(body.get("background") or ""),
                 str(body.get("entity_subtype") or ""),
                 str(body.get("parent_logical_key") or ""),
                 int(body.get("importance") or 0),
+                aliases_jsonb,
+                attrs_jsonb,
+                int(body.get("first_revealed_chapter") or 0),
+                bool(body.get("public_knowledge", False)),
             ),
         ).fetchone()
         if not new_row:
@@ -956,13 +1023,20 @@ async def api_anchor_update(
 ):
     """编辑 script_timeline_anchor，写 commit kind=anchor_edit。
 
-    body: {summary?, story_phase?}
+    body: {summary?, story_phase?, story_time_label?, chapter_min?, chapter_max?,
+           keywords?, confidence?, sample_title?}
+    （keywords 列是 PostgreSQL 原生 text[],写回直接绑 Python list,绝不 json.dumps 当 jsonb）
     （is_fatal / importance 在 save_anchor_states，不在 script_timeline_anchors）
     """
     try:
         body = await request.json()
     except Exception:
         return json_response({"ok": False, "error": "body 必须是合法 JSON"}, status_code=400)
+
+    _ANCHOR_COLS = (
+        "id, story_phase, story_time_label, sample_title, sample_summary, "
+        "chapter_min, chapter_max, chapter_count, keywords, confidence"
+    )
 
     with connect() as db:
         try:
@@ -971,11 +1045,7 @@ async def api_anchor_update(
             return json_response({"ok": False, "error": str(exc)}, status_code=403)
 
         before_row = db.execute(
-            """
-            SELECT id, story_phase, story_time_label, sample_summary,
-                   chapter_min, chapter_max, chapter_count
-            FROM script_timeline_anchors WHERE id = %s AND script_id = %s
-            """,
+            f"SELECT {_ANCHOR_COLS} FROM script_timeline_anchors WHERE id = %s AND script_id = %s",
             (anchor_id, script_id),
         ).fetchone()
         if not before_row:
@@ -987,12 +1057,28 @@ async def api_anchor_update(
         if "summary" in body:
             sets.append("sample_summary=%s")
             args.append(str(body["summary"]))
-        if "story_phase" in body:
-            sets.append("story_phase=%s")
-            args.append(str(body["story_phase"]))
+        for col in ("story_phase", "story_time_label", "sample_title"):
+            if col in body:
+                sets.append(f"{col}=%s")
+                args.append(str(body[col]))
+        for col in ("chapter_min", "chapter_max"):
+            if col in body:
+                sets.append(f"{col}=%s")
+                args.append(int(body[col]))
+        if "confidence" in body:
+            sets.append("confidence=%s")
+            args.append(float(body["confidence"]))
+        if "keywords" in body and isinstance(body["keywords"], list):
+            # keywords 列是 PostgreSQL 原生 text[](非 jsonb):psycopg 直接绑 Python list,
+            # 参数化 %s 传 list 即按数组写回;绝不可 json.dumps 当 jsonb 写。
+            sets.append("keywords=%s")
+            args.append([str(x) for x in body["keywords"]])
 
         if not sets:
-            return json_response({"ok": False, "error": "无可更新字段（可更新: summary, story_phase）"}, status_code=400)
+            return json_response(
+                {"ok": False, "error": "无可更新字段（可更新: summary, story_phase, story_time_label, chapter_min, chapter_max, keywords, confidence, sample_title）"},
+                status_code=400,
+            )
 
         sets.append("updated_at=now()")
         args.extend([anchor_id, script_id])
@@ -1002,7 +1088,7 @@ async def api_anchor_update(
         )
 
         after_row = db.execute(
-            "SELECT id, story_phase, story_time_label, sample_summary, chapter_min, chapter_max FROM script_timeline_anchors WHERE id=%s",
+            f"SELECT {_ANCHOR_COLS} FROM script_timeline_anchors WHERE id=%s",
             (anchor_id,),
         ).fetchone()
         after = dict(after_row)

@@ -1,0 +1,102 @@
+/* md-editor.css — VSCode 风三栏编辑器。颜色全走 tokens.css 变量,融入暖色主题。 */
+.mde-root {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  background: var(--bg, #1a1817); color: var(--text, #ebe7df);
+  font-family: var(--font-sans, system-ui);
+  overflow: hidden;
+}
+
+/* 顶栏 */
+.mde-topbar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+  padding: 6px 12px; border-bottom: 1px solid var(--line, #36322d);
+  background: var(--bg-deep, #131211); min-height: 40px;
+}
+.mde-brand { font-weight: 600; font-size: 13px; color: var(--muted, #968f85); letter-spacing: 0.3px; }
+.mde-script-select {
+  background: var(--panel, #211f1d); color: var(--text, #ebe7df);
+  border: 1px solid var(--line, #36322d); border-radius: var(--r-2, 6px);
+  padding: 4px 10px; font-size: 13px; max-width: 360px; font-family: inherit;
+}
+.mde-save {
+  margin-left: auto; background: var(--accent, #b5654a); color: #fff;
+  border: none; border-radius: var(--r-2, 6px); padding: 5px 14px; font-size: 12.5px;
+  cursor: pointer; font-family: inherit;
+}
+.mde-save:disabled { opacity: 0.6; cursor: default; }
+
+/* 三栏 */
+.mde-panes { flex: 1 1 auto; display: grid; grid-template-columns: 240px 1fr 320px; min-height: 0; }
+.mde-left   { border-right: 1px solid var(--line, #36322d); background: var(--panel, #211f1d); overflow: hidden; display: flex; flex-direction: column; }
+.mde-center { display: flex; flex-direction: column; min-width: 0; background: var(--bg, #1a1817); }
+.mde-right  { border-left: 1px solid var(--line, #36322d); background: var(--panel, #211f1d); overflow: auto; }
+
+/* 文件树 */
+.mde-tree { display: flex; flex-direction: column; height: 100%; }
+.mde-tree-search { padding: 8px; border-bottom: 1px solid var(--line-soft, #2a2724); }
+.mde-tree-search input {
+  width: 100%; box-sizing: border-box; background: rgba(255,255,255,0.04);
+  border: 1px solid var(--line-soft, #2a2724); border-radius: 6px; color: var(--text, #ebe7df);
+  padding: 5px 9px; font-size: 12.5px; outline: none; font-family: inherit;
+}
+.mde-tree-body { flex: 1 1 auto; overflow-y: auto; padding: 4px; }
+.mde-tree-group { margin-bottom: 2px; }
+.mde-tree-grouphead {
+  width: 100%; display: flex; align-items: center; gap: 6px; text-align: left;
+  background: transparent; border: none; color: var(--text, #ebe7df);
+  padding: 5px 6px; font-size: 12.5px; cursor: pointer; border-radius: 5px; font-family: inherit;
+}
+.mde-tree-grouphead:hover { background: var(--panel-2, #282623); }
+.mde-tree-caret { width: 10px; color: var(--muted-2, #6b655e); font-size: 10px; }
+.mde-tree-gicon { width: 12px; text-align: center; color: var(--accent, #b5654a); font-family: var(--font-mono, monospace); }
+.mde-tree-glabel { font-weight: 600; }
+.mde-tree-count { margin-left: auto; font-size: 10.5px; color: var(--muted-2, #6b655e); font-family: var(--font-mono, monospace); }
+.mde-tree-children { padding: 1px 0 3px 18px; }
+.mde-tree-item {
+  width: 100%; display: block; text-align: left; background: transparent; border: none;
+  color: var(--muted, #968f85); padding: 4px 8px; font-size: 12px; cursor: pointer;
+  border-radius: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: inherit;
+}
+.mde-tree-item:hover { background: var(--panel-2, #282623); color: var(--text, #ebe7df); }
+.mde-tree-item.active { background: var(--info-soft, rgba(122,166,194,.14)); color: var(--text, #ebe7df); }
+.mde-tree-hint { padding: 6px 10px; font-size: 11.5px; color: var(--muted-2, #6b655e); }
+.mde-tree-hint.err { color: var(--danger, #c8675d); }
+
+/* 标签栏 */
+.mde-tabs { flex: 0 0 auto; display: flex; overflow-x: auto; background: var(--bg-deep, #131211); border-bottom: 1px solid var(--line, #36322d); }
+.mde-tab {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px 7px 12px;
+  border-right: 1px solid var(--line, #36322d); cursor: pointer; font-size: 12.5px;
+  color: var(--muted, #968f85); max-width: 220px; white-space: nowrap;
+}
+.mde-tab.active { background: var(--bg, #1a1817); color: var(--text, #ebe7df); }
+.mde-tab-label { overflow: hidden; text-overflow: ellipsis; }
+.mde-tab-close { color: var(--muted-2, #6b655e); border-radius: 3px; width: 16px; text-align: center; }
+.mde-tab-close:hover { background: var(--panel-2, #282623); color: var(--text, #ebe7df); }
+
+/* 编辑器主体 */
+.mde-textarea {
+  flex: 1 1 auto; width: 100%; box-sizing: border-box; resize: none; border: none; outline: none;
+  background: var(--bg, #1a1817); color: var(--text, #ebe7df);
+  padding: 14px 18px; font-size: 13.5px; line-height: 1.7;
+}
+.mde-textarea.mono { font-family: var(--font-mono, monospace); }
+
+/* CodeMirror 宿主:填满编辑区 */
+.mde-cm { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.mde-cm .cm-editor { height: 100%; }
+.mde-cm .cm-editor.cm-focused { outline: none; }
+.mde-empty { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted-2, #6b655e); font-size: 13.5px; text-align: center; gap: 6px; }
+.mde-empty.err { color: var(--danger, #c8675d); }
+.mde-empty .muted { font-size: 12px; color: var(--muted-2, #6b655e); }
+
+/* 右栏 agent 占位 */
+.mde-agent-placeholder { padding: 12px; }
+.mde-agent-title { font-weight: 600; font-size: 13px; }
+.muted { color: var(--muted, #968f85); }
+
+@media (max-width: 1100px) {
+  .mde-panes { grid-template-columns: 200px 1fr 0; }
+  .mde-right { display: none; }
+}

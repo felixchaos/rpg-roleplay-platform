@@ -95,6 +95,14 @@ export default defineConfig(({ mode }) => {
         '@cloudscape-design/components/toggle',
         '@cloudscape-design/components/top-navigation',
         '@cloudscape-design/components/wizard',
+        // CodeMirror 6(MD 编辑器,React.lazy 懒加载)— 预打包子入口,避免首次打开编辑器时
+        // dev server 中途 re-optimize 黑屏。生产仍由 manualChunks 拆 'codemirror' chunk 懒载。
+        '@codemirror/state',
+        '@codemirror/view',
+        '@codemirror/commands',
+        '@codemirror/language',
+        '@codemirror/search',
+        '@codemirror/lang-markdown',
       ],
     },
 
@@ -147,10 +155,20 @@ export default defineConfig(({ mode }) => {
             if (id.includes('node_modules/ace-builds')) {
               return 'ace-editor';
             }
+            // CodeMirror 6(~2-3MB)— MD 编辑器专用,React.lazy 懒加载,绝不进主 bundle
+            if (id.includes('node_modules/@codemirror/') || id.includes('node_modules/codemirror')
+                || id.includes('node_modules/@lezer/')) {
+              return 'codemirror';
+            }
             // 新加的编辑器视图组件,首屏不需要 → 单独 chunk,后续 lazy() 可包,
             // 即便不 lazy,浏览器解析这个 chunk 也比塞主 bundle 快
             if (id.includes('/pages/script-edit-')) {
               return 'script-editors';
+            }
+            // VSCode 风 MD 编辑器页(含序列化层)— lazy 加载页 chunk
+            if (id.includes('/pages/md-editor') || id.includes('/lib/md-serialize')
+                || id.includes('/components/CodeMirrorEditor')) {
+              return 'md-editor';
             }
             // 其他保持默认(Vite 按 entry 分)
           },
