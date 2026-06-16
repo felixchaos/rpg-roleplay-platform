@@ -296,8 +296,10 @@ async def api_models_select(
     uid = _user_key(api_user)
     with _state_lock:
         _gm_by_user.pop(uid, None)
-    catalog = selected_model()
-    return JSONResponse({"ok": True, "scope": "user", "api_id": api_id, "model_id": model_id, "selected": catalog})
+    # selected 必须反映「用户刚选的模型」,而非 selected_model()(=全局 app_config 默认,常是 gemini)。
+    # 否则前端拿到 select 响应的 selected 会是全局默认 → 选完即跳默认(用户报「修十次没好」)。
+    return JSONResponse({"ok": True, "scope": "user", "api_id": api_id, "model_id": model_id,
+                         "selected": {"api_id": api_id, "model_id": model_id, "real_name": model_id}})
 
 
 @router.post("/api/models/api", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)

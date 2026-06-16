@@ -141,7 +141,11 @@ export default function AgentModelPicker({
         const list = models?.models?.apis || (Array.isArray(models?.apis) ? models.apis : []) || [];
         setApis(Array.isArray(list) ? list : []);
         // AgentPlatform 是 Vertex 的 SA 凭证 — UI 里归一成 vertex_ai（与后端 canonical 一致）
-        setCredApiIds(credApiIdSet(creds));
+        // 局部 ids 供下方 eligible()/Array.from(ids) 用 —— 此前直接引用未声明的 `ids` 会抛
+        // ReferenceError,被本块外层 catch 静默吞掉,导致挂载时 setApiId/setModel/onChange(init)
+        // 整段不执行(无偏好场景下选择器空着、回显失败)。必须用已构建的 Set。
+        const ids = credApiIdSet(creds);
+        setCredApiIds(ids);
         // 后端 selected 是全局默认模型（由 /api/models 返回）；
         // defaultModel prop 若未传（null），就从 selected 取。
         const backendSelected = models?.selected;
@@ -288,17 +292,28 @@ export default function AgentModelPicker({
   // embedder 平台兜底:仅 admin/vip(platformVertexAllowed=true)可见平台 vertex embedding。
   // 非 vip/admin 用户没上传自己的 SA 时 vertex_ai 不在 credApiIds → 不会被显示(收紧到位)。
   const platformVertexEmbedding = platformVertexAllowed && capabilityFilter === 'embedding';
+  // 单一真相:某 provider 在选择器里是否可见。
+  //   = provider 级 curation 开(a.enabled !== false,即用户/admin 没在「模型管理」隐藏它)
+  //     且(用户配了该 provider 凭据 OR 平台 vertex embedding 兜底)。
+  // 游戏内 popover 与设置/聊天 bare 的 providerOptions 共用此判定,避免两套门控不一致 ——
+  // 历史 bug:popover 看 a.enabled、下拉只看 cred,导致用户禁用的 provider(如 openrouter 336 模型)
+  // 在聊天/游戏选择器里仍冒出「完整模型列表」。
+  const _providerVisible = (a) => {
+    const aid = a && (a.api_id || a.id);
+    if (!aid) return false;
+    if (a.enabled === false) return false;          // 用户/admin 在模型管理隐藏了该 provider
+    if (credApiIds.has(aid)) return true;           // 用户配了凭据
+    if (platformVertexEmbedding && aid === 'vertex_ai'
+        && (a.models || a.entries || []).some((m) => (m.capabilities || m.caps || []).includes('embedding'))) return true;
+    return false;
+  };
   const providerOptions = React.useMemo(() => {
     const seen = new Set();
     const out = [];
     for (const a of apis) {
       const id = a.api_id || a.id;
       if (!id || seen.has(id)) continue;
-      const isCred = credApiIds.has(id);
-      // admin/vip 即使没配 vertex 用户凭证,也能选平台兜底的 vertex embedding。
-      const isPlatformVertex = platformVertexEmbedding && id === 'vertex_ai'
-        && (a.models || a.entries || []).some((m) => (m.capabilities || m.caps || []).includes('embedding'));
-      if (!isCred && !isPlatformVertex) continue;
+      if (!_providerVisible(a)) continue;            // 尊重 a.enabled curation + 凭据
       seen.add(id);
       out.push({ value: id, label: a.display_name || a.name || id });
     }
@@ -445,19 +460,12 @@ export default function AgentModelPicker({
   }
 
   function renderPopover() {
-    // 扁平化所有「已配 key 的 provider」下的可选模型(+ health / pricing)。
+    // 扁平化所有【可见 provider】(尊重 a.enabled curation + 凭据)下的可选模型(+ health / pricing)。
+    // 与 providerOptions 共用 _providerVisible,两处门控一致。
     const flat = [];
     for (const a of apis) {
       const aid = a.api_id || a.id;
-      // 门控与上方设置页 providerOptions 一致:只看「该用户是否配了凭据」(credApiIds),
-      // **不**再看全局菜单的 a.enabled。a.enabled 是 admin 策展的全局 provider 菜单开关
-      // (doubao/dashscope/hunyuan/openrouter 等默认 false),它不该覆盖用户自己配了 key+
-      // 启用了模型的 per-account 选择 —— 否则游戏内选择器会漏掉用户「选择显示的模型」
-      // (用户反馈:设置页能看到、游戏里却没有)。单个模型的禁用仍由下方 m.enabled===false 过滤。
-      if (!aid) continue;
-      const isCred = credApiIds.has(aid);
-      const isPlatV = platformVertexEmbedding && aid === 'vertex_ai';
-      if (!isCred && !isPlatV) continue;
+      if (!_providerVisible(a)) continue;
       for (const m of filteredModelsOf(aid)) {
         if (m.enabled === false) continue;
         const pricing = m.pricing || {};

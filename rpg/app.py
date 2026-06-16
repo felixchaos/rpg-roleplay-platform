@@ -1073,6 +1073,18 @@ def _payload(api_user: dict[str, Any] | None = None, *, include_catalog: bool = 
     # SSE 路径(include_catalog=False)不发整份目录:见 _payload docstring。
     if include_catalog:
         payload["models"] = _redact_catalog(model_catalog, is_admin, user_id=_uid)
+        # gameState.models.selected 必须 = 该用户当前模型(= 上面 model,已按 gm 偏好 / 存档级
+        # session_model 算好),而非 catalog 里的全局 app_config 默认。否则前端 Composer 底部
+        # 「当前模型」标签读 catalog.selected 会拿到全局默认(常是用户没配 key 的 gemini)→
+        # 用户报「每次刷新跳 gemini-3.1-pro-preview」。与 payload['app'] 同源,单一真相。
+        try:
+            payload["models"]["selected"] = {
+                "api_id": model["api_id"],
+                "model_id": model.get("model_id") or model["real_name"],
+                "real_name": model["real_name"],
+            }
+        except Exception:
+            pass
         payload["tools"] = _redact_tools(tool_payload(), is_admin)
     # task 10：把当前激活存档的 id/title 直接挂在 /api/state 顶层 + state 字段里，
     # Game Console 左侧栏拿来显示「当前存档」，避免回退到 hard-coded mock id=11。
