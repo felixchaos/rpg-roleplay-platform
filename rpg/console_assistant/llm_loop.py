@@ -153,6 +153,7 @@ _SCRIPT_WRITE_TOOLS = frozenset({
 _SCRIPT_READ_TOOLS = frozenset({
     "get_script_chapters", "list_script_npcs", "get_script_character_card",
     "list_worldbook_entries", "list_anchors", "list_canon_entities",
+    "get_chapter_context",
 })
 
 

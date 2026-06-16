@@ -175,6 +175,38 @@ def _t_list_canon_entities(user_id: int, script_id: int | None, args: dict, stat
         return f"失败: {type(exc).__name__}: {exc}"
 
 
+def _t_get_chapter_context(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
+    """一次性取「该章相关编辑环境」(相关世界书/人物/词条/时点/前情)——编辑前建立设定认知,
+    免去逐个 list_*/get_* 多轮往返、也防 agent 凭空写。复用阶段1 build_editor_environment,
+    按 chapter_index 防剧透截断(只给 ≤当前章 的设定/历史)。"""
+    sid = _resolve_sid(script_id, args)
+    if sid is None:
+        return "失败: script_id 必填"
+    ci_raw = args.get("chapter_index")
+    try:
+        ci = int(ci_raw) if ci_raw is not None else None
+    except (TypeError, ValueError):
+        ci = None
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        scan = ""
+        with connect() as db:
+            if not _user_can_read_script(db, sid, user_id):
+                return f"失败 (权限): 剧本 #{sid} 不属于当前用户或未订阅"
+            if ci is not None:
+                row = db.execute(
+                    "select content from script_chapters where script_id=%s and chapter_index=%s",
+                    (sid, ci),
+                ).fetchone()
+                scan = str((row or {}).get("content") or "")[:12000]
+        from console_assistant.editor_context import build_editor_environment
+        env = build_editor_environment(sid, scan, ci)
+        return env or "(该章未提取到相关设定;可能本章正文为空,或世界书/人物卡/canon 尚未建立。)"
+    except Exception as exc:
+        return f"失败: {type(exc).__name__}: {exc}"
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # 1) update_script_chapter — 覆盖整章正文(destructive=True)
 # ────────────────────────────────────────────────────────────────────────────

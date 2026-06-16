@@ -279,6 +279,7 @@ def _register_phase2_tools() -> None:
 def _register_script_read_tools() -> None:
     from tools_dsl.command_tools_script_write import (
         _SCRIPT_READ_ORIGINS,
+        _t_get_chapter_context,
         _t_list_anchors,
         _t_list_canon_entities,
         _t_list_worldbook_entries,
@@ -306,6 +307,23 @@ def _register_script_read_tools() -> None:
             description=desc,
             input_schema={"type": "object", "properties": {"script_id": {"type": "integer"}}},
             executor=exec_,
+            scope="script",
+            origins=_SCRIPT_READ_ORIGINS,
+            destructive=False,
+        ))
+    # get_chapter_context:聚合读工具(需 chapter_index),单独注册(schema 与上面 list_* 不同)。
+    if not registry.has("get_chapter_context"):
+        registry.register(ToolSpec(
+            name="get_chapter_context",
+            description=(
+                "一次性取「该章相关编辑环境」(相关世界书/人物/词条/此刻时点/前情提要,按 chapter_index 防剧透)。"
+                "编辑或续写某章前先调它建立设定认知,免去逐个 list_*/get_* 多轮往返、也避免凭空写。"
+            ),
+            input_schema={"type": "object", "properties": {
+                "script_id": {"type": "integer"},
+                "chapter_index": {"type": "integer", "description": "正在编辑的章号(1-based)"},
+            }},
+            executor=_t_get_chapter_context,
             scope="script",
             origins=_SCRIPT_READ_ORIGINS,
             destructive=False,
