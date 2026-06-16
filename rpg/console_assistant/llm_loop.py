@@ -157,6 +157,39 @@ _SCRIPT_READ_TOOLS = frozenset({
 })
 
 
+def _read_user_pref(user_id: int, key: str) -> str:
+    """读 user_preferences.preferences->>key(jsonb 单键)。缺/失败返回空串。"""
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select preferences->>%s as v from user_preferences where user_id=%s",
+                (key, int(user_id)),
+            ).fetchone()
+        return str((row or {}).get("v") or "")
+    except Exception:
+        return ""
+
+
+def _resolve_editor_write_mode(user_id: int) -> str:
+    """三级权限(Q3):编辑器写库模式 read_only / review / full_access。
+    复用 state.permissions 的归一语义;缺省 = review(最稳,涵盖旧 P0 的防注入)。"""
+    raw = _read_user_pref(user_id, "editor.write_mode")
+    if not raw:
+        return "review"
+    try:
+        from state.permissions import _normalize_permission_mode
+        m = _normalize_permission_mode(raw)  # read_only / default / auto_review / full_access
+    except Exception:
+        return "review"
+    if m == "read_only":
+        return "read_only"
+    if m == "full_access":
+        return "full_access"
+    return "review"
+
+
 def _run_llm_loop(
     *,
     user_id: int,
@@ -181,8 +214,8 @@ def _run_llm_loop(
         extra_pending_note.append({"role": "user", "content": pending_summary})
 
     pending_for_this_turn: list[dict[str, Any]] = []
-    # P0:本回合是否已出现 script 读工具结果(资产正文回灌)→ 后续 script 直写需二次确认。
-    turn_read_fired = [False]
+    # 三级权限(Q3):editor 写库模式 read_only/review/full_access,回合开始解析一次。
+    _editor_write_mode = _resolve_editor_write_mode(user_id)
 
     # 安全: 不再信前端任意传入的 save_id/script_id, 必须经过归属校验
     page_save_id = _validate_owned_save_id(user_id, (page_context or {}).get("save_id"))
@@ -193,11 +226,19 @@ def _run_llm_loop(
         if spec is None:
             return {"ok": False, "error": f"未知工具 {tool_name}"}
         call_id = _new_call_id()
-        # P0:被注入诱导的静默写防护 —— 原生 destructive,或本回合读过资产正文后的 script 直写,
-        # 一律走二次确认(前端 confirm UI 现成)。owner 闸仍是硬兜底,这是叠加的确定性闸。
-        needs_confirm = spec.destructive or (
-            tool_name in _SCRIPT_WRITE_TOOLS and turn_read_fired[0]
-        )
+        # 三级权限(Q3,替代旧 P0 ad-hoc):编辑器写库工具按 editor.write_mode 走 ——
+        # read_only=只读不写(仅给建议)、review=写前二次确认(默认,已涵盖防注入静默写)、full_access=按原行为。
+        # 非 script-write(游戏管理类)保持原行为(仅 destructive 走确认)。
+        if tool_name in _SCRIPT_WRITE_TOOLS:
+            if _editor_write_mode == "read_only":
+                return {
+                    "ok": False, "error": "EDITOR_READ_ONLY",
+                    "result": ("当前为「只读模式」,本回合不写库。请把要改的内容写在回复里供用户手动应用,"
+                               "或让用户在编辑器把写入权限改为「审查后写」或「直接写」。"),
+                }
+            needs_confirm = spec.destructive or (_editor_write_mode != "full_access")
+        else:
+            needs_confirm = spec.destructive
         if needs_confirm:
             args_for_pending = dict(arguments or {})
             # task 120 UX: 在确认弹窗里显示 title/turn, 不只是 save_id
@@ -234,9 +275,6 @@ def _run_llm_loop(
             call_id=call_id,
             state_provider=state_provider,
         )
-        # P0:成功的 script 读 → 标记本回合已回灌资产正文,后续 script 直写要确认。
-        if result.ok and tool_name in _SCRIPT_READ_TOOLS:
-            turn_read_fired[0] = True
         return {
             "ok": result.ok,
             "result": result.result,

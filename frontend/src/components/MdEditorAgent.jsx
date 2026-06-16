@@ -50,6 +50,24 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   const convIdRef = useRef(null);
   const scrollRef = useRef(null);
   const abortRef = useRef(null);
+  // 三级权限(Q3):AI 改库的写入权限 read_only / review(默认) / full_access。持久化 editor.write_mode。
+  const [writeMode, setWriteMode] = useState('review');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const p = await window.api?.me?.profile?.();
+        const prefs = p?.preferences || p?.profile?.preferences || {};
+        const m = prefs['editor.write_mode'];
+        if (m) setWriteMode(m);
+      } catch (_) { /* 默认 review */ }
+    })();
+  }, []);
+
+  const changeWriteMode = useCallback(async (m) => {
+    setWriteMode(m);
+    try { await window.api?.me?.preferences?.({ 'editor.write_mode': m }); } catch (_) {}
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -183,7 +201,19 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
 
   return (
     <div className="mde-agent">
-      <div className="mde-agent-head">AI 助手{activeTab ? ` · ${activeTab.label}` : ''}</div>
+      <div className="mde-agent-head">
+        <span className="mde-agent-head-title">AI 助手{activeTab ? ` · ${activeTab.label}` : ''}</span>
+        <select
+          className="mde-agent-wmode"
+          value={writeMode}
+          title="AI 改库的写入权限:只读=只给建议不写;审查=写前要你确认;直接写=AI 直接落库"
+          onChange={(e) => changeWriteMode(e.target.value)}
+        >
+          <option value="read_only">只读建议</option>
+          <option value="review">审查后写</option>
+          <option value="full_access">直接写</option>
+        </select>
+      </div>
       <div className="mde-agent-msgs" ref={scrollRef}>
         {messages.length === 0 && (
           <div className="mde-agent-hint">
