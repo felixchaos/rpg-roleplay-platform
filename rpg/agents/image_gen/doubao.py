@@ -37,6 +37,41 @@ _DEFAULT_BASE = "https://ark.cn-beijing.volces.com/api/v3"
 _CONNECT_TIMEOUT = 10.0
 _READ_TIMEOUT = 120.0
 
+# seedream 4.x 强制最小 3,686,400 像素(1920×1920);传更小尺寸或不传(走 provider 默认)
+# 都会被 Ark 退回 400 InvalidParameter(反馈 #65)。在适配器层(唯一出站口)钳到合法档,
+# 所有调用方(直连 API / 角色卡自动生图 / LLM 工具)都受保护。
+_SEEDREAM_MIN_PIXELS = 1920 * 1920  # 3_686_400
+_SEEDREAM_SIZES: tuple[tuple[int, int], ...] = (
+    (1920, 1920), (2048, 1152), (1152, 2048), (2048, 2048), (2560, 1440), (1440, 2560),
+)
+
+
+def _is_seedream(model: str) -> bool:
+    return "seedream" in (model or "").lower()
+
+
+def _coerce_seedream_size(size_str: str | None) -> str:
+    """把请求尺寸钳到 seedream 合法档(>=3,686,400 像素)。
+
+    - 缺省 / 比例串("1:1") / 无法解析 → 安全默认 "2048x2048"。
+    - 已达像素下限 → 原样保留。
+    - 不足 → 选纵横比最接近且满足下限的合法档(保留构图朝向)。
+    """
+    import re
+    if not size_str:
+        return "2048x2048"
+    m = re.match(r"^\s*(\d+)\s*[xX*]\s*(\d+)\s*$", str(size_str))
+    if not m:
+        return "2048x2048"
+    w, h = int(m.group(1)), int(m.group(2))
+    if w <= 0 or h <= 0:
+        return "2048x2048"
+    if w * h >= _SEEDREAM_MIN_PIXELS:
+        return f"{w}x{h}"
+    ratio = w / h
+    best = min(_SEEDREAM_SIZES, key=lambda s: (abs(s[0] / s[1] - ratio), s[0] * s[1]))
+    return f"{best[0]}x{best[1]}"
+
 
 def generate(
     prompt: str,
@@ -65,6 +100,12 @@ def generate(
     """
     base = (base_url or _DEFAULT_BASE).rstrip("/")
     endpoint = f"{base}/images/generations"
+
+    # 反馈 #65:seedream 4.x 要求 >=3,686,400 像素。出站前统一钳尺寸(含未传 size 时给安全默认),
+    # 否则过小尺寸被 Ark 退回 400。只对 seedream 生效,不影响其它 doubao 模型。
+    if _is_seedream(model):
+        params = dict(params or {})
+        params["size"] = _coerce_seedream_size(params.get("size"))
 
     body: dict[str, Any] = {"model": model, "prompt": prompt}
     # Forward supported optional fields from params
