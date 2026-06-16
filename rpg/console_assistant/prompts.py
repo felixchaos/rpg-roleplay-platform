@@ -149,14 +149,34 @@ def build_system_prompt(page_context: dict[str, Any] | None) -> str:
         except (TypeError, ValueError):
             pass
     script_id = page_context.get("script_id")
+    _script_id_int: int | None = None
     if script_id is not None:
         try:
-            pieces.append(f"  · script_id = {int(script_id)}")
+            _script_id_int = int(script_id)
+            pieces.append(f"  · script_id = {_script_id_int}")
         except (TypeError, ValueError):
             pass
     extra = page_context.get("note")
     if extra:
         pieces.append(f"  · note = <<<{_sanitize_ctx_string(extra, 256)}>>>")
+    # N (MD 编辑器) §5:带 script_id 时(右栏 agent)注入剧本编辑上下文 + 直写工具用法。
+    # open_file 描述当前打开的实体文件(章节 / 角色卡 / 世界书 / 锚点 / canon),由前端推上来。
+    if _script_id_int is not None and (page_context.get("tab") == "md-editor"
+                                       or page_context.get("md_editor")
+                                       or page_context.get("open_file")):
+        open_file = page_context.get("open_file")
+        of = f"当前打开的文件: {_sanitize_ctx_string(open_file, 200)}。" if open_file else ""
+        pieces.append(
+            f"\n你正在 MD 编辑器里协助编辑剧本 #{_script_id_int} 的知识资产。{of}\n"
+            "可用直写工具(都会落库并写审计;务必只改用户明确要求的内容):\n"
+            "  · update_script_chapter — 改章节正文/标题(覆盖整章,destructive,需用户确认)\n"
+            "  · upsert_worldbook_entry — 建/改世界书条目(传 entry_id 改、不传建)\n"
+            "  · update_npc_card — 改 NPC 角色卡(card_id 必填,只传要改的字段)\n"
+            "  · update_anchor — 改时间线锚点(anchor_id 必填)\n"
+            "  · upsert_canon_entity — 建/改 canon 实体(按 logical_key)\n"
+            "改前先用一句话向用户说清「要改哪个、改成什么」,得到默认许可的字段才写;"
+            "读现状用 get_script_chapters / list_script_npcs / get_script_character_card。"
+        )
     # task 109b: 注入 ui_atlas — 让 LLM 看到当前页面的结构化 DOM
     atlas = page_context.get("ui_atlas")
     if isinstance(atlas, dict) and (atlas.get("forms") or atlas.get("open_modals")):

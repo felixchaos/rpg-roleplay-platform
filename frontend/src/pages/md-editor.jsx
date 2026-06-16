@@ -6,6 +6,7 @@ import React from 'react';
 import './md-editor.css';
 import { lsGet, lsSet } from '../lib/storage.js';
 import CodeMirrorEditor from '../components/CodeMirrorEditor.jsx';
+import MdEditorAgent from '../components/MdEditorAgent.jsx';
 import { toMd, fromMd } from '../lib/md-serialize.js';
 
 const { useState, useEffect, useCallback, useRef } = React;
@@ -23,7 +24,7 @@ const api = () => (typeof window !== 'undefined' ? window.api : null);
 const toast = (msg, opts) => { try { window.__apiToast?.(msg, opts); } catch (_) {} };
 
 // ── 文件树:按组懒加载列表 ───────────────────────────────────────────────
-function FileTree({ scriptId, openNode, activeKey }) {
+function FileTree({ scriptId, openNode, activeKey, reloadKey }) {
   const [expanded, setExpanded] = useState(() => lsGet('mde.tree.expanded', 'chapter') || 'chapter');
   const [lists, setLists] = useState({});   // kind → {loading, error, items}
   const [filter, setFilter] = useState('');
@@ -41,6 +42,8 @@ function FileTree({ scriptId, openNode, activeKey }) {
 
   // 切剧本 → 清缓存,重载当前展开组。
   useEffect(() => { setLists({}); if (scriptId && expanded) loadGroup(expanded); /* eslint-disable-next-line */ }, [scriptId]);
+  // agent 写库后(reloadKey 变)→ 重载当前展开组(名称/数量可能变)。
+  useEffect(() => { if (reloadKey && scriptId && expanded) loadGroup(expanded); /* eslint-disable-next-line */ }, [reloadKey]);
 
   const toggle = (kind) => {
     const next = expanded === kind ? '' : kind;
@@ -163,6 +166,7 @@ export default function MdEditorPage() {
   const [scriptId, setScriptId] = useState(() => lsGet('mde.scriptId', null));
   const [tabs, setTabs] = useState([]);          // [{key, kind, id, label, content, original, loading, error, dirty}]
   const [activeKey, setActiveKey] = useState(null);
+  const [treeReloadKey, setTreeReloadKey] = useState(0);   // agent 写库后 bump,触发文件树重载
 
   // 拉剧本列表(仅自己拥有的可编辑)。
   useEffect(() => {
@@ -228,6 +232,20 @@ export default function MdEditorPage() {
     }
   }, [tabs, scriptId]);
 
+  // agent 写库后:重载受影响的标签(若打开且无未保存改动)+ 刷新文件树。
+  const refreshTab = useCallback(async (kind, id) => {
+    setTreeReloadKey((x) => x + 1);
+    const key = nodeKey(kind, id);
+    const t = tabs.find((x) => x.key === key);
+    if (!t) return;
+    if (t.dirty) { toast('AI 改了这条,但你有未保存修改,未自动刷新', { kind: 'warn', duration: 2600 }); return; }
+    try {
+      const content = await loadNodeContent(kind, scriptId, id);
+      setTabs((cur) => cur.map((x) => x.key === key ? { ...x, content, original: content, dirty: false } : x));
+      toast('AI 已修改,已刷新', { kind: 'ok', duration: 1400 });
+    } catch (_) { /* 静默 */ }
+  }, [tabs, scriptId]);
+
   // Cmd/Ctrl+S 保存当前标签。
   useEffect(() => {
     const onKey = (e) => {
@@ -258,7 +276,7 @@ export default function MdEditorPage() {
       <div className="mde-panes">
         {/* 左:文件树 */}
         <aside className="mde-left">
-          {scriptId ? <FileTree scriptId={scriptId} openNode={openNode} activeKey={activeKey} /> : <div className="mde-tree-hint">先选剧本</div>}
+          {scriptId ? <FileTree scriptId={scriptId} openNode={openNode} activeKey={activeKey} reloadKey={treeReloadKey} /> : <div className="mde-tree-hint">先选剧本</div>}
         </aside>
 
         {/* 中:标签 + 编辑器 */}
@@ -274,14 +292,11 @@ export default function MdEditorPage() {
           <EditorPane tab={active} onChange={onEdit} />
         </main>
 
-        {/* 右:agent 面板(P5)*/}
+        {/* 右:agent 直写面板(console_assistant SSE)*/}
         <aside className="mde-right">
-          <div className="mde-agent-placeholder">
-            <div className="mde-agent-title">AI 助手</div>
-            <div className="muted" style={{ fontSize: 12.5, padding: '8px 0' }}>
-              右栏 agent 直写库将在后续阶段接入(console_assistant)。
-            </div>
-          </div>
+          {scriptId
+            ? <MdEditorAgent scriptId={scriptId} activeTab={active} onWriteComplete={refreshTab} />
+            : <div className="mde-tree-hint">先选剧本</div>}
         </aside>
       </div>
     </div>

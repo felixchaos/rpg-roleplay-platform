@@ -61,6 +61,11 @@ def list_assistant_tools() -> list[dict[str, Any]]:
         "list_my_usage",
         # 剧本
         "list_scripts",
+        # MD 编辑器(剧本知识资产):读
+        "get_script_chapters", "list_script_npcs", "get_script_character_card",
+        # MD 编辑器(剧本知识资产):直写库(script scope,严格 owner 闸 + 二次确认)
+        "update_script_chapter", "upsert_worldbook_entry", "update_npc_card",
+        "update_anchor", "upsert_canon_entity",
         # 设置
         "select_model", "set_preference", "list_available_models",
         # 游戏状态查询 (task 48: console_assistant 读当前 save 状态)

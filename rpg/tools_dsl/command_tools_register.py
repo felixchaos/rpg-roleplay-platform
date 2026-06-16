@@ -365,6 +365,12 @@ def ensure_registered() -> None:
         register_image_tools()
     except Exception as exc:
         log.warning(f"[command_tools_register] image 工具注册失败: {exc}")
+    # N (MD 编辑器) §5: script 级「直写库」写工具(章节/世界书/NPC卡/锚点/canon,严格 owner 闸)
+    try:
+        from tools_dsl.command_tools_script_write import register_script_write_tools
+        register_script_write_tools()
+    except Exception as exc:
+        log.warning(f"[command_tools_register] script_write 工具注册失败: {exc}")
     # task 68/72 — 给已注册工具打 intent_keywords + side_effect_topics 标签,
     # 供 ui_describe 模糊匹配 + dispatcher 状态变更广播。
     try:
