@@ -177,15 +177,15 @@ export function AdminUsersPage() {
             }
             columnDefinitions={[
               { id: 'username', header: t('admin_page.users.col_username'), cell: (u) => u.username || u.name || '—' },
-              { id: 'display_name', header: t('admin_page.users.col_display_name'), cell: (u) => u.display_name || '—' },
+              { id: 'display_name', header: t('admin_page.users.col_display_name'), minWidth: 80, cell: (u) => u.display_name || '—' },
               {
-                id: 'role', header: t('admin_page.users.col_role'),
+                id: 'role', header: t('admin_page.users.col_role'), minWidth: 120,
                 cell: (u) => u.role === 'admin'
                   ? <CSBadge color="severity-medium">{t('admin_page.users.role_admin')}</CSBadge>
                   : <CSBadge color="grey">{t('admin_page.users.role_user')}</CSBadge>,
               },
               {
-                id: 'status', header: t('admin_page.users.col_status'),
+                id: 'status', header: t('admin_page.users.col_status'), minWidth: 100,
                 cell: (u) => u.deactivated_at
                   ? <CSStatusIndicator type="stopped">{t('admin_page.users.status_stopped')}</CSStatusIndicator>
                   : <CSStatusIndicator type="success">{t('admin_page.users.status_active_label')}</CSStatusIndicator>,
@@ -200,7 +200,7 @@ export function AdminUsersPage() {
                 cell: (u) => typeof u.active_session_count === 'number' ? u.active_session_count : '—',
               },
               {
-                id: 'actions', header: t('admin_page.common.actions'),
+                id: 'actions', header: t('admin_page.common.actions'), minWidth: 200,
                 cell: (u) => {
                   const isSelf = me && (me.id === u.id || me.username === u.username);
                   return (

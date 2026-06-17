@@ -83,10 +83,10 @@
 .mde-menu-hint { padding: 7px 10px; font-size: 12px; color: var(--muted-2, #6b655e); }
 
 /* 三栏(可拖拽:左/右宽度走 CSS 变量,中间分隔条拖动) */
-.mde-panes { flex: 1 1 auto; display: grid; grid-template-columns: var(--mde-left-w, 240px) 5px minmax(0, 1fr) 5px var(--mde-right-w, 320px); min-height: 0; }
-.mde-left   { background: var(--panel, #211f1d); overflow: hidden; display: flex; flex-direction: column; }
-.mde-center { display: flex; flex-direction: column; min-width: 0; background: var(--bg, #1a1817); }
-.mde-right  { background: var(--panel, #211f1d); overflow: auto; }
+.mde-panes { flex: 1 1 auto; display: grid; grid-template-columns: var(--mde-left-w, 240px) 5px minmax(0, 1fr) 5px var(--mde-right-w, 320px); min-height: 0; overflow: hidden; }
+.mde-left   { background: var(--panel, #211f1d); overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+.mde-center { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg, #1a1817); }
+.mde-right  { background: var(--panel, #211f1d); overflow: auto; min-height: 0; }
 .mde-splitter { background: var(--line, #36322d); cursor: col-resize; position: relative; }
 .mde-splitter:hover, .mde-splitter:active { background: var(--accent, #b5654a); }
 .mde-splitter::after { content: ''; position: absolute; inset: 0 -3px; }   /* 加宽命中区,视觉仍 5px */
@@ -234,6 +234,7 @@
     display: flex; flex-direction: column; position: fixed; top: 42px; right: 0; bottom: 0;
     width: min(360px, 88vw); z-index: 60; box-shadow: -8px 0 28px rgba(0,0,0,.5);
     border-left: 1px solid var(--line, #36322d);
+    overflow-x: hidden; overflow-y: auto;
   }
 }
 
