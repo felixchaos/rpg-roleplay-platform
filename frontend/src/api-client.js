@@ -85,7 +85,14 @@
       payload = await res.text();
     }
     if (!res.ok) {
-      const msg = (payload && payload.detail) || (payload && payload.error) || res.statusText || `请求失败 (HTTP ${res.status})`;
+      // payload.detail 可能是 FastAPI 422 的对象数组 [{loc,msg,type},…] 或任意对象;直接塞进
+      // Error(message) 会 toString 成 "[object Object]"(章节合并/各处报错都曾显示 [object Object])。
+      // 归一成可读串:数组取每项 msg 拼接,对象 JSON 化,其余原样。
+      const rawDetail = payload && payload.detail;
+      const detailStr = Array.isArray(rawDetail)
+        ? (rawDetail.map((d) => (d && (d.msg || d.message)) || (typeof d === "string" ? d : "")).filter(Boolean).join("；") || JSON.stringify(rawDetail))
+        : (rawDetail && typeof rawDetail === "object" ? JSON.stringify(rawDetail) : rawDetail);
+      const msg = detailStr || (payload && payload.error) || res.statusText || `请求失败 (HTTP ${res.status})`;
 
       // 401 — session expired; redirect once, then still throw so caller knows.
       if (res.status === 401) {
@@ -119,7 +126,8 @@
 
   class ApiError extends Error {
     constructor(code, status, message, payload) {
-      super(message);
+      // 兜底:message 永远是字符串,杜绝任何上游漏归一导致 .message 变 "[object Object]"。
+      super(typeof message === "string" ? message : (() => { try { return JSON.stringify(message); } catch (_) { return String(message); } })());
       this.code = code || "error";
       this.status = status;
       this.payload = payload;
@@ -461,6 +469,8 @@
       chapterDetail: (sid, idx) => GET(`${API_PREFIX}/scripts/${sid}/chapters/${idx}`),
       updateChapter: (sid, idx, body) => POST(`${API_PREFIX}/scripts/${sid}/chapters/${idx}`, body),
       mergeChapter: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/chapters/merge`, body),
+      // 批量删除章节(一次删整批再重排,避免逐章删 index 漂移)。indexes:number[]。
+      deleteChapters: (sid, indexes) => POST(`${API_PREFIX}/scripts/${sid}/chapters/delete`, { indexes }),
       splitChapter: (sid, idx, body) => POST(`${API_PREFIX}/scripts/${sid}/chapters/${idx}/split`, body),
       resplit: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/resplit`, body),
       chapterFacts: (sid, q) => GET(`${API_PREFIX}/scripts/${sid}/chapter-facts`, q),

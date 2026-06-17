@@ -146,6 +146,7 @@
 .mde-textarea.mono { font-family: var(--font-mono, monospace); }
 
 /* CodeMirror 宿主:填满编辑区 */
+.mde-editorwrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .mde-cm { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .mde-cm .cm-editor { height: 100%; }
 .mde-cm .cm-editor.cm-focused { outline: none; }
@@ -263,6 +264,15 @@
 .mde-ctx button:hover:not(:disabled) { background: var(--panel-2, #282623); }
 .mde-ctx button:disabled { color: var(--muted-2, #6b655e); cursor: not-allowed; }
 .mde-ctx button.danger { color: var(--danger, #c8675d); }
+/* 可复用 ContextMenu 项(带快捷键提示列) */
+.mde-ctx-item { display: flex; align-items: center; gap: 24px; width: 100%; text-align: left; background: transparent; border: none; color: var(--text, #ebe7df); padding: 6px 10px; font-size: 12.5px; cursor: pointer; border-radius: 5px; font-family: inherit; }
+.mde-ctx-item:hover:not(:disabled) { background: var(--panel-2, #282623); }
+.mde-ctx-item:disabled { color: var(--muted-2, #6b655e); cursor: not-allowed; }
+.mde-ctx-item.danger { color: var(--danger, #c8675d); }
+.mde-ctx-label { flex: 1 1 auto; white-space: nowrap; }
+.mde-ctx-kbd { margin-left: auto; color: var(--muted-2, #6b655e); font-family: var(--font-mono, monospace); font-size: 11px; white-space: nowrap; }
+.mde-ctx-sep { height: 1px; background: var(--line, #36322d); margin: 4px 2px; }
+.mde-tab { position: relative; }
 .mde-newmenu { position: relative; flex: 0 0 auto; }
 .mde-newmenu-pop { position: absolute; top: 26px; right: 0; z-index: 3000; min-width: 132px; background: var(--panel, #211f1d); border: 1px solid var(--line, #36322d); border-radius: 7px; box-shadow: 0 8px 28px rgba(0,0,0,.5); padding: 4px; display: flex; flex-direction: column; }
 .mde-newmenu-pop button { text-align: left; background: transparent; border: none; color: var(--text, #ebe7df); padding: 6px 10px; font-size: 12.5px; cursor: pointer; border-radius: 5px; font-family: inherit; display: flex; align-items: center; gap: 6px; }

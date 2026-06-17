@@ -1215,6 +1215,51 @@ def merge_chapters(user_id: int, script_id: int, first_index: int,
     return {"ok": True, "merged_into": int(a["chapter_index"]), "new_chapter_count": int(cnt["n"])}
 
 
+def delete_chapters(user_id: int, script_id: int, chapter_indexes: list[int]) -> dict[str, Any]:
+    """删除一批章节(按 chapter_index),随后整本重排为连续序号。
+
+    一次性删全部再重排,而不是逐章删——逐章删每次都 _renumber_contiguous 会让后续 index
+    漂移,导致删错章(用户多选删除时尤其明显)。负区两段式重排避免瞬时撞唯一键。
+
+    注意(与 merge/split 同):章节是 RAG(chunks/facts/锚点按 chapter_index 外键)的源,
+    结构改动后这些派生数据需重新提取才能完全对齐——本函数只做确定性的删除 + 重排 + 计数更新。
+    """
+    init_db()
+    idxs = sorted({int(i) for i in (chapter_indexes or [])})
+    if not idxs:
+        raise ValueError("未指定要删除的章节")
+    with connect() as db:
+        _lock_chapter_struct(db, script_id)
+        if not script_owned(db, script_id, user_id):
+            raise ValueError("无权访问该剧本")
+        total = int(db.execute(
+            "select count(*) as n from script_chapters where script_id = %s", (script_id,),
+        ).fetchone()["n"])
+        rows = db.execute(
+            "select chapter_index from script_chapters where script_id = %s and chapter_index = any(%s)",
+            (script_id, idxs),
+        ).fetchall()
+        hit = [int(r["chapter_index"]) for r in rows]
+        if not hit:
+            raise ValueError("要删除的章节都不存在")
+        if len(hit) >= total:
+            raise ValueError("不能删除全部章节(会清空剧本);如需清空请删除整个剧本")
+        db.execute(
+            "delete from script_chapters where script_id = %s and chapter_index = any(%s)",
+            (script_id, hit),
+        )
+        _renumber_contiguous(db, script_id)
+        cnt = db.execute(
+            "select count(*) as n, coalesce(sum(word_count),0) as w from script_chapters where script_id = %s",
+            (script_id,),
+        ).fetchone()
+        db.execute(
+            "update scripts set chapter_count = %s, word_count = %s, updated_at = now() where id = %s",
+            (int(cnt["n"]), int(cnt["w"]), script_id),
+        )
+    return {"ok": True, "deleted": len(hit), "new_chapter_count": int(cnt["n"])}
+
+
 def split_chapter(user_id: int, script_id: int, chapter_index: int,
                   *, split_at: int, new_title: str = "") -> dict[str, Any]:
     """按字符位置 split_at 把一章拆成两章。后续 index 全部 +1。"""

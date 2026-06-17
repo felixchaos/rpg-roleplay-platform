@@ -716,7 +716,7 @@ async def api_script_canon_entity(script_id: int, logical_key: str, user=Depends
     return json_response({"ok": True, "entity": dict(row)})
 
 
-@router.get("/api/scripts/{script_id}/chapters/{chapter_index}")
+@router.get("/api/scripts/{script_id}/chapters/{chapter_index:int}")
 async def api_chapter_detail(script_id: int, chapter_index: int, user=Depends(require_user)):
     """单章节完整 content(列表 API 只返 180 字符 preview,这里是 lazy fetch 真章节正文)。"""
     with connect() as db:
@@ -745,7 +745,7 @@ async def api_chapter_detail(script_id: int, chapter_index: int, user=Depends(re
     return json_response({"ok": True, "chapter": _expose(row)})
 
 
-@router.post("/api/scripts/{script_id}/chapters/{chapter_index}")
+@router.post("/api/scripts/{script_id}/chapters/{chapter_index:int}")
 async def api_chapter_update(request: Request, script_id: int, chapter_index: int, user=Depends(require_user)):
     """编辑单章 title/content/volume_title。"""
     body = await request.json()
@@ -803,7 +803,25 @@ async def api_chapter_merge(request: Request, script_id: int, user=Depends(requi
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 
 
-@router.post("/api/scripts/{script_id}/chapters/{chapter_index}/split")
+@router.post("/api/scripts/{script_id}/chapters/delete")
+async def api_chapters_delete(request: Request, script_id: int, user=Depends(require_user)):
+    """删除一批章节并整本重排(body: {indexes:[...]} 或 {chapter_index:n})。
+
+    结构操作:RAG(按 chapter_index 的外键)与 merge/split 一致,需重新提取才能完全对齐。
+    """
+    body = await request.json()
+    idxs = body.get("indexes")
+    if idxs is None and body.get("chapter_index") is not None:
+        idxs = [body.get("chapter_index")]
+    try:
+        return json_response(script_import.delete_chapters(
+            user["id"], script_id, [int(i) for i in (idxs or [])],
+        ))
+    except (ValueError, TypeError) as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@router.post("/api/scripts/{script_id}/chapters/{chapter_index:int}/split")
 async def api_chapter_split(request: Request, script_id: int, chapter_index: int, user=Depends(require_user)):
     """按字符位置 split_at 把一章拆成两章。"""
     body = await request.json()
