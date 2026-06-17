@@ -48,6 +48,12 @@ export default function GenerateImageModal({
   const { generate, generating: busy, error, credsMissing, reset, stop, setError } = useImageGeneration({
     onDone: (url) => { if (onDone) onDone(url); if (onClose) onClose(); },
   });
+  // 反馈采集:生图弹窗(无独立路由)标记当前活跃功能供运行环境快照识别。
+  useEffect(() => {
+    if (!open) return;
+    try { window.__activeFeature = 'AI 生图'; } catch (_) {}
+    return () => { try { if (window.__activeFeature === 'AI 生图') window.__activeFeature = null; } catch (_) {} };
+  }, [open]);
   // perCall:逐字保留本组件原 done/fail/error 文案与轮询策略。
   const PER_CALL = {
     noImageIdMsg: '服务端未返回任务 ID',   // 响应无 image_id(含 !res)→ 报错

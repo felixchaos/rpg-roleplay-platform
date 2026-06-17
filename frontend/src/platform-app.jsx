@@ -4193,6 +4193,8 @@ async function _csRefresh() {
 function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, onToggleAssistant }) {
   const { t } = useTranslation();
   const csModules = React.useMemo(() => getCSModules(t), [t]);
+  // 暴露页面 id→中文标题映射给运行环境快照(反馈采集把裸路径渲染成可读页面名)。
+  React.useEffect(() => { try { window.__PL_TITLES__ = getPLTitles(t); } catch (_) {} }, [t]);
   const platform = usePlatformData();
   const reactiveUser = useReactiveUser();
   const [continueState, setContinueState] = useStatePL({ open: false, save: null, nodeId: null });

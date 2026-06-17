@@ -53,6 +53,13 @@ export default function MediaStudio({ open, onClose, target, name, defaultPrompt
     return () => { imageGen.stop(); };
   }, [open, defaultPrompt]);
 
+  // 反馈采集:生图/媒体工作室是弹窗(无独立路由),标记当前活跃功能供运行环境快照识别。
+  useEffect(() => {
+    if (!open) return;
+    try { window.__activeFeature = 'AI 生图 / 媒体工作室'; } catch (_) {}
+    return () => { try { if (window.__activeFeature === 'AI 生图 / 媒体工作室') window.__activeFeature = null; } catch (_) {} };
+  }, [open]);
+
   useEffect(() => {
     if (open && tab === TAB.LIB && libItems === null && api.library && api.library.list) {
       api.library.list().then((r) => {

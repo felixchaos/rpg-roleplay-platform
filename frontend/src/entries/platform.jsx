@@ -97,7 +97,7 @@ const PL_IDS = [
   'admin-users', 'admin-usage', 'admin-audit', 'admin-health',
   'admin-logs', 'admin-registration', 'admin-security', 'admin-maintenance',
   'admin-dmca-takedowns', 'admin-dmca-strikes', 'admin-csam-reports', 'admin-aup-actions',
-  'admin-feedback',
+  'admin-feedback', 'admin-achievements',
   'usage', 'plugins', 'mcp', 'skills', 'apis', 'feedback', 'device', 'wall',
   'tavern', 'md-editor',
 ];

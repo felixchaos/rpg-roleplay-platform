@@ -118,6 +118,15 @@ window.__getRuntimeSnapshot = function (opts) {
     app_version: window.__APP_VERSION__ || '',
     url: location.pathname + location.search,
     hash: location.hash,
+    // 反馈采集:把裸路径映射成中文页面名(管理员可读)+ 当前活跃的浮层/弹窗功能(生图/后台任务等无独立路由的功能)。
+    page_label: (() => {
+      try {
+        const pid = (location.pathname || '/').replace(/^\/+/, '').replace(/\.html$/i, '') || 'profile';
+        const m = window.__PL_TITLES__ && window.__PL_TITLES__[pid];
+        return (Array.isArray(m) ? m[0] : m) || pid;
+      } catch (_) { return ''; }
+    })(),
+    active_feature: window.__activeFeature || null,
     viewport: `${w}x${h}`,
     locale: navigator.language || '',
     tz: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (_) { return ''; } })(),
