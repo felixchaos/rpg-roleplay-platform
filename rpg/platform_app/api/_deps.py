@@ -158,15 +158,23 @@ def _local_default_user() -> dict | None:
         return None
 
 
+def _is_loopback(request: Request) -> bool:
+    """请求是否来自本机回环(127.0.0.1 / ::1 / localhost)。LAN 设备走真实 IP → False。"""
+    host = (request.client.host if request.client else "") or ""
+    return host in {"127.0.0.1", "::1", "localhost"} or host.startswith("127.")
+
+
 def current_user(request: Request) -> dict | None:
     try:
         init_db()
         user = auth.user_from_token(request.cookies.get(SESSION_COOKIE))
-        # 本地/自部署免登录模式(_auth_required()=False)且无 cookie 时,回退到库里第一个
-        # 用户,让单用户本地部署开箱即用(否则前端 online=true & authed=false 会跳回登录页,
-        # 业务接口也拿不到用户上下文)。服务器模式(_auth_required()=True)绝不走这条路。
+        # 本地/自部署免登录模式(_auth_required()=False)且无 cookie 时,回退到库里第一个用户,
+        # 让单用户本地部署开箱即用。**安全收紧**:仅「本机回环 + 默认账户未设密码」时才免登录回退;
+        # LAN 设备(非回环)或默认账户已设密码 → 必须有真实会话(cookie / 魔法链接),
+        # 否则同网任意设备都能越权拿到默认账户(做好本地部署鉴权)。服务器模式绝不走这条路。
         if user is None and not _auth_required():
-            user = _local_default_user()
+            if _is_loopback(request) and not auth.local_account_has_password():
+                user = _local_default_user()
         if user:
             uid = int(user["id"])
             if uid not in _ENSURED_DEFAULT_USERS:

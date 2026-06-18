@@ -117,6 +117,85 @@ function initUpdater() {
   updater.on('update-downloaded', (i) => send('upd:status', { state: 'downloaded', version: i.version, notes: _notes(i) }));
 }
 
+// ── 共享 net helper(主进程,绕浏览器 CORS;可选 session 分区带 cookie)──
+function _netJson(method, url, body, ses) {
+  const { net } = require('electron');
+  return new Promise((resolve, reject) => {
+    let req;
+    try { req = net.request({ method, url, ...(ses ? { session: ses } : {}) }); }
+    catch (e) { return reject(e); }
+    if (body) req.setHeader('Content-Type', 'application/json');
+    let data = '';
+    req.on('response', (res) => {
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        let j = {};
+        try { j = data ? JSON.parse(data) : {}; } catch (_) { j = { raw: (data || '').slice(0, 200) }; }
+        resolve({ status: res.statusCode, ok: res.statusCode < 400, ...(j && typeof j === 'object' ? j : { value: j }) });
+      });
+    });
+    req.on('error', reject);
+    if (body) req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
+// 取二进制(账户导出 zip)。
+function _fetchBytes(url, ses) {
+  const { net } = require('electron');
+  return new Promise((resolve, reject) => {
+    let req;
+    try { req = net.request({ url, ...(ses ? { session: ses } : {}) }); } catch (e) { return reject(e); }
+    const chunks = [];
+    req.on('response', (res) => {
+      if (res.statusCode >= 400) { res.on('data', () => {}); res.on('end', () => reject(new Error('HTTP ' + res.statusCode))); return; }
+      res.on('data', (c) => chunks.push(Buffer.from(c)));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+// 上传 zip(multipart)到账户导入端点。
+function _postZip(url, buf, name, ses) {
+  const { net } = require('electron');
+  const boundary = '----stxform' + process.hrtime.bigint().toString(36);
+  const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: application/zip\r\n\r\n`);
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const body = Buffer.concat([head, buf, tail]);
+  return new Promise((resolve) => {
+    let req;
+    try { req = net.request({ method: 'POST', url, ...(ses ? { session: ses } : {}) }); } catch (e) { return resolve({ ok: false, error: String(e) }); }
+    req.setHeader('Content-Type', `multipart/form-data; boundary=${boundary}`);
+    let data = '';
+    req.on('response', (res) => { res.on('data', (d) => { data += d; }); res.on('end', () => { try { const j = JSON.parse(data); resolve({ ok: res.statusCode < 400 && j.ok !== false, ...j }); } catch (_) { resolve({ ok: res.statusCode < 400, status: res.statusCode }); } }); });
+    req.on('error', (e) => resolve({ ok: false, error: String(e && e.message || e) }));
+    req.write(body); req.end();
+  });
+}
+
+// 云端账户用独立持久化 session 分区:控制台登录的 cookie 与本地后端、系统浏览器都隔离(不串号)。
+let _cloudSes = null;
+function _cloudSession() {
+  if (!_cloudSes) { const { session } = require('electron'); _cloudSes = session.fromPartition('persist:cloud'); }
+  return _cloudSes;
+}
+
+// 统一重启前置:查本地后端有无正在运行的导入任务(防中断用户长任务)。
+async function _activeImportJobs() {
+  try {
+    if (cfg.load().mode !== 'local' || supervisor.state !== 'running' || !supervisor.backendPort) return [];
+    const r = await _netJson('GET', `http://127.0.0.1:${supervisor.backendPort}/api/me/tasks/active`);
+    const items = (r && (r.tasks || r.items || r.active)) || [];
+    return items.filter((t) => {
+      const kind = (t.kind || t.type || '').toLowerCase();
+      const st = (t.status || t.state || '').toLowerCase();
+      return (kind.includes('import') || kind.includes('rebuild') || kind.includes('extract'))
+        && !['done', 'failed', 'cancelled', 'canceled', 'error'].includes(st);
+    });
+  } catch (_) { return []; }
+}
+
 // ── IPC ──
 function wireIpc() {
   ipcMain.handle('app:version', () => app.getVersion());
@@ -124,7 +203,17 @@ function wireIpc() {
   ipcMain.handle('sv:logs', () => supervisor.recentLogs());
   ipcMain.handle('sv:start', async () => { await supervisor.start(); return supervisor.snapshot(); });
   ipcMain.handle('sv:stop', async () => { await supervisor.stop(); return supervisor.snapshot(); });
-  ipcMain.handle('sv:restart', async () => { await supervisor.restart(); return supervisor.snapshot(); });
+  // 统一重启鉴定:若有正在运行的导入/重建任务,先返回 needsConfirm 让前端弹窗询问;
+  // 用户确认(force)才中断并重启。所有重启入口(重启按钮 / 改需重启设置)都走这里。
+  ipcMain.handle('sv:restart', async (_e, opts) => {
+    const force = !!(opts && opts.force);
+    if (!force) {
+      const active = await _activeImportJobs();
+      if (active.length) return { ok: false, needsConfirm: true, activeTasks: active.map((t) => t.label || t.title || t.kind || '导入任务') };
+    }
+    await supervisor.restart();
+    return { ok: true, ...supervisor.snapshot() };
+  });
 
   ipcMain.handle('cfg:get', () => cfg.load());
   ipcMain.handle('cfg:set', (_e, patch) => {
@@ -138,12 +227,43 @@ function wireIpc() {
     const c = cfg.load();
     if (c.mode === 'local') {
       if (supervisor.state !== 'running') await supervisor.start();
-      await shell.openExternal(`http://127.0.0.1:${supervisor.backendPort}/Platform.html`);
-      return { url: `http://127.0.0.1:${supervisor.backendPort}/Platform.html` };
+      const base = `http://127.0.0.1:${supervisor.backendPort}`;
+      let target = `${base}/Platform.html`;
+      // 免登录魔法链接:铸一次性 token → 打开 desktop-login(浏览器即登录默认账户)。
+      // 关闭则直接开 Platform(未设密码=回环自动登录;已设密码=会跳登录页)。
+      if (c.magicLink) {
+        try {
+          const r = await _netJson('POST', `${base}/api/local/account/magic-token`);
+          if (r && r.ok && r.token) {
+            target = `${base}/api/auth/desktop-login?token=${encodeURIComponent(r.token)}&next=${encodeURIComponent('/Platform.html')}`;
+          }
+        } catch (_) { /* 兜底直接开 Platform */ }
+      }
+      await shell.openExternal(target);
+      return { url: target };
     }
     const url = c.onlineUrl.replace(/\/+$/, '') + '/';
     await shell.openExternal(url);
     return { url };
+  });
+
+  // ── 云端账户(在线模式):控制台侧登录/登出 + 显示头像昵称(独立 cookie 分区,不串号)──
+  const _cloudBase = () => (cfg.load().onlineUrl || 'https://rpg-roleplay.stellatrix.icu').replace(/\/+$/, '');
+  ipcMain.handle('cloud:me', async () => {
+    const base = _cloudBase();
+    try { const r = await _netJson('GET', `${base}/api/auth/me`, null, _cloudSession()); return { ok: !!(r.ok && r.user), user: r.user || null, base }; }
+    catch (e) { return { ok: false, error: String(e && e.message || e), base }; }
+  });
+  ipcMain.handle('cloud:login', async (_e, body) => {
+    const base = _cloudBase();
+    try { const r = await _netJson('POST', `${base}/api/auth/login`, { username: (body && body.username) || '', password: (body && body.password) || '' }, _cloudSession()); return { ok: !!(r.ok && r.user), user: r.user || null, error: r.error, base }; }
+    catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
+  ipcMain.handle('cloud:logout', async () => {
+    const base = _cloudBase();
+    try { await _netJson('POST', `${base}/api/auth/logout`, {}, _cloudSession()); } catch (_) {}
+    try { await _cloudSession().clearStorageData(); } catch (_) {}
+    return { ok: true };
   });
   ipcMain.handle('sys:openDataDir', () => { shell.openPath(P.userDataRoot()); });
   ipcMain.handle('sys:openLogsDir', () => { shell.openPath(P.logsDir()); });
@@ -240,6 +360,43 @@ function wireIpc() {
   // ── 账号数据迁移(对本地后端;本地模式 default user 无需鉴权)──
   const _localBase = () => `http://127.0.0.1:${supervisor.backendPort}`;
   const _localOk = () => cfg.load().mode === 'local' && supervisor.state === 'running' && !!supervisor.backendPort;
+
+  // ── 本地默认账户(本地模式):读信息 / 改用户名昵称 / 设密码 ──
+  ipcMain.handle('local:account', async () => {
+    if (!_localOk()) return { ok: false, error: '需本地模式且服务运行' };
+    try { return await _netJson('GET', `${_localBase()}/api/local/account`); }
+    catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
+  ipcMain.handle('local:setProfile', async (_e, body) => {
+    if (!_localOk()) return { ok: false, error: '需本地模式且服务运行' };
+    try { return await _netJson('POST', `${_localBase()}/api/local/account/profile`, body || {}); }
+    catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
+  ipcMain.handle('local:setPassword', async (_e, body) => {
+    if (!_localOk()) return { ok: false, error: '需本地模式且服务运行' };
+    try { return await _netJson('POST', `${_localBase()}/api/local/account/password`, body || {}); }
+    catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
+
+  // ── 云端 ↔ 本地 账户数据迁移(导出一端 → 合并导入另一端;两端 import 都按会话用户隔离,IDOR 安全)──
+  ipcMain.handle('cloud:syncToLocal', async () => {   // 云端 → 本地
+    if (!_localOk()) return { ok: false, error: '需本地模式且服务运行' };
+    const me = await _netJson('GET', `${_cloudBase()}/api/auth/me`, null, _cloudSession());
+    if (!me || !me.user) return { ok: false, error: '未登录云端账户' };
+    let buf;
+    try { buf = await _fetchBytes(`${_cloudBase()}/api/me/account/export`, _cloudSession()); }
+    catch (e) { return { ok: false, error: '云端导出失败:' + (e && e.message || e) }; }
+    return await _postZip(`${_localBase()}/api/me/account/import`, buf, 'cloud-account.zip', null);
+  });
+  ipcMain.handle('cloud:syncFromLocal', async () => { // 本地 → 云端
+    if (!_localOk()) return { ok: false, error: '需本地模式且服务运行' };
+    const me = await _netJson('GET', `${_cloudBase()}/api/auth/me`, null, _cloudSession());
+    if (!me || !me.user) return { ok: false, error: '未登录云端账户' };
+    let buf;
+    try { buf = await _fetchBytes(`${_localBase()}/api/me/account/export`, null); }
+    catch (e) { return { ok: false, error: '本地导出失败:' + (e && e.message || e) }; }
+    return await _postZip(`${_cloudBase()}/api/me/account/import`, buf, 'local-account.zip', _cloudSession());
+  });
 
   ipcMain.handle('account:estimate', async () => {
     if (!_localOk()) return { ok: false, error: '需本地模式且服务运行' };

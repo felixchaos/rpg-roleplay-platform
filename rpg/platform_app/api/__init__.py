@@ -18,6 +18,7 @@ from .worldline_memory import router as _wm_router
 from .admin import router as _admin_router
 from .splash import router as _splash_router
 from .feedback import router as _feedback_router
+from .local_account import router as _local_account_router
 from .policy import router as _policy_router
 from .federation import router as _federation_router
 from .images import router as _images_router
@@ -36,6 +37,7 @@ router.include_router(_library_router)
 router.include_router(_admin_router)
 router.include_router(_splash_router)
 router.include_router(_feedback_router)
+router.include_router(_local_account_router)
 router.include_router(_policy_router)
 router.include_router(_federation_router)
 router.include_router(_images_router)

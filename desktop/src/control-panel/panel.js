@@ -3,6 +3,7 @@
 
 const $ = (id) => document.getElementById(id);
 const sv = window.sv;
+const t = (k) => (window.I18N ? window.I18N.t(k) : k);   // i18n(i18n.js 提供;兜底返回 key)
 const CONSENT_TEXT = '我已阅读 AUP §2.J,理解不得包含成人主题节选,同意(此操作记录我的同意)';
 const LINKS = {
   landing: 'https://play.stellatrix.icu/legal/terms-of-service',
@@ -45,14 +46,15 @@ function mdToHtml(md) {
 function flash(btn, txt) { const o = btn.textContent; btn.textContent = txt; btn.disabled = true; setTimeout(() => { btn.textContent = o; btn.disabled = false; }, 1200); }
 
 // ── 标签切换 ──
-const TAB_TITLE = { overview: '概览', logs: '日志', backup: '备份 / 恢复', lan: '局域网访问', config: '配置', update: '更新', feedback: '反馈', about: '关于' };
+let _activeTab = 'overview';
 function switchTab(tab) {
+  _activeTab = tab;
   document.querySelectorAll('.navitem').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('active', p.dataset.pane === tab));
-  $('tabTitle').textContent = TAB_TITLE[tab] || tab;
+  $('tabTitle').textContent = t('nav.' + tab) || tab;
   if (tab === 'logs') $('logBadge').hidden = true;
   if (tab === 'lan') loadLan();
-  if (tab === 'backup') refreshBackupGate();
+  if (tab === 'backup') { refreshBackupGate(); loadBackupAccount(); }
   if (tab === 'feedback') loadFeedbackReplies();
 }
 
@@ -108,7 +110,10 @@ function renderStatus(s) {
   $('stopBtn').disabled = busy || s.state === 'stopped';
   $('restartBtn').disabled = busy || s.state === 'stopped';
   $('svError').hidden = s.state !== 'error';
-  if (s.state === 'error') $('svErrorTitle').textContent = s.detail || '启动失败';
+  if (s.state === 'error') $('svErrorTitle').textContent = s.detail || t('overview.start_failed');
+  if ($('localGuide')) $('localGuide').hidden = !(cfg && cfg.mode === 'local' && s.state === 'stopped');
+  // 服务转入运行后,本地账户信息才可读 → 拉一次(_localAcct 缓存,避免重复拉)。
+  if (s.state === 'running' && cfg && cfg.mode === 'local' && _localAcct === null) loadLocalAccount();
   refreshBackupGate();
 }
 
@@ -118,10 +123,68 @@ function renderMode() {
   document.querySelectorAll('.modeseg button').forEach((b) => b.classList.toggle('active', b.dataset.mode === cfg.mode));
   $('localSvc').hidden = !local;
   $('lanShareRow').hidden = !local;   // 局域网分享(复制地址+二维码)仅本地模式
-  $('modeHint').textContent = local ? '本机离线 · NSFW 自主' : '连云端账号';
+  if ($('magicChkWrap')) $('magicChkWrap').hidden = !local;
+  if ($('cloudAccount')) $('cloudAccount').hidden = local;
+  if ($('magicLink')) $('magicLink').checked = cfg.magicLink !== false;
+  $('modeHint').textContent = local ? t('mode.local_hint') : t('mode.online_hint');
+  if (local) loadLocalAccount(); else loadCloudAccount();
   renderStatus(last);
 }
 async function setMode(mode) { cfg = await sv.setConfig({ mode }); renderMode(); }
+
+// ── 账户(本地 / 云端)──
+function _setAvatar(el, name, path, base) {
+  if (!el) return;
+  if (path) { el.style.backgroundImage = `url("${base || ''}${path}")`; el.textContent = ''; }
+  else { el.style.backgroundImage = ''; el.textContent = ((name || '?').trim().charAt(0)) || '?'; }
+}
+let _localAcct = null;
+async function loadLocalAccount() {
+  if (!$('localName')) return;
+  if (last.state !== 'running') { $('localName').textContent = t('account.start_first'); $('localSub').textContent = ''; _setAvatar($('localAvatar'), '?', null); return; }
+  try {
+    const r = await sv.localAccount();
+    const a = r && r.account;
+    if (!a || !a.exists) return;
+    _localAcct = a;
+    const base = last.backendPort ? `http://127.0.0.1:${last.backendPort}` : '';
+    $('localName').textContent = a.display_name || a.username;
+    $('localSub').textContent = `@${a.username} · ` + (a.has_password ? t('account.pw_set') : t('account.pw_none'));
+    _setAvatar($('localAvatar'), a.display_name || a.username, a.avatar_path, base);
+  } catch (_) {}
+}
+let _cloudUser = null;
+async function loadCloudAccount() {
+  if (!$('cloudName')) return;
+  try {
+    const r = await sv.cloudMe();
+    const u = r && r.user;
+    if (u) {
+      _cloudUser = u;
+      $('cloudName').textContent = u.display_name || u.username;
+      $('cloudSub').textContent = '@' + u.username;
+      _setAvatar($('cloudAvatar'), u.display_name || u.username, u.avatar_path, r.base || '');
+      $('cloudLoginBtn').hidden = true; $('cloudLogoutBtn').hidden = false;
+    } else {
+      _cloudUser = null;
+      $('cloudName').textContent = t('account.not_logged_in'); $('cloudSub').textContent = '';
+      _setAvatar($('cloudAvatar'), '?', null);
+      $('cloudLoginBtn').hidden = false; $('cloudLogoutBtn').hidden = true;
+    }
+  } catch (_) {}
+}
+
+// ── 统一重启(查活跃导入任务 → 弹窗确认强制)──
+async function doRestart() {
+  let r;
+  try { r = await sv.restart(); } catch (_) { return; }
+  if (r && r.needsConfirm) {
+    const names = (r.activeTasks || []).join('、');
+    if (window.confirm(t('restart.confirm').replace('{tasks}', names))) {
+      try { await sv.restart({ force: true }); } catch (_) {}
+    }
+  }
+}
 
 // ── 日志 ──
 const logPane = $('logPane');
@@ -142,12 +205,44 @@ function appendLog(e) {
 }
 
 // ── 配置 ──
+// 本地部署可调参数(自然语言列表)。值落 cfg.extraEnv → supervisor 注入后端环境。
+// 全局 key 走后端 RPG_KEY_<API_ID> 约定(user_credentials.resolve_api_key,仅本地模式)。
+const ENV_PARAMS = [
+  { key: 'RPG_KEY_OPENAI', label: '全局 OpenAI Key', desc: '自部署全局密钥;留空则各用户在应用内自带(BYOK)。', restart: true, secret: true },
+  { key: 'RPG_KEY_ANTHROPIC', label: '全局 Anthropic (Claude) Key', desc: '同上。', restart: true, secret: true },
+  { key: 'RPG_KEY_GOOGLE_AI_STUDIO', label: '全局 Google AI Studio (Gemini) Key', desc: '同上。', restart: true, secret: true },
+  { key: 'RPG_KEY_DEEPSEEK', label: '全局 DeepSeek Key', desc: '同上。', restart: true, secret: true },
+  { key: 'EMBED_API_KEY', label: '平台嵌入向量 Key', desc: '知识库检索用嵌入模型密钥。', restart: true, secret: true },
+  { key: 'EMBED_DIM', label: '嵌入向量维度', desc: '默认 768;改后需重嵌知识库。', restart: true, def: '768' },
+  { key: 'RPG_VERTEX_EXPLICIT_CACHE', label: 'Vertex 显式缓存', desc: '1=开(默认)/0=关。', restart: true, def: '1' },
+];
+function renderParams() {
+  const box = $('paramsList'); if (!box) return;
+  const env = cfg.extraEnv || {};
+  box.innerHTML = '';
+  for (const p of ENV_PARAMS) {
+    const row = document.createElement('div'); row.className = 'paramrow';
+    const head = document.createElement('div'); head.className = 'paramhead';
+    head.innerHTML = `<span class="paramlabel"></span>${p.restart ? `<span class="paramtag">${t('config.needs_restart')}</span>` : ''}`;
+    head.querySelector('.paramlabel').textContent = p.label;
+    const desc = document.createElement('div'); desc.className = 'paramdesc muted-2'; desc.textContent = p.desc;
+    const inp = document.createElement('input');
+    inp.type = p.secret ? 'password' : 'text'; inp.className = 'mono'; inp.dataset.pkey = p.key;
+    inp.value = env[p.key] != null ? env[p.key] : '';
+    inp.placeholder = p.def ? `默认 ${p.def}` : (p.secret ? '未设置' : '');
+    row.appendChild(head); row.appendChild(desc); row.appendChild(inp);
+    box.appendChild(row);
+  }
+}
 function fillForm() {
   $('cfgOnlineUrl').value = cfg.onlineUrl || '';
   $('cfgBackendPort').value = cfg.backendPort || 0;
   $('cfgChannel').value = cfg.updateChannel || 'stable';
+  if ($('cfgLang')) $('cfgLang').value = cfg.uiLanguage || '';
   $('cfgAutoStart').checked = !!cfg.autoStartLocal;
-  $('cfgExtraEnv').value = Object.entries(cfg.extraEnv || {}).map(([k, v]) => `${k}=${v}`).join('\n');
+  const paramKeys = new Set(ENV_PARAMS.map((p) => p.key));
+  $('cfgExtraEnv').value = Object.entries(cfg.extraEnv || {}).filter(([k]) => !paramKeys.has(k)).map(([k, v]) => `${k}=${v}`).join('\n');
+  renderParams();
 }
 function parseEnv(text) {
   const out = {};
@@ -155,8 +250,28 @@ function parseEnv(text) {
   return out;
 }
 async function saveCfg() {
-  cfg = await sv.setConfig({ onlineUrl: $('cfgOnlineUrl').value.trim() || 'https://rpg-roleplay.stellatrix.icu', backendPort: parseInt($('cfgBackendPort').value, 10) || 0, updateChannel: $('cfgChannel').value, autoStartLocal: $('cfgAutoStart').checked, extraEnv: parseEnv($('cfgExtraEnv').value) });
-  fillForm(); flash($('saveCfgBtn'), '已保存'); $('updCurrent').textContent = `当前 v${appVer} · ${cfg.updateChannel}`;
+  const prevEnv = cfg.extraEnv || {};
+  const env = parseEnv($('cfgExtraEnv').value);   // 高级 raw 作底,参数列表覆盖其上
+  let restartNeeded = false;
+  document.querySelectorAll('#paramsList input[data-pkey]').forEach((inp) => {
+    const k = inp.dataset.pkey, v = (inp.value || '').trim();
+    if (v) env[k] = v; else delete env[k];
+    const p = ENV_PARAMS.find((x) => x.key === k);
+    if (p && p.restart && (prevEnv[k] || '') !== v) restartNeeded = true;
+  });
+  const lang = $('cfgLang') ? $('cfgLang').value : (cfg.uiLanguage || '');
+  const langChanged = (cfg.uiLanguage || '') !== lang;
+  cfg = await sv.setConfig({
+    onlineUrl: $('cfgOnlineUrl').value.trim() || 'https://rpg-roleplay.stellatrix.icu',
+    backendPort: parseInt($('cfgBackendPort').value, 10) || 0,
+    updateChannel: $('cfgChannel').value, autoStartLocal: $('cfgAutoStart').checked,
+    uiLanguage: lang, extraEnv: env,
+  });
+  if (langChanged && window.I18N) { window.I18N.setLang(lang); renderMode(); }
+  fillForm(); flash($('saveCfgBtn'), t('common.saved')); $('updCurrent').textContent = `当前 v${appVer} · ${cfg.updateChannel}`;
+  if (restartNeeded && cfg.mode === 'local' && last.state === 'running') {
+    if (window.confirm(t('restart.settings_changed'))) await doRestart();
+  }
 }
 
 // ── 备份 / 恢复 ──
@@ -169,6 +284,35 @@ function refreshBackupGate() {
   if (ok && $('exportSize') && $('exportSize').textContent === '—') loadEstimate();
 }
 async function loadEstimate() { try { const r = await sv.accountEstimate(); if (r && r.ok) $('exportSize').textContent = r.size || '—'; } catch (_) {} }
+// 备份页显示当前账户 + 云端数据迁移区(避免误解备份归属;在线已登录时可双向同步)。
+async function loadBackupAccount() {
+  const banner = $('bkAcct'); if (!banner) return;
+  const sync = $('cloudSyncSection');
+  if (cfg.mode === 'local') {
+    banner.hidden = false;
+    if (_localAcct) {
+      $('bkAcctName').textContent = _localAcct.display_name || _localAcct.username;
+      $('bkAcctSub').textContent = '@' + _localAcct.username + ' · ' + t('account.local');
+      _setAvatar($('bkAvatar'), _localAcct.display_name || _localAcct.username, _localAcct.avatar_path, last.backendPort ? `http://127.0.0.1:${last.backendPort}` : '');
+    } else { $('bkAcctName').textContent = '—'; $('bkAcctSub').textContent = t('account.local'); _setAvatar($('bkAvatar'), 'L', null); }
+    if (sync) {
+      sync.hidden = false;
+      const me = await sv.cloudMe().catch(() => null);
+      const logged = me && me.user;
+      $('cloudSyncRow').hidden = !logged;
+      $('cloudSyncHint').textContent = logged ? `${t('account.cloud')}:${me.user.display_name || me.user.username}` : t('backup.cloud_need_login');
+    }
+  } else {
+    if (sync) sync.hidden = true;
+    const me = await sv.cloudMe().catch(() => null);
+    if (me && me.user) {
+      banner.hidden = false;
+      $('bkAcctName').textContent = me.user.display_name || me.user.username;
+      $('bkAcctSub').textContent = '@' + me.user.username + ' · ' + t('account.cloud');
+      _setAvatar($('bkAvatar'), me.user.display_name || me.user.username, me.user.avatar_path, me.base || '');
+    } else banner.hidden = true;
+  }
+}
 function fillBackup() {
   $('backupDir').value = cfg.backupDir || '';
   $('autoBackup').checked = !!cfg.autoBackup;
@@ -231,6 +375,7 @@ async function init() {
   $('aupLink').href = LINKS.aup;
   $('lnLanding').href = LINKS.landing; $('lnApp').href = LINKS.app; $('lnRepo').href = LINKS.repo; $('lnCard').href = LINKS.card;
   cfg = await sv.getConfig();
+  if (window.I18N) window.I18N.setLang(cfg.uiLanguage || '');   // 设语言 + 翻译静态 DOM(在 renderMode 前,t() 可用)
   renderMode(); fillForm(); fillBackup();
   $('rememberMode').checked = !!cfg.rememberMode;
   $('updCurrent').textContent = `当前 v${appVer} · ${cfg.updateChannel || 'stable'}`;
@@ -254,10 +399,44 @@ async function init() {
   $('qrBtn').addEventListener('mouseleave', _hideQr);
   $('qrPop').addEventListener('mouseenter', () => clearTimeout(_qrT));
   $('qrPop').addEventListener('mouseleave', _hideQr);
-  $('startBtn').addEventListener('click', () => sv.start().catch(() => {}));
+  $('startBtn').addEventListener('click', async () => { await sv.start().catch(() => {}); loadLocalAccount(); });
   $('stopBtn').addEventListener('click', () => sv.stop().catch(() => {}));
-  $('restartBtn').addEventListener('click', () => sv.restart().catch(() => {}));
+  $('restartBtn').addEventListener('click', doRestart);
   $('retryBtn').addEventListener('click', () => sv.start().catch(() => {}));
+  if ($('magicLink')) $('magicLink').addEventListener('change', async () => { cfg = await sv.setConfig({ magicLink: $('magicLink').checked }); });
+  // 本地账户:改用户名/昵称
+  if ($('localRenameBtn')) $('localRenameBtn').addEventListener('click', () => {
+    $('localProfileForm').hidden = !$('localProfileForm').hidden; $('localPwForm').hidden = true;
+    if (_localAcct) { $('localUserInput').value = _localAcct.username || ''; $('localNameInput').value = _localAcct.display_name || ''; }
+  });
+  if ($('localProfileCancel')) $('localProfileCancel').addEventListener('click', () => { $('localProfileForm').hidden = true; });
+  if ($('localProfileSave')) $('localProfileSave').addEventListener('click', async () => {
+    $('localProfileErr').hidden = true;
+    const r = await sv.localSetProfile({ username: $('localUserInput').value.trim(), display_name: $('localNameInput').value.trim() });
+    if (r && r.ok) { $('localProfileForm').hidden = true; await loadLocalAccount(); }
+    else { $('localProfileErr').hidden = false; $('localProfileErr').textContent = (r && (r.error || r.detail)) || '保存失败'; }
+  });
+  // 本地账户:设/重置密码
+  if ($('localPwBtn')) $('localPwBtn').addEventListener('click', () => { $('localPwForm').hidden = !$('localPwForm').hidden; $('localProfileForm').hidden = true; $('localPwInput').value = ''; $('localPwMsg').hidden = true; });
+  if ($('localPwCancel')) $('localPwCancel').addEventListener('click', () => { $('localPwForm').hidden = true; });
+  if ($('localPwSave')) $('localPwSave').addEventListener('click', async () => {
+    const r = await sv.localSetPassword({ password: $('localPwInput').value });
+    $('localPwMsg').hidden = false;
+    $('localPwMsg').textContent = r && r.ok ? (r.has_password ? '已设密码' : '已清除密码') : ((r && (r.error || r.detail)) || '失败');
+    $('localPwMsg').className = 'hint ' + (r && r.ok ? 'ok' : 'danger');
+    if (r && r.ok) { setTimeout(() => { $('localPwForm').hidden = true; }, 900); await loadLocalAccount(); }
+  });
+  // 云端账户:登录 / 登出
+  if ($('cloudLoginBtn')) $('cloudLoginBtn').addEventListener('click', () => { $('cloudLoginForm').hidden = false; $('cloudLoginErr').hidden = true; });
+  if ($('cloudLoginCancel')) $('cloudLoginCancel').addEventListener('click', () => { $('cloudLoginForm').hidden = true; });
+  if ($('cloudLoginSubmit')) $('cloudLoginSubmit').addEventListener('click', async () => {
+    $('cloudLoginErr').hidden = true; $('cloudLoginSubmit').disabled = true;
+    const r = await sv.cloudLogin({ username: $('cloudUser').value.trim(), password: $('cloudPass').value });
+    $('cloudLoginSubmit').disabled = false;
+    if (r && r.ok) { $('cloudLoginForm').hidden = true; $('cloudPass').value = ''; await loadCloudAccount(); refreshBackupGate(); }
+    else { $('cloudLoginErr').hidden = false; $('cloudLoginErr').textContent = (r && r.error) || t('account.login_failed'); }
+  });
+  if ($('cloudLogoutBtn')) $('cloudLogoutBtn').addEventListener('click', async () => { await sv.cloudLogout(); await loadCloudAccount(); refreshBackupGate(); });
   $('errLogsBtn').addEventListener('click', () => sv.openLogsDir());
   $('copyDiagBtn').addEventListener('click', async () => { await sv.copyDiagnostics(); flash($('copyDiagBtn'), '已复制'); });
 
@@ -278,6 +457,24 @@ async function init() {
   $('pickBackupDirBtn').addEventListener('click', async () => { const r = await sv.pickBackupDir(); if (r && r.path) { cfg = await sv.setConfig({ backupDir: r.path }); fillBackup(); } });
   $('saveBackupBtn').addEventListener('click', async () => { cfg = await sv.setConfig({ autoBackup: $('autoBackup').checked, autoBackupHours: parseInt($('autoBackupHours').value, 10) || 168, backupKeep: Math.max(1, parseInt($('backupKeep').value, 10) || 3) }); flash($('saveBackupBtn'), '已保存'); });
   $('backupNowBtn').addEventListener('click', async () => { $('backupNowBtn').disabled = true; const r = await sv.backupNow(); flash($('backupNowBtn'), r && r.ok ? '已备份' : '失败'); refreshBackupGate(); });
+  // 云端数据迁移(合并导入,新增不覆盖)
+  const _cloudHost = () => { try { return new URL(cfg.onlineUrl || 'https://rpg-roleplay.stellatrix.icu').host; } catch (_) { return cfg.onlineUrl || ''; } };
+  if ($('syncFromLocalBtn')) $('syncFromLocalBtn').addEventListener('click', async () => {
+    // 安全:明确告知数据上传目的地(云端地址用户可改,防被诱导改成攻击者站点而无感)。
+    if (!window.confirm(`把本机数据合并上传到云端【${_cloudHost()}】(新增,不覆盖云端已有)。请确认目的地正确,继续?`)) return;
+    $('cloudSyncMsg').hidden = false; $('cloudSyncMsg').textContent = '同步中…'; $('syncFromLocalBtn').disabled = true; $('syncToLocalBtn').disabled = true;
+    const r = await sv.cloudSyncFromLocal();
+    $('syncFromLocalBtn').disabled = false; $('syncToLocalBtn').disabled = false;
+    $('cloudSyncMsg').textContent = r && r.ok ? '已提交到云端(后台导入中)' : ('失败:' + ((r && (r.error || r.detail)) || '请重试'));
+  });
+  if ($('syncToLocalBtn')) $('syncToLocalBtn').addEventListener('click', async () => {
+    if (!window.confirm('把云端账户数据合并导入到本机(新增,不覆盖本机已有)。继续?')) return;
+    $('cloudSyncMsg').hidden = false; $('cloudSyncMsg').textContent = '同步中…'; $('syncFromLocalBtn').disabled = true; $('syncToLocalBtn').disabled = true;
+    const r = await sv.cloudSyncToLocal();
+    $('syncFromLocalBtn').disabled = false; $('syncToLocalBtn').disabled = false;
+    $('cloudSyncMsg').textContent = r && r.ok ? '已导入到本机' : ('失败:' + ((r && (r.error || r.detail)) || '请重试'));
+    refreshBackupGate();
+  });
 
   // lan
   $('lanEnabled').addEventListener('change', async () => { cfg = await sv.setConfig({ lanEnabled: $('lanEnabled').checked }); loadLan(); });
@@ -286,6 +483,11 @@ async function init() {
 
   // config
   $('advToggle').addEventListener('click', () => { $('advBox').hidden = !$('advBox').hidden; });
+  if ($('cfgLang')) $('cfgLang').addEventListener('change', async () => {
+    const lang = $('cfgLang').value;
+    cfg = await sv.setConfig({ uiLanguage: lang });
+    if (window.I18N) { window.I18N.setLang(lang); renderMode(); fillForm(); $('tabTitle').textContent = t('nav.' + _activeTab); }
+  });
   $('saveCfgBtn').addEventListener('click', saveCfg);
   $('openDataDirBtn').addEventListener('click', () => sv.openDataDir());
   $('wipeBtn').addEventListener('click', () => { $('wipeModal').hidden = false; $('wipeConfirmInput').value = ''; $('wipeConfirm').disabled = true; });

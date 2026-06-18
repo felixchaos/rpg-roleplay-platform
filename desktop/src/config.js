@@ -35,6 +35,8 @@ const DEFAULTS = {
   // 更新回退源:GitHub 超时时改从此基址拉更新(latest*.yml + 安装包)。
   // 空 = 用 onlineUrl/updates 兜底。单一配置点,未来迁对象存储只改这里(或服务端反代重指)。
   updateFallbackUrl: '',
+  magicLink: true,         // 本地模式「在浏览器中打开」用免登录魔法链接(默认开)
+  uiLanguage: '',          // 控制台界面语言('' = 跟随系统;'zh-CN'|'en')
 };
 
 let _cache = null;

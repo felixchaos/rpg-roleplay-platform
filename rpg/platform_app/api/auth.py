@@ -203,6 +203,29 @@ async def api_logout(request: Request):
     return response
 
 
+@router.get("/api/auth/desktop-login")
+async def api_desktop_login(request: Request, token: str = "", next: str = "/Platform.html"):
+    """桌面「免登录魔法链接」入口:控制台铸的一次性 token → 兑换 session cookie → 重定向进 app。
+    仅本地/桌面模式可用。next 仅允许站内相对路径(防开放重定向)。"""
+    from fastapi.responses import RedirectResponse
+
+    from core.config import deployment_mode as _dm
+    if (_dm() or "").strip().lower() not in {"local", "desktop", "self_hosted", "self-hosted"}:
+        raise HTTPException(status_code=404, detail="仅本地部署可用")
+    # 防开放重定向:next 必须是站内相对路径(单个 /,不允许 // 或 \\ 或带协议)。
+    # 反斜杠要挡:浏览器会把 /\evil.com 当成协议相对 URL → 跳站外。
+    dest = next if (next.startswith("/") and not next.startswith("//") and "\\" not in next and ":" not in next) else "/Platform.html"
+    try:
+        user, session_token = _auth.consume_desktop_login_token((token or "").strip())
+        workspace.ensure_default(user["id"])
+    except ValueError:
+        # 失败 → 跳登录页,不泄露原因细节
+        return RedirectResponse(url="/Login.html?magic=expired", status_code=302)
+    response = RedirectResponse(url=dest, status_code=302)
+    _set_session_cookie(response, request, session_token)
+    return response
+
+
 @router.get("/api/auth/me")
 async def api_me(user=Depends(current_user)):
     # 安全：未登录不返回 DB 细节，仅返回 driver/ok 健康标识

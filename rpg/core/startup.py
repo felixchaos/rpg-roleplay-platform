@@ -137,6 +137,17 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.exception("[startup] init_db failed")
 
+    # 0b. 本地/桌面模式:确保存在一个默认账户。否则全新桌面库零用户 →
+    #     current_user 的本地回退取不到用户 → 首个业务接口 401,app 开箱即不可用。
+    try:
+        mode = _deployment_mode_cfg().strip().lower()
+        if mode in _LOCAL_MODES:
+            from platform_app import auth as _auth
+            acct = _auth.bootstrap_local_account()
+            log.info("[startup] 本地默认账户 ready: id=%s username=%s", acct.get("id"), acct.get("username"))
+    except Exception:
+        log.exception("[startup] bootstrap_local_account failed")
+
     # 1. MCP health loop
     try:
         import mcp_broker

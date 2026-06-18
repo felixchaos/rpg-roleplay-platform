@@ -135,6 +135,34 @@ body { background: var(--bg-deep); overflow: hidden; }
 .qrpop img { width: 168px; height: 168px; border-radius: 8px; background: #f4efe6; display: block; }
 .qrcap { font-size: 11px; }
 
+/* 运行模式行:分段控件 + 记住选择(贴在本地部署右边) */
+.moderow { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.magicchk { white-space: nowrap; }
+
+/* 账户块(本地 / 云端) */
+.acctblock { }
+.acctrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
+.acctface { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 600; flex: none; overflow: hidden; background-size: cover; background-position: center; text-transform: uppercase; }
+.acctmeta { min-width: 0; }
+.acctname { font-size: 14px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acctsub { font-size: 11px; margin-top: 2px; }
+.acctform { background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 10px; padding: 12px 13px; }
+.acctform input[type=text], .acctform input[type=password] { width: 100%; }
+
+/* 可配置参数(自然语言列表) */
+.paramrow { padding: 11px 0; border-bottom: 1px solid var(--line-soft); }
+.paramrow:last-child { border-bottom: none; }
+.paramhead { display: flex; align-items: center; gap: 8px; }
+.paramlabel { font-size: 13.5px; color: var(--text); }
+.paramtag { font-size: 10px; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 0 7px; }
+.paramdesc { font-size: 11.5px; margin: 3px 0 7px; }
+.paramrow input { width: 100%; }
+
+/* 备份页当前账户横幅 */
+.acctbanner { display: flex; align-items: center; gap: 9px; padding: 9px 12px; margin-bottom: 14px; background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 10px; }
+.avatar.sm { width: 26px; height: 26px; font-size: 12px; }
+
 /* 我的反馈 / 回执 */
 .fbreply { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-top: 10px; background: var(--panel); }
 .fbreply-h { display: flex; align-items: center; gap: 10px; justify-content: space-between; }

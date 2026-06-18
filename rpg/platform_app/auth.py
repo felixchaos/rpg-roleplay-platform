@@ -758,6 +758,135 @@ def _issue_session(db, user_id: int) -> str:
     return token
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 桌面/本地部署:默认账户 + 账户管理 + 一次性「免登录魔法链接」
+# ──────────────────────────────────────────────────────────────────────────────
+DESKTOP_LOGIN_TTL_MIN = 10  # 魔法链接有效期(分钟),单次使用
+
+
+def local_account() -> dict[str, Any] | None:
+    """本地默认账户 = 库中第一个用户(按 id)。无则 None。"""
+    with connect() as db:
+        row = db.execute("select * from users order by id asc limit 1").fetchone()
+        return dict(row) if row else None
+
+
+def bootstrap_local_account(username: str = "local", display_name: str = "本地用户") -> dict[str, Any]:
+    """本地/桌面模式首启:若库中没有任何用户,创建一个默认账户(role=admin,无密码 → 回环免登录)。
+    幂等:已有用户则原样返回第一个。改用户名/密码不换 id,数据始终归同一账户。"""
+    existing = local_account()
+    if existing:
+        return existing
+    init_db()
+    with connect() as db:
+        # 再查一次(并发/多 worker 防重),无则插入。
+        row = db.execute("select * from users order by id asc limit 1").fetchone()
+        if row:
+            return dict(row)
+        uname = normalize_username(username) or "local"
+        row = db.execute(
+            """
+            insert into users(username, password_hash, display_name, role,
+                              email, email_verified, age_confirmed, terms_accepted_at)
+            values (%s, null, %s, 'admin', '', false, true, now())
+            returning *
+            """,
+            (uname, (display_name or uname)),
+        ).fetchone()
+        return dict(row)
+
+
+def local_account_has_password() -> bool:
+    """默认账户是否已设密码(设了则回环也要求真实会话 / LAN 必须登录)。"""
+    acct = local_account()
+    return bool(acct and acct.get("password_hash"))
+
+
+def update_local_account(user_id: int, *, username: str | None = None,
+                         display_name: str | None = None) -> dict[str, Any]:
+    """改本地账户用户名/昵称(不换 id)。用户名唯一冲突 → ValueError。"""
+    sets, args = [], []
+    if username is not None:
+        uname = normalize_username(username)
+        if not uname:
+            raise ValueError("用户名不能为空")
+        sets.append("username = %s")
+        args.append(uname)
+    if display_name is not None:
+        sets.append("display_name = %s")
+        args.append(display_name.strip() or "本地用户")
+    if not sets:
+        raise ValueError("无可更新字段")
+    sets.append("updated_at = now()")
+    args.append(int(user_id))
+    with connect() as db:
+        try:
+            row = db.execute(
+                f"update users set {', '.join(sets)} where id = %s returning *",
+                tuple(args),
+            ).fetchone()
+        except UniqueViolation as exc:
+            raise ValueError("该用户名已被占用") from exc
+    if not row:
+        raise ValueError("账户不存在")
+    return dict(row)
+
+
+def set_account_password(user_id: int, password: str) -> None:
+    """设/改/清除本地账户密码。空字符串 = 清除(回到回环免登录)。
+    不撤销现有 session(避免把正打开的浏览器/控制台踢掉)。"""
+    pw = password or ""
+    pw_hash = hash_password(pw) if pw else None
+    with connect() as db:
+        db.execute(
+            "update users set password_hash = %s, updated_at = now() where id = %s",
+            (pw_hash, int(user_id)),
+        )
+
+
+def create_desktop_login_token(user_id: int) -> str:
+    """铸一次性桌面登录 token(控制台主进程在回环内调用)。返回明文,DB 只存哈希。"""
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=DESKTOP_LOGIN_TTL_MIN)
+    with connect() as db:
+        # 同账户旧的未用 token 作废(始终最多一个有效魔法链接)。
+        db.execute(
+            "update desktop_login_tokens set used_at = now() where user_id = %s and used_at is null",
+            (int(user_id),),
+        )
+        db.execute(
+            "insert into desktop_login_tokens(token_hash, user_id, expires_at) values (%s, %s, %s)",
+            (_hash_token(token), int(user_id), expires_at),
+        )
+    return token
+
+
+def consume_desktop_login_token(token: str) -> tuple[dict[str, Any], str]:
+    """兑换桌面登录 token → (user, session_token)。单次使用 + TTL 校验。失败 → ValueError。"""
+    if not token:
+        raise ValueError("缺 token")
+    init_db()
+    with connect() as db:
+        # 原子认领:UPDATE ... WHERE used_at IS NULL RETURNING —— 行锁让第一个写者赢,
+        # 并发的第二次 consume 命中 0 行(used_at 已非空)→ 真·单次使用,杜绝 TOCTOU 双发会话。
+        claimed = db.execute(
+            "update desktop_login_tokens set used_at = now() "
+            "where token_hash = %s and used_at is null and expires_at > now() "
+            "returning user_id",
+            (_hash_token(token),),
+        ).fetchone()
+        if not claimed:
+            raise ValueError("链接无效或已过期")
+        user = db.execute(
+            "select * from users where id = %s and deactivated_at is null",
+            (claimed["user_id"],),
+        ).fetchone()
+        if not user:
+            raise ValueError("账户不存在")
+        session_token = _issue_session(db, int(user["id"]))
+    return dict(user), session_token
+
+
 def request_login_code(email: str, *, ip: str = "", ua: str = "") -> dict[str, Any]:
     """Send a one-time email code for passwordless login.
 

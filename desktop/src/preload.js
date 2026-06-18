@@ -10,10 +10,10 @@ contextBridge.exposeInMainWorld('sv', {
   status: () => ipcRenderer.invoke('sv:status'),
   logs: () => ipcRenderer.invoke('sv:logs'),
 
-  // 服务生命周期
+  // 服务生命周期(restart 走统一鉴定:有活跃导入任务时返回 needsConfirm;force=true 强制)
   start: () => ipcRenderer.invoke('sv:start'),
   stop: () => ipcRenderer.invoke('sv:stop'),
-  restart: () => ipcRenderer.invoke('sv:restart'),
+  restart: (opts) => ipcRenderer.invoke('sv:restart', opts || {}),
 
   // 配置
   getConfig: () => ipcRenderer.invoke('cfg:get'),
@@ -33,6 +33,20 @@ contextBridge.exposeInMainWorld('sv', {
   // 反馈(发到中央服务器匿名端点)
   submitFeedback: (payload) => ipcRenderer.invoke('feedback:submit', payload),
   feedbackReplies: () => ipcRenderer.invoke('feedback:replies'),
+
+  // 本地默认账户(本地模式):信息 / 改用户名昵称 / 设密码
+  localAccount: () => ipcRenderer.invoke('local:account'),
+  localSetProfile: (body) => ipcRenderer.invoke('local:setProfile', body),
+  localSetPassword: (body) => ipcRenderer.invoke('local:setPassword', body),
+
+  // 云端账户(在线模式):控制台侧登录 / 登出 / 当前用户
+  cloudMe: () => ipcRenderer.invoke('cloud:me'),
+  cloudLogin: (body) => ipcRenderer.invoke('cloud:login', body),
+  cloudLogout: () => ipcRenderer.invoke('cloud:logout'),
+
+  // 云端 ↔ 本地 账户数据迁移
+  cloudSyncToLocal: () => ipcRenderer.invoke('cloud:syncToLocal'),
+  cloudSyncFromLocal: () => ipcRenderer.invoke('cloud:syncFromLocal'),
 
   // 账号数据迁移(对本地后端;仅本地模式+运行时有效)
   accountEstimate: () => ipcRenderer.invoke('account:estimate'),

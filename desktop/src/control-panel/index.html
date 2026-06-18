@@ -36,19 +36,19 @@
         <div class="brand-text"><span class="brand-name serif">RPG Roleplay</span><span class="mono brand-ver" id="appVersion">v—</span></div>
       </div>
       <nav class="nav" id="nav">
-        <button class="navitem active" data-tab="overview">概览</button>
-        <button class="navitem" data-tab="logs"><span>日志</span><span class="badge" id="logBadge" hidden>0</span></button>
-        <button class="navitem" data-tab="backup">备份 / 恢复</button>
-        <button class="navitem" data-tab="lan">局域网访问</button>
-        <button class="navitem" data-tab="config">配置</button>
-        <button class="navitem" data-tab="update"><span>更新</span><span class="upddot" id="updDot" hidden></span></button>
-        <button class="navitem" data-tab="feedback">反馈</button>
-        <button class="navitem" data-tab="about">关于</button>
+        <button class="navitem active" data-tab="overview" data-i18n="nav.overview">概览</button>
+        <button class="navitem" data-tab="logs"><span data-i18n="nav.logs">日志</span><span class="badge" id="logBadge" hidden>0</span></button>
+        <button class="navitem" data-tab="backup" data-i18n="nav.backup">备份 / 恢复</button>
+        <button class="navitem" data-tab="lan" data-i18n="nav.lan">局域网访问</button>
+        <button class="navitem" data-tab="config" data-i18n="nav.config">配置</button>
+        <button class="navitem" data-tab="update"><span data-i18n="nav.update">更新</span><span class="upddot" id="updDot" hidden></span></button>
+        <button class="navitem" data-tab="feedback" data-i18n="nav.feedback">反馈</button>
+        <button class="navitem" data-tab="about" data-i18n="nav.about">关于</button>
       </nav>
       <div class="side-foot">
         <div class="side-status"><span class="dot" id="sideDot"></span><span id="sideStatus">就绪</span></div>
         <div class="mono side-mode" id="sideMode">—</div>
-        <button class="btn ghost xs" id="sideOpenBrowser" style="margin-top:10px;width:100%;">在浏览器打开 ↗</button>
+        <button class="btn ghost xs" id="sideOpenBrowser" style="margin-top:10px;width:100%;" data-i18n="side.open_browser">在浏览器打开 ↗</button>
       </div>
     </aside>
 
@@ -62,47 +62,103 @@
         <!-- 概览 -->
         <section class="pane active" data-pane="overview">
           <div class="block">
-            <div class="modehead">
-              <div class="block-head" style="margin:0;">运行模式</div>
-              <label class="remember"><input type="checkbox" id="rememberMode" /><span>记住我的选择</span></label>
-            </div>
-            <div class="seg modeseg">
-              <button data-mode="online">免部署</button>
-              <button data-mode="local">本地部署</button>
+            <div class="block-head" style="margin-bottom:10px;" data-i18n="overview.run_mode">运行模式</div>
+            <div class="moderow">
+              <div class="seg modeseg">
+                <button data-mode="online" data-i18n="mode.online">免部署</button>
+                <button data-mode="local" data-i18n="mode.local">本地部署</button>
+              </div>
+              <label class="remember"><input type="checkbox" id="rememberMode" /><span data-i18n="mode.remember">记住我的选择</span></label>
             </div>
             <p class="muted hint" id="modeHint"></p>
           </div>
           <div class="block">
             <div class="openrow">
-              <button class="btn primary big" id="openExtBtn">在浏览器中打开</button>
-              <span class="muted-2 openhint">用系统默认浏览器</span>
+              <button class="btn primary big" id="openExtBtn" data-i18n="overview.open_browser">在浏览器中打开</button>
+              <label class="field check small magicchk" id="magicChkWrap" hidden style="margin:0;"><input type="checkbox" id="magicLink" /><span class="muted" data-i18n="overview.magic_link">免登录魔法链接</span></label>
+              <span class="muted-2 openhint" data-i18n="overview.open_hint">用系统默认浏览器</span>
             </div>
             <div class="openrow" id="lanShareRow" hidden>
               <div class="splitbtn">
-                <button class="btn splitbtn-main" id="copyLanBtn">复制局域网访问地址</button>
+                <button class="btn splitbtn-main" id="copyLanBtn" data-i18n="overview.copy_lan">复制局域网访问地址</button>
                 <button class="btn splitbtn-qr" id="qrBtn" aria-label="局域网二维码"><svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor"><path d="M0 0h6v6H0V0zm2 2v2h2V2H2zm7-2h6v6H9V0zm2 2v2h2V2h-2zM0 9h6v6H0V9zm2 2v2h2v-2H2zm9-2h2v2h-2V9zm2 2h2v2h-2v-2zm-4 2h2v2H9v-2zm4 0h2v2h-2v-2z"/></svg></button>
-                <div class="qrpop" id="qrPop" hidden><img id="qrImg" alt="局域网二维码" /><div class="muted-2 qrcap">手机扫码访问</div></div>
+                <div class="qrpop" id="qrPop" hidden><img id="qrImg" alt="局域网二维码" /><div class="muted-2 qrcap" data-i18n="overview.qr_cap">手机扫码访问</div></div>
               </div>
-              <span class="muted-2 openhint">同网手机/平板扫码或访问</span>
+              <span class="muted-2 openhint" data-i18n="overview.lan_hint">同网手机/平板扫码或访问</span>
             </div>
+
+            <!-- 云端账户(在线模式)-->
+            <div id="cloudAccount" class="acctblock" hidden>
+              <div class="block-head" style="margin-top:18px;" data-i18n="account.cloud">云端账户</div>
+              <div class="acctrow">
+                <div class="acctface"><span class="avatar" id="cloudAvatar">?</span>
+                  <div class="acctmeta"><div class="acctname" id="cloudName" data-i18n="account.not_logged_in">未登录</div><div class="muted-2 acctsub" id="cloudSub"></div></div>
+                </div>
+                <div class="row" style="margin:0;">
+                  <button class="btn xs" id="cloudLoginBtn" data-i18n="account.login">登录</button>
+                  <button class="btn ghost xs" id="cloudLogoutBtn" hidden data-i18n="account.logout">登出</button>
+                </div>
+              </div>
+              <div id="cloudLoginForm" hidden class="acctform">
+                <input type="text" id="cloudUser" autocomplete="username" data-i18n-ph="account.username_ph" placeholder="用户名或邮箱" />
+                <input type="password" id="cloudPass" autocomplete="current-password" data-i18n-ph="account.password_ph" placeholder="密码" style="margin-top:8px;" />
+                <div class="row" style="margin-top:10px;">
+                  <button class="btn primary xs" id="cloudLoginSubmit" data-i18n="account.login">登录</button>
+                  <button class="btn ghost xs" id="cloudLoginCancel" data-i18n="common.cancel">取消</button>
+                  <span class="danger hint" id="cloudLoginErr" hidden style="margin:0;"></span>
+                </div>
+              </div>
+            </div>
+
             <div id="localSvc" class="localsvc" hidden>
-              <div class="block-head" style="margin-top:18px;">本地服务</div>
+              <div class="block-head" style="margin-top:18px;" data-i18n="overview.local_service">本地服务</div>
+              <p class="muted hint" id="localGuide" hidden data-i18n="overview.local_guide">首次使用:点「启动服务」完成本地初始化(首次需建库,约 10-30 秒,请稍候)。</p>
               <div class="row">
-                <button class="btn" id="startBtn">启动服务</button>
-                <button class="btn" id="stopBtn">停止</button>
-                <button class="btn" id="restartBtn">重启</button>
+                <button class="btn" id="startBtn" data-i18n="overview.start">启动服务</button>
+                <button class="btn" id="stopBtn" data-i18n="overview.stop">停止</button>
+                <button class="btn" id="restartBtn" data-i18n="overview.restart">重启</button>
               </div>
               <div class="statgrid">
-                <div class="statcell"><div class="statk">状态</div><div class="statv" id="svDetail">—</div></div>
-                <div class="statcell ralign"><div class="statk">后端端口</div><div class="statv mono" id="svBackendPort">—</div></div>
-                <div class="statcell ralign"><div class="statk">数据库端口</div><div class="statv mono" id="svPgPort">—</div></div>
+                <div class="statcell"><div class="statk" data-i18n="overview.status">状态</div><div class="statv" id="svDetail">—</div></div>
+                <div class="statcell ralign"><div class="statk" data-i18n="overview.backend_port">后端端口</div><div class="statv mono" id="svBackendPort">—</div></div>
+                <div class="statcell ralign"><div class="statk" data-i18n="overview.db_port">数据库端口</div><div class="statv mono" id="svPgPort">—</div></div>
               </div>
               <div id="svError" class="errbox" hidden>
-                <div class="errtitle" id="svErrorTitle">启动失败</div>
+                <div class="errtitle" id="svErrorTitle" data-i18n="overview.start_failed">启动失败</div>
                 <div class="row" style="margin-top:10px;">
-                  <button class="btn" id="retryBtn">重试</button>
-                  <button class="btn ghost" id="errLogsBtn">打开日志目录</button>
-                  <button class="btn ghost" id="copyDiagBtn">复制诊断</button>
+                  <button class="btn" id="retryBtn" data-i18n="overview.retry">重试</button>
+                  <button class="btn ghost" id="errLogsBtn" data-i18n="overview.open_logs">打开日志目录</button>
+                  <button class="btn ghost" id="copyDiagBtn" data-i18n="overview.copy_diag">复制诊断</button>
+                </div>
+              </div>
+
+              <!-- 本地账户(本地服务状态下面)-->
+              <div class="block-head" style="margin-top:18px;" data-i18n="account.local">本地账户</div>
+              <div class="acctrow">
+                <div class="acctface"><span class="avatar" id="localAvatar">?</span>
+                  <div class="acctmeta"><div class="acctname" id="localName">—</div><div class="muted-2 acctsub" id="localSub"></div></div>
+                </div>
+                <div class="row" style="margin:0;">
+                  <button class="btn ghost xs" id="localRenameBtn" data-i18n="account.edit">编辑</button>
+                  <button class="btn ghost xs" id="localPwBtn" data-i18n="account.reset_pw">重置密码</button>
+                </div>
+              </div>
+              <div id="localProfileForm" hidden class="acctform">
+                <input type="text" id="localUserInput" data-i18n-ph="account.username_ph" placeholder="用户名" />
+                <input type="text" id="localNameInput" data-i18n-ph="account.nickname_ph" placeholder="昵称" style="margin-top:8px;" />
+                <div class="row" style="margin-top:10px;">
+                  <button class="btn primary xs" id="localProfileSave" data-i18n="common.save">保存</button>
+                  <button class="btn ghost xs" id="localProfileCancel" data-i18n="common.cancel">取消</button>
+                  <span class="danger hint" id="localProfileErr" hidden style="margin:0;"></span>
+                </div>
+              </div>
+              <div id="localPwForm" hidden class="acctform">
+                <input type="password" id="localPwInput" autocomplete="new-password" data-i18n-ph="account.new_pw_ph" placeholder="新密码(留空=清除,回环免登录)" />
+                <p class="muted-2 hint" data-i18n="account.pw_note">设密码后,局域网设备访问需登录;留空清除则本机回环免登录。</p>
+                <div class="row" style="margin-top:8px;">
+                  <button class="btn primary xs" id="localPwSave" data-i18n="common.save">保存</button>
+                  <button class="btn ghost xs" id="localPwCancel" data-i18n="common.cancel">取消</button>
+                  <span class="hint" id="localPwMsg" hidden style="margin:0;"></span>
                 </div>
               </div>
             </div>
@@ -120,7 +176,8 @@
 
         <!-- 备份 / 恢复 -->
         <section class="pane" data-pane="backup">
-          <p class="muted-2 hint" style="margin-top:0;">剧本 / 存档 / 角色卡 / 偏好,打包成单个 .zip。<span id="bkGate" class="warn"></span></p>
+          <div class="acctbanner" id="bkAcct" hidden><span class="muted-2" data-i18n="account.current">当前账户</span><span class="avatar sm" id="bkAvatar">?</span><span class="acctname" id="bkAcctName">—</span><span class="muted-2 acctsub" id="bkAcctSub"></span></div>
+          <p class="muted-2 hint" style="margin-top:0;" data-i18n="backup.intro">剧本 / 存档 / 角色卡 / 偏好,打包成单个 .zip。</p><p class="muted-2 hint" style="margin-top:2px;"><span id="bkGate" class="warn"></span></p>
           <div class="migcards">
             <div class="migcard">
               <div class="migcard-h">备份(导出)</div>
@@ -158,9 +215,20 @@
               </div>
             </div>
             <div class="row" style="margin-top:14px;">
-              <button class="btn primary" id="saveBackupBtn">保存</button>
-              <button class="btn ghost" id="backupNowBtn">立即备份</button>
+              <button class="btn primary" id="saveBackupBtn" data-i18n="common.save">保存</button>
+              <button class="btn ghost" id="backupNowBtn" data-i18n="backup.now">立即备份</button>
             </div>
+          </div>
+
+          <!-- 云端账户数据迁移(本地模式 + 已登录云端时可用)-->
+          <div class="section-divider" id="cloudSyncSection" hidden>
+            <div class="block-head" data-i18n="backup.cloud_sync">云端账户数据迁移</div>
+            <p class="muted-2 hint" style="margin-top:0;" id="cloudSyncHint" data-i18n="backup.cloud_need_login">需先在「概览」登录云端账户。</p>
+            <div class="row" id="cloudSyncRow" hidden>
+              <button class="btn" id="syncFromLocalBtn" data-i18n="backup.to_cloud">把本地数据同步到云端账户</button>
+              <button class="btn" id="syncToLocalBtn" data-i18n="backup.from_cloud">从云端账户导入到本地</button>
+            </div>
+            <p class="muted-2 hint" id="cloudSyncMsg" hidden style="margin-top:10px;"></p>
           </div>
         </section>
 
@@ -182,20 +250,30 @@
         <!-- 配置 -->
         <section class="pane" data-pane="config">
           <div class="formgrid">
-            <label class="field"><span>云端地址</span>
+            <label class="field"><span data-i18n="config.online_url">云端地址</span>
               <input type="text" id="cfgOnlineUrl" class="mono" placeholder="https://rpg-roleplay.stellatrix.icu" /></label>
-            <label class="field"><span>后端端口 <em class="muted-2">(0 = 自动)</em></span>
+            <label class="field"><span data-i18n="config.backend_port">本地后端端口(0=自动)</span>
               <input type="number" id="cfgBackendPort" class="mono" min="0" max="65535" /></label>
-            <label class="field"><span>更新渠道</span>
+            <label class="field"><span data-i18n="config.channel">更新渠道</span>
               <select id="cfgChannel"><option value="stable">stable</option><option value="beta">beta</option></select></label>
-            <label class="field check"><input type="checkbox" id="cfgAutoStart" /><span>本地模式下「打开」时自动启动服务</span></label>
+            <label class="field"><span data-i18n="config.language">界面语言</span>
+              <select id="cfgLang"><option value="" data-i18n="config.lang_follow">跟随系统</option><option value="zh-CN">简体中文</option><option value="en">English</option></select></label>
+            <label class="field check"><input type="checkbox" id="cfgAutoStart" /><span data-i18n="config.autostart">本地模式下「打开」时自动启动服务</span></label>
           </div>
-          <button class="btn ghost xs" id="advToggle" style="margin-top:12px;">高级 ▾</button>
-          <label class="field" id="advBox" hidden style="margin-top:10px;"><span>额外环境变量 <em class="muted-2">(每行 KEY=VALUE)</em></span>
+
+          <!-- 可配置参数(自然语言,本地部署)-->
+          <div class="section-divider" id="paramsSection">
+            <div class="block-head" data-i18n="config.params">可配置参数</div>
+            <p class="muted-2 hint" style="margin-top:0;" data-i18n="config.params_hint">本地部署可调参数,改后保存;标「需重启」的会询问是否立即重启。</p>
+            <div id="paramsList"></div>
+          </div>
+
+          <button class="btn ghost xs" id="advToggle" style="margin-top:12px;" data-i18n="config.advanced">高级 ▾</button>
+          <label class="field" id="advBox" hidden style="margin-top:10px;"><span data-i18n="config.extra_env">额外环境变量 (每行 KEY=VALUE)</span>
             <textarea id="cfgExtraEnv" rows="3" class="mono" placeholder="EMBED_DIM=768"></textarea></label>
           <div class="row" style="margin-top:14px;">
-            <button class="btn primary" id="saveCfgBtn">保存配置</button>
-            <button class="btn ghost" id="openDataDirBtn">打开数据目录</button>
+            <button class="btn primary" id="saveCfgBtn" data-i18n="config.save">保存配置</button>
+            <button class="btn ghost" id="openDataDirBtn" data-i18n="config.open_data">打开数据目录</button>
           </div>
 
           <div class="section-divider">
@@ -300,6 +378,7 @@
     </div>
   </div>
 
+  <script src="i18n.js"></script>
   <script src="panel.js"></script>
 </body>
 </html>

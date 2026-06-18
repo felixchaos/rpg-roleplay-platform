@@ -326,4 +326,11 @@ def resolve_api_key(user_id: int | None, api_id: str, env_fallback: str = "") ->
         env_key = os.environ.get(env_fallback)
         if env_key:
             return {"key": env_key, "source": "env", "base_url_override": ""}
+    # 自部署「全局 key」约定:环境变量 RPG_KEY_<API_ID>(大写,非字母数字→_)。
+    # 仅本地/自部署模式(上方 require_auth gate 已挡掉服务器模式)。让用户在控制台「配置」里
+    # 填一次全局密钥即对所有调用生效(无需逐用户 BYOK)。用户库内凭据优先级仍高于此回退。
+    conv = "RPG_KEY_" + "".join(ch if ch.isalnum() else "_" for ch in normalize_api_id(api_id)).upper()
+    conv_key = os.environ.get(conv)
+    if conv_key:
+        return {"key": conv_key, "source": "env", "base_url_override": ""}
     return {"key": "", "source": "none", "base_url_override": ""}
