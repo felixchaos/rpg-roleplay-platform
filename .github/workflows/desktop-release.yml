@@ -1,0 +1,91 @@
+name: desktop-release
+
+# 打 tag v* 触发,构建桌面服务端并发布到本仓 GitHub Releases。
+# 矩阵按「原生架构」分三机:每机各自捆绑本架构的便携 Python + PostgreSQL(不能跨架构),
+# electron-builder 只构建该架构 → 合并发布到同一 Release + 生成更新 feed。
+#
+# 需要的仓库 Secrets:
+#   MAC_CERT_P12_BASE64 / MAC_CERT_PASSWORD     Developer ID Application 证书(base64 的 .p12)
+#   APPLE_API_KEY_P8_BASE64 / APPLE_API_KEY_ID / APPLE_API_ISSUER   公证用 ASC API Key
+#   WIN_CERT_P12_BASE64 / WIN_CERT_PASSWORD     Authenticode 证书(可缺省,缺则不签名仅 SmartScreen 告警)
+#   GITHUB_TOKEN 自动提供(发布到本仓 Releases)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # 发布 Release 资产
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, platform: mac, arch: arm64 }
+          - { os: macos-13, platform: mac, arch: x64 }
+          - { os: windows-latest, platform: win, arch: x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装前端依赖
+        working-directory: frontend
+        run: npm ci
+
+      - name: 安装 desktop 依赖
+        working-directory: desktop
+        run: npm ci
+
+      - name: 组装后端 bundle (mac/linux)
+        if: matrix.platform == 'mac'
+        working-directory: desktop
+        run: bash scripts/bundle-backend.sh
+
+      - name: 组装后端 bundle (windows)
+        if: matrix.platform == 'win'
+        working-directory: desktop
+        shell: pwsh
+        run: ./scripts/bundle-backend.ps1
+
+      # ── macOS:写出公证 API Key 文件 ──
+      - name: 准备 Apple 公证 API Key
+        if: matrix.platform == 'mac'
+        run: |
+          mkdir -p "$HOME/.private_keys"
+          echo "${{ secrets.APPLE_API_KEY_P8_BASE64 }}" | base64 --decode > "$HOME/.private_keys/AuthKey.p8"
+          echo "APPLE_API_KEY=$HOME/.private_keys/AuthKey.p8" >> "$GITHUB_ENV"
+
+      - name: 构建 + 签名 + 公证 + 发布 (macOS)
+        if: matrix.platform == 'mac'
+        working-directory: desktop
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --mac dmg zip --${{ matrix.arch }} --publish always
+
+      - name: 构建 + 签名 + 发布 (Windows)
+        if: matrix.platform == 'win'
+        working-directory: desktop
+        env:
+          CSC_LINK: ${{ secrets.WIN_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win nsis --${{ matrix.arch }} --publish always
+
+      - name: 校验签名 (macOS,诊断用)
+        if: matrix.platform == 'mac'
+        working-directory: desktop
+        continue-on-error: true
+        run: |
+          APP=$(find release/mac* -name '*.app' -maxdepth 2 | head -1) || true
+          if [ -n "$APP" ]; then codesign -dv --verbose=4 "$APP" || true; spctl -vvv --assess --type exec "$APP" || true; fi

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  主 app 的 entitlements(Developer ID 公证分发,非 MAS)。
+  - allow-jit / allow-unsigned-executable-memory:Electron V8 + 捆绑 CPython 需要。
+  - disable-library-validation:让捆绑的 PostgreSQL/psycopg/cryptography 等第三方 .dylib/.so
+    在 hardened runtime 下能加载(漏了是静默运行时崩溃,非公证失败,极难查)。
+  - network.server / network.client:本地 PG 与 FastAPI 绑/连端口、后端出站调 LLM。
+  - allow-dyld-environment-variables:python-build-standalone 子进程可能依赖。
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  <key>com.apple.security.network.server</key>
+  <true/>
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+</dict>
+</plist>

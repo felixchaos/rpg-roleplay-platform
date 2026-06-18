@@ -1,0 +1,91 @@
+{
+  "name": "stellatrix-desktop",
+  "productName": "Stellatrix",
+  "version": "0.5.0",
+  "description": "Stellatrix 本地一键部署桌面服务端 —— 在线模式连云端,本地模式起捆绑的 PostgreSQL + Python 后端",
+  "private": true,
+  "main": "src/main.js",
+  "author": "Stellatrix",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "scripts": {
+    "start": "electron .",
+    "bundle:backend": "bash scripts/bundle-backend.sh",
+    "bundle:backend:win": "powershell -ExecutionPolicy Bypass -File scripts/bundle-backend.ps1",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:dir": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "@electron/notarize": "^2.5.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "build": {
+    "appId": "icu.stellatrix.desktop",
+    "productName": "Stellatrix",
+    "copyright": "Copyright © 2026 Stellatrix",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "!**/*.map"
+    ],
+    "//": "resources-staged 由 scripts/bundle-backend.* 在打包前生成:runtime(便携 Python+依赖) / pg(便携 Postgres+pgvector) / app-template(rpg 后端源码 + frontend/dist 保持 sibling 布局)。这些是只读资源,运行时会同步到用户可写目录。",
+    "extraResources": [
+      {
+        "from": "resources-staged",
+        "to": ".",
+        "filter": ["**/*"]
+      }
+    ],
+    "asar": true,
+    "asarUnpack": [],
+    "mac": {
+      "category": "public.app-category.entertainment",
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "//": "zip 是 electron-updater 自动更新必需产物,缺了会静默断更新(研究确认)。hardenedRuntime + 两份 entitlements 是公证必需;disable-library-validation 让捆绑的 .so/.dylib(psycopg/pg/cryptography)在 hardened runtime 下能加载,漏了是静默崩溃。",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "extendInfo": {
+        "NSAppTransportSecurity": { "NSAllowsLocalNetworking": true }
+      }
+    },
+    "dmg": {
+      "writeUpdateInfo": true
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
+      "//": "Windows 走 Authenticode 签名:electron-builder 读 CSC_LINK + CSC_KEY_PASSWORD 环境变量。无证书也能出包(仅 SmartScreen 首次告警)。"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "//": "deleteAppDataOnUninstall=false:卸载默认保留用户数据(存档/DB);彻底清除由 app 内『安全卸载』流程二次确认后执行。"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "REPLACE_GH_OWNER",
+        "repo": "rpg-roleplay-platform",
+        "releaseType": "release",
+        "//": "发布到开源仓 GitHub Releases;electron-builder 自动生成 latest-mac.yml / latest.yml 更新 feed。owner 待填(开源仓所有者),CI 用 GH_TOKEN 鉴权。"
+      }
+    ],
+    "afterSign": "build/notarize.js"
+  }
+}

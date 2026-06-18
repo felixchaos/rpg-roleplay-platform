@@ -1,0 +1,13 @@
+# 依赖与构建产物
+node_modules/
+release/
+
+# 打包脚本生成的捆绑资源(便携 Python/PG/后端副本)——体积巨大,绝不入库,由 CI 现场生成
+resources-staged/
+.bundle-work/
+
+# 证书/密钥绝不入库
+*.p12
+*.p8
+*.cer
+*.provisionprofile

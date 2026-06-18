@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stellatrix 控制台</title>
+  <link rel="stylesheet" href="panel.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">Stellatrix</span>
+      <span class="ver" id="appVersion">—</span>
+    </div>
+    <div class="statuschip" id="statusChip">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">就绪</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- 模式 -->
+    <section class="card">
+      <div class="card-h">运行模式</div>
+      <div class="seg" id="modeSeg" role="tablist">
+        <button class="seg-btn" data-mode="online">在线(连云端)</button>
+        <button class="seg-btn" data-mode="local">本地部署</button>
+      </div>
+      <p class="hint" id="modeHint"></p>
+    </section>
+
+    <!-- 主操作 -->
+    <section class="card">
+      <div class="row">
+        <button class="btn primary big" id="openAppBtn">打开应用</button>
+        <button class="btn ghost" id="openExtBtn">在浏览器打开</button>
+      </div>
+      <!-- 本地模式服务控制 -->
+      <div id="localControls" class="local-controls">
+        <div class="row">
+          <button class="btn" id="startBtn">启动服务</button>
+          <button class="btn" id="stopBtn">停止</button>
+          <button class="btn" id="restartBtn">重启</button>
+        </div>
+        <div class="kv">
+          <div><span class="k">状态</span><span class="v" id="svDetail">—</span></div>
+          <div><span class="k">后端端口</span><span class="v" id="svBackendPort">—</span></div>
+          <div><span class="k">数据库端口</span><span class="v" id="svPgPort">—</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 日志 -->
+    <section class="card">
+      <div class="card-h">
+        日志
+        <div class="card-h-actions">
+          <button class="btn xs" id="clearLogBtn">清屏</button>
+          <button class="btn xs" id="openLogsDirBtn">打开日志目录</button>
+        </div>
+      </div>
+      <pre class="logpane" id="logPane"></pre>
+    </section>
+
+    <!-- 配置 -->
+    <details class="card">
+      <summary class="card-h">配置</summary>
+      <div class="form">
+        <label>云端地址(在线模式)
+          <input type="text" id="cfgOnlineUrl" placeholder="https://play.stellatrix.icu" />
+        </label>
+        <label>后端端口(0 = 自动)
+          <input type="number" id="cfgBackendPort" min="0" max="65535" />
+        </label>
+        <label>更新渠道
+          <select id="cfgChannel"><option value="stable">stable</option><option value="beta">beta</option></select>
+        </label>
+        <label class="check"><input type="checkbox" id="cfgAutoStart" /> 本地模式下「打开应用」时自动启动服务</label>
+        <label>额外环境变量(每行 KEY=VALUE,高级)
+          <textarea id="cfgExtraEnv" rows="4" placeholder="EMBED_DIM=768"></textarea>
+        </label>
+        <div class="row">
+          <button class="btn primary" id="saveCfgBtn">保存配置</button>
+          <button class="btn ghost" id="openDataDirBtn">打开数据目录</button>
+        </div>
+        <p class="hint">说明:LLM 的 API Key 在应用内「设置」里填(BYOK),不在此处。数据(存档/数据库)存于本机数据目录,卸载默认保留。</p>
+      </div>
+    </details>
+
+    <!-- 更新 -->
+    <section class="card">
+      <div class="card-h">更新</div>
+      <div class="row">
+        <button class="btn" id="checkUpdBtn">检查更新</button>
+        <span class="hint" id="updText">—</span>
+      </div>
+      <div class="updrow" id="updActions" hidden>
+        <button class="btn" id="downloadUpdBtn">下载更新</button>
+        <button class="btn primary" id="installUpdBtn" hidden>重启并安装</button>
+        <div class="progress" id="updProgress" hidden><div class="bar" id="updBar"></div></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="panel.js"></script>
+</body>
+</html>

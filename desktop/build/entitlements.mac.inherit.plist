@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  应用于「嵌套二进制」的 entitlements(electron-builder 递归签 .app 内所有 Mach-O 时套用)。
+  覆盖捆绑的 Python 解释器、PostgreSQL 各可执行(postgres/initdb/pg_ctl/psql)、
+  以及一众 .dylib/.so(psycopg 自带的 libpq/libssl/libcrypto、cryptography 的 _rust 等)。
+  inherit + disable-library-validation 是它们在 hardened runtime 下能跑起来的关键。
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  <key>com.apple.security.inherit</key>
+  <true/>
+</dict>
+</plist>
