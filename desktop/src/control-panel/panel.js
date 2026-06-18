@@ -53,6 +53,39 @@ function switchTab(tab) {
   if (tab === 'logs') $('logBadge').hidden = true;
   if (tab === 'lan') loadLan();
   if (tab === 'backup') refreshBackupGate();
+  if (tab === 'feedback') loadFeedbackReplies();
+}
+
+// 我的反馈 / 回执:按本机 client_id 从中央拉取自己提交过的反馈 + admin 回复。
+const FB_DECISION = { ok: '已处理', spam: '已标记垃圾', nsfw_terminate: '违规' };
+function _fbTime(iso) { try { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; } catch (_) { return ''; } }
+async function loadFeedbackReplies() {
+  const list = $('fbReplyList'), empty = $('fbReplyEmpty');
+  if (!list) return;
+  let items = [];
+  try { const r = await sv.feedbackReplies(); items = (r && r.items) || []; } catch (_) { items = []; }
+  list.innerHTML = '';
+  if (!items.length) { empty.hidden = false; return; }
+  empty.hidden = true;
+  for (const it of items) {
+    const card = document.createElement('div');
+    card.className = 'fbreply';
+    const status = it.review_decision ? (FB_DECISION[it.review_decision] || it.review_decision) : '待处理';
+    const head = document.createElement('div'); head.className = 'fbreply-h';
+    head.innerHTML = `<span class="fbreply-q">${(it.free_text_preview || '').replace(/[<>&]/g, '')}</span><span class="fbreply-s">${status}</span>`;
+    card.appendChild(head);
+    const meta = document.createElement('div'); meta.className = 'fbreply-m';
+    meta.textContent = `提交于 ${_fbTime(it.created_at)}`;
+    card.appendChild(meta);
+    if (it.admin_reply) {
+      const rep = document.createElement('div'); rep.className = 'fbreply-r';
+      rep.innerHTML = `<span class="fbreply-rl">官方回复</span>`;
+      const body = document.createElement('div'); body.className = 'fbreply-rb'; body.textContent = it.admin_reply;
+      rep.appendChild(body);
+      card.appendChild(rep);
+    }
+    list.appendChild(card);
+  }
 }
 
 // ── 状态渲染 ──
@@ -175,7 +208,7 @@ async function submitFeedback() {
   try {
     const token = await sha256hex(CONSENT_TEXT);
     const r = await sv.submitFeedback({ freeText: text, email: $('fbEmail').value.trim(), consentToken: token, includeEnv: $('fbAttach').checked });
-    if (r && r.ok) { $('fbForm').hidden = true; $('fbSuccess').hidden = false; }
+    if (r && r.ok) { $('fbForm').hidden = true; $('fbSuccess').hidden = false; loadFeedbackReplies(); }
     else { $('fbErr').hidden = false; $('fbErr').textContent = '提交失败:' + ((r && (r.detail || r.error)) || '请稍后再试'); fbValidate(); }
   } catch (e) { $('fbErr').hidden = false; $('fbErr').textContent = '提交失败:' + (e && e.message || '网络错误'); fbValidate(); }
 }
@@ -270,6 +303,7 @@ async function init() {
   $('fbConsent').addEventListener('change', fbValidate);
   $('fbSubmitBtn').addEventListener('click', submitFeedback);
   $('fbAgainBtn').addEventListener('click', () => { $('fbSuccess').hidden = true; $('fbForm').hidden = false; $('fbText').value = ''; $('fbConsent').checked = false; fbValidate(); });
+  if ($('fbReplyRefresh')) $('fbReplyRefresh').addEventListener('click', () => loadFeedbackReplies());
 
   sv.onStatus(renderStatus); sv.onLog(appendLog); sv.onUpdate(renderUpdate);
 }

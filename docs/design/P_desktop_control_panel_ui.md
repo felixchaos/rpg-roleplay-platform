@@ -270,10 +270,18 @@
 
 ## 17. 更新机制 + 发版规范(开发规范)
 
-### 17.1 自动更新链路
-- **更新源** = GitHub Releases(`electron-updater`,渠道由 `updateChannel` 控制 stable/beta)。
+### 17.1 自动更新链路 + 回退源
+- **主更新源** = GitHub Releases(`electron-updater`,渠道由 `updateChannel` 控制 stable/beta)。
 - **检查更新**:控制台「更新」页 → `upd:check`。**必须有超时**(当前 15s,见 `main.js`):
   feed 不可达时不能让「检查中…」永久转圈,超时返回可读文案。
+- **回退机制(GitHub 优先 → 我的服务器)**:`upd:check` 先 `setFeedURL(UPD_GITHUB_FEED)` 跑(15s 超时);
+  超时/失败则 `setFeedURL(_fallbackFeed())` 改走我的服务器(generic provider,base=`updateFallbackUrl`
+  或默认 `${onlineUrl}/updates`,channel=stable→latest/beta→beta)再试一次。**每次检查都先重置回 GitHub**
+  → 永远「GitHub 优先」;下载用最近一次成功的 feed。客户端零额外配置即生效(服务器没东西时回退也只是优雅失败)。
+- **CI 双分发**:`desktop-release.yml` 在构建后,若配置了 `UPDATE_SERVER_HOST/USER/PATH/SSH_KEY` 四个 Secret,
+  用 `appleboy/scp-action` 把同批产物(安装包 + `latest*.yml` + `*.blockmap`)上传到服务器目录(= generic 源)。
+  未配置则跳过,GitHub 发布不受影响。**服务器侧**:nginx 静态 `location /updates/ { root ...; }` 即可;
+  **未来迁对象存储**只需把该 location 反代到对象存储 / 改客户端 `updateFallbackUrl` 单一配置点(最小改动)。
 - **下载 + 安装**:发现新版 → 「下载更新」(`download-progress` 进度条)→ 「重启并安装」(`quitAndInstall`)。
 - **数据库迁移随更新自动执行**:桌面端每次启动 supervisor 都跑 `python -m platform_app.migrate full`
   (幂等,见 `supervisor.js:_migrate`)。所以**新版只要带了新的 migration,用户装包重启后会自动迁移**,
@@ -293,6 +301,9 @@
 - 反馈抽屉在自部署模式显示**选填「联系邮箱」**;留邮箱 → 服务器处理后发**站点标准格式邮件回执**;
   邮箱与某登录账户一致时**自动归并**到该账户(`_match_user_id_by_email`)。
 - 设备 `client_id`(`config.js` 首启生成,经 `RPG_CLIENT_ID` 注入)随反馈上报,便于跨反馈归并同一安装。
+- **控制台内回执收件箱**:控制台「反馈」页底「我的反馈 / 回执」按 `client_id` 拉
+  `GET /api/feedback/anon/replies`(`feedback:replies` IPC → 中央),显示本机提交过的反馈 + admin 回复
+  (状态/提交时间/官方回复正文),回执因此**不只发邮件、在 app 内也能看到**。提交成功 + 切到反馈页 + 手动刷新都会重拉。
 
 ### 17.4 备份(账户数据迁移)
 - 「备份恢复」页:导出/导入账户数据 + 本地备份目录 + 自动备份。

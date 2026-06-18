@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('sv', {
 
   // 反馈(发到中央服务器匿名端点)
   submitFeedback: (payload) => ipcRenderer.invoke('feedback:submit', payload),
+  feedbackReplies: () => ipcRenderer.invoke('feedback:replies'),
 
   // 账号数据迁移(对本地后端;仅本地模式+运行时有效)
   accountEstimate: () => ipcRenderer.invoke('account:estimate'),

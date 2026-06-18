@@ -91,6 +91,17 @@ async function openAppWindow() {
 }
 
 // ── 自动更新(仅打包后)──
+// 更新源:GitHub Releases 为主(与 package.json publish 一致),失败回退到我的服务器。
+const UPD_GITHUB_FEED = { provider: 'github', owner: 'felixchaos', repo: 'rpg-roleplay-platform' };
+function _fallbackFeed() {
+  const c = cfg.load();
+  const base = (c.updateFallbackUrl
+    || `${(c.onlineUrl || 'https://rpg-roleplay.stellatrix.icu').replace(/\/+$/, '')}/updates`).replace(/\/+$/, '');
+  // generic provider:base 目录需含 latest.yml(win)/latest-mac.yml(mac)+ 安装包;
+  // channel 决定 yml 名(stable→latest / beta→beta)。CI 把同批产物上传到此目录。
+  return { provider: 'generic', url: base, channel: (c.updateChannel === 'beta' ? 'beta' : 'latest') };
+}
+
 function initUpdater() {
   if (!app.isPackaged) return;
   try { updater = require('electron-updater').autoUpdater; } catch (_) { return; }
@@ -139,14 +150,25 @@ function wireIpc() {
 
   ipcMain.handle('upd:check', async () => {
     if (!updater) return { ok: false, reason: '更新仅在打包版可用' };
+    // 优先 GitHub Releases;15s 超时/失败则自动回退到我的服务器(同一批更新包,CI 双分发)。
+    // 每次检查都先重置回 GitHub → 保持「GitHub 优先」;下载用最近一次成功的 feed。
+    const _race = () => Promise.race([
+      updater.checkForUpdates(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('检查更新超时')), 15000)),
+    ]);
     try {
-      // 加 15s 超时,避免 feed 不可达时「检查中…」永久卡住。
-      const r = await Promise.race([
-        updater.checkForUpdates(),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('检查更新超时,请稍后重试')), 15000)),
-      ]);
-      return { ok: true, version: r && r.updateInfo && r.updateInfo.version };
-    } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+      updater.setFeedURL(UPD_GITHUB_FEED);
+      const r = await _race();
+      return { ok: true, version: r && r.updateInfo && r.updateInfo.version, source: 'github' };
+    } catch (ePrimary) {
+      try {
+        updater.setFeedURL(_fallbackFeed());
+        const r = await _race();
+        return { ok: true, version: r && r.updateInfo && r.updateInfo.version, source: 'fallback' };
+      } catch (eFallback) {
+        return { ok: false, reason: `GitHub 与备用源均不可达:${String(eFallback && eFallback.message || eFallback)}` };
+      }
+    }
   });
   ipcMain.handle('upd:download', async () => { if (updater) await updater.downloadUpdate(); return { ok: !!updater }; });
   ipcMain.handle('upd:install', () => { if (updater) updater.quitAndInstall(); });
@@ -187,6 +209,30 @@ function wireIpc() {
       });
       req.on('error', (err) => resolve({ ok: false, error: String(err && err.message || err) }));
       req.write(body);
+      req.end();
+    });
+  });
+
+  // 拉取本机(client_id)提交过的反馈 + admin 回执,让回执在控制台内可见(不只发邮件)。
+  ipcMain.handle('feedback:replies', async () => {
+    const { net } = require('electron');
+    const c = cfg.load();
+    const base = (c.onlineUrl || 'https://rpg-roleplay.stellatrix.icu').replace(/\/+$/, '');
+    const cid = c.clientId || '';
+    if (!cid) return { ok: false, items: [] };
+    const url = `${base}/api/feedback/anon/replies?client_id=${encodeURIComponent(cid)}&limit=30`;
+    return await new Promise((resolve) => {
+      let req;
+      try { req = net.request(url); } catch (e) { return resolve({ ok: false, error: String(e && e.message || e), items: [] }); }
+      let data = '';
+      req.on('response', (res) => {
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          try { const j = JSON.parse(data); resolve({ ok: res.statusCode < 400 && !!j.ok, items: j.items || [] }); }
+          catch (_) { resolve({ ok: false, status: res.statusCode, items: [] }); }
+        });
+      });
+      req.on('error', (err) => resolve({ ok: false, error: String(err && err.message || err), items: [] }));
       req.end();
     });
   });

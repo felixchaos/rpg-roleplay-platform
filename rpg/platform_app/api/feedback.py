@@ -449,6 +449,45 @@ async def list_my_feedback(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# GET /api/feedback/anon/replies — 自部署客户端按 client_id 拉自己的反馈 + 回执
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/feedback/anon/replies")
+async def list_anon_feedback_replies(client_id: str = "", limit: int = 30):
+    """自部署(无登录)客户端凭安装级 client_id 拉取自己提交过的反馈 + admin 回执,
+    让回执在控制台内可见(不只发邮件)。client_id 是每安装一次性 UUID(config.js 生成),
+    仅返回该安装自己的提交。"""
+    client_id = (client_id or "").strip()[:128]
+    if len(client_id) < 16:
+        raise HTTPException(status_code=400, detail="client_id 缺失或过短")
+    limit = max(1, min(100, limit))
+    with connect() as db:
+        rows = db.execute(
+            """
+            select id, free_text, review_decision, reviewed_at, created_at,
+                   admin_reply, replied_at
+            from feedback
+            where client_id = %s
+            order by created_at desc
+            limit %s
+            """,
+            (client_id, limit),
+        ).fetchall()
+    items = []
+    for r in rows:
+        items.append({
+            "id": r["id"],
+            "free_text_preview": (r["free_text"] or "")[:100],
+            "review_decision": r["review_decision"],
+            "reviewed_at": r["reviewed_at"].isoformat() if r["reviewed_at"] else None,
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            "admin_reply": r["admin_reply"] or None,
+            "replied_at": r["replied_at"].isoformat() if r["replied_at"] else None,
+        })
+    return json_response({"ok": True, "items": items})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # DELETE /api/feedback/{id} — 用户撤回单条
 # ──────────────────────────────────────────────────────────────────────────────
 

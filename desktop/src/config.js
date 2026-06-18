@@ -32,6 +32,9 @@ const DEFAULTS = {
   autoBackup: false,       // 自动备份默认关闭
   autoBackupHours: 168,    // 自动备份间隔默认一周(168 小时)
   backupKeep: 3,           // 保留最近份数,默认 3
+  // 更新回退源:GitHub 超时时改从此基址拉更新(latest*.yml + 安装包)。
+  // 空 = 用 onlineUrl/updates 兜底。单一配置点,未来迁对象存储只改这里(或服务端反代重指)。
+  updateFallbackUrl: '',
 };
 
 let _cache = null;

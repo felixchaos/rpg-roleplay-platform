@@ -135,6 +135,16 @@ body { background: var(--bg-deep); overflow: hidden; }
 .qrpop img { width: 168px; height: 168px; border-radius: 8px; background: #f4efe6; display: block; }
 .qrcap { font-size: 11px; }
 
+/* 我的反馈 / 回执 */
+.fbreply { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-top: 10px; background: var(--panel); }
+.fbreply-h { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.fbreply-q { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fbreply-s { flex: none; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; }
+.fbreply-m { font-size: 11px; color: var(--muted-2); margin-top: 5px; }
+.fbreply-r { margin-top: 10px; border-left: 2px solid var(--accent); padding: 4px 0 4px 11px; }
+.fbreply-rl { font-size: 11px; font-weight: 600; color: var(--accent); }
+.fbreply-rb { font-size: 13px; line-height: 1.6; color: var(--text-quiet); margin-top: 4px; white-space: pre-wrap; }
+
 /* 更新日志(md) */
 .notes { margin-top: 20px; border-top: 1px solid var(--line-soft); padding-top: 16px; }
 .notes-h { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .14em; margin-bottom: 10px; }

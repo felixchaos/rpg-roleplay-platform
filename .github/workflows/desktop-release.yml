@@ -9,6 +9,9 @@ name: desktop-release
 #   APPLE_API_KEY_P8_BASE64 / APPLE_API_KEY_ID / APPLE_API_ISSUER   公证用 ASC API Key
 #   WIN_CERT_P12_BASE64 / WIN_CERT_PASSWORD     Authenticode 证书(可缺省,缺则不签名仅 SmartScreen 告警)
 #   GITHUB_TOKEN 自动提供(发布到本仓 Releases)
+#   ── 回退分发(可选,缺省则跳过):把同批更新包同时上传到我的服务器,供客户端在 GitHub 超时时回退 ──
+#   UPDATE_SERVER_HOST / UPDATE_SERVER_USER / UPDATE_SERVER_PATH   目标主机/用户/目录(nginx 静态目录,未来可反代到对象存储)
+#   UPDATE_SERVER_SSH_KEY                                          上传用 SSH 私钥(deploy key)
 
 on:
   push:
@@ -29,6 +32,9 @@ jobs:
           # Intel mac(macos-13)暂不构建:GitHub Intel runner 稀缺、常排队卡死;
           # arm64 覆盖绝大多数在用 Mac。需要 x64 mac 时再加回 { os: macos-13, platform: mac, arch: x64 }。
     runs-on: ${{ matrix.os }}
+    # 仅当配置了服务器 Secret 才执行回退分发(否则该步骤跳过,不影响 GitHub 发布)。
+    env:
+      UPLOAD_ENABLED: ${{ secrets.UPDATE_SERVER_HOST != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -90,3 +96,18 @@ jobs:
         run: |
           APP=$(find release/mac* -name '*.app' -maxdepth 2 | head -1) || true
           if [ -n "$APP" ]; then codesign -dv --verbose=4 "$APP" || true; spctl -vvv --assess --type exec "$APP" || true; fi
+
+      # ── 回退分发:把同批更新包(安装包 + latest*.yml + blockmap)上传到我的服务器 ──
+      # electron-updater 的 generic 源就读这个目录;客户端 GitHub 超时时自动回退到这里。
+      # 仅在配置了 UPDATE_SERVER_* Secret 时执行;未配置则跳过,GitHub 发布不受影响。
+      - name: 分发到我的服务器(更新回退源)
+        if: ${{ env.UPLOAD_ENABLED == 'true' }}
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.UPDATE_SERVER_HOST }}
+          username: ${{ secrets.UPDATE_SERVER_USER }}
+          key: ${{ secrets.UPDATE_SERVER_SSH_KEY }}
+          source: "desktop/release/*.dmg,desktop/release/*.zip,desktop/release/*.exe,desktop/release/*.blockmap,desktop/release/latest*.yml"
+          target: ${{ secrets.UPDATE_SERVER_PATH }}
+          strip_components: 2
+          overwrite: true
