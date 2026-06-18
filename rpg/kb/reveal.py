@@ -221,6 +221,55 @@ def derived_progress_chapter(save_id: int, *, db=None) -> int:
         return _q(db2)
 
 
+def backfill_entity_reveal_anchors(script_id: int) -> dict[str, Any]:
+    """P4 前置:把三张实体表的 reveal_anchor_key 从 first_revealed_chapter 映射到「该章的揭示锚点」,
+    使新前沿门控与旧「first_revealed_chapter <= progress」等价(shadow-compare 才能零 diff)。
+
+    映射规则(确定性):first_revealed_chapter = N > 0 → 取 main 线 reveal_anchors 里:
+      优先 chapter_min >= N 的最近一条(到达它=进度>=N,等价旧语义);若无(N 超出所有锚点)→ 取
+      chapter_min 最大的一条(末章可见,保守不剧透)。N <= 0 → 留 NULL(=未知/恒可见,等价旧 0<=progress)。
+    幂等。返回各表映射条数。
+    """
+    init_db()
+    sid = int(script_id)
+    # 每实体取一条锚点:prefer chapter_min>=N(升序最近),否则 chapter_min 最大者。
+    pick = (
+        "select ra.anchor_key from reveal_anchors ra "
+        "where ra.script_id=%(scr)s and ra.worldline_key='main' "
+        "order by (ra.chapter_min >= %(n)s) desc, "
+        "         case when ra.chapter_min >= %(n)s then ra.chapter_min else -ra.chapter_min end asc, "
+        "         ra.anchor_key asc limit 1"
+    )
+    out: dict[str, int] = {}
+    specs = [
+        ("character_cards", "card_type='npc' and "),
+        ("kb_canon_entities", ""),
+        ("worldbook_entries", ""),
+    ]
+    with connect() as db:
+        # 没有 reveal_anchors(P1 没回填)→ 跳过,避免把所有实体钉到 NULL(那会变成恒可见=剧透)
+        has = db.execute("select 1 from reveal_anchors where script_id=%s limit 1", (sid,)).fetchone()
+        if not has:
+            return {"ok": False, "script_id": sid, "reason": "reveal_anchors 未回填,先跑 P1 backfill_reveal_anchors"}
+        for table, extra in specs:
+            rows = db.execute(
+                f"select id, coalesce(first_revealed_chapter,0) as n from {table} "
+                f"where script_id=%s and {extra}coalesce(first_revealed_chapter,0) > 0",
+                (sid,),
+            ).fetchall()
+            n_mapped = 0
+            for r in rows:
+                pr = db.execute(pick, {"scr": sid, "n": int(r["n"])}).fetchone()
+                if pr and pr.get("anchor_key"):
+                    db.execute(
+                        f"update {table} set reveal_anchor_key=%s, reveal_known=true where id=%s",
+                        (pr["anchor_key"], r["id"]),
+                    )
+                    n_mapped += 1
+            out[table] = n_mapped
+    return {"ok": True, "script_id": sid, "mapped": out, "total": sum(out.values())}
+
+
 def reveal_clause_v2(save_id: int, mode: str = "none", prefix: str = "") -> tuple[str, list[Any]]:
     """收口剧透门控(替代标量 _reveal_clause)。返回 (SQL 片段, 参数列表)。
     节点可见 ⇔ 无揭示锚点(NULL) 或 其锚点在 save_visible_anchors。partial 再放行 public_knowledge。
