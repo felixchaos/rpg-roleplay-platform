@@ -87,6 +87,10 @@ def _validate_base_url(url: str) -> None:
     # 字面量本地名快速拦截
     if host in {"localhost", "ip6-localhost", "ip6-loopback"} or host.endswith(".localhost"):
         raise ValueError(f"base_url 不允许指向本地地址：{host}")
+    # 已知安全域名白名单：跳过内网检查（如 api.x.ai 解析到 198.18.0.x 保留段）
+    from core.outbound import _SSRF_HOST_ALLOWLIST
+    if host in _SSRF_HOST_ALLOWLIST:
+        return
     # 真正的防线:解析出所有 A/AAAA,任一为内网/保留即拒(覆盖各种进制 IP 伪装)。
     try:
         infos = socket.getaddrinfo(host, p.port or (443 if p.scheme == "https" else 80),

@@ -34,6 +34,19 @@ class OutboundBlocked(ValueError):
     """目标解析到私有/本地/保留地址,出于 SSRF 防护拒绝连接。"""
 
 
+# 已知安全域名白名单：这些域名即使解析到保留 IP 段（如 198.18.0.0/15）也允许连接。
+# 用于兼容 CDN / Anycast 等场景（如 api.x.ai 解析到 198.18.0.x）。
+_SSRF_HOST_ALLOWLIST: frozenset[str] = frozenset({
+    "api.x.ai",
+    "api.openai.com",
+    "api.anthropic.com",
+    "api.deepseek.com",
+    "generativelanguage.googleapis.com",
+    "api.hunyuan.cloud.tencent.com",
+    "chat.d.xiaomi.net",
+})
+
+
 def _ip_is_internal(ip_str: str) -> bool:
     """复用写时闸的内网判定(单一真源,避免逻辑漂移)。"""
     from platform_app.user_credentials import _ip_is_internal as _impl
@@ -44,7 +57,18 @@ def _resolve_external_ip(host: str, port: int) -> str:
     """解析 host 的所有 A/AAAA,任一为内网/保留即拒;返回首个已校验的公网 IP 供 pin。
 
     与 `_validate_base_url` 同样的「全部解析结果都必须是公网」语义 —— 不是只看第一条。
+    已知安全域名（_SSRF_HOST_ALLOWLIST）跳过内网检查，兼容 CDN/Anycast 场景。
     """
+    # 白名单域名跳过 SSRF 检查（如 api.x.ai 解析到 198.18.0.x 保留段）
+    if host in _SSRF_HOST_ALLOWLIST:
+        try:
+            infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+        except OSError as exc:
+            raise OutboundBlocked(f"出站目标无法解析:{host}") from exc
+        if not infos:
+            raise OutboundBlocked(f"出站目标无 A/AAAA 记录:{host}")
+        return infos[0][4][0]
+
     try:
         infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except OSError as exc:
