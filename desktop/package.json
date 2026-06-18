@@ -1,7 +1,7 @@
 {
   "name": "stellatrix-desktop",
   "productName": "Stellatrix",
-  "version": "0.5.0",
+  "version": "1.0.0",
   "description": "Stellatrix 本地一键部署桌面服务端 —— 在线模式连云端,本地模式起捆绑的 PostgreSQL + Python 后端",
   "private": true,
   "main": "src/main.js",

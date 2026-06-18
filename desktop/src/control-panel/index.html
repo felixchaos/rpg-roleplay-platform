@@ -3,20 +3,20 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Stellatrix 控制台</title>
+  <title>RPG Roleplay 控制台</title>
   <link rel="stylesheet" href="tokens.css" />
   <link rel="stylesheet" href="panel.css" />
 </head>
 <body>
-  <!-- ===== 首次运行向导(无 config 时;选模式)===== -->
+  <!-- 首次运行向导(无 config 时;选模式) -->
   <div id="onboard" class="onboard" hidden>
     <div class="onboard-card">
-      <div class="brand"><span class="logo"></span><span class="serif onboard-title">欢迎使用 Stellatrix</span></div>
+      <div class="brand"><span class="logo"></span><span class="serif onboard-title">欢迎使用 RPG Roleplay</span></div>
       <p class="muted onboard-lead">先选一种运行模式。之后随时可在控制台切换。</p>
       <div class="onboard-modes">
         <button class="modecard" data-mode="online">
           <div class="modecard-h">在线模式</div>
-          <div class="muted modecard-d">连接云端服务器,即开即用,数据存于你的云端账号。装包小、最省心。</div>
+          <div class="muted modecard-d">连接云端服务器,即开即用,数据存于你的云端账号。最省心。</div>
         </button>
         <button class="modecard" data-mode="local">
           <div class="modecard-h">本地部署</div>
@@ -30,22 +30,25 @@
     </div>
   </div>
 
-  <!-- ===== 主体:侧栏 + 主区 ===== -->
   <div class="app">
     <aside class="side">
       <div class="brand"><span class="logo"></span>
-        <span class="brand-name serif">Stellatrix</span><span class="mono brand-ver" id="appVersion">—</span>
+        <span class="brand-name serif">RPG Roleplay</span><span class="mono brand-ver" id="appVersion">—</span>
       </div>
       <nav class="nav" id="nav">
         <button class="navitem active" data-tab="overview">概览</button>
         <button class="navitem" data-tab="logs"><span>日志</span><span class="badge" id="logBadge" hidden>0</span></button>
+        <button class="navitem" data-tab="backup">备份 / 恢复</button>
+        <button class="navitem" data-tab="lan">局域网访问</button>
         <button class="navitem" data-tab="config">配置</button>
         <button class="navitem" data-tab="update"><span>更新</span><span class="upddot" id="updDot" hidden></span></button>
         <button class="navitem" data-tab="feedback">反馈</button>
+        <button class="navitem" data-tab="about">关于</button>
       </nav>
       <div class="side-foot">
         <div class="side-status"><span class="dot" id="sideDot"></span><span id="sideStatus">就绪</span></div>
         <div class="mono side-mode" id="sideMode">—</div>
+        <button class="btn ghost xs" id="sideOpenBrowser" style="margin-top:10px;width:100%;">在浏览器打开 ↗</button>
       </div>
     </aside>
 
@@ -67,9 +70,13 @@
             <p class="muted hint" id="modeHint"></p>
           </div>
           <div class="block">
-            <div class="row">
+            <div class="openrow">
               <button class="btn primary big" id="openAppBtn">打开应用</button>
-              <button class="btn ghost" id="openExtBtn">在浏览器打开</button>
+              <span class="muted-2 openhint">在内置窗口里打开</span>
+            </div>
+            <div class="openrow">
+              <button class="btn" id="openExtBtn">在浏览器打开</button>
+              <span class="muted-2 openhint">用系统默认浏览器打开(同一个地址)</span>
             </div>
             <div id="localSvc" class="localsvc" hidden>
               <div class="block-head" style="margin-top:18px;">本地服务</div>
@@ -104,11 +111,82 @@
           <pre class="logpane" id="logPane"></pre>
         </section>
 
+        <!-- 备份 / 恢复 -->
+        <section class="pane" data-pane="backup">
+          <p class="muted hint" style="margin-top:0;">备份 = 把你的剧本、存档、角色卡与偏好打包成单个 <span class="mono">.zip</span>;恢复 = 导入该 .zip。在线账号导出的备份也能导入到本地部署。<span id="bkGate" class="warn"></span></p>
+          <div class="migcards">
+            <div class="migcard">
+              <div class="migcard-h">备份(导出)</div>
+              <div class="migrow"><span class="muted">预计大小</span><span class="mono" id="exportSize">—</span></div>
+              <label class="field check small"><input type="checkbox" id="exportChunks" /><span>含对话切片(更大,更完整)</span></label>
+              <button class="btn" id="exportBtn" style="width:100%;">导出为 .zip</button>
+            </div>
+            <div class="migcard">
+              <div class="migcard-h">恢复(导入)</div>
+              <div id="importIdle">
+                <button class="btn dropzone" id="pickImportBtn">选择 .zip 文件…</button>
+                <button class="btn primary" id="startImportBtn" style="width:100%;" disabled>开始导入</button>
+              </div>
+              <div id="importBusy" hidden>
+                <div class="migrow"><span class="info" id="importStage">导入中…</span></div>
+                <div class="progress indet"><div class="bar"></div></div>
+                <p class="muted-2 hint" style="margin-top:8px;">多剧本串行恢复,可能数十秒到几分钟,请勿关闭。</p>
+              </div>
+              <div id="importDone" class="okbox" hidden><span class="dot ok"></span><span class="ok">导入完成</span><button class="btn ghost xs" id="importAgainBtn" style="margin-left:auto;">再导入</button></div>
+            </div>
+          </div>
+
+          <div class="section-divider">
+            <div class="block-head">本地备份目录 + 自动备份</div>
+            <div class="field" style="margin-bottom:12px;">
+              <span>备份目录(自动备份的 .zip 存放处)</span>
+              <div class="row">
+                <input type="text" id="backupDir" class="mono" readonly placeholder="未设置" style="flex:1;" />
+                <button class="btn" id="pickBackupDirBtn">选择目录…</button>
+              </div>
+            </div>
+            <label class="field check"><input type="checkbox" id="autoBackup" /><span>启用自动备份</span></label>
+            <div class="field" style="max-width:220px;margin-top:10px;">
+              <span>自动备份间隔(小时)</span>
+              <input type="number" id="autoBackupHours" class="mono" min="1" max="720" />
+            </div>
+            <div class="row" style="margin-top:12px;">
+              <button class="btn primary" id="saveBackupBtn">保存备份设置</button>
+              <button class="btn ghost" id="backupNowBtn">立即备份到目录</button>
+            </div>
+            <p class="muted-2 hint">自动备份需本地模式 + 服务运行;到点把账号数据导出到上面的目录(保留最近若干份)。</p>
+          </div>
+        </section>
+
+        <!-- 局域网访问 -->
+        <section class="pane" data-pane="lan">
+          <p class="muted hint" style="margin-top:0;">开启后,本后端会绑定到 <span class="mono">0.0.0.0</span>,同一局域网的其它设备(手机/平板/另一台电脑)可通过下面的地址访问你这台机器上的服务。数据库始终只绑本机,不对外。</p>
+          <div class="warnbox" style="margin-top:14px;"><span class="dot warn"></span><div>局域网模式下,同网设备无需登录即可访问你的本地数据(桌面单用户模式)。仅在可信网络开启。</div></div>
+
+          <label class="field check" style="margin-top:18px;"><input type="checkbox" id="lanEnabled" /><span>开启局域网访问(改动后需重启服务生效)</span></label>
+
+          <div class="section-divider">
+            <div class="block-head">局域网访问地址</div>
+            <div class="migrow"><span class="muted">本机局域网 IP</span><span class="mono" id="lanIp">—</span></div>
+            <div class="row" style="margin-top:8px;">
+              <input type="text" id="lanUrl" class="mono" readonly value="—" style="flex:1;" />
+              <button class="btn" id="copyLanUrlBtn">复制地址</button>
+            </div>
+          </div>
+
+          <div class="section-divider">
+            <div class="block-head">放行防火墙(按当前系统的命令)</div>
+            <p class="muted-2 hint" style="margin-top:0;">若同网设备访问不了,多半是系统防火墙挡了。在<strong>管理员/终端</strong>里运行下面的命令放行当前端口:</p>
+            <pre class="cmdbox" id="fwCmd">—</pre>
+            <button class="btn" id="copyFwBtn">复制命令</button>
+          </div>
+        </section>
+
         <!-- 配置 -->
         <section class="pane" data-pane="config">
           <div class="formgrid">
             <label class="field"><span>云端地址</span>
-              <input type="text" id="cfgOnlineUrl" class="mono" placeholder="https://play.stellatrix.icu" /></label>
+              <input type="text" id="cfgOnlineUrl" class="mono" placeholder="https://rpg-roleplay.stellatrix.icu" /></label>
             <label class="field"><span>后端端口 <em class="muted-2">(0 = 自动)</em></span>
               <input type="number" id="cfgBackendPort" class="mono" min="0" max="65535" /></label>
             <label class="field"><span>更新渠道</span>
@@ -122,48 +200,12 @@
             <button class="btn primary" id="saveCfgBtn">保存配置</button>
             <button class="btn ghost" id="openDataDirBtn">打开数据目录</button>
           </div>
-          <p class="muted-2 hint">LLM 的 API Key 在应用内「设置」里填(BYOK),不在此处。数据(存档/数据库)存于本机,卸载默认保留。</p>
+          <p class="muted-2 hint">LLM 的 API Key 在应用内「设置」里填(BYOK),不在此处。</p>
 
-          <!-- 账号数据迁移 -->
-          <div class="section-divider">
-            <div class="block-head">账号数据迁移</div>
-            <p class="muted-2 hint" style="margin-top:0;">把剧本、存档、角色卡与偏好打包成单个 <span class="mono">.zip</span>。在线账号导出后可导入到本地部署。<span id="migGate" class="warn"></span></p>
-            <div class="migcards">
-              <div class="migcard">
-                <div class="migcard-h">导出账号数据</div>
-                <div class="migrow"><span class="muted">预计大小</span><span class="mono" id="exportSize">—</span></div>
-                <label class="field check small"><input type="checkbox" id="exportChunks" /><span>含对话切片(更大,更完整)</span></label>
-                <button class="btn" id="exportBtn" style="width:100%;">导出为 .zip</button>
-              </div>
-              <div class="migcard">
-                <div class="migcard-h">导入账号数据</div>
-                <div id="importIdle">
-                  <button class="btn dropzone" id="pickImportBtn">选择 .zip 文件…</button>
-                  <button class="btn primary" id="startImportBtn" style="width:100%;" disabled>开始导入</button>
-                </div>
-                <div id="importBusy" hidden>
-                  <div class="migrow"><span class="info" id="importStage">导入中…</span></div>
-                  <div class="progress indet"><div class="bar"></div></div>
-                  <p class="muted-2 hint" style="margin-top:8px;">多剧本账号串行恢复,可能数十秒到几分钟,请勿关闭。</p>
-                </div>
-                <div id="importDone" class="okbox" hidden><span class="dot ok"></span><span class="ok">导入完成</span><button class="btn ghost xs" id="importAgainBtn" style="margin-left:auto;">再导入</button></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 危险区:清除本地数据 -->
           <div class="section-divider">
             <div class="block-head danger">危险区</div>
-            <p class="muted-2 hint" style="margin-top:0;">清除本机全部存档与数据库(不可恢复)。建议先用上方「导出」备份。</p>
+            <p class="muted-2 hint" style="margin-top:0;">清除本机全部存档与数据库(不可恢复)。建议先到「备份 / 恢复」导出。</p>
             <button class="btn danger" id="wipeBtn">清除本地数据…</button>
-          </div>
-
-          <!-- 规划中 -->
-          <div class="section-divider">
-            <div class="block-head">规划中</div>
-            <div class="row planned">
-              <span class="pill">系统托盘</span><span class="pill">局域网访问</span><span class="pill">备份/恢复</span><span class="pill">诊断包导出</span><span class="pill">开机自启</span>
-            </div>
           </div>
         </section>
 
@@ -213,11 +255,31 @@
             </div>
           </div>
         </section>
+
+        <!-- 关于 -->
+        <section class="pane" data-pane="about">
+          <div class="aboutcard">
+            <div class="brand" style="gap:12px;"><span class="logo" style="width:36px;height:36px;"></span>
+              <div><div class="serif" style="font-size:20px;font-weight:700;color:var(--text);">RPG Roleplay</div>
+              <div class="muted-2 mono" id="aboutVer" style="font-size:11.5px;">v—</div></div>
+            </div>
+            <p class="muted hint" style="margin-top:12px;">小说改编 AI 角色扮演平台。本桌面端是「本地服务端控制台」:在线连云端,或在本机一键起完整后端。由 Stellatrix Labs 出品。</p>
+          </div>
+          <div class="section-divider">
+            <div class="block-head">链接</div>
+            <div class="linklist">
+              <a class="linkrow" id="lnLanding" href="#" target="_blank" rel="noreferrer"><span>用户协议 / 使用条款</span><span class="muted-2">落地页 ↗</span></a>
+              <a class="linkrow" id="lnApp" href="#" target="_blank" rel="noreferrer"><span>已上线版本(在线游玩)</span><span class="muted-2 mono">rpg-roleplay.stellatrix.icu ↗</span></a>
+              <a class="linkrow" id="lnRepo" href="#" target="_blank" rel="noreferrer"><span>开源项目(GitHub)</span><span class="muted-2 mono">felixchaos/rpg-roleplay-platform ↗</span></a>
+              <a class="linkrow" id="lnCard" href="#" target="_blank" rel="noreferrer"><span>作者名片</span><span class="muted-2 mono">felixchaos.link ↗</span></a>
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   </div>
 
-  <!-- ===== 清除数据二次确认 ===== -->
+  <!-- 清除数据二次确认 -->
   <div id="wipeModal" class="modal" hidden>
     <div class="modal-card">
       <div class="modal-h danger">清除本地数据</div>

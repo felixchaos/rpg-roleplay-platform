@@ -116,3 +116,17 @@ body { background: var(--bg-deep); overflow: hidden; }
 .modecard-h { font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
 .modecard-d { font-size: 11.5px; line-height: 1.55; }
 .onboard-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; }
+
+/* overview 打开行 + 提示 */
+.openrow { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.openhint { font-size: 11.5px; }
+
+/* 局域网命令框 */
+.cmdbox { margin: 0 0 10px; background: var(--bg-deep); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; font: 12px/1.7 var(--font-mono); color: var(--text-quiet); white-space: pre-wrap; word-break: break-all; }
+
+/* 关于 */
+.aboutcard { background: var(--bg-deep); border: 1px solid var(--line-soft); border-radius: 10px; padding: 16px 18px; }
+.linklist { display: flex; flex-direction: column; gap: 2px; }
+.linkrow { display: flex; align-items: center; justify-content: space-between; padding: 11px 12px; border-radius: 8px; border: 1px solid var(--line-soft); color: var(--text-quiet); font-size: 12.5px; }
+.linkrow + .linkrow { margin-top: 6px; }
+.linkrow:hover { background: var(--panel-2); border-color: var(--line); color: var(--text); }

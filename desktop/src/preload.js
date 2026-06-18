@@ -43,6 +43,13 @@ contextBridge.exposeInMainWorld('sv', {
   wipeData: () => ipcRenderer.invoke('sys:wipeData'),
   copyDiagnostics: () => ipcRenderer.invoke('sys:copyDiagnostics'),
 
+  // 局域网
+  lanInfo: () => ipcRenderer.invoke('lan:info'),
+
+  // 备份目录 / 立即备份
+  pickBackupDir: () => ipcRenderer.invoke('backup:pickDir'),
+  backupNow: () => ipcRenderer.invoke('backup:now'),
+
   // 事件订阅(返回取消函数)
   onStatus: (cb) => { const h = (_e, p) => cb(p); ipcRenderer.on('sv:status', h); return () => ipcRenderer.removeListener('sv:status', h); },
   onLog: (cb) => { const h = (_e, p) => cb(p); ipcRenderer.on('sv:log', h); return () => ipcRenderer.removeListener('sv:log', h); },

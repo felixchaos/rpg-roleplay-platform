@@ -66,17 +66,14 @@ ZONKY_JAR="embedded-postgres-binaries-${ZONKY_ARTIFACT}-${PG_VER}.jar"
 dl "${ZONKY_BASE}/embedded-postgres-binaries-${ZONKY_ARTIFACT}/${PG_VER}/${ZONKY_JAR}" "$WORK/pg.jar"
 ( cd "$WORK" && unzip -oq pg.jar 'postgres-*.txz' )
 mkdir -p "$STAGE/pg"
-tar -xf "$WORK"/postgres-*.txz -C "$STAGE/pg"     # libarchive 自动识别 xz;解出 bin/lib/share/include
-PG_CONFIG="$STAGE/pg/bin/pg_config"
-[ -x "$PG_CONFIG" ] || { echo "✗ pg_config 未找到于 $PG_CONFIG" >&2; exit 1; }
-"$PG_CONFIG" --version || { echo "✗ pg_config 无法执行(部署目标不兼容?)" >&2; exit 1; }
+tar -xf "$WORK"/postgres-*.txz -C "$STAGE/pg"     # 解出 bin/lib/share(zonky 精简:initdb/pg_ctl/postgres + pgcrypto/pg_trgm 扩展)
+[ -x "$STAGE/pg/bin/postgres" ] || { echo "✗ postgres 二进制未找到" >&2; exit 1; }
+"$STAGE/pg/bin/postgres" --version || { echo "✗ postgres 无法执行(部署目标不兼容?)" >&2; exit 1; }
 
-# ── 4. 编译 pgvector 进便携 PG ──
-echo "== 4/5 pgvector ($PGVECTOR_VER) =="
-git clone --depth 1 --branch "$PGVECTOR_VER" https://github.com/pgvector/pgvector.git "$WORK/pgvector"
-make -C "$WORK/pgvector" PG_CONFIG="$PG_CONFIG"
-make -C "$WORK/pgvector" PG_CONFIG="$PG_CONFIG" install   # 装到便携 PG 的 lib/ 与 share/extension/
-echo "  ✓ vector 扩展已装入便携 PG"
+# ── 4. pgvector:zonky 便携包不含 pg_config/头文件,无法就地编译 → 跳过 ──
+# 后端 pgvector 是软依赖:缺失时自动降级 jsonb(语义检索弱化但全功能可用,与 Windows 一致)。
+# 待后续提供与 zonky PG ABI 匹配的预编译 vector 模块,再放进 pg/lib + pg/share/extension 即可启用。
+echo "== 4/5 pgvector 跳过(zonky 精简包无构建链;软依赖降级 jsonb)=="
 
 # ── 5. 后端源码 + 前端产物(剔除测试/夹具/venv;小说夹具绝不进包)──
 echo "== 5/5 后端源码 + 前端 =="

@@ -130,11 +130,20 @@ class Supervisor extends EventEmitter {
       '-D', P.pgData(), '-l', path.join(P.logsDir(), 'pg-server.log'),
       '-o', pgOpts, '-w', '-t', '60', 'start',
     ], { tag: 'pg', env: this._pgEnv() });
-    // 双保险:轮询 pg_isready
+    await this._pgReady();   // zonky 精简包无 pg_isready,用捆绑 python+psycopg 探就绪
+  }
+
+  // zonky 便携 PG 不含 pg_isready/createdb/psql —— 用捆绑 runtime 的 psycopg 代办。
+  // psycopg.connect() 读 PGHOST/PGPORT/PGUSER/PGDATABASE(由 _pgEnv 注入)。
+  async _pgReady() {
     for (let i = 0; i < 120; i++) {
-      try { await this._run(P.pgBin('pg_isready'), ['-h', '127.0.0.1', '-p', String(this.pgPort), '-U', 'rpg', '-q'], { tag: 'pg', env: this._pgEnv() }); break; }
-      catch (_) { await new Promise(r => setTimeout(r, 500)); }
+      try {
+        await this._run(P.runtimePython(), ['-c', 'import psycopg; psycopg.connect(connect_timeout=2).close()'],
+          { tag: 'pg', env: this._pgEnv() });
+        return;
+      } catch (_) { await new Promise((r) => setTimeout(r, 500)); }
     }
+    throw new Error('PostgreSQL 就绪超时');
   }
 
   async _pgStop() {
@@ -144,9 +153,11 @@ class Supervisor extends EventEmitter {
   }
 
   async _createDb() {
-    // 幂等:已存在则忽略
+    // zonky 无 createdb/psql → 用捆绑 python+psycopg 建库(连 postgres 库,autocommit)。幂等:已存在忽略。
     try {
-      await this._run(P.pgBin('createdb'), ['-h', '127.0.0.1', '-p', String(this.pgPort), '-U', 'rpg', 'rpg'], { tag: 'pg', env: this._pgEnv() });
+      await this._run(P.runtimePython(),
+        ['-c', "import psycopg; c=psycopg.connect(autocommit=True); c.execute('create database rpg'); c.close()"],
+        { tag: 'pg', env: this._pgEnv() });
       this._log('pg', '建库 rpg');
     } catch (_) { /* 已存在 */ }
   }
@@ -183,11 +194,13 @@ class Supervisor extends EventEmitter {
   // ── uvicorn ──
   async _startBackend() {
     this.backendPort = await this._pickPort(cfg.load().backendPort || 7860);
+    // 局域网开关:开则后端绑 0.0.0.0(同网设备可访问);否则仅本机 127.0.0.1。PG 始终只绑本机。
+    const host = cfg.load().lanEnabled ? '0.0.0.0' : '127.0.0.1';
     this._setState('starting', `启动后端 :${this.backendPort}…`);
-    this._log('backend', `uvicorn app:app :${this.backendPort}`);
+    this._log('backend', `uvicorn app:app ${host}:${this.backendPort}`);
     this._uvicorn = spawn(P.runtimePython(), [
       '-m', 'uvicorn', 'app:app',
-      '--host', '127.0.0.1', '--port', String(this.backendPort),
+      '--host', host, '--port', String(this.backendPort),
       '--workers', '1', '--no-access-log', '--log-level', 'info',
     ], { cwd: P.backendCwd(), env: this._backendEnv() });
 

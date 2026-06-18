@@ -17,7 +17,7 @@ const P = require('./paths');
 
 const DEFAULTS = {
   mode: 'online',
-  onlineUrl: 'https://play.stellatrix.icu',
+  onlineUrl: 'https://rpg-roleplay.stellatrix.icu',
   backendPort: 0,
   pgPort: 0,
   masterKey: '',
@@ -25,6 +25,11 @@ const DEFAULTS = {
   extraEnv: {},
   updateChannel: 'stable',
   autoStartLocal: true,
+  onboarded: false,        // 首启向导完成标记
+  lanEnabled: false,       // 局域网访问:后端绑 0.0.0.0(同网可访问)
+  backupDir: '',           // 本地备份目录(自动备份导出 zip 存放处)
+  autoBackup: false,       // 自动备份开关
+  autoBackupHours: 24,     // 自动备份间隔(小时)
 };
 
 let _cache = null;

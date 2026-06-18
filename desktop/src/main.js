@@ -13,6 +13,32 @@ const supervisor = require('./supervisor');
 let panelWin = null;
 let appWin = null;
 let updater = null;     // electron-updater(惰性载入,dev 环境可能未装)
+let tray = null;
+let _lastAutoBackup = 0;
+
+function showPanel() { if (panelWin && !panelWin.isDestroyed()) { if (panelWin.isMinimized()) panelWin.restore(); panelWin.show(); panelWin.focus(); } else createPanel(); }
+
+// ── 系统托盘(macOS + Windows)──
+function createTray() {
+  try {
+    const { Tray, Menu, nativeImage } = require('electron');
+    let img = nativeImage.createFromPath(path.join(__dirname, 'tray.png'));
+    if (!img.isEmpty()) img = img.resize({ width: 18, height: 18 });
+    tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
+    tray.setToolTip('RPG Roleplay 控制台');
+    const menu = Menu.buildFromTemplate([
+      { label: '打开控制台', click: showPanel },
+      { label: '打开应用', click: () => openAppWindow() },
+      { type: 'separator' },
+      { label: '启动服务', click: () => supervisor.start().catch(() => {}) },
+      { label: '停止服务', click: () => supervisor.stop().catch(() => {}) },
+      { type: 'separator' },
+      { label: '退出', click: () => { _quitting = true; app.quit(); } },
+    ]);
+    tray.setContextMenu(menu);
+    tray.on('click', showPanel);   // Windows 习惯:单击托盘打开
+  } catch (e) { console.error('[tray] 创建失败:', e && e.message); }
+}
 
 // ── 单实例锁:本机只允许一个服务端,避免抢端口/锁数据目录 ──
 if (!app.requestSingleInstanceLock()) {
@@ -23,8 +49,9 @@ if (!app.requestSingleInstanceLock()) {
 
 function createPanel() {
   panelWin = new BrowserWindow({
-    width: 760, height: 620, minWidth: 560, minHeight: 460,
-    title: 'Stellatrix 控制台',
+    width: 820, height: 640, minWidth: 600, minHeight: 480,
+    title: 'RPG Roleplay 控制台',
+    icon: path.join(__dirname, 'tray.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -54,7 +81,7 @@ async function openAppWindow() {
   if (appWin && !appWin.isDestroyed()) { appWin.loadURL(url); appWin.focus(); return url; }
   appWin = new BrowserWindow({
     width: 1280, height: 860, minWidth: 900, minHeight: 600,
-    title: 'Stellatrix',
+    title: 'RPG Roleplay',
     webPreferences: { partition: 'persist:stellatrix', contextIsolation: true, nodeIntegration: false },
   });
   appWin.loadURL(url);
@@ -119,7 +146,7 @@ function wireIpc() {
   ipcMain.handle('feedback:submit', async (_e, payload) => {
     const { net } = require('electron');
     const c = cfg.load();
-    const base = (c.onlineUrl || 'https://play.stellatrix.icu').replace(/\/+$/, '');
+    const base = (c.onlineUrl || 'https://rpg-roleplay.stellatrix.icu').replace(/\/+$/, '');
     const p = payload || {};
     const body = JSON.stringify({
       free_text: p.freeText || '',
@@ -222,7 +249,7 @@ function wireIpc() {
     const c = cfg.load();
     const recent = supervisor.recentLogs().slice(-50).map((l) => `${new Date(l.ts).toISOString()} [${l.src}] ${l.line}`).join('\n');
     clipboard.writeText([
-      `Stellatrix ${app.getVersion()}`,
+      `RPG Roleplay ${app.getVersion()}`,
       `platform: ${process.platform} ${process.arch} / os ${require('os').release()}`,
       `electron: ${process.versions.electron} / node ${process.versions.node}`,
       `mode: ${c.mode} / state: ${supervisor.state} / backend: ${supervisor.backendPort} / pg: ${supervisor.pgPort}`,
@@ -230,13 +257,95 @@ function wireIpc() {
     ].join('\n'));
     return { ok: true };
   });
+
+  // ── 局域网:本机 IP + 访问地址 + 按当前系统的放行防火墙命令 ──
+  ipcMain.handle('lan:info', () => {
+    const os = require('os');
+    let ip = '';
+    const ifs = os.networkInterfaces();
+    for (const name of Object.keys(ifs)) {
+      for (const ni of ifs[name] || []) { if (ni.family === 'IPv4' && !ni.internal && !/^169\.254\./.test(ni.address)) { ip = ni.address; break; } }
+      if (ip) break;
+    }
+    const port = supervisor.backendPort || cfg.load().backendPort || 0;
+    const url = ip && port ? `http://${ip}:${port}/` : (ip ? `http://${ip}:<启动服务后的端口>/` : '未检测到局域网 IP');
+    let firewallCmd;
+    if (process.platform === 'win32') {
+      firewallCmd = port
+        ? `netsh advfirewall firewall add rule name="RPG Roleplay LAN ${port}" dir=in action=allow protocol=TCP localport=${port}`
+        : '启动本地服务后这里会显示放行命令(需要后端端口)。';
+    } else if (process.platform === 'darwin') {
+      const py = P.runtimePython();
+      firewallCmd = 'macOS 应用防火墙按「程序」放行(若已关防火墙则无需操作):\n'
+        + `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add "${py}"\n`
+        + `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp "${py}"`;
+    } else {
+      firewallCmd = port ? `sudo ufw allow ${port}/tcp   # 或 firewalld: sudo firewall-cmd --add-port=${port}/tcp` : '启动本地服务后这里会显示放行命令(需要后端端口)。';
+    }
+    return { ip, port, url, firewallCmd };
+  });
+
+  // ── 备份目录选择 + 立即备份到目录 ──
+  ipcMain.handle('backup:pickDir', async () => {
+    const r = await dialog.showOpenDialog({ title: '选择备份目录', properties: ['openDirectory', 'createDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return { ok: false };
+    return { ok: true, path: r.filePaths[0] };
+  });
+  ipcMain.handle('backup:now', async () => {
+    const c = cfg.load();
+    if (!c.backupDir) return { ok: false, error: '未设置备份目录' };
+    if (!(c.mode === 'local' && supervisor.state === 'running' && supervisor.backendPort)) return { ok: false, error: '需本地模式且服务运行' };
+    return await _exportToDir(c.backupDir);
+  });
+}
+
+// 把本地后端的账号导出保存到指定目录(自动备份/立即备份共用);保留最近 7 份。
+function _exportToDir(dir) {
+  const { net } = require('electron');
+  const fs = require('fs');
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const file = require('path').join(dir, `rpg-backup-${ts}.zip`);
+  const url = `http://127.0.0.1:${supervisor.backendPort}/api/me/account/export`;
+  return new Promise((resolve) => {
+    let req;
+    try { req = net.request(url); } catch (e) { return resolve({ ok: false, error: String(e && e.message || e) }); }
+    req.on('response', (res) => {
+      if (res.statusCode >= 400) { res.resume(); return resolve({ ok: false, status: res.statusCode }); }
+      const ws = fs.createWriteStream(file);
+      res.on('data', (d) => ws.write(d));
+      res.on('end', () => { ws.end(); _pruneBackups(dir); resolve({ ok: true, file }); });
+      res.on('error', (e) => { ws.end(); resolve({ ok: false, error: String(e) }); });
+    });
+    req.on('error', (err) => resolve({ ok: false, error: String(err && err.message || err) }));
+    req.end();
+  });
+}
+function _pruneBackups(dir, keep = 7) {
+  try {
+    const fs = require('fs'), path = require('path');
+    fs.readdirSync(dir).filter((f) => /^rpg-backup-.*\.zip$/.test(f))
+      .map((f) => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t)
+      .slice(keep).forEach((x) => { try { fs.unlinkSync(path.join(dir, x.f)); } catch (_) {} });
+  } catch (_) {}
 }
 
 app.whenReady().then(() => {
   wireIpc();
   createPanel();
+  createTray();
   initUpdater();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createPanel(); });
+
+  // 自动备份:每 30 分钟检查一次,到点(本地模式+运行中+已设目录)就导出到备份目录。
+  setInterval(() => {
+    const c = cfg.load();
+    if (c.autoBackup && c.backupDir && c.mode === 'local' && supervisor.state === 'running' && supervisor.backendPort) {
+      if (Date.now() - _lastAutoBackup >= (c.autoBackupHours || 24) * 3600 * 1000) {
+        _lastAutoBackup = Date.now();
+        _exportToDir(c.backupDir).catch(() => {});
+      }
+    }
+  }, 30 * 60 * 1000);
 });
 
 // 关窗不退出(控制台是常驻服务管理器);仅当用户显式退出才走停机
