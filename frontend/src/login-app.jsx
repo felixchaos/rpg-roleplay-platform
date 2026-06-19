@@ -13,7 +13,7 @@
 //   - 可作为 Vite 独立入口,跟 PlatformApp 完全解耦
 
 import React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 const __DEFAULT_NEXT = 'Platform.html';
@@ -174,6 +174,10 @@ function LoginApp() {
   const [resetToken, setResetToken] = useState('');
   const [resetPw, setResetPw] = useState('');
   const [resetPwConfirm, setResetPwConfirm] = useState('');
+  // Cloudflare Turnstile 人机验证（仅当后端透出 sitekey 时启用）
+  const [tsToken, setTsToken] = useState('');
+  const tsRef = useRef(null);
+  const tsWidgetId = useRef(null);
 
   // 1) 已登录直接走开 — 不要让用户重复登录
   useEffect(() => {
@@ -268,6 +272,53 @@ function LoginApp() {
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 2d) Cloudflare Turnstile：后端透出 sitekey 时加载脚本（一次）
+  const turnstileSitekey = schema?.notes?.turnstile_sitekey || '';
+  useEffect(() => {
+    if (!turnstileSitekey) return;
+    if (window.turnstile) return;
+    if (document.querySelector('script[data-cf-turnstile]')) return;
+    const s = document.createElement('script');
+    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    s.async = true; s.defer = true;
+    s.setAttribute('data-cf-turnstile', '1');
+    document.head.appendChild(s);
+  }, [turnstileSitekey]);
+
+  // 2e) 注册表单可见时渲染挂件；离开注册态时销毁挂件并清 token
+  useEffect(() => {
+    if (!turnstileSitekey || mode !== 'register') { setTsToken(''); return; }
+    let cancelled = false;
+    let tries = 0;
+    const tick = () => {
+      if (cancelled) return;
+      if (!window.turnstile || !tsRef.current) {
+        if (tries++ < 100) setTimeout(tick, 100);  // 等脚本就绪（最长 ~10s）
+        return;
+      }
+      if (tsWidgetId.current != null) return;       // 已渲染，避免重复
+      try {
+        tsWidgetId.current = window.turnstile.render(tsRef.current, {
+          sitekey: turnstileSitekey,
+          callback: (token) => setTsToken(token || ''),
+          'expired-callback': () => setTsToken(''),
+          'error-callback': () => setTsToken(''),
+        });
+      } catch (_) { /* 脚本未就绪/重复渲染，忽略 */ }
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      try {
+        if (tsWidgetId.current != null && window.turnstile) {
+          window.turnstile.remove(tsWidgetId.current);
+        }
+      } catch (_) {}
+      tsWidgetId.current = null;
+      setTsToken('');
+    };
+  }, [turnstileSitekey, mode]);
 
   const fields = ['verify', 'code-login', 'forgot', 'reset'].includes(mode) ? [] : (schema?.[mode] || []);
   const minPw = schema?.notes?.min_password_length || 8;
@@ -557,6 +608,12 @@ function LoginApp() {
       }
     }
 
+    // 注册：人机验证未完成则前端先拦（后端会再校验一次）
+    if (mode === 'register' && turnstileSitekey && !tsToken) {
+      setErr(t('auth.captcha_required', { defaultValue: '请先完成人机验证后再提交' }));
+      return;
+    }
+
     setBusy(true);
     try {
       const body = {};
@@ -574,6 +631,7 @@ function LoginApp() {
       }
 
       if (mode === 'register') {
+        if (turnstileSitekey) body.turnstile_token = tsToken;
         const base = window.__API_BASE || '';
         const r = await fetch(`${base}/api/v1/auth/register`, {
           method: 'POST',
@@ -611,6 +669,11 @@ function LoginApp() {
       }
     } finally {
       setBusy(false);
+      // Turnstile token 单次有效：每次提交后重置挂件，失败重试时才有新 token
+      if (mode === 'register' && turnstileSitekey && tsWidgetId.current != null && window.turnstile) {
+        try { window.turnstile.reset(tsWidgetId.current); } catch (_) {}
+        setTsToken('');
+      }
     }
   };
 
@@ -962,6 +1025,11 @@ function LoginApp() {
                          borderLeft: '2px solid var(--accent)', paddingLeft: 8}}>
               {notice}
             </div>
+          )}
+
+          {mode === 'register' && turnstileSitekey && (
+            <div ref={tsRef} className="pl-auth-turnstile"
+                 style={{display: 'flex', justifyContent: 'center', margin: '2px 0'}} />
           )}
 
           <button type="submit" className="btn primary" disabled={busy || !schema}

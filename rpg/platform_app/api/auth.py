@@ -40,6 +40,17 @@ async def api_register(request: Request):
             status_code=429,
             headers={"Retry-After": str(rl.retry_after_sec)},
         )
+    # Cloudflare Turnstile 人机验证：仅当配置了 RPG_TURNSTILE_SECRET 时强制（fail-safe）。
+    # verify 含网络 I/O（阻塞 urllib），移出 event loop 防注册风暴卡 worker。
+    from .. import turnstile as _turnstile
+    if _turnstile.enabled():
+        _ok = await asyncio.to_thread(_turnstile.verify, body.get("turnstile_token", ""), ip=ip)
+        if not _ok:
+            _auth._record_login_fail(ip, normalized_username)
+            return json_response(
+                {"ok": False, "error": "人机验证失败，请刷新页面后重试", "error_key": "auth.captcha_failed"},
+                status_code=400,
+            )
     # 合规校验：服务条款 + 年龄确认
     terms_accepted = bool(body.get("terms_accepted"))
     age_confirmed = bool(body.get("age_confirmed"))
@@ -365,6 +376,11 @@ async def api_auth_schema():
         "max_password_length": 1024,
         "invite_only": False,
     }
+    # Cloudflare Turnstile site key（仅当配置时透出 → 前端据此渲染人机验证挂件）。
+    from .. import turnstile as _turnstile
+    _ts_sitekey = _turnstile.sitekey()
+    if _ts_sitekey:
+        notes["turnstile_sitekey"] = _ts_sitekey
     # P2-3: 仅本地/非鉴权模式（effective_auth_required=False）才透出 first_user_is_admin
     # server 模式下隐藏该字段，防止泄露首注册可抢 admin 的信息（CWE-200）
     if not effective_auth_required():

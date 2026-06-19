@@ -316,16 +316,20 @@ def _build_csp(dev: bool) -> str:
     # CF orange-cloud 自动注入 beacon.min.js (RUM 数据);允许它避免 9 个 CSP error
     # 噪音(不影响功能但污染 console)。同 connect-src 加 cloudflareinsights.com
     # 让 beacon POST 也通。
+    # Cloudflare Turnstile（人机验证，仅注册页在配置 sitekey 时加载）:脚本 + iframe
+    # 均来自 challenges.cloudflare.com。无条件 allowlist——未启用时该域名不会被访问,
+    # 加上它零副作用,启用时缺它则 widget 被 CSP 拦死。
     directives = [
         "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' static.cloudflareinsights.com",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' static.cloudflareinsights.com challenges.cloudflare.com",
         "style-src 'self' 'unsafe-inline' fonts.googleapis.com",
         # data: 放行 Cloudscape 设计系统内嵌的 Open Sans woff2(base64 data URI),
         # 否则每次加载刷 8 条 font CSP 违规红字(不影响显示——界面实际用 Noto Sans SC)。
         # data: 字体不能执行脚本,风险极低;真正的 XSS 边界在 script-src/style-src。
         "font-src 'self' fonts.gstatic.com data:",
         "img-src 'self' data: https:",
-        f"connect-src {connect_src} cloudflareinsights.com static.cloudflareinsights.com",
+        f"connect-src {connect_src} cloudflareinsights.com static.cloudflareinsights.com challenges.cloudflare.com",
+        "frame-src 'self' challenges.cloudflare.com",
         "frame-ancestors 'none'",
         "base-uri 'self'",
         "form-action 'self'",
