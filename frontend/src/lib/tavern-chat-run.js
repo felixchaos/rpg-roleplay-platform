@@ -105,9 +105,12 @@ export function applyTavernState(data, setters) {
   // data.player 是 persona 投影(无 id),编辑保存需真正的卡 id → 用 persona_card_id 拉全卡。
   const personaCardId = tavern.persona_card_id;
   if (setPersona) {
-    if (personaCardId != null && api && api.cards && api.cards.myGet) {
-      api.cards.myGet(personaCardId)
-        .then((full) => { if (full && full.id) setPersona(full); else setPersona(data.player || null); })
+    if (personaCardId != null && api && api.me && api.me.personas && api.me.personas.get) {
+      // persona 卡是 card_type='persona',必须走 /api/me/personas/{id};走 character-cards 的
+      // pc 端点会 404 → 回退到建档时的名字快照,persona 永远卡在首个默认卡(芙兰朵露)且无人设图。
+      // 反馈#76(persona 卡死)+ #75(头像只剩首字母,因回退快照无 avatar_path)。
+      api.me.personas.get(personaCardId)
+        .then((r) => { const full = (r && r.persona) || r; if (full && full.id) setPersona(full); else setPersona(data.player || null); })
         .catch(() => setPersona(data.player || null));
     } else {
       setPersona(data.player || null);
