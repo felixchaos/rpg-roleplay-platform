@@ -567,6 +567,11 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
                         anchor_max = int(_pw.get("chapter_max") or anchor_min)
             except Exception:
                 pass
+        # 开场兜底:若所有派生都没给出 anchor_min(timeline 未命中 + 无进度窗口),
+        # 开局(turn=0)必须仍从序章(第1章)起注入原著正文 —— 否则 GM 收不到任何原著开篇,
+        # 即便开了「贴原著」也会凭训练数据自由发挥开局(用户反馈:序章脱离原著、自设剧情)。
+        if anchor_min is None and is_opening and script_id:
+            anchor_min, anchor_max = 1, 3
         if anchor_min and script_id:
             _rail = (_steering_strength == "rail")
             # rail(贴原著)档多给预算,让当前章原著的对话/桥段尽量完整进 GM 上下文。

@@ -102,7 +102,12 @@ def _load_characters_db(script_id: int | None, book_id: int | None,
 
     use_v2 = save_id is not None and _frontier_on(save_id) and mode != "omniscient"
     if use_v2:
-        rc, rcp = reveal_clause_v2(int(save_id), mode, prefix="", has_public_knowledge=False, has_famous=False)
+        # 进度章传给前沿门控:开局/当前章实体(序章人物)按章节可见,不被空前沿误藏。
+        # progress 缺省时按已到达锚点确定性派生(绝不超玩家真实进度)。
+        from kb.reveal import derived_progress_chapter as _dpc
+        _prog = progress_chapter if progress_chapter is not None else _dpc(int(save_id))
+        rc, rcp = reveal_clause_v2(int(save_id), mode, prefix="", has_public_knowledge=False,
+                                   has_famous=False, progress_chapter=_prog)
         where_clauses.append(rc); params.extend(rcp)
     else:
         rc, rcp = _old_reveal()
@@ -130,7 +135,8 @@ def _load_characters_db(script_id: int | None, book_id: int | None,
                      + " and card_type = 'npc'")
                 return {r["name"] for r in db.execute(s, base_params + list(_rcp)).fetchall()}
             o_rc, o_rcp = _old_reveal()
-            n_rc, n_rcp = reveal_clause_v2(int(save_id), mode, prefix="", has_public_knowledge=False, has_famous=False)
+            n_rc, n_rcp = reveal_clause_v2(int(save_id), mode, prefix="", has_public_knowledge=False,
+                                           has_famous=False, progress_chapter=progress_chapter)
             _shadow_diff_log("load_characters", _names(o_rc, o_rcp), _names(n_rc, n_rcp))
     out: dict[str, Any] = {}
     for r in rows:
@@ -172,11 +178,14 @@ def _load_worldbook_db(script_id: int | None, book_id: int | None,
         params.append(int(book_id))
     base_where, base_params = list(where_clauses), list(params)  # 门控之前(影子比对用)
 
-    from kb.reveal import _frontier_on, _frontier_shadow, _shadow_diff_log, reveal_clause_v2
+    from kb.reveal import (_frontier_on, _frontier_shadow, _shadow_diff_log,
+                           derived_progress_chapter as _dpc, reveal_clause_v2)
     m = (mode or "omniscient").lower()
     use_v2 = save_id is not None and _frontier_on(save_id) and m != "omniscient"
+    _wprog = _dpc(int(save_id)) if use_v2 else None  # 世界书无 progress 入参 → 按已到达锚点派生
     if use_v2:
-        rc, rcp = reveal_clause_v2(int(save_id), m, prefix="", has_public_knowledge=False, has_famous=False)
+        rc, rcp = reveal_clause_v2(int(save_id), m, prefix="", has_public_knowledge=False,
+                                   has_famous=False, progress_chapter=_wprog)
         where_clauses.append(rc); params.extend(rcp)
 
     sql = (
@@ -191,7 +200,8 @@ def _load_worldbook_db(script_id: int | None, book_id: int | None,
             old_ids = {r["id"] for r in db.execute(
                 "select id from worldbook_entries where " + " and ".join(base_where),
                 base_params).fetchall()}
-            n_rc, n_rcp = reveal_clause_v2(int(save_id), m, prefix="", has_public_knowledge=False, has_famous=False)
+            n_rc, n_rcp = reveal_clause_v2(int(save_id), m, prefix="", has_public_knowledge=False,
+                                           has_famous=False, progress_chapter=_wprog)
             new_ids = {r["id"] for r in db.execute(
                 "select id from worldbook_entries where " + " and ".join(base_where + [n_rc]),
                 base_params + list(n_rcp)).fetchall()}

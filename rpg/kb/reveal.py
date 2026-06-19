@@ -321,11 +321,19 @@ def backfill_entity_reveal_anchors(script_id: int) -> dict[str, Any]:
 
 def reveal_clause_v2(save_id: int, mode: str = "none", prefix: str = "",
                      has_public_knowledge: bool = True,
-                     has_famous: bool = True) -> tuple[str, list[Any]]:
+                     has_famous: bool = True,
+                     progress_chapter: int | None = None) -> tuple[str, list[Any]]:
     """收口剧透门控(替代标量 _reveal_clause)。返回 (SQL 片段, 参数列表)。
-    节点可见 ⇔ 无揭示锚点(NULL) 或 其锚点在 save_visible_anchors。partial 再放行 public_knowledge
-    与 metadata.famous(穿越者模糊预知大事,与旧 _reveal_clause partial 语义对齐)。
+    节点可见 ⇔ 无揭示锚点(NULL) 或 其锚点在 save_visible_anchors **或** 其锚点章节 ≤ 当前进度章
+    (progress_chapter 非空时)。partial 再放行 public_knowledge 与 metadata.famous(穿越者模糊预知)。
     调用方把片段嵌进 WHERE 并按顺序传参。reveal_anchor_key 列名前缀由 prefix 指定(如 'p.')。
+
+    progress_chapter:**修复「开局/当前章人物被前沿门控藏掉」的关键**。纯前沿语义下,新游戏
+      save_reveal_frontier 为空 → save_visible_anchors 为空 → 凡带 reveal_anchor_key 的实体(序章就该
+      登场的角色,如张杰/雇佣兵)全被判「未揭示」过滤掉(已复现)。加「锚点章节 ≤ 当前进度章」这条 OR:
+      到达第 N 章 ⇒ 1..N 章内容可见;开局 progress=1 ⇒ 第 1/序章 内容可见。进度章由调用方按
+      已到达锚点确定性派生(derived_progress_chapter,绝不超玩家真实进度),故不会剧透未来章。
+      传 None = 退回纯前沿(旧行为,供枚举/无进度上下文用)。
 
     has_public_knowledge / has_famous:目标表是否有 public_knowledge 列 / metadata 列。仅 kb_canon_entities
       两者皆有(默认 True);character_cards / worldbook_entries 都没有 → 传 False,partial 模式不附加对应
@@ -334,8 +342,17 @@ def reveal_clause_v2(save_id: int, mode: str = "none", prefix: str = "",
     m = (mode or "none").strip().lower()
     if m == "omniscient":
         return "true", []
+    params: list[Any] = [int(save_id)]
+    chapter_or = ""
+    if progress_chapter is not None:
+        chapter_or = (
+            f" or {p}reveal_anchor_key in (select anchor_key from reveal_anchors ra "
+            f"where ra.script_id = (select script_id from game_saves where id=%s) "
+            f"and coalesce(ra.chapter_max, ra.chapter_min, 2147483647) <= %s)"
+        )
+        params += [int(save_id), int(progress_chapter)]
     base = (f"({p}reveal_anchor_key is null or {p}reveal_anchor_key in "
-            f"(select anchor_key from save_visible_anchors where save_id=%s))")
+            f"(select anchor_key from save_visible_anchors where save_id=%s){chapter_or})")
     if m == "partial":
         extras = []
         if has_public_knowledge:
@@ -343,5 +360,5 @@ def reveal_clause_v2(save_id: int, mode: str = "none", prefix: str = "",
         if has_famous:
             extras.append(f"({p}metadata->>'famous') = 'true'")
         if extras:
-            return f"({base} or " + " or ".join(extras) + ")", [int(save_id)]
-    return base, [int(save_id)]
+            return f"({base} or " + " or ".join(extras) + ")", params
+    return base, params

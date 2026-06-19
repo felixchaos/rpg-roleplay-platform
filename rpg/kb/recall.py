@@ -126,7 +126,9 @@ def recall(save_id: int, query: str, *, mode: str = "none", token_budget: int = 
         ceil_chap = int(progress_chapter) if progress_chapter else derived_progress_chapter(
             save_id, db=_db)
         ceil_chap = max(1, ceil_chap)
-        clause, params = reveal_clause_v2(int(save_id), mode, prefix="kn.")  # 三源统一门控
+        # 传进度章给前沿门控:到达第 N 章 ⇒ 1..N 章 kb_nodes 可见(开局=第1章/序章可见),
+        # 不被空前沿误藏(修复「序章人物/世界知识全无,GM 自由发挥脱离原著」)。
+        clause, params = reveal_clause_v2(int(save_id), mode, prefix="kn.", progress_chapter=ceil_chap)  # 三源统一门控
         cols = ", ".join("kn." + c for c in _KN_COLS)
         # 解析 script_id 一次:embed_query 必须用建库锁定的 embedder(否则向量空间错乱,
         # 静默错召回);_search_chunks 也复用。NULL(酒馆档)→ None,下游各自安全降级。
