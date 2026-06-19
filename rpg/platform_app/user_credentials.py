@@ -107,6 +107,20 @@ def _validate_base_url(url: str) -> None:
             raise ValueError(f"base_url 解析到私有/本地/保留地址，已拒绝：{host} → {ip_str}")
 
 
+def _normalize_openai_base_url(url: str) -> str:
+    """规整 OpenAI 兼容 base_url:剥掉用户常误填的完整端点尾巴 `/chat/completions`。
+
+    中转站文档普遍把「接口地址」写成完整 `https://host/v1/chat/completions`,用户整段填进
+    base_url → SDK 再拼 `/chat/completions`、`/models` → `.../chat/completions/chat/completions`
+    与 `.../chat/completions/models` 双双 404 →「不可访问 / 0 模型」。这里只剥这一个公认尾巴
+    (大小写无关),不动 `/v1`、`/v1beta/openai` 等合法 base 路径。写时+读时都过一遍,自愈历史误填。
+    """
+    s = (url or "").strip().rstrip("/")
+    if s.lower().endswith("/chat/completions"):
+        s = s[: -len("/chat/completions")].rstrip("/")
+    return s
+
+
 def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_override: str = "", enabled: bool = True, *, allow_base_url: bool = False, proxy: str = "") -> dict[str, Any]:
     """加密保存。空 key 等价于删除该 credential。
 
@@ -132,6 +146,7 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     if not allow_base_url:
         base_url_override = ""
     elif base_url_override:
+        base_url_override = _normalize_openai_base_url(base_url_override)
         _validate_base_url(base_url_override)
     proxy = (proxy or "").strip()
     if proxy:
@@ -298,7 +313,7 @@ def get_credential(user_id: int, api_id: str) -> dict[str, Any] | None:
         return {
             "api_id": canonical,
             "key": plaintext,
-            "base_url_override": row.get("base_url_override") or "",
+            "base_url_override": _normalize_openai_base_url(row.get("base_url_override") or ""),
             "proxy": (_meta or {}).get("proxy") or "",
         }
     return None
