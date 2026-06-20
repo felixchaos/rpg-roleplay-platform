@@ -430,7 +430,7 @@ function PanelMemory({ state, density }) {
       <div className="gp-section">
         <div className="section-head">
           <h3>{t('game.memory.pinned')}<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{t('game.memory.pinned_subtitle')}</span></h3>
-          <button className="iconbtn" data-tip={t('game.memory.add_pinned_tip')} data-tip-pos="below"
+          <button className="iconbtn" data-tip={t('game.memory.add_pinned_tip')} data-tip-pos="below" aria-label={t('game.memory.add_pinned_tip')}
             onClick={async () => {
               const txt = prompt(t('game.memory.add_pinned_prompt'), "");
               if (!txt) return;
@@ -447,7 +447,7 @@ function PanelMemory({ state, density }) {
             <li key={i}>
               <span className="gp-pin-mark"><Icon name="pin" size={12} /></span>
               <span className="serif">{item}</span>
-              <button className="iconbtn" data-tip={t('game.memory.unpin_tip')}
+              <button className="iconbtn" data-tip={t('game.memory.unpin_tip')} aria-label={t('game.memory.unpin_tip')}
                 onClick={async () => {
                   if (!confirm(t('game.memory.unpin_confirm'))) return;
                   try { await window.api.game.memoryRemove({ bucket: "pinned", index: i }); try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {} window.__apiToast?.(t('game.memory.unpinned_ok'), { kind: "ok" }); }
@@ -829,7 +829,7 @@ function PanelCharacters({ state }) {
           </div>
         )}
         {/* 手动添加关系入口 */}
-        <button className="iconbtn" style={{marginTop: 8, fontSize: 12, padding: "4px 10px", width: "auto"}}
+        <button className="iconbtn" style={{marginTop: 8, fontSize: 12, padding: "4px 10px", width: "auto"}} aria-label={t('game.characters.add_relationship')}
           onClick={async () => {
             const ch = prompt(t('game.characters.npc_name_prompt'), "");
             if (!ch) return;

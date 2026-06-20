@@ -366,17 +366,17 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
                 {conf.showActions && (
                   <span className="bg-actions">
                     {onContinue && (
-                      <button className="iconbtn" data-tip={t('branch_graph.action.continue')} onClick={(e) => { e.stopPropagation(); onContinue(cid); }}>
+                      <button className="iconbtn" data-tip={t('branch_graph.action.continue')} aria-label={t('branch_graph.action.continue')} onClick={(e) => { e.stopPropagation(); onContinue(cid); }}>
                         <Icon name="play" size={11} />
                       </button>
                     )}
                     {onActivate && !isActive && (
-                      <button className="iconbtn" data-tip={t('branch_graph.action.activate')} onClick={(e) => { e.stopPropagation(); onActivate(cid); }}>
+                      <button className="iconbtn" data-tip={t('branch_graph.action.activate')} aria-label={t('branch_graph.action.activate')} onClick={(e) => { e.stopPropagation(); onActivate(cid); }}>
                         <Icon name="check" size={11} />
                       </button>
                     )}
                     {onDelete && (
-                      <button className="iconbtn" data-tip={t('branch_graph.action.delete_subtree')} onClick={(e) => { e.stopPropagation(); onDelete(cid); }}>
+                      <button className="iconbtn" data-tip={t('branch_graph.action.delete_subtree')} aria-label={t('branch_graph.action.delete_subtree')} onClick={(e) => { e.stopPropagation(); onDelete(cid); }}>
                         <Icon name="trash" size={11} />
                       </button>
                     )}

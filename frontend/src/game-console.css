@@ -348,6 +348,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 0 18px;
+  padding-top: env(safe-area-inset-top, 0px);
   height: 64px;
   border-bottom: 1px solid var(--line-soft);
   background: rgba(26, 24, 23, 0.92);
@@ -783,7 +784,7 @@
 .gc-float-panel-btn {
   display: none;
   position: fixed;
-  bottom: 80px;
+  bottom: calc(80px + env(safe-area-inset-bottom, 0px));
   right: 16px;
   width: 40px; height: 40px;
   border-radius: 999px;
@@ -890,6 +891,7 @@
 .gc-menu > .gc-menu-head { flex-shrink: 0; }
 .gc-menu > .gc-menu-foot { flex-shrink: 0; }
 .gc-menu > ul.gc-pop-list {
+  overscroll-behavior: contain;
   flex: 1;
   overflow-y: auto;
   min-height: 0;
@@ -1538,6 +1540,7 @@
     height: 88vh !important; max-height: 88vh;
     z-index: 500;
     border-radius: 18px 18px 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     border-left: none;
     border-top: 1px solid var(--line);
     transform: translateY(100%);            /* 收起:滑到屏幕下方 */
@@ -1605,6 +1608,7 @@
     background: rgba(0, 0, 0, 0.45);
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
+    overscroll-behavior: contain;
   }
 
   .gp-panel-resize-handle { display: none; }
@@ -1654,6 +1658,7 @@
     background: rgba(0, 0, 0, 0.45);
     backdrop-filter: blur(1px);
     -webkit-backdrop-filter: blur(1px);
+    overscroll-behavior: contain;
   }
 }
 @media (max-width: 720px) {

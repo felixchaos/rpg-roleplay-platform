@@ -24,6 +24,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     networks:
       - rpg-net
 
@@ -61,6 +69,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
     networks:
       - rpg-net
 
@@ -75,7 +91,9 @@ services:
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?必须设 REDIS_PASSWORD(勿用弱口令)}", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
+      environment:
+        REDISCLI_AUTH: ${REDIS_PASSWORD:?必须设 REDIS_PASSWORD(勿用弱口令)}
       interval: 10s
       timeout: 3s
       retries: 5
@@ -96,7 +114,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "7860:7860"
+      - "127.0.0.1:7860:7860"
     environment:
       # DATABASE_URL 指向 pgbouncer:6432 而非 postgres 直连(psycopg 接受 postgres:// 前缀)
       DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD:?必须设 POSTGRES_PASSWORD(勿用弱口令)}@pgbouncer:6432/rpg
@@ -137,6 +155,14 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 512M
     networks:
       - rpg-net
 
@@ -161,6 +187,14 @@ services:
       RPG_DEPLOYMENT_MODE: ${RPG_DEPLOYMENT_MODE:-multiuser}
     networks:
       - rpg-net
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
 
 volumes:
   postgres_data:

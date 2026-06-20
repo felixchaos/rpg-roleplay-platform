@@ -149,6 +149,7 @@
   border: 1px solid var(--accent); border-radius: 5px;
   padding: 1px 6px; outline: none; font-family: inherit;
 }
+.tv-chat-title-edit:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tv-chat-time { font-size: 10.5px; flex-shrink: 0; }
 .tv-chat-snippet {
   font-size: 11.5px; margin-top: 2px;
@@ -160,7 +161,7 @@
 .tv-chat-menu-btn { opacity: 0; width: 24px; height: 24px; }
 .tv-chat-item:hover .tv-chat-menu-btn,
 .tv-chat-item:focus-within .tv-chat-menu-btn { opacity: 1; }
-.tv-menu-scrim { position: fixed; inset: 0; z-index: 1499; }
+.tv-menu-scrim { position: fixed; inset: 0; z-index: 1499; overscroll-behavior: contain; }
 .tv-menu {
   position: absolute; top: 100%; right: 0; z-index: 1500; margin-top: 2px;
   background: var(--panel); border: 1px solid var(--line-soft);
@@ -255,6 +256,7 @@
   position: fixed; inset: 0; z-index: 2000;
   background: rgba(0,0,0,0.5);
   display: flex; justify-content: flex-end;
+  overscroll-behavior: contain;
 }
 .tv-drawer {
   width: min(560px, 100vw);

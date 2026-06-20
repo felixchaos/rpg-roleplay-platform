@@ -169,7 +169,7 @@
 }
 
 /* 精致 lightbox（覆盖 AvatarImg 内置的，可全局用）*/
-.mlb-backdrop { position: fixed; inset: 0; z-index: 9000; background: rgba(10,9,8,.9); display: flex; align-items: center; justify-content: center; animation: mlb-fade .2s ease; }
+.mlb-backdrop { position: fixed; inset: 0; z-index: 9000; background: rgba(10,9,8,.9); display: flex; align-items: center; justify-content: center; animation: mlb-fade .2s ease; overscroll-behavior: contain; }
 @keyframes mlb-fade { from { opacity: 0; } to { opacity: 1; } }
 
 /* ── 触屏：无 hover，悬停才浮现的控件改为常驻可见 ────────────── */
@@ -244,6 +244,7 @@
   background: rgba(10, 9, 8, .92);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 14px; padding: 24px; animation: mlb-fade .18s ease;
+  overscroll-behavior: contain;
 }
 .ilb__stage { display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: 96vw; }
 .ilb__imgwrap { position: relative; display: inline-block; line-height: 0; }
@@ -284,7 +285,7 @@
 .ilb__btn:disabled { opacity: .6; cursor: not-allowed; }
 .ilb__btn--ghost { background: rgba(255,255,255,.12); color: #f3efe8; }
 .ilb__close {
-  position: absolute; top: 20px; right: 24px; width: 40px; height: 40px; z-index: 3;
+  position: absolute; top: calc(20px + env(safe-area-inset-top, 0px)); right: calc(24px + env(safe-area-inset-right, 0px)); width: 40px; height: 40px; z-index: 3;
   border-radius: 99px; border: 0; background: rgba(255,255,255,.14); color: #fff;
   font-size: 21px; cursor: pointer; line-height: 1;
 }
