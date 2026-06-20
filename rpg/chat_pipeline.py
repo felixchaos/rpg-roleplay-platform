@@ -87,6 +87,26 @@ def _should_inject_short_input_directive(raw_msg: str | None) -> bool:
     return len(r) <= _SHORT_INPUT_CHARS
 
 
+# 沉浸式拟人模式:玩家明确开/关请求的【确定性】识别(harness 确定性铁律:不指望 LLM 工具一定被调)。
+# 返回 True(开)/ False(关)/ None(未提)。短语集刻意收紧,降低误判;且这是可逆的本对话偏好。
+_IMMERSIVE_OFF_PHRASES = ("关掉沉浸", "关闭沉浸", "退出沉浸", "取消沉浸", "别沉浸", "不要沉浸",
+                          "回到正常叙事", "回到小说", "正常叙事模式", "恢复叙事")
+_IMMERSIVE_ON_PHRASES = ("沉浸式", "像真人一样", "当成真人", "当作真人", "别写成小说", "不要写成小说",
+                         "别像小说", "别用小说", "别替我说", "别帮我说", "不要替我", "别替我做",
+                         "别帮我做决定", "以第一人称", "用第一人称")
+
+
+def _immersive_request(raw_msg: str | None) -> bool | None:
+    t = (raw_msg or "").strip()
+    if not t or t.startswith("/"):
+        return None
+    if any(k in t for k in _IMMERSIVE_OFF_PHRASES):   # 先判关闭(『关掉沉浸式』含『沉浸』)
+        return False
+    if any(k in t for k in _IMMERSIVE_ON_PHRASES):
+        return True
+    return None
+
+
 def _gm_max_iters() -> int:
     """GM 单轮工具调用上限。原 8 太紧:世界线收束后一轮常需
     update_state → list_pending_anchors → mark_anchor_satisfied → set_question → 写正文,
@@ -1012,27 +1032,48 @@ async def run_gm_phase(
     except Exception as _si_err:
         log.warning(f"[chat] 短输入镜头指令注入跳过(不影响 gameplay): {_si_err}")
 
-    # 沉浸式拟人模式:每回合从 DB【新鲜读取】持久 flag 设到 gm 上(绕开 per-worker state 缓存
-    # → 跨 worker 安全 + UI 端点即时生效),由 master._build_system 在 tavern system prompt
-    # 里确定性注入覆盖块。读真相源 runtime_checkouts.state_snapshot(working tree;LLM 工具回合
-    # 持久化 + UI 端点直写都落这里)。默认/失败 → False(零行为变化)。
+    # 沉浸式拟人模式(仅酒馆):每回合从 DB【新鲜读取】持久 flag 设到 gm 上(绕开 per-worker
+    # state 缓存 → 跨 worker 安全 + UI 端点即时生效),由 master._build_system 在 tavern system
+    # prompt 里确定性注入覆盖块。真相源 = runtime_checkouts.state_snapshot(working tree)。
+    # 另:玩家本回合若【明确】请求开/关沉浸(确定性识别),先确定性落库,本回合即生效 —— 不指望
+    # LLM 一定调 set_tavern_immersive 工具(harness 确定性铁律)。默认/失败 → False(零行为变化)。
     try:
         if gm is not None:
+            _is_tav = False
+            try:
+                from context_providers.registry import resolve_content_pack as _rcp
+                _is_tav = (_rcp(ctx.state).get("gm_policy") or {}).get("mode") == "tavern_gm"
+            except Exception:
+                _is_tav = False
             _imm_sid = int(ctx.early_active_save_id or 0)
             _imm_uid = int(api_user.get("id")) if api_user else 0
-            _imm_on = False
-            if _imm_sid and _imm_uid:
+            if _is_tav and _imm_sid and _imm_uid:
                 from platform_app.db import connect as _connect_im
+                _req = _immersive_request(message_for_model)
+                _merge = ("coalesce({c},'{{}}'::jsonb) || jsonb_build_object('tavern', "
+                          "coalesce({c}->'tavern','{{}}'::jsonb) || "
+                          "jsonb_build_object('immersive', %s::boolean))")
                 with _connect_im() as _db_im:
+                    if _req is not None:
+                        _db_im.execute(
+                            "update runtime_checkouts set state_snapshot = "
+                            + _merge.format(c="state_snapshot")
+                            + ", updated_at=now() where user_id=%s and save_id=%s",
+                            (_req, _imm_uid, _imm_sid))
+                        _db_im.execute(
+                            "update game_saves set state_snapshot = "
+                            + _merge.format(c="state_snapshot")
+                            + ", updated_at=now() where id=%s and user_id=%s and save_kind='tavern'",
+                            (_req, _imm_sid, _imm_uid))
                     _imr = _db_im.execute(
                         "select state_snapshot->'tavern'->>'immersive' as im "
                         "from runtime_checkouts where user_id=%s and save_id=%s",
-                        (_imm_uid, _imm_sid),
-                    ).fetchone()
-                _imm_on = str((_imr or {}).get("im") or "").strip().lower() in ("true", "1", "t")
-            gm._immersive_mode = _imm_on
+                        (_imm_uid, _imm_sid)).fetchone()
+                gm._immersive_mode = str((_imr or {}).get("im") or "").strip().lower() in ("true", "1", "t")
+            else:
+                gm._immersive_mode = False
     except Exception as _imm_err:
-        log.warning(f"[chat] 沉浸式 flag 读取跳过(不影响 gameplay): {_imm_err}")
+        log.warning(f"[chat] 沉浸式 flag 处理跳过(不影响 gameplay): {_imm_err}")
 
     yield ("agent", {
         "phase": "main_gm",

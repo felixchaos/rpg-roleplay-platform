@@ -89,5 +89,16 @@ class ImmersivePromptInjection(unittest.TestCase):
         self.assertNotIn("沉浸式拟人模式", out)
 
 
+class ImmersiveRequestDetector(unittest.TestCase):
+    def test_on_off_none(self):
+        from chat_pipeline import _immersive_request as f
+        for s in ("请用沉浸式跟我聊", "像真人一样跟我说话", "别写成小说", "别替我说话", "以第一人称来"):
+            self.assertIs(f(s), True, s)
+        for s in ("关掉沉浸式", "退出沉浸模式", "回到正常叙事吧"):
+            self.assertIs(f(s), False, s)
+        for s in ("我递给她一壶水", "你好", "", "/set x", None):
+            self.assertIsNone(f(s), repr(s))
+
+
 if __name__ == "__main__":
     unittest.main()
