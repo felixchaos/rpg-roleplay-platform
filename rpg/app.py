@@ -727,6 +727,56 @@ def _selfheal_player_from_save_snapshot(state: GameState, api_user: dict[str, An
         pass
 
 
+def _kb_state_enabled(api_user: dict | None = None) -> bool:
+    """Q KB-backed 存储集成总开关(每用户特性,默认开)。on 时存档状态从 KB 行 load/persist
+    (DB-resident 单一来源,blob 仍并行写作兜底),off 时走原 blob。"""
+    from core.feature_flags import feature_enabled
+    uid = None
+    try:
+        uid = int(api_user["id"]) if api_user and api_user.get("id") is not None else None
+    except (TypeError, ValueError, KeyError):
+        uid = None
+    return feature_enabled("kb_state", uid)
+
+
+def _save_kb_native(save_id: int | None) -> bool:
+    """该存档是否 kb-native(创建时即 seed 进 KB、打了 kb_native 标记 →「封死新存档入口」)。
+    kb_native 档【始终】走 KB 新实现,不受每用户 kb_state 开关影响;旧档无标记 → 仍按开关 + 懒迁移。
+    任何失败/无列 → False(降级回开关判定,绝不破回合)。"""
+    if not save_id:
+        return False
+    try:
+        from platform_app.db import connect
+        with connect() as db:
+            r = db.execute("select kb_native from game_saves where id = %s", (int(save_id),)).fetchone()
+        return bool(r and r.get("kb_native"))
+    except Exception:
+        return False
+
+
+def _kb_backed_state(state: "GameState", save_id: int, commit_id: int) -> "GameState":
+    """从 KB 表 materialize 出 GameState(而非读 blob)。首次加载该 save 且 KB 未 seed →
+    先把当前 blob 迁进 KB(T0 seed 实体 + import_state)再 materialize(migrate-on-first-load)。"""
+    from kb import save_kb
+    from platform_app.db import connect
+    with connect() as db:
+        seeded = db.execute(
+            "select count(*) as n from kb_worldline_vars where save_id = %s", (save_id,)
+        ).fetchone()
+        if not int((seeded or {}).get("n") or 0):
+            sid = db.execute("select script_id from game_saves where id = %s", (save_id,)).fetchone()
+            script_id = (sid or {}).get("script_id")
+            if script_id:
+                save_kb.seed_full_t0(db, save_id, int(script_id), commit_id=commit_id)
+            save_kb.import_state(db, save_id, commit_id, state.data)
+            if hasattr(db, "commit"):
+                db.commit()
+        mat = save_kb.materialize(db, save_id, commit_id)
+    data = {k: v for k, v in mat.items() if not k.startswith("_")}
+    data["_active_save_id"] = save_id  # materialize 丢瞬态指针,这里补回
+    return GameState(data)
+
+
 def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = True) -> GameState:
     """加载当前用户的游戏状态。多用户安全：按 user_id 隔离。
 
@@ -792,6 +842,13 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = 
                     _lru_set(_state_commit_id_by_user, uid, _new_commit_id)
                 else:
                     _state_commit_id_by_user.pop(uid, None)
+                # Q KB-backed 存储集成(flag):state 从 KB 表 materialize(而非 blob)。
+                # 失败一律退回已加载的 blob state,绝不破回合。
+                if (_kb_state_enabled(api_user) or _save_kb_native(_new_save_id)) and _new_save_id and _new_commit_id:
+                    try:
+                        state = _kb_backed_state(state, _new_save_id, _new_commit_id)
+                    except Exception as _kbe:
+                        log.warning(f"[kb_state] materialize load 跳过,退回 blob: {_kbe}")
             except Exception:
                 state = GameState.new() if api_user else GameState.load_or_new()
                 _state_save_id_by_user.pop(uid, None)

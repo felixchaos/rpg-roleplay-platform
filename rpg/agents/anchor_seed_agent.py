@@ -39,6 +39,14 @@ from psycopg.types.json import Jsonb
 
 from platform_app.db import connect, init_db
 
+
+def _anchor_pace(user_id: int | None = None) -> bool:
+    """Q 锚点限速/同章可见(每用户特性 anchor_pace,默认开)。开时:进度窗口含当前章
+    (chapter_min=last_sat,不再 +1),让同章其余未发生锚点留在窗口里能被标记/被引导。"""
+    from core.feature_flags import feature_enabled
+    return feature_enabled("anchor_pace", user_id)
+
+
 # ────────────────────────────────────────────────────────────
 #  常量
 # ────────────────────────────────────────────────────────────
@@ -128,6 +136,20 @@ def seed_anchors_for_save(save_id: int, *, force: bool = False) -> dict[str, Any
         seeded = 0
         by_phase: dict[str, int] = {}
         fatal_count = 0
+        # Q 根因修复:同名实体「首次引入/首次登场」去重。提取层会把同一实体(如 D20)拆成
+        # item + concept(D20_concept/D20系统/...),在不同章各生成一个「首次引入」事件 → 玩家在
+        # ch1 碰 D20 却被判到达 ch11 的 D20 锚点 → floor 棘轮跳章。按 chapter 升序只留最早一个首次锚点。
+        import re as _re
+        def _intro_name(s: str):
+            m = _re.search(r"[「『]([^」』]+)[」』]", s)        # item「D20」/ concept「苍白之血」
+            if m:
+                return m.group(1).strip()
+            m = _re.match(r"^场景(.+?)首次", s)                 # 场景秋叶原避难所首次出现
+            if m:
+                return m.group(1).strip()
+            m = _re.match(r"^(.+?)[（(]", s)                    # 爱丽丝(character)首次登场
+            return m.group(1).strip() if m else None
+        seen_intro_names: set[str] = set()
         for fact in facts:
             events_raw = fact.get("events") or []
             if not isinstance(events_raw, list):
@@ -150,6 +172,15 @@ def seed_anchors_for_save(save_id: int, *, force: bool = False) -> dict[str, Any
                 # 过滤太低的 (减少噪音)
                 if importance < 40:
                     continue
+                # 同名实体首次引入/登场/出现去重:只留 chapter 升序里最早那个,跳掉后续重复
+                # (治 D20 在 ch1 item + ch11 concept 各生成首次锚点导致的跳章误判;含场景「首次出现」,
+                # 与 anchor_reconcile._INTRO_MARKERS 口径一致,避免同一场景多条首次锚点)。
+                if ("首次引入" in summary) or ("首次登场" in summary) or ("首次出现" in summary):
+                    _nm = _intro_name(summary)
+                    if _nm:
+                        if _nm in seen_intro_names:
+                            continue
+                        seen_intro_names.add(_nm)
                 is_fatal = classify_event_fatal(summary)
                 participants = ev.get("participants") or []
                 locations = ev.get("locations") or []
@@ -323,20 +354,48 @@ def get_progress_window(save_id: int, world_time_label: str | None = None,
     init_db()
     sid = int(save_id)
     with connect() as db:
+        # 每用户 anchor_pace:无 user 上下文,从 save 反查 owner 判定(单一连接复用)。
+        from core.feature_flags import feature_enabled_for_save
+        _pace = feature_enabled_for_save("anchor_pace", sid, db)
         # 1. 已处理(occurred / variant / superseded)的最大章节
         #    BUG 修复:原只算 occurred/variant,漏了 superseded。玩家早章绕过某锚点
         #    (mark_anchor_superseded)但此后未满足任何锚点时,last_sat 为 None → 进度窗口
         #    永停在书本开头,GM 反复注入已绕过的开头锚点、剧情推进停滞。绕过也是"这一章
         #    已处理过"的进度信号,纳入计算。
-        row = db.execute(
-            "select max(source_chapter) as max_ch from save_anchor_states "
-            "where save_id = %s and status in ('occurred', 'variant', 'superseded')",
-            (sid,),
-        ).fetchone()
-        last_sat = int(row["max_ch"]) if row and row.get("max_ch") is not None else None
+        #    Q 再修(pace on):楼层优先只认【真实到达】(occurred/variant)。superseded 含
+        #    save_phase_manager 按 phase_label【粗粒度自动绕过】—— 远未来锚点(ch42)与早章共享
+        #    phase_label 被一起 superseded 时,若计入楼层会把楼层/窗口拽到 ch42 = 跳章。故 pace 下
+        #    仅当【无任何真实到达】时才回退 superseded(保留上面「绕过全部早章不卡开头」的兜底)。
+        if _pace:
+            r_reached = db.execute(
+                "select max(source_chapter) as max_ch from save_anchor_states "
+                "where save_id = %s and status in ('occurred', 'variant')",
+                (sid,),
+            ).fetchone()
+            reached = int(r_reached["max_ch"]) if r_reached and r_reached.get("max_ch") is not None else None
+            if reached is not None:
+                last_sat = reached
+            else:
+                r_sup = db.execute(
+                    "select max(source_chapter) as max_ch from save_anchor_states "
+                    "where save_id = %s and status = 'superseded'",
+                    (sid,),
+                ).fetchone()
+                last_sat = int(r_sup["max_ch"]) if r_sup and r_sup.get("max_ch") is not None else None
+        else:
+            row = db.execute(
+                "select max(source_chapter) as max_ch from save_anchor_states "
+                "where save_id = %s and status in ('occurred', 'variant', 'superseded')",
+                (sid,),
+            ).fetchone()
+            last_sat = int(row["max_ch"]) if row and row.get("max_ch") is not None else None
         if last_sat:
+            # 根因修复(多锚点同章):last_sat+1 把当前章其余【未发生】锚点挤出窗口 →
+            # 永不被判定器标记(更新速度对不上)、永不作为 steering 注入(剧情不按锚点走)。
+            # pace on 时 chapter_min=last_sat(含当前章);status='pending' 过滤天然排除已发生的同章锚点。
+            chapter_min = last_sat if _pace else last_sat + 1
             return {
-                "chapter_min": last_sat + 1,
+                "chapter_min": chapter_min,
                 "chapter_max": last_sat + window_size,
                 "source": "satisfied",
                 "last_satisfied_chapter": last_sat,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from context_engine._constants import MAX_LAYER_CHARS
+from context_engine._constants import MAX_LAYER_CHARS, layer_cache_tier
 from context_engine._utils import _cache_plan, _estimate_tokens, _layer, _preview, _trim
 
 
@@ -214,11 +214,18 @@ def build_context_bundle(
 
     prompt_parts = []
     debug_layers = []
+    # Q 分层缓存:按 tier 收集已发出的层块(段内仍保持上面的 priority 降序)。
+    # 注意 prompt(扁平串)继续按 priority 顺序拼接 → 1a 行为零变化;prompt_segments 是
+    # 附加产出,1b 才由 master/backends 据此构造多 block + cache_control 断点。
+    seg_parts: dict[str, list[str]] = {"A": [], "B": [], "C": []}
     for layer in all_layers:
         trimmed = _trim(layer["content"], MAX_LAYER_CHARS.get(layer["id"], 1800))
         if not trimmed:
             continue
-        prompt_parts.append(f"【{layer['title']}】\n{trimmed}")
+        part = f"【{layer['title']}】\n{trimmed}"
+        prompt_parts.append(part)
+        tier = layer_cache_tier(layer)  # 始终返回 A/B/C
+        seg_parts[tier].append(part)
         debug_layers.append({
             "id": layer["id"],
             "title": layer["title"],
@@ -226,18 +233,26 @@ def build_context_bundle(
             "estimated_tokens": _estimate_tokens(trimmed),
             "sticky": layer.get("sticky", False),
             "priority": layer.get("priority", 50),
+            "cache_tier": tier,
             "source": layer.get("source", ""),
             "preview": _preview(trimmed),
             "items": layer.get("items", []),
         })
 
     prompt = "\n\n".join(prompt_parts)
+    # A→B→C 段;空段省略。每段是该 tier 内所有层块按 priority 降序拼接。
+    prompt_segments = [
+        {"tier": t, "text": "\n\n".join(seg_parts[t]),
+         "estimated_tokens": _estimate_tokens("\n\n".join(seg_parts[t]))}
+        for t in ("A", "B", "C") if seg_parts[t]
+    ]
     cache_plan = _cache_plan(debug_layers, prompt_parts)
     debug = {
         "total_chars": len(prompt),
         "estimated_tokens": _estimate_tokens(prompt),
         "layers": debug_layers,
         "cache_plan": cache_plan,
+        "tier_tokens": {t: _estimate_tokens("\n\n".join(seg_parts[t])) for t in ("A", "B", "C")},
         "curator_plan": curator_plan or {},
         "manifest": {
             "id": (manifest or {}).get("id"),
@@ -248,4 +263,4 @@ def build_context_bundle(
         },
         "contributions": contribution_meta,
     }
-    return {"prompt": prompt, "debug": debug}
+    return {"prompt": prompt, "prompt_segments": prompt_segments, "debug": debug}

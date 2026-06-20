@@ -2013,6 +2013,13 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         # 消息索引(本回合 assistant 消息位),列表端点返回,前端据此确定性还原。
         "alter table ai_images add column if not exists message_index integer",
     ]),
+    (79, "save_kb_native_marker", [
+        # 增量切换 KB 存储:新建存档在创建时即 seed 进 KB(kb-native from birth),打此标记。
+        # 加载/落库路径:kb_native=true 的存档【始终】走 KB(不受每用户 kb_state 开关影响,
+        # 即「封死新存档入口=新档按新实现」);旧档 kb_native=false → 仍按每用户开关 + 懒迁移。
+        # 默认 false:存量旧档不受影响(之后再单独迁移)。
+        "alter table game_saves add column if not exists kb_native boolean not null default false",
+    ]),
 ]
 
 

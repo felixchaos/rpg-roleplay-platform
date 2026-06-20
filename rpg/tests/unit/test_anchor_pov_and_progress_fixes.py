@@ -42,15 +42,23 @@ class RevokePovMirrorsClaim(unittest.TestCase):
 
 
 class ProgressWindowIncludesSuperseded(unittest.TestCase):
-    def test_window_max_chapter_includes_superseded(self):
+    def test_window_floor_counts_superseded_but_prioritizes_reached(self):
         body = _func(SEED_PY, "get_progress_window")
-        # 取"已处理最大章"那条 SQL 的 status 集合
-        m = re.search(r"max\(source_chapter\).*?status in \(([^)]*)\)", body, re.S)
-        self.assertIsNotNone(m, "未找到 progress window 的 max(source_chapter) 查询")
-        status_set = m.group(1)
-        for st in ("occurred", "variant", "superseded"):
-            self.assertIn(st, status_set,
-                          f"进度窗口的已处理最大章未含 {st}(superseded 漏算会冻结进度)")
+        # 反卡死保证(原 bug):superseded 仍必须参与楼层计算 —— 玩家绕过全部早章、无任何到达时,
+        # 楼层不能为 None,否则进度冻结在书本开头。
+        self.assertIn("superseded", body,
+                      "superseded 必须仍参与楼层(漏算会冻结进度)")
+        # legacy(pace off)路径:三态合一查询保留。
+        legacy = re.search(r"status in \(\s*'occurred',\s*'variant',\s*'superseded'\s*\)", body)
+        self.assertIsNotNone(legacy, "legacy 路径应保留 occurred/variant/superseded 三态合一查询")
+        # Q pace 修复:楼层【优先只认真实到达】(occurred/variant),远未来锚点被 phase 粗粒度
+        # 自动 superseded 时不抬楼层(防跳章);superseded 仅在无任何到达时作兜底。
+        reached_only = re.search(r"status in \(\s*'occurred',\s*'variant'\s*\)", body)
+        self.assertIsNotNone(reached_only,
+                             "pace 楼层应有'仅真实到达(occurred/variant)'的优先查询")
+        sup_fallback = re.search(r"status\s*=\s*'superseded'", body)
+        self.assertIsNotNone(sup_fallback,
+                             "pace 楼层应保留 superseded 兜底查询(无到达时防卡开头)")
 
 
 if __name__ == "__main__":

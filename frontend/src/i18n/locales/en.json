@@ -294,7 +294,26 @@
       "save_fail": "{{label}} save failed",
       "reset_ok": "All module overrides cleared",
       "reset_fail": "Reset failed",
-      "footer": "Changes are saved immediately via POST /api/me/preference. Each module picks up the new setting on next invocation."
+      "footer": "Changes are saved immediately via POST /api/me/preference. Each module picks up the new setting on next invocation.",
+      "features_title": "Features",
+      "models_title": "Model assignment",
+      "group_desc": {
+        "core": "The Three-Sage pipeline: Narrator prose, Planner orchestration, Recorder bookkeeping, plus core GM helper models.",
+        "script": "Models for script editing, character-card generation / import, and review.",
+        "world": "World progression: storyline anchors, phase digests, black-swan events.",
+        "gen": "Vector retrieval (RAG) and image generation.",
+        "misc": "Generic fallback model used when a module isn't configured separately."
+      }
+    },
+    "features": {
+      "on": "On",
+      "off": "Off",
+      "ctx_tiered": { "label": "Tiered context cache", "desc": "Splits the stable prefix from dynamic content to hit the model's prefix cache — significant token savings." },
+      "recorder_unified": { "label": "Unified Recorder", "desc": "Merges state extraction and storyline-anchor reconciliation into a single LLM call." },
+      "narrator_slim": { "label": "Slim Narrator (no tool loop)", "desc": "Main narration is written in one pass without the tool loop (the biggest token multiplier); state writes go to the Recorder." },
+      "rag_gate": { "label": "RAG retrieval gate", "desc": "The Planner decides whether this turn needs source retrieval; skips it when not, saving retrieval tokens." },
+      "anchor_pace": { "label": "Storyline anchor pacing", "desc": "Advances anchors at the conversation's real pace, marks same-chapter anchors one by one, and invalidates anchors when a character dies — fixes chapter-skipping / off-anchor drift." },
+      "kb_state": { "label": "DB-resident save knowledge base", "desc": "Stores save state as database rows (single source of truth) for precise retrieval and maintenance; off uses the traditional whole-save blob." }
     },
     "memory": {
       "title_recall": "Memory · Recall Behavior",
@@ -509,6 +528,7 @@
         "label_console": "Console Assistant",
         "label_editor": "Script Editor",
         "label_extractor": "Narrative Extractor",
+        "label_recorder": "Recorder (Three Sages)",
         "label_card_gen": "Card Generation",
         "label_card_import": "Card Import",
         "label_critic": "Critic",
@@ -524,6 +544,12 @@
         "tip_console": "Model powering the script editor console assistant",
         "tip_editor": "Model used for AI direct-writing in the script editor",
         "tip_extractor": "Model used for narrative extraction and rebuild",
+        "tip_recorder": "Recorder: one call for state ops + anchor reconcile + acceptance (merged, token-saving)",
+        "group_core": "Core dialogue (Three Sages + GM pipeline)",
+        "group_script": "Script & character cards",
+        "group_world": "World simulation & history",
+        "group_gen": "Retrieval & generation",
+        "group_misc": "General fallback",
         "tip_card_gen": "Model used to auto-generate character cards",
         "tip_card_import": "Model used during character card import",
         "tip_critic": "Model powering the critic agent",
@@ -4102,6 +4128,7 @@
           "set_parser": "Command Parser",
           "console": "Console Assistant",
           "extractor": "Narrative Extractor",
+          "recorder": "Recorder (Three Sages)",
           "card_gen": "Character Card Generator",
           "card_import": "AI Card Field Organizer",
           "critic": "Consistency Critic",
@@ -4118,6 +4145,7 @@
           "set_parser": "Natural-language parsing for /set commands",
           "console": "Side-panel console; follows the GM model",
           "extractor": "Secondary parsing of GM output (two-step GM pipeline)",
+          "recorder": "Recorder: state ops + anchor reconcile + acceptance in one call; inherits extractor",
           "card_gen": "Creative tool for generating and refining Character Cards",
           "card_import": "Organizes fields when importing Tavern cards; follows the GM model",
           "critic": "Consistency scoring sub-agent for card generation",
@@ -6252,6 +6280,8 @@
   "components": {
     "agent_model_picker": {
       "default_header": "Model",
+      "provider_label": "Provider",
+      "model_label": "Model",
       "inherit_label": "Follow main GM",
       "model_disabled_suffix": "(Disabled)",
       "custom_model_option": "Custom… (enter model name manually)",

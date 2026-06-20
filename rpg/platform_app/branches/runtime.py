@@ -107,6 +107,22 @@ def record_runtime_turn(
             _upsert_ref_by_id(db, ref_id, row["id"], active=True)
             _set_save_active(db, save_id, row["id"], ref_id)
             _write_checkout(db, int(save["user_id"]), save_id, ref_id, row["id"])
+            # Q KB-backed 存储集成(每用户特性 kb_state,默认开):把本回合 state 完整拆进 KB 行
+            # (COW,born=新 commit row["id"]),让存档状态 DB-resident、单一来源。同事务写;失败不破回合。
+            from core.feature_flags import feature_enabled as _feat
+            # kb_native 档(新档,创建即 seed)始终落 KB;旧档按每用户 kb_state 开关。
+            if bool(save.get("kb_native")) or _feat("kb_state", int(save["user_id"]) if save.get("user_id") is not None else None):
+                try:
+                    from kb.save_kb import import_state as _kb_import, maintain_structured_kb as _kb_maintain
+                    _kb_import(db, save_id, int(row["id"]), data)
+                    # 史官:从本回合正文确定性维护结构化 KB(实体 encountered + 全部关系)
+                    _sid = (save or {}).get("script_id")
+                    if _sid:
+                        _kb_maintain(db, save_id, int(_sid), int(row["id"]), gm_response or "",
+                                     player_name=str(((data or {}).get("player") or {}).get("name") or ""))
+                except Exception as _kbe:
+                    import logging as _lg
+                    _lg.getLogger("kb_state").warning("[kb_state] persist import/maintain skip: %s", _kbe)
     if missing_parent:
         rebound = bootstrap_runtime_binding(user_id=user_id)
         if rebound and rebound.get("active_commit_id") != parent_id:

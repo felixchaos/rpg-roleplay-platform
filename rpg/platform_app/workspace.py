@@ -114,6 +114,26 @@ def overview(user: dict | None) -> dict[str, Any]:
     }
 
 
+def _seed_kb_at_creation(save_id: int, script_id: int | None, snapshot: dict) -> None:
+    """新存档创建即 seed 进 KB(kb-native from birth)+ 打 `kb_native` 标记 →「封死新存档入口」:
+    该档之后【始终】走 KB 新实现(不受每用户 kb_state 开关影响);旧档 kb_native=false 不变。
+    scripted: 剧本 canon T0 seed + import_state;tavern: 仅 import_state(无剧本 T0)。
+    additive:blob 仍在(分支/回溯/兜底不破)。任何失败只 log、不阻断建档(降级回懒迁移路径)。"""
+    try:
+        from kb import save_kb
+        from kb.t0_seed import root_commit_id
+        with connect() as db:
+            cid = root_commit_id(db, save_id)
+            if cid is None:
+                return
+            if script_id:
+                save_kb.seed_full_t0(db, save_id, int(script_id), commit_id=cid)
+            save_kb.import_state(db, save_id, cid, snapshot or {})
+            db.execute("update game_saves set kb_native = true where id = %s", (save_id,))
+    except Exception as exc:
+        log.error(f"[kb_seed] creation-time KB seed failed save={save_id}: {type(exc).__name__}: {exc}")
+
+
 def create_save(
     user_id: int,
     script_id: int,
@@ -242,20 +262,18 @@ def create_save(
     # 不是「玩家接管原作主角 POV」。原作主角应作为独立 NPC 触发其登场 anchor,
     # 玩家(用户角色卡)在同一场景平行加入。两人可能在 ch1 相遇,但不是同一个人。
     # claim_protagonist_pov 工具保留,但只在玩家显式声明"我就是 X"时由 GM 主动调。
+    # 锚点 seed:**同步**做(改自原后台 daemon 线程)。原因(bug 修复):daemon 线程不保证在
+    # 玩家第一回合前完成 → 新存档常 0 pending 锚点 → 时间线锚点标记/收束整段失效(E2E 实测到)。
+    # 锚点 seed 是纯 DB 写(从 chapter_facts 批量 insert),即便 800 章量级也就秒级,放创建路径里
+    # 保证「存档一建好就有完整锚点」远比省那点延迟重要。失败不影响存档创建。
     try:
-        import threading
-
         from agents.anchor_seed_agent import seed_anchors_for_save
-        _save_id_for_seed = save["id"]
-        def _bg_seed():
-            try:
-                res = seed_anchors_for_save(_save_id_for_seed)
-                log.info(f"[anchor_seed] save={_save_id_for_seed} result={res}")
-            except Exception as exc:
-                log.error(f"[anchor_seed] save={_save_id_for_seed} failed: {type(exc).__name__}: {exc}")
-        threading.Thread(target=_bg_seed, daemon=True, name=f"anchor-seed-{save['id']}").start()
+        res = seed_anchors_for_save(save["id"])
+        log.info(f"[anchor_seed] save={save['id']} (sync) result={res}")
     except Exception as _seed_err:
-        log.error(f"[anchor_seed] schedule failed save={save['id']}: {_seed_err}")
+        log.error(f"[anchor_seed] sync seed failed save={save['id']}: {type(_seed_err).__name__}: {_seed_err}")
+    # 封死新存档入口:创建即 seed 进 KB + 打 kb_native 标记(新档按新实现)。
+    _seed_kb_at_creation(save["id"], script_id, snapshot)
     return expose(save)  # type: ignore[return-value]
 
 
@@ -438,6 +456,8 @@ def create_tavern_save(
                 log.info(f"[tavern] save={save['id']} ingested {n} character_book entries → worldbook overlay")
         except Exception as exc:
             log.warning(f"[tavern] character_book ingest failed save={save['id']}: {type(exc).__name__}: {exc}")
+    # 封死新存档入口(酒馆):创建即 seed 进 KB(无剧本 T0 → 仅 import_state)+ 打 kb_native 标记。
+    _seed_kb_at_creation(save["id"], None, snapshot)
     return expose(save)  # type: ignore[return-value]
 
 

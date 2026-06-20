@@ -385,7 +385,26 @@
       "save_fail": "{{label}} 保存失败",
       "reset_ok": "已清空全部模块覆盖",
       "reset_fail": "重置失败",
-      "footer": "改动通过 POST /api/me/preference 即时保存。后端各模块在下次调用时按 user_preferences 重选 backend。"
+      "footer": "改动通过 POST /api/me/preference 即时保存。后端各模块在下次调用时按 user_preferences 重选 backend。",
+      "features_title": "功能开关",
+      "models_title": "模型分配",
+      "group_desc": {
+        "core": "三贤者流水线:文宗叙事、司命规划、史官记录,以及核心 GM 辅助模型。",
+        "script": "剧本编辑、角色卡生成 / 导入与审校相关的模型。",
+        "world": "世界线锚点、阶段摘要、黑天鹅事件等世界推进相关。",
+        "gen": "向量检索(RAG)与图像生成。",
+        "misc": "未单独配置时的通用兜底模型。"
+      }
+    },
+    "features": {
+      "on": "已启用",
+      "off": "已关闭",
+      "ctx_tiered": { "label": "分层上下文缓存", "desc": "把稳定前缀与动态内容分层,命中模型前缀缓存,显著省 token。" },
+      "recorder_unified": { "label": "史官三合一", "desc": "状态提取 + 世界线锚点判定合并为一次调用,省一次 LLM。" },
+      "narrator_slim": { "label": "文宗精简(去工具循环)", "desc": "主叙事单次成文、不带工具循环(最大 token 乘数),状态交史官落库。" },
+      "rag_gate": { "label": "RAG 检索闸", "desc": "由司命判定本回合是否需要检索原著,不需要则跳过,省检索 token。" },
+      "anchor_pace": { "label": "世界线锚点节奏", "desc": "按对话实际节奏推进锚点、同章逐个标记、角色死亡使相关锚点失效 —— 治跳章 / 不按锚点走。" },
+      "kb_state": { "label": "存档知识库 DB 化", "desc": "存档状态以数据库行存储(单一来源),便于精确检索与维护;关闭则用传统整档存储。" }
     },
     "memory": {
       "title_recall": "记忆 · 召回行为",
@@ -600,6 +619,7 @@
         "label_console": "控制台助手",
         "label_editor": "剧本编辑器",
         "label_extractor": "叙事提取器",
+        "label_recorder": "史官（三贤者）",
         "label_card_gen": "角色卡生成",
         "label_card_import": "角色卡导入",
         "label_critic": "批评者",
@@ -615,6 +635,12 @@
         "tip_console": "剧本编辑器控制台助手模型",
         "tip_editor": "剧本编辑器 AI 直写模型",
         "tip_extractor": "叙事提取/重建模型",
+        "tip_recorder": "史官：单次提取状态 op + 锚点判定 + 验收（三合一，省 token）",
+        "group_core": "对话核心（三贤者 + GM 管线）",
+        "group_script": "剧本与角色卡",
+        "group_world": "世界模拟与历史",
+        "group_gen": "检索与生成",
+        "group_misc": "通用兜底",
         "tip_card_gen": "角色卡自动生成模型",
         "tip_card_import": "角色卡导入处理模型",
         "tip_critic": "批评者代理模型",
@@ -4102,6 +4128,7 @@
           "set_parser": "指令解析代理",
           "console": "控制台助手",
           "extractor": "叙事提取器",
+          "recorder": "史官（三贤者）",
           "card_gen": "角色卡生成器",
           "card_import": "AI 整理卡字段",
           "critic": "一致性评分",
@@ -4118,6 +4145,7 @@
           "set_parser": "/set 命令自然语言解析",
           "console": "侧栏控制台;跟随主 GM",
           "extractor": "GM 叙事二次解析(两步 GM)",
+          "recorder": "史官:状态 op+锚点+验收三合一;跟随提取器",
           "card_gen": "创意工具:生成/微调角色卡",
           "card_import": "导入酒馆卡时 LLM 整理字段;跟随主 GM",
           "critic": "角色卡生成的一致性评分子代理",
@@ -6252,6 +6280,8 @@
   "components": {
     "agent_model_picker": {
       "default_header": "模型",
+      "provider_label": "供应商",
+      "model_label": "模型",
       "inherit_label": "跟随主 GM",
       "model_disabled_suffix": "(禁用)",
       "custom_model_option": "自定义…（手动填写模型名）",

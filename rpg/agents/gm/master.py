@@ -290,6 +290,14 @@ _SYSTEM_TAVERN_BOOTSTRAP = """\
 {style_block}
 """
 
+def _content_text(content: Any) -> str:
+    """从 message content 提取纯文本 —— content 可能是 str 或 Anthropic 结构化 block 列表
+    (Q 分层缓存后,最后一条 user 消息可能是 [{type:text,text,...}, ...])。仅供 token 估算。"""
+    if isinstance(content, list):
+        return "\n".join(str(b.get("text", "")) for b in content if isinstance(b, dict))
+    return str(content or "")
+
+
 _DYNAMIC_CONTEXT = """\
 【当前剧情状态】
 {player_summary}
@@ -601,6 +609,45 @@ class GameMaster:
             f"【玩家本轮输入】\n{user_input}"
         )
 
+    def _tiered_enabled(self) -> bool:
+        """Q 分层缓存总开关(每用户特性,默认开)。off 时整条回退现状单串路径。"""
+        from core.feature_flags import feature_enabled
+        return feature_enabled("ctx_tiered", getattr(self, "user_id", None))
+
+    def _turn_content(self, user_input: str, state, retrieved_context: str, *,
+                      prompt_segments: list[dict] | None = None,
+                      dynamic_prefix: str = ""):
+        """Q 分层缓存:把单轮 user 消息按 cache_tier 重排为「稳定前缀在前、动态在后」。
+
+        - 无 segments 或 flag off → 退回 _turn_message(现状单串,零行为变化)。
+          (此路径下 dynamic_prefix 已由 caller prepend 进 retrieved_context,不重复注入)
+        - Anthropic backend → 返回结构化 content blocks,Tier A 段挂 cache_control(ephemeral)。
+          B 段暂只保前置顺序不单独缓存(场景稳定化在 Phase B;且 system+tools+A 已用满 ≤4 断点)。
+        - 其它 backend(含 DeepSeek/OpenAI-compat)→ 返回重排单串(A+B+动态),
+          让支持自动前缀缓存的 provider 命中稳定前缀。
+        dynamic_prefix = Phase D 注入 + 短输入镜头指令等回合动态前置项 → 进动态块最前,不污染缓存前缀。
+        """
+        if not prompt_segments or not self._tiered_enabled():
+            return self._turn_message(user_input, state, retrieved_context)
+        seg = {s.get("tier"): (s.get("text") or "").strip() for s in prompt_segments}
+        A, B, C = seg.get("A", ""), seg.get("B", ""), seg.get("C", "")
+        # 动态块 = [回合动态前置] + 【当前剧情状态】+【本轮上下文包=C 段】+ 玩家输入
+        dyn_parts: list[str] = []
+        if dynamic_prefix.strip():
+            dyn_parts.append(dynamic_prefix.strip())
+        dyn_parts.append(self._dynamic_context(state.short_summary(), C))
+        dyn_parts.append(f"【玩家本轮输入】\n{user_input}")
+        dyn = "\n\n".join(dyn_parts)
+        if isinstance(self._backend, _AnthropicBackend):
+            blocks: list[dict[str, Any]] = []
+            if A:
+                blocks.append({"type": "text", "text": A, "cache_control": {"type": "ephemeral"}})
+            if B:
+                blocks.append({"type": "text", "text": B})  # 仅保前置顺序,Phase B 再单独缓存
+            blocks.append({"type": "text", "text": dyn})
+            return blocks
+        return "\n\n".join(p for p in (A, B, dyn) if p)
+
     def curate_context(self, agent_prompt: str, task_prompt: str) -> str:
         """Run the model-backed context sub-agent before the main GM call.
 
@@ -664,6 +711,8 @@ class GameMaster:
         max_tokens: int = 800,
         tool_call_router: Any = None,
         stop_event=None,
+        prompt_segments: list[dict] | None = None,
+        dynamic_prefix: str = "",
     ) -> Iterator[dict[str, Any]]:
         """带 MCP 工具循环的流式响应。
 
@@ -690,6 +739,7 @@ class GameMaster:
             yield from self._respond_stream_native_tools(
                 user_input, retrieved_context, state, tools,
                 max_iterations, max_tokens, tool_call_router=tool_call_router,
+                prompt_segments=prompt_segments, dynamic_prefix=dynamic_prefix,
             )
             return
 
@@ -709,12 +759,15 @@ class GameMaster:
             if isinstance(_lc, dict):
                 _lc["system_prompt_tokens"] = _ctx_est(_base_system)
                 _lc["tools_tokens"] = _ctx_est(_tools_blob)
-                _lc["history_tokens"] = sum(_ctx_est((m or {}).get("content") or "") for m in messages)
+                _lc["history_tokens"] = sum(_ctx_est(_content_text((m or {}).get("content"))) for m in messages)
         except Exception:
             pass
         messages.append({
             "role": "user",
-            "content": self._turn_message(user_input, state, retrieved_context),
+            "content": self._turn_content(
+                user_input, state, retrieved_context,
+                prompt_segments=prompt_segments, dynamic_prefix=dynamic_prefix,
+            ),
         })
 
         START = "<<TOOL_CALL>>"
@@ -851,6 +904,8 @@ class GameMaster:
         max_iterations: int,
         max_tokens: int,
         tool_call_router: Any = None,
+        prompt_segments: list[dict] | None = None,
+        dynamic_prefix: str = "",
     ) -> Iterator[dict[str, Any]]:
         """task 66/70/71：用 backend 的 native tool_use / function calling API
         跑 MCP 循环。
@@ -871,7 +926,10 @@ class GameMaster:
         messages = state.history_messages()
         messages.append({
             "role": "user",
-            "content": self._turn_message(user_input, state, retrieved_context),
+            "content": self._turn_content(
+                user_input, state, retrieved_context,
+                prompt_segments=prompt_segments, dynamic_prefix=dynamic_prefix,
+            ),
         })
         # BUGFIX(上下文用量 breakdown):native tools 路径(anthropic/vertex/openai_compat,supports_native_tools=True)
         # 此前不写 last_context 的 token 估算 → breakdown 的「系统提示/工具/对话历史」全归 0,
@@ -883,7 +941,7 @@ class GameMaster:
             if isinstance(_lc, dict):
                 _lc["system_prompt_tokens"] = _ctx_est(system)
                 _lc["tools_tokens"] = sum(_ctx_est(str(_t)) for _t in (tools or []))
-                _lc["history_tokens"] = sum(_ctx_est((m or {}).get("content") or "") for m in messages)
+                _lc["history_tokens"] = sum(_ctx_est(_content_text((m or {}).get("content"))) for m in messages)
         except Exception:
             pass
         # 没有 tools 时退化

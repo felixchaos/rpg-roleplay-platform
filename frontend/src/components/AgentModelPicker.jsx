@@ -384,7 +384,7 @@ export default function AgentModelPicker({
         </CSAlert>
       )}
       <CSColumnLayout columns={2}>
-        <CSFormField label="Provider">
+        <CSFormField label={t('components.agent_model_picker.provider_label')}>
           <CSSelect
             selectedOption={inherit ? null : (() => {
               const a = apiOf(apiId);
@@ -409,7 +409,7 @@ export default function AgentModelPicker({
             empty={t('components.agent_model_picker.provider_empty')}
           />
         </CSFormField>
-        <CSFormField label="Model" description={t('components.agent_model_picker.model_field_description')}>
+        <CSFormField label={t('components.agent_model_picker.model_label')} description={t('components.agent_model_picker.model_field_description')}>
           <div style={{ display: 'grid', gap: 8 }}>
             {(modelOptions.length > 0 || allowInherit) && (
               <CSSelect

@@ -38,6 +38,7 @@ gm_serving.settings.advance_progress)。原两条路径全部保留。
 """
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
 from typing import Any
@@ -62,8 +63,214 @@ _TURN_TEXT_CAP = 6000
 # ch77 乱跳(floor=0 时上限 = prev+CAP,有界)。GM 自由 world.time 标签 resolve 不到锚点,故弃用标签
 # 路径、改读真实剧情正文。
 _LOOKAHEAD_CAP = 12
+
+# Q 锚点限速(flag RPG_ANCHOR_PACE,默认关):治用户屡报的「锚点更新速度跟实际对不上、跳章」。
+# 根因:canon 实体横跨多章(D20 在 ch1 和 ch11 各有锚点),宽候选窗口(±12)让玩家在 ch1 就把
+# ch11 锚点判为到达 → floor 棘轮锁高 → 进度跳。修:① 收窄标记候选窗口(_MARK_WINDOW),远未来锚点
+# 不进候选;② 每回合进度最多 +_PACE_CAP 章,匹配对话实际节奏。
+_MARK_WINDOW = 4    # 标记候选只看 [ch_min, ch_min+4],别让远章锚点误判
+_PACE_CAP = 2       # 每回合进度最多推进 2 章
+
+
+def _anchor_pace(user_id: int | None = None) -> bool:
+    """每用户特性 anchor_pace(默认开)。user_id 给定 → 按用户;否则仅环境默认。"""
+    from core.feature_flags import feature_enabled
+    return feature_enabled("anchor_pace", user_id)
 # 喂给判定器估章的章节摘要截断(每章),控 prompt 体积。
 _EST_SUMMARY_CAP = 160
+
+# ── 确定性 intro 标记(harness 确定性,不靠保守 LLM)──────────────────────────────
+# 「首次登场/首次引入/首次出现」型锚点 = 某实体首次现身。这是【确定性】信号:主体名/别名
+# 出现在本回合正文 = 到达。保守 LLM 判定器对此屡漏(用户报「更新速度跟实际对不上」)→ 补一条
+# 确定性路径,与 maintain_structured_kb 的 canon 名扫描同源同口径(名入正文=现身)。事件型锚点
+# (非 intro)无法靠名字确定性判定,仍交给 LLM 判定器。
+_INTRO_MARKERS = ("首次登场", "首次引入", "首次出现")
+
+
+def _intro_subject(summary: str) -> str | None:
+    """从 intro 锚点摘要提取主体名。覆盖三种 seed 格式:
+      · concept「苍白之血」首次引入 / item「D20」首次引入  → 「」/『』 内
+      · 爱丽丝(character)首次登场                        → NAME( 之前
+      · 场景秋叶原避难所首次出现                          → 场景…首次 之间
+    取冒号前的标题段再解析,失败返 None。"""
+    import re
+    s = (summary or "").split(":", 1)[0].split("：", 1)[0].strip()
+    m = re.search(r"[「『]([^」』]+)[」』]", s)
+    if m:
+        return m.group(1).strip()
+    m = re.match(r"^场景(.+?)首次", s)
+    if m:
+        return m.group(1).strip()
+    m = re.match(r"^(.+?)[（(]", s)
+    if m:
+        return m.group(1).strip()
+    m = re.match(r"^(.+?)首次", s)
+    return m.group(1).strip() if m else None
+
+
+def _deterministic_intro_hits(
+    save_id: int, pending: list[dict[str, Any]], turn_text: str,
+) -> list[dict[str, Any]]:
+    """intro 型 pending 锚点里,主体名/别名出现在本回合正文的 → 确定性到达(drift=0.0=occurred)。
+
+    只看传入的 pending(已被进度窗口约束),故不会越界标远未来锚点。canon 别名用于短名增广
+    (如 D20 别名「战术辅助设备D20」)。无 script/无 intro 锚点 → 返 []。
+    """
+    intro_pend = [a for a in pending
+                  if any(mk in (a.get("summary") or "") for mk in _INTRO_MARKERS)]
+    if not intro_pend:
+        return []
+    # 人/概念/物 vs 场景【两套口径】:
+    #   · 人/概念/物「首次引入」= 被命名即引入 → 正文名匹配(命名就是登场)。
+    #   · 场景「首次出现」≠ 被提及:地点常被第三方提及/玩家拒绝而非实际进入。实测玩家拒绝去秋叶原避难所,
+    #     GM 正文仍含「秋叶原」→ 名匹配会误标 → 过早退役未访问的强制场景。**改用权威信号:玩家当前所在地**
+    #     (player.current_location,结构化态、GM 维护),且只用【全名】匹配(秋叶原避难所 ∈ "秋叶原避难所·入口
+    #     通道" 命中;但 ∉ "秋叶原废墟·废土小径入口" → 拒绝/路过不误标)。短别名(秋叶原)会把废墟误配,故弃用。
+    ent_pend = [a for a in intro_pend if not (a.get("summary") or "").lstrip().startswith("场景")]
+    scene_pend = [a for a in intro_pend if (a.get("summary") or "").lstrip().startswith("场景")]
+    from platform_app.db import connect, init_db
+    init_db()
+    alias_map: dict[str, list[str]] = {}
+    cur_loc = ""
+    with connect() as db:
+        s = db.execute("select script_id from game_saves where id=%s", (save_id,)).fetchone()
+        script_id = int(s["script_id"]) if (s and s.get("script_id") is not None) else None
+        if script_id:
+            for c in db.execute(
+                "select name, aliases from kb_canon_entities where script_id=%s", (script_id,)
+            ).fetchall():
+                nm = (c.get("name") or "").strip()
+                if nm:
+                    alias_map[nm] = [a for a in (c.get("aliases") or []) if isinstance(a, str)]
+        if scene_pend:
+            r = db.execute(
+                "select state_snapshot from runtime_checkouts where save_id=%s "
+                "order by updated_at desc nulls last limit 1", (save_id,)
+            ).fetchone()
+            st = (r or {}).get("state_snapshot") or {}
+            if isinstance(st, str):
+                try:
+                    st = json.loads(st)
+                except (ValueError, TypeError):
+                    st = {}
+            cur_loc = str((st.get("player") or {}).get("current_location") or "")
+    hits: list[dict[str, Any]] = []
+    for a in ent_pend:
+        subj = _intro_subject(a.get("summary") or "")
+        if not subj or len(subj) < 2:
+            continue
+        names = [subj] + alias_map.get(subj, [])
+        names = [n for n in names if isinstance(n, str) and len(n) >= 2]
+        if any(n in turn_text for n in names):
+            key = (a.get("anchor_key") or "").strip()
+            if key:
+                hits.append({"anchor_key": key, "drift_score": 0.0})
+    for a in scene_pend:
+        subj = _intro_subject(a.get("summary") or "")
+        if not subj or len(subj) < 2 or not cur_loc:
+            continue
+        if subj in cur_loc:  # 全名 ∈ 当前所在地 = 确实进入了该场景
+            key = (a.get("anchor_key") or "").strip()
+            if key:
+                hits.append({"anchor_key": key, "drift_score": 0.0})
+    return hits
+
+
+# ── 死亡/失效检测(确定性,保守)────────────────────────────────────────────────
+# 玩家操作可能杀死/移除某角色 → 该角色【未来】只涉及他一人的锚点不再可能发生,应 superseded。
+# is_fatal=true(死神来了)锚点【绝不】退役:那是命中注定要发生的死亡,世界会绕路实现。
+# 因果细分(死亡【使 X 的行动锚点失效】vs【触发他人反应锚点】)无法确定性判断 → 只退役
+# 【单人参与】锚点(participants==[死者]):整条锚点只关于死者自己 → 死了必不可能,无歧义。
+# 多人参与锚点(可能是"为 X 复仇"等死亡的后果)留 pending,交 GM 工具/后续判断。宁漏勿误。
+_DEATH_MARKERS = (
+    "死亡", "死了", "死去", "身亡", "阵亡", "战死", "丧命", "毙命", "殒命", "气绝",
+    "暴毙", "横死", "惨死", "已死", "殒身", "命丧", "毙于", "死于", "断气", "咽气",
+)
+_KILL_VERBS = ("杀死", "杀了", "击杀", "处决", "处刑", "斩杀", "格杀", "弄死", "了结了", "结果了")
+_DEATH_NEGATION = (
+    "没死", "未死", "没有死", "不会死", "死不了", "不死", "假死", "诈死", "装死",
+    "差点", "差一点", "险些", "未遂", "没能", "未能", "无法", "幸免", "逃过", "躲过",
+    "复活", "起死回生", "并未", "并没", "似乎", "以为", "好像", "是不是", "会不会",
+)
+
+
+def _detect_dead_in_prose(prose: str, char_aliases: dict[str, list[str]]) -> set[str]:
+    """确定性、保守地从本回合正文检出【死亡】角色。规则:角色名【紧邻】强死亡词(名后 ≤6 字
+    出现死亡词,或名前 ≤6 字出现击杀动词),且邻域内无否定/未遂/假死/疑问。宁漏勿误 —— 误判会
+    错误退役有效锚点。char_aliases: {canonical: [name, *aliases]}(只含 character)。"""
+    import re
+    dead: set[str] = set()
+    for canonical, names in char_aliases.items():
+        found = False
+        for nm in names:
+            if not nm or len(nm) < 2 or nm not in prose:
+                continue
+            for m in re.finditer(re.escape(nm), prose):
+                before = prose[max(0, m.start() - 6):m.start()]
+                after = prose[m.end():m.end() + 6]
+                window = before + nm + after
+                if any(ng in window for ng in _DEATH_NEGATION):
+                    continue  # 否定/未遂/假死/疑问 → 不算死
+                if any(dk in after for dk in _DEATH_MARKERS) or any(kv in before for kv in _KILL_VERBS):
+                    found = True
+                    break
+            if found:
+                break
+        if found:
+            dead.add(canonical)
+    return dead
+
+
+def _invalidate_dead_entity_anchors(db: Any, save_id: int, prose: str) -> int:
+    """检出本回合死亡角色 → 退役其【单人参与】的未来 pending 锚点(非 is_fatal)。返回退役数。
+    任何异常吞掉返回 0(绝不破回合;调用方已在 try 内,但这里再保一层)。"""
+    try:
+        s = db.execute("select script_id from game_saves where id=%s", (save_id,)).fetchone()
+        script_id = int(s["script_id"]) if (s and s.get("script_id") is not None) else None
+        if not script_id:
+            return 0
+        rows = db.execute(
+            "select name, aliases from kb_canon_entities where script_id=%s and type='character'",
+            (script_id,),
+        ).fetchall()
+        char_aliases: dict[str, list[str]] = {}
+        for c in rows:
+            nm = (c.get("name") or "").strip()
+            if nm:
+                char_aliases[nm] = [nm] + [a for a in (c.get("aliases") or []) if isinstance(a, str)]
+        if not char_aliases:
+            return 0
+        dead = _detect_dead_in_prose(prose, char_aliases)
+        if not dead:
+            return 0
+        total = 0
+        for name in dead:
+            names = char_aliases.get(name, [name])
+            res = db.execute(
+                """
+                update save_anchor_states set
+                    status = 'superseded',
+                    variant_description = %s,
+                    drift_score = 1.0,
+                    updated_at = now()
+                where save_id = %s
+                  and status = 'pending'
+                  and is_fatal = false
+                  and jsonb_array_length(coalesce(metadata->'participants', '[]'::jsonb)) = 1
+                  and (metadata->'participants'->>0) = any(%s)
+                returning id
+                """,
+                (f"角色「{name}」已死亡 —— 仅其单人参与的未来锚点不再可能发生(非死神来了)",
+                 save_id, names),
+            ).fetchall()
+            if res:
+                total += len(res)
+                log.info("[anchor_reconcile] 死亡失效 save=%s 角色=%s 退役 %d 个单人未来锚点",
+                         save_id, name, len(res))
+        return total
+    except Exception as exc:
+        log.warning("[anchor_reconcile] 死亡失效检测失败(已吞): %s", exc)
+        return 0
 
 
 def _enabled() -> bool:
@@ -352,6 +559,11 @@ def _apply_estimate(db: Any, save_id: int, prev_progress: int, estimated_chapter
     prev = max(1, int(prev_progress or 1))
     ceiling = max(floor, prev) + _LOOKAHEAD_CAP
     candidate = max(prev, floor, min(int(estimated_chapter), ceiling))
+    # Q 锚点限速:每回合进度最多 +_PACE_CAP 章(匹配对话节奏,治跳章)。floor 是已确认锚点硬下界
+    # (不能退),故限速作用在 floor 之上:candidate = max(floor, min(candidate, prev+PACE))。
+    from core.feature_flags import feature_enabled_for_save
+    if feature_enabled_for_save("anchor_pace", save_id, db):
+        candidate = max(prev, floor, min(candidate, prev + _PACE_CAP))
     if candidate <= prev:
         return 0
     from gm_serving.settings import advance_progress
@@ -388,6 +600,9 @@ def _reconcile_impl(
     win = get_progress_window(save_id)
     ch_min = win.get("chapter_min")
     ch_max = win.get("chapter_max")
+    # Q 锚点限速:收窄标记候选窗口,远未来锚点(玩家在 ch1 时的 ch11 锚点)不进候选,防误判跳章。
+    if _anchor_pace(user_id) and ch_min is not None:
+        ch_max = int(ch_min) + _MARK_WINDOW
     pending = list_pending_for_phase(
         save_id, None,
         limit=_MAX_PENDING_PER_TURN,
@@ -423,21 +638,32 @@ def _reconcile_impl(
     #     此时该回合产生 1 次廉价调用,仅在「进度窗口(默认 50 章)内无任何 pending 锚点」的稀疏空白段
     #     触发(根治锚点间隔 > 窗口时的进度冻结);env RPG_PROGRESS_NARRATIVE_ESTIMATE=0 可关此行为。
     will_estimate = bool(est_on and (est_ctx is not None or _judge is not None))
-    if not pending and not will_estimate:
+    # Q 死亡失效:pace on 时每回合都查正文有无角色死亡(纯确定性、独立于锚点命中/估章,不需 LLM);
+    # text 顶部已保证非空。pace off → do_death=False,控制流与旧版逐字等价。
+    do_death = _anchor_pace(user_id)
+    if not pending and not will_estimate and not do_death:
         return 0
 
     # 4. 廉价判定(同一次调用:任务 A 锚点命中 + 任务 B 当前章估计)。
+    #    仅当有 pending 或要估章时才跑 LLM —— 死亡失效是纯确定性,不该为它平白产生 LLM 调用。
     #    注入式 _judge 保持旧签名契约(老测试不破);默认判定器才接 window_chapters。
-    window_chapters = est_ctx.get("window_chapters") if est_ctx else None
-    if _judge is not None:
-        raw = _judge(user_id, text, pending, save_id=save_id)
-    else:
-        raw = _default_judge(user_id, text, pending, save_id=save_id, window_chapters=window_chapters)
-    reached, estimated_chapter = _normalize_judge_result(raw)
+    reached: list[dict[str, Any]] = []
+    estimated_chapter: int | None = None
+    if pending or will_estimate:
+        window_chapters = est_ctx.get("window_chapters") if est_ctx else None
+        if _judge is not None:
+            raw = _judge(user_id, text, pending, save_id=save_id)
+        else:
+            raw = _default_judge(user_id, text, pending, save_id=save_id, window_chapters=window_chapters)
+        reached, estimated_chapter = _normalize_judge_result(raw)
 
     # 只保留窗口内、合法 anchor_key 的命中(防判定器越界到远未来/编造 key)。去重。
     seen: set[str] = set()
     valid_hits: list[dict[str, Any]] = []
+    # 顺序:LLM 判定【优先】(它读上下文、算 drift、能识别玩家背离/拒绝/敌对 → 该标 variant 还是
+    # 不标都由它定);确定性 intro 标记【兜底补漏】(保守 LLM 屡漏 intro)只补 LLM 没提到的 key,且
+    # 仅 character/concept/item(场景已在 _deterministic_intro_hits 排除)。这样背离时 LLM 的语义判断
+    # 不被确定性 d=0.0 覆盖,faithful 时 LLM 漏的仍被兜住。
     for h in reached:
         if not isinstance(h, dict):
             continue
@@ -452,19 +678,29 @@ def _reconcile_impl(
         valid_hits.append({"anchor_key": key, "drift_score": max(0.0, min(1.0, drift))})
         if len(valid_hits) >= _MAX_MARK_PER_TURN:
             break  # 保守:单回合最多标 N 个
+    if _anchor_pace(user_id) and len(valid_hits) < _MAX_MARK_PER_TURN:
+        for h in _deterministic_intro_hits(save_id, pending, text):
+            k = (h.get("anchor_key") or "").strip()
+            if k and k in win_by_key and k not in seen:
+                seen.add(k)
+                valid_hits.append({"anchor_key": k, "drift_score": 0.0})
+                if len(valid_hits) >= _MAX_MARK_PER_TURN:
+                    break
 
-    # 估章是否落库:本回合会估章 + 估章值有效。无锚点命中且不估章 → 无事可做。
+    # 估章是否落库:本回合会估章 + 估章值有效。无锚点命中、不估章、不查死亡 → 无事可做。
     do_estimate = bool(will_estimate and estimated_chapter)
-    if not valid_hits and not do_estimate:
+    if not valid_hits and not do_estimate and not do_death:
         return 0
 
-    # 5. 确定性落库:锚点标记 + 有界估章推进,同一 (user,save) scope lock + 单连接内。
+    # 5. 确定性落库:锚点标记 + 有界估章推进 + 死亡失效,同一 (user,save) scope lock + 单连接内。
     est_prev = int(est_ctx.get("prev")) if est_ctx else 1
     def _do(conn: Any) -> int:
         marked = _apply_hits(conn, save_id, user_id, valid_hits) if valid_hits else 0
         if do_estimate:
             # 锚点标记后 floor 可能已升,_apply_estimate 内重查 floor 算 ceiling。
             _apply_estimate(conn, save_id, est_prev, int(estimated_chapter))
+        if do_death:
+            _invalidate_dead_entity_anchors(conn, save_id, text)
         return marked
 
     if db is not None:
