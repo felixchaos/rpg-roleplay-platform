@@ -780,6 +780,19 @@ def _kb_backed_state(state: "GameState", save_id: int, commit_id: int) -> "GameS
     _blob_hist = (getattr(state, "data", {}) or {}).get("history") or []
     if not data.get("history") and _blob_hist:
         data["history"] = _blob_hist
+    # materialize 丢弃 memory 下的纯展示瞬态(save_kb._DROP_MEM:last_context / last_retrieval /
+    # last_context_agent / last_structured_updates)—— 它们不是存档状态、不入 KB,但 UI 要用:
+    # 「上下文用量明细」读 memory.last_context;多 worker 下用量请求落到冷缓存 worker → 重 materialize
+    # → 明细全 0(用户报的事故)。blob 每回合持久化、含最新值 → 从 blob 兜回(不影响 scripted)。
+    _blob_mem = (getattr(state, "data", {}) or {}).get("memory") or {}
+    _mem = data.get("memory")
+    if not isinstance(_mem, dict):
+        _mem = {}
+    for _tk in ("last_context", "last_retrieval", "last_context_agent", "last_structured_updates"):
+        if _mem.get(_tk) is None and _blob_mem.get(_tk) is not None:
+            _mem[_tk] = _blob_mem[_tk]
+    if _mem:
+        data["memory"] = _mem
     data["_active_save_id"] = save_id  # materialize 丢瞬态指针,这里补回
     return GameState(data)
 
