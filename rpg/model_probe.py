@@ -319,16 +319,26 @@ def _resolve_provider_key(api: dict[str, Any], user_id: int | None) -> str:
     _require_user_credential() 为假时才把 env_fallback 传给 resolve_api_key;为真时传空串,
     resolve_api_key 拿不到 env key → 下方 raise。
     """
+    return _resolve_provider_creds(api, user_id)["key"]
+
+
+def _resolve_provider_creds(api: dict[str, Any], user_id: int | None) -> dict[str, str]:
+    """统一取 key + base_url_override（单一真源 resolve_api_key），保留 raise 契约。
+
+    返回 {"key": "...", "base_url_override": "..."}。base_url_override 是 user/admin 在
+    「连接方式」里配置的 per-credential 端点覆盖（如自建中转站 / 本地 llama.cpp），与 GM
+    运行路径（openai_compat backend: effective_base = override or base_url）取的是同一个值。
+    """
     api_id = api.get("id") or api.get("kind") or ""
     from platform_app.user_credentials import resolve_api_key
     env_fallback = "" if _require_user_credential() else (api.get("credential_env") or "")
     result = resolve_api_key(user_id, api_id, env_fallback=env_fallback)
     key = result.get("key")
-    if key:
-        return key
-    if _require_user_credential():
-        raise RuntimeError(f"未在「个人主页 → API 凭证」配置 {api_id} 的 key")
-    raise RuntimeError(f"找不到 {api_id} 的 API key（用户凭证未配置且环境变量未设）")
+    if not key:
+        if _require_user_credential():
+            raise RuntimeError(f"未在「个人主页 → API 凭证」配置 {api_id} 的 key")
+        raise RuntimeError(f"找不到 {api_id} 的 API key（用户凭证未配置且环境变量未设）")
+    return {"key": key, "base_url_override": (result.get("base_url_override") or "").strip()}
 
 
 def _list_anthropic_models(api: dict[str, Any], user_id: int | None = None) -> list[dict[str, Any]]:
@@ -352,8 +362,13 @@ def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) 
         from openai import OpenAI
     except ImportError as exc:
         raise RuntimeError("openai SDK 未安装") from exc
-    key = _resolve_provider_key(api, user_id)
-    base_url = api.get("base_url") or None
+    creds = _resolve_provider_creds(api, user_id)
+    key = creds["key"]
+    # 与 GM 运行路径(openai_compat backend: effective_base = override or base_url)一致:
+    # per-credential base_url_override 优先于 catalog base_url。否则用户把自建中转站 / 本地
+    # llama.cpp 地址只填在「连接方式」凭据覆盖里时,拉模型清单会打 catalog 官方端点 → 选择器
+    # 空/错(运行能跑、却看不到/选不到自己的模型)。运行/探测两路径就此对齐。
+    base_url = creds["base_url_override"] or api.get("base_url") or None
     # 覆盖 openai SDK 默认 UA → 浏览器 UA,否则 Cloudflare 后的中转站会按 UA 拦掉(WAF 当 AI 爬虫),
     # 表现为「拉取模型/校验连接不可访问」。详见 core.outbound_ua。
     from core.outbound_ua import openai_default_headers

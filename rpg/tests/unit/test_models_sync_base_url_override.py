@@ -23,6 +23,7 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[3]
 MODELS_PY = (PROJECT / "rpg" / "routes" / "models.py").read_text(encoding="utf-8")
+MODEL_PROBE_PY = (PROJECT / "rpg" / "model_probe.py").read_text(encoding="utf-8")
 OPENAI_COMPAT_PY = (PROJECT / "rpg" / "agents" / "gm" / "backends" / "openai_compat.py").read_text(encoding="utf-8")
 SETTINGS_JSX = (PROJECT / "frontend" / "src" / "pages" / "settings.jsx").read_text(encoding="utf-8")
 MOBILE_SETTINGS_JSX = (PROJECT / "frontend" / "src" / "mobile" / "pages" / "MobileSettings.jsx").read_text(encoding="utf-8")
@@ -53,6 +54,32 @@ class SyncEndpointPrefersCredentialOverride(unittest.TestCase):
     def test_ssrf_validation_retained(self):
         """最终 base_url 仍过 _validate_base_url(override 在落库时已校验为公网,这里也会通过)。"""
         self.assertIn("_validate_base_url(base_url)", MODELS_PY)
+
+
+class RemoteListProbeHonorsOverride(unittest.TestCase):
+    """task #9 只修了 admin 的 `/api/models/remote/sync`(显式 api_override 注入 base_url)。
+    但 per-user `GET /api/models/remote` → list_remote_models(无 api_override)→ 走 catalog
+    裸 api → `_list_openai_compat_models` 旧实现只读 `api.get("base_url")`(官方端点),无视
+    用户「连接方式」里配的 base_url_override。表现:运行路径(openai_compat backend)能打到
+    自建中转站 / 本地 llama.cpp,但选择器「拉取模型」却空/错(看不到、选不到自己的模型)。
+    不变量:probe 拉模型清单也必须 base_url_override 优先,与运行/sync 两路径对齐。
+    """
+
+    def test_probe_resolves_credential_override(self):
+        """_list_openai_compat_models 必须通过 _resolve_provider_creds 拿到 base_url_override。"""
+        self.assertIn("_resolve_provider_creds(api, user_id)", MODEL_PROBE_PY)
+
+    def test_probe_prefers_override_over_catalog(self):
+        """base_url 解析:per-credential override 优先于 catalog 默认。"""
+        self.assertRegex(
+            MODEL_PROBE_PY,
+            r'base_url\s*=\s*creds\["base_url_override"\]\s+or\s+api\.get\("base_url"\)',
+            "probe 必须 `base_url = creds[base_url_override] or api.base_url`(override 优先)",
+        )
+
+    def test_combined_resolver_returns_override(self):
+        """_resolve_provider_creds 返回 key + base_url_override(单一真源 resolve_api_key)。"""
+        self.assertIn('"base_url_override": (result.get("base_url_override") or "").strip()', MODEL_PROBE_PY)
 
 
 class GenerationAlreadyHonorsOverride(unittest.TestCase):
