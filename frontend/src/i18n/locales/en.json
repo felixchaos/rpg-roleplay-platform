@@ -3735,7 +3735,8 @@
       "history_label": "Chat History",
       "no_chats": "No chats yet",
       "no_chats_hint": "Click \"New Chat\" or drag in a character card",
-      "archived_label": "Archived ({{count}})"
+      "archived_label": "Archived ({{count}})",
+      "toggle_tip": "Open chat list"
     },
     "hero": {
       "heading": "Who do you want to chat with?",
@@ -3868,6 +3869,9 @@
       "imported_chat": "Chat log imported ({{count}} messages)",
       "drop_unsupported": "Only .png, .json, or .webp character cards are supported",
       "no_retry_input": "No input to retry",
+      "still_generating": "Still generating, please wait",
+      "regenerating": "Regenerating…",
+      "retry_failed": "Retry failed",
       "renamed": "Renamed",
       "rename_failed": "Rename failed",
       "archived": "Archived",

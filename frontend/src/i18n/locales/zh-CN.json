@@ -3735,7 +3735,8 @@
       "history_label": "历史对话",
       "no_chats": "还没有对话",
       "no_chats_hint": "点「新建对话」或拖入一张角色卡",
-      "archived_label": "已归档 ({{count}})"
+      "archived_label": "已归档 ({{count}})",
+      "toggle_tip": "展开对话列表"
     },
     "hero": {
       "heading": "想和谁聊聊？",
@@ -3780,6 +3781,9 @@
       "gen_failed": "生成失败",
       "retry_hint": "请重试",
       "no_retry_input": "没有可重试的输入",
+      "still_generating": "正在生成中，请等待",
+      "regenerating": "正在重新生成…",
+      "retry_failed": "重新生成失败",
       "renamed": "已重命名",
       "rename_failed": "重命名失败",
       "archived": "已归档",
