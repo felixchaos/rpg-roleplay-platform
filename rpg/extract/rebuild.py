@@ -22,13 +22,23 @@ def synthesize_seed_from_db(db, script_id: int) -> ScriptSeed:
     """
     seed = ScriptSeed()
 
-    # era — 优先 scripts.author_era 列;退化到 canon "纪元" entity 的 summary
-    row = db.execute(
-        "select author_era from scripts where id = %s",
-        (script_id,),
+    # era — 优先 scripts.author_era 列(老库/当前 schema 无此列则跳过,避免 UndefinedColumn
+    # 在事务里炸掉整个 worldbook 重建);退化到 canon "纪元" entity 的 summary。
+    # 先用 information_schema 探列存在性:该查询永不报错,不会污染当前事务。
+    era_val = ""
+    has_author_era = db.execute(
+        "select 1 from information_schema.columns "
+        "where table_name='scripts' and column_name='author_era' limit 1",
     ).fetchone()
-    if row and (row.get("author_era") or "").strip():
-        seed.era = row["author_era"].strip()
+    if has_author_era:
+        row = db.execute(
+            "select author_era from scripts where id = %s",
+            (script_id,),
+        ).fetchone()
+        if row and (row.get("author_era") or "").strip():
+            era_val = row["author_era"].strip()
+    if era_val:
+        seed.era = era_val
     else:
         row = db.execute(
             "select summary from kb_canon_entities where script_id=%s and "
