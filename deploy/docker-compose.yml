@@ -90,10 +90,10 @@ services:
       - redis_data:/data
     ports:
       - "127.0.0.1:6379:6379"
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?必须设 REDIS_PASSWORD(勿用弱口令)}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      environment:
-        REDISCLI_AUTH: ${REDIS_PASSWORD:?必须设 REDIS_PASSWORD(勿用弱口令)}
       interval: 10s
       timeout: 3s
       retries: 5

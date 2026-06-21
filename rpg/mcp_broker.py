@@ -284,8 +284,8 @@ def start_server(server_id: str) -> dict[str, Any]:
     command = server_config.get("command", "")
     if not command or not isinstance(command, str):
         return {"ok": False, "error": "command 不能为空"}
-    from core.config import is_server_mode
-    if is_server_mode():
+    from core.config import require_auth
+    if require_auth():
         cmd_base = command.strip().split()[0] if command else ""
         # 解析路径最后一段（如 /usr/bin/python3 → python3）
         import os as _os
