@@ -1473,9 +1473,13 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
 /* ─ 列表 hero ─ */
 .m-root .tv-m-hero {
-  flex: 1; display: flex; align-items: center; justify-content: center;
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
   padding: 32px 24px;
 }
+.m-root .tv-m-hero > * { width: 100%; max-width: 360px; }
+.m-root .tv-m-hero .tv-m-hero-mark,
+.m-root .tv-m-hero .tv-m-hero-title,
+.m-root .tv-m-hero .tv-m-hero-sub { width: auto; }
 .m-root .tv-m-hero .tv-m-hero-mark {
   font-size: 40px; color: var(--accent); text-align: center; margin-bottom: 16px;
 }
@@ -1498,6 +1502,15 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .m-root .tv-m-hero-drop-ic { display: grid; place-items: center; margin-bottom: 4px; }
 .m-root .tv-m-hero-drop-main { font-size: 14.5px; font-weight: 500; color: var(--text); }
 .m-root .tv-m-hero-drop-sub { font-size: 11.5px; color: var(--muted); }
+/* 主操作:一键直接开聊(实心 accent,在虚线导入框之上) */
+.m-root .tv-m-hero-cta {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; padding: 15px 16px; margin-bottom: 12px; border-radius: 16px;
+  border: none; background: var(--accent); color: var(--accent-contrast, #fff);
+  font-size: 15px; font-weight: 600; cursor: pointer;
+  transition: filter .14s, transform .1s;
+}
+.m-root .tv-m-hero-cta:active { transform: scale(0.98); filter: brightness(0.94); }
 
 /* ─ 新对话按钮 ─ */
 .m-root .tv-m-newchat {
@@ -1571,6 +1584,15 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .m-root .tv-m-drawer-tabs { display: flex; gap: 4px; padding: 10px 14px 0; border-bottom: 1px solid var(--line-soft); }
 .m-root .tv-m-drawer-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 8px 4px 10px; font-size: 12.5px; color: var(--muted); border-bottom: 2px solid transparent; transition: color .14s, border-color .14s; }
 .m-root .tv-m-drawer-tab.active { color: var(--accent); border-color: var(--accent); }
+/* 沉浸式拟人模式开关行(角色 tab 顶) */
+.m-root .tv-m-immersive-row { display: flex; align-items: center; gap: 12px; padding: 14px 0 16px; border-bottom: 1px solid var(--line-soft); margin-bottom: 12px; }
+.m-root .tv-m-immersive-tx { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.m-root .tv-m-immersive-tx strong { font-size: 14px; color: var(--text); }
+.m-root .tv-m-immersive-tx span { font-size: 11.5px; line-height: 1.5; }
+.m-root .tv-m-switch { flex: none; width: 46px; height: 28px; border-radius: 99px; border: 1px solid var(--line); background: var(--panel-3); position: relative; transition: background .16s, border-color .16s; }
+.m-root .tv-m-switch.on { background: var(--accent); border-color: var(--accent); }
+.m-root .tv-m-switch-knob { position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 99px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .16s; }
+.m-root .tv-m-switch.on .tv-m-switch-knob { transform: translateX(18px); }
 
 /* ─ 导入按钮 ─ */
 .m-root .tv-m-import-btn {
@@ -1581,6 +1603,11 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   transition: background .13s, transform .1s;
 }
 .m-root .tv-m-import-btn:active { transform: scale(0.98); background: var(--panel-2); }
+/* 主入口:空白开始(accent 描边 + 软底,区别于普通导入项) */
+.m-root .tv-m-import-btn.primary { border: 1.5px solid var(--accent-edge); background: var(--accent-soft); }
+.m-root .tv-m-import-btn.primary .tv-m-import-tx strong { color: var(--accent); }
+/* 「或」分隔行 */
+.m-root .tv-m-import-or { text-align: center; font-size: 11.5px; margin: 12px 0 8px; letter-spacing: 0.04em; }
 .m-root .tv-m-import-ic { flex: none; width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: var(--accent-soft); border: 1px solid var(--accent-edge); color: var(--accent); }
 .m-root .tv-m-import-tx { flex: 1; min-width: 0; display: grid; gap: 3px; }
 .m-root .tv-m-import-tx strong { font-size: 14.5px; color: var(--text); }

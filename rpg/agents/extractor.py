@@ -339,6 +339,7 @@ def _call_openai_compat_json_mode(
     if not cred.get("key"):
         raise RuntimeError(f"无 {api_id} 凭证可用于 extractor")
     import urllib.request
+    import urllib.error
     from core.outbound import safe_urlopen  # SSRF: 不跟随重定向 + use-time 重解析 pin IP
     base_url = cred.get("base_url_override") or _api_base_url(api_id)
     if not base_url:
@@ -366,7 +367,9 @@ def _call_openai_compat_json_mode(
     try:
         with safe_urlopen(req, timeout=timeout_sec) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
-        text = payload["choices"][0]["message"]["content"]
+        if not payload.get("choices"):
+            raise RuntimeError(f"provider 响应结构异常: {str(payload)[:200]}")
+        text = (payload.get("choices") or [{}])[0].get("message", {}).get("content") or ""
         # 响应是 {"ops": [...]} 格式 → 提取 ops 数组
         try:
             obj = json.loads(text)
@@ -375,8 +378,11 @@ def _call_openai_compat_json_mode(
         except Exception:
             pass
         return text
-    except Exception:
-        # 不支持 response_format 的旧 endpoint：降级到无 json_object 请求
+    except urllib.error.HTTPError as exc:
+        # 只对 400(endpoint 不支持 response_format)降级重试;429/401/5xx/SSRF 等直接上抛,
+        # 否则瞬时错误会重复发请求(重复计费)且把真实错因(鉴权/限流/SSRF)吞成「降级后报错」。
+        if exc.code != 400:
+            raise
         body_dict.pop("response_format", None)
         body = json.dumps(body_dict).encode("utf-8")
         req = urllib.request.Request(
@@ -386,7 +392,9 @@ def _call_openai_compat_json_mode(
         )
         with safe_urlopen(req, timeout=timeout_sec) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
-        return payload["choices"][0]["message"]["content"]
+        if not payload.get("choices"):
+            raise RuntimeError(f"provider 响应结构异常: {str(payload)[:200]}")
+        return (payload.get("choices") or [{}])[0].get("message", {}).get("content") or ""
 
 
 def _api_base_url(api_id: str) -> str:

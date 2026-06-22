@@ -564,6 +564,30 @@ def _t_import_attached_script(state: Any, args: dict) -> str:
     return f"剧本导入完成:script_id={sid},共 {chapters} 章。{summary}"
 
 
+def _t_set_tavern_immersive(state: Any, args: dict) -> str:
+    """开/关本对话的【沉浸式拟人模式】。
+
+    enabled=True:GM 改为「真人(角色卡)实时聊天」基调 —— 口语化对话为主、严格贴角色,
+    **绝不替玩家(persona)写动作/台词/心理**,而非小说式大段第三人称叙事。
+    enabled=False:回到默认叙事基调。
+
+    只 mutate state.data['tavern'].immersive(由管线在锁内持久化进 state_snapshot,
+    逐回合不丢)。实际行为由 agents/gm/master.py._build_system 读此 flag、在 system prompt
+    里**确定性注入**对应指令实现(不依赖模型自己记住)。
+    """
+    enabled = args.get("enabled", True)
+    if isinstance(enabled, str):
+        enabled = enabled.strip().lower() not in ("false", "0", "no", "off", "")
+    enabled = bool(enabled)
+    tavern = state.data.setdefault("tavern", {})
+    tavern["immersive"] = enabled
+    return (
+        "已开启沉浸式拟人模式:之后以真人(角色卡)口吻实时对话、只演你自己的角色与环境,绝不替玩家说话或行动。"
+        if enabled else
+        "已关闭沉浸式拟人模式:回到默认叙事基调。"
+    )
+
+
 # ────────────────────────────────────────────────────────────
 # 注册
 # ────────────────────────────────────────────────────────────
@@ -605,6 +629,36 @@ def register_tavern_tools() -> None:
             input_examples=(
                 {"character_card_id": 42},
                 {"name": "薇拉", "identity": "流浪剑客", "personality": "冷峻寡言但护短"},
+            ),
+        ))
+
+    if not registry.has("set_tavern_immersive"):
+        registry.register(ToolSpec(
+            name="set_tavern_immersive",
+            description=(
+                "开/关本对话的【沉浸式拟人模式】(持久开关,设置后逐回合生效、不会丢失)。默认【关闭】。两条铁律:\n"
+                "① 绝不【主动 / 默认】开启 —— 不要因为『只是开始角色扮演 / 设定了角色 / 角色性格内向』就调用它。\n"
+                "② 一旦玩家【明确要求】(类似『像真人一样聊天 / 用沉浸式 / 别写成小说 / 别替我说话和行动 / "
+                "第一人称对话』,或角色卡里写明要拟真互动),你【必须【立即调用本工具 enabled=true】把它持久开启】"
+                "—— 不能只在这一回合照做却不调用工具(不调用 → 下一回合就退回小说体、设置丢失)。\n"
+                "开启后:你以真人(角色)口吻实时对话(以台词为主、简洁口语),严格只演你自己的角色与"
+                "环境反应,**绝不替玩家(persona)写台词/动作/心理/决定**。\n"
+                "玩家说『回到正常叙事 / 关掉沉浸式』→ enabled=false。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "enabled": {"type": "boolean", "description": "true=开启沉浸式拟人;false=关闭(回默认叙事)"},
+                },
+                "required": ["enabled"],
+            },
+            executor=_t_set_tavern_immersive,
+            scope="save",
+            origins=_WRITE_ORIGINS,
+            destructive=False,
+            input_examples=(
+                {"enabled": True},
+                {"enabled": False},
             ),
         ))
 

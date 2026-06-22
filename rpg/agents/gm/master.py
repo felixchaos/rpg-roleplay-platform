@@ -290,6 +290,30 @@ _SYSTEM_TAVERN_BOOTSTRAP = """\
 {style_block}
 """
 
+# 沉浸式拟人模式覆盖块(state.data['tavern'].immersive == True 时由 _build_system 追加到
+# _SYSTEM_TAVERN 末尾)。这是【确定性注入】:开关持久存于 state_snapshot,每回合读取后注入,
+# 不依赖模型自己记住。语义上覆盖前面的「小说笔法」基调,把酒馆从"写小说"转为"真人(角色)实时聊天",
+# 并把"绝不替玩家说话/行动"从软约束升为硬铁律。由 set_tavern_immersive 工具 / UI 开关控制。
+_IMMERSIVE_OVERRIDE = """\
+
+# 沉浸式拟人模式(玩家已开启,最高优先级,覆盖上面的叙事基调)
+从现在起你不是在"写小说",而是【{char_name}】这个真实的人正在和对方实时对话(像聊天/发消息):
+- 以【对话 / 台词】为主,像真人那样自然口语地回应;只在必要时夹一两句简短动作或神态,不写大段第三人称场景散文、不堆砌华丽辞藻、不做章节式铺陈。
+- 篇幅贴合真实对话:通常一到几句即可,不必每轮都长篇。
+- 始终用【{char_name}】的身份 / 性格 / 语气说话,绝不跳出角色、绝不切换成旁白或上帝视角叙述者。
+- **绝对禁止替玩家(persona)写任何内容**:不替玩家说话(不写"你说……"),不替玩家行动(不写"你做了……"/"你走向……"),不替玩家描写心理 / 感受 / 决定。你只能呈现【你自己这个角色】+ 你能直接感知到的环境反应。
+- 不知道玩家做了什么 / 想什么时,就用你的角色去【询问 / 等待 / 反应】,绝不替对方编造。
+本段由玩家显式开启,优先级高于前文任何"小说笔法 / 写动作神态台词内心"的措辞。
+"""
+
+def _content_text(content: Any) -> str:
+    """从 message content 提取纯文本 —— content 可能是 str 或 Anthropic 结构化 block 列表
+    (Q 分层缓存后,最后一条 user 消息可能是 [{type:text,text,...}, ...])。仅供 token 估算。"""
+    if isinstance(content, list):
+        return "\n".join(str(b.get("text", "")) for b in content if isinstance(b, dict))
+    return str(content or "")
+
+
 _DYNAMIC_CONTEXT = """\
 【当前剧情状态】
 {player_summary}
@@ -360,13 +384,12 @@ class GameMaster:
                 display_kind=api_id, user_id=user_id, api_id=api_id,
             )
         else:
-            from core.vertex_sa import load_sa_credentials as _lsa
-            _creds, _ = _lsa(user_id)
-            if _creds is not None:
-                self._backend = _VertexBackend(model=model, user_id=user_id)
-            else:
-                log.warning(f"[GM] 未知 kind={kind}，降级到 Anthropic")
-                self._backend = _AnthropicBackend(user_id=user_id)
+            # GM 严格 BYOK:未知/未配置的 provider kind 绝不静默回退平台 Vertex SA / Anthropic env key
+            # (那会用平台凭证替用户跑 LLM = 计费泄漏 + 用户没选的模型)。直接报错,暴露目录配置问题。
+            raise ValueError(
+                f"不支持的模型供应商 kind={kind!r}(api_id={api_id!r})。"
+                "请在模型目录检查该 provider 的 kind,或为其凭证填 base_url(按 OpenAI 兼容路由)。"
+            )
 
     # ── 构建 system prompt ────────────────────────────────────────
     def _build_system(self, style_profile: dict | None = None) -> str:
@@ -411,11 +434,19 @@ class GameMaster:
                     # 再用 set_tavern_character 搭好环境。已有角色名 → 沉浸扮演该角色(原行为)。
                     if not _char:
                         return _SYSTEM_TAVERN_BOOTSTRAP.replace("{style_block}", style_block)
-                    return (
+                    _sys_tav = (
                         _SYSTEM_TAVERN
                         .replace("{char_name}", _char)
                         .replace("{style_block}", style_block)
                     )
+                    # 沉浸式拟人模式:确定性追加覆盖块。flag 来源(任一为真即开):
+                    #   1. self._immersive_mode —— chat_pipeline 每回合从 runtime_checkouts 新鲜读 DB
+                    #      后设上(绕开 per-worker state 缓存,跨 worker 安全,UI 端点即时生效);
+                    #   2. _state.data['tavern'].immersive —— 加载态兜底(LLM 工具 mutate 的同一位)。
+                    _tav = (((getattr(_state, "data", {}) or {}).get("tavern")) or {})
+                    if getattr(self, "_immersive_mode", False) or _tav.get("immersive"):
+                        _sys_tav += _IMMERSIVE_OVERRIDE.replace("{char_name}", _char)
+                    return _sys_tav
             except Exception:
                 pass  # 任何异常都退回通用 GM system,绝不让酒馆分支拖垮主流程
         # _SYSTEM_BASE intentionally contains literal JSON examples such as
@@ -601,6 +632,45 @@ class GameMaster:
             f"【玩家本轮输入】\n{user_input}"
         )
 
+    def _tiered_enabled(self) -> bool:
+        """Q 分层缓存总开关(每用户特性,默认开)。off 时整条回退现状单串路径。"""
+        from core.feature_flags import feature_enabled
+        return feature_enabled("ctx_tiered", getattr(self, "user_id", None))
+
+    def _turn_content(self, user_input: str, state, retrieved_context: str, *,
+                      prompt_segments: list[dict] | None = None,
+                      dynamic_prefix: str = ""):
+        """Q 分层缓存:把单轮 user 消息按 cache_tier 重排为「稳定前缀在前、动态在后」。
+
+        - 无 segments 或 flag off → 退回 _turn_message(现状单串,零行为变化)。
+          (此路径下 dynamic_prefix 已由 caller prepend 进 retrieved_context,不重复注入)
+        - Anthropic backend → 返回结构化 content blocks,Tier A 段挂 cache_control(ephemeral)。
+          B 段暂只保前置顺序不单独缓存(场景稳定化在 Phase B;且 system+tools+A 已用满 ≤4 断点)。
+        - 其它 backend(含 DeepSeek/OpenAI-compat)→ 返回重排单串(A+B+动态),
+          让支持自动前缀缓存的 provider 命中稳定前缀。
+        dynamic_prefix = Phase D 注入 + 短输入镜头指令等回合动态前置项 → 进动态块最前,不污染缓存前缀。
+        """
+        if not prompt_segments or not self._tiered_enabled():
+            return self._turn_message(user_input, state, retrieved_context)
+        seg = {s.get("tier"): (s.get("text") or "").strip() for s in prompt_segments}
+        A, B, C = seg.get("A", ""), seg.get("B", ""), seg.get("C", "")
+        # 动态块 = [回合动态前置] + 【当前剧情状态】+【本轮上下文包=C 段】+ 玩家输入
+        dyn_parts: list[str] = []
+        if dynamic_prefix.strip():
+            dyn_parts.append(dynamic_prefix.strip())
+        dyn_parts.append(self._dynamic_context(state.short_summary(), C))
+        dyn_parts.append(f"【玩家本轮输入】\n{user_input}")
+        dyn = "\n\n".join(dyn_parts)
+        if isinstance(self._backend, _AnthropicBackend):
+            blocks: list[dict[str, Any]] = []
+            if A:
+                blocks.append({"type": "text", "text": A, "cache_control": {"type": "ephemeral"}})
+            if B:
+                blocks.append({"type": "text", "text": B})  # 仅保前置顺序,Phase B 再单独缓存
+            blocks.append({"type": "text", "text": dyn})
+            return blocks
+        return "\n\n".join(p for p in (A, B, dyn) if p)
+
     def curate_context(self, agent_prompt: str, task_prompt: str) -> str:
         """Run the model-backed context sub-agent before the main GM call.
 
@@ -664,6 +734,8 @@ class GameMaster:
         max_tokens: int = 800,
         tool_call_router: Any = None,
         stop_event=None,
+        prompt_segments: list[dict] | None = None,
+        dynamic_prefix: str = "",
     ) -> Iterator[dict[str, Any]]:
         """带 MCP 工具循环的流式响应。
 
@@ -690,6 +762,7 @@ class GameMaster:
             yield from self._respond_stream_native_tools(
                 user_input, retrieved_context, state, tools,
                 max_iterations, max_tokens, tool_call_router=tool_call_router,
+                prompt_segments=prompt_segments, dynamic_prefix=dynamic_prefix,
             )
             return
 
@@ -709,12 +782,15 @@ class GameMaster:
             if isinstance(_lc, dict):
                 _lc["system_prompt_tokens"] = _ctx_est(_base_system)
                 _lc["tools_tokens"] = _ctx_est(_tools_blob)
-                _lc["history_tokens"] = sum(_ctx_est((m or {}).get("content") or "") for m in messages)
+                _lc["history_tokens"] = sum(_ctx_est(_content_text((m or {}).get("content"))) for m in messages)
         except Exception:
             pass
         messages.append({
             "role": "user",
-            "content": self._turn_message(user_input, state, retrieved_context),
+            "content": self._turn_content(
+                user_input, state, retrieved_context,
+                prompt_segments=prompt_segments, dynamic_prefix=dynamic_prefix,
+            ),
         })
 
         START = "<<TOOL_CALL>>"
@@ -851,6 +927,8 @@ class GameMaster:
         max_iterations: int,
         max_tokens: int,
         tool_call_router: Any = None,
+        prompt_segments: list[dict] | None = None,
+        dynamic_prefix: str = "",
     ) -> Iterator[dict[str, Any]]:
         """task 66/70/71：用 backend 的 native tool_use / function calling API
         跑 MCP 循环。
@@ -871,7 +949,10 @@ class GameMaster:
         messages = state.history_messages()
         messages.append({
             "role": "user",
-            "content": self._turn_message(user_input, state, retrieved_context),
+            "content": self._turn_content(
+                user_input, state, retrieved_context,
+                prompt_segments=prompt_segments, dynamic_prefix=dynamic_prefix,
+            ),
         })
         # BUGFIX(上下文用量 breakdown):native tools 路径(anthropic/vertex/openai_compat,supports_native_tools=True)
         # 此前不写 last_context 的 token 估算 → breakdown 的「系统提示/工具/对话历史」全归 0,
@@ -883,7 +964,7 @@ class GameMaster:
             if isinstance(_lc, dict):
                 _lc["system_prompt_tokens"] = _ctx_est(system)
                 _lc["tools_tokens"] = sum(_ctx_est(str(_t)) for _t in (tools or []))
-                _lc["history_tokens"] = sum(_ctx_est((m or {}).get("content") or "") for m in messages)
+                _lc["history_tokens"] = sum(_ctx_est(_content_text((m or {}).get("content"))) for m in messages)
         except Exception:
             pass
         # 没有 tools 时退化

@@ -94,6 +94,13 @@ class NovelRetrievalProvider(ContextProvider):
         if not services.retrieve_fn:
             return ContextContribution.skipped(self.id, "no retrieve_fn injected")
 
+        # Q Phase 3 司命 RAG 闸:特性开 + 司命判定本轮无需检索原著 → 跳过(省 RAG 大头 token)。
+        # 每用户特性,默认开;拿不准时 need_retrieval=True 故不会误伤需要检索的回合。
+        from core.feature_flags import feature_enabled
+        if (feature_enabled("rag_gate", getattr(services, "user_id", None))
+                and demand is not None and not getattr(demand, "need_retrieval", True)):
+            return ContextContribution.skipped(self.id, "司命 need_retrieval=false(RAG 闸跳过)")
+
         query = (demand.retrieval_query if demand else "") or ""
         try:
             text = services.retrieve_fn(

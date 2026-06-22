@@ -1068,7 +1068,9 @@ function ChatArea({ history, runState, runStyle, narrativeFont, narrativeSize, h
             msgIndex={idx} saveId={saveId} commitId={commitId}
             thinking={m._thinking}
             images={imagesByKey[String(idx)] || (idx === lastAsstIdx ? imagesByKey['__last'] : undefined)}
-            streaming={!m.streaming_done && idx === totalLen - 1 && runState.running} /> :
+            streaming={!m.streaming_done && idx === totalLen - 1 && runState.running}
+            toolOps={m._toolOps || m.tool_ops || []}
+            renderTool={(ops) => <ToolCallBlock ops={ops} />} /> :
           <PlayerBlock key={`pl-${idx}`} text={m.content} ts={m.ts} attachments={m.attachments}
             msgIndex={idx} saveId={saveId} commitId={commitId} />;
         })}
@@ -1604,7 +1606,7 @@ function SearchDrawer({ open, history, state, onClose }) {
     const world = (state && state.world) || {};
     (Array.isArray(world.known_events) ? world.known_events : []).forEach((evItem, i) => push(t('game.app.search.group_world'), t('game.app.search.known_event_n', { n: i + 1 }), evItem, {}));
     return out.slice(0, 40);
-  }, [q, history, state]);
+  }, [q, history, state, t]);
 
   if (!open) return null;
   const node = (

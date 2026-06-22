@@ -1087,19 +1087,37 @@ export function MobileNewGame({ nav, scriptId: propScriptId, onDone }) {
         story_intent: storyIntent.trim() || null,
         player_origin: playerOrigin || 'soul',
         ...(identity && playerOrigin !== 'body' ? { identity_known: identityKnown } : {}),
-        // 设置字段(mapping to backend settings schema):
-        foreknowledge_mode: foreknowledge,
-        npc_awareness: npcAwareness,
-        steering_strength: steering,
-        spoiler_guard: spoiler,
+        // 注意:foreknowledge_mode/npc_awareness/steering_strength/spoiler_guard 是
+        // 游戏设置字段,saves.create 的 payload 后端不消费(由 updateSettings 写入),
+        // 已删除以避免后端无效字段警告。
       };
 
-      await window.__createAndEnterSave(payload);
-
-      // 成功后清草稿(如果 __createAndEnterSave 跳页了就不会执行到这里)
+      // window.__createAndEnterSave 仅在桌面 PlatformShellCS 注册;移动外壳(MobileRoot)下它 undefined,
+      // 调用即 TypeError → 移动端新游戏永远失败。改为直接 saves.create + 写设置 + nav.openGame(=launchSave 激活并跳游戏台)。
+      const created = await window.api.saves.create(payload);
+      if (created && created.ok === false) throw new Error(created.error || created.detail || t('mobile.new_game.create_failed'));
+      const save = (created && (created.save || created)) || null;
+      const newSaveId = save && save.id;
+      if (newSaveId) {
+        try {
+          await window.api.saves.updateSettings(newSaveId, {
+            foreknowledge_mode: foreknowledge,
+            npc_awareness: npcAwareness,
+            steering_strength: steering,
+            spoiler_guard: spoiler,
+          }, true);
+        } catch (settingsErr) {
+          // 设置写失败不阻断进入游戏,但给用户非阻塞提示。
+          window.__apiToast?.(
+            `游戏设置未能保存(${settingsErr?.message || '写入失败'}),进入游戏后可在设置中手动调整。`,
+            { kind: 'warn', duration: 5000 }
+          );
+        }
+      }
       lsRemove(DRAFT_KEY);
       onDone?.();
-      nav.pop();
+      if (newSaveId && nav.openGame) { nav.openGame(save); }   // 激活存档 + 跳转游戏台
+      else { nav.pop(); }
     } catch (e) {
       const msg = e?.message || (e?.payload && (e.payload.error || e.payload.detail)) || t('mobile.new_game.create_failed');
       setSubmitErr(msg);
@@ -1216,8 +1234,23 @@ export function MobileNewGame({ nav, scriptId: propScriptId, onDone }) {
           position: 'absolute', bottom: 0, left: 0, right: 0,
           padding: '12px 16px calc(var(--safe-bottom) + 12px)',
           background: 'linear-gradient(to bottom, transparent, var(--bg) 30%)',
-          display: 'flex', gap: 10,
+          display: 'flex', flexDirection: 'column', gap: 8,
         }}>
+          {/* 快速开始:剧本+角色就绪后,跳过可选设定(身份/元知识)直接创建 —— 对齐酒馆「直接开聊」,
+              身份/元知识保持各自默认值。仅在已看过角色步骤(step≥1)且未在最后一步时出现。 */}
+          {step >= 1 && step < TOTAL_STEPS - 1 && step0Valid && step1Valid && (
+            <button
+              className="pl-btn-ghost"
+              style={{ width: '100%', fontSize: 13, opacity: submitting ? 0.45 : 1 }}
+              disabled={submitting}
+              onClick={handleCreate}
+            >
+              {submitting
+                ? <><Icon name="spinner" size={14} className="spin" /> {t('mobile.new_game.nav.creating')}</>
+                : <><Icon name="play" size={14} /> {t('mobile.new_game.nav.quick_start')}</>}
+            </button>
+          )}
+          <div style={{ display: 'flex', gap: 10 }}>
           {step > 0 && (
             <button className="pl-btn-ghost" style={{ flex: 1 }} onClick={() => setStep(s => s - 1)}>
               <Icon name="chevron_left" size={15} /> {t('mobile.new_game.nav.prev')}
@@ -1226,8 +1259,8 @@ export function MobileNewGame({ nav, scriptId: propScriptId, onDone }) {
           {step < TOTAL_STEPS - 1 ? (
             <button
               className="pl-btn-primary"
-              style={{ flex: 2, opacity: canNext ? 1 : 0.45 }}
-              disabled={!canNext || dataLoading}
+              style={{ flex: 2, opacity: (canNext && !submitting) ? 1 : 0.45 }}
+              disabled={!canNext || dataLoading || submitting}
               onClick={() => { if (canNext) setStep(s => s + 1); }}
             >
               {t('mobile.new_game.nav.next')} <Icon name="chevron_right" size={15} />
@@ -1242,6 +1275,7 @@ export function MobileNewGame({ nav, scriptId: propScriptId, onDone }) {
               {submitting ? <><Icon name="spinner" size={15} className="spin" /> {t('mobile.new_game.nav.creating')}</> : <><Icon name="play" size={15} /> {t('mobile.new_game.nav.start')}</>}
             </button>
           )}
+          </div>
         </div>
       )}
     </>

@@ -1304,6 +1304,10 @@ function ScriptsListView() {
       const r = await fetch(`${window.__API_BASE || ""}/api/scripts/${sid}/embed`, {
         method: "POST", credentials: "include",
       });
+      if (!r.ok && r.status !== 200) {
+        window.__apiToast?.(t('scripts.toast.embed_fail'), { kind: "danger", detail: `HTTP ${r.status}`, duration: 5000 });
+        return;
+      }
       const j = await r.json();
       if (j.ok === false) {
         // credentials_required → 用人话引导去 RAG 设置，而不是裸技术错
@@ -1327,7 +1331,7 @@ function ScriptsListView() {
     } catch (e) {
       window.__apiToast?.(t('scripts.toast.embed_fail'), { kind: "danger", detail: String(e), duration: 3000 });
     }
-  }, []);
+  }, [t]);
 
   // task 51: 自动 poll 所有 running 状态的 script,每 3s 刷一次 progress
   useEffectPL(() => {
@@ -1337,6 +1341,7 @@ function ScriptsListView() {
       for (const sid of runningIds) {
         try {
           const r = await fetch(`${window.__API_BASE || ""}/api/scripts/${sid}/embed/status`, { credentials: "include" });
+          if (!r.ok) continue;
           const j = await r.json();
           if (j.ok && j.status) {
             setEmbedStatus(s => ({ ...s, [sid]: j.status }));

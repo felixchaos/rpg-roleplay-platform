@@ -39,11 +39,28 @@ _API_ID_ALIASES: dict[str, str] = {
 }
 
 
+import re as _re
+
+_API_ID_RE = _re.compile(r'^[a-z0-9][a-z0-9_.\-]*$')
+_API_ID_MAX_LEN = 64
+
+
 def normalize_api_id(api_id: str | None) -> str:
     value = str(api_id or "").strip()
     if not value:
         return ""
-    return _API_ID_ALIASES.get(value) or _API_ID_ALIASES.get(value.lower()) or value
+    canonical = _API_ID_ALIASES.get(value) or _API_ID_ALIASES.get(value.lower()) or value
+    # 别名表内的值是已知合法 canonical id,跳过校验。只对「未识别的原始输入」校验。
+    if canonical not in _API_ID_ALIASES.values():
+        if len(canonical) > _API_ID_MAX_LEN:
+            raise ValueError(
+                f"api_id 过长(最多 {_API_ID_MAX_LEN} 字符): {canonical!r}"
+            )
+        if not _API_ID_RE.match(canonical):
+            raise ValueError(
+                f"api_id 含非法字符(仅允许 a-z0-9 _ . -,不能以 . 或 - 开头): {canonical!r}"
+            )
+    return canonical
 
 
 def credential_storage_api_id(api_id: str) -> str:

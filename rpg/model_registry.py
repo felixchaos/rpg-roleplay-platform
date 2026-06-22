@@ -359,11 +359,36 @@ def select_model(api_id: str, model_id: str) -> dict[str, Any]:
     return load_model_catalog()
 
 
+def _check_base_url(base_url: str) -> None:
+    """写入前对用户提供的 base_url 做 SSRF 预校验(纵深防御,运行时仍走 safe_httpx)。
+
+    空字符串跳过(部分 provider 不需要 base_url)。校验逻辑复用
+    platform_app.user_credentials._validate_base_url:解析 hostname → 检验真实 IP。
+    """
+    if not base_url:
+        return
+    try:
+        from platform_app.user_credentials import _validate_base_url
+    except ImportError:
+        # [round-4-P2] 依赖缺失(部分安装)时写时闸失效 → 至少留痕,不再静默。运行时仍有
+        #   safe_httpx 纵深防御兜底,故不硬失败阻断 admin 配置,但要可观测。
+        import logging
+        logging.getLogger(__name__).warning(
+            "[model_registry] _validate_base_url 不可导入,base_url 写时 SSRF 预校验被跳过(运行时 safe_httpx 兜底): %s", base_url
+        )
+        return
+    _validate_base_url(base_url)  # 非法地址抛 ValueError → 上抛拒绝写入(SSRF 写时闸)
+
+
 def upsert_api(api_data: dict[str, Any]) -> dict[str, Any]:
     catalog = load_model_catalog()
     api_id = normalize_api_id(api_data.get("api_id") or api_data.get("id"))
     if not api_id:
         raise ValueError("API id 不能为空")
+    # 写入前校验用户提供的 base_url(SSRF 写时闸,非法地址直接拒绝)。
+    incoming_base_url = str(api_data.get("base_url") or "").strip()
+    if "base_url" in api_data and incoming_base_url:
+        _check_base_url(incoming_base_url)
     api = find_api(catalog, api_id)
     normalized = copy.deepcopy(api) if api else (default_api_for(api_id) or {"id": api_id, "models": []})
     normalized["id"] = api_id
@@ -498,11 +523,15 @@ def find_model(api: dict[str, Any] | None, model_id: str | None) -> dict[str, An
 
 def first_enabled_api(catalog: dict[str, Any]) -> dict[str, Any]:
     apis = catalog.get("apis") or []
+    if not apis:
+        raise ValueError("model catalog has no APIs")
     return next((api for api in apis if api.get("enabled", True)), apis[0])
 
 
 def first_enabled_model(api: dict[str, Any]) -> dict[str, Any]:
     models = api.get("models") or []
+    if not models:
+        raise ValueError("model catalog has no models")
     return next((model for model in models if model.get("enabled", True)), models[0])
 
 

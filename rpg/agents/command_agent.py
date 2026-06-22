@@ -278,7 +278,9 @@ def _call_openai_compat_tools(
     with safe_urlopen(req, timeout=timeout_sec) as resp:
         raw = resp.read().decode("utf-8")
     parsed = json.loads(raw)
-    content = parsed["choices"][0]["message"]["content"]
+    if not parsed.get("choices"):
+        raise RuntimeError(f"provider 响应结构异常: {str(parsed)[:200]}")
+    content = (parsed.get("choices") or [{}])[0].get("message", {}).get("content") or ""
     return _parse_tool_call_json_array(content)
 
 

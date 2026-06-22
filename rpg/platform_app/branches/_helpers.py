@@ -5,9 +5,12 @@ These are pure functions with no cross-submodule imports.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 # ── 常量 ─────────────────────────────────────────────────────────────────────
 BASE = Path(__file__).resolve().parents[2]
@@ -29,14 +32,17 @@ def acquire_save_advisory_lock(db: Any, save_id: int, user_id: int | None) -> No
     uid = user_id or save_id*7919),否则两把锁算出不同 id、互不排斥、形同虚设。
     必须在读 game_saves 之前调用,保证 save.active_commit_id 在本事务内稳定。
     """
+    # 不能吞异常:吞掉(如 deadlock_detected 40P01)= 未持锁仍继续写 game_saves 活跃指针 →
+    # 并发两 worker 同时改、指针错乱。失败必须上抛让调用方整事务回滚(用户重试),不可静默。
+    uid_for_lock = int(user_id or (save_id * 7919))
     try:
-        uid_for_lock = int(user_id or (save_id * 7919))
         db.execute(
             "select pg_advisory_xact_lock(hashtext(%s)::int, hashtext(%s)::int)",
             (f"rpg_turn_{uid_for_lock}", f"save_{save_id}"),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log.error("[advisory_lock] 获取 save=%s 锁失败,放弃本次写以防指针错乱: %s", save_id, exc)
+        raise
 
 
 # ── 文本工具 ──────────────────────────────────────────────────────────────────

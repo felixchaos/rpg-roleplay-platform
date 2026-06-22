@@ -256,9 +256,15 @@ async def api_script_chapters(
     """章节列表，支持 ?q=... 标题/内容全文 ILIKE 搜索。"""
     try:
         if q:
-            # 全文搜索分支
+            # 全文搜索分支 — 权限与非搜索路径一致:owner ∪ subscriber
             with connect() as db:
-                owned = db.execute("select 1 from scripts where id=%s and owner_id=%s", (script_id, user["id"])).fetchone()
+                owned = db.execute(
+                    """select 1 from scripts s where s.id = %s and (
+                         s.owner_id = %s
+                         or s.id in (select script_id from user_script_subscriptions where user_id = %s)
+                       )""",
+                    (script_id, user["id"], user["id"]),
+                ).fetchone()
                 if not owned:
                     return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
                 rows = db.execute(
@@ -884,10 +890,8 @@ async def api_set_script_cover_url(request: Request, script_id: int, user=Depend
             "select 1 from scripts where id = %s and owner_id = %s",
             (script_id, user_id),
         ).fetchone()
-    if not owned:
-        return json_response({"ok": False, "error": "无权操作该剧本"}, status_code=403)
-
-    with connect() as db:
+        if not owned:
+            return json_response({"ok": False, "error": "无权操作该剧本"}, status_code=403)
         db.execute(
             "update scripts set cover_image_url = %s where id = %s and owner_id = %s",
             (safe_url, script_id, user_id),
@@ -1443,11 +1447,14 @@ async def api_fork_public_script(script_id: int, user=Depends(require_user)):
 
 @router.get("/api/scripts/{script_id}/overrides")
 async def api_get_script_overrides(script_id: int, user=Depends(require_user)):
-    """查询剧本 overrides（能访问该 script 的用户均可读）。"""
+    """查询剧本 overrides（能访问该 script 的用户均可读:owner ∪ subscriber）。"""
     with connect() as db:
         owned = db.execute(
-            "SELECT 1 FROM scripts WHERE id = %s AND owner_id = %s",
-            (script_id, user["id"]),
+            """SELECT 1 FROM scripts s WHERE s.id = %s AND (
+                 s.owner_id = %s
+                 OR s.id IN (SELECT script_id FROM user_script_subscriptions WHERE user_id = %s)
+               )""",
+            (script_id, user["id"], user["id"]),
         ).fetchone()
     if not owned:
         return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
@@ -1546,7 +1553,12 @@ def _owned_script(db, script_id: int, user_id: int):
 
 @router.get("/api/scripts/{script_id}/graph")
 async def api_script_graph(script_id: int, user=Depends(require_user)):
-    """Phase E.1 复核图:规范实体 + 世界线 DAG + 时间线 + 摄入质量 flag。"""
+    """Phase E.1 复核图:规范实体 + 世界线 DAG + 时间线 + 摄入质量 flag。
+
+    保持 owner-only:响应包含 import_report(extraction quality review 元数据,
+    含 needs_review/author_notes/weird_titles/gaps/cleaning)和 review_status,
+    是编辑工作流专属字段,不对订阅者开放。
+    """
     with connect() as db:
         s = _owned_script(db, script_id, user["id"])
         if not s:
@@ -1604,13 +1616,13 @@ async def api_patch_canon(request: Request, script_id: int, user=Depends(require
       {"op": "merge_entity", "from_key": "...", "into_key": "..."}  # from 的别名并入 into,删 from
       {"op": "delete_entity", "logical_key": "..."}
     """
+    try:
+        body = await request.json()
+    except Exception:
+        return json_response({"ok": False, "error": "body 必须是合法 JSON"}, status_code=400)
     with connect() as db:
         if not _owned_script(db, script_id, user["id"]):
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
-        try:
-            body = await request.json()
-        except Exception:
-            return json_response({"ok": False, "error": "body 必须是合法 JSON"}, status_code=400)
         op = (body.get("op") or "").strip()
         if op == "update_entity":
             lk = (body.get("logical_key") or "").strip()
@@ -1642,19 +1654,27 @@ async def api_patch_canon(request: Request, script_id: int, user=Depends(require
             if not frm or not into:
                 return json_response({"ok": False, "error": "缺 from_key/into_key"}, status_code=400)
             src = db.execute("select name, aliases from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, frm)).fetchone()
-            if src:
-                from psycopg.types.json import Jsonb
-                merged_aliases = list({*(src.get("aliases") or []), src["name"]})
-                db.execute(
-                    "update kb_canon_entities set aliases = (select to_jsonb(array(select distinct e from unnest("
-                    "  array(select jsonb_array_elements_text(coalesce(aliases,'[]'::jsonb))) || %s::text[]) e))) "
-                    "where script_id=%s and logical_key=%s",
-                    (merged_aliases, script_id, into),
-                )
-                db.execute("delete from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, frm))
-            return json_response({"ok": True, "merged": bool(src)})
+            if not src:
+                return json_response({"ok": False, "error": f"from_key 不存在: {frm}"}, status_code=404)
+            dst = db.execute("select 1 from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, into)).fetchone()
+            if not dst:
+                return json_response({"ok": False, "error": f"into_key 不存在: {into}"}, status_code=400)
+            from psycopg.types.json import Jsonb
+            merged_aliases = list({*(src.get("aliases") or []), src["name"]})
+            updated = db.execute(
+                "update kb_canon_entities set aliases = (select to_jsonb(array(select distinct e from unnest("
+                "  array(select jsonb_array_elements_text(coalesce(aliases,'[]'::jsonb))) || %s::text[]) e))) "
+                "where script_id=%s and logical_key=%s",
+                (merged_aliases, script_id, into),
+            ).rowcount
+            if updated == 0:
+                return json_response({"ok": False, "error": "into_key 更新失败,未执行 DELETE"}, status_code=500)
+            db.execute("delete from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, frm))
+            return json_response({"ok": True, "merged": True})
         if op == "delete_entity":
             lk = (body.get("logical_key") or "").strip()
+            if not lk:
+                return json_response({"ok": False, "error": "缺 logical_key"}, status_code=400)
             n = db.execute("delete from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, lk)).rowcount
             return json_response({"ok": True, "deleted": n})
         return json_response({"ok": False, "error": f"未知 op: {op}"}, status_code=400)

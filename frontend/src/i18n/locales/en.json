@@ -294,7 +294,44 @@
       "save_fail": "{{label}} save failed",
       "reset_ok": "All module overrides cleared",
       "reset_fail": "Reset failed",
-      "footer": "Changes are saved immediately via POST /api/me/preference. Each module picks up the new setting on next invocation."
+      "footer": "Changes are saved immediately via POST /api/me/preference. Each module picks up the new setting on next invocation.",
+      "features_title": "Features",
+      "models_title": "Model assignment",
+      "group_desc": {
+        "core": "The Three-Sage pipeline: Narrator prose, Planner orchestration, Recorder bookkeeping, plus core GM helper models.",
+        "script": "Models for script editing, character-card generation / import, and review.",
+        "world": "World progression: storyline anchors, phase digests, black-swan events.",
+        "gen": "Vector retrieval (RAG) and image generation.",
+        "misc": "Generic fallback model used when a module isn't configured separately."
+      }
+    },
+    "features": {
+      "on": "On",
+      "off": "Off",
+      "ctx_tiered": {
+        "label": "Tiered context cache",
+        "desc": "Splits the stable prefix from dynamic content to hit the model's prefix cache — significant token savings."
+      },
+      "recorder_unified": {
+        "label": "Unified Recorder",
+        "desc": "Merges state extraction and storyline-anchor reconciliation into a single LLM call."
+      },
+      "narrator_slim": {
+        "label": "Slim Narrator (no tool loop)",
+        "desc": "Main narration is written in one pass without the tool loop (the biggest token multiplier); state writes go to the Recorder."
+      },
+      "rag_gate": {
+        "label": "RAG retrieval gate",
+        "desc": "The Planner decides whether this turn needs source retrieval; skips it when not, saving retrieval tokens."
+      },
+      "anchor_pace": {
+        "label": "Storyline anchor pacing",
+        "desc": "Advances anchors at the conversation's real pace, marks same-chapter anchors one by one, and invalidates anchors when a character dies — fixes chapter-skipping / off-anchor drift."
+      },
+      "kb_state": {
+        "label": "DB-resident save knowledge base",
+        "desc": "Stores save state as database rows (single source of truth) for precise retrieval and maintenance; off uses the traditional whole-save blob."
+      }
     },
     "memory": {
       "title_recall": "Memory · Recall Behavior",
@@ -509,6 +546,7 @@
         "label_console": "Console Assistant",
         "label_editor": "Script Editor",
         "label_extractor": "Narrative Extractor",
+        "label_recorder": "Recorder (Three Sages)",
         "label_card_gen": "Card Generation",
         "label_card_import": "Card Import",
         "label_critic": "Critic",
@@ -524,6 +562,12 @@
         "tip_console": "Model powering the script editor console assistant",
         "tip_editor": "Model used for AI direct-writing in the script editor",
         "tip_extractor": "Model used for narrative extraction and rebuild",
+        "tip_recorder": "Recorder: one call for state ops + anchor reconcile + acceptance (merged, token-saving)",
+        "group_core": "Core dialogue (Three Sages + GM pipeline)",
+        "group_script": "Script & character cards",
+        "group_world": "World simulation & history",
+        "group_gen": "Retrieval & generation",
+        "group_misc": "General fallback",
         "tip_card_gen": "Model used to auto-generate character cards",
         "tip_card_import": "Model used during character card import",
         "tip_critic": "Model powering the critic agent",
@@ -2681,7 +2725,8 @@
       "effort_saved": "Thinking effort → {{id}}",
       "effort_save_failed": "Save failed",
       "mention_you": "You",
-      "image_gen_tip": "AI Image Generation"
+      "image_gen_tip": "AI Image Generation",
+      "model_needs_config": "Set up model"
     },
     "command": {
       "title": "Commands",
@@ -3809,7 +3854,11 @@
       "saving": "Saving…",
       "sysprompt_title": "System Prompt",
       "sysprompt_empty": "No system prompt set for this chat. Click Edit to customize the AI's behavior, persona, or instructions (affects this chat only).",
-      "sysprompt_placeholder": "Enter a system prompt (persona, behavior rules, jailbreak instructions, etc.)…"
+      "sysprompt_placeholder": "Enter a system prompt (persona, behavior rules, jailbreak instructions, etc.)…",
+      "immersive_label": "Immersive Persona Mode",
+      "immersive_desc": "AI responds as the character in real time, never speaking or acting for you",
+      "immersive_on_toast": "Immersive persona mode enabled",
+      "immersive_off_toast": "Immersive persona mode disabled"
     },
     "toast": {
       "open_failed": "Failed to open chat",
@@ -3850,6 +3899,12 @@
       "eyebrow": "Rename chat",
       "title": "New title",
       "placeholder": "Chat title"
+    },
+    "ai_reply": {
+      "label": "AI Reply",
+      "desc": "Generate a contextual reply as your character",
+      "empty": "No reply generated, please try again",
+      "fail": "AI reply failed, please try again"
     }
   },
   "branch_graph": {
@@ -4102,6 +4157,7 @@
           "set_parser": "Command Parser",
           "console": "Console Assistant",
           "extractor": "Narrative Extractor",
+          "recorder": "Recorder (Three Sages)",
           "card_gen": "Character Card Generator",
           "card_import": "AI Card Field Organizer",
           "critic": "Consistency Critic",
@@ -4118,6 +4174,7 @@
           "set_parser": "Natural-language parsing for /set commands",
           "console": "Side-panel console; follows the GM model",
           "extractor": "Secondary parsing of GM output (two-step GM pipeline)",
+          "recorder": "Recorder: state ops + anchor reconcile + acceptance in one call; inherits extractor",
           "card_gen": "Creative tool for generating and refining Character Cards",
           "card_import": "Organizes fields when importing Tavern cards; follows the GM model",
           "critic": "Consistency scoring sub-agent for card generation",
@@ -5394,7 +5451,10 @@
         "card_btn": "Import Character Card",
         "card_btn_sub": "Supports .png (embedded metadata) / .json / .webp",
         "jsonl_btn": "Import Chat History",
-        "jsonl_btn_sub": "SillyTavern .jsonl — imports as a new chat"
+        "jsonl_btn_sub": "SillyTavern .jsonl — imports as a new chat",
+        "blank_btn": "Start chatting",
+        "blank_btn_sub": "Blank start, no preset character — the AI improvises; add details anytime",
+        "or": "or import existing content"
       },
       "list": {
         "back_to_app": "App",
@@ -5405,7 +5465,8 @@
         "hero_drop_main": "Select or drop a character card",
         "hero_drop_sub": ".png (embedded metadata) / .json / .webp",
         "newchat_sub": "Pick a character card or import a SillyTavern card",
-        "archived_toggle": "Archived ({{count}})"
+        "archived_toggle": "Archived ({{count}})",
+        "hero_quick_start": "Start chatting"
       },
       "msg_sheet": {
         "assistant_title": "This response",
@@ -5438,7 +5499,24 @@
         "autotitle_fail": "Auto-title failed",
         "sysprompt_saved": "System prompt saved",
         "save_fail": "Save failed",
-        "persona_saved": "Persona saved"
+        "persona_saved": "Persona saved",
+        "create_fail": "Failed to create chat"
+      },
+      "immersive": {
+        "label": "Immersive (human-like) mode",
+        "desc": "The AI talks like a real person (the character), never speaks or acts for you",
+        "on_toast": "Immersive mode on",
+        "off_toast": "Immersive mode off"
+      },
+      "ai_reply": {
+        "label": "AI reply for me",
+        "sub": "Generate a context-appropriate reply as your character, into the input box",
+        "empty": "The AI produced no reply",
+        "fail": "AI reply failed"
+      },
+      "plus": {
+        "aria": "More",
+        "title": "More"
       }
     },
     "new_game": {
@@ -5595,7 +5673,8 @@
         "prev": "Previous",
         "next": "Next",
         "creating": "Creating…",
-        "start": "Start Game"
+        "start": "Start Game",
+        "quick_start": "Start now (skip setup)"
       }
     },
     "saves": {
@@ -6056,7 +6135,10 @@
         "placeholder": "What do you do…  /command  + attach",
         "slash_aria": "Commands",
         "model_fallback": "Model",
-        "context_aria": "Context usage"
+        "context_aria": "Context usage",
+        "send_aria": "Send",
+        "stop_aria": "Stop",
+        "model_needs_config": "Set up model"
       }
     },
     "game_panels": {
@@ -6252,6 +6334,8 @@
   "components": {
     "agent_model_picker": {
       "default_header": "Model",
+      "provider_label": "Provider",
+      "model_label": "Model",
       "inherit_label": "Follow main GM",
       "model_disabled_suffix": "(Disabled)",
       "custom_model_option": "Custom… (enter model name manually)",

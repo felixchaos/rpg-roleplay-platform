@@ -1,7 +1,7 @@
 {
   "name": "rpg-roleplay-desktop",
   "productName": "RPG Roleplay",
-  "version": "1.0.5",
+  "version": "1.1.1",
   "description": "RPG Roleplay 本地一键部署桌面服务端(出品 Stellatrix Labs)—— 在线模式连云端,本地模式起捆绑的 PostgreSQL + Python 后端",
   "private": true,
   "main": "src/main.js",
@@ -42,22 +42,38 @@
       {
         "from": "resources-staged",
         "to": ".",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "asar": true,
     "mac": {
       "category": "public.app-category.entertainment",
       "target": [
-        { "target": "dmg", "arch": ["x64", "arm64"] },
-        { "target": "zip", "arch": ["x64", "arm64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "extendInfo": {
-        "NSAppTransportSecurity": { "NSAllowsLocalNetworking": true }
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
       }
     },
     "dmg": {
@@ -65,7 +81,12 @@
     },
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "nsis": {

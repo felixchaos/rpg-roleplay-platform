@@ -216,3 +216,69 @@ def strip_meta_tool_preamble(text: str) -> str:
             break
         result = s[: m.start(1)].rstrip()
     return result if result.strip() else text.rstrip()
+
+
+# === 检索/世界线脚手架 header 关键字 ===
+# 这些 `=== … ===` 段落是后端注入给模型的【隐形上下文】(retrieval.py / 阶段摘要 / 世界线收束
+# 等),绝不该出现在玩家可见正文里。弱模型(如 deepseek-v4-flash)有时把整段提示词上下文 + 自己
+# 的内部推理直接吐进正文(线上反馈 #77:正文里出现「=== 时间线检索锚点 ===…待确认跳跃…」)。
+# 这里做【确定性兜底】:命中这些 header 的整块剥掉,不依赖模型听"只输出正文"的提示词。
+_LEAKED_SCAFFOLD_KEYS: tuple[str, ...] = (
+    "时间线检索锚点", "存档独立时间线", "作者文风样本", "ChapterFact时间线",
+    "世界线收束", "世界设定", "剧本时间线锚点", "剧本章节事实", "剧本阶段摘要",
+    "当前剧情阶段", "最近剧情摘要", "相关原文片段", "相关角色", "组织/势力/地点",
+    "跳跃进度说明", "锚点章节原文",
+)
+_SCAFFOLD_HEADER_RE = re.compile(r"^\s*=+\s*(.+?)\s*=+\s*$")
+# 模型"内部推理→开始正文"的转场标记(中文 thinking 泄漏的收尾句)。
+_OUTPUT_TRANSITION_RE = re.compile(
+    r"^.{0,500}?(?:好[，,]?\s*)?(?:现在\s*)?开始(?:输出|正文|写正文)(?:正文)?\s*[。.!！]?\s*\n+",
+    re.S,
+)
+
+
+def _is_leaked_scaffold_header(stripped_line: str) -> bool:
+    m = _SCAFFOLD_HEADER_RE.match(stripped_line)
+    if not m:
+        return False
+    inner = m.group(1)
+    return any(k in inner for k in _LEAKED_SCAFFOLD_KEYS)
+
+
+def strip_leaked_scaffold(text: str) -> str:
+    """确定性剥离泄漏进正文的【检索/世界线脚手架块】+ 收尾的"开始输出"推理前言。
+
+    只命中后端自己注入的固定 `=== … ===` header(见 _LEAKED_SCAFFOLD_KEYS),正常叙事
+    永不会逐字产出这些 header,因此零误伤。整块剥除(header 到下一个空行 / 下一个脚手架
+    header / 文末)。仅当确实检出脚手架泄漏时,才顺带剥一次开头的推理转场前言。
+
+    若剥完为空(整轮纯泄漏,极端模型崩溃)则返回原文,避免把本回合 assistant 消息清空。
+    """
+    if not text or "===" not in text:
+        return text
+    lines = text.split("\n")
+    out: list[str] = []
+    i, n, removed = 0, len(lines), False
+    while i < n:
+        if _is_leaked_scaffold_header(lines[i].strip()):
+            removed = True
+            i += 1
+            while i < n:
+                nxt = lines[i].strip()
+                if nxt == "":
+                    i += 1
+                    break
+                if _is_leaked_scaffold_header(nxt):
+                    break
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    if not removed:
+        return text
+    result = "\n".join(out).strip()
+    # 检出脚手架泄漏后,正文若仍以"…开始输出。"推理前言开头(后面接真正文)则剥掉前言。
+    m = _OUTPUT_TRANSITION_RE.match(result)
+    if m and result[m.end():].strip():
+        result = result[m.end():].strip()
+    return result if result.strip() else text

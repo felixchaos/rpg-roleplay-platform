@@ -114,6 +114,26 @@ def overview(user: dict | None) -> dict[str, Any]:
     }
 
 
+def _seed_kb_at_creation(save_id: int, script_id: int | None, snapshot: dict) -> None:
+    """新存档创建即 seed 进 KB(kb-native from birth)+ 打 `kb_native` 标记 →「封死新存档入口」:
+    该档之后【始终】走 KB 新实现(不受每用户 kb_state 开关影响);旧档 kb_native=false 不变。
+    scripted: 剧本 canon T0 seed + import_state;tavern: 仅 import_state(无剧本 T0)。
+    additive:blob 仍在(分支/回溯/兜底不破)。任何失败只 log、不阻断建档(降级回懒迁移路径)。"""
+    try:
+        from kb import save_kb
+        from kb.t0_seed import root_commit_id
+        with connect() as db:
+            cid = root_commit_id(db, save_id)
+            if cid is None:
+                return
+            if script_id:
+                save_kb.seed_full_t0(db, save_id, int(script_id), commit_id=cid)
+            save_kb.import_state(db, save_id, cid, snapshot or {})
+            db.execute("update game_saves set kb_native = true where id = %s", (save_id,))
+    except Exception as exc:
+        log.error(f"[kb_seed] creation-time KB seed failed save={save_id}: {type(exc).__name__}: {exc}")
+
+
 def create_save(
     user_id: int,
     script_id: int,
@@ -233,29 +253,49 @@ def create_save(
                                 f"[identity] bind failed save={save['id']} "
                                 f"char={char_kind}:{char_ref} id={identity_card_id}: {_bind_err}"
                             )
-    branches.seed_tree(save["id"], str(SAVE_FILE))
-    # task 136: 新存档创建后异步 seed 世界线收束锚点。
-    # 800 章 × 5 events 量级,放后台不阻塞 UI;失败也不影响存档创建。
-    #
-    # 注意 (task 141 修正):**不**默认调 claim_protagonist_pov。
-    # isekai 语义是「玩家的现代灵魂 + 用户自创角色卡的肉身,与原作主角【平行共存】」,
-    # 不是「玩家接管原作主角 POV」。原作主角应作为独立 NPC 触发其登场 anchor,
-    # 玩家(用户角色卡)在同一场景平行加入。两人可能在 ch1 相遇,但不是同一个人。
-    # claim_protagonist_pov 工具保留,但只在玩家显式声明"我就是 X"时由 GM 主动调。
+    # seed_tree / anchor_seed / kb_seed 运行在已提交的 save 行之外（各自开独立连接）。
+    # 若任一步骤抛出非预期异常，save 行已提交却无可用状态 → 孤儿存档。
+    # 补偿策略：用 try/except 包裹全部后续步骤；任一不可恢复的异常触发补偿删除，
+    # 把孤儿存档清掉后再重新抛出，让调用方（create_save API）返回 500 而非静默留孤儿。
+    # branches.seed_tree / anchor_seed / kb_seed 内部已各自捕获并 log 自身的业务异常，
+    # 这里只捕获它们之外的意外异常（如 DB 连接断开等）；正常失败路径不会到达 except。
+    _save_id = save["id"]
     try:
-        import threading
-
-        from agents.anchor_seed_agent import seed_anchors_for_save
-        _save_id_for_seed = save["id"]
-        def _bg_seed():
-            try:
-                res = seed_anchors_for_save(_save_id_for_seed)
-                log.info(f"[anchor_seed] save={_save_id_for_seed} result={res}")
-            except Exception as exc:
-                log.error(f"[anchor_seed] save={_save_id_for_seed} failed: {type(exc).__name__}: {exc}")
-        threading.Thread(target=_bg_seed, daemon=True, name=f"anchor-seed-{save['id']}").start()
-    except Exception as _seed_err:
-        log.error(f"[anchor_seed] schedule failed save={save['id']}: {_seed_err}")
+        branches.seed_tree(_save_id, str(SAVE_FILE))
+        # task 136: 新存档创建后异步 seed 世界线收束锚点。
+        # 800 章 × 5 events 量级,放后台不阻塞 UI;失败也不影响存档创建。
+        #
+        # 注意 (task 141 修正):**不**默认调 claim_protagonist_pov。
+        # isekai 语义是「玩家的现代灵魂 + 用户自创角色卡的肉身,与原作主角【平行共存】」,
+        # 不是「玩家接管原作主角 POV」。原作主角应作为独立 NPC 触发其登场 anchor,
+        # 玩家(用户角色卡)在同一场景平行加入。两人可能在 ch1 相遇,但不是同一个人。
+        # claim_protagonist_pov 工具保留,但只在玩家显式声明"我就是 X"时由 GM 主动调。
+        # 锚点 seed:**同步**做(改自原后台 daemon 线程)。原因(bug 修复):daemon 线程不保证在
+        # 玩家第一回合前完成 → 新存档常 0 pending 锚点 → 时间线锚点标记/收束整段失效(E2E 实测到)。
+        # 锚点 seed 是纯 DB 写(从 chapter_facts 批量 insert),即便 800 章量级也就秒级,放创建路径里
+        # 保证「存档一建好就有完整锚点」远比省那点延迟重要。失败不影响存档创建。
+        try:
+            from agents.anchor_seed_agent import seed_anchors_for_save
+            res = seed_anchors_for_save(_save_id)
+            log.info(f"[anchor_seed] save={_save_id} (sync) result={res}")
+        except Exception as _seed_err:
+            log.error(f"[anchor_seed] sync seed failed save={_save_id}: {type(_seed_err).__name__}: {_seed_err}")
+        # 封死新存档入口:创建即 seed 进 KB + 打 kb_native 标记(新档按新实现)。
+        # 用回写后的 save["state_snapshot"](含 identity_card_id),而非建档前的旧 snapshot 局部变量,
+        # 否则 KB seed 拿不到身份卡 id。
+        _seed_kb_at_creation(_save_id, script_id, save.get("state_snapshot") or snapshot)
+    except Exception as _post_err:
+        # 意外异常（非 seed 内部的业务失败）：补偿删除已插入的孤儿 save 行，再重抛。
+        log.error(
+            f"[create_save] post-insert step failed save={_save_id}, compensating delete: "
+            f"{type(_post_err).__name__}: {_post_err}"
+        )
+        try:
+            with connect() as _cdb:
+                _cdb.execute("delete from game_saves where id = %s", (_save_id,))
+        except Exception as _del_err:
+            log.error(f"[create_save] compensation delete failed save={_save_id}: {_del_err}")
+        raise
     return expose(save)  # type: ignore[return-value]
 
 
@@ -438,6 +478,8 @@ def create_tavern_save(
                 log.info(f"[tavern] save={save['id']} ingested {n} character_book entries → worldbook overlay")
         except Exception as exc:
             log.warning(f"[tavern] character_book ingest failed save={save['id']}: {type(exc).__name__}: {exc}")
+    # 封死新存档入口(酒馆):创建即 seed 进 KB(无剧本 T0 → 仅 import_state)+ 打 kb_native 标记。
+    _seed_kb_at_creation(save["id"], None, snapshot)
     return expose(save)  # type: ignore[return-value]
 
 
@@ -1142,15 +1184,18 @@ def _read_state_snapshot() -> dict[str, Any]:
 
 
 # 列表页只取摘要字段；完整 state_snapshot 通过 save_detail() 单独取
+# 全列用 game_saves. 限定:saves_page() 里有 `left join scripts s`,scripts 同名列(id/title 等)
+# 会让裸列名歧义(AmbiguousColumn 500)。限定后在 saves()(无 join)与 saves_page()(有 join)都成立。
 _SAVE_LIST_COLUMNS = """
-    id, public_id, user_id, script_id, title, state_path,
-    active_commit_id, active_branch_node_id, active_branch_ref_id,
-    created_at, updated_at, coalesce(last_played_at, updated_at) as last_played_at, row_version,
-    (state_snapshot->>'turn')::int as turn,
-    (state_snapshot->'player'->>'name') as player_name,
-    coalesce(jsonb_array_length(state_snapshot->'history'), 0) as history_count,
-    coalesce((state_snapshot->'world'->>'time'), '') as world_time,
-    coalesce(save_kind, 'game') as save_kind
+    game_saves.id, game_saves.public_id, game_saves.user_id, game_saves.script_id, game_saves.title, game_saves.state_path,
+    game_saves.active_commit_id, game_saves.active_branch_node_id, game_saves.active_branch_ref_id,
+    game_saves.created_at, game_saves.updated_at,
+    coalesce(game_saves.last_played_at, game_saves.updated_at) as last_played_at, game_saves.row_version,
+    (game_saves.state_snapshot->>'turn')::int as turn,
+    (game_saves.state_snapshot->'player'->>'name') as player_name,
+    coalesce(jsonb_array_length(game_saves.state_snapshot->'history'), 0) as history_count,
+    coalesce((game_saves.state_snapshot->'world'->>'time'), '') as world_time,
+    coalesce(game_saves.save_kind, 'game') as save_kind
 """
 
 
@@ -1170,9 +1215,32 @@ def saves_page(user_id: int, limit: int | str | None = None, cursor: str | None 
     with connect() as db:
         rows = db.execute(
             f"""
-            select {_SAVE_LIST_COLUMNS} from game_saves
-            where user_id = %s and (%s::bigint is null or id < %s)
-            order by id desc
+            select {_SAVE_LIST_COLUMNS},
+                   s.title as script_title,
+                   (
+                     select sum(
+                       case
+                         when n.kind = 'gm' and exists (
+                           select 1 from branch_commits p
+                           where p.id = n.parent_id
+                             and p.kind = 'player'
+                             and p.turn_index = n.turn_index
+                         ) then 0
+                         else 1
+                       end
+                     )::int
+                     from branch_commits n
+                     where n.save_id = game_saves.id
+                   ) as branch_count,
+                   (game_saves.id = (
+                     select ur.save_id from user_runtime ur
+                     where ur.user_id = game_saves.user_id
+                     limit 1
+                   )) as current
+            from game_saves
+            left join scripts s on s.id = game_saves.script_id
+            where game_saves.user_id = %s and (%s::bigint is null or game_saves.id < %s)
+            order by game_saves.id desc
             limit %s
             """,
             (user_id, before_id, before_id, page_limit + 1),

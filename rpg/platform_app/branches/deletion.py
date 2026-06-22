@@ -36,7 +36,7 @@ def delete_subtree(user_id: int, node_id: int) -> dict[str, Any]:
         # 与回合提交 / autosave 同 key 的锁:删子树可能改 game_saves 活跃指针(active 被删时回退到
         # fallback),读 game_saves 之前取,防并发回合在我们读指针与写 fallback 之间提交被覆盖。
         acquire_save_advisory_lock(db, node["save_id"], user_id)
-        ids = collect_ids(db, node["id"])
+        ids = collect_ids(db, node["id"], save_id=node["save_id"])
         paths = [
             row["state_path"]
             for row in db.execute("select state_path from branch_commits where id = any(%s)", (ids,)).fetchall()

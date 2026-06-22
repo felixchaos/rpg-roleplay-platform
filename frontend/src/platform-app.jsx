@@ -332,10 +332,13 @@ function WelcomeModal({ open, firstTime = false, onClose }) {
   const [busy, setBusy] = useStatePL(false);
   const reactiveUserWM = useReactiveUser();
   // co_builder 复选框：默认勾选（= 参加），取消勾选写入 opt_out=true
-  // 初始值：co_builder_opt_out=false → 勾选；co_builder_opt_out=true → 不勾选
-  const [coBuilderChecked, setCoBuilderChecked] = useStatePL(
-    () => !reactiveUserWM?.co_builder_opt_out
-  );
+  // 不用懒初始化——user 数据到达前 reactiveUserWM 为 null，捕获的 opt_out 是 undefined → 恒 true
+  const [coBuilderChecked, setCoBuilderChecked] = useStatePL(true);
+  useEffectPL(() => {
+    if (reactiveUserWM?.co_builder_opt_out != null) {
+      setCoBuilderChecked(!reactiveUserWM.co_builder_opt_out);
+    }
+  }, [reactiveUserWM]);
   // 是否展示 co_builder 区：仅 firstTime + 普通用户（非 admin/vip_user）+ 已通过白名单注册
   const isRegularUser = reactiveUserWM && reactiveUserWM.role === 'user';
   const showCoBuilder = firstTime && isRegularUser && reactiveUserWM?.is_co_builder === true;
@@ -515,8 +518,7 @@ function DialogHost() {
       confirmText: o.confirmText || t('common.confirm'),
     }));
     return () => { delete window.__confirm; delete window.__prompt; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [t]);
   if (!dlg) return null;
   const close = (val) => { try { dlg.resolve(val); } catch (_) {} setDlg(null); };
   const cancelVal = dlg.type === 'prompt' ? null : false;
@@ -540,7 +542,7 @@ function DialogHost() {
         : <CSFormField label={dlg.label}>
             <CSInput value={dlg.value} autoFocus
               onChange={({ detail }) => setDlg((d) => ({ ...d, value: detail.value }))}
-              onKeyDown={({ detail }) => { if (detail.key === 'Enter') setDlg(d => { close(d.value || ''); return d; }); }} />
+              onKeyDown={({ detail }) => { if (detail.key === 'Enter') close(dlg.value || ''); }} />
           </CSFormField>}
     </CSModal>
   );
@@ -575,7 +577,7 @@ function useAutoSave(label, scope) {
       }
       try {
         await window.api.account.preferences(batch);
-        window.toast?.(`${label}已保存`, { kind: "ok", detail: scope ? `${scope} · ${field}` : field, duration: 2000 });
+        window.toast?.(`${label}已保存`, { kind: "ok", detail: Object.keys(batch).join(', '), duration: 2000 });
       } catch (e) {
         window.toast?.(`${label}保存失败`, { kind: "danger", detail: e?.message || "网络错误", duration: 3000 });
       }
@@ -672,7 +674,7 @@ function UnifiedSearch({ open, onClose, setPage }) {
   // (GPT-5.5/Claude Opus 4.7/35 条 OpenRouter 假模型名…)无条件塞进 Spotlight。
   // 仅 ?demo=1 或匿名访客(设计预览)才回退 MODELS_DATA,与 settings.jsx 的 useMock 同闸。
   const _IS_DEMO = new URLSearchParams(location.search).get('demo') === '1';
-  const _IS_ANON = !(window.RPG_AUTH && window.RPG_AUTH.authed);
+  const _IS_ANON = !(searchUser && searchUser.id);
   const _useMockModels = _IS_DEMO || _IS_ANON;
   const [modelCatalog, setModelCatalog] = useStatePL(null); // null=未加载;数组=真实 provider 目录
   useEffectPL(() => {
@@ -745,14 +747,14 @@ function UnifiedSearch({ open, onClose, setPage }) {
     ] : []),
   ];
 
-  const scripts = platform.scripts.map(s => ({
+  const scripts = (platform.scripts || []).map(s => ({
     id: "scr-" + s.id, label: s.title, kind: "script",
     sub: `${Number(s.chapter_count || 0).toLocaleString()} 章 · ${((s.word_count || 0) / 10000).toFixed(1)}万字`,
     icon: "book", keywords: s.uid + " " + s.description,
     hash: "scripts",
   }));
 
-  const saves = platform.saves.map(s => ({
+  const saves = (platform.saves || []).map(s => ({
     id: "sv-" + s.id, label: s.title, kind: "save",
     sub: `${s.branch_count} 节点 · ${s.updated_at}`,
     icon: "play", keywords: s.uid,
@@ -1439,6 +1441,20 @@ function MeEditProfile() {
     return () => { cancelled = true; };
   }, []);
 
+  // [round-4-P2] reactive user 可能在 mount 之后才就绪;form 的 useStatePL 初值只取一次,
+  //   会把 display_name/username/email/bio 锁成 mount 时的空值。这里在 user 就绪后【仅填空字段】,
+  //   不覆盖用户已输入或上面 profile() 已合并的值(用 `f.x || user.x` 幂等回填)。
+  useEffectPL(() => {
+    setForm(f => ({
+      ...f,
+      display_name: f.display_name || user.display_name || "",
+      username: f.username || user.username || "",
+      email: f.email || user._raw?.email || "",
+      bio: f.bio || user.bio || "",
+    }));
+    if (user._raw?.avatar_url && !avatarUrl) setAvatarUrl(user._raw.avatar_url);
+  }, [user.id, user.username, user.display_name]);
+
   const onSave = async () => {
     setSaving(true);
     try {
@@ -1652,8 +1668,12 @@ function MeEditProfile() {
 function MeUserSettings() {
   const user = useReactiveUser();
   const hasPassword = user.has_password !== false;
-  const save = useAutoSave("用户设置", "me");
-  const tog = (setter, label) => (v) => { setter(v); save(label); };
+  // [round-3-P2] 原 useAutoSave(scope="me") + tog 只调 save(label):label 被当成 field、无 val
+  //  → 走 useAutoSave 的「仅 toast 不落库」兼容分支,这些隐私开关全部只弹"已保存"却从不持久化。
+  //  且 scope="me" 会把键写成 me.two_fa,与下面 loader 读取的扁平 p.two_fa 不符 → 双重失效。
+  //  修:scope=null 写扁平键 + tog 传 (field, value) 真正落库。
+  const save = useAutoSave("用户设置", null);
+  const tog = (setter, field) => (v) => { setter(v); save(field, v); };
   // 初始值为 null，等后端拉取完成后再用真实值初始化，防止 mount 时以硬编码默认值覆盖已存设置
   const [twofa, setTwofa] = useStatePL(null);
   const [emailNotif, setEmailNotif] = useStatePL(null);
@@ -1669,7 +1689,7 @@ function MeUserSettings() {
     let cancelled = false;
     (async () => {
       try {
-        const r = await window.api.account.preferences();
+        const r = await window.api.account.getPreferences();
         if (cancelled) return;
         const p = r?.preferences || r || {};
         if (p.two_fa != null) setTwofa(!!p.two_fa);
@@ -1840,18 +1860,11 @@ function MeUserSettings() {
     }
   };
 
-  const onSavePreference = async (key, value) => {
-    try { await window.api.account.preferences({ [key]: value }); } catch (_) {}
-  };
-  // Persist preference changes on each toggle:
-  // 值为 null 时说明后端偏好尚未加载完成，跳过（避免 mount 时以默认值覆盖已存设置）
-  useEffectPL(() => { if (twofa !== null && prefLoaded) onSavePreference("two_fa", twofa); }, [twofa, prefLoaded]);
-  useEffectPL(() => { if (emailNotif !== null && prefLoaded) onSavePreference("email_notif", emailNotif); }, [emailNotif, prefLoaded]);
-  useEffectPL(() => { if (publicProfile !== null && prefLoaded) onSavePreference("public_profile", publicProfile); }, [publicProfile, prefLoaded]);
-  useEffectPL(() => { if (searchable !== null && prefLoaded) onSavePreference("searchable", searchable); }, [searchable, prefLoaded]);
-  useEffectPL(() => { if (shareUsage !== null && prefLoaded) onSavePreference("share_usage", shareUsage); }, [shareUsage, prefLoaded]);
-  useEffectPL(() => { if (shareCrash !== null && prefLoaded) onSavePreference("share_crash", shareCrash); }, [shareCrash, prefLoaded]);
-  useEffectPL(() => { if (adsTrack !== null && prefLoaded) onSavePreference("ads_track", adsTrack); }, [adsTrack, prefLoaded]);
+  // [round-4-P2] 移除原 7 个 useEffectPL「值变即 onSavePreference」持久化副作用:
+  //   ① 与 round-3 起 tog 走 save(field,v) 真正落库形成【双写】(每次切换写两次后端);
+  //   ② prefLoaded 翻 true 时 7 个 effect 全触发 → 每次进页都把 7 项偏好回写一遍(#39);
+  //   ③ load() 拉取失败的 catch 设安全默认值后,effect 会把这些默认值写回后端、覆盖真实偏好(#7)。
+  //   现单一持久化路径 = tog 内 save(field,v)(useAutoSave 防抖 + toast),仅用户实际切换才写。
 
   return (
     <CSSpaceBetween size="l" data-cap-anchor="me.settings">
@@ -1861,12 +1874,12 @@ function MeUserSettings() {
           <SettingRow
             title="公开个人主页"
             desc="开启后，其他用户可以通过 @用户名 查看你的成就墙和最近活动。"
-            control={<SettingsToggle on={publicProfile} set={tog(setPublicProfile, "公开主页")} />}
+            control={<SettingsToggle on={publicProfile} set={tog(setPublicProfile, "public_profile")} />}
           />
           <SettingRow
             title="允许搜索"
             desc="允许通过显示名或用户名在平台内搜索找到你。"
-            control={<SettingsToggle on={searchable} set={tog(setSearchable, "允许搜索")} />}
+            control={<SettingsToggle on={searchable} set={tog(setSearchable, "searchable")} />}
           />
           <SettingRow
             title="资料字段可见性"
@@ -1882,17 +1895,17 @@ function MeUserSettings() {
           <SettingRow
             title="匿名用量统计"
             desc="把按钮点击 / 页面停留时长（不含剧本内容）匿名上报给团队，用于改进体验。"
-            control={<SettingsToggle on={shareUsage} set={tog(setShareUsage, "匿名用量")} />}
+            control={<SettingsToggle on={shareUsage} set={tog(setShareUsage, "share_usage")} />}
           />
           <SettingRow
             title="崩溃 / 错误报告"
             desc="出现错误时上传堆栈信息和最近一次操作。剧本内容不会被上传。"
-            control={<SettingsToggle on={shareCrash} set={tog(setShareCrash, "崩溃报告")} />}
+            control={<SettingsToggle on={shareCrash} set={tog(setShareCrash, "share_crash")} />}
           />
           <SettingRow
             title="个性化推荐"
             desc="基于你的剧本与角色卡向你推荐 Skill 和 MCP。"
-            control={<SettingsToggle on={adsTrack} set={tog(setAdsTrack, "个性化推荐")} />}
+            control={<SettingsToggle on={adsTrack} set={tog(setAdsTrack, "ads_track")} />}
           />
           <SettingRow
             title="GDPR / 个人信息保护合规"
@@ -1916,7 +1929,7 @@ function MeUserSettings() {
             control={
               <CSSpaceBetween direction="horizontal" size="xs">
                 {twofa && <span className="pill ok"><span className="dot ok" /> Authenticator</span>}
-                <SettingsToggle on={twofa} set={tog(setTwofa, "二次验证")} />
+                <SettingsToggle on={twofa} set={tog(setTwofa, "two_fa")} />
               </CSSpaceBetween>
             }
           />
@@ -1958,7 +1971,7 @@ function MeUserSettings() {
         <SettingRow
           title="邮件通知"
           desc="重要安全事件、订阅变更、长时间未登录提醒。"
-          control={<SettingsToggle on={emailNotif} set={tog(setEmailNotif, "邮件通知")} />}
+          control={<SettingsToggle on={emailNotif} set={tog(setEmailNotif, "email_notif")} />}
         />
       </CSContainer>
 
@@ -2340,6 +2353,7 @@ function ProfilePage() {
 // 语义统一 #40(needs-care,保留):此处 KB 用 .toFixed(0)(整数),与 window.__fmt.bytes
 // 的 KB .toFixed(1) 显示数字不同(且无 GB 档),改用统一版会改显示 → 刻意不动。
 function fmtBytes(n) {
+  if (n == null || !Number.isFinite(n)) return "—";  // [round-3-P2] null/NaN 守卫,避免 "NaN B"
   if (n < 1024) return n + " B";
   if (n < 1024 * 1024) return (n / 1024).toFixed(0) + " KB";
   return (n / 1024 / 1024).toFixed(1) + " MB";
@@ -3671,7 +3685,7 @@ function CapCard({ id, name, desc, tag, on, status, kind, onChanged, _raw }) {
     setDelBusy(false);
   };
   // task 50：查看日志 → 拉真后端运行时（admin 看到 stderr）。导出 → 下载文本。
-  const loadLog = async () => {
+  const loadLog = React.useCallback(async () => {
     setLogBusy(true);
     try {
       if (kind === "mcp") {
@@ -3692,8 +3706,8 @@ function CapCard({ id, name, desc, tag, on, status, kind, onChanged, _raw }) {
       setLogText("读取日志失败：" + (e?.message || String(e)));
     }
     setLogBusy(false);
-  };
-  React.useEffect(() => { if (logOpen) loadLog(); }, [logOpen]);
+  }, [kind, id, name]);
+  React.useEffect(() => { if (logOpen) loadLog(); }, [logOpen, loadLog]);
   const editFields = kind === "mcp" ? (() => {
     const rawTransport = (_raw || {}).transport || tag || "stdio";
     const rawCommand = (_raw || {}).command || "";

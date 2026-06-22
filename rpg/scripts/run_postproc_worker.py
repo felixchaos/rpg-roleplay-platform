@@ -36,6 +36,9 @@ log = logging.getLogger("rpg.postproc_worker")
 MAX_TASKS_PER_POLL = 5
 MAX_ATTEMPTS = 3
 POLL_TIMEOUT_SEC = 30  # NOTIFY 没来时最多等 30s 再 poll 一次
+_REAP_INTERVAL = 300.0  # _reap_stuck_running 最多每 5 分钟调一次
+
+_last_reap_at: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -75,9 +78,12 @@ async def _handle_phase_digest(payload: dict[str, Any]) -> None:
 
 
 async def _handle_acceptance_verifier(payload: dict[str, Any]) -> None:
-    """跑 acceptance verifier,把 unmet 写到 audit_log。"""
+    """跑 acceptance verifier,把 unmet 写到 audit_log。
+    用函数内延迟 import 避免 worker 启动时拉入整个 FastAPI app 对象树（重量级）。"""
     try:
-        from app import _acceptance_verifier_mode as _avm, _verify_acceptance as _va
+        # 延迟 import：app.py 依赖 FastAPI/路由/中间件，worker 只需其中两个函数。
+        # 在调用时才 import 可将 worker 启动内存开销降到最低，且不影响功能正确性。
+        from app import _acceptance_verifier_mode as _avm, _verify_acceptance as _va  # noqa: PLC0415
         curator_plan = payload.get("curator_plan") or {}
         acceptance = curator_plan.get("acceptance") or []
         gm_output = payload.get("gm_output") or ""
@@ -131,10 +137,17 @@ async def _process_one(conn: psycopg.Connection, row: dict[str, Any]) -> None:
     task_kind = row["task_kind"]
     attempts = row["attempts"] + 1
 
-    conn.execute(
-        "UPDATE chat_postproc_tasks SET status='running', started_at=now(), attempts=%s WHERE id=%s",
+    # 原子认领:autocommit 下 SELECT ... FOR UPDATE SKIP LOCKED 的行锁在 execute 返回即释放(no-op),
+    # 多 worker 会捞到同一行重复处理。改用条件 UPDATE...RETURNING 做 CAS:只有 status 仍是 pending/failed
+    # 才置 running,RETURNING 空 = 已被别的 worker 抢走 → 跳过。
+    claimed = conn.execute(
+        "UPDATE chat_postproc_tasks SET status='running', started_at=now(), attempts=%s "
+        "WHERE id=%s AND status IN ('pending','failed') RETURNING id",
         (attempts, task_id),
-    )
+    ).fetchone()
+    if not claimed:
+        log.debug("[postproc] task %s 已被其他 worker 认领,跳过", task_id)
+        return
 
     handler = TASK_HANDLERS.get(task_kind)
     if handler is None:
@@ -176,43 +189,66 @@ async def _process_one(conn: psycopg.Connection, row: dict[str, Any]) -> None:
 def _reap_stuck_running(conn: psycopg.Connection) -> None:
     """回收僵死任务:被置 running 后 worker 崩溃/被 kill,该行永卡 running,
     而消费查询只捞 pending/failed → 永不重投、静默丢失(用户反馈"丢事件"的后处理侧)。
-    把 running 超过 5 分钟的行视为僵死,降级回 pending(attempts 已自增,仍受 MAX_ATTEMPTS 收口)。"""
+    把 running 超过 5 分钟的行视为僵死:attempts >= MAX_ATTEMPTS 直接标 failed,
+    否则降级回 pending 重投(防止 attempts 已饱和时永久僵尸循环)。"""
     try:
         n = conn.execute(
-            "UPDATE chat_postproc_tasks SET status='pending' "
-            "WHERE status='running' AND started_at < now() - interval '5 minutes'"
+            "UPDATE chat_postproc_tasks "
+            "SET status = CASE WHEN attempts >= %s THEN 'failed' ELSE 'pending' END, "
+            "    error_message = CASE WHEN attempts >= %s THEN 'reaped after max attempts' ELSE error_message END "
+            "WHERE status='running' AND started_at < now() - interval '5 minutes'",
+            (MAX_ATTEMPTS, MAX_ATTEMPTS),
         ).rowcount
         if n:
-            log.warning("[postproc] reaped %d stuck-running task(s) back to pending", n)
+            log.warning("[postproc] reaped %d stuck-running task(s) (failed or back to pending)", n)
     except Exception:
         log.exception("[postproc] reap stuck-running failed")
 
 
 async def consume(conn: psycopg.Connection) -> None:
     """主循环:LISTEN/NOTIFY + 兜底 30s poll。autocommit 连接,每次 DML 单句提交。"""
+    global _last_reap_at
+    import time as _time
     conn.execute("LISTEN chat_postproc_new")
     log.info("[postproc] worker ready, LISTEN chat_postproc_new")
     _reap_stuck_running(conn)  # 启动即回收上次崩溃残留的 running
+    _last_reap_at = _time.monotonic()
 
     while True:
-        _reap_stuck_running(conn)
+        now = _time.monotonic()
+        if now - _last_reap_at >= _REAP_INTERVAL:
+            _reap_stuck_running(conn)
+            _last_reap_at = _time.monotonic()
+        # 不用 FOR UPDATE SKIP LOCKED — 认领路径已改为 _process_one 里的 CAS UPDATE...RETURNING。
+        # SELECT 只是候选行扫描，实际认领由 CAS 原子完成；多 worker 同时读到同一行时，
+        # CAS 保证只有一个 worker 能置 running，其余跳过（claimed is None）。
         rows = conn.execute(
             "SELECT id, user_id, save_id, commit_id, task_kind, payload, attempts "
             "FROM chat_postproc_tasks "
             "WHERE status IN ('pending', 'failed') AND attempts < %s "
             "AND scheduled_at <= now() "
             "ORDER BY scheduled_at "
-            "LIMIT %s "
-            "FOR UPDATE SKIP LOCKED",
+            "LIMIT %s",
             (MAX_ATTEMPTS, MAX_TASKS_PER_POLL),
         ).fetchall()
 
         if not rows:
             # 等 NOTIFY 或超时后再 poll
             raw = conn.fileno()
-            readable, _, _ = select.select([raw], [], [], POLL_TIMEOUT_SEC)
+            readable, _, _ = await asyncio.get_event_loop().run_in_executor(
+                None, select.select, [raw], [], [], POLL_TIMEOUT_SEC
+            )
             if readable:
-                conn.notifies  # consume pending notifies
+                # 真正消费已缓冲的 NOTIFY(仅作唤醒提示,内容不用)。原写法 `conn.notifies` 只引用方法
+                # 不调用 → libpq 通知积压不消费。timeout=0 = 排空当前缓冲后立即返回。
+                try:
+                    for _ in conn.notifies(timeout=0):
+                        pass
+                except TypeError:
+                    for _ in conn.notifies():
+                        break
+                except Exception:
+                    pass
             continue
 
         for row in rows:

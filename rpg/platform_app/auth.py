@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import datetime as _datetime
 import hashlib
+import os
 import secrets
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from psycopg.errors import UniqueViolation
@@ -13,14 +13,15 @@ from psycopg.types.json import Jsonb
 
 from .db import connect, init_db
 from .security import (
-    calc_age,
-    generate_email_code,
-    hash_email_code,
     hash_password,
     normalize_email,
     normalize_username,
-    verify_email_code,
+    verify_password,
     verify_password_with_rehash,
+    generate_email_code,
+    hash_email_code,
+    verify_email_code,
+    calc_age,
 )
 
 SESSION_DAYS = 14
@@ -39,14 +40,13 @@ from core.config import (
 )
 
 MIN_PASSWORD_LENGTH = _min_password_length()
-UTC = _datetime.UTC
 
 # ── 登录速率限制 ──────────────────────────────────────────────────────────
 #
-# 此速率限制使用进程内 dict 实现。后端按单进程(单 uvicorn worker)部署,
-# 因此进程内计数是准确且共享的。
-# 注意: 若未来改为多副本横向扩展(多个独立后端进程),各进程内存独立,
-# 速率限制将不再跨进程共享 —— 届时需迁移至共享后端(Redis / 数据库)。
+# 警告: 此速率限制使用进程内 dict 实现。
+# 多 worker 部署（uvicorn --workers N / gunicorn）下，每个 worker 有独立内存，
+# 速率限制 **不在 worker 间共享**，攻击者可以通过轮询 worker 绕过限制。
+# 如需多 worker 部署，请将速率限制迁移至 Redis 或数据库后端。
 #
 LOGIN_MAX_FAILS = _login_max_fails()
 LOGIN_LOCKOUT_SEC = _login_lockout_sec()
@@ -76,8 +76,13 @@ _FAIL_BUCKETS: dict[str, list[float]] = {}  # key="ip|username" → [失败时�
 _LOCKED_UNTIL: dict[str, float] = {}        # key → 解锁时间
 _FAIL_LOCK = threading.Lock()
 
-import logging as _logging
+# [round-4-P2] confirm_password_reset 的 per-IP 进程内兜底(Redis 宕机时仍限流,
+#   与 Redis 路径阈值一致:600s 窗口 / 30 次)。
+_PWRESET_IP_BUCKETS: dict[str, list[float]] = {}  # ip → [时间戳...]
+_PWRESET_WINDOW_SEC = 600
+_PWRESET_IP_LIMIT = 30
 
+import logging as _logging
 _log = _logging.getLogger(__name__)
 
 _PENDING_REGISTER_UA_PREFIX = "rpg-pending-register:v1:"
@@ -100,7 +105,9 @@ def _check_rate_limit(ip: str, username: str) -> None:
     # Redis 可用时用共享锁定键(跨 worker 一致,根治多 worker 限流 ×N 绕过);
     # 不可用回落进程内(单进程语义)。
     ip_key = ip or "-"
-    user_key = (username or "").lower()
+    # [round-3-P2] 用 normalize_username 做规范键(不只 .lower()):调用方虽多已先归一,
+    # 但内部统一规范可彻底消除「同一账号经不同表示得到不同限流桶」的绕过面(只会合并桶,不会放宽)。
+    user_key = normalize_username(username)
     import redis_bus
     if redis_bus.get_sync_client() is not None:
         for scope, k in (("ip", ip_key), ("user", user_key)):
@@ -148,7 +155,9 @@ def _record_login_fail(ip: str, username: str) -> int:
     """记录一次失败。返回 username bucket 内累计失败次数。超阈值会被锁定。"""
     # P2-5: 分别记录 per-IP 和 per-username bucket
     ip_key = ip or "-"
-    user_key = (username or "").lower()
+    # [round-3-P2] 用 normalize_username 做规范键(不只 .lower()):调用方虽多已先归一,
+    # 但内部统一规范可彻底消除「同一账号经不同表示得到不同限流桶」的绕过面(只会合并桶,不会放宽)。
+    user_key = normalize_username(username)
     import redis_bus
     if redis_bus.get_sync_client() is not None:
         ip_cnt = redis_bus.rate_incr(f"loginfail:ip:{ip_key}", _IP_WINDOW_SEC) or 0
@@ -185,7 +194,9 @@ def _record_login_fail(ip: str, username: str) -> int:
 
 def _record_login_success(ip: str, username: str) -> None:
     ip_key = ip or "-"
-    user_key = (username or "").lower()
+    # [round-3-P2] 用 normalize_username 做规范键(不只 .lower()):调用方虽多已先归一,
+    # 但内部统一规范可彻底消除「同一账号经不同表示得到不同限流桶」的绕过面(只会合并桶,不会放宽)。
+    user_key = normalize_username(username)
     import redis_bus
     if redis_bus.get_sync_client() is not None:
         for scope, k in (("ip", ip_key), ("user", user_key)):
@@ -201,26 +212,37 @@ def _record_login_success(ip: str, username: str) -> None:
     _write_audit(username, ip, "login_ok", {})
 
 
+# [Fix-4] 仅首次调用时建表,后续跳过 CREATE TABLE IF NOT EXISTS 的锁开销
+_AUDIT_TABLE_READY = False
+
+
 def _write_audit(username: str, ip: str, event: str, meta: dict[str, Any]) -> None:
+    global _AUDIT_TABLE_READY
     try:
         init_db()
         with connect() as db:
-            db.execute(
-                """
-                create table if not exists login_audit (
-                  id bigint generated by default as identity primary key,
-                  username text,
-                  ip text,
-                  event text not null,
-                  meta jsonb not null default '{}'::jsonb,
-                  created_at timestamptz not null default now()
+            if not _AUDIT_TABLE_READY:
+                db.execute(
+                    """
+                    create table if not exists login_audit (
+                      id bigint generated by default as identity primary key,
+                      username text,
+                      ip text,
+                      event text not null,
+                      meta jsonb not null default '{}'::jsonb,
+                      created_at timestamptz not null default now()
+                    )
+                    """
                 )
-                """
-            )
-            db.execute(
-                "insert into login_audit(username, ip, event, meta) values (%s, %s, %s, %s)",
-                (username, ip, event, Jsonb(meta)),
-            )
+                _AUDIT_TABLE_READY = True
+            try:
+                db.execute(
+                    "insert into login_audit(username, ip, event, meta) values (%s, %s, %s, %s)",
+                    (username, ip, event, Jsonb(meta)),
+                )
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).warning("audit insert failed", exc_info=True)
     except Exception:
         import logging as _logging
         _logging.getLogger(__name__).warning("audit write failed", exc_info=True)
@@ -237,7 +259,9 @@ def _mask_email(email: str) -> str:
 def admin_unlock(ip: str, username: str) -> None:
     """admin 手动解锁某个用户/IP（暴露给 /api/admin/login/unlock 用）"""
     ip_key = ip or "-"
-    user_key = (username or "").lower()
+    # [round-3-P2] 用 normalize_username 做规范键(不只 .lower()):调用方虽多已先归一,
+    # 但内部统一规范可彻底消除「同一账号经不同表示得到不同限流桶」的绕过面(只会合并桶,不会放宽)。
+    user_key = normalize_username(username)
     # Redis 模式:清共享锁定键 + 失败计数
     try:
         import redis_bus
@@ -264,9 +288,6 @@ def _bootstrap_admin_allowed(setup_token: str | None) -> bool:
     - 本地/非鉴权模式:允许(单用户桌面场景,无引导风险)。
     - server/强制鉴权模式:必须配置 RPG_SETUP_TOKEN 且请求携带匹配令牌,
       否则首用户仅为普通 user —— 杜绝公网首注册抢 admin(CWE-269)。
-
-    注:自托管单人若想免 token 让首用户直接成 admin,把部署模式设为 local
-    (或 RPG_REQUIRE_AUTH=0)即可走上面的免鉴权分支;server 模式保留硬门控。
     """
     from core.config import effective_auth_required
     from core.config import setup_token as _cfg_setup_token
@@ -335,7 +356,7 @@ def register(
         "allow_admin": _bootstrap_admin_allowed(setup_token),
         "ip": ip or "",
         "ua": ua or "",
-        "created_at": datetime.now(UTC).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     pending_json = _encode_pending_register(pending_payload)
 
@@ -379,14 +400,6 @@ def register(
             mode = (cfg.get("mode") or "").lower()
         except Exception:
             mode = ""
-        # ── 关闭注册(closed 模式)─────────────────────────────────────────────
-        # admin 在「注册与邀请」里把模式设为 closed 即禁止任何新用户注册。
-        # 例外:users 表为空时放行,保证首个用户始终能注册并 bootstrap 成 admin
-        # (否则一旦误设 closed 且无 admin,实例将永久无法注册 = 自锁)。
-        if mode == "closed":
-            any_user = db.execute("select 1 from users limit 1").fetchone()
-            if any_user:
-                raise ValueError("该平台已关闭新用户注册")
         # task: mode='invite' 是 admin UI「仅邀请」按钮的语义,
         # mode='allowlist' 是 SQL 手动设置的别名 — 两者都走白名单 gate。
         if mode in ("allowlist", "invite"):
@@ -421,7 +434,7 @@ def register(
         # ── 写 email_verifications (pending) ──────────────────────────────────
         code = generate_email_code(6)
         code_h = hash_email_code(code)
-        expires_at = datetime.now(UTC) + timedelta(minutes=10)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 
         # 失效同邮箱之前的未使用记录（防积累），再插入新记录
         db.execute(
@@ -458,7 +471,7 @@ def register(
             _log.warning("[register] 本地模式自动验证失败,回退验证码流程: %s", _e)
 
     # ── server 模式:发验证码邮件 ──────────────────────────────────────────────
-    from .email import EmailSendError, send_verification_email
+    from .email import send_verification_email, EmailSendError
     try:
         send_verification_email(email_norm, code)
         # 发件成功 → 设 per-email 冷却(60s),阻断同邮箱快速重复注册刷件
@@ -689,7 +702,7 @@ def confirm_email_verification(email: str, code: str) -> tuple[dict[str, Any], s
             else _bootstrap_admin_allowed(pending.get("setup_token"))
         )
 
-        from datetime import date as _date
+        from datetime import date as _date, timezone as _tz
         birthday = _date.fromisoformat(pending["birthday"])
 
         try:
@@ -760,14 +773,10 @@ def confirm_email_verification(email: str, code: str) -> tuple[dict[str, Any], s
             (verif["id"],),
         )
 
-        # 颁 session
-        token = secrets.token_urlsafe(32)
-        from datetime import timedelta
-        expires_at = datetime.now(UTC) + timedelta(days=SESSION_DAYS)
-        db.execute(
-            "insert into sessions(token, token_hash, user_id, expires_at) values (%s, %s, %s, %s)",
-            ("", _hash_token(token), user["id"], expires_at),
-        )
+        # 颁 session — [round-4-P2] 走 _issue_session(强制 20 会话/用户上限,逐出最旧),
+        #   与 login/confirm_login_code/passwordless/magic 各登录路径一致;原裸 INSERT 绕过上限,
+        #   反复「换用户名同邮箱重注册」可无限堆积会话。
+        token = _issue_session(db, user["id"])
 
     return user, token
 
@@ -795,7 +804,7 @@ def _issue_session(db, user_id: int) -> str:
             (user_id, int(active_count) - 19),
         )
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.now(UTC) + timedelta(days=SESSION_DAYS)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
     db.execute(
         "insert into sessions(token, token_hash, user_id, expires_at) values (%s, %s, %s, %s)",
         ("", _hash_token(token), user_id, expires_at),
@@ -976,15 +985,15 @@ def request_login_code(email: str, *, ip: str = "", ua: str = "") -> dict[str, A
         if recent:
             created = recent["created_at"]
             if created.tzinfo is None:
-                created = created.replace(tzinfo=UTC)
-            elapsed = (datetime.now(UTC) - created).total_seconds()
+                created = created.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - created).total_seconds()
             if elapsed < 60:
                 raise ValueError(f"发送太频繁，请 {int(60 - elapsed) + 1} 秒后再试")
 
         user_id = int(row["id"])
         code = generate_email_code(6)
         code_h = hash_email_code(code)
-        expires_at = datetime.now(UTC) + timedelta(minutes=10)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
         db.execute(
             "update email_verifications set used_at = now() "
             "where lower(email) = %s and purpose = 'login' and used_at is null",
@@ -999,7 +1008,7 @@ def request_login_code(email: str, *, ip: str = "", ua: str = "") -> dict[str, A
             (email_norm, code_h, user_id, expires_at, ip or "", ua or ""),
         )
 
-    from .email import EmailSendError, send_login_code_email
+    from .email import send_login_code_email, EmailSendError
     try:
         send_login_code_email(email_norm, code)
     except EmailSendError:
@@ -1015,13 +1024,17 @@ def confirm_login_code(email: str, code: str, *, ip: str = "") -> tuple[dict[str
     code = (code or "").strip()
     if len(code) != 6 or not code.isdigit():
         raise ValueError("请输入 6 位数字验证码")
+    # [Fix-2] 镜像 confirm_email_verification 的 per-email 验证码暴破防护
+    if _verify_locked(email_norm):
+        raise ValueError("验证尝试次数过多，请稍后重新获取验证码")
     _check_rate_limit(ip, email_norm)
 
     init_db()
     with connect() as db:
+        # Step 1: 取最新未消费记录（仅用于 hash 比对，尚未消费）
         verif = db.execute(
             """
-            select * from email_verifications
+            select id, code_hash, user_id from email_verifications
             where lower(email) = %s
               and purpose = 'login'
               and used_at is null
@@ -1032,6 +1045,21 @@ def confirm_login_code(email: str, code: str, *, ip: str = "") -> tuple[dict[str
             (email_norm,),
         ).fetchone()
         if not verif or not verify_email_code(code, verif["code_hash"]):
+            # 错码或无记录：不消费，只计失败
+            _record_verify_fail(email_norm)  # [Fix-2] per-email 验证码失败计数(达上限锁定该 email)
+            _record_login_fail(ip, email_norm)
+            raise ValueError("验证码错误或已过期")
+
+        # Step 2: 原子消费 — WHERE 里重检 used_at IS NULL，并发第二个请求命中 0 行
+        # SEC: hash 已在 Step 1 比对通过才到这里，此处只做 CAS 式消费。
+        consumed = db.execute(
+            "UPDATE email_verifications SET used_at = NOW() "
+            "WHERE id = %s AND used_at IS NULL "
+            "RETURNING id",
+            (verif["id"],),
+        ).fetchone()
+        if not consumed:
+            # 并发重放：第一个请求已消费
             _record_login_fail(ip, email_norm)
             raise ValueError("验证码错误或已过期")
 
@@ -1051,7 +1079,6 @@ def confirm_login_code(email: str, code: str, *, ip: str = "") -> tuple[dict[str
             raise ValueError("验证码错误或已过期")
 
         token = _issue_session(db, int(row["id"]))
-        db.execute("update email_verifications set used_at = now() where id = %s", (verif["id"],))
         _record_login_success(ip, email_norm)
         return dict(row), token
 
@@ -1097,7 +1124,7 @@ def login(username: str, password: str, *, ip: str = "") -> tuple[dict[str, Any]
 
         token = secrets.token_urlsafe(32)
         # 使用 timezone-aware UTC 时间, 避免 server 本地时区漂移 session 过期
-        expires_at = datetime.now(UTC) + timedelta(days=SESSION_DAYS)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
 
         # P2-2: 并发会话上限 20，超出时驱逐最旧的会话
         active_count = db.execute(
@@ -1223,15 +1250,15 @@ def resend_verification_code(email: str, ip: str = "") -> None:
         )
         code = generate_email_code(6)
         code_h = hash_email_code(code)
-        from datetime import timedelta as _td
-        expires_at = datetime.now(UTC) + _td(minutes=10)
+        from datetime import timezone as _tz, timedelta as _td
+        expires_at = datetime.now(_tz.utc) + _td(minutes=10)
         db.execute(
             "insert into email_verifications (email, code_hash, purpose, expires_at, ip, ua) values (%s, %s, 'register', %s, %s, %s)",
             # SEC(H-7): ua 列存真实 user-agent,不再塞含 password_hash 的 pending_json。
             (email_norm, code_h, expires_at, ip or "", str(pending.get("ua") or "")[:512]),
         )
 
-    from .email import EmailSendError, send_verification_email
+    from .email import send_verification_email, EmailSendError
     try:
         send_verification_email(email_norm, code)
     except EmailSendError:
@@ -1300,10 +1327,10 @@ def request_password_reset(email: str, ip: str = "") -> dict:
         if not row:
             return {"ok": True}   # 邮箱不存在，静默
 
-        row["id"]
+        user_id = row["id"]
         token = secrets.token_urlsafe(32)
         token_hash = hash_email_code(token)   # 复用已有 HMAC util
-        expires_at = datetime.now(UTC) + timedelta(minutes=30)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
 
         # 废弃同邮箱的旧 password_reset 记录
         db.execute(
@@ -1322,7 +1349,7 @@ def request_password_reset(email: str, ip: str = "") -> dict:
             _log.warning("request_password_reset: insert failed for %s", email_norm, exc_info=True)
             return {"ok": True}
 
-    from .email import EmailSendError, send_password_reset_email
+    from .email import send_password_reset_email, EmailSendError
     try:
         send_password_reset_email(email_norm, token)
     except EmailSendError:
@@ -1348,10 +1375,11 @@ def consume_magic_token(token: str, email: str) -> dict:
         ).fetchone()
     if not row:
         raise ValueError("邀请链接无效、已过期或已被使用")
+    import datetime as _dt
     created = row["created_at"]
     if created.tzinfo is None:
-        created = created.replace(tzinfo=UTC)
-    age = (datetime.now(UTC) - created).total_seconds()
+        created = created.replace(tzinfo=_dt.timezone.utc)
+    age = (_dt.datetime.now(_dt.timezone.utc) - created).total_seconds()
     if age > 30 * 86400:
         raise ValueError("邀请链接已过期 (30天)")
     return {"email": norm, "batch": row["batch"]}
@@ -1372,7 +1400,7 @@ def request_passwordless_code(email: str, source: str = "magic_link") -> dict:
         )
         code = generate_email_code(6)
         code_h = hash_email_code(code)
-        expires_at = datetime.now(UTC) + timedelta(minutes=10)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
         db.execute(
             """
             insert into email_verifications
@@ -1381,7 +1409,7 @@ def request_passwordless_code(email: str, source: str = "magic_link") -> dict:
             """,
             (email_norm, code_h, expires_at, source),
         )
-    from .email import EmailSendError, send_login_code_email
+    from .email import send_login_code_email, EmailSendError
     try:
         send_login_code_email(email_norm, code)
     except EmailSendError:
@@ -1397,12 +1425,17 @@ def verify_passwordless_and_login(email: str, code: str, ip: str = "") -> dict:
     code = (code or "").strip()
     if len(code) != 6 or not code.isdigit():
         raise ValueError("请输入 6 位数字验证码")
+    # [Fix-2 round-3-P2] 镜像 confirm_login_code 的 per-email 验证码暴破防护:
+    # 无此则 passwordless 路径可对单邮箱无限猜码(仅受 IP 速率限,换 IP 即绕过)。
+    if _verify_locked(email_norm):
+        raise ValueError("验证尝试次数过多，请稍后重新获取验证码")
     _check_rate_limit(ip, email_norm)
     init_db()
     with connect() as db:
+        # Step 1: 取最新未消费记录（仅用于 hash 比对，尚未消费）
         verif = db.execute(
             """
-            select * from email_verifications
+            select id, code_hash from email_verifications
             where lower(email) = %s
               and purpose = 'passwordless_login'
               and used_at is null
@@ -1413,6 +1446,21 @@ def verify_passwordless_and_login(email: str, code: str, ip: str = "") -> dict:
             (email_norm,),
         ).fetchone()
         if not verif or not verify_email_code(code, verif["code_hash"]):
+            # 错码或无记录：不消费，只计失败
+            _record_verify_fail(email_norm)  # [Fix-2 round-3-P2] per-email 验证码失败计数(达上限锁定该 email)
+            _record_login_fail(ip, email_norm)
+            raise ValueError("验证码错误或已过期")
+
+        # Step 2: 原子消费 — WHERE 里重检 used_at IS NULL，并发第二个请求命中 0 行
+        # SEC: hash 已在 Step 1 比对通过才到这里，此处只做 CAS 式消费。
+        consumed = db.execute(
+            "UPDATE email_verifications SET used_at = NOW() "
+            "WHERE id = %s AND used_at IS NULL "
+            "RETURNING id",
+            (verif["id"],),
+        ).fetchone()
+        if not consumed:
+            # 并发重放：第一个请求已消费
             _record_login_fail(ip, email_norm)
             raise ValueError("验证码错误或已过期")
 
@@ -1449,14 +1497,14 @@ def verify_passwordless_and_login(email: str, code: str, ip: str = "") -> dict:
                     """,
                     (email_norm, email_norm, email_norm),
                 ).fetchone()
-            except UniqueViolation as err:
+            except UniqueViolation:
                 # 极端竞态：刚才建好了，重查
                 user_row = db.execute(
                     "select * from users where lower(email) = %s and deactivated_at is null limit 1",
                     (email_norm,),
                 ).fetchone()
                 if not user_row:
-                    raise ValueError("注册失败，请稍后重试") from err
+                    raise ValueError("注册失败，请稍后重试")
             # 标记白名单 used
             db.execute(
                 "update registration_allowlist set used_by_user_id = %s, used_at = now() where email_norm = %s",
@@ -1465,7 +1513,7 @@ def verify_passwordless_and_login(email: str, code: str, ip: str = "") -> dict:
 
         user = dict(user_row)
         token = _issue_session(db, int(user["id"]))
-        db.execute("update email_verifications set used_at = now() where id = %s", (verif["id"],))
+        # used_at 已在上面的原子 UPDATE 消费，无需重复置
         _record_login_success(ip, email_norm)
 
     needs_profile = not bool((user.get("username") or "").strip()) or user.get("username") == user.get("email")
@@ -1477,12 +1525,12 @@ def verify_passwordless_and_login(email: str, code: str, ip: str = "") -> dict:
     }
 
 
-def login_via_magic_token(email: str, ip: str = "") -> dict:
+def login_via_magic_token(email: str, ip: str = "", *, magic_token: str = "") -> dict:
     """task: magic link 直接登录(不发 OTP,token + email 匹配本身即认证)。
 
     consume_magic_token 已校验 token + email + 30 天有效期,这里直接:
     1. 查/建 user(未注册 → 按白名单建 passwordless 账号)
-    2. 标记 allowlist used_at
+    2. 原子消费 allowlist used_at(SEC: CAS 式，防并发重放)
     3. _issue_session → 返 session_token + needs_profile
 
     跟 verify_passwordless_and_login 的差异:跳过 OTP 校验(magic_token 已是认证)。
@@ -1526,19 +1574,29 @@ def login_via_magic_token(email: str, ip: str = "") -> dict:
                     (email_norm,),
                 ).fetchone()
                 if not user_row:
-                    raise ValueError("注册失败,请稍后重试") from None
-            db.execute(
-                "update registration_allowlist set used_by_user_id = %s, used_at = now() where email_norm = %s",
-                (user_row["id"], email_norm),
-            )
+                    raise ValueError("注册失败,请稍后重试")
+            # 注意：不在此处标记 allowlist used_at，交由下方原子 UPDATE 统一消费（避免双写）
         user = dict(user_row)
-        # SEC(H-6): 标记 magic 邀请为已用(已注册用户分支过去从不标 → 30 天内可无限重放)。
-        # 幂等(used_at is null 才更新),配合 consume_magic_token 的 used_at is null 实现单次使用。
-        db.execute(
-            "update registration_allowlist set used_by_user_id = %s, used_at = now() "
-            "where email_norm = %s and used_at is null",
-            (int(user["id"]), email_norm),
-        )
+        # SEC(H-6 原子消费): 把「检查 used_at IS NULL」与「置 used_at」合到一条 UPDATE...RETURNING。
+        # magic_token 列放进 WHERE → 精确匹配本次链接，并发第二个请求 RETURNING 空即被拒。
+        # consume_magic_token 的 SELECT 校验保留作快速失败（预筛），真正消费以此原子 UPDATE 为准。
+        if magic_token:
+            consumed_ml = db.execute(
+                "UPDATE registration_allowlist SET used_by_user_id = %s, used_at = NOW() "
+                "WHERE magic_token = %s AND email_norm = %s AND used_at IS NULL "
+                "RETURNING email_norm",
+                (int(user["id"]), magic_token, email_norm),
+            ).fetchone()
+            if not consumed_ml:
+                # 并发重放：另一个请求已消费此 magic link
+                raise ValueError("邀请链接无效、已过期或已被使用")
+        else:
+            # 兜底：无 magic_token（不应走到此分支，保守幂等写）
+            db.execute(
+                "UPDATE registration_allowlist SET used_by_user_id = %s, used_at = NOW() "
+                "WHERE email_norm = %s AND used_at IS NULL",
+                (int(user["id"]), email_norm),
+            )
         token = _issue_session(db, int(user["id"]))
         _record_login_success(ip, email_norm)
 
@@ -1566,29 +1624,39 @@ def confirm_password_reset(token: str, new_password: str, ip: str = "") -> dict:
         raise ValueError("密码超长")
 
     # SEC(L-2): per-IP 软上限,防对 reset token 的零摩擦探测 / DoS 放大(每次探针触发全表扫 + HMAC)。
-    try:
-        import redis_bus as _rb
-        _c = _rb.rate_incr(f"pwreset:{ip or '-'}", 600)
-        if _c and _c > 30:
+    # [round-4-P2] rate_incr 吞异常返 None(从不抛),原 except(Exception) 是死代码 → Redis 宕机时
+    #   限流完全失效。改为按返回值:None=Redis 不可用 → 进程内滑动窗口兜底。
+    import redis_bus as _rb
+    _c = _rb.rate_incr(f"pwreset:{ip or '-'}", 600)
+    if _c is None:
+        _now = time.monotonic()
+        _ipk = ip or "-"
+        with _FAIL_LOCK:
+            _b = _PWRESET_IP_BUCKETS.setdefault(_ipk, [])
+            _b.append(_now)
+            _b[:] = [t for t in _b if _now - t < _PWRESET_WINDOW_SEC]
+            _over = len(_b) > _PWRESET_IP_LIMIT
+        if _over:
             raise ValueError("尝试过于频繁,请稍后再试")
-    except ValueError:
-        raise
-    except Exception:
-        pass
+    elif _c > 30:
+        raise ValueError("尝试过于频繁,请稍后再试")
 
     token_hash = hash_email_code(token)
     init_db()
     with connect() as db:
+        # 原子消费 token:把「检查 used_at IS NULL」与「置 used_at」合到一条 UPDATE...RETURNING,
+        # used_at IS NULL 放在 WHERE 里 → READ COMMITTED 下并发第二个请求重检谓词失败、命中 0 行,
+        # 杜绝 TOCTOU 双花(原先 SELECT→Python 判 used_at→UPDATE 三步可被并发同时通过)。
+        # 后续任一步异常 → with connect() 回滚 → used_at 还原,合法用户仍可重试。
         verif = db.execute(
-            "SELECT id, email, used_at FROM email_verifications "
-            "WHERE code_hash = %s AND purpose = 'password_reset' AND expires_at > NOW() "
-            "LIMIT 1",
+            "UPDATE email_verifications SET used_at = NOW() "
+            "WHERE code_hash = %s AND purpose = 'password_reset' "
+            "  AND expires_at > NOW() AND used_at IS NULL "
+            "RETURNING id, email",
             (token_hash,),
         ).fetchone()
         if not verif:
-            raise ValueError("重置链接无效或已过期，请重新申请")
-        if verif["used_at"]:
-            raise ValueError("该重置链接已使用过，请重新申请")
+            raise ValueError("重置链接无效、已过期或已使用，请重新申请")
 
         # 查找对应用户
         email_norm = verif["email"]
@@ -1602,8 +1670,7 @@ def confirm_password_reset(token: str, new_password: str, ip: str = "") -> dict:
         pw_hash = hash_password(new_password)
         db.execute("UPDATE users SET password_hash = %s, updated_at = NOW() WHERE id = %s",
                    (pw_hash, user["id"]))
-        db.execute("UPDATE email_verifications SET used_at = NOW() WHERE id = %s",
-                   (verif["id"],))
+        # used_at 已在上面的原子 UPDATE 消费,无需重复置
         # 安全：重置密码后废除所有旧 session
         db.execute("DELETE FROM sessions WHERE user_id = %s", (user["id"],))
 

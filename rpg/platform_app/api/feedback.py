@@ -125,6 +125,65 @@ async def _forward_feedback_to_central(body: dict, ua: str):
         raise HTTPException(status_code=502, detail=f"反馈转发到服务器失败:{exc}")
 
 
+def _capture_feedback_env(user: dict | None, client_env: dict | None = None) -> dict:
+    """服务端采集反馈时的模型上下文,存进 feedback.env_snapshot。
+
+    用户报「GM 输出差/开局短/泄漏」这类反馈时,最关键的诊断信息是【当时用的哪个模型 + 有没有
+    配 key】—— 此前完全没记录(env_snapshot 一直是 null),导致这类反馈无从复现。这里服务端解析
+    (不依赖客户端上报),容错:任一项失败都不影响反馈提交。
+    """
+    snap: dict = {}
+    if client_env and isinstance(client_env, dict):
+        snap["client"] = client_env  # 客户端可选附带(如前端显示的模型标签),仅作参考
+    try:
+        from core.config import deployment_mode
+        snap["deployment_mode"] = deployment_mode()
+    except Exception:
+        pass
+    uid = (user or {}).get("id")
+    if not uid:
+        return snap
+    try:
+        from core.llm_backend import (
+            first_user_model as _fum,
+            resolve_preferred_api as _rpa,
+            resolve_preferred_model as _rpm,
+        )
+        gm_api, gm_model = _rpa(uid, "gm.api_id"), _rpm(uid, "gm.model_real_name")
+        snap["gm_pref"] = {"api_id": gm_api or None, "model": gm_model or None}
+        _fu = _fum(uid)  # 返回 (api_id, model)
+        snap["first_user_model"] = ({"api_id": _fu[0], "model": _fu[1]} if _fu else None)
+    except Exception:
+        pass
+    # 当前真正生效的模型(per-save session_model > gm 偏好),最贴近"产出这条输出的模型"
+    try:
+        from app import _resolve_effective_model_view, load_catalog_for_user
+        eff = _resolve_effective_model_view(user, load_catalog_for_user(int(uid)))
+        if eff:
+            snap["effective_model"] = {
+                "api_id": eff.get("api_id") or eff.get("api"),
+                "model": eff.get("real_name") or eff.get("model_id") or eff.get("model"),
+                "label": eff.get("label"),
+            }
+    except Exception:
+        pass
+    # 已配置(BYOK)的 provider 列表 + 是否完全没配 key
+    try:
+        from platform_app.db import connect as _connect
+        with _connect() as _db:
+            rows = _db.execute(
+                "select api_id from user_api_credentials "
+                "where user_id=%s and enabled=true and length(encrypted_key)>0",
+                (int(uid),),
+            ).fetchall()
+        apis = [r["api_id"] for r in rows]
+        snap["configured_apis"] = apis
+        snap["has_any_key"] = bool(apis)
+    except Exception:
+        pass
+    return snap
+
+
 @router.post("/api/feedback")
 async def submit_feedback(request: Request, user=Depends(require_user)):
     """FB-01/02: 提交反馈 + 写 consent_log。自部署(local/desktop)模式转发到中央服务器。"""
@@ -251,13 +310,19 @@ async def submit_feedback(request: Request, user=Depends(require_user)):
     excerpts_with_verdict.append(_verdict_meta)
     excerpts_raw_final = json.dumps(excerpts_with_verdict, ensure_ascii=False)
 
+    # 采集模型/凭据上下文(诊断 GM 输出类反馈用),容错不阻断提交
+    try:
+        env_snapshot = json.dumps(_capture_feedback_env(user, body.get("env") or body.get("client_env")), ensure_ascii=False)
+    except Exception:
+        env_snapshot = None
+
     with connect() as db:
         # 写 feedback 行
         row = db.execute(
             """
             insert into feedback
-              (user_id, free_text, excerpts_jsonb, consent_token, ua, app_version, ip, contact_email)
-            values (%s, %s, %s::jsonb, %s, %s, %s, %s, %s)
+              (user_id, free_text, excerpts_jsonb, consent_token, ua, app_version, ip, contact_email, env_snapshot)
+            values (%s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s::jsonb)
             returning id
             """,
             (
@@ -269,6 +334,7 @@ async def submit_feedback(request: Request, user=Depends(require_user)):
                 app_version,
                 ip,
                 contact_email or None,
+                env_snapshot,
             ),
         ).fetchone()
         feedback_id = row["id"]
@@ -508,7 +574,9 @@ async def delete_my_feedback(
 
         if not row:
             raise HTTPException(status_code=404, detail="反馈不存在")
-        if row["user_id"] != user["id"]:
+        # 匿名反馈 user_id 为 NULL;Python 中 None != <id> 恒 True 会让归属校验形同虚设,
+        # 任何登录用户都能删他人匿名反馈。NULL 视为无主,一律禁删。
+        if row["user_id"] is None or row["user_id"] != user["id"]:
             raise HTTPException(status_code=403, detail="无权操作此反馈")
         if row["review_decision"] == "nsfw_terminate":
             raise HTTPException(
@@ -639,6 +707,13 @@ async def admin_feedback_decision(
 
         # nsfw_terminate: 调现有 queue_account_termination
         if decision == "nsfw_terminate":
+            # 匿名反馈无关联账户(user_id=NULL):传 None 进 queue_account_termination 会
+            # SQL/格式化崩溃成 500。直接拒绝(已记 review_decision,合规证据仍留存)。
+            if row["user_id"] is None:
+                return json_response(
+                    {"ok": False, "error": "匿名反馈无关联账户,无法执行 nsfw_terminate"},
+                    status_code=409,
+                )
             from ..dmca import queue_account_termination
             terminate_reason = f"反馈审查 nsfw_terminate (feedback_id={feedback_id}): {notes}"
             queue_account_termination(db, row["user_id"], terminate_reason)

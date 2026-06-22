@@ -406,6 +406,147 @@ async def api_tavern_set_system_prompt(
     return _json({"ok": True, "system_prompt": sp})
 
 
+@router.post("/api/tavern/chats/{chat_id}/immersive")
+async def api_tavern_set_immersive(
+    chat_id: int,
+    request: Request,
+    api_user: dict[str, Any] = Depends(get_current_user),
+) -> JSONResponse:
+    """body {"enabled": bool} → 写 state.data.tavern.immersive(沉浸式拟人模式 UI 开关)。
+    与 LLM 工具 set_tavern_immersive 同一持久位(state_snapshot->tavern.immersive),供前端抽屉开关用;
+    实际行为由 master.py._build_system 读此 flag 确定性注入。读改写 + 清缓存让下次 /api/state 生效。"""
+    from platform_app.db import connect, init_db
+
+    user_id = _uid(api_user)
+    body = await request.json()
+    enabled = bool(body.get("enabled"))
+    init_db()
+    # 真相源是 runtime_checkouts.state_snapshot(per-user working tree,load_active_state 优先读它),
+    # 不是 game_saves.state_snapshot。只写 game_saves 回合根本读不到(turn 从 working tree 加载)。
+    # 故主写 runtime_checkouts,再镜像 game_saves(/api/state self-heal + 展示)。用 jsonb `||` 合并,
+    # 即使 tavern 键不存在也会建好(jsonb_set create_missing 不会创建中间对象)。
+    _merge = (
+        "coalesce({col}, '{{}}'::jsonb) || jsonb_build_object('tavern', "
+        "coalesce({col}->'tavern', '{{}}'::jsonb) || jsonb_build_object('immersive', %s::boolean))"
+    )
+    with connect() as db:
+        if not _require_tavern_save(db, chat_id, user_id):
+            return _bad("无权操作该对话", 403)
+        db.execute(
+            "update runtime_checkouts set state_snapshot = "
+            + _merge.format(col="state_snapshot")
+            + ", updated_at = now() where user_id = %s and save_id = %s",
+            (enabled, user_id, chat_id),
+        )
+        db.execute(
+            "update game_saves set state_snapshot = "
+            + _merge.format(col="state_snapshot")
+            + ", updated_at = now() where id = %s and user_id = %s and save_kind = 'tavern'",
+            (enabled, chat_id, user_id),
+        )
+    _invalidate_cache(api_user)
+    return _json({"ok": True, "immersive": enabled})
+
+
+_AI_REPLY_SYS = (
+    "你在一段角色扮演对话里【扮演玩家自己的角色】,替玩家写一条【符合上下文】的回复,"
+    "回应对方角色刚刚说的话。要求:\n"
+    "- 用玩家角色的第一人称、自然口吻;贴合此前对话的语气与情境。\n"
+    "- 只写玩家这一方的台词与简短动作,**绝不替对方角色说话或行动**,不写旁白解说。\n"
+    "- 简洁,通常一到三句,像真人对话。\n"
+    '只返回 JSON:{"reply":"……"};reply 为要发出的回复正文,不含引号/解释/前后缀。'
+)
+
+
+@router.post("/api/tavern/chats/{chat_id}/ai-reply")
+async def api_tavern_ai_reply(
+    chat_id: int,
+    api_user: dict[str, Any] = Depends(get_current_user),
+) -> JSONResponse:
+    """AI 帮回:以【玩家自己的角色 / persona】生成一条符合上下文的回复,返回文本供前端填入输入框。
+    不入库、不发送(玩家可改后再发)。复用用户 BYOK 模型(同 autotitle 的 _get_gm 路径)。"""
+    import json as _j
+    from platform_app.db import connect, init_db
+
+    user_id = _uid(api_user)
+    init_db()
+    with connect() as db:
+        row = _require_tavern_save(db, chat_id, user_id)
+        if not row:
+            return _bad("无权操作该对话", 403)
+    ss = row.get("state_snapshot")
+    if isinstance(ss, str):
+        ss = _j.loads(ss or "{}")
+    ss = ss if isinstance(ss, dict) else {}
+    tav = ss.get("tavern") or {}
+    player = ss.get("player") or {}
+    history = ss.get("history") or []
+    if not history:
+        return _bad("对话还没开始,无法帮回", 400)
+    char_name = (tav.get("character") or {}).get("name") or "对方"
+    player_name = player.get("name") or "我"
+    persona_desc = ""
+    try:
+        pid = tav.get("persona_card_id")
+        if pid:
+            from platform_app import user_cards as _uc
+            pc = _uc.get_user_card(user_id, int(pid))
+            if pc:
+                persona_desc = "\n".join(
+                    str(pc.get(k) or "") for k in ("identity", "personality", "background", "speech_style")
+                ).strip()
+    except Exception:
+        persona_desc = ""
+    recent = history[-12:]
+    lines = []
+    for m in recent:
+        txt = str(m.get("content") or "").strip()
+        if not txt:
+            continue
+        who = player_name if m.get("role") == "user" else char_name
+        lines.append(f"{who}:{txt[:600]}")
+    convo = "\n".join(lines)
+    user_block = (
+        f"你扮演的玩家角色:{player_name}\n"
+        + (f"玩家角色设定:{persona_desc[:800]}\n" if persona_desc else "")
+        + f"对方角色:{char_name}\n\n"
+        f"最近的对话(玩家={player_name},对方={char_name}):\n{convo}\n\n"
+        f"现在请以 {player_name} 的身份,写一条回应 {char_name} 最后这段话的回复。"
+    )
+    try:
+        from app import _get_gm
+        from agents._harness import call_agent_json
+        gm = _get_gm(api_user)
+        api_id = getattr(gm, "api_id", None)
+        backend = getattr(gm, "_backend", None)
+        model = getattr(backend, "model_name", None)
+        if not (api_id and model):
+            return _bad("未配置可用模型", 400)
+        text, _usage = call_agent_json(
+            api_id, model, _AI_REPLY_SYS, user_block, user_id,
+            max_tokens=400, timeout_sec=30, agent_kind="tavern_ai_reply", save_id=chat_id,
+        )
+    except Exception as exc:
+        return _bad(f"AI 帮回失败:{type(exc).__name__}", 502)
+    reply = ""
+    try:
+        t = (text or "").strip()
+        if t.startswith("```"):
+            t = t.strip("`")
+            t = t[4:] if t[:4].lower() == "json" else t
+            t = t.strip()
+        obj = _j.loads(t)
+        if isinstance(obj, dict):
+            reply = str(obj.get("reply") or "").strip()
+    except Exception:
+        reply = (text or "").strip()
+    if not reply:
+        reply = (text or "").strip()
+    if not reply:
+        return _bad("AI 帮回未产生内容", 502)
+    return _json({"ok": True, "reply": reply[:4000]})
+
+
 _TITLE_SYS = (
     '你为一段对话起一个简短的中文标题,概括主题或场景。'
     '只返回 JSON,格式 {"title":"标题"};标题 4-14 字,不含引号/书名号/标点/表情/解释。'

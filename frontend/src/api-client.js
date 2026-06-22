@@ -356,6 +356,7 @@
       achievementsCatalog: () => GET(`/api/achievements`),  // 公开目录(匿名可拉)
       publicWall: (username) => GET(`/api/u/${encodeURIComponent(username)}/achievements`),  // 公开成就墙
       preferences: (body) => POST(`${API_PREFIX}/me/preference`, body),
+      getPreferences: () => GET(`${API_PREFIX}/me/profile`),
       gmStyleSchema: () => GET(`${API_PREFIX}/gm-style/schema`),
       getGmStyle: () => GET(`${API_PREFIX}/me/gm-style`),
       setGmStyle: (gm_style) => POST(`${API_PREFIX}/me/gm-style`, { gm_style }),
@@ -626,6 +627,7 @@
       rename: (sid, title) => POST(`${API_PREFIX}/saves/` + sid + "/rename", { title }),
       remove: (sid) => POST(`${API_PREFIX}/saves/` + sid + "/delete", {}),
       activate: (sid) => POST(`${API_PREFIX}/saves/` + sid + "/activate", {}),
+      updateSettings: (sid, updates, is_create) => PATCH(`${API_PREFIX}/saves/` + sid + "/settings", { updates, is_create: !!is_create }),
       exportUrl: (sid) => BASE + `${API_PREFIX}/saves/` + sid + "/export",
       importFile: (file) => {
         const fd = new FormData(); fd.append("file", file);
@@ -758,6 +760,10 @@
       rename: (id, title) => POST(`/api/tavern/chats/${id}/rename`, { title }),
       // F#3:编辑本对话系统提示词
       setSystemPrompt: (id, sp) => POST(`/api/tavern/chats/${id}/system-prompt`, { system_prompt: sp }),
+      // 沉浸式拟人模式开关(持久写 state.tavern.immersive,确定性注入 system prompt)
+      setImmersive: (id, enabled) => POST(`/api/tavern/chats/${id}/immersive`, { enabled: !!enabled }),
+      // AI 帮回:以玩家自己的角色/persona 生成一条符合上下文的回复(返回文本,前端填入输入框,不自动发送)
+      aiReply: (id) => POST(`/api/tavern/chats/${id}/ai-reply`, {}),
       // 类 Claude:按对话内容自动生成标题(后端幂等,仅 title 为空时生成)
       autotitle: (id) => POST(`/api/tavern/chats/${id}/autotitle`, {}),
       // 删除对话

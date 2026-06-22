@@ -13,6 +13,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { Icon } from '../icons.jsx';
+import { MobileComposer } from '../Composer.jsx';
 import { useStickToBottom } from '../../hooks/useStickToBottom.js';
 import {
   useTavernChatRun, applyTavernState, abortRun,
@@ -351,7 +352,7 @@ function SystemPromptSheet({ show, chat, systemPrompt, onClose, onSave }) {
 }
 
 /* ─── 双卡抽屉(右侧滑入 drawer):AI 角色卡 + 我的 persona + 系统提示 ── */
-function TwoCardDrawer({ open, character, persona, systemPrompt, onClose, onSavePersona, onSaveSystemPrompt }) {
+function TwoCardDrawer({ open, character, persona, systemPrompt, immersive, onToggleImmersive, onClose, onSavePersona, onSaveSystemPrompt }) {
   const [tab, setTab] = useState('character');
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(() => cardFormInit(persona));
@@ -410,9 +411,30 @@ function TwoCardDrawer({ open, character, persona, systemPrompt, onClose, onSave
         <div className="drawer-body" style={{ padding: '0 14px' }}>
           {/* ── AI 角色卡 ── */}
           {tab === 'character' && (
-            character
-              ? <CardReadout card={character} />
-              : <div className="muted-2" style={{ padding: '28px 0', textAlign: 'center', fontSize: 13 }}>{t('mobile.tavern.drawer.no_character')}</div>
+            <>
+              {/* 沉浸式拟人模式开关:让 AI 以真人(角色卡)口吻实时对话、不替玩家说话/行动 */}
+              {onToggleImmersive && (
+                <div className="tv-m-immersive-row">
+                  <div className="tv-m-immersive-tx">
+                    <strong>{t('mobile.tavern.immersive.label')}</strong>
+                    <span className="muted-2">{t('mobile.tavern.immersive.desc')}</span>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={!!immersive}
+                    className={`tv-m-switch${immersive ? ' on' : ''}`}
+                    onClick={() => onToggleImmersive(!immersive)}
+                    aria-label={t('mobile.tavern.immersive.label')}
+                  >
+                    <span className="tv-m-switch-knob" />
+                  </button>
+                </div>
+              )}
+              {character
+                ? <CardReadout card={character} />
+                : <div className="muted-2" style={{ padding: '28px 0', textAlign: 'center', fontSize: 13 }}>{t('mobile.tavern.drawer.no_character')}</div>}
+            </>
           )}
 
           {/* ── Persona ── */}
@@ -499,16 +521,26 @@ function TwoCardDrawer({ open, character, persona, systemPrompt, onClose, onSave
 }
 
 /* ─── 导入 / 新对话 sheet ────────────────────────────────────────── */
-function ImportSheet({ show, onClose, onDropCard, onPickFile, onJsonlFile, onCreateFromCard }) {
+function ImportSheet({ show, onClose, onPickFile, onJsonlFile, onCreateBlank }) {
   const { t } = useTranslation();
   const fileRef = useRef(null);
   const jsonlRef = useRef(null);
 
-  /* 拖卡区(移动端没有 drag,所以只有 click 触发文件选择) */
   return (
     <BottomSheet show={show} onClose={onClose} maxHeight="88%">
       <div className="sheet-title">{t('mobile.tavern.import.title')}</div>
       <div className="sheet-sub">{t('mobile.tavern.import.sub')}</div>
+
+      {/* 主入口:空白开始(直接开聊,不预设角色卡)。放最上、accent 样式 = 推荐路径。 */}
+      <button className="tv-m-import-btn primary" onClick={onCreateBlank}>
+        <span className="tv-m-import-ic"><Icon name="feedback" size={20} /></span>
+        <span className="tv-m-import-tx">
+          <strong>{t('mobile.tavern.import.blank_btn')}</strong>
+          <span>{t('mobile.tavern.import.blank_btn_sub')}</span>
+        </span>
+      </button>
+
+      <div className="tv-m-import-or muted-2">{t('mobile.tavern.import.or')}</div>
 
       {/* 拖/选卡 —— 用 <label> 包裹 input 原生触发文件选择器:
           手机浏览器对 display:none input 的 .click() 多会拦截,改 label 关联 + 视觉隐藏(非 display:none)。 */}
@@ -550,9 +582,14 @@ function ChatListItem({ chat, active, onOpen, onMenu }) {
   const curTitle = chat.title || chat.character_name || t('mobile.tavern.chat.default_title', { id: chat.id });
 
   return (
-    <button
+    // 外层用 div[role=button] 而非 <button>:内部含「更多」菜单按钮,button 套 button =
+    // 非法 HTML / React 注水报错(In HTML, button cannot be a descendant of button)。
+    <div
+      role="button"
+      tabIndex={0}
       className={`tv-m-chat-item${active ? ' active' : ''}`}
       onClick={() => onOpen(chat)}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(chat); } }}
     >
       <span className="tv-m-chat-av serif">{initial}</span>
       <span className="tv-m-chat-main">
@@ -571,12 +608,12 @@ function ChatListItem({ chat, active, onOpen, onMenu }) {
       >
         <Icon name="more" size={17} />
       </button>
-    </button>
+    </div>
   );
 }
 
 /* ─── 列表屏 ──────────────────────────────────────────────────────── */
-function ListView({ chats, archivedChats, activeId, loading, onExit, onOpen, onMenu, onNew }) {
+function ListView({ chats, archivedChats, activeId, loading, onExit, onOpen, onMenu, onNew, onQuickStart }) {
   const { t } = useTranslation();
   const [showArchived, setShowArchived] = useState(false);
   const empty = !loading && chats.length === 0 && archivedChats.length === 0;
@@ -605,6 +642,12 @@ function ListView({ chats, archivedChats, activeId, loading, onExit, onOpen, onM
           <div className="tv-m-hero-mark">✻</div>
           <h1 className="tv-m-hero-title serif">{t('mobile.tavern.list.hero_title')}</h1>
           <p className="tv-m-hero-sub muted">{t('mobile.tavern.list.hero_sub')}</p>
+          {/* 主操作:一键直接开聊(空白起手,不强制上传角色卡)。 */}
+          <button className="tv-m-hero-cta" onClick={onQuickStart}>
+            <Icon name="feedback" size={18} />
+            {t('mobile.tavern.list.hero_quick_start')}
+          </button>
+          {/* 次操作:导入角色卡 / 聊天记录。 */}
           <button className="tv-m-hero-drop" onClick={onNew}>
             <span className="tv-m-hero-drop-ic"><Icon name="upload" size={22} /></span>
             <span className="tv-m-hero-drop-main">{t('mobile.tavern.list.hero_drop_main')}</span>
@@ -655,8 +698,10 @@ function ListView({ chats, archivedChats, activeId, loading, onExit, onOpen, onM
 function ChatView({
   activeChat, character, persona, history, running, hasError, systemPrompt,
   onBack, onSend, onStop, onRetry, onOpenDrawer, onOpenMenu, onToast,
+  onAiReply, aiReplyLoading,
 }) {
   const [text, setText] = useState('');
+  const [plusOpen, setPlusOpen] = useState(false); // + 附加功能 sheet(AI 帮回 等)
   const [pressedIdx, setPressedIdx] = useState(null);
   const [msgSheet, setMsgSheet] = useState(null); // 长按消息 → 操作 sheet(与游戏台同一套交互)
   const lpTimer = useRef(null);
@@ -680,13 +725,7 @@ function ChatView({
     withButton: true,
   });
 
-  /* textarea 自动增高 */
-  useEffect(() => {
-    const ta = taRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
-  }, [text]);
+  /* textarea 自动增高已下沉到 MobileComposer(taRef 仍传入,供其管理高度)。 */
 
   const submit = () => {
     const t = text.trim();
@@ -752,7 +791,7 @@ function ChatView({
 
         {history.map((m, i) => {
           if (m.role === 'assistant') {
-            const toolOps = m._toolOps;
+            const toolOps = m._toolOps || m.tool_ops;
             const isStreaming = !m.streaming_done && i === total - 1 && running;
             return (
               <React.Fragment key={`a-${i}`}>
@@ -768,7 +807,7 @@ function ChatView({
                     </span>
                     {m.ts && <span className="msg-gts">{m.ts}</span>}
                   </div>
-                  {m._thinking && <ThinkingBlock text={m._thinking} />}
+                  {(m._thinking || m.reasoning) && <ThinkingBlock text={m._thinking || m.reasoning} />}
                   <div className="msg-body">
                     <Paras text={m.content} />
                     {isStreaming && (
@@ -854,42 +893,45 @@ function ChatView({
         )}
       </div>
 
-      {/* Composer */}
-      <div className="composer-zone">
-        <div className={`composer${text ? '' : ''}`}>
-          <div className="composer-input-row">
-            <textarea
-              ref={taRef}
-              className="c-text"
-              rows={1}
-              value={text}
-              placeholder={t('mobile.tavern.chat.composer_placeholder', { name: charName })}
-              onChange={e => setText(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  submit();
-                }
-              }}
-              disabled={running}
-            />
-            {running ? (
-              <button className="c-send" onClick={onStop} aria-label={t('mobile.tavern.chat.stop_aria')} style={{ background: 'var(--danger)' }}>
-                <Icon name="stop" size={14} />
-              </button>
-            ) : (
-              <button
-                className={`c-send${!text.trim() ? ' idle' : ''}`}
-                onClick={submit}
-                disabled={!text.trim()}
-                aria-label={t('mobile.tavern.chat.send_aria')}
-              >
-                <Icon name="send" size={14} />
-              </button>
-            )}
-          </div>
+      {/* Composer(统一组件 MobileComposer:酒馆带 + 附加功能=AI 帮回) */}
+      <MobileComposer
+        value={text}
+        onChange={setText}
+        onSubmit={submit}
+        onStop={onStop}
+        running={running}
+        placeholder={t('mobile.tavern.chat.composer_placeholder', { name: charName })}
+        sendAria={t('mobile.tavern.chat.send_aria')}
+        stopAria={t('mobile.tavern.chat.stop_aria')}
+        taRef={taRef}
+        leading={onAiReply ? (
+          <button className="c-plus" onClick={() => setPlusOpen(true)} aria-label={t('mobile.tavern.plus.aria')}>
+            <Icon name="plus" size={20} />
+          </button>
+        ) : null}
+      />
+
+      {/* + 附加功能 sheet:AI 帮回(以玩家自己的角色生成一条回复,填入输入框) */}
+      <BottomSheet show={plusOpen} onClose={() => setPlusOpen(false)} maxHeight="40%">
+        <div className="sheet-title">{t('mobile.tavern.plus.title')}</div>
+        <div className="sheet-list">
+          <button
+            className="sheet-item"
+            disabled={aiReplyLoading || running}
+            onClick={async () => {
+              setPlusOpen(false);
+              const reply = await (onAiReply && onAiReply());
+              if (reply) { setText(reply); setTimeout(() => taRef.current?.focus(), 50); }
+            }}
+          >
+            <span className="sheet-ico"><Icon name={aiReplyLoading ? 'refresh' : 'sparkle'} size={18} /></span>
+            <span className="sheet-tx">
+              <strong>{t('mobile.tavern.ai_reply.label')}</strong>
+              <span>{t('mobile.tavern.ai_reply.sub')}</span>
+            </span>
+          </button>
         </div>
-      </div>
+      </BottomSheet>
 
       {/* 长按消息 → 操作 sheet(与游戏台同一套交互;酒馆无存档/分支,故仅 复制 + 重新生成) */}
       <BottomSheet show={!!msgSheet} onClose={closeMsgSheet} maxHeight="50%">
@@ -928,6 +970,8 @@ export function MobileTavern({ nav }) {
   const [persona, setPersona] = useState(null);
   const [history, setHistory] = useState([]);
   const [systemPrompt, setSystemPrompt] = useState('');
+  const [immersive, setImmersive] = useState(false);
+  const [aiReplyLoading, setAiReplyLoading] = useState(false);
 
   /* ── 流式发送状态 ──────────────────────────────────────────────── */
   const [text, setText] = useState('');
@@ -980,7 +1024,7 @@ export function MobileTavern({ nav }) {
   /* ── applyState(收口到 applyTavernState 核心三段 + 移动端叠加 setSystemPrompt)──── */
   const applyState = useCallback((data) => {
     applyTavernState(data, {
-      setCharacter, setPersona, setHistory, setActiveChat, setSystemPrompt,
+      setCharacter, setPersona, setHistory, setActiveChat, setSystemPrompt, setImmersive,
     });
   }, []);
 
@@ -1037,6 +1081,23 @@ export function MobileTavern({ nav }) {
       fireToast(t('mobile.tavern.toast.card_imported', { name: r.character_name || t('mobile.tavern.chat.default_char_name') }), 'ok');
     } catch (e) {
       fireToast(t('mobile.tavern.toast.import_fail') + (e?.message ? ': ' + e.message : ''), 'danger');
+    }
+  }, [openSaveId, fireToast, t]);
+
+  /* ── 空白开始(直接开聊,不预设角色卡)──────────────────────────────
+   * 后端 create_tavern_save 支持 character_card_id=None(空起手对话,由 agent 即兴扮演);
+   * 桌面端「新建对话」也是 tavern.create({}) → r.save.id。此前移动端 ImportSheet 只给「上传
+   * 角色卡 / 导入记录」两个入口 → 用户被强制上传 json 卡才能开聊(反馈:新酒馆聊天被拦住)。 */
+  const onCreateBlank = useCallback(async () => {
+    setImportOpen(false);
+    try {
+      const r = await window.api.tavern.create({});
+      if (r && r.ok === false) throw new Error(r.error || r.detail || t('mobile.tavern.toast.create_fail'));
+      const newId = (r && r.save && r.save.id) || r?.save_id || r?.id;
+      if (!newId) throw new Error(t('mobile.tavern.toast.create_fail'));
+      await openSaveId(newId, t('mobile.tavern.chat.default_char_name'));
+    } catch (e) {
+      fireToast(t('mobile.tavern.toast.create_fail') + (e?.message ? ': ' + e.message : ''), 'danger');
     }
   }, [openSaveId, fireToast, t]);
 
@@ -1167,6 +1228,36 @@ export function MobileTavern({ nav }) {
     }
   }, [applyState, fireToast, t]);
 
+  /* ── 沉浸式拟人模式开关(持久写 state.tavern.immersive,确定性注入 system prompt)── */
+  const onToggleImmersive = useCallback(async (enabled) => {
+    if (!activeId) return;
+    setImmersive(enabled); // 乐观更新
+    try {
+      await window.api.tavern.setImmersive(activeId, enabled);
+      fireToast(enabled ? t('mobile.tavern.immersive.on_toast') : t('mobile.tavern.immersive.off_toast'), 'ok');
+    } catch (e) {
+      setImmersive(!enabled); // 回滚
+      fireToast(t('mobile.tavern.toast.save_fail'), 'danger');
+    }
+  }, [activeId, fireToast, t]);
+
+  /* ── AI 帮回:以玩家自己的角色生成一条回复 → 填入输入框(不自动发送)── */
+  const onAiReply = useCallback(async () => {
+    if (!activeId || aiReplyLoading) return null;
+    setAiReplyLoading(true);
+    try {
+      const r = await window.api.tavern.aiReply(activeId);
+      const reply = (r && r.reply) || '';
+      if (!reply) { fireToast(t('mobile.tavern.ai_reply.empty'), 'warn'); return null; }
+      return reply;
+    } catch (e) {
+      fireToast(t('mobile.tavern.ai_reply.fail'), 'danger');
+      return null;
+    } finally {
+      setAiReplyLoading(false);
+    }
+  }, [activeId, aiReplyLoading, fireToast, t]);
+
   /* ── 列表页打开菜单时,记录操作 chat ─────────────────────────── */
   const openMenu = useCallback((chat) => {
     setMenuTarget(chat);
@@ -1206,6 +1297,7 @@ export function MobileTavern({ nav }) {
             onOpen={openChat}
             onMenu={openMenu}
             onNew={() => setImportOpen(true)}
+            onQuickStart={onCreateBlank}
           />
         </div>
 
@@ -1232,6 +1324,8 @@ export function MobileTavern({ nav }) {
               onOpenDrawer={() => setDrawerOpen(true)}
               onOpenMenu={openChatMenu}
               onToast={fireToast}
+              onAiReply={onAiReply}
+              aiReplyLoading={aiReplyLoading}
             />
           </div>
         )}
@@ -1243,6 +1337,8 @@ export function MobileTavern({ nav }) {
         character={character}
         persona={persona}
         systemPrompt={systemPrompt}
+        immersive={immersive}
+        onToggleImmersive={onToggleImmersive}
         onClose={() => setDrawerOpen(false)}
         onSavePersona={onSavePersona}
         onSaveSystemPrompt={onSaveSystemPrompt}
@@ -1254,6 +1350,7 @@ export function MobileTavern({ nav }) {
         onClose={() => setImportOpen(false)}
         onPickFile={onPickCardFile}
         onJsonlFile={onPickJsonlFile}
+        onCreateBlank={onCreateBlank}
       />
 
       {/* ── 聊天菜单 sheet ── */}

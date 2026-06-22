@@ -12,10 +12,12 @@ _CHARS_PER_TOKEN = 1.6
 _BUDGET_MIN = 800
 _BUDGET_MAX = 3000
 
-# 常驻层缓存:同 script 的 constant 骨架每回合相同,缓存掉省一次 DB 读 + 拼装。
-# 进程内(多 worker 各自一份,只读常量,无一致性问题)。编辑器改 constant 后用 invalidate 清。
+# 常驻层缓存:同 script 的 constant 骨架每回合相同,缓存掉省一次 DB 读 + 拼装。进程内(每 worker 一份)。
+# ⚠️ 跨 worker 一致性:invalidate_constant_cache 只清当前 worker 的字典;workers=2 下另一 worker 编辑后
+# 仍服务旧 constant 直到 TTL 过期。TTL 由 300s 收到 30s,把这段「改了世界书但某 worker 仍喂旧版」的窗口
+# 限到 ≤30s(彻底解需 redis pub/sub 广播失效,见审计待办)。代价仅多一点 constant DB 重读。
 _CONST_CACHE: dict[tuple[int, int], tuple[float, str]] = {}
-_CONST_TTL = 300.0  # 秒
+_CONST_TTL = 30.0  # 秒(跨 worker 失效窗口上界)
 
 
 def invalidate_constant_cache(script_id: int | None = None) -> None:

@@ -343,8 +343,15 @@ def _resolve_provider_creds(api: dict[str, Any], user_id: int | None) -> dict[st
 
 def _list_anthropic_models(api: dict[str, Any], user_id: int | None = None) -> list[dict[str, Any]]:
     from anthropic import Anthropic
-    key = _resolve_provider_key(api, user_id)
-    client = Anthropic(api_key=key)
+    from core.outbound import safe_httpx_client
+    creds = _resolve_provider_creds(api, user_id)
+    client_kwargs: dict[str, Any] = {
+        "api_key": creds["key"],
+        "http_client": safe_httpx_client(),
+    }
+    if creds.get("base_url_override"):
+        client_kwargs["base_url"] = creds["base_url_override"]
+    client = Anthropic(**client_kwargs)
     models = []
     for m in client.models.list():
         models.append({
@@ -492,6 +499,17 @@ def _probe_error_message(status_detail: str) -> str:
 
 
 def probe_availability(api_id: str, model_real_name: str | None = None, timeout_sec: int = 15, user_id: int | None = None) -> dict[str, Any]:
+    """发一条最小请求验证 (api_id, model) 是否真的能调用。
+
+    Returns:
+        {
+          "ok": True/False,
+          "latency_ms": int,
+          "response_text": str (first 80 chars),
+          "model_used": "...",
+          "error": "..." (if failed),
+        }
+    """
     # 服务器模式强制：必须有 user-scoped 凭证才能真实发请求（避免烧服务端凭证）
     if _require_user_credential():
         # vertex_ai BYOK 存在 "AgentPlatform" 这个 api_id 下，需要特殊处理
@@ -513,17 +531,6 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
                 "latency_ms": 0,
                 "error": "需要在「个人主页 → API 凭证」中配置该 provider 的 key 才能发探测请求",
             }
-    """发一条最小请求验证 (api_id, model) 是否真的能调用。
-
-    Returns:
-        {
-          "ok": True/False,
-          "latency_ms": int,
-          "response_text": str (first 80 chars),
-          "model_used": "...",
-          "error": "..." (if failed),
-        }
-    """
     from model_registry import find_api, load_model_catalog
 
     catalog = load_model_catalog()

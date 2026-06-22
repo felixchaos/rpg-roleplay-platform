@@ -55,10 +55,21 @@ create table if not exists stop_signals (
 """
 
 
+# [round-4-P2] 建表只跑一次:原来 is_stop_requested 每个流式 token 都触发 CREATE TABLE
+#   IF NOT EXISTS DDL + 一次连接池 acquire,几个并发 streaming 用户即可耗尽连接池(每请求 8s 超时)。
+_STOP_TABLE_READY = False
+_last_stop_cleanup_at = 0.0  # 过期行清理节流(秒)
+_STOP_CLEANUP_INTERVAL = 30.0
+
+
 def _ensure_stop_table() -> None:
+    global _STOP_TABLE_READY
+    if _STOP_TABLE_READY:
+        return
     init_db()
     with connect() as db:
         db.execute(_STOP_TABLE_DDL)
+    _STOP_TABLE_READY = True
 
 
 def request_stop(user_id: int, run_id: int) -> None:
@@ -80,11 +91,18 @@ def is_stop_requested(user_id: int, run_id: int) -> bool:
         return False
     try:
         _ensure_stop_table()
+        global _last_stop_cleanup_at
+        import time as _t
+        _now = _t.monotonic()
+        _do_cleanup = (_now - _last_stop_cleanup_at) >= _STOP_CLEANUP_INTERVAL
         with connect() as db:
-            db.execute(
-                "delete from stop_signals where requested_at < now() - (interval '1 second' * %s)",
-                (int(STOP_SIGNAL_MAX_AGE_SEC),),
-            )
+            if _do_cleanup:
+                # [round-4-P2] 过期行清理从「每 token 都删」改为节流 ≥30s 一次,避免热路径无谓 DELETE。
+                _last_stop_cleanup_at = _now
+                db.execute(
+                    "delete from stop_signals where requested_at < now() - (interval '1 second' * %s)",
+                    (int(STOP_SIGNAL_MAX_AGE_SEC),),
+                )
             row = db.execute(
                 """
                 select 1
@@ -128,25 +146,59 @@ def cleanup_old_stop_signals(max_age_sec: int = 3600) -> int:
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  Advisory lock: 防止多 worker 同时跑同一个 import_job
+#  Job lock: 防止同 job_id 被多 worker 重复跑
 # ══════════════════════════════════════════════════════════════════════
-def try_acquire_job_lock(job_key: str, worker_id: str = WORKER_ID) -> bool:
-    """非阻塞 advisory lock。返回 False = 已被其他 worker 占。
+# ⚠️ 原实现用 session 级 pg_advisory_lock:连接经 PgBouncer 事务池借还,acquire 与 release 落在
+#    不同后端会话 → unlock 永远 no-op、锁泄漏;且锁随连接归还/重置即失效 → 形同虚设,多 worker
+#    可同跑同一 import job(数据重复/损坏)。改用 DB 行锁(与 stop_signals 同套路,跨连接/事务池可靠),
+#    带 stale 接管做崩溃恢复(持有者崩溃后超时可被另一 worker 接管)。
+try:
+    _JOB_LOCK_STALE_SEC = max(300, int(os.getenv("RPG_JOB_LOCK_STALE_SEC", "7200")))
+except ValueError:
+    _JOB_LOCK_STALE_SEC = 7200
 
-    用 sha256 派生稳定 int8 lock_id (跨进程一致), 不再受 PYTHONHASHSEED 影响。
-    """
+_JOB_LOCK_DDL = """
+create table if not exists job_locks (
+  job_key text primary key,
+  worker_id text not null,
+  acquired_at timestamptz not null default now()
+)
+"""
+
+
+def _ensure_job_lock_table() -> None:
     init_db()
-    lock_id = _stable_lock_id(job_key)
     with connect() as db:
-        row = db.execute("select pg_try_advisory_lock(%s) as ok", (lock_id,)).fetchone()
-    return bool(row and row["ok"])
+        db.execute(_JOB_LOCK_DDL)
 
 
-def release_job_lock(job_key: str) -> None:
-    lock_id = _stable_lock_id(job_key)
+def try_acquire_job_lock(job_key: str, worker_id: str = WORKER_ID) -> bool:
+    """非阻塞抢锁。返回 False = 已被其他 worker 持有(且未 stale)。"""
+    _ensure_job_lock_table()
+    with connect() as db:
+        # 新建即抢到;冲突仅当旧锁 stale(持有者疑似崩溃)才接管;否则 RETURNING 空 → 抢锁失败。
+        row = db.execute(
+            """
+            insert into job_locks(job_key, worker_id, acquired_at) values (%s, %s, now())
+            on conflict (job_key) do update
+              set worker_id = excluded.worker_id, acquired_at = now()
+              where job_locks.acquired_at < now() - (interval '1 second' * %s)
+            returning job_key
+            """,
+            (job_key, worker_id, int(_JOB_LOCK_STALE_SEC)),
+        ).fetchone()
+    return bool(row)
+
+
+def release_job_lock(job_key: str, worker_id: str = WORKER_ID) -> None:
+    """释放本 worker 持有的锁(只删自己的,不动别人 stale 接管后的锁)。"""
     try:
+        _ensure_job_lock_table()
         with connect() as db:
-            db.execute("select pg_advisory_unlock(%s)", (lock_id,))
+            db.execute(
+                "delete from job_locks where job_key = %s and worker_id = %s",
+                (job_key, worker_id),
+            )
     except Exception:
         pass
 

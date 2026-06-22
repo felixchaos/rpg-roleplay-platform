@@ -35,6 +35,8 @@ export function useImageGeneration({ onDone, onFail } = {}) {
   const [error, setError] = useState(null);
   const [credsMissing, setCredsMissing] = useState(false);
   const pollRef = useRef(null);
+  // 陈旧取消守卫:每次 generate() 递增,poll 在每个 await 后校验是否仍为当前轮次。
+  const genIdRef = useRef(0);
 
   const stop = useCallback(() => {
     if (pollRef.current) {
@@ -71,7 +73,7 @@ export function useImageGeneration({ onDone, onFail } = {}) {
     if (onDone) onDone(url);
   }, [stop, onDone]);
 
-  const poll = useCallback((imageId, perCall) => {
+  const poll = useCallback((imageId, perCall, myGen) => {
     const pc = perCall || {};
     const intervalMs = 2000;
     const catchMs = Number.isFinite(pc.pollCatchMs) ? pc.pollCatchMs : 2000;
@@ -79,31 +81,35 @@ export function useImageGeneration({ onDone, onFail } = {}) {
     (async () => {
       try {
         const r = await window.api.images.get(imageId);
+        if (genIdRef.current !== myGen) return;  // 陈旧轮次,已被新 generate() 取代
         if (!r) {
           if (pc.emptyResStops) { handleFail(pc.emptyResMsg || '轮询返回空响应', pc); return; }
-          pollRef.current = setTimeout(() => poll(imageId, pc), intervalMs);
+          pollRef.current = setTimeout(() => poll(imageId, pc, myGen), intervalMs);
           return;
         }
         const status = pc.doneFromStatus ? pc.doneFromStatus(r) : r.status;
         if (status === 'done' && (!pc.requireUrl || r.url)) { handleDone(r.url); return; }
         if (status === 'failed') { handleFail(r.error || pc.failFallback || '生成失败', pc); return; }
-        pollRef.current = setTimeout(() => poll(imageId, pc), intervalMs);
+        pollRef.current = setTimeout(() => poll(imageId, pc, myGen), intervalMs);
       } catch (e) {
+        if (genIdRef.current !== myGen) return;  // 陈旧轮次
         if (pc.catchStops) { handleFail((e && e.message) || pc.pollCatchMsg || '轮询出错', pc); return; }
-        pollRef.current = setTimeout(() => poll(imageId, pc), catchMs);
+        pollRef.current = setTimeout(() => poll(imageId, pc, myGen), catchMs);
       }
     })();
   }, [stop, handleDone, handleFail]);
 
   const generate = useCallback(async (body, perCall) => {
     const pc = perCall || {};
+    const myGen = ++genIdRef.current;  // 每次生成递增,供 poll 的陈旧守卫比对
     setError(null);
     setCredsMissing(false);
     setGenerating(true);
     try {
       const r = await window.api.images.generate(body);
+      if (genIdRef.current !== myGen) return;  // generate() 已被新调用取代
       if (pc.inspect && pc.inspect(r, { fail: (m) => handleFail(m, pc) })) return;
-      if (r && r.image_id) { poll(r.image_id, pc); return; }
+      if (r && r.image_id) { poll(r.image_id, pc, myGen); return; }
       if (pc.noImageIdMsg) { handleFail(pc.noImageIdMsg, pc); return; }
       handleFail(r && r.error, pc);
     } catch (e) {

@@ -11,7 +11,7 @@ import { ConfirmModal, SettingsToggle, useAutoSave, usePlatformData, useReactive
 import AgentModelPicker from '../components/AgentModelPicker.jsx';
 import GmStyleEditor from '../components/GmStyleEditor.jsx';
 import { getCaps as _getCapsImported, normalizeProviderId, credentialToCatalogId, catalogToCredentialId } from '../components/catalog-helpers.js';
-import { MODULES as AGENT_MODULES } from '../agent-modules.js';
+import { MODULES as AGENT_MODULES, MODULE_GROUPS, FEATURES as AGENT_FEATURES } from '../agent-modules.js';
 import { readScopedPref, readNumberPref } from '../lib/prefs.js';
 import { lsGetJSON, lsSetJSON } from '../lib/storage.js';
 import { plNavigate } from '../router.js';
@@ -197,56 +197,20 @@ function PrefSection() {
 function ExtractorSection() {
   const { t } = useTranslation();
   const [enabled, setEnabled] = useStatePL(false);
-  // Wave 11.5-A: 旧默认是 "vertex_ai",改为统一的 "agent_platform"(后端 v024 migration
-   //   会把 user_credentials.api_id = 'vertex'/'vertex_ai' 自动改名)。
-  const [apiId, setApiId] = useStatePL("agent_platform");
-  const [modelRealName, setModelRealName] = useStatePL("");
-  const [apis, setApis] = useStatePL([]);
   const save = useAutoSave(t('settings.extractor.title'), "extractor");
   useEffectPL(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [profile, models] = await Promise.all([
-          window.api.account.profile(),
-          window.api.models.list().catch(() => ({ apis: [] })),
-        ]);
+        const profile = await window.api.account.profile();
         if (cancelled) return;
         const p = (profile && profile.preferences) || {};
         if (typeof p["extractor.enabled"] === "boolean") setEnabled(p["extractor.enabled"]);
-        if (p["extractor.api_id"]) setApiId(p["extractor.api_id"]);
-        if (p["extractor.model_real_name"]) setModelRealName(p["extractor.model_real_name"]);
-        // /api/models 真实返回 shape: {ok, models: {apis:[...]}, selected}
-        // 旧代码把 models 当扁平对象 → setApis(非数组) → apis.find 崩。
-        // 改为先解嵌套 models.models.apis，再兼容历史扁平 .apis。
-        const rawApis = models?.models?.apis
-          ?? (Array.isArray(models?.apis) ? models.apis : null)
-          ?? [];
-        setApis(Array.isArray(rawApis) ? rawApis : []);
       } catch (_) {}
     })();
     return () => { cancelled = true; };
   }, []);
 
-  // Wave 11.5-A: 兼容老 profile 里仍存 "vertex"/"vertex_ai" 的 api_id —
-  // 匹配时把它折成 "agent_platform" 再找 currentApi,避免下拉默认空。
-  const _normApi = (id) => (id === "vertex" || id === "vertex_ai") ? "agent_platform" : id;
-  const currentApi = apis.find(a => _normApi(a.api_id || a.id) === _normApi(apiId));
-  const modelList = (currentApi?.models || currentApi?.entries || []);
-  // 推荐 provider 排前，未在 /api/models 出现的兜底也保留（用户可能未配 agent_platform/anthropic 但仍要选）
-  // Wave 11.5-A: vertex_ai → agent_platform 统一命名。
-  const apiOptions = [];
-  const seen = new Set();
-  for (const preferred of ["agent_platform", "anthropic"]) {
-    apiOptions.push({ id: preferred, name: preferred === "agent_platform" ? "Agent Platform（JSON mode）" : "Anthropic（native tool_use）" });
-    seen.add(preferred);
-  }
-  for (const a of apis) {
-    const aid = a.api_id || a.id;
-    if (!aid || seen.has(aid)) continue;
-    apiOptions.push({ id: aid, name: (a.display_name || a.name || aid) + "（JSON mode）" });
-    seen.add(aid);
-  }
   return (
     <SetGroup title={t('settings.extractor.title')}>
       <SetRow label={t('settings.extractor.enable')} description={t('settings.extractor.enable_desc')}>
@@ -527,20 +491,22 @@ function ModelsSection() {
   }, [useMock, loadConfiguredApis]);
 
   const toggleApi = async (id) => {
-    setApis(arr => arr.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a));
+    const api = apis.find(a => a.id === id);
+    const newEnabled = !api?.enabled;
+    setApis(arr => arr.map(a => a.id === id ? { ...a, enabled: newEnabled } : a));
     try {
-      const api = apis.find(a => a.id === id);
-      await window.api.models.upsertApi({ api_id: id, enabled: !api?.enabled });
+      await window.api.models.upsertApi({ api_id: id, enabled: newEnabled });
     } catch (_) {}
   };
   const toggleModel = async (apiId, mId) => {
+    const api = apis.find(a => a.id === apiId);
+    const m = api?.models.find(m => m.id === mId);
+    const wasEnabled = m?.enabled ?? true;
     setApis(arr => arr.map(a => a.id === apiId
-      ? { ...a, models: a.models.map(m => m.id === mId ? { ...m, enabled: !m.enabled } : m) }
+      ? { ...a, models: a.models.map(m => m.id === mId ? { ...m, enabled: !wasEnabled } : m) }
       : a));
     try {
-      const api = apis.find(a => a.id === apiId);
-      const m = api?.models.find(m => m.id === mId);
-      await window.api.models.upsertModel({ api_id: apiId, real_name: mId, enabled: !m?.enabled });
+      await window.api.models.upsertModel({ api_id: apiId, real_name: mId, enabled: !wasEnabled });
     } catch (_) {}
   };
   const renameModel = async (apiId, mId, display) => {
@@ -550,19 +516,18 @@ function ModelsSection() {
     try { await window.api.models.upsertModel({ api_id: apiId, real_name: mId, display_name: display }); } catch (_) {}
   };
   const setModelVisibility = async (apiId, ids) => {
+    const api = apis.find(a => a.id === apiId);
     setApis(arr => arr.map(a => a.id === apiId
       ? { ...a, models: a.models.map(m => ({ ...m, visible: ids.includes(m.id) })) }
       : a));
-    const api = apis.find(a => a.id === apiId);
     if (api) {
       await Promise.all(api.models.map(m => {
         const body = { api_id: apiId, model: m.id, visible: ids.includes(m.id) };
         // 同步来的(overlay)模型走 per-user 端点(任何用户可隐藏自己的、re-sync 不重置);
-        // 全局策展模型走全局端点(admin)。
-        const call = m.synced
-          ? window.api.models.meVisibility(body)
-          : window.api.models.visibility(body);
-        return call.catch(() => {});
+        // 全局策展模型走全局端点(admin-only)——非 admin 跳过,避免注定失败的 403。
+        if (m.synced) return window.api.models.meVisibility(body).catch(() => {});
+        if (!isAdminUser) return Promise.resolve();  // 非 admin 无权改全局可见性
+        return window.api.models.visibility(body).catch(() => {});
       }));
     }
   };
@@ -609,6 +574,8 @@ function ModelsSection() {
           window.__apiToast?.(t('settings.models.delete_key_ok'), { kind: 'ok' });
           setSelectedApiId(null);
           setApis(arr => arr.map(a => a.id === selectedApi.id ? { ...a, key_set: false, key_hint: '—' } : a));
+          // 删除凭证后从 autoSyncedRef 移除,允许下次重新配置 key 后重新 auto-sync。
+          autoSyncedRef.current.delete(selectedApi.id);
           if (typeof window.__refreshPlatform === 'function') { try { await window.__refreshPlatform(); } catch (_) {} }
         } catch (e) { window.__apiToast?.(t('settings.models.delete_key_fail'), { kind: 'danger', detail: e?.message }); }
       }}
@@ -1217,7 +1184,7 @@ function ValidateModal({ open, api, onClose, onConfirm }) {
         await window.api.models.upsertModel({
           api_id: api.id,
           real_name: m.real_name || m.id,
-          display: m.display || m.name || m.real_name,
+          display_name: m.display || m.name || m.real_name,
           enabled: true,
         });
         ok++;
@@ -1894,6 +1861,7 @@ const PROVIDERS_CONFIG = [
  */
 function ProviderConfigSection() {
   const { t } = useTranslation();
+  const isAdminUser = !!(window.RPG_AUTH && window.RPG_AUTH.authed && window.MOCK_PLATFORM?.user?.role === "admin");
   const [creds, setCreds] = useStatePL({});
   const [saving, setSaving] = useStatePL({});
   const [agentPlatformJson, setAgentPlatformJson] = useStatePL(null);
@@ -1924,9 +1892,13 @@ function ProviderConfigSection() {
         await window.api.credentials.set({ api_id: providerId, api_key: apiKey.trim() });
       }
       if (baseUrl !== undefined) {
-        const cfg = PROVIDERS_CONFIG.find((p) => p.id === providerId);
-        const kind = providerId === "AgentPlatform" ? "vertex_ai" : providerId === "anthropic" ? "anthropic" : "openai_compat";
-        await window.api.models.upsertApi({ api_id: catalogApiIdForCredential(providerId), base_url: baseUrl, kind, display_name: cfg?.name || providerId });
+        if (isAdminUser) {
+          const cfg = PROVIDERS_CONFIG.find((p) => p.id === providerId);
+          const kind = providerId === "AgentPlatform" ? "vertex_ai" : providerId === "anthropic" ? "anthropic" : "openai_compat";
+          await window.api.models.upsertApi({ api_id: catalogApiIdForCredential(providerId), base_url: baseUrl, kind, display_name: cfg?.name || providerId });
+        } else {
+          window.__apiToast?.(t('settings.providers.admin_base_url_only') || '仅管理员可修改 provider base URL', { kind: "warn", duration: 3000 });
+        }
       }
       window.__apiToast?.(t('settings.providers.save_ok'), { kind: "ok", duration: 1800 });
       setCreds(s => ({ ...s, [providerId]: { ...s[providerId], has_key: !!(apiKey?.trim() || s[providerId]?.has_key), base_url: baseUrl ?? s[providerId]?.base_url } }));
@@ -2348,6 +2320,9 @@ function ModelParamsSection() {
       </SetRow>
 
       <SetRow label={t('settings.modelparams.stop')} description={t('settings.modelparams.stop_desc')}>
+        {/* stop 以竖线分隔串存入 user_preferences(如 "player:|system:")。
+            Preview JSON 仅展示拆分后的数组形态;后端当前不消费此字段(尚未接入 LLM call),
+            存储格式保持竖线串,待后端接入时在 app.py 里 split("|") 转数组传给模型。 */}
         <CSInput value={params.stop} onChange={({ detail }) => u("stop", detail.value)}
           placeholder="player:|system:" />
       </SetRow>
@@ -2450,6 +2425,23 @@ function ParamSlider({ label, desc, value, min, max, step, unit, onChange }) {
         console)
    主 GM 不可继承(它是被继承者);embedder / image_gen allowInherit=false(必须自己选)。
    embedder 还传 platformVertexAllowed(admin/vip 才显示平台 vertex embedding 兜底)。 */
+/* FeatureToggle — 引擎特性开关(每用户、默认开)。写 user_preferences["<key>.enabled"];
+   后端 core.feature_flags.feature_enabled 读同一键(未设=跟随环境默认开)。键名前后端单一来源。
+   initial 由父组件一次性 profile 读出下发,避免每个开关各拉一次 profile。 */
+function FeatureToggle({ featureKey, label, desc, initial }) {
+  const { t } = useTranslation();
+  const [on, setOn] = useStatePL(initial !== false);
+  const save = useAutoSave(label, featureKey);
+  useEffectPL(() => { setOn(initial !== false); }, [initial]);
+  return (
+    <SetRow label={label} description={desc}>
+      <CSToggle checked={on} onChange={({ detail }) => { setOn(detail.checked); save("enabled", detail.checked); }}>
+        {on ? t('settings.features.on', { defaultValue: '已启用' }) : t('settings.features.off', { defaultValue: '已关闭' })}
+      </CSToggle>
+    </SetRow>
+  );
+}
+
 function ModuleModelsSection() {
   const { t } = useTranslation();
   // 结构字段(prefPrefix / persistShape / dictKey / capabilityFilter / inherit / …)走单一来源
@@ -2457,7 +2449,7 @@ function ModuleModelsSection() {
   // 故保留在本地按 id 取 → 显示零变化。
   const LABELS = {
     gm: t('settings.more.modules.label_gm'), sub_agent: t('settings.more.modules.label_sub_agent'), set_parser: t('settings.more.modules.label_set_parser'),
-    console: t('settings.more.modules.label_console'), editor: t('settings.more.modules.label_editor'), extractor: t('settings.more.modules.label_extractor'), card_gen: t('settings.more.modules.label_card_gen'),
+    console: t('settings.more.modules.label_console'), editor: t('settings.more.modules.label_editor'), extractor: t('settings.more.modules.label_extractor'), recorder: t('settings.more.modules.label_recorder'), card_gen: t('settings.more.modules.label_card_gen'),
     card_import: t('settings.more.modules.label_card_import'), critic: t('settings.more.modules.label_critic'), verifier: t('settings.more.modules.label_verifier'),
     phase_digest: t('settings.more.modules.label_phase_digest'), black_swan: t('settings.more.modules.label_black_swan'), agent: t('settings.more.modules.label_agent'),
     embedder: t('settings.more.modules.label_embedder'), image_gen: t('settings.more.modules.label_image_gen'),
@@ -2469,6 +2461,7 @@ function ModuleModelsSection() {
     console: t('settings.more.modules.tip_console'),
     editor: t('settings.more.modules.tip_editor'),
     extractor: t('settings.more.modules.tip_extractor'),
+    recorder: t('settings.more.modules.tip_recorder'),
     card_gen: t('settings.more.modules.tip_card_gen'),
     card_import: t('settings.more.modules.tip_card_import'),
     critic: t('settings.more.modules.tip_critic'),
@@ -2481,6 +2474,28 @@ function ModuleModelsSection() {
   };
   const MODULES = AGENT_MODULES.map((m) => ({ ...m, label: LABELS[m.id], tip: TIPS[m.id] }));
 
+  // 引擎特性的本地默认文案(i18n 缺键时回退);label/desc 走 settings.features.<i18nKey>.*
+  const FEAT_LABELS = {
+    ctx_tiered: "分层上下文缓存", recorder_unified: "史官三合一", narrator_slim: "文宗精简(去工具循环)",
+    rag_gate: "RAG 检索闸", anchor_pace: "世界线锚点节奏", kb_state: "存档知识库 DB 化",
+  };
+  const FEAT_DESCS = {
+    ctx_tiered: "把稳定前缀与动态内容分层,命中模型前缀缓存,显著省 token。",
+    recorder_unified: "状态提取 + 世界线锚点判定合并为一次调用,省一次 LLM。",
+    narrator_slim: "主叙事单次成文、不带工具循环(最大 token 乘数),状态交史官落库。",
+    rag_gate: "由司命判定本回合是否需要检索原著,不需要则跳过,省检索 token。",
+    anchor_pace: "按对话实际节奏推进锚点、同章逐个标记、角色死亡使相关锚点失效 —— 治跳章 / 不按锚点走。",
+    kb_state: "存档状态以数据库行存储(单一来源),便于精确检索与维护;关闭则用传统整档存储。",
+  };
+  const GROUP_DESC = {
+    core: "三贤者流水线:文宗叙事、司命规划、史官记录,以及核心 GM 辅助模型。",
+    script: "剧本编辑、角色卡生成 / 导入与审校相关的模型。",
+    world: "世界线锚点、阶段摘要、黑天鹅事件等世界推进相关。",
+    gen: "向量检索(RAG)与图像生成。",
+    misc: "未单独配置时的通用兜底模型。",
+  };
+  const _subHdr = { fontSize: 11, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--muted)", marginBottom: 8 };
+
   // task: embedder 兜底状态 — RAG 模型 section banner 文案 + 是否给 admin/vip 平台 vertex 兜底
   const [embedderStatus, setEmbedderStatus] = useStatePL(null);
   useEffectPL(() => {
@@ -2490,71 +2505,111 @@ function ModuleModelsSection() {
   // 后端已按 _is_admin gate(admin/vip 才 true);非 vip/admin 不显示平台 vertex embedding。
   const platformVertexAllowed = !!(embedderStatus && embedderStatus.platform_fallback_available);
 
+  // 一次性读取特性偏好(各开关初值),避免每个 FeatureToggle 各拉一次 profile。
+  const [featPrefs, setFeatPrefs] = useStatePL({});
+  useEffectPL(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const profile = await window.api.account.profile();
+        if (!cancelled && profile && profile.preferences) setFeatPrefs(profile.preferences);
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const renderModelRow = (mod) => (
+    <div key={mod.id}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: 13 }}>{mod.label}</strong>
+        <span className="muted" style={{ fontSize: 11 }}>{mod.tip}</span>
+      </div>
+      <AgentModelPicker
+        prefPrefix={mod.prefPrefix}
+        persistShape={mod.persistShape || "flat"}
+        dictKey={mod.dictKey || null}
+        capabilityFilter={mod.capabilityFilter || null}
+        allowInherit={!!mod.inherit}
+        defaultModel={mod.defaultModel || null}
+        preferProvider={mod.preferProvider || null}
+        fallbackPrefix={mod.fallbackPrefix || null}
+        platformVertexAllowed={mod.id === "embedder" ? platformVertexAllowed : false}
+        variant="bare"
+        configHash="apis"
+      />
+      {mod.id === 'embedder' && embedderStatus && (
+        <div style={{ marginTop: 6 }}>
+          {embedderStatus.fallback_active ? (
+            <div style={{ fontSize: 11, color: "#0972d3" }}>{t('settings.more.modules.embedder_fallback_active')}</div>
+          ) : embedderStatus.is_admin && embedderStatus.user_configured ? (
+            <div style={{ fontSize: 11, color: "#1a7e3c" }}>{t('settings.more.modules.embedder_admin_configured')}</div>
+          ) : embedderStatus.is_admin && !embedderStatus.user_configured ? (
+            <div style={{ fontSize: 11, color: "#0972d3" }}>{t('settings.more.modules.embedder_admin_fallback')}</div>
+          ) : !embedderStatus.user_configured ? (
+            <div style={{ fontSize: 11, color: "#d18a00" }}>{t('settings.more.modules.embedder_user_no_key')}</div>
+          ) : null}
+        </div>
+      )}
+      {mod.id === "embedder" && (
+        <div style={{ marginTop: 6, fontSize: 11, color: "var(--muted)" }}>{t('settings.more.modules.embedder_note')}</div>
+      )}
+    </div>
+  );
+
   return (
     <SetGroup
       title={t('settings.modules.title')}
       description={t('settings.modules.description')}
     >
       <CSBox>
-        <span className="muted" style={{fontSize: 12}}>
-          {t('settings.modules.hint')}
-        </span>
+        <span className="muted" style={{ fontSize: 12 }}>{t('settings.modules.hint')}</span>
       </CSBox>
-      <div style={{ display: "grid", gap: 14, marginTop: 8 }}>
-        {MODULES.map(mod => (
-          <div key={mod.id} style={{ borderTop: "1px solid var(--pl-line, #eee)", paddingTop: 12 }}>
-            <div style={{display: "flex", alignItems: "center", gap: 6, marginBottom: 2}}>
-              <strong>{mod.label}</strong>
-              <span className="muted-2" data-tip={mod.tip} style={{cursor: "help", fontSize: 11}}>ⓘ</span>
+      {/* 按功能分组卡片:每组先「功能开关」(每用户、默认开)再「模型分配」,强分隔、去杂乱。 */}
+      <div style={{ display: "grid", gap: 16, marginTop: 10 }}>
+        {MODULE_GROUPS.map(grp => {
+          const items = MODULES.filter(m => (m.group || "misc") === grp.id);
+          const feats = (AGENT_FEATURES || []).filter(f => f.group === grp.id);
+          if (!items.length && !feats.length) return null;
+          const groupLabel = t(`settings.more.modules.group_${grp.id}`, {
+            defaultValue: { core: "对话核心（三贤者 + GM 管线）", script: "剧本与角色卡", world: "世界模拟与历史", gen: "检索与生成", misc: "通用兜底" }[grp.id] || grp.id,
+          });
+          const groupDesc = t(`settings.modules.group_desc.${grp.id}`, { defaultValue: GROUP_DESC[grp.id] || "" });
+          return (
+            <div key={grp.id} style={{ border: "1px solid var(--pl-line, #e9e9ed)", borderRadius: 12, padding: "16px 18px 18px" }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--pl-accent, #0972d3)" }}>{groupLabel}</div>
+              {groupDesc && <div className="muted" style={{ fontSize: 11.5, marginTop: 3 }}>{groupDesc}</div>}
+
+              {feats.length > 0 && (
+                <div style={{ marginTop: 16, marginBottom: items.length ? 18 : 0 }}>
+                  <div style={_subHdr}>{t('settings.modules.features_title', { defaultValue: '功能开关' })}</div>
+                  <div style={{ display: "grid", gap: 2 }}>
+                    {feats.map(f => (
+                      <FeatureToggle
+                        key={f.key}
+                        featureKey={f.key}
+                        label={t(`settings.features.${f.i18nKey}.label`, { defaultValue: FEAT_LABELS[f.key] || f.key })}
+                        desc={t(`settings.features.${f.i18nKey}.desc`, { defaultValue: FEAT_DESCS[f.key] || "" })}
+                        initial={featPrefs[`${f.key}.enabled`]}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {items.length > 0 && (
+                <div style={{ marginTop: feats.length ? 0 : 16 }}>
+                  <div style={_subHdr}>{t('settings.modules.models_title', { defaultValue: '模型分配' })}</div>
+                  <div style={{ display: "grid", gap: 14 }}>
+                    {items.map(renderModelRow)}
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="muted" style={{fontSize: 11, marginBottom: 8}}>{mod.tip}</div>
-            <AgentModelPicker
-              prefPrefix={mod.prefPrefix}
-              persistShape={mod.persistShape || "flat"}
-              dictKey={mod.dictKey || null}
-              capabilityFilter={mod.capabilityFilter || null}
-              allowInherit={!!mod.inherit}
-              defaultModel={mod.defaultModel || null}
-              preferProvider={mod.preferProvider || null}
-              fallbackPrefix={mod.fallbackPrefix || null}
-              platformVertexAllowed={mod.id === "embedder" ? platformVertexAllowed : false}
-              variant="bare"
-              configHash="apis"
-            />
-            {/* embedder 兜底状态提醒(admin/vip 平台 vertex / 普通用户引导配自己 key) */}
-            {mod.id === 'embedder' && embedderStatus && (
-              <div style={{marginTop: 6}}>
-                {embedderStatus.fallback_active ? (
-                  <div style={{fontSize: 11, color: "#0972d3"}}>
-                    {t('settings.more.modules.embedder_fallback_active')}
-                  </div>
-                ) : embedderStatus.is_admin && embedderStatus.user_configured ? (
-                  <div style={{fontSize: 11, color: "#1a7e3c"}}>
-                    {t('settings.more.modules.embedder_admin_configured')}
-                  </div>
-                ) : embedderStatus.is_admin && !embedderStatus.user_configured ? (
-                  <div style={{fontSize: 11, color: "#0972d3"}}>
-                    {t('settings.more.modules.embedder_admin_fallback')}
-                  </div>
-                ) : !embedderStatus.user_configured ? (
-                  <div style={{fontSize: 11, color: "#d18a00"}}>
-                    {t('settings.more.modules.embedder_user_no_key')}
-                  </div>
-                ) : null}
-              </div>
-            )}
-            {mod.id === "embedder" && (
-              <div style={{marginTop: 6, fontSize: 11, color: "var(--muted)"}}>
-                {t('settings.more.modules.embedder_note')}
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
       <CSBox>
-        <span className="muted" style={{fontSize: 11}}>
-          {t('settings.modules.footer')}
-        </span>
+        <span className="muted" style={{ fontSize: 11 }}>{t('settings.modules.footer')}</span>
       </CSBox>
     </SetGroup>
   );
@@ -3173,8 +3228,8 @@ function DeploySection() {
                 try {
                   const r = await window.api.admin.saveDeploymentConfig({});
                   void r;
-                  const t = await window.api.raw?.POST("/api/v1/admin/smtp/test", {});
-                  ok = !!(t && t.ok !== false);
+                  const smtpTestResp = await window.api.raw?.POST("/api/v1/admin/smtp/test", {});
+                  ok = !!(smtpTestResp && smtpTestResp.ok !== false);
                 } catch (_) { ok = false; }
                 setSmtpTesting(false);
                 setSmtpLastTestAt(new Date().toISOString());

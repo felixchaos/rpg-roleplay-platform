@@ -35,6 +35,10 @@ class Demand:
     timeline_target: str = ""           # 玩家显式时间跳跃请求；novel provider 才理解
     retrieval_query: str = ""           # 一个开放查询；具体怎么用由 provider 决定
     retrieval_needs: dict = field(default_factory=dict)  # provider 可选的细化需求
+    # Q Phase 3 司命 RAG 闸：本轮是否需要检索原著正文。default True = 现状(总检索)。
+    # 司命(curator)判定纯对话/情绪/简单互动 → False,NovelRetrievalProvider 在 RPG_RAG_GATE
+    # 开启时据此跳过检索,省下 RAG 大头 token。见 docs/design/Q_three_sage_pipeline.md §6/§7。
+    need_retrieval: bool = True
     rule_candidate_actions: list[dict] = field(default_factory=list)
     risk_flags: list[str] = field(default_factory=list)
     confidence: float = 1.0
@@ -67,6 +71,10 @@ class ContextContribution:
     provider_id: str
     kind: str = "generic"
     priority: int = 50           # 0-100，决定 prompt 层顺序
+    # Q 三贤者分层缓存:本 contribution 的层默认缓存层(A 会话级稳定 / B 场景级稳定 /
+    # C 回合动态)。单层可在 make_layer 里覆盖;空则 build_context_bundle 用 LAYER_CACHE_TIER
+    # 兜底,再兜底 "C"。详见 docs/design/Q_three_sage_pipeline.md §5。
+    cache_tier: str = ""
     facts: list[str] = field(default_factory=list)
     layers: list[dict] = field(default_factory=list)
     retrieval_items: list[dict] = field(default_factory=list)
@@ -137,8 +145,9 @@ class ContextProvider:
     def make_layer(layer_id: str, title: str, content: str, *,
                    sticky: bool = False, priority: int = 50,
                    items: list[dict] | None = None,
-                   source: str = "") -> dict:
-        return {
+                   source: str = "",
+                   cache_tier: str = "") -> dict:
+        layer = {
             "id": layer_id,
             "title": title,
             "content": content,
@@ -147,3 +156,8 @@ class ContextProvider:
             "items": items or [],
             "source": source,
         }
+        # Q 分层缓存:仅在 provider 显式指定时写入,否则留给 build_context_bundle 用
+        # LAYER_CACHE_TIER 兜底(避免在这里硬塞 "C" 覆盖中央映射)。
+        if cache_tier:
+            layer["cache_tier"] = cache_tier
+        return layer

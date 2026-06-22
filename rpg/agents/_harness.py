@@ -160,12 +160,17 @@ def _anthropic_tool_use(
     """
     from anthropic import Anthropic
 
+    from core.outbound import safe_httpx_client
     from platform_app.user_credentials import resolve_api_key
     result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
     key = result.get("key")
     if not key:
         raise RuntimeError("找不到 Anthropic API Key for agent harness")
-    client = Anthropic(api_key=key)
+    _base_url = result.get("base_url_override") or None
+    _client_kwargs: dict = {"api_key": key, "http_client": safe_httpx_client()}
+    if _base_url:
+        _client_kwargs["base_url"] = _base_url
+    client = Anthropic(**_client_kwargs)
     tool_name = tool_schema.get("name") or "emit_payload"
     resp = client.messages.create(
         model=model,
@@ -197,12 +202,17 @@ def _anthropic_json_text(
     """
     from anthropic import Anthropic
 
+    from core.outbound import safe_httpx_client
     from platform_app.user_credentials import resolve_api_key
     result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
     key = result.get("key")
     if not key:
         raise RuntimeError("找不到 Anthropic API Key for agent harness")
-    client = Anthropic(api_key=key)
+    _base_url = result.get("base_url_override") or None
+    _client_kwargs: dict = {"api_key": key, "http_client": safe_httpx_client()}
+    if _base_url:
+        _client_kwargs["base_url"] = _base_url
+    client = Anthropic(**_client_kwargs)
     resp = client.messages.create(
         model=model,
         max_tokens=max_tokens,
@@ -401,7 +411,10 @@ def _openai_compat_json_mode(
     try:
         with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
-        text = payload["choices"][0]["message"]["content"]
+        choice = (payload.get("choices") or [{}])[0]
+        text = choice.get("message", {}).get("content") or ""
+        if not text and not payload.get("choices"):
+            raise RuntimeError(f"provider 响应结构异常: {str(payload)[:200]}")
         usage = _openai_usage(payload.get("usage") or {})
         return text or "", usage
     except urllib.error.HTTPError as exc:
@@ -419,7 +432,10 @@ def _openai_compat_json_mode(
         )
         with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
-        text = payload["choices"][0]["message"]["content"]
+        choice = (payload.get("choices") or [{}])[0]
+        text = choice.get("message", {}).get("content") or ""
+        if not text and not payload.get("choices"):
+            raise RuntimeError(f"provider 响应结构异常: {str(payload)[:200]}")
         usage = _openai_usage(payload.get("usage") or {})
         return text or "", usage
 
@@ -484,7 +500,9 @@ def _openai_function_call(
         with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         usage = _openai_usage(payload.get("usage") or {})
-        msg = payload["choices"][0]["message"]
+        if not payload.get("choices"):
+            raise RuntimeError(f"provider 响应结构异常: {str(payload)[:200]}")
+        msg = (payload.get("choices") or [{}])[0].get("message", {})
         tool_calls = msg.get("tool_calls") or []
         for tc in tool_calls:
             fn = tc.get("function") or {}
@@ -621,6 +639,8 @@ def call_agent_tool_loop(
         )
 
     from anthropic import Anthropic
+
+    from core.outbound import safe_httpx_client
     from platform_app.user_credentials import resolve_api_key
 
     result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
@@ -628,7 +648,11 @@ def call_agent_tool_loop(
     if not key:
         raise RuntimeError("找不到 Anthropic API Key for agent tool_loop")
 
-    client = Anthropic(api_key=key)
+    _base_url = result.get("base_url_override") or None
+    _client_kwargs: dict = {"api_key": key, "http_client": safe_httpx_client()}
+    if _base_url:
+        _client_kwargs["base_url"] = _base_url
+    client = Anthropic(**_client_kwargs)
 
     messages: list[dict] = [{"role": "user", "content": user_prompt}]
     trace: list[dict] = []

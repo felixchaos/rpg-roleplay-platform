@@ -471,7 +471,7 @@ function SaveDetail({ save, scripts, onBack, onContinue, onToast, onReload }) {
                   { k: t('mobile.saves.detail.kv_turn'),     v: save._raw?.turn != null ? t('mobile.saves.detail.kv_turn_value', { turn: save._raw.turn }) : '—' },
                   { k: t('mobile.saves.detail.kv_branches'), v: t('mobile.saves.detail.kv_branches_value', { count: Number(save.branch_count) || 0 }) },
                   { k: t('mobile.saves.detail.kv_world_time'), v: save._raw?.world_time || '—' },
-                  { k: t('mobile.saves.detail.kv_last_played'), v: fmtDate(save.last_played_at || save.last_played_ts) },
+                  { k: t('mobile.saves.detail.kv_last_played'), v: fmtDate(save.last_played_ts || save._raw?.last_played_at) },
                   { k: t('mobile.saves.detail.kv_created'),  v: fmtDate(save.created_ts) },
                   { k: t('mobile.saves.detail.kv_status'),   v: save.current ? t('mobile.saves.detail.kv_status_current') : t('mobile.saves.detail.kv_status_idle') },
                 ].map(({ k, v }) => (
@@ -835,6 +835,8 @@ export function MobileSaves({ nav }) {
         .filter(s => (s && (s.save_kind || 'game')) !== 'tavern')
         .map(normSave);
       setSaves(list);
+      // rename/activate 后刷新 selectedSave 快照,避免详情面板显示旧数据。
+      setSelectedSave(s => s ? (list.find(x => x.id === s.id) || s) : s);
     } catch (_) { setSaves([]); }
     try {
       const s = await window.api.scripts.list();

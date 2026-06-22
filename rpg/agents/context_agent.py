@@ -386,6 +386,39 @@ def run_context_agent(
     }
 
 
+def _resolve_need_retrieval(plan: dict[str, Any], user_input: str) -> bool:
+    """Q Phase 3 司命 RAG 闸判定。**确定性优先**(遵守 harness 确定性铁律:不纯靠 LLM 遵守提示词):
+    - 司命 LLM 显式给了 need_retrieval(bool/"false"/0)→ 信它(schema-enforced 的 Anthropic 最可靠)。
+    - 弱模型(flash)常整字段省略 → 落确定性启发式:短输入 + 无目标实体 + 无目标地点 + 无时间跳转
+      → 纯对话/情绪/简单互动,跳过检索;否则检索(宁可多检索不漏关键素材)。
+    """
+    raw = plan.get("need_retrieval")
+    if raw is not None:
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)):
+            return raw != 0
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower() not in ("false", "0", "no", "否")
+    # 司命没给(flash 常省)→ 确定性兜底。**只看玩家输入文本本身**,不看 curator 的
+    # target_entities —— 实测弱模型会把在场 NPC 全填进 target_entities(即便玩家只是点头),
+    # 那个信号被污染、不可用。改用输入文本的「提问/求设定」标记 + 长度。
+    text = (user_input or "").strip()
+    # 显式提问/求原著设定/剧情信号 → 必检索
+    _LORE_MARK = ("?", "？", "为什么", "怎么", "如何", "是谁", "什么", "哪", "历史", "来历",
+                  "由来", "背景", "设定", "原著", "讲讲", "讲述", "告诉我", "介绍", "规则",
+                  "发生了", "之前", "当年", "据说", "传说", "典故")
+    if any(m in text for m in _LORE_MARK):
+        return True
+    # 去新地点 / 时间跳转 → 检索(这些字段污染少)
+    if str(plan.get("target_location") or "").strip() or str(plan.get("timeline_target") or "").strip():
+        return True
+    # 短输入且无 lore 信号 → 纯对话/情绪/简单动作,跳过检索
+    if len(text) <= 18:
+        return False
+    return True
+
+
 def _demand_from_curator_plan(curator_plan: dict[str, Any], user_input: str) -> Demand:
     """把 LLM/本地 curator_plan dict 包成 Demand 结构体，供 providers 使用。"""
     plan = curator_plan or {}
@@ -399,6 +432,7 @@ def _demand_from_curator_plan(curator_plan: dict[str, Any], user_input: str) -> 
         target_time=str(plan.get("target_time") or ""),
         timeline_target=str(plan.get("timeline_target") or ""),
         retrieval_query=_retrieval_query(user_input, plan),
+        need_retrieval=_resolve_need_retrieval(plan, user_input),
         retrieval_needs={
             "must_include": list((plan.get("retrieval_plan") or {}).get("must_include")
                                   or plan.get("must_include") or []),

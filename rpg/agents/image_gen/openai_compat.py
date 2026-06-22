@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 
 from agents.image_gen.base import ImageGenError, decode_b64, download_url
+from core.outbound import safe_httpx_client
 
 _CONNECT_TIMEOUT = 10.0
 _READ_TIMEOUT = 180.0  # 生图比聊天慢,给足时间
@@ -107,11 +108,10 @@ def _try_images_api(
             body[field] = params[field]
 
     try:
-        resp = httpx.post(
-            endpoint, json=body, headers=headers,
-            timeout=httpx.Timeout(_READ_TIMEOUT, connect=_CONNECT_TIMEOUT),
-            follow_redirects=False,
-        )
+        with safe_httpx_client(timeout=_READ_TIMEOUT) as client:
+            resp = client.post(
+                endpoint, json=body, headers=headers,
+            )
     except httpx.TimeoutException as exc:
         raise ImageGenError(f"openai_compat: images/generations 超时 ({exc})") from exc
     except Exception as exc:
@@ -174,11 +174,10 @@ def _try_chat_modality(
         "modalities": ["image", "text"],
     }
     try:
-        resp = httpx.post(
-            endpoint, json=body, headers=headers,
-            timeout=httpx.Timeout(_READ_TIMEOUT, connect=_CONNECT_TIMEOUT),
-            follow_redirects=False,
-        )
+        with safe_httpx_client(timeout=_READ_TIMEOUT) as client:
+            resp = client.post(
+                endpoint, json=body, headers=headers,
+            )
     except httpx.TimeoutException as exc:
         raise ImageGenError(f"openai_compat: chat 图像模态超时 ({exc})") from exc
     except Exception as exc:

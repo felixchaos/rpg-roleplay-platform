@@ -83,7 +83,7 @@ export function applyTavernState(data, setters) {
   if (!data || !setters) return;
   const {
     setCharacter, setPersona, setHistory, setActiveChat,
-    setGameState, setPermission, setSystemPrompt, mapHistory,
+    setGameState, setPermission, setSystemPrompt, setImmersive, mapHistory,
   } = setters;
   const api = setters.api || (typeof window !== 'undefined' && window.api);
 
@@ -125,6 +125,9 @@ export function applyTavernState(data, setters) {
   if (setSystemPrompt && tavern.system_prompt !== undefined) {
     setSystemPrompt(tavern.system_prompt || '');
   }
+
+  // 沉浸式拟人模式开关回填(state.data.tavern.immersive,经 /api/state 顶层 tavern 透出)。
+  if (setImmersive) setImmersive(!!tavern.immersive);
 
   if (data.save_id != null && setActiveChat) {
     setActiveChat((prev) => ({
@@ -352,6 +355,7 @@ export function startTavernRun(cfg) {
         // 但回复其实已生成并落库 → 旧逻辑直接判「空回复」逼用户刷新。先回查存档,有本轮 assistant
         // 回复就 applyState 渲染;确为空/被中断才提示。与 game-console on_done 同款兜底。
         if (interrupted || !(api && api.game && typeof api.game.state === 'function')) { showEmpty(); return; }
+        if (onDoneExtra) { try { onDoneExtra(data); } catch (_) {} }
         api.game.state().then((d2) => {
           if (!isCurrentRun()) return;
           const hist = (d2 && Array.isArray(d2.history)) ? d2.history : null;
@@ -371,6 +375,15 @@ export function startTavernRun(cfg) {
         if (!last || last.role !== 'assistant') return h;
         return [...h.slice(0, -1), { ...last, streaming: false, streaming_done: true }];
       });
+      // reasoning 流中断:已有助手气泡但被中断(如服务端强制截断),需恢复草稿并提示用户。
+      if (data && data.interrupted) {
+        restoreFailedDraft();
+        const msg = cfg.doneEmptyMsg ? cfg.doneEmptyMsg(true) : '本轮已中断,已恢复你的输入。';
+        setHasError(msg);
+        toast?.('生成中断', { kind: 'warn', detail: msg, duration: 4500, code: 'interrupted' });
+        rc.sse = null;
+        return;
+      }
       // 宿主成功收尾附加(pages:保存本轮 toolOps 快照 / setElapsedMs / setLastUsage)。
       // 在 applyState 之前调,以便 pages 把 lastTurnToolOps 写好供 applyState 回填。
       if (onDoneExtra) { try { onDoneExtra(data); } catch (_) {} }
@@ -379,7 +392,7 @@ export function startTavernRun(cfg) {
       // 工具可能中途换/建了角色或 persona → 再拉一次最新 state 确保顶部刷新。
       // (tavern-app/Mobile:仅在无 payload 时拉;pages:总是再拉一次。差异由 doneAlwaysRefetch 控制。)
       if (!payload || cfg.doneAlwaysRefetch) {
-        api.game.state().then(applyState).catch(() => {});
+        api.game.state().then((d) => { if (isCurrentRun()) applyState(d); }).catch(() => {});
       }
       // 刷新列表(更新 last_snippet / updated_at 排序);autotitle 由 onDoneExtra 负责(pages)。
       if (reloadList && !cfg.skipDoneReload) reloadList();
@@ -411,6 +424,7 @@ export function startTavernRun(cfg) {
         if (!last || last.role !== 'assistant' || !last.streaming) return h;
         return [...h.slice(0, -1), { ...last, streaming: false, streaming_done: true }];
       });
+      rc.sse = null;
     },
   });
 

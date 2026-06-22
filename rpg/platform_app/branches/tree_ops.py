@@ -199,16 +199,26 @@ def resolve_commit_id_by_message(user_id: int, save_id: int, message_index: int)
         return int(row["id"]) if row else None
 
 
-def collect_ids(db, node_id: int) -> list[int]:
+def collect_ids(db, node_id: int, save_id: int | None = None) -> list[int]:
     # seen 防环:正常数据下 parent 图无环(id 单调 + parent 指更早 id),但损坏存档 /
     # legacy 迁移可能产生 parent 指向自身或后代的环 → 原 BFS 会无限循环,而 collect_ids 是
     # delete_subtree 删除集的唯一来源 → 整个删除 worker 永挂。加 seen 集合幂等截断,代价极小。
+    # save_id 约束:把 SELECT 限定在同一存档内,防止跨存档 parent_id 碰撞导致误删其他存档节点。
     seen: set[int] = {node_id}
     ids = [node_id]
     queue = [node_id]
     while queue:
         current = queue.pop(0)
-        children = [row["id"] for row in db.execute("select id from branch_commits where parent_id = %s", (current,)).fetchall()]
+        if save_id is not None:
+            children = [row["id"] for row in db.execute(
+                "select id from branch_commits where parent_id = %s and save_id = %s",
+                (current, save_id),
+            ).fetchall()]
+        else:
+            children = [row["id"] for row in db.execute(
+                "select id from branch_commits where parent_id = %s",
+                (current,),
+            ).fetchall()]
         for c in children:
             if c in seen:
                 continue

@@ -213,7 +213,33 @@ def _search_entities(
         return out
     vec = _embed_query(query_text, script_id=script_id, user_id=user_id, db=db)
     if not vec:
-        return out  # 没 embedding 跑不动,自动跳过
+        # 无 embedding 时退化为 ILIKE 兜底(与 _search_chunks 同策略)
+        tokens = [t for t in query_text.split() if t][:8]
+        if not tokens:
+            return out
+        _OLD_GATE = "(%s::integer is null or first_revealed_chapter <= %s)"
+        gate_sql, gate_params = _OLD_GATE, [chapter_max, chapter_max]
+        for table, name_col, result_key, extra_cols in [
+            ("character_cards", "name", "cards", "identity, personality, appearance,"),
+            ("worldbook_entries", "title", "worldbook", "content,"),
+        ]:
+            enabled_clause = " and enabled = true" if table == "character_cards" else ""
+            where_parts = [f"{name_col} ilike %s" for _ in tokens]
+            patterns = [f"%{t}%" for t in tokens]
+            try:
+                rows = db.execute(
+                    f"select id, {name_col}, {extra_cols} first_revealed_chapter, 0.5 as score "
+                    f"from {table} "
+                    f"where script_id = %s{enabled_clause} "
+                    f"and ({' or '.join(where_parts)}) "
+                    f"and {gate_sql} "
+                    f"limit %s",
+                    (*patterns, script_id, *gate_params, max(1, min(top_k_cards if result_key == "cards" else top_k_wb, 8))),
+                ).fetchall()
+                out[result_key] = rows
+            except Exception:
+                pass
+        return out
 
     # P4(S2):门控有两套。旧=标量 `first_revealed_chapter <= chapter_max`(2 个 chapter_max 占位符);
     # 新=前沿 reveal_clause_v2(save_id)(1 个 save_id 占位符)。用 *gate_params 展开自动适配占位符个数。
@@ -221,7 +247,7 @@ def _search_entities(
     use_v2 = save_id is not None and _frontier_on(save_id)
     _OLD_GATE = "(%s::integer is null or first_revealed_chapter <= %s)"
     if use_v2:
-        gate_sql, gate_params = reveal_clause_v2(int(save_id), mode, prefix="", has_public_knowledge=False, has_famous=False)
+        gate_sql, gate_params = reveal_clause_v2(int(save_id), mode, prefix="", has_public_knowledge=False, has_famous=False, progress_chapter=chapter_max)
     else:
         gate_sql, gate_params = _OLD_GATE, [chapter_max, chapter_max]
 
@@ -234,7 +260,7 @@ def _search_entities(
     def _shadow(table: str, extra: str, tag: str) -> None:
         """对比旧标量门控 vs 新前沿门控的放行全集(与 vector 排序/limit 无关)。"""
         old_g, old_p = _OLD_GATE, [chapter_max, chapter_max]
-        new_g, new_p = reveal_clause_v2(int(save_id), mode, prefix="", has_public_knowledge=False, has_famous=False)
+        new_g, new_p = reveal_clause_v2(int(save_id), mode, prefix="", has_public_knowledge=False, has_famous=False, progress_chapter=chapter_max)
         _shadow_diff_log(tag, _gate_ids(table, extra, old_g, old_p),
                          _gate_ids(table, extra, new_g, new_p))
 

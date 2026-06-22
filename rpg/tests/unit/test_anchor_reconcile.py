@@ -120,6 +120,9 @@ class ReconcileTest(unittest.TestCase):
     def setUp(self):
         # 默认开启
         os.environ["RPG_ANCHOR_AUTO_RECONCILE"] = "1"
+        # 这些估章/ceiling 用例针对【非限速】基线写就(pace 现已默认开,会叠加 +2 cap)。
+        # 显式钉死 pace=off 以隔离测 ceiling 数学;限速 +2 的覆盖见 test_apply_estimate_pace_cap。
+        os.environ["RPG_ANCHOR_PACE"] = "0"
         # advance_progress 记录调用,不连库
         self.adv_calls = []
         self._adv_patch = mock.patch(
@@ -131,6 +134,7 @@ class ReconcileTest(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("RPG_ANCHOR_AUTO_RECONCILE", None)
+        os.environ.pop("RPG_ANCHOR_PACE", None)
 
     # 统一 patch 窗口 + pending,judge / db 用注入
     def _run(self, *, pending, judge, db, win=None):
@@ -379,6 +383,15 @@ class ReconcileTest(unittest.TestCase):
         out = ar._apply_estimate(FakeDB(occurred_max=20), 1, prev_progress=5, estimated_chapter=99)
         self.assertEqual(out, 32)
         self.assertEqual(self.adv_calls, [(1, 32)])
+
+    # ── _apply_estimate 限速(pace on,默认):每回合进度最多 +_PACE_CAP 章 ──
+    def test_apply_estimate_pace_cap(self):
+        os.environ["RPG_ANCHOR_PACE"] = "1"  # 覆盖 setUp 的 off,测限速层
+        self.adv_calls.clear()
+        # prev=5, est=99, floor=0:非限速会钳到 ceiling=17;限速叠加 → min(17, prev+_PACE_CAP)=5+2=7
+        out = ar._apply_estimate(FakeDB(occurred_max=0), 1, prev_progress=5, estimated_chapter=99)
+        self.assertEqual(out, 5 + ar._PACE_CAP, "pace on → 每回合最多 +_PACE_CAP 章")
+        self.assertEqual(self.adv_calls, [(1, 5 + ar._PACE_CAP)])
 
     # ── _normalize_judge_result 兼容新旧返回 ────────────────────
     def test_normalize_judge_result(self):

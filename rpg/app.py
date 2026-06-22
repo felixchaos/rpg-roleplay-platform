@@ -727,6 +727,88 @@ def _selfheal_player_from_save_snapshot(state: GameState, api_user: dict[str, An
         pass
 
 
+def _kb_state_enabled(api_user: dict | None = None) -> bool:
+    """Q KB-backed 存储集成总开关(每用户特性,默认开)。on 时存档状态从 KB 行 load/persist
+    (DB-resident 单一来源,blob 仍并行写作兜底),off 时走原 blob。"""
+    from core.feature_flags import feature_enabled
+    uid = None
+    try:
+        uid = int(api_user["id"]) if api_user and api_user.get("id") is not None else None
+    except (TypeError, ValueError, KeyError):
+        uid = None
+    return feature_enabled("kb_state", uid)
+
+
+def _save_kb_native(save_id: int | None) -> bool:
+    """该存档是否 kb-native(创建时即 seed 进 KB、打了 kb_native 标记 →「封死新存档入口」)。
+    kb_native 档【始终】走 KB 新实现,不受每用户 kb_state 开关影响;旧档无标记 → 仍按开关 + 懒迁移。
+    任何失败/无列 → False(降级回开关判定,绝不破回合)。"""
+    if not save_id:
+        return False
+    try:
+        from platform_app.db import connect
+        with connect() as db:
+            r = db.execute("select kb_native from game_saves where id = %s", (int(save_id),)).fetchone()
+        return bool(r and r.get("kb_native"))
+    except Exception:
+        return False
+
+
+def _kb_backed_state(state: "GameState", save_id: int, commit_id: int) -> "GameState":
+    """从 KB 表 materialize 出 GameState(而非读 blob)。首次加载该 save 且 KB 未 seed →
+    先把当前 blob 迁进 KB(T0 seed 实体 + import_state)再 materialize(migrate-on-first-load)。"""
+    from kb import save_kb
+    from platform_app.db import connect
+    with connect() as db:
+        seeded = db.execute(
+            "select count(*) as n from kb_worldline_vars where save_id = %s", (save_id,)
+        ).fetchone()
+        if not int((seeded or {}).get("n") or 0):
+            sid = db.execute("select script_id from game_saves where id = %s", (save_id,)).fetchone()
+            script_id = (sid or {}).get("script_id")
+            if script_id:
+                save_kb.seed_full_t0(db, save_id, int(script_id), commit_id=commit_id)
+            save_kb.import_state(db, save_id, commit_id, state.data)
+            if hasattr(db, "commit"):
+                db.commit()
+        mat = save_kb.materialize(db, save_id, commit_id)
+    data = {k: v for k, v in mat.items() if not k.startswith("_")}
+    # 酒馆等【不写 messages 表】的存档(对话历史在 state.history blob):materialize 从 messages
+    # 重建 history 会得空 → 若直接用空 history,GM 每回合丢上下文、对话不累积、KB 也无从建立。
+    # 用已加载 blob(传入的 state)的 history 兜底。scripted 存档写 messages,materialize 有 history,
+    # 不触发此兜底,行为不变。blob 每回合都被 record_runtime_turn 持久化,故 history 始终最新。
+    _blob_hist = (getattr(state, "data", {}) or {}).get("history") or []
+    if not data.get("history") and _blob_hist:
+        data["history"] = _blob_hist
+    # materialize 丢弃 memory 下的纯展示瞬态(save_kb._DROP_MEM:last_context / last_retrieval /
+    # last_context_agent / last_structured_updates)—— 它们不是存档状态、不入 KB,但 UI 要用:
+    # 「上下文用量明细」读 memory.last_context;多 worker 下用量请求落到冷缓存 worker → 重 materialize
+    # → 明细全 0(用户报的事故)。blob 每回合持久化、含最新值 → 从 blob 兜回(不影响 scripted)。
+    _blob_mem = (getattr(state, "data", {}) or {}).get("memory") or {}
+    _mem = data.get("memory")
+    if not isinstance(_mem, dict):
+        _mem = {}
+    for _tk in ("last_context", "last_retrieval", "last_context_agent", "last_structured_updates"):
+        if _mem.get(_tk) is None and _blob_mem.get(_tk) is not None:
+            _mem[_tk] = _blob_mem[_tk]
+    if _mem:
+        data["memory"] = _mem
+    # 同理 worldline 下的瞬态(save_kb._DROP_WL:last_projection / last_validation / pending_projection)
+    # —— pending_projection 是【待确认的时间跳跃】,属功能性:多 worker 冷重载丢了会让待确认跳跃失效。
+    # 只兜这 3 个瞬态键,不动 materialize 已重建的权威 worldline 字段(设置/进度/user_variables)。
+    _blob_wl = (getattr(state, "data", {}) or {}).get("worldline") or {}
+    _wl = data.get("worldline")
+    if not isinstance(_wl, dict):
+        _wl = {}
+    for _tk in ("last_projection", "last_validation", "pending_projection"):
+        if _wl.get(_tk) is None and _blob_wl.get(_tk) is not None:
+            _wl[_tk] = _blob_wl[_tk]
+    if _wl:
+        data["worldline"] = _wl
+    data["_active_save_id"] = save_id  # materialize 丢瞬态指针,这里补回
+    return GameState(data)
+
+
 def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = True) -> GameState:
     """加载当前用户的游戏状态。多用户安全：按 user_id 隔离。
 
@@ -792,6 +874,13 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = 
                     _lru_set(_state_commit_id_by_user, uid, _new_commit_id)
                 else:
                     _state_commit_id_by_user.pop(uid, None)
+                # Q KB-backed 存储集成(flag):state 从 KB 表 materialize(而非 blob)。
+                # 失败一律退回已加载的 blob state,绝不破回合。
+                if (_kb_state_enabled(api_user) or _save_kb_native(_new_save_id)) and _new_save_id and _new_commit_id:
+                    try:
+                        state = _kb_backed_state(state, _new_save_id, _new_commit_id)
+                    except Exception as _kbe:
+                        log.warning(f"[kb_state] materialize load 跳过,退回 blob: {_kbe}")
             except Exception:
                 state = GameState.new() if api_user else GameState.load_or_new()
                 _state_save_id_by_user.pop(uid, None)
@@ -1203,6 +1292,7 @@ def _redact_catalog(catalog: dict[str, Any], is_admin: bool, user_id: int | None
     if user_id is not None:
         sel = result.get("selected") or {}
         if normalize_api_id(sel.get("api_id")) not in cred_ids:
+            _picked = False
             for api in result.get("apis", []):
                 if api.get("has_credential") and (api.get("models") or []):
                     first = api["models"][0]
@@ -1210,7 +1300,13 @@ def _redact_catalog(catalog: dict[str, Any], is_admin: bool, user_id: int | None
                         "api_id": api.get("id"),
                         "model_id": first.get("id") or first.get("real_name"),
                     }
+                    _picked = True
                     break
+            # 用户没有任何已配 key 的可用模型 → 不把用不了的全局默认(opus)当成用户的选择,
+            # 标记 needs_model_config,前端据此展示「请先配置模型」CTA 而非假模型名。
+            # admin 可走平台兜底,不标记(BYOK 平台:模型应来自用户自己的 key,不靠平台默认)。
+            if not _picked and not is_admin:
+                result["needs_model_config"] = True
     return result
 
 

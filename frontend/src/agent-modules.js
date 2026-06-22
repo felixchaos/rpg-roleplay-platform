@@ -30,23 +30,61 @@
  * @property {string=} fallbackPrefix   未配时回退到哪个模块的偏好
  */
 
+// 功能分组(渲染端按此顺序分块 + 出小标题)。同组放一起,不再上下散落(#优化)。
+// 渲染端用 i18nKey 走 settings.more.modules.group_<id> / mobile.settings.modules.group.<id>。
+export const MODULE_GROUPS = [
+  { id: "core",   i18nKey: "core" },    // 对话核心:三贤者 + GM 管线
+  { id: "script", i18nKey: "script" },  // 剧本与角色卡
+  { id: "world",  i18nKey: "world" },   // 世界模拟与历史
+  { id: "gen",    i18nKey: "gen" },     // 检索与生成
+  { id: "misc",   i18nKey: "misc" },    // 通用兜底
+];
+
 /** @type {AgentModule[]} */
 export const MODULES = [
-  { id: "gm",            i18nKey: "gm",            prefPrefix: "gm" },
-  { id: "sub_agent",     i18nKey: "sub_agent",     persistShape: "dict", dictKey: "sub_agent_model_override", inherit: true },
-  { id: "set_parser",    i18nKey: "set_parser",    prefPrefix: "set_parser",               inherit: true },
-  { id: "console",       i18nKey: "console",       persistShape: "dict", dictKey: "console_assistant_model_override", inherit: true },
-  { id: "editor",        i18nKey: "editor",        prefPrefix: "editor",                   inherit: true },
-  { id: "extractor",     i18nKey: "extractor",     prefPrefix: "extractor",                inherit: true },
-  { id: "card_gen",      i18nKey: "card_gen",      prefPrefix: "character_card_generator", inherit: true },
-  { id: "card_import",   i18nKey: "card_import",   prefPrefix: "card_import",              inherit: true },
-  { id: "critic",        i18nKey: "critic",        prefPrefix: "critic",                   inherit: true },
-  { id: "verifier",      i18nKey: "verifier",      prefPrefix: "acceptance_verifier",      inherit: true },
-  { id: "phase_digest",  i18nKey: "phase_digest",  prefPrefix: "phase_digest",             inherit: true },
-  { id: "black_swan",    i18nKey: "black_swan",    prefPrefix: "black_swan_agent",         inherit: true },
-  { id: "agent",         i18nKey: "agent",         prefPrefix: "agent",                    inherit: true },
-  { id: "embedder",      i18nKey: "embedder",      prefPrefix: "embed",     capabilityFilter: "embedding", inherit: false, defaultModel: "text-embedding-004", preferProvider: "vertex_ai" },
-  { id: "image_gen",     i18nKey: "image_gen",     prefPrefix: "image_gen", capabilityFilter: "image_gen", inherit: false, fallbackPrefix: "gm" },
+  // ── 对话核心(三贤者:文宗 gm / 司命 sub_agent / 史官 recorder + GM 管线辅助)──
+  { id: "gm",            group: "core",   i18nKey: "gm",            prefPrefix: "gm" },
+  { id: "sub_agent",     group: "core",   i18nKey: "sub_agent",     persistShape: "dict", dictKey: "sub_agent_model_override", inherit: true },
+  { id: "recorder",      group: "core",   i18nKey: "recorder",      prefPrefix: "recorder",  fallbackPrefix: "extractor", inherit: true },
+  { id: "extractor",     group: "core",   i18nKey: "extractor",     prefPrefix: "extractor",                inherit: true },
+  { id: "verifier",      group: "core",   i18nKey: "verifier",      prefPrefix: "acceptance_verifier",      inherit: true },
+  { id: "set_parser",    group: "core",   i18nKey: "set_parser",    prefPrefix: "set_parser",               inherit: true },
+  // ── 剧本与角色卡 ──
+  { id: "editor",        group: "script", i18nKey: "editor",        prefPrefix: "editor",                   inherit: true },
+  { id: "console",       group: "script", i18nKey: "console",       persistShape: "dict", dictKey: "console_assistant_model_override", inherit: true },
+  { id: "card_gen",      group: "script", i18nKey: "card_gen",      prefPrefix: "character_card_generator", inherit: true },
+  { id: "card_import",   group: "script", i18nKey: "card_import",   prefPrefix: "card_import",              inherit: true },
+  { id: "critic",        group: "script", i18nKey: "critic",        prefPrefix: "critic",                   inherit: true },
+  // ── 世界模拟与历史 ──
+  { id: "black_swan",    group: "world",  i18nKey: "black_swan",    prefPrefix: "black_swan_agent",         inherit: true },
+  { id: "phase_digest",  group: "world",  i18nKey: "phase_digest",  prefPrefix: "phase_digest",             inherit: true },
+  // ── 检索与生成 ──
+  { id: "embedder",      group: "gen",    i18nKey: "embedder",      prefPrefix: "embed",     capabilityFilter: "embedding", inherit: false, defaultModel: "text-embedding-004", preferProvider: "vertex_ai" },
+  { id: "image_gen",     group: "gen",    i18nKey: "image_gen",     prefPrefix: "image_gen", capabilityFilter: "image_gen", inherit: false, fallbackPrefix: "gm" },
+  // ── 通用兜底 ──
+  { id: "agent",         group: "misc",   i18nKey: "agent",         prefPrefix: "agent",                    inherit: true },
+];
+
+/**
+ * @typedef {Object} EngineFeature
+ * @property {string} key      偏好键前缀(后端 core.feature_flags 同名);落库为 `<key>.enabled` 布尔
+ * @property {string} group    所属功能分组(与 MODULE_GROUPS.id 对齐,同组同块显示)
+ * @property {string} i18nKey  文案键(label/tip 走 settings/mobile 的 features.<i18nKey>)
+ */
+
+// 引擎特性开关(每用户、默认开)。与「模块模型」同组同块显示 —— 每个功能分组里:
+// 先列该组的特性开关(布尔 switch),再列该组可配的模型。前后端键名单一来源(core.feature_flags)。
+/** @type {EngineFeature[]} */
+export const FEATURES = [
+  // 对话核心:三贤者流水线
+  { key: "ctx_tiered",       group: "core",  i18nKey: "ctx_tiered" },       // 分层上下文缓存(司命)
+  { key: "recorder_unified", group: "core",  i18nKey: "recorder_unified" }, // 史官三合一
+  { key: "narrator_slim",    group: "core",  i18nKey: "narrator_slim" },    // 文宗精简(去工具循环)
+  // 检索与生成
+  { key: "rag_gate",         group: "gen",   i18nKey: "rag_gate" },         // RAG 检索闸
+  // 世界模拟与历史
+  { key: "anchor_pace",      group: "world", i18nKey: "anchor_pace" },      // 世界线锚点节奏
+  { key: "kb_state",         group: "world", i18nKey: "kb_state" },         // 存档知识库 DB 化
 ];
 
 /** prefPrefix → 模块(供 CAP_CONFIG 等子集投影派生 capabilityFilter)。 */

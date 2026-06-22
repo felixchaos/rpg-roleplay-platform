@@ -614,22 +614,20 @@ function UserCardsView() {
     try {
       const r = await window.api.cards.myList();
       const list = Array.isArray(r) ? r : (r?.cards || r?.items || []);
-      if (list.length) {
-        setCards(list.map(c => ({
-          id: String(c.id),
-          name: c.name,
-          role: c.identity || c.role || "—",
-          tone: c.tone || "—",
-          origin: c.origin || t('cards.list.origin_generic'),
-          bio: c.description || c.summary || c.bio || c.personality || c.current_status || c.appearance || "",
-          tags: c.tags || [],
-          pinned: !!c.pinned,
-          is_public: !!c.is_public,
-          uses: c.uses || 0,
-          updated: window.__fmt?.ago(c.updated_at) || c.updated_at || "—",
-          _raw: c,
-        })));
-      }
+      setCards(list.map(c => ({
+        id: String(c.id),
+        name: c.name,
+        role: c.identity || c.role || "—",
+        tone: c.tone || "—",
+        origin: c.origin || t('cards.list.origin_generic'),
+        bio: c.description || c.summary || c.bio || c.personality || c.current_status || c.appearance || "",
+        tags: c.tags || [],
+        pinned: !!c.pinned,
+        is_public: !!c.is_public,
+        uses: c.uses || 0,
+        updated: window.__fmt?.ago(c.updated_at) || c.updated_at || "—",
+        _raw: c,
+      })));
     } catch (_) {}
   }, [t]);
   useEffectPL(() => { reload(); }, [reload]);

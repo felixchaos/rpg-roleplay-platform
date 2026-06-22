@@ -53,6 +53,7 @@ from typing import Any
 import httpx
 
 from agents.image_gen.base import ImageGenError, decode_b64, download_url
+from core.outbound import safe_httpx_client
 
 # ── Endpoint constants ──────────────────────────────────────────────────────
 
@@ -149,13 +150,12 @@ def _submit(
         "X-DashScope-Async": "enable",
     }
     try:
-        resp = httpx.post(
-            endpoint,
-            json=body,
-            headers=headers,
-            timeout=httpx.Timeout(_REQUEST_TIMEOUT, connect=_CONNECT_TIMEOUT),
-            follow_redirects=False,
-        )
+        with safe_httpx_client(timeout=_REQUEST_TIMEOUT) as client:
+            resp = client.post(
+                endpoint,
+                json=body,
+                headers=headers,
+            )
     except httpx.TimeoutException as exc:
         raise ImageGenError(f"dashscope: submit timed out ({exc})") from exc
     except Exception as exc:
@@ -193,12 +193,11 @@ def _poll(task_id: str, api_key: str) -> dict[str, Any]:
             time.sleep(_POLL_INTERVAL_SECONDS)
 
         try:
-            resp = httpx.get(
-                poll_url,
-                headers=headers,
-                timeout=httpx.Timeout(_REQUEST_TIMEOUT, connect=_CONNECT_TIMEOUT),
-                follow_redirects=False,
-            )
+            with safe_httpx_client(timeout=_REQUEST_TIMEOUT) as client:
+                resp = client.get(
+                    poll_url,
+                    headers=headers,
+                )
         except httpx.TimeoutException as exc:
             raise ImageGenError(
                 f"dashscope: poll attempt {attempt + 1} timed out ({exc})"

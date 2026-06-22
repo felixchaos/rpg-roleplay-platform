@@ -55,9 +55,11 @@ def _ip_is_internal(ip_str: str) -> bool:
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
         ip = mapped
+    _CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
     return bool(
         ip.is_private or ip.is_loopback or ip.is_link_local
         or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+        or (isinstance(ip, ipaddress.IPv4Address) and ip in _CGNAT_NETWORK)
     )
 
 

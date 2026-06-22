@@ -1131,12 +1131,19 @@ function App() {
             }
             return out.trimEnd();
           };
-          setHistory((h) => {
-            const last = h[h.length - 1];
-            if (!last || last.role !== 'assistant') return h;
-            const cleaned = stripOps(last.content || '');
-            return [...h.slice(0, -1), { ...last, content: cleaned, streaming: false, streaming_done: true }];
-          });
+          // 若 on_done payload 包含服务端最终 history,直接用服务端版本(已是净内容),
+          // 不必在前端再 stripOps 并写 streaming_done — 否则 React 18 批处理中两次
+          // setHistory 并发,最后一次(payload.history)覆盖前一次但前一次的 streaming_done 丢失。
+          // 只在 payload 无 history 时才回退到前端 strip+标记。
+          const _payloadForStrip = (data && data.status) || null;
+          if (!(_payloadForStrip && Array.isArray(_payloadForStrip.history))) {
+            setHistory((h) => {
+              const last = h[h.length - 1];
+              if (!last || last.role !== 'assistant') return h;
+              const cleaned = stripOps(last.content || '');
+              return [...h.slice(0, -1), { ...last, content: cleaned, streaming: false, streaming_done: true }];
+            });
+          }
           setRunState((r) => {
             // 修: rawSteps 里所有 status='running' 的步骤 mark 'done' — 否则最后那步
             // ("主 GM 正在读取上下文并生成正文")永远是 pulse 状态,看起来像卡死。
@@ -1294,34 +1301,56 @@ function App() {
     startRun(t2);
   }, [runState.running, startRun]);
   const onStop = () => stopRun();
-  const onRetry = useCallback(() => {
+  const onRetry = useCallback(async () => {
     if (runState.running) {
       window.__apiToast?.(t('game.console.retry.still_running'), { kind: 'warn', duration: 2400 });
       return;
     }
-    // 优先用本轮 lastPlayerText;为空时(刷新后、首轮即失败、lastPlayerText 未及写入)
-    // 从历史里回捞最后一条非空玩家输入,避免"重试本轮"静默无反应。
+    // 「重试」语义 = 删除本轮输出(回滚到本轮玩家输入之前)+ 再次发送本轮输入。
+    // 找本轮玩家输入及其历史下标:优先 lastPlayerText,空时从历史回捞最后一条非空玩家输入。
+    const h = Array.isArray(history) ? history : [];
     let t2 = (lastPlayerText && lastPlayerText.trim()) || '';
-    if (!t2) {
-      const h = Array.isArray(history) ? history : [];
-      for (let i = h.length - 1; i >= 0; i--) {
-        if (h[i] && h[i].role === 'user' && (h[i].content || '').trim()) { t2 = h[i].content.trim(); break; }
+    let pIdx = -1;
+    for (let i = h.length - 1; i >= 0; i--) {
+      if (h[i] && h[i].role === 'user' && (h[i].content || '').trim()) {
+        pIdx = i;
+        if (!t2) t2 = h[i].content.trim();
+        break;
       }
     }
     if (!t2) { window.__apiToast?.(t('game.console.retry.no_input'), { kind: 'warn', duration: 2000 }); return; }
     setHasError(false);
-    setHistory((h) => {
-      const out = [...h];
-      while (out.length && out[out.length - 1].role === 'assistant' && !(out[out.length - 1].content || '').trim()) out.pop();
-      if (out.length && out[out.length - 1].role === 'user' && (out[out.length - 1].content || '').trim() === t2) out.pop();
-      return out;
-    });
+    // 之前只截断【前端】历史、不动后端 → 重发会叠在旧本轮之上(玩家报「没有删除」)。
+    // 改:先调 rollback 把本轮(玩家输入及之后)从后端删除并回退活跃指针(旧回合进 trash ref 可恢复),
+    // reloadState 后历史截到本轮之前,再 startRun 重走 → 真正实现「删除本轮 + 重发」。
+    const saveId = activeSave?.id ?? null;
+    let rolled = false;
+    if (saveId != null && pIdx >= 0) {
+      try {
+        const r = await window.api.branches.rollbackToMessage(saveId, pIdx);
+        if (r && r.ok === false) throw new Error(r.error || r.detail || 'rollback denied');
+        await reloadState();
+        rolled = true;
+      } catch (e) {
+        // 本轮可能尚未提交(纯生成失败,后端无本轮 commit)→ 退化为前端截断,不打断重试。
+        rolled = false;
+      }
+    }
+    if (!rolled) {
+      setHistory((hh) => {
+        const out = [...hh];
+        while (out.length && out[out.length - 1].role === 'assistant' && !(out[out.length - 1].content || '').trim()) out.pop();
+        if (out.length && out[out.length - 1].role === 'user' && (out[out.length - 1].content || '').trim() === t2) out.pop();
+        return out;
+      });
+    }
     window.__apiToast?.(t('game.console.retry.retrying'), { kind: 'info', duration: 1600 });
     startRun(t2);
-  }, [lastPlayerText, history, runState.running, startRun]);
+  }, [lastPlayerText, history, runState.running, startRun, activeSave, reloadState]);
   // 反馈:每条消息的「重新生成这一轮」(MsgActions 派发 rpg-regenerate 事件,携 message_index)。
-  // 做法:fork 到本轮之前(后端 resolve_commit_id_by_message 的 off-by-one 已修正)→ reloadState
-  // 把历史截到本轮前 → 用同一条玩家输入 startRun 重走完整 GM 流程。等价于"这一轮换个结果重来"。
+  // 语义 = 删除本轮 + 用同一条玩家输入重走 → 换个结果替换旧的(非分叉保留)。故用 rollback(删除,
+  // 旧回合进 trash ref 可恢复)而非 continueFrom(那是「建立分支」,保留旧线、玩家反馈「没有删除」)。
+  // reloadState 把历史截到本轮前 → 用同一条玩家输入 startRun 重走完整 GM 流程。
   const onRegenerate = useCallback(async (messageIndex) => {
     if (runState.running) { window.__apiToast?.(t('game.console.retry.still_generating'), { kind: 'warn', duration: 2000 }); return; }
     const h = Array.isArray(history) ? history : [];
@@ -1337,7 +1366,7 @@ function App() {
     if (saveId == null) { window.__apiToast?.(t('game.console.regen.no_save_context'), { kind: 'warn', duration: 2400 }); return; }
     try {
       setHasError(false);
-      const r = await window.api.branches.continueFrom({ save_id: saveId, message_index: pIdx, label: t('game.console.regen.label') });
+      const r = await window.api.branches.rollbackToMessage(saveId, pIdx);  // 删除本轮(玩家输入及之后),回退活跃指针
       if (r && r.ok === false) throw new Error(r.error || r.detail || t('game.console.regen.branch_rejected'));
       await reloadState();                 // 历史截到本轮之前(本轮玩家输入及之后被移除)
       window.__apiToast?.(t('game.console.regen.regenerating'), { kind: 'ok', duration: 1800 });

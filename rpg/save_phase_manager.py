@@ -308,7 +308,48 @@ def _audit_anchors_on_phase_close(save_id: int, closed_phase_index: int) -> None
             fatal_pending = [r for r in rows if r.get("is_fatal")]
             non_fatal = [r for r in rows if not r.get("is_fatal")]
             # 非 fatal: 自动 superseded
-            if non_fatal:
+            # Q 修复(章感知,flag RPG_ANCHOR_PACE):legacy 按 phase_label 一刀切绕过【整个 phase】的
+            # pending 锚点 —— 但 phase_label 粒度粗,常把远未来章(实测 ch42)和玩家其实会去/已进入的
+            # 当前章(秋叶原)一起绕过 → 退役强制锚点 + superseded 计入楼层把进度拽跳。pace on 时改为
+            # 只绕过玩家【确实走过】的章(source_chapter < 已到达 occurred/variant 楼层)的未触发锚点;
+            # 未来/当前位置锚点留 pending(玩家可能仍会做),交收束/判定器后续处理。
+            from core.feature_flags import feature_enabled_for_save
+            pace = feature_enabled_for_save("anchor_pace", save_id, db)
+            if non_fatal and pace:
+                fr = db.execute(
+                    "select max(source_chapter) as m from save_anchor_states "
+                    "where save_id = %s and status in ('occurred', 'variant')",
+                    (save_id,),
+                ).fetchone()
+                reached = int(fr["m"]) if fr and fr.get("m") is not None else None
+                if reached is None:
+                    log.info(f"[anchor_audit] save={save_id} phase={closed_phase_index} "
+                             f"pace: 玩家尚无任何到达锚点,phase 关闭不自动绕过(避免误退役)")
+                else:
+                    res = db.execute(
+                        """
+                        update save_anchor_states
+                        set status = 'superseded',
+                            variant_description = %s,
+                            drift_score = 1.0,
+                            updated_at = now()
+                        where save_id = %s
+                          and phase_label = %s
+                          and status = 'pending'
+                          and is_fatal = false
+                          and source_chapter < %s
+                        returning id
+                        """,
+                        (
+                            f"phase '{phase_label}' 已结束 (turn {turn_end}),玩家已推进过第 {reached} 章,"
+                            f"本 phase 中更早未触发的锚点自动绕过",
+                            save_id, phase_label, reached,
+                        ),
+                    ).fetchall()
+                    log.info(f"[anchor_audit] save={save_id} phase={closed_phase_index} "
+                             f"pace 章感知: 绕过 {len(res)} 个早于第 {reached} 章的 non-fatal 锚点"
+                             f"(未来/当前位置锚点保留 pending)")
+            elif non_fatal:
                 db.execute(
                     """
                     update save_anchor_states

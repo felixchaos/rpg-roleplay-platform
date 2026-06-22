@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from psycopg.types.json import Jsonb
 
 from ..db import connect
-from ..security import public_user
+from ..security import normalize_username, public_user
 from ._deps import SESSION_COOKIE, json_response, require_user
 
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB
@@ -104,7 +105,7 @@ async def api_my_profile(user=Depends(require_user)):
 async def api_patch_profile(request: Request, user=Depends(require_user)):
     """首次注册补充昵称用。body: {username?, display_name?, co_builder_opt_out?}"""
     body = await request.json()
-    username = (body.get("username") or "").strip()[:32]
+    username = normalize_username((body.get("username") or "").strip())[:32]
     display_name = (body.get("display_name") or "").strip()[:64]
     co_builder_opt_out = body.get("co_builder_opt_out")
     if not username and not display_name and co_builder_opt_out is None:
@@ -988,10 +989,8 @@ async def api_set_persona_image_url(request: Request, card_id: int, user=Depends
             "select 1 from character_cards where id = %s and user_id = %s",
             (card_id, user_id),
         ).fetchone()
-    if not owned:
-        return json_response({"ok": False, "error": "角色卡不存在或无权访问"}, status_code=403)
-
-    with connect() as db:
+        if not owned:
+            return json_response({"ok": False, "error": "角色卡不存在或无权访问"}, status_code=403)
         db.execute(
             "update card_persona_images set is_current = false where card_id = %s",
             (card_id,),
@@ -1156,7 +1155,13 @@ async def api_import_tavern_chat(request: Request, user=Depends(require_user)):
       {"ok": true, "save_id": 123, "commits_imported": N,
        "header": {...}, "preview": [first 3 commits]}
     """
-    body = await request.json()
+    raw_body = await request.body()
+    if len(raw_body) > 16 * 1024 * 1024:
+        return json_response({"ok": False, "error": "文件过大"}, status_code=400)
+    try:
+        body = json.loads(raw_body)
+    except (json.JSONDecodeError, ValueError):
+        return json_response({"ok": False, "error": "请求体须为 JSON 格式"}, status_code=400)
     from .. import tavern_chats, save_io
 
     jsonl_text = body.get("jsonl") or ""

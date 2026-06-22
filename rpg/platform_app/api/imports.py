@@ -65,8 +65,14 @@ async def api_script_llm_extract_usage(script_id: int, days: int = 30, user=Depe
     """
     days = max(1, min(int(days or 30), 365))
     with connect() as db:
-        owned = db.execute("select 1 from scripts where id=%s and owner_id=%s",
-                           (script_id, user["id"])).fetchone()
+        owned = db.execute(
+            """select 1 from scripts s
+            where s.id = %s and (
+              s.owner_id = %s
+              or s.id in (select script_id from user_script_subscriptions where user_id = %s)
+            )""",
+            (script_id, user["id"], user["id"]),
+        ).fetchone()
         if not owned:
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
         # 汇总
@@ -143,10 +149,16 @@ async def api_script_llm_extract_estimate(request: Request, script_id: int, user
         "note": "约 $0.09(38 弧 × deepseek-v4-flash)。"
       }
     """
-    # 校验 owner
+    # 校验 owner-or-subscriber
     with connect() as db:
-        owned = db.execute("select 1 from scripts where id=%s and owner_id=%s",
-                           (script_id, user["id"])).fetchone()
+        owned = db.execute(
+            """select 1 from scripts s
+            where s.id = %s and (
+              s.owner_id = %s
+              or s.id in (select script_id from user_script_subscriptions where user_id = %s)
+            )""",
+            (script_id, user["id"], user["id"]),
+        ).fetchone()
     if not owned:
         return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
     body = {}

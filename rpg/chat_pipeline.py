@@ -24,7 +24,7 @@ from typing import Any
 
 from agents.context_agent import run_context_agent
 from core.logging import get_logger
-from state import GameState, strip_json_state_ops, strip_meta_tool_preamble
+from state import GameState, strip_json_state_ops, strip_leaked_scaffold, strip_meta_tool_preamble
 
 log = get_logger(__name__)
 
@@ -87,6 +87,26 @@ def _should_inject_short_input_directive(raw_msg: str | None) -> bool:
     return len(r) <= _SHORT_INPUT_CHARS
 
 
+# 沉浸式拟人模式:玩家明确开/关请求的【确定性】识别(harness 确定性铁律:不指望 LLM 工具一定被调)。
+# 返回 True(开)/ False(关)/ None(未提)。短语集刻意收紧,降低误判;且这是可逆的本对话偏好。
+_IMMERSIVE_OFF_PHRASES = ("关掉沉浸", "关闭沉浸", "退出沉浸", "取消沉浸", "别沉浸", "不要沉浸",
+                          "回到正常叙事", "回到小说", "正常叙事模式", "恢复叙事")
+_IMMERSIVE_ON_PHRASES = ("沉浸式", "像真人一样", "当成真人", "当作真人", "别写成小说", "不要写成小说",
+                         "别像小说", "别用小说", "别替我说", "别帮我说", "不要替我", "别替我做",
+                         "别帮我做决定", "以第一人称", "用第一人称")
+
+
+def _immersive_request(raw_msg: str | None) -> bool | None:
+    t = (raw_msg or "").strip()
+    if not t or t.startswith("/"):
+        return None
+    if any(k in t for k in _IMMERSIVE_OFF_PHRASES):   # 先判关闭(『关掉沉浸式』含『沉浸』)
+        return False
+    if any(k in t for k in _IMMERSIVE_ON_PHRASES):
+        return True
+    return None
+
+
 def _gm_max_iters() -> int:
     """GM 单轮工具调用上限。原 8 太紧:世界线收束后一轮常需
     update_state → list_pending_anchors → mark_anchor_satisfied → set_question → 写正文,
@@ -96,6 +116,30 @@ def _gm_max_iters() -> int:
         return max(4, int(os.environ.get("RPG_GM_MAX_ITERS", "16")))
     except (TypeError, ValueError):
         return 16
+
+
+def _uid_of(api_user: dict | None) -> int | None:
+    try:
+        return int(api_user["id"]) if api_user and api_user.get("id") is not None else None
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def _recorder_unified(api_user: dict | None = None) -> bool:
+    """Q Phase 2 史官三合一开关(每用户特性,默认开)。
+    on 时 async 后处理把 ops 提取 + 锚点判定合成单次 recorder LLM 调用(替代
+    extractor-skip + 独立 anchor_reconcile);off 时走原路径。"""
+    from core.feature_flags import feature_enabled
+    return feature_enabled("recorder_unified", _uid_of(api_user))
+
+
+def _narrator_slim(api_user: dict | None = None) -> bool:
+    """Q Phase 4 文宗去工具循环开关(每用户特性,默认开)。
+    on 时主 GM(文宗)不带工具 → 单次纯散文,杀掉 ≤16 轮工具循环(最大 token 乘数);
+    状态写入全交史官(Phase 2 recorder)。**必须同时开 RECORDER_UNIFIED**,否则状态无人写
+    → 自动失效(见下游 guard)。tooling=none 档。"""
+    from core.feature_flags import feature_enabled
+    return feature_enabled("narrator_slim", _uid_of(api_user))
 
 
 def _should_route_to_curator_clarify(confidence: float, threshold: float, clarify: str) -> bool:
@@ -203,6 +247,7 @@ class PipelineContext:
 
     # 流程控制
     early_return: bool = False
+    tavern_character_set: bool = False  # Phase 4 酒馆角色卡工具成功(first_mes 可能为空,非 error)
 
 
 # 类型别名:phase generator 产物
@@ -943,6 +988,11 @@ async def run_gm_phase(
     bundle = ctx.bundle
     agent_result = ctx.agent_result
 
+    # Q 分层缓存:回合动态前置项(Phase D 注入 + 短输入镜头指令)在 tiered 路径下要进「动态块最前」
+    # 而非 prepend 到整串最前(否则污染缓存前缀)。这里收集起来,flag-on 时随 prompt_segments 一并传给 GM;
+    # 同时保留对 bundle["prompt"] 的 prepend,供 flag-off(单串)回退路径使用。两路径互斥,不会重复注入。
+    _dynamic_prefix_parts: list[str] = []
+
     # Phase D: 注入规范层常驻骨架(治 1935)+ 规范世界线软目标。
     # 加固:任何失败都不影响既有 gameplay(纯增量 prepend)。KB 无 constant 条目时为空。
     try:
@@ -959,6 +1009,7 @@ async def run_gm_phase(
             _inj = (_pd or {}).get("injection_text") or ""
             if _inj and _inj not in (bundle.get("prompt") or ""):
                 bundle["prompt"] = _inj + "\n\n" + (bundle.get("prompt") or "")
+                _dynamic_prefix_parts.append(_inj)
                 bundle.setdefault("debug", {})["phase_d_injection"] = {
                     "tokens": _pd.get("tokens"), "budget": _pd.get("budget"),
                     "steering_next": (_pd.get("steering") or {}).get("next_node"),
@@ -975,11 +1026,55 @@ async def run_gm_phase(
         if _should_inject_short_input_directive(message_for_model):
             if _SHORT_INPUT_DIRECTIVE not in (bundle.get("prompt") or ""):
                 bundle["prompt"] = _SHORT_INPUT_DIRECTIVE + "\n\n" + (bundle.get("prompt") or "")
+                _dynamic_prefix_parts.insert(0, _SHORT_INPUT_DIRECTIVE)  # 短输入指令置最前(与 flat prepend 顺序一致)
                 bundle.setdefault("debug", {})["short_input_directive"] = {
                     "len": len((message_for_model or "").strip())
                 }
     except Exception as _si_err:
         log.warning(f"[chat] 短输入镜头指令注入跳过(不影响 gameplay): {_si_err}")
+
+    # 沉浸式拟人模式(仅酒馆):每回合从 DB【新鲜读取】持久 flag 设到 gm 上(绕开 per-worker
+    # state 缓存 → 跨 worker 安全 + UI 端点即时生效),由 master._build_system 在 tavern system
+    # prompt 里确定性注入覆盖块。真相源 = runtime_checkouts.state_snapshot(working tree)。
+    # 另:玩家本回合若【明确】请求开/关沉浸(确定性识别),先确定性落库,本回合即生效 —— 不指望
+    # LLM 一定调 set_tavern_immersive 工具(harness 确定性铁律)。默认/失败 → False(零行为变化)。
+    try:
+        if gm is not None:
+            _is_tav = False
+            try:
+                from context_providers.registry import resolve_content_pack as _rcp
+                _is_tav = (_rcp(ctx.state).get("gm_policy") or {}).get("mode") == "tavern_gm"
+            except Exception:
+                _is_tav = False
+            _imm_sid = int(ctx.early_active_save_id or 0)
+            _imm_uid = int(api_user.get("id")) if api_user else 0
+            if _is_tav and _imm_sid and _imm_uid:
+                from platform_app.db import connect as _connect_im
+                _req = _immersive_request(message_for_model)
+                _merge = ("coalesce({c},'{{}}'::jsonb) || jsonb_build_object('tavern', "
+                          "coalesce({c}->'tavern','{{}}'::jsonb) || "
+                          "jsonb_build_object('immersive', %s::boolean))")
+                with _connect_im() as _db_im:
+                    if _req is not None:
+                        _db_im.execute(
+                            "update runtime_checkouts set state_snapshot = "
+                            + _merge.format(c="state_snapshot")
+                            + ", updated_at=now() where user_id=%s and save_id=%s",
+                            (_req, _imm_uid, _imm_sid))
+                        _db_im.execute(
+                            "update game_saves set state_snapshot = "
+                            + _merge.format(c="state_snapshot")
+                            + ", updated_at=now() where id=%s and user_id=%s and save_kind='tavern'",
+                            (_req, _imm_sid, _imm_uid))
+                    _imr = _db_im.execute(
+                        "select state_snapshot->'tavern'->>'immersive' as im "
+                        "from runtime_checkouts where user_id=%s and save_id=%s",
+                        (_imm_uid, _imm_sid)).fetchone()
+                gm._immersive_mode = str((_imr or {}).get("im") or "").strip().lower() in ("true", "1", "t")
+            else:
+                gm._immersive_mode = False
+    except Exception as _imm_err:
+        log.warning(f"[chat] 沉浸式 flag 处理跳过(不影响 gameplay): {_imm_err}")
 
     yield ("agent", {
         "phase": "main_gm",
@@ -1058,13 +1153,40 @@ async def run_gm_phase(
     state.data["_turn_reasoning"] = []
     state.data["_turn_images_generated"] = 0  # Phase 1 生图门控：每轮重置自主生图计数器
 
+    # Q Phase 4 文宗精简档(slim,且 recorder 开):砍掉重型/动作类工具,但**保留存档级 KB
+    # 维护工具**(GM_ALL_KB_TOOLS:world tree 读写 + 世界书叠加锚点 + 收束锚点)。
+    # ⚠️ 不能给 tools=None —— 否则 GM 不再调 kb_* / 锚点工具,存档级 KB(kb_entities/events/
+    # relationships/worldline_vars / save_worldbook_overlays / save_anchor_states)就此冻结,
+    # 而史官只提取 state-JSON ops + reconcile 锚点、**不维护这些 KB 表** → 动态 KB 维护断掉。
+    # 故 slim = 「文宗只保 KB 维护工具 + 史官补 state ops」,既省 145 个工具的 prompt、又不丢 KB 维护。
+    # 这些 KB 工具受 dispatcher origin 闸约束(llm_chat 不能写 script 域),不会污染原始剧本。
+    _gm_tools = unified_tools
+    # 酒馆豁免:文宗精简会把工具收成 12 个 KB 工具,但酒馆的 GM 是唯一写者、需要自己的工具
+    # (set_tavern_character / worldbook_add / 记忆·关系写 等),精简会令角色自举/记忆/世界书全断。
+    # 故 tavern_gm 不走精简(保留其完整工具集);酒馆仍享 ctx_tiered 前缀缓存。
+    if _narrator_slim(api_user) and _recorder_unified(api_user) and _gm_mode != "tavern_gm":
+        try:
+            from gm_serving.serve import GM_ALL_KB_TOOLS
+            # ask_player_choice 必须保留:否则 slim 档 GM 无法弹玩家选择(用户报"选项有时不弹"
+            # 的根因之一)。它是面向玩家的交互工具,不属 KB 维护但不可少。
+            _keep = set(GM_ALL_KB_TOOLS) | {"ask_player_choice"}
+            _kb_only = [t for t in (unified_tools or []) if t.get("name") in _keep]
+        except Exception:
+            _kb_only = []
+        _gm_tools = _kb_only or None  # 极端无 KB 工具时退回 None(纯叙事,史官兜 state)
+        yield ("agent", {"phase": "main_gm",
+                         "message": f"文宗精简档:仅保留 {len(_kb_only)} 个存档级 KB 维护工具,state ops 由史官统一落库。",
+                         "status": "running", "elapsed_ms": 0})
+
     async for event in _bridge_sync_generator_to_async(
         lambda: gm.respond_stream_with_tools(
             message_for_model, bundle["prompt"], state,
-            tools=unified_tools, max_iterations=_gm_max_iters(),
+            tools=_gm_tools, max_iterations=_gm_max_iters(),
             max_tokens=_max_tokens,
             tool_call_router=gm_tool_router,
             stop_event=_gm_stop,
+            prompt_segments=bundle.get("prompt_segments"),
+            dynamic_prefix="\n\n".join(_dynamic_prefix_parts),
         ),
         stop_event=_gm_stop,
     ):
@@ -1164,6 +1286,7 @@ async def run_gm_phase(
             if _gm_mode == "tavern_gm" and event.get("tool") in ("set_tavern_character", "import_character_card") and event.get("ok"):
                 _fm = str(((getattr(state, "data", {}) or {}).get("tavern") or {}).get("first_mes") or "").strip()
                 response = _fm
+                ctx.tavern_character_set = True  # first_mes 可能为空,Phase 5 不应视为 error
                 if _fm:
                     yield ("token", {"text": _fm})
                 _gm_stop.set()
@@ -1264,6 +1387,45 @@ async def run_gm_phase(
                     "labels": sorted({v.get("pattern_label") for v in _cliche}),
                 })
 
+            # Q Phase 2 史官三合一(flag on):一次 recorder LLM 调用同时产 ops + 锚点判定,
+            # 替代「extractor-skip(regex 兜底)+ 独立 anchor_reconcile LLM」。off 时走原路径。
+            # 酒馆豁免:tavern_gm 的 GM 已用自己的工具写状态(slim 已豁免、工具齐全),史官三合一对酒馆
+            # 实测不增 KB(关系/事实同结果)却多一次 LLM,且酒馆无锚点 → 走原 apply_gm_json_ops 即可。
+            if _recorder_unified(api_user) and _gm_mode != "tavern_gm":
+                _ru_sid = ctx.early_active_save_id or 0
+                _ru_uid = int(api_user["id"]) if api_user and api_user.get("id") else 0
+                try:
+                    from gm_serving.recorder_bridge import run_unified_recorder
+                    _ru = await asyncio.to_thread(
+                        run_unified_recorder, state, response,
+                        _ru_sid or None, _ru_uid or None,
+                        acceptance_clauses=None, tasks=["ops", "anchors"],
+                    )
+                except Exception as _ru_err:
+                    log.warning(f"[chat] 史官三合一失败,退回原 async 后处理: {_ru_err}")
+                    _ru = None
+                if _ru is not None:
+                    # recorder 给出 ops → 当权威提取(extractor_active=True 关 regex 兜底);
+                    # recorder 空(弱模型偶发漏提)→ extractor_active=False 保留 regex 兜底,
+                    # 确保不劣于原 async 路径(避免「史官空 + 无 regex = 本回合零写入」回归)。
+                    _ru_ops = _ru.get("ops") or []
+                    _resp_ops = response + ("\n\n```json\n" + json.dumps(_ru_ops, ensure_ascii=False) + "\n```" if _ru_ops else "")
+                    try:
+                        ctx._updates = _apply_gm_json_ops(
+                            state=state, response_with_ops=_resp_ops, api_user=api_user,
+                            active_script_id=active_script_id, ctx=ctx, extractor_active=bool(_ru_ops),
+                        )
+                    except Exception as _apply_err:
+                        log.warning(f"[chat] 史官 ops apply 失败,退回 directive_updates: {_apply_err}")
+                        ctx._updates = ctx.directive_updates[:]
+                    _rec_marked = int(_ru.get("anchors_marked") or 0)
+                    if _rec_marked:
+                        yield ("agent", {
+                            "phase": "anchor_reconcile",
+                            "message": f"世界线锚点确定性兜底(史官):本回合自动标记 {_rec_marked} 个原著锚点已到达",
+                            "status": "done", "elapsed_ms": 0, "marked": _rec_marked,
+                        })
+                    return
             # 关键修复:GM JSON op 确定性写回(async 不跑 extractor → extractor_active=False
             # → apply_structured_updates 保留 regex 兜底,把 GM 漏标的也尽量捞回)。
             try:
@@ -1387,6 +1549,8 @@ async def run_gm_phase(
                         _retry_msg, bundle["prompt"], state,
                         tools=unified_tools, max_iterations=max(4, _gm_max_iters() // 2), max_tokens=_max_tokens,
                         tool_call_router=gm_tool_router,
+                        prompt_segments=bundle.get("prompt_segments"),
+                        dynamic_prefix="\n\n".join(_dynamic_prefix_parts),
                     )
                     for _ev in _retry_state_iter:
                         if isinstance(_ev, dict) and _ev.get("type") == "text":
@@ -1699,6 +1863,27 @@ async def persist_turn_phase(
     # 确定性兜底:剥掉 GM 在 native tool_use 前泄漏进正文的英文"工具预告"元叙述
     # (例:"Let me mark the anchors that have been satisfied...")。不依赖 GM 听提示词。
     visible_response = strip_meta_tool_preamble(visible_response)
+    # 确定性兜底(反馈 #77):弱模型把检索/世界线脚手架块(=== 时间线检索锚点 === 等)+ 内部推理
+    # 直接吐进正文 → 整块剥掉。这些 header 是后端注入的隐形上下文,正常叙事永不产出,零误伤。
+    visible_response = strip_leaked_scaffold(visible_response)
+
+    # 确定性玩家选项兜底(用户反馈"选项有时不弹"):整个选择机制原本只在 GM 主动调 ask_player_choice
+    # 时才弹 —— GM 常把选项直接写进正文 markdown 列表却不调工具 → 前端无 chips。这里【确定性】解析
+    # 正文结尾的选项列表(≥2 项),把它移出正文、合成一个 pending_question 走选择组件。不靠 GM 听话。
+    # 仅当本回合 GM 没有已给出结构化选择(避免重复)时才兜底;过期清理已在回合开头跑过,故 pending
+    # 里只剩本回合的。放在沉浸感剥句之前:先把列表抽走,残留的"你想怎么做?"问句再被下面的剥句清掉。
+    _auto_choice_opts: list[str] = []
+    try:
+        from state.parsers import _extract_trailing_markdown_options
+        _existing_pqs = ((state.data.get("permissions") or {}).get("pending_questions") or [])
+        _has_choice = any((q.get("options") or q.get("choices")) for q in _existing_pqs)
+        if not _has_choice:
+            _body, _opts = _extract_trailing_markdown_options(visible_response)
+            if len(_opts) >= 2:
+                visible_response = _body
+                _auto_choice_opts = _opts
+    except Exception:
+        pass
 
     # 沉浸感确定性兜底(用户头号反馈):剥掉结尾"旁白向玩家显式提问下一步"的句子
     # ——只命中明确的决策反问(你接下来想怎么做 / 你打算如何应对 / 请玩家决定 等),
@@ -1728,6 +1913,15 @@ async def persist_turn_phase(
     except Exception:
         pass
 
+    # 落实上面确定性解析出的玩家选项(列表已移出正文)→ 合成选择组件。source 用 "gm:" 前缀,
+    # 使其与开场的 gm:opening_options 一样被 expire_stale_gm_questions 视为系统来源、下回合自动清理
+    # (system_sources 含 "gm";"auto" 不在其中会导致 chips 永不过期变残留)。
+    if _auto_choice_opts:
+        try:
+            state.add_pending_question("你想怎么做?", source="gm:auto_choice", options=_auto_choice_opts)
+        except Exception:
+            pass
+
     # task 128: GM 返回空时不写 history (避免出现"GM 主代理"标题但内容空的诡异消息),
     # 改为 yield error 让用户清楚知道并能重试。常见原因:
     #   · LLM 触发 safety filter (Gemini 对暴力/儿童虐待场景敏感)
@@ -1738,6 +1932,9 @@ async def persist_turn_phase(
     if not visible_response.strip():
         if ctx.directive_updates:
             # /set 已落盘，GM 空响应无需报错
+            yield ("done", {"status": payload_fn(api_user), "interrupted": False, "empty": True})
+        elif ctx.tavern_character_set:
+            # 酒馆角色卡工具成功但 first_mes 为空 — 正常干净结束,不报 error
             yield ("done", {"status": payload_fn(api_user), "interrupted": False, "empty": True})
         else:
             log.warning(f"[chat] WARN: GM 返回空响应, len(raw)={len(response)} "

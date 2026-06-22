@@ -32,6 +32,7 @@ from typing import Any
 import httpx
 
 from agents.image_gen.base import ImageGenError, decode_b64, download_url
+from core.outbound import safe_httpx_client
 
 _DEFAULT_BASE = "https://ark.cn-beijing.volces.com/api/v3"
 _CONNECT_TIMEOUT = 10.0
@@ -151,13 +152,12 @@ def generate(
     }
 
     try:
-        resp = httpx.post(
-            endpoint,
-            json=body,
-            headers=headers,
-            timeout=httpx.Timeout(_READ_TIMEOUT, connect=_CONNECT_TIMEOUT),
-            follow_redirects=False,
-        )
+        with safe_httpx_client(timeout=_READ_TIMEOUT) as client:
+            resp = client.post(
+                endpoint,
+                json=body,
+                headers=headers,
+            )
     except httpx.TimeoutException as exc:
         raise ImageGenError(f"doubao: request timed out ({exc})") from exc
     except Exception as exc:

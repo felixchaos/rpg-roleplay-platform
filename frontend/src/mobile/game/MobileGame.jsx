@@ -12,6 +12,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { Icon } from '../icons.jsx';
+import { MobileComposer } from '../Composer.jsx';
 import { MobilePanel, MOBILE_PANEL_TABS } from './panels.jsx';
 import AgentModelPicker from '../../components/AgentModelPicker.jsx';
 import { useStickToBottom } from '../../hooks/useStickToBottom.js';
@@ -276,6 +277,18 @@ function SheetHost({ sheet, onClose, gc, msgActions }) {
         ))}
       </div>
     );
+  } else if (type === 'rollback_confirm') {
+    const idx = sheet.data;
+    title = t('mobile.game.sheet.msg_rollback');
+    body = (
+      <div className="sheet-list">
+        <p className="confirm-note" style={{ padding: '0 4px 12px' }}>{t('mobile.game.toast.rollback_confirm')}</p>
+        <button className="sheet-item danger" onClick={() => { onClose(); msgActions._doRollback(idx); }}>
+          <span className="sheet-ico"><Icon name="trash" size={18} /></span>
+          <span className="sheet-tx"><strong>{t('mobile.game.sheet.msg_rollback')}</strong></span>
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -369,7 +382,8 @@ export function MobileGame(gc) {
 
   const closeAll = () => { setLeftOpen(false); setRightOpen(false); };
 
-  // 长按消息 → 操作 sheet
+  // 长按消息 → 操作 sheet；unmount 时清理挂起的 timer 防内存泄漏
+  useEffect(() => () => clearTimeout(lpTimer.current), []);
   const startPress = (idx) => { lpTimer.current = setTimeout(() => { setPressed(idx); if (navigator.vibrate) navigator.vibrate(12); setSheet({ type: 'msg', data: idx }); }, 420); };
   const cancelPress = () => clearTimeout(lpTimer.current);
 
@@ -386,11 +400,14 @@ export function MobileGame(gc) {
         window.__apiToast?.(t('mobile.game.toast.fork_ok'), { kind: 'ok', icon: 'fork' });
       } catch (e) { window.__apiToast?.(t('mobile.game.toast.fork_fail'), { kind: 'danger', detail: e?.message }); }
     },
-    rollback: async (idx) => {
+    rollback: (idx) => {
       setPressed(null);
-      if (!confirm(t('mobile.game.toast.rollback_confirm'))) return;
+      setSheet({ type: 'rollback_confirm', data: idx });
+    },
+    _doRollback: async (idx) => {
       try {
         const sid = activeSave?.id;
+        if (!sid) { window.__apiToast?.(t('mobile.game.toast.rollback_fail'), { kind: 'danger' }); return; }
         await window.api.branches.rollbackToMessage(sid, idx);
         gc.reloadState && gc.reloadState();
         window.__apiToast?.(t('mobile.game.toast.rollback_ok'), { kind: 'ok', icon: 'history' });
@@ -566,26 +583,29 @@ export function MobileGame(gc) {
           </div>
         )}
 
-        {/* composer */}
-        <div className="composer-zone">
-          {!running && suggestions.length > 0 && (
+        {/* composer(统一组件 MobileComposer:leading=附件 / footer=chip 行 / topSlot=建议词) */}
+        <MobileComposer
+          value={text}
+          onChange={setText}
+          onSubmit={submit}
+          onStop={onStop}
+          running={running}
+          placeholder={t('mobile.game.composer.placeholder')}
+          sendAria={t('mobile.game.composer.send_aria')}
+          stopAria={t('mobile.game.composer.stop_aria')}
+          taRef={taRef}
+          topSlot={!running && suggestions.length > 0 ? (
             <div className="suggestions scroll">
               {suggestions.map((s, i) => <button key={i} className="sugg" onClick={() => { setText(s); setTimeout(() => taRef.current?.focus(), 50); }}>{s}</button>)}
             </div>
+          ) : null}
+          leading={(
+            <button className="c-plus" onClick={() => setSheet({ type: 'attach' })} aria-label={t('mobile.game.composer.attach_aria')}><Icon name="plus" size={20} /></button>
           )}
-          <div className="composer">
-            <div className="composer-input-row">
-              <button className="c-plus" onClick={() => setSheet({ type: 'attach' })} aria-label={t('mobile.game.composer.attach_aria')}><Icon name="plus" size={20} /></button>
-              <textarea ref={taRef} className="c-text" rows={1} placeholder={t('mobile.game.composer.placeholder')}
-                value={text} onChange={(e) => setText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent?.isComposing) { e.preventDefault(); submit(); } }} />
-              <button className={`c-send ${(String(text || '').trim() && !running) || running ? '' : 'idle'}`} onClick={() => (running ? onStop() : submit())}>
-                <Icon name={running ? 'stop' : 'send'} size={18} />
-              </button>
-            </div>
-            <div className="composer-foot">
+          footer={(
+            <>
               <button className="c-chip" onClick={() => setSheet({ type: 'slash' })} aria-label={t('mobile.game.composer.slash_aria')}><Icon name="slash" size={14} /></button>
-              <button className="c-chip" onClick={() => setSheet({ type: 'model' })}><Icon name="sparkle" size={13} /><span className="lbl">{(gc.model && (gc.model.label || gc.model.id)) || t('mobile.game.composer.model_fallback')}</span><Icon name="chevron_down" size={12} /></button>
+              <button className={`c-chip${gc.game && gc.game.models && gc.game.models.needs_model_config ? ' needs-config' : ''}`} onClick={() => setSheet({ type: 'model' })}><Icon name="sparkle" size={13} /><span className="lbl">{(gc.game && gc.game.models && gc.game.models.needs_model_config) ? t('mobile.game.composer.model_needs_config') : ((gc.model && (gc.model.label || gc.model.id)) || t('mobile.game.composer.model_fallback'))}</span><Icon name="chevron_down" size={12} /></button>
               <button className={`c-chip perm ${permission}`} onClick={() => setSheet({ type: 'permission' })}><Icon name={(PERMISSIONS().find((x) => x.id === permission) || PERMISSIONS()[2]).icon} size={13} /></button>
               <span className="c-spacer" />
               <button className="c-ctx" onClick={() => setSheet({ type: 'context' })} aria-label={t('mobile.game.composer.context_aria')}>
@@ -595,9 +615,9 @@ export function MobileGame(gc) {
                 </svg>
                 <span className="c-ctx-pct mono">{Math.round(gc.lastUsage?.context_pct || 0)}%</span>
               </button>
-            </div>
-          </div>
-        </div>
+            </>
+          )}
+        />
 
         {/* 抽屉 + scrim + sheets */}
         <div className={`scrim ${leftOpen || rightOpen ? 'show' : ''}`} onClick={closeAll} />

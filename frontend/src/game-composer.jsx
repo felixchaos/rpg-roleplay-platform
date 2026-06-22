@@ -385,7 +385,7 @@ function CommandMenu({ query, onPick, onClose, triggerRef }) {
   );
 }
 
-function AttachMenu({ onPick, onClose, triggerRef }) {
+function AttachMenu({ onPick, onClose, triggerRef, onAiReply, aiReplyOnly = false }) {
   const menuRef = useRefC(null);
   // PR #14: 55vh 上限 + resize,防止菜单过高挡界面。
   const calcHeight = React.useCallback(() => {
@@ -421,10 +421,24 @@ function AttachMenu({ onPick, onClose, triggerRef }) {
       <div className="gc-menu-head">
         <Icon name="plus" size={12} />
         <span>{t('game.attach.title')}</span>
-        <span className="muted-2" style={{marginLeft: "auto", fontSize: 11}}>{t('game.attach.drag_hint')}</span>
+        {!aiReplyOnly && <span className="muted-2" style={{marginLeft: "auto", fontSize: 11}}>{t('game.attach.drag_hint')}</span>}
       </div>
       <div className="gc-attach-groups">
-        {ATTACH_GROUPS.map(g => (
+        {onAiReply && (
+          <div className="gc-attach-group">
+            <div className="gc-attach-group-title">{t('tavern_app.ai_reply.label')}</div>
+            <div className="gc-attach-items">
+              <button className="gc-attach-item" onClick={() => { onClose && onClose(); onAiReply(); }}>
+                <span className="gc-attach-icon"><Icon name="sparkle" size={16} /></span>
+                <span className="gc-attach-label">
+                  <strong>{t('tavern_app.ai_reply.label')}</strong>
+                  <span className="muted-2">{t('tavern_app.ai_reply.desc')}</span>
+                </span>
+              </button>
+            </div>
+          </div>
+        )}
+        {!aiReplyOnly && ATTACH_GROUPS.map(g => (
           <div key={g.titleKey} className="gc-attach-group">
             <div className="gc-attach-group-title">{t(g.titleKey)}</div>
             <div className="gc-attach-items">
@@ -535,6 +549,9 @@ function EffortSection({ selectedKey }) {
   // selectedKey 格式: "api_id::model_real_name" — backend pref key 用 "api_id:model_id"
   const [effort, setEffort] = useStateC('high');
   const [busy, setBusy] = useStateC(false);
+  const cancelledRef = React.useRef(false);  // 卸载守卫:卸载后跳过 setBusy
+  const reqIdRef = React.useRef(0);          // RMW 竞态守卫:只让最新请求写回
+  React.useEffect(() => { cancelledRef.current = false; return () => { cancelledRef.current = true; }; }, []);
   const prefKey = React.useMemo(() => {
     if (!selectedKey) return '';
     const [api, model] = selectedKey.split('::');
@@ -560,18 +577,21 @@ function EffortSection({ selectedKey }) {
 
   const onPickEffort = async (id) => {
     if (!prefKey || busy) return;
+    const myReq = ++reqIdRef.current;  // 竞态守卫:只让最新请求的结果生效
     setBusy(true);
     setEffort(id);  // 乐观更新
     try {
       // 先拉现有 model_effort 字典,patch 后整段 POST 回去
       const profileR = await window.api.account.profile();
+      if (reqIdRef.current !== myReq) return;  // 被更新请求取代,bail out
       const existing = ((profileR && profileR.preferences && profileR.preferences.model_effort) || {});
       const next = { ...existing, [prefKey]: id };
       await window.api.account.preferences({ preferences: { model_effort: next } });
+      if (reqIdRef.current !== myReq) return;  // 再次确认
       window.__apiToast?.(t('game.composer.effort_saved', { id }), { kind: 'ok', duration: 1500 });
     } catch (e) {
       window.__apiToast?.(t('game.composer.effort_save_failed'), { kind: 'danger', detail: e?.message });
-    } finally { setBusy(false); }
+    } finally { if (!cancelledRef.current) setBusy(false); }
   };
 
   if (!prefKey) return null;
@@ -722,6 +742,10 @@ function Composer({
   saveId: composerSaveId,
   imageGenKind = 'game',
   hideImageGen = false,
+  // 酒馆专属:AI 帮回回调(提供时在 + 菜单内追加「AI 帮回」入口,仅限酒馆上下文,游戏控制台不受影响)。
+  onAiReply,
+  // 酒馆专属:+ 菜单只显示「AI 帮回」,隐藏游戏附件组(file/image/章节/卡/世界书等)。
+  aiReplyOnly = false,
 }) {
   const { t } = useTranslation();
   const taRef = useRefC(null);
@@ -1004,7 +1028,7 @@ function Composer({
         {mention && filteredChars.length > 0 && (
           <MentionMenu chars={filteredChars} query={mention.query} onPick={insertMention} onClose={() => setMention(null)} />
         )}
-        {showPlus && <AttachMenu onPick={onAttachPick} onClose={togglePlus} triggerRef={plusTriggerRef} />}
+        {showPlus && <AttachMenu onPick={onAttachPick} onClose={togglePlus} triggerRef={plusTriggerRef} onAiReply={onAiReply} aiReplyOnly={aiReplyOnly} />}
         {showModel && <ModelPopover current={model} onPick={(id) => { setModel(id); toggleModel(); }} align="right" gameState={gameState} onClose={toggleModel} triggerRef={modelTriggerRef} />}
         {showPerm && <PermissionPopover current={permission} optionIds={permissionOptions} onPick={(id) => { setPermission(id); togglePerm(); }} onClose={togglePerm} triggerRef={permTriggerRef} />}
         {showImageGen && (
@@ -1223,6 +1247,8 @@ function _currentModelLabel(gameState, localModel, t) {
   };
   // catalog 已加载但没有任何「已配置 key」的 provider → 用户无可用模型,
   // 绝不回退显示一个他用不了的默认模型(否则删光 key 仍显示 Opus,误导)。
+  // 后端权威标记:用户无任何可用(已配 key)模型 → 提示去配置,绝不显示用不了的全局默认。
+  if (catalog && catalog.needs_model_config) return (t ? t('game.composer.model_needs_config') : 'Set up model');
   if (apis && !apis.some((a) => a.has_credential && (a.models || []).length)) return _placeholder();
   // 解析优先级:localModel(乐观更新) > 存档 session_model > catalog.selected(per-user 默认) > 后端全局 app。
   // 必须含 catalog.selected —— 否则刷新后掉到 app.model(可能是全局默认 opus)而显示用不了的模型;

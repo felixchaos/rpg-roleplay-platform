@@ -426,8 +426,17 @@ def _connector_auth(user_id: int) -> tuple[str, str]:
 
 def _client(base_url: str, token: str | None = None) -> httpx.Client:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    # 整包下载/上传可能数十秒;给 120s,与前端 180s 留余量。follow_redirects=False 防 SSRF 重定向绕过。
-    return httpx.Client(base_url=base_url, headers=headers, timeout=120.0, follow_redirects=False)
+    # 整包下载/上传可能数十秒;给 120s,与前端 180s 留余量。
+    # 使用 _SsrfGuardTransport 替代裸 httpx.Client:传输层 SSRF 守卫(use-time 重解析 + 不跟随重定向)。
+    from core.outbound import _SsrfGuardTransport
+    inner = httpx.HTTPTransport()
+    return httpx.Client(
+        base_url=base_url,
+        headers=headers,
+        timeout=httpx.Timeout(120.0, connect=10.0),
+        follow_redirects=False,
+        transport=_SsrfGuardTransport(inner),
+    )
 
 
 def connector_test(user_id: int) -> dict[str, Any]:

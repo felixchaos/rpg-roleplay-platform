@@ -267,8 +267,11 @@ async def api_continue_branch(request: Request, user=Depends(require_user)):
 async def api_activate_branch(request: Request, user=Depends(require_user)):
     body = await request.json()
     try:
-        result = branches.activate_node(user["id"], int(body.get("node_id")))
-    except ValueError as exc:
+        nid = body.get("node_id")
+        if nid is None:
+            return json_response({"ok": False, "error": "node_id 必填"}, status_code=400)
+        result = branches.activate_node(user["id"], int(nid))
+    except (TypeError, ValueError) as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
     # commit 级 activate 后必须清 app.py 进程内 state 缓存。
     # 之前 _ensure_loaded 自检只比较 save_id,同 save 内换 commit 缓存不会失效
@@ -285,9 +288,12 @@ async def api_activate_branch(request: Request, user=Depends(require_user)):
 @router.post("/api/branches/delete")
 async def api_delete_branch(request: Request, user=Depends(require_user)):
     body = await request.json()
+    nid = body.get("node_id")
+    if nid is None:
+        return json_response({"ok": False, "error": "node_id 必填"}, status_code=400)
     try:
-        return json_response(branches.delete_subtree(user["id"], int(body.get("node_id"))))
-    except ValueError as exc:
+        return json_response(branches.delete_subtree(user["id"], int(nid)))
+    except (TypeError, ValueError) as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 
 
@@ -486,6 +492,12 @@ async def api_save_anchor_satisfy(save_id: int, anchor_key: str, user=Depends(re
                     {"ok": False,
                      "error": f"该锚点在第 {src_ch} 章,超出当前进度窗口,暂不能提前标记(防剧透)。"},
                     status_code=409)
+            # 对称下界:早于当前进度窗口起点的锚点不应手动标记(原读了 win_min 却从未使用 → 漏判)。
+            if isinstance(src_ch, int) and isinstance(win_min, int) and src_ch < win_min:
+                return json_response(
+                    {"ok": False,
+                     "error": f"该锚点在第 {src_ch} 章,早于当前进度窗口起点,无法手动标记。"},
+                    status_code=409)
 
             # 当前最大 turn(与 _t_mark_anchor_satisfied 一致默认)
             tr = db.execute(
@@ -551,6 +563,14 @@ async def api_save_progress_rewind(save_id: int, request: Request, user=Depends(
         with _get_sync_scope_lock((user_id, save_id)), connect() as db:
             if not owns_save(db, save_id, user_id):
                 return json_response({"ok": False, "error": "无权访问该存档"}, status_code=403)
+            # 上界 clamp:不允许回退目标超过剧本真实章数
+            _cc_row = db.execute(
+                "SELECT s.chapter_count FROM game_saves gs JOIN scripts s ON s.id = gs.script_id "
+                "WHERE gs.id = %s",
+                (save_id,),
+            ).fetchone()
+            if _cc_row and _cc_row.get("chapter_count"):
+                target = min(target, int(_cc_row["chapter_count"]))
             sess = db.execute(
                 "select worldline from game_sessions where save_id=%s", (save_id,)).fetchone()
             wl = dict((sess or {}).get("worldline") or {}) if sess else {}
@@ -604,13 +624,13 @@ async def api_save_settings_patch(request: Request, save_id: int, user=Depends(r
     Body: {"updates": {...}, "is_create": bool}
     """
     from gm_serving import settings as _set
+    try:
+        body = await request.json()
+    except Exception:
+        return json_response({"ok": False, "error": "body 必须是合法 JSON"}, status_code=400)
     with connect() as db:
         if not owns_save(db, save_id, user["id"]):
             return json_response({"ok": False, "error": "无权访问该存档"}, status_code=403)
-        try:
-            body = await request.json()
-        except Exception:
-            return json_response({"ok": False, "error": "body 必须是合法 JSON"}, status_code=400)
         updates = body.get("updates") if isinstance(body.get("updates"), dict) else {}
         res = _set.apply_settings(db, save_id, updates, is_create=bool(body.get("is_create")))
     return json_response({"ok": True, **res})

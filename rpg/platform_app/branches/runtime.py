@@ -11,6 +11,7 @@ from psycopg.types.json import Jsonb
 from platform_app import runtime as _runtime_module
 from platform_app.branches._helpers import (
     _snapshot_quality,
+    acquire_save_advisory_lock,
     commit_state,
     load_state,
     rough_summary,
@@ -36,6 +37,7 @@ def record_runtime_turn(
     runtime_state_path: str | None = None,
     user_id: int | None = None,
     state_data: dict[str, Any] | None = None,
+    _depth: int = 0,
 ) -> dict[str, Any]:
     """多用户安全：调用方应传 state_data=state.data 而不是依赖 runtime_state_path 读文件。"""
     meta = _runtime_module.read_runtime(user_id=user_id) or bootstrap_runtime_binding(user_id=user_id)
@@ -63,14 +65,8 @@ def record_runtime_turn(
     init_db()
     missing_parent = False
     with connect() as db:
-        try:
-            uid_for_lock = int(user_id or (save_id * 7919))
-            db.execute(
-                "select pg_advisory_xact_lock(hashtext(%s)::int, hashtext(%s)::int)",
-                (f"rpg_turn_{uid_for_lock}", f"save_{save_id}"),
-            )
-        except Exception:
-            pass
+        # 复用统一锁助手(失败上抛,不再静默吞掉致并发指针错乱)
+        acquire_save_advisory_lock(db, save_id, user_id)
         parent = db.execute("select * from branch_commits where id = %s and save_id = %s", (parent_id, save_id)).fetchone()
         if not parent:
             missing_parent = True
@@ -107,10 +103,28 @@ def record_runtime_turn(
             _upsert_ref_by_id(db, ref_id, row["id"], active=True)
             _set_save_active(db, save_id, row["id"], ref_id)
             _write_checkout(db, int(save["user_id"]), save_id, ref_id, row["id"])
+            # Q KB-backed 存储集成(每用户特性 kb_state,默认开):把本回合 state 完整拆进 KB 行
+            # (COW,born=新 commit row["id"]),让存档状态 DB-resident、单一来源。同事务写;失败不破回合。
+            from core.feature_flags import feature_enabled as _feat
+            # kb_native 档(新档,创建即 seed)始终落 KB;旧档按每用户 kb_state 开关。
+            if bool(save.get("kb_native")) or _feat("kb_state", int(save["user_id"]) if save.get("user_id") is not None else None):
+                try:
+                    from kb.save_kb import import_state as _kb_import, maintain_structured_kb as _kb_maintain
+                    _kb_import(db, save_id, int(row["id"]), data)
+                    # 史官:从本回合正文确定性维护结构化 KB(实体 encountered + 全部关系)
+                    _sid = (save or {}).get("script_id")
+                    if _sid:
+                        _kb_maintain(db, save_id, int(_sid), int(row["id"]), gm_response or "",
+                                     player_name=str(((data or {}).get("player") or {}).get("name") or ""))
+                except Exception as _kbe:
+                    import logging as _lg
+                    _lg.getLogger("kb_state").warning("[kb_state] persist import/maintain skip: %s", _kbe)
     if missing_parent:
+        if _depth >= 2:
+            return {"ok": False, "reason": "runtime 指向的父节点不存在(重绑后仍缺失)"}
         rebound = bootstrap_runtime_binding(user_id=user_id)
         if rebound and rebound.get("active_commit_id") != parent_id:
-            return record_runtime_turn(player_input, gm_response, runtime_state_path, user_id=user_id)
+            return record_runtime_turn(player_input, gm_response, runtime_state_path, user_id=user_id, _depth=_depth + 1)
         return {"ok": False, "reason": "runtime 指向的父节点不存在"}
     effective_user_id = user_id or int(save.get("user_id") or 0)
     runtime_info = _runtime_module.update_active_node(
@@ -147,14 +161,7 @@ def persist_runtime_state(
         # 否则二者并发(多 tab:一 tab 发回合创建 commit N+1,另一 tab 改 state 触发 autosave)时,
         # autosave 可能在回合提交后用过时 commit_id 回退活跃指针 + 覆盖刚提交回合 → 丢回合。
         # 持锁后回合无法在本函数读 save 与写 UPDATE 之间提交,save.active 在事务内稳定。
-        try:
-            uid_for_lock = int(user_id or (save_id * 7919))
-            db.execute(
-                "select pg_advisory_xact_lock(hashtext(%s)::int, hashtext(%s)::int)",
-                (f"rpg_turn_{uid_for_lock}", f"save_{save_id}"),
-            )
-        except Exception:
-            pass
+        acquire_save_advisory_lock(db, save_id, user_id)
         save = db.execute("select * from game_saves where id = %s", (save_id,)).fetchone()
         if user_id and (not save or int(save["user_id"]) != int(user_id)):
             return {"ok": False, "reason": "runtime 不属于当前用户"}

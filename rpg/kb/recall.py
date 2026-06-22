@@ -132,8 +132,12 @@ def recall(save_id: int, query: str, *, mode: str = "none", token_budget: int = 
         cols = ", ".join("kn." + c for c in _KN_COLS)
         # 解析 script_id 一次:embed_query 必须用建库锁定的 embedder(否则向量空间错乱,
         # 静默错召回);_search_chunks 也复用。NULL(酒馆档)→ None,下游各自安全降级。
-        _srow = _db.execute("select script_id from game_saves where id=%s", (int(save_id),)).fetchone()
+        _srow = _db.execute("select script_id, user_id from game_saves where id=%s", (int(save_id),)).fetchone()
         _script_id = (_srow or {}).get("script_id") if _srow else None
+        # 召回侧 query 必须用建库锁定的 embedder(force_api_id/model),而该 provider 是 BYOK —
+        # 取 key 需 user_id。原来没传 → resolve_api_key(None,..) 无 key → 降级 vertex(异空间)
+        # 或 'unknown api_id' 静默退化为关键词召回。传存档属主 id 即可命中其凭证。
+        _owner_id = (_srow or {}).get("user_id") if _srow else None
 
         from platform_app.knowledge._utils import _query_tokens
         tokens = _query_tokens(query) or []
@@ -153,7 +157,7 @@ def recall(save_id: int, query: str, *, mode: str = "none", token_budget: int = 
         vec = None
         try:
             from platform_app.knowledge._search import _embed_query
-            vec = _embed_query(query, script_id=_script_id, db=_db) if query else None
+            vec = _embed_query(query, script_id=_script_id, user_id=_owner_id, db=_db) if query else None
         except Exception as exc:
             log.debug("[recall] embed 跳过: %s", exc)
         if vec:
@@ -209,7 +213,7 @@ def recall(save_id: int, query: str, *, mode: str = "none", token_budget: int = 
         if _script_id:
             try:
                 from platform_app.knowledge._search import _search_chunks
-                chunk_rows = _search_chunks(_db, int(_script_id), tokens, None, ceil_chap, 4) or []
+                chunk_rows = _search_chunks(_db, int(_script_id), tokens, None, ceil_chap, 4, user_id=_owner_id) or []
             except Exception as exc:
                 log.debug("[recall] chunks 跳过: %s", exc)
 

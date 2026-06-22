@@ -475,7 +475,8 @@ export function TavernChatArea({ history, running, saveId, charName, charInitial
  * inline=true(Platform 内嵌 tavern.jsx):页内可折叠右侧栏,不盖顶栏(open=false → collapsed)。
  * 新增「系统提示」tab —— 编辑本对话 system_prompt(onSaveSystemPrompt 持久化)。 */
 export function TwoCardDrawer({ open, character, persona, onClose, onSavePersona,
-                                inline = false, systemPrompt = '', onSaveSystemPrompt }) {
+                                inline = false, systemPrompt = '', onSaveSystemPrompt,
+                                immersive = false, onToggleImmersive }) {
   const { t } = useTranslation();
   const [form, setForm] = useState(() => cardFormInit(persona));
   const [editing, setEditing] = useState(false);
@@ -526,9 +527,42 @@ export function TwoCardDrawer({ open, character, persona, onClose, onSavePersona
   const body = (
     <div className="tv-drawer-body">
       {tab === 'character' && (
-        character
-          ? <CardSheet card={character} kind="user" />
-          : <div className="muted-2" style={{ padding: 24, textAlign: 'center' }}>{t('tavern_app.drawer.char_not_found')}</div>
+        <>
+          {onToggleImmersive && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '12px 0 12px', borderBottom: '1px solid var(--line)', marginBottom: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{t('tavern_app.drawer.immersive_label')}</div>
+                <div className="muted-2" style={{ fontSize: 12, lineHeight: 1.5, marginTop: 2 }}>{t('tavern_app.drawer.immersive_desc')}</div>
+              </div>
+              <button
+                role="switch"
+                aria-checked={!!immersive}
+                onClick={() => onToggleImmersive(!immersive)}
+                style={{
+                  flexShrink: 0,
+                  width: 36, height: 20, borderRadius: 999,
+                  background: immersive ? 'var(--accent)' : 'var(--line)',
+                  border: 'none', cursor: 'pointer', position: 'relative',
+                  transition: 'background 0.2s',
+                  padding: 0,
+                }}
+                aria-label={t('tavern_app.drawer.immersive_label')}
+              >
+                <span style={{
+                  position: 'absolute',
+                  top: 3, left: immersive ? 19 : 3,
+                  width: 14, height: 14, borderRadius: '50%',
+                  background: '#fff',
+                  transition: 'left 0.2s',
+                  display: 'block',
+                }} />
+              </button>
+            </div>
+          )}
+          {character
+            ? <CardSheet card={character} kind="user" />
+            : <div className="muted-2" style={{ padding: 24, textAlign: 'center' }}>{t('tavern_app.drawer.char_not_found')}</div>}
+        </>
       )}
       {tab === 'persona' && (
         !editing ? (
@@ -622,6 +656,8 @@ export default function TavernApp() {
   const [running, setRunning] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [lastPlayerText, setLastPlayerText] = useState('');
+  const [immersive, setImmersive] = useState(false);
+  const [aiReplyLoading, setAiReplyLoading] = useState(false);
 
   const [importOpen, setImportOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -629,6 +665,7 @@ export default function TavernApp() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
+  const [showPlus_, setShowPlus_] = useState(false);
 
   // 收口的酒馆 SSE 状态机(runRef + startRun/stopRun 在 hook 内,折叠语义见 lib/tavern-chat-run.js)。
   const { runRef, startRun: runChat, stopRun } = useTavernChatRun({ setRunning });
@@ -652,7 +689,7 @@ export default function TavernApp() {
 
   /* ── 把一份 state 投射进角色/persona/history(收口到 applyTavernState 核心三段)──── */
   const applyState = useCallback((data) => {
-    applyTavernState(data, { setCharacter, setPersona, setHistory, setActiveChat });
+    applyTavernState(data, { setCharacter, setPersona, setHistory, setActiveChat, setImmersive });
   }, []);
 
   /* ── 打开一个对话:激活 → 读 state(含 first_mes seed 的 history)────── */
@@ -817,6 +854,41 @@ export default function TavernApp() {
     }
   }, [applyState, t]);
 
+  /* ── 沉浸式拟人模式开关(持久写后端 state.tavern.immersive)── */
+  const onToggleImmersive = useCallback(async (enabled) => {
+    if (!activeId) return;
+    setImmersive(enabled); // 乐观更新
+    try {
+      await window.api.tavern.setImmersive(activeId, enabled);
+      window.__apiToast?.(
+        enabled ? t('tavern_app.drawer.immersive_on_toast') : t('tavern_app.drawer.immersive_off_toast'),
+        { kind: 'ok', duration: 1500 },
+      );
+    } catch (e) {
+      setImmersive(!enabled); // 回滚
+      window.__apiToast?.(t('tavern_app.toast.save_failed'), { kind: 'danger', detail: e?.message });
+    }
+  }, [activeId, t]);
+
+  /* ── AI 帮回:以玩家自己的角色生成一条回复 → 填入输入框(不自动发送)── */
+  const onAiReply = useCallback(async () => {
+    if (!activeId || aiReplyLoading) return;
+    setAiReplyLoading(true);
+    try {
+      const r = await window.api.tavern.aiReply(activeId);
+      const reply = (r && r.reply) || '';
+      if (!reply) {
+        window.__apiToast?.(t('tavern_app.ai_reply.empty'), { kind: 'warn', duration: 2000 });
+        return;
+      }
+      setText(reply);
+    } catch (e) {
+      window.__apiToast?.(t('tavern_app.ai_reply.fail'), { kind: 'danger', detail: e?.message });
+    } finally {
+      setAiReplyLoading(false);
+    }
+  }, [activeId, aiReplyLoading, t]);
+
   const charName = (character && character.name) || (activeChat && activeChat.character_name) || t('tavern_app.toast.char_fallback');
   const charInitial = charName.trim().slice(0, 1);
   const charAvatar = (character && character.avatar_path) || (activeChat && activeChat.avatar_path) || null;
@@ -888,12 +960,15 @@ export default function TavernApp() {
               model={model} setModel={setModel}
               composerMode="writing"
               placeholder={t('tavern_app.composer.placeholder', { name: charName })}
-              hideSlash hidePermission hideContinue hideAttach
+              hideSlash hidePermission hideContinue
               attachments={[]} removeAttachment={() => {}}
-              showSlash={false} showPlus={false} showModel={false} showPerm={false}
-              toggleSlash={() => {}} togglePlus={() => {}} toggleModel={() => {}} togglePerm={() => {}}
+              showSlash={false} showPlus={showPlus_} showModel={false} showPerm={false}
+              toggleSlash={() => {}} togglePlus={() => setShowPlus_(s => !s)} toggleModel={() => {}} togglePerm={() => {}}
               saveId={activeId != null ? String(activeId) : null}
               imageGenKind="chat"
+              onAiReply={onAiReply}
+              aiReplyOnly
+              onAttachPick={() => {}}
             />
           </div>
         )}
@@ -907,6 +982,8 @@ export default function TavernApp() {
         open={drawerOpen} character={character} persona={persona}
         onClose={() => setDrawerOpen(false)}
         onSavePersona={onSavePersona}
+        immersive={immersive}
+        onToggleImmersive={onToggleImmersive}
       />
 
       <RenameModal
