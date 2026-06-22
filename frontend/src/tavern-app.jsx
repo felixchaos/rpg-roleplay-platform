@@ -93,6 +93,7 @@ export function TavernChatItem({ chat, active, onOpen, onRename, onArchive, onDe
       onClick={() => { if (!editing) onOpen(chat); }}
       role="button"
       tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!editing) onOpen(chat); } }}
     >
       <AvatarImg src={chat.avatar_path || null} name={chat.character_name || chat.title || '?'} size={36} shape="circle" className="tv-chat-avatar" />
       <div className="tv-chat-main">
@@ -125,7 +126,7 @@ export function TavernChatItem({ chat, active, onOpen, onRename, onArchive, onDe
           : <div className="tv-chat-snippet muted-2" style={{ fontStyle: 'italic' }}>{chat.character_name || tl('tavern_app.chat_item.fallback_char')}</div>}
       </div>
       <div className="tv-chat-menu-wrap" onClick={(e) => e.stopPropagation()}>
-        <button className="iconbtn tv-chat-menu-btn" onClick={() => setMenuOpen((v) => !v)} data-tip={tl('tavern_app.chat_item.menu_more')}>
+        <button className="iconbtn tv-chat-menu-btn" onClick={() => setMenuOpen((v) => !v)} data-tip={tl('tavern_app.chat_item.menu_more')} aria-label={tl('tavern_app.chat_item.menu_more')}>
           <Icon name="more" size={14} />
         </button>
         {menuOpen && (
@@ -230,11 +231,11 @@ function TavernHeader({ chat, character, persona, onOpenDrawer, onExport, onOpen
   const charName = (character && character.name) || (chat && chat.character_name) || '';
   return (
     <header className="tv-header">
-      <button className="iconbtn tv-mobile-nav" onClick={onOpenNav} data-tip={t('tavern_app.header.chat_list')}>
+      <button className="iconbtn tv-mobile-nav" onClick={onOpenNav} data-tip={t('tavern_app.header.chat_list')} aria-label={t('tavern_app.header.chat_list')}>
         <Icon name="menu" size={16} />
       </button>
       {railCollapsed && (
-        <button className="iconbtn" onClick={onExpandRail} data-tip={t('tavern_app.header.expand_rail')}>
+        <button className="iconbtn" onClick={onExpandRail} data-tip={t('tavern_app.header.expand_rail')} aria-label={t('tavern_app.header.expand_rail')}>
           <Icon name="chevron_right" size={16} />
         </button>
       )}
@@ -248,12 +249,12 @@ function TavernHeader({ chat, character, persona, onOpenDrawer, onExport, onOpen
       )}
       <div className="tv-header-actions">
         {chat && onExport && (
-          <a className="iconbtn" href={onExport} target="_blank" rel="noopener" data-tip={t('tavern_app.header.export_jsonl')}>
+          <a className="iconbtn" href={onExport} target="_blank" rel="noopener" data-tip={t('tavern_app.header.export_jsonl')} aria-label={t('tavern_app.header.export_jsonl')}>
             <Icon name="download" size={15} />
           </a>
         )}
         {charName && (
-          <button className="iconbtn" onClick={onOpenDrawer} data-tip={t('tavern_app.header.char_persona')}>
+          <button className="iconbtn" onClick={onOpenDrawer} data-tip={t('tavern_app.header.char_persona')} aria-label={t('tavern_app.header.char_persona')}>
             <Icon name="cards" size={15} />
           </button>
         )}
@@ -517,7 +518,7 @@ export function TwoCardDrawer({ open, character, persona, onClose, onSavePersona
           <Icon name="settings" size={12} /> {t('tavern_app.drawer.tab_system')}
         </button>
       </div>
-      <button className="iconbtn" onClick={onClose} data-tip={inline ? t('tavern_app.drawer.collapse') : t('common.close')}>
+      <button className="iconbtn" onClick={onClose} data-tip={inline ? t('tavern_app.drawer.collapse') : t('common.close')} aria-label={inline ? t('tavern_app.drawer.collapse') : t('common.close')}>
         <Icon name={inline ? 'chevron_right' : 'close'} size={15} />
       </button>
     </header>

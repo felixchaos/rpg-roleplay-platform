@@ -19,4 +19,4 @@ jobs:
         working-directory: frontend
         run: |
           npm install -D @lhci/cli@0.14.x
-          npx lhci autorun || true
+          npx lhci autorun

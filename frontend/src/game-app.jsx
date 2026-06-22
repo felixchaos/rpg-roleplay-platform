@@ -40,7 +40,7 @@ function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitc
             <span className="muted-2" style={{ fontSize: 11 }}>RPG Roleplay · {(state && state.world && state.world.timeline && state.world.timeline.current_phase) || "—"}</span>
           </div>
         </div>
-        <button className="iconbtn" onClick={onToggle} data-tip={t('game.app.rail.collapse_tip')} data-tip-pos="below">
+        <button className="iconbtn" onClick={onToggle} data-tip={t('game.app.rail.collapse_tip')} data-tip-pos="below" aria-label={t('game.app.rail.collapse_tip')}>
           <Icon name="chevron_left" size={14} />
         </button>
       </div>
@@ -48,7 +48,7 @@ function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitc
       <div className="gc-rail-section">
         <div className="gc-rail-section-head">
           <span>{t('game.app.rail.current_save')}</span>
-          <button className="iconbtn" data-tip={t('game.app.rail.new_game_tip')} onClick={onNew}><Icon name="plus" size={12} /></button>
+          <button className="iconbtn" data-tip={t('game.app.rail.new_game_tip')} onClick={onNew} aria-label={t('game.app.rail.new_game_tip')}><Icon name="plus" size={12} /></button>
         </div>
         <div className="gc-rail-save-display">
           {(() => {
@@ -74,7 +74,7 @@ function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitc
         </div>
         <div className="gc-rail-quick">
           <button className="btn ghost" onClick={onSave} data-tip={t('game.app.rail.manual_save_tip')}><Icon name="save" size={12} /> {t('common.save')}</button>
-          <button className="btn ghost" onClick={() => setBranchOpen(o => !o)} data-tip={t('game.app.rail.branch_tip')}><Icon name="branch" size={12} /> {t('game.app.rail.branch_btn')}</button>
+          <button className="btn ghost" onClick={() => setBranchOpen(o => !o)} data-tip={t('game.app.rail.branch_tip')} aria-label={t('game.app.rail.branch_tip')}><Icon name="branch" size={12} /> {t('game.app.rail.branch_btn')}</button>
         </div>
         {/* task 48：传 currentSaveId / state._raw.save_id，BranchTreeRail 走真 /api/branches */}
         {branchOpen && <BranchTreeRail saveId={currentSaveId || state?._raw?.save_id || null} />}
@@ -83,13 +83,13 @@ function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitc
       <div className="gc-rail-section">
         <div className="gc-rail-section-head"><span>{t('game.app.rail.memory_mode')}</span></div>
         <div className="seg gc-mem-seg">
-          <button className={m.mode === "normal" ? "active" : ""} data-tip={t('game.app.rail.memory_normal_tip')} onClick={() => onMemoryMode?.("normal")}>
+          <button className={m.mode === "normal" ? "active" : ""} data-tip={t('game.app.rail.memory_normal_tip')} onClick={() => onMemoryMode?.("normal")} aria-label={t('game.app.rail.memory_normal_tip')}>
             <Icon name="memory" /> {t('game.app.rail.memory_normal')}
           </button>
-          <button className={m.mode === "deep" ? "active" : ""} data-tip={t('game.app.rail.memory_deep_tip')} onClick={() => onMemoryMode?.("deep")}>
+          <button className={m.mode === "deep" ? "active" : ""} data-tip={t('game.app.rail.memory_deep_tip')} onClick={() => onMemoryMode?.("deep")} aria-label={t('game.app.rail.memory_deep_tip')}>
             <Icon name="sparkle" /> {t('game.app.rail.memory_deep')}
           </button>
-          <button className={m.mode === "off" ? "active" : ""} data-tip={t('game.app.rail.memory_off_tip')} onClick={() => onMemoryMode?.("off")}>
+          <button className={m.mode === "off" ? "active" : ""} data-tip={t('game.app.rail.memory_off_tip')} onClick={() => onMemoryMode?.("off")} aria-label={t('game.app.rail.memory_off_tip')}>
             <Icon name="eye_off" /> {t('common.close')}
           </button>
         </div>
@@ -344,7 +344,8 @@ function RunDetailRail({ runState }) {
         </span>
         {rawSteps.length > 6 && (
           <button className="iconbtn" style={{ padding: "2px 8px", fontSize: 10.5, whiteSpace: "nowrap", width: "auto", height: "auto" }}
-            onClick={(e) => { e.stopPropagation(); setExpanded(v => !v); }}>
+            onClick={(e) => { e.stopPropagation(); setExpanded(v => !v); }}
+            aria-label={expanded ? t('game.app.run.collapse') : t('game.app.run.show_all', { count: rawSteps.length })}>
             {expanded ? t('game.app.run.collapse') : t('game.app.run.show_all', { count: rawSteps.length })}
           </button>
         )}
@@ -515,7 +516,7 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
   return (
     <>
       <div className="gc-msg-actions">
-        <button className="iconbtn gc-msg-act" data-tip={copied ? t('game.app.msg.copied') : t('game.app.msg.copy')} data-tip-pos="below" onClick={onCopy}>
+        <button className="iconbtn gc-msg-act" data-tip={copied ? t('game.app.msg.copied') : t('game.app.msg.copy')} data-tip-pos="below" onClick={onCopy} aria-label={copied ? t('game.app.msg.copied') : t('game.app.msg.copy')}>
           <Icon name={copied ? "check" : "file"} size={12} />
         </button>
         <button
@@ -523,7 +524,7 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
           data-tip={canFork ? t('game.app.msg.fork_tip') : t('game.app.msg.fork_no_ctx_tip')}
           data-tip-pos="below"
           disabled={!canFork}
-          onClick={onFork}>
+          aria-label={canFork ? t('game.app.msg.fork_tip') : t('game.app.msg.fork_no_ctx_tip')} onClick={onFork}>
           <Icon name="fork" size={12} />
         </button>
         <button
@@ -531,7 +532,7 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
           data-tip={canRegen ? t('game.app.msg.regen_tip') : t('game.app.msg.regen_no_ctx_tip')}
           data-tip-pos="below"
           disabled={!canRegen}
-          onClick={onRegenerate}>
+          aria-label={canRegen ? t('game.app.msg.regen_tip') : t('game.app.msg.regen_no_ctx_tip')} onClick={onRegenerate}>
           <Icon name="refresh" size={12} />
         </button>
         <button
@@ -539,7 +540,7 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
           data-tip={canDelete ? t('game.app.msg.delete_tip') : t('game.app.msg.delete_no_ctx_tip')}
           data-tip-pos="below"
           disabled={!canDelete}
-          onClick={() => setDelOpen(true)}>
+          aria-label={canDelete ? t('game.app.msg.delete_tip') : t('game.app.msg.delete_no_ctx_tip')} onClick={() => setDelOpen(true)}>
           <Icon name="trash" size={12} />
         </button>
         <span className="gc-msg-ts mono">{ts}</span>
@@ -1050,9 +1051,9 @@ function ChatArea({ history, runState, runStyle, narrativeFont, narrativeSize, h
         {hiddenCount > 0 && (
           <div className="muted-2" style={{textAlign: "center", padding: "8px 0", fontSize: 12}}>
             {t('game.app.chat.hidden_count', { count: hiddenCount })} ·{" "}
-            <a href="#" onClick={(e) => { e.preventDefault(); setExtra(x => x + HISTORY_WINDOW); }}>
+            <button className="link" onClick={() => setExtra(x => x + HISTORY_WINDOW)}>
               {t('game.app.chat.load_more', { count: Math.min(HISTORY_WINDOW, hiddenCount) })}
-            </a>
+            </button>
             {" · "}
             <span className="muted">{t('game.app.chat.full_history_hint')}</span>
           </div>
@@ -1192,6 +1193,7 @@ function BranchTreeRail({ saveId }) {
         <a className="iconbtn" href="/saves-branches"
            target="_blank" rel="noopener noreferrer"
            data-tip={t('game.app.branch.open_full_tip')} data-tip-pos="below"
+           aria-label={t('game.app.branch.open_full_tip')}
            style={{width: 18, height: 18}}>
           <Icon name="arrow_right" size={10} />
         </a>

@@ -35,7 +35,7 @@ RPG Roleplay 把一本长篇小说扔进一个自托管的 LLM 驱动的 RPG 运
 | **Python 核心游戏循环**(state, op, scene, 骰子, 5E 核心, 遭遇, 物品栏, 检索, agents) | ✅ 稳定 |
 | **LLM 路由**(Anthropic 原生 / OpenAI Responses / Vertex Gemini / OpenAI 兼容) | ✅ 稳定 — 流式 + 工具调用 + 多模态 |
 | **Postgres + pgvector** 存储, v39+ 版本化迁移, 启动时自动加咨询锁顺序执行 | ✅ 稳定 |
-| **Vite + React 18**, JSDoc 类型注解, 多页面入口 | ✅ 稳定 |
+| **Vite + React 19**, JSDoc 类型注解, 多页面入口 | ✅ 稳定 |
 | **可分支存档** — commit / ref / checkout 像 Git 一样工作 + 硬删 30 天宽限队列 | ✅ 稳定 |
 | **剧本导入** — TXT / ZIP 上传, 7 种章节切分, 自动抽角色卡 + 世界书 + 时间线 + 向量索引 | ✅ 稳定 |
 | **SillyTavern V2/V3 导入** — 角色卡(PNG tEXt / JSON) + 聊天记录(JSONL → 新存档) | ✅ 稳定 |
@@ -138,7 +138,7 @@ open http://localhost:5173/Login.html
 
 ```
 ┌─ browser ──────────────────────────────────────────────────┐
-│  React 18 + Vite + JS (ESM multi-page)                     │
+│  React 19 + Vite + JS (ESM multi-page)                     │
 │  Login.html · Platform.html · Game Console.html            │
 │  Cloudscape Design System · api-client.js · i18n           │
 └───────────────────────────────┬────────────────────────────┘
@@ -191,7 +191,7 @@ FastAPI 后端，~30+ 个路由模块 / agents / state mixin，~1k pytest 用例
 
 ## 技术栈
 
-`Python 3.12+` · `FastAPI` · `uvicorn` · `psycopg` · `pgvector` · `pgbouncer` · `Redis` · `React 18` · `Vite` · `Cloudscape Design System`
+`Python 3.12+` · `FastAPI` · `uvicorn` · `psycopg` · `pgvector` · `pgbouncer` · `Redis` · `React 19` · `Vite` · `Cloudscape Design System`
 
 ## 为什么不是 SillyTavern / Risu / KoboldCpp?
 

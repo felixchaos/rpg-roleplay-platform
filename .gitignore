@@ -117,6 +117,8 @@ output/
 #  编辑器 / IDE / Claude Code 会话缓存
 # ──────────────────────────────────────────────────────────────────
 .claude/
+.deepseek/
+.codewhale/
 .vscode/
 .idea/
 *.swp
@@ -179,6 +181,7 @@ rpg/config/novel_glossary.json
 rpg/config/*.private.json
 
 # copyrighted novel test fixtures — never publish
+.test-fixtures/
 .test-fixtures/
 # 运行时生成的用户 AI 图(不入库,误 add 防护)
 rpg/platform_data/ai_images/

@@ -20,7 +20,7 @@ data:
   RPG_COOKIE_SECURE: "1"
   RPG_SKIP_AUTO_MIGRATE: "0"
   EMBED_MODEL: "text-embedding-004"
-  RUST_LOG: "rpg_server=info,tower_http=warn"
+  # UVICORN_LOG_LEVEL 由 deployment env 控制；此 ConfigMap 仅含非敏感业务配置
 
 ---
 # Secret 模板 — 敏感值请用 sealed-secrets 或 External Secrets Operator 管理

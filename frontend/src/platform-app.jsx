@@ -256,22 +256,22 @@ function PromptModal({ open, eyebrow, title, fields = [], submitLabel = "", dang
         <div className="pl-modal-form">
           {fields.map(f => (
             <div key={f.key} className="pl-field">
-              <label>{f.label} {f.hint && <span className="muted-2" style={{textTransform: "none", letterSpacing: 0, marginLeft: 6}}>{f.hint}</span>}</label>
+              <label htmlFor={f.key}>{f.label} {f.hint && <span className="muted-2" style={{textTransform: "none", letterSpacing: 0, marginLeft: 6}}>{f.hint}</span>}</label>
               {f.type === "textarea" ? (
-                <textarea value={values[f.key] || ""} onChange={(e) => update(f.key, e.target.value)} placeholder={f.placeholder} rows={f.rows || 3} />
+                <textarea id={f.key} value={values[f.key] || ""} onChange={(e) => update(f.key, e.target.value)} placeholder={f.placeholder} rows={f.rows || 3} />
               ) : f.type === "select" ? (
-                <select value={values[f.key] || ""} onChange={(e) => update(f.key, e.target.value)}>
+                <select id={f.key} value={values[f.key] || ""} onChange={(e) => update(f.key, e.target.value)}>
                   {f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               ) : f.type === "file" ? (
                 <div className="pl-drop" style={{padding: "14px 16px"}}>
                   <Icon name="upload" size={18} style={{color: "var(--muted)"}} />
                   <strong>{t('platform.shell.drop_files')}</strong>
-                  <a href="#" onClick={(e) => { e.preventDefault(); update(f.key, "example.png"); }}>{t('platform.shell.choose_file')}</a>
+                  <button className="link" onClick={() => update(f.key, "example.png")}>{t('platform.shell.choose_file')}</button>
                   {values[f.key] && <span className="mono muted" style={{fontSize: 11.5}}>{values[f.key]}</span>}
                 </div>
               ) : (
-                <input type={f.type || "text"} className={f.mono ? "mono" : ""}
+                <input id={f.key} type={f.type || "text"} className={f.mono ? "mono" : ""}
                   value={values[f.key] || ""} onChange={(e) => update(f.key, e.target.value)}
                   placeholder={f.placeholder} autoFocus={f === fields[0]} />
               )}
@@ -893,7 +893,7 @@ function UnifiedSearch({ open, onClose, setPage }) {
             ref={inputRef}
             value={q}
             onChange={(e) => { setQ(e.target.value); setActiveIdx(0); }}
-            placeholder={tSearch('platform.search.placeholder')}
+            placeholder={tSearch('platform.search.placeholder')} aria-label={tSearch('platform.search.placeholder')}
           />
           <span className="pl-search-kbd">
             <span className="kbd">Esc</span>
@@ -3894,7 +3894,7 @@ function ApiList() {
         <div className="pl-sec-head">
           <h2>稳定接口 <span className="muted-2">v1 · {filtered.length} 条 · {Object.keys(groups).length} 组</span></h2>
           <div className="pl-sec-tools" style={{flex: 1, maxWidth: 320}}>
-            <input style={{height: 28, fontSize: 12}} placeholder="搜索路径或描述..." value={q} onChange={(e) => setQ(e.target.value)} />
+            <input style={{height: 28, fontSize: 12}} placeholder="搜索路径或描述..." aria-label="搜索路径或描述" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
         </div>
         {Object.entries(groups).map(([group, items]) => (

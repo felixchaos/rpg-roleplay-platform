@@ -1049,14 +1049,13 @@ function LoginApp() {
                 ? t('auth.min_password', { min: minPw })
                 : ''}
             </span>
-            <a href="#"
-               onClick={(e) => {
-                 e.preventDefault();
+            <button
+               onClick={() => {
                  setForgotEmail('');
                  setErr(''); setNotice('');
                  setMode('forgot');
                }}
-               style={{borderBottom: 0, color: 'var(--muted)', cursor: 'pointer'}}>{t('auth.forget_password')}</a>
+               style={{background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 'inherit', padding: 0}}>{t('auth.forget_password')}</button>
           </div>
         </form>}
       </div>

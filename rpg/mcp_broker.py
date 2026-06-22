@@ -35,6 +35,13 @@ DEFAULT_INIT_TIMEOUT = 8       # 启动 + 握手超时
 DEFAULT_CALL_TIMEOUT = 30      # tools/call 超时
 MAX_RESPONSE_BYTES = 256 * 1024  # 单条响应最大 256 KB
 
+# MCP 命令白名单：server 模式下仅允许这些可执行文件，防止命令注入。
+# local 模式不受限（开发灵活性）。新增合法 MCP runner 只需加一行。
+_SAFE_MCP_COMMANDS: set[str] = {
+    "npx", "uvx", "python", "python3", "node",
+    "docker", "podman",
+}
+
 
 class MCPServerConn:
     """单个 MCP server 的 stdio 进程连接 + JSON-RPC 客户端。"""
@@ -206,7 +213,8 @@ class MCPServerConn:
         readline() 不含 \\n 时表示截断（行超限），此时丢弃该行。
         """
         import io
-        assert self.proc and self.proc.stdout
+        if not self.proc or not self.proc.stdout:
+            return
         reader = io.BufferedReader(self.proc.stdout, buffer_size=65536)  # type: ignore[arg-type]
         _limit = MAX_RESPONSE_BYTES + 1
         while not self._closed:
@@ -237,7 +245,8 @@ class MCPServerConn:
 
     def _stderr_loop(self) -> None:
         """收集 stderr 用于诊断。"""
-        assert self.proc and self.proc.stderr
+        if not self.proc or not self.proc.stderr:
+            return
         while not self._closed:
             try:
                 line = self.proc.stderr.readline()
@@ -270,6 +279,24 @@ def start_server(server_id: str) -> dict[str, Any]:
         return {"ok": False, "error": f"server_id 不存在: {server_id}"}
     if not server_config.get("enabled"):
         return {"ok": False, "error": "server 未启用"}
+
+    # ── 命令白名单校验（server 模式防命令注入）───────────────────
+    command = server_config.get("command", "")
+    if not command or not isinstance(command, str):
+        return {"ok": False, "error": "command 不能为空"}
+    from core.config import require_auth
+    if require_auth():
+        cmd_base = command.strip().split()[0] if command else ""
+        # 解析路径最后一段（如 /usr/bin/python3 → python3）
+        import os as _os
+        cmd_name = _os.path.basename(cmd_base) if cmd_base else ""
+        if cmd_name not in _SAFE_MCP_COMMANDS:
+            return {
+                "ok": False,
+                "error": f"MCP command 不在白名单中: {cmd_name}。"
+                         f"允许的命令: {', '.join(sorted(_SAFE_MCP_COMMANDS))}",
+            }
+    # ──────────────────────────────────────────────────────────────
 
     with _LOCK:
         existing = _RUNNING.get(server_id)

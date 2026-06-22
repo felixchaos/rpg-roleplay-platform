@@ -1,4 +1,3 @@
-annotated-doc==0.0.4
 argon2-cffi>=25.1.0
 redis==8.0.0
 annotated-types==0.7.0

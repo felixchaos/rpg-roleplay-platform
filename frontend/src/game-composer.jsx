@@ -890,7 +890,7 @@ function Composer({
             <span key={i} className="gc-attachment">
               <Icon name={a.kind === "image" ? "image" : a.kind === "skill" ? "spark" : a.kind === "mcp" ? "diamond" : "file"} size={12} />
               <span className="truncate">{a.name}</span>
-              <button onClick={() => removeAttachment(i)} className="iconbtn" style={{width: 18, height: 18}}><Icon name="close" size={10} /></button>
+              <button onClick={() => removeAttachment(i)} className="iconbtn" style={{width: 18, height: 18}} aria-label={t('game.composer.remove_attachment')}><Icon name="close" size={10} /></button>
             </span>
           ))}
         </div>
@@ -901,7 +901,7 @@ function Composer({
             <div className="gc-cmd-chip">
               <span className="mono">{pickedCommand.trigger.trim()}</span>
               <span className="gc-cmd-chip-label">{pickedCommand.label}</span>
-              <button className="iconbtn" data-tip={t('game.composer.remove_command_tip')} onClick={onClearCommand} style={{width: 18, height: 18}}>
+              <button className="iconbtn" data-tip={t('game.composer.remove_command_tip')} onClick={onClearCommand} style={{width: 18, height: 18}} aria-label={t('game.composer.remove_command_tip')}>
                 <Icon name="close" size={10} />
               </button>
             </div>
@@ -1205,6 +1205,8 @@ function ContextUsage({ gameState, used: usedProp, cap: capProp }) {
   return (
     <span className={`gc-context-usage gc-context-usage-ring${open ? " active" : ""}`}
       ref={wrapRef}
+      role="button" tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o); } }}
       onClick={() => setOpen(o => !o)}
       title={t('game.composer.context_usage_tip')}>
       <svg width="20" height="20" viewBox="0 0 20 20" style={{display: "block"}}>

@@ -322,6 +322,7 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
   position: sticky; top: 0; z-index: 3;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 0 24px;
+  padding-top: env(safe-area-inset-top, 0px);
   height: 72px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--line-soft);
@@ -561,7 +562,7 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
   position: fixed;
   /* 顶栏 #pl-cs-topnav 高 ~53px / z-index 1002:toast 必须落在它下方且层级更高,
      否则通知框被顶栏遮盖。 */
-  top: 64px;
+  top: calc(64px + env(safe-area-inset-top, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 1100;
@@ -1986,6 +1987,7 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
   z-index: 50;
   padding: 24px;
   transition: right 0.2s cubic-bezier(.2,.7,.2,1);
+  overscroll-behavior: contain;
 }
 .pl-modal {
   width: min(560px, 100%);
