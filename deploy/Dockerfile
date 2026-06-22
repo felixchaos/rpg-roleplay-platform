@@ -27,6 +27,9 @@ FROM python:3.14-slim AS runtime
 # libpq-dev/gcc 用于 pip 编译;运行时 psycopg-binary 自带 libpq。
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gcc libpq-dev python3-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get purge -y gcc libpq-dev python3-dev \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 # 非 root 运行

@@ -117,6 +117,8 @@ output/
 #  编辑器 / IDE / Claude Code 会话缓存
 # ──────────────────────────────────────────────────────────────────
 .claude/
+.deepseek/
+.codewhale/
 .vscode/
 .idea/
 *.swp

@@ -19,7 +19,7 @@ RPG_DIR="$ROOT/rpg"
 
 DB_NAME="${RPG_DB_NAME:-rpg}"
 DB_USER="${RPG_DB_USER:-rpg}"
-DB_PASS="${RPG_DB_PASSWORD:-rpg_dev}"
+DB_PASS="${RPG_DB_PASSWORD:-$(python3 -c 'import secrets; print(secrets.token_hex(8))')}"
 PG_PORT="${PGPORT:-5432}"
 DB_URL="postgresql://${DB_USER}:${DB_PASS}@127.0.0.1:${PG_PORT}/${DB_NAME}"
 
