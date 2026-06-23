@@ -1160,11 +1160,13 @@ def _payload(api_user: dict[str, Any] | None = None, *, include_catalog: bool = 
                 from platform_app.db import connect as _connect
                 with _connect() as _db:
                     _sv = _db.execute(
-                        "select tavern_character_card_id, tavern_persona_card_id, save_kind "
+                        "select tavern_character_card_id, tavern_persona_card_id, save_kind, tavern_immersive "
                         "from game_saves where id = %s and user_id = %s", (int(_sid), _uid),
                     ).fetchone()
                     if _sv and _sv.get("save_kind") == "tavern":
                         _refresh_tavern_cards_from_library(_db, _uid, _sv, {"tavern": _tav})
+                        # 沉浸式开关从持久列回填(state_snapshot 会被 activate 擦掉,列才是真相源)。
+                        _tav["immersive"] = bool(_sv.get("tavern_immersive"))
             except Exception:
                 pass
     # 当前模型的 context window（tokens），由 platform_app.usage.context_window_for

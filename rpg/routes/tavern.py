@@ -471,6 +471,13 @@ async def api_tavern_set_immersive(
     with connect() as db:
         if not _require_tavern_save(db, chat_id, user_id):
             return _bad("无权操作该对话", 403)
+        # 持久列(真相源:activate_save 重建工作树/快照不会碰列,故跨重开对话不丢)。
+        db.execute(
+            "update game_saves set tavern_immersive = %s, updated_at = now() "
+            "where id = %s and user_id = %s and save_kind = 'tavern'",
+            (enabled, chat_id, user_id),
+        )
+        # 同时镜像进工作树/快照,让【当前在飞的回合】立即生效(回合管线也兜底读列)。
         db.execute(
             "update runtime_checkouts set state_snapshot = "
             + _merge.format(col="state_snapshot")
@@ -480,7 +487,7 @@ async def api_tavern_set_immersive(
         db.execute(
             "update game_saves set state_snapshot = "
             + _merge.format(col="state_snapshot")
-            + ", updated_at = now() where id = %s and user_id = %s and save_kind = 'tavern'",
+            + " where id = %s and user_id = %s and save_kind = 'tavern'",
             (enabled, chat_id, user_id),
         )
     _invalidate_cache(api_user)

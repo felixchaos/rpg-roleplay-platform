@@ -2042,6 +2042,12 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         """,
         "create index if not exists ix_user_persona_skills_user on user_persona_skills(user_id)",
     ]),
+    (81, "tavern_immersive_column", [
+        # 沉浸式拟人模式持久化:原先只存进 state_snapshot.tavern.immersive(工作树),而每次
+        # activate_save 都把工作树从提交重建 → 开关被擦掉 = 用户报「自动关闭」。改存独立列(激活不碰列),
+        # /api/state 从列回填 tavern.immersive、回合管线读列 → 跨激活/重开持久。默认 false。
+        "alter table game_saves add column if not exists tavern_immersive boolean not null default false",
+    ]),
 ]
 
 

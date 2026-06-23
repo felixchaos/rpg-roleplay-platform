@@ -1068,26 +1068,17 @@ async def run_gm_phase(
             if _is_tav and _imm_sid and _imm_uid:
                 from platform_app.db import connect as _connect_im
                 _req = _immersive_request(message_for_model)
-                _merge = ("coalesce({c},'{{}}'::jsonb) || jsonb_build_object('tavern', "
-                          "coalesce({c}->'tavern','{{}}'::jsonb) || "
-                          "jsonb_build_object('immersive', %s::boolean))")
                 with _connect_im() as _db_im:
+                    # 真相源 = game_saves.tavern_immersive 持久列(activate 重建工作树不碰列,跨重开对话不丢)。
                     if _req is not None:
                         _db_im.execute(
-                            "update runtime_checkouts set state_snapshot = "
-                            + _merge.format(c="state_snapshot")
-                            + ", updated_at=now() where user_id=%s and save_id=%s",
-                            (_req, _imm_uid, _imm_sid))
-                        _db_im.execute(
-                            "update game_saves set state_snapshot = "
-                            + _merge.format(c="state_snapshot")
-                            + ", updated_at=now() where id=%s and user_id=%s and save_kind='tavern'",
+                            "update game_saves set tavern_immersive=%s, updated_at=now() "
+                            "where id=%s and user_id=%s and save_kind='tavern'",
                             (_req, _imm_sid, _imm_uid))
                     _imr = _db_im.execute(
-                        "select state_snapshot->'tavern'->>'immersive' as im "
-                        "from runtime_checkouts where user_id=%s and save_id=%s",
-                        (_imm_uid, _imm_sid)).fetchone()
-                gm._immersive_mode = str((_imr or {}).get("im") or "").strip().lower() in ("true", "1", "t")
+                        "select tavern_immersive as im from game_saves "
+                        "where id=%s and user_id=%s", (_imm_sid, _imm_uid)).fetchone()
+                gm._immersive_mode = bool((_imr or {}).get("im"))
             else:
                 gm._immersive_mode = False
     except Exception as _imm_err:
