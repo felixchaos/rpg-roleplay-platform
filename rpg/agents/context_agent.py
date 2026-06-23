@@ -229,6 +229,7 @@ def run_context_agent(
             shared_with_main_gm=False,
             transport="agent_harness",
         )
+        harness_err: dict = {}
         try:
             llm_text = _call_curator_via_harness(
                 user_id=user_id,
@@ -237,16 +238,24 @@ def run_context_agent(
                 system_prompt=AGENT_PROMPT,
                 user_prompt=task_prompt_text,
                 stop_requested=stop_requested,
+                err_sink=harness_err,
             )
         except _CuratorStopped:
             yield {"type": "stopped", "steps": steps}
             return
         if llm_text is None:
-            curator_plan = _local_fallback_plan(directives, user_input,
-                                                reason="harness 调用失败，降级到本地规则。")
+            # Option A:把真实原因(403/401/余额/限流…)明确告诉用户,不再静默「调用失败」。
+            _emsg = harness_err.get("message")
+            if _emsg:
+                _notice = (f"子代理调用失败:{_emsg}"
+                           f"(服务商 {harness_err.get('api')} · 模型 {harness_err.get('model')})"
+                           f" 本回合已临时降级到本地规则。")
+            else:
+                _notice = "子代理调用失败(网络/超时等),已临时降级到本地规则。"
+            curator_plan = _local_fallback_plan(directives, user_input, reason=_notice)
             yield step(
                 "llm_curator",
-                "harness 调用失败，降级到本地规则。",
+                _notice,
                 "done",
                 plan=curator_plan,
                 fallback=True,
@@ -575,11 +584,13 @@ def _call_curator_via_harness(
     system_prompt: str,
     user_prompt: str,
     stop_requested: Callable[[], bool],
+    err_sink: dict | None = None,
 ) -> str | None:
     """走统一 agent harness 调 curator。
 
     优先级:override > user_preferences("context_agent.api_id"/"model_real_name")> 默认。
     返回原始文本(JSON);失败/超时返回 None;stop_requested 触发抛 _CuratorStopped。
+    err_sink:可选 dict,失败时把 {category,message,api,model} 写入,供调用方给用户明确报错(非静默降级)。
     """
     from agents._harness import call_agent_json, resolve_api_and_model
 
@@ -632,7 +643,18 @@ def _call_curator_via_harness(
             time.sleep(0.03)
         try:
             return future.result()
-        except Exception:
+        except Exception as exc:
+            # 分类真实错误写入 err_sink,供上层给用户明确提示(403/401/余额/限流…),不再静默降级。
+            if err_sink is not None:
+                try:
+                    from agents.provider_errors import classify_provider_error
+                    cls = classify_provider_error(exc)
+                    if cls:
+                        err_sink["category"], err_sink["message"] = cls[0], cls[1]
+                    err_sink.setdefault("api", api_id)
+                    err_sink.setdefault("model", model)
+                except Exception:
+                    pass
             return None
     finally:
         executor.shutdown(wait=False, cancel_futures=True)

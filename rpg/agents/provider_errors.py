@@ -24,6 +24,9 @@ _AUTH_MARKERS = (
     "please pass a valid api key",   # Google "API key not valid. Please pass a valid API key."
     "401 unauthorized",
     "authentication fails",          # DeepSeek 401 "Authentication Fails (no such user)"
+    "403 forbidden",                 # 中转站/聚合站对无权限模型常返 403
+    "http error 403",                # urllib HTTPError 文案
+    "forbidden",                     # 通用 403 reason phrase(key/套餐无该模型权限)
 )
 
 # 限流/速率配额:稍后重试可恢复。Google/Vertex 的 RESOURCE_EXHAUSTED(429)归这类
@@ -76,10 +79,10 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
         return ("balance",
                 "当前模型的 API 账户余额不足或配额已用尽，重试无法恢复。"
                 "请前往对应 API 提供商充值，或到「设置 → API 设置」切换其他已配置的模型。")
-    if status == 401 or any(m in raw_lower for m in _AUTH_MARKERS):
+    if status in (401, 403) or any(m in raw_lower for m in _AUTH_MARKERS):
         return ("auth",
-                "当前模型的 API Key 无效或已过期。"
-                "请到「设置 → API 设置」重新测试凭证，或切换到已配置的模型。")
+                "当前模型的 API Key 无效、已过期,或该 key 无权访问此模型(401/403 Forbidden)。"
+                "请到「模型与密钥」重新测试凭证、确认该 key/套餐包含此模型,或切换到已配置的其他模型。")
     if status == 429 or any(m in raw_lower for m in _RATELIMIT_MARKERS):
         return ("ratelimit",
                 "当前模型请求过于频繁（提供商限流）。"
