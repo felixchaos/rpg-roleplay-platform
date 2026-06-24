@@ -253,6 +253,111 @@ def _t_get_chapter_text(user_id: int, script_id: int | None, args: dict, state: 
         return f"失败: {type(exc).__name__}: {exc}"
 
 
+def _t_search_manuscript(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
+    """全书检索:在剧本所有章节正文里搜一个词/短语/正则,返回命中的【章号 + 标题 + 上下文片段 + 字符偏移】。
+
+    这是「先读后写、避免与全书矛盾」真正落地的关键工具(群反馈 行者无疆:agent 之前只能逐章硬读,
+    无法跨全书核对)。审稿查重复、查前文是否已交代过某设定、找某人物/物件上次出场、核对伏笔有没有
+    回收 —— 都先用它一次定位,再用 get_chapter_text(chapter_index, offset=@值) 精读上下文。
+    默认大小写无关的子串匹配;regex=true 时按 Python 正则。可用 chapter_min/chapter_max 缩范围。
+    只读,owner/订阅者可用。"""
+    sid = _resolve_sid(script_id, args)
+    if sid is None:
+        return "失败: script_id 必填"
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return "失败: query 必填(要搜索的词/短语/正则)"
+    use_regex = bool(args.get("regex"))
+
+    def _opt_int(key: str, default: int, lo: int, hi: int) -> int:
+        try:
+            return max(lo, min(int(args.get(key)), hi))
+        except (TypeError, ValueError):
+            return default
+
+    max_results = _opt_int("max_results", 30, 1, 100)
+    ctx_chars = _opt_int("context_chars", 60, 20, 200)
+
+    def _opt_chapter(key: str):
+        try:
+            return int(args.get(key))
+        except (TypeError, ValueError):
+            return None
+    ch_min, ch_max = _opt_chapter("chapter_min"), _opt_chapter("chapter_max")
+
+    import re as _re
+    try:
+        pat = _re.compile(query if use_regex else _re.escape(query), _re.I)
+    except _re.error as exc:
+        return f"失败: 正则无效: {exc}"
+
+    HARD_SCAN_CAP = 1000  # 防病态正则(如匹配每个字符)在 485 万字全书上炸开;到顶即停并提示收窄
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        where = "script_id=%s"
+        params: list[Any] = [sid]
+        if ch_min is not None:
+            where += " and chapter_index>=%s"
+            params.append(ch_min)
+        if ch_max is not None:
+            where += " and chapter_index<=%s"
+            params.append(ch_max)
+        # 子串搜索把粗筛下推给 DB(ILIKE 是超集,Python 再精确匹配 → 无漏判);正则则全取在 Python 扫。
+        if not use_regex:
+            where += " and content ILIKE %s"
+            params.append(f"%{query}%")
+        with connect() as db:
+            if not _user_can_read_script(db, sid, user_id):
+                return f"失败 (权限): 剧本 #{sid} 不属于当前用户或未订阅"
+            rows = db.execute(
+                f"select chapter_index, title, content from script_chapters where {where} order by chapter_index",
+                tuple(params),
+            ).fetchall()
+        hits: list[str] = []
+        total_hits = 0
+        chapters_with_hits = 0
+        capped = False
+        for row in rows:
+            ci = row.get("chapter_index")
+            title = str(row.get("title") or "")
+            content = str(row.get("content") or "")
+            if not content:
+                continue
+            ch_hit = False
+            for m in pat.finditer(content):
+                total_hits += 1
+                if len(hits) < max_results:
+                    ch_hit = True
+                    s = max(0, m.start() - ctx_chars)
+                    e = min(len(content), m.end() + ctx_chars)
+                    snippet = content[s:e].replace("\n", " ").strip()
+                    prefix = "…" if s > 0 else ""
+                    suffix = "…" if e < len(content) else ""
+                    hits.append(f"【第{ci}章 {title}】@{m.start()}: {prefix}{snippet}{suffix}")
+                if total_hits >= HARD_SCAN_CAP:
+                    capped = True
+                    break
+            if ch_hit:
+                chapters_with_hits += 1
+            if capped:
+                break
+        if not hits:
+            scanned = len(rows) if use_regex else f"{len(rows)} 个含「{query}」的"
+            return f"全书检索「{query}」:0 命中(扫了 {scanned} 章)。"
+        listed_note = ""
+        if len(hits) < total_hits or capped:
+            listed_note = (f"(命中较多,只列前 {len(hits)} 条" +
+                           ("、且已达扫描上限" if capped else "") +
+                           ";可加 chapter_min/chapter_max 收窄或调 max_results)")
+        head = (f"全书检索「{query}」:{'≥' if capped else ''}{total_hits} 处命中,分布在 "
+                f"{chapters_with_hits} 章{listed_note}。"
+                f"用 get_chapter_text(chapter_index, offset=@值) 精读上下文。")
+        return head + "\n" + "\n".join(hits)
+    except Exception as exc:
+        return f"失败: {type(exc).__name__}: {exc}"
+
+
 def _t_extract_from_selection(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
     """对用户选中的一段正文跑结构化提取(复用 extract/per_chapter.extract_chapter 的提取器,含其
     反史实/反编造/中文别名归并铁律),返回提议的人物/势力/地点/概念/事件/摘要 —— 供 agent 按用户意愿
@@ -1133,6 +1238,35 @@ def register_script_write_tools() -> None:
                 "required": ["chapter_index"],
             },
             executor=_t_get_chapter_text,
+            scope="script",
+            origins=_SCRIPT_WRITE_ORIGINS,
+            destructive=False,
+        ),
+        ToolSpec(
+            name="search_manuscript",
+            description=(
+                "全书检索:在剧本所有章节正文里搜一个词/短语/正则,返回命中的【章号 + 标题 + 上下文片段 + 字符偏移】。"
+                "这是『先读后写、避免与全书矛盾』的核心工具 —— 审稿查重复、查前文是否已交代过某设定、找某人物/"
+                "物件上次出场、核对伏笔是否回收,都先用它一次定位,再用 get_chapter_text(chapter_index, offset=@值) 精读。"
+                "默认大小写无关子串匹配;regex=true 走 Python 正则;可用 chapter_min/chapter_max 收窄。只读,owner/订阅者可用。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "要搜索的词/短语;regex=true 时为正则"},
+                    "regex": {"type": "boolean", "description": "是否按正则匹配(默认 false=子串)"},
+                    "chapter_min": {"type": "integer", "description": "只搜该章号及以后(可空)"},
+                    "chapter_max": {"type": "integer", "description": "只搜该章号及以前(可空)"},
+                    "max_results": {"type": "integer", "description": "最多列出多少条命中(默认 30,上限 100)"},
+                    "context_chars": {"type": "integer", "description": "每条命中前后各取多少字符上下文(默认 60)"},
+                },
+                "required": ["query"],
+            },
+            input_examples=(
+                {"query": "重力控制"},
+                {"query": "蜜特·托蕾特", "chapter_min": 1, "chapter_max": 20},
+            ),
+            executor=_t_search_manuscript,
             scope="script",
             origins=_SCRIPT_WRITE_ORIGINS,
             destructive=False,
