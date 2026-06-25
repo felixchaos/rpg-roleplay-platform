@@ -97,6 +97,46 @@ function MdeWritePreview({ pv, t }) {
   );
 }
 
+// cowork:agent 调 set_writing_plan / report_writing_issues 时,数据在 tool_call.args 里,
+// 这里把它渲染成右栏面板(计划清单 / 审稿问题清单)而不是普通工具行。
+function MdeAgentPanel({ tc, t }) {
+  const a = tc.args || {};
+  if (tc.tool === 'set_writing_plan') {
+    const steps = Array.isArray(a.steps) ? a.steps.filter((s) => String(s).trim()) : [];
+    if (!steps.length) return null;
+    return (
+      <div className="mde-agent-panel plan">
+        <div className="mde-agent-panel-head">{a.title || t('components.md_editor_agent.panel.plan', { defaultValue: '写作计划' })}</div>
+        <ol className="mde-agent-plan-list">
+          {steps.map((s, k) => <li key={k}>{String(s)}</li>)}
+        </ol>
+      </div>
+    );
+  }
+  const issues = Array.isArray(a.issues) ? a.issues : [];
+  if (!issues.length) return null;
+  return (
+    <div className="mde-agent-panel issues">
+      <div className="mde-agent-panel-head">
+        {t('components.md_editor_agent.panel.issues', { defaultValue: '审稿问题' })} · {issues.length}
+        {a.summary ? <span className="mde-agent-panel-sum"> — {a.summary}</span> : null}
+      </div>
+      <ul className="mde-agent-issue-list">
+        {issues.map((it, k) => (
+          <li key={k} className="mde-agent-issue">
+            <div className="mde-agent-issue-meta">
+              {it && it.chapter != null && <span className="mde-agent-issue-ch">{t('components.md_editor_agent.panel.chapter', { defaultValue: '第{{n}}章', n: it.chapter })}</span>}
+              {it && it.severity && <span className="mde-agent-issue-sev">{String(it.severity)}</span>}
+              {it && it.type && <span className="mde-agent-issue-type">{String(it.type)}</span>}
+            </div>
+            <div className="mde-agent-issue-detail">{it ? String(it.detail || '') : ''}</div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // 选区改写预设(写作引擎 rewrite 模式;onContinue 会对当前选区跑 runContinue)。
 const REWRITE_PRESETS = [
   { key: 'tighten', labelKey: 'components.md_editor_agent.rewrite.tighten', instruction: '把选中这段改写得更紧凑有力:删去冗余与重复,保留全部信息、人称、时态与语气,不要扩写。' },
@@ -364,6 +404,9 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
           <div key={i} className={'mde-agent-msg ' + m.role}>
             {m.text && <div className="mde-agent-text">{m.text}</div>}
             {(m.tools || []).map((tc, j) => (
+              (tc.tool === 'set_writing_plan' || tc.tool === 'report_writing_issues') ? (
+                <MdeAgentPanel key={j} tc={tc} t={t} />
+              ) : (
               <div key={j} className={'mde-agent-tool ' + tc.status}>
                 <span className="mde-agent-tool-name">{tc.tool}</span>
                 <span className="mde-agent-tool-status">{tc.status === 'running' ? t('components.md_editor_agent.tool_status.running') : tc.status === 'error' ? t('components.md_editor_agent.tool_status.error') : t('components.md_editor_agent.tool_status.done')}</span>
@@ -377,6 +420,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
                 )}
                 {tc.error && <div className="mde-agent-tool-err">{tc.error}</div>}
               </div>
+              )
             ))}
             {m.pendingConfirm && (
               <div className="mde-agent-confirm">

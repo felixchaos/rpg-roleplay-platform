@@ -698,6 +698,81 @@ def register_misc_tools() -> None:
     if not registry.has(describe_spec.name):
         registry.register(describe_spec)
 
+    # cowork(写作搭档):向作者「展示」结构化信息的两把无副作用工具 —— 数据在 args 里,前端按
+    # tool 名特殊渲染成右栏面板(计划清单 / 问题清单),executor 只回执让 agent 继续。informational,
+    # 不写库、不改状态;agent 不调也无害(只是不显示面板),不违反确定性铁律。
+    def _t_set_writing_plan(user_id: int, args: dict) -> str:
+        raw = args.get("steps")
+        steps = [str(s).strip() for s in raw if str(s).strip()] if isinstance(raw, list) else []
+        if not steps:
+            return "失败: steps 为空(给一个分步计划字符串数组)"
+        return f"已在右栏向作者展示写作计划({len(steps)} 步);按计划逐步执行即可。"
+
+    plan_spec = ToolSpec(
+        name="set_writing_plan",
+        description=(
+            "把你对当前写作/改稿任务的分步计划展示给作者(右栏渲染成清单)。遇到多步任务"
+            "(重写一章并同步设定 / 梳理一条线的伏笔等)开工前调一次,让作者看清你打算怎么做。"
+            "steps 是有序分步字符串数组,每步一句话。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "可选,计划标题"},
+                "steps": {"type": "array", "items": {"type": "string"},
+                          "description": "有序分步,每步一句话", "minItems": 1},
+            },
+            "required": ["steps"],
+        },
+        executor=_t_set_writing_plan,
+        scope="user",
+        origins=_CHOICE_ORIGINS,
+        destructive=False,
+    )
+    if not registry.has(plan_spec.name):
+        registry.register(plan_spec)
+
+    def _t_report_writing_issues(user_id: int, args: dict) -> str:
+        issues = args.get("issues")
+        if not isinstance(issues, list) or not issues:
+            return "失败: issues 为空(给一个问题对象数组)"
+        return f"已在右栏向作者列出 {len(issues)} 条问题供逐条处理。"
+
+    issues_spec = ToolSpec(
+        name="report_writing_issues",
+        description=(
+            "把你审稿/通读发现的问题结构化列给作者(右栏渲染成可逐条处理的清单,带章号可跳转)。"
+            "审稿、查矛盾/重复/连贯/伏笔回收后调它汇总,而不是只在回复里散文罗列。每条 issue:"
+            "chapter(可空,章号)/ severity(可空 高/中/低)/ type(类别)/ detail(具体描述与建议)。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string", "description": "可选,一句话总评"},
+                "issues": {
+                    "type": "array", "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "chapter": {"type": "integer", "description": "相关章号(可空)"},
+                            "severity": {"type": "string", "description": "高/中/低(可空)"},
+                            "type": {"type": "string", "description": "问题类别:矛盾/重复/连贯/伏笔/节奏/POV 等"},
+                            "detail": {"type": "string", "description": "具体描述 + 修改建议"},
+                        },
+                        "required": ["detail"],
+                    },
+                },
+            },
+            "required": ["issues"],
+        },
+        executor=_t_report_writing_issues,
+        scope="user",
+        origins=_CHOICE_ORIGINS,
+        destructive=False,
+    )
+    if not registry.has(issues_spec.name):
+        registry.register(issues_spec)
+
     # task 96: ui_invoke 已删除。LLM 直接调具体工具 (create_character_card etc.)
     # 通过 native tool_use,缺 required 字段时 dispatcher 返普通错误,
     # LLM 读错误自己调 ask_user_choice。与 Anthropic Tool Search Tool 模式一致。

@@ -6900,6 +6900,11 @@
       "undone": "已撤销",
       "undo_ok": "已撤销,正文已恢复改前内容",
       "undo_fail": "撤销失败",
+      "panel": {
+        "plan": "写作计划",
+        "issues": "审稿问题",
+        "chapter": "第{{n}}章"
+      },
       "preview": {
         "change": "改动预览",
         "new": "新建",

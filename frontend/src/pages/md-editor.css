@@ -228,6 +228,21 @@
 .mde-agent-preview-text.before { background: rgba(176,80,74,0.10); border: 1px solid rgba(176,80,74,0.30); color: var(--text, #ebe7df); }
 .mde-agent-preview-text.after { background: rgba(94,150,110,0.12); border: 1px solid rgba(94,150,110,0.32); color: var(--text, #ebe7df); }
 .mde-agent-preview-trunc { font-size: 10.5px; color: var(--muted-2, #6b655e); font-style: italic; }
+/* cowork 面板:写作计划清单 / 审稿问题清单 */
+.mde-agent-panel { margin-top: 6px; border: 1px solid var(--line, #36322d); border-radius: 7px; overflow: hidden; background: var(--bg-deep, #131211); }
+.mde-agent-panel.plan { border-left: 3px solid var(--info, #7aa6c2); }
+.mde-agent-panel.issues { border-left: 3px solid var(--accent, #b5654a); }
+.mde-agent-panel-head { padding: 6px 9px; font-size: 11.5px; font-weight: 600; background: var(--panel-2, #282623); }
+.mde-agent-panel-sum { font-weight: 400; color: var(--muted-2, #6b655e); }
+.mde-agent-plan-list { margin: 0; padding: 8px 8px 8px 26px; font-size: 12px; line-height: 1.65; }
+.mde-agent-plan-list li { margin: 2px 0; }
+.mde-agent-issue-list { margin: 0; padding: 6px 8px; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.mde-agent-issue { border: 1px solid var(--line-soft, #2a2724); border-radius: 5px; padding: 5px 8px; background: var(--panel, #1f1d1b); }
+.mde-agent-issue-meta { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin-bottom: 3px; }
+.mde-agent-issue-ch { font-size: 10.5px; padding: 1px 6px; border-radius: 4px; background: rgba(122,166,194,.16); color: var(--info, #7aa6c2); }
+.mde-agent-issue-sev { font-size: 10.5px; padding: 1px 6px; border-radius: 4px; background: rgba(181,101,74,.16); color: var(--accent, #b5654a); }
+.mde-agent-issue-type { font-size: 10.5px; color: var(--muted-2, #6b655e); }
+.mde-agent-issue-detail { font-size: 12px; line-height: 1.55; color: var(--text, #ebe7df); }
 .mde-agent-input { flex: 0 0 auto; display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line-soft, #2a2724); }
 .mde-agent-input textarea { flex: 1 1 auto; resize: none; height: 52px; background: rgba(255,255,255,0.04); border: 1px solid var(--line-soft, #2a2724); border-radius: 6px; color: var(--text, #ebe7df); padding: 6px 9px; font-size: 12.5px; outline: none; font-family: inherit; }
 .mde-agent-input button { flex: 0 0 auto; align-self: stretch; background: var(--accent, #b5654a); color: #fff; border: none; border-radius: 6px; padding: 0 14px; font-size: 12.5px; cursor: pointer; font-family: inherit; }
