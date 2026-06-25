@@ -226,6 +226,18 @@ def _run_llm_loop(
         if spec is None:
             return {"ok": False, "error": f"未知工具 {tool_name}"}
         call_id = _new_call_id()
+        # 健壮性(确定性):弱模型(如 deepseek-v4-flash)调 update_script_chapter 常漏必填的
+        # chapter_index → 整个新剧本写作流「完全失效」(group 反馈)。当前正在编辑的就是某一章时,
+        # 从 page_context.open_chapter_index 补默认,不指望模型自觉填。
+        if tool_name == "update_script_chapter" and isinstance(arguments, dict) \
+                and arguments.get("chapter_index") in (None, ""):
+            _oci = (page_context or {}).get("open_chapter_index")
+            try:
+                if _oci is not None and str(_oci).strip() != "":
+                    arguments = dict(arguments)
+                    arguments["chapter_index"] = int(_oci)
+            except (TypeError, ValueError):
+                pass
         # 三级权限(Q3,替代旧 P0 ad-hoc):编辑器写库工具按 editor.write_mode 走 ——
         # read_only=只读不写(仅给建议)、review=写前二次确认(默认,已涵盖防注入静默写)、full_access=按原行为。
         # 非 script-write(游戏管理类)保持原行为(仅 destructive 走确认)。

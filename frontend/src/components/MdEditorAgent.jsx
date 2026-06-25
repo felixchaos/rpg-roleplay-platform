@@ -225,14 +225,19 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   }, [scriptId]);
 
   const pageContext = useCallback(() => {
+    // 章节 tab 的 id 即 chapter_index(见 md-editor.jsx tree/create)。带上它,后端在弱模型漏填
+    // chapter_index 时可确定性补默认(否则 update_script_chapter 必失败,新剧本写作流完全失效)。
+    const openChapterIndex = (activeTab && activeTab.kind === 'chapter') ? activeTab.id : undefined;
     const open_file = activeTab
-      ? `【${labelKind(activeTab.kind)}】「${activeTab.label}」(${activeTab.kind} id=${activeTab.id})`
+      ? `【${labelKind(activeTab.kind)}】「${activeTab.label}」(${activeTab.kind === 'chapter' ? `chapter_index=${activeTab.id}` : `${activeTab.kind} id=${activeTab.id}`})`
       : '(未打开具体文件)';
     const note = activeTab
-      ? `用户正在剧本编辑器编辑剧本 #${scriptId} 的 ${open_file}。可用 update_*/upsert_* 工具直接改并落库;改前先说清要改什么。`
+      ? `用户正在剧本编辑器编辑剧本 #${scriptId} 的 ${open_file}。可用 update_*/upsert_* 工具直接改并落库`
+        + (openChapterIndex != null ? `(改本章正文用 update_script_chapter(chapter_index=${openChapterIndex}, content=...))` : '')
+        + `;改前先说清要改什么。`
       : `用户在剧本编辑器,当前剧本 #${scriptId},未打开具体文件。`;
     // tab:'md-editor' 是后端 build_system_prompt 注入编辑器上下文块的触发标记(光有 script_id 不够)。
-    return { script_id: scriptId, tab: 'md-editor', open_file, note };
+    return { script_id: scriptId, tab: 'md-editor', open_file, note, open_chapter_index: openChapterIndex };
   }, [scriptId, activeTab]);
 
   // 统一 SSE 事件处理(chat 与 confirm 共用)。assistantIdx = 当前 assistant 消息下标。
