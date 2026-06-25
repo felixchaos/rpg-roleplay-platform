@@ -2283,7 +2283,8 @@
       "need_key": "No API key configured for this model",
       "need_key_hint": "Go to Settings → API & Models to add a credential, or select a model that is already configured above.",
       "run": "Run Audit",
-      "title": "AI Audit NPC Character Cards"
+      "title": "AI Audit NPC Character Cards",
+      "started": "AI review started — track progress in the background-tasks panel (bottom-right)"
     }
   },
   "auth": {

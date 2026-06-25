@@ -163,6 +163,87 @@ def audit_character_cards(user_id: int, script_id: int, api_id: str = "", model:
     return {"summary": summary, "model": f"{api_id}/{model}"}
 
 
+def schedule_card_audit(user_id: int, script_id: int, api_id: str = "", model: str = "") -> dict[str, Any]:
+    """异步调度 NPC 卡 AI 复核(单次 LLM 裁决)→ 进 import_jobs,全局后台任务浮窗自动跟踪。返 {ok, job_id}。
+
+    复核本身是【一次】LLM 调用(非逐卡循环),所以没有真实百分比 —— 浮窗按 spinner 显示(与生图一致),
+    完成后从 import_jobs.budget_estimate.result 读回摘要。凭证预检在调度【前】同步做(缺 key 立即返
+    credentials_required,不进队列空转);owner 校验同理。复用同剧本进行中的复核任务,避免重复触发。
+    """
+    init_db()
+    import secrets
+    import threading
+
+    from platform_app import import_pipeline
+    rapi, rmodel = _resolve_audit_model(user_id, api_id, model)
+
+    with connect() as db:
+        _require_script_owner(db, user_id, script_id)
+
+    # 凭证预检(与同步版一致,放在 spawn 前):缺 key → 抛 MissingUserCredentialError,端点转 credentials_required。
+    from core.config import require_auth as _require_auth
+    from platform_app.user_credentials import resolve_api_key
+    if _require_auth() and rapi:
+        cred = resolve_api_key(user_id, rapi, env_fallback="")
+        if not cred.get("key"):
+            raise import_pipeline.MissingUserCredentialError(
+                api_id=rapi, model=rmodel,
+                credential_api_id=import_pipeline._credential_api_id_for(rapi))
+
+    with connect() as db:
+        existing = db.execute(
+            "select job_id from import_jobs where user_id=%s and script_id=%s and kind=%s "
+            "and status in ('pending','queued','running') order by id desc limit 1",
+            (user_id, script_id, "cards_audit"),
+        ).fetchone()
+        if existing:
+            return {"ok": True, "job_id": existing["job_id"], "reused": True}
+        job_id = f"audit_{script_id}_{secrets.token_hex(6)}"
+        db.execute(
+            "insert into import_jobs(job_id, user_id, script_id, kind, status, stage, "
+            "module, sub_kind, overall_total, budget_estimate, stages) "
+            "values (%s,%s,%s,%s,'pending','pending',%s,%s,1,%s,%s)",
+            (
+                job_id, user_id, script_id, "cards_audit",
+                "cards_audit", "cards_audit",
+                Jsonb({"action": "AI 复核角色卡", "api_id": rapi, "model": rmodel}),
+                Jsonb([{"id": "audit", "label": "AI 复核角色卡", "status": "pending"}]),
+            ),
+        )
+    th = threading.Thread(
+        target=_run_card_audit, args=(job_id, user_id, script_id, rapi, rmodel), daemon=True,
+    )
+    th.start()
+    return {"ok": True, "job_id": job_id, "reused": False}
+
+
+def _run_card_audit(job_id: str, user_id: int, script_id: int, api_id: str, model: str) -> None:
+    """复核 worker:统一 import_jobs 状态机。done 时把摘要写进 budget_estimate.result(前端读回)。"""
+    from platform_app.import_pipeline import JobController
+    ctl = JobController(job_id)
+    ctl.update(status="running", stage="audit", overall_progress=0, overall_total=1,
+               stages=[{"id": "audit", "label": "AI 复核角色卡", "status": "running"}])
+    with connect() as db:
+        db.execute("update import_jobs set started_at=now() where job_id=%s", (job_id,))
+    try:
+        result = audit_character_cards(user_id, script_id, api_id, model)
+        with connect() as db:
+            # 合并进 budget_estimate(保留 insert 时写入的 api_id/model),供 get_job_status 暴露给前端。
+            db.execute(
+                "update import_jobs set budget_estimate = budget_estimate || %s where job_id=%s",
+                (Jsonb({"result": result}), job_id),
+            )
+        ctl.update(status="done", stage="audit", overall_progress=1, overall_total=1,
+                   stages=[{"id": "audit", "label": "AI 复核角色卡", "status": "done"}])
+        with connect() as db:
+            db.execute("update import_jobs set finished_at=now() where job_id=%s", (job_id,))
+    except Exception as exc:  # noqa: BLE001
+        ctl.update(status="failed", stage="audit", error=str(exc),
+                   stages=[{"id": "audit", "label": "AI 复核角色卡", "status": "failed"}])
+        with connect() as db:
+            db.execute("update import_jobs set finished_at=now() where job_id=%s", (job_id,))
+
+
 def _apply_verdicts(db, script_id: int, cards_by_id: dict, verdict: dict) -> dict:
     """确定性应用 LLM 裁决。保守:id 必须真实存在;被并/删的不再二次处理;主角被并走则用保留卡。"""
     out: dict[str, Any] = {"merged": [], "protagonist": None, "dropped": []}

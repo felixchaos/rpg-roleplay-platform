@@ -629,14 +629,36 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
         }
         return;
       }
-      const sm = (r && r.summary) || {};
-      const parts = [];
-      if (sm.protagonist) parts.push(t('scripts.page.audit_protagonist_set', { name: sm.protagonist }));
-      if (Array.isArray(sm.merged) && sm.merged.length) parts.push(t('scripts.page.audit_merged', { n: sm.merged.length }));
-      if (Array.isArray(sm.dropped) && sm.dropped.length) parts.push(t('scripts.page.audit_dropped', { n: sm.dropped.length }));
-      window.__apiToast?.(parts.length ? t('scripts.page.audit_done_detail', { detail: parts.join('、') }) : t('scripts.page.audit_done_no_changes'), { kind: 'ok' });
+      // 异步:关弹窗,右下角全局后台任务浮窗接管进度;完成后轮询拿摘要 + 刷新 NPC 列表。
+      const jobId = r && r.job_id;
       setAuditOpen(false);
-      setNpc(null); // 触发 NPC 列表重新拉取
+      window.__apiToast?.(t('scripts.audit.started', { defaultValue: '已开始 AI 复核,可在右下角后台任务查看进度' }), { kind: 'ok' });
+      if (!jobId) { setNpc(null); return; }
+      const startedAt = Date.now();
+      const poll = async () => {
+        try {
+          const st = await window.api.scripts.jobStatus(jobId);
+          const job = (st && st.job) || {};
+          const status = job.status || '';
+          if (status === 'done' || status === 'done_with_errors') {
+            const sm = ((job.budget_estimate || {}).result || {}).summary || {};
+            const parts = [];
+            if (sm.protagonist) parts.push(t('scripts.page.audit_protagonist_set', { name: sm.protagonist }));
+            if (Array.isArray(sm.merged) && sm.merged.length) parts.push(t('scripts.page.audit_merged', { n: sm.merged.length }));
+            if (Array.isArray(sm.dropped) && sm.dropped.length) parts.push(t('scripts.page.audit_dropped', { n: sm.dropped.length }));
+            window.__apiToast?.(parts.length ? t('scripts.page.audit_done_detail', { detail: parts.join('、') }) : t('scripts.page.audit_done_no_changes'), { kind: 'ok' });
+            setNpc(null);
+            return;
+          }
+          if (status === 'failed' || status === 'cancelled') {
+            window.__apiToast?.(t('scripts.audit.fail', { defaultValue: 'AI 复核失败' }), { kind: 'danger', detail: job.error });
+            return;
+          }
+        } catch (_) { /* 轮询失败:继续重试,浮窗仍独立跟踪 */ }
+        if (Date.now() - startedAt < 120000) setTimeout(poll, 1600);
+        else setNpc(null); // 超时兜底:刷新一次,浮窗继续显示真状态
+      };
+      setTimeout(poll, 1600);
     } catch (e) {
       window.__apiToast?.(t('scripts.audit.fail', { defaultValue: 'AI 复核失败' }), { kind: 'danger', detail: e?.message });
     } finally {

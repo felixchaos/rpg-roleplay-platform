@@ -637,8 +637,9 @@ async def api_audit_character_cards(request: Request, script_id: int, user=Depen
     model = str(body.get("model") or body.get("model_real_name") or "").strip()
     from platform_app import import_pipeline
     try:
-        from platform_app.knowledge.card_audit import audit_character_cards
-        return json_response({"ok": True, **audit_character_cards(user["id"], script_id, api_id, model)})
+        # 异步:进 import_jobs → 全局后台任务浮窗跟踪,前端可关弹窗/离开页面;完成后读回摘要。
+        from platform_app.knowledge.card_audit import schedule_card_audit
+        return json_response({"ok": True, **schedule_card_audit(user["id"], script_id, api_id, model)})
     except import_pipeline.MissingUserCredentialError as exc:
         return json_response({
             "ok": False, "code": "credentials_required", "needs_credentials": True,

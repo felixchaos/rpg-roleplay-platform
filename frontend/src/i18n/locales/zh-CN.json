@@ -2374,7 +2374,8 @@
       "need_key": "该模型还没配 API Key",
       "need_key_hint": "去「设置 → API 与模型」配置后重试,或在上面换一个已配置的模型。",
       "run": "开始复核",
-      "title": "AI 复核 NPC 角色卡"
+      "title": "AI 复核 NPC 角色卡",
+      "started": "已开始 AI 复核,可在右下角后台任务查看进度"
     }
   },
   "auth": {

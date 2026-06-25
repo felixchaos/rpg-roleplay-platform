@@ -465,6 +465,7 @@ _TASK_IMPORT_KIND_LABELS = {
     "rebuild_worldbook": "世界书重建",
     "rebuild_anchors": "时间线重建",
     "rebuild_embeddings": "向量重嵌入",
+    "cards_audit": "AI 复核角色卡",
 }
 _TASK_IMAGE_KIND_LABELS = {
     "chat": "聊天生图", "cover": "封面生图", "avatar": "头像生图",
