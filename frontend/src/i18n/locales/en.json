@@ -20,7 +20,8 @@
     "back": "Back",
     "image_preview": "Image preview",
     "info_hint": "Info",
-    "settings": "Settings"
+    "settings": "Settings",
+    "remove": "Remove"
   },
   "settings": {
     "title": "Settings",
@@ -6921,7 +6922,17 @@
       "continue_btn_title": "Use the input box as an instruction (optional) and let the AI continue writing at the current cursor position, or rewrite the selected passage. You can also press ⌘K in the editor.",
       "continue_hint": "or press ⌘K in the editor",
       "placeholder_with_script": "Ask the AI to edit this script… (characters, Worldbook, prose)",
-      "placeholder_no_script": "Select a script first"
+      "placeholder_no_script": "Select a script first",
+      "model_label": "Model",
+      "model_inherit": "Follow default model",
+      "doc": {
+        "only_txt_md": "Only .txt / .md files",
+        "attached": "Attached “{{name}}” — say what to do below (e.g. “split into chapters”)",
+        "fail": "Document upload failed",
+        "drop_here": "Drop to upload · txt / md",
+        "uploading": "Uploading…",
+        "chars_suffix": " chars"
+      }
     },
     "generate_image_modal": {
       "title": "AI Image Generation",

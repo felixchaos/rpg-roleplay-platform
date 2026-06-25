@@ -111,7 +111,8 @@
     "back": "返回",
     "image_preview": "图片预览",
     "info_hint": "说明",
-    "settings": "设置"
+    "settings": "设置",
+    "remove": "移除"
   },
   "settings": {
     "title": "设置",
@@ -6918,7 +6919,17 @@
       "continue_btn_title": "把输入框作为指令(可空),让 AI 在当前正文光标处续写 / 选中段改写。也可在编辑器里按 ⌘K。",
       "continue_hint": "或在正文按 ⌘K",
       "placeholder_with_script": "让 AI 改这个剧本…(改角色卡 / 世界书 / 正文)",
-      "placeholder_no_script": "先选剧本"
+      "placeholder_no_script": "先选剧本",
+      "model_label": "模型",
+      "model_inherit": "跟随默认模型",
+      "doc": {
+        "only_txt_md": "只支持 .txt / .md 文档",
+        "attached": "已附加「{{name}}」，在下方说出要求（如「拆成章节」）",
+        "fail": "文档上传失败",
+        "drop_here": "松手上传 · txt / md 文档",
+        "uploading": "上传中…",
+        "chars_suffix": "字"
+      }
     },
     "generate_image_modal": {
       "title": "AI 生图",

@@ -5,8 +5,24 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Composer } from '../game-composer.jsx';
 import { RpgMarkdown } from '../markdown-render.jsx';
+import AgentModelPicker from './AgentModelPicker.jsx';
 
 const { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } = React;
+
+// 工具原始 API 名 → 人类可读标签(消息流里不再直接显示 update_script_chapter 这种裸标识符)。
+const TOOL_LABELS = {
+  get_chapter_text: '读章节正文', get_script_chapters: '列出章节', search_manuscript: '全书检索',
+  list_worldbook_entries: '列出世界书', list_canon_entities: '列出设定实体', list_anchors: '列出时间线',
+  list_script_npcs: '列出角色卡', get_script_character_card: '读角色卡', get_chapter_context: '读本章上下文',
+  update_script_chapter: '改写章节', create_script_chapter: '新建章节',
+  upsert_worldbook_entry: '写入世界书', upsert_worldbook_entries: '批量写世界书', delete_worldbook_entry: '删除世界书条目',
+  update_npc_card: '编辑角色卡', create_npc_card: '新建角色卡',
+  update_anchor: '编辑时间线', create_anchor: '新建时间线节点', delete_anchor: '删除时间线节点',
+  upsert_canon_entity: '写入设定实体', extract_from_selection: '抽取选区设定',
+  read_uploaded_document: '读取拖入文档', preview_document_split: '预览拆章', import_document_as_chapters: '导入为章节',
+  delegate_writing_task: '委派子模型写作',
+};
+function toolLabel(name) { return TOOL_LABELS[name] || name; }
 
 // 编辑器写权限只支持 3 档(后端 console_assistant 认 read_only/review/full_access,无 'default')。
 // 限制 PermissionPopover 只显示这三档,避免用户点「默认权限」却被静默映射成「审查」造成的高亮跳变。
@@ -176,6 +192,53 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   // 复用游戏聊天框 Composer 所需的浮层开关(只用权限/写模式浮层;模型/上下文环/斜杠/附件/生图在右栏全隐藏)。
   const [showPerm, setShowPerm] = useState(false);
   const togglePerm = useCallback(() => setShowPerm((v) => !v), []);
+  // 拖入文档(txt/md):上传到 /agent-doc 暂存 → 拿 doc_id,下条消息带上让 agent 用确定性拆章工具处理。
+  const [attached, setAttached] = useState(null);   // {doc_id, filename, chars}
+  const [dragOver, setDragOver] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  const uploadDoc = useCallback(async (file) => {
+    if (!scriptId || !file) return;
+    const name = file.name || 'doc.txt';
+    if (!/\.(txt|md)$/i.test(name)) {
+      window.__apiToast?.(t('components.md_editor_agent.doc.only_txt_md', { defaultValue: '只支持 .txt / .md 文档' }), { kind: 'warn' });
+      return;
+    }
+    setUploading(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 1) bin += String.fromCharCode(bytes[i]);
+      const res = await fetch(`/api/scripts/${scriptId}/agent-doc`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: name, content_b64: btoa(bin) }),
+      });
+      const j = await res.json();
+      if (j && j.ok) {
+        setAttached({ doc_id: j.doc_id, filename: j.filename || name, chars: j.chars || 0 });
+        window.__apiToast?.(t('components.md_editor_agent.doc.attached', { name: j.filename || name, defaultValue: `已附加「${j.filename || name}」,在下方说出要求(如「拆成章节」)` }), { kind: 'ok' });
+      } else {
+        window.__apiToast?.((j && j.error) || t('components.md_editor_agent.doc.fail', { defaultValue: '文档上传失败' }), { kind: 'danger' });
+      }
+    } catch (e) {
+      window.__apiToast?.(t('components.md_editor_agent.doc.fail', { defaultValue: '文档上传失败' }), { kind: 'danger', detail: e?.message });
+    } finally { setUploading(false); }
+  }, [scriptId, t]);
+
+  const onDocDragOver = useCallback((e) => {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+      e.preventDefault(); setDragOver(true);
+    }
+  }, []);
+  const onDocDragLeave = useCallback((e) => {
+    if (e.currentTarget === e.target) setDragOver(false);
+  }, []);
+  const onDocDrop = useCallback((e) => {
+    if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return;
+    e.preventDefault(); setDragOver(false);
+    uploadDoc(e.dataTransfer.files[0]);
+  }, [uploadDoc]);
 
   useEffect(() => {
     (async () => {
@@ -350,6 +413,14 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         sentMsg = `[我在正文里选中的片段 —— 下文若说「这段 / 选中 / 这一段」即指它]\n"""\n${sc.selection.slice(0, 4000)}\n"""\n\n${raw}`;
       }
     }
+    // 拖入文档:把 doc_id 前置到消息里,agent 用 preview_document_split/import_document_as_chapters/
+    // read_uploaded_document 处理(原文不进上下文,只传引用)。发出后清除附件。
+    if (attached && attached.doc_id) {
+      sentMsg = `[用户拖入了文档「${attached.filename}」(doc_id=${attached.doc_id},约${attached.chars}字)。`
+        + `如需拆章先 preview_document_split(doc_id) 预览再 import_document_as_chapters;其它指令可用 `
+        + `read_uploaded_document(doc_id) 读取内容]\n\n${sentMsg}`;
+      setAttached(null);
+    }
     setInput('');
     setBusy(true);
     let assistantIdx = -1;
@@ -369,7 +440,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
     } catch (e) {
       setMessages((m) => m.map((msg2, i) => i === assistantIdx ? { ...msg2, error: e?.message || String(e) } : msg2));
     } finally { setBusy(false); abortRef.current = null; }
-  }, [input, busy, pageContext, makeHandler, selLen, selCtxOff, getSelectionContext]);
+  }, [input, busy, pageContext, makeHandler, selLen, selCtxOff, getSelectionContext, attached]);
 
   const resolveConfirm = useCallback(async (msgIdx, decision) => {
     const pc = messages[msgIdx]?.pendingConfirm;
@@ -408,7 +479,16 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   }), [send, busy]);
 
   return (
-    <div className="mde-agent">
+    <div className={'mde-agent' + (dragOver ? ' dragover' : '')}
+         onDragOver={onDocDragOver} onDragLeave={onDocDragLeave} onDrop={onDocDrop}>
+      {dragOver && (
+        <div className="mde-agent-dropzone" aria-hidden="true">
+          <div className="mde-agent-dropzone-inner">
+            <div className="mde-agent-dropzone-icon">⤓</div>
+            {t('components.md_editor_agent.doc.drop_here', { defaultValue: '松手上传 · txt / md 文档' })}
+          </div>
+        </div>
+      )}
       <div className="mde-agent-head">
         <span className="mde-agent-head-icon">AI</span>
         <span className="mde-agent-head-title">{t('components.md_editor_agent.title')}{activeTab ? ` · ${activeTab.label}` : ''}</span>
@@ -454,13 +534,16 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         )}
         {messages.map((m, i) => (
           <div key={i} className={'mde-agent-msg ' + m.role}>
+            <div className="mde-agent-avatar" aria-hidden="true">{m.role === 'user' ? '你' : 'AI'}</div>
+            <div className="mde-agent-body">
             {/* 工具调用在前(agent 先读后写,这些是「思考/取数」过程),最终答复在后,符合流的时序 */}
             {(m.tools || []).map((tc, j) => (
               (tc.tool === 'set_writing_plan' || tc.tool === 'report_writing_issues') ? (
                 <MdeAgentPanel key={j} tc={tc} t={t} />
               ) : (
               <div key={j} className={'mde-agent-tool ' + tc.status}>
-                <span className="mde-agent-tool-name">{tc.tool}</span>
+                <span className="mde-agent-tool-dot" aria-hidden="true" />
+                <span className="mde-agent-tool-name">{toolLabel(tc.tool)}</span>
                 <span className="mde-agent-tool-status">{tc.status === 'running' ? t('components.md_editor_agent.tool_status.running') : tc.status === 'error' ? t('components.md_editor_agent.tool_status.error') : t('components.md_editor_agent.tool_status.done')}</span>
                 {tc.tool === 'update_script_chapter' && tc.status === 'done' && tc.args?.chapter_index != null && (
                   tc.undone
@@ -480,7 +563,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
             {m.pendingConfirm && (
               <div className="mde-agent-confirm">
                 <div className="mde-agent-confirm-q">
-                  {t('components.md_editor_agent.confirm_prompt', { tool: m.pendingConfirm.tool })}{m.pendingConfirm.description ? `:${m.pendingConfirm.description}` : ''}
+                  {t('components.md_editor_agent.confirm_prompt', { tool: toolLabel(m.pendingConfirm.tool) })}{m.pendingConfirm.description ? `:${m.pendingConfirm.description}` : ''}
                 </div>
                 {m.pendingConfirm.preview && <MdeWritePreview pv={m.pendingConfirm.preview} t={t} />}
                 <div className="mde-agent-confirm-btns">
@@ -490,6 +573,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
               </div>
             )}
             {m.error && <div className="mde-agent-tool-err">{m.error}</div>}
+            </div>
           </div>
         ))}
       </div>
@@ -515,6 +599,33 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
             onClick={() => { onContinue(input.trim()); setInput(''); }}
           >{t('components.md_editor_agent.continue_btn')}</button>
           <span className="mde-agent-toolbar-hint">{t('components.md_editor_agent.continue_hint')}</span>
+        </div>
+      )}
+      {(attached || uploading) && (
+        <div className="mde-agent-attachbar">
+          {uploading && <span className="mde-agent-attach-up">{t('components.md_editor_agent.doc.uploading', { defaultValue: '上传中…' })}</span>}
+          {attached && (
+            <span className="mde-agent-attach">
+              <span className="mde-agent-attach-icon" aria-hidden="true">⎘</span>
+              <span className="mde-agent-attach-name" title={attached.filename}>{attached.filename}</span>
+              <span className="mde-agent-attach-chars">{attached.chars}{t('components.md_editor_agent.doc.chars_suffix', { defaultValue: '字' })}</span>
+              <button type="button" className="mde-agent-attach-x" onClick={() => setAttached(null)}
+                title={t('common.remove', { defaultValue: '移除' })} aria-label={t('common.remove', { defaultValue: '移除' })}>×</button>
+            </span>
+          )}
+        </div>
+      )}
+      {scriptId && (
+        <div className="mde-agent-modelbar">
+          <span className="mde-agent-modelbar-label">{t('components.md_editor_agent.model_label', { defaultValue: '模型' })}</span>
+          <AgentModelPicker
+            variant="popover"
+            persistShape="dict"
+            dictKey="console_assistant_model_override"
+            allowInherit
+            inheritLabel={t('components.md_editor_agent.model_inherit', { defaultValue: '跟随默认模型' })}
+            configHash="settings-models"
+          />
         </div>
       )}
       <div className="mde-agent-composer">

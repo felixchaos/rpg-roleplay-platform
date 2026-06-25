@@ -196,22 +196,57 @@
 .mde-agent-composer .gc-composer-bottom { flex-wrap: wrap; gap: 4px 6px; }
 .mde-agent-composer .gc-model-label { max-width: 92px; }
 .mde-agent-wmode { flex: 0 0 auto; background: var(--panel-2, #282623); color: var(--text, #ebe7df); border: 1px solid var(--line, #36322d); border-radius: 5px; padding: 2px 6px; font-size: 11.5px; font-family: inherit; cursor: pointer; }
-.mde-agent-msgs { flex: 1 1 auto; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
-.mde-agent-hint { color: var(--muted-2, #6b655e); font-size: 12px; line-height: 1.6; padding: 8px; }
-.mde-agent-msg { font-size: 12.5px; line-height: 1.6; }
-.mde-agent-msg.user .mde-agent-text { background: var(--info-soft, rgba(122,166,194,.12)); border-radius: 8px; padding: 7px 10px; color: var(--text, #ebe7df); }
-.mde-agent-msg.assistant .mde-agent-text { color: var(--text, #ebe7df); }
+.mde-agent { position: relative; }
+.mde-agent-msgs { flex: 1 1 auto; overflow-y: auto; padding: 12px 10px; display: flex; flex-direction: column; gap: 14px; scroll-behavior: smooth; }
+.mde-agent-hint { color: var(--muted-2, #6b655e); font-size: 12.5px; line-height: 1.7; padding: 10px 8px; }
+
+/* 每条消息:头像 + 内容体;用户右错列、AI 左错列;逐条淡入 */
+.mde-agent-msg { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; line-height: 1.62; animation: mdeMsgIn .22s cubic-bezier(.22,.61,.36,1); }
+@keyframes mdeMsgIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.mde-agent-msg.user { flex-direction: row-reverse; }
+.mde-agent-avatar { flex: 0 0 auto; width: 24px; height: 24px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 700; letter-spacing: .3px; margin-top: 1px; }
+.mde-agent-msg.assistant .mde-agent-avatar { background: linear-gradient(135deg, rgba(181,101,74,.32), rgba(181,101,74,.14)); color: var(--accent, #b5654a); box-shadow: inset 0 0 0 1px rgba(181,101,74,.32); }
+.mde-agent-msg.user .mde-agent-avatar { background: rgba(122,166,194,.18); color: var(--info, #7aa6c2); box-shadow: inset 0 0 0 1px rgba(122,166,194,.3); }
+.mde-agent-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.mde-agent-msg.user .mde-agent-body { align-items: flex-end; }
+
+.mde-agent-msg.user .mde-agent-text { background: linear-gradient(135deg, rgba(122,166,194,.20), rgba(122,166,194,.12)); border: 1px solid rgba(122,166,194,.22); border-radius: 12px 12px 4px 12px; padding: 8px 12px; color: var(--text, #ebe7df); max-width: 92%; white-space: pre-wrap; word-break: break-word; }
+.mde-agent-msg.assistant .mde-agent-text { background: var(--panel, #1c1a18); border: 1px solid var(--line-soft, #2a2724); border-radius: 4px 12px 12px 12px; padding: 9px 12px; color: var(--text, #ebe7df); box-shadow: 0 1px 2px rgba(0,0,0,.18); }
 /* assistant 答复走 RpgMarkdown 渲染(标题/表格/列表/加粗),控制行内尺寸贴合右栏窄宽 */
-.mde-agent-msg.assistant .mde-agent-text :is(h1,h2,h3,h4) { font-size: 13px; margin: 8px 0 4px; }
+.mde-agent-msg.assistant .mde-agent-text :is(h1,h2,h3,h4) { font-size: 13.5px; margin: 8px 0 4px; }
 .mde-agent-msg.assistant .mde-agent-text p { margin: 4px 0; }
-.mde-agent-msg.assistant .mde-agent-text ul, .mde-agent-msg.assistant .mde-agent-text ol { margin: 4px 0; padding-left: 20px; }
+.mde-agent-msg.assistant .mde-agent-text :is(ul, ol) { margin: 4px 0; padding-left: 20px; }
 .mde-agent-msg.assistant .mde-agent-text .rpg-md-table { border-collapse: collapse; font-size: 11.5px; }
-.mde-agent-msg.assistant .mde-agent-text .rpg-md-table th, .mde-agent-msg.assistant .mde-agent-text .rpg-md-table td { border: 1px solid var(--line, #36322d); padding: 3px 7px; }
-.mde-agent-tool { display: flex; align-items: center; gap: 8px; margin-top: 5px; padding: 5px 8px; border: 1px solid var(--line-soft, #2a2724); border-radius: 6px; font-size: 11.5px; background: var(--panel-2, #282623); }
-.mde-agent-tool-name { font-family: var(--font-mono, monospace); color: var(--accent, #b5654a); }
+.mde-agent-msg.assistant .mde-agent-text .rpg-md-table :is(th, td) { border: 1px solid var(--line, #36322d); padding: 3px 7px; }
+
+/* 工具行:状态点 + 人类可读标签 + 状态;running 时点呼吸闪烁 */
+.mde-agent-tool { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--line-soft, #2a2724); border-radius: 8px; font-size: 11.5px; background: var(--panel-2, #282623); }
+.mde-agent-tool-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--muted-2, #6b655e); }
+.mde-agent-tool.running { border-color: rgba(181,101,74,.4); }
+.mde-agent-tool.running .mde-agent-tool-dot { background: var(--accent, #b5654a); animation: mdeDot 1.1s ease-in-out infinite; }
+@keyframes mdeDot { 0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(181,101,74,.5); } 50% { opacity: .45; box-shadow: 0 0 0 4px rgba(181,101,74,0); } }
+.mde-agent-tool.done .mde-agent-tool-dot { background: var(--ok, #3fa66a); }
+.mde-agent-tool.error .mde-agent-tool-dot { background: var(--danger, #c8675d); }
+.mde-agent-tool-name { color: var(--text, #ebe7df); font-weight: 500; }
 .mde-agent-tool-status { margin-left: auto; color: var(--muted-2, #6b655e); }
 .mde-agent-tool.done .mde-agent-tool-status { color: var(--ok, #3fa66a); }
 .mde-agent-tool.error .mde-agent-tool-status { color: var(--danger, #c8675d); }
+
+/* 拖入文档 dropzone(整栏覆盖)+ 附件条 + 内联模型条 */
+.mde-agent.dragover { outline: 2px dashed var(--accent, #b5654a); outline-offset: -6px; }
+.mde-agent-dropzone { position: absolute; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: rgba(19,18,17,.82); backdrop-filter: blur(2px); pointer-events: none; }
+.mde-agent-dropzone-inner { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 22px 30px; border: 2px dashed var(--accent, #b5654a); border-radius: 14px; color: var(--accent, #b5654a); font-size: 13px; font-weight: 600; background: rgba(181,101,74,.08); }
+.mde-agent-dropzone-icon { font-size: 26px; line-height: 1; }
+.mde-agent-attachbar { flex: 0 0 auto; padding: 6px 8px 0; }
+.mde-agent-attach { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 6px 4px 10px; border: 1px solid rgba(181,101,74,.4); border-radius: 999px; background: rgba(181,101,74,.1); font-size: 11.5px; color: var(--text, #ebe7df); }
+.mde-agent-attach-icon { color: var(--accent, #b5654a); }
+.mde-agent-attach-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mde-agent-attach-chars { color: var(--muted-2, #6b655e); }
+.mde-agent-attach-x { border: none; background: transparent; color: var(--muted, #968f85); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
+.mde-agent-attach-x:hover { color: var(--danger, #c8675d); }
+.mde-agent-attach-up { font-size: 11.5px; color: var(--muted-2, #6b655e); }
+.mde-agent-modelbar { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; padding: 6px 8px 0; }
+.mde-agent-modelbar-label { font-size: 10.5px; color: var(--muted-2, #6f685f); }
 .mde-agent-undo { border: 1px solid var(--line, #36322d); border-radius: 5px; padding: 2px 8px; font-size: 11px; cursor: pointer; font-family: inherit; background: var(--panel, #1f1d1b); color: var(--text, #ebe7df); }
 .mde-agent-undo:hover:not(:disabled) { border-color: var(--accent, #b5654a); color: var(--accent, #b5654a); }
 .mde-agent-undo:disabled { opacity: .5; cursor: default; }
