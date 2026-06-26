@@ -1,6 +1,6 @@
 [project]
 name = "rpg"
-version = "1.26.6"
+version = "1.26.7"
 description = "RPG roleplay backend — FastAPI + Postgres + Anthropic/Vertex AI"
 requires-python = ">=3.11"
 dependencies = [
