@@ -479,6 +479,9 @@
       // 章节版本历史 + 回滚到任意历史版本(改前快照)。
       chapterHistory: (sid, ci) => GET(`${API_PREFIX}/scripts/${sid}/chapters/${ci}/history`),
       chapterRestore: (sid, ci, commitId) => POST(`${API_PREFIX}/scripts/${sid}/chapters/${ci}/restore`, { commit_id: commitId }),
+      // 作者写作规范(.cursorrules 风,注入编辑器 agent)。
+      writingRules: (sid) => GET(`${API_PREFIX}/scripts/${sid}/writing-rules`),
+      saveWritingRules: (sid, rules) => PUT(`${API_PREFIX}/scripts/${sid}/writing-rules`, { rules }),
       mergeChapter: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/chapters/merge`, body),
       // 批量删除章节(一次删整批再重排,避免逐章删 index 漂移)。indexes:number[]。
       deleteChapters: (sid, indexes) => POST(`${API_PREFIX}/scripts/${sid}/chapters/delete`, { indexes }),

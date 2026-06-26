@@ -4064,6 +4064,15 @@
       "restore_fail": "Restore failed",
       "revert": "revert",
       "undone": "undone"
+    },
+    "rules": {
+      "btn": "Rules",
+      "tip": "Set writing rules for the AI (injected into context)",
+      "title": "Writing rules (injected into AI context, must follow)",
+      "desc": "Rules you set for the AI: style/person/POV, continuity taboos, naming conventions… highest priority when the AI continues/rewrites.",
+      "placeholder": "e.g. Third-person limited (follow protagonist only); no omniscient spoilers; place names always use “Yunxu City”; no modern slang in dialogue.",
+      "saved": "Writing rules saved; effective from next chat",
+      "fail": "Save failed"
     }
   },
   "tavern_page": {

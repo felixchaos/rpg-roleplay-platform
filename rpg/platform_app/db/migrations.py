@@ -2098,6 +2098,10 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         " created_at timestamptz not null default now())",
         "create index if not exists idx_agent_doc_user on agent_doc_uploads(user_id, created_at desc)",
     ]),
+    (87, "scripts_writing_rules", [
+        # 作者写作规范(.cursorrules 风):per-script 风格/连贯/禁忌规则,注入编辑器 agent 上下文最高优先层。
+        "alter table scripts add column if not exists writing_rules text not null default ''",
+    ]),
 ]
 
 

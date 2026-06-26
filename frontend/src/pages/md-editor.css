@@ -120,6 +120,19 @@
 .mde-history-restore:disabled { opacity: .5; cursor: default; }
 .mde-history-tag { flex: 0 0 auto; font-size: 10.5px; color: var(--muted-2, #6b655e); }
 
+/* 写作规范(.cursorrules)弹窗 + 顶栏文字按钮 */
+.mde-tb-txt { background: transparent; border: 1px solid var(--line, #36322d); border-radius: 6px; color: var(--muted, #968f85); cursor: pointer; font-size: 12px; padding: 3px 10px; font-family: inherit; }
+.mde-tb-txt:hover { border-color: var(--accent, #b5654a); color: var(--accent, #b5654a); }
+.mde-rules { width: min(620px, 92vw); background: var(--panel, #1c1a18); border: 1px solid var(--line, #36322d); border-radius: 10px; box-shadow: 0 16px 48px rgba(0,0,0,.55); overflow: hidden; }
+.mde-rules-head { padding: 12px 14px 4px; font-size: 13.5px; font-weight: 600; color: var(--text, #ebe7df); }
+.mde-rules-desc { padding: 0 14px 8px; font-size: 11.5px; color: var(--muted-2, #6b655e); line-height: 1.5; }
+.mde-rules-ta { display: block; width: calc(100% - 24px); margin: 0 12px; min-height: 220px; resize: vertical; background: var(--bg-deep, #131211); border: 1px solid var(--line-soft, #2a2724); border-radius: 7px; color: var(--text, #ebe7df); padding: 10px 12px; font-size: 13px; line-height: 1.6; outline: none; font-family: inherit; box-sizing: border-box; }
+.mde-rules-ta::placeholder { color: var(--muted-2, #6b655e); }
+.mde-rules-btns { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; }
+.mde-rules-save { background: var(--accent, #b5654a); color: #fff; border: none; border-radius: 6px; padding: 6px 16px; font-size: 12.5px; cursor: pointer; font-family: inherit; }
+.mde-rules-save:disabled { opacity: .55; cursor: default; }
+.mde-rules-cancel { background: var(--panel-2, #282623); color: var(--text, #ebe7df); border: 1px solid var(--line, #36322d); border-radius: 6px; padding: 6px 14px; font-size: 12.5px; cursor: pointer; font-family: inherit; }
+
 /* 快速打开(Mod+P)浮层 */
 .mde-qopen-scrim { position: fixed; inset: 0; z-index: 4000; background: rgba(0,0,0,.35); display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
 .mde-qopen { width: min(620px, 90vw); background: var(--panel, #1c1a18); border: 1px solid var(--line, #36322d); border-radius: 10px; box-shadow: 0 16px 48px rgba(0,0,0,.55); overflow: hidden; }

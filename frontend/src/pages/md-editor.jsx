@@ -680,6 +680,45 @@ function ChapterHistory({ scriptId, chapterIndex, onClose, onRestored }) {
   );
 }
 
+// 写作规范(.cursorrules 风):per-script 风格/连贯/禁忌规则,保存后注入编辑器 agent 最高优先上下文。
+function WritingRules({ scriptId, onClose }) {
+  const { t } = useTranslation();
+  const [text, setText] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try { const r = await api().scripts.writingRules(scriptId); if (!cancelled) setText(r && r.ok ? (r.rules || '') : ''); }
+      catch (_) { if (!cancelled) setText(''); }
+    })();
+    return () => { cancelled = true; };
+  }, [scriptId]);
+  const save = async () => {
+    if (busy) return; setBusy(true);
+    try {
+      const r = await api().scripts.saveWritingRules(scriptId, text || '');
+      if (r && r.ok) { toast(t('md_editor.rules.saved', { defaultValue: '写作规范已保存,下次对话起生效' }), { kind: 'ok' }); onClose(); }
+      else toast((r && r.error) || t('md_editor.rules.fail', { defaultValue: '保存失败' }), { kind: 'error' });
+    } catch (_) { toast(t('md_editor.rules.fail', { defaultValue: '保存失败' }), { kind: 'error' }); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="mde-qopen-scrim" onMouseDown={onClose}>
+      <div className="mde-rules" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="mde-rules-head">{t('md_editor.rules.title', { defaultValue: '写作规范(注入 AI 上下文,务必遵守)' })}</div>
+        <div className="mde-rules-desc">{t('md_editor.rules.desc', { defaultValue: '像给 AI 立的规矩:风格/人称/视角、连贯禁忌、命名约定…AI 续写/改写时最高优先遵守。' })}</div>
+        {text === null ? <div className="mde-qopen-empty">{t('common.loading')}</div>
+          : <textarea className="mde-rules-ta" value={text} onChange={(e) => setText(e.target.value)}
+              placeholder={t('md_editor.rules.placeholder', { defaultValue: '例:全程第三人称限制视角(只跟主角)；禁止上帝视角剧透；地名统一用「云墟城」不用「云墟」；台词不带现代网络词。' })} />}
+        <div className="mde-rules-btns">
+          <button type="button" className="mde-rules-save" disabled={busy || text === null} onClick={save}>{t('common.save', { defaultValue: '保存' })}</button>
+          <button type="button" className="mde-rules-cancel" onClick={onClose}>{t('common.cancel')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── 主页面 ───────────────────────────────────────────────────────────
 export default function MdEditorPage() {
   const { t } = useTranslation();
@@ -699,6 +738,7 @@ export default function MdEditorPage() {
   const [quickOpen, setQuickOpen] = useState(false);       // Mod+P 快速打开
   const [searchOpen, setSearchOpen] = useState(false);     // Mod+Shift+F 全书检索
   const [historyFor, setHistoryFor] = useState(null);      // 章节版本历史(chapter_index | null)
+  const [rulesOpen, setRulesOpen] = useState(false);       // 写作规范(.cursorrules)编辑弹窗
   // 选区/光标上报(对象):右栏要 selLen(数字),状态栏要 line/col/total。
   const onSel = useCallback((info) => {
     if (info && typeof info === 'object') {
@@ -1112,6 +1152,7 @@ export default function MdEditorPage() {
         </div>
 
         <div className="mde-tb-spacer" />
+        {scriptId && <button className="mde-tb-txt" data-tip={t('md_editor.rules.tip', { defaultValue: '给 AI 立写作规范(注入上下文)' })} title={t('md_editor.rules.btn', { defaultValue: '写作规范' })} onClick={() => setRulesOpen(true)}>{t('md_editor.rules.btn', { defaultValue: '写作规范' })}</button>}
         {active && active.dirty && <button className="mde-save" onClick={() => saveTab(active.key)} disabled={active.saving}>{active.saving ? t('md_editor.save_btn.saving') : t('md_editor.save_btn.save')}</button>}
         <button className={'mde-tb-ic' + (rightOpen ? ' on' : '')} data-tip={rightOpen ? t('md_editor.panel.hide_ai') : t('md_editor.panel.show_ai')} title={rightOpen ? t('md_editor.panel.hide_ai') : t('md_editor.panel.show_ai')} onClick={toggleRight}><TbIcon name="panelRight" /></button>
       </div>
@@ -1207,6 +1248,7 @@ export default function MdEditorPage() {
       {quickOpen && scriptId && <QuickOpen scriptId={scriptId} openNode={openNode} onClose={() => setQuickOpen(false)} />}
       {searchOpen && scriptId && <GlobalSearch scriptId={scriptId} openNode={openNode} onClose={() => setSearchOpen(false)} />}
       {historyFor != null && scriptId && <ChapterHistory scriptId={scriptId} chapterIndex={historyFor} onClose={() => setHistoryFor(null)} onRestored={() => { try { refreshTab('chapter', historyFor); } catch (_) {} setHistoryFor(null); }} />}
+      {rulesOpen && scriptId && <WritingRules scriptId={scriptId} onClose={() => setRulesOpen(false)} />}
     </div>
   );
 }

@@ -182,7 +182,23 @@ def _is_garbage_summary(s: str) -> bool:
 #   tier   - cache_tier:编辑器的「相关设定」按 script+章号稳定 → 场景级 B(框架头 A)。
 #   build  - (sid, scan_text, chapter_index, db) -> str,复用现成确定性装配件,零行为改写。
 # 想增删/改序/接新数据源 → 改这张表即可,不动装配逻辑(= 环境驱动)。
+def _writing_rules_section(db, sid: int) -> str:
+    """作者写作规范(.cursorrules 风):per-script 风格/连贯/禁忌,稳定 → 最高优先 A 层注入。"""
+    if db is None:
+        return ""
+    try:
+        row = db.execute("select writing_rules from scripts where id=%s", (sid,)).fetchone()
+    except Exception:
+        return ""
+    rules = str((row.get("writing_rules") if row else "") or "").strip()
+    if not rules:
+        return ""
+    return "【作者写作规范(最高优先,务必遵守)】\n" + rules[:4000]
+
+
 EDITOR_ENVIRONMENT: list[dict[str, Any]] = [
+    {"id": "writing_rules", "title": None, "needs_db": True, "tier": "A",
+     "build": lambda sid, scan, ci, db: _writing_rules_section(db, sid)},
     {"id": "timeline",   "title": None,         "needs_db": True,  "tier": "B",
      "build": lambda sid, scan, ci, db: _timeline_section(db, sid, ci)},
     {"id": "characters", "title": "【相关人物】", "needs_db": False, "tier": "B",
