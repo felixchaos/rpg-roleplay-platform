@@ -85,6 +85,11 @@ def _fact_groups_layer(state) -> str:
     for it in items:
         if it.get("status") and it.get("status") != "active":
             continue
+        # 自动归档的旧条目排除出 GM 上下文(与 MemoryProvider 读 bucket 同口径),减少
+        # 「事实库过时数据」漏进上下文。notes/pinned 已豁免自动归档(见 context_providers.
+        # memory._maybe_auto_archive),玩家手记不会因此被滤掉。
+        if it.get("archived"):
+            continue
         k = it.get("kind")
         if k in groups:
             groups[k].append(it)

@@ -47,12 +47,20 @@ def _maybe_auto_archive(state, ms) -> None:
                 continue
             if item.get("archived"):
                 continue
+            # 玩家手记(notes)与固定记忆(pinned)永不自动归档:都是玩家手写的权威输入,
+            # pinned 更是玩家显式「固定」。自动归档会把它们从 bucket 移除 → MemoryProvider
+            # 读不到 → GM 不再看到玩家笔记/固定记忆(且面板也没了),正是「玩家笔记/固定记忆
+            # 几十回合后悄悄消失、GM 改用事实库过时数据」的根因。只归档自动累积的
+            # facts / abilities / resources。
+            if item.get("legacy_bucket") in ("notes", "pinned"):
+                continue
             item_turn = int(item.get("turn", 0))
             if item_turn < cutoff_turn and item.get("status") != "archived":
                 item["archived"] = True
                 changed = True
-        # 同步到 legacy buckets：从 facts / notes / pinned / abilities / resources 中
-        # 移除已归档条目。采用 set 比对，保持顺序。
+        # 同步到 legacy buckets：从 facts / abilities / resources 移除已归档条目。
+        # **绝不碰 notes / pinned**(玩家权威手记);且这里按文本 set 比对,若把 notes/pinned
+        # 纳入,一条与某归档事实文本恰好相同的玩家笔记会被误删(文本碰撞)。
         if changed:
             archived_texts = {
                 item["text"]
@@ -60,7 +68,7 @@ def _maybe_auto_archive(state, ms) -> None:
                 if isinstance(item, dict) and item.get("archived")
             }
             mem = data.get("memory") or {}
-            for bucket in ("facts", "notes", "pinned", "abilities", "resources"):
+            for bucket in ("facts", "abilities", "resources"):
                 bucket_list = mem.get(bucket)
                 if isinstance(bucket_list, list):
                     mem[bucket] = [t for t in bucket_list if t not in archived_texts]
@@ -104,6 +112,14 @@ class MemoryProvider(ContextProvider):
             lines.append(line)
             token_used += cost
             return True
+
+        # 记忆优先级提示:玩家手写的「笔记/固定记忆」权威且最新,与自动累积的「事实」冲突
+        # 时一律以玩家手记为准(修「GM 拿事实库过时数值、不读玩家笔记」)。仅当确有手记时注入。
+        if m.get("notes") or m.get("pinned"):
+            _add_line(
+                "【记忆优先级:带「笔记：」「固定记忆：」的是玩家手写、权威且最新;"
+                "与「事实：」冲突时一律以笔记/固定记忆为准,数值/状态以玩家手记为最新。】"
+            )
 
         # ── bucket_world_enabled: main_quest / current_objective / facts / notes ─
         if ms.bucket_world_enabled:
