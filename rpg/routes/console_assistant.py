@@ -195,6 +195,27 @@ async def api_console_assistant_chat(
     return StreamingResponse(_gen(), media_type="text/event-stream")
 
 
+def _editor_panel_model(user_id: int) -> tuple[str | None, str | None]:
+    """续写 / 改写 / 内联补全默认跟随「编辑器 AI 面板」选的模型
+    (user_preferences.console_assistant_model_override = {api_id, model},与右栏聊天同源,见 app.py)。
+    否则 editor.* 偏好从没有任何 UI 写入、永远落 resolve_api_and_model 的 fallback,跟用户在面板里选的
+    模型不一致 → 续写可能用了未配置/不同的模型 → 返空「啥也没看到」(群反馈 耀月余辉)。无 → (None, None)。"""
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select preferences from user_preferences where user_id = %s", (int(user_id),),
+            ).fetchone()
+        prefs = (row and row.get("preferences")) or {}
+        ov = prefs.get("console_assistant_model_override") if isinstance(prefs, dict) else None
+        if isinstance(ov, dict):
+            return (ov.get("api_id") or None, ov.get("model") or None)
+    except Exception:
+        pass
+    return (None, None)
+
+
 @router.post("/api/console_assistant/autocomplete")
 async def api_console_assistant_autocomplete(
     request: Request,
@@ -240,8 +261,10 @@ async def api_console_assistant_autocomplete(
 
     try:
         from agents._harness import resolve_api_and_model
+        _ov_api, _ov_model = _editor_panel_model(user_id)
         api_id, model_real = resolve_api_and_model(
             user_id, api_pref_key="editor.api_id", model_pref_key="editor.model_real_name",
+            api_id_override=_ov_api, model_override=_ov_model,
         )
     except Exception:
         return JSONResponse({"ok": False, "error": "未配置可用模型"}, status_code=200)
@@ -511,7 +534,12 @@ async def api_console_assistant_continue(
         except Exception:
             environment = ""
 
-    # 模型解析:body 给了 api_id+model 就用;否则回退到用户编辑器偏好 / 默认 / gm
+    # 模型解析:body 给了 api_id+model 就用;否则跟随「编辑器 AI 面板」选的模型(与右栏聊天同源);
+    # 再否则回退到 editor.* 偏好 / agent.* / 用户首个可用模型 / 默认。
+    if not api_id_in or not model_in:
+        _ov_api, _ov_model = _editor_panel_model(user_id)
+        api_id_in = api_id_in or _ov_api
+        model_in = model_in or _ov_model
     try:
         from agents._harness import resolve_api_and_model
         api_id, model_real = resolve_api_and_model(

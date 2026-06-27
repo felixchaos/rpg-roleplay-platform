@@ -589,15 +589,13 @@
       // - rebuildEstimate 估算 (零 LLM 也走,统一 prereq 检查)
       // - rebuild 派发任务,返回 job_id (复用 import_jobs 表, kind='rebuild_<module>')
       // - rebuildEmbeddings 单独路由,body.include = ['chunks'|'cards'|'worldbook'|'canon']
-      // - streamRebuild = streamImport 别名,保留命名一致性
+      // - streamRebuild 见上方 import 区(箭头形式,与 streamImport 同一 SSE 路由);此处不再重复定义
+      //   (原来这里有第二个 streamRebuild(){return this.streamImport()} 方法形式 → 对象字面量重复键、
+      //    后者静默覆盖前者,且依赖 this 在解构调用时会炸 → 删掉,统一用上面那个箭头形式。)
       getModulesStatus: (sid) => GET(`${API_PREFIX}/scripts/` + sid + "/modules-status"),
       rebuildEstimate: (sid, mod, body) => POST(`${API_PREFIX}/scripts/` + sid + "/rebuild/" + mod + "/estimate", body || {}),
       rebuild: (sid, mod, body) => POST(`${API_PREFIX}/scripts/` + sid + "/rebuild/" + mod, body || {}),
       rebuildEmbeddings: (sid, body) => POST(`${API_PREFIX}/scripts/` + sid + "/rebuild/embeddings", body || {}),
-      streamRebuild(jobId, handlers) {
-        // 别名: rebuild jobs 跟 import-jobs 同一张表 / 同一 SSE 路由
-        return this.streamImport(jobId, handlers);
-      },
       // W3-C1: 手动上传剧本封面 → POST multipart /api/scripts/{id}/cover → {ok, url}
       uploadCover: (id, file) => {
         const fd = new FormData(); fd.append("file", file);
