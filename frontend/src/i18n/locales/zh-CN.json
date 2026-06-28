@@ -2962,6 +2962,8 @@
       "relationships_empty": "暂无明确关系。GM 输出含『关系:X -> Y』结构化标签时会自动写入这里；玩家也可点下方「+」手动建立。",
       "pinned_cards": "已固定角色卡",
       "pinned_cards_subtitle": "链接到平台 user_cards",
+      "invoked_badge": "本轮调用",
+      "invoked_tip": "本轮已注入 GM 上下文(后端按当前输入 / 在场 / 锚点命中这张卡)",
       "pinned_suffix": "已固定 · card:{{card_id}}",
       "add_relationship": "添加关系",
       "npc_name_prompt": "NPC 名字",

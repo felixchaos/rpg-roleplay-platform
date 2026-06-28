@@ -745,7 +745,7 @@ function _entityTypeLabel(kind, source, t) {
   return "—";
 }
 
-function CharacterCard({ name, info, subtitle, avatarPath, onEditStatus, onDelete }) {
+function CharacterCard({ name, info, subtitle, avatarPath, onEditStatus, onDelete, invoked }) {
   const { t } = useTranslation();
   // info: { tone | disposition, note?, role? }
   // 可选 props: onEditStatus(newValue)/onDelete() — 仅 relationships 区传入,
@@ -779,6 +779,12 @@ function CharacterCard({ name, info, subtitle, avatarPath, onEditStatus, onDelet
               <span className={`pill ${toneColor}`}><span className={`dot ${toneColor}`} />{dispLabel}</span>
             )}
             {subtitle ? <span className="muted-2 mono" style={{marginLeft: 6, fontSize: 11}}>{subtitle}</span> : null}
+            {invoked ? (
+              <span className="pill" title={t('game.characters.invoked_tip')}
+                style={{marginLeft: 6, color: "var(--accent)", borderColor: "var(--accent)", background: "var(--accent-soft)"}}>
+                <span className="dot" style={{background: "var(--accent)"}} />{t('game.characters.invoked_badge')}
+              </span>
+            ) : null}
           </div>
         </div>
         {/* 仅保留 @mention 插入交互;移除『编辑』『转为用户角色卡』按钮 —
@@ -818,6 +824,25 @@ function PanelCharacters({ state }) {
   const encounter = (state && state.encounter) || {};
   const combatants = Array.isArray(encounter.combatants) ? encounter.combatants : [];
   const relationships = (state && state.relationships) || {};
+
+  // A#1:本轮注入 GM 上下文的角色卡 —— 后端 _active_character_cards(grep scan_text + anchor 强制)
+  // 把命中卡写进 last_context 的 npc_cards 层(core.py 每层保留 items)。从中取卡名 + 命中别名,
+  // 给侧栏对应卡加「本轮调用」标记。空/首屏(尚无回合)→ 集合空 → 不显示标记。
+  const _normName = (s) => String(s || "").trim().toLowerCase();
+  const invokedNames = (() => {
+    const set = new Set();
+    const layers = (state && state.memory && state.memory.last_context && state.memory.last_context.layers) || [];
+    const npc = Array.isArray(layers) ? layers.find((l) => l && l.id === "npc_cards") : null;
+    const items = (npc && Array.isArray(npc.items)) ? npc.items : [];
+    for (const it of items) {
+      if (it && it.name) set.add(_normName(it.name));
+      for (const m of (it && Array.isArray(it.matched) ? it.matched : [])) {
+        if (m) set.add(_normName(m));
+      }
+    }
+    return set;
+  })();
+  const isInvoked = (nm) => invokedNames.size > 0 && invokedNames.has(_normName(nm));
 
   // 当前在场:active_entities + (战斗中的 combatants 兜底);按 id 去重
   const byId = new Map();
@@ -877,6 +902,7 @@ function PanelCharacters({ state }) {
                   info={{ disposition: e.disposition, note: e.role || "", role: e.role }}
                   subtitle={subtitle}
                   avatarPath={e.avatar_path}
+                  invoked={isInvoked(e.name || e.id)}
                 />
               );
             })}
@@ -942,6 +968,7 @@ function PanelCharacters({ state }) {
                 info={{ disposition: e.disposition, note: e.role || "", role: e.role }}
                 subtitle={t('game.characters.pinned_suffix', { card_id: e.card_id })}
                 avatarPath={e.avatar_path}
+                invoked={isInvoked(e.name || e.id)}
               />
             ))}
           </div>

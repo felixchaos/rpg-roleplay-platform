@@ -2871,6 +2871,8 @@
       "relationships_empty": "No relationships yet. Structured 'Relationship: X -> Y' tags in GM output are written here automatically; you can also add them manually with the + button.",
       "pinned_cards": "Pinned Character Cards",
       "pinned_cards_subtitle": "Linked to platform user_cards",
+      "invoked_badge": "This turn",
+      "invoked_tip": "Injected into the GM context this turn (matched by current input / on-stage / anchor)",
       "pinned_suffix": "Pinned · card:{{card_id}}",
       "add_relationship": "Add Relationship",
       "npc_name_prompt": "NPC name",

@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.30.0] - 2026-06-29
+
+### Added
+- **角色卡侧栏「本轮调用」标记**(群反馈):侧栏现在标出哪些角色卡在本回合被注入了 GM 上下文。数据源是后端既有的 `last_context` 的 `npc_cards` 层(`_active_character_cards` 按当前输入 / 在场 / pending anchor 命中,`core.py` 每层保留 `items`),纯前端读取——`当前在场` 与 `已固定角色卡` 中名字 / 别名命中的卡显示一枚 accent 小药丸标记。不另起页面、零后端改动。空 / 首屏(尚无回合)不显示。
+
 ## [1.29.0] - 2026-06-28
 
 ### Added
