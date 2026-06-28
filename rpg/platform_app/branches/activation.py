@@ -47,6 +47,13 @@ def continue_from(user_id: int, node_id: int) -> dict[str, Any]:
         ref_row = ref
         _set_save_active(db, save_id, active_commit_id, active_ref_id)
         _write_checkout(db, user_id, save_id, active_ref_id, active_commit_id)
+        # 截断超出目标 commit turn 的 messages:新建分支后旧分支残留的消息
+        # 会被 materialize() 重建 history 时拉出来,导致 Game Console 显示旧分支对话。
+        target_turn = int(node.get("turn_index") or 0)
+        db.execute(
+            "delete from messages where save_id = %s and turn > %s",
+            (save_id, target_turn),
+        )
     # [hotfix] runtime 写必须在 with 块外(advisory 锁已释放 + 本 conn 已归还池)。
     # 原来锁内调 activate_state_snapshot → _db_write_runtime 会【另开一条 conn】去
     # `update game_saves set last_played_at where id=save_id`,而本事务未提交的 _set_save_active
@@ -80,6 +87,12 @@ def activate_node(user_id: int, node_id: int) -> dict[str, Any]:
         state_path = node["state_path"]
         state_snapshot = commit_state(node)
         active_ref_id = ref["id"]
+        # 截断超出目标 commit turn 的 messages(与 continue_from 同理)。
+        target_turn = int(node.get("turn_index") or 0)
+        db.execute(
+            "delete from messages where save_id = %s and turn > %s",
+            (save_id, target_turn),
+        )
     # [hotfix] runtime 写移出 with 块,避免锁内嵌套连接 update 同一 game_saves 行的自死锁(见 continue_from)。
     runtime_info = _runtime_module.activate_state_snapshot(user_id, save_id, node_id, state_snapshot, state_path, ref_id=active_ref_id)
     result = tree(user_id, save_id)

@@ -21,15 +21,21 @@ def _db_update_context_run_status(db, run_id: int, status: str, error: str, dura
 
 
 def _db_insert_turn_messages(db, session_id: int, save_id: int, turn: int, player_input: str, gm_output: str, metadata: dict[str, Any]) -> tuple:
-    """repository: 插入一对 user/assistant 消息，返回 (user_row, gm_row)。"""
-    user_msg = db.execute(
-        """
-        insert into messages(session_id, save_id, turn, role, content, metadata)
-        values (%s, %s, %s, 'user', %s, %s)
-        returning *
-        """,
-        (session_id, save_id, turn, player_input, Jsonb(metadata)),
-    ).fetchone()
+    """repository: 插入一对 user/assistant 消息，返回 (user_row, gm_row)。
+
+    opening 等无真实玩家输入的场景,player_input 为空 → 跳过 user 行,
+    避免 materialize() 重建 history 时出现空的玩家气泡。
+    """
+    user_msg = None
+    if player_input and player_input.strip():
+        user_msg = db.execute(
+            """
+            insert into messages(session_id, save_id, turn, role, content, metadata)
+            values (%s, %s, %s, 'user', %s, %s)
+            returning *
+            """,
+            (session_id, save_id, turn, player_input, Jsonb(metadata)),
+        ).fetchone()
     gm_msg = db.execute(
         """
         insert into messages(session_id, save_id, turn, role, content, metadata)
