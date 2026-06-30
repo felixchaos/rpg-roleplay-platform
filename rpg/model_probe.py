@@ -395,8 +395,22 @@ def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) 
     try:
         data = client.models.list().data
     except Exception as exc:
-        # 某些 provider（如部分 OpenAI 兼容厂商）可能不支持 /v1/models，把这种情况显式标出
-        raise RuntimeError(f"provider 拒绝列模型（可能不支持 /v1/models）: {exc}") from exc
+        # 群反馈(#91,真库复现:evomap /v1/models=200、/models=403):用户常把 base_url 填成**不带版本段**
+        # 的裸地址(如 https://relay.com)→ OpenAI SDK 打 {base}/models 而非 /v1/models → 中转站 403/404 →
+        # 「配好却查不到模型」。base_url 不含 /vN 版本段时,自动补 /v1 重试一次(仅失败时、仅缺版本段时,
+        # 不掩盖真错、不动 /v1beta/openai 等已带版本的合法路径)。
+        import re as _re
+        data = None
+        if base_url and not _re.search(r"/v\d", base_url):
+            try:
+                _retry = OpenAI(**{**kwargs, "base_url": base_url.rstrip("/") + "/v1"})
+                data = _retry.models.list().data
+            except Exception:
+                data = None
+        if data is None:
+            raise RuntimeError(
+                f"provider 拒绝列模型(base_url 可能缺 /v1 版本段,或该 provider 不支持 /v1/models): {exc}"
+            ) from exc
     for m in data:
         mid = getattr(m, "id", "") or getattr(m, "name", "")
         if mid:

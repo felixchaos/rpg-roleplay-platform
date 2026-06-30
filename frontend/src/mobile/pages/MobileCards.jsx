@@ -490,7 +490,7 @@ function ImportSheet({ show, onClose, onConfirm }) {
   }, [show]);
 
   const handleFiles = (list) => {
-    const MAX = 5 * 1024 * 1024;
+    const MAX = 10 * 1024 * 1024;  // 10MB(对齐后端 + 桌面端;群反馈 #92:>5MB 角色卡传不上)
     const MAX_FILES = 8;
     const arr = [...list].slice(0, MAX_FILES);
     const valid = arr.filter((f) => {

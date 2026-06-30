@@ -1340,7 +1340,7 @@ function TavernImportModal({ open, onClose, onConfirm }) {
 
   const handleFiles = (list) => {
     // task 68: size + ext 校验,防内存炸 / 类型混淆
-    const MAX_BYTES = 5 * 1024 * 1024;  // 5MB / 文件
+    const MAX_BYTES = 10 * 1024 * 1024;  // 10MB / 文件(对齐后端 PNG 导入上限;群反馈 #92:>5MB 角色卡传不上)
     const MAX_FILES = 8;
     const arr = [...list].slice(0, MAX_FILES);
     if (list.length > MAX_FILES) {

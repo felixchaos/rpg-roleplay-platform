@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.32.1] - 2026-06-30
+
+### Fixed
+- **配好 API 却查询不到模型(反馈 #91)**:中转站 base_url 不带版本段(如 `https://relay.com`)时,OpenAI SDK 打 `{base}/models` 而非 `/v1/models` → 403/404 → 0 模型(真库复现:evomap `/v1/models`=200、`/models`=403)。`model_probe._list_openai_compat_models` 列模型失败且 base_url 无 `/vN` 版本段时,自动补 `/v1` 重试一次(仅失败时、仅缺版本段,不掩盖真错、不动 `/v1beta/openai` 等)。错误文案也提示「base_url 可能缺 /v1」。
+- **角色卡 >5MB 无法上传(反馈 #92)**:前端导入硬限 5MB,但后端实际可收 8–16MB → 5–10MB 的卡被前端挡下。`cards.jsx` 与 `MobileCards.jsx` 上限 5MB→**10MB**(对齐后端 PNG 导入上限)。
+
 ## [1.32.0] - 2026-06-29
 
 ### Added
