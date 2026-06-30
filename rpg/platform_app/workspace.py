@@ -709,6 +709,18 @@ def _build_initial_snapshot(
                 timeline["current_label"] = story_time_label
             if chapter_min is not None and chapter_max is not None:
                 timeline["anchor_chapter_range"] = [int(chapter_min), int(chapter_max)]
+            # 根因(#62/#63/#66/#67 选出生点仍从序章 / 原著正文+对话消失):出生点过去只写进
+            # world.timeline,没灌进【进度信号】worldline.progress_chapter → retrieve_context 的
+            # _progress_chapter 默认 1(reveal 闸锁序章、ch2+ 角色被藏)、get_progress_window 退回
+            # [1,30]、ongoing 回合贴原著注入序章原文。出生点是玩家显式选择的【确定性起始章】
+            # (区别于 story_time_label 猜章,见 retrieval.py:469 注释),作为进度下限写入 worldline:
+            # _PRESERVE_SETTINGS_SQL 已含 progress_chapter → 跨回合 sticky;advance_progress 仍可 max 前推。
+            if chapter_min is not None:
+                wl = state.data.setdefault("worldline", {})
+                try:
+                    wl["progress_chapter"] = max(int(wl.get("progress_chapter") or 0), int(chapter_min))
+                except (TypeError, ValueError):
+                    pass
         except Exception:
             pass
 

@@ -400,6 +400,25 @@ def get_progress_window(save_id: int, world_time_label: str | None = None,
                 "source": "satisfied",
                 "last_satisfied_chapter": last_sat,
             }
+        # 1.5 出生点 / 已推进进度(尚无 occurred 锚点时):读 worldline.progress_chapter。
+        #     玩家入场选 ch50 出生点 → _build_initial_snapshot 写 progress_chapter=50;此时
+        #     last_sat=None,但 pending 锚点窗口 / NPC 抽取 / 贴原著正文 fallback 必须从 ch50 起,
+        #     否则仍走下方 fallback[1,30] 注入序章(#62/#63/#66/#67)。progress_chapter 是确定性
+        #     数值(出生点显式选择或 advance_progress 由 occurred 锚点推进),比 world_time_label
+        #     易错字符串匹配可靠,故优先于 label 步。
+        r_prog = db.execute(
+            "select (worldline->>'progress_chapter')::int as pc "
+            "from game_sessions where save_id = %s",
+            (sid,),
+        ).fetchone()
+        _pc = int(r_prog["pc"]) if r_prog and r_prog.get("pc") is not None else 0
+        if _pc > 1:
+            return {
+                "chapter_min": _pc,
+                "chapter_max": _pc + window_size,
+                "source": "progress_chapter",
+                "last_satisfied_chapter": None,
+            }
         # 2. world.time label 匹配 anchor 表
         if world_time_label and script_id:
             row = db.execute(
