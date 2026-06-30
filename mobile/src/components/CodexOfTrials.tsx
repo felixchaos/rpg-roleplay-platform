@@ -45,11 +45,17 @@ export function CodexOfTrials({ visible, onClose }: { visible: boolean; onClose:
   }, []);
 
   useEffect(() => {
-    if (visible) {
-      setTab("status");
-      refresh();
-    }
-  }, [visible, refresh]);
+    if (!visible) return;
+    let alive = true;
+    setTab("status");
+    // Inline the fetch so we can guard setState against unmount during async resolution.
+    setLoading(true);
+    game.state()
+      .then((res) => { if (alive) setState(res?.state ?? res); })
+      .catch(() => {})
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [visible]);
 
   const act = async (fn: () => Promise<any>) => {
     if (acting) return;
@@ -241,7 +247,7 @@ export function CodexOfTrials({ visible, onClose }: { visible: boolean; onClose:
 const styles = StyleSheet.create({
   fill: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 },
   backdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.color.scrim },
-  sheet: { position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "84%", backgroundColor: "rgba(20,16,12,0.9)", borderTopLeftRadius: theme.radius.xl, borderTopRightRadius: theme.radius.xl, borderWidth: 1, borderColor: theme.color.surfaceLineStrong, overflow: "hidden", paddingHorizontal: theme.space(5), paddingTop: theme.space(3) },
+  sheet: { position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "84%", backgroundColor: palette.scrimCard90, borderTopLeftRadius: theme.radius.xl, borderTopRightRadius: theme.radius.xl, borderWidth: 1, borderColor: theme.color.surfaceLineStrong, overflow: "hidden", paddingHorizontal: theme.space(5), paddingTop: theme.space(3) },
   grabber: { alignSelf: "center", width: 44, height: 4, borderRadius: 2, backgroundColor: theme.color.surfaceLineStrong, marginBottom: theme.space(3) },
   title: { fontFamily: theme.font.display, fontSize: theme.size.lg, color: theme.color.text, letterSpacing: 1, marginBottom: theme.space(3) },
   tabs: { flexDirection: "row", gap: theme.space(2), marginBottom: theme.space(3) },
@@ -260,12 +266,12 @@ const styles = StyleSheet.create({
   hpTrackSm: { height: 4, borderRadius: 2, backgroundColor: theme.color.bgInput, overflow: "hidden", marginTop: 3 },
   hpFill: { height: "100%" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: theme.space(2) },
-  condChip: { backgroundColor: "rgba(184,69,58,0.15)", paddingHorizontal: theme.space(3), paddingVertical: theme.space(1), borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(184,69,58,0.4)" },
+  condChip: { backgroundColor: palette.blood15, paddingHorizontal: theme.space(3), paddingVertical: theme.space(1), borderRadius: theme.radius.pill, borderWidth: 1, borderColor: palette.blood40 },
   condText: { fontFamily: theme.font.proseMedium, fontSize: theme.size.sm, color: theme.color.danger },
   attrGrid: { flexDirection: "row", flexWrap: "wrap", gap: theme.space(2) },
   attrCard: { width: "30%", flexGrow: 1, alignItems: "center", paddingVertical: theme.space(3), borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.surfaceLine, backgroundColor: theme.color.bgCard },
   attrVal: { fontFamily: theme.font.display, fontSize: theme.size.lg, color: theme.color.accentBright },
-  attrKey: { fontFamily: theme.font.mono, fontSize: 10, color: theme.color.textFaint, letterSpacing: 1 },
+  attrKey: { fontFamily: theme.font.mono, fontSize: theme.size.xs, color: theme.color.textFaint, letterSpacing: 1 },
   sectionLabel: { fontFamily: theme.font.displaySemi, fontSize: theme.size.xs, letterSpacing: 2, textTransform: "uppercase", color: theme.color.accent, marginTop: theme.space(2) },
   empty: { fontFamily: theme.font.proseItalic, fontSize: theme.size.md, color: theme.color.textFaint, paddingVertical: theme.space(6), textAlign: "center", lineHeight: 22 },
   invRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: theme.space(2), borderBottomWidth: 1, borderBottomColor: theme.color.surfaceLine },
@@ -279,7 +285,7 @@ const styles = StyleSheet.create({
   moveText: { fontFamily: theme.font.proseSemi, fontSize: theme.size.sm, color: theme.color.accentBright },
   enemyRow: { flexDirection: "row", alignItems: "center", gap: theme.space(3), paddingVertical: theme.space(2) },
   enemyName: { fontFamily: theme.font.proseSemi, fontSize: theme.size.base, color: theme.color.text },
-  strikeBtn: { paddingHorizontal: theme.space(3), paddingVertical: theme.space(2), borderRadius: theme.radius.sm, borderWidth: 1, borderColor: "rgba(184,69,58,0.4)" },
+  strikeBtn: { paddingHorizontal: theme.space(3), paddingVertical: theme.space(2), borderRadius: theme.radius.sm, borderWidth: 1, borderColor: palette.blood40 },
   strikeText: { fontFamily: theme.font.displaySemi, fontSize: theme.size.xs, letterSpacing: 1, color: theme.color.danger },
   nextBtn: { marginTop: theme.space(2), paddingVertical: theme.space(3), alignItems: "center", borderRadius: theme.radius.md, backgroundColor: theme.color.accent },
   nextText: { fontFamily: theme.font.displaySemi, fontSize: theme.size.sm, letterSpacing: 1, color: theme.color.bg, textTransform: "uppercase" },

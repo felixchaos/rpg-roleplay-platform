@@ -10,7 +10,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeOut, Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming, cancelAnimation } from "react-native-reanimated";
 import { tasks, ActiveTask } from "@/api";
-import { theme } from "@/theme/theme";
+import { theme, palette } from "@/theme/theme";
 
 const KIND_LABEL: Record<string, string> = {
   import: "剧本导入",
@@ -107,14 +107,14 @@ export function EmberWatch() {
 const styles = StyleSheet.create({
   root: { position: "absolute", right: theme.space(5), alignItems: "flex-end", gap: theme.space(2) },
   stack: { gap: theme.space(2), alignItems: "flex-end" },
-  card: { width: 230, padding: theme.space(3), borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.surfaceLineStrong, backgroundColor: "rgba(20,16,12,0.96)", gap: theme.space(2) },
+  card: { width: 230, padding: theme.space(3), borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.surfaceLineStrong, backgroundColor: palette.scrimCard, gap: theme.space(2) },
   cardHead: { flexDirection: "row", alignItems: "center", gap: theme.space(2) },
   cardTitle: { flex: 1, fontFamily: theme.font.proseSemi, fontSize: theme.size.sm, color: theme.color.text },
   cardPct: { fontFamily: theme.font.mono, fontSize: theme.size.xs, color: theme.color.accent },
   cardStatus: { fontFamily: theme.font.prose, fontSize: theme.size.xs, color: theme.color.textFaint },
   track: { height: 4, borderRadius: 2, backgroundColor: theme.color.bgInput, overflow: "hidden" },
   fill: { height: "100%", backgroundColor: theme.color.accent },
-  pill: { flexDirection: "row", alignItems: "center", gap: theme.space(2), paddingHorizontal: theme.space(4), paddingVertical: theme.space(2.5), borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.color.accentSoft, backgroundColor: "rgba(20,16,12,0.96)", shadowColor: theme.color.accent, shadowOpacity: 0.4, shadowRadius: 12, elevation: 8 },
+  pill: { flexDirection: "row", alignItems: "center", gap: theme.space(2), paddingHorizontal: theme.space(4), paddingVertical: theme.space(2.5), borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.color.accentSoft, backgroundColor: palette.scrimCard, shadowColor: theme.color.accent, shadowOpacity: 0.4, shadowRadius: 12, elevation: 8 },
   pulseDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.color.accentBright },
   pillText: { fontFamily: theme.font.proseSemi, fontSize: theme.size.sm, color: theme.color.text },
   pillChevron: { fontSize: 12, color: theme.color.textFaint },

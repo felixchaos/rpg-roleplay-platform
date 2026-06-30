@@ -68,7 +68,7 @@ export default function LoginScreen() {
     try {
       await authApi.loginCodeVerify(email.trim(), code.trim());
       await refresh();
-      router.replace("/(app)/chats");
+      router.replace("/(app)/chats");  // refresh() has committed setUser synchronously; RouteGuard handles the redirect.
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "验证码无效或已过期");
     } finally {

@@ -73,33 +73,47 @@ export async function streamPost(
     headers,
     body: JSON.stringify(body || {}),
     // The stream stays open for the whole turn; disable the library's idle timeout.
-    timeout: 0,
-    timeoutBeforeConnection: 0,
+    // A reasonable upper bound prevents zombie connections on network drops.
+    timeout: 600_000, // 10 min hard cap
+    timeoutBeforeConnection: 15_000,
     pollingInterval: 0,
   });
 
-  es.addEventListener("open", () => handlers.onOpen?.());
+  // Keep listener-removal functions so we can clean up on close.
+  const cleanups: (() => void)[] = [];
+
+  const onOpen = () => handlers.onOpen?.();
+  es.addEventListener("open", onOpen);
+  cleanups.push(() => es.removeEventListener("open", onOpen));
 
   for (const name of CUSTOM_EVENTS) {
-    es.addEventListener(name as any, (event: any) => {
+    const handler = (event: any) => {
       const data = parseData(event?.data);
       handlers[name]?.(data);
       if (name === "done") {
+        // Detach all listeners, then close
+        for (const fn of cleanups) fn();
         es.close();
         handlers.onClose?.();
       }
-    });
+    };
+    es.addEventListener(name as any, handler);
+    cleanups.push(() => es.removeEventListener(name as any, handler));
   }
 
-  es.addEventListener("error", (event: any) => {
+  const onError = (event: any) => {
     handlers.onError?.({
       message: event?.message || "流式连接出错",
       status: event?.xhrStatus,
     });
-  });
+  };
+  es.addEventListener("error", onError);
+  cleanups.push(() => es.removeEventListener("error", onError));
 
   return {
     close: () => {
+      // Detach all listener references before closing the underlying EventSource.
+      for (const fn of cleanups) fn();
       try {
         es.close();
       } catch {

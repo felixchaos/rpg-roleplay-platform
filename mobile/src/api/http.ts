@@ -1,5 +1,5 @@
 /**
- * Cookie-aware HTTP client for the RPG Roleplay FastAPI backend.
+ * cookie-aware HTTP client for the RPG Roleplay FastAPI backend.
  *
  * The backend authenticates with an HTTP-only `rpg_session` cookie (no bearer token).
  * RN's implicit cookie jar is unreliable across app restarts and arbitrary self-hosted
@@ -24,20 +24,30 @@ export function setAuthExpiredHandler(fn: (() => void) | null) {
   onAuthExpired = fn;
 }
 
-const SESSION_RE = /(?:^|[,;\s])rpg_session=([^;,\s]+)/i;
+/**
+ * Extract rpg_session from each Set-Cookie header individually (RFC 6265 §5.2).
+ * Joining headers with "; " is unsafe — attribute/value boundaries blur.
+ */
+const SESSION_RE = /^\s*rpg_session=([^;]+)/i;
 
-/** Pull rpg_session out of a Set-Cookie header and persist it. */
 async function captureCookie(headers: Headers): Promise<void> {
-  // RN fetch exposes a combined header string; native may also use getSetCookie().
-  let raw = "";
   const anyHeaders = headers as unknown as { getSetCookie?: () => string[] };
-  if (typeof anyHeaders.getSetCookie === "function") {
-    raw = anyHeaders.getSetCookie().join("; ");
+  const setCookies: string[] =
+    typeof anyHeaders.getSetCookie === "function" ? anyHeaders.getSetCookie() : [];
+
+  // Fallback: some RN fetch implementations fold Set-Cookie into a single header
+  if (setCookies.length === 0) {
+    const raw = headers.get("set-cookie") || "";
+    if (raw) setCookies.push(raw);
   }
-  if (!raw) raw = headers.get("set-cookie") || "";
-  if (!raw) return;
-  const m = SESSION_RE.exec(raw);
-  if (m && m[1]) await setSessionCookie(`rpg_session=${m[1]}`);
+
+  for (const sc of setCookies) {
+    const m = SESSION_RE.exec(sc);
+    if (m && m[1]) {
+      await setSessionCookie(`rpg_session=${m[1]}`);
+      return; // first match wins
+    }
+  }
 }
 
 export async function baseUrl(): Promise<string> {
@@ -57,10 +67,9 @@ type RequestOpts = {
   method?: string;
   body?: unknown;
   timeoutMs?: number;
-  isForm?: boolean;
 };
 
-async function request<T = any>(path: string, opts: RequestOpts = {}): Promise<T> {
+async function request<T = unknown>(path: string, opts: RequestOpts = {}): Promise<T> {
   const base = await baseUrl();
   const url = path.startsWith("http") ? path : base + path;
   const controller = new AbortController();
@@ -82,7 +91,6 @@ async function request<T = any>(path: string, opts: RequestOpts = {}): Promise<T
       headers,
       body,
       signal: controller.signal,
-      credentials: "include",
     });
   } catch (e: any) {
     clearTimeout(timer);
@@ -116,7 +124,7 @@ async function request<T = any>(path: string, opts: RequestOpts = {}): Promise<T
 }
 
 export const http = {
-  get: <T = any>(path: string, query?: Record<string, unknown>) => {
+  get: <T = unknown>(path: string, query?: Record<string, unknown>) => {
     let p = path;
     if (query) {
       const usp = new URLSearchParams();
@@ -129,14 +137,14 @@ export const http = {
     }
     return request<T>(p, { method: "GET" });
   },
-  post: <T = any>(path: string, body?: unknown, timeoutMs?: number) =>
+  post: <T = unknown>(path: string, body?: unknown, timeoutMs?: number) =>
     request<T>(path, { method: "POST", body: body ?? {}, timeoutMs }),
-  patch: <T = any>(path: string, body?: unknown) =>
+  patch: <T = unknown>(path: string, body?: unknown) =>
     request<T>(path, { method: "PATCH", body: body ?? {} }),
-  put: <T = any>(path: string, body?: unknown) =>
+  put: <T = unknown>(path: string, body?: unknown) =>
     request<T>(path, { method: "PUT", body: body ?? {} }),
-  del: <T = any>(path: string, body?: unknown) =>
+  del: <T = unknown>(path: string, body?: unknown) =>
     request<T>(path, { method: "DELETE", body: body ?? {} }),
-  postForm: <T = any>(path: string, form: FormData, timeoutMs = 60000) =>
-    request<T>(path, { method: "POST", body: form, timeoutMs, isForm: true }),
+  postForm: <T = unknown>(path: string, form: FormData, timeoutMs = 60000) =>
+    request<T>(path, { method: "POST", body: form, timeoutMs }),
 };

@@ -87,7 +87,7 @@ export default function NewChatScreen() {
     setBusyId(-1);
     try {
       const form = new FormData();
-      appendFile(form, "file", file);
+      await appendFile(form, "file", file);
       const r = await tavern.importCharacter(form);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await tavern.activate(r.save_id);

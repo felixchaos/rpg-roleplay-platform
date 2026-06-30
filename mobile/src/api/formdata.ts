@@ -1,45 +1,54 @@
 /**
- * Centralized helpers for building FormData payloads that work with both:
- *   - expo-fetch (default in Expo SDK 56) — needs Blob/File entries, not {uri,name,type}
- *   - RN's legacy fetch — accepts {uri,name,type}
+ * Centralized helpers for building FormData payloads compatible with expo-fetch (the
+ * default fetch implementation in Expo SDK 56+).
  *
- * The trick: expo-file-system's `File` class extends Blob and points at a `file://` URI.
- * When you put it into FormData, expo-fetch's converter happily streams its bytes; RN's
- * native uploader also handles it because the underlying URI is real.
+ * expo-fetch only accepts these FormData part types:
+ *   - string
+ *   - Blob / File (native, not JS-polyfilled)
+ *   - { bytes: Uint8Array | ArrayBuffer, name?: string, type?: string }
  *
- * Why this exists: when a release build uses expo-fetch and you append a bare
- * `{uri, name, type}` to FormData, the converter throws "Unsupported FormDataPart
- * implementation" because it only accepts string | Blob | { bytes }. Wrapping the URI
- * in `new File(uri)` makes it a Blob.
+ * The legacy RN shape { uri, name, type } is NOT supported by expo-fetch and throws
+ * "Unsupported FormDataPart implementation" in release builds.
+ *
+ * Our strategy: read the picked file into a Uint8Array via expo-file-system, then
+ * append it as { bytes, name, type }.  This bypasses all Blob/File compatibility
+ * issues across Android and iOS.
  */
-import { File as ExpoFile } from "expo-file-system";
+import * as FileSystem from "expo-file-system";
 
 /**
  * Append a picked file (from DocumentPicker / ImagePicker) to a FormData under the
- * given field name. Internally constructs an `expo-file-system.File` (a Blob-like)
- * so the upload works regardless of which fetch implementation is active.
+ * given field name as the { bytes, name, type } format that expo-fetch expects.
  *
- * The `name` / `type` are passed through for legacy compatibility but the Blob's own
- * internal URI is what actually streams.
+ * This is async because we must read the file content from disk first.
  */
-export function appendFile(
+export async function appendFile(
   form: FormData,
   field: string,
   asset: { uri: string; name?: string | null; mimeType?: string | null; type?: string | null },
-) {
+): Promise<void> {
   const filename = asset.name || (asset.uri.split("/").pop() ?? "upload.bin");
   const mime = asset.mimeType || asset.type || "application/octet-stream";
 
   try {
-    const f = new ExpoFile(asset.uri);
-    // Some callers / picker results give "content://" or non-file URIs; in those cases
-    // ExpoFile is still happy to wrap them but exposing them as a Blob is enough.
-    // Patch name/type so multipart boundary headers carry the correct filename.
-    (f as any).name = filename;
-    (f as any).type = mime;
-    form.append(field, f as any);
+    // Read the file as base64, then decode to a raw Uint8Array.
+    const b64 = await FileSystem.readAsStringAsync(asset.uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    // Decode base64 → binary
+    const binaryStr = atob(b64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+
+    // { bytes, name, type } is the canonical expo-fetch FormData part format.
+    form.append(field, { bytes, name: filename, type: mime } as any);
   } catch {
-    // Fallback to the legacy RN shape if File construction fails for some reason.
+    // If FileSystem can't read the URI (e.g. content:// URI without permission),
+    // fall back to the legacy RN shape.  This will still fail with expo-fetch,
+    // but gives the caller a clearer error than a silent no-op.
     form.append(field, { uri: asset.uri, name: filename, type: mime } as any);
   }
 }

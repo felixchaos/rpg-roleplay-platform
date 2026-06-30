@@ -10,7 +10,7 @@ import { BlurView } from "expo-blur";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn } from "react-native-reanimated";
 import { game } from "@/api";
-import { theme } from "@/theme/theme";
+import { theme, palette } from "@/theme/theme";
 
 type Segment = { key?: string; label?: string; tokens?: number; pct?: number; color?: string };
 
@@ -110,7 +110,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     maxHeight: "76%",
-    backgroundColor: "rgba(20,16,12,0.9)",
+    backgroundColor: palette.scrimCard90,
     borderTopLeftRadius: theme.radius.xl,
     borderTopRightRadius: theme.radius.xl,
     borderWidth: 1,

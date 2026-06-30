@@ -27,7 +27,7 @@ function ToolBlock({ tools }: { tools: ToolEvent[] }) {
   if (!tools.length) return null;
   return (
     <View style={styles.toolWrap}>
-      <Pressable onPress={() => setOpen((v) => !v)} style={styles.toolHeader}>
+      <Pressable onPress={() => setOpen((v) => !v)} style={styles.toolHeader} accessibilityRole={"button"} accessibilityLabel={`${tools.length} 个工具调用`} accessibilityState={{expanded: open}}>
         <Text style={styles.toolSigil}>⌬</Text>
         <Text style={styles.toolHeaderText}>
           {tools.length} 个工具调用 {open ? "▾" : "▸"}
@@ -36,7 +36,7 @@ function ToolBlock({ tools }: { tools: ToolEvent[] }) {
       {open ? (
         <View style={styles.toolBody}>
           {tools.map((t, i) => (
-            <View key={i} style={styles.toolRow}>
+            <View key={`${t.kind}-${t.name}-${i}`} style={styles.toolRow}>
               <Text style={styles.toolName}>
                 {t.kind === "call" ? "→ " : "← "}
                 {t.name}
@@ -69,7 +69,7 @@ export function MessageBubble({
 
   if (isUser) {
     return (
-      <Pressable onLongPress={longPress} delayLongPress={350} style={styles.userRow}>
+      <Pressable onLongPress={longPress} delayLongPress={350} style={styles.userRow} accessibilityRole={"text"} accessibilityLabel={message.text || "用户消息"}>
         <View style={styles.userBubble}>
           <Text style={styles.userText}>{message.text}</Text>
           {message.error ? <Text style={styles.errText}>⚠ {message.error}</Text> : null}
@@ -80,7 +80,7 @@ export function MessageBubble({
 
   // GM / character prose — full-width, novel-like, no bubble chrome.
   return (
-    <Pressable onLongPress={longPress} delayLongPress={350} style={styles.gmWrap}>
+    <Pressable onLongPress={longPress} delayLongPress={350} style={styles.gmWrap} accessibilityRole={"text"} accessibilityLabel={message.text || "GM 消息"}>
       <View style={styles.gmMarker} />
       <View style={{ flex: 1 }}>
         {message.tools && message.tools.length > 0 ? <ToolBlock tools={message.tools} /> : null}

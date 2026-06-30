@@ -35,6 +35,8 @@ export function EmberButton({
       <Pressable
         onPress={onPress}
         disabled={off}
+        accessibilityRole="button"
+        accessibilityLabel={label}
         style={({ pressed }) => [
           styles.ghost,
           pressed && { opacity: 0.6 },
@@ -50,6 +52,8 @@ export function EmberButton({
     <Pressable
       onPress={onPress}
       disabled={off}
+      accessibilityRole="button"
+      accessibilityLabel={label}
       style={({ pressed }) => [{ opacity: off ? 0.5 : pressed ? 0.92 : 1 }, style]}
     >
       <LinearGradient
@@ -79,6 +83,7 @@ export function Field({
       <TextInput
         placeholderTextColor={theme.color.textFaint}
         style={[styles.input, style]}
+        accessibilityLabel={label || "text-input"}
         {...props}
       />
     </View>
@@ -115,7 +120,7 @@ export function SafeBackButton({ fallback = "/(app)/chats", style }: { fallback?
     router.replace(fallback as any);
   };
   return (
-    <Pressable onPress={onBack} hitSlop={12} style={[styles.safeBackBtn, style]}>
+    <Pressable onPress={onBack} hitSlop={12} style={[styles.safeBackBtn, style]} accessibilityRole="button" accessibilityLabel={"返回"}>
       <Text style={styles.safeBackGlyph}>‹</Text>
     </Pressable>
   );
@@ -148,6 +153,8 @@ export function IconLabelButton({
       onPress={onPress}
       disabled={disabled}
       hitSlop={hitSlop}
+      accessibilityRole="button"
+      accessibilityLabel={label}
       style={({ pressed }) => [styles.iconLabelSlot, pressed && { opacity: 0.6 }, disabled && { opacity: 0.35 }, style]}
     >
       <Text style={[styles.iconLabelGlyph, active && styles.iconLabelGlyphActive]}>{glyph}</Text>
@@ -250,3 +257,4 @@ const styles = StyleSheet.create({
   safeBackBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   safeBackGlyph: { fontSize: 34, color: theme.color.textDim, marginTop: -4 },
 });
+

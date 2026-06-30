@@ -131,7 +131,7 @@ export default function CardEditScreen() {
     setUploading(true);
     try {
       const form = new FormData();
-      appendFile(form, "file", {
+      await appendFile(form, "file", {
         uri: asset.uri,
         name: asset.fileName || "avatar.jpg",
         mimeType: asset.mimeType || "image/jpeg",

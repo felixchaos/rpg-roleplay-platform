@@ -68,7 +68,7 @@ export default function ChatsScreen() {
     const file = res.assets[0];
     try {
       const form = new FormData();
-      appendFile(form, "file", { uri: file.uri, name: file.name, mimeType: file.mimeType || "application/jsonl" });
+      await appendFile(form, "file", { uri: file.uri, name: file.name, mimeType: file.mimeType || "application/jsonl" });
       const r = await tavern.importJsonl(form);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       const cid = r.save_id ?? r.chat_id;

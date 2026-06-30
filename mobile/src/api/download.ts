@@ -3,6 +3,9 @@
  * SillyTavern JSONL. We must attach the rpg_session cookie manually (the backend
  * streams the file as an attachment behind auth), so we can't just hand a URL to
  * the OS — we download into the app cache first, then open the share sheet.
+ *
+ * The downloaded file is cleaned from cache after sharing (or immediately if
+ * sharing is unavailable) to prevent cache bloat.
  */
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
@@ -23,10 +26,16 @@ export async function downloadAndShare(
     headers: cookie ? { Cookie: cookie } : undefined,
   });
   if (res.status >= 400) {
+    // Clean up the partial/temp file on error
+    await FileSystem.deleteAsync(res.uri, { idempotent: true }).catch(() => {});
     throw new Error(`下载失败 (HTTP ${res.status})`);
   }
 
-  if (await Sharing.isAvailableAsync()) {
+  const canShare = await Sharing.isAvailableAsync();
+  if (canShare) {
     await Sharing.shareAsync(res.uri, { mimeType, dialogTitle: filename, UTI: "public.data" });
   }
+
+  // Always clean up the temp file from cache after sharing (or if sharing failed)
+  await FileSystem.deleteAsync(res.uri, { idempotent: true }).catch(() => {});
 }

@@ -61,6 +61,9 @@ export function GrimoireDock() {
               }}
               style={styles.slot}
               hitSlop={4}
+              accessibilityRole={"tab"}
+              accessibilityLabel={s.label}
+              accessibilityState={active ? { selected: true } : undefined}
             >
               <Text style={[styles.glyph, active && styles.glyphActive]}>{s.glyph}</Text>
               <Text style={[styles.label, active && styles.labelActive]}>{s.label}</Text>
@@ -79,7 +82,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(11,9,7,0.96)",
+    backgroundColor: theme.color.bg,
   },
   hairline: {
     height: 1,

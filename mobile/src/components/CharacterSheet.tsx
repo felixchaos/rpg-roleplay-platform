@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { tavern, game, cards } from "@/api";
 import { ApiError } from "@/api/http";
 import { EmberButton, RuneDivider } from "@/components/ui";
-import { theme } from "@/theme/theme";
+import { theme, palette } from "@/theme/theme";
 
 type Tab = "character" | "persona" | "prompt";
 
@@ -49,10 +49,12 @@ export function CharacterSheet({
 
   useEffect(() => {
     if (!visible) return;
+    let alive = true;
     setLoading(true);
     (async () => {
       try {
         const res = await game.state();
+        if (!alive) return;
         const state = res?.state ?? res;
         const tav = state?.tavern || {};
         const char = tav.character_card || tav.character || {};
@@ -66,11 +68,12 @@ export function CharacterSheet({
       } catch {
         /* keep blanks */
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
       // load the player's persona roster for the bind picker (best-effort)
       cards.personas().then((r) => setMyPersonas(r?.items ?? [])).catch(() => {});
     })();
+    return () => { alive = false; };
   }, [visible, chatId]);
 
   const bindPersona = async (personaId: number | null) => {
@@ -214,7 +217,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     maxHeight: "78%",
-    backgroundColor: "rgba(20,16,12,0.86)",
+    backgroundColor: palette.scrimSheet,
     borderTopLeftRadius: theme.radius.xl,
     borderTopRightRadius: theme.radius.xl,
     borderWidth: 1,

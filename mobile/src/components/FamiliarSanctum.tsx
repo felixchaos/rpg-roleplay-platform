@@ -271,7 +271,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     maxHeight: "88%",
     minHeight: "60%",
-    backgroundColor: "rgba(18,14,10,0.94)",
+    backgroundColor: palette.scrimDeep,
     borderTopLeftRadius: theme.radius.xl,
     borderTopRightRadius: theme.radius.xl,
     borderWidth: 1,

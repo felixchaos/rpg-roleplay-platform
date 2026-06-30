@@ -30,6 +30,16 @@ export const palette = {
   hairline: "rgba(233,220,194,0.10)",
   hairlineStrong: "rgba(233,220,194,0.18)",
   scrim: "rgba(5,4,3,0.72)",
+
+  // Shared semi-transparent sheet/drawer backgrounds
+  scrimSheet: "rgba(20,16,12,0.86)",
+  scrimCard: "rgba(20,16,12,0.96)",
+  scrimCard90: "rgba(20,16,12,0.90)",
+  scrimDeep: "rgba(18,14,10,0.94)",
+
+  // Blood-tinted translucent layers (conditions, danger borders)
+  blood15: "rgba(184,69,58,0.15)",
+  blood40: "rgba(184,69,58,0.4)",
 };
 
 export const theme = {

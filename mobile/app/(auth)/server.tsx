@@ -1,3 +1,5 @@
+// useEffect (not useFocusEffect) is deliberate: the URL field pre-fills from storage
+// only on first mount so that back-navigation doesn't overwrite user edits.
 import React, { useEffect, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
