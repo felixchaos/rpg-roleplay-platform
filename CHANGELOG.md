@@ -9,6 +9,14 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.32.14] - 2026-07-01
+
+md 编辑器 AI 写作副驾(`console_assistant`)系统性审计后修复 · 批次A(2 个 P1)。
+
+### Fixed
+- **编辑器对话重启即丢**(P1):`persist_conversation` 把「Redis 未配置/不可达」的 `return` 放在 `_persist_conv_pg` **之前** → Redis 关掉时(本地/桌面无 Redis)PG 永不写,与注释「再落 PG 永久保留」正好相反,worker 重启后对话历史全丢且无从恢复。改为:Redis 写尽力而为,PG **无条件**写(与 Redis 可用性解耦)。
+- **「激活存档 → 进入游戏」永远静默失效**(P1):`navigate_to_setting` 的安全白名单 `_NAV_TARGETS_WHITELIST` 漏了 `game_console` —— 而 tool 枚举、system prompt、前端导航 MAP 早就用它;非白名单 target 被静默置空、不发导航事件 → 用户激活存档后卡在 Platform 页不动。补进白名单(与 GM 管线同一类 fork:声明了却没接进门控)。
+
 ## [1.32.13] - 2026-07-01
 
 ### Fixed
