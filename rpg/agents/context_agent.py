@@ -190,7 +190,22 @@ def run_context_agent(
         return
 
     curator_plan: dict[str, Any] = {}
-    task_prompt_text = _curator_task_prompt(state, user_input, directives)
+    # 引导强度权威源 = game_sessions.worldline.steering_strength(与 retrieval.py:463-468 同源)。
+    _steering_strength = "guided"
+    if save_id:
+        try:
+            from platform_app.db import connect as _conn_ss
+            with _conn_ss() as _db_ss:
+                _row_ss = _db_ss.execute(
+                    "select worldline from game_sessions where save_id=%s", (save_id,)
+                ).fetchone()
+                _wl_ss = (_row_ss or {}).get("worldline") if _row_ss else None
+                if isinstance(_wl_ss, dict):
+                    _steering_strength = _wl_ss.get("steering_strength") or "guided"
+        except Exception:
+            pass
+    task_prompt_text = _curator_task_prompt(state, user_input, directives,
+                                            steering_strength=_steering_strength)
     if llm_curator:
         yield step(
             "llm_curator",
@@ -486,11 +501,38 @@ def _preview(text: str, limit: int = 180) -> str:
     return text[:limit] + ("..." if len(text) > limit else "")
 
 
-def _curator_task_prompt(state, user_input: str, directives: list[Any]) -> str:
+def _curator_task_prompt(state, user_input: str, directives: list[Any],
+                         steering_strength: str = "guided") -> str:
     world = state.data.get("world", {})
     memory = state.data.get("memory", {})
     recent = state.history_messages(limit_turns=3)
     local_directives = [getattr(d, "target", "") for d in directives]
+    # fork 收编(行者无疆「永远默认在修炼」):此前 curator 完全不看 steering_strength,
+    # 无论 rail/guided/free 都拿 main_quest 造 canon acceptance → 发散局玩家被当 rail railroad,
+    # 日常/亲密场景也被强拉回主线。mode 打通:free 不强推主线,guided 温和,rail 才收束。
+    _main = f"{memory.get('main_quest', '')} / {memory.get('current_objective', '')}"
+    _ss = (steering_strength or "guided").strip().lower()
+    if _ss == "free":
+        goal_block = [
+            "【当前目标/主线（仅背景，自由模式勿强推）】",
+            _main,
+            "【引导强度=自由(free)】玩家在自由发挥。本轮 acceptance 只覆盖玩家实际请求/所处场景，"
+            "**严禁**凭空造「推进主线/修炼进度」之类与玩家本轮行动无关的验收点；日常/亲密/休息等"
+            "与主线无关的场景，acceptance 可只含「如实响应玩家所提场景」或留空。",
+        ]
+    elif _ss == "rail":
+        goal_block = [
+            "【当前目标/主线】",
+            _main,
+            "【引导强度=贴原著(rail)】可围绕主线设定 acceptance，推动剧情朝原著走向收束。",
+        ]
+    else:  # guided（默认）
+        goal_block = [
+            "【当前目标/主线】",
+            _main,
+            "【引导强度=引导(guided)】可朝主线温和推进，但玩家明显跑题（日常/亲密/休息）时以玩家"
+            "意图为先，**不要**造把当前场景硬拉回主线的 acceptance。",
+        ]
     return "\n".join([
         "请为本轮 RPG 生成前的上下文选择做判断，只返回 JSON。",
         "",
@@ -506,8 +548,7 @@ def _curator_task_prompt(state, user_input: str, directives: list[Any]) -> str:
         "【强制设定规则】",
         "/set 开头的玩家输入代表用户显式改写设定、时间线、世界观或人设，必须作为硬约束交给主 GM，不得因为原时间线 locked 而忽略。",
         "",
-        "【当前目标/主线】",
-        f"{memory.get('main_quest', '')} / {memory.get('current_objective', '')}",
+        *goal_block,
         "",
         "【最近对话】",
         json.dumps(recent, ensure_ascii=False)[:2400],

@@ -88,6 +88,10 @@ def resolve_steering_target(db, *, save_id: int, script_id: int,
                 "已抵达/超出当前规范世界线末节点。保持世界自洽,围绕已确立的原著走向收尾,"
                 "不要凭空另起一条与原著无关的新主线。"
             )
+        elif steering_strength == "free":
+            # free 档:不注入任何软目标(与有 next_node 时 line 63-65 对称)。
+            # 原缺这一分支 → free 档走到末节点仍收到"自由发挥"文本约束,违背"free=不注入引导"契约。
+            soft = ""
         else:
             soft = "已抵达/超出当前规范世界线末节点,自由发挥并尽量保持世界自洽。"
 

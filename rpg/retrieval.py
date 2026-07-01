@@ -641,7 +641,10 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
         # 玩家可以改变事件发生方式,但 GM 必须想办法让锚点的【核心结果】发生。
         try:
             _sid_for_anchors = _resolve_save_id_from_user(user_id)
-            if _sid_for_anchors:
+            # fork 收编:此收束段(待发生锚点清单 + "偏离1-3轮内命运式拉回"指令)之前无视
+            # _steering_strength,free 档也照注 → 与 steering.py 三档区分被架空、发散局仍被强推
+            # canon(行者无疆「永远默认在修炼」)。free 档下整段跳过,只保留 steering.py 一层的正确区分。
+            if _sid_for_anchors and _steering_strength != "free":
                 from agents.anchor_seed_agent import (
                     get_progress_window,
                     list_pending_for_phase,
