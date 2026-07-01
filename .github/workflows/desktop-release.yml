@@ -54,7 +54,7 @@ jobs:
       # blockmap 差量极小 → 本地部署只拉小更新包。key 含 PY/PG 版本 + requirements.txt 哈希:
       # 依赖变则缓存失效重建;bug 补丁(deps 不变)命中缓存 → 运行时复用,只有 app 代码进差量。
       - name: 缓存便携运行时(小体积差量更新关键)
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: desktop/.runtime-cache
           key: rt-${{ matrix.platform }}-${{ matrix.arch }}-py3.12.13-pg17.10-${{ hashFiles('rpg/requirements.txt') }}

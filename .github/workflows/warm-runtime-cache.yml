@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: 恢复/保存运行时缓存(main 作用域)
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: desktop/.runtime-cache
           key: rt-${{ matrix.platform }}-${{ matrix.arch }}-py3.12.13-pg17.10-${{ hashFiles('rpg/requirements.txt') }}
