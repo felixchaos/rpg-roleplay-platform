@@ -37,7 +37,7 @@ jobs:
           - { os: windows-latest, platform: win, arch: x64 }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: 恢复/保存运行时缓存(main 作用域)
         uses: actions/cache@v5
