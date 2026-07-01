@@ -35,3 +35,29 @@ def test_pg_persist_runs_when_redis_client_none(monkeypatch):
     monkeypatch.setattr(conv, "_persist_conv_pg", lambda u, c, d: calls.append((u, c)))
     conv.persist_conversation(2, "cid_test2", {"messages": []})
     assert calls == [(2, "cid_test2")]
+
+
+# ── 批次B ──────────────────────────────────────────────────────────────
+
+def test_write_mode_unrecognized_falls_back_to_review_not_full_access(monkeypatch):
+    """P2 安全默认:DB 里一个坏 editor.write_mode 值不能静默升到 full_access(跳过写确认)。"""
+    import console_assistant.llm_loop as loop
+    # 未识别串 → review(不是 full_access)
+    monkeypatch.setattr(loop, "_read_user_pref", lambda u, k: "garbage_migration_artifact")
+    assert loop._resolve_editor_write_mode(1) == "review"
+    # 显式 full_access → full_access(不误伤合法值)
+    monkeypatch.setattr(loop, "_read_user_pref", lambda u, k: "full_access")
+    assert loop._resolve_editor_write_mode(1) == "full_access"
+    # read_only → read_only;空 → review
+    monkeypatch.setattr(loop, "_read_user_pref", lambda u, k: "read_only")
+    assert loop._resolve_editor_write_mode(1) == "read_only"
+    monkeypatch.setattr(loop, "_read_user_pref", lambda u, k: "")
+    assert loop._resolve_editor_write_mode(1) == "review"
+
+
+def test_resolve_pending_has_pg_fallback():
+    """P2 dual-store:confirm 解析 pending 时,Redis miss 后必须回落 PG(否则 TTL 过期报『对话不存在』)。"""
+    import inspect
+    from console_assistant import confirmation
+    src = inspect.getsource(confirmation._resolve_pending)
+    assert "_load_conv_pg" in src, "confirm 只读 Redis,缺 PG 回退"

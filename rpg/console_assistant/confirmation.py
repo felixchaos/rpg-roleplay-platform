@@ -41,6 +41,13 @@ def _resolve_pending(
             if conv is not None:
                 user_bucket[conversation_id] = conv
         if not conv:
+            # dual-store 不一致修:Redis TTL(6h)过期 / Redis 不可达时,回落 PG 永久层 —— 否则玩家
+            # 隔几小时回来点确认就报「对话不存在」。_get_or_create 走的是 Redis||PG,这里之前只 Redis。
+            from console_assistant.conversations import _load_conv_pg as _lcpg
+            conv = _lcpg(user_id, conversation_id)
+            if conv is not None:
+                user_bucket[conversation_id] = conv
+        if not conv:
             return None, None, f"conversation {conversation_id} 不存在或不属于当前用户"
         # 原子 pop：第二个 approve 拿到 None 直接返回错误
         pending = conv.get("pending_confirmations", {}).pop(call_id, None)

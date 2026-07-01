@@ -190,7 +190,10 @@ def _resolve_editor_write_mode(user_id: int) -> str:
         return "review"
     if m == "read_only":
         return "read_only"
-    if m == "full_access":
+    # 安全默认修:_normalize_permission_mode 对【任何未识别串】都兜底成 "full_access"(state/permissions.py),
+    # 若直接信它,DB 里一个坏值(迁移残留/拼写/废弃键)就会静默跳过所有写确认。只认【显式】full_access,
+    # 其余(未识别/default/review)一律回最稳的 review —— 与空串路径对称(不对称=坑)。
+    if m == "full_access" and raw.strip().lower() == "full_access":
         return "full_access"
     return "review"
 
