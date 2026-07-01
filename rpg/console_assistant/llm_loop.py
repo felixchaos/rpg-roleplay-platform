@@ -21,6 +21,9 @@ _NAV_TARGETS_WHITELIST = frozenset({
     "library",
     "saves",
     "scripts",
+    "game_console",   # 补漏:activate_save 后「进入游戏」的跨 SPA 目标(prompts.py + command_tools_misc
+                      # 的 tool 枚举早就用它,前端 console-assistant-navigation.jsx MAP 也认;唯独这层
+                      # 白名单没同步 → 激活存档后导航被静默丢弃、用户卡在 Platform 页)。
     "tools", "mcp",
     "settings", "settings.profile", "settings.security",
     "platform.home", "platform.usage",

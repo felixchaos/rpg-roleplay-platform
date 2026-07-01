@@ -23,18 +23,19 @@ def persist_conversation(user_id: int, cid: str, conv: dict[str, Any]) -> None:
     """每个 /chat、/confirm 回合结束后调用,把对话写回 Redis(TTL=对话 TTL)。"""
     if not cid or not isinstance(conv, dict):
         return
+    # Redis 是 6h 热缓存;写它是【尽力而为】—— 未配置/不可达都不能影响 PG 永久落库。
+    # 原实现把 is_enabled()/无 cli 的 return 放在 _persist_conv_pg 之前 → Redis 关掉时(本地/桌面
+    # 无 Redis)PG 永不写、对话重启即丢,与注释「再落 PG 永久保留」正好相反。改为解耦。
     try:
         import redis_bus
-        if not redis_bus.is_enabled():
-            return
-        cli = redis_bus.get_sync_client()
-        if not cli:
-            return
-        cli.setex(_conv_redis_key(user_id, cid), _state.CONVERSATION_TTL_SECONDS,
-                  _json.dumps(conv, ensure_ascii=False, default=str))
+        if redis_bus.is_enabled():
+            cli = redis_bus.get_sync_client()
+            if cli:
+                cli.setex(_conv_redis_key(user_id, cid), _state.CONVERSATION_TTL_SECONDS,
+                          _json.dumps(conv, ensure_ascii=False, default=str))
     except Exception:
         pass
-    # Redis 是 6h 热缓存;再落 PG 永久保留(刷新/超时/重启/换 worker 都能还原)。
+    # PG 无条件写(永久保留:刷新/超时/重启/换 worker 都能还原),与 Redis 是否可用解耦。
     _persist_conv_pg(user_id, cid, conv)
 
 
