@@ -111,7 +111,7 @@ jobs:
       # 仅在配置了 UPDATE_SERVER_* Secret 时执行;未配置则跳过,GitHub 发布不受影响。
       - name: 分发到我的服务器(更新回退源)
         if: ${{ env.UPLOAD_ENABLED == 'true' }}
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.UPDATE_SERVER_HOST }}
           username: ${{ secrets.UPDATE_SERVER_USER }}
