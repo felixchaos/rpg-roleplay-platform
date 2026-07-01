@@ -827,8 +827,13 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
                                        reveal_clause_v2 as _rc_v2)
                 _use_v2_tree = bool(_save_id_prog) and _frontier_on(_save_id_prog)
                 if _use_v2_tree:
-                    _rc, _rc_p = _rc_v2(int(_save_id_prog), _foreknowledge_mode, prefix="")
-                    _rc_par, _rc_par_p = _rc_v2(int(_save_id_prog), _foreknowledge_mode, prefix="p.")
+                    # 遗漏修复(审计 P1,休眠于 RPG_TKB_FRONTIER off):v2 分支漏传 progress_chapter →
+                    # reveal_clause_v2 无「锚点章≤当前进度章」兜底 OR,save_visible_anchors 为空(新档)时
+                    # 带 reveal_anchor_key 的实体全被过滤、层级树空。与 else 分支(旧门控)一样带上进度章。
+                    _rc, _rc_p = _rc_v2(int(_save_id_prog), _foreknowledge_mode, prefix="",
+                                        progress_chapter=_progress_chapter)
+                    _rc_par, _rc_par_p = _rc_v2(int(_save_id_prog), _foreknowledge_mode, prefix="p.",
+                                                progress_chapter=_progress_chapter)
                 else:
                     _rc, _rc_p = _rc_fn(_progress_chapter, _foreknowledge_mode)
                     _rc_par, _rc_par_p = _rc_fn(_progress_chapter, _foreknowledge_mode, prefix="p.")
@@ -864,7 +869,9 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
                                     "and type in ('faction','location','concept') and entity_subtype != '' "
                                     "and {clause} order by importance desc limit 60")
                         _o_rc, _o_p = _rc_fn(_progress_chapter, _foreknowledge_mode)
-                        _n_rc, _n_p = _rc_v2(int(_save_id_prog), _foreknowledge_mode, prefix="")
+                        # shadow 比对也带上 progress_chapter,否则 diff 恒因漏参不同、掩盖真实行为差异。
+                        _n_rc, _n_p = _rc_v2(int(_save_id_prog), _foreknowledge_mode, prefix="",
+                                             progress_chapter=_progress_chapter)
                         _old_keys = {r["logical_key"] for r in _db_tree.execute(
                             _top_sql.format(clause=_o_rc), (script_id, *_o_p)).fetchall()}
                         _new_keys = {r["logical_key"] for r in _db_tree.execute(

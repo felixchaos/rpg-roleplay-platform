@@ -281,7 +281,11 @@ def run_context_agent(
         else:
             curator_plan = _parse_curator_json(llm_text)
             target = _normalize_timeline_target(curator_plan.get("timeline_target", ""))
-            if target and not directives and not is_set:
+            # 遗漏修复(审计 P2):harness 路径(所有 BYOK 主路径)漏了 llm_curator 分支已有的两道门 →
+            # 玩家写「回想起…」等回忆叙述时会触发假时间跳跃(v1.26.4 只修了 llm_curator 分支)。对齐:
+            # is_recall_framing 抑制回忆、looks_like_time_value 拒含人称从句的非时间值。
+            if (target and not directives and not is_set
+                    and not is_recall_framing(user_input) and looks_like_time_value(target)):
                 state.request_time_jump(target, user_input)
             yield step(
                 "llm_curator",
