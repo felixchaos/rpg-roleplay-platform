@@ -2169,6 +2169,9 @@ function ModelParamsSection() {
   const [reqTimeout, setReqTimeout] = useStatePL("");
   // 从 catalog 获取当前选中模型的 capabilities,用于条件展示 reasoning_effort
   const [selectedModelCaps, setSelectedModelCaps] = useStatePL([]);
+  // task 141: Extended Thinking toggle — 读 model_effort 偏好,按当前模型展示开关
+  const [selectedModelKey, setSelectedModelKey] = useStatePL("");
+  const [thinkingEnabled, setThinkingEnabled] = useStatePL(false);
   useEffectPL(() => {
     let cancelled = false;
     (async () => {
@@ -2176,6 +2179,10 @@ function ModelParamsSection() {
         const models = await window.api.models.list().catch(() => ({}));
         if (cancelled) return;
         const sel = models?.models?.selected ?? models?.selected ?? null;
+        // 构建 model_effort 字典键: "{api_id}:{real_name}"
+        const apiId = sel?.api_id || "";
+        const modelId = sel?.real_name || sel?.model_id || sel?.id || "";
+        const effKey = apiId && modelId ? `${apiId}:${modelId}` : "";
         if (sel) {
           // sel.capabilities 可能是 array 或 object
           const caps = Array.isArray(sel.capabilities)
@@ -2183,6 +2190,15 @@ function ModelParamsSection() {
             : (sel.capabilities ? Object.keys(sel.capabilities) : []);
           setSelectedModelCaps(caps);
         }
+        if (effKey) setSelectedModelKey(effKey);
+        // 读取当前模型 thinking 偏好
+        const profile = await window.api.account.profile().catch(() => null);
+        if (cancelled) return;
+        const prefs = (profile && profile.preferences) || {};
+        const modelEffort = prefs.model_effort || {};
+        const cur = (modelEffort[effKey] || "").toString().toLowerCase();
+        // "off" 或空 → 关;其他档位 → 开 (默认 high)
+        setThinkingEnabled(cur !== "off" && cur !== "" && cur !== "0");
       } catch (_) {}
     })();
     return () => { cancelled = true; };
@@ -2248,6 +2264,23 @@ function ModelParamsSection() {
     if (Object.prototype.hasOwnProperty.call(patch, "extra_prompt")) save("nsfw_extra_prompt", patch.extra_prompt);
   };
 
+  // task 141: Extended Thinking 开关 — 写 model_effort[{api_id}:{model_id}] = "high" | "off"
+  const toggleThinking = async (on) => {
+    setThinkingEnabled(on);
+    if (!selectedModelKey) return;
+    const effort = on ? "high" : "off";
+    try {
+      const profileR = await window.api.account.profile();
+      const existing = ((profileR && profileR.preferences && profileR.preferences.model_effort) || {});
+      const next = { ...existing, [selectedModelKey]: effort };
+      await window.api.account.preferences({ preferences: { model_effort: next } });
+      window.__apiToast?.(t('settings.modelparams.thinking_saved', { defaultValue: on ? '深度思考已启用' : '深度思考已关闭' }), { kind: 'ok', duration: 1800 });
+    } catch (e) {
+      setThinkingEnabled(!on);  // 回滚
+      window.__apiToast?.(t('settings.modelparams.thinking_save_failed', { defaultValue: '保存失败' }), { kind: 'danger', detail: e?.message });
+    }
+  };
+
   return (
     <SetGroup title={t('settings.modelparams.title')} description={t('settings.modelparams.description')}>
       <SetRow label={t('settings.modelparams.preset')} description={t('settings.modelparams.preset_desc')}>
@@ -2272,6 +2305,18 @@ function ModelParamsSection() {
               </CSButton>
             ))}
           </CSSpaceBetween>
+        </SetRow>
+      )}
+
+      {/* task 141: Extended Thinking 开关 — 有选中模型时显示 */}
+      {selectedModelKey && (
+        <SetRow label={t('settings.modelparams.extended_thinking', { defaultValue: '启用深度思考 (Extended Thinking)' })}
+          description={t('settings.modelparams.extended_thinking_desc', { defaultValue: '开启后模型会在回复前进行深度推理,提升复杂场景质量。关闭则使用标准模式(低延迟)。' })}>
+          <CSToggle checked={thinkingEnabled} onChange={({ detail }) => toggleThinking(detail.checked)}>
+            {thinkingEnabled
+              ? t('settings.modelparams.thinking_on', { defaultValue: '已启用' })
+              : t('settings.modelparams.thinking_off', { defaultValue: '已关闭' })}
+          </CSToggle>
         </SetRow>
       )}
 
