@@ -968,6 +968,8 @@ def _apply_gm_json_ops(
 
 # acceptance A/B 改写候选:节流 —— 每存档最多每 N 回合提供一次改写候选(防止每回合弹 A/B 打断沉浸)。
 _ACCEPTANCE_AB_MIN_INTERVAL = 5
+# 后台改写候选任务的强引用集(防 asyncio.create_task 被 GC);完成后自动移除。
+_ACCEPTANCE_BG_TASKS: set = set()
 
 
 def _acceptance_ab_pref_enabled(user_id) -> bool:
@@ -1351,18 +1353,54 @@ async def run_gm_phase(
 
     ctx.response = response
 
-    # acceptance 硬闸(sync 内联 / async 用 to_thread 调,同源)。
-    # 【设计改版 · A/B 用户裁决】原实现:unmet 时同步重写并【直接替换】首稿(response/state 都换成第二稿)。
-    #   在生产流式路径下暴露成客户能看见的"正文流完后 5-10 秒自己变一套文字"(行者无疆反馈)——
-    #   流式是对用户的承诺,已读正文不该被事后重写替换。
-    # 新实现:
+    # acceptance 硬闸。
+    # 【设计改版 · A/B 用户裁决 + 下线关键路径】
     #   ① 首稿(用户流式读到的)【永远是权威版】,response/state 都不动 → 无跳变、state 确定性不变。
-    #   ② 只在 unmet 且【节流放行(每存档 ≥N 回合一次)】时,额外生成一份【改写候选】(只捕获正文,
-    #      不 apply 它的 ops)、落 acceptance_ab_log(pending)、yield `acceptance_alt` 事件 → 前端并排给
-    #      玩家 A/B 选择。玩家选改写才换消息(走 /api/acceptance/choice)。
-    #   ③ verify+audit_log 始终保留(可观测)。逃生开关 RPG_ACCEPTANCE_RETRY=0 关掉候选生成。
-    # 全程 try/except 兜底 = 任何失败退回首稿(worst-case == 无候选,正常显示首稿)。
-    def _acceptance_gate(_resp, _upd):
+    #   ② verify + audit + 节流决策【内联】(默认 rule 模式=确定性、极快,不阻塞)。
+    #   ③ 改写候选的【第二次 GM 调用】绝不在回合关键路径同步跑 —— 那是行者无疆报的严重问题:
+    #      正文流完后还要等一次完整 GM 生成(可 2-3 分钟 / 503 / 超时),期间 SSE 无事件 → 前端
+    #      不活跃超时 →「生成失败,连接超时」,整回合被拖垮(即便首稿早已生成)。
+    #      改为:async 生产路径把改写 fire-and-forget 丢后台任务(不阻塞 done),候选生成后经
+    #      state_event_bus.emit(`acceptance_alt`)跨 worker 推给前端(前端长连 /state_events 收);
+    #      回合本身立刻收尾。这也恢复了 W1 容量意图(回合 slot 不被第二次 LLM 占住)。
+    #   ④ sync(测试/debug)路径保留内联,候选走 SSE 流事件(便于确定性测试)。
+    #   逃生开关 RPG_ACCEPTANCE_RETRY=0 关掉候选生成。全程 try/except = 任何失败退回首稿。
+    async def _gen_candidate_bg(_resp_snapshot, _unmet, _turn_now, _save_id, _auid):
+        """后台改写候选:重跑 GM 拿第二稿(走 to_thread 不塞事件循环)→ 落 acceptance_ab_log →
+        emit `acceptance_alt` 推前端。绝不阻塞回合;失败只记日志。首稿永远权威,这里只产候选。"""
+        try:
+            _retry_msg = ("【系统:本轮 acceptance 自检】上一稿正文没有覆盖到以下验收点:\n"
+                + "\n".join(f"  - {x}" for x in _unmet[:5])
+                + "\n请在保持原叙事走向不变的前提下,重写本轮回应,确保覆盖每一条验收点。"
+                  "如果某条确实不该满足(玩家行动本就不触发),也要在 JSON op 注明原因。")
+
+            def _run_gm():
+                _parts = []
+                for _ev in gm.respond_stream_with_tools(
+                        _retry_msg, bundle["prompt"], state,
+                        tools=_gm_tools, max_iterations=max(4, _gm_max_iters() // 2),
+                        max_tokens=_max_tokens, tool_call_router=gm_tool_router,
+                        prompt_segments=bundle.get("prompt_segments"),
+                        dynamic_prefix="\n\n".join(_dynamic_prefix_parts)):
+                    if isinstance(_ev, dict) and _ev.get("type") == "text":
+                        _parts.append(_ev.get("text", ""))
+                return "".join(_parts).strip()
+
+            _r2_raw = await asyncio.to_thread(_run_gm)
+            _r2 = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(_r2_raw))).strip()
+            _orig_clean = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(_resp_snapshot))).strip()
+            if _r2 and _r2 != _orig_clean:
+                _alt_id = await asyncio.to_thread(
+                    _log_acceptance_ab, _auid, _save_id, _turn_now, _unmet[:5], _orig_clean, _r2)
+                if _alt_id and _auid:
+                    from state_event_bus import emit as _emit
+                    _emit(int(_auid), "acceptance_alt", "ready", {
+                        "save_id": int(_save_id or 0), "alt_id": int(_alt_id),
+                        "turn": int(_turn_now), "rewrite": _r2, "unmet": _unmet[:5]})
+        except Exception as _bg:
+            log.warning(f"[acceptance] 后台改写候选失败(仅首稿,已记 audit): {_bg}")
+
+    def _acceptance_gate(_resp, _upd, *, inline: bool):
         _events = []
         try:
             _cur_plan = (agent_result or {}).get("curator_plan", {}) or {}
@@ -1376,52 +1414,49 @@ async def run_gm_phase(
             unmet = verify_acceptance(_acc, _resp, _upd, mode=_amode, user_id=_auid)
             # 节流:每存档最多每 _ACCEPTANCE_AB_MIN_INTERVAL 回合提供一次改写候选。
             _turn_now = int(state.data.get("turn", 0) or 0)
+            _save_id = ctx.early_active_save_id or ctx.active_save_id or 0
             _ab_meta = state.data.setdefault("_acceptance_ab", {})
             _last_offer = int(_ab_meta.get("last_offer_turn", -(10 ** 9)))
             _throttle_ok = (_turn_now - _last_offer) >= _ACCEPTANCE_AB_MIN_INTERVAL
             rewrite_offered = False
             # 用户级开关(游戏设置可手动关):关了就不生成候选(节流通过也不弹)。
             if unmet and _rewrite_on and _throttle_ok and _acceptance_ab_pref_enabled(_auid):
-                _events.append(("agent", {"phase": "acceptance_retry",
-                    "message": f"acceptance 有 {len(unmet)} 条未覆盖,生成改写候选供选择",
-                    "status": "running", "elapsed_ms": 0, "unmet": unmet[:5]}))
-                _retry_msg = ("【系统:本轮 acceptance 自检】上一稿正文没有覆盖到以下验收点:\n"
-                    + "\n".join(f"  - {x}" for x in unmet[:5])
-                    + "\n请在保持原叙事走向不变的前提下,重写本轮回应,确保覆盖每一条验收点。"
-                      "如果某条确实不该满足(玩家行动本就不触发),也要在 JSON op 注明原因。")
-                try:
-                    _parts = []
-                    for _ev in gm.respond_stream_with_tools(
-                            _retry_msg, bundle["prompt"], state,
-                            tools=_gm_tools, max_iterations=max(4, _gm_max_iters() // 2),
-                            max_tokens=_max_tokens, tool_call_router=gm_tool_router,
-                            prompt_segments=bundle.get("prompt_segments"),
-                            dynamic_prefix="\n\n".join(_dynamic_prefix_parts)):
-                        if isinstance(_ev, dict) and _ev.get("type") == "text":
-                            _parts.append(_ev.get("text", ""))
-                    _r2_raw = "".join(_parts).strip()
-                    # 候选正文净化:与 persist_turn_phase 落库首稿同口径(剥 JSON ops / 工具预告 / 泄漏脚手架)。
-                    # 【不】apply 第二稿的 ops、【不】替换 canonical —— 只作为并排候选。
-                    _r2 = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(_r2_raw))).strip()
-                    _orig_clean = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(_resp))).strip()
-                    if _r2 and _r2 != _orig_clean:
-                        _alt_id = _log_acceptance_ab(
-                            _auid, ctx.early_active_save_id or ctx.active_save_id or 0,
-                            _turn_now, unmet[:5], _orig_clean, _r2)
-                        if _alt_id:
-                            rewrite_offered = True
-                            _ab_meta["last_offer_turn"] = _turn_now  # 节流仅在真正提供候选时消费
-                            _events.append(("acceptance_alt", {
-                                "alt_id": _alt_id, "turn": _turn_now,
-                                "rewrite": _r2, "unmet": unmet[:5]}))
-                            _events.append(("agent", {"phase": "acceptance_retry",
-                                "message": "改写候选已生成,等待玩家选择",
-                                "status": "done", "elapsed_ms": 0}))
-                except Exception as _re:
-                    log.warning(f"[acceptance] rewrite candidate failed: {_re}")
-                    _events.append(("agent", {"phase": "acceptance_retry",
-                        "message": f"改写候选生成失败(降级到只记 audit): {_re}",
-                        "status": "warning", "elapsed_ms": 0}))
+                rewrite_offered = True
+                _ab_meta["last_offer_turn"] = _turn_now  # 节流消费(自 Phase 5 落盘)
+                if inline:
+                    # sync/测试路径:内联重写,候选走 SSE 流事件。
+                    try:
+                        _parts = []
+                        _retry_msg = ("【系统:本轮 acceptance 自检】上一稿正文没有覆盖到以下验收点:\n"
+                            + "\n".join(f"  - {x}" for x in unmet[:5])
+                            + "\n请在保持原叙事走向不变的前提下,重写本轮回应,确保覆盖每一条验收点。"
+                              "如果某条确实不该满足(玩家行动本就不触发),也要在 JSON op 注明原因。")
+                        for _ev in gm.respond_stream_with_tools(
+                                _retry_msg, bundle["prompt"], state,
+                                tools=_gm_tools, max_iterations=max(4, _gm_max_iters() // 2),
+                                max_tokens=_max_tokens, tool_call_router=gm_tool_router,
+                                prompt_segments=bundle.get("prompt_segments"),
+                                dynamic_prefix="\n\n".join(_dynamic_prefix_parts)):
+                            if isinstance(_ev, dict) and _ev.get("type") == "text":
+                                _parts.append(_ev.get("text", ""))
+                        _r2 = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops("".join(_parts).strip()))).strip()
+                        _orig_clean = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(_resp))).strip()
+                        if _r2 and _r2 != _orig_clean:
+                            _alt_id = _log_acceptance_ab(_auid, _save_id, _turn_now, unmet[:5], _orig_clean, _r2)
+                            if _alt_id:
+                                _events.append(("acceptance_alt", {
+                                    "alt_id": _alt_id, "turn": _turn_now, "rewrite": _r2, "unmet": unmet[:5]}))
+                    except Exception as _re:
+                        log.warning(f"[acceptance] inline rewrite candidate failed: {_re}")
+                else:
+                    # async 生产路径:改写丢后台,不阻塞回合;候选生成后 emit 推前端。
+                    try:
+                        _t = asyncio.get_running_loop().create_task(
+                            _gen_candidate_bg(_resp, list(unmet), _turn_now, _save_id, _auid))
+                        _ACCEPTANCE_BG_TASKS.add(_t)
+                        _t.add_done_callback(_ACCEPTANCE_BG_TASKS.discard)
+                    except Exception as _sp:
+                        log.warning(f"[acceptance] 后台候选任务启动失败: {_sp}")
             if unmet:
                 from datetime import datetime as _dt
                 audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
@@ -1565,9 +1600,10 @@ async def run_gm_phase(
                             "message": f"世界线锚点确定性兜底(史官):本回合自动标记 {_rec_marked} 个原著锚点已到达",
                             "status": "done", "elapsed_ms": 0, "marked": _rec_marked,
                         })
-                    # fork 收编:async 也跑 acceptance verify+retry(阻塞的 retry 走 to_thread 不塞事件循环)。
-                    response, ctx._updates, _acc_events = await asyncio.to_thread(
-                        _acceptance_gate, response, ctx._updates)
+                    # acceptance:内联 verify+audit+节流(rule 模式确定性极快),改写候选丢后台任务
+                    # (不阻塞 done;候选 emit 推前端)。直接调(非 to_thread)以便 create_task 拿到运行 loop。
+                    response, ctx._updates, _acc_events = _acceptance_gate(
+                        response, ctx._updates, inline=False)
                     ctx.response = response
                     for _ac, _ap in _acc_events:
                         yield (_ac, _ap)
@@ -1585,9 +1621,9 @@ async def run_gm_phase(
             except Exception as _apply_err:
                 log.warning(f"[chat] async apply_structured_updates 失败,退回 directive_updates: {_apply_err}")
                 ctx._updates = ctx.directive_updates[:]
-            # fork 收编:async 也跑 acceptance verify+retry(在 anchor 兜底之前,用最终稿);retry 走 to_thread。
-            response, ctx._updates, _acc_events = await asyncio.to_thread(
-                _acceptance_gate, response, ctx._updates)
+            # acceptance:内联 verify+audit+节流,改写候选丢后台(不阻塞;emit 推前端)。直接调以拿 loop。
+            response, ctx._updates, _acc_events = _acceptance_gate(
+                response, ctx._updates, inline=False)
             ctx.response = response
             for _ac, _ap in _acc_events:
                 yield (_ac, _ap)
@@ -1656,9 +1692,8 @@ async def run_gm_phase(
         ctx=ctx,
     )
 
-    # sync 路径:走同一个 _acceptance_gate 闭包(与 async 路径同源,消除 sync/async fork ——
-    # 这正是审计里「async(生产默认)下 acceptance retry 失效」的根:两路各写一套、只在 sync 实现)。
-    response, updates, _acc_events = _acceptance_gate(response, updates)
+    # sync 路径(测试/debug):内联跑改写候选,走 SSE 流事件(便于确定性测试)。生产走 async(候选丢后台)。
+    response, updates, _acc_events = _acceptance_gate(response, updates, inline=True)
     for _ac, _ap in _acc_events:
         yield (_ac, _ap)
 

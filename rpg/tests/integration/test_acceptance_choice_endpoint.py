@@ -204,6 +204,36 @@ class AcceptanceChoiceEndpoint(unittest.TestCase):
             db.commit()
         self.assertFalse(chat_pipeline._acceptance_ab_pref_enabled(uid), "关掉后 gate 仍读到开")
 
+    def test_message_edit_persists_to_active_commit_snapshot(self):
+        """/api/message/edit 也必须写活跃 commit 快照(kb_native materialize 权威源)——
+        否则手动编辑历史消息后刷新回退(与 acceptance 选择同源 bug)。"""
+        import json as _json
+        user = register_user(self.client)
+        uid = _uid(user["username"])
+        save_id, commit_id = _seed_save_with_commit_history(uid, "编辑前的正文")
+        r = self.client.post("/api/message/edit",
+                             json={"save_id": save_id, "message_index": 0, "content": "编辑后的正文"},
+                             cookies=user["cookies"])
+        self.assertEqual(r.status_code, 200, r.text)
+        from platform_app.db import connect
+        with connect() as db:
+            snap = db.execute("select state_snapshot from branch_commits where id = %s", (commit_id,)).fetchone()["state_snapshot"]
+        if isinstance(snap, str):
+            snap = _json.loads(snap)
+        self.assertEqual((snap.get("history") or [{}])[0].get("content"), "编辑后的正文",
+                         "message/edit 未写活跃 commit 快照 → 刷新会回退(根 bug 未修)")
+        self.assertEqual(self._asst_msg_content(save_id), "编辑后的正文", "messages 表也应更新")
+
+    def test_message_edit_idor(self):
+        owner = register_user(self.client)
+        owner_uid = _uid(owner["username"])
+        save_id, _ = _seed_save_with_commit_history(owner_uid, "owner 正文")
+        attacker = register_user(self.client)
+        r = self.client.post("/api/message/edit",
+                             json={"save_id": save_id, "message_index": 0, "content": "篡改"},
+                             cookies=attacker["cookies"])
+        self.assertEqual(r.status_code, 403, f"IDOR 未拦截: {r.status_code} {r.text}")
+
     def test_idor_other_user_forbidden(self):
         owner = register_user(self.client)
         owner_uid = _uid(owner["username"])

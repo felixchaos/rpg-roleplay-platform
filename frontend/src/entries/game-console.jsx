@@ -748,6 +748,26 @@ function App() {
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, [tweaks.defaultRightTab]);
+  // acceptance 改写候选现在【后台生成】(不阻塞回合),生成后经 state_event_bus emit → 长连
+  // /state_events → state-event-bridge 派发 `rpg-acceptance_alt-updated`。这里收下,给本存档、
+  // 非运行中、且当前没有待选候选时,挂出双栏 A/B(避免打断正在进行的回合 / 覆盖已有候选)。
+  useEffect(() => {
+    const handler = (ev) => {
+      const { op, payload } = (ev && ev.detail) || {};
+      if (op !== 'ready' || !payload || !payload.alt_id) return;
+      if (!String(payload.rewrite || '').trim()) return;
+      const curSave = (activeSave && activeSave.id) || (game && game._raw && game._raw.save_id) || null;
+      if (curSave != null && payload.save_id != null && Number(payload.save_id) !== Number(curSave)) return;
+      if (runRef.current && runRef.current.sse) return;  // 回合进行中(SSE 未收尾)不弹
+      setRewriteAlt((prev) => prev || {
+        alt_id: payload.alt_id, turn: payload.turn,
+        rewrite: String(payload.rewrite || ''),
+        unmet: Array.isArray(payload.unmet) ? payload.unmet : [],
+      });
+    };
+    window.addEventListener('rpg-acceptance_alt-updated', handler);
+    return () => window.removeEventListener('rpg-acceptance_alt-updated', handler);
+  }, [activeSave, game]);
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') { setShowSlash(false); setShowPlus(false); setShowModel(false); setShowPerm(false); }

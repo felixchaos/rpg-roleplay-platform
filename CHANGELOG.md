@@ -9,6 +9,21 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.34.3] - 2026-07-02 (@ c47db1690)
+
+### Fixed
+- **回合卡在「生成中」→ 几十秒后「生成失败,连接超时」,三四次才成一次;改写还要等 2-3 分钟**(行者无疆
+  严重反馈):acceptance A/B 的**改写候选(第二次完整 GM 调用)被放在回合关键路径同步跑**(v1.32.9 批次4
+  用 `to_thread` 塞回主路径)—— 正文流完后还要等一次完整 GM 生成(provider 慢/503/超时可达 2-3 分钟),
+  期间 SSE 无事件 → 前端不活跃超时 → 整回合判失败(即便首稿早已生成)。根修:改写候选**下线关键路径** ——
+  async 生产路径把改写 fire-and-forget 丢**后台任务**(`asyncio.create_task`,GM 调用走 `to_thread` 不塞事件
+  循环),回合立刻收尾发 `done`;候选生成后经 `state_event_bus.emit('acceptance_alt')` 跨 worker 推给前端
+  (长连 `/state_events` → 前端收到再挂双栏 A/B)。verify+audit+节流仍内联(默认 rule 模式=确定性极快)。
+  这也恢复了 W1 容量意图(回合 slot 不再被第二次 LLM 占住)。sync/测试路径保留内联(便于确定性测试)。
+- **`/api/message/edit` 对 kb_native 存档编辑后刷新回退**(与 acceptance 选择同源):手动编辑历史消息只改
+  messages 表 + `state.save()` blob,没改**活跃 commit 快照**(kb_native materialize 权威源)→ 刷新/换 worker
+  回退。改为复用 `_amend_history_message` 写穿所有存储 + bump snapshot_hash(跨 worker 失效);支持任意角色编辑。
+
 ## [1.34.2] - 2026-07-02 (@ 62510f0c8)
 
 ### Fixed

@@ -35,6 +35,25 @@ def test_pref_helper_defaults_true(monkeypatch):
     assert chat_pipeline._acceptance_ab_pref_enabled(123) is True
 
 
+def test_rewrite_off_critical_path():
+    """严重回归防线(行者无疆:回合卡在生成中/连接超时/2-3分钟):改写候选的第二次 GM 调用
+    绝不能在回合关键路径同步跑。async 路径必须【直接调 gate + inline=False】(不 to_thread 阻塞),
+    改写丢后台任务 + emit 推前端。"""
+    src = (REPO / "chat_pipeline.py").read_text(encoding="utf-8")
+    # 后台协程存在,且用 state_event_bus.emit 推候选、用 to_thread 跑阻塞 GM
+    assert "async def _gen_candidate_bg" in src
+    bg = src.split("async def _gen_candidate_bg", 1)[1].split("def _acceptance_gate", 1)[0]
+    assert "from state_event_bus import emit" in bg
+    assert "acceptance_alt" in bg
+    assert "asyncio.to_thread(_run_gm)" in bg, "后台 GM 调用应走 to_thread 不塞事件循环"
+    # async 两处调用点 inline=False(直接调),sync 一处 inline=True
+    assert src.count("inline=False") >= 2
+    assert "inline=True" in src
+    # 绝不再有 to_thread(_acceptance_gate)(那是把第二次 GM 调用塞回关键路径的老 bug)
+    import re as _re
+    assert not _re.search(r"to_thread\(\s*_acceptance_gate", src), "gate 不应再被 to_thread 阻塞调用"
+
+
 def test_choice_swap_writes_active_commit_snapshot():
     """选改写的落库必须写【活跃 branch_commit 快照】(kb_native materialize 权威源)+ bump snapshot_hash
     (跨 worker 失效)—— 否则刷新/换 worker 回退首稿(行者无疆二次反馈的根)。"""
@@ -68,9 +87,10 @@ def test_frontend_wiring():
     assert "acceptanceChoice" in api and "/acceptance/choice" in api
 
     gc = (FRONTEND / "entries" / "game-console.jsx").read_text(encoding="utf-8")
-    assert "on_acceptance_alt" in gc
     assert "AcceptanceAbPanel" in gc
     assert "setRewriteAlt(null)" in gc  # 新回合清掉待选候选
+    # 后台候选经长连事件总线推来:监听 rpg-acceptance_alt-updated
+    assert "rpg-acceptance_alt-updated" in gc
 
     panel = (FRONTEND / "components" / "AcceptanceAbPanel.jsx").read_text(encoding="utf-8")
     assert "onChoose('rewrite')" in panel and "onChoose('original')" in panel

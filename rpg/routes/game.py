@@ -957,38 +957,23 @@ async def api_message_edit(
             # (任何登录用户可改他人存档的消息)。与全平台 save 端点统一走 perms.owns_save。
             if not owns_save(db, int(save_id), int(api_user["id"])):
                 return JSONResponse({"ok": False, "error": "无权访问该存档"}, status_code=403)
-            # 按 turn, id 排序拿到有序消息列表,定位到目标行
-            rows = db.execute(
-                "select id from messages where save_id = %s order by turn, id",
-                (save_id,),
-            ).fetchall()
-            if msg_index < 0 or msg_index >= len(rows):
-                return JSONResponse({"ok": False, "error": f"message_index {msg_index} out of range (0-{len(rows)-1})"}, status_code=400)
-            target_id = rows[msg_index]["id"]
-            db.execute(
-                "update messages set content = %s where id = %s",
-                (str(new_content), target_id),
-            )
+            # 与 acceptance 选择同款持久化:写穿【活跃 commit 快照(kb_native materialize 权威源)+ 工作树
+            # 快照 + snapshot_hash bump(跨 worker 失效)+ messages 表】。旧实现只改 messages + state.save()
+            # blob,不改 commit 快照 → kb_native 存档编辑后刷新/换 worker 就回退(与 acceptance 同源 bug)。
+            # message/edit 可编辑任意角色(玩家也能改自己输入),故不限 require_role。
+            ok, _orig = _amend_history_message(db, int(save_id), msg_index, str(new_content))
             db.commit()
-        # 同步更新 state blob history(非 kb_native 存档直接读 blob;
-        # kb_native 存档 materialize 从 messages 读,上面已更新)
-        try:
-            from app import _ensure_loaded, _resolve_persist_target
-            state = _ensure_loaded(api_user)
-            hist = state.data.get("history") or []
-            if 0 <= msg_index < len(hist):
-                hist[msg_index]["content"] = str(new_content)
-                state.save()
-        except Exception:
-            pass  # blob 同步失败不影响 messages 表已更新的事实
+        if not ok:
+            return JSONResponse({"ok": False, "error": f"message_index {msg_index} 越界或无有效消息"}, status_code=400)
     except Exception as e:
         _log.exception("[message/edit] failed")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
     return JSONResponse({"ok": True})
 
 
-def _amend_history_message(db, save_id: int, message_index: int, new_content: str) -> tuple[bool, str | None]:
-    """把 save 第 message_index 条(展示序 = materialize 的非空过滤视图)assistant 消息内容换成 new_content,
+def _amend_history_message(db, save_id: int, message_index: int, new_content: str,
+                           *, require_role: str | None = None) -> tuple[bool, str | None]:
+    """把 save 第 message_index 条(展示序 = materialize 的非空过滤视图)消息内容换成 new_content,
     确定性写穿【刷新/换 worker 后会重新读到的】所有权威存储,并 bump 跨 worker 缓存失效信号:
       ① 活跃 branch_commit 快照 —— kb_native 存档 materialize 读 history 的**权威源**(save_kb.materialize
          从 branch_commits[active].state_snapshot.history 读;messages 表只是空 history 时的兜底)。
@@ -1004,20 +989,21 @@ def _amend_history_message(db, save_id: int, message_index: int, new_content: st
     from platform_app.branches.commits import _state_snapshot_hash
     from psycopg.types.json import Jsonb
 
-    def _hist_content_at(snap, idx):
+    def _hist_at(snap, idx):
+        """返回展示序(滤空)第 idx 条的 (content, role);越界/无效返回 (None, None)。"""
         if not (isinstance(snap, dict) and isinstance(snap.get("history"), list)):
-            return None
+            return None, None
         raw_idx = [i for i, m in enumerate(snap["history"])
                    if isinstance(m, dict) and str(m.get("content") or "").strip()]
         if 0 <= idx < len(raw_idx):
             m = snap["history"][raw_idx[idx]]
-            if m.get("role") == "assistant":
-                return m.get("content")
-        return None
+            return m.get("content"), m.get("role")
+        return None, None
 
     srow = db.execute("select active_commit_id from game_saves where id = %s", (save_id,)).fetchone()
     commit_id = int((srow or {}).get("active_commit_id") or 0) if srow else 0
     original = None
+    target_role = None
     # ① 活跃 commit 快照(权威展示源):按展示序定位 original,就地改写回写。
     if commit_id:
         crow = db.execute(
@@ -1027,20 +1013,24 @@ def _amend_history_message(db, save_id: int, message_index: int, new_content: st
         snap = (crow or {}).get("state_snapshot") if crow else None
         if isinstance(snap, str):
             snap = _json.loads(snap)
-        original = _hist_content_at(snap, message_index)
-        if original is not None and original != new_content:
-            for m in snap["history"]:
-                if isinstance(m, dict) and m.get("content") == original:
-                    m["content"] = new_content
-            db.execute("update branch_commits set state_snapshot = %s where id = %s", (Jsonb(snap), commit_id))
+        _c, _r = _hist_at(snap, message_index)
+        if _c is not None and (require_role is None or _r == require_role):
+            original, target_role = _c, _r
+            if original != new_content:
+                for m in snap["history"]:
+                    if isinstance(m, dict) and m.get("content") == original:
+                        m["content"] = new_content
+                db.execute("update branch_commits set state_snapshot = %s where id = %s", (Jsonb(snap), commit_id))
     # 兜底:commit 无 history(酒馆/旧档)→ messages 表按展示序(滤空)定位 original。
     if original is None:
         rows = db.execute(
             "select role, content from messages where save_id = %s order by turn, id", (save_id,)
         ).fetchall()
         filt = [r for r in rows if str(r["content"] or "").strip()]
-        if 0 <= message_index < len(filt) and filt[message_index]["role"] == "assistant":
-            original = filt[message_index]["content"]
+        if 0 <= message_index < len(filt):
+            _r = filt[message_index]["role"]
+            if require_role is None or _r == require_role:
+                original, target_role = filt[message_index]["content"], _r
     if original is None:
         return False, None
     if original == new_content:
@@ -1070,11 +1060,17 @@ def _amend_history_message(db, save_id: int, message_index: int, new_content: st
                         "update game_saves set state_snapshot = %s, row_version = row_version + 1 where id = %s",
                         (Jsonb(snap), r["id"]),
                     )
-    # ④ messages 表(内容匹配)
-    db.execute(
-        "update messages set content = %s where save_id = %s and role = 'assistant' and content = %s",
-        (new_content, save_id, original),
-    )
+    # ④ messages 表(内容匹配 + 目标角色,避免同文本跨角色误伤)
+    if target_role:
+        db.execute(
+            "update messages set content = %s where save_id = %s and role = %s and content = %s",
+            (new_content, save_id, target_role, original),
+        )
+    else:
+        db.execute(
+            "update messages set content = %s where save_id = %s and content = %s",
+            (new_content, save_id, original),
+        )
     return True, original
 
 
@@ -1134,7 +1130,7 @@ async def api_acceptance_choice(
                     mi = -1
                 if mi >= 0 and owns_save(db, save_id, uid):
                     # 自包含写穿所有存储(commit 快照 + 工作树 blob + snapshot_hash bump + messages)。
-                    swapped, _orig = _amend_history_message(db, save_id, mi, rewrite_text)
+                    swapped, _orig = _amend_history_message(db, save_id, mi, rewrite_text, require_role="assistant")
                     db.commit()
     except Exception as e:
         _log.exception("[acceptance/choice] failed")

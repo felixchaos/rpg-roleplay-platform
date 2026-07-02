@@ -99,11 +99,14 @@ class AcceptanceRetryFiresE2E(unittest.TestCase):
                 "curator_plan": {"acceptance": ["红茶"], "rule_candidate_actions": []},
             }
 
-        orig = (ui_mod.run_context_agent, ui_mod._get_gm, ui_mod._get_sub_gm, cp._recorder_unified)
+        orig = (ui_mod.run_context_agent, ui_mod._get_gm, ui_mod._get_sub_gm, cp._recorder_unified, cp._POSTPROC_MODE)
         ui_mod.run_context_agent = fake_ca
         ui_mod._get_gm = lambda u: StubGM()
         ui_mod._get_sub_gm = lambda u: StubGM()
-        cp._recorder_unified = lambda *a, **k: False  # 走非史官三合一 async 路径(site 2),不触发 recorder LLM
+        cp._recorder_unified = lambda *a, **k: False  # 走非史官三合一路径,不触发 recorder LLM
+        # 强制 sync 模式:改写候选走【内联】路径(候选作为 SSE 流事件下发,便于确定性断言)。
+        # 生产 async 模式改写走后台任务(不阻塞回合)+ emit 推前端,不在流里,单独 source 测试覆盖。
+        cp._POSTPROC_MODE = "sync"
         try:
             with self.client.stream(
                 "POST", "/api/v1/chat",
@@ -112,16 +115,13 @@ class AcceptanceRetryFiresE2E(unittest.TestCase):
                 self.assertEqual(resp.status_code, 200)
                 events = self._consume(resp)
         finally:
-            (ui_mod.run_context_agent, ui_mod._get_gm, ui_mod._get_sub_gm, cp._recorder_unified) = orig
+            (ui_mod.run_context_agent, ui_mod._get_gm, ui_mod._get_sub_gm, cp._recorder_unified, cp._POSTPROC_MODE) = orig
 
         ev_names = [e["event"] for e in events]
         self.assertNotIn("error", ev_names, events)
         # 1. 改写候选真的生成:GM 被调 2 次(首稿 + 候选)
         self.assertEqual(calls["n"], 2, f"GM 调用次数={calls['n']},应为 2(候选未生成?)")
-        # 2. 出现 acceptance_retry agent 事件 + acceptance_alt 候选事件
-        agent_phases = [e["data"].get("phase") for e in events
-                        if e["event"] == "agent" and isinstance(e["data"], dict)]
-        self.assertIn("acceptance_retry", agent_phases, f"无 acceptance_retry 事件;phases={agent_phases}")
+        # 2. 出现 acceptance_alt 候选事件(sync/内联路径走 SSE 流)
         alt_events = [e for e in events if e["event"] == "acceptance_alt"]
         self.assertTrue(alt_events, f"无 acceptance_alt 候选事件;events={ev_names}")
         alt = alt_events[0]["data"]
