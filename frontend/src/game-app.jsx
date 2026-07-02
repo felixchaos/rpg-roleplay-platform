@@ -370,7 +370,7 @@ function RunDetailRail({ runState }) {
 }
 
 // ----------------------------- CHAT --------------------------------------
-function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, meta }) {
+function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, meta, memoryText }) {
   // task 38：以前 msgIndex / saveId / commitId 全是 undefined，doFork 就发
   // {label} 给后端 → 后端 int(None) 直接 500。现在 NarrativeBlock / PlayerBlock
   // 把 idx + saveId 透传进来，doFork 至少发 {save_id, message_index, label}，
@@ -382,8 +382,11 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
   const [delOpen, setDelOpen] = useStateA(false);
   const [delBusy, setDelBusy] = useStateA(false);
 
-  const onCopy = async () => {
-    const txt = text || "";
+  const [copyWithMemory, setCopyWithMemory] = useStateA(false);
+  const [copyAskOpen, setCopyAskOpen] = useStateA(false);
+  const hasMemory = !!(memoryText && memoryText.trim());
+  const doCopy = async (includeMemory) => {
+    const txt = includeMemory && hasMemory ? memoryText.trim() + "\n\n---\n\n" + (text || "") : (text || "");
     let ok = false;
     try {
       if (navigator.clipboard?.writeText) {
@@ -409,6 +412,14 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
       else window.toast(t('game.app.msg.copy_failed'), { kind: "danger", detail: t('game.app.msg.clipboard_denied'), duration: 2400 });
     }
     setTimeout(() => setCopied(false), 1400);
+    setCopyAskOpen(false);
+  };
+  const onCopy = () => {
+    if (hasMemory) {
+      setCopyAskOpen(true);
+    } else {
+      doCopy(false);
+    }
   };
   // task 38：禁用条件——必须有 saveId 或 commitId 之一，否则后端无法定位 commit。
   // 缺信息时按钮 disabled + tooltip 解释，比让用户点进去看 toast 失败强。
@@ -526,6 +537,18 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
         <button className="iconbtn gc-msg-act" data-tip={copied ? t('game.app.msg.copied') : t('game.app.msg.copy')} data-tip-pos="below" onClick={onCopy} aria-label={copied ? t('game.app.msg.copied') : t('game.app.msg.copy')}>
           <Icon name={copied ? "check" : "file"} size={12} />
         </button>
+        {copyAskOpen && (
+          <div className="gc-copy-ask" role="dialog" aria-label="复制选项">
+            <label className="gc-copy-ask-label">
+              <input type="checkbox" checked={copyWithMemory} onChange={(e) => setCopyWithMemory(e.target.checked)} />
+              {" "}同时复制长记忆
+            </label>
+            <div className="gc-copy-ask-actions">
+              <button className="btn ghost" onClick={() => { doCopy(copyWithMemory); }}>复制</button>
+              <button className="iconbtn" onClick={() => setCopyAskOpen(false)} aria-label="取消">×</button>
+            </div>
+          </div>
+        )}
         <button
           className="iconbtn gc-msg-act"
           data-tip={canFork ? t('game.app.msg.fork_tip') : t('game.app.msg.fork_no_ctx_tip')}
