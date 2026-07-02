@@ -1,0 +1,52 @@
+{
+  "name": "rpg-roleplay-mobile",
+  "version": "1.0.0",
+  "main": "expo-router/entry",
+  "private": true,
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "typecheck": "tsc --noEmit",
+    "assets": "node scripts/gen-assets.cjs",
+    "prebuild": "expo prebuild --platform android",
+    "build:apk": "eas build -p android --profile preview"
+  },
+  "dependencies": {
+    "@expo-google-fonts/cinzel": "^0.4.2",
+    "@expo-google-fonts/jetbrains-mono": "^0.4.1",
+    "@expo-google-fonts/spectral": "^0.4.1",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "^56.0.12",
+    "expo-blur": "~56.0.3",
+    "expo-camera": "~56.0.8",
+    "expo-clipboard": "^56.0.4",
+    "expo-constants": "~56.0.18",
+    "expo-crypto": "~56.0.4",
+    "expo-document-picker": "~56.0.4",
+    "expo-file-system": "~56.0.8",
+    "expo-font": "~56.0.7",
+    "expo-haptics": "~56.0.3",
+    "expo-image": "~56.0.11",
+    "expo-image-picker": "~56.0.0",
+    "expo-linear-gradient": "~56.0.4",
+    "expo-linking": "~56.0.14",
+    "expo-router": "~56.2.11",
+    "expo-secure-store": "~56.0.4",
+    "expo-sharing": "~56.0.18",
+    "expo-status-bar": "~56.0.4",
+    "expo-system-ui": "~56.0.5",
+    "react": "19.2.3",
+    "react-native": "0.85.3",
+    "react-native-gesture-handler": "~2.31.1",
+    "react-native-reanimated": "4.3.1",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "4.25.2",
+    "react-native-sse": "^1.2.1",
+    "react-native-webview": "^13.16.1",
+    "react-native-worklets": "^0.8.3"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.17",
+    "typescript": "~6.0.3"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "RPG Roleplay",
+    "slug": "rpg-roleplay-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "rpgroleplay",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#0b0907"
+    },
+    "android": {
+      "package": "icu.stellatrix.rpgroleplay",
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0b0907"
+      },
+      "usesCleartextTraffic": true
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        { "cameraPermission": "扫描桌面端登录二维码以免密登入。" }
+      ],
+      [
+        "expo-document-picker",
+        { "iCloudContainerEnvironment": "Production" }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}
