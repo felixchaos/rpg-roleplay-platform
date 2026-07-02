@@ -16,6 +16,7 @@ import { Icon } from '../icons.jsx';
 import { MobileComposer } from '../Composer.jsx';
 import { useStickToBottom } from '../../hooks/useStickToBottom.js';
 import { stripNarrativeOps } from '../../narrative-strip.js';
+import { SLASH_COMMANDS } from '../../game-composer.jsx';  // 命令集单一来源(与游戏台/酒馆一致)
 import {
   useTavernChatRun, applyTavernState, abortRun,
   toolCallInline, toolResultInline,
@@ -741,6 +742,7 @@ function ChatView({
 }) {
   const [text, setText] = useState('');
   const [plusOpen, setPlusOpen] = useState(false); // + 附加功能 sheet(AI 帮回 等)
+  const [slashOpen, setSlashOpen] = useState(false); // 斜杠命令 sheet(/set 等,与各前端同源 SLASH_COMMANDS)
   const [pressedIdx, setPressedIdx] = useState(null);
   const [msgSheet, setMsgSheet] = useState(null); // 长按消息 → 操作 sheet(与游戏台同一套交互)
   const lpTimer = useRef(null);
@@ -941,12 +943,36 @@ function ChatView({
         sendAria={t('mobile.tavern.chat.send_aria')}
         stopAria={t('mobile.tavern.chat.stop_aria')}
         taRef={taRef}
-        leading={onAiReply ? (
-          <button className="c-plus" onClick={() => setPlusOpen(true)} aria-label={t('mobile.tavern.plus.aria')}>
-            <Icon name="plus" size={20} />
-          </button>
-        ) : null}
+        leading={(
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button className="c-plus" onClick={() => setSlashOpen(true)} aria-label={t('mobile.tavern.slash.aria', '斜杠命令')}>
+              <Icon name="slash" size={18} />
+            </button>
+            {onAiReply ? (
+              <button className="c-plus" onClick={() => setPlusOpen(true)} aria-label={t('mobile.tavern.plus.aria')}>
+                <Icon name="plus" size={20} />
+              </button>
+            ) : null}
+          </div>
+        )}
       />
+
+      {/* 斜杠命令 sheet:挑一条把前缀塞进输入框(状态写指令由后端 apply_player_directives 处理,回执见 tavern-chat-run) */}
+      <BottomSheet show={slashOpen} onClose={() => setSlashOpen(false)} maxHeight="70%">
+        <div className="sheet-title">{t('mobile.tavern.slash.title', '斜杠命令')}</div>
+        <div className="sheet-list">
+          {SLASH_COMMANDS.map((c) => (
+            <button key={c.id} className="sheet-item" onClick={() => {
+              setSlashOpen(false);
+              setText(c.trigger);
+              setTimeout(() => taRef.current?.focus(), 50);
+            }}>
+              <span className="sheet-ico" style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent)' }}>/</span>
+              <span className="sheet-tx"><strong>{t(c.labelKey)}</strong> <span className="mono">{c.trigger.trim()}</span></span>
+            </button>
+          ))}
+        </div>
+      </BottomSheet>
 
       {/* + 附加功能 sheet:AI 帮回(以玩家自己的角色生成一条回复,填入输入框) */}
       <BottomSheet show={plusOpen} onClose={() => setPlusOpen(false)} maxHeight="40%">

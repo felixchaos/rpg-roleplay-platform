@@ -812,6 +812,10 @@ export default function TavernApp() {
   const [mobileNav, setMobileNav] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [showPlus_, setShowPlus_] = useState(false);
+  const [showSlash_, setShowSlash_] = useState(false);
+  // 斜杠命令(/set /loc /time /rel /var …):挑一条把前缀塞进输入框,玩家补参数后发送。
+  // 状态写指令由后端 apply_player_directives 处理(酒馆走 /api/chat,与游戏台同源),回执见 tavern-chat-run。
+  const onSlashPick = (cmd) => { if (cmd && cmd.trigger) setText(cmd.trigger); setShowSlash_(false); };
 
   // 收口的酒馆 SSE 状态机(runRef + startRun/stopRun 在 hook 内,折叠语义见 lib/tavern-chat-run.js)。
   const { runRef, startRun: runChat, stopRun } = useTavernChatRun({ setRunning });
@@ -1121,10 +1125,11 @@ export default function TavernApp() {
               model={model} setModel={setModel}
               composerMode="writing"
               placeholder={t('tavern_app.composer.placeholder', { name: charName })}
-              hideSlash hidePermission hideContinue
+              hidePermission hideContinue
+              onSlashPick={onSlashPick} pickedCommand={null} onClearCommand={() => {}}
               attachments={[]} removeAttachment={() => {}}
-              showSlash={false} showPlus={showPlus_} showModel={false} showPerm={false}
-              toggleSlash={() => {}} togglePlus={() => setShowPlus_(s => !s)} toggleModel={() => {}} togglePerm={() => {}}
+              showSlash={showSlash_} showPlus={showPlus_} showModel={false} showPerm={false}
+              toggleSlash={() => { setShowSlash_(s => !s); setShowPlus_(false); }} togglePlus={() => { setShowPlus_(s => !s); setShowSlash_(false); }} toggleModel={() => {}} togglePerm={() => {}}
               saveId={activeId != null ? String(activeId) : null}
               imageGenKind="chat"
               onAiReply={onAiReply}

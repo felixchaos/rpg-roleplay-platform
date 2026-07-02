@@ -7,6 +7,9 @@ import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { Icon } from '../icons.jsx';
 import { lsGet } from '../../lib/storage.js';
+// /set 强制设定管理(列出 + 逐条删 + 清空)复用电脑端同一组件:单一来源(worldline.remove + 配对 pinned +
+// game-state-refresh),移动端 MobileGame 复用 game-console run-loop,故 __confirm/__apiToast/刷新事件都可用。
+import { ForcedSetSection } from '../../game-panels.jsx';
 
 export const MOBILE_PANEL_TABS = [
   { id: 'status', label: i18n.t('mobile.game_panels.tab.status'), icon: 'status' },
@@ -57,6 +60,8 @@ function StatusPanel({ s }) {
           {varEntries.slice(0, 20).map(([k, v]) => <KV key={k} k={k} v={v} />)}
         </Sec>
       )}
+      {/* /set 强制设定管理(删改已设):复用电脑端组件,单一来源 */}
+      <ForcedSetSection state={s} />
     </>
   );
 }

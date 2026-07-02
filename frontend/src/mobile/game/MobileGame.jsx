@@ -17,28 +17,18 @@ import { MobilePanel, MOBILE_PANEL_TABS } from './panels.jsx';
 import AgentModelPicker from '../../components/AgentModelPicker.jsx';
 import { useStickToBottom } from '../../hooks/useStickToBottom.js';
 import { stripNarrativeOps } from '../../narrative-strip.js';
+import { SLASH_COMMANDS } from '../../game-composer.jsx';
 
-const SLASH_GROUPS = () => [
-  { title: i18n.t('mobile.game.slash.group_query'), items: [
-    { id: 'status', trig: '/status', label: i18n.t('mobile.game.slash.status'), tab: 'status' },
-    { id: 'debug', trig: '/debug', label: i18n.t('mobile.game.slash.debug'), sse: true },
-  ] },
-  { title: i18n.t('mobile.game.slash.group_state'), items: [
-    { id: 'set', trig: '/set ', label: i18n.t('mobile.game.slash.set') },
-    { id: 'loc', trig: '/loc ', label: i18n.t('mobile.game.slash.loc') },
-    { id: 'time', trig: '/time ', label: i18n.t('mobile.game.slash.time') },
-    { id: 'rel', trig: '/rel ', label: i18n.t('mobile.game.slash.rel') },
-    { id: 'var', trig: '/var ', label: i18n.t('mobile.game.slash.var') },
-  ] },
-  { title: i18n.t('mobile.game.slash.group_memory'), items: [
-    { id: 'pin', trig: '/pin ', label: i18n.t('mobile.game.slash.pin') },
-    { id: 'note', trig: '/note ', label: i18n.t('mobile.game.slash.note') },
-  ] },
-  { title: i18n.t('mobile.game.slash.group_system'), items: [
-    { id: 'save', trig: '/save', label: i18n.t('mobile.game.slash.save') },
-    { id: 'retry', trig: '/retry', label: i18n.t('mobile.game.slash.retry') },
-  ] },
-];
+// 命令集【单一来源】= 共享 SLASH_COMMANDS(与游戏台 web / 酒馆一致,含 /memory /permission 全 13 条)。
+// 映射成移动 sheet 需要的 {id, trig, label},按 groupKey 分组;不再各自维护子集列表。
+const SLASH_GROUPS = () => {
+  const groups = {};
+  for (const c of SLASH_COMMANDS) {
+    const title = i18n.t(c.groupKey);
+    (groups[title] = groups[title] || []).push({ id: c.id, trig: c.trigger, label: i18n.t(c.labelKey) });
+  }
+  return Object.entries(groups).map(([title, items]) => ({ title, items }));
+};
 
 const PERMISSIONS = () => [
   { id: 'read_only', icon: 'eye', label: i18n.t('mobile.game.permission.read_only_label'), desc: i18n.t('mobile.game.permission.read_only_desc') },

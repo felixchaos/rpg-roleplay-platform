@@ -9,6 +9,15 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-07-02 (@ 81bb5f986)
+
+### Added / Changed
+- **OOC/指令(`/set` 等)前端适配对齐各端**(用户审计:web 游戏台完整,但酒馆/移动缺回执、独立酒馆/移动酒馆缺斜杠菜单、/set 管理面板 web 独有)。补齐(单一来源、不 fork):
+  - **命令回执**:`lib/tavern-chat-run.js`(pages/tavern + tavern-app + MobileTavern 共用)补 `on_updates`(pre_llm)+ `on_system_receipt` → toast「设定已更新」+ `gotReceipt` 守卫(纯 `/set` 轮不再误判「空回复」恢复草稿)。移动游戏本就复用 game-console run-loop 已有回执。
+  - **斜杠菜单**:独立酒馆(tavern-app)去掉 `hideSlash` + 接 `onSlashPick`(挑命令塞前缀);移动酒馆(MobileTavern)加斜杠 sheet;命令集**单一来源** = 共享 `SLASH_COMMANDS`(MobileGame 不再自带子集,补齐 `/memory` `/permission` 全 13 条)。
+  - **`/set` 管理面板**:移动端 StatusPanel **复用**电脑端 `ForcedSetSection` 组件(列 `worldline.user_variables` + 逐条删 + 清空),而非另写一份。
+  - (iOS 的回执/管理面板/命令对齐单独一批。)
+
 ## [1.35.1] - 2026-07-02 (@ a80ef39d8)
 
 ### Changed

@@ -219,6 +219,7 @@ export function startTavernRun(cfg) {
 
   let openedAssistant = false;
   let gotDone = false;
+  let gotReceipt = false;  // 本轮是否收到 /set 等确定性回执(system_receipt / updates pre_llm),防被判「空回复」
 
   const restoreFailedDraft = () => {
     if (!isCurrentRun() || openedAssistant) return;
@@ -291,6 +292,32 @@ export function startTavernRun(cfg) {
       // 后端可能在 status 里回带最新 history,不强制覆盖流式气泡。
       void data;
     },
+    // /set 等 directive 的确定性回执(pre_llm)→ toast「设定已更新」,不进主叙事;与 game-console 同款。
+    on_updates: (data) => {
+      if (!isCurrentRun()) return;
+      resetIdle();
+      if (data && data.stage === 'pre_llm') {
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (items.length) {
+          gotReceipt = true;
+          toast?.(`设定已更新（${items.length}）`, { kind: 'ok', detail: items.join('\n'), duration: 4000, code: 'set_receipt' });
+        }
+      }
+    },
+    // 斜杠命令(/time /loc /rel /var 等)的确定性回执 → toast,不进主叙事(与 game-console on_system_receipt 同款)。
+    on_system_receipt: (data) => {
+      if (!isCurrentRun()) return;
+      resetIdle();
+      gotReceipt = true;
+      const text = (data && data.text) || '';
+      if (!text) return;
+      const firstLine = text.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim().split('\n')[0] || '已更新';
+      toast?.(firstLine, {
+        kind: (data && data.changed) ? 'ok' : 'info',
+        detail: text.trim().length > firstLine.length ? text.trim() : undefined,
+        duration: (data && data.changed) ? 3500 : 7000, code: 'slash_receipt',
+      });
+    },
     // 思考流(reasoning)实时累积到流式 assistant 气泡的 _thinking → 可折叠思考块。
     on_reasoning: (data) => {
       if (!isCurrentRun()) return;
@@ -339,6 +366,8 @@ export function startTavernRun(cfg) {
       // 无条件 done 收尾(空回复也跑):pages 用它写 elapsed_ms / usage(原实现在 !openedAssistant 之前)。
       if (onDoneAlways) { try { onDoneAlways(data); } catch (_) {} }
       setRunning(false);
+      // /set 等纯回执轮:收到 receipt、无叙事正文属正常,别判「空回复」恢复草稿(与 game-console gotReceipt 守卫同款)。
+      if (!openedAssistant && gotReceipt) { rc.sse = null; return; }
       if (!openedAssistant) {
         const interrupted = !!(data && data.interrupted);
         const showEmpty = () => {
