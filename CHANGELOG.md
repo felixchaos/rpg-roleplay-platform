@@ -9,6 +9,19 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.34.5] - 2026-07-02 (@ db95de8e3)
+
+### Fixed
+- **可以把没有 embedding 接口的 provider(DeepSeek/Anthropic)选成嵌入器 → 每批 404、重试 5 次
+  (~2.5 分钟)才放弃、导入的小说 RAG 坏掉**(生产日志:user 188 `embed.api_id=deepseek` +
+  `text-embedding-004`)。各层校验都漏:picker 只按**模型名** heuristic 判 embedding(`text-embedding-004`
+  名字命中)、preflight 只查「有没有该 provider 凭据」(deepseek 聊天凭据存在 → 判已配置)、resolution
+  盲目配对。补三层权威闸:①后端 `embedding.provider_lacks_embedding(api_id, base_url)`(按 provider +
+  base_url host 双判 deepseek/anthropic/moonshot),嵌入循环**绑定前快速失败**并给明确指引(改选支持
+  embedding 的 provider),不再 404-loop;②`/api/me/embedder-status` 把无 embedding 的选择判为**未配置** +
+  返回 `embed_provider_hint`;③前端 `AgentModelPicker`(`capabilityFilter='embedding'`)从嵌入器列表
+  **排除**这些 chat-only provider,即便配了聊天凭据也不显示。
+
 ## [1.34.4] - 2026-07-02 (@ 4de3ceb5e)
 
 ### Fixed

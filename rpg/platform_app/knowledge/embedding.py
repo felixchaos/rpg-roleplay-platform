@@ -30,6 +30,21 @@ log = logging.getLogger(__name__)
 # 系统默认 embedding 配置(env 可覆盖,用户 BYOK 优先于 env)
 DEFAULT_EMBED_MODEL = os.environ.get("EMBED_MODEL", "text-embedding-004")
 DEFAULT_EMBED_API_ID = os.environ.get("EMBED_API_ID", "vertex_ai")
+
+# 已知【没有 embedding 接口】的 chat-only provider:选成嵌入器必然 404/失败(记忆 project_rag_embedder:
+# Anthropic/DeepSeek 无 embedding)。用户曾把 deepseek 选成嵌入器(embed.api_id=deepseek + 默认模型
+# text-embedding-004 = Google 模型)→ 每批 404、重试 5 次(~2.5 分钟)才放弃、导入的小说 RAG 坏掉。
+# 各层校验都漏了(picker 只按模型名 heuristic、preflight 只查有无该 provider 凭据),这里做后端权威闸。
+_NO_EMBEDDING_PROVIDERS = frozenset({"deepseek", "anthropic", "moonshot"})
+
+
+def provider_lacks_embedding(api_id: str, base_url: str = "") -> bool:
+    """该 provider 是否没有 embedding 接口(选成嵌入器必然失败)。按 api_id + base_url host 双判。"""
+    a = (api_id or "").strip().lower()
+    if any(k in a for k in _NO_EMBEDDING_PROVIDERS):
+        return True
+    h = (base_url or "").strip().lower()
+    return any(k in h for k in ("deepseek.com", "api.anthropic.com", "moonshot"))
 # 向量维度:默认 768(text-embedding-004 / 平台栈)。自部署用别的 provider 时设 EMBED_DIM
 # (须与 migrations 建表维度一致,首次部署前设)。仅用于返回维度校验,不强制截断。
 EMBED_DIM = int(os.environ.get("EMBED_DIM", "768") or "768")
@@ -778,7 +793,15 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
 
     # P0-fix: 拆书开始时立即将 (api_id, model) 绑定到 scripts 表，
     # 保证召回时能读到确定的向量空间配置。
-    _bind_api_id, _bind_model, _, _ = _resolve_embed_config(user_id)
+    _bind_api_id, _bind_model, _bind_key, _bind_base = _resolve_embed_config(user_id)
+    # 权威闸:选了没有 embedding 接口的 provider(deepseek/anthropic 等)→ 快速失败 + 清晰指引,
+    # 不绑坏 meta、不进 5 次 404 重试(~2.5 分钟)。这是各层校验(picker/preflight)漏掉的兜底。
+    if provider_lacks_embedding(_bind_api_id, _bind_base):
+        raise RuntimeError(
+            f"嵌入器 provider「{_bind_api_id}」没有向量嵌入(embedding)接口,无法为 script {script_id} 建向量索引。"
+            f"请在「设置 → API & 模型 → RAG 模型」改选支持 embedding 的 provider"
+            f"(如 OpenAI text-embedding-3 / 阿里 dashscope / siliconflow / Vertex,或本地 bge/nomic),再重新导入。"
+        )
     try:
         with connect() as db:
             db.execute(

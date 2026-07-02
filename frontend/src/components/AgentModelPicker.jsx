@@ -307,10 +307,14 @@ export default function AgentModelPicker({
   // 游戏内 popover 与设置/聊天 bare 的 providerOptions 共用此判定,避免两套门控不一致 ——
   // 历史 bug:popover 看 a.enabled、下拉只看 cred,导致用户禁用的 provider(如 openrouter 336 模型)
   // 在聊天/游戏选择器里仍冒出「完整模型列表」。
+  // 已知没有 embedding 接口的 chat-only provider:选嵌入器时排除(即便用户配了聊天凭据)——
+  // 否则用户能把 deepseek 选成嵌入器 → 每批 404、导入 RAG 坏掉(后端 embedding.provider_lacks_embedding 兜底)。
+  const NO_EMBEDDING_PROVIDERS = new Set(['deepseek', 'anthropic', 'moonshot']);
   const _providerVisible = (a) => {
     const aid = a && (a.api_id || a.id);
     if (!aid) return false;
     if (a.enabled === false) return false;          // 用户/admin 在模型管理隐藏了该 provider
+    if (capabilityFilter === 'embedding' && NO_EMBEDDING_PROVIDERS.has(String(aid).toLowerCase())) return false;
     if (credApiIds.has(aid)) return true;           // 用户配了凭据
     if (platformVertexEmbedding && aid === 'vertex_ai'
         && (a.models || a.entries || []).some((m) => (m.capabilities || m.caps || []).includes('embedding'))) return true;

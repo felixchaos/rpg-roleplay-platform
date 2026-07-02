@@ -1393,6 +1393,20 @@ async def api_embedder_status(user=Depends(require_user)):
         if user_credentials.get_credential(user["id"], api_id_alias):
             user_configured = True
             break
+    # 权威闸:选了没有 embedding 接口的 chat-only provider(deepseek/anthropic 等)→ 即便配了聊天凭据
+    # 也判为「未配置有效嵌入器」+ 明确指引。否则前端显示「已配置」,实际每次 embed 都 404、导入 RAG 坏掉。
+    _embed_provider_hint = ""
+    try:
+        from ..knowledge.embedding import provider_lacks_embedding
+        if _selected_embed_api and provider_lacks_embedding(_selected_embed_api):
+            user_configured = False
+            _embed_provider_hint = (
+                f"当前嵌入器 provider「{_selected_embed_api}」没有向量嵌入(embedding)接口,"
+                f"请改选支持 embedding 的 provider(OpenAI text-embedding-3 / 阿里 dashscope / siliconflow / "
+                f"Vertex,或本地 bge/nomic)。"
+            )
+    except Exception:
+        pass
     platform_available = bool(_os.environ.get("EMBED_API_KEY"))
     # 平台 vertex embedding 兜底已收紧为仅 admin/vip(_get_vertex_client allow_fb / _resolve_embed_config)。
     # platform_fallback_available 必须与执行层一致地 _is_admin gate —— 否则普通用户也收到 True,
@@ -1416,6 +1430,7 @@ async def api_embedder_status(user=Depends(require_user)):
         "platform_fallback_available": platform_fallback_available,
         "effective_source": effective,
         "fallback_active": (effective == "platform_fallback"),
+        "embed_provider_hint": _embed_provider_hint,
         "preflight": preflight,
     })
 
