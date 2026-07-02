@@ -966,6 +966,33 @@ def _apply_gm_json_ops(
         _clear_write_ctx(_ctx_token)
 
 
+# acceptance A/B 改写候选:节流 —— 每存档最多每 N 回合提供一次改写候选(防止每回合弹 A/B 打断沉浸)。
+_ACCEPTANCE_AB_MIN_INTERVAL = 5
+
+
+def _log_acceptance_ab(user_id, save_id, turn, unmet, original_text, rewrite_text):
+    """插入一条 acceptance A/B 候选(chosen=null 待玩家选),返回行 id;失败返回 None。
+    数据采集层:统计玩家偏好首稿/改写稿 + 触发改写的验收点,用于迭代 acceptance 算法。"""
+    try:
+        from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "insert into acceptance_ab_log(user_id, save_id, turn, unmet, original_text, rewrite_text)"
+                " values (%s,%s,%s,%s,%s,%s) returning id",
+                (int(user_id) if user_id else None, int(save_id or 0), int(turn or 0),
+                 Jsonb(list(unmet or [])), str(original_text or ""), str(rewrite_text or "")),
+            ).fetchone()
+            if hasattr(db, "commit"):
+                db.commit()
+            return int(row["id"]) if row else None
+    except Exception as _e:
+        log.warning(f"[acceptance] ab log insert failed: {_e}")
+        return None
+
+
 async def run_gm_phase(
     ctx: PipelineContext,
     *,
@@ -1306,9 +1333,17 @@ async def run_gm_phase(
 
     ctx.response = response
 
-    # fork 收编:acceptance verify+retry 抽成同步闭包,sync 内联调 / async 用 to_thread 调
-    # (阻塞的 retry GM 调用跑线程里不塞事件循环 → 生产 async 也真跑 retry、又不牺牲容量)。
-    # 全程 try/except 兜底 = 任何失败退回原稿(worst-case == 今日行为)。返回 (response, updates, 待 yield 事件)。
+    # acceptance 硬闸(sync 内联 / async 用 to_thread 调,同源)。
+    # 【设计改版 · A/B 用户裁决】原实现:unmet 时同步重写并【直接替换】首稿(response/state 都换成第二稿)。
+    #   在生产流式路径下暴露成客户能看见的"正文流完后 5-10 秒自己变一套文字"(行者无疆反馈)——
+    #   流式是对用户的承诺,已读正文不该被事后重写替换。
+    # 新实现:
+    #   ① 首稿(用户流式读到的)【永远是权威版】,response/state 都不动 → 无跳变、state 确定性不变。
+    #   ② 只在 unmet 且【节流放行(每存档 ≥N 回合一次)】时,额外生成一份【改写候选】(只捕获正文,
+    #      不 apply 它的 ops)、落 acceptance_ab_log(pending)、yield `acceptance_alt` 事件 → 前端并排给
+    #      玩家 A/B 选择。玩家选改写才换消息(走 /api/acceptance/choice)。
+    #   ③ verify+audit_log 始终保留(可观测)。逃生开关 RPG_ACCEPTANCE_RETRY=0 关掉候选生成。
+    # 全程 try/except 兜底 = 任何失败退回首稿(worst-case == 无候选,正常显示首稿)。
     def _acceptance_gate(_resp, _upd):
         _events = []
         try:
@@ -1317,15 +1352,19 @@ async def run_gm_phase(
             if not (_acc and (_resp or "").strip()):
                 return _resp, _upd, _events
             import os as _os2
-            _retry_on = _os2.environ.get("RPG_ACCEPTANCE_RETRY", "1") not in ("0", "false", "False", "")
+            _rewrite_on = _os2.environ.get("RPG_ACCEPTANCE_RETRY", "1") not in ("0", "false", "False", "")
             _amode = acceptance_verifier_mode(api_user)
             _auid = int(api_user.get("id")) if api_user and api_user.get("id") else None
             unmet = verify_acceptance(_acc, _resp, _upd, mode=_amode, user_id=_auid)
-            retry_used = False
-            if unmet and _retry_on:
-                retry_used = True
+            # 节流:每存档最多每 _ACCEPTANCE_AB_MIN_INTERVAL 回合提供一次改写候选。
+            _turn_now = int(state.data.get("turn", 0) or 0)
+            _ab_meta = state.data.setdefault("_acceptance_ab", {})
+            _last_offer = int(_ab_meta.get("last_offer_turn", -(10 ** 9)))
+            _throttle_ok = (_turn_now - _last_offer) >= _ACCEPTANCE_AB_MIN_INTERVAL
+            rewrite_offered = False
+            if unmet and _rewrite_on and _throttle_ok:
                 _events.append(("agent", {"phase": "acceptance_retry",
-                    "message": f"acceptance 有 {len(unmet)} 条未通过,触发 retry once 补写",
+                    "message": f"acceptance 有 {len(unmet)} 条未覆盖,生成改写候选供选择",
                     "status": "running", "elapsed_ms": 0, "unmet": unmet[:5]}))
                 _retry_msg = ("【系统:本轮 acceptance 自检】上一稿正文没有覆盖到以下验收点:\n"
                     + "\n".join(f"  - {x}" for x in unmet[:5])
@@ -1341,32 +1380,28 @@ async def run_gm_phase(
                             dynamic_prefix="\n\n".join(_dynamic_prefix_parts)):
                         if isinstance(_ev, dict) and _ev.get("type") == "text":
                             _parts.append(_ev.get("text", ""))
-                    _r2 = "".join(_parts).strip()
-                    if _r2:
-                        import secrets as _sec
-                        from state_write_context import (ChatWriteContext,
-                            clear_context as _clr, set_context as _setc)
-                        _rc = ChatWriteContext(
-                            user_id=int(api_user.get("id")) if api_user else 0,
-                            save_id=ctx.early_active_save_id or 0,
-                            script_id=active_script_id(api_user),
-                            trace_id=f"gm-jsop-retry-{_sec.token_urlsafe(6)}",
-                            origin="llm_chat_json_op")
-                        _tok = _setc(_rc)
-                        try:
-                            _ru2 = state.apply_structured_updates(_r2)
-                        finally:
-                            _clr(_tok)
-                        _resp = _r2
-                        _upd = list(_upd) + ["[acceptance_retry]"] + list(_ru2 or [])
-                        unmet = verify_acceptance(_acc, _resp, _upd, mode=_amode, user_id=_auid)
-                        _events.append(("agent", {"phase": "acceptance_retry",
-                            "message": f"retry 完成 — 第二稿剩余 unmet {len(unmet)} 条",
-                            "status": "done", "elapsed_ms": 0, "unmet_after": unmet[:5]}))
+                    _r2_raw = "".join(_parts).strip()
+                    # 候选正文净化:与 persist_turn_phase 落库首稿同口径(剥 JSON ops / 工具预告 / 泄漏脚手架)。
+                    # 【不】apply 第二稿的 ops、【不】替换 canonical —— 只作为并排候选。
+                    _r2 = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(_r2_raw))).strip()
+                    _orig_clean = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(_resp))).strip()
+                    if _r2 and _r2 != _orig_clean:
+                        _alt_id = _log_acceptance_ab(
+                            _auid, ctx.early_active_save_id or ctx.active_save_id or 0,
+                            _turn_now, unmet[:5], _orig_clean, _r2)
+                        if _alt_id:
+                            rewrite_offered = True
+                            _ab_meta["last_offer_turn"] = _turn_now  # 节流仅在真正提供候选时消费
+                            _events.append(("acceptance_alt", {
+                                "alt_id": _alt_id, "turn": _turn_now,
+                                "rewrite": _r2, "unmet": unmet[:5]}))
+                            _events.append(("agent", {"phase": "acceptance_retry",
+                                "message": "改写候选已生成,等待玩家选择",
+                                "status": "done", "elapsed_ms": 0}))
                 except Exception as _re:
-                    log.warning(f"[acceptance] retry once failed: {_re}")
+                    log.warning(f"[acceptance] rewrite candidate failed: {_re}")
                     _events.append(("agent", {"phase": "acceptance_retry",
-                        "message": f"retry 跑挂(降级到只记 audit): {_re}",
+                        "message": f"改写候选生成失败(降级到只记 audit): {_re}",
                         "status": "warning", "elapsed_ms": 0}))
             if unmet:
                 from datetime import datetime as _dt
@@ -1374,13 +1409,14 @@ async def run_gm_phase(
                 for item in unmet[:5]:
                     audit.append({"ts": _dt.now().isoformat(timespec="seconds"),
                         "kind": "acceptance_unmet", "source": "curator:acceptance",
-                        "retry_used": retry_used, "hint": f"未通过验收：{item[:160]}",
-                        "turn": state.data.get("turn", 0)})
+                        "rewrite_offered": rewrite_offered, "hint": f"未通过验收：{item[:160]}",
+                        "turn": _turn_now})
                 if len(audit) > 200:
                     state.data["permissions"]["audit_log"] = audit[-200:]
                 _events.append(("agent", {"phase": "acceptance_check",
                     "message": (f"本轮 GM 输出有 {len(unmet)} 条 acceptance 未通过"
-                        + ("(retry 后仍存在,已记 audit_log)" if retry_used else "(retry 关闭,已记 audit_log)")),
+                        + ("(已生成改写候选供选择)" if rewrite_offered
+                           else "(本轮不提供候选:节流/关闭,已记 audit_log)")),
                     "status": "warning", "elapsed_ms": 0, "unmet": unmet[:5]}))
         except Exception as _acc_exc:
             log.warning(f"[acceptance] gate failed: {_acc_exc}")

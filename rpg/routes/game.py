@@ -985,3 +985,87 @@ async def api_message_edit(
         _log.exception("[message/edit] failed")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
     return JSONResponse({"ok": True})
+
+
+@router.post("/api/acceptance/choice", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
+async def api_acceptance_choice(
+    body: dict[str, Any],
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
+    """acceptance A/B 候选选择:玩家在「首稿 vs 改写稿」之间选一版。
+
+    body: {alt_id: int, choice: "original"|"rewrite", message_index?: int}
+    - 记录选择(chosen/chosen_at)供数据采集迭代 acceptance 算法。
+    - choice=="rewrite" 时把该轮 assistant 消息内容换成【服务端存的】rewrite_text(前端不回传正文,防注入);
+      定位复用 /api/message/edit 同款(按 message_index 定位 messages 表 + blob history)。
+    - save_id 一律用 log 行里的服务端值,不信任请求体。
+    """
+    if not api_user:
+        return JSONResponse({"ok": False, "error": "auth required"}, status_code=401)
+    alt_id = body.get("alt_id")
+    choice = (body.get("choice") or "").strip().lower()
+    msg_index = body.get("message_index")
+    if alt_id is None or choice not in ("original", "rewrite"):
+        return JSONResponse({"ok": False, "error": "alt_id 与 choice(original|rewrite) 必填"}, status_code=400)
+    try:
+        alt_id = int(alt_id)
+    except (TypeError, ValueError):
+        return JSONResponse({"ok": False, "error": "invalid alt_id"}, status_code=400)
+
+    from platform_app.db import connect
+    from platform_app.perms import owns_save
+    uid = int(api_user["id"])
+    swapped = False
+    try:
+        with connect() as db:
+            row = db.execute(
+                "select id, user_id, save_id, rewrite_text, chosen from acceptance_ab_log where id = %s",
+                (alt_id,),
+            ).fetchone()
+            if not row:
+                return JSONResponse({"ok": False, "error": f"acceptance 候选 {alt_id} 不存在"}, status_code=404)
+            # 归属校验:候选必须属于当前用户(IDOR 防护)。
+            if int(row["user_id"] or 0) != uid:
+                return JSONResponse({"ok": False, "error": "无权操作该候选"}, status_code=403)
+            save_id = int(row["save_id"] or 0)
+            rewrite_text = str(row["rewrite_text"] or "")
+            # 记录选择(幂等:重复点同一选择只更新时间戳)。
+            db.execute(
+                "update acceptance_ab_log set chosen = %s, chosen_at = now() where id = %s",
+                (choice, alt_id),
+            )
+            db.commit()
+
+            if choice == "rewrite" and rewrite_text and msg_index is not None:
+                try:
+                    mi = int(msg_index)
+                except (TypeError, ValueError):
+                    mi = -1
+                if mi >= 0 and save_id and owns_save(db, save_id, uid):
+                    rows = db.execute(
+                        "select id, role from messages where save_id = %s order by turn, id",
+                        (save_id,),
+                    ).fetchall()
+                    if 0 <= mi < len(rows) and (rows[mi]["role"] == "assistant"):
+                        db.execute(
+                            "update messages set content = %s where id = %s",
+                            (rewrite_text, rows[mi]["id"]),
+                        )
+                        db.commit()
+                        swapped = True
+        # 同步 blob history(与 /api/message/edit 同款;非 kb_native 直接读 blob)
+        if swapped:
+            try:
+                from app import _ensure_loaded
+                state = _ensure_loaded(api_user)
+                hist = state.data.get("history") or []
+                mi = int(msg_index)
+                if 0 <= mi < len(hist):
+                    hist[mi]["content"] = rewrite_text
+                    state.save()
+            except Exception:
+                pass
+    except Exception as e:
+        _log.exception("[acceptance/choice] failed")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    return JSONResponse({"ok": True, "choice": choice, "swapped": swapped})

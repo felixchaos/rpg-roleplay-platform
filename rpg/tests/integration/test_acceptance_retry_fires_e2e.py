@@ -1,13 +1,14 @@
-"""批次4 真机 e2e:async(生产默认)下 acceptance retry 真的会触发并落最终稿。
+"""acceptance A/B 真机 e2e:async(生产默认)下,首稿有 unmet + 节流放行时生成【改写候选】,
+但【首稿仍是权威版、不被替换】,候选以 acceptance_alt 事件下发前端供玩家选择。
 
-行者无疆流水线审计后 v1.32.9 把 verify+retry 抽成 _acceptance_gate 闭包,async 两处
-early-return 前用 to_thread 调它。本测试用【真实 chat 端点 + 真实 async 路径 + 真实
-rule 验收器】,只 stub 掉 curator(注入 acceptance 关键词)和 GM(第一稿不满足→触发
-retry→第二稿满足),确定性验证:
-  1. 回合 200、无 error(我的热路径改动没搞崩 turn loop)
-  2. GM 被调 2 次(retry 真的 fire 了)
-  3. 出现 acceptance_retry 事件
-  4. 最终落库的是第二稿(含关键词)
+改版背景:原「verify+retry 直接替换首稿」在生产流式路径暴露成客户可见的「正文流完 5-10 秒
+自己变一套」(行者无疆反馈)。现改为 A/B 用户裁决。本测试用【真实 chat 端点 + 真实 async
+路径 + 真实 rule 验收器】,只 stub curator(注入 acceptance 关键词)和 GM(首稿不满足→生成
+改写候选满足),确定性验证:
+  1. 回合 200、无 error(热路径没搞崩 turn loop)
+  2. GM 被调 2 次(首稿 + 改写候选)
+  3. 出现 acceptance_retry + acceptance_alt 事件(候选已生成、待玩家选)
+  4. 最终落库的是【首稿】(不含关键词)—— 候选不静默替换,除非玩家显式选择
 无外部 LLM 调用。
 """
 from __future__ import annotations
@@ -53,7 +54,7 @@ class AcceptanceRetryFiresE2E(unittest.TestCase):
                 buf.append(line[len("data:"):].strip())
         return events
 
-    def test_async_acceptance_retry_fires_and_applies_second_draft(self):
+    def test_async_acceptance_offers_ab_candidate_keeps_first_draft(self):
         import app as ui_mod
         import chat_pipeline as cp
 
@@ -115,16 +116,22 @@ class AcceptanceRetryFiresE2E(unittest.TestCase):
 
         ev_names = [e["event"] for e in events]
         self.assertNotIn("error", ev_names, events)
-        # 1. retry 真的 fire:GM 被调 2 次
-        self.assertEqual(calls["n"], 2, f"GM 调用次数={calls['n']},应为 2(retry 未触发?)")
-        # 2. 出现 acceptance_retry agent 事件
+        # 1. 改写候选真的生成:GM 被调 2 次(首稿 + 候选)
+        self.assertEqual(calls["n"], 2, f"GM 调用次数={calls['n']},应为 2(候选未生成?)")
+        # 2. 出现 acceptance_retry agent 事件 + acceptance_alt 候选事件
         agent_phases = [e["data"].get("phase") for e in events
                         if e["event"] == "agent" and isinstance(e["data"], dict)]
         self.assertIn("acceptance_retry", agent_phases, f"无 acceptance_retry 事件;phases={agent_phases}")
-        # 3. 最终 state 落的是第二稿(含红茶)
+        alt_events = [e for e in events if e["event"] == "acceptance_alt"]
+        self.assertTrue(alt_events, f"无 acceptance_alt 候选事件;events={ev_names}")
+        alt = alt_events[0]["data"]
+        self.assertIn("红茶", str(alt.get("rewrite", "")), "候选正文应含改写关键词")
+        self.assertTrue(alt.get("alt_id"), "候选应带 alt_id(已落 acceptance_ab_log)")
+        # 3. 最终 state 落的是【首稿】(不含红茶)—— 候选不静默替换首稿
         state = self.client.get("/api/v1/state", cookies=cookies).json()
         hist = json.dumps(state.get("history") or state, ensure_ascii=False)
-        self.assertIn("红茶", hist, "最终落库的不是 retry 第二稿")
+        self.assertNotIn("红茶", hist, "首稿被静默替换成候选了(应保留首稿,等玩家选)")
+        self.assertIn("坐了下来", hist, "最终落库的应是首稿正文")
 
 
 if __name__ == "__main__":

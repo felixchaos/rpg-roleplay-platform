@@ -45,6 +45,7 @@ import { FeedbackDrawerRoot } from '../components/FeedbackDrawer.jsx';
 import GlobalTaskFloater from '../components/GlobalTaskFloater.jsx';
 import ModelConfigInterceptModal, { capConfig } from '../components/ModelConfigInterceptModal.jsx';
 import DesktopDialogHost from '../components/DesktopDialogHost.jsx';
+import { AcceptanceAbPanel } from '../components/AcceptanceAbPanel.jsx';
 import { MobileDialogHost } from '../mobile/dialog.jsx';
 const SPLASH_VERSION = 'v1.0-2026-05-31';
 
@@ -385,6 +386,9 @@ function App() {
   const INITIAL_STATE = IS_ANON && window.MOCK_STATE ? structuredClone(window.MOCK_STATE) : structuredClone(EMPTY_STATE);
   const [game, setGame] = useState(INITIAL_STATE);
   const [history, setHistory] = useState(INITIAL_STATE.history || []);
+  // acceptance A/B 改写候选(后端 `acceptance_alt` 事件):{alt_id, turn, rewrite, unmet}。null=无待选候选。
+  const [rewriteAlt, setRewriteAlt] = useState(null);
+  const [abBusy, setAbBusy] = useState(false);
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [model, setModel] = useState(null);
@@ -805,6 +809,7 @@ function App() {
     const ts = (window.__fmt && window.__fmt.nowHHMM) ? window.__fmt.nowHHMM() : new Date().toLocaleTimeString().slice(0, 5);
     const sentAttachments = attachments;
     setHistory((h) => [...h, { role: 'user', content: playerText, ts, attachments: sentAttachments }]);
+    setRewriteAlt(null);  // 玩家继续 = 隐式保留当前版本(chosen 留 null,区分「主动选原版」vs「忽略」,亦是数据)
     setLastPlayerText(playerText);
     setSseLog([{ t: Date.now(), kind: 'send', payload: { message: playerText, model: model && model.id } }]);
     setText(''); setAttachments([]);
@@ -1003,6 +1008,19 @@ function App() {
             if (data.status === 'stopped') return { ...r, rawSteps, publicStage: null, label: t('game.console.run.stopped'), detail: '' };
             return { ...r, rawSteps, publicStage: nextStageId, label: nextLabel, detail: '' };
           });
+        },
+        on_acceptance_alt: (data) => {
+          if (!isCurrentRun()) return;
+          // 后端 acceptance 硬闸:首稿有验收点未覆盖且节流放行 → 额外生成一份改写候选(首稿不被替换)。
+          // 存起来,本轮 done 后在 gc-foot 处并排给玩家 A/B 选择。
+          logEvent('acceptance_alt', { alt_id: data && data.alt_id, unmet: (data && data.unmet && data.unmet.length) || 0 });
+          if (data && data.alt_id && String(data.rewrite || '').trim()) {
+            setRewriteAlt({
+              alt_id: data.alt_id, turn: data.turn,
+              rewrite: String(data.rewrite || ''),
+              unmet: Array.isArray(data.unmet) ? data.unmet : [],
+            });
+          }
         },
         on_rewind: (data) => {
           if (!isCurrentRun()) return;
@@ -1724,6 +1742,32 @@ function App() {
           )
         )}
         <div className="gc-foot-wrap">
+          {rewriteAlt && (() => {
+            let idx = -1;
+            for (let i = history.length - 1; i >= 0; i--) { if (history[i] && history[i].role === 'assistant') { idx = i; break; } }
+            const original = idx >= 0 ? String(history[idx].content || '') : '';
+            const doChoose = async (choice) => {
+              setAbBusy(true);
+              try {
+                if (choice === 'rewrite' && idx >= 0) {
+                  // 乐观替换本地气泡为改写稿(后端也会把该消息落库换成服务端存的改写稿)
+                  setHistory((h) => h.map((m, i) => (i === idx ? { ...m, content: rewriteAlt.rewrite } : m)));
+                }
+                await window.api.game.acceptanceChoice({ alt_id: rewriteAlt.alt_id, choice, message_index: idx });
+              } catch (e) {
+                window.__apiToast?.(t('game.console.acceptance_ab.save_failed', '选择保存失败'), { kind: 'warn', detail: e?.message });
+              } finally {
+                setAbBusy(false);
+                setRewriteAlt(null);
+              }
+            };
+            return (
+              <AcceptanceAbPanel
+                alt={rewriteAlt} original={original} busy={abBusy}
+                onChoose={doChoose} onDismiss={() => setRewriteAlt(null)}
+              />
+            );
+          })()}
           <ConfirmStrip pendingWrites={pendingWrites} pendingQuestions={pendingQuestions} onApprove={onApprove} onReject={onReject} onAnswer={onAnswerQuestion} onDismiss={onDismissConfirm}
             clicheNotice={clicheNotice}
             onRetryCliche={() => { setClicheNotice(null); onRetry(); }}

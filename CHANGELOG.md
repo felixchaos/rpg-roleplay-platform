@@ -9,6 +9,18 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.33.0] - 2026-07-02 (@ 2474a5fc9)
+
+acceptance 硬闸从「静默重写替换首稿」改造成「节流 + 双栏 A/B 玩家裁决 + 数据采集」。
+
+### Fixed
+- **正文流完后 5-10 秒被整段换成另一套文字**(行者无疆反馈,v1.32.9 批次4 起在生产暴露):acceptance 验收自检发现首稿有未覆盖的验收点时,会同步重跑一次 GM 重写整段,并**直接替换**首稿(response/state 都换成第二稿)。流式路径下前端在 `done` 时用服务端最终 history 覆盖流式气泡 → 客户看到「意思不变、文字全变」。根因:流式是对用户的承诺,已读正文不该被事后重写替换。现改为**首稿(玩家流式读到的)永远是权威版**,gate 不再 apply 第二稿 ops、不替换 canonical → 跳变在游戏台/酒馆/移动端一并消失。
+
+### Added
+- **acceptance 改写 A/B 玩家裁决**:首稿有 unmet 且**节流放行(每存档最多每 5 回合一次)**时,额外生成一份「改写候选」,以新 SSE 事件 `acceptance_alt` 下发前端,在气泡下方**双栏并排**展示「当前版本 / 改写版本」,玩家自己选。选改写才把该轮消息换成**服务端存的**改写稿(前端不回传正文,防注入)。
+- **数据采集层**(migration v91 `acceptance_ab_log`):每次提供候选落一行(unmet + 首稿 + 改写 + 玩家选择),用于统计玩家偏好、迭代 acceptance 算法。
+- 新端点 `POST /api/acceptance/choice`(记录选择 + 选改写时按 `message_index` 换消息,IDOR 归属校验,复用 `/api/message/edit` 落库路径)。
+
 ## [1.32.15] - 2026-07-01
 
 编辑器 AI 写作副驾审计修复 · 批次B。
