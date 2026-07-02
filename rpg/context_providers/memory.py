@@ -47,20 +47,22 @@ def _maybe_auto_archive(state, ms) -> None:
                 continue
             if item.get("archived"):
                 continue
-            # 玩家手记(notes)与固定记忆(pinned)永不自动归档:都是玩家手写的权威输入,
-            # pinned 更是玩家显式「固定」。自动归档会把它们从 bucket 移除 → MemoryProvider
-            # 读不到 → GM 不再看到玩家笔记/固定记忆(且面板也没了),正是「玩家笔记/固定记忆
-            # 几十回合后悄悄消失、GM 改用事实库过时数据」的根因。只归档自动累积的
-            # facts / abilities / resources。
-            if item.get("legacy_bucket") in ("notes", "pinned"):
+            # 永不自动归档的桶 = 角色卡式【持久状态】+ 玩家权威手写输入:
+            #   · notes(手记)/ pinned(固定记忆):玩家手写/显式固定的权威输入。
+            #   · abilities(能力)/ resources(资源/物品/货币):角色卡式持久状态 —— 角色不会
+            #     因为过了几十回合就「忘掉」一项能力或丢掉背包物品。手动添加的尤其荒谬
+            #     (行者无疆反馈「手动添加的能力随剧情推动消失、条目减少」的根因)。
+            # 只有 facts(叙事流水,高频累积、有上下文预算压力)才自动归档。
+            if item.get("legacy_bucket") in ("notes", "pinned", "abilities", "resources"):
                 continue
             item_turn = int(item.get("turn", 0))
             if item_turn < cutoff_turn and item.get("status") != "archived":
                 item["archived"] = True
                 changed = True
-        # 同步到 legacy buckets：从 facts / abilities / resources 移除已归档条目。
-        # **绝不碰 notes / pinned**(玩家权威手记);且这里按文本 set 比对,若把 notes/pinned
-        # 纳入,一条与某归档事实文本恰好相同的玩家笔记会被误删(文本碰撞)。
+        # 同步到 legacy buckets：仅从 facts 移除已归档条目。**绝不碰 notes/pinned/abilities/resources**
+        # (持久状态 + 玩家权威);且这里按文本 set 比对,若把它们纳入,一条与某归档事实文本恰好
+        # 相同的能力/资源/手记会被误删(文本碰撞)。上面的豁免已保证这些桶的 item 不会被标 archived,
+        # 此处仅剥 facts 是双保险。
         if changed:
             archived_texts = {
                 item["text"]
@@ -68,7 +70,7 @@ def _maybe_auto_archive(state, ms) -> None:
                 if isinstance(item, dict) and item.get("archived")
             }
             mem = data.get("memory") or {}
-            for bucket in ("facts", "abilities", "resources"):
+            for bucket in ("facts",):
                 bucket_list = mem.get(bucket)
                 if isinstance(bucket_list, list):
                     mem[bucket] = [t for t in bucket_list if t not in archived_texts]

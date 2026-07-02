@@ -9,6 +9,17 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.34.1] - 2026-07-02 (@ ae4521119)
+
+### Fixed
+- **手动添加的能力/资源随剧情推进消失、条目减少**(行者无疆反馈):`_maybe_auto_archive` 每
+  `summary_window`(默认 10)轮把 turn 早于 `current_turn - auto_archive_after_turns`(默认 50)的记忆条目标
+  archived 并**从 legacy bucket 移除**。v1.27.4 已豁免 notes/pinned,但 **abilities/resources 没豁免** →
+  角色能力/物品/货币是【角色卡式持久状态】(不该因回合数增长而静默消失,手动加的尤其荒谬),几十回合后被
+  自动归档移出 bucket → 面板条目减少、GM 也看不到。修:abilities/resources 与 notes/pinned 一同豁免自动
+  归档(bucket 剥离也只剩 facts);**只有 facts(叙事流水)才自动归档**。含复现测试(turn 60 归档窗口)+
+  真实 `GameState.add_memory` 写入路径回归。
+
 ## [1.34.0] - 2026-07-02 (@ 925f8bc38)
 
 acceptance A/B 二次迭代:选择持久化根修 + 用户级开关(行者无疆二次反馈 + 承诺)。
