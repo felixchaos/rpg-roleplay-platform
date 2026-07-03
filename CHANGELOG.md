@@ -10,6 +10,7 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 ## [Unreleased]
 
 ### Fixed
+- **acceptance A/B「改写」变成了续写下一段(行者无疆:当前版末尾『传来一声尖叫』、改写版开头顺着那声尖叫往下写)**:根因=改写候选用 `respond_stream_with_tools` 把改写指令追加到【当前 `state.history`】之上,而 Phase 5 `record_turn` 已把[玩家行动 + 首稿]写进历史 → 模型把改写指令当成**新回合**、续写首稿末尾,而不是重写本轮。修:改写候选改为【首稿时的历史快照 + 玩家行动 + 首稿作为「待改写对象」】**文本直调 backend**(新 `_rewrite_candidate_text`),指令明确「改写替换、不是续写」;async 后台任务在 `record_turn` **之前**快照历史再交出(运行时历史已被污染)。真库 e2e 断言:改写消息里首稿【不】作为 assistant 历史出现、只作为待改写对象在最后一条 user 指令内 + 指令含「不是续写」;acceptance 全套 72 passed。
 - **供应商 5xx / 网关宕机时错误文案含糊,被误当平台故障**(行者无疆报「生成失败(错误码 Ecxxxx)」,实为其中转站 `opencode.ai/zen` 返回 502 Bad Gateway / Cloudflare origin 过载):`classify_provider_error` 新增 `upstream` 类——HTTP 5xx 或 message 命中网关特征(cloudflare / bad gateway / service unavailable / origin_bad_gateway)时,给明确一句「你的模型服务暂时不可用(返回 5xx 网关错误,多为供应商/中转站过载或宕机),不是平台或存档的问题。请稍等重试或换个模型/供应商」。放在 4xx 各类之后,普通 400 / 未知仍走原兜底(不误吞)。单测覆盖 502/503/msg-only 命中 + 4xx 各类无回归。
 
 ### Added

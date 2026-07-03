@@ -1365,30 +1365,47 @@ async def run_gm_phase(
     #      回合本身立刻收尾。这也恢复了 W1 容量意图(回合 slot 不被第二次 LLM 占住)。
     #   ④ sync(测试/debug)路径保留内联,候选走 SSE 流事件(便于确定性测试)。
     #   逃生开关 RPG_ACCEPTANCE_RETRY=0 关掉候选生成。全程 try/except = 任何失败退回首稿。
-    async def _gen_candidate_bg(_resp_snapshot, _unmet, _turn_now, _save_id, _auid):
-        """后台改写候选:重跑 GM 拿第二稿(走 to_thread 不塞事件循环)→ 落 acceptance_ab_log →
-        emit `acceptance_alt` 推前端。绝不阻塞回合;失败只记日志。首稿永远权威,这里只产候选。"""
+    def _rewrite_candidate_text(_pre_hist, _player_action, _orig_clean, _unmet):
+        """产出改写候选【文本】(A/B 对比用;不落 ops —— 首稿永远权威)。
+
+        BUGFIX(行者无疆:『改写改到下一段去了』——原版末尾『传来一声尖叫』、改版开头顺着尖叫往下写):
+        旧实现用 respond_stream_with_tools 追加一条 user 消息到【当前】state.history 之上,而 Phase 5
+        record_turn 已把[玩家行动 + 首稿]写进 history → 模型把改写指令当成新回合、【续写】首稿末尾,
+        而不是重写本轮。根治:用【首稿生成时的历史快照】(_pre_hist,不含首稿)+ 把玩家行动与首稿一并
+        塞进【这一条改写指令】里,文本直调 backend,明确要求「改写替换、不是续写」。"""
+        _rw_user = (
+            (bundle.get("prompt") or "")
+            + "\n\n【系统:改写请求 —— 是改写替换,不是续写】\n"
+            + "下面给出玩家【本轮】的行动、以及你已经写好的【这一版】回应。请【重写这一版】,产出一个可以\n"
+            + "【整段替换】它的完整新版本:同样承接玩家这次的行动、停在同样的剧情位置与时间点,\n"
+            + "【不要接着往下写后续情节、不要顺着上一版的末尾继续】,只把漏掉的验收点自然地补进这一版里。\n\n"
+            + "【玩家本轮行动】\n" + (str(_player_action or "").strip() or "(见上文对话)") + "\n\n"
+            + "【你的上一版回应(待改写的对象)】\n" + (_orig_clean or "") + "\n\n"
+            + "【上一版漏掉的验收点】\n" + "\n".join(f"  - {x}" for x in (_unmet or [])[:5]) + "\n\n"
+            + "现在直接输出【改写后的完整正文】(整段替换上一版;不要解释、不要接着写之后发生的事):"
+        )
+        _msgs = list(_pre_hist or []) + [{"role": "user", "content": _rw_user}]
         try:
-            _retry_msg = ("【系统:本轮 acceptance 自检】上一稿正文没有覆盖到以下验收点:\n"
-                + "\n".join(f"  - {x}" for x in _unmet[:5])
-                + "\n请在保持原叙事走向不变的前提下,重写本轮回应,确保覆盖每一条验收点。"
-                  "如果某条确实不该满足(玩家行动本就不触发),也要在 JSON op 注明原因。")
+            gm._active_state = state  # _build_system 读它;文本直调不进工具循环、不改真状态
+        except Exception:
+            pass
+        _parts = []
+        for _chunk in gm._backend.stream(gm._build_system(), _msgs, max_tokens=_max_tokens):
+            _parts.append(_chunk)
+        return "".join(_parts).strip()
+
+    async def _gen_candidate_bg(_resp_snapshot, _unmet, _turn_now, _save_id, _auid, _pre_hist, _player_action):
+        """后台改写候选:文本直调 GM 拿第二稿(走 to_thread 不塞事件循环)→ 落 acceptance_ab_log →
+        emit `acceptance_alt` 推前端。绝不阻塞回合;失败只记日志。首稿永远权威,这里只产候选。
+        用【首稿时的历史快照 _pre_hist + 玩家行动】重建上下文,杜绝续写(见 _rewrite_candidate_text)。"""
+        try:
+            _orig_clean = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(_resp_snapshot))).strip()
 
             def _run_gm():
-                _parts = []
-                for _ev in gm.respond_stream_with_tools(
-                        _retry_msg, bundle["prompt"], state,
-                        tools=_gm_tools, max_iterations=max(4, _gm_max_iters() // 2),
-                        max_tokens=_max_tokens, tool_call_router=gm_tool_router,
-                        prompt_segments=bundle.get("prompt_segments"),
-                        dynamic_prefix="\n\n".join(_dynamic_prefix_parts)):
-                    if isinstance(_ev, dict) and _ev.get("type") == "text":
-                        _parts.append(_ev.get("text", ""))
-                return "".join(_parts).strip()
+                _raw = _rewrite_candidate_text(_pre_hist, _player_action, _orig_clean, _unmet)
+                return strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(_raw))).strip()
 
-            _r2_raw = await asyncio.to_thread(_run_gm)
-            _r2 = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(_r2_raw))).strip()
-            _orig_clean = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(_resp_snapshot))).strip()
+            _r2 = await asyncio.to_thread(_run_gm)
             if _r2 and _r2 != _orig_clean:
                 _alt_id = await asyncio.to_thread(
                     _log_acceptance_ab, _auid, _save_id, _turn_now, _unmet[:5], _orig_clean, _r2)
@@ -1424,23 +1441,12 @@ async def run_gm_phase(
                 rewrite_offered = True
                 _ab_meta["last_offer_turn"] = _turn_now  # 节流消费(自 Phase 5 落盘)
                 if inline:
-                    # sync/测试路径:内联重写,候选走 SSE 流事件。
+                    # sync/测试路径:内联重写,候选走 SSE 流事件。用当前历史快照(此刻尚未 record_turn)
+                    # + 玩家行动重建改写上下文,不再追加 user 消息到含首稿的历史之上(杜绝续写)。
                     try:
-                        _parts = []
-                        _retry_msg = ("【系统:本轮 acceptance 自检】上一稿正文没有覆盖到以下验收点:\n"
-                            + "\n".join(f"  - {x}" for x in unmet[:5])
-                            + "\n请在保持原叙事走向不变的前提下,重写本轮回应,确保覆盖每一条验收点。"
-                              "如果某条确实不该满足(玩家行动本就不触发),也要在 JSON op 注明原因。")
-                        for _ev in gm.respond_stream_with_tools(
-                                _retry_msg, bundle["prompt"], state,
-                                tools=_gm_tools, max_iterations=max(4, _gm_max_iters() // 2),
-                                max_tokens=_max_tokens, tool_call_router=gm_tool_router,
-                                prompt_segments=bundle.get("prompt_segments"),
-                                dynamic_prefix="\n\n".join(_dynamic_prefix_parts)):
-                            if isinstance(_ev, dict) and _ev.get("type") == "text":
-                                _parts.append(_ev.get("text", ""))
-                        _r2 = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops("".join(_parts).strip()))).strip()
                         _orig_clean = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(_resp))).strip()
+                        _r2 = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(
+                            _rewrite_candidate_text(list(state.history_messages()), ctx.message_for_model, _orig_clean, unmet)))).strip()
                         if _r2 and _r2 != _orig_clean:
                             _alt_id = _log_acceptance_ab(_auid, _save_id, _turn_now, unmet[:5], _orig_clean, _r2)
                             if _alt_id:
@@ -1450,9 +1456,12 @@ async def run_gm_phase(
                         log.warning(f"[acceptance] inline rewrite candidate failed: {_re}")
                 else:
                     # async 生产路径:改写丢后台,不阻塞回合;候选生成后 emit 推前端。
+                    # 此刻在 Phase 5 record_turn 之前,state.history 尚不含本轮[玩家行动+首稿] —— 快照它 +
+                    # 玩家行动一并交给后台任务重建改写上下文(后台任务运行时 history 已被 record_turn 污染)。
                     try:
                         _t = asyncio.get_running_loop().create_task(
-                            _gen_candidate_bg(_resp, list(unmet), _turn_now, _save_id, _auid))
+                            _gen_candidate_bg(_resp, list(unmet), _turn_now, _save_id, _auid,
+                                              list(state.history_messages()), ctx.message_for_model))
                         _ACCEPTANCE_BG_TASKS.add(_t)
                         _t.add_done_callback(_ACCEPTANCE_BG_TASKS.discard)
                     except Exception as _sp:

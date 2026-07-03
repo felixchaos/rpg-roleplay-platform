@@ -70,7 +70,8 @@ class AcceptanceRetryFiresE2E(unittest.TestCase):
         # 用模组 start 建立可玩 state(无需 reviewed 剧本)
         self.client.post("/api/v1/rules/module/start", json={"module_id": "ash_mine"}, cookies=cookies)
 
-        calls = {"n": 0}
+        calls = {"first": 0, "rewrite": 0}
+        captured = {"rewrite_msgs": None}
 
         class StubGM:
             api_id = "stub"
@@ -79,17 +80,23 @@ class AcceptanceRetryFiresE2E(unittest.TestCase):
                 model_name = "stub"
                 last_usage = {}
 
+                def stream(self, system, messages, max_tokens=800):
+                    # 改写候选走【文本直调 backend】(修复后:不再 respond_stream_with_tools 追加到实时历史)。
+                    calls["rewrite"] += 1
+                    captured["rewrite_msgs"] = messages
+                    yield "你走进房间，给自己泡了一杯红茶，慢慢啜饮。"  # 含「红茶」→ 满足
+
             _backend = Backend()
+
+            def _build_system(self, style_profile=None):
+                return "stub-system"
 
             def curate_context(self, *a, **k):
                 return ""
 
             def respond_stream_with_tools(self, *a, **k):
-                calls["n"] += 1
-                if calls["n"] == 1:
-                    yield {"type": "text", "text": "你走进房间，在椅子上坐了下来。"}  # 无「红茶」→ 不满足
-                else:
-                    yield {"type": "text", "text": "你走进房间，给自己泡了一杯红茶，慢慢啜饮。"}  # 满足
+                calls["first"] += 1  # 首稿走这里
+                yield {"type": "text", "text": "你走进房间，在椅子上坐了下来。"}  # 无「红茶」→ 不满足
 
         def fake_ca(*a, **k):
             yield {
@@ -119,14 +126,31 @@ class AcceptanceRetryFiresE2E(unittest.TestCase):
 
         ev_names = [e["event"] for e in events]
         self.assertNotIn("error", ev_names, events)
-        # 1. 改写候选真的生成:GM 被调 2 次(首稿 + 候选)
-        self.assertEqual(calls["n"], 2, f"GM 调用次数={calls['n']},应为 2(候选未生成?)")
+        # 1. 改写候选真的生成:首稿走 respond_stream_with_tools(1 次)、候选走 _backend.stream(1 次)
+        self.assertEqual(calls["first"], 1, f"首稿调用={calls['first']}")
+        self.assertEqual(calls["rewrite"], 1, f"改写候选调用={calls['rewrite']}(候选未生成?)")
         # 2. 出现 acceptance_alt 候选事件(sync/内联路径走 SSE 流)
         alt_events = [e for e in events if e["event"] == "acceptance_alt"]
         self.assertTrue(alt_events, f"无 acceptance_alt 候选事件;events={ev_names}")
         alt = alt_events[0]["data"]
         self.assertIn("红茶", str(alt.get("rewrite", "")), "候选正文应含改写关键词")
         self.assertTrue(alt.get("alt_id"), "候选应带 alt_id(已落 acceptance_ab_log)")
+        # ★ 核心回归防线(行者无疆:『改写改到下一段去了』——原版末尾一声尖叫、改版顺着往下写):
+        #   改写请求的消息里,首稿【绝不能】作为已提交的 assistant 历史消息出现(否则模型续写首稿末尾);
+        #   首稿只应作为『待改写对象』出现在最后一条 user 指令文本里,且指令明确『不是续写』。
+        msgs = captured["rewrite_msgs"]
+        self.assertIsNotNone(msgs, "未捕获改写候选消息")
+        _first_draft = "你走进房间，在椅子上坐了下来。"
+        _assistant = [m for m in msgs if isinstance(m, dict) and m.get("role") == "assistant"]
+        self.assertFalse(
+            any(_first_draft in str(m.get("content", "")) for m in _assistant),
+            "首稿作为 assistant 历史消息出现在改写上下文 → 模型会续写(正是该 bug)")
+        _last = msgs[-1]
+        self.assertEqual(_last.get("role"), "user", "改写指令应是最后一条 user 消息")
+        _last_txt = str(_last.get("content", ""))
+        self.assertIn(_first_draft, _last_txt, "首稿应作为『待改写对象』放进改写指令")
+        self.assertTrue(("不是续写" in _last_txt) or ("不要接着往下写" in _last_txt),
+                        "改写指令须明确『不是续写』")
         # 3. 最终 state 落的是【首稿】(不含红茶)—— 候选不静默替换首稿
         state = self.client.get("/api/v1/state", cookies=cookies).json()
         hist = json.dumps(state.get("history") or state, ensure_ascii=False)

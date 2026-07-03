@@ -44,10 +44,18 @@ def test_gate_throttles_by_min_interval():
     assert "last_offer_turn" in gate
 
 
-def test_rewrite_candidate_uses_same_toolset_as_first_pass():
-    """改写候选与首稿必须用同一工具集(_gm_tools),不能写死 unified_tools(slim 档不一致)。"""
+def test_rewrite_candidate_does_not_continue_from_first_draft():
+    """回归防线(行者无疆:『改写改到下一段去了』——原版末尾一声尖叫、改版顺着尖叫往下写):
+    改写候选绝不能把改写指令追加到【含首稿的实时 state.history】之上(Phase 5 record_turn 已把
+    [玩家行动+首稿]写进历史 → 模型把改写指令当新回合、续写首稿末尾)。必须用【首稿时的历史快照
+    + 玩家行动】文本直调 backend 重建上下文,并明确要求「改写替换、不是续写」。"""
+    # 改写候选走独立文本直调 helper,不再是 respond_stream_with_tools 追加到实时历史
+    helper = SRC.split("def _rewrite_candidate_text", 1)[1].split("async def _gen_candidate_bg", 1)[0]
+    assert "gm._backend.stream" in helper, "改写候选应文本直调 backend(不进工具循环、不追加到实时历史)"
+    assert "_pre_hist" in helper, "改写候选必须用首稿时的历史快照重建上下文"
+    assert ("不是续写" in helper) or ("不要接着往下写" in helper), "改写指令必须明确『不是续写』"
+    # 两处调用点都把【历史快照 + 玩家行动】传进去(而非让 GM 读被 record_turn 污染的实时历史)
     gate = _gate_body()
-    idx = gate.find("gm.respond_stream_with_tools")
-    assert idx > 0, "改写候选的 gm 调用不在 _acceptance_gate 闭包里"
-    window = gate[idx:idx + 400]
-    assert "tools=_gm_tools" in window
+    assert "list(state.history_messages())" in gate and "ctx.message_for_model" in gate
+    # 老 bug 契约:gate 内不再用 respond_stream_with_tools 生成改写(那正是续写的根因)
+    assert "gm.respond_stream_with_tools" not in gate, "改写候选不应再走会续写的 respond_stream_with_tools"

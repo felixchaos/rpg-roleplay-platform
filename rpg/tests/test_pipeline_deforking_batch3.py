@@ -40,14 +40,18 @@ def test_saves_rewind_uses_atomic_jsonb_set():
     assert "jsonb_set" in saves and "'{progress_chapter}'" in saves
 
 
-def test_acceptance_retry_uses_same_toolset_as_first_pass():
+def test_acceptance_rewrite_does_not_continue_first_draft():
+    """行者无疆(改写变续写)修复:改写候选不再走 respond_stream_with_tools 追加到实时历史(record_turn
+    后历史含首稿 → 模型续写),改为【首稿历史快照 + 玩家行动 + 首稿作为待改写对象】文本直调 backend,
+    并明确『不是续写』。此前『用同一工具集』的契约已过时(用同一调用路径正是续写根因)。"""
     cp = (REPO / "chat_pipeline.py").read_text(encoding="utf-8")
-    # retry 现抽进 _acceptance_gate 闭包:工具集必须 = 首稿(_gm_tools),不能写死 unified_tools
+    helper = cp.split("def _rewrite_candidate_text", 1)[1].split("async def _gen_candidate_bg", 1)[0]
+    assert "gm._backend.stream" in helper, "改写候选应文本直调 backend(不进工具循环、不追加实时历史)"
+    assert "_pre_hist" in helper, "改写候选须用首稿时的历史快照重建上下文"
+    assert ("不是续写" in helper) or ("不要接着往下写" in helper), "改写指令须明确『不是续写』"
     gate = cp.split("def _acceptance_gate", 1)[1].split("# ── W1 容量优化", 1)[0]
-    idx = gate.find("gm.respond_stream_with_tools")
-    assert idx > 0, "retry 的 gm 调用不在 _acceptance_gate 闭包里"
-    window = gate[idx:idx + 400]
-    assert "tools=_gm_tools" in window, "retry 仍用 unified_tools → slim 档工具集不一致"
+    assert "gm.respond_stream_with_tools" not in gate, "改写候选不应再走会续写的 respond_stream_with_tools"
+    assert "list(state.history_messages())" in gate and "ctx.message_for_model" in gate
 
 
 if __name__ == "__main__":
