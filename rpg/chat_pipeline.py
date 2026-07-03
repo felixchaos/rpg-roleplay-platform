@@ -1930,6 +1930,16 @@ async def persist_turn_phase(
         except Exception:
             pass
 
+    # 反馈#93:用户自定义输出正则(SillyTavern regex,输出/显示作用域)—— 对清洗后的可见正文做确定性
+    # find/replace。安全在 state.regex_scripts 内(每条脚本线程超时 + try/except,异常/超时跳过,绝不断轮)。
+    try:
+        from state.regex_scripts import apply_output_regex
+        _rx_uid = int(api_user.get("id")) if api_user and api_user.get("id") else 0
+        if _rx_uid:
+            visible_response = apply_output_regex(visible_response, _rx_uid)
+    except Exception:
+        pass
+
     # task 128: GM 返回空时不写 history (避免出现"GM 主代理"标题但内容空的诡异消息),
     # 改为 yield error 让用户清楚知道并能重试。常见原因:
     #   · LLM 触发 safety filter (Gemini 对暴力/儿童虐待场景敏感)

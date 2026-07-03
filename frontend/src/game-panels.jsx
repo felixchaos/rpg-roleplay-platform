@@ -621,6 +621,96 @@ export function WorldbookOverlaySection() {
   );
 }
 
+// 用户自定义输出正则(SillyTavern regex parity,反馈#93):对 AI 输出做确定性 find/replace。
+// v1 仅【输出/显示】作用域。数据自取 API(不在 state)。导出复用:酒馆抽屉 + 设置 + 移动,单一来源。
+export function RegexScriptsSection() {
+  const { t } = useTranslation();
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const blank = { name: '', find: '', replace: '', flags: '', enabled: true };
+  const [form, setForm] = useState(blank);
+
+  const load = React.useCallback(async () => {
+    try { const r = await window.api.regex.list(); setItems((r && r.scripts) || []); }
+    catch (_) { setItems([]); }
+    setLoading(false);
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+
+  const inputStyle = { width: '100%', padding: '5px 8px', fontSize: 12, background: 'var(--panel-2, rgba(255,255,255,0.04))', border: '1px solid var(--line-soft, rgba(255,255,255,0.12))', borderRadius: 6, color: 'inherit', font: 'inherit', boxSizing: 'border-box' };
+
+  const submit = async () => {
+    if (!form.find.trim()) { window.__apiToast?.(t('game.regex.need_find', { defaultValue: '匹配正则不能为空' }), { kind: 'warning' }); return; }
+    try {
+      const r = await window.api.regex.save({ name: form.name, find: form.find, replace: form.replace, flags: form.flags, enabled: form.enabled });
+      if (r && r.scripts) setItems(r.scripts);
+      setForm(blank); setAdding(false);
+      window.__apiToast?.(t('game.regex.saved', { defaultValue: '已保存正则脚本' }), { kind: 'ok' });
+    } catch (e) { window.__apiToast?.(t('game.regex.save_failed', { defaultValue: '保存失败（正则可能无效）' }), { kind: 'danger', detail: e?.message }); }
+  };
+  const remove = async (id) => {
+    if (!await window.__confirm({ message: t('game.regex.delete_confirm', { defaultValue: '删除该正则脚本？' }), danger: true })) return;
+    try { const r = await window.api.regex.remove({ id }); if (r && r.scripts) setItems(r.scripts); window.__apiToast?.(t('game.memory.deleted_ok'), { kind: 'ok' }); }
+    catch (e) { window.__apiToast?.(t('game.memory.action_failed'), { kind: 'danger', detail: e?.message }); }
+  };
+  const toggle = async (sc) => {
+    try { const r = await window.api.regex.save({ ...sc, enabled: !sc.enabled }); if (r && r.scripts) setItems(r.scripts); }
+    catch (e) { window.__apiToast?.(t('game.memory.action_failed'), { kind: 'danger', detail: e?.message }); }
+  };
+  const hasFlag = (c) => form.flags.includes(c);
+  const toggleFlag = (c) => setForm((f) => ({ ...f, flags: f.flags.includes(c) ? f.flags.replace(c, '') : f.flags + c }));
+
+  return (
+    <div className="gp-section">
+      <div className="section-head">
+        <h3>{t('game.regex.title', { defaultValue: '输出正则' })}
+          <span className="muted-2" style={{ marginLeft: 8, fontSize: 11, textTransform: 'none' }}>{t('game.regex.subtitle', { defaultValue: '对 AI 输出 find→replace（$1 捕获组）' })}</span>
+        </h3>
+        <button className="iconbtn" data-tip={t('game.regex.add_tip', { defaultValue: '新增正则' })} aria-label={t('game.regex.add_tip', { defaultValue: '新增正则' })}
+          onClick={() => setAdding((v) => !v)}>
+          {adding ? <Icon name="close" size={14} /> : <span style={{ fontSize: 15, lineHeight: 1, fontWeight: 600 }}>+</span>}
+        </button>
+      </div>
+      {adding ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+          <input style={inputStyle} placeholder={t('game.regex.ph_name', { defaultValue: '名称（可空）' })} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          <input style={{ ...inputStyle, fontFamily: 'var(--font-mono, monospace)' }} placeholder={t('game.regex.ph_find', { defaultValue: '匹配正则，如 \\*{2,}(.+?)\\*{2,}' })} value={form.find} onChange={(e) => setForm({ ...form, find: e.target.value })} />
+          <input style={{ ...inputStyle, fontFamily: 'var(--font-mono, monospace)' }} placeholder={t('game.regex.ph_replace', { defaultValue: '替换为，支持 $1 $& （留空=删除匹配）' })} value={form.replace} onChange={(e) => setForm({ ...form, replace: e.target.value })} />
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 12 }}>
+            {[['i', t('game.regex.flag_i', { defaultValue: '忽略大小写' })], ['m', t('game.regex.flag_m', { defaultValue: '多行' })], ['s', t('game.regex.flag_s', { defaultValue: '. 匹配换行' })]].map(([c, label]) => (
+              <label key={c} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                <input type="checkbox" checked={hasFlag(c)} onChange={() => toggleFlag(c)} /> {label}
+              </label>
+            ))}
+            <button className="btn" style={{ marginLeft: 'auto' }} onClick={submit}>{t('common.save', { defaultValue: '保存' })}</button>
+          </div>
+        </div>
+      ) : null}
+      {loading ? null : items.length ? (
+        <ul className="gp-flat-list">
+          {items.map((sc) => (
+            <li key={sc.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, opacity: sc.enabled === false ? 0.5 : 1 }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', paddingTop: 2, cursor: 'pointer' }} title={t('game.regex.toggle_tip', { defaultValue: '启用/停用' })}>
+                <input type="checkbox" checked={sc.enabled !== false} onChange={() => toggle(sc)} />
+              </label>
+              <span style={{ flex: 1 }}>
+                <span className="serif">{sc.name || sc.find}</span>
+                <span className="muted" style={{ display: 'block', fontSize: 11, marginTop: 2, fontFamily: 'var(--font-mono, monospace)', wordBreak: 'break-all' }}>/{sc.find}/{sc.flags} → {sc.replace || t('game.regex.delete_match', { defaultValue: '（删除）' })}</span>
+              </span>
+              <button className="iconbtn" data-tip={t('game.regex.delete_tip', { defaultValue: '删除' })} aria-label={t('game.regex.delete_tip', { defaultValue: '删除' })} onClick={() => remove(sc.id)}>
+                <Icon name="close" size={12} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted" style={{ fontSize: 12 }}>{t('game.regex.empty', { defaultValue: '暂无正则脚本。点右上「+」添加，对 AI 输出做替换（如把 **强调** 转成书名号）。' })}</p>
+      )}
+    </div>
+  );
+}
+
 function PanelMemory({ state, density }) {
   const { t } = useTranslation();
   const m = state.memory;

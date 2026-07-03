@@ -1008,6 +1008,13 @@
       overlayRemove: (body) => POST(`${API_PREFIX}/worldbook/overlay/remove`, body),
     },
 
+    // ---------- Regex scripts(用户自定义输出正则,SillyTavern parity 反馈#93)----------
+    regex: {
+      list: () => GET(`${API_PREFIX}/regex/scripts`),
+      save: (body) => POST(`${API_PREFIX}/regex/scripts`, body),
+      remove: (body) => POST(`${API_PREFIX}/regex/scripts/remove`, body),
+    },
+
     // ---------- Memories ----------
     memories: {
       list: (q) => GET(`${API_PREFIX}/memories`, q),
