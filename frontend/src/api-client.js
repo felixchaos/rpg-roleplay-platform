@@ -1001,6 +1001,13 @@
       remove: (body) => POST(`${API_PREFIX}/worldline/variable/remove`, body),
     },
 
+    // ---------- Worldbook overlay(存档级世界书 addition,前端管理入口 反馈#93)----------
+    worldbook: {
+      overlayList: () => GET(`${API_PREFIX}/worldbook/overlay`),
+      overlayAdd: (body) => POST(`${API_PREFIX}/worldbook/overlay`, body),
+      overlayRemove: (body) => POST(`${API_PREFIX}/worldbook/overlay/remove`, body),
+    },
+
     // ---------- Memories ----------
     memories: {
       list: (q) => GET(`${API_PREFIX}/memories`, q),

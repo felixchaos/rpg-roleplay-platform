@@ -23,6 +23,7 @@ import ConfirmDialog from './components/ConfirmDialog.jsx';
 import { useResizable } from './responsive.jsx';
 import { NarrativeBlock, PlayerBlock, GameToastStack, SaveImagesStrip, useSaveImages } from './game-app.jsx';
 import { Composer } from './game-composer.jsx';
+import { WorldbookOverlaySection } from './game-panels.jsx';
 import { TavernImportModal, CardSheet, CardEditFields, cardFormInit, cardFormPayload } from './pages/cards.jsx';
 import AvatarImg from './components/AvatarImg.jsx';
 import { useStickToBottom } from './hooks/useStickToBottom.js';
@@ -645,6 +646,9 @@ export function TwoCardDrawer({ open, character, persona, onClose, onSavePersona
         <button className={tab === 'system' ? 'active' : ''} onClick={() => setTab('system')}>
           <Icon name="settings" size={12} /> {t('tavern_app.drawer.tab_system')}
         </button>
+        <button className={tab === 'worldbook' ? 'active' : ''} onClick={() => setTab('worldbook')}>
+          <Icon name="world" size={12} /> {t('tavern_app.drawer.tab_worldbook', { defaultValue: '世界书' })}
+        </button>
       </div>
       <button className="iconbtn" onClick={onClose} data-tip={inline ? t('tavern_app.drawer.collapse') : t('common.close')} aria-label={inline ? t('tavern_app.drawer.collapse') : t('common.close')}>
         <Icon name={inline ? 'chevron_right' : 'close'} size={15} />
@@ -756,6 +760,9 @@ export function TwoCardDrawer({ open, character, persona, onClose, onSavePersona
             </>
           )}
         </div>
+      )}
+      {tab === 'worldbook' && (
+        <WorldbookOverlaySection />
       )}
       {pickRole && (
         <CardPickerSheet

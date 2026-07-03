@@ -9,7 +9,7 @@ import { Icon } from '../icons.jsx';
 import { lsGet } from '../../lib/storage.js';
 // /set 强制设定管理(列出 + 逐条删 + 清空)复用电脑端同一组件:单一来源(worldline.remove + 配对 pinned +
 // game-state-refresh),移动端 MobileGame 复用 game-console run-loop,故 __confirm/__apiToast/刷新事件都可用。
-import { ForcedSetSection } from '../../game-panels.jsx';
+import { ForcedSetSection, WorldbookOverlaySection } from '../../game-panels.jsx';
 
 export const MOBILE_PANEL_TABS = [
   { id: 'status', label: i18n.t('mobile.game_panels.tab.status'), icon: 'status' },
@@ -116,16 +116,21 @@ function WorldbookPanel({ s }) {
   const { t } = useTranslation();
   const wb = s.worldbook || s.world_book || (s.content_pack && s.content_pack.worldbook) || [];
   const entries = Array.isArray(wb) ? wb : (wb.entries || []);
-  if (!entries.length) return <Empty>{t('mobile.game_panels.worldbook.empty')}</Empty>;
   return (
-    <Sec title={t('mobile.game_panels.tab.worldbook')} count={entries.length}>
-      {entries.slice(0, 40).map((e, i) => (
-        <div key={i} className="mp-card">
-          <div className="mp-card-t">{e.key || e.title || e.name || (t('mobile.game_panels.worldbook.entry_fallback', { index: i }))}</div>
-          {(e.content || e.text) ? <div className="mp-card-b">{String(e.content || e.text).slice(0, 200)}</div> : null}
-        </div>
-      ))}
-    </Sec>
+    <>
+      {/* /set 同款:世界书 overlay 管理(复用电脑端组件,单一来源)。反馈#93 添加入口 */}
+      <WorldbookOverlaySection />
+      {entries.length ? (
+        <Sec title={t('mobile.game_panels.tab.worldbook')} count={entries.length}>
+          {entries.slice(0, 40).map((e, i) => (
+            <div key={i} className="mp-card">
+              <div className="mp-card-t">{e.key || e.title || e.name || (t('mobile.game_panels.worldbook.entry_fallback', { index: i }))}</div>
+              {(e.content || e.text) ? <div className="mp-card-b">{String(e.content || e.text).slice(0, 200)}</div> : null}
+            </div>
+          ))}
+        </Sec>
+      ) : <Empty>{t('mobile.game_panels.worldbook.empty')}</Empty>}
+    </>
   );
 }
 

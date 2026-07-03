@@ -9,6 +9,9 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+### Added
+- **酒馆世界书「添加入口」(反馈#93 之一)**:酒馆等无剧本存档的世界书全靠 `save_worldbook_overlays` 的 addition,此前只有 LLM/命令能加、前端无 UI 入口。新增 `/api/worldbook/overlay`(GET 列表全文 / POST 新增走既有 `worldbook_add` 工具 ui_button origin / POST remove 归属校验删 addition)+ 可复用组件 `WorldbookOverlaySection`(游戏台 PanelWorldbook + 酒馆抽屉新增「世界书」页签 + 移动世界书面板,单一来源)。真库 e2e:add→list→remove 全通。
+
 ### Fixed
 - **酒馆系统提示词无法保存(反馈#94)**:`POST /api/tavern/chats/{id}/system-prompt` 仅写 `game_saves.state_snapshot`,但主读源是 `runtime_checkouts.state_snapshot`(`load_active_state` 优先读它),且 kb_native 档经 `_kb_backed_state`→`materialize` 从 `kb_worldline_vars` 重建 `tavern` 覆盖该写 → 系统提示词保存后回退。**两处根因修复**(均沿用既有范式):①端点在本对话即活跃档时把 `system_prompt` 写进 working-tree state + `_persist_runtime_checkpoint`(runtime + `snapshot_hash` bump,跨 worker 失效),与 worldline 变量端点同款;②`_kb_backed_state` 对 `tavern` 子树做 blob 覆盖(同 `session_model`,out-of-turn 编辑不随回合 import 进 KB)。真库 e2e 往返验证(kb_native 档 set→reload 持久化 + 证伪旧路径);tavern/materialize/kb 测试 13 passed。
 ## [1.36.0] - 2026-07-02 (@ 81bb5f986)

@@ -465,6 +465,7 @@ from routes.skills import router as skills_router
 from routes.persona_skills import router as persona_skills_router
 from routes.tavern import router as tavern_router
 from routes.timeline import router as timeline_router
+from routes.worldbook_overlay import router as worldbook_overlay_router
 from routes.worldline import router as worldline_router
 
 app.include_router(game_router)
@@ -473,6 +474,7 @@ app.include_router(mcp_router)
 app.include_router(skills_router)
 app.include_router(persona_skills_router)
 app.include_router(worldline_router)
+app.include_router(worldbook_overlay_router)
 app.include_router(rules_router)
 app.include_router(timeline_router)
 app.include_router(console_assistant_router)
