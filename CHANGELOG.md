@@ -9,6 +9,8 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.37.0] - 2026-07-03 (@ 1d17112b0)
+
 ### Added
 - **正则脚本(SillyTavern regex parity,反馈#93 之三)**:全新用户自定义正则,对 **AI 输出**做确定性 find→replace(v1 仅输出/显示作用域;输入作用域与指令解析纠缠,留 v2,故 UI 不给假开关)。`/api/regex/scripts`(增删查,存 `user_preferences.regex_scripts`,服务端校验正则可编译)+ `state/regex_scripts.apply_output_regex`(chat_pipeline 清洗后应用)+ 可复用组件 `RegexScriptsSection`(酒馆抽屉新增「正则」页签)。替换串用 SillyTavern/JS 风格 `$1`/`$&`(手动展开,避 Python 反斜杠陷阱),flags 支持 i/m/s。**ReDoS 安全**:嵌套无界量词(如 `(a+)+`)启发式在**保存 + 应用**双端拒绝 + daemon 线程 wall-clock 超时(0.5s)兜底 + 输入长度上限,绝不断轮/不挂进程。真库 e2e:捕获组/删除/flags/停用/无效跳过/ReDoS 拦截 全通。
 - **酒馆世界书「添加入口」(反馈#93 之一)**:酒馆等无剧本存档的世界书全靠 `save_worldbook_overlays` 的 addition,此前只有 LLM/命令能加、前端无 UI 入口。新增 `/api/worldbook/overlay`(GET 列表全文 / POST 新增走既有 `worldbook_add` 工具 ui_button origin / POST remove 归属校验删 addition)+ 可复用组件 `WorldbookOverlaySection`(游戏台 PanelWorldbook + 酒馆抽屉新增「世界书」页签 + 移动世界书面板,单一来源)。真库 e2e:add→list→remove 全通。
