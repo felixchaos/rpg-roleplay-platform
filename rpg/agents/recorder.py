@@ -192,14 +192,6 @@ def _build_user_prompt(
         if chapter_map:
             lines.append("")
             lines.append("## 原著章节地图（任务 ANCHORS-B，current_chapter 只能从这些章号里选或 null）")
-            # 玩家为核心、原著为参照:玩家常是【自插入主角】,用自己的名字/视角跟着原著主角的剧情走。
-            # 让史官(LLM)用语义理解判「在围着原著主角转 vs 干原著之外的事」,别因人物名对不上就一律 null
-            # —— 实测:比对原著人物时结算回合判 null,改成语义判断后稳定判到正确章号(自插入卡章根因)。
-            lines.append("判 current_chapter 前先做语义判断:玩家往往是【自插入主角】——用自己的名字/视角,"
-                         "但可能正跟着原著某主角的剧情线走(原著主角的处境,玩家换个名字在演)。")
-            lines.append("· 若本回合玩家的处境/事件对应原著某主角正经历的剧情(哪怕人物名、细节不同)"
-                         "→ current_chapter=那一章号;**人物名不同绝不是答 null 的理由**。")
-            lines.append("· 若玩家确实脱离原著、在干原著里没有的自己的事 → current_chapter=null。")
             for c in chapter_map:
                 ch = c.get("chapter")
                 label = (c.get("story_time_label") or c.get("label") or "").strip().replace("\n", " ")
@@ -230,6 +222,19 @@ def _build_user_prompt(
         lines.append("## 待判定 acceptance 条款（任务 ACCEPTANCE）")
         for i, cond in enumerate(acceptance_clauses, start=1):
             lines.append(f"{i}. {str(cond).strip()}")
+
+    # 【估章语义判断——必须放在所有材料之后、紧邻输出前】实测便宜模型对提示位置极敏感:同一框架
+    # 放章节地图中间 → 结算回合判 None(被其后的原著章概要"带回"表面人物比对);放到正文之后末尾
+    # → 稳定判到正确章号(A/B 实测 mid=[None,None,None] vs end=[17,17,16])。玩家为核心:让史官
+    # 用语义理解判「在围着原著主角转 vs 干原著之外的事」,别因人物名对不上就一律 null(自插入卡章根因)。
+    if "anchors" in tasks and chapter_map:
+        lines.append("")
+        lines.append("## 判 current_chapter 前必读(玩家为核心)")
+        lines.append("玩家往往是【自插入主角】——用自己的名字/视角,但可能正跟着原著某主角的剧情线走"
+                     "(原著主角的处境,玩家换个名字在演)。用你最擅长的语义理解:")
+        lines.append("· 本回合玩家的处境/事件,若对应原著某主角正经历的剧情(哪怕人物名、细节不同)"
+                     "→ current_chapter=那一章号;**人物名不同绝不是答 null 的理由**。")
+        lines.append("· 若玩家确实脱离原著、在干原著里没有的自己的事 → current_chapter=null。")
 
     return "\n".join(lines)
 
