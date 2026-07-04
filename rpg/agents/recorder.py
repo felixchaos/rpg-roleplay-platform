@@ -591,6 +591,20 @@ def record_turn(
         log.debug("[recorder] 结果解析失败，返回空: %s", exc)
         return _empty_result()
 
+    # 史官判定可观测:此前 progress_motion/reached 是黑盒,排查「进度不动是判断错误还是本就无节点」
+    # 只能翻 DB。一行 INFO 记下本回合史官到底判了什么 —— motion=0/None 一眼可辨(0=判定无推进、
+    # None=模型没吐该字段=结构化返回没生效)。
+    try:
+        _reached = [r.get("anchor_key") for r in (result.get("reached") or [])]
+        log.info(
+            "[recorder] uid=%s %s·%s → motion=%s reached=%s current_ch=%s ops=%d unmet=%d",
+            user_id, api_id, model, result.get("progress_motion"),
+            _reached or "[]", result.get("current_chapter"),
+            len(result.get("ops") or []), len(result.get("unmet") or []),
+        )
+    except Exception:
+        pass
+
     return result
 
 
