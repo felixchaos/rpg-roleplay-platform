@@ -588,6 +588,8 @@
       "title": "供应商凭证（BYOK）",
       "description": "API key 加密存储在用户凭证表中，不在 catalog 明文保存。base_url 支持中转站覆盖。",
       "configured": "已配置",
+      "deprecated_geo_title": "Google AI Studio 已下架 —— 请改用 Agent Platform",
+      "deprecated_geo_desc": "Google 从 2026-07-04 起封禁了本服务器所在地区/机房 IP(返回「User location is not supported」),AI Studio 的免费接口在本服务器已连不通 —— 与你的 API key、base_url 都无关。请改用下方的「Agent Platform (Service Account)」= Vertex AI:它用服务账号鉴权、面向服务器,不受此封,实测可正常列出 Gemini 模型。步骤:Google Cloud 建项目并启用 Vertex AI API → 建服务账号(角色 Vertex AI User)→ 下载 JSON → 传到下方 Agent Platform。",
       "select_json": "选择 JSON 文件",
       "save_cred": "保存凭证",
       "save_cred_ok": "Agent Platform 凭证已保存",

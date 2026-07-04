@@ -161,10 +161,11 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
             "id": "google_ai_studio",
             "display_name": "Google AI Studio (Gemini)",
             "kind": "openai_compat",
-            # enabled=True:策展必备 provider。选择器还有 credApiIds 凭据闸,故只有配了 Google key 的
-            # 用户才看得到它 —— 之前 seed 成 False 时,用户配了 key 也被 a.enabled 闸隐藏、选不到自己同步的
-            # 56 个 Gemini 模型(反馈 #86「model 被强制选预设第一个、不能选」)。
-            "enabled": True,
+            # enabled=False + 归入 _DEPRECATED_APIS:AI Studio(免费档)从 2026-07-04 起把服务器机房
+            # IP 整段封禁(返 "User location is not supported"),这台服务器上根本连不通(实测有效 key
+            # 也撞墙)。故默认候选下架,Gemini 统一走 Agent Platform / Vertex(服务账号,不吃此封)。
+            # 保留条目(find_api 不返 None、存量凭据不硬崩),但强制 disabled、不进选择器/添加候选。
+            "enabled": False,
             "credential_env": "GOOGLE_API_KEY",
             # Gemini 的 OpenAI 兼容端点在 /v1beta/openai —— base_url 只到
             # generativelanguage.googleapis.com 时,SDK 拼成 .../chat/completions 会 404
@@ -177,7 +178,13 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
 
 # 这些 provider 必须存在于 catalog(整条 api)——持久化 catalog 可能在新增它们之前存的,
 # 缺了会导致选择器里没有、GM 调用降级失败(用户实测 Google AI Studio「找不到」)。
+# google_ai_studio 仍需【存在】(find_api 不返 None、存量凭据/模型解析不硬崩),但已归入
+# _DEPRECATED_APIS 强制 disabled(地区封禁不可用,统一走 Vertex)。
 _CURATED_REQUIRED_APIS = {"google_ai_studio"}
+
+# 已下架 provider:仍保留在 catalog 里(向后兼容),但无论持久化 catalog 存成什么,serve 时
+# 强制 enabled=False —— 不进模型选择器、不进添加候选。google_ai_studio 因 Google 封机房 IP 下架。
+_DEPRECATED_APIS = {"google_ai_studio"}
 
 
 def _ensure_curated_embeddings(catalog: dict[str, Any]) -> dict[str, Any]:
@@ -223,10 +230,14 @@ def _ensure_curated_apis(catalog: dict[str, Any]) -> dict[str, Any]:
             if nid not in by_id:
                 catalog.setdefault("apis", []).append(copy.deepcopy(d))
             else:
-                # 自愈:历史持久化 catalog(DB)可能把策展必备 provider 存成 enabled=False(google_ai_studio
-                # 旧 seed)→ 用户配了 key 也被选择器 a.enabled 闸隐藏、选不到自己的模型(反馈 #86)。
-                # 策展必备 provider 在 serve 时强制可见(凭据闸仍只让 key-havers 看到),不落库。
-                by_id[nid]["enabled"] = True
+                # 自愈:历史持久化 catalog(DB)可能把 provider 存成与预期相反的 enabled。serve 时强制
+                # 对齐(不落库):_DEPRECATED_APIS 强制 False(下架、地区封禁不可用),其余策展必备强制
+                # True(凭据闸仍只让 key-havers 看到,反馈 #86)。
+                by_id[nid]["enabled"] = (nid not in _DEPRECATED_APIS)
+        # 已下架但不在 _CURATED_REQUIRED_APIS 的(未来扩展):存在即强制 disabled。
+        for nid in _DEPRECATED_APIS:
+            if nid in by_id:
+                by_id[nid]["enabled"] = False
     except Exception:
         pass
     return catalog

@@ -1834,6 +1834,11 @@ const PROVIDERS_CONFIG = [
     // Gemini 的 OpenAI 兼容端点在 /v1beta/openai;少了这段路径会 404「找不到」。
     defaultBase: "https://generativelanguage.googleapis.com/v1beta/openai",
     keyEnv: "GOOGLE_API_KEY",
+    // 下架:Google 从 2026-07-04 起封禁本服务器机房 IP(User location is not supported),
+    // AI Studio 连不通。从默认候选(添加下拉 + provider 卡片)移除;仅存量已配置用户仍见其卡片
+    // (带下架提示,引导改用 Agent Platform)。Gemini 统一走 Vertex。
+    hidden_in_edit_modal: true,
+    deprecated: true,
   },
   {
     id: "AgentPlatform", name: "Agent Platform (Service Account)", kind: "native",
@@ -1952,7 +1957,7 @@ function ProviderConfigSection() {
       data-cap-anchor="settings.providers"
     >
       <CSSpaceBetween size="m">
-        {PROVIDERS_CONFIG.map(p => {
+        {PROVIDERS_CONFIG.filter(p => !p.deprecated || creds[p.id]?.has_key).map(p => {
           const cred = creds[p.id] || {};
           const isSaving = !!saving[p.id];
           return (
@@ -2082,6 +2087,11 @@ function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPla
   return (
     <CSContainer>
       <CSSpaceBetween size="s">
+        {p.deprecated && (
+          <CSAlert key="deprecated" type="warning" header={t('settings.providers.deprecated_geo_title')}>
+            {t('settings.providers.deprecated_geo_desc')}
+          </CSAlert>
+        )}
         <CSSpaceBetween key="hdr" direction="horizontal" size="xs" alignItems="center">
           <div>
             <CSBox fontWeight="bold">{p.name}</CSBox>

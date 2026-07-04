@@ -497,6 +497,8 @@
       "title": "Provider Credentials (BYOK)",
       "description": "API keys are encrypted in the user credentials table; not stored in plaintext in the catalog. base_url supports relay/proxy override.",
       "configured": "Configured",
+      "deprecated_geo_title": "Google AI Studio is retired — switch to Agent Platform",
+      "deprecated_geo_desc": "As of 2026-07-04 Google blocks this server's region / datacenter IP (returns \"User location is not supported\"), so the free AI Studio endpoint no longer connects from this server — this is unrelated to your API key or base_url. Use \"Agent Platform (Service Account)\" = Vertex AI below instead: it authenticates via a service account, is built for servers, and is unaffected by this block (verified to list Gemini models). Steps: create a Google Cloud project and enable the Vertex AI API → create a service account (role: Vertex AI User) → download its JSON → upload it to Agent Platform below.",
       "select_json": "Select JSON file",
       "save_cred": "Save Credentials",
       "save_cred_ok": "Agent Platform credentials saved",
