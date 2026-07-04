@@ -683,9 +683,15 @@ def _reconcile_impl(
     win = get_progress_window(save_id)
     ch_min = win.get("chapter_min")
     ch_max = win.get("chapter_max")
-    # Q 锚点限速:收窄标记候选窗口,远未来锚点(玩家在 ch1 时的 ch11 锚点)不进候选,防误判跳章。
+    # 候选窗口放宽到 lookahead:让【快进/自插入玩家】正在跨的远章锚点也能进候选、被史官看到
+    # (原 _MARK_WINDOW=4 窄窗把它们挡在门外 → 快进玩家在 ch16、候选只到 ch11 → 他正跨的锚点
+    #  永远标不上、进度只能靠 pace 慢爬 = 行者无疆卡章的结构性一环)。
+    # 防跳章不再靠"不给史官看",而靠【标记接受上界 _mark_ceiling = 史官对本回合玩家位置的语义
+    # 估计 current_chapter】(见下方):史官说玩家在 ch16、才允许标到 ch16;它没估出来(便宜模型常
+    # 返 null)就退回窄窗 ch_min+_MARK_WINDOW —— 保守、与旧版逐字等价、不跳章。marks 恒在候选窗内
+    # (win_by_key),故最坏跳章上限 = +_LOOKAHEAD_CAP/回合,与估章 clamp 同界。
     if _anchor_pace(user_id) and ch_min is not None:
-        ch_max = int(ch_min) + _MARK_WINDOW
+        ch_max = int(ch_min) + _LOOKAHEAD_CAP
     pending = list_pending_for_phase(
         save_id, None,
         limit=_MAX_PENDING_PER_TURN,
@@ -747,6 +753,18 @@ def _reconcile_impl(
         reached, estimated_chapter = _normalize_judge_result(raw)
         progress_motion = _motion_from_raw(raw)
 
+    # 标记接受上界(防跳章):史官对本回合玩家位置的语义估计 current_chapter 优先 —— 它说玩家在
+    # 第几章,就只允许标到第几章(+1 容差);史官没估出来(便宜模型常 null)则退回窄窗 ch_min+_MARK_WINDOW
+    # (保守、与旧版逐字等价)。宽候选窗口负责【让快进玩家的真锚点能被看到】,这个上界负责【拒绝超出
+    # 玩家实际位置的远章误标】——该标的标得上,不该标的挡得住。marks 恒在候选窗内,故上界天然 ≤ ch_min+_LOOKAHEAD_CAP。
+    _cmin = int(ch_min) if ch_min is not None else 1
+    _est_ok = estimated_chapter is not None and int(estimated_chapter) >= _cmin
+    _mark_ceiling = (int(estimated_chapter) + 1) if _est_ok else (_cmin + _MARK_WINDOW)
+
+    def _anchor_src_chapter(k: str) -> int | None:
+        _p = (k or "").split(":")
+        return int(_p[1]) if len(_p) > 1 and _p[1].isdigit() else None
+
     # 只保留窗口内、合法 anchor_key 的命中(防判定器越界到远未来/编造 key)。去重。
     seen: set[str] = set()
     valid_hits: list[dict[str, Any]] = []
@@ -760,6 +778,9 @@ def _reconcile_impl(
         key = (h.get("anchor_key") or "").strip()
         if not key or key in seen or key not in win_by_key:
             continue
+        _kch = _anchor_src_chapter(key)
+        if _kch is not None and _kch > _mark_ceiling:
+            continue  # 防跳章:锚点原著章 > 玩家实际位置上界(史官估章 / 无估章退窄窗)→ 拒绝远章误标
         seen.add(key)
         try:
             drift = float(h.get("drift_score"))
@@ -774,6 +795,9 @@ def _reconcile_impl(
     if len(valid_hits) < _MAX_MARK_PER_TURN:
         for h in _deterministic_intro_hits(save_id, pending, text):
             k = (h.get("anchor_key") or "").strip()
+            _kc = _anchor_src_chapter(k)
+            if _kc is not None and _kc > _mark_ceiling:
+                continue  # 防跳章:确定性 intro 兜底也受同一位置上界约束(宽候选窗后尤其必要)
             if k and k in win_by_key and k not in seen:
                 seen.add(k)
                 valid_hits.append({"anchor_key": k, "drift_score": 0.0})

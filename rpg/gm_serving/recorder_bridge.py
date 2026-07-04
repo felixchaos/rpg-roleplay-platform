@@ -133,12 +133,13 @@ def _build_anchor_inputs(
     ch_min = win.get("chapter_min")
     ch_max = win.get("chapter_max")
 
-    # anchor_pace:与 _reconcile_impl 一致收窄候选窗口到 [ch_min, ch_min+_MARK_WINDOW],
-    # 否则备料喂给 LLM 的 pending 含远章锚点 → 误判到达 → 进度跳(本函数原漏了这步收窄)。
+    # anchor_pace:与 _reconcile_impl 一致的候选窗口 [ch_min, ch_min+_LOOKAHEAD_CAP]。放宽到 lookahead
+    # (不再 _MARK_WINDOW=4 窄窗)——让快进/自插入玩家正在跨的远章锚点也进候选、被史官看到;防跳章
+    # 交给 _reconcile_impl 的【标记接受上界=史官估章】(remote 远章误标在那里被拒),两处窗口必须同宽。
     from core.feature_flags import feature_enabled_for_save
-    from gm_serving.anchor_reconcile import _MARK_WINDOW
+    from gm_serving.anchor_reconcile import _LOOKAHEAD_CAP
     if feature_enabled_for_save("anchor_pace", int(save_id)) and ch_min is not None:
-        ch_max = int(ch_min) + _MARK_WINDOW
+        ch_max = int(ch_min) + _LOOKAHEAD_CAP
 
     # 窗口内 pending 锚点(与 _reconcile_impl 完全一致)
     pending_raw = list_pending_for_phase(
