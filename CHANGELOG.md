@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.51.1] - 2026-07-06
+
+### Fixed
+- **情景召回排序**:多语料合并单一排序,弱相关事件不再压掉对话历史里的真实答案(修角色回忆时编造细节)。
+
+
 ## [1.51.0] - 2026-07-06
 
 ### Added
