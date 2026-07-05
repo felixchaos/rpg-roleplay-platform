@@ -457,6 +457,28 @@ def execute_tool(state: Any, name: str, args: dict) -> str:
                 return "set_world_time 失败: target 为空"
             old = state.data.get("world", {}).get("time", "")
             state.update_time(target, source="user_set")
+            # 时间连续性护栏 v0:天数倒退检测(检测→surface,不拦截;解析不出天数即休眠)。
+            try:
+                from state.time_ops import detect_day_regression
+                _regress = detect_day_regression(old, target)
+            except Exception:
+                _regress = None
+            if _regress:
+                try:
+                    from datetime import datetime as _dt
+                    _audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                    _audit.append({
+                        "ts": _dt.now().isoformat(timespec="seconds"),
+                        "kind": "time_day_regression",
+                        "source": "time_continuity_guard",
+                        "turn": int(state.data.get("turn") or 0),
+                        "from": old, "to": target,
+                        "hint": _regress,
+                    })
+                    state.data["permissions"]["audit_log"] = _audit[-200:]
+                except Exception:
+                    pass
+                return f"时间线 → {target} (原: {old}) ⚠ {_regress}"
             return f"时间线 → {target} (原: {old})"
         if name == "set_player_location":
             loc = (args.get("location") or "").strip()

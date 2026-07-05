@@ -107,3 +107,72 @@ def _phase_for_time(time_desc: str) -> str:
     → "柏林暗流篇"),完全无法泛化到别的剧本。已删。
     """
     return "玩家分支"
+
+
+# ── 时间连续性护栏 v0(天数倒退检测)─────────────────────────────────────
+# 哲学同星期验错器(a80ef39d8):确定性检测→surface 提示,不拦截不改写;标签里
+# 解析不出「第N天」就休眠(玄幻/无天数计法的存档零副作用)。
+
+_DAY_NUM_RE = None  # 惰性编译
+
+_CJK_DIGITS = {"零": 0, "一": 1, "两": 2, "二": 2, "三": 3, "四": 4,
+               "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def _cjk_to_int(s: str) -> int | None:
+    """常见中文数字→int(支持到 999:三/十/二十三/一百零五/首)。解析不出返 None。"""
+    s = (s or "").strip()
+    if not s:
+        return None
+    if s.isdigit():
+        try:
+            return int(s)
+        except ValueError:
+            return None
+    total = 0
+    section = 0
+    num = 0
+    for ch in s:
+        if ch in _CJK_DIGITS:
+            num = _CJK_DIGITS[ch]
+        elif ch == "十":
+            section += (num if num else 1) * 10
+            num = 0
+        elif ch == "百":
+            section += (num if num else 1) * 100
+            num = 0
+        else:
+            return None
+    total = section + num
+    return total if total > 0 or s == "零" else None
+
+
+def _day_number(label: str) -> int | None:
+    """从时间标签抽「第N天」的 N。抽不出(无天数计法)返 None=护栏休眠。"""
+    global _DAY_NUM_RE
+    import re as _re
+    if _DAY_NUM_RE is None:
+        _DAY_NUM_RE = _re.compile(r"第([0-9零一两二三四五六七八九十百]+)天")
+    m = _DAY_NUM_RE.search(label or "")
+    if not m:
+        return None
+    return _cjk_to_int(m.group(1))
+
+
+def detect_day_regression(old_label: str, new_label: str) -> str | None:
+    """新时间标签的天数计数比旧的小 → 返回警示文案;否则 None。
+
+    只在新旧标签【都】带可解析的「第N天」时才判(缺任一侧=休眠,零误伤);
+    倒退是强信号(梦境/回忆通常不重置天数计法,生产 t18「第四天·入夜⟶梦境」
+    后仍是「第五天」)。文案不拦截:有意的设定回调(玩家 /set 改写)可忽略。
+    """
+    old_day = _day_number(old_label or "")
+    new_day = _day_number(new_label or "")
+    if old_day is None or new_day is None:
+        return None
+    if new_day < old_day:
+        return (
+            f"时间疑似倒退(第{old_day}天 → 第{new_day}天)。"
+            "若非玩家有意的设定回调,建议 /retry 或用 /set 纠正时间线。"
+        )
+    return None
