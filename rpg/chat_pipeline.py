@@ -1236,8 +1236,12 @@ async def run_gm_phase(
     # response 累积不受影响(史官/落库/acceptance 仍读完整文本)。
     _fence_guard = StreamFenceGuard()
 
-    async for event in _bridge_sync_generator_to_async(
-        lambda: gm.respond_stream_with_tools(
+    # 流式重试(韧性战役):首个已提交事件(正文token/工具调用)之前的 upstream/ratelimit
+    # 失败自动重建重放(≤2次退避),之后的失败保持原错误路径(partial 保留,防工具双重副作用)。
+    from agents.gm.stream_retry import stream_with_pretoken_retry as _st_retry
+
+    def _gm_stream_factory():
+        return gm.respond_stream_with_tools(
             message_for_model, bundle["prompt"], state,
             tools=_gm_tools, max_iterations=_gm_max_iters(),
             max_tokens=_max_tokens,
@@ -1245,7 +1249,10 @@ async def run_gm_phase(
             stop_event=_gm_stop,
             prompt_segments=bundle.get("prompt_segments"),
             dynamic_prefix="\n\n".join(_dynamic_prefix_parts),
-        ),
+        )
+
+    async for event in _bridge_sync_generator_to_async(
+        lambda: _st_retry(_gm_stream_factory, stop_event=_gm_stop),
         stop_event=_gm_stop,
     ):
         if stop_event.is_set() or run_id != current_run_id_fn(api_user) or is_stop_requested_global(api_user, run_id):
@@ -1289,6 +1296,16 @@ async def run_gm_phase(
             _fence_fw = _fence_guard.feed(chunk)
             if _fence_fw:
                 yield ("token", {"text": _fence_fw})
+        elif etype == "retry_notice":
+            # 流式重试包装器发出:上游拥堵自动重试中,给玩家可见进度别干等。
+            yield ("agent", {
+                "phase": "gm_retry",
+                "message": (
+                    f"模型服务暂时不可用({event.get('category', 'upstream')}),"
+                    f"正在自动重试 {event.get('attempt')}/{event.get('max_retries')}…"
+                ),
+                "status": "running", "elapsed_ms": 0,
+            })
         elif etype == "reasoning":
             # #7 reasoning 流式: 思考过程单独走 reasoning 事件 — 不进 token(叙事)、不累加进
             # response。但**累积进 _turn_reasoning** → record_turn 落到 assistant 历史消息,

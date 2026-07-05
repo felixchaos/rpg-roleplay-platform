@@ -318,9 +318,19 @@ async def api_opening(
             # 「裸转发 + 落库前清洗」,半截 ```json 会漏给玩家。text 累积不受影响。
             from state import StreamFenceGuard
             _fence_guard = StreamFenceGuard()
+            # 流式重试(与 chat 主循环同一包装器):首个非空 chunk 之前的 upstream/
+            # ratelimit 失败静默重试(裸字符串流,不发 notice 事件防混入正文)。
+            from agents.gm.stream_retry import opening_chunk_commits, stream_with_pretoken_retry
+
+            def _opening_factory():
+                return gm.generate_opening_stream(state, retrieved_context=bundle["prompt"], stop_event=_opening_stop,
+                                                  prompt=_open_prompt, max_tokens=_open_tokens)
+
             async for chunk in _bridge_sync_generator_to_async(
-                lambda: gm.generate_opening_stream(state, retrieved_context=bundle["prompt"], stop_event=_opening_stop,
-                                                   prompt=_open_prompt, max_tokens=_open_tokens),
+                lambda: stream_with_pretoken_retry(
+                    _opening_factory, is_commit=opening_chunk_commits,
+                    emit_retry_notice=False, stop_event=_opening_stop,
+                ),
                 stop_event=_opening_stop,
             ):
                 text += chunk
