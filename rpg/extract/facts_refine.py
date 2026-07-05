@@ -133,6 +133,10 @@ def refine_script(script_id: int, user_id: int, *, ch_from: int = 1, ch_to: int 
             with connect() as db:
                 refined = refine_chapter(db, script_id, ch, user_id, rapi, rmodel)
                 if not refined:
+                    # 验收拒(便宜模型偶发照抄原文被拒)重试一次;仍拒才跳过,
+                    # 该章保留确定性占位(句边界截断版),不算失败。
+                    refined = refine_chapter(db, script_id, ch, user_id, rapi, rmodel)
+                if not refined:
                     skipped += 1
                     continue
                 if apply:
