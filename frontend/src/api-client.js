@@ -100,10 +100,24 @@
     }
     const isJson = (res.headers.get("content-type") || "").indexOf("application/json") >= 0;
     let payload = null;
+    let jsonParseFailed = false;
     if (isJson) {
-      try { payload = await res.json(); } catch (_) { payload = null; }
+      // 先读文本再手动 parse:空体(如无内容 2xx)合法置 null;非空却 parse 失败要能
+      // 区分出来 —— 不能像旧代码那样 catch→null 静默吞,否则 2xx 畸形 JSON(如响应含
+      // 裸控制字符)会让调用方拿到 null 误判"成功却没数据"(建档成功却报错的根因)。
+      const raw = await res.text();
+      if (raw.trim() !== "") {
+        try { payload = JSON.parse(raw); }
+        catch (_) { jsonParseFailed = true; payload = null; }
+      }
     } else {
       payload = await res.text();
+    }
+    // 2xx 但声称 JSON 的响应解析失败 = 服务端返回了畸形 JSON。抛可见错误,绝不静默吞成
+    // null(错误响应 !res.ok 的畸形 JSON 走下方降级处理,那里有 statusText/HTTP 码兜底)。
+    if (res.ok && jsonParseFailed) {
+      throw new ApiError("bad_json", res.status,
+        "服务器返回了无法解析的响应(可能含非法字符),请重试;若反复出现请联系管理员。", { url });
     }
     if (!res.ok) {
       // payload.detail 可能是 FastAPI 422 的对象数组 [{loc,msg,type},…] 或任意对象;直接塞进
