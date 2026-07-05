@@ -144,13 +144,22 @@ def retrieve_episodic(
     try:
         from kb.live_repo import _ANCESTRY
         from platform_app.db import connect, init_db
-        from platform_app.knowledge.embedding import embed_query
         init_db()
+        # 正确性门:本存档一条嵌入事件都没有(生产常态,全库覆盖 0.65%)→ 嵌入查询向量
+        # 毫无意义,跳过 embed_query —— 否则每回合白挨最多两次注定失败的 HTTP(用户
+        # embedder+admin fallback 皆 400)拖慢回合。有嵌入才值得付这次调用。
+        with connect() as db:
+            _has_vec = db.execute(
+                "select 1 from kb_events where save_id=%s and embedding_vec is not null limit 1",
+                (int(save_id),),
+            ).fetchone()
         qv = None
-        try:
-            qv = embed_query(query_text, user_id)
-        except Exception:
-            qv = None
+        if _has_vec:
+            try:
+                from platform_app.knowledge.embedding import embed_query
+                qv = embed_query(query_text, user_id)
+            except Exception:
+                qv = None
         if qv:
             sql = _ANCESTRY + """
             select logical_key, summary, story_time, location, participants,
