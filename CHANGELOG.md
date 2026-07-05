@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.45.0] - 2026-07-05
+
+### Added
+- **断线打断即落库**:手机切后台/信号抖动导致 SSE 断连时,已生成的半截剧情落库保留(标注「网络中断,已保留部分内容」),重连后不再整回合作废重新生成;顺带修复错误事件的 partial 恒空问题。
+
+
 ## [1.44.0] - 2026-07-05
 
 ### Added
