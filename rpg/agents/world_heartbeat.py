@@ -292,10 +292,10 @@ def run_heartbeat_tick(
         try:
             api_id, model = _resolve_recorder_api_and_model(user_id, api_id_override, model_override)
         except Exception as exc:
-            log.debug("[world_heartbeat] 模型解析失败,跳过: %s", exc)
+            log.info("[world_heartbeat] 模型解析失败,跳过: %s", exc)
             return []
         if not api_id or not model:
-            log.debug("[world_heartbeat] 无可用 api_id/model,跳过")
+            log.info("[world_heartbeat] 无可用 api_id/model,跳过")
             return []
 
         materials = _build_materials(state_data, pending_anchors)
@@ -315,13 +315,13 @@ def run_heartbeat_tick(
                 agent_kind="world_heartbeat",
             )
         except Exception as exc:
-            log.debug("[world_heartbeat] LLM 调用失败,跳过: %s", exc)
+            log.info("[world_heartbeat] LLM 调用失败,跳过: %s", exc)
             return []
 
         from core.json_parse import parse_llm_json
         raw_items = parse_llm_json(text, want=list)
         if raw_items is None:
-            log.debug("[world_heartbeat] 输出不是合法 JSON 数组,跳过")
+            log.info("[world_heartbeat] 输出不是合法 JSON 数组,跳过(raw前120字: %r)", (text or "")[:120])
             return []
 
         turn = int(state_data.get("turn", 0) or 0)
@@ -332,6 +332,7 @@ def run_heartbeat_tick(
 
         player_name = str((state_data.get("player") or {}).get("name", "") or "")
         accepted = _validate_items(raw_items, state_data=state_data, player_name=player_name)
+        log.info("[world_heartbeat] tick@turn=%s raw=%d accepted=%d", turn, len(raw_items), len(accepted))
         if not accepted:
             return []
 
@@ -353,9 +354,11 @@ def run_heartbeat_tick(
             events.append(entry)
             written.append(text_item)
 
+        if written:
+            log.info("[world_heartbeat] tick@turn=%s 写入 %d 条世界事件", turn, len(written))
         return written
     except Exception as exc:
-        log.debug("[world_heartbeat] tick 异常,静默跳过: %s", exc)
+        log.warning("[world_heartbeat] tick 异常,跳过(不破回合): %s", exc, exc_info=True)
         return []
 
 
