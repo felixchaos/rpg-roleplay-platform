@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.48.0] - 2026-07-05
+
+### Added
+- **world_key 批次3b-1 LLM 窄确认层(默认关)**:多世界书(无限流/穿越)结构先验切不出世界时,可选 admin 触发的 LLM 确认(读章节摘要检测世界边界,必须举证),BYOK 计费;默认关,不影响现有回填。
+
+
 ## [1.47.3] - 2026-07-05
 
 ### Fixed
