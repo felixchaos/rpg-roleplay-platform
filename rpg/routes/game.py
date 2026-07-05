@@ -863,13 +863,18 @@ async def api_chat(
         # schema-echo 截停)结束时前端都能收到一个 done。否则 Composer 的 streaming 旗标永不清,
         # 圆环/思考流也因 applyState 不跑而出不来。done 走 _sse 前缀 "event: done\n" 可靠识别。
         _done_seen = False
+        _disconnected = False
         try:
             async for _chunk in stream():
                 if isinstance(_chunk, str) and _chunk.startswith("event: done\n"):
                     _done_seen = True
                 yield _chunk
+        except GeneratorExit:
+            # 客户端断开 → 不能在 finally 里再 yield(否则 "generator ignored GeneratorExit")
+            _disconnected = True
+            raise
         finally:
-            if not _done_seen:
+            if not _done_seen and not _disconnected:
                 try:
                     yield _sse("done", {"status": _payload_sse(api_user), "interrupted": True})
                 except Exception:
