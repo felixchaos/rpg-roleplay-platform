@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.38.0] - 2026-07-05
+
+### Added
+- **Vertex SA 前置校验(新手引导头号坑收口)**:新用户默认模型是需上传 SA JSON 的 Agent Platform(Vertex),此前选模型/建存档全程零校验、发第一条消息才报「未找到 Service Account」。现在 POST /api/models/select 与 POST /api/saves(按 _ensure_loaded 同优先级链解析实际 api_id)在生产鉴权模式下命中 vertex_ai 且无 SA 即 400 + needs_model_config + 引导文案;本地模式/解析失败保守放行,admin 豁免(同 _redact_catalog 约定)。AgentModelPicker 的 models_select 错误不再静默吞。
+
+
 ## [1.37.1] - 2026-07-05 (@ 90fefef83)
 
 ### Fixed
