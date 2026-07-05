@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.50.0] - 2026-07-06
+
+### Added
+- **永恒记忆·情景召回全量可用**:玩家提起很久之前的人物/物品/约定时,GM 现在能从全程游戏历史确定性召回相关往事(不再局限最近几轮对话)——无需配置 embedding,所有用户可用;配置了 embedding 的走语义召回且不再注入不相关内容。
+
+
 ## [1.49.1] - 2026-07-05
 
 ### Fixed
