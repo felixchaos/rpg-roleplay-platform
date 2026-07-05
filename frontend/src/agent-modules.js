@@ -88,6 +88,7 @@ export const FEATURES = [
   { key: "consequence_ledger", group: "world", i18nKey: "consequence_ledger" }, // 后果账本(承诺到期回响)
   { key: "world_heartbeat",    group: "world", i18nKey: "world_heartbeat" },   // 世界心跳(玩家不在场时的世界侧小事)
   { key: "channel_fallback",  group: "world", i18nKey: "channel_fallback" },  // 跨渠道自动备援(主渠道故障切备用凭据)
+  { key: "npc_agenda",        group: "world", i18nKey: "npc_agenda" },        // NPC 议程(当下活跃 NPC 的意图/态度)
 ];
 
 /** prefPrefix → 模块(供 CAP_CONFIG 等子集投影派生 capabilityFilter)。 */

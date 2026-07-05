@@ -104,3 +104,41 @@ def test_recorder_user_prompt_lists_pending_ledger():
     assert "严禁重复登记" in p_on and "答应雷纳德查兽伤" in p_on and "已兑现的旧事" not in p_on
     p_off = _build_user_prompt("正文", sd, frozenset({"ops"}), None, None, None, consequence_enabled=False)
     assert "严禁重复登记" not in p_off
+
+
+# ── NPC 议程 parity 守卫(柱子3,consequence 同款铁律)────────────────────
+
+def test_recorder_agenda_parity():
+    p_on = _build_system_prompt(_OPS_TASKS, agenda_enabled=True)
+    s_on = _build_tool_schema(_OPS_TASKS, None, agenda_enabled=True)
+    assert "agenda" in _schema_op_enum(s_on)
+    props_on = _schema_item_props(s_on)
+    assert "goal" in props_on and "stance" in props_on and "name" in props_on
+    assert "NPC 议程" in p_on
+
+    p_off = _build_system_prompt(_OPS_TASKS, agenda_enabled=False)
+    s_off = _build_tool_schema(_OPS_TASKS, None, agenda_enabled=False)
+    assert "agenda" not in _schema_op_enum(s_off)
+    assert "NPC 议程更新" not in p_off
+
+
+def test_recorder_user_prompt_lists_current_agendas():
+    from agents.recorder import _build_user_prompt
+    sd = {
+        "player": {}, "world": {}, "memory": {}, "relationships": {},
+        "npc_agendas": {"雷纳德": {"goal": "查兽伤", "stance": "信任", "updated_turn": 5}},
+    }
+    p_on = _build_user_prompt("正文", sd, frozenset({"ops"}), None, None, None, agenda_enabled=True)
+    assert "NPC 议程·当前值" in p_on and "雷纳德" in p_on
+    p_off = _build_user_prompt("正文", sd, frozenset({"ops"}), None, None, None, agenda_enabled=False)
+    assert "NPC 议程·当前值" not in p_off
+
+
+def test_gm_agenda_guide_follows_flag(monkeypatch):
+    import agents.gm.master as master
+    import core.feature_flags as ff
+
+    monkeypatch.setattr(ff, "feature_enabled", lambda key, uid=None: key == "npc_agenda")
+    assert "agenda" in master._agenda_guide_block(1)
+    monkeypatch.setattr(ff, "feature_enabled", lambda key, uid=None: False)
+    assert master._agenda_guide_block(1) == ""

@@ -351,6 +351,10 @@
       "channel_fallback": {
         "label": "Channel fallback",
         "desc": "When the primary model channel keeps failing, automatically switch to another channel you configured to finish the turn (with a clear notice)."
+      },
+      "npc_agenda": {
+        "label": "NPC agendas",
+        "desc": "Every currently active NPC carries an evolving agenda (what they want right now / how they feel about the player), visible to the GM and continuous across turns — so NPCs stop being scenery."
       }
     },
     "memory": {

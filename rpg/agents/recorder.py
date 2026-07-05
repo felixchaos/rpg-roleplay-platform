@@ -90,6 +90,18 @@ _SYSTEM_OPS_CONSEQUENCE = """\
 - due_turns 建议 2-8(近期回响),重大伏笔可 10-15;due_location 填地点关键词,玩家到达含该词的地点时到期。
 """
 
+# NPC 议程 v0(feature_enabled("npc_agenda") 时启用,docs/design/npc_agenda_v0.md)。
+# 同 consequence:史官是权威 ops 通道,议程必须由史官提取。
+_SYSTEM_OPS_AGENDA = """\
+【任务 OPS · 附加 — NPC 议程更新(agenda)】
+本回合某 NPC 的言行【透露了新的意图/目标,或对玩家的态度发生变化】时,输出 agenda op:
+- 形态:{"op":"agenda","name":"雷纳德","goal":"查清东林兽伤真相,保住猎场","stance":"信任但保留观察"}
+- goal 写【角色自己想要的】(不是玩家的任务);stance 写对玩家的当下态度;各 ≤60 字;
+  goal/stance 至少给一个,只写变化的那个(部分更新,另一项会保留)。
+- 只更新本回合真的透露了新信息的 NPC,每轮最多 2 条;没有变化就一条都不输出。
+- name 必须是已出场角色(关系表/在场名单里有的),绝不发明新名字。
+"""
+
 _SYSTEM_ANCHORS = """\
 【任务 ANCHORS — 世界线锚点判定 · 极度保守，宁漏勿误】
 读本回合 GM 叙事，完成：
@@ -133,13 +145,16 @@ _SYSTEM_OUTPUT_FORMAT = """\
 """
 
 
-def _build_system_prompt(tasks: frozenset[str], consequence_enabled: bool = False) -> str:
+def _build_system_prompt(tasks: frozenset[str], consequence_enabled: bool = False,
+                         agenda_enabled: bool = False) -> str:
     """根据启用的任务集合组装 system prompt。"""
     parts = [_SYSTEM_OUTPUT_HEADER.strip()]
     if "ops" in tasks:
         parts.append(_SYSTEM_OPS.strip())
         if consequence_enabled:
             parts.append(_SYSTEM_OPS_CONSEQUENCE.strip())
+        if agenda_enabled:
+            parts.append(_SYSTEM_OPS_AGENDA.strip())
     if "anchors" in tasks:
         parts.append(_SYSTEM_ANCHORS.strip())
     if "acceptance" in tasks:
@@ -148,10 +163,13 @@ def _build_system_prompt(tasks: frozenset[str], consequence_enabled: bool = Fals
     # 输出格式说明
     schema_fields: list[str] = []
     if "ops" in tasks:
+        _kinds = "set|append|overwrite|question"
         if consequence_enabled:
-            schema_fields.append('"ops": [{"op":"set|append|overwrite|question|consequence","path":"player.xxx","value":"...","due_turns":4}]')
-        else:
-            schema_fields.append('"ops": [{"op":"set|append|overwrite|question","path":"player.xxx","value":"..."}]')
+            _kinds += "|consequence"
+        if agenda_enabled:
+            _kinds += "|agenda"
+        _extra = ',"due_turns":4' if consequence_enabled else ""
+        schema_fields.append('"ops": [{"op":"%s","path":"player.xxx","value":"..."%s}]' % (_kinds, _extra))
     if "anchors" in tasks:
         schema_fields.append('"reached": [{"anchor_key":"<来自列表>","drift_score":0.0}]')
         schema_fields.append('"current_chapter": <章号整数 或 null>')
@@ -174,6 +192,7 @@ def _build_user_prompt(
     chapter_map: list[dict] | None,
     acceptance_clauses: list[str] | None,
     consequence_enabled: bool = False,
+    agenda_enabled: bool = False,
 ) -> str:
     """组装 user message：state 快照 + GM 正文 + 各任务附加材料。"""
     lines: list[str] = []
@@ -192,6 +211,21 @@ def _build_user_prompt(
         if _pending_cq:
             lines.append("## 后果账本·已登记未到期（严禁重复登记,包括换措辞描述同一件事）")
             lines.extend(f"- {t}" for t in _pending_cq)
+            lines.append("")
+
+    # NPC 议程:现有议程喂给史官,只在真变化时更新(防换措辞重登,consequence 同教训)。
+    if agenda_enabled:
+        try:
+            _ag = state_data.get("npc_agendas") or {}
+            _ag_lines = [
+                f"- {n}: 目标={v.get('goal','')} / 态度={v.get('stance','')}"
+                for n, v in list(_ag.items())[:12] if isinstance(v, dict)
+            ]
+        except Exception:
+            _ag_lines = []
+        if _ag_lines:
+            lines.append("## NPC 议程·当前值(只在本回合透露新信息时才输出 agenda op,不要复读)")
+            lines.extend(_ag_lines)
             lines.append("")
 
     # 状态快照（始终附带，ops 任务需要；其它任务只读正文但一并提供）
@@ -281,7 +315,8 @@ def _build_user_prompt(
 # ── merged tool schema（Anthropic native tool_use）──────────────────
 
 def _build_tool_schema(tasks: frozenset[str], acceptance_clauses: list[str] | None,
-                       consequence_enabled: bool = False) -> dict:
+                       consequence_enabled: bool = False,
+                       agenda_enabled: bool = False) -> dict:
     """构造合并后的 emit_record 工具 schema，只包含已启用任务对应的字段。
 
     consequence_enabled 必须与 _build_system_prompt 同源传入 —— 三通道(anthropic/vertex/
@@ -317,6 +352,20 @@ def _build_tool_schema(tasks: frozenset[str], acceptance_clauses: list[str] | No
             _op_item_props["due_location"] = {
                 "type": "string",
                 "description": "op=consequence:玩家到达含该关键词的地点时到期",
+            }
+        if agenda_enabled:
+            _op_enum.append("agenda")
+            _op_item_props["name"] = {
+                "type": "string",
+                "description": "op=agenda:NPC 名(必须是已出场角色)",
+            }
+            _op_item_props["goal"] = {
+                "type": "string",
+                "description": "op=agenda:该角色当下想要什么(≤60字,可省)",
+            }
+            _op_item_props["stance"] = {
+                "type": "string",
+                "description": "op=agenda:对玩家的当下态度(≤60字,可省)",
             }
         properties["ops"] = {
             "type": "array",
@@ -621,15 +670,23 @@ def record_turn(
         _consequence_on = "ops" in active_tasks and _feat("consequence_ledger", user_id)
     except Exception:
         _consequence_on = False
+    try:
+        from core.feature_flags import feature_enabled as _feat_a
+        _agenda_on = "ops" in active_tasks and _feat_a("npc_agenda", user_id)
+    except Exception:
+        _agenda_on = False
 
-    system_prompt = _build_system_prompt(active_tasks, consequence_enabled=_consequence_on)
+    system_prompt = _build_system_prompt(active_tasks, consequence_enabled=_consequence_on,
+                                         agenda_enabled=_agenda_on)
     user_prompt = _build_user_prompt(
         gm_prose, state_data, active_tasks,
         pending_anchors, chapter_map, acceptance_clauses,
         consequence_enabled=_consequence_on,
+        agenda_enabled=_agenda_on,
     )
     tool_schema = _build_tool_schema(active_tasks, acceptance_clauses,
-                                     consequence_enabled=_consequence_on)
+                                     consequence_enabled=_consequence_on,
+                                     agenda_enabled=_agenda_on)
 
     # 三通道 dispatch（优先 native tool_use / function calling）
     try:

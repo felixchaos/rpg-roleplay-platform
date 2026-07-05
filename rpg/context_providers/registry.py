@@ -63,6 +63,8 @@ DEFAULT_NOVEL_MANIFEST: dict = {
         "consequence_echo",
         # 世界心跳 v0: 玩家不在场时的世界侧小事回响(feature gate 内部关闭,默认零输出)
         "world_pulse",
+        # NPC 议程 v0: 当下活跃 NPC 的意图/态度(feature gate 内部关闭,默认零输出)
+        "npc_agenda",
     ],
     "retrieval_policy": {
         "allow_script_retrieval": True,
@@ -117,6 +119,8 @@ DEFAULT_FREEFORM_MANIFEST: dict = {
         "consequence_echo",
         # 世界心跳 v0: 玩家不在场时的世界侧小事回响(feature gate 内部关闭,默认零输出)
         "world_pulse",
+        # NPC 议程 v0: 当下活跃 NPC 的意图/态度(feature gate 内部关闭,默认零输出)
+        "npc_agenda",
     ],
     "retrieval_policy": {
         "allow_script_retrieval": False,

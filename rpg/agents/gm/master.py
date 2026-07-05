@@ -272,6 +272,30 @@ _CONSEQUENCE_GUIDE = """
 """
 
 
+# ── NPC 议程指引(feature_enabled("npc_agenda") 时由 _build_system 追加)──────
+_AGENDA_GUIDE = """
+
+# NPC 议程(角色的当下意图)
+上下文可能出现【NPC 议程】段(每个活跃 NPC 当下想要什么/对玩家什么态度)。铁律:
+- NPC 的言行必须与其议程一致:有自己的目标,不是玩家的应声虫;议程与玩家冲突时演出张力。
+- 本回合 NPC 透露了新意图/态度变化时,在 JSON fence 里更新:
+  {"op": "agenda", "name": "雷纳德", "goal": "查清东林兽伤真相", "stance": "信任但保留观察"}
+  (goal/stance 至少一个,只写变化的;每轮最多 2 条;name 必须是已出场角色。)
+- 议程是幕后状态,不要在正文里复述清单。
+"""
+
+
+def _agenda_guide_block(user_id) -> str:
+    """flag 开启时返回 NPC 议程指引块,关闭/异常返回空串。"""
+    try:
+        from core.feature_flags import feature_enabled
+        if feature_enabled("npc_agenda", user_id):
+            return _AGENDA_GUIDE
+    except Exception:
+        pass
+    return ""
+
+
 def _consequence_guide_block(user_id) -> str:
     """flag 开启时返回后果账本指引块,关闭/异常返回空串(零行为漂移)。"""
     try:
@@ -501,7 +525,8 @@ class GameMaster:
             _SYSTEM_BASE
             .replace("{world_section}", world_section)
             .replace("{style_block}", style_block)
-        ) + _consequence_guide_block(getattr(self, "user_id", None))
+        ) + _consequence_guide_block(getattr(self, "user_id", None)) \
+          + _agenda_guide_block(getattr(self, "user_id", None))
 
     def _active_script_id(self) -> int | None:
         """解出当前 active script_id,用于剧本级 gm_style 解析。无 → None。

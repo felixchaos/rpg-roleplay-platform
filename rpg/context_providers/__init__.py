@@ -14,6 +14,7 @@ from . import consequence_echo as _consequence_echo  # noqa: F401
 from . import memory as _memory  # noqa: F401
 from . import module as _module  # noqa: F401
 from . import novel as _novel  # noqa: F401
+from . import npc_agenda as _npc_agenda  # noqa: F401
 from . import recent_chat as _recent_chat  # noqa: F401
 from . import rules as _rules  # noqa: F401
 

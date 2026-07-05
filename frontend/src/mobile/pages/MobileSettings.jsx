@@ -574,6 +574,7 @@ const _FEAT_LABEL_DEF = {
   ctx_tiered: '分层上下文缓存', recorder_unified: '史官三合一', narrator_slim: '文宗精简(去工具循环)',
   rag_gate: 'RAG 检索闸', anchor_pace: '世界线锚点节奏', kb_state: '存档知识库 DB 化',
   consequence_ledger: '后果账本', world_heartbeat: '世界心跳', channel_fallback: '跨渠道自动备援',
+  npc_agenda: 'NPC 议程',
 };
 const _FEAT_DESC_DEF = {
   ctx_tiered: '分层稳定前缀,命中前缀缓存,显著省 token。',
@@ -585,6 +586,7 @@ const _FEAT_DESC_DEF = {
   consequence_ledger: '承诺/欠债到期或抵达指定地点时,提醒 GM 主动兑现。',
   world_heartbeat: '每隔几回合生成不在场处的世界小事,之后以传闻方式浮现。',
   channel_fallback: '主渠道持续故障时自动切换你配置的其他渠道(明确提示)。',
+  npc_agenda: 'NPC 带持续演化的议程(想要什么/对玩家什么态度),跨回合连续。',
 };
 function FeatureToggleM({ featureKey, i18nKey, initial }) {
   const { t } = useTranslation();

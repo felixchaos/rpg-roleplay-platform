@@ -24,6 +24,7 @@ _FEATURES: dict[str, tuple[str, str]] = {
     "consequence_ledger": ("RPG_CONSEQUENCE_LEDGER", "0"),  # 后果账本(承诺/欠债到期回响,默认关,验后开)
     "world_heartbeat": ("RPG_WORLD_HEARTBEAT", "0"),  # 世界心跳(玩家不在场时的世界侧小事,默认关,验后开)
     "channel_fallback": ("RPG_CHANNEL_FALLBACK", "0"),  # 跨渠道 fallback(主渠道重试耗尽切备用凭据渠道,默认关,验后开)
+    "npc_agenda": ("RPG_NPC_AGENDA", "0"),  # NPC 议程(当下活跃 NPC 的意图/态度,默认关,验后开)
 }
 
 _FALSY = ("0", "false", "no", "off", "")

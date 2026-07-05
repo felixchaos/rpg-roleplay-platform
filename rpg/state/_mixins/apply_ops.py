@@ -66,6 +66,24 @@ class ApplyOpsMixin:
             origin=origin,
         )
 
+    # NPC 议程 v0（docs/design/npc_agenda_v0.md）：薄封装，纯逻辑在
+    # state.npc_agenda（不做 IO，方便单测）。JSON op "agenda" 分支走这一个方法。
+    def upsert_npc_agenda(
+        self,
+        *,
+        name: str,
+        goal: str | None = None,
+        stance: str | None = None,
+    ) -> tuple[bool, str]:
+        from state.npc_agenda import upsert_agenda as _upsert
+        return _upsert(
+            self.data,
+            name=name,
+            goal=goal,
+            stance=stance,
+            turn=self.data.get("turn", 0),
+        )
+
     def apply_structured_updates(self, gm_response: str) -> list[str]:
         updates: list[str] = []
         memory = self.data["memory"]
@@ -298,6 +316,22 @@ class ApplyOpsMixin:
                         due_turns=op.get("due_turns"),
                         due_location=op.get("due_location"),
                         origin="gm",
+                    )
+                    updates.append(f"状态写入：{msg}" if ok else msg)
+                    continue
+                # NPC 议程 v0（docs/design/npc_agenda_v0.md）：登记/更新一条 NPC
+                # 当下议程（想要什么/对玩家什么态度）。goal/stance 至少给一，部分
+                # 更新合并（不整条覆盖）。名字校验（防臆造路人）在纯函数层做。
+                if kind == "agenda":
+                    a_name = op.get("name") or ""
+                    if not a_name:
+                        _log_op_parse_error("agenda op 缺 'name' 字段", op)
+                        updates.append(f"JSON op 忽略（议程缺 name）：{op}")
+                        continue
+                    ok, msg = self.upsert_npc_agenda(
+                        name=a_name,
+                        goal=op.get("goal"),
+                        stance=op.get("stance"),
                     )
                     updates.append(f"状态写入：{msg}" if ok else msg)
                     continue
