@@ -282,3 +282,135 @@ def strip_leaked_scaffold(text: str) -> str:
     if m and result[m.end():].strip():
         result = result[m.end():].strip()
     return result if result.strip() else text
+
+
+def dedupe_json_ops(json_ops: list[dict]) -> list[dict]:
+    """同批次内按内容指纹去重(顺序保留首次出现)。
+
+    双源头场景:GM 正文自带 ```json fence 与史官三合一追加的权威 fence 描述同一批
+    语义变化时,_extract_json_state_ops 会把两份都解析出来 → 同 op 双 apply。set 幂等
+    但 updates 双报/审计翻倍;未来 add/subtract 类数值 op 双 apply 是真损坏。只去
+    「同一次调用内容完全相同」的重复,跨回合正常写入不受影响。
+    """
+    seen: set[str] = set()
+    result: list[dict] = []
+    for op in json_ops:
+        try:
+            fp = json.dumps(op, sort_keys=True, ensure_ascii=False)
+        except Exception:
+            result.append(op)
+            continue
+        if fp in seen:
+            continue
+        seen.add(fp)
+        result.append(op)
+    return result
+
+
+class StreamFenceGuard:
+    """流式 ops 围栏抑制器 —— 修「玩家看着 ```json ops 逐字打出来、生成完又消失」。
+
+    落库前的 strip_json_state_ops 只能处理完整文本;流式期间半截围栏不满足正则,
+    原样漏给前端(基线局实测 5 回合漏 2 次)。本类在 token 转发层做跨 chunk 状态机:
+    检测到 ops 围栏起点(```json / ```state-ops / ```state,或裸 ``` 后首个非空白字符
+    是 [ / {,与 _JSON_STATE_OPS_RE 同口径)即停止对外转发,围栏闭合后恢复。
+    调用方自己维护完整 response 累积(落库/史官/acceptance 读到的仍是完整文本),
+    本类只决定「哪些字符现在可以安全转发给 SSE」。
+
+    跨 chunk 边界:``` 可能拆在两个 chunk(如「``」+「`json」),靠内部缓冲延迟放行
+    解决;正文里的单/双反引号(内联代码)最多延迟一个 chunk 放行,永不丢字。
+    权衡:叙事正文按提示词约定不含代码围栏,窄口径(仅 ops 关键字/裸括号围栏)把
+    误伤面收到几乎为零;```python 等其它围栏原样放行。
+    """
+
+    _OPS_INFO = ("json", "state-ops", "state")
+    _OPS_INFO_RE = re.compile(r"^(?:json|state-ops|state)\b")
+
+    def __init__(self) -> None:
+        self._buf = ""          # 未决字符(可能是围栏起点/闭合的一部分)
+        self._suppress = False  # 当前在 ops 围栏内
+
+    @staticmethod
+    def _tail_backticks(s: str) -> str:
+        """s 尾部可能是 ``` 前缀的 1-2 个反引号(3 个以上会被 find 捕获)。"""
+        n = 0
+        while n < 2 and n < len(s) and s[-(n + 1)] == "`":
+            n += 1
+        return s[-n:] if n else ""
+
+    def _classify(self) -> bool | None:
+        """self._buf 以 ``` 开头。True=ops 围栏,False=普通围栏,None=信息不足待补。"""
+        after = self._buf[3:]
+        nl = after.find("\n")
+        complete = nl != -1
+        info = (after[:nl] if complete else after).strip()
+        if info:
+            if self._OPS_INFO_RE.match(info):
+                return True
+            if info[0] in "[{":
+                return True  # ```[{"op"... 同行直接开数组/对象(正则同样接受)
+            if not complete and any(kw.startswith(info) for kw in self._OPS_INFO):
+                return None  # 可能还在打 "js" / "state-o"
+            return False
+        if not complete:
+            return None
+        body = after[nl + 1:]
+        stripped = body.lstrip()
+        if not stripped:
+            return None  # 围栏头后还没内容,等下一个 chunk
+        return stripped[0] in "[{"
+
+    def feed(self, chunk: str) -> str:
+        """喂入一个流式 chunk,返回当前可以安全转发的文本(可能为空)。"""
+        if not chunk:
+            return ""
+        self._buf += chunk
+        out: list[str] = []
+        while True:
+            if self._suppress:
+                close = self._buf.find("```")
+                if close == -1:
+                    # 围栏未闭合:抑制内容不留(调用方有完整累积),只留尾部可能的 ` 前缀
+                    self._buf = self._tail_backticks(self._buf)
+                    break
+                rest = self._buf[close + 3:]
+                if rest.startswith("\n"):
+                    rest = rest[1:]
+                self._buf = rest
+                self._suppress = False
+                continue
+            start = self._buf.find("```")
+            if start == -1:
+                keep = self._tail_backticks(self._buf)
+                emit = self._buf[: len(self._buf) - len(keep)] if keep else self._buf
+                self._buf = keep
+                if emit:
+                    out.append(emit)
+                break
+            if start > 0:
+                out.append(self._buf[:start])
+                self._buf = self._buf[start:]
+            decided = self._classify()
+            if decided is None:
+                break  # 信息不足,整段围栏头留在缓冲等下一个 chunk
+            if decided:
+                self._suppress = True
+                # 只吃掉开栏反引号,余下(含 info 词/同行内联内容)交给闭合扫描 ——
+                # 兼容 ```json\n[...] 与 ```[{...}]``` 同行内联两种形态。
+                self._buf = self._buf[3:]
+                continue
+            # 非 ops 围栏(如 ```python):放行围栏头 3 个反引号,其余回到普通扫描
+            out.append(self._buf[:3])
+            self._buf = self._buf[3:]
+        return "".join(out)
+
+    def flush(self) -> str:
+        """流结束时调用:返回残留的可转发文本。截断的未决围栏头不放行
+        (与 _strip_trailing_unclosed_ops 同哲学 —— 玩家不该看到半个 ops 块)。"""
+        buf, self._buf = self._buf, ""
+        if self._suppress:
+            self._suppress = False
+            return ""
+        if buf.startswith("```"):
+            return ""
+        return buf

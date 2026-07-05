@@ -314,13 +314,22 @@ async def api_opening(
             # P0-1: generate_opening_stream 是同步 generator,通过 bridge 异步化
             # stop_event 在 SSE 断开时由 bridge finally 设置,让 sync generator 提前退出
             _opening_stop = threading.Event()
+            # 流式 ops 围栏抑制(与 chat 主循环同一 StreamFenceGuard):开场同样是
+            # 「裸转发 + 落库前清洗」,半截 ```json 会漏给玩家。text 累积不受影响。
+            from state import StreamFenceGuard
+            _fence_guard = StreamFenceGuard()
             async for chunk in _bridge_sync_generator_to_async(
                 lambda: gm.generate_opening_stream(state, retrieved_context=bundle["prompt"], stop_event=_opening_stop,
                                                    prompt=_open_prompt, max_tokens=_open_tokens),
                 stop_event=_opening_stop,
             ):
                 text += chunk
-                yield _sse("token", {"text": chunk})
+                _fence_fw = _fence_guard.feed(chunk)
+                if _fence_fw:
+                    yield _sse("token", {"text": _fence_fw})
+            _fence_tail = _fence_guard.flush()
+            if _fence_tail:
+                yield _sse("token", {"text": _fence_tail})
             opening = text
             yield _sse("stage", {"phase": "done", "label": ""})
             opening_for_history, opening_options = _extract_trailing_markdown_options(opening)

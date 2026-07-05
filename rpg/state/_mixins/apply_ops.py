@@ -246,6 +246,11 @@ class ApplyOpsMixin:
             except Exception:
                 pass
 
+        # 同批指纹去重:双源头(GM 自带 fence + 史官追加 fence)或模型重复输出时,同 op
+        # 只 apply 一次。set 幂等但 updates 双报/审计翻倍;未来 add/subtract 类是真损坏。
+        from state.json_ops import dedupe_json_ops
+        json_ops = dedupe_json_ops(json_ops)
+
         for op in json_ops:
             try:
                 kind = (op.get("op") or "set").lower()

@@ -21,7 +21,9 @@ from state.extractors import (
     _extract_time_matches,
 )
 from state.json_ops import (
+    StreamFenceGuard,
     _extract_json_state_ops,
+    dedupe_json_ops,
     strip_json_state_ops,
     strip_leaked_scaffold,
     strip_meta_tool_preamble,
@@ -65,6 +67,8 @@ __all__ = [
     "strip_json_state_ops",
     "strip_leaked_scaffold",
     "strip_meta_tool_preamble",
+    "StreamFenceGuard",
+    "dedupe_json_ops",
     "_extract_json_state_ops",
     "_clean_item",
     "_split_label",

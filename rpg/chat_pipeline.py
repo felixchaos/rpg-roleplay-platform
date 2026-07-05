@@ -24,7 +24,7 @@ from typing import Any
 
 from agents.context_agent import run_context_agent
 from core.logging import get_logger
-from state import GameState, strip_json_state_ops, strip_leaked_scaffold, strip_meta_tool_preamble
+from state import GameState, StreamFenceGuard, strip_json_state_ops, strip_leaked_scaffold, strip_meta_tool_preamble
 
 log = get_logger(__name__)
 
@@ -1231,6 +1231,11 @@ async def run_gm_phase(
                          "message": f"文宗精简档:仅保留 {len(_kb_only)} 个存档级 KB 维护工具,state ops 由史官统一落库。",
                          "status": "running", "elapsed_ms": 0})
 
+    # 流式 ops 围栏抑制:GM 按提示词在正文末尾追加 ```json ops fence,落库前清洗只处理
+    # 完整文本 → 流式期间半截围栏原样漏给玩家(打出来又消失)。转发层状态机拦截,
+    # response 累积不受影响(史官/落库/acceptance 仍读完整文本)。
+    _fence_guard = StreamFenceGuard()
+
     async for event in _bridge_sync_generator_to_async(
         lambda: gm.respond_stream_with_tools(
             message_for_model, bundle["prompt"], state,
@@ -1281,7 +1286,9 @@ async def run_gm_phase(
                 ctx.early_return = True
                 return
             response += chunk
-            yield ("token", {"text": chunk})
+            _fence_fw = _fence_guard.feed(chunk)
+            if _fence_fw:
+                yield ("token", {"text": _fence_fw})
         elif etype == "reasoning":
             # #7 reasoning 流式: 思考过程单独走 reasoning 事件 — 不进 token(叙事)、不累加进
             # response。但**累积进 _turn_reasoning** → record_turn 落到 assistant 历史消息,
@@ -1350,6 +1357,10 @@ async def run_gm_phase(
                 "raw": event.get("raw", ""),
             })
         await asyncio.sleep(0)
+
+    _fence_tail = _fence_guard.flush()
+    if _fence_tail:
+        yield ("token", {"text": _fence_tail})
 
     ctx.response = response
 
@@ -1581,7 +1592,13 @@ async def run_gm_phase(
                     # recorder(史官)给出的 ops 作为权威提取,拼回 response 走 JSON op 确定性 apply;
                     # 空 ops 也只是本回合无结构化写入(GM 本就没标),不再有「正文关键词 regex 兜底」。
                     _ru_ops = _ru.get("ops") or []
-                    _resp_ops = response + ("\n\n```json\n" + json.dumps(_ru_ops, ensure_ascii=False) + "\n```" if _ru_ops else "")
+                    # 双源头修复:GM 正文可能已自带 json fence(提示词要求它写),史官 ops 再
+                    # 追加一份 → 同 op 双 apply(updates 双报;set 幂等暂无害,add 类是真损坏)。
+                    # 史官有产出时它是唯一权威 → 剥掉 GM 自带 fence 只留正文;史官空产出时
+                    # 保留 GM fence 作为唯一兜底来源(行为不变)。
+                    _resp_ops = (
+                        strip_json_state_ops(response) + "\n\n```json\n" + json.dumps(_ru_ops, ensure_ascii=False) + "\n```"
+                    ) if _ru_ops else response
                     try:
                         ctx._updates = _apply_gm_json_ops(
                             state=state, response_with_ops=_resp_ops, api_user=api_user,
