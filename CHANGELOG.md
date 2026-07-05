@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.40.1] - 2026-07-05
+
+### Fixed
+- **后果账本换措辞重复登记**:指纹归一化(去标点)+ 已登记未到期清单注入史官提示词并明令禁止重登。生产探针局实测抓出并当日修复。
+
+
 ## [1.40.0] - 2026-07-05
 
 ### Added
