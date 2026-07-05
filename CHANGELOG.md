@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.47.3] - 2026-07-05
+
+### Fixed
+- **前端静默吞 JSON 解析失败**:2xx 响应体畸形时不再静默变 null(建档成功却报错的前端根因),改为抛可见错误;与 v1.47.2 后端清洗双向堵死。
+
+
 ## [1.47.2] - 2026-07-05
 
 ### Fixed
