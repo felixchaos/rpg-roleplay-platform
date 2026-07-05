@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.41.1] - 2026-07-05
+
+### Fixed
+- **世界心跳接线修正**:v1.41.0 错接进 sync 模式专用路径导致生产(async 默认)永不触发;改为 async 早退分支内与史官三合一并行执行,sync 路径保留 parity,加源码守卫测试防回归。tick 判定日志升 INFO。
+
+
 ## [1.41.0] - 2026-07-05
 
 ### Added
