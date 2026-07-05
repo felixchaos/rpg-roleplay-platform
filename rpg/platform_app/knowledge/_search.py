@@ -13,6 +13,12 @@ _VEC_COLUMN_CACHE: dict[str, bool] = {}
 _SCRIPT_EMBED_META_CACHE: dict[int, tuple[str, str, float]] = {}
 _SCRIPT_EMBED_META_TTL = 300.0
 
+# 「没绑定 embed model」告警降频(2026-07-05 生产实证):未绑定的剧本每次检索
+# (每 query 一次)都打一条 WARNING → 刷屏。同一 (script_id, 进程) 只需要提醒一次
+# 「该重新拆书绑定」,后续降为 debug。模块级 set,进程重启/TTL 均不重置(未绑定
+# 状态在重新 embed 前不会变化,没有必要按时间过期——过期只会让噪声重新出现)。
+_UNBOUND_EMBED_WARNED: set[int] = set()
+
 
 def _vector_column_exists(db, table: str) -> bool:
     if table in _VEC_COLUMN_CACHE:
@@ -85,12 +91,23 @@ def _embed_query(
             force_api_id = api_id_locked
             force_model = model_locked
         else:
-            # 已有剧本未绑定：fall back 到系统默认，发出警告
-            log.warning(
-                "[_search] 召回剧本 %s 没绑定 embed model，fall back 到系统默认。"
-                "重新拆书后会绑定正确的 embed model。",
-                script_id,
-            )
+            # 已有剧本未绑定：fall back 到系统默认，发出警告。
+            # 降频:同一 script_id 每 query 都会重新走到这里(每轮检索都调 _embed_query)
+            # → 同一句 WARNING 刷屏。该 script 的绑定状态在重新 embed 前不会变化,
+            # 第一次告警已经把「需要重新拆书」的信息传达到位,进程内只报一次即可,
+            # 后续降为 debug(仍留痕,不完全消音)。
+            if script_id not in _UNBOUND_EMBED_WARNED:
+                _UNBOUND_EMBED_WARNED.add(script_id)
+                log.warning(
+                    "[_search] 召回剧本 %s 没绑定 embed model，fall back 到系统默认。"
+                    "重新拆书后会绑定正确的 embed model。(本进程内此后降为 debug)",
+                    script_id,
+                )
+            else:
+                log.debug(
+                    "[_search] 召回剧本 %s 没绑定 embed model，fall back 到系统默认。",
+                    script_id,
+                )
     elif script_id is not None and db is None:
         log.warning(
             "[_search] _embed_query: script_id=%s 但未传 db，无法读取建库 embed meta，"
