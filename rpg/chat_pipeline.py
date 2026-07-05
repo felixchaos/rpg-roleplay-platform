@@ -1571,6 +1571,22 @@ async def run_gm_phase(
             except Exception as _g_err:
                 log.warning(f"[chat] async narrative_guards 跳过: {_g_err}")
 
+            # 世界心跳(柱子1,docs/design/world_heartbeat_v0.md):与史官三合一【并行】跑,
+            # 独立便宜 LLM 调用,只写 state 专属键(background_events/heartbeat_meta),
+            # 两个 return 前 await,Phase 5 统一持久化。⚠️接线必须在这条【async 生产默认
+            # 路径】—— v1.41.0 曾错接进 sync-only 的 _run_post_gm_parallel 导致生产永不
+            # 触发(灰度双路径老坑);sync 路径的接线保留作 parity。
+            _hb_task = None
+            if _gm_mode != "tavern_gm":
+                try:
+                    from agents.world_heartbeat import run_heartbeat_tick as _hb_run
+                    from agents.world_heartbeat import should_tick as _hb_should
+                    _hb_uid = _uid_of(api_user)
+                    if _hb_should(state.data, _hb_uid):
+                        _hb_task = asyncio.create_task(asyncio.to_thread(_hb_run, state, _hb_uid))
+                except Exception as _hb_err:
+                    log.warning(f"[chat] world_heartbeat 启动失败,跳过: {_hb_err}")
+
             # Q Phase 2 史官三合一(flag on):一次 recorder LLM 调用同时产 ops + 锚点判定,
             # 替代「独立 extractor + 独立 anchor_reconcile LLM」两次调用。off 时走原路径。
             # 酒馆豁免:tavern_gm 的 GM 已用自己的工具写状态(slim 已豁免、工具齐全),史官三合一对酒馆
@@ -1621,6 +1637,11 @@ async def run_gm_phase(
                     ctx.response = response
                     for _ac, _ap in _acc_events:
                         yield (_ac, _ap)
+                    if _hb_task is not None:
+                        try:
+                            await _hb_task  # 心跳写完 state 再进 Phase 5 持久化
+                        except Exception as _hb_err:
+                            log.warning(f"[chat] world_heartbeat 等待失败: {_hb_err}")
                     return
             # 关键修复:GM JSON op 确定性写回(async 早退路径也必须 apply,否则 GM 经
             # JSON op 写的 location/time/resources/quest/relationships/选项 全部丢失)。
@@ -1649,6 +1670,11 @@ async def run_gm_phase(
                     "message": f"世界线锚点确定性兜底:本回合自动标记 {_rec_marked} 个原著锚点已到达",
                     "status": "done", "elapsed_ms": 0, "marked": _rec_marked,
                 })
+            if _hb_task is not None:
+                try:
+                    await _hb_task  # 心跳写完 state 再进 Phase 5 持久化
+                except Exception as _hb_err:
+                    log.warning(f"[chat] world_heartbeat 等待失败: {_hb_err}")
             return
     # ── 同步后处理路径 (sync 模式 or enqueue 失败降级) ─────────────────────
 

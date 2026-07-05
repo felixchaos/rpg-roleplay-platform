@@ -12,10 +12,14 @@
 - flag `world_heartbeat` 默认关;前端开关同批交付。
 - **零新持久化机制**:写进活 state.data,由本回合 Phase 5 统一持久化(见架构决策)。
 
-## 0. 架构决策(已侦察定案,不要改道)
+## 0. 架构决策(v1.41.1 勘误后定案)
 
-执行点 = `chat_pipeline._run_post_gm_parallel`(chat_pipeline.py:1847 附近)里新增第三个
-并行 worker(与 `_worker_extractor`/`_worker_black_swan` 并列 gather)。理由:
+⚠️ 勘误(生产实测抓出):`_run_post_gm_parallel` 是 **sync 模式专用路径**(生产默认
+RPG_POSTPROC_MODE=async 在其之前早退),v1.41.0 只接在那里导致生产永不触发——
+灰度双路径老坑。定案:**执行点 = async 早退分支内、与史官三合一并行**
+(asyncio.create_task(to_thread) 起在史官之前、两个 return 前 await,保证写完 state
+再进 Phase 5 持久化);sync 路径的 `_run_post_gm_parallel` 接线保留作 parity,
+两路都活。原选点理由(仍成立,只是路径找错了):
 - postproc worker 进程侧「无法安全访问实时 state」(run_postproc_worker.py:101 的
   black_swan handler 因此 enable_llm=False)——心跳若走 worker 会重蹈跨 worker 写状态坑。
 - post-GM 并行段在 Phase 5 持久化之前、与 extractor 并行,墙钟开销≈0(心跳调用
