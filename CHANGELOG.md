@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.47.1] - 2026-07-05
+
+### Fixed
+- world 结构先验加信号强度分级:弱信号孤立单命中不再切出错误伪世界(真书 dry-run 抓出),整书保守退单世界待 LLM 确认层。
+
+
 ## [1.47.0] - 2026-07-05
 
 ### Added
