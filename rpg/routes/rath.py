@@ -73,7 +73,13 @@ async def api_rath_detail(exp_id: int, user=Depends(get_current_user)):
             "update rath_experiments set last_viewed_at=now() where id=%s", (int(exp_id),))
         events = db.execute(
             "select id, kind, summary, payload, world_clock_min, created_at from rath_events "
-            "where exp_id=%s order by id desc limit 30",
+            "where exp_id=%s and kind <> 'trace' order by id desc limit 30",
+            (int(exp_id),),
+        ).fetchall()
+        # 运行日志(思考流/执行层):独立于故事日志,近40条
+        trace_rows = db.execute(
+            "select id, summary, world_clock_min, created_at from rath_events "
+            "where exp_id=%s and kind='trace' order by id desc limit 40",
             (int(exp_id),),
         ).fetchall()
         snap, _commit = _read_snapshot(db, int(exp["save_id"]))
@@ -109,8 +115,13 @@ async def api_rath_detail(exp_id: int, user=Depends(get_current_user)):
          "private_memories": private_memories.get(n, [])}
         for n, a in agendas.items() if isinstance(n, str)
     ]
+    trace_out = [{
+        "id": int(r["id"]), "summary": r.get("summary"),
+        "world_clock_label": _clock_label(int(r.get("world_clock_min") or 0)),
+        "created_at": str(r.get("created_at") or ""),
+    } for r in (trace_rows or [])]
     return {"ok": True, "experiment": _expose(dict(exp)), "events": ev_out,
-            "fluctlights": fluctlights}
+            "trace": trace_out, "fluctlights": fluctlights}
 
 
 @router.post("/api/rath/experiments/{exp_id}/tick")

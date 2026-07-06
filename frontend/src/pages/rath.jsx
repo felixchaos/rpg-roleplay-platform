@@ -195,6 +195,15 @@ function ExperimentPanel({ expId }) {
   const exp = detail?.experiment;
   const fluctlights = detail?.fluctlights || [];
   const events = detail?.events || [];
+  const trace = detail?.trace || [];
+  // 推进后快轮询(实时看到运行日志):点击推进一步后 2 分钟内每 5s 拉一次
+  const fastPollUntilRef = useRef(0);
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (Date.now() < fastPollUntilRef.current) load(true);
+    }, 5000);
+    return () => clearInterval(iv);
+  }, [load]);
 
   const doTick = async () => {
     if (ticking) return;
@@ -205,9 +214,8 @@ function ExperimentPanel({ expId }) {
       if (!r || r.ok === false) {
         window.__apiToast?.(t('rath_page.toast.tick_declined', { defaultValue: '本次推进未执行' }), { kind: 'warn', detail: r?.error || r?.reason });
       } else {
-        window.__apiToast?.(t('rath_page.toast.tick_started', { defaultValue: '已开始推进,完成后会出现在日志中(约1分钟)' }), { kind: 'ok', duration: 3600 });
-        setTimeout(() => load(true), 35000);
-        setTimeout(() => load(true), 80000);
+        window.__apiToast?.(t('rath_page.toast.tick_started', { defaultValue: '已开始推进,运行日志实时可见(约1分钟完成)' }), { kind: 'ok', duration: 3600 });
+        fastPollUntilRef.current = Date.now() + 120000;
       }
       await load(true);
     } catch (e) {
@@ -349,6 +357,22 @@ function ExperimentPanel({ expId }) {
           {t('rath_page.action.archive', { defaultValue: '归档' })}
         </CSButton>
       </CSSpaceBetween>
+
+      {/* 运行日志(思考流/执行层) */}
+      <CSContainer header={<CSHeader variant="h2" description={t('rath_page.trace.desc', { defaultValue: '引擎每一步的决策与验收结果:材料装配、选角、模型产出与拒收原因。' })}>{t('rath_page.trace.title', { defaultValue: '运行日志' })}</CSHeader>}>
+        {trace.length === 0 ? (
+          <CSBox color="text-body-secondary" fontSize="body-s">{t('rath_page.trace.empty', { defaultValue: '暂无运行记录——推进一步后这里会实时滚动。' })}</CSBox>
+        ) : (
+          <div style={{ maxHeight: 260, overflowY: 'auto', fontFamily: 'var(--font-family-monospace, monospace)', fontSize: 12, lineHeight: 1.7 }}>
+            {trace.map((r) => (
+              <div key={r.id} style={{ borderBottom: '1px solid var(--color-border-divider-default, #e9ebed)', padding: '2px 0' }}>
+                <span style={{ opacity: 0.55, marginRight: 8 }}>{r.world_clock_label}</span>
+                {r.summary}
+              </div>
+            ))}
+          </div>
+        )}
+      </CSContainer>
 
       {/* 角色动态板 */}
       <CSContainer header={<CSHeader variant="h2">{t('rath_page.fluctlights.title', { defaultValue: '角色动态' })}</CSHeader>}>

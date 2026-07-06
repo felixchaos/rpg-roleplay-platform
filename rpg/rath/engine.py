@@ -26,6 +26,23 @@ ACCEL_CHOICES = (1, 60, 240)
 SCENE_EVERY_N_TICKS = 2  # 每第 2 拍尝试一场对手戏
 
 
+def _trace(exp_id: int, msg: str, *, clock: int = 0) -> None:
+    """运行日志(用户需求:思考流/执行层可见):tick 各相位逐条落 rath_events kind=trace,
+    前端快轮询实时展示。短连接、静默失败,绝不破 tick。"""
+    try:
+        from platform_app.db import connect
+        with connect() as db:
+            db.execute(
+                "insert into rath_events (exp_id, kind, summary, world_clock_min) "
+                "values (%s, 'trace', %s, %s)",
+                (int(exp_id), str(msg)[:300], int(clock)),
+            )
+            if hasattr(db, "commit"):
+                db.commit()
+    except Exception:
+        pass
+
+
 def _clock_label(total_min: int) -> str:
     d, rem = divmod(max(0, int(total_min)), 1440)
     h, m = divmod(rem, 60)
@@ -215,10 +232,15 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
     }
     new_clock = int(claim["new_clock"])
     gain_min = max(0, new_clock - int(claim["old_clock"] or 0))
+    _trace(exp_id, f"推进开始({'手动' if manual else '自动'}):世界时间 +{gain_min}分钟 → {_clock_label(new_clock)}", clock=new_clock)
     elapsed_hint = f"世界内约 {gain_min // 60} 小时 {gain_min % 60} 分钟(观测钟 {_clock_label(new_clock)})"
     recent = [r["summary"] for r in (recent_rows or [])]
     player_name = str(((snap.get("player") or {}).get("name")) or "")
     location = str(((snap.get("player") or {}).get("current_location")) or "")
+
+    _trace(exp_id, "材料装配:卡司候选[" + ",".join(cast_names or ["无"]) + "]"
+           + f" · 世界书要点 {len(wb_rows or [])} 条 · 引导:" + (directive[:40] + "…" if len(directive) > 40 else directive or "无"),
+           clock=new_clock)
 
     # ── 段2:LLM(不持任何 DB 连接) ──
     wrote: list[str] = []
@@ -252,8 +274,12 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
             )
             raw_items = parse_llm_json(text, want=list) or []
             wrote = _validate_items(raw_items, state_data=snap, player_name=player_name)[:2]
+            _trace(exp_id, f"背景事件:模型产出 {len(raw_items)} 条 → 验收通过 {len(wrote)} 条"
+                   + ("(其余因重复/提及玩家/超长被丢弃)" if len(raw_items) > len(wrote) else ""),
+                   clock=new_clock)
         except Exception as exc:
             log.warning("[rath] 离线心跳跳过(非致命): %s", exc)
+            _trace(exp_id, f"背景事件:失败跳过({str(exc)[:60]})", clock=new_clock)
         # 2b. NPC-NPC 对手戏(每第 N 拍,预算内)
         if (int(claim["ticks_today"]) % SCENE_EVERY_N_TICKS == 0
                 and int(claim["scenes_today"]) < MAX_SCENES_PER_DAY):
@@ -276,6 +302,9 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
                         + str(_pl.get("background") or _pl.get("identity_role_desc") or "")[:180]
                     )
                 if scene_pair:
+                    _trace(exp_id, f"选角:{scene_pair[0]} × {scene_pair[1]}"
+                           + ("(玩家化身场,按设定驱动)" if player_in_scene else "")
+                           + f" · 来源=议程/关系+卡司", clock=new_clock)
                     from agents._harness import call_agent_json
                     sys_p, usr_p = build_scene_prompts(
                         snap, scene_pair[0], scene_pair[1],
@@ -290,6 +319,13 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
                     _known = usr_p + " " + sys_p  # 材料全集=档案+世界观要点+近况+引导
                     scene = validate_scene(text or "", scene_pair[0], scene_pair[1],
                                            known_text=_known)
+                    if scene:
+                        _trace(exp_id, f"互动生成:通过验收 —— {scene['scene_summary'][:60]}", clock=new_clock)
+                    else:
+                        from rath.npc_scene import find_fabricated_nouns
+                        _fab = find_fabricated_nouns(text or "", _known)
+                        _trace(exp_id, ("互动拒收:新造名词 " + "/".join(_fab[:3])) if _fab
+                               else "互动拒收:结构不合格或对白为空(本拍无戏,正常)", clock=new_clock)
             except Exception as exc:
                 log.warning("[rath] 对手戏跳过(非致命): %s", exc)
 
@@ -332,6 +368,8 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
                     db.commit()
             except Exception as exc:
                 log.warning("[rath] 产物落库失败(非致命): %s", exc)
+    _trace(exp_id, f"推进完成:落库 背景事件 {len(wrote)} 条"
+           + (" + 互动 1 场" if scene else "") + f" @ {_clock_label(new_clock)}", clock=new_clock)
     log.info("[rath] tick exp=%s clock=%s events=%d scene=%s",
              exp_id, _clock_label(new_clock), len(wrote), bool(scene))
     return {"ok": True, "wrote_events": wrote,
@@ -359,6 +397,17 @@ def run_due_ticks() -> int:
         if hasattr(db, "commit"):
             db.commit()
     ticked = 0
+    try:
+        with connect() as db:
+            db.execute(
+                """delete from rath_events t using (
+                       select exp_id, id, row_number() over (partition by exp_id order by id desc) rn
+                       from rath_events where kind='trace') x
+                   where t.id = x.id and x.rn > 300""")
+            if hasattr(db, "commit"):
+                db.commit()
+    except Exception:
+        pass
     for r in (due or []):
         try:
             if tick_experiment(int(r["id"])).get("ok"):
