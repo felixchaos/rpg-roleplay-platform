@@ -338,3 +338,12 @@ def test_apparatus_gate_catches_short_name():
     out = apply_scheduler_output(sim, {"new_facts": ["菲莉丝头顶的能量核心与祭坛产生共振"]})
     assert out["applied"]["facts"] == 0
     assert any("解释装置" in r for r in out["rejected"])
+
+
+def test_alias_resolve_strips_view_tags():
+    from rath.sim import resolve_cast_name
+    cast = {"菲莉丝·卡俄斯": {}, "林有德": {}}
+    assert resolve_cast_name(cast, "菲莉丝[玩家]") == "菲莉丝·卡俄斯"
+    assert resolve_cast_name(cast, "菲莉丝·卡俄斯[玩家]") == "菲莉丝·卡俄斯"
+    assert resolve_cast_name(cast, "林有德(睡眠中)") == "林有德"
+    assert resolve_cast_name(cast, "[玩家]") is None

@@ -198,6 +198,11 @@ def resolve_cast_name(names, raw: str) -> str | None:
     pool = list(names)
     if n in pool:
         return n
+    # 剥尾部注记(「菲莉丝[玩家]」「薇欧拉(昏迷)」——LLM 会照抄视图标签进键名)
+    n2 = re.sub(r"[\s\[【(（].*$", "", n).strip()
+    if n2 in pool:
+        return n2
+    n = n2 or n
     if len(n) < 2:
         return None
     hits = [k for k in pool if (n in k) or (k in n)]
