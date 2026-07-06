@@ -338,6 +338,9 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
     decayed = S.decay_threads(sim)
     if decayed:
         _trace(exp_id, f"张力衰减:{decayed} 条剧情线 -1(压力需持续喂养)", clock=new_clock)
+    closed = S.close_stale_threads(sim)
+    if closed:
+        _trace(exp_id, "剧情线平息:" + ";".join(c[:30] for c in closed), clock=new_clock)
     forced = S.enforce_night(sim)
     if forced:
         _trace(exp_id, f"时间推进:夜间,{forced} 人转入睡眠", clock=new_clock)

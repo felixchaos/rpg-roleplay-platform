@@ -68,7 +68,7 @@ def test_apply_updates_and_interaction():
     assert out["applied"]["cast"] == 3
     assert out["applied"]["interaction"]["participants"] == ["林有德", "薇欧拉"]
     assert sim["cast"]["林有德"]["goal"] == "弄清少女来历"
-    assert sim["threads"][0]["tension"] == 6
+    assert sim["threads"][0]["tension"] == 4  # 种子线基线 3(去谜团钩子)+1
     assert any("呼吸变化" in f for f in sim["facts"])
 
 
@@ -192,7 +192,7 @@ def test_thread_decay_releases_pressure():
 def test_tension_ratchet_capped_plus_one():
     sim = _sim()
     apply_scheduler_output(sim, {"thread_updates": [{"id": "t1", "tension_delta": 2}]})
-    assert sim["threads"][0]["tension"] == 6  # +2 被夹成 +1
+    assert sim["threads"][0]["tension"] == 4  # 基线3,+2 被夹成 +1
 
 
 def test_apparatus_around_player_rejected():
@@ -407,3 +407,50 @@ def test_night_gate_spares_hot_thread_and_daytime():
     sim2.setdefault("places", []).append("水泥厂东边仓库")
     out2 = apply_scheduler_output(sim2, {"cast_updates": {npc2: {"location": "水泥厂东边仓库"}}})
     assert sim2["cast"][npc2]["location"] == "水泥厂东边仓库"
+
+
+# ── 原著主线夺回(用户实锤:河道只当背景板,自由悬疑线绑架原著卡司) ──────────
+
+def test_canon_anchor_resets_cast_goal_on_advance():
+    from rath.sim import anchor_cast_to_beat
+    sim = _sim_canon()
+    npc = next(n for n, c in sim["cast"].items() if c.get("kind") != "player")
+    beat_with_npc = f"{npc}在留学生会馆与同胞辩论"
+    sim["cast"][npc]["goal"] = "调查水泥厂暗门"  # 自由线绑架中
+    out = anchor_cast_to_beat(sim, beat_with_npc)
+    assert npc in out
+    assert sim["cast"][npc]["goal"].startswith("(原著行程)")
+    assert "水泥厂" not in sim["cast"][npc]["goal"]
+
+
+def test_canon_advance_triggers_anchor():
+    sim = _sim_canon()
+    # _sim_canon 的 beat1 提到「林有德」——若卡司里有他,goal 应被锚定
+    if "林有德" in sim["cast"]:
+        sim["cast"]["林有德"]["goal"] = "撬开地下车间铁门"
+        apply_scheduler_output(sim, {"canon_advance": True})
+        assert sim["cast"]["林有德"]["goal"].startswith("(原著行程)")
+
+
+def test_player_probe_rejected():
+    sim = _sim_fullname_player()
+    out = apply_scheduler_output(sim, {"new_facts": ["千寻发现灵魂锚点研究或可定位菲莉丝的来历"]})
+    assert out["applied"]["facts"] == 0
+    assert any("探究" in r for r in out["rejected"])
+    out2 = apply_scheduler_output(sim, {"new_threads": [{"desc": "研究菲莉丝随身物品以鉴定其身世", "tension": 4}]})
+    assert not any(("菲莉丝" in (t.get("desc") or "") and "鉴定" in (t.get("desc") or ""))
+                   for t in sim["threads"])
+
+
+def test_stale_threads_closed_and_recorded():
+    from rath.sim import close_stale_threads, STALE_THREAD_TICKS
+    sim = _sim_canon()
+    sim["threads"] = [{"id": "t2", "desc": "伊萨尔河沿岸调查", "tension": 0, "last_touch": 1}]
+    sim["tick_seq"] = 1 + STALE_THREAD_TICKS
+    closed = close_stale_threads(sim)
+    assert closed and "伊萨尔河" in closed[0]
+    assert sim["threads"] == []
+    assert any("(已平息)" in f for f in sim["facts"])
+    # 高张力/近期触及的线不关
+    sim["threads"] = [{"id": "t3", "desc": "活跃线", "tension": 5, "last_touch": 1}]
+    assert close_stale_threads(sim) == []

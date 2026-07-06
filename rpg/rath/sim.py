@@ -83,10 +83,12 @@ def init_sim_state(snapshot: dict, cast_cards: list[dict], wb_rows: list[dict],
             facts.append("最近发生:" + re.sub(r"\s+", " ", last)[:160])
     threads = []
     if pstatus == "昏迷":
+        # 500k 浸泡实锤:种子线带「她究竟是谁」钩子=奖励 LLM 在不许推进的谜团上
+        # 「有进展」(灵魂锚点研究=解释装置新形态),矛盾内建。改纯照料措辞。
         threads.append({
             "id": "t1",
-            "desc": f"昏迷的{pname}:照料她,以及她究竟是谁(谜团保持开放,不得替她定来历)",
-            "tension": 5,
+            "desc": f"照料昏迷的{pname}(日常看护;其来历是玩家自己的谜团,世界不得探究)",
+            "tension": 3,
             "participants": [n for n in cast if n != pname][:2] + [pname],
         })
     canon = {"cursor": 0, "stall": 0,
@@ -139,7 +141,8 @@ _SCHED_SYSTEM = """你是世界仿真的调度器:决定接下来这段时间里
 1. 只能调度下面列出的角色与地点;确需新的日常小地点(如某人的房间/街角)可给出,但新组织/新机构/新装置一律禁止发明。
 2. 每个角色的行动必须符合其设定、状态、目标与此刻时间(深夜就该睡觉,工作日就该干活)。
 3. 玩家角色[player]的状态神圣:昏迷则只能沉睡/微弱生理反应,绝不能行动或对话;
-   绝不为其编造来历/身份;其谜团只属于玩家。
+   绝不为其编造来历/身份;其谜团只属于玩家。**绝不让任何角色研究/调查/检测玩家或其
+   随身物品,不设立以玩家为对象的研究项目(灵魂锚点、血统鉴定之类);照料是日常,不是调查。**
 4. 剧情自然呼吸:可以推进也可以只是生活;推进必须从已确立事实自然长出;
    不必每拍都有相遇(interaction 可为 null)。
 5. 有【观测者引导】时,将其翻译成剧情线/目标的调整,让世界朝该方向自然倾斜。
@@ -147,8 +150,9 @@ _SCHED_SYSTEM = """你是世界仿真的调度器:决定接下来这段时间里
    角色应主要处于本职与日常活动。
 7. 世界的超常现象只能来自【世界观要点】已有的体系;禁止发明新的超常机制/发光装置/
    现象链;禁止让环境发生灾变级变化;**禁止围绕玩家角色搭建解释其力量的装置或现象**。
-8. 原著河道是这个世界的主流:角色的本职、谈资、world_events 应与河道交织(回声/铺垫/
-   亲历);当河道第一条动向在世界中自然成熟发生,输出 canon_advance: true。
+8. **原著河道是这个世界的主线**:goal 带「(原著行程)」标记的角色,其行动必须服务于该
+   行程,自由支线只能占用其零散时间;角色的本职、谈资、world_events 应与河道交织
+   (回声/铺垫/亲历);当河道第一条动向已在世界中发生或正在发生,输出 canon_advance: true。
 只输出严格 JSON(不要围栏):
 {"cast_updates": {"名字": {"location": "可选", "activity": "可选", "goal": "可选", "stance": "可选"}},
  "interaction": {"participants": ["甲","乙"], "place": "已知地点", "reason": "为何相遇", "expected_outcome": "本场自然收在哪"} 或 null,
@@ -190,6 +194,25 @@ def parse_scheduler_output(raw_text: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def anchor_cast_to_beat(sim: dict, beat_text: str) -> list[str]:
+    """河道前行时把 beat 中出现的原著卡司 goal 锚定为原著行程。确定性。
+
+    500k 浸泡实锤:河道只当背景板→自由悬疑线(水泥厂暗门/撬棍)绑架原著卡司,
+    goal 自我强化滚雪球。每次前行代码直接夺回 goal,自由线失去载体。"""
+    anchored = []
+    text = str(beat_text or "")
+    if not text:
+        return anchored
+    for n, c in (sim.get("cast") or {}).items():
+        if c.get("kind") == "player":
+            continue
+        short = n.split("·")[0]
+        if (n in text) or (len(short) >= 2 and short in text):
+            c["goal"] = "(原著行程)" + text[:70]
+            anchored.append(n)
+    return anchored
+
+
 def resolve_cast_name(names, raw: str) -> str | None:
     """实体别名归并(500k 浸泡实锤:调度输出简称「菲莉丝」,cast 键=全名「菲莉丝·卡俄斯」
     →被当未知角色拒收,玩家 agent 僵死;「侍者=汉斯」同族)。
@@ -217,12 +240,16 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
     rejected: list[str] = []
     applied = {"cast": 0, "events": [], "interaction": None, "threads": 0, "facts": 0}
     cast = sim.setdefault("cast", {})
+    sim["tick_seq"] = int(sim.get("tick_seq") or 0) + 1  # 拍序(僵尸线判定的时钟)
     known = _whitelist(sim, world_context)
 
     _pname = next((n for n, c in cast.items() if c.get("kind") == "player"), "")
     # 全名+首段简称都算提及玩家(「菲莉丝·卡俄斯」→「菲莉丝」,防简称绕过装置闸)
     _pkeys = [x for x in {_pname, _pname.split("·")[0] if _pname else ""} if len(x) >= 2]
     _APPARATUS = ("共振", "能量转移", "能量核心", "激活条件", "装置")
+    # 探究闸(浸泡实锤:「灵魂锚点研究」=解释玩家来历的装置新形态,词表打地鼠打不完;
+    # 根因=任何以玩家为对象的探究项目都在滑向解释。玩家名+探究词共现一律拒收,宁严勿松)
+    _PROBE = ("锚点", "锚定", "来历", "身世", "血统", "研究", "调查", "检测", "鉴定", "解析", "档案")
     # 夜间外出闸(浸泡实锤:夜律拍首拉回家,同拍调度又把人派去水泥厂搜查=夜归被覆盖。
     # 夜间低张力角色拒收「离家」位置变更;回家方向放行;高张力线参与者豁免)
     _m = int(sim.get("clock_min") or 0) % 1440
@@ -239,6 +266,9 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
         # 玩家设定神圣旁路闸(浸泡实锤:铭牌共振玩家头顶能量=给玩家力量建解释装置)
         if _pkeys and any(p in t for p in _pkeys) and any(k in t for k in _APPARATUS):
             rejected.append(f"{what}:围绕玩家搭建解释装置")
+            return False
+        if _pkeys and any(p in t for p in _pkeys) and any(k in t for k in _PROBE):
+            rejected.append(f"{what}:以玩家为对象的探究(神圣条款)")
             return False
         return True
 
@@ -317,6 +347,7 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
         except Exception:
             delta = 0
         t["tension"] = max(0, min(10, int(t.get("tension") or 0) + delta))
+        t["last_touch"] = sim["tick_seq"]
         note = str(tu.get("note") or "").strip()
         if note and _gate(note, "thread.note"):
             t["desc"] = (t["desc"].split("——")[0] + "——" + note)[:120]
@@ -329,6 +360,7 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
             threads.append({
                 "id": f"t{len(threads) + 1}",
                 "desc": desc[:80],
+                "last_touch": sim["tick_seq"],
                 "tension": max(1, min(6, int((nt or {}).get("tension") or 3))),
                 "participants": list(dict.fromkeys(
                     rp for rp in (resolve_cast_name(cast, p)
@@ -356,6 +388,7 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
         canon["stall"] = 0
         applied["canon_advance"] = True
         applied["canon_text"] = beats[cur]["text"]
+        applied["canon_anchored"] = anchor_cast_to_beat(sim, beats[cur]["text"])
     else:
         canon["stall"] = int(canon.get("stall") or 0) + 1
         applied["canon_advance"] = False
@@ -419,6 +452,7 @@ def advance_stalled_canon(sim: dict) -> str | None:
         sim["facts"] = sim["facts"][-MAX_FACTS:]
     canon["cursor"] = cur + 1
     canon["stall"] = 0
+    anchor_cast_to_beat(sim, text)
     return text
 
 
@@ -432,6 +466,33 @@ def decay_threads(sim: dict) -> int:
             t["tension"] = cur - 1
             n += 1
     return n
+
+
+STALE_THREAD_TICKS = 8  # 张力≤1 的线连续 N 拍无触及即平息
+
+
+def close_stale_threads(sim: dict) -> list[str]:
+    """僵尸剧情线自动平息(浸泡实锤:伊萨尔河线张力0仍永久挂账,随时等 LLM 复活)。
+    张力≤1 且连续 STALE_THREAD_TICKS 拍未被 thread_updates 触及 → 移入 facts(已平息)。
+    确定性。返回被平息的线描述。"""
+    seq = int(sim.get("tick_seq") or 0)
+    keep, closed = [], []
+    for t in sim.get("threads") or []:
+        lt = t.get("last_touch")
+        if lt is None:
+            t["last_touch"] = seq  # 老档首见即记,从现在起计时
+            keep.append(t)
+            continue
+        if int(t.get("tension") or 0) <= 1 and seq - int(lt) >= STALE_THREAD_TICKS:
+            closed.append(str(t.get("desc") or "")[:40])
+            sim.setdefault("facts", []).append("(已平息)" + str(t.get("desc") or "")[:60])
+            continue
+        keep.append(t)
+    if closed:
+        sim["threads"] = keep
+        if len(sim.get("facts") or []) > MAX_FACTS:
+            sim["facts"] = sim["facts"][-MAX_FACTS:]
+    return closed
 
 
 def enforce_night(sim: dict) -> int:
