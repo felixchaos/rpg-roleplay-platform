@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.58.0] - 2026-07-06
+
+### Added
+- **RATH 运行日志**:引擎每一步实时可见——材料装配、选角决策、模型产出与验收、拒收原因(含新造名词点名);推进期间自动快速刷新。
+
 ## [1.57.4] - 2026-07-06
 
 ### Fixed
