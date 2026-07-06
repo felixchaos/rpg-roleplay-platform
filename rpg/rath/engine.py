@@ -359,8 +359,10 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
                 sim, elapsed_hint=elapsed_hint, directive=directive, world_context=world_context)
             data = None
             for _att in (1, 2):  # flash 结构化产出必配验收+重试(铁律)
+                # 500k 浸泡实锤:800 顶格截断率 40/68 → 66% 拍静默。中文结构化 JSON
+                # (4人cast+threads+facts)800 装不下,扩容是根因修,重试只是保险丝。
                 text, _u = call_agent_json(api_id, model, sys_p, usr_p, user_id,
-                                           tool_schema=None, max_tokens=800, timeout_sec=40,
+                                           tool_schema=None, max_tokens=1600, timeout_sec=60,
                                            agent_kind="rath_scheduler")
                 data = S.parse_scheduler_output(text or "")
                 if data:
@@ -397,7 +399,7 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
                 scene = None
                 for _att in (1, 2):  # flash 结构化产出必配验收+重试(铁律)
                     text, _u = call_agent_json(api_id, model, sys_p, usr_p, user_id,
-                                               tool_schema=None, max_tokens=900, timeout_sec=45,
+                                               tool_schema=None, max_tokens=1400, timeout_sec=60,
                                                agent_kind="rath_director")
                     scene = S.validate_director_output(text or "", interaction, sim,
                                                        world_context=world_context)
