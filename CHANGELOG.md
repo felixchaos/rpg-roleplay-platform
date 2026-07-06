@@ -9,6 +9,8 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.61.8] - 2026-07-06 (@ 27cf0fcc7)
+
 ## [1.61.7] - 2026-07-06 (@ c2170d6d0)
 
 ## [1.61.6] - 2026-07-06 (@ 2963471ad)

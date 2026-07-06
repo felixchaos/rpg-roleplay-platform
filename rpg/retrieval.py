@@ -573,7 +573,20 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
         anchor_range = (timeline.get("anchor_chapter_range") or [])
         anchor_min = None
         anchor_max = None
-        if isinstance(anchor_range, list) and len(anchor_range) >= 1:
+        # 群反馈(行者无疆,rail 档"原文完全没注入"):timeline.chapter_min/max 是 /set 时间
+        # 跳跃(resolve_timeline_anchor)持续更新的【当前锚定章】,anchor_chapter_range 是
+        # 出生点建档写死的一次性遗留(此后无任何代码更新它)。旧序=range 绝对优先 →
+        # /set 跳到 ch17 后 rail 每回合仍按建档 range[1,1] 注入第 1 章原文。
+        # 新序=鲜活锚定优先,range 只作建档兜底。
+        try:
+            _tl_cmin = int(timeline.get("chapter_min") or 0)
+            _tl_cmax = int(timeline.get("chapter_max") or 0)
+        except (TypeError, ValueError):
+            _tl_cmin = _tl_cmax = 0
+        if _tl_cmin > 0:
+            anchor_min = _tl_cmin
+            anchor_max = _tl_cmax if _tl_cmax >= _tl_cmin else _tl_cmin
+        elif isinstance(anchor_range, list) and len(anchor_range) >= 1:
             try:
                 anchor_min = int(anchor_range[0])
                 anchor_max = int(anchor_range[1]) if len(anchor_range) > 1 else anchor_min
