@@ -159,10 +159,7 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
             "order by id desc limit 1",
             (int(exp_id),),
         ).fetchone()
-        _last_scene = db.execute(
-            "select id from rath_events where exp_id=%s and kind='scene' order by id desc limit 1",
-            (int(exp_id),),
-        ).fetchone()
+
         # 世界观要点(拆书审计后补):离线戏/心跳没有世界书材料会滑向平庸写实(战姬味丢失实锤)。
         # 取该剧本高优先级条目压缩成要点,喂进两个 LLM prompt。
         wb_rows = []
@@ -206,8 +203,6 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
         f"- {r['title']}: {str(r.get('content') or '')[:140]}" for r in (wb_rows or [])
     )
     directive = str((drow or {}).get("summary") or "").strip()
-    _directive_is_new = bool(drow) and (not _last_scene or int(drow["id"]) > int(_last_scene["id"]))
-    scene_beat = "progress" if (_directive_is_new or int(claim["scenes_today"]) % 4 == 0) else "daily"
     cast_names = [str(r.get("name") or "").strip() for r in (cast_rows or []) if r.get("name")]
     cast_dossiers = {
         str(r["name"]).strip():
@@ -283,8 +278,7 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
                         snap, scene_pair[0], scene_pair[1],
                         elapsed_hint=elapsed_hint, recent_events=recent + wrote,
                         world_context=world_context, directive=directive,
-                        extra_dossiers=cast_dossiers, player_in_scene=player_in_scene,
-                        beat=scene_beat)
+                        extra_dossiers=cast_dossiers, player_in_scene=player_in_scene)
                     text, _usage = call_agent_json(
                         api_id=api_id, model=model, system_prompt=sys_p, user_prompt=usr_p,
                         user_id=user_id, tool_schema=None, max_tokens=900, timeout_sec=40,

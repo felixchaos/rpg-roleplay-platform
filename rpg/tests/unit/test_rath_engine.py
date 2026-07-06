@@ -138,15 +138,12 @@ def test_player_in_scene_rules():
 
 # ── 剧情膨胀根治(用户实锤:3拍编出G7臂甲/第七试验场) ─────────────────
 
-def test_daily_beat_forbids_new_clues():
-    sys_p, _ = build_scene_prompts(_snap(), "汉娜", "伊万", beat="daily")
-    assert "日常一拍" in sys_p and "禁止" in sys_p
+def test_organic_pacing_rule():
+    """用户纠偏:限制歪,不限制节奏——不强求也不禁止进展,推进须从已有事实长出。"""
+    sys_p, _ = build_scene_prompts(_snap(), "汉娜", "伊万")
+    assert "顺其自然" in sys_p and "从已有事实自然长出" in sys_p
     assert "专有名词铁律" in sys_p
-
-
-def test_progress_beat_allows_one_step():
-    sys_p, _ = build_scene_prompts(_snap(), "汉娜", "伊万", beat="progress")
-    assert "进展一拍" in sys_p and "恰好一个" in sys_p
+    assert "日常一拍" not in sys_p and "进展一拍" not in sys_p
 
 
 def test_fabricated_noun_gate():
