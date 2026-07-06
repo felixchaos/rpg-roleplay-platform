@@ -294,3 +294,47 @@ def test_canon_refill_none_when_never_had_beats():
     from rath.sim import canon_refill_from
     sim = init_sim_state(_snapshot(), _cards(), [], clock_min=0, canon_beats=[])
     assert canon_refill_from(sim) is None
+
+
+# ── 实体别名归并(500k 浸泡实锤:简称「菲莉丝」被当未知角色,v1.61.2) ──────────
+
+def _sim_fullname_player():
+    snap = _snapshot()
+    snap["player"]["name"] = "菲莉丝·卡俄斯"
+    return init_sim_state(snap, _cards(), [], clock_min=0)
+
+
+def test_alias_resolve_short_name_updates_full_key():
+    from rath.sim import resolve_cast_name
+    sim = _sim_fullname_player()
+    assert "菲莉丝·卡俄斯" in sim["cast"]
+    assert resolve_cast_name(sim["cast"], "菲莉丝") == "菲莉丝·卡俄斯"
+    assert resolve_cast_name(sim["cast"], "不存在的人") is None
+    out = apply_scheduler_output(sim, {"cast_updates": {"菲莉丝": {"stance": "安详"}}})
+    assert out["applied"]["cast"] == 1
+    assert sim["cast"]["菲莉丝·卡俄斯"]["stance"] == "安详"
+    assert not any("未知角色" in r for r in out["rejected"])
+
+
+def test_alias_ambiguous_not_guessed():
+    from rath.sim import resolve_cast_name
+    cast = {"汉斯·里希特": {}, "汉斯·韦伯": {}}
+    assert resolve_cast_name(cast, "汉斯") is None  # 歧义不猜
+
+
+def test_alias_interaction_participants_resolved_and_deduped():
+    sim = _sim_fullname_player()
+    npc = next(n for n, c in sim["cast"].items() if c.get("kind") != "player")
+    out = apply_scheduler_output(sim, {"interaction": {
+        "participants": ["菲莉丝", "菲莉丝·卡俄斯", npc],
+        "place": sim["cast"][npc].get("location") or (sim.get("places") or ["未知地点"])[0],
+        "reason": "查看昏迷少女", "expected_outcome": "无"}})
+    it = out["applied"]["interaction"]
+    assert it and it["participants"] == ["菲莉丝·卡俄斯", npc]
+
+
+def test_apparatus_gate_catches_short_name():
+    sim = _sim_fullname_player()
+    out = apply_scheduler_output(sim, {"new_facts": ["菲莉丝头顶的能量核心与祭坛产生共振"]})
+    assert out["applied"]["facts"] == 0
+    assert any("解释装置" in r for r in out["rejected"])

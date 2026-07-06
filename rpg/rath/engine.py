@@ -201,10 +201,12 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
             if _sid:
                 # 基础设施对齐(用户实锤「我的基础设施一个没用」):世界书必须过平台
                 # reveal 门控(first_revealed_chapter/reveal_known),裸查会泄漏未揭示条目。
+                # 500k 浸泡实锤:reveal_known 默认 false(migration 1854)且只是揭示
+                # 机制的记录位,当必要条件=任何剧本都被滤成 0 条(战姬味丢失同款)。
+                # 正统口径=loaders reveal 闸:只看 first_revealed_chapter(0=保守放行)。
                 wb_rows = db.execute(
                     "select title, content from worldbook_entries where script_id=%s "
-                    "and coalesce(reveal_known, true) "
-                    "and coalesce(first_revealed_chapter, 0) <= %s "
+                    "and enabled and coalesce(first_revealed_chapter, 0) <= %s "
                     "order by priority desc, id asc limit 6",
                     (_sid, _prog + 3),
                 ).fetchall()
@@ -355,10 +357,16 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
         try:
             sys_p, usr_p = S.build_scheduler_prompts(
                 sim, elapsed_hint=elapsed_hint, directive=directive, world_context=world_context)
-            text, _u = call_agent_json(api_id, model, sys_p, usr_p, user_id,
-                                       tool_schema=None, max_tokens=800, timeout_sec=40,
-                                       agent_kind="rath_scheduler")
-            data = S.parse_scheduler_output(text or "")
+            data = None
+            for _att in (1, 2):  # flash 结构化产出必配验收+重试(铁律)
+                text, _u = call_agent_json(api_id, model, sys_p, usr_p, user_id,
+                                           tool_schema=None, max_tokens=800, timeout_sec=40,
+                                           agent_kind="rath_scheduler")
+                data = S.parse_scheduler_output(text or "")
+                if data:
+                    break
+                if _att == 1:
+                    _trace(exp_id, "调度:输出不可解析,重试一次", clock=new_clock)
             if data:
                 verdict = S.apply_scheduler_output(sim, data, world_context=world_context)
                 ap = verdict["applied"]
@@ -386,11 +394,15 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
         if interaction:
             try:
                 sys_p, usr_p = S.build_director_prompts(sim, interaction, elapsed_hint=elapsed_hint)
-                text, _u = call_agent_json(api_id, model, sys_p, usr_p, user_id,
-                                           tool_schema=None, max_tokens=900, timeout_sec=45,
-                                           agent_kind="rath_director")
-                scene = S.validate_director_output(text or "", interaction, sim,
-                                                   world_context=world_context)
+                scene = None
+                for _att in (1, 2):  # flash 结构化产出必配验收+重试(铁律)
+                    text, _u = call_agent_json(api_id, model, sys_p, usr_p, user_id,
+                                               tool_schema=None, max_tokens=900, timeout_sec=45,
+                                               agent_kind="rath_director")
+                    scene = S.validate_director_output(text or "", interaction, sim,
+                                                       world_context=world_context)
+                    if scene:
+                        break
                 if scene:
                     S.absorb_scene(sim, interaction, scene)
                     _trace(exp_id, "呈现:通过验收 —— " + scene["scene_summary"][:60], clock=new_clock)

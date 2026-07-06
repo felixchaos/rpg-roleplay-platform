@@ -188,6 +188,22 @@ def parse_scheduler_output(raw_text: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def resolve_cast_name(names, raw: str) -> str | None:
+    """实体别名归并(500k 浸泡实锤:调度输出简称「菲莉丝」,cast 键=全名「菲莉丝·卡俄斯」
+    →被当未知角色拒收,玩家 agent 僵死;「侍者=汉斯」同族)。
+    精确命中优先;否则互包含(≥2字)且唯一命中才归并,歧义不猜。确定性。"""
+    n = str(raw or "").strip()
+    if not n:
+        return None
+    pool = list(names)
+    if n in pool:
+        return n
+    if len(n) < 2:
+        return None
+    hits = [k for k in pool if (n in k) or (k in n)]
+    return hits[0] if len(hits) == 1 else None
+
+
 def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") -> dict:
     """裁决层(确定性单写者):逐字段验收 → 落 sim_state。返回 {applied:…, rejected:[原因]}。
     玩家状态守恒与名词闸在这里代码强制。纯函数(原地改 sim)。"""
@@ -197,6 +213,8 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
     known = _whitelist(sim, world_context)
 
     _pname = next((n for n, c in cast.items() if c.get("kind") == "player"), "")
+    # 全名+首段简称都算提及玩家(「菲莉丝·卡俄斯」→「菲莉丝」,防简称绕过装置闸)
+    _pkeys = [x for x in {_pname, _pname.split("·")[0] if _pname else ""} if len(x) >= 2]
     _APPARATUS = ("共振", "能量转移", "能量核心", "激活条件", "装置")
 
     def _gate(text: str, what: str) -> bool:
@@ -206,14 +224,15 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
             rejected.append(f"{what}:新造名词{'/'.join(fab[:2])}")
             return False
         # 玩家设定神圣旁路闸(浸泡实锤:铭牌共振玩家头顶能量=给玩家力量建解释装置)
-        if _pname and _pname in t and any(k in t for k in _APPARATUS):
+        if _pkeys and any(p in t for p in _pkeys) and any(k in t for k in _APPARATUS):
             rejected.append(f"{what}:围绕玩家搭建解释装置")
             return False
         return True
 
-    # cast_updates
+    # cast_updates(键先过别名归并:简称/全名互认)
     for name, u in (data.get("cast_updates") or {}).items():
-        c = cast.get(str(name))
+        rk = resolve_cast_name(cast, str(name))
+        c = cast.get(rk) if rk else None
         if not c or not isinstance(u, dict):
             rejected.append(f"cast_updates:未知角色{name}")
             continue
@@ -242,8 +261,12 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
     # interaction
     it = data.get("interaction")
     if isinstance(it, dict):
-        ps = [str(x).strip() for x in (it.get("participants") or []) if str(x).strip()]
-        ps = [p for p in ps if p in cast][:2]
+        ps = []
+        for x in (it.get("participants") or []):
+            rp = resolve_cast_name(cast, str(x))
+            if rp and rp not in ps:
+                ps.append(rp)
+        ps = ps[:2]
         place = str(it.get("place") or "").strip()
         unconscious_active = [p for p in ps if cast[p].get("kind") == "player"
                               and cast[p].get("status") == "昏迷"]
@@ -289,7 +312,9 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
                 "id": f"t{len(threads) + 1}",
                 "desc": desc[:80],
                 "tension": max(1, min(6, int((nt or {}).get("tension") or 3))),
-                "participants": [p for p in ((nt or {}).get("participants") or []) if p in cast][:3],
+                "participants": list(dict.fromkeys(
+                    rp for rp in (resolve_cast_name(cast, p)
+                                  for p in ((nt or {}).get("participants") or [])) if rp))[:3],
             })
             applied["threads"] += 1
 
@@ -452,6 +477,7 @@ def validate_director_output(raw_text: str, interaction: dict, sim: dict,
         if not isinstance(row, dict):
             continue
         sp = str(row.get("speaker") or "").strip()
+        sp = resolve_cast_name(ps, sp) or sp  # 简称/全名互认(别名归并)
         ln = str(row.get("line") or "").strip()[:120]
         if sp not in ps or not ln:
             continue
@@ -468,8 +494,9 @@ def validate_director_output(raw_text: str, interaction: dict, sim: dict,
         return None
     mems = {}
     for n, v in (data.get("private_memories") or {}).items():
-        if str(n) in ps and str(v or "").strip():
-            mems[str(n)] = str(v).strip()[:60]
+        rn = resolve_cast_name(ps, str(n))
+        if rn and str(v or "").strip():
+            mems[rn] = str(v).strip()[:60]
     return {"transcript": transcript, "scene_summary": summary, "private_memories": mems}
 
 
