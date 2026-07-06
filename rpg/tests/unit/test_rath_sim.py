@@ -175,3 +175,31 @@ def test_prompts_smoke():
 def test_parse_scheduler_fenced():
     assert parse_scheduler_output('```json\n{"cast_updates": {}}\n```') == {"cast_updates": {}}
     assert parse_scheduler_output("garbage") is None
+
+
+# ── 浸泡实锤回归(v1.59.2) ────────────────────────────────────────────
+
+def test_thread_decay_releases_pressure():
+    from rath.sim import decay_threads
+    sim = _sim(); sim["threads"][0]["tension"] = 10
+    assert decay_threads(sim) == 1
+    assert sim["threads"][0]["tension"] == 9
+    sim["threads"][0]["tension"] = 1
+    assert decay_threads(sim) == 0  # 下限1不再降
+
+
+def test_tension_ratchet_capped_plus_one():
+    sim = _sim()
+    apply_scheduler_output(sim, {"thread_updates": [{"id": "t1", "tension_delta": 2}]})
+    assert sim["threads"][0]["tension"] == 6  # +2 被夹成 +1
+
+
+def test_apparatus_around_player_rejected():
+    """浸泡实锤:铭牌与玩家头顶能量共振=围绕玩家搭建解释装置,硬闸拒收。"""
+    sim = _sim()
+    out = apply_scheduler_output(sim, {
+        "new_facts": ["铭牌与菲莉丝头顶的能量残余产生共振"],
+        "world_events": ["某个装置在菲莉丝靠近时被激活条件触发"],
+    })
+    assert not any("共振" in f for f in sim["facts"])
+    assert sum("解释装置" in r for r in out["rejected"]) == 2

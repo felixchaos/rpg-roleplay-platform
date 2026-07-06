@@ -128,6 +128,10 @@ _SCHED_SYSTEM = """你是世界仿真的调度器:决定接下来这段时间里
 4. 剧情自然呼吸:可以推进也可以只是生活;推进必须从已确立事实自然长出;
    不必每拍都有相遇(interaction 可为 null)。
 5. 有【观测者引导】时,将其翻译成剧情线/目标的调整,让世界朝该方向自然倾斜。
+6. 生活优先:角色有自己的本职与日常,调查/异象不得吞噬全部生活;除非某剧情线张力≥7,
+   角色应主要处于本职与日常活动。
+7. 世界的超常现象只能来自【世界观要点】已有的体系;禁止发明新的超常机制/发光装置/
+   现象链;禁止让环境发生灾变级变化;**禁止围绕玩家角色搭建解释其力量的装置或现象**。
 只输出严格 JSON(不要围栏):
 {"cast_updates": {"名字": {"location": "可选", "activity": "可选", "goal": "可选", "mood": "可选"}},
  "interaction": {"participants": ["甲","乙"], "place": "已知地点", "reason": "为何相遇", "expected_outcome": "本场自然收在哪"} 或 null,
@@ -184,10 +188,18 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
     cast = sim.setdefault("cast", {})
     known = _whitelist(sim, world_context)
 
+    _pname = next((n for n, c in cast.items() if c.get("kind") == "player"), "")
+    _APPARATUS = ("共振", "能量转移", "能量核心", "激活条件", "装置")
+
     def _gate(text: str, what: str) -> bool:
-        fab = find_fabricated_nouns(str(text or ""), known)
+        t = str(text or "")
+        fab = find_fabricated_nouns(t, known)
         if fab:
             rejected.append(f"{what}:新造名词{'/'.join(fab[:2])}")
+            return False
+        # 玩家设定神圣旁路闸(浸泡实锤:铭牌共振玩家头顶能量=给玩家力量建解释装置)
+        if _pname and _pname in t and any(k in t for k in _APPARATUS):
+            rejected.append(f"{what}:围绕玩家搭建解释装置")
             return False
         return True
 
@@ -251,7 +263,7 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
         if not t:
             continue
         try:
-            delta = max(-2, min(2, int(tu.get("tension_delta") or 0)))
+            delta = max(-2, min(1, int(tu.get("tension_delta") or 0)))  # 升压封1,降压封2(防棘轮)
         except Exception:
             delta = 0
         t["tension"] = max(0, min(10, int(t.get("tension") or 0) + delta))
@@ -282,6 +294,18 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
     if len(facts) > MAX_FACTS:
         sim["facts"] = facts[-MAX_FACTS:]
     return {"applied": applied, "rejected": rejected}
+
+
+def decay_threads(sim: dict) -> int:
+    """张力衰减(浸泡实锤:LLM 只升不降,张力钉死10→夜律豁免全员=24/7永动侦探)。
+    每拍每线 -1(下限1),戏剧压力必须靠持续喂养才能维持。返回衰减条数。确定性。"""
+    n = 0
+    for t in sim.get("threads") or []:
+        cur = int(t.get("tension") or 0)
+        if cur > 1:
+            t["tension"] = cur - 1
+            n += 1
+    return n
 
 
 def enforce_night(sim: dict) -> int:

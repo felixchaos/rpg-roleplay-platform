@@ -253,6 +253,9 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
                               [dict(r) for r in (wb_rows or [])], clock_min=new_clock)
         _trace(exp_id, f"仿真态初始化:角色 {len(sim['cast'])} 人 · 地点 {len(sim['places'])} 处 · 剧情线 {len(sim['threads'])} 条", clock=new_clock)
     sim["clock_min"] = new_clock
+    decayed = S.decay_threads(sim)
+    if decayed:
+        _trace(exp_id, f"张力衰减:{decayed} 条剧情线 -1(压力需持续喂养)", clock=new_clock)
     forced = S.enforce_night(sim)
     if forced:
         _trace(exp_id, f"时间推进:夜间,{forced} 人转入睡眠", clock=new_clock)
