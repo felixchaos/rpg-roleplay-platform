@@ -1,7 +1,7 @@
 {
   "name": "rpg-roleplay-frontend",
   "private": true,
-  "version": "1.53.0",
+  "version": "1.54.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
