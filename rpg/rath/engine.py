@@ -242,141 +242,118 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
            + f" · 世界书要点 {len(wb_rows or [])} 条 · 引导:" + (directive[:40] + "…" if len(directive) > 40 else directive or "无"),
            clock=new_clock)
 
-    # ── 段2:LLM(不持任何 DB 连接) ──
+    # ── 段2:仿真环(v2,状态优先;LLM 阶段不持任何 DB 连接) ──
+    from rath import sim as S
+    sim = None
+    with connect() as db:
+        row = db.execute("select sim_state from rath_experiments where id=%s", (int(exp_id),)).fetchone()
+        sim = (row or {}).get("sim_state")
+    if not isinstance(sim, dict) or not sim.get("cast"):
+        sim = S.init_sim_state(snap, [dict(r) for r in (cast_rows or [])],
+                              [dict(r) for r in (wb_rows or [])], clock_min=new_clock)
+        _trace(exp_id, f"仿真态初始化:角色 {len(sim['cast'])} 人 · 地点 {len(sim['places'])} 处 · 剧情线 {len(sim['threads'])} 条", clock=new_clock)
+    sim["clock_min"] = new_clock
+    forced = S.enforce_night(sim)
+    if forced:
+        _trace(exp_id, f"时间推进:夜间,{forced} 人转入睡眠", clock=new_clock)
+
     wrote: list[str] = []
     scene: dict | None = None
-    scene_pair: tuple[str, str] | None = None
+    interaction: dict | None = None
     try:
         from agents.recorder import _resolve_recorder_api_and_model
         api_id, model = _resolve_recorder_api_and_model(user_id, None, None)
     except Exception:
         api_id, model = None, None
-    if api_id and model:
-        # 2a. 离线心跳事件(复用心跳材料/prompt/验收,绝不写 state)
-        try:
-            from agents._harness import call_agent_json
-            from agents.world_heartbeat import _build_materials, _build_prompts, _validate_items
-            from core.json_parse import parse_llm_json
-            materials = _build_materials(snap, None)
-            sys_p, usr_p = _build_prompts(materials)
-            usr_p += (f"\n\n【离线时长】玩家已离开,{elapsed_hint}。事件应体现这段时间的自然流逝。"
-                      "\n【关联铁律】事件必须与在场人物、当前舞台或他们的生活直接相关"
-                      "(会被他们看见/听见/影响到);不要生成与故事无关的随机路人事件。")
-            if player_name:
-                usr_p += (f"\n【玩家角色设定神圣】不得为玩家角色{player_name}编造来历/身份/标签,"
-                          "不得生成把其归类为实验品/机构产物等的事件;其谜团只属于玩家。")
-            if world_context:
-                usr_p += f"\n【世界观要点(事件应符合此世界质感)】\n{world_context}"
-            if directive:
-                usr_p += f"\n【观测者引导(事件应朝此方向自然倾斜,不得突兀)】{directive}"
-            text, _usage = call_agent_json(
-                api_id=api_id, model=model, system_prompt=sys_p, user_prompt=usr_p,
-                user_id=user_id, tool_schema=None, max_tokens=400, timeout_sec=25,
-                agent_kind="rath_offline_heartbeat",
-            )
-            raw_items = parse_llm_json(text, want=list) or []
-            wrote = _validate_items(raw_items, state_data=snap, player_name=player_name)[:2]
-            _trace(exp_id, f"背景事件:模型产出 {len(raw_items)} 条 → 验收通过 {len(wrote)} 条"
-                   + ("(其余因重复/提及玩家/超长被丢弃)" if len(raw_items) > len(wrote) else ""),
-                   clock=new_clock)
-        except Exception as exc:
-            log.warning("[rath] 离线心跳跳过(非致命): %s", exc)
-            _trace(exp_id, f"背景事件:失败跳过({str(exc)[:60]})", clock=new_clock)
-        # 2b. NPC-NPC 对手戏(每第 N 拍,预算内)
-        if (int(claim["ticks_today"]) % SCENE_EVERY_N_TICKS == 0
-                and int(claim["scenes_today"]) < MAX_SCENES_PER_DAY):
-            try:
-                from rath.npc_scene import build_scene_prompts, select_scene_pair, validate_scene
-                scene_pair = select_scene_pair(
-                    snap, extra_candidates=cast_names,
-                    exclude_names={player_name} if player_name else None)
-                # 玩家化身自主行动(用户需求):偶数场次由玩家角色按【设定】参演——
-                # 化身在玩家离线时也活着(状态守恒:昏迷只能梦呓;绝不替玩家做重大决定)。
-                player_in_scene = ""
-                if player_name and scene_pair and int(claim["scenes_today"]) % 2 == 0:
-                    scene_pair = (scene_pair[0], player_name)
-                    player_in_scene = player_name
-                    _pl = snap.get("player") or {}
-                    cast_dossiers = dict(cast_dossiers)
-                    cast_dossiers[player_name] = (
-                        "玩家角色(按其设定由模拟器驱动,状态守恒);"
-                        + str(_pl.get("role") or "")[:50] + ";"
-                        + str(_pl.get("background") or _pl.get("identity_role_desc") or "")[:180]
-                    )
-                if scene_pair:
-                    _trace(exp_id, f"选角:{scene_pair[0]} × {scene_pair[1]}"
-                           + ("(玩家化身场,按设定驱动)" if player_in_scene else "")
-                           + f" · 来源=议程/关系+卡司", clock=new_clock)
-                    from agents._harness import call_agent_json
-                    sys_p, usr_p = build_scene_prompts(
-                        snap, scene_pair[0], scene_pair[1],
-                        elapsed_hint=elapsed_hint, recent_events=recent + wrote,
-                        world_context=world_context, directive=directive,
-                        extra_dossiers=cast_dossiers, player_in_scene=player_in_scene)
-                    text, _usage = call_agent_json(
-                        api_id=api_id, model=model, system_prompt=sys_p, user_prompt=usr_p,
-                        user_id=user_id, tool_schema=None, max_tokens=900, timeout_sec=40,
-                        agent_kind="rath_npc_scene",
-                    )
-                    _known = usr_p + " " + sys_p  # 材料全集=档案+世界观要点+近况+引导
-                    scene = validate_scene(text or "", scene_pair[0], scene_pair[1],
-                                           known_text=_known)
-                    if scene:
-                        _trace(exp_id, f"互动生成:通过验收 —— {scene['scene_summary'][:60]}", clock=new_clock)
-                    else:
-                        from rath.npc_scene import find_fabricated_nouns
-                        _fab = find_fabricated_nouns(text or "", _known)
-                        _trace(exp_id, ("互动拒收:新造名词 " + "/".join(_fab[:3])) if _fab
-                               else "互动拒收:结构不合格或对白为空(本拍无戏,正常)", clock=new_clock)
-            except Exception as exc:
-                log.warning("[rath] 对手戏跳过(非致命): %s", exc)
 
-    # ── 段3:落产物(连接B;只写 kb_events + rath 表) ──
-    if wrote or scene:
-        with connect() as db:
+    if api_id and model:
+        from agents._harness import call_agent_json
+        # ① 调度(LLM-A):结构化意图
+        try:
+            sys_p, usr_p = S.build_scheduler_prompts(
+                sim, elapsed_hint=elapsed_hint, directive=directive, world_context=world_context)
+            text, _u = call_agent_json(api_id, model, sys_p, usr_p, user_id,
+                                       tool_schema=None, max_tokens=800, timeout_sec=40,
+                                       agent_kind="rath_scheduler")
+            data = S.parse_scheduler_output(text or "")
+            if data:
+                verdict = S.apply_scheduler_output(sim, data, world_context=world_context)
+                ap = verdict["applied"]
+                _trace(exp_id, f"调度裁决:角色更新 {ap['cast']} 项 · 事件 {len(ap['events'])} 条"
+                       + f" · 剧情线 {ap['threads']} 项 · 事实 {ap['facts']} 条"
+                       + (" · 拒收:" + ";".join(verdict["rejected"][:3]) if verdict["rejected"] else ""),
+                       clock=new_clock)
+                wrote = ap["events"]
+                interaction = ap.get("interaction")
+                if interaction:
+                    _trace(exp_id, "相遇:" + "×".join(interaction["participants"])
+                           + f" @ {interaction['place']} · 缘由:{interaction['reason'][:40]}", clock=new_clock)
+            else:
+                _trace(exp_id, "调度:输出不可解析,本拍世界静默", clock=new_clock)
+        except Exception as exc:
+            log.warning("[rath] 调度失败(非致命): %s", exc)
+            _trace(exp_id, f"调度失败跳过({str(exc)[:60]})", clock=new_clock)
+
+        # ② 呈现(LLM-B):只演绎已裁决的相遇
+        if interaction:
             try:
-                from kb.live_repo import record_event
-                for i, it in enumerate(wrote):
-                    record_event(
-                        db, save_id, commit_id, f"rath_hb_{exp_id}_{new_clock}_{i}",
-                        summary=it, story_time=_clock_label(new_clock), location=location,
-                        metadata={"source": "rath_offline_heartbeat"},
-                    )
-                    db.execute(
-                        "insert into rath_events (exp_id, kind, summary, world_clock_min) values (%s,'heartbeat',%s,%s)",
-                        (int(exp_id), it, new_clock),
-                    )
-                if scene and scene_pair:
-                    npc_a, npc_b = scene_pair
-                    record_event(
-                        db, save_id, commit_id, f"rath_scene_{exp_id}_{new_clock}",
-                        summary=f"{npc_a}与{npc_b}:{scene['scene_summary']}",
-                        story_time=_clock_label(new_clock), participants=[npc_a, npc_b],
-                        metadata={"source": "rath_npc_scene"},
-                    )
-                    db.execute(
-                        "insert into rath_events (exp_id, kind, summary, payload, world_clock_min) values (%s,'scene',%s,%s,%s)",
-                        (int(exp_id), scene["scene_summary"],
-                         json.dumps({"npc_a": npc_a, "npc_b": npc_b,
-                                     "transcript": scene["transcript"],
-                                     "npc_updates": scene["npc_updates"]}, ensure_ascii=False),
-                         new_clock),
-                    )
-                    db.execute(
-                        "update rath_experiments set scenes_today = scenes_today + 1 where id=%s",
-                        (int(exp_id),),
-                    )
-                if hasattr(db, "commit"):
-                    db.commit()
+                sys_p, usr_p = S.build_director_prompts(sim, interaction, elapsed_hint=elapsed_hint)
+                text, _u = call_agent_json(api_id, model, sys_p, usr_p, user_id,
+                                           tool_schema=None, max_tokens=900, timeout_sec=45,
+                                           agent_kind="rath_director")
+                scene = S.validate_director_output(text or "", interaction, sim,
+                                                   world_context=world_context)
+                if scene:
+                    S.absorb_scene(sim, interaction, scene)
+                    _trace(exp_id, "呈现:通过验收 —— " + scene["scene_summary"][:60], clock=new_clock)
+                else:
+                    _trace(exp_id, "呈现拒收(结构/名词/状态守恒),相遇改记为事实", clock=new_clock)
+                    sim.setdefault("facts", []).append(
+                        ("、".join(interaction["participants"]) + "在" + interaction["place"]
+                         + "见了一面:" + interaction["reason"])[:120])
             except Exception as exc:
-                log.warning("[rath] 产物落库失败(非致命): %s", exc)
-    _trace(exp_id, f"推进完成:落库 背景事件 {len(wrote)} 条"
-           + (" + 互动 1 场" if scene else "") + f" @ {_clock_label(new_clock)}", clock=new_clock)
+                log.warning("[rath] 呈现失败(非致命): %s", exc)
+                _trace(exp_id, f"呈现失败跳过({str(exc)[:60]})", clock=new_clock)
+
+    # ── 段3:落库(连接B;sim_state + kb_events + rath 表) ──
+    with connect() as db:
+        try:
+            db.execute("update rath_experiments set sim_state=%s where id=%s",
+                       (json.dumps(sim, ensure_ascii=False), int(exp_id)))
+            from kb.live_repo import record_event
+            for i, it in enumerate(wrote):
+                record_event(db, save_id, commit_id, f"rath_hb_{exp_id}_{new_clock}_{i}",
+                             summary=it, story_time=_clock_label(new_clock), location=location,
+                             metadata={"source": "rath_offline_heartbeat"})
+                db.execute("insert into rath_events (exp_id, kind, summary, world_clock_min) values (%s,'heartbeat',%s,%s)",
+                           (int(exp_id), it, new_clock))
+            if scene and interaction:
+                npc_a, npc_b = interaction["participants"][0], interaction["participants"][1]
+                record_event(db, save_id, commit_id, f"rath_scene_{exp_id}_{new_clock}",
+                             summary=f"{npc_a}与{npc_b}:{scene['scene_summary']}",
+                             story_time=_clock_label(new_clock), participants=[npc_a, npc_b],
+                             metadata={"source": "rath_npc_scene"})
+                db.execute(
+                    "insert into rath_events (exp_id, kind, summary, payload, world_clock_min) values (%s,'scene',%s,%s,%s)",
+                    (int(exp_id), scene["scene_summary"],
+                     json.dumps({"npc_a": npc_a, "npc_b": npc_b,
+                                 "transcript": scene["transcript"],
+                                 "npc_updates": {n: {"private_memory": v}
+                                                 for n, v in (scene.get("private_memories") or {}).items()}},
+                                ensure_ascii=False), new_clock))
+                db.execute("update rath_experiments set scenes_today = scenes_today + 1 where id=%s",
+                           (int(exp_id),))
+            if hasattr(db, "commit"):
+                db.commit()
+        except Exception as exc:
+            log.warning("[rath] 落库失败(非致命): %s", exc)
+    _trace(exp_id, f"推进完成:事件 {len(wrote)} 条" + (" + 相遇 1 场" if scene else "")
+           + f" · 剧情线 {len(sim.get('threads') or [])} 条 @ {_clock_label(new_clock)}", clock=new_clock)
     log.info("[rath] tick exp=%s clock=%s events=%d scene=%s",
              exp_id, _clock_label(new_clock), len(wrote), bool(scene))
     return {"ok": True, "wrote_events": wrote,
-            "scene": ({"npc_a": scene_pair[0], "npc_b": scene_pair[1],
-                       "summary": scene["scene_summary"]} if scene and scene_pair else None),
+            "scene": ({"npc_a": interaction["participants"][0], "npc_b": interaction["participants"][1],
+                       "summary": scene["scene_summary"]} if scene and interaction else None),
             "world_clock_label": _clock_label(new_clock)}
 
 

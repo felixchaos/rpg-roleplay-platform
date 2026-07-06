@@ -114,27 +114,47 @@ async def api_rath_detail(exp_id: int, user=Depends(get_current_user)):
             "world_clock_label": _clock_label(int(r.get("world_clock_min") or 0)),
             "created_at": str(r.get("created_at") or ""),
         })
-    _names: list[str] = [n for n in agendas if isinstance(n, str)]
-    for n in list(offline_updates) + list(private_memories):
-        if n not in _names:
-            _names.append(n)
-    fluctlights = []
-    for n in _names:
-        a = agendas.get(n) or {}
-        o = offline_updates.get(n) or {}
-        fluctlights.append({
-            "name": n,
-            "goal": o.get("goal") or (a or {}).get("goal") or "",
-            "stance": o.get("stance") or (a or {}).get("stance") or "",
-            "private_memories": private_memories.get(n, []),
-        })
+    # 仿真态 v2:cast 即角色动态的权威源(位置/活动/目标/心情/私记全在状态里)。
+    sim = exp.get("sim_state") if isinstance(exp.get("sim_state"), dict) else None
+    threads_out = []
+    if sim and (sim.get("cast") or {}):
+        fluctlights = []
+        for n, c in (sim.get("cast") or {}).items():
+            fluctlights.append({
+                "name": n,
+                "kind": c.get("kind") or "npc",
+                "location": c.get("location") or "",
+                "activity": c.get("activity") or "",
+                "goal": c.get("goal") or "",
+                "stance": c.get("mood") or "",
+                "status": c.get("status") or "",
+                "private_memories": (c.get("memory") or [])[-5:][::-1],
+            })
+        threads_out = [{"id": t.get("id"), "desc": t.get("desc"), "tension": t.get("tension")}
+                       for t in (sim.get("threads") or [])]
+    else:
+        # 兜底(仿真态未初始化):旧三源合并
+        _names: list[str] = [n for n in agendas if isinstance(n, str)]
+        for n in list(offline_updates) + list(private_memories):
+            if n not in _names:
+                _names.append(n)
+        fluctlights = []
+        for n in _names:
+            a = agendas.get(n) or {}
+            o = offline_updates.get(n) or {}
+            fluctlights.append({
+                "name": n,
+                "goal": o.get("goal") or (a or {}).get("goal") or "",
+                "stance": o.get("stance") or (a or {}).get("stance") or "",
+                "private_memories": private_memories.get(n, []),
+            })
     trace_out = [{
         "id": int(r["id"]), "summary": r.get("summary"),
         "world_clock_label": _clock_label(int(r.get("world_clock_min") or 0)),
         "created_at": str(r.get("created_at") or ""),
     } for r in (trace_rows or [])]
     return {"ok": True, "experiment": _expose(dict(exp)), "events": ev_out,
-            "trace": trace_out, "fluctlights": fluctlights}
+            "trace": trace_out, "fluctlights": fluctlights, "threads": threads_out}
 
 
 @router.post("/api/rath/experiments/{exp_id}/tick")

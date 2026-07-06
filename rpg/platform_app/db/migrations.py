@@ -2219,6 +2219,11 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         # RATH 世界引导(观测者意志):用户在观测台写引导方向,离线心跳/对手戏朝其自然倾斜。
         "alter table rath_experiments add column if not exists directive text",
     ]),
+    (95, "rath_sim_state", [
+        # RATH 仿真核心 v2(docs/design/rath_simulation_v2.md):状态优先——世界的本体是
+        # 持续演化的 sim_state(cast/places/facts/threads),文字只是投影。
+        "alter table rath_experiments add column if not exists sim_state jsonb",
+    ]),
 ]
 
 

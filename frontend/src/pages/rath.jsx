@@ -196,6 +196,7 @@ function ExperimentPanel({ expId }) {
   const fluctlights = detail?.fluctlights || [];
   const events = detail?.events || [];
   const trace = detail?.trace || [];
+  const threads = detail?.threads || [];
   // 推进后快轮询(实时看到运行日志):点击推进一步后 2 分钟内每 5s 拉一次
   const fastPollUntilRef = useRef(0);
   useEffect(() => {
@@ -394,6 +395,15 @@ function ExperimentPanel({ expId }) {
 
       {/* 角色动态板 */}
       <CSContainer header={<CSHeader variant="h2">{t('rath_page.fluctlights.title', { defaultValue: '角色动态' })}</CSHeader>}>
+        {threads.length > 0 && (
+          <CSBox margin={{ bottom: 's' }}>
+            {threads.map((th) => (
+              <CSBox key={th.id} fontSize="body-s" color="text-body-secondary">
+                {t('rath_page.threads.prefix', { defaultValue: '剧情线' })} · {th.desc}（{t('rath_page.threads.tension', { defaultValue: '张力' })} {th.tension}/10）
+              </CSBox>
+            ))}
+          </CSBox>
+        )}
         {fluctlights.length === 0 ? (
           <CSBox color="text-body-secondary" textAlign="center" padding={{ vertical: 'l' }}>
             {t('rath_page.fluctlights.empty', { defaultValue: '尚无角色动态——推进几步或进游戏玩几回合后,这里会出现各角色的目标、态度与私记。' })}
@@ -402,7 +412,12 @@ function ExperimentPanel({ expId }) {
           <div className="rath-fluctlight-grid">
             {fluctlights.map((f) => (
               <div key={f.name} className="rath-fluctlight-card">
-                <CSBox fontWeight="bold">{f.name}</CSBox>
+                <CSBox fontWeight="bold">{f.name}{f.kind === 'player' ? t('rath_page.fluctlights.player_tag', { defaultValue: '(玩家)' }) : ''}{f.status ? `·${f.status}` : ''}</CSBox>
+                {(f.location || f.activity) && (
+                  <CSBox fontSize="body-s" color="text-body-secondary">
+                    {f.location}{f.location && f.activity ? ' · ' : ''}{f.activity}
+                  </CSBox>
+                )}
                 {f.goal && <CSBox fontSize="body-s" margin={{ top: 'xxs' }}>{t('rath_page.fluctlights.goal_prefix', { defaultValue: '目标：' })}{f.goal}</CSBox>}
                 {f.stance && <CSBox fontSize="body-s" color="text-body-secondary">{t('rath_page.fluctlights.stance_prefix', { defaultValue: '态度：' })}{f.stance}</CSBox>}
                 {Array.isArray(f.private_memories) && f.private_memories.length > 0 && (
