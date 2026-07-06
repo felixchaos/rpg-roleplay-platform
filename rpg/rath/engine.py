@@ -184,11 +184,28 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
             srow = db.execute(
                 "select script_id from game_saves where id=%s", (save_id,)).fetchone()
             _sid = int((srow or {}).get("script_id") or 0)
+            # 进度权威=平台 get_progress_window(reveal 钳制同源),不再土算
+            _prog = 1
+            try:
+                from agents.anchor_seed_agent import get_progress_window as _gpw
+                _pw = _gpw(save_id, script_id=_sid, window_size=12) if _sid else None
+                if _pw and _pw.get("chapter_min"):
+                    _prog = int(_pw["chapter_min"])
+            except Exception:
+                try:
+                    _prog = int(((snap.get("worldline") or {}).get("progress_chapter"))
+                                or ((snap.get("world") or {}).get("progress_chapter")) or 1)
+                except Exception:
+                    _prog = 1
             if _sid:
+                # 基础设施对齐(用户实锤「我的基础设施一个没用」):世界书必须过平台
+                # reveal 门控(first_revealed_chapter/reveal_known),裸查会泄漏未揭示条目。
                 wb_rows = db.execute(
                     "select title, content from worldbook_entries where script_id=%s "
+                    "and coalesce(reveal_known, true) "
+                    "and coalesce(first_revealed_chapter, 0) <= %s "
                     "order by priority desc, id asc limit 6",
-                    (_sid,),
+                    (_sid, _prog + 3),
                 ).fetchall()
         except Exception:
             wb_rows = []
@@ -198,12 +215,6 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
         cast_rows = []
         try:
             if _sid:
-                _prog = 1
-                try:
-                    _prog = int(((snap.get("worldline") or {}).get("progress_chapter"))
-                                or ((snap.get("world") or {}).get("progress_chapter")) or 1)
-                except Exception:
-                    _prog = 1
                 cast_rows = db.execute(
                     "select name, personality, appearance from character_cards "
                     "where script_id=%s and coalesce(reveal_known, true) "

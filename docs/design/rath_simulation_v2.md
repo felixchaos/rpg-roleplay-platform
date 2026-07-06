@@ -71,3 +71,16 @@ sim_state = {
 ## §6 成本
 
 每拍 LLM 2 次(调度+呈现,无相遇时 1 次),与 v1 持平。
+
+## §7 基础设施复用清单(用户实锤「基础设施一个没用」后的对账,2026-07-06)
+
+已复用:`agents._harness.call_agent_json`(LLM调用+token_usage记账)/`_resolve_recorder_api_and_model`
+(BYOK)/`kb.live_repo.record_event`(kb_events→情景召回闭环)/`core.json_parse.parse_llm_json`
+(v1.60.2 收口,此前 sim.py 手写过两份解析)/`get_progress_window`(进度权威,v1.60.2 收口,
+此前土算 progress_chapter)/世界书查询过 reveal 门控(v1.60.2 收口,此前裸查有剧透泄漏面)。
+
+已知平行结构(记为债务,不急改):sim_state.cast 的 goal/mood/memory 与柱子3 npc_agendas /
+私记格式平行——设计取舍(离线绝不写游戏 state),但字段命名与验收器应逐步对齐;
+find_fabricated_nouns 与 black_swan validator/npc_extract L2 同族,未来可抽公共验收层。
+
+教训:新子系统动工前先列「平台已有能力清单」,能 import 的绝不重写。

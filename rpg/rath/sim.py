@@ -181,19 +181,9 @@ def _whitelist(sim: dict, extra: str = "") -> str:
 
 
 def parse_scheduler_output(raw_text: str) -> dict | None:
-    if not raw_text:
-        return None
-    text = raw_text.strip()
-    m = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
-    if m:
-        text = m.group(1).strip()
-    a, b = text.find("{"), text.rfind("}")
-    if a < 0 or b <= a:
-        return None
-    try:
-        data = json.loads(text[a:b + 1])
-    except Exception:
-        return None
+    # 复用平台 parse_llm_json(专治便宜模型形态漂移;基础设施复用清单见设计文档§7)
+    from core.json_parse import parse_llm_json
+    data = parse_llm_json(raw_text or "", want=dict)
     return data if isinstance(data, dict) else None
 
 
@@ -411,18 +401,9 @@ def build_director_prompts(sim: dict, interaction: dict, *, elapsed_hint: str = 
 
 def validate_director_output(raw_text: str, interaction: dict, sim: dict,
                              *, world_context: str = "") -> dict | None:
-    if not raw_text:
-        return None
-    text = raw_text.strip()
-    m = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
-    if m:
-        text = m.group(1).strip()
-    a, b = text.find("{"), text.rfind("}")
-    if a < 0 or b <= a:
-        return None
-    try:
-        data = json.loads(text[a:b + 1])
-    except Exception:
+    from core.json_parse import parse_llm_json
+    data = parse_llm_json(raw_text or "", want=dict)
+    if not isinstance(data, dict):
         return None
     ps = set(interaction.get("participants") or [])
     passive = set(interaction.get("passive") or [])
