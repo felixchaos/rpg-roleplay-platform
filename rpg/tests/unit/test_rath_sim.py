@@ -230,6 +230,7 @@ def test_canon_advance_moves_cursor_into_facts():
     sim = _sim_canon()
     out = apply_scheduler_output(sim, {"canon_advance": True})
     assert out["applied"]["canon_advance"] is True
+    assert "留学生会馆" in out["applied"]["canon_text"]  # engine 靠它把动向并入事件流
     assert sim["canon"]["cursor"] == 1
     assert any("【原著进程】" in f and "留学生会馆" in f for f in sim["facts"])
 

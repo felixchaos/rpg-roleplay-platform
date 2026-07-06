@@ -342,6 +342,7 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
         canon["cursor"] = cur + 1
         canon["stall"] = 0
         applied["canon_advance"] = True
+        applied["canon_text"] = beats[cur]["text"]
     else:
         canon["stall"] = int(canon.get("stall") or 0) + 1
         applied["canon_advance"] = False

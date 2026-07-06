@@ -378,11 +378,16 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
                        clock=new_clock)
                 wrote = ap["events"]
                 interaction = ap.get("interaction")
+                # 河道前行的动向并入事件流(浸泡实锤:只进 facts 池=情景召回看不到
+                # 原著进程,违反 RATH 产物 kb_events 闭环铁律)
                 if ap.get("canon_advance"):
                     _trace(exp_id, "原著河道:动向成熟,前行一格", clock=new_clock)
+                    if ap.get("canon_text"):
+                        wrote = wrote + ["【原著进程】" + str(ap["canon_text"])[:120]]
                 stalled = S.advance_stalled_canon(sim)
                 if stalled:
                     _trace(exp_id, "原著河道:滞留强制前行 —— " + stalled[:60], clock=new_clock)
+                    wrote = wrote + ["【原著进程】" + stalled[:120]]
                 if interaction:
                     _trace(exp_id, "相遇:" + "×".join(interaction["participants"])
                            + f" @ {interaction['place']} · 缘由:{interaction['reason'][:40]}", clock=new_clock)
