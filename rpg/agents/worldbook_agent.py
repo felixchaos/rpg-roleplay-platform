@@ -125,6 +125,36 @@ def consult(
                 jump_to_phase=jump_to_phase,
                 jump_to_chapter=jump_to_chapter,
             )
+            # 群反馈(行者无疆):current_phase=自由标签(「玩家分支」)且 query 也匹配不到
+            # phase → _resolve_anchor fallback 到第一个 phase(开端) → 阶段摘要/章节事实
+            # 全是开局材料,GM 把早已过去的剧情(生化危机)当刚发生。玩家显式进度是权威
+            # 地板:anchor 整体落后于进度章时,按进度章重定位所在 phase
+            # (「/set 跳章信号传播」同族缝第 4 条;显式 jump_to_* 语义优先不钳)。
+            if save_id and not jump_to_chapter and not jump_to_phase:
+                try:
+                    from agents.anchor_seed_agent import get_progress_window as _gpw
+                    _pw = _gpw(int(save_id), script_id=int(script_id), window_size=12)
+                    _pc = int((_pw or {}).get("chapter_min") or 0)
+                except Exception:
+                    _pc = 0
+                if _pc > 1 and anchor and int(anchor.get("chapter_min") or 0) < _pc <= int(anchor.get("chapter_max") or 0):
+                    # 进度在 phase 中段(如五等分巨窗「开端」1..78,进度=17):事实窗口
+                    # 地板抬到当前进度章,否则 chapter_facts 恒从 phase 开头拉最早 5 章。
+                    anchor["chapter_min"] = _pc
+                elif _pc > 1 and (not anchor or int(anchor.get("chapter_max") or 0) < _pc):
+                    prow = db.execute(
+                        "select phase_label, chapter_min, chapter_max, story_time_label_start "
+                        "from phase_digests where script_id=%s and chapter_min<=%s and chapter_max>=%s "
+                        "order by chapter_max - chapter_min asc limit 1",
+                        (script_id, _pc, _pc),
+                    ).fetchone()
+                    anchor = {
+                        "phase": (prow or {}).get("phase_label") or "",
+                        "chapter_min": _pc,
+                        "chapter_max": int((prow or {}).get("chapter_max") or _pc),
+                        "time_label": (prow or {}).get("story_time_label_start") or current_time,
+                        "source": "progress_floor",
+                    }
             if anchor:
                 result.timeline_anchor = anchor
                 result.sources.append("phase_digests")
