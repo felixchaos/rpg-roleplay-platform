@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.55.1] - 2026-07-06
+
+### Fixed
+- **RATH 离线戏选角**:泛指称谓(「少女」「神秘人」等)与玩家自身不再被选为离线互动角色;地点未知时不再凭空编造场景。
+
 ## [1.55.0] - 2026-07-06
 
 ### Added
