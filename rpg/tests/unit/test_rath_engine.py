@@ -109,3 +109,18 @@ def test_engine_never_imports_state_writers():
     for forbidden in ("persist_runtime_state", "record_runtime_turn", "apply_ops",
                       "update_active_node", "import_state"):
         assert forbidden not in src, f"engine.py 不得触碰 state 写入口: {forbidden}"
+
+
+def test_pair_excludes_generic_names_and_player():
+    """生产实锤回归:开场史官把昏迷玩家记成「少女」进 relationships → 被选进对手戏
+    (昏迷中的玩家开口说话)。泛指称谓+玩家名都不配登台;canon 卡司顶上。"""
+    s = {"npc_agendas": {}, "relationships": {"少女": "未知", "薇欧拉": "房东"}}
+    pair = select_scene_pair(s, extra_candidates=["林有德", "薇欧拉"],
+                             exclude_names={"菲莉丝·卡俄斯"})
+    assert pair is not None and "少女" not in pair
+    assert set(pair) == {"薇欧拉", "林有德"}
+
+
+def test_pair_all_generic_falls_back_to_cast():
+    s = {"npc_agendas": {}, "relationships": {"少女": "未知", "陌生人": "警惕"}}
+    assert select_scene_pair(s, extra_candidates=["林有德", "薇欧拉"]) == ("林有德", "薇欧拉")

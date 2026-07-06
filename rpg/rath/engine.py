@@ -246,7 +246,9 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
                 and int(claim["scenes_today"]) < MAX_SCENES_PER_DAY):
             try:
                 from rath.npc_scene import build_scene_prompts, select_scene_pair, validate_scene
-                scene_pair = select_scene_pair(snap, extra_candidates=cast_names)
+                scene_pair = select_scene_pair(
+                    snap, extra_candidates=cast_names,
+                    exclude_names={player_name} if player_name else None)
                 if scene_pair:
                     from agents._harness import call_agent_json
                     sys_p, usr_p = build_scene_prompts(

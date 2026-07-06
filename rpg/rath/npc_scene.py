@@ -17,9 +17,17 @@ MAX_LINE_CHARS = 120
 MAX_SUMMARY_CHARS = 160
 MAX_PRIVATE_MEMORY_CHARS = 80
 
+# 通用称谓黑名单(实测:开场史官把玩家的神秘身体记成「少女」进了 relationships,
+# 被选进对手戏=昏迷中的玩家开口说话)。泛指条目不是角色,不配登台。
+_GENERIC_NAMES = frozenset((
+    "少女", "少年", "男人", "女人", "老人", "老者", "孩子", "小孩",
+    "神秘人", "陌生人", "路人", "士兵", "侍者", "店主", "商人", "旅人",
+))
+
 
 def select_scene_pair(
     state_data: dict, extra_candidates: list[str] | None = None,
+    exclude_names: set[str] | None = None,
 ) -> tuple[str, str] | None:
     """从快照选两个对手戏 NPC:议程 NPC 优先(有 goal/stance 才演得像),
     不足两个则从 relationships 补位。选不出两个 → None(本 tick 不演,正常)。
@@ -30,17 +38,23 @@ def select_scene_pair(
     发明的路人打转。"""
     if not isinstance(state_data, dict):
         return None
+    excl = {x for x in (exclude_names or set()) if x}
+
+    def _ok(n) -> bool:
+        return (isinstance(n, str) and n.strip()
+                and n not in _GENERIC_NAMES and n not in excl)
+
     agendas = state_data.get("npc_agendas") or {}
-    names = [n for n in agendas if isinstance(n, str) and n.strip()]
+    names = [n for n in agendas if _ok(n)]
     if len(names) < 2:
         rels = state_data.get("relationships") or {}
         for n in rels:
-            if isinstance(n, str) and n.strip() and n not in names:
+            if _ok(n) and n not in names:
                 names.append(n)
             if len(names) >= 2:
                 break
     extras = [n for n in (extra_candidates or [])
-              if isinstance(n, str) and n.strip() and n not in names]
+              if _ok(n) and n not in names]
     if not names and len(extras) >= 2:
         return extras[0], extras[1]  # 全新档:直接演卡司
     if len(names) < 1 or (len(names) < 2 and not extras):
@@ -90,7 +104,8 @@ def build_scene_prompts(
         "你是离线世界模拟器:玩家不在场时,两位 NPC 之间发生一小段真实互动。\n"
         "铁律:\n"
         "1. 只能使用下面档案、世界观要点与近况中给出的信息,不得发明新的重要人物/地点/物品。\n"
-        "2. 地理连贯:场景只能发生在两人当前合理所在之处;远方的人与事只能被谈及,不能到场。\n"
+        "2. 地理连贯:场景只能发生在两人当前合理所在之处;远方的人与事只能被谈及,不能到场;\n"
+        "   若玩家所在地未知,场景应设在与两人身份相符的日常场所,禁止凭空编造军事/战场场景。\n"
         "3. 玩家不在场:对话中可以提到玩家(用其名字),但玩家绝不出现、绝不说话。\n"
         f"4. 对话不超过 {MAX_TRANSCRIPT_LINES} 行,每行不超过 {MAX_LINE_CHARS} 字;小事即可,不要写重大转折。\n"
         "5. **不要复读近期动向里已发生的对话**:写这段时间里【新】的小进展,让世界前进一小步;\n"
