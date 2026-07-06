@@ -26,7 +26,7 @@ UNCONSCIOUS_MARKERS = ("昏迷", "沉睡", "深度睡眠", "无意识")
 # ── 初始化 ───────────────────────────────────────────────────────────
 
 def init_sim_state(snapshot: dict, cast_cards: list[dict], wb_rows: list[dict],
-                   *, clock_min: int = 0) -> dict:
+                   *, clock_min: int = 0, canon_beats: list[dict] | None = None) -> dict:
     """从游戏快照+canon 卡司+世界书确定性构建初始 sim_state。纯函数。"""
     player = (snapshot or {}).get("player") or {}
     pname = str(player.get("name") or "").strip() or "玩家"
@@ -86,8 +86,12 @@ def init_sim_state(snapshot: dict, cast_cards: list[dict], wb_rows: list[dict],
             "tension": 5,
             "participants": [n for n in cast if n != pname][:2] + [pname],
         })
+    canon = {"cursor": 0, "stall": 0,
+             "beats": [{"chapter": int(b.get("chapter") or 0),
+                        "text": str(b.get("summary") or "").strip()[:140]}
+                       for b in (canon_beats or []) if str(b.get("summary") or "").strip()][:12]}
     return {"clock_min": int(clock_min), "cast": cast, "places": places,
-            "facts": facts, "threads": threads}
+            "facts": facts, "threads": threads, "canon": canon}
 
 
 def _derive_player_status(snapshot: dict) -> str:
@@ -112,6 +116,14 @@ def compact_view(sim: dict) -> str:
     lines.append("剧情线:")
     for t in sim.get("threads") or []:
         lines.append(f"  · [{t['id']}|张力{t['tension']}] {t['desc']}")
+    canon = sim.get("canon") or {}
+    beats = canon.get("beats") or []
+    cur = int(canon.get("cursor") or 0)
+    nxt = beats[cur:cur + 2]
+    if nxt:
+        lines.append("原著河道(这个世界正在/即将发生的主流事件):")
+        for b in nxt:
+            lines.append(f"  → {b['text']}")
     lines.append("已确立事实(节选):")
     for f in (sim.get("facts") or [])[-8:]:
         lines.append(f"  · {f}")
@@ -132,13 +144,16 @@ _SCHED_SYSTEM = """你是世界仿真的调度器:决定接下来这段时间里
    角色应主要处于本职与日常活动。
 7. 世界的超常现象只能来自【世界观要点】已有的体系;禁止发明新的超常机制/发光装置/
    现象链;禁止让环境发生灾变级变化;**禁止围绕玩家角色搭建解释其力量的装置或现象**。
+8. 原著河道是这个世界的主流:角色的本职、谈资、world_events 应与河道交织(回声/铺垫/
+   亲历);当河道第一条动向在世界中自然成熟发生,输出 canon_advance: true。
 只输出严格 JSON(不要围栏):
 {"cast_updates": {"名字": {"location": "可选", "activity": "可选", "goal": "可选", "mood": "可选"}},
  "interaction": {"participants": ["甲","乙"], "place": "已知地点", "reason": "为何相遇", "expected_outcome": "本场自然收在哪"} 或 null,
  "world_events": ["≤1条,必须直接影响列出的角色或舞台"],
  "thread_updates": [{"id": "t1", "tension_delta": -2到2, "note": "≤40字"}],
  "new_threads": [{"desc": "≤60字", "tension": 1到6, "participants": ["名字"]}],
- "new_facts": ["≤2条,只能是本窗口行动的自然结果"]}"""
+ "new_facts": ["≤2条,只能是本窗口行动的自然结果"],
+ "canon_advance": false}"""
 
 
 def build_scheduler_prompts(sim: dict, *, elapsed_hint: str, directive: str = "",
@@ -155,6 +170,8 @@ def _whitelist(sim: dict, extra: str = "") -> str:
     parts += list((sim.get("cast") or {}).keys())
     parts += sim.get("places") or []
     parts += sim.get("facts") or []
+    for b in ((sim.get("canon") or {}).get("beats") or []):
+        parts.append(str(b.get("text") or ""))
     for t in sim.get("threads") or []:
         parts.append(str(t.get("desc") or ""))
     for c in (sim.get("cast") or {}).values():
@@ -293,7 +310,41 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
             applied["facts"] += 1
     if len(facts) > MAX_FACTS:
         sim["facts"] = facts[-MAX_FACTS:]
+
+    # 原著河道推进(canon_advance):动向成熟 → 入事实池,游标前移
+    canon = sim.get("canon") or {}
+    beats = canon.get("beats") or []
+    cur = int(canon.get("cursor") or 0)
+    if data.get("canon_advance") and cur < len(beats):
+        sim.setdefault("facts", []).append("【原著进程】" + beats[cur]["text"])
+        canon["cursor"] = cur + 1
+        canon["stall"] = 0
+        applied["canon_advance"] = True
+    else:
+        canon["stall"] = int(canon.get("stall") or 0) + 1
+        applied["canon_advance"] = False
+    if len(sim.get("facts") or []) > MAX_FACTS:
+        sim["facts"] = sim["facts"][-MAX_FACTS:]
     return {"applied": applied, "rejected": rejected}
+
+
+CANON_STALL_LIMIT = 6  # 河道滞留上限:连续N拍未自然成熟则强制前行(原著世界不等小屋)
+
+
+def advance_stalled_canon(sim: dict) -> str | None:
+    """河道滞留强制前行。返回被推进的动向文本(无则 None)。确定性。"""
+    canon = sim.get("canon") or {}
+    beats = canon.get("beats") or []
+    cur = int(canon.get("cursor") or 0)
+    if cur >= len(beats) or int(canon.get("stall") or 0) < CANON_STALL_LIMIT:
+        return None
+    text = beats[cur]["text"]
+    sim.setdefault("facts", []).append("【原著进程】" + text)
+    if len(sim["facts"]) > MAX_FACTS:
+        sim["facts"] = sim["facts"][-MAX_FACTS:]
+    canon["cursor"] = cur + 1
+    canon["stall"] = 0
+    return text
 
 
 def decay_threads(sim: dict) -> int:

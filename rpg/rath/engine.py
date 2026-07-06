@@ -209,11 +209,19 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
                     "where script_id=%s and coalesce(reveal_known, true) "
                     "and coalesce(first_revealed_chapter, 0) <= %s "
                     "and coalesce(importance, 0) >= 100 "  # 垃圾卡地板(实锤:「秘书」importance=1 混进卡司)
-                    "order by importance desc nulls last limit 3",
+                    "order by importance desc nulls last limit 5",
                     (_sid, _prog + 3),
+                ).fetchall()
+                # 原著河道(用户实锤:仿真跟原著0%重合——原著剧情必须是世界的主时间流)
+                canon_rows = db.execute(
+                    "select chapter, summary from chapter_facts "
+                    "where script_id=%s and chapter between %s and %s "
+                    "and coalesce(summary,'') <> '' order by chapter limit 12",
+                    (_sid, _prog, _prog + 11),
                 ).fetchall()
         except Exception:
             cast_rows = []
+            canon_rows = []
     if not snap or not commit_id:
         return {"ok": False, "reason": "快照不可读"}
     world_context = "\n".join(
@@ -250,8 +258,10 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
         sim = (row or {}).get("sim_state")
     if not isinstance(sim, dict) or not sim.get("cast"):
         sim = S.init_sim_state(snap, [dict(r) for r in (cast_rows or [])],
-                              [dict(r) for r in (wb_rows or [])], clock_min=new_clock)
-        _trace(exp_id, f"仿真态初始化:角色 {len(sim['cast'])} 人 · 地点 {len(sim['places'])} 处 · 剧情线 {len(sim['threads'])} 条", clock=new_clock)
+                              [dict(r) for r in (wb_rows or [])], clock_min=new_clock,
+                              canon_beats=[dict(r) for r in (canon_rows or [])])
+        _trace(exp_id, f"仿真态初始化:角色 {len(sim['cast'])} 人 · 地点 {len(sim['places'])} 处"
+               + f" · 剧情线 {len(sim['threads'])} 条 · 原著河道 {len(sim['canon']['beats'])} 段", clock=new_clock)
     sim["clock_min"] = new_clock
     decayed = S.decay_threads(sim)
     if decayed:
@@ -288,6 +298,11 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
                        clock=new_clock)
                 wrote = ap["events"]
                 interaction = ap.get("interaction")
+                if ap.get("canon_advance"):
+                    _trace(exp_id, "原著河道:动向成熟,前行一格", clock=new_clock)
+                stalled = S.advance_stalled_canon(sim)
+                if stalled:
+                    _trace(exp_id, "原著河道:滞留强制前行 —— " + stalled[:60], clock=new_clock)
                 if interaction:
                     _trace(exp_id, "相遇:" + "×".join(interaction["participants"])
                            + f" @ {interaction['place']} · 缘由:{interaction['reason'][:40]}", clock=new_clock)

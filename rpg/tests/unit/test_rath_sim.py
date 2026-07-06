@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from rath.sim import (  # noqa: E402
     absorb_scene,
+    compact_view,
     apply_scheduler_output,
     build_director_prompts,
     build_scheduler_prompts,
@@ -205,3 +206,39 @@ def test_apparatus_around_player_rejected():
     # 两条都必须被拒(理由可能是「解释装置」或名词闸先拦「装置」类新词,拦住即胜利)
     assert len(out["rejected"]) >= 2
     assert any("解释装置" in r for r in out["rejected"])
+
+
+# ── 原著河道(用户实锤:与原著0%重合,v1.60.0) ─────────────────────────
+
+def _sim_canon():
+    return init_sim_state(_snapshot(), _cards(), [], clock_min=0, canon_beats=[
+        {"chapter": 1, "summary": "林有德在留学生会馆与同胞辩论,首次听说战姬与神姬的存在"},
+        {"chapter": 2, "summary": "金发房东以修屋顶为名试探林有德,暴露神姬身份被他制服"},
+    ])
+
+
+def test_canon_in_view_and_whitelist():
+    sim = _sim_canon()
+    view = compact_view(sim)
+    assert "原著河道" in view and "留学生会馆" in view
+    # 河道文本进入白名单:调度提及「留学生会馆」不再被名词闸拒
+    out = apply_scheduler_output(sim, {"new_facts": ["镇上有人议论留学生会馆的那场辩论"]})
+    assert any("留学生会馆" in f for f in sim["facts"])
+
+
+def test_canon_advance_moves_cursor_into_facts():
+    sim = _sim_canon()
+    out = apply_scheduler_output(sim, {"canon_advance": True})
+    assert out["applied"]["canon_advance"] is True
+    assert sim["canon"]["cursor"] == 1
+    assert any("【原著进程】" in f and "留学生会馆" in f for f in sim["facts"])
+
+
+def test_canon_stall_forced_advance():
+    from rath.sim import CANON_STALL_LIMIT, advance_stalled_canon
+    sim = _sim_canon()
+    for _ in range(CANON_STALL_LIMIT):
+        apply_scheduler_output(sim, {})  # 每次不 advance → stall+1
+    text = advance_stalled_canon(sim)
+    assert text and "留学生会馆" in text
+    assert sim["canon"]["cursor"] == 1 and sim["canon"]["stall"] == 0
