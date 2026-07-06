@@ -222,12 +222,21 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
                 _cards_all = _load_characters(
                     script_id=_sid, progress_chapter=_prog,
                     foreknowledge_mode="strict", save_id=save_id) or {}
-                _ranked = sorted(
-                    ((n, c) for n, c in _cards_all.items()
-                     if int((c or {}).get("importance") or 0) >= 100),  # 垃圾卡地板(「秘书」=1)
-                    key=lambda kv: -int((kv[1] or {}).get("importance") or 0))[:5]
-                cast_rows = [{"name": n, "sheet": _format_card(n, c or {})[:260]}
-                             for n, c in _ranked]
+                # 装载器不带 importance 列(实锤:地板过滤把空键当0全灭,cast只剩玩家)——
+                # 门控与内容独家归装载器,重要度只做排名,单独轻查。
+                cast_rows = []
+                if _cards_all:
+                    _imp_rows = db.execute(
+                        "select name, coalesce(importance,0) i from character_cards "
+                        "where script_id=%s and name = any(%s)",
+                        (_sid, list(_cards_all.keys())),
+                    ).fetchall()
+                    _imp = {r["name"]: int(r["i"]) for r in (_imp_rows or [])}
+                    _ranked = sorted(
+                        ((n, c) for n, c in _cards_all.items() if _imp.get(n, 0) >= 100),
+                        key=lambda kv: -_imp.get(kv[0], 0))[:5]
+                    cast_rows = [{"name": n, "sheet": _format_card(n, c or {})[:260]}
+                                 for n, c in _ranked]
                 # 原著河道(用户实锤:仿真跟原著0%重合——原著剧情必须是世界的主时间流)
                 canon_rows = db.execute(
                     "select chapter, summary from chapter_facts "
