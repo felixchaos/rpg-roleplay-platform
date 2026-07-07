@@ -10,7 +10,9 @@ def test_briefing_deterministic_and_bounded():
     assert "rath\\_%%" in BR, "只聚合 RATH 产物"
     assert "MAX_BRIEF_CHARS = 700" in BR, "纪要有界"
     assert "MIN_GAP_MINUTES = 120" in BR, "连续对话不打扰(间隔<2h 不注入)"
-    assert "role = 'user'" in BR, "窗口起点=上次玩家消息"
+    assert "role = 'user'" in BR, "窗口起点含玩家消息"
+    assert "branch_commits" in BR and "greatest" in BR, (
+        "kb_native 档不写 flat messages,玩家活动须以 branch_commits 为主源(353 prod 实锤)")
     assert "retired_at_commit is null" in BR, "尊重 tombstone"
     body = BR[BR.find("def build_offline_briefing"):]
     assert "不要一口气复述全部" in body, "GM 指令:自然提及不照本宣科"

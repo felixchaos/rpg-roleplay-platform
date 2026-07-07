@@ -21,9 +21,17 @@ def build_offline_briefing(db, save_id: int) -> str | None:
 
     窗口=上次玩家消息时间 → 现在;事件按 story_time(世界日)分组,场景(scene)优先、
     心跳(hb)限量;输出确定性文本段供 GM 材料装配。"""
+    # 玩家活动时间源:kb_native 档不写 flat messages,回合的权威痕迹是 branch_commits
+    # (RATH 铁律离线不写 game state=不建 commit,故 commit 时间恒等于玩家侧活动);
+    # messages 兜底旧档,取两者最新。
     last = db.execute(
-        "select max(created_at) as ts from messages where save_id = %s and role = 'user'",
-        (int(save_id),),
+        """
+        select greatest(
+            (select max(created_at) from messages where save_id = %(sid)s and role = 'user'),
+            (select max(created_at) from branch_commits where save_id = %(sid)s)
+        ) as ts
+        """,
+        {"sid": int(save_id)},
     ).fetchone()
     since = (last or {}).get("ts")
     if since is None:
