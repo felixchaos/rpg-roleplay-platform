@@ -1,7 +1,7 @@
 {
   "name": "rpg-roleplay-desktop",
   "productName": "RPG Roleplay",
-  "version": "1.31.2",
+  "version": "1.65.2",
   "description": "RPG Roleplay 本地一键部署桌面服务端(出品 Stellatrix Labs)—— 在线模式连云端,本地模式起捆绑的 PostgreSQL + Python 后端",
   "private": true,
   "main": "src/main.js",
