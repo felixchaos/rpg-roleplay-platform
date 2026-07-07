@@ -209,6 +209,28 @@
 }
 .bg-row:last-child { border-bottom: none; }
 .bg-row:hover { background: var(--panel-2); }
+/* 丝滑动效(用户反馈:折叠展开跳变生硬)。行渐入+SVG 点线平移过渡;respect reduced-motion */
+.bg-row { transition: background 140ms ease, opacity 140ms ease; }
+.bg-row-enter { animation: bgRowIn 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes bgRowIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.bg-svg circle { transition: cx 220ms cubic-bezier(0.2, 0.8, 0.2, 1), cy 220ms cubic-bezier(0.2, 0.8, 0.2, 1), r 140ms ease; }
+.bg-svg path { transition: d 220ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 180ms ease; }
+.bg-gap .bg-message { transition: color 140ms ease; }
+.bg-gap:hover .bg-message { color: var(--text); }
+.bg-fold-all {
+  position: sticky; top: 0; z-index: 2; display: inline-flex; align-items: center;
+  gap: 4px; margin: 2px 0 4px 6px; padding: 2px 8px; font-size: 11px;
+  color: var(--text-quiet); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; cursor: pointer; transition: color 140ms ease, border-color 140ms ease;
+}
+.bg-fold-all:hover { color: var(--text); border-color: var(--accent); }
+@media (prefers-reduced-motion: reduce) {
+  .bg-row, .bg-svg circle, .bg-svg path { transition: none; }
+  .bg-row-enter { animation: none; }
+}
 .bg-row.bg-active {
   background: var(--accent-soft);
 }

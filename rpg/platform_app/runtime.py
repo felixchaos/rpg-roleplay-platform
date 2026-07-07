@@ -242,7 +242,9 @@ def write_runtime(
     runtime_state = Path(state_path)
     runtime_state.parent.mkdir(parents=True, exist_ok=True)
     source = Path(source_state_path)
-    if source.exists() and source.resolve() != runtime_state.resolve():
+    # 护栏:state_path 空串时 Path('')=='.'(目录),copy2 直接 IsADirectoryError 炸掉
+    # 登录/激活(本地 file 后端;kb_native 档 state_path 本就可为空)。
+    if source_state_path and source.exists() and source.is_file() and source.resolve() != runtime_state.resolve():
         shutil.copy2(source, runtime_state)
         if _should_mirror_save_file():
             SAVE_FILE.parent.mkdir(parents=True, exist_ok=True)

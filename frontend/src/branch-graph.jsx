@@ -190,7 +190,8 @@ function _buildDisplayList(sortedDesc, { refsByTarget, activeId, selectedId, chi
     if (run.length >= MIN_GAP && !(expandedGaps && expandedGaps.has(gapKey))) {
       items.push({ type: "gap", key: gapKey, nodes: run });
     } else {
-      for (const m of run) items.push({ type: "commit", node: m });
+      const justExpanded = run.length >= MIN_GAP;  // 本段是被点开的 → 渐入
+      for (const m of run) items.push({ type: "commit", node: m, entered: justExpanded });
     }
     run = [];
   };
@@ -346,6 +347,13 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
 
   return (
     <div className={`bg-root bg-${variant}`}>
+      {expandedGaps.size > 0 && (
+        <button type="button" className="bg-fold-all"
+          onClick={() => setExpandedGaps(new Set())}
+          title={t('branch_graph.fold_all_tip', { defaultValue: '重新折叠所有展开的段' })}>
+          {t('branch_graph.fold_all', { defaultValue: '折叠' })}
+        </button>
+      )}
       {/* 行容器:每行一个 row,row 内部分左 SVG (graph) + 右内容 */}
       <div className="bg-rows" style={{position: "relative"}}>
         {/* 左侧 SVG 层:画所有 edges 和 dots */}
@@ -418,7 +426,7 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
           const nodeRefs = refsByTarget.get(cid) || [];
           return (
             <div key={`r-${cid}`}
-              className={`bg-row ${isActive ? "bg-active" : ""} ${isSelected ? "bg-selected" : ""} ${n.deleted ? "bg-deleted" : ""}`}
+              className={`bg-row ${isActive ? "bg-active" : ""} ${isSelected ? "bg-selected" : ""} ${n.deleted ? "bg-deleted" : ""} ${it.entered ? "bg-row-enter" : ""}`}
               style={{
                 position: "relative",
                 height: conf.rowH,

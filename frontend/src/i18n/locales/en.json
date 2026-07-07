@@ -4439,7 +4439,9 @@
       "delete_subtree": "Delete subtree"
     },
     "gap": "… {{n}} turns",
-    "gap_tip": "Click to expand collapsed turns"
+    "gap_tip": "Click to expand collapsed turns",
+    "fold_all": "Fold",
+    "fold_all_tip": "Re-collapse all expanded segments"
   },
   "feedback_page": {
     "header_title": "Support & Feedback",

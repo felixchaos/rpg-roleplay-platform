@@ -4436,7 +4436,9 @@
       "delete_subtree": "删除子树"
     },
     "gap": "⋯ {{n}} 个回合",
-    "gap_tip": "点击展开被折叠的回合"
+    "gap_tip": "点击展开被折叠的回合",
+    "fold_all": "折叠",
+    "fold_all_tip": "重新折叠所有展开的段"
   },
   "feedback_page": {
     "header_title": "支持与反馈",
