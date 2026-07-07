@@ -256,3 +256,13 @@ def test_clock_label_pure_function():
     assert _clock_label(0) == "第1日 00:00"
     assert _clock_label(61) == "第1日 01:01"
     assert _clock_label(1441) == "第2日 00:01"
+
+
+def test_create_experiment_starts_at_morning():
+    """v4.1:新实验世界钟从第1日 08:00(480分钟)起步,不再从午夜 0 起步
+    (269 浸泡实锤:前6拍全落夜律窗口=全员安睡零场景,第一印象灾难)。"""
+    src = (ROOT / "rath" / "engine.py").read_text(encoding="utf-8")
+    i = src.find("insert into rath_experiments")
+    assert i != -1
+    seg = src[i:i + 400]
+    assert "world_clock_min" in seg and "480" in seg

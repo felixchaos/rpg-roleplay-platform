@@ -275,9 +275,12 @@ def create_experiment(user_id: int, save_id: int) -> dict:
         ).fetchone()
         if dup:
             return {"ok": False, "error": "该存档已有进行中的实验", "id": int(dup["id"])}
+        # v4.1(269 浸泡实锤):世界钟从 0=午夜起步,新实验前 6 拍全落夜律窗口(全员安睡
+        # 零场景)=第一印象灾难。改从第1日 08:00(480min)清晨起步,建档即有戏可看。
         row = db.execute(
-            """insert into rath_experiments (user_id, save_id, script_id, status, last_tick_at)
-               values (%s, %s, %s, 'running', now()) returning *""",
+            """insert into rath_experiments (user_id, save_id, script_id, status, last_tick_at,
+                                             world_clock_min)
+               values (%s, %s, %s, 'running', now(), 480) returning *""",
             (int(user_id), int(save_id), save.get("script_id")),
         ).fetchone()
         if hasattr(db, "commit"):

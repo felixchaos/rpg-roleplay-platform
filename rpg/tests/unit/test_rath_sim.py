@@ -751,3 +751,23 @@ def test_active_cast_slot_allocator_compresses_stable_cast():
     view1 = compact_view(sim)
     assert "- 林有德" in view1  # 持续变化 → 活跃
     assert "(状态稳定:" in view1 and "薇欧拉" in view1 and "- 薇欧拉" not in view1
+
+
+def test_canon_advance_births_thread_when_none_alive():
+    """v4.1(storylets 补完):河道前行且无活跃线 → 从 beat 确定性孵化剧情线
+    (薄剧本无昏迷种子线时 threads 恒空,世界只有河道没有弧——269 浸泡实锤)。"""
+    snap = {"player": {"name": "菲莉丝", "role": "神姬", "current_location": "家",
+                        "background": "普通日常"}, "history": []}
+    sim = init_sim_state(snap, _cards(), [], clock_min=600,
+                         canon_beats=[{"chapter": 1, "summary": "林有德邀请薇欧拉参加测试"}])
+    assert sim["threads"] == []
+    out = apply_scheduler_output(sim, {"canon_advance": True})
+    assert out["applied"]["canon_advance"] is True
+    assert out["applied"].get("thread_born_from_beat") == "t1"
+    t = sim["threads"][0]
+    assert t["stage"] == "seed" and t["tension"] == 3
+    assert t["desc"].startswith("(原著动向)")
+    assert t["participants"], "participants 必须非空(锚定卡司或非玩家卡司兜底)"
+    # 已有活跃线时不再重复孵化
+    out2 = apply_scheduler_output(sim, {"canon_advance": True})
+    assert out2["applied"].get("thread_born_from_beat") is None

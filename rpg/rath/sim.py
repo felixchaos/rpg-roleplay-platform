@@ -657,6 +657,25 @@ def apply_scheduler_output(sim: dict, data: dict, *, world_context: str = "") ->
         applied["canon_text"] = beats[cur]["text"]
         applied["canon_anchored"] = anchor_cast_to_beat(sim, beats[cur]["text"])
         _feed_tension(applied["canon_anchored"])  # B1:河道前行=世界侧对冲信号,喂养涉及的现存线
+        # v4.1(storylets 补完,269 薄剧本浸泡实锤):没有昏迷种子线的剧本 threads 恒空,
+        # 世界只有河道没有叙事弧。河道前行且无任何活跃线时,从本 beat 确定性孵化一条
+        # (beat 即 storylet:precondition=游标到达,effect=生弧);participants 取锚定卡司。
+        _threads = sim.setdefault("threads", [])
+        _alive = [t for t in _threads if (t.get("stage") or "rising") != "aftermath"]
+        if not _alive and len(_threads) < MAX_THREADS:
+            _ids = {str(t.get("id")) for t in _threads}
+            _n = 1
+            while f"t{_n}" in _ids:
+                _n += 1
+            _parts = list(applied["canon_anchored"] or [])[:3]
+            if not _parts:
+                _parts = [nm for nm, cc in (sim.get("cast") or {}).items()
+                          if cc.get("kind") != "player"][:2]
+            _threads.append({"id": f"t{_n}",
+                             "desc": ("(原著动向)" + str(applied["canon_text"]))[:80],
+                             "tension": 3, "stage": "seed", "tension_hist": [3],
+                             "participants": _parts})
+            applied["thread_born_from_beat"] = f"t{_n}"
     else:
         canon["stall"] = int(canon.get("stall") or 0) + 1
         applied["canon_advance"] = False
