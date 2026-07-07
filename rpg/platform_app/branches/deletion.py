@@ -75,10 +75,11 @@ def delete_subtree(user_id: int, node_id: int) -> dict[str, Any]:
             # 若在持有本事务连接 + advisory 锁时调用,高并发下「人人持 conn#1+锁、等 conn#2」会把
             # PgBouncer 连接池拖入死锁 → worker 事件循环冻结 → 全站不响应。改为捕获参数、推迟到
             # with 块外(锁与连接均已释放)再激活,与 rollback_to_message 的做法一致。
+            from platform_app.branches.history_elide import hydrate_commit_state as _hyd
             activate = {
                 "save_id": node["save_id"],
                 "commit_id": fallback["id"],
-                "state": commit_state(fallback),
+                "state": _hyd(db, node["save_id"], fallback),
                 "state_path": fallback["state_path"],
                 "ref_id": ref["id"],
             }
@@ -235,7 +236,8 @@ def rollback_to_message(
                 )
                 phase_fixed += 1
 
-        target_state = commit_state(target_commit)
+        from platform_app.branches.history_elide import hydrate_commit_state as _hyd2
+        target_state = _hyd2(db, save_id, target_commit)
         state_path = target_commit.get("state_path") or ""
         ref_id_for_runtime = new_ref["id"]
         # M1:回滚到目标消息后,进度信号族对齐目标快照的时间线章
@@ -346,7 +348,8 @@ def rewind_last_round(user_id: int, save_id: int) -> dict[str, Any] | None:
                     (deleted_turn - 1, ph["id"]),
                 )
 
-        reverted_state = commit_state(parent)
+        from platform_app.branches.history_elide import hydrate_commit_state as _hyd3
+        reverted_state = _hyd3(db, save_id, parent)
         # M1:重演回退(rewind_last_round)后,进度信号族对齐父 commit 快照的时间线章
         _realign_after_state_rewind(db, save_id, reverted_state)
 

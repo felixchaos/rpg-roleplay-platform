@@ -113,8 +113,15 @@ def _set_save_active(db, save_id: int, commit_id: int, ref_id: int | None) -> No
 
 def _write_checkout(db, user_id: int, save_id: int, ref_id: int | None, commit_id: int) -> None:
     from state import SAVE_FILE as _SAVE_FILE
-    commit = db.execute("select state_snapshot from branch_commits where id = %s and save_id = %s", (commit_id, save_id)).fetchone()
-    state_snapshot = commit_state(commit or {})
+    commit = db.execute("select id, state_snapshot, state_path from branch_commits where id = %s and save_id = %s", (commit_id, save_id)).fetchone()
+    # 历史祖先裁剪(history_elide):被恢复的 commit 若处于裁剪态,从后代无损重建
+    # 并 un-elide 回写——它即将成为活跃头(工作树/materialize/换稿的权威源)。
+    from platform_app.branches.history_elide import hydrate_commit_state, unelide_commit
+    _was_elided = isinstance((commit or {}).get("state_snapshot"), dict) and \
+        "_history_elided" in (commit or {}).get("state_snapshot", {})
+    state_snapshot = hydrate_commit_state(db, save_id, commit or {})
+    if _was_elided:
+        unelide_commit(db, save_id, commit_id, state_snapshot)
     snap_hash = _state_snapshot_hash(state_snapshot)
     turn_at_commit = int(state_snapshot.get("turn", 0)) if isinstance(state_snapshot, dict) else 0
     db.execute(
