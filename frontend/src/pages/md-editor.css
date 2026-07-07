@@ -560,3 +560,6 @@
   /* 顶栏工作区名按钮限宽,防止挤压 */
   .mde-ws { max-width: 140px; }
 }
+
+/* P0 冲突标记:标签被 AI/他处改动且本地有未保存修改 */
+.mde-tab-conflict { color: var(--warn, #e8a33d); }

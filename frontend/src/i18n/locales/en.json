@@ -4156,6 +4156,52 @@
       "btn": "AI review",
       "busy": "AI is busy, try again shortly",
       "started": "Reviewing this chapter — issues will collect in the Problems panel"
+    },
+    "playtest": {
+      "btn": "Playtest chapter",
+      "no_script": "Select a script first",
+      "no_chapter": "Open a chapter first",
+      "save_title": "Playtest · Chapter {{n}}",
+      "confirm_title": "Playtest this chapter?",
+      "confirm_msg": "This creates a new test save \"{{n}}\" starting from \"{{title}}\" and opens the game console in a new tab, for quickly checking this chapter. Continue?",
+      "review_gate_title": "Script has not passed KB review",
+      "review_gate_msg": "This script hasn't been marked as reviewed yet, so a new save can't be started. Mark it as reviewed now and retry the playtest? (Make sure you've checked entities/timeline/worldview in KB Review first)",
+      "review_gate_declined": "Cancelled: script not reviewed",
+      "mark_reviewed_ok": "Marked as reviewed — retrying save creation…",
+      "mark_reviewed_fail": "Failed to mark as reviewed",
+      "create_fail": "Failed to create save",
+      "no_save_id": "Response is missing a save id",
+      "activate_fail": "Failed to activate playtest save",
+      "started": "Playtest save created — opening the game console in a new tab",
+      "busy": "Starting…"
+    },
+    "kb": {
+      "title": "Knowledge Base Center",
+      "audit_cards": {
+        "btn": "AI Audit Character Cards",
+        "busy": "Auditing...",
+        "dispatched": "Audit dispatched — track progress in the task tray (bottom right)",
+        "needs_credentials": "Missing model credentials — configure them in Settings first",
+        "fail": "Dispatch failed"
+      },
+      "embed": {
+        "title": "Vector Index Status",
+        "running": "Embedding in progress...",
+        "row_chunks": "Text chunks",
+        "row_cards": "Character cards",
+        "row_worldbook": "Worldbook",
+        "row_canon": "Canon entities",
+        "empty": "No data"
+      }
+    },
+    "conflict": {
+      "merge_prompt": "This chapter was modified elsewhere: review hunks (approve all = take theirs, reject all = keep yours)",
+      "took_theirs": "Took their version",
+      "kept_yours": "Kept your version and saved",
+      "mixed_saved": "Merged per your choices and saved",
+      "auto_deferred": "Autosave detected AI edits to this chapter: press Cmd+S to merge",
+      "other_tab": "Chapter modified elsewhere: switch to its tab and press Cmd+S to merge",
+      "tab_tip": "Conflict: AI/external edits need merging with your unsaved changes"
     }
   },
   "tavern_page": {

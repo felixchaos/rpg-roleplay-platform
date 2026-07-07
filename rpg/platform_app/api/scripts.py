@@ -761,14 +761,23 @@ async def api_chapter_detail(script_id: int, chapter_index: int, user=Depends(re
 
 @router.post("/api/scripts/{script_id}/chapters/{chapter_index:int}")
 async def api_chapter_update(request: Request, script_id: int, chapter_index: int, user=Depends(require_user)):
-    """编辑单章 title/content/volume_title。"""
+    """编辑单章 title/content/volume_title。
+
+    body.base_updated_at(可选,乐观锁):与服务端 updated_at 不一致时 409+服务端当前版本,
+    前端转三方合并(编辑器 P0:AI 写库与未保存改动互相静默覆盖)。不传=覆盖语义不变。"""
     body = await request.json()
     try:
         return json_response(script_import.update_chapter(
             user["id"], script_id, chapter_index,
             title=body.get("title"), content=body.get("content"),
             volume_title=body.get("volume_title"),
+            base_updated_at=body.get("base_updated_at"),
         ))
+    except script_import.ChapterConflict as conflict:
+        return json_response(
+            {"ok": False, "conflict": True, "error": "章节已被他方更新",
+             "server_chapter": conflict.server_chapter},
+            status_code=409)
     except ValueError as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 

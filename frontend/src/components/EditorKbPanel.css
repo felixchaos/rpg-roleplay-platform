@@ -1,0 +1,158 @@
+/* EditorKbPanel.css — 自包含样式,类名前缀 mde-kb-,跟随 tokens.css 全局暗色变量
+   (--panel/--line/--text/--muted/--accent/--bg-deep 等已在 src/tokens.css :root 定义,
+   全局始终加载;这里各处仍带字面回退值,防御性地不依赖加载顺序)。
+   不使用 emoji/装饰图标;状态用文字 + 颜色区分(遵循项目「UI 不要 emoji」偏好)。 */
+
+.mde-kb-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 4200;
+  background: rgba(0, 0, 0, .42);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.mde-kb-drawer {
+  width: min(520px, 94vw);
+  height: 100%;
+  background: var(--panel, #211f1d);
+  border-left: 1px solid var(--line, #36322d);
+  box-shadow: -12px 0 36px rgba(0, 0, 0, .5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mde-kb-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--line-soft, #2a2724);
+  background: var(--bg-deep, #131211);
+}
+
+.mde-kb-title {
+  flex: 1 1 auto;
+  font-family: var(--font-serif, serif);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: .03em;
+  color: var(--text, #ebe7df);
+}
+
+.mde-kb-x {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--muted-2, #6b655e);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 4px;
+  font-family: inherit;
+}
+.mde-kb-x:hover { color: var(--text, #ebe7df); }
+
+.mde-kb-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mde-kb-section {
+  border-top: 1px solid var(--line-soft, #2a2724);
+  padding-top: 14px;
+}
+
+/* ── AI 复核角色卡按钮 ── */
+.mde-kb-audit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid var(--line, #36322d);
+  background: var(--panel-2, #282623);
+  color: var(--text-quiet, #c8c2b7);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.mde-kb-audit-btn:hover:not(:disabled) {
+  border-color: var(--accent, #c96442);
+  color: var(--accent, #c96442);
+  background: var(--panel-3, #2f2c28);
+}
+.mde-kb-audit-btn:disabled { opacity: .5; cursor: default; }
+
+/* ── 向量索引状态行 ── */
+.mde-kb-embed-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mde-kb-embed-title {
+  flex: 1 1 auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted, #968f85);
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+.mde-kb-embed-running {
+  font-size: 11px;
+  color: var(--accent, #c96442);
+}
+.mde-kb-embed-refresh {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--line, #36322d);
+  border-radius: 6px;
+  color: var(--muted, #968f85);
+  cursor: pointer;
+  font-size: 11.5px;
+  padding: 3px 10px;
+  font-family: inherit;
+}
+.mde-kb-embed-refresh:hover:not(:disabled) { border-color: var(--accent, #c96442); color: var(--accent, #c96442); }
+.mde-kb-embed-refresh:disabled { opacity: .5; cursor: default; }
+
+.mde-kb-embed-err {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--danger, #c8675d);
+}
+
+.mde-kb-embed-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.mde-kb-embed-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border: 1px solid var(--line-soft, #2a2724);
+  border-radius: 6px;
+  background: var(--bg-deep, #131211);
+}
+.mde-kb-embed-label { font-size: 12px; color: var(--text-quiet, #c8c2b7); }
+.mde-kb-embed-count { font-family: var(--font-mono, monospace); font-size: 12.5px; color: var(--muted, #968f85); }
+.mde-kb-embed-count.done { color: var(--ok, #7eb88e); }
+
+.mde-kb-embed-empty {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted-2, #6b655e);
+}

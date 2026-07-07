@@ -1091,14 +1091,44 @@ def create_chapter(user_id: int, script_id: int, title: str = "") -> dict[str, A
     return {"ok": True, "chapter_index": ci, "title": t}
 
 
+class ChapterConflict(Exception):
+    """乐观锁冲突:调用方带 base_updated_at 但服务端已被他方(AI 工具/另一标签)更新。
+    携带服务端当前版本供前端做三方合并(编辑器 P0:AI 写库 vs 未保存改动静默互覆盖)。"""
+
+    def __init__(self, server_chapter: dict[str, Any]):
+        super().__init__("chapter updated by someone else")
+        self.server_chapter = server_chapter
+
+
 def update_chapter(user_id: int, script_id: int, chapter_index: int, *,
                    title: str | None = None, content: str | None = None,
-                   volume_title: str | None = None) -> dict[str, Any]:
-    """编辑单章。title/content/volume_title 任一可传。"""
+                   volume_title: str | None = None,
+                   base_updated_at: str | None = None) -> dict[str, Any]:
+    """编辑单章。title/content/volume_title 任一可传。
+
+    base_updated_at(可选,乐观锁):传入调用方打开/上次保存时拿到的 updated_at;
+    与服务端当前值不一致时抛 ChapterConflict(不落库),端点转 409+服务端版本。
+    不传=老客户端/AI 工具路径,保持覆盖语义不变。"""
     init_db()
     with connect() as db:
         if not script_owned(db, script_id, user_id):
             raise ValueError("无权访问该剧本")
+        if base_updated_at:
+            cur = db.execute(
+                "select id, public_id, chapter_index, title, volume_title, word_count, "
+                "content, created_at, updated_at from script_chapters "
+                "where script_id = %s and chapter_index = %s",
+                (script_id, chapter_index),
+            ).fetchone()
+            if not cur:
+                raise ValueError(f"章节 {chapter_index} 不存在")
+            # 秒级比对+分隔符归一(DB datetime str 是空格分隔,前端拿到的 expose 值是
+            # ISO 'T' 分隔):保存节奏远大于 1 秒,秒级足够判「被他方改过」,微秒/时区
+            # 尾缀差异不误伤。
+            def _norm_ts(x):
+                return str(x or "").replace("T", " ")[:19]
+            if _norm_ts(cur.get("updated_at")) != _norm_ts(base_updated_at):
+                raise ChapterConflict(expose(cur))
         sets, params = [], []
         if title is not None:
             sets.append("title = %s")

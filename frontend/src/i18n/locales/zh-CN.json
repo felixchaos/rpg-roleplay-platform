@@ -4156,6 +4156,52 @@
       "btn": "AI 复审本章",
       "busy": "AI 正忙,请稍候再试",
       "started": "正在复审本章,问题会汇总到「问题」面板"
+    },
+    "playtest": {
+      "btn": "试玩本章",
+      "no_script": "请先选择剧本",
+      "no_chapter": "请先打开一个章节",
+      "save_title": "试玩·第{{n}}章",
+      "confirm_title": "试玩本章？",
+      "confirm_msg": "将从「{{title}}」创建一个新的测试存档「{{n}}」并在新标签页打开游戏台，用于快速验收本章效果。是否继续？",
+      "review_gate_title": "剧本尚未通过 KB 复核",
+      "review_gate_msg": "该剧本还没有标记为「已复核」，无法开局。是否现在标记为已复核并重试试玩？(请确认已在「KB 核查」里检查过实体/时间线/世界观)",
+      "review_gate_declined": "已取消:剧本未复核",
+      "mark_reviewed_ok": "已标记为已复核，正在重试建档…",
+      "mark_reviewed_fail": "标记已复核失败",
+      "create_fail": "建档失败",
+      "no_save_id": "响应缺少存档 id",
+      "activate_fail": "激活试玩存档失败",
+      "started": "试玩存档已创建，正在新标签页打开游戏台",
+      "busy": "试玩中…"
+    },
+    "kb": {
+      "title": "知识库中心",
+      "audit_cards": {
+        "btn": "AI 复核角色卡",
+        "busy": "复核中…",
+        "dispatched": "AI 复核已派发,进度见右下角任务浮窗",
+        "needs_credentials": "缺少模型凭据,请先在设置里配置",
+        "fail": "派发失败"
+      },
+      "embed": {
+        "title": "向量索引状态",
+        "running": "正在嵌入…",
+        "row_chunks": "文本分块",
+        "row_cards": "角色卡",
+        "row_worldbook": "世界书",
+        "row_canon": "知识库人物",
+        "empty": "暂无数据"
+      }
+    },
+    "conflict": {
+      "merge_prompt": "本章已被 AI/他处改动:请逐块取舍(全部批准=采用对方,全部拒绝=保留你的)",
+      "took_theirs": "已采用对方版本",
+      "kept_yours": "已保留你的版本并保存",
+      "mixed_saved": "已按你的取舍合并保存",
+      "auto_deferred": "自动保存检测到本章被 AI 改动:按 ⌘S 进入合并",
+      "other_tab": "该章节已被他处改动:切到该标签后按 ⌘S 合并",
+      "tab_tip": "有冲突:AI/他处改动与你的未保存修改需要合并"
     }
   },
   "tavern_page": {

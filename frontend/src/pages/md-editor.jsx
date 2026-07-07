@@ -9,6 +9,8 @@ import './md-editor.css';
 import { lsGet, lsSet, lsGetJSON } from '../lib/storage.js';
 import CodeMirrorEditor from '../components/CodeMirrorEditor.jsx';
 import MdEditorAgent from '../components/MdEditorAgent.jsx';
+import EditorKbPanel, { useKbHealthBadge } from '../components/EditorKbPanel.jsx';
+import { usePlaytest } from '../components/EditorPlaytest.jsx';
 import { toMd, fromMd, splitFrontMatter } from '../lib/md-serialize.js';
 import { runContinue } from '../lib/md-continue.js';
 import { showChapterDiff, hasChapterDiff } from '../lib/md-diff.js';
@@ -804,6 +806,9 @@ export default function MdEditorPage() {
   const [searchOpen, setSearchOpen] = useState(false);     // Mod+Shift+F 全书检索
   const [historyFor, setHistoryFor] = useState(null);      // 章节版本历史(chapter_index | null)
   const [rulesOpen, setRulesOpen] = useState(false);       // 写作规范(.cursorrules)编辑弹窗
+  const [kbOpen, setKbOpen] = useState(false);             // 知识库中心抽屉(P1:治理能力接进 IDE)
+  const kbBadge = useKbHealthBadge(scriptId);              // 顶栏徽标:{stale_count, ready} | null
+  const { playtest, busy: playtestBusy } = usePlaytest(scriptId);   // P1:写完即试玩
   const [issuesOpen, setIssuesOpen] = useState(false);     // 审稿问题面板(VSCode Problems 风)
   const [issueCount, setIssueCount] = useState(0);         // 顶栏「问题」徽标计数
   const [issuesReloadKey, setIssuesReloadKey] = useState(0); // 编辑器 agent 汇报问题后 bump → 重载
@@ -961,8 +966,8 @@ export default function MdEditorPage() {
       return [...cur, { key, kind: node.kind, id: node.id, label: node.label, content: '', original: '', loading: true, error: null, dirty: false }];
     });
     try {
-      const content = await loadNodeContent(node.kind, scriptId, node.id);
-      setTabs((cur) => cur.map((t) => t.key === key ? { ...t, content, original: content, loading: false } : t));
+      const meta = await loadNodeContentMeta(node.kind, scriptId, node.id);
+      setTabs((cur) => cur.map((t) => t.key === key ? { ...t, content: meta.content, original: meta.content, baseUpdatedAt: meta.updatedAt, loading: false } : t));
     } catch (e) {
       setTabs((cur) => cur.map((t) => t.key === key ? { ...t, loading: false, error: e?.message || String(e) } : t));
     }
@@ -1043,19 +1048,60 @@ export default function MdEditorPage() {
     });
   }, [tabs, activeKey]);
 
-  const saveTab = useCallback(async (key) => {
+  // 冲突三方合并(P0):把「服务端新版 vs 本地未保存」丢进现成逐块 diff 审阅。
+  // 全部批准=采用对方;全部拒绝=保留自己(以服务端版本为基线强制落库);逐块=合并保存。
+  // 仅当该章节是激活标签(有 EditorView)时可用,返回 false 让调用方走降级提示。
+  const openConflictMerge = useCallback((key, localContent, serverMd, serverTs) => {
+    const view = activeViewRef.current;
+    const a = activeRef.current;
+    if (!view || !a || a.key !== key || a.kind !== 'chapter') return false;
+    const applyTab = (content, ts) => setTabs((cur) => cur.map((x) => x.key === key
+      ? { ...x, content, original: content, dirty: false, saving: false, conflict: false, baseUpdatedAt: ts } : x));
+    const forceSave = async (finalText, okMsg) => {
+      try {
+        const ts = await saveNodeContent('chapter', scriptId, a.id, finalText, serverMd, serverTs);
+        applyTab(finalText, ts || serverTs);
+        toast(okMsg, { kind: 'ok', duration: 1600 });
+      } catch (e2) {
+        toast(t('md_editor.toast.save_failed'), { kind: 'danger', detail: e2?.message });
+      }
+    };
+    const ok = showChapterDiff(view, localContent, serverMd, {
+      onAccept: () => { applyTab(serverMd, serverTs); toast(t('md_editor.conflict.took_theirs'), { kind: 'ok', duration: 1600 }); },
+      onReject: () => { forceSave(localContent, t('md_editor.conflict.kept_yours')); },
+      onMixed: (finalText) => { forceSave(finalText, t('md_editor.conflict.mixed_saved')); },
+    });
+    if (ok) toast(t('md_editor.conflict.merge_prompt'), { kind: 'warn', duration: 3200 });
+    return ok;
+  }, [scriptId, t]);
+
+  const saveTab = useCallback(async (key, opts) => {
     const tab = tabs.find((x) => x.key === key);
     if (!tab || !tab.dirty) return;
     setTabs((cur) => cur.map((x) => x.key === key ? { ...x, saving: true } : x));
     try {
-      await saveNodeContent(tab.kind, scriptId, tab.id, tab.content, tab.original);
-      setTabs((cur) => cur.map((x) => x.key === key ? { ...x, original: tab.content, dirty: false, saving: false } : x));
+      const newTs = await saveNodeContent(tab.kind, scriptId, tab.id, tab.content, tab.original, tab.baseUpdatedAt);
+      setTabs((cur) => cur.map((x) => x.key === key ? { ...x, original: tab.content, dirty: false, saving: false, conflict: false, baseUpdatedAt: newTs || x.baseUpdatedAt } : x));
       toast(t('md_editor.toast.saved'), { kind: 'ok', duration: 1200 });
     } catch (e) {
       setTabs((cur) => cur.map((x) => x.key === key ? { ...x, saving: false } : x));
+      if (e && e.status === 409 && e.payload && e.payload.conflict) {
+        const server = e.payload.server_chapter || {};
+        const serverMd = toMd('chapter', server);
+        const serverTs = server.updated_at || null;
+        if (opts && opts.auto) {
+          setTabs((cur) => cur.map((x) => x.key === key ? { ...x, conflict: true } : x));
+          toast(t('md_editor.conflict.auto_deferred'), { kind: 'warn', duration: 3600 });
+          return;
+        }
+        if (openConflictMerge(key, tab.content, serverMd, serverTs)) return;
+        setTabs((cur) => cur.map((x) => x.key === key ? { ...x, conflict: true } : x));
+        toast(t('md_editor.conflict.other_tab'), { kind: 'warn', duration: 3600 });
+        return;
+      }
       toast(t('md_editor.toast.save_failed'), { kind: 'danger', detail: e?.message });
     }
-  }, [tabs, scriptId, t]);
+  }, [tabs, scriptId, t, openConflictMerge]);
 
   // agent 写库后:重载受影响的标签(若打开且无未保存改动)+ 刷新文件树。
   const refreshTab = useCallback(async (kind, id) => {
@@ -1063,13 +1109,20 @@ export default function MdEditorPage() {
     const key = nodeKey(kind, id);
     const tab = tabs.find((x) => x.key === key);
     if (!tab) return;
-    if (tab.dirty) { toast(t('md_editor.toast.ai_edited_has_unsaved'), { kind: 'warn', duration: 2600 }); return; }
     try {
-      const content = await loadNodeContent(kind, scriptId, id);
-      setTabs((cur) => cur.map((x) => x.key === key ? { ...x, content, original: content, dirty: false } : x));
-      toast(t('md_editor.toast.ai_refreshed'), { kind: 'ok', duration: 1400 });
+      const meta = await loadNodeContentMeta(kind, scriptId, id);
+      if (!tab.dirty) {
+        setTabs((cur) => cur.map((x) => x.key === key ? { ...x, content: meta.content, original: meta.content, baseUpdatedAt: meta.updatedAt, dirty: false, conflict: false } : x));
+        toast(t('md_editor.toast.ai_refreshed'), { kind: 'ok', duration: 1400 });
+        return;
+      }
+      // P0:有未保存改动时不再只 toast(旧行为=用户随后 ⌘S 用旧底稿覆盖 AI 改动,静默丢数据)。
+      // 激活章节→直接进三方合并;其他情况标记冲突,乐观锁在保存时兜底。
+      if (kind === 'chapter' && openConflictMerge(key, tab.content, meta.content, meta.updatedAt)) return;
+      setTabs((cur) => cur.map((x) => x.key === key ? { ...x, conflict: true } : x));
+      toast(t('md_editor.toast.ai_edited_has_unsaved'), { kind: 'warn', duration: 3200 });
     } catch (_) { /* 静默 */ }
-  }, [tabs, scriptId, t]);
+  }, [tabs, scriptId, t, openConflictMerge]);
 
   // 资源管理器增删改后:同步已打开的标签(删→关、改名→更新标题),并触发树重载。
   const onTreeMutate = useCallback((action, kind, id, label) => {
@@ -1189,14 +1242,15 @@ export default function MdEditorPage() {
   // 文本落库)。云端多用户安全:saveTab 走 owner 校验的 updateChapter 端点。
   useEffect(() => {
     if (!active || !active.dirty) return undefined;
+    if (active.conflict) return undefined;   // 冲突已标记:等用户 ⌘S 进合并,不再重试(否则每 2.5s 409+toast 轰炸)
     const key = active.key;
     const id = setTimeout(() => {
       const v = activeViewRef.current;
       if (v && hasChapterDiff(v)) return;   // diff 审阅中,跳过
-      saveTab(key);
+      saveTab(key, { auto: true });
     }, 2500);
     return () => clearTimeout(id);
-  }, [active && active.key, active && active.content, active && active.dirty, saveTab]);
+  }, [active && active.key, active && active.content, active && active.dirty, active && active.conflict, saveTab]);
 
   return (
     <div className="mde-root">
@@ -1271,6 +1325,7 @@ export default function MdEditorPage() {
         {scriptId && active && active.kind === 'chapter' && <button className={'mde-tb-txt' + (autoComplete ? ' on' : '')} data-tip={t('md_editor.ghost.tip', { defaultValue: '内联续写:打字停顿后给灰色续写建议,Tab 采纳(用你自己的模型)' })} title={t('md_editor.ghost.btn', { defaultValue: 'AI 续写' })} onClick={toggleAutoComplete}>{t('md_editor.ghost.btn', { defaultValue: 'AI 续写' })}{autoComplete ? ' ·开' : ''}</button>}
         {scriptId && <button className={'mde-tb-txt' + (issueCount > 0 ? ' has-badge' : '')} data-tip={t('md_editor.problems.tip', { defaultValue: 'AI 审稿发现的问题(可跳转章节)' })} title={t('md_editor.problems.btn', { defaultValue: '问题' })} onClick={() => setIssuesOpen(true)}>{t('md_editor.problems.btn', { defaultValue: '问题' })}{issueCount > 0 ? <span className="mde-tb-badge">{issueCount}</span> : null}</button>}
         {scriptId && <button className="mde-tb-txt" data-tip={t('md_editor.rules.tip', { defaultValue: '给 AI 立写作规范(注入上下文)' })} title={t('md_editor.rules.btn', { defaultValue: '写作规范' })} onClick={() => setRulesOpen(true)}>{t('md_editor.rules.btn', { defaultValue: '写作规范' })}</button>}
+        {scriptId && <button className={'mde-tb-txt' + (kbBadge && !kbBadge.ready ? ' has-badge' : '')} data-tip={t('md_editor.kb.tip', { defaultValue: '本剧本知识库健康度与重建(摘要精炼/世界书充实/复核卡/嵌入)' })} title={t('md_editor.kb.title', { defaultValue: '知识库中心' })} onClick={() => setKbOpen(true)}>{t('md_editor.kb.title', { defaultValue: '知识库中心' })}{kbBadge && !kbBadge.ready ? <span className="mde-tb-badge">{kbBadge.stale_count}</span> : null}</button>}
         {active && active.dirty && <button className="mde-save" onClick={() => saveTab(active.key)} disabled={active.saving}>{active.saving ? t('md_editor.save_btn.saving') : t('md_editor.save_btn.save')}</button>}
         <button className={'mde-tb-ic' + (rightOpen ? ' on' : '')} data-tip={rightOpen ? t('md_editor.panel.hide_ai') : t('md_editor.panel.show_ai')} title={rightOpen ? t('md_editor.panel.hide_ai') : t('md_editor.panel.show_ai')} onClick={toggleRight}><TbIcon name="panelRight" /></button>
       </div>
@@ -1293,7 +1348,7 @@ export default function MdEditorPage() {
                 title={tb.label}
                 onContextMenu={(e) => { e.preventDefault(); setTabCtx({ x: e.clientX, y: e.clientY, key: tb.key }); }}
                 onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(tb.key); } /* 中键关闭(VSCode) */ }}>
-                <span className="mde-tab-label">{tb.dirty ? '● ' : ''}{tb.label}</span>
+                <span className={'mde-tab-label' + (tb.conflict ? ' mde-tab-conflict' : '')} title={tb.conflict ? t('md_editor.conflict.tab_tip') : undefined}>{tb.conflict ? '! ' : (tb.dirty ? '● ' : '')}{tb.label}</span>
                 <span className="mde-tab-close" title={t('common.close')} onClick={(e) => { e.stopPropagation(); closeTab(tb.key); }}>×</span>
               </div>
             ))}
@@ -1314,6 +1369,9 @@ export default function MdEditorPage() {
                 )}
                 {active.kind === 'chapter' && (
                   <button type="button" className="mde-sb-btn" onClick={() => setHistoryFor(active.id)}>{t('md_editor.history.btn', { defaultValue: '版本历史' })}</button>
+                )}
+                {active.kind === 'chapter' && (
+                  <button type="button" className="mde-sb-btn" disabled={playtestBusy} onClick={() => playtest(active.id, active.label)}>{playtestBusy ? t('md_editor.playtest.busy', { defaultValue: '试玩中…' }) : t('md_editor.playtest.btn', { defaultValue: '从本章试玩' })}</button>
                 )}
                 <span className={'mde-sb-item' + (active.dirty ? ' dirty' : '')}>{active.dirty ? t('md_editor.statusbar.unsaved', { defaultValue: '未保存' }) : t('md_editor.statusbar.saved', { defaultValue: '已保存' })}</span>
               </>
@@ -1370,6 +1428,7 @@ export default function MdEditorPage() {
       {searchOpen && scriptId && <GlobalSearch scriptId={scriptId} openNode={openNode} onClose={() => setSearchOpen(false)} />}
       {historyFor != null && scriptId && <ChapterHistory scriptId={scriptId} chapterIndex={historyFor} onClose={() => setHistoryFor(null)} onRestored={() => { try { refreshTab('chapter', historyFor); } catch (_) {} setHistoryFor(null); }} />}
       {rulesOpen && scriptId && <WritingRules scriptId={scriptId} onClose={() => setRulesOpen(false)} />}
+      {kbOpen && scriptId && <EditorKbPanel scriptId={scriptId} open={kbOpen} onClose={() => setKbOpen(false)} />}
       {issuesOpen && scriptId && <ProblemsPanel scriptId={scriptId} reloadKey={issuesReloadKey} onCountChange={setIssueCount}
         onJump={(ch) => { if (ch != null) openNode({ kind: 'chapter', id: ch, label: t('md_editor.chapter_prefix', { index: ch }) }); setIssuesOpen(false); }}
         onClose={() => setIssuesOpen(false)} />}
@@ -1378,9 +1437,13 @@ export default function MdEditorPage() {
 }
 
 // ── 节点内容 加载:GET 行 → md-serialize.toMd ─────────────────────────────
-async function loadNodeContent(kind, sid, id) {
+async function loadNodeContentMeta(kind, sid, id) {
   const row = await loadRow(kind, sid, id);
-  return toMd(kind, row);
+  // updatedAt=章节乐观锁基线(P0:AI 写库与未保存改动互覆盖);非章节实体走全量合并保存,冲突面小,V1 不带。
+  return { content: toMd(kind, row), updatedAt: (kind === 'chapter' && row && row.updated_at) || null };
+}
+async function loadNodeContent(kind, sid, id) {
+  return (await loadNodeContentMeta(kind, sid, id)).content;
 }
 
 async function loadRow(kind, sid, id) {
@@ -1423,7 +1486,7 @@ async function loadRow(kind, sid, id) {
 }
 
 // ── 节点内容 保存:fromMd(当前) vs fromMd(原始) 求 diff,只发改动字段 ──────────
-async function saveNodeContent(kind, sid, id, content, original) {
+async function saveNodeContent(kind, sid, id, content, original, baseUpdatedAt) {
   const A = api();
   // front-matter 结构冻结(权威闸):顶层字段集合不可增删改名,只能改值。编辑层 frontMatterGuard 已挡掉
   // 改键名/破围栏的交互;此处兜底拦「新增/删除顶层字段」(加项目)—— 否则 fromMd 会静默丢弃非 schema 键,
@@ -1451,8 +1514,11 @@ async function saveNodeContent(kind, sid, id, content, original) {
   if (Object.keys(diff).length === 0) return;   // 无实际改动
 
   if (kind === 'chapter') {
-    await A.scripts.updateChapter(sid, id, diff);   // 收 {title?, content?, volume_title?}
-    return;
+    // base_updated_at=乐观锁:服务端已被他方(AI 工具/另一标签)改过时 409+服务端版本,
+    // 调用方转三方合并。返回新 updated_at 供刷新基线。
+    const body = baseUpdatedAt ? { ...diff, base_updated_at: baseUpdatedAt } : diff;
+    const r = await A.scripts.updateChapter(sid, id, body);
+    return (r && r.chapter && r.chapter.updated_at) || null;
   }
   if (kind === 'card') {
     // 后端 upsert_character_card 是「全量覆盖」(缺字段→清空,含 SCHEMA 不覆盖的 avatar/metadata/
