@@ -241,6 +241,15 @@ class ApplyOpsMixin:
             elif "关系" in key:
                 rel_name, rel_status = _split_relation(value)
                 if rel_name and rel_status:
+                    # 群反馈(斗破档):GM 用化名写关系(relationships.云芝)与真名(云韵)并存
+                    # =人物面板同人两卡。写入前过 canon 别名归并(确定性,失败原名)。
+                    try:
+                        from kb.alias import canonical_name_for_save
+                        _rn = canonical_name_for_save(self.data.get("_active_save_id"), rel_name)
+                        if _rn and _rn != rel_name:
+                            rel_name = _rn
+                    except Exception:
+                        pass
                     _gm_write_via_gate(f"relationships.{rel_name}", rel_status, label_for_update=f"关系：{rel_name} -> {rel_status}")
                 elif self.add_memory("facts", item):
                     # facts 是低风险积累，仍走 add_memory 但记到 updates

@@ -231,9 +231,20 @@ def maintain_structured_kb(db, save_id: int, script_id: int, commit_id: int,
     if not prose or not script_id:
         return {"entities": 0, "relationships": 0, "mentioned": []}
     canon = db.execute(
-        "select logical_key, name, type, summary, aliases, identity, background "
+        "select logical_key, name, type, summary, aliases, identity, background, "
+        "coalesce(first_revealed_chapter, 0) as frc "
         "from kb_canon_entities where script_id = %s", (int(script_id),)
     ).fetchall()
+    # 群反馈(斗破档):GM 从训练数据薅后文角色名(韩枫)当原创路人 → 史官全量扫确证
+    # =未来角色被提前标 encountered,且 canon identity(真身份"药老徒弟")进 KB →
+    # 下回合材料带真身份=剧透泄漏闭环。确证跟随 GM 输出不能不记(召回需要),但
+    # 未揭示实体降级:不抄 identity/background/summary,metadata 标 premature。
+    _prog_ch = 0
+    try:
+        from agents.anchor_seed_agent import get_progress_window as _gpw_kb
+        _prog_ch = int((_gpw_kb(save_id, script_id=int(script_id), window_size=12) or {}).get("chapter_min") or 0)
+    except Exception:
+        _prog_ch = 0
     # 关系只给「无歧义的人」:同名实体若还以非 character 类型出现(如 人造邪神/伟大意志 同时是
     # character 和 concept),多半是势力/概念/怪物而非人 → 不建人际关系(避免误判过捕)。
     _ambiguous = {c["name"] for c in canon if (c.get("type") or "") != "character"}
@@ -262,13 +273,16 @@ def maintain_structured_kb(db, save_id: int, script_id: int, commit_id: int,
         mentioned.append(c["name"])
         # 标 encountered(运行时实体态,COW 新行覆盖 T0)
         attrs = {"_encountered": True, "_encountered_commit": commit_id}
-        for k in ("identity", "background"):
-            if c.get(k):
-                attrs[k] = c[k]
+        _premature = bool(_prog_ch and int(c.get("frc") or 0) > _prog_ch)
+        if not _premature:
+            for k in ("identity", "background"):
+                if c.get(k):
+                    attrs[k] = c[k]
         live_repo.upsert_entity(db, save_id, commit_id, lk, name=c["name"],
                                 type=(c.get("type") or "entity"), status="live",
-                                summary=(c.get("summary") or ""), attrs=attrs,
-                                origin="recorder", metadata={"source": "prose_mention"})
+                                summary=("" if _premature else (c.get("summary") or "")), attrs=attrs,
+                                origin="recorder",
+                                metadata={"source": "prose_mention", **({"premature": True} if _premature else {})})
         n_ent += 1
         # character(非玩家本人、非歧义概念/势力)且尚无关系 → 确定性补一条「初识」
         if (c.get("type") or "") == "character" and c["name"] != (player_name or "") \

@@ -808,6 +808,32 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
         except Exception as _anchor_err:
             log.warning(f"[retrieval] pending_anchors 注入失败 (非致命): {_anchor_err}")
 
+        # ── 命名禁区(群反馈,斗破档):GM 给原创路人起名会从训练数据薅【后文角色名】
+        # (韩枫/紫妍),还顺带赋予真身份——防剧透闸管注入材料,管不住模型自带的原著知识。
+        # 注入禁用名单:只给名字不给任何身份(名字本身模型早知道,禁令不增加知识只增加
+        # 约束)。史官侧配套:未揭示实体确证降级(save_kb premature,不抄 identity)。
+        try:
+            if script_id and _progress_chapter:
+                from platform_app.db import connect as _conn_ban
+                with _conn_ban() as _db_ban:
+                    _ban_rows = _db_ban.execute(
+                        "select name from kb_canon_entities where script_id=%s and type='character' "
+                        "and coalesce(first_revealed_chapter,0) > %s and coalesce(importance,0) >= 40 "
+                        "order by importance desc nulls last limit 30",
+                        (int(script_id), int(_progress_chapter) + 3),
+                    ).fetchall()
+                _ban_names = [str(r["name"]) for r in (_ban_rows or []) if r.get("name")]
+                if _ban_names:
+                    parts.append(
+                        "=== 命名禁区(尚未出场的原著角色名) ===\n"
+                        "以下名字属于本书后文才出场的角色,当前【禁止】用于任何人物"
+                        "(包括你原创的路人/官员/化名),也不得赋予其原著身份或提前引入:"
+                        + "、".join(_ban_names)
+                        + "\n(玩家若主动提到这些名字,当作陌生名字处理,不确认任何设定。)"
+                    )
+        except Exception as _ban_err:
+            log.debug(f"[retrieval] 命名禁区注入跳过(非致命): {_ban_err}")
+
         # ── 存档独立时间线·历史锚点 (跟上面【世界线收束·接下来的锚点】平行的另一套) ──
         # 上面那段 = 原著未来 (玩家还没推进到的剧本必然事件)
         # 下面这段 = 玩家创造的过去 (玩家在这个世界线已经做过的重要事)
