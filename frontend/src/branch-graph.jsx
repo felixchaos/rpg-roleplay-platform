@@ -72,7 +72,24 @@ function _colorForRef(refName) {
 //   4. 一个 column 被认为 "active" 直到它最后一个 commit (没有 child 使用)
 //
 // 简化:由于后端 branch_commits 是单父结构,merge 不需要处理。
-function _assignColumns(nodes) {
+function _assignColumns(nodes, activeId) {
+  // 主线锚定(群反馈二连「一直向右偏移」,GitHub/VSCode Git Graph 同款语义):
+  // 死枝按出生序先处理会【继承走】主线的列,多回合死枝迫使主线开新列——每次
+  // 回滚重试主线右移一列。修=active HEAD 的祖先链恒钉 column 0,其他分支只在
+  // 右侧起落(findFreeColumn 从 1 起扫,col0 专属主线)。
+  const _byIdM = new Map();
+  for (const n of nodes) _byIdM.set(n.commit_id ?? n.id, n);
+  const mainline = new Set();
+  {
+    let cur = activeId != null ? _byIdM.get(activeId) : null;
+    while (cur) {
+      const cid = cur.commit_id ?? cur.id;
+      if (mainline.has(cid)) break;
+      mainline.add(cid);
+      const pid = cur.parent_id ?? cur.parent ?? null;
+      cur = pid != null ? _byIdM.get(pid) : null;
+    }
+  }
   // 按 turn_index 升序排列 (时间从早到晚)
   const sorted = [...nodes].sort((a, b) => {
     const ta = a.turn_index ?? 0;
@@ -94,19 +111,23 @@ function _assignColumns(nodes) {
   const columns = []; // 索引 = column index
   const columnOf = new Map(); // commit_id → column
 
+  const colStart = mainline.size ? 1 : 0;  // 有主线时 col0 专属
   function findFreeColumn() {
-    for (let i = 0; i < columns.length; i++) {
+    for (let i = colStart; i < columns.length; i++) {
       if (columns[i] == null) return i;
     }
     columns.push(null);
     return columns.length - 1;
   }
+  if (mainline.size) columns.push("__mainline__");  // 占住 col0
 
   for (const node of sorted) {
     const cid = node.commit_id ?? node.id;
     const pid = node.parent_id ?? node.parent ?? null;
     let col;
-    if (pid != null && columnOf.has(pid)) {
+    if (mainline.has(cid)) {
+      col = 0;
+    } else if (pid != null && columnOf.has(pid)) {
       const parentCol = columnOf.get(pid);
       // 父 column 是否还被父占着? 如果还是 — 这个 child 是父的第一个 child,继承
       if (columns[parentCol] === pid) {
@@ -126,7 +147,7 @@ function _assignColumns(nodes) {
     // 列回收(群反馈:754 commits/83 refs 长局档,回滚/重试的死枝各占一列且永不
     // 释放 → totalColumns 累计到几十,graphW=列数×columnW 把右侧内容推爆)。
     // 叶子(无 child)处理完即释放其列 → 并行列数回到「真实并发分支数」。
-    if (!childrenOf.has(cid)) columns[col] = null;
+    if (col !== 0 && !childrenOf.has(cid)) columns[col] = null;
   }
 
   // 返回每个 commit 的 (column, 行号 row=index in sorted_desc).
@@ -238,7 +259,7 @@ function BranchGraph({ data, variant = "full", headOnly, selectedId, onActivate,
     return m;
   }, [refs]);
 
-  const { sortedDesc, columnOf, totalColumns, childCount } = useMemoB(() => _assignColumns(nodes), [nodes]);
+  const { sortedDesc, columnOf, totalColumns, childCount } = useMemoB(() => _assignColumns(nodes, activeId), [nodes, activeId]);
   const [expandedGaps, setExpandedGaps] = useStateB(() => new Set());
   const displayItems = useMemoB(
     () => _buildDisplayList(sortedDesc, { refsByTarget, activeId, selectedId, childCount, expandedGaps }),
