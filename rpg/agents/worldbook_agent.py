@@ -56,7 +56,7 @@ class WorldbookResult:
                 f"原著章节: 第{a.get('chapter_min', '?')}-{a.get('chapter_max', '?')}章\n"
                 f"时间标签: {a.get('time_label', '')}"
             )
-        if self.phase_digest:
+        if self.phase_digest and str(self.phase_digest.get('summary') or '').strip():
             pd = self.phase_digest
             parts.append(
                 f"=== 剧本阶段摘要 ({pd.get('phase_label', '')}) ===\n"
@@ -141,6 +141,7 @@ def consult(
                     # 进度在 phase 中段(如五等分巨窗「开端」1..78,进度=17):事实窗口
                     # 地板抬到当前进度章,否则 chapter_facts 恒从 phase 开头拉最早 5 章。
                     anchor["chapter_min"] = _pc
+                    anchor["floored"] = True
                 elif _pc > 1 and (not anchor or int(anchor.get("chapter_max") or 0) < _pc):
                     prow = db.execute(
                         "select phase_label, chapter_min, chapter_max, story_time_label_start "
@@ -169,7 +170,19 @@ def consult(
                     (script_id, anchor["phase"]),
                 ).fetchone()
                 if row:
-                    result.phase_digest = dict(row)
+                    pd = dict(row)
+                    # 群反馈(行者无疆二报):进度在 phase 中段时整段 summary=phase 头部
+                    # 内容(且多为拆书病态逐章拼接体),对当前进度全是过期材料 → 子代理
+                    # 复述生化危机(ch1-5 剧情)。降级:summary 换成 key_events 按章过滤
+                    # (≥进度章,事件带章号可确定性切),无合格事件则置空(渲染层跳过该段)。
+                    if anchor.get("source") == "progress_floor" or anchor.get("floored"):
+                        _floor_ch = int(anchor.get("chapter_min") or 0)
+                        _evs = [e for e in (pd.get("key_events") or [])
+                                if isinstance(e, dict) and int(e.get("chapter") or 0) >= _floor_ch]
+                        pd["summary"] = "\n".join(
+                            f"第{e.get('chapter')}章:{str(e.get('event') or '').strip()[:160]}"
+                            for e in _evs[:5])
+                    result.phase_digest = pd
 
             # 3) 拉 相关 ChapterFact
             cmin = anchor.get("chapter_min") if anchor else None
