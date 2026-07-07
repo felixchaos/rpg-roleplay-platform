@@ -328,26 +328,40 @@ def _retrieve_vector(
             if float(r.get("score") or 0.0) >= _VECTOR_SCORE_FLOOR]
 
 
+_RATH_CORPUS_CAP = 300  # RATH 离线产物在语料里的独立配额(见 _fetch_keyword_corpus)
+
+
 def _fetch_keyword_corpus(save_id: int, commit_id: int) -> list[dict]:
-    """谱系过滤的 kb_events 关键词语料(近因优先,封顶 _KEYWORD_CORPUS_CAP)。"""
+    """谱系过滤的 kb_events 关键词语料(近因优先,封顶 _KEYWORD_CORPUS_CAP)。
+
+    深审 X4(数据实证:exp2 档 RATH 产物已占 80%):RATH 离线心跳/场景与玩家事件共享
+    同一近因窗口,挂机越久玩家自己的早期关键事件被挤出越快=GM 对亲历剧情失忆。
+    分池配额:玩家事件满额 _KEYWORD_CORPUS_CAP,rath_% 走独立小配额(仍可召回离线
+    世界发生的事——那是 RATH 设计意图,只是不再挤兑玩家池)。"""
     from kb.live_repo import _ANCESTRY
     from platform_app.db import connect, init_db
     init_db()
-    sql = _ANCESTRY + """
+    _base = r"""
     select id, logical_key, summary, story_time, location, participants
     from kb_events
     where save_id = %(save)s
       and born_commit in (select cid from ancestry)
       and retired_at_commit is null
       and coalesce(summary, '') <> ''
+      and logical_key {rath_op} 'rath\_%%'
     order by id desc
     limit %(cap)s
     """
     with connect() as db:
         rows = db.execute(
-            sql, {"commit": int(commit_id), "save": int(save_id), "cap": _KEYWORD_CORPUS_CAP},
+            _ANCESTRY + _base.format(rath_op="not like"),
+            {"commit": int(commit_id), "save": int(save_id), "cap": _KEYWORD_CORPUS_CAP},
         ).fetchall()
-    return [dict(r) for r in (rows or [])]
+        rath_rows = db.execute(
+            _ANCESTRY + _base.format(rath_op="like"),
+            {"commit": int(commit_id), "save": int(save_id), "cap": _RATH_CORPUS_CAP},
+        ).fetchall()
+    return [dict(r) for r in (rows or [])] + [dict(r) for r in (rath_rows or [])]
 
 
 def retrieve_episodic_keyword(

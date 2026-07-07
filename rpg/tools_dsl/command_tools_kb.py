@@ -260,9 +260,34 @@ def _t_kb_upsert_entity(user_id: int, args: dict) -> str:
         ctx, err = _require_commit(db, save_id, user_id)
         if err:
             return err
+        _name = (args.get("name") or lk).strip()
+        # 库扫描实锤(335 对同人两卡,「让」↔「让·保罗」):LLM 给的名字/键落库前必须过
+        # 确定性归并——①canon 别名(化名/贬称→主名);②save 内 live 实体互为包含且唯一
+        # 命中→归并到已有实体(COW 新行覆盖=更新),歧义(多命中)不猜保持原名。
+        try:
+            from kb.alias import canonical_name_for_save
+            _cn = canonical_name_for_save(save_id, _name)
+            if _cn and _cn != _name:
+                _name = _cn
+                lk = _cn
+        except Exception:
+            pass
+        try:
+            if len(_name) >= 2:
+                _rows = db.execute(
+                    "select distinct name, logical_key from kb_entities "
+                    "where save_id=%s and status='live' and name <> %s "
+                    "and (name like '%%' || %s || '%%' or %s like '%%' || name || '%%')",
+                    (save_id, _name, _name, _name),
+                ).fetchall()
+                if len(_rows or []) == 1:
+                    lk = _rows[0]["logical_key"]
+                    _name = _rows[0]["name"]
+        except Exception:
+            pass
         live_repo.upsert_entity(
             db, save_id, ctx["commit_id"], lk,
-            name=(args.get("name") or lk), type=(args.get("type") or "character"),
+            name=_name, type=(args.get("type") or "character"),
             status=(args.get("status") or "active"), summary=_sanitize_kb_text(args.get("summary")),
             attrs=args.get("attrs") if isinstance(args.get("attrs"), dict) else None,
             origin=(args.get("origin") or "player"),
