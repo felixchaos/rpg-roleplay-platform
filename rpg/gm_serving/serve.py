@@ -52,8 +52,18 @@ def assemble_gm_context(db, *, save_id: int, user_id: int, user_input: str = "",
     save_settings = _set.read_settings(db, save_id)
     steering_strength = save_settings.get("steering_strength", "guided")
 
+    # M5(进度信号矩阵审计):此前用 _save_ctx 的裸标量 ctx["progress_chapter"]
+    # (command_tools_kb._save_ctx 只读 worldline.progress_chapter 原始值,default=1,
+    # 不做 P4 前沿派生/floor clamp)。read_settings 已把 floor(已到达锚点最大原著章)/
+    # derived(前沿派生)/史官估章三者取 max 合并为权威进度(见 gm_serving/settings.py
+    # read_settings),steer 应采用这个权威值,而非绕过它的裸标量。裸标量只作 fallback
+    # (read_settings 异常/未返回时)。
+    _progress_chapter = save_settings.get("progress_chapter")
+    if _progress_chapter is None:
+        _progress_chapter = ctx["progress_chapter"]
+
     steer = ST.resolve_steering_target(
-        db, save_id=save_id, script_id=script_id, progress_chapter=ctx["progress_chapter"],
+        db, save_id=save_id, script_id=script_id, progress_chapter=_progress_chapter,
         steering_strength=steering_strength,
     )
     inj = CI.build_injection(

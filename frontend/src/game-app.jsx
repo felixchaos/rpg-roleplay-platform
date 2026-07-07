@@ -1807,8 +1807,23 @@ function TopBar({ state, saveUpdatedAt, onOpenTweaks, onOpenSearch, onOpenHistor
     ? window.__fmt.ago(saveUpdatedAt)
     : (saveUpdatedAt || "—");
   const scriptName = state?._raw?.save_title || state?.app?.script_name || "";
-  const chapter = state?.app?.current_chapter ? t('game.app.topbar.chapter', { n: state.app.current_chapter }) : "";
-  const phase = state?.data?.world?.timeline?.current_phase || state?.app?.current_phase || "";
+  // M7 修复：state.app.current_chapter 后端从不写，恒 undefined；权威值来自
+  // GET /api/saves/:id/timeline 的 current_chapter（game-panels.jsx PanelTimeline 同款读法）。
+  // 存档切换时（saveId 变化）才重新拉取，避免每次 render 重复请求。
+  const saveId = state?._raw?.save_id ?? null;
+  const [currentChapter, setCurrentChapter] = useStateA(null);
+  useEffectA(() => {
+    if (!saveId) { setCurrentChapter(null); return; }
+    let cancelled = false;
+    const base = (typeof window !== "undefined" && window.__API_BASE) || "";
+    fetch(`${base}/api/saves/${saveId}/timeline`, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => { if (!cancelled && json) setCurrentChapter(json.current_chapter ?? null); })
+      .catch(() => { if (!cancelled) setCurrentChapter(null); });
+    return () => { cancelled = true; };
+  }, [saveId]);
+  const chapter = currentChapter ? t('game.app.topbar.chapter', { n: currentChapter }) : "";
+  const phase = state?.world?.timeline?.current_phase || "";
   return (
     <header className="gc-topbar">
       <div className="gc-topbar-left">

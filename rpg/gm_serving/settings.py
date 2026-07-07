@@ -141,6 +141,48 @@ def set_user_progress_floor(db, save_id: int, chapter: int) -> None:
     )
 
 
+def realign_progress_signals(db, save_id: int, target_chapter: int) -> int:
+    """回退方向的进度信号族对齐(同事务原子)。矩阵审计 M1-M4 收口。
+
+    病根:软回退(rollback_to_message/rewind_last_round/delete_subtree/进度回退端点)
+    只退 state_snapshot 或只改单个信号,不动 save_anchor_states / progress_chapter /
+    user_progress_floor → 下一回合 retrieval self-heal 用 stale 的 occurred 锚点把
+    progress 顶回去 = 玩家的回退被静默撤销,防剧透闸按回退前高进度继续泄漏后期设定。
+    所有回退路径必须走本函数:
+      A: progress_chapter 显式设 target(可降) + user_progress_floor clamp 到 ≤target;
+      C: source_chapter > target 的 occurred/variant 锚点重锁回 pending;
+      frontier(flag on): 删 >target 前沿行 + recompute_visible_set。
+    返回重锁锚点数。异常向外传播(调用方事务整体回滚,防信号族半对齐脱节)。"""
+    _ensure_session(db, save_id)
+    t = max(1, int(target_chapter))
+    db.execute(
+        "update game_sessions set worldline = jsonb_set(jsonb_set(coalesce(worldline,'{}'::jsonb), "
+        "'{progress_chapter}', to_jsonb(%s::int), true), "
+        "'{user_progress_floor}', to_jsonb(least(coalesce((worldline->>'user_progress_floor')::int, 0), %s)), true), "
+        "updated_at = now() where save_id=%s",
+        (t, t, save_id),
+    )
+    relocked = db.execute(
+        "update save_anchor_states set status='pending', occurred_at_turn=null, "
+        "variant_description=null, drift_score=0, updated_at=now() "
+        "where save_id=%s and source_chapter > %s and status in ('occurred','variant') "
+        "returning id",
+        (save_id, t),
+    ).fetchall()
+    from kb.reveal import _frontier_on, recompute_visible_set
+    if _frontier_on(save_id):
+        db.execute(
+            "delete from save_reveal_frontier where save_id=%s and anchor_key in "
+            "(select anchor_key from save_anchor_states where save_id=%s and source_chapter > %s)",
+            (save_id, save_id, t),
+        )
+        _scr = db.execute(
+            "select script_id from game_saves where id=%s", (save_id,)).fetchone()
+        if _scr and _scr.get("script_id"):
+            recompute_visible_set(db, save_id, int(_scr["script_id"]))
+    return len(relocked or [])
+
+
 def clamp_reveal_progress(progress: int, det_floor: int, lookahead: int) -> int:
     """揭示天花板的估章钳制(纯函数,时间线战役批次1)。
 

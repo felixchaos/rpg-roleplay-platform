@@ -402,12 +402,24 @@ async def api_save_anchors(save_id: int, user=Depends(require_user)):
     try:
         from agents.anchor_seed_agent import (
             drift_by_phase,
+            get_progress_window,
             list_pending_for_phase,
             summarize_save_anchor_state,
         )
         summary = summarize_save_anchor_state(save_id)
         by_phase = drift_by_phase(save_id)
-        recent_pending = list_pending_for_phase(save_id, None, limit=12)
+        # M9(进度信号矩阵审计):此前不带章节窗口过滤,按 importance 全局取 top-12 —
+        # 会把远超玩家当前进度的中后期锚点摘要(含 summary 剧透正文)直接推给前端。
+        # 用权威读取器 get_progress_window 的 [chapter_min, chapter_max] 过滤,窗口外
+        # 的待发生锚点不返回(与 steering/retrieval 对「玩家能看到多远」的口径一致)。
+        try:
+            _win = get_progress_window(save_id)
+            _ch_min, _ch_max = _win.get("chapter_min"), _win.get("chapter_max")
+        except Exception:
+            _ch_min, _ch_max = None, None
+        recent_pending = list_pending_for_phase(
+            save_id, None, limit=12, chapter_min=_ch_min, chapter_max=_ch_max,
+        )
         with connect() as db:
             occ_rows = db.execute(
                 """
@@ -620,37 +632,32 @@ async def api_save_progress_rewind(save_id: int, request: Request, user=Depends(
             ).fetchone()
             if _cc_row and _cc_row.get("chapter_count"):
                 target = min(target, int(_cc_row["chapter_count"]))
-            # fork 收编(workers=2 竞态):原读-改-写整列会被并发 advance_progress 的 jsonb_set
-            # 吞更新,且整列覆盖抹掉对方刚写的其它 worldline 键(_get_sync_scope_lock 是进程内
-            # RLock,跨 worker 无效)。改单条原子 jsonb_set(只动 progress_chapter),与
-            # advance_progress(settings.py:124-128)同范式。回退语义=显式设(非 max),故不用 greatest。
-            db.execute(
-                "update game_sessions set "
-                "worldline = jsonb_set(coalesce(worldline,'{}'::jsonb), '{progress_chapter}', to_jsonb(%s::int), true), "
-                "updated_at = now() where save_id=%s",
-                (target, save_id))
-            relocked = db.execute(
-                "update save_anchor_states set status='pending', occurred_at_turn=null, "
-                "variant_description=null, drift_score=0, updated_at=now() "
-                "where save_id=%s and source_chapter > %s and status in ('occurred','variant') "
-                "returning id",
-                (save_id, target),
-            ).fetchall()
-            # P4(S7.3):flag on 时同步收缩前沿 —— 必须与进度降/锚点重锁【同事务原子】。
-            # 【不吞异常】:任何失败传播给外层 with 连接 → 整笔 rewind 回滚(否则前沿与 anchor_states
-            # 脱节、derived 仍返回回退前章数、门控仍放行已重锁实体 = 违 I3/I4)。
-            from kb.reveal import _frontier_on, recompute_visible_set
-            if _frontier_on(save_id):
+            # 矩阵审计 M3 收口:进度信号族统一走 realign_progress_signals
+            # (progress 可降 + user_progress_floor clamp[旧漏:曾 /set 抬高的地板会卡住
+            # 揭示天花板不随回退收窄] + 锚点重锁 + frontier 收缩,同事务原子、异常整体
+            # 回滚 —— 沿用原 P4(S7.3)不吞异常口径)。
+            from gm_serving.settings import realign_progress_signals
+            n_relocked = realign_progress_signals(db, save_id, target)
+            # M4:同步写穿工作树快照的时间线(信号B)。rail/guided 原文选章优先读
+            # state.world.timeline.chapter_min —— 不写穿则回退后 GM 每轮仍被喂旧章
+            # 原文,需再手动 /set 一次才纠正。重算 snapshot_hash(跨 worker 缓存失效,
+            # 同 snapshot_hash 漂移范式);工作树是回合加载真相源,commit 历史不动。
+            _rc_row = db.execute(
+                "select state_snapshot from runtime_checkouts where save_id=%s",
+                (save_id,)).fetchone()
+            _snap = (_rc_row or {}).get("state_snapshot")
+            if isinstance(_snap, dict):
+                _tl = _snap.setdefault("world", {}).setdefault("timeline", {})
+                _tl["chapter_min"] = target
+                _tl["chapter_max"] = target
+                _tl["anchor_chapter"] = target
+                from platform_app.branches.commits import _state_snapshot_hash
                 db.execute(
-                    "delete from save_reveal_frontier where save_id=%s and anchor_key in "
-                    "(select anchor_key from save_anchor_states where save_id=%s and source_chapter > %s)",
-                    (save_id, save_id, target))
-                _scr = db.execute(
-                    "select script_id from game_saves where id=%s", (save_id,)).fetchone()
-                if _scr and _scr.get("script_id"):
-                    recompute_visible_set(db, save_id, int(_scr["script_id"]))
+                    "update runtime_checkouts set state_snapshot=%s, snapshot_hash=%s, "
+                    "row_version = row_version + 1, updated_at=now() where save_id=%s",
+                    (Jsonb(_snap), _state_snapshot_hash(_snap), save_id))
         return json_response({"ok": True, "progress_chapter": target,
-                              "relocked": len(relocked or [])})
+                              "relocked": n_relocked})
     except Exception:
         log.exception("save progress rewind error")
         return json_response(

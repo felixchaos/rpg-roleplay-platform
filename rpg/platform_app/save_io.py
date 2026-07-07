@@ -43,6 +43,27 @@ _STATE_TABLES: tuple[tuple[str, str], ...] = (
     ("save_history_anchors", True),
 )
 
+# 矩阵审计 M6:game_sessions 不在 _STATE_TABLES(通用 select */insert 机制)里 —— 该表除了
+# worldline 玩家设置外还有 book_id/script_id/user_id 等跨库外键与运行态列,不适合通用整行
+# 导入。但 worldline jsonb 里的【玩家显式设置】(剧情引导强度/进度下限/进度章节/先知模式等)
+# 是游戏体验的一部分,导入分支(见 import_save 步骤 5)目前只建空白 game_sessions 行 →
+# 这些设置导入后全部丢失(steering_strength 静默退回默认 'guided',progress_chapter /
+# user_progress_floor 直接消失,进度靠下回合自愈但 floor/引导强度永久丢)。
+# 修复:导出时单独把 worldline 打包成 "game_session_worldline" 附加块(不动通用机制);
+# 导入时按 jsonb 白名单键塞回新建的 game_sessions 行。白名单键与 _PRESERVE_SETTINGS_SQL
+# (knowledge/_session_repo.py)+ SETTINGS_SCHEMA(gm_serving/settings.py)保持同步 ——
+# 均为「玩家可改设置」命名空间,不含世界树运行态键(user_variables/last_projection 等,
+# 那些每回合由 state 快照重建,导入空白亦可,且不应从旧存档带入新 save 的运行态)。
+_WORLDLINE_SETTINGS_KEYS: frozenset[str] = frozenset({
+    "starting_worldline",
+    "foreknowledge_mode",
+    "npc_awareness",
+    "steering_strength",
+    "spoiler_guard",
+    "progress_chapter",
+    "user_progress_floor",
+})
+
 
 def _check_json_size(obj: Any, field: str) -> Any:
     """序列化后检查字节数，超限抛 ValueError。"""
@@ -83,10 +104,17 @@ def export_save(user_id: int, save_id: int) -> dict[str, Any]:
             (save_id,),
         ).fetchall()
         sessions = db.execute(
-            "select id from game_sessions where save_id = %s",
+            "select id, worldline from game_sessions where save_id = %s",
             (save_id,),
         ).fetchall()
         session_ids = [int(s["id"]) for s in sessions]
+        # 矩阵审计 M6:game_sessions 本身不在 _STATE_TABLES 通用机制里(见上方常量注释),
+        # 单独打包 worldline(单行,save_id 唯一)供导入侧按白名单键回填玩家设置。
+        session_worldline: dict[str, Any] = {}
+        if sessions:
+            wl = sessions[0].get("worldline")
+            if isinstance(wl, dict):
+                session_worldline = wl
         messages = []
         memories_rows = []
         if session_ids:
@@ -113,6 +141,8 @@ def export_save(user_id: int, save_id: int) -> dict[str, Any]:
         "messages": [expose(m) for m in messages],
         "memories": [expose(m) for m in memories_rows],
         "state_tables": state_tables,
+        # M6 修复:game_sessions.worldline 附加块(不进 _STATE_TABLES 通用机制)。
+        "game_session_worldline": session_worldline,
     }
 
 
@@ -578,30 +608,53 @@ def import_save(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         #    save_kb 按 save_id 查 messages 拿不到对话历史,GM 上下文全盲)。
         #    先建一行 game_sessions(仅存 session_id 关联),再逐条 remap session_id → new_session_id,
         #    save_id → new_save_id 写入。payload v1 可能无 messages 字段,静默跳过。
+        #    M6:game_sessions 行的创建不再仅限于「有 messages 才建」—— worldline 玩家设置
+        #    (steering_strength 等)与是否有对话历史无关,即使 messages 为空也要建行以承载设置。
         messages_raw = payload.get("messages") or []
         messages_imported = 0
-        if messages_raw:
-            # 取(或建)该 save 的 session:先查是否已在 step 4 的 state 里间接建了 session,
-            # 否则直接 insert 一行最小 session。
+        # 取(或建)该 save 的 session:先查是否已在 step 4 的 state 里间接建了 session,
+        # 否则直接 insert 一行最小 session。
+        new_session_row = db.execute(
+            "select id from game_sessions where save_id = %s order by id limit 1",
+            (new_save_id,),
+        ).fetchone()
+        if new_session_row is None:
+            # [hotfix] game_sessions 没有 context_size 列(本就不存在)→ 原 insert 报
+            # UndefinedColumn,带 messages 的存档导入 100% 失败。改用真实必填列:
+            # save_id + user_id(user_id 是 NOT NULL 无默认,必须给)。
             new_session_row = db.execute(
-                "select id from game_sessions where save_id = %s order by id limit 1",
-                (new_save_id,),
+                """
+                insert into game_sessions(save_id, user_id)
+                values (%s, %s)
+                on conflict do nothing
+                returning id
+                """,
+                (new_save_id, user_id),
             ).fetchone()
-            if new_session_row is None:
-                # [hotfix] game_sessions 没有 context_size 列(本就不存在)→ 原 insert 报
-                # UndefinedColumn,带 messages 的存档导入 100% 失败。改用真实必填列:
-                # save_id + user_id(user_id 是 NOT NULL 无默认,必须给)。
-                new_session_row = db.execute(
-                    """
-                    insert into game_sessions(save_id, user_id)
-                    values (%s, %s)
-                    on conflict do nothing
-                    returning id
-                    """,
-                    (new_save_id, user_id),
-                ).fetchone()
-            new_session_id: int | None = int(new_session_row["id"]) if new_session_row else None
+        new_session_id: int | None = int(new_session_row["id"]) if new_session_row else None
 
+        # M6:回填玩家 worldline 设置(仅信任白名单键,其余键丢弃防注入 —— payload 来自用户
+        # 上传的 JSON,worldline 是 jsonb 任意结构,不能整块塞回)。老导出包(export_version<2
+        # 时代前,或本次修复前生成的 v2 包)没有 "game_session_worldline" 键 → get 到 None/{}，
+        # 行为与修复前一致(向后兼容,不报错不 warning 刷屏)。
+        if new_session_id is not None:
+            raw_wl = payload.get("game_session_worldline")
+            if isinstance(raw_wl, dict) and raw_wl:
+                wl_to_apply = {k: v for k, v in raw_wl.items() if k in _WORLDLINE_SETTINGS_KEYS}
+                if wl_to_apply:
+                    try:
+                        with db.transaction():
+                            db.execute(
+                                "update game_sessions set worldline = coalesce(worldline, '{}'::jsonb) || %s "
+                                "where id = %s",
+                                (Jsonb(wl_to_apply), new_session_id),
+                            )
+                    except Exception as exc:
+                        warnings.append(
+                            f"game_session_worldline 回填失败: {type(exc).__name__}: {str(exc)[:120]}"
+                        )
+
+        if messages_raw:
             if new_session_id is not None:
                 # 允许的 messages 列(防注入;content/metadata/role/turn 是固定结构,直接枚举白名单)
                 _msg_allowed = frozenset({"session_id", "save_id", "turn", "role", "content", "metadata"})

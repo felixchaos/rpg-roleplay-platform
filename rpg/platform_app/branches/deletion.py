@@ -22,6 +22,23 @@ from platform_app.branches.tree_ops import collect_ids, round_start_node, tree
 from platform_app.db import connect, expose, init_db
 
 
+def _realign_after_state_rewind(db, save_id: int, reverted_state: dict[str, Any] | None) -> None:
+    """软回退后把进度信号族(progress_chapter/user_progress_floor/save_anchor_states/
+    frontier)对齐到回退后快照的时间线章(矩阵审计 M1/M2:回退只退 state_snapshot,
+    下一回合 retrieval self-heal 用 stale occurred 锚点把进度顶回=回退被静默撤销)。
+    快照无时间线章信号时不猜(宁漏勿误,保持旧行为)。同事务内调用,异常向外传播。"""
+    tl = (((reverted_state or {}).get("world") or {}).get("timeline") or {})
+    target = tl.get("anchor_chapter") or tl.get("chapter_min")
+    try:
+        target = int(target)
+    except (TypeError, ValueError):
+        return
+    if target < 1:
+        return
+    from gm_serving.settings import realign_progress_signals
+    realign_progress_signals(db, int(save_id), target)
+
+
 def delete_subtree(user_id: int, node_id: int) -> dict[str, Any]:
     init_db()
     runtime_payload: dict[str, Any] | None = None
@@ -65,6 +82,9 @@ def delete_subtree(user_id: int, node_id: int) -> dict[str, Any]:
                 "state_path": fallback["state_path"],
                 "ref_id": ref["id"],
             }
+            # M2:活跃指针回退到 fallback 后,进度信号族对齐回退后快照(被删分支里
+            # 标 occurred 的未来章锚点重锁,防剧透闸不再按被删分支的最远章放行)。
+            _realign_after_state_rewind(db, node["save_id"], activate["state"])
         save_id = node["save_id"]
     for path in paths:
         _unlink_branch_state(path)
@@ -218,6 +238,8 @@ def rollback_to_message(
         target_state = commit_state(target_commit)
         state_path = target_commit.get("state_path") or ""
         ref_id_for_runtime = new_ref["id"]
+        # M1:回滚到目标消息后,进度信号族对齐目标快照的时间线章
+        _realign_after_state_rewind(db, save_id, target_state)
 
     runtime_payload = _runtime_module.activate_state_snapshot(
         user_id, save_id, target_commit["id"], target_state, state_path, ref_id=ref_id_for_runtime,
@@ -325,6 +347,8 @@ def rewind_last_round(user_id: int, save_id: int) -> dict[str, Any] | None:
                 )
 
         reverted_state = commit_state(parent)
+        # M1:重演回退(rewind_last_round)后,进度信号族对齐父 commit 快照的时间线章
+        _realign_after_state_rewind(db, save_id, reverted_state)
 
     return {
         "ok": True,
