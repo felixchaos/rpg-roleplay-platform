@@ -97,7 +97,8 @@ class ModuleProfileContent(unittest.TestCase):
     def test_renders_5e_stats(self):
         # Lv/Class/HP/AC 必须出现 (用户要求:'Lv1 探险者 · HP 10/10 · AC 14')
         # 写法宽松:这些字符串作为 label 或 jsx 文本出现就算
-        for needle in ("Lv", "HP", "AC", "class_name", "max_hp"):
+        # 标签文案已迁 i18n(HP/AC label 现为 t('game.status.hp/ac'));查 i18n key + 数据字段
+        for needle in ("Lv", "game.status.hp", "game.status.ac", "class_name", "max_hp"):
             self.assertIn(needle, self.body,
                 f"ModuleStatusProfile 缺 {needle!r} — 该展示 5E 角色卡核心字段")
 
@@ -125,13 +126,13 @@ class ModuleProfileContent(unittest.TestCase):
         self.assertIn("出口", self.body)
 
     def test_combat_section_conditional_on_encounter_active(self):
-        # 战斗 section 仅 encounter.active 时显示
+        # 战斗 section 仅 encounter.active 时显示(标题文案已迁 i18n)
         self.assertIn("encounter.active", self.body)
-        self.assertIn("战斗", self.body)
+        self.assertIn("game.status.combat", self.body)
         # 显示 round / 当前行动 / 敌人 HP
         self.assertIn("round", self.body)
         self.assertIn("turn_index", self.body)
-        self.assertIn("当前行动", self.body)
+        self.assertIn("game.status.current_action", self.body)
 
     def test_recent_dice_log_section(self):
         # 最近裁定 — dice_log 末尾一条
@@ -156,7 +157,9 @@ class NovelProfileBackwardCompat(unittest.TestCase):
         assert cls.body, "NovelStatusProfile 不存在"
 
     def test_keeps_legacy_four_sections(self):
-        for needle in ("玩家", "当下世界", "身上之物", "本轮已知事件"):
+        # section 标题已迁 i18n:玩家/当下世界/身上之物/本轮已知事件 → 对应 key
+        for needle in ("game.status.player", "game.status.world_now",
+                       "game.status.inventory", "game.status.known_events"):
             self.assertIn(needle, self.body,
                 f"Novel profile 应保留 section: {needle}")
 

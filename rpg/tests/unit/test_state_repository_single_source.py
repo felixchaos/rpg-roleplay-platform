@@ -33,6 +33,8 @@ if _branches_pkg.is_dir():
 else:
     BRANCHES_PY = _branches_py_path.read_text(encoding="utf-8")
 PLATFORM_JSX = (PROJECT / "frontend" / "src" / "platform-app.jsx").read_text(encoding="utf-8")
+# 重构:ContinuePicker 已移到 pages/saves.jsx。
+SAVES_JSX = (PROJECT / "frontend" / "src" / "pages" / "saves.jsx").read_text(encoding="utf-8")
 
 
 class LoadActiveStateSingleSource(unittest.TestCase):
@@ -155,9 +157,9 @@ class ContinuePickerShowsRealRefs(unittest.TestCase):
 
     def test_uses_ref_names_from_backend(self):
         # 必须读 n.ref_names (后端 tree 返回的真实 refs 字段)
-        idx = PLATFORM_JSX.find("function ContinuePicker(")
-        end = PLATFORM_JSX.find("\nfunction ", idx + 1)
-        body = PLATFORM_JSX[idx:end if end > 0 else len(PLATFORM_JSX)]
+        idx = SAVES_JSX.find("function ContinuePicker(")
+        end = SAVES_JSX.find("\nfunction ", idx + 1)
+        body = SAVES_JSX[idx:end if end > 0 else len(SAVES_JSX)]
         self.assertIn("ref_names", body,
             "ContinuePicker 必须读 n.ref_names 显示真实分支名")
         self.assertIn("short_refs", body,

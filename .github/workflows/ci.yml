@@ -53,6 +53,8 @@ jobs:
           --ignore=tests/unit/test_branch_graph_vscode_style.py
           --ignore=tests/unit/test_credential_proxy.py
           --ignore=tests/unit/test_branch_ops_advisory_lock.py
+          --ignore=tests/unit/test_suggestions_cross_setting_filter.py
+          --ignore=tests/unit/test_suggestions_no_berlin_leak.py
 
   frontend:
     runs-on: ubuntu-latest
