@@ -214,3 +214,12 @@ describe('TavernDrawer — 兼容导出', () => {
     expect(screen.getAllByRole('tab')).toHaveLength(5);
   });
 });
+
+describe('CardSheet dense(抽屉窄容器元数据紧凑网格)', () => {
+  it('抽屉内两处 CardSheet 都必须传 dense(否则 KVP 在 ~320px 塌成单列半屏竖排)', () => {
+    const src = require('fs').readFileSync(
+      require('path').resolve(__dirname, '../tavern-drawer.jsx'), 'utf-8');
+    const denseCount = (src.match(/<CardSheet[^>]*\bdense\b/g) || []).length;
+    expect(denseCount).toBe(2);
+  });
+});

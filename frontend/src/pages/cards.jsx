@@ -300,7 +300,7 @@ function SkillContentSection({ cardId }) {
   );
 }
 
-function CardSheet({ card, kind = 'user' }) {
+function CardSheet({ card, kind = 'user', dense = false }) {
   const { t } = useTranslation();
   const raw = (card && card._raw) || card || {};
   const fullName = raw.full_name && raw.full_name !== raw.name ? raw.full_name : null;
@@ -375,10 +375,27 @@ function CardSheet({ card, kind = 'user' }) {
         </div>
       </div>
 
-      {/* 属性条 */}
-      <div style={{ background: 'var(--panel, #211f1d)', border: '1px solid var(--line-soft, #2a2724)', borderRadius: 10, padding: '12px 16px' }}>
-        <CSKeyValuePairs columns={4} items={attrs} />
-      </div>
+      {/* 属性条。dense(酒馆抽屉等窄容器):Cloudscape KVP 的响应式在 ~320px 会塌成单列,
+          7 个短值竖排占半屏(用户实锤「特别空看着怪」)——改用自绘双列紧凑网格。 */}
+      {dense ? (
+        <div className="pl-cardsheet-attrs-dense"
+          style={{ background: 'var(--panel, #211f1d)', border: '1px solid var(--line-soft, #2a2724)',
+                   borderRadius: 10, padding: '10px 14px', display: 'grid',
+                   gridTemplateColumns: '1fr 1fr', gap: '10px 16px' }}>
+          {attrs.map((a) => (
+            <div key={a.label} style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 11, letterSpacing: '.06em', color: 'var(--muted, #968f85)',
+                            marginBottom: 2 }}>{a.label}</div>
+              <div style={{ fontSize: 13, color: 'var(--text, #ebe7df)', overflow: 'hidden',
+                            textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.value}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ background: 'var(--panel, #211f1d)', border: '1px solid var(--line-soft, #2a2724)', borderRadius: 10, padding: '12px 16px' }}>
+          <CSKeyValuePairs columns={4} items={attrs} />
+        </div>
+      )}
 
       {/* 人格 skill 卡:不内联 30k 原文,改折叠按需拉(防内存爆);其余字段照常 */}
       {(raw.metadata && raw.metadata.persona_skill) || tags.includes('人格skill') ? (

@@ -322,7 +322,7 @@ export function TavernDrawer({ open, character, persona, onClose, onSavePersona,
             )}
           </div>
           {character
-            ? <><PersonaHero cardId={character.id} avatar={character.avatar_path} /><CardSheet card={character} kind="user" /></>
+            ? <><PersonaHero cardId={character.id} avatar={character.avatar_path} /><CardSheet card={character} kind="user" dense /></>
             : <div className="tvd-empty">{t('tavern_app.drawer.char_not_found')}</div>}
         </div>
       )}
@@ -349,7 +349,7 @@ export function TavernDrawer({ open, character, persona, onClose, onSavePersona,
               </div>
               {persona && persona.id ? <PersonaHero cardId={persona.id} avatar={persona.avatar_path} /> : null}
               {persona
-                ? <CardSheet card={persona} kind="persona" />
+                ? <CardSheet card={persona} kind="persona" dense />
                 : <div className="tvd-empty">{t('tavern_app.drawer.persona_not_set')}</div>}
             </>
           ) : (
