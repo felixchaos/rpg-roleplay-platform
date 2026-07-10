@@ -8,9 +8,9 @@ dependencies = [
     "fastapi>=0.139.0",
     "fsspec>=2026.6.0",
     "google-auth>=2.55.2",
-    "google-genai>=2.10.0",
+    "google-genai>=2.11.0",
     "httpx[http2]>=0.28",
-    "openai>=2.44.0",
+    "openai>=2.45.0",
     "psycopg[binary]>=3.3",
     "psycopg-pool>=3.3",
     "python-dotenv>=1.2",
@@ -21,7 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=9.1.1",
-    "ruff>=0.15.20",
+    "ruff>=0.15.21",
     "mypy>=2.2.0",
 ]
 
