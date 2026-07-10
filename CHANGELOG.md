@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.67.3] - 2026-07-10 (@ 2d3f133c9)
+
+### Fixed
+- **史官(recorder)思考黑洞根修**(行者268二连实锤「场景切换后 AIGM 时间倒流+反复描述同一批事件」):生产在线回合唯一的锚点验收/估章/motion/ops 通道是 recorder_bridge→recorder 单次 LLM 调用,v1.67.1 的 no_think 只接到了生产不走的 `_default_judge`;op 中转拒 tools 降级 json_object 后思考模型(op/deepseek-v4-flash)无界思考吃光 1200 预算(reasoning_tokens=1200 正文 0 字),全字段被静默解析成空 → 锚点永不验收 → 同批 pending 锚点每回合重新注入 rail 目标 → GM 反复重演已过剧情/时间倒流、进度与 ops 提取一并冻结。修:`_openai_function_call` 支持 no_think(tools 请求体带 thinking.disabled + 降级路径透传 extra_body,复用 json_mode 400 退参自愈链);recorder 三通道全接 no_think + 空正文护栏(告警带 reasoning_tokens 证据+扩预算 2400 重试一次,再空才放弃,绝不静默);curator 同批接 no_think。回归测试 tests/unit/test_recorder_no_think.py 锁三条缝。
+
 ## [1.67.2] - 2026-07-09 (@ f6fd30b48)
 
 ## [1.67.1] - 2026-07-09 (@ 1a3ab5043)

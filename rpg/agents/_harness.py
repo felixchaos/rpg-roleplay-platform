@@ -102,6 +102,7 @@ def call_agent_json(
             text, usage = _openai_function_call(
                 api_id, model, system_prompt, user_prompt, tool_schema,
                 user_id, timeout_sec, max_tokens,
+                no_think=no_think,
             )
         else:
             # no_think:结构化微任务禁深思(268 实锤:思考模型对判定类 prompt 无界思考,
@@ -472,12 +473,18 @@ def _openai_function_call(
     user_id: int | None,
     timeout_sec: int,
     max_tokens: int,
+    no_think: bool = False,
 ) -> tuple[str, dict]:
     """OpenAI / 兼容 endpoint native function calling,强制 schema 校验。
 
     把 anthropic 风格 tool_schema 翻译为 OpenAI tools format,tool_choice 强制必调。
     支持的 endpoint:OpenAI / SiliconFlow / DashScope / Qwen / DeepSeek 等。
     旧 endpoint 不支持 tools 时 → 降级到 response_format json_object。
+
+    no_think:结构化微任务禁深思(268 二连实锤:思考模型 forced tool-call 也会无界思考吃光
+    max_tokens 正文/arguments 恒空——史官 recorder 走本函数,v1.67.1 只接了 json_mode 路径,
+    生产 1200 预算 reasoning_tokens=1200 正文 0 字)。tools 请求体直接带 thinking.disabled;
+    形态被拒降级 json_object 时同样透传,json_mode 内已有 400 退参自愈链,所有组合可自愈。
 
     返回 (tool.arguments JSON, usage_dict)。
     """
@@ -510,6 +517,8 @@ def _openai_function_call(
         }],
         "tool_choice": {"type": "function", "function": {"name": tool_name}},
     }
+    if no_think:
+        body_dict["thinking"] = {"type": "disabled"}
     body = json.dumps(body_dict).encode("utf-8")
     req = urllib.request.Request(
         base_url.rstrip("/") + "/chat/completions",
@@ -549,9 +558,12 @@ def _openai_function_call(
         if exc.code not in _TOOLS_SHAPE_REJECT:
             raise
         log.warning(f"[_harness] {api_id} 拒绝 tools 请求(HTTP {exc.code}),降级到 json_object 兼容模式")
+        # no_think 透传降级路径:op 等中转拒 tools 后走 json_object,思考模型在那里同样会
+        # 吃光预算;json_mode 对 extra_body 被 400 拒有退参自愈,不会因带参加重降级失败。
         return _openai_compat_json_mode(
             api_id, model, system_prompt, user_prompt,
             user_id, timeout_sec, max_tokens,
+            extra_body=({"thinking": {"type": "disabled"}} if no_think else None),
         )
 
 

@@ -666,6 +666,7 @@ def _call_curator_via_harness(
                     max_tokens=1200,
                     timeout_sec=45,   # 30→45:慢 BYOK provider 不至于一上来就超时降级
                     agent_kind="curator",
+                    no_think=True,  # 结构化微任务禁深思(268 实锤族:思考模型吃光预算正文恒空)
                 )
                 return text or ""
             except Exception as exc:

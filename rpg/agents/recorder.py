@@ -703,6 +703,27 @@ def record_turn(
         log.debug("[recorder] LLM 调用失败，返回空结果: %s", exc)
         return _empty_result()
 
+    # 空正文护栏(268 实锤范式:LLM 返回空绝不静默当「没有结果」——空正文静默解析成全空
+    # result 正是史官全灭 1300+ 回合无人发觉的原因)。带 reasoning_tokens 证据告警 + 扩预算
+    # 重试一次(no_think 被 provider 忽略时思考仍可能吃预算,2400 给正文留余量);再空才放弃。
+    if not (text or "").strip():
+        _rt = int((usage or {}).get("reasoning_tokens") or 0)
+        log.warning("[recorder] uid=%s %s·%s 返回空正文(reasoning_tokens=%s),扩预算重试一次",
+                    user_id, api_id, model, _rt)
+        try:
+            text, usage = _call_recorder(
+                api_id=api_id, model=model,
+                system_prompt=system_prompt, user_prompt=user_prompt,
+                tool_schema=tool_schema, user_id=user_id,
+                timeout_sec=timeout_sec, max_tokens=2400,
+            )
+        except Exception as exc:
+            log.debug("[recorder] 空正文重试调用失败，返回空结果: %s", exc)
+            return _empty_result()
+        if not (text or "").strip():
+            log.warning("[recorder] uid=%s 重试仍空正文,本回合放弃(锚点/ops/验收全空)", user_id)
+            return _empty_result()
+
     # 记 usage（史官三通道唯一记账点，不影响主流程，异常静默）。
     # dispatch 层不再自动记账,故这里记一次即准确、不双计。
     try:
@@ -755,6 +776,7 @@ def _call_recorder(
     tool_schema: dict,
     user_id: int | None,
     timeout_sec: int,
+    max_tokens: int = 1200,
 ) -> tuple[str, dict]:
     """三通道 dispatch，返回 (text, usage)。
 
@@ -778,8 +800,9 @@ def _call_recorder(
             user_prompt=user_prompt,
             user_id=user_id,
             tool_schema=tool_schema,
-            max_tokens=1200,
+            max_tokens=max_tokens,
             timeout_sec=timeout_sec,
+            no_think=True,  # 结构化微任务禁深思(268 实锤族)
             # 不传 agent_kind：usage 由下方 record_turn 统一记一次(scenario="extract"+tasks)。
             # 传了 agent_kind call_agent_json 会自动再记一次(scenario="tool")→ 史官用量双计。
         )
@@ -796,8 +819,9 @@ def _call_recorder(
             user_prompt=user_prompt,
             user_id=user_id,
             tool_schema=tool_schema,
-            max_tokens=1200,
+            max_tokens=max_tokens,
             timeout_sec=timeout_sec,
+            no_think=True,  # 结构化微任务禁深思(268 实锤族)
             # 不传 agent_kind：usage 由下方 record_turn 统一记一次(scenario="extract"+tasks)。
             # 传了 agent_kind call_agent_json 会自动再记一次(scenario="tool")→ 史官用量双计。
         )
@@ -827,7 +851,12 @@ def _call_recorder(
         tool_schema=tool_schema,
         user_id=user_id,
         timeout_sec=timeout_sec,
-        max_tokens=1200,
+        max_tokens=max_tokens,
+        # [268 二连实锤] 史官是生产在线回合唯一的锚点验收/估章/motion/ops 通道;op 中转拒 tools
+        # 降级 json_object 后,思考模型(op/deepseek-v4-flash)无界思考吃光 1200 预算 → 正文 0 字
+        # → 全字段静默空 → 锚点永不验收反复重演/进度冻结/时间倒流。v1.67.1 只接了 _default_judge
+        # (生产不走),这里才是真正的生产缝。
+        no_think=True,
     )
     return text, usage
 
