@@ -17,6 +17,12 @@ updates:
     groups:
       frontend-deps:
         patterns: ["*"]
+    ignore:
+      # typescript 7 与 i18next 的 peerOptional "^5 || ^6" 冲突,npm ci 必炸 ERESOLVE
+      # (PR#78 实锤,与 pydantic_core 同族:组内单成员把整组 CI 拖死)。
+      # i18next 放宽 peer 范围后手动解除。
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
