@@ -1821,3 +1821,23 @@
 .rpg-md-table tbody tr:last-child td { border-bottom: 0; }
 .rpg-md-table tbody tr:hover td { background: rgba(255, 255, 255, 0.015); }
 .rpg-md-table code { font-size: 0.92em; padding: 1px 5px; }
+
+/* ── Copy-with-memory popover ─────────────────────────── */
+.gc-copy-ask {
+  position: absolute; bottom: 100%; left: 0;
+  margin-bottom: 6px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--r-2); padding: 10px 12px;
+  box-shadow: var(--shadow-2);
+  z-index: 200; white-space: nowrap;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.gc-copy-ask-label {
+  font-size: 12.5px; color: var(--text-quiet);
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+}
+.gc-copy-ask-label input { accent-color: var(--accent); }
+.gc-copy-ask-actions {
+  display: flex; gap: 6px; align-items: center; justify-content: flex-end;
+}
+.gc-copy-ask-actions .btn.ghost { font-size: 12px; height: 26px; padding: 0 10px; }
