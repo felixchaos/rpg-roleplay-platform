@@ -199,6 +199,8 @@ _JSON_MODE_INSTRUCTION = """
 - 不要写任何 markdown / 自然语言解释,只输出 JSON 数组。
 - 一次 /set 命令可以并行多个工具调用,数组依次执行。
 - 工具名必须严格匹配上面列出的工具表。
+- input 参数值必须匹配工具表标注的类型:integer 参数只传纯数字(如 30),
+  不要带「第」「章」等文字或单位(错: "第30章",对: 30)。
 - 如果用户话语真的无法映射,返回 [{"name": "clarify", "input": {"question": "..."}}].
 """
 
@@ -215,9 +217,12 @@ def _schema_args(schema: dict) -> str:
     props = schema.get("properties", {})
     required = set(schema.get("required") or [])
     parts = []
-    for name, _spec in props.items():
+    for name, spec in props.items():
         suffix = "" if name in required else "?"
-        parts.append(f"{name}{suffix}")
+        # 带上类型:JSON-mode fallback 模型只见这段文档,丢类型会把 integer 参数
+        # 传成玩家原话字符串(生产实锤 to_chapter="第30章")。
+        ftype = (spec or {}).get("type") if isinstance(spec, dict) else None
+        parts.append(f"{name}{suffix}:{ftype}" if ftype else f"{name}{suffix}")
     return ", ".join(parts)
 
 

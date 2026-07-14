@@ -503,5 +503,104 @@ class TraceSeenLRUBound(unittest.TestCase):
         self.assertIn(live, self.dispatcher._trace_seen)
 
 
+class IntegerArgCoercion(unittest.TestCase):
+    """schema 驱动整数纠偏(群反馈 行者无疆:/set 推进到第30章 → to_chapter="第30章"):
+    JSON-mode fallback 模型把 integer 参数传成玩家原话字符串,dispatcher 在
+    _validate 8.5 步做确定性提取;歧义(0/≥2 个数字组)保持原值 —— 宁漏勿误。"""
+
+    def setUp(self):
+        self.reg = ToolRegistry()
+        self.reg.register(ToolSpec(
+            name="fake_advance",
+            description="",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "to_chapter": {"type": "integer"},
+                    "label": {"type": "string"},
+                },
+                "required": ["to_chapter"],
+            },
+            executor=lambda state, args: f"got {args['to_chapter']!r}/{args.get('label')!r}",
+            scope="save",
+            origins=frozenset({"llm_set"}),
+        ))
+        self.dispatcher = ToolDispatcher(
+            registry=self.reg, state_provider=lambda env: _new_state())
+
+    def _dispatch(self, args, trace):
+        return self.dispatcher.dispatch_sync(ToolCallEnvelope(
+            user_id=1, save_id=100, tool="fake_advance", args=args,
+            origin="llm_set", trace_id=trace))
+
+    def test_chinese_wrapped_chapter_coerced(self):
+        r = self._dispatch({"to_chapter": "第30章"}, "co-1")
+        self.assertTrue(r.ok, r.error)
+        self.assertIn("got 30/", r.result)
+
+    def test_numeric_string_coerced(self):
+        r = self._dispatch({"to_chapter": "36"}, "co-2")
+        self.assertIn("got 36/", r.result)
+
+    def test_fullwidth_digits_coerced(self):
+        r = self._dispatch({"to_chapter": "第３０章"}, "co-3")
+        self.assertIn("got 30/", r.result)
+
+    def test_float_integral_coerced(self):
+        r = self._dispatch({"to_chapter": 30.0}, "co-4")
+        self.assertIn("got 30/", r.result)
+
+    def test_ambiguous_two_groups_untouched(self):
+        r = self._dispatch({"to_chapter": "从第3章到第5章"}, "co-5")
+        self.assertIn("got '从第3章到第5章'/", r.result)
+
+    def test_string_typed_param_never_coerced(self):
+        r = self._dispatch({"to_chapter": 9, "label": "第30章"}, "co-6")
+        self.assertIn("/'第30章'", r.result)
+
+    def test_real_advance_story_progress_schema_coerced(self):
+        # 真工具表:走 _validate 验证 advance_story_progress 的 schema 触发纠偏
+        force_reset_for_tests()
+        d = ToolDispatcher(registry=get_registry(), state_provider=lambda env: None)
+        env = ToolCallEnvelope(
+            user_id=1, save_id=100, tool="advance_story_progress",
+            args={"to_chapter": "第30章"}, origin="llm_set", trace_id="co-real")
+        d._validate(env)
+        self.assertEqual(env.args["to_chapter"], 30)
+
+
+class FailureResultDetection(unittest.TestCase):
+    """结果串失败识别:老检测只认「失败/ERROR/拒绝」裸前缀,漏掉平台更普遍的
+    「<tool_name> 失败: ...」惯例 → 失败被记 ok=True,前端计进「设定已更新」。"""
+
+    def _make(self, ret):
+        reg = ToolRegistry()
+        reg.register(ToolSpec(
+            name="probe", description="",
+            input_schema={"type": "object", "properties": {}},
+            executor=lambda state, args: ret,
+            scope="save", origins=frozenset({"llm_set"})))
+        d = ToolDispatcher(registry=reg, state_provider=lambda env: _new_state())
+        return d.dispatch_sync(ToolCallEnvelope(
+            user_id=1, save_id=100, tool="probe", args={}, origin="llm_set"))
+
+    def test_toolname_prefixed_failure_detected(self):
+        r = self._make("advance_story_progress 失败: to_chapter 必须是整数章号")
+        self.assertFalse(r.ok)
+
+    def test_bare_failure_prefix_still_detected(self):
+        self.assertFalse(self._make("失败: index 必须是整数").ok)
+
+    def test_rejected_prefix_still_detected(self):
+        self.assertFalse(self._make("拒绝: 不允许").ok)
+
+    def test_success_result_stays_ok(self):
+        self.assertTrue(self._make("进度推进:第 17 章 → 第 30 章").ok)
+
+    def test_midstring_failure_word_not_flagged(self):
+        # 「失败」出现在正文中间(非失败惯例形态)不误判
+        self.assertTrue(self._make("记录:上次尝试失败的教训已写入笔记").ok)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

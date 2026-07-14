@@ -214,6 +214,18 @@ class TestSchemaArgs(unittest.TestCase):
         result = self._fn({})
         self.assertEqual(result, "")
 
+    def test_typed_param_annotated(self):
+        # JSON-mode fallback 工具表必须带类型:丢类型 → 模型把 integer 传成
+        # "第30章" 原话串(群反馈 行者无疆 /set 推进到第30章)
+        schema = {"properties": {"to_chapter": {"type": "integer"}},
+                  "required": ["to_chapter"]}
+        self.assertIn("to_chapter:integer", self._fn(schema))
+
+    def test_tool_table_doc_carries_integer_type(self):
+        from agents.command_agent import _build_tool_table_doc
+        doc = _build_tool_table_doc()
+        self.assertIn("advance_story_progress(to_chapter:integer)", doc)
+
 
 if __name__ == "__main__":
     unittest.main()

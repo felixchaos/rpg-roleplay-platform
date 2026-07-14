@@ -300,7 +300,10 @@ export function startTavernRun(cfg) {
         const items = Array.isArray(data.items) ? data.items : [];
         if (items.length) {
           gotReceipt = true;
-          toast?.(`设定已更新（${items.length}）`, { kind: 'ok', detail: items.join('\n'), duration: 4000, code: 'set_receipt' });
+          // 失败项(后端惯例:「X 失败:」「X 被拒绝:」「X 未生效:」)不该被标成「已更新」
+          const fail = items.filter((s) => /失败|被拒绝|未生效/.test(String(s))).length;
+          const label = fail ? `设定已应用 ${items.length - fail} 项，${fail} 项未生效` : `设定已更新（${items.length}）`;
+          toast?.(label, { kind: fail ? 'warn' : 'ok', detail: items.join('\n'), duration: fail ? 6000 : 4000, code: 'set_receipt' });
         }
       }
     },

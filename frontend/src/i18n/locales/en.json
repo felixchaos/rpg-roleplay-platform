@@ -3455,6 +3455,7 @@
         "thinking": "Thinking",
         "rewound_toast": "Last turn rewound — replaying with your correction…",
         "settings_updated": "Settings updated ({{count}} item(s))",
+        "settings_updated_partial": "Settings: {{ok}} applied, {{fail}} failed",
         "updated": "Updated",
         "interrupted_msg": "(Generation interrupted — output is incomplete)",
         "empty_reply_msg": "(Model returned an empty reply)",

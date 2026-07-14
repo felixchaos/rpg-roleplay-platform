@@ -517,8 +517,12 @@ async def apply_player_directives_phase(
                     if _res.ok:
                         directive_updates.append(f"{_env.tool}: {_res.result}")
                     else:
+                        # 失败可能来自 DispatchError(error 有值)或工具自身返回的
+                        # "X 失败: ..." 结果串(error=None,消息在 result 里)。
+                        _err_txt = str(_res.error or _res.result or "未知原因")
                         directive_updates.append(
-                            f"{_env.tool} 被拒绝: {_res.error}"
+                            _err_txt if _err_txt.startswith(_env.tool)
+                            else f"{_env.tool} 未生效: {_err_txt}"
                         )
                 command_tools_handled = True
         except Exception as _cmd_exc:

@@ -3546,6 +3546,7 @@
         "thinking": "思考中",
         "rewound_toast": "已回滚上一轮，按你的修正重演…",
         "settings_updated": "设定已更新（{{count}} 项）",
+        "settings_updated_partial": "设定已应用 {{ok}} 项，{{fail}} 项未生效",
         "updated": "已更新",
         "interrupted_msg": "（生成被中断，输出不完整）",
         "empty_reply_msg": "（模型返回了空回复）",

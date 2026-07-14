@@ -1075,7 +1075,14 @@ function App() {
           // 不进主聊天 transcript(原本被直接丢弃,现给 /set"修改世界观"一个确认通道)。
           if (stage === 'pre_llm') {
             const items = (data && Array.isArray(data.items)) ? data.items : [];
-            if (items.length) window.__apiToast?.(t('game.console.run.settings_updated', { count: items.length }), { kind: 'ok', detail: items.join('\n'), duration: 4000 });
+            if (items.length) {
+              // 失败项(后端惯例:「X 失败:」「X 被拒绝:」「X 未生效:」)不该被标成「已更新」
+              const fail = items.filter((s) => /失败|被拒绝|未生效/.test(String(s))).length;
+              const label = fail
+                ? t('game.console.run.settings_updated_partial', { ok: items.length - fail, fail })
+                : t('game.console.run.settings_updated', { count: items.length });
+              window.__apiToast?.(label, { kind: fail ? 'warn' : 'ok', detail: items.join('\n'), duration: fail ? 6000 : 4000 });
+            }
             return;
           }
           if (stage === 'rules_engine') return;

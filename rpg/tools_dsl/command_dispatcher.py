@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import queue as _queue
+import re
 import secrets
 import threading
 import time
@@ -219,6 +220,37 @@ def _get_sync_scope_lock(key: tuple[int, int | None]) -> threading.RLock:
         return lock
 
 
+# JSON-mode fallback 模型(无 native function calling 的中转/廉价模型)常把 integer 参数
+# 传成玩家原话字符串(生产实锤:advance_story_progress to_chapter="第30章"/"36"/"３０")。
+# schema 驱动的确定性纠偏:只对 input_schema 声明 type=integer 的顶层参数、且字符串里
+# 恰好含唯一一个数字组时提取;0 组或 ≥2 组(如"从第3章到第5章")保持原值让 executor
+# 按原语义报错 —— 宁漏勿误。
+_FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+_INT_GROUP_RE = re.compile(r"-?\d+")
+# 工具失败结果串的两种既有惯例:"失败: ..."(裸前缀)与 "<tool_name> 失败: ..."。
+# 老检测只认裸前缀,后者被记成 ok=True → 前端把失败计进「设定已更新」。
+_RESULT_FAILURE_RE = re.compile(r"^(?:失败|ERROR|拒绝)|^\S{1,64}\s失败\s*[::]")
+
+
+def _coerce_declared_integers(spec: ToolSpec, args: dict[str, Any]) -> None:
+    """按 spec.input_schema 对 args 做保守的整数纠偏(原地修改)。"""
+    props = (spec.input_schema or {}).get("properties") or {}
+    for key, prop in props.items():
+        if not isinstance(prop, dict) or prop.get("type") != "integer":
+            continue
+        v = args.get(key)
+        if v is None or isinstance(v, bool) or isinstance(v, int):
+            continue
+        if isinstance(v, float):
+            if v.is_integer():
+                args[key] = int(v)
+            continue
+        if isinstance(v, str):
+            groups = _INT_GROUP_RE.findall(v.strip().translate(_FULLWIDTH_DIGITS))
+            if len(groups) == 1:
+                args[key] = int(groups[0])
+
+
 class ToolDispatcher:
     """中央分发器。所有工具调用必须通过它。
 
@@ -381,6 +413,8 @@ class ToolDispatcher:
                 "missing_required",
                 f"工具 {env.tool} 缺必填字段: {', '.join(hints)}{actual_hint}{typo_hint}",
             )
+        # 8.5) schema 驱动整数纠偏 — 放在去重签名/审计/执行之前,下游统一看到纠偏后的值
+        _coerce_declared_integers(spec, env.args)
         # 9) trace 内去重 (同 trace 同 tool+args 只执行一次)
         if env.trace_id:
             sig = (env.tool, _stable_json(env.args))
@@ -437,8 +471,8 @@ class ToolDispatcher:
             if isinstance(text, dict):
                 ok = True
             else:
-                # str 走老路径: "失败/ERROR/拒绝" 前缀判失败
-                ok = not str(text).startswith(("失败", "ERROR", "拒绝"))
+                # str 走老路径: "失败/ERROR/拒绝" 前缀 或 "<tool> 失败:" 惯例判失败
+                ok = not _RESULT_FAILURE_RE.match(str(text))
             return self._record(env, spec, ok=ok, result=text)
         except Exception as exc:
             return self._record(
