@@ -32,9 +32,12 @@ class WorldbookFullFailureMarksDoneWithErrors(unittest.TestCase):
         - ctl.update 被调用写 warnings + error
         """
         from platform_app import import_pipeline as ip
+        # 拆包后 patch-where-defined:_stage_worldbook 定义在子模块 stages_llm,
+        # 它内部用的 connect 必须 patch 定义模块(打门面拦不到)。
+        from platform_app.import_pipeline import stages_llm as ip_stages
         ctl = MagicMock()
         # 让 books 查询返 fake book id,然后让 call_agent_json 抛
-        with patch.object(ip, "connect") as mock_connect:
+        with patch.object(ip_stages, "connect") as mock_connect:
             cur = MagicMock()
             cur.execute.return_value.fetchone.side_effect = [
                 {"id": 99},  # book row

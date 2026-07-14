@@ -15,7 +15,8 @@ if str(REPO) not in sys.path:
 
 
 def test_stage_worldbook_uses_cursor_rowcount_not_connection():
-    src = (REPO / "platform_app" / "import_pipeline.py").read_text(encoding="utf-8")
+    # import_pipeline 已拆包:_stage_worldbook 住在子模块 stages_llm.py。
+    src = (REPO / "platform_app" / "import_pipeline" / "stages_llm.py").read_text(encoding="utf-8")
     fn = src.split("def _stage_worldbook", 1)[1].split("\ndef ", 1)[0]
     assert "count += db.rowcount" not in fn, "worldbook 阶段仍在 Connection 上取 rowcount(会 AttributeError 崩)"
     # 应从 execute() 返回的 cursor 取

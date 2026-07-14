@@ -25,7 +25,7 @@ def test_routes_disconnect_persist_clause():
 
 
 def test_pipeline_keeps_ctx_response_fresh():
-    src = (_ROOT / "chat_pipeline.py").read_text(encoding="utf-8")
+    src = "\n".join(_p.read_text(encoding="utf-8") for _p in sorted((_ROOT / "chat_pipeline").glob("*.py")))
     i = src.index("response += chunk")
     window = src[i:i + 400]
     assert "ctx.response = response" in window, "GM token 分支必须实时刷新 ctx.response"

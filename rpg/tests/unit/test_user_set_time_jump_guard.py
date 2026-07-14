@@ -227,7 +227,7 @@ class ChatFlowIntegratesGuard(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app_text = (PROJECT / "rpg" / "chat_pipeline.py").read_text(encoding="utf-8")
+        cls.app_text = "\n".join(_p.read_text(encoding="utf-8") for _p in sorted((PROJECT / "rpg" / "chat_pipeline").glob("*.py")))
         cls.guard_text = (PROJECT / "rpg" / "agents" / "timeline_narrative_guard.py").read_text(encoding="utf-8")
 
     def test_chat_pipeline_calls_unified_runner(self):

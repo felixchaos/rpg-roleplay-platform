@@ -21,6 +21,7 @@ test_branch_graph_head_only_filter.py
 """
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -28,6 +29,15 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parents[3]
 BG_JSX = (PROJECT / "frontend" / "src" / "branch-graph.jsx").read_text(encoding="utf-8")
 GAME_APP = (PROJECT / "frontend" / "src" / "game-app.jsx").read_text(encoding="utf-8")
+ZH_CN = json.loads((PROJECT / "frontend" / "src" / "i18n" / "locales" / "zh-CN.json").read_text(encoding="utf-8"))
+
+
+def _zh(dotted: str) -> str:
+    """按点分 key 取 zh-CN locale 文案(文案已迁 i18n,jsx 里只剩 t() key)。"""
+    node = ZH_CN
+    for part in dotted.split("."):
+        node = node[part]
+    return node
 
 
 class HeadOnlyFilterImplementation(unittest.TestCase):
@@ -84,23 +94,33 @@ class RefPillColorHashing(unittest.TestCase):
 
 
 class GameRailWording(unittest.TestCase):
-    """游戏内侧栏 head 文案应明示是"当前子分支",避免被误以为是全 DAG。"""
+    """游戏内侧栏 head 文案应明示是"当前子分支",避免被误以为是全 DAG。
+    文案已迁 i18n:jsx 里查 t() key 被引用 + locale JSON 里查中文实词(同
+    test_continue_picker_uses_commit_activate 等姊妹测试的范式)。"""
+
+    @staticmethod
+    def _rail_body() -> str:
+        idx = GAME_APP.find("function BranchTreeRail(")
+        end = GAME_APP.find("\nfunction ", idx + 1)
+        return GAME_APP[idx:end if end > 0 else len(GAME_APP)]
 
     def test_rail_head_says_current_sub_branch(self):
-        idx = GAME_APP.find("function BranchTreeRail(")
-        end = GAME_APP.find("\nfunction ", idx + 1)
-        body = GAME_APP[idx:end if end > 0 else len(GAME_APP)]
-        self.assertIn("当前子分支", body,
-            "BranchTreeRail head 应写'当前子分支'区分于 Platform 完整 DAG")
-        self.assertIn("HEAD 历史", body,
-            "BranchTreeRail head 副标题应是'HEAD 历史'明示是 ancestor chain")
+        body = self._rail_body()
+        self.assertIn("game.app.branch.current_branches", body,
+            "BranchTreeRail head 应引用 current_branches 文案 key")
+        self.assertIn("game.app.branch.head_history", body,
+            "BranchTreeRail head 副标题应引用 head_history 文案 key")
+        self.assertIn("当前子分支", _zh("game.app.branch.current_branches"),
+            "locale 文案应写'当前子分支'区分于 Platform 完整 DAG")
+        self.assertIn("HEAD 历史", _zh("game.app.branch.head_history"),
+            "locale 文案应是'HEAD 历史'明示是 ancestor chain")
 
     def test_link_to_platform_explains_full_dag(self):
-        idx = GAME_APP.find("function BranchTreeRail(")
-        end = GAME_APP.find("\nfunction ", idx + 1)
-        body = GAME_APP[idx:end if end > 0 else len(GAME_APP)]
-        self.assertIn("所有分支路线", body,
-            "BranchTreeRail 跳 Platform 链接 tooltip 应明示是'查看所有分支路线'")
+        body = self._rail_body()
+        self.assertIn("game.app.branch.open_full_tip", body,
+            "BranchTreeRail 跳 Platform 链接 tooltip 应引用 open_full_tip 文案 key")
+        self.assertIn("所有分支路线", _zh("game.app.branch.open_full_tip"),
+            "locale tooltip 文案应明示是'查看所有分支路线'")
 
 
 if __name__ == "__main__":

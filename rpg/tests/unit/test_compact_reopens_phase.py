@@ -5,7 +5,7 @@ detect_phase_boundary 因无 active phase 恒 False)→ GM 对 /compact 后的�
 import unittest
 from pathlib import Path
 
-PIPE = (Path(__file__).resolve().parents[2] / "chat_pipeline.py").read_text(encoding="utf-8")
+PIPE = "\n".join(_p.read_text(encoding="utf-8") for _p in sorted((Path(__file__).resolve().parents[2] / "chat_pipeline").glob("*.py")))
 
 
 class CompactReopensPhase(unittest.TestCase):

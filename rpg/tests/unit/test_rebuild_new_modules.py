@@ -25,6 +25,13 @@ from unittest.mock import MagicMock, patch
 
 import platform_app.import_pipeline as ip
 
+# 拆包后 patch-where-defined:estimate_module_rebuild / schedule_module_rebuild 定义在
+# rebuild_scheduler,_run_module_rebuild 定义在 rebuild_worker;它们内部引用的
+# connect/init_db/script_owned/_resolve_extractor_llm/... 必须 patch 各自定义模块。
+# ip.JobController / ip._run_module_rebuild 等对象引用仍走门面(同一对象)。
+from platform_app.import_pipeline import rebuild_scheduler as ip_sched
+from platform_app.import_pipeline import rebuild_worker as ip_worker
+
 
 def _fake_connect_cm(db: MagicMock):
     """构造一个 `with connect() as db:` 可用的上下文管理器 mock。"""
@@ -104,11 +111,11 @@ class EstimateFactsRefine(unittest.TestCase):
         if ch_to is not None:
             body["ch_to"] = ch_to
 
-        with patch.object(ip, "init_db"), \
-             patch.object(ip, "connect", return_value=_fake_connect_cm(db)), \
-             patch.object(ip, "script_owned", return_value=script_row), \
-             patch.object(ip, "_resolve_extractor_llm", return_value=("deepseek", "deepseek-v4-flash")), \
-             patch.object(ip, "_has_user_llm_credential", return_value=True):
+        with patch.object(ip_sched, "init_db"), \
+             patch.object(ip_sched, "connect", return_value=_fake_connect_cm(db)), \
+             patch.object(ip_sched, "script_owned", return_value=script_row), \
+             patch.object(ip_sched, "_resolve_extractor_llm", return_value=("deepseek", "deepseek-v4-flash")), \
+             patch.object(ip_sched, "_has_user_llm_credential", return_value=True):
             return ip.estimate_module_rebuild(1, 1, "facts_refine", body=body)
 
     def test_full_range_defaults_to_all_chapters(self):
@@ -153,11 +160,11 @@ class EstimateWorldbookEnrich(unittest.TestCase):
         if pattern is not None:
             body["pattern"] = pattern
 
-        with patch.object(ip, "init_db"), \
-             patch.object(ip, "connect", return_value=_fake_connect_cm(db)), \
-             patch.object(ip, "script_owned", return_value=script_row), \
-             patch.object(ip, "_resolve_extractor_llm", return_value=("deepseek", "deepseek-v4-flash")), \
-             patch.object(ip, "_has_user_llm_credential", return_value=True):
+        with patch.object(ip_sched, "init_db"), \
+             patch.object(ip_sched, "connect", return_value=_fake_connect_cm(db)), \
+             patch.object(ip_sched, "script_owned", return_value=script_row), \
+             patch.object(ip_sched, "_resolve_extractor_llm", return_value=("deepseek", "deepseek-v4-flash")), \
+             patch.object(ip_sched, "_has_user_llm_credential", return_value=True):
             return ip.estimate_module_rebuild(1, 1, "worldbook_enrich", body=body)
 
     def test_default_pattern_estimates_by_matched_entries(self):
@@ -199,11 +206,11 @@ class EstimateWorldKey(unittest.TestCase):
         db.execute.side_effect = _execute
         body = {"use_llm": use_llm} if use_llm else {}
 
-        with patch.object(ip, "init_db"), \
-             patch.object(ip, "connect", return_value=_fake_connect_cm(db)), \
-             patch.object(ip, "script_owned", return_value=script_row), \
-             patch.object(ip, "_resolve_extractor_llm", return_value=("deepseek", "deepseek-v4-flash")), \
-             patch.object(ip, "_has_user_llm_credential", return_value=True):
+        with patch.object(ip_sched, "init_db"), \
+             patch.object(ip_sched, "connect", return_value=_fake_connect_cm(db)), \
+             patch.object(ip_sched, "script_owned", return_value=script_row), \
+             patch.object(ip_sched, "_resolve_extractor_llm", return_value=("deepseek", "deepseek-v4-flash")), \
+             patch.object(ip_sched, "_has_user_llm_credential", return_value=True):
             return ip.estimate_module_rebuild(1, 1, "world_key", body=body)
 
     def test_use_llm_false_is_free(self):
@@ -236,9 +243,9 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
         db = MagicMock()
         db.execute.return_value = _row(0)
 
-        with patch.object(ip, "connect", return_value=_fake_connect_cm(db)), \
+        with patch.object(ip_worker, "connect", return_value=_fake_connect_cm(db)), \
              patch.object(ip.JobController, "update", return_value=None), \
-             patch.object(ip, "finalize_job_if_unterminated", return_value=None):
+             patch.object(ip_worker, "finalize_job_if_unterminated", return_value=None):
             ip._run_module_rebuild("job1", 42, 7, module, body)
 
     def test_facts_refine_calls_refine_script_with_expected_kwargs(self):
@@ -316,10 +323,10 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
     def test_world_key_overcut_reported_as_partial_failure(self):
         fake_result = {"segments": [], "overcut": True, "would_write": 5, "written": 5}
         with patch("extract.world_key_backfill.backfill_worldlines", return_value=fake_result), \
-             patch.object(ip, "connect", return_value=_fake_connect_cm(MagicMock(
+             patch.object(ip_worker, "connect", return_value=_fake_connect_cm(MagicMock(
                  execute=MagicMock(return_value=_row(5))))), \
              patch.object(ip.JobController, "update") as mock_update, \
-             patch.object(ip, "finalize_job_if_unterminated", return_value=None):
+             patch.object(ip_worker, "finalize_job_if_unterminated", return_value=None):
             ip._run_module_rebuild("job1", 42, 7, "world_key", {})
         # 找到写终态那次 update 调用,断言 status 为 done_with_errors(overcut 记为 partial_failure)
         final_calls = [c for c in mock_update.call_args_list if c.kwargs.get("status")]
@@ -333,9 +340,9 @@ class NonOwnerRejected(unittest.TestCase):
     不重复造新的校验逻辑)。"""
 
     def _assert_rejected(self, module: str, body: dict | None = None):
-        with patch.object(ip, "init_db"), \
-             patch.object(ip, "connect", return_value=_fake_connect_cm(MagicMock())), \
-             patch.object(ip, "script_owned", return_value=None):
+        with patch.object(ip_sched, "init_db"), \
+             patch.object(ip_sched, "connect", return_value=_fake_connect_cm(MagicMock())), \
+             patch.object(ip_sched, "script_owned", return_value=None):
             with self.assertRaises(ValueError):
                 ip.schedule_module_rebuild(999, 7, module, body=body or {})
 
@@ -352,10 +359,10 @@ class NonOwnerRejected(unittest.TestCase):
         # use_llm=True 会先触发 require_user_llm_credential;非 owner 校验应仍然生效
         # (script_owned 在 credential 校验之后执行 —— 但即便凭证校验先跑,非owner用户
         # 也不应该拿到 job_id;这里验证最终仍抛 ValueError)。
-        with patch.object(ip, "init_db"), \
-             patch.object(ip, "connect", return_value=_fake_connect_cm(MagicMock())), \
-             patch.object(ip, "script_owned", return_value=None), \
-             patch.object(ip, "require_user_llm_credential", return_value=None):
+        with patch.object(ip_sched, "init_db"), \
+             patch.object(ip_sched, "connect", return_value=_fake_connect_cm(MagicMock())), \
+             patch.object(ip_sched, "script_owned", return_value=None), \
+             patch.object(ip_sched, "require_user_llm_credential", return_value=None):
             with self.assertRaises(ValueError):
                 ip.schedule_module_rebuild(999, 7, "world_key", body={"use_llm": True})
 

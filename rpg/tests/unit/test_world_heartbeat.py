@@ -585,7 +585,7 @@ def test_heartbeat_wired_in_async_and_sync_paths():
     """源码守卫(free-gate 守卫同款):心跳必须同时接在 async 生产默认路径(史官三合一
     所在的早退分支)与 sync 路径(_run_post_gm_parallel),缺任一路=灰度双路径事故
     (v1.41.0 只接 sync 导致生产永不触发,勿回归)。"""
-    src = (Path(__file__).resolve().parents[2] / "chat_pipeline.py").read_text(encoding="utf-8")
+    src = "\n".join(_p.read_text(encoding="utf-8") for _p in sorted((Path(__file__).resolve().parents[2] / "chat_pipeline").glob("*.py")))
     sync_start = src.index("async def _run_post_gm_parallel")
     async_section = src[:sync_start]
     sync_section = src[sync_start:]

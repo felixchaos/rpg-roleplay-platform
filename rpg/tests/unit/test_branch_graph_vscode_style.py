@@ -43,7 +43,9 @@ from pathlib import Path
 FRONTEND = Path(__file__).resolve().parents[3] / "frontend"
 BG_JSX = (FRONTEND / "src" / "branch-graph.jsx").read_text(encoding="utf-8")
 GAME_APP = (FRONTEND / "src" / "game-app.jsx").read_text(encoding="utf-8")
-PLATFORM = (FRONTEND / "src" / "platform-app.jsx").read_text(encoding="utf-8")
+# 代码分割后真实 BranchesPage 落在 pages/saves.jsx(platform-app.jsx 只剩壳/共用件)
+SAVES_JSX = (FRONTEND / "src" / "pages" / "saves.jsx").read_text(encoding="utf-8")
+API_CLIENT = (FRONTEND / "src" / "api-client.js").read_text(encoding="utf-8")
 GAME_HTML = (FRONTEND / "Game Console.html").read_text(encoding="utf-8")
 PLATFORM_HTML = (FRONTEND / "Platform.html").read_text(encoding="utf-8")
 
@@ -58,8 +60,11 @@ class BranchGraphComponent(unittest.TestCase):
         self.assertIn("function BranchGraph(", BG_JSX)
 
     def test_branch_graph_exposed_on_window(self):
-        # 别的 jsx 文件用 BranchGraph 时需要 window 全局暴露
-        self.assertIn("window, { BranchGraph }", BG_JSX)
+        # Vite/ESM 迁移后:不再 window 全局暴露,改为 ESM export;消费者用 import 取。
+        # export 语句后来扩为多个具名导出(_assignColumns/_buildDisplayList 给测试用),
+        # 只要求 BranchGraph 在某个具名 export 里,不锁死全列表。
+        self.assertRegex(BG_JSX, r"export\s*\{[^}]*\bBranchGraph\b[^}]*\}",
+            "branch-graph.jsx 必须具名 export BranchGraph")
 
     def test_swimlane_algorithm_present(self):
         # _assignColumns 是核心 layout 算法
@@ -145,11 +150,15 @@ class GameRailUsesBranchGraph(unittest.TestCase):
 
 
 class PlatformBranchesPageUsesBranchGraph(unittest.TestCase):
+    @staticmethod
+    def _branches_page_body() -> str:
+        idx = SAVES_JSX.find("function BranchesPage(")
+        assert idx > 0, "pages/saves.jsx 未找到 BranchesPage(代码分割后它住这里)"
+        end = SAVES_JSX.find("\nfunction ", idx + 1)
+        return SAVES_JSX[idx:end if end > 0 else len(SAVES_JSX)]
+
     def test_branches_page_uses_branch_graph(self):
-        idx = PLATFORM.find("function BranchesPage(")
-        self.assertGreater(idx, 0)
-        end = PLATFORM.find("\nfunction ", idx + 1)
-        body = PLATFORM[idx:end if end > 0 else len(PLATFORM)]
+        body = self._branches_page_body()
         self.assertIn("<BranchGraph", body,
             "BranchesPage 应渲染 <BranchGraph 组件")
         self.assertIn('variant="full"', body,
@@ -157,9 +166,7 @@ class PlatformBranchesPageUsesBranchGraph(unittest.TestCase):
 
     def test_old_drag_layout_removed(self):
         # 旧自由拖拽 SVG 的核心:dragId / onNodePointerDown / svgPoint
-        idx = PLATFORM.find("function BranchesPage(")
-        end = PLATFORM.find("\nfunction ", idx + 1)
-        body = PLATFORM[idx:end if end > 0 else len(PLATFORM)]
+        body = self._branches_page_body()
         self.assertNotIn("onNodePointerDown", body,
             "BranchesPage 不应再有拖拽节点逻辑")
         self.assertNotIn("setDragId", body,
@@ -169,12 +176,14 @@ class PlatformBranchesPageUsesBranchGraph(unittest.TestCase):
             "BranchesPage 不应再有 zoom 按钮")
 
     def test_delete_modal_preserved(self):
-        # 删除子树确认弹窗仍要存在
-        idx = PLATFORM.find("function BranchesPage(")
-        end = PLATFORM.find("\nfunction ", idx + 1)
-        body = PLATFORM[idx:end if end > 0 else len(PLATFORM)]
+        # 删除子树确认弹窗仍要存在;删除调用经 api-client 封装
+        # (window.api.branches.delete → `${API_PREFIX}/branches/delete`,前缀默认 /api/v1)。
+        body = self._branches_page_body()
         self.assertIn("ConfirmModal", body)
-        self.assertIn("/api/v1/branches/delete", body)
+        self.assertIn("api.branches.delete", body,
+            "BranchesPage 删除必须走 api.branches.delete 封装")
+        self.assertRegex(API_CLIENT, r"delete:\s*\(body\)\s*=>\s*POST\(`\$\{API_PREFIX\}/branches/delete`",
+            "api-client 的 branches.delete 必须打 /branches/delete 端点")
 
 
 # ────────────────────────────────────────────────────────────
@@ -184,20 +193,19 @@ class PlatformBranchesPageUsesBranchGraph(unittest.TestCase):
 
 class HtmlLoadsBranchGraph(unittest.TestCase):
     def test_game_console_loads_branch_graph_before_game_app(self):
-        idx_bg = GAME_HTML.find("branch-graph.jsx")
-        idx_app = GAME_HTML.find("game-app.jsx")
-        self.assertGreater(idx_bg, 0, "Game Console.html 应加载 src/branch-graph.jsx")
-        self.assertGreater(idx_app, 0)
-        self.assertLess(idx_bg, idx_app,
-            "branch-graph.jsx 必须在 game-app.jsx 之前加载 (BranchTreeRail 用到 BranchGraph)")
+        # Vite/ESM:HTML 只加载单一 entry(src/entries/game-console.jsx),
+        # 加载顺序由 import 图自动解析。等价保证 = game-app.jsx import 了 branch-graph.jsx。
+        self.assertIn("src/entries/game-console.jsx", GAME_HTML)
+        self.assertIn("branch-graph.jsx", GAME_APP,
+            "game-app.jsx 应 import branch-graph.jsx(BranchTreeRail 用到 BranchGraph)")
 
     def test_platform_loads_branch_graph_before_platform_app(self):
-        idx_bg = PLATFORM_HTML.find("branch-graph.jsx")
-        idx_app = PLATFORM_HTML.find("platform-app.jsx")
-        self.assertGreater(idx_bg, 0, "Platform.html 应加载 src/branch-graph.jsx")
-        self.assertGreater(idx_app, 0)
-        self.assertLess(idx_bg, idx_app,
-            "branch-graph.jsx 必须在 platform-app.jsx 之前加载")
+        # Vite/ESM:Platform.html 加载 src/entries/platform.jsx;真实 BranchesPage 在
+        # pages/saves.jsx,它 import branch-graph.jsx。
+        self.assertIn("src/entries/platform.jsx", PLATFORM_HTML)
+        saves = (FRONTEND / "src" / "pages" / "saves.jsx").read_text(encoding="utf-8")
+        self.assertIn("branch-graph.jsx", saves,
+            "pages/saves.jsx(真实 BranchesPage)应 import branch-graph.jsx")
 
 
 # ────────────────────────────────────────────────────────────

@@ -21,7 +21,13 @@ import unittest
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[2]  # rpg/
-PIPELINE = (PROJECT / "platform_app" / "import_pipeline.py").read_text(encoding="utf-8")
+# import_pipeline 已拆包:canon 估算在 rebuild_scheduler.py,canon 重做 runner 的
+# progress_cb/_count/终态重置在 rebuild_worker.py。源码级不变量跨文件,读全部子模块
+# 拼接后检查(「必须存在」不变;「必须不存在」覆盖面只增不减)。
+_PKG = PROJECT / "platform_app" / "import_pipeline"
+PIPELINE = "\n".join(
+    p.read_text(encoding="utf-8") for p in sorted(_PKG.glob("*.py"))
+)
 SCRIPTS_JSX = (PROJECT.parent / "frontend" / "src" / "pages" / "scripts.jsx").read_text(encoding="utf-8")
 
 

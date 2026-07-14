@@ -106,14 +106,14 @@ class AcceptanceRetryFiresE2E(unittest.TestCase):
                 "curator_plan": {"acceptance": ["红茶"], "rule_candidate_actions": []},
             }
 
-        orig = (ui_mod.run_context_agent, ui_mod._get_gm, ui_mod._get_sub_gm, cp._recorder_unified, cp._POSTPROC_MODE)
+        orig = (ui_mod.run_context_agent, ui_mod._get_gm, ui_mod._get_sub_gm, cp.gm._recorder_unified, cp.gm._POSTPROC_MODE)
         ui_mod.run_context_agent = fake_ca
         ui_mod._get_gm = lambda u: StubGM()
         ui_mod._get_sub_gm = lambda u: StubGM()
-        cp._recorder_unified = lambda *a, **k: False  # 走非史官三合一路径,不触发 recorder LLM
+        cp.gm._recorder_unified = lambda *a, **k: False  # 走非史官三合一路径,不触发 recorder LLM
         # 强制 sync 模式:改写候选走【内联】路径(候选作为 SSE 流事件下发,便于确定性断言)。
         # 生产 async 模式改写走后台任务(不阻塞回合)+ emit 推前端,不在流里,单独 source 测试覆盖。
-        cp._POSTPROC_MODE = "sync"
+        cp.gm._POSTPROC_MODE = "sync"
         try:
             with self.client.stream(
                 "POST", "/api/v1/chat",
@@ -122,7 +122,7 @@ class AcceptanceRetryFiresE2E(unittest.TestCase):
                 self.assertEqual(resp.status_code, 200)
                 events = self._consume(resp)
         finally:
-            (ui_mod.run_context_agent, ui_mod._get_gm, ui_mod._get_sub_gm, cp._recorder_unified, cp._POSTPROC_MODE) = orig
+            (ui_mod.run_context_agent, ui_mod._get_gm, ui_mod._get_sub_gm, cp.gm._recorder_unified, cp.gm._POSTPROC_MODE) = orig
 
         ev_names = [e["event"] for e in events]
         self.assertNotIn("error", ev_names, events)

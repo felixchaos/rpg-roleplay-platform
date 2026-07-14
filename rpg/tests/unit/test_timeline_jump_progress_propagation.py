@@ -5,7 +5,7 @@ progress_chapter+user_progress_floor(max-only)。源码结构断言。"""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = (ROOT / "chat_pipeline.py").read_text(encoding="utf-8")
+SRC = "\n".join(_p.read_text(encoding="utf-8") for _p in sorted((ROOT / "chat_pipeline").glob("*.py")))
 
 
 def _step5():

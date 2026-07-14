@@ -32,15 +32,19 @@ class BranchOpsAdvisoryLock(unittest.TestCase):
             self.assertIn(token, body, f"helper lock key 缺 {token}")
 
     def test_helper_key_identical_to_runtime(self):
-        # 抓 helper 与 record_runtime_turn 的 SQL + 参数行,确认两边对锁的调用一致
+        # 锁 key 单一真相已收敛进共享 helper(runtime.py 的内联 SQL 重构为调 helper):
+        # ① helper 本体仍是那句 SQL + 参数(逐字);② record_runtime_turn 与
+        # persist_runtime_state 都必须调同一个 helper 且实参一致 —— 单一来源保证 key 互斥。
         helper = _func_body(HELPERS, "acquire_save_advisory_lock")
-        turn = _func_body(RUNTIME, "record_runtime_turn")
         sql = 'select pg_advisory_xact_lock(hashtext(%s)::int, hashtext(%s)::int)'
         self.assertIn(sql, helper)
-        self.assertIn(sql, turn)
         params = '(f"rpg_turn_{uid_for_lock}", f"save_{save_id}")'
         self.assertIn(params, helper)
-        self.assertIn(params, turn)
+        call = "acquire_save_advisory_lock(db, save_id, user_id)"
+        for name in ("record_runtime_turn", "persist_runtime_state"):
+            body = _func_body(RUNTIME, name)
+            self.assertIn(call, body,
+                          f"{name} 必须调共享锁 helper(同 key 才互斥),不得绕开或另写锁")
 
     def test_all_five_branch_writers_acquire_lock(self):
         cases = [

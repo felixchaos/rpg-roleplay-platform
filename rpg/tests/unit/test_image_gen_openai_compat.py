@@ -8,14 +8,22 @@ test_image_gen_openai_compat.py
 gpt-image / gemini-*-image 全部失败 = 用户「APIKEY 选哪个都生成不了图片」。
 
 修复:新增 openai_compat 适配器(标准 /images/generations + OpenRouter chat 图像模态回退),
-dispatch 把所有非 vertex/anthropic 的 provider 都路由过去。本测试用 mock httpx 锁两条路径
-+ 路由 + UA + base_url 解析。
+dispatch 把所有非 vertex/anthropic 的 provider 都路由过去。本测试 mock 出站 HTTP 客户端
+锁两条路径 + 路由 + UA + base_url 解析。
+
+mock 缝(重要):生产代码经 SSRF 统一出站层改造后走
+`with core.outbound.safe_httpx_client(...) as client: client.post(...)`,
+**不再调用模块级 httpx.post** —— 老的 `mock.patch("httpx.post")` 会完全落空,
+单测悄悄发真实网络请求(实测曾打到 api.openai.com 拿回真 401)。
+故必须 patch `agents.image_gen.openai_compat.safe_httpx_client`,并用
+_NoNetworkTestCase 断网守门(任何 DNS 解析直接炸 = mock 落空的回归信号)。
 """
 from __future__ import annotations
 
 import base64
 import sys
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -42,9 +50,39 @@ class _Resp:
         return self._payload
 
 
-class ImagesApiPath(unittest.TestCase):
+@contextmanager
+def _patched_post(response=None, side_effect=None):
+    """把 openai_compat 的出站缝 safe_httpx_client 换成假 client,yield 其 .post mock。
+
+    生产代码每个请求都 `with safe_httpx_client(...) as client: client.post(...)`;
+    这里让工厂恒返回同一个假 client(context manager 返回自身),.post 共享同一个
+    mock —— 跨两次请求的 side_effect 序列(images 404 → chat 回退)也能按序吐。
+    断言接口与旧 mock.patch("httpx.post") 完全一致(call_args/call_count/...)。
+    """
+    post = mock.Mock(return_value=response, side_effect=side_effect)
+    client = mock.MagicMock()
+    client.__enter__.return_value = client
+    client.post = post
+    with mock.patch("agents.image_gen.openai_compat.safe_httpx_client", return_value=client):
+        yield post
+
+
+class _NoNetworkTestCase(unittest.TestCase):
+    """守门:本文件是纯单测,任何真实 DNS/TCP 都说明 mock 打错了缝(历史事故:
+    httpx.post 落空后真打到 api.openai.com)。socket.getaddrinfo 直接炸掉。"""
+
+    def setUp(self):
+        guard = mock.patch(
+            "socket.getaddrinfo",
+            side_effect=AssertionError("单测不得发真实网络请求 —— mock 缝落空(见文件头注释)"),
+        )
+        guard.start()
+        self.addCleanup(guard.stop)
+
+
+class ImagesApiPath(_NoNetworkTestCase):
     def test_b64_json_decoded(self):
-        with mock.patch("httpx.post", return_value=_Resp(200, {"data": [{"b64_json": _B64}]})) as p:
+        with _patched_post(_Resp(200, {"data": [{"b64_json": _B64}]})) as p:
             out = openai_compat.generate("a cat", {"size": "1024x1024"},
                                          api_id="openai", model="gpt-image-1",
                                          api_key="k", base_url="https://relay.test/v1")
@@ -57,7 +95,7 @@ class ImagesApiPath(unittest.TestCase):
         self.assertNotIn("OpenAI/Python", sent_headers["User-Agent"])
 
     def test_url_downloaded(self):
-        with mock.patch("httpx.post", return_value=_Resp(200, {"data": [{"url": "https://img.test/x.png"}]})), \
+        with _patched_post(_Resp(200, {"data": [{"url": "https://img.test/x.png"}]})), \
              mock.patch("agents.image_gen.openai_compat.download_url", return_value=_PNG) as dl:
             out = openai_compat.generate("x", {}, api_id="guiji", model="ERNIE-Image",
                                          api_key="k", base_url="https://relay.test/v1")
@@ -66,7 +104,7 @@ class ImagesApiPath(unittest.TestCase):
 
     def test_data_uri_b64_stripped(self):
         payload = {"data": [{"b64_json": "data:image/png;base64," + _B64}]}
-        with mock.patch("httpx.post", return_value=_Resp(200, payload)):
+        with _patched_post(_Resp(200, payload)):
             out = openai_compat.generate("x", {}, api_id="openai", model="dall-e-3",
                                          api_key="k", base_url="https://relay.test/v1")
         self.assertEqual(out, [_PNG])
@@ -74,7 +112,7 @@ class ImagesApiPath(unittest.TestCase):
     def test_auth_401_gives_actionable_key_message(self):
         # 401/403 → 「鉴权失败/检查 Key」可行动文案,而非裸 HTTP 401(生产实况:openrouter
         # key 无效 → Missing Authentication header,用户看不懂)
-        with mock.patch("httpx.post", return_value=_Resp(401, {"error": {"message": "Missing Authentication header"}})):
+        with _patched_post(_Resp(401, {"error": {"message": "Missing Authentication header"}})):
             with self.assertRaises(ImageGenError) as ctx:
                 openai_compat.generate("x", {}, api_id="openai", model="dall-e-3",
                                        api_key="k", base_url="https://relay.test/v1")
@@ -84,7 +122,7 @@ class ImagesApiPath(unittest.TestCase):
         self.assertIn("401", msg)
 
 
-class ChatModalityFallback(unittest.TestCase):
+class ChatModalityFallback(_NoNetworkTestCase):
     def test_404_falls_back_to_chat_modality(self):
         # 非 openrouter provider:先打 /images/generations,404 再回退 chat 模态
         seq = [
@@ -93,7 +131,7 @@ class ChatModalityFallback(unittest.TestCase):
                 {"image_url": {"url": "data:image/png;base64," + _B64}}
             ]}}]}),
         ]
-        with mock.patch("httpx.post", side_effect=seq) as p:
+        with _patched_post(side_effect=seq) as p:
             out = openai_compat.generate("a dog", {}, api_id="some-relay",
                                          model="flux-image",
                                          api_key="k", base_url="https://relay.test/v1")
@@ -106,7 +144,7 @@ class ChatModalityFallback(unittest.TestCase):
         resp = _Resp(200, {"choices": [{"message": {"images": [
             {"image_url": {"url": "data:image/png;base64," + _B64}}
         ]}}]})
-        with mock.patch("httpx.post", return_value=resp) as p:
+        with _patched_post(resp) as p:
             out = openai_compat.generate("a dog", {}, api_id="openrouter",
                                          model="google/gemini-2.5-flash-image",
                                          api_key="k", base_url="https://openrouter.test/api/v1")
@@ -116,7 +154,7 @@ class ChatModalityFallback(unittest.TestCase):
 
     def test_openrouter_bad_key_gives_actionable_message(self):
         # openrouter chat 模态遇 401 → 「鉴权失败」可行动文案(生产实况:用户 key 无效)
-        with mock.patch("httpx.post", return_value=_Resp(401, {"error": {"message": "Missing Authentication header", "code": 401}})):
+        with _patched_post(_Resp(401, {"error": {"message": "Missing Authentication header", "code": 401}})):
             with self.assertRaises(ImageGenError) as ctx:
                 openai_compat.generate("x", {}, api_id="openrouter", model="google/gemini-3-pro-image-preview",
                                        api_key="k", base_url="https://openrouter.test/api/v1")
@@ -126,21 +164,21 @@ class ChatModalityFallback(unittest.TestCase):
 
     def test_chat_no_image_clear_error(self):
         resp = _Resp(200, {"choices": [{"message": {"content": "sorry, text only"}}]})
-        with mock.patch("httpx.post", return_value=resp):
+        with _patched_post(resp):
             with self.assertRaises(ImageGenError) as ctx:
                 openai_compat.generate("x", {}, api_id="openrouter", model="some/text-model",
                                        api_key="k", base_url="https://openrouter.test/api/v1")
         self.assertIn("未返回图像", str(ctx.exception))
 
 
-class BaseUrlResolution(unittest.TestCase):
+class BaseUrlResolution(_NoNetworkTestCase):
     def test_falls_back_to_catalog_base_url(self):
         # 内置 provider(非 chat-modality)无 override 时,base_url 回退 catalog
         fake_api = {"id": "openai", "base_url": "https://api.openai.com/v1"}
         with mock.patch("model_registry.load_model_catalog", return_value={"apis": [fake_api]}), \
              mock.patch("model_registry.find_api", return_value=fake_api), \
              mock.patch("model_registry.normalize_api_id", side_effect=lambda x: x), \
-             mock.patch("httpx.post", return_value=_Resp(200, {"data": [{"b64_json": _B64}]})) as p:
+             _patched_post(_Resp(200, {"data": [{"b64_json": _B64}]})) as p:
             openai_compat.generate("x", {}, api_id="openai", model="dall-e-3", api_key="k", base_url=None)
         self.assertTrue(p.call_args.args[0].startswith("https://api.openai.com/v1/"))
 
@@ -152,7 +190,7 @@ class BaseUrlResolution(unittest.TestCase):
                 openai_compat.generate("x", {}, api_id="weird", model="m", api_key="k", base_url=None)
 
 
-class DispatchRouting(unittest.TestCase):
+class DispatchRouting(_NoNetworkTestCase):
     def test_openai_compat_providers_routed(self):
         for pid in ("openai", "openrouter", "deepseek", "guiji", "xiaomi_mimo", "my-custom-relay"):
             with mock.patch("model_aliases.normalize_api_id", side_effect=lambda x: x), \

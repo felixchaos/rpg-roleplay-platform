@@ -79,7 +79,7 @@ def test_unified_into_narrative_guards():
 
 
 def test_wired_into_pipeline_and_frontend():
-    cp = (REPO / "chat_pipeline.py").read_text(encoding="utf-8")
+    cp = "\n".join(_p.read_text(encoding="utf-8") for _p in sorted((REPO / "chat_pipeline").glob("*.py")))
     # 消除散落:不再有孤立的 _weekday_check_events;两路都调统一 run_narrative_guards
     assert "_weekday_check_events" not in cp
     assert cp.count("run_narrative_guards(response, ctx.message_for_model, state)") == 2

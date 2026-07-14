@@ -56,11 +56,13 @@ class _FakeClient:
         self.chat = _FakeChat(comp)
 
 
-def _backend(comp, api_id="moonshot", model="kimi-k2.5"):
+def _backend(comp, api_id="moonshot", model="kimi-k2.5", user_id=None):
     b = object.__new__(_OpenAICompatBackend)  # 跳过 __init__(不连真 provider)
     b.client = _FakeClient(comp)
     b.api_id = api_id
     b.model_name = model
+    # 反馈#93 之二(42e89ed65)后 combo 扩为 (api_id, model, user_id):采样参数自愈记忆按用户隔离
+    b.user_id = user_id
     return b
 
 
@@ -84,8 +86,8 @@ class TemperatureSelfHeal(unittest.TestCase):
         self.assertEqual(len(comp.calls), 2)
         self.assertIn("temperature", comp.calls[0])
         self.assertNotIn("temperature", comp.calls[1])
-        # 记忆该组合
-        self.assertIn(("moonshot", "kimi-k2.5"), _OpenAICompatBackend._fixed_temp_combos)
+        # 记忆该组合(combo 现含 user_id 维度)
+        self.assertIn(("moonshot", "kimi-k2.5", None), _OpenAICompatBackend._fixed_temp_combos)
 
     def test_subsequent_calls_skip_temperature(self):
         comp = _FakeCompletions(reject_when_temp=True)
@@ -105,7 +107,7 @@ class TemperatureSelfHeal(unittest.TestCase):
         self.assertEqual(out["ok"], True)
         self.assertEqual(len(comp.calls), 1)
         self.assertIn("temperature", comp.calls[0])  # 正常模型保留 temperature
-        self.assertNotIn(("openai", "gpt-4o"), _OpenAICompatBackend._fixed_temp_combos)
+        self.assertNotIn(("openai", "gpt-4o", None), _OpenAICompatBackend._fixed_temp_combos)
 
     def test_non_temperature_400_still_raises(self):
         comp = _FakeCompletions(reject_when_temp=False)

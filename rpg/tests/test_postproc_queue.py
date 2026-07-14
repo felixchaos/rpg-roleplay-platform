@@ -352,8 +352,8 @@ class TestAsyncModeAppliesJsonOps(unittest.IsolatedAsyncioTestCase):
         cm.__enter__ = MagicMock(return_value=MagicMock())
         cm.__exit__ = MagicMock(return_value=False)
 
-        orig_mode = _cp._POSTPROC_MODE
-        _cp._POSTPROC_MODE = "async"
+        orig_mode = _cp.gm._POSTPROC_MODE
+        _cp.gm._POSTPROC_MODE = "async"
         try:
             with patch("platform_app.postproc_queue.enqueue_postproc", mock_enqueue), \
                  patch("platform_app.db.connect", MagicMock(return_value=cm)):
@@ -374,7 +374,7 @@ class TestAsyncModeAppliesJsonOps(unittest.IsolatedAsyncioTestCase):
                 ):
                     events.append(ev)
         finally:
-            _cp._POSTPROC_MODE = orig_mode
+            _cp.gm._POSTPROC_MODE = orig_mode
 
         # 核心:JSON op 已 apply 回内存 state(修复前 async 早退会全丢)
         self.assertEqual(state.data["player"]["current_location"], "灯塔顶层")

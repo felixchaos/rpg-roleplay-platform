@@ -28,7 +28,9 @@ from agents import _harness
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RPG = os.path.abspath(os.path.join(HERE, "..", ".."))
-IP_PATH = os.path.join(RPG, "platform_app", "import_pipeline.py")
+# import_pipeline 已拆包:四个 LLM 微任务站点(story_phase/cards/worldbook/npc_voice)
+# 全部住在子模块 stages_llm.py,接线锁读它。
+IP_PATH = os.path.join(RPG, "platform_app", "import_pipeline", "stages_llm.py")
 TAVERN_PATH = os.path.join(RPG, "platform_app", "tavern_cards.py")
 AUDIT_PATH = os.path.join(RPG, "platform_app", "knowledge", "card_audit.py")
 
@@ -101,7 +103,9 @@ def test_story_phase_empty_body_retries_and_parse_lands(monkeypatch):
     """第一跳空正文(reasoning 吃光)→ guarded 扩预算 max(400*2,1200)=1200 重试;
     重试拿到合法 JSON 数组 → 解析出的 phase 区间落到 chapter_facts UPDATE。
     锁「静默零结果无人发觉」的病根,并证明结果确实穿到解析+写库层。"""
-    from platform_app import import_pipeline as IP
+    # patch-where-defined:_stage_story_phase_llm 定义在子模块 stages_llm,
+    # 其 connect/_resolve_extractor_llm 补丁必须打在定义模块上。
+    from platform_app.import_pipeline import stages_llm as IP
     from platform_app import usage as USAGE
 
     budgets: list = []

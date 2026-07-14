@@ -34,12 +34,15 @@ def test_commands_and_empty_do_not_fire():
 def test_threshold_boundary_respects_env(monkeypatch):
     # 阈值由 RPG_SHORT_INPUT_CHARS 决定;改环境后 reimport 生效。
     monkeypatch.setenv("RPG_SHORT_INPUT_CHARS", "5")
+    # 拆包后阈值常量落在子模块 chat_pipeline._input_signals;先重载它,再重载门面包 cp。
+    importlib.reload(cp._input_signals)
     importlib.reload(cp)
     try:
         assert cp._should_inject_short_input_directive("一二三四五") is True   # len 5 == 阈值
         assert cp._should_inject_short_input_directive("一二三四五六") is False  # len 6 > 阈值
     finally:
         monkeypatch.delenv("RPG_SHORT_INPUT_CHARS", raising=False)
+        importlib.reload(cp._input_signals)
         importlib.reload(cp)
 
 

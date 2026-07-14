@@ -174,7 +174,7 @@ def test_backup_failure_reraises(monkeypatch):
 # ── ③ 源码守卫 ─────────────────────────────────────────────────────────
 
 def test_wired_in_gm_phase_and_notice_handled():
-    src = (Path(__file__).resolve().parents[2] / "chat_pipeline.py").read_text(encoding="utf-8")
+    src = "\n".join(_p.read_text(encoding="utf-8") for _p in sorted((Path(__file__).resolve().parents[2] / "chat_pipeline").glob("*.py")))
     assert "stream_with_channel_fallback" in src, "GM 主流必须走跨渠道 fallback 包装器"
     assert 'etype == "fallback_notice"' in src, "事件循环必须处理 fallback_notice"
     assert "gm_fallback" in src

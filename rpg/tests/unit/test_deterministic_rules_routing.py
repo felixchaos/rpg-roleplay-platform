@@ -174,7 +174,7 @@ class ChatHandlerCallsExpire(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app_text = (PROJECT_ROOT / "rpg" / "chat_pipeline.py").read_text(encoding="utf-8")
+        cls.app_text = "\n".join(_p.read_text(encoding="utf-8") for _p in sorted((PROJECT_ROOT / "rpg" / "chat_pipeline").glob("*.py")))
 
     def test_chat_imports_or_calls_expire(self):
         self.assertIn("expire_stale_gm_questions", self.app_text,
@@ -330,7 +330,7 @@ class ChatHandlerWiresDeterministicRouting(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app_text = (PROJECT_ROOT / "rpg" / "chat_pipeline.py").read_text(encoding="utf-8")
+        cls.app_text = "\n".join(_p.read_text(encoding="utf-8") for _p in sorted((PROJECT_ROOT / "rpg" / "chat_pipeline").glob("*.py")))
 
     def test_chat_calls_apply_chat_rule_candidates(self):
         self.assertIn("apply_chat_rule_candidates", self.app_text)

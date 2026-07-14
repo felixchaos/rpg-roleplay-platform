@@ -44,7 +44,7 @@ def test_acceptance_rewrite_does_not_continue_first_draft():
     """行者无疆(改写变续写)修复:改写候选不再走 respond_stream_with_tools 追加到实时历史(record_turn
     后历史含首稿 → 模型续写),改为【首稿历史快照 + 玩家行动 + 首稿作为待改写对象】文本直调 backend,
     并明确『不是续写』。此前『用同一工具集』的契约已过时(用同一调用路径正是续写根因)。"""
-    cp = (REPO / "chat_pipeline.py").read_text(encoding="utf-8")
+    cp = "\n".join(_p.read_text(encoding="utf-8") for _p in sorted((REPO / "chat_pipeline").glob("*.py")))
     helper = cp.split("def _rewrite_candidate_text", 1)[1].split("async def _gen_candidate_bg", 1)[0]
     assert "gm._backend.stream" in helper, "改写候选应文本直调 backend(不进工具循环、不追加实时历史)"
     assert "_pre_hist" in helper, "改写候选须用首稿时的历史快照重建上下文"

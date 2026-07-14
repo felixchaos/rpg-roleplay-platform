@@ -31,8 +31,12 @@ import importlib
 import importlib.util
 import os
 
+# import_pipeline 已拆包:被测的 _resolve_extractor_llm / _stage_story_phase_llm /
+# _stage_cards / _stage_worldbook 全部定义在子模块 stages_llm.py,standalone 加载它。
 _PIPELINE_PATH = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "platform_app", "import_pipeline.py")
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "platform_app", "import_pipeline", "stages_llm.py",
+    )
 )
 
 
@@ -107,15 +111,22 @@ def setUpModule() -> None:
     global _pipeline, _resolve_extractor_llm, _stage_story_phase_llm
     global _stage_cards, _stage_worldbook, _STUB_PATCHER
 
+    # 拆包后: 先把真包链 import 进 sys.modules(在 stub 生效前),让 standalone 加载的
+    # stages_llm 的包内相对 import(from .errors import ...)直接命中已就位的真模块,
+    # 不会在 patch 生效期间触发父包再 import(避免 stub 绑进真包/残留污染)。
+    import platform_app.import_pipeline  # noqa: F401
+
     stub_map = dict(_build_stub_overrides())
     for name, mod in _build_stub_defaults().items():
         if name not in sys.modules:  # 复刻 setdefault 语义: 真模块已在则保留真的
             stub_map[name] = mod
 
-    # 先建模块对象, 连同自身注册一起纳入 patch.dict —— 这样 import_pipeline 的注册也会被还原
-    _spec = importlib.util.spec_from_file_location("platform_app.import_pipeline", _PIPELINE_PATH)
+    # 先建模块对象, 连同自身注册一起纳入 patch.dict —— 这样 stages_llm 的注册也会被还原
+    _spec = importlib.util.spec_from_file_location(
+        "platform_app.import_pipeline.stages_llm", _PIPELINE_PATH,
+    )
     _pipeline = importlib.util.module_from_spec(_spec)
-    stub_map["platform_app.import_pipeline"] = _pipeline
+    stub_map["platform_app.import_pipeline.stages_llm"] = _pipeline
 
     _STUB_PATCHER = patch.dict(sys.modules, stub_map)
     _STUB_PATCHER.start()

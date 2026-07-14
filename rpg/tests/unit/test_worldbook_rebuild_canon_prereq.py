@@ -25,7 +25,13 @@ import unittest
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[2]  # rpg/
-PIPELINE = (PROJECT / "platform_app" / "import_pipeline.py").read_text(encoding="utf-8")
+# import_pipeline 已拆包:estimate/schedule 在 rebuild_scheduler.py,runner 在
+# rebuild_worker.py,REBUILD_MODULES 在 rebuild_registry.py。源码级不变量跨文件,
+# 读全部子模块拼接后检查(「必须存在」不变;「必须不存在」覆盖面只增不减)。
+_PKG = PROJECT / "platform_app" / "import_pipeline"
+PIPELINE = "\n".join(
+    p.read_text(encoding="utf-8") for p in sorted(_PKG.glob("*.py"))
+)
 
 
 class EstimateAlignsWorldbookDefaultCanon(unittest.TestCase):

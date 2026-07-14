@@ -29,11 +29,21 @@ class PayloadHasCatalogSwitch(unittest.TestCase):
         self.assertRegex(APP_PY, r"def _payload\([^)]*\*,\s*include_catalog:\s*bool\s*=\s*True")
 
     def test_models_tools_guarded(self):
-        # models/tools 必须在 `if include_catalog:` 下,不再无条件塞
-        self.assertRegex(
-            APP_PY,
-            r"if include_catalog:\s*\n\s*payload\[\"models\"\]\s*=\s*_redact_catalog[^\n]*\n\s*payload\[\"tools\"\]\s*=\s*_redact_tools",
-        )
+        # models/tools 必须都在 `if include_catalog:` 缩进块内,不再无条件塞。
+        # 块内后来插入了 models.selected 校正段(修「刷新跳 gemini」),两行不再相邻 ——
+        # 按缩进提取整块断言,并确认块外没有第二处无条件赋值。
+        m = re.search(r"^([ \t]*)if include_catalog:\n((?:\1[ \t]+.*\n|[ \t]*\n)+)", APP_PY, re.M)
+        self.assertIsNotNone(m, "app.py 缺 `if include_catalog:` 守卫块")
+        block = m.group(2)
+        self.assertRegex(block, r"payload\[\"models\"\]\s*=\s*_redact_catalog",
+                         "models 赋值必须在 include_catalog 守卫块内")
+        self.assertRegex(block, r"payload\[\"tools\"\]\s*=\s*_redact_tools",
+                         "tools 赋值必须在 include_catalog 守卫块内")
+        outside = APP_PY.replace(block, "")
+        self.assertNotRegex(outside, r"payload\[\"models\"\]\s*=\s*_redact_catalog",
+                            "守卫块外不得再有无条件 models 赋值")
+        self.assertNotRegex(outside, r"payload\[\"tools\"\]\s*=\s*_redact_tools",
+                            "守卫块外不得再有无条件 tools 赋值")
 
     def test_payload_sse_helper_exists(self):
         self.assertRegex(APP_PY, r"def _payload_sse\([^)]*\)[^\n]*:")
@@ -52,9 +62,10 @@ class GameRouteUsesLiteOnSse(unittest.TestCase):
         self.assertGreaterEqual(GAME_PY.count("payload_fn=_payload_sse,"), 1)
 
     def test_json_bootstrap_endpoints_keep_full_catalog(self):
-        # /api/new 与 /api/state 的 JSON 响应仍用整份 _payload(前端选择器要目录)
-        self.assertIn('JSONResponse({"ok": True, "backup": backup, "state": _payload(api_user)})', GAME_PY)
-        self.assertIn('JSONResponse({"ok": True, "state": _payload(api_user)})', GAME_PY)
+        # /api/new 与 /api/state 的 JSON 响应仍用整份 _payload(前端选择器要目录)。
+        # 后续修复给这两处包了 _sanitize_payload(裸控制字符兜底),不变量不受影响。
+        self.assertIn('JSONResponse({"ok": True, "backup": backup, "state": _sanitize_payload(_payload(api_user))})', GAME_PY)
+        self.assertIn('JSONResponse({"ok": True, "state": _sanitize_payload(_payload(api_user))})', GAME_PY)
 
     def test_lite_imported(self):
         self.assertIn("_payload_sse", GAME_PY)

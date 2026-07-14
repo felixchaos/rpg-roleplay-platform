@@ -46,8 +46,10 @@ class ChatErrorNoLeak(unittest.TestCase):
             "'type': 'invalid_request_error', 'code': 'invalid_api_key'}}"
         )
         msg = _client_safe_error(exc)
-        self.assertIn("API Key 无效或已过期", msg)
-        self.assertIn("API 设置", msg)
+        # 573bbde1b 后 auth 文案扩为「无效、已过期,或该 key 无权访问此模型(401/403)」+
+        # 入口改「模型与密钥」;只锁稳定片段,不锁全句。
+        self.assertIn("API Key 无效", msg)
+        self.assertIn("模型与密钥", msg)
         self.assertNotIn("123", msg)
         self.assertNotIn("platform.openai.com", msg)
         self.assertNotIn("invalid_request_error", msg)
@@ -99,14 +101,14 @@ class ChatErrorNoLeak(unittest.TestCase):
         class _FakeAPIStatusError(Exception):
             status_code = 401
         msg = _client_safe_error(_FakeAPIStatusError("Authentication Fails"))
-        self.assertIn("API Key 无效或已过期", msg)
+        self.assertIn("API Key 无效", msg)
 
     def test_deepseek_auth_fails_message_without_status_attr(self):
         # DeepSeek 401 文案不含既有 marker;靠 "authentication fails" 兜住
         msg = _client_safe_error(RuntimeError(
             "Error code: 401 - {'error': {'message': 'Authentication Fails (no such user)'}}"
         ))
-        self.assertIn("API Key 无效或已过期", msg)
+        self.assertIn("API Key 无效", msg)
 
     def test_vertex_resource_exhausted_maps_to_ratelimit(self):
         # google.genai 的 ClientError 只有 .code 没有 .status_code,靠 message/code 兜住

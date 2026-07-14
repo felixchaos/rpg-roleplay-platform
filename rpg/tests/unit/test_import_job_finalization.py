@@ -83,8 +83,12 @@ class _FakeDB:
 
 @pytest.fixture()
 def ip(monkeypatch):
-    """patch import_pipeline 的 connect/init_db 为 fake,返回 (module, install_db)。"""
-    from platform_app import import_pipeline as _ip
+    """patch import_pipeline 的 connect/init_db 为 fake,返回 (module, install_db)。
+
+    拆包后 patch-where-defined:finalize_job_if_unterminated / reap_zombie_import_jobs
+    定义在子模块 runner,monkeypatch 它们内部用的 connect/init_db 必须打在定义模块上。
+    """
+    from platform_app.import_pipeline import runner as _ip
 
     def _install(jobs):
         db = _FakeDB(jobs)

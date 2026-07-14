@@ -28,17 +28,20 @@ class PersistRuntimeNoPointerRegress(unittest.TestCase):
         self.body = _func_body(RUNTIME_PY, "persist_runtime_state")
 
     def test_acquires_advisory_lock(self):
-        # 必须取事务级 advisory lock 串行化 autosave 与回合提交
-        self.assertIn("pg_advisory_xact_lock", self.body,
-                      "persist_runtime_state 缺 pg_advisory_xact_lock,无法与回合提交串行化")
+        # 必须取事务级 advisory lock 串行化 autosave 与回合提交。锁已收敛为共享 helper
+        # acquire_save_advisory_lock(_helpers.py,内部即 pg_advisory_xact_lock;
+        # SQL/key 逐字断言见 test_branch_ops_advisory_lock.py)。
+        self.assertIn("acquire_save_advisory_lock(", self.body,
+                      "persist_runtime_state 缺 acquire_save_advisory_lock,无法与回合提交串行化")
 
     def test_lock_key_matches_record_runtime_turn(self):
-        # lock key 必须与 record_runtime_turn 同(rpg_turn_{uid} + save_{save_id}),否则锁不互斥
+        # lock key 必须与 record_runtime_turn 同,否则锁不互斥。key 单一真相在共享 helper 内,
+        # 故这里断言:两个函数调的是**同一个 helper 且实参一致**(db, save_id, user_id)。
+        call = "acquire_save_advisory_lock(db, save_id, user_id)"
         turn_body = _func_body(RUNTIME_PY, "record_runtime_turn")
-        for token in ("rpg_turn_", "save_{save_id}", "save_id * 7919"):
-            self.assertIn(token, turn_body, f"record_runtime_turn 基准缺 {token}")
-            self.assertIn(token, self.body,
-                          f"persist_runtime_state 的 lock key 缺 {token},与回合提交锁不互斥")
+        self.assertIn(call, turn_body, "record_runtime_turn 基准缺共享锁 helper 调用")
+        self.assertIn(call, self.body,
+                      "persist_runtime_state 未调同一共享锁 helper(或实参不一致),与回合提交锁不互斥")
 
     def test_uses_db_active_as_authority(self):
         # 必须以事务内 game_saves 的当前活跃指针为权威(读 save 的 active_commit_id)
@@ -59,7 +62,7 @@ class PersistRuntimeNoPointerRegress(unittest.TestCase):
 
     def test_advisory_lock_before_save_read(self):
         # 锁必须在读 save 之前获取,保证 save.active 在事务内稳定
-        lock_pos = self.body.find("pg_advisory_xact_lock")
+        lock_pos = self.body.find("acquire_save_advisory_lock(")
         read_pos = self.body.find('select * from game_saves where id = %s')
         self.assertGreater(lock_pos, 0)
         self.assertGreater(read_pos, 0)

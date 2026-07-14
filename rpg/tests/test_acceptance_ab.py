@@ -21,7 +21,7 @@ def test_min_interval_constant():
 
 def test_gate_gated_on_user_pref():
     """候选生成必须受用户级开关门控(玩家可手动关)。"""
-    src = (REPO / "chat_pipeline.py").read_text(encoding="utf-8")
+    src = "\n".join(_p.read_text(encoding="utf-8") for _p in sorted((REPO / "chat_pipeline").glob("*.py")))
     gate = src.split("def _acceptance_gate", 1)[1].split("# ── W1 容量优化", 1)[0]
     assert "_acceptance_ab_pref_enabled" in gate, "候选条件未接用户开关"
 
@@ -39,7 +39,7 @@ def test_rewrite_off_critical_path():
     """严重回归防线(行者无疆:回合卡在生成中/连接超时/2-3分钟):改写候选的第二次 GM 调用
     绝不能在回合关键路径同步跑。async 路径必须【直接调 gate + inline=False】(不 to_thread 阻塞),
     改写丢后台任务 + emit 推前端。"""
-    src = (REPO / "chat_pipeline.py").read_text(encoding="utf-8")
+    src = "\n".join(_p.read_text(encoding="utf-8") for _p in sorted((REPO / "chat_pipeline").glob("*.py")))
     # 后台协程存在,且用 state_event_bus.emit 推候选、用 to_thread 跑阻塞 GM
     assert "async def _gen_candidate_bg" in src
     bg = src.split("async def _gen_candidate_bg", 1)[1].split("def _acceptance_gate", 1)[0]

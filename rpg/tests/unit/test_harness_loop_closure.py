@@ -35,6 +35,12 @@ from tools_dsl.command_dispatcher import (  # noqa: E402
 from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
 from platform_app import import_pipeline as ip  # noqa: E402
 
+# 拆包后 patch-where-defined:wait_for_import_job 定义在子模块 runner,它内部调的
+# get_job_status 要拦截必须 patch runner(打门面拦不到定义模块的全局名)。
+# 本文件其余 patch.object(ip, ...)(schedule_module_rebuild/wait_for_import_job/cancel_job)
+# 拦的是 tools_dsl 经门面属性的外部调用,维持打门面不变。
+from platform_app.import_pipeline import runner as ip_runner  # noqa: E402
+
 
 def _new_state(turn=3) -> GameState:
     s = GameState(copy.deepcopy(DEFAULT_STATE))
@@ -49,7 +55,7 @@ def _new_state(turn=3) -> GameState:
 
 class WaitForImportJob(unittest.TestCase):
     def test_terminal_returns_immediately(self):
-        with patch.object(ip, "get_job_status") as gjs:
+        with patch.object(ip_runner, "get_job_status") as gjs:
             gjs.return_value = {"ok": True, "found": True,
                                 "job": {"status": "done", "overall_progress": 8, "overall_total": 8}}
             res = ip.wait_for_import_job(1, "job-x", timeout_s=30.0, poll_s=0.01)
@@ -58,21 +64,21 @@ class WaitForImportJob(unittest.TestCase):
         gjs.assert_called_once()
 
     def test_done_with_errors_is_terminal(self):
-        with patch.object(ip, "get_job_status") as gjs:
+        with patch.object(ip_runner, "get_job_status") as gjs:
             gjs.return_value = {"ok": True, "found": True,
                                 "job": {"status": "done_with_errors", "warnings": "卡 3 失败"}}
             res = ip.wait_for_import_job(1, "job-x", timeout_s=30.0)
         self.assertEqual(res["status"], "done_with_errors")
 
     def test_not_found_returns_immediately(self):
-        with patch.object(ip, "get_job_status") as gjs:
+        with patch.object(ip_runner, "get_job_status") as gjs:
             gjs.return_value = {"ok": True, "found": False}
             res = ip.wait_for_import_job(1, "ghost", timeout_s=30.0)
         self.assertEqual(res["status"], "not_found")
         self.assertIs(res["found"], False)
 
     def test_timeout_returns_timed_out(self):
-        with patch.object(ip, "get_job_status") as gjs, patch("time.sleep"):
+        with patch.object(ip_runner, "get_job_status") as gjs, patch("time.sleep"):
             gjs.return_value = {"ok": True, "found": True, "job": {"status": "running"}}
             res = ip.wait_for_import_job(1, "job-x", timeout_s=0.0, poll_s=0.0)
         self.assertTrue(res.get("timed_out"))
