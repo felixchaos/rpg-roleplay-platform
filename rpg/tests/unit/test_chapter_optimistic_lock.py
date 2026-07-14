@@ -4,7 +4,9 @@ update_chapter 带 base_updated_at 与服务端不一致→ChapterConflict→端
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SI = (ROOT / "platform_app" / "script_import.py").read_text(encoding="utf-8")
+# script_import.py 已包化为 script_import/ 子包(纯机械搬家);按新住址读整包源码做结构断言。
+_SI_DIR = ROOT / "platform_app" / "script_import"
+SI = "\n".join(p.read_text(encoding="utf-8") for p in sorted(_SI_DIR.glob("*.py")))
 # scripts.py 已包化为 scripts/ 子包(纯机械搬家);按新住址读整包源码做结构断言。
 _API_DIR = ROOT / "platform_app" / "api" / "scripts"
 API = "\n".join(p.read_text(encoding="utf-8") for p in sorted(_API_DIR.glob("*.py")))
