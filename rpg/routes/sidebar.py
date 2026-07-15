@@ -12,6 +12,9 @@
         - phase        → set_timeline_phase (硬覆盖 + mark_user_locked,后续 update_time 不刷)
         - location     → set_player_location
         - 其它 scalar  → set_world_attribute(value 必填)
+  · POST /api/player/profile/set        {field, value}
+        field ∈ {appearance, personality, speech_style, background} → set_player_<field>
+        (整体替换 + mark_user_locked;此后 GM/史官不可自动改写)
 """
 from __future__ import annotations
 
@@ -23,6 +26,7 @@ from fastapi.responses import JSONResponse
 from routes._deps_fastapi import get_current_user
 from schemas._common import COMMON_ERROR_RESPONSES, StateResponse
 from schemas.sidebar import (
+    PlayerProfileSetRequest,
     RelationshipDeleteRequest,
     RelationshipSetRequest,
     WorldSetRequest,
@@ -88,6 +92,47 @@ async def api_relationship_delete(
     result = dispatch_ui_tool(
         tool_name="delete_relationship",
         args={"character": character},
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=_resolve_persist_target(api_user)[1] or 0,
+        state=state,
+    )
+    if not result.ok:
+        return JSONResponse({"ok": False, "error": result.error}, status_code=400)
+    state.save()
+    _persist_runtime_checkpoint(state, api_user)
+    return JSONResponse({"ok": True, "state": _payload(api_user)})
+
+
+# ── 玩家人设卡编辑 ─────────────────────────────────────────────
+_PLAYER_PROFILE_FIELD_ALLOWLIST = {"appearance", "personality", "speech_style", "background"}
+
+
+@router.post("/api/player/profile/set", response_model=StateResponse,
+             responses=COMMON_ERROR_RESPONSES)
+async def api_player_profile_set(
+    body: PlayerProfileSetRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
+    """设置玩家人设卡字段(appearance/personality/speech_style/background)。整体替换,
+    走 origin='ui_button' → 执行器 mark_user_locked,此后 GM/史官不可自动改写。"""
+    from app import (
+        _ensure_loaded,
+        _payload,
+        _persist_runtime_checkpoint,
+        _resolve_persist_target,
+    )
+    b = body.model_dump(exclude_none=True)
+    field = (b.get("field") or "").strip()
+    value = (b.get("value") or "").strip()
+    if field not in _PLAYER_PROFILE_FIELD_ALLOWLIST:
+        return JSONResponse({"ok": False, "error": f"field 非法(允许 {sorted(_PLAYER_PROFILE_FIELD_ALLOWLIST)})"}, status_code=400)
+    if not value:
+        return JSONResponse({"ok": False, "error": "value 不能为空"}, status_code=400)
+    state = _ensure_loaded(api_user)
+    from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
+    result = dispatch_ui_tool(
+        tool_name=f"set_player_{field}",
+        args={field: value},
         user_id=int(api_user.get("id")) if api_user else 0,
         save_id=_resolve_persist_target(api_user)[1] or 0,
         state=state,

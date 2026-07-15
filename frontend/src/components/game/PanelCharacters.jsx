@@ -42,11 +42,12 @@ function _entityTypeLabel(kind, source, t) {
   return "—";
 }
 
-function CharacterCard({ name, info, subtitle, avatarPath, onEditStatus, onDelete, invoked }) {
+function CharacterCard({ name, info, subtitle, avatarPath, onEditStatus, onDelete, invoked, agenda }) {
   const { t } = useTranslation();
   // info: { tone | disposition, note?, role? }
   // 可选 props: onEditStatus(newValue)/onDelete() — 仅 relationships 区传入,
   //            on-stage/pinned 不传,保持原本只读语义。
+  // agenda: state.npc_agendas[name] — {goal, stance, updated_turn},不存在则零渲染。
   const dispLabel = info.tone || info.disposition || "—";
   const toneColor = _toneColorOfDisposition(dispLabel);
   const onDragStart = (e) => {
@@ -106,6 +107,13 @@ function CharacterCard({ name, info, subtitle, avatarPath, onEditStatus, onDelet
       {(info.note || info.role) ? (
         <p className="gp-card-note">{info.note || info.role}</p>
       ) : null}
+      {agenda ? (
+        <div className="muted-2" style={{fontSize: 11.5, lineHeight: 1.6, marginTop: 4}}>
+          {agenda.goal ? <div>{t('game.characters.agenda_goal')}: {agenda.goal}</div> : null}
+          {agenda.stance ? <div>{t('game.characters.agenda_stance')}: {agenda.stance}</div> : null}
+          {agenda.updated_turn ? <div>{t('game.characters.agenda_turn', { turn: agenda.updated_turn })}</div> : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -121,6 +129,8 @@ function PanelCharacters({ state }) {
   const encounter = (state && state.encounter) || {};
   const combatants = Array.isArray(encounter.combatants) ? encounter.combatants : [];
   const relationships = (state && state.relationships) || {};
+  // NPC 议程(活世界柱子3):后端 state.npc_agendas,可能为空 dict 或(旧后端)undefined。
+  const agendas = (state && state.npc_agendas) || {};
 
   // A#1:本轮注入 GM 上下文的角色卡 —— 后端 _active_character_cards(grep scan_text + anchor 强制)
   // 把命中卡写进 last_context 的 npc_cards 层(core.py 每层保留 items)。从中取卡名 + 命中别名,
@@ -200,6 +210,7 @@ function PanelCharacters({ state }) {
                   subtitle={subtitle}
                   avatarPath={e.avatar_path}
                   invoked={isInvoked(e.name || e.id)}
+                  agenda={agendas[e.name || e.id]}
                 />
               );
             })}
@@ -221,6 +232,7 @@ function PanelCharacters({ state }) {
           <div className="gp-cards">
             {relEntries.map(({ name, info }) => (
               <CharacterCard key={name} name={name} info={info}
+                agenda={agendas[name]}
                 onEditStatus={async (status) => {
                   await window.api.game.relationshipSet({ character: name, status });
                   window.__apiToast?.(t('game.characters.relationship_updated', { name, status }), { kind: "ok", duration: 1500 });

@@ -63,6 +63,7 @@ _SYSTEM_OPS = """\
 可写字段（严格）：
 - player.role / player.background / player.current_location（注意：**绝不写 player.name**——
   玩家姓名是玩家自己选的身份,原著里出现别的角色名也不要改成它,后端会硬拒）
+- player.appearance / player.personality / player.speech_style（玩家人设卡;只在叙事中玩家形象/性情/说话方式发生**持久**变化时更新——变身/易容/重大性情转变;值=完整替换文本,保持简洁;临时状态(一次受伤/换装)不要写;玩家手动定制过的字段会被拒,被拒后同字段不要再试）
 - world.time / world.weather / world.timeline.current_phase / world.known_events
 - memory.main_quest / memory.current_objective / memory.mode
 - memory.resources / memory.abilities / memory.facts / memory.pinned / memory.notes

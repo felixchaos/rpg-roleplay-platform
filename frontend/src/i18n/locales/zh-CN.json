@@ -2934,7 +2934,9 @@
       "origin_dual": "双魂",
       "origin_dual_title": "一体双魂：玩家灵魂与原住民灵魂共处一具身体，GM 扮演另一魂",
       "origin_native": "原作",
-      "origin_native_title": "彻底扮演：玩家就是原住民本人，无外来灵魂，GM 守世界观"
+      "origin_native_title": "彻底扮演：玩家就是原住民本人，无外来灵魂，GM 守世界观",
+      "tap_to_set": "点击设置",
+      "profile_saved": "已保存,已锁定防自动改写"
     },
     "memory": {
       "current_objective": "当前目标",
@@ -3023,7 +3025,10 @@
       "entity_unconfirmed": "待确认",
       "status_placeholder": "状态(如 信任/警惕/敌意)",
       "set_status": "设状态",
-      "normalize_neutral": "中立"
+      "normalize_neutral": "中立",
+      "agenda_goal": "想要",
+      "agenda_stance": "对你的态度",
+      "agenda_turn": "第{{turn}}回合更新"
     },
     "timeline": {
       "no_save": "暂无存档上下文，请先进入游戏后查看时间线。",

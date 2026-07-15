@@ -192,6 +192,33 @@ COMMAND_TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "set_player_appearance",
+        "description": "设置玩家外貌描述(整体替换)。",
+        "input_schema": {
+            "type": "object",
+            "properties": {"appearance": {"type": "string"}},
+            "required": ["appearance"],
+        },
+    },
+    {
+        "name": "set_player_personality",
+        "description": "设置玩家性格/详细设定(整体替换)。",
+        "input_schema": {
+            "type": "object",
+            "properties": {"personality": {"type": "string"}},
+            "required": ["personality"],
+        },
+    },
+    {
+        "name": "set_player_speech_style",
+        "description": "设置玩家语气/说话方式(整体替换)。",
+        "input_schema": {
+            "type": "object",
+            "properties": {"speech_style": {"type": "string"}},
+            "required": ["speech_style"],
+        },
+    },
+    {
         "name": "set_relationship",
         "description": (
             '设置玩家与某 NPC 的关系状态。用户写"NPC关系=信任"/"X对我警惕"等用这个工具。\n'
@@ -411,6 +438,30 @@ COMMAND_TOOLS: list[dict[str, Any]] = [
 # ────────────────────────────────────────────────────────────
 
 
+def _set_player_profile_field(state, args, field, label):
+    """玩家人设卡字段(appearance/personality/speech_style/background)的整体替换写入。
+
+    锁语义:玩家亲手改过的字段(_origin ∈ 用户意图集)会被 mark_user_locked,
+    此后 GM/史官的自动改写(_origin=llm_chat_json_op 等,即史官 ops 路由)一律被拒,
+    只能玩家再从状态面板手动改。dispatcher 已无条件覆盖 args["_origin"]=env.origin,
+    故此处读到的 _origin 不可被 LLM 伪造。"""
+    v = (args.get(field) or "").strip()
+    if not v:
+        return f"set_player_{field} 失败: {field} 为空"
+    path = f"player.{field}"
+    origin = str(args.get("_origin") or "")
+    user_intent = origin in ("ui_button", "llm_set", "api_direct")
+    if not user_intent and state._is_user_locked(path):
+        return f"失败: 玩家{label}已被玩家手动定制(锁定),GM/史官不可自动改写;请玩家在状态面板修改"
+    state.data.setdefault("player", {})[field] = v
+    if user_intent:
+        try:
+            state.mark_user_locked(path)
+        except Exception:
+            pass
+    return f"玩家{label} → {v[:40]}"
+
+
 def execute_tool(state: Any, name: str, args: dict) -> str:
     """执行单个工具调用,返回人类可读的执行结果文本。
 
@@ -539,11 +590,13 @@ def execute_tool(state: Any, name: str, args: dict) -> str:
             state.data.setdefault("player", {})["role"] = v
             return f"玩家身份 → {v}"
         if name == "set_player_background":
-            v = (args.get("background") or "").strip()
-            if not v:
-                return "set_player_background 失败: background 为空"
-            state.data.setdefault("player", {})["background"] = v
-            return "玩家背景已更新"
+            return _set_player_profile_field(state, args, "background", "背景")
+        if name == "set_player_appearance":
+            return _set_player_profile_field(state, args, "appearance", "外貌")
+        if name == "set_player_personality":
+            return _set_player_profile_field(state, args, "personality", "性格设定")
+        if name == "set_player_speech_style":
+            return _set_player_profile_field(state, args, "speech_style", "语气")
         if name == "set_relationship":
             ch = (args.get("character") or "").strip()
             st = (args.get("status") or "").strip()

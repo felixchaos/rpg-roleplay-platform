@@ -2,6 +2,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../../game-icons.jsx';
+import { InlineEditField } from './InlineEditField.jsx';
 
 // ── PanelStatus —— content-pack-aware 状态栏 ─────────────────────────
 //
@@ -259,23 +260,27 @@ function NovelStatusProfile({ state }) {
   const abilities = (state && state.memory && Array.isArray(state.memory.abilities)) ? state.memory.abilities : [];
   const [playerExpanded, setPlayerExpanded] = React.useState(false);
 
-  const hasDetail = !!(p.appearance || p.personality || p.speech_style || p.secrets || p.background || p.identity_role_desc);
+  // 玩家卡字段可编辑:外貌/性格/语气/背景走 /player/profile/set,成功后刷新 state + toast。
+  // 失败时 InlineEditField 内部已 toast,这里不重复处理。
+  const onProfileSubmit = (field) => async (value) => {
+    await window.api.game.playerProfileSet({ field, value });
+    try { window.dispatchEvent(new CustomEvent("game-state-refresh")); } catch (_) {}
+    window.__apiToast?.(t('game.status.profile_saved'), { kind: "ok", duration: 1500 });
+  };
 
   return (
     <div className="gp-stack">
       <div className="gp-section">
         <div className="section-head">
           <h3>{t('game.status.player')}</h3>
-          {hasDetail && (
-            <button
-              className="iconbtn"
-              style={{ fontSize: 11, padding: "2px 6px", borderRadius: 4 }}
-              onClick={() => setPlayerExpanded(v => !v)}
-              data-tip={playerExpanded ? t('game.status.collapse_detail') : t('game.status.expand_detail')}
-            >
-              {playerExpanded ? t('game.status.collapse_detail') : t('game.status.expand_detail')}
-            </button>
-          )}
+          <button
+            className="iconbtn"
+            style={{ fontSize: 11, padding: "2px 6px", borderRadius: 4 }}
+            onClick={() => setPlayerExpanded(v => !v)}
+            data-tip={playerExpanded ? t('game.status.collapse_detail') : t('game.status.expand_detail')}
+          >
+            {playerExpanded ? t('game.status.collapse_detail') : t('game.status.expand_detail')}
+          </button>
         </div>
         <div className="gp-kv">
           <div className="gp-row">
@@ -308,30 +313,40 @@ function NovelStatusProfile({ state }) {
           <div className="gp-row"><span className="gp-label">{t('game.status.identity')}</span><span>{p.role || "—"}</span></div>
           <div className="gp-row"><span className="gp-label">{t('game.status.location')}</span><span>{p.current_location || "—"}</span></div>
         </div>
-        {playerExpanded && hasDetail && (
+        {playerExpanded && (
           <div className="gp-player-detail" style={{ marginTop: 8 }}>
-            {p.appearance && (
-              <div style={{ marginBottom: 6 }}>
-                <div className="gp-label" style={{ marginBottom: 2 }}>{t('game.status.appearance')}</div>
-                <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.appearance}</p>
+            <div style={{ marginBottom: 6 }}>
+              <div className="gp-label" style={{ marginBottom: 2 }}>{t('game.status.appearance')}</div>
+              <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                <InlineEditField value={p.appearance || ""} multiline
+                  emptyLabel={t('game.status.tap_to_set')}
+                  onSubmit={onProfileSubmit('appearance')} />
               </div>
-            )}
-            {p.personality && (
-              <div style={{ marginBottom: 6 }}>
-                <div className="gp-label" style={{ marginBottom: 2 }}>{t('game.status.personality')}</div>
-                <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.personality}</p>
+            </div>
+            <div style={{ marginBottom: 6 }}>
+              <div className="gp-label" style={{ marginBottom: 2 }}>{t('game.status.personality')}</div>
+              <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                <InlineEditField value={p.personality || ""} multiline
+                  emptyLabel={t('game.status.tap_to_set')}
+                  onSubmit={onProfileSubmit('personality')} />
               </div>
-            )}
-            {p.speech_style && (
-              <div style={{ marginBottom: 6 }}>
-                <div className="gp-label" style={{ marginBottom: 2 }}>{t('game.status.speech_style')}</div>
-                <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.speech_style}</p>
+            </div>
+            <div style={{ marginBottom: 6 }}>
+              <div className="gp-label" style={{ marginBottom: 2 }}>{t('game.status.speech_style')}</div>
+              <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                <InlineEditField value={p.speech_style || ""} multiline
+                  emptyLabel={t('game.status.tap_to_set')}
+                  onSubmit={onProfileSubmit('speech_style')} />
               </div>
-            )}
+            </div>
             {p.background && !p.personality && (
               <div style={{ marginBottom: 6 }}>
                 <div className="gp-label" style={{ marginBottom: 2 }}>{t('game.status.background')}</div>
-                <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6 }}>{p.background}</p>
+                <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                  <InlineEditField value={p.background || ""} multiline
+                    emptyLabel={t('game.status.tap_to_set')}
+                    onSubmit={onProfileSubmit('background')} />
+                </div>
               </div>
             )}
             {p.identity_role_desc && (

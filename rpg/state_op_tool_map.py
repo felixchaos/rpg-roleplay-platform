@@ -67,6 +67,12 @@ def map_op_to_tool(path: str, value: Any, *, op_kind: str = "set",
         return "set_player_role", {"role": str(value or "")}
     if path == "player.background":
         return "set_player_background", {"background": str(value or "")}
+    if path == "player.appearance":
+        return "set_player_appearance", {"appearance": str(value or "")}
+    if path == "player.personality":
+        return "set_player_personality", {"personality": str(value or "")}
+    if path == "player.speech_style":
+        return "set_player_speech_style", {"speech_style": str(value or "")}
     if path == "player.current_location":
         return "set_player_location", {"location": str(value or "")}
 

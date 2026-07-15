@@ -2843,7 +2843,9 @@
       "origin_dual": "Dual Soul",
       "origin_dual_title": "Dual Soul: your soul and the native soul share one body, GM voices the other",
       "origin_native": "Native",
-      "origin_native_title": "Pure Roleplay: you are the native character, no foreign soul, GM enforces world-canon"
+      "origin_native_title": "Pure Roleplay: you are the native character, no foreign soul, GM enforces world-canon",
+      "tap_to_set": "Tap to set",
+      "profile_saved": "Saved and locked against auto-rewrite"
     },
     "memory": {
       "current_objective": "Current Objective",
@@ -2932,7 +2934,10 @@
       "entity_unconfirmed": "Unconfirmed",
       "status_placeholder": "Status (e.g. Trust / Wary / Hostile)",
       "set_status": "Set status",
-      "normalize_neutral": "Neutral"
+      "normalize_neutral": "Neutral",
+      "agenda_goal": "Wants",
+      "agenda_stance": "Stance toward you",
+      "agenda_turn": "updated turn {{turn}}"
     },
     "timeline": {
       "no_save": "No save context — enter a game first to view the timeline.",

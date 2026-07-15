@@ -5,8 +5,9 @@ import { useTranslation } from 'react-i18next';
 import { Icon } from '../../game-icons.jsx';
 
 // ── 通用 inline editor:click-to-edit 文本字段 ────────────────────
-// 用于 PanelWorldbook 的 time/weather/location 和 PanelCharacters 的关系状态
-function InlineEditField({ value, placeholder, emptyLabel, onSubmit, busy }) {
+// 用于 PanelWorldbook 的 time/weather/location、PanelCharacters 的关系状态、
+// PanelStatus 的玩家卡字段(multiline=true:外貌/性格/语气/背景,长文本用 textarea)。
+function InlineEditField({ value, placeholder, emptyLabel, onSubmit, busy, multiline, className }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value || "");
@@ -23,16 +24,36 @@ function InlineEditField({ value, placeholder, emptyLabel, onSubmit, busy }) {
   };
   if (!editing) {
     return (
-      <span style={{cursor: "pointer", display: "inline-flex", gap: 4, alignItems: "center"}}
+      <span style={{cursor: "pointer", display: "inline-flex", gap: 4, alignItems: multiline ? "flex-start" : "center"}}
             onClick={() => setEditing(true)}
             title={t('game.inline_edit.click_to_edit')}>
-        <span>{value || (emptyLabel || "—")}</span>
-        <Icon name="edit" size={10} style={{opacity: 0.4}} />
+        <span style={multiline ? { whiteSpace: "pre-wrap" } : undefined}>{value || (emptyLabel || "—")}</span>
+        <Icon name="edit" size={10} style={{opacity: 0.4, flexShrink: 0, marginTop: multiline ? 2 : 0}} />
       </span>
     );
   }
+  if (multiline) {
+    return (
+      <textarea className={className || "gp-inline-input"} autoFocus disabled={busy}
+        rows={3}
+        value={draft}
+        placeholder={placeholder || ""}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") { setDraft(value || ""); setEditing(false); }
+          else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commit(); }
+        }}
+        style={{
+          background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.2)",
+          borderRadius: 4, padding: "4px 6px", color: "inherit", font: "inherit",
+          width: "100%", resize: "vertical", boxSizing: "border-box",
+        }}
+      />
+    );
+  }
   return (
-    <input className="gp-inline-input" autoFocus disabled={busy}
+    <input className={className || "gp-inline-input"} autoFocus disabled={busy}
       value={draft}
       placeholder={placeholder || ""}
       onChange={(e) => setDraft(e.target.value)}

@@ -42,6 +42,13 @@ from state.permissions import _normalize_permission_mode, _permission_label
 from state.time_ops import _gm_is_asking_for_time_confirm
 from timeline_state import detect_time_directives, is_time_key
 
+# 玩家人设卡字段(玩家手动定制后锁定 → GM/史官不可自动改写)。锁闸主战场在工具执行器
+# (_set_player_profile_field);这里是 map_op_to_tool 路由失败 fall-through 老路径时的
+# 纵深防御,与工具执行器内锁闸同语义,防「GM op → 无对应工具 → 直写老路径」绕过锁。
+_PLAYER_PROFILE_LOCK_PATHS = {
+    "player.appearance", "player.personality", "player.speech_style", "player.background",
+}
+
 
 class ApplyOpsMixin:
     """apply_* 系列方法 — GM/玩家/RulesEngine 对 state 的写入入口。"""
@@ -479,6 +486,11 @@ class ApplyOpsMixin:
             _new_name = str(value or "").strip()
             if _new_name != _cur_name:  # 含 空→郑吒;仅同值 no-op 放行(不刷拒绝噪音)
                 return f"状态写入拒绝:玩家姓名只由玩家本人设定,GM/史官 不可写(拦截「{_cur_name or '(空)'}」→「{_new_name}」)"
+        # 玩家人设卡锁闸(纵深防御):map_op_to_tool 路由失败 fall-through 到老路径时,GM/史官
+        # 仍可能直写玩家手动定制过的 appearance/personality/speech_style/background。与工具执行器内
+        # _set_player_profile_field 同语义:玩家锁定过就拒 gm 写入。/set(source=user*/force)不受此闸。
+        if path in _PLAYER_PROFILE_LOCK_PATHS and str(source or "").startswith("gm") and self._is_user_locked(path):
+            return f"状态写入拒绝:{path} 已被玩家手动定制(锁定),GM/史官不可自动改写"
         # 1-c fork 收编:/set story_intent=X 之前写到顶层 data["story_intent"](没人读),而
         # WorldlineProvider 读的是 player_private.story_intent(建档 dual-write 的字段)→ 游戏中
         # 改 story_intent 对 GM 导演层无效。统一路由到 player_private.story_intent(与建档+读取同源)。

@@ -124,6 +124,11 @@ def _write_path_allowed(path: str, mode: str) -> bool:
         "player.name",
         "player.role",
         "player.background",
+        # 玩家人设卡字段(与史官 recorder._SYSTEM_OPS 可写清单同批加入):auto_review 允许 LLM
+        # 自动改写但入 review;default 模式故意不加(保守,持久人设变更走 pending 让玩家确认)。
+        "player.appearance",
+        "player.personality",
+        "player.speech_style",
         "player.current_location",
         "world.time",
         "world.weather",   # P3 fork 收编:recorder/extractor 提示词声明 weather 可写,但白名单漏它

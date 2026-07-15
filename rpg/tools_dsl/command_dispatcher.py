@@ -514,6 +514,11 @@ class ToolDispatcher:
                 # (save 级语义恒为"当前绑定存档",不存在合法的跨档 save 级调用)。
                 if env.save_id is not None:
                     env.args["save_id"] = env.save_id
+                # 同款安全围栏:玩家卡字段执行器靠 _origin 判「用户意图 vs GM/史官自动改写」
+                # 决定是否吃 user_locked 锁闸。_origin 必须恒等于服务端鉴权后的 env.origin,
+                # **无条件覆盖** args 里 LLM/调用方可能伪造的 _origin —— 覆盖即消除伪造面
+                # (LLM 若能在 args 里塞 _origin="ui_button" 就能冒充用户意图绕过锁)。
+                env.args["_origin"] = env.origin
                 text = spec.executor(state, env.args)
             # task 109b: 工具可以返 dict (e.g. ui_set_field 返 __ui_action__ payload);
             # dict 默认 ok=True, 由上层 console_assistant 解释 __ui_action__ 转 SSE

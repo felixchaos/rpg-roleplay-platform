@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.69.0] - 2026-07-15 (@ 59f9006ad)
+
+### Added
+- **玩家人设卡中期可维护(群反馈:行者无疆)**:开局写入的外貌/性格/语气此前无任何更新通道,中期人设过时只能弃档。现打通三条:① 状态面板玩家详情三字段(+背景)click-to-edit 直改(空值也可补设),保存即锁定防自动改写;② 新工具 `set_player_appearance/personality/speech_style` 接入 /set 指令代理与史官 ops 路由(dispatcher 注入不可伪造的 `_origin` 区分用户意图与自动改写);③ 史官可写清单纳入三字段(仅叙事中发生**持久**变化时更新)。玩家手动定制过的字段对 GM/史官双层锁定(工具执行器 + 写闸纵深)。
+- **NPC 议程面板展示(npc_agenda v0 收尾)**:人物 tab 的在场/关系卡片显示该 NPC 当下议程(想要什么/对玩家态度/更新回合);`/api/state` 暴露 `npc_agendas`。此前议程只进 GM 上下文、UI 完全不可见。
+
 ## [1.68.0] - 2026-07-12 (@ 223346c86)
 
 ### Added

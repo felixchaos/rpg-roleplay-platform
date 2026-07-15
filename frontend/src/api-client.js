@@ -1017,6 +1017,8 @@
       relationshipSet: (body) => POST(`${API_PREFIX}/relationships/set`, body),
       relationshipDelete: (body) => POST(`${API_PREFIX}/relationships/delete`, body),
       worldSet: (body) => POST(`${API_PREFIX}/world/set`, body),
+      // 玩家卡字段可编辑:{field, value},field ∈ appearance/personality/speech_style/background
+      playerProfileSet: (body) => POST(`${API_PREFIX}/player/profile/set`, body),
     },
 
     // ---------- Worldline ----------

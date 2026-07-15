@@ -815,6 +815,8 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             "player": dict(p),
             "world": dict(w),
             "relationships": dict(self.data["relationships"]),
+            # NPC 议程 v0:前端人物面板展示用;无议程 = 空 dict。
+            "npc_agendas": copy.deepcopy(self.data.get("npc_agendas") or {}),
             "permissions": copy.deepcopy(self.data.get("permissions", {})),
             "worldline": copy.deepcopy(self.data.get("worldline", {})),
             "memory": copy.deepcopy(m),

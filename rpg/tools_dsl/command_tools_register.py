@@ -52,6 +52,8 @@ def _register_legacy_command_tools() -> None:
     # advance_story_progress 不标 destructive(非删除),但要挡 llm_chat:进度推进是史官(三贤者)
     # 的活,GM 自由叙事流不该自行跳章;只允许玩家显式 /set(llm_set)+ UI + api_direct。
     destructive_names = {"set_player_name", "set_player_role", "set_player_background",
+                         "set_player_appearance", "set_player_personality",
+                         "set_player_speech_style",
                          "delete_relationship"}
     no_llm_chat_names = {"advance_story_progress"}
     registry = get_registry()
