@@ -13,10 +13,10 @@
     "gen:types": "cd ../rust && cargo test -p rpg-schemas --features ts-rs && cargo test -p rpg-state --features ts-rs && cargo test -p rpg-llm --features ts-rs && cargo test -p rpg-routes --features ts-rs"
   },
   "dependencies": {
-    "@cloudscape-design/components": "^3.0.1325",
+    "@cloudscape-design/components": "^3.0.1329",
     "@cloudscape-design/global-styles": "^1.0.62",
     "@codemirror/commands": "^6.10.4",
-    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/lang-markdown": "^6.5.1",
     "@codemirror/language": "^6.12.4",
     "@codemirror/search": "^6.7.1",
     "@codemirror/state": "^6.7.1",
@@ -25,7 +25,7 @@
     "i18next-browser-languagedetector": "^8.2.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-i18next": "^17.0.9",
+    "react-i18next": "^17.0.10",
     "web-vitals": "^5.3.0",
     "yaml": "^2.9.0"
   },
