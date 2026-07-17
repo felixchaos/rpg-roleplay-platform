@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.71.1] - 2026-07-18 (@ dedb45620)
+
+### Fixed
+- **自部署/桌面 Origin 允许列表漏 CGNAT/Tailscale 段(登录报「Origin 不在允许列表」)**:本地/自托管模式的本地来源判定只覆盖 loopback+RFC1918(10/172.16/192.168),而用户经 Tailscale 等网状 VPN 组网访问时内网 IP 落在 RFC6598 CGNAT 段(`100.64.0.0/10`,如 `100.98.88.64`)与 IPv6 ULA(`fd7a::/48`),被 CSRF Origin 闸与 CORS 中间件双双拦下。补 `100.64.0.0/10`+`fc00::/7`+`fe80::/10` 到 `_PRIVATE_LAN_NETS` 与 `_LOCAL_LAN_ORIGIN_REGEX`(两者是同一「本地来源」判定的孪生实现,FastAPI CORSMiddleware 只吃 regex 无法共用一份,已加同面横扫注释+孪生守卫测试锁同步)。⚠️ 仅 local/desktop/self_hosted 模式放宽,server/production 永不放宽(边界测试守住 100.63/100.128/172.15/172.32/公网 IP 仍拒)。
+
+
 ## [1.71.0] - 2026-07-18 (@ f527e9311)
 
 ### Fixed

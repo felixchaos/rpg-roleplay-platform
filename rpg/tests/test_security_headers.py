@@ -126,9 +126,27 @@ class TestOriginAllowed:
             assert startup._origin_allowed("http://192.168.1.4:7860") is True
             assert startup._origin_allowed("http://10.0.0.5:7860") is True
             assert startup._origin_allowed("http://172.16.3.9:7860") is True
-            # 边界:172.15/172.32 不在私网段,应拒
+            # CGNAT/Tailscale(100.64/10)+ IPv6 ULA:网状 VPN 组网访问自部署应放行
+            assert startup._origin_allowed("http://100.98.88.64:7860") is True
+            assert startup._origin_allowed("http://100.64.0.1:7860") is True
+            assert startup._origin_allowed("http://100.127.255.254:7860") is True
+            assert startup._origin_allowed("http://[fd7a:115c:a1e0::1]:7860") is True
+            # 边界:172.15/172.32 不在私网段,应拒;100.63/100.128 在 CGNAT 段外应拒
             assert startup._origin_allowed("http://172.15.0.1:7860") is False
             assert startup._origin_allowed("http://172.32.0.1:7860") is False
+            assert startup._origin_allowed("http://100.63.0.1:7860") is False
+            assert startup._origin_allowed("http://100.128.0.1:7860") is False
+
+    def test_cors_regex_twin_stays_in_sync_with_nets(self):
+        """CORS allow_origin_regex 与 _origin_allowed 的 nets 是孪生实现,CGNAT/ULA 两边都要认。"""
+        import re
+        from core import startup
+        rx = re.compile(startup._LOCAL_LAN_ORIGIN_REGEX)
+        for ok in ("http://100.98.88.64:7860", "http://192.168.1.4:7860",
+                   "http://[fd7a:115c:a1e0::1]:7860", "http://localhost:5174"):
+            assert rx.match(ok), ok
+        for bad in ("http://8.8.8.8:7860", "http://100.63.0.1:7860", "http://evil.example:5174"):
+            assert not rx.match(bad), bad
 
     def test_local_mode_still_rejects_non_loopback_non_lan_origins(self):
         from core import startup

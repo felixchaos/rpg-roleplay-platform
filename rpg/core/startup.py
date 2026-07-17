@@ -58,15 +58,23 @@ API_VERSION = "1"
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 _LOOPBACK_ORIGIN_REGEX = r"^https?://(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d{1,5})?$"
-# 本地/桌面自托管放行的来源:loopback + 私网 LAN(RFC1918)。让用户从手机 / 同网
-# 设备经 LAN IP(如 http://192.168.1.4:7860)访问桌面端服务器——邀请链接 / 登录 /
-# 打开存档。⚠️ 仅在本地模式(is_local_mode)启用;server/production 永不放宽。
+# 本地/桌面自托管放行的来源:loopback + 私网 LAN(RFC1918)+ CGNAT/网状 VPN(RFC6598,
+# 如 Tailscale 的 100.64/10 与 fd7a::/48 ULA)+ IPv6 ULA/链路本地。让用户从手机 / 同网
+# 设备 / Tailscale 组网经内网 IP(如 http://192.168.1.4:7860、http://100.98.88.64:7860)
+# 访问桌面端服务器——邀请链接 / 登录 / 打开存档。
+# ⚠️ 仅在本地模式(is_local_mode)启用;server/production 永不放宽。
 # 安全:Origin 由浏览器按页面真实来源填写,外部站点(evil.com)的 Origin 是其域名、
-# 非私网 IP,仍被拒;DNS rebinding 的 Origin 也是攻击者域名而非 IP,同样被拒。
+# 非私网/CGNAT IP,仍被拒;DNS rebinding 的 Origin 也是攻击者域名而非 IP,同样被拒。
+# ⚠️ 同面横扫:下方 _PRIVATE_LAN_NETS(_origin_allowed/CSRF 路径,精确 ip 判定)与
+#    _LOCAL_LAN_ORIGIN_REGEX(CORS allow_origin_regex 路径)是同一「本地来源」判定的孪生
+#    实现,FastAPI CORSMiddleware 只吃 regex 故无法共用一份——改一处必须同步改另一处。
 _PRIVATE_LAN_NETS = (
     ip_network("10.0.0.0/8"),
     ip_network("172.16.0.0/12"),
     ip_network("192.168.0.0/16"),
+    ip_network("100.64.0.0/10"),   # RFC6598 CGNAT / Tailscale 等网状 VPN
+    ip_network("fc00::/7"),        # IPv6 ULA(含 Tailscale fd7a::/48)
+    ip_network("fe80::/10"),       # IPv6 链路本地
 )
 _LOCAL_LAN_ORIGIN_REGEX = (
     r"^https?://(?:"
@@ -74,6 +82,9 @@ _LOCAL_LAN_ORIGIN_REGEX = (
     r"|10(?:\.\d{1,3}){3}"                             # 10.0.0.0/8
     r"|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}"      # 172.16–31.x.x
     r"|192\.168(?:\.\d{1,3}){2}"                       # 192.168.x.x
+    r"|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2}"  # 100.64–127.x.x CGNAT/Tailscale
+    r"|\[[fF][cCdD][0-9a-fA-F:]*\]"                    # IPv6 ULA fc00::/7
+    r"|\[[fF][eE][89aAbB][0-9a-fA-F:]*\]"              # IPv6 链路本地 fe80::/10
     r")(?::\d{1,5})?$"
 )
 
