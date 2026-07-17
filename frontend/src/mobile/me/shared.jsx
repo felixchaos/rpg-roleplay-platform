@@ -2,12 +2,13 @@
    语义统一 Batch 6b GUARD 的保护范围仅限 ConfirmSheet 一项:它是纯 inline-style 抽屉
    (滚入动画/圆角20px/scrim rgba(0.6)),与 mobile/Sheet.jsx 或桌面 .sheet 视觉/行为真实不同,
    防误合清单点名,绝不合并;详见 ConfirmSheet 上方 GUARD 注释。**本文件其余组件不在此保护范围
-   内,可正常演进**——例如 Toggle(44×26 内联样式)为视觉分叉遗留(与 mobile/Toggle.jsx 的
-   46×28 pl-toggle 视觉真不同),统一需设计定夺后迁 ViewSettings 6 调用点(2026-07-17 审计)。 */
+   内,可正常演进**——例如 Toggle 曾是第三份视觉分叉实现(44×26 内联样式),已于
+   2026-07-17 统一到 mobile/Toggle.jsx(46×28 pl-toggle 权威版,见下方 re-export)。 */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { Icon } from '../icons.jsx';
+export { Toggle } from '../Toggle.jsx';
 
 /* ── 共用头部 ──────────────────────────────────────────────────── */
 function PageHead({ title, sub, onBack, actions }) {
@@ -25,28 +26,6 @@ function PageHead({ title, sub, onBack, actions }) {
       </div>
       {actions && <div className="pl-head-actions">{actions}</div>}
     </div>
-  );
-}
-
-/* ── Toggle 开关 ───────────────────────────────────────────────── */
-function Toggle({ on, onChange, disabled }) {
-  return (
-    <button
-      style={{
-        width: 44, height: 26, borderRadius: 13, flexShrink: 0, position: 'relative',
-        background: on ? 'var(--accent)' : 'var(--panel-3)',
-        border: '1px solid ' + (on ? 'var(--accent-2)' : 'var(--line)'),
-        transition: 'background .18s, border-color .18s',
-        opacity: disabled ? 0.45 : 1,
-      }}
-      onClick={() => !disabled && onChange(!on)}
-      role="switch" aria-checked={!!on}
-    >
-      <span style={{
-        position: 'absolute', top: 2, left: on ? 20 : 2, width: 20, height: 20, borderRadius: 10,
-        background: '#fff', transition: 'left .18s', boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-      }} />
-    </button>
   );
 }
 
@@ -172,4 +151,4 @@ function ConfirmSheet({ open, title, body, confirmLabel, onClose, onConfirm, dan
   );
 }
 
-export { PageHead, Toggle, SetRow, ActionBtn, Input, Select, ConfirmSheet };
+export { PageHead, SetRow, ActionBtn, Input, Select, ConfirmSheet };

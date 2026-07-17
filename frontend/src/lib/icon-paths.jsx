@@ -1,16 +1,17 @@
 /* icon-paths.jsx — 平台端(game-icons.jsx)与移动端(mobile/icons.jsx)共享的
    图标 path/JSX 字典。24x24 viewBox,currentColor 描边。
 
-   收录范围:两端图标字典里 **同名且视觉等价**(逐字节或仅 JSX Fragment 包裹差异)
-   的条目,以 game-icons.jsx 版本为蓝本逐字节复制。两端各自保留:
-     1) 平台/移动端独有的图标(对方没有同名条目);
-     2) 同名但形状真实不同的 14 个 DIVERGED 条目(见两文件内 `// DIVERGED` 注释)。
+   收录范围:两端图标字典里 **同名条目**,以视觉等价版本为蓝本逐字节复制。
+   两端各自仅保留平台/移动端独有的图标(对方没有同名条目)。
 
-   审计日期 2026-07-17:57 个同名条目中 43 个视觉等价收录于此,14 个真不同形维持
-   两端本地定义。新增/修改共享图标只需改这一处,两端零改动自动同步 —— 别在
-   game-icons.jsx 或 mobile/icons.jsx 单侧直接添加与本文件重名的条目(会与
-   spread 顺序冲突,产生新的分叉)。奇偶守卫测试见
-   frontend/src/__tests__/icon-paths-parity.test.jsx。 */
+   审计日期 2026-07-17:57 个同名条目全部收录于此。初审 43 个视觉等价直接合并;
+   另 14 个曾经真不同形(DIVERGED)的条目经用户拍板逐个裁定胜者版本后一并归一
+   (桌面版胜出 7 个:search/settings/user/folder/plug/braces/usage;移动版胜出
+   7 个:diamond/grid/list/upload/download/more/link),DIVERGED 状态清零。
+   新增/修改共享图标只需改这一处,两端零改动自动同步 —— 别在 game-icons.jsx
+   或 mobile/icons.jsx 单侧直接添加与本文件重名的条目(会与 spread 顺序冲突,
+   产生新的分叉)。奇偶守卫测试见
+   frontend/src/__tests__/icon-paths-parity.test.js。 */
 import React from 'react';
 
 export const SHARED_ICON_PATHS = {
@@ -62,4 +63,22 @@ export const SHARED_ICON_PATHS = {
   flag: <><path d="M5 21V4M5 4l11 1-2 5 3 4-12 .5" /></>,
   compass: <><circle cx="12" cy="12" r="9" /><path d="M15 9l-2 5-4 1 2-5z" /></>,
   eye_off: <><path d="M3 3l18 18" /><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8M9 5.3A10 10 0 0 1 12 5c6 0 10 7 10 7a18 18 0 0 1-2.6 3.4M6.6 6.6A18 18 0 0 0 2 12s4 7 10 7c1.6 0 3-.4 4.3-1" /></>,
+
+  // 2026-07-17 用户拍板归一(原 14 个 DIVERGED 条目)—— 桌面版胜出 7 个:
+  search: <><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></>,
+  settings: <><path d="M19.4 14.6a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /><circle cx="12" cy="12" r="3" /></>,
+  user: <><circle cx="12" cy="8" r="3.6" /><path d="M5 20c1.5-3.4 4.1-5 7-5s5.5 1.6 7 5" /></>,
+  folder: <><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></>,
+  plug: <><path d="M10.5 3a1.5 1.5 0 0 0-1.5 1.5V7H6a2 2 0 0 0-2 2v3.5h2.5a1.5 1.5 0 0 1 0 3H4V19a2 2 0 0 0 2 2h3.5v-2.5a1.5 1.5 0 0 1 3 0V21H16a2 2 0 0 0 2-2v-3.5h2.5a1.5 1.5 0 0 0 0-3H18V9a2 2 0 0 0-2-2h-3v-2.5A1.5 1.5 0 0 0 11.5 3z" /></>,
+  braces: <><path d="M9 4H7a2 2 0 0 0-2 2v3a2 2 0 0 1-2 2 2 2 0 0 1 2 2v3a2 2 0 0 0 2 2h2" /><path d="M15 4h2a2 2 0 0 1 2 2v3a2 2 0 0 0 2 2 2 2 0 0 0-2 2v3a2 2 0 0 1-2 2h-2" /></>,
+  usage: <><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></>,
+
+  // 移动版胜出 7 个:
+  diamond: <><path d="M12 3l9 9-9 9-9-9z" /></>,
+  grid: <><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></>,
+  list: <><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" /></>,
+  upload: <><path d="M12 16V4M7 9l5-5 5 5" /><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2" /></>,
+  download: <><path d="M12 4v12M7 11l5 5 5-5" /><path d="M4 19h16" /></>,
+  more: <><circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" /></>,
+  link: <><path d="M9 15l6-6M10 6l1-1a4 4 0 0 1 6 6l-1 1M14 18l-1 1a4 4 0 0 1-6-6l1-1" /></>,
 };

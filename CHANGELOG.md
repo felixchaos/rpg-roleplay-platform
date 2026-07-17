@@ -9,6 +9,13 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.70.4] - 2026-07-17 (@ 7bc36fa82)
+
+### Changed
+- **图标字典 14 项 DIVERGED 归一(用户拍板,逐项目视裁定)**:桌面胜 7(search/settings/user/folder/plug=拼图隐喻/braces/usage)+ 移动胜 7(diamond=名实相符/grid=圆角一致/list·more=实心点小尺寸清晰/upload·download=托盘标准隐喻/link=斜杆清晰),`SHARED_ICON_PATHS` 43→57,双端同名图标全部单一来源,奇偶守卫下限 ≥55;加新图标只写一处。
+- **第三份 Toggle 收口**(用户拍板视觉基准=`mobile/Toggle.jsx` 主题变量版):mobile/me 本地 44×26 内联样式版删除改 re-export,ViewSettings 6 处调用点零适配迁移,「我的」页开关自此跟随主题皮肤(46×28 pl-toggle)。
+- Gemini 流式思考默认档维持 high(用户确认)。
+
 ## [1.70.3] - 2026-07-17 (@ 0ba86c645)
 
 ### Fixed
