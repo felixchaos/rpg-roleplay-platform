@@ -9,10 +9,29 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.71.0] - 2026-07-18 (@ f527e9311)
+
 ### Fixed
-- **P0 平台页全员挂死根修(生产事故,2026-07-18)**:data-loader 模块体顶层立即快照 `window.MOCK_*` 全局 = 隐式契约「mock-data 先于我求值」;v1.70.x 新增共享 lib 改变 chunk 依赖图后 Platform 入口模块求值顺序反转 → `BASELINE.platform=undefined` → 引导器 try 内 set 炸被吞、catch 内 read 再炸逃逸 → 平台页对所有冷进入用户永久「加载中」。根修=BASELINE 惰性快照+空对象兜底+merge 基座加固(空串 bio 回退链防再炸)+bootstrap 推迟一个 microtask(模块图完成后必然就绪),与模块排序彻底解耦。排障沉淀:线上 sourcemap 定位;同 commit 本地/服务器双构建对照。
+- **P0 双端并发状态覆盖根修**:`/api/chat` 回合从读 state 到 `record_runtime_turn` 全程含 LLM 流式数十秒,漂移检测(`fresh_active != parent_id`)旧实现「假 rebase」——用请求早期旧基线全量快照整体覆盖提交,不合并不拒绝。库尸检实锤 messages 同 (save,turn,assistant) 重复 90 组。改「漂移即拒绝」(整回合原子放弃 DB 零写,SSE `save_conflict` 事件「存档已在别处推进」,chat 主链/打断/opening 三条调用链全接住);顺带清除恒 False 死接线 `mark_runtime_dirty`+`_runtime_repo.py`。
+- **换稿旧稿幽灵**:acceptance 换稿只换 commit 快照/messages,不 retire `kb_events` → 情景召回持续回忆被换掉的旧剧情。修=换稿成功后就地 `retired_at_commit` 退役该回合 kb_events(扁平语料+召回双双排除)+ 史官 `maintain_structured_kb` 用新稿重跑。
+- **read_only 权限被 5 类叙事写入绕闸**:`register_consequence`/`upsert_npc_agenda`/`add_hypothesis`/`confirm/reject_hypothesis` 经 JSON-op 与工具面(`schedule_consequence`/`add_hypothesis` 工具)直写、绕过 `_gm_write_via_gate`——三个 context provider 逐一核实全进 GM 注入,read_only/default 破坏「LLM 自动写入入 pending」承诺。双路并入 pending 闸;3 个真控制流 op(time-jump 确认/ask-player/worldline 投影)豁免理由已显式化。`ui_set_field` 补后端权限闸(前端零检查是假防护)。
+- **message_edit / acceptance amend 三表读改写无锁** → 加 `acquire_save_advisory_lock`(复用外层连接防 PgBouncer 池死锁,同面横扫两处)。
+- **Anthropic tool-loop thinking 补全**:思考深度设置在 Anthropic GM 工具循环此前完全无效;补 thinking block round-trip(API 合规硬要求)+ thinking_delta→reasoning 事件(与 openai/vertex 对齐)。
+- **黑天鹅 validator 假绿清缴**:2 层 `return True` 占位却与真 validator 同构输出(日志像「5 层全过」)→ 诚实摘除,`run_validators` 收敛 3 层并如实记「已实现/设计层数」。
+- **拆书 worldbook 分派硬编码致大剧本 detail 卡静默丢失**:全员 `insertion_position='constant'`+空 keys 使 detail 被 3000 token 常驻层截断、又因 keys 空关键词池永不命中——两头落空。改按 priority 分派(≥80 常驻;<80 走 keyed+实体名别名触发)。
+- **combat 敌方攻击打玩家漏审计**:抽 `append_rules_audit` 单一落法两路径共用,玩家分支补同构 audit。
+
+### Changed
+- **retention 系统性遗漏族补齐**:`tool_invocations`(90天)/`chat_postproc_tasks`(30天终态)/`email_verifications`(7天,顺带堵安全审计 H-7 无 TTL 暴露面)三表 prune 上 `run_cron`(分批 commit 防长事务锁不释放);`token_usage` 补 `created_at` 索引(migration 98,四条 admin usage 查询原全表扫);`_SYNC_SCOPE_LOCKS` 加 LRU 淘汰(非阻塞探测「确实空闲才淘汰」防击穿并发保护)。
+- **移除从未生效的死设置 `npc_awareness` / `spoiler_guard`**:全链 schema/持久化/建档向导俱全但全库零读取点——从后端 schema、Web/iOS 建档向导下架,持久化列保留不动库。
+- **双 fallback 静默兜底加可观测 trace**:`worldbook_agent.consult` 空结果与 `get_progress_window` 退化 fallback 各补 info 日志(含 save_id),同回合出现=「未拆书剧本被静默兜底」强信号。
+- **ValueError→400 样板收敛**:`_deps` 加 `value_error_response` helper,90 处/29 文件形状完全一致的返回收敛为一行(try/except 作用域一字不动);顺带修 2 族预存测试疤 + 消除 `INEFFECTIVE_DYNAMIC_IMPORT` 构建警告。
+- Anthropic 流式思考深度默认档=high 起效(与 openai/vertex 对齐,用户可 Off)。
 
 ## [1.70.5] - 2026-07-18 (@ ff6ac8016)
+
+### Fixed
+- **P0 平台页全员挂死根修(生产事故)**:data-loader 模块体顶层立即快照 `window.MOCK_*` 全局 = 隐式契约「mock-data 先于我求值」;v1.70.x 新增共享 lib 改变 chunk 依赖图后 Platform 入口模块求值顺序反转 → `BASELINE.platform=undefined` → 引导器 try 内 set 炸被吞、catch 内 read 再炸逃逸 → 平台页对所有冷进入用户永久「加载中」。根修=BASELINE 惰性快照+空对象兜底+merge 基座加固+bootstrap 推迟一个 microtask,与模块排序彻底解耦。排障沉淀:线上 sourcemap 定位;同 commit 本地/服务器双构建对照。
 
 ## [1.70.4] - 2026-07-17 (@ 7bc36fa82)
 
