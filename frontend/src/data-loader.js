@@ -13,13 +13,27 @@
  * ============================================================ */
 import i18n from './i18n/index.js';
 // Capture the designer baseline so we can fall back / extend it.
-const BASELINE = {
-  novel: deepCopy(window.MOCK_NOVEL),
-  state: deepCopy(window.MOCK_STATE),
-  runSteps: deepCopy(window.MOCK_RUN_STEPS),
-  platform: deepCopy(window.MOCK_PLATFORM),
-};
-window.__MOCK_BASELINE = BASELINE;
+// ⚠️ P0 根修(2026-07-18,平台页全员挂死):mock 全局(window.MOCK_*)由 mock-data.js 的
+// 模块副作用设置。此前这里在模块体顶层**立即**快照 = 隐式契约「mock-data 必须先于本模块求值」。
+// v1.70.x 新增共享 lib 改变了 chunk 依赖图,rolldown 对 Platform 入口的模块求值顺序随之
+// 反转:本模块先跑 → MOCK_PLATFORM 未赋值 → deepCopy(undefined) 走 catch 返回 undefined →
+// baseline().platform=undefined → hydratePlatform 的 try 内 set 炸被吞、catch 内 read 再炸
+// 逃逸 → 引导 Promise 拒绝、页面永久「加载中」。
+// 根修 = 惰性快照(首次访问必然晚于整张模块图求值完成)+ platform 空对象兜底;
+// 配套:文件尾 init() 的调用也推迟一个 microtask,双保险与求值顺序彻底解耦。
+let _BASELINE = null;
+function baseline() {
+  if (!_BASELINE) {
+    _BASELINE = {
+      novel: deepCopy(window.MOCK_NOVEL),
+      state: deepCopy(window.MOCK_STATE),
+      runSteps: deepCopy(window.MOCK_RUN_STEPS),
+      platform: deepCopy(window.MOCK_PLATFORM) || {},
+    };
+    window.__MOCK_BASELINE = _BASELINE;
+  }
+  return _BASELINE;
+}
 
 function deepCopy(o) { try { return JSON.parse(JSON.stringify(o)); } catch (_) { return o; } }
 
@@ -145,20 +159,24 @@ function anonymizeUser(u) {
 }
 
 async function hydratePlatform() {
-  if (!window.api) return { platform: BASELINE.platform, authed: false };
-  const platform = deepCopy(BASELINE.platform);
+  if (!window.api) return { platform: baseline().platform, authed: false };
+  const platform = deepCopy(baseline().platform);
   let authed = false;
   try {
     const me = await window.api.auth.me();
     if (me && me.user) {
       authed = true;
+      // base:同一 P0 根修的配套加固 —— baseline().platform 兜底为 {} 后 platform.user
+      // 可能为 undefined,而下面的空值回退链(如 bio 为空串时读 platform.user.bio)会再抛
+      // TypeError。统一经 base 访问,与求值顺序/兜底形态彻底解耦。
+      const base = platform.user || {};
       platform.user = {
-        ...platform.user,
-        username: me.user.username || platform.user.username,
-        display_name: me.user.display_name || me.user.username || platform.user.display_name,
-        role: me.user.role || platform.user.role,
+        ...base,
+        username: me.user.username || base.username,
+        display_name: me.user.display_name || me.user.username || base.display_name,
+        role: me.user.role || base.role,
         uid: me.user.uid || "u_" + (me.user.id || ""),
-        bio: me.user.bio || platform.user.bio,
+        bio: me.user.bio || base.bio,
         avatar_url: me.user.avatar_url || '',
         id: me.user.id,
         // 透传首登须知弹窗状态(null=从未 dismiss),否则前端 === null 判断永远拿不到字段
@@ -311,7 +329,7 @@ function deepMergeInto(target, source) {
 
 async function hydrateGameState() {
   const allowMockFallback = !window.api || useDesignerFallback();
-  const fallback = () => allowMockFallback ? deepCopy(BASELINE.state) : emptyGameStateFallback();
+  const fallback = () => allowMockFallback ? deepCopy(baseline().state) : emptyGameStateFallback();
   if (!window.api) return fallback();
   try {
     const data = await window.api.game.state();
@@ -319,7 +337,7 @@ async function hydrateGameState() {
     // 深合并：backend 返回的 partial state 覆盖到安全骨架上，缺的字段不会冲掉
     // 老的 apply() 是「整段替换」语义，backend 没有 inventory/timeline 等子字段时
     // 会让 PanelStatus / ConfirmStrip 等链式访问炸 undefined（Game Console 白屏）。
-    const merged = allowMockFallback ? deepCopy(BASELINE.state) : emptyGameStateFallback();
+    const merged = allowMockFallback ? deepCopy(baseline().state) : emptyGameStateFallback();
     deepMergeInto(merged, {
       player: data.player,
       world: data.world,
@@ -468,7 +486,12 @@ window.__refreshPlatform = async function () {
   }
 };
 
-if (window.api) bootstrap();
-else window.addEventListener("api-ready", bootstrap, { once: true });
+// P0 根修配套:启动推迟一个 microtask —— 模块图求值是同步的,求值期间入队的
+// microtask 必然在整张图(含 mock-data.js / api-client.js 的副作用)完成后才跑,
+// 恢复「boot 时全局已就绪」的原始语义,不再依赖 chunk 内模块排序。
+queueMicrotask(() => {
+  if (window.api) bootstrap();
+  else window.addEventListener("api-ready", bootstrap, { once: true });
+});
 
 export {};

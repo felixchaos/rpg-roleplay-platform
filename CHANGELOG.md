@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+### Fixed
+- **P0 平台页全员挂死根修(生产事故,2026-07-18)**:data-loader 模块体顶层立即快照 `window.MOCK_*` 全局 = 隐式契约「mock-data 先于我求值」;v1.70.x 新增共享 lib 改变 chunk 依赖图后 Platform 入口模块求值顺序反转 → `BASELINE.platform=undefined` → 引导器 try 内 set 炸被吞、catch 内 read 再炸逃逸 → 平台页对所有冷进入用户永久「加载中」。根修=BASELINE 惰性快照+空对象兜底+merge 基座加固(空串 bio 回退链防再炸)+bootstrap 推迟一个 microtask(模块图完成后必然就绪),与模块排序彻底解耦。排障沉淀:线上 sourcemap 定位;同 commit 本地/服务器双构建对照。
+
+## [1.70.5] - 2026-07-18 (@ ff6ac8016)
+
 ## [1.70.4] - 2026-07-17 (@ 7bc36fa82)
 
 ### Changed
