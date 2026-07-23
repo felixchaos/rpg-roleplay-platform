@@ -4,13 +4,13 @@ version = "1.71.1"
 description = "RPG roleplay backend — FastAPI + Postgres + Anthropic/Vertex AI"
 requires-python = ">=3.11"
 dependencies = [
-    "anthropic>=0.116.0",
-    "fastapi>=0.139.0",
+    "anthropic>=0.118.0",
+    "fastapi>=0.139.2",
     "fsspec>=2026.6.0",
-    "google-auth>=2.55.2",
-    "google-genai>=2.11.0",
+    "google-auth>=2.56.2",
+    "google-genai>=2.14.0",
     "httpx[http2]>=0.28",
-    "openai>=2.45.0",
+    "openai>=2.47.0",
     "psycopg[binary]>=3.3",
     "psycopg-pool>=3.3",
     "python-dotenv>=1.2",
@@ -21,8 +21,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=9.1.1",
-    "ruff>=0.15.21",
-    "mypy>=2.2.0",
+    "ruff>=0.15.22",
+    "mypy>=2.3.0",
 ]
 
 [tool.ruff]
