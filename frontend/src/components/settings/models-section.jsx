@@ -409,12 +409,27 @@ function ModelsSection() {
                 }
               }
             }
-            if (payload.api_key && payload.api_key.trim()) {
+            const keyProvided = !!(payload.api_key && payload.api_key.trim());
+            // key 从不回显:「编辑」只改接口地址、不重填 key 时,base_url 也必须落库。
+            // 否则改 URL 保存后毫无变化(必须删 key 重填才生效)——这正是本次上报的 bug。
+            const baseUrlChanged = !addingApi && existing && ((payload.base_url || '') !== (existing.base_url || ''));
+            if (keyProvided) {
               try {
                 await window.api.credentials.set({
                   api_id: credentialId, api_key: payload.api_key.trim(),
                   base_url_override: payload.base_url || '',
                   proxy: payload.proxy === 'http_proxy' ? (payload.proxy_url || '').trim() : '',
+                });
+              } catch (e) {
+                window.__apiToast?.(t('settings.edit_api.key_save_fail'), { kind: "warn", detail: e?.message, duration: 4000 });
+                throw e;
+              }
+            } else if (baseUrlChanged && existing.key_set) {
+              // 保留已存密钥与 proxy,只更新 base_url_override(keep_key)。
+              try {
+                await window.api.credentials.set({
+                  api_id: credentialId, api_key: '',
+                  base_url_override: payload.base_url || '', keep_key: true,
                 });
               } catch (e) {
                 window.__apiToast?.(t('settings.edit_api.key_save_fail'), { kind: "warn", detail: e?.message, duration: 4000 });

@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.71.2] - 2026-07-25 (@ 653076e21)
+
+### Fixed
+- **网页版改「接口地址(base_url)」保存后不生效,必须删 key 重填**:API 设置里「编辑」某供应商、只改 Base URL 而不重填 API Key(key 从不回显)时,URL 变更被静默丢弃——根因是前端仅在填了 key 时才 `credentials.set`,而后端 `set_credential` 又把空 key 当「删除凭证」。修:后端加 `preserve_key_if_empty`(空 key + 已存凭证 → 只改 `base_url_override`/启用态,保留密文 key 与 proxy;无凭证则报错),`/api/me/credentials` 透传 `keep_key`;前端 `EditApiModal` 在已配置凭证且 base_url 变更、未重填 key 时带 `keep_key` 保存。删 key(空 key 无 base_url)/联邦断连语义不变(短路在校验前)。孪生核查:mobile 为纯 key(无 base_url 编辑)、provider-config 的 base_url 为 admin-only 且显式提示,均无此症。
+
 ## [1.71.1] - 2026-07-18 (@ dedb45620)
 
 ### Fixed

@@ -91,3 +91,77 @@ def test_non_admin_builtin_api_credential_is_normalized(monkeypatch):
     assert response.status_code == 200
     assert json.loads(response.body)["api_id"] == "dashscope"
     assert calls[0][0][1] == "dashscope"
+
+
+def test_keep_key_forwards_preserve_flag(monkeypatch):
+    """编辑弹窗只改接口地址、不重填 key(key 从不回显)时,前端发 keep_key=true。
+
+    路由必须把它翻成 set_credential(preserve_key_if_empty=True),否则空 key 会被
+    当成删除 —— 这正是「改 URL 保存后没变化、要删 key 重填」的上报 bug。
+    """
+    from platform_app.api import me as me_api
+    from platform_app import user_credentials
+
+    calls: list[tuple] = []
+
+    def fake_set_credential(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"ok": True, "api_id": args[1], "base_url_override": kwargs.get("base_url_override", "")}
+
+    monkeypatch.setattr(user_credentials, "set_credential", fake_set_credential)
+
+    response = asyncio.run(me_api.api_set_credential(
+        _JsonRequest({
+            "api_id": "longcat",
+            "api_key": "",  # key 未重填
+            "base_url_override": "https://relay.example.com/v1",
+            "keep_key": True,
+        }),
+        user={"id": 19, "role": "user"},
+    ))
+
+    assert response.status_code == 200
+    assert calls, "set_credential 必须被调用"
+    _args, kwargs = calls[0]
+    assert kwargs.get("preserve_key_if_empty") is True
+    assert kwargs.get("base_url_override") == "https://relay.example.com/v1"
+
+
+def test_no_keep_key_defaults_to_delete_semantics(monkeypatch):
+    """没有 keep_key 时,preserve_key_if_empty 必须为 False —— 保留「空 key = 删除」语义。"""
+    from platform_app.api import me as me_api
+    from platform_app import user_credentials
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(user_credentials, "set_credential",
+                        lambda *a, **k: calls.append((a, k)) or {"ok": True})
+
+    asyncio.run(me_api.api_set_credential(
+        _JsonRequest({"api_id": "openai", "api_key": ""}),
+        user={"id": 19, "role": "admin"},
+    ))
+
+    assert calls[0][1].get("preserve_key_if_empty") is False
+
+
+def test_set_credential_preserve_dispatch(monkeypatch):
+    """set_credential 层:空 key + preserve → _update_credential_meta;否则 → delete。
+
+    不碰 DB:桩掉 init_db 及两个落库 helper,只验证分支派发。
+    """
+    from platform_app import user_credentials as uc
+
+    monkeypatch.setattr(uc, "init_db", lambda *a, **k: None)
+    routed: list[str] = []
+    monkeypatch.setattr(uc, "delete_credential",
+                        lambda *a, **k: routed.append("delete") or {"ok": True, "deleted": True})
+    monkeypatch.setattr(uc, "_update_credential_meta",
+                        lambda *a, **k: routed.append("update") or {"ok": True})
+
+    # 空 key + preserve → 更新元数据,保留密钥
+    uc.set_credential(19, "openai", "", base_url_override="", allow_base_url=True,
+                      preserve_key_if_empty=True)
+    # 空 key,无 preserve → 删除(短路在 base_url 校验之前)
+    uc.set_credential(19, "openai", "", base_url_override="", allow_base_url=True)
+
+    assert routed == ["update", "delete"]

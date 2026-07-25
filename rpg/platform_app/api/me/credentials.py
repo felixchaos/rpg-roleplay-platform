@@ -30,6 +30,9 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
     try:
         api_id = body.get("api_id", "")
         base_url_override = (body.get("base_url_override") or "").strip()
+        # keep_key：编辑弹窗只改接口地址、不重填 key（key 从不回显）。空 key 时不删
+        # 凭证，只更新 base_url_override / 启用态，保留已存密钥与 proxy。
+        keep_key = bool(body.get("keep_key"))
         if not is_admin:
             from model_registry import default_api_for, find_api, load_model_catalog, normalize_api_id
             normalized_api_id = normalize_api_id(api_id)
@@ -53,6 +56,7 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
             enabled=bool(body.get("enabled", True)),
             allow_base_url=True,  # base_url 不再 admin 限定;SSRF 由 _validate_base_url 强制
             proxy=(body.get("proxy") or "").strip(),  # 出站代理 URL;仅本地模式真正使用(见 openai_compat)
+            preserve_key_if_empty=keep_key,
         )
         return json_response(result)
     except ValueError as exc:

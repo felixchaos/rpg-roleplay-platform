@@ -154,8 +154,13 @@ def _normalize_openai_base_url(url: str) -> str:
     return s
 
 
-def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_override: str = "", enabled: bool = True, *, allow_base_url: bool = False, proxy: str = "") -> dict[str, Any]:
-    """加密保存。空 key 等价于删除该 credential。
+def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_override: str = "", enabled: bool = True, *, allow_base_url: bool = False, proxy: str = "", preserve_key_if_empty: bool = False) -> dict[str, Any]:
+    """加密保存。空 key 等价于删除该 credential（preserve_key_if_empty=True 时例外）。
+
+    preserve_key_if_empty=True 时，空 key 表示「只改 base_url_override / 启用态，保留
+    已存密文 key 与 metadata(proxy)」—— 对应「编辑」弹窗只改接口地址、不重填 key 的
+    场景（key 从不回显，逼用户为改 URL 重填 key 既反直觉又正是该 bug 的成因）。无已存
+    凭证则报错。
 
     安全：base_url_override 是 SSRF 风险源。allow_base_url 默认 False，
     意味着普通用户无法用自己的 key 让服务器访问任意 URL（如 127.0.0.1）。
@@ -170,7 +175,8 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     api_id = normalize_api_id(api_id)
     if not api_id:
         raise ValueError("api_id 不能为空")
-    if not plaintext_key:
+    if not plaintext_key and not preserve_key_if_empty:
+        # 空 key 常态 = 删除凭证（base_url 无关，短路在校验之前，保持 delete 路径零变化）。
         return delete_credential(user_id, api_id)
     # P1 #7：之前非 admin 传 base_url_override 直接静默 = ""，UI 以为已设置。
     # 改成显式 raise ValueError，让 /api/me/credentials 回 400，前端能感知。
@@ -181,6 +187,9 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     elif base_url_override:
         base_url_override = _normalize_openai_base_url(base_url_override)
         _validate_base_url(base_url_override)
+    if not plaintext_key:
+        # preserve_key_if_empty：只改 base_url_override / 启用态，保留密钥与 metadata(proxy)。
+        return _update_credential_meta(user_id, api_id, base_url_override, enabled)
     proxy = (proxy or "").strip()
     if proxy:
         if not re.match(r"^(https?|socks5h?)://[^\s/]+", proxy, re.IGNORECASE):
@@ -254,6 +263,29 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
             pass
 
     return result
+
+
+def _update_credential_meta(user_id: int, api_id: str, base_url_override: str, enabled: bool) -> dict[str, Any]:
+    """只更新已存凭证的 base_url_override / enabled，保留密文 key 与 metadata(proxy)。
+
+    调用方（set_credential 的 preserve_key_if_empty 分支）已做完 SSRF 闸与
+    base_url_override 归一，这里只落库。无匹配行 → 报错，让前端提示先填 Key。
+    metadata 不动，因此 proxy 等既有字段原样保留。
+    """
+    canonical = normalize_api_id(api_id)
+    with connect() as db:
+        row = db.execute(
+            """
+            update user_api_credentials
+               set base_url_override = %s, enabled = %s, updated_at = now()
+             where user_id = %s and api_id = any(%s)
+            returning id, user_id, api_id, base_url_override, enabled, updated_at
+            """,
+            (base_url_override or "", enabled, user_id, _credential_aliases(canonical)),
+        ).fetchone()
+    if not row:
+        raise ValueError("尚未配置该供应商的 API Key，请先填写 Key")
+    return {"ok": True, **(expose(row) or {}), "has_credential": True}
 
 
 def delete_credential(user_id: int, api_id: str) -> dict[str, Any]:
