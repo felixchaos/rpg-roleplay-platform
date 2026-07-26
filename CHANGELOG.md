@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.71.3] - 2026-07-26 (@ 30ff86522)
+
+### Fixed
+- **「向量索引(按类型)」写着可选择性重嵌,却满页找不到重新生成的按钮(群反馈)**:剧本详情页 embed 4 子卡(章节切片 / NPC 角色卡 / 世界书条目 / 知识库人物)在收敛处置③里改成了只读进度、`onRebuild` 已摘掉,但 i18n 的 `scripts.editor.embed_breakdown_desc` 仍是旧文案「可选择性重嵌」(代码里的 `defaultValue` 当时更新过,locale JSON 的值把它盖住了——**文案改 defaultValue 不改 locale = 白改**)。更要命的是「按类型重嵌」这个能力当时**整个从 UI 消失了**:后端 `POST /api/scripts/{id}/rebuild/embeddings` 的 `body.include`(估算路径 `rebuild_scheduler` 与执行路径 `rebuild_worker._rebuild_embeddings` 都读)一直好好的,只是没有任何界面能传它,所有重做都退化成四类全清全重嵌。修:① `RebuildEstimateModal` 在 `module==='embeddings'` 时渲染 4 个类型勾选框(默认全选 = 后端缺省行为,改动即时重估「将检查 N 条向量目标」,全不选则禁用确认——空 `include` 会被后端当全选,与所见相反);② 文案改成说清去处(点「向量索引」卡的「重做」),locale 与 `defaultValue` 同步。三个入口(剧本详情页 / 知识库中心 / 编辑器 KB 抽屉)共用同一个 `useScriptRebuild` + 弹窗,一处修全站生效。回归测试 `rebuild-estimate-embeddings.test.jsx`,含前端 `EMBED_KINDS` 与后端两处默认 `include` 字面量的跨语言奇偶守卫。
+
 ## [1.71.2] - 2026-07-25 (@ 653076e21)
 
 ### Fixed

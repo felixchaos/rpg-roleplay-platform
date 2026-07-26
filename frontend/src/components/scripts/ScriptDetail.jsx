@@ -413,11 +413,14 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
             ]} />
             {/* phase_rebuild_panel: 7 模块状态矩阵 — 取代旧 embed 单卡 */}
             <ModuleMatrixOverview {...rb.matrixProps} />
-            {/* 收敛处置③:embed 4 子卡改只读进度展示——重嵌操作统一收口到「知识库中心」
-                (ModuleRebuildPanel → embeddings 模块卡),这里不再传 onRebuild,
-                ModuleStatusCard 无 onRebuild 时天然不渲染"重做"按钮。 */}
+            {/* 收敛处置③:embed 4 子卡改只读进度展示——重嵌操作统一收口到上方矩阵的
+                embeddings 模块卡(知识库中心是同一张卡),这里不再传 onRebuild,
+                ModuleStatusCard 无 onRebuild 时天然不渲染"重做"按钮。
+                「按类型重嵌」不是没了,是搬进那张卡的估算弹窗里(RebuildEstimateModal
+                的 include 勾选)——本卡的 description 必须把去处说清楚,否则用户在这
+                4 张卡上找不到按钮(群反馈)。 */}
             <CSSpaceBetween size="s">
-              <CSHeader variant="h3" description={t('scripts.editor.embed_breakdown_desc', { defaultValue: '向量索引按内容类型拆分的只读进度;重嵌请去「知识库中心」。' })}>
+              <CSHeader variant="h3" description={t('scripts.editor.embed_breakdown_desc', { defaultValue: '向量索引按内容类型拆分的只读进度。要重嵌,点「向量索引」卡的「重做」——弹窗里可勾选只重嵌其中几类。' })}>
                 {t('scripts.editor.embed_breakdown_title', { defaultValue: '向量索引' })}
               </CSHeader>
               <CSColumnLayout columns={2} variant="text-grid" minColumnWidth={300}>

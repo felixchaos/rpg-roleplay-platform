@@ -1907,7 +1907,7 @@
       "split_title": "Split Chapter",
       "split_label": "Split at which character position?",
       "embed_breakdown_title": "Vector index (by type)",
-      "embed_breakdown_desc": "Vector index split by content type; can be selectively re-embedded.",
+      "embed_breakdown_desc": "Read-only progress, split by content type. To re-embed, hit \"Rebuild\" on the Vector index card — the dialog lets you pick which types to re-embed.",
       "embed_kind_chunks": "Chapter chunks",
       "embed_kind_cards": "NPC cards",
       "embed_kind_worldbook": "Worldbook entries",
@@ -3941,7 +3941,10 @@
     },
     "embeddings": {
       "title": "Vector index",
-      "desc": "pgvector embeddings, used for RAG semantic recall"
+      "desc": "pgvector embeddings, used for RAG semantic recall",
+      "include_label": "Which types to re-embed",
+      "include_help": "Rebuild = clears the selected types' vectors, then re-embeds them all; unchecked types are left as-is. Zero LLM — only consumes embedding-model quota.",
+      "include_empty": "Pick at least one type."
     }
   },
   "md_editor": {

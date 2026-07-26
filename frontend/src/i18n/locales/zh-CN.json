@@ -87,7 +87,10 @@
     },
     "embeddings": {
       "title": "向量索引",
-      "desc": "pgvector 嵌入,RAG 语义召回用"
+      "desc": "pgvector 嵌入,RAG 语义召回用",
+      "include_label": "重嵌哪些类型",
+      "include_help": "重做 = 先把选中类型的向量清空再全部重嵌;未勾选的类型原样保留。零 LLM,只消耗嵌入模型配额。",
+      "include_empty": "至少选一个类型。"
     }
   },
   "common": {
@@ -1939,7 +1942,7 @@
     },
     "editor": {
       "embed_breakdown_title": "向量索引(按类型)",
-      "embed_breakdown_desc": "向量索引按内容类型拆分,可选择性重嵌。",
+      "embed_breakdown_desc": "向量索引按内容类型拆分的只读进度。要重嵌,点「向量索引」卡的「重做」——弹窗里可勾选只重嵌其中几类。",
       "embed_kind_chunks": "章节切片",
       "embed_kind_cards": "NPC 角色卡",
       "embed_kind_worldbook": "世界书条目",

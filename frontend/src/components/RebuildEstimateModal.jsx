@@ -10,22 +10,45 @@ import CSButton from '@cloudscape-design/components/button';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import s from './editorial.module.css';
 
+/* embeddings 的可选重嵌类型 —— 顺序/取值必须与后端默认 include 一致:
+   rebuild_worker._rebuild_embeddings / rebuild_scheduler(estimate)两处的
+   `body.get("include") or ["chunks","cards","worldbook","canon"]`。 */
+const EMBED_KINDS = ['chunks', 'cards', 'worldbook', 'canon'];
+
 export function RebuildEstimateModal({ open, module, scriptId, estimate, loading, options, onOptionsChange, onClose, onConfirm }) {
   const { t } = useTranslation();
   const isCards = module === 'cards';
+  const isEmbeddings = module === 'embeddings';
 
   // 进度感知角色卡:cards 重建的「重建到第 N 章」+「LLM 丰富」本地状态。
   // 改动 → debounce 后回调 onOptionsChange(带 chapter_max / mode)重估。
   const [chapterMax, setChapterMax] = React.useState('');
   const [llmEnrich, setLlmEnrich] = React.useState(false);
+  // 按类型重嵌:embeddings 的 include 勾选本地态。默认全选 = 后端不传 include 时的行为,
+  // 所以打开弹窗时不需要额外重估一次。
+  const [embedKinds, setEmbedKinds] = React.useState(EMBED_KINDS);
   // 弹窗每次打开(module 变化)重置本地态,避免上次残留。
   React.useEffect(() => {
     if (open && isCards) {
       setChapterMax(options && options.chapter_max != null ? String(options.chapter_max) : '');
       setLlmEnrich(!!(options && (options.mode === 'llm' || options.source === 'llm')));
     }
+    if (open && isEmbeddings) {
+      const inc = options && Array.isArray(options.include) ? options.include.filter((k) => EMBED_KINDS.includes(k)) : null;
+      setEmbedKinds(inc && inc.length ? inc : EMBED_KINDS);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, module]);
+
+  // 勾选变化立即重估(影响「将检查 N 条向量目标」与前置条件)。全空不重估——
+  // 后端会把空 include 当成缺省的全选,估算数字会与用户所见勾选相反,故直接拦在确认按钮。
+  const onEmbedKindToggle = (kind, checked) => {
+    const next = checked
+      ? EMBED_KINDS.filter((k) => k === kind || embedKinds.includes(k))  // 保持 EMBED_KINDS 顺序
+      : embedKinds.filter((k) => k !== kind);
+    setEmbedKinds(next);
+    if (next.length && onOptionsChange) onOptionsChange({ include: next });
+  };
 
   const emitOptions = React.useCallback((nextCh, nextLlm) => {
     if (!onOptionsChange) return;
@@ -59,6 +82,7 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
   const affects         = Array.isArray(estimate?.affects) ? estimate.affects : [];
   const prereqs         = Array.isArray(estimate?.prereqs) ? estimate.prereqs : [];
   const hasBlockingPrereq = prereqs.some(p => p && p.ok === false);
+  const noEmbedKind     = isEmbeddings && embedKinds.length === 0;
   const isZeroLlm       = (tokens === 0 || tokens == null) && (cost === 0 || cost == null);
 
   const moduleName = t(`modules.${module}.title`, { defaultValue: module });
@@ -80,7 +104,7 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
           </CSButton>
           <CSButton
             variant="primary"
-            disabled={loading || !ok || hasBlockingPrereq}
+            disabled={loading || !ok || hasBlockingPrereq || noEmbedKind}
             onClick={() => onConfirm && onConfirm({ module, scriptId })}
           >
             {isZeroLlm
@@ -91,6 +115,37 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
       }
     >
       <div className={s.estimateBody}>
+        {/* 按类型重嵌:embeddings 的 include 勾选(后端早就支持 body.include,只是 UI 一直没给口子) */}
+        {isEmbeddings && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14,
+                        padding: '12px 14px', border: '1px solid var(--border, #d8d2c4)', borderRadius: 6 }}>
+            <label style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 600 }}>
+              {t('modules.embeddings.include_label', { defaultValue: '重嵌哪些类型' })}
+            </label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px' }}>
+              {EMBED_KINDS.map((kind) => (
+                <label key={kind} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={embedKinds.includes(kind)}
+                    onChange={(e) => onEmbedKindToggle(kind, e.target.checked)}
+                    disabled={loading}
+                  />
+                  <span>{t(`scripts.editor.embed_kind_${kind}`, { defaultValue: kind })}</span>
+                </label>
+              ))}
+            </div>
+            <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)' }}>
+              {t('modules.embeddings.include_help', { defaultValue: '重做 = 先把选中类型的向量清空再全部重嵌;未勾选的类型原样保留。零 LLM,只消耗嵌入模型配额。' })}
+            </span>
+            {noEmbedKind && (
+              <span style={{ fontSize: 11, color: 'var(--danger, #b4483c)' }}>
+                {t('modules.embeddings.include_empty', { defaultValue: '至少选一个类型。' })}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* 进度感知角色卡:cards 重建选项(重建到第 N 章 + LLM 丰富) */}
         {isCards && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14,
