@@ -204,6 +204,11 @@ def _t_mark_anchor_satisfied(user_id: int, args: dict) -> str:
                                         via="gm", drift=drift, db=db)
             except Exception:
                 pass  # 前沿写失败不阻断锚点标记
+        # 反向级联(连接已释放后调,理由见 _cascade_history_from_anchor 文档串)
+        _cascade_history_from_anchor(
+            save_id, anchor_key=anchor_key or (row.get("anchor_key") or ""),
+            anchor_summary=row.get("summary") or "", new_status=new_status,
+            detail=how, turn_occurred=occurred_turn)
         return json.dumps({
             "ok": True,
             "anchor_id": row["id"],
@@ -247,13 +252,13 @@ def _t_mark_anchor_superseded(user_id: int, args: dict) -> str:
                 return f"失败 (权限): save {save_id} 不属于当前用户或不存在"
             if anchor_key:
                 row = db.execute(
-                    "select id, status, is_fatal, summary from save_anchor_states "
+                    "select id, status, is_fatal, summary, anchor_key from save_anchor_states "
                     "where save_id = %s and anchor_key = %s",
                     (save_id, anchor_key),
                 ).fetchone()
             else:
                 row = db.execute(
-                    "select id, status, is_fatal, summary from save_anchor_states "
+                    "select id, status, is_fatal, summary, anchor_key from save_anchor_states "
                     "where save_id = %s and id = %s",
                     (save_id, int(anchor_id_raw)),
                 ).fetchone()
@@ -278,6 +283,11 @@ def _t_mark_anchor_superseded(user_id: int, args: dict) -> str:
                 """,
                 (reason, save_id, row["id"]),
             )
+        # 反向级联(连接已释放后调,理由见 _cascade_history_from_anchor 文档串)
+        _cascade_history_from_anchor(
+            save_id, anchor_key=anchor_key or (row.get("anchor_key") or ""),
+            anchor_summary=row.get("summary") or "", new_status="superseded",
+            detail=reason)
         return json.dumps({
             "ok": True,
             "anchor_id": row["id"],
@@ -287,6 +297,69 @@ def _t_mark_anchor_superseded(user_id: int, args: dict) -> str:
         }, ensure_ascii=False, indent=2)
     except Exception as exc:
         return f"失败: {type(exc).__name__}: {exc}"
+
+
+# ── 锚点脱离 pending → 自动补写「存档独立时间线」历史锚点(确定性地板) ──────────
+# 为什么要这条反向级联(v1.72.5,群反馈「50 多章从来没创造过玩家锚点」):
+# record_history_anchor 早就有**正向**级联(带 linked_pending_anchors 写历史 → 同事务把对应
+# pending 标 satisfied),但反向一直空着——GM 标了锚点却不留档,时间线就是空的。生产实证:
+# 一个 883 回合的存档 mark_anchor_* 真调了 90 次(24 occurred / 42 superseded / 24 variant),
+# record_history_anchor 0 次;全站 1140 次 vs 10 条。**GM 会用够得着的工具,只是不会自己想起
+# 留档**——所以这一步不能挂在提示词上,必须落确定性代码缝。
+# importance 取值依 save_history.record_history_anchor 文档串的阈值语义:
+#   superseded = 锚点被绕过、原著走向被改写 → 80
+#   variant    = 发生了但走样(drift≥0.15)   → 70
+#   occurred   = 基本照原著发生               → 60(仍达「留档」建议线 60)
+_CASCADE_IMPORTANCE = {"superseded": 80, "variant": 70, "occurred": 60}
+
+
+def _cascade_importance(new_status: str) -> int:
+    return _CASCADE_IMPORTANCE.get(new_status, 60)
+
+
+def _cascade_history_from_anchor(save_id: int, *, anchor_key: str, anchor_summary: str,
+                                 new_status: str, detail: str,
+                                 turn_occurred: int | None = None) -> None:
+    """把一次锚点状态迁移补写成历史锚点。**绝不抛**——级联失败不许影响 mark 本身。
+
+    去重:同一 anchor_key 已被某条 history 关联过就跳过(GM 若已手动 record_history_anchor
+    并填了 linked_pending_anchors,正向级联会先把锚点标掉,这里再查就命中 → 不双写)。
+    ⚠️ 必须在调用方的 `with connect()` **之外**调:record_history_anchor 自己开连接,
+    嵌在已持连接的块里会在 PgBouncer 上叠连接(有前科)。
+    """
+    key = (anchor_key or "").strip()
+    if not save_id or not key:
+        return
+    try:
+        from platform_app.db import connect, init_db
+        from psycopg.types.json import Jsonb
+        init_db()
+        with connect() as db:
+            dup = db.execute(
+                "select 1 from save_history_anchors "
+                "where save_id = %s and linked_pending_anchors @> %s::jsonb limit 1",
+                (int(save_id), Jsonb([key])),
+            ).fetchone()
+        if dup:
+            return
+        from agents.save_history import record_history_anchor
+        head = (anchor_summary or "").strip()[:200]
+        body = (detail or "").strip()[:400]
+        summary = f"[锚点 {key} → {new_status}] " + (f"{head}｜{body}" if head and body else (head or body))
+        record_history_anchor(
+            int(save_id),
+            summary=summary,
+            importance=_cascade_importance(new_status),
+            turn_occurred=turn_occurred,
+            tags=["anchor_cascade", new_status],
+            linked_pending_anchors=[key],
+            source="gm_generated",
+            metadata={"via": "anchor_cascade", "anchor_key": key, "anchor_status": new_status},
+        )
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "[anchors] 历史锚点级联失败 (非致命, save=%s key=%s): %s", save_id, key, exc)
 
 
 def _t_record_history_anchor(user_id: int, args: dict) -> str:

@@ -142,6 +142,8 @@ pending_questions 选项把剧情引到完全脱离原著的世界线,玩家觉�
 - 临时世界级流水账(巡逻兵换班这种小事) → `set_world_known_event` (流水账,弱)
 - 原著锚点已被触发 → **`mark_anchor_satisfied(anchor_key, how_it_happened, drift_score)`**
   · drift_score 0.0 = 完全按原著, 0.3-0.6 = 中度变体, 0.8+ = 高度变体
+  · mark_anchor_satisfied / mark_anchor_superseded 成功后**系统会自动**往存档独立历史时间线补一条(反向级联),
+    所以锚点类事件**不用再单独调 record_history_anchor**;要补细节就把它写进 how_it_happened / reason。
 - 严禁:同一事件同时调 record_history_anchor + set_world_known_event + add_memory_fact(三重 audit)
 
 【规则模组族 if-then 决策树】(玩家行动需要判定)

@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.72.0] - 2026-07-27 (@ 11e18f0c1)
+
+### Added
+- **锚点脱离 pending 时自动补写「存档独立时间线」历史锚点(反向级联)**:`record_history_anchor` 早有**正向**级联(带 `linked_pending_anchors` 写历史 → 同事务把对应 pending 标 satisfied),反向一直空着——GM 标了锚点却不留档,时间线就是空的。v1.72.4 把 `record_history_anchor` 补进直发工具窗口只解决了「够不着」,而生产数据说明够得着也未必会想起来调:一个 883 回合的存档 `mark_anchor_*` 真调了 **90 次**(24 occurred / 42 superseded / 24 variant),`record_history_anchor` **0 次**;全站 1140 次 vs 10 条。按铁律「留档不能挂提示词」,现在 `mark_anchor_satisfied` / `mark_anchor_superseded` 成功后确定性补一条历史锚点(`source='gm_generated'`,`metadata.via='anchor_cascade'`,importance 按 superseded 80 / variant 70 / occurred 60 —— 依 `record_history_anchor` 文档串自身的阈值语义,不新发明判据)。去重:该 `anchor_key` 已被某条 history 关联过就跳过(GM 手动填了 `linked_pending_anchors` 时正向级联先标掉锚点,这里查得到 → 不双写)。级联在 `connect()` 块**之外**调(自己开连接,嵌在已持连接的块里会在 PgBouncer 上叠连接,本仓有前科),且全程吞异常——级联失败绝不影响 mark 本身。顺带补上 `mark_anchor_superseded` 两条 SELECT 漏掉的 `anchor_key` 列(不补则级联永远拿不到 key、静默跳过)。GM 提示词同步说明锚点类事件不用再单独调 `record_history_anchor`。回归测试 `test_anchor_history_cascade.py`(14 例:importance 映射 / 两条路径都接线 / 调用点在连接块外的缩进断言 / SELECT 含 anchor_key / 去重 / 缺 key 跳过 / 异常吞掉)。
+
 ## [1.71.4] - 2026-07-27 (@ 0214cb370)
 
 ### Fixed
