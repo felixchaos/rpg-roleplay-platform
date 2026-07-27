@@ -29,23 +29,69 @@ def is_recall_framing(text: str) -> bool:
     return bool(_RECALL_FRAMING.search(text or ""))
 
 
+# 显式跳跃动词表(与下方 patterns[0] 同源;单独抽出来供 LLM 侧门控复用)。
+_JUMP_VERB = re.compile(
+    r"跳到|跳转到|快进到|切到|来到|推进到|过渡到|直接到|直接进入|进入|等到|等至|直到"
+    r"|跳过到|略过到|越过到|/time\b|/timeline\b"
+)
+# 「整条输入就是一个时点」——玩家只打了「第30章」「1968年」「第30章 中秋夜」。
+# 这是**唯一**允许省略跳跃动词的形态,见 detect_time_directives 的说明。
+_BARE_TARGET = re.compile(
+    r"(?:第\s*\d{1,5}\s*章[^，。！？\n]{0,24}"
+    r"|(?:公元)?\d{3,5}\s*年[^，。！？\n]{0,24})"
+)
+_STRIP_EDGE = " \n\t：:。.，,！!？?、;；"
+
+
+def has_jump_verb(text: str) -> bool:
+    """输入里有没有显式跳跃动词 / 时间线斜杠命令。"""
+    return bool(_JUMP_VERB.search(text or ""))
+
+
+def is_bare_time_target(text: str) -> bool:
+    """整条输入(去掉首尾标点空白后)恰好就是一个时点值。"""
+    return bool(_BARE_TARGET.fullmatch((text or "").strip(_STRIP_EDGE)))
+
+
+def mentions_time_without_intent(text: str) -> bool:
+    """文本里提到了年份/章号,但**既没有跳跃动词、整条输入也不只是那个时点**
+    → 这是叙述里顺带提到时间(投喂设定、写背景、讲人物生平),不是跳跃指令。
+
+    行者无疆 实测(v1.73.2):推剧情时粘了一段 NPC 背景「起源故事: 1968年,年幼的威廉…
+    参加了天空景观餐厅的开幕派对」,被判成跳转到 1968 年。
+    """
+    t = text or ""
+    if not _BARE_TARGET.search(t):
+        return False
+    return not has_jump_verb(t) and not is_bare_time_target(t)
+
+
 def detect_time_directives(text: str) -> list[TimeDirective]:
     t = text or ""
     # 闪回/回忆/幻想叙述 → 不当作跳跃指令(玩家在讲记忆,不是要把时间线跳过去)。
     if _RECALL_FRAMING.search(t):
         return []
+    # 误判族第四案(v1.73.2,行者无疆:粘一段含「1968年」的 NPC 背景 → 被判跳转到 1968 年)。
+    # 病灶:原 patterns 里「第N章」「N年」两条把跳跃动词写成**可选**前缀(`(?:跳到|…)?`),
+    # 于是它们不再是「指令检测器」,而退化成「文本里出现章号/年份检测器」——任何叙述、
+    # 设定投喂、人物生平只要带个年份就触发。而这两条在有动词时本就被 patterns[0] 覆盖
+    # (动词表是它的子集),**唯一**的独立价值是玩家只打一个裸时点(「第30章」)。
+    # 修:动词形态只留 patterns[0]/[1];裸时点单独走 fullmatch 判定(整条输入就是时点)。
+    # 口径仍是宁漏勿误:漏检有 GM 确认两步事务兜底,误报直接把玩家的剧情推歪。
     patterns = [
         r"(?:时间线|时间|剧情|镜头|场景)?\s*(?:跳到|跳转到|快进到|切到|来到|推进到|过渡到|直接到|直接进入|进入|等到|等至|直到|跳过到|略过到|越过到)\s*([^，。！？\n]{2,48})",
         r"(?:/time|/timeline)\s+([^\n]{2,80})",
-        r"(?:跳到|跳转到|快进到|切到|来到|进入)?\s*(第\s*\d{1,5}\s*章[^，。！？\n]{0,24})",
-        r"(?:跳到|跳转到|快进到|切到|来到|进入)?\s*((?:公元)?\d{3,5}\s*年[^，。！？\n]{0,24})",
     ]
     out: list[TimeDirective] = []
     for pattern in patterns:
-        for match in re.findall(pattern, text or ""):
+        for match in re.findall(pattern, t):
             target = clean_time_value(match)
             if looks_like_time_value(target) and target not in [x.target for x in out]:
                 out.append(TimeDirective(target=target, raw=text))
+    if not out and is_bare_time_target(t):
+        target = clean_time_value(t.strip(_STRIP_EDGE))
+        if looks_like_time_value(target):
+            out.append(TimeDirective(target=target, raw=text))
     return out
 
 

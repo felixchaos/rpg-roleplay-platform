@@ -31,7 +31,8 @@ from context_providers import (
 from retrieval import retrieve_context  # noqa: F401 (retrieve_fn_compat 内部委托;保留以兼容)
 from kb.recall import retrieve_fn_compat  # P5:统一召回 flag 门控包装(默认 off=委托 retrieve_context)
 from timeline_index import timeline_filter_for_label
-from timeline_state import detect_time_directives, is_recall_framing, looks_like_time_value
+from timeline_state import (detect_time_directives, is_recall_framing,
+                            looks_like_time_value, mentions_time_without_intent)
 
 log = logging.getLogger(__name__)
 
@@ -227,8 +228,13 @@ def run_context_agent(
         target = _normalize_timeline_target(curator_plan.get("timeline_target", ""))
         # LLM 子代理(便宜直连模型)也可能把回忆/闪回误判成跳跃(行者无疆实测)。门控:输入是回忆叙述
         # 或 target 不像时点(含人称从句)→ 不发起跳跃,与确定性 detect_time_directives 同口径。
+        # v1.73.2 补第三条同口径闸:输入里的年份/章号是**叙述里顺带提到**的(既无跳跃动词、
+        # 整条输入也不只是那个时点),确定性侧已判定不是指令,LLM 侧不许绕过它自己发起跳跃
+        # ——否则修了确定性检测,子代理照样把「NPC 背景: 1968年…」读成跳转。
         if (target and not directives and not is_set
-                and not is_recall_framing(user_input) and looks_like_time_value(target)):
+                and not is_recall_framing(user_input)
+                and not mentions_time_without_intent(user_input)
+                and looks_like_time_value(target)):
             state.request_time_jump(target, user_input)
         yield step(
             "llm_curator",

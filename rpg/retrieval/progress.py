@@ -5,12 +5,32 @@ DB 访问全为函数内局部 import(platform_app.db),无模块级外部依赖�
 """
 from __future__ import annotations
 
+import re
+
 
 # task 117: 算法层 phase 推导 — 不硬编码"第一章"/"火星"/"柏林"。
 # 当 world.time 空 / state 干净时,从 save.active_phase_index + save_phase_digests
 # 或 fallback 到 script 级 phase_digests 拿当前 phase 的 chapter_range,
 # 让 BM25 / worldbook 检索被自动限制到正确的剧情阶段,而不是检索整本书。
 # 通用于任意小说 — 只要剧本导入流程跑过 phase_digest 聚合 (task 85),就有数据。
+# `phase_digests.summary` **不是摘要**——生产实测全站 521/521 条都是「第N章 · <该章开头正文>」
+# 的拼接(单条 3000 字,首行还是一整排 `====` 分隔线)。两个下游都会被它毒到:
+#   · 「当前剧情阶段 (phase fallback)」块注入它前 600 字 = 一屏 ==== 加第 1-3 章原文;
+#   · assemble 的 main_quest 派生取 `f"{label} — {summary}"[:200]` → 玩家可见的【主线】
+#     会变成「开端 — 第1章 · ============…」(仅在主线为空/仍是上次派生值时才写,所以
+#     手写过主线的档侥幸没中招)。
+# 判据取**形状**不取关键词:以「第N章 ·」开头,或含长连续分隔线 —— 命中就当没有摘要,
+# 只用 phase_label。真·摘要(LLM 产的散文)不会长这样。
+_CHAPTER_CONCAT = re.compile(r"^\s*第\s*\d+\s*章\s*·|={10,}|-{20,}")
+
+
+def _usable_phase_summary(raw: object) -> str:
+    s = str(raw or "").strip()
+    if not s or _CHAPTER_CONCAT.search(s):
+        return ""
+    return s
+
+
 def _resolve_active_phase_range(save_id: int | None, script_id: int | None,
                                 progress_chapter: int | None = None) -> dict | None:
     """返回当前 phase 的 {chapter_min, chapter_max, phase_label, summary},
@@ -96,7 +116,7 @@ def _resolve_active_phase_range(save_id: int | None, script_id: int | None,
                     "chapter_min": int(row["chapter_min"]),
                     "chapter_max": int(row["chapter_max"]),
                     "phase_label": str(row.get("phase_label") or ""),
-                    "summary": str(row.get("summary") or ""),
+                    "summary": _usable_phase_summary(row.get("summary")),
                 }
     except Exception:
         pass

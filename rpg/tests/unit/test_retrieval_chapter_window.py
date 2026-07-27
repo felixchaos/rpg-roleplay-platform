@@ -50,6 +50,13 @@ def test_label_without_chapter_number_still_empty_without_sqlite(label):
 
 
 # ── B:phase 解析必须认进度 ────────────────────────────────────────────────
+# 生产实测:phase_digests.summary 全站 521/521 条都是「第N章 · <该章开头正文>」的拼接,
+# 不是摘要。它会毒到两个下游(phase 块注入 + main_quest 派生)。
+_JUNK_SUMMARY = ("第1章 · ============================================================；"
+                 "===========================================================\n"
+                 "第2章 · 【时间线锚点：无限历元年】\n第3章 · 郑吒一直觉得自己死在现实中")
+
+
 class _FakeDB:
     """按 SQL 关键字派发的假连接。phase_digests 用剧本真实形态(每段 78 章)。"""
 
@@ -69,8 +76,8 @@ class _FakeDB:
             lbl = self.save_phase_labels.get(params[1])
             rows = [{"phase_label": lbl}] if lbl else []
         elif "from phase_digests" in s:
-            cand = [{"phase_label": p, "chapter_min": lo, "chapter_max": hi, "summary": ""}
-                    for p, lo, hi in self.PHASES]
+            cand = [{"phase_label": p, "chapter_min": lo, "chapter_max": hi,
+                     "summary": _JUNK_SUMMARY} for p, lo, hi in self.PHASES]
             if "and phase_label = %s" in s:
                 cand = [r for r in cand if r["phase_label"] == params[1]]
             elif "chapter_min <= %s and chapter_max >= %s" in s:
@@ -161,3 +168,18 @@ def test_assemble_derives_window_from_progress_before_phase():
     assert i_prog < i_phase, "进度派生窗口必须排在 phase fallback 之前"
     assert "progress_chapter=_progress_chapter" in src[i_phase: i_phase + 200], \
         "phase fallback 没把进度传下去"
+
+
+# ── phase summary 是章节原文拼接,不能当摘要用 ──────────────────────────────
+def test_junk_phase_summary_is_dropped(phase_db):
+    """否则 phase 块注入一屏 ==== + 第 1-3 章原文,main_quest 还会被派生成同样的垃圾。"""
+    phase_db(_FakeDB(active_phase_index=None))
+    assert _resolve(progress_chapter=67)["summary"] == ""
+
+
+def test_real_summary_survives():
+    from retrieval.progress import _usable_phase_summary
+    good = "主角一行人初入主神空间，完成第一场生化危机试炼并组建中洲队。"
+    assert _usable_phase_summary(good) == good
+    for junk in ["第1章 · 正文开头", "=" * 40, "-" * 30, "", None]:
+        assert _usable_phase_summary(junk) == ""
