@@ -11,7 +11,8 @@ from __future__ import annotations
 # 或 fallback 到 script 级 phase_digests 拿当前 phase 的 chapter_range,
 # 让 BM25 / worldbook 检索被自动限制到正确的剧情阶段,而不是检索整本书。
 # 通用于任意小说 — 只要剧本导入流程跑过 phase_digest 聚合 (task 85),就有数据。
-def _resolve_active_phase_range(save_id: int | None, script_id: int | None) -> dict | None:
+def _resolve_active_phase_range(save_id: int | None, script_id: int | None,
+                                progress_chapter: int | None = None) -> dict | None:
     """返回当前 phase 的 {chapter_min, chapter_max, phase_label, summary},
     或 None (DB 没数据时)。
 
@@ -20,8 +21,15 @@ def _resolve_active_phase_range(save_id: int | None, script_id: int | None) -> d
          - 如果该 index 在 save_phase_digests 有 row → 拿它的 phase_label 去
            script 级 phase_digests 查 chapter_min/max + summary
          - 否则继续到 step 2
-      2. fallback: script 级 phase_digests 按 (chapter_min, chapter_max) ASC
+      2. **progress_chapter 给了 → 取包住它的那个 phase**(下方新增)
+      3. fallback: script 级 phase_digests 按 (chapter_min, chapter_max) ASC
          取第一个 → 这就是"剧本最早期的 phase"
+
+    ⚠️ step 2 是 v1.73.1 补的。原来 step 1 一断就直接掉到 step 3,而 step 1 断得很容易——
+    `game_saves.active_phase_index` 可以指向 `save_phase_digests` 里**根本不存在的行**
+    (生产实证 save 268:active_phase_index=2,该表只有 phase 0/1)→ 静默退到「最早期
+    phase」= 第 1-78 章。玩家在第 67 章,拿到的阶段概要和检索窗口全是开篇。
+    本函数的返回值还喂给 assemble 的 main_quest 派生,所以这个洞同时让「主线永远停在开端」。
     """
     if not script_id:
         return None
@@ -53,6 +61,27 @@ def _resolve_active_phase_range(save_id: int | None, script_id: int | None) -> d
                     "order by chapter_min asc limit 1",
                     (script_id, active_phase_label),
                 ).fetchone()
+            # 进度已知 → 取包住玩家当前章的 phase(active_phase_index 断链时的正确兜底)
+            if not row and progress_chapter and int(progress_chapter) >= 1:
+                row = _db.execute(
+                    "select phase_label, chapter_min, chapter_max, summary "
+                    "from phase_digests where script_id = %s "
+                    "and chapter_min is not null and chapter_max is not null "
+                    "and chapter_min <= %s and chapter_max >= %s "
+                    "order by chapter_min desc limit 1",
+                    (script_id, int(progress_chapter), int(progress_chapter)),
+                ).fetchone()
+                if not row:
+                    # 进度超出所有 phase 区间(发散档/估章跑过头)→ 取不晚于进度的最后一个 phase,
+                    # 宁可停在玩家已走过的阶段,也绝不跳到更后面的 phase(剧透方向只退不进)。
+                    row = _db.execute(
+                        "select phase_label, chapter_min, chapter_max, summary "
+                        "from phase_digests where script_id = %s "
+                        "and chapter_min is not null and chapter_max is not null "
+                        "and chapter_min <= %s "
+                        "order by chapter_min desc limit 1",
+                        (script_id, int(progress_chapter)),
+                    ).fetchone()
             # fallback: 剧本最早期 phase (按 chapter_min asc, chapter_max asc)
             if not row:
                 row = _db.execute(

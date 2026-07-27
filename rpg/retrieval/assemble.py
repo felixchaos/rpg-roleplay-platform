@@ -157,7 +157,10 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
             # 记得发【主线】→ 主线永不 stale。非破坏:仅当 main_quest 为空、或仍是上次自动派生值
             # (=没被玩家 set_main_quest / GM【主线】手改)时刷新,保护手写主线。
             try:
-                _mqp = _resolve_active_phase_range(_save_id_prog, script_id)
+                # 带上进度:active_phase_index 断链时不再退到「最早期 phase」,
+                # 否则主线派生值永远是开篇阶段(与检索窗口同一个洞)。
+                _mqp = _resolve_active_phase_range(_save_id_prog, script_id,
+                                                   progress_chapter=_progress_chapter)
                 if _mqp and (_mqp.get("phase_label") or _mqp.get("summary")):
                     _pl = (_mqp.get("phase_label") or "").strip()
                     _ps = (_mqp.get("summary") or "").strip()
@@ -174,10 +177,23 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
             previous = (timeline.get("last_transition") or {}).get("from")
             if previous:
                 timeline_filter = timeline_filter_for_label(previous)
-        # 仍然拿不到 chapter window → 走 phase 算法 fallback
+        # 仍然拿不到 chapter window → 先用【进度派生窗口】,再退 phase。
+        # v1.73.1:phase 区间是**阶段级**的(实测该剧本每个 phase 78 章),拿它当检索窗口
+        # 等于没有窗口——ChapterFact 在 [1,78] 里 order by chapter 取头 5 条,永远第 1-5 章。
+        # _progress_chapter 才是权威进度(已含锚点底 + 前沿派生 + 揭示钳制),按它开一个与
+        # timeline_filter_for_label 同宽的窗口(ch-1..ch+1),语义一致、可预期。
+        if (not timeline_filter.get("chapter_min") or not timeline_filter.get("chapter_max")) \
+                and _progress_chapter and _progress_chapter > 1:
+            timeline_filter = dict(timeline_filter or {})
+            timeline_filter["chapter_min"] = max(1, _progress_chapter - 1)
+            timeline_filter["chapter_max"] = _progress_chapter + 1
+            timeline_filter.setdefault("anchor_chapter", _progress_chapter)
+            log.info("[retrieval] 标签无章号 → 按进度派生检索窗口: %s-%s",
+                     timeline_filter["chapter_min"], timeline_filter["chapter_max"])
         if not timeline_filter.get("chapter_min") or not timeline_filter.get("chapter_max"):
             _sid_for_phase = _resolve_save_id_from_user(user_id)
-            phase_range = _resolve_active_phase_range(_sid_for_phase, script_id)
+            phase_range = _resolve_active_phase_range(_sid_for_phase, script_id,
+                                                      progress_chapter=_progress_chapter)
             if phase_range:
                 # 覆盖 timeline_filter 的 chapter 范围,让下游 BM25/worldbook 检索按 phase 限制
                 timeline_filter = dict(timeline_filter or {})

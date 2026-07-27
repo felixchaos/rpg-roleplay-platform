@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.72.1] - 2026-07-27 (@ cf515be8c)
+
+### Fixed
+- **玩家在第 67 章,除锚点块外的检索全从第 1 章召回(群反馈:「只有锚点章节(67章)原文是对的,phase fallback 还是从第一章开始召回,Postgres ChapterFact 也是第一章开始召回,Postgres 原文片段时第六章开始召回」)**:三处独立缺陷链式放大,生产实证 save 268(progress_chapter=67,`world.time`=「第67章·回归主神空间后·…」)全部复现。① `timeline_filter_for_label` 把 `_db_available` 早退放在函数最前面,而那个 SQLite 时间线索引**只有内置 demo 剧本才有**(同函数下方还硬编码着「图卢兹/柏林」加权)→ **所有用户导入的剧本恒返回空窗口**;可章号明明就写在 `world.time` 里,`_direct_chapter` 也早就能解析,那条路纯算术、根本不需要 SQLite。修:直接章号解析提到可用性判断之前,无索引时退化为与 `_chapter_filter` 同宽的算术窗口(ch-1..ch+1)。② 空窗口 → `_resolve_active_phase_range` 兜底,而它在 `game_saves.active_phase_index` 断链时(实证:该档 active_phase_index=2,`save_phase_digests` 只有 phase 0/1)直接退到「剧本最早期 phase」=**第 1-78 章**,全程不看进度;该返回值还喂 `main_quest` 派生,所以「主线永远停在开端」是同一个洞。修:新增 progress 感知档——先取包住玩家当前章的 phase,进度超出所有区间时取不晚于进度的最后一个(剧透方向只退不进),进度未知才保留原「最早期」行为。③ ChapterFact 的 `order by chapter` + limit 在宽窗口下恒取窗口头部,即便窗口正确、只要比 limit 宽就还是第 1-5 章。修:已知进度时按 `abs(chapter - progress)` 排序取回、再按章号升序注入(给 GM 读的是时间顺序)。另在 assemble 的回退链里补上【进度派生窗口】一档,排在 phase fallback 之前——phase 区间是阶段级的(该剧本每段 78 章),拿它当检索窗口等于没有窗口。回归测试 `test_retrieval_chapter_window.py`(13 例,含回退链顺序守卫)。
+
 ## [1.72.0] - 2026-07-27 (@ 11e18f0c1)
 
 ### Added

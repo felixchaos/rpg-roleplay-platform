@@ -82,18 +82,33 @@ def retrieve_script_context(
         parts: list[str] = []
         # pin 重定向:引用剧本(pinned/floating)检索读 pin 目标的数据;非 pin 原样,零影响。
         script_id = effective_kb_script_id(db, script_id)
+        # 排序锚在玩家当前章,而不是窗口最前面。
+        # 前科(v1.73.1,群反馈「ChapterFact 从第一章开始召回」):`order by chapter` + limit
+        # 在宽窗口下恒取窗口头部——窗口一退化成 phase 区间(实测 1-78 章),玩家在第 67 章
+        # 却永远只拿到第 1-5 章的摘要。窗口收窄是根修,这里是同一病灶的第二处:即便窗口正确,
+        # 只要它比 limit 宽,靠前的章仍会挤掉玩家眼前的章。
+        # progress 未知时保持原「窗口内从前往后」行为,零变化。
+        if progress_chapter and int(progress_chapter) >= 1:
+            _order = "order by abs(chapter - %s) asc, chapter desc"
+            _order_params = (int(progress_chapter),)
+        else:
+            _order = "order by chapter"
+            _order_params = ()
         fact_rows = db.execute(
-            """
+            f"""
             select chapter, title, story_time_label, summary, events
             from chapter_facts
             where script_id = %s
               and (%s::integer is null or chapter >= %s)
               and (%s::integer is null or chapter <= %s)
-            order by chapter
+            {_order}
             limit %s
             """,
-            (script_id, chapter_min, chapter_min, chapter_max, chapter_max, max(1, top_k + 2)),
+            (script_id, chapter_min, chapter_min, chapter_max, chapter_max,
+             *_order_params, max(1, top_k + 2)),
         ).fetchall()
+        # 注入序仍按章号升序(给 GM 读的是时间顺序,不是相关性顺序)
+        fact_rows = sorted(fact_rows, key=lambda r: int(r["chapter"] or 0))
         if fact_rows:
             lines = []
             for row in fact_rows:

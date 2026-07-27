@@ -216,17 +216,35 @@ def timeline_filter_for_label(label: str, db_path: Path = DB_PATH) -> dict[str, 
     it anchors by key timeline events and nearby chapters rather than pretending to
     know exact in-world dates.
     """
-    # SQLite 索引缺失时返回空 filter，让 retrieval 走 Postgres ChapterFact 主路径
+    label = label or ""
+    # 「标签里直接写了第 N 章」这条路是**纯算术**的,不需要 SQLite。
+    # 前科(v1.73.1,群反馈「只有锚点章节原文是对的,其它块从第 1 章召回」):
+    # _db_available 的早退挡在最前面 → 这个 SQLite 索引只有内置 demo 剧本才有
+    # (函数下方还硬编码着「图卢兹/柏林」),**所有用户导入的剧本恒返回空窗口**
+    # → assemble 每回合都退到 phase fallback,取「剧本最早期 phase」= 第 1-78 章,
+    # ChapterFact 再 order by chapter 取头 5 条 = 永远第 1-5 章。玩家在第 67 章,
+    # world.time 明写着「第67章·…」,章号就在字符串里却没人解析。
+    direct_chapter = _direct_chapter(label)
+    if direct_chapter:
+        direct = _chapter_filter(direct_chapter, db_path)  # 有 SQLite 索引 → 精确路径(带边界校验)
+        if direct:
+            return direct
+        # 无索引(用户导入剧本=绝大多数)→ 退化为算术窗口,与 _chapter_filter 同宽(ch-1..ch+1),
+        # 保持两条路行为一致;confidence 略低表示没经过索引边界校验。
+        return {
+            "chapter_min": max(1, direct_chapter - 1),
+            "chapter_max": direct_chapter + 1,
+            "anchor_chapter": direct_chapter,
+            "anchor_event": f"原著第{direct_chapter}章",
+            "story_time_label": f"原著第{direct_chapter}章附近",
+            "confidence": 0.75,
+        }
+    # 标签没写章号 → 剩下的语义匹配全靠 SQLite 索引;缺文件就返回空窗口,
+    # 让 assemble 走「进度派生窗口 → phase」的后续回退链。
     if not _db_available(db_path):
         return {"chapter_min": None, "chapter_max": None, "anchor_chapter": None,
                 "anchor_event": "", "story_time_label": "", "confidence": 0.0}
     ensure_timeline_schema(db_path)
-    label = label or ""
-    direct_chapter = _direct_chapter(label)
-    if direct_chapter:
-        direct = _chapter_filter(direct_chapter, db_path)
-        if direct:
-            return direct
     conn = sqlite3.connect(str(db_path))
     try:
         cur = conn.cursor()
