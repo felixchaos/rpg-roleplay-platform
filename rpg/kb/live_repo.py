@@ -52,7 +52,12 @@ def logical_key_order(lk: str) -> tuple:
 
 def _newest_visible(db, table: str, save_id: int, commit_id: int, extra_cols: tuple[str, ...]) -> list[dict]:
     """沿谱系取每 logical_key 最新可见行(过滤 tombstone)。通用于 4 张行级表。
-    返回按 logical_key **数字感知序**(见 logical_key_order)。"""
+    返回按 logical_key **数字感知序**(见 logical_key_order)。
+
+    ⚠️ 这是「**当前 state 投影**」语义(每键只留最新版),不是「全程历史」语义。
+    情景召回(kb/episodic.py)要的是后者——同一 logical_key 的旧版本行正是被轮换出
+    memory.facts 桶的远期记忆,按键收敛会把它们全砍掉(生产实测 578 条往事 → 52 条)。
+    那边的去重维度是 **summary 文本**,别把这个函数搬过去。"""
     cols = ", ".join(extra_cols)
     sql = (
         _ANCESTRY

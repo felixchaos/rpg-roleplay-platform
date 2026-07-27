@@ -39,6 +39,31 @@ _TAVERN_CANON_READ_SUBSTR = (
 _TAVERN_KEEP_PREFIX = ("set_tavern_", "edit_tavern_", "tavern_")
 
 
+# ── 锚点/存档历史族(时间线的读写全集)——**提权名单的单一真源** ──────────────
+# 工具名前缀天然分不到一起:record_*/check_* 落 _rank 的兜底档 3、list_* 落档 1,
+# 而窗口只有 16 → 落档 3 的成员拿不到 schema,GM 只能在 tiered 目录里看见一行简介,
+# 实际从不 load。前科两次,同一个族被分两批发现:
+#   ① mark_anchor_satisfied / mark_anchor_superseded 落档 3 → 剧情锚点「推不动」;
+#   ② 本条(v1.72.4,群反馈「50 多章从来没创造过玩家锚点」):record_history_anchor
+#      在 100 个工具里排 89、list_recent_history 排 39,双双在窗口外 → 存档独立时间线
+#      这一侧**写不进也查不到**。生产实证:全站 gm_generated 锚点仅 10 条 / 3 档,
+#      877 回合的 save 268 一条没有,玩家看到的两条全是 phase digest 自动写的 system 档。
+# 修 ① 时只把「未来侧」四个名字塞进 _rank 的字面量元组,漏了「过去侧」——典型修 A 漏 B。
+# 收成一份名单:以后这个族新增工具,只改这里一处;成员资格由 tools_dsl 的注册名兜底
+# (奇偶守卫见 rpg/tests/unit/test_anchor_tool_window.py)。
+_ANCHOR_FAMILY = frozenset((
+    # 剧本未来侧:save_anchor_states
+    "list_pending_anchors", "mark_anchor_satisfied", "mark_anchor_superseded",
+    "summarize_anchors", "check_pending_anchor_drift",
+    # 存档过去侧:save_history_anchors
+    "record_history_anchor", "list_recent_history",
+))
+# 族内**必须常驻直发窗口**的子集 = 主回合闭环真正会用到的读写。
+# check_pending_anchor_drift 是排查用的反查器(GM 主循环走 list_pending_anchors +
+# mark_*),不占窗口名额;它仍在族里,受同一份奇偶守卫覆盖。
+_ANCHOR_WINDOW_PROMOTED = _ANCHOR_FAMILY - {"check_pending_anchor_drift"}
+
+
 def _tavern_drops_tool(name: str, *, bound_script_id: int | None = None) -> bool:
     n = (name or "").lower()
     # 酒馆自举工具永远保留
@@ -79,12 +104,9 @@ def build_unified_tool_list(
         # 幻觉式叙述「已修改」而不真正调用。放 -1 保证它们永远落在窗口内。
         if n.startswith(("set_tavern_", "edit_tavern_", "tavern_")):
             return -1
-        # 世界线收束锚点工具显式提权:与 search_canon 同级(0/1),保证进 GM 直发工具
-        # 窗口(默认 16)、不被挤进 backend tiered 目录。否则 mark_anchor_satisfied /
-        # mark_anchor_superseded 落 rank 3、summarize_anchors 落 rank 3,窗口满时被截 →
-        # GM 拿不到 schema、剧情锚点永远「推不动」(用户反馈根因之一)。
-        if n in ("mark_anchor_satisfied", "mark_anchor_superseded",
-                 "list_pending_anchors", "summarize_anchors"):
+        # 锚点族显式提权(名单见 _ANCHOR_WINDOW_PROMOTED):与 search_canon 同级,保证进
+        # GM 直发工具窗口、不被挤进 backend tiered 目录。
+        if n in _ANCHOR_WINDOW_PROMOTED:
             return 0
         if n.startswith(("search_canon", "lookup_", "graph_neighbors")):
             return 0

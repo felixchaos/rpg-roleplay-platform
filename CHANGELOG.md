@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.71.4] - 2026-07-27 (@ 0214cb370)
+
+### Fixed
+- **「相关往事·语义召回」5 条一模一样(群反馈)**:注入的 5 条往事正文逐字相同,只有括号里的环境描述符不同(「夜晚·路灯已亮」vs「暮色时分·路灯未亮」)。根因在 `kb/episodic.py` 的两条召回路径直接扫 COW 原表 `kb_events`——`memory.facts`/`world.known_events` 按 `fact:{i}` 位置键落库,桶一重排同一段文本就漂到别的 index 上再写一行(旧行不打 tombstone),于是一条事实在表里躺着几十上百个内容相同、只有 `story_time`/`location` 不同的副本。生产实证:单档 **108,902 活行只对应 578 段不同文本**,单个 `logical_key` 最多 1543 行 / 只有 16 段不同文本;拿真实事件向量做 40 次随机召回,**37 次 top-5 是同一段文本的 5 个副本**(不同文本数均值 1.15/5)。第二重伤害更隐蔽:关键词路径按 `id desc` 取 3000 条近因语料,里面只有 160 段不同文本 → 玩家早期真正的关键事件永远进不了打分池 = GM 对亲历剧情失忆。修:两条路径收敛到同一段 `_DEDUP_BY_SUMMARY` SQL,按 **summary 文本**去重(同文本取最近一次写入的那行)。⚠️去重维度刻意**不是** `logical_key`——按键收敛是 `live_repo._newest_visible` 的「当前 state 投影」语义,会把被轮换出 facts 桶的旧文本一并砍掉,而那些正是本模块要召回的远期记忆(同档实测 578 → 52);两处均已加注释互指。改后同档语料 3000 行/160 文本 → 505 行/505 文本,向量 top-5 恒为 5 段不同文本。
+- **跑了 877 回合的存档一条玩家历史锚点都没有(群反馈「50 多章从来没创造过玩家锚点」)**:`record_history_anchor` 名字落 `chat_tool_router._rank` 的兜底档 3,在 100 个工具里排 **89**,而 GM 直发工具窗口只有 16 → 模型永远拿不到它的 schema,只在 `tiered__load_tools` 目录里看见一行简介,实际从不 load;`list_recent_history` 排 39 同样在窗外,GM 连自己写过什么都查不了。生产实证:全站 `gm_generated` 历史锚点仅 **10 条 / 3 个存档**,66 条 `system` 全是 phase digest 自动写的——玩家看到的两条正是【Phase 1/2 浓缩】。这是同一族第二次翻车:上一次修 `mark_anchor_satisfied` / `mark_anchor_superseded` 时只把「剧本未来侧」四个名字塞进 `_rank` 的字面量元组,漏了「存档过去侧」(修 A 漏 B)。修:族成员收成单一名单 `_ANCHOR_FAMILY` + 提权子集 `_ANCHOR_WINDOW_PROMOTED`,新增成员只改一处;`check_pending_anchor_drift` 是排查用反查器(其自身描述即写「GM 一般不需要主动调」),留在族里但不占窗口名额。窗口默认 **16 → 18**:窗口是硬名额不是软优先级,16 会让提权把 `get_current_scene`/`get_game_state` 挤出去,18 保证改动**只增不减**(改前直发的工具一个不少),代价约 +2 条 schema ≈ 400 token/轮。回归测试 `test_anchor_tool_window.py`(族成员资格 + 两模式窗口内 + 核心状态读不被挤出 + 酒馆自管理工具仍居首);顺手把 3 处把窗口大小抄成字面量 `16` 的既有测试改为读 `tool_window_size()`(抄字面量正是它们这次假红的原因)。
+
 ## [1.71.3] - 2026-07-26 (@ 30ff86522)
 
 ### Fixed

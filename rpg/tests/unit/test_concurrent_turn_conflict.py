@@ -137,9 +137,20 @@ class RewriteRetiresKbEvents(unittest.TestCase):
 
     def test_episodic_corpus_filters_retired(self):
         # 语料查询确实带 retired 过滤(退役才有意义)——孪生保证:改这些查询不能丢掉该谓词。
+        # v1.72.4 起两条路径共用 _DEDUP_BY_SUMMARY 一段 SQL(原本各写一份、各带一次谓词),
+        # 所以断言从「出现 ≥2 次」改成「谓词在共享片段里 + 两条路径都真的用了共享片段」——
+        # 覆盖面只增不减:任一路径绕开共享片段自己拼 SQL 会被抓住。
+        from kb import episodic as _epi
+        self.assertIn("retired_at_commit is null", _epi._DEDUP_BY_SUMMARY)
         epi = (RPG / "kb" / "episodic.py").read_text(encoding="utf-8")
-        # 向量路径 + 关键词路径都必须过滤 retired_at_commit is null
-        self.assertGreaterEqual(epi.count("retired_at_commit is null"), 2)
+        for fn in ("_retrieve_vector", "_fetch_keyword_corpus"):
+            body = _func_body(epi, fn)
+            self.assertIn("_DEDUP_BY_SUMMARY", body, f"{fn} 没走共享去重片段")
+            # 谱系谓词只该出现在共享片段里。函数体里再出现一次 = 自己拼了条平行语料查询
+            # (那条必然绕过 retired 过滤与文本去重)。_retrieve_vector 里那句
+            # `select 1 from kb_events ... limit 1` 是存在性门、不带谱系,故不误伤。
+            self.assertNotIn("select cid from ancestry", body,
+                             f"{fn} 绕开共享片段自己拼了语料查询")
 
 
 if __name__ == "__main__":

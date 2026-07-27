@@ -30,6 +30,32 @@ _STOP_GRAMS = frozenset((
     "告诉", "打算", "准备", "想起", "回想",
 ))
 _VECTOR_SCORE_FLOOR = 0.45  # 向量路径相关性下限:top-k 无阈值会把不相关往事硬塞满 5 条
+
+# ── 语料去重:同一 summary 文本只留一行(**两条召回路径共用的唯一收敛缝**) ──────
+# kb_events 是 COW 表:memory.facts / world.known_events 每次落库都按 fact:{i} 位置键写,
+# 桶一重排,同一段文本就漂到别的 index 上再写一行(旧行不打 tombstone)。于是一条事实在
+# 表里躺着几十上百个内容相同、只有 story_time/location 不同的副本。
+# 前科(v1.72.4,群反馈「相关往事 5 条都一样」):生产单档 108,902 活行只对应 578 条不同
+# 文本,单个 logical_key 最多 1543 行 / 只有 16 段不同文本。后果两重——
+#   ① top-k 被同一条事实的不同时刻版本占满(玩家截图:5 条正文逐字相同,只有括号里的
+#      「夜晚·路灯已亮 / 暮色时分·路灯未亮」不同);
+#   ② 关键词路径按 id desc 取近因语料,3000 行里只有 160 段不同文本 → 玩家早期真正的
+#      关键事件永远进不了打分池 = GM 对亲历剧情失忆。
+# ⚠️ 去重维度是 **summary 文本**,不是 logical_key。按键收敛(live_repo._newest_visible
+# 那套「当前 state 投影」语义)会把被轮换出 facts 桶的旧文本一并砍掉——而那些正是本模块
+# 要召回的远期记忆(同档实测 578 → 52)。同文本取 id 最大的一行(最近一次写入的环境描述符)。
+_DEDUP_BY_SUMMARY = """
+, live as (
+    select distinct on (summary) id, {cols}
+    from kb_events
+    where save_id = %(save)s
+      and born_commit in (select cid from ancestry)
+      and retired_at_commit is null
+      and coalesce(summary, '') <> ''
+      {extra_where}
+    order by summary, id desc
+)
+"""
 _KEYWORD_SCORE_FLOOR = 3    # 关键词路径:单三字 gram(如人名)=3 可过;单二字 gram(=2)永不过
 _KEYWORD_CORPUS_CAP = 3000  # 每次最多拉多少条事件参与打分(防超长档拖慢;近因优先)
 
@@ -293,7 +319,11 @@ def retrieve_episodic_merged(
 def _retrieve_vector(
     save_id: int, commit_id: int, user_id: int | None, query_text: str, *, k: int = 5,
 ) -> list[dict]:
-    """向量路径(带存在性门+相关性下限)。无嵌入/无 embedder/全不过阈 → []。"""
+    """向量路径(带存在性门+相关性下限)。无嵌入/无 embedder/全不过阈 → []。
+
+    语料按 **summary 文本**去重(见 _DEDUP_BY_SUMMARY):否则同一条事实的 N 个 COW
+    版本行(向量几乎相同)会把 top-k 全部占满,玩家看到「5 条往事一模一样、只有括号里的
+    环境描述符不同」。"""
     from kb.live_repo import _ANCESTRY
     from platform_app.db import connect, init_db
     init_db()
@@ -311,14 +341,13 @@ def _retrieve_vector(
         qv = None
     if not qv:
         return []
-    sql = _ANCESTRY + """
+    sql = _ANCESTRY + _DEDUP_BY_SUMMARY.format(
+        cols="logical_key, summary, story_time, location, participants, embedding_vec",
+        extra_where="and embedding_vec is not null",
+    ) + """
     select logical_key, summary, story_time, location, participants,
            (1 - (embedding_vec <=> %(qv)s::vector)) as score
-    from kb_events
-    where save_id = %(save)s
-      and born_commit in (select cid from ancestry)
-      and retired_at_commit is null
-      and embedding_vec is not null
+    from live
     order by embedding_vec <=> %(qv)s::vector
     limit %(k)s
     """
@@ -339,28 +368,33 @@ def _fetch_keyword_corpus(save_id: int, commit_id: int) -> list[dict]:
     深审 X4(数据实证:exp2 档 RATH 产物已占 80%):RATH 离线心跳/场景与玩家事件共享
     同一近因窗口,挂机越久玩家自己的早期关键事件被挤出越快=GM 对亲历剧情失忆。
     分池配额:玩家事件满额 _KEYWORD_CORPUS_CAP,rath_% 走独立小配额(仍可召回离线
-    世界发生的事——那是 RATH 设计意图,只是不再挤兑玩家池)。"""
+    世界发生的事——那是 RATH 设计意图,只是不再挤兑玩家池)。
+
+    ⚠️ 近因配额只有在语料**先按文本去重**后才有意义(见 _DEDUP_BY_SUMMARY):直接扫 COW
+    原表时,3000 条近因里生产实测只有 160 段不同文本,玩家早期真正的关键事件永远进不了
+    打分池。去重后同档 578 段全进(< cap),近因裁剪实际不再发生。"""
     from kb.live_repo import _ANCESTRY
     from platform_app.db import connect, init_db
     init_db()
-    _base = r"""
+    _tail = """
     select id, logical_key, summary, story_time, location, participants
-    from kb_events
-    where save_id = %(save)s
-      and born_commit in (select cid from ancestry)
-      and retired_at_commit is null
-      and coalesce(summary, '') <> ''
-      and logical_key {rath_op} 'rath\_%%'
+    from live
     order by id desc
     limit %(cap)s
     """
+    def _sql(rath_op: str) -> str:
+        return (_ANCESTRY
+                + _DEDUP_BY_SUMMARY.format(
+                    cols="logical_key, summary, story_time, location, participants",
+                    extra_where=rf"and logical_key {rath_op} 'rath\_%%'")
+                + _tail)
     with connect() as db:
         rows = db.execute(
-            _ANCESTRY + _base.format(rath_op="not like"),
+            _sql("not like"),
             {"commit": int(commit_id), "save": int(save_id), "cap": _KEYWORD_CORPUS_CAP},
         ).fetchall()
         rath_rows = db.execute(
-            _ANCESTRY + _base.format(rath_op="like"),
+            _sql("like"),
             {"commit": int(commit_id), "save": int(save_id), "cap": _RATH_CORPUS_CAP},
         ).fetchall()
     return [dict(r) for r in (rows or [])] + [dict(r) for r in (rath_rows or [])]

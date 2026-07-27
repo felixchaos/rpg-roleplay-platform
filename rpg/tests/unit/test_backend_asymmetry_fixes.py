@@ -204,7 +204,10 @@ def test_openai_compat_tiered_load_then_call_roundtrip(monkeypatch):
     from tools_dsl.chat_tool_router import build_unified_tool_list
     ensure_registered()
     tav = build_unified_tool_list([], origin="llm_chat", mode="tavern_gm", bound_script_id=None)
-    _win, ovf, _cat = _tiered.split_window(tav, 16, True)
+    # 窗口大小取配置真值,别抄字面量(理由同 test_tiered_tools)。
+    from core.config import tool_window_size
+    _W = tool_window_size()
+    _win, ovf, _cat = _tiered.split_window(tav, _W, True)
     assert ovf, "应有窗口外工具"
     target = next(iter(ovf))  # 某个窗口外工具的 full name
 
@@ -238,7 +241,7 @@ def test_openai_compat_tiered_load_then_call_roundtrip(monkeypatch):
     # 轮1:窗口工具 + load_tools,target 还没在
     assert _tiered.LOAD_TOOLS_FULL_NAME in tools_seen[0]
     assert target not in tools_seen[0]
-    assert len(tools_seen[0]) <= 16 + 1  # 窗口16 + load_tools
+    assert len(tools_seen[0]) <= _W + 1  # 窗口 + load_tools
     # 轮2:load 之后 target 被 append 进工具数组
     assert target in tools_seen[1], "load 后 target 应出现在工具数组"
     # target 真的被 dispatch,load_tools 没走 dispatcher
@@ -255,7 +258,9 @@ def test_openai_compat_tiered_disabled_discards_overflow(monkeypatch):
     from tools_dsl.chat_tool_router import build_unified_tool_list
     ensure_registered()
     tav = build_unified_tool_list([], origin="llm_chat", mode="tavern_gm", bound_script_id=None)
-    assert len(tav) > 16
+    from core.config import tool_window_size
+    _W = tool_window_size()
+    assert len(tav) > _W
 
     be = _oai_backend()
     tools_seen: list[list[str]] = []
@@ -269,6 +274,6 @@ def test_openai_compat_tiered_disabled_discards_overflow(monkeypatch):
     list(be.stream_with_mcp_loop("sys", [{"role": "user", "content": "hi"}], tav, 2, 256, lambda *a: {"ok": True}))
 
     assert tools_seen, "至少发一次请求"
-    # 禁用阶梯化:只发窗口内 16 个,无 load_tools 目录
+    # 禁用阶梯化:只发窗口内那些,无 load_tools 目录
     assert _tiered.LOAD_TOOLS_FULL_NAME not in tools_seen[0]
-    assert len(tools_seen[0]) == 16
+    assert len(tools_seen[0]) == _W

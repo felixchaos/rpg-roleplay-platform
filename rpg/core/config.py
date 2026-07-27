@@ -60,12 +60,18 @@ def tool_window_size() -> int:
 
     窗口越小,每轮工具 token 越省(91 个全发约 9.5k token);但窗口外工具要多一次 load 往返。
     chat_tool_router 已按 _rank 排序(酒馆自管理 set_tavern_*/tavern_* 排最前 → 永远在窗口内),
-    所以默认 16 足以让酒馆核心工具与常用读取工具常驻、其余(建卡/生图/anchor 等)按需加载。
-    RPG_TOOL_WINDOW 覆盖。"""
+    常用读取工具与锚点族次之,其余(建卡/生图等)按需加载。RPG_TOOL_WINDOW 覆盖。
+
+    默认 16 → 18(v1.72.4):窗口是**硬名额**,不是软优先级——挤出去的工具实测等于消失
+    (模型极少主动 load,见 chat_tool_router._ANCHOR_FAMILY 的两次前科)。锚点族补进
+    record_history_anchor / list_recent_history 后,rank 0 占 10 个;酒馆模式还有 5 个
+    rank -1 自管理工具,16 会把 get_current_scene / get_game_state 一并挤出窗口。18 让
+    改动**只增不减**(改前直发的工具一个不少),代价约 +2 条 schema ≈ 400 token/轮。
+    再往族里加工具前先算这笔账:窗口需 ≥ 5(酒馆) + rank0 个数 + 3(核心 get_*)。"""
     try:
-        n = int(os.getenv("RPG_TOOL_WINDOW", "16"))
+        n = int(os.getenv("RPG_TOOL_WINDOW", "18"))
     except (TypeError, ValueError):
-        n = 16
+        n = 18
     return max(1, n)
 
 # ── 网络 ─────────────────────────────────────────────────────────────────

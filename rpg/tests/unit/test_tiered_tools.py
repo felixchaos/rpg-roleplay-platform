@@ -128,8 +128,12 @@ class TestAnthropicLoadToolsRoundTrip(unittest.TestCase):
         from tools_dsl.command_tools_register import ensure_registered
         from tools_dsl.chat_tool_router import build_unified_tool_list
         ensure_registered()
+        from core.config import tool_window_size
         tav = build_unified_tool_list([], origin="llm_chat", mode="tavern_gm", bound_script_id=None)
-        win_tools, ovf, _cat = _tiered.split_window(tav, 16, True)
+        # 窗口大小取配置真值,别抄字面量——抄了就会在调 RPG_TOOL_WINDOW 默认值时假红
+        # (v1.72.4:16→18,ovf 里挑的 target 其实已进窗口,断言 'target 不在轮1' 必炸)。
+        _W = tool_window_size()
+        win_tools, ovf, _cat = _tiered.split_window(tav, _W, True)
         self.assertTrue(ovf, "应有窗口外工具")
         target = next(iter(ovf))  # 某个窗口外工具的 full name
 
@@ -167,7 +171,7 @@ class TestAnthropicLoadToolsRoundTrip(unittest.TestCase):
         # 轮1:窗口工具 + load_tools,target 还没在
         self.assertIn(_tiered.LOAD_TOOLS_FULL_NAME, seen_tool_names[0])
         self.assertNotIn(target, seen_tool_names[0])
-        self.assertLessEqual(len(seen_tool_names[0]), 16 + 1)  # 窗口16 + load_tools
+        self.assertLessEqual(len(seen_tool_names[0]), _W + 1)  # 窗口 + load_tools
         # 轮2:load 之后 target 被 append 进工具数组
         self.assertIn(target, seen_tool_names[1], "load 后 target 应出现在工具数组")
         # target 工具真的被 dispatch(且 load_tools 没走 dispatcher)
