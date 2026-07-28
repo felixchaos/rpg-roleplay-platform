@@ -45,7 +45,7 @@ def _client_safe_error(exc: Exception) -> str:
     绝不能直透进 SSE 给玩家。原始异常带 error_id 写服务端日志,客户端只拿 id 便于排障对账。
     已知提供商错误(余额/key/限流)走 agents.provider_errors 统一分类,给可行动文案。
     """
-    from agents.provider_errors import classify_provider_error
+    from agents.provider_errors import classify_provider_error, redact_secrets
 
     # 字母前缀:token_hex(4) 约 2% 概率全是数字(如 65969875),紧跟「余额/配额已用尽」
     # 文案会被用户误读成「本轮消耗了 6500 万 token」(生产实况:用户 @拾酒 据此问"token 消耗
@@ -58,7 +58,16 @@ def _client_safe_error(exc: Exception) -> str:
     known = classify_provider_error(exc)
     if known:
         category, message = known
-        _log.warning("[chat] client-safe %s stream error (error_id=%s): %s", category, error_id, type(exc).__name__)
+        # v1.73.5:服务端日志必须留下 provider 的原话(脱敏后)。
+        # 原来这里只记 `type(exc).__name__`(如 "PermissionDeniedError")—— 客户端不回显
+        # str(exc) 是对的(可能含路径/SDK 内部细节),但**日志是我们自己的**,把唯一能定位问题
+        # 的那句话也丢掉,等于自断排查路。前科(星色マジック,xai/grok 403):生产日志里只有
+        # "PermissionDeniedError",24h 内 200/403 交替也说不出对面到底拒了什么,只能靠对
+        # api.x.ai 发无凭据探针反推「403 不是没凭据(那是 401)」。而未知异常走的 _log.exception
+        # 本来就会记全文 —— 偏偏是**已分类**的提供商错误(最需要原话的那类)被吞了,不对称。
+        # redact_secrets 按形状打码 key,不枚举供应商前缀。
+        _log.warning("[chat] client-safe %s stream error (error_id=%s): %s | provider: %s",
+                     category, error_id, type(exc).__name__, redact_secrets(exc))
         return f"{message}(错误码 {error_id})"
     _log.exception("[chat] unhandled stream error (error_id=%s)", error_id)
     return f"本轮处理出错,请重试(错误码 {error_id})"

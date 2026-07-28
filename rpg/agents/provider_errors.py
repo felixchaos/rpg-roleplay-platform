@@ -6,7 +6,10 @@ routes/game.py 的 SSE 错误面与 console_assistant 的 llm loop 共用此分�
 
 文案必须客户端安全:固定中文文案,不回显 str(exc)(可能含路径/凭据/SDK 内部细节)。
 """
+
 from __future__ import annotations
+
+import re as _re
 
 # 余额/计费配额耗尽:充值才能解决。注意 OpenAI 的 insufficient_quota 走 HTTP 429,
 # 但本质是计费问题,必须先于限流判定。
@@ -24,9 +27,14 @@ _AUTH_MARKERS = (
     "please pass a valid api key",   # Google "API key not valid. Please pass a valid API key."
     "401 unauthorized",
     "authentication fails",          # DeepSeek 401 "Authentication Fails (no such user)"
+)
+
+# 403 的文本特征单独一组:状态码被 SDK 吞掉时也要走 403 文案,别落进「key 无效/过期」的断言。
+# (原来这三条混在 _AUTH_MARKERS 里,任何 403 都会被说成 key 失效 —— 见下方 403 分支的注释。)
+_FORBIDDEN_MARKERS = (
     "403 forbidden",                 # 中转站/聚合站对无权限模型常返 403
     "http error 403",                # urllib HTTPError 文案
-    "forbidden",                     # 通用 403 reason phrase(key/套餐无该模型权限)
+    "forbidden",                     # 通用 403 reason phrase
 )
 
 # 限流/速率配额:稍后重试可恢复。Google/Vertex 的 RESOURCE_EXHAUSTED(429)归这类
@@ -83,6 +91,42 @@ def _http_status(exc: Exception) -> int | None:
     return None
 
 
+# 形如 API key / Bearer token 的串:带进日志或客户端文案都不行。按**形状**打码,
+# 不枚举供应商前缀(sk-/xai-/AIza… 各家不同,枚举必漏)。
+_SECRET_SHAPE = _re.compile(
+    r"\b(?:bearer\s+)?[A-Za-z0-9_\-]{2,10}[-_][A-Za-z0-9_\-]{20,}\b"   # sk-… / xai-… / 中转站前缀
+    r"|\bbearer\s+[A-Za-z0-9._\-]{16,}\b"
+    r"|\b[A-Za-z0-9]{32,}\b",                                          # 无前缀长串
+    _re.IGNORECASE,
+)
+
+
+def redact_secrets(text: str, *, limit: int = 400) -> str:
+    """把疑似密钥的串打码并截断。用于**服务端日志**与客户端文案的共同前置。"""
+    s = _SECRET_SHAPE.sub("<redacted>", str(text or "").strip())
+    s = " ".join(s.split())
+    return s[:limit] + ("…" if len(s) > limit else "")
+
+
+def _provider_detail(exc: Exception) -> str:
+    """取 provider 返回的可读原因(已脱敏截断)。
+
+    SDK 异常的 str() 通常已含响应体;openai SDK 另有 .body(dict)。两者都试,优先 .body
+    里的 message/error 字段——它比 str(exc) 干净(不带 URL/状态行)。
+    """
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        for k in ("message", "error", "detail", "code"):
+            v = body.get(k)
+            if isinstance(v, str) and v.strip():
+                return redact_secrets(v, limit=200)
+            if isinstance(v, dict):
+                vv = v.get("message") or v.get("error")
+                if isinstance(vv, str) and vv.strip():
+                    return redact_secrets(vv, limit=200)
+    return redact_secrets(exc, limit=200)
+
+
 def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
     """已知提供商错误 → (category, 客户端安全文案);未知返回 None(调用方走各自兜底)。
 
@@ -95,9 +139,21 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
         return ("balance",
                 "当前模型的 API 账户余额不足或配额已用尽，重试无法恢复。"
                 "请前往对应 API 提供商充值，或到「设置 → API 设置」切换其他已配置的模型。")
-    if status in (401, 403) or any(m in raw_lower for m in _AUTH_MARKERS):
+    # 403 ≠ key 失效。群反馈(星色マジック,2026-07-28,xai/grok):同一个 key 在 SillyTavern
+    # 一直好用,在这里「说不了几句就提示凭证过期 403」。实测 api.x.ai **无凭据时返回 401**
+    # (`{"code":"unauthenticated:no-credentials"}`),它的 403 是别的原因(拒绝该请求),而且
+    # 生产日志里 200/403 交替(24h 内 21 次 200、12 次 403)—— 断言「key 无效/已过期」把用户
+    # 支去查一个根本没坏的东西。故 403 单独成文案:说清是「被拒绝」,并把 provider 自己的原话
+    # 带给用户(那是唯一可行动的信息);401 才保留「key 无效/过期」的断言。
+    if status == 403 or any(m in raw_lower for m in _FORBIDDEN_MARKERS):
+        return ("auth", "当前模型的请求被提供商拒绝(HTTP 403)。"
+                        "403 通常**不是** key 失效(多数提供商 key 无效返 401),"
+                        "更常见的是该 key/套餐无权访问此模型、或该请求内容被提供商策略拦下。"
+                        f"提供商原话:{_provider_detail(exc) or '(未提供)'} "
+                        "可先换一个模型试;若同一 key 在别处能用,多半是这个模型或这段内容的问题。")
+    if status == 401 or any(m in raw_lower for m in _AUTH_MARKERS):
         return ("auth",
-                "当前模型的 API Key 无效、已过期,或该 key 无权访问此模型(401/403 Forbidden)。"
+                "当前模型的 API Key 无效、已过期,或该 key 无权访问此模型(401 Unauthorized)。"
                 "请到「模型与密钥」重新测试凭证、确认该 key/套餐包含此模型,或切换到已配置的其他模型。")
     if status == 429 or any(m in raw_lower for m in _RATELIMIT_MARKERS):
         return ("ratelimit",

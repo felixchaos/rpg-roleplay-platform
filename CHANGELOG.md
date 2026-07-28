@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.72.5] - 2026-07-28 (@ d2f13b2e7)
+
+### Fixed
+- **403 被说成「凭证过期」,把用户支去查一个没坏的 key(群反馈:「能用 grok,但是说不了几句就会提示我凭证过期 403」「同一个 api key 在 sillytavern 依然能用」)**:`classify_provider_error` 把 401 与 403 合并成同一句「API Key 无效、已过期」。从生产机对 `api.x.ai` 发**无凭据**探针实测:它没有凭据时返回的是 **401**(`{"code":"unauthenticated:no-credentials"}`),403 是别的原因;生产日志里该用户 24h 内 **21 次 200 / 12 次 403 交替**,key 显然没失效。修:403 单独成文案——说清是「被提供商拒绝」、点明 403 通常不是 key 失效、并把 **provider 自己那句原话**(脱敏截断后)带给用户,401 才保留「key 无效/过期」的断言;`_AUTH_MARKERS` 里混着的三条 403 文本特征(`403 forbidden`/`http error 403`/`forbidden`)拆进新的 `_FORBIDDEN_MARKERS`,状态码被 SDK 吞掉时也走 403 文案。
+- **已分类的提供商错误把原话丢了,服务端日志无从排查**:`_client_safe_error` 对 `classify_provider_error` 命中的异常只记 `type(exc).__name__`(生产日志里就只有一行 `PermissionDeniedError`),而**未知**异常走 `_log.exception` 反倒记全文——最需要原话的那类被吞了,不对称。上面那个 403 也正因如此只能靠外部探针反推。修:已分类分支同样把 provider 原话写进服务端日志,经新增的 `redact_secrets` 按**形状**打码(不枚举 `sk-`/`xai-`/`AIza` 等前缀,枚举必漏)后再落盘;客户端文案仍不回显 `str(exc)`,契约不变。回归测试 `test_provider_403_not_expired_key.py`(15 例,含 4 种 key 形状的脱敏与「日志里也不许出现明文 key」)。
+
 ## [1.72.4] - 2026-07-28 (@ cc16356fe)
 
 ### Fixed
