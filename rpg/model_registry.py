@@ -140,9 +140,11 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
         },
         {
             "id": "doubao",
-            "display_name": "Doubao",
+            # 显示名带上「火山方舟 / Volcengine Ark」:用户是按平台名找的(群反馈原话「火山的」),
+            # 只写 "Doubao" 在列表里搜不到、也认不出来。
+            "display_name": "火山方舟 Doubao (Volcengine Ark)",
             "kind": "openai_compat",
-            "enabled": False,
+            "enabled": True,
             "credential_env": "ARK_API_KEY",
             "base_url": "https://ark.cn-beijing.volces.com/api/v3",
             "models": [],
@@ -180,7 +182,12 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
 # 缺了会导致选择器里没有、GM 调用降级失败(用户实测 Google AI Studio「找不到」)。
 # google_ai_studio 仍需【存在】(find_api 不返 None、存量凭据/模型解析不硬崩),但已归入
 # _DEPRECATED_APIS 强制 disabled(地区封禁不可用,统一走 Vertex)。
-_CURATED_REQUIRED_APIS = {"google_ai_studio"}
+# doubao = 火山方舟(Volcengine Ark)。群反馈(行者无疆 2026-07-28)问「火山的能用吗」并手填了
+# `.../api/plan`、`.../api/plan/v3` 两个都不对 —— 根因不是他填错,是这条 provider 在 catalog 里
+# enabled=false、**根本不出现在供应商列表**,用户只能自己猜接口地址。它的 base_url 早就正确地写在
+# DEFAULT_MODEL_CATALOG(`https://ark.cn-beijing.volces.com/api/v3`),只差露出来。进策展白名单后
+# serve 时强制 enabled(凭据闸仍只让配了 key 的人看到模型),存量 DB catalog 也会自愈,无需改库。
+_CURATED_REQUIRED_APIS = {"google_ai_studio", "doubao"}
 
 # 已下架 provider:仍保留在 catalog 里(向后兼容),但无论持久化 catalog 存成什么,serve 时
 # 强制 enabled=False —— 不进模型选择器、不进添加候选。google_ai_studio 因 Google 封机房 IP 下架。

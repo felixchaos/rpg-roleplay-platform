@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.73.0] - 2026-07-28 (@ 454f43990)
+
+### Added
+- **火山方舟(Volcengine Ark / 豆包)接入供应商列表**(群反馈:「火山的能用吗()格式试了两个都不对,用的 `.../api/plan` 和 `.../api/plan/v3`」):真因不是他填错——`doubao` 这条 provider 的 base_url 早就正确地写在 catalog(`https://ark.cn-beijing.volces.com/api/v3`),但 `enabled=false`,**根本不出现在供应商列表里**,用户只能自己猜接口地址。而 ark 网关**先验鉴权再路由**(实测 `/api/v3/chat/completions`、`/api/plan`、`/api/plan/v3` 任意路径都回 401 `AuthenticationError`,不是 404),填错路径只会看到「key 无效」,没法从报错反推是路径写错了。两处修:① `doubao` 进 `_CURATED_REQUIRED_APIS`(策展白名单)→ serve 时强制 `enabled`,**存量 DB catalog 自愈、无需改库**;`display_name` 从 `Doubao` 改成「火山方舟 Doubao (Volcengine Ark)」——用户是按平台名找的,只写 Doubao 在列表里认不出来。② `_normalize_openai_base_url` 按 **host** 确定性收敛:`*.volces.com` 且路径不含 `/api/v3` → 一律纠正为 `<scheme>://<host>/api/v3`,把 `/api`、`/api/plan`、`/api/plan/v3`、裸域名、缺 scheme、其它 region 全兜住(写时+读时都过一遍,历史误填也自愈)。模型清单不写死:配好 key 后由既有的「配 key 自动同步 `/models`」拉真实列表。回归测试 `test_volcengine_ark_provider.py`(17 例,含存量 catalog 自愈、下架 provider 不被误开、其它 provider 的 base_url 零误伤、Google 既有自愈规则不受影响)。
+
 ## [1.72.6] - 2026-07-28 (@ e9484f328)
 
 ### Fixed

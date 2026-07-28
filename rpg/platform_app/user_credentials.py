@@ -151,6 +151,20 @@ def _normalize_openai_base_url(url: str) -> str:
     _low = s.lower()
     if "generativelanguage.googleapis.com" in _low and _low.endswith("/v1beta"):
         s = s + "/openai"
+    # 火山方舟(Volcengine Ark)的 OpenAI 兼容端点固定在 `/api/v3`。群反馈(行者无疆 2026-07-28)
+    # 手填了 `.../api/plan` 和 `.../api/plan/v3`「两个都不对」——ark 网关**先验鉴权再路由**
+    # (实测任意路径都回 401 AuthenticationError),用户填错路径时拿到的是「key 无效」而非 404,
+    # 根本没法从报错反推是路径错了。所以这里按 host 确定性纠正:ark.*.volces.com 一律收敛到
+    # `<scheme>://<host>/api/v3`,把 /api、/api/plan、/api/plan/v3、裸域名、多余尾巴全兜住。
+    # (bots/应用端点 `/api/v3/bots/chat/completions` 也是在这个 base 之上,不受影响。)
+    if ".volces.com" in _low and "/api/v3" not in _low:
+        try:
+            from urllib.parse import urlsplit
+            _u = urlsplit(s if "://" in s else "https://" + s)
+            if _u.hostname and _u.hostname.lower().endswith(".volces.com"):
+                s = f"{_u.scheme or 'https'}://{_u.netloc}/api/v3"
+        except Exception:
+            pass
     return s
 
 

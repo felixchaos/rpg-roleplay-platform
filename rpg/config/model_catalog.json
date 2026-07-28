@@ -137,9 +137,9 @@
     },
     {
       "id": "doubao",
-      "display_name": "Doubao",
+      "display_name": "火山方舟 Doubao (Volcengine Ark)",
       "kind": "openai_compat",
-      "enabled": false,
+      "enabled": true,
       "credential_ref": "",
       "credential_env": "ARK_API_KEY",
       "base_url": "https://ark.cn-beijing.volces.com/api/v3",
