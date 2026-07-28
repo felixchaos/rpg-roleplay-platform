@@ -713,7 +713,8 @@
       "providers": {
         "note_openrouter": "可填中转站 OpenAI-compat 端点（如 https://your-proxy.com/v1），鉴权方式不变（Bearer）",
         "note_agent_platform": "上传 Service Account JSON（含 client_email / private_key / project_id）",
-        "note_dashscope": "支持 OpenAI-compat 模式（/compatible-mode/v1）或 native DashScope 协议"
+        "note_dashscope": "支持 OpenAI-compat 模式（/compatible-mode/v1）或 native DashScope 协议",
+        "note_doubao": "OpenAI 兼容端点在 /api/v3。火山「Agent Plan」是另一个入口(/api/plan,Anthropic 原生格式),请用「自定义」添加"
       },
       "migrate": {
         "stage_scripts": "剧本",

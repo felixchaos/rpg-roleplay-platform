@@ -209,6 +209,18 @@ const PROVIDERS_CONFIG = [
     special: "alibaba_qwen",
     noteKey: "settings.more.providers.note_dashscope",
   },
+  {
+    // 火山方舟(Volcengine Ark)。群反馈(行者无疆 2026-07-28)问「火山的能用吗」,自己猜地址猜不中。
+    // ⚠️ 本列表是**前端写死的**,与后端 model_registry 的 catalog 是两份东西 —— v1.74.0 只在后端
+    // 把 doubao 启用了,这里没加,所以他刷新后「还是没看到」。加 provider 必须两边一起改。
+    // 火山同一域名下有两个不同产品的入口,这里给的是 OpenAI 兼容那条(doubao 系模型):
+    //   · /api/v3   —— Ark OpenAI 兼容(本条)
+    //   · /api/plan —— Agent Plan(Anthropic Messages 原生 + AUTH_TOKEN),走「自定义」配
+    id: "doubao", name: "火山方舟 Doubao (Volcengine Ark)", kind: "openai_compat",
+    defaultBase: "https://ark.cn-beijing.volces.com/api/v3",
+    keyEnv: "ARK_API_KEY",
+    noteKey: "settings.more.providers.note_doubao",
+  },
 ];
 
 export {

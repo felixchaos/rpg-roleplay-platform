@@ -9,6 +9,13 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.73.2] - 2026-07-28 (@ fbea24729)
+
+### Fixed
+- **v1.74.0 的火山方舟接入只改了一半,用户刷新后「还是没看到」**:供应商其实有**两份互不知情的清单** —— 后端 `model_catalog.json` / `model_registry`(决定 provider 是否存在、base_url、GM 能否解析)与前端 `components/settings/models-catalog.js` 里**写死的 `PROVIDERS_CONFIG` 数组**(决定「添加供应商」下拉里能不能选到)。上一版只改了后端,下拉里自然还是没有。修:前端清单补上火山方舟;新增 `provider-list-parity.test.js` 锁双向一致(后端 `enabled` 的必须能在下拉里选到、两边 `base_url` 必须相同、豁免项必须写明理由且不许过期)。
+- **撤回 v1.74.0 的 `*.volces.com → /api/v3` base_url 自愈 —— 那条规则是错的,会改坏用户正确的配置**:当时以为反馈者把 `/api/plan` 写错了,实际他原话是「agent plan 给的是这个地址」——火山方舟同一域名下至少有**两个不同产品**的入口:`/api/v3`(Ark OpenAI 兼容,doubao 系模型)与 `/api/plan`(Agent Plan,Anthropic Messages 原生 + `AUTH_TOKEN`)。按 host 一刀切改写会把人家从火山控制台拿到的合法 Agent Plan 地址悄悄改成打不开的 `/api/v3`;而 ark 网关**先验鉴权再路由**(任意路径都回 401 `AuthenticationError`),用户根本看不出地址被动过手脚。教训写进注释与测试:**base_url 自愈只能针对同一产品公认的写法歧义**(如 Google 少写 `/openai`),一个域名下有多产品时,猜哪个都是错的。Google 那条自愈不受影响。
+- 供应商说明文案(`note_doubao`)点明两个入口的区别:OpenAI 兼容走预设的 `/api/v3`,Agent Plan 走「自定义 + Anthropic Messages(原生)」配 `/api/plan`。
+
 ## [1.73.1] - 2026-07-28 (@ 43d833cc1)
 
 ### Fixed

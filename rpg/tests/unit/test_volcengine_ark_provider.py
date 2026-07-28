@@ -82,39 +82,38 @@ def test_deprecated_provider_still_forced_off():
     assert healed["apis"][0]["enabled"] is False
 
 
-# ── ② base_url 自愈:玩家填错的两个格式都要被纠正 ──────────────────────────
+# ── ② base_url **不许**被路径改写(v1.74.2 撤回) ────────────────────────────
+# v1.74.0 曾按 host 把 *.volces.com 一律改写成 /api/v3,以为用户把 /api/plan 写错了。
+# 那是错的:火山方舟同一域名下至少有两个不同产品的入口 ——
+#   · /api/v3   Ark OpenAI 兼容(doubao 系模型)
+#   · /api/plan Agent Plan(Anthropic Messages 原生 + AUTH_TOKEN)
+# 反馈者原话「agent plan 给的是这个地址」,即 /api/plan 是火山控制台真给的合法端点。
+# 一刀切改写 = 把人家正确的配置悄悄改成打不开的地址,而 ark 网关先验鉴权再路由
+# (任意路径都回 401),用户根本看不出地址被动过手脚。
+
 @pytest.mark.parametrize("typed", [
-    "https://ark.cn-beijing.volces.com/api/plan",       # 群反馈原文其一
-    "https://ark.cn-beijing.volces.com/api/plan/v3",    # 群反馈原文其二
-    "https://ark.cn-beijing.volces.com",                # 裸域名
-    "https://ark.cn-beijing.volces.com/",               # 带尾斜杠
-    "https://ark.cn-beijing.volces.com/api",            # 只到 /api
-    "ark.cn-beijing.volces.com/api/plan",               # 没写 scheme
-    "https://ark.ap-southeast.volces.com/api/plan",     # 别的 region 同样兜住
+    "https://ark.cn-beijing.volces.com/api/plan",       # Agent Plan:合法端点,绝不能被改
+    "https://ark.cn-beijing.volces.com/api/v3",         # Ark OpenAI 兼容
+    "https://ark.cn-beijing.volces.com/api",
+    "https://ark.ap-southeast.volces.com/api/plan",
 ])
-def test_wrong_ark_base_urls_are_normalized(typed):
-    assert _norm(typed).endswith("/api/v3")
-    assert "/plan" not in _norm(typed)
+def test_volces_base_urls_are_never_rewritten(typed):
+    assert _norm(typed) == typed.rstrip("/")
 
 
-def test_correct_ark_base_url_is_left_alone():
-    assert _norm(_ARK) == _ARK
+def test_only_the_universally_wrong_tail_is_still_stripped():
+    """既有的通用规则不受影响:整段贴完整端点时仍剥 /chat/completions。"""
+    assert _norm(_ARK + "/chat/completions") == _ARK
     assert _norm(_ARK + "/") == _ARK
 
 
-def test_ark_full_endpoint_tail_still_stripped_first():
-    """用户整段贴完整端点时,先剥 /chat/completions 的既有规则仍生效。"""
-    assert _norm(_ARK + "/chat/completions") == _ARK
-
-
 def test_non_volces_hosts_untouched():
-    """别误伤其它 provider —— 只按 host 后缀匹配。"""
     for u in ["https://api.deepseek.com/v1", "https://api.x.ai/v1",
               "https://openrouter.ai/api/v1", "https://api.siliconflow.cn/v1"]:
         assert _norm(u) == u
 
 
 def test_google_self_heal_unchanged():
-    """既有的 Google 自愈规则不能被这次改动影响。"""
+    """Google 那条自愈是**同一产品**的公认写法歧义(少写 /openai),仍然保留。"""
     assert _norm("https://generativelanguage.googleapis.com/v1beta") == \
         "https://generativelanguage.googleapis.com/v1beta/openai"
