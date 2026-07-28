@@ -44,6 +44,23 @@ def test_display_name_is_findable_by_platform_name():
     assert "火山" in name and "Ark" in name
 
 
+def test_persisted_catalog_display_name_self_heals():
+    """只同步 enabled 会留下「露出来了但名字还是旧的」—— 生产 DB 里存的就是旧名 "Doubao",
+    用户按「火山」照样搜不到,等于改名没生效。"""
+    stale = {"apis": [{"id": "doubao", "enabled": True, "display_name": "Doubao",
+                       "base_url": _ARK, "models": []}]}
+    healed = _ensure_curated_apis(stale)
+    assert "火山" in healed["apis"][0]["display_name"]
+
+
+def test_admin_customized_base_url_is_not_clobbered():
+    """base_url 可能被管理员按区域/中转有意改过 —— 强制同步只覆盖 display_name,不碰它。"""
+    custom = "https://my-ark-proxy.example.com/api/v3"
+    healed = _ensure_curated_apis({"apis": [{"id": "doubao", "enabled": False,
+                                             "display_name": "x", "base_url": custom, "models": []}]})
+    assert healed["apis"][0]["base_url"] == custom
+
+
 def test_persisted_catalog_with_doubao_disabled_self_heals():
     """存量 DB catalog 把它存成 disabled 时,serve 时必须被强制拉回 enabled(不落库)。"""
     stale = {"apis": [{"id": "doubao", "enabled": False,

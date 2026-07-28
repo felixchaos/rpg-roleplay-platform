@@ -241,6 +241,15 @@ def _ensure_curated_apis(catalog: dict[str, Any]) -> dict[str, Any]:
                 # 对齐(不落库):_DEPRECATED_APIS 强制 False(下架、地区封禁不可用),其余策展必备强制
                 # True(凭据闸仍只让 key-havers 看到,反馈 #86)。
                 by_id[nid]["enabled"] = (nid not in _DEPRECATED_APIS)
+                # display_name 同样强制对齐(v1.74.0):只同步 enabled 会留下「provider 露出来了、
+                # 名字还是旧的」——doubao 改叫「火山方舟 Doubao (Volcengine Ark)」后,生产 DB 里
+                # 存的仍是 "Doubao",用户按「火山」还是搜不到,等于改名没生效。
+                # 只对策展白名单这么做:这几条的展示名是我们策展的事实,不是管理员可自定义的内容
+                # (与上面强制 enabled 同一个理由)。base_url **刻意不碰** —— 那个可能被管理员按
+                # 区域/中转有意改过,覆盖会打断人家的部署。
+                _d_name = d.get("display_name")
+                if _d_name:
+                    by_id[nid]["display_name"] = _d_name
         # 已下架但不在 _CURATED_REQUIRED_APIS 的(未来扩展):存在即强制 disabled。
         for nid in _DEPRECATED_APIS:
             if nid in by_id:

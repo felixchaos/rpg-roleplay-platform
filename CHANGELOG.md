@@ -9,6 +9,13 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.73.1] - 2026-07-28 (@ 43d833cc1)
+
+### Fixed
+- **改名没生效:策展 provider 的 `display_name` 也要强制对齐**:v1.74.0 把 doubao 改叫「火山方舟 Doubao (Volcengine Ark)」,但 `_ensure_curated_apis` 只强制同步 `enabled` —— 已持久化的 catalog 里存的仍是旧名 `Doubao`,线上核对时 provider 确实露出来了、名字却没变,用户按「火山」照样搜不到,等于改名白改。修:策展白名单里的 provider 同步 `display_name`(展示名是我们策展的事实,与强制 `enabled` 同一个理由)。**`base_url` 刻意不碰** —— 那个可能被管理员按区域/中转有意改过,覆盖会打断人家的部署(已加守卫测试)。
+
+## [1.74.1] - 2026-07-28 (@ 93921658d)
+
 ## [1.73.0] - 2026-07-28 (@ 454f43990)
 
 ### Added
