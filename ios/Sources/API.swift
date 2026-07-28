@@ -768,14 +768,39 @@ final class API {
         return (obj["items"] as? [[String: Any]]) ?? (obj["achievements"] as? [[String: Any]]) ?? []
     }
     /// 分支树 GET /api/branches/{saveId} → (nodes, activeCommitId)。
+    ///
+    /// 必须翻页拉完:后端 tree() 默认 page_limit=1000 且 `order by id`(**升序**),不跟
+    /// page.next_cursor 就只拿到**最老的** 1000 个 commit,新的全被截掉。群反馈
+    /// (行者无疆 2026-07-27,save 268 有 1035 个 commit):第 1 页停在 turn 878、玩家已在
+    /// turn 909,当前活跃 commit 根本不在第 1 页里 → 看起来像「进度没存下来」,其实一条没丢。
+    /// 孪生:frontend/src/api-client.js 的 branches.list、mobile/src/api/index.ts 的
+    /// branches.list —— 三端同批次修。上限 20 页(=2 万 commit)。
     func branchTree(base: String, saveId: Int) async -> (nodes: [[String: Any]], activeId: String?) {
-        guard let (data, resp) = try? await session.data(for: try request(base, "/api/branches/\(saveId)")),
-              (resp as? HTTPURLResponse)?.statusCode == 200,
-              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return ([], nil) }
-        let nodes = (obj["nodes"] as? [[String: Any]]) ?? (obj["commits"] as? [[String: Any]]) ?? []
-        let active = (obj["active_commit_id"] as? String) ?? (obj["active_branch_node_id"] as? String)
-            ?? (obj["active_commit_id"] as? NSNumber).map { $0.stringValue }
-        return (nodes, active)
+        var nodes: [[String: Any]] = []
+        var activeId: String? = nil
+        var cursor: String? = nil
+        for _ in 0..<20 {
+            var path = "/api/branches/\(saveId)"
+            if let c = cursor,
+               let esc = c.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+                path += "?cursor=\(esc)"
+            }
+            guard let (data, resp) = try? await session.data(for: try request(base, path)),
+                  (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            else { break }
+            let page = (obj["nodes"] as? [[String: Any]]) ?? (obj["commits"] as? [[String: Any]]) ?? []
+            nodes.append(contentsOf: page)
+            if activeId == nil {
+                activeId = (obj["active_commit_id"] as? String) ?? (obj["active_branch_node_id"] as? String)
+                    ?? (obj["active_commit_id"] as? NSNumber).map { $0.stringValue }
+            }
+            let pageInfo = obj["page"] as? [String: Any]
+            cursor = pageInfo?["next_cursor"] as? String
+                ?? (pageInfo?["next_cursor"] as? NSNumber).map { $0.stringValue }
+            if cursor == nil || page.isEmpty { break }
+        }
+        return (nodes, activeId)
     }
     func branchActivate(base: String, saveId: Int, commitId: String, nodeId: String) async throws {
         // 后端只读 node_id 且做 int();发 Int(数值串)避免空/非数字串触发 500。save_id/commit_id 后端忽略,不发。

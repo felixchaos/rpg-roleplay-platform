@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.72.3] - 2026-07-28 (@ 60d438991)
+
+### Fixed
+- **P0「存档系统报废」——其实一条都没丢,是分支树被分页截断(群反馈:「想在分支树里切分支的时候发现下午以后的进度都没存下来,本来应该是 turn900 左右」「试了下手动存档也不行,显示存了但是分支树里没有」)**:后端 `branches.tree_ops.tree()` 默认 `page_limit=1000` 且 `order by id`(**升序**)+ 游标分页,而三端客户端**没有一个跟 `page.next_cursor`** → 永远只拿到**最老的** 1000 个 commit,新的全被截掉。生产实证 save 268(1035 个 commit):第 1 页 1000 个、最大 `turn_index=878`;第 2 页 35 个、到 `turn 909`;**当前活跃 commit 5688 根本不在第 1 页里**。所以树看着停在下午之前,新存的 commit 也进不了视野,而 `game_saves.turn`/`branch_commits` 在库里一直正常写(玩家截图里「分支图 1000 commits · 110 refs」的 1000 就是 `page_limit` 本身——refs 不分页所以是全的,两个数字一对比就能看出是截断)。修:三端同批次改成翻页拉完(上限 20 页 = 2 万 commit;`refs`/`save`/`active_commit_id` 取首页,后端本就不分页这几项)——`frontend/src/api-client.js` 的 `branches.list`(web 6 个调用方 GameLeftRail / Branches ×2 / SavesList / mobile 视图 ×2 全走这一个缝)、`mobile/src/api/index.ts` 的 `branches.list`(独立 Expo app)、`ios/Sources/API.swift` 的 `branchTree`。回归测试 `branches-pagination.test.js`(6 例,复刻后端游标语义:1035 → 全量返回 / 活跃 commit 必在集合内 / 单页存档只发一次请求 / 拉完后 `has_more` 归 false)。
+
 ## [1.72.2] - 2026-07-27 (@ 02d061439)
 
 ### Fixed

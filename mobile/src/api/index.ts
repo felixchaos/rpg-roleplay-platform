@@ -347,12 +347,41 @@ export type BranchNode = {
   [k: string]: unknown;
 };
 
+type BranchTree = {
+  ok: boolean;
+  nodes?: BranchNode[];
+  commits?: BranchNode[];
+  active_commit_id?: number;
+  page?: { next_cursor?: string | null; has_more?: boolean };
+};
+
 export const branches = {
-  /** Full commit tree for a save, newest-first, with the active node flagged. */
-  list: (saveId: number) =>
-    http.get<{ ok: boolean; nodes?: BranchNode[]; commits?: BranchNode[]; active_commit_id?: number }>(
-      `${V1}/branches/${saveId}`,
-    ),
+  /** Full commit tree for a save, with the active node flagged.
+   *
+   * 必须翻页拉完:后端 tree() 默认 page_limit=1000 且 `order by id`(**升序**),不跟
+   * page.next_cursor 就只拿到**最老的** 1000 个 commit,新的全被截掉。群反馈
+   * (行者无疆 2026-07-27,save 268 有 1035 个 commit):第 1 页停在 turn 878、玩家已在
+   * turn 909,当前活跃 commit 根本不在第 1 页里 → 看起来像「进度没存下来 / 手动存档
+   * 显示成功但树里没有」,其实一条没丢。孪生:frontend/src/api-client.js 的
+   * branches.list、ios/Sources/API.swift 的 branchTree —— 三端同批次修。
+   */
+  list: async (saveId: number): Promise<BranchTree | null> => {
+    let acc: BranchTree | null = null;
+    const nodes: BranchNode[] = [];
+    let cursor: string | null = null;
+    for (let i = 0; i < 20; i++) {
+      const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+      const r = await http.get<BranchTree>(`${V1}/branches/${saveId}${qs}`);
+      if (!r) break;
+      if (!acc) acc = r;
+      const page = r.nodes ?? r.commits ?? [];
+      nodes.push(...page);
+      cursor = r.page?.next_cursor ?? null;
+      if (!cursor || !page.length) break;
+    }
+    if (!acc) return acc;
+    return { ...acc, nodes, page: { has_more: false, next_cursor: null } };
+  },
   /** Fork a new branch from a historical commit. */
   continueFrom: (node_id: number) =>
     http.post<{ ok: boolean; save_id?: number; new_branch_node_id?: number }>(`${V1}/branches/continue`, { node_id }),

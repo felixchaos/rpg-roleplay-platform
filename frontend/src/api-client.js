@@ -654,7 +654,33 @@
       },
     },
     branches: {
-      list: (saveId) => GET(`${API_PREFIX}/branches/` + saveId),
+      // 取完整分支树(分页拉完)。此前不传 limit/cursor → 后端 tree() 默认 page_limit=1000
+      // 且 `order by id`(**升序**)→ 只拿到最老的 1000 个 commit,**新的全被截掉**。
+      // 群反馈(行者无疆,2026-07-27,save 268 有 1035 个 commit):「下午以后的进度都没存
+      // 下来」「手动存档显示存了但分支树里没有」——其实一条都没丢,commits/turn_index 在库里
+      // 一直正常写,是这里没跟 page.next_cursor,树停在了第 1000 个节点。玩家截图里
+      // 「分支图 1000 commits · 110 refs」的 1000 就是 page_limit 本身(refs 不分页所以是全的,
+      // 一眼就能看出是截断)。6 个调用方(GameLeftRail / Branches ×2 / SavesList / mobile ×2)
+      // 全走这里,一处修全站生效。
+      // 上限 20 页(=2 万 commit);refs/save/active_commit_id 不分页,取首页的。
+      list: async (saveId) => {
+        let acc = null;
+        const nodes = [];
+        let cursor = null;
+        for (let i = 0; i < 20; i++) {
+          const q = {};
+          if (cursor) q.cursor = cursor;
+          const r = await GET(`${API_PREFIX}/branches/` + saveId, q);
+          if (!r) break;
+          if (!acc) acc = r;
+          const page = Array.isArray(r.nodes) ? r.nodes : [];
+          nodes.push(...page);
+          cursor = (r && r.page) ? (r.page.next_cursor || null) : null;
+          if (!cursor || !page.length) break;
+        }
+        if (!acc) return acc;
+        return { ...acc, nodes, page: { ...(acc.page || {}), has_more: false, next_cursor: null } };
+      },
       continueFrom: (body) => POST(`${API_PREFIX}/branches/continue`, body),
       activate: (body) => POST(`${API_PREFIX}/branches/activate`, body),
       delete: (body) => POST(`${API_PREFIX}/branches/delete`, body),
