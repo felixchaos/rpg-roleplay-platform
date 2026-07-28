@@ -9,6 +9,14 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.74.0] - 2026-07-28 (@ 8f8f11a8e)
+
+### Added
+- **火山方舟 Agent Plan(订阅套餐)成为正式预设**:反馈者实测跑通并给出确定配置——Base URL `https://ark.cn-beijing.volces.com/api/plan/v3`(**不是** `/api/plan`,**也不要加** `/v1`)、模型 ID 手动填(如 `deepseek-v4-pro`,返 200)。它与 Ark(`/api/v3`)是**同域名下的两个不同产品**,各自成条目、互不覆盖。上一轮我因为无法验证其契约而没做预设,现在有实测就补上了。后端 catalog + 别名表 + 前端下拉 + i18n 说明**四处同批次**改(上一轮就是漏了前端那份才白改一轮,现有 `provider-list-parity.test.js` 守着)。
+
+### Fixed
+- **`/models` 返回 404 时的提示在误导人**:原文案一律说「base_url 可能缺 /v1 版本段」。而 404 的真实含义是**这个 provider 根本没有模型列表接口**,跟 base_url、key 都无关。反馈者照着提示在方舟订阅套餐地址后加了 `/v1` —— 结果连本来能用的 `chat/completions` 也一起 404(他的原话:「那个网页提示的『base_url 可能缺 /v1』是它的通用猜测,对方舟不适用 —— 加了 /v1 只会让 chat/completions 也一起挂掉」)。修:404 单独成文案,说清「没有这个接口 ≠ 地址写错」、明确劝阻加 `/v1`、并告知手动填模型 ID 即可正常使用;非 404 的拒绝仍保留原来的通用猜测(它对别的 provider 有用)。
+
 ## [1.73.2] - 2026-07-28 (@ fbea24729)
 
 ### Fixed

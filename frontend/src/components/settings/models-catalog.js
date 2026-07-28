@@ -221,6 +221,14 @@ const PROVIDERS_CONFIG = [
     keyEnv: "ARK_API_KEY",
     noteKey: "settings.more.providers.note_doubao",
   },
+  {
+    // 火山方舟「Agent Plan」订阅套餐 —— 与上面的 Ark 是同域名下的两个不同产品。
+    // 地址与「没有 /models」都由反馈者实测确认(deepseek-v4-pro 返 200;/models 恒 404)。
+    id: "ark_agent_plan", name: "火山方舟 Agent Plan (订阅套餐)", kind: "openai_compat",
+    defaultBase: "https://ark.cn-beijing.volces.com/api/plan/v3",
+    keyEnv: "ARK_API_KEY",
+    noteKey: "settings.more.providers.note_ark_agent_plan",
+  },
 ];
 
 export {

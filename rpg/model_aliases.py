@@ -32,6 +32,8 @@ _API_ID_ALIASES: dict[str, str] = {
     "minimax": "minimax",
     "Doubao": "doubao",
     "doubao": "doubao",
+    "ArkAgentPlan": "ark_agent_plan",
+    "ark_agent_plan": "ark_agent_plan",
     "AgentPlatform": "vertex_ai",
     "agent_platform": "vertex_ai",
     "vertex": "vertex_ai",

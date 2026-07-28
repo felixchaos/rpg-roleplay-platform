@@ -517,6 +517,18 @@ def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) 
                     f"URL 没问题——请核对该 provider 的 API key 是否正确、未过期,对应 API 已启用,"
                     f"且没有 IP/来源限制挡住服务器。原始错误:{_msg}"
                 ) from exc
+            # 404 = 这个 provider **根本没有** /models 这个接口,不是 base_url 写错。
+            # 群反馈(行者无疆 2026-07-28,火山方舟 Agent Plan 订阅套餐地址):原文案把 404 也
+            # 归到「base_url 可能缺 /v1」,他照着加了 /v1 —— 结果连本来能用的 chat/completions
+            # 一起 404。方舟订阅套餐地址(/api/plan/v3)确实没有 /models,手动填模型 ID 就能正常用。
+            # 所以 404 必须单独成文案:说清「没有这个接口 ≠ 地址错」,并明确劝阻加 /v1。
+            if _code == 404:
+                raise RuntimeError(
+                    "该 provider 没有提供模型列表接口(/models 返回 404)。这**不是** base_url 或 "
+                    "API key 的问题 —— 手动填写模型 ID 即可正常使用(聊天接口不受影响)。"
+                    "⚠️ 请**不要**为此在 base_url 后面加 /v1:有的 provider(如火山方舟订阅套餐 "
+                    "/api/plan/v3)加了会让 chat/completions 也一起 404。"
+                ) from exc
             raise RuntimeError(
                 f"provider 拒绝列模型(base_url 可能缺 /v1 版本段,或该 provider 不支持 /v1/models): {exc}"
             ) from exc

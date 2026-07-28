@@ -150,6 +150,19 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
             "models": [],
         },
         {
+            # 火山方舟 Agent Plan(订阅套餐)。与上面的 Ark(/api/v3)是**同域名下的两个不同产品**:
+            # 订阅套餐走 /api/plan/v3,模型是 deepseek-v4-pro 这类第三方模型。
+            # ⚠️ 这个端点**没有 /models 接口**(实测 404),模型 ID 必须手动填 —— 别为此在 base_url
+            # 后面加 /v1,加了连 chat/completions 也会 404(反馈者实测踩过)。
+            "id": "ark_agent_plan",
+            "display_name": "火山方舟 Agent Plan (订阅套餐)",
+            "kind": "openai_compat",
+            "enabled": True,
+            "credential_env": "ARK_API_KEY",
+            "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+            "models": [],
+        },
+        {
             "id": "xiaomi_mimo",
             "display_name": "MiMo",
             "kind": "openai_compat",
@@ -187,7 +200,7 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
 # enabled=false、**根本不出现在供应商列表**,用户只能自己猜接口地址。它的 base_url 早就正确地写在
 # DEFAULT_MODEL_CATALOG(`https://ark.cn-beijing.volces.com/api/v3`),只差露出来。进策展白名单后
 # serve 时强制 enabled(凭据闸仍只让配了 key 的人看到模型),存量 DB catalog 也会自愈,无需改库。
-_CURATED_REQUIRED_APIS = {"google_ai_studio", "doubao"}
+_CURATED_REQUIRED_APIS = {"google_ai_studio", "doubao", "ark_agent_plan"}
 
 # 已下架 provider:仍保留在 catalog 里(向后兼容),但无论持久化 catalog 存成什么,serve 时
 # 强制 enabled=False —— 不进模型选择器、不进添加候选。google_ai_studio 因 Google 封机房 IP 下架。

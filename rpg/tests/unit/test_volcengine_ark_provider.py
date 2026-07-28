@@ -76,6 +76,25 @@ def test_missing_doubao_is_merged_back():
     assert got and got[0]["base_url"] == _ARK
 
 
+# ── ①b Agent Plan 是同域名下的另一个产品(反馈者实测确认) ──────────────────
+_PLAN = "https://ark.cn-beijing.volces.com/api/plan/v3"
+
+
+def test_agent_plan_is_a_separate_provider():
+    """实测结论:订阅套餐走 /api/plan/v3(不是 /api/plan、也不能加 /v1),
+    deepseek-v4-pro 返 200。与 Ark 的 /api/v3 是两条不同的产品线,必须各自成条目。"""
+    api = default_api_for("ark_agent_plan")
+    assert api is not None, "Agent Plan 没进 catalog → GM 解析不到这个 api_id"
+    assert api["base_url"] == _PLAN
+    assert api["enabled"] is True
+    assert "ark_agent_plan" in _CURATED_REQUIRED_APIS
+
+
+def test_agent_plan_and_ark_do_not_collide():
+    """两条不能互相覆盖 —— 它们只是同域名,产品与路径都不同。"""
+    assert default_api_for("doubao")["base_url"] != default_api_for("ark_agent_plan")["base_url"]
+
+
 def test_deprecated_provider_still_forced_off():
     """别把下架逻辑一起改坏:google_ai_studio 仍必须强制 disabled。"""
     healed = _ensure_curated_apis({"apis": [{"id": "google_ai_studio", "enabled": True, "models": []}]})
@@ -117,3 +136,26 @@ def test_google_self_heal_unchanged():
     """Google 那条自愈是**同一产品**的公认写法歧义(少写 /openai),仍然保留。"""
     assert _norm("https://generativelanguage.googleapis.com/v1beta") == \
         "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
+# ── ③ /models 404 必须说清「没有这个接口」,而不是猜 base_url ────────────────
+# 反馈者实测:方舟订阅套餐地址没有 /models(恒 404)。原文案把 404 也归到
+# 「base_url 可能缺 /v1」,他照着加了 /v1 → 连本来能用的 chat/completions 一起挂掉。
+def test_models_404_message_does_not_blame_base_url():
+    import pathlib as _p
+    import model_probe as _mp
+    src = _p.Path(_mp.__file__).read_text(encoding="utf-8")
+    assert "if _code == 404:" in src, "404 没有单独分支,仍会落进「base_url 可能缺 /v1」的通用猜测"
+    i = src.index("if _code == 404:")
+    branch = src[i: i + 700]
+    assert "没有提供模型列表接口" in branch
+    assert "不要**在 base_url 后面加 /v1" in branch or "不要" in branch and "/v1" in branch
+    assert "手动填写模型 ID" in branch
+
+
+def test_generic_guess_still_exists_for_non_404():
+    """非 404 的拒绝仍保留原来的通用提示,别把有用的猜测一起删了。"""
+    import pathlib as _p
+    import model_probe as _mp
+    src = _p.Path(_mp.__file__).read_text(encoding="utf-8")
+    assert "base_url 可能缺 /v1 版本段" in src

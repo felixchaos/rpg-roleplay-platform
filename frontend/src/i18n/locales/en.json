@@ -620,7 +620,8 @@
         "note_openrouter": "Optionally set a relay OpenAI-compat endpoint (e.g. https://your-proxy.com/v1); auth stays Bearer",
         "note_agent_platform": "Upload a Service Account JSON containing client_email / private_key / project_id",
         "note_dashscope": "Supports OpenAI-compat mode (/compatible-mode/v1) or native DashScope protocol",
-        "note_doubao": "OpenAI-compatible endpoint is /api/v3. Volcengine \"Agent Plan\" is a separate entry (/api/plan, native Anthropic format) — add it via \"Custom\""
+        "note_doubao": "OpenAI-compatible endpoint is /api/v3. Volcengine \"Agent Plan\" is a separate entry (/api/plan, native Anthropic format) — add it via \"Custom\"",
+        "note_ark_agent_plan": "Subscription-plan endpoint — a different product from Ark (/api/v3). It has no /models endpoint, so enter the model ID manually (e.g. deepseek-v4-pro). Do NOT append /v1 — that breaks chat/completions too"
       },
       "migrate": {
         "stage_scripts": "Scripts",

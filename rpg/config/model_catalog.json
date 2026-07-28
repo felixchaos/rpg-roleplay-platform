@@ -63,6 +63,16 @@
       ]
     },
     {
+      "id": "ark_agent_plan",
+      "display_name": "火山方舟 Agent Plan (订阅套餐)",
+      "kind": "openai_compat",
+      "enabled": true,
+      "credential_ref": "",
+      "credential_env": "ARK_API_KEY",
+      "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+      "models": []
+    },
+    {
       "id": "dashscope",
       "display_name": "DashScope",
       "kind": "openai_compat",
