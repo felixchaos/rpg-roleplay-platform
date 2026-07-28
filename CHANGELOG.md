@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.75.0] - 2026-07-28 (@ 4e2ed7d90)
+
+### Added
+- **「添加模型」入口接上了 —— 此前弹窗写好了却没有任何地方能打开它**(群反馈:「模型id应该在哪里填」):`AddModelModal` 早已实现并从 models-section 导出,但**全项目没有一处 render 它**,手动填模型 ID 的路一直是断的。平时没暴露,是因为绝大多数 provider 都能靠「拉取模型」自动同步;而有的 provider 根本没有 `/models` 接口(实测:火山方舟 Agent Plan 订阅套餐地址恒 404),不手填就完全没法用 —— 上一版刚把这个 provider 做成预设,等于发了个用不了的东西。修:供应商详情页动作栏加「添加模型」按钮 → 打开既有弹窗 → 确认后走 `POST /api/models/model`(`window.api.models.upsertModel`,api-client 早已封装)。乐观插入 + 失败回滚,不留下「UI 里有、库里没有」的幽灵条目。守卫测试 `add-model-entry-wired.test.js`:这类「组件存在 + 导出齐全 + 没人用」靠 lint 和 build 都发现不了(导出即被认为已使用),只能做源码级接线断言。
+
 ## [1.74.0] - 2026-07-28 (@ 8f8f11a8e)
 
 ### Added

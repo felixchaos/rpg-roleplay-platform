@@ -102,7 +102,10 @@
       "delete_key_confirm": "Delete the API Key for \"{{name}}\"? Its models will no longer be available.",
       "delete_key_btn": "Delete",
       "delete_key_ok": "API Key deleted",
-      "delete_key_fail": "Delete failed"
+      "delete_key_fail": "Delete failed",
+      "detail_add_model": "Add model",
+      "add_model_ok": "Model added",
+      "add_model_fail": "Failed to add model"
     },
     "add_model": {
       "title": "Configure a new model",

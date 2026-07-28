@@ -196,7 +196,10 @@
       "delete_key_confirm": "删除「{{name}}」的 API Key?该供应商的模型将不再可用。",
       "delete_key_btn": "删除",
       "delete_key_ok": "已删除 API Key",
-      "delete_key_fail": "删除失败"
+      "delete_key_fail": "删除失败",
+      "detail_add_model": "添加模型",
+      "add_model_ok": "模型已添加",
+      "add_model_fail": "模型添加失败"
     },
     "add_model": {
       "title": "配置一个新模型",
