@@ -44,7 +44,6 @@ function ModelsSection() {
   const [addingApi, setAddingApi] = useStatePL(false);
   const [visibilityApi, setVisibilityApi] = useStatePL(null);
   const [validateApi, setValidateApi] = useStatePL(null);
-  const [addModelApi, setAddModelApi] = useStatePL(null);
   const [selectedApiId, setSelectedApiId] = useStatePL(null);
   const autoSyncedRef = React.useRef(new Set());
 
@@ -220,30 +219,6 @@ function ModelsSection() {
       }));
     }
   };
-  // 手动新增模型:provider 没有 /models 接口(如火山方舟 Agent Plan 订阅套餐)时的唯一途径。
-  // 乐观插入 + 后端 upsert;失败则回滚并提示,不留下 UI 里有、库里没有的幽灵条目。
-  const addModel = async (apiId, m) => {
-    const real = String(m.id || m.real_name || "").trim();
-    if (!apiId || !real) return;
-    const row = { id: real, real_name: real, display: m.display || real,
-                  capabilities: m.capabilities || [], enabled: true, visible: true,
-                  price: m.price || null, context: m.context || null, health: "unknown" };
-    setApis(arr => arr.map(a => a.id === apiId
-      ? { ...a, models: [...(a.models || []).filter(x => x.id !== real), row] }
-      : a));
-    try {
-      await window.api.models.upsertModel({
-        api_id: apiId, real_name: real, display_name: row.display,
-        capabilities: row.capabilities, enabled: true,
-      });
-      window.__apiToast?.(t('settings.models.add_model_ok', { defaultValue: '模型已添加' }), { kind: 'ok' });
-    } catch (e) {
-      setApis(arr => arr.map(a => a.id === apiId
-        ? { ...a, models: (a.models || []).filter(x => x.id !== real) } : a));
-      window.__apiToast?.(t('settings.models.add_model_fail', { defaultValue: '模型添加失败' }),
-                          { kind: 'danger', detail: e?.message || '' });
-    }
-  };
   const removeModels = async (apiId, ids) => {
     setApis(arr => arr.map(a => a.id === apiId
       ? { ...a, models: a.models.filter(m => !ids.includes(m.id)) }
@@ -276,7 +251,6 @@ function ModelsSection() {
       onEdit={() => setEditingApi(selectedApi.id)}
       onVisibility={() => setVisibilityApi(selectedApi.id)}
       onValidate={() => setValidateApi(selectedApi.id)}
-      onAddModel={() => setAddModelApi(selectedApi.id)}
       onToggleModel={(mId) => toggleModel(selectedApi.id, mId)}
       onRenameModel={(mId, display) => renameModel(selectedApi.id, mId, display)}
       onDeleteKey={async () => {
@@ -495,12 +469,6 @@ function ModelsSection() {
         api={apis.find(a => a.id === validateApi)}
         onClose={() => setValidateApi(null)}
         onConfirm={(toRemove) => { removeModels(validateApi, toRemove); setValidateApi(null); }}
-      />
-      <AddModelModal
-        open={!!addModelApi}
-        api={apis.find(a => a.id === addModelApi)}
-        onClose={() => setAddModelApi(null)}
-        onConfirm={(m) => { addModel(addModelApi, m); setAddModelApi(null); }}
       />
     </CSSpaceBetween>
   );
