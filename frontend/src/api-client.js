@@ -944,6 +944,11 @@
       visibility: (body) => POST(`${API_PREFIX}/models/visibility`, body),
       // per-user:隐藏/显示自己同步来的(overlay)模型,任何用户可调,且 re-sync 不重置。
       meVisibility: (body) => POST(`${API_PREFIX}/me/models/visibility`, body),
+      // 手填模型:只写**当前用户**的 overlay(user_model_entries, source='manual')。
+      // ⚠️ 别用上面的 upsertModel —— 那是 admin-only 的**全局** catalog 写入,
+      //    普通用户会撞「需要管理员权限」,写成功了还会让所有人看见你的私人模型。
+      meUpsertModel: (body) => POST(`${API_PREFIX}/me/models/model`, body),
+      meDeleteModel: (body) => POST(`${API_PREFIX}/me/models/model/delete`, body),
       validate: (body) => POST(`${API_PREFIX}/models/validate`, body),
       remote: (q) => GET(`${API_PREFIX}/models/remote`, q),
       syncRemote: (body) => POST(`${API_PREFIX}/models/remote/sync`, body),

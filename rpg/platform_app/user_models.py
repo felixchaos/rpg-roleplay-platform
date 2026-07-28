@@ -66,9 +66,13 @@ def replace_synced_models(user_id: int, api_id: str, models: list[dict[str, Any]
             (int(user_id), canonical),
         ).fetchall() or []:
             prev[er["model_id"]] = bool(er["enabled"])
-        # 覆盖语义:先清该 (user, api_id) 旧 overlay,再写新清单
+        # 覆盖语义:先清该 (user, api_id) 旧 overlay,再写新清单。
+        # ⚠️ 只清 source='synced' —— 用户**手填**的模型(source='manual')必须留下。
+        # 有的 provider 没有 /models 接口(火山方舟 Agent Plan 订阅套餐恒 404),模型只能手填;
+        # 若这里连它一起删,用户每点一次「拉取模型」就把自己填的清空一次。
         db.execute(
-            "delete from user_model_entries where user_id = %s and api_id = %s",
+            "delete from user_model_entries "
+            "where user_id = %s and api_id = %s and coalesce(source, 'synced') <> 'manual'",
             (int(user_id), canonical),
         )
         for r in rows:
@@ -85,6 +89,8 @@ def replace_synced_models(user_id: int, api_id: str, models: list[dict[str, Any]
                   enabled = excluded.enabled,
                   capabilities = excluded.capabilities,
                   updated_at = now()
+                  -- source 不动:同名模型若已被用户手填过,保持 'manual',
+                  -- 免得同步一次就把它降级成可被下次同步清掉的 'synced'。
                 """,
                 (
                     int(user_id), canonical, r["id"], r["real_name"],
@@ -92,6 +98,62 @@ def replace_synced_models(user_id: int, api_id: str, models: list[dict[str, Any]
                 ),
             )
     return len(rows)
+
+
+def upsert_manual_model(user_id: int, api_id: str, model: dict[str, Any]) -> dict[str, Any] | None:
+    """把**用户自己填的**一个模型写进他的 overlay(user_model_entries, source='manual')。
+
+    这是「provider 没有 /models 接口」时的唯一途径(如火山方舟 Agent Plan 订阅套餐,
+    /models 恒 404)。与 model_registry.upsert_model 的区别是关键的:
+      · upsert_model      → 写**全局 catalog**,admin-only,写进去所有人都看得见;
+      · 本函数            → 只写**当前用户**的 overlay,任何用户都能用,别人看不到。
+    (前科:v1.76.0 的「添加模型」按钮误接了前者,普通用户直接撞「需要管理员权限」。)
+
+    source='manual' 让它在下次「拉取远程模型」时不被覆盖(见 replace_synced_models)。
+    返回写入后的模型 dict;参数不合法返回 None。
+    """
+    if not user_id:
+        return None
+    canonical = normalize_api_id(api_id) or (api_id or "").strip()
+    norm = _norm_model(model if isinstance(model, dict) else {})
+    if not canonical or not norm:
+        return None
+    init_db()
+    with connect() as db:
+        db.execute(
+            """
+            insert into user_model_entries
+              (user_id, api_id, model_id, real_name, display_name, enabled, capabilities, source)
+            values (%s, %s, %s, %s, %s, %s, %s, 'manual')
+            on conflict (user_id, api_id, model_id) do update set
+              real_name = excluded.real_name,
+              display_name = excluded.display_name,
+              enabled = excluded.enabled,
+              capabilities = excluded.capabilities,
+              source = 'manual',
+              updated_at = now()
+            """,
+            (int(user_id), canonical, norm["id"], norm["real_name"],
+             norm["display_name"], bool(norm["enabled"]), Jsonb(norm["capabilities"])),
+        )
+    return {**norm, "api_id": canonical, "source": "manual"}
+
+
+def delete_overlay_model(user_id: int, api_id: str, model: str) -> int:
+    """删除该用户 overlay 里的一个模型(手填的删掉就没了;同步来的下次同步会回来)。"""
+    if not user_id or not model:
+        return 0
+    canonical = normalize_api_id(api_id) or (api_id or "").strip()
+    if not canonical:
+        return 0
+    init_db()
+    with connect() as db:
+        cur = db.execute(
+            "delete from user_model_entries where user_id = %s and api_id = %s "
+            "and (model_id = %s or real_name = %s)",
+            (int(user_id), canonical, str(model), str(model)),
+        )
+        return int(getattr(cur, "rowcount", 0) or 0)
 
 
 def set_overlay_model_enabled(user_id: int, api_id: str, model: str, enabled: bool) -> int:

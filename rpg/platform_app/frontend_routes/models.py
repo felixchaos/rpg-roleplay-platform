@@ -74,6 +74,53 @@ async def api_me_models_visibility(request: Request):
     return json_response({"ok": True, "updated": n})
 
 
+@router.post("/api/me/models/model")
+async def api_me_models_model(request: Request):
+    """每用户:往**自己的** overlay 里加/改一个手填模型(user_model_entries, source='manual')。
+
+    与 /api/models/model(admin-only,写全局 catalog、写进去所有人可见)彻底分开 —— 用户
+    自己的模型只属于他自己。这是「provider 没有 /models 接口」时的唯一途径:火山方舟
+    Agent Plan 订阅套餐地址 /models 恒 404,模型 ID 只能手填。
+    (前科:v1.76.0 的「添加模型」按钮误接了 admin 端点,普通用户直接撞「需要管理员权限」,
+     且一旦成功会把私人模型写进全局目录。已整条回滚重写。)
+
+    body: {api_id, real_name(必填), display_name?, capabilities?}
+    """
+    user = require_user(request)
+    body = await request.json() or {}
+    api_id = body.get("api_id") or body.get("api")
+    real = (body.get("real_name") or body.get("model") or body.get("model_id") or "").strip()
+    if not api_id or not real:
+        return _bad("缺少参数:api_id 与 real_name 必填")
+    from platform_app.user_models import upsert_manual_model
+    saved = upsert_manual_model(user["id"], api_id, {
+        "id": real,
+        "real_name": real,
+        "display_name": (body.get("display_name") or body.get("display") or real).strip() or real,
+        "capabilities": body.get("capabilities") or ["text", "streaming"],
+        "enabled": True,
+    })
+    if not saved:
+        return _bad("参数不合法(api_id / real_name 无法规范化)")
+    return json_response({"ok": True, "model": saved})
+
+
+@router.post("/api/me/models/model/delete")
+async def api_me_models_model_delete(request: Request):
+    """每用户:从自己的 overlay 删掉一个模型。手填的删了就没了;同步来的下次同步会回来。"""
+    user = require_user(request)
+    body = await request.json() or {}
+    api_id = body.get("api_id") or body.get("api")
+    model = body.get("real_name") or body.get("model") or body.get("model_id")
+    if not api_id or not model:
+        return _bad("缺少参数")
+    from platform_app.user_models import delete_overlay_model
+    n = delete_overlay_model(user["id"], api_id, str(model))
+    if not n:
+        return _bad("该模型不在你的清单里", status=404)
+    return json_response({"ok": True, "deleted": n})
+
+
 @router.post("/api/models/validate")
 async def api_models_validate(request: Request):
     """Lightweight credentials probe — defers to model_probe.list_remote_models."""

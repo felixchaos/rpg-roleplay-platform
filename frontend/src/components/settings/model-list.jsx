@@ -21,7 +21,7 @@ import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 
 /* API 详情面板 —— 选中某个已配置 Key 后在列表下方展开。
    Tabs:模型列表(ApiModelsList)/ API 用量(简略)。头部:编辑 / 管理显示 / 校验 / 删除 Key。 */
-function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, onToggleModel, onRenameModel }) {
+function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, onToggleModel, onRenameModel, onAddModel }) {
   const { t } = useTranslation();
   const [tab, setTab] = useStatePL('models');
   const [usage, setUsage] = useStatePL(null);
@@ -51,6 +51,9 @@ function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, on
         actions={
           <CSSpaceBetween direction="horizontal" size="xs">
             <CSButton iconName="edit" onClick={onEdit}>{t('settings.models.detail_edit')}</CSButton>
+            {/* 手填模型入口。有的 provider 根本没有 /models 接口(火山方舟 Agent Plan 订阅套餐
+                恒 404),不手填就完全没法用。写的是**当前用户自己的** overlay,不是全局目录。 */}
+            <CSButton iconName="add-plus" onClick={onAddModel}>{t('settings.models.detail_add_model')}</CSButton>
             <CSButton iconName="view-full" onClick={onVisibility}>{t('settings.models.detail_manage')}</CSButton>
             <CSButton iconName="refresh" onClick={onValidate}>{t('settings.models.detail_validate')}</CSButton>
             <CSButton iconName="remove" onClick={onDeleteKey}>{t('settings.models.detail_delete_key')}</CSButton>

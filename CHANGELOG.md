@@ -9,6 +9,15 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.76.0] - 2026-07-28 (@ 240c77a73)
+
+### Added
+- **手填模型 ID 的入口(写进你自己的模型清单,不是全局目录)**:有的 provider 根本没有 `/models` 接口(火山方舟 Agent Plan 订阅套餐地址恒 404),模型 ID 只能手填,否则该 provider 完全不可用。供应商详情页动作栏加「添加模型」→ `POST /api/me/models/model` → 写 `user_model_entries`(**per-user overlay**,`source='manual'`),任何登录用户都能用,别人看不到。同时新增 `POST /api/me/models/model/delete` 供删除。
+  - migration 99 给 `user_model_entries` 加 `source` 列(`synced`/`manual`,存量默认 `synced`)。`replace_synced_models` 的覆盖删除改为**只清 `synced`** —— 否则用户每点一次「拉取模型」,自己手填的就被清空一次,而恰恰是那些没有 `/models` 的 provider 才需要手填。
+
+### Fixed
+- **回滚上一版的「添加模型」按钮 —— 它接的是 admin-only 的全局写入**:上一版的确认回调走 `POST /api/models/model`(`model_registry.upsert_model`),那是**管理员专属的全局 catalog 写入**。普通用户点下去直接撞「需要管理员权限」;更糟的是一旦写成功,用户自己的私人模型会出现在**所有人**的模型列表里。整条回滚后按 per-user overlay 重写(见上)。回归测试 `test_manual_model_is_per_user.py` 用 AST 断言 per-user 写入路径**不调用**任何全局 catalog 写入口,并锁住「同步不清手填」与 migration append-only。
+
 ## [1.75.0] - 2026-07-28 (@ 4e2ed7d90)
 
 ### Reverted

@@ -2250,6 +2250,16 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         # 不能在事务块中执行。
         "create index if not exists idx_token_usage_created_at on token_usage(created_at)",
     ]),
+    (99, "user_model_entries_source", [
+        # 用户**手填**的模型必须与「拉取远程模型」同步来的分开标记。
+        # 背景(群反馈 2026-07-28):有的 provider 根本没有 /models 接口(火山方舟 Agent Plan
+        # 订阅套餐恒 404),模型 ID 只能手填。而 replace_synced_models 是**覆盖语义**——
+        # 它先 `delete from user_model_entries where user_id=%s and api_id=%s` 再重写整份清单,
+        # 手填条目会在下一次「拉取模型」时被静默清空。
+        # source: 'synced'(同步来的,可被覆盖) / 'manual'(用户手填,同步时保留)。
+        # 存量行默认 'synced' —— 它们本来就全是同步写入的,语义正确。
+        "alter table user_model_entries add column if not exists source text not null default 'synced'",
+    ]),
 ]
 
 

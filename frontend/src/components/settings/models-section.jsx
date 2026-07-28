@@ -44,6 +44,7 @@ function ModelsSection() {
   const [addingApi, setAddingApi] = useStatePL(false);
   const [visibilityApi, setVisibilityApi] = useStatePL(null);
   const [validateApi, setValidateApi] = useStatePL(null);
+  const [addModelApi, setAddModelApi] = useStatePL(null);
   const [selectedApiId, setSelectedApiId] = useStatePL(null);
   const autoSyncedRef = React.useRef(new Set());
 
@@ -219,6 +220,31 @@ function ModelsSection() {
       }));
     }
   };
+  // 手填模型 → **当前用户自己的** overlay(POST /api/me/models/model)。
+  // ⚠️ 绝不能走 window.api.models.upsertModel —— 那是 admin-only 的全局 catalog 写入:
+  //    普通用户直接 403「需要管理员权限」,写成功了还会把私人模型塞进所有人的目录。
+  //    (v1.76.0 就是这么翻的车,已整条回滚重写。)
+  // 标 synced:true 让可见性 toggle 也走 per-user 端点,与同步来的模型一致。
+  const addModel = async (apiId, m) => {
+    const real = String(m.id || m.real_name || "").trim();
+    if (!apiId || !real) return;
+    const display = (m.display || "").trim() || real;
+    const row = { id: real, real_name: real, display, capabilities: m.capabilities || [],
+                  enabled: true, visible: true, synced: true, health: "unknown" };
+    setApis(arr => arr.map(a => a.id === apiId
+      ? { ...a, models: [...(a.models || []).filter(x => x.id !== real), row] } : a));
+    try {
+      await window.api.models.meUpsertModel({
+        api_id: credentialApiIdForCatalog(apiId), real_name: real,
+        display_name: display, capabilities: row.capabilities,
+      });
+      window.__apiToast?.(t('settings.models.add_model_ok'), { kind: 'ok' });
+    } catch (e) {
+      setApis(arr => arr.map(a => a.id === apiId
+        ? { ...a, models: (a.models || []).filter(x => x.id !== real) } : a));
+      window.__apiToast?.(t('settings.models.add_model_fail'), { kind: 'danger', detail: e?.message || '' });
+    }
+  };
   const removeModels = async (apiId, ids) => {
     setApis(arr => arr.map(a => a.id === apiId
       ? { ...a, models: a.models.filter(m => !ids.includes(m.id)) }
@@ -251,6 +277,7 @@ function ModelsSection() {
       onEdit={() => setEditingApi(selectedApi.id)}
       onVisibility={() => setVisibilityApi(selectedApi.id)}
       onValidate={() => setValidateApi(selectedApi.id)}
+      onAddModel={() => setAddModelApi(selectedApi.id)}
       onToggleModel={(mId) => toggleModel(selectedApi.id, mId)}
       onRenameModel={(mId, display) => renameModel(selectedApi.id, mId, display)}
       onDeleteKey={async () => {
@@ -469,6 +496,12 @@ function ModelsSection() {
         api={apis.find(a => a.id === validateApi)}
         onClose={() => setValidateApi(null)}
         onConfirm={(toRemove) => { removeModels(validateApi, toRemove); setValidateApi(null); }}
+      />
+      <AddModelModal
+        open={!!addModelApi}
+        api={apis.find(a => a.id === addModelApi)}
+        onClose={() => setAddModelApi(null)}
+        onConfirm={(m) => { addModel(addModelApi, m); setAddModelApi(null); }}
       />
     </CSSpaceBetween>
   );
