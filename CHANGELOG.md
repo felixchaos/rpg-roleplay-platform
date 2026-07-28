@@ -12,8 +12,8 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 ## [1.72.6] - 2026-07-28 (@ e9484f328)
 
 ### Fixed
-- **统一召回「新路」11 天一次都没跑成 —— 符号搬家漏改了调用方,又被 `except Exception` 吞掉**:`kb/recall.py` 从 `context_providers.novel` 导入 `_split_anchor_pending`,但该符号在 v1.70.1「函数寻根轮4」(`fdea8d321`,2026-07-17)已被收敛到权威缝 `context_engine.core` —— `novel.py` 自己的调用改了,**这个调用方漏了**。于是新路每次 `ImportError` → 静默降级旧路,生产日志每天刷 90 条 warning 没人看见。而 env 是 `RPG_TKB_RECALL=on` + `RPG_TKB_RECALL_MIN_SAVE_ID=169`,覆盖 **170/271(62%)** 个存档、近 7 天活跃 30 个 —— 一个自以为已灰度上线的功能,实际全死。玩家侧无可见损坏(旧路正常),但等于灰度从未发生。修:两处 import 改指权威缝。**根上的问题是那个 `except Exception` 把编程错误(符号搬家/改名/签名不符)和运行期故障(DB 抖动/超时)一视同仁当「可降级」** —— 现在编程错误单独一条分支走 `log.error` + 固定可 grep 前缀「接线断了」,运行期故障维持 warning + 静默降级(绝不为一个 import 打断玩家回合)。回归测试 `test_recall_wiring_not_broken.py`(6 例;其中一例用 AST 抓出 `recall.py` 所有本仓 import 目标并逐个校验存在性 —— 这类断线以后在**导入期**就红)。
-- ⚠️ **上线策略**:因新路从未在生产执行过,本次修复**不顺势放量**。生产 env 同步改为影子模式(`RPG_TKB_RECALL=off` + `RPG_TKB_RECALL_SHADOW=on`):新路照常执行并把与旧路的 diff 落日志,但**返回值仍取旧路**,玩家可见行为与修复前完全一致。确认 diff 无异常后再决定是否翻回 `on`。
+- **统一召回「新路」11 天一次都没跑成 —— 符号搬家漏改了调用方,又被 `except Exception` 吞掉**:`kb/recall.py` 从 `context_providers.novel` 导入 `_split_anchor_pending`,但该符号在 v1.70.1「函数寻根轮4」(`fdea8d321`,2026-07-17)已被收敛到权威缝 `context_engine.core` —— `novel.py` 自己的调用改了,**这个调用方漏了**。于是新路每次 `ImportError` → 静默降级旧路,生产日志每天刷 90 条 warning 没人看见。而这条路由 `RPG_TKB_RECALL` / `RPG_TKB_RECALL_MIN_SAVE_ID` 灰度门控 —— 只要开了,命中的存档全都在走这条死路:一个自以为已灰度上线的功能,实际全死。玩家侧无可见损坏(旧路正常),但等于灰度从未发生。修:两处 import 改指权威缝。**根上的问题是那个 `except Exception` 把编程错误(符号搬家/改名/签名不符)和运行期故障(DB 抖动/超时)一视同仁当「可降级」** —— 现在编程错误单独一条分支走 `log.error` + 固定可 grep 前缀「接线断了」,运行期故障维持 warning + 静默降级(绝不为一个 import 打断玩家回合)。回归测试 `test_recall_wiring_not_broken.py`(6 例;其中一例用 AST 抓出 `recall.py` 所有本仓 import 目标并逐个校验存在性 —— 这类断线以后在**导入期**就红)。
+- ⚠️ **上线建议**:这条路在修好之前从未真正执行过,所以修 import 等于让它对所有命中灰度的存档当场生效。建议先把 `RPG_TKB_RECALL` 关掉、改开 `RPG_TKB_RECALL_SHADOW`(影子模式:新路照常执行并把与旧路的 diff 落日志,**返回值仍取旧路**,玩家可见行为不变),确认 diff 无异常后再放量。
 
 ## [1.72.5] - 2026-07-28 (@ d2f13b2e7)
 

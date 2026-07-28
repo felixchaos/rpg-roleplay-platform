@@ -4,8 +4,8 @@
 `_split_anchor_pending`,但该符号在 v1.70.1「函数寻根轮4」(fdea8d321,2026-07-17)已被
 收敛到权威缝 `context_engine.core`。于是新路每次 ImportError → 静默降级旧路,
 **11 天一次都没跑成**,日志里每天 90 条 warning 没人看见。
-而 env 是 `RPG_TKB_RECALL=on` + `RPG_TKB_RECALL_MIN_SAVE_ID=169`,覆盖 170/271(62%)
-个存档 —— 一个自以为已灰度上线的功能,实际是全死的。
+而这条路由 `RPG_TKB_RECALL` / `RPG_TKB_RECALL_MIN_SAVE_ID` 灰度门控 —— 只要开了,命中的
+存档全在走这条死路:一个自以为已灰度上线的功能,实际是全死的。
 
 能藏这么久的原因是 `except Exception` 把**编程错误**(符号搬家/改名/签名不符)和运行期
 故障(DB 抖动/超时)一视同仁当「可降级」。本文件锁两件事:

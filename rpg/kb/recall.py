@@ -308,7 +308,7 @@ def retrieve_fn_compat(query, *, state=None, user_id=None, script_id=None) -> st
         # ⚠️ _split_anchor_pending 的家在 context_engine.core —— v1.70.1「函数寻根轮4」
         # (fdea8d321)把它收敛成权威缝时,novel.py 自己的调用改了,**这里漏了**。
         # 于是本函数每次都 ImportError → 静默降级旧路,统一召回新路 11 天(07-17→07-28)
-        # 一次都没跑成,而 env 里 RPG_TKB_RECALL=on / MIN_SAVE_ID=169 覆盖 62% 的存档。
+        # 一次都没跑成 —— 而 RPG_TKB_RECALL 一旦开启,命中灰度的存档全都在走这条死路。
         # 之所以能藏这么久,是下面那个 `except Exception` 把**编程错误**和运行期故障一视同仁
         # 当成「可降级」——见下方分支注释。
         from context_engine.core import _split_anchor_pending
