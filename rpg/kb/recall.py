@@ -305,11 +305,25 @@ def retrieve_fn_compat(query, *, state=None, user_id=None, script_id=None) -> st
 
     old_text = _old()  # 始终先跑(承载进度 materialize 副作用 + 提供锚点段)
     try:
-        from context_providers.novel import _read_progress_and_mode, _split_anchor_pending
+        # ⚠️ _split_anchor_pending 的家在 context_engine.core —— v1.70.1「函数寻根轮4」
+        # (fdea8d321)把它收敛成权威缝时,novel.py 自己的调用改了,**这里漏了**。
+        # 于是本函数每次都 ImportError → 静默降级旧路,统一召回新路 11 天(07-17→07-28)
+        # 一次都没跑成,而 env 里 RPG_TKB_RECALL=on / MIN_SAVE_ID=169 覆盖 62% 的存档。
+        # 之所以能藏这么久,是下面那个 `except Exception` 把**编程错误**和运行期故障一视同仁
+        # 当成「可降级」——见下方分支注释。
+        from context_engine.core import _split_anchor_pending
+        from context_providers.novel import _read_progress_and_mode
         progress, mode = _read_progress_and_mode(state, save_id)
         anchor_section, _ = _split_anchor_pending(old_text)
         result = recall(save_id, query or "", mode=mode, progress_chapter=progress)
         new_text = render_compat_string(result, anchor_section)
+    except (ImportError, AttributeError, NameError, TypeError) as exc:
+        # 编程错误(符号搬家/改名/签名对不上)不是「运行期故障」,降级能保住这一回合,但必须
+        # 吼出来:上面那次搬家就是因为和 DB 抖动共用一条 warning,在日志里泡了 11 天没人看见。
+        # 仍然降级(绝不为了一个 import 打断玩家回合),但 ERROR + 固定前缀便于告警/grep。
+        log.error("[recall] 新路【接线断了】(编程错误,非运行期故障),已降级旧路: %s: %s",
+                  type(exc).__name__, exc)
+        return old_text
     except Exception as exc:
         log.warning("[recall] 新路异常,降级旧路: %s", exc)
         return old_text
@@ -317,7 +331,7 @@ def retrieve_fn_compat(query, *, state=None, user_id=None, script_id=None) -> st
     if shadow:
         try:
             from kb.reveal import _shadow_diff_log
-            from context_providers.novel import _split_anchor_pending as _split
+            from context_engine.core import _split_anchor_pending as _split  # 同上:家在 core
             _, old_body = _split(old_text)
             # S4:传【纯长度字符串】集合(无前缀),否则 old/new 永不相等、每回合误报 warning。
             _shadow_diff_log("recall body len",
