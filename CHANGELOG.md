@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.72.4] - 2026-07-28 (@ cc16356fe)
+
+### Fixed
+- **世界线面板不跟 `/set` 强制约束、而且会「回退」(群反馈:「推进到第68章」后「世界线不变,而且这个世界线发生了回退(之前应该是 64 章左右,之前也出现过类似情况)……召回的和思考时的锚点是根据强制约束来的」)**:`routes/timeline._resolve_current_chapter` 取的是 `win["last_satisfied_chapter"] or win["chapter_min"]`。前者是 `get_progress_window` **内部的锚点单路中间值**(`max(source_chapter)` over occurred/variant[/superseded]),后者才是「锚点真实到达」与「玩家显式进度 `worldline.progress_chapter`」**取 max 之后**的权威值——取前者等于主动丢掉那个 max,于是世界线面板成了全站唯一只读单路信号的消费者,两个症状同源:① `/set` 抬了 `progress_chapter`,检索窗口与软引导都跟上了(所以玩家说召回和思考都按强制约束走),唯独面板钉在锚点到达章;② 锚点集合会因回滚/换分支而缩小,`max(source_chapter)` 随之**下降**(生产实证 save 268:曾到 ch64,后回落到 occurred 最大 ch58 → 面板显示「第58章 当前」),而 `advance_progress` 写的 `progress_chapter` 单调只增、永不回退。该函数上方的注释本来就写着「`chapter_min` 都取自它」——**注释是对的,实现跑偏了**。修:`source=='progress_chapter'`(玩家显式进度赢过锚点)时取 `chapter_min`,否则维持锚点章,保证 `anchor_pace` 开/关两种既有语义都不位移(pace off 时 `chapter_min = last_sat + 1`,直接改用它会让所有存档的高亮整体前移一章)。桌面与手机端面板读的是同一个端点的同一个 `current_chapter` 字段,一处修两端生效。回归测试 `test_timeline_panel_current_chapter.py`(7 例,含 pace 开/关不位移与三级回退链)。
+
 ## [1.72.3] - 2026-07-28 (@ 60d438991)
 
 ### Fixed

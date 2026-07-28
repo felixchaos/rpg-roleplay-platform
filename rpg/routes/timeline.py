@@ -200,11 +200,28 @@ def _resolve_current_chapter(db, save_id, script_id):
     #    该权威值的路径(steering/retrieval/reveal)不同源,可能读到不同章号。
     #    改为:get_progress_window 优先(source + chapter_min 都取自它);
     #    它异常/不可用时才回退旧链(progress_chapter → 出生点兜底 → 1)。
+    #    ⚠️ v1.73.4:上面这段注释写的是「chapter_min 取自它」,但实现取的是
+    #    `last_satisfied_chapter or chapter_min` —— **注释与代码不一致,代码是错的**。
+    #    `last_satisfied_chapter` 是 get_progress_window 内部的**锚点单路**中间值
+    #    (`max(source_chapter)` over occurred/variant[/superseded]),而 `chapter_min` 才是
+    #    「锚点真实到达」与「玩家显式进度 worldline.progress_chapter」**取 max 后**的权威值。
+    #    取前者 = 主动丢掉那个 max,于是世界线面板成了唯一读单路信号的消费者,两个症状:
+    #      ① 「世界线不变」:玩家 /set 推进到第 68 章,progress_chapter 抬到 68/69、检索与
+    #         软引导都跟上了(所以玩家说「召回的和思考时的锚点是根据强制约束来的」),
+    #         唯独面板还钉在锚点到达章;
+    #      ② 「世界线回退」:锚点集合会因回滚/换分支而缩小,`max(source_chapter)` 随之下降
+    #         (生产实证 save 268:曾到 ch64,后回落 occurred 最大 ch58 → 面板显示第 58 章
+    #         当前),而 progress_chapter 是 advance_progress 单调只增的,永不回退。
+    #    修:source=='progress_chapter'(玩家显式进度赢过锚点)时用 chapter_min;否则维持
+    #    锚点章,保持 anchor_pace 开/关两种既有语义不变(pace off 时 chapter_min=last_sat+1,
+    #    直接改用它会让所有存档的高亮整体前移一章)。
     current_chapter: int | None = None
     try:
         from agents.anchor_seed_agent import get_progress_window
         win = get_progress_window(save_id, script_id=script_id)
-        _ch = win.get("last_satisfied_chapter") or win.get("chapter_min")
+        _last = win.get("last_satisfied_chapter") or 0
+        _cmin = win.get("chapter_min") or 0
+        _ch = _cmin if win.get("source") == "progress_chapter" else (_last or _cmin)
         if _ch:
             current_chapter = int(_ch)
     except Exception:
