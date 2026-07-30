@@ -5,14 +5,19 @@ import { useTranslation } from 'react-i18next';
 import { Icon } from '../../game-icons.jsx';
 
 // 世界书 overlay 管理(反馈#93):酒馆等无剧本存档的世界书全靠 save_worldbook_overlays addition,
-// 此前只有 LLM/命令能加、前端无入口。这里给「列出 + 新增 + 删除」的直接 UI。数据不在 state,自取 API。
+// 此前只有 LLM/命令能加、前端无入口。这里给「列出 + 新增 + 改 + 删除」的直接 UI。数据不在 state,自取 API。
 // 导出:游戏台 PanelWorldbook 与酒馆设置抽屉共用同一组件(单一来源)。
+// 编辑(07-30 反馈):此前只有「+」和「×」,写错一个字得删掉重打整段——而 overlay 正文常是几百字
+// 的功法/设定长文。新增与编辑复用同一张表单(editingId===null 即新增),避免两套输入框漂移。
+const BLANK_WB = { title: '', content: '', keys: '', priority: 50 };
+
 export function WorldbookOverlaySection() {
   const { t } = useTranslation();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ title: '', content: '', keys: '', priority: 50 });
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(BLANK_WB);
 
   const load = React.useCallback(async () => {
     try { const r = await window.api.worldbook.overlayList(); setItems((r && r.additions) || []); }
@@ -28,20 +33,46 @@ export function WorldbookOverlaySection() {
 
   const inputStyle = { width: '100%', padding: '5px 8px', fontSize: 12, background: 'var(--panel-2, rgba(255,255,255,0.04))', border: '1px solid var(--line-soft, rgba(255,255,255,0.12))', borderRadius: 6, color: 'inherit', font: 'inherit', boxSizing: 'border-box' };
 
+  const closeForm = () => { setAdding(false); setEditingId(null); setForm(BLANK_WB); };
+  const openAdd = () => { if (adding) { closeForm(); return; } setEditingId(null); setForm(BLANK_WB); setAdding(true); };
+  const openEdit = (e) => {
+    setEditingId(e.id);
+    setForm({
+      title: e.title || '',
+      content: e.content || '',
+      keys: Array.isArray(e.keys) ? e.keys.join(', ') : '',
+      priority: e.priority == null ? 50 : e.priority,
+    });
+    setAdding(true);
+  };
+
   const submit = async () => {
     const title = form.title.trim(); const content = form.content.trim();
     if (!title || !content) { window.__apiToast?.(t('game.worldbook.overlay_need_fields', { defaultValue: '标题和正文不能为空' }), { kind: 'warning' }); return; }
+    const editing = editingId != null;
     try {
       const keys = form.keys.split(',').map((s) => s.trim()).filter(Boolean);
-      await window.api.worldbook.overlayAdd({ title, content, keys, priority: Number(form.priority) || 50 });
-      setForm({ title: '', content: '', keys: '', priority: 50 }); setAdding(false);
+      const payload = { title, content, keys, priority: Number(form.priority) || 50 };
+      if (editing) await window.api.worldbook.overlayUpdate({ id: editingId, ...payload });
+      else await window.api.worldbook.overlayAdd(payload);
+      closeForm();
       await load();
-      window.__apiToast?.(t('game.worldbook.overlay_added', { defaultValue: '已新增世界书条目' }), { kind: 'ok' });
-    } catch (e) { window.__apiToast?.(t('game.worldbook.overlay_add_failed', { defaultValue: '新增失败' }), { kind: 'danger', detail: e?.message }); }
+      window.__apiToast?.(editing
+        ? t('game.worldbook.overlay_updated', { defaultValue: '已保存修改' })
+        : t('game.worldbook.overlay_added', { defaultValue: '已新增世界书条目' }), { kind: 'ok' });
+    } catch (e) {
+      window.__apiToast?.(editing
+        ? t('game.worldbook.overlay_update_failed', { defaultValue: '保存失败' })
+        : t('game.worldbook.overlay_add_failed', { defaultValue: '新增失败' }), { kind: 'danger', detail: e?.message });
+    }
   };
   const remove = async (id) => {
     if (!await window.__confirm({ message: t('game.worldbook.overlay_delete_confirm', { defaultValue: '删除该世界书条目？' }), danger: true })) return;
-    try { await window.api.worldbook.overlayRemove({ id }); await load(); window.__apiToast?.(t('game.memory.deleted_ok'), { kind: 'ok' }); }
+    try {
+      await window.api.worldbook.overlayRemove({ id });
+      if (editingId === id) closeForm();  // 别把表单留在一条已经不存在的条目上
+      await load(); window.__apiToast?.(t('game.memory.deleted_ok'), { kind: 'ok' });
+    }
     catch (e) { window.__apiToast?.(t('game.memory.action_failed'), { kind: 'danger', detail: e?.message }); }
   };
 
@@ -52,31 +83,40 @@ export function WorldbookOverlaySection() {
           <span className="muted-2" style={{ marginLeft: 8, fontSize: 11, textTransform: 'none' }}>{t('game.worldbook.overlay_subtitle', { defaultValue: '本存档新增（不改剧本原文）' })}</span>
         </h3>
         <button className="iconbtn" data-tip={t('game.worldbook.overlay_add_tip', { defaultValue: '新增条目' })} aria-label={t('game.worldbook.overlay_add_tip', { defaultValue: '新增条目' })}
-          onClick={() => setAdding((v) => !v)}>
+          onClick={openAdd}>
           {adding ? <Icon name="close" size={14} /> : <span style={{ fontSize: 15, lineHeight: 1, fontWeight: 600 }}>+</span>}
         </button>
       </div>
       {adding ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+          {editingId != null ? (
+            <div className="muted-2" style={{ fontSize: 11 }}>{t('game.worldbook.overlay_editing', { defaultValue: '正在编辑已有条目' })}</div>
+          ) : null}
           <input style={inputStyle} placeholder={t('game.worldbook.overlay_ph_title', { defaultValue: '标题（如：断剑·残）' })} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-          <textarea style={{ ...inputStyle, resize: 'vertical' }} rows={3} placeholder={t('game.worldbook.overlay_ph_content', { defaultValue: '正文设定' })} value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} />
+          {/* 编辑态给更高的文本框:overlay 正文常是几百字长文,3 行看不全 */}
+          <textarea style={{ ...inputStyle, resize: 'vertical' }} rows={editingId != null ? 8 : 3} placeholder={t('game.worldbook.overlay_ph_content', { defaultValue: '正文设定' })} value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} />
           <input style={inputStyle} placeholder={t('game.worldbook.overlay_ph_keys', { defaultValue: '触发关键词，逗号分隔（可空）' })} value={form.keys} onChange={(e) => setForm({ ...form, keys: e.target.value })} />
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <span className="muted-2" style={{ fontSize: 11 }}>{t('game.worldbook.overlay_priority', { defaultValue: '优先级' })}</span>
             <input style={{ ...inputStyle, width: 72 }} type="number" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} />
-            <button className="btn" style={{ marginLeft: 'auto' }} onClick={submit}>{t('common.save', { defaultValue: '保存' })}</button>
+            <button className="btn ghost" style={{ marginLeft: 'auto' }} onClick={closeForm}>{t('common.cancel', { defaultValue: '取消' })}</button>
+            <button className="btn" onClick={submit}>{t('common.save', { defaultValue: '保存' })}</button>
           </div>
         </div>
       ) : null}
       {loading ? null : items.length ? (
         <ul className="gp-flat-list">
           {items.map((e) => (
-            <li key={e.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-              <span style={{ flex: 1 }}>
+            <li key={e.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, ...(editingId === e.id ? { outline: '1px solid var(--accent-edge)', outlineOffset: 2, borderRadius: 6 } : null) }}>
+              <span style={{ flex: 1, cursor: 'pointer' }} onClick={() => openEdit(e)} title={t('game.worldbook.overlay_edit_tip', { defaultValue: '编辑' })}>
                 <span className="serif">{e.title}</span>
                 {Array.isArray(e.keys) && e.keys.length ? <span className="muted-2" style={{ marginLeft: 8, fontSize: 11 }}>{e.keys.join(' · ')}</span> : null}
                 {e.content ? <span className="muted" style={{ display: 'block', fontSize: 12, marginTop: 2 }}>{String(e.content).slice(0, 140)}</span> : null}
               </span>
+              <button className="iconbtn" data-tip={t('game.worldbook.overlay_edit_tip', { defaultValue: '编辑' })} aria-label={t('game.worldbook.overlay_edit_tip', { defaultValue: '编辑' })}
+                onClick={() => openEdit(e)}>
+                <Icon name="edit" size={12} />
+              </button>
               <button className="iconbtn" data-tip={t('game.worldbook.overlay_delete_tip', { defaultValue: '删除' })} aria-label={t('game.worldbook.overlay_delete_tip', { defaultValue: '删除' })}
                 onClick={() => remove(e.id)}>
                 <Icon name="close" size={12} />

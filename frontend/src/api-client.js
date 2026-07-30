@@ -1062,6 +1062,7 @@
     worldbook: {
       overlayList: () => GET(`${API_PREFIX}/worldbook/overlay`),
       overlayAdd: (body) => POST(`${API_PREFIX}/worldbook/overlay`, body),
+      overlayUpdate: (body) => POST(`${API_PREFIX}/worldbook/overlay/update`, body),
       overlayRemove: (body) => POST(`${API_PREFIX}/worldbook/overlay/remove`, body),
     },
 

@@ -9,6 +9,19 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.78.0] - 2026-07-30 (@ f3fbc4fe8)
+
+### Added
+- **存档内世界书条目可以改了**(群反馈:「这个世界书可以给个编辑选项吗」):面板长期只有「+」和「×」—— 写错一个字只能删掉重打整段,而 overlay 正文往往是几百字的功法/设定长文。现在每行有编辑按钮(点标题区同样进编辑),复用同一张表单预填**完整正文**(列表只显示 140 字截断,编辑态给 8 行文本框),保存 → `POST /api/worldbook/overlay/update`。
+  - **部分更新语义**:只写 body 里真正出现的键(`"x" in body`,不是 truthy 判断)—— 将来「只改优先级」不该被迫回传整段正文,反过来也不该把 title/content 悄悄清空。
+  - `priority` 不用 `raw or 50`:**0 是合法优先级**(压到最低),`0 or 50` 会把它偷偷改成 50。
+  - overlay 表不是 COW 表(无 born/retired commit),检索侧每回合直读 → 改完即生效,不新增版本行。
+  - 单一组件覆盖三处入口(游戏台世界书面板 / 酒馆设置抽屉 / 移动端左抽屉),无平行实现待对齐;移动 Expo 端与 iOS 端本来就没有 overlay 增删入口,不涉及。
+  - 补齐 `game.worldbook.overlay_*` 的 i18n:这一整组此前只有 `defaultValue`,en 环境下整个区块显示中文。
+
+### Changed
+- `routes/worldbook_overlay.py` 的归属判断收口到 `perms.owns_save`:该文件早先 list / remove / (新) update 各写一遍 `game_saves` join,违反「严禁手写归属 SQL」。现统一走 `_own_addition`(解析 overlay → `owns_save`),并加 AST 守卫断言两条写路径都调它、文件里不再出现 `game_saves` join。
+
 ## [1.77.0] - 2026-07-29 (@ e0c0a7118)
 
 ### Removed
