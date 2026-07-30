@@ -132,14 +132,20 @@ class MemoryTools(unittest.TestCase):
         execute_tool(s, "pin_memory", {"text": "蕾穆丽娜的银十字坠饰"})
         self.assertIn("蕾穆丽娜的银十字坠饰", s.data["memory"]["pinned"])
 
-    def test_set_memory_mode(self):
+    def test_set_memory_mode_tool_is_gone(self):
+        """set_memory_mode 已随「记忆模式」选择器一并删除(v1.77.0)。
+
+        它是装饰性的:全仓没有任何一处据 memory.mode 改变行为(MemoryProvider 只把它塞进
+        debug),真旋钮是 MemorySettings(recall_depth / token_budget / 三个分桶开关)。
+        原实现的白名单还漏了 UI 提供的 "off",且非法值**静默丢弃** → 用户点「关闭」自动
+        弹回普通(群反馈)。这里反向断言:工具不该再存在,别被谁顺手加回来。
+        """
         s = _new_state()
-        execute_tool(s, "set_memory_mode", {"mode": "deep"})
-        self.assertEqual(s.data["memory"]["mode"], "deep")
-        # 非法 mode
-        result = execute_tool(s, "set_memory_mode", {"mode": "ultra"})
-        self.assertIn("失败", result)
-        self.assertEqual(s.data["memory"]["mode"], "deep")
+        before = s.data["memory"].get("mode")
+        result = execute_tool(s, "set_memory_mode", {"mode": "deep"})
+        # 未注册工具 → 返回 "unknown tool: ...",且绝不改状态
+        self.assertIn("unknown tool", result.lower())
+        self.assertEqual(s.data["memory"].get("mode"), before)
 
     def test_set_main_quest(self):
         s = _new_state()

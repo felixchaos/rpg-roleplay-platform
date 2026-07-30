@@ -1775,11 +1775,6 @@ def _command_response(message: str, state: GameState) -> tuple[str, bool]:
         state.update_relationship(parts[0], parts[1])
         state.save()
         return f"关系已更新：{parts[0]} -> {parts[1]}", True
-    if low.startswith("/memory "):
-        mode = low.split(" ", 1)[1].strip()
-        state.set_memory_mode(mode)
-        state.save()
-        return f"记忆模式已切换为：{state.data['memory']['mode']}", True
     if low.startswith("/permission "):
         mode = cmd.split(" ", 1)[1].strip()
         state.set_permission_mode(mode)

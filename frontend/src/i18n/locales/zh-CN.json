@@ -3238,7 +3238,6 @@
       "var_label": "设置世界线变量",
       "pin_label": "加入固定记忆",
       "note_label": "玩家笔记",
-      "memory_label": "切换记忆模式",
       "permission_label": "切换写入权限",
       "save_label": "手动存档",
       "retry_label": "重试上一轮 GM 输出"
@@ -3316,15 +3315,6 @@
         "manual_save_tip": "手动保存",
         "branch_tip": "切换分支树视图",
         "branch_btn": "分支",
-        "memory_mode": "记忆模式",
-        "memory_normal": "普通",
-        "memory_normal_tip": "每轮召回 6 段历史与原文",
-        "memory_normal_desc": "平衡速度和连贯性",
-        "memory_deep": "深度",
-        "memory_deep_tip": "每轮召回 14 段，更慢但更连贯",
-        "memory_deep_desc": "额外召回 8 段，延迟 +30%",
-        "memory_off_tip": "不召回历史，只用当前上下文",
-        "memory_off_desc": "只用当前面板上下文",
         "structured_updates": "本轮结构化更新",
         "no_updates": "暂无",
         "back_home_tip": "返回平台主页",
@@ -6684,15 +6674,6 @@
         "review_desc": "GM 想写状态时先列出待确认,你批准才生效。",
         "full_access_label": "完全",
         "full_access_desc": "GM 可直接改写世界状态。"
-      },
-      "memory": {
-        "normal_label": "普通",
-        "normal_desc": "每轮召回 6 段历史与原文",
-        "deep_label": "深度",
-        "deep_desc": "每轮召回 14 段,更慢但更连贯",
-        "off_label": "关闭",
-        "off_desc": "不召回历史,只用当前上下文",
-        "section_title": "记忆模式"
       },
       "left_drawer": {
         "title": "存档 · 分支",

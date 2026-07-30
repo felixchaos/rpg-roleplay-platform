@@ -212,7 +212,6 @@ class MemoryProvider(ContextProvider):
             layers=[layer],
             tokens_estimate=token_used,
             debug={
-                "memory_mode": m.get("mode"),
                 "items_count": len(m.get("items") or []),
                 "token_used": token_used,
                 "token_budget": budget,

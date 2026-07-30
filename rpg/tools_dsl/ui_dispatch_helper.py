@@ -10,7 +10,7 @@ ui_dispatch_helper.py — task 87 Phase 6 余下: UI HTTP endpoint 接入 dispat
 用法 (在 chat handler 等同步路径):
     from tools_dsl.ui_dispatch_helper import dispatch_ui_tool
     result = dispatch_ui_tool(
-        tool_name="set_memory_mode", args={"mode": "deep"},
+        tool_name="set_permission_mode", args={"mode": "default"},
         user_id=user_id, save_id=save_id, state=state,
     )
     if not result.ok:

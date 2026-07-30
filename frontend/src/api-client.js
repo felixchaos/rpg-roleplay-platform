@@ -1037,7 +1037,6 @@
       // acceptance A/B 改写候选选择:{alt_id, choice: 'original'|'rewrite', message_index?}
       acceptanceChoice: (body) => POST(`${API_PREFIX}/acceptance/choice`, body || {}),
       contextBreakdown: () => GET(`${API_PREFIX}/chat/context-breakdown`),
-      memoryMode: (mode) => POST(`${API_PREFIX}/memory/mode`, { mode }),
       memoryAdd: (body) => POST(`${API_PREFIX}/memory/add`, body),
       memoryRemove: (body) => POST(`${API_PREFIX}/memory/remove`, body),
       memoryUpdate: (body) => POST(`${API_PREFIX}/memory/update`, body),

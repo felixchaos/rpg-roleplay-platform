@@ -45,15 +45,8 @@ function paras(text) {
 /* ===================== 左抽屉:存档 / 记忆 / 分支 / 结构化更新 ===================== */
 function LeftDrawer({ open, onClose, gc }) {
   const { t } = useTranslation();
-  const { game, activeSave, realSaves, onSwitchSave, onMemoryMode, onSave, onNew, onExit } = gc;
-  const memMode = (game.memory && game.memory.mode) || 'normal';
+  const { game, activeSave, realSaves, onSave, onNew, onExit } = gc;
   const updates = Array.isArray(game?.memory?.last_structured_updates) ? game.memory.last_structured_updates : [];
-  const MEM = [
-    { id: 'normal', icon: 'memory', label: t('mobile.game.memory.normal_label'), desc: t('mobile.game.memory.normal_desc') },
-    { id: 'deep', icon: 'spark', label: t('mobile.game.memory.deep_label'), desc: t('mobile.game.memory.deep_desc') },
-    { id: 'off', icon: 'eye_off', label: t('mobile.game.memory.off_label'), desc: t('mobile.game.memory.off_desc') },
-  ];
-  const md = MEM.find((m) => m.id === memMode) || MEM[0];
   return (
     <div className={`drawer drawer-left ${open ? 'open' : ''}`}>
       <div className="drawer-head">
@@ -85,17 +78,7 @@ function LeftDrawer({ open, onClose, gc }) {
           <button className="btn ghost" style={{ marginTop: 8, width: '100%' }} onClick={() => { onClose(); onSave && onSave(); }}><Icon name="save" size={13} /> {t('mobile.game.left_drawer.manual_save')}</button>
         </div>
 
-        <div className="ld-section">
-          <div className="ld-head"><span>{t('mobile.game.memory.section_title')}</span></div>
-          <div className="seg">
-            {MEM.map((m) => (
-              <button key={m.id} className={`${memMode === m.id ? 'active' : ''} ${m.id === 'deep' ? 'deep' : ''}`} onClick={() => onMemoryMode && onMemoryMode(m.id)}>
-                <Icon name={m.icon} size={16} />{m.label}
-              </button>
-            ))}
-          </div>
-          <p className="mem-desc"><strong>{md.label}</strong> · {md.desc}</p>
-        </div>
+        {/* 「记忆模式」段已移除(v1.77.0,与电脑端同批次)——理由见 GameLeftRail.jsx。 */}
 
         {/* 找回:本轮结构化更新(电脑端 LeftRail 有,设计稿无) */}
         <div className="ld-section" style={{ borderBottom: 'none' }}>

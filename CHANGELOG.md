@@ -9,6 +9,18 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.77.0] - 2026-07-29 (@ e0c0a7118)
+
+### Removed
+- **删除「记忆模式」选择器(普通/深度/关闭)—— 它是装饰性的**(群反馈:「这个关闭是不生效的,点了也会自动回到普通」):查下来是三个缺陷叠在一起,而最根本的一条是**它什么都不控制**。
+  - ① 后端 `state.set_memory_mode` 的白名单只有 `{concise, normal, deep}` —— **UI 提供的 `off` 不在里面**,而且非法值是**静默丢弃**(不报错、不抛异常)。反过来后端有 `concise`、UI 又不提供:两边取值集合从来没对齐。
+  - ② 端点其实返回了 400,但前端 `try { … } catch (_) {}` **把错误整个吞了** → 用户看不到任何提示,只看到乐观更新后被下次状态刷新打回「普通」。
+  - ③ **全仓没有任何一处据 `memory.mode` 改变行为** —— `MemoryProvider` 只把它塞进 `debug` 字段;真正决定召回量的是 `MemorySettings.recall_depth` / `token_budget`,与 mode 完全无关。UI 提示写着「每轮召回 6 段」「每轮召回 14 段,延迟 +30%」,**这两个数字在代码里根本不存在**。实测佐证:选了「深度」的会话与「普通」召回量一模一样 —— 因为 `MemorySettings` 一直是默认值,mode 不参与计算。
+  - 替代品早就存在且更好:「设置 → 记忆」有 `recall_depth`、`token_budget`,以及 **pinned / world / character 三个分桶开关** —— 正是这个「关闭」想做却没做到的事。
+  - 删除面(同批次):web 左栏区块 + 移动端左抽屉区块 + `game-console` 的 3 个 handler + `api-client.memoryMode` + `POST /api/memory/mode` + `set_memory_mode` **LLM 工具**(顺带给直发工具窗口腾出一个名额)+ `state_op_tool_map` 的 `memory.mode` 映射 + `command_agent` 提示词 + `/memory <mode>` 斜杠命令 + `state.set_memory_mode` setter + 说谎的 i18n 文案。
+  - **刻意保留** `state.data["memory"]["mode"]` 数据字段与 `game_sessions.memory_mode` 列:存量存档/快照往返兼容,留着无害(已无消费方),**不做破坏性 migration**。
+  - 另:该字段历史上存在绕过白名单的写入路径(疑似 `apply_ops` 直写 state path),会写进非白名单字符串。字段现已完全无消费方,脏值无害。
+
 ## [1.76.0] - 2026-07-28 (@ 240c77a73)
 
 ### Added

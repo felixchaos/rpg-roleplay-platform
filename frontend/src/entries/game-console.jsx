@@ -1465,7 +1465,6 @@ function App() {
           onSwitchSave={async (sid) => { try { if (runRef.current.sse || runState.running) stopRun(); await window.api.saves.activate(sid); reloadState(); } catch (e) { window.__apiToast?.(t('game.console.save.switch_failed'), { kind: 'danger', detail: e?.message }); } }}
           onNew={async () => { if (!await window.__confirm({ message: t('game.console.save.new_confirm') })) return; location.href = '/saves'; }}
           onSave={async () => { try { await window.api.game.saveGame(); window.__apiToast?.(t('common.save') + ' ✓', { kind: 'ok' }); } catch (e) { window.__apiToast?.(t('game.console.save.save_failed'), { kind: 'danger', detail: e?.message }); } }}
-          onMemoryMode={async (mode) => { setGame((g) => ({ ...g, memory: { ...(g.memory || {}), mode } })); try { await window.api.game.memoryMode(mode); } catch (_) {} }}
           reloadState={reloadState}
           activeTab={activeTab} setActiveTab={setActiveTab}
           lastUsage={lastUsage}
@@ -1553,7 +1552,6 @@ function App() {
         onNew={async () => { if (!await window.__confirm({ message: t('game.console.save.new_confirm') })) return; window.open('/saves', '_blank'); }}
         onSave={async () => { try { await window.api.game.saveGame(); window.__apiToast?.(t('common.save') + ' ✓', { kind: 'ok' }); } catch (e) { window.__apiToast?.(t('game.console.save.save_failed'), { kind: 'danger', detail: e?.message }); } }}
         onSwitchSave={async (sid) => { setMobileNav(false); try { if (runRef.current.sse || runState.running) stopRun(); await window.api.saves.activate(sid); reloadState(); } catch (e) { window.__apiToast?.(t('game.console.save.switch_failed'), { kind: 'danger', detail: e?.message }); } }}
-        onMemoryMode={async (mode) => { setGame((g) => ({ ...g, memory: { ...(g.memory || {}), mode } })); try { await window.api.game.memoryMode(mode); } catch (_) {} }}
         currentSaveId={activeSave?.id ?? null}
         saves={realSaves.length ? realSaves : ((window.RPG_AUTH && window.RPG_AUTH.authed) ? [] : (window.MOCK_PLATFORM?.saves || []))}
         mobileOpen={mobileNav}

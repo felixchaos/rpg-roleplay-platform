@@ -8,7 +8,7 @@ import { Icon } from '../../game-icons.jsx';
 import { BranchGraph } from '../../branch-graph.jsx';
 
 // ----------------------------- LEFT RAIL ---------------------------------
-function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitchSave, onMemoryMode, currentSaveId, saves, resizeHandle, mobileOpen }) {
+function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitchSave, currentSaveId, saves, resizeHandle, mobileOpen }) {
   // task 102E: resizeHandle 是 React 节点 (一般是 <ResizeHandle />),
   // 由 App 层注入,放在 <aside> 内绝对定位
   const { t } = useTranslation();
@@ -72,25 +72,13 @@ function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitc
         {branchOpen && <BranchTreeRail saveId={currentSaveId || state?._raw?.save_id || null} />}
       </div>
 
-      <div className="gc-rail-section">
-        <div className="gc-rail-section-head"><span>{t('game.app.rail.memory_mode')}</span></div>
-        <div className="seg gc-mem-seg">
-          <button className={m.mode === "normal" ? "active" : ""} data-tip={t('game.app.rail.memory_normal_tip')} onClick={() => onMemoryMode?.("normal")} aria-label={t('game.app.rail.memory_normal_tip')}>
-            <Icon name="memory" /> {t('game.app.rail.memory_normal')}
-          </button>
-          <button className={m.mode === "deep" ? "active" : ""} data-tip={t('game.app.rail.memory_deep_tip')} onClick={() => onMemoryMode?.("deep")} aria-label={t('game.app.rail.memory_deep_tip')}>
-            <Icon name="sparkle" /> {t('game.app.rail.memory_deep')}
-          </button>
-          <button className={m.mode === "off" ? "active" : ""} data-tip={t('game.app.rail.memory_off_tip')} onClick={() => onMemoryMode?.("off")} aria-label={t('game.app.rail.memory_off_tip')}>
-            <Icon name="eye_off" /> {t('common.close')}
-          </button>
-        </div>
-        <p className="gc-mem-desc">
-          {m.mode === "deep" ? <><strong>{t('game.app.rail.memory_deep')}</strong> · {t('game.app.rail.memory_deep_desc')}</>
-            : m.mode === "off" ? <><strong>{t('common.close')}</strong> · {t('game.app.rail.memory_off_desc')}</>
-            : <><strong>{t('game.app.rail.memory_normal')}</strong> · {t('game.app.rail.memory_normal_desc')}</>}
-        </p>
-      </div>
+      {/* 「记忆模式」选择器已整块移除(v1.77.0)。它是**装饰性**的:全仓没有任何一处
+          据 memory.mode 改变行为(MemoryProvider 只把它塞进 debug 字段),真正决定召回量的是
+          MemorySettings.recall_depth / token_budget —— 那套在「设置 → 记忆」里有完整 UI,
+          还带三个分桶开关(pinned/world/character),正是这里的「关闭」想做却没做到的事。
+          而且提示文案「每轮召回 6 段 / 14 段」这两个数字在代码里根本不存在。
+          症状(群反馈):点「关闭」自动弹回普通 —— 后端白名单只有 concise/normal/deep,
+          off 被静默丢弃,前端的空 catch 又把 400 吞了。删掉假旋钮,不再骗人。 */}
 
       {/* task 48：原硬编码两行『memory.facts +1: 童氏与南陵同源』『relationships.沈知微.tone +』。
           改为读 state.memory.last_structured_updates；空就空态。 */}

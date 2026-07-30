@@ -34,7 +34,6 @@ command_tools.py — task 86: LLM 命令工具表。
     add_memory_ability      能力
     pin_memory              固定记忆(高优先级)
     add_memory_note         笔记
-    set_memory_mode         记忆模式 (concise/normal/deep)
 
   推测/世界线:
     add_hypothesis          推测/计划/草稿
@@ -363,17 +362,6 @@ COMMAND_TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {"text": {"type": "string"}},
             "required": ["text"],
-        },
-    },
-    {
-        "name": "set_memory_mode",
-        "description": '切换记忆模式: concise(精简)/normal(普通)/deep(深度).',
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "mode": {"type": "string", "enum": ["concise", "normal", "deep"]},
-            },
-            "required": ["mode"],
         },
     },
     {
@@ -767,12 +755,6 @@ def execute_tool(state: Any, name: str, args: dict) -> str:
                 return f"{name} 失败: text 为空"
             ok = state.add_memory(bucket, v)
             return f"memory.{bucket} += {v}" if ok else f"memory.{bucket} 已含此条 (去重)"
-        if name == "set_memory_mode":
-            mode = (args.get("mode") or "").strip()
-            if mode not in {"concise", "normal", "deep"}:
-                return f"set_memory_mode 失败: mode 非法 {mode!r}"
-            state.set_memory_mode(mode)
-            return f"记忆模式 → {mode}"
         if name == "add_hypothesis":
             return _exec_add_hypothesis(state, args)
         if name == "set_user_variable":

@@ -934,9 +934,11 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         return suggestions
 
     # ── 长期记忆与结构化更新 ──────────────────────────────────────
-    def set_memory_mode(self, mode: str):
-        if mode in {"concise", "normal", "deep"}:
-            self.data["memory"]["mode"] = mode
+    # set_memory_mode 已删除(v1.77.0)。记忆模式选择器是装饰性的:全仓没有任何一处据
+    # memory.mode 改变行为,真正的旋钮是 MemorySettings(recall_depth / token_budget /
+    # 三个分桶开关,「设置 → 记忆」里有完整 UI)。原实现的白名单还漏了 UI 提供的 "off",
+    # 且非法值**静默丢弃** → 用户点「关闭」自动弹回普通(群反馈)。
+    # data["memory"]["mode"] 字段保留不删:存量存档/快照往返兼容,留着无害(已无消费方)。
 
     def add_memory(self, bucket: str, text: str) -> bool:
         text = _clean_item(text)

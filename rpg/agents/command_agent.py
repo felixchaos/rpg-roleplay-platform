@@ -74,7 +74,6 @@ _SYSTEM_PROMPT = """\
     "能力:X" → add_memory_ability
     "重要:X" / "钉住:X" → pin_memory
     "笔记:X" → add_memory_note
-    "记忆模式=concise/normal/deep" → set_memory_mode
   推测/约束:
     "假设/我猜/可能X" → add_hypothesis
     "硬约束变量X=Y" → set_user_variable

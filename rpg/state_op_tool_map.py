@@ -86,8 +86,8 @@ def map_op_to_tool(path: str, value: Any, *, op_kind: str = "set",
         return "set_main_quest", {"text": str(value or "")}
     if path == "memory.current_objective":
         return "set_current_objective", {"text": str(value or "")}
-    if path == "memory.mode":
-        return "set_memory_mode", {"mode": str(value or "")}
+    # memory.mode 已废弃(v1.77.0 删除记忆模式选择器):不再有对应工具,
+    # 该 path 落到下方的「未映射」分支即可 —— 它本来就不控制任何行为。
     # memory list-bucket appends
     bucket_to_tool = {
         "memory.facts": "add_memory_fact",

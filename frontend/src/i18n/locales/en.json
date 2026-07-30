@@ -3144,7 +3144,6 @@
       "var_label": "Set world-line variable",
       "pin_label": "Add to pinned memory",
       "note_label": "Player note",
-      "memory_label": "Switch memory mode",
       "permission_label": "Switch write permission",
       "save_label": "Manual save",
       "retry_label": "Retry last GM output"
@@ -3222,15 +3221,6 @@
         "manual_save_tip": "Manual save",
         "branch_tip": "Toggle branch tree view",
         "branch_btn": "Branch",
-        "memory_mode": "Memory Mode",
-        "memory_normal": "Normal",
-        "memory_normal_tip": "Recall 6 history segments per turn",
-        "memory_normal_desc": "Balanced speed and coherence",
-        "memory_deep": "Deep",
-        "memory_deep_tip": "Recall 14 segments, slower but more coherent",
-        "memory_deep_desc": "Extra 8 segments recalled, +30% latency",
-        "memory_off_tip": "No recall, current context only",
-        "memory_off_desc": "Current panel context only",
         "structured_updates": "Updates This Turn",
         "no_updates": "None",
         "back_home_tip": "Back to platform home",
@@ -6687,15 +6677,6 @@
         "review_desc": "GM must list proposed changes for your approval before they take effect.",
         "full_access_label": "Full access",
         "full_access_desc": "GM can freely modify world state."
-      },
-      "memory": {
-        "normal_label": "Normal",
-        "normal_desc": "Recalls 6 history segments and source text each turn",
-        "deep_label": "Deep",
-        "deep_desc": "Recalls 14 segments — slower but more coherent",
-        "off_label": "Off",
-        "off_desc": "No history recall — current context only",
-        "section_title": "Memory Mode"
       },
       "left_drawer": {
         "title": "Saves & Branches",
