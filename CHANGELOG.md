@@ -9,6 +9,14 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+### Fixed
+- 补记脚本的报数自相矛盾(补完后报出来的总数还是补之前的旧值):`history_summary` 自己开新连接,读不到调用方尚未提交的事务。数据本身没问题,是**报数**错。`history_summary` 补 `db=` 复用连接(与 `record_history_anchor` / `cascade_history_from_anchor` 同款),脚本传本连接。
+
+### Added
+- `scripts/backfill_history_anchors.py` —— 把级联接线之前已发生的锚点迁移补记成历史锚点。只 INSERT;走线上同一条缝(补出来的行与自然产生的行同形);靠 `linked_pending_anchors` 去重,重复跑不双写;写入行带 `metadata.backfill=true` 可精确撤回;默认 dry-run,须显式 `--apply`。口径与线上一致:批量退役(角色死亡失效 / phase 关闭绕过)不补。
+
+## [1.78.3] - 2026-07-31 (@ d7d84236e)
+
 ## [1.78.2] - 2026-07-31 (@ e8f53752a)
 
 ### Fixed

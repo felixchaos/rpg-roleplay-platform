@@ -92,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
 
     init_db()
     with connect() as db:
-        before = history_summary(args.save_id)
+        before = history_summary(args.save_id, db=db)
         todo = collect(db, args.save_id)
         if args.limit > 0:
             todo = todo[: args.limit]
@@ -132,7 +132,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             written += 1
 
-        after = history_summary(args.save_id)
+        # 必须复用本连接:新连接读不到尚未提交的事务,报数会和刚写的对不上
+        after = history_summary(args.save_id, db=db)
         print(f"\n已补记 {written} 条。现有: {after['total']} 条 "
               f"(系统判定 {after.get('system_count', 0)} / GM 写 {after['gm_count']} / "
               f"玩家声明 {after['player_count']})")

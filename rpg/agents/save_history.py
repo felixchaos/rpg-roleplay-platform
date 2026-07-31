@@ -278,24 +278,34 @@ def find_history_for_pending(save_id: int, anchor_keys: list[str]) -> dict[str, 
     return result
 
 
-def history_summary(save_id: int) -> dict[str, Any]:
-    """快速统计:有多少历史锚点 / 最高 importance / 最近 turn。"""
+def history_summary(save_id: int, db: Any = None) -> dict[str, Any]:
+    """快速统计:有多少历史锚点 / 最高 importance / 最近 turn。
+
+    `db` 传入已有连接时复用它 —— 否则新连接读不到调用方尚未提交的事务,报出来的
+    数字会和刚写的对不上(补记脚本第一版就这么自相矛盾过:补完之后报出来的总数还是旧值)。
+    """
+    if db is not None:
+        return _history_summary_row(db, save_id)
     init_db()
-    with connect() as db:
-        row = db.execute(
-            """
-            select count(*) as total,
-                   max(importance) as max_importance,
-                   max(turn_occurred) as last_turn,
-                   sum(case when source = 'gm_generated' then 1 else 0 end) as gm_count,
-                   sum(case when source = 'player_declared' then 1 else 0 end) as player_count,
-                   sum(case when source not in ('gm_generated', 'player_declared')
-                            then 1 else 0 end) as system_count
-            from save_history_anchors
-            where save_id = %s
-            """,
-            (int(save_id),),
-        ).fetchone()
+    with connect() as conn:
+        return _history_summary_row(conn, save_id)
+
+
+def _history_summary_row(db: Any, save_id: int) -> dict[str, Any]:
+    row = db.execute(
+        """
+        select count(*) as total,
+               max(importance) as max_importance,
+               max(turn_occurred) as last_turn,
+               sum(case when source = 'gm_generated' then 1 else 0 end) as gm_count,
+               sum(case when source = 'player_declared' then 1 else 0 end) as player_count,
+               sum(case when source not in ('gm_generated', 'player_declared')
+                        then 1 else 0 end) as system_count
+        from save_history_anchors
+        where save_id = %s
+        """,
+        (int(save_id),),
+    ).fetchone()
     return {
         "total": int(row["total"] or 0),
         "max_importance": int(row["max_importance"] or 0),
