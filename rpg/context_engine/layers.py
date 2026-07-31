@@ -233,6 +233,17 @@ def _write_results_layer(state) -> str:
         lines.append("- JSON：`{\"op\":\"set\",\"path\":\"player.role\",\"value\":\"史官\"}`")
         lines.append("- 【】：`【状态写入：player.role=史官】`（半角 = 号；path 不要含空格）")
 
+    # 洪泛闸反馈 — 没有这一段,闸就只是「悄悄拒绝」,GM 下轮还会原样再写一遍。
+    flood = [a for a in audit_log[-20:] if a.get("kind") == "memory_flood_blocked"]
+    if flood:
+        lines.append("")
+        lines.append("⚠️ 上轮有记忆写入**被洪泛闸拒绝**（同一件事被拆成太多条，玩家面板里每条都要手动删）：")
+        for a in flood[-5:]:
+            lines.append(f"- {a.get('path')} ← {str(a.get('value', ''))[:40]}")
+            if a.get("hint"):
+                lines.append(f"  · 原因：{a['hint']}")
+        lines.append("处理办法：把同族条目**合并成一条**（在正文里叙述细节，条目只留一条带进展/层数的总纲），不要逐条追加。")
+
     rejected = [a for a in audit_log[-15:] if "rejected" in str(a.get("source", "")) or a.get("kind") == "rejected"]
     if rejected:
         lines.append("")

@@ -940,31 +940,68 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
     # 且非法值**静默丢弃** → 用户点「关闭」自动弹回普通(群反馈)。
     # data["memory"]["mode"] 字段保留不删:存量存档/快照往返兼容,留着无害(已无消费方)。
 
-    def add_memory(self, bucket: str, text: str) -> bool:
+    def add_memory(self, bucket: str, text: str, *, origin: str = "") -> bool:
+        """兼容门面:只回「写没写进去」。要区分「重复」和「被闸拦」用 add_memory_ex。"""
+        return self.add_memory_ex(bucket, text, origin=origin)[0]
+
+    def add_memory_ex(self, bucket: str, text: str, *, origin: str = "") -> tuple[bool, str]:
+        """返回 (是否写入, 原因)。原因为空=写入成功;否则是给调用方/GM 看的拒绝理由。
+
+        origin 走 dispatcher 恒等注入的 `_origin`(用户意图分流的既有约定):玩家自己的
+        写入不受洪泛闸,GM/史官的受。
+        """
         text = _clean_item(text)
         if not text:
-            return False
+            return False, "文本为空"
         # acceptance 验收元信息不进任何玩家记忆桶。此处是**单点根闸**:dispatcher 的
         # add_memory_fact/pin_memory 等 5 工具、apply_ops 的关系标签回退分支、以及一切
         # 未来调用方都经这里;apply_ops 列表闸/known_event 工具闸是各自入口的前置纵深。
         from state.json_ops import is_acceptance_meta
         if is_acceptance_meta(text):
-            return False
+            return False, "验收元信息不进玩家记忆桶"
         bucket = bucket if bucket in {"resources", "abilities", "facts", "pinned", "notes"} else "notes"
         items = self.data["memory"].setdefault(bucket, [])
-        if text not in items:
-            items.append(text)
-            # task 74：dual-write 到结构化 memory.items（旧调用方完全无感知）
-            # bucket → kind 映射：当前所有旧 bucket 都标 runtime_fact（本局事实）。
-            # 后续 task 76/77/78 会按更细粒度区分 canon_fact / hypothesis 等。
-            self.add_memory_item(
-                text=text,
-                kind="runtime_fact",
-                source="legacy_add_memory",
-                legacy_bucket=bucket,
-            )
-            return True
-        return False
+        # 精确去重排在洪泛闸**前面**:重复写入本来就什么都不改,拿「超额」当理由回它会
+        # 误导 GM(它会以为自己在刷屏,其实只是重写了一条已有的)。
+        if text in items:
+            return False, "已含此条(去重)"
+        # 洪泛闸(群反馈:一门功法逐窍拆写刷了二十多条能力)。放在这里是因为这里是所有
+        # 写入路径的共同终点;拒绝会原样退回给 GM,绝不静默丢玩家可见资产。
+        from state.memory_budget import check_append
+        blocked = check_append(self.data, bucket, text, origin)
+        if blocked:
+            self._log_memory_flood_block(bucket, text, blocked, origin)
+            return False, blocked
+        items.append(text)
+        # task 74：dual-write 到结构化 memory.items（旧调用方完全无感知）
+        # bucket → kind 映射：当前所有旧 bucket 都标 runtime_fact（本局事实）。
+        # 后续 task 76/77/78 会按更细粒度区分 canon_fact / hypothesis 等。
+        self.add_memory_item(
+            text=text,
+            kind="runtime_fact",
+            source="legacy_add_memory",
+            legacy_bucket=bucket,
+        )
+        return True, ""
+
+    def _log_memory_flood_block(self, bucket: str, text: str, reason: str, origin: str) -> None:
+        """洪泛闸拦下的写入进 audit_log —— 与 parse_error / hard_forbidden 同一条落法,
+        context_engine.write_results 下轮会把它讲给 GM 听,让它自己合并而不是反复重试。"""
+        try:
+            audit = self.data.setdefault("permissions", {}).setdefault("audit_log", [])
+            audit.append({
+                "ts": now_iso(),
+                "kind": "memory_flood_blocked",
+                "source": origin or "gm",
+                "path": f"memory.{bucket}",
+                "value": str(text)[:120],
+                "hint": reason,
+                "turn": int(self.data.get("turn") or 0),
+            })
+            if len(audit) > 200:
+                self.data["permissions"]["audit_log"] = audit[-200:]
+        except Exception:
+            pass
 
     # task 74：结构化记忆写入入口。callers (extractor / curator / GM JSON op /
     # 玩家手动 add) 可以直接用这个，带上 kind + source + meta，避免被 bucket

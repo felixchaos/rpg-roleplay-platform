@@ -74,6 +74,29 @@ def tool_window_size() -> int:
         n = 18
     return max(1, n)
 
+# ── 记忆桶洪泛闸(state/memory_budget.py 的两条阈值,详见该模块头部实测数据)─────
+def memory_append_per_turn_max() -> int:
+    """GM 单回合往同一个记忆桶最多追加几条。0 = 关闭该闸。
+
+    默认 6:正常节奏是每回合往一个桶追加 1-2 条,超过 6 的基本只有「同一件事被逐条拆写」
+    这一种形态。RPG_MEMORY_APPEND_PER_TURN 覆盖。"""
+    try:
+        n = int(os.getenv("RPG_MEMORY_APPEND_PER_TURN", "6"))
+    except (TypeError, ValueError):
+        n = 6
+    return max(0, n)
+
+def memory_family_max() -> int:
+    """同一「族名」(结构前缀)在 abilities/resources 里最多几条。0 = 关闭该闸。
+
+    默认 4:同族攒到 5 条以上的,实际见到的形态就两类 —— 一门功法被逐窍拆写(群反馈来源),
+    和以「新发现」开头的资源流水账。RPG_MEMORY_FAMILY_MAX 覆盖。"""
+    try:
+        n = int(os.getenv("RPG_MEMORY_FAMILY_MAX", "4"))
+    except (TypeError, ValueError):
+        n = 4
+    return max(0, n)
+
 # ── 网络 ─────────────────────────────────────────────────────────────────
 def cors_origins() -> str | None:
     return os.getenv("RPG_CORS_ORIGINS")

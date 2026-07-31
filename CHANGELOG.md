@@ -9,6 +9,20 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.78.1] - 2026-07-31 (@ 2bcce9df1)
+
+### Fixed
+- **GM 把一件事拆成几十条记忆,刷爆玩家的能力/资源面板**(群反馈:「修功法要点亮体内星辰,写了几段话点亮了 36 个,应该是每点一个就给我写一个能力,直接污染了大概二十多条」):全链路**没有任何追加预算** —— `world.known_events` 早就因为同样的「GM 记流水账无界堆积」加了硬上限,记忆桶却一直没有(典型的修 A 漏 B)。补两条确定性闸,都落在所有写入路径的共同终点 `add_memory`:
+  - **每回合每桶预算**(默认 6):单回合往同一个桶追加超过 6 条即拒。
+  - **同族上限**(默认 4):`abilities`/`resources` 里同「族名」(首个结构分隔符前的前缀,需 ≥3 字)超过 4 条即拒。族闸**不管 `facts`** —— 事实天然按人名聚族,给它上闸就是误伤;`pinned`/`notes` 主要是玩家自己写的,同样不管。
+  - 阈值按真实对局的追加节奏校准,只打病理长尾:正常节奏是每回合往一个桶追加 1–2 条,超过阈值的基本只有「同一件事被逐条拆写」这一种形态。
+  - **拒绝,不是丢弃**:超额写入原样退回并给出理由,进 `audit_log`(`kind=memory_flood_blocked`),再由 `write_results` 层讲给下一轮 GM 听让它自己合并 —— 否则闸只是「悄悄拒绝」,GM 下轮原样再写一遍。
+  - **方向是 fail-open**:只拦认得出的 GM 来源(`llm_chat*` / `gm*`),玩家来源与认不出的来源一律放行。前科是「玩家笔记/固定记忆被自动归档悄悄丢」,玩家可见资产绝不能被系统吃掉。
+  - 旋钮:`RPG_MEMORY_APPEND_PER_TURN` / `RPG_MEMORY_FAMILY_MAX`,置 0 即关掉对应的闸。
+
+### Changed
+- 记忆桶的列表追加收口到 `add_memory` 单点根闸:`apply_state_write_typed` 的老路径(dispatcher 路由失败时的 fall-through)此前**手写 append**,于是既跳过了 `memory.items` 的 dual-write(结构化记忆漏条),也会绕过上面这两条闸。现在 `memory.<bucket>` 的追加一律回到 `add_memory`,同批次里某条被拦不影响其它条目落地。
+
 ## [1.78.0] - 2026-07-30 (@ f3fbc4fe8)
 
 ### Added

@@ -753,8 +753,14 @@ def execute_tool(state: Any, name: str, args: dict) -> str:
             v = (args.get("text") or "").strip()
             if not v:
                 return f"{name} 失败: text 为空"
-            ok = state.add_memory(bucket, v)
-            return f"memory.{bucket} += {v}" if ok else f"memory.{bucket} 已含此条 (去重)"
+            # _origin 由 dispatcher 无条件注入(用户意图分流的既有约定):玩家自己的写入
+            # 不受洪泛闸,GM/史官的受。拒绝理由原样回给 GM,让它下一轮自己合并。
+            ok, why = state.add_memory_ex(bucket, v, origin=str(args.get("_origin") or ""))
+            if ok:
+                return f"memory.{bucket} += {v}"
+            if why and "去重" not in why:
+                return f"失败: {name} 被拒 —— {why}"
+            return f"memory.{bucket} 已含此条 (去重)"
         if name == "add_hypothesis":
             return _exec_add_hypothesis(state, args)
         if name == "set_user_variable":

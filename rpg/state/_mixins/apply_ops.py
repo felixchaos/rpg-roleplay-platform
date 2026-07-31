@@ -49,6 +49,10 @@ _PLAYER_PROFILE_LOCK_PATHS = {
     "player.appearance", "player.personality", "player.speech_style", "player.background",
 }
 
+# 玩家可见记忆桶 —— 与 GameState.add_memory 的白名单同一套。老路径对这些 path 的
+# 追加必须回到 add_memory(单点根闸:去重 + memory.items dual-write + 洪泛闸)。
+_MEMORY_BUCKETS = {"resources", "abilities", "facts", "pinned", "notes"}
+
 
 class ApplyOpsMixin:
     """apply_* 系列方法 — GM/玩家/RulesEngine 对 state 的写入入口。"""
@@ -720,6 +724,21 @@ class ApplyOpsMixin:
             is_full_list_replacement = isinstance(value, (list, tuple)) and not append
             if overwrite or is_full_list_replacement:
                 _set_path(self.data, path, items)
+            elif path.startswith("memory.") and path.split(".", 1)[1] in _MEMORY_BUCKETS:
+                # 记忆桶的追加**一律回到 add_memory**(单点根闸)。这里原本手写 append,
+                # 于是 dispatcher 路由失败 fall-through 到老路径时,既跳过了 memory.items
+                # 的 dual-write,也绕过了洪泛闸 —— 典型的「修 A 漏 B」平行实现,现已收口。
+                bucket = path.split(".", 1)[1]
+                _blocked: list[str] = []
+                for item in items:
+                    if not item:
+                        continue
+                    _ok, _why = self.add_memory_ex(bucket, item, origin=source)
+                    if _why and "去重" not in _why:
+                        # 逐条继续,不因一条被拦就丢掉同批次里其它合法条目
+                        _blocked.append(_why)
+                if _blocked:
+                    return f"状态写入部分拒绝({bucket}·{len(_blocked)} 条): {_blocked[0]}"
             else:
                 target = _get_path(self.data, path)
                 if not isinstance(target, list):
