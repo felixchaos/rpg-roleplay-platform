@@ -126,6 +126,7 @@ def cascade_history_from_anchor(
     save_id: int, *, anchor_key: str, anchor_summary: str, new_status: str,
     detail: str = "", turn_occurred: int | None = None,
     source: str = "gm_generated", via: str = "anchor_cascade", db: Any = None,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> None:
     """把一次锚点状态迁移补写成历史锚点。**绝不抛** —— 级联失败不许影响标记本身。
 
@@ -148,10 +149,10 @@ def cascade_history_from_anchor(
             init_db()
             with connect() as conn:
                 _cascade_impl(conn, save_id, key, anchor_summary, new_status,
-                              detail, turn_occurred, source, via)
+                              detail, turn_occurred, source, via, extra_metadata)
         else:
             _cascade_impl(db, save_id, key, anchor_summary, new_status,
-                          detail, turn_occurred, source, via)
+                          detail, turn_occurred, source, via, extra_metadata)
     except Exception as exc:  # noqa: BLE001
         import logging
         logging.getLogger(__name__).warning(
@@ -159,7 +160,8 @@ def cascade_history_from_anchor(
 
 
 def _cascade_impl(db: Any, save_id: int, key: str, anchor_summary: str, new_status: str,
-                  detail: str, turn_occurred: int | None, source: str, via: str) -> None:
+                  detail: str, turn_occurred: int | None, source: str, via: str,
+                  extra_metadata: dict[str, Any] | None = None) -> None:
     from psycopg.types.json import Jsonb
 
     dup = db.execute(
@@ -177,7 +179,8 @@ def _cascade_impl(db: Any, save_id: int, key: str, anchor_summary: str, new_stat
         importance=_cascade_importance(new_status),
         turn_occurred=turn_occurred, tags=["anchor_cascade", new_status],
         linked_pending_anchors=[key], source=source,
-        metadata={"via": via, "anchor_key": key, "anchor_status": new_status},
+        metadata={"via": via, "anchor_key": key, "anchor_status": new_status,
+                  **(extra_metadata or {})},
         db=db,
     )
 
