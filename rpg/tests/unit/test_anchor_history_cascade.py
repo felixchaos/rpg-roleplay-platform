@@ -6,6 +6,12 @@
 想起留档。所以留档不能挂提示词,必须在 mark 成功的确定性缝上补。
 
 本文件锁三件:importance 映射、两条 mark 路径都真的接了级联、级联的去重与失败隔离。
+
+⚠️ v1.78.2 补记:上面这套「挂在 mark_anchor_* 上」的判断只对了一半 —— 真正在标锚点的
+是 anchor_reconcile 的每回合确定性兜底,GM 工具路径实际上已不再被调用,级联挂在它上面
+等于没挂(群反馈:「存档永远只有 2 个锚点」)。缝已搬到 agents.save_history,由
+reconciler / GM 工具 / 玩家面板三方共用;本文件保留对 GM 工具那条路的断言(它仍需正确),
+「每个写入方都得接线」的横扫断言在 test_history_anchor_cascade_paths.py。
 """
 from __future__ import annotations
 
@@ -15,6 +21,7 @@ import sys
 
 import pytest
 
+from agents import save_history as SH
 from tools_dsl import command_tools_anchors as A
 
 _SRC = pathlib.Path(A.__file__).read_text(encoding="utf-8")
@@ -58,10 +65,9 @@ def patched(monkeypatch):
     written: list[dict] = []
 
     def _install(dup_row):
-        import platform_app.db as _db
         import agents.save_history as _sh
-        monkeypatch.setattr(_db, "init_db", lambda *a, **k: None, raising=False)
-        monkeypatch.setattr(_db, "connect", lambda *a, **k: _FakeDB(dup_row), raising=False)
+        monkeypatch.setattr(_sh, "init_db", lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(_sh, "connect", lambda *a, **k: _FakeDB(dup_row), raising=False)
 
         def _rec(save_id, **kw):
             written.append({"save_id": save_id, **kw})
@@ -82,12 +88,12 @@ def patched(monkeypatch):
     ("weird", 60),        # 未知状态退化到留档线,不会低于阈值被后续过滤吃掉
 ])
 def test_cascade_importance(status, expected):
-    assert A._cascade_importance(status) == expected
+    assert SH._cascade_importance(status) == expected
 
 
 def test_importance_never_below_record_threshold():
     """全部取值 ≥60 —— record_history_anchor 文档串的「建议 60 起留档」线。"""
-    assert min(A._CASCADE_IMPORTANCE.values()) >= 60
+    assert min(SH._CASCADE_IMPORTANCE.values()) >= 60
 
 
 # ── 两条 mark 路径都接了级联,且在连接之外调 ────────────────────────────────
@@ -130,7 +136,7 @@ def test_cascade_writes_history_anchor(patched):
     assert w["turn_occurred"] == 33
     assert w["linked_pending_anchors"] == ["ch12_meet"]
     assert w["source"] == "gm_generated"  # 面板的「GM 写 N」要如实反映,不另立第三种 source
-    assert w["metadata"]["via"] == "anchor_cascade"
+    assert w["metadata"]["via"] == "gm_tool"  # 三个写入方各自可辨认
     assert "ch12_meet" in w["summary"] and "码头" in w["summary"]
 
 
@@ -151,13 +157,13 @@ def test_cascade_noop_without_anchor_key(patched):
 
 def test_cascade_swallows_errors(monkeypatch):
     """级联炸了绝不能把 mark 本身带崩。"""
-    import platform_app.db as _db
-    monkeypatch.setattr(_db, "init_db", lambda *a, **k: None, raising=False)
+    import agents.save_history as _sh
+    monkeypatch.setattr(_sh, "init_db", lambda *a, **k: None, raising=False)
 
     def _boom(*a, **k):
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(_db, "connect", _boom, raising=False)
+    monkeypatch.setattr(_sh, "connect", _boom, raising=False)
     A._cascade_history_from_anchor(7, anchor_key="k", anchor_summary="s",
                                    new_status="occurred", detail="d")  # 不抛即通过
 

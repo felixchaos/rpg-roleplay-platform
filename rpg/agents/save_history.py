@@ -38,6 +38,7 @@ def record_history_anchor(
     linked_pending_anchors: list[str] | None = None,
     source: str = "gm_generated",
     metadata: dict[str, Any] | None = None,
+    db: Any = None,
 ) -> dict[str, Any]:
     """记录"玩家在这个世界线创造的"重要历史事件。
 
@@ -48,6 +49,9 @@ def record_history_anchor(
         ≥80: 改写了某个原著锚点 (linked_pending_anchors 不空)
         ≥90: 引入了原著不存在的新角色 / 新势力
 
+    `db` 传入已有连接时复用它(调用方已在 `with connect()` 里)——**别在持连接的块里
+    再开新连接**,那会在 PgBouncer 上叠连接把池打死(有前科)。
+
     返回 {"ok": bool, "id": int, ...} 或 {"ok": false, "error": str}。
     """
     summary = (summary or "").strip()
@@ -56,38 +60,126 @@ def record_history_anchor(
     if len(summary) > 800:
         summary = summary[:800]
     importance = max(0, min(100, int(importance)))
+    fields = dict(
+        story_time_label=story_time_label, ingame_chapter=ingame_chapter, tags=tags,
+        characters=characters, locations=locations, linked_canon_keys=linked_canon_keys,
+        linked_pending_anchors=linked_pending_anchors, source=source, metadata=metadata)
+    if db is not None:
+        return _insert_anchor_row(db, save_id, summary, importance, turn_occurred, fields)
     init_db()
+    with connect() as conn:
+        return _insert_anchor_row(conn, save_id, summary, importance, turn_occurred, fields)
+
+
+def _insert_anchor_row(db: Any, save_id: int, summary: str, importance: int,
+                       turn_occurred: int | None, f: dict[str, Any]) -> dict[str, Any]:
+    """真正的 INSERT —— 自带连接与复用连接两条路共用它,别写第二份。"""
     from psycopg.types.json import Jsonb
-    with connect() as db:
-        # turn 没传 → 取存档当前 turn
-        if turn_occurred is None:
-            row = db.execute(
-                "select coalesce((state_snapshot->>'turn')::int, 0) as t "
-                "from game_saves where id = %s", (int(save_id),),
-            ).fetchone()
-            turn_occurred = int(row["t"]) if row else 0
-        ret = db.execute(
-            """
-            insert into save_history_anchors (
-              save_id, turn_occurred, story_time_label, ingame_chapter,
-              summary, importance, tags,
-              characters, locations, linked_canon_keys, linked_pending_anchors,
-              source, metadata
-            )
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            returning id, created_at
-            """,
-            (
-                int(save_id), int(turn_occurred), story_time_label.strip(),
-                ingame_chapter if ingame_chapter is None else int(ingame_chapter),
-                summary, importance, Jsonb(tags or []),
-                Jsonb(characters or []), Jsonb(locations or []),
-                Jsonb(linked_canon_keys or []), Jsonb(linked_pending_anchors or []),
-                source.strip() or "gm_generated", Jsonb(metadata or {}),
-            ),
+
+    if turn_occurred is None:  # turn 没传 → 取存档当前 turn
+        row = db.execute(
+            "select coalesce((state_snapshot->>'turn')::int, 0) as t "
+            "from game_saves where id = %s", (int(save_id),),
         ).fetchone()
+        turn_occurred = int(row["t"]) if row else 0
+    ingame_chapter = f.get("ingame_chapter")
+    ret = db.execute(
+        """
+        insert into save_history_anchors (
+          save_id, turn_occurred, story_time_label, ingame_chapter,
+          summary, importance, tags,
+          characters, locations, linked_canon_keys, linked_pending_anchors,
+          source, metadata
+        )
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        returning id, created_at
+        """,
+        (
+            int(save_id), int(turn_occurred), (f.get("story_time_label") or "").strip(),
+            ingame_chapter if ingame_chapter is None else int(ingame_chapter),
+            summary, importance, Jsonb(f.get("tags") or []),
+            Jsonb(f.get("characters") or []), Jsonb(f.get("locations") or []),
+            Jsonb(f.get("linked_canon_keys") or []), Jsonb(f.get("linked_pending_anchors") or []),
+            (f.get("source") or "").strip() or "gm_generated", Jsonb(f.get("metadata") or {}),
+        ),
+    ).fetchone()
     return {"ok": True, "id": int(ret["id"]), "turn_occurred": turn_occurred,
             "importance": importance}
+
+
+# ── 锚点脱离 pending → 自动补写历史锚点(确定性地板,两个写入方共用这一条缝)────────
+# v1.73.0 把这条级联挂在了 GM 工具 `mark_anchor_*` 上,可那条路实际上**早已不再被调用**
+# —— 因为 `anchor_reconcile` 的「每回合确定性兜底判定」已经先把 pending 锚点确定性地
+# 标掉了,GM 再没有可标的东西。级联挂在了不跑的那条路上,
+# 所以玩家看到的时间线永远停在最初那两条 phase 浓缩(群反馈:「存档永远只有 2 个锚点」)。
+# 现在缝收在这里,GM 工具路径与系统兜底路径都调它,谁标的就记谁。
+_CASCADE_IMPORTANCE = {"superseded": 80, "variant": 70, "occurred": 60}
+
+
+def _cascade_importance(new_status: str) -> int:
+    """未知状态退化到 60 —— record_history_anchor 文档串的「建议 60 起留档」线,
+    低于它会被下游 min_importance 过滤吃掉。"""
+    return _CASCADE_IMPORTANCE.get(new_status, 60)
+
+
+def cascade_history_from_anchor(
+    save_id: int, *, anchor_key: str, anchor_summary: str, new_status: str,
+    detail: str = "", turn_occurred: int | None = None,
+    source: str = "gm_generated", via: str = "anchor_cascade", db: Any = None,
+) -> None:
+    """把一次锚点状态迁移补写成历史锚点。**绝不抛** —— 级联失败不许影响标记本身。
+
+    去重:同一 anchor_key 已被某条 history 关联过就跳过(GM 若已手动 record_history_anchor
+    并填了 linked_pending_anchors,正向级联会先把锚点标掉,这里再查就命中 → 不双写)。
+
+    importance 依 record_history_anchor 文档串的阈值语义:
+      superseded = 锚点被绕过、原著走向被改写 → 80
+      variant    = 发生了但走样(drift≥0.15)   → 70
+      occurred   = 基本照原著发生               → 60(仍达「留档」建议线 60)
+
+    ⚠️ 调用方已持连接时**必须**把它经 `db=` 传进来:在持连接的块里再开新连接会在
+    PgBouncer 上叠连接把池打死(有前科)。
+    """
+    key = (anchor_key or "").strip()
+    if not save_id or not key:
+        return
+    try:
+        if db is None:
+            init_db()
+            with connect() as conn:
+                _cascade_impl(conn, save_id, key, anchor_summary, new_status,
+                              detail, turn_occurred, source, via)
+        else:
+            _cascade_impl(db, save_id, key, anchor_summary, new_status,
+                          detail, turn_occurred, source, via)
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "[save_history] 历史锚点级联失败 (非致命, save=%s key=%s): %s", save_id, key, exc)
+
+
+def _cascade_impl(db: Any, save_id: int, key: str, anchor_summary: str, new_status: str,
+                  detail: str, turn_occurred: int | None, source: str, via: str) -> None:
+    from psycopg.types.json import Jsonb
+
+    dup = db.execute(
+        "select 1 from save_history_anchors "
+        "where save_id = %s and linked_pending_anchors @> %s::jsonb limit 1",
+        (int(save_id), Jsonb([key])),
+    ).fetchone()
+    if dup:
+        return
+    head = (anchor_summary or "").strip()[:200]
+    body = (detail or "").strip()[:400]
+    summary = f"[锚点 {key} → {new_status}] " + (f"{head}｜{body}" if head and body else (head or body))
+    record_history_anchor(
+        int(save_id), summary=summary,
+        importance=_cascade_importance(new_status),
+        turn_occurred=turn_occurred, tags=["anchor_cascade", new_status],
+        linked_pending_anchors=[key], source=source,
+        metadata={"via": via, "anchor_key": key, "anchor_status": new_status},
+        db=db,
+    )
 
 
 def list_recent_history(
@@ -193,7 +285,9 @@ def history_summary(save_id: int) -> dict[str, Any]:
                    max(importance) as max_importance,
                    max(turn_occurred) as last_turn,
                    sum(case when source = 'gm_generated' then 1 else 0 end) as gm_count,
-                   sum(case when source = 'player_declared' then 1 else 0 end) as player_count
+                   sum(case when source = 'player_declared' then 1 else 0 end) as player_count,
+                   sum(case when source not in ('gm_generated', 'player_declared')
+                            then 1 else 0 end) as system_count
             from save_history_anchors
             where save_id = %s
             """,
@@ -205,4 +299,7 @@ def history_summary(save_id: int) -> dict[str, Any]:
         "last_turn": int(row["last_turn"] or 0),
         "gm_count": int(row["gm_count"] or 0),
         "player_count": int(row["player_count"] or 0),
+        # 系统写的(每回合确定性兜底判定 + phase 浓缩)。少了这一格,面板会在明明有几十条
+        # 记录时显示「GM 写 0 / 玩家声明 0」,读起来就像坏了(群反馈正是这么读的)。
+        "system_count": int(row["system_count"] or 0),
     }

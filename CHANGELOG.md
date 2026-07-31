@@ -9,6 +9,19 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.78.2] - 2026-07-31 (@ e8f53752a)
+
+### Fixed
+- **「存档独立时间线」永远只有建档初期那两条,玩家做的事一件都没留档**(群反馈:「之前反馈过这个问题好像还没修,存档永远只有 2 个锚点」):v1.73.0 加的反向级联(锚点脱离 pending → 自动补写历史锚点)**挂在了不跑的那条路上**。
+  - 真正在标锚点的是 `anchor_reconcile` 的「每回合确定性兜底判定」—— 它每回合先把 pending 锚点确定性地标掉,GM 再没有可标的东西,于是 `mark_anchor_*` 工具路径**实际上早已不再被调用**,挂在它上面的级联一次都没跑过。玩家看到的两条是更早的 phase 浓缩,时间线就此冻在建档初期。
+  - 级联缝搬到 `agents.save_history.cascade_history_from_anchor`,由**三个写入方共用**:①`anchor_reconcile` 的兜底判定(`source='system'`)②GM 工具 `mark_anchor_*`(`source='gm_generated'`)③玩家在世界线面板手动标记已到达(`source='player_declared'` —— 这也是「玩家声明 N」此前恒为 0 的原因,那条路从来没接过留档)。
+  - **刻意豁免**两类批量退役:角色死亡导致的单人锚点失效、phase 关闭时的自动绕过。它们是「不再可能发生」,不是「发生了什么」,记进玩家历史只会刷屏(测试里写明理由,防止后人顺手接上)。
+  - 级联复用调用方已持的连接(`db=`)。在持连接的块里再开新连接会在 PgBouncer 上叠连接把池打死,本仓有前科。
+- **面板把几十条记录显示成「GM 写 0 / 玩家声明 0」**:`history_summary` 只统计 GM 与玩家两种来源,系统写的一条不算 —— 明明有记录却显示两个 0,读起来就像功能坏了(反馈者正是这么读的)。补 `system_count`,注入行改为「系统判定 N / GM 写 N / 玩家声明 N」。
+
+### Changed
+- `record_history_anchor` 接受 `db=` 复用连接;自带连接与复用连接两条路共用同一个 INSERT(`_insert_anchor_row`),不再有第二份。
+
 ## [1.78.1] - 2026-07-31 (@ 2bcce9df1)
 
 ### Fixed

@@ -587,6 +587,19 @@ async def api_save_anchor_satisfy(save_id: int, anchor_key: str, user=Depends(re
                     advance_progress(db, save_id, src_ch)
                 except Exception:
                     pass  # 进度同步失败不阻断锚点标记
+            # 补写历史锚点 —— 这是**玩家亲手声明**的到达,理应记进「存档独立时间线」,
+            # 也是唯一能让面板的「玩家声明 N」不恒为 0 的入口。与 GM 工具路径 /
+            # anchor_reconcile 共用 cascade_history_from_anchor 一条缝(复用本连接)。
+            try:
+                from agents.save_history import cascade_history_from_anchor
+                cascade_history_from_anchor(
+                    save_id, anchor_key=anchor_key or (row.get("anchor_key") or ""),
+                    anchor_summary=row.get("summary") or "", new_status="occurred",
+                    detail="玩家在世界线面板手动标记已到达",
+                    turn_occurred=occurred_turn, source="player_declared",
+                    via="worldline_panel", db=db)
+            except Exception:
+                log.warning("[saves] 历史锚点级联失败(忽略)", exc_info=True)
         return json_response({
             "ok": True,
             "anchor_id": row["id"],

@@ -508,8 +508,9 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
                 if hist:
                     hlines = [
                         "=== 存档独立时间线·玩家创造的历史 (过去时态) ===",
-                        f"本存档共积累 {hsum['total']} 条历史锚点 (GM 写 {hsum['gm_count']} / "
-                        f"玩家声明 {hsum['player_count']}),最高 importance={hsum['max_importance']}",
+                        f"本存档共积累 {hsum['total']} 条历史锚点 (系统判定 {hsum.get('system_count', 0)} / "
+                        f"GM 写 {hsum['gm_count']} / 玩家声明 {hsum['player_count']}),"
+                        f"最高 importance={hsum['max_importance']}",
                         "下面是最近 6 条 (turn 倒序),必须当作【已经发生的事实】,",
                         "不要重复触发、不要描述成『接下来要发生』:",
                     ]

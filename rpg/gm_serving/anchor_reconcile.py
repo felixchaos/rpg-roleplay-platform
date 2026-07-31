@@ -925,7 +925,7 @@ def _apply_hits(
               drift_score = %s,
               updated_at = now()
             where save_id = %s and anchor_key = %s and status = 'pending'
-            returning id, source_chapter
+            returning id, source_chapter, summary
             """,
             (
                 new_status,
@@ -936,6 +936,18 @@ def _apply_hits(
         if not row:
             continue  # 已非 pending(GM 本轮自调过 / 并发已标)→ 跳过
         marked += 1
+        # 补写「存档独立时间线」历史锚点。**这条是本文件必须有的**:GM 工具路径实际上
+        # 已不再被调用(pending 都被这里先确定性标掉了),级联只挂在那边就等于没挂 ——
+        # 玩家看到的时间线会永远停在建档初期(群反馈:「存档永远只有 2 个锚点」)。
+        # 复用同一 db 连接(别在持连接的块里再开连接);源标 system,谁标的记谁。
+        try:
+            from agents.save_history import cascade_history_from_anchor
+            cascade_history_from_anchor(
+                save_id, anchor_key=key, anchor_summary=row.get("summary") or "",
+                new_status=new_status, detail="本回合剧情到达此锚点(系统确定性判定)",
+                turn_occurred=occurred_turn, source="system", via="anchor_reconcile", db=db)
+        except Exception as hist_exc:  # 留档失败不阻断锚点标记
+            log.warning("[anchor_reconcile] 历史锚点级联失败(忽略): %s", hist_exc)
         # 推进玩家进度(max-only,只增不减,幂等)。复用既有 advance_progress。
         src_ch = row.get("source_chapter")
         if isinstance(src_ch, int) and src_ch >= 1:
