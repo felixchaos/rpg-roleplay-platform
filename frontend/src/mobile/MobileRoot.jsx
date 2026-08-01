@@ -32,6 +32,8 @@ import { MobileTavern } from './pages/MobileTavern.jsx';
 import { MobileAdmin } from './pages/MobileAdmin.jsx';
 import { MobileNewGame } from './pages/MobileNewGame.jsx';
 import { MobileDialogHost } from './dialog.jsx';
+// 角色来源与桌面壳同一份(useReactiveUser),别在移动端另起一套用户状态。
+import { useReactiveUser } from '../components/platform/shared.jsx';
 
 const TAB_DEFS = [
   { id: 'home', labelKey: 'mobile.root.tab.home', icon: 'home', root: 'profile' },
@@ -112,6 +114,8 @@ export function MobileRoot({ page = 'profile', setPage }) {
   const [stack, setStack] = useState([]);   // 页内实体详情局部栈(不改 URL)
   const [toast, setToast] = useState(null);
   const seen = useRef(new Set());
+  const _u = useReactiveUser();
+  const _role = _u && _u.role;
 
   // 路由变化(URL/Tab 切换)→ 清空页内局部栈,回到该路由的根视图
   useEffect(() => { setStack([]); }, [page]);
@@ -182,6 +186,27 @@ export function MobileRoot({ page = 'profile', setPage }) {
 
   // 当前路由视图
   const renderRoute = () => {
+    // 角色闸:桌面壳有 AdminGuard,移动壳一直没有 —— 直接敲 #admin / #rath 就能把整套
+    // 管理/灰度界面渲染出来(数据面后端会 403,但菜单、区块名、页面结构都露了)。
+    // 「导航里没有入口」不是访问控制,URL 是公开的(08-01 反馈:「为什么普通用户可以看到 rath」)。
+    const _restricted = page === 'admin' || (page || '').startsWith('admin-') || page === 'rath';
+    if (_restricted && _role !== 'admin') {
+      // 角色未就绪时也**不放行**(fail-closed,与桌面 AdminGuard 同向)
+      const _msg = !_role
+        ? t('mobile.root.restricted.checking', { defaultValue: '正在校验权限…' })
+        : t('mobile.root.restricted.desc', { defaultValue: '该页面仅平台管理员可访问。' });
+      return (
+        <>
+          <PageHeader title={t('mobile.root.restricted.title', { defaultValue: '需要管理员权限' })}
+            onBack={() => goRoute(TAB_ROOT[tab] || 'profile')} />
+          <div className="pl-body"><div className="pl-pad">
+            <div className="pl-empty" style={{ padding: '64px 20px', textAlign: 'center' }}>
+              <div style={{ fontSize: 13.5, color: 'var(--muted)', lineHeight: 1.7 }}>{_msg}</div>
+            </div>
+          </div></div>
+        </>
+      );
+    }
     if (page === 'admin' || (page || '').startsWith('admin-')) return <MobileAdmin nav={nav} />;
     // RATH 观测台桌面专属(密集轮询面板/大量数据可视化,未做移动适配)——给出明确的居中
     // 空态说明,而不是像之前那样静默落到「未识别 page → 通用占位」显示裸 page id。

@@ -7,6 +7,22 @@
 
 特性键 = 前端 agent-modules.js 的 FEATURES[].key,前后端同名(单一真相),前端经
 `POST /api/me/preference` 写 `{"<key>.enabled": true/false}`,后端这里读同一键。
+
+⚠️ **用户偏好不是访问控制**(08-01 反馈:「为什么普通用户可以看到 rath」)。
+`POST /api/me/preference` 收任意键、无白名单,于是任何登录用户都能自己 POST 一句
+`{"rath_experiment.enabled": true}` 把「默认关的灰度特性」给自己打开 —— 前端那两道
+(导航隐藏 / 路由守卫)只是藏 UI,绕过成本就是一次 POST,而后端这道闸读的正是用户
+自己能写的那张表。于是「三道防线」实际上一道都不成立。
+
+分界不在「默认开还是默认关」,而在**这个开关控制什么**:
+
+  · **引擎开关**(绝大多数)—— 只影响这个用户自己这局怎么跑(分层缓存、召回深度、
+    NPC 议程…)。用户偏好照旧优先;按人灰度(金丝雀)也靠它,不能锁。
+  · **访问闸**(`_ACCESS_GATED`)—— 决定能不能进某个界面/功能面。用户偏好一律
+    **忽略**,只认环境变量;谁能用由真正的角色闸决定(RATH 路由另有 is_admin)。
+
+加新特性时的判据:**这个开关决定「能不能进某个页面/管理面」吗?**
+是 → 进 `_ACCESS_GATED`;只是改自己这局的跑法 → 不用管。
 """
 from __future__ import annotations
 
@@ -29,6 +45,21 @@ _FEATURES: dict[str, tuple[str, str]] = {
     "rath_experiment": ("RPG_RATH_EXPERIMENT", "0"),  # RATH·搖光观测台(离线世界实验,默认关,验后开)
 }
 
+# 访问闸:这些键决定「能不能进某个界面/功能面」,**用户偏好一律忽略**(见模块头)。
+# 其余键都是只影响自己这局的引擎开关 —— 用户偏好照旧优先,按人灰度也靠它
+# (线上就有靠偏好跑的金丝雀,一刀切锁死会把它们静默关掉)。
+_ACCESS_GATED: frozenset[str] = frozenset({
+    "rath_experiment",   # RATH·搖光观测台:灰度期仅管理员,前端 adminOnly + 路由 AdminGuard 同向
+})
+
+# 前端「模块模型」页面里列给用户自己控制的键(agent-modules.js FEATURES)。
+# 与 _ACCESS_GATED 必须无交集 —— 一个键不能既摆在用户面前又声称是访问闸。
+_USER_TOGGLABLE: frozenset[str] = frozenset({
+    "ctx_tiered", "recorder_unified", "narrator_slim", "rag_gate", "kb_state",
+    "anchor_pace", "consequence_ledger", "world_heartbeat", "channel_fallback",
+    "npc_agenda",
+})
+
 _FALSY = ("0", "false", "no", "off", "")
 
 
@@ -44,7 +75,8 @@ def feature_enabled(key: str, user_id: int | None = None) -> bool:
     """
     if key not in _FEATURES:
         return False
-    if user_id is not None:
+    # 访问闸:用户偏好不参与判定(用户偏好不是访问控制,见模块头)。
+    if user_id is not None and key not in _ACCESS_GATED:
         try:
             from core.request_cache import get_user_prefs_cached
             v = get_user_prefs_cached(int(user_id)).get(f"{key}.enabled")
@@ -81,3 +113,19 @@ def _owner_uid(save_id: int | None, db: object | None = None) -> int | None:
 
 def feature_keys() -> list[str]:
     return list(_FEATURES.keys())
+
+
+def rejected_feature_keys(payload: dict) -> set[str]:
+    """从一份 preference payload 里挑出**用户无权自设**的特性开关键。
+
+    只拦**访问闸**那几个键;引擎开关(用户自己这局怎么跑)与其它偏好一律放行 ——
+    线上有靠偏好跑的按人灰度,拦它们就是把金丝雀掐了。
+    """
+    out: set[str] = set()
+    for k in (payload or {}):
+        if not isinstance(k, str) or not k.endswith(".enabled"):
+            continue
+        feat = k[: -len(".enabled")]
+        if feat in _ACCESS_GATED:
+            out.add(k)
+    return out

@@ -25,6 +25,18 @@ async def api_set_preference(request: Request, user=Depends(require_user)):
     import json as _json
     if len(_json.dumps(payload, ensure_ascii=False).encode("utf-8")) > 32 * 1024:
         return json_response({"ok": False, "error": "preferences 过大(上限 32KB)"}, status_code=400)
+    # 本端点收任意键(界面主题/字号/默认模型…都塞这里),但 `<key>.enabled` 是
+    # core.feature_flags 的特性开关命名空间 —— 灰度/未开放特性不许用户自己写开,
+    # 否则「默认关」形同虚设(08-01 反馈:「为什么普通用户可以看到 rath」)。
+    # feature_flags 侧已忽略这些键;这里再拒一次是纵深:让越权意图当场可见、可审计,
+    # 而不是写进去了却静默不生效(那种「写成功但没用」最难查)。
+    from core.feature_flags import rejected_feature_keys
+    bad = rejected_feature_keys(payload)
+    if bad:
+        return json_response(
+            {"ok": False, "error": f"这些特性开关不可由用户自行设置: {', '.join(sorted(bad))}"},
+            status_code=403,
+        )
     with connect() as db:
         if replace:
             row = db.execute(

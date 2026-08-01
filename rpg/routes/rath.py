@@ -17,7 +17,23 @@ router = APIRouter()
 
 
 def _flag_ok(user) -> bool:
+    """灰度期两道**服务端**闸,缺一不可:
+
+    ① 管理员角色 —— 这是真正的访问控制。前端的「导航隐藏 + 路由 AdminGuard」只是藏 UI,
+      绕过成本是敲一下 URL;而 `rath_experiment` 那道 flag 读的是 **用户自己能写的**
+      `user_preferences`(`POST /api/me/preference` 收任意键、无白名单)—— 任何登录用户
+      POST 一句 `{"rath_experiment.enabled": true}` 就能给自己开(08-01 反馈:
+      「为什么普通用户可以看到 rath」)。所以灰度期必须有一道用户改不了的闸。
+    ② 特性 flag —— 决定这套东西在本部署上是否启用(env `RPG_RATH_EXPERIMENT`)。
+      feature_flags 已把 rath 排除出「用户可自开」集合,这里读到的只会是环境值。
+
+    对全体开放时:删掉 ① 这一行,同时删掉 platform-app.jsx 的 adminOnly 与
+    entries/platform.jsx 的 AdminGuard 包裹(三处同批次改,别只改一处)。
+    """
     from core.feature_flags import feature_enabled
+    from platform_app.api._deps import is_admin
+    if not is_admin(user):
+        return False
     return feature_enabled("rath_experiment", int(user["id"]))
 
 

@@ -9,6 +9,15 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.78.5] - 2026-08-01 (@ 12e71a489)
+
+### Security
+- **灰度特性可以被普通用户自己开**(反馈:「为什么普通用户可以看到 rath,不对吧??」):RATH 号称有「三道防线」,实际一道都不成立 —— ①导航隐藏只是不显示菜单项 ②路由 `AdminGuard` 只是前端不渲染 ③后端 flag `rath_experiment` **读的是 `user_preferences`,而 `POST /api/me/preference` 收任意键、无白名单**,于是任何登录用户 POST 一句 `{"rath_experiment.enabled": true}` 就把自己放进去了。唯一在服务端的那道闸,开关握在被拦的人手里。**用户偏好不是访问控制。**
+  - `core.feature_flags` 新增 `_ACCESS_GATED`:决定「能不能进某个界面」的键,用户偏好一律忽略,只认环境变量。分界**不是**「默认开还是默认关」,而是这个开关控制什么 —— 只影响自己这局怎么跑的引擎开关照旧认偏好(线上有靠偏好跑的按人灰度,一刀切会把它们静默关掉,守卫测试已钉死这条)。
+  - `POST /api/me/preference` 对访问闸键直接 403(纵深:让越权当场可见,而不是写进去了却静默不生效 —— 那种最难查)。
+  - RATH 全部端点加一道**用户改不了**的角色闸(`is_admin`),与前端 adminOnly 意图对齐;AST 守卫断言每个端点都过闸。
+- **移动端外壳完全没有管理员守卫**:桌面壳有 `AdminGuard`,移动壳一直没有 —— 直接敲 `#admin` / `#admin-*` / `#rath` 就能把整套管理/灰度界面渲染出来(数据面后端会 403,但菜单、区块名、页面结构都露了)。「导航里没有入口」不是访问控制,URL 是公开的。现补齐角色闸,且角色未就绪时 fail-closed(与桌面同向)。
+
 ## [1.78.4] - 2026-08-01 (@ 3664ffdef)
 
 ### Fixed
