@@ -732,6 +732,10 @@ def execute_tool(state: Any, name: str, args: dict) -> str:
             if not v:
                 return "set_main_quest 失败: text 为空"
             state.data.setdefault("memory", {})["main_quest"] = v
+            # 打「上次更新回合」戳 —— 陈旧提醒靠它。写入路径有两条(本执行器 + apply_ops
+            # 老路径的标量分支),两条都要戳,漏一条主线就会假性陈旧、天天被催。
+            from state.quest_staleness import stamp_main_quest
+            stamp_main_quest(state.data)
             return f"主线 → {v}"
         if name == "set_current_objective":
             v = (args.get("text") or "").strip()

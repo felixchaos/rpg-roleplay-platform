@@ -708,6 +708,11 @@ class ApplyOpsMixin:
             self.update_time(value, source=source)
         elif kind == "scalar":
             _set_path(self.data, path, value)
+            # 主线的「上次更新回合」戳:这是 dispatcher 路由失败 fall-through 的老路径,
+            # 与工具执行器是同一件事的两条路,漏戳就会假性陈旧、天天催 GM 改主线。
+            if path == "memory.main_quest":
+                from state.quest_staleness import stamp_main_quest
+                stamp_main_quest(self.data)
         elif kind == "list":
             items = _split_items(value)
             # fork 收编(污染回路 B):master.py 曾指示 GM 把 acceptance 跳过理由写进 memory.facts,

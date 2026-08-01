@@ -241,6 +241,25 @@ def _build_user_prompt(
     lines.append(f"- world.time = {w.get('time', '') or '(空)'}")
     lines.append(f"- world.weather = {w.get('weather', '') or '(空)'}")
     lines.append(f"- memory.main_quest = {m.get('main_quest', '') or '(空)'}")
+    # 主线陈旧提醒(群反馈:主线五十多回合没变过,只有当前目标在变)。当前目标每轮都在
+    # 议程上,主线是长程字段、写完就没人再管 —— 实测能冻上百个回合零更新,期间
+    # set_current_objective 反复被调、set_main_quest 一次没有,且没有任何东西在拒绝写入。
+    # 触发是确定性的(回合数),改不改、改成什么仍归史官判断:主线该写什么是叙事判断,
+    # 代码代写只会写出废话。措辞刻意给「仍然准确就别动」的出口,避免逼出编造式改写。
+    try:
+        from state.quest_staleness import MAIN_QUEST_STALE_TURNS, main_quest_age, main_quest_is_stale
+        if main_quest_is_stale(state_data):
+            _age = main_quest_age(state_data)
+            _how_long = f"已 {_age} 回合" if _age is not None else "长期"
+            lines.append(
+                f"  ⚠ 上面这条主线{_how_long}没有更新过(阈值 {MAIN_QUEST_STALE_TURNS} 回合)。"
+                "请对照最近剧情判断,二选一,本轮必须做其中一件:"
+                '(a) 它已完成/已被剧情甩在身后 → {"op":"set","path":"memory.main_quest",'
+                '"value":"新的长程目标"};'
+                "(b) 它仍然准确 → **原样重写同一条值**以确认(内容不变,只是重置计时器)。"
+                "别为了交差编一条同义废话。")
+    except Exception:  # noqa: BLE001  提醒失败绝不影响史官正常工作
+        pass
     lines.append(f"- memory.current_objective = {m.get('current_objective', '') or '(空)'}")
     # 快照窗口取尾:resources 尾部 append、relationships 新键落 dict 尾;取头会让
     # 史官看不到新近获得的物品/新建立的关系(误判「未知实体」/重复发放)。
