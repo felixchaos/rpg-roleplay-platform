@@ -2479,6 +2479,7 @@
       "sent_notice": "验证码已发送到 {{mask}}，请在 10 分钟内完成验证"
     },
     "login_code": {
+      "not_registered": "这个邮箱还没有账号，已为你转到注册页（邮箱已填好）。",
       "desc": "输入已验证邮箱，我们会发送一次性登录验证码。",
       "email_label": "邮箱",
       "email_required": "请填写有效的邮箱地址",

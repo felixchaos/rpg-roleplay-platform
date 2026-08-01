@@ -121,16 +121,22 @@ final class API {
         try await postExpectOK(base, "/api/auth/resend-code", ["email": email], fail: "重发失败")
     }
     /// 请求免密登录验证码(发到邮箱)。
-    func requestLoginCode(base: String, email: String) async throws {
-        try await postExpectOK(base, "/api/auth/login-code/request", ["email": email], fail: "发送验证码失败")
+    /// 返回 false = 该邮箱还没有账号(服务端不会发信,调用方应引导去注册),别让人干等。
+    @discardableResult
+    func requestLoginCode(base: String, email: String) async throws -> Bool {
+        let obj = try await postExpectOK(base, "/api/auth/login-code/request", ["email": email], fail: "发送验证码失败")
+        // 老服务端没有这个字段 → 缺省当已注册,行为与改动前一致。
+        return (obj["registered"] as? Bool) ?? true
     }
-    private func postExpectOK(_ base: String, _ path: String, _ json: [String: Any], fail: String) async throws {
+    @discardableResult
+    private func postExpectOK(_ base: String, _ path: String, _ json: [String: Any], fail: String) async throws -> [String: Any] {
         let (data, resp) = try await session.data(for: try request(base, path, method: "POST", json: json))
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         if code < 200 || code >= 300 || obj["ok"] as? Bool == false {
             throw APIError.message((obj["error"] as? String) ?? fail)
         }
+        return obj
     }
     /// 经鉴权会话 GET 一个文件,落临时目录,返回本地 URL(供 UIActivityViewController 分享)。
     private func downloadToTemp(_ base: String, _ path: String, _ filename: String) async throws -> URL {

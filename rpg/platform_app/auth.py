@@ -1143,14 +1143,23 @@ def register_via_invite(
 def request_login_code(email: str, *, ip: str = "", ua: str = "") -> dict[str, Any]:
     """Send a one-time email code for passwordless login.
 
-    The request path is intentionally non-enumerating: unknown or unverified
-    emails still return ok, but no email is sent.
+    返回里的 `registered` 告诉调用方这个邮箱有没有账号 —— 没有就该把人领去注册,
+    而不是让他对着「验证码已发送」干等一封永远不会到的信(群反馈 08-01)。
+
+    为什么敢直说(这里原本刻意静默 ok 防账号枚举):**那个防护是装饰性的**。
+    同一套 API 的 `register` 对已占用邮箱直接回「该邮箱已被注册」,枚举面本来就
+    敞开着 —— 于是登录码这边的沉默一个攻击者都挡不住,只挡住了真实用户。
+    要真防枚举必须两边一起改(注册也不许透露邮箱是否被占用,改用「验证码已发到该
+    邮箱」的统一话术),那是独立的一件事;在两边对齐之前,这里不该单方面牺牲可用性。
+
+    per-IP 发码预算超限仍走静默 ok —— 那条是**防滥发**,不是防枚举,语义不同。
     """
     email_norm = normalize_email(email)
     if not email_norm or "@" not in email_norm:
         raise ValueError("请填写有效的邮箱地址")
     _check_rate_limit(ip, email_norm)
-    # per-IP 发码预算:防单 IP 向任意已注册邮箱批量发登录码。静默返回 ok(防枚举)。
+    # per-IP 发码预算:防单 IP 向任意已注册邮箱批量发登录码。静默返回 ok(防滥发)。
+    # 这条**故意不报 registered** —— 到这一步已是滥用嫌疑,不给它任何探测信号。
     if _ip_budget_exceeded("logincode:ip", ip, 20, 600):
         return {"ok": True, "pending_verify": True, "email_mask": _mask_email(email_norm)}
 
@@ -1168,7 +1177,10 @@ def request_login_code(email: str, *, ip: str = "", ua: str = "") -> dict[str, A
             (email_norm,),
         ).fetchone()
         if not row:
-            return {"ok": True, "pending_verify": True, "email_mask": _mask_email(email_norm)}
+            # 该邮箱没有可登录的账号 → 明确告知,由客户端领去注册流程。
+            # 旧行为是返回 pending_verify=True 假装发了信,于是用户对着验证码输入框
+            # 等一封永远不会到的邮件(群反馈 08-01:「查了半天他没注册,就没发登录邮件」)。
+            return {"ok": True, "registered": False, "email_mask": _mask_email(email_norm)}
 
         recent = db.execute(
             """
@@ -1213,7 +1225,8 @@ def request_login_code(email: str, *, ip: str = "", ua: str = "") -> dict[str, A
     except EmailSendError:
         _log.warning("send_login_code_email failed (RESEND unconfigured?)")  # SEC(M-10): 不记明文验证码
 
-    return {"ok": True, "pending_verify": True, "email_mask": _mask_email(email_norm)}
+    return {"ok": True, "registered": True, "pending_verify": True,
+            "email_mask": _mask_email(email_norm)}
 
 
 def confirm_login_code(email: str, code: str, *, ip: str = "") -> tuple[dict[str, Any], str]:

@@ -2385,6 +2385,7 @@
       "sent_notice": "Verification code sent to {{mask}}. Please verify within 10 minutes."
     },
     "login_code": {
+      "not_registered": "No account exists for this email \u2014 switched you to sign-up (email prefilled).",
       "desc": "Enter your verified email and we will send a one-time sign-in code.",
       "email_label": "Email",
       "email_required": "Please enter a valid email address",

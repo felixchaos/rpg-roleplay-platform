@@ -44,7 +44,8 @@ export const auth = {
   forgotPassword: (email: string) => http.post<{ ok: boolean }>(`${V1}/auth/forgot-password`, { email }),
   /** Passwordless OTP: request a 6-digit code by email, then verify it to log in. */
   loginCodeRequest: (email: string) =>
-    http.post<{ ok: boolean; pending_verify?: boolean; message?: string }>(`${V1}/auth/login-code/request`, { email }),
+    // registered=false → 该邮箱没有账号,服务端不会发信,调用方应引导去注册(别显示「已发送」)
+    http.post<{ ok: boolean; registered?: boolean; pending_verify?: boolean; message?: string }>(`${V1}/auth/login-code/request`, { email }),
   loginCodeVerify: (email: string, code: string) =>
     http.post<{ ok: boolean; user?: User }>(`${V1}/auth/login-code/verify`, { email, code }),
   register: (body: Record<string, unknown>) =>

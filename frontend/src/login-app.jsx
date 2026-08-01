@@ -242,6 +242,19 @@ function LoginApp() {
     try {
       const j = await window.api.auth.loginCodeRequest({ email: cleanEmail });
       if (!j || j.ok === false) throw new Error(j?.error || t('auth.login_code.send_fail'));
+      // 邮箱没注册:后端不会发信,这里必须把人领去注册,否则他会对着验证码框等一封
+      // 永远不会到的邮件(群反馈 08-01)。邮箱带过去预填,少让人重打一遍。
+      if (j.registered === false) {
+        setLoginCodeSent(false);
+        setLoginCode('');
+        setValues((v) => ({ ...v, email: cleanEmail }));
+        setMode('register');
+        setErr('');
+        setNotice(t('auth.login_code.not_registered', {
+          defaultValue: '这个邮箱还没有账号，已为你转到注册页（邮箱已填好）。',
+        }));
+        return;
+      }
       setLoginCodeEmail(cleanEmail);
       setLoginCodeEmailMask(j.email_mask || cleanEmail);
       setLoginCodeSent(true);

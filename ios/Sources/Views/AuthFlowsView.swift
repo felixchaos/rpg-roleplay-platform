@@ -186,7 +186,11 @@ struct OTPLoginView: View {
     }
     private func sendCode() async {
         busy = true; err = nil; defer { busy = false }
-        do { try await store.api.requestLoginCode(base: store.serverURL, email: email); sent = true }
+        do {
+            // 邮箱没注册时服务端不发信 —— 必须说破,否则用户对着验证码框等一封不会到的邮件。
+            let registered = try await store.api.requestLoginCode(base: store.serverURL, email: email)
+            if registered { sent = true } else { self.err = "这个邮箱还没有账号,请先注册。" }
+        }
         catch { self.err = (error as? LocalizedError)?.errorDescription ?? "发送失败" }
     }
     private func verify() async {
