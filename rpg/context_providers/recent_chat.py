@@ -12,7 +12,9 @@ class RecentChatProvider(ContextProvider):
 
     def collect(self, state, manifest, demand, services) -> ContextContribution:
         try:
-            history = state.history_messages()
+            # include_digest=False:本层标题就是「最近对话」,不能混进已 closed phase 的
+            # 前情提要(最旧的开局摘要)。历史由 runtime_phase_digests 层单独注入。
+            history = state.history_messages(include_digest=False)
         except Exception:
             history = (getattr(state, "data", state) or {}).get("history") or []
         if not history:

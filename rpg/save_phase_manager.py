@@ -8,6 +8,7 @@ Public API:
   detect_phase_boundary(save_id, state, gm_op_payload=None) -> bool
   open_new_phase(save_id, turn_index, phase_label, story_time_label) -> dict
   close_phase(save_id, phase_index) -> None
+  ensure_active_phase(save_id, turn_index, ...)  -> None  (每回合调,无 open phase 就补开)
 
 Design notes:
 - All DB ops are synchronous (called from the turn persist hook).
@@ -472,12 +473,25 @@ def close_phase(save_id: int, phase_index: int) -> None:
 
 
 # ────────────────────────────────────────────────────────────
-# Ensure phase 0 exists (called on first turn for a save)
+# Ensure an OPEN phase exists (called every turn for a save)
 # ────────────────────────────────────────────────────────────
 
 
-def ensure_initial_phase(save_id: int, turn_index: int, phase_label: str = "", story_time_label: str = "") -> None:
-    """Open phase 0 if no phase exists yet for this save."""
+def ensure_active_phase(save_id: int, turn_index: int, phase_label: str = "", story_time_label: str = "") -> None:
+    """保证该存档**有一个 open phase**;没有就开下一个 (首回合即 phase 0)。
+
+    原实现叫 ensure_initial_phase,判据是「有没有 phase 行」而不是「有没有 open
+    phase」—— 一旦某条路径把 open phase 关掉却没重开(compact_phase(force=True)、
+    open_new_phase 关完插入失败、老 /compact 等),这里见到 closed 行就早退、
+    detect_phase_boundary 又因无 active phase 恒 False,**该存档自此永久停止折叠
+    历史**:save_phase_digests 冻在开局那几个 phase,前情提要/「已发生历史摘要」
+    从此永远讲开局剧情(生产 12 个存档处于该状态,其中一个已打到 1000+ 回合、
+    前情提要还停在第 1-12 回合)。判据改成「有没有 open phase」= 所有关闭路径
+    统一在这条每回合都跑的确定性缝上自愈,不必逐个 closer 打补丁。
+
+    新 phase 从**当前回合**起算:冻结期那段既无 open phase 也无 commit 归属,
+    不做追溯压缩(那会把上千回合塞进一次 LLM 摘要),它由 KB/情节召回覆盖。
+    """
     active = get_active_phase(save_id)
     if active is not None:
         return
@@ -488,12 +502,14 @@ def ensure_initial_phase(save_id: int, turn_index: int, phase_label: str = "", s
 
         init_db()
         with connect() as db:
-            existing = db.execute(
-                "select 1 from save_phase_digests where save_id = %s limit 1",
+            # 同一连接算下一个 index(别调 _next_phase_index —— 那会在本连接内
+            # 再开一条连接,PgBouncer 池上是自找死锁)。
+            row = db.execute(
+                "select coalesce(max(phase_index), -1) as mx "
+                "from save_phase_digests where save_id = %s",
                 (save_id,),
             ).fetchone()
-            if existing:
-                return
+            new_index = int((row or {}).get("mx", -1)) + 1
             db.execute(
                 """
                 insert into save_phase_digests
@@ -501,11 +517,12 @@ def ensure_initial_phase(save_id: int, turn_index: int, phase_label: str = "", s
                      story_time_label, phase_label,
                      summary, key_events, key_npcs, key_locations, key_decisions,
                      emotion_arc, status, generated_by, metadata)
-                values (%s, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 on conflict (save_id, phase_index) do nothing
                 """,
                 (
                     save_id,
+                    new_index,
                     turn_index,
                     turn_index,
                     story_time_label or "",
@@ -522,11 +539,20 @@ def ensure_initial_phase(save_id: int, turn_index: int, phase_label: str = "", s
                 ),
             )
             db.execute(
-                "update game_saves set active_phase_index = 0 where id = %s",
-                (save_id,),
+                "update game_saves set active_phase_index = %s where id = %s",
+                (new_index, save_id),
+            )
+        if new_index > 0:
+            log.info(
+                f"[save_phase_manager] save {save_id} 无 open phase(冻结),"
+                f"已在 turn {turn_index} 补开 phase {new_index}"
             )
     except Exception as exc:
-        log.warning(f"[save_phase_manager] ensure_initial_phase failed: {exc}")
+        log.warning(f"[save_phase_manager] ensure_active_phase failed: {exc}")
+
+
+# 旧名保留:外部/测试仍可能按老名字 import。
+ensure_initial_phase = ensure_active_phase
 
 
 # ────────────────────────────────────────────────────────────
@@ -560,7 +586,8 @@ __all__ = [
     "detect_phase_boundary",
     "open_new_phase",
     "close_phase",
-    "ensure_initial_phase",
+    "ensure_active_phase",
+    "ensure_initial_phase",  # 旧名别名
     "update_phase_turn_end",
     "PHASE_TURN_THRESHOLD",
 ]

@@ -355,7 +355,9 @@ class NovelCharactersProvider(ContextProvider):
             chars = _project_chars_in_place(
                 chars, services.script_id, progress_chapter, foreknowledge_mode,
             )
-            history = state.history_messages()
+            # include_digest=False:scan_text 判的是「此刻谁在场」,前情提要是最旧的
+            # 已压缩阶段(开局)—— 混进来会让开局 NPC 的卡在几百回合后仍被判定在场。
+            history = state.history_messages(include_digest=False)
             scan_text = "\n".join([
                 (demand.player_intent if demand else "") or "",
                 _recent_text(history),
@@ -447,7 +449,8 @@ class NovelWorldbookProvider(ContextProvider):
         data = getattr(state, "data", state) or {}
         try:
             world = _load_world()
-            history = state.history_messages()
+            # 同上:世界书条目激活判的也是「此刻」,不吃前情提要(开局摘要)。
+            history = state.history_messages(include_digest=False)
             scan_text = "\n".join([
                 (demand.player_intent if demand else "") or "",
                 _recent_text(history),

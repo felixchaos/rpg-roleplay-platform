@@ -1464,7 +1464,7 @@ def _persist_chat_turn(
         try:
             from save_phase_manager import (
                 detect_phase_boundary,
-                ensure_initial_phase,
+                ensure_active_phase,
                 open_new_phase,
                 update_phase_turn_end,
                 upsert_timeline_anchor,
@@ -1486,8 +1486,8 @@ def _persist_chat_turn(
                 phase_label=_phase_label,
                 source="gm",
             )
-            # 107C: ensure phase 0 on first turn
-            ensure_initial_phase(active_save_id, _turn, _phase_label, _story_time)
+            # 107C: 保证有 open phase(首回合开 phase 0;被关掉没重开的档在此自愈)
+            ensure_active_phase(active_save_id, _turn, _phase_label, _story_time)
             # 107C: update turn_end of open phase
             update_phase_turn_end(active_save_id, _turn)
             # 107C: detect boundary and open new phase if needed

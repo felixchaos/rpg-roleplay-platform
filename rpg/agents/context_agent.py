@@ -511,11 +511,50 @@ def _preview(text: str, limit: int = 180) -> str:
     return text[:limit] + ("..." if len(text) > limit else "")
 
 
+_RECENT_BUDGET = 2400   # 【最近对话】块总预算(字符)
+_RECENT_PER_MSG = 600   # 单条消息上限:一条长正文不许吃光预算,保证多轮都进得来
+
+
+def _recent_dialogue_json(state) -> str:
+    """渲染【最近对话】块 —— **保尾不保头**。
+
+    行者无疆报「子代理有时候抽风认为现在在小说序章-生化危机-激光通道」根因:
+      ① `history_messages()` 会把**已 closed phase 的前情提要顶在最前面**(最旧的
+         开局摘要),这里却按「最近对话」语义使用;
+      ② 再对 `json.dumps(...)` 做**头部**截断 `[:2400]`。
+    两者相乘 = 预算被开局摘要吃光,当前回合原文**一条都进不来**(save 268 实测
+    前情提要 json 2409 字符 > 2400,玩家已在第 116 章,子代理却只看得到第 1-12 回合
+    的激光通道)。玩家输入本身带场景信号时子代理还能纠正,一点「继续」这种无信号
+    输入就照着开局摘要往下编 —— 这就是「有时候」。
+
+    修法:①不要前情提要(历史另有 runtime_phase_digests 层专门注入)②从**最新**
+    一条往回装,装不下的丢最旧的,永远保证最后一轮玩家输入+GM 正文在里面。
+    """
+    try:
+        msgs = state.history_messages(limit_turns=3, include_digest=False)
+    except TypeError:  # 老 state 实现(测试替身)没有 include_digest
+        msgs = state.history_messages(limit_turns=3)
+    picked: list[dict[str, Any]] = []
+    budget = _RECENT_BUDGET
+    for msg in reversed(msgs or []):
+        if not isinstance(msg, dict):
+            continue
+        text = str(msg.get("content") or "")
+        if len(text) > _RECENT_PER_MSG:
+            text = text[:_RECENT_PER_MSG] + "…"
+        cost = len(text) + 24  # json 的 role/引号/逗号开销
+        if picked and cost > budget:
+            break
+        picked.append({"role": msg.get("role") or "user", "content": text})
+        budget -= cost
+    picked.reverse()
+    return json.dumps(picked, ensure_ascii=False)
+
+
 def _curator_task_prompt(state, user_input: str, directives: list[Any],
                          steering_strength: str = "guided") -> str:
     world = state.data.get("world", {})
     memory = state.data.get("memory", {})
-    recent = state.history_messages(limit_turns=3)
     local_directives = [getattr(d, "target", "") for d in directives]
     # fork 收编(行者无疆「永远默认在修炼」):此前 curator 完全不看 steering_strength,
     # 无论 rail/guided/free 都拿 main_quest 造 canon acceptance → 发散局玩家被当 rail railroad,
@@ -560,8 +599,8 @@ def _curator_task_prompt(state, user_input: str, directives: list[Any],
         "",
         *goal_block,
         "",
-        "【最近对话】",
-        json.dumps(recent, ensure_ascii=False)[:2400],
+        "【最近对话】(按时间正序，最后一条最新)",
+        _recent_dialogue_json(state),
         "",
         "只输出 JSON，不要 Markdown。",
     ])

@@ -595,7 +595,8 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
 
     # ── 给 GM 用的历史消息列表 ────────────────────────────────────
     def history_messages(self, limit_turns: int = MAX_HISTORY_TURNS,
-                          *, save_id: int | None = None) -> list[dict]:
+                          *, save_id: int | None = None,
+                          include_digest: bool = True) -> list[dict]:
         """返回喂给 GM backend 的历史 messages。
 
         默认行为:
@@ -607,6 +608,13 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
           1. 显式参数(老 caller / 测试可控制)
           2. self.data["_active_save_id"] (chat_pipeline 入口写入)
           3. None → 退化到只返最近 limit_turns 轮原文
+
+        include_digest=False:
+          只返最近 limit_turns 轮**原文**,不带前情提要。给「判断此刻在哪、
+          谁在场」的消费方用 —— 前情提要是**最旧**的已压缩阶段且顶在最前面,
+          任何按「最近对话」语义使用它、或对返回值做**头部**截断的调用方,
+          拿到的都是开局剧情而非当前场景(子代理把第 116 章的档判成开局
+          激光通道即此因)。
         """
         max_msgs = limit_turns * 2
         # 丢弃 content 为空/纯空白的历史消息:某些 provider(moonshot/kimi 等)对**空 assistant
@@ -615,6 +623,8 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         # backend 前过滤,兼修已被污染的存档(非破坏性,只过滤不改库)。
         recent = [m for m in self.data["history"][-max_msgs:]
                   if isinstance(m, dict) and str(m.get("content") or "").strip()]
+        if not include_digest:
+            return recent
         if save_id is None:
             save_id = self.data.get("_active_save_id")
         if save_id is None:
