@@ -87,8 +87,8 @@ def read_canon_entities(db, script_id: int, *, progress_chapter: int | None = No
     cols = ", ".join(_CANON_COLS)
 
     # P4(S1):flag on 且有 save_id → 用前沿门控(reveal_clause_v2);否则旧标量门控。
-    from kb.reveal import (_frontier_on, _frontier_shadow, _shadow_diff_log,
-                           derived_progress_chapter as _dpc, reveal_clause_v2)
+    from kb.reveal import _frontier_on, _frontier_shadow, _shadow_diff_log, reveal_clause_v2
+    from kb.reveal import derived_progress_chapter as _dpc
     use_v2 = save_id is not None and _frontier_on(save_id)
     # 进度章传给前沿门控:开局/当前章 canon(序章人物/世界知识)按章节可见,不被空前沿误藏。
     _prog = progress_chapter if progress_chapter is not None else (_dpc(int(save_id)) if save_id is not None else None)
@@ -129,8 +129,8 @@ def lookup_canon_entity(db, script_id: int, logical_key: str, *, progress_chapte
     from platform_app.knowledge._pin import effective_kb_script_id
     script_id = effective_kb_script_id(db, script_id)  # pin 重定向(纯读)
 
-    from kb.reveal import (_frontier_on, _frontier_shadow, _shadow_diff_log,
-                           derived_progress_chapter as _dpc, reveal_clause_v2)
+    from kb.reveal import _frontier_on, _frontier_shadow, _shadow_diff_log, reveal_clause_v2
+    from kb.reveal import derived_progress_chapter as _dpc
     use_v2 = save_id is not None and _frontier_on(save_id)
     _prog = progress_chapter if progress_chapter is not None else (_dpc(int(save_id)) if save_id is not None else None)
     if use_v2:

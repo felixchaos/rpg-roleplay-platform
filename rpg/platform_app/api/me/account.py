@@ -9,7 +9,6 @@ from fastapi import Depends, Request
 from .._deps import json_response, require_user, value_error_response
 from ._shared import router
 
-
 # ── 账号级数据导出 / 导入(免部署服务 → 本地自部署 迁移)─────────────────
 _MAX_ACCOUNT_IMPORT_BYTES = 300 * 1024 * 1024  # 与 account_io.MAX_ACCOUNT_ZIP_BYTES 对齐
 
@@ -29,9 +28,8 @@ async def api_account_export(include_chunks: int = 0, user=Depends(require_user)
     """
     from urllib.parse import quote as _quote
 
-    from fastapi.responses import Response
-
     from fastapi.concurrency import run_in_threadpool
+    from fastapi.responses import Response
 
     from ... import account_io
     try:

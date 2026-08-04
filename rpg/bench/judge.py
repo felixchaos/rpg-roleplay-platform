@@ -76,7 +76,7 @@ def judge_dim_prompt(dim: str, case: dict, resp_a: str, resp_b: str) -> str:
             lines.append(f"【锚点摘要(已发生)】\n{anchor_summary[:800]}\n")
         if must_preserve:
             mp = must_preserve if isinstance(must_preserve, list) else [str(must_preserve)]
-            lines.append(f"【must_preserve 要素】\n" + "\n".join(f"- {x}" for x in mp[:20]) + "\n")
+            lines.append("【must_preserve 要素】\n" + "\n".join(f"- {x}" for x in mp[:20]) + "\n")
         if chapter_event_snippet:
             lines.append(f"【当前章节事件参考】\n{chapter_event_snippet[:600]}\n")
         if player_input:
@@ -97,7 +97,7 @@ def judge_dim_prompt(dim: str, case: dict, resp_a: str, resp_b: str) -> str:
         canon = case.get("canon_aliases") or {}
         names = list(canon.keys())[:20]
         if names:
-            lines.append(f"【已知 canon 角色】\n" + "、".join(names) + "\n")
+            lines.append("【已知 canon 角色】\n" + "、".join(names) + "\n")
         worldbook = (case.get("canon_worldbook") or "").strip()
         if worldbook:
             lines.append(f"【世界书角色补充设定】\n{worldbook[:400]}\n")

@@ -22,7 +22,6 @@ consent_token 设计:
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 
@@ -146,7 +145,11 @@ def _capture_feedback_env(user: dict | None, client_env: dict | None = None) -> 
     try:
         from core.llm_backend import (
             first_user_model as _fum,
+        )
+        from core.llm_backend import (
             resolve_preferred_api as _rpa,
+        )
+        from core.llm_backend import (
             resolve_preferred_model as _rpm,
         )
         gm_api, gm_model = _rpa(uid, "gm.api_id"), _rpm(uid, "gm.model_real_name")

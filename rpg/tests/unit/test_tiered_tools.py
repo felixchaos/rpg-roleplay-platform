@@ -76,6 +76,7 @@ class TestTokenReductionRealTavern(unittest.TestCase):
     def _openai_array(self, mcp_tools, window):
         """复刻 openai_compat 的 tools 数组构建(窗口内完整 + load_tools 目录)。"""
         import re
+
         from agents.gm.backends import _tiered
         sep = "__"
 
@@ -99,8 +100,8 @@ class TestTokenReductionRealTavern(unittest.TestCase):
         return arr
 
     def test_window_16_far_smaller_than_full(self):
-        from tools_dsl.command_tools_register import ensure_registered
         from tools_dsl.chat_tool_router import build_unified_tool_list
+        from tools_dsl.command_tools_register import ensure_registered
         ensure_registered()
         tav = build_unified_tool_list([], origin="llm_chat", mode="tavern_gm", bound_script_id=None)
         self.assertGreater(len(tav), 60, "酒馆应有几十个工具")
@@ -123,10 +124,10 @@ class TestAnthropicLoadToolsRoundTrip(unittest.TestCase):
     用 __new__ 跳过需要 API key 的 __init__,monkeypatch stream_with_tools_native 脚本化事件。"""
 
     def test_load_then_call(self):
-        from agents.gm.backends.anthropic import _AnthropicBackend as AnthropicBackend
         from agents.gm.backends import _tiered
-        from tools_dsl.command_tools_register import ensure_registered
+        from agents.gm.backends.anthropic import _AnthropicBackend as AnthropicBackend
         from tools_dsl.chat_tool_router import build_unified_tool_list
+        from tools_dsl.command_tools_register import ensure_registered
         ensure_registered()
         from core.config import tool_window_size
         tav = build_unified_tool_list([], origin="llm_chat", mode="tavern_gm", bound_script_id=None)

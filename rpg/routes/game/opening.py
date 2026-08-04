@@ -19,8 +19,7 @@ from chat_pipeline._common import _bridge_sync_generator_to_async
 from routes._deps_fastapi import get_current_user
 from state.parsers import _extract_trailing_markdown_options
 
-from ._shared import router, _client_safe_error, _note_channel_health_failure
-
+from ._shared import _client_safe_error, _note_channel_health_failure, router
 
 # ── 游戏流水线 · 开场策略(rail 知识只住游戏层,不进底层 GMAgent)──────────────
 # 反馈#73:开了「贴原著」开局仍脱离原著、原著开篇人物(张杰/雇佣兵等)流失。原因:开场默认
@@ -65,7 +64,6 @@ async def api_opening(
         _build_turn_context,
         _ensure_loaded,
         _get_gm,
-        _payload,
         _payload_sse,
         _persist_runtime_checkpoint,
         _resolve_persist_target,
@@ -172,13 +170,13 @@ async def api_opening(
             opening_visible = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(opening_for_history)))
             state.data["history"].append({"role": "assistant", "content": opening_visible})
             # 让开场也走结构化解析,把【询问玩家】+JSON ops 解析进 pending_questions / state
-            before_questions = len(((state.data.get("permissions") or {}).get("pending_questions") or []))
+            before_questions = len((state.data.get("permissions") or {}).get("pending_questions") or [])
             try:
                 state.apply_structured_updates(opening_for_history)
             except Exception:
                 import logging as _logging
                 _logging.getLogger(__name__).warning("opening apply_structured_updates failed", exc_info=True)
-            after_questions = len(((state.data.get("permissions") or {}).get("pending_questions") or []))
+            after_questions = len((state.data.get("permissions") or {}).get("pending_questions") or [])
             if opening_options and after_questions == before_questions:
                 state.add_pending_question("你想怎么行动？", source="gm:opening_options", options=opening_options)
             state.save()

@@ -5,6 +5,7 @@ rules.engine — RulesEngine 统一入口。
 from __future__ import annotations
 
 from core.clock import now_iso
+
 from .base import RuleResult
 from .dice import RollResult
 from .dice import roll as _roll

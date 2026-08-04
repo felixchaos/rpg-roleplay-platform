@@ -18,10 +18,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from platform_app.api._deps import json_response
 
-from routes._deps_fastapi import get_current_user
+from platform_app.api._deps import json_response
 from routes._deps_fastapi import _uid_or_zero as _uid
+from routes._deps_fastapi import get_current_user
 
 router = APIRouter()
 
@@ -59,7 +59,6 @@ async def api_worldbook_overlay_list(api_user: dict[str, Any] = Depends(get_curr
     """列出当前活跃存档的世界书 overlay(additions 全文 + retirements),供前端管理面板。"""
     from app import _resolve_persist_target
     from platform_app.db import connect, init_db
-
     from platform_app.perms import owns_save
 
     _pu, save_id = _resolve_persist_target(api_user)

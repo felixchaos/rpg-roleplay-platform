@@ -10,6 +10,7 @@ from typing import Any
 
 from ._helpers import _resolve_sid, _strlist, _user_can_read_script
 
+
 def _t_list_canon_entities(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
     """紧凑列出剧本 canon 实体(供 rule 4 按 logical_key 定位去 upsert)。
 

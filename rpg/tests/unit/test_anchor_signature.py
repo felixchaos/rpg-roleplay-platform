@@ -4,9 +4,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 import sys
+
 sys.path.insert(0, str(ROOT))
 from gm_serving.anchor_signature import (  # noqa: E402
-    MAX_DET_MARKS_PER_TURN, deterministic_hits, extract_signatures, match_anchor_in_text)
+    MAX_DET_MARKS_PER_TURN,
+    deterministic_hits,
+    extract_signatures,
+    match_anchor_in_text,
+)
 
 # 行者 268 的真实场景形状:锚点 summary 与 GM 重演正文高度逐字重合。
 _ANCHOR = ('张杰眯着眼睛说道:"一是创造人物,根据主神提供的条件,不限种族、年龄、性别、'

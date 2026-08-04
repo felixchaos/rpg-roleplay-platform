@@ -8,7 +8,8 @@ import secrets
 # ── Argon2id (REG-01 / ENC-08) ───────────────────────────────────────────────
 try:
     from argon2 import PasswordHasher
-    from argon2.exceptions import VerifyMismatchError, VerifyMismatchError as _VME
+    from argon2.exceptions import VerifyMismatchError
+    from argon2.exceptions import VerifyMismatchError as _VME
     _ph = PasswordHasher(time_cost=3, memory_cost=64 * 1024, parallelism=1)  # OWASP 2023
     _ARGON2_AVAILABLE = True
 except ImportError:
@@ -109,6 +110,7 @@ def _email_server_secret() -> bytes:
         # SEC(L-1): 未设 EMAIL_CODE_SECRET → 重启/多 worker 间验证码哈希不一致(进行中验证码静默失效)。
         try:
             import logging
+
             from core.config import require_auth as _require_auth
             logging.getLogger(__name__).warning(
                 "EMAIL_CODE_SECRET 未设置:验证码 HMAC 回退进程级随机 key,重启/多 worker 会使进行中验证码失效。%s",

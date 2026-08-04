@@ -135,6 +135,7 @@ class _VertexBackend:
             user_id: 当前用户 ID，用于取 BYOK SA；None 仅在本地/匿名开发模式可走全局 SA。
         """
         from google import genai
+
         from core.vertex_sa import load_sa_credentials
 
         self.user_id = user_id
@@ -408,9 +409,9 @@ class _VertexBackend:
         # 截断上限:Gemini 2.5/3.x 实测支持 ≥64 个 FunctionDeclaration,40 太保守把
         # KB 查询工具(lookup_/search_canon)砍出去了。提到 64 + chat_tool_router 已
         # 按优先级排序,KB 查询永远在前面,即使再截也不丢。
+        from agents.gm.backends import _tiered
         from core.config import tiered_tools_enabled as _tiered_enabled
         from core.config import tool_window_size as _tool_window
-        from agents.gm.backends import _tiered
 
         def _mk(t):
             """unified tool → Gemini FunctionDeclaration;缺 sid/name 返回 None。"""

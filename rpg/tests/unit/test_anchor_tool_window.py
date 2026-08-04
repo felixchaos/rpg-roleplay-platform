@@ -17,8 +17,11 @@ import pytest
 
 from core.config import tool_window_size
 from tools_dsl import command_tools_register as _reg
-from tools_dsl.chat_tool_router import (_ANCHOR_FAMILY, _ANCHOR_WINDOW_PROMOTED,
-                                        build_unified_tool_list)
+from tools_dsl.chat_tool_router import (
+    _ANCHOR_FAMILY,
+    _ANCHOR_WINDOW_PROMOTED,
+    build_unified_tool_list,
+)
 from tools_dsl.command_dispatcher import get_registry
 
 # list_anchors / update_anchor 属**剧本编辑**域(script_timeline_anchors 表,给编辑器用),

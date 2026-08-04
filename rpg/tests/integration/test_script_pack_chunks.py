@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import io
 import json
-import zipfile
 import unittest
+import zipfile
 
 from tests.helpers import cleanup_test_users, make_client, register_user
 
@@ -153,8 +153,8 @@ class ScriptPackChunksRoundTrip(unittest.TestCase):
         uid = _get_uid(u["username"])
         sid, _, _ = _make_script_with_book_and_chunks(uid, "pack_content_match_src")
 
-        from platform_app.knowledge.script_pack import export_script_pack, import_script_pack
         from platform_app.db import connect
+        from platform_app.knowledge.script_pack import export_script_pack, import_script_pack
 
         with connect() as db:
             orig_chunks = db.execute(
@@ -212,8 +212,11 @@ class ScriptPackChunksRoundTrip(unittest.TestCase):
         uid = _get_uid(u["username"])
         sid, _, _ = _make_script_with_book_and_chunks(uid, "pack_missing_chunks_src")
 
-        from platform_app.knowledge.script_pack import export_script_pack, import_script_pack, CHUNKS_VERSION
         from platform_app.db import connect
+        from platform_app.knowledge.script_pack import (
+            export_script_pack,
+            import_script_pack,
+        )
 
         zip_bytes, _ = export_script_pack(sid, uid, include_chunks=True)
 

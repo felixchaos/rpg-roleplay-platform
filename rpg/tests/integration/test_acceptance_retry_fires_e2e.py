@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parent.parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from tests.helpers import make_client, register_user, cleanup_test_users  # noqa: E402
+from tests.helpers import cleanup_test_users, make_client, register_user  # noqa: E402
 
 
 class AcceptanceRetryFiresE2E(unittest.TestCase):

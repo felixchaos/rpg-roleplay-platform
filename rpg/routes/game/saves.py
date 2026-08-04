@@ -12,13 +12,13 @@ from typing import Any
 
 from fastapi import Depends
 from fastapi.responses import JSONResponse
-from platform_app.api._deps import json_response
 
+from platform_app.api._deps import json_response
 from platform_app.branches._helpers import acquire_save_advisory_lock
 from routes._deps_fastapi import get_current_user
 from schemas._common import COMMON_ERROR_RESPONSES, GenericOkResponse, StateResponse
 
-from ._shared import router, _log, _sanitize_payload
+from ._shared import _log, _sanitize_payload, router
 
 
 @router.post("/api/save", response_model=StateResponse, responses=COMMON_ERROR_RESPONSES)
@@ -112,8 +112,9 @@ def _amend_history_message(db, save_id: int, message_index: int, new_content: st
     避免各存储 index 基准(滤空/分支)不一致;完全自包含,不依赖 _ensure_loaded 的进程内缓存态。"""
     import json as _json
 
-    from platform_app.branches.commits import _state_snapshot_hash
     from psycopg.types.json import Jsonb
+
+    from platform_app.branches.commits import _state_snapshot_hash
 
     def _hist_at(snap, idx):
         """返回展示序(滤空)第 idx 条的 (content, role);越界/无效返回 (None, None)。"""

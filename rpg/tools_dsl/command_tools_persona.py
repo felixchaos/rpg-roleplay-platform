@@ -12,10 +12,9 @@ command_tools_persona.py — persona / character_card 工具 (拆自 command_too
 from __future__ import annotations
 
 import json
-from typing import Any
 
-from tools_dsl.command_dispatcher import ToolSpec, get_registry
 from tools_dsl._arg_guards import require_int_arg
+from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
 # 角色卡/persona「创建·克隆」类(非破坏)tool 的 origin。
 # 历史(task 87)排除 llm_chat,把这些工具圈在侧栏控制台助手里;但用户已退役控制台助手,

@@ -10,10 +10,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from platform_app.api._deps import json_response
 
-from routes._deps_fastapi import get_current_user
+from platform_app.api._deps import json_response
 from routes._deps_fastapi import _uid_or_zero as _uid
+from routes._deps_fastapi import get_current_user
 
 router = APIRouter()
 

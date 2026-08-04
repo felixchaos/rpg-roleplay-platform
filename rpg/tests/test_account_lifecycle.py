@@ -11,10 +11,9 @@
 """
 from __future__ import annotations
 
-import sys
 import os
+import sys
 from pathlib import Path
-from datetime import datetime, timezone
 
 import pytest
 
@@ -32,7 +31,7 @@ os.environ.setdefault("RPG_REQUIRE_AUTH", "1")
 @pytest.fixture(scope="module")
 def db_conn():
     """返回一个 psycopg.Connection（dict_row）。测试结束后回滚清理。"""
-    from platform_app.db import init_db, connect
+    from platform_app.db import connect, init_db
     init_db()
     with connect() as db:
         yield db
@@ -195,10 +194,8 @@ def test_prune_login_audit(db_conn):
 
 def test_export_payload_structure(db_conn):
     """验证 export 返回的 JSON 包含所有必要字段。"""
-    import json
-    import zipfile
-    import io
     import datetime as _dt
+    import json
     import uuid as _uuid
 
     db = db_conn
@@ -276,5 +273,6 @@ def test_export_payload_structure(db_conn):
 # ---------------------------------------------------------------------------
 
 def _rand(n: int = 6) -> str:
-    import random, string
+    import random
+    import string
     return "".join(random.choices(string.ascii_lowercase + string.digits, k=n))

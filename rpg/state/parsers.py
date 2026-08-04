@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import re
 
-
 _TRAILING_OPTION_LINE_RE = re.compile(
     r"^\s{0,3}(?:[-*+]|\d{1,2}[.)、]|[A-Da-d][.)、])\s+(.+?)\s*$"
 )

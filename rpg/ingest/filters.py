@@ -9,7 +9,7 @@ chapter dict 新增字段:is_author_note / exclude_from_extraction / title_confi
 from __future__ import annotations
 
 import re
-from typing import Callable
+from collections.abc import Callable
 
 from core.vecmath import cosine as _cosine
 

@@ -35,7 +35,7 @@ from psycopg.types.json import Jsonb  # noqa: F401
 from ...db import connect  # noqa: F401
 from ...security import normalize_username, public_user  # noqa: F401
 from .._deps import SESSION_COOKIE, json_response, require_user  # noqa: F401
-from ._shared import router, _detect_image_mime, _store_imported_card_image
+from ._shared import _detect_image_mime, _store_imported_card_image, router
 from .account import (
     _MAX_ACCOUNT_IMPORT_BYTES,
     api_account_export,

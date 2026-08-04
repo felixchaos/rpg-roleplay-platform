@@ -8,8 +8,9 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from ..db import connect, init_db
 from core.llm_backend import DEFAULT_FALLBACK_API, DEFAULT_FALLBACK_MODEL
+
+from ..db import connect, init_db
 
 
 # ══════════════════════════════════════════════════════════════════════

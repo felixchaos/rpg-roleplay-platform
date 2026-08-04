@@ -12,7 +12,7 @@ from fastapi import Depends, File, Request, UploadFile
 
 from ...db import connect
 from .._deps import json_response, require_user, value_error_response
-from ._shared import router, _detect_image_mime
+from ._shared import _detect_image_mime, router
 
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB
 
@@ -34,6 +34,7 @@ async def api_set_auto_image_sync(request: Request, card_id: int, user=Depends(r
 async def api_generate_persona_image(request: Request, card_id: int, user=Depends(require_user)):
     """手动触发为指定角色卡生成人设图。Body: {prompt?: str}（prompt 留空则 worker 端自动构建）。"""
     from fastapi import HTTPException as _HTTPException
+
     from ... import image_jobs
     from ...db import connect as _connect
 

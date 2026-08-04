@@ -595,7 +595,7 @@ class ApplyOpsMixin:
         # 原著男主」的首次填充(旧实现只挡覆盖、漏了空→填,导致角色无名时被史官命名为原著主角)。
         # 不指望史官提示词自觉(确定性铁律)。
         if path == "player.name" and str(source or "").startswith("gm"):
-            _cur_name = str(((self.data.get("player") or {}).get("name") or "")).strip()
+            _cur_name = str((self.data.get("player") or {}).get("name") or "").strip()
             _new_name = str(value or "").strip()
             if _new_name != _cur_name:  # 含 空→郑吒;仅同值 no-op 放行(不刷拒绝噪音)
                 return f"状态写入拒绝:玩家姓名只由玩家本人设定,GM/史官 不可写(拦截「{_cur_name or '(空)'}」→「{_new_name}」)"

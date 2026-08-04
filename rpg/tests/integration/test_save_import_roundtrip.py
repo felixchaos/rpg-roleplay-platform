@@ -23,9 +23,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from psycopg.types.json import Jsonb  # noqa: E402
 
+from platform_app import save_io  # noqa: E402
 from platform_app.db import connect  # noqa: E402
 from platform_app.db.init import init_db  # noqa: E402
-from platform_app import save_io  # noqa: E402
 
 _UNAME = "integtest_save_roundtrip"
 

@@ -272,7 +272,8 @@ class GenericAlgorithmNoHardcoding(unittest.TestCase):
                 )
         except Exception:
             # tearDown 不应该让测试 fail，但记录到 stderr 方便排查
-            import traceback, sys
+            import sys
+            import traceback
             traceback.print_exc(file=sys.stderr)
 
     @classmethod

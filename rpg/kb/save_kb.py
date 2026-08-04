@@ -20,7 +20,6 @@
 from __future__ import annotations
 
 import json
-
 from typing import Any
 
 from kb import live_repo, t0_seed

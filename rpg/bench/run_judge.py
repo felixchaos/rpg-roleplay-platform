@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import psycopg
 from psycopg.rows import dict_row
 
-from bench.harness import RecordedHarness, OpenAICompatHarness
+from bench.harness import OpenAICompatHarness, RecordedHarness
 from bench.judge import DIMS, batch_judge
 from bench.judge_cases import load_judge_cases
 from bench.judge_report import build_judge_report

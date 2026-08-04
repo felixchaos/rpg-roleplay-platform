@@ -4,11 +4,10 @@ from __future__ import annotations
 import json as _json
 import time
 from datetime import datetime
-
-from core.clock import now_iso
 from typing import Any
 
 from console_assistant import _state
+from core.clock import now_iso
 
 
 # ────────────────────────────────────────────────────────────

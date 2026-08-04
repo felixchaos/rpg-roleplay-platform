@@ -25,7 +25,11 @@ from typing import Any
 from core.json_parse import parse_llm_json
 from core.llm_backend import (
     detect_default_api as _detect_default_api,
+)
+from core.llm_backend import (
     resolve_preferred_api as _resolve_preferred_api_base,
+)
+from core.llm_backend import (
     resolve_preferred_model as _resolve_preferred_model_base,
 )
 from core.logging import get_logger
@@ -257,6 +261,7 @@ def _call_openai_compat_tools(
     if not base_url:
         raise RuntimeError(f"未知 base_url for {api_id}")
     import urllib.request
+
     from core.outbound import safe_urlopen  # SSRF: 不跟随重定向 + use-time 重解析 pin IP
     system_prompt = (
         _SYSTEM_PROMPT

@@ -5,8 +5,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from platform_app.api._deps import json_response, value_error_response
 
+from platform_app.api._deps import json_response, value_error_response
 from routes._deps_fastapi import get_current_admin_strict, get_current_user
 from schemas._common import COMMON_ERROR_RESPONSES, ErrorResponse, GenericOkResponse
 from schemas.mcp import (

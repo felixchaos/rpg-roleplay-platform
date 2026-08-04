@@ -11,7 +11,6 @@ from ...db import connect
 from .._deps import json_response, require_user
 from ._shared import router
 
-
 # ── 全局后台任务面板:聚合本人所有"进行中/刚结束"的后台任务 ───────────────
 # 给右下角全局浮窗用。只读聚合,UNION import_jobs(导入+各模块重建)+ ai_images(生图),
 # 不做 schema 迁移。如实状态:import 类有真实 overall_progress 进度,生图类只有阶段+耗时。

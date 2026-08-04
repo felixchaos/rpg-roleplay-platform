@@ -136,8 +136,9 @@ class TestBothWritePathsStamp(unittest.TestCase):
 
 class TestRecorderSeesTheReminder(unittest.TestCase):
     def _prompt(self, data):
-        from agents.recorder import _build_user_prompt
         import inspect
+
+        from agents.recorder import _build_user_prompt
         sig = inspect.signature(_build_user_prompt)
         kwargs = {}
         for name, p in sig.parameters.items():

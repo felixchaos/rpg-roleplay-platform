@@ -10,7 +10,12 @@ from fastapi import APIRouter, HTTPException, Request
 
 from .. import auth as _auth
 from ..security import public_user
-from ._deps import _is_loopback, _set_session_cookie, current_user, json_response, value_error_response
+from ._deps import (
+    _is_loopback,
+    _set_session_cookie,
+    json_response,
+    value_error_response,
+)
 
 router = APIRouter()
 

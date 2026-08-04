@@ -19,22 +19,23 @@ import threading
 import time
 from typing import Any
 
-from ._base import (
-    BATCH_SIZE,
-    EMBED_DIM,
-    EMBED_MODEL,
-    PER_CHUNK_CHAR_LIMIT,
-    _MAX_EMBED_BATCH_RETRIES,
-    _vec_literal,
-    log,
-    provider_lacks_embedding,
-)
 # 受控循环导入(见模块 docstring)。retry_cap 测试按 patch-where-defined 在 _writer 命名空间
 # patch _resolve_embed_config / _embed_batch,故必须是本模块的模块级名字。
 from platform_app.knowledge.embedding import (  # noqa: E402  (有序循环导入)
     _embed_batch,
     _resolve_embed_config,
     embedding_preflight,
+)
+
+from ._base import (
+    _MAX_EMBED_BATCH_RETRIES,
+    BATCH_SIZE,
+    EMBED_DIM,
+    EMBED_MODEL,
+    PER_CHUNK_CHAR_LIMIT,
+    _vec_literal,
+    log,
+    provider_lacks_embedding,
 )
 
 # Redis key 前缀,用于跨进程去重;TTL 略大于预期最长 embed 时长,兼做宕机自动解锁。
@@ -149,7 +150,6 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
     daemon thread 异常死亡 / backend 重启后下次 embed_script 不会卡在
     already_running 状态。
     """
-    from platform_app.db import connect
     log.info("[embedding] start chunks: script_id=%s user=%s", script_id, user_id)
     try:
         _embed_chunks_loop_inner(script_id, user_id)

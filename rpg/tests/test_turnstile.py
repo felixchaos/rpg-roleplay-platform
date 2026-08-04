@@ -6,8 +6,8 @@
 """
 from __future__ import annotations
 
-import json
 import io
+import json
 from unittest import mock
 
 import pytest

@@ -94,8 +94,9 @@ class RecallPureFunctions(unittest.TestCase):
 
     def test_dispatcher_flag_off_no_db_touch(self):
         """审计 S3:flag 全 off 时 retrieve_fn_compat 不解析 save_id(零额外 DB 往返)+ 直通旧路。"""
-        import retrieval
         from unittest.mock import patch
+
+        import retrieval
         for k in ("RPG_TKB_RECALL", "RPG_TKB_RECALL_SHADOW"):
             os.environ.pop(k, None)
         from kb.recall import retrieve_fn_compat
@@ -125,9 +126,8 @@ class RecallGating(unittest.TestCase):
         cleanup_test_users()
         cls.client = make_client()
         u = register_user(cls.client)
+        from kb.reveal import backfill_entity_reveal_anchors, backfill_reveal_anchors, seed_frontier
         from platform_app.db import connect, init_db
-        from kb.reveal import (backfill_entity_reveal_anchors, backfill_reveal_anchors,
-                               seed_frontier)
         init_db()
         with connect() as db:
             cls.owner_id = int(db.execute(
@@ -186,6 +186,7 @@ class RecallGating(unittest.TestCase):
     def test_recall_embed_uses_locked_script_id(self):
         """审计 S2:向量路必须用本剧本锁定的 embedder(传真 script_id,非 None),否则向量空间错乱。"""
         from unittest.mock import patch
+
         import platform_app.knowledge._search as search_mod
         seen = {}
 

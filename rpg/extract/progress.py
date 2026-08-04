@@ -13,7 +13,7 @@ InterruptedError 当普通"进度上报失败"吞掉 → 取消信号丢失 → 
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 
 def emit_progress(

@@ -52,6 +52,7 @@ def test_dormant_when_unparseable_either_side():
 
 def _new_state():
     import copy
+
     from state import DEFAULT_STATE, GameState
     return GameState(copy.deepcopy(DEFAULT_STATE))
 

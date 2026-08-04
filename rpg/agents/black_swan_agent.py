@@ -17,7 +17,8 @@ from __future__ import annotations
 import logging
 import re
 import secrets
-from typing import Any, Callable, Optional, cast
+from collections.abc import Callable
+from typing import Any, cast
 
 log = logging.getLogger(__name__)
 

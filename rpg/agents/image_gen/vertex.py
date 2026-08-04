@@ -29,6 +29,7 @@ def generate(
     try:
         from google import genai
         from google.genai import types
+
         from core.vertex_sa import load_sa_credentials
     except Exception as exc:  # pragma: no cover - import env issue
         raise ImageGenError(f"vertex genai import failed: {exc}") from exc

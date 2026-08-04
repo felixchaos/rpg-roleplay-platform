@@ -11,14 +11,14 @@ from typing import Any
 
 from fastapi import Depends
 from fastapi.responses import JSONResponse, StreamingResponse
+
 from platform_app.api._deps import json_response
 from platform_app.branches import RuntimeTurnConflict
-
 from routes._deps_fastapi import get_current_user
 from schemas._common import COMMON_ERROR_RESPONSES, GenericOkResponse, OkResponse
 from schemas.game import ChatEstimateRequest, ChatRequest
 
-from ._shared import router, _client_safe_error, _log, _note_channel_health_failure
+from ._shared import _client_safe_error, _log, _note_channel_health_failure, router
 
 
 @router.post("/api/chat/estimate", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
@@ -226,8 +226,8 @@ async def api_chat(
         _active_script_id,
         _apply_chat_rule_candidates,
         _build_usage_payload,
-        _chat_rule_candidates,
         _chat_max_tokens,
+        _chat_rule_candidates,
         _clarify_threshold,
         _command_response,
         _current_run_id,
@@ -241,7 +241,6 @@ async def api_chat(
         _is_stop_requested_global,
         _mark_context_run,
         _message_with_attachments,
-        _payload,
         _payload_sse,
         _persist_chat_turn,
         _persist_runtime_checkpoint,

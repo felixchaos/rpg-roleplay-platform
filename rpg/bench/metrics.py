@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from typing import Any, Callable
+from collections.abc import Callable
 
 _METRICS: dict[str, Callable[[str, dict], dict]] = {}
 # 每个指标声明它的字段方向:'bad_rate'=布尔(越低越好)/'lower'/'higher'/'info'(仅观测)

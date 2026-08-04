@@ -28,7 +28,6 @@ if str(REPO) not in sys.path:
 
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
-from state import DEFAULT_STATE, GameState  # noqa: E402
 from agents.world_heartbeat import (  # noqa: E402
     MAX_UNSURFACED_BACKLOG,
     MAX_UNSURFACED_STORED,
@@ -39,6 +38,7 @@ from agents.world_heartbeat import (  # noqa: E402
     run_heartbeat_tick,
     should_tick,
 )
+from state import DEFAULT_STATE, GameState  # noqa: E402
 
 
 def _new_state(turn: int = 0) -> GameState:

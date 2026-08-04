@@ -11,6 +11,7 @@ from typing import Any
 
 from ._helpers import _resolve_sid, _user_can_read_script
 
+
 def _t_list_anchors(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
     """紧凑列出剧本时间线锚点(供 rule 4 定位现有 anchor_id 去更新)。
 

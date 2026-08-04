@@ -46,7 +46,7 @@ from psycopg.types.json import Jsonb  # noqa: F401
 from ...db import connect  # noqa: F401
 from ...perms import script_owned  # noqa: F401
 from .._deps import json_response, require_user  # noqa: F401
-from ._shared import router, _require_owner, _write_commit
+from ._shared import _require_owner, _write_commit, router
 from .agent_doc import api_agent_doc_upload
 from .anchors import (
     _anchor_update_sets,

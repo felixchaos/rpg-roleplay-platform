@@ -9,8 +9,7 @@ from typing import Any
 from agents.context_agent import run_context_agent
 from state import GameState
 
-from ._common import PipelineContext, SSEEvent, _bridge_sync_generator_to_async, log
-
+from ._common import PipelineContext, SSEEvent, _bridge_sync_generator_to_async
 
 # ---------------------------------------------------------------------------
 # Phase 2: context agent (sub-GM curator) + clarifying-question 短路

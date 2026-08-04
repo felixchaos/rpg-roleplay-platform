@@ -8,7 +8,8 @@ from fastapi import Depends, Request
 
 from ...db import connect
 from .._deps import json_response, require_user, value_error_response
-from ._shared import router, _require_owner
+from ._shared import _require_owner, router
+
 
 @router.post("/api/scripts/{script_id}/agent-doc")
 async def api_agent_doc_upload(request: Request, script_id: int, user=Depends(require_user)):

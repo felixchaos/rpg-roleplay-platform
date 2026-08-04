@@ -13,7 +13,6 @@ from ... import script_import
 from .._deps import json_response, require_user, value_error_response
 from ._shared import router
 
-
 # task 141: 测试期只允许 .txt / .md 剧本文本上传
 _ALLOWED_SCRIPT_EXTS = (".txt", ".md")
 

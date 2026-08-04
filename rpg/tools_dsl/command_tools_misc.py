@@ -31,8 +31,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from tools_dsl.command_dispatcher import ToolSpec, get_registry
 from tools_dsl._arg_guards import require_int_arg
+from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
 # task 87 Phase 7 安全审查:
 #   _USER_READ      : 任意 origin (含 LLM 与 console_assistant) — read-only

@@ -70,8 +70,8 @@ from .worldbook import (
     _invalidate_worldbook_cache,
     _t_delete_worldbook_entry,
     _t_list_worldbook_entries,
-    _t_upsert_worldbook_entry,
     _t_upsert_worldbook_entries,
+    _t_upsert_worldbook_entry,
     _wb_upsert_one,
 )
 
