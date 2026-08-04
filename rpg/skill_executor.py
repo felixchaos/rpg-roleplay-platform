@@ -3,12 +3,12 @@ skill_executor.py — Skill 沙箱执行
 
 设计目标（来自交接 TODO #10）：
 - subprocess 隔离：禁止访问主项目 working tree
-- 资源限制：CPU 时间、内存、文件大小、open files
 - 超时：默认 30s，最大 300s
 - stdout/stderr 捕获 + 截断
 - 临时工作目录：执行完自动清理
 - 输出大小限制：避免 stdout 炸内存
 - 环境变量白名单：只传必要的 PATH 和 LANG
+- 资源限制（CPU/内存/文件）由外部沙箱层负责（Docker / nsjail / firejail）
 
 不防御的事：
 - 网络访问（靠容器/防火墙层面）
@@ -20,7 +20,6 @@ skill_executor.py — Skill 沙箱执行
 from __future__ import annotations
 
 import os
-import resource
 import shutil
 import subprocess
 import tempfile
@@ -33,10 +32,6 @@ DEFAULT_TIMEOUT_SEC = 30
 MAX_TIMEOUT_SEC = 300
 MAX_STDOUT_BYTES = 1 * 1024 * 1024   # 1 MB
 MAX_STDERR_BYTES = 256 * 1024         # 256 KB
-RLIMIT_CPU_SEC = 60                   # CPU 时间硬限制（秒）
-RLIMIT_AS_BYTES = 512 * 1024 * 1024   # 地址空间（虚拟内存）512 MB
-RLIMIT_FSIZE_BYTES = 16 * 1024 * 1024 # 单文件最大 16 MB
-RLIMIT_NOFILE = 64                    # open files
 
 
 # 环境变量白名单：只传这些，其他全砍掉。
@@ -56,31 +51,6 @@ def _build_env(extra: dict[str, str] | None = None) -> dict[str, str]:
             if isinstance(v, str) and len(v) < 4096:
                 env[k] = v
     return env
-
-
-def _preexec_setrlimit():
-    """子进程 fork 后、exec 前调用。设置资源限制。"""
-    try:
-        resource.setrlimit(resource.RLIMIT_CPU, (RLIMIT_CPU_SEC, RLIMIT_CPU_SEC))
-    except Exception:
-        pass
-    try:
-        resource.setrlimit(resource.RLIMIT_AS, (RLIMIT_AS_BYTES, RLIMIT_AS_BYTES))
-    except Exception:
-        pass
-    try:
-        resource.setrlimit(resource.RLIMIT_FSIZE, (RLIMIT_FSIZE_BYTES, RLIMIT_FSIZE_BYTES))
-    except Exception:
-        pass
-    try:
-        resource.setrlimit(resource.RLIMIT_NOFILE, (RLIMIT_NOFILE, RLIMIT_NOFILE))
-    except Exception:
-        pass
-    # 与父进程脱离会话，防止 Ctrl+C 误传
-    try:
-        os.setsid()
-    except Exception:
-        pass
 
 
 def run_skill_command(
@@ -152,7 +122,6 @@ def run_skill_command(
                 stdin=subprocess.PIPE if stdin_text else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                preexec_fn=_preexec_setrlimit,
                 start_new_session=True,
                 text=True,
                 encoding="utf-8",

@@ -136,7 +136,10 @@ class MCPServerConn:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
         except Exception:
-            pass
+            import logging
+            logging.getLogger("rpg.mcp_broker").warning(
+                "[mcp] terminate/kill 失败 server_id=%s", self.server_id, exc_info=True
+            )
         self.proc = None
         with self._pending_lock:
             self._pending_lock.notify_all()
@@ -156,7 +159,10 @@ class MCPServerConn:
                 result = self._request("tools/list", {}, timeout=timeout)
                 self.tools = result.get("tools") or []
             except Exception:
-                pass
+                import logging
+                logging.getLogger("rpg.mcp_broker").warning(
+                    "[mcp] tools/list 刷新失败 server_id=%s", self.server_id, exc_info=True
+                )
         return self.tools
 
     # ── 内部：JSON-RPC ────────────────────────────────────────────
@@ -430,7 +436,10 @@ def _health_loop():
                         except Exception:
                             conn._health = "restart_failed"
         except Exception:
-            pass
+            import logging
+            logging.getLogger("rpg.mcp_broker").warning(
+                "[mcp] health loop 异常,等待 %ss 后重试", HEALTH_CHECK_INTERVAL, exc_info=True
+            )
         _HEALTH_STOP.wait(HEALTH_CHECK_INTERVAL)
 
 
@@ -467,7 +476,8 @@ def _audit_call(server_id: str, tool_name: str, user_id: int | None, ok: bool, e
         if len(_AUDIT_LOG) > _AUDIT_LIMIT:
             del _AUDIT_LOG[:len(_AUDIT_LOG) - _AUDIT_LIMIT]
     except Exception:
-        pass
+        import logging
+        logging.getLogger("rpg.mcp_broker").warning("[mcp] audit log 写入/裁剪失败", exc_info=True)
 
 
 def get_audit_log(user_id: int | None = None, limit: int = 100) -> list[dict[str, Any]]:

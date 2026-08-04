@@ -108,7 +108,8 @@ def _deliver(q: asyncio.Queue[StateEvent], event: StateEvent) -> None:
             q.get_nowait()
             q.put_nowait(event)
         except Exception:
-            pass
+            import logging
+            logging.getLogger("rpg.state_event_bus").debug("_try_put 背压替换失败,丢弃事件")
 
 
 def _local_emit(event: StateEvent) -> None:
@@ -152,7 +153,10 @@ def emit(user_id: int, topic: str, op: str, payload: dict[str, Any] | None = Non
             )
             redis_bus.publish_event(wire)
     except Exception:
-        pass
+        import logging
+        logging.getLogger("rpg.state_event_bus").warning(
+            "Redis 跨进程投递失败 user_id=%s topic=%s", user_id, topic, exc_info=True
+        )
 
 
 async def redis_listener() -> None:
@@ -211,7 +215,7 @@ async def redis_listener() -> None:
                     try:
                         await _c.aclose()
                     except Exception:
-                        pass
+                        _log.debug("Redis 连接关闭失败(cleanup 路径,忽略)")
 
 
 def subscriber_count(user_id: int) -> int:
