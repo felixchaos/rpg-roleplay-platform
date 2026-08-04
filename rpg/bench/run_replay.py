@@ -19,9 +19,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import psycopg
 from psycopg.rows import dict_row
 
-from bench.cases import select_save_ids, iter_cases
-from bench.harness import RecordedHarness, OpenAICompatHarness
-from bench.replay import run_replay, render_compare
+from bench.cases import iter_cases, select_save_ids
+from bench.harness import OpenAICompatHarness, RecordedHarness
+from bench.replay import render_compare, run_replay
 
 
 def main():

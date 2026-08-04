@@ -10,7 +10,7 @@ from ...db import connect
 from ...dmca import increment_strike, queue_account_termination
 from .._card_dto import _iso
 from .._deps import _client_ip, json_response
-from ._shared import router, _require_admin, _write_audit
+from ._shared import _require_admin, _write_audit, router
 
 
 @router.get("/api/admin/dmca/takedowns")

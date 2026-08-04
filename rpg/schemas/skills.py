@@ -1,7 +1,7 @@
 """schemas.skills — Skill 导入与运行路由请求模型。"""
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Any
 
 from pydantic import Field
 

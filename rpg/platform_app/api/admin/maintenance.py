@@ -6,13 +6,13 @@ from __future__ import annotations
 
 import os
 import signal
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import Depends, Request
 
 from ...db import connect
 from .._deps import _client_ip, json_response
-from ._shared import router, _require_admin, _get_app_config, _set_app_config, _write_audit
+from ._shared import _get_app_config, _require_admin, _set_app_config, _write_audit, router
 
 _MAINTENANCE_CFG_KEY = "admin.maintenance_config"
 
@@ -43,7 +43,7 @@ async def admin_set_maintenance(
     if "maintenance_mode" in body:
         update["maintenance_mode"] = bool(body["maintenance_mode"])
         if update["maintenance_mode"]:
-            update["maintenance_since"] = datetime.now(timezone.utc).isoformat()
+            update["maintenance_since"] = datetime.now(UTC).isoformat()
         else:
             update["maintenance_since"] = None
     if "announcement" in body:

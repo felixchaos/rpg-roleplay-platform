@@ -16,7 +16,7 @@ REPO = Path(__file__).resolve().parent.parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from tests.helpers import make_client, register_user, cleanup_test_users  # noqa: E402
+from tests.helpers import cleanup_test_users, make_client, register_user  # noqa: E402
 
 
 def _uid(username: str) -> int:
@@ -187,9 +187,10 @@ class AcceptanceChoiceEndpoint(unittest.TestCase):
 
     def test_pref_off_switch_read(self):
         """用户级开关:user_preferences['acceptance_ab.enabled']=false → 后端 gate 读到 False(玩家可关)。"""
+        from psycopg.types.json import Jsonb
+
         import chat_pipeline
         from platform_app.db import connect
-        from psycopg.types.json import Jsonb
         user = register_user(self.client)
         uid = _uid(user["username"])
         # 默认(无偏好行)= 开

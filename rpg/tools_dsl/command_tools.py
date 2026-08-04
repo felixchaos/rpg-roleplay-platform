@@ -601,9 +601,8 @@ def _exec_advance_story_progress(state, args) -> str:
         return "advance_story_progress 失败: 无 active save(存档未就绪)"
     clamp_note = ""
     try:
+        from gm_serving.settings import advance_progress, read_settings, set_user_progress_floor
         from platform_app.db import connect
-        from gm_serving.settings import advance_progress, read_settings
-        from gm_serving.settings import set_user_progress_floor
         with connect() as db:
             # 手滑护栏:advance_progress 是 max-only 单调,目标超剧本实际章数
             # (如想打 30 打成 300)会顶死进度并炸开全部防剧透 → 钳到最后一章。

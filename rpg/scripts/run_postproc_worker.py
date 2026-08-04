@@ -85,7 +85,8 @@ async def _handle_acceptance_verifier(payload: dict[str, Any]) -> None:
     try:
         # 延迟 import：app.py 依赖 FastAPI/路由/中间件，worker 只需其中两个函数。
         # 在调用时才 import 可将 worker 启动内存开销降到最低，且不影响功能正确性。
-        from app import _acceptance_verifier_mode as _avm, _verify_acceptance as _va  # noqa: PLC0415
+        from app import _acceptance_verifier_mode as _avm  # noqa: PLC0415
+        from app import _verify_acceptance as _va
         curator_plan = payload.get("curator_plan") or {}
         acceptance = curator_plan.get("acceptance") or []
         gm_output = payload.get("gm_output") or ""

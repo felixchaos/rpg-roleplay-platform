@@ -13,10 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from rath.sim import (  # noqa: E402
     absorb_scene,
-    compact_view,
     apply_scheduler_output,
     build_director_prompts,
     build_scheduler_prompts,
+    compact_view,
     enforce_night,
     init_sim_state,
     parse_scheduler_output,
@@ -288,7 +288,7 @@ def test_unconscious_player_location_settles_once():
 # ── 河道低水位补给(500k 浸泡前置修:烧穿 12 段后不空转,v1.61.1) ──────────
 
 def test_canon_refill_signals_low_water_and_extend_appends():
-    from rath.sim import canon_refill_from, extend_canon, CANON_REFILL_THRESHOLD
+    from rath.sim import CANON_REFILL_THRESHOLD, canon_refill_from, extend_canon
     sim = _sim_canon()  # 2 段,cursor=0 → 未消费 2 ≤ 阈值,应报低水位
     assert canon_refill_from(sim) == 3  # 从最后一章(2)+1 续拉
     n = extend_canon(sim, [
@@ -470,7 +470,7 @@ def test_player_probe_rejected():
 
 
 def test_stale_threads_closed_and_recorded():
-    from rath.sim import close_stale_threads, STALE_THREAD_TICKS
+    from rath.sim import STALE_THREAD_TICKS, close_stale_threads
     sim = _sim_canon()
     sim["threads"] = [{"id": "t2", "desc": "伊萨尔河沿岸调查", "tension": 0, "last_touch": 1}]
     sim["tick_seq"] = 1 + STALE_THREAD_TICKS

@@ -115,8 +115,8 @@ def test_empty_token_rejected(signer):
 
 def test_alg_none_rejected(signer):
     # 经典攻击:alg=none 无签名令牌 — 必须被拒(algorithms 限定 RS256)。
-    import json
     import base64
+    import json
 
     def b64(d):
         return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()

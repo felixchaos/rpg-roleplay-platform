@@ -43,11 +43,11 @@ async def _run_anchor_reconcile(ctx: Any, api_user: dict | None, response: str) 
 
 def _apply_gm_json_ops(
     *,
-    state: "GameState",
+    state: GameState,
     response_with_ops: str,
     api_user: dict[str, Any] | None,
     active_script_id: Callable[[dict[str, Any] | None], int | None],
-    ctx: "PipelineContext",
+    ctx: PipelineContext,
 ) -> list[str]:
     """把 GM 的 JSON op(set/append/overwrite/question/hypothesis/...)经 ChatWriteContext
     确定性 apply 回内存 state,返回 update 文案列表(已含 directive_updates 前缀)。
@@ -62,7 +62,11 @@ def _apply_gm_json_ops(
 
     from state_write_context import (
         ChatWriteContext,
+    )
+    from state_write_context import (
         clear_context as _clear_write_ctx,
+    )
+    from state_write_context import (
         set_context as _set_write_ctx,
     )
     _json_op_ctx = ChatWriteContext(
@@ -100,7 +104,7 @@ def _acceptance_ab_pref_enabled(user_id) -> bool:
                 (int(user_id),),
             ).fetchone()
         v = (row or {}).get("v")
-        return not (str(v).strip().lower() in ("false", "0", "off", "no")) if v is not None else True
+        return str(v).strip().lower() not in ("false", "0", "off", "no") if v is not None else True
     except Exception:
         return True
 

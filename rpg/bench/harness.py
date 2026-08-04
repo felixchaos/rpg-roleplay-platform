@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import urllib.request
-from typing import Any
 
 DEFAULT_GM_SYSTEM = (
     "你是一个中文沉浸式角色扮演游戏的 GM(游戏主持)。规则:\n"

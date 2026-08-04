@@ -20,7 +20,6 @@ model_probe.py — API 探测：远端模型列表 + 可用性 + 定价
 """
 from __future__ import annotations
 
-import json
 import os
 import time
 from pathlib import Path
@@ -363,6 +362,7 @@ def invalidate_user_api(user_id: int | None, api_id: str) -> None:
 def _list_vertex_models(api: dict[str, Any], user_id: int | None = None) -> list[dict[str, Any]]:
     """列出 Vertex 可用 Gemini 模型。user_id 非 None 时优先使用用户 BYOK SA。"""
     from google import genai
+
     from core.vertex_sa import load_sa_credentials
 
     creds, project_id = load_sa_credentials(user_id)
@@ -425,6 +425,7 @@ def _resolve_provider_creds(api: dict[str, Any], user_id: int | None) -> dict[st
 
 def _list_anthropic_models(api: dict[str, Any], user_id: int | None = None) -> list[dict[str, Any]]:
     from anthropic import Anthropic
+
     from core.outbound import safe_httpx_client
     creds = _resolve_provider_creds(api, user_id)
     client_kwargs: dict[str, Any] = {
@@ -460,11 +461,11 @@ def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) 
     base_url = creds["base_url_override"] or api.get("base_url") or None
     # 覆盖 openai SDK 默认 UA → 浏览器 UA,否则 Cloudflare 后的中转站会按 UA 拦掉(WAF 当 AI 爬虫),
     # 表现为「拉取模型/校验连接不可访问」。详见 core.outbound_ua。
-    from core.outbound_ua import openai_default_headers
     # SEC(H-5): base_url 用户/admin 可控(中转站)。OpenAI SDK 默认 follow_redirects=True →
     # 攻击者端点能用 301/302 把携 Authorization 的 /v1/models 请求跳到 169.254.169.254 / 内网。
     # 用 core.outbound.safe_httpx_client(不跟随重定向 + 传输层私网校验),与 GM 后端一致。
     from core.outbound import safe_httpx_client
+    from core.outbound_ua import openai_default_headers
     kwargs: dict[str, Any] = {
         "api_key": key,
         "default_headers": openai_default_headers(),

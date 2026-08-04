@@ -38,7 +38,6 @@ from typing import Any
 
 from core.llm_backend import DEFAULT_FALLBACK_API, DEFAULT_FALLBACK_MODEL
 
-
 # 标签 → 字段映射。同时覆盖两类 label：
 #   · 叶子标签（W++ 的 Age/Occupation、扁平 colon 的「身份/外貌」）
 #   · 段落标题（中文人设模板的「基本信息/背景故事/家庭背景/NSFW」等大段落头）

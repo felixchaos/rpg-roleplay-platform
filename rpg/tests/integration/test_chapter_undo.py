@@ -54,8 +54,8 @@ class ChapterUndoE2E(unittest.TestCase):
         return uid, sid
 
     def test_undo_restores_prior_content(self):
-        from tools_dsl.command_tools_script_write import _t_update_script_chapter
         from platform_app.api.script_edit import api_undo_chapter_edit
+        from tools_dsl.command_tools_script_write import _t_update_script_chapter
         uid, sid = self._setup()
 
         # agent 改写
@@ -71,8 +71,8 @@ class ChapterUndoE2E(unittest.TestCase):
         self.assertEqual(_chapter_content(sid, 1), "原始正文 v0", "撤销应恢复改前全文")
 
     def test_sequential_undo_walks_back(self):
-        from tools_dsl.command_tools_script_write import _t_update_script_chapter
         from platform_app.api.script_edit import api_undo_chapter_edit
+        from tools_dsl.command_tools_script_write import _t_update_script_chapter
         uid, sid = self._setup()
 
         _t_update_script_chapter(uid, sid, {"chapter_index": 1, "content": "v1"}, None)
@@ -93,8 +93,8 @@ class ChapterUndoE2E(unittest.TestCase):
         self.assertFalse(body.get("ok"))
 
     def test_undo_rejects_non_owner(self):
-        from tools_dsl.command_tools_script_write import _t_update_script_chapter
         from platform_app.api.script_edit import api_undo_chapter_edit
+        from tools_dsl.command_tools_script_write import _t_update_script_chapter
         uid, sid = self._setup()
         _t_update_script_chapter(uid, sid, {"chapter_index": 1, "content": "v1"}, None)
         # 另一个用户撤销 → 403,正文不变

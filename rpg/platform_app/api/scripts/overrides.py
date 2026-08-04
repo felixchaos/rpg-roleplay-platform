@@ -10,7 +10,6 @@ from ...db import connect
 from .._deps import json_response, require_user, value_error_response
 from ._shared import router
 
-
 # ── script overrides API ──────────────────────────────────────────────────────
 
 @router.get("/api/scripts/{script_id}/overrides")
@@ -73,9 +72,9 @@ async def api_get_script_gm_style(script_id: int, user=Depends(require_user)):
         ).fetchone()
     if not access:
         return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
-    from platform_app.knowledge.script_overrides import get_overrides_by_script_id
-    from agents.gm.style_harness import resolve_profile
     from agents.gm.style_config import _read_user_gm_style
+    from agents.gm.style_harness import resolve_profile
+    from platform_app.knowledge.script_overrides import get_overrides_by_script_id
     data = get_overrides_by_script_id(script_id) or {}
     stored = data.get("gm_style") if isinstance(data.get("gm_style"), dict) else {}
     effective = resolve_profile(
@@ -94,8 +93,8 @@ async def api_set_script_gm_style(request: Request, script_id: int, user=Depends
         owned = script_owned(db, script_id, user["id"])
     if not owned:
         return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
-    from platform_app.knowledge.script_overrides import get_overrides_by_script_id, upsert_overrides
     from agents.gm.style_harness import validate_patch
+    from platform_app.knowledge.script_overrides import get_overrides_by_script_id, upsert_overrides
     body = await request.json()
     try:
         clean = validate_patch(body.get("gm_style") if "gm_style" in body else body)

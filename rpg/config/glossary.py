@@ -19,7 +19,7 @@ _EXAMPLE = _CFG_DIR / "novel_glossary.example.json"
 def load_glossary() -> dict:
     """Load glossary; prefer private file, fall back to example."""
     path = _PRIVATE if _PRIVATE.exists() else _EXAMPLE
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 

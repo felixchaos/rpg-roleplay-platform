@@ -5,7 +5,7 @@ from fastapi import Depends
 
 from ...db import connect
 from .._deps import json_response
-from ._shared import router, _require_admin
+from ._shared import _require_admin, router
 
 
 @router.get("/api/admin/usage")

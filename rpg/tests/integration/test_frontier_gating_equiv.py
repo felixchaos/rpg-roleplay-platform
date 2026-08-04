@@ -26,9 +26,8 @@ class FrontierGatingEquiv(unittest.TestCase):
         cleanup_test_users()
         cls.client = make_client()
         u = register_user(cls.client)
+        from kb.reveal import backfill_entity_reveal_anchors, backfill_reveal_anchors, seed_frontier
         from platform_app.db import connect, init_db
-        from kb.reveal import (backfill_entity_reveal_anchors, backfill_reveal_anchors,
-                               seed_frontier)
         init_db()
         with connect() as db:
             cls.owner_id = int(db.execute(
@@ -202,8 +201,8 @@ class FrontierWritePath(unittest.TestCase):
         cleanup_test_users()
         cls.client = make_client()
         u = register_user(cls.client)
-        from platform_app.db import connect, init_db
         from kb.reveal import backfill_reveal_anchors
+        from platform_app.db import connect, init_db
         init_db()
         with connect() as db:
             cls.owner_id = int(db.execute(
@@ -229,8 +228,8 @@ class FrontierWritePath(unittest.TestCase):
 
     def _seed_save(self, occurred_upto: int) -> int:
         """建档 + ch1..10 锚点(ch1..occurred_upto occurred,余 pending)+ seed_frontier。返回 save_id。"""
-        from platform_app.db import connect
         from kb.reveal import seed_frontier
+        from platform_app.db import connect
         with connect() as db:
             sid = int(db.execute(
                 "insert into game_saves(user_id, script_id, title, state_path) "
@@ -247,8 +246,9 @@ class FrontierWritePath(unittest.TestCase):
         return sid
 
     def _set_progress(self, save_id: int, ch: int):
-        from platform_app.db import connect
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect
         with connect() as db:
             db.execute("insert into game_sessions(save_id, user_id, worldline) values (%s,%s,%s) "
                        "on conflict (save_id) do update set worldline=excluded.worldline",
@@ -289,8 +289,8 @@ class FrontierWritePath(unittest.TestCase):
 
     # ── S6.3:GM 工具 mark_anchor_satisfied 写前沿 ──────────────────────────────
     def test_mark_satisfied_writes_frontier(self):
-        from platform_app.db import connect
         from kb.reveal import derived_progress_chapter
+        from platform_app.db import connect
         from tools_dsl.command_tools_anchors import _t_mark_anchor_satisfied
         os.environ["RPG_TKB_FRONTIER"] = "on"
         sid = self._seed_save(3)
@@ -307,9 +307,10 @@ class FrontierWritePath(unittest.TestCase):
 
     # ── S7.2+审计修复 #4:read_settings 派生进度 floor 兜底 ─────────────────────
     def test_read_settings_floor(self):
-        from platform_app.db import connect
         from psycopg.types.json import Jsonb
+
         from gm_serving.settings import read_settings
+        from platform_app.db import connect
         os.environ["RPG_TKB_FRONTIER"] = "on"
         # (a) 前沿已种:read_settings 进度 == derived == 3
         sid = self._seed_save(3)
@@ -343,8 +344,8 @@ class FrontierWritePath(unittest.TestCase):
 
     # ── S7.3:rewind 收缩前沿 → derived 下降 ────────────────────────────────────
     def test_rewind_shrinks_frontier(self):
-        from platform_app.db import connect
         from kb.reveal import derived_progress_chapter, recompute_visible_set
+        from platform_app.db import connect
         os.environ["RPG_TKB_FRONTIER"] = "on"
         sid = self._seed_save(5)
         self.assertEqual(derived_progress_chapter(sid), 5)

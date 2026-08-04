@@ -15,7 +15,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
@@ -32,6 +32,7 @@ class TestEmbedProviderDispatch(unittest.TestCase):
     def _import(self):
         # 每次重新 import 确保 module cache 不污染
         import importlib
+
         import platform_app.knowledge.embedding as mod
         importlib.reload(mod)
         return mod
@@ -108,6 +109,7 @@ class TestResolveEmbedConfig(unittest.TestCase):
 
     def _import(self):
         import importlib
+
         import platform_app.knowledge.embedding as mod
         importlib.reload(mod)
         return mod
@@ -152,6 +154,7 @@ class TestEmbedQueryBYOK(unittest.TestCase):
 
     def _import(self):
         import importlib
+
         import platform_app.knowledge.embedding as mod
         importlib.reload(mod)
         return mod
@@ -201,6 +204,7 @@ class TestEmbedBatch(unittest.TestCase):
 
     def _import(self):
         import importlib
+
         import platform_app.knowledge.embedding as mod
         importlib.reload(mod)
         return mod

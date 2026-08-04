@@ -18,7 +18,7 @@ import string
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -123,8 +123,8 @@ class TestEnqueueChain(unittest.TestCase):
         self._image_id = result["image_id"]
 
     def test_ai_images_row_pending(self):
-        from platform_app.image_jobs import enqueue_image_generation
         from platform_app.db import connect
+        from platform_app.image_jobs import enqueue_image_generation
         result = enqueue_image_generation(
             self.uid, "forest at dusk", "cover",
             api_id="doubao", model="doubao-seedream-4-x",
@@ -141,8 +141,8 @@ class TestEnqueueChain(unittest.TestCase):
         self.assertEqual(int(row["user_id"]), self.uid)
 
     def test_postproc_task_created(self):
-        from platform_app.image_jobs import enqueue_image_generation
         from platform_app.db import connect
+        from platform_app.image_jobs import enqueue_image_generation
         result = enqueue_image_generation(
             self.uid, "snowy mountain peak", "game",
             api_id="doubao", model="doubao-seedream-4-x",
@@ -188,8 +188,8 @@ class TestWorkerHandlerMock(unittest.TestCase):
             db.execute("delete from users where id = %s", (cls.uid,))
 
     def test_handler_updates_done_and_writes_file(self):
-        from platform_app.image_jobs import enqueue_image_generation, handle_image_gen
         from platform_app.db import connect
+        from platform_app.image_jobs import enqueue_image_generation, handle_image_gen
 
         # 先入队
         result = enqueue_image_generation(
@@ -269,8 +269,8 @@ class TestWorkerNoKey(unittest.TestCase):
             db.execute("delete from users where id = %s", (cls.uid,))
 
     def test_no_key_marks_failed(self):
-        from platform_app.image_jobs import enqueue_image_generation, handle_image_gen
         from platform_app.db import connect
+        from platform_app.image_jobs import enqueue_image_generation, handle_image_gen
 
         result = enqueue_image_generation(
             self.uid, "a lonely lighthouse", "game",
@@ -464,8 +464,8 @@ class TestApproveImagePending(unittest.TestCase):
 
     def test_approve_enqueues_image(self):
         """构造 generate_image pending_write，approve 后 ai_images / chat_postproc_tasks 各增一行。"""
-        from state._mixins.pending import _approve_image_pending
         from platform_app.db import connect
+        from state._mixins.pending import _approve_image_pending
 
         # 构造 pending_write item（和 executor 存进去的格式一致）
         item = {

@@ -9,12 +9,6 @@
 """
 from __future__ import annotations
 
-import sys
-import types
-import unittest
-from unittest.mock import MagicMock, call, patch
-
-
 # ── stub 重量级依赖, 让 import_pipeline 可被加载 ─────────────────────────────────
 #
 # 隔离要求: 这些 stub 只能在「本模块测试运行期间」存在于 sys.modules,运行结束
@@ -26,10 +20,13 @@ from unittest.mock import MagicMock, call, patch
 #       patch.dict(sys.modules, ...) 装入 stub 并加载 import_pipeline,
 #       tearDownModule 还原。import_pipeline 的重依赖均为函数内惰性导入,
 #       故运行期 stub 在位即可。
-
 import importlib
 import importlib.util
 import os
+import sys
+import types
+import unittest
+from unittest.mock import MagicMock, patch
 
 # import_pipeline 已拆包:被测的 _resolve_extractor_llm / _stage_story_phase_llm /
 # _stage_cards / _stage_worldbook 全部定义在子模块 stages_llm.py,standalone 加载它。

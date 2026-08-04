@@ -8,7 +8,6 @@ from typing import Any
 
 from .errors import MissingEmbeddingCredentialError
 
-
 # ══════════════════════════════════════════════════════════════════════
 #  phase_backend: rebuild job 调度器 (kind='rebuild_*' 写 import_jobs)
 # ══════════════════════════════════════════════════════════════════════

@@ -10,7 +10,6 @@
 本测试在 rpg_platform dev 库的一个事务里建最小图,断言后 ROLLBACK(零污染)。
 需要本机 PG (localhost:5432, rpg_platform) — 缺库则 skip。
 """
-import json
 import os
 import sys
 from pathlib import Path

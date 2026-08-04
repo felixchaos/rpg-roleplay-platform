@@ -12,7 +12,6 @@ from state import GameState
 
 from ._common import PipelineContext, SSEEvent, log
 
-
 # ---------------------------------------------------------------------------
 # Phase 1: 玩家 directive 应用 (过期问题 + /set 工具化 + 正则 fallback + set_parser + timeline anchor)
 # ---------------------------------------------------------------------------
@@ -321,11 +320,13 @@ async def apply_player_directives_phase(
                     # advance_story_progress 同语义推进(max-only 单调,回跳不回退)。
                     try:
                         if _early_active_save_id:
-                            from platform_app.db import connect as _conn_jump
                             from gm_serving.settings import (
                                 advance_progress as _adv_jump,
+                            )
+                            from gm_serving.settings import (
                                 set_user_progress_floor as _floor_jump,
                             )
+                            from platform_app.db import connect as _conn_jump
                             with _conn_jump() as _db_jump:
                                 _adv_jump(_db_jump, int(_early_active_save_id), int(_anchor["chapter_min"]))
                                 _floor_jump(_db_jump, int(_early_active_save_id), int(_anchor["chapter_min"]))

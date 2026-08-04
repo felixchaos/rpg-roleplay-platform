@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+# ══════════════════════════════════════════════════════════════════════
+#  分片上传（大文件 stream 到磁盘，避免 base64 撑爆内存）
+# ══════════════════════════════════════════════════════════════════════
+import json as _json
+import secrets as _secrets
+import time as _t
 from pathlib import Path
 from typing import Any
 
@@ -9,15 +15,6 @@ from ._base import (
     MAX_UPLOAD_CHUNK_BYTES,
     UPLOAD_CHUNK_ROOT,
 )
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  分片上传（大文件 stream 到磁盘，避免 base64 撑爆内存）
-# ══════════════════════════════════════════════════════════════════════
-import json as _json
-import secrets as _secrets
-import time as _t
-
 
 # ── 跨平台 meta.json 文件锁 ────────────────────────────────────────────────
 # put_chunk 对同一 upload 的 meta.json 做 read-modify-write,需串行化。原实现用

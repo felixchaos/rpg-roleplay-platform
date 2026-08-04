@@ -11,7 +11,7 @@ import json
 from fastapi import Depends, Request
 
 from .._deps import json_response, require_user, value_error_response
-from ._shared import router, _store_imported_card_image
+from ._shared import _store_imported_card_image, router
 
 
 # ── 酒馆 (SillyTavern) 角色卡兼容 ───────────────────────────────────
@@ -209,7 +209,7 @@ async def api_import_tavern_chat(request: Request, user=Depends(require_user)):
         body = json.loads(raw_body)
     except (json.JSONDecodeError, ValueError):
         return json_response({"ok": False, "error": "请求体须为 JSON 格式"}, status_code=400)
-    from ... import tavern_chats, save_io
+    from ... import save_io, tavern_chats
 
     jsonl_text = body.get("jsonl") or ""
     if not isinstance(jsonl_text, str) or not jsonl_text.strip():

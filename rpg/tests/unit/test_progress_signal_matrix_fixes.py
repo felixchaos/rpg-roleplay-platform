@@ -18,7 +18,6 @@ M5  — gm_serving/serve.py 的 steer 用 _save_ctx 裸标量 ctx["progress_chap
 """
 from __future__ import annotations
 
-import re
 import unittest
 from pathlib import Path
 
@@ -192,8 +191,8 @@ class M9FunctionalRealDB(unittest.TestCase):
     """用真实 DB 验证:list_pending_for_phase 传入窗口后,窗口外的 pending 锚点确实被排除。"""
 
     def test_window_excludes_out_of_range_pending(self):
-        from platform_app.db import connect, init_db
         from agents.anchor_seed_agent import list_pending_for_phase
+        from platform_app.db import connect, init_db
 
         init_db()
         sid = 9990501
@@ -275,10 +274,11 @@ class M10FunctionalRealDB(unittest.TestCase):
     全部 occurred → 该行 status 应为 done,而非按章号猜测。"""
 
     def test_status_reflects_save_anchor_states_not_chapter_math(self):
-        from platform_app.db import connect, init_db
         import asyncio
         import json
+
         import routes.timeline as tl_mod
+        from platform_app.db import connect, init_db
 
         init_db()
         sid = 9990502
@@ -379,6 +379,7 @@ class M5FunctionalWithFakeDB(unittest.TestCase):
 
     def test_resolve_steering_target_receives_authoritative_value(self):
         import unittest.mock as mock
+
         import gm_serving.serve as serve_mod
 
         class FakeDB:

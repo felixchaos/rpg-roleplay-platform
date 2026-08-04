@@ -5,7 +5,7 @@ import os
 import secrets
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from psycopg.errors import UniqueViolation
@@ -13,15 +13,14 @@ from psycopg.types.json import Jsonb
 
 from .db import connect, init_db
 from .security import (
+    calc_age,
+    generate_email_code,
+    hash_email_code,
     hash_password,
     normalize_email,
     normalize_username,
-    verify_password,
-    verify_password_with_rehash,
-    generate_email_code,
-    hash_email_code,
     verify_email_code,
-    calc_age,
+    verify_password_with_rehash,
 )
 
 SESSION_DAYS = 14
@@ -83,6 +82,7 @@ _PWRESET_WINDOW_SEC = 600
 _PWRESET_IP_LIMIT = 30
 
 import logging as _logging
+
 _log = _logging.getLogger(__name__)
 
 _PENDING_REGISTER_UA_PREFIX = "rpg-pending-register:v1:"
@@ -356,7 +356,7 @@ def register(
         "allow_admin": _bootstrap_admin_allowed(setup_token),
         "ip": ip or "",
         "ua": ua or "",
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     pending_json = _encode_pending_register(pending_payload)
 
@@ -434,7 +434,7 @@ def register(
         # ── 写 email_verifications (pending) ──────────────────────────────────
         code = generate_email_code(6)
         code_h = hash_email_code(code)
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+        expires_at = datetime.now(UTC) + timedelta(minutes=10)
 
         # 失效同邮箱之前的未使用记录（防积累），再插入新记录
         db.execute(
@@ -471,7 +471,7 @@ def register(
             _log.warning("[register] 本地模式自动验证失败,回退验证码流程: %s", _e)
 
     # ── server 模式:发验证码邮件 ──────────────────────────────────────────────
-    from .email import send_verification_email, EmailSendError
+    from .email import EmailSendError, send_verification_email
     try:
         send_verification_email(email_norm, code)
         # 发件成功 → 设 per-email 冷却(60s),阻断同邮箱快速重复注册刷件
@@ -702,7 +702,7 @@ def confirm_email_verification(email: str, code: str) -> tuple[dict[str, Any], s
             else _bootstrap_admin_allowed(pending.get("setup_token"))
         )
 
-        from datetime import date as _date, timezone as _tz
+        from datetime import date as _date
         birthday = _date.fromisoformat(pending["birthday"])
 
         try:
@@ -809,7 +809,7 @@ def _issue_session(db, user_id: int) -> str:
             (user_id, int(active_count) - 19),
         )
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
+    expires_at = datetime.now(UTC) + timedelta(days=SESSION_DAYS)
     db.execute(
         "insert into sessions(token, token_hash, user_id, expires_at) values (%s, %s, %s, %s)",
         ("", _hash_token(token), user_id, expires_at),
@@ -1025,7 +1025,7 @@ def set_account_password(user_id: int, password: str) -> None:
 def create_desktop_login_token(user_id: int) -> str:
     """铸一次性桌面登录 token(控制台主进程在回环内调用)。返回明文,DB 只存哈希。"""
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=DESKTOP_LOGIN_TTL_MIN)
+    expires_at = datetime.now(UTC) + timedelta(minutes=DESKTOP_LOGIN_TTL_MIN)
     with connect() as db:
         # 允许同账户多枚有效 token 并存:自部署常把「登录链接」+「二维码」分别发给不同设备
         # (手机/平板),各自单次消费。每枚仍单次 + 10 分钟 TTL,过期自然失效,无需互相作废。
@@ -1072,7 +1072,7 @@ DESKTOP_INVITE_TTL_HOURS = 24 * 14  # 邀请链接默认 14 天有效、可复�
 def create_desktop_invite_token(creator_id: int) -> str:
     """铸一枚可复用邀请 token(控制台回环调用)。返回明文,DB 只存哈希。"""
     token = secrets.token_urlsafe(24)
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=DESKTOP_INVITE_TTL_HOURS)
+    expires_at = datetime.now(UTC) + timedelta(hours=DESKTOP_INVITE_TTL_HOURS)
     init_db()
     with connect() as db:
         db.execute(
@@ -1196,15 +1196,15 @@ def request_login_code(email: str, *, ip: str = "", ua: str = "") -> dict[str, A
         if recent:
             created = recent["created_at"]
             if created.tzinfo is None:
-                created = created.replace(tzinfo=timezone.utc)
-            elapsed = (datetime.now(timezone.utc) - created).total_seconds()
+                created = created.replace(tzinfo=UTC)
+            elapsed = (datetime.now(UTC) - created).total_seconds()
             if elapsed < 60:
                 raise ValueError(f"发送太频繁，请 {int(60 - elapsed) + 1} 秒后再试")
 
         user_id = int(row["id"])
         code = generate_email_code(6)
         code_h = hash_email_code(code)
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+        expires_at = datetime.now(UTC) + timedelta(minutes=10)
         db.execute(
             "update email_verifications set used_at = now() "
             "where lower(email) = %s and purpose = 'login' and used_at is null",
@@ -1219,7 +1219,7 @@ def request_login_code(email: str, *, ip: str = "", ua: str = "") -> dict[str, A
             (email_norm, code_h, user_id, expires_at, ip or "", ua or ""),
         )
 
-    from .email import send_login_code_email, EmailSendError
+    from .email import EmailSendError, send_login_code_email
     try:
         send_login_code_email(email_norm, code)
     except EmailSendError:
@@ -1336,7 +1336,7 @@ def login(username: str, password: str, *, ip: str = "") -> tuple[dict[str, Any]
 
         token = secrets.token_urlsafe(32)
         # 使用 timezone-aware UTC 时间, 避免 server 本地时区漂移 session 过期
-        expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
+        expires_at = datetime.now(UTC) + timedelta(days=SESSION_DAYS)
 
         # P2-2: 并发会话上限 20，超出时驱逐最旧的会话
         active_count = db.execute(
@@ -1462,15 +1462,15 @@ def resend_verification_code(email: str, ip: str = "") -> None:
         )
         code = generate_email_code(6)
         code_h = hash_email_code(code)
-        from datetime import timezone as _tz, timedelta as _td
-        expires_at = datetime.now(_tz.utc) + _td(minutes=10)
+        from datetime import timedelta as _td
+        expires_at = datetime.now(UTC) + _td(minutes=10)
         db.execute(
             "insert into email_verifications (email, code_hash, purpose, expires_at, ip, ua) values (%s, %s, 'register', %s, %s, %s)",
             # SEC(H-7): ua 列存真实 user-agent,不再塞含 password_hash 的 pending_json。
             (email_norm, code_h, expires_at, ip or "", str(pending.get("ua") or "")[:512]),
         )
 
-    from .email import send_verification_email, EmailSendError
+    from .email import EmailSendError, send_verification_email
     try:
         send_verification_email(email_norm, code)
     except EmailSendError:
@@ -1542,7 +1542,7 @@ def request_password_reset(email: str, ip: str = "") -> dict:
         user_id = row["id"]
         token = secrets.token_urlsafe(32)
         token_hash = hash_email_code(token)   # 复用已有 HMAC util
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+        expires_at = datetime.now(UTC) + timedelta(minutes=30)
 
         # 废弃同邮箱的旧 password_reset 记录
         db.execute(
@@ -1561,7 +1561,7 @@ def request_password_reset(email: str, ip: str = "") -> dict:
             _log.warning("request_password_reset: insert failed for %s", email_norm, exc_info=True)
             return {"ok": True}
 
-    from .email import send_password_reset_email, EmailSendError
+    from .email import EmailSendError, send_password_reset_email
     try:
         send_password_reset_email(email_norm, token)
     except EmailSendError:
@@ -1590,8 +1590,8 @@ def consume_magic_token(token: str, email: str) -> dict:
     import datetime as _dt
     created = row["created_at"]
     if created.tzinfo is None:
-        created = created.replace(tzinfo=_dt.timezone.utc)
-    age = (_dt.datetime.now(_dt.timezone.utc) - created).total_seconds()
+        created = created.replace(tzinfo=_dt.UTC)
+    age = (_dt.datetime.now(_dt.UTC) - created).total_seconds()
     if age > 30 * 86400:
         raise ValueError("邀请链接已过期 (30天)")
     return {"email": norm, "batch": row["batch"]}
@@ -1612,7 +1612,7 @@ def request_passwordless_code(email: str, source: str = "magic_link") -> dict:
         )
         code = generate_email_code(6)
         code_h = hash_email_code(code)
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+        expires_at = datetime.now(UTC) + timedelta(minutes=10)
         db.execute(
             """
             insert into email_verifications
@@ -1621,7 +1621,7 @@ def request_passwordless_code(email: str, source: str = "magic_link") -> dict:
             """,
             (email_norm, code_h, expires_at, source),
         )
-    from .email import send_login_code_email, EmailSendError
+    from .email import EmailSendError, send_login_code_email
     try:
         send_login_code_email(email_norm, code)
     except EmailSendError:

@@ -17,9 +17,10 @@ class ImportJobsColumns(unittest.TestCase):
             self.assertIn(col, statements, f"v45 必须包含 {col} 列添加")
 
     def test_sse_handler_uses_get_job_status(self):
-        from platform_app.api import imports as api_imports
         # SSE 实现里调 import_pipeline.get_job_status,后者返 SELECT * 含新列
         import inspect
+
+        from platform_app.api import imports as api_imports
         src = inspect.getsource(api_imports.api_import_job_stream)
         self.assertIn("get_job_status", src)
 

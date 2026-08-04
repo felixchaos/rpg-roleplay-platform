@@ -10,6 +10,7 @@ from typing import Any
 
 from ._helpers import _resolve_sid, _user_can_read_script
 
+
 def _t_extract_from_selection(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
     """对用户选中的一段正文跑结构化提取(复用 extract/per_chapter.extract_chapter 的提取器,含其
     反史实/反编造/中文别名归并铁律),返回提议的人物/势力/地点/概念/事件/摘要 —— 供 agent 按用户意愿

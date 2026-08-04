@@ -21,7 +21,6 @@ from unittest import mock
 import gm_serving.steering as ST
 from gm_serving.context_inject import build_injection
 
-
 _PEND = [
     {"anchor_key": "a1", "summary": "蕾穆丽娜登场", "must_preserve": ["登场地点=学院"]},
     {"anchor_key": "a2", "summary": "主角与穆蕾莉娅初遇", "must_preserve": []},

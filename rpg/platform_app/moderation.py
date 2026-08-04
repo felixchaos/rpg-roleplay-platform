@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Dict
 
 import httpx
 
@@ -23,7 +22,7 @@ MODERATION_ENDPOINT: str = "https://api.openai.com/v1/moderations"
 # AUP §2.J 红线类别 → 阈值
 # sexual/minors: 零容忍（CSAM），极低阈值
 # 其余命中 → 人工审查
-BLOCKED_CATEGORIES: Dict[str, float] = {
+BLOCKED_CATEGORIES: dict[str, float] = {
     "sexual": 0.5,
     "sexual/minors": 0.05,
     "violence/graphic": 0.8,
@@ -49,8 +48,8 @@ class ModerationVerdict:
     """
 
     action: str
-    categories: Dict[str, float] = field(default_factory=dict)
-    scores: Dict[str, float] = field(default_factory=dict)
+    categories: dict[str, float] = field(default_factory=dict)
+    scores: dict[str, float] = field(default_factory=dict)
 
 
 async def moderate_feedback(text: str) -> ModerationVerdict:
@@ -88,7 +87,7 @@ async def moderate_feedback(text: str) -> ModerationVerdict:
             return ModerationVerdict(action="manual_review")
 
         result = resp.json()["results"][0]
-        scores: Dict[str, float] = result.get("category_scores", {})
+        scores: dict[str, float] = result.get("category_scores", {})
 
         # 零容忍：CSAM → auto_reject
         for cat in _CSAM_CATEGORIES:
@@ -106,7 +105,7 @@ async def moderate_feedback(text: str) -> ModerationVerdict:
                 )
 
         # 其余阈值命中 → manual_review
-        hit: Dict[str, float] = {
+        hit: dict[str, float] = {
             cat: scores[cat]
             for cat, threshold in BLOCKED_CATEGORIES.items()
             if cat not in _CSAM_CATEGORIES and scores.get(cat, 0.0) > threshold

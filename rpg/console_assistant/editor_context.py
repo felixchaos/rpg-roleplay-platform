@@ -54,8 +54,8 @@ def _worldbook_section(script_id: int, scan_text: str) -> str:
 
 def _characters_section(script_id: int, scan_text: str, chapter_index: int | None) -> str:
     try:
-        from context_engine.loaders import _load_characters
         from context_engine.formatters import _active_character_cards
+        from context_engine.loaders import _load_characters
         # 防剧透:给了章号 → partial 档(first_revealed<=ci 或 =0 放行),挡掉远期未登场角色;
         # 无章号 → omniscient(作者全见)。
         mode = "partial" if chapter_index is not None else "omniscient"

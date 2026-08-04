@@ -73,8 +73,8 @@ if __name__ == "__main__":
 
 def test_cluster_does_not_merge_distinct_names_even_if_embeddings_close():
     """回归 W1: 旧 0.86 阈值把 14 个不同角色并成 1。不同人名(非子串)即使嵌入接近也不合并。"""
-    from extract.resolve import gather_entity_mentions, cluster_entities
     from extract.per_chapter import ChapterExtract
+    from extract.resolve import cluster_entities, gather_entity_mentions
     names = ["林有德", "茜茜", "千寻", "薇欧拉", "薇欧拉小姐", "特蕾西亚", "狐狸"]
     exs = [ChapterExtract(chapter=1, entities=[{"canonical_guess": n, "type": "character"} for n in names])]
     m = gather_entity_mentions(exs)

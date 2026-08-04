@@ -49,7 +49,7 @@ def test_excerpt_anchor_deterministic():
 
 # ── #7 adaptive_split: 巨号跳章不得无界枚举 gap(zh-chapter-splitter) ──────
 def test_gap_enumeration_bounded():
-    from ingest.adaptive_split import fuse, _MAX_GAP_SPAN
+    from ingest.adaptive_split import _MAX_GAP_SPAN, fuse
     t0 = time.time()
     _fused, gaps = fuse(
         [{"title": "第1章", "content": "a"}, {"title": "第20000000章", "content": "b"}],
@@ -79,7 +79,8 @@ def test_ssrf_embedded_private_v4_blocked():
 # ── #3 crypto: 篡改密文可观测(byok-vault);行为契约仍返 ""(不破调用方) ──
 def test_decrypt_tamper_returns_empty_not_raise(caplog):
     import logging
-    from utils.crypto import encrypt_api_key, decrypt_api_key
+
+    from utils.crypto import decrypt_api_key, encrypt_api_key
     blob = bytearray(encrypt_api_key("sk-secret-123", 42, "openai"))
     blob[-1] ^= 0xFF  # 翻末字节 → GCM 认证失败
     with caplog.at_level(logging.WARNING):

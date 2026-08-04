@@ -12,13 +12,11 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from core.logging import get_logger
-
 from state import SAVE_FILE
 
 from .. import branches
 from ..db import connect, expose, init_db
 from ..perms import script_readable
-
 from .snapshot import _build_initial_snapshot
 
 log = get_logger(__name__)

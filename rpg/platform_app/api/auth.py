@@ -273,8 +273,8 @@ async def api_desktop_login(request: Request, token: str = "", next: str = "/Pla
     仅本地/桌面模式可用。next 仅允许站内相对路径(防开放重定向)。"""
     from fastapi.responses import RedirectResponse
 
-    from core.config import deployment_mode as _dm
     from core.config import LOCAL_MODES
+    from core.config import deployment_mode as _dm
     if (_dm() or "").strip().lower() not in LOCAL_MODES:
         raise HTTPException(status_code=404, detail="仅本地部署可用")
     # 防开放重定向:next 必须是站内相对路径(单个 /,不允许 // 或 \\ 或带协议)。
@@ -430,8 +430,10 @@ async def api_auth_schema():
     后端是字段的唯一权威源 — 加减字段只改这里,前端零改动。
     """
     pw_min = _auth.MIN_PASSWORD_LENGTH
+    from core.config import effective_auth_required
+    from core.config import setup_token as configured_setup_token
+
     from ..db import connect, init_db
-    from core.config import effective_auth_required, setup_token as configured_setup_token
     init_db()
     with connect() as db:
         user_count = db.execute("select count(*) as n from users").fetchone()["n"]

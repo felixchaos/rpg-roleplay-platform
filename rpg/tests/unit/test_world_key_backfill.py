@@ -272,7 +272,7 @@ class _FakeDB:
 
 
 class _FakeResult:
-    def __init__(self, db: "_FakeDB", sql: str):
+    def __init__(self, db: _FakeDB, sql: str):
         self._db = db
         self._sql = sql
 

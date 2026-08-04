@@ -21,10 +21,10 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from model_aliases import _API_ID_ALIASES, normalize_api_id  # noqa: F401 — re-export for compat
 from utils.crypto import decrypt_api_key, encrypt_api_key
 
 from .db import connect, expose, init_db
-from model_aliases import normalize_api_id, _API_ID_ALIASES  # noqa: F401 — re-export for compat
 
 _PRIVATE_HOST_PREFIXES = (
     "127.", "10.", "192.168.", "169.254.",
@@ -250,6 +250,7 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     # 失败只 log，绝不影响存 key 主流程。
     try:
         import logging as _logging
+
         from model_probe import invalidate_user_api, list_remote_models
         from platform_app.user_models import replace_synced_models
         # 先清旧 key 的远程模型缓存,再强制重拉:绝不能命中改 key 前「校验连接/拉取模型」

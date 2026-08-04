@@ -28,7 +28,6 @@ from .stages_llm import (
     require_user_llm_credential,
 )
 
-
 # ── 阶段定义 ────────────────────────────────────────────────────────
 # v29 (一站完成): wizard 末尾 chain LLM extract + 嵌入 → 用户上传后所有模块齐备
 #   chunks/facts/entities/cards/worldbook 沿用旧路径,新增:
@@ -217,7 +216,7 @@ def get_job_status(user_id: int, job_id: str | None = None, script_id: int | Non
                 "where status in ('queued', 'pending', 'running') and id < %s",
                 (cur_id,),
             ).fetchone()
-            job["queue_position"] = int((ahead_row["n"] if ahead_row else 0))
+            job["queue_position"] = int(ahead_row["n"] if ahead_row else 0)
         elif status in ("pending", "running") and job.get("script_id"):
             # 现算 token_usage 累计 — 终态不动(防覆盖正式快照)
             live = db.execute(

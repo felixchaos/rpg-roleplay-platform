@@ -52,7 +52,7 @@ def cmd_hard_delete(db) -> dict:
 
 
 def cmd_prune_audit(db) -> dict:
-    from cron.prune_audit import run_prune_login_audit, run_prune_admin_audit
+    from cron.prune_audit import run_prune_admin_audit, run_prune_login_audit
     r1 = run_prune_login_audit(db)
     r2 = run_prune_admin_audit(db)
     result = {"login_audit_pruned": r1["pruned"], "admin_audit_pruned": r2["pruned"]}
@@ -69,15 +69,15 @@ def cmd_prune_retention(db) -> dict:
     # (顶层可导,`rpg` 包名不可导)—— 同 cmd_phase_digest_backfill 的 dual-import 写法。
     try:
         from rpg.cron.prune_retention import (
-            run_prune_tool_invocations,
-            run_prune_postproc_tasks,
             run_prune_email_verifications,
+            run_prune_postproc_tasks,
+            run_prune_tool_invocations,
         )
     except ModuleNotFoundError:
         from cron.prune_retention import (
-            run_prune_tool_invocations,
-            run_prune_postproc_tasks,
             run_prune_email_verifications,
+            run_prune_postproc_tasks,
+            run_prune_tool_invocations,
         )
     r1 = run_prune_tool_invocations(db)
     r2 = run_prune_postproc_tasks(db)

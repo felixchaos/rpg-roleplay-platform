@@ -150,7 +150,7 @@ def _fallback_soft_goal(save_id: int, *, wl_key: str | None,
     # rail 多带一条(次近)给「下一拍 + 其后」;guided 仍只取最近 1 个。
     want = 2 if steering_strength == "rail" else 1
     try:
-        from agents.anchor_seed_agent import list_pending_for_phase, get_progress_window
+        from agents.anchor_seed_agent import get_progress_window, list_pending_for_phase
         win = get_progress_window(int(save_id))
         ch_min = win.get("chapter_min")
         ch_max = win.get("chapter_max")

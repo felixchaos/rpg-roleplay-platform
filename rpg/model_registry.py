@@ -345,7 +345,9 @@ def apply_user_overlay(catalog: dict[str, Any], user_id: int | None) -> dict[str
                 # 保留全局菜单里该 provider 人工策展的 embedding 模型:模型同步通常只抓
                 # chat 模型(provider 的 /models 多不列 embedding),若被 overlay 直接覆盖,
                 # RAG 向量模型选择器就会空 → 用户配了 key 也选不到 embedding。
-                from model_probe import is_embedding_model  # lazy: model_probe imports model_registry
+                from model_probe import (
+                    is_embedding_model,  # lazy: model_probe imports model_registry
+                )
                 synced_names = {(m.get("real_name") or m.get("id")) for m in cleaned}
                 curated_embeds = [
                     m for m in (existing.get("models") or [])

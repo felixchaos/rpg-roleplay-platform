@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import pathlib
 
-
 import pytest
 
 import platform_app.user_models as um

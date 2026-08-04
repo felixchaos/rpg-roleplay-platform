@@ -16,8 +16,8 @@ def test_game_console_in_nav_whitelist():
 
 def test_pg_persist_runs_even_when_redis_disabled(monkeypatch):
     """P1:Redis 未配置/不可达(本地/桌面)时,PG 永久落库仍必须执行,否则对话重启即丢。"""
-    import redis_bus
     import console_assistant.conversations as conv
+    import redis_bus
     calls = []
     monkeypatch.setattr(redis_bus, "is_enabled", lambda: False)
     monkeypatch.setattr(conv, "_persist_conv_pg", lambda u, c, d: calls.append((u, c)))
@@ -27,8 +27,8 @@ def test_pg_persist_runs_even_when_redis_disabled(monkeypatch):
 
 def test_pg_persist_runs_when_redis_client_none(monkeypatch):
     """Redis 开着但取不到 client 时,PG 也必须写(不能因 Redis 抖动丢历史)。"""
-    import redis_bus
     import console_assistant.conversations as conv
+    import redis_bus
     calls = []
     monkeypatch.setattr(redis_bus, "is_enabled", lambda: True)
     monkeypatch.setattr(redis_bus, "get_sync_client", lambda: None)
@@ -58,6 +58,7 @@ def test_write_mode_unrecognized_falls_back_to_review_not_full_access(monkeypatc
 def test_resolve_pending_has_pg_fallback():
     """P2 dual-store:confirm 解析 pending 时,Redis miss 后必须回落 PG(否则 TTL 过期报『对话不存在』)。"""
     import inspect
+
     from console_assistant import confirmation
     src = inspect.getsource(confirmation._resolve_pending)
     assert "_load_conv_pg" in src, "confirm 只读 Redis,缺 PG 回退"

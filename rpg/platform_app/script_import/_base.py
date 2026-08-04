@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..storage import SCRIPTS_DIR as SCRIPT_ROOT
-from ..storage import UPLOAD_CHUNKS_DIR as UPLOAD_CHUNK_ROOT
 from core.config import (
     script_upload_max_bytes as _script_upload_max_bytes,
 )

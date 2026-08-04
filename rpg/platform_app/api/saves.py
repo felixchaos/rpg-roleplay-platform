@@ -8,7 +8,7 @@ from urllib.parse import quote as _quote
 
 log = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
 from .. import branches, knowledge, workspace
@@ -508,8 +508,8 @@ async def api_save_anchor_satisfy(save_id: int, anchor_key: str, user=Depends(re
     if not anchor_key:
         return json_response({"ok": False, "error": "anchor_key 必填"}, status_code=400)
 
-    from tools_dsl.command_dispatcher import _get_sync_scope_lock
     from gm_serving.settings import advance_progress
+    from tools_dsl.command_dispatcher import _get_sync_scope_lock
 
     try:
         # SEC: 整 read-modify-write 在 (user,save) 锁内,与 command_tools_anchors 同锁。
@@ -631,8 +631,9 @@ async def api_save_progress_rewind(save_id: int, request: Request, user=Depends(
         return json_response({"ok": False, "error": "target_chapter 必须为整数"}, status_code=400)
     if target < 1:
         target = 1
-    from tools_dsl.command_dispatcher import _get_sync_scope_lock
     from psycopg.types.json import Jsonb
+
+    from tools_dsl.command_dispatcher import _get_sync_scope_lock
     try:
         with _get_sync_scope_lock((user_id, save_id)), connect() as db:
             if not owns_save(db, save_id, user_id):

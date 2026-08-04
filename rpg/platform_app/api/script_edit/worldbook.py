@@ -11,7 +11,7 @@ from psycopg.types.json import Jsonb
 
 from ...db import connect
 from .._deps import json_response, require_user, value_error_response
-from ._shared import router, _require_owner, _write_commit
+from ._shared import _require_owner, _write_commit, router
 
 # ─── worldbook CRUD ───────────────────────────────────────────────────────────
 

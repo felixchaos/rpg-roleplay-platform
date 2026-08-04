@@ -16,21 +16,19 @@ from __future__ import annotations
 
 import importlib
 import json
-import time
-from datetime import date, timedelta, timezone, datetime
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 # ── 环境变量 mock（须在 import 前设置）────────────────────────────────────────
 import os
+from datetime import UTC, date, datetime, timedelta
+
+import pytest
+
 os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/stellatrix_test")
 os.environ.setdefault("EMAIL_CODE_SECRET", "test-secret-key-for-pytest")
 
 # ── 延迟 import 以便 mock 生效 ─────────────────────────────────────────────────
 
 def _auth():
-    import importlib
     import platform_app.auth as m
     importlib.reload(m)
     return m
@@ -66,7 +64,6 @@ def mock_email(monkeypatch):
 
     monkeypatch.setattr("platform_app.email.send_verification_email", fake_send)
     # 也 patch 在 auth 模块内 import 的引用
-    import platform_app.auth as auth_mod
     # auth.register 内 lazy import，直接 patch email module
     import platform_app.email as email_mod
     monkeypatch.setattr(email_mod, "send_verification_email", fake_send)
@@ -172,19 +169,19 @@ def test_register_and_verify_success(monkeypatch, mock_email):
         "email": email_norm,
         "code_hash": code_hash,
         "purpose": "register",
-        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+        "expires_at": datetime.now(UTC) + timedelta(minutes=5),
         "used_at": None,
     }
     fake_user_row = {
         "id": 42, "username": "alice", "display_name": "alice",
         "role": "user", "email": email_norm, "email_verified": True,
-        "email_verified_at": datetime.now(timezone.utc),
+        "email_verified_at": datetime.now(UTC),
         "birthday": date(2000, 1, 1),
         "password_hash": auth_mod._PENDING_REGISTER.get(email_norm, "{}"),
-        "public_id": None, "bio": "", "created_at": datetime.now(timezone.utc),
-        "updated_at": datetime.now(timezone.utc), "row_version": 1,
+        "public_id": None, "bio": "", "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC), "row_version": 1,
         "deactivated_at": None, "ban_reason": "",
-        "terms_accepted_at": datetime.now(timezone.utc), "age_confirmed": True,
+        "terms_accepted_at": datetime.now(UTC), "age_confirmed": True,
     }
 
     class _FakeConnVerify:
@@ -312,7 +309,7 @@ def test_verify_wrong_code_rejected(monkeypatch):
         "email": email_norm,
         "code_hash": code_hash,
         "purpose": "register",
-        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+        "expires_at": datetime.now(UTC) + timedelta(minutes=5),
         "used_at": None,
     }
     # 放入 pending
@@ -333,7 +330,6 @@ def test_verify_wrong_code_rejected(monkeypatch):
 
 def test_verify_expired_code_rejected(monkeypatch):
     import platform_app.auth as auth_mod
-    from platform_app.security import hash_email_code
 
     monkeypatch.setattr(auth_mod, "init_db", lambda: None)
     # 没有有效 verif 行（过期）→ fetchone 返回 None
@@ -350,11 +346,11 @@ def test_verify_expired_code_rejected(monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_login_pbkdf2_rehashed_to_argon2id(monkeypatch):
-    import platform_app.auth as auth_mod
-    from platform_app.security import hash_password as new_hash, _verify_pbkdf2
-
     # 生成一个真实 PBKDF2 哈希
-    import hashlib, secrets as _sec
+    import hashlib
+    import secrets as _sec
+
+    import platform_app.auth as auth_mod
     salt = _sec.token_hex(16)
     plaintext = "OldPassword!"
     digest = hashlib.pbkdf2_hmac("sha256", plaintext.encode(), salt.encode(), 180_000).hex()
@@ -372,8 +368,8 @@ def test_login_pbkdf2_rehashed_to_argon2id(monkeypatch):
                     "id": 7, "username": "olduser", "password_hash": pbkdf2_stored,
                     "role": "user", "email": "", "email_verified": False,
                     "public_id": None, "display_name": "old", "bio": "",
-                    "created_at": datetime.now(timezone.utc),
-                    "updated_at": datetime.now(timezone.utc),
+                    "created_at": datetime.now(UTC),
+                    "updated_at": datetime.now(UTC),
                     "row_version": 1, "deactivated_at": None,
                 }])
             if "update users set password_hash" in s:

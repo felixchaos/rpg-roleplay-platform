@@ -23,8 +23,8 @@ platform_app.script_import — 剧本导入 / 章节编辑编排(包化)。
 """
 from __future__ import annotations
 
-import os  # 名字可见性:原单文件顶层 import(未使用),保留 name parity
 import logging
+import os  # 名字可见性:原单文件顶层 import(未使用),保留 name parity
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +35,6 @@ from chapter_splitter import chapter_splitter
 from ..db import connect, expose, init_db, limit_value, page_payload
 from ..library import decode_upload, safe_filename, unique_path
 from ..perms import script_owned
-
 from ._base import (
     BASE,
     MAX_SCRIPT_UPLOAD_BYTES,
@@ -45,38 +44,9 @@ from ._base import (
     _script_upload_max_bytes,
     _upload_chunk_max_bytes,
 )
-from .sync_jobs import (
-    MAX_ACTIVE_JOBS_PER_USER,
-    STALE_RUNNING_SECONDS,
-    SYNC_HEARTBEAT_SECONDS,
-    _SYNC_POOL,
-    _claim_pending_job,
-    _jsonify,
-    _run_sync_job,
-    _sync_heartbeat_seconds,
-    _sync_stale_running_seconds,
-    _schedule_knowledge_sync,
-    get_sync_status,
-    recover_pending_sync_jobs,
-)
-from .uploads import (
-    _consume_upload_chunks,
-    _json,
-    _lock_meta_file,
-    _read_meta,
-    _secrets,
-    _t,
-    _unlock_meta_file,
-    _upload_dir,
-    cancel_upload,
-    cleanup_stale_upload_chunks,
-    finish_upload,
-    init_upload,
-    put_chunk,
-)
 from .chapters import (
-    ChapterConflict,
     _CHAPTER_STRUCT_LOCK_NS,
+    ChapterConflict,
     _cursor_index,
     _lock_chapter_struct,
     _renumber_contiguous,
@@ -96,6 +66,35 @@ from .imports import (
     _validate_custom_pattern,
     import_script,
     preview_split,
+)
+from .sync_jobs import (
+    _SYNC_POOL,
+    MAX_ACTIVE_JOBS_PER_USER,
+    STALE_RUNNING_SECONDS,
+    SYNC_HEARTBEAT_SECONDS,
+    _claim_pending_job,
+    _jsonify,
+    _run_sync_job,
+    _schedule_knowledge_sync,
+    _sync_heartbeat_seconds,
+    _sync_stale_running_seconds,
+    get_sync_status,
+    recover_pending_sync_jobs,
+)
+from .uploads import (
+    _consume_upload_chunks,
+    _json,
+    _lock_meta_file,
+    _read_meta,
+    _secrets,
+    _t,
+    _unlock_meta_file,
+    _upload_dir,
+    cancel_upload,
+    cleanup_stale_upload_chunks,
+    finish_upload,
+    init_upload,
+    put_chunk,
 )
 
 logger = logging.getLogger(__name__)
