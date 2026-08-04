@@ -17,6 +17,8 @@ export { SuggestionRow } from './components/game/GameSuggestionRow.jsx';
 export { SLASH_COMMANDS } from './components/game/GameComposerMenus.jsx';
 export { ContextBreakdownPanel } from './components/game/GameContextUsage.jsx';
 
+import { SuggestionRow } from './components/game/GameSuggestionRow.jsx';
+
 function Composer({
   text, setText,
   onSend, onStop, running,
@@ -191,7 +193,8 @@ function Composer({
   };
   return (
     <div className={`gc-composer-wrap ${isWriting ? "writing" : "compact"}`}>
-      {/* task 129: 删 SuggestionRow — "基于当前剧情" 的建议多次修不好,直接砍 */}
+      {/* 对话建议:基于当前剧情状态常驻生成,帮助玩家决定下一步行动 */}
+      {!running && <SuggestionRow suggestions={suggestions} onPick={(s) => setText(s)} />}
       {attachments?.length > 0 && (
         <div className="gc-attachments">
           {attachments.map((a, i) => (
