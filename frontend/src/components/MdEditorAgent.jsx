@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { Composer } from '../game-composer.jsx';
 import { RpgMarkdown } from '../markdown-render.jsx';
 import { consumeSSE } from '../lib/sse-consume.js';
+import { lsGet, lsSet, lsRemove } from '../lib/storage.js';
 
 // 编辑器 agent 模型选择落库目标:复用游戏/酒馆同一个 Composer 内置模型选择器,但写到 console_assistant
 // 专属偏好(不污染游戏 GM 模型)。后端 console_assistant 解析优先读此键(app.py)。
@@ -368,7 +369,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
     setMessages([]);
     if (!scriptId) return undefined;
     let cid = null;
-    try { cid = localStorage.getItem(`mde.conv.${scriptId}`); } catch (_) {}
+    cid = lsGet(`mde.conv.${scriptId}`);
     if (!cid) return undefined;
     convIdRef.current = cid;
     (async () => {
@@ -391,7 +392,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   const loadConversation = useCallback(async (cid) => {
     convIdRef.current = cid || null;
     setMessages([]);
-    try { if (scriptIdRef.current && cid) localStorage.setItem(`mde.conv.${scriptIdRef.current}`, cid); } catch (_) {}
+    if (scriptIdRef.current && cid) lsSet(`mde.conv.${scriptIdRef.current}`, cid);
     if (!cid) return;
     try {
       const j = await window.api?.consoleAssistant?.getMessages?.(cid);
@@ -404,12 +405,10 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
     let nid = null;
     try { nid = (await window.api?.consoleAssistant?.newConversation?.())?.conversation_id || null; } catch (_) {}
     convIdRef.current = nid;
-    try {
-      if (scriptIdRef.current) {
-        if (nid) localStorage.setItem(`mde.conv.${scriptIdRef.current}`, nid);
-        else localStorage.removeItem(`mde.conv.${scriptIdRef.current}`);
-      }
-    } catch (_) {}
+    if (scriptIdRef.current) {
+      if (nid) lsSet(`mde.conv.${scriptIdRef.current}`, nid);
+      else lsRemove(`mde.conv.${scriptIdRef.current}`);
+    }
     setMessages([]);
     setShowConvList(false);
   }, []);
@@ -432,7 +431,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
     if (convIdRef.current === cid) {
       convIdRef.current = null;
       setMessages([]);
-      try { if (scriptIdRef.current) localStorage.removeItem(`mde.conv.${scriptIdRef.current}`); } catch (_) {}
+      if (scriptIdRef.current) lsRemove(`mde.conv.${scriptIdRef.current}`);
     }
   }, []);
 
@@ -458,7 +457,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
       if (data.conversation_id) {
         convIdRef.current = data.conversation_id;
         // 记住本剧本的对话 id,刷新后据此拉回历史。
-        try { if (scriptIdRef.current) localStorage.setItem(`mde.conv.${scriptIdRef.current}`, data.conversation_id); } catch (_) {}
+        if (scriptIdRef.current) lsSet(`mde.conv.${scriptIdRef.current}`, data.conversation_id);
       }
       return;
     }

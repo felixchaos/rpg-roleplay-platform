@@ -13,7 +13,7 @@
     "jsx": "preserve",
     "allowJs": true,
     "checkJs": false,
-    "strict": false,
+    "strict": true,
     "noEmit": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

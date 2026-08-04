@@ -3,6 +3,7 @@ import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../../game-icons.jsx';
+import { lsGet, lsSet } from '../../lib/storage.js';
 import { plNavigate } from '../../router.js';
 import Modal from '../Modal.jsx';
 import {
@@ -19,11 +20,10 @@ const SITE_ANNOUNCEMENT = {
 };
 const ANNOUNCEMENT_SEEN_KEY = 'rpg_announcement_seen';
 function announcementUnseen() {
-  try { return localStorage.getItem(ANNOUNCEMENT_SEEN_KEY) !== SITE_ANNOUNCEMENT.version; }
-  catch (_) { return false; }
+  return lsGet(ANNOUNCEMENT_SEEN_KEY) !== SITE_ANNOUNCEMENT.version;
 }
 function markAnnouncementSeen() {
-  try { localStorage.setItem(ANNOUNCEMENT_SEEN_KEY, SITE_ANNOUNCEMENT.version); } catch (_) { /* 隐私模式忽略 */ }
+  lsSet(ANNOUNCEMENT_SEEN_KEY, SITE_ANNOUNCEMENT.version);
 }
 
 /* 使用须知弹窗 — 新用户首次进入 Platform 时弹一次，也可从「📖 使用须知」按钮随时再看。
