@@ -186,8 +186,13 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     if not api_id:
         raise ValueError("api_id 不能为空")
     if not plaintext_key and not preserve_key_if_empty:
-        # 空 key 常态 = 删除凭证（base_url 无关，短路在校验之前，保持 delete 路径零变化）。
-        return delete_credential(user_id, api_id)
+        # 空 key + 有 base_url → 允许创建无认证本地 provider 凭据
+        # (如 Ollama / llama.cpp 等仅需 URL 不需 key 的本地推理服务器)
+        if base_url_override:
+            preserve_key_if_empty = True
+        else:
+            # 空 key 常态 = 删除凭证（base_url 无关，短路在校验之前，保持 delete 路径零变化）。
+            return delete_credential(user_id, api_id)
     # P1 #7：之前非 admin 传 base_url_override 直接静默 = ""，UI 以为已设置。
     # 改成显式 raise ValueError，让 /api/me/credentials 回 400，前端能感知。
     if base_url_override and not allow_base_url:
@@ -276,11 +281,10 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
 
 
 def _update_credential_meta(user_id: int, api_id: str, base_url_override: str, enabled: bool) -> dict[str, Any]:
-    """只更新已存凭证的 base_url_override / enabled，保留密文 key 与 metadata(proxy)。
+    """更新凭证的 base_url_override / enabled。无匹配行 → upsert 新行(本地 provider 场景)。
 
     调用方（set_credential 的 preserve_key_if_empty 分支）已做完 SSRF 闸与
-    base_url_override 归一，这里只落库。无匹配行 → 报错，让前端提示先填 Key。
-    metadata 不动，因此 proxy 等既有字段原样保留。
+    base_url_override 归一，这里只落库。metadata 不动，因此 proxy 等既有字段原样保留。
     """
     canonical = normalize_api_id(api_id)
     with connect() as db:
@@ -294,8 +298,22 @@ def _update_credential_meta(user_id: int, api_id: str, base_url_override: str, e
             (base_url_override or "", enabled, user_id, _credential_aliases(canonical)),
         ).fetchone()
     if not row:
-        raise ValueError("尚未配置该供应商的 API Key，请先填写 Key")
-    return {"ok": True, **(expose(row) or {}), "has_credential": True}
+        # 无现有行 → upsert 新行:空 encrypted_key + base_url (本地 provider 无认证场景)
+        row = db.execute(
+            """
+            insert into user_api_credentials(user_id, api_id, encrypted_key, base_url_override, enabled, metadata)
+            values (%s, %s, '', %s, %s, '{}')
+            on conflict(user_id, api_id) do update set
+              base_url_override = excluded.base_url_override,
+              enabled = excluded.enabled,
+              updated_at = now()
+            returning id, user_id, api_id, base_url_override, enabled, updated_at
+            """,
+            (user_id, canonical, base_url_override or "", enabled),
+        ).fetchone()
+    if not row:
+        raise RuntimeError(f"凭证 upsert 未返回行: user_id={user_id} api_id={canonical}")
+    return {"ok": True, **(expose(row) or {}), "has_credential": bool(row.get("encrypted_key"))}
 
 
 def delete_credential(user_id: int, api_id: str) -> dict[str, Any]:
@@ -383,6 +401,18 @@ def get_credential(user_id: int, api_id: str) -> dict[str, Any] | None:
             if plaintext:
                 break
         if not plaintext:
+            # 空 encrypted_key 允许:本地/自托管 provider (Ollama/vLLM) 无需 key,
+            # 仅 base_url 即可。返回 key="" + base_url_override,与 resolve_api_key
+            # 的 user_db_no_key 分支配对。
+            base = _normalize_openai_base_url(row.get("base_url_override") or "")
+            if base:
+                _meta_nk = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+                return {
+                    "api_id": canonical,
+                    "key": "",
+                    "base_url_override": base,
+                    "proxy": (_meta_nk or {}).get("proxy") or "",
+                }
             continue
         _meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
         return {
@@ -416,6 +446,12 @@ def resolve_api_key(user_id: int | None, api_id: str, env_fallback: str = "") ->
         if cred and cred.get("key"):
             # 读时也过一遍规整(补 Google /openai、剥 /chat/completions)→ 存量误填的凭据自愈,用户无需重存。
             return {"key": cred["key"], "source": "user_db",
+                    "base_url_override": _normalize_openai_base_url(cred.get("base_url_override", "")),
+                    "proxy": cred.get("proxy", "")}
+        # 本地/自托管 provider 无 key 但配了 base_url：允许无认证调用
+        # (如 Ollama / llama.cpp / vLLM 等本地推理服务器)
+        if cred and cred.get("base_url_override"):
+            return {"key": "", "source": "user_db_no_key",
                     "base_url_override": _normalize_openai_base_url(cred.get("base_url_override", "")),
                     "proxy": cred.get("proxy", "")}
 
