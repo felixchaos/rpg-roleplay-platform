@@ -9,8 +9,10 @@ name: warm-runtime-cache
 # 运行时 → blockmap 差量极小 → 本地部署只拉很小的增量更新包。
 #
 # 缓存 key 必须与 desktop-release.yml 完全一致(否则白热):
-#   rt-<platform>-<arch>-py3.12.13-pg17.10-<hash(rpg/requirements.txt)>
+#   rt-<platform>-<arch>-py3.12.13-pg17.10-pgv0.8.0-<hash(rpg/requirements.txt)>
 # 依赖(requirements.txt)变 → key 变 → 这里重建并刷新 main 缓存 → 下次 release 自动用新基线。
+# ⚠️ key 里的 pgv<版本> 不能省:pgvector 是随 bundle-backend.ps1 编进 pg 树的,只改脚本
+# 不动 key 会命中【不含 vector.dll 的旧缓存】,修了等于没修。升 pgvector 必须同步改两处 key。
 
 on:
   push:
@@ -43,7 +45,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: desktop/.runtime-cache
-          key: rt-${{ matrix.platform }}-${{ matrix.arch }}-py3.12.13-pg17.10-${{ hashFiles('rpg/requirements.txt') }}
+          key: rt-${{ matrix.platform }}-${{ matrix.arch }}-py3.12.13-pg17.10-pgv0.8.0-${{ hashFiles('rpg/requirements.txt') }}
 
       - name: 预热运行时 (mac/linux)
         if: matrix.platform == 'mac'

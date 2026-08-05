@@ -57,7 +57,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: desktop/.runtime-cache
-          key: rt-${{ matrix.platform }}-${{ matrix.arch }}-py3.12.13-pg17.10-${{ hashFiles('rpg/requirements.txt') }}
+          key: rt-${{ matrix.platform }}-${{ matrix.arch }}-py3.12.13-pg17.10-pgv0.8.0-${{ hashFiles('rpg/requirements.txt') }}
 
       - name: 组装后端 bundle (mac/linux)
         if: matrix.platform == 'mac'

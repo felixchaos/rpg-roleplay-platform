@@ -9,6 +9,17 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.79.0] - 2026-08-05 (@ d90ad1c40)
+
+### Fixed
+- **Windows 开箱即用版装完是个「看着好的坏包」**(用户实测反馈:管理员模式装完后 `pg\share\extension\vector.control` 等一系列文件不存在,initdb 日志显示成功但数据目录是空壳、连 `PG_VERSION` 都没有;表面无异常,直到**建 RAG 向量**才发现库根本没建成,最后只能自己下载 PostgreSQL 17 对应的 pgvector 预编译包拷进 pg 目录、删掉 pgdata 重新初始化才恢复)。三处根因,逐条修:
+  - **捆绑包真的没带 pgvector**:`bundle-backend.ps1` 里 `$BuildPgvector = $false`,注释理由是「Windows 需 MSVC/nmake 构建较脆」。已核实 theseus-rs 的 Windows PG 包自带 `include\server`(925 个头文件)+ `lib\postgres.lib` + `pg_config.exe`,pgvector 的 `Makefile.win` 就地 nmake 完全够用。改为**随包构建**:用 vswhere 定位 MSVC 环境 → nmake → `vector.dll` 落 `pg\lib`($libdir)、`vector.control` 落 `pg\share\extension`。
+  - **Windows 侧此前【完全没有出包校验】**(mac 侧一直有):下载/解压残缺、pgvector 没装上,都会一路走到发布,装到用户机器上才炸。补齐硬校验 —— `postgres.exe`/`initdb.exe`/`pg_ctl.exe`/`share\postgres.bki`/`vector.control`/`vector.dll` 缺任意一个即让构建失败,并实际执行 `postgres.exe --version`。宁可 CI 红,不许再出静默坏包。
+  - **CI 运行时缓存会让这个修复静默失效**:缓存把整棵 `pg/` 树缓起来,key 只含 Python/PG 版本 + requirements 哈希 —— 只改组装脚本不动 key,构建会恢复一份**不含 `vector.dll` 的旧 pg** 直接复用。key 补上 `pgv<版本>`(`desktop-release.yml` + `warm-runtime-cache.yml` 两处),脚本内再加一道「缓存里没有 vector.control 就当未命中重建」的内容校验。
+- **initdb 半途失败后,桌面版会永久卡死在同一处,只能手删 pgdata**:`_initdbIfNeeded` 只看 `PG_VERSION` 在不在,而 initdb **拒绝在非空目录上初始化** —— 上一次失败留下的残骸让之后每次启动都撞同一堵墙。现在遇到「非空但无 `PG_VERSION`」(按定义就是不可用的残骸)自动挪到 `pgdata.broken` 隔离(挪不删,判断有误还能捞回)再重新初始化;initdb 返回 0 之后**以产物为准复核** `PG_VERSION` 是否真的生成,不再让「日志显示成功、实际是空壳」这种状态默默流到下游。
+- **存量桌面库升级后不会真正吃到 pgvector**(migration 100):这类库上 v10/v40/v60/v83 的建列块当年在 `if exists(vector)` 里静默跳过、migration 却已标记 applied,v89 又建了 jsonb 同名占位列 —— 光让新包带上 pgvector,列类型仍是 jsonb,`udt_name='vector'` 判定为假,语义检索照旧退化成关键词。新迁移在「pgvector 从无到有」时把占位列换成真向量列并补齐 HNSW 索引。四个 `embedding_vec` 占位列必然是空的(写入路径都是 `%s::vector`,在 jsonb 列上写不进去)→ 直接重建;`kb_canon_entities.embedding` 例外(写入路径无 cast,向量字面量恰好是合法 JSON 数组,可能真存了嵌入)→ 优先原地保值转换,失败才退回重建,并用嵌套 exception 兜住,绝不让一次迁移把桌面 app 卡在起不来。无 pgvector 的部署与健康 prod 库上全程 no-op。
+- macOS 桌面版**仍不带 pgvector,且这是刻意的**:zonky 精简包没有 `pg_config`/头文件编不了;换成能编的 theseus-rs mac 包,其 `postgres` 二进制 `minos = 26.0`(zonky 是 12.0),会把 macOS 26 以下的用户全部打死。理由已写进 `bundle-backend.sh` 与 `desktop/README.md`,免得后人当成遗漏顺手「对齐」。
+
 ## [1.78.7] - 2026-08-03 (@ 88f7ed60c)
 
 ### Fixed

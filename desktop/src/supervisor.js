@@ -129,14 +129,41 @@ class Supervisor extends EventEmitter {
   }
 
   // ── PostgreSQL ──
+  // PG_VERSION 是「这个数据目录是不是一个可用集簇」的权威判据:任何能启动的集簇必有它,
+  // 没有它的目录 postgres 一定拒绝启动。所以「目录非空但无 PG_VERSION」= 上一次 initdb
+  // 半途失败留下的残骸,不是用户数据。
+  //
+  // 2026-08 用户实测踩的坑:首次 initdb 失败后残骸留在 pgdata,而 initdb 拒绝在
+  // 【非空目录】上初始化("directory exists but is not empty")→ 之后每次启动都卡死在
+  // 同一处,用户只能自己去删 pgdata 才能恢复。这里把那一步自动化:把残骸挪到隔离目录
+  // (不是删——万一判断有误还能捞回来),再重新 initdb。
+  async _quarantineBrokenPgData() {
+    const data = P.pgData();
+    let entries = [];
+    try { entries = await fsp.readdir(data); } catch (_) { return; }   // 目录不存在 = 没事
+    if (entries.length === 0) return;                                   // 空目录 initdb 可直接用
+    const broken = `${data}.broken`;
+    this._log('pg', `检测到残缺数据目录(无 PG_VERSION 却非空)→ 隔离到 ${broken} 后重新初始化`);
+    await fsp.rm(broken, { recursive: true, force: true });             // 只保留最近一份残骸
+    await fsp.rename(data, broken);
+    await fsp.mkdir(data, { recursive: true });
+  }
+
   async _initdbIfNeeded() {
-    if (fs.existsSync(path.join(P.pgData(), 'PG_VERSION'))) return;
+    const stamp = path.join(P.pgData(), 'PG_VERSION');
+    if (fs.existsSync(stamp)) return;
+    await this._quarantineBrokenPgData();
     this._setState('starting', '首次初始化数据库…');
     this._log('pg', 'initdb（首次）');
     await this._run(P.pgBin('initdb'), [
       '-D', P.pgData(), '-U', 'rpg', '-A', 'trust',
       '--locale=C', '--encoding=UTF8',
     ], { tag: 'pg', env: this._pgEnv() });
+    // 退出码 0 不等于真建成:用户实测见过「日志 initdb 显示成功,实际只有空壳、连
+    // PG_VERSION 都没有」。以产物为准复核,把静默的空壳变成当场可读的错误。
+    if (!fs.existsSync(stamp)) {
+      throw new Error(`initdb 报告成功但数据目录未建成(缺 PG_VERSION):${P.pgData()}`);
+    }
   }
 
   async _pgStart() {

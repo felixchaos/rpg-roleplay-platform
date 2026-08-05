@@ -14,7 +14,7 @@ set -euo pipefail
 # ── [ADJUST] 版本与来源 ──
 PY_VER="3.12.13"
 PBS_TAG="20260610"                 # astral/python-build-standalone release tag(核实:含 cpython-3.12.13)
-PG_VER="17.10.0"                   # zonky embedded PG(低部署目标,跨 macOS 版本兼容 + 含 include 头文件可编 pgvector)
+PG_VER="17.10.0"                   # zonky embedded PG(低部署目标 minos 12.0,跨 macOS 版本兼容;精简包无头文件,编不了 pgvector——见下)
 PGVECTOR_VER="v0.8.0"
 PBS_BASE="https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_TAG}"
 ZONKY_BASE="https://repo1.maven.org/maven2/io/zonky/test/postgres"
@@ -85,10 +85,13 @@ tar -xf "$WORK"/postgres-*.txz -C "$STAGE/pg"     # 解出 bin/lib/share(zonky �
 [ -x "$STAGE/pg/bin/postgres" ] || { echo "✗ postgres 二进制未找到" >&2; exit 1; }
 "$STAGE/pg/bin/postgres" --version || { echo "✗ postgres 无法执行(部署目标不兼容?)" >&2; exit 1; }
 
-# ── 4. pgvector:zonky 便携包不含 pg_config/头文件,无法就地编译 → 跳过 ──
-# 后端 pgvector 是软依赖:缺失时自动降级 jsonb(语义检索弱化但全功能可用,与 Windows 一致)。
-# 待后续提供与 zonky PG ABI 匹配的预编译 vector 模块,再放进 pg/lib + pg/share/extension 即可启用。
-echo "== 4/5 pgvector 跳过(zonky 精简包无构建链;软依赖降级 jsonb)=="
+# ── 4. pgvector:macOS 侧【刻意跳过】,与 Windows 不对称,理由如下 ──
+# zonky 便携包不含 pg_config/头文件 → 无法就地编译。换 theseus-rs 的 mac 包可以编
+# (Windows 侧就是这么做的,见 bundle-backend.ps1),但已核实其 postgres 二进制
+# minos = 26.0,而 zonky 是 12.0 —— 换源等于把 macOS 26 以下的用户全部打死,不划算。
+# 所以 macOS 桌面版继续降级:jsonb 占位列 + 关键词检索(migration 89 兜住计数路径)。
+# 若将来拿到与 zonky ABI 匹配的预编译 vector 模块,放进 pg/lib + pg/share/extension 即可启用。
+echo "== 4/5 pgvector 跳过(zonky 精简包无构建链;降级 jsonb + 关键词检索)=="
 
 # 填充运行时缓存(供后续补丁构建复用 → 小体积差量更新)
 mkdir -p "$RUNTIME_CACHE"
