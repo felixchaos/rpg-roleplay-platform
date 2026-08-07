@@ -151,12 +151,14 @@ class _OpenAICompatBackend:
             byok_only = True
         env_fb = "" if (byok_only and user_id) else env_key
         result = resolve_api_key(user_id, api_id or display_kind, env_fallback=env_fb)
-        key = result.get("key")
-        if not key:
+        key = result.get("key") or ""
+        if not key and result.get("source") != "user_db_no_key":
             raise ValueError(
                 f"{api_id or display_kind} 的 API Key 未配置。请在「设置 → API 设置」添加你自己的 API Key。"
                 "(测试服 LLM 调用必须 BYOK,平台不提供共享 key)"
             )
+        # source=user_db_no_key: 本地/自托管 provider (Ollama/vLLM) 仅需 URL 不需 key,
+        # api_key="" 传给 OpenAI SDK 即不发送 Authorization header
         # 用户覆盖了 base_url 的话优先用用户的
         effective_base = result.get("base_url_override") or base_url
         import os as _os

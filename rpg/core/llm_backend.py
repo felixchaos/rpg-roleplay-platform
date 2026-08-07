@@ -59,7 +59,9 @@ def first_user_model(user_id: Optional[int], api_id: str | None = None) -> tuple
                 """
                 select api_id
                 from user_api_credentials
-                where user_id = %s and enabled = true and length(encrypted_key) > 0
+                where user_id = %s and enabled = true
+                  and (length(encrypted_key) > 0
+                       or (length(encrypted_key) = 0 and base_url_override != ''))
                 """,
                 (int(user_id),),
             ).fetchall()
@@ -115,7 +117,9 @@ def first_user_model(user_id: Optional[int], api_id: str | None = None) -> tuple
         with connect() as db2:
             cred = db2.execute(
                 "select api_id from user_api_credentials where user_id=%s and enabled=true "
-                "and length(encrypted_key)>0 order by updated_at desc",
+                "and (length(encrypted_key)>0 "
+                "     or (length(encrypted_key)=0 and base_url_override!='')) "
+                "order by updated_at desc",
                 (int(user_id),),
             ).fetchall()
             pref = db2.execute(
@@ -235,7 +239,7 @@ def _provider_usable_strict(user_id: int, api_id: str) -> bool:
 
     单一真源(上提自 import_pipeline._has_user_llm_credential):
       · vertex_ai(含 kind=vertex_ai 的别名)→ 用户上传过 BYOK Service Account
-      · 其它 → user_api_credentials 里有非空 key
+      · 其它 → user_api_credentials 里有非空 key 或 base_url_override(本地 provider)
 
     **不吞异常**:可用性可被确定时返回 True/False;凭证/SA 校验发生瞬时异常(DB 连接、
     解密失败等)时**向上抛**,代表「不可判定」。由调用方决定如何处理这一第三态:
@@ -252,7 +256,10 @@ def _provider_usable_strict(user_id: int, api_id: str) -> bool:
         return bool(cred and cred.get("key"))
     from platform_app.user_credentials import get_credential
     cred = get_credential(int(user_id), api_id)
-    return bool(cred and cred.get("key"))
+    if not cred:
+        return False
+    # 有 key → 可用; 无 key 但有 base_url_override → 本地 provider (Ollama/vLLM) 可用
+    return bool(cred.get("key") or cred.get("base_url_override"))
 
 
 def user_can_use_provider(user_id: Optional[int], api_id: str) -> bool:

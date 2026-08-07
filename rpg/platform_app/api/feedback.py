@@ -173,7 +173,9 @@ def _capture_feedback_env(user: dict | None, client_env: dict | None = None) -> 
         with _connect() as _db:
             rows = _db.execute(
                 "select api_id from user_api_credentials "
-                "where user_id=%s and enabled=true and length(encrypted_key)>0",
+                "where user_id=%s and enabled=true "
+                "and (length(encrypted_key)>0 "
+                "     or (length(encrypted_key)=0 and base_url_override!=''))",
                 (int(uid),),
             ).fetchall()
         apis = [r["api_id"] for r in rows]
