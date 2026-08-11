@@ -15,6 +15,9 @@ from platform_app.knowledge._character_cards_repo import (
     _db_set_protagonist,
 )
 from platform_app.knowledge._utils import _cursor_int, _require_script, _require_script_owner
+# tags 归一化与 PC 卡路径(user_cards.upsert_user_card)共用同一实现,避免两条卡写入路径
+# 对「标签」的解析规则漂移(str 逗号/顿号分隔 → list)。
+from platform_app.user_cards import _normalize_list
 
 
 def list_chapter_facts(user_id: int, script_id: int, limit: int | str | None = None, cursor: str | None = None) -> dict[str, Any]:
@@ -73,6 +76,10 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
         "current_status": (payload.get("current_status") or "").strip(),
         "secrets": (payload.get("secrets") or "").strip(),
         "sample_dialogue": Jsonb(payload.get("sample_dialogue") or []),
+        # tags:此前 fields/UPDATE/INSERT 三处都没有它 —— 前端「基本信息 · 标签」照常提交
+        # tags:[...],后端整列静默丢弃,用户表现为「标签这一栏保存不了」(群反馈:大道)。
+        # PC 卡路径(user_cards.upsert_user_card)一直写这一列,是典型的「修 A 漏 B」不对称。
+        "tags": Jsonb(_normalize_list(payload.get("tags"))),
         "first_revealed_chapter": int(payload.get("first_revealed_chapter") or 0),
         "importance": int(payload.get("importance") or 0),
         "token_budget": int(payload.get("token_budget") or 450),
@@ -115,6 +122,7 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
                   appearance=%(appearance)s, personality=%(personality)s,
                   speech_style=%(speech_style)s, current_status=%(current_status)s,
                   secrets=%(secrets)s, sample_dialogue=%(sample_dialogue)s,
+                  tags=%(tags)s,
                   first_revealed_chapter=%(first_revealed_chapter)s,
                   importance=%(importance)s, token_budget=%(token_budget)s,
                   priority=%(priority)s, enabled=%(enabled)s, metadata=%(metadata)s,
@@ -130,14 +138,14 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
                 insert into character_cards(
                   book_id, script_id, name, full_name, aliases, identity, background,
                   appearance, personality, speech_style, current_status, secrets,
-                  sample_dialogue, first_revealed_chapter, importance,
+                  sample_dialogue, tags, first_revealed_chapter, importance,
                   token_budget, priority, enabled, metadata,
                   card_type, source, scope
                 ) values (
                   %(book_id)s, %(script_id)s, %(name)s, %(full_name)s, %(aliases)s,
                   %(identity)s, %(background)s, %(appearance)s, %(personality)s,
                   %(speech_style)s, %(current_status)s, %(secrets)s,
-                  %(sample_dialogue)s, %(first_revealed_chapter)s, %(importance)s,
+                  %(sample_dialogue)s, %(tags)s, %(first_revealed_chapter)s, %(importance)s,
                   %(token_budget)s, %(priority)s, %(enabled)s, %(metadata)s,
                   'npc', 'platform', 'script'
                 )
@@ -148,6 +156,7 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
                   appearance=excluded.appearance, personality=excluded.personality,
                   speech_style=excluded.speech_style, current_status=excluded.current_status,
                   secrets=excluded.secrets, sample_dialogue=excluded.sample_dialogue,
+                  tags=excluded.tags,
                   first_revealed_chapter=excluded.first_revealed_chapter,
                   importance=excluded.importance, token_budget=excluded.token_budget,
                   priority=excluded.priority, enabled=excluded.enabled,

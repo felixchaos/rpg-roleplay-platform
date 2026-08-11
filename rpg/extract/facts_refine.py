@@ -113,8 +113,15 @@ def apply_refined(db, script_id: int, chapter_index: int, refined: dict) -> None
 
 def refine_script(script_id: int, user_id: int, *, ch_from: int = 1, ch_to: int | None = None,
                   api_id: str | None = None, model: str | None = None,
-                  apply: bool = False) -> dict[str, Any]:
-    """批量精炼 [ch_from, ch_to]。逐章独立失败跳过;apply=False 只打样前 3 章。"""
+                  apply: bool = False,
+                  should_cancel=None, progress_cb=None) -> dict[str, Any]:
+    """批量精炼 [ch_from, ch_to]。逐章独立失败跳过;apply=False 只打样前 3 章。
+
+    should_cancel: 可选无参回调,返回真值表示用户已请求取消 —— 每章开头检查一次,
+      命中即停在章边界并返回 {"cancelled": True} + 已完成的统计(已 apply 的章保留)。
+      整本几百章逐章调 LLM 要几十分钟,没有这个检查点「取消」就只是个不生效的按钮。
+    progress_cb: 可选 (done, total) 回调,每章一次,给 job 进度条用。
+    """
     from platform_app.db import connect, init_db
     init_db()
     from agents.recorder import _resolve_recorder_api_and_model
@@ -130,7 +137,25 @@ def refine_script(script_id: int, user_id: int, *, ch_from: int = 1, ch_to: int 
     ch_to = min(int(ch_to or max_ch), max_ch)
     done = skipped = failed = 0
     samples: list[dict] = []
+    cancelled = False
+    total_ch = max(ch_to - int(ch_from) + 1, 0)
     for ch in range(int(ch_from), ch_to + 1):
+        # 取消检查点:放在每章 LLM 调用之前 → 最坏等一章(秒级),而不是等整本跑完。
+        if should_cancel is not None:
+            try:
+                if should_cancel():
+                    cancelled = True
+                    log.info("[facts_refine] script=%s 用户取消,停在 ch%d(已精炼 %d 章)",
+                             script_id, ch, done)
+                    break
+            except Exception:
+                pass  # 取消信号查询失败不该中断正在跑的任务
+        # 进度回传放在循环体最前面(done=已处理章数):下面 try 里有 continue,放末尾会被跳过。
+        if progress_cb is not None:
+            try:
+                progress_cb(ch - int(ch_from), total_ch)
+            except Exception:
+                pass  # 进度回传失败不该中断任务
         try:
             with connect() as db:
                 refined = refine_chapter(db, script_id, ch, user_id, rapi, rmodel)
@@ -156,7 +181,8 @@ def refine_script(script_id: int, user_id: int, *, ch_from: int = 1, ch_to: int 
             failed += 1
             log.warning("[facts_refine] ch%s 失败跳过: %s", ch, exc)
     return {"ok": True, "refined": done, "skipped": skipped, "failed": failed,
-            "range": [ch_from, ch_to], "samples": samples, "applied": bool(apply)}
+            "range": [ch_from, ch_to], "samples": samples, "applied": bool(apply),
+            "cancelled": cancelled}
 
 
 if __name__ == "__main__":

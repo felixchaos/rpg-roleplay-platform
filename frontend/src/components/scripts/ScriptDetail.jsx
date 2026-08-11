@@ -83,6 +83,18 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
 
   const isOwner = currentUserId && s.owner_id === currentUserId;
 
+  // NPC 列表「静默重拉」——**不清空**旧列表,拿到新数据再整体换掉。
+  // 此前所有刷新点都写 setNpc(null) 借 == null 触发下面那个拉取 effect,代价是中间有一帧
+  // 列表为空:页面高度塌成一个表头,浏览器把 window.scrollY 夹到新的 maxScroll(≈0),等列表
+  // 回来时滚动位置已经丢了 —— 用户表现为「改完一张卡就被弹回 NPC 列表最顶端,想改下一张
+  // 还得重新往下翻」(群反馈:大道)。保持 DOM 高度不塌,滚动位置自然就留住了。
+  // 失败时保留旧列表(总比闪成空列表好),错误由调用方各自 toast。
+  const reloadNpc = React.useCallback(async () => {
+    try {
+      const r = await window.api.cards.scriptList(s.id);
+      setNpc(Array.isArray(r) ? r : (r?.items || r?.cards || []));
+    } catch (_) { /* 保留旧列表,不塌高度 */ }
+  }, [s.id]);
 
   // 手动把某 NPC 卡设为主角(AI canon importance 误判时纠正)。设完重拉列表刷新「主角」徽标。
   const [protagBusy, setProtagBusy] = useStatePL(null); // 正在设置的 card id
@@ -92,7 +104,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
     try {
       await window.api.cards.scriptSetProtagonist(s.id, c.id);
       window.__apiToast?.(t('scripts.toast.protagonist_set', { name: c.name || 'NPC', defaultValue: `已将「${c.name || 'NPC'}」设为主角` }), { kind: 'ok' });
-      setNpc(null); // 触发 NPC 列表重新拉取
+      await reloadNpc(); // 静默重拉(不清空 → 不丢滚动位置)
     } catch (e) {
       window.__apiToast?.(t('scripts.toast.protagonist_fail', { defaultValue: '设为主角失败' }), { kind: 'danger', detail: e?.message });
     } finally {
@@ -145,7 +157,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
       const jobId = r && r.job_id;
       setAuditOpen(false);
       window.__apiToast?.(t('scripts.audit.started', { defaultValue: '已开始 AI 复核,可在右下角后台任务查看进度' }), { kind: 'ok' });
-      if (!jobId) { setNpc(null); return; }
+      if (!jobId) { await reloadNpc(); return; }
       const startedAt = Date.now();
       const poll = async () => {
         try {
@@ -159,7 +171,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
             if (Array.isArray(sm.merged) && sm.merged.length) parts.push(t('scripts.page.audit_merged', { n: sm.merged.length }));
             if (Array.isArray(sm.dropped) && sm.dropped.length) parts.push(t('scripts.page.audit_dropped', { n: sm.dropped.length }));
             window.__apiToast?.(parts.length ? t('scripts.page.audit_done_detail', { detail: parts.join('、') }) : t('scripts.page.audit_done_no_changes'), { kind: 'ok' });
-            setNpc(null);
+            reloadNpc();
             return;
           }
           if (status === 'failed' || status === 'cancelled') {
@@ -169,7 +181,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
         } catch (_) { /* 轮询失败:继续重试,浮窗仍独立跟踪 */ }
         // 大花名册分批复核可达数分钟;放宽到 6 分钟再兜底(浮窗始终独立显示真状态)。
         if (Date.now() - startedAt < 360000) setTimeout(poll, 2500);
-        else setNpc(null); // 超时兜底:刷新一次,浮窗继续显示真状态
+        else reloadNpc(); // 超时兜底:刷新一次,浮窗继续显示真状态
       };
       setTimeout(poll, 1600);
     } catch (e) {
@@ -224,9 +236,11 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
       } finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
-    // 必须把 wb/npc/tl/ov 纳入依赖:保存/重建后用 setNpc(null) 触发重拉的模式靠的就是
-    // 这些值变 null 重跑本 effect(== null 守卫天然防循环)。此前漏了它们 → 保存后置 null
-    // 却不重拉 → 列表渲染 npc||[]=空,刷新切 tab 才恢复(用户反馈"保存后变空,刷新恢复"真因)。
+    // 必须把 wb/npc/tl/ov 纳入依赖:切剧本(s.id effect)把它们置 null 后靠本 effect 重跑
+    // 补数据(== null 守卫天然防循环)。此前漏了它们 → 置 null 却不重拉 → 列表渲染
+    // npc||[]=空,刷新切 tab 才恢复(用户反馈"保存后变空,刷新恢复"真因)。
+    // ⚠️ 别再拿 setXxx(null) 当「保存后刷新」的手段:清空会让列表高度塌一帧、滚动位置被浏览器
+    //    夹到顶部(用户反馈"改完一张卡弹回最顶端")。局部刷新一律走 reloadNpc() 那种静默重拉。
   }, [tab, s.id, wb, npc, tl, ov]);
 
   const es = embedStatus[s.id];
@@ -668,7 +682,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
               await window.api.cards.scriptUpsert(s.id, payload);
               window.__apiToast?.(npcEdit.isNew ? t('scripts.toast.npc_added') : t('scripts.toast.npc_saved'), { kind: 'ok' });
               setNpcEdit(null);
-              setNpc(null); // 触发 NPC 列表重新拉取
+              await reloadNpc(); // 静默重拉(不清空 → 改完一张卡不会被弹回列表顶端)
             } catch (e) {
               window.__apiToast?.(t('scripts.toast.save_fail'), { kind: 'danger', detail: e?.message });
             }

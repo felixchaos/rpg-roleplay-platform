@@ -29,6 +29,7 @@
       "last_job": "上次任务"
     },
     "banner": {
+      "cancelling": "取消中…",
       "failed": "重做失败",
       "failed_detail": "后端日志可查任务 ID",
       "running": "正在重做"
@@ -48,6 +49,8 @@
       "confirm_llm": "确认重做(消耗 LLM)"
     },
     "toast": {
+      "cancel_requested": "已请求取消,正在收尾当前这一章/条",
+      "cancel_fail": "取消请求失败",
       "dispatched": "重做任务已派发",
       "dispatch_fail": "派发失败",
       "rebuild_done": "重做完成"

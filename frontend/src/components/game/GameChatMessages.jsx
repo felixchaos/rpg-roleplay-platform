@@ -151,8 +151,11 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
       setDelBusy(false);
     }
   };
-  // 编辑消息:仅 assistant(GM) 消息可编辑 → 派发事件让 NarrativeBlock 进入内联编辑
-  const canEdit = role === "assistant" && saveId != null && msgIndex != null && msgIndex >= 0;
+  // 编辑消息:GM 正文与玩家发言都可编辑 → 派发事件让对应 Block 进入内联编辑。
+  // 玩家发言此前被这里的 role === "assistant" 挡掉,想补一句话只能"复制→删除→重打"
+  // (群反馈:白玖)。后端 /api/message/edit 本来就明确不限角色,是前端单方面收窄了。
+  const canEdit = (role === "assistant" || role === "user")
+    && saveId != null && msgIndex != null && msgIndex >= 0;
   const onEdit = () => {
     if (!canEdit) return;
     window.dispatchEvent(new CustomEvent("rpg-edit-message", { detail: { saveId, msgIndex } }));
@@ -368,40 +371,40 @@ function renderNarrativeWithInlineTools(rawText, toolOps, renderTool, streaming,
   return nodes;
 }
 
-// 酒馆模式复用:speakerName/speakerAvatar/tag 可选覆盖默认的 GM/主代理 标签。
-// 不传时与 Game Console 行为完全一致(默认 tag="GM", subtitle="主代理")。
-function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, thinking, speakerName, speakerAvatar, tag, hideMeta, meta, images, toolOps, renderTool, memoryText }) {
+/* 消息内联编辑 —— GM 正文(NarrativeBlock)与玩家发言(PlayerBlock)共用同一套状态机,
+   避免两边各写一份、日后只改其中一份(本仓固有的「修 A 漏 B」)。
+   激活方式:MsgActions 的编辑按钮派发 rpg-edit-message {saveId, msgIndex}。 */
+function useInlineMessageEdit({ saveId, msgIndex, sourceText }) {
   const { t } = useTranslation();
-  const displayText = stripStateOpsForDisplay(text);
-  // 内联编辑状态:点击 MsgActions 的编辑按钮时通过事件激活
   const [editing, setEditing] = useStateA(false);
-  const [editDraft, setEditDraft] = useStateA("");
-  const [editSaving, setEditSaving] = useStateA(false);
-  const editRef = useRefA(null);
+  const [draft, setDraft] = useStateA("");
+  const [saving, setSaving] = useStateA(false);
+  const ref = useRefA(null);
   useEffectA(() => {
     const handler = (e) => {
       const d = e.detail || {};
       if (d.saveId === saveId && d.msgIndex === msgIndex) {
-        setEditDraft(displayText || "");
+        setDraft(sourceText || "");
         setEditing(true);
       }
     };
     window.addEventListener("rpg-edit-message", handler);
     return () => window.removeEventListener("rpg-edit-message", handler);
-  }, [saveId, msgIndex, displayText]);
+  }, [saveId, msgIndex, sourceText]);
   // 进入编辑模式后自动 focus textarea 并定位到末尾
   useEffectA(() => {
-    if (editing && editRef.current) {
-      const el = editRef.current;
+    if (editing && ref.current) {
+      const el = ref.current;
       el.focus();
       el.setSelectionRange(el.value.length, el.value.length);
     }
   }, [editing]);
-  const doEditSave = async () => {
-    if (editSaving) return;
-    setEditSaving(true);
+  const cancel = () => setEditing(false);
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
     try {
-      const r = await window.api.game.editMessage({ save_id: saveId, message_index: msgIndex, content: editDraft });
+      const r = await window.api.game.editMessage({ save_id: saveId, message_index: msgIndex, content: draft });
       if (r && r.ok === false) throw new Error(r.error || "edit failed");
       setEditing(false);
       try {
@@ -411,9 +414,56 @@ function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, think
     } catch (e) {
       window.toast?.(t('game.app.msg.edit_failed'), { kind: "danger", detail: e?.message, duration: 3000 });
     } finally {
-      setEditSaving(false);
+      setSaving(false);
     }
   };
+  return { editing, draft, setDraft, saving, save, cancel, ref };
+}
+
+/* 内联编辑器视图(textarea + 取消/确认)。minHeight 由调用方给:GM 正文长、玩家发言短。 */
+function InlineMessageEditor({ edit, minHeight = 180 }) {
+  const { t } = useTranslation();
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <textarea
+        ref={edit.ref}
+        value={edit.draft}
+        onChange={e => edit.setDraft(e.target.value)}
+        disabled={edit.saving}
+        onKeyDown={e => {
+          if (e.key === "s" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); edit.save(); }
+          if (e.key === "Escape") { edit.cancel(); }
+        }}
+        style={{
+          width: "100%", minHeight, maxHeight: "60vh", resize: "vertical",
+          fontFamily: "var(--font-serif, inherit)", fontSize: "var(--d-narrative, 16.5px)",
+          lineHeight: "var(--d-line, 1.78)", padding: "10px 12px", borderRadius: 8,
+          border: "1px solid var(--accent-edge, var(--line))",
+          background: "var(--bg-deep, #1a1816)", color: "var(--text)", outline: "none",
+          letterSpacing: "0.02em",
+        }}
+      />
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn ghost" disabled={edit.saving} onClick={edit.cancel}>
+          {t('common.cancel')}
+        </button>
+        <button className="btn primary" disabled={edit.saving || !edit.draft.trim()} onClick={edit.save}>
+          {edit.saving
+            ? <><span className="gc-spinner spin" /> {t('game.app.edit_modal.saving')}</>
+            : <><Icon name="check" size={12} /> {t('game.app.edit_modal.confirm')}</>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// 酒馆模式复用:speakerName/speakerAvatar/tag 可选覆盖默认的 GM/主代理 标签。
+// 不传时与 Game Console 行为完全一致(默认 tag="GM", subtitle="主代理")。
+function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, thinking, speakerName, speakerAvatar, tag, hideMeta, meta, images, toolOps, renderTool, memoryText }) {
+  const { t } = useTranslation();
+  const displayText = stripStateOpsForDisplay(text);
+  // 内联编辑状态:点击 MsgActions 的编辑按钮时通过事件激活(与 PlayerBlock 共用同一 hook)
+  const edit = useInlineMessageEdit({ saveId, msgIndex, sourceText: displayText });
   // task 90: 用 RpgMarkdown.Block 渲染 markdown (** / # / list / code / link...)
   // window.RpgMarkdown 由 markdown-render.jsx 提供,加载顺序在 game-app.jsx 之前。
   const MdBlock = RpgMarkdown.Block;
@@ -456,37 +506,8 @@ function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, think
         </div>
       )}
       <div className="gc-msg-body serif">
-        {editing ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <textarea
-              ref={editRef}
-              value={editDraft}
-              onChange={e => setEditDraft(e.target.value)}
-              disabled={editSaving}
-              onKeyDown={e => {
-                if (e.key === "s" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); doEditSave(); }
-                if (e.key === "Escape") { setEditing(false); }
-              }}
-              style={{
-                width: "100%", minHeight: 180, maxHeight: "60vh", resize: "vertical",
-                fontFamily: "var(--font-serif, inherit)", fontSize: "var(--d-narrative, 16.5px)",
-                lineHeight: "var(--d-line, 1.78)", padding: "10px 12px", borderRadius: 8,
-                border: "1px solid var(--accent-edge, var(--line))",
-                background: "var(--bg-deep, #1a1816)", color: "var(--text)", outline: "none",
-                letterSpacing: "0.02em",
-              }}
-            />
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn ghost" disabled={editSaving} onClick={() => setEditing(false)}>
-                {t('common.cancel')}
-              </button>
-              <button className="btn primary" disabled={editSaving || !editDraft.trim()} onClick={doEditSave}>
-                {editSaving
-                  ? <><span className="gc-spinner spin" /> {t('game.app.edit_modal.saving')}</>
-                  : <><Icon name="check" size={12} /> {t('game.app.edit_modal.confirm')}</>}
-              </button>
-            </div>
-          </div>
+        {edit.editing ? (
+          <InlineMessageEditor edit={edit} minHeight={180} />
         ) : (
           <>
             {(Array.isArray(toolOps) && toolOps.length > 0 && typeof renderTool === 'function')
@@ -510,6 +531,9 @@ function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, think
 // 酒馆模式复用:speakerName/tag 可选覆盖默认「玩家」标签(persona 名等)。
 function PlayerBlock({ text, ts, attachments, msgIndex, saveId, commitId, speakerName, speakerAvatar, tag, hideMeta, memoryText }) {
   const { t } = useTranslation();
+  // 玩家发言同样可内联编辑(群反馈:白玖 ——「只是想加一句话,要复制删除粘贴太麻烦」)。
+  // 与 GM 正文共用 useInlineMessageEdit;后端 /api/message/edit 本就不限角色。
+  const edit = useInlineMessageEdit({ saveId, msgIndex, sourceText: text });
   const tagLabel = tag || speakerName || t('game.app.narrative.player');
   // speakerAvatar 兼容:若为 URL(/ 或 http 开头)则渲 AvatarImg,否则保持首字母 span(向后兼容)。
   const isAvatarUrl = speakerAvatar && (speakerAvatar.startsWith('/') || speakerAvatar.startsWith('http'));
@@ -527,17 +551,24 @@ function PlayerBlock({ text, ts, attachments, msgIndex, saveId, commitId, speake
         </div>
       )}
       <div className="gc-msg-body">
-        <p>{text}</p>
-        {attachments?.length > 0 &&
-        <div className="gc-attachments" style={{ marginTop: 6 }}>
-            {attachments.map((a, i) =>
-          <span key={i} className="gc-attachment">
-                <Icon name={a.kind === "image" ? "image" : "file"} size={12} />
-                {a.name}
-              </span>
-          )}
-          </div>
-        }
+        {edit.editing ? (
+          /* 玩家发言通常只有一两行,编辑框给个更贴身的高度(GM 正文用 180) */
+          <InlineMessageEditor edit={edit} minHeight={96} />
+        ) : (
+          <>
+            <p>{text}</p>
+            {attachments?.length > 0 &&
+            <div className="gc-attachments" style={{ marginTop: 6 }}>
+                {attachments.map((a, i) =>
+              <span key={i} className="gc-attachment">
+                    <Icon name={a.kind === "image" ? "image" : "file"} size={12} />
+                    {a.name}
+                  </span>
+              )}
+              </div>
+            }
+          </>
+        )}
       </div>
       <MsgActions text={text} ts={ts} msgIndex={msgIndex} saveId={saveId} commitId={commitId} role="user" memoryText={memoryText} />
     </div>);

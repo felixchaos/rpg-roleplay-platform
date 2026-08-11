@@ -323,11 +323,16 @@ def _parse_llm_verdict(raw_text: str) -> dict | None:
     }
 
 
+class WorldKeyCancelled(Exception):
+    """用户在 LLM 窄确认途中请求取消。由 backfill_worldlines 捕获 → 不落任何写入。"""
+
+
 def confirm_segments_llm(
     segments: list[dict],
     chapter_summaries: dict[int, str],
     *,
     call_fn: Callable[[str, str], str],
+    should_cancel=None,
 ) -> list[dict]:
     """第二层·LLM 窄确认(§3 第二层)。纯函数,不做 IO——call_fn 由调用方注入。
 
@@ -363,6 +368,16 @@ def confirm_segments_llm(
     merged: list[dict] = []
     prev_out: dict | None = None
     for idx, seg in enumerate(segments):
+        # 取消检查点:每个边界一次 LLM 调用,段多时整轮可达数分钟。抛出去让调用方整体放弃
+        # (半程确认的结果没有意义,不落库)。注意必须在下面那个 except Exception 之外,
+        # 否则会被 parsed=None 的兜底吞掉。
+        if should_cancel is not None:
+            try:
+                _hit = bool(should_cancel())
+            except Exception:
+                _hit = False  # 取消信号查询失败不该中断正在跑的任务
+            if _hit:
+                raise WorldKeyCancelled()
         ch_min, ch_max = seg["ch_min"], seg["ch_max"]
         if idx == 0 or prev_out is None:
             # 首段无上一段可比较,原样沿用结构先验结果(不发起 LLM 调用)。
@@ -488,6 +503,7 @@ def backfill_worldlines(
     user_id: int | None = None,
     api_id_override: str | None = None,
     model_override: str | None = None,
+    should_cancel=None,
 ) -> dict[str, Any]:
     """回填 chapter_facts.worldline_key/in_world_time + script_timeline_anchors.worldline_key。
 
@@ -515,7 +531,13 @@ def backfill_worldlines(
         call_fn = _make_llm_call_fn(user_id, api_id_override, model_override)
         if call_fn is not None:
             chapter_summaries = {int(c["chapter_index"]): c.get("summary") or "" for c in chapters}
-            segments = confirm_segments_llm(segments, chapter_summaries, call_fn=call_fn)
+            try:
+                segments = confirm_segments_llm(segments, chapter_summaries, call_fn=call_fn,
+                                                should_cancel=should_cancel)
+            except WorldKeyCancelled:
+                # 用户取消:半程确认的分段没有意义,整轮放弃、一列都不写。
+                return {"segments": [], "overcut": False, "would_write": 0,
+                        "written": 0, "cancelled": True}
 
     overcut = bool(segments and segments[0].get("overcut"))
 

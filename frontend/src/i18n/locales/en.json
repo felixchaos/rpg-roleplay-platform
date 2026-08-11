@@ -3896,6 +3896,7 @@
       "last_job": "Last job"
     },
     "banner": {
+      "cancelling": "Cancelling…",
       "failed": "Rebuild failed",
       "failed_detail": "Job ID available in backend logs",
       "running": "Rebuilding"
@@ -3915,6 +3916,8 @@
       "confirm_llm": "Confirm rebuild (uses LLM)"
     },
     "toast": {
+      "cancel_requested": "Cancellation requested — finishing the current chapter/entry",
+      "cancel_fail": "Cancel request failed",
       "dispatched": "Rebuild job dispatched",
       "dispatch_fail": "Dispatch failed",
       "rebuild_done": "Rebuild complete"
