@@ -9,7 +9,6 @@ from typing import Any
 
 from .db import connect, init_db, limit_value
 
-
 # ---------------------------------------------------------------------------
 # 写：登记 / 幂等 upsert
 # ---------------------------------------------------------------------------
@@ -67,7 +66,8 @@ def register_asset(
                 "meta":        Jsonb(meta_val),
             },
         ).fetchone()
-    assert row is not None
+    if row is None:
+        raise RuntimeError(f"assets_registry: insert/upsert 未返回行 (storage_key={storage_key!r})")
     return int(row["id"])
 
 

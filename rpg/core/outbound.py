@@ -77,7 +77,8 @@ def _resolve_external_ip(host: str, port: int) -> str:
             )
         if pinned is None:
             pinned = ip_str
-    assert pinned is not None  # 上面非空且全过校验 → 必有值
+    if pinned is None:
+        raise OutboundBlocked(f"出站目标解析后无有效公网 IP:{host}")
     return pinned
 
 
