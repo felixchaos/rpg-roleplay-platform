@@ -2,11 +2,17 @@
   "ci": {
     "collect": {
       "staticDistDir": "./dist",
-      "url": ["http://localhost/Overview.html", "http://localhost/Platform.html", "http://localhost/Game%20Console.html"],
+      "_comment_url": "必须与 vite.config.js 的多入口清单一致。Overview.html 是早已删除的旧 Claude Design 原型入口,留在这里让 lhci 每次都 404 → ERRORED_DOCUMENT_REQUEST → 每个动 frontend/** 的 PR 都收到失败邮件。空格要 URL 编码(Game%20Console.html)。",
+      "url": [
+        "http://localhost/Platform.html",
+        "http://localhost/Game%20Console.html",
+        "http://localhost/Tavern.html",
+        "http://localhost/Login.html"
+      ],
       "numberOfRuns": 1
     },
     "assert": {
-      "preset": "lighthouse:no-pwa",
+      "_comment": "刻意不用 lighthouse:no-pwa preset —— 它把一批对「无后端的静态构建」毫无意义的审计判成 error:errors-in-console(页面在静态服务器上跑,API 全打不通必然报错)、unused-javascript / unused-css-rules(SPA 打包常态)、valid-source-maps(生产构建本就不出 map)、meta-description / color-contrast 等。四条真正关心的指标在下面,且都是 warn —— 本配置的原意就是「提示性能回归」,不是卡合并。",
       "assertions": {
         "categories:performance": ["warn", {"minScore": 0.7}],
         "largest-contentful-paint": ["warn", {"maxNumericValue": 2500}],
