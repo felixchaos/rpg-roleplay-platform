@@ -637,6 +637,9 @@ def _stop_user(api_user: dict[str, Any] | None) -> None:
             ev.set()
     # 跨进程：写 DB stop_signals
     if api_user:
+        # current_run 必须在 try **之外**先绑定:否则 import 那行抛异常时它还没赋值,
+        # except 里引用它会抛 UnboundLocalError —— 把本来被吞掉的错误升级成真崩溃。
+        current_run = 0
         try:
             from platform_app.cluster import request_stop
             current_run = _lru_get(_run_id_by_user, uid, 0)
@@ -2432,6 +2435,10 @@ def _resolve_console_assistant_backend(api_user: dict[str, Any] | None):
     # BYOK 守卫(同主 GM):解析出的 provider 用户不可用(stale 偏好/默认落 vertex 但没 SA)
     # → 回退到用户配过 key 的第一个模型,避免控制台助手构造即失败。
     if api_user and api_user.get("id"):
+        # 同 _stop_user:日志引用的变量必须在 try 之外先绑定。int(api_user["id"]) 本身
+        # 就可能抛(脏 session / 非数字 id),那时 _uid_c 尚未赋值,except 里引用它会
+        # UnboundLocalError —— 反而把被吞的错误变成崩溃。
+        _uid_c = api_user.get("id")
         try:
             _uid_c = int(api_user["id"])
             from core.llm_backend import guard_byok_usable as _guard_byok_c
