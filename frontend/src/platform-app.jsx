@@ -77,7 +77,7 @@ import {
   PromptModal, ConfirmModal, useAutoSave, usePlatformData, publishUser, useReactiveUser,
   _userState, _initialUser, SettingsToggle, fmtBytes, fmtN,
 } from './components/platform/shared.jsx';
-import { WelcomeModal } from './components/platform/WelcomeModal.jsx';
+import { WelcomeModal, announcementUnseen, markAnnouncementSeen } from './components/platform/WelcomeModal.jsx';
 import { DialogHost } from './components/platform/DialogHost.jsx';
 import { UnifiedSearch } from './components/platform/UnifiedSearch.jsx';
 import { PublicAchievementsPage, flushAchievementToasts } from './components/platform/achievements.jsx';

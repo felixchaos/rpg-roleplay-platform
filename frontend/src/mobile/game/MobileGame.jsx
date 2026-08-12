@@ -65,7 +65,7 @@ function LeftDrawer({ open, onClose, gc }) {
         <div className="ld-section">
           <div className="ld-head"><span>{t('mobile.game.left_drawer.saves_section')}</span><button className="add" onClick={() => { onClose(); onNew && onNew(); }}><Icon name="plus" size={14} /></button></div>
           {(realSaves || []).map((s) => (
-            <button key={s.id} className={`save-card ${s.id === activeSave?.id ? 'current' : ''}`} onClick={() => { onClose(); onSwitchSave && onSwitchSave(s.id); }} style={{ width: '100%', textAlign: 'left' }}>
+            <button key={s.id} className={`save-card ${s.id === activeSave?.id ? 'current' : ''}`} onClick={() => { onClose(); gc?.onSwitchSave && gc.onSwitchSave(s.id); }} style={{ width: '100%', textAlign: 'left' }}>
               <span className="save-thumb"><Icon name={s.id === activeSave?.id ? 'play' : 'save'} size={16} /></span>
               <span className="save-info">
                 <strong>{s.title || t('mobile.game.left_drawer.save_default_title', { id: s.id })}</strong>

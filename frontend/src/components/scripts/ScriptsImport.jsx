@@ -105,7 +105,10 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
         const list = models?.models?.apis || (Array.isArray(models?.apis) ? models.apis : []) || [];
         setExtractApis(Array.isArray(list) ? list : []);
         // AgentPlatform 是 Vertex 的 SA 凭证 — UI 里用 vertex_ai
-        setCredApiIds(credApiIdSet(creds));
+        // ids 曾是裸引用(未定义)→ ReferenceError 被下面的 catch(_){} 整段吞掉,
+        // 于是 setExtractApiId / setExtractModel / setEmbedderStatus 全都没执行过。
+        const ids = credApiIdSet(creds);
+        setCredApiIds(ids);
         const p = (profile && profile.preferences) || {};
         // 默认值优先级:用户 prefs > deepseek(如果已配) > 用户第一个已配的 provider
         const preferred = p['extractor.api_id']
