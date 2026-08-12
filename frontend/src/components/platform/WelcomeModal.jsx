@@ -159,4 +159,6 @@ function WelcomeModal({ open, firstTime = false, onClose }) {
   );
 }
 
-export { WelcomeModal };
+// platform-app 需要这两个:老用户有未读公告时再弹一次 + 关闭时记已读。
+// 此前只导出了 WelcomeModal,那边是裸引用 → ReferenceError(公告二次弹窗与关闭都炸)。
+export { WelcomeModal, announcementUnseen, markAnnouncementSeen };

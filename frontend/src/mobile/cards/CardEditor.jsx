@@ -21,7 +21,8 @@ function CardEditor({ card, isNew, kind, onBack, onSave, targetScripts = [], tar
 
   const doSave = async () => {
     if (!nameOk || saving) return;
-    if (!nameOk) { nav?.toast?.(t('mobile.cards.editor.name_required'), 'warn', 'warn'); return; }
+    // 上一行已 `if (!nameOk || saving) return;`,这里恒不可达;原本还裸引用了未定义的 nav
+    // (裸标识符即使配 ?. 也照抛 ReferenceError)。直接删掉死分支。
     setSaving(true);
     try {
       await onSave(cardFormPayload(form, card));
