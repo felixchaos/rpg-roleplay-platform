@@ -9,6 +9,58 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.81.0] - 2026-08-12 (@ c99324789)
+
+### Added
+- **本地 / 自托管模型可以免 API Key 使用**(OSS PR #102 的诉求,龙杰 dragonjay-lyj 提):Ollama / vLLM / llama.cpp / LM Studio 这类端点只有一个 base_url、多数根本没有 API Key 概念,而全站「这个 provider 能不能用」的判定一律是 `length(encrypted_key) > 0` —— 于是地址配好了也永远算不可用。
+  - 做成**显式选项**(`auth_mode`,设置 → API 与模型的「免 API Key(本地 / 自托管模型)」开关),而不是 PR 里的隐式判定「空 key + base_url 即放行」:后者会让任何一个不小心被清空 key 的托管 provider 悄悄变成「可用」,一路走到 401 才发现。显式声明才放行,**BYOK 墙对其余 provider 一字不动**(无 key 仍是不可用 / 空 key 仍等价删除)。
+  - **key 与免 key 同时兼容**:勾选后 Key 变成可选,不填就走免鉴权,填了照常加密保存并在请求里发送(部分 vLLM / LM Studio 会校验一个任意 token)。免鉴权模式强制要求 base_url —— 不指地址的「免 Key」是残缺行,不是本地模型。
+  - 可用性判定收敛成**单一真相源**:SQL 侧 `CREDENTIAL_USABLE_SQL`、Python 侧 `credential_is_usable` / `resolved_is_usable` / `resolved_auth_token`。原先这个条件被抄在 `first_user_model` 两处查询 + 反馈环境快照里,加免鉴权时漏改任何一处,本地 provider 就会在那条路径上「半可用」(能选不能跑 / 能跑不上报)。加了守卫测试:生产代码里再出现手写的 `length(encrypted_key)>0` 就红。
+  - 一并打通配置链路:`model_probe`(校验连接 / 拉取模型)、子代理 harness、extractor、command_agent 都改用同一判据 —— 否则用户配好本地模型,一点「拉取模型」就被「未配置 key」挡回去。列表可见性改看 `configured` 而非 `has_key`,不然勾了免 Key 保存后 provider 会直接从列表里消失。
+  - **送进 OpenAI SDK 的 token 永不为空串**:实测 openai-python 2.41.1 对 `api_key=""` 与 `None` 一视同仁,直接抛 `OpenAIError("Missing credentials")`,在构造 client 时就崩、连请求都发不出去(PR #102 原文认为空串「即不发送 Authorization header」,与实测不符)。免鉴权统一用占位 token,Ollama / llama.cpp / 未开 `--api-key` 的 vLLM 都不校验它的值。
+  - migration 100 加 `user_api_credentials.auth_mode`(`api_key` 默认 / `none`),存量行语义不变。
+
+## [1.80.1] - 2026-08-12 (@ 9e860b00e)
+
+### Fixed
+- **老浏览器 / App 内置 WebView 上整站点不动,登录报 `AbortSignal.timeout is not a function`**(反馈 #95,世界引擎:「注册成功后,点开这个在浏览器打开,登录会显示 AbortSignal.timeout is not a function?」):`AbortSignal.timeout` 是 Chrome 103+ / Safari 16+ 才有的 API,而它是 `api-client._send` 的**唯一**超时来源 —— 缺了它不是「超时不生效」,是**每一个** API 调用在发出去之前当场抛 TypeError。所以报出来的虽然是登录,实际整站都用不了。改成能力检测 + `AbortController` + `setTimeout` 回退(语义等价,请求结束即清定时器);连 `AbortController` 都没有的极老环境退化成「无超时」而不是崩。
+  - 同族横扫:`structuredClone`(Chrome 98+,比上面那个还早)在 game-console **组件初始化时裸调**,同一批浏览器缺它就是整个游戏台白屏。抽 `lib/clone-safe.js` 做降级(纯 JSON 状态,JSON 往返是等价回退)。`crypto.randomUUID` 早有 `lib/crypto-safe.js` 兜底,复查无恙;其余高版本 API(`Object.hasOwn`/`findLast`/`replaceAll`/`Array.at`)全站零使用。
+- **世界线面板同时挂着三四个「当前」**(反馈 #96,1335179168:「世界线有三个"当前",不知道是不是显示bug」):剧本锚点的章节区间是**允许嵌套重叠**的,而桌面和移动两端各自写了一份「区间包含即当前」的逐条谓词,重叠几条就并排挂几个「当前」。生产实测该用户所用 script 322 在第 100 章同时落在 `[1,292]序章` / `[43,283]数日后` / `[57,128]` / `[100,107]` 四条锚点里 —— 四个「当前」。
+  - 判定收敛到共享缝 `lib/timeline-status.js`:包含当前章的锚点里只有**最贴切(区间最窄)**的一条算「当前」(`[100,107]` 显然比「序章 [1,292]」更能说明此刻在哪),同宽取起点更靠后的;其余包住当前章的外层弧标「进行中」——不能误标成已度过或待解锁,它们确实正在进行。桌面/移动同批换到这条缝,并加奇偶守卫测试锁死(再有人手写 `chapter_min <= currentChapter` 就红)。
+
+## [1.80.0] - 2026-08-11 (@ 307cb5866)
+
+### Added
+- **对话气泡可以直接改玩家自己的发言**(群反馈 白玖:「这个对话框能不能加个修改编辑功能,有时候只是想要加一句话,要复制删除粘贴太麻烦了」):后端 `/api/message/edit` 本来就明确不限角色(注释写着「玩家也能改自己输入」),是前端 `MsgActions` 把 `canEdit` 写死成 `role === "assistant"`,玩家气泡上压根没长出那个按钮。现在 GM 正文与玩家发言共用同一套内联编辑(`useInlineMessageEdit` / `InlineMessageEditor`),Game Console 与酒馆两端同时生效(两者共用 `PlayerBlock`/`NarrativeBlock`)。
+  - 放开之前先补了后端一个隐患:`_amend_history_message` 定位到目标后,是按**内容相等**把 commit 快照 / 工作树快照 / messages 表里所有同文本消息**全部**改掉的。GM 正文动辄几百字、同档天然唯一,所以一直没炸;但玩家输入大量重复(「继续」「嗯」「好」),改其中一条会把整局所有同文本发言一起改写。改成按「同角色 + 同全文」里的**出现序号**锁定唯一一条(序号越界时退化成第一条),三处存储一致。GM 正文行为零变化。
+
+### Fixed
+- **知识库中心三个 LLM 模块点「取消」一直卡着,取消了几十分钟还在跑**(群反馈 大道:章节摘要 LLM 精炼 / 世界书核心条目充实 / 世界观切分回填):`/cancel` 端点只把 `import_jobs.cancel_requested` 置 true,而 rebuild worker 从头到尾**一个 `ctl.is_cancelled()` 都没有** —— 没有任何人读那个标记,任务照跑到底,终态还写成 `done`。整本逐章调 LLM 的 `facts_refine` 正好是最慢的那个,于是「点了取消也得等它把几百章跑完」。
+  - 修法落在三个确定性检查点:① 派发前查一次(排队期间被取消的一步 LLM 都不烧);② 长循环把 `should_cancel` 传进 `refine_script` / `enrich_script_worldbook` / `backfill_worldlines`,在**章边界 / 条目边界**退出(最坏等一章,不是等一整本);③ 收尾前再查,命中落 `cancelled` 而不是覆盖成 `done` —— 否则用户点了取消、等半天,最后弹的还是「重做完成」。
+  - 顺带把这三个模块的进度接上:它们此前从不回传进度,`overall_progress` 全程 0,进度条一动不动,更像"卡死"。现在按章/按条推进。
+  - 前端:「取消」点下去立刻变成禁用的「取消中…」(后端取消是协作式的,到真正落终态有几秒到十几秒空窗,此前按钮毫无反应、进度条照走,只能反复点);刷新页面也能从 `cancel_requested` 认出「已在取消途中」。
+- **剧本 NPC 角色卡改完一张就被弹回列表最顶端**(群反馈 大道:「修改一张就直接返回到 NPC 角色卡页面最上端了,想修改另一张还要重新往下翻」):保存后走的是 `setNpc(null)` 借「值变 null」触发重拉的老写法,代价是中间有一帧列表为空 —— 页面高度塌成一个表头,浏览器把 `window.scrollY` 夹到新的 maxScroll(≈0),等列表回来滚动位置已经没了。改成静默重拉(先拿新数据、再整体换掉,全程不清空),DOM 高度不塌,滚动位置自然留住。设为主角、AI 复核完成后的刷新是同一个病灶,同批一起换掉。
+- **剧本 NPC 人物卡「基本信息 → 标签」保存不了**(群反馈 大道):不是前端没提交 —— `cardFormPayload` 一直在发 `tags: [...]`;是 `upsert_character_card` 的 fields / UPDATE / INSERT / on-conflict **四处都没有 tags 这一列**,整个字段被后端静默丢弃。PC 卡路径(`upsert_user_card`)一直好好写着这列,典型的「修 A 漏 B」不对称。补齐四处,并复用 PC 卡同一个 `_normalize_list`,避免两条写入路径对「标签」的解析规则漂移。
+  - 同时把前端 CSV 拆分的分隔符与后端对齐(`, ,;;、`):提示文案只写「逗号分隔」,中文输入法打出来的是全角「,」,只认半角会把「战姬,剑士」整条当成一个标签。
+
+## [1.79.1] - 2026-08-05 (@ 19f5cd7f9)
+
+### Fixed
+- **剧本设定里已「关闭」的世界书条目照样被召回进 GM 记忆**(群反馈 行者无疆:「发现剧本设定里关闭的世界书也会召回」—— 截图里那条启用状态=关闭的条目,仍带着「相关度 0.57」躺在记忆里):世界书有五条读路径,常驻铁律层、关键词激活层、关键词检索层、RATH 世界观要点、给 LLM 的 `get_worldbook` 查询**全都过 `enabled = true`**,只有**向量召回层是裸查表**。而「关闭」是刻意不脏化向量的(只有改标题/正文才重嵌,免得拨个开关就触发重嵌)——于是条目一关,向量原样留在库里,语义一沾边就召回,一召一个准。
+  - 修法落在唯一漏掉那道闸的路径上:向量召回的世界书查询补 `enabled = true`。同时把同语义的存档级孪生 —— `worldbook_retire`(「本档停用」)写的 retirement overlay —— 一并挡掉:关键词层本来就过滤 retirement,向量层是两道都没有,只补一道等于换个入口接着漏。retirement 是存档级语义,只在有存档上下文时生效,管理/编辑器视角照旧看得见全量。
+  - 顺带修掉同一个函数里的一条死路:没有向量时的 ILIKE 兜底,参数序把 ilike patterns 排在了 `script_id` 前面(占位符个数刚好对得上,所以一直没被发现)—— 每次都拿「%词%」去比整数列,必抛,再被外层的裸 except 吞掉。也就是说没配 embedding 的部署,实体层召回一直恒空,而不是它以为的「退化成关键词」。
+
+## [1.79.0] - 2026-08-05 (@ d90ad1c40)
+
+### Fixed
+- **Windows 开箱即用版装完是个「看着好的坏包」**(用户实测反馈:管理员模式装完后 `pg\share\extension\vector.control` 等一系列文件不存在,initdb 日志显示成功但数据目录是空壳、连 `PG_VERSION` 都没有;表面无异常,直到**建 RAG 向量**才发现库根本没建成,最后只能自己下载 PostgreSQL 17 对应的 pgvector 预编译包拷进 pg 目录、删掉 pgdata 重新初始化才恢复)。三处根因,逐条修:
+  - **捆绑包真的没带 pgvector**:`bundle-backend.ps1` 里 `$BuildPgvector = $false`,注释理由是「Windows 需 MSVC/nmake 构建较脆」。已核实 theseus-rs 的 Windows PG 包自带 `include\server`(925 个头文件)+ `lib\postgres.lib` + `pg_config.exe`,pgvector 的 `Makefile.win` 就地 nmake 完全够用。改为**随包构建**:用 vswhere 定位 MSVC 环境 → nmake → `vector.dll` 落 `pg\lib`($libdir)、`vector.control` 落 `pg\share\extension`。
+  - **Windows 侧此前【完全没有出包校验】**(mac 侧一直有):下载/解压残缺、pgvector 没装上,都会一路走到发布,装到用户机器上才炸。补齐硬校验 —— `postgres.exe`/`initdb.exe`/`pg_ctl.exe`/`share\postgres.bki`/`vector.control`/`vector.dll` 缺任意一个即让构建失败,并实际执行 `postgres.exe --version`。宁可 CI 红,不许再出静默坏包。
+  - **CI 运行时缓存会让这个修复静默失效**:缓存把整棵 `pg/` 树缓起来,key 只含 Python/PG 版本 + requirements 哈希 —— 只改组装脚本不动 key,构建会恢复一份**不含 `vector.dll` 的旧 pg** 直接复用。key 补上 `pgv<版本>`(`desktop-release.yml` + `warm-runtime-cache.yml` 两处),脚本内再加一道「缓存里没有 vector.control 就当未命中重建」的内容校验。
+- **initdb 半途失败后,桌面版会永久卡死在同一处,只能手删 pgdata**:`_initdbIfNeeded` 只看 `PG_VERSION` 在不在,而 initdb **拒绝在非空目录上初始化** —— 上一次失败留下的残骸让之后每次启动都撞同一堵墙。现在遇到「非空但无 `PG_VERSION`」(按定义就是不可用的残骸)自动挪到 `pgdata.broken` 隔离(挪不删,判断有误还能捞回)再重新初始化;initdb 返回 0 之后**以产物为准复核** `PG_VERSION` 是否真的生成,不再让「日志显示成功、实际是空壳」这种状态默默流到下游。
+- **存量桌面库升级后不会真正吃到 pgvector**(migration 100):这类库上 v10/v40/v60/v83 的建列块当年在 `if exists(vector)` 里静默跳过、migration 却已标记 applied,v89 又建了 jsonb 同名占位列 —— 光让新包带上 pgvector,列类型仍是 jsonb,`udt_name='vector'` 判定为假,语义检索照旧退化成关键词。新迁移在「pgvector 从无到有」时把占位列换成真向量列并补齐 HNSW 索引。四个 `embedding_vec` 占位列必然是空的(写入路径都是 `%s::vector`,在 jsonb 列上写不进去)→ 直接重建;`kb_canon_entities.embedding` 例外(写入路径无 cast,向量字面量恰好是合法 JSON 数组,可能真存了嵌入)→ 优先原地保值转换,失败才退回重建,并用嵌套 exception 兜住,绝不让一次迁移把桌面 app 卡在起不来。无 pgvector 的部署与健康 prod 库上全程 no-op。
+- macOS 桌面版**仍不带 pgvector,且这是刻意的**:zonky 精简包没有 `pg_config`/头文件编不了;换成能编的 theseus-rs mac 包,其 `postgres` 二进制 `minos = 26.0`(zonky 是 12.0),会把 macOS 26 以下的用户全部打死。理由已写进 `bundle-backend.sh` 与 `desktop/README.md`,免得后人当成遗漏顺手「对齐」。
+
 ## [1.78.7] - 2026-08-03 (@ 88f7ed60c)
 
 ### Fixed

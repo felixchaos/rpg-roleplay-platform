@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { Icon } from '../icons.jsx';
 import { lsGet } from '../../lib/storage.js';
+import { anchorStatuses } from '../../lib/timeline-status.js';
 // /set 强制设定管理(列出 + 逐条删 + 清空)复用电脑端同一组件:单一来源(worldline.remove + 配对 pinned +
 // game-state-refresh),移动端 MobileGame 复用 game-console run-loop,故 __confirm/__apiToast/刷新事件都可用。
 import { ForcedSetSection, WorldbookOverlaySection } from '../../game-panels.jsx';
@@ -197,6 +198,7 @@ function TimelinePanel({ s }) {
 
   const scriptAnchors = Array.isArray(data.script_anchors) ? data.script_anchors : [];
   const currentChapter = data.current_chapter ?? 1;
+  const anchorStatus_ = anchorStatuses(scriptAnchors, currentChapter);
 
   return (
     <>
@@ -209,14 +211,18 @@ function TimelinePanel({ s }) {
         ) : scriptAnchors.slice(0, 60).map((a, i) => {
           const chMin = a.chapter_min;
           const chMax = a.chapter_max != null ? a.chapter_max : a.chapter_min;
-          const isDone = chMax != null && chMax < currentChapter;
-          const isCurrent = chMin != null && chMin <= currentChapter && (chMax == null || currentChapter <= chMax);
+          // 与桌面 PanelTimeline 共用 anchorStatuses:锚点区间允许嵌套重叠,「当前」只能有一条
+          // (群反馈「世界线有三个当前」);包住当前章的外层弧标「进行中」。
+          const st = anchorStatus_[i];
           const mainTitle = a.story_time_label || a.phase_label
             || (chMin != null ? t('game.timeline.chapter_label', { chapter: chMin }) : '');
           const chapterRange = chMin != null
             ? `${t('game.timeline.chapter_label', { chapter: chMin })}${chMax != null && chMax !== chMin ? `–${chMax}` : ''}`
             : '';
-          const statusLabel = isCurrent ? t('game.timeline.current_pill') : isDone ? t('game.timeline.done_label') : t('game.timeline.pending_label');
+          const statusLabel = st === 'current' ? t('game.timeline.current_pill')
+            : st === 'ongoing' ? t('game.timeline.in_progress_pill')
+            : st === 'done' ? t('game.timeline.done_label')
+            : t('game.timeline.pending_label');
           return (
             <div key={i} className="mp-tl">
               <span className="mp-tl-dot" />

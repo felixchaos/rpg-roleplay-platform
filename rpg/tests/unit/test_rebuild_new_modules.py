@@ -21,7 +21,7 @@ unittest.mock.patch.object 打桩 db/connect,不打真 DB。
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import platform_app.import_pipeline as ip
 
@@ -248,6 +248,16 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
              patch.object(ip_worker, "finalize_job_if_unterminated", return_value=None):
             ip._run_module_rebuild("job1", 42, 7, module, body)
 
+    def _assert_cancel_wired(self, mock_fn, *, expect_progress: bool = True):
+        """取消/进度回调必须真的传下去 —— 这是「点取消卡几十分钟」那个 bug 的守卫:
+        worker 侧一旦漏传 should_cancel,长循环就又变成不可中断的黑盒。"""
+        _, kwargs = mock_fn.call_args
+        self.assertTrue(callable(kwargs.get("should_cancel")),
+                        "should_cancel 必须作为可调用对象传给 extract 函数(否则取消无效)")
+        if expect_progress:
+            self.assertTrue(callable(kwargs.get("progress_cb")),
+                            "progress_cb 必须传下去,否则进度条全程 0%")
+
     def test_facts_refine_calls_refine_script_with_expected_kwargs(self):
         fake_result = {"ok": True, "refined": 3, "skipped": 0, "failed": 0, "range": [1, 3]}
         with patch("extract.facts_refine.refine_script", return_value=fake_result) as mock_refine:
@@ -259,7 +269,9 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
             ch_from=1, ch_to=3,
             api_id="deepseek", model="deepseek-v4-flash",
             apply=True,
+            should_cancel=ANY, progress_cb=ANY,
         )
+        self._assert_cancel_wired(mock_refine)
 
     def test_facts_refine_defaults_apply_true_and_none_model(self):
         fake_result = {"ok": True, "refined": 0, "skipped": 0, "failed": 0, "range": [1, 1]}
@@ -270,7 +282,9 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
             ch_from=1, ch_to=None,
             api_id=None, model=None,
             apply=True,
+            should_cancel=ANY, progress_cb=ANY,
         )
+        self._assert_cancel_wired(mock_refine)
 
     def test_worldbook_enrich_calls_enrich_script_worldbook_with_expected_kwargs(self):
         fake_result = {"ok": True, "applied": True, "entries": [
@@ -280,7 +294,9 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
             self._run_module("worldbook_enrich", {"pattern": "战姬|神姬"})
         mock_enrich.assert_called_once_with(
             7, 42, pattern="战姬|神姬", api_id=None, model=None, apply=True,
+            should_cancel=ANY, progress_cb=ANY,
         )
+        self._assert_cancel_wired(mock_enrich)
 
     def test_worldbook_enrich_default_pattern(self):
         fake_result = {"ok": True, "applied": True, "entries": []}
@@ -292,7 +308,7 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
     def test_world_key_calls_backfill_worldlines_with_real_signature(self):
         # 真实签名(extract/world_key_backfill.py):
         # backfill_worldlines(script_id, *, dry_run=True, use_llm=False, user_id=None,
-        #                      api_id_override=None, model_override=None)
+        #                      api_id_override=None, model_override=None, should_cancel=None)
         fake_result = {"segments": [], "overcut": False, "would_write": 5, "written": 5}
         with patch("extract.world_key_backfill.backfill_worldlines", return_value=fake_result) as mock_backfill:
             self._run_module("world_key", {
@@ -305,7 +321,10 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
             user_id=42,
             api_id_override="deepseek",
             model_override="deepseek-v4-flash",
+            should_cancel=ANY,
         )
+        # world_key 只在 LLM 确认层有长循环,不回传逐条进度
+        self._assert_cancel_wired(mock_backfill, expect_progress=False)
 
     def test_world_key_defaults_use_llm_false(self):
         fake_result = {"segments": [], "overcut": False, "would_write": 0, "written": 0}
@@ -318,7 +337,9 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
             user_id=42,
             api_id_override=None,
             model_override=None,
+            should_cancel=ANY,
         )
+        self._assert_cancel_wired(mock_backfill, expect_progress=False)
 
     def test_world_key_overcut_reported_as_partial_failure(self):
         fake_result = {"segments": [], "overcut": True, "would_write": 5, "written": 5}
@@ -365,6 +386,95 @@ class NonOwnerRejected(unittest.TestCase):
              patch.object(ip_sched, "require_user_llm_credential", return_value=None):
             with self.assertRaises(ValueError):
                 ip.schedule_module_rebuild(999, 7, "world_key", body={"use_llm": True})
+
+
+class RebuildCancellation(unittest.TestCase):
+    """5. 取消真的能停 —— 用户反馈「点取消会一直卡在那里,取消了几十分钟」的回归守卫。
+
+    根因:_run_module_rebuild 从头到尾一次 ctl.is_cancelled() 都没有,/cancel 只把
+    import_jobs.cancel_requested 置 true,没人读 → 任务照跑到底、终态还写成 'done'。
+    """
+
+    def _run_with_cancel(self, module: str, cancelled_values: list[bool]):
+        """跑一次 worker,is_cancelled 按 cancelled_values 依次返回。
+        返回 (被调用的终态 SQL 里是否落了 cancelled, 模块函数是否被调用过)。"""
+        db = MagicMock()
+        db.execute.return_value = _row(0)
+        finalized: list[str] = []
+
+        def _fake_finalize_cancelled(ctl):
+            finalized.append("cancelled")
+
+        with patch.object(ip_worker, "connect", return_value=_fake_connect_cm(db)), \
+             patch.object(ip.JobController, "update", return_value=None), \
+             patch.object(ip.JobController, "is_cancelled", side_effect=cancelled_values), \
+             patch.object(ip_worker, "_finalize_cancelled", side_effect=_fake_finalize_cancelled), \
+             patch.object(ip_worker, "finalize_job_if_unterminated", return_value=None), \
+             patch("extract.facts_refine.refine_script") as mock_refine:
+            mock_refine.return_value = {"ok": True, "refined": 0, "skipped": 0,
+                                        "failed": 0, "range": [1, 1]}
+            ip._run_module_rebuild("job1", 42, 7, module, {})
+            called = mock_refine.called
+        return bool(finalized), called
+
+    def test_cancel_before_dispatch_skips_the_llm_work_entirely(self):
+        # 排队期间就被取消:一次 LLM 都不该烧,直接落 cancelled。
+        landed_cancelled, module_ran = self._run_with_cancel("facts_refine", [True])
+        self.assertTrue(landed_cancelled, "派发前已取消,应直接落 cancelled 终态")
+        self.assertFalse(module_ran, "派发前已取消,不应再调用 refine_script")
+
+    def test_cancel_during_run_lands_cancelled_not_done(self):
+        # 派发时未取消(第一次 False),跑的过程中用户点了取消(第二次 True):
+        # 终态必须是 cancelled,不能覆盖成 done —— 否则用户等半天最后看到「重做完成」。
+        landed_cancelled, module_ran = self._run_with_cancel("facts_refine", [False, True])
+        self.assertTrue(module_ran, "未取消时应正常调用 refine_script")
+        self.assertTrue(landed_cancelled, "跑动中被取消,终态应为 cancelled 而非 done")
+
+    def test_module_reported_cancelled_flag_lands_cancelled(self):
+        """模块自己在检查点退出并带回 cancelled=True 时,即使 DB 再查已看不到取消标记
+        (worker 已消费),也必须落 cancelled。"""
+        db = MagicMock()
+        db.execute.return_value = _row(0)
+        finalized: list[str] = []
+        with patch.object(ip_worker, "connect", return_value=_fake_connect_cm(db)), \
+             patch.object(ip.JobController, "update", return_value=None), \
+             patch.object(ip.JobController, "is_cancelled", return_value=False), \
+             patch.object(ip_worker, "_finalize_cancelled",
+                          side_effect=lambda ctl: finalized.append("cancelled")), \
+             patch.object(ip_worker, "finalize_job_if_unterminated", return_value=None), \
+             patch("extract.facts_refine.refine_script") as mock_refine:
+            mock_refine.return_value = {"ok": True, "refined": 2, "skipped": 0, "failed": 0,
+                                        "range": [1, 9], "cancelled": True}
+            ip._run_module_rebuild("job1", 42, 7, "facts_refine", {})
+        self.assertTrue(finalized, "模块回传 cancelled=True 时终态应为 cancelled")
+
+
+class ExtractLoopsHonourCancel(unittest.TestCase):
+    """6. 长循环自身在检查点停下 —— should_cancel 传下去了但循环不读也是白搭。"""
+
+    def test_refine_script_stops_at_chapter_boundary(self):
+        from extract import facts_refine as fr
+
+        calls: list[int] = []
+
+        def _fake_refine_chapter(db, script_id, ch, user_id, rapi, rmodel):
+            calls.append(ch)
+            return {"summary": "x", "in_world_time": ""}
+
+        db = MagicMock()
+        db.execute.return_value = MagicMock(fetchone=lambda: {"m": 100})
+        with patch.object(fr, "refine_chapter", side_effect=_fake_refine_chapter), \
+             patch.object(fr, "apply_refined", return_value=None), \
+             patch("platform_app.db.connect", return_value=_fake_connect_cm(db)), \
+             patch("platform_app.db.init_db", return_value=None), \
+             patch("agents.recorder._resolve_recorder_api_and_model",
+                   return_value=("deepseek", "deepseek-v4-flash")):
+            # 第 3 次检查点返回 True → 只应精炼前 2 章,而不是跑满 100 章
+            flags = iter([False, False, True] + [False] * 200)
+            out = fr.refine_script(7, 42, ch_from=1, ch_to=100, apply=True,
+                                   should_cancel=lambda: next(flags))
+        self.assertTrue(out.get("cancelled"), "取消后应回传 cancelled=True")
+        self.assertEqual(len(calls), 2, f"应停在章边界(只跑 2 章),实际跑了 {len(calls)} 章")
 
 
 if __name__ == "__main__":

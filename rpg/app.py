@@ -12,7 +12,6 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-import os
 import re
 import shutil
 import sys
@@ -46,7 +45,6 @@ from core.startup import configure_app, lifespan
 from model_registry import (
     delete_model,  # noqa: F401
     load_catalog_for_user,
-    load_model_catalog,
     select_model,  # noqa: F401
     selected_model,
     upsert_api,  # noqa: F401
@@ -238,6 +236,7 @@ def _verify_acceptance(
 # P0-3: 单请求用户偏好缓存 — 用 request_id contextvar 做 key,同一请求内只查一次 DB。
 # cache 在请求结束后由 api_chat/api_opening 调用 _clear_prefs_cache 清理。
 import contextvars as _contextvars
+
 _prefs_cache_var: _contextvars.ContextVar[dict] = _contextvars.ContextVar(
     "_prefs_cache", default=None  # type: ignore[assignment]
 )
@@ -264,7 +263,7 @@ def _get_user_preferences_cached(api_user: dict | None) -> dict:
         if row and isinstance(row.get("preferences"), dict):
             prefs = row["preferences"]
     except Exception:
-        pass
+        log.warning("[prefs] load_preferences DB 查询失败,回退空偏好 uid=%s", uid, exc_info=True)
     cache = {"__uid__": uid, **prefs}
     _prefs_cache_var.set(cache)
     return cache
@@ -459,14 +458,14 @@ from routes.console_assistant import router as console_assistant_router
 from routes.game import router as game_router
 from routes.mcp import router as mcp_router
 from routes.models import router as models_router
+from routes.persona_skills import router as persona_skills_router
 from routes.rath import router as rath_router
+from routes.regex_scripts import router as regex_scripts_router
 from routes.rules import router as rules_router
 from routes.sidebar import router as sidebar_router
 from routes.skills import router as skills_router
-from routes.persona_skills import router as persona_skills_router
 from routes.tavern import router as tavern_router
 from routes.timeline import router as timeline_router
-from routes.regex_scripts import router as regex_scripts_router
 from routes.worldbook_overlay import router as worldbook_overlay_router
 from routes.worldline import router as worldline_router
 
@@ -546,7 +545,9 @@ if _FRONTEND_DIR.is_dir():
 
 # 注：init_db 已移到 core.startup.lifespan startup 段（lazy import 避免循环依赖）。
 # 此处保留函数引用，供 lifespan 使用。
-from platform_app.db import init_db as _bootstrap_init_db  # noqa: F401  (lifespan lazy-imports this)
+from platform_app.db import (
+    init_db as _bootstrap_init_db,  # noqa: F401  (lifespan lazy-imports this)
+)
 
 _startup_auth_banner()
 
@@ -584,7 +585,7 @@ _state_save_id_by_user: OrderedDict[int, int] = OrderedDict()
 _state_commit_id_by_user: OrderedDict[int, int] = OrderedDict()
 # 侧改漂移检测:out-of-turn 编辑(固定记忆/笔记增删等)bump runtime snapshot_hash 但不 bump
 # commit → 记本 worker 载入时的 snapshot_hash,与 DB 真值比对抓跨 worker 陈旧缓存。
-_state_snaphash_by_user: "OrderedDict[int, str]" = OrderedDict()
+_state_snaphash_by_user: OrderedDict[int, str] = OrderedDict()
 _gm_by_user: OrderedDict[int, GameMaster] = OrderedDict()
 # B4: 子代理使用独立 GameMaster 实例，独立模型 / 独立 usage / 独立日志
 _sub_gm_by_user: OrderedDict[int, GameMaster] = OrderedDict()
@@ -636,13 +637,16 @@ def _stop_user(api_user: dict[str, Any] | None) -> None:
             ev.set()
     # 跨进程：写 DB stop_signals
     if api_user:
+        # current_run 必须在 try **之外**先绑定:否则 import 那行抛异常时它还没赋值,
+        # except 里引用它会抛 UnboundLocalError —— 把本来被吞掉的错误升级成真崩溃。
+        current_run = 0
         try:
             from platform_app.cluster import request_stop
             current_run = _lru_get(_run_id_by_user, uid, 0)
             if current_run:
                 request_stop(int(api_user["id"]), current_run)
         except Exception:
-            pass
+            log.warning("[stop] request_stop 失败 uid=%s run_id=%s", uid, current_run, exc_info=True)
 
 
 def _is_stop_requested_global(api_user: dict[str, Any] | None, run_id: int) -> bool:
@@ -739,7 +743,7 @@ def _selfheal_player_from_save_snapshot(state: GameState, api_user: dict[str, An
         })
         state.data["permissions"]["audit_log"] = audit[-200:]
     except Exception:
-        pass
+        log.warning("[state] 快照恢复玩家状态失败,fallback 空 player", exc_info=True)
 
 
 def _kb_state_enabled(api_user: dict | None = None) -> bool:
@@ -769,7 +773,7 @@ def _save_kb_native(save_id: int | None) -> bool:
         return False
 
 
-def _kb_backed_state(state: "GameState", save_id: int, commit_id: int) -> "GameState":
+def _kb_backed_state(state: GameState, save_id: int, commit_id: int) -> GameState:
     """从 KB 表 materialize 出 GameState(而非读 blob)。首次加载该 save 且 KB 未 seed →
     先把当前 blob 迁进 KB(T0 seed 实体 + import_state)再 materialize(migrate-on-first-load)。"""
     from kb import save_kb
@@ -1138,7 +1142,11 @@ def _resolve_user_default_model_view(api_user: dict[str, Any] | None, model_cata
     try:
         from core.llm_backend import (
             first_user_model as _fum,
+        )
+        from core.llm_backend import (
             resolve_preferred_api as _rpa,
+        )
+        from core.llm_backend import (
             resolve_preferred_model as _rpm,
         )
         _api = _rpa(uid, "gm.api_id")
@@ -1150,7 +1158,7 @@ def _resolve_user_default_model_view(api_user: dict[str, Any] | None, model_cata
         if _api and _mdl:
             return _session_model_app_view(model_catalog, (_mdl, _api))
     except Exception:
-        pass
+        log.warning("[models] _session_model_app_view 失败 uid=%s", uid, exc_info=True)
     return None
 
 
@@ -1169,7 +1177,7 @@ def _resolve_effective_model_view(api_user: dict[str, Any] | None, model_catalog
             if _sess_view:
                 return _sess_view
     except Exception:
-        pass
+        log.warning("[models] _resolve_effective_model_view 失败,回退默认模型视图", exc_info=True)
     return _resolve_user_default_model_view(api_user, model_catalog)
 
 
@@ -1279,7 +1287,7 @@ def _payload(api_user: dict[str, Any] | None = None, *, include_catalog: bool = 
                 "real_name": model["real_name"],
             }
         except Exception:
-            pass
+            log.warning("[payload] models.selected 设置失败", exc_info=True)
         payload["tools"] = _redact_tools(tool_payload(), is_admin)
     # task 10：把当前激活存档的 id/title 直接挂在 /api/state 顶层 + state 字段里，
     # Game Console 左侧栏拿来显示「当前存档」，避免回退到 hard-coded mock id=11。
@@ -1324,7 +1332,7 @@ def _user_credentialed_api_ids(user_id: int | None) -> set[str]:
             if it.get("has_credential") and it.get("enabled"):
                 ids.add(normalize_api_id(it.get("api_id")))
     except Exception:
-        pass
+        log.warning("[state] list_credentials 失败 user_id=%s", user_id, exc_info=True)
     try:
         from core.vertex_sa import has_user_sa
         if has_user_sa(int(user_id)):
@@ -1343,13 +1351,15 @@ def _redact_catalog(catalog: dict[str, Any], is_admin: bool, user_id: int | None
     服务器模式必须传 user_id;本地匿名模式回退到 env/SA 文件存在性。
     """
     import copy
+
     import model_probe
-    from model_registry import normalize_api_id
+
     # require_auth() 现已 mode-aware(server 模式 → True),统一按 per-user 账号 key 算 has_credential;
     # 注意:不论 require_auth 与否,只要能解析出 user_id 就按用户 BYOK 算。
     # 旧版 "if require_auth" 守卫会让 local 模式 + api_user=user 1 走 else(env/SA),
     # 而 env/SA 在 local 模式几乎都是空的 → has_credential 全部 false。
     from core.config import require_auth as _require_auth
+    from model_registry import normalize_api_id
     result = copy.deepcopy(catalog)
     require_auth = _require_auth()
     cred_ids = _user_credentialed_api_ids(user_id) if user_id is not None else set()
@@ -1581,7 +1591,7 @@ def _mark_context_run(context_run_id: int | None, status: str, error: str = "", 
             duration_ms=duration_ms,
         )
     except Exception:
-        pass
+        log.warning("[context_run] update_context_run_status 失败 run_id=%s", context_run_id, exc_info=True)
 
 
 def _persist_runtime_checkpoint(state: GameState, user: dict[str, Any] | None) -> None:
@@ -1852,13 +1862,13 @@ from rules_bridge import (
     parse_pickup_intent as _rb_parse_pickup_intent,
 )
 from rules_bridge import (
-    pickup_loot_action as _rb_pickup_loot_action,
-)
-from rules_bridge import (
     perform_saving_throw as _rb_saving_throw,
 )
 from rules_bridge import (
     perform_skill_check as _rb_skill_check,
+)
+from rules_bridge import (
+    pickup_loot_action as _rb_pickup_loot_action,
 )
 from rules_bridge import (
     player_attack as _rb_player_attack,
@@ -2407,12 +2417,13 @@ def _resolve_console_assistant_backend(api_user: dict[str, Any] | None):
                     if not model_real:
                         model_real = prefs.get("gm.model_real_name") or None
         except Exception:
-            pass
+            log.warning("[console] console_assistant_model_override 读取失败", exc_info=True)
     if not api_id or not model_real:
         try:
             from core.llm_backend import first_user_model
             user_default = first_user_model(int(api_user["id"])) if api_user and api_user.get("id") else None
         except Exception:
+            log.warning("[console] first_user_model 失败", exc_info=True)
             user_default = None
         if user_default:
             api_id = api_id or user_default[0]
@@ -2424,12 +2435,16 @@ def _resolve_console_assistant_backend(api_user: dict[str, Any] | None):
     # BYOK 守卫(同主 GM):解析出的 provider 用户不可用(stale 偏好/默认落 vertex 但没 SA)
     # → 回退到用户配过 key 的第一个模型,避免控制台助手构造即失败。
     if api_user and api_user.get("id"):
+        # 同 _stop_user:日志引用的变量必须在 try 之外先绑定。int(api_user["id"]) 本身
+        # 就可能抛(脏 session / 非数字 id),那时 _uid_c 尚未赋值,except 里引用它会
+        # UnboundLocalError —— 反而把被吞的错误变成崩溃。
+        _uid_c = api_user.get("id")
         try:
             _uid_c = int(api_user["id"])
             from core.llm_backend import guard_byok_usable as _guard_byok_c
             api_id, model_real = _guard_byok_c(_uid_c, api_id, model_real)
         except Exception:
-            pass
+            log.warning("[console] guard_byok_usable 失败 uid=%s", _uid_c, exc_info=True)
     # 用 GameMaster 构造 backend, 再借用其 ._backend
     gm = GameMaster(
         api_id=str(api_id) if api_id is not None else api_id,

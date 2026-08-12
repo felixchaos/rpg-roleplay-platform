@@ -78,7 +78,14 @@ def validate_enriched(raw_text: str) -> str | None:
 
 def enrich_script_worldbook(script_id: int, user_id: int, *, pattern: str,
                             api_id: str | None = None, model: str | None = None,
-                            apply: bool = False) -> dict[str, Any]:
+                            apply: bool = False,
+                            should_cancel=None, progress_cb=None) -> dict[str, Any]:
+    """命中 pattern 的世界书条目逐条 LLM 重写 content。
+
+    should_cancel: 可选无参回调,返回真值表示用户已请求取消 —— 每条开头检查一次,
+      命中即停在条目边界并返回 {"cancelled": True} + 已充实的条目(已 apply 的保留)。
+    progress_cb: 可选 (done, total) 回调,每条一次,给 job 进度条用。
+    """
     from platform_app.db import connect, init_db
     init_db()
     from agents._harness import call_agent_json_guarded
@@ -93,7 +100,25 @@ def enrich_script_worldbook(script_id: int, user_id: int, *, pattern: str,
             (int(script_id), pattern),
         ).fetchall()
     out: list[dict] = []
-    for ent in entries or []:
+    cancelled = False
+    all_entries = list(entries or [])
+    for _i, ent in enumerate(all_entries):
+        # 取消检查点:放在每条 LLM 调用之前(每条最多 3 次重试 × 60s,不检查就得干等整批)。
+        if should_cancel is not None:
+            try:
+                if should_cancel():
+                    cancelled = True
+                    log.info("[worldbook_enrich] script=%s 用户取消,已处理 %d/%d 条",
+                             script_id, _i, len(all_entries))
+                    break
+            except Exception:
+                pass  # 取消信号查询失败不该中断正在跑的任务
+        # 进度回传放在循环体最前面(done=_i):后面几条分支都有 continue,放末尾会被跳过。
+        if progress_cb is not None:
+            try:
+                progress_cb(_i, len(all_entries))
+            except Exception:
+                pass
         title = str(ent.get("title") or "")
         # 关键词=标题去分类前缀(「力量·战姬」→「战姬」)
         keyword = title.split("·")[-1].split(" ")[-1].strip() or title
@@ -132,7 +157,7 @@ def enrich_script_worldbook(script_id: int, user_id: int, *, pattern: str,
                         "chars": len(content), "preview": content[:80]})
         except Exception as exc:
             out.append({"id": ent["id"], "title": title, "status": f"fail:{exc}"})
-    return {"ok": True, "applied": bool(apply), "entries": out}
+    return {"ok": True, "applied": bool(apply), "entries": out, "cancelled": cancelled}
 
 
 if __name__ == "__main__":

@@ -79,7 +79,19 @@ CI 之后**唯一不可自动化**的只有:Apple 要求的人工 App Review —
 
 ## 已知约束 / 待办
 
-- **Windows pgvector 默认跳过**:需 MSVC/nmake 构建较脆;后端 pgvector 是软依赖,缺失自动降级 jsonb(语义检索弱化但可用)。打通后把 `bundle-backend.ps1` 的 `$BuildPgvector` 设 `$true`。
+- **pgvector:Windows 随包带,macOS 暂缺**(2026-08 起)。
+  - Windows:`bundle-backend.ps1` 用 MSVC/nmake 就地编 pgvector 装进捆绑 pg(theseus-rs 的
+    Windows 包自带 `include\server` + `lib\postgres.lib`,够编)。**编不出来就让构建失败** ——
+    此前默认跳过,出的包缺 `share\extension\vector.control`,装完看着正常、直到建 RAG 向量
+    才暴露(用户实测反馈),这种静默故障不许再出包。
+  - macOS:zonky 便携包不含 `pg_config`/头文件,无法就地编译。换 theseus-rs 的 mac 包能编,
+    但它的 `postgres` 二进制 `minos = 26.0`(zonky 是 12.0),换了会把 macOS 26 以下的用户
+    全部打死 —— 不划算,**故意保持现状**。macOS 桌面版继续降级 jsonb + 关键词检索。
+  - 升级路径:migration 100 会在「pgvector 从无到有」时把 v89 建的 jsonb 占位列换成真向量列
+    (存量库升级后才真正吃到 pgvector,否则修了等于没修)。
+- **改 pgvector 版本要同时改 CI 缓存 key**:运行时缓存把 `pg/` 整棵树缓起来,key 里带
+  `pgv<版本>`(`desktop-release.yml` + `warm-runtime-cache.yml` 两处)。只改脚本不改 key
+  会命中不含 `vector.dll` 的旧缓存。
 - **整包体积** ~180–280MB(便携 PG ~120MB + Python 依赖 ~100MB 是底盘,壳只占小头)。
 - **嵌套二进制签名**:psycopg-binary 自带整套 `libpq/libssl/libcrypto` dylib、cryptography/pydantic-core 等 `.so` —— electron-builder 递归签 .app 内所有 Mach-O 并套用 `entitlements.mac.inherit.plist`(含 `disable-library-validation`,漏了是静默崩溃)。
 - **版本号**:与根 `VERSION` 单一真源对齐,`package.json` 的 `version` 由 `scripts/bump_version.sh` 同步(`__APP_VERSION__` / `/api/health` 也读它)。

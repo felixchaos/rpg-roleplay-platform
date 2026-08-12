@@ -199,6 +199,30 @@ def _search_chunks(
     return db.execute(query, tuple(params)).fetchall()
 
 
+def _worldbook_visibility(save_id: int | None) -> tuple[str, list[Any]]:
+    """世界书「本档还该不该看见这条」闸:剧本侧 enabled + 存档侧 retirement。
+
+    群反馈(行者无疆):剧本设定里**已关闭**的世界书条目照样被召回进 GM 记忆
+    (截图里《食材与天财地宝》enabled=false 仍带着相关度 0.57 出现)。真因=向量
+    召回层是唯一没过这道闸的世界书读路径 —— 常驻层(gm_serving/context_inject)、
+    激活层(context_engine/loaders)、关键词层(retrieval/sources)、RATH(rath/engine)
+    全都 `enabled=true`,只有这里裸查表;`enabled` 又只是关闭开关不脏化向量
+    (test_worldbook_embed_hygiene 的约定),条目关了向量还在 → 一召一个准。
+    retirement(worldbook_retire 工具的「本档停用」)是同一语义的存档级孪生,
+    关键词层同样过滤,这里一并收口,免得两个「已停用」只挡住一个。
+    """
+    sql = "enabled = true"
+    params: list[Any] = []
+    if save_id is not None:
+        sql += (
+            " and not exists (select 1 from save_worldbook_overlays o "
+            "where o.save_id = %s and o.kind = 'retirement' "
+            "and o.retired_entry_id = worldbook_entries.id)"
+        )
+        params.append(int(save_id))
+    return sql, params
+
+
 def _search_entities(
     db,
     script_id: int,
@@ -243,18 +267,26 @@ def _search_entities(
             ("character_cards", "name", "cards", "identity, personality, appearance,"),
             ("worldbook_entries", "title", "worldbook", "content,"),
         ]:
-            enabled_clause = " and enabled = true" if table == "character_cards" else ""
+            if table == "character_cards":
+                vis_sql, vis_params = "enabled = true", []
+            else:
+                vis_sql, vis_params = _worldbook_visibility(save_id)
             where_parts = [f"{name_col} ilike %s" for _ in tokens]
             patterns = [f"%{t}%" for t in tokens]
             try:
                 rows = db.execute(
                     f"select id, {name_col}, {extra_cols} first_revealed_chapter, 0.5 as score "
                     f"from {table} "
-                    f"where script_id = %s{enabled_clause} "
+                    f"where script_id = %s and {vis_sql} "
                     f"and ({' or '.join(where_parts)}) "
                     f"and {gate_sql} "
                     f"limit %s",
-                    (*patterns, script_id, *gate_params, max(1, min(top_k_cards if result_key == "cards" else top_k_wb, 8))),
+                    # ⚠️ 参数序必须跟占位符序:script_id → 可见性 → ilike patterns → 章节闸 → limit。
+                    # 旧代码把 patterns 排在 script_id 前面(占位符个数刚好对得上,故没人发现),
+                    # 每次都以 "%词%" 去比整数列 → 必抛 → 被下面的裸 except 吞掉:无向量时的
+                    # ILIKE 兜底其实一直是条死路(恒返空)。
+                    (script_id, *vis_params, *patterns, *gate_params,
+                     max(1, min(top_k_cards if result_key == "cards" else top_k_wb, 8))),
                 ).fetchall()
                 out[result_key] = rows
             except Exception:
@@ -271,18 +303,18 @@ def _search_entities(
     else:
         gate_sql, gate_params = _OLD_GATE, [chapter_max, chapter_max]
 
-    def _gate_ids(table: str, extra: str, g: str, p: list) -> set:
+    def _gate_ids(table: str, extra: str, extra_params: list, g: str, p: list) -> set:
         """某门控放行的全集 id(不带 vector/limit),供影子比对隔离纯门控差异。"""
         return {r["id"] for r in db.execute(
-            f"select id from {table} where script_id=%s and embedding_vec is not null{extra} and {g}",
-            (script_id, *p)).fetchall()}
+            f"select id from {table} where script_id=%s and embedding_vec is not null and {extra} and {g}",
+            (script_id, *extra_params, *p)).fetchall()}
 
-    def _shadow(table: str, extra: str, tag: str) -> None:
+    def _shadow(table: str, extra: str, extra_params: list, tag: str) -> None:
         """对比旧标量门控 vs 新前沿门控的放行全集(与 vector 排序/limit 无关)。"""
         old_g, old_p = _OLD_GATE, [chapter_max, chapter_max]
         new_g, new_p = reveal_clause_v2(int(save_id), mode, prefix="", has_public_knowledge=False, has_famous=False, progress_chapter=chapter_max)
-        _shadow_diff_log(tag, _gate_ids(table, extra, old_g, old_p),
-                         _gate_ids(table, extra, new_g, new_p))
+        _shadow_diff_log(tag, _gate_ids(table, extra, extra_params, old_g, old_p),
+                         _gate_ids(table, extra, extra_params, new_g, new_p))
 
     if _vector_column_exists(db, "character_cards"):
         try:
@@ -303,11 +335,12 @@ def _search_entities(
                 (vec, script_id, *gate_params, vec, max(1, min(top_k_cards, 8))),
             ).fetchall()
             if _frontier_shadow() and save_id is not None:
-                _shadow("character_cards", " and enabled = true", "_search cards")
+                _shadow("character_cards", "enabled = true", [], "_search cards")
         except Exception:
             pass
 
     if _vector_column_exists(db, "worldbook_entries"):
+        _wb_vis_sql, _wb_vis_params = _worldbook_visibility(save_id)
         try:
             out["worldbook"] = db.execute(
                 f"""
@@ -316,14 +349,16 @@ def _search_entities(
                 from worldbook_entries
                 where script_id = %s
                   and embedding_vec is not null
+                  -- 关闭(enabled=false)/本档停用(retirement)的条目不该再被召回。
+                  and {_wb_vis_sql}
                   and {gate_sql}
                 order by embedding_vec <=> %s::vector
                 limit %s
                 """,
-                (vec, script_id, *gate_params, vec, max(1, min(top_k_wb, 8))),
+                (vec, script_id, *_wb_vis_params, *gate_params, vec, max(1, min(top_k_wb, 8))),
             ).fetchall()
             if _frontier_shadow() and save_id is not None:
-                _shadow("worldbook_entries", "", "_search worldbook")
+                _shadow("worldbook_entries", _wb_vis_sql, _wb_vis_params, "_search worldbook")
         except Exception:
             pass
 

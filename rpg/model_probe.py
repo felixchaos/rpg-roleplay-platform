@@ -412,15 +412,21 @@ def _resolve_provider_creds(api: dict[str, Any], user_id: int | None) -> dict[st
     运行路径（openai_compat backend: effective_base = override or base_url）取的是同一个值。
     """
     api_id = api.get("id") or api.get("kind") or ""
-    from platform_app.user_credentials import resolve_api_key
+    from platform_app.user_credentials import (
+        resolve_api_key,
+        resolved_auth_token,
+        resolved_is_usable,
+    )
     env_fallback = "" if _require_user_credential() else (api.get("credential_env") or "")
     result = resolve_api_key(user_id, api_id, env_fallback=env_fallback)
-    key = result.get("key")
-    if not key:
+    # 免鉴权(本地/自托管)凭据没有 key 也算配好了 —— 否则用户配完本地 Ollama 想「校验连接 /
+    # 拉取模型」会被这里挡住,等于配了用不了。
+    if not resolved_is_usable(result):
         if _require_user_credential():
             raise RuntimeError(f"未在「个人主页 → API 凭证」配置 {api_id} 的 key")
         raise RuntimeError(f"找不到 {api_id} 的 API key（用户凭证未配置且环境变量未设）")
-    return {"key": key, "base_url_override": (result.get("base_url_override") or "").strip()}
+    return {"key": resolved_auth_token(result),
+            "base_url_override": (result.get("base_url_override") or "").strip()}
 
 
 def _list_anthropic_models(api: dict[str, Any], user_id: int | None = None) -> list[dict[str, Any]]:

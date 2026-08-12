@@ -16,7 +16,7 @@ from .rebuild_modules import (
     rebuild_worldbook_with_llm,
 )
 from .rebuild_registry import REBUILD_MODULES
-from .runner import finalize_job_if_unterminated
+from .runner import _finalize_cancelled, finalize_job_if_unterminated
 from .stages_llm import _stage_worldbook
 
 
@@ -24,12 +24,22 @@ def _run_module_rebuild(
     job_id: str, user_id: int, script_id: int, module: str, body: dict[str, Any],
 ) -> None:
     """rebuild worker。统一 import_jobs + SSE,失败标 failed,
-    partial 失败标 done_with_errors,写 before/after_count + warnings。"""
+    partial 失败标 done_with_errors,写 before/after_count + warnings。
+
+    取消语义(v1.78.9 修):此前本 worker **一个 ctl.is_cancelled() 都没有** —— /cancel 端点
+    只把 import_jobs.cancel_requested 置 true,没有任何人读它,任务照跑到底。表现为「点取消
+    一直卡在那里,取消了几十分钟」(群反馈:大道),facts_refine 这种整本逐章调 LLM 的模块
+    正好是最慢的那批。现在:① 派发前先看一眼(排队期间被取消的直接不跑);② 长循环模块把
+    ctl.is_cancelled 作为 should_cancel 传进去,在章/条边界退出;③ 收尾时若已取消,落
+    'cancelled' 而不是 'done'(否则用户点了取消最后还是看到"重做完成")。"""
     ctl = JobController(job_id)
     ctl.update(status="running", stage=module, overall_progress=0)
     with connect() as db:
         db.execute("update import_jobs set started_at = now() where job_id = %s", (job_id,))
     try:
+        # ① 派发前检查:任务可能在排队(queued)期间就被取消了,那一步 LLM 都不该烧。
+        if ctl.is_cancelled():
+            return _finalize_cancelled(ctl)
         if module == "chunks":
             result = _rebuild_chunks(ctl, user_id, script_id, body)
         elif module == "chapter-facts":
@@ -52,6 +62,11 @@ def _run_module_rebuild(
             result = _rebuild_world_key(ctl, user_id, script_id, body)
         else:
             result = {"ok": False, "error": f"unhandled module: {module}"}
+        # ③ 收尾前先看取消:模块自己在检查点退出后会带 cancelled=True 回来;没带的模块
+        #    (短任务/无循环)再查一次 DB 兜底。命中就落 'cancelled',不能覆盖成 'done' ——
+        #    否则用户点了取消、等半天,最后弹的还是「重做完成」。
+        if bool(result.get("cancelled")) or ctl.is_cancelled():
+            return _finalize_cancelled(ctl)
         # 写终态 — 任何 partial_failures 标 done_with_errors
         partial_failures = list(result.get("partial_failures") or [])
         ok = bool(result.get("ok"))
@@ -348,11 +363,18 @@ def _rebuild_facts_refine(ctl, user_id, script_id, body) -> dict:
         ch_to = None
     with connect() as _dbc:
         before = _count(_dbc, "chapter_facts", script_id)
+    def _refine_progress(done: int, total: int) -> None:
+        try:
+            ctl.update(stage="facts_refine", stage_progress=int(done), stage_total=max(int(total), 1),
+                       overall_progress=int(done), overall_total=max(int(total), 1))
+        except Exception:
+            pass
     r = refine_script(
         script_id, user_id,
         ch_from=ch_from, ch_to=ch_to,
         api_id=(body.get("api_id") or None), model=(body.get("model") or None),
         apply=True,
+        should_cancel=ctl.is_cancelled, progress_cb=_refine_progress,
     )
     with connect() as _dbc:
         after = _count(_dbc, "chapter_facts", script_id)
@@ -369,6 +391,7 @@ def _rebuild_facts_refine(ctl, user_id, script_id, body) -> dict:
         "after_count": after,
         "partial_failures": partial_failures,
         "error": r.get("error") if not r.get("ok") else "",
+        "cancelled": bool(r.get("cancelled")),
         "extra": {"refined": r.get("refined"), "range": r.get("range")},
     }
     return result
@@ -381,10 +404,17 @@ def _rebuild_worldbook_enrich(ctl, user_id, script_id, body) -> dict:
     pattern = str(body.get("pattern") or "力量|概念|势力|体系")
     with connect() as _dbc:
         before = _count(_dbc, "worldbook_entries", script_id)
+    def _enrich_progress(done: int, total: int) -> None:
+        try:
+            ctl.update(stage="worldbook_enrich", stage_progress=int(done), stage_total=max(int(total), 1),
+                       overall_progress=int(done), overall_total=max(int(total), 1))
+        except Exception:
+            pass
     r = enrich_script_worldbook(
         script_id, user_id, pattern=pattern,
         api_id=(body.get("api_id") or None), model=(body.get("model") or None),
         apply=True,
+        should_cancel=ctl.is_cancelled, progress_cb=_enrich_progress,
     )
     entries = list(r.get("entries") or [])
     ok_count = sum(1 for e in entries if e.get("status") == "ok")
@@ -399,6 +429,7 @@ def _rebuild_worldbook_enrich(ctl, user_id, script_id, body) -> dict:
         "after_count": before,   # UPDATE,不新增行;充实数用 extra.enriched 体现
         "partial_failures": partial_failures,
         "error": r.get("error") if not r.get("ok") else "",
+        "cancelled": bool(r.get("cancelled")),
         "extra": {"enriched": ok_count, "total_matched": len(entries)},
     }
     return result
@@ -417,6 +448,7 @@ def _rebuild_world_key(ctl, user_id, script_id, body) -> dict:
         user_id=user_id,
         api_id_override=(body.get("api_id") or None),
         model_override=(body.get("model") or None),
+        should_cancel=ctl.is_cancelled,
     )
     with connect() as _dbc:
         after = _count(_dbc, "script_timeline_anchors", script_id)
@@ -432,6 +464,7 @@ def _rebuild_world_key(ctl, user_id, script_id, body) -> dict:
         "before_count": before,
         "after_count": after,
         "partial_failures": partial_failures,
+        "cancelled": bool(r.get("cancelled")),
         "extra": {"written": r.get("written"), "would_write": r.get("would_write"),
                   "overcut": r.get("overcut")},
     }

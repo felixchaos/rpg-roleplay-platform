@@ -42,10 +42,14 @@ function bannerBar(pct) {
 export function RebuildJobBanner({ scriptId, activeJob, onChange, onDone }) {
   const { t } = useTranslation();
   const [job, setJob] = React.useState(activeJob || null);
+  // 「取消中」本地态:后端取消是协作式的(worker 在章/条边界才退出),点下去到真正落
+  // 'cancelled' 之间有几秒到十几秒空窗。此前这段时间按钮毫无反应、进度条照走,用户只能
+  // 反复点(群反馈:"点取消会一直卡在那里")。这里立刻把按钮切成禁用的「取消中…」。
+  const [cancelling, setCancelling] = React.useState(false);
   const esRef = React.useRef(null);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  React.useEffect(() => { setJob(activeJob || null); }, [activeJob && activeJob.job_id]);
+  React.useEffect(() => { setJob(activeJob || null); setCancelling(false); }, [activeJob && activeJob.job_id]);
 
   React.useEffect(() => {
     const jid = activeJob && (activeJob.job_id || activeJob.id);
@@ -95,6 +99,9 @@ export function RebuildJobBanner({ scriptId, activeJob, onChange, onDone }) {
   if (status === 'done' || status === 'cancelled') return null;
 
   /* ── Running ── */
+  // 后端 import_jobs.cancel_requested 会随 job 快照一起下发(get_job_status 是 select *),
+  // 于是刷新页面 / 换标签页回来时也能看出「这个任务已经在取消途中」,而不是又显示成可取消。
+  const isCancelling = !!(job.cancel_requested || job.canceling);
   const overall      = job.overall_progress || 0;
   const overallTotal = job.overall_total || 100;
   const pct          = overallTotal ? Math.round((overall / overallTotal) * 100) : 0;
@@ -117,7 +124,19 @@ export function RebuildJobBanner({ scriptId, activeJob, onChange, onDone }) {
     : (before != null ? `${before} → …` : null);
 
   const onCancel = async () => {
-    try { await window.api?.scripts?.jobCancel?.(job.job_id || job.id); } catch (_) {}
+    if (cancelling) return;
+    setCancelling(true);
+    try {
+      const r = await window.api?.scripts?.jobCancel?.(job.job_id || job.id);
+      if (r && r.ok === false) throw new Error(r.error || 'cancel failed');
+      window.__apiToast?.(t('modules.toast.cancel_requested', { defaultValue: '已请求取消,正在收尾当前这一章/条' }),
+        { kind: 'ok', duration: 2600 });
+    } catch (e) {
+      // 取消请求本身失败(掉线/任务已不存在)→ 放开按钮让用户重试,别假装在取消。
+      setCancelling(false);
+      window.__apiToast?.(t('modules.toast.cancel_fail', { defaultValue: '取消请求失败' }),
+        { kind: 'danger', detail: (e && e.message) || '' });
+    }
   };
 
   return (
@@ -130,8 +149,12 @@ export function RebuildJobBanner({ scriptId, activeJob, onChange, onDone }) {
           <span className={s.bannerModule}>{moduleName}</span>
           {arrow && <span className={s.bannerArrow}>{arrow}</span>}
         </span>
-        <button className={s.bannerCancel} type="button" onClick={onCancel}>
-          {t('common.cancel', { defaultValue: '取消' })}
+        <button className={s.bannerCancel} type="button" onClick={onCancel}
+          disabled={cancelling || isCancelling}
+          aria-busy={cancelling || isCancelling}>
+          {(cancelling || isCancelling)
+            ? t('modules.banner.cancelling', { defaultValue: '取消中…' })
+            : t('common.cancel', { defaultValue: '取消' })}
         </button>
       </div>
 

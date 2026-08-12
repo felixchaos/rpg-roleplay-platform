@@ -35,6 +35,59 @@ _PRIVATE_HOST_PREFIXES = (
 )
 
 
+# 「这条凭据算不算可用」的 SQL 谓词 —— **单一真相源**。
+# 原本这个条件(length(encrypted_key) > 0)被抄在至少三处:llm_backend.first_user_model 的
+# 两条查询、feedback 的环境快照。加免鉴权模式时任何一处漏改,都会让本地 provider 在那条
+# 路径上"半可用"(能选不能跑 / 能跑不上报),属于本仓的「修 A 漏 B」惯犯地形。
+# 免鉴权必须同时有 base_url_override:不指地址的无 key 凭据不是"本地模型",只是残缺行。
+CREDENTIAL_USABLE_SQL = (
+    "(length(encrypted_key) > 0 "
+    " or (auth_mode = 'none' and coalesce(base_url_override, '') <> ''))"
+)
+
+
+# 免鉴权端点在 HTTP 层要带的占位 token。**不能用空串**:openai SDK(实测 2.41.1)对
+# api_key="" 与 None 一视同仁,直接抛 OpenAIError("Missing credentials") —— 在构造 client
+# 时就崩,连请求都发不出去。Ollama / llama.cpp / LM Studio / 未开 --api-key 的 vLLM
+# 都不校验 Authorization 的值,收到占位串照常应答。
+NO_AUTH_PLACEHOLDER = "no-key-required"
+
+
+def resolved_is_usable(result: dict[str, Any] | None) -> bool:
+    """resolve_api_key 的返回值是否代表「可以发请求」。
+
+    有 key → 可用;没 key 但 source='user_db_no_auth'(用户显式声明免鉴权)→ 也可用。
+    各 agent/probe 路径统一用它,别再各写 `if not cred.get("key")`——那样新加的免鉴权
+    模式会在每条没改到的路径上表现为「配好了却说没配 key」。
+    """
+    if not result:
+        return False
+    return bool(result.get("key")) or result.get("source") == "user_db_no_auth"
+
+
+def resolved_auth_token(result: dict[str, Any] | None) -> str:
+    """要真正塞进 Authorization 头的串:有 key 用 key,免鉴权用占位 token。"""
+    if not result:
+        return ""
+    key = result.get("key") or ""
+    if key:
+        return key
+    return NO_AUTH_PLACEHOLDER if result.get("source") == "user_db_no_auth" else ""
+
+
+def credential_is_usable(cred: dict[str, Any] | None) -> bool:
+    """CREDENTIAL_USABLE_SQL 的 Python 侧孪生(给已取出的 cred dict 用)。
+
+    与 SQL 版语义一致:有 key 即可用;无 key 但用户显式声明免鉴权 → 也可用。
+    get_credential 返回的 base_url_override 已归一,空串表示没配。
+    """
+    if not cred:
+        return False
+    if cred.get("key"):
+        return True
+    return cred.get("auth_mode") == "none" and bool(cred.get("base_url_override"))
+
+
 def _credential_aliases(api_id: str) -> list[str]:
     canonical = normalize_api_id(api_id)
     aliases = [canonical]
@@ -164,8 +217,16 @@ def _normalize_openai_base_url(url: str) -> str:
     return s
 
 
-def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_override: str = "", enabled: bool = True, *, allow_base_url: bool = False, proxy: str = "", preserve_key_if_empty: bool = False) -> dict[str, Any]:
+def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_override: str = "", enabled: bool = True, *, allow_base_url: bool = False, proxy: str = "", preserve_key_if_empty: bool = False, auth_mode: str = "api_key") -> dict[str, Any]:
     """加密保存。空 key 等价于删除该 credential（preserve_key_if_empty=True 时例外）。
+
+    auth_mode（v1.81.0）:
+      'api_key'(默认) —— 现有语义,一字未变:必须有非空 key,空 key = 删除凭据。
+      'none'          —— 免鉴权端点(本地 Ollama / vLLM / llama.cpp / LM Studio)。
+                         **key 可选**:不填就存一条无 key 凭据,填了照常加密保存并在请求里发送
+                         (部分 vLLM/LM Studio 会校验一个任意 token)。因此空 key **不再**等价删除。
+                         必须同时给 base_url_override —— 不指地址的「免 key」没有意义,
+                         也防止把某个托管 provider 误设成免鉴权后静默走空 key 撞 401。
 
     preserve_key_if_empty=True 时，空 key 表示「只改 base_url_override / 启用态，保留
     已存密文 key 与 metadata(proxy)」—— 对应「编辑」弹窗只改接口地址、不重填 key 的
@@ -185,8 +246,14 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     api_id = normalize_api_id(api_id)
     if not api_id:
         raise ValueError("api_id 不能为空")
-    if not plaintext_key and not preserve_key_if_empty:
+    auth_mode = (auth_mode or "api_key").strip() or "api_key"
+    if auth_mode not in ("api_key", "none"):
+        raise ValueError("auth_mode 只能是 api_key 或 none")
+    if auth_mode == "none" and not base_url_override:
+        raise ValueError("免鉴权模式必须填接口地址(base_url)——不指地址的「免 Key」无意义")
+    if not plaintext_key and not preserve_key_if_empty and auth_mode != "none":
         # 空 key 常态 = 删除凭证（base_url 无关，短路在校验之前，保持 delete 路径零变化）。
+        # auth_mode='none' 例外:无 key 正是它的常态,要落库而不是删。
         return delete_credential(user_id, api_id)
     # P1 #7：之前非 admin 传 base_url_override 直接静默 = ""，UI 以为已设置。
     # 改成显式 raise ValueError，让 /api/me/credentials 回 400，前端能感知。
@@ -197,9 +264,10 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     elif base_url_override:
         base_url_override = _normalize_openai_base_url(base_url_override)
         _validate_base_url(base_url_override)
-    if not plaintext_key:
+    if not plaintext_key and auth_mode != "none":
         # preserve_key_if_empty：只改 base_url_override / 启用态，保留密钥与 metadata(proxy)。
-        return _update_credential_meta(user_id, api_id, base_url_override, enabled)
+        return _update_credential_meta(user_id, api_id, base_url_override, enabled, auth_mode)
+    # auth_mode='none' 且没填 key → 继续往下走正常 upsert,只是密文为空(见 encrypted 计算)。
     proxy = (proxy or "").strip()
     if proxy:
         if not re.match(r"^(https?|socks5h?)://[^\s/]+", proxy, re.IGNORECASE):
@@ -227,23 +295,26 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
             if any(_ip_is_internal(_i[4][0]) for _i in _infos):
                 raise ValueError(f"服务器模式下代理不允许指向私有/本地/保留地址:{_phost}")
     meta = {"proxy": proxy} if proxy else {}
-    encrypted = encrypt_api_key(plaintext_key, user_id, api_id)
+    # 免鉴权且用户没填 key → 存空密文(列是 bytea not null default ''),length(encrypted_key)=0
+    # 与「没有 key」在 SQL 侧口径一致。填了 key 就照常加密,免鉴权模式下也会带上。
+    encrypted = encrypt_api_key(plaintext_key, user_id, api_id) if plaintext_key else b""
     with connect() as db:
         row = db.execute(
             """
-            insert into user_api_credentials(user_id, api_id, encrypted_key, base_url_override, enabled, metadata)
-            values (%s, %s, %s, %s, %s, %s)
+            insert into user_api_credentials(user_id, api_id, encrypted_key, base_url_override, enabled, metadata, auth_mode)
+            values (%s, %s, %s, %s, %s, %s, %s)
             on conflict(user_id, api_id) do update set
               encrypted_key = excluded.encrypted_key,
               base_url_override = excluded.base_url_override,
               enabled = excluded.enabled,
               metadata = excluded.metadata,
+              auth_mode = excluded.auth_mode,
               updated_at = now()
-            returning id, user_id, api_id, base_url_override, enabled, updated_at
+            returning id, user_id, api_id, base_url_override, enabled, auth_mode, updated_at
             """,
-            (user_id, api_id, encrypted, base_url_override or "", enabled, Jsonb(meta)),
+            (user_id, api_id, encrypted, base_url_override or "", enabled, Jsonb(meta), auth_mode),
         ).fetchone()
-    result = {"ok": True, **(expose(row) or {}), "has_credential": True}
+    result = {"ok": True, **(expose(row) or {}), "has_credential": bool(plaintext_key)}
 
     # best-effort: 配 key 后自动拉该 provider 的真实模型列表并写入用户 overlay。
     # lazy import 防循环依赖（model_probe → model_registry → ? ← credentials）。
@@ -276,23 +347,27 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     return result
 
 
-def _update_credential_meta(user_id: int, api_id: str, base_url_override: str, enabled: bool) -> dict[str, Any]:
-    """只更新已存凭证的 base_url_override / enabled，保留密文 key 与 metadata(proxy)。
+def _update_credential_meta(user_id: int, api_id: str, base_url_override: str, enabled: bool,
+                            auth_mode: str = "api_key") -> dict[str, Any]:
+    """只更新已存凭证的 base_url_override / enabled / auth_mode，保留密文 key 与 metadata(proxy)。
 
     调用方（set_credential 的 preserve_key_if_empty 分支）已做完 SSRF 闸与
     base_url_override 归一，这里只落库。无匹配行 → 报错，让前端提示先填 Key。
     metadata 不动，因此 proxy 等既有字段原样保留。
+
+    auth_mode 也要一起写:用户把一条免鉴权凭据改回「需要 API Key」时,若只改列名不改
+    auth_mode,DB 里会留着 'none',可用性判定继续按免鉴权放行 —— 与用户所见不符。
     """
     canonical = normalize_api_id(api_id)
     with connect() as db:
         row = db.execute(
             """
             update user_api_credentials
-               set base_url_override = %s, enabled = %s, updated_at = now()
+               set base_url_override = %s, enabled = %s, auth_mode = %s, updated_at = now()
              where user_id = %s and api_id = any(%s)
-            returning id, user_id, api_id, base_url_override, enabled, updated_at
+            returning id, user_id, api_id, base_url_override, enabled, auth_mode, updated_at
             """,
-            (base_url_override or "", enabled, user_id, _credential_aliases(canonical)),
+            (base_url_override or "", enabled, auth_mode, user_id, _credential_aliases(canonical)),
         ).fetchone()
     if not row:
         raise ValueError("尚未配置该供应商的 API Key，请先填写 Key")
@@ -330,7 +405,7 @@ def list_credentials(user_id: int) -> dict[str, Any]:
         rows = db.execute(
             """
             select user_id, api_id, base_url_override, enabled, created_at, updated_at,
-                   metadata, length(encrypted_key) as cipher_len
+                   metadata, auth_mode, length(encrypted_key) as cipher_len
             from user_api_credentials
             where user_id = %s
             order by api_id
@@ -345,9 +420,13 @@ def list_credentials(user_id: int) -> dict[str, Any]:
             continue
         seen.add(api_id)
         _meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
+        _auth_mode = str(r.get("auth_mode") or "api_key") or "api_key"
         items.append({
             "api_id": api_id,
             "has_credential": int(r["cipher_len"] or 0) > 0,
+            "auth_mode": _auth_mode,
+            # 免鉴权凭据没 key 也算配好了 —— 前端用它显示「已配置」,别再提示"请先填 Key"
+            "configured": int(r["cipher_len"] or 0) > 0 or _auth_mode == "none",
             "base_url_override": r["base_url_override"] or "",
             "proxy_url": (_meta or {}).get("proxy") or "",
             "enabled": bool(r["enabled"]),
@@ -374,6 +453,9 @@ def get_credential(user_id: int, api_id: str) -> dict[str, Any] | None:
             continue
         stored_api_id = row.get("api_id") or canonical
         blob = row.get("encrypted_key")
+        # auth_mode='none' = 用户显式声明「这个端点免鉴权」(本地 Ollama/vLLM 等)。
+        # 这类凭据允许 key 为空;key 填了就照常带上(部分 vLLM/LM Studio 要一个任意 token)。
+        auth_mode = str(row.get("auth_mode") or "api_key").strip() or "api_key"
         # 密钥派生(HKDF info=api:<id>)与 AAD(api=<id>)都绑定 api_id。历史上凭据可能以
         # 别名(如 'AgentPlatform')加密;migration v67 规范化重命名了 api_id 列却未重新
         # 加密 blob,导致用当前列值解密会失败(AAD/密钥不匹配)。依次尝试 [当前列值] +
@@ -383,12 +465,14 @@ def get_credential(user_id: int, api_id: str) -> dict[str, Any] | None:
             plaintext = decrypt_api_key(blob, user_id, _cand)
             if plaintext:
                 break
-        if not plaintext:
+        # 免鉴权凭据没有 key 是正常态,不能像 api_key 模式那样当成「解密失败」跳过。
+        if not plaintext and auth_mode != "none":
             continue
         _meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
         return {
             "api_id": canonical,
             "key": plaintext,
+            "auth_mode": auth_mode,
             "base_url_override": _normalize_openai_base_url(row.get("base_url_override") or ""),
             "proxy": (_meta or {}).get("proxy") or "",
         }
@@ -416,7 +500,14 @@ def resolve_api_key(user_id: int | None, api_id: str, env_fallback: str = "") ->
             cred = get_credential(user_id, api_id)
         if cred and cred.get("key"):
             # 读时也过一遍规整(补 Google /openai、剥 /chat/completions)→ 存量误填的凭据自愈,用户无需重存。
+            # 注:免鉴权(auth_mode='none')但用户仍填了 key 的,也走这条 —— key 照常发送。
             return {"key": cred["key"], "source": "user_db",
+                    "base_url_override": _normalize_openai_base_url(cred.get("base_url_override", "")),
+                    "proxy": cred.get("proxy", "")}
+        if cred and cred.get("auth_mode") == "none":
+            # 免鉴权端点且用户没填 key:这是**合法可用**状态,不能继续往下掉进 env 回退/none。
+            # source 单独标记,好让 GM 后端区分「用户明确说不需要 key」与「压根没配」。
+            return {"key": "", "source": "user_db_no_auth",
                     "base_url_override": _normalize_openai_base_url(cred.get("base_url_override", "")),
                     "proxy": cred.get("proxy", "")}
 

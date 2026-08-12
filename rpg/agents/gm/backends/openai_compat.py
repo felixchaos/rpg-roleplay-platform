@@ -142,7 +142,11 @@ class _OpenAICompatBackend:
                  user_id: int | None = None, api_id: str | None = None):
         from openai import OpenAI
 
-        from platform_app.user_credentials import resolve_api_key
+        from platform_app.user_credentials import (
+            resolve_api_key,
+            resolved_auth_token,
+            resolved_is_usable,
+        )
         # task: LLM 严格 BYOK — 生产模式拒绝平台 env fallback,防用户白嫖你的 OPENAI_API_KEY / DEEPSEEK_API_KEY 等
         try:
             from core.config import require_auth as _require_auth
@@ -151,11 +155,15 @@ class _OpenAICompatBackend:
             byok_only = True
         env_fb = "" if (byok_only and user_id) else env_key
         result = resolve_api_key(user_id, api_id or display_kind, env_fallback=env_fb)
-        key = result.get("key")
-        if not key:
+        # source='user_db_no_auth' = 用户在设置里显式把该 provider 标成「免鉴权(本地/自托管)」
+        # 且没填 key。这是合法可用状态,不是"没配"。判据是 source 而不是「key 为空」——
+        # 后者会把任何一个 key 被清空的托管 provider 悄悄放行,撞 401 才发现;
+        # 显式声明才放行,BYOK 墙对其余 provider 原样不动。
+        key = resolved_auth_token(result)
+        if not resolved_is_usable(result):
             raise ValueError(
                 f"{api_id or display_kind} 的 API Key 未配置。请在「设置 → API 设置」添加你自己的 API Key。"
-                "(测试服 LLM 调用必须 BYOK,平台不提供共享 key)"
+                "(测试服 LLM 调用必须 BYOK,平台不提供共享 key;本地/自托管模型可勾选「免 API Key」)"
             )
         # 用户覆盖了 base_url 的话优先用用户的
         effective_base = result.get("base_url_override") or base_url
@@ -181,6 +189,8 @@ class _OpenAICompatBackend:
         from core.outbound import safe_httpx_client
         from core.outbound_ua import openai_default_headers
         kwargs: dict[str, Any] = {
+            # key 已由 resolved_auth_token 归一:有 key 用 key,免鉴权用占位 token
+            # (绝不能是空串 —— openai SDK 对空串同样抛 Missing credentials,构造即崩)。
             "api_key": key,
             "timeout": httpx.Timeout(_read_to, connect=10.0),
             "default_headers": openai_default_headers(),

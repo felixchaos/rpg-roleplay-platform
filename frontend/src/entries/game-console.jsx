@@ -36,6 +36,7 @@ import '../mobile.css';
 import '../media.css';
 import { MobileGame } from '../mobile/game/MobileGame.jsx';
 import { safeUUID } from '../lib/crypto-safe.js';
+import { safeStructuredClone } from '../lib/clone-safe.js';
 import { LeftRail, TopBar, ChatArea, HistoryDrawer, SearchDrawer, GameToastStack, RunSteps, GameSettingsModal } from '../game-app.jsx';
 import { Composer, ConfirmStrip } from '../game-composer.jsx';
 import { RightPanel, PANEL_TABS } from '../game-panels.jsx';
@@ -207,7 +208,8 @@ function App() {
     turn: 0,
     history: [],
   };
-  const INITIAL_STATE = IS_ANON && window.MOCK_STATE ? structuredClone(window.MOCK_STATE) : structuredClone(EMPTY_STATE);
+  // 老 WebView 没有 structuredClone(Chrome 98+),而这行在组件初始化时就跑 —— 裸调即整页白屏。
+  const INITIAL_STATE = IS_ANON && window.MOCK_STATE ? safeStructuredClone(window.MOCK_STATE) : safeStructuredClone(EMPTY_STATE);
   const [game, setGame] = useState(INITIAL_STATE);
   const [history, setHistory] = useState(INITIAL_STATE.history || []);
   // acceptance A/B 改写候选(后端 `acceptance_alt` 事件):{alt_id, turn, rewrite, unmet}。null=无待选候选。

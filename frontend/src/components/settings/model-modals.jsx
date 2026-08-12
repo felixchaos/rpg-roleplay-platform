@@ -18,6 +18,7 @@ import CSFormField from '@cloudscape-design/components/form-field';
 import CSInput from '@cloudscape-design/components/input';
 import CSSelect from '@cloudscape-design/components/select';
 import CSColumnLayout from '@cloudscape-design/components/column-layout';
+import CSToggle from '@cloudscape-design/components/toggle';
 
 
 function AddModelModal({ open, api, onClose, onConfirm }) {
@@ -92,11 +93,12 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
   // 编辑时供应商固定,只改 base_url / key。key 写入后不回显。
   const CUSTOM = '__custom__';
   const [provider, setProvider] = useStatePL('');   // 选中的 provider id(新增用)
-  const [form, setForm] = useStatePL({ id: "", name: "", base_url: "", api_key: "", proxy: "direct", proxy_url: "" });
+  const [form, setForm] = useStatePL({ id: "", name: "", base_url: "", api_key: "", proxy: "direct", proxy_url: "", no_auth: false });
   React.useEffect(() => {
     if (!open) return;
-    if (isNew) { setProvider(''); setForm({ id: "", name: "", base_url: "", api_key: "", proxy: "direct", proxy_url: "" }); }
-    else if (api) { setProvider(api.id); setForm({ id: api.id, name: api.name, base_url: api.base_url, api_key: "", proxy: api.proxy || "direct", proxy_url: api.proxy_url || "" }); }
+    if (isNew) { setProvider(''); setForm({ id: "", name: "", base_url: "", api_key: "", proxy: "direct", proxy_url: "", no_auth: false }); }
+    // 编辑时回显免鉴权开关(auth_mode 由 list_credentials 带出),否则用户一保存就被重置成"要 Key"
+    else if (api) { setProvider(api.id); setForm({ id: api.id, name: api.name, base_url: api.base_url, api_key: "", proxy: api.proxy || "direct", proxy_url: api.proxy_url || "", no_auth: api.auth_mode === 'none' }); }
   }, [open, api, isNew]);
   if (!open) return null;
 
@@ -122,9 +124,12 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
       return !!(sa.client_email && sa.private_key && sa.project_id);
     } catch { return false; }
   })();
+  // 免鉴权模式:Key 不再是必填(这正是它存在的意义),但 base_url 反而**必须**有 ——
+  // 不指地址的「免 Key」没有任何含义,后端也会拒。
   const canSubmit = isAgentPlatform
     ? (!!form.id && !!form.name && (isNew ? _saJsonValid : true))
-    : (!!form.id && !!form.name && !!form.base_url && (isNew ? !!form.api_key.trim() : true));
+    : (!!form.id && !!form.name && !!form.base_url
+       && (isNew && !form.no_auth ? !!form.api_key.trim() : true));
 
   return (
     <CSModal
@@ -196,10 +201,27 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
                 <CSFormField label={t('settings.edit_api.base_url')}>
                   <CSInput value={form.base_url} onChange={({ detail }) => setForm((f) => ({ ...f, base_url: detail.value }))} placeholder="https://your-relay.example.com/v1" />
                 </CSFormField>
-                <CSFormField label={t('settings.edit_api.api_key')} description={api?.key_set ? t('settings.edit_api.api_key_desc_set', { hint: api.key_hint || t('settings.models.key_set_hint') }) : t('settings.edit_api.api_key_desc_new')}>
+                {/* 本地/自托管模型(Ollama / vLLM / llama.cpp / LM Studio)多数没有 API Key 概念。
+                    做成显式开关而不是「留空即免鉴权」:留空在本站的既有语义是「保留原 key」
+                    或「删除凭据」,再让它兼任「免鉴权」会三义混淆。勾上后 Key 变成可选 —— 填了
+                    照样发送(部分 vLLM/LM Studio 会校验任意 token)。 */}
+                <CSFormField description={t('settings.edit_api.no_auth_desc', { defaultValue: '本地模型(Ollama / vLLM / llama.cpp / LM Studio)通常不需要 Key。勾选后 Key 可留空;若你的服务设了 Key,照常填即可。' })}>
+                  <CSToggle checked={!!form.no_auth}
+                    onChange={({ detail }) => setForm((f) => ({ ...f, no_auth: detail.checked }))}>
+                    {t('settings.edit_api.no_auth', { defaultValue: '免 API Key(本地 / 自托管模型)' })}
+                  </CSToggle>
+                </CSFormField>
+                <CSFormField
+                  label={form.no_auth
+                    ? t('settings.edit_api.api_key_optional', { defaultValue: 'API Key(可选)' })
+                    : t('settings.edit_api.api_key')}
+                  description={api?.key_set ? t('settings.edit_api.api_key_desc_set', { hint: api.key_hint || t('settings.models.key_set_hint') }) : t('settings.edit_api.api_key_desc_new')}>
                   <CSInput type="password" value={form.api_key}
                     onChange={({ detail }) => setForm((f) => ({ ...f, api_key: detail.value }))}
-                    placeholder={api?.key_set ? t('settings.edit_api.api_key_placeholder_keep') : "sk-…"} autoComplete="new-password" />
+                    placeholder={form.no_auth
+                      ? t('settings.edit_api.api_key_placeholder_no_auth', { defaultValue: '留空即可(本地模型无需 Key)' })
+                      : (api?.key_set ? t('settings.edit_api.api_key_placeholder_keep') : "sk-…")}
+                    autoComplete="new-password" />
                 </CSFormField>
               </>
             )}

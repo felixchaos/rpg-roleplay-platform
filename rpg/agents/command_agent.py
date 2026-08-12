@@ -252,11 +252,15 @@ def _call_openai_compat_tools(
 ) -> list[dict]:
     """OpenAI 兼容 JSON mode。"""
     from model_registry import base_url_for
-    from platform_app.user_credentials import resolve_api_key
+    from platform_app.user_credentials import (
+        resolve_api_key,
+        resolved_auth_token,
+        resolved_is_usable,
+    )
     cred = resolve_api_key(user_id, api_id)
-    key = cred.get("key")
-    if not key:
+    if not resolved_is_usable(cred):
         raise RuntimeError(f"无 {api_id} 凭证 for command_agent")
+    key = resolved_auth_token(cred)   # 免鉴权 → 占位 token
     base_url = cred.get("base_url_override") or base_url_for(api_id)
     if not base_url:
         raise RuntimeError(f"未知 base_url for {api_id}")
