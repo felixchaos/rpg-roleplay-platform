@@ -9,6 +9,17 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.81.0] - 2026-08-12 (@ c99324789)
+
+### Added
+- **本地 / 自托管模型可以免 API Key 使用**(OSS PR #102 的诉求,龙杰 dragonjay-lyj 提):Ollama / vLLM / llama.cpp / LM Studio 这类端点只有一个 base_url、多数根本没有 API Key 概念,而全站「这个 provider 能不能用」的判定一律是 `length(encrypted_key) > 0` —— 于是地址配好了也永远算不可用。
+  - 做成**显式选项**(`auth_mode`,设置 → API 与模型的「免 API Key(本地 / 自托管模型)」开关),而不是 PR 里的隐式判定「空 key + base_url 即放行」:后者会让任何一个不小心被清空 key 的托管 provider 悄悄变成「可用」,一路走到 401 才发现。显式声明才放行,**BYOK 墙对其余 provider 一字不动**(无 key 仍是不可用 / 空 key 仍等价删除)。
+  - **key 与免 key 同时兼容**:勾选后 Key 变成可选,不填就走免鉴权,填了照常加密保存并在请求里发送(部分 vLLM / LM Studio 会校验一个任意 token)。免鉴权模式强制要求 base_url —— 不指地址的「免 Key」是残缺行,不是本地模型。
+  - 可用性判定收敛成**单一真相源**:SQL 侧 `CREDENTIAL_USABLE_SQL`、Python 侧 `credential_is_usable` / `resolved_is_usable` / `resolved_auth_token`。原先这个条件被抄在 `first_user_model` 两处查询 + 反馈环境快照里,加免鉴权时漏改任何一处,本地 provider 就会在那条路径上「半可用」(能选不能跑 / 能跑不上报)。加了守卫测试:生产代码里再出现手写的 `length(encrypted_key)>0` 就红。
+  - 一并打通配置链路:`model_probe`(校验连接 / 拉取模型)、子代理 harness、extractor、command_agent 都改用同一判据 —— 否则用户配好本地模型,一点「拉取模型」就被「未配置 key」挡回去。列表可见性改看 `configured` 而非 `has_key`,不然勾了免 Key 保存后 provider 会直接从列表里消失。
+  - **送进 OpenAI SDK 的 token 永不为空串**:实测 openai-python 2.41.1 对 `api_key=""` 与 `None` 一视同仁,直接抛 `OpenAIError("Missing credentials")`,在构造 client 时就崩、连请求都发不出去(PR #102 原文认为空串「即不发送 Authorization header」,与实测不符)。免鉴权统一用占位 token,Ollama / llama.cpp / 未开 `--api-key` 的 vLLM 都不校验它的值。
+  - migration 100 加 `user_api_credentials.auth_mode`(`api_key` 默认 / `none`),存量行语义不变。
+
 ## [1.80.1] - 2026-08-12 (@ 9e860b00e)
 
 ### Fixed

@@ -170,10 +170,11 @@ def _capture_feedback_env(user: dict | None, client_env: dict | None = None) -> 
     # 已配置(BYOK)的 provider 列表 + 是否完全没配 key
     try:
         from platform_app.db import connect as _connect
+        from platform_app.user_credentials import CREDENTIAL_USABLE_SQL as _USABLE
         with _connect() as _db:
             rows = _db.execute(
                 "select api_id from user_api_credentials "
-                "where user_id=%s and enabled=true and length(encrypted_key)>0",
+                f"where user_id=%s and enabled=true and {_USABLE}",
                 (int(uid),),
             ).fetchall()
         apis = [r["api_id"] for r in rows]

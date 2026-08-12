@@ -2332,6 +2332,24 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         end $$;
         """,
     ]),
+    (101, "user_api_credentials_auth_mode", [
+        # 本地/自托管模型(Ollama / vLLM / llama.cpp / LM Studio)只需要一个 base_url,
+        # 多数部署根本没有 API Key 概念。但全站「可用性」判定一律是「encrypted_key 非空」,
+        # 于是这类 provider 永远算不可用 —— 用户配好了地址也用不了(OSS PR #102 的诉求)。
+        #
+        # 这里用**显式选项**而不是「空 key 即放行」的隐式判定:后者会让任何一个不小心把 key
+        # 删空的托管 provider 悄悄变成「可用」,再撞上 401 才发现。auth_mode 让用户明确声明
+        # 「这个端点不需要鉴权」,BYOK 墙对其余 provider 保持原样(无 key = 不可用)。
+        #
+        #   'api_key'(默认,存量行语义不变)= 必须有非空 key 才算可用
+        #   'none'                        = 免鉴权端点;**key 仍可选填**,填了照样发送
+        #                                   (部分 vLLM/LM Studio 会校验一个任意 token)
+        # 免鉴权模式要求 base_url_override 非空 —— 不指地址的「免 key」没有意义。
+        "alter table user_api_credentials add column if not exists auth_mode text not null default 'api_key'",
+        "alter table user_api_credentials drop constraint if exists ck_user_api_creds_auth_mode",
+        "alter table user_api_credentials add constraint ck_user_api_creds_auth_mode "
+        "check (auth_mode in ('api_key', 'none'))",
+    ]),
 ]
 
 
