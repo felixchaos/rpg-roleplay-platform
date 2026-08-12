@@ -432,7 +432,8 @@ def _t_import_character_card(state: Any, args: dict) -> str:
         except Exception as exc:
             return f"失败: 读取上传文件失败: {exc}"
     try:
-        from platform_app import tavern_cards as _tc, user_cards as _uc
+        from platform_app import tavern_cards as _tc
+        from platform_app import user_cards as _uc
         low = fname.lower()
         if low.endswith(".png") or low.endswith(".webp"):
             v2 = _tc.parse_png_card(blob)
@@ -466,7 +467,8 @@ def _t_export_character_card(state: Any, args: dict) -> str:
     if not cid:
         return "失败: 当前对话没有绑定角色卡,无可导出"
     try:
-        from platform_app import tavern_cards as _tc, user_cards as _uc
+        from platform_app import tavern_cards as _tc
+        from platform_app import user_cards as _uc
         card = _uc.get_user_card(user_id, int(cid))
         if not card:
             return f"失败: 找不到角色卡 #{cid}"
@@ -567,9 +569,11 @@ def _t_import_attached_script(state: Any, args: dict) -> str:
     except Exception as exc:
         return f"失败: 读取上传文件失败: {exc}"
     try:
-        from platform_app import script_import as _si, import_pipeline as _ip
         # import_script 接受 file_item(base64) —— 复用其解码/清洗/切章/落库一条龙。
         import base64 as _b64
+
+        from platform_app import import_pipeline as _ip
+        from platform_app import script_import as _si
         file_item = {"name": fname, "base64": _b64.b64encode(raw).decode("ascii")}
         # scope=chapters: 只要切章,不触发知识流水线;通过先 split 再(可选)调度。
         # import_script 内部会自动 schedule_full_import;chapters 模式下我们随后取消它。

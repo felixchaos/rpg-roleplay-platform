@@ -40,8 +40,9 @@ class ProgressMotionSchemaParity(unittest.TestCase):
 
     def test_parity_system_prompt_also_declares_it(self):
         """provider fork parity:JSON-文本路径(system prompt)与原生 tool-use 路径必须同源。"""
-        from agents.recorder import _build_system_prompt
         import inspect
+
+        from agents.recorder import _build_system_prompt
         sig = inspect.signature(_build_system_prompt)
         # 尽量用最少必需参数调用;失败则回退到源码级断言
         try:

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import json
 
-from tools_dsl.command_dispatcher import ToolSpec, get_registry
 from tools_dsl._arg_guards import require_int_arg
+from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
 # Origins: console_assistant + ui_button + api_direct
 # (LLM free-chat should not spontaneously advance phases)

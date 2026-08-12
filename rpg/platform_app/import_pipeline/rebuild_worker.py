@@ -98,8 +98,8 @@ def _run_module_rebuild(
                 "update import_jobs set finished_at=now() where job_id=%s", (job_id,),
             )
     except Exception as exc:
-        import traceback as _tb
         import logging as _logging
+        import traceback as _tb
         _logging.getLogger(__name__).exception(
             "_run_module_rebuild %s failed: %s", job_id, exc,
         )
@@ -280,8 +280,9 @@ def _rebuild_anchors(ctl, user_id, script_id, body) -> dict:
 
 def _rebuild_embeddings(ctl, user_id, script_id, body) -> dict:
     includes = list(body.get("include") or ["chunks", "cards", "worldbook", "canon"])
-    from ..knowledge import embedding as _embed
     from extract.embed import embed_canon_entities
+
+    from ..knowledge import embedding as _embed
     counts = {}
     partial_failures = []
     # KB 卫生(设计 O §5.2):「重做」= 强制重嵌。先把被选类型的向量清成 NULL,再跑增量循环

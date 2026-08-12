@@ -21,7 +21,6 @@ import re as _re
 from pathlib import Path
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # 兼容 shim — script_import.py / api/scripts.py 仍在引用这些工具函数
 # （剧本 txt 上传管线用，非文件库手动上传）
@@ -112,7 +111,7 @@ def get_asset(user_id: int, asset_id: int) -> dict | None:
 def asset_download_path(user_id: int, asset_id: int):
     """返回 (asset_dict, Path)。资产不存在/不属于该用户 → ValueError。"""
     from . import assets_registry as _reg  # lazy import
-    from . import storage as _storage      # lazy import
+    from . import storage as _storage  # lazy import
 
     asset = _reg.get_asset(user_id, asset_id)
     if asset is None:

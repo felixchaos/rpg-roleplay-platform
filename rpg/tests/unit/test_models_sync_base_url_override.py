@@ -17,7 +17,6 @@ body / catalog 默认。与生成路径(openai_compat.py 早已 base_url_overrid
 """
 from __future__ import annotations
 
-import re
 import unittest
 from pathlib import Path
 

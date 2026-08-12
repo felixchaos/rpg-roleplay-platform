@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.81.1] - 2026-08-12 (@ 38bad1276)
+
+### Fixed
+- **每个动 `frontend/**` 的 PR 都收到 CI 失败邮件**(用户报「ci工作流报错,邮件都发到我这里了」):Lighthouse CI 从来就没跑通过 —— `frontend/.lighthouserc.json` 的 url 清单里还留着 `Overview.html`,那是**早已删除**的旧 Claude Design 原型入口(vite.config.js 的注释里写着已删)。lhci 每次请求它都 404 → `ERRORED_DOCUMENT_REQUEST` → 整个 job 失败。改成与 vite 多入口清单一致的四个真实页面(Platform / Game Console / Tavern / Login,空格 URL 编码)。
+  - 顺带去掉 `preset: lighthouse:no-pwa`:它把一批对「无后端静态构建」毫无意义的审计判成 error —— `errors-in-console`(页面在静态服务器上跑,API 全打不通必然报错)、`unused-javascript` / `unused-css-rules`(SPA 打包常态)、`valid-source-maps`(生产构建本就不出 map)、`meta-description` / `color-contrast` 等,合计每页 10 条硬失败。配置里作者自己写的四条断言(performance / LCP / INP / CLS)**全是 warn**,原意就是提示性能回归而不是卡合并。现在本地实测 `lhci autorun` 退出码 0、0 失败、12 条性能警告照常输出。
+
 ## [1.81.0] - 2026-08-12 (@ c99324789)
 
 ### Added

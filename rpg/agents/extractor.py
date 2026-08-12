@@ -36,8 +36,14 @@ import re
 
 from core.llm_backend import (
     DEFAULT_FALLBACK_API as _DEFAULT_FALLBACK_API,
+)
+from core.llm_backend import (
     DEFAULT_FALLBACK_MODEL as _DEFAULT_FALLBACK_MODEL,
+)
+from core.llm_backend import (
     resolve_preferred_api as _resolve_preferred_api_base,
+)
+from core.llm_backend import (
     resolve_preferred_model as _resolve_preferred_model_base,
 )
 from core.logging import get_logger
@@ -343,8 +349,9 @@ def _call_openai_compat_json_mode(
     if not resolved_is_usable(cred):
         raise RuntimeError(f"无 {api_id} 凭证可用于 extractor")
     cred = {**cred, "key": resolved_auth_token(cred)}   # 免鉴权 → 占位 token
-    import urllib.request
     import urllib.error
+    import urllib.request
+
     from core.outbound import safe_urlopen  # SSRF: 不跟随重定向 + use-time 重解析 pin IP
     base_url = cred.get("base_url_override") or _api_base_url(api_id)
     if not base_url:

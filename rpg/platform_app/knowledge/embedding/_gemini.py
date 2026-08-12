@@ -12,7 +12,6 @@ from typing import Any
 
 from ._base import EMBED_DIM, log
 
-
 # ---------------------------------------------------------------------------
 # 地区封禁自愈(2026-07-05 生产实证):Google AI Studio 从 2026-07-04 起把服务器
 # 机房 IP 整段封禁(400 "User location is not supported" / FAILED_PRECONDITION,
@@ -95,11 +94,12 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
     (TTL=_GEO_BAN_TTL),入口先查缓存,标记生效时直接跳过网络调用返 None
     (由上层继续尝试下一通道),避免每次检索都白撞一次注定失败的直连。
     """
-    import urllib.request
-    import urllib.error
     import json as _json
-    from core.outbound_ua import outbound_user_agent
+    import urllib.error
+    import urllib.request
+
     from core.outbound import safe_urlopen  # SSRF: 不跟随重定向 + use-time 重解析 pin IP
+    from core.outbound_ua import outbound_user_agent
 
     if not api_key:
         log.warning("[embedding] gemini api_id but no api_key")

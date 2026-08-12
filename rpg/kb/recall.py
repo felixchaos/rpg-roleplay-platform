@@ -330,8 +330,8 @@ def retrieve_fn_compat(query, *, state=None, user_id=None, script_id=None) -> st
 
     if shadow:
         try:
-            from kb.reveal import _shadow_diff_log
             from context_engine.core import _split_anchor_pending as _split  # 同上:家在 core
+            from kb.reveal import _shadow_diff_log
             _, old_body = _split(old_text)
             # S4:传【纯长度字符串】集合(无前缀),否则 old/new 永不相等、每回合误报 warning。
             _shadow_diff_log("recall body len",

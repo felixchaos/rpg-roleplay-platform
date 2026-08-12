@@ -12,10 +12,11 @@ from fastapi import Depends, File, Request, UploadFile
 from ...db import connect
 from ...perms import script_owned
 from .._deps import json_response, require_user, value_error_response
-from ._shared import router
+
 # 封面 MIME 魔数校验与 me._shared._detect_image_mime 逐字节相同(PNG/JPEG/WebP 同判、同
 # ValueError 文案)—— 收敛到单一真相源,本地保留 _detect_cover_mime 名(调用点零改动)。
 from ..me._shared import _detect_image_mime as _detect_cover_mime
+from ._shared import router
 
 _MAX_COVER_BYTES = 8 * 1024 * 1024  # 8 MB
 

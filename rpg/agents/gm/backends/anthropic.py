@@ -407,9 +407,9 @@ class _AnthropicBackend:
         - assistant + tool_result 消息装回历史的具体形态
         """
         sep = "__"  # server_id 与 tool_name 分隔符
+        from agents.gm.backends import _tiered
         from core.config import tiered_tools_enabled as _tiered_enabled
         from core.config import tool_window_size as _tool_window
-        from agents.gm.backends import _tiered
 
         def _mk(t):
             """unified tool → Anthropic tool 定义;缺 sid/name 返回 None。"""

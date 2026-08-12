@@ -8,7 +8,7 @@ from fastapi import Depends, Request
 
 from ...db import connect
 from .._deps import json_response, require_user
-from ._shared import router, _write_commit
+from ._shared import _write_commit, router
 
 # ─── fork ─────────────────────────────────────────────────────────────────────
 

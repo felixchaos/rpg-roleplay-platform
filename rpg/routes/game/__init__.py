@@ -31,13 +31,6 @@ from ._shared import (
     _sanitize_payload,
     router,
 )
-from .new import api_new
-from .opening import (
-    _RAIL_OPENING_INSTRUCTION,
-    _bridge_sync_generator_to_async,
-    _game_opening_policy,
-    api_opening,
-)
 from .chat import (
     _CATEGORY_ORDER,
     _LAYER_CATEGORY,
@@ -45,6 +38,13 @@ from .chat import (
     api_chat_estimate,
     api_context_breakdown,
     api_stop,
+)
+from .new import api_new
+from .opening import (
+    _RAIL_OPENING_INSTRUCTION,
+    _bridge_sync_generator_to_async,
+    _game_opening_policy,
+    api_opening,
 )
 from .saves import (
     _amend_history_message,

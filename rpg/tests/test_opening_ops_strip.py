@@ -10,7 +10,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from state import strip_json_state_ops, strip_leaked_scaffold, strip_meta_tool_preamble  # noqa: E402
+from state import (  # noqa: E402
+    strip_json_state_ops,
+    strip_leaked_scaffold,
+    strip_meta_tool_preamble,
+)
 
 
 def _opening_visible(raw: str) -> str:

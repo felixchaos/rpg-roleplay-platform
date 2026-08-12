@@ -9,16 +9,14 @@
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import os
 import random
 import string
 import sys
-import time
 import unittest
+from datetime import UTC
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -67,8 +65,8 @@ class TestSaveIdPersisted(unittest.TestCase):
 
     def test_save_id_written_to_ai_images(self):
         """enqueue 传 save_id='S123' → ai_images 该行 save_id=='S123'。"""
-        from platform_app.image_jobs import enqueue_image_generation
         from platform_app.db import connect
+        from platform_app.image_jobs import enqueue_image_generation
 
         result = enqueue_image_generation(
             self.uid,
@@ -97,8 +95,8 @@ class TestSaveIdPersisted(unittest.TestCase):
 
     def test_save_id_none_when_not_passed(self):
         """不传 save_id 时，ai_images 该行 save_id 为 NULL。"""
-        from platform_app.image_jobs import enqueue_image_generation
         from platform_app.db import connect
+        from platform_app.image_jobs import enqueue_image_generation
 
         result = enqueue_image_generation(
             self.uid,
@@ -216,8 +214,8 @@ class TestDailyQuota(unittest.TestCase):
 
     def test_quota_counts_pending_not_only_done(self):
         """配额计数包含 pending 状态（非 failed），即 pending 行也消耗配额。"""
-        from platform_app.image_jobs import enqueue_image_generation
         from platform_app.db import connect
+        from platform_app.image_jobs import enqueue_image_generation
 
         # 建一个全新用户确保隔离
         with connect() as db:
@@ -370,8 +368,10 @@ class TestCleanupOldChatImages(unittest.TestCase):
 
     def test_cleanup_selective_delete(self):
         """建旧/新/avatar图，cleanup(14天)后只删旧的 game/chat，保留其余。"""
-        from platform_app.api.images import create_image_record, update_image_record
-        from platform_app.api.images import cleanup_old_chat_images
+        from platform_app.api.images import (
+            cleanup_old_chat_images,
+            create_image_record,
+        )
         from platform_app.db import connect
 
         # 建 4 张图
@@ -445,7 +445,7 @@ class TestCleanupOldChatImages(unittest.TestCase):
 
     def test_cleanup_returns_zero_when_nothing_old(self):
         """没有超期图时，cleanup 返回 0。"""
-        from platform_app.api.images import create_image_record, cleanup_old_chat_images
+        from platform_app.api.images import cleanup_old_chat_images, create_image_record
 
         # 建一张近期图（不超期）
         create_image_record(
@@ -504,13 +504,13 @@ class TestGenerateEndpointQuota(unittest.TestCase):
 
             import hashlib
             import secrets as _sec
-            from datetime import datetime, timezone, timedelta
+            from datetime import datetime, timedelta
             with connect() as db:
                 cls.uid = _make_user(db)
                 # 建一个 session token（token_hash=sha256，cookie name=rpg_session）
                 tok = _sec.token_urlsafe(32)
                 tok_hash = hashlib.sha256(tok.encode()).hexdigest()
-                expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                expires_at = datetime.now(UTC) + timedelta(hours=1)
                 db.execute(
                     """
                     insert into sessions(user_id, token, token_hash, expires_at)

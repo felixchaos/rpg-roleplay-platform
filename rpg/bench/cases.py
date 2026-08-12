@@ -7,7 +7,8 @@ case = 一条真实"上下文→GM 回复"。从存档【活跃 commit 的 state
 from __future__ import annotations
 
 import json
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 
 def _load_canon_aliases(db, script_id: int | None) -> dict[str, list[str]]:

@@ -105,8 +105,8 @@ def test_story_phase_empty_body_retries_and_parse_lands(monkeypatch):
     锁「静默零结果无人发觉」的病根,并证明结果确实穿到解析+写库层。"""
     # patch-where-defined:_stage_story_phase_llm 定义在子模块 stages_llm,
     # 其 connect/_resolve_extractor_llm 补丁必须打在定义模块上。
-    from platform_app.import_pipeline import stages_llm as IP
     from platform_app import usage as USAGE
+    from platform_app.import_pipeline import stages_llm as IP
 
     budgets: list = []
     nothink: list = []

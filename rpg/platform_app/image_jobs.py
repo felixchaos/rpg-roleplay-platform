@@ -199,7 +199,7 @@ async def handle_image_gen(payload: dict[str, Any]) -> None:
     6. SSE emit image_ready
     7. attach 写回目标（如有）
     """
-    from platform_app.api.images import update_image_record, store_image
+    from platform_app.api.images import store_image, update_image_record
 
     image_id: int = int(payload.get("image_id") or 0)
     user_id: int = int(payload.get("user_id") or 0)

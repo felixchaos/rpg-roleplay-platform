@@ -21,7 +21,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Callable, Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -162,8 +163,11 @@ def stream_with_channel_fallback(
         try:
             from core.feature_flags import feature_enabled
             if feature_enabled("channel_fallback", user_id):
-                from agents.provider_errors import classify_provider_error  # noqa: F401 (口径同 _retryable_category)
                 import sys as _sys
+
+                from agents.provider_errors import (
+                    classify_provider_error,  # noqa: F401 (口径同 _retryable_category)
+                )
                 _exc = _sys.exc_info()[1]
                 if _retryable_category(_exc) is not None:
                     from core.channel_fallback import resolve_fallback_channel

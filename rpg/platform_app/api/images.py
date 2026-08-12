@@ -20,8 +20,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from ._deps import json_response, require_user
 from ..db import connect, init_db
+from ._deps import json_response, require_user
 
 router = APIRouter()
 

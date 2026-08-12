@@ -5,7 +5,7 @@ from fastapi import Depends, HTTPException, Request
 
 from ...db import connect, limit_value
 from .._deps import _client_ip, json_response
-from ._shared import router, _require_admin, _write_audit
+from ._shared import _require_admin, _write_audit, router
 
 
 @router.get("/api/admin/users")

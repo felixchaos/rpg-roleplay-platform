@@ -1,8 +1,8 @@
 """combat.py — 战斗初始化、攻击、回合推进。"""
 from __future__ import annotations
 
-from core.clock import now_iso
 import modules as module_registry
+from core.clock import now_iso
 from rules import RulesEngine, get_engine
 from rules_bridge.entity_sync import _entities_from_encounter
 

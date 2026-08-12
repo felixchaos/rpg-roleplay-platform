@@ -13,6 +13,7 @@ from ...perms import script_owned
 from .._deps import json_response, require_user
 from ._shared import router
 
+
 @router.get("/api/scripts/{script_id}/search")
 async def api_script_search(script_id: int, q: str = "", regex: bool = False,
                             chapter_min: int | None = None, chapter_max: int | None = None,

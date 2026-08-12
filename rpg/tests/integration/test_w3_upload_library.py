@@ -25,7 +25,7 @@ import string
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -64,7 +64,7 @@ def _make_session(db, user_id: int) -> str:
     """建 session，返回 raw token（用于 Cookie: rpg_session=<token>）。"""
     tok = secrets.token_urlsafe(32)
     tok_hash = hashlib.sha256(tok.encode()).hexdigest()
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=2)
+    expires_at = datetime.now(UTC) + timedelta(hours=2)
     db.execute(
         """
         insert into sessions(user_id, token, token_hash, expires_at)
@@ -109,6 +109,7 @@ def _build_client():
     from platform_app.db import connect, init_db
     init_db()
     from starlette.testclient import TestClient
+
     import app as _app_module
     client = TestClient(_app_module.app, raise_server_exceptions=False)
     return client, connect

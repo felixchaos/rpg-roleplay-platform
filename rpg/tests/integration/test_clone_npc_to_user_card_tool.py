@@ -112,8 +112,8 @@ class TestCloneNpcToUserCardTool(unittest.TestCase):
 
     def test_origin_policy(self):
         """控制台助手退役后放开酒馆/游戏 agent:console_assistant 与 llm_chat 都可见。"""
-        from tools_dsl.command_tools_register import ensure_registered
         from tools_dsl.command_dispatcher import get_registry
+        from tools_dsl.command_tools_register import ensure_registered
         ensure_registered()
         reg = get_registry()
         self.assertTrue(reg.has("clone_npc_to_user_card"))

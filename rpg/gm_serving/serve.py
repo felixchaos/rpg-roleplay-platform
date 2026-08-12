@@ -29,8 +29,8 @@ def assemble_gm_context(db, *, save_id: int, user_id: int, user_input: str = "",
     """
     from gm_serving import context_inject as CI
     from gm_serving import impact as IM
-    from gm_serving import steering as ST
     from gm_serving import settings as _set
+    from gm_serving import steering as ST
     from tools_dsl.command_tools_kb import _save_ctx
 
     ctx = _save_ctx(db, save_id, user_id)

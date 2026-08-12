@@ -23,8 +23,8 @@ from . import rules as _rules  # noqa: F401
 from . import runtime_phase_digests as _rpd  # noqa: F401
 from . import script_phase_anticipation as _spa  # noqa: F401
 from . import tavern as _tavern  # noqa: F401
-from . import worldline as _worldline  # noqa: F401
 from . import world_pulse as _world_pulse  # noqa: F401
+from . import worldline as _worldline  # noqa: F401
 from .base import (
     ContextContribution,
     ContextProvider,

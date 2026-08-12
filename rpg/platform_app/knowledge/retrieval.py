@@ -3,9 +3,9 @@ from __future__ import annotations
 from platform_app import runtime
 from platform_app.db import connect, init_db
 from platform_app.knowledge._pin import effective_kb_script_id
-from platform_app.perms import owns_save
 from platform_app.knowledge._search import _search_chunks, _search_entities
 from platform_app.knowledge._utils import _query_tokens
+from platform_app.perms import owns_save
 
 
 def retrieve_runtime_context(

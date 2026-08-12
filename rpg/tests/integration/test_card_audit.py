@@ -55,6 +55,7 @@ class CardAuditIntegration(unittest.TestCase):
 
     def test_merge_protagonist_drop(self):
         import json
+
         from platform_app.db import connect
         uid, sid, ids = self._setup()
         verdict = {
@@ -110,6 +111,7 @@ class CardAuditIntegration(unittest.TestCase):
     def test_invalid_ids_ignored(self):
         """LLM 编造不存在的 id → 保守忽略,不误删/误并。"""
         import json
+
         from platform_app.db import connect
         uid, sid, ids = self._setup()
         self._patch_llm(json.dumps({

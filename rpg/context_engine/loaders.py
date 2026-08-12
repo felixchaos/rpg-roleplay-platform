@@ -183,8 +183,8 @@ def _load_worldbook_db(script_id: int | None, book_id: int | None,
         params.append(int(book_id))
     base_where, base_params = list(where_clauses), list(params)  # 门控之前(影子比对用)
 
-    from kb.reveal import (_frontier_on, _frontier_shadow, _shadow_diff_log,
-                           derived_progress_chapter as _dpc, reveal_clause_v2)
+    from kb.reveal import _frontier_on, _frontier_shadow, _shadow_diff_log, reveal_clause_v2
+    from kb.reveal import derived_progress_chapter as _dpc
     m = (mode or "omniscient").lower()
     use_v2 = save_id is not None and _frontier_on(save_id) and m != "omniscient"
     _wprog = _dpc(int(save_id)) if use_v2 else None  # 世界书无 progress 入参 → 按已到达锚点派生

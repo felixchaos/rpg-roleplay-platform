@@ -23,9 +23,10 @@ from .extract import _t_delegate_writing_task
 from .npc_cards import _t_create_npc_card, _t_update_npc_card
 from .worldbook import (
     _t_delete_worldbook_entry,
-    _t_upsert_worldbook_entry,
     _t_upsert_worldbook_entries,
+    _t_upsert_worldbook_entry,
 )
+
 
 def _write_entity_crud_specs() -> list:
     return [

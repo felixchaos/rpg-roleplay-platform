@@ -12,7 +12,6 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from state import (
-    GameState,
     StreamFenceGuard,
     strip_json_state_ops,
     strip_leaked_scaffold,
@@ -45,7 +44,6 @@ from .postproc import (
     _run_anchor_reconcile,
     _run_post_gm_parallel,
 )
-
 
 # W1 容量优化: RPG_POSTPROC_MODE=async (默认) → GM 流完即入队 Phase 4, 不阻塞 worker。
 # RPG_POSTPROC_MODE=sync → 旧行为 (后处理阻塞主路径, 测试/debug 用)。

@@ -12,7 +12,6 @@ from pathlib import Path
 
 from ._common import DB_PATH, FACT_DB, SUM_IDX
 
-
 # 旧版默认剧本的本地角色索引已停用；运行期角色卡/世界书走数据库按 script_id scope 读取。
 _CHAR_ALIASES: dict[str, str] = {}   # lazy-loaded
 

@@ -8,8 +8,7 @@ Priority (high→low):
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
+from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -138,7 +137,6 @@ class TestGMModelResolution:
 
 def test_smoke_ensure_loaded_uses_pref(monkeypatch):
     """Smoke: patch DB helpers so _ensure_loaded 走 pref 分支返回 pref 模型."""
-    import importlib
     import sys
 
     # Stub heavy dependencies before importing app

@@ -26,8 +26,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from psycopg.types.json import Jsonb
 
+from extract.resolve import _is_generic_referent, _norm_name, _to_simplified
 from platform_app.db import connect
-from extract.resolve import _to_simplified, _is_generic_referent, _norm_name
 
 
 def clean_aliases(aliases, sid, own_norm, prim_norm_by_sid):

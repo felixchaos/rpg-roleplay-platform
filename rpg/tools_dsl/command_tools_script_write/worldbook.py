@@ -11,6 +11,7 @@ from typing import Any
 
 from ._helpers import _resolve_sid, _strlist, _user_can_read_script
 
+
 def _t_list_worldbook_entries(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
     """紧凑列出剧本世界书条目(供 rule 4 定位现有 entry_id 去更新)。
 
@@ -44,6 +45,7 @@ def _wb_upsert_one(db: Any, sid: int, user_id: int, args: dict) -> dict:
     """单条世界书 create/update 核心:在已开连接 + 已过 owner 闸内执行,**不 commit**(由调用方提交)。
     返回 {ok, id, action:'created'|'updated', title, error}。供单条工具与批量工具共用同一代码路径。"""
     from psycopg.types.json import Jsonb
+
     from platform_app.api.script_edit import _write_commit
     entry_id = args.get("entry_id")
     title = args.get("title")

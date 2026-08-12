@@ -175,6 +175,7 @@ class NpcCardsSearchGroup(_SearchBase):
     def setUpClass(cls):
         super().setUpClass()
         from psycopg.types.json import Jsonb
+
         from platform_app.db import connect
         with connect() as db:
             db.execute(

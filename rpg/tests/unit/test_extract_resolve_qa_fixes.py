@@ -119,5 +119,6 @@ def test_rc1_only_touches_characters():
 
 if __name__ == "__main__":
     import sys
+
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

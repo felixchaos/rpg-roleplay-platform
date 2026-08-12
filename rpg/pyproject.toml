@@ -1,6 +1,6 @@
 [project]
 name = "rpg"
-version = "1.81.0"
+version = "1.81.1"
 description = "RPG roleplay backend — FastAPI + Postgres + Anthropic/Vertex AI"
 requires-python = ">=3.11"
 dependencies = [
@@ -58,13 +58,17 @@ python_version = "3.11"
 warn_unused_ignores = true
 warn_redundant_casts = true
 ignore_missing_imports = true
+# 渐进式类型收紧路线:
+#   1. ✅ check_untyped_defs=true — 检查无注解函数体内的类型错误(无需改签名)
+#   2. 🔜 移除 no-untyped-def — 强制函数签名注解(下一阶段)
+#   3. 🔜 逐步减少 per-module overrides 列表
+check_untyped_defs = true
 disable_error_code = [
     "import-untyped",
     "no-untyped-def",
     "no-untyped-call",
     "var-annotated",
     "no-any-return",
-    "annotation-unchecked",
 ]
 exclude = [
     "claude_design_upload",

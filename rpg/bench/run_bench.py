@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import psycopg
 from psycopg.rows import dict_row
 
-from bench.cases import select_save_ids, iter_cases
+from bench.cases import iter_cases, select_save_ids
 from bench.runner import run_scorecard
 
 

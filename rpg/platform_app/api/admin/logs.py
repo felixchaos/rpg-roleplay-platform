@@ -6,7 +6,7 @@ import os
 from fastapi import Depends
 
 from .._deps import json_response
-from ._shared import router, _require_admin, log
+from ._shared import _require_admin, log, router
 
 
 @router.get("/api/admin/logs")
@@ -20,7 +20,7 @@ async def admin_logs(
 
     if log_file and os.path.isfile(log_file):
         try:
-            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+            with open(log_file, encoding="utf-8", errors="replace") as f:
                 all_lines = f.readlines()
             # read last lines*3 to filter, then take last `lines`
             tail = all_lines[-(lines * 3):]

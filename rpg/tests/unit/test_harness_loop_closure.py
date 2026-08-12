@@ -26,13 +26,6 @@ if str(REPO) not in sys.path:
 
 os.environ.setdefault("RPG_REQUIRE_AUTH", "0")
 
-from state import DEFAULT_STATE, GameState  # noqa: E402
-from tools_dsl.command_dispatcher import (  # noqa: E402
-    ToolCallEnvelope,
-    ToolDispatcher,
-    get_registry,
-)
-from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
 from platform_app import import_pipeline as ip  # noqa: E402
 
 # 拆包后 patch-where-defined:wait_for_import_job 定义在子模块 runner,它内部调的
@@ -40,6 +33,13 @@ from platform_app import import_pipeline as ip  # noqa: E402
 # 本文件其余 patch.object(ip, ...)(schedule_module_rebuild/wait_for_import_job/cancel_job)
 # 拦的是 tools_dsl 经门面属性的外部调用,维持打门面不变。
 from platform_app.import_pipeline import runner as ip_runner  # noqa: E402
+from state import DEFAULT_STATE, GameState  # noqa: E402
+from tools_dsl.command_dispatcher import (  # noqa: E402
+    ToolCallEnvelope,
+    ToolDispatcher,
+    get_registry,
+)
+from tools_dsl.command_tools_register import force_reset_for_tests  # noqa: E402
 
 
 def _new_state(turn=3) -> GameState:

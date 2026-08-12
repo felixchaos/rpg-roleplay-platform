@@ -29,7 +29,6 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from core.logging import get_logger
-
 from state import SAVE_FILE
 from state.core import _extract_secret_sections, _strip_secret_sections
 
@@ -38,6 +37,12 @@ from ..db import connect, cursor_id, expose, init_db, limit_value, page_payload
 from ..db import status as db_status
 from ..perms import script_readable
 from ..security import public_user
+from .creation import (
+    _ingest_character_book,
+    _seed_kb_at_creation,
+    create_save,
+    create_tavern_save,
+)
 
 # —— 子模块全部顶层名 re-export(生产引用面零改动)——
 from .listing import (
@@ -67,12 +72,6 @@ from .snapshot import (
     _has_opening_meta,
     _is_doc_title_only,
     _scrub_berlin_default,
-)
-from .creation import (
-    _ingest_character_book,
-    _seed_kb_at_creation,
-    create_save,
-    create_tavern_save,
 )
 
 log = get_logger(__name__)

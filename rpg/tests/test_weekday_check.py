@@ -12,6 +12,8 @@ if str(REPO) not in sys.path:
 
 from agents.timeline_narrative_guard import (  # noqa: E402
     detect_weekday_violations as chk,
+)
+from agents.timeline_narrative_guard import (
     parse_today_weekday as today,
 )
 

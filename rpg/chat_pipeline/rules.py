@@ -9,8 +9,7 @@ from typing import Any
 
 from state import GameState
 
-from ._common import PipelineContext, SSEEvent, _sync_active_entities_from_bundle, log
-
+from ._common import PipelineContext, SSEEvent, _sync_active_entities_from_bundle
 
 # ---------------------------------------------------------------------------
 # Phase 3: 5E rules preflight (GamePolicy.preflight + combat gate)

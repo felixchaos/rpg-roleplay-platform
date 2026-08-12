@@ -30,6 +30,8 @@ from typing import Any
 from core.json_parse import parse_llm_json
 from core.llm_backend import (
     DEFAULT_FALLBACK_API as _DEFAULT_FALLBACK_API,
+)
+from core.llm_backend import (
     DEFAULT_FALLBACK_MODEL as _DEFAULT_FALLBACK_MODEL,
 )
 from core.logging import get_logger

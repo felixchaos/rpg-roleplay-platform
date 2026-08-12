@@ -23,7 +23,7 @@ if str(PROJECT) not in sys.path:
 import httpx
 from openai import BadRequestError
 
-from agents.gm.backends.openai_compat import _OpenAICompatBackend, _is_temperature_rejected
+from agents.gm.backends.openai_compat import _is_temperature_rejected, _OpenAICompatBackend
 
 
 def _temp_400() -> BadRequestError:

@@ -5,8 +5,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from platform_app.api._deps import json_response
 
+from platform_app.api._deps import json_response
 from routes._deps_fastapi import get_current_admin, get_current_user
 from schemas._common import COMMON_ERROR_RESPONSES, ErrorResponse, GenericOkResponse
 from schemas.models import (
@@ -109,7 +109,7 @@ def _inject_capabilities(catalog: dict[str, Any]) -> dict[str, Any]:
 async def api_models(
     api_user: dict[str, Any] | None = Depends(get_current_user),
 ) -> JSONResponse:
-    from app import _redact_catalog, selected_model, _resolve_effective_model_view
+    from app import _redact_catalog, _resolve_effective_model_view, selected_model
     from model_registry import load_catalog_for_user
     # 安全:每用户视图 = 全局菜单 + 该用户私有 overlay(同步模型 / 自建中转站)。
     _uid = int(api_user["id"]) if api_user and api_user.get("id") else None
@@ -147,8 +147,8 @@ async def api_models_health_refresh_all(
     """
     import threading
 
-    from app import _check_probe_permission, load_model_catalog
     import model_probe
+    from app import _check_probe_permission, load_model_catalog
 
     body = {}
     try:
@@ -298,8 +298,9 @@ async def api_models_select(
         from fastapi import HTTPException
         raise HTTPException(status_code=401, detail="未登录")
     try:
-        from platform_app.db import connect as _connect
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect as _connect
         with _connect() as db:
             row = db.execute(
                 "select preferences from user_preferences where user_id = %s",
@@ -406,12 +407,16 @@ async def api_models_remote_sync(
     写 user_model_entries(每用户隔离),只在该用户自己的 catalog 视图里 merge。
     全局菜单只有 admin 能改(/api/models/api)。
     """
+    import model_probe
     from app import _check_probe_permission
     from model_registry import (
-        default_api_for, find_api, load_catalog_for_user, load_model_catalog, normalize_api_id,
+        default_api_for,
+        find_api,
+        load_catalog_for_user,
+        load_model_catalog,
+        normalize_api_id,
     )
     from platform_app import user_models
-    import model_probe
 
     user_id = int(api_user["id"]) if api_user and api_user.get("id") else None
     if not user_id:

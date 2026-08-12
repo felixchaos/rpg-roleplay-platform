@@ -5,24 +5,24 @@ from fastapi import APIRouter
 router = APIRouter()
 
 # sub-router 必须先 import,然后 include
+from .admin import router as _admin_router
 from .auth import router as _auth_router
+from .federation import router as _federation_router
+from .feedback import router as _feedback_router
+from .images import router as _images_router
 from .imports import router as _imports_router
 from .library import router as _library_router
+from .local_account import router as _local_account_router
 from .me import router as _me_router
 from .platform import router as _platform_router
-from .saves import router as _saves_router
-from .scripts import router as _scripts_router
-from .script_edit import router as _script_edit_router
-from .settings import router as _settings_router
-from .worldline_memory import router as _wm_router
-from .admin import router as _admin_router
-from .splash import router as _splash_router
-from .feedback import router as _feedback_router
-from .local_account import router as _local_account_router
 from .policy import router as _policy_router
-from .federation import router as _federation_router
-from .images import router as _images_router
+from .saves import router as _saves_router
+from .script_edit import router as _script_edit_router
+from .scripts import router as _scripts_router
+from .settings import router as _settings_router
+from .splash import router as _splash_router
 from .storage_routes import router as _storage_router
+from .worldline_memory import router as _wm_router
 
 router.include_router(_auth_router)
 router.include_router(_platform_router)

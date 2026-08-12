@@ -17,7 +17,6 @@ from ..api import json_response, require_user
 from ..db import connect, init_db
 
 # 头像落盘统一走 storage 模块（S1 基座）
-from ..storage import AVATARS_DIR as _AVATARS_DIR
 from ..storage import resolve_path as _storage_resolve_path
 from ..storage import store_bytes as _storage_store_bytes
 from ._shared import _bad, router

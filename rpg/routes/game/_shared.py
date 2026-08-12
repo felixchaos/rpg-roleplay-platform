@@ -12,12 +12,11 @@ _note_channel_health_failure 被多个子模块(new/opening/chat/saves)共用,�
 """
 from __future__ import annotations
 
+import logging as _logging
+import secrets as _secrets
 from typing import Any
 
 from fastapi import APIRouter
-
-import logging as _logging
-import secrets as _secrets
 
 _log = _logging.getLogger(__name__)
 

@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import random
 import string
@@ -19,7 +18,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -93,8 +92,12 @@ class TestHookTriggersOnChange(unittest.TestCase):
 
     def test_hook_triggers_when_hash_changes_and_auto_sync_on(self):
         """upsert persona(auto_image_sync=true) → 改 appearance → 再 upsert → job 入队 + hash 更新。"""
-        from platform_app.user_cards import upsert_persona, set_auto_image_sync, compute_persona_hash
         from platform_app.db import connect
+        from platform_app.user_cards import (
+            compute_persona_hash,
+            set_auto_image_sync,
+            upsert_persona,
+        )
 
         # 第1次 upsert：建卡（初始 hash 从默认 '' 变为真实 hash，会触发钩子）
         # 为精确控制：先建卡（关闭 auto_sync），再开启 auto_sync，再改内容 upsert
@@ -179,8 +182,8 @@ class TestHookNoTriggerWhenSyncOff(unittest.TestCase):
 
     def test_no_job_when_auto_sync_false(self):
         """auto_image_sync=false 时改字段 upsert → hash 变、job 数不增。"""
-        from platform_app.user_cards import upsert_persona, compute_persona_hash
         from platform_app.db import connect
+        from platform_app.user_cards import compute_persona_hash, upsert_persona
 
         # 建卡，auto_sync 默认 false
         card = upsert_persona(self.uid, {
@@ -265,8 +268,8 @@ class TestHookNoTriggerOnSameContent(unittest.TestCase):
 
     def test_no_job_when_content_unchanged(self):
         """相同内容第2次 upsert → job 数不增（hash 未变不触发钩子）。"""
-        from platform_app.user_cards import upsert_persona, set_auto_image_sync
         from platform_app.db import connect
+        from platform_app.user_cards import set_auto_image_sync, upsert_persona
 
         # 建卡（auto_sync=false 时建，再开启，避免首次 upsert 建 job）
         persona_data = {
@@ -453,7 +456,7 @@ class TestWorkerPersonaImageIsCurrentFlip(unittest.TestCase):
         self.assertIsNotNone(old_row,
                              f"旧行 id={self.__class__._img_id_1} 应存在且 is_current=false")
         self.assertFalse(bool(old_row["is_current"]),
-                         f"旧行 is_current 应为 false")
+                         "旧行 is_current 应为 false")
         # avatar_path 更新为 url2
         self.assertEqual(card_row["avatar_path"], url2,
                          f"avatar_path 应更新为 {url2!r}，实际={card_row['avatar_path']!r}")
@@ -606,8 +609,8 @@ class TestSetCurrentPersonaImage(unittest.TestCase):
 
     @staticmethod
     def _run_worker_static(uid, card_id, fake_png, h):
-        from platform_app.image_jobs import enqueue_image_generation, handle_image_gen
         from platform_app.db import connect
+        from platform_app.image_jobs import enqueue_image_generation, handle_image_gen
         result = enqueue_image_generation(
             uid, prompt=f"setcur {h}", kind="persona",
             api_id="doubao", model="m",
@@ -656,8 +659,8 @@ class TestSetCurrentPersonaImage(unittest.TestCase):
 
     def test_set_current_rollback_to_first_image(self):
         """把第1张（旧）设为 current → 该图 is_current=true、第2张 false、avatar_path 更新。"""
-        from platform_app.image_jobs import set_current_persona_image
         from platform_app.db import connect
+        from platform_app.image_jobs import set_current_persona_image
 
         # 执行回滚：把第1张设为 current
         result = set_current_persona_image(self.uid_owner, self.card_id, self.img_id_1)

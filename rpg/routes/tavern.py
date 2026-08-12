@@ -569,6 +569,7 @@ async def api_tavern_ai_reply(
     """AI 帮回:以【玩家自己的角色 / persona】生成一条符合上下文的回复,返回文本供前端填入输入框。
     不入库、不发送(玩家可改后再发)。复用用户 BYOK 模型(同 autotitle 的 _get_gm 路径)。"""
     import json as _j
+
     from platform_app.db import connect, init_db
 
     user_id = _uid(api_user)
@@ -617,9 +618,9 @@ async def api_tavern_ai_reply(
         f"现在请以 {player_name} 的身份,写一条回应 {char_name} 最后这段话的回复。"
     )
     try:
-        from app import _get_gm
         # 结构化微任务禁深思(268 实锤族)+空正文护栏
         from agents._harness import call_agent_json_guarded
+        from app import _get_gm
         gm = _get_gm(api_user)
         api_id = getattr(gm, "api_id", None)
         backend = getattr(gm, "_backend", None)
@@ -695,6 +696,7 @@ async def api_tavern_autotitle(
 ) -> JSONResponse:
     """类 Claude:按对话内容自动生成标题。幂等 —— 仅当 title 仍为空(未被用户改名或上次生成)时才生成。"""
     import json as _j
+
     from platform_app.db import connect, init_db
 
     user_id = _uid(api_user)
@@ -722,9 +724,9 @@ async def api_tavern_autotitle(
         return _json({"ok": True, "title": None, "skipped": "too_short"})
     excerpt = f"玩家:{str(user_msg)[:500]}\n回应:{str(asst_msg)[:500]}"
     try:
-        from app import _get_gm
         # 结构化微任务禁深思(268 实锤族)+空正文护栏
         from agents._harness import call_agent_json_guarded
+        from app import _get_gm
         gm = _get_gm(api_user)
         api_id = getattr(gm, "api_id", None)
         backend = getattr(gm, "_backend", None)

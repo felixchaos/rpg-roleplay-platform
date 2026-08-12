@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from unittest import mock
 
 from platform_app.knowledge import embedding
+
 # 拆包后 _embed_chunks_loop / _embed_chunks_loop_inner 及其依赖 _resolve_embed_config /
 # _embed_batch 住 embedding._writer;patch-where-defined:loop 内部按 _writer 命名空间解析。
 # (embedding.time 仍是共享 time 模块,patch time.sleep 对 _writer 生效,无需重定向。)

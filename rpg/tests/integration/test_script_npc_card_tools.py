@@ -110,8 +110,8 @@ class TestScriptNpcCardTools(unittest.TestCase):
         self.assertIn("card_id 必填", out)
 
     def test_tools_registered_and_visible_to_llm_chat(self):
-        from tools_dsl.command_tools_register import ensure_registered
         from tools_dsl.command_dispatcher import get_registry
+        from tools_dsl.command_tools_register import ensure_registered
         ensure_registered()
         reg = get_registry()
         self.assertTrue(reg.has("list_script_npcs"))
