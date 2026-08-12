@@ -74,8 +74,14 @@ function ModelsSection() {
     const credMap = {};
     for (const c of (creds?.items || creds?.credentials || [])) {
       const cid = normalizeApiId(c.api_id || c.id);
+      const _hasKey = !!c.has_credential || !!c.has_key || !!c.key_hint;
       credMap[cid] = {
-        has_key: !!c.has_credential || !!c.has_key || !!c.key_hint,
+        has_key: _hasKey,
+        auth_mode: c.auth_mode || 'api_key',
+        // configured = 「这条凭据算配好了」。免鉴权(本地/自托管)凭据没有 key,若继续用
+        // has_key 当可见性判据,用户勾了「免 API Key」保存后 provider 会**直接从列表消失**。
+        // 后端 list_credentials 已给出同名字段,这里兜底再算一次(老后端没有该字段时不至于全空)。
+        configured: (c.configured != null) ? !!c.configured : (_hasKey || c.auth_mode === 'none'),
         key_hint: c.key_hint || "",
         enabled: c.enabled !== false,
         base_url_override: c.base_url_override || "",
@@ -97,6 +103,8 @@ function ModelsSection() {
         // 清掉(与生成/同步实际所用一致)③ 同步模型时 body 也带上正确地址。
         base_url: cred.base_url_override || api.base_url || "",
         key_set: !!cred.has_key,
+        auth_mode: cred.auth_mode || 'api_key',
+        configured: !!cred.configured,
         key_hint: cred.key_hint || t('settings.models.key_set_hint'),
         status: cred.enabled === false ? "disabled" : "configured",
         connectivity: { status: "untested" },
@@ -105,15 +113,17 @@ function ModelsSection() {
         proxy: cred.proxy_url ? "http_proxy" : "direct",
         models: (api.models || api.entries || []).map(mapModel),
       };
-    }).filter(api => api.key_set) : [];
+      // 可见性按 configured 而非 key_set —— 免鉴权 provider 没 key 但确实配好了。
+    }).filter(api => api.configured) : [];
     // 中转站: 把不在全局 catalog 里的用户自定义凭证(带 base_url)合成为 provider 行,
     // 否则保存后在列表里看不到、无法选模型。models=[] 由用户点同步从中转站拉取。
     const catalogIds = new Set((Array.isArray(list) ? list : []).map(a => normalizeApiId(catalogApiIdForCredential(a.api_id || a.id))));
     const customRows = Object.entries(credMap)
-      .filter(([cid, c]) => c.has_key && c.base_url_override && !catalogIds.has(normalizeApiId(cid)))
+      .filter(([cid, c]) => c.configured && c.base_url_override && !catalogIds.has(normalizeApiId(cid)))
       .map(([cid, c]) => ({
         id: cid, credential_id: cid, name: cid,
-        base_url: c.base_url_override, key_set: true, key_hint: c.key_hint || '',
+        base_url: c.base_url_override, key_set: !!c.has_key, key_hint: c.key_hint || '',
+        auth_mode: c.auth_mode || 'api_key', configured: true,
         status: c.enabled === false ? "disabled" : "configured",
         connectivity: { status: "untested" }, enabled: c.enabled !== false,
         proxy_url: c.proxy_url || "",
@@ -440,12 +450,16 @@ function ModelsSection() {
             // key 从不回显:「编辑」只改接口地址、不重填 key 时,base_url 也必须落库。
             // 否则改 URL 保存后毫无变化(必须删 key 重填才生效)——这正是本次上报的 bug。
             const baseUrlChanged = !addingApi && existing && ((payload.base_url || '') !== (existing.base_url || ''));
-            if (keyProvided) {
+            // 免鉴权(本地/自托管)= 显式选项:即使一个字符的 key 都没填也必须落库,
+            // 否则「勾了免 Key + 填了地址」保存后什么都没发生(和不勾一模一样)。
+            const noAuth = !!payload.no_auth;
+            if (keyProvided || noAuth) {
               try {
                 await window.api.credentials.set({
-                  api_id: credentialId, api_key: payload.api_key.trim(),
+                  api_id: credentialId, api_key: keyProvided ? payload.api_key.trim() : '',
                   base_url_override: payload.base_url || '',
                   proxy: payload.proxy === 'http_proxy' ? (payload.proxy_url || '').trim() : '',
+                  no_auth: noAuth,
                 });
               } catch (e) {
                 window.__apiToast?.(t('settings.edit_api.key_save_fail'), { kind: "warn", detail: e?.message, duration: 4000 });

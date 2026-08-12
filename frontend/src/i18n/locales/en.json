@@ -137,6 +137,10 @@
       "api_key_desc_set": "Current: •••• {{hint}} (leave blank to keep existing)",
       "api_key_desc_new": "Encrypted at rest; never shown again after saving",
       "api_key_placeholder_keep": "Leave blank to keep current key",
+      "no_auth": "No API key (local / self-hosted model)",
+      "no_auth_desc": "Local models (Ollama / vLLM / llama.cpp / LM Studio) usually need no key. With this on the key may be left blank; if your server does require one, just fill it in.",
+      "api_key_optional": "API Key (optional)",
+      "api_key_placeholder_no_auth": "Leave blank (local models need no key)",
       "connection": "Connection",
       "direct": "Direct",
       "http_proxy": "HTTP Proxy",
@@ -3896,6 +3900,7 @@
       "last_job": "Last job"
     },
     "banner": {
+      "cancelling": "Cancelling…",
       "failed": "Rebuild failed",
       "failed_detail": "Job ID available in backend logs",
       "running": "Rebuilding"
@@ -3915,6 +3920,8 @@
       "confirm_llm": "Confirm rebuild (uses LLM)"
     },
     "toast": {
+      "cancel_requested": "Cancellation requested — finishing the current chapter/entry",
+      "cancel_fail": "Cancel request failed",
       "dispatched": "Rebuild job dispatched",
       "dispatch_fail": "Dispatch failed",
       "rebuild_done": "Rebuild complete"

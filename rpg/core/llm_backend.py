@@ -54,12 +54,13 @@ def first_user_model(user_id: Optional[int], api_id: str | None = None) -> tuple
 
         target_api = normalize_api_id(api_id) if api_id else ""
         init_db()
+        from platform_app.user_credentials import CREDENTIAL_USABLE_SQL
         with connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select api_id
                 from user_api_credentials
-                where user_id = %s and enabled = true and length(encrypted_key) > 0
+                where user_id = %s and enabled = true and {CREDENTIAL_USABLE_SQL}
                 """,
                 (int(user_id),),
             ).fetchall()
@@ -113,9 +114,10 @@ def first_user_model(user_id: Optional[int], api_id: str | None = None) -> tuple
         # 无从回退、子代理落 vertex 失败。这里用"第一个启用凭证 + 用户 gm 模型偏好"兜底:
         # 玩家既然在用这个自定义 provider 玩,gm.model_real_name 偏好就是可用的模型名。
         with connect() as db2:
+            from platform_app.user_credentials import CREDENTIAL_USABLE_SQL as _USABLE
             cred = db2.execute(
                 "select api_id from user_api_credentials where user_id=%s and enabled=true "
-                "and length(encrypted_key)>0 order by updated_at desc",
+                f"and {_USABLE} order by updated_at desc",
                 (int(user_id),),
             ).fetchall()
             pref = db2.execute(
@@ -250,9 +252,10 @@ def _provider_usable_strict(user_id: int, api_id: str) -> bool:
         from platform_app.user_credentials import get_credential
         cred = get_credential(int(user_id), "AgentPlatform")
         return bool(cred and cred.get("key"))
-    from platform_app.user_credentials import get_credential
+    from platform_app.user_credentials import credential_is_usable, get_credential
     cred = get_credential(int(user_id), api_id)
-    return bool(cred and cred.get("key"))
+    # 有 key → 可用;无 key 但用户显式选了「免鉴权(本地/自托管)」且填了地址 → 也可用。
+    return credential_is_usable(cred)
 
 
 def user_can_use_provider(user_id: Optional[int], api_id: str) -> bool:

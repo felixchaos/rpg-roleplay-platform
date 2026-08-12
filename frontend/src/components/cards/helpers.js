@@ -51,6 +51,11 @@ function cardFormInit(card) {
   };
 }
 
+// CSV 输入(别名 / 标签)拆分。分隔符集与后端 user_cards._normalize_list 一致 ——
+// 提示文案只写「逗号分隔」,中文输入法打出的是全角「,」/「、」/「;」,只认半角逗号
+// 会把「战姬,剑士」整条当成一个标签(用户看到的就是"标签没保存对")。
+const _splitCsv = (s) => (s || '').split(/[,，;；、]/).map((x) => x.trim()).filter(Boolean);
+
 function cardFormPayload(form, card) {
   const trim = (s) => (s || '').trim();
   return {
@@ -58,8 +63,8 @@ function cardFormPayload(form, card) {
     name: trim(form.name),
     full_name: trim(form.full_name),
     identity: trim(form.identity),
-    aliases: trim(form.aliases).split(',').map((s) => s.trim()).filter(Boolean),
-    tags: trim(form.tags).split(',').map((s) => s.trim()).filter(Boolean),
+    aliases: _splitCsv(form.aliases),
+    tags: _splitCsv(form.tags),
     background: trim(form.background),
     appearance: trim(form.appearance),
     personality: trim(form.personality),

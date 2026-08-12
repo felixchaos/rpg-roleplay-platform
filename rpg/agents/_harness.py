@@ -446,10 +446,16 @@ def _openai_compat_json_mode(
 
     旧 endpoint 不支持 response_format → 降级到普通 chat.completions。
     """
-    from platform_app.user_credentials import resolve_api_key
+    from platform_app.user_credentials import (
+        resolve_api_key,
+        resolved_auth_token,
+        resolved_is_usable,
+    )
     cred = resolve_api_key(user_id, api_id)
-    if not cred.get("key"):
+    if not resolved_is_usable(cred):
         raise RuntimeError(f"无 {api_id} 凭证可用于 agent harness")
+    # 免鉴权(本地/自托管)端点无 key:归一成占位 token,下游 Authorization 头照常拼。
+    cred = {**cred, "key": resolved_auth_token(cred)}
     import urllib.error
     import urllib.request
     base_url = cred.get("base_url_override") or _api_base_url(api_id)
@@ -542,10 +548,16 @@ def _openai_function_call(
 
     返回 (tool.arguments JSON, usage_dict)。
     """
-    from platform_app.user_credentials import resolve_api_key
+    from platform_app.user_credentials import (
+        resolve_api_key,
+        resolved_auth_token,
+        resolved_is_usable,
+    )
     cred = resolve_api_key(user_id, api_id)
-    if not cred.get("key"):
+    if not resolved_is_usable(cred):
         raise RuntimeError(f"无 {api_id} 凭证可用于 agent harness")
+    # 免鉴权(本地/自托管)端点无 key:归一成占位 token,下游 Authorization 头照常拼。
+    cred = {**cred, "key": resolved_auth_token(cred)}
     import urllib.error
     import urllib.request
     base_url = cred.get("base_url_override") or _api_base_url(api_id)

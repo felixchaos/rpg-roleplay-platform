@@ -126,10 +126,28 @@ def _amend_history_message(db, save_id: int, message_index: int, new_content: st
             return m.get("content"), m.get("role")
         return None, None
 
+    def _match_positions(seq, role, content, *, get_role, get_content):
+        """seq 中所有 (role, content) 都命中的下标,按原顺序。role=None 表示不比角色。"""
+        return [i for i, e in enumerate(seq)
+                if get_content(e) == content and (role is None or get_role(e) == role)]
+
+    def _nth_or_first(idxs, occ):
+        """取第 occ 个命中;occ 越界(各存储历史不完全一致时)退化成第一个命中。
+
+        关键:**永远只返回一个位置**。旧实现是「内容相等的全都换掉」——GM 正文全文够长
+        基本唯一,所以没炸;但玩家输入大量重复(「继续」「嗯」「好」),改其中一条会把整局
+        所有同文本的玩家发言一起改掉。放开玩家消息编辑前必须先收敛成单点替换。"""
+        if not idxs:
+            return None
+        return idxs[occ] if (occ is not None and 0 <= occ < len(idxs)) else idxs[0]
+
     srow = db.execute("select active_commit_id from game_saves where id = %s", (save_id,)).fetchone()
     commit_id = int((srow or {}).get("active_commit_id") or 0) if srow else 0
     original = None
     target_role = None
+    # occ = 目标在「同角色 + 同全文」这组重复消息里排第几个(0-based)。跨存储替换用它锁定
+    # 唯一一条,而不是把所有同文本消息一起改。
+    occ = None
     # ① 活跃 commit 快照(权威展示源):按展示序定位 original,就地改写回写。
     if commit_id:
         crow = db.execute(
@@ -142,10 +160,18 @@ def _amend_history_message(db, save_id: int, message_index: int, new_content: st
         _c, _r = _hist_at(snap, message_index)
         if _c is not None and (require_role is None or _r == require_role):
             original, target_role = _c, _r
+            hist = snap["history"]
+            raw_idx = [i for i, m in enumerate(hist)
+                       if isinstance(m, dict) and str(m.get("content") or "").strip()]
+            target_raw = raw_idx[message_index]
+            matches = _match_positions(
+                hist, target_role, original,
+                get_role=lambda m: m.get("role") if isinstance(m, dict) else None,
+                get_content=lambda m: m.get("content") if isinstance(m, dict) else None,
+            )
+            occ = matches.index(target_raw) if target_raw in matches else 0
             if original != new_content:
-                for m in snap["history"]:
-                    if isinstance(m, dict) and m.get("content") == original:
-                        m["content"] = new_content
+                hist[target_raw]["content"] = new_content
                 db.execute("update branch_commits set state_snapshot = %s where id = %s", (Jsonb(snap), commit_id))
     # 兜底:commit 无 history(酒馆/旧档)→ messages 表按展示序(滤空)定位 original。
     if original is None:
@@ -157,6 +183,11 @@ def _amend_history_message(db, save_id: int, message_index: int, new_content: st
             _r = filt[message_index]["role"]
             if require_role is None or _r == require_role:
                 original, target_role = filt[message_index]["content"], _r
+                matches = _match_positions(
+                    filt, target_role, original,
+                    get_role=lambda r: r["role"], get_content=lambda r: r["content"],
+                )
+                occ = matches.index(message_index) if message_index in matches else 0
     if original is None:
         return False, None
     if original == new_content:
@@ -169,12 +200,15 @@ def _amend_history_message(db, save_id: int, message_index: int, new_content: st
                 snap = _json.loads(snap)
             if not (isinstance(snap, dict) and isinstance(snap.get("history"), list)):
                 continue
-            changed = False
-            for m in snap["history"]:
-                if isinstance(m, dict) and m.get("content") == original:
-                    m["content"] = new_content
-                    changed = True
+            # 只换 occ 指向的那一条(见 _nth_or_first):重复的玩家发言不能被连坐改写。
+            pos = _nth_or_first(_match_positions(
+                snap["history"], target_role, original,
+                get_role=lambda m: m.get("role") if isinstance(m, dict) else None,
+                get_content=lambda m: m.get("content") if isinstance(m, dict) else None,
+            ), occ)
+            changed = pos is not None
             if changed:
+                snap["history"][pos]["content"] = new_content
                 if tbl == "runtime_checkouts":
                     db.execute(
                         "update runtime_checkouts set state_snapshot = %s, snapshot_hash = %s,"
@@ -186,17 +220,25 @@ def _amend_history_message(db, save_id: int, message_index: int, new_content: st
                         "update game_saves set state_snapshot = %s, row_version = row_version + 1 where id = %s",
                         (Jsonb(snap), r["id"]),
                     )
-    # ④ messages 表(内容匹配 + 目标角色,避免同文本跨角色误伤)
+    # ④ messages 表:同样只改 occ 指向的那一行。先按与上面读 filt 完全一致的
+    #    order by turn, id 取出全部候选 id,再用 _nth_or_first 选中唯一一行(occ 越界时退化成
+    #    第一条,与快照侧口径一致;直接写 offset 会在越界时静默一行都不改)。
+    #    此前是 where content = original 的批量 UPDATE,玩家重复发言会被整局连坐改写。
     if target_role:
-        db.execute(
-            "update messages set content = %s where save_id = %s and role = %s and content = %s",
-            (new_content, save_id, target_role, original),
-        )
+        _cand = db.execute(
+            "select id from messages where save_id = %s and role = %s and content = %s"
+            " order by turn, id",
+            (save_id, target_role, original),
+        ).fetchall()
     else:
-        db.execute(
-            "update messages set content = %s where save_id = %s and content = %s",
-            (new_content, save_id, original),
-        )
+        _cand = db.execute(
+            "select id from messages where save_id = %s and content = %s order by turn, id",
+            (save_id, original),
+        ).fetchall()
+    _pos = _nth_or_first(list(range(len(_cand))), occ)
+    if _pos is not None:
+        db.execute("update messages set content = %s where id = %s",
+                   (new_content, _cand[_pos]["id"]))
     return True, original
 
 

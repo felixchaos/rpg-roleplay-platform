@@ -334,10 +334,15 @@ def _call_openai_compat_json_mode(
     会与 verifier 自己的 unmet schema 矛盾,模型产出 {"ops":...} → 解析取不到 unmet →
     verifier 静默失效降级 rule。
     """
-    from platform_app.user_credentials import resolve_api_key
+    from platform_app.user_credentials import (
+        resolve_api_key,
+        resolved_auth_token,
+        resolved_is_usable,
+    )
     cred = resolve_api_key(user_id, api_id)
-    if not cred.get("key"):
+    if not resolved_is_usable(cred):
         raise RuntimeError(f"无 {api_id} 凭证可用于 extractor")
+    cred = {**cred, "key": resolved_auth_token(cred)}   # 免鉴权 → 占位 token
     import urllib.request
     import urllib.error
     from core.outbound import safe_urlopen  # SSRF: 不跟随重定向 + use-time 重解析 pin IP

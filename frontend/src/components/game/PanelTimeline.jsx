@@ -2,6 +2,7 @@
 import React from 'react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { anchorStatuses } from '../../lib/timeline-status.js';
 
 // task 136h: 世界线收束·锚点 子组件 — 嵌入 PanelTimeline 底部
 // 从 /api/saves/:id/anchors 拉取, 跟 timeline 数据互相独立。
@@ -386,6 +387,8 @@ function PanelTimeline({ state }) {
   const currentPhaseIndex = data.current_phase_index ?? 0;  // 兼容字段,不再用于高亮判定
   // FIX1: 高亮按真实剧情章节(current_chapter),不再用 active_phase_index(恒卡 0)。
   const currentChapter = data.current_chapter ?? 1;
+  // FIX5: 全线状态一次算好(唯一「当前」由共享缝裁定,见 lib/timeline-status.js)
+  const anchorStatus_ = anchorStatuses(scriptAnchors, currentChapter);
 
   return (
     <div className="gp-stack">
@@ -401,14 +404,18 @@ function PanelTimeline({ state }) {
           <div className="gp-track">
             {scriptAnchors.map((a, i) => {
               // FIX1: 状态按真实章节区间判定(确定性),不再用序列下标对 active_phase_index。
-              //   chapter_max < currentChapter           → 已度过
-              //   chapter_min <= currentChapter <= max    → 当前
-              //   否则                                    → 待解锁
+              // FIX5(群反馈「世界线有三个当前」):锚点区间**允许嵌套重叠**(生产 script 322
+              //   第 100 章同时落在 [1,292]/[43,283]/[57,128]/[100,107] 四条里),逐条独立判
+              //   「区间包含即当前」就会并排挂出多个「当前」。判定收敛到共享缝 anchorStatuses:
+              //   包含当前章的锚点里只有最贴切(最窄)的一条算「当前」,其余标「进行中」。
+              //   移动端 mobile/game/panels.jsx 用同一个缝,两端不会再各判各的。
+              const st = anchorStatus_[i];
               const chMin = a.chapter_min;
               const chMax = a.chapter_max != null ? a.chapter_max : a.chapter_min;
-              const isDone    = chMax != null && chMax < currentChapter;
-              const isCurrent = chMin != null && chMin <= currentChapter && (chMax == null || currentChapter <= chMax);
-              const isPending = !isDone && !isCurrent;
+              const isDone    = st === 'done';
+              const isCurrent = st === 'current';
+              const isOngoing = st === 'ongoing';
+              const isPending = st === 'pending';
               // FIX4: 主标题用 story_time_label(场景/章名);story_phase(开端…)降为弱副标,
               //   连续同 phase 只在该组首条显示一次。
               const phase = a.phase_label || "";
@@ -420,11 +427,14 @@ function PanelTimeline({ state }) {
               return (
                 <div
                   key={i}
-                  className={`gp-anchor ${isCurrent ? "current" : ""} ${isDone ? "done" : ""} ${isPending ? "pending" : ""}`}
+                  className={`gp-anchor ${isCurrent ? "current" : ""} ${isDone ? "done" : ""} ${isOngoing ? "ongoing" : ""} ${isPending ? "pending" : ""}`}
                 >
+                  {/* ongoing = 跨度更大、把当前章包在里面的外层弧:不实心高亮(那是「当前」专属),
+                      但也不像未解锁那样打灰 —— 它确实正在进行中。 */}
                   <div className="gp-anchor-dot" style={{
                     background: isDone ? "var(--ok)" : isCurrent ? "var(--accent)" : "var(--panel-3)",
-                    border: isCurrent ? "2px solid var(--accent)" : "2px solid var(--line)",
+                    border: isCurrent ? "2px solid var(--accent)"
+                      : isOngoing ? "2px solid var(--accent-edge, var(--accent))" : "2px solid var(--line)",
                   }} />
                   <div className="gp-anchor-body">
                     {showPhaseGroup && (
@@ -438,6 +448,7 @@ function PanelTimeline({ state }) {
                     }}>
                       {mainTitle}
                       {isCurrent && <span className="pill" style={{marginLeft: 6, fontSize: 10, background: "var(--accent)", color: "#fff"}}>{t('game.timeline.current_pill')}</span>}
+                      {isOngoing && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>{t('game.timeline.in_progress_pill')}</span>}
                       {isDone && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>{t('game.timeline.done_label')}</span>}
                       {isPending && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>{t('game.timeline.pending_label')}</span>}
                     </div>

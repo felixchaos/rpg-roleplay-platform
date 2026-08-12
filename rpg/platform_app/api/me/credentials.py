@@ -33,6 +33,8 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
         # keep_key：编辑弹窗只改接口地址、不重填 key（key 从不回显）。空 key 时不删
         # 凭证，只更新 base_url_override / 启用态，保留已存密钥与 proxy。
         keep_key = bool(body.get("keep_key"))
+        # 免鉴权(本地/自托管:Ollama / vLLM / llama.cpp / LM Studio)。显式选项,不是靠"key 为空"猜。
+        auth_mode = "none" if bool(body.get("no_auth")) else "api_key"
         if not is_admin:
             from model_registry import default_api_for, find_api, load_model_catalog, normalize_api_id
             normalized_api_id = normalize_api_id(api_id)
@@ -47,6 +49,10 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
             # 不该被这条设置态校验挡住(否则自定义中转站删不掉,报「删除失败」)。
             if (body.get("api_key") or "").strip() and not known and not base_url_override:
                 raise ValueError("自定义供应商必须填写 Base URL(中转站地址)")
+            # 免鉴权模式没有"填了 key"这一说,上面那条按 api_key 写的校验兜不住它 ——
+            # 单独要求 base_url(set_credential 里还有一道,这里给的是更早、更贴 UI 的报错)。
+            if auth_mode == "none" and not base_url_override:
+                raise ValueError("勾选「免 API Key」时必须填写 Base URL(本地模型的接口地址)")
             api_id = normalized_api_id
         result = user_credentials.set_credential(
             user["id"],
@@ -57,6 +63,7 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
             allow_base_url=True,  # base_url 不再 admin 限定;SSRF 由 _validate_base_url 强制
             proxy=(body.get("proxy") or "").strip(),  # 出站代理 URL;仅本地模式真正使用(见 openai_compat)
             preserve_key_if_empty=keep_key,
+            auth_mode=auth_mode,
         )
         return json_response(result)
     except ValueError as exc:

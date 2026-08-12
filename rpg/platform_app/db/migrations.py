@@ -2260,6 +2260,96 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         # 存量行默认 'synced' —— 它们本来就全是同步写入的,语义正确。
         "alter table user_model_entries add column if not exists source text not null default 'synced'",
     ]),
+    (100, "adopt_pgvector_after_it_becomes_available", [
+        # 「pgvector 从无到有」的升级路径。桌面捆绑版此前**不带 pgvector**(Windows 包里
+        # 连 share/extension/vector.control 都没有,用户 2026-08 实测反馈),这类库上:
+        #   · v10/v40/v60/v83 的向量列/HNSW 建列块全在 `if exists(vector)` 里静默跳过,
+        #     但 migration 仍被标记 applied → 之后扩展可用了也**永不回补**(与 v60 同族的病);
+        #   · v89 又建了 jsonb 同名占位列让计数不炸 —— 占位列不是向量列,udt_name='vector'
+        #     判定为假 → 语义检索永久退化成关键词。
+        # 现在捆绑包自带 pgvector(desktop/scripts/bundle-backend.ps1 随包编 vector.dll),
+        # 存量库升级后扩展就位,必须有人把占位列换成真向量列,否则「装了新版=还是退化的」。
+        #
+        # 安全性:
+        #   · 整块只在 vector 扩展存在时执行;prod(一直有 pgvector)列已是 vector 类型,
+        #     所有分支均为 no-op(下面按 udt_name 判定,只动 jsonb 占位列)。
+        #   · 四个 embedding_vec 占位列**必然是空的** —— 所有写入路径都是 `%s::vector`,
+        #     在 jsonb 列上必然报错,写不进去 → 直接 drop 重建,不丢数据。
+        #   · kb_canon_entities.embedding 例外:extract/embed.py 的写入没有 ::vector cast,
+        #     向量字面量 '[0.1,...]' 恰好是合法 JSON 数组 → 占位列**可能真存了嵌入**。
+        #     那份数据重算要花钱,所以优先【原地转换】保留;万一有维度不符/脏值导致转换失败,
+        #     再退回 drop 重建(那些值本来也没法拿来检索)。用嵌套 exception 兜住,
+        #     绝不让一次迁移失败把桌面 app 卡在起不来的状态。
+        f"""
+        do $$
+        begin
+          if not exists (select 1 from pg_extension where extname = 'vector') then
+            return;
+          end if;
+
+          -- ① 四个恒空的 jsonb 占位列:直接换成真向量列
+          if exists (select 1 from information_schema.columns
+                     where table_name='document_chunks' and column_name='embedding_vec' and udt_name='jsonb') then
+            execute 'alter table document_chunks drop column embedding_vec';
+          end if;
+          if exists (select 1 from information_schema.columns
+                     where table_name='memories' and column_name='embedding_vec' and udt_name='jsonb') then
+            execute 'alter table memories drop column embedding_vec';
+          end if;
+          if exists (select 1 from information_schema.columns
+                     where table_name='character_cards' and column_name='embedding_vec' and udt_name='jsonb') then
+            execute 'alter table character_cards drop column embedding_vec';
+          end if;
+          if exists (select 1 from information_schema.columns
+                     where table_name='worldbook_entries' and column_name='embedding_vec' and udt_name='jsonb') then
+            execute 'alter table worldbook_entries drop column embedding_vec';
+          end if;
+
+          -- ② kb_canon_entities.embedding:先试保值转换,失败再重建
+          if exists (select 1 from information_schema.columns
+                     where table_name='kb_canon_entities' and column_name='embedding' and udt_name='jsonb') then
+            begin
+              execute 'alter table kb_canon_entities alter column embedding type vector({_EMBED_DIM}) '
+                      'using (case when embedding is null then null else embedding::text::vector end)';
+            exception when others then
+              raise warning 'kb_canon_entities.embedding 占位列转换失败(%),丢弃重建,需重新嵌入', sqlerrm;
+              execute 'alter table kb_canon_entities drop column embedding';
+            end;
+          end if;
+
+          -- ③ 幂等补齐全部向量列 + HNSW 索引(与 v10/v40/v60/v83 同名同维,健康库上全 no-op)
+          execute 'alter table document_chunks    add column if not exists embedding_vec vector({_EMBED_DIM})';
+          execute 'alter table memories            add column if not exists embedding_vec vector({_EMBED_DIM})';
+          execute 'alter table character_cards     add column if not exists embedding_vec vector({_EMBED_DIM})';
+          execute 'alter table worldbook_entries   add column if not exists embedding_vec vector({_EMBED_DIM})';
+          execute 'alter table kb_events           add column if not exists embedding_vec vector({_EMBED_DIM})';
+          execute 'alter table kb_canon_entities   add column if not exists embedding vector({_EMBED_DIM})';
+          execute 'create index if not exists idx_doc_chunks_embedding_hnsw        on document_chunks   using hnsw (embedding_vec vector_cosine_ops)';
+          execute 'create index if not exists idx_memories_embedding_hnsw          on memories          using hnsw (embedding_vec vector_cosine_ops)';
+          execute 'create index if not exists idx_character_cards_embedding_hnsw   on character_cards   using hnsw (embedding_vec vector_cosine_ops)';
+          execute 'create index if not exists idx_worldbook_entries_embedding_hnsw on worldbook_entries using hnsw (embedding_vec vector_cosine_ops)';
+          execute 'create index if not exists idx_kb_events_embedding_hnsw         on kb_events         using hnsw (embedding_vec vector_cosine_ops)';
+        end $$;
+        """,
+    ]),
+    (101, "user_api_credentials_auth_mode", [
+        # 本地/自托管模型(Ollama / vLLM / llama.cpp / LM Studio)只需要一个 base_url,
+        # 多数部署根本没有 API Key 概念。但全站「可用性」判定一律是「encrypted_key 非空」,
+        # 于是这类 provider 永远算不可用 —— 用户配好了地址也用不了(OSS PR #102 的诉求)。
+        #
+        # 这里用**显式选项**而不是「空 key 即放行」的隐式判定:后者会让任何一个不小心把 key
+        # 删空的托管 provider 悄悄变成「可用」,再撞上 401 才发现。auth_mode 让用户明确声明
+        # 「这个端点不需要鉴权」,BYOK 墙对其余 provider 保持原样(无 key = 不可用)。
+        #
+        #   'api_key'(默认,存量行语义不变)= 必须有非空 key 才算可用
+        #   'none'                        = 免鉴权端点;**key 仍可选填**,填了照样发送
+        #                                   (部分 vLLM/LM Studio 会校验一个任意 token)
+        # 免鉴权模式要求 base_url_override 非空 —— 不指地址的「免 key」没有意义。
+        "alter table user_api_credentials add column if not exists auth_mode text not null default 'api_key'",
+        "alter table user_api_credentials drop constraint if exists ck_user_api_creds_auth_mode",
+        "alter table user_api_credentials add constraint ck_user_api_creds_auth_mode "
+        "check (auth_mode in ('api_key', 'none'))",
+    ]),
 ]
 
 
