@@ -11,6 +11,7 @@ from ...perms import script_owned
 from .._deps import json_response, require_user
 from ._shared import router
 
+
 @router.get("/api/scripts/{script_id}/writing-rules")
 async def api_get_writing_rules(script_id: int, user=Depends(require_user)):
     """读作者写作规范(.cursorrules 风)。仅 owner(云端隔离)。"""

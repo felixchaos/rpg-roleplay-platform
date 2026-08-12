@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import json
 
-from tools_dsl.command_dispatcher import ToolSpec, get_registry
 from tools_dsl._arg_guards import require_int_arg
+from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
 _ANCHOR_READ_ORIGINS = frozenset({"ui_button", "api_direct", "console_assistant", "llm_chat", "llm_set"})
 # GM 直接负责标记锚点状态, 必须给 llm_chat origin
@@ -524,8 +524,9 @@ def _t_claim_protagonist_pov(user_id: int, args: dict) -> str:
     save_id = int(save_id_raw)
     explicit_name = (args.get("original_protag_name") or "").strip()
     try:
-        from platform_app.db import connect, init_db
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect, init_db
         init_db()
         # SEC(M-5): 整快照 read-modify-write 在 (user,save) 级锁内,防与并发 save 级写者互覆盖。
         from tools_dsl.command_dispatcher import _get_sync_scope_lock
@@ -622,8 +623,9 @@ def _t_revoke_protagonist_pov(user_id: int, args: dict) -> str:
     if not name:
         return "失败: original_protag_name 必填"
     try:
-        from platform_app.db import connect, init_db
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect, init_db
         init_db()
         # SEC(M-5): 整快照 read-modify-write 在 (user,save) 级锁内,防与并发 save 级写者互覆盖。
         from tools_dsl.command_dispatcher import _get_sync_scope_lock

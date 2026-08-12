@@ -53,8 +53,8 @@ def test_every_symbol_recall_imports_actually_exists():
 
 def test_split_anchor_pending_comes_from_its_authoritative_home():
     """权威缝在 context_engine.core;别再从 context_providers.novel 拿(那是搬家前的旧址)。"""
-    from context_engine.core import _split_anchor_pending  # noqa: F401
     import context_providers.novel as _novel
+    from context_engine.core import _split_anchor_pending  # noqa: F401
     assert not hasattr(_novel, "_split_anchor_pending"), \
         "novel.py 又出现了同名副本 —— 权威缝被复制回去了,收口失效"
     assert "from context_engine.core import _split_anchor_pending" in _SRC

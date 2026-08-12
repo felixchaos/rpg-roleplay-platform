@@ -141,7 +141,7 @@ def _render_email(
             <div class="sr-rule" style="height:1px;line-height:1px;background:#36322d;">&nbsp;</div>
             <div style="height:14px;line-height:14px;">&nbsp;</div>
             <div class="sr-muted" style="color:#968f85;font-size:13px;line-height:1.65;">
-              {footer_html or f'如果你没有请求此邮件，可以安全忽略。<br>If you did not request this email, you can safely ignore it.'}
+              {footer_html or '如果你没有请求此邮件，可以安全忽略。<br>If you did not request this email, you can safely ignore it.'}
               <br><a class="sr-link" style="color:#d97955;text-decoration:none;font-weight:700;" href="{support_url}">rpg-roleplay.stellatrix.icu</a>
             </div>
           </td>

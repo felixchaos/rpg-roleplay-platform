@@ -28,11 +28,17 @@ from context_providers import (
     resolve_content_pack,
     run_providers,
 )
+from kb.recall import (
+    retrieve_fn_compat,  # P5:统一召回 flag 门控包装(默认 off=委托 retrieve_context)
+)
 from retrieval import retrieve_context  # noqa: F401 (retrieve_fn_compat 内部委托;保留以兼容)
-from kb.recall import retrieve_fn_compat  # P5:统一召回 flag 门控包装(默认 off=委托 retrieve_context)
 from timeline_index import timeline_filter_for_label
-from timeline_state import (detect_time_directives, is_recall_framing,
-                            looks_like_time_value, mentions_time_without_intent)
+from timeline_state import (
+    detect_time_directives,
+    is_recall_framing,
+    looks_like_time_value,
+    mentions_time_without_intent,
+)
 
 log = logging.getLogger(__name__)
 

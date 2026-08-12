@@ -12,10 +12,8 @@ from __future__ import annotations
 
 import logging
 import sys
-import types
 import unittest
-from unittest.mock import MagicMock, call, patch
-
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -60,7 +58,6 @@ class TestEmbedRecallConsistency(unittest.TestCase):
 
     def setUp(self):
         # 清理进程内 cache，防止跨 test 污染
-        import importlib
         # 强制重新加载 _search 以清空 module-level cache
         if "platform_app.knowledge._search" in sys.modules:
             mod = sys.modules["platform_app.knowledge._search"]

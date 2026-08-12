@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from chapter_splitter import ChapterSplitter
-from ingest.adaptive_split import split_by_heading_regex, build_candidate_rules
+from ingest.adaptive_split import build_candidate_rules, split_by_heading_regex
 from ingest.filters import filter_non_content
 
 

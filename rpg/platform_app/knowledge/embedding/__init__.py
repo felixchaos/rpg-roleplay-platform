@@ -37,15 +37,15 @@ import time
 from typing import Any
 
 from ._base import (
+    _EMBED_SECS_PER_TEXT,
+    _MAX_EMBED_BATCH_RETRIES,
+    _NO_EMBEDDING_PROVIDERS,
+    _PLATFORM_FALLBACK_ROLES,
     BATCH_SIZE,
     DEFAULT_EMBED_MODEL,
     EMBED_DIM,
     EMBED_MODEL,
     PER_CHUNK_CHAR_LIMIT,
-    _EMBED_SECS_PER_TEXT,
-    _MAX_EMBED_BATCH_RETRIES,
-    _NO_EMBEDDING_PROVIDERS,
-    _PLATFORM_FALLBACK_ROLES,
     _embed_req_timeout,
     _is_admin,
     _is_google_generative_openai_base,
@@ -155,11 +155,12 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
     与 DB 向量列(默认 768)一致。模型不支持 dimensions(如 ada-002)时会 400 → 自动去掉
     dimensions 重试一次。
     """
-    import urllib.request
-    import urllib.error
     import json as _json
-    from core.outbound_ua import outbound_user_agent
+    import urllib.error
+    import urllib.request
+
     from core.outbound import safe_urlopen  # SSRF: 不跟随重定向 + use-time 重解析 pin IP
+    from core.outbound_ua import outbound_user_agent
     global _last_openai_embed_error
     effective_url = (base_url.rstrip("/") if base_url else "https://api.openai.com/v1") + "/embeddings"
 
@@ -449,8 +450,8 @@ def embed_query(
         # key → 发到旧 provider 端点 → 401/404 → 静默降级 ILIKE。
         api_id, model = force_api_id, force_model
         try:
-            from platform_app.user_credentials import resolve_api_key
             from model_registry import default_api_for
+            from platform_app.user_credentials import resolve_api_key
             _cred = resolve_api_key(user_id, force_api_id, env_fallback="")
             api_key = _cred.get("key", "")
             base_url = _cred.get("base_url_override", "") or (default_api_for(force_api_id) or {}).get("base_url", "") or ""

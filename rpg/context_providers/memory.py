@@ -12,13 +12,13 @@ A6 新增：消费 MemorySettings 配置
 """
 from __future__ import annotations
 
-from .base import ContextContribution, ContextProvider
-from .registry import register_provider
-
 # token 粗估收敛到权威 context_engine._utils._estimate_tokens(带 `or ""` 防御)。
 # 注:本地旧版 `len(text)//2` 无防御,text=None 会 TypeError —— 收口顺带消除该潜在缺陷,
 # 属行为强化(非纯等价);非 None 输入两版结果逐位相同。
 from context_engine._utils import _estimate_tokens
+
+from .base import ContextContribution, ContextProvider
+from .registry import register_provider
 
 
 def _maybe_auto_archive(state, ms) -> None:

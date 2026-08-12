@@ -7,8 +7,8 @@ import re
 import unittest
 from pathlib import Path
 
-from state import DEFAULT_STATE, GameState
 from rules_bridge import enter_room, start_module
+from state import DEFAULT_STATE, GameState
 
 MOD_SRC = (Path(__file__).resolve().parents[2] / "rules_bridge" / "module_ops.py").read_text(encoding="utf-8")
 

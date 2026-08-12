@@ -12,7 +12,6 @@ import_character_card 只 mutate state.data['tavern'](单写者铁律,不裸写 
 from platform_app.branches._helpers import tavern_card_cols
 from routes.tavern import _expose_save, _snapshot_card_ids
 
-
 # ── 写侧:tavern_card_cols(state_snapshot) ───────────────────────────────────
 
 def test_write_extracts_both_card_ids():

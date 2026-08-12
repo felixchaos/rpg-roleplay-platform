@@ -12,10 +12,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from timeline_state import (  # noqa: E402
-    detect_time_directives, has_jump_verb, is_bare_time_target,
-    looks_like_time_value, mentions_time_without_intent,
+    detect_time_directives,
+    has_jump_verb,
+    is_bare_time_target,
+    looks_like_time_value,
+    mentions_time_without_intent,
 )
-
 
 # ── 本案 + 同族假阳性:动作叙述绝不能判成跳跃 ──────────────────────────
 

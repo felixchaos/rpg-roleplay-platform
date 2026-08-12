@@ -35,7 +35,6 @@
 """
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from core.logging import get_logger
@@ -247,7 +246,11 @@ def _build_user_prompt(
     # 触发是确定性的(回合数),改不改、改成什么仍归史官判断:主线该写什么是叙事判断,
     # 代码代写只会写出废话。措辞刻意给「仍然准确就别动」的出口,避免逼出编造式改写。
     try:
-        from state.quest_staleness import MAIN_QUEST_STALE_TURNS, main_quest_age, main_quest_is_stale
+        from state.quest_staleness import (
+            MAIN_QUEST_STALE_TURNS,
+            main_quest_age,
+            main_quest_is_stale,
+        )
         if main_quest_is_stale(state_data):
             _age = main_quest_age(state_data)
             _how_long = f"已 {_age} 回合" if _age is not None else "长期"
@@ -620,6 +623,8 @@ def _resolve_recorder_api_and_model(
     from agents._harness import resolve_api_and_model
     from core.llm_backend import (
         resolve_preferred_api as _rapi,
+    )
+    from core.llm_backend import (
         resolve_preferred_model as _rmodel,
     )
 

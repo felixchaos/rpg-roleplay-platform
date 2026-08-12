@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import re
 
-
 # task 117: 算法层 phase 推导 — 不硬编码"第一章"/"火星"/"柏林"。
 # 当 world.time 空 / state 干净时,从 save.active_phase_index + save_phase_digests
 # 或 fallback 到 script 级 phase_digests 拿当前 phase 的 chapter_range,

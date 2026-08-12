@@ -23,8 +23,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from tools_dsl.command_dispatcher import ToolSpec, get_registry
 from tools_dsl._arg_guards import require_int_arg
+from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
 # task 87 Phase 7 安全审查:跨"世界泡"隔离
 # task 48 新增 console_assistant:控制台助手是「用户带方向盘的 agent」,

@@ -8,7 +8,7 @@ from fastapi import Depends, Request
 
 from ...db import connect
 from .._deps import json_response, require_user
-from ._shared import router, _require_owner
+from ._shared import _require_owner, router
 
 _VALID_SHARING_MODES = {"private", "public", "pinned-snapshot", "floating-latest"}
 

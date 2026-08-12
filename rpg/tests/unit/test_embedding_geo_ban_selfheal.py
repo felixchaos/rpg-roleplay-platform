@@ -108,8 +108,8 @@ class EmbedViaGeminiGeoBanSelfHeal(unittest.TestCase):
         embedding._GEO_BAN_CACHE.clear()
 
     def _make_geo_ban_http_error(self):
-        import urllib.error
         import io
+        import urllib.error
         body = (
             b'{"error": {"code": 400, "message": '
             b'"User location is not supported for the API use.", '
@@ -154,8 +154,8 @@ class EmbedViaGeminiGeoBanSelfHeal(unittest.TestCase):
 
     def test_non_geo_ban_error_does_not_mark_channel(self):
         """非地区封禁错误(如 401)不应误标记通道(避免误伤真实可恢复故障)。"""
-        import urllib.error
         import io
+        import urllib.error
         err = urllib.error.HTTPError(
             url="https://generativelanguage.googleapis.com/v1beta/models/x:embedContent",
             code=401, msg="Unauthorized", hdrs=None,

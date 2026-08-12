@@ -32,6 +32,7 @@ class WorldbookFullFailureMarksDoneWithErrors(unittest.TestCase):
         - ctl.update 被调用写 warnings + error
         """
         from platform_app import import_pipeline as ip
+
         # 拆包后 patch-where-defined:_stage_worldbook 定义在子模块 stages_llm,
         # 它内部用的 connect 必须 patch 定义模块(打门面拦不到)。
         from platform_app.import_pipeline import stages_llm as ip_stages
@@ -48,7 +49,7 @@ class WorldbookFullFailureMarksDoneWithErrors(unittest.TestCase):
             with patch("agents._harness.call_agent_json", side_effect=RuntimeError("boom")):
                 count = ip._stage_worldbook(ctl, user_id=1, script_id=12)
         self.assertEqual(count, 0)
-        self.assertEqual(getattr(ip._stage_worldbook, "_last_count"), 0)
+        self.assertEqual(ip._stage_worldbook._last_count, 0)
         # ctl.update 应该至少被调用过(error + warnings)
         called_keys = set()
         for call_args in ctl.update.call_args_list:

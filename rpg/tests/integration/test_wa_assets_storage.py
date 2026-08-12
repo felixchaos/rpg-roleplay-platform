@@ -196,7 +196,7 @@ class TestRegisterAssetIdempotent(unittest.TestCase):
 
     def test_register_updates_url(self):
         """第二次 url 变了 → update 不新增。"""
-        from platform_app.assets_registry import register_asset, get_asset
+        from platform_app.assets_registry import get_asset, register_asset
         from platform_app.db import connect
         sk = f"ai_images/url_up_{_rand()}.png"
         id1 = register_asset(
@@ -240,8 +240,9 @@ class TestListUserAssets(unittest.TestCase):
             cls.user1 = _make_user(db)
             cls.user2 = _make_user(db)
 
-        from platform_app.assets_registry import register_asset
         import time
+
+        from platform_app.assets_registry import register_asset
         # user1: 2 ai_image + 1 avatar
         register_asset(
             user_id=cls.user1, kind="ai_image",
@@ -304,8 +305,8 @@ class TestFindReferences(unittest.TestCase):
 
     def test_find_card_reference(self):
         """character_cards.avatar_path 引用 → find_references 返回含该 card 的引用。"""
-        from platform_app.db import connect
         import platform_app.storage as storage
+        from platform_app.db import connect
         url = "/api/storage/ai_images/ref_card_test.png"
         with connect() as db:
             card_id = _make_card(db, self.user_id, avatar_path=url)
@@ -316,8 +317,8 @@ class TestFindReferences(unittest.TestCase):
 
     def test_find_user_reference(self):
         """users.avatar_url 引用 → find_references 返回含该 user 的引用。"""
-        from platform_app.db import connect
         import platform_app.storage as storage
+        from platform_app.db import connect
         url = f"/api/storage/avatars/ref_user_{_rand()}.png"
         with connect() as db:
             uid = _make_user(db)
@@ -329,8 +330,8 @@ class TestFindReferences(unittest.TestCase):
 
     def test_find_script_reference(self):
         """scripts.cover_image_url 引用 → find_references 返回含该 script 的引用。"""
-        from platform_app.db import connect
         import platform_app.storage as storage
+        from platform_app.db import connect
         url = f"/api/storage/ai_images/ref_script_{_rand()}.png"
         with connect() as db:
             uid = _make_user(db)
@@ -370,8 +371,8 @@ class TestDeleteAssetReferenceCheck(unittest.TestCase):
 
     def _setup_asset_with_card_ref(self):
         """插入一条资产，并让一个 character_card.avatar_path 引用其 url。"""
-        from platform_app.db import connect
         from platform_app.assets_registry import register_asset
+        from platform_app.db import connect
         url = f"/api/storage/ai_images/del_test_{_rand()}.png"
         sk = f"ai_images/del_test_{_rand()}.png"
         asset_id = register_asset(
@@ -507,7 +508,7 @@ class TestBackfillThreeSources(unittest.TestCase):
                 """,
                 (self.user_id, sid),
             ).fetchone()
-        self.assertIsNotNone(row, f"scripts.source_path backfill 未产生 user_assets 行")
+        self.assertIsNotNone(row, "scripts.source_path backfill 未产生 user_assets 行")
         self.assertEqual(row["kind"], "script_txt")
         expected_sk = source_path[len("platform_data/"):]
         self.assertEqual(row["storage_key"], expected_sk,

@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 # 第一层结构先验词表(§3):卷/章标题命中即视为 new_world 候选。
 # 宁漏勿误——词表故意窄,过切有 §3 第三层回退兜底。

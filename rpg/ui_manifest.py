@@ -20,11 +20,11 @@ import json
 from dataclasses import replace as dc_replace
 from typing import Any
 
+from config.glossary import load_glossary as _load_glossary
 from tools_dsl.command_dispatcher import (
     ToolSpec,
     get_registry,
 )
-from config.glossary import load_glossary as _load_glossary
 
 # ────────────────────────────────────────────────────────────
 # 工具 → (intent_keywords, side_effect_topics) 标签表

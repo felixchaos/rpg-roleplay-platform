@@ -11,6 +11,7 @@ from typing import Any
 
 from ._helpers import _resolve_sid, _user_can_read_script
 
+
 def _t_get_chapter_context(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
     """一次性取「该章相关编辑环境」(相关世界书/人物/词条/时点/前情)——编辑前建立设定认知,
     免去逐个 list_*/get_* 多轮往返、也防 agent 凭空写。复用阶段1 build_editor_environment,
@@ -370,7 +371,7 @@ def _t_preview_document_split(user_id: int, script_id: int | None, args: dict, s
         return report  # 错误串
     if not chapters:
         return "拆不出任何章节 —— 文档可能没有章节标记。可换 split_rule(chapter_cn/chapter_en/number_dot/custom)再试。"
-    titles = [str((c.get("title") or f"第{i + 1}章"))[:50] for i, c in enumerate(chapters)]
+    titles = [str(c.get("title") or f"第{i + 1}章")[:50] for i, c in enumerate(chapters)]
     head = "、".join(f"#{i + 1}「{t}」" for i, t in enumerate(titles[:30]))
     more = f" …(共 {len(titles)} 章)" if len(titles) > 30 else ""
     mode = (report or {}).get("split_mode") or (report or {}).get("split_rule") or "auto"
@@ -412,7 +413,7 @@ def _t_import_document_as_chapters(user_id: int, script_id: int | None, args: di
             n = 0
             for i, c in enumerate(chapters):
                 ci = start + i
-                title = str((c.get("title") or f"第{ci}章"))[:200]
+                title = str(c.get("title") or f"第{ci}章")[:200]
                 content = str(c.get("content") or "")
                 db.execute(
                     "insert into script_chapters(script_id, chapter_index, title, content, word_count,"

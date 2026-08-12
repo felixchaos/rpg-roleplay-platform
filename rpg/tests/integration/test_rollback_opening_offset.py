@@ -65,10 +65,11 @@ class RollbackOpeningOffsetE2E(unittest.TestCase):
 
     def _mk_save_with_history(self, uid: int, blob: dict, title: str) -> int:
         """建 save,清 auto-seed 的 commits,把 state_snapshot 覆盖为 blob 再 seed_tree 重建。"""
+        from psycopg.types.json import Jsonb
+
         from platform_app import workspace
         from platform_app.branches import seed_tree
         from platform_app.db import connect
-        from psycopg.types.json import Jsonb
 
         with connect() as db:
             scr = db.execute(
@@ -105,8 +106,8 @@ class RollbackOpeningOffsetE2E(unittest.TestCase):
 
     def _active_history(self, save_id: int) -> list:
         """回滚后活跃 commit 的 hydrated history(权威截断源)。"""
-        from platform_app.db import connect
         from platform_app.branches.history_elide import hydrate_commit_state
+        from platform_app.db import connect
         with connect() as db:
             cid = int((db.execute(
                 "select coalesce(active_commit_id, active_branch_node_id) as cid from game_saves where id = %s",

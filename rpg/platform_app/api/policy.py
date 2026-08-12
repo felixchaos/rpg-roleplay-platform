@@ -12,14 +12,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from platform_app.api._deps import current_user, is_admin, json_response, require_user
 from platform_app.db import connect
-from platform_app.api._deps import current_user, is_admin, require_user, json_response
 from platform_app.policy_notice import (
     POLICY_SLUGS,
     activate_notice,
@@ -99,7 +98,7 @@ class CreateNoticeBody(BaseModel):
     slug: str
     new_version: str
     summary: str
-    effective_at: Optional[str] = None  # ISO-8601; 不传则默认 now+30d
+    effective_at: str | None = None  # ISO-8601; 不传则默认 now+30d
 
 
 @router.post("/api/admin/policy/notices")
@@ -115,7 +114,7 @@ def admin_create_notice(body: CreateNoticeBody, request: Request):
         try:
             effective_at = datetime.fromisoformat(body.effective_at)
             if effective_at.tzinfo is None:
-                effective_at = effective_at.replace(tzinfo=timezone.utc)
+                effective_at = effective_at.replace(tzinfo=UTC)
         except ValueError:
             raise HTTPException(status_code=400, detail="effective_at 格式无效,需 ISO-8601")
 

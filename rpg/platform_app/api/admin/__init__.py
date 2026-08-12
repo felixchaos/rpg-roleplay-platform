@@ -42,12 +42,12 @@ from ...db import connect  # noqa: F401
 from ...dmca import increment_strike, queue_account_termination  # noqa: F401
 from .._deps import _client_ip, json_response, require_admin  # noqa: F401
 from ._shared import (
-    router,
-    log,
-    _require_admin,
     _get_app_config,
+    _require_admin,
     _set_app_config,
     _write_audit,
+    log,
+    router,
 )
 from .achievements import (
     _ACHV_SLUG,

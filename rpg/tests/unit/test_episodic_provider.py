@@ -9,8 +9,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from context_providers.base import Demand, ProviderServices  # noqa: E402
@@ -84,7 +82,11 @@ def test_excerpt_windows_long_message():
 def test_registered_in_non_novel_packs():
     from context_providers.registry import (
         DEFAULT_FREEFORM_MANIFEST as F,
+    )
+    from context_providers.registry import (
         DEFAULT_MODULE_MANIFEST as M,
+    )
+    from context_providers.registry import (
         DEFAULT_TAVERN_MANIFEST as T,
     )
     for pack in (F, M, T):

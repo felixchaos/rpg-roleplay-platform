@@ -8,7 +8,7 @@ from fastapi import Depends, Request
 
 from ...db import connect
 from .._deps import json_response, require_user, value_error_response
-from ._shared import router, _require_owner, _write_commit
+from ._shared import _require_owner, _write_commit, router
 
 # ─── anchors CRUD ─────────────────────────────────────────────────────────────
 
@@ -157,7 +157,7 @@ async def api_anchor_add(
         ).fetchone()
         if not new_row:
             return json_response(
-                {"ok": False, "error": f"story_phase+story_time_label 组合已存在"},
+                {"ok": False, "error": "story_phase+story_time_label 组合已存在"},
                 status_code=409,
             )
         after = dict(new_row)

@@ -200,8 +200,8 @@ def test_openai_compat_tiered_load_then_call_roundtrip(monkeypatch):
     """openai_compat.stream_with_mcp_loop 收敛到 _tiered 后,真实酒馆工具表跑 load→call 闭环:
     模型先 load 窗口外工具,下一轮即可调用它;load_tools 不进 dispatcher。"""
     from agents.gm.backends import _tiered
-    from tools_dsl.command_tools_register import ensure_registered
     from tools_dsl.chat_tool_router import build_unified_tool_list
+    from tools_dsl.command_tools_register import ensure_registered
     ensure_registered()
     tav = build_unified_tool_list([], origin="llm_chat", mode="tavern_gm", bound_script_id=None)
     # 窗口大小取配置真值,别抄字面量(理由同 test_tiered_tools)。
@@ -254,8 +254,8 @@ def test_openai_compat_tiered_disabled_discards_overflow(monkeypatch):
     """RPG_TIERED_TOOLS=0 → 窗口外丢弃(无 load_tools 元工具),与 _tiered.split_window(enabled=False) 一致。"""
     monkeypatch.setenv("RPG_TIERED_TOOLS", "0")
     from agents.gm.backends import _tiered
-    from tools_dsl.command_tools_register import ensure_registered
     from tools_dsl.chat_tool_router import build_unified_tool_list
+    from tools_dsl.command_tools_register import ensure_registered
     ensure_registered()
     tav = build_unified_tool_list([], origin="llm_chat", mode="tavern_gm", bound_script_id=None)
     from core.config import tool_window_size

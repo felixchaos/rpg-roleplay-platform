@@ -187,7 +187,6 @@ def _claim_pending_job(job_id: str) -> dict[str, Any] | None:
 
 def _run_sync_job(job_id: str) -> None:
     """worker 入口：必须先 _claim_pending_job 原子领取，领不到直接退出。"""
-    from psycopg.types.json import Jsonb
 
     from .. import knowledge
     from ..db import connect, init_db

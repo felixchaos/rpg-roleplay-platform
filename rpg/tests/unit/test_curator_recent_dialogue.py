@@ -18,8 +18,7 @@ import ast
 import json
 import pathlib
 
-from agents.context_agent import (_RECENT_BUDGET, _curator_task_prompt,
-                                  _recent_dialogue_json)
+from agents.context_agent import _RECENT_BUDGET, _curator_task_prompt, _recent_dialogue_json
 
 _SRC = pathlib.Path(
     pathlib.Path(__file__).resolve().parents[2] / "agents" / "context_agent.py"

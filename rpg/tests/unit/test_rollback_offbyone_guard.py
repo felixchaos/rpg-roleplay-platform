@@ -21,7 +21,6 @@ from pathlib import Path
 
 from platform_app.branches import deletion
 
-
 SRC = Path(deletion.__file__).read_text(encoding="utf-8")
 
 

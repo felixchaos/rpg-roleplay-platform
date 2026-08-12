@@ -32,6 +32,7 @@ def _get_vertex_client(user_id: int | None = None):
         return _VERTEX_CLIENT_CACHE[cache_key]
     try:
         from google import genai
+
         from core.vertex_sa import load_sa_credentials
 
         # 平台共享 SA 兜底仅 admin/vip(_is_admin 含 vip_user)+ 系统任务(无 user);

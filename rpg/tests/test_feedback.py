@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 import os
 import random
 import string
+import sys
 from pathlib import Path
 
 import pytest
@@ -36,7 +36,7 @@ os.environ.setdefault("RPG_REQUIRE_AUTH", "1")
 @pytest.fixture(scope="module")
 def db_conn():
     """返回 psycopg Connection（dict_row）。"""
-    from platform_app.db import init_db, connect
+    from platform_app.db import connect, init_db
     init_db()
     with connect() as db:
         yield db

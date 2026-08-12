@@ -42,8 +42,8 @@ class ImmersiveTool(unittest.TestCase):
     def test_executor_writes_persistent_column(self):
         """LLM 工具必须把选择落持久列 game_saves.tavern_immersive(真相源),否则下回合
         被新鲜列读覆盖、形同没改。save_id 解析得到 → 发 UPDATE。"""
-        import tools_dsl.command_tools_tavern as T
         import platform_app.db as _db
+        import tools_dsl.command_tools_tavern as T
         captured = {}
 
         class _FakeCur:

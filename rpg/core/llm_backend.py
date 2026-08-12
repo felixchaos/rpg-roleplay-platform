@@ -11,9 +11,6 @@
 """
 from __future__ import annotations
 
-from typing import Optional
-
-
 # 全局「便宜 vertex 默认」单一真源 —— 各调用点(command_agent / set_parser / _harness /
 # extractor / acceptance_verifier / import_pipeline / tavern_cards / GameMaster …)的兜底
 # 默认统一引用这两个常量,消除 2.5/3.5 漂移。
@@ -40,7 +37,7 @@ def detect_default_api() -> str:
     return "vertex_ai"  # 默认仍兜底 vertex,失败时调用方走 fallback
 
 
-def first_user_model(user_id: Optional[int], api_id: str | None = None) -> tuple[str, str] | None:
+def first_user_model(user_id: int | None, api_id: str | None = None) -> tuple[str, str] | None:
     """Return the first model backed by this user's own credential.
 
     Production must not fall back to the global selected model if the user has
@@ -155,9 +152,9 @@ def _model_in_catalog(user_id: int, model_real_name: str) -> bool:
 
 
 def resolve_preferred_model(
-    user_id: Optional[int],
+    user_id: int | None,
     pref_key: str = "set_parser.model_real_name",
-) -> Optional[str]:
+) -> str | None:
     """从用户偏好推断该用户应该用的 model。
 
     Args:
@@ -193,9 +190,9 @@ def resolve_preferred_model(
 
 
 def resolve_preferred_api(
-    user_id: Optional[int],
+    user_id: int | None,
     pref_key: str = "set_parser.api_id",
-) -> Optional[str]:
+) -> str | None:
     """从用户偏好推断该用户应该用的 API provider。
 
     Args:
@@ -258,7 +255,7 @@ def _provider_usable_strict(user_id: int, api_id: str) -> bool:
     return credential_is_usable(cred)
 
 
-def user_can_use_provider(user_id: Optional[int], api_id: str) -> bool:
+def user_can_use_provider(user_id: int | None, api_id: str) -> bool:
     """该用户是否实际可用此 provider(有自己配的凭证)。公开 bool 契约。
 
     薄包装 _provider_usable_strict:任何异常(含「不可判定」第三态)视为 → False
@@ -274,7 +271,7 @@ def user_can_use_provider(user_id: Optional[int], api_id: str) -> bool:
 
 
 def guard_byok_usable(
-    user_id: Optional[int],
+    user_id: int | None,
     api_id: str | None,
     model: str | None,
     *,

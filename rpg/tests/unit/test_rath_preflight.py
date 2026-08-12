@@ -17,7 +17,6 @@ sys.path.insert(0, str(ROOT))
 
 from rath import engine  # noqa: E402
 
-
 # ── mock db 基础设施(风格延续 test_rath_briefing.py 的 _MockDB) ──────────
 
 class _Result:

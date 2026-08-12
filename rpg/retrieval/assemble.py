@@ -13,13 +13,13 @@ from .anchor_prose import _extract_style_sample, _load_anchor_chapter_text
 from .defaults import _is_default_mumu_script, _strip_default_novel_leakage
 from .progress import _resolve_active_phase_range, _resolve_save_id_from_user
 from .sources import (
-    bm25_search,
-    detect_mentioned_characters,
-    load_character_cards,
-    load_chapter_facts,
-    load_summaries_window,
     _load_script_character_cards,
     _load_worldbook_for_retrieval,
+    bm25_search,
+    detect_mentioned_characters,
+    load_chapter_facts,
+    load_character_cards,
+    load_summaries_window,
 )
 
 _TIMELINE_READY = False
@@ -113,9 +113,9 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
                         # P4(S7):flag on 时进度改由【前沿派生】——丢弃可能被旧猜章器冲高的 worldline 标量
                         # (over-shoot 根源),但绝不低于「已确认锚点」可靠底 _last_sat。正常档 derived==_last_sat,
                         # 等价旧行为;over-shoot 档则收敛回真实章。shadow 记 标量↔派生 供切换前核对。
-                        from kb.reveal import (_frontier_on as _fr_on,
-                                               _frontier_shadow as _fr_shadow,
-                                               derived_progress_chapter as _dpc)
+                        from kb.reveal import _frontier_on as _fr_on
+                        from kb.reveal import _frontier_shadow as _fr_shadow
+                        from kb.reveal import derived_progress_chapter as _dpc
                         if _fr_on(_save_id_prog):
                             try:
                                 _derived = _dpc(_save_id_prog, db=_db_prog)
@@ -140,6 +140,7 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
                         # env RPG_REVEAL_ESTIMATE_LOOKAHEAD 默认 3,<=0 关闭钳制。
                         try:
                             import os as _os_clamp
+
                             from gm_serving.settings import clamp_reveal_progress as _clamp_rp
                             _user_floor = int((_wl_prog or {}).get("user_progress_floor") or 0)
                             _det_floor = max(int(_last_sat or 0), _user_floor)
@@ -573,16 +574,17 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
         # 不再让 GM 看到 12 个平级 token 不知道层级关系。
         try:
             if script_id:
-                from platform_app.db import connect as _connect_tree
                 from kb.canon_repo import _reveal_clause as _rc_fn
+
                 # BUG-2: 层级图注入 kb_canon_entities 时必须按"已揭示集合"过滤,否则
                 # `order by importance desc limit 60` 会把全书后期势力/地点塞给早章玩家 = 剧透。
                 # 复用 canon_repo._reveal_clause(与 Phase D 同语义,单一真源):
                 #   CTE 实体用裸列;parent self-join 用 p. 前缀,防"早章子实体的后期父势力名"泄漏
                 #   (父若未揭示 → join 不命中 → 该实体退化为顶级独立项,不显示父名)。
                 # P4(S5):flag on 且有 save_id → 前沿门控(占位符个数不变:标量章号 → save_id)。
-                from kb.reveal import (_frontier_on, _frontier_shadow, _shadow_diff_log,
-                                       reveal_clause_v2 as _rc_v2)
+                from kb.reveal import _frontier_on, _frontier_shadow, _shadow_diff_log
+                from kb.reveal import reveal_clause_v2 as _rc_v2
+                from platform_app.db import connect as _connect_tree
                 _use_v2_tree = bool(_save_id_prog) and _frontier_on(_save_id_prog)
                 if _use_v2_tree:
                     # 遗漏修复(审计 P1,休眠于 RPG_TKB_FRONTIER off):v2 分支漏传 progress_chapter →
@@ -760,7 +762,7 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
             # NovelWorldbookProvider 跳过重叠;属性缺失时 provider 照旧全注入(无回归)。
             try:
                 if state is not None:
-                    setattr(state, "_rag_wb_ids", _wb_ids)
+                    state._rag_wb_ids = _wb_ids
             except Exception:
                 pass
             if wb_text:

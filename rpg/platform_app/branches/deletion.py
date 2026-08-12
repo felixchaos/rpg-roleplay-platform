@@ -9,7 +9,6 @@ from platform_app.branches._helpers import (
     MAIN_REF,
     _unlink_branch_state,
     acquire_save_advisory_lock,
-    commit_state,
 )
 from platform_app.branches.commits import _commit_for_user
 from platform_app.branches.refs import (

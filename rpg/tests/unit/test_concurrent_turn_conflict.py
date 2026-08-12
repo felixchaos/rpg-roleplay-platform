@@ -4,7 +4,6 @@
 源码断言锁定确定性代码缝(并发路径难在单测里真并发,故守卫「拒绝分支存在 + 假 rebase 已删 +
 锁在改写前」),不依赖跑库。
 """
-import re
 import unittest
 from pathlib import Path
 

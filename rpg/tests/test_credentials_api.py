@@ -18,8 +18,8 @@ def test_non_admin_cannot_save_unknown_api_credential(monkeypatch):
     """当前安全模型(a0f6efa39 起,见 me/credentials.py 非 admin 闸):普通用户可添加
     自定义(未知)provider,但必须自带 base_url 指向中转站——【无 base_url 的未知
     provider】仍被 400 拒且不落库(拒绝面不降级);base_url 本身的 SSRF 闸见下个测试。"""
-    from platform_app.api import me as me_api
     from platform_app import user_credentials
+    from platform_app.api import me as me_api
 
     calls: list[tuple] = []
 
@@ -72,8 +72,8 @@ def test_validate_base_url_rejects_internal_hosts_in_server_mode(monkeypatch):
 
 
 def test_non_admin_builtin_api_credential_is_normalized(monkeypatch):
-    from platform_app.api import me as me_api
     from platform_app import user_credentials
+    from platform_app.api import me as me_api
 
     calls: list[tuple] = []
 
@@ -99,8 +99,8 @@ def test_keep_key_forwards_preserve_flag(monkeypatch):
     路由必须把它翻成 set_credential(preserve_key_if_empty=True),否则空 key 会被
     当成删除 —— 这正是「改 URL 保存后没变化、要删 key 重填」的上报 bug。
     """
-    from platform_app.api import me as me_api
     from platform_app import user_credentials
+    from platform_app.api import me as me_api
 
     calls: list[tuple] = []
 
@@ -129,8 +129,8 @@ def test_keep_key_forwards_preserve_flag(monkeypatch):
 
 def test_no_keep_key_defaults_to_delete_semantics(monkeypatch):
     """没有 keep_key 时,preserve_key_if_empty 必须为 False —— 保留「空 key = 删除」语义。"""
-    from platform_app.api import me as me_api
     from platform_app import user_credentials
+    from platform_app.api import me as me_api
 
     calls: list[tuple] = []
     monkeypatch.setattr(user_credentials, "set_credential",

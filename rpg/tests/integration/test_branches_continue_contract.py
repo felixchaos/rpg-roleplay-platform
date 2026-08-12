@@ -47,9 +47,10 @@ class BranchesContinueAcceptsMessageIndex(unittest.TestCase):
         的落库形态一致），state_snapshot.history 累积 [user, assistant] 对（不再留空数组），
         让 opening_offset 探测（读 state_snapshot->history->0）在真实数据下工作。
         """
+        from psycopg.types.json import Jsonb
+
         from platform_app import workspace
         from platform_app.db import connect
-        from psycopg.types.json import Jsonb
         with connect() as db:
             scr = db.execute(
                 "insert into scripts(owner_id, title) values (%s, %s) returning id",
@@ -104,10 +105,12 @@ class BranchesContinueAcceptsMessageIndex(unittest.TestCase):
 
     def _mk_save_with_turn_one_messages(self, uid: int) -> int:
         """建一个真实 messages 表从 turn=1 开始的存档，覆盖线上删除/分支映射。"""
+        import secrets as _secrets
+
+        from psycopg.types.json import Jsonb
+
         from platform_app import workspace
         from platform_app.db import connect
-        from psycopg.types.json import Jsonb
-        import secrets as _secrets
 
         with connect() as db:
             scr = db.execute(

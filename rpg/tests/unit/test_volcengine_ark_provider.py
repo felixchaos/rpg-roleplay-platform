@@ -17,8 +17,12 @@ from __future__ import annotations
 
 import pytest
 
-from model_registry import (DEFAULT_MODEL_CATALOG, _CURATED_REQUIRED_APIS,
-                            _DEPRECATED_APIS, _ensure_curated_apis, default_api_for)
+from model_registry import (
+    _CURATED_REQUIRED_APIS,
+    _DEPRECATED_APIS,
+    _ensure_curated_apis,
+    default_api_for,
+)
 from platform_app.user_credentials import _normalize_openai_base_url as _norm
 
 _ARK = "https://ark.cn-beijing.volces.com/api/v3"
@@ -143,6 +147,7 @@ def test_google_self_heal_unchanged():
 # 「base_url 可能缺 /v1」,他照着加了 /v1 → 连本来能用的 chat/completions 一起挂掉。
 def test_models_404_message_does_not_blame_base_url():
     import pathlib as _p
+
     import model_probe as _mp
     src = _p.Path(_mp.__file__).read_text(encoding="utf-8")
     assert "if _code == 404:" in src, "404 没有单独分支,仍会落进「base_url 可能缺 /v1」的通用猜测"
@@ -156,6 +161,7 @@ def test_models_404_message_does_not_blame_base_url():
 def test_generic_guess_still_exists_for_non_404():
     """非 404 的拒绝仍保留原来的通用提示,别把有用的猜测一起删了。"""
     import pathlib as _p
+
     import model_probe as _mp
     src = _p.Path(_mp.__file__).read_text(encoding="utf-8")
     assert "base_url 可能缺 /v1 版本段" in src

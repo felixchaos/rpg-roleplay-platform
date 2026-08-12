@@ -9,6 +9,7 @@ from typing import Any
 
 from ._helpers import _resolve_sid, _strlist
 
+
 def _t_update_npc_card(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
     sid = _resolve_sid(script_id, args)
     if sid is None:

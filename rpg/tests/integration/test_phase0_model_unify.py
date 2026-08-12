@@ -10,9 +10,9 @@
 from __future__ import annotations
 
 import os
-import sys
 import random
 import string
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -166,8 +166,9 @@ class TestResolvePrefFallback(unittest.TestCase):
         cls.connect = connect
 
     def setUp(self):
-        from platform_app.db import connect
         from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect
         with connect() as db:
             self._uid = _make_test_user(db)
             # 写 user_preferences: gm.model_real_name = 不存在的模型

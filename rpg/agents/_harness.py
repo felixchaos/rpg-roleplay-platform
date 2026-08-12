@@ -682,10 +682,20 @@ def resolve_api_and_model(
     """
     from core.llm_backend import (
         DEFAULT_FALLBACK_API as _DEFAULT_FALLBACK_API,
+    )
+    from core.llm_backend import (
         DEFAULT_FALLBACK_MODEL as _DEFAULT_FALLBACK_MODEL,
+    )
+    from core.llm_backend import (
         first_user_model as _first_user_model,
+    )
+    from core.llm_backend import (
         guard_byok_usable as _guard_byok_usable,
+    )
+    from core.llm_backend import (
         resolve_preferred_api as _resolve_api,
+    )
+    from core.llm_backend import (
         resolve_preferred_model as _resolve_model,
     )
     # 兜底默认统一引用 catalog.selected 对齐的常量(消除散落 'vertex_ai'/'gemini-3.5-flash' 漂移)。
@@ -725,13 +735,13 @@ def call_agent_tool_loop(
     *,
     tools: list[dict],
     terminal_tool_name: str,
-    tool_handler: "Callable[[str, dict], str | dict]",
+    tool_handler: Callable[[str, dict], str | dict],
     max_iterations: int = 4,
     max_tokens: int = 1024,
     agent_kind: str | None = None,
     save_id: int | None = None,
     context_run_id: int | None = None,
-) -> "tuple[dict | None, dict, list[dict]]":
+) -> tuple[dict | None, dict, list[dict]]:
     """Anthropic native multi-turn tool use 循环。返回 (terminal_tool_args, usage, trace)。
 
     trace 是 [(tool_name, args, result), ...] 让 caller 审计 LLM 中间动作。
@@ -739,7 +749,7 @@ def call_agent_tool_loop(
 
     非 anthropic provider:暂不支持,抛 NotImplementedError。
     """
-    from typing import Callable as _Callable  # noqa: F401 (used above for annotation)
+    from collections.abc import Callable as _Callable  # noqa: F401 (used above for annotation)
 
     if api_id != "anthropic":
         raise NotImplementedError(

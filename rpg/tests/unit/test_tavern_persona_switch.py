@@ -12,6 +12,7 @@ RT = (ROOT / "routes" / "tavern.py").read_text(encoding="utf-8")
 TT = (ROOT / "tools_dsl" / "command_tools_tavern.py").read_text(encoding="utf-8")
 
 import sys
+
 sys.path.insert(0, str(ROOT))
 from platform_app.tavern_persona import persona_card_to_player_fields  # noqa: E402
 

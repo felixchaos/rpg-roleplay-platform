@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Iterator
-from typing import Any, Dict, Set
+from typing import Any
 
 import httpx
 
@@ -88,12 +88,12 @@ class _OpenAICompatBackend:
     # 同一进程内之后直接走 text marker 不再重试。
     # 已知限制：进程内缓存，多 worker 模式下各自独立学习（不跨进程共享），可接受——
     # 最坏情况是同一 (api_id, model) 在多 worker 上各自发一次失败请求后才降级。
-    _unsupported_combos: Set[tuple[str, str]] = set()
+    _unsupported_combos: set[tuple[str, str]] = set()
 
     # 类级状态：记录拒绝自定义 temperature(只接受默认/=1)的 (api_id, model) 组合，
     # 同一进程内之后直接不发 temperature。见 _create / _is_temperature_rejected。
     # 已知限制：进程内缓存，多 worker 模式下各自独立学习（不跨进程共享），可接受。
-    _fixed_temp_combos: Set[tuple[str, str]] = set()
+    _fixed_temp_combos: set[tuple[str, str]] = set()
 
     def _create(self, **kwargs):
         """self.client.chat.completions.create 的包装,带 temperature 自愈。
@@ -186,8 +186,8 @@ class _OpenAICompatBackend:
         # 覆盖 openai SDK 默认 UA(`OpenAI/Python x.y.z`)→ 浏览器 UA。否则挂在 Cloudflare 后的
         # 中转站会按 UA 用 WAF 把它当 AI 爬虫拦掉(403「Your request was blocked」/ error 1010),
         # 导致这类中转站聊天/校验/拉取模型全部「不可访问」。详见 core.outbound_ua(已实测)。
-        from core.outbound_ua import openai_default_headers
         from core.outbound import safe_httpx_client
+        from core.outbound_ua import openai_default_headers
         kwargs: dict[str, Any] = {
             # key 已由 resolved_auth_token 归一:有 key 用 key,免鉴权用占位 token
             # (绝不能是空串 —— openai SDK 对空串同样抛 Missing credentials,构造即崩)。
@@ -393,9 +393,9 @@ class _OpenAICompatBackend:
             return
 
         sep = "__"
+        from agents.gm.backends import _tiered
         from core.config import tiered_tools_enabled as _tiered_enabled
         from core.config import tool_window_size as _tool_window
-        from agents.gm.backends import _tiered
         # 窗口外工具进 load_tools 目录按需加载(见 _tiered.py)。默认 16(原硬编码 64 → 91 个
         # 工具里 64 个仍每轮全发 ≈ 6.7k token,阶梯化形同虚设;收到 16 后每轮工具 token 大降)。
         _WINDOW = _tool_window()

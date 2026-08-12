@@ -10,9 +10,8 @@
 """
 from __future__ import annotations
 
-from gm_serving import steering as ST
 from agents import anchor_seed_agent as ASA
-
+from gm_serving import steering as ST
 
 # 数据集:开局两个近锚点(ch1/ch2,低重要度)+ 远章重要角色(ch28,高重要度)。
 # 旧实现(importance DESC)开局会把 ch28 当「下一拍」;修复后按 chapter ASC 取 ch1/ch2,

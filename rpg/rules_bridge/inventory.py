@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import re
 
-from core.clock import now_iso
 import modules as module_registry
+from core.clock import now_iso
 
 # 拾取动词。刻意与 consume 的"拿出/拿来/点亮"等错开，避免同义冲突。
 _PICKUP_VERBS_CN = ("捡起", "捡走", "捡", "拾起", "拾取", "拾", "拿走", "取走",

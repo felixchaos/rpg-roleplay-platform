@@ -149,6 +149,7 @@ def export_save(user_id: int, save_id: int) -> dict[str, Any]:
 def _clean_gm_text(text: str) -> str:
     """剥掉给玩家不该看的 ops JSON / 工具脚手架 / 代码围栏 → 人类可读正文(当小说)。"""
     import re
+
     from state.json_ops import (
         strip_json_state_ops,
         strip_leaked_scaffold,

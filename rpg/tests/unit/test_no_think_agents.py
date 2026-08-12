@@ -8,10 +8,8 @@
 所以 monkeypatch.setattr(_harness, "call_agent_json", fake) 即可拦到真实调用链(顺带验证
 护栏在真实调用方生效)。
 """
-import json
 
 from agents import _harness
-
 
 # ── 黑天鹅 black_swan ────────────────────────────────────────────
 
@@ -101,8 +99,8 @@ class _State:
 
 def test_world_heartbeat_passes_no_think(monkeypatch):
     """run_heartbeat_tick 走 guarded,带 no_think=True;合法 JSON 数组通过确定性验收后写入。"""
-    from agents import world_heartbeat as W
     from agents import recorder as R
+    from agents import world_heartbeat as W
 
     monkeypatch.setattr(R, "_resolve_recorder_api_and_model", lambda *a, **k: ("relay", "m"))
     captured = {}

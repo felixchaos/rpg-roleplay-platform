@@ -8,9 +8,9 @@
 import argparse
 import sys
 
-from platform_app.db import connect, init_db
 from platform_app.branches._helpers import acquire_save_advisory_lock
 from platform_app.branches.history_elide import elide_save
+from platform_app.db import connect, init_db
 
 
 def run_one(save_id: int, dry_run: bool) -> dict:

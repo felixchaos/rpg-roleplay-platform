@@ -11,7 +11,7 @@ from psycopg.types.json import Jsonb
 
 from ...db import connect
 from .._deps import json_response
-from ._shared import router, _require_admin
+from ._shared import _require_admin, router
 
 _ACHV_SLUG = _re.compile(r"^[a-z0-9][a-z0-9_]{1,48}[a-z0-9]$")
 _ACHV_TIERS = {"bronze", "silver", "gold", None, ""}

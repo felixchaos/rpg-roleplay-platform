@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from platform_app.api._deps import json_response
 
+from platform_app.api._deps import json_response
 from routes._deps_fastapi import get_current_user
 
 router = APIRouter()
@@ -239,6 +239,7 @@ async def api_rath_tick(exp_id: int, user=Depends(get_current_user)):
     # 异步化(用户实锤:同步跑两次 LLM 需 60-100s,前端超时误报失败):
     # 立即返回 started,tick 在后台线程跑完落日志,前端轮询自然刷出。
     import asyncio
+
     from rath.engine import tick_experiment
     task = asyncio.create_task(asyncio.to_thread(tick_experiment, int(exp_id), manual=True))
     _bg = getattr(api_rath_tick, "_bg_tasks", set())

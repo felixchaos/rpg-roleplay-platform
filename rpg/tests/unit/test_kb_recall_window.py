@@ -6,7 +6,6 @@
 """
 from unittest import mock
 
-import kb.recall as recall_mod
 from kb.recall import CHUNK_RECENT_WINDOW, recall
 
 

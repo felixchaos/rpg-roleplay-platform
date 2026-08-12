@@ -12,7 +12,7 @@ from fastapi import Depends, HTTPException, Request
 
 from ...db import connect, limit_value
 from .._deps import _client_ip, json_response
-from ._shared import router, _require_admin
+from ._shared import _require_admin, router
 
 
 @router.post("/api/admin/allowlist/bulk")

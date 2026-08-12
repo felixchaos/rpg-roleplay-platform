@@ -159,8 +159,8 @@ class TavernSaveLifecycle(unittest.TestCase):
         开场(record_runtime_turn 用 data['turn']=history_len//2)对齐。否则前端按 msg_index//2
         回退会命中早一个 turn → continue_from 多截一轮。"""
         from platform_app import workspace
-        from platform_app.db import connect
         from platform_app.branches.tree_ops import resolve_commit_id_by_message
+        from platform_app.db import connect
         save = workspace.create_tavern_save(self.uid, self.card_id)
         self._save_ids.append(save["id"])
         sid = int(save["id"])

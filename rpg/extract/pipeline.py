@@ -7,7 +7,8 @@ constant 骨架 + 实体嵌入)。设计 A_extraction.md。
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from extract import resolve as R
 from extract.embed import embed_canon_entities
@@ -41,9 +42,8 @@ def run_extraction(
     sample_chapters: 只提取前 N 章(测试/控成本);None=全书(Phase H 回填)。
     progress_cb(stage, info): 可选进度回调(挂 import_jobs)。
     """
-    from platform_app.db import connect
-
     from extract.progress import emit_progress
+    from platform_app.db import connect
 
     def _emit(stage, info):
         # 取消信号(InterruptedError)经 emit_progress 上抛,不再被吞 → 取消可生效。

@@ -118,7 +118,8 @@ def record_runtime_turn(
             # kb_native 档(新档,创建即 seed)始终落 KB;旧档按每用户 kb_state 开关。
             if bool(save.get("kb_native")) or _feat("kb_state", int(save["user_id"]) if save.get("user_id") is not None else None):
                 try:
-                    from kb.save_kb import import_state as _kb_import, maintain_structured_kb as _kb_maintain
+                    from kb.save_kb import import_state as _kb_import
+                    from kb.save_kb import maintain_structured_kb as _kb_maintain
                     _kb_import(db, save_id, int(row["id"]), data)
                     # 史官:从本回合正文确定性维护结构化 KB(实体 encountered + 全部关系)
                     _sid = (save or {}).get("script_id")
@@ -146,6 +147,7 @@ def record_runtime_turn(
         from core.feature_flags import feature_enabled as _feat
         if _feat("episodic_recall", effective_user_id):
             import threading as _th
+
             from kb.episodic import embed_pending_events as _emb
             _th.Thread(target=_emb, args=(int(save_id), effective_user_id), daemon=True).start()
     except Exception:

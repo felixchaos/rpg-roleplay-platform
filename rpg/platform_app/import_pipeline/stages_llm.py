@@ -10,10 +10,11 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from ..db import connect
-from .errors import MissingUserCredentialError
 from core.llm_backend import DEFAULT_FALLBACK_API, DEFAULT_FALLBACK_MODEL
 from model_aliases import credential_storage_api_id, normalize_api_id
+
+from ..db import connect
+from .errors import MissingUserCredentialError
 
 
 def _resolve_extractor_llm(user_id: int) -> tuple[str, str]:
@@ -398,8 +399,8 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
         except Exception:
             pass
     # 返 (generated, llm_failures) 让 _run_pipeline 决定是否标 partial
-    setattr(_stage_cards, "_last_llm_failures", llm_failures)
-    setattr(_stage_cards, "_last_targets", len(targets))
+    _stage_cards._last_llm_failures = llm_failures
+    _stage_cards._last_targets = len(targets)
     return generated
 
 
@@ -535,7 +536,7 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
                 count += (getattr(_cur, "rowcount", 0) or 0)
         ctl.update(stage_progress=1)
         # phase_backend: 标记 worldbook 阶段写了多少条 — 0 当作 partial 让上层标 done_with_errors
-        setattr(_stage_worldbook, "_last_count", count)
+        _stage_worldbook._last_count = count
         return count
     except Exception as exc:
         # phase_backend: 不 silent swallow,把 LLM 失败写到 import_jobs.error + warnings
@@ -557,7 +558,7 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
             )
         except Exception:
             pass
-        setattr(_stage_worldbook, "_last_count", 0)
+        _stage_worldbook._last_count = 0
         return 0
 
 def _stage_npc_voices(user_id: int, script_id: int, *, max_npc: int = 20, only_empty: bool = True) -> int:
@@ -652,13 +653,13 @@ def _stage_npc_voices(user_id: int, script_id: int, *, max_npc: int = 20, only_e
             f"已知背景: {r['background'] or '(空)'}\n\n"
             f"原文片段(此 NPC 出场场景,可能不完整):\n"
             + "\n---\n".join(excerpts) + "\n\n"
-            f"严格输出 JSON(无前后文字),字段必填:\n"
-            f"{{\n"
-            f'  "personality": "≤80字性格,用具体形容词+行为倾向(例:平静、戏谑、信息密度高、不轻易动情绪)",\n'
-            f'  "speech_style": "≤80字说话风格,语气+常用词+句式特征(例:称对方为被选中者,尾音常带呢/呐,'
-            f'冷峻陈述穿插戏谑反问)",\n'
-            f'  "sample_dialogue": ["逐字摘原文 2-3 句最有代表性的台词,保留引号"]\n'
-            f"}}"
+            "严格输出 JSON(无前后文字),字段必填:\n"
+            "{\n"
+            '  "personality": "≤80字性格,用具体形容词+行为倾向(例:平静、戏谑、信息密度高、不轻易动情绪)",\n'
+            '  "speech_style": "≤80字说话风格,语气+常用词+句式特征(例:称对方为被选中者,尾音常带呢/呐,'
+            '冷峻陈述穿插戏谑反问)",\n'
+            '  "sample_dialogue": ["逐字摘原文 2-3 句最有代表性的台词,保留引号"]\n'
+            "}"
         )
         try:
             # 结构化微任务禁深思(268 实锤族)+空正文护栏

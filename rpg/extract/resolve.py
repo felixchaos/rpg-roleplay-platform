@@ -440,11 +440,7 @@ def cluster_entities(mentions: dict, *, embedder=None, sim_threshold: float = 0.
             seen[c.logical_key] = 1
     # phase_backend: 通过函数属性暴露 stats(避免改返回类型)
     cluster_method = "embedding+heuristic" if (embedder is not None and not embedder_fallback) else "heuristic"
-    setattr(cluster_entities, "_last_stats", {
-        "embedder_fallback": embedder_fallback,
-        "fallback_reason": fallback_reason,
-        "cluster_method": cluster_method,
-    })
+    cluster_entities._last_stats = {"embedder_fallback": embedder_fallback, "fallback_reason": fallback_reason, "cluster_method": cluster_method}
     return canon
 
 
@@ -473,7 +469,7 @@ def _looks_like_non_person(name: str) -> bool:
     return False
 
 
-def _has_person_evidence(c: "CanonEntity") -> bool:
+def _has_person_evidence(c: CanonEntity) -> bool:
     """有个人化身份描述,或除规范名外还有 ≥1 别名 → 像真有其人,降级闸放过。"""
     if (getattr(c, "identity", "") or "").strip():
         return True

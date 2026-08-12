@@ -8,10 +8,9 @@
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -140,6 +139,7 @@ class TestOriginAllowed:
     def test_cors_regex_twin_stays_in_sync_with_nets(self):
         """CORS allow_origin_regex 与 _origin_allowed 的 nets 是孪生实现,CGNAT/ULA 两边都要认。"""
         import re
+
         from core import startup
         rx = re.compile(startup._LOCAL_LAN_ORIGIN_REGEX)
         for ok in ("http://100.98.88.64:7860", "http://192.168.1.4:7860",
@@ -257,8 +257,10 @@ class TestMiddlewareIntegration:
 
     def _build_app(self):
         from fastapi import FastAPI
-        from fastapi.responses import HTMLResponse, JSONResponse as _JSONResponse
-        from core.startup import configure_app, lifespan
+        from fastapi.responses import HTMLResponse
+        from fastapi.responses import JSONResponse as _JSONResponse
+
+        from core.startup import configure_app
 
         # 最小 app,不启动 lifespan(避免 DB 依赖)
         mini = FastAPI()
