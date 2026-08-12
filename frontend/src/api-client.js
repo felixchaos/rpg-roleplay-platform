@@ -50,8 +50,26 @@
   })();
 
   // ---- core fetch helpers ------------------------------------
+  // AbortSignal.timeout 是 Chrome 103+ / Safari 16+ / Firefox 100+ 才有的新 API。
+  // 老浏览器和一批 App 内置 WebView(QQ/微信等)没有 —— 而这里是 _send 的**唯一**超时来源,
+  // 缺了它不是"超时不生效",是每一个 API 调用当场抛 TypeError:
+  // 用户反馈「登录会显示 AbortSignal.timeout is not a function」,实际整站都点不动。
+  // 回退:AbortController + setTimeout,语义等价(超时即 abort);拿不到 AbortController
+  // 的极老环境返回 undefined —— fetch 收到 signal: undefined 合法,退化成"没有超时"而不是崩。
+  const _HAS_SIGNAL_TIMEOUT = (typeof AbortSignal !== "undefined"
+    && typeof AbortSignal.timeout === "function");
   function timeoutSignal(ms) {
-    return AbortSignal.timeout(ms);
+    if (_HAS_SIGNAL_TIMEOUT) return AbortSignal.timeout(ms);
+    if (typeof AbortController === "undefined") return undefined;
+    const ac = new AbortController();
+    const timer = setTimeout(() => {
+      try { ac.abort(new DOMException("TimeoutError", "TimeoutError")); }
+      catch (_) { ac.abort(); }   // 老环境 DOMException 构造签名不一致
+    }, ms);
+    // 请求正常结束后清掉定时器,避免每次调用都吊一个 15s 的 timer
+    try { ac.signal.addEventListener("abort", () => clearTimeout(timer), { once: true }); } catch (_) {}
+    ac.signal.__clearTimeout = () => clearTimeout(timer);
+    return ac.signal;
   }
 
   async function _send(path, opts) {
@@ -76,6 +94,9 @@
       res = await fetch(url, init);
     } catch (e) {
       throw new ApiError("network", 0, "网络异常：" + (e && e.message), { url });
+    } finally {
+      // 回退路径的 setTimeout 在请求结束后要撤掉(原生 AbortSignal.timeout 无此负担)
+      try { defaultSignal && defaultSignal.__clearTimeout && defaultSignal.__clearTimeout(); } catch (_) {}
     }
     const isJson = (res.headers.get("content-type") || "").indexOf("application/json") >= 0;
     let payload = null;

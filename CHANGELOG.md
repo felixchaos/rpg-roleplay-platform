@@ -9,6 +9,14 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.80.1] - 2026-08-12 (@ 9e860b00e)
+
+### Fixed
+- **老浏览器 / App 内置 WebView 上整站点不动,登录报 `AbortSignal.timeout is not a function`**(反馈 #95,世界引擎:「注册成功后,点开这个在浏览器打开,登录会显示 AbortSignal.timeout is not a function?」):`AbortSignal.timeout` 是 Chrome 103+ / Safari 16+ 才有的 API,而它是 `api-client._send` 的**唯一**超时来源 —— 缺了它不是「超时不生效」,是**每一个** API 调用在发出去之前当场抛 TypeError。所以报出来的虽然是登录,实际整站都用不了。改成能力检测 + `AbortController` + `setTimeout` 回退(语义等价,请求结束即清定时器);连 `AbortController` 都没有的极老环境退化成「无超时」而不是崩。
+  - 同族横扫:`structuredClone`(Chrome 98+,比上面那个还早)在 game-console **组件初始化时裸调**,同一批浏览器缺它就是整个游戏台白屏。抽 `lib/clone-safe.js` 做降级(纯 JSON 状态,JSON 往返是等价回退)。`crypto.randomUUID` 早有 `lib/crypto-safe.js` 兜底,复查无恙;其余高版本 API(`Object.hasOwn`/`findLast`/`replaceAll`/`Array.at`)全站零使用。
+- **世界线面板同时挂着三四个「当前」**(反馈 #96,1335179168:「世界线有三个"当前",不知道是不是显示bug」):剧本锚点的章节区间是**允许嵌套重叠**的,而桌面和移动两端各自写了一份「区间包含即当前」的逐条谓词,重叠几条就并排挂几个「当前」。生产实测该用户所用 script 322 在第 100 章同时落在 `[1,292]序章` / `[43,283]数日后` / `[57,128]` / `[100,107]` 四条锚点里 —— 四个「当前」。
+  - 判定收敛到共享缝 `lib/timeline-status.js`:包含当前章的锚点里只有**最贴切(区间最窄)**的一条算「当前」(`[100,107]` 显然比「序章 [1,292]」更能说明此刻在哪),同宽取起点更靠后的;其余包住当前章的外层弧标「进行中」——不能误标成已度过或待解锁,它们确实正在进行。桌面/移动同批换到这条缝,并加奇偶守卫测试锁死(再有人手写 `chapter_min <= currentChapter` 就红)。
+
 ## [1.80.0] - 2026-08-11 (@ 307cb5866)
 
 ### Added
