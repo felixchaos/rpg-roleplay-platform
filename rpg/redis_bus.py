@@ -134,7 +134,7 @@ def rate_reset(key: str) -> None:
     try:
         cli.delete(f"rpg:rl:{key}")
     except Exception:
-        pass
+        log.debug("[redis] rate_reset delete 失败 key=%s", key, exc_info=True)
 
 
 # ── 锁定键(登录失败锁定等,带 TTL 自动解锁)────────────────────────────────
@@ -170,7 +170,7 @@ def lock_clear(name: str) -> None:
     try:
         cli.delete(f"rpg:lock:{name}")
     except Exception:
-        pass
+        log.debug("[redis] lock_clear delete 失败 name=%s", name, exc_info=True)
 
 
 # ── 跨进程并发信号量(令牌列表 + 阻塞 BLPOP)──────────────────────────────
@@ -276,7 +276,7 @@ def sem_release(name: str, token: str) -> None:
     try:
         cli.rpush(f"rpg:sem:{name}:tokens", token)
     except Exception:
-        pass
+        log.debug("[redis] semaphore_release rpush 失败 name=%s", name, exc_info=True)
 
 
 __all__ = [
