@@ -20,7 +20,14 @@ import unittest
 from pathlib import Path
 
 RPG = Path(__file__).resolve().parents[2]
-SKIP_DIRS = ("tests/", "claude_design_upload/")
+# `.venv/` 必须排除:生产与本地约定的 venv 就在 rpg/.venv(见部署 runbook),不排除的话
+# 这个守卫会扫进 site-packages,拿第三方代码的写法把自己判红(153 处全是依赖里的)。
+# CI 恰好没暴露 —— 它把依赖装在 runner 的系统 python 里,rpg/ 下没有 venv。
+# 其余条目对齐 pyproject.toml 的 ruff extend-exclude。
+SKIP_DIRS = (
+    "tests/", "claude_design_upload/", ".venv/", "venv/",
+    "user_skills/", "saves/", "platform_data/", "indexes/", "modules/",
+)
 
 
 def _names_bound_before(node_body: list[ast.stmt], upto: ast.stmt) -> set[str]:
