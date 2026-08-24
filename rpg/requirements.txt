@@ -53,8 +53,8 @@ typing-inspection==0.4.4
 typing_extensions==4.16.0
 urllib3==2.7.0
 uvicorn==0.52.3
-# 维护者按住:dependabot 把它顶到 17.0.1,但 google-genai 2.17.0 要求 websockets<17.0,
+# 维护者按住:dependabot 反复把它顶到 17.0.1,但 google-genai(2.18.1 仍然)要求 websockets<17.0,
 # 整组因此 ResolutionImpossible。16.1.1 是天花板内的最高版本(仍是升级,不是回退)。
 # google-genai 放开 <18 之后可跟着上 17.x。
-websockets==17.0.1
+websockets==16.1.1
 zhconv==1.4.3
