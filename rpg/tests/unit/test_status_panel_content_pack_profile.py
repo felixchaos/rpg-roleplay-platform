@@ -173,6 +173,42 @@ class NovelProfileBackwardCompat(unittest.TestCase):
                 f"Novel profile 应读取 {needle}")
 
 
+class MemoryBucketFamilyParity(unittest.TestCase):
+    """memory 的两个玩家可写桶(abilities / resources)必须同面同待遇。
+
+    反馈 #98:玩家往 memory.resources 存了东西,GM 读得到(recorder/extractor prompt
+    都注入 memory.resources),但状态栏「身上之物」只渲染 player.inventory → 面板空着,
+    看上去像数据丢了。abilities 桶早有渲染 + 增删入口,resources 漏了 —— 典型「修 A 漏 B」。
+    这条守卫锁死:同族桶要么都有渲染路径,要么都没有。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.body = _extract_function(PANELS, "NovelStatusProfile")
+        assert cls.body, "NovelStatusProfile 不存在"
+
+    def test_resources_bucket_is_rendered(self):
+        self.assertIn("state.memory.resources", self.body,
+            "身上之物必须读 memory.resources 桶 —— GM 写得进、UI 读不到就是反馈 #98")
+
+    def test_inventory_count_covers_both_sources(self):
+        # 计数不能只数 player.inventory,否则「N 件」与列表条数对不上
+        self.assertIn("inventory.length + resources.length", self.body,
+            "身上之物计数必须覆盖 player.inventory + memory.resources 两源")
+
+    def test_resources_has_add_and_remove_entries(self):
+        # 与 abilities 同款:bucket=resources 的 memoryAdd / memoryRemove
+        self.assertIn('memoryAdd({ bucket: "resources"', self.body,
+            "resources 桶缺手动添加入口(abilities 有,同族必须对称)")
+        self.assertIn('memoryRemove({ bucket: "resources"', self.body,
+            "resources 桶缺删除入口(abilities 有,同族必须对称)")
+
+    def test_both_family_buckets_reachable(self):
+        for bucket in ("abilities", "resources"):
+            self.assertIn(f'bucket: "{bucket}"', self.body,
+                f"memory.{bucket} 在状态栏没有任何写入路径 —— 同族桶不得只做一半")
+
+
 class CrossProfileSeparation(unittest.TestCase):
     """两 profile 之间互不污染。"""
 
