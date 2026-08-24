@@ -234,7 +234,11 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
     from .. import knowledge
     api_id, model = _resolve_extractor_llm(user_id)
 
-    top_n = 30
+    # 候选定型后(_stage_entities 把截断名长回真名、折掉影子、滤掉虚词碎片),
+    # 名额的含金量高了,但泛词仍会占掉一部分 —— 实测 script 143 的「詹岚」「楚轩」
+    # 恰好卡在第 31、32 名。30 → 40 让这类刚出线的角色有机会,代价是每本书至多
+    # 多 10 次 LLM 调用(单次 ~1.2k token,相对整个拆书流程可忽略)。
+    top_n = 40
     targets = [e for e in entities[:top_n] if e["count"] >= 5]
     ctl.update(stage_progress=0, stage_total=len(targets))
 
