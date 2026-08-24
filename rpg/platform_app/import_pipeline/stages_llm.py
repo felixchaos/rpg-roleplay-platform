@@ -281,7 +281,14 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
         existing_keys = set()
 
     generated = 0
-    llm_failures = 0  # phase_backend: 累计 LLM 调用失败次数,>50% 标 partial
+    llm_failures = 0  # phase_backend: 累计 LLM 调用失败次数(抛异常),>50% 标 partial
+    # 反馈 #99:调用「成功」但输出没法用(JSON 解不出 / 自称人名却给不出 identity)以前
+    # 静默 continue —— 弱模型(本地 ollama / 中转小模型)整批解不出时,阶段照报 done、
+    # 卡只出寥寥几张,用户只看到「人物做不出来」而无任何线索。分开计数 + 留日志 + 进 warnings。
+    unusable = 0   # 输出不可用(解不出 JSON / 空正文 / identity 空)
+    rejected = 0   # 模型明确判「不是人名」—— 正常筛掉,不算失败
+    skipped_dup = 0  # 已有同名/别名卡,跳过不重复建
+    no_context = 0   # 摘要/正文里都找不到该名字的上下文,没法喂 LLM
     for i, entity in enumerate(targets):
         if ctl.is_cancelled():
             raise RuntimeError("cancelled")
@@ -289,6 +296,7 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
 
         # #5 去重(pre-LLM): 候选名已等于某现有卡的 name/别名 → 跳过,省 LLM 调用 + 不重复建卡。
         if _norm_name(name) in existing_keys:
+            skipped_dup += 1
             ctl.update(stage_progress=i + 1)
             continue
 
@@ -313,6 +321,7 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
                     if len(snippets) >= 3:
                         break
             if not snippets:
+                no_context += 1
                 ctl.update(stage_progress=i + 1)
                 continue
             context = "文本片段：\n" + "\n---\n".join(snippets)
@@ -356,11 +365,28 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
             cost = float(compute_cost(api_id, model, last))
             ctl.add_usage(int(last.get("input_tokens", 0)), int(last.get("output_tokens", 0)), cost)
             # task 47: LLM 明确说不是人名 → 跳过;identity 为空也判定为假名(双保险)
-            if data and data.get("is_character") is not False and (data.get("identity") or "").strip():
+            # 三种「没写卡」必须分清:不可用输出 ≠ 模型正常否决(反馈 #99)。
+            if not isinstance(data, dict):
+                unusable += 1
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "[cards] %r: 模型输出不是可解析 JSON,跳过(前 120 字: %s)",
+                    name, (raw or "")[:120].replace("\n", " ") or "<空正文>",
+                )
+            elif data.get("is_character") is False:
+                rejected += 1
+            elif not (data.get("identity") or "").strip():
+                unusable += 1
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "[cards] %r: 模型判为人名但 identity 为空,跳过", name,
+                )
+            else:
                 # #5 去重(post-LLM): 候选名或其别名已存在 → 跳过,不创建短名/全名变体重复卡。
                 _cand_keys = {_norm_name(name)} | {_norm_name(a) for a in (data.get("aliases") or [])}
                 _cand_keys.discard("")
                 if _cand_keys & existing_keys:
+                    skipped_dup += 1
                     ctl.update(stage_progress=i + 1)
                     continue
                 # 写入 character_cards(含 secrets 字段)
@@ -385,21 +411,42 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
                 "[cards] LLM card for %r failed: %s", name, exc, exc_info=True,
             )
         ctl.update(stage_progress=i + 1)
-    # 失败比例 >50% → 写 warnings 到 import_jobs,让 _run_pipeline 标 partial
-    if targets and llm_failures > len(targets) // 2:
+    # 「没答上来」= 调用抛异常 + 输出不可用。两者都该让用户看见,不能只数异常
+    # (反馈 #99:弱模型不抛异常,只是吐不出 JSON —— 老口径下 100% 静默)。
+    answer_failures = llm_failures + unusable
+    if targets and (
+        answer_failures > len(targets) // 2
+        or (generated == 0 and answer_failures > 0)
+    ):
         try:
             ctl.update(
                 warnings={
                     "stage": "cards",
                     "llm_failures": llm_failures,
+                    "unusable": unusable,
+                    "rejected": rejected,
+                    "skipped_dup": skipped_dup,
+                    "no_context": no_context,
                     "targets": len(targets),
                     "generated": generated,
                 },
             )
         except Exception:
             pass
-    # 返 (generated, llm_failures) 让 _run_pipeline 决定是否标 partial
-    _stage_cards._last_llm_failures = llm_failures
+    if unusable:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "[cards] script=%s: %s/%s 个候选的模型输出不可用(解不出 JSON 或 identity 空),"
+            "生成 %s 张卡 —— 提取模型多半不适配结构化输出,建议在设置里换提取模型",
+            script_id, unusable, len(targets), generated,
+        )
+    # 返给 _run_pipeline 决定是否标 partial(口径 = 异常 + 不可用输出)
+    _stage_cards._last_llm_failures = answer_failures
+    _stage_cards._last_exceptions = llm_failures
+    _stage_cards._last_unusable = unusable
+    _stage_cards._last_rejected = rejected
+    _stage_cards._last_skipped_dup = skipped_dup
+    _stage_cards._last_no_context = no_context
     _stage_cards._last_targets = len(targets)
     return generated
 

@@ -453,15 +453,39 @@ def _run_pipeline(job_id: str, user_id: int, script_id: int, options: dict[str, 
             ctl.update(stage="cards")
             cards_n = _stage_cards(ctl, user_id, script_id, entities)
             # phase_backend: 失败比例 >50% 标 error,主流程返 done_with_errors
+            # failures 口径 = 抛异常 + 输出不可用(弱模型解不出 JSON 也算没答上来,反馈 #99)
             cards_failures = getattr(_stage_cards, "_last_llm_failures", 0)
             cards_targets = getattr(_stage_cards, "_last_targets", 0)
             cards_status = "done"
-            if cards_targets and cards_failures > cards_targets // 2:
+            if cards_targets and (
+                cards_failures > cards_targets // 2
+                or (cards_n == 0 and cards_failures > 0)
+            ):
                 cards_status = "error"
-            stages_progress.append({
+            cards_entry = {
                 "id": "cards", "status": cards_status, "count": cards_n,
                 "failures": cards_failures, "targets": cards_targets,
-            })
+                # 明细:让用户/客服一眼看出是「模型吐不出 JSON」还是「本来就没人物」
+                "exceptions": getattr(_stage_cards, "_last_exceptions", 0),
+                "unusable": getattr(_stage_cards, "_last_unusable", 0),
+                "rejected": getattr(_stage_cards, "_last_rejected", 0),
+                "skipped_dup": getattr(_stage_cards, "_last_skipped_dup", 0),
+                "no_context": getattr(_stage_cards, "_last_no_context", 0),
+            }
+            if cards_status == "error":
+                # 结果卡片只会显示 s.error,没有它就是「unknown_error」——
+                # 反馈 #99 的用户正是卡在「人物做不出来但看不到原因」。
+                _u = int(cards_entry["unusable"] or 0)
+                _e = int(cards_entry["exceptions"] or 0)
+                _why = []
+                if _u:
+                    _why.append(f"{_u} 个候选的模型输出解析不出 JSON(提取模型不适配结构化输出,可在设置里换提取模型重试)")
+                if _e:
+                    _why.append(f"{_e} 个候选 LLM 调用报错")
+                cards_entry["error"] = (
+                    ";".join(_why) + f";共 {cards_targets} 个候选,生成 {cards_n} 张人物卡"
+                )
+            stages_progress.append(cards_entry)
         else:
             stages_progress.append({"id": "cards", "status": "skipped"})
         ctl.update(stages=stages_progress, overall_progress=4)

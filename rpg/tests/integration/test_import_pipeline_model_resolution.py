@@ -46,6 +46,9 @@ def _build_stub_overrides() -> dict:
 
     harness_mod = types.ModuleType("agents._harness")
     harness_mod.call_agent_json = MagicMock(return_value=("[]", {}))
+    # _stage_cards 走护栏版(空正文重试);stub 必须同时提供,否则函数内 import 直接 ImportError
+    # 被 except 吞成「LLM 失败」,测不到真实分支。
+    harness_mod.call_agent_json_guarded = MagicMock(return_value=("[]", {}))
     harness_mod.resolve_api_and_model = MagicMock(return_value=("vertex_ai", "gemini-3.5-flash"))
 
     # agents.gm — 三阶段修复后不应被实例化; 塞 tripwire mock 验证未走 GM 路径
@@ -202,8 +205,8 @@ class TestStageStoryPhaseLlm(unittest.TestCase):
     def setUp(self):
         harness = sys.modules["agents._harness"]
         harness.resolve_api_and_model.return_value = ("anthropic", "claude-haiku-4")
-        # call_agent_json 返回合法 phase 数组
-        harness.call_agent_json.return_value = (
+        # 调用点是护栏版 call_agent_json_guarded(空正文重试),桩要打在真正被调的那个上
+        harness.call_agent_json_guarded.return_value = (
             '[{"phase":"开端","start":1,"end":5}]', {"input_tokens": 100, "output_tokens": 50}
         )
 
@@ -219,7 +222,7 @@ class TestStageStoryPhaseLlm(unittest.TestCase):
         db_mock.execute.return_value.fetchone.return_value = None
 
         harness = sys.modules["agents._harness"]
-        harness.call_agent_json.reset_mock()
+        harness.call_agent_json_guarded.reset_mock()
 
         with patch.object(_pipeline, "connect", return_value=db_ctx):
             with patch.dict(sys.modules, {"platform_app.usage": sys.modules["platform_app.usage"]}):
@@ -228,9 +231,9 @@ class TestStageStoryPhaseLlm(unittest.TestCase):
                 except Exception:
                     pass  # DB 操作失败可以忽略
 
-        # 关键断言: call_agent_json 被调用,且 api_id="anthropic", model="claude-haiku-4"
-        harness.call_agent_json.assert_called_once()
-        args, kwargs = harness.call_agent_json.call_args
+        # 关键断言: LLM 被调用,且 api_id="anthropic", model="claude-haiku-4"
+        harness.call_agent_json_guarded.assert_called_once()
+        args, kwargs = harness.call_agent_json_guarded.call_args
         self.assertEqual(args[0], "anthropic", "api_id 应为 user pref 'anthropic'")
         self.assertEqual(args[1], "claude-haiku-4", "model 应为 user pref 'claude-haiku-4'")
 
@@ -260,14 +263,14 @@ class TestStageCards(unittest.TestCase):
     def setUp(self):
         harness = sys.modules["agents._harness"]
         harness.resolve_api_and_model.return_value = ("anthropic", "claude-haiku-4")
-        harness.call_agent_json.return_value = (
+        harness.call_agent_json_guarded.return_value = (
             '{"is_character": false}', {"input_tokens": 50, "output_tokens": 20}
         )
 
     def test_uses_extractor_pref_api(self):
         """_stage_cards 应用 extractor pref 的 api_id/model 调 call_agent_json。"""
         harness = sys.modules["agents._harness"]
-        harness.call_agent_json.reset_mock()
+        harness.call_agent_json_guarded.reset_mock()
 
         db_mock = MagicMock()
         db_ctx = MagicMock()
@@ -304,13 +307,137 @@ class TestStageCards(unittest.TestCase):
         gm_mod.GameMaster.assert_not_called()
 
 
+# ── 测试: _stage_cards 失败口径(反馈 #99)─────────────────────────────────────
+
+class _RecordingCtl(_FakeCtl):
+    """记录 ctl.update(warnings=...) —— 验证「没答上来」有没有被上报。"""
+    def __init__(self):
+        super().__init__()
+        self.warnings = None
+
+    def update(self, **kw):
+        if "warnings" in kw:
+            self.warnings = kw["warnings"]
+
+
+def _cards_db_ctx(content: str = "李明 王五 赵六 都在这一章出现"):
+    db_mock = MagicMock()
+    db_ctx = MagicMock()
+    db_ctx.__enter__ = MagicMock(return_value=db_mock)
+    db_ctx.__exit__ = MagicMock(return_value=False)
+    # 同一 fetchall 供三处查询复用(章节正文 / chapter_facts / 现有卡),
+    # 缺的键一律 .get(...) → None,各分支自然兜底。
+    db_mock.execute.return_value.fetchall.return_value = [
+        {"chapter_index": 1, "content": content},
+    ]
+    db_mock.execute.return_value.fetchone.return_value = None
+    return db_ctx
+
+
+class TestStageCardsFailureAccounting(unittest.TestCase):
+    """弱模型(本地 ollama / 小中转模型)吐不出 JSON 时,阶段不能装作 done。
+
+    反馈 #99:用户用 ollama + deepseek 拆书,「知识库人物」只出了极少量卡,
+    页面上没有任何错误 —— 因为 _parse_json 解不出就 `continue`,既不计数也不记日志,
+    只有抛异常才算 failure。这里锁死三件事:
+      1. 解不出 JSON 记进 unusable,并算进对外的 failures 口径;
+      2. 一张卡都没出且有失败 → 写 warnings(上游据此标 partial);
+      3. 模型明确说「不是人名」是正常筛选,不得算失败(否则真·无人物的书永远报错)。
+    """
+
+    def setUp(self):
+        harness = sys.modules["agents._harness"]
+        harness.resolve_api_and_model.return_value = ("anthropic", "claude-haiku-4")
+        for attr in ("_last_llm_failures", "_last_exceptions", "_last_unusable",
+                     "_last_rejected", "_last_skipped_dup", "_last_no_context",
+                     "_last_targets"):
+            if hasattr(_stage_cards, attr):
+                delattr(_stage_cards, attr)
+
+    def test_unparseable_output_counts_as_failure(self):
+        harness = sys.modules["agents._harness"]
+        harness.call_agent_json_guarded.return_value = (
+            "好的,我来分析一下这个角色……", {"input_tokens": 30, "output_tokens": 10},
+        )
+        entities = [{"name": n, "count": 9} for n in ("李明", "王五", "赵六")]
+        ctl = _RecordingCtl()
+
+        with patch.object(_pipeline, "connect", return_value=_cards_db_ctx()):
+            generated = _stage_cards(ctl, user_id=42, script_id=1, entities=entities)
+
+        self.assertEqual(generated, 0)
+        self.assertEqual(_stage_cards._last_unusable, 3,
+            "解不出 JSON 的候选必须计入 unusable,不能静默 continue")
+        self.assertEqual(_stage_cards._last_exceptions, 0,
+            "没抛异常就不该记成调用失败 —— 两种失败要分得开")
+        self.assertEqual(_stage_cards._last_llm_failures, 3,
+            "对外 failures 口径 = 异常 + 不可用输出")
+        self.assertIsNotNone(ctl.warnings, "一张卡没出且全失败,必须写 warnings 让上游标 partial")
+        self.assertEqual(ctl.warnings.get("unusable"), 3)
+        self.assertEqual(ctl.warnings.get("generated"), 0)
+
+    def test_model_rejecting_non_names_is_not_a_failure(self):
+        harness = sys.modules["agents._harness"]
+        harness.call_agent_json_guarded.return_value = (
+            '{"is_character": false}', {"input_tokens": 30, "output_tokens": 10},
+        )
+        entities = [{"name": n, "count": 9} for n in ("李明", "王五", "赵六")]
+        ctl = _RecordingCtl()
+
+        with patch.object(_pipeline, "connect", return_value=_cards_db_ctx()):
+            generated = _stage_cards(ctl, user_id=42, script_id=1, entities=entities)
+
+        self.assertEqual(generated, 0)
+        self.assertEqual(_stage_cards._last_rejected, 3)
+        self.assertEqual(_stage_cards._last_unusable, 0)
+        self.assertEqual(_stage_cards._last_llm_failures, 0,
+            "模型正常否决候选不算失败,否则真没人物的书会被报成错误")
+        self.assertIsNone(ctl.warnings, "全是正常否决时不该写 warnings")
+
+    def test_missing_identity_counts_as_unusable(self):
+        harness = sys.modules["agents._harness"]
+        harness.call_agent_json_guarded.return_value = (
+            '{"is_character": true, "identity": "  "}', {"input_tokens": 30, "output_tokens": 10},
+        )
+        entities = [{"name": "李明", "count": 9}]
+        ctl = _RecordingCtl()
+
+        with patch.object(_pipeline, "connect", return_value=_cards_db_ctx()):
+            generated = _stage_cards(ctl, user_id=42, script_id=1, entities=entities)
+
+        self.assertEqual(generated, 0)
+        self.assertEqual(_stage_cards._last_unusable, 1,
+            "自称人名却给不出 identity = 模型没答上来,不是正常否决")
+
+    def test_good_output_still_writes_card(self):
+        harness = sys.modules["agents._harness"]
+        harness.call_agent_json_guarded.return_value = (
+            '{"is_character": true, "identity": "镖师", "appearance": "刀疤"}',
+            {"input_tokens": 30, "output_tokens": 40},
+        )
+        entities = [{"name": "李明", "count": 9}]
+        ctl = _RecordingCtl()
+
+        # `from .. import knowledge` 取的是**父包属性**(真子模块),不是 sys.modules 里的桩;
+        # patch("platform_app.knowledge.…") 只会打到桩上,必须按父包属性拿到真模块再 patch。
+        import platform_app as _pa
+        with patch.object(_pipeline, "connect", return_value=_cards_db_ctx()), \
+             patch.object(_pa.knowledge, "upsert_character_card") as upsert:
+            generated = _stage_cards(ctl, user_id=42, script_id=1, entities=entities)
+
+        self.assertEqual(generated, 1)
+        upsert.assert_called_once()
+        self.assertEqual(_stage_cards._last_unusable, 0)
+        self.assertIsNone(ctl.warnings)
+
+
 # ── 测试: _stage_worldbook ────────────────────────────────────────────────────
 
 class TestStageWorldbook(unittest.TestCase):
     def setUp(self):
         harness = sys.modules["agents._harness"]
         harness.resolve_api_and_model.return_value = ("anthropic", "claude-haiku-4")
-        harness.call_agent_json.return_value = (
+        harness.call_agent_json_guarded.return_value = (
             '[{"name":"测试地点","keys":["地点"],"content":"测试内容","priority":80}]',
             {"input_tokens": 200, "output_tokens": 100},
         )
@@ -318,7 +445,7 @@ class TestStageWorldbook(unittest.TestCase):
     def test_uses_extractor_pref_api(self):
         """_stage_worldbook 应用 extractor pref 的 api_id/model。"""
         harness = sys.modules["agents._harness"]
-        harness.call_agent_json.reset_mock()
+        harness.call_agent_json_guarded.reset_mock()
 
         db_mock = MagicMock()
         db_ctx = MagicMock()
@@ -335,8 +462,8 @@ class TestStageWorldbook(unittest.TestCase):
             except Exception:
                 pass  # DB insert 可以失败
 
-        harness.call_agent_json.assert_called_once()
-        args, kwargs = harness.call_agent_json.call_args
+        harness.call_agent_json_guarded.assert_called_once()
+        args, kwargs = harness.call_agent_json_guarded.call_args
         self.assertEqual(args[0], "anthropic", "api_id 应为 user pref 'anthropic'")
         self.assertEqual(args[1], "claude-haiku-4", "model 应为 user pref 'claude-haiku-4'")
 
