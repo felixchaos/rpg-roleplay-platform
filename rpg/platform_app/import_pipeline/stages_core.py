@@ -163,6 +163,112 @@ def _stage_phase_digests(script_id: int) -> int:
 
 # 高频人名扫描的章节范围,与 UI 文案「扫前 30 章高频角色名」对齐。
 _ENTITY_SCAN_CHAPTERS = 30
+# 候选名最大扩展长度(中文姓名/称谓极少超过 6 字:「猛虎教练」「阿尔弗雷德」)。
+_NAME_MAX_LEN = 6
+# 扩展判据:某个后继/前驱字占该候选全部出现次数的比例 ≥ 此值,说明候选只是更长名字的
+# 影子(如「猛虎教」几乎总是出现在「猛虎教练」里),用更长的形式取代它。
+_SHADOW_RATIO = 0.85
+# 扩展分析扫描的正文上限(整本书没必要全扫,前 20 万字足够定名)。
+_NAME_SCAN_CHARS = 200_000
+
+
+# 中文人名/称谓的首尾几乎不会是虚词。这是**结构性**判据(与 task 47 那份逐词维护的
+# 黑名单不同,不需要跟着内容更新),专门清掉「教练的」「的说」「着教练」这类
+# n-gram 残渣 —— 它们不产生错卡(LLM 会判 false),但会白占前 30 的名额、挤掉真名。
+# 只在**首尾**位置判,避免误伤「不知火」「花不弃」这类名字中间含虚词的情形。
+_EDGE_PARTICLES = frozenset("的了着是在和就都也把被而却又还很太最更与但只这那有会能")
+# 名字后面最常跟的动词/短语字:扩展时绝不能把它们吞进名字(「郑吒说」「许荣泰道」)。
+_TAIL_STOP_CHARS = frozenset("说道看想问笑点走来去回叫喊听坐站转拿手心脸眼身上下里中前后")
+
+
+def _is_particle_fragment(name: str) -> bool:
+    return bool(name) and (name[0] in _EDGE_PARTICLES or name[-1] in _EDGE_PARTICLES)
+
+
+def _absorbable(ch: str, cur: str, *, tail: bool) -> bool:
+    """扩展时能不能把邻字 ch 吞进候选 cur。
+
+    两条止损:
+      · 动词/方位字与虚词不能进名字(「郑吒」+「说」→「郑吒说」);
+      · 邻字等于候选自己的首字(右扩)或尾字(左扩)= 周期性重复的签名,
+        再吞就是把相邻那一次出现的头/尾吃进来了。
+    """
+    if not ch or not cur:
+        return False
+    if ch == (cur[0] if tail else cur[-1]):
+        return False
+    if ch in _EDGE_PARTICLES:
+        return False
+    return not (tail and ch in _TAIL_STOP_CHARS)
+
+
+def _grow_name(text: str, name: str) -> tuple[str, int]:
+    """把 n-gram 候选长回真名,返回 (定型后的名字, 出现次数)。
+
+    2–3 字 n-gram 切不出 4 字以上的名字:「猛虎教练」只会以「猛虎教」「虎教练」的
+    形式进候选池,于是同一个人被拆成两张卡,而真名一张都没有(生产实测:script 321
+    同时有「猛虎教」和「猛虎教练」两张 NPC 卡)。
+
+    判据是确定性的:统计该候选每次出现时紧邻的前/后一个字,若某个字占比 ≥
+    _SHADOW_RATIO,说明这个候选几乎从不独立出现 —— 它是更长名字的一截,吞掉那个字
+    继续长,直到没有压倒性的邻字或到 _NAME_MAX_LEN 为止。
+    """
+    cur = name
+    for _ in range(_NAME_MAX_LEN):
+        if len(cur) >= _NAME_MAX_LEN:
+            break
+        occ = list(re.finditer(re.escape(cur), text))
+        total = len(occ)
+        if total < 3:  # 样本太少,不做扩展判断
+            break
+        nxt: Counter[str] = Counter()
+        prv: Counter[str] = Counter()
+        for m in occ:
+            e, b = m.end(), m.start()
+            if e < len(text) and "\u4e00" <= text[e] <= "\u9fff":
+                nxt[text[e]] += 1
+            if b > 0 and "\u4e00" <= text[b - 1] <= "\u9fff":
+                prv[text[b - 1]] += 1
+        best_next = nxt.most_common(1)[0] if nxt else ("", 0)
+        best_prev = prv.most_common(1)[0] if prv else ("", 0)
+        # 两条止损:
+        #  · 动词/方位字不能吞进名字(「郑吒」+「说」→「郑吒说」);虚词同理。
+        #  · 邻字等于候选自己的首字 = 周期性重复(「暗夜观察者暗夜观察者…」),
+        #    再长下去就是把下一次出现的头吃进来了。
+        grow_next = (best_next[1] >= total * _SHADOW_RATIO
+                     and _absorbable(best_next[0], cur, tail=True))
+        grow_prev = (best_prev[1] >= total * _SHADOW_RATIO
+                     and _absorbable(best_prev[0], cur, tail=False))
+        # 前后都能长时取占比更高的那侧
+        if grow_next and best_next[1] >= best_prev[1]:
+            cur = cur + best_next[0]
+        elif grow_prev:
+            cur = best_prev[0] + cur
+        else:
+            break
+    return cur, text.count(cur)
+
+
+def _collapse_name_shadows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """丢掉「只是更长候选的一截」的影子名,保留信息量更大的长名。
+
+    A 是 B 的子串且两者出现次数接近(A 几乎只在 B 里出现)→ A 是影子。
+    这一步专治同一个人被拆成两张卡(「猛虎教」605 次 / 「猛虎教练」604 次)。
+    """
+    kept: list[dict[str, Any]] = []
+    for it in sorted(items, key=lambda x: (-len(x["name"]), -x["count"])):
+        name, cnt = it["name"], it["count"]
+        shadow = False
+        for k in kept:
+            if name != k["name"] and name in k["name"] and cnt <= k["count"] * 1.15:
+                shadow = True
+                break
+        if not shadow:
+            kept.append(it)
+    # 还原调用方给的名次(词频序),不按 count 重排 —— 见 _stage_entities 的注释。
+    order = {it["name"]: i for i, it in enumerate(items)}
+    kept.sort(key=lambda x: order.get(x["name"], 10**6))
+    return kept
 
 
 def _stage_entities(ctl: JobController, script_id: int, user_id: int) -> list[dict[str, Any]]:
@@ -199,11 +305,29 @@ def _stage_entities(ctl: JobController, script_id: int, user_id: int) -> list[di
     counter = Counter(c for c in candidates if c not in stop)
     ctl.update(stage_progress=1, stage_total=1)
 
-    # top 50 高频 + existing cards 名字合并
-    top_n = [{"name": n, "count": cnt} for n, cnt in counter.most_common(50)]
+    # n-gram 候选 → 长回真名 → 去影子。
+    # 只做 n-gram 词频的老口径有两个硬伤(生产实测):4 字以上的名字永远进不了候选池,
+    # 而它的 3 字前缀会冒充人名 → 同一个人两张卡、真名一张没有(反馈 #99 的主因)。
+    scan_text = full_text[:_NAME_SCAN_CHARS]
+    # ⚠️ 只**定型**,不重排:名次仍按原始 n-gram 词频序。
+    # (用「长完后的全文计数」重排会让「自己」「什么」这类泛词跃到前面,把真名挤出前 30
+    #  —— 实测 script 379 的「木湘茹」「小岩姐」就是这么掉出去的。)
+    grown: dict[str, int] = {}
+    for n, cnt in counter.most_common(80):
+        if _is_particle_fragment(n):
+            continue
+        name, real_cnt = _grow_name(scan_text, n)
+        if not name or len(name) < 2 or _is_particle_fragment(name):
+            continue
+        # 长回来后可能与别的候选重名(「猛虎教」「虎教练」都长成「猛虎教练」)→ 取大;
+        # dict 保持首次出现序 = 原词频名次,后来者不改变名次。
+        grown[name] = max(grown.get(name, 0), real_cnt or cnt)
+    top_n = [{"name": n, "count": c} for n, c in grown.items()]
+    top_n = _collapse_name_shadows(top_n)
+    # 已有卡的名字始终保留(用户手编/上一轮确认过的,不能被本轮候选挤掉)
     for n in existing_names:
         if not any(x["name"] == n for x in top_n):
-            top_n.append({"name": n, "count": counter.get(n, 0)})
+            top_n.append({"name": n, "count": full_text.count(n) or counter.get(n, 0)})
     return top_n[:60]
 
 
