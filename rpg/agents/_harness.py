@@ -131,6 +131,7 @@ def call_agent_json_guarded(
     *,
     log_tag: str = "agent",
     retry_max_tokens: int | None = None,
+    require_json: bool = False,
     **kw,
 ) -> tuple[str, dict]:
     """call_agent_json + 空正文护栏(268 实锤范式,与 recorder.record_turn 同款)。
@@ -140,6 +141,12 @@ def call_agent_json_guarded(
     重试仍空 → 原样返回空文本(调用方保留各自的空处理语义),但日志已留痕。
     重试自身抛异常 → 不向上抛,返回第一跳的空结果(不比不加护栏更糟)。
     第一跳抛异常则照常向上抛(与裸 call_agent_json 行为一致)。
+
+    require_json=True(2026-08-24,反馈 #99):把护栏从「空正文」扩到「**有正文但不是
+    JSON**」—— 思考模型的失败形态不止「正文全空」,更常见的是正文被推理挤成半截、
+    或者干脆吐一段解释。这两种在调用方眼里都是「没答上来」,待遇应当一致:
+    同样扩预算重试一次(并加一句更硬的只输出 JSON 指令)。仍不可解析则返回**第一跳**
+    原文,由调用方按各自语义处理(留原文是为了能进日志/给用户看,别丢证据)。
     """
     # 内层统一关键字传参:既有测试/桩以 `lambda **kwargs` 形态替换 call_agent_json
     # (调用点原本就是关键字传参),护栏薄层不得把调用形状降级成位置参数。
@@ -147,6 +154,32 @@ def call_agent_json_guarded(
         api_id=api_id, model=model, system_prompt=system_prompt,
         user_prompt=user_prompt, user_id=user_id, **kw)
     if (text or "").strip():
+        if not require_json:
+            return text, usage
+        from core.json_parse import parse_llm_json
+        if parse_llm_json(text, allow_truncated=True) is not None:
+            return text, usage
+        _mt0 = int(kw.get("max_tokens") or 1024)
+        _retry_mt0 = int(retry_max_tokens or max(_mt0 * 2, 1200))
+        log.warning(
+            "[%s] uid=%s %s·%s 正文解析不出 JSON(前 80 字: %s),扩预算(%s→%s)重试一次",
+            log_tag, user_id, api_id, model,
+            (text or "")[:80].replace("\n", " "), _mt0, _retry_mt0,
+        )
+        kw_json = dict(kw)
+        kw_json["max_tokens"] = _retry_mt0
+        try:
+            text2, usage2 = call_agent_json(
+                api_id=api_id, model=model,
+                system_prompt=system_prompt + "\n\n只输出一个 JSON 对象。不要解释,不要思考过程,不要 markdown 围栏。",
+                user_prompt=user_prompt, user_id=user_id, **kw_json)
+        except Exception as exc:
+            log.warning("[%s] uid=%s 不可解析重试调用失败(%s: %s),按原文返回",
+                        log_tag, user_id, type(exc).__name__, exc)
+            return text, usage
+        if (text2 or "").strip() and parse_llm_json(text2, allow_truncated=True) is not None:
+            return text2, usage2
+        log.warning("[%s] uid=%s 重试仍解析不出 JSON,按第一跳原文返回", log_tag, user_id)
         return text, usage
     _rt = int((usage or {}).get("reasoning_tokens") or 0)
     _mt = int(kw.get("max_tokens") or 1024)

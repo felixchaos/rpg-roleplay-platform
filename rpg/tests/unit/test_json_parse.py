@@ -71,9 +71,21 @@ class ParseLlmJsonBalancedScan(unittest.TestCase):
 
     def test_fixes_greedy_multi_object_weakness(self):
         # 历史弱点:贪婪 \{.*\} 会从第一个 { 吃到最后一个 } 跨多对象 →
-        # 拼出非法 JSON。平衡扫描只取最早 { 的那一个平衡对象。
+        # 拼出非法 JSON。平衡扫描保证拿到的是**一个完整对象**(本测试的原始意图)。
+        # 2026-08-24 起选块规则从「取最早」改为「取信息量最大、同分取最后」:
+        # 模型爱先复述一份 schema 示例再给答案,取最早 = 把示例当答案(静默错答案,
+        # 比解析失败更糟)。本例两块同为 1 个字段 → 同分取最后。
         text = '{"first": 1}\n后面还有一个对象\n{"second": 2}'
-        self.assertEqual(parse_llm_json(text), {"first": 1})
+        self.assertEqual(parse_llm_json(text), {"second": 2})
+
+    def test_example_then_real_answer_picks_the_answer(self):
+        # 反馈 #99 现场形态:模型先摆示例 {"is_character": false},再给真答案。
+        text = ('参考格式:{"is_character": false}\n'
+                '实际结果:\n{"is_character": true, "identity": "镖师", "appearance": "刀疤"}')
+        self.assertEqual(
+            parse_llm_json(text, want=dict),
+            {"is_character": True, "identity": "镖师", "appearance": "刀疤"},
+        )
 
 
 class ParseLlmJsonWantFilter(unittest.TestCase):
@@ -109,3 +121,49 @@ class ParseLlmJsonContractParity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ParseLlmJsonWeakModelShapes(unittest.TestCase):
+    """反馈 #99 现场形态:思考型/中转模型的输出长什么样。
+
+    这三种老实现全接不住,而拆书流水线恰好每种都撞得上:
+      · <think>…</think> 推理块里自带花括号 → 扫描抓到推理里的假括号;
+      · max_tokens 打断在半路 → 没有收尾括号,整份丢弃;
+      · 尾逗号。
+    """
+
+    def test_think_block_with_braces_inside(self):
+        text = ('<think>用户要 {"is_character": ...} 这种格式,我先想想这人是谁</think>\n'
+                '{"is_character": true, "identity": "镖师"}')
+        self.assertEqual(
+            parse_llm_json(text, want=dict),
+            {"is_character": True, "identity": "镖师"},
+        )
+
+    def test_unclosed_think_block_yields_none(self):
+        # 被打断在推理里 = 根本没有正文,不能瞎捞
+        self.assertIsNone(parse_llm_json("<think>我还在想这个人是谁"))
+
+    def test_trailing_comma(self):
+        self.assertEqual(parse_llm_json('{"a": 1,}'), {"a": 1})
+
+    def test_truncated_object_needs_opt_in(self):
+        raw = '{"is_character": true, "identity": "镖师", "personality": "嘴硬心'
+        self.assertIsNone(parse_llm_json(raw), "默认不打捞截断响应")
+        self.assertEqual(
+            parse_llm_json(raw, allow_truncated=True),
+            {"is_character": True, "identity": "镖师"},
+            "打捞时保留已完整的字段,丢掉残缺的那个",
+        )
+
+    def test_truncated_list_keeps_only_complete_elements(self):
+        # 截断的数组不能退化成「里面某个完整对象」—— 调用方按 list 迭代会拿到一堆键
+        raw = '[{"name":"青云镖局","content":"江南最大镖局"},{"name":"落霞谷","content":"传说中'
+        self.assertEqual(
+            parse_llm_json(raw, allow_truncated=True),
+            [{"name": "青云镖局", "content": "江南最大镖局"}],
+        )
+
+    def test_truncated_beyond_salvage(self):
+        self.assertIsNone(parse_llm_json('{"is_char', allow_truncated=True))
+        self.assertIsNone(parse_llm_json("[", allow_truncated=True))

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from psycopg.types.json import Jsonb
@@ -355,8 +354,12 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
                 prompt,
                 user_id,
                 log_tag="card_extract",
-                max_tokens=700,
+                # 思考型模型(ds-v4-pro 一类)会先花掉几百 token 推理,700 常常正文没写完
+                # 就被打断 → 半份 JSON。no_think 那套 thinking.disabled 是厂商方言,
+                # 中转站/自托管端点未必认,不能指望它,预算要留够。
+                max_tokens=1200,
                 no_think=True,
+                require_json=True,   # 解析不出 → 扩预算重试一次(见 _harness 护栏)
                 agent_kind="import_pipeline",
             )
             data = _parse_json(raw)
@@ -751,13 +754,18 @@ def _stage_npc_voices(user_id: int, script_id: int, *, max_npc: int = 20, only_e
     return backfilled
 
 def _parse_json(text: str) -> Any:
-    if not text:
-        return None
-    cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.I | re.M).strip()
-    m = re.search(r"[\[\{].*[\]\}]", cleaned, re.S)
-    if m:
-        cleaned = m.group(0)
-    try:
-        return json.loads(cleaned)
-    except Exception:
-        return None
+    """收口到 core.json_parse.parse_llm_json(全站单一鲁棒实现)。
+
+    2026-08-24(反馈 #99):本文件此前留着最原始的贪婪正则版 —— 全站其它调用点
+    (extract/llm.py、phase_digest_agent、character_card_generator)早就收口过去了,
+    唯独拆书流水线漏了。实测三种形态它接不住,而拆书恰恰全撞上:
+      · 思考型模型(deepseek-v4-pro 一类)的 <think> 块里自带花括号 → 抓到推理里的假括号;
+      · max_tokens 打断在半路 → 没有收尾括号,整份丢弃;
+      · `{"a":1,}` 尾逗号。
+    另外贪婪的「首括号吃到尾括号」正则在示例+答案两块并存时会拼出非法 JSON。
+
+    allow_truncated=True:拆书是「能捞多少是多少」的场景 —— 截断响应里已完整的字段
+    (identity/appearance…)照样能写出一张有用的卡,整份丢掉才是浪费。
+    """
+    from core.json_parse import parse_llm_json
+    return parse_llm_json(text, allow_truncated=True)

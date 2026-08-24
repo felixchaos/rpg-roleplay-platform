@@ -126,3 +126,76 @@ def test_empty_warns_with_reasoning_tokens(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         _harness.call_agent_json_guarded("relay", "m", "sys", "user", 1, log_tag="curator", max_tokens=400)
     assert any("777" in rec.getMessage() and "curator" in rec.getMessage() for rec in caplog.records)
+
+
+
+# ── require_json:护栏从「正文全空」扩到「有正文但不是 JSON」(反馈 #99)──────────
+#
+# 思考型模型(deepseek-v4-pro 一类)的失败形态不止空正文 —— 更常见的是正文被推理挤成
+# 半截 JSON,或者干脆回一段解释。调用方眼里两者都是「没答上来」,待遇必须一致。
+
+def test_require_json_unparseable_retries_with_bigger_budget(monkeypatch):
+    """有正文但解析不出 → 扩预算重试一次,重试成功则返回重试结果。"""
+    fake, records = _make_fake([
+        ("好的,我来分析一下这个角色……", {"output_tokens": 30}),
+        ('{"is_character": true, "identity": "镖师"}', {"output_tokens": 60}),
+    ])
+    monkeypatch.setattr(_harness, "call_agent_json", fake)
+
+    text, usage = _harness.call_agent_json_guarded(
+        "deepseek", "deepseek-v4-pro", "sys", "user", 1,
+        max_tokens=700, no_think=True, require_json=True,
+    )
+    assert len(records) == 2, "解析不出必须重试一次"
+    assert records[1]["kw"]["max_tokens"] == 1400, "重试要扩预算(max(700*2,1200))"
+    assert records[1]["kw"]["no_think"] is True, "业务 kwargs 不变"
+    assert "require_json" not in records[0]["kw"], "护栏专属 kwargs 不得泄漏进底层"
+    assert text == '{"is_character": true, "identity": "镖师"}'
+    assert usage == {"output_tokens": 60}
+
+
+def test_require_json_truncated_json_counts_as_parseable(monkeypatch):
+    """被 max_tokens 打断但已完整字段可打捞 → 不算失败,不该白花一次重试。"""
+    fake, records = _make_fake([
+        ('{"is_character": true, "identity": "镖师", "appearance": "刀疤', {}),
+    ])
+    monkeypatch.setattr(_harness, "call_agent_json", fake)
+
+    _harness.call_agent_json_guarded(
+        "deepseek", "m", "sys", "user", 1, max_tokens=700, require_json=True,
+    )
+    assert len(records) == 1
+
+
+def test_require_json_retry_still_bad_returns_first_text(monkeypatch):
+    """重试仍解析不出 → 最多两跳,返回第一跳原文(留证据给日志/用户,别丢)。"""
+    fake, records = _make_fake([("解释一通", {"output_tokens": 5}), ("还是解释一通", {})])
+    monkeypatch.setattr(_harness, "call_agent_json", fake)
+
+    text, usage = _harness.call_agent_json_guarded(
+        "deepseek", "m", "sys", "user", 1, max_tokens=700, require_json=True,
+    )
+    assert len(records) == 2, "最多重试一次,不能无限试"
+    assert (text, usage) == ("解释一通", {"output_tokens": 5})
+
+
+def test_require_json_off_keeps_old_passthrough(monkeypatch):
+    """不开 require_json 的调用点行为一字不变(非空即透传)。"""
+    fake, records = _make_fake([("随便什么文本", {})])
+    monkeypatch.setattr(_harness, "call_agent_json", fake)
+
+    text, _ = _harness.call_agent_json_guarded("deepseek", "m", "sys", "user", 1, max_tokens=700)
+    assert len(records) == 1
+    assert text == "随便什么文本"
+
+
+def test_require_json_retry_exception_falls_back_to_first(monkeypatch):
+    """重试自身抛异常 → 不上抛,返回第一跳(与空正文护栏同语义)。"""
+    fake, records = _make_fake([("解释一通", {}), RuntimeError("boom")])
+    monkeypatch.setattr(_harness, "call_agent_json", fake)
+
+    text, _ = _harness.call_agent_json_guarded(
+        "deepseek", "m", "sys", "user", 1, max_tokens=700, require_json=True,
+    )
+    assert text == "解释一通"
+    assert len(records) == 2
