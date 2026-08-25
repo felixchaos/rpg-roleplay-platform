@@ -79,11 +79,14 @@ _EXTRACTOR_SYSTEM = """\
 输出格式（**严格 JSON，不要 markdown fence，不要解释**）：
 
 [
-  {"op":"set","path":"player.current_location","value":"北港·灯塔下"},
-  {"op":"append","path":"memory.resources","value":"黄铜怀表"},
-  {"op":"set","path":"relationships.阿衡","value":"信任"},
-  {"op":"question","question":"是否进入灯塔？","options":["进入","退后观察"]}
+  {"op":"set","path":"player.current_location","value":"<地点名>"},
+  {"op":"append","path":"memory.resources","value":"<物品名>"},
+  {"op":"set","path":"relationships.<角色名>","value":"信任"},
+  {"op":"question","question":"是否进入<地点名>？","options":["进入","退后观察"]}
 ]
+
+⚠️ 上面只是**格式示例**：尖括号占位必须换成本局正文里真实出现的人名/地名/物品名。
+不要把示例里的任何名字当作本局已存在的设定。
 """
 
 
@@ -286,7 +289,7 @@ def _call_anthropic_tool_use(
                         "type": "object",
                         "properties": {
                             "op": {"type": "string", "enum": ["set", "append", "overwrite", "question", "hypothesis", "confirm_hypothesis", "reject_hypothesis"]},
-                            "path": {"type": "string", "description": "state 路径（如 player.role / relationships.阿衡）；op=question/hypothesis/confirm_hypothesis/reject_hypothesis 时可省"},
+                            "path": {"type": "string", "description": "state 路径（如 player.role / relationships.<角色名>）；op=question/hypothesis/confirm_hypothesis/reject_hypothesis 时可省"},
                             "value": {"description": "要写入的值，字符串"},
                             "question": {"type": "string", "description": "op=question 时用"},
                             "options": {"type": "array", "items": {"type": "string"}, "description": "op=question 时用"},

@@ -78,6 +78,63 @@ _FEATURE_MARKERS = (
 )
 
 
+# SDK 构造期就崩:api_key 为空/未传。openai SDK(实测 2.41.1)对 api_key="" 与 None 一视同仁,
+# 直接抛 OpenAIError("Missing credentials") —— **连请求都没发出去**,所以没有 HTTP 状态码,
+# 前面所有按 status 的分支全不命中,一路落进「本轮处理出错,请重试(错误码 Exxx)」泛化兜底。
+# 这是 BYOK 最高频的一类失败(没填 key / key 被清空 / 免鉴权配置残缺),却是用户最看不懂的
+# 一类报错:文案让人去"重试",而重试一万次也不会好。归 auth,给出可行动指引。
+_CREDENTIAL_MISSING_MARKERS = (
+    "missing credentials",                 # openai SDK
+    "client option must be set",           # openai/anthropic "The api_key client option must be set"
+    "could not resolve authentication",    # anthropic SDK
+    "no api key provided",
+)
+
+# 连接层失败:请求根本没送达对面(地址不通/端口没开/DNS 解不出/代理不可达/握手超时)。
+# 同样没有 HTTP 状态码 —— 之前整类落进泛化兜底,而它恰恰是**自定义 base_url / 本地模型
+# (Ollama·LM Studio·vLLM)/中转站**用户的头号故障:玩家只看到一个随机错误码,既不知道是
+# 自己网络的问题,也不知道该去看接口地址还是看服务有没有起。
+# 类型判定优先于字符串:各 SDK 的措辞差异极大(openai "Connection error." / httpx
+# "All connection attempts failed" / urllib "[Errno 61] Connection refused"),枚举必漏;
+# 而类名在 openai/anthropic/httpx/urllib 之间反而是稳定的一小撮。
+_CONNECTION_EXC_NAMES = frozenset({
+    "APIConnectionError",      # openai / anthropic(APITimeoutError 是其子类,走 MRO 命中)
+    "APITimeoutError",
+    "TransportError",          # httpx 传输层基类(ConnectError/ReadTimeout/ProxyError 全在其下)
+    "ConnectError", "ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout",
+    "ProxyError", "URLError", "TimeoutError", "ConnectionError",
+})
+
+_CONNECTION_MARKERS = (
+    "connection error",
+    "connection refused",
+    "connection reset",
+    "connection aborted",
+    "all connection attempts failed",
+    "failed to establish a new connection",
+    "name or service not known",
+    "nodename nor servname",
+    "temporary failure in name resolution",
+    "getaddrinfo failed",
+    "timed out",
+    "read timeout",
+    "proxy",
+)
+
+
+def _is_connection_failure(exc: Exception) -> bool:
+    """请求是否根本没送达对面(连接/DNS/代理/超时),而非对面返回了错误。
+
+    先按异常类的整条 MRO 判类名(子类如 APITimeoutError / ConnectTimeout 一并命中),
+    再按措辞兜底。**调用方必须先排完所有带 HTTP 状态码的分支**:504 gateway timeout
+    这类带 status 的错误措辞里也有 "timeout",顺序反了会被这里吞掉。
+    """
+    for klass in type(exc).__mro__:
+        if klass.__name__ in _CONNECTION_EXC_NAMES:
+            return True
+    return any(m in str(exc).strip().lower() for m in _CONNECTION_MARKERS)
+
+
 def _http_status(exc: Exception) -> int | None:
     """从 SDK 异常上取 HTTP 状态码。
 
@@ -135,6 +192,14 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
     """
     raw_lower = str(exc).strip().lower()
     status = _http_status(exc)
+    # 凭据缺失放最前:它是构造期异常,不带 status、也不带 provider 响应体,与下面任何一类
+    # 都不重叠,且"请重试"对它绝对无效。
+    if status is None and any(m in raw_lower for m in _CREDENTIAL_MISSING_MARKERS):
+        return ("auth",
+                "这个模型所属的供应商还没有可用的 API Key(请求没能发出去)。"
+                "请到「设置 → 模型与密钥」为该供应商填入 API Key 并测试凭证;"
+                "若用的是本地模型(Ollama / LM Studio / vLLM 等),请把该供应商的鉴权方式"
+                "选为「无需 API Key」并填好接口地址。")
     if status == 402 or any(m in raw_lower for m in _BALANCE_MARKERS):
         return ("balance",
                 "当前模型的 API 账户余额不足或配额已用尽，重试无法恢复。"
@@ -185,4 +250,13 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
         return ("feature_unsupported",
                 "该模型不支持本次请求所需的功能(如工具调用/系统指令)，重试无法恢复。"
                 "请切换到支持完整功能的模型。")
+    # 连接层失败放最后:它没有 HTTP 状态码,必须等上面所有带 status 的分支排完
+    # (504 gateway timeout 的措辞里也有 "timeout",顺序反了会被误吞成"连不上")。
+    if _is_connection_failure(exc):
+        return ("network",
+                "连不上这个模型的接口地址(请求没送达或没等到响应),不是存档或剧本的问题。"
+                "请依次检查:① 「设置 → 模型与密钥」里该供应商的接口地址(base_url)是否正确;"
+                "② 若是本地模型,对应的服务(Ollama / LM Studio / vLLM)是否正在运行、端口是否一致;"
+                "③ 网络或代理能否访问该地址。"
+                f"底层报错:{redact_secrets(exc, limit=120) or '(无)'}")
     return None

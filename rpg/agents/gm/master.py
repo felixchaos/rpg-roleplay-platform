@@ -181,14 +181,16 @@ pending_questions 选项把剧情引到完全脱离原著的世界线,玩家觉�
 
 ```json
 [
-  {"op": "set",      "path": "player.current_location", "value": "北港·灯塔下"},
-  {"op": "set",      "path": "world.time",              "value": "申时三刻"},
-  {"op": "append",   "path": "memory.resources",        "value": "黄铜怀表"},
-  {"op": "set",      "path": "relationships.阿衡",       "value": "信任"},
-  {"op": "set",      "path": "memory.main_quest",       "value": "营救沈知微"},
-  {"op": "question", "question": "是否进入灯塔？",      "options": ["进入", "退后观察"]}
+  {"op": "set",      "path": "player.current_location", "value": "<地点名>"},
+  {"op": "set",      "path": "world.time",              "value": "<本档时间格式>"},
+  {"op": "append",   "path": "memory.resources",        "value": "<物品名>"},
+  {"op": "set",      "path": "relationships.<角色名>",   "value": "信任"},
+  {"op": "set",      "path": "memory.main_quest",       "value": "<当前主线目标>"},
+  {"op": "question", "question": "是否进入<地点名>？",   "options": ["进入", "退后观察"]}
 ]
 ```
+⚠️ 上面只是**格式示例**：尖括号占位必须换成本局真实的人名/地名/时间/目标。
+示例里的名字不是本局设定，绝不可当作已存在的人物或地点写进正文。
 
 - op 可选：`set` / `append` / `overwrite` / `question` / `hypothesis` / `confirm_hypothesis` / `reject_hypothesis`
 - path 是字符串；value 是字符串（list 字段用 append 逐项追加）
@@ -204,7 +206,7 @@ pending_questions 选项把剧情引到完全脱离原著的世界线,玩家觉�
 ⚠️ 下列文本标签格式已废弃，**不要在新输出中使用**。这些标签只供旧版本 parser 向后兼容解析，
 前端已有专用 UI 组件处理 JSON ops，正文里写这些标签只会造成内容重复。
 - `【状态写入：path=value】`、`【状态追加：path=value】`、`【询问玩家：问题｜选项：A、B、C】`
-- 时间/位置专用：`【当前时间线：申时三刻】`、`【当前位置：北港·灯塔下】`
+- 时间/位置专用：`【当前时间线：<本档时间>】`、`【当前位置：<地点名>】`
 - 时间跳跃裁定：`【时间跳跃确认：目标】`、`【时间跳跃拒绝：原因】`
 - 详细 schema 与字段类型见动态注入的【状态字段 schema】层。
 
