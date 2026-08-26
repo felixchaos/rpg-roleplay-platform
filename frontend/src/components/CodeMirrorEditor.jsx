@@ -3,12 +3,12 @@
 // 受控约定:docKey 变(切标签)→ 整篇替换为 value;同一 docKey 内用户输入由 CM 内部管理、
 // 经 onChange 上抛,绝不把 value 回灌(否则光标乱跳)。
 import React from 'react';
-import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, highlightActiveLineGutter } from '@codemirror/view';
+import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, highlightActiveLineGutter, rectangularSelection, crosshairCursor } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
-import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput } from '@codemirror/language';
-import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput, codeFolding, foldGutter, foldKeymap } from '@codemirror/language';
+import { searchKeymap, highlightSelectionMatches, selectNextOccurrence } from '@codemirror/search';
 import { aiContinueExtension, cmdKKeymap } from '../lib/md-continue.js';
 import { chapterDiffExtension } from '../lib/md-diff.js';
 import { ghostCompleteExtension } from '../lib/md-ghost.js';
@@ -22,6 +22,12 @@ const warmTheme = EditorView.theme({
   '.cm-scroller': { fontFamily: 'var(--font-mono, monospace)', overflow: 'auto' },
   '.cm-gutters': { backgroundColor: 'var(--bg-deep, #131211)', color: 'var(--muted-2, #6b655e)', border: 'none' },
   '.cm-activeLineGutter': { backgroundColor: 'var(--panel-2, #282623)' },
+  // 折叠槽(v1.82.1):默认样式在暖色主题里是刺眼的高对比小三角,收到与行号同一档灰度,
+  // hover 才提亮 —— 与平台「状态用文字/边框/高亮,不用装饰图标」的取向一致。
+  '.cm-foldGutter': { width: '14px' },
+  '.cm-foldGutter .cm-gutterElement': { color: 'var(--muted-2, #6b655e)', cursor: 'pointer', padding: '0 2px' },
+  '.cm-foldGutter .cm-gutterElement:hover': { color: 'var(--accent, #b5654a)' },
+  '.cm-foldPlaceholder': { backgroundColor: 'var(--panel-2, #282623)', border: '1px solid var(--line, #3a3733)', color: 'var(--muted, #9c958c)', borderRadius: '3px', padding: '0 6px', margin: '0 2px' },
   '.cm-activeLine': { backgroundColor: 'rgba(255,255,255,0.025)' },
   '.cm-cursor': { borderLeftColor: 'var(--accent, #b5654a)' },
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': { backgroundColor: 'var(--info-soft, rgba(122,166,194,.22))' },
@@ -71,7 +77,9 @@ function frontMatterGuard() {
   });
 }
 
-function baseExtensions(onChange, readOnly, getScriptId, getOnAccept, getChapterIndex, getOnSel, getGhostEnabled, getGhostFetch) {
+// export:给 vitest 用真 EditorView 断言扩展**真的生效**(编辑器改动纪律:光看 import 不算数,
+// 历史上 diff 的块装饰就是「代码在、运行时抛错」)。生产路径仍只有下面的默认导出用它。
+export function baseExtensions(onChange, readOnly, getScriptId, getOnAccept, getChapterIndex, getOnSel, getGhostEnabled, getGhostFetch) {
   return [
     frontMatterGuard(),
     aiContinueExtension(),
@@ -85,6 +93,16 @@ function baseExtensions(onChange, readOnly, getScriptId, getOnAccept, getChapter
     highlightActiveLineGutter(),
     highlightActiveLine(),
     drawSelection(),
+    // IDE 基本功(v1.82.1)。依赖早就在(@codemirror/language / /search),只是从没开过 ——
+    // 长章节(本平台单章常上万字)不能折叠、改个反复出现的称呼不能多光标,是编辑器体验缺口。
+    // 折叠按 markdown 标题层级(lang-markdown 提供 foldService),对「## 第N章 / ### 小节」直接可用。
+    codeFolding(),
+    foldGutter({ openText: '▾', closedText: '▸' }),
+    // 多光标:allowMultipleSelections 是**必需的开关**,不开则 Alt+点击 / Cmd+D 全部无效
+    // (drawSelection 只负责画,不负责允许)。rectangularSelection = Alt+拖拽列选。
+    EditorState.allowMultipleSelections.of(true),
+    rectangularSelection(),
+    crosshairCursor(),
     history(),
     indentOnInput(),
     bracketMatching(),
@@ -92,7 +110,10 @@ function baseExtensions(onChange, readOnly, getScriptId, getOnAccept, getChapter
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     markdown(),
     EditorView.lineWrapping,
-    keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+    // Mod-d = 选中下一处相同文本(VSCode/Copilot 里改称呼的肌肉记忆)。放在 defaultKeymap
+    // **之前**:defaultKeymap 里 Mod-d 是 deleteCharForward 的别名,放后面会被它吃掉。
+    keymap.of([{ key: 'Mod-d', run: selectNextOccurrence, preventDefault: true }]),
+    keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, ...foldKeymap, indentWithTab]),
     warmTheme,
     EditorState.readOnly.of(!!readOnly),
     EditorView.editable.of(!readOnly),

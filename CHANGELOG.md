@@ -9,6 +9,33 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.83.0] - 2026-08-27 (@ 313214d7c)
+
+### Fixed
+- **被审定为「精简后仍必须保留」的 4 个 `kb_*` 写工具,在非精简档从来进不了直发窗口**:`gm_serving.GM_ALL_KB_TOOLS` 是人工审定过的清单(文宗精简把工具收成 12 个之后仍要保留的存档级 KB 维护工具),11 个成员里 7 个已在 tier 0,剩下 4 个 `kb_*` 落 tier 1、按字母序排在 38 个 `get_*` 之后 —— 「GM 不维护存档级 KB」的一条确定性成因。
+  - v1.82.0 只把 `ask_player_choice` 从这个「精简档保它、非精简档够不到」的不对称里救了出来,**没有回头查同一份清单的其他成员**。修 A 漏 B,而且是上一版我自己犯的。现在改成 import 派生,不手抄名字:往 `GM_ALL_KB_TOOLS` 加工具,窗口会自己跟着定容。
+  - 顺带记一笔判据来源:v1.82.0 把平台族(`list_my_saves` / `get_save_detail` / `get_my_stats` / `get_import_status`)踢出窗口**有生产数据支撑** —— 3142 次 `tool_invocations` 里它们的调用全部停在 2026-07-08 之前,近 30 天零调用。免得以后有人拿「`list_my_saves` 排第 5 高频」来反推。
+  - ⚠️ **调用频次不能当分档判据**:窗口外的工具模型根本看不见、自然也不会调,统计天然有幸存者偏差(`kb_*` 那 68 次实际来自精简档白名单,与窗口构成无关)。首要读档的判据是「本回合是关于这个存档此刻的状态」。
+- **剧本编辑器的写作搭档够不到本该属于它的剧本工具**:同一个 `console_assistant` origin 上跑着两个面貌完全不同的 agent —— 平台控制台助手、编辑器写作搭档。`build_system_prompt` 早就按面换了人格与工作方式(编辑器那套「先读后写、动笔前把设定吃透」),**工具表却一直共用一份硬编码名单**。
+  - 注册时声明了 `origin="console_assistant"`、名字却没进名单的工具会**静默不可见**:120 个注册、只有 54 个发出去,`get_chapter_facts` / `get_worldbook` 就是这样失踪的 —— 提示词教它读设定,而它没有读设定的工具。与 GM 侧直发窗口是同一族缺陷。
+  - 编辑器面新增 8 个:`get_chapter_facts`、`get_worldbook`(记录在案的失踪工具)、`ask_user_text`(名单里只有选项式的 `ask_user_choice`,问书名/角色名这类答不了)、`rebuild_script_module` / `resplit_script`(编辑器已有「知识库中心」抽屉,作者点得到、搭档调不到)、`get_import_status` / `list_my_import_jobs` / `cancel_import_job`(有拖入拆章入口,却查不了自己触发的任务)。
+  - **控制台面逐字节未动** —— 刻意不做减法:从编辑器面移除平台工具(管存档/改设置/页面导航)是行为变更,留给产品拍板。
+- **`lineDiff` 的 LCS 表没有规模保护**:`n×m` 的 Uint32 表,一章 2 万行 × 2 万行 = 1.6 GB,浏览器标签页当场死。原注释写着「超大文本退化由调用方控」,而调用方从来没做。现在两道闸都落在函数里:① 先裁掉首尾完全相同的行(典型「只改中间几段」能把 `n·m` 砍掉一两个数量级,hunk 也更紧凑);② 裁完仍超过 400 万格就退化成整段全删全增 —— 作者仍能整体接受/拒绝,而不是编辑器卡死。
+
+### Added
+- **编辑器 IDE 基本功:折叠 / 多光标 / Mod-d**。`@codemirror/language` 与 `@codemirror/search` 一直在依赖里,`foldGutter` / `codeFolding` / `allowMultipleSelections` / `rectangularSelection` / `selectNextOccurrence` 却从没开过。
+  - 折叠按 markdown 标题层级(`lang-markdown` 自带 foldService),单章常上万字的场景直接可用;折叠槽收到与行号同一档灰度,hover 才提亮。
+  - 多光标需要 `EditorState.allowMultipleSelections` **显式开启** —— `drawSelection` 只负责画、不负责允许,这也是它此前一直无效的原因。Alt+拖拽列选一并接上。
+  - `Mod-d` 绑定必须排在 `defaultKeymap` **之前**:后者的 `Mod-d` 是 `deleteCharForward` 的别名,放后面会被它吃掉(改称呼变成删字符)。
+- **助手工具按「面」声明**:`SHARED` / `EDITOR_ONLY` / `CONSOLE_ONLY` / `NOT_SERVED` 四个集合,每个注册给本 origin 的工具必须落进其中之一,`NOT_SERVED` 的每一组都写清为什么不给。判据抽到 `console_assistant/surfaces.py`,与 `build_system_prompt` 共用一条 —— 两处各写一遍必然漂移成「提示词说你是写作搭档、工具表却是控制台那套」。
+
+### 守卫
+- `test_assistant_tool_surfaces.py`:注册给 origin 的工具无一漏分类、名单无死项、面之间不重叠、编辑器拿得到剧本资产工具、未知 surface 退最保守那面、判据与 prompts 同源。
+- `test_tool_window_tiering.py` 补 6 条:审定清单可达性、清单靠派生非手抄、首要读常驻、编辑域枚举不越位、门控压过清单、空闲局面窗口不许撑大。
+- `cm-ide-basics.test.js`(真 EditorView):标题真能折叠、折叠槽真渲染、多重选区不被压成一个、多光标同时输入两处都改到、`Mod-d` 加选且不删字符、绑定顺序在 `defaultKeymap` 之前。
+- `md-diff-degradation.test.js`:首尾裁剪后仍可双向还原、纯追加不产生 del、超大差异退化后仍能整体取舍、大文本但首尾相同仍走精确 LCS。
+
+
 ## [1.82.0] - 2026-08-27 (@ 6ad692854)
 
 ### Fixed

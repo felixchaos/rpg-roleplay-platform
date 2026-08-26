@@ -7,12 +7,41 @@ import { StateField, StateEffect } from '@codemirror/state';
 import { EditorView, Decoration, WidgetType, showPanel } from '@codemirror/view';
 import { setPanelVisible } from './md-panel.js';
 
+// LCS 表是 n×m 的 Uint32:一章 2 万行 × 2 万行 = 1.6 GB,浏览器标签页当场死。
+// 原注释写着「超大文本退化由调用方控」—— 而调用方从来没控(路线图 P2 记在案)。
+// 现在两道闸都落在这里:① 先裁掉首尾完全相同的行(典型「只改中间几段」能把 n·m 砍掉一两个
+// 数量级,而且 hunk 更紧凑);② 裁完仍超过 MAX_LCS_CELLS 就退化成「整段全删全增」,
+// 让作者仍能整体接受/拒绝,而不是编辑器卡死。
+const MAX_LCS_CELLS = 4_000_000;   // ≈16 MB Uint32 表,单章正常量级远够用
+
 // ── 行级 LCS diff → ops:[{type:'same'|'add'|'del', text}] ──────────────────
 export function lineDiff(oldText, newText) {
   const a = (oldText || '').split('\n');
   const b = (newText || '').split('\n');
+  // ① 首尾公共行裁剪 —— 它们必然是 same,不必进 LCS 表
+  let lo = 0;
+  while (lo < a.length && lo < b.length && a[lo] === b[lo]) lo++;
+  let hi = 0;
+  while (hi < a.length - lo && hi < b.length - lo
+         && a[a.length - 1 - hi] === b[b.length - 1 - hi]) hi++;
+  const head = a.slice(0, lo).map((text) => ({ type: 'same', text }));
+  const tail = a.slice(a.length - hi).map((text) => ({ type: 'same', text }));
+  const midA = a.slice(lo, a.length - hi);
+  const midB = b.slice(lo, b.length - hi);
+  // ② 退化闸:裁完还是太大就整段全删全增(仍可整体接受/拒绝,不卡死)
+  if (midA.length * midB.length > MAX_LCS_CELLS) {
+    return [
+      ...head,
+      ...midA.map((text) => ({ type: 'del', text })),
+      ...midB.map((text) => ({ type: 'add', text })),
+      ...tail,
+    ];
+  }
+  return [...head, ..._lcsDiff(midA, midB), ...tail];
+}
+
+function _lcsDiff(a, b) {
   const n = a.length, m = b.length;
-  // LCS 长度表(章节体量 OK;超大文本退化为「全删全增」由调用方控）。
   const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {

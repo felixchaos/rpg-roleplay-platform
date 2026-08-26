@@ -44,10 +44,24 @@ def _get_dispatcher() -> ToolDispatcher:
     return _DISPATCHER_SINGLETON
 
 
-def list_assistant_tools() -> list[dict[str, Any]]:
-    """返回 console_assistant 给 LLM 看的工具列表。"""
-    from tools_dsl.chat_tool_router import DISPATCHER_SENTINEL
-    PRIMARY = {
+# ── 助手工具的「面」划分(v1.82.1)──────────────────────────────────────────
+# 在此之前这里是一份硬编码名单 `PRIMARY`,两个面貌完全不同的 agent 共用它:平台控制台助手
+# 与剧本编辑器右栏的写作搭档(面的定义见 console_assistant/surfaces.py)。
+#
+# 问题不在名单本身,在**名单之外没有出口**:一个工具注册时明明声明了
+# `origin="console_assistant"`,只因为名字没进名单就静默不可见 —— 不报错、不告警、
+# 无从诊断。`get_chapter_facts` / `get_worldbook` 就是这样在编辑器里失踪的
+# (记录见 docs/knowledge,现由本文件下方的守卫兜住)。这与 GM 侧直发工具窗口那个
+# 「按名字查表授权,查不到就静默降级」是同一族缺陷。
+#
+# 现在每个注册给本 origin 的工具**必须**落进下面四个集合之一,否则守卫测试
+# rpg/tests/unit/test_assistant_tool_surfaces.py 直接红:
+#   SHARED         两个面都给
+#   EDITOR_ONLY    只给编辑器写作搭档
+#   CONSOLE_ONLY   只给平台控制台助手
+#   NOT_SERVED     刻意不给任何面(必须写清理由)
+
+SHARED: frozenset[str] = frozenset({
         # 角色卡
         "create_character_card", "list_my_character_cards", "delete_character_card",
         "generate_character_card_draft", "refine_character_card_draft",
@@ -88,10 +102,77 @@ def list_assistant_tools() -> list[dict[str, Any]]:
         "ui_describe_page",  # 主动看页面结构 (实际 atlas 已在 system prompt)
         "ui_set_field",      # 填表单字段
         "ui_click",          # 点按钮 (destructive, default 模式会要求 confirm)
-    }
+    })
+
+# 只给编辑器写作搭档 —— 剧本资产域,控制台用不上。
+EDITOR_ONLY: frozenset[str] = frozenset({
+    # 剧本知识资产读:章节事实表 / 世界书。**这两个就是记录在案的失踪工具** ——
+    # 编辑器的系统提示词一直在教 agent「动笔前先把设定吃透」,而它够不到设定。
+    "get_chapter_facts", "get_worldbook",
+    # 自由文本提问。SHARED 里有 ask_user_choice(选项式)却没有它 —— 问书名 / 角色名 /
+    # 一句话设定这类,选项式答不了,只能让 agent 改用旁白提问然后猜作者的回答。
+    "ask_user_text",
+    # 知识库维护:编辑器已有「知识库中心」抽屉(EditorKbPanel,作者点得到),agent 却调不到
+    # 同一批动作 —— 面板能点、搭档不能,是同一个不对称的另一半。两者 destructive=True,
+    # 走既有二次确认闸。
+    "rebuild_script_module", "resplit_script",
+    # 导入进度:编辑器有拖入文档拆章的入口(import_document_as_chapters 在 SHARED),
+    # 却查不了自己刚触发的任务进度、也取消不了。
+    "get_import_status", "list_my_import_jobs", "cancel_import_job",
+})
+
+# 只给平台控制台助手。目前为空 —— **刻意不做减法**:从编辑器面移除平台工具
+# (管存档 / 改设置 / 页面导航)是行为变更,风险不对称,留给产品拍板。
+# 现状因此是「编辑器 = SHARED + EDITOR_ONLY」,纯增量,零回归。
+CONSOLE_ONLY: frozenset[str] = frozenset()
+
+# 刻意不给任何面。每一组都要写清为什么 —— 这份清单的价值就在于「不给」是个决定,
+# 而不是一次遗忘。
+NOT_SERVED: frozenset[str] = frozenset({
+    # 游戏运行时(GM 域):读写的是某个**存档**的活态世界,不是剧本资产
+    "activate_branch", "ask_player_choice", "check_pending_anchor_drift",
+    "claim_protagonist_pov", "continue_branch", "delete_branch", "get_current_scene",
+    "get_known_events", "get_pending_questions", "get_pending_writes", "get_save_detail",
+    "get_user_variables", "graph_neighbors", "kb_record_event", "kb_set_relationship",
+    "kb_set_worldline_var", "kb_upsert_entity", "list_branches", "list_modules",
+    "list_pending_anchors", "list_recent_history", "list_relationships", "lookup_entity",
+    "lookup_timeline", "mark_anchor_satisfied", "mark_anchor_superseded", "phase_advance",
+    "phase_list", "phase_rebuild", "query_memory", "record_history_anchor",
+    "revoke_protagonist_pov", "schedule_consequence", "search_canon", "summarize_anchors",
+    "worldbook_add", "worldbook_list_save_overlay", "worldbook_retire",
+    # 酒馆域:角色扮演运行时资产,与剧本编辑是设计分野(见 project_editor_copilot_parity「边界澄清」)
+    "clone_npc_to_user_card", "edit_tavern_character", "export_character_card",
+    "import_attached_script", "import_character_card", "read_attached_text",
+    "set_tavern_character", "set_tavern_immersive", "set_tavern_persona",
+    "switch_tavern_persona_card", "tavern_bind_script", "tavern_list_scripts",
+    # 平台/账户元信息:助手不需要,也不该替用户翻账本
+    "get_my_stats", "get_my_usage", "list_available_tools", "list_my_credentials_meta",
+    "probe_models", "recent_audit_log",
+    # 不可逆且无审阅路径:必须走用户自己的 UI
+    "delete_script",
+    # 建新剧本属控制台流程:编辑器里作者已经身处某个剧本内,不该从这里开新的
+    "start_script_import",
+})
+
+
+def _surface_names(surface: str) -> frozenset[str]:
+    """某个面能看到的工具名集合。未知 surface 退化成 console(最保守)。"""
+    if surface == "editor":
+        return SHARED | EDITOR_ONLY
+    return SHARED | CONSOLE_ONLY
+
+
+def list_assistant_tools(surface: str = "console") -> list[dict[str, Any]]:
+    """返回 console_assistant 给 LLM 看的工具列表。
+
+    surface: "console"(平台控制台助手,默认)/ "editor"(剧本编辑器写作搭档)。
+             判据见 console_assistant.surfaces.surface_of(page_context)。
+    """
+    from tools_dsl.chat_tool_router import DISPATCHER_SENTINEL
+    allowed = _surface_names(surface)
     out: list[dict[str, Any]] = []
     for spec in get_registry().list_for_origin("console_assistant"):
-        if spec.name not in PRIMARY:
+        if spec.name not in allowed:
             continue
         out.append({
             "server_id": DISPATCHER_SENTINEL,

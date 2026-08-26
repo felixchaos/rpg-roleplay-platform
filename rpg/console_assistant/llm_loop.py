@@ -213,7 +213,11 @@ def _run_llm_loop(
     """task 58: 共享内核 — 跑 backend.stream_with_mcp_loop, yield SSE 字符串。"""
 
     system_prompt = build_system_prompt(page_context)
-    tools = list_assistant_tools()
+    # v1.82.1:工具表跟着「面」走,与 build_system_prompt 用同一条判据 —— 编辑器右栏拿
+    # 剧本资产工具,平台控制台拿平台工具。此前两个面共用一份名单,编辑器因此够不到
+    # get_chapter_facts / get_worldbook 等本该属于它的工具(注册了但名字没进名单=静默不可见)。
+    from console_assistant.surfaces import surface_of
+    tools = list_assistant_tools(surface_of(page_context))
 
     extra_pending_note: list[dict[str, Any]] = []
     if conv.get("pending_confirmations"):

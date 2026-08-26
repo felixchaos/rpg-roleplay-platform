@@ -163,9 +163,10 @@ def build_system_prompt(page_context: dict[str, Any] | None) -> str:
         pieces.append(f"  · note = <<<{_sanitize_ctx_string(extra, 256)}>>>")
     # N (MD 编辑器) §5:带 script_id 时(右栏 agent)注入剧本编辑上下文 + 直写工具用法。
     # open_file 描述当前打开的实体文件(章节 / 角色卡 / 世界书 / 锚点 / canon),由前端推上来。
-    if _script_id_int is not None and (page_context.get("tab") == "md-editor"
-                                       or page_context.get("md_editor")
-                                       or page_context.get("open_file")):
+    # v1.82.1:判据抽到 console_assistant.surfaces —— 工具表要用同一条判据分面,
+    # 两处各写一遍必然漂移(「提示词说你是写作搭档、工具表却是控制台那套」)。
+    from console_assistant.surfaces import is_editor_surface
+    if _script_id_int is not None and is_editor_surface(page_context):
         open_file = page_context.get("open_file")
         of = f"当前打开的文件: {_sanitize_ctx_string(open_file, 200)}。" if open_file else ""
         pieces.append(
