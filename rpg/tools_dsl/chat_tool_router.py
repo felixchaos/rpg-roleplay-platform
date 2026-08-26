@@ -89,12 +89,36 @@ _ANCHOR_WINDOW_PROMOTED = _ANCHOR_FAMILY - {"check_pending_anchor_drift"}
 #      窗口 18):get_import_status / get_my_stats / get_my_usage 三个平台查询挤在
 #      窗口里,而 query_memory / get_worldbook / get_pending_questions 全在窗外。
 TIER_TAVERN_SELF = -1     # 酒馆自举:建/换角色、persona、列/绑剧本
-TIER_TURN_CRITICAL = 0    # 主回合闭环必需:锚点族、canon 读、面向玩家交互
-TIER_TURN_READ = 1        # 主回合读取:当前状态 / 记忆 / 世界书 / 剧本
-TIER_TURN_WRITE = 2       # 主回合写入:改 state
-TIER_SITUATIONAL = 3      # 情境专用:战斗 / 物品 / 生图 / 建卡 / 导入 / UI
-TIER_PLATFORM = 4         # 平台账户管理:用量 / 凭据 / 存档管理 / 审计 —— 永不占窗口
+TIER_TURN_CRITICAL = 0    # 主回合闭环必需:锚点族、canon 读写、面向玩家交互
+TIER_PRIMARY_READ = 1     # 主回合首要读:这个存档**此刻**的状态(记忆/世界书/关系/原著窗口)
+TIER_TURN_READ = 2        # 主回合次要读:其余 get_/list_/query_
+TIER_SECONDARY_READ = 3   # 编辑域枚举:拿 id 用的清单,不是主回合读
+TIER_TURN_WRITE = 4       # 主回合写入:改 state
+TIER_SITUATIONAL = 5      # 情境专用:战斗 / 物品 / 生图 / 建卡 / 导入 / UI
+TIER_PLATFORM = 6         # 平台账户管理:用量 / 凭据 / 存档管理 / 审计 —— 永不占窗口
 TIER_UNCLASSIFIED = 9     # 没匹配到任何规则 —— 守卫测试要求这一档恒为空
+
+
+def _curated_turn_critical() -> frozenset[str]:
+    """从 gm_serving 那份**人工审定过的**清单派生主回合必需集,不手抄名字。
+
+    `GM_ALL_KB_TOOLS` 的定义就是「文宗精简档把工具收成 12 个之后**仍然必须保留**的
+    存档级 KB 维护工具」—— 那是一份现成的、与窗口无关的「主回合真正需要什么」权威声明。
+
+    v1.82.0 只把 ask_player_choice 从这个不对称里救了出来(精简档保它、非精简档却够不到
+    窗口),**没有回头查同一份清单里的其他成员** —— 典型的修 A 漏 B,而且是我自己犯的。
+    实测:清单 11 个里 7 个已在 tier 0(canon 读 4 + 锚点 3),剩下 4 个 kb_* 写工具落
+    tier 1,按字母序排在 38 个 get_* 之后,在非精简档从来进不了 18 的窗口 —— 也就是
+    「GM 不维护存档级 KB」的一条确定性成因。
+
+    改成结构派生:以后往 GM_ALL_KB_TOOLS 加工具,窗口自动跟着变(effective_window 会
+    按不变量定容),不需要有人记得来这里补名字。
+    """
+    try:
+        from gm_serving.serve import GM_ALL_KB_TOOLS
+        return frozenset(GM_ALL_KB_TOOLS)
+    except Exception:  # gm_serving 不可用(裁剪部署 / 单测替身)时退回空集,不影响其余规则
+        return frozenset()
 
 # 主回合闭环必需的具名工具(前缀分不到一起,只能列名)。
 _TURN_CRITICAL_NAMES = frozenset((
@@ -104,7 +128,7 @@ _TURN_CRITICAL_NAMES = frozenset((
     "ask_player_choice",
     # 当前场景与状态:GM 每轮都要知道「此刻在哪、什么状态」
     "get_current_scene", "get_game_state", "get_pending_questions",
-))
+)) | _curated_turn_critical()
 
 # 平台/账户管理:与本回合叙事无关,不该竞争窗口名额。窗口外仍可经 load_tools 目录取用。
 _PLATFORM_NAMES = frozenset((
@@ -127,6 +151,30 @@ _SITUATIONAL_PREFIXES = (
     "check_pending_anchor_drift",
     "list_my_character_cards", "list_my_personas", "list_modules",
 )
+
+# 编辑域枚举:这些工具**按它们自己的描述**就是「更新前先用它拿 id」的清单
+# (list_anchors → 拿 anchor_id 给 update_anchor;list_canon_entities → 拿 logical_key
+# 给 upsert_canon_entity),属剧本编辑工作流而不是主回合叙事。放次要档,给主回合读腾名额。
+# ⚠️ 刻意不含 list_script_npcs / get_script_character_card —— 那两个是「这一幕谁在场」,
+# 主回合真的会用。
+_SECONDARY_READ_NAMES = frozenset((
+    "list_anchors", "list_canon_entities", "list_scripts", "get_script_chapters",
+))
+
+# 主回合**首要**读 —— 判据是「本回合是关于这个存档此刻的状态」,不是调用频次。
+# (频次数据不可用作判据:窗口外的工具模型根本看不见、自然也不会调,统计天然有幸存者偏差;
+#  kb_* 那 68 次调用实际来自文宗精简档的白名单,与窗口构成无关。)
+# 这一档与 tier 0 一起进 effective_window 的定容不变量,所以它们不再靠字母序抢名额 ——
+# v1.81 里 get_import_status / get_my_usage 压过 query_memory / get_worldbook,就是字母序。
+_PRIMARY_TURN_READS = frozenset((
+    "query_memory",          # 记忆检索
+    "get_worldbook",         # 世界书(设定权威)
+    "list_relationships",    # 关系网
+    "get_known_events",      # 已发生事件
+    "get_pending_writes",    # 上轮待确认的写
+    "get_chapter_context",   # 贴原著档每回合都要
+    "get_chapter_facts",
+))
 
 # 主回合读 / 写的前缀规则(顺序敏感:读在写前,因为 kb_ 既是读也是写的前缀)。
 _TURN_READ_PREFIXES = ("kb_", "get_", "list_", "query_")
@@ -153,8 +201,12 @@ def classify_tool(name: str, *, signals: frozenset[str] | None = None) -> int:
         return TIER_TAVERN_SELF
     if n in _PLATFORM_NAMES:
         return TIER_PLATFORM
-    if n in _TURN_CRITICAL_NAMES:
-        return TIER_TURN_CRITICAL
+    # ⚠️ 受相关性门控的两族(锚点剧本侧 / canon 读)必须排在 _TURN_CRITICAL_NAMES **之前**。
+    # _TURN_CRITICAL_NAMES 含 gm_serving 那份审定清单,而清单里的 canon 读(search_canon /
+    # lookup_* / graph_neighbors)也是 GM_KB_QUERY_TOOLS 成员 —— 放在前面会让它们绕过门,
+    # 于是「没绑剧本、根本没有原著可读」时 canon 读仍占着窗口名额。
+    # 两个权威在这里打架:清单说的是「有剧本时主回合要用」,门说的是「压根没东西可读」,门赢。
+    # 清单真正额外贡献的是那 4 个 kb_* 写工具,它们不受任何门控,在下面被接住。
     if n in _ANCHOR_WINDOW_PROMOTED:
         # 存档过去侧无条件常驻:写自己的历史锚点跟剧本有没有 pending anchor 无关。
         if n in _ANCHOR_HISTORY_SIDE:
@@ -166,6 +218,12 @@ def classify_tool(name: str, *, signals: frozenset[str] | None = None) -> int:
         if signals is not None and "canon" not in signals:
             return TIER_TURN_READ
         return TIER_TURN_CRITICAL
+    if n in _TURN_CRITICAL_NAMES:
+        return TIER_TURN_CRITICAL
+    if n in _SECONDARY_READ_NAMES:
+        return TIER_SECONDARY_READ
+    if n in _PRIMARY_TURN_READS:
+        return TIER_PRIMARY_READ
     if n.startswith(_SITUATIONAL_PREFIXES):
         return TIER_SITUATIONAL
     if n.startswith(_TURN_READ_PREFIXES):
@@ -230,8 +288,8 @@ def build_unified_tool_list(
     窗口是硬名额,排在窗口外约等于这个工具不存在。档位定义见本模块 classify_tool()。
 
     档位(小的靠前):
-      -1 酒馆自举   ·  0 主回合闭环  ·  1 主回合读  ·  2 主回合写
-       3 情境专用   ·  4 平台账户管理(永不占窗口)
+      -1 酒馆自举   ·  0 主回合闭环  ·  1 主回合首要读 ·  2 主回合次要读
+       3 编辑域枚举 ·  4 主回合写    ·  5 情境专用     ·  6 平台账户管理(永不占窗口)
 
     signals: 本回合相关性信号(见 turn_signals())。None = 不做门控,与 v1.81 一致。
              只降权不提权:没有 pending anchor 时锚点族让出窗口名额,没绑剧本时

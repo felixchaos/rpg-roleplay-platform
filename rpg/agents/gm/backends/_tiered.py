@@ -42,13 +42,14 @@ def tool_full_name(t: dict[str, Any]) -> str:
     return f"{sid}{SEP}{tname}"[:64]
 
 
-# 主回合闭环之外再留几个名额给常用读取(get_chapter_context / get_worldbook 之类)。
-CORE_READ_RESERVE = 4
+# 主回合闭环 + 首要读之外再留的机动名额。v1.82.1:首要读已经自己成一档(tier 1)并被
+# 下面的不变量覆盖,所以这里从 4 降到 2 —— 名额不再靠「留几个然后字母序抢」来分配。
+CORE_READ_RESERVE = 2
 # 自动定容的上限:超过它宁可让工具掉进目录,也不让每轮 schema 无限膨胀(会 warn)。
 MAX_AUTO_WINDOW = 32
-# tier <= 这个值的工具视为「主回合闭环必需」,必须全部直发。定义见
-# tools_dsl/chat_tool_router.classify_tool。
-_CRITICAL_TIER = 0
+# tier <= 这个值的工具视为「主回合必须直发」,不许掉进 load_tools 目录。
+# 1 = 主回合闭环(0)+ 主回合首要读(1)。定义见 tools_dsl/chat_tool_router.classify_tool。
+_CRITICAL_TIER = 1
 
 
 def effective_window(mcp_tools: list[dict[str, Any]], window: int) -> int:
