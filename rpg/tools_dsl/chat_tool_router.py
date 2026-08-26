@@ -34,9 +34,16 @@ _TAVERN_CANON_READ_SUBSTR = (
     "get_chapter_facts", "get_worldbook",
 )
 
-# agent 自举工具(建/换角色、persona、列/绑剧本)永不被子串匹配误伤 ——
+# 酒馆自举工具(建/换角色、persona、列/绑剧本)的前缀 —— **单一真相源**。
+# v1.82.0:这个元组此前在本文件里有三份拷贝(_TAVERN_KEEP_PREFIX / _rank 的字面量 /
+# build_unified_tool_list 里 GM 模式的丢弃分支),补 switch_tavern_ 时漏改其中两处,
+# 结果 switch_tavern_persona_card 在 GM 模式拿到 tier -1、占掉窗口第一个名额。
+# 三处合一,以后加前缀只改这里。
+TAVERN_SELF_PREFIXES = ("set_tavern_", "edit_tavern_", "tavern_", "switch_tavern_")
+
+# 别名:保留旧名给既有 import(语义相同 —— 这批工具永不被子串规则误伤)。
 # tavern_list_scripts / tavern_bind_script 含 "script" 子串,否则可能被规则吞掉。
-_TAVERN_KEEP_PREFIX = ("set_tavern_", "edit_tavern_", "tavern_")
+_TAVERN_KEEP_PREFIX = TAVERN_SELF_PREFIXES
 
 
 # ── 锚点/存档历史族(时间线的读写全集)——**提权名单的单一真源** ──────────────
@@ -51,17 +58,145 @@ _TAVERN_KEEP_PREFIX = ("set_tavern_", "edit_tavern_", "tavern_")
 # 修 ① 时只把「未来侧」四个名字塞进 _rank 的字面量元组,漏了「过去侧」——典型修 A 漏 B。
 # 收成一份名单:以后这个族新增工具,只改这里一处;成员资格由 tools_dsl 的注册名兜底
 # (奇偶守卫见 rpg/tests/unit/test_anchor_tool_window.py)。
-_ANCHOR_FAMILY = frozenset((
-    # 剧本未来侧:save_anchor_states
+# 两侧必须分开(v1.82.0):相关性门只能门控**剧本未来侧** —— 「这个剧本有没有待收束的
+# 锚点」是剧本侧事实。**存档过去侧**(玩家自己的历史锚点)与剧本无关,任何一局都可能要写,
+# 门控它就会重演 v1.72.4 那个 bug:877 回合的存档一条玩家锚点都没有,因为工具够不到。
+_ANCHOR_SCRIPT_SIDE = frozenset((
     "list_pending_anchors", "mark_anchor_satisfied", "mark_anchor_superseded",
     "summarize_anchors", "check_pending_anchor_drift",
-    # 存档过去侧:save_history_anchors
+))
+_ANCHOR_HISTORY_SIDE = frozenset((
     "record_history_anchor", "list_recent_history",
 ))
+_ANCHOR_FAMILY = _ANCHOR_SCRIPT_SIDE | _ANCHOR_HISTORY_SIDE
 # 族内**必须常驻直发窗口**的子集 = 主回合闭环真正会用到的读写。
 # check_pending_anchor_drift 是排查用的反查器(GM 主循环走 list_pending_anchors +
 # mark_*),不占窗口名额;它仍在族里,受同一份奇偶守卫覆盖。
 _ANCHOR_WINDOW_PROMOTED = _ANCHOR_FAMILY - {"check_pending_anchor_drift"}
+
+
+# ── 直发窗口的档位(v1.82.0)──────────────────────────────────────────────
+# 在此之前档位是「按名字前缀猜」,匹配不到就落兜底档 3 —— 而窗口是硬名额,落兜底
+# 等于这个工具不存在。前科两次(锚点族分两批发现),两次都是几个月后靠群反馈找出来的。
+#
+# 这一版把三件事改掉:
+#   ① 档位规则变成**显式声明表**(_TIER_RULES),不再是散在 if 里的前缀链;
+#   ② 匹配不到任何规则的工具进 UNCLASSIFIED,由守卫测试
+#      rpg/tests/unit/test_tool_window_tiering.py 断言其为空 —— 新工具不选档就红,
+#      不再有「静默落兜底」这条路;
+#   ③ 平台/账户管理类工具单列一档(PLATFORM),它们在 GM 主回合毫无用处,却因为
+#      同档内 tie-break 是**字母序**而实际占着窗口名额。实测(104 个 llm_chat 工具,
+#      窗口 18):get_import_status / get_my_stats / get_my_usage 三个平台查询挤在
+#      窗口里,而 query_memory / get_worldbook / get_pending_questions 全在窗外。
+TIER_TAVERN_SELF = -1     # 酒馆自举:建/换角色、persona、列/绑剧本
+TIER_TURN_CRITICAL = 0    # 主回合闭环必需:锚点族、canon 读、面向玩家交互
+TIER_TURN_READ = 1        # 主回合读取:当前状态 / 记忆 / 世界书 / 剧本
+TIER_TURN_WRITE = 2       # 主回合写入:改 state
+TIER_SITUATIONAL = 3      # 情境专用:战斗 / 物品 / 生图 / 建卡 / 导入 / UI
+TIER_PLATFORM = 4         # 平台账户管理:用量 / 凭据 / 存档管理 / 审计 —— 永不占窗口
+TIER_UNCLASSIFIED = 9     # 没匹配到任何规则 —— 守卫测试要求这一档恒为空
+
+# 主回合闭环必需的具名工具(前缀分不到一起,只能列名)。
+_TURN_CRITICAL_NAMES = frozenset((
+    # 面向玩家的选择题。gm.py 的文宗精简档已经显式保它(注释原话:「否则 slim 档 GM
+    # 无法弹玩家选择(用户报"选项有时不弹"的根因之一)」)—— 但**非 slim 档**它一直落在
+    # 兜底档、进不了 18 的窗口,同一个根因在另一半路径上没被修。这里补齐。
+    "ask_player_choice",
+    # 当前场景与状态:GM 每轮都要知道「此刻在哪、什么状态」
+    "get_current_scene", "get_game_state", "get_pending_questions",
+))
+
+# 平台/账户管理:与本回合叙事无关,不该竞争窗口名额。窗口外仍可经 load_tools 目录取用。
+_PLATFORM_NAMES = frozenset((
+    "get_my_stats", "get_my_usage", "list_my_usage",
+    "get_import_status", "list_my_import_jobs",
+    "list_my_credentials_meta", "list_available_models", "list_available_tools",
+    "recent_audit_log",
+    "list_my_saves", "get_save_detail", "list_branches",
+))
+
+# 情境专用:只在特定玩法/操作里用得上,平时不占窗口。
+_SITUATIONAL_PREFIXES = (
+    "combat_", "skill_check", "saving_throw", "short_rest",
+    "consume_item", "grant_item", "pickup_loot",
+    "generate_image", "create_character_card", "create_persona",
+    "clone_npc_", "export_character_card", "import_",
+    "module_", "extract_from_selection", "read_attached_text",
+    "claim_protagonist_pov", "revoke_protagonist_pov", "recommend_player_identity",
+    "schedule_consequence", "ui_", "phase_list",
+    "check_pending_anchor_drift",
+    "list_my_character_cards", "list_my_personas", "list_modules",
+)
+
+# 主回合读 / 写的前缀规则(顺序敏感:读在写前,因为 kb_ 既是读也是写的前缀)。
+_TURN_READ_PREFIXES = ("kb_", "get_", "list_", "query_")
+_TURN_WRITE_PREFIXES = ("set_", "add_", "pin_", "clarify", "confirm_",
+                        "reject_", "dismiss_", "save_", "worldbook_")
+
+
+def classify_tool(name: str, *, signals: frozenset[str] | None = None) -> int:
+    """把工具名归到一个显式档位。返回 TIER_* 之一。
+
+    signals 是**本回合**的相关性信号集合(见 build_unified_tool_list 的 signals 参数)。
+    传 None = 不做相关性门控,与 v1.81 行为一致。
+
+    相关性门只做**降权**,不做提权,而且只降两族:
+      · 锚点族的**剧本未来侧**:没有 pending anchor 时从 TURN_CRITICAL 降到 TURN_READ。
+        今天这 4 个工具无条件占着窗口名额,哪怕这局根本没有待收束的锚点。
+        **存档过去侧(record_history_anchor / list_recent_history)不受门控** —— 见
+        _ANCHOR_HISTORY_SIDE 的注释。
+      · canon 读:没有绑定剧本时降级 —— 没有原著可读。
+    有信号时行为与改动前完全一致(仍在 TURN_CRITICAL),所以「有用的时候一个不少」。
+    """
+    n = (name or "").lower()
+    if n.startswith(TAVERN_SELF_PREFIXES):
+        return TIER_TAVERN_SELF
+    if n in _PLATFORM_NAMES:
+        return TIER_PLATFORM
+    if n in _TURN_CRITICAL_NAMES:
+        return TIER_TURN_CRITICAL
+    if n in _ANCHOR_WINDOW_PROMOTED:
+        # 存档过去侧无条件常驻:写自己的历史锚点跟剧本有没有 pending anchor 无关。
+        if n in _ANCHOR_HISTORY_SIDE:
+            return TIER_TURN_CRITICAL
+        if signals is not None and "anchors" not in signals:
+            return TIER_TURN_READ
+        return TIER_TURN_CRITICAL
+    if n.startswith(("search_canon", "lookup_", "graph_neighbors")):
+        if signals is not None and "canon" not in signals:
+            return TIER_TURN_READ
+        return TIER_TURN_CRITICAL
+    if n.startswith(_SITUATIONAL_PREFIXES):
+        return TIER_SITUATIONAL
+    if n.startswith(_TURN_READ_PREFIXES):
+        return TIER_TURN_READ
+    if n.startswith(_TURN_WRITE_PREFIXES):
+        return TIER_TURN_WRITE
+    return TIER_UNCLASSIFIED
+
+
+def unclassified_tools(names) -> list[str]:
+    """匹配不到任何显式规则的工具名。守卫测试断言它恒为空。
+
+    这是「miss 必须可诊断」的落点:新工具不选档就在 CI 里红,而不是上线几个月后
+    由玩家报「这个功能 GM 从来不用」。
+    """
+    return sorted(n for n in names if classify_tool(n) == TIER_UNCLASSIFIED)
+
+
+def turn_signals(*, bound_script_id: int | None = None,
+                 has_pending_anchors: bool = False) -> frozenset[str]:
+    """本回合的相关性信号。
+
+    刻意只吃**已经算好的**事实(是否绑了剧本、有没有 pending anchor),不新增任何 IO —— 
+    与上下文层共用同一份 world state 快照,不另开一条会漂移的真相源。
+    """
+    sig: set[str] = set()
+    if bound_script_id:
+        sig.add("canon")
+    if has_pending_anchors:
+        sig.add("anchors")
+    return frozenset(sig)
 
 
 def _tavern_drops_tool(name: str, *, bound_script_id: int | None = None) -> bool:
@@ -82,6 +217,7 @@ def build_unified_tool_list(
     *,
     mode: str | None = None,
     bound_script_id: int | None = None,
+    signals: frozenset[str] | None = None,
 ) -> list[dict[str, Any]]:
     """合并 MCP 工具列表 + dispatcher 注册表中允许 origin 的工具。
 
@@ -89,32 +225,20 @@ def build_unified_tool_list(
         [{"server_id": str, "name": str, "description": str, "schema": dict}, ...]
     dispatcher 工具用 server_id="__dispatcher__" 标识。
 
-    排序:KB 查询 / 信息最稀缺的工具排前 — backend 截断(Vertex 64 / Anthropic 128)
-    时不会把 search_canon 等 GM 真正需要的查询砍掉。
-    优先级(数字小靠前):
-      0. KB 查询(search_canon / lookup_* / graph_neighbors)— 缺这个 GM 只能虚构
-      1. 状态读(get_* / list_* / query_*)+ KB 写(kb_*)— 看清现状 / 提交世界树 delta
-      2. 状态写(set_* / add_* / pin_* / clarify / confirm_*)— 改 state
-      3. 其余(combat_* / skill_* / consume_*)— 战斗 / 检定专用
+    **排序即窗口资格。** backend 只把前 N 个(core.config.tool_window_size(),默认 18)
+    的完整 schema 直发给模型,其余进 load_tools 目录 —— 而实测模型极少主动 load,所以
+    窗口是硬名额,排在窗口外约等于这个工具不存在。档位定义见本模块 classify_tool()。
+
+    档位(小的靠前):
+      -1 酒馆自举   ·  0 主回合闭环  ·  1 主回合读  ·  2 主回合写
+       3 情境专用   ·  4 平台账户管理(永不占窗口)
+
+    signals: 本回合相关性信号(见 turn_signals())。None = 不做门控,与 v1.81 一致。
+             只降权不提权:没有 pending anchor 时锚点族让出窗口名额,没绑剧本时
+             canon 读让出 —— 有信号时与改动前逐个工具相同。
     """
     def _rank(name: str) -> int:
-        n = (name or "").lower()
-        # 酒馆自管理工具(建/换角色、persona、改卡、列/绑剧本)是酒馆 agent 的核心能力,必须排最前:
-        # backend 有工具数上限(openai_compat 取前 N),排后面会被截断 → 模型拿不到 schema → 只能
-        # 幻觉式叙述「已修改」而不真正调用。放 -1 保证它们永远落在窗口内。
-        if n.startswith(("set_tavern_", "edit_tavern_", "tavern_")):
-            return -1
-        # 锚点族显式提权(名单见 _ANCHOR_WINDOW_PROMOTED):与 search_canon 同级,保证进
-        # GM 直发工具窗口、不被挤进 backend tiered 目录。
-        if n in _ANCHOR_WINDOW_PROMOTED:
-            return 0
-        if n.startswith(("search_canon", "lookup_", "graph_neighbors")):
-            return 0
-        if n.startswith(("kb_", "get_", "list_", "query_")):
-            return 1
-        if n.startswith(("set_", "add_", "pin_", "clarify", "confirm_", "reject_", "dismiss_", "save_")):
-            return 2
-        return 3
+        return classify_tool(name, signals=signals)
 
     out: list[dict[str, Any]] = list(mcp_tools or [])
     disp: list[dict[str, Any]] = []
@@ -123,14 +247,19 @@ def build_unified_tool_list(
             if _tavern_drops_tool(spec.name, bound_script_id=bound_script_id):
                 continue
         # 非酒馆(游戏控制台 freeform/novel)模式:酒馆自管理工具(建/换角色、persona、列/绑剧本)
-        # 在游戏里无意义且会因 _rank=-1 抢占窗口最前。这里丢掉,别污染游戏控制台工具表。
-        elif spec.name.lower().startswith(("set_tavern_", "edit_tavern_", "tavern_")):
+        # 在游戏里无意义且会因 tier -1 抢占窗口最前。这里丢掉,别污染游戏控制台工具表。
+        elif spec.name.lower().startswith(TAVERN_SELF_PREFIXES):
             continue
         disp.append({
             "server_id": DISPATCHER_SENTINEL,
             "name": spec.name,
             "description": spec.description,
             "schema": spec.input_schema,
+            # 档位随工具一起交给下游(纯数据,backend 只读它认识的键)。_tiered.split_window
+            # 据此把直发窗口按「主回合闭环工具必须全部直发」这条不变量自动定容 —— 在此
+            # 之前窗口是个手算出来的常量,已经被手算过三次(16→18,每次都是有工具掉出去
+            # 之后才发现)。MCP 工具没有这个键,不参与定容。
+            "tier": _rank(spec.name),
         })
     disp.sort(key=lambda d: (_rank(d.get("name", "")), d.get("name", "")))
     out.extend(disp)

@@ -3,8 +3,38 @@ from __future__ import annotations
 
 from typing import Any
 
-from context_engine._constants import MAX_LAYER_CHARS, layer_cache_tier
+from context_engine._constants import (
+    MAX_LAYER_CHARS,  # noqa: F401 — 老 caller / 测试仍直接读它
+    NEVER_DROP_LAYERS,
+    layer_cache_tier,
+    layer_char_budget,
+    layer_min_chars,
+)
 from context_engine._utils import _cache_plan, _estimate_tokens, _layer, _preview, _trim
+from context_engine.budget import solve_layer_budgets
+
+# 未登记层 id 只 warn 一次:每回合都会重复,刷屏没有信息量。
+_WARNED_UNREGISTERED: set[str] = set()
+
+
+def _warn_unregistered_layers(layer_ids: list[str]) -> None:
+    """层 id 没进 MAX_LAYER_CHARS → 被砍到默认上限。这件事必须可见。
+
+    历史上这样丢过 8 个层(novel_retrieval / novel_worldbook / timeline_pending /
+    酒馆四层 / episodic_recall 等),每次都是几个月后靠玩家反馈发现的,因为症状
+    (「GM 不记得」「世界书像摆设」)和「被截断」没有任何字面关联。
+    """
+    fresh = [i for i in layer_ids if i not in _WARNED_UNREGISTERED]
+    if not fresh:
+        return
+    _WARNED_UNREGISTERED.update(fresh)
+    import logging
+    logging.getLogger("context_engine").warning(
+        "[context] 这些层 id 未登记进 MAX_LAYER_CHARS,已按默认上限截断: %s "
+        "—— 请在 context_engine/_constants.py 里补登记(守卫: "
+        "rpg/tests/unit/test_context_layer_budget_registry.py)",
+        ", ".join(sorted(fresh)),
+    )
 
 
 def _split_anchor_pending(retrieved_context: str) -> tuple[str, str]:
@@ -99,6 +129,7 @@ def build_context_bundle(
     contributions: list | None = None,
     manifest: dict | None = None,
     save_id: int | None = None,  # task 107E
+    budget_chars: int | None = None,  # v1.82.0 全局预算求解;None/0 = 每层各拿 want(旧行为)
 ) -> dict[str, Any]:
     """组装单轮 prompt 上下文。
 
@@ -212,6 +243,36 @@ def build_context_bundle(
     all_layers = universal_layers + provider_layers + tail_layers
     all_layers.sort(key=lambda lyr: -int(lyr.get("priority", 50)))
 
+    # ── 每层上限:先查登记表(命中与否要交出去,不许静默),再做全局求解 ────────────
+    want_by_id: dict[str, int] = {}
+    unregistered: list[str] = []
+    for layer in all_layers:
+        lid = layer["id"]
+        if lid in want_by_id:
+            continue
+        want, registered = layer_char_budget(lid)
+        want_by_id[lid] = want
+        if not registered:
+            unregistered.append(lid)
+    if unregistered:
+        # 动态生成的层 id 绕得过 AST 守卫,绕不过这里。warn 一次即可(每轮都会重复)。
+        _warn_unregistered_layers(unregistered)
+
+    granted = want_by_id
+    dropped_ids: list[str] = []
+    if budget_chars and budget_chars > 0:
+        specs = [
+            {"id": lid,
+             "want": want_by_id[lid],
+             "min": layer_min_chars(lid, want_by_id[lid]),
+             "priority": int(next((lyr.get("priority", 50) for lyr in all_layers
+                                   if lyr["id"] == lid), 50))}
+            for lid in want_by_id
+        ]
+        granted, dropped_ids = solve_layer_budgets(
+            specs, int(budget_chars), protected=NEVER_DROP_LAYERS)
+    dropped_set = set(dropped_ids)
+
     prompt_parts = []
     debug_layers = []
     # Q 分层缓存:按 tier 收集已发出的层块(段内仍保持上面的 priority 降序)。
@@ -219,7 +280,12 @@ def build_context_bundle(
     # 附加产出,1b 才由 master/backends 据此构造多 block + cache_control 断点。
     seg_parts: dict[str, list[str]] = {"A": [], "B": [], "C": []}
     for layer in all_layers:
-        trimmed = _trim(layer["content"], MAX_LAYER_CHARS.get(layer["id"], 1800))
+        lid = layer["id"]
+        if lid in dropped_set:
+            continue
+        cap = granted.get(lid, want_by_id.get(lid, 0))
+        raw = (layer["content"] or "").strip()
+        trimmed = _trim(layer["content"], cap)
         if not trimmed:
             continue
         part = f"【{layer['title']}】\n{trimmed}"
@@ -227,9 +293,16 @@ def build_context_bundle(
         tier = layer_cache_tier(layer)  # 始终返回 A/B/C
         seg_parts[tier].append(part)
         debug_layers.append({
-            "id": layer["id"],
+            "id": lid,
             "title": layer["title"],
             "chars": len(trimmed),
+            # 截断可观测(v1.82.0):在此之前「这层被砍了」只以正文里一句中文标记存在,
+            # 统计不了、告警不了。context_runs 表已存 debug,补这三个字段就能直接查
+            # 「哪一层最常被砍、平均砍掉多少字」。
+            "original_chars": len(raw),
+            "budget_chars": cap,
+            "truncated": len(raw) > cap,
+            "budget_registered": lid not in unregistered,
             "estimated_tokens": _estimate_tokens(trimmed),
             "sticky": layer.get("sticky", False),
             "priority": layer.get("priority", 50),
@@ -253,6 +326,15 @@ def build_context_bundle(
         "layers": debug_layers,
         "cache_plan": cache_plan,
         "tier_tokens": {t: _estimate_tokens("\n\n".join(seg_parts[t])) for t in ("A", "B", "C")},
+        # v1.82.0:预算求解报告。budget_chars=0 表示没做求解(拿不到模型窗口 → 旧行为)。
+        "budget": {
+            "budget_chars": int(budget_chars or 0),
+            "want_total_chars": sum(want_by_id.values()),
+            "granted_total_chars": sum(granted.get(i, 0) for i in want_by_id),
+            "dropped_layers": dropped_ids,
+            "unregistered_layers": unregistered,
+            "truncated_layers": [d["id"] for d in debug_layers if d.get("truncated")],
+        },
         "curator_plan": curator_plan or {},
         "manifest": {
             "id": (manifest or {}).get("id"),

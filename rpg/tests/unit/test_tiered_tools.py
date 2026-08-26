@@ -106,6 +106,8 @@ class TestTokenReductionRealTavern(unittest.TestCase):
         tav = build_unified_tool_list([], origin="llm_chat", mode="tavern_gm", bound_script_id=None)
         self.assertGreater(len(tav), 60, "酒馆应有几十个工具")
 
+        from agents.gm.backends._tiered import effective_window
+
         full = self._openai_array(tav, window=len(tav))      # 全发(旧行为基线)
         win16 = self._openai_array(tav, window=16)           # 阶梯化
         full_chars = len(json.dumps(full, ensure_ascii=False))
@@ -113,10 +115,14 @@ class TestTokenReductionRealTavern(unittest.TestCase):
         # 阶梯化后体积应显著下降(目录是一句话 vs 完整 schema)
         self.assertLess(win16_chars, full_chars * 0.55,
                         f"窗口16={win16_chars} 应 < 全发{full_chars} 的 55%")
-        # load_tools 元工具在数组里且窗口内只有 16+1 个
+        # v1.82.0:传进去的 16 是**下限**,真实窗口由 effective_window 按「主回合闭环工具
+        # 必须全部直发」这条不变量定容(酒馆自举 6 + 闭环 4 + 锚点族 6 → 会撑到 20)。
+        # 断言必须走同一个函数,抄字面量 16 就会在任何一次档位调整后假红。
+        eff = effective_window(tav, 16)
+        self.assertGreaterEqual(eff, 16)
         names = {x["function"]["name"] for x in win16}
         self.assertIn("tiered__load_tools", names)
-        self.assertEqual(len(win16), 17)  # 16 窗口 + 1 load_tools
+        self.assertEqual(len(win16), eff + 1)  # 窗口 + 1 load_tools
 
 
 class TestAnthropicLoadToolsRoundTrip(unittest.TestCase):
@@ -133,7 +139,8 @@ class TestAnthropicLoadToolsRoundTrip(unittest.TestCase):
         tav = build_unified_tool_list([], origin="llm_chat", mode="tavern_gm", bound_script_id=None)
         # 窗口大小取配置真值,别抄字面量——抄了就会在调 RPG_TOOL_WINDOW 默认值时假红
         # (v1.72.4:16→18,ovf 里挑的 target 其实已进窗口,断言 'target 不在轮1' 必炸)。
-        _W = tool_window_size()
+        # v1.82.0:「配置真值」现在是 effective_window(配置值只是下限,不变量会把它撑大)。
+        _W = _tiered.effective_window(tav, tool_window_size())
         win_tools, ovf, _cat = _tiered.split_window(tav, _W, True)
         self.assertTrue(ovf, "应有窗口外工具")
         target = next(iter(ovf))  # 某个窗口外工具的 full name

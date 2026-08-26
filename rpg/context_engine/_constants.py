@@ -55,8 +55,89 @@ _BASE_LAYER_CHARS = {
     "tavern_persona": 3000,
     "module_scene": 3000,                 # 房间描述/出口/NPC/检查
     "module_encounter": 3000,
+    # 补全第三批(v1.82.0,由 test_context_layer_budget_registry 的 AST 守卫扫出):
+    # 这四层从上线起就没进过本表 → 一直走默认 1800 静默截断。episodic_recall 尤其致命 ——
+    # 它就是长程记忆的召回层,被砍到 900 token 等于「召回了但塞不进去」。
+    "episodic_recall": 12000,             # 相关往事·全程历史召回(长局的记忆主通道)
+    "world_pulse": 4000,                  # RATH 离线世界脉动
+    "npc_agenda": 4000,                   # NPC 日程/意图
+    "consequence_echo": 3000,             # 上轮后果回响
 }
 MAX_LAYER_CHARS = {k: int(v * _CTX_SCALE) for k, v in _BASE_LAYER_CHARS.items()}
+
+# 未登记层的兜底上限。**它是个陷阱**:漏登记一个层 id 不会报错,只会让那层被砍到 1800 字符,
+# 而症状(「GM 不记得」「世界书像摆设」)与截断毫无字面关联,历史上已经这样丢过 8 个层。
+# 所以现在有两道闸:① AST 守卫 test_context_layer_budget_registry 在 CI 里挡住新的漏登记;
+# ② layer_char_budget() 把「命中/未命中」作为返回值交出去,build_context_bundle 记进 debug
+#    并 warn 一次 —— 动态生成的层 id 绕得过 ①,绕不过 ②。
+DEFAULT_LAYER_CHARS = 1800
+
+
+def layer_char_budget(layer_id: str) -> tuple[int, bool]:
+    """返回 (该层 char 上限, 是否命中登记表)。
+
+    未命中时给 DEFAULT_LAYER_CHARS,但把 False 交出去 —— 调用方负责让这件事**可见**,
+    不许静默。这是「资格在登记处声明,miss 必须可诊断」的最小落点。
+    """
+    v = MAX_LAYER_CHARS.get(layer_id)
+    if v is None:
+        return int(DEFAULT_LAYER_CHARS * _CTX_SCALE), False
+    return v, True
+
+
+# ── 全局预算求解(v1.82.0)────────────────────────────────────────────────
+# 上面那张表是每层的 want(想要多少)。它们之和 ≈17.3 万字符 ≈ 8.7 万 token,而在此之前
+# **没有任何一处**拿这个和跟模型真实 context window 比对过 —— context_window_for() 只在
+# app.py 事后记账。小窗模型上等于把「超没超」交给 backend 去盲截。
+#
+# 现在 build_context_bundle 可以收一个 budget_chars 做求解:先保每层 min,再把剩余预算按
+# priority 降序、按 (want-min) 比例分配。**求解结果永不超过 want** —— 所以预算宽裕时
+# (gemini 1M / deepseek 1M)输出与改动前逐字节相同,只有真的装不下时才生效。
+_LAYER_MIN_CHARS = {
+    # 不可压缩:压了就不是「少一点素材」,而是契约/输入本身残缺。min == want。
+    "rules": 2000,
+    "agent_runtime": 1600,
+    "state_schema": 1600,
+    "user_input": 2400,
+    # 有意义的下限:低于它这层就没有信息价值,宁可整层丢弃也别留半句。
+    "state": 1200,
+    "anchor_pending": 1500,
+    "episodic_recall": 1500,
+    "novel_retrieval": 2000,
+    "npc_cards": 1500,
+    "worldbook": 1200,
+    "novel_worldbook": 1200,
+    "module_worldbook": 1200,
+    "runtime_phase_digests": 900,
+    "script_phase_anticipation": 900,
+    "tavern_card_system": 1200,
+    "tavern_character": 1200,
+    "tavern_persona": 600,
+}
+# ⚠️ priority 是**层在 prompt 里的位置**,不是重要性 —— user_input 的 priority=0 是因为
+# 它必须垫底(近因),不是因为它可有可无。所以丢弃顺序不能直接用 priority:那样第一个被丢的
+# 就是玩家这一轮说的话。这份名单把「不许丢」显式列出来,与位置解耦。
+NEVER_DROP_LAYERS = frozenset((
+    "rules",           # GM 行为契约
+    "agent_runtime",   # 主 GM 代理运行契约
+    "state_schema",    # 状态字段 schema:丢了 GM 写不出合法标签
+    "state",           # 当前状态简报
+    "user_input",      # 玩家本轮输入 —— 丢它等于没收到消息
+))
+
+# 未列出的层:按 want 的比例折算并夹进 [200, 1500]。
+_MIN_RATIO = 0.30
+_MIN_FLOOR = 200
+_MIN_CEIL = 1500
+
+
+def layer_min_chars(layer_id: str, want_chars: int) -> int:
+    """求解用的每层下限。永不超过 want(否则 min>want 会让求解无解)。"""
+    explicit = _LAYER_MIN_CHARS.get(layer_id)
+    if explicit is not None:
+        return min(int(explicit * _CTX_SCALE), want_chars)
+    derived = int(want_chars * _MIN_RATIO)
+    return min(max(derived, _MIN_FLOOR), _MIN_CEIL, want_chars)
 
 # Q 三贤者分层缓存:层 id → cache_tier。
 #   A 会话级稳定 = 逐回合字节恒等 → 厂商缓存真命中(放可缓存前缀)。
@@ -100,6 +181,10 @@ LAYER_CACHE_TIER = {
     "recent_chat": "C",
     "runtime_phase_digests": "C",
     "user_input": "C",
+    "episodic_recall": "C",
+    "world_pulse": "C",
+    "npc_agenda": "C",
+    "consequence_echo": "C",
 }
 
 

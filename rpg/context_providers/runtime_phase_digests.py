@@ -16,10 +16,13 @@ from __future__ import annotations
 from .base import ContextContribution, ContextProvider
 from .registry import register_provider
 
-# 最大返回的 phase 数 (避免长游戏拉太多)
-MAX_PHASES = 4
-# 单 phase 渲染上限 (字符)
-PER_PHASE_BUDGET = 450
+# v1.82.0:这两个数与 state.core.history_messages() 的前情提要**必须同源**,否则两条路
+# 各按各的取法拉 phase → 同一段历史在一个请求里出现两次(长局实测重叠 3 个 phase)。
+# 归属划分规则见 state/phase_digest_policy.py 的模块注释。
+from state.phase_digest_policy import (  # noqa: E402
+    PER_PHASE_BUDGET,
+    RECENT_PHASE_WINDOW as MAX_PHASES,
+)
 
 
 class RuntimePhaseDigestProvider(ContextProvider):

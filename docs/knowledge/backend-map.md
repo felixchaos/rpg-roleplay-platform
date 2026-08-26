@@ -15,7 +15,7 @@ Python FastAPI 后端逐包/逐模块职责。给 AI 协作者:找「某功能�
 - `chat_pipeline/` **[热路径]** — `/api/chat` SSE 流水线。`__init__.py` 编排 5 个 async-generator phase;`context.py`(取上下文)→ `directives.py`(OOC/斜杠指令)→ `rules.py`(规则桥)→ `gm.py`(`run_gm_phase`,调 GM 出文)→ `persist.py`(落库)/ `postproc.py`(异步后处理)。`_common.py` 定义 `PipelineContext`/SSE 事件。搬家不改语义:事件名/顺序与旧 app.py 一致。
 - `agents/gm/` **[热路径]** — 三贤者 GM 管线(司命/文宗/史官)。`master.py` 主编排,`backends/`(anthropic/openai_compat/_tiered 各 LLM 后端),`style_config.py`/`style_harness.py`(GM 文风),`stream_retry.py`(流式重试)。
 - `gm_serving/` **[热路径]** — 回合服务层。`serve.py` 主服务,`context_inject.py`(上下文注入),`anchor_reconcile.py` + `anchor_signature.py`(锚点对齐,import `get_progress_window`),`impact.py`(后果),`steering.py`(引导强度),`settings.py`(含 `realign_progress_signals` 进度回退)。
-- `context_engine/` — 分层上下文组装:`core.py`/`layers.py`/`projection.py`/`formatters.py`。
+- `context_engine/` — 分层上下文组装:`core.py`/`layers.py`/`projection.py`/`formatters.py`;`budget.py`(层预算全局求解 —— 纯函数,按 min/want/priority 在模型窗口内分配,宽裕时等价于每层拿满 want);`_constants.py` 的 `MAX_LAYER_CHARS` 是**层预算登记表**,漏登记会被静默截断到默认上限,守卫 `tests/unit/test_context_layer_budget_registry.py`。
 - `context_providers/` — 可插拔上下文 provider,`registry.py` 注册;含 `episodic_recall`(长程记忆)、`memory`、`npc_agenda`、`world_pulse`、`runtime_phase_digests` 等。加 provider 走 registry。
 
 ## Agents(LLM 微任务)
@@ -33,7 +33,7 @@ Python FastAPI 后端逐包/逐模块职责。给 AI 协作者:找「某功能�
 - `tools_dsl/command_tools.py` — LLM-facing 工具 schema(纯数据 `COMMAND_TOOLS`)。`command_tools_register.py` — 启动时把工具包成 `ToolSpec` 注册进 registry。
 - `tools_dsl/command_tools_*.py` — 按域拆分的工具实现(anchors/consequence/creative/image/imports/kb/misc/persona/phase/queries/rules/saves/tavern/ui_action/worldbook)。
 - `tools_dsl/command_tools_script_write/` — 剧本写作工具,**已包化**(拆分收尾中):`chapters.py`/`anchors.py`/`canon.py`/`npc_cards.py`/`worldbook.py`/`extract.py`/`registry.py`。以完成后结构为准。
-- `tools_dsl/chat_tool_router.py`、`set_parser.py`、`ui_dispatch_helper.py`、`tool_registry.py`(MCP catalog 持久化,与 dispatcher 的 registry 不同)。
+- `tools_dsl/chat_tool_router.py`(**直发工具窗口的档位单一真相源** —— `classify_tool()` 决定哪些工具的完整 schema 直发给模型;窗口是硬名额,排在窗口外约等于不存在。新工具必须落进某个显式档,守卫 `tests/unit/test_tool_window_tiering.py`)、`set_parser.py`、`ui_dispatch_helper.py`、`tool_registry.py`(MCP catalog 持久化,与 dispatcher 的 registry 不同)。
 
 ## 核心工具层(core/)
 
@@ -73,6 +73,7 @@ Python FastAPI 后端逐包/逐模块职责。给 AI 协作者:找「某功能�
 ## 状态 / 规则 / 存档
 
 - `state/` — 游戏状态核心:`core.py`、`json_ops.py`/`path_ops.py`(JSON 操作)、`consequence_ledger.py`(后果账本)、`npc_agenda.py`、`time_ops.py`、`regex_scripts.py`、`permissions.py`、`labels.py`、`_mixins/`。
+  - `state/phase_digest_policy.py` — phase digest 的**归属划分单一真相源**:哪些 phase 归「已发生历史摘要」层、哪些进 `history_messages()` 的前情提要,以及两条路各自的上限。两边必须 import 它,否则同一段历史会在一个请求里注入两次(守卫 `tests/unit/test_phase_digest_ownership.py`)。
 - `state_repository.py`/`state_event_bus.py`/`state_write_context.py`/`state_op_tool_map.py` — 状态仓储/事件总线/写上下文。`save_phase_manager.py` — 存档阶段管理。
 - `rules/` — 规则引擎:`engine.py`、`dice.py`、`dnd5e/`、`seed_policy.py`。`rules_bridge/` — 规则↔叙事桥:`intent.py`、`checks.py`、`combat.py`、`inventory.py`/`consume.py`、`entity_sync.py`、`suggest.py`、`module_ops.py`。
 - `saves/` — 本地存档数据(`game_state.json`、`backups/`)。

@@ -9,6 +9,34 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.82.0] - 2026-08-27 (@ 6ad692854)
+
+### Fixed
+- **四个上下文层从上线起就被静默截断到 1800 字符,其中一个是长程记忆的召回层**:`build_context_bundle` 用 `MAX_LAYER_CHARS.get(layer_id, 1800)` 取每层上限,层 id 没进那张表**不会报错**,只会被砍到默认值。用 AST 扫描全部 `make_layer/_layer` 字面量后确认漏了四个:`episodic_recall`(「相关往事·全程历史召回」)、`world_pulse`、`npc_agenda`、`consequence_echo`。
+  - `episodic_recall` 最致命:它是长局记忆的主通道(kb_events 之外那条确定性召回),被压到 900 token 等于「召回了但塞不进去」。现在给 12000 字符。
+  - 这已经是同一个病的**第三批**受害者 —— 前两批(`novel_retrieval` / `novel_worldbook` / `timeline_pending`、以及酒馆四层)的补登记注释还留在 `_constants.py` 里。症状(「GM 不记得」「世界书像摆设」「角色卡不全」)与「被截断」没有任何字面关联,所以每次都是几个月后靠玩家反馈才找出来。
+  - 根因是「按名字查表授权,查不到就静默降级」。堵法两道:① AST 守卫 `test_context_layer_budget_registry` 让新的漏登记在 CI 里就红;② `layer_char_budget()` 把「命中/未命中」当返回值交出去,`build_context_bundle` 记进 `debug.budget.unregistered_layers` 并 warn 一次 —— 动态生成的层 id 绕得过 ①,绕不过 ②。
+  - 顺带发现两个**登记了但没有任何调用点**的死键(`timeline` / `worldbook`),真 id 是 `novel_*`,正是当年那两次漏登记留下的痕迹。
+- **同一批 phase digest 在一个请求里被注入两次,而且其中一条路没有上限**:`context_providers/runtime_phase_digests` 把最近 4 个 phase 渲染成层(每个封顶 450 字符,受层预算管辖);`state.core.history_messages()` 又把**所有** closed phase 拼成一条 user 消息顶在 `messages[]` 最前面 —— **无条数上限、无 token 上限、完全在层预算体系之外**。长局里两者的 phase 集合重叠,而后者随存档变长无限膨胀(phase digest 的 summary 全站都是章节原文拼接,不是压缩摘要,每条按 600 字符切)。
+  - 归属划分与上限收敛到新模块 `state/phase_digest_policy.py`:最近 `RECENT_PHASE_WINDOW` 个 phase 归「层」那条路,更早的 closed phase 才进 `messages[]` 前情提要,且封顶 6 条 / 4000 字符 / 每条摘要 400 字符。两条路的 phase 集合现在不相交(守卫 `test_phase_digest_ownership`)。
+  - 再早的历史不靠这条路,靠 `episodic_recall` 层按相关性召回 —— 也就是上一条刚从 1800 字符里放出来的那一层。
+- **`ask_player_choice` 在非精简档进不了直发工具窗口**:`chat_pipeline/gm.py` 的文宗精简档显式保留它,注释写着「否则 slim 档 GM 无法弹玩家选择(用户报『选项有时不弹』的根因之一)」—— 但**非 slim 档**它匹配不到任何前缀规则、落兜底档,而窗口只有 18 个名额,实际发不到模型手上。同一个根因在另一半路径上一直没修。
+- **平台账户管理工具靠字母序挤占直发窗口名额**:同档内的 tie-break 是工具名字母序。实测 104 个 `llm_chat` 工具、窗口 18 的构成里,`get_import_status` / `get_my_stats` / `get_my_usage`(导入进度、存档计数、token 用量)占着名额,而 `query_memory` / `get_worldbook` / `get_pending_questions` 全在窗口外。平台类工具单列一档,永不参与窗口竞争(窗口外仍可经 `load_tools` 目录取用)。
+- **酒馆自举工具的前缀元组在 `chat_tool_router.py` 里有三份拷贝**,补 `switch_tavern_` 时只改一处就会让它在 GM 模式拿到最高档、占掉窗口第一个名额(本次改动中实际踩到并由测试拦下)。三处收敛成 `TAVERN_SELF_PREFIXES` 单一真相源,测试里那第四份拷贝也改成 import 它。
+
+### Added
+- **上下文层预算的全局求解**(`context_engine/budget.py`):在此之前 33 个层各有一个互不知情的常量上限,其和 ≈17.3 万字符 ≈ 8.7 万 token,而**没有任何一处**拿这个和跟模型真实 context window 比对过 —— `context_window_for()` 只在 `app.py` 事后记账,小窗模型上「超没超」是交给 backend 盲截的,而被截的尾部恰好是 `user_input`。
+  - 每层从「一个常量」变成 `(min, want, priority)`;预算由主 GM 模型的窗口按 `RPG_CTX_LAYER_SHARE`(默认 0.45)换算。先保每层 min,剩余按 `want-min` 比例分配。
+  - **求解结果永不超过 want**,所以预算宽裕时(deepseek / gemini 的 1M 窗口)输出与改动前**逐字节相同** —— 风险面收窄到「本来就要溢出」的那批请求(守卫 `test_context_bundle_budget_wiring`)。
+  - `priority` 在本仓库是**层在 prompt 里的位置**而非重要性(`user_input` 的 priority=0 是因为必须垫底),所以丢弃顺序另立 `NEVER_DROP_LAYERS`,不直接复用 priority —— 复用的话第一个被丢的就是玩家这一轮说的话(写测试时实际发生过)。
+- **截断可观测**:每层现在报出 `original_chars` / `budget_chars` / `truncated` / `budget_registered`。在此之前「这层被砍了」只以正文里一句中文标记存在,统计不了也告警不了。`context_runs.layers` 是整块 JSONB 落库,所以这些字段自动可查:`select l->>'id', count(*) filter (where (l->>'truncated')::bool) from context_runs, jsonb_array_elements(layers) l group by 1`。
+- **直发工具窗口的档位显式化 + 相关性门 + 自动定容**:
+  - 档位从「散在 if 里的前缀猜测」改成显式声明表,匹配不到任何规则的工具落 `TIER_UNCLASSIFIED`,由守卫 `test_tool_window_tiering` 断言其恒为空 —— 新工具不选档就在 CI 里红,不再有「静默落兜底」这条路。
+  - 相关性门(`turn_signals`)**只降权不提权**:没有待收束锚点时剧本侧锚点族让出窗口名额,没绑定剧本时 canon 读让出。信号取自 Phase 2 已经算好的 context bundle(有没有 `anchor_pending` 层),与上下文层共用同一份快照,不新增任何 IO。有信号时窗口构成与改动前逐个工具相同。`RPG_TOOL_RELEVANCE=0` 退回旧行为。
+  - **锚点族拆成剧本未来侧与存档过去侧**:`record_history_anchor` / `list_recent_history` 写的是玩家自己的时间线,与剧本有没有 pending anchor 无关,**不受相关性门控** —— 门控它就会重演 v1.72.4 那个「877 回合的存档一条玩家锚点都没有」。
+  - 窗口大小由 `_tiered.effective_window()` 按「主回合闭环工具必须全部直发」这条不变量**自动定容**,配置值 `RPG_TOOL_WINDOW` 降级为下限。此前这个数被手算过三次(16→18),每次都是有工具掉出窗口、玩家报「这个功能 GM 从来不用」之后才补算的。小说模式实测仍是 18(零成本),酒馆绑剧本时撑到 20。
+
+
 ## [1.81.5] - 2026-08-26 (@ 99ac496f4)
 
 ### Fixed

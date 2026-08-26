@@ -228,9 +228,31 @@ async def run_gm_phase(
             _tavern_bound_script_id = int(_bsid) if _bsid else None
         except Exception:
             _tavern_bound_script_id = None
+        # v1.82.0 相关性门:窗口是硬名额(默认 18,104 个工具竞争),让确定用不上的族先让位。
+        # 信号只取**已经算好的**事实 —— Phase 2 的 context bundle 里有没有 anchor_pending
+        # 层,就是「这局有没有待收束锚点」的权威答案。与上下文层共用同一份快照,不另开
+        # 一条会漂移的真相源;也不新增任何 IO。
+        _signals = None
+        try:
+            import os as _os
+
+            from tools_dsl.chat_tool_router import turn_signals
+            if _os.getenv("RPG_TOOL_RELEVANCE", "1") != "0":
+                _layer_ids = {
+                    (lyr or {}).get("id")
+                    for lyr in (((getattr(ctx, "bundle", None) or {}).get("debug") or {})
+                                .get("layers") or [])
+                }
+                _signals = turn_signals(
+                    bound_script_id=_tavern_bound_script_id or active_script_id(api_user),
+                    has_pending_anchors=("anchor_pending" in _layer_ids),
+                )
+        except Exception:
+            _signals = None  # 拿不到信号就退回旧行为(不门控),不因此丢工具
         unified_tools = build_unified_tool_list(
             mcp_tools, origin="llm_chat", mode=_gm_mode,
             bound_script_id=_tavern_bound_script_id,
+            signals=_signals,
         )
         _gm_trace_id = f"gm-{_secrets.token_urlsafe(6)}"
         gm_tool_router = build_tool_call_router(

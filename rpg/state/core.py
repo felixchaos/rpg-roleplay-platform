@@ -629,27 +629,40 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             save_id = self.data.get("_active_save_id")
         if save_id is None:
             return recent
-        # 拉 closed 的 phase digests (按 phase_index asc) 顶到最前面
+        # 拉该 save 的全部 phase(不只 closed)—— 需要全集才能算出「层」那条路占了哪几个。
+        # v1.82.0:在此之前这里注入的是**所有** closed phase,无条数上限也无字符上限,而
+        # runtime_phase_digests 层又把最近 4 个 phase 渲染了一遍 → 同一段历史一个请求里出现
+        # 两次,且这条路随存档变长无限膨胀。归属划分与上限现在收敛在 state.phase_digest_policy。
         try:
             from platform_app.db import connect as _connect
+
+            from state.phase_digest_policy import (
+                DIGEST_PREFIX_MAX_CHARS,
+                DIGEST_SUMMARY_MAX_CHARS,
+                layer_owned_phase_indexes,
+                select_prefix_phases,
+            )
             with _connect() as db:
                 digests = db.execute(
                     """
                     select phase_index, phase_label, turn_start, turn_end,
                            summary, key_events, key_npcs, key_locations,
-                           key_decisions
+                           key_decisions, status
                     from save_phase_digests
-                    where save_id = %s and status = 'closed' and summary != ''
+                    where save_id = %s
                     order by phase_index asc
                     """,
                     (int(save_id),),
                 ).fetchall()
             if not digests:
                 return recent
+            digests = [dict(d) for d in digests]
             # 如果最近 K 轮已经覆盖了所有 phase,不重复注入 (避免老 phase 重复)
             min_recent_turn = self.data.get("turn", 0) - limit_turns
-            relevant_digests = [d for d in digests
-                                if int(d["turn_end"] or 0) <= min_recent_turn]
+            _owned = layer_owned_phase_indexes(
+                [int(d.get("phase_index") or 0) for d in digests])
+            relevant_digests = select_prefix_phases(
+                digests, layer_owned=_owned, max_recent_turn=min_recent_turn)
             if not relevant_digests:
                 return recent
             # 组装前情提要 message
@@ -664,13 +677,20 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
                 digest_lines.append(
                     f"\n## Phase {d['phase_index']}: {d['phase_label']} "
                     f"(turn {d['turn_start']}-{d['turn_end']})\n"
-                    f"{(d['summary'] or '')[:600]}\n"
+                    f"{(d['summary'] or '')[:DIGEST_SUMMARY_MAX_CHARS]}\n"
                     f"关键事件: {ev_str}\n"
                     f"出场人物: {npc_str}\n"
                     f"主要地点: {', '.join(str(x) for x in locs[:3]) if locs else '(无)'}\n"
                     f"关键决策: {'; '.join(str(x) for x in decisions[:3]) if decisions else '(无)'}"
                 )
             digest_text = "\n".join(digest_lines)
+            # 总字符上限:比逐条上限更硬的那道闸(phase 条数已封顶,但 key_events/npcs
+            # 是变长的)。超了从**最早**的 phase 砍起 —— 前情提要是时间正序,越靠后越接近
+            # 当前场景,砍头保尾。
+            if len(digest_text) > DIGEST_PREFIX_MAX_CHARS:
+                digest_text = ("【前情提要 · 已压缩历史阶段(更早的部分已省略,"
+                               "可经「相关往事」层按需召回)】\n"
+                               + digest_text[-(DIGEST_PREFIX_MAX_CHARS):])
             digest_msg = {"role": "user", "content": digest_text}
             # 给一个 assistant ack 让结构合法 (避免连续两个 user role)
             ack_msg = {"role": "assistant", "content": "[已收到前情提要,继续在此基础上叙事]"}

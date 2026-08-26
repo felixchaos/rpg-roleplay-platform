@@ -205,8 +205,10 @@ def test_openai_compat_tiered_load_then_call_roundtrip(monkeypatch):
     ensure_registered()
     tav = build_unified_tool_list([], origin="llm_chat", mode="tavern_gm", bound_script_id=None)
     # 窗口大小取配置真值,别抄字面量(理由同 test_tiered_tools)。
+    # v1.82.0:真值 = effective_window(配置值只是下限,「主回合闭环工具必须全部直发」
+    # 这条不变量会把它撑大;酒馆自举 6 + 闭环 4 + 锚点族 6 → 20)。
     from core.config import tool_window_size
-    _W = tool_window_size()
+    _W = _tiered.effective_window(tav, tool_window_size())
     _win, ovf, _cat = _tiered.split_window(tav, _W, True)
     assert ovf, "应有窗口外工具"
     target = next(iter(ovf))  # 某个窗口外工具的 full name
@@ -259,7 +261,7 @@ def test_openai_compat_tiered_disabled_discards_overflow(monkeypatch):
     ensure_registered()
     tav = build_unified_tool_list([], origin="llm_chat", mode="tavern_gm", bound_script_id=None)
     from core.config import tool_window_size
-    _W = tool_window_size()
+    _W = _tiered.effective_window(tav, tool_window_size())
     assert len(tav) > _W
 
     be = _oai_backend()

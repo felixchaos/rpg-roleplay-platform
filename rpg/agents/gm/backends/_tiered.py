@@ -42,6 +42,39 @@ def tool_full_name(t: dict[str, Any]) -> str:
     return f"{sid}{SEP}{tname}"[:64]
 
 
+# 主回合闭环之外再留几个名额给常用读取(get_chapter_context / get_worldbook 之类)。
+CORE_READ_RESERVE = 4
+# 自动定容的上限:超过它宁可让工具掉进目录,也不让每轮 schema 无限膨胀(会 warn)。
+MAX_AUTO_WINDOW = 32
+# tier <= 这个值的工具视为「主回合闭环必需」,必须全部直发。定义见
+# tools_dsl/chat_tool_router.classify_tool。
+_CRITICAL_TIER = 0
+
+
+def effective_window(mcp_tools: list[dict[str, Any]], window: int) -> int:
+    """按不变量给直发窗口定容:主回合闭环工具**必须全部直发**,再留 CORE_READ_RESERVE。
+
+    在此之前窗口是个手写常量(默认 18),而「多少个工具是闭环必需的」随模式(酒馆/小说)、
+    随是否绑定剧本而变。于是每加一族工具就要有人重新手算一次「窗口需 ≥ 5 + rank0 + 3」——
+    已经算过三次,每次都是有工具掉出窗口、玩家报「这个功能 GM 从来不用」之后才补算的。
+    这里让它自己算:配置值当**下限**,不变量当**底线**,两者取大。
+    """
+    critical = sum(1 for t in mcp_tools
+                   if isinstance(t.get("tier"), int) and t["tier"] <= _CRITICAL_TIER)
+    if not critical:
+        return window  # 全是 MCP 工具(没有 tier)→ 维持配置值
+    need = critical + CORE_READ_RESERVE
+    if need <= window:
+        return window
+    if need > MAX_AUTO_WINDOW:
+        import logging
+        logging.getLogger("gm.tiered").warning(
+            "[tiered] 主回合闭环工具 %d 个 + 保留 %d 超过自动定容上限 %d,"
+            "仍有闭环工具会掉进 load_tools 目录", critical, CORE_READ_RESERVE, MAX_AUTO_WINDOW)
+        return MAX_AUTO_WINDOW
+    return need
+
+
 def split_window(
     mcp_tools: list[dict[str, Any]],
     window: int,
@@ -50,12 +83,14 @@ def split_window(
     """把已排序的 unified 工具表切成「窗口内 / 目录」。
 
     Returns:
-        window_tools: 直接发完整 schema 的工具(unified dict,前 `window` 个)。
+        window_tools: 直接发完整 schema 的工具(unified dict,前 N 个,
+                      N = effective_window(mcp_tools, window))。
         overflow_index: {full_name: unified tool} —— 目录里、可被 load_tools 拉起的工具。
         catalog_lines: ["- full_name: 一句话描述", ...] 供拼进 load_tools 描述。
 
     enabled=False(RPG_TIERED_TOOLS=0)→ 退回旧行为:窗口外直接丢弃(overflow 为空)。
     """
+    window = effective_window(mcp_tools, window)
     window_tools = list(mcp_tools[:window])
     overflow_index: dict[str, dict[str, Any]] = {}
     catalog_lines: list[str] = []

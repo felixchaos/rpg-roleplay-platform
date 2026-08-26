@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import pytest
 
+from agents.gm.backends._tiered import effective_window
 from core.config import tool_window_size
 from tools_dsl import command_tools_register as _reg
 from tools_dsl.chat_tool_router import (
     _ANCHOR_FAMILY,
     _ANCHOR_WINDOW_PROMOTED,
+    TAVERN_SELF_PREFIXES,
     build_unified_tool_list,
 )
 from tools_dsl.command_dispatcher import get_registry
@@ -37,9 +39,11 @@ def _registered():
 
 
 def _window(mode: str, bound_script_id: int | None) -> list[str]:
-    names = [t["name"] for t in build_unified_tool_list(
-        [], origin="llm_chat", mode=mode, bound_script_id=bound_script_id)]
-    return names[: tool_window_size()]
+    # v1.82.0:真实窗口由 _tiered.effective_window 按不变量定容(配置值只是下限),
+    # 这里必须走同一个函数 —— 直接切 tool_window_size() 会与生产实际发出去的窗口脱节。
+    tools = build_unified_tool_list(
+        [], origin="llm_chat", mode=mode, bound_script_id=bound_script_id)
+    return [t["name"] for t in tools][: effective_window(tools, tool_window_size())]
 
 
 def test_family_covers_every_registered_anchor_or_history_tool():
@@ -74,6 +78,12 @@ def test_core_state_reads_survive_the_promotion(mode, bound):
 
 
 def test_tavern_self_management_tools_still_lead():
-    """酒馆自管理工具 rank=-1,必须仍在最前(锚点提权不许抢它们的位)。"""
+    """酒馆自管理工具 tier=-1,必须仍在最前(锚点提权不许抢它们的位)。
+
+    v1.82.0:前缀元组改从 TAVERN_SELF_PREFIXES 取 —— 这里原本是那个元组的第四份拷贝,
+    补 switch_tavern_ 时它会假红(而真正的 bug 是 GM 模式没同步丢弃该前缀)。
+    """
     win = _window("tavern_gm", 1)
-    assert all(w.startswith(("set_tavern_", "edit_tavern_", "tavern_")) for w in win[:5]), win[:5]
+    lead = [w for w in win if w.lower().startswith(TAVERN_SELF_PREFIXES)]
+    assert win[: len(lead)] == lead, f"酒馆自管理工具不在最前: {win[:8]}"
+    assert len(lead) >= 5, f"酒馆自管理工具只有 {len(lead)} 个在窗口里: {lead}"

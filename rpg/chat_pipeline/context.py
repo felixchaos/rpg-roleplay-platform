@@ -55,6 +55,19 @@ async def run_context_phase(
     _sub_api = getattr(sub_gm, "api_id", None)
     _sub_backend = getattr(sub_gm, "_backend", None)
     _sub_model = getattr(_sub_backend, "model_name", None) if _sub_backend else None
+    # v1.82.0 全局预算求解:层预算按**主 GM**(ctx.gm)的模型窗口换算 —— bundle 进的是主 GM
+    # 的 prompt,curator 的窗口与它无关。拿不到窗口(定价表没这个模型)时返回 0,
+    # build_context_bundle 跳过求解、每层各拿 want,与改动前逐字节相同。
+    _main_gm = getattr(ctx, "gm", None)
+    _main_backend = getattr(_main_gm, "_backend", None)
+    try:
+        from context_engine.budget import layer_budget_chars
+        _budget_chars = layer_budget_chars(
+            getattr(_main_gm, "api_id", None),
+            getattr(_main_backend, "model_name", None) if _main_backend else None,
+        )
+    except Exception:
+        _budget_chars = 0
     # task: context_agent async 化 — context_agent 内部是同步 generator,
     # 中间穿插 ThreadPoolExecutor + time.sleep 轮询 LLM 结果,会阻塞 asyncio
     # event loop ~2-5s,期间 SSE chunks 全部停吐。
@@ -72,6 +85,7 @@ async def run_context_phase(
         save_id=ctx.early_active_save_id,
         api_id_override=_sub_api,
         model_override=_sub_model,
+        budget_chars=_budget_chars or None,
     ):
         if item["type"] == "step":
             yield ("agent", item["step"])

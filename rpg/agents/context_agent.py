@@ -128,6 +128,7 @@ def run_context_agent(
     save_id: int | None = None,  # task 107E: 给 RuntimePhaseDigestProvider 用
     api_id_override: str | None = None,
     model_override: str | None = None,
+    budget_chars: int | None = None,  # v1.82.0: 主 GM 模型窗口换算出的层预算;None = 不求解
 ) -> Generator[dict[str, Any], None, None]:
     """Demand Resolver + ContextProvider 调度。
 
@@ -403,6 +404,9 @@ def run_context_agent(
         script_id=script_id, book_id=book_id,
         contributions=contributions,
         manifest=manifest,
+        # v1.82.0: 预算来自**主 GM** 的模型窗口(不是 curator 的)——这份 bundle 进的是
+        # 主 GM 的 prompt。拿不到窗口时 caller 传 None,求解跳过,行为与改动前一致。
+        budget_chars=budget_chars,
     )
     cache = bundle["debug"].get("cache_plan", {})
     yield step(
