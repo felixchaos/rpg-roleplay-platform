@@ -41,3 +41,32 @@ export function plNavigate(id, opts = {}) {
   try { history[replace ? 'replaceState' : 'pushState'](null, '', url); } catch (_) {}
   try { window.dispatchEvent(new CustomEvent('pl-navigate', { detail: id })); } catch (_) {}
 }
+
+// 本文档是不是 Platform SPA 本身。由 entries/platform.jsx 挂载时置位 —— 显式标记优于
+// 按路径/DOM 猜:干净路由上线后 location.pathname 是 /settings 这类页面路径,
+// 老的 /Platform\.html/ 判据已经恒假。
+export function plIsPlatformDoc() {
+  return typeof window !== 'undefined' && window.__PL_ROUTER__ === true;
+}
+
+// 「跳到平台某页」的唯一入口 —— 任意文档(Platform SPA / 游戏台 / 酒馆)都可调。
+//   · Platform SPA 内 → plNavigate,无刷新换页
+//   · 独立文档(Game Console.html)→ 新标签打开该路径,不打断正在进行的回合
+//     (沿用 GCWelcomeModal / console-assistant-navigation 既有约定)
+//
+// ⚠ 历史坑(用户反馈「已有 apikey,这个界面点不了配置」):这些跳转原本写的是
+//   `window.location.hash = 'settings-models'`,而 PlatformApp 只监听 popstate /
+//   pl-navigate —— hash 路由在本文件顶部那次迁移里就被 History 路由取代了,
+//   plPathToPage 也只在首屏落在 Platform.html 时才去 hash 里抢救 page id。
+//   于是「去配 key」按钮点下去只是把 URL 尾巴改成 #settings-models,画面纹丝不动,
+//   而没配 key 的用户恰恰只能从这个按钮走到配置页 → 整条上手路径死锁。
+//   新增任何跳转一律走这里,别再写 location.hash。守卫见
+//   frontend/tests/unit/router-goto-parity.test.js。
+export function plGoto(id, opts = {}) {
+  if (plIsPlatformDoc()) { plNavigate(id, opts); return; }
+  const url = plPageToPath(id);
+  try {
+    if (window.open(url, '_blank')) return;
+  } catch (_) { /* 弹窗被拦 → 落到整页导航 */ }
+  try { window.location.assign(url); } catch (_) {}
+}

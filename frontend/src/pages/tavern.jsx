@@ -37,6 +37,7 @@ import {
 } from '../tavern-app.jsx';
 
 import './tavern-platform.css';
+import { plGoto } from '../router.js';
 
 export default function TavernPage() {
   const { t } = useTranslation();
@@ -523,7 +524,7 @@ export default function TavernPage() {
     if (!running) startRun(label || t('tavern_page.config_continue_prompt'));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, startRun]);
-  const onConfigSettings = useCallback(() => { try { window.location.hash = 'settings-models'; } catch (_) {} }, []);
+  const onConfigSettings = useCallback(() => { plGoto('settings-models'); }, []);
   // mode "model_not_configured"(hard):开阻塞弹窗
   const onHardConfig = useCallback((item) => setHardConfigItem(item), []);
   const onHardResolve = useCallback(async (chosenModel) => {
@@ -1023,7 +1024,7 @@ export default function TavernPage() {
                         <button className="gc-chip-btn gc-chip-primary" onClick={() => { setNeedsCreds(false); onRetry(); }}>
                           {t('tavern_page.creds_card.retry_btn')}
                         </button>
-                        <button className="gc-chip-btn" onClick={() => { try { window.location.hash = 'settings-models'; } catch (_) {} }}>
+                        <button className="gc-chip-btn" onClick={() => { plGoto('settings-models'); }}>
                           <Icon name="settings" size={11} /> {t('tavern_page.creds_card.settings_btn')}
                         </button>
                       </div>

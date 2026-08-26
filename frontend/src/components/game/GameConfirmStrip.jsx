@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { Icon } from '../../game-icons.jsx';
 import AgentModelPicker from '../AgentModelPicker.jsx';
 import { capConfig } from '../ModelConfigInterceptModal.jsx';
+import { plGoto } from '../../router.js';
 
 // task 53：onApprove/onReject/onAnswer 现在签名是 (it) → 调用方拿 {id, index}
 // 双字段发后端（id 优先；老数据没 id 时走 index 兜底，确保历史 pending 也能清掉）。
@@ -186,7 +187,7 @@ function ConfigCard({ it, handleId, onConfigDefault, onConfigContinue, onConfigS
   }, [mode]);
   const goSettings = () => {
     if (onConfigSettings) onConfigSettings();
-    else { try { window.location.hash = 'settings-models'; } catch (_) {} }
+    else { plGoto('settings-models'); }
     if (onDismiss) onDismiss(handleId);
   };
   return (

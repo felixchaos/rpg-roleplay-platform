@@ -6,6 +6,7 @@ import MediaUploadZone from './MediaUploadZone.jsx';
 import ImageSizePicker from './ImageSizePicker.jsx';
 import { isCredentialsError } from '../lib/creds.js';
 import { useImageGeneration } from '../hooks/useImageGeneration.js';
+import { plGoto } from '../router.js';
 
 /* MediaStudio — 统一图片来源：① AI 生成 ② 上传(拖拽/粘贴/点击) ③ 从图库选。
    一个优雅的流替代散落的"AI生成 / 上传"按钮。拿到最终 URL 后 onApplied(url)。
@@ -216,7 +217,7 @@ export default function MediaStudio({ open, onClose, target, name, defaultPrompt
 
         {credsMissing && (
           <div style={{ marginTop: 12, padding: 10, background: 'var(--warn-soft)', borderRadius: 'var(--r-2)', fontSize: 12.5, color: 'var(--text-quiet)' }}>
-            ⚠ {t('components.media_studio.error.no_api_key')}<a href="#settings-models" style={{ color: 'var(--accent)' }}>{t('components.media_studio.error.go_configure')}</a>
+            ⚠ {t('components.media_studio.error.no_api_key')}<a href="/settings-models" style={{ color: 'var(--accent)' }} onClick={(e) => { e.preventDefault(); plGoto('settings-models'); }}>{t('components.media_studio.error.go_configure')}</a>
           </div>
         )}
         {err && <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--danger)' }}>{err}</div>}

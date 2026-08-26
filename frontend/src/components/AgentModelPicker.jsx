@@ -9,6 +9,7 @@ import CSInput from '@cloudscape-design/components/input';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSButton from '@cloudscape-design/components/button';
 import { credApiIdSet } from './catalog-helpers.js';
+import { plGoto } from '../router.js';
 
 // ── variant="popover" 紧凑浮层样式(只注一次;复用与旧 ModelPopover 同源的视觉 token) ──
 const AMP_POP_STYLE_ID = 'amp-pop-styles-v1';
@@ -408,7 +409,7 @@ export default function AgentModelPicker({
     <>
       {showNoKeyAlert && (
         <CSAlert type="warning" header={t('agent_picker.no_key_alert_header')} action={
-          <CSButton iconName="settings" onClick={() => { window.location.hash = configHash; }}>{t('agent_picker.go_config_key')}</CSButton>
+          <CSButton iconName="settings" onClick={() => { plGoto(configHash); }}>{t('agent_picker.go_config_key')}</CSButton>
         }>
           {t('agent_picker.no_key_alert_body')}
         </CSAlert>

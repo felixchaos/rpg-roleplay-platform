@@ -41,6 +41,10 @@ import { FeedbackPage } from '../pages/feedback.jsx';
 import { DeviceAuthorizePage } from '../pages/device.jsx';
 import { plPathToPage, plNavigate, plPageToPath } from '../router.js';
 
+// 本文档 = Platform SPA。plGoto() 据此决定「无刷新换页」还是「新标签打开」——
+// 显式置位,不让下游再去 /Platform\.html/ 或 data-screen-label 上猜(干净路由后已失准)。
+window.__PL_ROUTER__ = true;
+
 // 移动端专用外壳(路线 A)— <600px 且开启 m2 标志时替代 Cloudscape 外壳。
 import '../mobile.css';
 import '../media.css';

@@ -11,6 +11,7 @@ import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import AgentModelPicker from './AgentModelPicker.jsx';
 import ImageSizePicker from './ImageSizePicker.jsx';
 import { useImageGeneration } from '../hooks/useImageGeneration.js';
+import { plGoto } from '../router.js';
 
 /* GenerateImageModal — AI 生图弹窗，复用 CSModal + AgentModelPicker 范式。
 
@@ -137,7 +138,7 @@ export default function GenerateImageModal({
             type="error"
             header={credsMissing ? t('components.generate_image_modal.error.missing_api_key') : t('components.generate_image_modal.error.generate_failed')}
             action={credsMissing
-              ? <CSButton iconName="settings" onClick={() => { window.location.hash = 'settings-models'; }}>{t('components.generate_image_modal.configure_key_btn')}</CSButton>
+              ? <CSButton iconName="settings" onClick={() => { plGoto('settings-models'); }}>{t('components.generate_image_modal.configure_key_btn')}</CSButton>
               : undefined
             }
           >

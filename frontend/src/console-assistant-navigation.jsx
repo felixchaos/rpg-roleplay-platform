@@ -8,10 +8,9 @@
  *   1. 解析 target → pageId + anchor
  *   2. 未保存检测: 读 window.__cap_dirty_pages (Map<pageId, true>)
  *      当前页 dirty 时弹 confirm modal,用户拒绝 → 取消跳转
- *   3. 触发跳转:
- *      · Platform.html: 同页内通过 history.replaceState + dispatchEvent("hashchange")
- *        (PlatformApp 已监听 hashchange)
- *      · Game Console.html: 如果 target 属于平台页,window.open Platform.html#<pageId>
+ *   3. 触发跳转: 统一走 router.js::plGoto
+ *      · Platform SPA 内 → plNavigate(pushState + pl-navigate 事件),无刷新
+ *      · Game Console.html → 新标签打开 /<pageId>
  *   4. 跳转完成后,找 [data-cap-anchor="<target>"] 元素 → 加 cap-highlight class
  *      + scrollIntoView + 一次性 click listener (capture) 用于消高亮
  *
@@ -24,6 +23,7 @@
  * Platform.html / Game Console.html 在 console-assistant-panel.jsx 之前 load。
  */
 import i18n from './i18n';
+import { plGoto } from './router.js';
 
 // ESM 模块只执行一次,不需要幂等 guard
 window.__cap_navigation_installed = true;
@@ -272,23 +272,10 @@ function navigateTo(pageId) {
       return true;
     } catch (_) { return false; }
   }
-  const isPlatform = /Platform\.html/i.test(location.pathname)
-    || (document.body && document.body.getAttribute("data-screen-label") === "Platform");
-  if (isPlatform) {
-    try { history.replaceState(null, "", "#" + pageId); } catch (_) {}
-    try { window.dispatchEvent(new HashChangeEvent("hashchange")); } catch (_) {
-      // 老浏览器兜底
-      const ev = document.createEvent("Event");
-      ev.initEvent("hashchange", true, false);
-      window.dispatchEvent(ev);
-    }
-    return true;
-  }
-  // Game Console: 跨页跳到 Platform
-  try {
-    window.open("/" + pageId, "_blank");
-    return true;
-  } catch (_) { return false; }
+  // 同页(Platform SPA)无刷新换页 / 独立文档(游戏台)新标签打开 —— 两种情形都归 plGoto。
+  // 这里原本是 replaceState("#"+pageId) + 派发 hashchange,但 History 路由取代 hash 路由后
+  // PlatformApp 只监听 popstate / pl-navigate,这条路早就不通了(同一根因见 router.js::plGoto)。
+  try { plGoto(pageId); return true; } catch (_) { return false; }
 }
 
 // ---------- 主入口 ----------

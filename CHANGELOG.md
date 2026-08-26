@@ -9,6 +9,17 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.81.5] - 2026-08-26 (@ 99ac496f4)
+
+### Fixed
+- **「去配 key」按钮点了没反应,没配 key 的新用户被锁死在门外**(群反馈,小橘九:「已有 apikey,这个界面点不了配置」+ 截图):没配过 key 时,任何模型选择器都会亮黄条「尚未配置任何 API key」、并把**供应商下拉置灰**——此时用户唯一的出路就是黄条右边那颗「去配 key」。而它的实现是 `window.location.hash = 'settings-models'`。
+  - Platform 早在引入 `router.js` 时就**从 hash 路由迁到了 History 路由**,`PlatformApp` 只监听 `popstate` 与 `pl-navigate`,`plPathToPage` 也只在首屏落在 `Platform.html` 时才回头去 hash 里抢救 page id。所以在 `/settings` 上写 hash,除了把 URL 尾巴改成 `#settings-models`,**什么都不会发生**——画面纹丝不动。用户看到的就是「这个界面点不了配置」。
+  - 那次路由迁移改掉了走 `plNavigate` 的调用点,却把裸 hash 赋值整批留在原地。**同批共 8 处**:`AgentModelPicker`(用户撞上的这颗)、`GenerateImageModal`、`MediaStudio`(裸 `<a href="#settings-models">`)、`GameConfirmStrip`、`game-console`、`tavern`×2,以及 `console-assistant-navigation` 的 `navigateTo`(它还留着一句「PlatformApp 已监听 hashchange」的过期注释,并按 `/Platform\.html/` 判断宿主——干净路由上线后这条判据恒假)。
+  - 收敛成唯一入口 `router.js::plGoto(pageId)`:Platform SPA 内走 `plNavigate` 无刷新换页,游戏台等独立文档新标签打开 `/<pageId>`(沿用既有约定)。宿主判定改用 `entries/platform.jsx` 挂载时置的显式标记 `window.__PL_ROUTER__`,不再从路径/DOM 上猜。
+  - 顺带修掉顶栏 logo 的 `href="#profile"` + `setPage()`:新标签打开会落到错的页,点击则画面换了而 URL 还停在 `/settings`,浏览器后退随即错乱。改与同文件既有写法一致的 `href="/profile"` + `plNavigate`。
+  - 守卫 `platform-nav-parity.test.js`:源码里再出现导航用的 `location.hash =` 赋值、或指向 page id 的裸 `<a href="#…">`,直接红。
+- **免 API Key 的本地模型在每个模型选择器里都被判成「没配」**(v1.81.0 那轮的漏网):1.81.0 已把**列表**可见性从 `has_key` 改成 `configured`,但**选择器**用的是另一份判据 `catalog-helpers.js::credApiIdSet`,它仍在按 `has_credential` 过滤。于是 `auth_mode='none'` 的凭据(本地 Ollama / vLLM / LM Studio,本来就没有 key)在设置→模型管理里显示「已配置」,一到选择器就整条被丢掉——黄条「尚未配置任何 API key」+ 供应商下拉置灰,和上面那条是同一个死胡同。改为以后端 `list_credentials` 给的 `configured` 为唯一判据(老后端无该字段时回退旧谓词),与 `settings/models-section.jsx` 同源。生产库当前 162 条凭据全是 `enabled + api_key + 有密文`,**这条属于潜伏缺陷,尚未伤到线上用户**。
+
 ## [1.81.1] - 2026-08-12 (@ 38bad1276)
 
 ### Fixed

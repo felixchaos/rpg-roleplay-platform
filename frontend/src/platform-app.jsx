@@ -482,7 +482,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
 <body><div style="text-align:center;padding:80px 20px">
   <h2 style="color:#d54;margin-bottom:12px">无法打开存档</h2>
   <p style="opacity:.75;margin-bottom:20px">${escapeHtml(e?.message || "存档已被删除或网络异常")}</p>
-  <p><a href="#saves" style="color:#c49b4e" onclick="window.close();return false;">返回存档列表</a></p>
+  <p><a href="#" style="color:#c49b4e" onclick="window.close();return false;">返回存档列表</a></p>
 </div></body></html>`);
             gameWin.document.close();
           }
@@ -588,7 +588,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
             </svg>
           </button>
           )}
-          <a href="#profile" onClick={(e) => { e.preventDefault(); setPage('profile'); }}
+          <a href="/profile" onClick={(e) => { e.preventDefault(); plNavigate('profile'); }}
             style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 16, fontWeight: 600, color: '#ebe7df', textDecoration: 'none', whiteSpace: 'nowrap' }}>
             RPG Roleplay
           </a>

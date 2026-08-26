@@ -52,6 +52,7 @@ import { MobileDialogHost } from '../mobile/dialog.jsx';
 // 模块化拆分:自包含展示组件搬到 components/game/(DOM/视觉/行为零变化)。
 import { ScriptVersionSelect } from '../components/game/ScriptVersionSelect.jsx';
 import { GCWelcomeModal } from '../components/game/GCWelcomeModal.jsx';
+import { plGoto } from '../router.js';
 const SPLASH_VERSION = 'v1.0-2026-05-31';
 
 // density preset + narrative font init（等价原 HTML 非 babel inline script）
@@ -1400,7 +1401,7 @@ function App() {
     await _clearConfigQuestion(handleId);
     startRun(label || t('game.console.retry.continue'));
   };
-  const onConfigSettings = () => { try { window.location.hash = 'settings-models'; } catch (_) {} };
+  const onConfigSettings = () => { plGoto('settings-models'); };
   // mode "model_not_configured"(hard):打开阻塞弹窗。
   const [hardConfigItem, setHardConfigItem] = useState(null);
   const onHardConfig = (item) => setHardConfigItem(item);

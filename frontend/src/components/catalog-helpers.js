@@ -143,7 +143,15 @@ export function credApiIdSet(creds) {
   for (const c of list) {
     if (!c) continue;
     if (c.enabled === false) continue;
-    if (!(c.has_credential || c.has_key || c.key_hint !== undefined)) continue;
+    // 「这条凭据算不算配好了」以后端 list_credentials 的 configured 为唯一判据。
+    // 免鉴权凭据(auth_mode='none' —— 本地 Ollama / vLLM / LM Studio)本来就没有 key,
+    // 按 has_credential 判会被整条丢掉:模型管理页显示「已配置」,而每一个模型选择器
+    // 都报「尚未配置任何 API key」+ 供应商下拉置灰 —— 同一个问题两套判据。
+    // 与 settings/models-section.jsx 的 configured 保持同源,老后端(无该字段)回退旧谓词。
+    const configured = (c.configured != null)
+      ? !!c.configured
+      : !!(c.has_credential || c.has_key || c.key_hint !== undefined || c.auth_mode === "none");
+    if (!configured) continue;
     const aid = (c.api_id || c.id || "").trim();
     ids.add(credentialToCatalogId(aid));
   }
