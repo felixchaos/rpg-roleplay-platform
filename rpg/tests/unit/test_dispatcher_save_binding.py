@@ -24,6 +24,17 @@ REAL_SAVE = 268
 MODEL_GUESS = 1  # 模型实际填的那个数
 
 
+@pytest.fixture(autouse=True)
+def _no_real_persistence(monkeypatch):
+    """`_persist_invocation_async` 是 fire-and-forget 起线程写库的。单测里让它真跑会:
+    ① 在没有 DB 的环境下起一堆连不上的后台线程;② 线程活到后面的用例里,污染全局态
+    (实测会让 test_outbound_ua 的 SDK UA 断言**间歇性**失败 —— 单跑必过、全量偶挂)。
+    默认全打桩;需要观察持久化内容的用例自己再 setattr 覆盖。"""
+    import tools_dsl.command_dispatcher as cd
+    monkeypatch.setattr(cd, "_persist_invocation_async",
+                        lambda env, *, ok, error, error_kind: None)
+
+
 def _spec(name="probe", scope="user", with_save=True, executor=None):
     props = {"save_id": {"type": "integer"}} if with_save else {}
     return ToolSpec(
