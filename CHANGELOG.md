@@ -9,6 +9,37 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.83.1] - 2026-08-27 (@ a0afc9dab)
+
+### Fixed
+- **世界线收束 / 存档级 KB 维护 / canon 查询三条线在 GM 回合里全线失效 —— 因为模型不知道存档 id,只好填了个 1。**
+
+  生产 `tool_invocations` 近 30 天(`origin='llm_chat'`)的成功率:
+
+  | 工具 | 调用 | ok |
+  |---|---|---|
+  | `list_pending_anchors` | 240 | **0.4%** |
+  | `mark_anchor_satisfied` | 67 | **0%** |
+  | `lookup_entity` | 53 | **0%** |
+  | `kb_record_event` | 24 | **0%** |
+  | `search_canon` | 10 | **0%** |
+  | `kb_set_worldline_var` / `kb_set_relationship` / `graph_neighbors` / `lookup_timeline` / `kb_upsert_entity` / `mark_anchor_superseded` | 17 | **全 0%** |
+  | `ask_player_choice`(对照) | 93 | 98.9% |
+
+  `list_pending_anchors` 的 239 次失败里 238 次带了 `args.save_id`,模型填的是 **1**(135 次)、**0**(19 次)、**2**(3 次) —— 而真实存档是 268 / 493 / 540。于是 `_own_save` 判权限失败,整族返回「失败 (权限): save 1 不属于当前用户或不存在」。
+
+  **因果已在生产上直接验证**(只读探针,同一用户同一时刻):同一个工具传 `save_id=1` 返回「无权访问该存档」,传真值则正常返回锚点 JSON 与 canon 实体。工具本身完全健康。
+
+  根因是管道层的不对称:dispatcher 早就对 `scope="save"` 的工具**无条件覆盖** `args["save_id"]`(理由写在 `_execute` 注释里:save 级语义恒为「当前绑定存档」,不存在合法的跨档调用)。但**语义上是当前存档、管道上却是 `scope="user"`** 的那一族(执行器签名 `(user_id, args)`、自己进库做 `_own_save`)拿不到这层保护,`save_id` 只能由模型自己填 —— 而它既不在系统提示词里、也不在任何工具返回里,模型**无从知道**。对照组把因果钉死:同期 `get_game_state` 97.6% / `get_current_scene` 99.2% / `add_memory` 100%,全是 `scope="save"`。**成功率与「谁来填 save_id」完全相关,与工具本身无关。**
+
+  修法不新增「哪些工具要绑」的名单(那正是本仓库的宿疾:按名字查表、漏了就静默失效)。判据用声明本身 —— **schema 里声明了 `save_id`,就说明它按存档工作**:`origin="llm_chat"` 无条件覆盖(GM 回合按定义只有一个当前存档,并顺带关掉 user 级工具此前敞开的跨档注入面);其余 origin 只在模型没填时补默认(平台助手确实会跨档:「列出我的存档」→「激活第 3 个」)。覆盖到 GM 可见的 21 个工具。
+
+- **981 条失败记录的 `error` / `error_kind` 全是空的**,导致上面这个结论一度无法从数据判定真伪:工具在自己体内 `except` 后返回一个「失败: ...」**字符串**,`ok` 由 `_RESULT_FAILURE_RE` 判出来,而 `error` 参数是 `None` —— 于是留下一条「失败了,但不知道为什么」。带内失败串本身就是原因,现在落进 `error` 列并标 `error_kind='in_band'`,与 dispatcher 自己抛的 `DispatchError` 区分开。**这本身是同一族缺陷:失败被降级成一个字符串,诊断信息静默丢弃。**
+
+### 守卫
+- `test_dispatcher_save_binding.py`:GM 回合覆盖模型瞎填的值 / 缺失时补默认 / 平台助手保留显式跨档 id / schema 没声明就不插手 / `scope="save"` 留给既有围栏 / 无绑定档时不动;**行为守卫**走完整 dispatch 断言执行器收到的是已鉴权的 save_id;**真实注册表守卫**遍历 GM 可见工具,凡 schema 声明 `save_id` 而未被绑定的一律报出;带内失败串必须落进 `error` 列。
+
+
 ## [1.83.0] - 2026-08-27 (@ 313214d7c)
 
 ### Fixed

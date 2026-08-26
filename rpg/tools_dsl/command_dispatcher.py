@@ -332,6 +332,55 @@ def _coerce_declared_integers(spec: ToolSpec, args: dict[str, Any]) -> None:
                             element[sk] = _coerce_numeric_value(element[sk], stype)
 
 
+def _bind_current_save(env: ToolCallEnvelope, spec: ToolSpec) -> None:
+    """把 `save_id` 参数绑到服务端已鉴权的当前存档(v1.83.1)。
+
+    # 病灶
+
+    dispatcher 早就对 `scope="save"` 的工具**无条件覆盖** `args["save_id"]`,理由写在
+    `_execute` 那段注释里:save 级语义恒为「当前绑定存档」,不存在合法的跨档调用。
+
+    但**语义上是当前存档、管道上却是 `scope="user"`** 的那一族(执行器签名是
+    `(user_id, args)`、自己进库做 `_own_save` 校验)拿不到这层保护,`save_id` 只能由模型
+    自己填 —— 而模型**根本无从知道存档 id**:它既不在系统提示词里,也不在任何工具返回里。
+
+    生产实测(近 30 天 origin=llm_chat):`list_pending_anchors` 239 次失败里 238 次带了
+    args.save_id,模型填的是 **1**(135 次)、**0**(19 次)、**2**(3 次),而真实存档是
+    268 / 493 / 540。于是 `_own_save` 判权限失败,整族返回「失败 (权限): save 1 不属于
+    当前用户或不存在」。成功率:`list_pending_anchors` 0.4%、`mark_anchor_satisfied` /
+    `lookup_entity` / `kb_*` / `search_canon` / `graph_neighbors` **全 0%** ——
+    世界线收束、存档级 KB 维护、canon 查询三条线在 GM 回合里全线失效。
+
+    对照组把因果钉死:同期 `get_game_state` 97.6%、`get_current_scene` 99.2%、
+    `add_memory` / `set_world_field` 100% —— 它们全是 `scope="save"`,save_id 由服务端注入。
+    **成功率与「谁来填 save_id」完全相关,与工具本身无关。**
+
+    # 修法
+
+    不新增「哪些工具要绑」的名单(那正是本仓库的宿疾:按名字查表、漏了就静默失效)。
+    判据用声明本身:**工具的 input_schema 里声明了 `save_id`,就说明它按存档工作**。
+
+      · `origin="llm_chat"`(GM 回合):**无条件覆盖**。GM 回合按定义只有一个当前存档,
+        跨档调用没有合法形态 —— 与 save 级那道围栏同一条理由,并顺带关掉了 user 级工具
+        此前敞开的跨档注入面(模型塞别人的 save_id,此前只靠各执行器自己的 _own_save 兜)。
+      · 其他 origin(console_assistant 等):**只在模型没填时补默认**。平台助手确实可能
+        跨档操作(「列出我的存档」→「激活第 3 个」→「看它的锚点」),不能一刀切覆盖。
+
+    `env.save_id` 为空时不动:此时无档可绑,交给执行器按原语义报错。
+    """
+    if env.save_id is None:
+        return
+    props = (spec.input_schema or {}).get("properties") or {}
+    if "save_id" not in props:
+        return
+    if spec.scope == "save":
+        return  # 已由 _execute 的 save 级围栏覆盖,别重复
+    if env.origin == "llm_chat":
+        env.args["save_id"] = env.save_id
+    else:
+        env.args.setdefault("save_id", env.save_id)
+
+
 class ToolDispatcher:
     """中央分发器。所有工具调用必须通过它。
 
@@ -524,6 +573,8 @@ class ToolDispatcher:
         state = None
         if spec.scope in ("save", "script", "user"):
             state = self._state_provider(env)
+        # v1.83.1:把 save_id 绑到已鉴权的当前存档(理由与失效实证见 _bind_current_save)
+        _bind_current_save(env, spec)
         try:
             if spec.scope == "global":
                 text = spec.executor(env.args)
@@ -606,8 +657,17 @@ class ToolDispatcher:
             "error": error,
             "ok": ok,
         }
-        # 持久化到 tool_invocations 表(fire-and-forget,不阻塞主流程)
-        _persist_invocation_async(env, ok=ok, error=error, error_kind=None)
+        # 持久化到 tool_invocations 表(fire-and-forget,不阻塞主流程)。
+        # v1.83.1 可观测性:工具在自己体内 except 后返回一个「失败: ...」**字符串**时,
+        # ok 由 _RESULT_FAILURE_RE 判出来,而 error 参数是 None —— 于是 tool_invocations
+        # 里留下一条「失败了,但不知道为什么」。生产实测 981 条失败记录的 error/error_kind
+        # 全是空的,导致「GM 的锚点/KB/canon 工具面近乎全线失败」这个结论一度无法判定真伪。
+        # 带内失败串本身就是原因,落进 error 列(已截到 240 字),error_kind 标 in_band 以便
+        # 与「dispatcher 自己抛的 DispatchError」区分开。
+        _err, _kind = error, None
+        if not ok and _err is None and audit_result:
+            _err, _kind = audit_result, "in_band"
+        _persist_invocation_async(env, ok=ok, error=_err, error_kind=_kind)
         # 进程级滚动缓冲 (按 user_id 分桶)
         uid = int(env.user_id)
         user_bucket = self._recent_audit.setdefault(uid, [])
