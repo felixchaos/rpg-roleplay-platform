@@ -9,6 +9,20 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.83.2] - 2026-08-27 (@ 0b268a4f0)
+
+### Fixed
+- **`platform_app/runtime.py` 里 `LOCAL_MODES` 从来没被 import 进来 —— 两个函数各引用一次,走到就是 `NameError`。** `_runtime_backend()` 与 `_should_mirror_save_file()` 都在函数内 import 了 `deployment_mode` / `require_auth` / `runtime_backend`,唯独漏了 `LOCAL_MODES`。
+  - 可达条件:`RPG_RUNTIME_BACKEND` 未设(默认 `"auto"`)+ `require_auth()` 为假 —— 也就是**本地 / 桌面的默认配置**。生产(`RPG_REQUIRE_AUTH=1`)在更前面就 `return "db"`,所以从没暴露。触发时 `read_runtime()` 直接抛,注册 / 建档 / 激活存档全线 500。
+  - 修法是把 import 提到**模块级**而不是在两个函数里各写一遍 —— 函数内 import 正是「两处各写一遍、漏一个就炸」的成因。实证:本轮先只修了 `_runtime_backend`,跑真实 SSE 回合时立刻撞出第二处 `_should_mirror_save_file`(我自己在同一个文件里又犯了一次修 A 漏 B)。
+
+### 守卫
+- `test_chat_sse_save_binding_e2e.py` —— **走真实 `/api/chat` SSE 回合**验证 v1.83.1 的 save_id 绑定。此前只有直接调 dispatcher 的探针:那证明了绑定函数本身对,但没证明**真实回合链路**(chat_pipeline → run_gm_phase → build_unified_tool_list → build_tool_call_router → ToolDispatcher)上它真的生效。
+  - GM 用桩(不打 LLM、不花任何人额度),按**生产实测的模型行为**发一次 `list_pending_anchors(save_id=1)` —— 生产 239 次失败里 135 次填的就是这个 1。判据确定性:该工具的返回 JSON 会回显它实际收到的 `save_id`,「回显值 == 本次会话真实存档 id 且 != 1」即绑定在真实链路上生效。
+  - **已验证关掉绑定必红**,且红出来的是生产上一模一样的报错串「失败 (权限): save 1 不属于当前用户或不存在」。
+  - 桩要盖住**三个** LLM 构造点(`_get_gm` / `_get_sub_gm` / `GameMaster` 本身)——`_ensure_loaded(ensure_gm=True)` 在 `_get_gm` 之前就已经 new 了一个真 backend,只桩工厂函数拦不住,会撞 BYOK 墙变成 400。
+
+
 ## [1.83.1] - 2026-08-27 (@ a0afc9dab)
 
 ### Fixed

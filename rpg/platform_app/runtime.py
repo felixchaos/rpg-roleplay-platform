@@ -25,6 +25,15 @@ LEGACY_RUNTIME_FILE = BASE / "platform_data" / "runtime.json"
 RUNTIME_STATE_ROOT = BASE / "platform_data" / "runtime_states"
 
 
+# v1.83.2:LOCAL_MODES 被本文件**两个**函数引用(_runtime_backend / _should_mirror_save_file),
+# 而两处都只在函数内 import 了别的名字、唯独漏了它 —— 走到那两行就是 NameError。
+# 可达条件:RPG_RUNTIME_BACKEND 未设(默认 "auto")+ require_auth() 为假,也就是**本地 /
+# 桌面的默认配置**;生产(RPG_REQUIRE_AUTH=1)在更前面就 return "db",所以从没暴露。
+# 提到模块级而不是各函数再 import 一遍 —— 函数内 import 正是「两处各写一遍、漏一个就炸」
+# 的成因(本轮先只修了 _runtime_backend,跑真实 SSE 回合时才撞出 _should_mirror_save_file)。
+from core.config import LOCAL_MODES  # noqa: E402
+
+
 # ── backend 选择 ──────────────────────────────────────────────────
 def _runtime_backend() -> str:
     """db / file. 默认：server 模式用 db，本地用 file。"""
