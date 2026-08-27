@@ -35,6 +35,14 @@ updates:
       # i18next 放宽 peer 范围后手动解除。
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # eslint 10 与 eslint-plugin-jsx-a11y 的 peer "^3||...||^9" 冲突,npm ci 必炸 ERESOLVE
+      # (PR#108 实锤)。jsx-a11y 最新版 6.10.2 仍未支持 eslint 10 —— 是上游没跟上,不是我们的问题。
+      # 与 typescript 那条、以及 pip 侧 websockets 是同一个病:组内单成员把整组 CI 拖死。
+      # jsx-a11y 支持 eslint 10 后,删这两条(eslint 与 @eslint/js)再跟上。
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/js"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
