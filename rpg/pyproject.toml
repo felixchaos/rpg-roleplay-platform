@@ -4,24 +4,29 @@ version = "1.84.0"
 description = "RPG roleplay backend — FastAPI + Postgres + Anthropic/Vertex AI"
 requires-python = ">=3.11"
 dependencies = [
+    # 按住在 0.x:1.x 把 HTTP 层换成 httpx2,而 agents/gm/backends/anthropic.py 给
+    # Anthropic() 传的 timeout 与 http_client 都是 httpx 对象(来自全站 SSRF 出站层
+    # core.outbound.safe_httpx_client,28 个调用点)——1.x 下会**构造即 TypeError**,
+    # 整个 Anthropic GM 后端直接死。升级要连同出站层一起迁,是独立一件事,不能顺手合。
+    # 闸同样在 .github/dependabot.yml 的 ignore。
     "anthropic>=0.122.0",
     "fastapi>=0.141.1",
     "fsspec>=2026.7.0",
     "google-auth>=2.56.3",
-    "google-genai>=2.18.1",
+    "google-genai>=2.19.0",
     "httpx[http2]>=0.28",
-    "openai>=3.1.0",
+    "openai>=3.3.1",
     "psycopg[binary]>=3.3",
     "psycopg-pool>=3.3",
     "python-dotenv>=1.2.3",
-    "uvicorn>=0.52.3",
+    "uvicorn>=0.52.4",
     "zhconv>=1.4",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=9.1.1",
-    "ruff>=0.16.3",
+    "ruff>=0.16.4",
     "mypy>=2.3.1",
 ]
 

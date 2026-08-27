@@ -15,14 +15,14 @@ docstring_parser==0.18.0
 fastapi==0.141.1
 fsspec==2026.7.0
 google-auth==2.56.3
-google-genai==2.18.1
+google-genai==2.19.0
 h11==0.16.0
 h2==4.4.1
 hpack==4.2.0
 httpcore==1.0.9
 httpx==0.28.1
 hyperframe==6.1.0
-idna==3.18
+idna==3.19
 iniconfig==2.3.0
 jiter==0.16.0
 librt==0.15.0
@@ -31,7 +31,7 @@ mypy_extensions==1.1.0
 packaging==26.3
 pathspec==1.1.1
 pluggy==1.6.0
-openai==3.1.0
+openai==3.3.1
 psycopg==3.3.4
 psycopg-binary==3.3.4
 psycopg-pool==3.3.1
@@ -39,12 +39,12 @@ pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==3.0
 pydantic==2.13.4
-Pygments==2.20.0
+Pygments==2.21.0
 pytest==9.1.1
 python-dotenv==1.2.3
 python-multipart==0.0.32
 requests==2.34.2
-ruff==0.16.3
+ruff==0.16.4
 sniffio==1.3.1
 starlette==1.6.0
 tenacity==9.1.4
@@ -52,9 +52,11 @@ tqdm==4.70.0
 typing-inspection==0.4.4
 typing_extensions==4.16.0
 urllib3==2.7.0
-uvicorn==0.52.3
-# 维护者按住:dependabot 反复把它顶到 17.0.1,但 google-genai(2.18.1 仍然)要求 websockets<17.0,
-# 整组因此 ResolutionImpossible。16.1.1 是天花板内的最高版本(仍是升级,不是回退)。
-# google-genai 放开 <18 之后可跟着上 17.x。
+uvicorn==0.52.4
+# 维护者按住:google-genai 要求 websockets<17.0(2.19.0 实测仍然如此),顶到 17.x 会让整组
+# ResolutionImpossible。16.1.1 是天花板内的最高版本(仍是升级,不是回退)。
+# 光靠这条注释拦不住 dependabot —— 它读不懂注释,已经反复提过三次。真正的闸在
+# .github/dependabot.yml 的 ignore(与 npm 侧 typescript 同族做法);google-genai 放开
+# <18 之后,把那条 ignore 一起删掉再跟上 17.x。
 websockets==16.1.1
 zhconv==1.4.3
