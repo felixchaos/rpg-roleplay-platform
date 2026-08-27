@@ -381,3 +381,52 @@ def average_output_tokens(user_id: int, model_real_name: str = "", last_n: int =
                 (user_id, last_n),
             ).fetchone()
     return int(row["avg"]) if row else 0
+
+# ── provider 失败遥测(v1.84.0)──────────────────────────────────────────────
+# 「错误有没有被拦截器捕获」此前从数据库里答不了:失败只进日志和 SSE。这里补上,
+# 让拦截率 / 未分类占比 / 渠道健康变成可查数字。写入是 fire-and-forget,
+# 失败静默 —— 遥测绝不能拖垮或阻断玩家的那一轮。
+_FAILURE_DETAIL_MAX = 400
+
+
+def record_provider_failure(
+    *,
+    user_id: int | None,
+    save_id: int | None,
+    api_id: str,
+    model: str,
+    category: str,
+    exc_type: str,
+    error_id: str,
+    detail: str,
+    scenario: str = "chat",
+) -> None:
+    """记一条 provider 失败。category 用 classify_provider_error 的 7 类,未知填 'unclassified'。
+
+    detail 必须是**已脱敏**的 provider 原话(调用方负责过 redact_secrets),这里只做截断。
+    """
+    def _do() -> None:
+        try:
+            from platform_app.db import connect
+            with connect() as db:
+                db.execute(
+                    """
+                    insert into provider_failures
+                      (user_id, save_id, scenario, api_id, model,
+                       category, exc_type, error_id, detail)
+                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (user_id, save_id, scenario or "chat", (api_id or "")[:64],
+                     (model or "")[:128], (category or "unclassified")[:32],
+                     (exc_type or "")[:64], (error_id or "")[:32],
+                     (detail or "")[:_FAILURE_DETAIL_MAX]),
+                )
+        except Exception:  # noqa: BLE001 — 遥测失败绝不影响主路径
+            import logging
+            logging.getLogger(__name__).debug("[telemetry] provider_failures 写入失败", exc_info=True)
+
+    try:
+        from tools_dsl.command_dispatcher import _submit_telemetry
+        _submit_telemetry(_do)
+    except Exception:  # noqa: BLE001 — 拿不到队列就同步兜一下,还失败就算了
+        _do()

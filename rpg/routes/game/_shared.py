@@ -37,7 +37,15 @@ _CLIENT_SAFE_RUNTIME_PREFIXES = (
 )
 
 
-def _client_safe_error(exc: Exception) -> str:
+def _client_safe_error(
+    exc: Exception,
+    *,
+    user_id: int | None = None,
+    save_id: int | None = None,
+    api_id: str = "",
+    model: str = "",
+    scenario: str = "chat",
+) -> str:
     """把未预期异常转成对客户端安全的泛化文案 + error_id。
 
     str(exc) 可能含 DB 表名/连接串、文件路径、第三方 SDK 内部细节(乃至凭据上下文),
@@ -51,8 +59,24 @@ def _client_safe_error(exc: Exception) -> str:
     # 这么大吗")。前缀 E 让它一眼是排障标识、不是数量。日志侧同 id,对账不受影响。
     error_id = "E" + _secrets.token_hex(4)
     raw_message = str(exc).strip()
+
+    def _persist(category: str) -> None:
+        """把这次失败落库(v1.84.0)。此前 provider 失败一条都不落 —— 近 60 天
+        token_usage 里 0 条错误记录,于是「拦截率多少、多少走了未分类兜底」这个问题
+        从数据库里根本答不了。本函数是所有流式错误的**唯一漏斗**,是天然的落点。"""
+        try:
+            from platform_app.usage import record_provider_failure
+            record_provider_failure(
+                user_id=user_id, save_id=save_id, api_id=api_id, model=model,
+                category=category, exc_type=type(exc).__name__, error_id=error_id,
+                detail=str(redact_secrets(exc))[:400], scenario=scenario,
+            )
+        except Exception:  # noqa: BLE001 — 遥测绝不能把错误处理本身弄挂
+            pass
+
     if isinstance(exc, RuntimeError) and raw_message.startswith(_CLIENT_SAFE_RUNTIME_PREFIXES):
         _log.warning("[chat] client-safe stream error (error_id=%s): %s", error_id, raw_message)
+        _persist("runtime_prereq")
         return f"{raw_message}\n\n如果已经上传,请重新测试凭证或切换到已配置的模型。(错误码 {error_id})"
     known = classify_provider_error(exc)
     if known:
@@ -67,8 +91,11 @@ def _client_safe_error(exc: Exception) -> str:
         # redact_secrets 按形状打码 key,不枚举供应商前缀。
         _log.warning("[chat] client-safe %s stream error (error_id=%s): %s | provider: %s",
                      category, error_id, type(exc).__name__, redact_secrets(exc))
+        _persist(category)
         return f"{message}(错误码 {error_id})"
     _log.exception("[chat] unhandled stream error (error_id=%s)", error_id)
+    # 未分类:正是「错误码 Exxx」那条盲区(码是随机的、反查不到),落库后才数得出来它有多少
+    _persist("unclassified")
     return f"本轮处理出错,请重试(错误码 {error_id})"
 
 

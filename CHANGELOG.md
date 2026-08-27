@@ -9,6 +9,32 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.84.0] - 2026-08-27 (@ ce970bac8)
+
+### Added
+- **provider 失败落库(migration 102 `provider_failures`)。** 「错误有没有被拦截器捕获」此前**从数据库里答不了** —— 失败只进日志和 SSE,近 60 天 `token_usage` 里 0 条错误记录,只能靠反扫 `messages` 里有没有原始报错痕迹来间接推断(实测全量仅 1 条,说明拦截器是有效的,但拦截率/未分类占比无从得知)。
+  - 落点选 `_client_safe_error` —— 它是 chat 与 opening **共用的唯一漏斗**,已经分好类、生成了 error_id、写了日志,只差落库。每条分支都记一行,含未分类那条(正是「错误码 Exxx」盲区:码是随机的、反查不到,不落库就永远数不出它有多少)。
+  - 客户端拿到的 error_id 与库里那行**同码**,玩家报「错误码 Exxx」现在能直接反查。
+  - 刻意**不复用 `token_usage`**:那是计费账本,塞进零 token 的失败行会污染用量口径与 UI。
+  - `detail` 存脱敏后的 provider 原话(过 `redact_secrets`),写入 fire-and-forget、失败静默 —— 遥测绝不能拖垮玩家那一轮。
+- **上游把这一轮掐了,玩家现在知道。** 两种情况此前只有服务端 `log.warning`:
+  - `content_filter`:玩家收到的是**模型自己的拒答原话**(生产实测「你好,我无法给到相关内容。」13 字,save 268 两周内 42 次),读起来像 GM 突然出戏。
+  - `length`:撞 `max_tokens` 被截断,玩家拿到半截场景(还会连带漏出 ops 围栏,v1.83.3 修的就是它的下游症状)。
+  - 现在按 provider 的 `finish_reason`(确定性信号,不猜正文)发一条阶段提示,走现成的 `agent` 通道,前端已渲染、不新造事件类型。**不改写正文** —— 那是模型的产出,可能仍有可用部分。
+
+### Fixed
+- **匿名反馈是个黑洞。** 站内 #100(「使用 deepseek 进行知识库人物分析后,人物数量还是少」)的 `env_snapshot` 是 `{}`、`user_id` 为空 —— 既不知道用的哪个模型、也没有可关联的剧本,按「先查客户实拆出什么再谈模型强弱」的规矩根本无从查起。
+  - 成因是两条路径的不对称:登录路径调 `_capture_feedback_env` 做**服务端**采集,匿名路径**只收客户端自报的** `env_snapshot`。
+  - 匿名路径补上服务端采集:没有可归并账户时至少留下 `deployment_mode` + 客户端那份;`contact_email` 归并到账户时,连同该账户的模型/凭据上下文一起采集。
+  - 采集放在主事务**之外** —— `_capture_feedback_env` 内部自己开连接,套在 `with connect()` 里就是嵌套连接(PgBouncer 池死锁前科)。
+
+### 守卫
+- `test_provider_failure_telemetry.py`:漏斗每条分支都落库(含未分类)、error_id 与客户端文案同码、detail 已脱敏、遥测挂了不许把错误处理弄挂、两个入口都传了上下文。
+- `test_stop_reason_notice.py`:content_filter/length 各出可行动文案、正常结束不出声、ctx 坏了不许崩、提示不许改写正文。
+- `test_anon_feedback_env_capture.py`:无账户也有服务端采集、匿名路径必须走 `_capture_feedback_env`、采集在主事务之外、归并账户时用其上下文。
+- 修好 `test_chat_error_no_leak` 的脆弱断言:它数的是字面量 `_client_safe_error(exc)`,漏斗加上下文参数改成多行后假红。改成形状无关(「凡是从异常来的 SSE error 都必须过漏斗」),并把判定窗口收到错误载荷本身 —— 取固定 300 字符会把**相邻**的 `except Exception as exc:` 框进来,把一处自写文案误判成异常路径。已验证拆掉漏斗必红。
+
+
 ## [1.83.3] - 2026-08-27 (@ 540b68b96)
 
 ### Fixed

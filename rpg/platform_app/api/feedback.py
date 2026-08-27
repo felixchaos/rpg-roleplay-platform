@@ -419,8 +419,29 @@ async def submit_feedback_anon(request: Request):
     # NSFW 预审(与登录路径同一把关)
     verdict = await moderate_feedback(free_text + "\n" + excerpts_raw)
 
+    # v1.84.0:匿名路径此前**只收客户端自报的 env_snapshot**,而登录路径会调
+    # _capture_feedback_env 做服务端采集 —— 这个不对称让匿名反馈成了黑洞:
+    # 站内 #100(「知识库人物分析后人物数量还是少」)的 env_snapshot 是 {},
+    # 既不知道他用的哪个模型、也没有可关联的剧本,按「先查客户实拆出什么」的规矩
+    # 根本无从查起。这里补齐:
+    #   · 没有可归并账户时,至少留下 deployment_mode + 客户端自报那份
+    #   · contact_email 归并到了账户时,连同该账户的模型/凭据上下文一起采集
+    # 归并与采集都放在主事务**之外**:_capture_feedback_env 内部会自己开连接,
+    # 套在 `with connect()` 里就是嵌套连接(PgBouncer 池死锁前科)。
+    with connect() as _db_link:
+        linked_user_id = _match_user_id_by_email(_db_link, contact_email)
+    try:
+        env_raw = json.dumps(
+            _capture_feedback_env(
+                {"id": linked_user_id} if linked_user_id else None,
+                env_snapshot,
+            ),
+            ensure_ascii=False,
+        )
+    except Exception:  # noqa: BLE001 — 采集失败不阻断提交,退回客户端自报那份
+        log.debug("anon feedback env capture failed", exc_info=True)
+
     with connect() as db:
-        linked_user_id = _match_user_id_by_email(db, contact_email)
 
         if verdict.action == "auto_reject":
             _csam_summary = json.dumps(

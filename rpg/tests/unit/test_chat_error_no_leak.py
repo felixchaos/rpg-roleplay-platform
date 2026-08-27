@@ -142,8 +142,28 @@ class ChatErrorNoLeak(unittest.TestCase):
         # 两处 client-facing SSE error 不应再直传 str(exc)
         self.assertNotIn('_sse("error", {"message": str(exc)', SRC,
                          "仍有 str(exc) 直透进 SSE error 给客户端")
-        self.assertEqual(SRC.count("_client_safe_error(exc)"), 2,
-                         "两处 SSE error 未都改用 _client_safe_error")
+        # v1.84.0:原来数的是字面量 `_client_safe_error(exc)`,漏斗加了上下文参数
+        # (user_id/save_id/api_id/model/scenario,给失败落库用)改成多行调用后就假红 ——
+        # 它要守的是**意图**「凡是从异常来的错误文案都必须过漏斗」,不是调用写成几行。
+        #
+        # 注意口径:`_sse("error"` 共 6 处,其中 4 处是我们自己写的安全文案(消息过长 /
+        # 空消息 / 存档冲突),压根不涉及异常,不该被这条守卫管。只挑**窗口里出现 `exc`**
+        # 的那些 —— 那才是「异常转客户端文案」的路径。
+        import re
+        def _payload(pos: int) -> str:
+            """截到该 _sse("error", {...}) 的载荷结尾。
+            窗口不能拍脑袋取固定长度 —— 取 300 字符会把**相邻**的
+            `except Exception as exc:` 框进来,把一处自写文案误判成「从异常来的」。"""
+            end = SRC.find("})", pos)
+            return SRC[pos:end if end != -1 else pos + 200]
+
+        sites = [m.start() for m in re.finditer(r'_sse\("error"', SRC)]
+        from_exc = [pos for pos in sites if re.search(r"\bexc\b", _payload(pos))]
+        self.assertGreaterEqual(len(from_exc), 2,
+                                "从异常来的 SSE error 少于 2 处?口径可能失效了")
+        for pos in from_exc:
+            self.assertIn("_client_safe_error(", _payload(pos),
+                          f"这处从异常来的 SSE error 没走漏斗: {SRC[pos:pos+120]!r}")
 
 
 if __name__ == "__main__":

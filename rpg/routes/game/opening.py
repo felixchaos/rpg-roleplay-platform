@@ -224,7 +224,13 @@ async def api_opening(
             yield _sse("done", {"status": _payload_sse(api_user)})
         except Exception as exc:
             _note_channel_health_failure(exc, gm.api_id, api_user)
-            yield _sse("error", {"message": _client_safe_error(exc), "partial": text})
+            yield _sse("error", {"message": _client_safe_error(
+                exc,
+                user_id=(api_user or {}).get("id"),
+                api_id=getattr(gm, "api_id", "") or "",
+                model=getattr(getattr(gm, "_backend", None), "model_name", "") or "",
+                scenario="opening",
+            ), "partial": text})
             yield _sse("done", {"interrupted": True, "status": _payload_sse(api_user)})
 
     return StreamingResponse(stream(), media_type="text/event-stream")

@@ -511,6 +511,17 @@ async def run_gm_phase(
 
     ctx.response = response
 
+    # v1.84.0:上游把这一轮**掐了**的两种情况,此前只有服务端 log.warning,玩家侧完全无感。
+    #   · content_filter:模型的内容策略挡了。玩家收到的是**模型自己的拒答原话**
+    #     (生产实测「你好,我无法给到相关内容。」13 字,save 268 两周内 42 次),读起来
+    #     像 GM 突然出戏,而不是「这一轮被策略挡了」。
+    #   · length:撞 max_tokens 被截断。玩家拿到半截场景,还会连带把 ops 围栏漏出来
+    #     (v1.83.3 修的就是它的下游症状)。
+    # 这里发一条确定性的阶段提示走现成的 agent 通道(前端已渲染,不新造事件类型)。
+    # **不改写正文** —— 那是模型的产出,可能仍有可用部分,由玩家自己判断。
+    for _phase, _msg in _stop_reason_notice(ctx):
+        yield ("agent", {"phase": _phase, "message": _msg, "status": "done", "elapsed_ms": 0})
+
     # acceptance 硬闸。
     # 【设计改版 · A/B 用户裁决 + 下线关键路径】
     #   ① 首稿(用户流式读到的)【永远是权威版】,response/state 都不动 → 无跳变、state 确定性不变。
@@ -880,3 +891,23 @@ async def run_gm_phase(
             "message": f"世界线锚点确定性兜底:本回合自动标记 {_rec_marked} 个原著锚点已到达",
             "status": "done", "elapsed_ms": 0, "marked": _rec_marked,
         })
+
+
+def _stop_reason_notice(ctx) -> list[tuple[str, str]]:
+    """按上游的 finish_reason 给玩家一条可读的解释。返回 [(phase, message)],正常结束时为空。
+
+    判据是 provider 的 finish_reason(确定性信号),不是猜正文 —— 短回复既可能是拒答、
+    也可能是正常的一句话叙事,只有 finish_reason 分得清。
+    """
+    try:
+        fr = str(((getattr(getattr(ctx, "gm", None), "_backend", None) or None)
+                  and getattr(ctx.gm._backend, "last_usage", {}) or {}).get("finish_reason") or "")
+    except Exception:
+        return []
+    if fr == "content_filter":
+        return [("stop_reason", "这一轮被所用模型的内容策略挡下了 —— 上面那句是模型自己的回绝,"
+                                "不是剧情。可以换个说法重述,或在「设置 → 模型」里换一个对该题材更宽松的模型。")]
+    if fr == "length":
+        return [("stop_reason", "这一轮写到长度上限被截断了,结尾可能不完整。"
+                                "可以直接说「继续」让它接着写,或在设置里调高单轮输出上限。")]
+    return []

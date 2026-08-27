@@ -594,7 +594,14 @@ async def api_chat(
                 duration_ms=int((time.time() - _chat_start_time) * 1000),
             )
             _note_channel_health_failure(exc, gm.api_id, api_user)
-            yield _sse("error", {"message": _client_safe_error(exc), "partial": pipeline_ctx.response or response})
+            yield _sse("error", {"message": _client_safe_error(
+                exc,
+                user_id=(api_user or {}).get("id"),
+                save_id=pipeline_ctx.active_save_id or pipeline_ctx.early_active_save_id,
+                api_id=getattr(gm, "api_id", "") or "",
+                model=getattr(getattr(gm, "_backend", None), "model_name", "") or "",
+                scenario="chat",
+            ), "partial": pipeline_ctx.response or response})
             yield _sse("done", {"interrupted": True, "status": _payload_sse(api_user)})
 
     async def _stream_with_done_guard():
