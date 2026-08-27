@@ -9,6 +9,22 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.84.1] - 2026-08-27 (@ 31781afce)
+
+### Changed
+- **依赖追平开源线,并给 dependabot 装上真闸。** 生产线没有 dependabot,依赖一直在往后漂(anthropic 0.121 / google-genai 2.17 / openai 2.53);开源线那两组 dependabot PR 则**恒红**,原因是同一个病:**组内单成员把整组 CI 拖死**。
+  - `python-deps`:`google-genai` 要求 `websockets<17.0`(2.19.0 实测仍然),dependabot 反复顶到 17.x → 整组 `ResolutionImpossible`。`requirements.txt` 里早有一条维护者注释按住它,但**注释拦不住 dependabot**,这已经是第三次提上来。
+  - `frontend-deps`:`eslint-plugin-jsx-a11y` 的 peer 只到 `^9`(最新版 6.10.2 仍未支持 eslint 10),dependabot 顶到 `^10` → `npm ci` 必炸 `ERESOLVE`。
+  - 真闸补进开源仓 `.github/dependabot.yml` 的 `ignore`,与该文件里早先那条 `typescript` major 同族。生产仓刻意没有 dependabot,依赖同步过去但不搬配置。
+- **`anthropic` 按住在 0.x。** 1.x 把 HTTP 层从 `httpx` 换成 `httpx2`,而 `agents/gm/backends/anthropic.py` 给 `Anthropic()` 传的 `timeout` 与 `http_client` **都是 httpx 对象**(后者来自全站 SSRF 出站层 `core.outbound.safe_httpx_client`,28 个调用点)—— 1.x 下会**构造即 TypeError**,整个 Anthropic GM 后端直接死。升级要连出站层一起迁,是独立一件事。`ignore` 只挡 semver-major,0.x 的更新照常跟进(本次即 0.121 → 0.125)。
+
+  升级项:`anthropic` 0.121.0 → 0.125.0、`google-genai` 2.17.0 → 2.19.0、`openai` 2.53.0 → 3.3.1、`charset-normalizer`、`idna`、`Pygments`、`ruff`、`uvicorn`;前端 cloudscape、i18next/react-i18next、codemirror、vite/vitest、@vitejs/plugin-react、web-vitals 等。
+
+  验证:后端干净 venv 实装后 unit 2358 passed;前端 `npm ci` 退出码 0(原本 ERESOLVE)、build ✓、vitest 272 passed。
+
+
+## [1.84.1] - 2026-08-27 (@ 78fed7bf2)
+
 ## [1.84.0] - 2026-08-27 (@ ce970bac8)
 
 ### Added
@@ -200,25 +216,14 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 - **剧本 NPC 人物卡「基本信息 → 标签」保存不了**(群反馈 大道):不是前端没提交 —— `cardFormPayload` 一直在发 `tags: [...]`;是 `upsert_character_card` 的 fields / UPDATE / INSERT / on-conflict **四处都没有 tags 这一列**,整个字段被后端静默丢弃。PC 卡路径(`upsert_user_card`)一直好好写着这列,典型的「修 A 漏 B」不对称。补齐四处,并复用 PC 卡同一个 `_normalize_list`,避免两条写入路径对「标签」的解析规则漂移。
   - 同时把前端 CSV 拆分的分隔符与后端对齐(`, ,;;、`):提示文案只写「逗号分隔」,中文输入法打出来的是全角「,」,只认半角会把「战姬,剑士」整条当成一个标签。
 
-## [1.79.1] - 2026-08-05 (@ 19f5cd7f9)
+## [1.78.8] - 2026-08-05 (@ 3423272d5)
 
 ### Fixed
-- **剧本设定里已「关闭」的世界书条目照样被召回进 GM 记忆**(群反馈 行者无疆:「发现剧本设定里关闭的世界书也会召回」—— 截图里那条启用状态=关闭的条目,仍带着「相关度 0.57」躺在记忆里):世界书有五条读路径,常驻铁律层、关键词激活层、关键词检索层、RATH 世界观要点、给 LLM 的 `get_worldbook` 查询**全都过 `enabled = true`**,只有**向量召回层是裸查表**。而「关闭」是刻意不脏化向量的(只有改标题/正文才重嵌,免得拨个开关就触发重嵌)——于是条目一关,向量原样留在库里,语义一沾边就召回,一召一个准。
+- **剧本设定里已「关闭」的世界书条目照样被召回进 GM 记忆**(群反馈 行者无疆:「发现剧本设定里关闭的世界书也会召回」—— 截图里那条启用状态=关闭的《食材与天财地宝》,仍带着「相关度 0.57」躺在记忆里):世界书有五条读路径,常驻铁律层、关键词激活层、关键词检索层、RATH 世界观要点、给 LLM 的 `get_worldbook` 查询**全都过 `enabled = true`**,只有**向量召回层是裸查表**。而「关闭」是刻意不脏化向量的(只有改标题/正文才重嵌,免得拨个开关就触发重嵌)——于是条目一关,向量原样留在库里,语义一沾边就召回,一召一个准。
   - 修法落在唯一漏掉那道闸的路径上:向量召回的世界书查询补 `enabled = true`。同时把同语义的存档级孪生 —— `worldbook_retire`(「本档停用」)写的 retirement overlay —— 一并挡掉:关键词层本来就过滤 retirement,向量层是两道都没有,只补一道等于换个入口接着漏。retirement 是存档级语义,只在有存档上下文时生效,管理/编辑器视角照旧看得见全量。
   - 顺带修掉同一个函数里的一条死路:没有向量时的 ILIKE 兜底,参数序把 ilike patterns 排在了 `script_id` 前面(占位符个数刚好对得上,所以一直没被发现)—— 每次都拿「%词%」去比整数列,必抛,再被外层的裸 except 吞掉。也就是说没配 embedding 的部署,实体层召回一直恒空,而不是它以为的「退化成关键词」。
 
-## [1.79.0] - 2026-08-05 (@ d90ad1c40)
-
-### Fixed
-- **Windows 开箱即用版装完是个「看着好的坏包」**(用户实测反馈:管理员模式装完后 `pg\share\extension\vector.control` 等一系列文件不存在,initdb 日志显示成功但数据目录是空壳、连 `PG_VERSION` 都没有;表面无异常,直到**建 RAG 向量**才发现库根本没建成,最后只能自己下载 PostgreSQL 17 对应的 pgvector 预编译包拷进 pg 目录、删掉 pgdata 重新初始化才恢复)。三处根因,逐条修:
-  - **捆绑包真的没带 pgvector**:`bundle-backend.ps1` 里 `$BuildPgvector = $false`,注释理由是「Windows 需 MSVC/nmake 构建较脆」。已核实 theseus-rs 的 Windows PG 包自带 `include\server`(925 个头文件)+ `lib\postgres.lib` + `pg_config.exe`,pgvector 的 `Makefile.win` 就地 nmake 完全够用。改为**随包构建**:用 vswhere 定位 MSVC 环境 → nmake → `vector.dll` 落 `pg\lib`($libdir)、`vector.control` 落 `pg\share\extension`。
-  - **Windows 侧此前【完全没有出包校验】**(mac 侧一直有):下载/解压残缺、pgvector 没装上,都会一路走到发布,装到用户机器上才炸。补齐硬校验 —— `postgres.exe`/`initdb.exe`/`pg_ctl.exe`/`share\postgres.bki`/`vector.control`/`vector.dll` 缺任意一个即让构建失败,并实际执行 `postgres.exe --version`。宁可 CI 红,不许再出静默坏包。
-  - **CI 运行时缓存会让这个修复静默失效**:缓存把整棵 `pg/` 树缓起来,key 只含 Python/PG 版本 + requirements 哈希 —— 只改组装脚本不动 key,构建会恢复一份**不含 `vector.dll` 的旧 pg** 直接复用。key 补上 `pgv<版本>`(`desktop-release.yml` + `warm-runtime-cache.yml` 两处),脚本内再加一道「缓存里没有 vector.control 就当未命中重建」的内容校验。
-- **initdb 半途失败后,桌面版会永久卡死在同一处,只能手删 pgdata**:`_initdbIfNeeded` 只看 `PG_VERSION` 在不在,而 initdb **拒绝在非空目录上初始化** —— 上一次失败留下的残骸让之后每次启动都撞同一堵墙。现在遇到「非空但无 `PG_VERSION`」(按定义就是不可用的残骸)自动挪到 `pgdata.broken` 隔离(挪不删,判断有误还能捞回)再重新初始化;initdb 返回 0 之后**以产物为准复核** `PG_VERSION` 是否真的生成,不再让「日志显示成功、实际是空壳」这种状态默默流到下游。
-- **存量桌面库升级后不会真正吃到 pgvector**(migration 100):这类库上 v10/v40/v60/v83 的建列块当年在 `if exists(vector)` 里静默跳过、migration 却已标记 applied,v89 又建了 jsonb 同名占位列 —— 光让新包带上 pgvector,列类型仍是 jsonb,`udt_name='vector'` 判定为假,语义检索照旧退化成关键词。新迁移在「pgvector 从无到有」时把占位列换成真向量列并补齐 HNSW 索引。四个 `embedding_vec` 占位列必然是空的(写入路径都是 `%s::vector`,在 jsonb 列上写不进去)→ 直接重建;`kb_canon_entities.embedding` 例外(写入路径无 cast,向量字面量恰好是合法 JSON 数组,可能真存了嵌入)→ 优先原地保值转换,失败才退回重建,并用嵌套 exception 兜住,绝不让一次迁移把桌面 app 卡在起不来。无 pgvector 的部署与健康 prod 库上全程 no-op。
-- macOS 桌面版**仍不带 pgvector,且这是刻意的**:zonky 精简包没有 `pg_config`/头文件编不了;换成能编的 theseus-rs mac 包,其 `postgres` 二进制 `minos = 26.0`(zonky 是 12.0),会把 macOS 26 以下的用户全部打死。理由已写进 `bundle-backend.sh` 与 `desktop/README.md`,免得后人当成遗漏顺手「对齐」。
-
-## [1.78.7] - 2026-08-03 (@ 88f7ed60c)
+## [1.78.7] - 2026-08-03 (@ 5da16e61d)
 
 ### Fixed
 - **子代理时不时认定「现在在小说序章·生化危机·激光通道」,而且每次都是激光通道**(群反馈:「不知道为什么会发生但好几次了,且每次都是识别为在激光通道」):出问题那一档实际在**第 116 章**,世界时间是「侏罗纪世界·重返第十四日」,人站在旧金山金门大桥观景台,最近六条对话里一个字都没提过激光通道 —— 唯一还留着那段剧情的地方,是**第 1-12 回合的阶段摘要**。
@@ -229,17 +234,17 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
   - 判据改成「有没有 open phase」,没有就按 `max(phase_index)+1` 从当前回合补开 —— 所有关闭路径(`compact_phase(force=True)`、`open_new_phase` 关完插入失败、老 `/compact`)统一在这条每回合都跑的确定性缝上自愈,不必逐个 closer 打补丁。受影响的存档下一回合自动恢复,无需数据手术;冻结期那段不做追溯压缩(那会把上千回合塞进一次 LLM 摘要),它由 KB/情节召回覆盖。
   - 函数更名 `ensure_active_phase`(旧名保留为别名)。
 
-## [1.78.6] - 2026-08-02 (@ b17c2bd44)
+## [1.78.6] - 2026-08-02 (@ 4bf164db0)
 
 ### Fixed
-- **主线(蓝框)几十上百回合不变,只有当前目标在变**(群反馈:「蓝框有起码五十个回合以上没变过了,只有下面的会变」):先排除了「写不进去」—— 涉事存档没有待审批写入、权限是完全放行、审计日志零 blocked,**没有任何东西在拒绝**。真相是从来没人写:工具审计里 `set_current_objective` 被反复调用,`set_main_quest` **一次都没有**,主线因此冻了上百个回合。
+- **主线(蓝框)几十上百回合不变,只有当前目标在变**(群反馈:「蓝框有起码五十个回合以上没变过了,只有下面的会变」):先排除了「写不进去」—— 该档没有待审批写入、权限 full_access、审计日志零 blocked,**没有任何东西在拒绝**。真相是从来没人写:最近 200 条工具审计里 `set_current_objective` 调了 21 次,`set_main_quest` **0 次**;主线停在第 932 回合而存档已打到 1047,冻了 115 回合。
   - 根因:当前目标每轮都在议程上,而主线是长程字段 —— 写完一次就**没有任何机制再提起它**,全靠 LLM 自己想起来,它不会。
   - 修法按「确定性代码缝」拆成两半:**触发**做成确定性的(主线写入时打「上次更新回合」戳,超过阈值即在史官的状态快照里摆出「已 N 回合没更新」);**内容**仍归史官判断 —— 主线该写什么是叙事判断,代码代写只会写废话。
   - 提醒是**自限**的:给两个出口(已过时→更新 / 仍准确→原样重写同一条值以确认),后者同样打戳、重置计时。若只说「仍准确就别动」,戳永远不更新 → 每回合都催 → 反而逼出交差式改写。
-  - 阈值 25 回合按真实对局的更新节奏校准:正常间隔在个位数回合量级,超过 25 的属于长尾 —— 只打长尾,不烦正常节奏。
+  - 阈值 25 回合按生产实测定:全站主线变更的平均间隔 7 回合,间隔 >25 的仅约 6.6% —— 只打病理长尾。
   - 打戳覆盖两条写入路径(工具执行器 + `apply_state_write_typed` 老路径的标量分支),AST 守卫锁死;漏一条会让主线明明刚改过却被判陈旧、天天被催。
 
-## [1.78.5] - 2026-08-01 (@ 12e71a489)
+## [1.78.5] - 2026-08-01 (@ 39b571f2b)
 
 ### Security
 - **灰度特性可以被普通用户自己开**(反馈:「为什么普通用户可以看到 rath,不对吧??」):RATH 号称有「三道防线」,实际一道都不成立 —— ①导航隐藏只是不显示菜单项 ②路由 `AdminGuard` 只是前端不渲染 ③后端 flag `rath_experiment` **读的是 `user_preferences`,而 `POST /api/me/preference` 收任意键、无白名单**,于是任何登录用户 POST 一句 `{"rath_experiment.enabled": true}` 就把自己放进去了。唯一在服务端的那道闸,开关握在被拦的人手里。**用户偏好不是访问控制。**
@@ -248,7 +253,7 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
   - RATH 全部端点加一道**用户改不了**的角色闸(`is_admin`),与前端 adminOnly 意图对齐;AST 守卫断言每个端点都过闸。
 - **移动端外壳完全没有管理员守卫**:桌面壳有 `AdminGuard`,移动壳一直没有 —— 直接敲 `#admin` / `#admin-*` / `#rath` 就能把整套管理/灰度界面渲染出来(数据面后端会 403,但菜单、区块名、页面结构都露了)。「导航里没有入口」不是访问控制,URL 是公开的。现补齐角色闸,且角色未就绪时 fail-closed(与桌面同向)。
 
-## [1.78.4] - 2026-08-01 (@ 3664ffdef)
+## [1.78.4] - 2026-08-01 (@ 0c6e54364)
 
 ### Fixed
 - **未注册的邮箱请求登录验证码 → 前端显示「验证码已发送」,但服务端根本没发信**(群反馈 08-01:「有人想用邮箱登录,我查了半天他没注册,好像就没发登录邮件」):`request_login_code` 对未知邮箱**刻意静默返回 `pending_verify: True` 且不发信**(设计意图是防账号枚举),前端不看这个字段、照样跳到验证码输入框 —— 人就对着一封永远不会到的邮件干等。该分支**不打日志、不写库、不计数**,所以服务器上连一行证据都没有,只能靠读代码定位。
@@ -257,18 +262,18 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
   - per-IP 发码预算超限那条**仍然静默**,且刻意不带 `registered` —— 那条是防滥发,不能顺手变成探测账号是否存在的信道(已登记/未登记两种输入在该分支返回完全一致)。
 
 ### Fixed
-- 补记脚本的报数自相矛盾(补完后报出来的总数还是补之前的旧值):`history_summary` 自己开新连接,读不到调用方尚未提交的事务。数据本身没问题,是**报数**错。`history_summary` 补 `db=` 复用连接(与 `record_history_anchor` / `cascade_history_from_anchor` 同款),脚本传本连接。
+- 补记脚本的报数自相矛盾(「已补记 73 条。现有: 6 条」):`history_summary` 自己开新连接,读不到调用方尚未提交的事务。数据本身没问题,是**报数**错。`history_summary` 补 `db=` 复用连接(与 `record_history_anchor` / `cascade_history_from_anchor` 同款),脚本传本连接。
 
 ### Added
 - `scripts/backfill_history_anchors.py` —— 把级联接线之前已发生的锚点迁移补记成历史锚点。只 INSERT;走线上同一条缝(补出来的行与自然产生的行同形);靠 `linked_pending_anchors` 去重,重复跑不双写;写入行带 `metadata.backfill=true` 可精确撤回;默认 dry-run,须显式 `--apply`。口径与线上一致:批量退役(角色死亡失效 / phase 关闭绕过)不补。
 
-## [1.78.3] - 2026-07-31 (@ d7d84236e)
+## [1.78.3] - 2026-07-31 (@ 3ddc56694)
 
-## [1.78.2] - 2026-07-31 (@ e8f53752a)
+## [1.78.2] - 2026-07-31 (@ 087f9157a)
 
 ### Fixed
 - **「存档独立时间线」永远只有建档初期那两条,玩家做的事一件都没留档**(群反馈:「之前反馈过这个问题好像还没修,存档永远只有 2 个锚点」):v1.73.0 加的反向级联(锚点脱离 pending → 自动补写历史锚点)**挂在了不跑的那条路上**。
-  - 真正在标锚点的是 `anchor_reconcile` 的「每回合确定性兜底判定」—— 它每回合先把 pending 锚点确定性地标掉,GM 再没有可标的东西,于是 `mark_anchor_*` 工具路径**实际上早已不再被调用**,挂在它上面的级联一次都没跑过。玩家看到的两条是更早的 phase 浓缩,时间线就此冻在建档初期。
+  - 真正在标锚点的是 `anchor_reconcile` 的「每回合确定性兜底判定」—— 它每回合先把 pending 锚点确定性地标掉,GM 再没有可标的东西,于是 `mark_anchor_*` 工具路径**自 2026-06-19 起零调用**,挂在它上面的级联一次都没跑过。玩家看到的两条是更早的 phase 浓缩,时间线就此冻在建档初期。
   - 级联缝搬到 `agents.save_history.cascade_history_from_anchor`,由**三个写入方共用**:①`anchor_reconcile` 的兜底判定(`source='system'`)②GM 工具 `mark_anchor_*`(`source='gm_generated'`)③玩家在世界线面板手动标记已到达(`source='player_declared'` —— 这也是「玩家声明 N」此前恒为 0 的原因,那条路从来没接过留档)。
   - **刻意豁免**两类批量退役:角色死亡导致的单人锚点失效、phase 关闭时的自动绕过。它们是「不再可能发生」,不是「发生了什么」,记进玩家历史只会刷屏(测试里写明理由,防止后人顺手接上)。
   - 级联复用调用方已持的连接(`db=`)。在持连接的块里再开新连接会在 PgBouncer 上叠连接把池打死,本仓有前科。
@@ -277,13 +282,13 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 ### Changed
 - `record_history_anchor` 接受 `db=` 复用连接;自带连接与复用连接两条路共用同一个 INSERT(`_insert_anchor_row`),不再有第二份。
 
-## [1.78.1] - 2026-07-31 (@ 2bcce9df1)
+## [1.78.1] - 2026-07-31 (@ 866573775)
 
 ### Fixed
 - **GM 把一件事拆成几十条记忆,刷爆玩家的能力/资源面板**(群反馈:「修功法要点亮体内星辰,写了几段话点亮了 36 个,应该是每点一个就给我写一个能力,直接污染了大概二十多条」):全链路**没有任何追加预算** —— `world.known_events` 早就因为同样的「GM 记流水账无界堆积」加了硬上限,记忆桶却一直没有(典型的修 A 漏 B)。补两条确定性闸,都落在所有写入路径的共同终点 `add_memory`:
   - **每回合每桶预算**(默认 6):单回合往同一个桶追加超过 6 条即拒。
   - **同族上限**(默认 4):`abilities`/`resources` 里同「族名」(首个结构分隔符前的前缀,需 ≥3 字)超过 4 条即拒。族闸**不管 `facts`** —— 事实天然按人名聚族,给它上闸就是误伤;`pinned`/`notes` 主要是玩家自己写的,同样不管。
-  - 阈值按真实对局的追加节奏校准,只打病理长尾:正常节奏是每回合往一个桶追加 1–2 条,超过阈值的基本只有「同一件事被逐条拆写」这一种形态。
+  - 阈值按生产实测定,只打病理长尾:每回合每桶 1056 组样本里 >6 的仅 9 组(0.9%),同族 602 组样本里 >4 的仅 9 组 —— 正常节奏是每回合 1–2 条。
   - **拒绝,不是丢弃**:超额写入原样退回并给出理由,进 `audit_log`(`kind=memory_flood_blocked`),再由 `write_results` 层讲给下一轮 GM 听让它自己合并 —— 否则闸只是「悄悄拒绝」,GM 下轮原样再写一遍。
   - **方向是 fail-open**:只拦认得出的 GM 来源(`llm_chat*` / `gm*`),玩家来源与认不出的来源一律放行。前科是「玩家笔记/固定记忆被自动归档悄悄丢」,玩家可见资产绝不能被系统吃掉。
   - 旋钮:`RPG_MEMORY_APPEND_PER_TURN` / `RPG_MEMORY_FAMILY_MAX`,置 0 即关掉对应的闸。
@@ -291,7 +296,7 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 ### Changed
 - 记忆桶的列表追加收口到 `add_memory` 单点根闸:`apply_state_write_typed` 的老路径(dispatcher 路由失败时的 fall-through)此前**手写 append**,于是既跳过了 `memory.items` 的 dual-write(结构化记忆漏条),也会绕过上面这两条闸。现在 `memory.<bucket>` 的追加一律回到 `add_memory`,同批次里某条被拦不影响其它条目落地。
 
-## [1.78.0] - 2026-07-30 (@ f3fbc4fe8)
+## [1.78.0] - 2026-07-30 (@ b37facf4d)
 
 ### Added
 - **存档内世界书条目可以改了**(群反馈:「这个世界书可以给个编辑选项吗」):面板长期只有「+」和「×」—— 写错一个字只能删掉重打整段,而 overlay 正文往往是几百字的功法/设定长文。现在每行有编辑按钮(点标题区同样进编辑),复用同一张表单预填**完整正文**(列表只显示 140 字截断,编辑态给 8 行文本框),保存 → `POST /api/worldbook/overlay/update`。
@@ -304,33 +309,28 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 ### Changed
 - `routes/worldbook_overlay.py` 的归属判断收口到 `perms.owns_save`:该文件早先 list / remove / (新) update 各写一遍 `game_saves` join,违反「严禁手写归属 SQL」。现统一走 `_own_addition`(解析 overlay → `owns_save`),并加 AST 守卫断言两条写路径都调它、文件里不再出现 `game_saves` join。
 
-## [1.77.0] - 2026-07-29 (@ e0c0a7118)
+## [1.77.0] - 2026-07-30 (@ ca5a3296c)
 
 ### Removed
 - **删除「记忆模式」选择器(普通/深度/关闭)—— 它是装饰性的**(群反馈:「这个关闭是不生效的,点了也会自动回到普通」):查下来是三个缺陷叠在一起,而最根本的一条是**它什么都不控制**。
   - ① 后端 `state.set_memory_mode` 的白名单只有 `{concise, normal, deep}` —— **UI 提供的 `off` 不在里面**,而且非法值是**静默丢弃**(不报错、不抛异常)。反过来后端有 `concise`、UI 又不提供:两边取值集合从来没对齐。
   - ② 端点其实返回了 400,但前端 `try { … } catch (_) {}` **把错误整个吞了** → 用户看不到任何提示,只看到乐观更新后被下次状态刷新打回「普通」。
-  - ③ **全仓没有任何一处据 `memory.mode` 改变行为** —— `MemoryProvider` 只把它塞进 `debug` 字段;真正决定召回量的是 `MemorySettings.recall_depth` / `token_budget`,与 mode 完全无关。UI 提示写着「每轮召回 6 段」「每轮召回 14 段,延迟 +30%」,**这两个数字在代码里根本不存在**。实测佐证:选了「深度」的会话与「普通」召回量一模一样 —— 因为 `MemorySettings` 一直是默认值,mode 不参与计算。
+  - ③ **全仓没有任何一处据 `memory.mode` 改变行为** —— `MemoryProvider` 只把它塞进 `debug` 字段;真正决定召回量的是 `MemorySettings.recall_depth` / `token_budget`,与 mode 完全无关。UI 提示写着「每轮召回 6 段」「每轮召回 14 段,延迟 +30%」,**这两个数字在代码里根本不存在**。生产数据佐证:150 个会话 `normal` / 20 个 `deep`,但全站无人改过 `MemorySettings` —— 那 20 个选了「深度」的会话,召回量与「普通」一模一样。
   - 替代品早就存在且更好:「设置 → 记忆」有 `recall_depth`、`token_budget`,以及 **pinned / world / character 三个分桶开关** —— 正是这个「关闭」想做却没做到的事。
   - 删除面(同批次):web 左栏区块 + 移动端左抽屉区块 + `game-console` 的 3 个 handler + `api-client.memoryMode` + `POST /api/memory/mode` + `set_memory_mode` **LLM 工具**(顺带给直发工具窗口腾出一个名额)+ `state_op_tool_map` 的 `memory.mode` 映射 + `command_agent` 提示词 + `/memory <mode>` 斜杠命令 + `state.set_memory_mode` setter + 说谎的 i18n 文案。
   - **刻意保留** `state.data["memory"]["mode"]` 数据字段与 `game_sessions.memory_mode` 列:存量存档/快照往返兼容,留着无害(已无消费方),**不做破坏性 migration**。
-  - 另:该字段历史上存在绕过白名单的写入路径(疑似 `apply_ops` 直写 state path),会写进非白名单字符串。字段现已完全无消费方,脏值无害。
+  - 顺带记录一条脏数据:生产有 1 个会话的 `memory_mode` 被写成了剧情文本 `'心魔已破·准备冲击炼神境'` —— 说明存在绕过白名单的写入路径(疑似 `apply_ops` 直写 state path)。该字段现已完全无消费方,脏值无害;入口未定位。
 
-## [1.76.0] - 2026-07-28 (@ 240c77a73)
+## [1.76.0] - 2026-07-28 (@ 68782097b)
 
 ### Added
 - **手填模型 ID 的入口(写进你自己的模型清单,不是全局目录)**:有的 provider 根本没有 `/models` 接口(火山方舟 Agent Plan 订阅套餐地址恒 404),模型 ID 只能手填,否则该 provider 完全不可用。供应商详情页动作栏加「添加模型」→ `POST /api/me/models/model` → 写 `user_model_entries`(**per-user overlay**,`source='manual'`),任何登录用户都能用,别人看不到。同时新增 `POST /api/me/models/model/delete` 供删除。
   - migration 99 给 `user_model_entries` 加 `source` 列(`synced`/`manual`,存量默认 `synced`)。`replace_synced_models` 的覆盖删除改为**只清 `synced`** —— 否则用户每点一次「拉取模型」,自己手填的就被清空一次,而恰恰是那些没有 `/models` 的 provider 才需要手填。
 
 ### Fixed
-- **回滚上一版的「添加模型」按钮 —— 它接的是 admin-only 的全局写入**:上一版的确认回调走 `POST /api/models/model`(`model_registry.upsert_model`),那是**管理员专属的全局 catalog 写入**。普通用户点下去直接撞「需要管理员权限」;更糟的是一旦写成功,用户自己的私人模型会出现在**所有人**的模型列表里。整条回滚后按 per-user overlay 重写(见上)。回归测试 `test_manual_model_is_per_user.py` 用 AST 断言 per-user 写入路径**不调用**任何全局 catalog 写入口,并锁住「同步不清手填」与 migration append-only。
+- **回滚 v1.76.0 的「添加模型」按钮 —— 它接的是 admin-only 的全局写入**:上一版的确认回调走 `POST /api/models/model`(`model_registry.upsert_model`),那是**管理员专属的全局 catalog 写入**。普通用户点下去直接撞「需要管理员权限」;更糟的是一旦写成功,用户自己的私人模型会出现在**所有人**的模型列表里。整条回滚后按 per-user overlay 重写(见上)。回归测试 `test_manual_model_is_per_user.py` 用 AST 断言 per-user 写入路径**不调用**任何全局 catalog 写入口,并锁住「同步不清手填」与 migration append-only。
 
-## [1.75.0] - 2026-07-28 (@ 4e2ed7d90)
-
-### Reverted
-- 「添加模型」入口已整条回滚:那个按钮接的是 `POST /api/models/model` —— **admin-only 的全局 catalog 写入**,普通用户点下去直接「需要管理员权限」,写成功还会把私人模型塞进所有人的目录。正确实现见下一版。
-
-## [1.74.0] - 2026-07-28 (@ 8f8f11a8e)
+## [1.75.0] - 2026-07-28 (@ 3ef8677ac)
 
 ### Added
 - **火山方舟 Agent Plan(订阅套餐)成为正式预设**:反馈者实测跑通并给出确定配置——Base URL `https://ark.cn-beijing.volces.com/api/plan/v3`(**不是** `/api/plan`,**也不要加** `/v1`)、模型 ID 手动填(如 `deepseek-v4-pro`,返 200)。它与 Ark(`/api/v3`)是**同域名下的两个不同产品**,各自成条目、互不覆盖。上一轮我因为无法验证其契约而没做预设,现在有实测就补上了。后端 catalog + 别名表 + 前端下拉 + i18n 说明**四处同批次**改(上一轮就是漏了前端那份才白改一轮,现有 `provider-list-parity.test.js` 守着)。
@@ -338,78 +338,90 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 ### Fixed
 - **`/models` 返回 404 时的提示在误导人**:原文案一律说「base_url 可能缺 /v1 版本段」。而 404 的真实含义是**这个 provider 根本没有模型列表接口**,跟 base_url、key 都无关。反馈者照着提示在方舟订阅套餐地址后加了 `/v1` —— 结果连本来能用的 `chat/completions` 也一起 404(他的原话:「那个网页提示的『base_url 可能缺 /v1』是它的通用猜测,对方舟不适用 —— 加了 /v1 只会让 chat/completions 也一起挂掉」)。修:404 单独成文案,说清「没有这个接口 ≠ 地址写错」、明确劝阻加 `/v1`、并告知手动填模型 ID 即可正常使用;非 404 的拒绝仍保留原来的通用猜测(它对别的 provider 有用)。
 
-## [1.73.2] - 2026-07-28 (@ fbea24729)
+## [1.74.2] - 2026-07-28 (@ 0e075a2f7)
 
 ### Fixed
 - **v1.74.0 的火山方舟接入只改了一半,用户刷新后「还是没看到」**:供应商其实有**两份互不知情的清单** —— 后端 `model_catalog.json` / `model_registry`(决定 provider 是否存在、base_url、GM 能否解析)与前端 `components/settings/models-catalog.js` 里**写死的 `PROVIDERS_CONFIG` 数组**(决定「添加供应商」下拉里能不能选到)。上一版只改了后端,下拉里自然还是没有。修:前端清单补上火山方舟;新增 `provider-list-parity.test.js` 锁双向一致(后端 `enabled` 的必须能在下拉里选到、两边 `base_url` 必须相同、豁免项必须写明理由且不许过期)。
 - **撤回 v1.74.0 的 `*.volces.com → /api/v3` base_url 自愈 —— 那条规则是错的,会改坏用户正确的配置**:当时以为反馈者把 `/api/plan` 写错了,实际他原话是「agent plan 给的是这个地址」——火山方舟同一域名下至少有**两个不同产品**的入口:`/api/v3`(Ark OpenAI 兼容,doubao 系模型)与 `/api/plan`(Agent Plan,Anthropic Messages 原生 + `AUTH_TOKEN`)。按 host 一刀切改写会把人家从火山控制台拿到的合法 Agent Plan 地址悄悄改成打不开的 `/api/v3`;而 ark 网关**先验鉴权再路由**(任意路径都回 401 `AuthenticationError`),用户根本看不出地址被动过手脚。教训写进注释与测试:**base_url 自愈只能针对同一产品公认的写法歧义**(如 Google 少写 `/openai`),一个域名下有多产品时,猜哪个都是错的。Google 那条自愈不受影响。
 - 供应商说明文案(`note_doubao`)点明两个入口的区别:OpenAI 兼容走预设的 `/api/v3`,Agent Plan 走「自定义 + Anthropic Messages(原生)」配 `/api/plan`。
 
-## [1.73.1] - 2026-07-28 (@ 43d833cc1)
-
 ### Fixed
 - **改名没生效:策展 provider 的 `display_name` 也要强制对齐**:v1.74.0 把 doubao 改叫「火山方舟 Doubao (Volcengine Ark)」,但 `_ensure_curated_apis` 只强制同步 `enabled` —— 已持久化的 catalog 里存的仍是旧名 `Doubao`,线上核对时 provider 确实露出来了、名字却没变,用户按「火山」照样搜不到,等于改名白改。修:策展白名单里的 provider 同步 `display_name`(展示名是我们策展的事实,与强制 `enabled` 同一个理由)。**`base_url` 刻意不碰** —— 那个可能被管理员按区域/中转有意改过,覆盖会打断人家的部署(已加守卫测试)。
 
 ## [1.74.1] - 2026-07-28 (@ 93921658d)
 
-## [1.73.0] - 2026-07-28 (@ 454f43990)
+## [1.74.0] - 2026-07-28 (@ 0c064d7b1)
 
 ### Added
 - **火山方舟(Volcengine Ark / 豆包)接入供应商列表**(群反馈:「火山的能用吗()格式试了两个都不对,用的 `.../api/plan` 和 `.../api/plan/v3`」):真因不是他填错——`doubao` 这条 provider 的 base_url 早就正确地写在 catalog(`https://ark.cn-beijing.volces.com/api/v3`),但 `enabled=false`,**根本不出现在供应商列表里**,用户只能自己猜接口地址。而 ark 网关**先验鉴权再路由**(实测 `/api/v3/chat/completions`、`/api/plan`、`/api/plan/v3` 任意路径都回 401 `AuthenticationError`,不是 404),填错路径只会看到「key 无效」,没法从报错反推是路径写错了。两处修:① `doubao` 进 `_CURATED_REQUIRED_APIS`(策展白名单)→ serve 时强制 `enabled`,**存量 DB catalog 自愈、无需改库**;`display_name` 从 `Doubao` 改成「火山方舟 Doubao (Volcengine Ark)」——用户是按平台名找的,只写 Doubao 在列表里认不出来。② `_normalize_openai_base_url` 按 **host** 确定性收敛:`*.volces.com` 且路径不含 `/api/v3` → 一律纠正为 `<scheme>://<host>/api/v3`,把 `/api`、`/api/plan`、`/api/plan/v3`、裸域名、缺 scheme、其它 region 全兜住(写时+读时都过一遍,历史误填也自愈)。模型清单不写死:配好 key 后由既有的「配 key 自动同步 `/models`」拉真实列表。回归测试 `test_volcengine_ark_provider.py`(17 例,含存量 catalog 自愈、下架 provider 不被误开、其它 provider 的 base_url 零误伤、Google 既有自愈规则不受影响)。
 
-## [1.72.6] - 2026-07-28 (@ e9484f328)
+## [1.73.6] - 2026-07-28 (@ 708a32db9)
 
 ### Fixed
-- **统一召回「新路」11 天一次都没跑成 —— 符号搬家漏改了调用方,又被 `except Exception` 吞掉**:`kb/recall.py` 从 `context_providers.novel` 导入 `_split_anchor_pending`,但该符号在 v1.70.1「函数寻根轮4」(`fdea8d321`,2026-07-17)已被收敛到权威缝 `context_engine.core` —— `novel.py` 自己的调用改了,**这个调用方漏了**。于是新路每次 `ImportError` → 静默降级旧路,生产日志每天刷 90 条 warning 没人看见。而这条路由 `RPG_TKB_RECALL` / `RPG_TKB_RECALL_MIN_SAVE_ID` 灰度门控 —— 只要开了,命中的存档全都在走这条死路:一个自以为已灰度上线的功能,实际全死。玩家侧无可见损坏(旧路正常),但等于灰度从未发生。修:两处 import 改指权威缝。**根上的问题是那个 `except Exception` 把编程错误(符号搬家/改名/签名不符)和运行期故障(DB 抖动/超时)一视同仁当「可降级」** —— 现在编程错误单独一条分支走 `log.error` + 固定可 grep 前缀「接线断了」,运行期故障维持 warning + 静默降级(绝不为一个 import 打断玩家回合)。回归测试 `test_recall_wiring_not_broken.py`(6 例;其中一例用 AST 抓出 `recall.py` 所有本仓 import 目标并逐个校验存在性 —— 这类断线以后在**导入期**就红)。
-- ⚠️ **上线建议**:这条路在修好之前从未真正执行过,所以修 import 等于让它对所有命中灰度的存档当场生效。建议先把 `RPG_TKB_RECALL` 关掉、改开 `RPG_TKB_RECALL_SHADOW`(影子模式:新路照常执行并把与旧路的 diff 落日志,**返回值仍取旧路**,玩家可见行为不变),确认 diff 无异常后再放量。
+- **统一召回「新路」11 天一次都没跑成 —— 符号搬家漏改了调用方,又被 `except Exception` 吞掉**:`kb/recall.py` 从 `context_providers.novel` 导入 `_split_anchor_pending`,但该符号在 v1.70.1「函数寻根轮4」(`fdea8d321`,2026-07-17)已被收敛到权威缝 `context_engine.core` —— `novel.py` 自己的调用改了,**这个调用方漏了**。于是新路每次 `ImportError` → 静默降级旧路,生产日志每天刷 90 条 warning 没人看见。而 env 是 `RPG_TKB_RECALL=on` + `RPG_TKB_RECALL_MIN_SAVE_ID=169`,覆盖 **170/271(62%)** 个存档、近 7 天活跃 30 个 —— 一个自以为已灰度上线的功能,实际全死。玩家侧无可见损坏(旧路正常),但等于灰度从未发生。修:两处 import 改指权威缝。**根上的问题是那个 `except Exception` 把编程错误(符号搬家/改名/签名不符)和运行期故障(DB 抖动/超时)一视同仁当「可降级」** —— 现在编程错误单独一条分支走 `log.error` + 固定可 grep 前缀「接线断了」,运行期故障维持 warning + 静默降级(绝不为一个 import 打断玩家回合)。回归测试 `test_recall_wiring_not_broken.py`(6 例;其中一例用 AST 抓出 `recall.py` 所有本仓 import 目标并逐个校验存在性 —— 这类断线以后在**导入期**就红)。
+- ⚠️ **上线策略**:因新路从未在生产执行过,本次修复**不顺势放量**。生产 env 同步改为影子模式(`RPG_TKB_RECALL=off` + `RPG_TKB_RECALL_SHADOW=on`):新路照常执行并把与旧路的 diff 落日志,但**返回值仍取旧路**,玩家可见行为与修复前完全一致。确认 diff 无异常后再决定是否翻回 `on`。
 
-## [1.72.5] - 2026-07-28 (@ d2f13b2e7)
+## [1.73.5] - 2026-07-28 (@ 88f770f32)
 
 ### Fixed
 - **403 被说成「凭证过期」,把用户支去查一个没坏的 key(群反馈:「能用 grok,但是说不了几句就会提示我凭证过期 403」「同一个 api key 在 sillytavern 依然能用」)**:`classify_provider_error` 把 401 与 403 合并成同一句「API Key 无效、已过期」。从生产机对 `api.x.ai` 发**无凭据**探针实测:它没有凭据时返回的是 **401**(`{"code":"unauthenticated:no-credentials"}`),403 是别的原因;生产日志里该用户 24h 内 **21 次 200 / 12 次 403 交替**,key 显然没失效。修:403 单独成文案——说清是「被提供商拒绝」、点明 403 通常不是 key 失效、并把 **provider 自己那句原话**(脱敏截断后)带给用户,401 才保留「key 无效/过期」的断言;`_AUTH_MARKERS` 里混着的三条 403 文本特征(`403 forbidden`/`http error 403`/`forbidden`)拆进新的 `_FORBIDDEN_MARKERS`,状态码被 SDK 吞掉时也走 403 文案。
 - **已分类的提供商错误把原话丢了,服务端日志无从排查**:`_client_safe_error` 对 `classify_provider_error` 命中的异常只记 `type(exc).__name__`(生产日志里就只有一行 `PermissionDeniedError`),而**未知**异常走 `_log.exception` 反倒记全文——最需要原话的那类被吞了,不对称。上面那个 403 也正因如此只能靠外部探针反推。修:已分类分支同样把 provider 原话写进服务端日志,经新增的 `redact_secrets` 按**形状**打码(不枚举 `sk-`/`xai-`/`AIza` 等前缀,枚举必漏)后再落盘;客户端文案仍不回显 `str(exc)`,契约不变。回归测试 `test_provider_403_not_expired_key.py`(15 例,含 4 种 key 形状的脱敏与「日志里也不许出现明文 key」)。
 
-## [1.72.4] - 2026-07-28 (@ cc16356fe)
+## [1.73.4] - 2026-07-28 (@ 911c3d1b1)
 
 ### Fixed
 - **世界线面板不跟 `/set` 强制约束、而且会「回退」(群反馈:「推进到第68章」后「世界线不变,而且这个世界线发生了回退(之前应该是 64 章左右,之前也出现过类似情况)……召回的和思考时的锚点是根据强制约束来的」)**:`routes/timeline._resolve_current_chapter` 取的是 `win["last_satisfied_chapter"] or win["chapter_min"]`。前者是 `get_progress_window` **内部的锚点单路中间值**(`max(source_chapter)` over occurred/variant[/superseded]),后者才是「锚点真实到达」与「玩家显式进度 `worldline.progress_chapter`」**取 max 之后**的权威值——取前者等于主动丢掉那个 max,于是世界线面板成了全站唯一只读单路信号的消费者,两个症状同源:① `/set` 抬了 `progress_chapter`,检索窗口与软引导都跟上了(所以玩家说召回和思考都按强制约束走),唯独面板钉在锚点到达章;② 锚点集合会因回滚/换分支而缩小,`max(source_chapter)` 随之**下降**(生产实证 save 268:曾到 ch64,后回落到 occurred 最大 ch58 → 面板显示「第58章 当前」),而 `advance_progress` 写的 `progress_chapter` 单调只增、永不回退。该函数上方的注释本来就写着「`chapter_min` 都取自它」——**注释是对的,实现跑偏了**。修:`source=='progress_chapter'`(玩家显式进度赢过锚点)时取 `chapter_min`,否则维持锚点章,保证 `anchor_pace` 开/关两种既有语义都不位移(pace off 时 `chapter_min = last_sat + 1`,直接改用它会让所有存档的高亮整体前移一章)。桌面与手机端面板读的是同一个端点的同一个 `current_chapter` 字段,一处修两端生效。回归测试 `test_timeline_panel_current_chapter.py`(7 例,含 pace 开/关不位移与三级回退链)。
 
-## [1.72.3] - 2026-07-28 (@ 60d438991)
+## [1.73.3] - 2026-07-28 (@ 2258c4814)
 
 ### Fixed
 - **P0「存档系统报废」——其实一条都没丢,是分支树被分页截断(群反馈:「想在分支树里切分支的时候发现下午以后的进度都没存下来,本来应该是 turn900 左右」「试了下手动存档也不行,显示存了但是分支树里没有」)**:后端 `branches.tree_ops.tree()` 默认 `page_limit=1000` 且 `order by id`(**升序**)+ 游标分页,而三端客户端**没有一个跟 `page.next_cursor`** → 永远只拿到**最老的** 1000 个 commit,新的全被截掉。生产实证 save 268(1035 个 commit):第 1 页 1000 个、最大 `turn_index=878`;第 2 页 35 个、到 `turn 909`;**当前活跃 commit 5688 根本不在第 1 页里**。所以树看着停在下午之前,新存的 commit 也进不了视野,而 `game_saves.turn`/`branch_commits` 在库里一直正常写(玩家截图里「分支图 1000 commits · 110 refs」的 1000 就是 `page_limit` 本身——refs 不分页所以是全的,两个数字一对比就能看出是截断)。修:三端同批次改成翻页拉完(上限 20 页 = 2 万 commit;`refs`/`save`/`active_commit_id` 取首页,后端本就不分页这几项)——`frontend/src/api-client.js` 的 `branches.list`(web 6 个调用方 GameLeftRail / Branches ×2 / SavesList / mobile 视图 ×2 全走这一个缝)、`mobile/src/api/index.ts` 的 `branches.list`(独立 Expo app)、`ios/Sources/API.swift` 的 `branchTree`。回归测试 `branches-pagination.test.js`(6 例,复刻后端游标语义:1035 → 全量返回 / 活跃 commit 必在集合内 / 单页存档只发一次请求 / 拉完后 `has_more` 归 false)。
 
-## [1.72.2] - 2026-07-27 (@ 02d061439)
+## [1.73.2] - 2026-07-27 (@ 3188d58e8)
 
 ### Fixed
 - **推剧情时粘一段含年份的 NPC 背景,被判成时间跳转(群反馈:「输入 NPC 背景:起源故事:1968年,年幼的威廉(昵称"JB")和母亲参加了'天空景观餐厅'的开幕派对。AIGM 会识别到时间跳转到 1968 年」)**——时间跳跃误判族第四案。病灶:`detect_time_directives` 的「第N章」「N年」两条 pattern 把跳跃动词写成**可选**前缀(`(?:跳到|快进到|…)?`),于是它们不再是「指令检测器」而退化成「文本里出现章号/年份检测器」,任何叙述、设定投喂、人物生平只要带个年份就触发(同族假阳性还有「他在1985年出生，后来搬到了纽约」)。而这两条在动词存在时本就被第一条 pattern 完全覆盖(动词表是它的子集),**唯一**的独立价值是玩家只打一个裸时点(「第30章」)。修:动词形态只留原第一/第二条;裸时点单独走 `fullmatch` 判定(整条输入去掉首尾标点后恰好就是时点值)。口径仍是既有的宁漏勿误——漏检有 GM 确认两步事务兜底,误报直接把玩家剧情推歪,代价不对称。同面横扫:`context_agent` 的 LLM 子代理侧补同口径第三道闸 `mentions_time_without_intent`(文本提到年份/章号、但既无跳跃动词、整条输入也不只是那个时点 → 不许子代理绕过确定性结论自行发起跳跃),否则修了确定性检测子代理照样把这段背景读成跳转。族谱:v1.26.4 回忆从句(前) → v1.49.1 动作叙述(后/周) → 本案 叙述里的年份/章号。回归测试并入既有 `test_time_directive_false_positive.py`(12 例)。
 - **`phase_digests.summary` 不是摘要,却被当摘要注入**:生产实测**全站 521/521 条**都是「第N章 · <该章开头正文>」的拼接(单条 3000 字,首行还是一整排 `====` 分隔线)。两个下游中毒——「当前剧情阶段」块注入它前 600 字 = 一屏 `====` 加第 1-3 章原文;`main_quest` 派生取 `f"{label} — {summary}"[:200]`,玩家可见的【主线】会被写成「开端 — 第1章 · ====…」(只在主线为空或仍是上次派生值时才写,所以手写过主线的存档侥幸没中招)。修:`_resolve_active_phase_range` 出口统一过 `_usable_phase_summary`,按**形状**判废(以「第N章 ·」开头 / 含长连续分隔线)——命中就当没有摘要,只用 phase_label;真·摘要(LLM 产的散文)不受影响。
 
-## [1.72.1] - 2026-07-27 (@ cf515be8c)
+## [1.73.1] - 2026-07-27 (@ 5690f95bd)
 
 ### Fixed
 - **玩家在第 67 章,除锚点块外的检索全从第 1 章召回(群反馈:「只有锚点章节(67章)原文是对的,phase fallback 还是从第一章开始召回,Postgres ChapterFact 也是第一章开始召回,Postgres 原文片段时第六章开始召回」)**:三处独立缺陷链式放大,生产实证 save 268(progress_chapter=67,`world.time`=「第67章·回归主神空间后·…」)全部复现。① `timeline_filter_for_label` 把 `_db_available` 早退放在函数最前面,而那个 SQLite 时间线索引**只有内置 demo 剧本才有**(同函数下方还硬编码着「图卢兹/柏林」加权)→ **所有用户导入的剧本恒返回空窗口**;可章号明明就写在 `world.time` 里,`_direct_chapter` 也早就能解析,那条路纯算术、根本不需要 SQLite。修:直接章号解析提到可用性判断之前,无索引时退化为与 `_chapter_filter` 同宽的算术窗口(ch-1..ch+1)。② 空窗口 → `_resolve_active_phase_range` 兜底,而它在 `game_saves.active_phase_index` 断链时(实证:该档 active_phase_index=2,`save_phase_digests` 只有 phase 0/1)直接退到「剧本最早期 phase」=**第 1-78 章**,全程不看进度;该返回值还喂 `main_quest` 派生,所以「主线永远停在开端」是同一个洞。修:新增 progress 感知档——先取包住玩家当前章的 phase,进度超出所有区间时取不晚于进度的最后一个(剧透方向只退不进),进度未知才保留原「最早期」行为。③ ChapterFact 的 `order by chapter` + limit 在宽窗口下恒取窗口头部,即便窗口正确、只要比 limit 宽就还是第 1-5 章。修:已知进度时按 `abs(chapter - progress)` 排序取回、再按章号升序注入(给 GM 读的是时间顺序)。另在 assemble 的回退链里补上【进度派生窗口】一档,排在 phase fallback 之前——phase 区间是阶段级的(该剧本每段 78 章),拿它当检索窗口等于没有窗口。回归测试 `test_retrieval_chapter_window.py`(13 例,含回退链顺序守卫)。
 
-## [1.72.0] - 2026-07-27 (@ 11e18f0c1)
+## [1.73.0] - 2026-07-27 (@ 197d35e50)
 
 ### Added
 - **锚点脱离 pending 时自动补写「存档独立时间线」历史锚点(反向级联)**:`record_history_anchor` 早有**正向**级联(带 `linked_pending_anchors` 写历史 → 同事务把对应 pending 标 satisfied),反向一直空着——GM 标了锚点却不留档,时间线就是空的。v1.72.4 把 `record_history_anchor` 补进直发工具窗口只解决了「够不着」,而生产数据说明够得着也未必会想起来调:一个 883 回合的存档 `mark_anchor_*` 真调了 **90 次**(24 occurred / 42 superseded / 24 variant),`record_history_anchor` **0 次**;全站 1140 次 vs 10 条。按铁律「留档不能挂提示词」,现在 `mark_anchor_satisfied` / `mark_anchor_superseded` 成功后确定性补一条历史锚点(`source='gm_generated'`,`metadata.via='anchor_cascade'`,importance 按 superseded 80 / variant 70 / occurred 60 —— 依 `record_history_anchor` 文档串自身的阈值语义,不新发明判据)。去重:该 `anchor_key` 已被某条 history 关联过就跳过(GM 手动填了 `linked_pending_anchors` 时正向级联先标掉锚点,这里查得到 → 不双写)。级联在 `connect()` 块**之外**调(自己开连接,嵌在已持连接的块里会在 PgBouncer 上叠连接,本仓有前科),且全程吞异常——级联失败绝不影响 mark 本身。顺带补上 `mark_anchor_superseded` 两条 SELECT 漏掉的 `anchor_key` 列(不补则级联永远拿不到 key、静默跳过)。GM 提示词同步说明锚点类事件不用再单独调 `record_history_anchor`。回归测试 `test_anchor_history_cascade.py`(14 例:importance 映射 / 两条路径都接线 / 调用点在连接块外的缩进断言 / SELECT 含 anchor_key / 去重 / 缺 key 跳过 / 异常吞掉)。
 
-## [1.71.4] - 2026-07-27 (@ 0214cb370)
+## [1.72.4] - 2026-07-27 (@ 9c762fec4)
 
 ### Fixed
 - **「相关往事·语义召回」5 条一模一样(群反馈)**:注入的 5 条往事正文逐字相同,只有括号里的环境描述符不同(「夜晚·路灯已亮」vs「暮色时分·路灯未亮」)。根因在 `kb/episodic.py` 的两条召回路径直接扫 COW 原表 `kb_events`——`memory.facts`/`world.known_events` 按 `fact:{i}` 位置键落库,桶一重排同一段文本就漂到别的 index 上再写一行(旧行不打 tombstone),于是一条事实在表里躺着几十上百个内容相同、只有 `story_time`/`location` 不同的副本。生产实证:单档 **108,902 活行只对应 578 段不同文本**,单个 `logical_key` 最多 1543 行 / 只有 16 段不同文本;拿真实事件向量做 40 次随机召回,**37 次 top-5 是同一段文本的 5 个副本**(不同文本数均值 1.15/5)。第二重伤害更隐蔽:关键词路径按 `id desc` 取 3000 条近因语料,里面只有 160 段不同文本 → 玩家早期真正的关键事件永远进不了打分池 = GM 对亲历剧情失忆。修:两条路径收敛到同一段 `_DEDUP_BY_SUMMARY` SQL,按 **summary 文本**去重(同文本取最近一次写入的那行)。⚠️去重维度刻意**不是** `logical_key`——按键收敛是 `live_repo._newest_visible` 的「当前 state 投影」语义,会把被轮换出 facts 桶的旧文本一并砍掉,而那些正是本模块要召回的远期记忆(同档实测 578 → 52);两处均已加注释互指。改后同档语料 3000 行/160 文本 → 505 行/505 文本,向量 top-5 恒为 5 段不同文本。
 - **跑了 877 回合的存档一条玩家历史锚点都没有(群反馈「50 多章从来没创造过玩家锚点」)**:`record_history_anchor` 名字落 `chat_tool_router._rank` 的兜底档 3,在 100 个工具里排 **89**,而 GM 直发工具窗口只有 16 → 模型永远拿不到它的 schema,只在 `tiered__load_tools` 目录里看见一行简介,实际从不 load;`list_recent_history` 排 39 同样在窗外,GM 连自己写过什么都查不了。生产实证:全站 `gm_generated` 历史锚点仅 **10 条 / 3 个存档**,66 条 `system` 全是 phase digest 自动写的——玩家看到的两条正是【Phase 1/2 浓缩】。这是同一族第二次翻车:上一次修 `mark_anchor_satisfied` / `mark_anchor_superseded` 时只把「剧本未来侧」四个名字塞进 `_rank` 的字面量元组,漏了「存档过去侧」(修 A 漏 B)。修:族成员收成单一名单 `_ANCHOR_FAMILY` + 提权子集 `_ANCHOR_WINDOW_PROMOTED`,新增成员只改一处;`check_pending_anchor_drift` 是排查用反查器(其自身描述即写「GM 一般不需要主动调」),留在族里但不占窗口名额。窗口默认 **16 → 18**:窗口是硬名额不是软优先级,16 会让提权把 `get_current_scene`/`get_game_state` 挤出去,18 保证改动**只增不减**(改前直发的工具一个不少),代价约 +2 条 schema ≈ 400 token/轮。回归测试 `test_anchor_tool_window.py`(族成员资格 + 两模式窗口内 + 核心状态读不被挤出 + 酒馆自管理工具仍居首);顺手把 3 处把窗口大小抄成字面量 `16` 的既有测试改为读 `tool_window_size()`(抄字面量正是它们这次假红的原因)。
 
-## [1.71.3] - 2026-07-26 (@ 30ff86522)
+## [1.72.3] - 2026-07-26 (@ 38f580d9b)
 
 ### Fixed
 - **「向量索引(按类型)」写着可选择性重嵌,却满页找不到重新生成的按钮(群反馈)**:剧本详情页 embed 4 子卡(章节切片 / NPC 角色卡 / 世界书条目 / 知识库人物)在收敛处置③里改成了只读进度、`onRebuild` 已摘掉,但 i18n 的 `scripts.editor.embed_breakdown_desc` 仍是旧文案「可选择性重嵌」(代码里的 `defaultValue` 当时更新过,locale JSON 的值把它盖住了——**文案改 defaultValue 不改 locale = 白改**)。更要命的是「按类型重嵌」这个能力当时**整个从 UI 消失了**:后端 `POST /api/scripts/{id}/rebuild/embeddings` 的 `body.include`(估算路径 `rebuild_scheduler` 与执行路径 `rebuild_worker._rebuild_embeddings` 都读)一直好好的,只是没有任何界面能传它,所有重做都退化成四类全清全重嵌。修:① `RebuildEstimateModal` 在 `module==='embeddings'` 时渲染 4 个类型勾选框(默认全选 = 后端缺省行为,改动即时重估「将检查 N 条向量目标」,全不选则禁用确认——空 `include` 会被后端当全选,与所见相反);② 文案改成说清去处(点「向量索引」卡的「重做」),locale 与 `defaultValue` 同步。三个入口(剧本详情页 / 知识库中心 / 编辑器 KB 抽屉)共用同一个 `useScriptRebuild` + 弹窗,一处修全站生效。回归测试 `rebuild-estimate-embeddings.test.jsx`,含前端 `EMBED_KINDS` 与后端两处默认 `include` 字面量的跨语言奇偶守卫。
 
-## [1.71.2] - 2026-07-25 (@ 653076e21)
+## [1.72.2] - 2026-07-25 (@ d77587bb0)
 
 ### Fixed
 - **网页版改「接口地址(base_url)」保存后不生效,必须删 key 重填**:API 设置里「编辑」某供应商、只改 Base URL 而不重填 API Key(key 从不回显)时,URL 变更被静默丢弃——根因是前端仅在填了 key 时才 `credentials.set`,而后端 `set_credential` 又把空 key 当「删除凭证」。修:后端加 `preserve_key_if_empty`(空 key + 已存凭证 → 只改 `base_url_override`/启用态,保留密文 key 与 proxy;无凭证则报错),`/api/me/credentials` 透传 `keep_key`;前端 `EditApiModal` 在已配置凭证且 base_url 变更、未重填 key 时带 `keep_key` 保存。删 key(空 key 无 base_url)/联邦断连语义不变(短路在校验前)。孪生核查:mobile 为纯 key(无 base_url 编辑)、provider-config 的 base_url 为 admin-only 且显式提示,均无此症。
+
+## [1.72.1] - 2026-07-22 (@ 849a3d5c9)
+
+### Fixed
+- **云端加本地模型撞「必须是 https」的墙,且提示不可执行(群反馈 dali:「本地模型怎么添加 / 提示我一定要 https,但是本地模型不是只有 http」)**:云端实例(server 模式)`_validate_base_url` 拒 http 与本机/私网地址是**正确且必须保留**的——云端服务器根本到不了用户自己机器上的 Ollama / LM Studio,换成 https 也连不上,不是 https 与否的问题。问题全在**表达与时机**,三处修:① 后端把「服务器模式下 base_url 必须是 https」换成统一的 `_LOCAL_MODEL_HINT`(讲清为什么 + 出路=桌面版/自托管),http / localhost 字面量 / 解析到私网 三条拒绝路径共用同一份文案;② `EditApiModal` 按 `/api/state` 的 `app.deployment` **提前**判定,云端填本机/私网 base_url 时字段直接报错并禁用「保存」,不再让用户填完 API key 才撞墙(后端仍是唯一权威,前端只做提示层);③ 删掉「连接方式」里的**纯装饰**选项「局域网 / 本地」——提交侧只认 `http_proxy`,选它等同直连却让人以为云端能接局域网模型(「UI 存在 ≠ 生效」)。
+- **保存 API key 失败时误报「元数据已保存」**:`models-section` 无条件弹这条警告,但 catalog 写入是 admin 专属(普通用户 `needsCatalogWrite` 恒 false),实际一个字节都没写,用户却看到两条 toast 叠着、以为留下了半截脏数据。改为只在 catalog 真写成功后才提示;失败 toast 停留时间加长到 9s(detail 现在是一整段可执行说明,默认 2.4s 读不完)。
+- 新增 `frontend/src/lib/deployment.js`:部署模式(云端 vs 自部署)判定的前端单一真相源(与后端 `core.config.LOCAL_MODES` 对齐,结果进程内缓存),`FeedbackDrawer` 里抄写的字面量数组一并收口。回归测试 `edit-api-local-model.test.jsx`。
+
+## [1.72.0] - 2026-07-18 (@ 9804ddfa0)
+
+### Added
+- **galgame 转换功能地基(灰度:仅管理员可见)**:「创作」分类下新页 `convert`——选可成片存档(≥10 GM 回合门控)+ 基础转换设置(模型 `AgentModelPicker` / 精编强度 / 主角模式(默认沉默,由真实数据裁定:玩家输入中位 13 字符不足以建内心独白)/ 生图开关默认关)+ 成本监控(新端点 `POST /api/me/convert/estimate`,按活跃快照 GM 回合数确定性估算 tokens/成本)。「开始转换」暂 disabled——改编管线(台本层/演出层两趟分离)尚未实现,本页是设置与成本监控的 UX 面。**三道防线灰度**:导航 `adminOnly` 隐藏 + 路由 `AdminGuard` + 端点服务端管理员校验(前端隐藏≠后端安全)。
+- 文档:`docs/design/letsgal-export.md`(LetsGal 格式勘探 + 两层改编方向设计 + 真实数据驱动决策)、`docs/audit/save-data-audit-2026-07-18.md`(256 档聚合审计,零正文外泄)。
+
 
 ## [1.71.1] - 2026-07-18 (@ dedb45620)
 
@@ -916,6 +928,13 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 ### Fixed
 - **生成参数预设从不生效(反馈#93 之二)**:设置页早有 temperature/top_p/top_k/惩罚项 + 4 档预设 UI,值落 `user_preferences` 顶层扁平键,但**后端从不读取**(各 provider 硬编码 temperature)→ 调预设等于没调。新增单一来源 `agents/gm/backends/_gen_params.resolve_gen_params(user_id)`(**只返回用户显式设过的键** + 校验夹取 → 未配置用户零行为变化),三后端**叙事**调用接入:openai_compat(temperature/top_p/penalties + extra_body 的 top_k/repetition_penalty,自愈从「只挡 temperature」扩到「拒任一采样参数即剥全部退默认」)、vertex(temperature/top_p/top_k 覆盖)、anthropic(temperature/top_p/top_k;Extended Thinking 开启时全跳过,避冲突)。结构化/JSON 调用保持低温不受影响。真库 e2e:未配置空 / 设置生效 / 超界夹取 / 部分设置只回设过的键 全通。
 - **酒馆系统提示词无法保存(反馈#94)**:`POST /api/tavern/chats/{id}/system-prompt` 仅写 `game_saves.state_snapshot`,但主读源是 `runtime_checkouts.state_snapshot`(`load_active_state` 优先读它),且 kb_native 档(生产 74 个酒馆档中 49 个)经 `_kb_backed_state`→`materialize` 从 `kb_worldline_vars` 重建 `tavern` 覆盖该写 → 系统提示词保存后回退。**两处根因修复**(均沿用既有范式):①端点在本对话即活跃档时把 `system_prompt` 写进 working-tree state + `_persist_runtime_checkpoint`(runtime + `snapshot_hash` bump,跨 worker 失效),与 worldline 变量端点同款;②`_kb_backed_state` 对 `tavern` 子树做 blob 覆盖(同 `session_model`,out-of-turn 编辑不随回合 import 进 KB)。真库 e2e 往返验证(kb_native 档 set→reload 持久化 + 证伪旧路径);tavern/materialize/kb 测试 13 passed。
+
+### Added (iOS · swiftc typecheck 通过,待 TestFlight 归档)
+- **iOS OOC/指令适配**(承接 1.36.0 的各端对齐;全模块 `swiftc -typecheck -target arm64-apple-ios17.0-simulator` 零错误,分发仍需 Xcode 归档/签名):
+  - **命令回执**:SSE 分发补 `system_receipt` + `updates`(pre_llm)→ 状态行「✓ 设定已更新：…」(复用现有 `.stage`,不引入新 UI 基建)。
+  - **斜杠命令集**:`ChatView.slashSheet` 从 6 条补到指令全集(加 `/rel /var /pin /note`;客户端命令 `/status /debug /save` 由 iOS 原生 UI 承担)。
+  - **`/set` 管理面板**:世界面板新增「强制设定（/set）」段,列出 `worldline.user_variables` 并逐条删除 —— 新增 `GameSnapshot.forcedSetVars` 访问器(仿 `structuredUpdates`)+ `API.worldlineVariableRemove`(仿 `saveSettings`,`POST /api/worldline/variable/remove`)+ 删后 `rawState` 刷新(仿现有 `snap` 重载)。三处均镜像同文件既有写法降低编译风险,但仍需 Xcode 构建确认。
+
 ## [1.36.0] - 2026-07-02 (@ 81bb5f986)
 
 ### Added / Changed
@@ -1277,6 +1296,9 @@ First SemVer release; baseline for desktop distribution + versioned releases.
 - Self-hosted frontend bundles now treat an empty `<meta name="api-base" content="">` as an explicit same-origin API base, so login/schema requests no longer fall back to port 7860 when the backend serves `dist` on another local port.
 - Fresh/self-hosted database setup now enables pgvector before versioned migrations, and migration v60 backfills missing vector columns and HNSW indexes so semantic retrieval works on both new and previously drifted databases.
 - Game Console now turns invalid or expired BYOK API keys into an actionable settings prompt instead of showing only a generic chat failure.
+- VIP/admin RAG embedding fallback now uses Gemini's native embedding endpoint when the platform key is a Google AI Studio key, and backend startup no longer lets a stale root `.env` override the service embedding provider; ordinary users still need their own embedding key.
+- Short player inputs now add a GM camera directive so the reply focuses on NPC/world reactions instead of expanding the player's own actions or inner monologue.
+- Script timeline anchors now show full sample summaries instead of truncating them, and worldbook detail buttons can open read-only details for non-owner scripts.
 - Background phase summaries now use the save owner's model credentials, so long-memory compaction no longer falls back to an unconfigured server Vertex account.
 - New-save player origin selection no longer forces an initial identity card; the identity overlay is now truly optional for all origin modes.
 - Game Console openings now convert trailing markdown action lists into the GM choice box and refresh the streamed opening with the cleaned stored state.
@@ -1297,7 +1319,8 @@ First SemVer release; baseline for desktop distribution + versioned releases.
 - Game Console chat streaming now distinguishes completed streams, backend errors, idle timeouts, manual stops, and true premature closes, so normal SSE close events no longer show a false "generation interrupted" error and the failure card exposes retry plus event-log details.
 - Model parameter settings now reload saved values after refresh, persist NSFW mode/presets, and let the main GM honor each user's max output token setting.
 - Chat usage records now include model finish reason and the applied output budget, making token-limit truncation visible in ops logs.
-- Vertex/Agent Platform chats now return a recoverable user-facing error when the Service Account JSON is missing instead of failing the request with a backend 500.
+- Acceptance retry now keeps the chat write context in scope, so a retry draft can safely write GM JSON state updates instead of falling back to audit-only warnings.
+- Vertex/Agent Platform chats and openings now return a recoverable user-facing error when the Service Account JSON is missing instead of failing the request or showing only a generic stream error.
 - Script module rebuilds now expose the missing estimate endpoint and show actionable embedding credential prerequisites instead of surfacing "Method Not Allowed" when rebuilding vector indexes.
 - NPC character-card editing and deletion in the card library now call the existing script card APIs.
 - Saving an NPC character card with an existing name now updates the existing card instead of failing with a duplicate-name backend error.
