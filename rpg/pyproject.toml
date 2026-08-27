@@ -9,7 +9,7 @@ dependencies = [
     # core.outbound.safe_httpx_client,28 个调用点)——1.x 下会**构造即 TypeError**,
     # 整个 Anthropic GM 后端直接死。升级要连同出站层一起迁,是独立一件事,不能顺手合。
     # 闸同样在 .github/dependabot.yml 的 ignore。
-    "anthropic>=0.122.0",
+    "anthropic>=0.125.0",
     "fastapi>=0.141.1",
     "fsspec>=2026.7.0",
     "google-auth>=2.56.3",

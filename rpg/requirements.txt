@@ -1,7 +1,7 @@
 argon2-cffi>=25.1.0
 redis==8.1.0
 annotated-types==0.8.0
-anthropic==0.122.0
+anthropic==0.125.0
 anyio==4.14.2
 ast_serialize==0.8.0
 certifi==2026.7.22
