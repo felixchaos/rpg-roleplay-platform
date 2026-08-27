@@ -8,6 +8,18 @@ updates:
     groups:
       python-deps:
         patterns: ["*"]
+    ignore:
+      # 与 npm 侧 typescript 同族:组内单成员把整组 CI 拖死。
+      # google-genai 要求 websockets<17.0(2.19.0 实测仍然),dependabot 反复顶到 17.x →
+      # 整组 ResolutionImpossible,PR 恒红。requirements.txt 里的注释拦不住它(读不懂),
+      # 这里才是真闸。google-genai 放开 <18 后,删这条并跟上 17.x。
+      - dependency-name: "websockets"
+        versions: [">=17.0"]
+      # anthropic 1.x 把 HTTP 层换成 httpx2:给 Anthropic() 传 httpx 对象会构造即 TypeError,
+      # 而我们的 SSRF 出站层 core.outbound.safe_httpx_client(28 个调用点)正是 httpx。
+      # 这是一次要连出站层一起迁的独立工程,不能混在依赖组里自动合。做完后删这条。
+      - dependency-name: "anthropic"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/frontend"
