@@ -9,6 +9,20 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.83.3] - 2026-08-27 (@ 540b68b96)
+
+### Fixed
+- **GM 的 ops 围栏漏进玩家可见正文,29 条 / 11 个存档,且逐月上升(6 月 7 → 7 月 4 → 8 月 18)。** 扫全量 `messages` 发现的;`strip_json_state_ops` 的 docstring 从第一天就写着「玩家永远不该看到 ops JSON」,但三层剥离合起来仍然漏。两种形态各有各的原因:
+  - **截断**(`...正文。\n\n```json\n[,,,,`):**第 2 层毁掉了第 3 层的判据** —— `_strip_bare_json_ops` 把被 `max_tokens` 截断的 ops 对象剥走,只留下 `[,,,,`;而 `_strip_trailing_unclosed_ops` 开头要求文本里还有 `"op"` / `"path"` 标记才动手,标记刚被上一层删了,于是直接 return。即便它动手,`cut = max(rfind("```"), rfind("["), ...)` 取的是**最右**的 `[`,围栏本身仍会留下。
+  - **文本形态工具调用**(`...正文。\n\n```json\n</parameter>\n</function>`):模型用文本而非原生形态发工具调用,残片落进正文。围栏体里根本不是 JSON,前三层按定义都不匹配。
+  - 补第 4 层:**只看「末尾有未闭合的 ops 围栏」,不看围栏体里是什么**。窄口径沿用流式那侧 `StreamFenceGuard` 的 ops info 判据(`json`/`state-ops`/`state`,或直接开 `[`/`{`),```` ```python ```` 之类原样保留。用 6 条**生产原样尾巴**验证:改前全漏、改后全清。
+  - 佐证:同期 `finish_reason='length'` 42 次 / 10 个存档 —— 与泄漏量级吻合,截断确是主因。
+  - ⚠️ **已落库的 29 条历史消息没有回填** —— 那是玩家的对话记录,改它属于改用户数据,留给你拍板。
+
+### 守卫
+- `test_ops_fence_never_reaches_player.py`:8 条生产实测形态 + 反向不变量(```` ```python ```` 闭合/未闭合都不许误伤)+ 回归锁(第 2 层删掉 ops 标记后第 4 层仍须生效)+ 整条回复只有 ops 时玩家侧得到空串。
+
+
 ## [1.83.2] - 2026-08-27 (@ 0b268a4f0)
 
 ### Fixed

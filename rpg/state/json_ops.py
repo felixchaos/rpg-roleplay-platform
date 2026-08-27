@@ -165,6 +165,51 @@ def _strip_trailing_unclosed_ops(text: str) -> str:
     return text[:cut].rstrip()
 
 
+# ops 围栏的 info 串(与 StreamFenceGuard._OPS_INFO_RE 同口径,别各写各的)。
+_OPS_FENCE_INFO_RE = re.compile(r"^(?:json|state-ops|state)\b")
+
+
+def _strip_trailing_unclosed_fence(text: str) -> str:
+    """兜底之兜底:剥离**末尾未闭合的 ops 围栏**,不管围栏体里是什么。
+
+    生产实证(2026-08 扫全量 messages,29 条 / 11 个存档,且逐月上升 7→4→18):
+    上面三层合起来仍会把围栏漏给玩家,两种形态各有各的原因 ——
+
+      A. `...正文。\n\n```json\n[,,,,`
+         **第 2 层毁掉了第 3 层的判据**:`_strip_bare_json_ops` 把截断的 ops 对象剥走,
+         只留下 `[,,,,`;而 `_strip_trailing_unclosed_ops` 开头要求文本里还有
+         `"op"` / `"path"` 标记才动手 —— 标记刚被上一层删了,于是直接 return。
+         (而且即便它动手,`cut = max(rfind("```"), rfind("["), ...)` 取的是最右的 `[`,
+          围栏本身仍会留下。)
+      B. `...正文。\n\n```json\n</parameter>\n</function>`
+         模型用**文本形态**发工具调用,残片落进正文。围栏体里根本没有 JSON,
+         前三层按定义都不匹配。
+
+    这两种都违反了 strip_json_state_ops 开头写下的不变量「玩家永远不该看到 ops 围栏」。
+    所以这一层改用**与围栏体无关**的判据:末尾有一个 ops info 的围栏、且其后再无闭合
+    ``` → 从围栏起点截掉。```python 之类的普通围栏原样保留(与流式那侧同一口径)。
+    """
+    if not text:
+        return text or ""
+    idx = text.rfind("```")
+    if idx == -1:
+        return text
+    if text.find("```", idx + 3) != -1:
+        return text  # 后面还有 ``` → 是闭合围栏,交给第 1 层
+    after = text[idx + 3:]
+    nl = after.find("\n")
+    info = (after[:nl] if nl != -1 else after).strip()
+    body = after[nl + 1:] if nl != -1 else ""
+    is_ops = (
+        bool(_OPS_FENCE_INFO_RE.match(info))
+        or info[:1] in ("[", "{")
+        or (not info and body.lstrip()[:1] in ("[", "{"))
+    )
+    if not is_ops:
+        return text
+    return text[:idx].rstrip()
+
+
 def strip_json_state_ops(text: str) -> str:
     """Return player-facing narrative text without JSON state-op fences.
 
@@ -172,11 +217,16 @@ def strip_json_state_ops(text: str) -> str:
       1. 围栏内 ops(```json [...] ```),含畸形围栏
       2. 裸 ops(未加围栏的 [{"op":...}])
       3. 截断的未闭合 ops(GM 响应被切断留下的半个块)
+      4. 末尾未闭合的 ops 围栏本身(不看体内是什么)——前三层都要求体内可识别,
+         而截断/文本形态工具调用留下的围栏体里啥都不是
     ops 的"应用"由更宽容的 extractor 兜底,与可见文本剥离解耦。
     """
     fenced_stripped = _extract_json_state_ops(text or "")[1]
     bare_stripped = _strip_bare_json_ops(fenced_stripped)
     final = _strip_trailing_unclosed_ops(bare_stripped)
+    # 第 4 层:前三层都按「围栏体是合法/可识别的 ops」设计,而截断与文本形态工具调用
+    # 会留下体内啥都不是的围栏。这一层只看「末尾有未闭合的 ops 围栏」。
+    final = _strip_trailing_unclosed_fence(final)
     return final.strip()
 
 
