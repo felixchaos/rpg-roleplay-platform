@@ -768,6 +768,19 @@
         }
         return { items: all };
       },
+      // 剧本 NPC 卡:酒馆卡导入(文件 / 粘贴 JSON)。同一端点两种 Content-Type ——
+      // 后端解析与用户卡 importTavern/importJson 共用 api/_card_import,只有落点不同
+      // (这里写进 script 的 NPC 卡)。60s 超时对齐 tavern.importCharacter:开了
+      // 「AI 整理字段」时要等一次 LLM 调用,默认 15s 会在后端还在跑时就断在前端。
+      scriptImportTavern: (sid, file, opts = {}) => {
+        const fd = new FormData(); fd.append("file", file);
+        if (opts.aiSplit) fd.append("ai_split", "true");
+        return _send(`${API_PREFIX}/scripts/` + sid + "/character-cards/import-tavern",
+          { method: "POST", body: fd, signal: timeoutSignal(60000) });
+      },
+      scriptImportTavernJson: (sid, body) => POST(
+        `${API_PREFIX}/scripts/` + sid + "/character-cards/import-tavern", body || {},
+        { signal: timeoutSignal(60000) }),
       scriptGet: (sid, cid) => GET(`${API_PREFIX}/scripts/` + sid + "/character-cards/" + cid),
       scriptUpsert: (sid, body) => POST(`${API_PREFIX}/scripts/` + sid + "/character-cards", body),
       scriptDelete: (sid, cid) => POST(`${API_PREFIX}/scripts/` + sid + "/character-cards/" + cid + "/delete", {}),

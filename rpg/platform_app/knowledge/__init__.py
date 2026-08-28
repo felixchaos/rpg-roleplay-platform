@@ -24,6 +24,7 @@ from platform_app.knowledge._utils import _chunk_text
 from platform_app.knowledge.character_cards import (
     delete_character_card,
     get_character_card,
+    import_character_card,
     list_chapter_facts,
     list_character_cards,
     set_character_card_enabled,
@@ -71,6 +72,7 @@ __all__ = [
     "list_character_cards",
     "get_character_card",
     "upsert_character_card",
+    "import_character_card",
     "delete_character_card",
     "set_character_card_enabled",
     "set_character_card_protagonist",

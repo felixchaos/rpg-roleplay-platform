@@ -9,6 +9,22 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.85.0] - 2026-08-29 (@ 5b5895c87)
+
+### Added
+- **剧本 NPC 角色卡支持导入酒馆卡 / 粘贴 JSON。** 群反馈(白玖):「新增 NPC 角色卡这里能不能增加一个酒馆卡导入或者粘贴 JSON 的功能」。此前剧本详情的「NPC 角色卡」只有「新增 NPC 卡」一条路 —— 一张卡十几个字段全靠手敲,而用户手里现成的 SillyTavern 卡(.png / .json)只能导进**用户角色卡库**(那是 PC 卡,进不了剧本的 NPC 检索)。
+  - 新端点 `POST /api/scripts/{id}/character-cards/import-tavern`(仅 owner)。**请求解析**(multipart 文件 / `json` / `json_string` / `base64` / `png_base64` / 大小上限 / 报错文案)收敛进新的 `api/_card_import.py`,与用户卡导入端点共用同一份 —— 否则就是「一边收 PNG 一边只收 JSON」的经典修 A 漏 B。**字段映射**共用 `tavern_cards.tavern_to_user_card`,NPC 侧只补酒馆卡没有的剧本字段(`tavern_to_npc_card`),默认值与前端手建卡逐字段对齐(首现第 1 章 / 重要度 100 / 预算 450),不会一进来就排在召回最末。
+  - **同名卡是「换人设」不是「换一张卡」。** 导入撞上已有同名 NPC 时走 `knowledge.import_character_card` 合并:更新人设文本,但保留该卡在**本剧本内**攒出来的东西 —— 首现章节 / 重要度 / token 预算 / 位置 / 启停 / 主角锁(`protagonist_locked`),以及酒馆卡根本不带的字段(秘密、别名):**留空 ≠ 清空指令**。
+  - PNG / WEBP 内嵌卡的立绘落成该 NPC 卡头像并登记进文件库 —— `_store_imported_card_image` 加 `script_id` 分支(NPC 卡 `user_id` 恒 NULL,原来的 `user_id` 闸会更新 0 行,立绘静默丢失)。
+  - 前端复用同一个 `TavernImportModal`(新增 `allowChat` / `multiple` / `footerHint` 三个 prop),执行段抽到 `lib/tavern-card-import.js`,用户卡库与剧本 NPC 卡共用。
+
+### Fixed
+- **导入弹窗选了多张卡,只有第一张真的进来。** 弹窗允许一次选 8 个文件、也把文件都列出来了,但 `onConfirm` 的 payload 长期只带预览的那一张(`parsed._file`),其余**静默丢弃**,没有任何提示。payload 改带 `files[]`,两个卡库入口按序逐张导入并逐张统计失败;酒馆侧「导入一张卡=开一个新对话」没有「开哪个」的语义,显式传 `multiple={false}` 关掉多选。
+
+### Notes
+- 平行面豁免:移动端 NPC 卡页(`mobile/cards/NpcView.jsx`)与跨剧本聚合 NPC 页(`CardViews.NpcCardsView`)本批**未**加入口 —— 后者的落点剧本在 filter=all 时不确定(已有 `npc_script_required` 的老问题),前者是另一套 sheet 组件。后端端点已就位,补前端入口时直接调即可。
+
+
 ## [1.84.1] - 2026-08-27 (@ 31781afce)
 
 ### Changed
@@ -23,7 +39,6 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
   验证:后端干净 venv 实装后 unit 2358 passed;前端 `npm ci` 退出码 0(原本 ERESOLVE)、build ✓、vitest 272 passed。
 
 
-## [1.84.1] - 2026-08-27 (@ 78fed7bf2)
 
 ## [1.84.0] - 2026-08-27 (@ ce970bac8)
 

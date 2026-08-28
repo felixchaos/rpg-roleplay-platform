@@ -5,6 +5,8 @@ import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CardEditModal, cardSnippet, npcToUserCardBody } from '../../pages/cards.jsx';
+import { TavernImportModal } from '../cards/TavernImportModal.jsx';
+import { runCardImport } from '../../lib/tavern-card-import.js';
 import { WorldbookEditorView } from '../../pages/script-edit-worldbook.jsx';
 import { CanonEntityEditorView } from '../../pages/script-edit-canon.jsx';
 import { useScriptRebuild, ModuleRebuildPanel } from '../../pages/script-modules-panel.jsx';
@@ -61,6 +63,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
   const [ov, setOv] = useStatePL(null);
   const [loading, setLoading] = useStatePL(false);
   const [npcEdit, setNpcEdit] = useStatePL(null); // { card, isNew } | null — NPC 卡编辑(复用 CardEditModal)
+  const [npcImport, setNpcImport] = useStatePL(false); // 酒馆卡导入弹窗(复用 TavernImportModal)
   // Version history drawer
   const [historyOpen, setHistoryOpen] = useStatePL(false);
   // Fork inline confirmation state
@@ -110,6 +113,33 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
     } finally {
       setProtagBusy(null);
     }
+  };
+
+  // 酒馆卡 → 本剧本 NPC 卡(群反馈:白玖)。弹窗与用户卡库共用 TavernImportModal,
+  // 执行段共用 lib/tavern-card-import(多选逐张导入 + 失败逐张统计),只有落点不同:
+  // 这里打 /api/v1/scripts/{id}/character-cards/import-tavern,卡直接落进本剧本。
+  const onImportNpcCards = async (payload) => {
+    const r = await runCardImport(payload, {
+      importFile: (f) => window.api.cards.scriptImportTavern(s.id, f, { aiSplit: payload?.aiSplit }),
+      importJson: (body) => window.api.cards.scriptImportTavernJson(s.id, body),
+    });
+    setNpcImport(false);
+    if (r.failures.length) {
+      window.__apiToast?.(t('scripts.toast.npc_import_fail', { defaultValue: '角色卡导入失败' }), {
+        kind: r.imported ? 'warn' : 'danger',
+        detail: r.failures.map((f) => (f.name ? `${f.name}: ` : '') + f.message).join(' · '),
+      });
+    } else {
+      // replaced = 同名卡被更新(人设换了,首现章节/重要度/主角锁保留)——说清楚,别让用户
+      // 以为多了一张新卡。
+      window.__apiToast?.(t('scripts.toast.npc_imported', { count: r.imported, defaultValue: `已导入 ${r.imported} 张角色卡` }), {
+        kind: 'ok',
+        detail: r.replaced
+          ? t('scripts.toast.npc_imported_replaced', { count: r.replaced, defaultValue: `其中 ${r.replaced} 张是同名卡,已更新人设(章节/重要度保留)` })
+          : undefined,
+      });
+    }
+    if (r.imported) await reloadNpc(); // 静默重拉(不清空 → 不丢滚动位置)
   };
 
   // NPC 卡 → 用户角色卡(card_type='pc')。复制一份独立用户卡(含头像),后端 myUpsert
@@ -491,6 +521,11 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
               <CSHeader counter={`(${(npc || []).length})`}
                 actions={
                   <CSSpaceBetween direction="horizontal" size="xs">
+                    {isOwner && (
+                      <CSButton iconName="download" onClick={() => setNpcImport(true)}>
+                        {t('scripts.editor.import_npc', { defaultValue: '导入酒馆卡' })}
+                      </CSButton>
+                    )}
                     <CSButton iconName="add-plus" onClick={() => setNpcEdit({ card: null, isNew: true })}>{t('scripts.editor.add_npc')}</CSButton>
                   </CSSpaceBetween>
                 }>
@@ -670,6 +705,13 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
           </CSSpaceBetween>
         </CSModal>
       )}
+      <TavernImportModal
+        open={npcImport}
+        onClose={() => setNpcImport(false)}
+        onConfirm={onImportNpcCards}
+        allowChat={false}
+        footerHint={t('cards.import.script_footer_hint', { defaultValue: '导入后成为本剧本的 NPC 角色卡;同名卡会更新人设' })}
+      />
       {npcEdit && (
         <CardEditModal
           card={npcEdit.card}

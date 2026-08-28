@@ -1,12 +1,15 @@
 """platform_app.api.scripts.cards —— 剧本 NPC 角色卡族 + AI 复核端点。
 
-列表/详情/upsert/删除/enabled/protagonist + audit-cards。纯机械搬家,行为零变化。
+列表/详情/upsert/删除/enabled/protagonist + import-tavern(酒馆卡导入)+ audit-cards。
 """
 from __future__ import annotations
+
+import asyncio
 
 from fastapi import Depends, Request
 
 from ... import knowledge
+from .._card_import import parse_card_import_request
 from .._deps import json_response, require_user, value_error_response
 from ._shared import router
 
@@ -52,6 +55,52 @@ async def api_script_upsert_character_card(request: Request, script_id: int, use
         except Exception:
             pass
         raise
+
+
+@router.post("/api/scripts/{script_id}/character-cards/import-tavern")
+async def api_script_import_tavern_card(request: Request, script_id: int, user=Depends(require_user)):
+    """把酒馆(SillyTavern)角色卡导入为**本剧本的 NPC 角色卡**。**仅 owner**。
+
+    群反馈(白玖):剧本详情「NPC 角色卡」只能一个字段一个字段手建,手里现成的酒馆卡
+    没有入口。请求解析(multipart 文件 / 粘贴 JSON / PNG 内嵌卡 / base64)与用户卡导入
+    共用 api/_card_import;字段映射共用 tavern_cards.tavern_to_npc_card;同名卡走
+    knowledge.import_character_card 合并(保住该卡在本剧本里的章节/重要度/主角锁)。
+
+    返回 {"ok", "card", "replaced", "imported_from", "llm_structured"}。
+    """
+    from ... import tavern_cards
+    from ..me._shared import _store_imported_card_image
+
+    try:
+        # image_bytes: PNG/WEBP 卡的原图(卡本身即头像);ai_split: 用户显式 opt-in 才挂 LLM
+        v2, image_bytes, ai_split = await parse_card_import_request(request)
+        payload = tavern_cards.tavern_to_npc_card(v2)
+        if ai_split:
+            # LLM 兜底拆字段(同步调用包进线程,失败不阻断导入)。模型走 card_import 统一配置。
+            try:
+                payload, _used = await asyncio.to_thread(
+                    tavern_cards.apply_llm_structure, payload, user["id"]
+                )
+            except Exception:
+                pass
+        result = knowledge.import_character_card(user["id"], script_id, payload)
+        card = result["card"]
+        # PNG/WEBP 卡自带立绘 → 存为该 NPC 卡头像 + 登记文件库。失败不阻断导入(卡已落库)。
+        if image_bytes and isinstance(card, dict) and card.get("id"):
+            try:
+                _store_imported_card_image(user["id"], int(card["id"]), image_bytes, script_id=script_id)
+                card = knowledge.get_character_card(user["id"], script_id, int(card["id"])) or card
+            except Exception as _img_exc:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "[script-import-tavern] store card image failed: %s", _img_exc)
+        return json_response({
+            "ok": True, "card": card, "replaced": bool(result["replaced"]),
+            "imported_from": "tavern_v2",
+            "llm_structured": bool((payload.get("metadata") or {}).get("llm_structured_description")),
+        })
+    except ValueError as exc:
+        return value_error_response(exc)
 
 
 @router.post("/api/scripts/{script_id}/character-cards/{card_id}/delete")

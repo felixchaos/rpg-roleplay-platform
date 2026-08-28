@@ -21,6 +21,7 @@ import { CardGrid } from './CardGrid.jsx';
 import { CardDetailPanel } from './CardDetailPanel.jsx';
 import { CardEditModal } from './CardEditModal.jsx';
 import { TavernImportModal } from './TavernImportModal.jsx';
+import { runCardImport } from '../../lib/tavern-card-import.js';
 
 /* 在线角色卡库 — 浏览并完整导入其他用户公开分享的 PC 角色卡。
    GET /api/cards/public · POST /api/cards/public/{id}/clone(完整复制进自己卡库,非指针) */
@@ -161,23 +162,27 @@ function UserCardsView() {
 
   const onImport = async (payload) => {
     try {
-      if (payload?.type === "card" && payload.file) {
-        await window.api.cards.importTavern(payload.file, { aiSplit: payload.aiSplit });
-      } else if (payload?.type === "card_json" && payload.json_string) {
-        await window.api.cards.importJson({ json_string: payload.json_string, ai_split: payload.aiSplit });
-      } else if (payload?.type === "chat" && payload.jsonl) {
+      if (payload?.type === "chat" && payload.jsonl) {
         const title = payload.charName ? t('cards.page.import.chat_title_prefix', { name: payload.charName }) : undefined;
         await window.api.chats.importTavern({ jsonl: payload.jsonl, title });
         window.__apiToast?.(t('cards.toast.chat_imported'), { kind: "ok" });
         setImporting(false);
         return;
-      } else if (payload?.file) {
-        // legacy fallback
-        await window.api.cards.importTavern(payload.file);
-      } else if (payload?.json) {
-        await window.api.cards.importJson({ json: payload.json });
       }
-      window.__apiToast?.(t('cards.toast.imported'), { kind: "ok" });
+      // 卡导入(文件 / 粘贴 JSON)走共享执行段:多选的文件逐张导入,失败逐张统计 ——
+      // 此前只导 payload.file 一张,弹窗里列出来的其余文件被静默丢弃。
+      const r = await runCardImport(payload, {
+        importFile: (f) => window.api.cards.importTavern(f, { aiSplit: payload?.aiSplit }),
+        importJson: (body) => window.api.cards.importJson(body),
+      });
+      if (r.failures.length) {
+        window.__apiToast?.(t('cards.toast.import_fail'), {
+          kind: r.imported ? "warn" : "danger",
+          detail: r.failures.map((f) => (f.name ? `${f.name}: ` : '') + f.message).join(' · '),
+        });
+      } else {
+        window.__apiToast?.(t('cards.toast.imported'), { kind: "ok" });
+      }
       setImporting(false);
       reload();
     } catch (e) {

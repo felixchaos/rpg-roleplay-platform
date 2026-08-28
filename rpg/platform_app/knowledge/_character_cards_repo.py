@@ -41,6 +41,15 @@ def _db_get_character_card(db, script_id: int, card_id: int):
     ).fetchone()
 
 
+def _db_get_character_card_by_name(db, script_id: int, name: str):
+    """repository: 按 script_id+name 查单条 NPC character_card(唯一约束
+    uq_character_cards_npc_name 保证最多一条)。导入同名卡时用来判「新建还是更新」。"""
+    return db.execute(
+        "select * from character_cards where script_id = %s and name = %s and card_type = 'npc'",
+        (script_id, name),
+    ).fetchone()
+
+
 def _db_delete_character_card(db, script_id: int, card_id: int):
     """repository: 按 id+script_id 删除 NPC character_card,返回 row 或 None。"""
     return db.execute(

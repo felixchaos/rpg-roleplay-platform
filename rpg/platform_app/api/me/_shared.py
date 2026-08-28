@@ -29,10 +29,15 @@ def _detect_image_mime(data: bytes) -> tuple[str, str]:
     raise ValueError("仅支持 PNG / JPEG / WebP 图片（魔数校验失败）")
 
 
-def _store_imported_card_image(user_id: int, card_id: int, blob: bytes) -> None:
+def _store_imported_card_image(user_id: int, card_id: int, blob: bytes, script_id: int | None = None) -> None:
     """导入角色卡时把卡自带的原图(PNG/WEBP 卡本身即头像)存进 storage +
     设 character_cards.avatar_path + 登记 user_assets(功能组件→文件库)。
-    非图片(魔数失败)会 raise，调用方 try/except 兜底。"""
+    非图片(魔数失败)会 raise，调用方 try/except 兜底。
+
+    script_id 给定 → 落点是剧本 NPC 卡(character_cards.user_id 恒 NULL,归属看 script_id,
+    owner 由调用方先校验);缺省 → 落点是本人用户卡(user_id 闸)。两条导入路径共用本函数,
+    避免"PC 卡导入带头像、NPC 卡导入不带"这种半边功能。
+    """
     import secrets as _secrets
 
     from ... import storage as _storage
@@ -44,10 +49,16 @@ def _store_imported_card_image(user_id: int, card_id: int, blob: bytes) -> None:
         blob, kind="ai_images", filename=f"card_{user_id}_{_secrets.token_hex(12)}.{ext}"
     )
     with _connect() as db:
-        db.execute(
-            "update character_cards set avatar_path = %s where id = %s and user_id = %s",
-            (url, card_id, user_id),
-        )
+        if script_id is not None:
+            db.execute(
+                "update character_cards set avatar_path = %s where id = %s and script_id = %s",
+                (url, card_id, script_id),
+            )
+        else:
+            db.execute(
+                "update character_cards set avatar_path = %s where id = %s and user_id = %s",
+                (url, card_id, user_id),
+            )
     _register_asset(
         user_id=user_id, kind="card_image", storage_key=key, url=url,
         source="card_import", ref_kind="card", ref_id=card_id,

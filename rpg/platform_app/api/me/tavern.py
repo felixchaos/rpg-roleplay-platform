@@ -1,7 +1,7 @@
 """platform_app.api.me.tavern —— 酒馆(SillyTavern)角色卡兼容 + 聊天记录导入端点。
 
 角色卡 import-tavern / import-json、export-tavern / export-png、聊天记录 import-tavern(JSONL)。
-纯机械搬家,行为零变化。
+请求解析共用 api/_card_import(与剧本 NPC 卡导入端点同一份)。
 """
 from __future__ import annotations
 
@@ -10,82 +10,32 @@ import json
 
 from fastapi import Depends, Request
 
+from .._card_import import parse_card_import_request
+from .._card_import import truthy as _truthy
 from .._deps import json_response, require_user, value_error_response
 from ._shared import _store_imported_card_image, router
 
-
 # ── 酒馆 (SillyTavern) 角色卡兼容 ───────────────────────────────────
-def _truthy(v) -> bool:
-    return str(v or "").strip().lower() in ("1", "true", "yes", "on")
+# 请求解析(multipart / JSON body / PNG base64 / 大小上限 / 报错文案)收敛在
+# api/_card_import.py —— 与剧本 NPC 卡导入端点共用同一份,避免两个入口对同一张卡
+# 表现不一致。
 
 
 @router.post("/api/me/character-cards/import-tavern")
 async def api_import_tavern_card(request: Request, user=Depends(require_user)):
-    """导入酒馆角色卡。
+    """导入酒馆角色卡为**用户角色卡**(card_type='pc')。
 
-    两种 Content-Type 均支持：
-    A) multipart/form-data: 含 "file" 字段（.png/.json/.webp 文件）
-    B) application/json payload 形态:
-      - {"json": {...V2 dict...}}
-      - {"json_string": "{...}"}
-      - {"base64": "..."}
-      - {"png_base64": "..."}
+    支持 multipart(file) 与 JSON body(json / json_string / base64 / png_base64),
+    形态清单见 api/_card_import.parse_card_import_request。
     """
     from ... import tavern_cards, user_cards
-    _MAX_IMPORT_PAYLOAD_BYTES = 16 * 1024 * 1024
 
-    content_type = request.headers.get("content-type", "")
-    ai_split = False  # 用户显式 opt-in「AI 整理字段」时才挂 LLM 兜底
-    image_bytes: bytes | None = None  # PNG/WEBP 卡的原图，导入后存为头像 + 登记文件库
     # 整理用模型统一走「设置 → 模型 → card_import」配置(apply_llm_structure 内部解析),
     # 不在导入请求里透传 per-import 模型。
     try:
-        # ── multipart/form-data（前端 importTavern(file)）─────────────
-        if "multipart/form-data" in content_type:
-            form = await request.form()
-            ai_split = _truthy(form.get("ai_split"))
-            file_field = form.get("file")
-            if file_field is None:
-                return json_response({"ok": False, "error": "multipart 中缺少 file 字段"}, status_code=400)
-            blob = await file_field.read()
-            if len(blob) > _MAX_IMPORT_PAYLOAD_BYTES:
-                raise ValueError(f"文件过大（上限 {_MAX_IMPORT_PAYLOAD_BYTES // (1024*1024)} MB）")
-            fname = getattr(file_field, "filename", "") or ""
-            if fname.lower().endswith(".png") or fname.lower().endswith(".webp"):
-                v2 = tavern_cards.parse_png_card(blob)
-                image_bytes = blob  # PNG/WEBP 卡本身即头像图
-            else:
-                # treat as JSON
-                try:
-                    v2 = tavern_cards.parse_card(blob.decode("utf-8", errors="replace"))
-                except Exception as exc:
-                    raise ValueError(f"JSON 解析失败：{exc}") from exc
-        # ── JSON body ────────────────────────────────────────────────
-        else:
-            body = await request.json()
-            ai_split = _truthy(body.get("ai_split"))
-            if body.get("png_base64"):
-                import base64 as _b64
-                png_b64 = body["png_base64"]
-                if not isinstance(png_b64, str) or len(png_b64) > _MAX_IMPORT_PAYLOAD_BYTES:
-                    raise ValueError(f"png_base64 过大或非字符串（上限 {_MAX_IMPORT_PAYLOAD_BYTES} 字节）")
-                try:
-                    blob = _b64.b64decode(png_b64, validate=True)
-                except Exception as exc:
-                    raise ValueError(f"png_base64 不合法：{exc}") from exc
-                if len(blob) > 10 * 1024 * 1024:
-                    raise ValueError("PNG 文件过大（解码后最大 10MB）")
-                v2 = tavern_cards.parse_png_card(blob)
-                image_bytes = blob  # PNG 卡本身即头像图
-            elif body.get("json") is not None:
-                v2 = tavern_cards.parse_card(body["json"])
-            elif body.get("json_string"):
-                v2 = tavern_cards.parse_card(body["json_string"])
-            elif body.get("base64"):
-                v2 = tavern_cards.parse_card(body["base64"])
-            else:
-                return json_response({"ok": False, "error": "需要 file(multipart) / json / json_string / base64 / png_base64 之一"}, status_code=400)
-
+        # image_bytes: PNG/WEBP 卡的原图，导入后存为头像 + 登记文件库
+        # ai_split: 用户显式 opt-in「AI 整理字段」时才挂 LLM 兜底
+        v2, image_bytes, ai_split = await parse_card_import_request(request)
         payload = tavern_cards.tavern_to_user_card(v2)
         if ai_split:
             # LLM 兜底拆分(同步调用包进线程,失败不阻断导入)。模型走 card_import 统一配置,usage 自动入账。

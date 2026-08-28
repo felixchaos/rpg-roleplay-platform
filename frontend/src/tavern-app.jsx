@@ -796,7 +796,9 @@ export default function TavernApp() {
 
       {mobileNav && <div className="gc-nav-backdrop" onClick={() => setMobileNav(false)} aria-hidden="true" />}
 
-      <TavernImportModal open={importOpen} onClose={() => setImportOpen(false)} onConfirm={onImportConfirm} />
+      {/* multiple={false}:酒馆侧「导入一张卡 = 开一个新对话」,多张没有"开哪个"的语义,
+          所以不给多选(卡库侧才循环 payload.files)。 */}
+      <TavernImportModal open={importOpen} onClose={() => setImportOpen(false)} onConfirm={onImportConfirm} multiple={false} />
 
       <TavernDrawer
         open={drawerOpen} character={character} persona={persona}

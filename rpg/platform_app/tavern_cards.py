@@ -496,6 +496,30 @@ def tavern_to_user_card(card_v2: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# 剧本 NPC 卡的剧本侧默认值。与前端手建 NPC 卡(components/cards/helpers.js 的
+# cardFormPayload)逐字段对齐 —— 导入进来的卡和手建的卡在列表/召回里应当表现一致,
+# 而不是一个 importance=100、一个 importance=0(后者会被当成"最不重要"排到最后)。
+NPC_CARD_DEFAULTS: dict[str, Any] = {
+    "first_revealed_chapter": 1,
+    "importance": 100,
+    "token_budget": 450,
+    "priority": 100,
+    "enabled": True,
+}
+
+
+def tavern_to_npc_card(card_v2: dict[str, Any]) -> dict[str, Any]:
+    """V2 → knowledge.upsert_character_card() 的 payload(剧本 NPC 卡, card_type='npc')。
+
+    人设字段的映射规则与用户 PC 卡完全共用 tavern_to_user_card(单一真相源:酒馆卡的
+    description 怎么拆字段,两个入口必须一致);本函数只补酒馆卡里根本没有的**剧本侧**
+    字段(首现章节 / 重要度 / 预算 / 位置 / 启停)。
+    """
+    payload = tavern_to_user_card(card_v2)
+    payload.update(NPC_CARD_DEFAULTS)
+    return payload
+
+
 # ── LLM 兜底:确定性规则拆不开的自由文本 description,挂 LLM 拆字段 ──────
 #    仅在调用方显式 opt-in(ai_split)时触发,走平台统一 usage 管理:
 #    call_agent_json 在 user_id + agent_kind 下自动 record_usage,不会赊账。

@@ -9,6 +9,7 @@ from platform_app.db import connect, init_db, limit_value, page_payload
 from platform_app.knowledge._character_cards_repo import (
     _db_delete_character_card,
     _db_get_character_card,
+    _db_get_character_card_by_name,
     _db_select_chapter_facts,
     _db_select_character_cards,
     _db_set_character_card_enabled,
@@ -167,6 +168,70 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
                 {**fields, "book_id": book_id, "script_id": script_id},
             ).fetchone()
     return card_to_dto(row) or {}
+
+
+# 外部卡导入时「只覆盖人设、不动剧本侧字段」的文本字段清单。
+# 酒馆卡里没有这些字段的对应物,留空不等于「用户要求清空」。
+_IMPORT_TEXT_FIELDS = (
+    "full_name", "identity", "background", "appearance",
+    "personality", "speech_style", "current_status", "secrets",
+)
+# 剧本侧字段:导入不该覆盖。这些是提取链路 / 人工在**本剧本内**攒出来的位置信息,
+# 酒馆卡根本不携带(NPC_CARD_DEFAULTS 只是新建时的兜底值,不是用户的意图)。
+_IMPORT_KEEP_FIELDS = (
+    "first_revealed_chapter", "importance", "token_budget", "priority", "enabled",
+)
+
+
+def merge_imported_card(existing: dict[str, Any] | None, payload: dict[str, Any]) -> dict[str, Any]:
+    """把导入的卡 payload 合并到同名旧卡上,返回 upsert_character_card 的入参。
+
+    规则(纯函数,便于单测):
+      · 旧卡不存在 → 原样返回(走 INSERT);
+      · 旧卡存在 → 带上 id 走 UPDATE,且
+        - 剧本侧字段(章节/重要度/预算/位置/启停)一律保留旧值;
+        - 文本人设字段:导入值非空才覆盖(空字段 ≠ 清空指令);
+        - aliases / sample_dialogue / tags:导入值非空才覆盖;
+        - metadata 浅合并(旧键打底),保住 is_protagonist / protagonist_locked 等标记。
+    """
+    merged = dict(payload)
+    if not existing:
+        return merged
+    old = dict(existing)
+    merged["id"] = old.get("id")
+    for key in _IMPORT_KEEP_FIELDS:
+        if key in old:
+            merged[key] = old[key]
+    for key in _IMPORT_TEXT_FIELDS:
+        if not str(payload.get(key) or "").strip():
+            merged[key] = old.get(key) or ""
+    for key in ("aliases", "sample_dialogue", "tags"):
+        if not payload.get(key):
+            merged[key] = old.get(key) or []
+    merged["metadata"] = {**(old.get("metadata") or {}), **(payload.get("metadata") or {})}
+    return merged
+
+
+def import_character_card(user_id: int, script_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    """把外部角色卡(酒馆卡 / 粘贴的 JSON)导入为本剧本的 NPC 卡。**仅 owner**。
+
+    与 upsert_character_card 的区别只有一条:同名卡按 merge_imported_card 的规则合并,
+    而不是整卡覆盖 —— 导入的是**人设**,不该顺手抹掉这张卡在本剧本里的位置(首现章节 /
+    重要度 / 主角锁)或它已有、而酒馆卡没有的字段。
+
+    返回 {"card": DTO, "replaced": bool}(replaced=True 表示更新了同名旧卡)。
+    """
+    init_db()
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise ValueError("character.name 不能为空")
+    with connect() as db:
+        # 写路径,owner-only(订阅者不能改原作者剧本的 NPC 卡)。upsert 里还会再校验一次,
+        # 这里先校验是为了「无权」比「同名查询结果」更早返回。
+        _require_script_owner(db, user_id, script_id)
+        existing = _db_get_character_card_by_name(db, script_id, name)
+    card = upsert_character_card(user_id, script_id, merge_imported_card(existing, payload))
+    return {"card": card, "replaced": bool(existing)}
 
 
 def delete_character_card(user_id: int, script_id: int, card_id: int) -> dict[str, Any]:

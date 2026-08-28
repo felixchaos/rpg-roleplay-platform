@@ -1,4 +1,11 @@
-/* 酒馆角色卡 / 聊天记录导入弹窗(文件 / 粘贴 JSON;AI 整理字段 opt-in)—— 从 pages/cards.jsx 拆出,逐字节不变。 */
+/* 酒馆角色卡 / 聊天记录导入弹窗(文件 / 粘贴 JSON;AI 整理字段 opt-in)。
+
+   三个入口共用:用户角色卡库 / 剧本 NPC 角色卡 / 酒馆(导入即开新对话)。
+   props:
+     allowChat  —— 是否显示「聊天记录」页签(剧本 NPC 卡侧无意义,关掉)
+     multiple   —— 是否允许一次选多张卡。只有会循环 payload.files 的调用方才该开
+                   (酒馆侧导入一张=开一个新对话,多张没有"开哪个"的语义,故关)
+     footerHint —— 底部说明(默认是用户卡库的文案) */
 
 import React from 'react';
 import { createPortal } from 'react-dom';
@@ -10,7 +17,7 @@ import AvatarImg from '../AvatarImg.jsx';
 import AgentModelPicker from '../AgentModelPicker.jsx';
 import { fmtBytes } from '../../platform-app.jsx';
 
-function TavernImportModal({ open, onClose, onConfirm }) {
+function TavernImportModal({ open, onClose, onConfirm, allowChat = true, multiple = true, footerHint = null }) {
   const { t } = useTranslation();
   // importType: "card" | "chat"
   const [importType, setImportType] = useStatePL("card");
@@ -38,7 +45,7 @@ function TavernImportModal({ open, onClose, onConfirm }) {
   const handleFiles = (list) => {
     // task 68: size + ext 校验,防内存炸 / 类型混淆
     const MAX_BYTES = 10 * 1024 * 1024;  // 10MB / 文件(对齐后端 PNG 导入上限;群反馈 #92:>5MB 角色卡传不上)
-    const MAX_FILES = 8;
+    const MAX_FILES = multiple ? 8 : 1;
     const arr = [...list].slice(0, MAX_FILES);
     if (list.length > MAX_FILES) {
       window.__apiToast?.(t('cards.page.import.too_many_files', { max: MAX_FILES }), { kind: 'warn', duration: 2400 });
@@ -143,7 +150,9 @@ function TavernImportModal({ open, onClose, onConfirm }) {
     if (!parsed) return;
     // 整理用模型统一走「设置 → 模型 → AI 整理卡字段」配置,这里不再透传 per-import 模型。
     if (parsed._file) {
-      onConfirm({ type: "card", file: parsed._file, aiSplit });
+      // files: 用户选的**全部**文件。此前只传 parsed._file(预览的第一张),
+      // 其余在弹窗里列出来的文件被静默丢弃 —— 选 5 张只进 1 张且无提示。
+      onConfirm({ type: "card", file: parsed._file, files, aiSplit });
     } else if (parsed._jsonString) {
       onConfirm({ type: "card_json", json_string: parsed._jsonString, aiSplit });
     }
@@ -167,13 +176,15 @@ function TavernImportModal({ open, onClose, onConfirm }) {
       onClose={onClose}
       footer={<>
         <span className="muted-2" style={{fontSize: 11.5}}>
-          <Icon name="info" size={11} /> {importType === "chat" ? t('cards.import.chat_footer_hint') : t('cards.import.footer_hint')}
+          <Icon name="info" size={11} /> {importType === "chat" ? t('cards.import.chat_footer_hint') : (footerHint || t('cards.import.footer_hint'))}
         </span>
         <div style={{display: "flex", gap: 8}}>
           <button className="btn ghost" onClick={onClose}>{t('cards.import.btn_cancel')}</button>
           {importType === "card" ? (
             <button className="btn primary" onClick={doConfirmCard} disabled={!canSubmitCard}>
-              <Icon name="check" size={12} /> {t('cards.import.btn_confirm', { count: files.length > 1 ? files.length : 0 })}
+              <Icon name="check" size={12} /> {files.length > 1
+                ? t('cards.import.btn_confirm_n', { count: files.length })
+                : t('cards.import.btn_confirm')}
             </button>
           ) : (
             <button className="btn primary" onClick={doConfirmChat} disabled={!canSubmitChat}>
@@ -184,15 +195,15 @@ function TavernImportModal({ open, onClose, onConfirm }) {
       </>}
     >
         <div className="pl-modal-form">
-          {/* top-level type switcher */}
-          <div className="seg" style={{display: "flex"}}>
+          {/* top-level type switcher(剧本 NPC 卡侧没有"导入聊天记录"这回事,整条隐藏) */}
+          {allowChat && <div className="seg" style={{display: "flex"}}>
             <button className={importType === "card" ? "active" : ""} onClick={() => setImportType("card")}>
               <Icon name="user" size={12} /> {t('cards.import.type_card')}
             </button>
             <button className={importType === "chat" ? "active" : ""} onClick={() => setImportType("chat")}>
               <Icon name="chat" size={12} /> {t('cards.import.type_chat')}
             </button>
-          </div>
+          </div>}
 
           {/* ── Card import ─────────────────────────────────────────── */}
           {importType === "card" && (
@@ -219,8 +230,8 @@ function TavernImportModal({ open, onClose, onConfirm }) {
                     <strong style={{color: dragOver ? "var(--accent)" : "var(--text)"}}>
                       {dragOver ? t('cards.import.drop_release') : t('cards.import.drop_hint')}
                     </strong>
-                    <span>{t('cards.import.drop_formats')}</span>
-                    <input id="tavern-file-input" type="file" accept=".png,.json,.webp" multiple
+                    <span>{multiple ? t('cards.import.drop_formats') : t('cards.import.drop_formats_single')}</span>
+                    <input id="tavern-file-input" type="file" accept=".png,.json,.webp" multiple={multiple}
                       style={{display: "none"}} onChange={(e) => handleFiles(e.target.files)} />
                   </div>
                   {files.length > 0 && (
