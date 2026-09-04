@@ -547,6 +547,79 @@
       ]
     },
     {
+      "id": "xai",
+      "display_name": "xAI (Grok)",
+      "kind": "openai_compat",
+      "enabled": true,
+      "credential_ref": "",
+      "credential_env": "XAI_API_KEY",
+      "base_url": "https://api.x.ai/v1",
+      "models": [
+        {
+          "id": "grok-4.6",
+          "real_name": "grok-4.6",
+          "display_name": "Grok 4.6",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "file_input",
+            "tools",
+            "json_mode",
+            "reasoning",
+            "code_exec",
+            "web_search"
+          ]
+        },
+        {
+          "id": "grok-4.5",
+          "real_name": "grok-4.5",
+          "display_name": "Grok 4.5",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "file_input",
+            "tools",
+            "json_mode",
+            "reasoning",
+            "web_search"
+          ]
+        },
+        {
+          "id": "grok-4.3",
+          "real_name": "grok-4.3",
+          "display_name": "Grok 4.3",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "tools",
+            "json_mode",
+            "reasoning",
+            "web_search"
+          ]
+        },
+        {
+          "id": "grok-4.20-0309-reasoning",
+          "real_name": "grok-4.20-0309-reasoning",
+          "display_name": "Grok 4.20 (推理)",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "tools",
+            "json_mode",
+            "reasoning"
+          ]
+        }
+      ]
+    },
+    {
       "id": "vertex_ai",
       "display_name": "Vertex AI",
       "kind": "vertex_ai",

@@ -102,11 +102,26 @@ _STATIC_PRICING: dict[str, dict[str, dict[str, Any]]] = {
         "openai/gpt-6-astra":            {"input": 10.5,  "output": 52.5,  "context": 1050000},
         "openai/gpt-5.6":                {"input": 4.20,  "output": 21.0,  "context": 1050000},
         "google/gemini-3.8-flash":       {"input": 0.79,  "output": 3.94,  "context": 1000000},
+        "x-ai/grok-4.6":                 {"input": 2.10,  "output": 6.30,  "context": 500000},
+        "x-ai/grok-4.5":                 {"input": 2.10,  "output": 6.30,  "context": 500000},
+        "x-ai/grok-4.3":                 {"input": 1.31,  "output": 2.63,  "context": 1000000},
         "openai/gpt-5.5":                {"input": 2.625, "output": 10.5,  "context": 400000},
         "openai/gpt-4o":                 {"input": 2.625, "output": 10.5,  "context": 128000},
         "google/gemini-3.5-flash":       {"input": 1.575, "output": 9.45,  "context": 1000000},
         "google/gemini-3.1-pro":         {"input": 2.10,  "output": 12.60, "context": 1000000},
         "google/gemini-2.5-pro":         {"input": 1.31,  "output": 5.25,  "context": 2000000},
+    },
+    # xAI(api.x.ai)。2026-09-04 按官方 docs.x.ai/developers/pricing 校准。
+    # ⚠️ 记的是 **<200K 上下文** 的标准档;官方对 **≥200K 的请求整单翻倍**
+    # (grok-4.6 就变 $4/$12),长文玩法要按两倍估。
+    "xai": {
+        "grok-4.6":                    {"input": 2.00, "output": 6.00, "context": 500000,  "notes": "Grok 4.6 · 2026-08-12 当前旗舰(≥200K 输入整单翻倍)"},
+        "grok-4.5":                    {"input": 2.00, "output": 6.00, "context": 500000,  "notes": "Grok 4.5(≥200K 输入整单翻倍)"},
+        "grok-4.3":                    {"input": 1.25, "output": 2.50, "context": 1000000, "notes": "Grok 4.3 · 1M 上下文(≥200K 输入整单翻倍)"},
+        "grok-4.20-0309-reasoning":    {"input": 1.25, "output": 2.50, "context": 1000000, "notes": "Grok 4.20 推理版"},
+        "grok-4.20-0309-non-reasoning":{"input": 1.25, "output": 2.50, "context": 1000000, "notes": "Grok 4.20 非推理版"},
+        "grok-4.20-multi-agent-0309":  {"input": 1.25, "output": 2.50, "context": 1000000, "notes": "Grok 4.20 多智能体"},
+        "grok-build-0.1":              {"input": 1.00, "output": 2.00, "context": 256000,  "notes": "Grok Build 0.1"},
     },
     # DeepSeek 直供平台(api.deepseek.com),区别于 siliconflow 转售
     "deepseek": {
@@ -900,6 +915,16 @@ _CAPABILITY_DEFAULTS: dict[str, dict[str, list[str]]] = {
         "Qwen/Qwen3.7-Max":              ["text", "streaming", "image_input", "tools", "json_mode", "reasoning", "code_exec"],
         "Qwen/Qwen3.6-Flash":            ["text", "streaming", "tools", "json_mode"],
         "Qwen/Qwen2.5-72B-Instruct":     ["text", "streaming", "tools"],
+    },
+    "xai": {
+        # Grok 4.x 全系支持视觉 + function calling;4.6/4.5/4.3 与 4.20-reasoning 走推理。
+        "grok-4.6":                    ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "code_exec", "web_search"],
+        "grok-4.5":                    ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "web_search"],
+        "grok-4.3":                    ["text", "streaming", "image_input", "tools", "json_mode", "reasoning", "web_search"],
+        "grok-4.20-0309-reasoning":    ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"],
+        "grok-4.20-0309-non-reasoning":["text", "streaming", "image_input", "tools", "json_mode"],
+        "grok-4.20-multi-agent-0309":  ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"],
+        "grok-build-0.1":              ["text", "streaming", "tools", "json_mode"],
     },
     "deepseek": {
         # 直供平台(api.deepseek.com)。此前只有 siliconflow 转售侧有能力表,直供侧缺失

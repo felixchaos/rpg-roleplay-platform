@@ -177,6 +177,20 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
             "models": [],
         },
         {
+            # xAI(Grok)。2026-09-04 接入:此前**根本不在供应商列表里**,想用 Grok 的人
+            # 只能自己猜接口地址 —— 生产库里已有 3 个用户手填了 https://api.x.ai/v1
+            # (user 2/6/188),与当初 doubao「填错 base_url」是同一个根因(反馈:行者无疆)。
+            # 另有群反馈(星色マジック 2026-07-28)用 Grok 撞 403 被误报「凭证过期」。
+            # OpenAI 兼容端点,base_url 到 /v1 即可。
+            "id": "xai",
+            "display_name": "xAI (Grok)",
+            "kind": "openai_compat",
+            "enabled": True,
+            "credential_env": "XAI_API_KEY",
+            "base_url": "https://api.x.ai/v1",
+            "models": [],
+        },
+        {
             "id": "xiaomi_mimo",
             "display_name": "MiMo",
             "kind": "openai_compat",
@@ -214,7 +228,7 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
 # enabled=false、**根本不出现在供应商列表**,用户只能自己猜接口地址。它的 base_url 早就正确地写在
 # DEFAULT_MODEL_CATALOG(`https://ark.cn-beijing.volces.com/api/v3`),只差露出来。进策展白名单后
 # serve 时强制 enabled(凭据闸仍只让配了 key 的人看到模型),存量 DB catalog 也会自愈,无需改库。
-_CURATED_REQUIRED_APIS = {"google_ai_studio", "doubao", "ark_agent_plan"}
+_CURATED_REQUIRED_APIS = {"google_ai_studio", "doubao", "ark_agent_plan", "xai"}
 
 # 已下架 provider:仍保留在 catalog 里(向后兼容),但无论持久化 catalog 存成什么,serve 时
 # 强制 enabled=False —— 不进模型选择器、不进添加候选。google_ai_studio 因 Google 封机房 IP 下架。
