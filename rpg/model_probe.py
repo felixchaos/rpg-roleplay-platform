@@ -42,19 +42,30 @@ BASE = Path(__file__).parent
 # - DeepSeek: V4-Pro (Apr 24, 2026) 1M context $1.74/$3.48
 _STATIC_PRICING: dict[str, dict[str, dict[str, Any]]] = {
     "anthropic": {
-        # task 57: 2026-05-25 校准
-        "claude-opus-4-7":     {"input": 15.0, "output": 75.0, "context": 200000, "notes": "Opus 4.7 · 2026-04-16 当前 frontier"},
-        "claude-opus-4-6":     {"input": 15.0, "output": 75.0, "context": 200000, "notes": "Opus 4.6"},
-        "claude-opus-4-5":     {"input": 15.0, "output": 75.0, "context": 200000, "notes": "Opus 4.5"},
-        "claude-sonnet-4-6":   {"input": 3.0,  "output": 15.0, "context": 200000, "notes": "Sonnet 4.6 · 2026-02"},
+        # 2026-09-04 校准(官方 Anthropic 定价表)。⚠️ 上一版(task 57)把 Opus 系列记成
+        # $15/$75 @200K —— 那是 Claude 3 Opus 时代的价,4.x 起 Opus 是 $5/$25 且上下文 1M。
+        "claude-fable-5-1":    {"input": 10.0, "output": 50.0, "context": 1000000, "notes": "Fable 5.1 · 当前最强"},
+        "claude-fable-5":      {"input": 10.0, "output": 50.0, "context": 1000000, "notes": "Fable 5"},
+        "claude-opus-5":       {"input": 5.0,  "output": 25.0, "context": 1000000, "notes": "Opus 5 · 当前 Opus 旗舰"},
+        "claude-opus-4-8":     {"input": 5.0,  "output": 25.0, "context": 1000000, "notes": "Opus 4.8"},
+        "claude-opus-4-7":     {"input": 5.0,  "output": 25.0, "context": 1000000, "notes": "Opus 4.7"},
+        "claude-opus-4-6":     {"input": 5.0,  "output": 25.0, "context": 1000000, "notes": "Opus 4.6"},
+        "claude-opus-4-5":     {"input": 5.0,  "output": 25.0, "context": 200000, "notes": "Opus 4.5"},
+        "claude-sonnet-5":     {"input": 2.0,  "output": 10.0, "context": 1000000, "notes": "Sonnet 5 · 当前 Sonnet 旗舰"},
+        "claude-sonnet-4-6":   {"input": 3.0,  "output": 15.0, "context": 1000000, "notes": "Sonnet 4.6"},
         "claude-sonnet-4-5":   {"input": 3.0,  "output": 15.0, "context": 200000},
         "claude-haiku-4-5":    {"input": 1.0,  "output": 5.0,  "context": 200000, "notes": "Haiku 4.5 · 2025-10"},
         "claude-3-5-sonnet":   {"input": 3.0,  "output": 15.0, "context": 200000},
         "claude-3-5-haiku":    {"input": 0.8,  "output": 4.0,  "context": 200000},
     },
     "vertex_ai": {
-        # task 57: 2026-05-25 校准 - Gemini 3.5 Flash 是 2026-05-19 当前默认/最便宜旗舰
-        "gemini-3.5-flash":    {"input": 1.50,  "output": 9.00,  "context": 1000000, "notes": "Flash · 2026-05-19 当前默认"},
+        # 2026-09-04 校准(官方 Gemini 定价页)。3.8/3.7/3.6 Flash 同价,且 $0.75/$3.75 是
+        # **限时价(至 2026-12-31)**,2027-01-01 起翻倍到 $1.50/$7.50 —— 到期需回来改。
+        "gemini-3.8-flash":      {"input": 0.75, "output": 3.75, "context": 1000000, "notes": "3.8 Flash · 当前旗舰(限时价,2027-01-01 起 $1.50/$7.50)"},
+        "gemini-3.7-flash":      {"input": 0.75, "output": 3.75, "context": 1000000, "notes": "3.7 Flash(限时价,2027-01-01 起 $1.50/$7.50)"},
+        "gemini-3.6-flash":      {"input": 0.75, "output": 3.75, "context": 1000000, "notes": "3.6 Flash(限时价,2027-01-01 起 $1.50/$7.50)"},
+        "gemini-3.5-flash-lite": {"input": 0.30, "output": 2.50, "context": 1000000, "notes": "3.5 Flash-Lite · 最便宜"},
+        "gemini-3.5-flash":    {"input": 1.50,  "output": 9.00,  "context": 1000000, "notes": "3.5 Flash"},
         "gemini-3.1-pro":      {"input": 2.00,  "output": 12.00, "context": 1000000, "notes": "3.1 Pro · prev flagship; >200K 时 $4/$18"},
         "gemini-3-flash":      {"input": 1.50,  "output": 9.00,  "context": 1000000, "notes": "别名指向 3.5 Flash"},
         "gemini-3-pro":        {"input": 1.25,  "output": 10.0,  "context": 2000000, "notes": "3 Pro · 旧 flagship"},
@@ -63,9 +74,15 @@ _STATIC_PRICING: dict[str, dict[str, dict[str, Any]]] = {
         "gemini-2.0-flash":    {"input": 0.075, "output": 0.3,   "context": 1000000},
     },
     "openai": {
-        # task 57: GPT-5.5 (2026-05-05) 替代 5.3-instant 成为 ChatGPT 默认
-        # 定价未官方公开，按 GPT-5.5 Instant 略高于 5.x 估算（待官方 API 价更新）
-        "gpt-5.5":             {"input": 2.5,  "output": 10.0, "context": 400000, "notes": "GPT-5.5 · 2026-05-05 默认"},
+        # 2026-09-04 校准(官方 OpenAI 定价页)。GPT-6 Astra 是当前最强,GPT-5.6 三档
+        # (Sol/Terra/Luna)是主力;`gpt-5.6` 是 `gpt-5.6-sol` 的别名。上下文 1.05M。
+        # 注:官方另有 long-context 档(超长输入翻倍计价),此处记标准档。
+        "gpt-6-astra":         {"input": 10.0, "output": 50.0, "context": 1050000, "notes": "GPT-6 Astra · 当前最强"},
+        "gpt-5.6-sol":         {"input": 4.0,  "output": 20.0, "context": 1050000, "notes": "GPT-5.6 Sol · 旗舰(别名 gpt-5.6)"},
+        "gpt-5.6":             {"input": 4.0,  "output": 20.0, "context": 1050000, "notes": "= gpt-5.6-sol 别名"},
+        "gpt-5.6-terra":       {"input": 2.0,  "output": 12.0, "context": 1050000, "notes": "GPT-5.6 Terra · 均衡"},
+        "gpt-5.6-luna":        {"input": 0.20, "output": 1.20, "context": 1050000, "notes": "GPT-5.6 Luna · 廉价"},
+        "gpt-5.5":             {"input": 2.5,  "output": 10.0, "context": 400000, "notes": "GPT-5.5 · 上一代"},
         "gpt-5.5-instant":     {"input": 1.25, "output": 5.0,  "context": 400000, "notes": "GPT-5.5 Instant · 低延迟"},
         "gpt-5.5-pro":         {"input": 5.0,  "output": 20.0, "context": 400000, "notes": "GPT-5.5 Pro · 付费"},
         "gpt-5.5-thinking":    {"input": 5.0,  "output": 20.0, "context": 400000, "notes": "GPT-5.5 Thinking · 推理"},
@@ -78,8 +95,13 @@ _STATIC_PRICING: dict[str, dict[str, dict[str, Any]]] = {
     },
     "openrouter": {
         # OpenRouter 聚合，价格 = 上游 + 5% 平台费。task 57 同步刷新代表项。
-        "anthropic/claude-opus-4-7":     {"input": 15.75, "output": 78.75, "context": 200000},
-        "anthropic/claude-sonnet-4-6":   {"input": 3.15,  "output": 15.75, "context": 200000},
+        "anthropic/claude-opus-5":       {"input": 5.25,  "output": 26.25, "context": 1000000},
+        "anthropic/claude-sonnet-5":     {"input": 2.10,  "output": 10.50, "context": 1000000},
+        "anthropic/claude-opus-4-7":     {"input": 5.25,  "output": 26.25, "context": 1000000},
+        "anthropic/claude-sonnet-4-6":   {"input": 3.15,  "output": 15.75, "context": 1000000},
+        "openai/gpt-6-astra":            {"input": 10.5,  "output": 52.5,  "context": 1050000},
+        "openai/gpt-5.6":                {"input": 4.20,  "output": 21.0,  "context": 1050000},
+        "google/gemini-3.8-flash":       {"input": 0.79,  "output": 3.94,  "context": 1000000},
         "openai/gpt-5.5":                {"input": 2.625, "output": 10.5,  "context": 400000},
         "openai/gpt-4o":                 {"input": 2.625, "output": 10.5,  "context": 128000},
         "google/gemini-3.5-flash":       {"input": 1.575, "output": 9.45,  "context": 1000000},
@@ -88,8 +110,11 @@ _STATIC_PRICING: dict[str, dict[str, dict[str, Any]]] = {
     },
     # DeepSeek 直供平台(api.deepseek.com),区别于 siliconflow 转售
     "deepseek": {
-        "deepseek-v4-pro":   {"input": 0.30, "output": 1.20, "context": 1000000, "notes": "DeepSeek V4-Pro 官方"},
-        "deepseek-v4-flash": {"input": 0.10, "output": 0.40, "context": 1000000, "notes": "DeepSeek V4-Flash 官方"},
+        # 2026-09-04 校准(官方 api-docs 定价页)。**记的是 off-peak 价**;官方高峰时段
+        # (UTC 周一至周五 01:00-04:00 / 06:00-10:00)翻倍,故实际账单可能是此处两倍。
+        "deepseek-v4-pro":   {"input": 0.66, "output": 1.98, "context": 1000000, "notes": "V4-Pro 官方 · off-peak(高峰翻倍)"},
+        "deepseek-v4-flash": {"input": 0.22, "output": 0.66, "context": 1000000, "notes": "V4-Flash 官方 · off-peak(高峰翻倍)"},
+        "deepseek-v4-flash-vision-exp": {"input": 0.22, "output": 0.66, "context": 1000000, "notes": "V4-Flash 视觉实验版 · off-peak"},
         "deepseek-v3":       {"input": 0.27, "output": 1.10, "context": 64000,  "notes": "V3 旧版"},
         # 兼容驼峰大小写写法
         "DeepSeek-V4-Flash": {"input": 0.10, "output": 0.40, "context": 1000000},
@@ -110,7 +135,10 @@ _STATIC_PRICING: dict[str, dict[str, dict[str, Any]]] = {
     },
     "dashscope": {
         # task 57: 阿里云 Model Studio 直供 Qwen 3.7 / 3.6 系列
-        "qwen3.7-max":     {"input": 2.50,  "output": 7.50, "context": 1000000, "notes": "Qwen 3.7-Max · 2026-05-21 旗舰"},
+        # 2026-09-04:3.8-Max 系列上线(国际站美元价按官方 0-1M 档;prime 为增强档)
+        "qwen3.8-max-prime": {"input": 5.00, "output": 15.00, "context": 1000000, "notes": "Qwen 3.8-Max Prime · 当前最强(国内 ¥24/¥72)"},
+        "qwen3.8-max":     {"input": 2.50,  "output": 7.50, "context": 1000000, "notes": "Qwen 3.8-Max · 旗舰(国内 ¥12/¥36)"},
+        "qwen3.7-max":     {"input": 2.50,  "output": 7.50, "context": 1000000, "notes": "Qwen 3.7-Max · 2026-05-21"},
         "qwen3.6-flash":   {"input": 0.19,  "output": 1.13, "context": 131072, "notes": "Qwen 3.6 Flash"},
         "qwen-max":        {"input": 1.40,  "output": 5.6,  "context": 32000,  "notes": "旧 Qwen Max · 约合 RMB ¥10/¥40"},
         "qwen-plus":       {"input": 0.11,  "output": 0.28, "context": 131072},
@@ -815,7 +843,12 @@ CAPABILITY_LABELS = {
 # 模型默认能力（按 real_name 前缀匹配，精确名优先）。task 57 校准。
 _CAPABILITY_DEFAULTS: dict[str, dict[str, list[str]]] = {
     "anthropic": {
-        # task 57: 4.x 系列都支持 computer_use（agentic capability）
+        # 2026-09-04 校准。4.6+ / 5 系列都支持 computer_use（agentic capability）。
+        "claude-fable-5-1":  ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "computer_use", "code_exec", "web_search"],
+        "claude-fable-5":    ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "computer_use", "code_exec", "web_search"],
+        "claude-opus-5":     ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "computer_use", "code_exec", "web_search"],
+        "claude-opus-4-8":   ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "computer_use", "code_exec", "web_search"],
+        "claude-sonnet-5":   ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "computer_use", "code_exec", "web_search"],
         "claude-opus-4-7":   ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "computer_use", "code_exec"],
         "claude-opus-4-6":   ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "computer_use"],
         "claude-opus-4-5":   ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning"],
@@ -825,7 +858,12 @@ _CAPABILITY_DEFAULTS: dict[str, dict[str, list[str]]] = {
         "claude-3-5":        ["text", "streaming", "image_input", "file_input", "tools", "json_mode"],
     },
     "vertex_ai": {
-        # task 57: 3.5 Flash + 3.1 Pro 是新主力
+        # 2026-09-04 校准:3.8 Flash 是当前旗舰,3.5 Flash-Lite 是最便宜档。
+        # (前缀回退按 key 长度倒序匹配,故 flash-lite 天然先于 flash 命中,与字典顺序无关。)
+        "gemini-3.8-flash":      ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode", "reasoning", "code_exec"],
+        "gemini-3.7-flash":      ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode", "reasoning", "code_exec"],
+        "gemini-3.6-flash":      ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode", "reasoning"],
+        "gemini-3.5-flash-lite": ["text", "streaming", "image_input", "file_input", "tools", "json_mode"],
         "gemini-3.5-flash": ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode", "reasoning"],
         "gemini-3.1-pro":   ["text", "streaming", "image_input", "audio_input", "video_input", "file_input", "tools", "json_mode", "reasoning", "code_exec"],
         "gemini-3-pro":     ["text", "streaming", "image_input", "audio_input", "video_input", "file_input", "tools", "json_mode", "reasoning"],
@@ -835,7 +873,12 @@ _CAPABILITY_DEFAULTS: dict[str, dict[str, list[str]]] = {
         "gemini-2.0-flash": ["text", "streaming", "image_input", "tools", "json_mode"],
     },
     "openai": {
-        # task 57: GPT-5.5 family
+        # 2026-09-04 校准:GPT-6 Astra + GPT-5.6 (Sol/Terra/Luna) family
+        "gpt-6-astra":      ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode", "reasoning", "code_exec", "web_search"],
+        "gpt-5.6-sol":      ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode", "reasoning", "code_exec", "web_search"],
+        "gpt-5.6-terra":    ["text", "streaming", "image_input", "file_input", "tools", "json_mode", "reasoning", "code_exec"],
+        "gpt-5.6-luna":     ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"],
+        "gpt-5.6":          ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode", "reasoning", "code_exec", "web_search"],
         "gpt-5.5-pro":      ["text", "streaming", "image_input", "audio_input", "tools", "json_mode", "reasoning", "code_exec", "web_search"],
         "gpt-5.5-thinking": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"],
         "gpt-5.5-instant": ["text", "streaming", "image_input", "tools", "json_mode"],
@@ -858,8 +901,17 @@ _CAPABILITY_DEFAULTS: dict[str, dict[str, list[str]]] = {
         "Qwen/Qwen3.6-Flash":            ["text", "streaming", "tools", "json_mode"],
         "Qwen/Qwen2.5-72B-Instruct":     ["text", "streaming", "tools"],
     },
+    "deepseek": {
+        # 直供平台(api.deepseek.com)。此前只有 siliconflow 转售侧有能力表,直供侧缺失
+        # → 直供用户的模型卡片一律拿不到能力标签。
+        "deepseek-v4-pro":              ["text", "streaming", "tools", "json_mode", "reasoning", "code_exec"],
+        "deepseek-v4-flash-vision-exp": ["text", "streaming", "image_input", "tools", "json_mode"],
+        "deepseek-v4-flash":            ["text", "streaming", "tools", "json_mode"],
+    },
     "minimax":   {"MiniMax-M1": ["text", "streaming", "tools", "json_mode"]},
     "dashscope": {
+        "qwen3.8-max-prime": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning", "code_exec"],
+        "qwen3.8-max":   ["text", "streaming", "image_input", "tools", "json_mode", "reasoning", "code_exec"],
         "qwen3.7-max":   ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"],
         "qwen3.6-flash": ["text", "streaming", "tools", "json_mode"],
         "qwen-max":      ["text", "streaming", "tools", "json_mode"],

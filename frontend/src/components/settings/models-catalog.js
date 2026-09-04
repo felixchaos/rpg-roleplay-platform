@@ -44,18 +44,19 @@ const MODELS_DATA = [
     id: "openai", name: "OpenAI", base_url: "https://api.openai.com/v1",
     enabled: true, status: "online", key_set: true, key_hint: "·sk-…3a9f", proxy: "直连",
     models: [
-      { id: "gpt-5.5", real_name: "gpt-5.5", display: "GPT-5.5 · 标准", capabilities: ["text", "vision", "tool-use", "rpg"], enabled: true, price: "$2.50 / $10.00", context: "400K", health: "ok", visible: true },
-      { id: "gpt-5.5-instant", real_name: "gpt-5.5-instant", display: "GPT-5.5 Instant · 低延迟", capabilities: ["fast", "vision"], enabled: true, price: "$1.25 / $5.00", context: "400K", health: "ok", visible: true },
-      { id: "gpt-5.5-pro", real_name: "gpt-5.5-pro", display: "GPT-5.5 Pro", capabilities: ["text", "vision", "tool-use"], enabled: false, price: "$5.00 / $20.00", context: "400K", health: "ok", visible: true },
-      { id: "gpt-5", real_name: "gpt-5", display: "GPT-5 · 上一代", capabilities: ["text", "vision"], enabled: false, price: "$2.00 / $8.00", context: "400K", health: "ok", visible: true },
+      { id: "gpt-6-astra", real_name: "gpt-6-astra", display: "GPT-6 Astra · 最强", capabilities: ["text", "vision", "tool-use", "rpg"], enabled: true, price: "$10.00 / $50.00", context: "1.05M", health: "ok", visible: true },
+      { id: "gpt-5.6-sol", real_name: "gpt-5.6-sol", display: "GPT-5.6 Sol · 旗舰", capabilities: ["text", "vision", "tool-use", "rpg"], enabled: true, price: "$4.00 / $20.00", context: "1.05M", health: "ok", visible: true },
+      { id: "gpt-5.6-terra", real_name: "gpt-5.6-terra", display: "GPT-5.6 Terra · 均衡", capabilities: ["text", "vision", "tool-use"], enabled: true, price: "$2.00 / $12.00", context: "1.05M", health: "ok", visible: true },
+      { id: "gpt-5.6-luna", real_name: "gpt-5.6-luna", display: "GPT-5.6 Luna · 廉价", capabilities: ["fast", "vision"], enabled: false, price: "$0.20 / $1.20", context: "1.05M", health: "ok", visible: true },
     ]
   },
   {
     id: "anthropic", name: "Anthropic", base_url: "https://api.anthropic.com/v1",
     enabled: true, status: "online", key_set: true, key_hint: "·sk-***", proxy: "直连",
     models: [
-      { id: "claude-opus-4-7", real_name: "claude-opus-4-7", display: "Claude Opus 4.7 · 长文", capabilities: ["long", "tool-use", "rpg"], enabled: true, price: "$15 / $75", context: "200K", health: "ok", visible: true },
-      { id: "claude-sonnet-4-6", real_name: "claude-sonnet-4-6", display: "Claude Sonnet 4.6", capabilities: ["text", "fast"], enabled: true, price: "$3 / $15", context: "200K", health: "ok", visible: true },
+      { id: "claude-opus-5", real_name: "claude-opus-5", display: "Claude Opus 5 · 长文", capabilities: ["long", "tool-use", "rpg"], enabled: true, price: "$5 / $25", context: "1M", health: "ok", visible: true },
+      { id: "claude-sonnet-5", real_name: "claude-sonnet-5", display: "Claude Sonnet 5", capabilities: ["text", "fast", "tool-use"], enabled: true, price: "$2 / $10", context: "1M", health: "ok", visible: true },
+      { id: "claude-opus-4-7", real_name: "claude-opus-4-7", display: "Claude Opus 4.7 · 上一代", capabilities: ["long", "tool-use"], enabled: false, price: "$5 / $25", context: "1M", health: "ok", visible: true },
       { id: "claude-haiku-4-5", real_name: "claude-haiku-4-5", display: "Claude Haiku 4.5", capabilities: ["fast"], enabled: false, price: "$1.00 / $5", context: "200K", health: "ok", visible: true },
     ]
   },
@@ -63,15 +64,17 @@ const MODELS_DATA = [
     id: "google", name: "Google", base_url: "https://generativelanguage.googleapis.com/v1beta",
     enabled: false, status: "未连接", key_set: false, proxy: "需配置 API key",
     models: [
-      { id: "gemini-3.5-flash", real_name: "gemini-3.5-flash", display: "Gemini 3.5 Flash · 当前默认", capabilities: ["fast", "vision", "tool-use"], enabled: false, price: "$1.50 / $9.00", context: "1M", health: "ok", visible: true },
-      { id: "gemini-3.1-pro", real_name: "gemini-3.1-pro", display: "Gemini 3.1 Pro", capabilities: ["long", "vision", "tool-use"], enabled: false, price: "$2.00 / $12.00", context: "1M", health: "ok", visible: true },
+      { id: "gemini-3.8-flash", real_name: "gemini-3.8-flash", display: "Gemini 3.8 Flash · 当前旗舰", capabilities: ["fast", "vision", "tool-use", "reasoning"], enabled: false, price: "$0.75 / $3.75", context: "1M", health: "ok", visible: true },
+      { id: "gemini-3.5-flash-lite", real_name: "gemini-3.5-flash-lite", display: "Gemini 3.5 Flash Lite · 最便宜", capabilities: ["fast", "vision"], enabled: false, price: "$0.30 / $2.50", context: "1M", health: "ok", visible: true },
+      { id: "gemini-2.5-flash", real_name: "gemini-2.5-flash", display: "Gemini 2.5 Flash · 兜底默认", capabilities: ["fast", "vision", "tool-use"], enabled: false, price: "$0.075 / $0.30", context: "1M", health: "ok", visible: true },
     ]
   },
   {
     id: "qwen", name: "通义千问", base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     enabled: true, status: "online", key_set: true, key_hint: "·sk-…c024", proxy: "直连",
     models: [
-      { id: "qwen3.7-max", real_name: "qwen3.7-max", display: "Qwen 3.7-Max · 旗舰", capabilities: ["cn", "rpg", "text", "reasoning"], enabled: true, price: "$2.50 / $7.50", context: "1M", health: "ok", visible: true },
+      { id: "qwen3.8-max", real_name: "qwen3.8-max", display: "Qwen 3.8-Max · 旗舰", capabilities: ["cn", "rpg", "text", "reasoning"], enabled: true, price: "$2.50 / $7.50", context: "1M", health: "ok", visible: true },
+      { id: "qwen3.7-max", real_name: "qwen3.7-max", display: "Qwen 3.7-Max · 上一代", capabilities: ["cn", "rpg", "text", "reasoning"], enabled: false, price: "$2.50 / $7.50", context: "1M", health: "ok", visible: true },
       { id: "qwen3.6-flash", real_name: "qwen3.6-flash", display: "Qwen 3.6 Flash", capabilities: ["cn", "fast"], enabled: true, price: "$0.19 / $1.13", context: "131K", health: "ok", visible: true },
       { id: "qwen-turbo", real_name: "qwen-turbo", display: "Qwen Turbo", capabilities: ["cn", "fast"], enabled: false, price: "¥0.04 / ¥0.08", context: "1M", health: "ok", visible: true },
     ]
@@ -80,8 +83,8 @@ const MODELS_DATA = [
     id: "deepseek", name: "DeepSeek", base_url: "https://api.deepseek.com/v1",
     enabled: true, status: "online", key_set: true, key_hint: "·sk-…a8d2", proxy: "直连",
     models: [
-      { id: "deepseek-v4-pro", real_name: "deepseek-ai/DeepSeek-V4-Pro", display: "DeepSeek V4-Pro · 旗舰", capabilities: ["reasoning", "cn", "tool-use"], enabled: true, price: "$1.74 / $3.48", context: "1M", health: "ok", visible: true },
-      { id: "deepseek-v4-flash", real_name: "deepseek-ai/DeepSeek-V4-Flash", display: "DeepSeek V4-Flash · 快速", capabilities: ["cn", "fast"], enabled: true, price: "$0.30 / $1.20", context: "1M", health: "ok", visible: true },
+      { id: "deepseek-v4-pro", real_name: "deepseek-v4-pro", display: "DeepSeek V4-Pro · 旗舰", capabilities: ["reasoning", "cn", "tool-use"], enabled: true, price: "$0.66 / $1.98", context: "1M", health: "ok", visible: true },
+      { id: "deepseek-v4-flash", real_name: "deepseek-v4-flash", display: "DeepSeek V4-Flash · 快速", capabilities: ["cn", "fast"], enabled: true, price: "$0.22 / $0.66", context: "1M", health: "ok", visible: true },
     ]
   },
   {
@@ -93,8 +96,9 @@ const MODELS_DATA = [
         ["openai/gpt-4o-mini", "GPT-4o mini", ["fast", "vision"], "$0.15 / $0.60", "128K", true],
         ["openai/o3-mini", "o3-mini", ["reasoning"], "$1.10 / $4.40", "200K", false],
         ["openai/o1", "o1", ["reasoning"], "$15 / $60", "200K", false],
-        ["anthropic/claude-opus-4-7", "Claude Opus 4.7", ["long", "tool-use"], "$15.75 / $78.75", "200K", true],
-        ["anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6", ["text", "fast"], "$3.15 / $15.75", "200K", false],
+        ["anthropic/claude-opus-5", "Claude Opus 5", ["long", "tool-use"], "$5.25 / $26.25", "1M", true],
+        ["anthropic/claude-sonnet-5", "Claude Sonnet 5", ["text", "fast"], "$2.10 / $10.50", "1M", false],
+        ["anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6", ["text", "fast"], "$3.15 / $15.75", "1M", false],
         ["anthropic/claude-haiku-4-5", "Claude Haiku 4.5", ["fast"], "$1.05 / $5.25", "200K", false],
         ["google/gemini-pro-1.5", "Gemini Pro 1.5", ["long", "vision"], "$1.25 / $5", "2M", false],
         ["google/gemini-flash-1.5", "Gemini Flash 1.5", ["fast", "vision"], "$0.075 / $0.30", "1M", false],

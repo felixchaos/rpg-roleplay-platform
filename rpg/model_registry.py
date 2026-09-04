@@ -41,6 +41,20 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
             "enabled": True,
             "credential_ref": "rpg/vertex_sa.json",
             "models": [
+                # 2026-09-04 补齐 Gemini 3.x 世代(此前保底列表停在 2.5,新装/未 sync 实例
+                # 的用户在选择器里根本看不到 3.x)。**默认 selected 仍是 gemini-2.5-flash**:
+                # 它 $0.075/$0.3 比 3.8-flash 的 $0.75/$3.75 便宜一个数量级,作为兜底更合适;
+                # 想要更强的用户自己在选择器里选 3.x。
+                {"id": "gemini-3.8-flash", "real_name": "gemini-3.8-flash", "display_name": "Gemini 3.8 Flash", "enabled": True,
+                 "capabilities": ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode", "reasoning", "code_exec"]},
+                {"id": "gemini-3.7-flash", "real_name": "gemini-3.7-flash", "display_name": "Gemini 3.7 Flash", "enabled": True,
+                 "capabilities": ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode", "reasoning", "code_exec"]},
+                {"id": "gemini-3.6-flash", "real_name": "gemini-3.6-flash", "display_name": "Gemini 3.6 Flash", "enabled": True,
+                 "capabilities": ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode", "reasoning"]},
+                {"id": "gemini-3.5-flash", "real_name": "gemini-3.5-flash", "display_name": "Gemini 3.5 Flash", "enabled": True,
+                 "capabilities": ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode", "reasoning"]},
+                {"id": "gemini-3.5-flash-lite", "real_name": "gemini-3.5-flash-lite", "display_name": "Gemini 3.5 Flash Lite", "enabled": True,
+                 "capabilities": ["text", "streaming", "image_input", "file_input", "tools", "json_mode"]},
                 {"id": "gemini-2.5-flash", "real_name": "gemini-2.5-flash", "display_name": "Gemini 2.5 Flash", "enabled": True,
                  "capabilities": ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode"]},
                 {"id": "gemini-2.5-pro",   "real_name": "gemini-2.5-pro",   "display_name": "Gemini 2.5 Pro", "enabled": True,

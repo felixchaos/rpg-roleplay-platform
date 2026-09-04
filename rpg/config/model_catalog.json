@@ -2,7 +2,7 @@
   "schema_version": 1,
   "selected": {
     "api_id": "anthropic",
-    "model_id": "claude-opus-4-7"
+    "model_id": "claude-opus-5"
   },
   "apis": [
     {
@@ -14,6 +14,60 @@
       "credential_env": "ANTHROPIC_API_KEY",
       "base_url": "",
       "models": [
+        {
+          "id": "claude-opus-5",
+          "real_name": "claude-opus-5",
+          "display_name": "Claude Opus 5",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "file_input",
+            "tools",
+            "json_mode",
+            "reasoning",
+            "computer_use",
+            "code_exec",
+            "web_search"
+          ]
+        },
+        {
+          "id": "claude-sonnet-5",
+          "real_name": "claude-sonnet-5",
+          "display_name": "Claude Sonnet 5",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "file_input",
+            "tools",
+            "json_mode",
+            "reasoning",
+            "computer_use",
+            "code_exec",
+            "web_search"
+          ]
+        },
+        {
+          "id": "claude-opus-4-8",
+          "real_name": "claude-opus-4-8",
+          "display_name": "Claude Opus 4.8",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "file_input",
+            "tools",
+            "json_mode",
+            "reasoning",
+            "computer_use",
+            "code_exec",
+            "web_search"
+          ]
+        },
         {
           "id": "claude-opus-4-7",
           "real_name": "claude-opus-4-7",
@@ -82,6 +136,21 @@
       "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
       "models": [
         {
+          "id": "qwen3.8-max",
+          "real_name": "qwen3.8-max",
+          "display_name": "Qwen 3.8-Max",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "tools",
+            "json_mode",
+            "reasoning",
+            "code_exec"
+          ]
+        },
+        {
           "id": "qwen3.7-max",
           "real_name": "qwen3.7-max",
           "display_name": "Qwen 3.7-Max",
@@ -118,6 +187,19 @@
       "credential_env": "DEEPSEEK_API_KEY",
       "base_url": "https://api.deepseek.com/v1",
       "models": [
+        {
+          "id": "deepseek-v4-flash-vision-exp",
+          "real_name": "deepseek-v4-flash-vision-exp",
+          "display_name": "DeepSeek V4 Flash Vision (exp)",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "tools",
+            "json_mode"
+          ]
+        },
         {
           "id": "deepseek-v4-flash",
           "real_name": "deepseek-v4-flash",
@@ -247,6 +329,72 @@
       "credential_env": "OPENAI_API_KEY",
       "base_url": "https://api.openai.com/v1",
       "models": [
+        {
+          "id": "gpt-6-astra",
+          "real_name": "gpt-6-astra",
+          "display_name": "GPT-6 Astra",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "audio_input",
+            "file_input",
+            "tools",
+            "json_mode",
+            "reasoning",
+            "code_exec",
+            "web_search"
+          ]
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "real_name": "gpt-5.6-sol",
+          "display_name": "GPT-5.6 Sol",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "audio_input",
+            "file_input",
+            "tools",
+            "json_mode",
+            "reasoning",
+            "code_exec",
+            "web_search"
+          ]
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "real_name": "gpt-5.6-terra",
+          "display_name": "GPT-5.6 Terra",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "file_input",
+            "tools",
+            "json_mode",
+            "reasoning",
+            "code_exec"
+          ]
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "real_name": "gpt-5.6-luna",
+          "display_name": "GPT-5.6 Luna",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "tools",
+            "json_mode",
+            "reasoning"
+          ]
+        },
         {
           "id": "gpt-5.5",
           "real_name": "gpt-5.5",
@@ -407,6 +555,70 @@
       "credential_env": "",
       "base_url": "",
       "models": [
+        {
+          "id": "gemini-3.8-flash",
+          "real_name": "gemini-3.8-flash",
+          "display_name": "Gemini 3.8 Flash",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "audio_input",
+            "file_input",
+            "tools",
+            "json_mode",
+            "reasoning",
+            "code_exec"
+          ]
+        },
+        {
+          "id": "gemini-3.7-flash",
+          "real_name": "gemini-3.7-flash",
+          "display_name": "Gemini 3.7 Flash",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "audio_input",
+            "file_input",
+            "tools",
+            "json_mode",
+            "reasoning",
+            "code_exec"
+          ]
+        },
+        {
+          "id": "gemini-3.6-flash",
+          "real_name": "gemini-3.6-flash",
+          "display_name": "Gemini 3.6 Flash",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "audio_input",
+            "file_input",
+            "tools",
+            "json_mode",
+            "reasoning"
+          ]
+        },
+        {
+          "id": "gemini-3.5-flash-lite",
+          "real_name": "gemini-3.5-flash-lite",
+          "display_name": "Gemini 3.5 Flash Lite",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "file_input",
+            "tools",
+            "json_mode"
+          ]
+        },
         {
           "id": "gemini-3.5-flash",
           "real_name": "gemini-3.5-flash",
