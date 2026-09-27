@@ -14,6 +14,7 @@ import { MODELS_DATA } from './pages/settings.jsx';
 // PlatformShell(本文件)直接渲染这两个组件,必须从真实现 import,不能用 stub。
 import { ContinuePicker, NewGameModal } from './pages/saves.jsx';
 import { Composer } from './game-composer.jsx';
+import { helpSlugFor, DEFAULT_HELP_SLUG } from './components/help-slugs.js';
 import {
   AdminUsersPage,
   AdminGlobalUsagePage,
@@ -531,22 +532,8 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
     };
   }, [platform.saves]);
 
-  // 页面 → 帮助 slug 映射(slug 对应 frontend/help/__index.json 中的键)
-  const PAGE_HELP_SLUG = {
-    scripts: 'scripts', 'scripts-import': 'scripts',
-    cards: 'cards', 'cards-npc': 'cards', 'cards-online': 'cards',
-    saves: 'saves', 'saves-branches': 'saves',
-    settings: 'settings-models',
-    'settings-models': 'settings-models',
-    'settings-modelparams': 'settings-modelparams',
-    'settings-modules': 'settings-modules',
-    'settings-memory': 'settings-memory',
-    'admin-users': 'admin',
-    'md-editor': 'md-editor', tavern: 'tavern',
-    profile: 'intro',
-    me: 'intro',
-  };
-  const helpSlugForPage = PAGE_HELP_SLUG[page] || null;
+  // 页面 → 帮助 slug(文档站嵌入页),映射表与默认页在 components/help-slugs.js。
+  const helpSlugForPage = helpSlugFor(page);
 
   const onUserMenu = ({ detail }) => {
     const id = detail.id;
@@ -555,7 +542,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
     } else if (id === 'feedback') {
       setFeedbackOpen(true);
     } else if (id === 'help') {
-      if (window.__openHelp) window.__openHelp(helpSlugForPage || 'intro');
+      if (window.__openHelp) window.__openHelp(helpSlugForPage || DEFAULT_HELP_SLUG);
     } else { setPage(id); }
   };
 
@@ -642,7 +629,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
             utilities={[
               { type: 'button', iconName: 'search', title: t('platform.menu.search_title'), ariaLabel: t('platform.menu.search_title'), disableUtilityCollapse: true, onClick: () => setSearchOpen(true) },
               { type: 'button', iconName: 'settings', title: t('platform.nav.settings'), ariaLabel: t('platform.nav.settings'), disableUtilityCollapse: true, onClick: () => { setPage('settings'); } },
-              { type: 'button', iconName: 'status-info', title: helpSlugForPage ? `${t('platform.menu.help_current')} (${helpSlugForPage})` : t('platform.menu.help'), ariaLabel: t('platform.menu.help'), disableUtilityCollapse: true, onClick: () => { if (window.__openHelp) window.__openHelp(helpSlugForPage || 'intro'); } },
+              { type: 'button', iconName: 'status-info', title: helpSlugForPage ? `${t('platform.menu.help_current')} (${helpSlugForPage})` : t('platform.menu.help'), ariaLabel: t('platform.menu.help'), disableUtilityCollapse: true, onClick: () => { if (window.__openHelp) window.__openHelp(helpSlugForPage || DEFAULT_HELP_SLUG); } },
               { type: 'button', iconName: 'refresh', title: t('common.refresh'), ariaLabel: t('platform.menu.refresh_aria'), disableUtilityCollapse: true, onClick: _csRefresh },
               {
                 type: 'menu-dropdown',
