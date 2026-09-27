@@ -319,6 +319,64 @@ class SafeHttpxClientGate(unittest.TestCase):
         self.assertFalse(bool(getattr(c1._transport._inner._pool, "_http2", False)))
 
 
+class SsrfGuardTransportContract(unittest.TestCase):
+    """httpx 约定 transport 只抛 TransportError(dependabot #118 前置修复)。
+
+    openai 3.14.1 起 SDK 只把 httpx.RequestError 包成 APIConnectionError 并重试;以前闸门抛裸
+    OutboundBlocked(ValueError) 会原样穿出去:分类器认不出、SDK 不重试(服务器模式 DNS 瞬时失败
+    直接报错)。现在抛 OutboundBlockedTransportError:既是 httpx.ConnectError 也是 OutboundBlocked。
+    `_ssrf_enforced` 显式打桩为 True,不依赖测试执行顺序 / RPG_REQUIRE_AUTH 环境。
+    """
+
+    def setUp(self):
+        p = mock.patch.object(outbound, "_ssrf_enforced", return_value=True)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _assert_contract(self, exc):
+        import httpx
+        self.assertIsInstance(exc, httpx.TransportError)
+        self.assertIsInstance(exc, OutboundBlocked)
+        self.assertIsInstance(exc, ValueError)  # 既有 `except ValueError` 写法照样接得住
+
+    def test_internal_target_raises_transport_error(self):
+        client = outbound.safe_httpx_client(timeout=5)
+        self.addCleanup(client.close)
+        with self.assertRaises(OutboundBlocked) as cm:
+            client.get("http://127.0.0.1:9/")
+        self._assert_contract(cm.exception)
+
+    def test_bad_scheme_and_missing_host_raise_transport_error(self):
+        import httpx
+        transport = outbound._SsrfGuardTransport(mock.Mock())
+        for url in ("ftp://relay.example/v1", "http:///v1"):
+            with self.assertRaises(OutboundBlocked) as cm:
+                transport.handle_request(httpx.Request("GET", url))
+            self._assert_contract(cm.exception)
+
+    def test_dns_failure_raises_transport_error(self):
+        import socket as _s
+        transport = outbound._SsrfGuardTransport(mock.Mock())
+        with mock.patch.object(outbound.socket, "getaddrinfo", side_effect=_s.gaierror(8, "nodename nor servname")):
+            with self.assertRaises(OutboundBlocked) as cm:
+                import httpx
+                transport.handle_request(httpx.Request("GET", "https://no-such-host.invalid/v1"))
+        self._assert_contract(cm.exception)
+
+    def test_openai_sdk_wraps_it_as_connection_error_classified_network(self):
+        import openai
+
+        from agents.provider_errors import classify_provider_error
+        client = openai.OpenAI(api_key="test-key", base_url="http://127.0.0.1:9/v1",
+                               http_client=outbound.safe_httpx_client(timeout=5), max_retries=0)
+        with self.assertRaises(openai.APIConnectionError) as cm:
+            client.chat.completions.create(model="m", messages=[{"role": "user", "content": "hi"}])
+        self.assertIsInstance(cm.exception.__cause__, OutboundBlocked)
+        known = classify_provider_error(cm.exception)
+        self.assertEqual((known or [None])[0], "network")
+        self.assertIn("保留地址", known[1])  # 底层报错带上闸门的真实原因,而不是只有 "Connection error."
+
+
 class ConsolidationSourceGuards(unittest.TestCase):
     """静态巡检:四处调用点必须收口到 safe_urlopen,不许裸 urlopen / 自建 redirect opener 复活。"""
 

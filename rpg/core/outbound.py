@@ -29,6 +29,8 @@ import socket
 import urllib.request
 from urllib.parse import urlparse
 
+import httpx
+
 
 class OutboundBlocked(ValueError):
     """目标解析到私有/本地/保留地址,出于 SSRF 防护拒绝连接。"""
@@ -230,6 +232,18 @@ def safe_get_bytes(
     raise OutboundBlocked(f"重定向次数超限(> {max_redirects}):{url}")
 
 
+class OutboundBlockedTransportError(httpx.ConnectError, OutboundBlocked):
+    """httpx 传输层里的 SSRF 拒绝:同时是 httpx.ConnectError 和 OutboundBlocked。
+
+    httpx 的约定是 transport 只抛 TransportError。以前 _SsrfGuardTransport 直接抛
+    OutboundBlocked(ValueError),openai<3.14 靠 `except Exception` 兜着把它包成
+    APIConnectionError 并重试;openai 3.14.1 起改成只包 httpx.RequestError,裸 ValueError
+    原样穿出去,分类器认不出、SDK 也不重试(服务器模式 DNS 瞬时失败直接报错)。
+    改成 ConnectError 子类后:SDK 照常包成 APIConnectionError(__cause__ 是本异常)并重试,
+    分类回到 network;`except OutboundBlocked` / `except ValueError` 的既有写法也照样接得住。
+    """
+
+
 class _SsrfGuardTransport:
     """httpx 传输层 SSRF 闸:发请求前对目标 host 重解析,任一 IP 内网/保留即拒。
 
@@ -237,22 +251,26 @@ class _SsrfGuardTransport:
     配合 `follow_redirects=False`(在 safe_httpx_client 里设)即可挡住「302 → 内网」与裸打内网;
     use-time 重解析缓解 DNS rebinding(httpx 不便像 urllib 那样 pin socket,故此处为校验而非 pin,
     残余 TOCTOU 窗口极小,且写时闸 + 不跟随重定向已覆盖主要攻击面)。
+    拒绝一律抛 OutboundBlockedTransportError(httpx transport 契约,见该类注释)。
     """
 
     def __init__(self, inner):
         self._inner = inner
 
     def handle_request(self, request):
-        host = request.url.host
-        scheme = (request.url.scheme or "").lower()
-        if scheme not in {"http", "https"}:
-            raise OutboundBlocked(f"出站仅允许 http/https:{scheme or '(空)'}")
-        if not host:
-            raise OutboundBlocked("出站目标缺少 host")
-        port = request.url.port or (443 if scheme == "https" else 80)
-        # 服务器模式才做内网拦截;本地/自部署模式放行(本机大模型 / 梯子 fake-ip)。
-        if _ssrf_enforced():
-            _resolve_external_ip(host, port)  # 内网即抛 OutboundBlocked(fail-closed)
+        try:
+            host = request.url.host
+            scheme = (request.url.scheme or "").lower()
+            if scheme not in {"http", "https"}:
+                raise OutboundBlocked(f"出站仅允许 http/https:{scheme or '(空)'}")
+            if not host:
+                raise OutboundBlocked("出站目标缺少 host")
+            port = request.url.port or (443 if scheme == "https" else 80)
+            # 服务器模式才做内网拦截;本地/自部署模式放行(本机大模型 / 梯子 fake-ip)。
+            if _ssrf_enforced():
+                _resolve_external_ip(host, port)  # 内网即抛 OutboundBlocked(fail-closed)
+        except OutboundBlocked as exc:
+            raise OutboundBlockedTransportError(str(exc), request=request) from exc
         return self._inner.handle_request(request)
 
     def close(self):

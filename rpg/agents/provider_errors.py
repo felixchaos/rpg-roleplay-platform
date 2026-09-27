@@ -122,6 +122,24 @@ _CONNECTION_MARKERS = (
 )
 
 
+def _outbound_blocked_in_chain(exc: BaseException) -> BaseException | None:
+    """异常链(自身 / __cause__ / __context__)里有没有 core.outbound.OutboundBlocked。
+
+    服务器模式下出站 SSRF 闸拒绝(目标解析失败、解析到内网/保留地址)时:httpx 线经
+    OutboundBlockedTransportError 被 SDK 包成 APIConnectionError("Connection error."),
+    真正原因挂在 __cause__ 上;urllib 线(子代理 harness)则直接抛裸 OutboundBlocked。
+    两条线都按类名找,不 import core.outbound(本模块保持零依赖)。
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen and len(seen) < 8:
+        seen.add(id(cur))
+        if any(k.__name__ == "OutboundBlocked" for k in type(cur).__mro__):
+            return cur
+        cur = cur.__cause__ or cur.__context__
+    return None
+
+
 def _is_connection_failure(exc: Exception) -> bool:
     """请求是否根本没送达对面(连接/DNS/代理/超时),而非对面返回了错误。
 
@@ -129,20 +147,36 @@ def _is_connection_failure(exc: Exception) -> bool:
     再按措辞兜底。**调用方必须先排完所有带 HTTP 状态码的分支**:504 gateway timeout
     这类带 status 的错误措辞里也有 "timeout",顺序反了会被这里吞掉。
     """
+    if _outbound_blocked_in_chain(exc) is not None:
+        return True
     for klass in type(exc).__mro__:
         if klass.__name__ in _CONNECTION_EXC_NAMES:
             return True
     return any(m in str(exc).strip().lower() for m in _CONNECTION_MARKERS)
 
 
+_THREE_DIGITS = _re.compile(r"[0-9]{3}")
+
+
 def _http_status(exc: Exception) -> int | None:
     """从 SDK 异常上取 HTTP 状态码。
 
     openai/anthropic APIStatusError 用 .status_code;google.genai ClientError /
-    urllib HTTPError 用 .code。只认 int 且在合法 HTTP 区间,避免误读 sqlstate 等字段。
+    urllib HTTPError 用 .code。只认合法 HTTP 区间,避免误读 sqlstate 等字段。
+
+    openai>=3.14 把 APIError.code 一律转成 str(流内错误 {"code": 502} 变成 "502"),
+    所以 .code 为恰好三位 ASCII 数字的字符串也认;4 位业务码(智谱 "1301")、bool、
+    "5O2" 这类都不当状态码。status_code 优先。
     """
     for attr in ("status_code", "code"):
         v = getattr(exc, attr, None)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, str):
+            s = v.strip()
+            if not _THREE_DIGITS.fullmatch(s):
+                continue
+            v = int(s)
         if isinstance(v, int) and 100 <= v <= 599:
             return v
     return None
@@ -253,10 +287,12 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
     # 连接层失败放最后:它没有 HTTP 状态码,必须等上面所有带 status 的分支排完
     # (504 gateway timeout 的措辞里也有 "timeout",顺序反了会被误吞成"连不上")。
     if _is_connection_failure(exc):
+        _blocked = _outbound_blocked_in_chain(exc)
+        _low = redact_secrets(_blocked if _blocked is not None else exc, limit=120)
         return ("network",
                 "连不上这个模型的接口地址(请求没送达或没等到响应),不是存档或剧本的问题。"
                 "请依次检查:① 「设置 → 模型与密钥」里该供应商的接口地址(base_url)是否正确;"
                 "② 若是本地模型,对应的服务(Ollama / LM Studio / vLLM)是否正在运行、端口是否一致;"
                 "③ 网络或代理能否访问该地址。"
-                f"底层报错:{redact_secrets(exc, limit=120) or '(无)'}")
+                f"底层报错:{_low or '(无)'}")
     return None
