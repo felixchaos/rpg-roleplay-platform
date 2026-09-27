@@ -192,7 +192,7 @@ def _openai_text_marker_loop(
     interchangeable。
     """
     # 函数内导入:agents.gm.backends 包初始化会反过来 import 本模块
-    from agents.gm.backends._dsml import DsmlStreamFilter, resolve_tool_ref
+    from agents.gm.backends._dsml import DSML_UNPARSED_ERROR, DsmlStreamFilter, resolve_tool_ref
 
     system_with_tools = system + _format_tools_for_prompt(mcp_tools)
     START = "<<TOOL_CALL>>"
@@ -306,6 +306,10 @@ def _openai_text_marker_loop(
                 messages.append({"role": "user", "content": "【系统】上一条工具调用未闭合，请重新输出完整 marker 或放弃调用。"})
                 accumulated_text = ""
                 continue
+            if dsml.seen and not dsml.calls:
+                # 与 native 循环(openai_compat.stream_with_mcp_loop)同款:DSML 块被扣下却没解析出调用
+                # → 发 tool_error,别让空回合被分诊成「上游返空」。
+                yield {"type": "tool_error", "error": DSML_UNPARSED_ERROR, "raw": ""}
             if buffer:
                 yield {"type": "text", "text": buffer}
             return

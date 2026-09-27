@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from agents.gm.backends._dsml import DsmlStreamFilter, resolve_tool_ref
+from agents.gm.backends._dsml import DSML_UNPARSED_ERROR, DsmlStreamFilter, resolve_tool_ref
 from agents.gm.helpers import _openai_text_marker_loop
 from core.logging import get_logger
 
@@ -405,9 +405,10 @@ class _OpenAICompatBackend:
                     fr = getattr(choice, "finish_reason", None)
                     if fr:
                         finish_reason = str(fr)
-                        if self.last_usage:
-                            self.last_usage["finish_reason"] = finish_reason
-                            self.last_usage["max_tokens"] = int(max_tokens)
+                        # 无条件写:GameMaster 每回合入口会把 last_usage 清成 {},有些中转站只发
+                        # finish_reason 不发 usage chunk —— 这里再以「非空才写」为条件,截断/风控信号就丢了。
+                        self.last_usage["finish_reason"] = finish_reason
+                        self.last_usage["max_tokens"] = int(max_tokens)
                     delta = choice.delta.content
                     if delta:
                         yield delta
@@ -561,9 +562,9 @@ class _OpenAICompatBackend:
                         fr = getattr(choice, "finish_reason", None)
                         if fr:
                             finish_reason = str(fr)
-                            if self.last_usage:
-                                self.last_usage["finish_reason"] = finish_reason
-                                self.last_usage["max_tokens"] = int(max_tokens)
+                            # 无条件写,理由同 stream():每回合入口清零后,不发 usage chunk 的渠道靠它留住截断信号。
+                            self.last_usage["finish_reason"] = finish_reason
+                            self.last_usage["max_tokens"] = int(max_tokens)
                     except Exception:
                         continue
             except Exception as exc:
@@ -609,6 +610,11 @@ class _OpenAICompatBackend:
             if dsml.seen:
                 log.warning(f"[gm] {self.api_id}/{self.model_name} 在正文里吐了 DSML 工具标记,"
                             f"已拦下并解析出 {len(dsml.calls)} 个调用")
+                if not dsml.calls:
+                    # 标记整块被扣下、却一个完整调用都没解析出来(截断在 invoke 里 / 结构走样):正文被吞、
+                    # 工具也没执行。此前唯一痕迹是上面那行日志,空回合分诊只能误判成「上游返空」。
+                    # 发一个 tool_error 事件(chat 层现成转发并累积),给分诊一个确定性信号。
+                    yield {"type": "tool_error", "error": DSML_UNPARSED_ERROR, "raw": ""}
             _next = max(tool_calls_buf, default=-1) + 1
             for _j, (_name, _args) in enumerate(dsml.calls):
                 _sid, _tool = resolve_tool_ref(_name, mcp_tools)

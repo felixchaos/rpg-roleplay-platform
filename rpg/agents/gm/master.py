@@ -842,6 +842,15 @@ class GameMaster:
         task 66：backend 支持 native tool_use（Anthropic）时走 native 路径，
         否则用文本 marker 兜底。
         """
+        # 每回合清零 last_usage(三后端 + tools / 无工具 / text-marker 三条路都从这里进):后端只在
+        # 收到 usage 时才覆盖它,流里没有 usage(中转站返空、不发 include_usage)时读到的是上一次
+        # 调用的残留 —— finish_reason 误报截断、token 数重复记账,空回合分诊也会被带偏。
+        # 放在这一层而不是后端 stream() 起点:后台 acceptance 改写直接调 gm._backend.stream,
+        # 在后端清零会把本回合主 GM 已记下的用量抹掉。
+        try:
+            self._backend.last_usage = {}
+        except Exception:
+            pass
         if not tools:
             for chunk in self.respond_stream(user_input, retrieved_context, state, max_tokens=max_tokens):
                 if stop_event is not None and stop_event.is_set():

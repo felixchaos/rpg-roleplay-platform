@@ -43,6 +43,11 @@ _PARAM = re.compile(
     _TAG_HEAD + r"parameter\s+name\s*=\s*\"([^\"]+)\"([^>]*)>(.*?)" + _TAG_TAIL + r"parameter\s*>",
     re.I | re.S,
 )
+# DSML 标记出现过、但一个完整调用都没解析出来时发的 tool_error 文案。native 循环
+# (openai_compat.stream_with_mcp_loop)与 text-marker 降级循环(helpers._openai_text_marker_loop)
+# 共用;chat 层据 tool_error 事件把空回合分诊为「工具调用标记解析不了」,而不是「上游返空」。
+DSML_UNPARSED_ERROR = "模型输出了无法解析的工具调用标记,本轮未执行"
+
 # 清残渣用:任何一枚 DSML 标签(开/闭),包括丢了 `<` 的半截(生产 2296:`｜DSML｜parameter name=…>`)。
 _ANY_TAG = re.compile(r"<?\s*/?\s*" + _BAR + r"\s*DSML\s*" + _BAR + r"[^>\n]{0,120}>", re.I)
 # 流尾可能停在开标签的半截上(`<`、`<｜`、`<｜DS`…),先扣住别外发。
