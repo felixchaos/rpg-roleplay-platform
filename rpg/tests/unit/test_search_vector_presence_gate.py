@@ -220,3 +220,56 @@ def test_search_canon_skips_embedding_when_script_has_no_canon_vectors(monkeypat
     monkeypatch.setattr(emb, "embed_query", lambda *a, **k: pytest.fail("没有 canon 向量不该嵌入查询"))
     out = kbt._t_search_canon(1, {"save_id": 5, "query": "康拉德"})
     assert out.startswith("检索不可用")
+
+
+# ── 审查补充 ──────────────────────────────────────────────────────────────────
+def test_vector_column_check_error_is_not_cached():
+    """「有没有 pgvector 列」的缓存没有 TTL:查询碰上一次 DB 抖动时不能把 False 写进去,
+    否则这张表的向量召回在该 worker 的整个生命周期里都关掉。"""
+    calls = {"n": 0}
+
+    class _Flaky:
+        def execute(self, sql, params=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("connection reset")
+            return _R(one={"x": 1})
+
+    db = _Flaky()
+    assert _search._vector_column_exists(db, "document_chunks") is False
+    assert _search._vector_column_exists(db, "document_chunks") is True
+    assert _search._vector_column_exists(db, "document_chunks") is True
+    assert calls["n"] == 2, "成功的结果照常缓存"
+
+
+def test_entity_fallbacks_share_the_vector_path_gate(spy_embed):
+    """两条关键词兜底(查询没嵌入 / 向量路空)与向量路用同一道门控:前沿门开着时都用它。"""
+    db = _DB(vec_cols={"character_cards", "worldbook_entries"}, has_vec=set(),
+             kw_rows={"character_cards": _KW_CARD, "worldbook_entries": _KW_WB})
+    with mock.patch("kb.reveal._frontier_on", lambda _sid: True), \
+         mock.patch("kb.reveal.reveal_clause_v2", lambda *a, **k: ("(FRONTIER_GATE = %s)", [42])):
+        out = _search._search_entities(db, 7, "康拉德 仓库", chapter_max=5, user_id=1, save_id=9)
+    assert spy_embed == []
+    assert out == {"cards": _KW_CARD, "worldbook": _KW_WB}
+    kw_sql = [q for q in db.sql if "ilike" in q]
+    assert len(kw_sql) == 2 and all("FRONTIER_GATE" in q for q in kw_sql)
+    assert not any("first_revealed_chapter <= %s" in q for q in kw_sql)
+
+
+def test_entity_keyword_fallback_matches_names_mentioned_in_chinese_sentence():
+    """玩家输入是没有空格的中文整句:关键词兜底要能按「句子里提到了这个名字」命中,
+    不能只拿整句当一个 token 去比名字。"""
+    seen: list[tuple[str, tuple]] = []
+
+    class _Cap:
+        def execute(self, sql, params=None):
+            seen.append((" ".join(sql.split()), tuple(params or ())))
+            return _R(rows=[])
+
+    _search._ilike_entities(_Cap(), 7, ["我去仓库找康拉德"], "cards", save_id=None,
+                            gate_sql="(%s::integer is null or first_revealed_chapter <= %s)",
+                            gate_params=[5, 5], top_k=3, query_text="我去仓库找康拉德")
+    sql, params = seen[-1]
+    assert "strpos(lower(%s::text), lower(name)) > 0" in sql and "char_length(name) >= 2" in sql
+    # 参数序:script_id → ilike token → 原句 → 章节闸 → limit
+    assert params == (7, "%我去仓库找康拉德%", "我去仓库找康拉德", 5, 5, 3)

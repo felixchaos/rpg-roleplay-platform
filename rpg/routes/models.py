@@ -28,6 +28,7 @@ def _inject_pricing(catalog: dict[str, Any]) -> dict[str, Any]:
     只在 model 本身没有这些字段时才注入(不覆盖 catalog 已有值)。
     """
     import model_probe
+    from platform_app.usage import context_window_for
     for api in catalog.get("apis", []):
         api_id = api.get("id", "")
         for m in api.get("models", []):
@@ -42,8 +43,13 @@ def _inject_pricing(catalog: dict[str, Any]) -> dict[str, Any]:
                 continue
             m["input_cost_per_million"] = pricing.get("input")
             m["output_cost_per_million"] = pricing.get("output")
-            if m.get("context_window") is None and pricing.get("context"):
-                m["context_window"] = pricing.get("context")
+            if m.get("context_window") is None:
+                # 窗口统一问 usage.context_window_for(层预算 / 上下文圆环用的同一个口径):
+                # 价格表前缀命中的型号它给 0,这里也就不显示,免得设置页写着一个窗口、
+                # 实际上下文预算却按「不知道窗口」处理。
+                ctx = context_window_for(api_id, real)
+                if ctx:
+                    m["context_window"] = ctx
             if not m.get("source"):
                 m["source"] = pricing.get("source", "static")
     return catalog

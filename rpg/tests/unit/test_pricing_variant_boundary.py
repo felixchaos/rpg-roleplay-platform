@@ -67,6 +67,21 @@ def test_context_window_only_from_exact_hits():
     assert context_window_for("siliconflow", "deepseek-ai/DeepSeek-V3.2") == 0
 
 
+def test_settings_model_table_window_uses_same_source():
+    """设置页模型表(/api/models 的 _inject_pricing)的窗口与层预算同一个口径:
+    前缀命中的型号不显示窗口,免得页面写着一个窗口、实际上下文预算却按「不知道窗口」处理。"""
+    from routes.models import _inject_pricing
+
+    catalog = {"apis": [{"id": "deepseek", "models": [
+        {"real_name": "deepseek-v4.1-flash"},
+        {"real_name": "deepseek-v4.1-flash-expires-on-0910"},
+    ]}]}
+    exact, alias = _inject_pricing(catalog)["apis"][0]["models"]
+    assert exact["context_window"] == context_window_for("deepseek", "deepseek-v4.1-flash") > 0
+    assert alias.get("context_window") is None
+    assert alias["input_cost_per_million"] == exact["input_cost_per_million"], "价格照常显示"
+
+
 @pytest.mark.parametrize("api_id,name", [
     ("siliconflow", "deepseek-ai/DeepSeek-V3.2"),
     ("hunyuan", "hunyuan-large-longcontext"),

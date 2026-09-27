@@ -47,9 +47,13 @@ def _vector_column_exists(db, table: str, column: str = "embedding_vec") -> bool
             "where table_name = %s and column_name = %s and udt_name = 'vector'",
             (table, column),
         ).fetchone()
-        _VEC_COLUMN_CACHE[ck] = bool(row)
-    except Exception:
-        _VEC_COLUMN_CACHE[ck] = False
+    except Exception as exc:
+        # 查询出错(DB 抖动)只当本次没有,不写缓存:这个缓存没有 TTL,写进 False 会让这张表的
+        # 向量召回在该 worker 的整个生命周期里都关掉。现在每次检索、嵌入前都先问这一句,碰上一次
+        # 瞬时错误的概率不低。
+        log.debug("[_search] _vector_column_exists(%s.%s) failed: %s", table, column, exc)
+        return False
+    _VEC_COLUMN_CACHE[ck] = bool(row)
     return _VEC_COLUMN_CACHE[ck]
 
 
@@ -321,27 +325,30 @@ def _search_entities(
         "cards": _script_has_vectors(db, script_id, "character_cards"),
         "worldbook": _script_has_vectors(db, script_id, "worldbook_entries"),
     }
-    vec = None
-    if has_vec["cards"] or has_vec["worldbook"]:
-        vec = _embed_query(query_text, script_id=script_id, user_id=user_id, db=db)
-    if not vec:
-        # 无 embedding 时退化为 ILIKE 兜底(与 _search_chunks 同策略)
-        for result_key in ("cards", "worldbook"):
-            out[result_key] = _ilike_entities(
-                db, script_id, tokens, result_key, save_id=save_id,
-                gate_sql=_OLD_GATE, gate_params=[chapter_max, chapter_max],
-                top_k=top_k_cards if result_key == "cards" else top_k_wb,
-            )
-        return out
-
     # P4(S2):门控有两套。旧=标量 `first_revealed_chapter <= chapter_max`(2 个 chapter_max 占位符);
     # 新=前沿 reveal_clause_v2(save_id)(1 个 save_id 占位符)。用 *gate_params 展开自动适配占位符个数。
+    # 门控先定下来,向量路和两处关键词兜底用同一道 —— 此前「查询没嵌入」那条兜底固定用旧标量门,
+    # 「向量路空」那条跟前沿门,同一个剧本走哪条兜底就看嵌入成没成功,可见集不一致。
     from kb.reveal import _frontier_on, _frontier_shadow, _shadow_diff_log, reveal_clause_v2
     use_v2 = save_id is not None and _frontier_on(save_id)
     if use_v2:
         gate_sql, gate_params = reveal_clause_v2(int(save_id), mode, prefix="", has_public_knowledge=False, has_famous=False, progress_chapter=chapter_max)
     else:
         gate_sql, gate_params = _OLD_GATE, [chapter_max, chapter_max]
+
+    vec = None
+    if has_vec["cards"] or has_vec["worldbook"]:
+        vec = _embed_query(query_text, script_id=script_id, user_id=user_id, db=db)
+    if not vec:
+        # 无 embedding 时退化为关键词兜底(与 _search_chunks 同策略)
+        for result_key in ("cards", "worldbook"):
+            out[result_key] = _ilike_entities(
+                db, script_id, tokens, result_key, save_id=save_id,
+                gate_sql=gate_sql, gate_params=list(gate_params),
+                top_k=top_k_cards if result_key == "cards" else top_k_wb,
+                query_text=query_text,
+            )
+        return out
 
     def _gate_ids(table: str, extra: str, extra_params: list, g: str, p: list) -> set:
         """某门控放行的全集 id(不带 vector/limit),供影子比对隔离纯门控差异。"""
@@ -411,6 +418,7 @@ def _search_entities(
                 db, script_id, tokens, result_key, save_id=save_id,
                 gate_sql=gate_sql, gate_params=list(gate_params),
                 top_k=top_k_cards if result_key == "cards" else top_k_wb,
+                query_text=query_text,
             )
 
     return out
@@ -433,9 +441,18 @@ def _ilike_entities(
     gate_sql: str,
     gate_params: list[Any],
     top_k: int,
+    query_text: str = "",
 ) -> list[dict[str, Any]]:
-    """实体层关键词兜底:名字 / 标题 ILIKE 任一 token。可见性闸与向量路一致。"""
-    if not tokens:
+    """实体层关键词兜底。可见性闸与向量路一致。两种命中取并集:
+
+    - 名字 / 标题 ILIKE 任一 token(token = 查询按空白切开的片段);
+    - 查询原文里提到了这个名字 / 标题(至少 2 个字)。玩家输入是没有空格的中文整句,
+      只按 token 匹配时整句会被当成一个 token 去比名字,几乎命不中 ——
+      「我去仓库找康拉德」要召回的是名字叫「康拉德」的人物卡。
+    名字越长越具体,排在前面。
+    """
+    query_text = (query_text or "").strip()
+    if not tokens and not query_text:
         return []
     table, name_col, extra_cols = _ENTITY_ILIKE_SPECS[result_key]
     if table == "character_cards":
@@ -443,7 +460,11 @@ def _ilike_entities(
     else:
         vis_sql, vis_params = _worldbook_visibility(save_id)
     where_parts = [f"{name_col} ilike %s" for _ in tokens]
-    patterns = [f"%{t}%" for t in tokens]
+    patterns: list[Any] = [f"%{t}%" for t in tokens]
+    if query_text:
+        where_parts.append(
+            f"(char_length({name_col}) >= 2 and strpos(lower(%s::text), lower({name_col})) > 0)")
+        patterns.append(query_text)
     try:
         return db.execute(
             f"select id, {name_col}, {extra_cols} first_revealed_chapter, 0.5 as score "
@@ -451,6 +472,7 @@ def _ilike_entities(
             f"where script_id = %s and {vis_sql} "
             f"and ({' or '.join(where_parts)}) "
             f"and {gate_sql} "
+            f"order by char_length({name_col}) desc, id "
             f"limit %s",
             # 注意:参数序必须跟占位符序:script_id → 可见性 → ilike patterns → 章节闸 → limit。
             # 旧代码把 patterns 排在 script_id 前面(占位符个数刚好对得上,故没人发现),
