@@ -110,6 +110,17 @@ async def run_context_phase(
     ctx.bundle = bundle
     ctx.ctx_text = ctx_text
 
+    # 落库身份(persist_user_id / active_save_id)原本只在 run_rules_phase(Phase 3)末尾赋值,
+    # 而酒馆(tavern_gm)整段跳过 Phase 3 → 酒馆回合这两个字段恒为 None:chat 的 token_usage
+    # 一条不记、打断/断连落库拿不到身份、空响应日志打出 save_id=None。所有模式都经过 Phase 2,
+    # 这里直接复用 Phase 1 已解析的 early_* —— 同一个 resolve_persist_target 的结果,零额外 IO。
+    # 非酒馆模式 Phase 3 会用同一函数重新解析并覆盖,行为与改动前一致。
+    try:
+        ctx.persist_user_id = ctx.early_persist_user_id
+        ctx.active_save_id = ctx.early_active_save_id
+    except Exception:
+        pass
+
     # 上下文用量面板(ContextUsage 圆环 + breakdown)读 state.data.memory.last_context。
     # 原本只在 run_rules_phase(Phase 3)末尾写,而酒馆(tavern_gm)跳过 Phase 3 → last_context
     # 永不写入 → 前端 /api/chat/context-breakdown 全 0。这里在 context 组装后先记一次(所有模式

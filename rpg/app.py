@@ -1462,7 +1462,20 @@ def _persist_chat_turn(
         raise platform_branches.RuntimeTurnConflict(
             str(_rt.get("reason") or "存档已在别处推进,请刷新后重试")
         )
-    if persist_user_id and active_save_id:
+    # 酒馆(tavern_gm)豁免下面两块,判据与 routes/game/chat.py 跳 Phase 3 的同源:
+    #   · record_turn_messages:ensure_game_session 要 join scripts,酒馆存档 script_id 恒为 NULL
+    #     (CHECK 约束),必抛「无权访问该存档」—— 调了也只是白跑两次查询再被吞。
+    #   · 锚点 + 阶段块:DEFAULT_TAVERN_MANIFEST(context_providers/registry.py)明确不含
+    #     runtime_phase_digests 与任何锚点 provider,酒馆没有消费方;开阶段反而会让
+    #     history_messages() 往酒馆 prompt 前面插「前情提要」、并每 30 回合用玩家的 key 跑一次摘要。
+    # 酒馆回合的落库身份在 Phase 2 才补上(此前恒 None,这两块从来没对酒馆跑过),这里保持原样不新开。
+    _is_tavern_turn = False
+    try:
+        from context_providers.registry import resolve_content_pack as _resolve_cp
+        _is_tavern_turn = (_resolve_cp(state).get("gm_policy") or {}).get("mode") == "tavern_gm"
+    except Exception:
+        _is_tavern_turn = False
+    if persist_user_id and active_save_id and not _is_tavern_turn:
         try:
             platform_knowledge.record_turn_messages(
                 persist_user_id,
@@ -1475,7 +1488,7 @@ def _persist_chat_turn(
         except Exception:
             pass
     # task 107B/107C: 每 turn 写 save_timeline_anchors + phase boundary 检测
-    if active_save_id:
+    if active_save_id and not _is_tavern_turn:
         try:
             from save_phase_manager import (
                 detect_phase_boundary,
