@@ -184,7 +184,10 @@ class RecallGating(unittest.TestCase):
         self.assertIn("丙城实体", names, "omniscient 不门控,应召回 ch10 实体")
 
     def test_recall_embed_uses_locked_script_id(self):
-        """审计 S2:向量路必须用本剧本锁定的 embedder(传真 script_id,非 None),否则向量空间错乱。"""
+        """审计 S2:向量路必须用本剧本锁定的 embedder(传真 script_id,非 None),否则向量空间错乱。
+
+        fixture 剧本一条向量都没有,存在性门会直接跳过嵌入;这里把门打开(当作剧本有向量),
+        只验「真发嵌入时传的是锁定的 script_id」。门本身的行为由下一条用例锁住。"""
         from unittest.mock import patch
 
         import platform_app.knowledge._search as search_mod
@@ -195,10 +198,29 @@ class RecallGating(unittest.TestCase):
             return None  # 返 None → 向量路跳过,只验传参
 
         from kb.recall import recall
-        with patch.object(search_mod, "_embed_query", _spy_embed):
+        with patch.object(search_mod, "_script_has_vectors", return_value=True), \
+                patch.object(search_mod, "_embed_query", _spy_embed):
             recall(self.save_id, "甲城实体", mode="none")
         self.assertEqual(seen.get("script_id"), self.script_id,
                          "recall 向量路应传本档锁定的 script_id,而非 None")
+
+    def test_recall_skips_embed_when_script_has_no_vectors(self):
+        """存在性门:剧本的 kb_nodes 一条向量都没有 → 不嵌入查询(不白打供应商),关键词路照常召回。"""
+        from unittest.mock import patch
+
+        import platform_app.knowledge._search as search_mod
+        calls = []
+
+        def _spy_embed(text, *, script_id=None, user_id=None, db=None):
+            calls.append(script_id)
+            return None
+
+        from kb.recall import recall
+        with patch.object(search_mod, "_embed_query", _spy_embed):
+            r = recall(self.save_id, "甲城实体", mode="none")
+        self.assertEqual(calls, [], "零向量剧本不应发出查询嵌入")
+        self.assertIn("甲城实体", {c["name"] for c in r.candidates},
+                      "跳过向量路后关键词路仍应召回")
 
 
 if __name__ == "__main__":

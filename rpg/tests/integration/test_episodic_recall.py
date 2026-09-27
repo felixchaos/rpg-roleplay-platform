@@ -26,6 +26,13 @@ def _vec(lead: float) -> str:
     return "[" + ",".join(str(x) for x in dims) + "]"
 
 
+def _patch_embed_query(testcase, emb_module, fake) -> None:
+    from unittest.mock import patch
+    patcher = patch.object(emb_module, "embed_query", fake)
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+
+
 def _mk_commit(db, save_id: int, parent_id, msg: str) -> int:
     import uuid
     h = uuid.uuid4().hex
@@ -88,8 +95,10 @@ class EpisodicRecallBranchIsolation(unittest.TestCase):
         from kb.episodic import retrieve_episodic
         uid, save_id, root, b, c = self._setup_save()
 
-        # 注固定查询向量(首维=1.0),所有事件都相似,只由分支谱系决定可见性
-        emb.embed_query = lambda text, user_id, **kw: _vec(1.0)
+        # 注固定查询向量(首维=1.0),所有事件都相似,只由分支谱系决定可见性。
+        # 经 _patch_embed_query 注入并在用例结束时还原:以前直接给模块属性赋值不还原,
+        # 同进程后面跑的嵌入测试(如 test_embed_recall_consistency)会拿到这个假实现。
+        _patch_embed_query(self, emb, lambda text, user_id, **kw: _vec(1.0))
 
         # 站在 B 分支召回 → 应见 共同祖先 + B 分支事件,绝不见 C 分支事件
         res_b = retrieve_episodic(save_id, b, uid, "回忆一下过去", k=10)
@@ -114,7 +123,7 @@ class EpisodicRecallBranchIsolation(unittest.TestCase):
         import platform_app.knowledge.embedding as emb
         from kb.episodic import retrieve_episodic
         uid, save_id, root, b, c = self._setup_save()
-        emb.embed_query = lambda text, user_id, **kw: None  # 无 embedder
+        _patch_embed_query(self, emb, lambda text, user_id, **kw: None)  # 无 embedder
         self.assertEqual(retrieve_episodic(save_id, b, uid, "回忆", k=5), [],
                          "无 embedder 应静默返空,降级到近因检索")
 
