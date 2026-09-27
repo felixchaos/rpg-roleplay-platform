@@ -1,35 +1,48 @@
 ---
 // 文档反馈模块 + 默认页脚。注入到每个文档页底部:「这对我有帮助」点赞 / 点踩 / 反馈,
 // 走同源 CF Pages Function /api/doc-feedback → 转发到 RPG Roleplay 的 /api/feedback/anon。
+// 交互逻辑只在 src/scripts/doc-feedback.js 一处实现(嵌入视图 /embed/<slug> 共用)。
 import Default from '@astrojs/starlight/components/Footer.astro';
 
-// Starlight 通过 Astro.props 把路由数据(含 pagination)传给页脚组件。仅真实文档页有
-// pagination;404 / splash 没有 → 不渲染反馈块与默认页脚(默认页脚内部解构 pagination,缺失即崩)。
-const isDoc = Boolean(Astro.props && Astro.props.pagination);
+// Starlight 0.30 通过 Astro.props 把路由数据传给页脚组件。pagination 对每个路由都是
+// {prev,next} 对象,404 也有,不能拿它判断是不是文档页。404 路由的 id 固定为 '404'
+// (@astrojs/starlight/routes/static/404.astro),据此排除:404 页不挂反馈组件。
+// 默认页脚照常渲染。scripts/check-dist.mjs 在构建后断言 404.html 里没有反馈组件,
+// 升级 Starlight 时路由结构若有变化会在构建期暴露。
+const isDoc = Astro.props?.id !== '404';
 const isEn = Astro.url.pathname === '/en' || Astro.url.pathname.startsWith('/en/');
 const L = isEn
-  ? { q: 'Was this page helpful?', yes: 'Helpful', no: 'Not helpful', fb: 'Send feedback', ph: 'Tell us what was unclear, missing, or wrong (you can leave contact info at the end).', send: 'Submit', cancel: 'Cancel', thanks: 'Thanks for your feedback.', fail: 'Could not submit, please try again later.' }
-  : { q: '这对我有帮助？', yes: '有帮助', no: '没帮助', fb: '反馈', ph: '告诉我们哪里不清楚、缺失或有误(可在结尾留联系方式)。', send: '提交', cancel: '取消', thanks: '感谢你的反馈。', fail: '提交失败,请稍后再试。' };
+  ? { q: 'Was this page helpful?', yes: 'Helpful', no: 'Not helpful', fb: 'Send feedback', ph: 'Tell us what was unclear, missing, or wrong (you can leave contact info at the end).', send: 'Submit', cancel: 'Cancel', sending: 'Sending…', thanks: 'Thanks for your feedback.', fail: 'Could not submit, please try again later.', rateLimited: 'Too many submissions, please try again later.' }
+  : { q: '这对我有帮助？', yes: '有帮助', no: '没帮助', fb: '反馈', ph: '告诉我们哪里不清楚、缺失或有误(可在结尾留联系方式)。', send: '提交', cancel: '取消', sending: '提交中…', thanks: '感谢你的反馈。', fail: '提交失败,请稍后再试。', rateLimited: '提交过于频繁,请稍后再试。' };
 ---
 
-{isDoc && (<section class="doc-feedback" data-lang={isEn ? 'en' : 'zh-CN'} aria-label={L.q}>
-  <span class="df-q">{L.q}</span>
-  <div class="df-actions">
+{isDoc && (<section
+  class="doc-feedback"
+  data-doc-feedback
+  data-lang={isEn ? 'en' : 'zh-CN'}
+  data-sending={L.sending}
+  data-thanks={L.thanks}
+  data-fail={L.fail}
+  data-rate-limited={L.rateLimited}
+  aria-label={L.q}
+>
+  <span class="df-q" data-hide-on-done>{L.q}</span>
+  <div class="df-actions" data-hide-on-done>
     <button type="button" class="df-btn" data-vote="up">{L.yes}</button>
     <button type="button" class="df-btn" data-vote="down">{L.no}</button>
     <button type="button" class="df-btn" data-fb>{L.fb}</button>
   </div>
-  <form class="df-form" hidden>
-    <textarea class="df-text" rows="3" maxlength="3500" placeholder={L.ph}></textarea>
+  <form class="df-form" data-fb-form data-hide-on-done hidden>
+    <textarea class="df-text" data-fb-text rows="3" maxlength="3500" placeholder={L.ph}></textarea>
     <div class="df-row">
       <button type="submit" class="df-btn df-primary">{L.send}</button>
       <button type="button" class="df-btn" data-cancel>{L.cancel}</button>
     </div>
   </form>
-  <p class="df-done" hidden></p>
+  <p class="df-done" data-fb-status role="status" aria-live="polite" hidden></p>
 </section>)}
 
-{isDoc && <Default {...Astro.props} />}
+<Default {...Astro.props} />
 
 <style>
   .doc-feedback {
@@ -43,6 +56,10 @@ const L = isEn
     align-items: center;
     gap: 0.75rem;
   }
+  /* .df-actions / .df-form 自带 display:flex,作者样式会盖过浏览器默认的
+     [hidden]{display:none},hidden 属性因此失效(表单一加载就展开、投完票按钮不消失)。
+     这里显式补回。 */
+  .doc-feedback [hidden] { display: none !important; }
   .df-q { font-weight: 600; font-size: var(--sl-text-sm); color: var(--sl-color-white); }
   .df-actions { display: flex; gap: 0.5rem; }
   .df-btn {
@@ -52,6 +69,10 @@ const L = isEn
     color: var(--sl-color-gray-1); transition: border-color .15s, color .15s, background .15s;
   }
   .df-btn:hover { border-color: var(--sl-color-accent); color: var(--sl-color-white); }
+  .df-btn:disabled { cursor: default; opacity: 0.55; }
+  .df-btn:disabled:hover { border-color: var(--sl-color-gray-4); color: var(--sl-color-gray-1); }
+  .df-btn[aria-pressed='true'],
+  .df-btn[aria-pressed='true']:hover { border-color: var(--sl-color-accent); color: var(--sl-color-white); opacity: 1; }
   .df-primary { border-color: var(--sl-color-accent); color: var(--sl-color-white); }
   .df-form { flex-basis: 100%; display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.25rem; }
   .df-text {
@@ -63,34 +84,6 @@ const L = isEn
   .df-done { flex-basis: 100%; margin: 0; font-size: var(--sl-text-sm); color: var(--sl-color-accent-high); }
 </style>
 
-<script is:inline define:vars={{ THANKS: L.thanks, FAIL: L.fail }}>
-  document.querySelectorAll('.doc-feedback').forEach(function (box) {
-    if (box.dataset.wired) return; box.dataset.wired = '1';
-    var lang = box.getAttribute('data-lang');
-    var actions = box.querySelector('.df-actions');
-    var form = box.querySelector('.df-form');
-    var text = box.querySelector('.df-text');
-    var done = box.querySelector('.df-done');
-    function post(payload) {
-      return fetch('/api/doc-feedback', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(Object.assign({ page: location.pathname, lang: lang }, payload)),
-      }).then(function (r) { return r.ok; }).catch(function () { return false; });
-    }
-    function finish(ok) {
-      actions.hidden = true; form.hidden = true;
-      done.textContent = ok ? THANKS : FAIL; done.hidden = false;
-    }
-    box.querySelectorAll('[data-vote]').forEach(function (b) {
-      b.addEventListener('click', function () { post({ helpful: b.getAttribute('data-vote') === 'up' }).then(finish); });
-    });
-    box.querySelector('[data-fb]').addEventListener('click', function () { form.hidden = false; text.focus(); });
-    box.querySelector('[data-cancel]').addEventListener('click', function () { form.hidden = true; });
-    form.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var t = (text.value || '').trim();
-      if (!t) { form.hidden = true; return; }
-      post({ text: t }).then(finish);
-    });
-  });
+<script>
+  import '../scripts/doc-feedback.js';
 </script>

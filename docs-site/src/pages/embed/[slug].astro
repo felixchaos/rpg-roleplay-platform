@@ -30,39 +30,40 @@ const title = entry.data.title ?? entry.id;
       <h1>{title}</h1>
       <Content />
     </article>
-    <div class="embed-feedback" id="embedFeedback">
-      <span class="ef-q">这对我有帮助？</span>
-      <button type="button" class="ef-btn" data-vote="up">有帮助</button>
-      <button type="button" class="ef-btn" data-vote="down">没帮助</button>
-      <span class="ef-done" hidden></span>
+    <div
+      class="embed-feedback"
+      id="embedFeedback"
+      data-doc-feedback
+      data-lang="zh-CN"
+      data-sending="提交中…"
+      data-thanks="感谢你的反馈。"
+      data-fail="提交失败,请稍后再试。"
+      data-rate-limited="提交过于频繁,请稍后再试。"
+    >
+      <span class="ef-q" data-hide-on-done>这对我有帮助？</span>
+      <span class="ef-actions" data-hide-on-done>
+        <button type="button" class="ef-btn" data-vote="up">有帮助</button>
+        <button type="button" class="ef-btn" data-vote="down">没帮助</button>
+      </span>
+      <span class="ef-done" data-fb-status role="status" aria-live="polite" hidden></span>
     </div>
     <style>
       .embed-feedback { max-width: 760px; margin: 8px auto 28px; padding: 12px 22px 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--line); }
+      /* 与主站页脚同一条规则:任何带 display 的样式都不许盖掉 hidden。 */
+      .embed-feedback [hidden] { display: none !important; }
       .ef-q { font-size: 13px; color: var(--ink-2); }
+      .ef-actions { display: inline-flex; gap: 10px; }
       .ef-btn { font: inherit; font-size: 12px; cursor: pointer; padding: 4px 12px; border-radius: 7px; border: 1px solid var(--line); background: transparent; color: var(--ink); }
       .ef-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .ef-btn:disabled { cursor: default; opacity: 0.55; }
+      .ef-btn:disabled:hover { border-color: var(--line); color: var(--ink); }
+      .ef-btn[aria-pressed='true'],
+      .ef-btn[aria-pressed='true']:hover { border-color: var(--accent); color: var(--accent); opacity: 1; }
       .ef-done { font-size: 13px; color: var(--accent); }
     </style>
-    <script is:inline>
-      (function () {
-        var box = document.getElementById('embedFeedback');
-        if (!box) return;
-        var actions = box.querySelectorAll('.ef-btn');
-        var done = box.querySelector('.ef-done');
-        box.querySelectorAll('[data-vote]').forEach(function (b) {
-          b.addEventListener('click', function () {
-            var helpful = b.getAttribute('data-vote') === 'up';
-            fetch('/api/doc-feedback', { method: 'POST', headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ helpful: helpful, page: location.pathname, lang: 'zh-CN' }) })
-              .then(function (r) { return r.ok; }).catch(function () { return false; })
-              .then(function (ok) {
-                actions.forEach(function (x) { x.hidden = true; });
-                box.querySelector('.ef-q').hidden = true;
-                done.textContent = ok ? '感谢你的反馈。' : '提交失败,请稍后再试。'; done.hidden = false;
-              });
-          });
-        });
-      })();
+    <script>
+      // 投票交互与主站页脚共用 src/scripts/doc-feedback.js(一次浏览一票、在途锁、超时)。
+      import '../../scripts/doc-feedback.js';
     </script>
     <script is:inline>
       (function () {
