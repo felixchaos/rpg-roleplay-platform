@@ -146,7 +146,7 @@ def parse_set_command(
 
     try:
         if api_id == "anthropic":
-            return _call_anthropic_tools(model, user_prompt, user_id)
+            return _call_anthropic_tools(model, user_prompt, user_id, timeout_sec)
         if api_id == "vertex_ai":
             return _call_vertex_tools(model, user_prompt, user_id)
         # OpenAI 兼容
@@ -162,20 +162,20 @@ def parse_set_command(
 # ────────────────────────────────────────────────────────────
 
 
-def _call_anthropic_tools(model: str, user_prompt: str, user_id: int | None) -> list[dict]:
-    """Anthropic native tool_use,允许并行多个 tool_use blocks。"""
-    from anthropic import Anthropic
+def _call_anthropic_tools(
+    model: str, user_prompt: str, user_id: int | None, timeout_sec: int = 15,
+) -> list[dict]:
+    """Anthropic native tool_use,允许并行多个 tool_use blocks。
 
+    timeout_sec:调用方(聊天 directives 阶段传 15)的上限,与 OpenAI 兼容分支同口径,SDK 不重试。"""
+    from agents._harness import micro_task_anthropic_client
     from platform_app.user_credentials import resolve_api_key
     result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
     key = result.get("key")
     if not key:
         raise RuntimeError("无 Anthropic API Key for command_agent")
-    # 走统一出站层:不跟随重定向 + 凭据代理(本地模式才有值)。读超时沿用 GM 的单一来源。
-    from core.config import llm_timeout_seconds
-    from core.outbound import credential_proxy, safe_httpx_client
-    client = Anthropic(api_key=key, http_client=safe_httpx_client(
-        timeout=llm_timeout_seconds(user_id), proxy=credential_proxy(result)))
+    # 走统一出站层(不跟随重定向 + 凭据代理),读超时守调用方的 timeout_sec。
+    client = micro_task_anthropic_client(result, timeout_sec=timeout_sec)
     resp = client.messages.create(
         model=model,
         max_tokens=2048,

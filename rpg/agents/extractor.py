@@ -230,7 +230,7 @@ def _call_extractor_backend(
     Anthropic tool_use 路径无 backend 对象，返回 None。
     """
     if api_id == "anthropic":
-        text, anth_usage = _call_anthropic_tool_use(model, system_prompt, user_prompt, user_id)
+        text, anth_usage = _call_anthropic_tool_use(model, system_prompt, user_prompt, user_id, timeout_sec)
         # 包装一个轻量 usage holder，让上层可以统一读 last_usage
         class _UsageHolder:
             last_usage = anth_usage
@@ -258,7 +258,7 @@ def _call_extractor_backend(
 
 
 def _call_anthropic_tool_use(
-    model: str, system_prompt: str, user_prompt: str, user_id: int | None
+    model: str, system_prompt: str, user_prompt: str, user_id: int | None, timeout_sec: int = 20,
 ) -> tuple[str, dict]:
     """task 63：用 Anthropic native tool_use 强制 schema 校验。
 
@@ -266,20 +266,18 @@ def _call_anthropic_tool_use(
     模型必须输出 tool_use block 而不是文本，SDK 会校验 schema 合规。
     错误率比文本 JSON 低 5-10×。
 
+    timeout_sec:extract_state_ops 的上限,与 OpenAI 兼容分支同口径,SDK 不重试。
+
     返回 (text, usage_dict)。
     """
-    from anthropic import Anthropic
-
+    from agents._harness import micro_task_anthropic_client
     from platform_app.user_credentials import resolve_api_key
     result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
     key = result.get("key")
     if not key:
         raise RuntimeError("找不到 Anthropic API Key for extractor")
-    # 走统一出站层:不跟随重定向 + 凭据代理(本地模式才有值)。读超时沿用 GM 的单一来源。
-    from core.config import llm_timeout_seconds
-    from core.outbound import credential_proxy, safe_httpx_client
-    client = Anthropic(api_key=key, http_client=safe_httpx_client(
-        timeout=llm_timeout_seconds(user_id), proxy=credential_proxy(result)))
+    # 走统一出站层(不跟随重定向 + 凭据代理),读超时守调用方的 timeout_sec。
+    client = micro_task_anthropic_client(result, timeout_sec=timeout_sec)
     tools = [{
         "name": "emit_state_ops",
         "description": "把 GM 叙事里发生的状态变化输出为操作数组。没有变化就传 ops=[].",

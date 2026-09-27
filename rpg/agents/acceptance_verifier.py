@@ -246,7 +246,7 @@ def _call_verifier_backend(
     """
     if api_id == "anthropic":
         text, anth_usage = _call_anthropic_tool_use_for_acceptance(
-            model, system_prompt, user_prompt, user_id, acceptance,
+            model, system_prompt, user_prompt, user_id, acceptance, timeout_sec=timeout_sec,
         )
         class _UsageHolder:
             last_usage = anth_usage
@@ -287,6 +287,7 @@ def _call_anthropic_tool_use_for_acceptance(
     user_prompt: str,
     user_id: int | None,
     acceptance: list[str],
+    timeout_sec: int = 15,
 ) -> tuple[str, dict]:
     """task 84：Anthropic native tool_use，schema = emit_acceptance_verdict。
 
@@ -295,18 +296,14 @@ def _call_anthropic_tool_use_for_acceptance(
 
     返回 (text, usage_dict)。
     """
-    from anthropic import Anthropic
-
+    from agents._harness import micro_task_anthropic_client
     from platform_app.user_credentials import resolve_api_key
     result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
     key = result.get("key")
     if not key:
         raise RuntimeError("找不到 Anthropic API Key for acceptance_verifier")
-    # 走统一出站层:不跟随重定向 + 凭据代理(本地模式才有值)。读超时沿用 GM 的单一来源。
-    from core.config import llm_timeout_seconds
-    from core.outbound import credential_proxy, safe_httpx_client
-    client = Anthropic(api_key=key, http_client=safe_httpx_client(
-        timeout=llm_timeout_seconds(user_id), proxy=credential_proxy(result)))
+    # 走统一出站层(不跟随重定向 + 凭据代理),读超时守调用方的 timeout_sec,SDK 不重试。
+    client = micro_task_anthropic_client(result, timeout_sec=timeout_sec)
     # enum 必须是非空且 ≤512 个；正常 acceptance 不会超
     enum_vals = [str(c).strip() for c in acceptance if str(c).strip()][:64]
     items_schema: dict = {"type": "string"}

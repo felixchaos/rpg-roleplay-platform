@@ -53,6 +53,28 @@ def _no_redirect_urlopen(req, *, timeout, proxy=None):
         raise
 
 
+def micro_task_anthropic_client(resolved: dict, *, timeout_sec: float):
+    """/set 解析(command_agent)、状态抽取(extractor)、验收判定(acceptance_verifier)的 Anthropic
+    裸客户端:读超时 = 调用方的 timeout_sec(连接 10s),SDK 不重试,凭据代理照常带上。
+
+    与这三处的 OpenAI 兼容分支同口径(那边 urllib 按 timeout_sec、不重试)。以前 Anthropic 分支
+    用 llm_timeout_seconds(桌面 1800s)+ SDK 默认 max_retries=2:请求挂住时 /set 这一步最坏把
+    整个回合卡 3 x 1800s。这三处都在失败时降级(返回空 / 退回规则判定),多等一次重试不值。
+    resolved = resolve_api_key(...) 的返回(取 key 与凭据代理)。
+    """
+    import httpx
+    from anthropic import Anthropic
+
+    from core.outbound import credential_proxy, safe_httpx_client
+    t = float(timeout_sec)
+    return Anthropic(
+        api_key=resolved.get("key"),
+        timeout=httpx.Timeout(t, connect=10.0),
+        max_retries=0,
+        http_client=safe_httpx_client(timeout=t, proxy=credential_proxy(resolved)),
+    )
+
+
 def call_agent_json(
     api_id: str,
     model: str,
