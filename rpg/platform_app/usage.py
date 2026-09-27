@@ -279,10 +279,18 @@ def aggregate_usage(
 
 
 def context_window_for(api_id: str, model_real_name: str) -> int:
-    """从定价表里取该模型的 context_window"""
+    """从定价表里取该模型的 context_window。
+
+    只认精确命中(及 catalog 自带的价格条目)。前缀回退(source="static-prefix")命中的
+    返回 0 = 「不知道这个型号的窗口」:层预算求解器(context_engine.budget)与上下文圆环的
+    契约是查不到窗口就不求解、各层照拿 want。前缀命中的窗口即便来自同一型号的日期别名,
+    也宁可不用 —— 窗口给小了会静默砍掉 GM 上下文层,给不出窗口只是回到不求解的旧行为。
+    """
     try:
         from model_probe import get_pricing
         pricing = get_pricing(api_id, model_real_name) or {}
+        if pricing.get("source") == "static-prefix":
+            return 0
         return int(pricing.get("context", 0))
     except Exception:
         return 0

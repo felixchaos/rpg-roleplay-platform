@@ -21,6 +21,7 @@ model_probe.py — API 探测：远端模型列表 + 可用性 + 定价
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -195,13 +196,43 @@ def get_pricing(api_id_or_kind: str, model_real_name: str, catalog_override: dic
     pricing = table.get(model_real_name)
     if pricing:
         return {**pricing, "source": "static", "unit": "USD per million tokens"}
-    # 最长前缀回退,与 get_capabilities 对称。厂商的带日期/后缀变体
-    # (gemini-3.8-flash-preview-09-01、deepseek-v4.1-flash-expires-on-0910 …)此前
-    # **只有能力表兜得住、价格恒 None** —— 同一族信息一半有一半没有,是典型的修 A 漏 B。
-    # 前缀命中的价格标 source="static-prefix",与精确命中可区分。
+    # 最长前缀回退,只认「同一型号的日期 / 预览别名」(gemini-3.8-flash-preview-09-01、
+    # deepseek-v4.1-flash-expires-on-0910 …)。前缀命中的价格标 source="static-prefix",
+    # 与精确命中可区分。边界见 _variant_prefix_match。
+    prefix = _variant_prefix_match(table, model_real_name or "")
+    if prefix is not None:
+        return {**table[prefix], "source": "static-prefix", "unit": "USD per million tokens"}
+    return None
+
+
+# 前缀之后允许出现的「同一型号」后缀:日期、零填充修订号、预览 / 实验 / latest 标记,可串联。
+# 刻意**不认**:
+#   - 档位词(-mini / -nano / -pro / -lite / -max / -plus / -turbo / -image / -tts / -audio /
+#     -realtime / -longcontext / -instant / -thinking / -vision …)—— 那是另一个型号,价格和窗口都不同;
+#   - 紧跟的小版本号(.1 / .2 / -1 / -2,如 gpt-5 → gpt-5.1、DeepSeek-V3 → DeepSeek-V3.2、
+#     claude-sonnet-5 → claude-sonnet-5-1)—— 同样是另一个型号。
+# v1.88.0 的前缀回退没有这道边界:gpt-5-nano 被套上 gpt-5 的价(贵 40 倍),
+# siliconflow 的 DeepSeek-V3.2 被套上 V3 的 64K 窗口,喂给层预算求解器后 GM 上下文被砍到 54%。
+_VARIANT_SUFFIX_RE = re.compile(
+    r"^(?:[-_@](?:"
+    r"\d{8}|\d{6}|\d{4}-\d{2}-\d{2}|\d{2}-\d{4}|\d{2}-\d{2}|\d{4}|0\d{2}"
+    r"|preview|exp|experimental|latest|expires-on-\d{4}"
+    r"))+$",
+    re.IGNORECASE,
+)
+
+
+def _variant_prefix_match(table: dict[str, Any], name: str) -> str | None:
+    """在 table 里找 name 的最长前缀,且前缀之后只剩日期 / 预览类后缀(同一型号的别名)。
+
+    价格与上下文窗口是**档位级**数字,只能在同一型号内继承;这里故意不与 get_capabilities
+    的前缀回退对称 —— 能力(tools / reasoning / vision)是家族级特征,前缀继承本来就合理。
+    逐个前缀试:长前缀的后缀不合格就接着试更短的,全部不合格返回 None。
+    """
     for prefix in sorted(table.keys(), key=len, reverse=True):
-        if model_real_name.startswith(prefix):
-            return {**table[prefix], "source": "static-prefix", "unit": "USD per million tokens"}
+        if name.startswith(prefix) and len(name) > len(prefix) \
+                and _VARIANT_SUFFIX_RE.match(name[len(prefix):]):
+            return prefix
     return None
 
 
