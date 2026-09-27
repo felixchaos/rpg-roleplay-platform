@@ -46,6 +46,8 @@ class _PhaseDB:
     def execute(self, sql, params=None):
         flat = " ".join(sql.split()).lower()
         self.log.append(flat)
+        if flat.startswith("select 1 from game_saves where id = %s for update"):
+            return _Cur({"?column?": 1})
         if flat.startswith("select phase_index, turn_start, turn_end from save_phase_digests"):
             opens = sorted(
                 (r for r in self.rows.values() if r["status"] == "open"),
@@ -227,3 +229,21 @@ def test_threshold_is_clamped_to_two(monkeypatch):
     for raw, want in (("1", 2), ("0", 2), ("-5", 2), ("2", 2), ("30", 30)):
         monkeypatch.setenv("RPG_PHASE_TURN_THRESHOLD", raw)
         assert phase_turn_threshold() == want
+
+
+def test_locks_game_saves_row_before_reading_open_phase(monkeypatch):
+    """同一存档的开段必须串行:事务第一句先锁 game_saves 那一行,再读 open 行。
+
+    只锁 open 行做不到串行(READ COMMITTED):A 锁住 p5、关掉、插入 p6 后提交;B 拿到锁时 p5
+    已不是 open 被排除,p6 又不在 B 那条语句的快照里 → B 看到「没有 open」走 else 分支,
+    随后的 UPDATE 能看到 p6,按 T-1 把它关成倒挂 [T,T-1] 并对当前剧情段跑锚点审计。锁一行
+    必定存在的 game_saves 记录,B 等 A 提交后再读,看到的就是 p6(走就地改造,不关不审计)。
+    锁顺序也与 deletion.py(先 game_saves 后 save_phase_digests)一致,消掉 ABBA 窗口。"""
+    for rows, turn in (
+        ([{"phase_index": 0, "turn_start": 1, "turn_end": 30, "status": "open", "phase_label": "a"}], 31),
+        ([{"phase_index": 0, "turn_start": 5, "turn_end": 5, "status": "open", "phase_label": "a"}], 5),
+        ([], 1),
+    ):
+        db, *_ = _run(monkeypatch, rows, turn_index=turn)
+        assert db.log[0] == "select 1 from game_saves where id = %s for update", db.log[:2]
+        assert db.log[1].startswith("select phase_index, turn_start, turn_end from save_phase_digests")

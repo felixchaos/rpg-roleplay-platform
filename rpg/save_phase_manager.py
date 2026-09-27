@@ -169,6 +169,11 @@ def detect_phase_boundary(
 # ────────────────────────────────────────────────────────────
 
 
+def _lock_save_row(db: Any, save_id: int) -> None:
+    """开段事务的第一句:锁住 game_saves 那一行(同一存档的开段串行,锁顺序同 deletion.py)。"""
+    db.execute("select 1 from game_saves where id = %s for update", (save_id,))
+
+
 def open_new_phase(
     save_id: int,
     turn_index: int,
@@ -198,8 +203,15 @@ def open_new_phase(
         repurposed = False
         stale_to_digest: list[int] = []
         with connect() as db:
-            # 同一连接、同一事务读 open phase 并锁行:与每回合钩子里的 update_phase_turn_end /
-            # 并发的 open_new_phase 串行,判定与改写之间不留缝。
+            # 先锁 game_saves 那一行,把同一存档的开段(open_new_phase / ensure_active_phase)串行化。
+            # 只锁 open 行做不到(READ COMMITTED):并发的另一次开段关掉旧行、插入新 open 行并提交后,
+            # 本事务等到的旧行已不是 open、新行又不在那条语句的快照里 → 读到「没有 open」,随后的
+            # UPDATE 却能看到新行,按 turn_index-1 把它关成倒挂空段并对当前剧情段跑锚点审计。
+            # 锁一行必定存在的记录,等对方提交后下面这句才读,看到的就是对方刚开的那条。
+            # 顺序与 branches/deletion.py 一致(game_saves 在前、save_phase_digests 在后),不成 ABBA。
+            _lock_save_row(db, save_id)
+            # 同一连接、同一事务读 open phase 并锁行:与每回合钩子里的 update_phase_turn_end
+            # 串行,判定与改写之间不留缝。
             open_rows = db.execute(
                 """
                 select phase_index, turn_start, turn_end
@@ -580,6 +592,15 @@ def ensure_active_phase(save_id: int, turn_index: int, phase_label: str = "", st
 
         init_db()
         with connect() as db:
+            # 与 open_new_phase 同一把锁、同一顺序;锁到手后在本事务里复查一次:上面那次读在锁外,
+            # 并发的另一次开段可能刚提交了一条 open 行,不复查就会再补开一条,同时开着两条。
+            _lock_save_row(db, save_id)
+            if db.execute(
+                "select phase_index from save_phase_digests "
+                "where save_id = %s and status = 'open' limit 1",
+                (save_id,),
+            ).fetchone():
+                return
             # 同一连接算下一个 index(别在持有本连接时另开一条连接去查 max ——
             # PgBouncer 池上是自找死锁)。
             row = db.execute(

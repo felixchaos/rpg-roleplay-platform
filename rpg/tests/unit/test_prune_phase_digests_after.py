@@ -79,9 +79,13 @@ def test_prune_back_to_opening_drops_everything():
     assert (fixed, dropped) == (0, 3) and db.phases == []
 
 
-def _run_delete_subtree(monkeypatch, *, active_commit_id, phases):
-    node = {"id": 500, "parent_id": 400, "save_id": 7, "turn_index": 31, "kind": "player"}
-    fallback = {"id": 400, "save_id": 7, "turn_index": 30, "state_path": "/tmp/_g4_fallback.json"}
+def _run_delete_subtree(monkeypatch, *, active_commit_id, phases, fallback_turn=30,
+                        remaining_max_turn=None):
+    """remaining_max_turn:删完子树后,本存档剩下的 commit 里最大的 turn_index(兄弟分支 /
+    主线还活着时比 fallback 大);None = 只剩 fallback 这条线,取 fallback_turn。"""
+    node = {"id": 500, "parent_id": 400, "save_id": 7, "turn_index": fallback_turn + 1, "kind": "player"}
+    fallback = {"id": 400, "save_id": 7, "turn_index": fallback_turn, "state_path": "/tmp/_g4_fallback.json"}
+    remaining = fallback_turn if remaining_max_turn is None else remaining_max_turn
 
     def extra(flat, params):
         if flat.startswith("select state_path from branch_commits"):
@@ -90,6 +94,8 @@ def _run_delete_subtree(monkeypatch, *, active_commit_id, phases):
             return _Cur({"id": 7, "active_commit_id": active_commit_id})
         if flat.startswith("select * from branch_commits where id = %s and save_id = %s"):
             return _Cur(dict(fallback))
+        if flat.startswith("select max(turn_index)") and "from branch_commits" in flat:
+            return _Cur({"mx": remaining})
         if flat.startswith("delete from branch_refs") or flat.startswith("delete from branch_commits"):
             return _Cur(None)
         raise AssertionError(f"假库没预料到的 SQL: {flat[:120]}")
@@ -133,3 +139,33 @@ def test_delete_subtree_off_active_branch_leaves_phases(monkeypatch):
     """删的不是活跃分支:活跃指针没动,phase 也不该动。"""
     db = _run_delete_subtree(monkeypatch, active_commit_id=999, phases=_phases())
     assert [(p["turn_start"], p["turn_end"]) for p in db.phases] == [(1, 30), (31, 60), (61, 70)]
+
+
+def _mainline_phases():
+    """主线打到第 60 回合:p0-p3 已关闭并摘要,p4 还开着。"""
+    return [
+        {"id": 20, "phase_index": 0, "turn_start": 1, "turn_end": 12},
+        {"id": 21, "phase_index": 1, "turn_start": 13, "turn_end": 24},
+        {"id": 22, "phase_index": 2, "turn_start": 25, "turn_end": 36},
+        {"id": 23, "phase_index": 3, "turn_start": 37, "turn_end": 48},
+        {"id": 24, "phase_index": 4, "turn_start": 49, "turn_end": 60},
+    ]
+
+
+def test_delete_active_branch_keeps_phases_still_covered_by_sibling(monkeypatch):
+    """第 20 回合 fork 出的支线 B 是活跃分支,主线还在(打到第 60 回合)。删掉 B 退回第 20 回合,
+    phase 表不分分支,21-60 回合的摘要属于主线 —— 不能剪。以前按 fallback+1 修剪,把 p1 截成
+    [13,20]、p2-p4 整行删掉,玩家切回主线末端后 21-48 回合的前情提要永久丢失。"""
+    db = _run_delete_subtree(monkeypatch, active_commit_id=501, phases=_mainline_phases(),
+                             fallback_turn=20, remaining_max_turn=60)
+    got = [(p["turn_start"], p["turn_end"]) for p in db.phases]
+    assert got == [(1, 12), (13, 24), (25, 36), (37, 48), (49, 60)], "主线仍覆盖的阶段摘要被删了"
+
+
+def test_delete_active_branch_prunes_only_past_surviving_commits(monkeypatch):
+    """兄弟分支只打到第 25 回合,被删的支线走到过第 60 回合:第 25 回合之后已没有任何 commit,
+    那些阶段只可能来自被删的分支,照常剪到 25。"""
+    db = _run_delete_subtree(monkeypatch, active_commit_id=501, phases=_mainline_phases(),
+                             fallback_turn=20, remaining_max_turn=25)
+    got = [(p["turn_start"], p["turn_end"]) for p in db.phases]
+    assert got == [(1, 12), (13, 24), (25, 25)]

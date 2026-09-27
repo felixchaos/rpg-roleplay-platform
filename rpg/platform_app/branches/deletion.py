@@ -49,9 +49,10 @@ def _prune_phase_digests_after(db, save_id: int, deleted_turn: int) -> tuple[int
     turn_start >= deleted_turn 的 phase 整行删掉(整段都在被撤销的回合里);跨过删除点的
     截到 deleted_turn-1。返回 (截断条数, 删除条数)。
 
-    rollback_to_message / rewind_last_round / delete_subtree(删到活跃分支时)共用这一份:
-    以前只有前两处修剪,删子树退回 fallback 后旧 phase 原样留着 —— 新分支再打到同一回合,
-    open_new_phase 就会把「一个回合都没收进来」的旧 phase 关成倒挂空段。
+    rollback_to_message / rewind_last_round / delete_subtree(删到活跃分支时)共用这一份。
+    前两处传被撤销的第一个回合(被撤销的回合已移进 trash,本来就该剪);delete_subtree 传
+    「删完后剩余 commit 的最大回合 + 1」—— phase 不分分支,还被主线 / 兄弟支线覆盖的回合
+    不能剪,只剪已没有任何 commit 到过的尾巴。
     """
     fixed = 0
     dropped = 0
@@ -120,10 +121,20 @@ def delete_subtree(user_id: int, node_id: int) -> dict[str, Any]:
                 "state_path": fallback["state_path"],
                 "ref_id": ref["id"],
             }
-            # 被删分支的回合已物理删除,save phase 跟着退回 fallback 之后(与回滚同一套修剪),
-            # 否则残留的旧 phase 会在新分支打到同一回合时被关成倒挂空段。
+            # phase 表按存档线性存、不分分支:fallback 之后的回合若还被别的分支(主线 / 兄弟
+            # 支线)的 commit 覆盖,那些 phase 就是它们的前情提要,不能剪 —— 否则玩家切回主线
+            # 末端后,中间几十回合的摘要永久丢失。只剪「删完之后已没有任何 commit 到过」的回合:
+            # 起点取剩余 commit 的最大 turn_index + 1(不小于 fallback + 1)。只剩这一条线时与
+            # 回滚同口径;还没剪到的旧 open phase 由 open_new_phase 的就地改造兜住倒挂。
+            _fallback_turn = int(fallback.get("turn_index") or 0)
+            _rest = db.execute(
+                "select max(turn_index) as mx from branch_commits where save_id = %s",
+                (node["save_id"],),
+            ).fetchone()
+            _rest_max = (_rest or {}).get("mx")
             _prune_phase_digests_after(
-                db, node["save_id"], int(fallback.get("turn_index") or 0) + 1,
+                db, node["save_id"],
+                max(_fallback_turn, int(_rest_max) if _rest_max is not None else _fallback_turn) + 1,
             )
             # M2:活跃指针回退到 fallback 后,进度信号族对齐回退后快照(被删分支里
             # 标 occurred 的未来章锚点重锁,防剧透闸不再按被删分支的最远章放行)。

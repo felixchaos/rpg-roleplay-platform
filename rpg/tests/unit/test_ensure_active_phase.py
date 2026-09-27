@@ -23,35 +23,41 @@ class _FakeCur:
 
 
 class _FakeDB:
-    def __init__(self, log, max_index):
+    def __init__(self, log, max_index, open_in_tx=None):
         self.log = log
         self.max_index = max_index
+        self.open_in_tx = open_in_tx
 
     def execute(self, sql, params=None):
         flat = " ".join(sql.split())
         self.log.append((flat, params))
         if "coalesce(max(phase_index)" in flat:
             return _FakeCur({"mx": self.max_index})
+        if flat.startswith("select") and "from save_phase_digests" in flat and "status = 'open'" in flat:
+            return _FakeCur(self.open_in_tx)
         return _FakeCur(None)
 
 
 class _FakeConn:
-    def __init__(self, log, max_index):
+    def __init__(self, log, max_index, open_in_tx=None):
         self.log = log
         self.max_index = max_index
+        self.open_in_tx = open_in_tx
 
     def __enter__(self):
-        return _FakeDB(self.log, self.max_index)
+        return _FakeDB(self.log, self.max_index, self.open_in_tx)
 
     def __exit__(self, *a):
         return False
 
 
-def _run(monkeypatch, *, active, max_index):
+def _run(monkeypatch, *, active, max_index, open_in_tx=None):
+    """active:事务外 get_active_phase 看到的;open_in_tx:拿到 game_saves 行锁之后,
+    事务内再读到的 open phase(并发的另一次开段刚提交)。"""
     log: list[tuple[str, object]] = []
     monkeypatch.setattr(spm, "get_active_phase", lambda sid: active)
     monkeypatch.setattr(_db, "init_db", lambda *a, **k: None)
-    monkeypatch.setattr(_db, "connect", lambda *a, **k: _FakeConn(log, max_index))
+    monkeypatch.setattr(_db, "connect", lambda *a, **k: _FakeConn(log, max_index, open_in_tx))
     spm.ensure_active_phase(268, 1041, "蜂巢外", "第116章")
     return log
 
@@ -90,3 +96,19 @@ def test_healthy_save_untouched(monkeypatch):
 
 def test_legacy_name_still_exported():
     assert spm.ensure_initial_phase is spm.ensure_active_phase
+
+
+def test_locks_game_saves_row_first(monkeypatch):
+    """与 open_new_phase 同一把锁、同一顺序:事务第一句锁 game_saves 行(与 deletion.py 一致)。"""
+    log = _run(monkeypatch, active=None, max_index=1)
+    assert log[0][0] == "select 1 from game_saves where id = %s for update"
+    assert log[0][1] == (268,)
+
+
+def test_concurrent_opener_won_no_second_open_phase(monkeypatch):
+    """事务外看到「没有 open phase」,但拿到锁时另一次开段已提交了一条 open 行 →
+    不再插第二条(否则同一存档同时开着两条 open phase)。"""
+    log = _run(monkeypatch, active=None, max_index=2, open_in_tx={"phase_index": 2})
+    assert not any(s.startswith("insert into save_phase_digests") for s, _ in log), \
+        "锁内没有复查,并发下补开了第二条 open phase"
+    assert not any(s.startswith("update game_saves set active_phase_index") for s, _ in log)
