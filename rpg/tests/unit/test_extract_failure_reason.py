@@ -126,3 +126,108 @@ def test_editor_selection_extract_reports_reason():
          mock.patch("extract.per_chapter.extract_chapter", return_value=dead):
         out = tool._t_extract_from_selection(1, 12, {"text": "一段选中的正文"}, None)
     assert "下线" in out, out
+
+
+# ── 解析失败 ≠ 服务商报错(审查返修)──────────────────────────────────────
+# parse_json 的异常文本里夹着模型输出的前 200 字(小说正文)。以前它和服务商异常一起进了
+# provider_errors 分类器:正文里有「Forbidden Forest」→「请求被提供商拒绝(HTTP 403)」,
+# 有「timed out」→「连不上接口地址」,有「insufficient balance」→ 余额不足。
+import pytest  # noqa: E402
+
+from extract.llm import ExtractLLM, ExtractOutputUnparseable, parse_json  # noqa: E402
+from extract.per_chapter import UNUSABLE_OUTPUT_REASON  # noqa: E402
+
+
+def _llm_answering(text: str) -> ExtractLLM:
+    """走真实 complete_json → parse_json 路径,只把「模型回了什么」换掉。"""
+    llm = ExtractLLM(model="m", api_id="relay")
+    llm.complete_text = lambda *a, **k: text  # type: ignore[method-assign]
+    return llm
+
+
+@pytest.mark.parametrize("prose", [
+    "Harry walked into the Forbidden Forest at dusk.",
+    "他说代理 proxy 连接 timed out 了,然后转身离开。",
+    "The merchant had insufficient balance to pay the knight.",
+    "The model said nothing; the knight reached the end of life.",
+    "",
+])
+def test_unparseable_output_is_not_classified_as_provider_error(prose):
+    ex = extract_chapter(_llm_answering(prose), 3, "正文", era="")
+    assert ex.raw_ok is False
+    assert ex.error == UNUSABLE_OUTPUT_REASON
+    for wrong in ("403", "连不上", "余额", "下线", "Error"):
+        assert wrong not in ex.error, (prose, ex.error)
+
+
+def test_parse_json_raises_dedicated_subclass_still_a_value_error():
+    with pytest.raises(ExtractOutputUnparseable):
+        parse_json("没有 JSON")
+    with pytest.raises(ValueError):  # 既有 `except ValueError` 调用方照样接得住
+        parse_json("")
+
+
+def test_editor_selection_parse_failure_keeps_actionable_hint():
+    from tools_dsl.command_tools_script_write import extract as tool
+    cur = mock.MagicMock()
+    cur.execute.return_value.fetchall.return_value = []
+    cm = mock.MagicMock()
+    cm.__enter__.return_value = cur
+    with mock.patch("platform_app.db.connect", mock.MagicMock(return_value=cm)), \
+         mock.patch("platform_app.db.init_db"), \
+         mock.patch.object(tool, "_user_can_read_script", return_value=True), \
+         mock.patch("agents._harness.resolve_api_and_model", return_value=("relay", "m")), \
+         mock.patch.object(ExtractLLM, "complete_text", return_value="Into the Forbidden Forest."):
+        out = tool._t_extract_from_selection(1, 12, {"text": "一段选中的正文"}, None)
+    assert "缩短选区" in out and "403" not in out, out
+
+
+# ── 本地异常(写库 / 消歧)不进服务商分类器 ─────────────────────────────────
+def test_arc_pipeline_local_exception_is_not_called_model_unavailable():
+    from extract import arc_pipeline
+    seed = SimpleNamespace(era="", power_system=[], entity_vocab=[])
+    boom = RuntimeError('relation "kb_canon_entities" does not exist')
+    with mock.patch("platform_app.db.connect", _fake_db_connect(_chapters(4))), \
+         mock.patch.object(arc_pipeline, "build_seed", return_value=seed), \
+         mock.patch.object(arc_pipeline, "extract_arc", side_effect=boom), \
+         mock.patch("time.sleep"):
+        res = arc_pipeline.run_arc_extraction(12, 7, user_id=1, model="m", api_id="relay",
+                                              target_arcs=1, concurrency=1)
+    assert res["ok"] is False
+    assert "RuntimeError" in res["error"] and "不可用" not in res["error"]
+
+
+def test_per_chapter_pipeline_failed_chapters_with_none_index_do_not_crash():
+    from extract import pipeline
+    seed = SimpleNamespace(era="", power_system=[], entity_vocab=[])
+    chapters = _chapters(2)
+    chapters[0]["chapter_index"] = None  # 章号缺值时和 int 混比,min() 以前会 TypeError
+    dead = ChapterExtract(chapter=1, raw_ok=False, error="当前模型不可用:已被服务商下线或不存在")
+    with mock.patch("platform_app.db.connect", _fake_db_connect(chapters)), \
+         mock.patch.object(pipeline, "build_seed", return_value=seed), \
+         mock.patch.object(pipeline, "extract_chapter", return_value=dead):
+        res = pipeline.run_extraction(12, 7, user_id=1, model="m", api_id="relay", concurrency=1)
+    assert res["ok"] is False and "下线" in res["error"]
+
+
+def test_stage_canon_extract_local_exception_is_not_classified():
+    from platform_app.import_pipeline import stages_core
+    from platform_app.import_pipeline.control import JobController
+
+    class _Ctl(JobController):
+        def update(self, **fields):
+            pass
+
+    ctl = _Ctl("job-canon-local")
+    cur = mock.MagicMock()
+    cur.execute.return_value.fetchone.return_value = {"book_id": 7}
+    cm = mock.MagicMock()
+    cm.__enter__.return_value = cur
+    with mock.patch.object(stages_core, "connect", mock.MagicMock(return_value=cm)), \
+         mock.patch.object(stages_core, "_resolve_extractor_llm", return_value=("relay", "m")), \
+         mock.patch("extract.arc_pipeline.run_arc_extraction",
+                    side_effect=RuntimeError('relation "kb_canon_entities" does not exist')):
+        out = stages_core._stage_canon_extract(ctl, 1, 12)
+    assert out[2] == "error"
+    hint = ctl.stage_error_hints["canon_extract"]
+    assert "中途出错" in hint and "不可用" not in hint and "提取模型" not in hint

@@ -87,20 +87,29 @@ class ExtractLLM:
         return text
 
     def complete_json(self, system: str, user: str, max_tokens: int = 2000) -> Any:
-        """返回解析后的 JSON(dict/list)。解析失败抛 ValueError(调用方决定重试)。"""
+        """返回解析后的 JSON(dict/list)。解析失败抛 ExtractOutputUnparseable(ValueError 子类,调用方决定重试)。"""
         raw = self.complete_text(system, user, max_tokens)
         return parse_json(raw)
+
+
+class ExtractOutputUnparseable(ValueError):
+    """模型答了,但答案里解析不出 JSON(或是空的)。
+
+    这不是服务商报错:别拿去 provider_errors 分类。异常文本里夹着模型输出的前 200 字(小说正文),
+    分类器会拿它去匹配服务商措辞 —— 正文里有「Forbidden Forest」就被说成 HTTP 403,
+    有「timed out」就被说成连不上接口地址。仍是 ValueError 的子类,既有 `except ValueError` 照接。
+    """
 
 
 def parse_json(raw: str) -> Any:
     """鲁棒 JSON 解析:剥 ```json 围栏 / 取首个 {..} 或 [..] / 容忍前后散文。
 
     薄包装 core.json_parse.parse_llm_json;**对外签名不变**:解析失败仍
-    raise ValueError(触发 complete_json 调用方重试)。
+    raise ValueError(具体是 ExtractOutputUnparseable,触发 complete_json 调用方重试)。
     """
     result = parse_llm_json(raw)
     if result is None:
         if not raw:
-            raise ValueError("空响应")
-        raise ValueError(f"无法从响应解析 JSON: {raw.strip()[:200]!r}")
+            raise ExtractOutputUnparseable("空响应")
+        raise ExtractOutputUnparseable(f"无法从响应解析 JSON: {raw.strip()[:200]!r}")
     return result

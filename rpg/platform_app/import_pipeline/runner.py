@@ -456,7 +456,8 @@ def _run_pipeline(job_id: str, user_id: int, script_id: int, options: dict[str, 
             # failures 口径 = 抛异常 + 输出不可用(弱模型解不出 JSON 也算没答上来,反馈 #99)
             cards_failures = getattr(_stage_cards, "_last_llm_failures", 0)
             cards_targets = getattr(_stage_cards, "_last_targets", 0)
-            cards_aborted = int(getattr(_stage_cards, "_last_aborted", 0) or 0)
+            # 提前停下的数量挂在 job 级 ctl 上(函数属性在进程内共享,并发导入会串到别的 job)
+            cards_aborted = int((getattr(ctl, "stage_aborted", None) or {}).get("cards", 0) or 0)
             cards_status = "done"
             if cards_targets and (
                 cards_failures > cards_targets // 2
@@ -534,8 +535,14 @@ def _run_pipeline(job_id: str, user_id: int, script_id: int, options: dict[str, 
         # ── 阶段 7: anchors（canon_extract 已写,这里只报告 + verify)─────
         # canon_extract 失败 → anchors 跟着标 error;此阶段不发起新 LLM 调用。
         anchors_entry = {"id": "anchors", "status": anchors_stage_status, "count": anchors_n}
-        if anchors_stage_status == "error" and _canon_hint:
-            anchors_entry["error"] = "规范实体提取失败,时间线锚点没有生成(原因见上一项)"
+        if anchors_stage_status == "error":
+            # 没有 error 字段时结果卡显示「未知错误」。canon 成功但锚点为 0 也是 error(见
+            # _stage_canon_extract),那不是报错,只是没整理出时间线,照实说。
+            anchors_entry["error"] = (
+                "规范实体提取失败,时间线锚点没有生成(原因见上一项)"
+                if canon_stage_status == "error" else
+                "规范实体已提取,但没有从中整理出时间线锚点"
+            )
         stages_progress.append(anchors_entry)
         ctl.update(stages=stages_progress, overall_progress=7)
 

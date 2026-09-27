@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agents.provider_errors import provider_error_summary
-from extract.llm import ExtractLLM
+from extract.llm import ExtractLLM, ExtractOutputUnparseable
 
 # 每章输出 JSON schema(给模型看的契约)
 # v28: entities 加 identity / background,与玩家 PC 角色卡字段对齐 → 同套 schema 渲染
@@ -89,9 +89,14 @@ class ChapterExtract:
     concepts: list = field(default_factory=list)
     confidence: float = 0.0
     raw_ok: bool = True
-    # raw_ok=False 时的可读原因(模型调用报错经 provider_errors 分类;或输出不是 JSON 对象)。
+    # raw_ok=False 时的可读原因(模型调用报错经 provider_errors 分类;或 UNUSABLE_OUTPUT_REASON)。
     # 以前只有一个布尔,弧段/逐章管线全挂时上层只能报「全部失败」或「未知错误」。
     error: str = ""
+
+
+# 模型答了、但答案没法用(解析不出 JSON / 不是 JSON 对象)。固定文案,不经 provider_errors:
+# 解析失败的异常文本里夹着模型输出(小说正文),拿去分类会被正文里的词带偏(见 ExtractOutputUnparseable)。
+UNUSABLE_OUTPUT_REASON = "模型输出解析不出 JSON 对象(提取模型多半不适配结构化输出,可换提取模型重试)"
 
 
 def build_system(era: str, power_system: list[str] | None = None) -> str:
@@ -176,11 +181,12 @@ def extract_chapter(llm: ExtractLLM, chapter_num: int, chapter_text: str, *, era
                       prev_summary=prev_summary, title_descriptor=title_descriptor)
     try:
         data = llm.complete_json(system, user, max_tokens=max_tokens)
+    except ExtractOutputUnparseable:
+        return ChapterExtract(chapter=chapter_num, raw_ok=False, error=UNUSABLE_OUTPUT_REASON)
     except Exception as exc:
         return ChapterExtract(chapter=chapter_num, raw_ok=False, error=provider_error_summary(exc))
     if not isinstance(data, dict):
-        return ChapterExtract(chapter=chapter_num, raw_ok=False,
-                              error="模型输出不是 JSON 对象(提取模型多半不适配结构化输出)")
+        return ChapterExtract(chapter=chapter_num, raw_ok=False, error=UNUSABLE_OUTPUT_REASON)
     st = data.get("story_time") or {}
     # era 已定(非空)→ 铁律回写;era 空 → 让 LLM 自抽,供后续共识
     if isinstance(st, dict) and era.strip():

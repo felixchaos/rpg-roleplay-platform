@@ -9,7 +9,12 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from agents.provider_errors import classify_provider_error, http_status, provider_error_summary
+from agents.provider_errors import (
+    classify_provider_error,
+    http_status,
+    plain_error_summary,
+    provider_error_summary,
+)
 from core.llm_backend import DEFAULT_FALLBACK_API, DEFAULT_FALLBACK_MODEL
 from model_aliases import credential_storage_api_id, normalize_api_id
 
@@ -99,6 +104,13 @@ def _note_stage_error(ctl: Any, stage: str, hint: str) -> None:
             note(stage, hint)
         except Exception:
             pass
+
+
+def _note_stage_aborted(ctl: Any, stage: str, n: int) -> None:
+    """记下某阶段提前停下后没再尝试的数量(job 级,runner 据此把阶段标 error)。"""
+    box = getattr(ctl, "stage_aborted", None)
+    if isinstance(box, dict):
+        box[stage] = int(n)
 
 
 def _stage_story_phase_llm(ctl: JobController, user_id: int, script_id: int) -> None:
@@ -384,6 +396,10 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
             "}\n\n"
             + context
         )
+        # 模型调用本身返回了没有:之后(解析/记账/写卡)抛的异常不是服务商的问题,不能拿去
+        # provider_errors 分类 —— psycopg 的「relation … does not exist」会被说成「模型不可用」,
+        # 还会触发下面的提前停。
+        llm_answered = False
         try:
             # 结构化微任务禁深思(268 实锤族)+空正文护栏
             from agents._harness import call_agent_json_guarded
@@ -404,6 +420,7 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
                 require_json=True,   # 解析不出 → 扩预算重试一次(见 _harness 护栏)
                 agent_kind="import_pipeline",
             )
+            llm_answered = True
             data = _parse_json(raw)
             # 累 usage(无论是否写卡,LLM 都跑了)
             from ..usage import compute_cost
@@ -455,7 +472,10 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
             _logging.getLogger(__name__).warning(
                 "[cards] LLM card for %r failed: %s", name, exc, exc_info=True,
             )
-            _hint, _fatal = _provider_error_hint(exc, api_id=api_id, model=model)
+            if llm_answered:
+                _hint, _fatal = f"写入人物卡时出错:{plain_error_summary(exc)}", False
+            else:
+                _hint, _fatal = _provider_error_hint(exc, api_id=api_id, model=model)
             if not first_hint:
                 first_hint = _hint
                 _note_stage_error(ctl, "cards", _hint)
@@ -508,8 +528,8 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
     _stage_cards._last_rejected = rejected
     _stage_cards._last_skipped_dup = skipped_dup
     _stage_cards._last_no_context = no_context
-    _stage_cards._last_aborted = aborted
     _stage_cards._last_targets = len(targets)
+    _note_stage_aborted(ctl, "cards", aborted)  # job 级,不挂函数属性(并发导入会串到别的 job)
     return generated
 
 
@@ -593,6 +613,7 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
         "[{\"name\":\"...\",\"keys\":[\"关键词1\",\"关键词2\"],\"content\":\"≤200字解释\",\"priority\":80}]\n"
         "数量上限 20。\n\n" + seed
     )
+    llm_answered = False  # 同 _stage_cards:模型答完之后(写库)出的错不进服务商分类
     try:
         # 结构化微任务禁深思(268 实锤族)+空正文护栏
         from agents._harness import call_agent_json_guarded
@@ -606,6 +627,7 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
             no_think=True,
             agent_kind="import_pipeline",
         )
+        llm_answered = True
         from ..usage import compute_cost
         cost = float(compute_cost(api_id, model, last))
         ctl.add_usage(int(last.get("input_tokens", 0)), int(last.get("output_tokens", 0)), cost)
@@ -651,6 +673,13 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
                 # psycopg3:rowcount 在 execute() 返回的 cursor 上,不在 Connection 上
                 # (旧代码 `db.rowcount` → AttributeError,整个 worldbook LLM 抽取阶段崩、条目没入库)。
                 count += (getattr(_cur, "rowcount", 0) or 0)
+        if entries and count <= 0:
+            # 模型给了条目却一条没写进去:以前阶段条目同样只剩「未知错误」。
+            _note_stage_error(
+                ctl, "worldbook",
+                f"模型返回了 {len(entries)} 条世界书条目,但一条都没有写进去:"
+                "条目缺名字,或同名条目是在编辑器里手写的(导入不会覆盖手写条目)",
+            )
         ctl.update(stage_progress=1)
         # phase_backend: 标记 worldbook 阶段写了多少条 — 0 当作 partial 让上层标 done_with_errors
         _stage_worldbook._last_count = count
@@ -665,7 +694,10 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
         # 原因经分类写进阶段条目(runner / rebuild worker 从 ctl 读);job.error 只留一句短话,
         # 不然导入结果卡上 job.error 和阶段明细会把同一段原因显示两遍。
         # 以前 job.error 是「_stage_worldbook: HTTPError: HTTP Error 410: Gone」,阶段条目显示「未知错误」。
-        _hint, _ = _provider_error_hint(exc, api_id=api_id, model=model)
+        if llm_answered:
+            _hint = f"写入世界书条目时出错:{plain_error_summary(exc)}"
+        else:
+            _hint, _ = _provider_error_hint(exc, api_id=api_id, model=model)
         _note_stage_error(ctl, "worldbook", _hint)
         try:
             ctl.update(

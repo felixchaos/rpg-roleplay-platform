@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from agents.provider_errors import provider_error_summary
+from agents.provider_errors import plain_error_summary
 from extract import resolve as R
 from extract.embed import embed_canon_entities
 from extract.llm import ExtractLLM
@@ -200,7 +200,8 @@ def run_arc_extraction(
 
     def _one(idx: int, arc: list[dict]):
         # extract_chapter 自己吞掉 LLM 调用异常、返回 raw_ok=False(带 error 原因),所以下面的重试
-        # 只兜本地异常。raw_ok=False 的弧不算成功:以前它被当成功计数,模型下线时 100 个弧全空,
+        # 只兜本地异常(原因用 plain_error_summary,不进服务商分类器)。
+        # raw_ok=False 的弧不算成功:以前它被当成功计数,模型下线时 100 个弧全空,
         # 流水线照样报 ok、阶段只显示「未知错误」(知识库提取入口还会照扣一次月度额度)。
         # 不对 raw_ok=False 重试:调用次数与以前一致,下线/欠费的模型不会被多撞几轮。
         for attempt in range(4):
@@ -213,7 +214,7 @@ def run_arc_extraction(
             except Exception as exc:
                 if attempt == 3:
                     # 以前 return 写在记录之前,failed_arcs 永远是空的
-                    _record_failure(idx, arc, provider_error_summary(exc))
+                    _record_failure(idx, arc, plain_error_summary(exc))
                     return idx, None
                 import time as _t
                 _t.sleep(0.5 * (2 ** attempt))

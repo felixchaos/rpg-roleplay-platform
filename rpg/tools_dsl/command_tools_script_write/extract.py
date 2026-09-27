@@ -38,15 +38,16 @@ def _t_extract_from_selection(user_id: int, script_id: int | None, args: dict, s
         if not api_id or not model_real:
             return "失败: 未找到可用的提取模型,请到「设置 → 模块模型」配置 extractor(或编辑器/GM)模型后重试。"
         from extract.llm import ExtractLLM
-        from extract.per_chapter import extract_chapter
+        from extract.per_chapter import UNUSABLE_OUTPUT_REASON, extract_chapter
         llm = ExtractLLM(model=str(model_real), api_id=str(api_id), user_id=user_id,
                          script_id=sid, algorithm="editor_selection")
         ex = extract_chapter(llm, 0, text, era="", known_entities=known)
         if not getattr(ex, "raw_ok", False):
             # extract_chapter 把调用异常吞成 raw_ok=False,原因在 ex.error(已按 provider_errors 分类):
             # 模型下线 / 欠费时再说「没返回有效结构」会把人支去换选区。
+            # 输出解析不出 JSON 时仍给原来那句(编辑器里「缩短选区」是有用的建议)。
             _why = str(getattr(ex, "error", "") or "")
-            if _why:
+            if _why and _why != UNUSABLE_OUTPUT_REASON:
                 return f"提取失败:{_why}"
             return "提取失败:模型未返回有效结构,可换更强的提取模型或缩短选区后重试。"
         proposal = {

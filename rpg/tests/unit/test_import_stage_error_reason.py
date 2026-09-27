@@ -105,7 +105,7 @@ def test_stage_cards_stops_after_fatal_error_and_records_reason():
         generated = stages_llm._stage_cards(ctl, 1, 12, entities)
     assert generated == 0
     assert len(calls) == 1, "模型已下线还在对剩下的候选挨个调用"
-    assert stages_llm._stage_cards._last_aborted == len(names) - 1
+    assert ctl.stage_aborted["cards"] == len(names) - 1
     assert stages_llm._stage_cards._last_llm_failures == len(names)
     assert "下线" in ctl.stage_error_hints["cards"]
     warn = [u["warnings"] for u in ctl.updates if "warnings" in u][-1]
@@ -127,7 +127,7 @@ def test_stage_cards_keeps_going_after_non_fatal_error():
          mock.patch("agents._harness.call_agent_json_guarded", side_effect=_call):
         stages_llm._stage_cards(ctl, 1, 12, [{"name": n, "count": 9} for n in names])
     assert len(calls) == len(names)  # 403 可能只是这一条内容被拦,其余候选照试
-    assert stages_llm._stage_cards._last_aborted == 0
+    assert ctl.stage_aborted["cards"] == 0
     assert "403" in ctl.stage_error_hints["cards"]
 
 
@@ -175,7 +175,8 @@ def test_run_pipeline_writes_reasons_into_stage_entries():
         f = runner._stage_cards  # runner 读的是它命名空间里的这个对象(此处为桩)
         f._last_llm_failures, f._last_exceptions, f._last_unusable = 4, 1, 0
         f._last_rejected = f._last_skipped_dup = f._last_no_context = 0
-        f._last_aborted, f._last_targets = 3, 4
+        f._last_targets = 4
+        c.stage_aborted["cards"] = 3
         return 0
 
     def _wb(c, uid, sid):
@@ -215,3 +216,125 @@ def test_run_pipeline_writes_reasons_into_stage_entries():
     assert "下线" in by_id["worldbook"]["error"]
     assert "下线" in by_id["canon_extract"]["error"]
     assert "规范实体提取失败" in by_id["anchors"]["error"]
+
+
+# ── 审查返修:模型答完之后的本地异常不进服务商分类、不触发提前停 ────────────────
+def test_stage_cards_write_failure_is_not_classified_or_fatal():
+    """psycopg 的「relation … does not exist」以前被说成「模型不可用」,还让人物卡阶段提前停。"""
+    ctl = _Ctl()
+    names = ["张三丰", "李四海", "王五岳"]
+    rows = [{"chapter_index": 1, "content": "".join(names), "chapter": 1, "summary": ""}]
+    calls = []
+
+    def _call(*a, **k):
+        calls.append(a)
+        return '{"is_character": true, "identity": "掌门"}', {"input_tokens": 1, "output_tokens": 1}
+
+    boom = RuntimeError('relation "character_cards" does not exist')
+    with mock.patch.object(stages_llm, "connect", _fake_connect(rows)), \
+         mock.patch.object(stages_llm, "_resolve_extractor_llm", return_value=("relay", "m")), \
+         mock.patch("agents._harness.call_agent_json_guarded", side_effect=_call), \
+         mock.patch("platform_app.usage.compute_cost", return_value=0.0), \
+         mock.patch("platform_app.knowledge.upsert_character_card", side_effect=boom):
+        stages_llm._stage_cards(ctl, 1, 12, [{"name": n, "count": 9} for n in names])
+    assert len(calls) == len(names), "写库失败不是模型不可用,不该提前停"
+    assert ctl.stage_aborted["cards"] == 0
+    hint = ctl.stage_error_hints["cards"]
+    assert "写入人物卡时出错" in hint and "不可用" not in hint and "提取模型" not in hint
+
+
+def test_stage_cards_aborted_count_is_per_job():
+    """提前停下的数量挂在 job 级 ctl 上:并发导入时 A 的 aborted 不能把 B 的人物卡阶段标成 error。"""
+    a, b = _Ctl("job-a"), _Ctl("job-b")
+    rows = [{"chapter_index": 1, "content": "张三丰李四海", "chapter": 1, "summary": ""}]
+    ents = [{"name": n, "count": 9} for n in ("张三丰", "李四海")]
+    with mock.patch.object(stages_llm, "connect", _fake_connect(rows)), \
+         mock.patch.object(stages_llm, "_resolve_extractor_llm", return_value=("relay", "m")), \
+         mock.patch("agents._harness.call_agent_json_guarded", side_effect=_gone()):
+        stages_llm._stage_cards(a, 1, 12, ents)
+    with mock.patch.object(stages_llm, "connect", _fake_connect(rows)), \
+         mock.patch.object(stages_llm, "_resolve_extractor_llm", return_value=("relay", "m")), \
+         mock.patch("agents._harness.call_agent_json_guarded",
+                    return_value=('{"is_character": false}', {})), \
+         mock.patch("platform_app.usage.compute_cost", return_value=0.0):
+        stages_llm._stage_cards(b, 1, 12, ents)
+    assert a.stage_aborted["cards"] == 1
+    assert b.stage_aborted["cards"] == 0
+    assert not hasattr(stages_llm._stage_cards, "_last_aborted")
+
+
+def test_stage_worldbook_write_failure_is_not_classified():
+    ctl = _Ctl()
+    cur = mock.MagicMock()
+    cur.execute.return_value.fetchall.return_value = []
+    cur.execute.return_value.fetchone.return_value = {"id": 7, "content": "", "c": 0}
+
+    def _exec(sql, *a, **k):
+        if "insert into worldbook_entries" in sql:
+            raise RuntimeError('column "model" does not exist')
+        return cur.execute.return_value
+
+    cur.execute.side_effect = _exec
+    cm = mock.MagicMock()
+    cm.__enter__.return_value = cur
+    with mock.patch.object(stages_llm, "connect", mock.MagicMock(return_value=cm)), \
+         mock.patch.object(stages_llm, "_resolve_extractor_llm", return_value=("relay", "m")), \
+         mock.patch("platform_app.usage.compute_cost", return_value=0.0), \
+         mock.patch("agents._harness.call_agent_json_guarded",
+                    return_value=('[{"name": "青云门", "content": "门派"}]', {})):
+        assert stages_llm._stage_worldbook(ctl, 1, 12) == 0
+    hint = ctl.stage_error_hints["worldbook"]
+    assert "写入世界书条目时出错" in hint and "不可用" not in hint
+
+
+def test_stage_worldbook_entries_returned_but_none_written_gets_a_reason():
+    ctl = _Ctl()
+    cur = mock.MagicMock()
+    cur.execute.return_value.fetchall.return_value = []
+    cur.execute.return_value.fetchone.return_value = {"id": 7, "content": "", "c": 0}
+    cur.execute.return_value.rowcount = 0  # 同名条目是编辑器手写的:on conflict where 不满足
+    cm = mock.MagicMock()
+    cm.__enter__.return_value = cur
+    with mock.patch.object(stages_llm, "connect", mock.MagicMock(return_value=cm)), \
+         mock.patch.object(stages_llm, "_resolve_extractor_llm", return_value=("relay", "m")), \
+         mock.patch("platform_app.usage.compute_cost", return_value=0.0), \
+         mock.patch("agents._harness.call_agent_json_guarded",
+                    return_value=('[{"name": "青云门", "content": "门派"}]', {})):
+        assert stages_llm._stage_worldbook(ctl, 1, 12) == 0
+    assert "一条都没有写进去" in ctl.stage_error_hints["worldbook"]
+
+
+def test_run_pipeline_anchors_zero_after_canon_ok_is_not_unknown_error():
+    ctl = _Ctl("job-anchors")
+
+    def _cards(c, uid, sid, ents):
+        f = runner._stage_cards
+        f._last_llm_failures = f._last_exceptions = f._last_unusable = 0
+        f._last_rejected = f._last_skipped_dup = f._last_no_context = 0
+        f._last_targets = 0
+        return 0
+
+    with mock.patch.object(runner, "JobController", return_value=ctl), \
+         mock.patch.object(runner, "init_db"), \
+         mock.patch.object(runner, "connect", _fake_connect([])), \
+         mock.patch.object(runner, "_redis_sem_init"), \
+         mock.patch.object(runner, "_redis_sem_acquire", return_value=(False, None)), \
+         mock.patch.object(runner, "_redis_sem_release"), \
+         mock.patch("platform_app.cluster.try_acquire_job_lock", return_value=True), \
+         mock.patch("platform_app.cluster.release_job_lock"), \
+         mock.patch.object(runner, "finalize_job_if_unterminated"), \
+         mock.patch.object(runner, "_stage_chunks", return_value=1), \
+         mock.patch.object(runner, "_stage_facts", return_value=1), \
+         mock.patch.object(runner, "_stage_story_phase_llm"), \
+         mock.patch.object(runner, "_stage_phase_digests", return_value=0), \
+         mock.patch.object(runner, "_stage_entities", return_value=[]), \
+         mock.patch.object(runner, "_stage_cards", side_effect=_cards), \
+         mock.patch.object(runner, "_stage_worldbook", return_value=3), \
+         mock.patch.object(runner, "_stage_canon_extract", return_value=(12, 0, "done", "error")), \
+         mock.patch.object(runner, "_stage_embeddings", return_value=("done", 1)):
+        runner._run_pipeline("job-anchors", 1, 12, {})
+    stages = [u["stages"] for u in ctl.updates if "stages" in u and u["stages"]
+              and isinstance(u["stages"][-1], dict) and "count" in u["stages"][-1]][-1]
+    by_id = {s["id"]: s for s in stages}
+    assert by_id["anchors"]["status"] == "error"
+    assert "规范实体已提取" in by_id["anchors"]["error"]

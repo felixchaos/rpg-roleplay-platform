@@ -122,6 +122,9 @@ class JobController:
         # 函数属性在进程内共享,并发导入会串号 —— 串计数无伤大雅,串服务商原话就是把别人的
         # 报错显示给另一个用户。
         self.stage_error_hints: dict[str, str] = {}
+        # 某阶段遇到对所有请求都会同样失败的错误(模型下线/欠费…)后提前停下,没再尝试的数量。
+        # 同样挂 job 级:它决定阶段标不标 error,串到别的 job 上会把人家好好的阶段标红。
+        self.stage_aborted: dict[str, int] = {}
 
     def note_stage_error(self, stage: str, hint: str) -> None:
         """记下某阶段的第一条失败原因(同阶段后续的不覆盖)。"""

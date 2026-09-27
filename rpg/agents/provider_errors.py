@@ -514,12 +514,21 @@ def provider_error_summary(exc: Exception) -> str:
     已分类 → 分类文案;未分类但对面回过话(有状态码或响应体)→ 类型 + 提供商原话
     (urllib HTTPError 挂了 body 后,原话比「HTTP Error 422」有用得多);
     其它 → 类型 + 脱敏截断的异常文本。
+
+    只给**模型调用**抛出的异常用。写库失败、解析失败这类本地异常别往这里送:分类器会拿
+    异常文本去匹配服务商措辞,psycopg 的「relation … does not exist」、回显的小说正文里的
+    「Forbidden」「timed out」都会被说成服务商的问题 —— 那种用 plain_error_summary。
     """
     known = classify_provider_error(exc)
     if known:
         return known[1]
-    name = type(exc).__name__
     if _http_status(exc) is not None or getattr(exc, "body", None) is not None:
-        return f"{name}: {_provider_detail(exc)}"
+        return f"{type(exc).__name__}: {_provider_detail(exc)}"
+    return plain_error_summary(exc)
+
+
+def plain_error_summary(exc: BaseException) -> str:
+    """不做服务商分类的一句话摘要:类型 + 脱敏截断的异常文本。给本地异常(写库、解析等)用。"""
+    name = type(exc).__name__
     detail = redact_secrets(exc, limit=160)
     return f"{name}: {detail}" if detail else name

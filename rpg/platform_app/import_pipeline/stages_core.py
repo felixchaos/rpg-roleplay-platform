@@ -10,7 +10,7 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from agents.provider_errors import provider_error_summary
+from agents.provider_errors import plain_error_summary
 
 from ..db import connect
 from ..perms import script_owned
@@ -403,8 +403,9 @@ def _stage_canon_extract(
         )
     except Exception as exc:
         _log.warning("[canon_extract] run_arc_extraction raised: %s", exc, exc_info=True)
-        _note_stage_error(ctl, "canon_extract",
-                          f"{provider_error_summary(exc)}(提取模型 {api_id}/{model})")
+        # 模型调用的异常都被 extract_chapter 吞成 raw_ok=False(原因走 result["error"]),能冒到这里的
+        # 是本地异常(读章节 / 消歧写库 / 嵌入):不进服务商分类器,也不挂提取模型名。
+        _note_stage_error(ctl, "canon_extract", f"规范实体提取中途出错:{plain_error_summary(exc)}")
         try:
             ctl.update(warnings={
                 "stage": "canon_extract",
