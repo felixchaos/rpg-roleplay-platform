@@ -302,7 +302,11 @@ def _call_anthropic_tool_use_for_acceptance(
     key = result.get("key")
     if not key:
         raise RuntimeError("找不到 Anthropic API Key for acceptance_verifier")
-    client = Anthropic(api_key=key)
+    # 走统一出站层:不跟随重定向 + 凭据代理(本地模式才有值)。读超时沿用 GM 的单一来源。
+    from core.config import llm_timeout_seconds
+    from core.outbound import credential_proxy, safe_httpx_client
+    client = Anthropic(api_key=key, http_client=safe_httpx_client(
+        timeout=llm_timeout_seconds(user_id), proxy=credential_proxy(result)))
     # enum 必须是非空且 ≤512 个；正常 acceptance 不会超
     enum_vals = [str(c).strip() for c in acceptance if str(c).strip()][:64]
     items_schema: dict = {"type": "string"}

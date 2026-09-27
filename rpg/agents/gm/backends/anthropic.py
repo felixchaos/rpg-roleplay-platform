@@ -97,11 +97,16 @@ class _AnthropicBackend:
         # (SDK 流式到 [DONE] 即停不 drain → HTTP/1.1 下 httpx 无法归还 socket;h2 关 stream≠关连接,
         # 故仍复用)。api.anthropic.com 支持 h2;safe_httpx_client 缺 h2 包时自动回退 1.1。
         # 复用 safe_httpx_client 取其 h2+回退+不跟随重定向;固定官方端点,SSRF 守卫为无害冗余。
-        from core.outbound import safe_httpx_client
+        # 凭据代理与 openai_compat 同源(credential_proxy:本地模式才有值)—— 国内桌面用户
+        # 直连 api.anthropic.com 不通,以前这里不带代理,选了「HTTP 代理」也白选。
+        from core.outbound import credential_proxy, safe_httpx_client
+        _use_proxy = credential_proxy(result)
+        if _use_proxy:
+            log.info(f"[GM] Anthropic 出站走用户代理 {_use_proxy}")
         self.client = Anthropic(
             api_key=key,
             timeout=httpx.Timeout(_read_to, connect=10.0),
-            http_client=safe_httpx_client(timeout=_read_to),
+            http_client=safe_httpx_client(timeout=_read_to, proxy=_use_proxy),
         )
         self.model_name = model
         self.user_id = user_id  # task 141: 给 _thinking_param 用

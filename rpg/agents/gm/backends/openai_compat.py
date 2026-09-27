@@ -215,15 +215,14 @@ class _OpenAICompatBackend:
         # 出站代理:用户在凭据里配的 proxy URL。**仅本地模式(非 require_auth)才真正使用** ——
         # 托管多用户后端永不使用用户 proxy(防 SSRF:代理合法地可指向 127.0.0.1,无法用「禁私网」
         # 校验拦截;故把使用面收窄到自托管单用户场景)。本地梯子用户选「HTTP 代理」即生效。
-        _proxy = (result.get("proxy") or "").strip()
-        # 出站代理仅本地模式生效(托管多用户后端永不用用户 proxy,见上注释)。
-        _use_proxy = _proxy if (_proxy and not byok_only) else None
+        # 门控收口在 core.outbound.credential_proxy(单一真源,拉模型/子代理/生图/向量同一口径)。
+        from core.outbound import credential_proxy, safe_httpx_client
+        _use_proxy = credential_proxy(result)
         if _use_proxy:
             log.info(f"[GM] {display_kind} 出站走用户代理 {_use_proxy}")
         # 覆盖 openai SDK 默认 UA(`OpenAI/Python x.y.z`)→ 浏览器 UA。否则挂在 Cloudflare 后的
         # 中转站会按 UA 用 WAF 把它当 AI 爬虫拦掉(403「Your request was blocked」/ error 1010),
         # 导致这类中转站聊天/校验/拉取模型全部「不可访问」。详见 core.outbound_ua(已实测)。
-        from core.outbound import safe_httpx_client
         from core.outbound_ua import openai_default_headers
         kwargs: dict[str, Any] = {
             # key 已由 resolved_auth_token 归一:有 key 用 key,免鉴权用占位 token

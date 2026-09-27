@@ -111,6 +111,7 @@ def generate(
     model: str,
     api_key: str,
     base_url: str | None = None,
+    proxy: str | None = None,
 ) -> list[bytes]:
     """Call Ark images/generations and return image bytes.
 
@@ -123,6 +124,7 @@ def generate(
         api_key:   Ark API key (Bearer token).
         base_url:  Override Ark endpoint base.  Defaults to
                    https://ark.cn-beijing.volces.com/api/v3
+        proxy:     凭据代理(core.outbound.credential_proxy 的结果,本地模式才有值)。
     Returns:
         list[bytes] — one element per generated image.
     Raises:
@@ -152,7 +154,7 @@ def generate(
     }
 
     try:
-        with safe_httpx_client(timeout=_READ_TIMEOUT) as client:
+        with safe_httpx_client(timeout=_READ_TIMEOUT, proxy=proxy) as client:
             resp = client.post(
                 endpoint,
                 json=body,

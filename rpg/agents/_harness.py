@@ -34,19 +34,21 @@ from core.logging import get_logger
 log = get_logger(__name__)
 
 
-def _no_redirect_urlopen(req, *, timeout):
+def _no_redirect_urlopen(req, *, timeout, proxy=None):
     """agents 层 urllib LLM 出站的唯一缝(_harness 两条 OpenAI 兼容路径 / extractor / command_agent)。
 
     SEC(H-4): 出站走 `core.outbound.safe_urlopen` —— 不跟随重定向 + use-time 重解析并把
     socket pin 到已校验 IP(抗 DNS rebinding)。
+    proxy = credential_proxy(凭据),本地模式才有值;服务器模式恒为 None。
     失败时把响应体挂到 HTTPError.body 上再抛(attach_http_error_body):urllib 的 HTTPError
     只带「HTTP Error 410: Gone」,服务商写在响应体里的真实原因(模型下线、未识别参数、
     上下文超长)不挂上去,provider_errors 就只能看状态码猜。
     """
+    from core.outbound import proxy_kwargs
     from core.outbound import safe_urlopen
 
     try:
-        return safe_urlopen(req, timeout=timeout)
+        return safe_urlopen(req, timeout=timeout, **proxy_kwargs(proxy))
     except urllib.error.HTTPError as exc:
         attach_http_error_body(exc)
         raise
@@ -264,14 +266,15 @@ def _anthropic_tool_use(
     """
     from anthropic import Anthropic
 
-    from core.outbound import safe_httpx_client
+    from core.outbound import credential_proxy, safe_httpx_client
     from platform_app.user_credentials import resolve_api_key
     result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
     key = result.get("key")
     if not key:
         raise RuntimeError("找不到 Anthropic API Key for agent harness")
     _base_url = result.get("base_url_override") or None
-    _client_kwargs: dict = {"api_key": key, "http_client": safe_httpx_client()}
+    _client_kwargs: dict = {"api_key": key,
+                            "http_client": safe_httpx_client(proxy=credential_proxy(result))}
     if _base_url:
         _client_kwargs["base_url"] = _base_url
     client = Anthropic(**_client_kwargs)
@@ -306,14 +309,15 @@ def _anthropic_json_text(
     """
     from anthropic import Anthropic
 
-    from core.outbound import safe_httpx_client
+    from core.outbound import credential_proxy, safe_httpx_client
     from platform_app.user_credentials import resolve_api_key
     result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
     key = result.get("key")
     if not key:
         raise RuntimeError("找不到 Anthropic API Key for agent harness")
     _base_url = result.get("base_url_override") or None
-    _client_kwargs: dict = {"api_key": key, "http_client": safe_httpx_client()}
+    _client_kwargs: dict = {"api_key": key,
+                            "http_client": safe_httpx_client(proxy=credential_proxy(result))}
     if _base_url:
         _client_kwargs["base_url"] = _base_url
     client = Anthropic(**_client_kwargs)
@@ -502,6 +506,10 @@ def _openai_compat_json_mode(
     cred = {**cred, "key": resolved_auth_token(cred)}
     import urllib.error
     import urllib.request
+
+    from core.outbound import credential_proxy, proxy_kwargs
+    # 凭据代理(本地模式才有值);没配时 **{} 让调用形态与改动前一致。
+    _px = proxy_kwargs(credential_proxy(cred))
     base_url = cred.get("base_url_override") or _api_base_url(api_id)
     if not base_url:
         raise RuntimeError(f"未知 base_url for {api_id}")
@@ -529,7 +537,7 @@ def _openai_compat_json_mode(
         },
     )
     try:
-        with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
+        with _no_redirect_urlopen(req, timeout=timeout_sec, **_px) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         choice = (payload.get("choices") or [{}])[0]
         text = choice.get("message", {}).get("content") or ""
@@ -558,7 +566,7 @@ def _openai_compat_json_mode(
             headers={"Content-Type": "application/json",
                      "Authorization": f"Bearer {cred['key']}"},
         )
-        with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
+        with _no_redirect_urlopen(req, timeout=timeout_sec, **_px) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         choice = (payload.get("choices") or [{}])[0]
         text = choice.get("message", {}).get("content") or ""
@@ -604,6 +612,10 @@ def _openai_function_call(
     cred = {**cred, "key": resolved_auth_token(cred)}
     import urllib.error
     import urllib.request
+
+    from core.outbound import credential_proxy, proxy_kwargs
+    # 凭据代理(本地模式才有值);没配时 **{} 让调用形态与改动前一致。
+    _px = proxy_kwargs(credential_proxy(cred))
     base_url = cred.get("base_url_override") or _api_base_url(api_id)
     if not base_url:
         raise RuntimeError(f"未知 base_url for {api_id}")
@@ -639,7 +651,7 @@ def _openai_function_call(
         },
     )
     try:
-        with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
+        with _no_redirect_urlopen(req, timeout=timeout_sec, **_px) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         usage = _openai_usage(payload.get("usage") or {})
         if not payload.get("choices"):
@@ -802,7 +814,7 @@ def call_agent_tool_loop(
 
     from anthropic import Anthropic
 
-    from core.outbound import safe_httpx_client
+    from core.outbound import credential_proxy, safe_httpx_client
     from platform_app.user_credentials import resolve_api_key
 
     result = resolve_api_key(user_id, "anthropic", env_fallback="ANTHROPIC_API_KEY")
@@ -811,7 +823,8 @@ def call_agent_tool_loop(
         raise RuntimeError("找不到 Anthropic API Key for agent tool_loop")
 
     _base_url = result.get("base_url_override") or None
-    _client_kwargs: dict = {"api_key": key, "http_client": safe_httpx_client()}
+    _client_kwargs: dict = {"api_key": key,
+                            "http_client": safe_httpx_client(proxy=credential_proxy(result))}
     if _base_url:
         _client_kwargs["base_url"] = _base_url
     client = Anthropic(**_client_kwargs)

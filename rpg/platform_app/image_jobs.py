@@ -223,12 +223,16 @@ async def handle_image_gen(payload: dict[str, Any]) -> None:
     # 2. resolve key
     api_key: str = ""
     base_url: str = ""
+    proxy: str | None = None
     if api_id:
         try:
+            from core.outbound import credential_proxy
             from platform_app.user_credentials import resolve_api_key
             cred = resolve_api_key(user_id, api_id)
             api_key = cred.get("key") or ""
             base_url = cred.get("base_url_override") or ""
+            # 凭据代理与 GM / 拉模型同源(本地模式才有值,服务器模式恒 None)
+            proxy = credential_proxy(cred)
         except Exception as exc:
             log.warning("[image_jobs] resolve_api_key failed image_id=%s: %s", image_id, exc)
 
@@ -256,6 +260,7 @@ async def handle_image_gen(payload: dict[str, Any]) -> None:
             api_key=api_key,
             base_url=base_url,
             user_id=user_id,
+            proxy=proxy,
         )
     except Exception as exc:
         log.exception("[image_jobs] generate_image_bytes failed image_id=%s", image_id)

@@ -35,6 +35,7 @@ def generate_image_bytes(
     api_key: str,
     base_url: str | None = None,
     user_id: int | None = None,
+    proxy: str | None = None,
 ) -> list[bytes]:
     """Route image generation to the correct provider adapter.
 
@@ -45,6 +46,8 @@ def generate_image_bytes(
         params:    Provider-specific optional parameters dict.
         api_key:   API key for the provider.
         base_url:  Optional base URL override (used by doubao for custom ARK endpoints).
+        proxy:     凭据代理(core.outbound.credential_proxy 的结果,本地模式才有值)。
+                   vertex 走 Service Account + genai SDK,不经这里的代理。
 
     Returns:
         list[bytes] — one element per generated image.
@@ -60,14 +63,14 @@ def generate_image_bytes(
         from agents.image_gen import doubao
         return doubao.generate(
             prompt, params,
-            api_id=normalized, model=model, api_key=api_key, base_url=base_url,
+            api_id=normalized, model=model, api_key=api_key, base_url=base_url, proxy=proxy,
         )
 
     if normalized == "dashscope":
         from agents.image_gen import dashscope
         return dashscope.generate(
             prompt, params,
-            api_id=normalized, model=model, api_key=api_key, base_url=base_url,
+            api_id=normalized, model=model, api_key=api_key, base_url=base_url, proxy=proxy,
         )
 
     if normalized == "vertex_ai":
@@ -89,5 +92,5 @@ def generate_image_bytes(
     from agents.image_gen import openai_compat
     return openai_compat.generate(
         prompt, params,
-        api_id=normalized, model=model, api_key=api_key, base_url=base_url,
+        api_id=normalized, model=model, api_key=api_key, base_url=base_url, proxy=proxy,
     )

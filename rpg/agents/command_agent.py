@@ -171,7 +171,11 @@ def _call_anthropic_tools(model: str, user_prompt: str, user_id: int | None) -> 
     key = result.get("key")
     if not key:
         raise RuntimeError("无 Anthropic API Key for command_agent")
-    client = Anthropic(api_key=key)
+    # 走统一出站层:不跟随重定向 + 凭据代理(本地模式才有值)。读超时沿用 GM 的单一来源。
+    from core.config import llm_timeout_seconds
+    from core.outbound import credential_proxy, safe_httpx_client
+    client = Anthropic(api_key=key, http_client=safe_httpx_client(
+        timeout=llm_timeout_seconds(user_id), proxy=credential_proxy(result)))
     resp = client.messages.create(
         model=model,
         max_tokens=2048,
@@ -271,6 +275,8 @@ def _call_openai_compat_tools(
     # SSRF(不跟随重定向 + use-time 重解析 pin IP)走 core.outbound.safe_urlopen;经 _harness 那层薄包装,
     # 失败时响应体挂到 HTTPError.body 上(本路径的错误在上层被吞成 [] 只留日志,日志里也该有原话)。
     from agents._harness import _no_redirect_urlopen
+    from core.outbound import credential_proxy
+    _proxy = credential_proxy(cred)  # 凭据代理(本地模式才有值;没配时为 None)
     system_prompt = (
         _SYSTEM_PROMPT
         + "\n\n## 可用工具表\n"
@@ -292,7 +298,7 @@ def _call_openai_compat_tools(
         data=body,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     )
-    with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
+    with _no_redirect_urlopen(req, timeout=timeout_sec, proxy=_proxy) as resp:
         raw = resp.read().decode("utf-8")
     parsed = json.loads(raw)
     if not parsed.get("choices"):

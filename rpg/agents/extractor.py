@@ -275,7 +275,11 @@ def _call_anthropic_tool_use(
     key = result.get("key")
     if not key:
         raise RuntimeError("找不到 Anthropic API Key for extractor")
-    client = Anthropic(api_key=key)
+    # 走统一出站层:不跟随重定向 + 凭据代理(本地模式才有值)。读超时沿用 GM 的单一来源。
+    from core.config import llm_timeout_seconds
+    from core.outbound import credential_proxy, safe_httpx_client
+    client = Anthropic(api_key=key, http_client=safe_httpx_client(
+        timeout=llm_timeout_seconds(user_id), proxy=credential_proxy(result)))
     tools = [{
         "name": "emit_state_ops",
         "description": "把 GM 叙事里发生的状态变化输出为操作数组。没有变化就传 ops=[].",
@@ -356,8 +360,10 @@ def _call_openai_compat_json_mode(
     import urllib.request
 
     # SSRF(不跟随重定向 + use-time 重解析 pin IP)走 core.outbound.safe_urlopen;经 _harness 那层薄包装,
-    # 失败时响应体会挂到 HTTPError.body 上,provider_errors 才看得到服务商的真实原因(两跳都走它)。
+    # 失败时响应体挂到 HTTPError.body 上(provider_errors 才看得到服务商的真实原因(两跳都走它))。
     from agents._harness import _no_redirect_urlopen
+    from core.outbound import credential_proxy
+    _proxy = credential_proxy(cred)  # 凭据代理(本地模式才有值;没配时为 None)
     base_url = cred.get("base_url_override") or _api_base_url(api_id)
     if not base_url:
         raise RuntimeError(f"未知 base_url for {api_id}")
@@ -382,7 +388,7 @@ def _call_openai_compat_json_mode(
         },
     )
     try:
-        with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
+        with _no_redirect_urlopen(req, timeout=timeout_sec, proxy=_proxy) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         if not payload.get("choices"):
             raise RuntimeError(f"provider 响应结构异常: {str(payload)[:200]}")
@@ -407,7 +413,7 @@ def _call_openai_compat_json_mode(
             data=body, method="POST",
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {cred['key']}"},
         )
-        with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
+        with _no_redirect_urlopen(req, timeout=timeout_sec, proxy=_proxy) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         if not payload.get("choices"):
             raise RuntimeError(f"provider 响应结构异常: {str(payload)[:200]}")

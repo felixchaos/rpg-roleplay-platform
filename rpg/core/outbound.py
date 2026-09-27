@@ -21,12 +21,25 @@ no-redirect opener,并补齐运行时(use-time)的 SSRF 防线。
 内网/保留地址判定复用 `platform_app.user_credentials._ip_is_internal`(单一真源,与写时闸
 零漂移;十进制/八进制/十六进制/IPv4-mapped IPv6 各种伪装在 getaddrinfo 归一化后统一被拦)。
 core 懒导入 platform_app 是本仓既有模式(见 core.vertex_sa / core.request_cache)。
+
+出站代理(本地/自部署单用户模式专属,服务器模式一概不走代理):
+- 凭据里配的代理 → 一律经 `credential_proxy(resolved)` 取(单一真源,服务器模式恒 None)。
+  以前只有 GM 的 openai_compat 后端读它,拉模型/校验连接/子代理/生图/向量全都绕开,
+  表现为「聊天能通,保存 key、同步模型却超时」(反馈 #107)。
+- 凭据没配代理时,本地模式跟随环境变量与系统代理(HTTPS_PROXY / macOS 系统代理 /
+  Windows 注册表),这是 2026-06 SSRF 加固前的行为:当时给 httpx 塞了自定义 transport,
+  httpx 就不再读环境代理(`allow_env_proxies = trust_env and transport is None`),
+  桌面版从此「浏览器能通、后端不通」。
+- 无论显式代理还是系统代理,本机/局域网目标(127.0.0.1、localhost、私网段、*.local、
+  单标签主机名)一律直连,本机 Ollama / LM Studio 绝不会被送进代理(`_is_local_target`)。
 """
 from __future__ import annotations
 
 import http.client
+import ipaddress
 import socket
 import urllib.request
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -34,6 +47,10 @@ import httpx
 
 class OutboundBlocked(ValueError):
     """目标解析到私有/本地/保留地址,出于 SSRF 防护拒绝连接。"""
+
+
+class UnsupportedProxy(ValueError):
+    """出站代理的协议在这条出站路径上用不了(urllib 不支持 SOCKS / 缺 socksio 组件)。"""
 
 
 def _ssrf_enforced() -> bool:
@@ -56,6 +73,74 @@ def _ip_is_internal(ip_str: str) -> bool:
     """复用写时闸的内网判定(单一真源,避免逻辑漂移)。"""
     from platform_app.user_credentials import _ip_is_internal as _impl
     return _impl(ip_str)
+
+
+def credential_proxy(resolved: dict[str, Any] | None) -> str | None:
+    """凭据解析结果(resolve_api_key 的返回)→ 这次出站实际该用的代理 URL。单一真源。
+
+    只有本地/自部署单用户模式(`not _ssrf_enforced()`)才返回凭据里配的 proxy;服务器
+    (多租户)模式恒返回 None —— 代理 URL 合法地可以指向 127.0.0.1,无法用「禁私网」校验
+    拦住,所以托管后端永远不用用户代理(与 set_credential 的写时闸构成双闸)。
+    取不到配置时 `_ssrf_enforced()` 按服务器模式处理(fail-safe),同样返回 None。
+    """
+    if not resolved or _ssrf_enforced():
+        return None
+    proxy = str(resolved.get("proxy") or "").strip()
+    return proxy or None
+
+
+def proxy_kwargs(proxy: str | None) -> dict[str, str]:
+    """有代理 → {"proxy": proxy};没有 → {}。
+
+    给 urllib 出站点用:没配代理时调用形态与改动前逐字节相同(`safe_urlopen(req, timeout=...)`),
+    不给既有调用点和测试桩平添一个参数。
+    """
+    return {"proxy": proxy} if proxy else {}
+
+
+# 局域网网段:RFC1918 + CGNAT(Tailscale 等组网常用 100.64/10)+ IPv6 ULA。
+# 回环 / 链路本地 / 未指定地址由 ipaddress 的属性判断,不在这里重复列。
+_LAN_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7",
+))
+
+
+def _is_local_target(host: str | None) -> bool:
+    """出站目标是不是本机/局域网 —— 是的话无论配没配代理都直连。
+
+    只看 URL 里写的主机名/IP 字面量,不做 DNS 解析(梯子的 fake-ip 会把公网域名解析成
+    198.18.x.x,那种必须照常走代理)。判为本地的:localhost / *.localhost / *.local、
+    回环 / 链路本地 / 私网网段 IP、以及不带点的单标签主机名(容器服务名、局域网机器名,
+    与 Windows 代理例外里 <local> 的语义一致)。
+    """
+    h = (host or "").strip().strip("[]").lower().rstrip(".")
+    if not h:
+        return False
+    if h == "localhost" or h.endswith(".localhost") or h.endswith(".local"):
+        return True
+    try:
+        ip = ipaddress.ip_address(h.split("%", 1)[0])
+    except ValueError:
+        return "." not in h
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if ip.is_loopback or ip.is_link_local or ip.is_unspecified:
+        return True
+    return any(ip.version == net.version and ip in net for net in _LAN_NETWORKS)
+
+
+def _urllib_proxy_handler(proxy: str) -> urllib.request.ProxyHandler:
+    """显式代理 → urllib ProxyHandler。urllib 只会 HTTP CONNECT,SOCKS 代理给明确报错,
+    不能让它把 socks5://… 当成 HTTP 代理去连,那样只会报一个看不懂的 Connection refused。"""
+    scheme = (urlparse(proxy).scheme or "").lower()
+    if scheme.startswith("socks"):
+        raise UnsupportedProxy(
+            "这项功能暂不支持 SOCKS 代理。请在「设置 → API & 模型」这个供应商的连接方式里"
+            "改填 HTTP 代理(形如 http://127.0.0.1:7890),聊天和其它功能都能用。"
+        )
+    if scheme not in {"http", "https"}:
+        raise UnsupportedProxy(f"代理地址协议不支持:{scheme or '(空)'}")
+    return urllib.request.ProxyHandler({"http": proxy, "https": proxy})
 
 
 def _resolve_external_ip(host: str, port: int) -> str:
@@ -145,7 +230,7 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
         return self.do_open(self._conn_class, req, context=self._context)
 
 
-def safe_urlopen(req, *, timeout=socket._GLOBAL_DEFAULT_TIMEOUT):
+def safe_urlopen(req, *, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, proxy: str | None = None):
     """SSRF 安全地打开一个 urllib Request(或 URL 字符串)。
 
     - 不跟随重定向(30x → 抛 urllib.error.HTTPError,fail-closed)。
@@ -153,6 +238,11 @@ def safe_urlopen(req, *, timeout=socket._GLOBAL_DEFAULT_TIMEOUT):
     - socket 拨号 pin 到已校验 IP(抗 DNS rebinding),Host/SNI/证书仍用原 hostname。
 
     仅支持 http/https。timeout 语义与 urllib.request.urlopen 一致。
+
+    proxy:凭据里配的出站代理,调用方一律传 `credential_proxy(...)` 的结果。只在本地模式生效
+    (服务器模式走 IP pin,不经任何代理,传了也忽略);只接受 http/https 代理,SOCKS 抛
+    UnsupportedProxy。没传时本地模式沿用 urllib 默认的环境/系统代理。无论哪种,本机/局域网
+    目标一律直连。
     """
     full_url = req.full_url if isinstance(req, urllib.request.Request) else req
     parsed = urlparse(full_url)
@@ -182,7 +272,13 @@ def safe_urlopen(req, *, timeout=socket._GLOBAL_DEFAULT_TIMEOUT):
             _PinnedHTTPSHandler(pinned_ip),
             _NoRedirect(),
         )
+    elif _is_local_target(host):
+        # 本机/局域网模型:空 ProxyHandler = 不走任何代理(显式的、环境的、系统的都不走)。
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+    elif proxy:
+        opener = urllib.request.build_opener(_urllib_proxy_handler(proxy), _NoRedirect())
     else:
+        # 没配代理:build_opener 自带的默认 ProxyHandler 读环境变量 / 系统代理。
         opener = urllib.request.build_opener(_NoRedirect())
     return opener.open(req, timeout=timeout)
 
@@ -284,15 +380,72 @@ class _SsrfGuardTransport:
         self._inner.__exit__(*a)
 
 
+_LOCAL_CLIENT_CLS: Any = None
+
+
+def _local_client_cls():
+    """本地模式用的 httpx.Client 子类:本机/局域网目标永远走直连连接池。
+
+    httpx 的环境代理例外只认 NO_PROXY,且 URL 匹配不支持网段(10.0.0.0/8 这种写不进去),
+    也不认 macOS 系统例外 / Windows ProxyOverride 里的 <local>。所以在「按 URL 挑传输层」
+    这一步先拦一道:本地目标返回默认传输层(= 直连),其余交回 httpx 原逻辑(显式代理 /
+    环境代理 / NO_PROXY)。test_outbound_local_proxy 锁着这个钩子,httpx 升级改了名字会立刻红。
+    """
+    global _LOCAL_CLIENT_CLS
+    if _LOCAL_CLIENT_CLS is None:
+        import httpx
+
+        class _LocalModeClient(httpx.Client):
+            def _transport_for_url(self, url):  # noqa: D401
+                if _is_local_target(url.host):
+                    return self._transport
+                return super()._transport_for_url(url)
+
+        _LOCAL_CLIENT_CLS = _LocalModeClient
+    return _LOCAL_CLIENT_CLS
+
+
+def _local_httpx_client(*, timeout: float, proxy: str | None, http2: bool):
+    """本地/自部署单用户模式的出站 client。
+
+    不挂 SSRF 守卫 transport(本地模式那道守卫本来就是空操作),这样 httpx 才会:
+    显式 proxy 走显式 proxy;没有时按 trust_env 读环境变量和系统代理。本机/局域网目标直连。
+    """
+    import httpx
+
+    kwargs: dict[str, Any] = {
+        "follow_redirects": False,
+        "timeout": httpx.Timeout(timeout, connect=10.0),
+        "http2": http2,
+        "trust_env": True,
+    }
+    cls = _local_client_cls()
+    try:
+        return cls(proxy=proxy or None, **kwargs)
+    except ImportError as exc:
+        # SOCKS 代理需要 socksio(requirements 已带);老安装包可能还缺它。
+        if proxy:
+            raise UnsupportedProxy(
+                "当前安装缺少 SOCKS 代理支持组件,用不了 socks5:// 代理。请把连接方式里的代理"
+                "改成 HTTP 代理(形如 http://127.0.0.1:7890),或更新到最新版本后再试。"
+            ) from exc
+        # 代理来自环境变量(如 ALL_PROXY=socks5://…)而组件缺失:退回直连,别让整条出站崩掉。
+        import logging
+        logging.getLogger(__name__).warning(
+            "[outbound] 环境代理用不了(%s),本次出站改为直连", exc)
+        return cls(trust_env=False, **{k: v for k, v in kwargs.items() if k != "trust_env"})
+
+
 def safe_httpx_client(*, timeout: float = 30.0, proxy: str | None = None, http2: bool = True):
     """返回一个 SSRF 安全的 httpx.Client:不跟随重定向 + 传输层 use-time 私网校验(缓解 DNS rebinding)。
 
     用于把 user/admin 可控 base_url 喂给 OpenAI 兼容 SDK 的出站点(model_probe 拉模型、
-    gm/backends/openai_compat.py 的 GM LLM 调用)。传输层守卫自身按 `_ssrf_enforced()` 门控:
-    服务器模式才做私网拦截,本地/自部署模式为 no-op(本机大模型 / 梯子 fake-ip 照常)。
+    gm/backends/openai_compat.py 的 GM LLM 调用)。传输层守卫只在服务器模式挂上(私网拦截);
+    本地/自部署模式不挂守卫,改走 `_local_httpx_client`(显式代理 / 系统代理 / 本地目标直连)。
 
-    proxy:仅本地模式应传(用户在凭据里配的出站代理);托管多用户后端永不传(防 SSRF —— 代理可
-    合法指向内网,无法用「禁私网」拦)。代理走内层 HTTPTransport,守卫仍校验目标 host。
+    proxy:调用方一律传 `credential_proxy(...)` 的结果,不需要代理的写 proxy=None(守卫测试
+    要求每个调用点显式写出 proxy=)。服务器模式下 credential_proxy 恒为 None,托管多用户后端
+    永不走用户代理(防 SSRF —— 代理可合法指向内网,无法用「禁私网」拦)。
 
     http2(默认 True):开 HTTP/2。一个 GM run 内会发多个 LLM 调用(推理 + 工具轮),都走 stream=True;
     OpenAI/Anthropic SDK 的流式响应到 [DONE] 即停、不 drain body → HTTP/1.1 下 httpx 无法把 socket
@@ -311,6 +464,8 @@ def safe_httpx_client(*, timeout: float = 30.0, proxy: str | None = None, http2:
             import h2  # noqa: F401  # 仅探测是否可用
         except Exception:
             _h2 = False  # 没装 h2 包 → 退回 HTTP/1.1(不报错)
+    if not _ssrf_enforced():
+        return _local_httpx_client(timeout=timeout, proxy=proxy, http2=_h2)
     inner = (
         httpx.HTTPTransport(proxy=proxy, http2=_h2) if proxy
         else httpx.HTTPTransport(http2=_h2)

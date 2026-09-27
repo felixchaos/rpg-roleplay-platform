@@ -142,6 +142,7 @@ def _submit(
     endpoint: str,
     body: dict[str, Any],
     api_key: str,
+    proxy: str | None = None,
 ) -> str:
     """Submit image generation task.  Returns task_id string."""
     headers = {
@@ -150,7 +151,7 @@ def _submit(
         "X-DashScope-Async": "enable",
     }
     try:
-        with safe_httpx_client(timeout=_REQUEST_TIMEOUT) as client:
+        with safe_httpx_client(timeout=_REQUEST_TIMEOUT, proxy=proxy) as client:
             resp = client.post(
                 endpoint,
                 json=body,
@@ -182,7 +183,7 @@ def _submit(
     return str(task_id)
 
 
-def _poll(task_id: str, api_key: str) -> dict[str, Any]:
+def _poll(task_id: str, api_key: str, proxy: str | None = None) -> dict[str, Any]:
     """Poll task until terminal status.  Returns the full completed response dict."""
     poll_url = _POLL_TEMPLATE.format(task_id=task_id)
     headers = {"Authorization": f"Bearer {api_key}"}
@@ -193,7 +194,7 @@ def _poll(task_id: str, api_key: str) -> dict[str, Any]:
             time.sleep(_POLL_INTERVAL_SECONDS)
 
         try:
-            with safe_httpx_client(timeout=_REQUEST_TIMEOUT) as client:
+            with safe_httpx_client(timeout=_REQUEST_TIMEOUT, proxy=proxy) as client:
                 resp = client.get(
                     poll_url,
                     headers=headers,
@@ -298,6 +299,7 @@ def generate(
     model: str,
     api_key: str,
     base_url: str | None = None,
+    proxy: str | None = None,
 ) -> list[bytes]:
     """Async submit → poll → download for DashScope image generation.
 
@@ -310,6 +312,7 @@ def generate(
         api_key:   DashScope API key (Bearer token).
         base_url:  Unused for DashScope (endpoint is fixed); reserved for interface
                    compatibility.  Ignored.
+        proxy:     凭据代理(core.outbound.credential_proxy 的结果,本地模式才有值)。
     Returns:
         list[bytes] — one element per generated image.
     Raises:
@@ -324,8 +327,8 @@ def generate(
         endpoint = _SUBMIT_NEW
         body = _build_new_body(model, prompt, params)
 
-    task_id = _submit(endpoint, body, api_key)
-    completed = _poll(task_id, api_key)
+    task_id = _submit(endpoint, body, api_key, proxy=proxy)
+    completed = _poll(task_id, api_key, proxy=proxy)
     raw_urls = _extract_urls(completed, is_legacy=legacy)
 
     result: list[bytes] = []

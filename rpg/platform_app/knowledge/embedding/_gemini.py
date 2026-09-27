@@ -81,7 +81,7 @@ def _native_gemini_embed_model(model: str) -> str:
 _GEO_BAN_CHANNEL_GEMINI_NATIVE = "gemini_native_embedcontent"
 
 
-def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]] | None:
+def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT", proxy: str | None = None) -> list[list[float]] | None:
     """Gemini native embedContent API, avoiding OpenAI-compatible batchEmbed quota.
 
     注意:此处对多文本逐条串行调用 embedContent(v1beta)。
@@ -93,11 +93,14 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
     地区封禁自愈:命中特征后进程内标记 _GEO_BAN_CHANNEL_GEMINI_NATIVE 不可用
     (TTL=_GEO_BAN_TTL),入口先查缓存,标记生效时直接跳过网络调用返 None
     (由上层继续尝试下一通道),避免每次检索都白撞一次注定失败的直连。
+
+    proxy:凭据代理(调用方传 core.outbound.credential_proxy 的结果,本地模式才有值)。
     """
     import json as _json
     import urllib.error
     import urllib.request
 
+    from core.outbound import proxy_kwargs
     from core.outbound import safe_urlopen  # SSRF: 不跟随重定向 + use-time 重解析 pin IP
     from core.outbound_ua import outbound_user_agent
 
@@ -125,7 +128,7 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
                 headers={"Content-Type": "application/json", "User-Agent": outbound_user_agent()},
                 method="POST",
             )
-            with safe_urlopen(req, timeout=60) as resp:
+            with safe_urlopen(req, timeout=60, **proxy_kwargs(proxy)) as resp:
                 data = _json.loads(resp.read())
             values = data.get("embedding", {}).get("values") or []
             if len(values) != EMBED_DIM:

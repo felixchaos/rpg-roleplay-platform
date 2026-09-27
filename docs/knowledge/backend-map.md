@@ -37,7 +37,7 @@ Python FastAPI 后端逐包/逐模块职责。给 AI 协作者:找「某功能�
 
 ## 核心工具层(core/)
 
-- `core/outbound.py` — `safe_urlopen` / `safe_httpx_client`(**SSRF 安全出站,用户可控 URL/代理必走此**)+ `outbound_ua.py`(UA 注入)。
+- `core/outbound.py` — `safe_urlopen` / `safe_httpx_client`(**SSRF 安全出站,用户可控 URL/代理必走此**)+ `credential_proxy`(凭据代理单一真源,仅本地模式有值;本地模式无显式代理时跟随环境/系统代理,本机/局域网目标恒直连)+ `outbound_ua.py`(UA 注入)。
 - `core/llm_backend.py` — 模型/API 解析:`resolve_preferred_model`/`resolve_preferred_api`/`guard_byok_usable`。
 - `core/json_parse.py` — `parse_llm_json`(LLM JSON 容错解析)。
 - `core/text.py` — 文本工具权威缝:`slugify`(URL/目录/文件名安全化,保留中文,`fallback` 参数化)/ `normalize_for_fp`(指纹归一化,去标点空白只留文字数字)。散落的 `_slugify`/`_normalize_for_fp` 统一委托此处。

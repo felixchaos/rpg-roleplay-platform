@@ -166,18 +166,21 @@ def _resolve_embed_config(user_id: int | None) -> tuple[str, str, str, str]:
 # Provider dispatch
 # ---------------------------------------------------------------------------
 
-def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str = "") -> list[list[float]] | None:
+def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str = "", proxy: str | None = None) -> list[list[float]] | None:
     """OpenAI 兼容 embeddings API。base_url 为空则走官方 https://api.openai.com/v1。
 
     请求 dimensions=EMBED_DIM,让 text-embedding-3 / qwen text-embedding-v3 等可降维模型输出
     与 DB 向量列(默认 768)一致。模型不支持 dimensions(如 ada-002)时会 400 → 自动去掉
     dimensions 重试一次。
+
+    proxy:凭据代理(调用方传 core.outbound.credential_proxy 的结果,本地模式才有值)。
     """
     import json as _json
     import urllib.error
     import urllib.parse
     import urllib.request
 
+    from core.outbound import proxy_kwargs
     from core.outbound import safe_urlopen  # SSRF: 不跟随重定向 + use-time 重解析 pin IP
     from core.outbound_ua import outbound_user_agent
     global _last_openai_embed_error
@@ -193,7 +196,7 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
     if len(texts) > _max_batch:
         out: list[list[float]] = []
         for _i in range(0, len(texts), _max_batch):
-            sub = _embed_via_openai(model, api_key, texts[_i:_i + _max_batch], base_url)
+            sub = _embed_via_openai(model, api_key, texts[_i:_i + _max_batch], base_url, **proxy_kwargs(proxy))
             if sub is None:
                 return None
             out.extend(sub)
@@ -217,7 +220,7 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
             },
             method="POST",
         )
-        with safe_urlopen(req, timeout=_embed_req_timeout(len(texts))) as resp:
+        with safe_urlopen(req, timeout=_embed_req_timeout(len(texts)), **proxy_kwargs(proxy)) as resp:
             data = _json.loads(resp.read())
         items = sorted(data["data"], key=lambda x: x["index"])
         return [item["embedding"] for item in items]
@@ -307,6 +310,24 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
         return None
 
 
+def _embed_credential_proxy(user_id: int | None, api_id: str) -> str | None:
+    """向量请求该走的凭据代理(与 GM / 拉模型同源:core.outbound.credential_proxy)。
+
+    user_id 为空(平台兜底 / 后台任务)不走用户代理;解析失败一律按「没配代理」处理,
+    代理只是出站路径的选择,不能因为它把向量请求本身弄挂。
+    """
+    if not user_id or not api_id:
+        return None
+    try:
+        from core.outbound import _ssrf_enforced, credential_proxy
+        if _ssrf_enforced():
+            return None  # 服务器模式恒不走用户代理,省一次凭据查询
+        from platform_app.user_credentials import resolve_api_key
+        return credential_proxy(resolve_api_key(user_id, api_id, env_fallback=""))
+    except Exception:
+        return None
+
+
 def _embed_provider_dispatch(
     api_id: str,
     model: str,
@@ -322,8 +343,11 @@ def _embed_provider_dispatch(
     global _last_openai_embed_error
     if api_id in _VERTEX_API_IDS:
         return _embed_via_vertex(model, texts, task_type=task_type, user_id=user_id)
+    # 该用户这个 provider 凭据里配的出站代理(本地模式才有值);没配时 **{} 不改变调用形态。
+    from core.outbound import proxy_kwargs
+    _px = proxy_kwargs(_embed_credential_proxy(user_id, api_id))
     if api_id in _GEMINI_API_IDS:
-        return _embed_via_gemini(model, api_key, texts, task_type=task_type)
+        return _embed_via_gemini(model, api_key, texts, task_type=task_type, **_px)
     if api_id in _COHERE_API_IDS:
         if not api_key:
             log.warning("[embedding] cohere api_id but no api_key; falling back to vertex")
@@ -346,7 +370,7 @@ def _embed_provider_dispatch(
             )
             log.warning("[embedding] api_id=%r resolved to empty base_url; refusing to send its key to api.openai.com", api_id)
             return None
-        return _embed_via_openai(model, api_key, texts, base_url=base_url)
+        return _embed_via_openai(model, api_key, texts, base_url=base_url, **_px)
     log.warning("[embedding] unknown api_id=%r and no api_key; falling back to vertex", api_id)
     return _embed_via_vertex(DEFAULT_EMBED_MODEL, texts, task_type=task_type, user_id=user_id)
 

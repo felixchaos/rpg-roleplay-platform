@@ -96,7 +96,8 @@ def _strip_data_uri(s: str) -> str:
 
 
 def _try_images_api(
-    base: str, headers: dict[str, str], prompt: str, model: str, params: dict, api_id: str
+    base: str, headers: dict[str, str], prompt: str, model: str, params: dict, api_id: str,
+    proxy: str | None = None,
 ) -> list[bytes]:
     """标准 OpenAI Images API。返回 [] 表示「应回退到 chat 模态」(端点不存在)。"""
     endpoint = f"{base}/images/generations"
@@ -108,7 +109,7 @@ def _try_images_api(
             body[field] = params[field]
 
     try:
-        with safe_httpx_client(timeout=_READ_TIMEOUT) as client:
+        with safe_httpx_client(timeout=_READ_TIMEOUT, proxy=proxy) as client:
             resp = client.post(
                 endpoint, json=body, headers=headers,
             )
@@ -164,7 +165,8 @@ def _collect_chat_images(message: dict[str, Any]) -> list[bytes]:
 
 
 def _try_chat_modality(
-    base: str, headers: dict[str, str], prompt: str, model: str, api_id: str
+    base: str, headers: dict[str, str], prompt: str, model: str, api_id: str,
+    proxy: str | None = None,
 ) -> list[bytes]:
     """OpenRouter 等:chat/completions + modalities=["image","text"],图在 message 里。"""
     endpoint = f"{base}/chat/completions"
@@ -174,7 +176,7 @@ def _try_chat_modality(
         "modalities": ["image", "text"],
     }
     try:
-        with safe_httpx_client(timeout=_READ_TIMEOUT) as client:
+        with safe_httpx_client(timeout=_READ_TIMEOUT, proxy=proxy) as client:
             resp = client.post(
                 endpoint, json=body, headers=headers,
             )
@@ -210,8 +212,11 @@ def generate(
     model: str,
     api_key: str,
     base_url: str | None = None,
+    proxy: str | None = None,
 ) -> list[bytes]:
-    """通用 OpenAI 兼容生图:先标准 Images API,无端点则退 chat 图像模态。"""
+    """通用 OpenAI 兼容生图:先标准 Images API,无端点则退 chat 图像模态。
+
+    proxy:凭据代理(调用方传 core.outbound.credential_proxy 的结果,本地模式才有值)。"""
     if not api_key:
         raise ImageGenError(f"openai_compat: {api_id} 缺少 API Key")
     base = _resolve_base_url(api_id, base_url)
@@ -219,10 +224,10 @@ def generate(
 
     # OpenRouter 等只有 chat 图像模态(无 /images/generations)→ 直接走,免打误导性 401。
     if api_id in _CHAT_MODALITY_IMAGE_PROVIDERS:
-        return _try_chat_modality(base, headers, prompt, model, api_id)
+        return _try_chat_modality(base, headers, prompt, model, api_id, proxy=proxy)
 
-    images = _try_images_api(base, headers, prompt, model, params or {}, api_id)
+    images = _try_images_api(base, headers, prompt, model, params or {}, api_id, proxy=proxy)
     if images:
         return images
     # /images/generations 不存在(404/405)→ 回退 chat 图像模态
-    return _try_chat_modality(base, headers, prompt, model, api_id)
+    return _try_chat_modality(base, headers, prompt, model, api_id, proxy=proxy)

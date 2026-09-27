@@ -34,6 +34,18 @@ def _read(rel: str) -> str:
     return (PROJECT / "rpg" / rel).read_text(encoding="utf-8")
 
 
+class _ServerModeTestCase(unittest.TestCase):
+    """SSRF 防线(IP pin / 私网拦截 / 守卫 transport)只在服务器模式启用。这些用例锁的都是
+    服务器模式语义,显式钉住 `_ssrf_enforced`,不随运行环境的部署模式漂(以前在本地模式环境
+    单独跑这个文件有 4 条红,全量跑时结果取决于前面的用例留下什么部署模式环境)。
+    本地模式的出站行为见 test_outbound_local_proxy。"""
+
+    def setUp(self):
+        patcher = mock.patch.object(outbound, "_ssrf_enforced", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
 # --------------------------------------------------------------------------- #
 # 本地一次性 HTTP server:用于「真的发一次请求」的行为测试。                       #
 # safe_urlopen 默认会拒绝 127.0.0.1(内网)→ 这些测试 patch 掉内网判定,只为让本地    #
@@ -136,7 +148,7 @@ class _RouteServer:
         self.httpd.server_close()
 
 
-class SafeUrlopenNoRedirect(unittest.TestCase):
+class SafeUrlopenNoRedirect(_ServerModeTestCase):
     """(a) 30x 不被跟随 —— 元数据地址绝不会被二次访问。"""
 
     def test_301_to_metadata_is_refused(self):
@@ -156,7 +168,7 @@ class SafeUrlopenNoRedirect(unittest.TestCase):
         self.assertEqual(srv.record["hits"], 1)
 
 
-class SafeUrlopenHappyPath(unittest.TestCase):
+class SafeUrlopenHappyPath(_ServerModeTestCase):
     """pin 连接的管线本身能打通正常 200(证明安全改造没把正常请求弄坏)。"""
 
     def test_normal_200_round_trip(self):
@@ -169,7 +181,7 @@ class SafeUrlopenHappyPath(unittest.TestCase):
         self.assertEqual(srv.record["hits"], 1)
 
 
-class SafeUrlopenRebinding(unittest.TestCase):
+class SafeUrlopenRebinding(_ServerModeTestCase):
     """(b) DNS rebinding:host 在请求时解析到内网/元数据 → use-time 闸必须拒,且绝不拨号。"""
 
     def test_rebind_to_metadata_ip_is_blocked(self):
@@ -209,7 +221,7 @@ class SafeUrlopenRebinding(unittest.TestCase):
                 safe_urlopen(Request("http://mixed.example/v1"), timeout=5)
 
 
-class SafeUrlopenSchemeGuard(unittest.TestCase):
+class SafeUrlopenSchemeGuard(_ServerModeTestCase):
     def test_non_http_schemes_blocked(self):
         for url in ("file:///etc/passwd", "ftp://example.com/x", "gopher://x/"):
             with self.assertRaises(OutboundBlocked):
@@ -220,10 +232,11 @@ class SafeUrlopenSchemeGuard(unittest.TestCase):
             safe_urlopen(Request("http:///no-host"), timeout=5)
 
 
-class SafeGetBytes(unittest.TestCase):
+class SafeGetBytes(_ServerModeTestCase):
     """safe_get_bytes:手动跟随重定向,但**每一跳都重新过 safe_urlopen 的私网校验**,且限体积。"""
 
     def setUp(self):
+        super().setUp()
         self.srv = _RouteServer()
         self.addCleanup(self.srv.stop)
         # 放行 loopback(本地 server 可达),拦其余(含 169.254)→ 用来验证「跳内网被拦」
@@ -257,7 +270,7 @@ class SafeGetBytes(unittest.TestCase):
             safe_get_bytes(self.srv.url("/redirect-local"), timeout=5, max_redirects=0)
 
 
-class SafeHttpxClientGate(unittest.TestCase):
+class SafeHttpxClientGate(_ServerModeTestCase):
     """httpx 传输层 SSRF 闸(给 OpenAI/Anthropic SDK 等必须用 httpx 的出站点)。"""
 
     @staticmethod
@@ -416,7 +429,8 @@ class ConsolidationSourceGuards(unittest.TestCase):
     def test_harness_delegates_to_safe_urlopen(self):
         src = _read("agents/_harness.py")
         self.assertIn("from core.outbound import safe_urlopen", src)
-        self.assertIn("return safe_urlopen(req, timeout=timeout)", src)
+        # 凭据代理(反馈 #107)只在有值时才作为关键字透传,委托对象不变。
+        self.assertIn("return safe_urlopen(req, timeout=timeout, **proxy_kwargs(proxy))", src)
 
     def test_core_outbound_invariants(self):
         src = _read("core/outbound.py")
