@@ -49,9 +49,12 @@ rpg/claude_design_upload
 .dev-logs
 
 # ── Secrets — must NEVER enter the image ────────────────────────────────────
-.env
-.env.*
-!.env.example
+# Patterns here are anchored at the build-context root (unlike .gitignore), so a
+# bare `.env` would only match ./.env and let rpg/.env (written by setup.sh) slip
+# into the image via `COPY rpg/`. Use **/ to match at any depth.
+**/.env
+**/.env.*
+!**/.env.example
 **/master.key
 **/*.pem
 **/*.key
