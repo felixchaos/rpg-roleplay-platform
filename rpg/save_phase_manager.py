@@ -107,22 +107,6 @@ def get_active_phase(save_id: int) -> dict | None:
         return None
 
 
-def _next_phase_index(save_id: int) -> int:
-    """Return max(phase_index)+1 for this save, or 0 if none exist."""
-    try:
-        from platform_app.db import connect, init_db
-
-        init_db()
-        with connect() as db:
-            row = db.execute(
-                "select coalesce(max(phase_index), -1) as mx from save_phase_digests where save_id = %s",
-                (save_id,),
-            ).fetchone()
-        return int((row or {}).get("mx", -1)) + 1
-    except Exception:
-        return 0
-
-
 # ────────────────────────────────────────────────────────────
 # Phase boundary detection (107C)
 # ────────────────────────────────────────────────────────────
@@ -195,6 +179,14 @@ def open_new_phase(
 
     Also updates game_saves.active_phase_index.
     Returns the newly inserted row as a dict.
+
+    当前 open phase 若一个回合都还没收进来(turn_start > turn_index-1),不关它、就地改造
+    成新 phase(重设起点与标签),不摘要、不审计 —— 按 turn_index-1 关它会得到倒挂空区间
+    [s, s-1]:compact 恒失败、留 needs_rebuild 毒行给 cron 天天重试,
+    锚点审计还把整段 story_phase 的 fatal 锚点报成「超期」。来源是分支回退后残留的旧
+    open phase(continue_from / activate_node 不修剪 phase,回到开场后新分支 turn 1 标签
+    一变,detect_phase_boundary 就触发)、同回合二次开 phase、阈值被配成 ≤1 等。
+    本函数是关闭 open phase 的唯一缝,在这里判一次,各来源都兜得住。
     """
     try:
         from psycopg.types.json import Jsonb
@@ -202,61 +194,129 @@ def open_new_phase(
         from platform_app.db import connect, init_db
 
         init_db()
+        close_end = max(0, turn_index - 1)
+        repurposed = False
+        stale_to_digest: list[int] = []
         with connect() as db:
-            # Close existing open phase at turn_index - 1
-            db.execute(
+            # 同一连接、同一事务读 open phase 并锁行:与每回合钩子里的 update_phase_turn_end /
+            # 并发的 open_new_phase 串行,判定与改写之间不留缝。
+            open_rows = db.execute(
                 """
-                update save_phase_digests
-                   set status   = 'closed',
-                       turn_end = %s,
-                       updated_at = now()
+                select phase_index, turn_start, turn_end
+                  from save_phase_digests
                  where save_id = %s and status = 'open'
+                 order by phase_index desc
+                   for update
                 """,
-                (max(0, turn_index - 1), save_id),
+                (save_id,),
+            ).fetchall() or []
+            cur = open_rows[0] if open_rows else None
+            if cur is not None and int(cur.get("turn_start") or 0) > close_end:
+                keep_index = int(cur["phase_index"])
+                # 历史异常:同时开着多条 open 行。较小 index 的那些按各自 turn_end 关掉
+                # (不改区间),区间正常的才补摘要;倒挂的不摘要(find_pending 也不会挑它)。
+                for extra in open_rows[1:]:
+                    idx = int(extra["phase_index"])
+                    db.execute(
+                        "update save_phase_digests set status = 'closed', updated_at = now() "
+                        "where save_id = %s and phase_index = %s",
+                        (save_id, idx),
+                    )
+                    if int(extra.get("turn_end") or 0) >= int(extra.get("turn_start") or 0):
+                        stale_to_digest.append(idx)
+                row = db.execute(
+                    """
+                    update save_phase_digests
+                       set turn_start       = %s,
+                           turn_end         = %s,
+                           phase_label      = %s,
+                           story_time_label = %s,
+                           updated_at       = now()
+                     where save_id = %s and phase_index = %s
+                    returning *
+                    """,
+                    (turn_index, turn_index, phase_label or "", story_time_label or "",
+                     save_id, keep_index),
+                ).fetchone()
+                db.execute(
+                    "update game_saves set active_phase_index = %s where id = %s",
+                    (keep_index, save_id),
+                )
+                new_index = keep_index
+                repurposed = True
+            else:
+                # Close existing open phase at turn_index - 1
+                db.execute(
+                    """
+                    update save_phase_digests
+                       set status   = 'closed',
+                           turn_end = %s,
+                           updated_at = now()
+                     where save_id = %s and status = 'open'
+                    """,
+                    (close_end, save_id),
+                )
+                # 同一连接算下一个 index(别在持有本连接时另开一条连接去查 max ——
+                # PgBouncer 池上是自找死锁;与 ensure_active_phase 同法)。
+                mx = db.execute(
+                    "select coalesce(max(phase_index), -1) as mx "
+                    "from save_phase_digests where save_id = %s",
+                    (save_id,),
+                ).fetchone()
+                new_index = int((mx or {}).get("mx", -1)) + 1
+                row = db.execute(
+                    """
+                    insert into save_phase_digests
+                        (save_id, phase_index, turn_start, turn_end,
+                         story_time_label, phase_label,
+                         summary, key_events, key_npcs, key_locations, key_decisions,
+                         emotion_arc, status, generated_by, metadata)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    on conflict (save_id, phase_index) do update
+                        set status           = 'open',
+                            turn_start       = excluded.turn_start,
+                            turn_end         = excluded.turn_end,
+                            story_time_label = excluded.story_time_label,
+                            phase_label      = excluded.phase_label,
+                            updated_at       = now()
+                    returning *
+                    """,
+                    (
+                        save_id,
+                        new_index,
+                        turn_index,
+                        turn_index,
+                        story_time_label or "",
+                        phase_label or "",
+                        "",                # summary — filled by 107D LLM agent
+                        Jsonb([]),
+                        Jsonb([]),
+                        Jsonb([]),
+                        Jsonb([]),
+                        "",                # emotion_arc
+                        "open",
+                        "llm",
+                        Jsonb({}),
+                    ),
+                ).fetchone()
+                # Update game_saves.active_phase_index
+                db.execute(
+                    "update game_saves set active_phase_index = %s where id = %s",
+                    (new_index, save_id),
+                )
+        if repurposed:
+            log.info(
+                f"[save_phase_manager] save {save_id} phase {new_index} 尚未收进任何回合,"
+                f"就地改到 turn {turn_index} 起算(不关成空段)"
             )
-            new_index = _next_phase_index(save_id)
-            row = db.execute(
-                """
-                insert into save_phase_digests
-                    (save_id, phase_index, turn_start, turn_end,
-                     story_time_label, phase_label,
-                     summary, key_events, key_npcs, key_locations, key_decisions,
-                     emotion_arc, status, generated_by, metadata)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                on conflict (save_id, phase_index) do update
-                    set status           = 'open',
-                        turn_start       = excluded.turn_start,
-                        turn_end         = excluded.turn_end,
-                        story_time_label = excluded.story_time_label,
-                        phase_label      = excluded.phase_label,
-                        updated_at       = now()
-                returning *
-                """,
-                (
-                    save_id,
-                    new_index,
-                    turn_index,
-                    turn_index,
-                    story_time_label or "",
-                    phase_label or "",
-                    "",                # summary — filled by 107D LLM agent
-                    Jsonb([]),
-                    Jsonb([]),
-                    Jsonb([]),
-                    Jsonb([]),
-                    "",                # emotion_arc
-                    "open",
-                    "llm",
-                    Jsonb({}),
-                ),
-            ).fetchone()
-            # Update game_saves.active_phase_index
-            db.execute(
-                "update game_saves set active_phase_index = %s where id = %s",
-                (new_index, save_id),
-            )
+            for idx in stale_to_digest:
+                _fire_and_forget_compact(save_id, idx)
+            return dict(row) if row else {"phase_index": new_index, "save_id": save_id}
         # task 107D 集成: 新 phase 一旦 open 成功, 老 phase 已被 close ->
-        # fire-and-forget 触发 LLM 摘要老 phase (不阻塞玩家 chat)
+        # fire-and-forget 触发 LLM 摘要老 phase (不阻塞玩家 chat)。
+        # 注意:这里按「新 index > 0」触发,而不是按本次 update 实际关了几行 ——
+        # /compact 先由 compact_phase(force=True) 把 phase 关掉再调本函数,本次关 0 行,
+        # 但老 phase 的锚点审计仍得跑(摘要那头命中 already_closed 短路,不调 LLM)。
         if new_index > 0:
             _fire_and_forget_compact(save_id, new_index - 1)
             # task 136f: 世界线收束 phase boundary audit —
@@ -501,8 +561,8 @@ def ensure_active_phase(save_id: int, turn_index: int, phase_label: str = "", st
 
         init_db()
         with connect() as db:
-            # 同一连接算下一个 index(别调 _next_phase_index —— 那会在本连接内
-            # 再开一条连接,PgBouncer 池上是自找死锁)。
+            # 同一连接算下一个 index(别在持有本连接时另开一条连接去查 max ——
+            # PgBouncer 池上是自找死锁)。
             row = db.execute(
                 "select coalesce(max(phase_index), -1) as mx "
                 "from save_phase_digests where save_id = %s",

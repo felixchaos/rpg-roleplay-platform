@@ -279,7 +279,10 @@ def enable_mcp_config_write() -> str | None:
 
 # ── Phase manager ────────────────────────────────────────────────────────
 def phase_turn_threshold() -> int:
-    return int(os.getenv("RPG_PHASE_TURN_THRESHOLD", "30"))
+    """一个 save phase 攒满多少回合就换段。下限钳到 2:配成 ≤1 时,每回合钩子里
+    ensure_active_phase 刚开出的 phase(1 回合)立刻就满,同一回合就要再开新段 ——
+    段永远收不进回合,历史压缩形同停摆。"""
+    return max(2, int(os.getenv("RPG_PHASE_TURN_THRESHOLD", "30")))
 
 
 # ── 黑天鹅子代理 (sprint 5) ────────────────────────────────────────────

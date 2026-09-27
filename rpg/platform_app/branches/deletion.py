@@ -43,6 +43,39 @@ def _realign_after_state_rewind(db, save_id: int, reverted_state: dict[str, Any]
     realign_progress_signals(db, int(save_id), target)
 
 
+def _prune_phase_digests_after(db, save_id: int, deleted_turn: int) -> tuple[int, int]:
+    """回合退回到 deleted_turn 之前时,修剪 save_phase_digests(同事务内调用)。
+
+    turn_start >= deleted_turn 的 phase 整行删掉(整段都在被撤销的回合里);跨过删除点的
+    截到 deleted_turn-1。返回 (截断条数, 删除条数)。
+
+    rollback_to_message / rewind_last_round / delete_subtree(删到活跃分支时)共用这一份:
+    以前只有前两处修剪,删子树退回 fallback 后旧 phase 原样留着 —— 新分支再打到同一回合,
+    open_new_phase 就会把「一个回合都没收进来」的旧 phase 关成倒挂空段。
+    """
+    fixed = 0
+    dropped = 0
+    affected_phases = db.execute(
+        """
+        select id, phase_index, turn_start, turn_end from save_phase_digests
+        where save_id = %s and turn_end >= %s
+        order by phase_index
+        """,
+        (save_id, deleted_turn),
+    ).fetchall()
+    for ph in affected_phases:
+        if int(ph["turn_start"]) >= deleted_turn:
+            db.execute("delete from save_phase_digests where id = %s", (ph["id"],))
+            dropped += 1
+        else:
+            db.execute(
+                "update save_phase_digests set turn_end = %s, updated_at = now() where id = %s",
+                (deleted_turn - 1, ph["id"]),
+            )
+            fixed += 1
+    return fixed, dropped
+
+
 def delete_subtree(user_id: int, node_id: int) -> dict[str, Any]:
     init_db()
     runtime_payload: dict[str, Any] | None = None
@@ -87,6 +120,11 @@ def delete_subtree(user_id: int, node_id: int) -> dict[str, Any]:
                 "state_path": fallback["state_path"],
                 "ref_id": ref["id"],
             }
+            # 被删分支的回合已物理删除,save phase 跟着退回 fallback 之后(与回滚同一套修剪),
+            # 否则残留的旧 phase 会在新分支打到同一回合时被关成倒挂空段。
+            _prune_phase_digests_after(
+                db, node["save_id"], int(fallback.get("turn_index") or 0) + 1,
+            )
             # M2:活跃指针回退到 fallback 后,进度信号族对齐回退后快照(被删分支里
             # 标 occurred 的未来章锚点重锁,防剧透闸不再按被删分支的最远章放行)。
             _realign_after_state_rewind(db, node["save_id"], activate["state"])
@@ -233,26 +271,7 @@ def rollback_to_message(
         ).fetchall()
         n_runs = len(deleted_runs or [])
 
-        phase_fixed = 0
-        phase_dropped = 0
-        affected_phases = db.execute(
-            """
-            select id, phase_index, turn_start, turn_end from save_phase_digests
-            where save_id = %s and turn_end >= %s
-            order by phase_index
-            """,
-            (save_id, deleted_turn),
-        ).fetchall()
-        for ph in affected_phases:
-            if ph["turn_start"] >= deleted_turn:
-                db.execute("delete from save_phase_digests where id = %s", (ph["id"],))
-                phase_dropped += 1
-            else:
-                db.execute(
-                    "update save_phase_digests set turn_end = %s, updated_at = now() where id = %s",
-                    (deleted_turn - 1, ph["id"]),
-                )
-                phase_fixed += 1
+        phase_fixed, phase_dropped = _prune_phase_digests_after(db, save_id, deleted_turn)
 
         from platform_app.branches.history_elide import hydrate_commit_state as _hyd2
         target_state = _hyd2(db, save_id, target_commit)
@@ -353,18 +372,7 @@ def rewind_last_round(user_id: int, save_id: int) -> dict[str, Any] | None:
             """,
             (save_id, deleted_turn),
         )
-        for ph in db.execute(
-            "select id, turn_start, turn_end from save_phase_digests "
-            "where save_id = %s and turn_end >= %s",
-            (save_id, deleted_turn),
-        ).fetchall():
-            if int(ph["turn_start"]) >= deleted_turn:
-                db.execute("delete from save_phase_digests where id = %s", (ph["id"],))
-            else:
-                db.execute(
-                    "update save_phase_digests set turn_end = %s, updated_at = now() where id = %s",
-                    (deleted_turn - 1, ph["id"]),
-                )
+        _prune_phase_digests_after(db, save_id, deleted_turn)
 
         from platform_app.branches.history_elide import hydrate_commit_state as _hyd3
         reverted_state = _hyd3(db, save_id, parent)
