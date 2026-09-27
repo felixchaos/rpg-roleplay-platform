@@ -31,6 +31,7 @@ import CSExpandableSection from '@cloudscape-design/components/expandable-sectio
 // 后端只校验 64-hex,不校验等于某文案的 SHA256,故 token 差异无副作用)。
 import { AUP_LINK, MAX_FREE_TEXT, QQ_GROUP_NUMBER, QQ_JOIN_URL, QQ_QR_SRC, submitFeedback, feedbackDecisionLabel } from '../lib/feedback.js';
 import { lsGet, lsSet } from '../lib/storage.js';
+import { fetchIsSelfHost } from '../lib/deployment.js';
 
 // ── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -106,13 +107,8 @@ export function FeedbackDrawer({ open, onClose }) {
       setRuntimePreview(snap ? snap.__runtime__ : null);
     } catch (_) { setRuntimePreview(null); }
     // 探测部署模式:自部署时反馈走中央服务器,需要选填邮箱来收回执。
-    (async () => {
-      try {
-        const st = await window.api?.game?.state?.();
-        const dep = (st?.app?.deployment || '').toLowerCase();
-        setSelfHost(['local', 'desktop', 'self_hosted', 'self-hosted'].includes(dep));
-      } catch (_) { /* 默认非自部署 */ }
-    })();
+    // 判定集合住 lib/deployment.js(单一真相源,与后端 core.config.LOCAL_MODES 对齐)。
+    (async () => { setSelfHost(await fetchIsSelfHost()); })();
     loadFeedbackHistory();
   }, [open, loadFeedbackHistory]);
 

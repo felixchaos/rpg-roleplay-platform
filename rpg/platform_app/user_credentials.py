@@ -140,6 +140,19 @@ def _ip_is_internal(ip_str: str) -> bool:
     )
 
 
+# 云端(server 模式)拒绝 http / 本机 / 局域网 base_url 时的统一文案。
+# 原文案「服务器模式下 base_url 必须是 https」只说了规则、没说原因和出路,用户(反馈:dali
+# 「提示我一定要 https,但是本地模型不是只有 http」)会以为是 bug,反复改地址也过不去。
+# 真相是**云端服务器根本到不了用户自己机器上的模型服务**,不是 https 与否的问题 —— 换成
+# https 也一样连不上。所以这里一次把「为什么 + 怎么办」讲清,前端各处只需透传 detail。
+_LOCAL_MODEL_HINT = (
+    "云端版只能连公网 https 地址。本地模型(Ollama / LM Studio / llama.cpp 等)跑在你自己的"
+    "机器上,127.0.0.1 / localhost / 192.168.x.x 这类地址云端服务器访问不到,改成 https 也连不上。"
+    "要用本地模型,请改用桌面版或自托管部署(装在你自己机器上,直连本地 http 地址);"
+    "如果这是公网中转站,请填它的 https 地址。"
+)
+
+
 def _validate_base_url(url: str) -> None:
     """禁止把 base_url 指向私网/本机/保留地址，避免 SSRF。
 
@@ -167,13 +180,13 @@ def _validate_base_url(url: str) -> None:
     if not _require_auth():
         return
     if p.scheme == "http":
-        raise ValueError("服务器模式下 base_url 必须是 https")
+        raise ValueError(_LOCAL_MODEL_HINT)
     host = (p.hostname or "").lower()
     if not host:
         raise ValueError("base_url 缺少 host")
     # 字面量本地名快速拦截
     if host in {"localhost", "ip6-localhost", "ip6-loopback"} or host.endswith(".localhost"):
-        raise ValueError(f"base_url 不允许指向本地地址：{host}")
+        raise ValueError(_LOCAL_MODEL_HINT)
     # 真正的防线:解析出所有 A/AAAA,任一为内网/保留即拒(覆盖各种进制 IP 伪装)。
     try:
         infos = socket.getaddrinfo(host, p.port or (443 if p.scheme == "https" else 80),
@@ -183,7 +196,8 @@ def _validate_base_url(url: str) -> None:
     for info in infos:
         ip_str = info[4][0]
         if _ip_is_internal(ip_str):
-            raise ValueError(f"base_url 解析到私有/本地/保留地址，已拒绝：{host} → {ip_str}")
+            # 同一类问题(地址在用户自己网络里)→ 同一份可执行文案,后面附技术细节便于排查。
+            raise ValueError(f"{_LOCAL_MODEL_HINT}(该域名解析到私有/保留地址:{host} → {ip_str})")
 
 
 def _normalize_openai_base_url(url: str) -> str:

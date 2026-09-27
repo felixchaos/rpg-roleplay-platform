@@ -10,6 +10,7 @@ import Modal from '../Modal.jsx';
 import { CAP_LABEL } from '../../pages/settings.jsx';
 import { PROVIDERS_CONFIG, fmtCtx } from './models-catalog.js';
 import { HealthDot } from './model-list.jsx';
+import { fetchIsCloud } from '../../lib/deployment.js';
 import CSModal from '@cloudscape-design/components/modal';
 import CSBox from '@cloudscape-design/components/box';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
@@ -94,6 +95,22 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
   const CUSTOM = '__custom__';
   const [provider, setProvider] = useStatePL('');   // 选中的 provider id(新增用)
   const [form, setForm] = useStatePL({ id: "", name: "", base_url: "", api_key: "", proxy: "direct", proxy_url: "", no_auth: false });
+  // 云端实例:后端 _validate_base_url 会拒掉 http:// 与本机/局域网地址(服务器根本到不了
+  // 用户自己机器上的模型服务)。以前只有提交后才从 toast 里看到这条,用户(反馈:dali)
+  // 填完 key 才撞墙、且看不懂「必须是 https」。这里提前判定 → 字段下直接给可执行提示 +
+  // 禁用提交。自部署(desktop/local/self_hosted)不设限,本地模型本来就该填 http。
+  // 用 fetchIsCloud 而非 !fetchIsSelfHost:模式取不到时**不拦**(前端这层只是提前告知,
+  // 权威判定在后端;一次 /api/state 抖动不该把自部署用户挡在「填不了本地模型」外面)。
+  const [isCloud, setIsCloud] = useStatePL(false);
+  React.useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      const v = await fetchIsCloud();
+      if (!cancelled) setIsCloud(v);
+    })();
+    return () => { cancelled = true; };
+  }, [open]);
   React.useEffect(() => {
     if (!open) return;
     if (isNew) { setProvider(''); setForm({ id: "", name: "", base_url: "", api_key: "", proxy: "direct", proxy_url: "", no_auth: false }); }
@@ -124,12 +141,28 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
       return !!(sa.client_email && sa.private_key && sa.project_id);
     } catch { return false; }
   })();
+  // 云端 + 本机/局域网 base_url = 后端必拒。这里只做**提示层**的粗判(浏览器解析不了 DNS,
+  // 也不该复刻后端那套进制/IPv6 归一化);真正的判定权威始终在后端 _validate_base_url,
+  // 这不是散落守卫,而是把已知必失败的组合提前告诉用户,省掉一次「填完 key 才撞墙」。
+  const _cloudLocalBaseUrl = (() => {
+    if (!isCloud || isAgentPlatform) return false;
+    const raw = (form.base_url || '').trim();
+    if (!raw) return false;
+    if (/^http:\/\//i.test(raw)) return true;            // 明文 http:云端一律拒
+    const host = (/^https?:\/\/([^/:?#]+)/i.exec(raw)?.[1] || '')
+      .toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+    if (!host) return false;
+    if (host === 'localhost' || host.endsWith('.localhost') || host === '::1') return true;
+    if (/^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(host)) return true;
+    return /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  })();
   // 免鉴权模式:Key 不再是必填(这正是它存在的意义),但 base_url 反而**必须**有 ——
   // 不指地址的「免 Key」没有任何含义,后端也会拒。
-  const canSubmit = isAgentPlatform
+  const canSubmit = (isAgentPlatform
     ? (!!form.id && !!form.name && (isNew ? _saJsonValid : true))
     : (!!form.id && !!form.name && !!form.base_url
-       && (isNew && !form.no_auth ? !!form.api_key.trim() : true));
+       && (isNew && !form.no_auth ? !!form.api_key.trim() : true)))
+    && !_cloudLocalBaseUrl;
 
   return (
     <CSModal
@@ -198,7 +231,10 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
               </CSFormField>
             ) : (
               <>
-                <CSFormField label={t('settings.edit_api.base_url')}>
+                <CSFormField
+                  label={t('settings.edit_api.base_url')}
+                  errorText={_cloudLocalBaseUrl ? t('settings.edit_api.cloud_no_local_model') : undefined}
+                >
                   <CSInput value={form.base_url} onChange={({ detail }) => setForm((f) => ({ ...f, base_url: detail.value }))} placeholder="https://your-relay.example.com/v1" />
                 </CSFormField>
                 {/* 本地/自托管模型(Ollama / vLLM / llama.cpp / LM Studio)多数没有 API Key 概念。
@@ -229,7 +265,11 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
               description={form.proxy === 'http_proxy' ? t('settings.edit_api.proxy_hint') : undefined}>
               <CSSelect
                 selectedOption={{ value: form.proxy, label: form.proxy }}
-                options={[{ value: 'direct', label: t('settings.edit_api.direct') }, { value: 'http_proxy', label: t('settings.edit_api.http_proxy') }, { value: 'lan', label: t('settings.edit_api.lan') }]}
+                // 曾有第三项「局域网 / 本地」——纯装饰:提交侧只认 'http_proxy'(见
+                // models-section.jsx 的 proxy 传参),选它等同「直连」,却让用户以为云端能接
+                // 局域网模型(「UI 存在 ≠ 生效」)。删掉;本地模型的正解是自部署,由 base_url
+                // 字段的 cloud_no_local_model 提示指路。
+                options={[{ value: 'direct', label: t('settings.edit_api.direct') }, { value: 'http_proxy', label: t('settings.edit_api.http_proxy') }]}
                 onChange={({ detail }) => setForm((f) => ({ ...f, proxy: detail.selectedOption.value }))}
               />
             </CSFormField>

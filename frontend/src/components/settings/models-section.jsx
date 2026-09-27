@@ -429,6 +429,11 @@ function ModelsSection() {
               || !existing
               || (payload.base_url && payload.base_url !== existing.base_url)
             );
+            // 只有 catalog 真写成功了,下面 key 写失败才配叫「元数据已保存但 key 写入失败」。
+            // 普通用户 needsCatalogWrite 恒 false(catalog 是 admin 专属),以前无条件弹那句
+            // 警告 → 用户看到「元数据已保存」以为留下了半截脏数据,实际一个字节都没写
+            // (dali 反馈截图里两条 toast 叠着,就是这个假警告 + 真失败)。
+            let catalogWritten = false;
             if (needsCatalogWrite) {
               try {
                 await window.api.models.upsertApi({
@@ -437,6 +442,7 @@ function ModelsSection() {
                   base_url: payload.base_url,
                   kind,
                 });
+                catalogWritten = true;
               } catch (e) {
                 if (e?.status === 403) {
                   // 普通用户改全局 catalog 被拒,提示但不阻断 key 保存
@@ -462,7 +468,10 @@ function ModelsSection() {
                   no_auth: noAuth,
                 });
               } catch (e) {
-                window.__apiToast?.(t('settings.edit_api.key_save_fail'), { kind: "warn", detail: e?.message, duration: 4000 });
+                if (catalogWritten) {
+                  // 真的留下了半截状态才提醒;否则交给下面 catch 的 save_fail 单条报错(带 detail)。
+                  window.__apiToast?.(t('settings.edit_api.key_save_fail'), { kind: "warn", detail: e?.message, duration: 4000 });
+                }
                 throw e;
               }
             } else if (baseUrlChanged && existing.key_set) {
@@ -490,7 +499,9 @@ function ModelsSection() {
             setSelectedApiId(catalogId);
             await syncRemoteModels(row, { silent: false });
           } catch (e) {
-            window.__apiToast?.(t('settings.edit_api.save_fail'), { kind: "danger", detail: e?.message });
+            // detail 常是后端一整段可执行说明(如「云端连不到本地模型,请用桌面版…」),
+            // 默认 2.4s 读不完 → 给失败态更长停留。
+            window.__apiToast?.(t('settings.edit_api.save_fail'), { kind: "danger", detail: e?.message, duration: 9000 });
           }
           setEditingApi(null); setAddingApi(false);
           // 刷新让真实 key_set / key_hint 由后端权威

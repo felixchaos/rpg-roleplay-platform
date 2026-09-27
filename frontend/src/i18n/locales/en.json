@@ -144,7 +144,7 @@
       "connection": "Connection",
       "direct": "Direct",
       "http_proxy": "HTTP Proxy",
-      "lan": "LAN / Local",
+      "cloud_no_local_model": "The cloud version cannot reach a model server on your own machine or LAN (127.0.0.1, localhost, 192.168.x.x only exist on your computer — switching to https will not help). To use a local model, run the desktop app or a self-hosted deployment; if this is a public relay endpoint, enter its https address.",
       "proxy_url": "Proxy URL",
       "proxy_hint": "On self-hosted deploys, this provider's outbound calls go through this proxy (e.g. to reach Google via a VPN). Save it together with the API Key; only takes effect on self-hosted instances.",
       "add_btn": "Add",

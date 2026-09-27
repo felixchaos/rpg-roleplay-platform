@@ -241,7 +241,7 @@
       "connection": "连接方式",
       "direct": "直连",
       "http_proxy": "HTTP 代理",
-      "lan": "局域网 / 本地",
+      "cloud_no_local_model": "云端版连不到你本机 / 局域网的模型服务(127.0.0.1、localhost、192.168.x.x 这些地址只在你自己电脑上,换成 https 也一样连不上)。要用本地模型请改用桌面版或自托管部署;如果这是公网中转站,请填它的 https 地址。",
       "proxy_url": "代理地址",
       "proxy_hint": "本地部署时,该 provider 出站走此代理(如用梯子访问 Google)。需与 API Key 一起保存;仅自托管实例生效。",
       "add_btn": "添加",
