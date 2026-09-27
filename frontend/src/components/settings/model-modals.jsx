@@ -10,7 +10,7 @@ import Modal from '../Modal.jsx';
 import { CAP_LABEL } from '../../pages/settings.jsx';
 import { PROVIDERS_CONFIG, fmtCtx } from './models-catalog.js';
 import { HealthDot } from './model-list.jsx';
-import { fetchIsCloud } from '../../lib/deployment.js';
+import { fetchBaseUrlPublicOnly } from '../../lib/deployment.js';
 import CSModal from '@cloudscape-design/components/modal';
 import CSBox from '@cloudscape-design/components/box';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
@@ -95,19 +95,20 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
   const CUSTOM = '__custom__';
   const [provider, setProvider] = useStatePL('');   // 选中的 provider id(新增用)
   const [form, setForm] = useStatePL({ id: "", name: "", base_url: "", api_key: "", proxy: "direct", proxy_url: "", no_auth: false });
-  // 云端实例:后端 _validate_base_url 会拒掉 http:// 与本机/局域网地址(服务器根本到不了
-  // 用户自己机器上的模型服务)。以前只有提交后才从 toast 里看到这条,用户(反馈:dali)
+  // 实例开了多用户鉴权时,后端 _validate_base_url 会拒掉 http:// 与本机/局域网地址(服务器
+  // 到不了用户自己机器上的模型服务)。以前只有提交后才从 toast 里看到这条,用户(反馈:dali)
   // 填完 key 才撞墙、且看不懂「必须是 https」。这里提前判定 → 字段下直接给可执行提示 +
-  // 禁用提交。自部署(desktop/local/self_hosted)不设限,本地模型本来就该填 http。
-  // 用 fetchIsCloud 而非 !fetchIsSelfHost:模式取不到时**不拦**(前端这层只是提前告知,
-  // 权威判定在后端;一次 /api/state 抖动不该把自部署用户挡在「填不了本地模型」外面)。
-  const [isCloud, setIsCloud] = useStatePL(false);
+  // 禁用提交。判据读 app.base_url_public_only(与后端 require_auth() 同源),不再从部署模式
+  // 串自己推 —— 那样 multiuser / 显式 RPG_REQUIRE_AUTH 的部署会和后端判反。
+  // 取不到时**不拦**(前端这层只是提前告知,权威判定在后端;一次 /api/state 抖动不该把
+  // 自部署用户挡在「填不了本地模型」外面)。
+  const [baseUrlPublicOnly, setBaseUrlPublicOnly] = useStatePL(false);
   React.useEffect(() => {
     if (!open) return;
     let cancelled = false;
     (async () => {
-      const v = await fetchIsCloud();
-      if (!cancelled) setIsCloud(v);
+      const v = await fetchBaseUrlPublicOnly();
+      if (!cancelled) setBaseUrlPublicOnly(v);
     })();
     return () => { cancelled = true; };
   }, [open]);
@@ -141,14 +142,15 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
       return !!(sa.client_email && sa.private_key && sa.project_id);
     } catch { return false; }
   })();
-  // 云端 + 本机/局域网 base_url = 后端必拒。这里只做**提示层**的粗判(浏览器解析不了 DNS,
-  // 也不该复刻后端那套进制/IPv6 归一化);真正的判定权威始终在后端 _validate_base_url,
-  // 这不是散落守卫,而是把已知必失败的组合提前告诉用户,省掉一次「填完 key 才撞墙」。
+  // 只收公网 https + 本机/局域网 base_url = 后端必拒。这里只做**提示层**的粗判(浏览器解析
+  // 不了 DNS,也不该复刻后端那套进制/IPv6 归一化);真正的判定权威始终在后端
+  // _validate_base_url,这不是散落守卫,而是把已知必失败的组合提前告诉用户,省掉一次
+  // 「填完 key 才撞墙」。
   const _cloudLocalBaseUrl = (() => {
-    if (!isCloud || isAgentPlatform) return false;
+    if (!baseUrlPublicOnly || isAgentPlatform) return false;
     const raw = (form.base_url || '').trim();
     if (!raw) return false;
-    if (/^http:\/\//i.test(raw)) return true;            // 明文 http:云端一律拒
+    if (/^http:\/\//i.test(raw)) return true;            // 明文 http:一律拒
     const host = (/^https?:\/\/([^/:?#]+)/i.exec(raw)?.[1] || '')
       .toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
     if (!host) return false;

@@ -1255,6 +1255,7 @@ def _payload(api_user: dict[str, Any] | None = None, *, include_catalog: bool = 
             pass
     except Exception:
         ctx_window = 0
+    from core.config import require_auth as _require_auth_for_base_url
     payload["app"] = {
         "title": APP_TITLE,
         "model": model["display_name"],
@@ -1267,6 +1268,10 @@ def _payload(api_user: dict[str, Any] | None = None, *, include_catalog: bool = 
         "preset": PRESET,
         # 部署模式:local/desktop/self_hosted = 自部署 → 前端反馈抽屉转走中央服务器 + 显示选填邮箱。
         "deployment": _deployment_mode(),
+        # base_url 只收公网 https(本机 / 局域网 / http 会被拒)。与 user_credentials._validate_base_url
+        # 用同一个谓词 core.config.require_auth(),前端 EditApiModal 据此提前提示;别让前端从
+        # deployment 串自己推(multiuser / RPG_REQUIRE_AUTH 显式覆盖会推反)。
+        "base_url_public_only": bool(_require_auth_for_base_url()),
     }
     # 绝对路径仅 admin 可见
     if is_admin:
