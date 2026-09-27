@@ -11,22 +11,22 @@ dependencies = [
     # 闸同样在 .github/dependabot.yml 的 ignore。
     "anthropic>=0.125.0",
     "fastapi>=0.141.1",
-    "fsspec>=2026.7.0",
+    "fsspec>=2026.9.0",
     "google-auth>=2.58.0",
-    "google-genai>=2.23.0",
+    "google-genai>=2.24.0",
     "httpx[http2]>=0.28",
-    "openai>=3.13.0",
-    "psycopg[binary]>=3.3.5",
-    "psycopg-pool>=3.3",
+    "openai>=3.16.2",
+    "psycopg[binary]>=3.3.6",
+    "psycopg-pool>=3.3.2",
     "python-dotenv>=1.2.3",
-    "uvicorn>=0.52.4",
+    "uvicorn>=0.53.0",
     "zhconv>=1.4",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=9.1.1",
-    "ruff>=0.16.7",
+    "ruff>=0.16.8",
     "mypy>=2.3.1",
 ]
 
