@@ -53,12 +53,15 @@ function ApisSection({ toast }) {
     if (!keyVal.trim()) { toast(t('mobile.caps.apis.form.key_required'), 'warn'); return; }
     setSaveBusy(true);
     try {
+      // 不带 proxy 键:手机端没有连接方式输入,后端据此保留在别处配好的代理。
       await window.api.credentials.set({ api_id: editProv.id, api_key: keyVal.trim() });
       toast(t('mobile.caps.apis.toast.key_saved'), 'ok');
       setEditProv(null);
       load();
     } catch (e) {
       toast(t('mobile.caps.toast.save_failed') + ': ' + (e?.message || ''), 'danger');
+      // 请求超时 ≠ 没存上:回读后端真实状态,别让已落库的 key 显示成未配置。
+      load();
     } finally {
       setSaveBusy(false);
     }

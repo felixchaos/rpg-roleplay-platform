@@ -102,6 +102,9 @@ function ModelsSection() {
         // 兜底让 ① 详情/编辑弹窗显示真实中转站地址 ② 重新保存 key 时不会因表单空值把 override
         // 清掉(与生成/同步实际所用一致)③ 同步模型时 body 也带上正确地址。
         base_url: cred.base_url_override || api.base_url || "",
+        // 凭据里真正存的覆盖地址(可能为空 = 跟随目录)。只改连接方式时原样回写它,
+        // 不能拿上面那个「显示用」的 base_url 顶上去,否则会把目录地址钉死成覆盖。
+        base_url_override: cred.base_url_override || "",
         key_set: !!cred.has_key,
         auth_mode: cred.auth_mode || 'api_key',
         configured: !!cred.configured,
@@ -122,7 +125,8 @@ function ModelsSection() {
       .filter(([cid, c]) => c.configured && c.base_url_override && !catalogIds.has(normalizeApiId(cid)))
       .map(([cid, c]) => ({
         id: cid, credential_id: cid, name: cid,
-        base_url: c.base_url_override, key_set: !!c.has_key, key_hint: c.key_hint || '',
+        base_url: c.base_url_override, base_url_override: c.base_url_override,
+        key_set: !!c.has_key, key_hint: c.key_hint || '',
         auth_mode: c.auth_mode || 'api_key', configured: true,
         status: c.enabled === false ? "disabled" : "configured",
         connectivity: { status: "untested" }, enabled: c.enabled !== false,
@@ -453,36 +457,46 @@ function ModelsSection() {
               }
             }
             const keyProvided = !!(payload.api_key && payload.api_key.trim());
+            // 连接方式:选了 HTTP 代理才带代理地址,选直连 = 空串(= 清掉已存代理)。
+            const proxyUrl = payload.proxy === 'http_proxy' ? (payload.proxy_url || '').trim() : '';
             // key 从不回显:「编辑」只改接口地址、不重填 key 时,base_url 也必须落库。
             // 否则改 URL 保存后毫无变化(必须删 key 重填才生效)——这正是本次上报的 bug。
             const baseUrlChanged = !addingApi && existing && ((payload.base_url || '') !== (existing.base_url || ''));
+            // 同理「只改连接方式 / 代理地址」也要落库。以前这种保存前端什么都不发,却提示保存成功
+            // (反馈 #107:本地版的出路正是在连接方式里配 HTTP 代理,结果配了也存不上)。
+            const proxyChanged = !addingApi && existing && (proxyUrl !== (existing.proxy_url || ''));
             // 免鉴权(本地/自托管)= 显式选项:即使一个字符的 key 都没填也必须落库,
             // 否则「勾了免 Key + 填了地址」保存后什么都没发生(和不勾一模一样)。
             const noAuth = !!payload.no_auth;
+            // 写凭据只有一处请求、一个 catch:以前「带 key」和「keep_key 只改地址」各有一份
+            // credentials.set + catch,catalogWritten 门控只修了前一份,后一份照旧无条件弹
+            // 「元数据已保存但 key 写入失败」的假警告(两条线都漏)。
+            let credBody = null;
             if (keyProvided || noAuth) {
+              credBody = {
+                api_id: credentialId, api_key: keyProvided ? payload.api_key.trim() : '',
+                base_url_override: payload.base_url || '',
+                proxy: proxyUrl,
+                no_auth: noAuth,
+              };
+            } else if ((baseUrlChanged || proxyChanged) && existing.key_set) {
+              // keep_key:保留已存密钥,只更新 base_url_override 与连接方式(代理)。
+              // 地址没改时回写凭据里原有的覆盖值(常为空 = 跟随目录),只动代理。
+              credBody = {
+                api_id: credentialId, api_key: '',
+                base_url_override: baseUrlChanged ? (payload.base_url || '') : (existing.base_url_override || ''),
+                keep_key: true,
+                proxy: proxyUrl,
+              };
+            }
+            if (credBody) {
               try {
-                await window.api.credentials.set({
-                  api_id: credentialId, api_key: keyProvided ? payload.api_key.trim() : '',
-                  base_url_override: payload.base_url || '',
-                  proxy: payload.proxy === 'http_proxy' ? (payload.proxy_url || '').trim() : '',
-                  no_auth: noAuth,
-                });
+                await window.api.credentials.set(credBody);
               } catch (e) {
                 if (catalogWritten) {
                   // 真的留下了半截状态才提醒;否则交给下面 catch 的 save_fail 单条报错(带 detail)。
                   window.__apiToast?.(t('settings.edit_api.key_save_fail'), { kind: "warn", detail: e?.message, duration: 4000 });
                 }
-                throw e;
-              }
-            } else if (baseUrlChanged && existing.key_set) {
-              // 保留已存密钥与 proxy,只更新 base_url_override(keep_key)。
-              try {
-                await window.api.credentials.set({
-                  api_id: credentialId, api_key: '',
-                  base_url_override: payload.base_url || '', keep_key: true,
-                });
-              } catch (e) {
-                window.__apiToast?.(t('settings.edit_api.key_save_fail'), { kind: "warn", detail: e?.message, duration: 4000 });
                 throw e;
               }
             }
@@ -502,6 +516,9 @@ function ModelsSection() {
             // detail 常是后端一整段可执行说明(如「云端连不到本地模型,请用桌面版…」),
             // 默认 2.4s 读不完 → 给失败态更长停留。
             window.__apiToast?.(t('settings.edit_api.save_fail'), { kind: "danger", detail: e?.message, duration: 9000 });
+            // 失败也回读一次后端真实状态:请求超时 ≠ 没存上(反馈 #107:前端先超时报失败,
+            // 后端随后把 key 落了库,列表却一直显示「还没有配置」)。
+            try { await loadConfiguredApis(); } catch (_) {}
           }
           setEditingApi(null); setAddingApi(false);
           // 刷新让真实 key_set / key_hint 由后端权威

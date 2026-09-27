@@ -31,27 +31,31 @@ function ProviderConfigSection() {
   const [agentPlatformError, setAgentPlatformError] = useStatePL("");
   const [alibabaMode, setAlibabaMode] = useStatePL("openai_compat");
 
-  useEffectPL(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await window.api.credentials.list().catch(() => ({ items: [] }));
-        if (cancelled) return;
-        const map = {};
-        for (const c of (r?.items || r?.credentials || [])) {
-          const pid = normalizeApiId(c.api_id || c.id);
-          map[pid] = { has_key: !!c.has_credential || !!c.has_key, key_hint: c.key_hint || "", base_url: c.base_url_override || "" };
-        }
-        setCreds(map);
-      } catch (_) {}
-    })();
-    return () => { cancelled = true; };
+  // 读当前凭据:挂载时一次;保存失败后再读一次(请求超时 ≠ 没存上,以后端为准)。
+  const aliveRef = React.useRef(true);
+  const loadCreds = React.useCallback(async () => {
+    try {
+      const r = await window.api.credentials.list().catch(() => ({ items: [] }));
+      if (!aliveRef.current) return;
+      const map = {};
+      for (const c of (r?.items || r?.credentials || [])) {
+        const pid = normalizeApiId(c.api_id || c.id);
+        map[pid] = { has_key: !!c.has_credential || !!c.has_key, key_hint: c.key_hint || "", base_url: c.base_url_override || "" };
+      }
+      setCreds(map);
+    } catch (_) {}
   }, []);
+  useEffectPL(() => {
+    aliveRef.current = true;
+    loadCreds();
+    return () => { aliveRef.current = false; };
+  }, [loadCreds]);
 
   const saveKey = async (providerId, apiKey, baseUrl) => {
     setSaving(s => ({ ...s, [providerId]: true }));
     try {
       if (apiKey && apiKey.trim()) {
+        // 不带 proxy 键:这张卡片没有连接方式输入,后端据此保留已存的代理。
         await window.api.credentials.set({ api_id: providerId, api_key: apiKey.trim() });
       }
       if (baseUrl !== undefined) {
@@ -66,7 +70,8 @@ function ProviderConfigSection() {
       window.__apiToast?.(t('settings.providers.save_ok'), { kind: "ok", duration: 1800 });
       setCreds(s => ({ ...s, [providerId]: { ...s[providerId], has_key: !!(apiKey?.trim() || s[providerId]?.has_key), base_url: baseUrl ?? s[providerId]?.base_url } }));
     } catch (e) {
-      window.__apiToast?.(t('settings.providers.save_fail'), { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('settings.providers.save_fail'), { kind: "danger", detail: e?.message, duration: 9000 });
+      await loadCreds();
     } finally {
       setSaving(s => ({ ...s, [providerId]: false }));
     }
@@ -102,7 +107,8 @@ function ProviderConfigSection() {
       setCreds(s => ({ ...s, AgentPlatform: { ...s.AgentPlatform, has_key: true } }));
       setAgentPlatformJson(null);
     } catch (e) {
-      window.__apiToast?.(t('settings.providers.save_fail'), { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('settings.providers.save_fail'), { kind: "danger", detail: e?.message, duration: 9000 });
+      await loadCreds();
     } finally {
       setSaving(s => ({ ...s, AgentPlatform: false }));
     }

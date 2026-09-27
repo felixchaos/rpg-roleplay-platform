@@ -9,7 +9,7 @@ import CSFormField from '@cloudscape-design/components/form-field';
 import CSSelect from '@cloudscape-design/components/select';
 import CSSegmentedControl from '@cloudscape-design/components/segmented-control';
 import AgentModelPicker from './AgentModelPicker.jsx';
-import { EditApiModal, ProviderCard, PROVIDERS_CONFIG, normalizeApiId } from '../pages/settings.jsx';
+import { ProviderCard, PROVIDERS_CONFIG, normalizeApiId } from '../pages/settings.jsx';
 import { moduleByPrefix } from '../agent-modules.js';
 
 /* config_card 能力 → 前端配置映射(后端契约里的 capability 字段)。
@@ -63,32 +63,36 @@ export function InlineProviderConfig({ capability = 'llm', defaultApiId = '', on
   const [saving, setSaving] = useState(false);
   const [alibabaMode, setAlibabaMode] = useState('openai_compat');  // DashScope mode toggle
 
-  // 读一次当前凭据(用于 ProviderCard 显示「已配置」/已存 base_url),并随广播刷新。
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const r = await window.api.credentials.list().catch(() => ({ items: [] }));
-        if (cancelled) return;
-        const map = {};
-        for (const c of (r?.items || r?.credentials || [])) {
-          const pid = normalizeApiId(c.api_id || c.id);
-          map[pid] = {
-            has_key: !!c.has_credential || !!c.has_key,
-            key_hint: c.key_hint || '',
-            base_url: c.base_url_override || '',
-          };
-        }
-        setCreds(map);
-      } catch (_) {}
-    };
-    load();
-    window.addEventListener('rpg-credentials-updated', load);
-    return () => { cancelled = true; window.removeEventListener('rpg-credentials-updated', load); };
+  // 读当前凭据(用于 ProviderCard 显示「已配置」/已存 base_url):挂载时读一次,随广播刷新,
+  // 保存失败后也再读一次(见 onSaveKey)。
+  const aliveRef = React.useRef(true);
+  const loadCreds = React.useCallback(async () => {
+    try {
+      const r = await window.api.credentials.list().catch(() => ({ items: [] }));
+      if (!aliveRef.current) return;
+      const map = {};
+      for (const c of (r?.items || r?.credentials || [])) {
+        const pid = normalizeApiId(c.api_id || c.id);
+        map[pid] = {
+          has_key: !!c.has_credential || !!c.has_key,
+          key_hint: c.key_hint || '',
+          base_url: c.base_url_override || '',
+        };
+      }
+      setCreds(map);
+    } catch (_) {}
   }, []);
+  useEffect(() => {
+    aliveRef.current = true;
+    loadCreds();
+    window.addEventListener('rpg-credentials-updated', loadCreds);
+    return () => { aliveRef.current = false; window.removeEventListener('rpg-credentials-updated', loadCreds); };
+  }, [loadCreds]);
 
   // ProviderCard 的 onSaveKey:保存 key(+ base_url)。credentials.set 内部已广播
   // rpg-credentials-updated,父组件据此点亮「继续」。
+  // 请求体不带 proxy 键:这张卡片没有连接方式输入,后端据此保留已存的代理,
+  // 不会把用户在设置页配好的 HTTP 代理冲掉。
   const onSaveKey = async (pid, apiKey, baseUrl) => {
     setSaving(true);
     try {
@@ -106,7 +110,10 @@ export function InlineProviderConfig({ capability = 'llm', defaultApiId = '', on
       window.__apiToast?.(t('components.model_config_intercept.toast.api_key_saved'), { kind: 'ok', duration: 1800 });
       onSaved && onSaved(pid);
     } catch (e) {
-      window.__apiToast?.(t('components.model_config_intercept.toast.save_failed'), { kind: 'danger', detail: e?.message });
+      // detail 常是后端一整段可执行说明,默认停留读不完。
+      window.__apiToast?.(t('components.model_config_intercept.toast.save_failed'), { kind: 'danger', detail: e?.message, duration: 9000 });
+      // 请求超时 ≠ 没存上:回读后端真实状态,别让已落库的 key 显示成「未配置」。
+      await loadCreds();
     } finally {
       setSaving(false);
     }
@@ -149,7 +156,7 @@ export function InlineProviderConfig({ capability = 'llm', defaultApiId = '', on
 /* ModelConfigInterceptModal —— config_card 的 hard 拦截弹窗(mode==="model_not_configured")。
    后端要求的模型「<item.model>」当前不可用 → 阻塞式弹窗,用户二选一:
      (a) 给该能力另选一个已配好的模型(内嵌 AgentModelPicker,选中即持久化偏好);或
-     (b) 给该模型所属 provider 补一把 API Key(打开 EditApiModal,保存即 credentials.set + 广播刷新)。
+     (b) 给该模型所属 provider 补一把 API Key(就地内联 InlineProviderConfig,保存即 credentials.set + 广播刷新)。
    两条路都支持,用户自选。
    确认(继续)→ onResolve(chosenModel) 让父组件 clearQuestions(item) + startRun(`用 X 生成`) 重试。
    取消 → onCancel(item) 仍要 clearQuestions(别把卡片永久卡在 composer)+ 一个「已取消」toast。
@@ -167,46 +174,20 @@ export default function ModelConfigInterceptModal({ open, item, onResolve, onCan
   // 用户在本能力下当前选定的模型(AgentModelPicker onChange 回填);默认沿用后端要求的 model。
   const [chosen, setChosen] = useState({ api_id: (item && item.api_id) || '', model: (item && item.model) || '' });
   const [tab, setTab] = useState('pick');     // pick = 选已有模型 / key = 补 provider key
-  const [editKeyOpen, setEditKeyOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [keyError, setKeyError] = useState('');
 
   // 每次打开/换 item 时重置(避免上一个 config_card 的残留选择)。
   useEffect(() => {
     if (!open) return;
     setChosen({ api_id: (item && item.api_id) || '', model: (item && item.model) || '' });
     setTab('pick');
-    setEditKeyOpen(false);
-    setKeyError('');
   }, [open, item]);
 
   if (!open || !item) return null;
 
   const requestedModel = (item && item.model) || '';
-  // EditApiModal 用 api 对象预填 provider(item.api_id 即 provider id);没有就走「新增」自由选。
-  const prefillApi = item && item.api_id
-    ? { id: item.api_id, name: item.api_id, base_url: '', kind: item.api_id === 'vertex_ai' ? 'vertex_ai' : undefined }
-    : null;
-
-  const onConfirmKey = async (form) => {
-    setSaving(true); setKeyError('');
-    try {
-      await window.api.credentials.set({
-        api_id: form.id,
-        api_key: form.api_key,
-        base_url_override: form.base_url || undefined,
-      });
-      // credentials.set 内部已广播 rpg-credentials-updated → AgentModelPicker 会重拉。
-      setEditKeyOpen(false);
-      setTab('pick');   // 配好 key 后切回「选模型」,让用户确认要用的模型
-      window.__apiToast?.(t('components.model_config_intercept.toast.api_key_saved'), { kind: 'ok', duration: 1800 });
-    } catch (e) {
-      setKeyError(String(e?.message || e || t('components.model_config_intercept.toast.save_failed')));
-    } finally {
-      setSaving(false);
-    }
-  };
-
+  // 这里曾有一份 onConfirmKey(配合 EditApiModal 保存 key),但 EditApiModal 早已不在本弹窗渲染,
+  // 「补 Key」全走下面的 InlineProviderConfig —— 那份是没有入口的死代码,已删,免得再有人
+  // 只改它、以为修好了弹窗的保存。
   const canContinue = !!(chosen.api_id && chosen.model);
 
   return (

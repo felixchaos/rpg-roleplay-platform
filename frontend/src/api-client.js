@@ -177,7 +177,8 @@
   }
   window.ApiError = ApiError;
 
-  const GET = (path, query) => {
+  // opts 与 POST 同形:需要比默认 15s 更长的请求传 { signal: timeoutSignal(ms) }。
+  const GET = (path, query, opts) => {
     let p = path;
     if (query && Object.keys(query).length) {
       const usp = new URLSearchParams();
@@ -188,7 +189,7 @@
       }
       p = path + (path.indexOf("?") >= 0 ? "&" : "?") + usp.toString();
     }
-    return _send(p, { method: "GET" });
+    return _send(p, Object.assign({ method: "GET" }, opts || {}));
   };
   const POST = (path, body, opts) => _send(path, Object.assign({ method: "POST", body: body || {} }, opts || {}));
   const PATCH = (path, body, opts) => _send(path, Object.assign({ method: "PATCH", body: body || {} }, opts || {}));
@@ -222,6 +223,20 @@
     try { if (_credsChannel) _credsChannel.postMessage({ type: "creds-updated" }); } catch (_) {}
     return r;
   };
+  // 写凭据失败时:网络层失败(超时 / 断连)= 结果未知,后端可能已经落库(反馈 #107:前端 15s
+  // 超时报「保存失败」,后端 31s 后其实存上了);bad_json 是 2xx 响应体坏了,写入其实成功了。
+  // 这两种照样广播一次,让各处模型选择器 / 凭据列表回读后端真实状态;后端明确拒绝(4xx/5xx)
+  // 的什么都没写,不广播。错误原样抛给调用方。
+  const _emitCredsUpdatedOnUnknown = (e) => {
+    if (e && (e.code === "network" || e.code === "bad_json")) _emitCredsUpdated();
+    throw e;
+  };
+
+  // 探测类请求(拉模型 / 校验连接 / 可用性)的前端超时。后端每次探测有上限(连接 5s + 读 15s、
+  // 不重试,裸地址最多再补一次 /v1),这里必须留得比它长,否则后端还在正常工作前端就先报失败。
+  const _PROBE_TIMEOUT_MS = 45000;
+  // 保存凭据:落库后后端会内联同步一次模型列表(同样有上限),30s 足够。
+  const _CRED_SAVE_TIMEOUT_MS = 30000;
 
   // ---- SSE helper for /api/chat & /api/opening ---------------
   // Posts a JSON body and parses the streaming response into
@@ -971,9 +986,10 @@
     // ---------- Credentials (per-user API keys) ----------
     credentials: {
       list: () => GET(`${API_PREFIX}/me/credentials`),
-      set: (body) => POST(`${API_PREFIX}/me/credentials`, body).then(_emitCredsUpdated),
+      set: (body) => POST(`${API_PREFIX}/me/credentials`, body, { signal: timeoutSignal(_CRED_SAVE_TIMEOUT_MS) })
+        .then(_emitCredsUpdated, _emitCredsUpdatedOnUnknown),
       remove: (body) => POST(`${API_PREFIX}/me/credentials/delete`, body).then(_emitCredsUpdated),
-      test: (q) => GET(`${API_PREFIX}/me/credentials/test`, q),
+      test: (q) => GET(`${API_PREFIX}/me/credentials/test`, q, { signal: timeoutSignal(_PROBE_TIMEOUT_MS) }),
     },
 
     // ---------- Models & APIs ----------
@@ -997,13 +1013,14 @@
       //    普通用户会撞「需要管理员权限」,写成功了还会让所有人看见你的私人模型。
       meUpsertModel: (body) => POST(`${API_PREFIX}/me/models/model`, body),
       meDeleteModel: (body) => POST(`${API_PREFIX}/me/models/model/delete`, body),
-      validate: (body) => POST(`${API_PREFIX}/models/validate`, body),
-      remote: (q) => GET(`${API_PREFIX}/models/remote`, q),
-      syncRemote: (body) => POST(`${API_PREFIX}/models/remote/sync`, body),
-      diff: (q) => GET(`${API_PREFIX}/models/diff`, q),
-      probe: (body) => POST(`${API_PREFIX}/models/probe`, body),
+      // 以下几个都会真的去连供应商(拉 /models 或发一条最小请求),超时见 _PROBE_TIMEOUT_MS。
+      validate: (body) => POST(`${API_PREFIX}/models/validate`, body, { signal: timeoutSignal(_PROBE_TIMEOUT_MS) }),
+      remote: (q) => GET(`${API_PREFIX}/models/remote`, q, { signal: timeoutSignal(_PROBE_TIMEOUT_MS) }),
+      syncRemote: (body) => POST(`${API_PREFIX}/models/remote/sync`, body, { signal: timeoutSignal(_PROBE_TIMEOUT_MS) }),
+      diff: (q) => GET(`${API_PREFIX}/models/diff`, q, { signal: timeoutSignal(_PROBE_TIMEOUT_MS) }),
+      probe: (body) => POST(`${API_PREFIX}/models/probe`, body, { signal: timeoutSignal(_PROBE_TIMEOUT_MS) }),
       pricing: () => GET(`${API_PREFIX}/models/pricing`),
-      report: (q) => GET(`${API_PREFIX}/models/report`, q),
+      report: (q) => GET(`${API_PREFIX}/models/report`, q, { signal: timeoutSignal(_PROBE_TIMEOUT_MS) }),
       capabilities: () => GET(`${API_PREFIX}/models/capabilities`),
       capabilityLabels: () => GET(`${API_PREFIX}/models/capabilities/labels`),
     },

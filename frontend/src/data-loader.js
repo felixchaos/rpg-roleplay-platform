@@ -162,6 +162,10 @@ async function hydratePlatform() {
   if (!window.api) return { platform: baseline().platform, authed: false };
   const platform = deepCopy(baseline().platform);
   let authed = false;
+  // authUnknown:这次根本没问到登录态(超时 / 断连 / 后端 5xx),≠ 后端确认匿名。
+  // __refreshPlatform 据此保留原登录态,别把「后端忙」误报成「掉登录」(反馈 #107:
+  // 本地后端被一次慢探测卡住几十秒,顶栏跟着变成「未登录」)。
+  let authUnknown = false;
   try {
     const me = await window.api.auth.me();
     if (me && me.user) {
@@ -189,6 +193,7 @@ async function hydratePlatform() {
   } catch (e) {
     // /api/auth/me 本身失败（一般是后端挂了）也按匿名处理，宁可空着
     platform.user = anonymizeUser(platform.user);
+    authUnknown = isAuthProbeInconclusive(e);
   }
   try {
     const info = await window.api.platform.info();
@@ -204,7 +209,7 @@ async function hydratePlatform() {
     platform.saves = [];
     platform.scripts = [];
     platform.recent_assets = [];
-    return { platform, authed };
+    return { platform, authed, authUnknown };
   }
   // 登录态禁止保留 designer baseline：接口慢/失败时宁可显示空态或 loading，
   // 也不能把示例剧本、示例存档、示例统计误渲染成用户数据。
@@ -250,7 +255,16 @@ async function hydratePlatform() {
     assets: (platform.recent_assets || []).length || null,
     api_calls: null,               // 真实总调用要走 /api/me/usage，本页不强行拉
   };
-  return { platform, authed };
+  return { platform, authed, authUnknown };
+}
+
+// auth.me 失败时,是不是「没问到」而不是「问到了:没登录」。401/403 是后端明确说没登录;
+// 网络层失败(api-client 的 code="network",含超时)和 5xx 只说明后端这会儿答不上来。
+function isAuthProbeInconclusive(e) {
+  if (!e) return false;
+  if (e.code === "network" || e.code === "bad_json") return true;
+  const st = Number(e.status) || 0;
+  return st === 0 || st >= 500;
 }
 
 function guessKind(name) {
@@ -460,7 +474,12 @@ async function bootstrap() {
 window.__refreshPlatform = async function () {
   if (!window.api) return;
   try {
-    const [{ platform, authed }, state] = await Promise.all([hydratePlatform(), hydrateGameState()]);
+    const [{ platform, authed, authUnknown }, state] = await Promise.all([hydratePlatform(), hydrateGameState()]);
+    if (authUnknown && window.RPG_AUTH && window.RPG_AUTH.authed) {
+      // 已登录用户刷新时没问到登录态:保留当前数据和登录态,当作这次刷新失败,
+      // 调用方(顶栏刷新按钮)会提示「刷新失败」,而不是把人显示成「未登录」。
+      throw new Error("暂时连不上后端,已保留当前页面数据,请稍后再刷新");
+    }
     window.MOCK_PLATFORM = platform;
     window.MOCK_STATE = state;
     // owner 判定(剧本级叙事风格/分享模式/版本回滚等"仅作者可写"的 UI)依赖 RPG_AUTH.user_id,
