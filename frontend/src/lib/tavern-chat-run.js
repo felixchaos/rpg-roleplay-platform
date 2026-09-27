@@ -22,6 +22,15 @@ const STREAM_IDLE_TIMEOUT_MS = 120000;
 /* abort reason 属于「主动/受控中断」→ 不当作错误,不恢复草稿、不报红。 */
 const CONTROLLED_ABORTS = ['manual_stop', 'superseded', 'unmount', 'switch', 'idle_timeout'];
 
+/**
+ * 出正文之前的自动重试(gm_retry)/ 切到备用渠道(gm_fallback):失败那次的思考流作废。
+ * 后端在同一时刻清掉本回合的 _turn_reasoning(chat_pipeline/gm.py),前端据这两个 agent 阶段
+ * 清空思考显示,两边口径一致。game-console 与 tavern-chat-run 共用这一个判据。
+ */
+export function isAttemptResetPhase(phase) {
+  return phase === 'gm_retry' || phase === 'gm_fallback';
+}
+
 /** 本轮时间戳:优先 window.__fmt.nowHHMM,回退 HH:MM。 */
 export function nowHHMM() {
   if (typeof window !== 'undefined' && window.__fmt && window.__fmt.nowHHMM) {
@@ -350,6 +359,20 @@ export function startTavernRun(cfg) {
         kind: (data && data.changed) ? 'ok' : 'info',
         detail: text.trim().length > firstLine.length ? text.trim() : undefined,
         duration: (data && data.changed) ? 3500 : 7000, code: 'slash_receipt',
+      });
+    },
+    // 出正文前的自动重试 / 切备用渠道:失败那次的思考作废,清掉流式气泡上的 _thinking,
+    // 重试后的思考从头累积(不这样做,重试成功时思考块里是两次尝试拼在一起的内容)。
+    // 其它 agent 阶段酒馆不展示,照旧忽略。
+    on_agent: (data) => {
+      if (!isCurrentRun()) return;
+      if (!isAttemptResetPhase(data && data.phase)) return;
+      resetIdle();
+      if (gotText) return;  // 包装器只在正文之前重试;防御性判断
+      setHistory((h) => {
+        const last = h[h.length - 1];
+        if (!last || last.role !== 'assistant' || !last.streaming || !last._thinking) return h;
+        return [...h.slice(0, -1), { ...last, _thinking: '' }];
       });
     },
     // 思考流(reasoning)实时累积到流式 assistant 气泡的 _thinking → 可折叠思考块。

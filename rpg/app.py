@@ -1026,11 +1026,11 @@ def _get_sub_gm(api_user: dict[str, Any] | None) -> GameMaster:
 
     模型选择优先级：
       1. user_preferences.sub_agent_model_override = {api_id, model} → 真·独立实例
-      2. 无 override → 复用主 GM 实例（避免 init SDK 二次成本），但 usage 仍按
-         "子代理"标签独立记账（snapshot last_usage 后立刻 record）
+      2. 无 override → 复用主 GM 实例（避免 init SDK 二次成本）
 
-    无论哪种情况，调用方都应该用「_get_sub_gm(api_user)」拿到的对象去做 curate_context，
-    后续 record_usage 时显式标 metadata.kind='sub_agent'。
+    调用方只从它身上取 api_id + model 名,作为 curator / 黑天鹅 / 后处理的模型覆盖传给
+    agents._harness;真正的请求与 token 记账都在 harness 里按 agent_kind 完成。
+    别再读它的 _backend.last_usage 记账:复用主 GM 时那是上一回合主 GM 的用量。
     """
     uid = _user_key(api_user)
     # 快路径：缓存命中无需取锁的 _get_gm 重入

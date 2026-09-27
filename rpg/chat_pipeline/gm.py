@@ -421,6 +421,10 @@ async def run_gm_phase(
                 yield ("token", {"text": _fence_fw})
         elif etype == "retry_notice":
             # 流式重试包装器发出:上游拥堵自动重试中,给玩家可见进度别干等。
+            # 失败那次的思考流作废(前端收到 gm_retry 阶段也清空思考框):不清的话重试成功时两次
+            # 尝试的思考一起落进 assistant 历史;重试那次若空手而归,空回合分诊会按残留思考误判
+            # reasoning_only。包装器保证此前没有已提交事件,正文 / 工具记录本来就是空的。
+            state.data["_turn_reasoning"] = []
             yield ("agent", {
                 "phase": "gm_retry",
                 "message": (
@@ -431,6 +435,8 @@ async def run_gm_phase(
             })
         elif etype == "fallback_notice":
             # 跨渠道 fallback 包装器发出:主渠道重试耗尽,已切换玩家自己的备用凭据渠道。
+            # 主渠道那几次的思考流同样作废(与 retry_notice 同理)。
+            state.data["_turn_reasoning"] = []
             yield ("agent", {
                 "phase": "gm_fallback",
                 "message": (

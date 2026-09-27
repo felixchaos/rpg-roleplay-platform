@@ -44,7 +44,6 @@ async def run_rules_phase(
     agent_result = ctx.agent_result
     bundle = ctx.bundle
     ctx_text = ctx.ctx_text
-    sub_gm = ctx.sub_gm
 
     # (a) preflight combat gate
     from game_policy import get_game_policy as _get_game_policy
@@ -146,23 +145,10 @@ async def run_rules_phase(
     state.set_last_retrieval(ctx_text)
     state.set_last_context(bundle["debug"])
 
-    # B4: 子代理 usage 单独记账（metadata.kind='sub_agent'）
-    try:
-        sub_usage = getattr(sub_gm._backend, "last_usage", {}) or {}
-        if sub_usage and api_user:
-            from platform_app.usage import record_usage as _rec
-            _rec(
-                user_id=api_user["id"],
-                save_id=None,
-                context_run_id=None,
-                api_id=sub_gm.api_id,
-                model_real_name=sub_gm._backend.model_name,
-                usage=sub_usage,
-                metadata={"kind": "sub_agent", "phase": "context_curator"},
-                scenario="tool",
-            )
-    except Exception:
-        pass
+    # 这里不给 curator 记账:它走 agents._harness.call_agent_json(agent_kind="curator"),
+    # 由 harness 按真实调用各记一行。以前这里读 sub_gm._backend.last_usage 再按 kind=sub_agent
+    # 记一行,但 curator 从不经这个 backend 发请求 —— 没配子代理覆盖时 sub_gm 就是主 GM,读到的是
+    # 上一回合主 GM 的用量(清零点在 Phase 4 入口,晚于这里),每回合主 GM 花费被重复计一次。
 
     state.set_last_context_agent({
         "status": "done",

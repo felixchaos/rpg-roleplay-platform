@@ -37,6 +37,7 @@ import '../media.css';
 import { MobileGame } from '../mobile/game/MobileGame.jsx';
 import { safeUUID } from '../lib/crypto-safe.js';
 import { safeStructuredClone } from '../lib/clone-safe.js';
+import { isAttemptResetPhase } from '../lib/tavern-chat-run.js';
 import { LeftRail, TopBar, ChatArea, HistoryDrawer, SearchDrawer, GameToastStack, RunSteps, GameSettingsModal } from '../game-app.jsx';
 import { Composer, ConfirmStrip } from '../game-composer.jsx';
 import { RightPanel, PANEL_TABS } from '../game-panels.jsx';
@@ -848,6 +849,9 @@ function App() {
           resetInactivityTimer();
           logEvent('agent', data);
           if (!data || !data.phase) return;
+          // 出正文前的自动重试 / 切备用渠道:失败那次的思考作废,思考预览从头累积(后端同时清掉
+          // 本回合的 _turn_reasoning,与酒馆 tavern-chat-run 同一判据)。
+          if (isAttemptResetPhase(data.phase)) reasoningBuf = '';
           const mapped = mapAgentPhase(data.phase);
           setRunState((r) => {
             const rawSteps = Array.isArray(r.rawSteps) ? r.rawSteps.slice() : [];
@@ -969,10 +973,22 @@ function App() {
           if (data && data.usage) setLastUsage(data.usage);  // #11: 兜底(若无独立 usage 事件)
           logEvent('done', { status: !!data && data.status ? 'ok' : 'noop', interrupted: data && data.interrupted, usage: data && data.usage });
           clearInterval(tickerId);
-          // 失败轮(没出正文):on_error 已把真实原因放进横幅 / toast 并恢复了草稿,后端随后照例补一个 done。
-          // 不能再走下面的回查兜底:它会清掉「生成失败」的状态标签,首回合还会用通用的「空回复」文案
-          // 盖掉横幅里的真实原因、再弹一次 toast。本轮没落库,回查也只会拿到上一轮。
-          if (!openedAssistant && gotError) { runRef.current.sse = null; return; }
+          // 失败轮:on_error 已把真实原因放进横幅 / toast(没出正文时还恢复了草稿),后端随后照例补一个 done。
+          // 不管出没出过正文,都不能再走下面的回查兜底或成功收尾:前者会清掉「生成失败」的状态标签,
+          // 首回合还会用通用的「空回复」文案盖掉真实原因、再弹一次 toast;后者把 label 改成「本轮完成」,
+          // 并用存档历史(本轮没落库,只有上一轮)把半截正文连同本轮玩家气泡一起冲掉 —— 随后点「重试」
+          // 回捞到的是上一个好回合,同文(如「继续」)时 rollback 会把它滚进 trash。
+          // 这里只把流式气泡封口,保留本轮两条气泡:重试定位到本轮玩家气泡,后端 rollback 对这个下标
+          // 算出的就是当前 commit,是空操作。与 lib/tavern-chat-run.js 同一守卫(奇偶测试锁定)。
+          if (gotError) {
+            setHistory((h) => {
+              const last = h[h.length - 1];
+              if (!last || last.role !== 'assistant' || !last.streaming) return h;
+              return [...h.slice(0, -1), { ...last, streaming: false, streaming_done: true }];
+            });
+            runRef.current.sse = null;
+            return;
+          }
           if (!openedAssistant && !gotReceipt) {
             if (runRef.current.doneTimer) { clearTimeout(runRef.current.doneTimer); runRef.current.doneTimer = null; }
             const _interrupted = !!(data && data.interrupted);

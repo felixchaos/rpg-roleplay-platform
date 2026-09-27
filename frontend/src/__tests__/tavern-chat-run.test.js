@@ -109,6 +109,23 @@ describe('startTavernRun — 公共骨架折叠语义', () => {
     expect(last.role).toBe('assistant');
   });
 
+  it('出正文前自动重试 / 切备用渠道:失败那次的思考作废,重试后的思考从头累积', () => {
+    const fake = makeFakeChat();
+    const { cfg, hist } = baseCfg({ api: { game: { chat: fake.chat, stop: vi.fn() } } });
+    startTavernRun(cfg);
+    const H = fake.calls[0]._handlers;
+    H.on_reasoning({ text: '思考1' });
+    H.on_agent({ phase: 'gm_retry', status: 'running' });
+    expect(hist.get()[hist.get().length - 1]._thinking).toBe('');
+    H.on_reasoning({ text: '思考2' });
+    H.on_agent({ phase: 'gm_fallback', status: 'running' });
+    H.on_reasoning({ text: '思考3' });
+    expect(hist.get()[hist.get().length - 1]._thinking).toBe('思考3');
+    // 其它阶段不动思考流
+    H.on_agent({ phase: 'main_gm', status: 'running' });
+    expect(hist.get()[hist.get().length - 1]._thinking).toBe('思考3');
+  });
+
   it('on_status 是 no-op(不改 history)', () => {
     const fake = makeFakeChat();
     const { cfg, hist } = baseCfg({ api: { game: { chat: fake.chat, stop: vi.fn() } } });
@@ -288,15 +305,39 @@ describe('失败轮(on_error 之后的 done)—— 空回合分诊文案不被�
 describe('失败轮收尾守卫:两个回合 SSE 缝(game-console / tavern-chat-run)同款', () => {
   const read = (rel) => readFileSync(resolve(__dirname, '..', rel), 'utf-8');
 
-  it.each(['entries/game-console.jsx', 'lib/tavern-chat-run.js'])('%s:on_error 记下 gotError,on_done 据此跳过「空回复」兜底', (rel) => {
+  const SEAMS = ['entries/game-console.jsx', 'lib/tavern-chat-run.js'];
+  // on_done 里第一个提到 gotError 的守卫:条件原文 + 它的分支体(到分支里第一个 return 为止)。
+  const guardOf = (rel) => {
+    const src = read(rel);
+    const onDone = src.slice(src.indexOf('on_done: (data) => {'), src.indexOf('on_error: (data) => {'));
+    const m = onDone.match(/if \(([^)]*gotError[^)]*)\) \{/);
+    if (!m) return null;
+    const body = onDone.slice(m.index + m[0].length);
+    return { cond: m[1].replace(/\s+/g, ' ').trim(), index: m.index, body: body.slice(0, body.indexOf('return;') + 7), onDone };
+  };
+
+  it.each(SEAMS)('%s:on_error 记下 gotError,on_done 据此跳过「空回复」兜底', (rel) => {
     const src = read(rel);
     const onError = src.slice(src.indexOf('on_error: (data) => {'));
     expect(onError.slice(0, 200)).toMatch(/gotError = true/);
-    const onDone = src.slice(src.indexOf('on_done: (data) => {'), src.indexOf('on_error: (data) => {'));
-    const guard = onDone.search(/if \([^)]*gotError[^)]*\)/);
-    const emptyBranch = onDone.search(/if \(!openedAssistant( && !gotReceipt)?\) \{/);
-    expect(guard).toBeGreaterThan(-1);
-    expect(emptyBranch).toBeGreaterThan(guard);
+    const g = guardOf(rel);
+    expect(g).not.toBe(null);
+    const emptyBranch = g.onDone.search(/if \(!openedAssistant( && !gotReceipt)?\) \{/);
+    expect(emptyBranch).toBeGreaterThan(g.index);
+  });
+
+  it('两边守卫条件一致:出过正文再收到 error 也按失败收尾,不走成功路径', () => {
+    // 以前游戏台写的是 `!openedAssistant && gotError`:出过正文后上游断开(error → done)照样走成功收尾,
+    // label 改成「本轮完成」盖掉「生成失败」,setHistory(payload.history) 把半截正文和本轮玩家气泡一起冲掉,
+    // 随后点「重试」回捞到上一个好回合,同文时 rollback 会把它滚进 trash。
+    const [gc, tv] = SEAMS.map(guardOf);
+    expect(gc.cond).toBe(tv.cond);
+    expect(gc.cond).toBe('gotError');
+    for (const g of [gc, tv]) {
+      // 分支里只把流式气泡封口然后返回:不回写存档历史,也不应用成功收尾
+      expect(g.body).toMatch(/streaming: false, streaming_done: true/);
+      expect(g.body).not.toMatch(/payload|applyState|turn_complete/);
+    }
   });
 });
 
