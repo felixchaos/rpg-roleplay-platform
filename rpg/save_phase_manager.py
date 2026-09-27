@@ -333,7 +333,8 @@ def _audit_anchors_on_phase_close(save_id: int, closed_phase_index: int) -> None
 
     规则:
     - 老 phase 的 pending 锚点中, is_fatal=true → 留 pending + 写 audit_log warning
-      (下个 phase 的 GM 仍能看到, 但会被强制注意"超期 fatal 锚点")
+      (下个 phase 的 GM 仍能看到, 但会被强制注意"超期 fatal 锚点")。anchor_pace 开时
+      只算玩家已推进过其章节的(source_chapter < 已到达章),与 non-fatal 绕过同口径
     - 非 fatal pending → 自动 mark superseded, reason="phase 已结束未触发, 自动绕过"
 
     不阻塞主流程; 任何异常 print 警告即可。
@@ -357,7 +358,7 @@ def _audit_anchors_on_phase_close(save_id: int, closed_phase_index: int) -> None
             # 该 phase 的 pending 锚点
             rows = db.execute(
                 """
-                select id, anchor_key, is_fatal, summary, importance
+                select id, anchor_key, is_fatal, summary, importance, source_chapter
                 from save_anchor_states
                 where save_id = %s and phase_label = %s and status = 'pending'
                 """,
@@ -375,13 +376,26 @@ def _audit_anchors_on_phase_close(save_id: int, closed_phase_index: int) -> None
             # 未来/当前位置锚点留 pending(玩家可能仍会做),交收束/判定器后续处理。
             from core.feature_flags import feature_enabled_for_save
             pace = feature_enabled_for_save("anchor_pace", save_id, db)
-            if non_fatal and pace:
+            reached: int | None = None
+            if pace:
                 fr = db.execute(
                     "select max(source_chapter) as m from save_anchor_states "
                     "where save_id = %s and status in ('occurred', 'variant')",
                     (save_id,),
                 ).fetchone()
                 reached = int(fr["m"]) if fr and fr.get("m") is not None else None
+                # fatal「超期」与 non-fatal 绕过同口径(章感知):save phase 关闭只说明一个
+                # 压缩窗口满了或标签翻了,不代表原著这段 story_phase 走完了。只有玩家已推进过
+                # 其章节(source_chapter < reached)仍未触发的 fatal 才算超期;当前/未来章的
+                # 不报,玩家尚无任何到达锚点时一个都不报。旧口径把整段 story_phase 的 fatal
+                # 全报成超期(玩家才到第 1 章也整段报)。
+                fatal_pending = [
+                    r for r in fatal_pending
+                    if reached is not None
+                    and r.get("source_chapter") is not None
+                    and int(r["source_chapter"]) < reached
+                ]
+            if non_fatal and pace:
                 if reached is None:
                     log.info(f"[anchor_audit] save={save_id} phase={closed_phase_index} "
                              f"pace: 玩家尚无任何到达锚点,phase 关闭不自动绕过(避免误退役)")
