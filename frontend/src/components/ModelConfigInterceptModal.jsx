@@ -93,6 +93,9 @@ export function InlineProviderConfig({ capability = 'llm', defaultApiId = '', on
   // rpg-credentials-updated,父组件据此点亮「继续」。
   // 请求体不带 proxy 键:这张卡片没有连接方式输入,后端据此保留已存的代理,
   // 不会把用户在设置页配好的 HTTP 代理冲掉。
+  // base_url_override 则相反:卡片有地址输入(预填已存地址),输入框里是什么就原样发什么,
+  // 清空也发空串。后端对这个键是「带了才改、没带保留」,以前的 `baseUrl || undefined` 会让
+  // 清空地址变成「没带」→ 旧地址清不掉。
   const onSaveKey = async (pid, apiKey, baseUrl) => {
     setSaving(true);
     try {
@@ -100,7 +103,7 @@ export function InlineProviderConfig({ capability = 'llm', defaultApiId = '', on
         await window.api.credentials.set({
           api_id: pid,
           api_key: apiKey.trim(),
-          base_url_override: baseUrl || undefined,
+          ...(typeof baseUrl === 'string' ? { base_url_override: baseUrl.trim() } : {}),
         });
       }
       setCreds((s) => ({

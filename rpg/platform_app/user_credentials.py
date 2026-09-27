@@ -270,7 +270,7 @@ def _validate_proxy(proxy: str | None) -> str | None:
     return proxy
 
 
-def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_override: str = "", enabled: bool = True, *, allow_base_url: bool = False, proxy: str | None = None, preserve_key_if_empty: bool = False, auth_mode: str = "api_key") -> dict[str, Any]:
+def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_override: str | None = "", enabled: bool = True, *, allow_base_url: bool = False, proxy: str | None = None, preserve_key_if_empty: bool = False, auth_mode: str = "api_key") -> dict[str, Any]:
     """加密保存。空 key 等价于删除该 credential（preserve_key_if_empty=True 时例外）。
 
     auth_mode（v1.81.0）:
@@ -299,6 +299,14 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
       ""          —— 明确清空代理。
       "http://…"  —— 设为该代理。
     keep_key(preserve_key_if_empty)路径同样遵守这三种语义。
+
+    base_url_override 同样三态(/api/me/credentials 按请求体有没有这个键决定):
+      None        —— 调用方没提地址:保留已存值(新行为空),不校验、不归一 —— 手机端「API」
+                     等没有地址输入的表单重填 key,不能把桌面设置页配好的中转站地址冲掉
+                     (冲掉后 GM 打官方端点,拿中转站的 key 撞 401)。
+      ""          —— 明确清空(回到目录里的默认地址)。
+      "https://…" —— 设为该地址(过 SSRF 校验)。
+    Python 调用方的默认值仍是 "",行为不变。
     """
     init_db()
     api_id = normalize_api_id(api_id)
@@ -307,7 +315,10 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     auth_mode = (auth_mode or "api_key").strip() or "api_key"
     if auth_mode not in ("api_key", "none"):
         raise ValueError("auth_mode 只能是 api_key 或 none")
-    if auth_mode == "none" and not base_url_override:
+    keep_base_url = base_url_override is None
+    if auth_mode == "none" and not (
+        stored_base_url_override(user_id, api_id) if keep_base_url else base_url_override
+    ):
         raise ValueError("免鉴权模式必须填接口地址(base_url)——不指地址的「免 Key」无意义")
     if not plaintext_key and not preserve_key_if_empty and auth_mode != "none":
         # 空 key 常态 = 删除凭证（base_url 无关，短路在校验之前，保持 delete 路径零变化）。
@@ -315,9 +326,11 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
         return delete_credential(user_id, api_id)
     # P1 #7：之前非 admin 传 base_url_override 直接静默 = ""，UI 以为已设置。
     # 改成显式 raise ValueError，让 /api/me/credentials 回 400，前端能感知。
-    if base_url_override and not allow_base_url:
+    if keep_base_url:
+        pass  # 本次没提地址:已存值原样保留,落库时由 SQL 维持原列值
+    elif base_url_override and not allow_base_url:
         raise ValueError("base_url_override 仅管理员可设置 · 普通用户必须使用 catalog 中的 base_url")
-    if not allow_base_url:
+    elif not allow_base_url:
         base_url_override = ""
     elif base_url_override:
         base_url_override = _normalize_openai_base_url(base_url_override)
@@ -341,7 +354,9 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
             values (%s, %s, %s, %s, %s, %s, %s)
             on conflict(user_id, api_id) do update set
               encrypted_key = excluded.encrypted_key,
-              base_url_override = excluded.base_url_override,
+              base_url_override = case when %s
+                                       then user_api_credentials.base_url_override
+                                       else excluded.base_url_override end,
               enabled = excluded.enabled,
               metadata = case when %s
                               then (coalesce(user_api_credentials.metadata, '{}'::jsonb) - 'proxy')
@@ -352,7 +367,7 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
             returning id, user_id, api_id, base_url_override, enabled, auth_mode, updated_at
             """,
             (user_id, api_id, encrypted, base_url_override or "", enabled, Jsonb(meta), auth_mode,
-             proxy is not None),
+             keep_base_url, proxy is not None),
         ).fetchone()
     result = {"ok": True, **(expose(row) or {}), "has_credential": bool(plaintext_key)}
 
@@ -387,7 +402,7 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     return result
 
 
-def _update_credential_meta(user_id: int, api_id: str, base_url_override: str, enabled: bool,
+def _update_credential_meta(user_id: int, api_id: str, base_url_override: str | None, enabled: bool,
                             auth_mode: str = "api_key", *, proxy: str | None = None) -> dict[str, Any]:
     """只更新已存凭证的 base_url_override / enabled / auth_mode，保留密文 key。
 
@@ -395,6 +410,7 @@ def _update_credential_meta(user_id: int, api_id: str, base_url_override: str, e
     base_url_override 归一，这里只落库。无匹配行 → 报错，让前端提示先填 Key。
 
     proxy:None = 调用方没提代理,metadata 原样不动;"" = 清掉代理;其余 = 换成这个代理。
+    base_url_override 同理:None = 没提地址,原列值不动。
     以前这里完全不写 metadata,设置页「只改连接方式、不重填 key」保存后提示成功,代理却没存上。
 
     auth_mode 也要一起写:用户把一条免鉴权凭据改回「需要 API Key」时,若只改列名不改
@@ -406,7 +422,8 @@ def _update_credential_meta(user_id: int, api_id: str, base_url_override: str, e
         row = db.execute(
             """
             update user_api_credentials
-               set base_url_override = %s, enabled = %s, auth_mode = %s,
+               set base_url_override = case when %s then base_url_override else %s end,
+                   enabled = %s, auth_mode = %s,
                    metadata = case when %s
                                    then (coalesce(metadata, '{}'::jsonb) - 'proxy') || %s
                                    else metadata end,
@@ -414,12 +431,34 @@ def _update_credential_meta(user_id: int, api_id: str, base_url_override: str, e
              where user_id = %s and api_id = any(%s)
             returning id, user_id, api_id, base_url_override, enabled, auth_mode, updated_at
             """,
-            (base_url_override or "", enabled, auth_mode, proxy is not None, Jsonb(new_meta),
-             user_id, _credential_aliases(canonical)),
+            (base_url_override is None, base_url_override or "", enabled, auth_mode,
+             proxy is not None, Jsonb(new_meta), user_id, _credential_aliases(canonical)),
         ).fetchone()
     if not row:
         raise ValueError("尚未配置该供应商的 API Key，请先填写 Key")
     return {"ok": True, **(expose(row) or {}), "has_credential": True}
+
+
+def stored_base_url_override(user_id: int, api_id: str) -> str:
+    """已存凭据的 base_url_override 原值;没有这条凭据时为 ""。
+
+    只给「请求没带地址 = 保留已存值」的校验用(自定义中转站 / 免鉴权凭据必须有地址):
+    表单没有地址输入时,按已存地址判断,而不是把缺失当成空。停用 / 解不开的行也算,
+    因为保留的就是这一列。
+    """
+    init_db()
+    canonical = normalize_api_id(api_id)
+    with connect() as db:
+        row = db.execute(
+            """
+            select base_url_override from user_api_credentials
+            where user_id = %s and api_id = any(%s)
+            order by (api_id = %s) desc, updated_at desc
+            limit 1
+            """,
+            (user_id, _credential_aliases(canonical), canonical),
+        ).fetchone()
+    return str((row or {}).get("base_url_override") or "")
 
 
 def delete_credential(user_id: int, api_id: str) -> dict[str, Any]:

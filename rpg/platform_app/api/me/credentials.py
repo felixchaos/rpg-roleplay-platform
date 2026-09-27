@@ -41,7 +41,12 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
     is_admin = user.get("role") == "admin"
     try:
         api_id = body.get("api_id", "")
-        base_url_override = (body.get("base_url_override") or "").strip()
+        # 与下面的 proxy 同一语义:请求体**带了** base_url_override 键才改地址(空串 = 清空,回到
+        # 目录默认地址);没带(手机端「API」/ 供应商卡片这些表单根本没有地址输入)= 保留已存值,
+        # 不能把桌面设置页配好的中转站地址悄悄冲掉 —— 冲掉后 GM 打官方端点,拿中转站的 key 撞 401。
+        base_url_override = (
+            (str(body.get("base_url_override") or "")).strip() if "base_url_override" in body else None
+        )
         # keep_key：编辑弹窗只改接口地址、不重填 key（key 从不回显）。空 key 时不删
         # 凭证，只更新 base_url_override / 启用态，保留已存密钥与 proxy。
         keep_key = bool(body.get("keep_key"))
@@ -64,11 +69,18 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
             # (强制 https + 禁私网/本机),不再一刀切拒绝未知 provider。
             # 仅在「真的在设置一个 key」时才要求 base_url;清空 key(api_key='')/纯删除
             # 不该被这条设置态校验挡住(否则自定义中转站删不掉,报「删除失败」)。
-            if (body.get("api_key") or "").strip() and not known and not base_url_override:
+            # 请求没带地址 = 保留已存地址,所以按已存值判断(只在这两条校验真要用时才查库)。
+            setting_key = bool((body.get("api_key") or "").strip())
+            effective_base_url = base_url_override or ""
+            if base_url_override is None and ((setting_key and not known) or auth_mode == "none"):
+                effective_base_url = await asyncio.to_thread(
+                    user_credentials.stored_base_url_override, user["id"], normalized_api_id,
+                )
+            if setting_key and not known and not effective_base_url:
                 raise ValueError("自定义供应商必须填写 Base URL(中转站地址)")
             # 免鉴权模式没有"填了 key"这一说,上面那条按 api_key 写的校验兜不住它 ——
             # 单独要求 base_url(set_credential 里还有一道,这里给的是更早、更贴 UI 的报错)。
-            if auth_mode == "none" and not base_url_override:
+            if auth_mode == "none" and not effective_base_url:
                 raise ValueError("勾选「免 API Key」时必须填写 Base URL(本地模型的接口地址)")
             api_id = normalized_api_id
         # 出站代理 URL(仅本地模式真正使用,见 core.outbound.credential_proxy)。
@@ -77,6 +89,8 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
         proxy = (str(body.get("proxy") or "")).strip() if "proxy" in body else None
         # set_credential 落库后会内联同步一次远程模型列表(网络请求)。放进线程执行:
         # async 路由里直接同步调用会冻住事件循环,桌面版单 worker 时整个后端跟着卡住(反馈 #107)。
+        # 这次同步最坏约 40s(单次探测连接 5s + 读 15s,裸地址再补一次 /v1);前端给保存留了
+        # 45s(api-client 的 _CRED_SAVE_TIMEOUT_MS = _PROBE_TIMEOUT_MS),改探测上限时两边一起看。
         result = await asyncio.to_thread(
             user_credentials.set_credential,
             user["id"],

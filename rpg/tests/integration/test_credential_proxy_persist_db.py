@@ -120,6 +120,42 @@ class TestCredentialProxyPersist(unittest.TestCase):
         from platform_app import user_credentials
         self.assertEqual((user_credentials.get_credential(self.uid, "deepseek") or {}).get("key"), "sk-one")
 
+    def _base_url(self) -> str:
+        from platform_app.db import connect
+        with connect() as db:
+            row = db.execute(
+                "select base_url_override from user_api_credentials where user_id = %s and api_id = %s",
+                (self.uid, "deepseek"),
+            ).fetchone()
+        return str((row or {}).get("base_url_override") or "")
+
+    def test_base_url_override_tristate(self):
+        """接口地址与代理同一约定:None = 不动已存值;"" = 清空;其余 = 替换。
+        手机端「API」只带 key 重存,不能把设置页配好的中转站地址冲掉。"""
+        relay = "https://relay.example.com/v1"
+        self._save("sk-one", base_url_override=relay)
+        self.assertEqual(self._base_url(), relay)
+
+        # 没有地址输入的表单重新存 key
+        self._save("sk-two", base_url_override=None)
+        self.assertEqual(self._base_url(), relay)
+        from platform_app import user_credentials
+        self.assertEqual((user_credentials.get_credential(self.uid, "deepseek") or {}).get("key"), "sk-two")
+        self.assertEqual(user_credentials.stored_base_url_override(self.uid, "deepseek"), relay)
+
+        # keep_key 只改代理、没提地址
+        self._save("", preserve_key_if_empty=True, base_url_override=None, proxy=_PROXY_A)
+        self.assertEqual(self._base_url(), relay)
+        self.assertEqual(self._meta().get("proxy"), _PROXY_A)
+
+        # 显式清空(回到目录默认地址)
+        self._save("sk-three", base_url_override="")
+        self.assertEqual(self._base_url(), "")
+
+    def test_new_row_without_base_url_is_empty(self):
+        self._save("sk-one", base_url_override=None)
+        self.assertEqual(self._base_url(), "")
+
     def test_other_metadata_keys_survive_proxy_changes(self):
         from psycopg.types.json import Jsonb
 

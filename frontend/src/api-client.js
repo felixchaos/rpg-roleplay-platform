@@ -235,8 +235,10 @@
   // 探测类请求(拉模型 / 校验连接 / 可用性)的前端超时。后端每次探测有上限(连接 5s + 读 15s、
   // 不重试,裸地址最多再补一次 /v1),这里必须留得比它长,否则后端还在正常工作前端就先报失败。
   const _PROBE_TIMEOUT_MS = 45000;
-  // 保存凭据:落库后后端会内联同步一次模型列表(同样有上限),30s 足够。
-  const _CRED_SAVE_TIMEOUT_MS = 30000;
+  // 保存凭据:落库后后端会内联同步一次模型列表,走的就是上面那种探测 —— 首次失败不是连接类
+  // (中转站在裸地址 /models 上慢慢回 403/404、或回 200 HTML)时还会对 /v1 整轮再试一次,最坏约 40s。
+  // 以前给 30s:前端先弹「保存失败」,key 其实已经落库(反馈 #107 那类假失败)。与探测同一上限。
+  const _CRED_SAVE_TIMEOUT_MS = _PROBE_TIMEOUT_MS;
 
   // ---- SSE helper for /api/chat & /api/opening ---------------
   // Posts a JSON body and parses the streaming response into

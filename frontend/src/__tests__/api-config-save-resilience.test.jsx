@@ -74,7 +74,8 @@ describe('api-client:探测类请求的超时与结果未知时的广播', () =>
     ['models.probe', (a) => a.models.probe({ api_id: 'openai' }), 45000],
     ['models.validate', (a) => a.models.validate({ api_id: 'openai' }), 45000],
     ['credentials.test(GET)', (a) => a.credentials.test({ api_id: 'openai' }), 45000],
-    ['credentials.set', (a) => a.credentials.set({ api_id: 'openai', api_key: 'sk' }), 30000],
+    // 保存凭据会内联同步一次模型列表(最坏两次探测约 40s),不能比探测类请求先超时
+    ['credentials.set', (a) => a.credentials.set({ api_id: 'openai', api_key: 'sk' }), 45000],
   ])('%s 用专用超时(不是默认 15s)', async (_name, call, ms) => {
     expect(typeof AbortSignal.timeout).toBe('function');
     const spy = vi.spyOn(AbortSignal, 'timeout');
@@ -252,6 +253,8 @@ describe('首配拦截弹窗:内联保存 key', () => {
     });
     expect(credSet).toHaveBeenCalledTimes(1);
     expect('proxy' in credSet.mock.calls[0][0]).toBe(false);
+    // 卡片有地址输入:清空也要显式发空串(后端「没带 = 保留」,不发就清不掉旧地址)
+    expect(credSet.mock.calls[0][0]).toMatchObject({ api_key: 'sk-x', base_url_override: '' });
     expect(window.api.credentials.list).toHaveBeenCalledTimes(2);
     const [, opts] = window.__apiToast.mock.calls[0];
     expect(opts).toMatchObject({ kind: 'danger', duration: 9000 });
