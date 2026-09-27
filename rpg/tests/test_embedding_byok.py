@@ -4,6 +4,7 @@
   · 无 user_id → 走系统默认 vertex 路径
   · user_id + embed.api_id='openai' → 走 OpenAI 路径,model 名正确
   · user_id + embed.api_id='vertex' → 仍走 vertex
+  · 平台 Gemini OpenAI-compatible 环境 → 转 Gemini 原生 embedContent
   · user_id + embed.api_id='cohere' → 走 cohere 路径
   · 未知 api_id → 降级 vertex + warn 日志
   · resolve_api_key 无 key 时 openai 降级 vertex
@@ -42,7 +43,7 @@ class TestEmbedProviderDispatch(unittest.TestCase):
         fake_vecs = [[0.1] * 768]
         with patch.object(mod, "_embed_via_vertex", return_value=fake_vecs) as m:
             result = mod._embed_provider_dispatch("vertex", "text-embedding-004", "", ["hello"])
-        m.assert_called_once_with("text-embedding-004", ["hello"], task_type="RETRIEVAL_DOCUMENT")
+        m.assert_called_once_with("text-embedding-004", ["hello"], task_type="RETRIEVAL_DOCUMENT", user_id=None)
         self.assertEqual(result, fake_vecs)
 
     def test_google_api_id_also_routes_vertex(self):
@@ -85,6 +86,16 @@ class TestEmbedProviderDispatch(unittest.TestCase):
         mv.assert_called_once()
         self.assertEqual(result, fake_vecs)
 
+    def test_gemini_path_calls_native_gemini(self):
+        mod = self._import()
+        fake_vecs = [[0.55] * 768]
+        with patch.object(mod, "_embed_via_gemini", return_value=fake_vecs) as m:
+            result = mod._embed_provider_dispatch(
+                "gemini", "gemini-embedding-001", "gem-key", ["text"], task_type="RETRIEVAL_QUERY"
+            )
+        m.assert_called_once_with("gemini-embedding-001", "gem-key", ["text"], task_type="RETRIEVAL_QUERY")
+        self.assertEqual(result, fake_vecs)
+
     def test_cohere_path_calls_cohere(self):
         mod = self._import()
         fake_vecs = [[0.6] * 1024]
@@ -93,12 +104,25 @@ class TestEmbedProviderDispatch(unittest.TestCase):
         m.assert_called_once_with("embed-multilingual-v3.0", "co-key", ["text"])
         self.assertEqual(result, fake_vecs)
 
-    def test_unknown_api_id_falls_back_vertex_and_warns(self):
+    def test_unknown_api_id_with_key_but_no_base_url_is_refused(self):
+        """带 key 的未知供应商按 OpenAI 兼容处理;解析不出地址时拒发(反馈 #104:
+        别家的 key 绝不送去 api.openai.com),也不偷偷改走 vertex。"""
+        mod = self._import()
+        with patch.object(mod, "_embed_via_vertex") as mv, \
+             patch.object(mod, "_embed_via_openai") as mo, \
+             self.assertLogs("platform_app.knowledge.embedding", level="WARNING") as cm:
+            result = mod._embed_provider_dispatch("magic_provider", "some-model", "key", ["hi"])
+        mv.assert_not_called()
+        mo.assert_not_called()
+        self.assertIsNone(result)
+        self.assertTrue(any("empty base_url" in line for line in cm.output))
+
+    def test_unknown_api_id_without_key_falls_back_vertex_and_warns(self):
         mod = self._import()
         fake_vecs = [[0.7] * 768]
         with patch.object(mod, "_embed_via_vertex", return_value=fake_vecs) as mv, \
              self.assertLogs("platform_app.knowledge.embedding", level="WARNING") as cm:
-            result = mod._embed_provider_dispatch("magic_provider", "some-model", "key", ["hi"])
+            result = mod._embed_provider_dispatch("magic_provider", "some-model", "", ["hi"])
         mv.assert_called_once()
         self.assertTrue(any("unknown api_id" in line for line in cm.output))
         self.assertEqual(result, fake_vecs)
@@ -148,6 +172,49 @@ class TestResolveEmbedConfig(unittest.TestCase):
         self.assertEqual(api_id, mod.DEFAULT_EMBED_API_ID)
         self.assertEqual(model, mod.DEFAULT_EMBED_MODEL)
 
+    def test_privileged_platform_gemini_openai_env_uses_native_provider(self):
+        with patch.dict(os.environ, {
+            "EMBED_API_ID": "openai",
+            "EMBED_MODEL": "text-embedding-004",
+            "EMBED_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "EMBED_API_KEY": "gemini-platform-key",
+        }):
+            mod = self._import()
+            with patch("core.llm_backend.resolve_preferred_api", return_value=None), \
+                 patch("core.llm_backend.resolve_preferred_model", return_value=None), \
+                 patch(
+                     "platform_app.user_credentials.resolve_api_key",
+                     return_value={"key": "", "source": "none", "base_url_override": ""},
+                 ), \
+                 patch.object(mod, "_is_admin", return_value=True):
+                api_id, model, api_key, base_url = mod._resolve_embed_config(99)
+        self.assertEqual(api_id, "gemini")
+        self.assertEqual(model, "gemini-embedding-001")
+        self.assertEqual(api_key, "gemini-platform-key")
+        self.assertEqual(base_url, "")
+
+    def test_regular_user_without_embed_key_does_not_get_platform_key(self):
+        with patch.dict(os.environ, {
+            "EMBED_API_ID": "openai",
+            "EMBED_MODEL": "text-embedding-004",
+            "EMBED_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "EMBED_API_KEY": "gemini-platform-key",
+        }):
+            mod = self._import()
+            with patch("core.llm_backend.resolve_preferred_api", return_value=None), \
+                 patch("core.llm_backend.resolve_preferred_model", return_value=None), \
+                 patch(
+                     "platform_app.user_credentials.resolve_api_key",
+                     return_value={"key": "", "source": "none", "base_url_override": ""},
+                 ), \
+                 patch.object(mod, "_is_admin", return_value=False):
+                api_id, model, api_key, base_url = mod._resolve_embed_config(42)
+        self.assertEqual(api_id, "openai")
+        # 没选模型时取该供应商目录里的嵌入模型,不再套平台 EMBED_MODEL(那是 Gemini 的模型名)
+        self.assertEqual(model, "text-embedding-3-small")
+        self.assertEqual(api_key, "")
+        self.assertEqual(base_url, "")
+
 
 class TestEmbedQueryBYOK(unittest.TestCase):
     """embed_query 全链路测试(mock 到 provider dispatch 层)。"""
@@ -171,7 +238,9 @@ class TestEmbedQueryBYOK(unittest.TestCase):
              ), \
              patch.object(mod, "_embed_via_openai", return_value=[fake_vec]) as mo:
             result = mod.embed_query("测试文本", user_id=42)
-        mo.assert_called_once_with("text-embedding-3-small", "sk-byok", ["测试文本"], base_url="")
+        # 凭据没填地址 → 取 openai 的 catalog 地址(与召回 force 路径同一个解析器)
+        mo.assert_called_once_with("text-embedding-3-small", "sk-byok", ["测试文本"],
+                                   base_url=mod._catalog_embed_base_url("openai"))
         self.assertIsNotNone(result)
         self.assertTrue(result.startswith("["))
         self.assertTrue(result.endswith("]"))

@@ -10,6 +10,7 @@ import os
 import time
 from typing import Any
 
+from . import _breaker
 from ._base import EMBED_DIM, log
 
 # ---------------------------------------------------------------------------
@@ -106,6 +107,8 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
 
     if not api_key:
         log.warning("[embedding] gemini api_id but no api_key")
+        _breaker.note(_breaker.KIND_NO_CRED, overwrite=False,
+                      friendly="没有配置 Gemini 的 API Key,向量嵌入不可用。请在「设置 → API & 模型」填上 Key。")
         return None
 
     if _geo_ban_active(_GEO_BAN_CHANNEL_GEMINI_NATIVE):
@@ -133,6 +136,11 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
             values = data.get("embedding", {}).get("values") or []
             if len(values) != EMBED_DIM:
                 log.warning("[embedding] gemini embed returned dim=%s expected=%s", len(values), EMBED_DIM)
+                # 维度不符是模型选错了,改配置前不会好(与 OpenAI 通道的维度卫士同一分类)
+                _breaker.note(_breaker.KIND_CONFIG, friendly=(
+                    f"Gemini 向量嵌入模型「{effective_model}」输出 {len(values)} 维,但系统统一用 {EMBED_DIM} 维。"
+                    f"请到「设置 → RAG / 向量模型」换一个支持 {EMBED_DIM} 维的模型。"
+                ))
                 return None
             out.append(list(values))
         return out
@@ -141,9 +149,13 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
         log.warning("[embedding] gemini embed failed: %s %s", e.code, body[:200])
         if _is_geo_ban_error(body) or _is_geo_ban_error(str(e)):
             _geo_ban_mark(_GEO_BAN_CHANNEL_GEMINI_NATIVE)
+        # 记入熔断(地区封禁是 400,按请求级处理不熔断,已由上面的 _GEO_BAN_CACHE 兜)
+        _breaker.note_http(e.code, body=body, headers=e.headers,
+                           friendly=f"Gemini 向量嵌入请求失败(HTTP {e.code}):{body[:160]}")
         return None
     except Exception as e:
         log.warning("[embedding] gemini embed failed: %s", e)
         if _is_geo_ban_error(str(e)):
             _geo_ban_mark(_GEO_BAN_CHANNEL_GEMINI_NATIVE)
+        _breaker.note_exception(e, "generativelanguage.googleapis.com")
         return None

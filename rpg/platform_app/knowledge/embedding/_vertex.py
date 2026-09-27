@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from . import _breaker
 from ._base import DEFAULT_EMBED_MODEL, EMBED_DIM, _is_admin, log
 from ._gemini import _embed_via_gemini
 
@@ -75,6 +76,14 @@ def _embed_via_vertex(model: str, texts: list[str], task_type: str = "RETRIEVAL_
             return _native
     client = _get_vertex_client(user_id=user_id)
     if client is None:
+        # 没有可用的 Service Account:没发请求。记成「无凭据」冷却,免得每次检索都重读一遍 SA
+        # 再打一条 warning;用户上传 SA(保存凭据)时 reset_user 会立即解除。
+        # overwrite=False:上面平台 Gemini 原生那一路若已真打并失败(如 429),以它为准 ——
+        # 否则一次限流会被记成「没凭据」,连写库路径也被短路。
+        _breaker.note(_breaker.KIND_NO_CRED, overwrite=False, friendly=(
+            "没有可用的 Agent Platform / Vertex Service Account,向量嵌入不可用。"
+            "请在「设置 → API 设置」上传 Service Account JSON,或在「设置 → RAG / 向量模型」换一个供应商。"
+        ))
         return None
     try:
         from google.genai import types
@@ -86,4 +95,9 @@ def _embed_via_vertex(model: str, texts: list[str], task_type: str = "RETRIEVAL_
         return [list(e.values) for e in resp.embeddings]
     except Exception as e:
         log.warning("[embedding] vertex embed failed (%d items): %s", len(texts), e)
+        code = getattr(e, "code", None)  # google.genai.errors.APIError 带 int code
+        if isinstance(code, int) and 100 <= code < 600:
+            _breaker.note_http(code, body=str(e), friendly=f"Vertex 向量嵌入请求失败(HTTP {code})。")
+        else:
+            _breaker.note_exception(e, "Vertex AI")
         return None

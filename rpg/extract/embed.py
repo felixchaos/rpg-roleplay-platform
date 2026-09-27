@@ -23,6 +23,13 @@ def embed_canon_entities(db, script_id: int, *, user_id: int | None = None,
     ).fetchall()
     if not rows:
         return {"embedded": 0, "skipped": 0, "failed_batches": 0}
+    # 建向量是用户主动发起的(导入 / 重建):先清掉该用户的嵌入熔断,保证至少真打一次
+    # (充值后 key 没变时,不必等配置类冷却过期)。
+    try:
+        from platform_app.knowledge.embedding import _breaker
+        _breaker.reset_user(user_id)
+    except Exception:
+        pass
 
     embedded = 0
     failed = 0
@@ -33,7 +40,8 @@ def embed_canon_entities(db, script_id: int, *, user_id: int | None = None,
             aliases = r.get("aliases") or []
             alias_str = "、".join(aliases) if isinstance(aliases, list) else ""
             texts.append(f"{r['name']} {alias_str} {r.get('summary') or ''}".strip())
-        vecs = _embed_batch(texts, user_id=user_id)
+        # 不切平台兜底:召回侧 search_canon 按剧本绑定的 embedder 算查询向量,混空间就召回错乱
+        vecs = _embed_batch(texts, user_id=user_id, allow_platform_fallback=False)
         if not vecs:
             failed += 1
             continue
@@ -43,6 +51,13 @@ def embed_canon_entities(db, script_id: int, *, user_id: int | None = None,
                 (_vec_literal(vec), r["id"]),
             )
             embedded += 1
+    if embedded:
+        # kb_nodes 视图含 canon:本进程「剧本有没有向量」缓存作废,新向量立刻参与召回
+        try:
+            from platform_app.knowledge._search import invalidate_script_vector_presence
+            invalidate_script_vector_presence(script_id)
+        except Exception:
+            pass
     return {"embedded": embedded, "skipped": len(rows) - embedded, "failed_batches": failed}
 
 

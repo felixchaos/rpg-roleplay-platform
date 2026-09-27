@@ -53,6 +53,17 @@ def _patch_embed_provider_dispatch(testcase, module, return_vec=None):
     return calls
 
 
+def _patch_user_has_key(testcase):
+    """召回 force 路径要求玩家真有剧本锁定供应商的凭据,否则直接不发(不再降级 vertex 产出异空间向量)。
+    这些用例测的是「按锁定的 (api_id, model) 分发」,给一把假 key 让分发发生。"""
+    patcher = patch(
+        "platform_app.user_credentials.resolve_api_key",
+        return_value={"key": "sk-test", "source": "user_db", "base_url_override": ""},
+    )
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+
+
 # ---------------------------------------------------------------------------
 # tests
 # ---------------------------------------------------------------------------
@@ -92,6 +103,7 @@ class TestEmbedRecallConsistency(unittest.TestCase):
             42: {"embed_api_id": "openai", "embed_model": "text-embedding-3-small"},
         })
         dispatch_calls = _patch_embed_provider_dispatch(self, embed_mod, return_vec=[[0.5] * 3])
+        _patch_user_has_key(self)
 
         result = search_mod._embed_query("测试 query", script_id=42, db=db)
 
@@ -140,6 +152,7 @@ class TestEmbedRecallConsistency(unittest.TestCase):
 
         calls_a: list[dict] = []
         calls_b: list[dict] = []
+        _patch_user_has_key(self)
 
         orig_dispatch = embed_mod._embed_provider_dispatch
 
@@ -172,6 +185,7 @@ class TestEmbedRecallConsistency(unittest.TestCase):
     def test_case4_force_params_override_user_pref(self):
         embed_mod = self._import_embedding()
         dispatch_calls = _patch_embed_provider_dispatch(self, embed_mod, return_vec=[[0.3] * 3])
+        _patch_user_has_key(self)
 
         # user_id=7 理论上有 BYOK cohere，但 force 应覆盖
         with patch.object(embed_mod, "_resolve_embed_config", return_value=("cohere", "embed-v3", "COHERE_KEY", "")) as mock_resolve:

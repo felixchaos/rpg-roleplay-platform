@@ -13,6 +13,16 @@ from .._deps import json_response, require_user, value_error_response
 from ._shared import router
 
 
+def _reset_embed_breaker(user_id: int) -> None:
+    """凭据变了(改 key / 充值后重存 / 上传 SA / 删除):清掉该用户的嵌入熔断和最近错误,
+    下一次检索或建向量立刻真打,不用等冷却过期。"""
+    try:
+        from ...knowledge.embedding import _breaker
+        _breaker.reset_user(user_id)
+    except Exception:
+        pass
+
+
 @router.get("/api/me/credentials")
 async def api_my_credentials(user=Depends(require_user)):
     """列出当前用户已配置的 API 凭证（不含 raw key）"""
@@ -79,6 +89,7 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
             preserve_key_if_empty=keep_key,
             auth_mode=auth_mode,
         )
+        _reset_embed_breaker(user["id"])
         return json_response(result)
     except ValueError as exc:
         return value_error_response(exc)
@@ -88,7 +99,9 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
 async def api_delete_credential(request: Request, user=Depends(require_user)):
     body = await request.json()
     from ... import user_credentials
-    return json_response(user_credentials.delete_credential(user["id"], body.get("api_id", "")))
+    result = user_credentials.delete_credential(user["id"], body.get("api_id", ""))
+    _reset_embed_breaker(user["id"])
+    return json_response(result)
 
 
 _PING_CACHE: dict[tuple[int, str], tuple[float, dict]] = {}

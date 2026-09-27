@@ -1,6 +1,7 @@
 """core.request_cache — Request-scoped in-memory cache for hot DB lookups.
 
-目标: 一个 HTTP 请求内 user_preferences / user_api_credentials 只查一次 DB。
+目标: 一个 HTTP 请求内 user_preferences / user_api_credentials 只查一次 DB;
+同一段文本的查询向量只嵌入一次(一回合的检索会对同一句玩家输入反复嵌入)。
 
 用法 (middleware 层):
     from core.request_cache import reset_request_caches
@@ -22,6 +23,7 @@ contextvars 在 asyncio.to_thread 中的传播:
 from __future__ import annotations
 
 import contextvars
+from collections.abc import Callable
 from typing import Any
 
 # None = 非请求上下文; dict = 请求内缓存容器
@@ -31,12 +33,17 @@ _user_prefs_cache: contextvars.ContextVar[dict[int, dict] | None] = (
 _api_creds_cache: contextvars.ContextVar[dict[tuple, Any] | None] = (
     contextvars.ContextVar("_api_creds_cache", default=None)
 )
+# (user_id, 锁定 api_id, 锁定 model, 文本) → pgvector 字面量 / None(失败也记)
+_embed_vec_cache: contextvars.ContextVar[dict[tuple, str | None] | None] = (
+    contextvars.ContextVar("_embed_vec_cache", default=None)
+)
 
 
 def reset_request_caches() -> None:
-    """每个 HTTP 请求开始时由 middleware 调用,清空/初始化两个缓存容器。"""
+    """每个 HTTP 请求开始时由 middleware 调用,清空/初始化各缓存容器。"""
     _user_prefs_cache.set({})
     _api_creds_cache.set({})
+    _embed_vec_cache.set({})
 
 
 # ── user_preferences ────────────────────────────────────────────────────────
@@ -114,9 +121,29 @@ def _fetch_cred(user_id: int, api_id: str) -> dict | None:
         return None
 
 
+# ── 查询向量 ────────────────────────────────────────────────────────────────
+
+def get_embed_vec_cached(key: tuple, compute: Callable[[], str | None]) -> str | None:
+    """请求内同一 key 的查询向量只算一次;失败(None)也缓存,本回合不再重打同一个坏供应商。
+
+    key 由调用方(embedding.embed_query)给出:(user_id, 锁定 api_id, 锁定 model, 文本) ——
+    同一请求里偏好与凭据本身也走请求缓存,所以同 key 必然解析到同一个 embedder。
+    非请求上下文(后台线程 / cron / 测试直调)不缓存,每次都算,行为与改造前一致。
+    """
+    cache = _embed_vec_cache.get()
+    if cache is None:
+        return compute()
+    if key in cache:
+        return cache[key]
+    val = compute()
+    cache[key] = val
+    return val
+
+
 __all__ = [
     "reset_request_caches",
     "get_user_prefs_cached",
     "invalidate_user_prefs_cache",
     "get_api_cred_cached",
+    "get_embed_vec_cached",
 ]

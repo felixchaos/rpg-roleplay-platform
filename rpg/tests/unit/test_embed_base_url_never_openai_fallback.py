@@ -85,12 +85,15 @@ def test_force_path_uses_same_resolver(monkeypatch):
 def test_non_openai_provider_with_empty_base_url_is_refused(monkeypatch):
     called = []
     monkeypatch.setattr(embedding, "_embed_via_openai", lambda *a, **k: called.append(1))
-    monkeypatch.setattr(embedding, "_last_openai_embed_error", "")
-    out = embedding._embed_provider_dispatch("my_qwen", "text-embedding-v3", "sk-qwen", ["x"], base_url="")
+    out = embedding._embed_provider_dispatch("my_qwen", "text-embedding-v3", "sk-qwen", ["x"],
+                                             base_url="", user_id=7)
     assert out is None
     assert not called, "空地址 + 非 OpenAI 供应商 → 不许发请求"
-    assert "my_qwen" in embedding._last_openai_embed_error
-    assert "接口地址" in embedding._last_openai_embed_error
+    # 提示按用户记(不再是进程级全局,别的用户看不到)
+    msg = embedding._breaker.last_error_for(7)
+    assert "my_qwen" in msg
+    assert "接口地址" in msg
+    assert embedding._breaker.last_error_for(8) == ""
 
 
 def test_openai_itself_may_use_default_endpoint(monkeypatch):
@@ -110,7 +113,7 @@ def test_401_message_names_the_host(monkeypatch):
                                      io.BytesIO(b'{"error":{"message":"Incorrect API key provided."}}'))
 
     monkeypatch.setattr(outbound, "safe_urlopen", _raise)
-    monkeypatch.setattr(embedding, "_last_openai_embed_error", "")
-    assert embedding._embed_via_openai("text-embedding-v3", "sk-q", ["x"], base_url=_DS_COMPAT) is None
-    msg = embedding._last_openai_embed_error
+    assert embedding._embed_provider_dispatch("dashscope", "text-embedding-v3", "sk-q", ["x"],
+                                              base_url=_DS_COMPAT, user_id=7) is None
+    msg = embedding._breaker.last_error_for(7)
     assert "401" in msg and "dashscope.aliyuncs.com" in msg

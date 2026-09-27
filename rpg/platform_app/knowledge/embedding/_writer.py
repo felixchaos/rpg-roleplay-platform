@@ -27,6 +27,7 @@ from platform_app.knowledge.embedding import (  # noqa: E402  (有序循环导�
     embedding_preflight,
 )
 
+from . import _breaker
 from ._base import (
     _MAX_EMBED_BATCH_RETRIES,
     BATCH_SIZE,
@@ -158,6 +159,13 @@ def _embed_chunks_loop(script_id: int, user_id: int) -> None:
     finally:
         _EMBED_QUEUE_RUNNING[script_id] = False
         _embed_redis_release(script_id)  # 释放跨进程锁(Redis 不可达时静默忽略)
+        # 本进程的「剧本有没有向量」缓存作废:刚写进去的向量立刻参与召回(其它 worker 等 TTL)。
+        # 放在结束时而不是绑定 meta 时 —— 绑定发生在嵌入开始前,那时清完会马上又缓存成「无向量」。
+        try:
+            from platform_app.knowledge._search import invalidate_script_vector_presence
+            invalidate_script_vector_presence(script_id)
+        except Exception:
+            pass
         log.info("[embedding] done script_id=%s (flag cleared)", script_id)
 
 
@@ -165,9 +173,14 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
     """实际工作循环 — 由 _embed_chunks_loop 包裹保证 flag 清理"""
     from platform_app.db import connect
 
+    # 建向量是用户主动发起的(导入 / 重建):先清掉该用户的嵌入熔断,保证至少真打一次 ——
+    # 否则充值后(key 没变)还得等配置类冷却过期。
+    _breaker.reset_user(user_id)
     # P0-fix: 拆书开始时立即将 (api_id, model) 绑定到 scripts 表，
     # 保证召回时能读到确定的向量空间配置。
     _bind_api_id, _bind_model, _bind_key, _bind_base = _resolve_embed_config(user_id)
+    # 与 _embed_batch → dispatch 里用户那一路同一个熔断单元
+    _bkey = _breaker.key_for(user_id, _bind_api_id, _bind_model, _bind_base or "", _bind_key or "")
     # 权威闸:选了没有 embedding 接口的 provider(deepseek/anthropic 等)→ 快速失败 + 清晰指引,
     # 不绑坏 meta、不进 5 次 404 重试(~2.5 分钟)。这是各层校验(picker/preflight)漏掉的兜底。
     if provider_lacks_embedding(_bind_api_id, _bind_base):
@@ -209,8 +222,16 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
             break
 
         texts = [r["content"][:PER_CHUNK_CHAR_LIMIT] for r in rows]  # 见模块顶 PER_CHUNK_CHAR_LIMIT 注释
-        vecs = _embed_batch(texts, user_id=user_id)
+        vecs = _embed_batch(texts, user_id=user_id, allow_platform_fallback=False)
         if vecs is None:
+            _cool = _breaker.status(_bkey)
+            if _cool and _cool["kind"] in (_breaker.KIND_CONFIG, _breaker.KIND_NO_CRED):
+                # key 无效 / 欠费 / 模型不存在 / 没凭据:再等 5×30s 也不会好,直接放弃并说清原因。
+                _why = _breaker.last_error_for(user_id, _bkey)
+                raise RuntimeError(
+                    f"嵌入供应商配置有问题,放弃 script {script_id}(剩余 chunk 留 null,改好后重新建向量即可)"
+                    + (f":{_why}" if _why else "")
+                )
             _consecutive_fails += 1
             if _consecutive_fails >= _MAX_EMBED_BATCH_RETRIES:
                 # 连续失败达上限:大概率 provider 永久故障(坏 key/配额/模型下线)。
@@ -219,9 +240,13 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
                     f"embedding batch 连续失败 {_consecutive_fails} 次,放弃 script {script_id}"
                     f"(剩余 chunk 留 null 待修复 provider 后重试)"
                 )
-            log.warning("[embedding] batch failed (%d/%d), sleeping 30s then retry",
-                        _consecutive_fails, _MAX_EMBED_BATCH_RETRIES)
-            time.sleep(30)
+            # 被限流:按冷却剩余时间退避(至少 30s,最多 120s),别在冷却期里接着撞
+            _wait = 30.0
+            if _cool and _cool["kind"] == _breaker.KIND_RATE:
+                _wait = max(30.0, min(float(_cool["remaining"]), 120.0))
+            log.warning("[embedding] batch failed (%d/%d), sleeping %ds then retry",
+                        _consecutive_fails, _MAX_EMBED_BATCH_RETRIES, int(_wait))
+            time.sleep(_wait)
             continue
         _consecutive_fails = 0  # 成功一批即重置连续失败计数(仅对持续性故障熔断)
         if len(vecs) != len(rows):
@@ -271,7 +296,7 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
                 f"{c['name']}。{c.get('identity') or ''}。{(c.get('personality') or '')[:1000]}。{(c.get('appearance') or '')[:500]}"
                 for c in batch
             ]
-            vecs = _embed_batch(texts, user_id=user_id)
+            vecs = _embed_batch(texts, user_id=user_id, allow_platform_fallback=False)
             if vecs is None:
                 continue
             with connect() as db:
@@ -296,7 +321,7 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
                 f"{w['title']}。{(w.get('content') or '')[:2000]}"
                 for w in batch
             ]
-            vecs = _embed_batch(texts, user_id=user_id)
+            vecs = _embed_batch(texts, user_id=user_id, allow_platform_fallback=False)
             if vecs is None:
                 continue
             with connect() as db:

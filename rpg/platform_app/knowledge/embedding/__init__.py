@@ -21,9 +21,11 @@ batch size: 100 chunks/请求(API 限 250,留 buffer)
 包结构(拆包 2026-07,纯机械搬家,行为零变化;原 embedding.py 单文件 1038 行):
 - 本 __init__ = 公共层 + orchestration + OpenAI 兼容通道 + 共享错误态。测试在包命名空间上
   patch `_embed_via_*` / `_resolve_embed_config` 等并期望本层内部调用看到 patch,故这些
-  函数逐字定义在此(globals 在门面解析)。OpenAI 通道因与 `_last_openai_embed_error`
-  可变全局 + `embedding_preflight` 读方耦合,亦留在本层同居。
+  函数逐字定义在此(globals 在门面解析)。OpenAI 通道亦留在本层;失败信息经 `_breaker`
+  记到「该用户、该配置」名下(曾是进程级全局 `_last_openai_embed_error`,A 用户的中转站
+  主机名和报错会出现在 B 用户的提示里,已删)。
 - `_base` = 共享常量/维度/配置低层谓词(叶子)
+- `_breaker` = 按 (用户, 供应商, 模型, 地址, key 指纹) 的熔断 + 按用户隔离的最近错误(叶子)
 - `_vertex` / `_gemini` / `_cohere` = 各供应商通道
 - `_writer` = 后台 batch embedding 作业 + 运行锁(末尾导入,构成受控有序循环)
 """
@@ -36,6 +38,7 @@ import os
 import time
 from typing import Any
 
+from . import _breaker
 from ._base import (
     _EMBED_SECS_PER_TEXT,
     _MAX_EMBED_BATCH_RETRIES,
@@ -71,9 +74,6 @@ from ._vertex import _VERTEX_CLIENT_CACHE, _embed_via_vertex, _get_vertex_client
 # 注:DEFAULT_EMBED_MODEL / EMBED_MODEL 住 _base;DEFAULT_EMBED_API_ID 留本层——测试会 patch
 # EMBED_API_ID env 后 reload 本包,须由本层(被 reload)重读 env 才生效。
 DEFAULT_EMBED_API_ID = os.environ.get("EMBED_API_ID", "vertex_ai")
-
-# 最近一次 _embed_via_openai 失败的友好描述(405/401/404 等),供前端引导用户去 RAG 设置用。
-_last_openai_embed_error: str = ""
 
 _VERTEX_API_IDS = {"vertex", "google", "vertex_ai"}
 _OPENAI_API_IDS = {"openai", "openai_compat"}
@@ -124,32 +124,65 @@ def _catalog_embed_base_url(api_id: str) -> str:
         return ""
 
 
+def _embed_endpoint_for_cred(api_id: str, cred: dict[str, Any] | None) -> tuple[str, str]:
+    """用户凭据 → (要放进 Authorization 的 token, 嵌入请求发往的 base_url)。
+
+    建库(_resolve_embed_config)与召回(embed_query 的 force 分支)共用这一个解析器,
+    两条路对同一个 (用户, 供应商) 永远算出同一个主机。
+    - token 走 resolved_auth_token:免 Key 的本地嵌入模型(Ollama / LM Studio)拿占位 token,
+      不再被当成「没配」。
+    - 地址 = 凭据自己的 base_url_override,没有就取该供应商的 catalog 地址。
+      **不读 EMBED_BASE_URL**:那是平台那把 key 的地址,只属于 _platform_fallback_config。
+      此前用户分支排在 catalog 前面读它 → 部署设了 EMBED_BASE_URL(常见值是 Gemini 兼容端点)
+      时,用户的 siliconflow / dashscope / openai key 被发给了 Google(#104 同族,修了一半)。
+    """
+    from platform_app.user_credentials import resolved_auth_token
+    token = resolved_auth_token(cred)
+    base_url = ((cred or {}).get("base_url_override", "") or "") or _catalog_embed_base_url(api_id)
+    return token, base_url
+
+
+def _default_embed_model_for(api_id: str) -> str:
+    """用户选了供应商(或默认供应商)却没选嵌入模型时用哪个:该供应商策展目录里第一个
+    带 embedding 能力的模型(openai → text-embedding-3-small,dashscope → text-embedding-v3)。
+
+    目录里没有才退平台 EMBED_MODEL。此前直接用平台 EMBED_MODEL(默认值是 Gemini 的
+    text-embedding-004)→ 没设 RAG 偏好、只配了 OpenAI 聊天 key 的用户,嵌入请求带着
+    text-embedding-004 发给 OpenAI,必然 404:平台配置漏进用户凭据路径,与 EMBED_BASE_URL 同族。
+    """
+    try:
+        from model_registry import default_api_for
+        for m in (default_api_for(api_id) or {}).get("models") or []:
+            if "embedding" in (m.get("capabilities") or []) and m.get("real_name"):
+                return str(m["real_name"])
+    except Exception:
+        pass  # 非法 api_id → 查不到,退平台默认
+    return DEFAULT_EMBED_MODEL
+
+
 def _resolve_embed_config(user_id: int | None) -> tuple[str, str, str, str]:
     """返回 (api_id, model, api_key, base_url_override)。
 
     优先链:
-    1. user 自己配的 BYOK embedder credential(任何用户都允许)
+    1. user 自己配的 BYOK embedder credential(任何用户都允许;地址见 _embed_endpoint_for_cred)
     2. 平台 env 兜底(EMBED_API_KEY / EMBED_BASE_URL / EMBED_MODEL)— 只对 admin/vip 生效。
        普通用户没自己配 → 返回空 api_key,_embed_via_openai 会返 None 让上层降级。
 
     设计理由:Gemini API text-embedding-004 在付费层 $0.025/M tokens,100 用户
     满量 import ≈ $187 一次性。不给普通用户兜底,强制 BYOK。
     """
-    env_base_url = os.environ.get("EMBED_BASE_URL", "")
     if user_id:
         try:
             from core.llm_backend import resolve_preferred_api, resolve_preferred_model
-            from platform_app.user_credentials import resolve_api_key
+            from platform_app.user_credentials import resolve_api_key, resolved_is_usable
             api_id = resolve_preferred_api(user_id, "embed.api_id") or DEFAULT_EMBED_API_ID
-            model = resolve_preferred_model(user_id, "embed.model_real_name") or DEFAULT_EMBED_MODEL
-            # user 自己配了 — 优先用,任何用户都允许
+            model = (resolve_preferred_model(user_id, "embed.model_real_name")
+                     or _default_embed_model_for(api_id))
+            # user 自己配了 — 优先用,任何用户都允许。可用性走 resolved_is_usable(免 Key 本地模型也算)。
             cred = resolve_api_key(user_id, api_id, env_fallback="")
-            if cred.get("key"):
-                # 凭据没带地址 → 从 catalog 取该 provider 的 base(如 dashscope compatible-mode),
-                # 否则 _embed_via_openai 会误连 api.openai.com。
-                base_url = (cred.get("base_url_override", "") or env_base_url
-                            or _catalog_embed_base_url(api_id))
-                return api_id, model, cred["key"], base_url
+            if resolved_is_usable(cred):
+                token, base_url = _embed_endpoint_for_cred(api_id, cred)
+                return api_id, model, token, base_url
             # user 没自配 — 只 admin/vip 才走平台 env 兜底
             if _is_admin(user_id):
                 return _platform_fallback_config()
@@ -158,7 +191,11 @@ def _resolve_embed_config(user_id: int | None) -> tuple[str, str, str, str]:
             return api_id, model, "", ""
         except Exception as exc:
             log.debug("[embedding] resolve_embed_config failed for user %s: %s", user_id, exc)
-    # 无 user_id (后台 cron / 内部任务):走 env 兜底
+            # 解析中途出错(DB 抖动等)时也守住 BYOK 闸:只有 admin/vip 才能拿平台 key。
+            # 此前直接落到下面的平台兜底 → 普通用户在这一刻拿到的是平台 EMBED_API_KEY。
+            if not _is_admin(user_id):
+                return DEFAULT_EMBED_API_ID, DEFAULT_EMBED_MODEL, "", ""
+    # 无 user_id (后台 cron / 内部任务) 或 admin/vip 解析出错:走 env 兜底
     return _platform_fallback_config()
 
 
@@ -183,7 +220,6 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
     # safe_urlopen —— SSRF: 不跟随重定向 + use-time 重解析 pin IP
     from core.outbound import UnsupportedProxy, proxy_kwargs, safe_urlopen
     from core.outbound_ua import outbound_user_agent
-    global _last_openai_embed_error
     effective_url = (base_url.rstrip("/") if base_url else "https://api.openai.com/v1") + "/embeddings"
     # 报错里带上实际请求的主机:同一个 401,发错了地方和 key 真坏了是两回事,不写出来用户和我们都分不清。
     _host = urllib.parse.urlsplit(effective_url).netloc or effective_url
@@ -229,39 +265,36 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
         # 维度卫士:有的模型(如 BAAI/bge-m3 固定 1024)不支持降到 EMBED_DIM(768),会静默返回
         # 异维向量 → 既存不进 vector(768) 列(索引侧 with_vec=0),又在召回侧维度不符报错被吞 →
         # 用户「RAG 完全失效」却查不出原因。这里维度不符即「响亮失败」+ 写人话错误供前端引导换模型。
-        global _last_openai_embed_error
         if vecs and EMBED_DIM and len(vecs[0]) != EMBED_DIM:
-            _last_openai_embed_error = (
+            _breaker.note(_breaker.KIND_CONFIG, friendly=(
                 f"向量嵌入模型「{model}」输出 {len(vecs[0])} 维,但系统统一用 {EMBED_DIM} 维"
                 f"(该模型不支持降到 {EMBED_DIM})。请到「设置 → RAG / 向量模型」改用支持 {EMBED_DIM} 维的模型"
                 f"(如 Qwen/Qwen3-Embedding-* 带降维、OpenAI text-embedding-3-*、Gemini text-embedding-004),并重新拆书。"
-            )
+            ))
             log.warning("[embedding] dim mismatch: model=%s got=%d want=%d → 拒绝异维向量", model, len(vecs[0]), EMBED_DIM)
             return None
         return vecs
 
     try:
-        result = _guard_dim(_post(with_dim=bool(EMBED_DIM)))
-        if result is not None:
-            _last_openai_embed_error = ""  # 仅真正成功才清 sticky 错误(维度不符已写错误,别清掉)
-        return result
+        return _guard_dim(_post(with_dim=bool(EMBED_DIM)))
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")
         code = e.code
+        headers = e.headers
         # 带 dimensions 被 400 拒(模型不支持降维)→ 去掉 dimensions 重试一次
         if code == 400 and EMBED_DIM:
             try:
-                result = _guard_dim(_post(with_dim=False))  # 去 dimensions 重试后,模型可能吐回原生维度 → 仍须卡维
-                if result is not None:
-                    _last_openai_embed_error = ""  # 仅真正成功才清错误(维度不符已写错误,别清掉)
-                return result
+                return _guard_dim(_post(with_dim=False))  # 去 dimensions 重试后,模型可能吐回原生维度 → 仍须卡维
             except urllib.error.HTTPError as e2:
-                body = e2.read().decode(errors="replace"); code = e2.code
+                body = e2.read().decode(errors="replace")
+                code = e2.code
+                headers = e2.headers
             except Exception as e2:
                 log.warning("[embedding] openai embed retry-no-dim failed: %s", e2)
+                _breaker.note_exception(e2, _host)
                 return None
-        # 把裸 HTTP 错误码映射成对用户有意义的描述，存 _last_openai_embed_error 供
-        # embedding_preflight / embed_status 读取以便前端引导用户去 RAG 设置。
+        # 把裸 HTTP 错误码映射成对用户有意义的描述,经 _breaker 记到本用户、本配置名下,
+        # 供 embedding_preflight 读取以便前端引导用户去 RAG 设置。
         if code == 405:
             friendly = (
                 f"你配置的 embedding 中转站地址不支持 /embeddings 接口（HTTP 405 Method Not Allowed）。"
@@ -302,8 +335,8 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
         else:
             friendly = f"向量嵌入请求失败（HTTP {code}，{_host}）：{body[:200]}"
         log.warning("[embedding] openai embed failed: %s %s | friendly: %s", code, body[:200], friendly)
-        # 把友好描述存到模块级变量(global 已在函数顶部声明),供 embedding_preflight 读取
-        _last_openai_embed_error = friendly
+        # 401/402/403/404/405 → 配置类冷却;429 → 限流冷却(读 Retry-After);400/413/422 只记不熔断
+        _breaker.note_http(code, body=body, headers=headers, friendly=friendly)
         return None
     except UnsupportedProxy as e:
         # 凭据里的代理这条出站用不了(urllib 不支持 SOCKS):写进 sticky 错误,设置页 / 拆书预检
@@ -313,6 +346,7 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
         return None
     except Exception as e:
         log.warning("[embedding] openai embed failed: %s", e)
+        _breaker.note_exception(e, _host)
         return None
 
 
@@ -345,8 +379,36 @@ def _embed_provider_dispatch(
 ) -> list[list[float]] | None:
     """根据 api_id 分发到对应 provider SDK。不识别 → 降级 vertex + warn。
     user_id 传给 Vertex 路径以走 BYOK SA 优先链。
+
+    这里是所有嵌入出站的唯一收口,熔断也落在这:该 (用户, 供应商, 模型, 地址, key) 在冷却中
+    就直接返回 None(上层退关键词召回),不再发请求。查询路径(RETRIEVAL_QUERY)任何冷却都短路;
+    写库路径只在配置类 / 无凭据冷却时短路,限流和瞬时故障照常真打、由写库循环自己退避。
     """
-    global _last_openai_embed_error
+    bkey = _breaker.key_for(user_id, api_id, model, base_url, api_key)
+    if _breaker.blocked(bkey, batch=(task_type != "RETRIEVAL_QUERY")) is not None:
+        log.debug("[embedding] api_id=%s model=%s 仍在冷却,本次不发请求", api_id, model)
+        return None
+    _breaker.mark_dispatched()
+    with _breaker.attempt() as att:
+        vecs = _embed_provider_dispatch_inner(
+            api_id, model, api_key, texts, base_url=base_url, task_type=task_type, user_id=user_id)
+    if vecs:
+        _breaker.record_success(bkey, user_id=user_id)
+    else:
+        _breaker.record_failure(bkey, att, user_id=user_id, api_id=api_id, model=model, base_url=base_url)
+    return vecs
+
+
+def _embed_provider_dispatch_inner(
+    api_id: str,
+    model: str,
+    api_key: str,
+    texts: list[str],
+    base_url: str = "",
+    task_type: str = "RETRIEVAL_DOCUMENT",
+    user_id: int | None = None,
+) -> list[list[float]] | None:
+    """按 api_id 选通道(熔断判断在外层 _embed_provider_dispatch)。"""
     if api_id in _VERTEX_API_IDS:
         return _embed_via_vertex(model, texts, task_type=task_type, user_id=user_id)
     # 该用户这个 provider 凭据里配的出站代理(本地模式才有值);没配时 **{} 不改变调用形态。
@@ -369,11 +431,11 @@ def _embed_provider_dispatch(
         if not base_url and api_id not in _OPENAI_API_IDS:
             # 空 base_url 在 _embed_via_openai 里等于 api.openai.com。那只对 OpenAI 自己成立;
             # 别家的 key 发过去必然 401,等于把用户的 key 交给了第三方(反馈 #104)。
-            _last_openai_embed_error = (
+            _breaker.note(_breaker.KIND_CONFIG, friendly=(
                 f"找不到向量嵌入供应商「{api_id}」的接口地址,已停止发送请求。"
                 f"请在「设置 → API & 模型」给这个供应商填上接口地址(base_url),"
                 f"或在「设置 → RAG / 向量模型」换一个内置的供应商。"
-            )
+            ))
             log.warning("[embedding] api_id=%r resolved to empty base_url; refusing to send its key to api.openai.com", api_id)
             return None
         return _embed_via_openai(model, api_key, texts, base_url=base_url, **_px)
@@ -398,6 +460,7 @@ def _platform_fallback_config() -> tuple[str, str, str, str]:
 def _embed_with_admin_fallback(
     texts: list[str], user_id: int | None,
     task_type: str = "RETRIEVAL_DOCUMENT",
+    allow_platform_fallback: bool = True,
 ) -> tuple[list[list[float]] | None, str]:
     """task: admin 用户的 embedder 兜底逻辑。
 
@@ -415,10 +478,17 @@ def _embed_with_admin_fallback(
         if vecs:
             return vecs, "user"
 
-    # admin fallback: 即使 user 配了但调用失败,自动切平台兜底
-    if user_id and _is_admin(user_id):
+    # admin fallback: 即使 user 配了但调用失败,自动切平台兜底。
+    # 写库路径(allow_platform_fallback=False)不切:剧本已按用户自己的 (api_id, model) 绑定,
+    # 混进平台模型算的向量会让同一剧本里有两个向量空间(维度同为 768 不报错),召回静默错乱。
+    if allow_platform_fallback and user_id and _is_admin(user_id):
         plat_api, plat_model, plat_key, plat_base = _platform_fallback_config()
-        if plat_key or plat_api in _VERTEX_API_IDS:
+        # 第一步用的已经就是平台配置(admin/vip 没自配时 _resolve_embed_config 直接给平台配置):
+        # 同一把 key、同一个端点刚失败过,别原样再打一次。vertex 除外 —— 它按 user_id 取 SA,
+        # 第一步可能用的是该用户自己的 SA,这里 user_id=None 才是平台 SA。
+        already_tried = (plat_api not in _VERTEX_API_IDS
+                         and (plat_api, plat_model, plat_key, plat_base) == (api_id, model, api_key, base_url))
+        if not already_tried and (plat_key or plat_api in _VERTEX_API_IDS):
             log.info("[embedding-only] privileged user=%s (admin/vip): RAG fallback to platform EMBED_API_KEY (Gemini API,**非** LLM,LLM 严格 BYOK 不会兜底)", user_id)
             vecs = _embed_provider_dispatch(plat_api, plat_model, plat_key, texts, base_url=plat_base, task_type=task_type, user_id=None)
             if vecs:
@@ -426,13 +496,17 @@ def _embed_with_admin_fallback(
     return None, "failed"
 
 
-def _embed_batch(texts: list[str], user_id: int | None = None) -> list[list[float]] | None:
+def _embed_batch(
+    texts: list[str], user_id: int | None = None, *, allow_platform_fallback: bool = True,
+) -> list[list[float]] | None:
     """调 embedding provider,返向量列表。失败返 None。
     user_id 非 None 时走 BYOK 优先链 + admin fallback;None 走系统默认。
+    写进已绑定剧本的向量(_writer / canon)传 allow_platform_fallback=False,见 _embed_with_admin_fallback。
     """
     if not texts:
         return []
-    vecs, _source = _embed_with_admin_fallback(texts, user_id)
+    vecs, _source = _embed_with_admin_fallback(
+        texts, user_id, allow_platform_fallback=allow_platform_fallback)
     return vecs
 
 
@@ -441,11 +515,11 @@ def embedding_preflight(user_id: int | None) -> dict[str, Any]:
 
     扩展逻辑:
     - 普通"没配 Key"走旧逻辑,返 needs_credentials=True 引导去设置。
-    - openai_compat provider 有 Key 但上次实际调用失败(e.g. 405/401/404)时,
-      把 _last_openai_embed_error 里的友好描述带进 hint,让前端能显示人话
-      而不是技术错误码,并附上"去 RAG 设置检查"按钮所需的 settings_hash。
+    - 有 Key 但**本用户、当前这套配置**上次实际调用失败(e.g. 405/401/404/429)时,
+      把友好描述带进 hint,让前端能显示人话而不是技术错误码,并附上"去 RAG 设置检查"
+      按钮所需的 settings_hash。错误按用户隔离(_breaker.last_error_for),换了配置旧错不再显示。
     """
-    api_id, model, api_key, _base_url = _resolve_embed_config(user_id)
+    api_id, model, api_key, base_url = _resolve_embed_config(user_id)
     credential_api_id = "AgentPlatform" if api_id in _VERTEX_API_IDS else api_id
     provider_ok = (
         (_get_vertex_client(user_id=user_id) is not None)
@@ -461,8 +535,10 @@ def embedding_preflight(user_id: int | None) -> dict[str, Any]:
             "model": model,
             "credential_api_id": credential_api_id,
         }
-        if (api_id in _OPENAI_API_IDS or api_key) and _last_openai_embed_error:
-            base["last_error_hint"] = _last_openai_embed_error
+        hint = _breaker.last_error_for(
+            user_id, _breaker.key_for(user_id, api_id, model, base_url, api_key))
+        if hint:
+            base["last_error_hint"] = hint
             base["settings_hash"] = "settings-models"
         return base
     if api_id in _VERTEX_API_IDS:
@@ -501,10 +577,32 @@ def embed_query(
       1. force_api_id + force_model（召回路径：必须与建库时的 (api_id, model) 完全一致）
       2. user_id BYOK 配置（ad-hoc query / admin 工具）
       3. 系统默认 vertex_ai + text-embedding-004
+
+    同一请求(一回合)内,同一用户、同一锁定 embedder、同一文本只真算一次(失败的 None 也记住):
+    一回合的检索会对同一段玩家输入嵌入 4-5 次(新旧两路召回 × chunks/实体/kb_nodes),
+    实际只有两种不同文本。缓存容器由中间件在每个请求开头重置;不在请求里(后台线程、cron)
+    时不缓存,行为不变。
     """
     text = (text or "").strip()
     if not text:
         return None
+    try:
+        from core.request_cache import get_embed_vec_cached
+    except Exception:  # pragma: no cover - core 总在
+        return _embed_query_uncached(text, user_id, force_api_id, force_model)
+    return get_embed_vec_cached(
+        (user_id, force_api_id or "", force_model or "", text),
+        lambda: _embed_query_uncached(text, user_id, force_api_id, force_model),
+    )
+
+
+def _embed_query_uncached(
+    text: str,
+    user_id: int | None,
+    force_api_id: str | None,
+    force_model: str | None,
+) -> str | None:
+    _breaker.reset_dispatched()
     if force_api_id and force_model:
         # 严格锁定建库时的 provider（召回侧强制路径,不走 admin fallback,
         # 因为换 provider 会让向量维度不匹配,反而召回不出来)
@@ -513,19 +611,39 @@ def embed_query(
         # key → 发到旧 provider 端点 → 401/404 → 静默降级 ILIKE。
         api_id, model = force_api_id, force_model
         try:
-            from platform_app.user_credentials import resolve_api_key
+            from platform_app.user_credentials import resolve_api_key, resolved_is_usable
             _cred = resolve_api_key(user_id, force_api_id, env_fallback="")
-            api_key = _cred.get("key", "")
-            base_url = _cred.get("base_url_override", "") or _catalog_embed_base_url(force_api_id)
+            usable = resolved_is_usable(_cred)
+            # 与建库侧 _resolve_embed_config 同一个解析器:同一 (用户, 供应商) 永远同一个主机
+            api_key, base_url = _embed_endpoint_for_cred(force_api_id, _cred)
         except Exception:
-            # 极端情况(catalog 不可用):回退到当前用户 config 的 key/base_url 尽力而为
+            # 极端情况(凭据读取失败):回退到当前用户 config 的 key/base_url 尽力而为
             _, _, api_key, base_url = _resolve_embed_config(user_id)
+            usable = bool(api_key)
+        if not usable and force_api_id not in _VERTEX_API_IDS:
+            # 用户自己没有这家的凭据。admin/vip(及无 user 的系统任务)建库时 _resolve_embed_config
+            # 给的就是平台配置,剧本按平台的 (api_id, model) 绑定 —— 召回也用平台配置,
+            # 否则这批剧本的向量召回恒失败。只在锁定的 (api_id, model) 与平台配置完全一致时用,
+            # 同一个向量空间;普通用户拿不到平台 key。
+            if (not user_id) or _is_admin(user_id):
+                p_api, p_model, p_key, p_base = _platform_fallback_config()
+                if p_key and (p_api, p_model) == (force_api_id, force_model):
+                    api_key, base_url, usable = p_key, p_base, True
+        if not usable and force_api_id not in _VERTEX_API_IDS:
+            # 没有这家供应商的凭据:不发请求。交给 dispatch 的话会降级到 vertex,产出的是
+            # 另一个向量空间的查询向量(维度同为 768 不报错),召回静默错乱。
+            log.debug("[embedding] 剧本锁定的嵌入供应商 %s 当前用户没有可用凭据,跳过向量召回", force_api_id)
+            return None
         vecs = _embed_provider_dispatch(api_id, model, api_key, [text], base_url=base_url, task_type="RETRIEVAL_QUERY", user_id=user_id)
     else:
         # 常规路径:走 admin fallback(user 自配失败时 admin 自动切平台)
         vecs, _ = _embed_with_admin_fallback([text], user_id, task_type="RETRIEVAL_QUERY")
     if not vecs:
-        log.warning("[embedding] embed_query returned no vectors")
+        if _breaker.dispatched():
+            log.warning("[embedding] embed_query returned no vectors")
+        else:
+            # 冷却中短路 / 根本没配嵌入器:没发请求,失败原因在进入冷却时已记过
+            log.debug("[embedding] embed_query: 没有发出请求(冷却中或未配置嵌入器)")
         return None
     vec = vecs[0]
     # pgvector 接受 "[v1,v2,...]" 字符串。单一真源 _vec_literal(模块级,call-time 解析)。
