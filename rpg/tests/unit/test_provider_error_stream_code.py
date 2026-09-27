@@ -93,3 +93,45 @@ def test_real_sdk_stream_error_event_is_retryable():
     assert getattr(ei.value, "status_code", None) is None  # 流内错误没有 HTTP 状态码
     assert _retryable_category(ei.value) == "upstream"
 
+
+# ── 流内错误归 upstream 的行为变化:channel_fallback 开着时会换渠道(审核类不换)──────────
+def _wire_fallback(monkeypatch):
+    import core.channel_fallback as cf
+    import core.feature_flags as ff
+    monkeypatch.setattr(ff, "feature_enabled",
+                        lambda key, uid=None: key == "channel_fallback")
+    monkeypatch.setattr(cf, "resolve_fallback_channel", lambda uid, ex: ("anthropic", "claude"))
+
+
+def _failing(exc):
+    def factory():
+        def g():
+            raise exc
+            yield  # pragma: no cover
+        return g()
+    return factory
+
+
+def test_in_stream_error_switches_channel_when_fallback_enabled(monkeypatch):
+    from agents.gm.stream_retry import stream_with_channel_fallback
+    _wire_fallback(monkeypatch)
+    exc = openai.APIError("上游未知错误", _REQ, body={"message": "上游未知错误", "code": "upstream_error"})
+    out = list(stream_with_channel_fallback(
+        _failing(exc), user_id=1, primary_api_id="relay",
+        make_backup_factory=lambda a, m: (lambda: iter([{"type": "text", "text": "备用"}])),
+        sleep=lambda _s: None,
+    ))
+    assert [e for e in out if e.get("type") == "fallback_notice"][0]["api_id"] == "anthropic"
+    assert {"type": "text", "text": "备用"} in out
+
+
+def test_in_stream_content_policy_error_does_not_switch_channel(monkeypatch):
+    from agents.gm.stream_retry import stream_with_channel_fallback
+    _wire_fallback(monkeypatch)
+    exc = openai.APIError("blocked", _REQ, body={"message": "blocked", "code": "content_policy_violation"})
+    with pytest.raises(openai.APIError):
+        list(stream_with_channel_fallback(
+            _failing(exc), user_id=1, primary_api_id="relay",
+            make_backup_factory=lambda a, m: (lambda: iter([{"type": "text", "text": "备用"}])),
+            sleep=lambda _s: None,
+        ))

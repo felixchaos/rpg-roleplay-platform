@@ -25,20 +25,31 @@ usage 是 {"input_tokens", "output_tokens", "cached_input_tokens",
 from __future__ import annotations
 
 import json
+import urllib.error
 from typing import Any
 
+from agents.provider_errors import attach_http_error_body
 from core.logging import get_logger
 
 log = get_logger(__name__)
 
 
 def _no_redirect_urlopen(req, *, timeout):
-    """SEC(H-4): 已并入 `core.outbound.safe_urlopen` —— 不跟随重定向 + use-time 重解析并把
-    socket pin 到已校验 IP(抗 DNS rebinding)。保留此薄包装仅为兼容既有调用点;新代码
-    直接用 `core.outbound.safe_urlopen`。"""
+    """agents 层 urllib LLM 出站的唯一缝(_harness 两条 OpenAI 兼容路径 / extractor / command_agent)。
+
+    SEC(H-4): 出站走 `core.outbound.safe_urlopen` —— 不跟随重定向 + use-time 重解析并把
+    socket pin 到已校验 IP(抗 DNS rebinding)。
+    失败时把响应体挂到 HTTPError.body 上再抛(attach_http_error_body):urllib 的 HTTPError
+    只带「HTTP Error 410: Gone」,服务商写在响应体里的真实原因(模型下线、未识别参数、
+    上下文超长)不挂上去,provider_errors 就只能看状态码猜。
+    """
     from core.outbound import safe_urlopen
 
-    return safe_urlopen(req, timeout=timeout)
+    try:
+        return safe_urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        attach_http_error_body(exc)
+        raise
 
 
 def call_agent_json(

@@ -355,7 +355,9 @@ def _call_openai_compat_json_mode(
     import urllib.error
     import urllib.request
 
-    from core.outbound import safe_urlopen  # SSRF: 不跟随重定向 + use-time 重解析 pin IP
+    # SSRF(不跟随重定向 + use-time 重解析 pin IP)走 core.outbound.safe_urlopen;经 _harness 那层薄包装,
+    # 失败时响应体会挂到 HTTPError.body 上,provider_errors 才看得到服务商的真实原因(两跳都走它)。
+    from agents._harness import _no_redirect_urlopen
     base_url = cred.get("base_url_override") or _api_base_url(api_id)
     if not base_url:
         raise RuntimeError(f"未知 base_url for {api_id}")
@@ -380,7 +382,7 @@ def _call_openai_compat_json_mode(
         },
     )
     try:
-        with safe_urlopen(req, timeout=timeout_sec) as resp:
+        with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         if not payload.get("choices"):
             raise RuntimeError(f"provider 响应结构异常: {str(payload)[:200]}")
@@ -405,7 +407,7 @@ def _call_openai_compat_json_mode(
             data=body, method="POST",
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {cred['key']}"},
         )
-        with safe_urlopen(req, timeout=timeout_sec) as resp:
+        with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         if not payload.get("choices"):
             raise RuntimeError(f"provider 响应结构异常: {str(payload)[:200]}")

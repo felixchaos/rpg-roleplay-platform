@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agents.provider_errors import provider_detail
 from core.json_parse import parse_llm_json
 from core.llm_backend import (
     detect_default_api as _detect_default_api,
@@ -151,7 +152,8 @@ def parse_set_command(
         # OpenAI 兼容
         return _call_openai_compat_tools(api_id, model, user_prompt, user_id, timeout_sec)
     except Exception as exc:
-        log.warning(f"[command_agent] parse failed: {type(exc).__name__}: {exc}")
+        # provider_detail:urllib HTTPError 挂了响应体后取服务商原话(已脱敏),不再只有「HTTP Error 400」。
+        log.warning(f"[command_agent] parse failed: {type(exc).__name__}: {provider_detail(exc)}")
         return []
 
 
@@ -266,7 +268,9 @@ def _call_openai_compat_tools(
         raise RuntimeError(f"未知 base_url for {api_id}")
     import urllib.request
 
-    from core.outbound import safe_urlopen  # SSRF: 不跟随重定向 + use-time 重解析 pin IP
+    # SSRF(不跟随重定向 + use-time 重解析 pin IP)走 core.outbound.safe_urlopen;经 _harness 那层薄包装,
+    # 失败时响应体挂到 HTTPError.body 上(本路径的错误在上层被吞成 [] 只留日志,日志里也该有原话)。
+    from agents._harness import _no_redirect_urlopen
     system_prompt = (
         _SYSTEM_PROMPT
         + "\n\n## 可用工具表\n"
@@ -288,7 +292,7 @@ def _call_openai_compat_tools(
         data=body,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     )
-    with safe_urlopen(req, timeout=timeout_sec) as resp:
+    with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
         raw = resp.read().decode("utf-8")
     parsed = json.loads(raw)
     if not parsed.get("choices"):

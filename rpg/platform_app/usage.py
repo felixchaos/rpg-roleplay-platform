@@ -401,7 +401,7 @@ def record_provider_failure(
     detail: str,
     scenario: str = "chat",
 ) -> None:
-    """记一条 provider 失败。category 用 classify_provider_error 的 7 类,未知填 'unclassified'。
+    """记一条 provider 失败。category 用 classify_provider_error 的分类名(集合见其 docstring),未知填 'unclassified'。
 
     detail 必须是**已脱敏**的 provider 原话(调用方负责过 redact_secrets),这里只做截断。
     """

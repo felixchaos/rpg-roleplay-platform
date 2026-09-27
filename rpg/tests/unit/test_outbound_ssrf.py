@@ -389,10 +389,19 @@ class ConsolidationSourceGuards(unittest.TestCase):
         "platform_app/knowledge/embedding/_gemini.py",
     )
 
+    # extractor / command_agent 经 _harness._no_redirect_urlopen(它内部 return safe_urlopen,
+    # 见 test_harness_delegates_to_safe_urlopen)出站:同一道 SSRF 闸,另外失败时保留响应体。
+    HARNESS_SEAM_FILES = ("agents/extractor.py", "agents/command_agent.py")
+
     def test_callers_use_safe_urlopen(self):
         for rel in self.PROD_FILES:
             src = _read(rel)
-            self.assertIn("safe_urlopen", src, f"{rel} 应改用 safe_urlopen")
+            if rel in self.HARNESS_SEAM_FILES:
+                self.assertIn("from agents._harness import _no_redirect_urlopen", src,
+                              f"{rel} 应经 _harness._no_redirect_urlopen 出站")
+                self.assertIn("_no_redirect_urlopen(req", src, f"{rel} 应经 _no_redirect_urlopen 出站")
+            else:
+                self.assertIn("safe_urlopen", src, f"{rel} 应改用 safe_urlopen")
             self.assertNotIn(
                 "urllib.request.urlopen(", src,
                 f"{rel} 不得再有裸 urllib.request.urlopen( —— 会绕过 no-redirect/use-time 闸",

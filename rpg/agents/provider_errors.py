@@ -5,10 +5,16 @@ BYOK 场景下「余额耗尽 / key 无效 / 限流」是用户自己能解决�
 routes/game.py 的 SSE 错误面与 console_assistant 的 llm loop 共用此分类。
 
 文案必须客户端安全:固定中文文案,不回显 str(exc)(可能含路径/凭据/SDK 内部细节)。
+需要带「提供商原话」的分支一律走 _provider_detail(按形状脱敏 + 截断)。
+
+urllib 出站(子代理 harness / extractor / command_agent)抛的 HTTPError,str() 只有
+「HTTP Error 410: Gone」,真实原因在响应体里。抛出点用 attach_http_error_body 把响应体
+挂到 exc.body 上(与 openai SDK 的 .body 同形),分类器才看得见。
 """
 
 from __future__ import annotations
 
+import json as _json
 import re as _re
 
 # 余额/计费配额耗尽:充值才能解决。注意 OpenAI 的 insufficient_quota 走 HTTP 429,
@@ -31,11 +37,16 @@ _AUTH_MARKERS = (
 
 # 403 的文本特征单独一组:状态码被 SDK 吞掉时也要走 403 文案,别落进「key 无效/过期」的断言。
 # (原来这三条混在 _AUTH_MARKERS 里,任何 403 都会被说成 key 失效 —— 见下方 403 分支的注释。)
-_FORBIDDEN_MARKERS = (
+# 前两条明写了 403,中转站把上游 403 包成 400/500 转发时也可信,不看状态码;
+# 裸 "forbidden" 只在状态码未知或 400 时生效(400 内容策略拒绝常写 forbidden;404/410 等
+# 有自己的结论,错误页正文里顺带出现的 forbidden 不算),且先剔掉参数校验的错误类型名 extra_forbidden
+# (vLLM / pydantic 对多余参数回 400 + "extra_forbidden",以前被说成「被拒绝(HTTP 403)」)。
+_FORBIDDEN_STRONG_MARKERS = (
     "403 forbidden",                 # 中转站/聚合站对无权限模型常返 403
     "http error 403",                # urllib HTTPError 文案
-    "forbidden",                     # 通用 403 reason phrase
 )
+_FORBIDDEN_WEAK_MARKER = "forbidden"  # 通用 403 reason phrase
+_FORBIDDEN_FALSE_FRIENDS = ("extra_forbidden",)
 
 # 限流/速率配额:稍后重试可恢复。Google/Vertex 的 RESOURCE_EXHAUSTED(429)归这类
 # (google.genai 的 ClientError 只有 .code 没有 .status_code,必须靠 message 兜住)。
@@ -68,6 +79,22 @@ _MODEL_MARKERS = (
     "model_not_found",                   # OpenAI error code
     "not found for account",             # 部分中转站对无权限/不存在模型的措辞
     "does not exist",                    # 通用 "model xxx does not exist"
+    "model_decommissioned",              # Groq 等对已下线模型的 error code
+    "模型不存在",                         # 国内中转站
+)
+
+# 模型已被服务商下线 / 停用 / 到期(生产实况:OpenRouter 410
+# "The model 'openai/gpt-oss-120b' has reached its end of life …")。和 404 一样换模型才能解决,
+# 归同一个 model_unavailable,不另开平行类别。HTTP 410 直接命中;状态码丢了时靠措辞兜:
+# 措辞必须以「模型」做主语、紧跟下线动词,不能裸认 "deprecated / no longer supported /
+# end of life" —— 参数级报错("'functions' parameter is no longer supported")和回显的
+# 玩家正文("the knight reached the end of life")里都有这些词,宁漏勿误。
+_MODEL_GONE_RE = _re.compile(
+    r"\bmodels?\b\s*[`'\"]?[\w./:@\-]{0,100}[`'\"]?\s+(?:has\s+|is\s+)?(?:been\s+)?"
+    r"(?:reached\s+(?:its\s+)?end[\s\-]of[\s\-]life|deprecated|decommissioned|retired|shut\s+down"
+    r"|no\s+longer\s+(?:available|served|supported))"
+    r"|模型[^\n,，。;；]{0,60}?(?:已下线|已停用|已弃用|已停止服务|已退役|不再提供服务)",
+    _re.IGNORECASE,
 )
 
 # 请求所需能力(工具调用/系统指令等)该模型不支持:换模型才能解决,重试无用。目前只见
@@ -75,6 +102,41 @@ _MODEL_MARKERS = (
 # "Function calling is not enabled")。
 _FEATURE_MARKERS = (
     "is not enabled for",
+)
+
+# 请求里有对面不认识 / 不支持的参数:多见于中转站或兼容接口不接受平台发的某个调参
+# (思考开关、stream_options、采样参数),也有 OpenAI 官方对推理模型拒 max_tokens 的情况。
+# 重试不会好,只能换模型/供应商或让中转站维护者放行。只在 4xx 或无状态码时认。
+_UNKNOWN_PARAM_MARKERS = (
+    "未识别参数",                         # 生产实况:"code:400 请求失败:请求中含有未识别参数"
+    "无法识别的参数",
+    "不支持的参数",
+    "未知参数",
+    "unrecognized request argument",     # OpenAI "Unrecognized request argument supplied: x"
+    "unrecognized parameter",
+    "unrecognized argument",
+    "unrecognized field",
+    "unknown parameter",                 # OpenAI "Unknown parameter: 'x'."
+    "unknown_parameter",
+    "unsupported parameter",             # OpenAI "Unsupported parameter: 'max_tokens' ..."
+    "unsupported_parameter",
+    "unsupported value",                 # OpenAI 推理模型 "Unsupported value: 'temperature' ..."
+    "unsupported_value",
+    "extra inputs are not permitted",    # pydantic(vLLM / Anthropic 兼容层)
+    "extra_forbidden",
+)
+
+# 流内错误里的内容审核类:别当「供应商临时故障」去重试(白白重发整段提示词),也别计入
+# 渠道健康失败(model_probe 按 api_id 跨用户聚合,一个人的审核拒绝会把公共渠道标成故障)。
+_CONTENT_POLICY_MARKERS = (
+    "content_policy",
+    "content_filter",
+    "content management policy",
+    "safety system",
+    "moderation",
+    "敏感",
+    "违规",
+    "审核",
 )
 
 
@@ -146,7 +208,15 @@ def _is_connection_failure(exc: Exception) -> bool:
     先按异常类的整条 MRO 判类名(子类如 APITimeoutError / ConnectTimeout 一并命中),
     再按措辞兜底。**调用方必须先排完所有带 HTTP 状态码的分支**:504 gateway timeout
     这类带 status 的错误措辞里也有 "timeout",顺序反了会被这里吞掉。
+
+    带 4xx/5xx 状态码 = 对面已经回过话,一定不是连接失败。urllib 的 HTTPError 是 URLError
+    的子类,按类名会命中下面的 "URLError",以前没被状态码分支接住的 400/405/410/413/422
+    全被说成「连不上接口地址」。例外两类仍归连接层:30x(safe_urlopen 出于安全不跟随重定向,
+    多半是 base_url 协议或路径写错)和 408(请求超时)。
     """
+    st = _http_status(exc)
+    if st is not None and st >= 400 and st != 408:
+        return False
     if _outbound_blocked_in_chain(exc) is not None:
         return True
     for klass in type(exc).__mro__:
@@ -199,11 +269,31 @@ def redact_secrets(text: str, *, limit: int = 400) -> str:
     return s[:limit] + ("…" if len(s) > limit else "")
 
 
+def _body_text(exc: Exception, *, limit: int = 4000) -> str:
+    """exc.body(openai SDK 的 dict / attach_http_error_body 挂上的 dict 或文本)转成文本。"""
+    body = getattr(exc, "body", None)
+    if body is None:
+        return ""
+    if isinstance(body, (bytes, bytearray)):
+        text = bytes(body[:limit]).decode("utf-8", "replace")
+    elif isinstance(body, str):
+        text = body
+    else:
+        try:
+            text = _json.dumps(body, ensure_ascii=False, default=str)
+        except Exception:
+            text = str(body)
+    return text[:limit]
+
+
 def _provider_detail(exc: Exception) -> str:
     """取 provider 返回的可读原因(已脱敏截断)。
 
     SDK 异常的 str() 通常已含响应体;openai SDK 另有 .body(dict)。两者都试,优先 .body
     里的 message/error 字段——它比 str(exc) 干净(不带 URL/状态行)。
+    .body 是纯文本(中转站常见,如「code:400 请求失败:请求中含有未识别参数」)时原样取;
+    是没有这些字段的 dict/list(如 pydantic 的 {"detail": [...]})时取整段 JSON ——
+    urllib HTTPError 的 str() 只有「HTTP Error 400: Bad Request」,退回它等于把原因丢了。
     """
     body = getattr(exc, "body", None)
     if isinstance(body, dict):
@@ -215,16 +305,101 @@ def _provider_detail(exc: Exception) -> str:
                 vv = v.get("message") or v.get("error")
                 if isinstance(vv, str) and vv.strip():
                     return redact_secrets(vv, limit=200)
+    if isinstance(body, str) and body.strip():
+        return redact_secrets(body, limit=200)
+    if isinstance(body, (dict, list)) and body:
+        return redact_secrets(_body_text(exc), limit=200)
     return redact_secrets(exc, limit=200)
+
+
+def provider_detail(exc: Exception) -> str:
+    """公开入口:provider 原话(已脱敏、截断到 200 字)。给导入阶段条目等非对话出错面用。"""
+    return _provider_detail(exc)
+
+
+def http_status(exc: Exception) -> int | None:
+    """公开入口:异常上的 HTTP 状态码(取法与分类器一致)。"""
+    return _http_status(exc)
+
+
+_HTML_TITLE = _re.compile(r"<title[^>]*>(.*?)</title>", _re.IGNORECASE | _re.DOTALL)
+_HTML_TAG = _re.compile(r"<[^>]+>")
+
+
+def attach_http_error_body(exc: BaseException, *, limit: int = 2000) -> None:
+    """把 urllib HTTPError 的响应体读出来挂到 exc.body(幂等;读不到就算了,绝不抛)。
+
+    urllib 的 HTTPError 不读响应体,str() 只有「HTTP Error 410: Gone」,服务商给的真实原因
+    (模型下线说明、未识别参数、上下文超长)对分类器全不可见。挂上后与 openai SDK 的 .body
+    同形:JSON 响应取 error 子对象(没有就整个对象),非 JSON 取文本(HTML 错误页只取 <title>
+    或去标签后的文字)。只读前 limit 字节。
+
+    会消费 HTTPError 的响应流 —— 只在「抛出后没人再 exc.read()」的出站点用(子代理 harness /
+    extractor / command_agent);embedding / gemini 路径自己读 body,别接。
+    """
+    if getattr(exc, "body", None) is not None:
+        return
+    read = getattr(exc, "read", None)
+    if not callable(read):
+        return
+    try:
+        raw = read(limit)
+    except Exception:
+        return
+    if not raw:
+        return
+    if isinstance(raw, (bytes, bytearray)):
+        text = bytes(raw).decode("utf-8", "replace")
+    else:
+        text = str(raw)
+    text = text.strip()
+    if not text:
+        return
+    body: object = text
+    if text[:1] in "{[":
+        try:
+            parsed = _json.loads(text)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict):
+            inner = parsed.get("error")
+            body = inner if isinstance(inner, dict) else parsed
+        elif isinstance(parsed, list):
+            body = parsed
+    elif text[:1] == "<":
+        m = _HTML_TITLE.search(text)
+        plain = m.group(1) if m else _HTML_TAG.sub(" ", text)
+        body = " ".join(plain.split())[:300] or text[:300]
+    try:
+        exc.body = body  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
+def _is_openai_stream_error(exc: Exception, status: int | None) -> bool:
+    """HTTP 200 的流里出现的错误事件。
+
+    openai SDK 在流内遇到 {"error": ...} 时抛**不带状态码**的裸 APIError(_streaming.py 是
+    SDK 里唯一抛裸 APIError 的地方);anthropic 抛 status_code=200 的 APIStatusError
+    (如 overloaded_error)。google-genai 也有同名的 errors.APIError,按模块排除。
+    """
+    if status == 200:
+        return True
+    if status is not None:
+        return False
+    t = type(exc)
+    return t.__name__ == "APIError" and (t.__module__ or "").startswith("openai")
 
 
 def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
     """已知提供商错误 → (category, 客户端安全文案);未知返回 None(调用方走各自兜底)。
 
     category ∈ {"balance", "auth", "ratelimit", "context", "upstream", "model_unavailable",
-    "feature_unsupported"}。文案不含 error_id,调用方自行追加。
+    "feature_unsupported", "bad_request", "network"}。文案不含 error_id,调用方自行追加。
+    只有 upstream / ratelimit 可重试(stream_retry)、计入渠道健康(_note_channel_health_failure)。
     """
-    raw_lower = str(exc).strip().lower()
+    body_text = _body_text(exc)
+    raw_lower = (str(exc).strip() + (" " + body_text if body_text else "")).lower()
     status = _http_status(exc)
     # 凭据缺失放最前:它是构造期异常,不带 status、也不带 provider 响应体,与下面任何一类
     # 都不重叠,且"请重试"对它绝对无效。
@@ -244,9 +419,15 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
     # 生产日志里 200/403 交替(24h 内 21 次 200、12 次 403)—— 断言「key 无效/已过期」把用户
     # 支去查一个根本没坏的东西。故 403 单独成文案:说清是「被拒绝」,并把 provider 自己的原话
     # 带给用户(那是唯一可行动的信息);401 才保留「key 无效/过期」的断言。
-    if status == 403 or any(m in raw_lower for m in _FORBIDDEN_MARKERS):
-        return ("auth", "当前模型的请求被提供商拒绝(HTTP 403)。"
-                        "403 通常**不是** key 失效(多数提供商 key 无效返 401),"
+    _fb_scan = raw_lower
+    for _ff in _FORBIDDEN_FALSE_FRIENDS:
+        _fb_scan = _fb_scan.replace(_ff, "")
+    _strong_403 = any(m in _fb_scan for m in _FORBIDDEN_STRONG_MARKERS)
+    _weak_403 = status in (None, 400) and _FORBIDDEN_WEAK_MARKER in _fb_scan
+    if status == 403 or _strong_403 or _weak_403:
+        _shown = 403 if (status in (None, 403) or _strong_403) else status
+        return ("auth", f"当前模型的请求被提供商拒绝(HTTP {_shown})。"
+                        "这通常不是 key 失效(多数提供商 key 无效返 401),"
                         "更常见的是该 key/套餐无权访问此模型、或该请求内容被提供商策略拦下。"
                         f"提供商原话:{_provider_detail(exc) or '(未提供)'} "
                         "可先换一个模型试;若同一 key 在别处能用,多半是这个模型或这段内容的问题。")
@@ -259,11 +440,16 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
                 "当前模型请求过于频繁（提供商限流）。"
                 "请稍候片刻再重试，或切换到其他模型。")
     # 上下文超长放在限流之后:它是 400 + 特征短语,与上面三类(402/401/429)不重叠。
-    if any(m in raw_lower for m in _CONTEXT_MARKERS):
+    # 413 Payload Too Large 本质也是这一回合塞给模型的东西太大。
+    if status == 413 or any(m in raw_lower for m in _CONTEXT_MARKERS):
         return ("context",
                 "本回合的剧情上下文（历史 + 世界书 + 设定）超过了所选模型的上下文长度上限，"
                 "重试也无法恢复。请到「设置 → 模型 / API 设置」换用上下文窗口更大的模型"
                 "（例如百万级上下文的 Gemini 2.5 Flash / Pro 等），或精简世界书 / 历史注入后再试。")
+    # 模型不存在(404)/ 已下线(410):状态码本身就是结论,放在网关措辞兜底之前 ——
+    # 挂 Cloudflare 的服务商,4xx 错误页正文里也带 "cloudflare"。
+    if status in (404, 410):
+        return ("model_unavailable", _MODEL_UNAVAILABLE_MSG)
     # 提供商服务器侧 5xx / 网关错误(502/503/504/520-524,含 Cloudflare origin 故障):供应商 / 中转站
     # 过载或宕机,与请求内容、平台、存档都无关,是对面服务器暂时没响应。放最后:前面 4xx 已排除。
     # 双判:HTTP 5xx 状态,或 message 命中网关特征(状态码被 SDK 吞掉时兜住)。
@@ -274,19 +460,37 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
         return ("upstream",
                 f"你的模型服务暂时不可用（服务器返回 {code} 网关错误，多为供应商 / 中转站过载或宕机），"
                 "不是平台或存档的问题。请稍等片刻重试，或到「设置 → 模型 / API 设置」换用其他模型 / 供应商。")
-    # 模型在该服务商/账户下不可用:404,或中转站对未知模型名的特征短语。重试无法恢复。
-    if status == 404 or any(m in raw_lower for m in _MODEL_MARKERS):
-        return ("model_unavailable",
-                "当前模型在该服务商/账户下不可用，重试无法恢复。"
-                "请到「设置 → API 设置」切换其他模型，或联系你的 API 提供商确认模型名。")
     # 该模型不支持本次请求所需的功能(工具调用/系统指令等):400 + 特征短语。重试无法恢复。
     if status == 400 and any(m in raw_lower for m in _FEATURE_MARKERS):
         return ("feature_unsupported",
                 "该模型不支持本次请求所需的功能(如工具调用/系统指令)，重试无法恢复。"
                 "请切换到支持完整功能的模型。")
+    # 请求里有对面不认识/不支持的参数(中转站最常见)。排在模型措辞之前:这类报错里偶尔也会出现
+    # "does not exist"(指参数不存在),不能被说成模型不可用。
+    if (status is None or 400 <= status < 500) and any(m in raw_lower for m in _UNKNOWN_PARAM_MARKERS):
+        return ("bad_request",
+                "模型服务拒绝了这次请求:请求里有它不认识或不支持的参数,重试无法恢复。"
+                "多半是模型服务或中转站不接受平台发送的某个参数(比如思考开关、采样参数、工具调用)。"
+                "请先换一个模型或供应商;如果用的是中转站,可以把下面这句原话转给它的维护者。"
+                f"提供商原话:{_provider_detail(exc) or '(未提供)'}")
+    # 状态码被 SDK 吞掉时,按措辞认「模型不存在 / 已下线」。
+    if _MODEL_GONE_RE.search(raw_lower) or any(m in raw_lower for m in _MODEL_MARKERS):
+        return ("model_unavailable", _MODEL_UNAVAILABLE_MSG)
+    # 流内错误(HTTP 200 的流里来了 error 事件):多为供应商/中转站在生成中途出错,归 upstream,
+    # 首 token 前自动重试、计入渠道健康。内容审核类除外(重试无用,也不该拖累公共渠道的健康标记)。
+    if _is_openai_stream_error(exc, status) and not any(m in raw_lower for m in _CONTENT_POLICY_MARKERS):
+        return ("upstream",
+                "模型服务在生成过程中返回了错误,多为供应商或中转站临时故障,不是平台或存档的问题。"
+                f"提供商原话:{_provider_detail(exc) or '(未提供)'} "
+                "请稍等片刻重试,或到「设置 → API 设置」换用其他模型或供应商。")
     # 连接层失败放最后:它没有 HTTP 状态码,必须等上面所有带 status 的分支排完
     # (504 gateway timeout 的措辞里也有 "timeout",顺序反了会被误吞成"连不上")。
     if _is_connection_failure(exc):
+        if status is not None and 300 <= status < 400:
+            return ("network",
+                    f"接口地址返回了重定向(HTTP {status}),平台出于安全不跟随重定向。"
+                    "请到「设置 → API 设置」检查该供应商的接口地址(base_url):"
+                    "协议是 http 还是 https、路径是否少了 /v1。")
         _blocked = _outbound_blocked_in_chain(exc)
         _low = redact_secrets(_blocked if _blocked is not None else exc, limit=120)
         return ("network",
@@ -296,3 +500,26 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
                 "③ 网络或代理能否访问该地址。"
                 f"底层报错:{_low or '(无)'}")
     return None
+
+
+_MODEL_UNAVAILABLE_MSG = (
+    "当前模型不可用:已被服务商下线或不存在(也可能是这个账户无权使用它),重试无法恢复。"
+    "请到「设置 → API 设置」换一个模型;如果确认模型名没写错,可以向 API 提供商确认。"
+)
+
+
+def provider_error_summary(exc: Exception) -> str:
+    """给「不在对话流里」的出错面(导入阶段条目、job.error)用的一句话原因。
+
+    已分类 → 分类文案;未分类但对面回过话(有状态码或响应体)→ 类型 + 提供商原话
+    (urllib HTTPError 挂了 body 后,原话比「HTTP Error 422」有用得多);
+    其它 → 类型 + 脱敏截断的异常文本。
+    """
+    known = classify_provider_error(exc)
+    if known:
+        return known[1]
+    name = type(exc).__name__
+    if _http_status(exc) is not None or getattr(exc, "body", None) is not None:
+        return f"{name}: {_provider_detail(exc)}"
+    detail = redact_secrets(exc, limit=160)
+    return f"{name}: {detail}" if detail else name
