@@ -75,13 +75,22 @@ _CONTEXT_MARKERS = (
 
 # 模型在该账户/服务商下不存在或不可用:换模型才能解决,重试无用。404 或特征短语(中转站
 # 对未知模型名常返 400 而非 404,靠短语兜住)。
+# 以前这里还有裸 "does not exist":psycopg 的「relation / column "x" does not exist」也会命中,
+# 导入阶段写库失败被说成「模型不可用」并让人物卡阶段提前停。改由 _MODEL_MISSING_RE 按「模型做主语」认。
 _MODEL_MARKERS = (
     "model_not_found",                   # OpenAI error code
     "not found for account",             # 部分中转站对无权限/不存在模型的措辞
-    "does not exist",                    # 通用 "model xxx does not exist"
     "model_decommissioned",              # Groq 等对已下线模型的 error code
     "模型不存在",                         # 国内中转站
 )
+
+# 模型标识:可带引号,只收 ASCII 字符(\w 在 Python 里会吃中文,「该模型的参数已弃用」会被拼成
+# 「模型 + 标识"的参数" + 已弃用」)。model 后面紧跟收尾引号的是别人引号里的名字(psycopg 的
+# column "model" does not exist),不算主语。前面有引号不能排除:JSON 的 "message":"model x …"
+# 里 model 正好在引号后面。
+_MODEL_ID = r"[`'\"「『“]?[a-z0-9_./:@\-]{0,100}[`'\"」』”]?"
+_MODEL_WORD = r"\bmodels?\b(?![`'\"」』”])"
+_MODEL_HEAD = _MODEL_WORD + r":?\s*" + _MODEL_ID
 
 # 模型已被服务商下线 / 停用 / 到期(生产实况:OpenRouter 410
 # "The model 'openai/gpt-oss-120b' has reached its end of life …")。和 404 一样换模型才能解决,
@@ -89,13 +98,40 @@ _MODEL_MARKERS = (
 # 措辞必须以「模型」做主语、紧跟下线动词,不能裸认 "deprecated / no longer supported /
 # end of life" —— 参数级报错("'functions' parameter is no longer supported")和回显的
 # 玩家正文("the knight reached the end of life")里都有这些词,宁漏勿误。
+# 「模型」只是介词宾语的也不算("The 'max_tokens' parameter of this model is deprecated"
+# 说的是参数),见 _model_is_subject。
 _MODEL_GONE_RE = _re.compile(
-    r"\bmodels?\b\s*[`'\"]?[\w./:@\-]{0,100}[`'\"]?\s+(?:has\s+|is\s+)?(?:been\s+)?"
+    _MODEL_HEAD + r"\s+(?:has\s+|is\s+)?(?:been\s+)?"
     r"(?:reached\s+(?:its\s+)?end[\s\-]of[\s\-]life|deprecated|decommissioned|retired|shut\s+down"
     r"|no\s+longer\s+(?:available|served|supported))"
-    r"|模型[^\n,，。;；]{0,60}?(?:已下线|已停用|已弃用|已停止服务|已退役|不再提供服务)",
+    r"|模型\s*" + _MODEL_ID + r"\s*(?:已经|已)被?(?:下线|停用|弃用|停止服务|退役)"
+    r"|模型\s*" + _MODEL_ID + r"\s*不再提供服务",
     _re.IGNORECASE,
 )
+
+# 模型不存在(状态码丢了时):"The model `gpt-9` does not exist" / DeepSeek 400 "Model Not Exist"。
+_MODEL_MISSING_RE = _re.compile(
+    _MODEL_HEAD + r"\s+(?:does\s+not|doesn't)\s+exist"
+    r"|" + _MODEL_WORD + r"\s+not\s+exists?\b",
+    _re.IGNORECASE,
+)
+
+# 「模型」前面紧挨介词(of / for / with this model …;对该模型…)= 它是宾语,主语是别的东西。
+_PREP_BEFORE_MODEL = _re.compile(
+    r"\b(?:of|for|with|in|on|by|to|from)\s+(?:(?:this|the|that|these|those|your|a|an|each|any)\s+)?$"
+    r"|(?:对|对于|针对|用于|在)(?:此|该|这个|本|当前)?$",
+    _re.IGNORECASE,
+)
+
+
+def _model_is_subject(rx: _re.Pattern, text: str) -> bool:
+    """rx 在 text 里有没有一处命中是以「模型」做主语的(排除介词宾语)。"""
+    for m in rx.finditer(text):
+        if _PREP_BEFORE_MODEL.search(text[max(0, m.start() - 24):m.start()]):
+            continue
+        return True
+    return False
+
 
 # 请求所需能力(工具调用/系统指令等)该模型不支持:换模型才能解决,重试无用。目前只见
 # Gemini 的 400 + "is not enabled for"(如 "Developer instruction is not enabled" /
@@ -134,6 +170,7 @@ _CONTENT_POLICY_MARKERS = (
     "content management policy",
     "safety system",
     "moderation",
+    "content exists risk",               # DeepSeek 风控
     "敏感",
     "违规",
     "审核",
@@ -185,12 +222,15 @@ _CONNECTION_MARKERS = (
 
 
 def _outbound_blocked_in_chain(exc: BaseException) -> BaseException | None:
-    """异常链(自身 / __cause__ / __context__)里有没有 core.outbound.OutboundBlocked。
+    """异常自身或显式 __cause__ 链上有没有 core.outbound.OutboundBlocked。
 
     服务器模式下出站 SSRF 闸拒绝(目标解析失败、解析到内网/保留地址)时:httpx 线经
     OutboundBlockedTransportError 被 SDK 包成 APIConnectionError("Connection error."),
-    真正原因挂在 __cause__ 上;urllib 线(子代理 harness)则直接抛裸 OutboundBlocked。
-    两条线都按类名找,不 import core.outbound(本模块保持零依赖)。
+    openai / anthropic 都是 `raise ... from err`,真正原因挂在 __cause__ 上;urllib 线
+    (子代理 harness)则直接抛裸 OutboundBlocked。两条线都按类名找,不 import core.outbound
+    (本模块保持零依赖)。
+    不走 __context__:那是「处理 OutboundBlocked 时又出了别的错」的隐式链,顺着它找会把
+    无关异常说成「连不上接口地址」、还把闸门原因当成底层报错显示出去。
     """
     seen: set[int] = set()
     cur: BaseException | None = exc
@@ -198,7 +238,7 @@ def _outbound_blocked_in_chain(exc: BaseException) -> BaseException | None:
         seen.add(id(cur))
         if any(k.__name__ == "OutboundBlocked" for k in type(cur).__mro__):
             return cur
-        cur = cur.__cause__ or cur.__context__
+        cur = cur.__cause__
     return None
 
 
@@ -212,7 +252,8 @@ def _is_connection_failure(exc: Exception) -> bool:
     带 4xx/5xx 状态码 = 对面已经回过话,一定不是连接失败。urllib 的 HTTPError 是 URLError
     的子类,按类名会命中下面的 "URLError",以前没被状态码分支接住的 400/405/410/413/422
     全被说成「连不上接口地址」。例外两类仍归连接层:30x(safe_urlopen 出于安全不跟随重定向,
-    多半是 base_url 协议或路径写错)和 408(请求超时)。
+    多半是 base_url 协议或路径写错;classify_provider_error 在前面按状态码先给了专门文案)
+    和 408(请求超时)。
     """
     st = _http_status(exc)
     if st is not None and st >= 400 and st != 408:
@@ -446,10 +487,20 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
                 "本回合的剧情上下文（历史 + 世界书 + 设定）超过了所选模型的上下文长度上限，"
                 "重试也无法恢复。请到「设置 → 模型 / API 设置」换用上下文窗口更大的模型"
                 "（例如百万级上下文的 Gemini 2.5 Flash / Pro 等），或精简世界书 / 历史注入后再试。")
+    # 30x:urllib 线(safe_urlopen 出于安全不跟随重定向)抛 HTTPError,SDK 线是 APIStatusError
+    # (如 http 被重定向到 https 的 307)。按状态码统一判,不分异常类型 —— 以前只有 urllib 那条
+    # 经连接层分支拿到这句,SDK 的 307 落空成「请重试」。多半是 base_url 协议或路径写错。
+    if status is not None and 300 <= status < 400:
+        return ("network",
+                f"接口地址返回了重定向(HTTP {status}),平台出于安全不跟随重定向。"
+                "请到「设置 → API 设置」检查该供应商的接口地址(base_url):"
+                "协议是 http 还是 https、路径是否少了 /v1。")
     # 模型不存在(404)/ 已下线(410):状态码本身就是结论,放在网关措辞兜底之前 ——
     # 挂 Cloudflare 的服务商,4xx 错误页正文里也带 "cloudflare"。
+    # 404 也可能是路由不存在(base_url 少了 /v1),多给一句怎么分辨。
     if status in (404, 410):
-        return ("model_unavailable", _MODEL_UNAVAILABLE_MSG)
+        return ("model_unavailable",
+                _MODEL_UNAVAILABLE_MSG + (_ROUTE_404_HINT if status == 404 else ""))
     # 提供商服务器侧 5xx / 网关错误(502/503/504/520-524,含 Cloudflare origin 故障):供应商 / 中转站
     # 过载或宕机,与请求内容、平台、存档都无关,是对面服务器暂时没响应。放最后:前面 4xx 已排除。
     # 双判:HTTP 5xx 状态,或 message 命中网关特征(状态码被 SDK 吞掉时兜住)。
@@ -474,7 +525,8 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
                 "请先换一个模型或供应商;如果用的是中转站,可以把下面这句原话转给它的维护者。"
                 f"提供商原话:{_provider_detail(exc) or '(未提供)'}")
     # 状态码被 SDK 吞掉时,按措辞认「模型不存在 / 已下线」。
-    if _MODEL_GONE_RE.search(raw_lower) or any(m in raw_lower for m in _MODEL_MARKERS):
+    if (_model_is_subject(_MODEL_GONE_RE, raw_lower) or _model_is_subject(_MODEL_MISSING_RE, raw_lower)
+            or any(m in raw_lower for m in _MODEL_MARKERS)):
         return ("model_unavailable", _MODEL_UNAVAILABLE_MSG)
     # 流内错误(HTTP 200 的流里来了 error 事件):多为供应商/中转站在生成中途出错,归 upstream,
     # 首 token 前自动重试、计入渠道健康。内容审核类除外(重试无用,也不该拖累公共渠道的健康标记)。
@@ -486,11 +538,6 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
     # 连接层失败放最后:它没有 HTTP 状态码,必须等上面所有带 status 的分支排完
     # (504 gateway timeout 的措辞里也有 "timeout",顺序反了会被误吞成"连不上")。
     if _is_connection_failure(exc):
-        if status is not None and 300 <= status < 400:
-            return ("network",
-                    f"接口地址返回了重定向(HTTP {status}),平台出于安全不跟随重定向。"
-                    "请到「设置 → API 设置」检查该供应商的接口地址(base_url):"
-                    "协议是 http 还是 https、路径是否少了 /v1。")
         _blocked = _outbound_blocked_in_chain(exc)
         _low = redact_secrets(_blocked if _blocked is not None else exc, limit=120)
         return ("network",
@@ -506,6 +553,7 @@ _MODEL_UNAVAILABLE_MSG = (
     "当前模型不可用:已被服务商下线或不存在(也可能是这个账户无权使用它),重试无法恢复。"
     "请到「设置 → API 设置」换一个模型;如果确认模型名没写错,可以向 API 提供商确认。"
 )
+_ROUTE_404_HINT = "如果换哪个模型都报这个错,多半是接口地址(base_url)不对,比如少了 /v1。"
 
 
 def provider_error_summary(exc: Exception) -> str:

@@ -310,3 +310,68 @@ def test_http_status_accepts_three_digit_string_code_only():
         e = _E("x")
         e.code = code
         assert pe._http_status(e) == expect, code
+
+
+# ── 审查返修:「模型」只是宾语 / 别人引号里的 model / 本地异常,都不算模型下线或不存在 ─────
+@pytest.mark.parametrize("status,message", [
+    (400, "The 'max_tokens' parameter of this model is deprecated, use 'max_completion_tokens'."),
+    (400, "Parameter 'logprobs' for this model is no longer supported."),
+    (None, "该模型的 max_tokens 参数已弃用,请改用 max_completion_tokens"),
+    (None, "此参数对该模型已弃用"),
+])
+def test_model_as_object_not_subject_is_not_model_gone(status, message):
+    exc = _openai_status_error(status, {"error": {"message": message}}) if status else RuntimeError(message)
+    assert _cat(exc) != "model_unavailable"
+
+
+@pytest.mark.parametrize("message", [
+    'relation "kb_canon_entities" does not exist',
+    'column "model" does not exist',
+    'function jsonb_path_exists(text) does not exist',
+])
+def test_database_does_not_exist_is_not_model_unavailable(message):
+    assert _cat(RuntimeError(message)) != "model_unavailable"
+
+
+@pytest.mark.parametrize("message", [
+    "The model `gpt-9` does not exist or you do not have access to it.",
+    "model 'claude-x' does not exist",
+    "Model Not Exist",  # DeepSeek 400
+])
+def test_model_missing_wordings_are_model_unavailable(message):
+    assert _cat(RuntimeError(message)) == "model_unavailable"
+    assert _cat(_openai_status_error(400, {"error": {"message": message}})) == "model_unavailable"
+
+
+def test_404_hints_base_url_but_410_does_not():
+    _, msg404 = classify_provider_error(_openai_status_error(404, {"error": {"message": "Not Found"}}))
+    _, msg410 = classify_provider_error(_openai_status_error(410, {"error": {"message": _EOL}}))
+    assert "/v1" in msg404
+    assert "/v1" not in msg410
+
+
+def test_sdk_redirect_status_gets_redirect_hint():
+    """openai SDK 的 307(http 被重定向到 https)以前落空成「请重试」;按状态码统一给 base_url 提示。"""
+    cat, msg = classify_provider_error(_openai_status_error(307, "Temporary Redirect"))
+    assert cat == "network"
+    assert "重定向" in msg and "base_url" in msg
+
+
+def test_unrelated_error_raised_while_handling_outbound_blocked_is_not_network():
+    """只认显式 __cause__:except OutboundBlocked 里又抛的无关异常(隐式 __context__)别说成连不上。"""
+    from core.outbound import OutboundBlocked
+    try:
+        try:
+            raise OutboundBlocked("出站目标解析到私有/本地/保留地址,已拒绝:x → 10.0.0.2")
+        except OutboundBlocked:
+            raise ValueError("写日志时出错")  # noqa: B904
+    except ValueError as exc:
+        known = classify_provider_error(exc)
+    assert known is None or (known[0] != "network" and "保留地址" not in known[1])
+
+
+def test_in_stream_deepseek_risk_control_is_not_retried():
+    from agents.gm.stream_retry import _retryable_category
+    exc = openai.APIError("Content Exists Risk", _REQ, body={"message": "Content Exists Risk"})
+    assert _cat(exc) != "upstream"
+    assert _retryable_category(exc) is None
