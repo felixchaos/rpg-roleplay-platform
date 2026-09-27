@@ -11,6 +11,10 @@ test_outbound_local_proxy.py
 3. 无论显式代理还是环境代理,本机 / 局域网目标一律直连 —— 本机 Ollama 绝不被送进代理
    (httpx 的 NO_PROXY 不认网段,也不认 macOS / Windows 的系统例外,所以要我们自己兜)。
 4. 服务器模式行为不变:挂 SSRF 守卫 transport,不读环境代理。
+5. 环境 / 系统代理里有 httpx 用不了的条目(Ubuntu/GNOME 导出的 all_proxy=socks://、Windows
+   注册表只配 SOCKS 时映射出的 socks4://、端口写坏的地址)时,只跳过那一条,不让 Client 构造
+   抛 ValueError 把本地模式所有出站(GM / 拉模型 / 本机 Ollama)一起带崩;同一环境里能用的
+   https_proxy 照常生效。
 
 部署模式一律用 mock 钉住 `_ssrf_enforced`,不随运行环境漂;环境代理变量逐个 monkeypatch。
 """
@@ -80,6 +84,8 @@ class TestIsLocalTarget:
         "::1", "[::1]", "10.0.0.5", "172.20.3.4", "192.168.1.20", "169.254.1.1",
         "100.101.102.103", "fd12:3456::1", "0.0.0.0", "ollama", "my-gpu-box",
         "::ffff:192.168.1.2",
+        # 容器访问宿主机 / 路由器局域网域名 / RFC 8375
+        "host.docker.internal", "HOST.DOCKER.INTERNAL.", "ollama.lan", "nas.home.arpa",
     ])
     def test_local(self, host):
         assert _is_local_target(host) is True
@@ -87,6 +93,8 @@ class TestIsLocalTarget:
     @pytest.mark.parametrize("host", [
         "api.openai.com", "relay.example.com", "8.8.8.8", "172.32.0.1", "11.0.0.1",
         "2001:4860:4860::8888", "", None,
+        # 后缀要整段匹配,域名里恰好含这些词的公网地址不算
+        "internal.example.com", "lan.example.com", "api.homearpa.com",
         # 梯子 fake-ip 段的**字面量**不算本地(域名解析成它时本就不经过这里)
         "api.deepseek.com",
     ])
@@ -145,6 +153,99 @@ class TestLocalModeHttpx:
         assert "HTTP 代理" in str(ei.value)
 
 
+class TestEnvProxyUnsupportedEntries:
+    """环境 / 系统代理里 httpx 不认的条目:跳过那一条,绝不让 Client 构造失败。"""
+
+    @pytest.mark.parametrize("env", [
+        {"all_proxy": "socks://127.0.0.1:1/"},            # Ubuntu / GNOME 系统代理
+        {"HTTPS_PROXY": "socks4://127.0.0.1:1", "HTTP_PROXY": "socks4://127.0.0.1:1"},  # Windows 注册表只配 SOCKS
+        {"HTTPS_PROXY": "http://127.0.0.1:notaport"},     # 地址写坏
+        {"HTTPS_PROXY": "ftp://127.0.0.1:21"},
+    ])
+    def test_client_builds_and_local_target_still_direct(self, local_mode, servers, monkeypatch, env):
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        with safe_httpx_client(timeout=5, proxy=None) as c:
+            assert c.get(servers["direct"]).text == "direct"
+            # 这些条目全都用不了:一条代理传输层都不该挂上(None = 直连例外)
+            assert all(t is None for t in c._mounts.values()), c._mounts
+
+    def test_usable_entry_kept_when_sibling_unusable(self, local_mode, servers, monkeypatch):
+        """Clash on Ubuntu 的典型环境:http(s)_proxy 能用 + all_proxy=socks:// 不能用 → 前者照常走。"""
+        monkeypatch.setenv("http_proxy", servers["proxy"])
+        monkeypatch.setenv("all_proxy", "socks://127.0.0.1:1/")
+        with safe_httpx_client(timeout=5, proxy=None) as c:
+            r = c.get("http://upstream.example/q")
+        assert r.text == "via-proxy http://upstream.example/q"
+
+    def test_unusable_entry_falls_back_to_broader_pattern(self, local_mode, servers, monkeypatch):
+        monkeypatch.setenv("HTTP_PROXY", "socks4://127.0.0.1:1")
+        monkeypatch.setenv("ALL_PROXY", servers["proxy"])
+        with safe_httpx_client(timeout=5, proxy=None) as c:
+            r = c.get("http://upstream.example/w")
+        assert r.text == "via-proxy http://upstream.example/w"
+
+    def test_env_socks5_without_socksio_skipped(self, local_mode, monkeypatch):
+        monkeypatch.setenv("HTTPS_PROXY", "socks5h://127.0.0.1:1")
+        monkeypatch.setattr(outbound, "_socksio_available", lambda: False)
+        with safe_httpx_client(timeout=5, proxy=None) as c:
+            assert c._mounts == {}
+
+    def test_last_resort_fallback_is_direct(self, local_mode, monkeypatch):
+        """过滤本身出意外(比如 httpx 升级改了内部接口)也退回直连,不崩。"""
+        monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+
+        def _boom():
+            raise RuntimeError("httpx internals changed")
+
+        monkeypatch.setattr(outbound, "_env_proxy_map", _boom)
+        with safe_httpx_client(timeout=5, proxy=None) as c:
+            assert c._mounts == {}
+            assert c.follow_redirects is False
+
+    @pytest.mark.parametrize("bad", ["http://127.0.0.1:notaport", "socks4://127.0.0.1:1080"])
+    def test_explicit_bad_proxy_is_explained_not_ignored(self, local_mode, bad):
+        """显式凭据代理写坏了:给一句能照着改的话,不悄悄退回直连(用户明确要走代理)。"""
+        with pytest.raises(UnsupportedProxy) as ei:
+            safe_httpx_client(timeout=5, proxy=bad)
+        assert "HTTP 代理" in str(ei.value)
+
+    def test_private_hooks_present(self):
+        """两个内部钩子 httpx 升级若改名,环境代理过滤就会悄悄失效 —— 在这里红。"""
+        from httpx import _utils
+
+        assert hasattr(httpx.Client, "_get_proxy_map")
+        assert callable(getattr(_utils, "get_environment_proxies", None))
+        cls = outbound._local_client_cls()
+        assert cls._get_proxy_map is not httpx.Client._get_proxy_map
+
+
+class TestRedactProxyUrl:
+    @pytest.mark.parametrize("raw,want", [
+        ("http://user:pass@127.0.0.1:7890", "http://***@127.0.0.1:7890"),
+        ("socks5://token@proxy.example:1080", "socks5://***@proxy.example:1080"),
+        ("http://a:b@c@proxy.example:1", "http://***@proxy.example:1"),
+        ("http://127.0.0.1:7890", "http://127.0.0.1:7890"),
+        ("http://127.0.0.1:7890/path@x", "http://127.0.0.1:7890/path@x"),
+        ("", ""),
+        (None, ""),
+    ])
+    def test_redact(self, raw, want):
+        assert outbound.redact_proxy_url(raw) == want
+
+    def test_gm_backends_log_redacted(self):
+        """GM 后端「出站走用户代理」日志必须脱敏,代理里可能带账号密码。"""
+        import re as _re
+        from pathlib import Path
+        root = Path(outbound.__file__).resolve().parent.parent / "agents" / "gm" / "backends"
+        for name in ("openai_compat.py", "anthropic.py"):
+            src = (root / name).read_text(encoding="utf-8")
+            lines = [ln for ln in src.splitlines() if "出站走用户代理" in ln]
+            assert lines, name
+            for ln in lines:
+                assert _re.search(r"redact_proxy_url\(_use_proxy\)", ln), f"{name}: {ln.strip()}"
+
+
 class TestServerModeUnchanged:
     def test_guard_transport_and_env_ignored(self, servers, monkeypatch):
         for k in _PROXY_VARS:
@@ -181,6 +282,21 @@ class TestLocalModeUrllib:
             safe_urlopen(Request("http://upstream.example/z"), timeout=5,
                          proxy="socks5://127.0.0.1:1080")
         assert "SOCKS" in str(ei.value) and "HTTP 代理" in str(ei.value)
+
+    def test_env_proxy_followed_when_no_credential_proxy(self, local_mode, servers, monkeypatch):
+        monkeypatch.setenv("HTTP_PROXY", servers["proxy"])
+        with safe_urlopen(Request("http://upstream.example/e"), timeout=5) as resp:
+            assert resp.read() == b"via-proxy http://upstream.example/e"
+
+    def test_env_proxy_filter_keeps_only_http(self, local_mode, monkeypatch):
+        """Windows 注册表只配 SOCKS 时 Python 给出 https=socks4://…:urllib 会拿它当 HTTP 代理
+        去 CONNECT。只留 http/https(不带协议的 host:port 按 http 算),其余跳过 = 直连。"""
+        monkeypatch.setenv("HTTPS_PROXY", "socks4://127.0.0.1:1")
+        monkeypatch.setenv("HTTP_PROXY", "127.0.0.1:7890")
+        monkeypatch.setenv("ALL_PROXY", "socks://127.0.0.1:1/")
+        monkeypatch.setenv("NO_PROXY", "example.org")
+        handler = outbound._urllib_env_proxy_handler()
+        assert handler.proxies == {"http": "127.0.0.1:7890"}
 
     def test_server_mode_ignores_proxy_arg(self, monkeypatch):
         """服务器模式走 IP pin,凭据代理即便被误传也不生效(credential_proxy 本就恒 None)。"""

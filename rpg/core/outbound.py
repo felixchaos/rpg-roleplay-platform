@@ -29,20 +29,27 @@ core 懒导入 platform_app 是本仓既有模式(见 core.vertex_sa / core.requ
 - 凭据没配代理时,本地模式跟随环境变量与系统代理(HTTPS_PROXY / macOS 系统代理 /
   Windows 注册表),这是 2026-06 SSRF 加固前的行为:当时给 httpx 塞了自定义 transport,
   httpx 就不再读环境代理(`allow_env_proxies = trust_env and transport is None`),
-  桌面版从此「浏览器能通、后端不通」。
-- 无论显式代理还是系统代理,本机/局域网目标(127.0.0.1、localhost、私网段、*.local、
-  单标签主机名)一律直连,本机 Ollama / LM Studio 绝不会被送进代理(`_is_local_target`)。
+  桌面版从此「浏览器能通、后端不通」。环境/系统代理里 httpx 用不了的条目(Ubuntu 导出的
+  all_proxy=socks://、Windows 只配 SOCKS 时映射出的 socks4://)只跳过那一条,不让 Client
+  构造失败(`_env_proxy_map`)。
+- 无论显式代理还是系统代理,本机/局域网目标(127.0.0.1、localhost、私网段、*.local /
+  *.internal / *.lan / *.home.arpa、单标签主机名)一律直连,本机 Ollama / LM Studio 绝不会
+  被送进代理(`_is_local_target`)。
 """
 from __future__ import annotations
 
 import http.client
 import ipaddress
+import logging
+import re
 import socket
 import urllib.request
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+
+_log = logging.getLogger(__name__)
 
 
 class OutboundBlocked(ValueError):
@@ -98,6 +105,15 @@ def proxy_kwargs(proxy: str | None) -> dict[str, str]:
     return {"proxy": proxy} if proxy else {}
 
 
+def redact_proxy_url(url: Any) -> str:
+    """代理 URL 打日志 / 拼进报错之前去掉账号密码:http://user:pass@host:port → http://***@host:port。"""
+    return re.sub(r"(://)[^/\s]*@", r"\1***@", str(url or ""))
+
+
+# 环境 / 系统代理里用不了的条目只 warning 一次(每次建 client 都会重读环境,别刷屏)。
+_WARNED_ENV_PROXIES: set[str] = set()
+
+
 # 局域网网段:RFC1918 + CGNAT(Tailscale 等组网常用 100.64/10)+ IPv6 ULA。
 # 回环 / 链路本地 / 未指定地址由 ipaddress 的属性判断,不在这里重复列。
 _LAN_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
@@ -105,18 +121,24 @@ _LAN_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
 ))
 
 
+# 只在局域网 / 本机内有意义的私用域名后缀。容器里经 host.docker.internal 访问宿主机的 Ollama,
+# 容器环境又设了 HTTP_PROXY 时,不列进来就会被送进代理(宿主机上的代理多半解析不了这个名字)。
+_LOCAL_SUFFIXES = (".localhost", ".local", ".internal", ".lan", ".home.arpa")
+
+
 def _is_local_target(host: str | None) -> bool:
     """出站目标是不是本机/局域网 —— 是的话无论配没配代理都直连。
 
     只看 URL 里写的主机名/IP 字面量,不做 DNS 解析(梯子的 fake-ip 会把公网域名解析成
-    198.18.x.x,那种必须照常走代理)。判为本地的:localhost / *.localhost / *.local、
-    回环 / 链路本地 / 私网网段 IP、以及不带点的单标签主机名(容器服务名、局域网机器名,
-    与 Windows 代理例外里 <local> 的语义一致)。
+    198.18.x.x,那种必须照常走代理)。判为本地的:localhost 与 _LOCAL_SUFFIXES 里的私用
+    后缀(*.local、Docker 访问宿主机用的 host.docker.internal、路由器常用的 *.lan、
+    RFC 8375 的 *.home.arpa)、回环 / 链路本地 / 私网网段 IP、以及不带点的单标签主机名
+    (容器服务名、局域网机器名,与 Windows 代理例外里 <local> 的语义一致)。
     """
     h = (host or "").strip().strip("[]").lower().rstrip(".")
     if not h:
         return False
-    if h == "localhost" or h.endswith(".localhost") or h.endswith(".local"):
+    if h == "localhost" or h.endswith(_LOCAL_SUFFIXES):
         return True
     try:
         ip = ipaddress.ip_address(h.split("%", 1)[0])
@@ -141,6 +163,29 @@ def _urllib_proxy_handler(proxy: str) -> urllib.request.ProxyHandler:
     if scheme not in {"http", "https"}:
         raise UnsupportedProxy(f"代理地址协议不支持:{scheme or '(空)'}")
     return urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+
+
+def _urllib_env_proxy_handler() -> urllib.request.ProxyHandler:
+    """没配凭据代理时 urllib 出站用的环境 / 系统代理(与 httpx 那边 `_env_proxy_map` 同口径)。
+
+    urllib.request.getproxies() 读 HTTP(S)_PROXY、macOS 系统代理、Windows 注册表;Windows 只配了
+    SOCKS 时它会给出 https=socks4://…,urllib 拿它当 HTTP 代理去 CONNECT,只会得到一个看不懂的
+    连接错误。这里只留 http/https 代理(不带协议的 host:port 按 http 算),其余跳过 = 这类请求直连。
+    """
+    usable: dict[str, str] = {}
+    for scheme, url in urllib.request.getproxies().items():
+        if scheme == "no" or not url:
+            continue  # 例外名单由 ProxyHandler.proxy_open 里的 proxy_bypass 自己读
+        full = url if "://" in url else f"http://{url}"
+        if (urlparse(full).scheme or "").lower() in {"http", "https"}:
+            usable[scheme] = url
+            continue
+        key = f"urllib:{scheme}={url}"
+        if key not in _WARNED_ENV_PROXIES:
+            _WARNED_ENV_PROXIES.add(key)
+            _log.warning("[outbound] 环境/系统代理 %s → %s 这条出站用不了,这一条不走代理",
+                         scheme, redact_proxy_url(url))
+    return urllib.request.ProxyHandler(usable)
 
 
 def _resolve_external_ip(host: str, port: int) -> str:
@@ -278,8 +323,9 @@ def safe_urlopen(req, *, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, proxy: str | No
     elif proxy:
         opener = urllib.request.build_opener(_urllib_proxy_handler(proxy), _NoRedirect())
     else:
-        # 没配代理:build_opener 自带的默认 ProxyHandler 读环境变量 / 系统代理。
-        opener = urllib.request.build_opener(_NoRedirect())
+        # 没配代理:读环境变量 / 系统代理(与 build_opener 默认的 ProxyHandler 同源),只留 urllib
+        # 用得了的 http/https 代理;NO_PROXY / 系统例外仍由 urllib 的 proxy_bypass 处理。
+        opener = urllib.request.build_opener(_urllib_env_proxy_handler(), _NoRedirect())
     return opener.open(req, timeout=timeout)
 
 
@@ -380,16 +426,68 @@ class _SsrfGuardTransport:
         self._inner.__exit__(*a)
 
 
+def _socksio_available() -> bool:
+    import importlib.util
+    return importlib.util.find_spec("socksio") is not None
+
+
+def _env_proxy_map() -> dict[str, Any]:
+    """环境变量 / 系统代理 → httpx 的 {URL 模式: Proxy | None},只留 httpx 真用得了的条目。
+
+    与 httpx 自己读环境代理的口径相同(同一个 get_environment_proxies:HTTP(S)_PROXY / ALL_PROXY /
+    NO_PROXY,macOS 系统代理,Windows 注册表),区别只在于:某一条 httpx 用不了时,跳过这一条并
+    记一次 warning,而不是让整个 Client 构造失败。常见的用不了:
+    - Ubuntu / GNOME 设了系统代理(Clash 常见)会导出 all_proxy=socks://…,Windows 注册表只配了
+      SOCKS 时 Python 会映射成 socks4://… —— httpx 只认 http / https / socks5 / socks5h,构造时抛
+      ValueError("Unknown scheme for proxy URL");
+    - 地址写坏(端口不是数字等)抛 InvalidURL;
+    - socks5 代理但没装 socksio,建传输层时抛 ImportError。
+    以前任何一条这样的环境变量都会让本地模式所有 httpx 出站(GM / 拉模型 / 生图 / 本机 Ollama)在
+    构造时就崩掉;现在只是这一条不走代理,同一环境里能用的 https_proxy 照常生效。
+    """
+    import httpx
+    from httpx._utils import get_environment_proxies
+
+    out: dict[str, Any] = {}
+    for pattern, url in get_environment_proxies().items():
+        if url is None:
+            out[pattern] = None  # NO_PROXY 例外 = 直连
+            continue
+        reason = ""
+        proxy: Any = None
+        try:
+            proxy = httpx.Proxy(url=url)
+        except Exception as exc:  # noqa: BLE001 —— 协议不认(ValueError)/ 地址写坏(InvalidURL)
+            reason = str(exc)
+        else:
+            if proxy.url.scheme in ("socks5", "socks5h") and not _socksio_available():
+                proxy, reason = None, "缺少 SOCKS 代理组件 socksio"
+        if proxy is None:
+            key = f"{pattern}={url}"
+            if key not in _WARNED_ENV_PROXIES:
+                _WARNED_ENV_PROXIES.add(key)
+                _log.warning(
+                    "[outbound] 环境/系统代理 %s → %s 用不了(%s),这一条不走代理",
+                    pattern, redact_proxy_url(url), reason,
+                )
+            continue
+        out[pattern] = proxy
+    return out
+
+
 _LOCAL_CLIENT_CLS: Any = None
 
 
 def _local_client_cls():
-    """本地模式用的 httpx.Client 子类:本机/局域网目标永远走直连连接池。
+    """本地模式用的 httpx.Client 子类,改了 httpx 的两个内部钩子:
 
-    httpx 的环境代理例外只认 NO_PROXY,且 URL 匹配不支持网段(10.0.0.0/8 这种写不进去),
-    也不认 macOS 系统例外 / Windows ProxyOverride 里的 <local>。所以在「按 URL 挑传输层」
-    这一步先拦一道:本地目标返回默认传输层(= 直连),其余交回 httpx 原逻辑(显式代理 /
-    环境代理 / NO_PROXY)。test_outbound_local_proxy 锁着这个钩子,httpx 升级改了名字会立刻红。
+    - `_transport_for_url`:本机/局域网目标永远走直连连接池。httpx 的环境代理例外只认 NO_PROXY,
+      且 URL 匹配不支持网段(10.0.0.0/8 这种写不进去),也不认 macOS 系统例外 / Windows
+      ProxyOverride 里的 <local>。所以在「按 URL 挑传输层」这一步先拦一道:本地目标返回默认
+      传输层(= 直连),其余交回 httpx 原逻辑(显式代理 / 环境代理 / NO_PROXY)。
+    - `_get_proxy_map`:读环境代理时改用 `_env_proxy_map`,跳过 httpx 用不了的条目,不让一条
+      socks:// 环境变量把整个 Client 构造弄崩。显式代理仍走 httpx 原逻辑。
+    test_outbound_local_proxy 锁着这两个钩子名,httpx 升级改了名字会立刻红。
     """
     global _LOCAL_CLIENT_CLS
     if _LOCAL_CLIENT_CLS is None:
@@ -400,6 +498,11 @@ def _local_client_cls():
                 if _is_local_target(url.host):
                     return self._transport
                 return super()._transport_for_url(url)
+
+            def _get_proxy_map(self, proxy, allow_env_proxies):  # noqa: D401
+                if proxy is None and allow_env_proxies:
+                    return _env_proxy_map()
+                return super()._get_proxy_map(proxy, allow_env_proxies)
 
         _LOCAL_CLIENT_CLS = _LocalModeClient
     return _LOCAL_CLIENT_CLS
@@ -417,23 +520,29 @@ def _local_httpx_client(*, timeout: float, proxy: str | None, http2: bool):
         "follow_redirects": False,
         "timeout": httpx.Timeout(timeout, connect=10.0),
         "http2": http2,
-        "trust_env": True,
     }
     cls = _local_client_cls()
     try:
-        return cls(proxy=proxy or None, **kwargs)
-    except ImportError as exc:
-        # SOCKS 代理需要 socksio(requirements 已带);老安装包可能还缺它。
+        return cls(proxy=proxy or None, trust_env=True, **kwargs)
+    except Exception as exc:  # noqa: BLE001 —— 分两种来源各自处理,见下
         if proxy:
-            raise UnsupportedProxy(
-                "当前安装缺少 SOCKS 代理支持组件,用不了 socks5:// 代理。请把连接方式里的代理"
-                "改成 HTTP 代理(形如 http://127.0.0.1:7890),或更新到最新版本后再试。"
-            ) from exc
-        # 代理来自环境变量(如 ALL_PROXY=socks5://…)而组件缺失:退回直连,别让整条出站崩掉。
-        import logging
-        logging.getLogger(__name__).warning(
-            "[outbound] 环境代理用不了(%s),本次出站改为直连", exc)
-        return cls(trust_env=False, **{k: v for k, v in kwargs.items() if k != "trust_env"})
+            # 显式凭据代理:给用户一句能照着改的话,不退回直连(用户明确要走代理)。
+            if isinstance(exc, ImportError):
+                # SOCKS 代理需要 socksio(requirements 已带);老安装包可能还缺它。
+                raise UnsupportedProxy(
+                    "当前安装缺少 SOCKS 代理支持组件,用不了 socks5:// 代理。请把连接方式里的代理"
+                    "改成 HTTP 代理(形如 http://127.0.0.1:7890),或更新到最新版本后再试。"
+                ) from exc
+            if isinstance(exc, (ValueError, httpx.InvalidURL)):
+                raise UnsupportedProxy(
+                    f"连接方式里填的代理地址用不了:{redact_proxy_url(proxy)}。请改成形如 "
+                    "http://127.0.0.1:7890 的 HTTP 代理地址(或 socks5://127.0.0.1:1080)。"
+                ) from exc
+            raise
+        # 代理来自环境变量 / 系统设置:用不了的条目 _env_proxy_map 已经跳过了,走到这里说明还有
+        # 别的问题(比如 httpx 升级改了内部接口)。退回直连,别让整条出站崩掉。
+        _log.warning("[outbound] 按环境/系统代理建出站 client 失败(%s),本次出站改为直连", exc)
+        return cls(proxy=None, trust_env=False, **kwargs)
 
 
 def safe_httpx_client(*, timeout: float = 30.0, proxy: str | None = None, http2: bool = True):
