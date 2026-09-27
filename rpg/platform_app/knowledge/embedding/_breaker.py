@@ -5,10 +5,12 @@ key 失效 401 / 卡住超时)后,每回合的检索照样对它连打 4-5 次,�
 对「每分钟 2 次、失败也计数」的中转站,这些嵌入请求会把用户自己的聊天配额一起吃掉;
 超时的供应商则让上下文阶段一回合串行等好几个 60s。
 
-做法:以 (用户, 供应商, 模型, 接口地址, key 指纹) 为一个熔断单元。失败按类别进冷却,
+做法:以 (用户, 供应商, 模型, 接口地址, key 指纹, 凭据版本) 为一个熔断单元。失败按类别进冷却,
 冷却期内查询路径直接返回「无向量」走关键词降级,不再发请求;成功一次即清除。
-换 key / 换地址 / 换模型会自然落到新的单元上,改完配置立即生效;保存/删除凭据时
-另有 reset_user 清掉该用户的全部单元(充值后 key 不变的情况)。
+换 key / 换地址 / 换模型会自然落到新的单元上,改完配置立即生效。凭据版本是该凭据的保存时间:
+充值后用同一把 key 重新保存,版本变了,所有 worker 都落到新单元(熔断状态在进程内,
+保存请求只落在一个 worker 上,那里的 reset_user 清不到别的 worker)。reset_user 仍然保留,
+管本进程的最近错误和平台配置那种没有凭据版本的单元。
 
 分类与冷却:
 - config   401/402/403/404/405、维度不符、空地址拒发、SSRF 拒连、代理用不了:改配置前不会好,600s(402 为 900s)
@@ -22,7 +24,7 @@ key 失效 401 / 卡住超时)后,每回合的检索照样对它连打 4-5 次,�
 由各自的重试循环处理;否则一次 429 就会让角色卡 / 世界书 / canon 整片被跳过。
 冷却中写库路径又失败时,冷却只延长不缩短,原因按优先级取(config / no_cred > rate > timeout / server)。
 
-进程内状态(多 worker 各自熔断,每个 worker 最多多打一次,可接受)。明文 key 不进内存表,
+进程内状态(多 worker 各自熔断,每个 worker 最多多打一次,可接受;解除靠凭据版本,见上)。明文 key 不进内存表,
 只存 sha256 指纹。本模块只依赖 _base,测试 reload 包门面时这里的状态与 ContextVar 不会被重建。
 """
 from __future__ import annotations
@@ -112,11 +114,15 @@ _LAST_ERROR: OrderedDict[Any, tuple[str, str]] = OrderedDict()
 
 
 # ── 熔断单元 key ─────────────────────────────────────────────────────────────
-def key_for(user_id: int | None, api_id: str, model: str, base_url: str, api_key: str) -> str:
+def key_for(user_id: int | None, api_id: str, model: str, base_url: str, api_key: str,
+            cred_version: str = "") -> str:
+    """熔断单元 key。cred_version:这次用的凭据的版本(保存时间;平台配置 / 没有凭据时为空)。"""
     parts = urllib.parse.urlsplit(base_url or "")
     endpoint = (parts.netloc + parts.path).rstrip("/").lower() if parts.netloc else (base_url or "").strip().lower()
     key_fp = hashlib.sha256(api_key.encode()).hexdigest()[:16] if api_key else ""
     raw = f"{int(user_id or 0)}|{api_id or ''}|{model or ''}|{endpoint}|{key_fp}"
+    if cred_version:
+        raw += f"|{cred_version}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -365,7 +371,9 @@ def last_error_for(user_id: int | None, bkey: str | None = None) -> str:
 
 
 def reset_user(user_id: int | None) -> None:
-    """清掉该用户的全部熔断单元和最近错误(保存/删除凭据、手动重建向量时调用)。
+    """清掉该用户在本进程的全部熔断单元和最近错误(保存/删除凭据、手动重建向量时调用)。
+
+    只清得到本进程;别的 worker 靠熔断单元 key 里的凭据版本自然换单元(见模块 docstring)。
 
     user_id 为空(系统任务 / 平台兜底)时什么都不做:那些单元记的是平台 key 的状态,
     admin/vip 的平台兜底也落在上面;某个系统建库作业开始不代表平台 key 恢复了,

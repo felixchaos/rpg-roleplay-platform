@@ -124,22 +124,63 @@ def _catalog_embed_base_url(api_id: str) -> str:
         return ""
 
 
-def _embed_endpoint_for_cred(api_id: str, cred: dict[str, Any] | None) -> tuple[str, str]:
-    """用户凭据 → (要放进 Authorization 的 token, 嵌入请求发往的 base_url)。
+class _EmbedConfig(tuple):
+    """一份嵌入配置。按位置就是 (api_id, model, api_key, base_url) 四元组,解包、比较与旧的
+    四元组完全一样(测试替身直接返回普通四元组也照常工作);另外带两样跟着「这次实际用的那份
+    凭据」一起解析出来的东西,由 dispatch 使用:
+
+    - proxy:该凭据配的出站代理(core.outbound.credential_proxy,服务器模式恒 None)。平台
+      EMBED_* 配置恒为 None —— 平台 key 的请求不套任何用户代理。以前 dispatch 按 (用户, api_id)
+      另查一次凭据取代理,admin/vip 用平台配置时被套上了他自己聊天凭据里的代理。
+    - cred_version:该凭据的版本(保存时间),进熔断单元 key。充值后用同一把 key 重新保存,
+      所有 worker 都落到新单元(保存请求上的 reset_user 只清得到处理它的那个 worker)。
+
+    取这两样一律经 _cfg_proxy / _cfg_version(普通四元组时给空值)。
+    """
+
+    proxy: str | None
+    cred_version: str
+
+    def __new__(cls, api_id: str, model: str, api_key: str, base_url: str, *,
+                proxy: str | None = None, cred_version: str = "") -> _EmbedConfig:
+        obj = super().__new__(cls, (api_id, model, api_key, base_url))
+        obj.proxy = proxy or None
+        obj.cred_version = cred_version or ""
+        return obj
+
+
+def _cfg_proxy(cfg: Any) -> str | None:
+    return getattr(cfg, "proxy", None) or None
+
+
+def _cfg_version(cfg: Any) -> str:
+    return getattr(cfg, "cred_version", "") or ""
+
+
+def _embed_config_for_cred(api_id: str, model: str, cred: dict[str, Any] | None) -> _EmbedConfig:
+    """用户凭据 → 这份凭据的嵌入配置(token、base_url、代理、凭据版本一次解析齐)。
 
     建库(_resolve_embed_config)与召回(embed_query 的 force 分支)共用这一个解析器,
-    两条路对同一个 (用户, 供应商) 永远算出同一个主机。
+    两条路对同一个 (用户, 供应商) 永远算出同一个主机、同一个代理、同一个熔断单元。
     - token 走 resolved_auth_token:免 Key 的本地嵌入模型(Ollama / LM Studio)拿占位 token,
       不再被当成「没配」。
     - 地址 = 凭据自己的 base_url_override,没有就取该供应商的 catalog 地址。
       **不读 EMBED_BASE_URL**:那是平台那把 key 的地址,只属于 _platform_fallback_config。
       此前用户分支排在 catalog 前面读它 → 部署设了 EMBED_BASE_URL(常见值是 Gemini 兼容端点)
       时,用户的 siliconflow / dashscope / openai key 被发给了 Google(#104 同族,修了一半)。
+    - 代理 / 版本:见 _EmbedConfig。代理解析失败按「没配代理」处理,代理只是出站路径的选择,
+      不能因为它把向量请求本身弄挂。
     """
     from platform_app.user_credentials import resolved_auth_token
     token = resolved_auth_token(cred)
     base_url = ((cred or {}).get("base_url_override", "") or "") or _catalog_embed_base_url(api_id)
-    return token, base_url
+    try:
+        from core.outbound import credential_proxy
+        proxy = credential_proxy(cred)
+    except Exception:
+        proxy = None
+    return _EmbedConfig(api_id, model, token, base_url, proxy=proxy,
+                        cred_version=str((cred or {}).get("updated_at") or ""))
 
 
 def _default_embed_model_for(api_id: str) -> str:
@@ -161,10 +202,10 @@ def _default_embed_model_for(api_id: str) -> str:
 
 
 def _resolve_embed_config(user_id: int | None) -> tuple[str, str, str, str]:
-    """返回 (api_id, model, api_key, base_url_override)。
+    """返回 (api_id, model, api_key, base_url_override)(实为 _EmbedConfig,另带 proxy / cred_version)。
 
     优先链:
-    1. user 自己配的 BYOK embedder credential(任何用户都允许;地址见 _embed_endpoint_for_cred)
+    1. user 自己配的 BYOK embedder credential(任何用户都允许;地址 / 代理见 _embed_config_for_cred)
     2. 平台 env 兜底(EMBED_API_KEY / EMBED_BASE_URL / EMBED_MODEL)— 只对 admin/vip 生效。
        普通用户没自己配 → 返回空 api_key,_embed_via_openai 会返 None 让上层降级。
 
@@ -181,8 +222,7 @@ def _resolve_embed_config(user_id: int | None) -> tuple[str, str, str, str]:
             # user 自己配了 — 优先用,任何用户都允许。可用性走 resolved_is_usable(免 Key 本地模型也算)。
             cred = resolve_api_key(user_id, api_id, env_fallback="")
             if resolved_is_usable(cred):
-                token, base_url = _embed_endpoint_for_cred(api_id, cred)
-                return api_id, model, token, base_url
+                return _embed_config_for_cred(api_id, model, cred)
             # user 没自配 — 只 admin/vip 才走平台 env 兜底
             if _is_admin(user_id):
                 return _platform_fallback_config()
@@ -346,24 +386,6 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
         return None
 
 
-def _embed_credential_proxy(user_id: int | None, api_id: str) -> str | None:
-    """向量请求该走的凭据代理(与 GM / 拉模型同源:core.outbound.credential_proxy)。
-
-    user_id 为空(平台兜底 / 后台任务)不走用户代理;解析失败一律按「没配代理」处理,
-    代理只是出站路径的选择,不能因为它把向量请求本身弄挂。
-    """
-    if not user_id or not api_id:
-        return None
-    try:
-        from core.outbound import _ssrf_enforced, credential_proxy
-        if _ssrf_enforced():
-            return None  # 服务器模式恒不走用户代理,省一次凭据查询
-        from platform_app.user_credentials import resolve_api_key
-        return credential_proxy(resolve_api_key(user_id, api_id, env_fallback=""))
-    except Exception:
-        return None
-
-
 def _embed_provider_dispatch(
     api_id: str,
     model: str,
@@ -372,22 +394,29 @@ def _embed_provider_dispatch(
     base_url: str = "",
     task_type: str = "RETRIEVAL_DOCUMENT",
     user_id: int | None = None,
+    *,
+    proxy: str | None = None,
+    cred_version: str = "",
 ) -> list[list[float]] | None:
     """根据 api_id 分发到对应 provider SDK。不识别 → 降级 vertex + warn。
     user_id 传给 Vertex 路径以走 BYOK SA 优先链。
 
-    这里是所有嵌入出站的唯一收口,熔断也落在这:该 (用户, 供应商, 模型, 地址, key) 在冷却中
-    就直接返回 None(上层退关键词召回),不再发请求。查询路径(RETRIEVAL_QUERY)任何冷却都短路;
-    写库路径只在配置类 / 无凭据冷却时短路,限流和瞬时故障照常真打、由写库循环自己退避。
+    这里是所有嵌入出站的唯一收口,熔断也落在这:该 (用户, 供应商, 模型, 地址, key, 凭据版本)
+    在冷却中就直接返回 None(上层退关键词召回),不再发请求。查询路径(RETRIEVAL_QUERY)任何冷却
+    都短路;写库路径只在配置类 / 无凭据冷却时短路,限流和瞬时故障照常真打、由写库循环自己退避。
+
+    proxy / cred_version:跟着这次用的配置一起解析出来的(_EmbedConfig),调用方原样传入;
+    平台配置两者都为空。这里不再按 (用户, api_id) 反查凭据。
     """
-    bkey = _breaker.key_for(user_id, api_id, model, base_url, api_key)
+    bkey = _breaker.key_for(user_id, api_id, model, base_url, api_key, cred_version)
     if _breaker.blocked(bkey, batch=(task_type != "RETRIEVAL_QUERY")) is not None:
         log.debug("[embedding] api_id=%s model=%s 仍在冷却,本次不发请求", api_id, model)
         return None
     _breaker.mark_dispatched()
     with _breaker.attempt() as att:
         vecs = _embed_provider_dispatch_inner(
-            api_id, model, api_key, texts, base_url=base_url, task_type=task_type, user_id=user_id)
+            api_id, model, api_key, texts, base_url=base_url, task_type=task_type, user_id=user_id,
+            proxy=proxy)
     if vecs:
         _breaker.record_success(bkey, user_id=user_id)
     else:
@@ -403,13 +432,14 @@ def _embed_provider_dispatch_inner(
     base_url: str = "",
     task_type: str = "RETRIEVAL_DOCUMENT",
     user_id: int | None = None,
+    proxy: str | None = None,
 ) -> list[list[float]] | None:
     """按 api_id 选通道(熔断判断在外层 _embed_provider_dispatch)。"""
     if api_id in _VERTEX_API_IDS:
         return _embed_via_vertex(model, texts, task_type=task_type, user_id=user_id)
-    # 该用户这个 provider 凭据里配的出站代理(本地模式才有值);没配时 **{} 不改变调用形态。
+    # 这份配置的凭据代理(本地模式才有值);没配时 **{} 不改变调用形态。
     from core.outbound import proxy_kwargs
-    _px = proxy_kwargs(_embed_credential_proxy(user_id, api_id))
+    _px = proxy_kwargs(proxy)
     if api_id in _GEMINI_API_IDS:
         return _embed_via_gemini(model, api_key, texts, task_type=task_type, **_px)
     if api_id in _COHERE_API_IDS:
@@ -468,9 +498,11 @@ def _embed_with_admin_fallback(
     2. 失败 + user 是 admin → retry 平台 EMBED_* env(防 user 配的 vertex 不可用)
     3. 仍失败 → return None
     """
-    api_id, model, api_key, base_url = _resolve_embed_config(user_id)
+    cfg = _resolve_embed_config(user_id)
+    api_id, model, api_key, base_url = cfg
     if api_key or api_id in _VERTEX_API_IDS:  # vertex 不用 api_key,看 SA
-        vecs = _embed_provider_dispatch(api_id, model, api_key, texts, base_url=base_url, task_type=task_type, user_id=user_id)
+        vecs = _embed_provider_dispatch(api_id, model, api_key, texts, base_url=base_url, task_type=task_type,
+                                        user_id=user_id, proxy=_cfg_proxy(cfg), cred_version=_cfg_version(cfg))
         if vecs:
             return vecs, "user"
 
@@ -515,7 +547,8 @@ def embedding_preflight(user_id: int | None) -> dict[str, Any]:
       把友好描述带进 hint,让前端能显示人话而不是技术错误码,并附上"去 RAG 设置检查"
       按钮所需的 settings_hash。错误按用户隔离(_breaker.last_error_for),换了配置旧错不再显示。
     """
-    api_id, model, api_key, base_url = _resolve_embed_config(user_id)
+    cfg = _resolve_embed_config(user_id)
+    api_id, model, api_key, base_url = cfg
     credential_api_id = "AgentPlatform" if api_id in _VERTEX_API_IDS else api_id
     provider_ok = (
         (_get_vertex_client(user_id=user_id) is not None)
@@ -532,7 +565,7 @@ def embedding_preflight(user_id: int | None) -> dict[str, Any]:
             "credential_api_id": credential_api_id,
         }
         hint = _breaker.last_error_for(
-            user_id, _breaker.key_for(user_id, api_id, model, base_url, api_key))
+            user_id, _breaker.key_for(user_id, api_id, model, base_url, api_key, _cfg_version(cfg)))
         if hint:
             base["last_error_hint"] = hint
             base["settings_hash"] = "settings-models"
@@ -617,12 +650,14 @@ def _embed_query_uncached(
             from platform_app.user_credentials import resolve_api_key, resolved_is_usable
             _cred = resolve_api_key(user_id, force_api_id, env_fallback="")
             usable = resolved_is_usable(_cred)
-            # 与建库侧 _resolve_embed_config 同一个解析器:同一 (用户, 供应商) 永远同一个主机
-            api_key, base_url = _embed_endpoint_for_cred(force_api_id, _cred)
+            # 与建库侧 _resolve_embed_config 同一个解析器:同一 (用户, 供应商) 永远同一个主机、同一个代理
+            cfg = _embed_config_for_cred(force_api_id, force_model, _cred)
         except Exception:
             # 极端情况(凭据读取失败):回退到当前用户 config 的 key/base_url 尽力而为
-            _, _, api_key, base_url = _resolve_embed_config(user_id)
-            usable = bool(api_key)
+            cfg = _resolve_embed_config(user_id)
+            usable = bool(cfg[2])
+        _, _, api_key, base_url = cfg
+        proxy, cred_version = _cfg_proxy(cfg), _cfg_version(cfg)
         if not usable and force_api_id not in _VERTEX_API_IDS:
             # 用户自己没有这家的凭据。admin/vip(及无 user 的系统任务)建库时 _resolve_embed_config
             # 给的就是平台配置,剧本按平台的 (api_id, model) 绑定 —— 召回也用平台配置,
@@ -631,13 +666,16 @@ def _embed_query_uncached(
             if (not user_id) or _is_admin(user_id):
                 p_api, p_model, p_key, p_base = _platform_fallback_config()
                 if p_key and (p_api, p_model) == (force_api_id, force_model):
+                    # 平台 key:不套用户凭据的代理,也没有凭据版本
                     api_key, base_url, usable = p_key, p_base, True
+                    proxy, cred_version = None, ""
         if not usable and force_api_id not in _VERTEX_API_IDS:
             # 没有这家供应商的凭据:不发请求。交给 dispatch 的话会降级到 vertex,产出的是
             # 另一个向量空间的查询向量(维度同为 768 不报错),召回静默错乱。
             log.debug("[embedding] 剧本锁定的嵌入供应商 %s 当前用户没有可用凭据,跳过向量召回", force_api_id)
             return None
-        vecs = _embed_provider_dispatch(api_id, model, api_key, [text], base_url=base_url, task_type="RETRIEVAL_QUERY", user_id=user_id)
+        vecs = _embed_provider_dispatch(api_id, model, api_key, [text], base_url=base_url, task_type="RETRIEVAL_QUERY",
+                                        user_id=user_id, proxy=proxy, cred_version=cred_version)
     else:
         # 常规路径:走 admin fallback(user 自配失败时 admin 自动切平台;调用方可关掉,见 docstring)
         vecs, _ = _embed_with_admin_fallback([text], user_id, task_type="RETRIEVAL_QUERY",

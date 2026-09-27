@@ -22,6 +22,7 @@ from typing import Any
 # 受控循环导入(见模块 docstring)。retry_cap 测试按 patch-where-defined 在 _writer 命名空间
 # patch _resolve_embed_config / _embed_batch,故必须是本模块的模块级名字。
 from platform_app.knowledge.embedding import (  # noqa: E402  (有序循环导入)
+    _cfg_version,
     _embed_batch,
     _resolve_embed_config,
     embedding_preflight,
@@ -178,9 +179,11 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
     _breaker.reset_user(user_id)
     # P0-fix: 拆书开始时立即将 (api_id, model) 绑定到 scripts 表，
     # 保证召回时能读到确定的向量空间配置。
-    _bind_api_id, _bind_model, _bind_key, _bind_base = _resolve_embed_config(user_id)
-    # 与 _embed_batch → dispatch 里用户那一路同一个熔断单元
-    _bkey = _breaker.key_for(user_id, _bind_api_id, _bind_model, _bind_base or "", _bind_key or "")
+    _bind_cfg = _resolve_embed_config(user_id)
+    _bind_api_id, _bind_model, _bind_key, _bind_base = _bind_cfg
+    # 与 _embed_batch → dispatch 里用户那一路同一个熔断单元(含凭据版本)
+    _bkey = _breaker.key_for(user_id, _bind_api_id, _bind_model, _bind_base or "", _bind_key or "",
+                             _cfg_version(_bind_cfg))
     # 权威闸:选了没有 embedding 接口的 provider(deepseek/anthropic 等)→ 快速失败 + 清晰指引,
     # 不绑坏 meta、不进 5 次 404 重试(~2.5 分钟)。这是各层校验(picker/preflight)漏掉的兜底。
     if provider_lacks_embedding(_bind_api_id, _bind_base):

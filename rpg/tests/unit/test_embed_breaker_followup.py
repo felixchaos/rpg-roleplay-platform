@@ -8,6 +8,12 @@
    1 小时内每次都不发请求,提示还说「服务器」(本地模式下是用户自己的网络出口)。
 3. 冷却生效中写库路径又失败(超时 / 5xx)会把更长的限流冷却缩短,查询路径提前恢复,
    继续吃「失败也计数」的中转站配额。
+4. 代理没跟着「这次实际用的那份凭据」走:dispatch 按 (用户, api_id) 反查一次,admin/vip 用
+   平台 EMBED_* 配置时被套上了用户自己聊天凭据里的代理。
+5. 多 worker 下保存凭据的 reset_user 只清处理请求的那个进程:熔断单元 key 带上凭据版本
+   (保存时间),重存之后所有 worker 都落到新单元。
+6. _vertex 的「平台 Gemini 原生直连」不看平台配置是哪家,把 SiliconFlow 等别家的
+   EMBED_API_KEY 放进 URL 发给了 Google。
 
 网络一律用假的 safe_urlopen,不依赖 core.outbound 对 SOCKS 是抛错还是退回环境代理。
 """
@@ -19,9 +25,11 @@ import urllib.error
 
 import pytest
 
+import core.llm_backend as llm_backend
 import core.outbound as outbound
+import platform_app.user_credentials as uc
 from platform_app.knowledge import embedding
-from platform_app.knowledge.embedding import _breaker, _gemini
+from platform_app.knowledge.embedding import _breaker, _gemini, _vertex
 
 _RELAY = "https://relay.example/v1"
 _GEMINI_HOST = "generativelanguage.googleapis.com"
@@ -275,3 +283,283 @@ def test_config_error_during_rate_cooldown_takes_over(monkeypatch, clock):
     embedding._embed_batch(["x"], user_id=1)
     st = _breaker.status(_bkey())
     assert st["kind"] == _breaker.KIND_CONFIG and int(st["remaining"]) == 600
+
+
+# ── 4. 代理跟着这次实际用的凭据走 ──────────────────────────────────────────────
+def _creds_by_api(monkeypatch, table: dict):
+    def _resolve(_uid, api_id, env_fallback=""):
+        return dict(table.get(api_id) or {"key": "", "source": "none", "base_url_override": ""})
+    monkeypatch.setattr(uc, "resolve_api_key", _resolve)
+
+
+def _prefs(monkeypatch, api_id, model):
+    monkeypatch.setattr(llm_backend, "resolve_preferred_api", lambda *a, **k: api_id)
+    monkeypatch.setattr(llm_backend, "resolve_preferred_model", lambda *a, **k: model)
+
+
+@pytest.fixture
+def platform_relay(monkeypatch):
+    monkeypatch.setenv("EMBED_API_KEY", "PLATFORM-KEY")
+    monkeypatch.setenv("EMBED_BASE_URL", "https://platform-relay.example/v1")
+    monkeypatch.setenv("EMBED_MODEL", "text-embedding-3-small")
+    monkeypatch.setattr(embedding, "DEFAULT_EMBED_API_ID", "openai")
+
+
+def test_admin_on_platform_config_does_not_borrow_chat_credential_proxy(monkeypatch, clock, platform_relay):
+    """admin/vip 没配嵌入凭据 → 用平台配置(openai + 平台地址)。他自己的 openai 聊天凭据里
+    配的代理跟平台 key 毫无关系,不能套到平台请求上。"""
+    _local_mode(monkeypatch)
+    monkeypatch.setattr(embedding, "_is_admin", lambda _uid: True)
+    _prefs(monkeypatch, "siliconflow", "BAAI/bge-m3")
+    _creds_by_api(monkeypatch, {
+        "openai": {"key": "sk-chat", "source": "user_db", "base_url_override": "",
+                   "proxy": "http://127.0.0.1:7890"},
+    })
+    net = _net(monkeypatch, ["ok"])
+    assert embedding.embed_query("你好", user_id=9) is not None
+    assert net.calls[0]["url"].startswith("https://platform-relay.example/v1")
+    assert net.calls[0]["proxy"] is None
+
+
+def test_user_own_embed_credential_proxy_is_used(monkeypatch, clock, platform_relay):
+    _local_mode(monkeypatch)
+    _prefs(monkeypatch, "siliconflow", "BAAI/bge-m3")
+    _creds_by_api(monkeypatch, {
+        "siliconflow": {"key": "sk-sf", "source": "user_db", "base_url_override": _RELAY,
+                        "proxy": "http://127.0.0.1:7890"},
+    })
+    net = _net(monkeypatch, ["ok"])
+    monkeypatch.setattr(embedding, "_is_admin", lambda _uid: False)
+    assert embedding.embed_query("你好", user_id=9) is not None
+    assert net.calls[0]["proxy"] == "http://127.0.0.1:7890"
+    # 召回 force 路径:同一份凭据、同一个代理
+    embedding.embed_query("召回", user_id=9, force_api_id="siliconflow", force_model="BAAI/bge-m3")
+    assert net.calls[-1]["proxy"] == "http://127.0.0.1:7890"
+
+
+def test_force_path_platform_fallback_has_no_user_proxy(monkeypatch, clock, platform_relay):
+    _local_mode(monkeypatch)
+    monkeypatch.setattr(embedding, "_is_admin", lambda _uid: True)
+    _creds_by_api(monkeypatch, {
+        "siliconflow": {"key": "sk-sf", "source": "user_db", "base_url_override": _RELAY,
+                        "proxy": "http://127.0.0.1:7890"},
+    })
+    net = _net(monkeypatch, ["ok"])
+    assert embedding.embed_query("召回", user_id=9, force_api_id="openai",
+                                 force_model="text-embedding-3-small") is not None
+    assert net.calls[0]["url"].startswith("https://platform-relay.example/v1")
+    assert net.calls[0]["proxy"] is None
+
+
+def test_server_mode_never_uses_credential_proxy(monkeypatch, clock, platform_relay):
+    _local_mode(monkeypatch, local=False)
+    _prefs(monkeypatch, "siliconflow", "BAAI/bge-m3")
+    _creds_by_api(monkeypatch, {
+        "siliconflow": {"key": "sk-sf", "source": "user_db", "base_url_override": _RELAY,
+                        "proxy": "http://127.0.0.1:7890"},
+    })
+    monkeypatch.setattr(embedding, "_is_admin", lambda _uid: False)
+    net = _net(monkeypatch, ["ok"])
+    assert embedding.embed_query("你好", user_id=9) is not None
+    assert net.calls[0]["proxy"] is None
+
+
+def test_gemini_socks_via_dispatch_opens_config_cooldown(monkeypatch, clock, geo_cache):
+    """经 dispatch:一次就进配置类冷却,最近错误里写的是代理的事(设置页 / 拆书预检看得到)。"""
+    _local_mode(monkeypatch)
+    net = _net(monkeypatch, ["socks"])
+    for _ in range(3):
+        assert embedding._embed_provider_dispatch(
+            "gemini", "gemini-embedding-001", "AIza-user", ["x"], task_type="RETRIEVAL_QUERY",
+            user_id=5, proxy="socks5://127.0.0.1:1080") is None
+    assert len(net.calls) == 1
+    st = _breaker.status(_breaker.key_for(5, "gemini", "gemini-embedding-001", "", "AIza-user"))
+    assert st is not None and st["kind"] == _breaker.KIND_CONFIG
+    assert "SOCKS" in _breaker.last_error_for(5)
+
+
+def test_geo_ban_behind_proxy_opens_cooldown_instead_of_hitting_every_turn(monkeypatch, clock, geo_cache):
+    """代理出口也被封:按用户记配置类冷却,不再每回合都真打一次。"""
+    _local_mode(monkeypatch)
+    net = _net(monkeypatch, ["geo"])
+    for _ in range(3):
+        embedding._embed_provider_dispatch("gemini", "gemini-embedding-001", "AIza-user", ["x"],
+                                           task_type="RETRIEVAL_QUERY", user_id=5,
+                                           proxy="http://127.0.0.1:7890")
+    assert len(net.calls) == 1
+
+
+# ── 5. 重存凭据:所有 worker 都落到新熔断单元 ──────────────────────────────────
+def test_resaved_credential_leaves_old_cooldown_without_reset_user(monkeypatch, clock):
+    """另一个 worker 收到了保存请求(本进程的 reset_user 没被调用):凭据版本变了,
+    本进程也立刻落到新单元,不用等 900s 的余额不足冷却过期;旧提示也不再显示。"""
+    _local_mode(monkeypatch, local=False)
+    monkeypatch.setattr(embedding, "_is_admin", lambda _uid: False)
+    _prefs(monkeypatch, "openai", "text-embedding-3-small")
+    cred = {"key": "sk-a", "source": "user_db", "base_url_override": _RELAY,
+            "updated_at": "2026-09-28 10:00:00+08:00"}
+    _creds_by_api(monkeypatch, {"openai": cred})
+    net = _net(monkeypatch, [402])
+    embedding.embed_query("a", user_id=1)
+    embedding.embed_query("b", user_id=1)
+    assert len(net.calls) == 1
+    assert "last_error_hint" in embedding.embedding_preflight(1)
+
+    cred["updated_at"] = "2026-09-28 10:05:00+08:00"   # 充值后同一把 key 重新保存
+    net.script = ["ok"]
+    assert "last_error_hint" not in embedding.embedding_preflight(1)
+    assert embedding.embed_query("c", user_id=1) is not None
+    assert len(net.calls) == 2
+
+
+def test_same_credential_version_stays_in_cooldown(monkeypatch, clock):
+    _local_mode(monkeypatch, local=False)
+    monkeypatch.setattr(embedding, "_is_admin", lambda _uid: False)
+    _prefs(monkeypatch, "openai", "text-embedding-3-small")
+    _creds_by_api(monkeypatch, {"openai": {"key": "sk-a", "source": "user_db", "base_url_override": _RELAY,
+                                           "updated_at": "2026-09-28 10:00:00+08:00"}})
+    net = _net(monkeypatch, [402])
+    for t in ("a", "b", "c"):
+        embedding.embed_query(t, user_id=1)
+    assert len(net.calls) == 1
+
+
+def test_writer_breaker_key_matches_dispatch_with_credential_version(monkeypatch, clock):
+    """写库循环按同一个熔断单元判断「配置类就立即放弃」:单元 key 带了凭据版本,两边要一致。"""
+    import platform_app.db as dbmod
+    from platform_app.knowledge.embedding import _writer
+
+    class _DB:
+        def execute(self, sql, params=None):
+            rows = [{"id": 1, "content": "x" * 20}] if "embedding_vec is null" in sql else []
+
+            class _R:
+                def fetchall(self_inner):
+                    return rows
+
+                def fetchone(self_inner):
+                    return None
+            return _R()
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _connect():
+        yield _DB()
+
+    _local_mode(monkeypatch, local=False)
+    monkeypatch.setattr(embedding, "_is_admin", lambda _uid: False)
+    _prefs(monkeypatch, "openai", "text-embedding-3-small")
+    _creds_by_api(monkeypatch, {"openai": {"key": "sk-a", "source": "user_db", "base_url_override": _RELAY,
+                                           "updated_at": "2026-09-28 10:00:00+08:00"}})
+    monkeypatch.setattr(dbmod, "connect", _connect)
+    net = _net(monkeypatch, [401])
+    sleeps: list[float] = []
+    monkeypatch.setattr(_writer.time, "sleep", lambda s: sleeps.append(s))
+    with pytest.raises(RuntimeError) as ei:
+        _writer._embed_chunks_loop_inner(script_id=5, user_id=1)
+    assert len(net.calls) == 1 and sleeps == []
+    assert "401" in str(ei.value)
+
+
+def test_resolve_api_key_carries_credential_version(monkeypatch):
+    monkeypatch.setattr(uc, "get_credential", lambda *_a, **_k: {
+        "api_id": "openai", "key": "sk-a", "auth_mode": "api_key", "base_url_override": "",
+        "proxy": "", "updated_at": "2026-09-28 10:00:00+08:00"})
+    got = uc.resolve_api_key(1, "openai")
+    assert got["updated_at"] == "2026-09-28 10:00:00+08:00"
+    monkeypatch.setattr(uc, "get_credential", lambda *_a, **_k: {
+        "api_id": "ollama", "key": "", "auth_mode": "none", "base_url_override": "http://127.0.0.1:11434/v1",
+        "proxy": "", "updated_at": "2026-09-28 11:00:00+08:00"})
+    got = uc.resolve_api_key(1, "ollama")
+    assert got["source"] == "user_db_no_auth" and got["updated_at"] == "2026-09-28 11:00:00+08:00"
+
+
+def test_get_credential_returns_updated_at(monkeypatch):
+    from contextlib import contextmanager
+
+    row = {"api_id": "openai", "enabled": True, "encrypted_key": b"blob", "auth_mode": "api_key",
+           "base_url_override": "", "metadata": {}, "updated_at": "2026-09-28 10:00:00+08:00"}
+
+    class _DB:
+        def execute(self, *_a, **_k):
+            class _R:
+                def fetchall(self_inner):
+                    return [row]
+            return _R()
+
+    @contextmanager
+    def _connect():
+        yield _DB()
+
+    monkeypatch.setattr(uc, "init_db", lambda: None)
+    monkeypatch.setattr(uc, "connect", _connect)
+    monkeypatch.setattr(uc, "decrypt_api_key", lambda *_a, **_k: "sk-a")
+    got = uc.get_credential(1, "openai")
+    assert got["key"] == "sk-a" and got["updated_at"] == "2026-09-28 10:00:00+08:00"
+
+
+# ── 6. _vertex 的平台 Gemini 原生直连只给 Gemini 的 key ────────────────────────
+class _FakeVertexClient:
+    def __init__(self):
+        self.calls = 0
+
+        class _Models:
+            def embed_content(inner, model, contents, config):
+                self.calls += 1
+
+                class _E:
+                    values = [0.02] * _dim()
+
+                class _Resp:
+                    embeddings = [_E() for _ in contents]
+                return _Resp()
+        self.models = _Models()
+
+
+@pytest.fixture
+def vertex_sdk(monkeypatch):
+    client = _FakeVertexClient()
+    monkeypatch.setattr(_vertex, "_get_vertex_client", lambda user_id=None: client)
+    monkeypatch.setattr(_vertex, "_is_admin", lambda _uid: True)
+    return client
+
+
+@pytest.mark.parametrize("api_id,base_url", [
+    ("vertex_ai", "https://api.siliconflow.cn/v1"),     # 自部署:SiliconFlow key + 地址,EMBED_API_ID 留默认
+    ("openai", ""),                                      # 显式 OpenAI 的 key
+    ("siliconflow", "https://api.siliconflow.cn/v1"),
+])
+def test_vertex_does_not_send_non_gemini_platform_key_to_google(monkeypatch, vertex_sdk, geo_cache,
+                                                                api_id, base_url):
+    monkeypatch.setenv("EMBED_API_KEY", "sk-not-a-gemini-key")
+    if base_url:
+        monkeypatch.setenv("EMBED_BASE_URL", base_url)
+    else:
+        monkeypatch.delenv("EMBED_BASE_URL", raising=False)
+    monkeypatch.setattr(embedding, "DEFAULT_EMBED_API_ID", api_id)
+    net = _net(monkeypatch, ["ok"])
+    out = embedding._embed_via_vertex("text-embedding-004", ["x"], user_id=None)
+    assert out and vertex_sdk.calls == 1
+    assert net.calls == [], "平台 key 不是 Gemini 的,不许拼进 URL 发给 Google"
+
+
+@pytest.mark.parametrize("api_id,base_url", [
+    ("vertex_ai", ""),                                                  # 历史配法:只填了一把 Gemini key
+    ("openai", "https://generativelanguage.googleapis.com/v1beta/openai/"),
+    ("vertex_ai", "https://generativelanguage.googleapis.com/v1beta/openai/"),
+    ("gemini", ""),
+])
+def test_vertex_prefers_native_rest_for_platform_gemini_key(monkeypatch, vertex_sdk, geo_cache,
+                                                            api_id, base_url):
+    monkeypatch.setenv("EMBED_API_KEY", "AIza-platform")
+    if base_url:
+        monkeypatch.setenv("EMBED_BASE_URL", base_url)
+    else:
+        monkeypatch.delenv("EMBED_BASE_URL", raising=False)
+    monkeypatch.setattr(embedding, "DEFAULT_EMBED_API_ID", api_id)
+    net = _net(monkeypatch, ["ok"])
+    out = embedding._embed_via_vertex("text-embedding-004", ["x"], user_id=None)
+    assert out
+    assert len(net.calls) == 1 and _GEMINI_HOST in net.calls[0]["url"]
+    assert vertex_sdk.calls == 0

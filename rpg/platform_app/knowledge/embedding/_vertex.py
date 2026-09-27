@@ -62,22 +62,46 @@ def _get_vertex_client(user_id: int | None = None):
         return None
 
 
+def _platform_key_is_gemini() -> bool:
+    """平台 EMBED_API_KEY 是不是一把 Gemini(Google AI Studio)的 key。
+
+    判据与 _platform_fallback_config 的归一同源:归一后 api_id 是 gemini;或 EMBED_BASE_URL 指向
+    Google 生成式端点;或根本没配地址、EMBED_API_ID 也还是默认的 vertex_ai(历史配法:只填了一把
+    Gemini key)。显式写了 openai / siliconflow 等、或地址指向别家,key 就是那家的。
+    平台配置住公共层(测试会 patch 它和 DEFAULT_EMBED_API_ID),调用时再取。
+    """
+    from . import _GEMINI_API_IDS, _VERTEX_API_IDS, DEFAULT_EMBED_API_ID, _platform_fallback_config
+    from ._base import _is_google_generative_openai_base
+
+    p_api, _p_model, p_key, _p_base = _platform_fallback_config()
+    if not p_key:
+        return False
+    if p_api in _GEMINI_API_IDS:
+        return True
+    raw_base = (os.environ.get("EMBED_BASE_URL", "") or "").strip()
+    if raw_base:
+        return _is_google_generative_openai_base(raw_base)
+    return DEFAULT_EMBED_API_ID in _VERTEX_API_IDS
+
+
 def _embed_via_vertex(model: str, texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT", user_id: int | None = None) -> list[list[float]] | None:
     """调 Vertex genai SDK。model 为空时回退 DEFAULT_EMBED_MODEL。user_id 用于 BYOK SA 优先链。"""
     # 关键修复:genai SDK 的 embed_content 实测对【任何】不同文本返回**完全相同**的向量
     # (768/768 维全等,与 contents 无关)→ 语义检索彻底失效(任何查询等距命中,永恒记忆 / 原著
     # RAG 都形同虚设)。而原生 REST embedContent(_embed_via_gemini)正常。允许平台兜底的场景
-    # (admin/vip / 系统任务 user_id=None)且有平台 gemini key 时,优先改走原生 REST;
+    # (admin/vip / 系统任务 user_id=None)且平台 key 本身是 Gemini 的时,优先改走原生 REST;
     # 否则退回 genai SDK(用户自己的 BYOK Vertex SA,无平台 key 可用,与原行为一致)。
+    # 平台 key 是别家的(自部署常见:EMBED_API_KEY + EMBED_BASE_URL 指 SiliconFlow)时绝不走这一路 ——
+    # 那会把别家的 key 拼进 URL query 发给 Google,换回一个 API_KEY_INVALID(#104 族)。
     _plat_key = os.environ.get("EMBED_API_KEY", "")
-    if _plat_key and ((user_id is None) or _is_admin(user_id)):
+    if _plat_key and ((user_id is None) or _is_admin(user_id)) and _platform_key_is_gemini():
         _native = _embed_via_gemini(model, _plat_key, texts, task_type=task_type, note_geo_ban=False)
         if _native:
             return _native
     client = _get_vertex_client(user_id=user_id)
     if client is None:
         # 没有可用的 Service Account:没发请求。记成「无凭据」冷却,免得每次检索都重读一遍 SA
-        # 再打一条 warning;用户上传 SA(保存凭据)时 reset_user 会立即解除。
+        # 再打一条 warning;用户上传 SA(保存凭据)后凭据变了,落到新的熔断单元,各 worker 都立即解除。
         # overwrite=False:上面平台 Gemini 原生那一路若已真打并失败(如 429),以它为准 ——
         # 否则一次限流会被记成「没凭据」,连写库路径也被短路。
         _breaker.note(_breaker.KIND_NO_CRED, overwrite=False, friendly=(

@@ -29,7 +29,8 @@ def test_embed_loop_fast_fails_on_no_embedding_provider():
     """绑定前的权威闸:选了无 embedding 的 provider → 立刻抛清晰错误,不进 404 重试循环。"""
     # embedding 拆包后 _embed_chunks_loop_inner(绑定闸所在)住 embedding/_writer.py。
     src = (REPO / "platform_app" / "knowledge" / "embedding" / "_writer.py").read_text(encoding="utf-8")
-    loop = src.split("_bind_api_id, _bind_model, _bind_key, _bind_base = _resolve_embed_config", 1)[1][:800]
+    # 锚在绑定那次解析调用上(赋值目标的写法可能变,调用本身不变)
+    loop = src.split("= _resolve_embed_config(user_id)", 1)[1][:800]
     assert "provider_lacks_embedding(_bind_api_id, _bind_base)" in loop
     assert "raise RuntimeError" in loop
 

@@ -562,6 +562,9 @@ def get_credential(user_id: int, api_id: str) -> dict[str, Any] | None:
             "auth_mode": auth_mode,
             "base_url_override": _normalize_openai_base_url(row.get("base_url_override") or ""),
             "proxy": (_meta or {}).get("proxy") or "",
+            # 凭据版本(每次保存都会刷新):进程内缓存 / 熔断按它判断「凭据换过了」,
+            # 多 worker 下不必依赖只落在一个 worker 上的清理调用
+            "updated_at": str(row.get("updated_at") or ""),
         }
     return None
 
@@ -574,7 +577,8 @@ def resolve_api_key(user_id: int | None, api_id: str, env_fallback: str = "") ->
     1. 当前 user 在 user_api_credentials 表里的 key（绝对隔离）
     2. 本地未登录 + 环境变量（仅 RPG_REQUIRE_AUTH != 1 时允许）
 
-    返回 {"key": "...", "source": "user_db" | "env" | "none", "base_url_override": "..."}
+    返回 {"key": "...", "source": "user_db" | "env" | "none", "base_url_override": "..."};
+    用户库内凭据另带 "proxy"(凭据代理)与 "updated_at"(凭据版本,每次保存刷新)。
 
     内部使用 request-scoped cache（core.request_cache.get_api_cred_cached），
     同一请求内相同 (user_id, api_id) 只查一次 DB；非请求上下文行为不变。
@@ -590,13 +594,13 @@ def resolve_api_key(user_id: int | None, api_id: str, env_fallback: str = "") ->
             # 注:免鉴权(auth_mode='none')但用户仍填了 key 的,也走这条 —— key 照常发送。
             return {"key": cred["key"], "source": "user_db",
                     "base_url_override": _normalize_openai_base_url(cred.get("base_url_override", "")),
-                    "proxy": cred.get("proxy", "")}
+                    "proxy": cred.get("proxy", ""), "updated_at": cred.get("updated_at", "")}
         if cred and cred.get("auth_mode") == "none":
             # 免鉴权端点且用户没填 key:这是**合法可用**状态,不能继续往下掉进 env 回退/none。
             # source 单独标记,好让 GM 后端区分「用户明确说不需要 key」与「压根没配」。
             return {"key": "", "source": "user_db_no_auth",
                     "base_url_override": _normalize_openai_base_url(cred.get("base_url_override", "")),
-                    "proxy": cred.get("proxy", "")}
+                    "proxy": cred.get("proxy", ""), "updated_at": cred.get("updated_at", "")}
 
     # 仅未强制鉴权时允许环境变量回退
     from core.config import require_auth as _require_auth
