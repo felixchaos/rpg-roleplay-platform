@@ -404,7 +404,7 @@ class CompactPhaseIntegration(unittest.TestCase):
         result = compact_phase(save_id, phase_index, user_id=uid,
                                _backend=_FakeBackend("happy"))
         self.assertIn("error", result)
-        self.assertIn("no branch_commits", result["error"])
+        self.assertEqual(result.get("code"), "empty_range")
 
 
 if __name__ == "__main__":

@@ -639,6 +639,7 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             from state.phase_digest_policy import (
                 DIGEST_PREFIX_MAX_CHARS,
                 DIGEST_SUMMARY_MAX_CHARS,
+                drop_empty_ranges,
                 layer_owned_phase_indexes,
                 select_prefix_phases,
             )
@@ -654,9 +655,10 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
                     """,
                     (int(save_id),),
                 ).fetchall()
+            # 倒挂空段先滤掉,与 runtime_phase_digests 层取窗同一判据(否则归属错开一格)
+            digests = drop_empty_ranges([dict(d) for d in digests or []])
             if not digests:
                 return recent
-            digests = [dict(d) for d in digests]
             # 如果最近 K 轮已经覆盖了所有 phase,不重复注入 (避免老 phase 重复)
             min_recent_turn = self.data.get("turn", 0) - limit_turns
             _owned = layer_owned_phase_indexes(

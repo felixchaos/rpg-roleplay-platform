@@ -22,6 +22,7 @@ from .registry import register_provider
 from state.phase_digest_policy import (  # noqa: E402
     PER_PHASE_BUDGET,
     RECENT_PHASE_WINDOW as MAX_PHASES,
+    drop_empty_ranges,
 )
 
 
@@ -75,7 +76,13 @@ class RuntimePhaseDigestProvider(ContextProvider):
 
 
 def _load_recent_phases(save_id: int, limit: int = 4) -> list[dict]:
-    """拉 save 最近 limit 个 phase (按 phase_index 倒序拉, 然后反转给 LLM 时间正序)。"""
+    """拉 save 最近 limit 个 phase (按 phase_index 倒序拉, 然后反转给 LLM 时间正序)。
+
+    倒挂空段(turn_end < turn_start)先滤掉再取窗,不占最近 limit 段的名额。滤法与
+    state.core.history_messages() 的前情提要同源(phase_digest_policy.drop_empty_ranges),
+    所以这里取全集后在 Python 里滤、再截断,而不是在 SQL 里 limit —— 否则两边算出的
+    「层负责哪几段」会错开一格。
+    """
     from platform_app.db import connect, init_db
     init_db()
     with connect() as db:
@@ -87,11 +94,10 @@ def _load_recent_phases(save_id: int, limit: int = 4) -> list[dict]:
             from save_phase_digests
             where save_id = %s
             order by phase_index desc
-            limit %s
             """,
-            (save_id, limit),
+            (save_id,),
         ).fetchall()
-    out = [dict(r) for r in rows]
+    out = drop_empty_ranges([dict(r) for r in rows])[:limit]
     out.reverse()  # 时间正序: 早 phase 在前, 当前 open phase 在后
     return out
 

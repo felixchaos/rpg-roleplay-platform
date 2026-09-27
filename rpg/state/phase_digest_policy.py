@@ -34,11 +34,30 @@ DIGEST_PREFIX_MAX_CHARS = 4000
 DIGEST_SUMMARY_MAX_CHARS = 400
 
 
+def is_empty_range(phase: dict) -> bool:
+    """turn_end < turn_start 的倒挂行:一个回合都不含,永远不会有摘要。
+
+    open_new_phase 旧缺陷把「还没收进回合的 open phase」按 turn_index-1 关成 [s, s-1]
+    留下的存量(新代码不再产生)。两条注入路都当它不存在:它不占「层」的最近窗口名额,
+    也不参与归属划分。两边必须用这同一个判据先滤掉它 —— 否则层跳过它多拿一段、前情
+    提要却按全集算归属,那一段会在两条路里各出现一次。
+    """
+    try:
+        return int(phase.get("turn_end") or 0) < int(phase.get("turn_start") or 0)
+    except (TypeError, ValueError):
+        return False
+
+
+def drop_empty_ranges(phases: list[dict]) -> list[dict]:
+    """滤掉倒挂空段,保持原顺序。两条注入路在做任何取窗/归属计算之前都先过这一道。"""
+    return [p for p in phases if not is_empty_range(p)]
+
+
 def layer_owned_phase_indexes(all_phase_indexes: list[int]) -> set[int]:
     """哪些 phase_index 由「层」那条路负责渲染。
 
     与 runtime_phase_digests 的取法一致:按 phase_index 降序取前 RECENT_PHASE_WINDOW 个
-    (含 open phase)。传入的是该 save 的**全部** phase_index。
+    (含 open phase)。传入的是该 save 经 drop_empty_ranges 滤过之后的**全部** phase_index。
     """
     return set(sorted(set(int(i) for i in all_phase_indexes), reverse=True)[:RECENT_PHASE_WINDOW])
 
@@ -74,6 +93,8 @@ __all__ = [
     "DIGEST_PREFIX_MAX_PHASES",
     "DIGEST_PREFIX_MAX_CHARS",
     "DIGEST_SUMMARY_MAX_CHARS",
+    "is_empty_range",
+    "drop_empty_ranges",
     "layer_owned_phase_indexes",
     "select_prefix_phases",
 ]

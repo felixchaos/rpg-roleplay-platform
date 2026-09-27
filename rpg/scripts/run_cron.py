@@ -132,7 +132,7 @@ def cmd_phase_digest_backfill(db) -> dict:
     failed,无副作用。每轮有界(MAX),逐行 try 隔离,本命令绝不抛异常(否则会中断
     `run_cron all` 后续任务)。
     """
-    result = {"done": 0, "failed": 0, "skipped_no_key": 0, "pending": 0}
+    result = {"done": 0, "failed": 0, "skipped_no_key": 0, "empty_range": 0, "pending": 0}
     PHASE_BACKFILL_MAX = 20  # 单次 cron 最多重试几个,控时长 + BYOK 调用成本
     try:
         # 生产以 `-m rpg.scripts.run_cron` 跑(rpg.* 可导);测试/直接调以 rpg/ 为根(顶层可导)。
@@ -154,7 +154,10 @@ def cmd_phase_digest_backfill(db) -> dict:
                     force=True,
                 ) or {}
                 err = r.get("error")
-                if err:
+                if err and r.get("code") == "empty_range":
+                    # 这段没有可摘要的回合:compact_phase 已标 digest_empty 终态,下轮不会再选中
+                    result["empty_range"] += 1
+                elif err:
                     # 无凭证类失败单独计数,便于辨别"卡住"vs"用户没配 key"
                     if "key" in str(err).lower() or "credential" in str(err).lower():
                         result["skipped_no_key"] += 1

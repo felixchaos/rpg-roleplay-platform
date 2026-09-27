@@ -14,6 +14,11 @@
                                         — 107F backfill 占了行但 LLM 还没跑
   C. status='closed' and summary=''     — 上次摘要失败 (异常吞了),要重试
 
+永远不挑的行:
+  - turn_end < turn_start               — 倒挂空区间,一个回合都不含,摘要恒败
+  - metadata.digest_empty=true (且没被显式 needs_rebuild) — compact 已判定没有可摘要回合
+  这两类不排除的话,cron 每轮按 save_id 升序取有限条,它们会一直占着名额,真该重试的行轮不到。
+
 用法:
   rpg_env/bin/python rpg/scripts/phase_digest_worker.py
   rpg_env/bin/python rpg/scripts/phase_digest_worker.py --save-id 7916
@@ -57,8 +62,10 @@ def find_pending(
               join game_saves gs on gs.id = spd.save_id
              where (
                  (spd.metadata->>'needs_rebuild')::bool
-                 or (spd.status = 'closed' and coalesce(spd.summary,'') = '')
+                 or (spd.status = 'closed' and coalesce(spd.summary,'') = ''
+                     and not coalesce((spd.metadata->>'digest_empty')::bool, false))
                )
+               and spd.turn_end >= spd.turn_start
                and (%s::bigint is null or spd.save_id = %s)
              order by spd.save_id, spd.phase_index
              limit %s
@@ -121,7 +128,10 @@ def main() -> int:
                     force=True,
                 )
                 err = (result or {}).get("error")
-                if err:
+                if err and (result or {}).get("code") == "empty_range":
+                    # 没有可摘要的回合,已标 digest_empty 终态,不算失败
+                    print(f"  [SKIP] {tag} — {err}")
+                elif err:
                     print(f"  [FAIL] {tag} — {err}")
                     total_failed += 1
                 else:

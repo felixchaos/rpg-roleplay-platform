@@ -467,8 +467,13 @@ def _fire_and_forget_compact(save_id: int, phase_index: int) -> None:
             user_id = _load_save_user_id(save_id)
             result = compact_phase(save_id, phase_index, user_id=user_id)
             err = (result or {}).get("error")
-            if err:
-                log.warning(f"[phase_digest async] save {save_id} phase {phase_index} LLM error: {err}")
+            if err and (result or {}).get("code") == "empty_range":
+                # 这段一个回合都没有(区间倒挂或 commit 已不在):重试也不会成功,compact_phase
+                # 已把行标成 digest_empty 终态;别再置 needs_rebuild 让 cron 天天空转。
+                log.info(f"[phase_digest async] save {save_id} phase {phase_index} 无可摘要回合,跳过: {err}")
+            elif err:
+                # 失败未必是模型的锅(取 key、解析、DB 都可能),措辞别写死成 LLM error。
+                log.warning(f"[phase_digest async] save {save_id} phase {phase_index} compact 失败: {err}")
                 # 标记 needs_rebuild 让 worker 后续重试
                 try:
                     from psycopg.types.json import Jsonb

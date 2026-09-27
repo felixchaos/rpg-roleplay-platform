@@ -73,7 +73,7 @@ Python FastAPI 后端逐包/逐模块职责。给 AI 协作者:找「某功能�
 ## 状态 / 规则 / 存档
 
 - `state/` — 游戏状态核心:`core.py`、`json_ops.py`/`path_ops.py`(JSON 操作)、`consequence_ledger.py`(后果账本)、`npc_agenda.py`、`time_ops.py`、`regex_scripts.py`、`permissions.py`、`labels.py`、`_mixins/`。
-  - `state/phase_digest_policy.py` — phase digest 的**归属划分单一真相源**:哪些 phase 归「已发生历史摘要」层、哪些进 `history_messages()` 的前情提要,以及两条路各自的上限。两边必须 import 它,否则同一段历史会在一个请求里注入两次(守卫 `tests/unit/test_phase_digest_ownership.py`)。
+  - `state/phase_digest_policy.py` — phase digest 的**归属划分单一真相源**:哪些 phase 归「已发生历史摘要」层、哪些进 `history_messages()` 的前情提要,两条路各自的上限,以及倒挂空段(turn_end < turn_start)的共同滤法 `drop_empty_ranges`。两边必须 import 它,否则同一段历史会在一个请求里注入两次(守卫 `tests/unit/test_phase_digest_ownership.py`)。
 - `state_repository.py`/`state_event_bus.py`/`state_write_context.py`/`state_op_tool_map.py` — 状态仓储/事件总线/写上下文。`save_phase_manager.py` — 存档阶段管理。
 - `rules/` — 规则引擎:`engine.py`、`dice.py`、`dnd5e/`、`seed_policy.py`。`rules_bridge/` — 规则↔叙事桥:`intent.py`、`checks.py`、`combat.py`、`inventory.py`/`consume.py`、`entity_sync.py`、`suggest.py`、`module_ops.py`。
 - `saves/` — 本地存档数据(`game_state.json`、`backups/`)。

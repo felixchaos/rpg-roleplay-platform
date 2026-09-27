@@ -31,6 +31,9 @@ opus" 的设计指导针对的是实现工程师本人,被实现的子系统不�
 - LLM 调用失败 (网络/凭证) → 返 {"error": ..., "save_id": ..., "phase_index": ...}
 - DB 写入失败 → 抛异常,不静默吞 (上层 worker 决定是否重试)
 - force=False + status='closed' + summary 非空 → 不重摘,直接返现状
+- 区间里一个回合都没有 (turn_end < turn_start 或 commit 已不在) → 返
+  {"error": ..., "code": "empty_range", ...},不调 LLM;closed 行同时标
+  metadata.digest_empty=true / needs_rebuild=false,后台重试不再挑它
 
 线程 / 异步
 ===========
@@ -157,9 +160,13 @@ def compact_phase(
 
     turn_start = int(phase_row["turn_start"])
     turn_end = int(phase_row["turn_end"])
-    commits = _load_phase_commits(save_id, turn_start, turn_end)
+    # 倒挂区间 [s, s-1] 一个回合都不含,不必查库;区间正常但 commit 已不在(子树被删等)同理。
+    commits = _load_phase_commits(save_id, turn_start, turn_end) if turn_end >= turn_start else []
     if not commits:
-        return {"error": f"no branch_commits in turn {turn_start}-{turn_end}",
+        # 这类行重试多少次都不会成功 —— 标成终态,别让 cron 每天选中它、挤掉真该重试的行。
+        _mark_digest_empty(save_id, phase_index)
+        return {"error": f"这一段没有可摘要的回合(turn {turn_start}-{turn_end})",
+                "code": "empty_range",
                 "save_id": save_id, "phase_index": phase_index}
 
     prev_digest = _load_previous_digest(save_id, phase_index)
@@ -686,6 +693,8 @@ def _persist_digest(
         ).fetchone()
         meta = dict((row or {}).get("metadata") or {})
         meta["needs_rebuild"] = False
+        # 摘要成功就不再是空段(显式 rebuild 后补上了 commit 等),撤掉终态标记
+        meta.pop("digest_empty", None)
         meta["last_compact_model"] = model
         meta["last_compact_at"] = time.time()
 
@@ -714,6 +723,33 @@ def _persist_digest(
                 Jsonb(meta),
                 save_id, phase_index,
             ),
+        )
+
+
+def _mark_digest_empty(save_id: int, phase_index: int) -> None:
+    """closed 且没有可摘要回合的 phase 标成终态:digest_empty=true、needs_rebuild=false。
+
+    phase_digest_worker.find_pending 不再挑这类行(除非有人显式 /phase rebuild 重新置了
+    needs_rebuild)。只标 closed 行:open 行还会继续收回合,关段时照常摘要。
+    标记失败不影响返回(调用方靠 code=empty_range 判断),只记日志。
+    """
+    try:
+        from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect, init_db
+
+        init_db()
+        with connect() as db:
+            db.execute(
+                "update save_phase_digests "
+                "set metadata = coalesce(metadata, '{}'::jsonb) || %s, updated_at = now() "
+                "where save_id = %s and phase_index = %s and status = 'closed'",
+                (Jsonb({"digest_empty": True, "needs_rebuild": False}), save_id, phase_index),
+            )
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "[phase_digest] save %s phase %s 标 digest_empty 失败: %s", save_id, phase_index, exc
         )
 
 
