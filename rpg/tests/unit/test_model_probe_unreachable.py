@@ -271,10 +271,13 @@ def test_embedding_unsupported_proxy_is_recorded(monkeypatch):
     from core import outbound
     from platform_app.knowledge import embedding
 
+    from platform_app.knowledge.embedding import _breaker
+
     monkeypatch.setattr(outbound, "_ssrf_enforced", lambda: False)
-    monkeypatch.setattr(embedding, "_last_openai_embed_error", "")
-    out = embedding._embed_via_openai("text-embedding-3-small", "sk", ["hi"],
-                                      base_url="https://relay.example/v1",
-                                      proxy="socks5://127.0.0.1:1080")
+    with _breaker.attempt() as att:
+        out = embedding._embed_via_openai("text-embedding-3-small", "sk", ["hi"],
+                                          base_url="https://relay.example/v1",
+                                          proxy="socks5://127.0.0.1:1080")
     assert out is None
-    assert "SOCKS" in embedding._last_openai_embed_error
+    assert att.kind == _breaker.KIND_CONFIG
+    assert "SOCKS" in att.friendly

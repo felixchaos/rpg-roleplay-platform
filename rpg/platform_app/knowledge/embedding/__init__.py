@@ -339,9 +339,9 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
         _breaker.note_http(code, body=body, headers=headers, friendly=friendly)
         return None
     except UnsupportedProxy as e:
-        # 凭据里的代理这条出站用不了(urllib 不支持 SOCKS):写进 sticky 错误,设置页 / 拆书预检
-        # 能看到原因。不写的话向量静默失败,用户只会觉得「检索没效果」。
-        _last_openai_embed_error = f"向量嵌入请求没有发出去:{e}"
+        # 凭据里的代理这条出站用不了(urllib 不支持 SOCKS):按配置类记进熔断,原因进该用户的
+        # 最近错误,设置页 / 拆书预检能看到。不记的话向量静默失败,用户只会觉得「检索没效果」。
+        _breaker.note(_breaker.KIND_CONFIG, friendly=f"向量嵌入请求没有发出去:{e}")
         log.warning("[embedding] openai embed 代理不可用: %s", e)
         return None
     except Exception as e:
