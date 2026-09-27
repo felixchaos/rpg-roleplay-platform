@@ -2,13 +2,23 @@
 // 嵌入视图:去文档站外壳,只渲染正文。app 内 HelpDrawer 以 iframe 打开
 // https://docs.stellatrix.icu/embed/<slug>,实现「原控件内打开、不跳页」。
 import { getCollection, render } from 'astro:content';
+import { EMBED_SLUG_ALIASES } from '../../embed-aliases.mjs';
 
 export async function getStaticPaths() {
   const docs = await getCollection('docs');
   // 仅生成 zh(根)嵌入页 /embed/<slug>;排除 index 与 en/* 多段 id(app 内帮助用 zh)。
-  return docs
-    .filter((e) => e.id !== 'index' && !e.id.includes('/'))
-    .map((entry) => ({ params: { slug: entry.id }, props: { entry } }));
+  const pages = docs.filter((e) => e.id !== 'index' && !e.id.includes('/'));
+  const paths = pages.map((entry) => ({ params: { slug: entry.id }, props: { entry } }));
+  // 旧 slug 兼容(见 embed-aliases.mjs):已发出的客户端还在打这些 slug,额外生成一张
+  // 内容取自目标页的嵌入页。真实页面同名时以真实页面为准;目标页不存在直接让构建失败。
+  const byId = new Map(pages.map((e) => [e.id, e]));
+  for (const [alias, target] of Object.entries(EMBED_SLUG_ALIASES)) {
+    if (byId.has(alias)) continue;
+    const entry = byId.get(target);
+    if (!entry) throw new Error(`embed-aliases: ${alias} 指向的文档页 ${target} 不存在`);
+    paths.push({ params: { slug: alias }, props: { entry } });
+  }
+  return paths;
 }
 
 const { entry } = Astro.props;

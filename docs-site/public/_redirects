@@ -1,0 +1,7 @@
+# CF Pages 重定向规则。只写精确路径,不要加 /embed/* 这类通配:重定向可能先于
+# 静态文件生效,通配会把正常的嵌入页一起带走。
+# 旧 slug「intro」:主站从来没有这一页。嵌入视图 /embed/intro/ 已由
+# src/embed-aliases.mjs 生成真实页面,这里只兜主站路径。用 302:这是兼容垫片,
+# 301 会被浏览器和桌面端长期缓存,以后真加了 intro 页就收不回来。
+/intro/  /getting-started/  302
+/intro   /getting-started/  302

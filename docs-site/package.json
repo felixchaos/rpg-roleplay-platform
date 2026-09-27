@@ -6,7 +6,8 @@
   "description": "Stellatrix / RPG Roleplay 使用文档站 (docs.stellatrix.icu)",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "astro build && node scripts/check-dist.mjs",
+    "check-dist": "node scripts/check-dist.mjs",
     "preview": "astro preview"
   },
   "dependencies": {
