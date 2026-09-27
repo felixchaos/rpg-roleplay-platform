@@ -43,7 +43,8 @@ def test_non_http_codes_are_not_read_as_status(code):
     from agents.provider_errors import _http_status
     exc = _stream_error(code, "系统检测到输入或生成内容可能包含不安全或敏感内容")
     assert _http_status(exc) is None
-    assert _cat(exc) is None  # 敏感内容类流内错误:不归 upstream(不重试)
+    # 敏感内容类流内错误:不归 upstream(不重试),单独归 content_policy(以前落 None =「请重试(错误码)」)
+    assert _cat(exc) == "content_policy"
 
 
 def test_status_code_attribute_wins_over_code():

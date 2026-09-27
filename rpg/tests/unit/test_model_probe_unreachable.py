@@ -16,6 +16,7 @@ test_model_probe_unreachable.py
 6. GM 路径探测的读超时夹紧到 60s(请求体传入的 timeout 不许无上限);本地模式打本机 / 局域网
    模型时至少 40s,冷加载不被误报成不可用;服务器模式不放宽。
 7. 向量请求因凭据代理用不了(协议不对)失败时,原因写进 sticky 错误,不静默。
+8. 出站闸拒绝时带闸门原因、不提代理;只有本地模式才给「连接方式 / 系统代理」建议。
 
 全程 MockTransport,零真实网络。
 """
@@ -230,6 +231,58 @@ def test_unreachable_plain_direct_message_unchanged(probe):
     msg = str(ei.value)
     assert msg.startswith("连不上这个地址(连接超时或连接失败)")
     assert "拒绝了这次连接" not in msg and "经连接方式里配的代理" not in msg
+
+
+def test_unreachable_outbound_blocked_shows_gate_reason_not_proxy(probe, monkeypatch):
+    """服务器模式:出站闸拒绝(域名解析不到 / 解析到内网)被 SDK 包成「Connection error.」。
+    文案要带闸门的真实原因,且不提代理 —— 服务器模式恒不走用户代理,叫人去配代理是误导。"""
+    from core import outbound
+
+    monkeypatch.setattr(outbound, "_ssrf_enforced", lambda: True)
+    reason = "出站目标解析到私有/本地/保留地址,已拒绝(防 SSRF/DNS rebinding):relay.example → 10.0.0.2"
+
+    def _blocked(request):
+        raise outbound.OutboundBlockedTransportError(reason, request=request)
+
+    probe["handler"] = _blocked
+    with pytest.raises(RuntimeError) as ei:
+        probe["run"]("https://relay.example")
+    msg = str(ei.value)
+    assert "保留地址" in msg and "10.0.0.2" in msg
+    assert "代理" not in msg and "Connection error" not in msg
+    assert probe["paths"] == ["/models"]
+
+
+def test_unreachable_server_mode_does_not_suggest_proxy(probe, monkeypatch):
+    from core import outbound
+
+    monkeypatch.setattr(outbound, "_ssrf_enforced", lambda: True)
+
+    def _boom(request):
+        raise httpx.ConnectTimeout("boom", request=request)
+
+    probe["handler"] = _boom
+    with pytest.raises(RuntimeError) as ei:
+        probe["run"]("https://relay.example")
+    msg = str(ei.value)
+    assert msg.startswith("连不上这个地址(连接超时或连接失败)")
+    assert "代理" not in msg and "连接方式" not in msg
+
+
+def test_unreachable_local_mode_suggests_proxy(probe, monkeypatch):
+    from core import outbound
+
+    monkeypatch.setattr(outbound, "_ssrf_enforced", lambda: False)
+
+    def _boom(request):
+        raise httpx.ConnectTimeout("boom", request=request)
+
+    probe["handler"] = _boom
+    with pytest.raises(RuntimeError) as ei:
+        probe["run"]("https://relay.example")
+    msg = str(ei.value)
+    assert msg.startswith("连不上这个地址(连接超时或连接失败)")
+    assert "连接方式" in msg and "系统代理" in msg
 
 
 def _openai_backend(base_url: str):

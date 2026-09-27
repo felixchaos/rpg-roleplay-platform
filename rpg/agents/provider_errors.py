@@ -162,19 +162,45 @@ _UNKNOWN_PARAM_MARKERS = (
     "extra_forbidden",
 )
 
-# 流内错误里的内容审核类:别当「供应商临时故障」去重试(白白重发整段提示词),也别计入
-# 渠道健康失败(model_probe 按 api_id 跨用户聚合,一个人的审核拒绝会把公共渠道标成故障)。
+# 内容审核类(供应商的内容策略拦下了这次请求):单独归 content_policy。重试也会被拦,别当
+# 「供应商临时故障」去重试(白白用玩家的 key 重发整段提示词、再切备用渠道发一遍),也别计入渠道
+# 健康失败(model_probe 按 api_id 跨用户聚合,一个人的审核拒绝会把公共渠道标成故障)。
+# 强措辞:HTTP 400 与流内错误都认(各家把审核拒绝报成 400 的居多)。
 _CONTENT_POLICY_MARKERS = (
-    "content_policy",
-    "content_filter",
-    "content management policy",
-    "safety system",
-    "moderation",
+    "content_policy",                    # OpenAI content_policy_violation
+    "content_filter",                    # Azure / Moonshot 的 code / type
+    "content management policy",         # Azure "...triggering Azure OpenAI's content management policy"
+    "content filtering",                 # Anthropic 流内 "Output blocked by content filtering policy"
+    "output blocked",
+    "inappropriate content",             # 通义 "Input/Output data may contain inappropriate content."
+    "data_inspection",                   # 通义 code data_inspection_failed
+    "safety system",                     # OpenAI "rejected as a result of our safety system"
     "content exists risk",               # DeepSeek 风控
+    "敏感内容",                           # 智谱 1301「可能包含不安全或敏感内容」
+    "内容安全",
+    "内容审核",
+)
+# 弱措辞:只在流内错误里认。HTTP 400 的参数报错里也会出现(「参数名大小写敏感」「违规参数」),
+# 宁漏勿误;流内错误是生成中途被掐断,这些词在那里基本只指审核。
+_CONTENT_POLICY_WEAK_MARKERS = (
+    "moderation",
     "敏感",
     "违规",
     "审核",
 )
+# 流内错误的 error.type / code 里表示「请求本身被拒」的非瞬时类型:没命中审核词也不归 upstream
+# (Anthropic 流内 invalid_request_error 重发一样被拒)。瞬时的是 overloaded_error / api_error 等。
+_STREAM_NON_TRANSIENT_TYPES = frozenset({
+    "invalid_request_error",
+})
+
+# 与空回合分诊(chat_pipeline/persist._empty_turn_diagnosis 的 content_filter 分支)同一口径:
+# 同一个原因以 finish_reason 到达还是以报错到达,玩家看到的是同一句话、同一条建议。
+_CONTENT_POLICY_ADVICE = "可以换个说法重述,或在设置的「模型」页换一个对该题材更宽松的模型。"
+
+# 代理这一跳就被拒了:urllib 的 http.client._tunnel 抛 OSError("Tunnel connection failed: 403 Forbidden"),
+# 被包成 URLError;httpx 是 ProxyError("403 Forbidden")(httpcore 拿 CONNECT 响应的状态行做消息)。
+_PROXY_TUNNEL_MARKER = "tunnel connection failed"
 
 
 # SDK 构造期就崩:api_key 为空/未传。openai SDK(实测 2.41.1)对 api_key="" 与 None 一视同仁,
@@ -240,6 +266,63 @@ def _outbound_blocked_in_chain(exc: BaseException) -> BaseException | None:
             return cur
         cur = cur.__cause__
     return None
+
+
+def _proxy_refusal_in_chain(exc: BaseException) -> BaseException | None:
+    """请求在代理这一跳就被拒了(代理不肯建隧道 / 要代理认证 / 代理自己连不上上游),返回那个异常。
+
+    - urllib:URLError(OSError('Tunnel connection failed: 403 Forbidden'));
+    - httpx:ProxyError('403 Forbidden'),openai / anthropic SDK 再包成 APIConnectionError,
+      原异常在 __cause__ 上(与 _outbound_blocked_in_chain 同样只走显式 __cause__)。
+    文本里带着的是**代理**回的状态码:不能被 403 分支说成「提供商拒绝、换个模型试」,也不能被
+    网关措辞说成供应商 502 去重试、记渠道故障。带 HTTP 状态码的(对面真回过话)一律不算。
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen and len(seen) < 8:
+        seen.add(id(cur))
+        if _http_status(cur) is None:  # type: ignore[arg-type]
+            if any(k.__name__ == "ProxyError" for k in type(cur).__mro__):
+                return cur
+            if _PROXY_TUNNEL_MARKER in str(cur).lower():
+                return cur
+        cur = cur.__cause__
+    return None
+
+
+def _error_types(exc: Exception) -> set[str]:
+    """异常上的 error.type / error.code(小写):SDK 属性 + body 的顶层与 error 子对象。
+
+    anthropic 流内错误:.type='invalid_request_error',body={type:'error', error:{type,message}};
+    openai 流内错误:.type / .code 来自 body。纯数字的 code(HTTP 状态 / 业务码)不收。
+    """
+    out: set[str] = set()
+
+    def _add(v: object) -> None:
+        if isinstance(v, str):
+            t = v.strip().lower()
+            if t and not t.isdigit() and t != "error":
+                out.add(t)
+
+    _add(getattr(exc, "type", None))
+    _add(getattr(exc, "code", None))
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        _add(body.get("type"))
+        _add(body.get("code"))
+        inner = body.get("error")
+        if isinstance(inner, dict):
+            _add(inner.get("type"))
+            _add(inner.get("code"))
+    return out
+
+
+def outbound_blocked_in_chain(exc: BaseException) -> BaseException | None:
+    """公开入口:异常(或显式 __cause__ 链)上的出站闸拒绝原因;没有返回 None。
+
+    给 model_probe 这类不走 classify_provider_error、自己拼「连不上」文案的出错面用,
+    判据与分类器同一份,别各写一套。"""
+    return _outbound_blocked_in_chain(exc)
 
 
 def _is_connection_failure(exc: Exception) -> bool:
@@ -436,7 +519,7 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
     """已知提供商错误 → (category, 客户端安全文案);未知返回 None(调用方走各自兜底)。
 
     category ∈ {"balance", "auth", "ratelimit", "context", "upstream", "model_unavailable",
-    "feature_unsupported", "bad_request", "network"}。文案不含 error_id,调用方自行追加。
+    "feature_unsupported", "bad_request", "content_policy", "network"}。文案不含 error_id,调用方自行追加。
     只有 upstream / ratelimit 可重试(stream_retry)、计入渠道健康(_note_channel_health_failure)。
     """
     body_text = _body_text(exc)
@@ -450,6 +533,15 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
                 "请到「设置 → 模型与密钥」为该供应商填入 API Key 并测试凭证;"
                 "若用的是本地模型(Ollama / LM Studio / vLLM 等),请把该供应商的鉴权方式"
                 "选为「无需 API Key」并填好接口地址。")
+    # 代理这一跳被拒放在所有按状态码 / 措辞的分支之前:文本里的 403 / 502 是代理回的,
+    # 不是模型服务回的(以前 "Tunnel connection failed: 403 Forbidden" 被说成「提供商拒绝,换个模型试」)。
+    _proxy_refused = _proxy_refusal_in_chain(exc)
+    if _proxy_refused is not None:
+        return ("network",
+                "代理拒绝了这次连接,请求没有送到模型服务,和 API key、所选模型都没有关系。"
+                "请检查代理软件是否正常、代理是否允许访问这个地址、是否需要账号密码;"
+                "或者在「设置 → 模型与密钥」里给该供应商的连接方式换一个能用的代理。"
+                f"代理的回复:{redact_secrets(_proxy_refused, limit=120) or '(无)'}")
     if status == 402 or any(m in raw_lower for m in _BALANCE_MARKERS):
         return ("balance",
                 "当前模型的 API 账户余额不足或配额已用尽，重试无法恢复。"
@@ -528,9 +620,24 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
     if (_model_is_subject(_MODEL_GONE_RE, raw_lower) or _model_is_subject(_MODEL_MISSING_RE, raw_lower)
             or any(m in raw_lower for m in _MODEL_MARKERS)):
         return ("model_unavailable", _MODEL_UNAVAILABLE_MSG)
+    # 内容审核:流内错误(HTTP 200 / openai 裸 APIError)强弱措辞都认,HTTP 400 只认强措辞。
+    # 放在流内错误归 upstream 之前 —— 审核拒绝重发一样被拒,不重试、不换渠道、不记渠道故障。
+    _in_stream = _is_openai_stream_error(exc, status)
+    if (_in_stream or status == 400) and (
+            any(m in raw_lower for m in _CONTENT_POLICY_MARKERS)
+            or (_in_stream and any(m in raw_lower for m in _CONTENT_POLICY_WEAK_MARKERS))):
+        return ("content_policy",
+                "这次请求被所用模型的内容策略拦下了,重试也会被拦。"
+                + _CONTENT_POLICY_ADVICE
+                + f"提供商原话:{_provider_detail(exc) or '(未提供)'}")
     # 流内错误(HTTP 200 的流里来了 error 事件):多为供应商/中转站在生成中途出错,归 upstream,
-    # 首 token 前自动重试、计入渠道健康。内容审核类除外(重试无用,也不该拖累公共渠道的健康标记)。
-    if _is_openai_stream_error(exc, status) and not any(m in raw_lower for m in _CONTENT_POLICY_MARKERS):
+    # 首 token 前自动重试、计入渠道健康。error.type 是「请求本身被拒」的非瞬时类型时除外。
+    if _in_stream:
+        if _error_types(exc) & _STREAM_NON_TRANSIENT_TYPES:
+            return ("bad_request",
+                    "模型服务在生成途中拒绝了这次请求(请求错误,不是临时故障),重试也不会好。"
+                    "请先换一个模型或供应商试试;如果用的是中转站,可以把下面这句原话转给它的维护者。"
+                    f"提供商原话:{_provider_detail(exc) or '(未提供)'}")
         return ("upstream",
                 "模型服务在生成过程中返回了错误,多为供应商或中转站临时故障,不是平台或存档的问题。"
                 f"提供商原话:{_provider_detail(exc) or '(未提供)'} "

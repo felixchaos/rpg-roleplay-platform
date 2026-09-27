@@ -592,9 +592,25 @@ def _is_proxy_refusal(exc: BaseException) -> bool:
 def _unreachable_error(exc: BaseException, proxy: str | None = None) -> RuntimeError:
     """连不上时给用户的准话。proxy = 这次出站用的凭据代理(credential_proxy 的结果)。
 
-    分三种说:经用户配的代理连不上(多半是代理软件没开 / 地址端口填错)、系统代理拒绝了连接、
-    直连连不上(需要代理却没配)。三种都和 API key、/v1 路径无关,都不该让用户去改那两样。
+    先看是不是出站安全闸拦的(服务器模式:域名解析不到 / 解析到内网或保留地址):SDK 把闸门异常
+    包成「Connection error.」,原因在 __cause__ 上,与 provider_errors 同一个判据
+    (outbound_blocked_in_chain)。这种要把闸门原因原样说出来,不提代理 —— 服务器模式恒不走
+    用户代理,叫人去配代理是误导。
+    其余分三种说:经用户配的代理连不上(多半是代理软件没开 / 地址端口填错)、系统代理拒绝了连接、
+    直连连不上。「连接方式 / 系统代理」这条建议只给本地模式(服务器模式没有这两样可配)。
+    都和 API key、/v1 路径无关,都不该让用户去改那两样。
     """
+    from agents.provider_errors import outbound_blocked_in_chain, redact_secrets
+    from core.outbound import _ssrf_enforced
+
+    blocked = outbound_blocked_in_chain(exc)
+    if blocked is not None:
+        return RuntimeError(
+            "这个地址被平台的出站安全检查拦下了,和 API key、/v1 路径都没有关系。"
+            "常见原因是接口地址里的域名现在解析不到,或者解析到了内网 / 保留地址。"
+            "请确认接口地址(base_url)写对了、是公网能访问的地址,过一会儿再试。"
+            f"拦截原因:{redact_secrets(blocked, limit=200)}"
+        )
     if proxy:
         from core.outbound import redact_proxy_url
         return RuntimeError(
@@ -607,6 +623,11 @@ def _unreachable_error(exc: BaseException, proxy: str | None = None) -> RuntimeE
             "连不上这个地址:系统代理(或环境变量 HTTPS_PROXY 里的代理)拒绝了这次连接,"
             "和 API key、/v1 路径都没有关系。请检查代理软件是否正常,或者在这个供应商的"
             f"「连接方式」里填一个能用的 HTTP 代理。原始错误:{exc}"
+        )
+    if _ssrf_enforced():
+        return RuntimeError(
+            "连不上这个地址(连接超时或连接失败),和 API key、/v1 路径都没有关系。"
+            f"请确认接口地址写对了、这个服务现在能从公网访问,过一会儿再试。原始错误:{exc}"
         )
     return RuntimeError(
         "连不上这个地址(连接超时或连接失败),和 API key、/v1 路径都没有关系。"

@@ -8,7 +8,8 @@
   tool_result(工具可能已执行,重试会双重副作用);纯 reasoning / 状态类事件不算提交
   (重试后思考流重启,视觉可接受,无副作用)。
 - 只对 classify_provider_error 分类为 upstream(5xx/网关/流内错误)/ratelimit(429) 的错误重试;
-  balance/auth/context/model_unavailable/feature_unsupported/bad_request/network 重试无意义,原样抛。
+  balance/auth/context/model_unavailable/feature_unsupported/bad_request/content_policy/network
+  重试无意义,原样抛(content_policy = 内容审核拦截,重发一样被拦)。
 - 最多 MAX_RETRIES 次,线性退避(attempt * BACKOFF_BASE_SEC);每次重试先 yield 一个
   {"type": "retry_notice"} 事件,调用方转成 SSE 告知玩家「自动重试中」,不再干等。
 - stop_event 已置位(玩家停止/断连)不重试。
