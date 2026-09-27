@@ -693,6 +693,7 @@ function App() {
     let openedAssistant = false;
     let gotReceipt = false;  // #13: 本轮是否收到 system_receipt(斜杠命令回执)
     let gotDone = false;
+    let gotError = false;    // 本轮收到过后端 error 事件:on_error 已报出真实原因(如空回合分诊文案)
     let streamFailed = false;
     let reasoningBuf = '';   // #7: 本轮累计的 reasoning(思考过程)文本
     const describeLastSseEvent = () => {
@@ -968,6 +969,10 @@ function App() {
           if (data && data.usage) setLastUsage(data.usage);  // #11: 兜底(若无独立 usage 事件)
           logEvent('done', { status: !!data && data.status ? 'ok' : 'noop', interrupted: data && data.interrupted, usage: data && data.usage });
           clearInterval(tickerId);
+          // 失败轮(没出正文):on_error 已把真实原因放进横幅 / toast 并恢复了草稿,后端随后照例补一个 done。
+          // 不能再走下面的回查兜底:它会清掉「生成失败」的状态标签,首回合还会用通用的「空回复」文案
+          // 盖掉横幅里的真实原因、再弹一次 toast。本轮没落库,回查也只会拿到上一轮。
+          if (!openedAssistant && gotError) { runRef.current.sse = null; return; }
           if (!openedAssistant && !gotReceipt) {
             if (runRef.current.doneTimer) { clearTimeout(runRef.current.doneTimer); runRef.current.doneTimer = null; }
             const _interrupted = !!(data && data.interrupted);
@@ -1090,6 +1095,7 @@ function App() {
         on_error: (data) => {
           if (!isCurrentRun()) return;
           streamFailed = true;
+          gotError = true;
           logEvent('error', data);
           clearInterval(tickerId);
           if (runRef.current.doneTimer) { clearTimeout(runRef.current.doneTimer); runRef.current.doneTimer = null; }

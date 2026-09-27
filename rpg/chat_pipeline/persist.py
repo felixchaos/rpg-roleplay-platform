@@ -7,7 +7,117 @@ from typing import Any
 
 from state import strip_json_state_ops, strip_leaked_scaffold, strip_meta_tool_preamble
 
-from ._common import PipelineContext, SSEEvent, log
+from ._common import (
+    _TOOL_MARKUP_FINISH_REASONS,
+    PipelineContext,
+    SSEEvent,
+    _gm_mode_of,
+    _is_content_filter_reason,
+    _last_usage_of,
+    _norm_finish_reason,
+    log,
+)
+
+# 空回合兜底文案:分诊本身出异常时才用(分诊是纯函数,正常走不到)。
+_EMPTY_FALLBACK_MESSAGE = "这一轮模型没有写出正文,请重试。"
+
+
+def _as_int(v: Any) -> int:
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _empty_turn_diagnosis(
+    ctx: PipelineContext, raw_len: int, *, regex_emptied: bool = False,
+) -> tuple[str, str, dict[str, Any]]:
+    """空回合(清洗后没有正文)的确定性分诊 → (reason, 给玩家的文案, 证据 facts)。
+
+    只读现成的确定性信号,不猜正文:
+      · ctx.gm._backend.last_usage 的 finish_reason / output_tokens / reasoning_tokens / max_tokens
+        (与 _stop_reason_notice 共用 _last_usage_of;每回合入口已清零,读到的是本回合的)
+      · state.data 的 _turn_reasoning(思考流)/ _turn_tool_ops(工具调用),本回合 Phase 4 累积
+      · ctx.turn_tool_errors(工具调用标记解析失败 / DSML 解析出 0 个调用)
+    regex_emptied:清洗到输出正则之前还有正文、被玩家自己的输出正则整段换空了(stripped_to_empty 的
+    特例,单列 output_regex_emptied —— 这种情况重试没用,得去改正则)。
+    优先级自上而下,先命中先返回:
+      output_regex_emptied > stripped_to_empty > reasoning_exhausted > length > content_filter > tool_markup_unparsed
+      > tool_only > reasoning_only > upstream_empty
+    无工具路径(stream())不发思考事件、部分服务也不回传 reasoning_tokens,所以 length 且看不到
+    思考信号时文案仍点明「多半是思考占满」。
+    """
+    lu = _last_usage_of(ctx)
+    state_data = getattr(getattr(ctx, "state", None), "data", None) or {}
+    try:
+        reasoning_chars = sum(len(str(x or "")) for x in (state_data.get("_turn_reasoning") or []))
+    except Exception:
+        reasoning_chars = 0
+    try:
+        tool_count = len(state_data.get("_turn_tool_ops") or [])
+    except Exception:
+        tool_count = 0
+    tool_errors = len(getattr(ctx, "turn_tool_errors", None) or [])
+    fr = _norm_finish_reason(lu.get("finish_reason"))
+    out_tokens = _as_int(lu.get("output_tokens"))
+    reasoning_tokens = _as_int(lu.get("reasoning_tokens"))
+    max_tokens = _as_int(lu.get("max_tokens")) or _as_int(getattr(ctx, "gm_max_tokens", 0))
+    try:
+        gm = getattr(ctx, "gm", None)
+    except Exception:
+        gm = None
+    facts: dict[str, Any] = {
+        "api_id": str(getattr(gm, "api_id", "") or ""),
+        "model": str(getattr(getattr(gm, "_backend", None), "model_name", "") or ""),
+        "finish_reason": str(lu.get("finish_reason") or ""),
+        "out_tokens": out_tokens,
+        "reasoning_tokens": reasoning_tokens,
+        "max_tokens": max_tokens,
+        "reasoning_chars": reasoning_chars,
+        "tool_count": tool_count,
+        "tool_errors": tool_errors,
+        "raw_len": int(raw_len or 0),
+    }
+    has_reasoning = reasoning_tokens > 0 or reasoning_chars > 0
+    cap = f"(上限 {max_tokens} tokens)" if max_tokens else ""
+    # 不引用具体控件名:设置页叫「最大生成 token」、酒馆参数抽屉叫「最大输出 Tokens」,两处都在「模型参数」下。
+    raise_cap = "可以在「模型参数」里调高最大输出 token 数,或把推理强度调低、换一个不带思考的模型,然后重试。"
+
+    if raw_len > 0 and regex_emptied:
+        return ("output_regex_emptied",
+                "模型写了正文,但被你启用的输出正则脚本整段替换成了空内容。重试也会这样,"
+                "请检查一下正则脚本的查找和替换规则。", facts)
+    if raw_len > 0:
+        return ("stripped_to_empty",
+                "模型这一轮只输出了状态指令或内部标记,没有写正文。直接重试一般就好。", facts)
+    if fr == "length" and has_reasoning:
+        used = f"(思考约 {reasoning_tokens} tokens)" if reasoning_tokens else ""
+        return ("reasoning_exhausted",
+                f"模型把这一轮的输出额度{cap}全用在了思考上{used},正文还没开始写就到顶了。" + raise_cap,
+                facts)
+    if fr == "length":
+        return ("length",
+                f"模型用满了这一轮的输出额度{cap},却一个字的正文都没写出来,多半是思考过程占满了额度"
+                "(有些服务不回传思考内容,所以这里看不到)。" + raise_cap,
+                facts)
+    if _is_content_filter_reason(fr):
+        return ("content_filter",
+                "这一轮被所用模型的内容策略拦下了,没有生成正文。可以换个说法重述,"
+                "或在设置的「模型」页换一个对该题材更宽松的模型。", facts)
+    if tool_errors > 0 or fr in _TOOL_MARKUP_FINISH_REASONS:
+        return ("tool_markup_unparsed",
+                "模型想调用工具,但写出来的调用格式解析不了,这一轮没能写出正文。"
+                "可以直接重试;经常这样的话,换个模型或渠道试试。", facts)
+    if tool_count > 0:
+        return ("tool_only",
+                f"模型这一轮只调用了工具({tool_count} 次),没有接着写正文。可以直接重试。", facts)
+    if has_reasoning:
+        return ("reasoning_only",
+                "模型这一轮只输出了思考过程,没有写正文。可以直接重试;经常这样的话,"
+                "在设置的「模型参数」里把推理强度调低,或换个模型。", facts)
+    return ("upstream_empty",
+            "模型服务这一轮返回了空内容:没有正文,没有思考,也没有调用工具。多半是中转站或服务端"
+            "临时出了问题,请重试;反复出现的话换个渠道。", facts)
 
 
 async def persist_turn_phase(
@@ -91,6 +201,7 @@ async def persist_turn_phase(
 
     # 反馈#93:用户自定义输出正则(SillyTavern regex,输出/显示作用域)—— 对清洗后的可见正文做确定性
     # find/replace。安全在 state.regex_scripts 内(每条脚本线程超时 + try/except,异常/超时跳过,绝不断轮)。
+    _before_output_regex = visible_response
     try:
         from state.regex_scripts import apply_output_regex
         _rx_uid = int(api_user.get("id")) if api_user and api_user.get("id") else 0
@@ -114,12 +225,43 @@ async def persist_turn_phase(
             # 酒馆角色卡工具成功但 first_mes 为空 — 正常干净结束,不报 error
             yield ("done", {"status": payload_fn(api_user), "interrupted": False, "empty": True})
         else:
-            log.warning(f"[chat] WARN: GM 返回空响应, len(raw)={len(response)} "
-                        f"user_msg='{message_for_model[:80]}', save_id={ctx.active_save_id}")
-            yield ("error", {
-                "message": "GM 没生成内容(可能触发了模型的安全过滤,或者上下文出错)。请尝试换个说法重新发送。",
-                "kind": "empty_response",
-            })
+            # 确定性分诊:此前这里是写死的「可能触发了安全过滤 / 上下文出错,换个说法」,而最常见的
+            # 成因(思考模型把单轮输出上限吃光)换说法根本没用;现场信号也一条没留。
+            try:
+                # raw_len 按去空白后算:原始输出只有空白 = 上游确实没给东西,不该判成「清洗后为空」。
+                _reason, _msg, _facts = _empty_turn_diagnosis(
+                    ctx, len((response or "").strip()),
+                    regex_emptied=bool((_before_output_regex or "").strip()),
+                )
+            except Exception:
+                _reason, _msg, _facts = "unknown", _EMPTY_FALLBACK_MESSAGE, {}
+            _mode = _gm_mode_of(state)
+            _pid = ctx.persist_user_id or ctx.early_persist_user_id
+            _sid = ctx.active_save_id or ctx.early_active_save_id
+            log.warning(
+                "[chat] WARN: GM 返回空响应 reason=%s api_id=%s model=%s finish_reason=%s out_tokens=%s "
+                "reasoning_tokens=%s max_tokens=%s reasoning_chars=%s tools=%s tool_errors=%s mode=%s "
+                "len(raw)=%s user_msg='%s' save_id=%s",
+                _reason, _facts.get("api_id"), _facts.get("model"), _facts.get("finish_reason"),
+                _facts.get("out_tokens"), _facts.get("reasoning_tokens"), _facts.get("max_tokens"),
+                _facts.get("reasoning_chars"), _facts.get("tool_count"), _facts.get("tool_errors"),
+                _mode or "?", len(response or ""), message_for_model[:80], _sid,
+            )
+            # 证据落库:空回合也实际花了玩家的输入 + 思考 token。写一条 chat token_usage,metadata 带
+            # empty_response/reason,生产上能直接按 reason 统计成因分布。只在游戏台发 usage SSE(footer
+            # 显示本轮用量);酒馆页把 usage 挂在「最后一条消息」下面,空回合那条是上一回合的 GM 回复,
+            # 会把这轮的用量错挂过去,所以酒馆只落库不发。
+            _usage = None
+            try:
+                _usage = build_usage_payload(
+                    api_user, gm, bundle, message_for_model, _pid, _sid, ctx.context_run_id,
+                    extra_metadata={"empty_response": True, "reason": _reason},
+                )
+            except Exception:
+                _usage = None
+            if _usage and _mode != "tavern_gm":
+                yield ("usage", _usage)
+            yield ("error", {"message": _msg, "kind": "empty_response", "reason": _reason})
             yield ("done", {"status": payload_fn(api_user), "interrupted": False, "empty": True})
         return
     persist_chat_turn(

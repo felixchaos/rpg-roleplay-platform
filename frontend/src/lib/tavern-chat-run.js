@@ -226,11 +226,17 @@ export function startTavernRun(cfg) {
   if (onStart) onStart();
 
   let openedAssistant = false;
+  let gotText = false;     // 本轮是否收到过非空正文 token(与 game-console 只在正文 token 时开气泡同义)
+  let gotError = false;    // 本轮是否收到过后端 error 事件(on_error 已报出真实原因)
   let gotDone = false;
   let gotReceipt = false;  // 本轮是否收到 /set 等确定性回执(system_receipt / updates pre_llm),防被判「空回复」
 
   const restoreFailedDraft = () => {
-    if (!isCurrentRun() || openedAssistant) return;
+    // 守卫看「有没有正文」而不是「开没开气泡」:酒馆的思考流 / 工具折叠也会开助手气泡,而后端只在
+    // 有正文时才落库。原来按 openedAssistant 判 → 思考模型吃光输出上限的空回合里这里直接返回:
+    // 只剩思考的空气泡留着、输入不回填、失败标记不置;随后 done 的 applyState 用存档历史把两个气泡都
+    // 冲掉,玩家输入就丢了,再点「重试」若与上一轮同文(如「继续」)会把上一个好回合 rollback 掉。
+    if (!isCurrentRun() || gotText) return;
     // 失败轮未落库标记:pages/tavern 的「重试」据此跳过 rollback(与 game-console restoreFailedDraft 同款)。
     // 不标的话,本轮气泡被下面移除后,裸重试从历史回捞到的最后一条玩家输入是【上一个好回合】,
     // rollback 会把它滚进 trash = 每次失败重试多吃一个好回合。
@@ -241,10 +247,19 @@ export function startTavernRun(cfg) {
     // (与 game-console restoreFailedDraft 719 行同款语义)。移动酒馆无附件 UI,不传 cfg.setAttachments 即 no-op。
     if (setAttachments) setAttachments((cur) => (Array.isArray(cur) && cur.length ? cur : sentAttachments));
     // gc.keepFailedTurn 为 RPG 台专属;若未来全局化,此处需接同款短路(2026-07-17 审计记录)。
+    // 先快照再清标记:setHistory 的函数式更新可能延后执行,不能在 updater 里读会被改掉的闭包变量。
+    const hadGhostBubble = openedAssistant;
+    openedAssistant = false;
     setHistory((h) => {
-      const last = h[h.length - 1];
-      if (last && last.role === 'user' && last.content === playerText) return h.slice(0, -1);
-      return h;
+      let arr = h;
+      let last = arr[arr.length - 1];
+      // 本轮只有思考 / 工具、没有正文的助手气泡:本轮不落库,连同玩家气泡一起撤掉。
+      if (hadGhostBubble && last && last.role === 'assistant' && !String(last.content || '').trim()) {
+        arr = arr.slice(0, -1);
+        last = arr[arr.length - 1];
+      }
+      if (last && last.role === 'user' && last.content === playerText) return arr.slice(0, -1);
+      return arr;
     });
   };
 
@@ -370,6 +385,7 @@ export function startTavernRun(cfg) {
       resetIdle();
       const piece = (data && (data.text || data.delta)) || '';
       if (!piece) return;
+      gotText = true;
       setHistory((h) => {
         if (!openedAssistant) { openedAssistant = true; return [...h, { role: 'assistant', content: piece, ts, streaming: true }]; }
         const last = h[h.length - 1];
@@ -387,6 +403,18 @@ export function startTavernRun(cfg) {
       setRunning(false);
       // /set 等纯回执轮:收到 receipt、无叙事正文属正常,别判「空回复」恢复草稿(与 game-console gotReceipt 守卫同款)。
       if (!openedAssistant && gotReceipt) { rc.sse = null; return; }
+      // 失败轮:on_error 已经报出真实原因(如空回合分诊文案)并按需恢复了草稿,后端随后照例补一个 done。
+      // 这里不能再走下面的「空回复 / 已中断」提示(会用通用文案盖掉横幅里的真实原因、再弹一次 toast),
+      // 也不当成功收尾去回查 / applyState(本轮没落库,拿到的只是上一轮)。只把流式气泡封口。
+      if (gotError) {
+        setHistory((h) => {
+          const last = h[h.length - 1];
+          if (!last || last.role !== 'assistant' || !last.streaming) return h;
+          return [...h.slice(0, -1), { ...last, streaming: false, streaming_done: true }];
+        });
+        rc.sse = null;
+        return;
+      }
       if (!openedAssistant) {
         const interrupted = !!(data && data.interrupted);
         const showEmpty = () => {
@@ -448,6 +476,7 @@ export function startTavernRun(cfg) {
     },
     on_error: (data) => {
       if (!isCurrentRun()) return;
+      gotError = true;
       clearIdle();
       endStream();
       if (onErrorEvent) { onErrorEvent(data, { setRunning, setHasError, toast, restoreFailedDraft }); return; }

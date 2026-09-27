@@ -12,6 +12,8 @@
  *   · applyTavernState 核心三段 + 宿主叠加(setGameState/setPermission/setSystemPrompt/mapHistory)
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import {
   startTavernRun, applyTavernState, makeStopRun, abortRun, nowHHMM,
   toolCallInlineAnchor, toolResultInline, toolCallInline,
@@ -198,6 +200,103 @@ describe('startTavernRun — 公共骨架折叠语义', () => {
     startTavernRun(cfg);
     fake.calls[0]._handlers.on_done({});
     expect(calls.hasError).toContain('本轮没有收到回复,请重试。');
+  });
+});
+
+describe('失败轮(on_error 之后的 done)—— 空回合分诊文案不被盖掉,思考 / 工具空气泡随本轮撤回', () => {
+  const EMPTY_ERR = { message: '模型把这一轮的输出额度全用在了思考上,正文还没开始写就到顶了。', kind: 'empty_response', reason: 'reasoning_exhausted' };
+
+  it('只有思考流就报错:撤掉思考空气泡 + 玩家气泡、回填输入、置失败标记;done 不再 applyState / 不弹第二个 toast', () => {
+    const fake = makeFakeChat();
+    const state = vi.fn(() => Promise.resolve({ history: [] }));
+    const prior = [{ role: 'user', content: '继续' }, { role: 'assistant', content: '上一轮的回复' }];
+    const hist = makeHistory(prior);
+    const { cfg, calls, rc } = baseCfg({ api: { game: { chat: fake.chat, stop: vi.fn(), state } }, playerText: '继续' });
+    cfg.setHistory = hist.setHistory;
+    startTavernRun(cfg);
+    const H = fake.calls[0]._handlers;
+    H.on_reasoning({ text: '让我想想……' });
+    expect(hist.get()[hist.get().length - 1]).toMatchObject({ role: 'assistant', content: '', _thinking: '让我想想……' });
+    H.on_error(EMPTY_ERR);
+    H.on_done({ status: { history: prior }, interrupted: false, empty: true });
+    expect(hist.get()).toEqual(prior);                   // 只剩上一轮,空气泡与本轮玩家气泡都撤了
+    expect(calls.text).toContain('继续');                // 输入回填
+    expect(rc.lastRunFailedUnpersisted).toBe(true);      // 「重试」据此跳过 rollback,不吃上一个好回合
+    expect(cfg.applyState).not.toHaveBeenCalled();
+    expect(state).not.toHaveBeenCalled();
+    expect(calls.hasError[calls.hasError.length - 1]).toBe(EMPTY_ERR.message);
+    expect(calls.toast.map((x) => x.code)).toEqual(['gen_failed']);
+  });
+
+  it('只有工具折叠就报错:工具空气泡同样撤回', () => {
+    const fake = makeFakeChat();
+    const { cfg, hist } = baseCfg({
+      api: { game: { chat: fake.chat, stop: vi.fn() } },
+      onToolCall: (data, ctx) => toolCallInline(data, ctx),
+    });
+    startTavernRun(cfg);
+    const H = fake.calls[0]._handlers;
+    H.on_tool_call({ tool: 'kb_search' });
+    expect(hist.get()).toHaveLength(2);
+    H.on_error({ message: '模型这一轮只调用了工具(1 次),没有接着写正文。可以直接重试。', kind: 'empty_response', reason: 'tool_only' });
+    H.on_done({ empty: true });
+    expect(hist.get()).toEqual([]);
+  });
+
+  it('没开过气泡就报错(首回合):done 不再补「空回复」toast、不改写横幅、不回查存档', () => {
+    const fake = makeFakeChat();
+    const state = vi.fn(() => Promise.resolve({ history: [] }));
+    const { cfg, calls, hist } = baseCfg({ api: { game: { chat: fake.chat, stop: vi.fn(), state } } });
+    startTavernRun(cfg);
+    const H = fake.calls[0]._handlers;
+    H.on_error(EMPTY_ERR);
+    H.on_done({ empty: true });
+    expect(hist.get()).toEqual([]);
+    expect(state).not.toHaveBeenCalled();
+    expect(calls.toast.map((x) => x.code)).toEqual(['gen_failed']);
+    expect(calls.hasError[calls.hasError.length - 1]).toBe(EMPTY_ERR.message);
+  });
+
+  it('已出正文后报错:正文气泡保留(只封口),横幅不被「已中断,已恢复你的输入」覆盖', () => {
+    const fake = makeFakeChat();
+    const { cfg, calls, hist, rc } = baseCfg({ api: { game: { chat: fake.chat, stop: vi.fn() } } });
+    startTavernRun(cfg);
+    const H = fake.calls[0]._handlers;
+    H.on_token({ text: '她推开门' });
+    H.on_error({ message: '上游 502,请重试' });
+    H.on_done({ interrupted: true });
+    const last = hist.get()[hist.get().length - 1];
+    expect(last).toMatchObject({ role: 'assistant', content: '她推开门', streaming: false, streaming_done: true });
+    expect(rc.lastRunFailedUnpersisted).toBe(false);
+    expect(calls.hasError[calls.hasError.length - 1]).toBe('上游 502,请重试');
+    expect(calls.toast.map((x) => x.code)).toEqual(['gen_failed']);
+  });
+
+  it('只有思考流时被服务端中断(无 error):思考空气泡撤回并恢复输入', () => {
+    const fake = makeFakeChat();
+    const { cfg, calls, hist } = baseCfg({ api: { game: { chat: fake.chat, stop: vi.fn() } } });
+    startTavernRun(cfg);
+    const H = fake.calls[0]._handlers;
+    H.on_reasoning({ text: '想' });
+    H.on_done({ interrupted: true });
+    expect(hist.get()).toEqual([]);
+    expect(calls.text).toContain('hello');
+    expect(calls.toast.some((x) => x.code === 'interrupted')).toBe(true);
+  });
+});
+
+describe('失败轮收尾守卫:两个回合 SSE 缝(game-console / tavern-chat-run)同款', () => {
+  const read = (rel) => readFileSync(resolve(__dirname, '..', rel), 'utf-8');
+
+  it.each(['entries/game-console.jsx', 'lib/tavern-chat-run.js'])('%s:on_error 记下 gotError,on_done 据此跳过「空回复」兜底', (rel) => {
+    const src = read(rel);
+    const onError = src.slice(src.indexOf('on_error: (data) => {'));
+    expect(onError.slice(0, 200)).toMatch(/gotError = true/);
+    const onDone = src.slice(src.indexOf('on_done: (data) => {'), src.indexOf('on_error: (data) => {'));
+    const guard = onDone.search(/if \([^)]*gotError[^)]*\)/);
+    const emptyBranch = onDone.search(/if \(!openedAssistant( && !gotReceipt)?\) \{/);
+    expect(guard).toBeGreaterThan(-1);
+    expect(emptyBranch).toBeGreaterThan(guard);
   });
 });
 

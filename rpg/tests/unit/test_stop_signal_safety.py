@@ -49,7 +49,10 @@ class StopSignalSafetyTest(unittest.TestCase):
 
     def test_is_stop_requested_ignores_stale_rows(self):
         db = _FakeDb(row=(1,))
-        with mock.patch.object(cluster, "_ensure_stop_table"), mock.patch.object(cluster, "connect", return_value=db):
+        # 过期行清理按模块级 _last_stop_cleanup_at 节流(30s 一次):同进程里 30s 内跑过任何真实
+        # /api/chat 回合(会调 is_stop_requested)的测试都会让这里跳过 DELETE。钉住它,别依赖测试顺序。
+        with mock.patch.object(cluster, "_ensure_stop_table"), mock.patch.object(cluster, "connect", return_value=db), \
+                mock.patch.object(cluster, "_last_stop_cleanup_at", float("-inf")):
             self.assertTrue(cluster.is_stop_requested(7, 123456789))
 
         self.assertEqual(len(db.queries), 2)

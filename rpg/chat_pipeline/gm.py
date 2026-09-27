@@ -23,6 +23,8 @@ from ._common import (
     SSEEvent,
     _bridge_sync_generator_to_async,
     _gm_max_iters,
+    _is_content_filter_reason,
+    _last_usage_of,
     _snippet_tool_result,
     _summarize_tool_args,
     _uid_of,
@@ -282,6 +284,7 @@ async def run_gm_phase(
     except Exception as _mt_err:
         log.warning(f"[chat] max_tokens preference skipped: {_mt_err}")
         _max_tokens = 800
+    ctx.gm_max_tokens = _max_tokens  # 空回合分诊要报「上限 N tokens」;vertex/anthropic 的 last_usage 不带它
 
     # 工具流 + 思考流持久化:本轮累积进 state.data 临时键 → record_turn 落到 assistant 历史消息,
     # 重开/刷新后聊天记录里仍可见(酒馆沉浸:工具调用 + 思考流不该生成完就消失)。每轮开头清零。
@@ -503,6 +506,11 @@ async def run_gm_phase(
                 "error": event.get("error", ""),
                 "raw": event.get("raw", ""),
             })
+            # 空回合分诊信号(Phase 5):工具调用标记解析失败 / DSML 解析出 0 个调用。只挂 ctx,不进 state.data。
+            try:
+                ctx.turn_tool_errors.append(str(event.get("error", ""))[:200])
+            except Exception:
+                pass
         await asyncio.sleep(0)
 
     _fence_tail = _fence_guard.flush()
@@ -519,8 +527,24 @@ async def run_gm_phase(
     #     (v1.83.3 修的就是它的下游症状)。
     # 这里发一条确定性的阶段提示走现成的 agent 通道(前端已渲染,不新造事件类型)。
     # **不改写正文** —— 那是模型的产出,可能仍有可用部分,由玩家自己判断。
-    for _phase, _msg in _stop_reason_notice(ctx):
+    # 清洗后正文为空的回合不在这里提示(「截断了,说继续」和「根本没有正文」自相矛盾),
+    # 统一交给 Phase 5 的空回合分诊 _empty_turn_diagnosis 解释。
+    try:
+        _body_empty = not strip_leaked_scaffold(
+            strip_meta_tool_preamble(strip_json_state_ops(response or ""))).strip()
+    except Exception:
+        _body_empty = not (response or "").strip()
+    for _phase, _msg in _stop_reason_notice(ctx, body_empty=_body_empty):
         yield ("agent", {"phase": _phase, "message": _msg, "status": "done", "elapsed_ms": 0})
+
+    # 空回合短路(省玩家的 token):原始输出为空 = 没有任何正文可供后处理。此前 async 路径照样
+    # 入队验收/黑天鹅、跑史官 recorder LLM 和世界心跳,全是白花玩家 BYOK 的钱;sync 路径同理。
+    # 解释与证据统一交给 Phase 5 的空回合分诊。只看原始 response:只有 ops 围栏的回合不受影响
+    # (围栏照常 apply);/set 回执(directive_updates)原样带给 Phase 5;酒馆开卡
+    # (tavern_character_set,first_mes 可能为空)走原路径。
+    if not (response or "").strip() and not ctx.tavern_character_set:
+        ctx._updates = list(ctx.directive_updates)
+        return
 
     # acceptance 硬闸。
     # 【设计改版 · A/B 用户裁决 + 下线关键路径】
@@ -893,20 +917,24 @@ async def run_gm_phase(
         })
 
 
-def _stop_reason_notice(ctx) -> list[tuple[str, str]]:
+def _stop_reason_notice(ctx, *, body_empty: bool = False) -> list[tuple[str, str]]:
     """按上游的 finish_reason 给玩家一条可读的解释。返回 [(phase, message)],正常结束时为空。
 
     判据是 provider 的 finish_reason(确定性信号),不是猜正文 —— 短回复既可能是拒答、
     也可能是正常的一句话叙事,只有 finish_reason 分得清。
+    body_empty=True(清洗后没有正文)时不发:空回合由 Phase 5 的 _empty_turn_diagnosis 统一解释,
+    这里再说「截断了,可以说继续」只会和「根本没有正文」打架。
     """
-    try:
-        fr = str(((getattr(getattr(ctx, "gm", None), "_backend", None) or None)
-                  and getattr(ctx.gm._backend, "last_usage", {}) or {}).get("finish_reason") or "")
-    except Exception:
+    if body_empty:
         return []
+    fr = str(_last_usage_of(ctx).get("finish_reason") or "")
     if fr == "content_filter":
         return [("stop_reason", "这一轮被所用模型的内容策略挡下了 —— 上面那句是模型自己的回绝,"
                                 "不是剧情。可以换个说法重述,或在「设置 → 模型」里换一个对该题材更宽松的模型。")]
+    if _is_content_filter_reason(fr):
+        # vertex SAFETY 一族 / anthropic refusal:流写到一半被拦,上面的正文可能只有半截。
+        return [("stop_reason", "这一轮写到一半被所用模型的内容策略拦下了,上面的正文可能不完整。"
+                                "可以换个说法重述,或在设置的「模型」页换一个对该题材更宽松的模型。")]
     if fr == "length":
         return [("stop_reason", "这一轮写到长度上限被截断了,结尾可能不完整。"
                                 "可以直接说「继续」让它接着写,或在设置里调高单轮输出上限。")]

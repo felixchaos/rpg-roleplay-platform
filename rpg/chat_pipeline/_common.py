@@ -58,6 +58,52 @@ def _uid_of(api_user: dict | None) -> int | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# 回合停止信号(确定性):_stop_reason_notice(Phase 4,非空回合的提示)与
+# _empty_turn_diagnosis(Phase 5,空回合分诊)共用同一份读取与同一张词表,别各写一份。
+# ---------------------------------------------------------------------------
+
+# 上游内容策略拦截的 finish_reason 一族(小写比较):openai 系 content_filter;vertex 原样透传
+# 的 SAFETY / PROHIBITED_CONTENT / BLOCKLIST / SPII / RECITATION / IMAGE_SAFETY
+# (backends/vertex._finish_reason_normalized 只把 MAX_TOKENS 归一成 length);anthropic 的 refusal。
+_CONTENT_FILTER_FINISH_REASONS = frozenset({
+    "content_filter", "safety", "prohibited_content", "blocklist", "spii",
+    "recitation", "image_safety", "refusal",
+})
+# vertex:模型想调函数但调用格式坏了 / 调了没提供的函数 —— 与 DSML 解析 0 调用同属「工具调用标记解析不了」。
+_TOOL_MARKUP_FINISH_REASONS = frozenset({"malformed_function_call", "unexpected_tool_call"})
+
+
+def _norm_finish_reason(fr: Any) -> str:
+    return str(fr or "").strip().lower()
+
+
+def _is_content_filter_reason(fr: Any) -> bool:
+    return _norm_finish_reason(fr) in _CONTENT_FILTER_FINISH_REASONS
+
+
+def _last_usage_of(ctx: Any) -> dict[str, Any]:
+    """ctx.gm._backend.last_usage 的安全快照;任何一环拿不到都返回 {}(提示/分诊绝不能把回合弄挂)。
+
+    注:跨渠道 fallback 的回合,本回合真正出字的是备用 GameMaster,这里读到的是主渠道实例
+    (与 _build_usage_payload 同一取舍,见 gm.py _make_backup_factory 注释)。"""
+    try:
+        backend = getattr(getattr(ctx, "gm", None), "_backend", None)
+        lu = getattr(backend, "last_usage", None) if backend is not None else None
+        return dict(lu) if isinstance(lu, dict) else {}
+    except Exception:
+        return {}
+
+
+def _gm_mode_of(state: Any) -> str:
+    """本回合 gm_policy.mode(tavern_gm / novel_gm …);拿不到返回 ""。判据与 routes/game/chat.py 同源。"""
+    try:
+        from context_providers.registry import resolve_content_pack
+        return str((resolve_content_pack(state).get("gm_policy") or {}).get("mode") or "")
+    except Exception:
+        return ""
+
+
 def _should_route_to_curator_clarify(confidence: float, threshold: float, clarify: str) -> bool:
     """Only interrupt the GM when the curator is actually below confidence threshold."""
     return bool((clarify or "").strip()) and float(confidence) < float(threshold)
@@ -182,6 +228,10 @@ class PipelineContext:
     # 流程控制
     early_return: bool = False
     tavern_character_set: bool = False  # Phase 4 酒馆角色卡工具成功(first_mes 可能为空,非 error)
+
+    # Phase 4 → Phase 5 的空回合分诊信号(不进 state.data,免得临时键落进存档快照)
+    turn_tool_errors: list[str] = field(default_factory=list)  # 本回合 tool_error 事件(含 DSML 解析 0 调用)
+    gm_max_tokens: int = 0                                     # 本回合主 GM 的单轮输出上限
 
 
 # 类型别名:phase generator 产物

@@ -1538,8 +1538,12 @@ def _build_usage_payload(
     persist_user_id: int | None,
     active_save_id: int | None,
     context_run_id: int | None,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """从 backend.last_usage 抽 SSE usage 形状 + 写 token_usage 表。"""
+    """从 backend.last_usage 抽 SSE usage 形状 + 写 token_usage 表。
+
+    extra_metadata:并进 token_usage.metadata(空回合分诊用 {"empty_response": True, "reason": ...},
+    生产上可直接按 reason 统计空回合成因)。缺省时与原行为逐字节一致。"""
     try:
         from platform_app import usage as usage_mod
         from platform_app.usage import context_window_for, estimate_input_tokens
@@ -1555,6 +1559,8 @@ def _build_usage_payload(
                 val = last_usage.get(key)
                 if val not in (None, ""):
                     usage_metadata[key] = val
+            if extra_metadata:
+                usage_metadata.update(extra_metadata)
             finish_reason = str(last_usage.get("finish_reason") or "")
             if finish_reason == "length":
                 log.warning(
