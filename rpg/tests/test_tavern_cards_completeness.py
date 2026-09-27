@@ -326,6 +326,68 @@ def test_tavern_to_user_card_splits_colon_description_sections():
     assert "先观察" in user_card["speech_style"]
 
 
+def test_tavern_to_user_card_splits_nested_outline_template():
+    """中文人设模板:缩进式大段落(基本信息/背景故事/家庭/外貌/性格/NSFW)。
+
+    回归 bug:导入后所有段落全堆进 identity,把页面撑到超级宽。
+    现在段落标题驱动归属,每段进各自字段,identity 只剩基本信息。
+    """
+    desc = """基本信息:
+  姓名: 早月缘
+  年龄: 24
+  性别: 女
+  身份: 占卜师
+
+背景故事:
+  童年: 在神秘学家庭长大。
+  现状: 经营一家占卜工作室。
+
+家庭背景:
+  父亲: 大学教授。
+  母亲: 插画师。
+
+外貌:
+  发型: 墨紫色卷发。
+  体型: 纤细修长。
+
+衣着风格:
+  休闲装: 黑色长裙。
+
+性格:
+  核心特质: 沉静内省。
+
+情绪表现:
+  愤怒时: 变得更加沉默。
+
+NSFW:
+  性取向: 双向
+  禁忌底线: 屎尿屁
+"""
+    v2 = minimal_v2()
+    v2["data"]["description"] = desc
+    result = parse_card(v2)
+    uc = tavern_to_user_card(result)
+
+    # identity 不再是塞满全文的巨型 blob(撑爆页面的根因)
+    assert len(uc["identity"]) < 80, f"identity 仍过长: {len(uc['identity'])}"
+    assert "占卜师" in uc["identity"]
+    # 背景 / 家庭 / 社会都进 background,绝不泄漏进 identity
+    assert "大学教授" in uc["background"]
+    assert "占卜工作室" in uc["background"]
+    assert "大学教授" not in uc["identity"]
+    assert "墨紫色卷发" not in uc["identity"]
+    # 外貌 + 衣着风格 → appearance
+    assert "墨紫色卷发" in uc["appearance"]
+    assert "黑色长裙" in uc["appearance"]
+    # 性格 + 情绪表现 → personality
+    assert "沉静内省" in uc["personality"]
+    assert "变得更加沉默" in uc["personality"]
+    # NSFW → personality(GM 可见,才能尊重取向/避开禁忌底线;secrets 被硬隔离不进 GM)
+    assert "双向" in uc["personality"]
+    assert "双向" not in uc["secrets"]
+    assert uc["metadata"]["tavern_structured_description"] is True
+
+
 def test_tavern_to_user_card_mes_example_extraction():
     v2 = minimal_v2()
     v2["data"]["mes_example"] = "<START>\n{{user}}: What do you seek?\n{{char}}: Power and knowledge."

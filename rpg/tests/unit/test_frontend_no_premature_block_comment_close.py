@@ -22,7 +22,9 @@ from pathlib import Path
 FRONTEND = Path(__file__).resolve().parents[3] / "frontend"
 EXTS = {".jsx", ".js", ".html", ".ts", ".tsx"}
 # 排除目录:不属于我们写的源
-EXCLUDE_DIRS = {"node_modules", ".playwright-cli", "screenshots", "uploads", "output", ".git"}
+# dist = Vite 构建产物(minified):压缩后 `*/import` / `*/class` 紧贴是正常的,扫它会满屏误报。
+# 本 lint 只针对手写源码。
+EXCLUDE_DIRS = {"node_modules", ".playwright-cli", "screenshots", "uploads", "output", ".git", "dist"}
 
 
 def scan_premature_close(text: str) -> list[tuple[int, int, str]]:
