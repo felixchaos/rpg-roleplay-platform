@@ -9,6 +9,7 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from agents.provider_errors import classify_provider_error, http_status, provider_error_summary
 from core.llm_backend import DEFAULT_FALLBACK_API, DEFAULT_FALLBACK_MODEL
 from model_aliases import credential_storage_api_id, normalize_api_id
 
@@ -64,6 +65,41 @@ def _require_user_llm_credential(user_id: int, api_id: str, model: str) -> None:
     """Production import pipeline must use user-scoped credentials only."""
     if not _has_user_llm_credential(user_id, api_id):
         raise MissingUserCredentialError(api_id, model, _credential_api_id_for(api_id))
+
+
+# 提取模型对**每个**候选都会同样失败的类别:遇到一次就别再对剩下的候选挨个打一遍
+# (模型下线时以前要连撞 40 次,结果卡上还只写「N 个候选 LLM 调用报错」)。
+# 403 不在内:它常是单条请求的内容被拦,换个候选可能就过了;401 按状态码单独判。
+_FATAL_FOR_ALL_CANDIDATES = frozenset({
+    "model_unavailable", "balance", "bad_request", "feature_unsupported",
+})
+
+
+def _provider_error_hint(exc: Exception, *, api_id: str, model: str) -> tuple[str, bool]:
+    """LLM 阶段失败 → (给用户看的一句话原因, 是否对后续请求同样致命)。
+
+    原因走 provider_errors 的分类(与对话里的报错同一口径),带上是哪个提取模型出的错 ——
+    导入用的是「提取模型」不是对话模型,只说「换个模型」用户会去改错地方。
+    """
+    known = classify_provider_error(exc)
+    text = known[1] if known else provider_error_summary(exc)
+    who = f"(提取模型 {api_id}/{model})" if (api_id or model) else ""
+    fatal = bool(known) and (
+        known[0] in _FATAL_FOR_ALL_CANDIDATES
+        or (known[0] == "auth" and http_status(exc) == 401)
+    )
+    return f"{text}{who}", fatal
+
+
+def _note_stage_error(ctl: Any, stage: str, hint: str) -> None:
+    """把阶段失败原因记到 job 级对象上(runner / rebuild worker 从同一个 ctl 读)。"""
+    note = getattr(ctl, "note_stage_error", None)
+    if callable(note):
+        try:
+            note(stage, hint)
+        except Exception:
+            pass
+
 
 def _stage_story_phase_llm(ctl: JobController, user_id: int, script_id: int) -> None:
     """facts 完成后，一次 LLM call 把章节范围分到 开端/发展/高潮/结局/番外。
@@ -292,6 +328,8 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
     rejected = 0   # 模型明确判「不是人名」—— 正常筛掉,不算失败
     skipped_dup = 0  # 已有同名/别名卡,跳过不重复建
     no_context = 0   # 摘要/正文里都找不到该名字的上下文,没法喂 LLM
+    aborted = 0      # 提取模型对所有候选都会同样失败(下线/欠费/参数不认…)后,没再尝试的候选数
+    first_hint = ""  # 第一条调用失败的可读原因(分类后),写进 warnings 与阶段条目
     for i, entity in enumerate(targets):
         if ctl.is_cancelled():
             raise RuntimeError("cancelled")
@@ -417,13 +455,27 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
             _logging.getLogger(__name__).warning(
                 "[cards] LLM card for %r failed: %s", name, exc, exc_info=True,
             )
+            _hint, _fatal = _provider_error_hint(exc, api_id=api_id, model=model)
+            if not first_hint:
+                first_hint = _hint
+                _note_stage_error(ctl, "cards", _hint)
+            if _fatal:
+                aborted = len(targets) - (i + 1)
+                _logging.getLogger(__name__).warning(
+                    "[cards] script=%s: 提取模型 %s/%s 对所有候选都会失败(%s),剩余 %d 个候选不再尝试",
+                    script_id, api_id, model, type(exc).__name__, aborted,
+                )
+                ctl.update(stage_progress=len(targets))
+                break
         ctl.update(stage_progress=i + 1)
     # 「没答上来」= 调用抛异常 + 输出不可用。两者都该让用户看见,不能只数异常
     # (反馈 #99:弱模型不抛异常,只是吐不出 JSON —— 老口径下 100% 静默)。
-    answer_failures = llm_failures + unusable
+    # 提前停下的候选同样算「没答上来」:它们不是被筛掉,而是模型已经不可用。
+    answer_failures = llm_failures + unusable + aborted
     if targets and (
         answer_failures > len(targets) // 2
         or (generated == 0 and answer_failures > 0)
+        or aborted
     ):
         try:
             ctl.update(
@@ -436,6 +488,8 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
                     "no_context": no_context,
                     "targets": len(targets),
                     "generated": generated,
+                    "aborted": aborted,
+                    "reason": first_hint,
                 },
             )
         except Exception:
@@ -454,6 +508,7 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
     _stage_cards._last_rejected = rejected
     _stage_cards._last_skipped_dup = skipped_dup
     _stage_cards._last_no_context = no_context
+    _stage_cards._last_aborted = aborted
     _stage_cards._last_targets = len(targets)
     return generated
 
@@ -557,6 +612,14 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
         entries = _parse_json(raw) or []
         if not isinstance(entries, list):
             entries = []
+        if not entries:
+            # 调用成功但拿不到条目:以前阶段条目只剩「未知错误」。
+            _note_stage_error(
+                ctl, "worldbook",
+                "模型没有返回可用的世界书条目(输出解析不出 JSON 数组,或是空的)。"
+                "提取模型多半不适配结构化输出,可在设置里换提取模型重试"
+                f"(提取模型 {api_id}/{model})",
+            )
         count = 0
         with connect() as db:
             for entry in entries[:20]:
@@ -599,14 +662,20 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
         _logging.getLogger(__name__).warning(
             "[worldbook] LLM extract failed: %s", exc, exc_info=True,
         )
+        # 原因经分类写进阶段条目(runner / rebuild worker 从 ctl 读);job.error 只留一句短话,
+        # 不然导入结果卡上 job.error 和阶段明细会把同一段原因显示两遍。
+        # 以前 job.error 是「_stage_worldbook: HTTPError: HTTP Error 410: Gone」,阶段条目显示「未知错误」。
+        _hint, _ = _provider_error_hint(exc, api_id=api_id, model=model)
+        _note_stage_error(ctl, "worldbook", _hint)
         try:
             ctl.update(
                 stage_progress=1,
-                error=f"_stage_worldbook: {type(exc).__name__}: {str(exc)[:300]}",
+                error="世界书阶段失败,原因见阶段明细",
                 warnings={
                     "stage": "worldbook",
                     "exception": type(exc).__name__,
                     "message": str(exc)[:500],
+                    "reason": _hint,
                     "traceback": _tb.format_exc()[:800],
                 },
             )

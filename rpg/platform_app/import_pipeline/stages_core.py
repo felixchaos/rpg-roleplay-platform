@@ -10,9 +10,11 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from agents.provider_errors import provider_error_summary
+
 from ..db import connect
 from ..perms import script_owned
-from .stages_llm import _resolve_extractor_llm
+from .stages_llm import _note_stage_error, _resolve_extractor_llm
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -401,6 +403,8 @@ def _stage_canon_extract(
         )
     except Exception as exc:
         _log.warning("[canon_extract] run_arc_extraction raised: %s", exc, exc_info=True)
+        _note_stage_error(ctl, "canon_extract",
+                          f"{provider_error_summary(exc)}(提取模型 {api_id}/{model})")
         try:
             ctl.update(warnings={
                 "stage": "canon_extract",
@@ -415,6 +419,8 @@ def _stage_canon_extract(
     if not result.get("ok"):
         err = str(result.get("error") or "unknown")
         _log.warning("[canon_extract] arc_pipeline returned !ok: %s", err)
+        # arc_pipeline 的 error 已带第一条失败原因(分类后)和提取模型;以前阶段条目只有「未知错误」
+        _note_stage_error(ctl, "canon_extract", err if err != "unknown" else "")
         try:
             ctl.update(warnings={
                 "stage": "canon_extract",
@@ -431,6 +437,8 @@ def _stage_canon_extract(
     # 时间线为 0 不算 fatal — canon 写了就 ok,只把 anchors 标 error
     anchors_status = "done" if anchors_n > 0 else "error"
     canon_status = "done" if canon_n > 0 else "error"
+    if canon_status == "error" and result.get("first_error"):
+        _note_stage_error(ctl, "canon_extract", str(result["first_error"]))
     # canon 写完后回填 character_cards 的主角标识 + priority 排序
     # (cards stage 跑在 canon_extract 之前,当时 kb_canon_entities 是空,
     # 没法 join 排序,只能等 canon 写完再做)

@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from agents.provider_errors import provider_error_summary
 from extract import resolve as R
 from extract.embed import embed_canon_entities
 from extract.llm import ExtractLLM
@@ -191,8 +192,17 @@ def run_arc_extraction(
     failed_arcs: list[tuple[int, str]] = []  # phase_backend
     failed_lock = threading.Lock()
 
+    def _record_failure(idx: int, arc: list[dict], reason: str) -> None:
+        with failed_lock:
+            arc_min = arc[0].get("chapter_index", 0) if arc else 0
+            arc_max = arc[-1].get("chapter_index", 0) if arc else 0
+            failed_arcs.append((idx, f"arc[{arc_min}-{arc_max}]: {reason[:300]}"))
+
     def _one(idx: int, arc: list[dict]):
-        last_exc: Exception | None = None
+        # extract_chapter 自己吞掉 LLM 调用异常、返回 raw_ok=False(带 error 原因),所以下面的重试
+        # 只兜本地异常。raw_ok=False 的弧不算成功:以前它被当成功计数,模型下线时 100 个弧全空,
+        # 流水线照样报 ok、阶段只显示「未知错误」(知识库提取入口还会照扣一次月度额度)。
+        # 不对 raw_ok=False 重试:调用次数与以前一致,下线/欠费的模型不会被多撞几轮。
         for attempt in range(4):
             try:
                 ex = extract_arc(
@@ -200,18 +210,18 @@ def run_arc_extraction(
                     power_system=seed.power_system,
                     known_entities=seed.entity_vocab,
                 )
-                return idx, ex
             except Exception as exc:
-                last_exc = exc
                 if attempt == 3:
+                    # 以前 return 写在记录之前,failed_arcs 永远是空的
+                    _record_failure(idx, arc, provider_error_summary(exc))
                     return idx, None
                 import time as _t
                 _t.sleep(0.5 * (2 ** attempt))
-        if last_exc is not None:
-            with failed_lock:
-                arc_min = arc[0].get("chapter_index", 0) if arc else 0
-                arc_max = arc[-1].get("chapter_index", 0) if arc else 0
-                failed_arcs.append((idx, f"arc[{arc_min}-{arc_max}]: {str(last_exc)[:200]}"))
+                continue
+            if not getattr(ex, "raw_ok", True):
+                _record_failure(idx, arc, getattr(ex, "error", "") or "模型输出不可用")
+                return idx, None
+            return idx, ex
         return idx, None
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -243,8 +253,14 @@ def run_arc_extraction(
     _emit("arc_extract", {"done": done[0], "total": len(arcs),
                           "succeeded": succeeded, "failed": len(arcs) - succeeded})
 
+    # 第一条失败原因(已分类、已脱敏),带上是哪个提取模型 —— 给阶段条目 / job.error 看
+    first_error = ""
+    if failed_arcs:
+        first_error = f"{min(failed_arcs)[1].split(': ', 1)[-1]}(提取模型 {api_id}/{model})"
     if not extracts:
-        return {"ok": False, "error": "全部弧段 LLM 提取失败"}
+        return {"ok": False,
+                "error": "全部弧段 LLM 提取失败" + (f":{first_error}" if first_error else ""),
+                "first_error": first_error}
 
     # 4.5) era fallback:Pass 0 共识门严会返空,从 N 弧 Pass 1 二次共识(要求 ≥ 25% 弧投同票)
     if not era and extracts:
@@ -314,4 +330,5 @@ def run_arc_extraction(
         "constant_worldbook": wb,
         "embed": emb,
         "partial_failures": partial_failures,
+        "first_error": first_error,
     }

@@ -456,10 +456,12 @@ def _run_pipeline(job_id: str, user_id: int, script_id: int, options: dict[str, 
             # failures 口径 = 抛异常 + 输出不可用(弱模型解不出 JSON 也算没答上来,反馈 #99)
             cards_failures = getattr(_stage_cards, "_last_llm_failures", 0)
             cards_targets = getattr(_stage_cards, "_last_targets", 0)
+            cards_aborted = int(getattr(_stage_cards, "_last_aborted", 0) or 0)
             cards_status = "done"
             if cards_targets and (
                 cards_failures > cards_targets // 2
                 or (cards_n == 0 and cards_failures > 0)
+                or cards_aborted  # 提取模型已不可用(下线/欠费/参数不认…),剩下的候选没做
             ):
                 cards_status = "error"
             cards_entry = {
@@ -481,9 +483,13 @@ def _run_pipeline(job_id: str, user_id: int, script_id: int, options: dict[str, 
                 if _u:
                     _why.append(f"{_u} 个候选的模型输出解析不出 JSON(提取模型不适配结构化输出,可在设置里换提取模型重试)")
                 if _e:
-                    _why.append(f"{_e} 个候选 LLM 调用报错")
+                    _why.append(f"{_e} 个候选 LLM 调用报错"
+                                + (f",剩下 {cards_aborted} 个候选没有再试" if cards_aborted else ""))
+                # 原因(分类后的可读文案)挂在 job 级 ctl 上;以前这里只有计数,用户看不到为什么报错。
+                _hint = ctl.stage_error_hints.get("cards")
                 cards_entry["error"] = (
                     ";".join(_why) + f";共 {cards_targets} 个候选,生成 {cards_n} 张人物卡"
+                    + (f"。原因:{_hint}" if _hint else "")
                 )
             stages_progress.append(cards_entry)
         else:
@@ -498,7 +504,12 @@ def _run_pipeline(job_id: str, user_id: int, script_id: int, options: dict[str, 
             wb_n = _stage_worldbook(ctl, user_id, script_id)
             # phase_backend: worldbook 全部失败 (count=0) → 标 error
             wb_status = "done" if wb_n > 0 else "error"
-            stages_progress.append({"id": "worldbook", "status": wb_status, "count": wb_n})
+            wb_entry = {"id": "worldbook", "status": wb_status, "count": wb_n}
+            # 没有 error 字段时结果卡显示「未知错误」(以前世界书失败一律如此)
+            _wb_hint = ctl.stage_error_hints.get("worldbook") if wb_status == "error" else None
+            if _wb_hint:
+                wb_entry["error"] = _wb_hint
+            stages_progress.append(wb_entry)
         else:
             stages_progress.append({"id": "worldbook", "status": "skipped"})
         ctl.update(stages=stages_progress, overall_progress=5)
@@ -513,16 +524,19 @@ def _run_pipeline(job_id: str, user_id: int, script_id: int, options: dict[str, 
         canon_n, anchors_n, canon_stage_status, anchors_stage_status = _stage_canon_extract(
             ctl, user_id, script_id,
         )
-        stages_progress.append({
-            "id": "canon_extract", "status": canon_stage_status, "count": canon_n,
-        })
+        canon_entry = {"id": "canon_extract", "status": canon_stage_status, "count": canon_n}
+        _canon_hint = ctl.stage_error_hints.get("canon_extract") if canon_stage_status == "error" else None
+        if _canon_hint:
+            canon_entry["error"] = _canon_hint
+        stages_progress.append(canon_entry)
         ctl.update(stages=stages_progress, overall_progress=6)
 
         # ── 阶段 7: anchors（canon_extract 已写,这里只报告 + verify)─────
         # canon_extract 失败 → anchors 跟着标 error;此阶段不发起新 LLM 调用。
-        stages_progress.append({
-            "id": "anchors", "status": anchors_stage_status, "count": anchors_n,
-        })
+        anchors_entry = {"id": "anchors", "status": anchors_stage_status, "count": anchors_n}
+        if anchors_stage_status == "error" and _canon_hint:
+            anchors_entry["error"] = "规范实体提取失败,时间线锚点没有生成(原因见上一项)"
+        stages_progress.append(anchors_entry)
         ctl.update(stages=stages_progress, overall_progress=7)
 
         # ── 阶段 8: embeddings（chunks/cards/worldbook 向量化,fire-and-forget)──

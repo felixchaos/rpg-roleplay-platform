@@ -241,13 +241,18 @@ def _rebuild_worldbook(ctl, user_id, script_id, body) -> dict:
             ).fetchone()
             before_count = int(before["c"]) if before else 0
         count = _stage_worldbook(ctl, user_id, script_id)
+        # 失败原因(分类后)由 _stage_worldbook 记在 ctl 上;终态 ctl.update 会用 result["error"]
+        # 覆盖 job.error,不带上它用户就只看到「失败」。
+        _hint = (getattr(ctl, "stage_error_hints", None) or {}).get("worldbook") if count <= 0 else None
         result = {
             "ok": count > 0, "source": "llm",
             "before_count": before_count, "after_count": count,
             "partial_failures": [] if count > 0 else [
-                {"stage": "worldbook", "error": "LLM returned 0 entries"}
+                {"stage": "worldbook", "error": _hint or "LLM returned 0 entries"}
             ],
         }
+        if _hint:
+            result["error"] = _hint
     else:
         result = rebuild_worldbook_with_llm(user_id, script_id, source="canon")
     return result

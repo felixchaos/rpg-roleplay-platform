@@ -283,7 +283,9 @@ async def api_script_llm_extract(request: Request, script_id: int, user=Depends(
                     )
                 result["review_status"] = "unreviewed"
             status = 200 if (result.get("ok") or result.get("needs_confirm")) else 400
-            if result.get("error") and "无权" in str(result.get("error")):
+            # 只认「无权访问该剧本」这类以「无权」开头的归属错误:提取失败的 error 现在带着分类后的
+            # 服务商原因(如「该 key 无权访问此模型」),按子串匹配会把它误报成 403。
+            if str(result.get("error") or "").startswith("无权"):
                 status = 403
             return json_response(result, status_code=status)
 

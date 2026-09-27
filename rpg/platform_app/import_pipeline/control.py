@@ -117,6 +117,16 @@ class JobController:
 
     def __init__(self, job_id: str):
         self.job_id = job_id
+        # 本 job 各 LLM 阶段的第一条失败原因(已分类、已脱敏),runner 读它写进阶段条目的 error。
+        # 挂在 job 级对象上,不学阶段函数属性(_stage_cards._last_*):导入是一 job 一线程,
+        # 函数属性在进程内共享,并发导入会串号 —— 串计数无伤大雅,串服务商原话就是把别人的
+        # 报错显示给另一个用户。
+        self.stage_error_hints: dict[str, str] = {}
+
+    def note_stage_error(self, stage: str, hint: str) -> None:
+        """记下某阶段的第一条失败原因(同阶段后续的不覆盖)。"""
+        if hint and stage not in self.stage_error_hints:
+            self.stage_error_hints[stage] = hint
 
     def _exec(self, sql: str, params: tuple) -> None:
         init_db()

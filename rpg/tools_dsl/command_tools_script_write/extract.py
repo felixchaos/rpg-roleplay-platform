@@ -43,6 +43,11 @@ def _t_extract_from_selection(user_id: int, script_id: int | None, args: dict, s
                          script_id=sid, algorithm="editor_selection")
         ex = extract_chapter(llm, 0, text, era="", known_entities=known)
         if not getattr(ex, "raw_ok", False):
+            # extract_chapter 把调用异常吞成 raw_ok=False,原因在 ex.error(已按 provider_errors 分类):
+            # 模型下线 / 欠费时再说「没返回有效结构」会把人支去换选区。
+            _why = str(getattr(ex, "error", "") or "")
+            if _why:
+                return f"提取失败:{_why}"
             return "提取失败:模型未返回有效结构,可换更强的提取模型或缩短选区后重试。"
         proposal = {
             "summary": getattr(ex, "chapter_summary", ""),

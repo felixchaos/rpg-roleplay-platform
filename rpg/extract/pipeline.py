@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from agents.provider_errors import provider_error_summary
 from extract import resolve as R
 from extract.embed import embed_canon_entities
 from extract.llm import ExtractLLM
@@ -101,9 +102,14 @@ def run_extraction(
     failed_chapters: list[tuple[int, str]] = []  # phase_backend: 收集失败章节
     failed_lock = threading.Lock()
 
+    def _record_failure(idx: int, ch: dict, reason: str) -> None:
+        with failed_lock:
+            failed_chapters.append((ch.get("chapter_index", idx), reason[:300]))
+
     def _one(idx: int, ch: dict):
-        # 用空 prev_summary(并发下章序不保证) + 单章 5 次重试容 429/网络抖
-        last_exc: Exception | None = None
+        # 用空 prev_summary(并发下章序不保证) + 单章 5 次重试容本地异常。
+        # 与 arc_pipeline._one 同一口径:extract_chapter 吞掉 LLM 异常返回 raw_ok=False(带 error),
+        # 这种章不算成功、记进 failed_chapters,也不重试(调用次数不变)。
         for attempt in range(5):
             try:
                 ex = extract_chapter(
@@ -111,18 +117,19 @@ def run_extraction(
                     power_system=seed.power_system, known_entities=seed.entity_vocab,
                     prev_summary="", title_descriptor=ch.get("content_descriptor") or "",
                 )
-                return idx, ex
             except Exception as exc:
-                last_exc = exc
                 if attempt == 4:
+                    # phase_backend: 5 次重试全失败 — 记到 failed_chapters(以前 return 在记录之前,记不上)
+                    _record_failure(idx, ch, provider_error_summary(exc))
                     return idx, None
                 # 指数退避(0.5s, 1s, 2s, 4s) — 让 429 缓解
                 import time as _t
                 _t.sleep(0.5 * (2 ** attempt))
-        # phase_backend: 5 次重试全失败 — 记到 failed_chapters
-        if last_exc is not None:
-            with failed_lock:
-                failed_chapters.append((ch.get("chapter_index", idx), str(last_exc)[:200]))
+                continue
+            if not getattr(ex, "raw_ok", True):
+                _record_failure(idx, ch, getattr(ex, "error", "") or "模型输出不可用")
+                return idx, None
+            return idx, ex
         return idx, None
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -153,6 +160,13 @@ def run_extraction(
     extracts = [extracts_dict[i] for i in range(len(chapters)) if i in extracts_dict]
     _emit("per_chapter", {"done": done_count[0], "total": len(chapters),
                           "succeeded": len(extracts), "failed": len(chapters) - len(extracts)})
+    if not extracts:
+        first_error = ""
+        if failed_chapters:
+            first_error = f"{min(failed_chapters)[1]}(提取模型 {api_id}/{model})"
+        return {"ok": False,
+                "error": "全部章节 LLM 提取失败" + (f":{first_error}" if first_error else ""),
+                "first_error": first_error}
 
     # Pass 2:消歧聚合 → 规范层(短连接,写完即释放)
     _emit("resolve", {"extracts": len(extracts)})

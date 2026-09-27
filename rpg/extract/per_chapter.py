@@ -10,6 +10,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from agents.provider_errors import provider_error_summary
 from extract.llm import ExtractLLM
 
 # 每章输出 JSON schema(给模型看的契约)
@@ -88,6 +89,9 @@ class ChapterExtract:
     concepts: list = field(default_factory=list)
     confidence: float = 0.0
     raw_ok: bool = True
+    # raw_ok=False 时的可读原因(模型调用报错经 provider_errors 分类;或输出不是 JSON 对象)。
+    # 以前只有一个布尔,弧段/逐章管线全挂时上层只能报「全部失败」或「未知错误」。
+    error: str = ""
 
 
 def build_system(era: str, power_system: list[str] | None = None) -> str:
@@ -172,10 +176,11 @@ def extract_chapter(llm: ExtractLLM, chapter_num: int, chapter_text: str, *, era
                       prev_summary=prev_summary, title_descriptor=title_descriptor)
     try:
         data = llm.complete_json(system, user, max_tokens=max_tokens)
-    except Exception:
-        return ChapterExtract(chapter=chapter_num, raw_ok=False)
+    except Exception as exc:
+        return ChapterExtract(chapter=chapter_num, raw_ok=False, error=provider_error_summary(exc))
     if not isinstance(data, dict):
-        return ChapterExtract(chapter=chapter_num, raw_ok=False)
+        return ChapterExtract(chapter=chapter_num, raw_ok=False,
+                              error="模型输出不是 JSON 对象(提取模型多半不适配结构化输出)")
     st = data.get("story_time") or {}
     # era 已定(非空)→ 铁律回写;era 空 → 让 LLM 自抽,供后续共识
     if isinstance(st, dict) and era.strip():
