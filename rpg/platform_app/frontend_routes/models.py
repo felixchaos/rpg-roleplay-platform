@@ -128,16 +128,22 @@ async def api_models_validate(request: Request):
     body = await request.json() or {}
     api_id = body.get("api_id") or body.get("api_slug") or body.get("api") or ""
     try:
+        import asyncio
+
         from model_probe import list_remote_models, probe_availability
+        # 两条探测都是同步网络请求(各自有上限):放进线程,别在 async 路由里冻住事件循环。
         if body.get("model"):
-            out = probe_availability(
+            out = await asyncio.to_thread(
+                probe_availability,
                 api_id=api_id,
                 model_real_name=body.get("model"),
                 user_id=user["id"],
                 timeout_sec=int(body.get("timeout", 8)),
             )
         else:
-            out = list_remote_models(api_id=api_id, force_refresh=True, user_id=user["id"])
+            out = await asyncio.to_thread(
+                list_remote_models, api_id=api_id, force_refresh=True, user_id=user["id"],
+            )
         return json_response({"ok": True, **(out if isinstance(out, dict) else {"result": out})})
     except Exception as e:
         return json_response({"ok": False, "error": str(e)}, status_code=400)

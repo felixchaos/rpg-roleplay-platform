@@ -234,7 +234,43 @@ def _normalize_openai_base_url(url: str) -> str:
     return s
 
 
-def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_override: str = "", enabled: bool = True, *, allow_base_url: bool = False, proxy: str = "", preserve_key_if_empty: bool = False, auth_mode: str = "api_key") -> dict[str, Any]:
+def _validate_proxy(proxy: str | None) -> str | None:
+    """代理地址写时校验。None 原样返回(= 调用方没提代理,不动已存值);其余返回 strip 后的串。
+
+    格式:scheme://host。托管多用户模式下额外拒掉指向本机/内网的代理 —— 代理合法地可填
+    127.0.0.1,无法靠 _validate_base_url 拦,所以写时就挡,与消费侧 core.outbound.credential_proxy
+    (服务器模式恒不用用户代理)构成双闸,杜绝「存量内网 proxy 随某次重构变实弹」。
+    本地单用户模式(require_auth=False)才允许 127.0.0.1 这类本地梯子。
+    """
+    if proxy is None:
+        return None
+    proxy = str(proxy).strip()
+    if not proxy:
+        return ""
+    if not re.match(r"^(https?|socks5h?)://[^\s/]+", proxy, re.IGNORECASE):
+        raise ValueError("代理地址格式不对 · 形如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080")
+    try:
+        from core.config import require_auth as _require_auth
+        _hosted = bool(_require_auth())
+    except Exception:
+        _hosted = True
+    if _hosted:
+        import socket as _socket
+        from urllib.parse import urlparse as _urlparse
+        _phost = (_urlparse(proxy).hostname or "").lower()
+        if (not _phost or _phost in {"localhost", "ip6-localhost", "ip6-loopback"}
+                or _phost.endswith(".localhost")):
+            raise ValueError("服务器模式下代理不允许指向本地地址")
+        try:
+            _infos = _socket.getaddrinfo(_phost, None, proto=_socket.IPPROTO_TCP)
+        except OSError as _exc:
+            raise ValueError(f"代理主机无法解析:{_phost}") from _exc
+        if any(_ip_is_internal(_i[4][0]) for _i in _infos):
+            raise ValueError(f"服务器模式下代理不允许指向私有/本地/保留地址:{_phost}")
+    return proxy
+
+
+def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_override: str = "", enabled: bool = True, *, allow_base_url: bool = False, proxy: str | None = None, preserve_key_if_empty: bool = False, auth_mode: str = "api_key") -> dict[str, Any]:
     """加密保存。空 key 等价于删除该 credential（preserve_key_if_empty=True 时例外）。
 
     auth_mode（v1.81.0）:
@@ -256,8 +292,13 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
 
     proxy: 该 provider 出站走的 HTTP/SOCKS 代理 URL(存进 metadata)。**注意**:代理合法地
     常是 127.0.0.1(本地梯子),不能用 _validate_base_url 拦私网。SSRF 由「只在本地模式
-    (非 require_auth)才真正使用」兜底(见 openai_compat.py)——托管多用户后端永不使用用户
-    proxy,故存了也无害。这里只做轻量格式校验。
+    (非 require_auth)才真正使用」兜底(见 core.outbound.credential_proxy)——托管多用户后端
+    永不使用用户 proxy,故存了也无害。这里只做轻量格式校验。
+      None(默认) —— 调用方没提代理:保留已存的代理不动(手机端 / 供应商卡片等表单根本
+                     没有代理输入,重新存 key 不能把别处配好的代理冲掉)。
+      ""          —— 明确清空代理。
+      "http://…"  —— 设为该代理。
+    keep_key(preserve_key_if_empty)路径同样遵守这三种语义。
     """
     init_db()
     api_id = normalize_api_id(api_id)
@@ -281,36 +322,14 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     elif base_url_override:
         base_url_override = _normalize_openai_base_url(base_url_override)
         _validate_base_url(base_url_override)
+    # 代理格式 + 托管模式内网拦截:keep_key 路径与完整保存路径共用同一道校验。
+    proxy = _validate_proxy(proxy)
     if not plaintext_key and auth_mode != "none":
-        # preserve_key_if_empty：只改 base_url_override / 启用态，保留密钥与 metadata(proxy)。
-        return _update_credential_meta(user_id, api_id, base_url_override, enabled, auth_mode)
+        # preserve_key_if_empty：只改 base_url_override / 启用态(以及显式传了的代理)，保留密钥。
+        return _update_credential_meta(user_id, api_id, base_url_override, enabled, auth_mode,
+                                       proxy=proxy)
     # auth_mode='none' 且没填 key → 继续往下走正常 upsert,只是密文为空(见 encrypted 计算)。
-    proxy = (proxy or "").strip()
-    if proxy:
-        if not re.match(r"^(https?|socks5h?)://[^\s/]+", proxy, re.IGNORECASE):
-            raise ValueError("代理地址格式不对 · 形如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080")
-        # SEC: 托管多用户模式下,proxy 指向内网/本机 = SSRF 隐患(代理合法地可填 127.0.0.1,无法
-        # 靠 _validate_base_url 拦)。这里在**写时**就拒掉内网代理,与消费侧 byok_only 守卫
-        # (openai_compat.py:仅 require_auth=False 才用 proxy)构成双闸,杜绝「存量内网 proxy 随
-        # 某次重构变实弹」。本地单用户模式(require_auth=False)才允许 127.0.0.1 这类本地梯子。
-        try:
-            from core.config import require_auth as _require_auth
-            _hosted = bool(_require_auth())
-        except Exception:
-            _hosted = True
-        if _hosted:
-            import socket as _socket
-            from urllib.parse import urlparse as _urlparse
-            _phost = (_urlparse(proxy).hostname or "").lower()
-            if (not _phost or _phost in {"localhost", "ip6-localhost", "ip6-loopback"}
-                    or _phost.endswith(".localhost")):
-                raise ValueError("服务器模式下代理不允许指向本地地址")
-            try:
-                _infos = _socket.getaddrinfo(_phost, None, proto=_socket.IPPROTO_TCP)
-            except OSError as _exc:
-                raise ValueError(f"代理主机无法解析:{_phost}") from _exc
-            if any(_ip_is_internal(_i[4][0]) for _i in _infos):
-                raise ValueError(f"服务器模式下代理不允许指向私有/本地/保留地址:{_phost}")
+    # proxy is None → 本次不动代理(新行 metadata 为空,已有行保留原 metadata);否则只替换 proxy 键。
     meta = {"proxy": proxy} if proxy else {}
     # 免鉴权且用户没填 key → 存空密文(列是 bytea not null default ''),length(encrypted_key)=0
     # 与「没有 key」在 SQL 侧口径一致。填了 key 就照常加密,免鉴权模式下也会带上。
@@ -324,12 +343,16 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
               encrypted_key = excluded.encrypted_key,
               base_url_override = excluded.base_url_override,
               enabled = excluded.enabled,
-              metadata = excluded.metadata,
+              metadata = case when %s
+                              then (coalesce(user_api_credentials.metadata, '{}'::jsonb) - 'proxy')
+                                   || excluded.metadata
+                              else user_api_credentials.metadata end,
               auth_mode = excluded.auth_mode,
               updated_at = now()
             returning id, user_id, api_id, base_url_override, enabled, auth_mode, updated_at
             """,
-            (user_id, api_id, encrypted, base_url_override or "", enabled, Jsonb(meta), auth_mode),
+            (user_id, api_id, encrypted, base_url_override or "", enabled, Jsonb(meta), auth_mode,
+             proxy is not None),
         ).fetchone()
     result = {"ok": True, **(expose(row) or {}), "has_credential": bool(plaintext_key)}
 
@@ -365,26 +388,34 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
 
 
 def _update_credential_meta(user_id: int, api_id: str, base_url_override: str, enabled: bool,
-                            auth_mode: str = "api_key") -> dict[str, Any]:
-    """只更新已存凭证的 base_url_override / enabled / auth_mode，保留密文 key 与 metadata(proxy)。
+                            auth_mode: str = "api_key", *, proxy: str | None = None) -> dict[str, Any]:
+    """只更新已存凭证的 base_url_override / enabled / auth_mode，保留密文 key。
 
-    调用方（set_credential 的 preserve_key_if_empty 分支）已做完 SSRF 闸与
+    调用方（set_credential 的 preserve_key_if_empty 分支）已做完 SSRF 闸、代理校验与
     base_url_override 归一，这里只落库。无匹配行 → 报错，让前端提示先填 Key。
-    metadata 不动，因此 proxy 等既有字段原样保留。
+
+    proxy:None = 调用方没提代理,metadata 原样不动;"" = 清掉代理;其余 = 换成这个代理。
+    以前这里完全不写 metadata,设置页「只改连接方式、不重填 key」保存后提示成功,代理却没存上。
 
     auth_mode 也要一起写:用户把一条免鉴权凭据改回「需要 API Key」时,若只改列名不改
     auth_mode,DB 里会留着 'none',可用性判定继续按免鉴权放行 —— 与用户所见不符。
     """
     canonical = normalize_api_id(api_id)
+    new_meta = {"proxy": proxy} if proxy else {}
     with connect() as db:
         row = db.execute(
             """
             update user_api_credentials
-               set base_url_override = %s, enabled = %s, auth_mode = %s, updated_at = now()
+               set base_url_override = %s, enabled = %s, auth_mode = %s,
+                   metadata = case when %s
+                                   then (coalesce(metadata, '{}'::jsonb) - 'proxy') || %s
+                                   else metadata end,
+                   updated_at = now()
              where user_id = %s and api_id = any(%s)
             returning id, user_id, api_id, base_url_override, enabled, auth_mode, updated_at
             """,
-            (base_url_override or "", enabled, auth_mode, user_id, _credential_aliases(canonical)),
+            (base_url_override or "", enabled, auth_mode, proxy is not None, Jsonb(new_meta),
+             user_id, _credential_aliases(canonical)),
         ).fetchone()
     if not row:
         raise ValueError("尚未配置该供应商的 API Key，请先填写 Key")

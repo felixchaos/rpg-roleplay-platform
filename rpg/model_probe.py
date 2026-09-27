@@ -464,12 +464,14 @@ def _resolve_provider_key(api: dict[str, Any], user_id: int | None) -> str:
     return _resolve_provider_creds(api, user_id)["key"]
 
 
-def _resolve_provider_creds(api: dict[str, Any], user_id: int | None) -> dict[str, str]:
-    """统一取 key + base_url_override（单一真源 resolve_api_key），保留 raise 契约。
+def _resolve_provider_creds(api: dict[str, Any], user_id: int | None) -> dict[str, Any]:
+    """统一取 key + base_url_override + proxy（单一真源 resolve_api_key），保留 raise 契约。
 
-    返回 {"key": "...", "base_url_override": "..."}。base_url_override 是 user/admin 在
-    「连接方式」里配置的 per-credential 端点覆盖（如自建中转站 / 本地 llama.cpp），与 GM
-    运行路径（openai_compat backend: effective_base = override or base_url）取的是同一个值。
+    返回 {"key": "...", "base_url_override": "...", "proxy": str|None}。base_url_override 是
+    user/admin 在「连接方式」里配置的 per-credential 端点覆盖（如自建中转站 / 本地 llama.cpp），
+    与 GM 运行路径（openai_compat backend: effective_base = override or base_url）取的是同一个值。
+    proxy 经 core.outbound.credential_proxy 取(本地模式才有值,服务器模式恒 None),与 GM 路径同源 ——
+    以前这里不带代理,「聊天能通、保存 key / 同步模型却超时」(反馈 #107)。
     """
     api_id = api.get("id") or api.get("kind") or ""
     from platform_app.user_credentials import (
@@ -485,8 +487,76 @@ def _resolve_provider_creds(api: dict[str, Any], user_id: int | None) -> dict[st
         if _require_user_credential():
             raise RuntimeError(f"未在「个人主页 → API 凭证」配置 {api_id} 的 key")
         raise RuntimeError(f"找不到 {api_id} 的 API key（用户凭证未配置且环境变量未设）")
+    from core.outbound import credential_proxy
     return {"key": resolved_auth_token(result),
-            "base_url_override": (result.get("base_url_override") or "").strip()}
+            "base_url_override": (result.get("base_url_override") or "").strip(),
+            "proxy": credential_proxy(result)}
+
+
+# 列模型探测的上限。SDK 默认 max_retries=2、连接超时 10s,打不通的地址单轮就要 ~31s,
+# 裸地址再补 /v1 重试一轮就是 ~62s —— 比前端 15s 超时长,于是「假保存失败」,还把单 worker 的
+# 桌面后端整个冻住(反馈 #107)。探测是用户点出来的,失败可以再点,不需要 SDK 自己重试。
+_PROBE_READ_TIMEOUT = 15.0
+_PROBE_CONNECT_TIMEOUT = 5.0
+
+
+def _probe_timeout():
+    import httpx
+    return httpx.Timeout(_PROBE_READ_TIMEOUT, connect=_PROBE_CONNECT_TIMEOUT)
+
+
+def _is_connection_error(exc: BaseException) -> bool:
+    """连接类 / 超时类异常(按类继承判断,不按字符串猜)。
+
+    openai.APIConnectionError(APITimeoutError 是它的子类)、anthropic 同名类、以及裸 httpx 的
+    TransportError(ConnectError / ConnectTimeout / ReadTimeout / ProxyError …)。这类错误说明
+    地址根本连不上,换 /v1 路径也一样连不上,不该再补试一轮。
+    """
+    types: list[type] = []
+    try:
+        import httpx
+        types.append(httpx.TransportError)
+    except Exception:
+        pass
+    try:
+        import openai
+        types.append(openai.APIConnectionError)
+    except Exception:
+        pass
+    try:
+        import anthropic
+        types.append(anthropic.APIConnectionError)
+    except Exception:
+        pass
+    return bool(types) and isinstance(exc, tuple(types))
+
+
+def _unreachable_error(exc: BaseException) -> RuntimeError:
+    return RuntimeError(
+        "连不上这个地址(连接超时或连接失败),和 API key、/v1 路径都没有关系。"
+        "本地版如果访问这个服务需要代理,请在这个供应商的「连接方式」里选 HTTP 代理并填上代理地址,"
+        f"或者打开系统代理后再试。原始错误:{exc}"
+    )
+
+
+def bound_backend_for_probe(backend: Any, timeout_sec: float) -> None:
+    """GM backend 拿来做探测(校验连接 / 可用性嗅探)时,给它的 SDK client 套上上限。
+
+    GM 正常对话的读超时是 llm_timeout_seconds(桌面 1800s / 服务器 300s)+ SDK 默认重试 2 次,
+    用在一次性的连通性探测上,打不通的端点能把线程占好几分钟。这里换成 max_retries=0 +
+    有界 timeout 的副本(with_options 复用同一个 http_client,代理设置不丢)。
+    vertex 后端的 genai client 没有 with_options,保持原样。
+    """
+    client = getattr(backend, "client", None)
+    with_options = getattr(client, "with_options", None)
+    if not callable(with_options):
+        return
+    import httpx
+    t = max(1.0, float(timeout_sec or _PROBE_READ_TIMEOUT))
+    backend.client = with_options(
+        timeout=httpx.Timeout(t, connect=min(_PROBE_CONNECT_TIMEOUT, t)),
+        max_retries=0,
+    )
 
 
 def _list_anthropic_models(api: dict[str, Any], user_id: int | None = None) -> list[dict[str, Any]]:
@@ -496,13 +566,21 @@ def _list_anthropic_models(api: dict[str, Any], user_id: int | None = None) -> l
     creds = _resolve_provider_creds(api, user_id)
     client_kwargs: dict[str, Any] = {
         "api_key": creds["key"],
-        "http_client": safe_httpx_client(),
+        "timeout": _probe_timeout(),
+        "max_retries": 0,
+        "http_client": safe_httpx_client(timeout=_PROBE_READ_TIMEOUT, proxy=creds["proxy"]),
     }
     if creds.get("base_url_override"):
         client_kwargs["base_url"] = creds["base_url_override"]
     client = Anthropic(**client_kwargs)
     models = []
-    for m in client.models.list():
+    try:
+        listed = list(client.models.list())
+    except Exception as exc:
+        if _is_connection_error(exc):
+            raise _unreachable_error(exc) from exc
+        raise
+    for m in listed:
         models.append({
             "id": m.id,
             "real_name": m.id,
@@ -535,7 +613,11 @@ def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) 
     kwargs: dict[str, Any] = {
         "api_key": key,
         "default_headers": openai_default_headers(),
-        "http_client": safe_httpx_client(timeout=30.0),
+        # 探测有上限:不重试 + 连接 5s / 读 15s(见 _PROBE_READ_TIMEOUT 注释)。
+        "timeout": _probe_timeout(),
+        "max_retries": 0,
+        # 凭据代理与 GM 路径同源(credential_proxy),本地版「连接方式 = HTTP 代理」在这里也生效。
+        "http_client": safe_httpx_client(timeout=_PROBE_READ_TIMEOUT, proxy=creds["proxy"]),
     }
     if base_url:
         kwargs["base_url"] = base_url
@@ -544,10 +626,15 @@ def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) 
     try:
         data = client.models.list().data
     except Exception as exc:
+        # 连不上(超时 / 连接失败 / 代理不通):换 /v1 路径也一样连不上,不补试,直接给准话。
+        # 以前这里照样补一轮 /v1,最坏 62s,还把错误归成「base_url 可能缺 /v1」误导用户改地址。
+        if _is_connection_error(exc):
+            raise _unreachable_error(exc) from exc
         # 群反馈(#91,真库复现:evomap /v1/models=200、/models=403):用户常把 base_url 填成**不带版本段**
         # 的裸地址(如 https://relay.com)→ OpenAI SDK 打 {base}/models 而非 /v1/models → 中转站 403/404 →
         # 「配好却查不到模型」。base_url 不含 /vN 版本段时,自动补 /v1 重试一次(仅失败时、仅缺版本段时,
-        # 不掩盖真错、不动 /v1beta/openai 等已带版本的合法路径)。
+        # 不掩盖真错、不动 /v1beta/openai 等已带版本的合法路径)。除连接类错误外一律照补
+        # (含 400/401/405、裸地址返回 200 HTML 页面导致的解析异常)。
         import re as _re
         data = None
         if base_url and not _re.search(r"/v\d", base_url):
@@ -591,9 +678,9 @@ def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) 
             # 所以 404 必须单独成文案:说清「没有这个接口 ≠ 地址错」,并明确劝阻加 /v1。
             if _code == 404:
                 raise RuntimeError(
-                    "该 provider 没有提供模型列表接口(/models 返回 404)。这**不是** base_url 或 "
+                    "该 provider 没有提供模型列表接口(/models 返回 404)。这不是 base_url 或 "
                     "API key 的问题 —— 手动填写模型 ID 即可正常使用(聊天接口不受影响)。"
-                    "⚠️ 请**不要**为此在 base_url 后面加 /v1:有的 provider(如火山方舟订阅套餐 "
+                    "注意:请不要为此在 base_url 后面加 /v1:有的 provider(如火山方舟订阅套餐 "
                     "/api/plan/v3)加了会让 chat/completions 也一起 404。"
                 ) from exc
             raise RuntimeError(
@@ -759,6 +846,8 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
         from agents.gm import GameMaster
         # 强制按 user 取 key；服务器模式下 user_id=None 会导致 backend 取不到 key 抛错
         gm = GameMaster(api_id=api_id, model=model_real_name, user_id=user_id)
+        # timeout_sec 以前是死参数(函数体从没用过),探测沿用 GM 的 1800s/300s 读超时 + SDK 重试。
+        bound_backend_for_probe(gm._backend, timeout_sec)
         text = gm._backend.call(
             system="只回复一个字符：1",
             messages=[{"role": "user", "content": "1"}],

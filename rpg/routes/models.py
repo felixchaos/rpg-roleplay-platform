@@ -1,6 +1,7 @@
 """models.py — 模型目录与 API 管理路由 (/api/models/*)。"""
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -386,7 +387,9 @@ async def api_models_remote(
         return blocked
     force = request.query_params.get("refresh") == "1"
     import model_probe
-    return json_response(model_probe.list_remote_models(
+    # 拉远程模型是同步网络请求:放进线程,别在 async 路由里冻住事件循环(见 remote/sync 注释)。
+    return json_response(await asyncio.to_thread(
+        model_probe.list_remote_models,
         api_id, force_refresh=force,
         user_id=api_user["id"] if api_user else None,
     ))
@@ -406,7 +409,24 @@ async def api_models_remote_sync(
     导致一个用户的 provider/模型泄露进所有人(含 admin)的模型选择器。现在改为
     写 user_model_entries(每用户隔离),只在该用户自己的 catalog 视图里 merge。
     全局菜单只有 admin 能改(/api/models/api)。
+
+    整段(查凭据 / 解析校验 base_url / 拉远端 /models / 写 overlay)都是同步 IO,放进线程跑:
+    以前直接在 async 路由里同步调用,打不通的端点最坏 62s,事件循环全程冻住 —— 桌面版
+    单 worker 时整个后端卡死,连带其它渠道的保存一起超时(反馈 #107)。
     """
+    user_id = int(api_user["id"]) if api_user and api_user.get("id") else None
+    if not user_id:
+        return json_response({"ok": False, "error": "需要登录"}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return await asyncio.to_thread(_remote_sync_blocking, api_user, user_id, body)
+
+
+def _remote_sync_blocking(api_user: dict[str, Any], user_id: int, body: Any) -> JSONResponse:
+    """/api/models/remote/sync 的同步主体(在线程里执行,见路由注释)。"""
     import model_probe
     from app import _check_probe_permission
     from model_registry import (
@@ -418,14 +438,6 @@ async def api_models_remote_sync(
     )
     from platform_app import user_models
 
-    user_id = int(api_user["id"]) if api_user and api_user.get("id") else None
-    if not user_id:
-        return json_response({"ok": False, "error": "需要登录"}, status_code=401)
-
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
     api_id = normalize_api_id((body or {}).get("api_id", ""))
     if not api_id:
         return json_response({"ok": False, "error": "api_id 不能为空"}, status_code=400)
@@ -529,7 +541,9 @@ async def api_models_diff(
     if blocked:
         return blocked
     import model_probe
-    return json_response(model_probe.diff_catalog(api_id, user_id=api_user["id"] if api_user else None))
+    return json_response(await asyncio.to_thread(
+        model_probe.diff_catalog, api_id, user_id=api_user["id"] if api_user else None,
+    ))
 
 
 @router.post("/api/models/probe", response_model=GenericOkResponse, responses={**COMMON_ERROR_RESPONSES, 403: {"model": ErrorResponse}})
@@ -554,7 +568,8 @@ async def api_models_probe(
                 status_code=403,
             )
     import model_probe
-    return json_response(model_probe.probe_availability(
+    return json_response(await asyncio.to_thread(
+        model_probe.probe_availability,
         api_id,
         body_dict.get("model"),
         timeout_sec=int(body_dict.get("timeout", 15)),
@@ -602,7 +617,8 @@ async def api_models_report(
         return blocked
     probe = request.query_params.get("probe") == "1"
     import model_probe
-    return json_response(model_probe.full_report(
+    return json_response(await asyncio.to_thread(
+        model_probe.full_report,
         api_id, probe_model=probe,
         user_id=api_user["id"] if api_user else None,
     ))

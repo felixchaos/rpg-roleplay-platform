@@ -5,6 +5,8 @@ credentials 列表/设置/删除、embedder/status 生效路径、credentials/te
 """
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import Depends, Request
 
 from .._deps import json_response, require_user, value_error_response
@@ -59,14 +61,21 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
             if auth_mode == "none" and not base_url_override:
                 raise ValueError("勾选「免 API Key」时必须填写 Base URL(本地模型的接口地址)")
             api_id = normalized_api_id
-        result = user_credentials.set_credential(
+        # 出站代理 URL(仅本地模式真正使用,见 core.outbound.credential_proxy)。
+        # 请求体**带了** proxy 键才改代理(空串 = 清空);没带(手机端 / 供应商卡片 / 拦截弹窗
+        # 这些表单根本没有代理输入)= 保留已存代理,不能把别处配好的代理悄悄覆盖成空。
+        proxy = (str(body.get("proxy") or "")).strip() if "proxy" in body else None
+        # set_credential 落库后会内联同步一次远程模型列表(网络请求)。放进线程执行:
+        # async 路由里直接同步调用会冻住事件循环,桌面版单 worker 时整个后端跟着卡住(反馈 #107)。
+        result = await asyncio.to_thread(
+            user_credentials.set_credential,
             user["id"],
             api_id,
             body.get("api_key", ""),
             base_url_override=base_url_override,
             enabled=bool(body.get("enabled", True)),
             allow_base_url=True,  # base_url 不再 admin 限定;SSRF 由 _validate_base_url 强制
-            proxy=(body.get("proxy") or "").strip(),  # 出站代理 URL;仅本地模式真正使用(见 openai_compat)
+            proxy=proxy,
             preserve_key_if_empty=keep_key,
             auth_mode=auth_mode,
         )
@@ -84,6 +93,7 @@ async def api_delete_credential(request: Request, user=Depends(require_user)):
 
 _PING_CACHE: dict[tuple[int, str], tuple[float, dict]] = {}
 _PING_TTL = 60.0  # 60s 内同 user+api_id 的 ping 结果直接复用,防 API 被封
+_PING_TIMEOUT_SEC = 20.0  # 自检单次上限(不重试);前端给这个请求留了 45s
 
 
 @router.get("/api/me/embedder/status")
@@ -238,13 +248,21 @@ async def api_test_credential(
 
     # 实际打 ping:走 GameMaster.call 跟真实游戏一致
     started = _time.monotonic()
-    try:
+
+    def _ping() -> None:
         from agents.gm import GameMaster
+        from model_probe import bound_backend_for_probe
         # 走 GM 路径,user_id 传过去让 BYOK 凭证自动加载
         catalog_api_id = "vertex_ai" if user_credentials.normalize_api_id(api_id) == "AgentPlatform" else api_id
         gm = GameMaster(api_id=catalog_api_id, model=model, user_id=int(user["id"]))
+        # 探测有上限(不重试 + 20s):GM 正常读超时是 300s/1800s,打不通的端点会把线程占好几分钟。
+        bound_backend_for_probe(gm._backend, _PING_TIMEOUT_SEC)
         # 最小调用:max_tokens=1,system 空,user "ping"
         gm._backend.call(system="", messages=[{"role": "user", "content": "ping"}], max_tokens=8)
+
+    try:
+        # 同步网络调用放进线程:async 路由里直接调会冻住事件循环(桌面版单 worker = 整个后端卡住)。
+        await asyncio.to_thread(_ping)
         elapsed_ms = int((_time.monotonic() - started) * 1000)
         result = {
             "ok": True, "api_id": api_id, "has_credential": True,
