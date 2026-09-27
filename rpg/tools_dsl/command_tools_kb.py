@@ -184,7 +184,11 @@ def _t_search_canon(user_id: int, args: dict) -> str:
         if not ctx:
             return "失败: 无权访问该存档"
         # P0-fix: 传 script_id 的 embed meta，确保 query 向量与建库时相同
-        from platform_app.knowledge._search import _get_script_embed_meta
+        from platform_app.knowledge._search import _get_script_embed_meta, _script_has_vectors
+        # 先看这个剧本的规范实体有没有向量(没建过向量 / 桌面无 pgvector):没有就不嵌入查询,
+        # 免得白打一次嵌入供应商再搜出空列表。与 _search / kb.recall 的存在性门同一口径。
+        if not ctx.get("script_id") or not _script_has_vectors(db, int(ctx["script_id"]), "kb_canon_entities"):
+            return "检索不可用(这个剧本还没有规范实体的向量索引)"
         _locked_api_id, _locked_model = _get_script_embed_meta(db, ctx["script_id"])
         qv = embed_query(
             query,

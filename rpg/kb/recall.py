@@ -158,10 +158,14 @@ def recall(save_id: int, query: str, *, mode: str = "none", token_budget: int = 
                 by_key[k] = node
 
         # 向量路(有 embedder 才走;空间不一致/无 key → 静默跳过,降级关键词)
+        # 先看该剧本的 kb_nodes 有没有可比的向量(桌面无 pgvector 时视图列是 null::text,恒为否):
+        # 没有就不嵌入查询,免得每回合白打一次嵌入;桌面上还免得 %s::vector 报错把事务打挂,
+        # 连带后面的关键词路和原文片段查询一起失败。
         vec = None
         try:
-            from platform_app.knowledge._search import _embed_query
-            vec = _embed_query(query, script_id=_script_id, user_id=_owner_id, db=_db) if query else None
+            from platform_app.knowledge._search import _embed_query, _script_has_vectors
+            if query and _script_id and _script_has_vectors(_db, int(_script_id), "kb_nodes"):
+                vec = _embed_query(query, script_id=_script_id, user_id=_owner_id, db=_db)
         except Exception as exc:
             log.debug("[recall] embed 跳过: %s", exc)
         if vec:

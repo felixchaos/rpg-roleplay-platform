@@ -41,3 +41,39 @@ for _mod_name in _EAGER_IMPORTS:
         __import__(_mod_name)
     except Exception:
         pass   # DB 未连接 / 依赖缺失时忽略，不影响测试 collect
+
+
+# 3. 嵌入相关的进程级 / ContextVar 状态每个用例前后清空:熔断表与按用户的最近错误、
+#    请求级查询向量缓存、「剧本有没有向量」与「有没有 pgvector 列」缓存。否则一个用例
+#    触发的冷却或缓存会让后面的用例(同一进程)不发请求、拿到别人的结果,出现顺序相关的假红假绿。
+#    一律经 sys.modules.get 取模块:集成测试会往 sys.modules 塞裸 stub,这里不能主动 import。
+import pytest  # noqa: E402
+
+
+def _clear_embedding_process_state() -> None:
+    br = sys.modules.get("platform_app.knowledge.embedding._breaker")
+    if br is not None and hasattr(br, "reset_all"):
+        try:
+            br.reset_all()
+        except Exception:
+            pass
+    rc = sys.modules.get("core.request_cache")
+    var = getattr(rc, "_embed_vec_cache", None) if rc is not None else None
+    if var is not None:
+        try:
+            var.set(None)
+        except Exception:
+            pass
+    srch = sys.modules.get("platform_app.knowledge._search")
+    if srch is not None:
+        for _name in ("_SCRIPT_HAS_VEC_CACHE", "_VEC_COLUMN_CACHE"):
+            _c = getattr(srch, _name, None)
+            if isinstance(_c, dict):
+                _c.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_embedding_process_state():
+    _clear_embedding_process_state()
+    yield
+    _clear_embedding_process_state()
