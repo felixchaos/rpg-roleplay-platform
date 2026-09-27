@@ -11,7 +11,7 @@ key 失效 401 / 卡住超时)后,每回合的检索照样对它连打 4-5 次,�
 另有 reset_user 清掉该用户的全部单元(充值后 key 不变的情况)。
 
 分类与冷却:
-- config   401/402/403/404/405、维度不符、空地址拒发、SSRF 拒连:改配置前不会好,600s(402 为 900s)
+- config   401/402/403/404/405、维度不符、空地址拒发、SSRF 拒连、代理用不了:改配置前不会好,600s(402 为 900s)
 - no_cred  没有凭据 / 没有 Service Account(没发请求):300s
 - rate     429:读 Retry-After(夹在 30-600s),没有则 90s;冷却到期后再次 429 翻倍,封顶 900s
 - timeout  超时 / 连不上:首次即 60s(免得一回合串行等 N 个 60s)
@@ -20,6 +20,7 @@ key 失效 401 / 卡住超时)后,每回合的检索照样对它连打 4-5 次,�
 
 批量写库路径(导入 / 重建向量)只在 config / no_cred 时短路 —— 限流、瞬时故障照常真打,
 由各自的重试循环处理;否则一次 429 就会让角色卡 / 世界书 / canon 整片被跳过。
+冷却中写库路径又失败时,冷却只延长不缩短,原因按优先级取(config / no_cred > rate > timeout / server)。
 
 进程内状态(多 worker 各自熔断,每个 worker 最多多打一次,可接受)。明文 key 不进内存表,
 只存 sha256 指纹。本模块只依赖 _base,测试 reload 包门面时这里的状态与 ContextVar 不会被重建。
@@ -59,6 +60,10 @@ _RATE_ESCALATE_CAP = 900.0
 
 # 批量写库路径只在这两类熔断时短路(见模块 docstring)
 _BATCH_BLOCKING_KINDS = frozenset({KIND_CONFIG, KIND_NO_CRED})
+
+# 冷却中又失败时原因的优先级:要用户改配置的 > 限流 > 超时 / 5xx。高的不被低的改写 ——
+# 限流被写库路径的一次超时改成「超时」,写库循环就不按限流退避了;配置类则要让写库循环立即放弃。
+_KIND_RANK = {KIND_CONFIG: 3, KIND_NO_CRED: 3, KIND_RATE: 2, KIND_TIMEOUT: 1, KIND_SERVER: 1}
 
 _MAX_ENTRIES = 4096
 _MAX_LAST_ERRORS = 2048
@@ -189,13 +194,18 @@ def note_http(status: int, *, body: str = "", headers: Any = None, friendly: str
 
 
 def note_exception(exc: BaseException, host: str = "") -> None:
-    """非 HTTP 状态码类的失败:SSRF 拒连=配置;超时/连不上=timeout;其余(多为 200 但响应体坏)=server。"""
+    """非 HTTP 状态码类的失败:代理用不了 / SSRF 拒连=配置;超时/连不上=timeout;
+    其余(多为 200 但响应体坏)=server。所有 urllib 通道的异常都经这里分类,别在通道里各判各的。"""
     where = host or "嵌入接口"
     try:
-        from core.outbound import OutboundBlocked
+        from core.outbound import OutboundBlocked, UnsupportedProxy, redact_proxy_url
     except Exception:  # pragma: no cover - core 总在
-        OutboundBlocked = ()  # type: ignore[assignment]
-    if OutboundBlocked and isinstance(exc, OutboundBlocked):  # 注意它是 ValueError 子类,须先判
+        OutboundBlocked = UnsupportedProxy = ()  # type: ignore[assignment]
+        redact_proxy_url = str  # type: ignore[assignment]
+    if UnsupportedProxy and isinstance(exc, UnsupportedProxy):  # 同为 ValueError 子类,须在兜底 server 之前判
+        # 凭据里的代理这条出站用不了(urllib 不支持 SOCKS 等):请求根本没发出去,改代理之前不会好。
+        note(KIND_CONFIG, friendly=f"向量嵌入请求没有发出去:{redact_proxy_url(exc)}")
+    elif OutboundBlocked and isinstance(exc, OutboundBlocked):  # 注意它是 ValueError 子类,须先判
         note(KIND_CONFIG, friendly=(
             f"向量嵌入接口地址({where})解析到内网或保留地址,出于安全已拒绝连接。"
             f"请在「设置 → API & 模型」检查接口地址。"
@@ -319,17 +329,26 @@ def record_failure(bkey: str, att: Attempt, *, user_id: int | None, api_id: str,
         elif kind == KIND_NO_CRED:
             tripped = _NO_CRED_COOLDOWN
         if tripped:
-            ent.kind = kind
-            ent.until = now + tripped
+            if was_open:
+                # 冷却中(只有写库路径会在冷却中真打)又失败:只延长不缩短。否则还剩 570s 的限流冷却
+                # 被一次写库超时改成 60s,查询路径提前恢复,接着吃「失败也计数」的中转站配额。
+                ent.until = max(ent.until, now + tripped)
+                if _KIND_RANK.get(kind, 0) >= _KIND_RANK.get(ent.kind, 0):
+                    ent.kind = kind
+            else:
+                ent.kind = kind
+                ent.until = now + tripped
         label = ent.label
+        effective_kind = ent.kind
+        effective_secs = int(ent.until - now)
         _prune_locked(now)
     # 只在「进入冷却」或冷却原因变了(如超时冷却中写库路径又撞上 429)时打一条;
-    # 冷却中写库路径同类失败不重复刷
-    if tripped and (not was_open or prev_kind != kind):
+    # 冷却中写库路径同类失败、或较低优先级的失败(限流中撞上超时)不重复刷
+    if tripped and (not was_open or prev_kind != effective_kind):
         reason = f"HTTP {att.status}" if att.status else _KIND_LABEL.get(kind, kind)
         log.warning(
             "[embedding] 嵌入供应商 %s 失败(%s),冷却 %ds,期间向量召回改走关键词",
-            label, reason, int(tripped),
+            label, reason, effective_secs,
         )
 
 

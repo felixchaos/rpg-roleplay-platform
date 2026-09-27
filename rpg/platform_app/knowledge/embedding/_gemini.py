@@ -22,6 +22,11 @@ from ._base import EMBED_DIM, log
 # 瞬时抖动),命中特征后进程内标记该通道不可用,TTL 拉长到 1 小时,后续调用直接跳过
 # 直连、走 Vertex genai SDK 兜底 —— **不改变「所有通道都失败」时的最终报错行为**,
 # 只是跳过已知必然失败的一步。
+#
+# 封禁是按出口 IP 判的:这张表记的是「不走凭据代理」时的出口(服务器机房 / 本地模式下用户
+# 自己的网络或系统代理)。请求带了凭据代理就是另一个出口,既不查也不记这张表 —— 否则用户照
+# 提示给 Gemini 凭据配了代理,1 小时内照样一个请求都不发(巡检整合审查)。代理出口也被封时,
+# 由熔断(配置类冷却)按用户、按凭据兜住,改代理保存即换单元。
 _GEO_BAN_CACHE: dict[str, float] = {}  # channel key → 标记时刻(time.time())
 _GEO_BAN_TTL = 3600.0  # 1 小时;地区封禁是机房 IP 段级别,不会分钟级自愈
 
@@ -82,6 +87,31 @@ def _native_gemini_embed_model(model: str) -> str:
 _GEO_BAN_CHANNEL_GEMINI_NATIVE = "gemini_native_embedcontent"
 
 
+def _geo_ban_friendly(proxy: str | None) -> str:
+    """地区封禁的提示。出口是谁要说对:服务器模式是服务器;本地模式是用户自己的网络出口
+    (或他给 Gemini 凭据配的代理),解决办法也不一样。"""
+    if proxy:
+        return (
+            "Gemini 凭据里配置的代理,出口所在地区被 Google 拒绝访问向量接口。"
+            "请换一个其它地区的代理,或在「设置 → RAG / 向量模型」换一个供应商。"
+        )
+    try:
+        from core.outbound import _ssrf_enforced
+        server_mode = _ssrf_enforced()
+    except Exception:  # pragma: no cover - core 总在
+        server_mode = True
+    if server_mode:
+        return (
+            "服务器目前连不上 Gemini 的向量接口(Google 按服务器所在地区拒绝访问),"
+            "系统会过一段时间自动再试;也可以在「设置 → RAG / 向量模型」换一个供应商。"
+        )
+    return (
+        "当前网络出口所在地区被 Google 拒绝访问 Gemini 的向量接口。"
+        "可以在「设置 → API & 模型」给 Gemini 配置代理,或在「设置 → RAG / 向量模型」换一个供应商;"
+        "系统也会过一段时间自动再试。"
+    )
+
+
 def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT",
                       proxy: str | None = None, *, note_geo_ban: bool = True) -> list[list[float]] | None:
     """Gemini native embedContent API, avoiding OpenAI-compatible batchEmbed quota.
@@ -97,8 +127,9 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
     (由上层继续尝试下一通道),避免每次检索都白撞一次注定失败的直连。
 
     proxy:凭据代理(调用方传 core.outbound.credential_proxy 的结果,本地模式才有值)。
+    带了代理就是另一个出口:不查、不记进程级封禁表(见 _GEO_BAN_CACHE 注释)。
 
-    note_geo_ban:封禁期间跳过时是否记入熔断(配置类)。用户直接选了 Gemini 时要记 ——
+    note_geo_ban:撞上 / 跳过地区封禁时是否记入熔断(配置类)。用户直接选了 Gemini 时要记 ——
     否则每次检索都算「真失败」打一条 WARNING,也不进冷却;_vertex 里这一路只是可选的
     优先通道、后面还有 SDK,传 False,由 SDK 那一路的结果决定。
     """
@@ -116,14 +147,23 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
                       friendly="没有配置 Gemini 的 API Key,向量嵌入不可用。请在「设置 → API & 模型」填上 Key。")
         return None
 
-    if _geo_ban_active(_GEO_BAN_CHANNEL_GEMINI_NATIVE):
+    # 进程级封禁表只管「不走凭据代理」的出口
+    geo_channel = None if proxy else _GEO_BAN_CHANNEL_GEMINI_NATIVE
+    if geo_channel and _geo_ban_active(geo_channel):
         log.debug("[embedding] gemini_native 仍在地区封禁 TTL 窗口内,跳过直连")
         if note_geo_ban:
-            _breaker.note(_breaker.KIND_CONFIG, overwrite=False, friendly=(
-                "服务器目前连不上 Gemini 的向量接口(Google 按服务器所在地区拒绝访问),"
-                "系统会过一段时间自动再试;也可以在「设置 → RAG / 向量模型」换一个供应商。"
-            ))
+            _breaker.note(_breaker.KIND_CONFIG, overwrite=False, friendly=_geo_ban_friendly(proxy))
         return None
+
+    def _on_geo_ban() -> bool:
+        """撞上地区封禁:不带代理时标记进程级封禁表;要记熔断时直接记配置类(换出口 / 换供应商
+        之前不会好),返回 True 表示已记,调用方不再按 HTTP 400(请求级,不熔断)记一遍。"""
+        if geo_channel:
+            _geo_ban_mark(geo_channel)
+        if note_geo_ban:
+            _breaker.note(_breaker.KIND_CONFIG, friendly=_geo_ban_friendly(proxy))
+            return True
+        return False
 
     effective_model = _native_gemini_embed_model(model)
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{effective_model}:embedContent?key={api_key}"
@@ -157,15 +197,16 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")
         log.warning("[embedding] gemini embed failed: %s %s", e.code, body[:200])
-        if _is_geo_ban_error(body) or _is_geo_ban_error(str(e)):
-            _geo_ban_mark(_GEO_BAN_CHANNEL_GEMINI_NATIVE)
-        # 记入熔断(地区封禁是 400,按请求级处理不熔断,已由上面的 _GEO_BAN_CACHE 兜)
+        if (_is_geo_ban_error(body) or _is_geo_ban_error(str(e))) and _on_geo_ban():
+            return None
+        # 记入熔断(_vertex 里的可选优先通道撞上地区封禁时仍按 400 请求级记,由 SDK 那一路定)
         _breaker.note_http(e.code, body=body, headers=e.headers,
                            friendly=f"Gemini 向量嵌入请求失败(HTTP {e.code}):{body[:160]}")
         return None
     except Exception as e:
         log.warning("[embedding] gemini embed failed: %s", e)
-        if _is_geo_ban_error(str(e)):
-            _geo_ban_mark(_GEO_BAN_CHANNEL_GEMINI_NATIVE)
+        if _is_geo_ban_error(str(e)) and _on_geo_ban():
+            return None
+        # 代理用不了(UnsupportedProxy)/ SSRF 拒连 / 超时 / 响应体坏:统一由 note_exception 分类
         _breaker.note_exception(e, "generativelanguage.googleapis.com")
         return None

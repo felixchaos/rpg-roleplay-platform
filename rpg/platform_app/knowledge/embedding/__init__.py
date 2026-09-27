@@ -218,7 +218,7 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
     import urllib.request
 
     # safe_urlopen —— SSRF: 不跟随重定向 + use-time 重解析 pin IP
-    from core.outbound import UnsupportedProxy, proxy_kwargs, safe_urlopen
+    from core.outbound import proxy_kwargs, safe_urlopen
     from core.outbound_ua import outbound_user_agent
     effective_url = (base_url.rstrip("/") if base_url else "https://api.openai.com/v1") + "/embeddings"
     # 报错里带上实际请求的主机:同一个 401,发错了地方和 key 真坏了是两回事,不写出来用户和我们都分不清。
@@ -338,13 +338,9 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
         # 401/402/403/404/405 → 配置类冷却;429 → 限流冷却(读 Retry-After);400/413/422 只记不熔断
         _breaker.note_http(code, body=body, headers=headers, friendly=friendly)
         return None
-    except UnsupportedProxy as e:
-        # 凭据里的代理这条出站用不了(urllib 不支持 SOCKS):按配置类记进熔断,原因进该用户的
-        # 最近错误,设置页 / 拆书预检能看到。不记的话向量静默失败,用户只会觉得「检索没效果」。
-        _breaker.note(_breaker.KIND_CONFIG, friendly=f"向量嵌入请求没有发出去:{e}")
-        log.warning("[embedding] openai embed 代理不可用: %s", e)
-        return None
     except Exception as e:
+        # 代理用不了(UnsupportedProxy,urllib 不支持 SOCKS)也走这里:note_exception 按配置类记,
+        # 原因进该用户的最近错误,设置页 / 拆书预检能看到。与 Gemini 通道同一处判断。
         log.warning("[embedding] openai embed failed: %s", e)
         _breaker.note_exception(e, _host)
         return None
