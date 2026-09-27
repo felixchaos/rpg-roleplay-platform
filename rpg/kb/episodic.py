@@ -140,7 +140,10 @@ def embed_pending_events(save_id: int, user_id: int | None, *, limit: int = _EMB
             ).fetchall()
         n = 0
         for r in rows or []:
-            vec = embed_query(str(r.get("summary") or ""), user_id)  # 用户 embed 偏好
+            # 用户 embed 偏好。不切平台兜底:kb_events 没有绑定 embedder 的元数据,admin/vip 自己的
+            # key 失败时切到平台模型写进去,同一存档里就有了两个向量空间(维度同为 768 不报错),
+            # 之后的相似度排序静默错乱。失败就留 NULL,下回合再补。
+            vec = embed_query(str(r.get("summary") or ""), user_id, allow_platform_fallback=False)
             if not vec:
                 break  # 无可用 embedder → 整批放弃(下次或换 embedder 再补),不空转
             with connect() as db:
@@ -336,7 +339,8 @@ def _retrieve_vector(
         return []
     try:
         from platform_app.knowledge.embedding import embed_query
-        qv = embed_query(query_text, user_id)
+        # 与写入侧同口径:不切平台兜底,免得拿另一个向量空间的查询向量去比。失败走关键词召回。
+        qv = embed_query(query_text, user_id, allow_platform_fallback=False)
     except Exception:
         qv = None
     if not qv:

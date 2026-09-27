@@ -288,6 +288,7 @@ def record_failure(bkey: str, att: Attempt, *, user_id: int | None, api_id: str,
             _STATE[bkey] = ent
         _STATE.move_to_end(bkey)
         was_open = bool(ent.kind) and ent.until > now
+        prev_kind = ent.kind if was_open else ""
         if kind == KIND_SERVER:
             ent.server_strikes += 1
             if ent.server_strikes >= _SERVER_TRIP_AFTER:
@@ -299,15 +300,19 @@ def record_failure(bkey: str, att: Attempt, *, user_id: int | None, api_id: str,
             base = att.retry_after if att.retry_after is not None else _RATE_DEFAULT
             cooldown = min(max(base, _RATE_MIN), _RATE_MAX)
             if was_open and ent.kind == KIND_RATE:
-                # 冷却中又被 429(只有写库路径会在冷却中真打):顺延,不翻倍
+                # 冷却中又被 429(只有写库路径会在冷却中真打):顺延,不翻倍。
+                # 翻倍基数(last_rate_cooldown)不能跟着降:顺延出来的剩余时长可能比上一档短,
+                # 拿它当基数,下一次到期再 429 时的冷却反而回退了。
                 cooldown = max(cooldown, ent.until - now)
+                ent.last_rate_cooldown = max(ent.last_rate_cooldown, cooldown)
             elif ent.rate_trips and ent.last_rate_cooldown:
                 # 冷却到期后又被 429:间隔翻倍,两个 worker 周期性试探也不至于持续吃掉用户配额
                 cooldown = max(cooldown, min(ent.last_rate_cooldown * 2, _RATE_ESCALATE_CAP))
                 ent.rate_trips += 1
+                ent.last_rate_cooldown = cooldown
             else:
                 ent.rate_trips = 1
-            ent.last_rate_cooldown = cooldown
+                ent.last_rate_cooldown = cooldown
             tripped = cooldown
         elif kind == KIND_CONFIG:
             tripped = _PAYMENT_COOLDOWN if att.status == 402 else _CONFIG_COOLDOWN
@@ -318,7 +323,9 @@ def record_failure(bkey: str, att: Attempt, *, user_id: int | None, api_id: str,
             ent.until = now + tripped
         label = ent.label
         _prune_locked(now)
-    if tripped and not was_open:  # 只在「进入冷却」那一刻打一条;冷却中写库路径又失败不重复刷
+    # 只在「进入冷却」或冷却原因变了(如超时冷却中写库路径又撞上 429)时打一条;
+    # 冷却中写库路径同类失败不重复刷
+    if tripped and (not was_open or prev_kind != kind):
         reason = f"HTTP {att.status}" if att.status else _KIND_LABEL.get(kind, kind)
         log.warning(
             "[embedding] 嵌入供应商 %s 失败(%s),冷却 %ds,期间向量召回改走关键词",
@@ -339,12 +346,19 @@ def last_error_for(user_id: int | None, bkey: str | None = None) -> str:
 
 
 def reset_user(user_id: int | None) -> None:
-    """清掉该用户的全部熔断单元和最近错误(保存/删除凭据、手动重建向量时调用)。"""
-    uk = int(user_id) if user_id else None
+    """清掉该用户的全部熔断单元和最近错误(保存/删除凭据、手动重建向量时调用)。
+
+    user_id 为空(系统任务 / 平台兜底)时什么都不做:那些单元记的是平台 key 的状态,
+    admin/vip 的平台兜底也落在上面;某个系统建库作业开始不代表平台 key 恢复了,
+    不能顺手把它们的冷却清掉。
+    """
+    if not user_id:
+        return
+    uk = int(user_id)
     with _LOCK:
         for k in [k for k, e in _STATE.items() if e.user_id == uk]:
             _STATE.pop(k, None)
-        _LAST_ERROR.pop(uk or 0, None)
+        _LAST_ERROR.pop(uk, None)
 
 
 def reset_all() -> None:

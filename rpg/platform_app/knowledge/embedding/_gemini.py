@@ -82,7 +82,8 @@ def _native_gemini_embed_model(model: str) -> str:
 _GEO_BAN_CHANNEL_GEMINI_NATIVE = "gemini_native_embedcontent"
 
 
-def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT", proxy: str | None = None) -> list[list[float]] | None:
+def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT",
+                      proxy: str | None = None, *, note_geo_ban: bool = True) -> list[list[float]] | None:
     """Gemini native embedContent API, avoiding OpenAI-compatible batchEmbed quota.
 
     注意:此处对多文本逐条串行调用 embedContent(v1beta)。
@@ -96,6 +97,10 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
     (由上层继续尝试下一通道),避免每次检索都白撞一次注定失败的直连。
 
     proxy:凭据代理(调用方传 core.outbound.credential_proxy 的结果,本地模式才有值)。
+
+    note_geo_ban:封禁期间跳过时是否记入熔断(配置类)。用户直接选了 Gemini 时要记 ——
+    否则每次检索都算「真失败」打一条 WARNING,也不进冷却;_vertex 里这一路只是可选的
+    优先通道、后面还有 SDK,传 False,由 SDK 那一路的结果决定。
     """
     import json as _json
     import urllib.error
@@ -113,6 +118,11 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
 
     if _geo_ban_active(_GEO_BAN_CHANNEL_GEMINI_NATIVE):
         log.debug("[embedding] gemini_native 仍在地区封禁 TTL 窗口内,跳过直连")
+        if note_geo_ban:
+            _breaker.note(_breaker.KIND_CONFIG, overwrite=False, friendly=(
+                "服务器目前连不上 Gemini 的向量接口(Google 按服务器所在地区拒绝访问),"
+                "系统会过一段时间自动再试;也可以在「设置 → RAG / 向量模型」换一个供应商。"
+            ))
         return None
 
     effective_model = _native_gemini_embed_model(model)

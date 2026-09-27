@@ -190,6 +190,64 @@ def test_default_path_keeps_admin_platform_fallback(monkeypatch):
     assert sent == ["sk-own", "PLATFORM-KEY"]
 
 
+def test_embed_query_can_opt_out_of_platform_fallback(monkeypatch):
+    """kb_events(永恒记忆)没有绑定 embedder 的元数据:写入和召回都关掉平台兜底,
+    admin/vip 自己的 key 失败时不拿平台模型的向量去写 / 去比。默认路径的兜底不变。"""
+    from core import request_cache
+
+    sent = _admin_with_own_failing_key(monkeypatch)
+    request_cache.reset_request_caches()
+    try:
+        assert embedding.embed_query("往事", user_id=7, allow_platform_fallback=False) is None
+        assert sent == ["sk-own"]
+        # 同一请求、同一文本:开关不同是两条缓存,默认路径照常切平台兜底
+        embedding.embed_query("往事", user_id=7)
+        assert sent == ["sk-own", "sk-own", "PLATFORM-KEY"]
+    finally:
+        request_cache._embed_vec_cache.set(None)
+
+
+def test_episodic_embeds_without_platform_fallback(monkeypatch):
+    """kb.episodic 的补嵌入(写)与向量召回(读)都传 allow_platform_fallback=False。"""
+    from contextlib import contextmanager
+
+    import platform_app.db as dbmod
+    from kb import episodic
+
+    seen: list[bool] = []
+
+    def _fake_embed_query(text, user_id=None, *a, **kw):
+        seen.append(kw.get("allow_platform_fallback", True))
+        return None
+
+    class _DB:
+        def execute(self, sql, params=None):
+            if "embedding_vec is null" in sql:
+                return _R([{"id": 1, "summary": "在站台遇见楚轩"}])
+            if "embedding_vec is not null limit 1" in sql:
+                return _R1({"x": 1})
+            return _R([])
+
+    @contextmanager
+    def _connect():
+        yield _DB()
+
+    monkeypatch.setattr(dbmod, "connect", _connect)
+    monkeypatch.setattr(dbmod, "init_db", lambda: None)
+    monkeypatch.setattr(embedding, "embed_query", _fake_embed_query)
+    assert episodic.embed_pending_events(11, 7) == 0
+    assert episodic._retrieve_vector(11, 3, 7, "楚轩") == []
+    assert seen == [False, False]
+
+
+class _R1:
+    def __init__(self, one):
+        self._one = one
+
+    def fetchone(self):
+        return self._one
+
+
 class _R:
     def __init__(self, rows):
         self._rows = rows

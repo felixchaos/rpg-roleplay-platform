@@ -220,14 +220,62 @@ def test_reset_user_recovers_same_key(monkeypatch, clock):
     assert len(net.calls) == 2
 
 
-def test_credentials_api_resets_breaker():
-    """保存 / 删除凭据的接口都要挂 reset_user(源码级核对挂点存在)。"""
-    import inspect
+class _JsonRequest:
+    def __init__(self, body: dict):
+        self._body = body
 
+    async def json(self):
+        return self._body
+
+
+@pytest.mark.parametrize("route", ["set", "delete"])
+def test_credentials_api_resets_breaker(monkeypatch, clock, route):
+    """保存 / 删除凭据后,该用户的冷却和最近错误立即清掉(充值后 key 没变也能马上恢复);
+    别的用户不受影响。走真的路由函数,不做源码字面量核对。"""
+    import asyncio
+
+    from platform_app import user_credentials
     from platform_app.api.me import credentials as cred_api
-    src_set = inspect.getsource(cred_api.api_set_credential)
-    src_del = inspect.getsource(cred_api.api_delete_credential)
-    assert "_reset_embed_breaker" in src_set and "_reset_embed_breaker" in src_del
+
+    net = _net(monkeypatch, [402])
+    monkeypatch.setattr(embedding, "_is_admin", lambda _uid: False)
+    keys = {1: "sk-user-a", 2: "sk-user-b"}
+    monkeypatch.setattr(embedding, "_resolve_embed_config",
+                        lambda uid: ("openai", "text-embedding-3-small", keys[uid], _RELAY))
+    embedding.embed_query("a", user_id=1)
+    embedding.embed_query("a", user_id=2)
+    k1 = _breaker.key_for(1, "openai", "text-embedding-3-small", _RELAY, keys[1])
+    k2 = _breaker.key_for(2, "openai", "text-embedding-3-small", _RELAY, keys[2])
+    assert _breaker.status(k1) and _breaker.status(k2)
+
+    monkeypatch.setattr(user_credentials, "set_credential", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(user_credentials, "delete_credential", lambda *a, **k: {"ok": True})
+    user = {"id": 1, "role": "admin"}
+    if route == "set":
+        resp = asyncio.run(cred_api.api_set_credential(
+            _JsonRequest({"api_id": "openai", "api_key": "sk-user-a"}), user=user))
+    else:
+        resp = asyncio.run(cred_api.api_delete_credential(_JsonRequest({"api_id": "openai"}), user=user))
+    assert resp.status_code == 200
+    assert _breaker.status(k1) is None, "凭据变了,该用户的冷却要清掉"
+    assert _breaker.last_error_for(1) == ""
+    assert _breaker.status(k2) is not None, "别的用户的冷却不受影响"
+    net.script = ["ok"]
+    assert embedding.embed_query("b", user_id=1) is not None
+
+
+def test_reset_user_none_keeps_platform_cooldown(monkeypatch, clock):
+    """系统任务(user_id=None)开始建向量不代表平台 key 恢复了:平台单元的冷却不能被顺手清掉。"""
+    net = _net(monkeypatch, [429])
+    monkeypatch.setattr(embedding, "_resolve_embed_config",
+                        lambda _uid: ("openai", "text-embedding-3-small", "PLATFORM-KEY", _RELAY))
+    embedding.embed_query("a", user_id=None)
+    bkey = _breaker.key_for(None, "openai", "text-embedding-3-small", _RELAY, "PLATFORM-KEY")
+    assert _breaker.status(bkey) is not None
+    _breaker.reset_user(None)
+    assert _breaker.status(bkey) is not None
+    embedding.embed_query("b", user_id=None)
+    assert len(net.calls) == 1
 
 
 # ── 三、用户隔离 ──────────────────────────────────────────────────────────────
@@ -443,3 +491,72 @@ def test_admin_platform_config_failure_not_retried_verbatim(monkeypatch, clock):
     net = _net(monkeypatch, [502])
     assert embedding._embed_batch(["x"], user_id=1) is None
     assert len(net.calls) == 1
+
+
+# ── 七、审查补充:翻倍基数 / 冷却原因变化 / 地区封禁 ────────────────────────────
+def test_batch_429_during_rate_cooldown_does_not_reset_escalation(monkeypatch, clock):
+    """冷却中写库路径又撞 429 走「顺延」:翻倍基数不能被顺延出来的较短剩余时长拉低,
+    否则下一次到期再 429 时冷却反而回退。"""
+    _use_config(monkeypatch)
+    net = _net(monkeypatch, [429])
+    bkey = _breaker.key_for(1, "openai", "text-embedding-3-small", _RELAY, "sk-a")
+    embedding.embed_query("a", user_id=1)                 # 90s
+    clock.t += 91
+    embedding.embed_query("b", user_id=1)                 # 到期再 429 → 180s
+    assert int(_breaker.status(bkey)["remaining"]) == 180
+    clock.t += 100                                        # 剩 80s
+    assert embedding._embed_batch(["x"], user_id=1) is None   # 写库路径冷却中真打 → 顺延
+    assert len(net.calls) == 3
+    clock.t += 181
+    embedding.embed_query("c", user_id=1)                 # 到期再 429 → 应从 180 翻到 360
+    assert int(_breaker.status(bkey)["remaining"]) == 360
+
+
+def test_cooldown_reason_change_is_logged(monkeypatch, clock, caplog):
+    """超时冷却中,写库路径又撞上 429:冷却原因变了,要打一条(否则日志里只看得到超时)。"""
+    _use_config(monkeypatch)
+    net = _net(monkeypatch, ["timeout"])
+    caplog.set_level(logging.DEBUG, logger=_LOGGER)
+    embedding.embed_query("a", user_id=1)
+    assert len(_cooldown_warnings(caplog)) == 1
+    net.script = [429]
+    embedding._embed_batch(["x"], user_id=1)
+    warns = _cooldown_warnings(caplog)
+    assert len(warns) == 2 and "HTTP 429" in warns[-1].getMessage()
+    embedding._embed_batch(["y"], user_id=1)              # 同类再失败不重复刷
+    assert len(_cooldown_warnings(caplog)) == 2
+
+
+def test_direct_gemini_geo_ban_skip_opens_config_cooldown(monkeypatch, clock, caplog):
+    """用户选的就是 Gemini、服务器所在地区被 Google 拒绝:封禁期间的跳过记成配置类冷却,
+    提示写明原因;不再每次检索都算一次「真失败」打 WARNING。"""
+    from platform_app.knowledge.embedding import _gemini
+
+    monkeypatch.setattr(_gemini, "_geo_ban_active", lambda _ch: True)
+    monkeypatch.setattr(embedding, "_is_admin", lambda _uid: False)
+    monkeypatch.setattr(embedding, "_resolve_embed_config",
+                        lambda _uid: ("gemini", "gemini-embedding-001", "AIza-user", ""))
+    caplog.set_level(logging.DEBUG, logger=_LOGGER)
+    for text in ("一", "二", "三"):
+        assert embedding.embed_query(text, user_id=5) is None
+    st = _breaker.status(_breaker.key_for(5, "gemini", "gemini-embedding-001", "", "AIza-user"))
+    assert st is not None and st["kind"] == _breaker.KIND_CONFIG
+    assert "地区" in _breaker.last_error_for(5)
+    no_vec_warns = [r for r in caplog.records
+                    if "returned no vectors" in r.getMessage() and r.levelno == logging.WARNING]
+    assert len(no_vec_warns) == 1 and len(_cooldown_warnings(caplog)) == 1
+
+
+def test_vertex_geo_ban_skip_does_not_mask_missing_sa(monkeypatch, clock):
+    """_vertex 里平台 Gemini 原生只是可选的优先通道:它在封禁期间被跳过时不记熔断,
+    以后面 SDK 那一路的结果为准(这里没有 SA → 记「没凭据」)。"""
+    from platform_app.knowledge.embedding import _gemini, _vertex
+
+    monkeypatch.setenv("EMBED_API_KEY", "PLATFORM-KEY")
+    monkeypatch.setattr(_vertex, "_is_admin", lambda _uid: True)
+    monkeypatch.setattr(_vertex, "_get_vertex_client", lambda user_id=None: None)
+    monkeypatch.setattr(_gemini, "_geo_ban_active", lambda _ch: True)
+    assert embedding._embed_provider_dispatch("vertex_ai", "text-embedding-004", "", ["x"],
+                                              task_type="RETRIEVAL_QUERY", user_id=None) is None
+    st = _breaker.status(_breaker.key_for(None, "vertex_ai", "text-embedding-004", "", ""))
+    assert st is not None and st["kind"] == _breaker.KIND_NO_CRED

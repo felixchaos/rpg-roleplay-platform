@@ -71,7 +71,7 @@ def _embed_via_vertex(model: str, texts: list[str], task_type: str = "RETRIEVAL_
     # 否则退回 genai SDK(用户自己的 BYOK Vertex SA,无平台 key 可用,与原行为一致)。
     _plat_key = os.environ.get("EMBED_API_KEY", "")
     if _plat_key and ((user_id is None) or _is_admin(user_id)):
-        _native = _embed_via_gemini(model, _plat_key, texts, task_type=task_type)
+        _native = _embed_via_gemini(model, _plat_key, texts, task_type=task_type, note_geo_ban=False)
         if _native:
             return _native
     client = _get_vertex_client(user_id=user_id)

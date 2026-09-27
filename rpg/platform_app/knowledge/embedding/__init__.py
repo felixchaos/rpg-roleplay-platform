@@ -569,6 +569,8 @@ def embed_query(
     user_id: int | None = None,
     force_api_id: str | None = None,
     force_model: str | None = None,
+    *,
+    allow_platform_fallback: bool = True,
 ) -> str | None:
     """task 51 / P0-fix: query 文本 → 768 维向量字符串。
     `_search._embed_query` 的 production 实现。失败返 None 自动 fallback ILIKE。
@@ -582,6 +584,10 @@ def embed_query(
     一回合的检索会对同一段玩家输入嵌入 4-5 次(新旧两路召回 × chunks/实体/kb_nodes),
     实际只有两种不同文本。缓存容器由中间件在每个请求开头重置;不在请求里(后台线程、cron)
     时不缓存,行为不变。
+
+    allow_platform_fallback=False:常规路径(没给 force_*)在 admin/vip 自己的嵌入器失败时
+    不切平台兜底。没有绑定 embedder 元数据、却要和已存向量比相似度的地方用它(kb_events 的
+    写入与召回):切过去算出的是另一个向量空间,写进去就混了,拿来比就是乱比。
     """
     text = (text or "").strip()
     if not text:
@@ -589,10 +595,10 @@ def embed_query(
     try:
         from core.request_cache import get_embed_vec_cached
     except Exception:  # pragma: no cover - core 总在
-        return _embed_query_uncached(text, user_id, force_api_id, force_model)
+        return _embed_query_uncached(text, user_id, force_api_id, force_model, allow_platform_fallback)
     return get_embed_vec_cached(
-        (user_id, force_api_id or "", force_model or "", text),
-        lambda: _embed_query_uncached(text, user_id, force_api_id, force_model),
+        (user_id, force_api_id or "", force_model or "", text, bool(allow_platform_fallback)),
+        lambda: _embed_query_uncached(text, user_id, force_api_id, force_model, allow_platform_fallback),
     )
 
 
@@ -601,6 +607,7 @@ def _embed_query_uncached(
     user_id: int | None,
     force_api_id: str | None,
     force_model: str | None,
+    allow_platform_fallback: bool = True,
 ) -> str | None:
     _breaker.reset_dispatched()
     if force_api_id and force_model:
@@ -636,8 +643,9 @@ def _embed_query_uncached(
             return None
         vecs = _embed_provider_dispatch(api_id, model, api_key, [text], base_url=base_url, task_type="RETRIEVAL_QUERY", user_id=user_id)
     else:
-        # 常规路径:走 admin fallback(user 自配失败时 admin 自动切平台)
-        vecs, _ = _embed_with_admin_fallback([text], user_id, task_type="RETRIEVAL_QUERY")
+        # 常规路径:走 admin fallback(user 自配失败时 admin 自动切平台;调用方可关掉,见 docstring)
+        vecs, _ = _embed_with_admin_fallback([text], user_id, task_type="RETRIEVAL_QUERY",
+                                             allow_platform_fallback=allow_platform_fallback)
     if not vecs:
         if _breaker.dispatched():
             log.warning("[embedding] embed_query returned no vectors")
