@@ -44,8 +44,7 @@ def _no_redirect_urlopen(req, *, timeout, proxy=None):
     只带「HTTP Error 410: Gone」,服务商写在响应体里的真实原因(模型下线、未识别参数、
     上下文超长)不挂上去,provider_errors 就只能看状态码猜。
     """
-    from core.outbound import proxy_kwargs
-    from core.outbound import safe_urlopen
+    from core.outbound import proxy_kwargs, safe_urlopen
 
     try:
         return safe_urlopen(req, timeout=timeout, **proxy_kwargs(proxy))

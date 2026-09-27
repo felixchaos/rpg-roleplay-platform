@@ -498,6 +498,14 @@ def _resolve_provider_creds(api: dict[str, Any], user_id: int | None) -> dict[st
 # 桌面后端整个冻住(反馈 #107)。探测是用户点出来的,失败可以再点,不需要 SDK 自己重试。
 _PROBE_READ_TIMEOUT = 15.0
 _PROBE_CONNECT_TIMEOUT = 5.0
+# GM 路径探测(校验连接 / 可用性)的读超时上限。/api/models/probe 与 /api/models/validate 的
+# timeout 由请求体传入,不夹紧的话一个挂着不回的端点加一个超大 timeout 能长时间占住线程池
+# (和 GM 共用)。
+_PROBE_MAX_READ_TIMEOUT = 60.0
+# 本地模式下目标是本机 / 局域网模型(Ollama、LM Studio)时的读超时下限:第一次请求要把模型载入
+# 显存,常见十几到几十秒,按 8s / 15s / 20s 的上限会把「正在加载」误报成不可用。取 40s 是为了
+# 落在前端探测超时(45s)之内,前端先超时的话后端多等也白等。
+_PROBE_LOCAL_READ_FLOOR = 40.0
 
 
 def _probe_timeout():
@@ -531,7 +539,44 @@ def _is_connection_error(exc: BaseException) -> bool:
     return bool(types) and isinstance(exc, tuple(types))
 
 
-def _unreachable_error(exc: BaseException) -> RuntimeError:
+def _is_proxy_refusal(exc: BaseException) -> bool:
+    """异常链里有没有 httpx.ProxyError(代理本身回了错误,比如 CONNECT 被拒)。
+
+    openai / anthropic SDK 把 httpx 异常包成 APIConnectionError,原异常在 __cause__ 上。
+    """
+    try:
+        import httpx
+    except Exception:
+        return False
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        if isinstance(cur, httpx.ProxyError):
+            return True
+        seen.add(id(cur))
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
+def _unreachable_error(exc: BaseException, proxy: str | None = None) -> RuntimeError:
+    """连不上时给用户的准话。proxy = 这次出站用的凭据代理(credential_proxy 的结果)。
+
+    分三种说:经用户配的代理连不上(多半是代理软件没开 / 地址端口填错)、系统代理拒绝了连接、
+    直连连不上(需要代理却没配)。三种都和 API key、/v1 路径无关,都不该让用户去改那两样。
+    """
+    if proxy:
+        from core.outbound import redact_proxy_url
+        return RuntimeError(
+            f"经连接方式里配的代理({redact_proxy_url(proxy)})连不上这个地址(连接超时或连接失败),"
+            "和 API key、/v1 路径都没有关系。请确认代理软件开着、代理地址和端口没填错;"
+            f"如果这个地址本来就不用代理,把连接方式改回直连。原始错误:{exc}"
+        )
+    if _is_proxy_refusal(exc):
+        return RuntimeError(
+            "连不上这个地址:系统代理(或环境变量 HTTPS_PROXY 里的代理)拒绝了这次连接,"
+            "和 API key、/v1 路径都没有关系。请检查代理软件是否正常,或者在这个供应商的"
+            f"「连接方式」里填一个能用的 HTTP 代理。原始错误:{exc}"
+        )
     return RuntimeError(
         "连不上这个地址(连接超时或连接失败),和 API key、/v1 路径都没有关系。"
         "本地版如果访问这个服务需要代理,请在这个供应商的「连接方式」里选 HTTP 代理并填上代理地址,"
@@ -545,14 +590,21 @@ def bound_backend_for_probe(backend: Any, timeout_sec: float) -> None:
     GM 正常对话的读超时是 llm_timeout_seconds(桌面 1800s / 服务器 300s)+ SDK 默认重试 2 次,
     用在一次性的连通性探测上,打不通的端点能把线程占好几分钟。这里换成 max_retries=0 +
     有界 timeout 的副本(with_options 复用同一个 http_client,代理设置不丢)。
-    vertex 后端的 genai client 没有 with_options,保持原样。
+    读超时夹在 [1, _PROBE_MAX_READ_TIMEOUT] 之间;本地模式打本机 / 局域网模型时至少
+    _PROBE_LOCAL_READ_FLOOR(冷加载)。vertex 后端的 genai client 没有 with_options,保持原样。
     """
     client = getattr(backend, "client", None)
     with_options = getattr(client, "with_options", None)
     if not callable(with_options):
         return
     import httpx
-    t = max(1.0, float(timeout_sec or _PROBE_READ_TIMEOUT))
+
+    from core.outbound import _is_local_target, _ssrf_enforced
+    t = float(timeout_sec or _PROBE_READ_TIMEOUT)
+    base_host = getattr(getattr(client, "base_url", None), "host", None)
+    if not _ssrf_enforced() and _is_local_target(base_host):
+        t = max(t, _PROBE_LOCAL_READ_FLOOR)  # 本机模型冷加载,见 _PROBE_LOCAL_READ_FLOOR
+    t = min(max(1.0, t), _PROBE_MAX_READ_TIMEOUT)
     backend.client = with_options(
         timeout=httpx.Timeout(t, connect=min(_PROBE_CONNECT_TIMEOUT, t)),
         max_retries=0,
@@ -578,7 +630,7 @@ def _list_anthropic_models(api: dict[str, Any], user_id: int | None = None) -> l
         listed = list(client.models.list())
     except Exception as exc:
         if _is_connection_error(exc):
-            raise _unreachable_error(exc) from exc
+            raise _unreachable_error(exc, creds["proxy"]) from exc
         raise
     for m in listed:
         models.append({
@@ -629,7 +681,7 @@ def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) 
         # 连不上(超时 / 连接失败 / 代理不通):换 /v1 路径也一样连不上,不补试,直接给准话。
         # 以前这里照样补一轮 /v1,最坏 62s,还把错误归成「base_url 可能缺 /v1」误导用户改地址。
         if _is_connection_error(exc):
-            raise _unreachable_error(exc) from exc
+            raise _unreachable_error(exc, creds["proxy"]) from exc
         # 群反馈(#91,真库复现:evomap /v1/models=200、/models=403):用户常把 base_url 填成**不带版本段**
         # 的裸地址(如 https://relay.com)→ OpenAI SDK 打 {base}/models 而非 /v1/models → 中转站 403/404 →
         # 「配好却查不到模型」。base_url 不含 /vN 版本段时,自动补 /v1 重试一次(仅失败时、仅缺版本段时,

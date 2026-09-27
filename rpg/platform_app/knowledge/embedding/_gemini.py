@@ -100,8 +100,8 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
     import urllib.error
     import urllib.request
 
-    from core.outbound import proxy_kwargs
-    from core.outbound import safe_urlopen  # SSRF: 不跟随重定向 + use-time 重解析 pin IP
+    # safe_urlopen —— SSRF: 不跟随重定向 + use-time 重解析 pin IP
+    from core.outbound import proxy_kwargs, safe_urlopen
     from core.outbound_ua import outbound_user_agent
 
     if not api_key:

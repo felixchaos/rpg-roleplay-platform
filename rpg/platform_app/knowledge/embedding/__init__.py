@@ -180,8 +180,8 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
     import urllib.parse
     import urllib.request
 
-    from core.outbound import proxy_kwargs
-    from core.outbound import safe_urlopen  # SSRF: 不跟随重定向 + use-time 重解析 pin IP
+    # safe_urlopen —— SSRF: 不跟随重定向 + use-time 重解析 pin IP
+    from core.outbound import UnsupportedProxy, proxy_kwargs, safe_urlopen
     from core.outbound_ua import outbound_user_agent
     global _last_openai_embed_error
     effective_url = (base_url.rstrip("/") if base_url else "https://api.openai.com/v1") + "/embeddings"
@@ -304,6 +304,12 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
         log.warning("[embedding] openai embed failed: %s %s | friendly: %s", code, body[:200], friendly)
         # 把友好描述存到模块级变量(global 已在函数顶部声明),供 embedding_preflight 读取
         _last_openai_embed_error = friendly
+        return None
+    except UnsupportedProxy as e:
+        # 凭据里的代理这条出站用不了(urllib 不支持 SOCKS):写进 sticky 错误,设置页 / 拆书预检
+        # 能看到原因。不写的话向量静默失败,用户只会觉得「检索没效果」。
+        _last_openai_embed_error = f"向量嵌入请求没有发出去:{e}"
+        log.warning("[embedding] openai embed 代理不可用: %s", e)
         return None
     except Exception as e:
         log.warning("[embedding] openai embed failed: %s", e)

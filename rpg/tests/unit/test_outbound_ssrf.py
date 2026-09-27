@@ -428,7 +428,8 @@ class ConsolidationSourceGuards(unittest.TestCase):
 
     def test_harness_delegates_to_safe_urlopen(self):
         src = _read("agents/_harness.py")
-        self.assertIn("from core.outbound import safe_urlopen", src)
+        # 同一行里可能还 import 了别的名字(proxy_kwargs 等),按「从 core.outbound 导入了 safe_urlopen」判。
+        self.assertRegex(src, r"from core\.outbound import [^\n]*\bsafe_urlopen\b")
         # 凭据代理(反馈 #107)只在有值时才作为关键字透传,委托对象不变。
         self.assertIn("return safe_urlopen(req, timeout=timeout, **proxy_kwargs(proxy))", src)
 
