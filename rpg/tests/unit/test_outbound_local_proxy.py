@@ -277,11 +277,21 @@ class TestLocalModeUrllib:
                           proxy=servers["proxy"]) as resp:
             assert resp.read() == b"via-proxy http://upstream.example/z"
 
-    def test_socks_proxy_rejected_with_chinese_hint(self, local_mode):
-        with pytest.raises(UnsupportedProxy) as ei:
+    def test_socks_proxy_falls_back_to_env_proxy(self, local_mode, servers, monkeypatch):
+        """urllib 不会 SOCKS:凭据代理是 socks5 时不抛错,退回环境/系统代理(改动前的行为)。
+
+        以前这里抛 UnsupportedProxy,子代理 / 状态抽取 / /set 解析全被上层吞成空结果,
+        聊天(httpx 走得了 SOCKS)照常,状态却一动不动。"""
+        monkeypatch.setenv("HTTP_PROXY", servers["proxy"])
+        with safe_urlopen(Request("http://upstream.example/z"), timeout=5,
+                          proxy="socks5://127.0.0.1:1") as resp:
+            assert resp.read() == b"via-proxy http://upstream.example/z"
+
+    def test_non_proxy_scheme_still_rejected(self, local_mode):
+        """写时闸只放行 http/https/socks5;真出现别的协议(存量脏数据)照旧明确报错。"""
+        with pytest.raises(UnsupportedProxy):
             safe_urlopen(Request("http://upstream.example/z"), timeout=5,
-                         proxy="socks5://127.0.0.1:1080")
-        assert "SOCKS" in str(ei.value) and "HTTP 代理" in str(ei.value)
+                         proxy="ftp://127.0.0.1:21")
 
     def test_env_proxy_followed_when_no_credential_proxy(self, local_mode, servers, monkeypatch):
         monkeypatch.setenv("HTTP_PROXY", servers["proxy"])
@@ -309,3 +319,119 @@ class TestLocalModeUrllib:
              mock.patch.object(outbound.socket, "getaddrinfo", _addr):
             with pytest.raises(outbound.OutboundBlocked):
                 safe_urlopen(Request("http://attacker.example/"), timeout=5, proxy=_DEAD_PROXY)
+
+
+# ── 凭据代理是 SOCKS 时 urllib 出站的口径(巡检整合审查)────────────────────────────
+# 写时闸放行 socks5,聊天(httpx + socksio)也真能走 SOCKS;urllib 这一侧(子代理 harness /
+# extractor / 验收器 / command_agent 的 OpenAI 兼容路径 / 向量 / 生图下载)不会 SOCKS。
+# 约定:不抛错,退回环境/系统代理(凭据代理接进 urllib 之前就是这样),该代理只 warning 一次。
+
+_SOCKS = "socks5://user:secret@127.0.0.1:1080"
+
+
+@pytest.fixture()
+def chat_proxy():
+    """能回 POST 的代理桩:记下收到的绝对 URI,回一个 OpenAI 兼容的 chat completion。"""
+    import json as _json
+
+    seen: list[str] = []
+
+    class _H(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            seen.append(self.path)
+            body = _json.dumps({"choices": [{"message": {"content": "[]"}}], "usage": {}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield {"url": f"http://127.0.0.1:{srv.server_address[1]}", "seen": seen}
+    srv.shutdown()
+
+
+@pytest.fixture()
+def socks_cred(monkeypatch):
+    from platform_app import user_credentials
+
+    monkeypatch.setattr(user_credentials, "resolve_api_key", lambda *a, **k: {
+        "key": "sk-test", "base_url_override": "http://upstream.example/v1",
+        "proxy": _SOCKS, "source": "user_db",
+    })
+
+
+class TestSocksCredentialProxyUrllib:
+    def test_handler_falls_back_to_env_proxy(self, local_mode, monkeypatch):
+        monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
+        monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:7890")
+        handler = outbound._urllib_proxy_handler(_SOCKS)
+        assert handler.proxies == {"https": "http://127.0.0.1:7890", "http": "http://127.0.0.1:7890"}
+
+    def test_no_env_proxy_means_direct(self, local_mode, monkeypatch):
+        monkeypatch.setattr(outbound.urllib.request, "getproxies", lambda: {})
+        assert outbound._urllib_proxy_handler(_SOCKS).proxies == {}
+
+    def test_warns_once_and_redacts(self, local_mode, monkeypatch, caplog):
+        import logging
+
+        monkeypatch.setattr(outbound, "_WARNED_ENV_PROXIES", set())
+        monkeypatch.setattr(outbound.urllib.request, "getproxies", lambda: {})
+        with caplog.at_level(logging.WARNING, logger=outbound.__name__):
+            outbound._urllib_proxy_handler(_SOCKS)
+            outbound._urllib_proxy_handler(_SOCKS)
+        hits = [r.getMessage() for r in caplog.records if "SOCKS" in r.getMessage()]
+        assert len(hits) == 1, hits
+        assert "secret" not in hits[0] and "127.0.0.1:1080" in hits[0]
+
+    def test_extractor_json_mode_does_not_raise(self, local_mode, chat_proxy, socks_cred, monkeypatch):
+        from agents import extractor
+
+        monkeypatch.setenv("HTTP_PROXY", chat_proxy["url"])
+        out = extractor._call_openai_compat_json_mode(
+            api_id="relay", model="m", system_prompt="s", user_prompt="u", user_id=1, timeout_sec=5)
+        assert out == "[]"
+        assert chat_proxy["seen"] == ["http://upstream.example/v1/chat/completions"]
+
+    def test_harness_json_mode_does_not_raise(self, local_mode, chat_proxy, socks_cred, monkeypatch):
+        from agents import _harness
+
+        monkeypatch.setenv("HTTP_PROXY", chat_proxy["url"])
+        text, _usage = _harness._openai_compat_json_mode(
+            "relay", "m", "s", "u", 1, 5, 64)
+        assert text == "[]"
+        assert chat_proxy["seen"] == ["http://upstream.example/v1/chat/completions"]
+
+    def test_command_agent_does_not_raise(self, local_mode, chat_proxy, socks_cred, monkeypatch):
+        from agents import command_agent
+
+        monkeypatch.setenv("HTTP_PROXY", chat_proxy["url"])
+        assert command_agent._call_openai_compat_tools("relay", "m", "u", 1, 5) == []
+        assert chat_proxy["seen"] == ["http://upstream.example/v1/chat/completions"]
+
+
+class TestSafeGetBytesProxy:
+    """生图下载与提交同一条出站:提交走凭据代理,下载也得走(以前 safe_get_bytes 不收 proxy)。"""
+
+    def test_explicit_proxy_used(self, local_mode, servers, monkeypatch):
+        monkeypatch.setenv("HTTP_PROXY", _DEAD_PROXY)
+        data = outbound.safe_get_bytes("http://upstream.example/img.png", timeout=5,
+                                       proxy=servers["proxy"])
+        assert data == b"via-proxy http://upstream.example/img.png"
+
+    def test_download_url_passes_proxy(self, local_mode, servers, monkeypatch):
+        from agents.image_gen.base import download_url
+
+        monkeypatch.setenv("HTTP_PROXY", _DEAD_PROXY)
+        assert download_url("http://upstream.example/a.png", timeout=5,
+                            proxy=servers["proxy"]) == b"via-proxy http://upstream.example/a.png"
+
+    def test_no_proxy_keeps_env_behavior(self, local_mode, servers, monkeypatch):
+        monkeypatch.setenv("HTTP_PROXY", servers["proxy"])
+        assert outbound.safe_get_bytes("http://upstream.example/e.png", timeout=5) \
+            == b"via-proxy http://upstream.example/e.png"

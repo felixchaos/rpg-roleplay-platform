@@ -71,7 +71,8 @@ def _fetch_github_markdown(url: str) -> tuple[list[tuple[str, str]], str]:
     for br in branches:
         codeload = f"https://codeload.github.com/{owner}/{repo}/tar.gz/refs/heads/{br}"
         try:
-            data = safe_get_bytes(codeload, max_bytes=_MAX_FETCH_BYTES, max_redirects=2)
+            # 平台自己拉公开仓库,不是某个供应商凭据的出站,没有凭据代理可用(本地模式跟随系统代理)。
+            data = safe_get_bytes(codeload, max_bytes=_MAX_FETCH_BYTES, max_redirects=2, proxy=None)
             if data:
                 break
         except Exception as exc:  # 404/网络 → 试下一个分支

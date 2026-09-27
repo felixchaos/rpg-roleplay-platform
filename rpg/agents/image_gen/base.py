@@ -30,7 +30,7 @@ class ImageGenError(Exception):
     """
 
 
-def download_url(url: str, *, timeout: float = 60.0) -> bytes:
+def download_url(url: str, *, timeout: float = 60.0, proxy: str | None = None) -> bytes:
     """Fetch image bytes from a URL.  Raises ImageGenError on failure.
 
     SEC: 这个 URL 来自 provider 响应(data[].url / message.images),而 provider 的 base_url
@@ -38,10 +38,13 @@ def download_url(url: str, *, timeout: float = 60.0) -> bytes:
     URL,把本函数变成二阶 SSRF(读云元数据/内网,且抓回的字节会落盘后经 /api/images/file 取出
     = 非盲外带)。故统一走 core.outbound.safe_get_bytes:不跟随重定向到内网 + 每跳重解析校验 +
     pin 已校验 IP(抗 DNS rebinding)+ 体积上限。data: URI 由各 adapter 自行 decode,不进这里。
+
+    proxy:该生图任务凭据的代理(adapter 把 generate() 收到的 proxy 原样传下来)。提交走了代理、
+    下载不走的话,需要代理的图片域名会下载超时,整单失败(而提交那一步已经计费)。
     """
     from core.outbound import OutboundBlocked, safe_get_bytes
     try:
-        return safe_get_bytes(url, timeout=timeout)
+        return safe_get_bytes(url, timeout=timeout, proxy=proxy)
     except OutboundBlocked as exc:
         raise ImageGenError(f"image url blocked (SSRF guard): {exc}") from exc
     except Exception as exc:

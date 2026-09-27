@@ -75,8 +75,8 @@ def _headers(api_key: str) -> dict[str, str]:
     }
 
 
-def _bytes_from_data_item(item: dict[str, Any]) -> bytes | None:
-    """从 /images/generations 的 data[] 项取字节:b64_json 优先,其次 url。"""
+def _bytes_from_data_item(item: dict[str, Any], proxy: str | None = None) -> bytes | None:
+    """从 /images/generations 的 data[] 项取字节:b64_json 优先,其次 url(下载与提交同一个凭据代理)。"""
     b64 = item.get("b64_json")
     if b64:
         return decode_b64(_strip_data_uri(b64))
@@ -84,7 +84,7 @@ def _bytes_from_data_item(item: dict[str, Any]) -> bytes | None:
     if url:
         if url.startswith("data:"):
             return decode_b64(_strip_data_uri(url))
-        return download_url(url)
+        return download_url(url, proxy=proxy)
     return None
 
 
@@ -135,7 +135,7 @@ def _try_images_api(
 
     out: list[bytes] = []
     for item in data:
-        b = _bytes_from_data_item(item) if isinstance(item, dict) else None
+        b = _bytes_from_data_item(item, proxy=proxy) if isinstance(item, dict) else None
         if b:
             out.append(b)
     if not out:
@@ -143,15 +143,15 @@ def _try_images_api(
     return out
 
 
-def _collect_chat_images(message: dict[str, Any]) -> list[bytes]:
+def _collect_chat_images(message: dict[str, Any], proxy: str | None = None) -> list[bytes]:
     """从 chat 响应 message 里抽图。兼容 OpenRouter `message.images[].image_url.url`
-    与 content 数组里的 image_url 项(data: URI 或 http)。"""
+    与 content 数组里的 image_url 项(data: URI 或 http)。http 图片与提交同一个凭据代理下载。"""
     out: list[bytes] = []
     for img in (message.get("images") or []):
         url = ((img or {}).get("image_url") or {}).get("url") or (img or {}).get("url")
         if not url:
             continue
-        out.append(decode_b64(_strip_data_uri(url)) if url.startswith("data:") else download_url(url))
+        out.append(decode_b64(_strip_data_uri(url)) if url.startswith("data:") else download_url(url, proxy=proxy))
     content = message.get("content")
     if isinstance(content, list):
         for part in content:
@@ -160,7 +160,8 @@ def _collect_chat_images(message: dict[str, Any]) -> list[bytes]:
             if part.get("type") in ("image_url", "image"):
                 url = ((part.get("image_url") or {}).get("url")) or part.get("url") or ""
                 if url:
-                    out.append(decode_b64(_strip_data_uri(url)) if url.startswith("data:") else download_url(url))
+                    out.append(decode_b64(_strip_data_uri(url)) if url.startswith("data:")
+                               else download_url(url, proxy=proxy))
     return out
 
 
@@ -196,7 +197,7 @@ def _try_chat_modality(
     choices = payload.get("choices") or []
     if not choices:
         raise ImageGenError(f"openai_compat: chat 响应无 choices: {str(payload)[:300]}")
-    out = _collect_chat_images((choices[0] or {}).get("message") or {})
+    out = _collect_chat_images((choices[0] or {}).get("message") or {}, proxy=proxy)
     if not out:
         raise ImageGenError(
             "openai_compat: 该模型未返回图像 —— 可能不是生图模型,或该 provider 用非标准接口。"

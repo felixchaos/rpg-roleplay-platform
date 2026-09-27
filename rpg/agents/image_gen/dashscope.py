@@ -336,7 +336,7 @@ def generate(
         if raw.startswith("__b64__"):
             result.append(decode_b64(raw[len("__b64__"):]))
         else:
-            result.append(download_url(raw))
+            result.append(download_url(raw, proxy=proxy))
 
     if not result:
         raise ImageGenError(

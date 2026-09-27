@@ -29,7 +29,7 @@
 ### 后端
 - **归属/权限判断** → `rpg/platform_app/perms.py`:`owns_save` / `script_readable` / `script_owned`(+ `require_*` 抛异常版)。严禁手写归属 SQL。
 - **玩家进度读取** → `get_progress_window`(权威定义在 `rpg/agents/anchor_seed_agent.py`,`gm_serving` 各模块 import 它)。**进度回退** → `rpg/gm_serving/settings.py` 的 `realign_progress_signals`。严禁直读 `worldline`/`timeline` 散落字段。
-- **出站 HTTP(用户可控 URL/代理)** → `rpg/core/outbound.py`:`safe_urlopen` / `safe_httpx_client`。严禁裸 `httpx`/`urllib`(SSRF 防线)。凭据里配的代理一律经 `credential_proxy(resolved)` 取(服务器模式恒 None);`safe_httpx_client(` 每处调用必须显式写 `proxy=`(不需要的写 `proxy=None`,守卫 `test_outbound_proxy_parity`);代理地址打日志 / 拼进报错前先过 `redact_proxy_url`(可能带账号密码)。
+- **出站 HTTP(用户可控 URL/代理)** → `rpg/core/outbound.py`:`safe_urlopen` / `safe_httpx_client`。严禁裸 `httpx`/`urllib`(SSRF 防线)。凭据里配的代理一律经 `credential_proxy(resolved)` 取(服务器模式恒 None);`safe_httpx_client(` / `safe_get_bytes(` / 生图 `download_url(` 每处调用必须显式写 `proxy=`(不需要的写 `proxy=None`),`safe_urlopen(` / `_no_redirect_urlopen(` 写 `proxy=` 或 `**proxy_kwargs(...)`(守卫 `test_outbound_proxy_parity`);urllib 出站不会 SOCKS:凭据代理是 SOCKS 时 `safe_urlopen` 退回环境/系统代理、不抛错;代理地址打日志 / 拼进报错前先过 `redact_proxy_url`(可能带账号密码)。
 - **LLM 工具调用分发** → `rpg/tools_dsl/command_dispatcher.py`:`ToolDispatcher` 统一做 origin 白名单 / 整数纠偏(`_coerce_declared_integers`)/ 锁 / 审计。新工具经 `get_registry()` 注册(见 `command_tools_register.py`),失败结果串遵循「`失败: /X ...`」惯例(识别规则见 dispatcher 顶部注释)。
 - **结构化 LLM 微任务** → `rpg/agents/_harness.py` 的 `call_agent_json_guarded`(思考黑洞护栏,强制 no_think)。严禁裸调 agent。
 - **LLM JSON 容错解析** → `rpg/core/json_parse.py` 的 `parse_llm_json`。

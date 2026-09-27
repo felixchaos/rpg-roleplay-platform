@@ -15,7 +15,7 @@ test_model_probe_unreachable.py
 5. 连不上时按出站方式分开说:经用户配的代理(文案带脱敏后的代理地址)、系统代理拒绝、直连。
 6. GM 路径探测的读超时夹紧到 60s(请求体传入的 timeout 不许无上限);本地模式打本机 / 局域网
    模型时至少 40s,冷加载不被误报成不可用;服务器模式不放宽。
-7. 向量请求因凭据代理用不了(urllib 不支持 SOCKS)失败时,原因写进 sticky 错误,不静默。
+7. 向量请求因凭据代理用不了(协议不对)失败时,原因写进 sticky 错误,不静默。
 
 全程 MockTransport,零真实网络。
 """
@@ -267,7 +267,11 @@ def test_bound_backend_for_probe_clamp_and_local_floor(monkeypatch, server_mode,
 
 
 def test_embedding_unsupported_proxy_is_recorded(monkeypatch):
-    """向量走 urllib,SOCKS 凭据代理用不了:要写进 sticky 错误(设置页 / 拆书预检能看到),不能静默。"""
+    """向量走 urllib,凭据代理这条出站用不了:要写进 sticky 错误(设置页 / 拆书预检能看到),不能静默。
+
+    SOCKS 不再算「用不了」:safe_urlopen 对 SOCKS 凭据代理退回环境/系统代理(巡检整合审查,
+    与子代理 / 状态抽取同一口径)。还会抛 UnsupportedProxy 的只剩写时闸不放行的协议(存量脏数据)。
+    """
     from core import outbound
     from platform_app.knowledge import embedding
 
@@ -277,7 +281,7 @@ def test_embedding_unsupported_proxy_is_recorded(monkeypatch):
     with _breaker.attempt() as att:
         out = embedding._embed_via_openai("text-embedding-3-small", "sk", ["hi"],
                                           base_url="https://relay.example/v1",
-                                          proxy="socks5://127.0.0.1:1080")
+                                          proxy="ftp://127.0.0.1:21")
     assert out is None
     assert att.kind == _breaker.KIND_CONFIG
-    assert "SOCKS" in att.friendly
+    assert "代理" in att.friendly

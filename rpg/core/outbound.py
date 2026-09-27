@@ -35,6 +35,11 @@ core 懒导入 platform_app 是本仓既有模式(见 core.vertex_sa / core.requ
 - 无论显式代理还是系统代理,本机/局域网目标(127.0.0.1、localhost、私网段、*.local /
   *.internal / *.lan / *.home.arpa、单标签主机名)一律直连,本机 Ollama / LM Studio 绝不会
   被送进代理(`_is_local_target`)。
+- 凭据代理是 SOCKS 时:httpx 这一侧(GM / 拉模型 / 生图提交)借 socksio 真走 SOCKS;urllib 这一侧
+  (子代理 harness / extractor / 验收器 / command_agent 的 OpenAI 兼容路径 / 向量 / 生图下载)不会
+  SOCKS,**不抛错**,退回环境 / 系统代理(与没配凭据代理时同一条路,也是凭据代理接进 urllib 之前的
+  行为),该代理只 warning 一次(`_urllib_proxy_handler`)。以前在这里抛 UnsupportedProxy,上层大多
+  吞成空结果只打日志:聊天正常,状态抽取和 /set 却静默失效。
 """
 from __future__ import annotations
 
@@ -57,7 +62,12 @@ class OutboundBlocked(ValueError):
 
 
 class UnsupportedProxy(ValueError):
-    """出站代理的协议在这条出站路径上用不了(urllib 不支持 SOCKS / 缺 socksio 组件)。"""
+    """凭据里配的出站代理用不了,且不该悄悄退回别的路(用户明确要走这个代理)。
+
+    抛出点:httpx 线 —— 缺 socksio 组件、代理地址写坏 / 协议不认;urllib 线 —— 协议既不是
+    http/https 也不是 socks(写时闸只放行 http/https/socks5,只可能是存量脏数据)。
+    urllib 线遇到 SOCKS **不**抛,见 `_urllib_proxy_handler`。
+    """
 
 
 def _ssrf_enforced() -> bool:
@@ -152,14 +162,25 @@ def _is_local_target(host: str | None) -> bool:
 
 
 def _urllib_proxy_handler(proxy: str) -> urllib.request.ProxyHandler:
-    """显式代理 → urllib ProxyHandler。urllib 只会 HTTP CONNECT,SOCKS 代理给明确报错,
-    不能让它把 socks5://… 当成 HTTP 代理去连,那样只会报一个看不懂的 Connection refused。"""
+    """凭据代理 → urllib ProxyHandler。
+
+    - http / https 代理:照用。
+    - SOCKS 代理:urllib 只会 HTTP CONNECT,不能把 socks5://… 当 HTTP 代理去连(只会得到一个
+      看不懂的 Connection refused);也**不抛错** —— 写时闸放行 socks5,聊天(httpx)真能走它,
+      这里抛错等于让子代理 / 状态抽取 / /set 解析在同一份配置下静默失效。退回环境 / 系统代理
+      (`_urllib_env_proxy_handler`,即没配凭据代理时的那条路),每个代理只 warning 一次。
+    - 其它协议:写时闸不放行,只可能是存量脏数据,抛 UnsupportedProxy 让调用方记下原因。
+    """
     scheme = (urlparse(proxy).scheme or "").lower()
     if scheme.startswith("socks"):
-        raise UnsupportedProxy(
-            "这项功能暂不支持 SOCKS 代理。请在「设置 → API & 模型」这个供应商的连接方式里"
-            "改填 HTTP 代理(形如 http://127.0.0.1:7890),聊天和其它功能都能用。"
-        )
+        shown = redact_proxy_url(proxy)
+        key = f"credential-socks:{shown}"
+        if key not in _WARNED_ENV_PROXIES:
+            _WARNED_ENV_PROXIES.add(key)
+            _log.warning(
+                "[outbound] 凭据里的 SOCKS 代理 %s 在 urllib 出站上用不了(子代理 / 状态抽取 / "
+                "向量 / 生图下载),这些请求改走环境/系统代理,没有就直连", shown)
+        return _urllib_env_proxy_handler()
     if scheme not in {"http", "https"}:
         raise UnsupportedProxy(f"代理地址协议不支持:{scheme or '(空)'}")
     return urllib.request.ProxyHandler({"http": proxy, "https": proxy})
@@ -284,10 +305,14 @@ def safe_urlopen(req, *, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, proxy: str | No
 
     仅支持 http/https。timeout 语义与 urllib.request.urlopen 一致。
 
-    proxy:凭据里配的出站代理,调用方一律传 `credential_proxy(...)` 的结果。只在本地模式生效
-    (服务器模式走 IP pin,不经任何代理,传了也忽略);只接受 http/https 代理,SOCKS 抛
-    UnsupportedProxy。没传时本地模式沿用 urllib 默认的环境/系统代理。无论哪种,本机/局域网
-    目标一律直连。
+    proxy:凭据里配的出站代理,调用方一律传 `credential_proxy(...)` 的结果(经 proxy_kwargs 展开)。
+    契约(本地模式;服务器模式走 IP pin,不经任何代理,传了也忽略):
+      - 本机/局域网目标:一律直连,不看 proxy 也不看环境代理;
+      - http/https 代理:经它出去;
+      - SOCKS 代理:urllib 不会 SOCKS,**不抛错**,退回环境/系统代理(没有就直连),每个代理只
+        warning 一次 —— 与没传 proxy 时同一条路;
+      - 其它协议(写时闸不放行的存量脏数据):抛 UnsupportedProxy;
+      - 没传:环境/系统代理(只留 urllib 用得了的 http/https 条目)。
     """
     full_url = req.full_url if isinstance(req, urllib.request.Request) else req
     parsed = urlparse(full_url)
@@ -339,6 +364,7 @@ def safe_get_bytes(
     timeout: float = 60.0,
     max_bytes: int = _MAX_DOWNLOAD_BYTES,
     max_redirects: int = 3,
+    proxy: str | None = None,
 ) -> bytes:
     """SSRF 安全地 GET 一个 URL 的字节(给生图 download_url 等用)。
 
@@ -348,6 +374,10 @@ def safe_get_bytes(
     - 限制响应体大小,防把内网/元数据响应当图片无限抓回。
 
     URL 来自 provider 响应(攻击者可控),从不经写时 `_validate_base_url`,故这里是唯一硬防线。
+
+    proxy:与 safe_urlopen 同一契约,每一跳都带上。生图下载必须传该任务凭据的
+    `credential_proxy(...)`(提交走了代理、下载不走,需要代理的图片域名就会超时);
+    不需要代理的调用点显式写 proxy=None(守卫 test_outbound_proxy_parity)。
     """
     import urllib.error
     import urllib.request
@@ -357,7 +387,7 @@ def safe_get_bytes(
     for _hop in range(max_redirects + 1):
         req = urllib.request.Request(current, method="GET")
         try:
-            with safe_urlopen(req, timeout=timeout) as resp:
+            with safe_urlopen(req, timeout=timeout, **proxy_kwargs(proxy)) as resp:
                 data = resp.read(max_bytes + 1)
                 if len(data) > max_bytes:
                     raise OutboundBlocked(f"下载体积超限(> {max_bytes} bytes):{current}")

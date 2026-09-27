@@ -190,7 +190,7 @@ def generate(
         if b64:
             result.append(decode_b64(b64))
         elif url:
-            result.append(download_url(url))
+            result.append(download_url(url, proxy=proxy))
         else:
             raise ImageGenError(f"doubao: data item has neither url nor b64_json: {item}")
 
