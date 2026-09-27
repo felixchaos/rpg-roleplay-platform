@@ -140,15 +140,18 @@ def _ip_is_internal(ip_str: str) -> bool:
     )
 
 
-# 云端(server 模式)拒绝 http / 本机 / 局域网 base_url 时的统一文案。
+# 开了多用户鉴权(require_auth)的实例拒绝 http / 本机 / 局域网 base_url 时的统一文案。
 # 原文案「服务器模式下 base_url 必须是 https」只说了规则、没说原因和出路,用户(反馈:dali
 # 「提示我一定要 https,但是本地模型不是只有 http」)会以为是 bug,反复改地址也过不去。
-# 真相是**云端服务器根本到不了用户自己机器上的模型服务**,不是 https 与否的问题 —— 换成
-# https 也一样连不上。所以这里一次把「为什么 + 怎么办」讲清,前端各处只需透传 detail。
+# 所以这里一次把「为什么 + 怎么办」讲清,前端各处只需透传 detail。
+#
+# 措辞按真实判据写:跑多用户模式的实例很多是用户自己部署的,说「云端服务器访问不到」不准。
+# 拒绝与否只看 core.config.require_auth()(RPG_REQUIRE_AUTH=1/0 显式覆盖优先,否则按
+# RPG_DEPLOYMENT_MODE),所以文案直接给出关掉它的开关。前端同义文案在 i18n 的
+# settings.edit_api.cloud_no_local_model,改一处要同批改另一处。
 _LOCAL_MODEL_HINT = (
-    "云端版只能连公网 https 地址。本地模型(Ollama / LM Studio / llama.cpp 等)跑在你自己的"
-    "机器上,127.0.0.1 / localhost / 192.168.x.x 这类地址云端服务器访问不到,改成 https 也连不上。"
-    "要用本地模型,请改用桌面版或自托管部署(装在你自己机器上,直连本地 http 地址);"
+    "当前实例开启了多用户鉴权,出于 SSRF 防护只接受公网 https 地址,本机、局域网和 http 地址会被拒绝。"
+    "要接本地模型,请用桌面版,或以单用户方式自部署(RPG_REQUIRE_AUTH=0 且 RPG_DEPLOYMENT_MODE=local);"
     "如果这是公网中转站,请填它的 https 地址。"
 )
 
