@@ -9,10 +9,10 @@ import { Icon } from './game-icons.jsx';
 import { useResizable, ResizeHandle } from './responsive.jsx';
 import { plNavigate } from './router.js';
 import { MODELS_DATA } from './pages/settings.jsx';
-// ESM 重构遗漏修复:ContinuePicker / NewGameModal 的真实现在 pages/saves.jsx,
-// platform-app 之前留了返回 null 的 stub 遮蔽它们 → "继续游戏"/"新建存档" 全失效。
-// PlatformShell(本文件)直接渲染这两个组件,必须从真实现 import,不能用 stub。
-import { ContinuePicker, NewGameModal } from './pages/saves.jsx';
+// ESM 重构遗漏修复:ContinuePicker 的真实现在 pages/saves.jsx,
+// platform-app 之前留了返回 null 的 stub 遮蔽它 → "继续游戏"/"新建存档" 全失效。
+// PlatformShell(本文件)直接渲染它,必须从真实现 import,不能用 stub。
+import { ContinuePicker } from './pages/saves.jsx';
 import { Composer } from './game-composer.jsx';
 import { helpSlugFor, DEFAULT_HELP_SLUG } from './components/help-slugs.js';
 import {
@@ -736,29 +736,6 @@ function promoteNpcToUserCard(c) {
 /* ── ContinuePicker / NewGameModal ──
    真实现在 pages/saves.jsx,已在文件顶部 import。
    此处原有的返回 null 的 stub 已删除(ESM 重构遗漏,曾导致继续/新建存档失效)。 */
-
-/* ── ScriptsListView: 剧本列表 (含新建存档入口) ── */
-// 实现细节见 pages/scripts.jsx ScriptsListView
-function ScriptsListView() {
-  // stub — 真实实现在 pages/scripts.jsx
-  // 没存档时弹 NewGameModal:
-  //   const [newModalScriptId, setNewModalScriptId] = useStatePL(null);
-  //   setNewModalScriptId(s.id)  →  <NewGameModal defaultScriptId={newModalScriptId} ... />
-  //   onConfirm: await window.__createAndEnterSave(payload)
-  const [newModalScriptId, setNewModalScriptId] = React.useState(null);
-  return (
-    <div>
-      <NewGameModal
-        open={!!newModalScriptId}
-        onClose={() => setNewModalScriptId(null)}
-        defaultScriptId={newModalScriptId}
-        onConfirm={async (payload) => {
-          await window.__createAndEnterSave({ ...payload, script_id: payload.script_id || newModalScriptId });
-        }}
-      />
-    </div>
-  );
-}
 
 /* ── ExtractorSection: 叙事提取器设置 ── */
 // 实现细节见 pages/settings.jsx ExtractorSection

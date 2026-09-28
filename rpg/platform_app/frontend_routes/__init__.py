@@ -24,10 +24,9 @@ api/me/profile)、测试侧 `from platform_app import frontend_routes as fr; fr.
 
 _shared.py   — 共享 router 实例 + 通用辅助 _bad / _client_ip
 auth.py      — /api/auth/*:改密 / 登录历史 / 会话列表 / 吊销
-profile.py   — /api/profile/* + /api/me/preference(含 _ensure_profile_extras_table 占位)
+profile.py   — /api/profile/*(含 _ensure_profile_extras_table 占位)
 account.py   — /api/account/*:导出 / 停用 / 硬删申请撤销 / 状态
-saves.py     — /api/saves/{save_id}/*:删除 / 改名 / 激活 / 导出
-cards.py     — /api/me/character-cards/import-json
+saves.py     — /api/saves/{save_id}/*:删除 / 改名 / 激活
 models.py    — /api/models/* + /api/me/models/visibility(可见性 & 校验)
 search.py    — /api/search + /api/plugins + /api/skills(含 _SEARCH_SCOPES)
 admin.py     — /api/admin/smtp/test + /api/admin/deployment-config(含 _DEPLOY_CFG_KEY)
@@ -84,7 +83,6 @@ from .auth import (
     api_revoke_all_sessions,
     api_revoke_session,
 )
-from .cards import api_card_import_json
 from .models import (
     api_me_models_visibility,
     api_models_validate,
@@ -95,14 +93,12 @@ from .profile import (
     api_avatar_file,
     api_profile_visibility,
     api_reset_avatar,
-    api_save_preference,
     api_set_avatar_url,
     api_upload_avatar,
 )
 from .saves import (
     api_save_activate,
     api_save_delete,
-    api_save_export,
     api_save_rename,
 )
 from .search import (

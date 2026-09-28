@@ -1,16 +1,11 @@
 """platform_app.frontend_routes.saves —— SAVES 补充路由(/api/saves/{save_id}/*)。
 
 原单文件「SAVES supplements」段逐端点搬运,零行为变化:
-删除 / 改名 / 激活(切 runtime + 清 ui 缓存)/ 导出为 JSON。
+删除 / 改名 / 激活(切 runtime + 清 ui 缓存)。
 """
 from __future__ import annotations
 
-import io
-import json
-from datetime import datetime
-
-from fastapi import HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import Request
 
 from ..api import json_response, require_user
 from ..db import connect, init_db
@@ -75,30 +70,5 @@ async def api_save_activate(save_id: int, request: Request):
     return json_response(result)
 
 
-@router.get("/api/saves/{save_id}/export")
-async def api_save_export(save_id: int, request: Request):
-    user = require_user(request)
-    init_db()
-    with connect() as db:
-        # 归属判定收敛到 perms.owns_save;不属返 404(沿用原契约,不暴露存在性)。
-        if not owns_save(db, save_id, user["id"]):
-            raise HTTPException(404)
-        row = db.execute(
-            "select id, title, state_snapshot, created_at, updated_at from game_saves where id = %s",
-            (save_id,),
-        ).fetchone()
-    if not row:
-        raise HTTPException(404)
-    payload = {
-        "id": row["id"],
-        "title": row["title"],
-        "exported_at": datetime.now().isoformat(),
-        "state": row["state_snapshot"],
-    }
-    body = json.dumps(payload, ensure_ascii=False, indent=2)
-    safe_title = (row["title"] or f"save-{save_id}").replace("/", "_")
-    return StreamingResponse(
-        io.BytesIO(body.encode("utf-8")),
-        media_type="application/json; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{safe_title}.json"'},
-    )
+# 注:GET /api/saves/{save_id}/export 由 platform_app/api/saves.py 提供(先挂载);这里原有的
+# 同名实现被它遮蔽、永远到不了,已删除(守卫 tests/unit/test_no_shadowed_routes.py)。

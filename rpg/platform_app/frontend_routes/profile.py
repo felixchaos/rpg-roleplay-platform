@@ -1,7 +1,7 @@
 """platform_app.frontend_routes.profile —— PROFILE 补充路由(/api/profile/* + /api/me/preference)。
 
 原单文件「PROFILE supplements」段逐端点搬运,零行为变化:
-头像上传(魔数校验)/ 从图库设头像 / 重置头像 / 头像取图 / 可见性 / me 偏好合并。
+头像上传(魔数校验)/ 从图库设头像 / 重置头像 / 头像取图 / 可见性(兼容旧客户端)。
 _ensure_profile_extras_table 为空占位函数(v33 migration 已建表),被 api/platform.py 与
 api/me/profile.py import,故随本段保留并经 __init__ 门面 re-export 不变。
 """
@@ -170,31 +170,9 @@ async def api_profile_visibility(request: Request):
     return json_response({"ok": True, "visibility": body})
 
 
-# Persist any additional “me/preference” keys here too.
-@router.post("/api/me/preference")
-async def api_save_preference(request: Request):
-    user = require_user(request)
-    body = await request.json() or {}
-    from psycopg.types.json import Jsonb
-    # Merge over existing preferences
-    with connect() as db:
-        row = db.execute(
-            "select preferences from profile_extras where user_id = %s",
-            (user["id"],),
-        ).fetchone()
-        prefs = (row and row["preferences"]) or {}
-        prefs.update(body)
-        db.execute(
-            """
-            insert into profile_extras(user_id, preferences)
-            values (%s, %s)
-            on conflict (user_id) do update set preferences = excluded.preferences, updated_at = now()
-            """,
-            (user["id"], Jsonb(prefs)),
-        )
-    return json_response({"ok": True, "preferences": prefs})
-
-
+# 注:POST /api/me/preference 由 platform_app/api/me/preferences.py 提供(先挂载,写
+# user_preferences)。这里原有的同名实现写的是另一张表 profile_extras.preferences,被遮蔽、
+# 永远到不了,已删除(守卫 tests/unit/test_no_shadowed_routes.py)。
 # 注:GET /api/me/profile 已统一到 platform_app/api/me.py(返回 user+profile+extras+
 # 偏好+用量+凭证,超集)。此处原有的重复路由会被 platform_router(先挂载)遮蔽,
 # 已删除以消除路由冲突。
