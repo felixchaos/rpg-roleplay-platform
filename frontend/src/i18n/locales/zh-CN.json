@@ -2207,19 +2207,15 @@
       "fork_confirm_body": "将以「{{title}} (副本)」为名创建副本。",
       "fork_ok": "已 Fork，正在跳转…",
       "fork_fail": "Fork 失败",
-      "mode_label": "共享模式",
-      "mode_private": "私有",
-      "mode_public": "公开",
-      "mode_pinned": "锁定快照",
-      "mode_floating": "跟随最新",
-      "pin_commit_label": "锁定到 commit",
-      "pin_commit_placeholder": "选择一个版本",
-      "pin_ok": "共享设置已保存",
-      "pin_fail": "保存共享设置失败",
-      "badge_floating": "♻ 跟随原作者",
-      "badge_pinned": "📌 锁定版本 #{{id}}",
-      "badge_public": "公开",
-      "pin_commit_hint": "选定版本作记录;当前 GM 检索按【目标剧本的最新内容】读取(精确版本回放为后续功能)。floating-latest 则始终跟随目标最新。"
+      "ref_title": "引用模式",
+      "ref_desc": "本剧本的设定检索读取的是剧本 #{{id}} 的内容。",
+      "ref_mode_floating": "跟随它的最新内容。",
+      "ref_mode_pinned": "记录的版本是 #{{commit}},检索目前仍按它的最新内容读取。",
+      "unpin_btn": "解除引用",
+      "unpin_ok": "已解除引用,之后读取本剧本自己的设定",
+      "unpin_fail": "解除引用失败",
+      "badge_floating": "引用 · 跟随最新",
+      "badge_pinned": "引用 · 版本 #{{id}}"
     },
     "version": {
       "history_btn": "查看版本历史",
@@ -5462,11 +5458,7 @@
         "import_export_section": "导入 / 导出",
         "exporting": "导出中…",
         "export_btn": "导出剧本包 (.zip)",
-        "sharing_mode_section": "共享模式",
-        "current_mode": "当前模式：",
-        "mode_public": "公开",
-        "mode_pinned": "固定快照",
-        "mode_floating": "跟随最新"
+        "sharing_mode_section": "引用模式"
       },
       "detail": {
         "embed_no_creds": "未配置向量嵌入模型，请先在设置中配置 RAG / Embedding 模型",

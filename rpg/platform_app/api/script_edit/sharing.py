@@ -1,6 +1,7 @@
 """platform_app.api.script_edit.sharing —— 剧本引用(pin / unpin)。
 
-设/解 pinned-snapshot | floating-latest 引用模式。纯机械搬家,行为零变化。
+设/解 pinned-snapshot | floating-latest 引用模式(让本剧本的 KB 读取重定向到另一个剧本,
+见 knowledge/_pin.py)。
 """
 from __future__ import annotations
 
@@ -10,7 +11,9 @@ from ...db import connect
 from .._deps import json_response, require_user
 from ._shared import _require_owner, router
 
-_VALID_SHARING_MODES = {"private", "public", "pinned-snapshot", "floating-latest"}
+# scripts.sharing_mode 的全部合法值。「公开」不在其中:公开发布是 is_public(/visibility),
+# 与引用模式是两回事(前端口径见 frontend/src/lib/script-sharing.js)。
+_VALID_SHARING_MODES = {"private", "pinned-snapshot", "floating-latest"}
 
 
 # ─── pin / unpin ──────────────────────────────────────────────────────────────
@@ -35,7 +38,17 @@ async def api_pin_script(request: Request, script_id: int, user=Depends(require_
     target_script_id = body.get("target_script_id")
     if not target_script_id:
         return json_response({"ok": False, "error": "缺少 target_script_id"}, status_code=400)
-    target_script_id = int(target_script_id)
+    try:
+        target_script_id = int(target_script_id)
+    except (TypeError, ValueError):
+        return json_response({"ok": False, "error": "target_script_id 必须是剧本编号"}, status_code=400)
+    # 引用自己没有任何效果(KB 读取重定向指回自己),以前却照样 200 并把模式写进去,
+    # 用户以为设置生效了。明确拒绝。
+    if target_script_id == int(script_id):
+        return json_response(
+            {"ok": False, "error": "不能引用剧本自己:引用模式是让本剧本读取另一个剧本的设定"},
+            status_code=400,
+        )
 
     commit_id = body.get("commit_id")
     if mode == "pinned-snapshot" and not commit_id:
@@ -43,7 +56,10 @@ async def api_pin_script(request: Request, script_id: int, user=Depends(require_
             {"ok": False, "error": "pinned-snapshot 模式需要 commit_id"},
             status_code=400,
         )
-    commit_id = int(commit_id) if commit_id else None
+    try:
+        commit_id = int(commit_id) if commit_id else None
+    except (TypeError, ValueError):
+        return json_response({"ok": False, "error": "commit_id 必须是版本编号"}, status_code=400)
 
     with connect() as db:
         _require_owner(db, script_id, user["id"])

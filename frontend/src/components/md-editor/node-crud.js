@@ -6,17 +6,36 @@ import { api, stripChapterPrefix, canonTypeZh } from './helpers.js';
 
 const anchorLabel = (name, min, max) => `${name} (${min}-${max})`;
 
+// ── 系统代起的名字自动避让 ──────────────────────────────────────────────
+// 角色卡新建是 create_only(同名 400),锚点按 (阶段, 时间标签) 唯一(同名 409)。系统替用户起的名字
+// (空名时的默认名、「复制」生成的「X 副本」)第二次用就撞 —— 用户没法对不是自己起的名字负责。
+// 这类名字按同组现有名字加序号避让;用户自己输入的名字不改写,撞了照实报错。
+function uniqueName(base, taken) {
+  const used = new Set((taken || []).map((x) => String(x || '').trim()));
+  if (!used.has(base)) return base;
+  for (let i = 2; i < 10000; i++) { const cand = `${base} ${i}`; if (!used.has(cand)) return cand; }
+  return `${base} ${Date.now()}`;
+}
+async function autoName(kind, sid, base) {
+  const items = await fetchGroupList(kind, sid);
+  return uniqueName(base, items.map((it) => it.name));
+}
+
 // ── 实体 CRUD(树内增删改) ─────────────────────────────────────────────
 // opts.type:canon 专用(复制时沿用原类型);缺省 concept。
+// opts.autoName:name 是系统拼出来的(如「X 副本」)→ 撞名时自动加序号。name 为空时用默认名,同样避让。
 async function createNode(kind, sid, name, opts) {
-  const A = api(); const nm = (name || '').trim();
-  if (kind === 'chapter')   { const r = await A.scripts.addChapter(sid, nm); return { id: r.chapter_index, label: `${i18n.t('md_editor.chapter_prefix', { index: r.chapter_index })} ${r.title || ''}`.trim() }; }
-  if (kind === 'worldbook') { const _def = i18n.t('md_editor.node_defaults.worldbook'); const r = await A.scripts.worldbookCreate(sid, { title: nm || _def, content: '' }); const e = r?.entry || r; return { id: e.id, label: e.title || nm || _def }; }
-  if (kind === 'card')      { const _def = i18n.t('md_editor.node_defaults.card'); const r = await A.scripts.cardUpsert(sid, { name: nm || _def }); const c = r?.card || r; return { id: c.id, label: c.name || nm || _def }; }
+  const A = api(); const typed = (name || '').trim();
+  if (kind === 'chapter')   { const r = await A.scripts.addChapter(sid, typed); return { id: r.chapter_index, label: `${i18n.t('md_editor.chapter_prefix', { index: r.chapter_index })} ${r.title || ''}`.trim() }; }
+  if (!['worldbook', 'card', 'canon', 'anchor'].includes(kind)) throw new Error(i18n.t('md_editor.errors.create_unsupported'));
+  const base = typed || i18n.t(`md_editor.node_defaults.${kind}`);
+  const nm = (!typed || (opts && opts.autoName)) ? await autoName(kind, sid, base) : base;
+  if (kind === 'worldbook') { const r = await A.scripts.worldbookCreate(sid, { title: nm, content: '' }); const e = r?.entry || r; return { id: e.id, label: e.title || nm }; }
+  if (kind === 'card')      { const r = await A.scripts.cardUpsert(sid, { name: nm }); const c = r?.card || r; return { id: c.id, label: c.name || nm }; }
   // canon:不带 logical_key 发 POST,后端按名字+类型生成 key 并在 entity 里返回(用它打开节点)。
-  if (kind === 'canon')     { const _def = i18n.t('md_editor.node_defaults.canon'); const r = await A.scripts.canonCreate(sid, { name: nm || _def, type: (opts && opts.type) || 'concept' }); const e = r?.entity || r; return { id: e.logical_key, label: `${e.name || nm || _def} (${canonTypeZh(e.type || 'concept')})` }; }
-  if (kind === 'anchor')    { const _def = i18n.t('md_editor.node_defaults.anchor'); const r = await A.scripts.anchorCreate(sid, { story_time_label: nm || _def, chapter_min: 1, chapter_max: 1 }); const a = r?.anchor || r; return { id: a.id, label: anchorLabel(a.story_time_label || nm || _def, a.chapter_min ?? 1, a.chapter_max ?? 1) }; }
-  throw new Error(i18n.t('md_editor.errors.create_unsupported'));
+  if (kind === 'canon')     { const r = await A.scripts.canonCreate(sid, { name: nm, type: (opts && opts.type) || 'concept' }); const e = r?.entity || r; return { id: e.logical_key, label: `${e.name || nm} (${canonTypeZh(e.type || 'concept')})` }; }
+  const r = await A.scripts.anchorCreate(sid, { story_time_label: nm, chapter_min: 1, chapter_max: 1 }); const a = r?.anchor || r;
+  return { id: a.id, label: anchorLabel(a.story_time_label || nm, a.chapter_min ?? 1, a.chapter_max ?? 1) };
 }
 async function renameNode(kind, sid, id, name) {
   const A = api(); const nm = (name || '').trim(); if (!nm) return;
@@ -77,4 +96,4 @@ async function fetchGroupList(kind, sid) {
   return [];
 }
 
-export { createNode, renameNode, deleteNode, fetchGroupList };
+export { createNode, renameNode, deleteNode, fetchGroupList, uniqueName };

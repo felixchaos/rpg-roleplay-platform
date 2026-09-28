@@ -181,7 +181,8 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate }) {
     try {
       // 复制:用裸名字命名;canon 沿用原类型(之前一律建成「概念」)。
       const meta = it.meta || it;
-      const created = await createNode(kind, scriptId, `${rawName(kind, it)} ${t('md_editor.copy_suffix')}`, kind === 'canon' ? { type: meta.type } : undefined);
+      // 「X 副本」是系统拼的名字 → autoName:复制第二次自动变「X 副本 2」,不再撞同名 400 / 409。
+      const created = await createNode(kind, scriptId, `${rawName(kind, it)} ${t('md_editor.copy_suffix')}`, { autoName: true, ...(kind === 'canon' ? { type: meta.type } : {}) });
       await loadGroup(kind); onMutate?.('create', kind, created.id, created.label);
       toast(t('md_editor.toast.copied'), { kind: 'ok', duration: 1100 });
     } catch (err) { toast(t('md_editor.toast.copy_failed'), { kind: 'danger', detail: err?.message }); }

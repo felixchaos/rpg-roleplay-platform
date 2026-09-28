@@ -1,8 +1,9 @@
-/* 发布/分享子视图 —— 从 pages/MobileScripts.jsx 拆出,逐字节不变。 */
+/* 发布/分享子视图 —— 从 pages/MobileScripts.jsx 拆出。 */
 
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../icons.jsx';
+import { referenceInfo } from '../../lib/script-sharing.js';
 
 /* ─── 发布/分享子视图 ─────────────────────────── */
 function ShareView({ script, currentUserId, onBack, onRefresh, nav }) {
@@ -11,6 +12,19 @@ function ShareView({ script, currentUserId, onBack, onRefresh, nav }) {
   const [exporting, setExporting] = useState(false);
   const isOwner = script && currentUserId && script.owner_id === currentUserId;
   const isPublic = !!script?.is_public;
+  const refInfo = referenceInfo(script);
+  const [unpinning, setUnpinning] = useState(false);
+
+  const onUnpin = async () => {
+    if (!isOwner || !refInfo) return;
+    setUnpinning(true);
+    try {
+      await window.api.scripts.unpin(script.id);
+      nav.toast(t('scripts.share.unpin_ok'), 'ok', 'check');
+      onRefresh?.();
+    } catch (e) { nav.toast(e?.message || t('scripts.share.unpin_fail'), 'danger', 'warn'); }
+    finally { setUnpinning(false); }
+  };
 
   const onToggleVisibility = async () => {
     if (!isOwner) return;
@@ -104,25 +118,24 @@ function ShareView({ script, currentUserId, onBack, onRefresh, nav }) {
             </button>
           </div>
 
-          {script?.sharing_mode && script.sharing_mode !== 'private' && (
+          {/* 引用状态:口径与 web 剧本详情共用 lib/script-sharing.js。commit id 是整数(以前对它调
+              .slice 直接让整页崩掉);「公开」是上面的发布开关(is_public),不是 sharing_mode。 */}
+          {refInfo && (
             <div className="pl-sec">
               <div className="pl-sec-head"><h2>{t('mobile.scripts.share.sharing_mode_section')}</h2></div>
               <div className="pl-card">
-                <div style={{ fontSize: 13, color: 'var(--text-quiet)' }}>
-                  {t('mobile.scripts.share.current_mode')}
-                  <span style={{ color: 'var(--accent)', fontWeight: 500 }}>
-                    {{
-                      'public': t('mobile.scripts.share.mode_public'),
-                      'pinned-snapshot': t('mobile.scripts.share.mode_pinned'),
-                      'floating-latest': t('mobile.scripts.share.mode_floating'),
-                    }[script.sharing_mode] || script.sharing_mode}
-                  </span>
-                  {script.sharing_mode === 'pinned-snapshot' && script.current_pin_commit_id && (
-                    <span className="mono" style={{ marginLeft: 8, fontSize: 11, color: 'var(--muted-2)' }}>
-                      {script.current_pin_commit_id.slice(0, 8)}
-                    </span>
-                  )}
+                <div style={{ fontSize: 13, color: 'var(--text-quiet)', lineHeight: 1.6 }}>
+                  {t('scripts.share.ref_desc', { id: refInfo.targetId })}
+                  {' '}
+                  {refInfo.mode === 'pinned-snapshot'
+                    ? t('scripts.share.ref_mode_pinned', { commit: refInfo.commitId || '-' })
+                    : t('scripts.share.ref_mode_floating')}
                 </div>
+                {isOwner && (
+                  <button className="pl-btn-ghost" style={{ marginTop: 10 }} onClick={onUnpin} disabled={unpinning}>
+                    {t('scripts.share.unpin_btn')}
+                  </button>
+                )}
               </div>
             </div>
           )}

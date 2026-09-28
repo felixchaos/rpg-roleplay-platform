@@ -1,114 +1,53 @@
-/* 共享模式选择器(从 ScriptDetail.jsx 二次拆出,纯机械搬家零行为变化)。 */
+/* 剧本引用状态(剧本详情页,仅 owner 可见)。
+ *
+ * 以前这里是一个四选一的「共享模式」选择器(私有 / 公开 / 锁定快照 / 跟随最新),三个选项都不成立:
+ *   · 「公开」不是 sharing_mode —— 发 mode='public' 给 /pin,后端必回 400。公开发布走剧本的
+ *     「发布」操作(is_public),详情页右上角的操作菜单里已经有;
+ *   · 两种引用模式把 target_script_id 填成剧本自己,保存成功但检索读的还是自己,等于没做;
+ *     真要引用别的剧本得先有目标剧本选择器,这是新功能,不在这里假装有。
+ * 现在只做一件真实的事:剧本确实引用了另一个剧本时(历史数据或其它入口设置的),把引用状态
+ * 摆出来,并能「解除引用」恢复成读自己的设定。判定与文案口径见 lib/script-sharing.js。 */
 
 import React from 'react';
-import { useState as useStatePL, useEffect as useEffectPL } from 'react';
+import { useState as useStatePL } from 'react';
 import { useTranslation } from 'react-i18next';
-import CSSpaceBetween from '@cloudscape-design/components/space-between';
+import CSAlert from '@cloudscape-design/components/alert';
 import CSButton from '@cloudscape-design/components/button';
-import CSFormField from '@cloudscape-design/components/form-field';
-import CSSelect from '@cloudscape-design/components/select';
-import CSSegmentedControl from '@cloudscape-design/components/segmented-control';
+import { referenceInfo } from '../../lib/script-sharing.js';
 
-/* ─── 共享模式选择器 ─────────────────────────────────────────────
-   CSSegmentedControl: private / public / pinned-snapshot / floating-latest
-   pinned 时显示 commit 下拉选择器。
-   POST /api/scripts/{id}/pin 设置 */
 function SharingModeSelector({ script, currentUserId, onChanged }) {
   const { t } = useTranslation();
-  const [mode, setMode] = useStatePL(script?.sharing_mode || 'private');
-  const [commits, setCommits] = useStatePL([]);
-  const [pinCommitId, setPinCommitId] = useStatePL(script?.current_pin_commit_id || null);
   const [saving, setSaving] = useStatePL(false);
 
   const isOwner = script && currentUserId && script.owner_id === currentUserId;
+  const ref = referenceInfo(script);
+  if (!isOwner || !ref) return null;
 
-  useEffectPL(() => {
-    setMode(script?.sharing_mode || 'private');
-    setPinCommitId(script?.current_pin_commit_id || null);
-  }, [script?.id, script?.sharing_mode, script?.current_pin_commit_id]);
-
-  useEffectPL(() => {
-    if (!script || !isOwner) return;
-    (async () => {
-      try {
-        const r = await window.api.scripts.commits(script.id, { limit: 30 });
-        const list = Array.isArray(r) ? r : (r?.items || r?.commits || []);
-        setCommits(list);
-      } catch (_) {}
-    })();
-  }, [script?.id, isOwner]);
-
-  if (!script || !isOwner) return null;
-
-  const onSave = async (newMode, newPinCommitId) => {
+  const onUnpin = async () => {
     setSaving(true);
     try {
-      if (newMode === 'private') {
-        await window.api.scripts.unpin(script.id);
-      } else {
-        await window.api.scripts.pin(script.id, {
-          mode: newMode,
-          target_script_id: script.id,
-          commit_id: newMode === 'pinned-snapshot' ? (newPinCommitId || undefined) : undefined,
-        });
-      }
-      window.__apiToast?.(t('scripts.share.pin_ok'), { kind: 'ok', duration: 2000 });
+      await window.api.scripts.unpin(script.id);
+      window.__apiToast?.(t('scripts.share.unpin_ok'), { kind: 'ok', duration: 2000 });
       onChanged && onChanged();
     } catch (e) {
-      window.__apiToast?.(t('scripts.share.pin_fail'), { kind: 'danger', detail: e?.message });
+      window.__apiToast?.(t('scripts.share.unpin_fail'), { kind: 'danger', detail: e?.message });
     } finally {
       setSaving(false);
     }
   };
 
-  const handleModeChange = ({ detail }) => {
-    const m = detail.selectedId;
-    setMode(m);
-    if (m !== 'pinned-snapshot') onSave(m, null);
-  };
-
-  const commitOptions = commits.map(c => ({
-    value: c.id,
-    label: `${String(c.id || '').slice(0, 8)} · ${c.message || c.kind || ''}`,
-  }));
-  const selectedCommitOpt = commitOptions.find(o => o.value === pinCommitId) || (pinCommitId ? { value: pinCommitId, label: String(pinCommitId).slice(0, 8) } : null);
-
   return (
-    <CSSpaceBetween size="xs">
-      <CSFormField label={t('scripts.share.mode_label')}>
-        <CSSegmentedControl
-          selectedId={mode}
-          options={[
-            { id: 'private',          text: t('scripts.share.mode_private') },
-            { id: 'public',           text: t('scripts.share.mode_public') },
-            { id: 'pinned-snapshot',  text: t('scripts.share.mode_pinned') },
-            { id: 'floating-latest',  text: t('scripts.share.mode_floating') },
-          ]}
-          onChange={handleModeChange}
-          disabled={saving}
-        />
-      </CSFormField>
-      {mode === 'pinned-snapshot' && (
-        <CSSpaceBetween direction="horizontal" size="xs" alignItems="flex-end">
-          <CSFormField
-            label={t('scripts.share.pin_commit_label')}
-            description={t('scripts.share.pin_commit_hint', { defaultValue: '选定版本作记录;当前 GM 检索按【目标剧本的最新内容】读取(精确版本回放为后续功能)。floating-latest 则始终跟随目标最新。' })}
-            stretch
-          >
-            <CSSelect
-              selectedOption={selectedCommitOpt}
-              options={commitOptions}
-              placeholder={t('scripts.share.pin_commit_placeholder')}
-              onChange={({ detail }) => setPinCommitId(detail.selectedOption.value)}
-              disabled={saving}
-            />
-          </CSFormField>
-          <CSButton loading={saving} disabled={!pinCommitId || saving} onClick={() => onSave('pinned-snapshot', pinCommitId)}>
-            {t('common.save', { defaultValue: '保存' })}
-          </CSButton>
-        </CSSpaceBetween>
-      )}
-    </CSSpaceBetween>
+    <CSAlert
+      type="info"
+      header={t('scripts.share.ref_title')}
+      action={<CSButton loading={saving} disabled={saving} onClick={onUnpin}>{t('scripts.share.unpin_btn')}</CSButton>}
+    >
+      {t('scripts.share.ref_desc', { id: ref.targetId })}
+      {' '}
+      {ref.mode === 'pinned-snapshot'
+        ? t('scripts.share.ref_mode_pinned', { commit: ref.commitId || '-' })
+        : t('scripts.share.ref_mode_floating')}
+    </CSAlert>
   );
 }
 

@@ -2110,19 +2110,15 @@
       "fork_confirm_body": "A copy named \"{{title}} (Copy)\" will be created.",
       "fork_ok": "Forked, redirecting…",
       "fork_fail": "Fork failed",
-      "mode_label": "Sharing mode",
-      "mode_private": "Private",
-      "mode_public": "Public",
-      "mode_pinned": "Pinned Snapshot",
-      "mode_floating": "Follow Latest",
-      "pin_commit_label": "Pin to commit",
-      "pin_commit_placeholder": "Select a version",
-      "pin_ok": "Sharing settings saved",
-      "pin_fail": "Failed to save sharing settings",
-      "badge_floating": "♻ Following author",
-      "badge_pinned": "📌 Pinned #{{id}}",
-      "badge_public": "Public",
-      "pin_commit_hint": "The selected version is recorded for reference. GM retrieval always reads the target script's latest content — precise version playback is a future feature. \"Floating latest\" always follows the most recent version."
+      "ref_title": "Reference mode",
+      "ref_desc": "Lore lookups for this script read the content of script #{{id}}.",
+      "ref_mode_floating": "They follow its latest content.",
+      "ref_mode_pinned": "The recorded version is #{{commit}}; lookups still read its latest content for now.",
+      "unpin_btn": "Stop referencing",
+      "unpin_ok": "Reference removed; this script now reads its own lore",
+      "unpin_fail": "Failed to remove the reference",
+      "badge_floating": "Reference · latest",
+      "badge_pinned": "Reference · version #{{id}}"
     },
     "version": {
       "history_btn": "Version History",
@@ -5465,11 +5461,7 @@
         "import_export_section": "Import / Export",
         "exporting": "Exporting…",
         "export_btn": "Export script pack (.zip)",
-        "sharing_mode_section": "Sharing Mode",
-        "current_mode": "Current mode: ",
-        "mode_public": "Public",
-        "mode_pinned": "Pinned snapshot",
-        "mode_floating": "Follow latest"
+        "sharing_mode_section": "Reference mode"
       },
       "detail": {
         "embed_no_creds": "No embedding model configured — set up a RAG / Embedding model in settings first",

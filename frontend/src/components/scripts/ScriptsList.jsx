@@ -25,6 +25,7 @@ import CSBadge from '@cloudscape-design/components/badge';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import CSTextFilter from '@cloudscape-design/components/text-filter';
 import CSPagination from '@cloudscape-design/components/pagination';
+import { referenceInfo } from '../../lib/script-sharing.js';
 
 function ScriptsListView() {
   // task 19: 永远以 /api/scripts 真实回包为准；空列表也覆盖 mock，不再混 MOCK_PLATFORM.scripts。
@@ -289,7 +290,6 @@ function ScriptsListView() {
     isInternalPlaceholder(selected) ? (
       <CSContainer header={<CSHeader variant="h2">{selected.title}</CSHeader>}>
         <div style={{ padding: '36px 20px', textAlign: 'center' }}>
-          <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.7 }}>🚧</div>
           <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>{t('scripts.page.placeholder_coming_soon')}</div>
           <div style={{ fontSize: 13.5, color: 'var(--muted)', maxWidth: 480, margin: '0 auto 8px' }}>
             {t('scripts.page.placeholder_dnd_desc')}
@@ -353,9 +353,10 @@ function ScriptsListView() {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <CSBox fontWeight="bold">{s.title}</CSBox>
-                {s.sharing_mode === 'floating-latest' && <CSBadge color="blue">{t('scripts.share.badge_floating')}</CSBadge>}
-                {s.sharing_mode === 'pinned-snapshot' && <CSBadge color="grey">{t('scripts.share.badge_pinned', { id: (s.current_pin_commit_id || '').slice(0, 7) })}</CSBadge>}
-                {s.sharing_mode === 'public' && <CSBadge color="green">{t('scripts.share.badge_public')}</CSBadge>}
+                {/* 引用徽标:口径见 lib/script-sharing.js(commit id 是整数,不能 .slice;「公开」看 is_public 列,不是 sharing_mode) */}
+                {(() => { const ref = referenceInfo(s); return ref && (ref.mode === 'floating-latest'
+                  ? <CSBadge color="blue">{t('scripts.share.badge_floating')}</CSBadge>
+                  : <CSBadge color="grey">{t('scripts.share.badge_pinned', { id: ref.commitId || '-' })}</CSBadge>); })()}
                 {s.forked_from_script_id && <CSBadge color="severity-neutral">fork</CSBadge>}
               </div>
               <CSBox fontSize="body-s" color="text-body-secondary">{s.uid} · {t('scripts.my.updated')} {s.updated_at}</CSBox>
