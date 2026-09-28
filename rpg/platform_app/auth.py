@@ -582,6 +582,30 @@ def registration_mode(db) -> str:
     return str(raw.get("mode") or "").strip().lower() or "open"
 
 
+def invite_code_unused_sql(alias: str = "") -> str:
+    """邀请码「没用过」的唯一判据(SQL 片段),注册闸、confirm 原子预占、管理页列表 / 删除共用。
+
+    invite_codes.used_by 的外键是 on delete set null:用这张码注册的账号被硬删后,used_by 变回
+    NULL,used_at 仍在。只看 used_by is null 会把用过的码当成没用过,单次码能再注册一次;
+    管理页按 used_at 显示「已使用」。两列都空才算没用过,两边口径一致。
+    """
+    p = f"{alias}." if alias else ""
+    return f"({p}used_by is null and {p}used_at is null)"
+
+
+def _assert_new_accounts_open(db) -> str:
+    """所有「新建账号」路径共用的第一道闸:关闭注册一律拒。放行时返回当前注册模式。
+
+    密码注册(_registration_gate)、Apple 新建账号(_assert_registration_allowed)、魔法链接
+    (login_via_magic_token)、免密验证码(verify_passwordless_and_login)都先过这里,拒绝矩阵
+    只有一份。已有账号的登录不经过这里,不受注册模式影响。
+    """
+    mode = registration_mode(db)
+    if mode == "closed":
+        raise ValueError(_REGISTRATION_CLOSED_MSG)
+    return mode
+
+
 def _email_allowlisted(db, email_norm: str) -> bool:
     if not email_norm:
         return False
@@ -600,9 +624,7 @@ def _registration_gate(db, email_norm: str, invite_code: str | None) -> str | No
     - invite:内测白名单邮箱直接放行(06-01 定下的「仅邀请」语义);否则必须带有效、未用、
       未过期的邀请码。码在 confirm 时原子预占,并发双花由那边的 rowcount 判定兜住。
     """
-    mode = registration_mode(db)
-    if mode == "closed":
-        raise ValueError(_REGISTRATION_CLOSED_MSG)
+    mode = _assert_new_accounts_open(db)
     if mode not in ("invite", "allowlist"):
         return None
     if _email_allowlisted(db, email_norm):
@@ -613,10 +635,10 @@ def _registration_gate(db, email_norm: str, invite_code: str | None) -> str | No
     if not code:
         raise ValueError("当前为邀请制，注册需要填写邀请码（已预约内测的邮箱不用填）")
     row = db.execute(
-        """
+        f"""
         select 1 from invite_codes
         where code = %s
-          and used_by is null
+          and {invite_code_unused_sql()}
           and (expires_at is null or expires_at > now())
         limit 1
         """,
@@ -775,7 +797,8 @@ def confirm_email_verification(email: str, code: str) -> tuple[dict[str, Any], s
         invite_code = pending.get("invite_code")
         if invite_code:
             _res = db.execute(
-                "update invite_codes set used_by = %s, used_at = now() where code = %s and used_by is null",
+                "update invite_codes set used_by = %s, used_at = now() "
+                f"where code = %s and {invite_code_unused_sql()}",
                 (user["id"], invite_code),
             )
             if _res.rowcount == 0:
@@ -889,9 +912,7 @@ def verify_apple_identity_token(identity_token: str, raw_nonce: str = "") -> dic
 def _assert_registration_allowed(db, email_norm: str) -> None:
     """Apple 新建账号的准入:关闭注册一律拒;allowlist/invite 下邮箱必须在白名单
     (Apple 登录没有邀请码输入);open/dev 不拦。模式读取与密码注册同源(registration_mode)。"""
-    mode = registration_mode(db)
-    if mode == "closed":
-        raise ValueError(_REGISTRATION_CLOSED_MSG)
+    mode = _assert_new_accounts_open(db)
     if mode in ("allowlist", "invite") and not _email_allowlisted(db, email_norm):
         raise ValueError("该邮箱不在内测白名单。本批次仅向早期预约者开放。")
 
@@ -1697,6 +1718,9 @@ def verify_passwordless_and_login(email: str, code: str, ip: str = "") -> dict:
         ).fetchone()
 
         if user_row is None:
+            # 未注册 = 新建账号:先过注册闸(关闭注册一律拒,与密码注册 / Apple 一致),再查白名单。
+            # 抛错时整个事务回滚,上面消费掉的验证码也还原。
+            _assert_new_accounts_open(db)
             # 未注册：必须在白名单里
             wl_row = db.execute(
                 "select email_norm, batch from registration_allowlist where email_norm = %s",
@@ -1768,6 +1792,9 @@ def login_via_magic_token(email: str, ip: str = "", *, magic_token: str = "") ->
             (email_norm,),
         ).fetchone()
         if user_row is None:
+            # 未注册 = 新建账号:先过注册闸(关闭注册一律拒,与密码注册 / Apple 一致)。
+            # 魔法链接只在这里被消费,拒掉时链接保持未用,重新开放注册后还能用。
+            _assert_new_accounts_open(db)
             # 未注册:必须在白名单(magic token 已通过 consume_magic_token 校验,这里二次保险)
             wl_row = db.execute(
                 "select email_norm, batch from registration_allowlist where email_norm = %s",

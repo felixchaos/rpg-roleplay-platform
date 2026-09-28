@@ -9,6 +9,7 @@ import string
 
 from fastapi import Depends, HTTPException, Request
 
+from ...auth import invite_code_unused_sql
 from ...db import connect
 from .._deps import _client_ip, json_response
 from ._shared import _get_app_config, _require_admin, _set_app_config, _write_audit, router
@@ -73,27 +74,31 @@ async def admin_list_invite_codes(
     limit = max(1, min(200, limit))
     offset = (page - 1) * limit
 
+    # 「已用 / 未用」与注册闸同一判据(auth.invite_code_unused_sql):注册者被硬删后 used_by 变回
+    # NULL、used_at 还在,这张码仍算已用 —— 与两端管理页按 used_at 显示「已使用」一致。
+    unused = invite_code_unused_sql()
+    unused_ic = invite_code_unused_sql("ic")
     with connect() as db:
         count_row = db.execute(
-            """
+            f"""
             select count(*) as total from invite_codes
             where (%s = 'all'
-                   or (%s = 'used' and used_by is not null)
-                   or (%s = 'unused' and used_by is null))
+                   or (%s = 'used' and not {unused})
+                   or (%s = 'unused' and {unused}))
             """,
             (used, used, used),
         ).fetchone()
         total = count_row["total"] if count_row else 0
 
         rows = db.execute(
-            """
+            f"""
             select ic.id, ic.code, ic.note, ic.expires_at, ic.used_at, ic.created_at,
                    u.username as used_by_username
             from invite_codes ic
             left join users u on u.id = ic.used_by
             where (%s = 'all'
-                   or (%s = 'used' and ic.used_by is not null)
-                   or (%s = 'unused' and ic.used_by is null))
+                   or (%s = 'used' and not {unused_ic})
+                   or (%s = 'unused' and {unused_ic}))
             order by ic.created_at desc
             limit %s offset %s
             """,
@@ -175,8 +180,9 @@ async def admin_delete_invite_code(
 ):
     ip = _client_ip(request)
     with connect() as db:
+        # 只删没用过的码(判据同上):用过的码留作记录,管理页也不给它删除按钮。
         result = db.execute(
-            "delete from invite_codes where code = %s and used_by is null returning id",
+            f"delete from invite_codes where code = %s and {invite_code_unused_sql()} returning id",
             (code,),
         ).fetchone()
         if not result:

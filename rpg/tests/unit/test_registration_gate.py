@@ -183,6 +183,118 @@ class TestClosedMode(unittest.TestCase):
             auth._assert_registration_allowed(_Db({"mode": "closed"}, allowlist={_EMAIL}), _EMAIL)
 
 
+class _PasswordlessDb(_Db):
+    """免密登录 / 魔法链接要用到的额外几张表:users(按邮箱查)、建号、验证码、白名单消费。"""
+
+    def __init__(self, cfg, *, existing_user=None, **kw):
+        super().__init__(cfg, **kw)
+        self.existing_user = existing_user
+
+    def execute(self, sql, params=None):
+        s = " ".join(sql.split()).lower()
+        if s.startswith("select * from users") or (s.startswith("select") and "from users" in s and "lower(email)" in s):
+            self.sql.append((s, tuple(params or ())))
+            cur = MagicMock()
+            cur.fetchone = lambda: self.existing_user
+            return cur
+        if s.startswith("insert into users"):
+            self.sql.append((s, tuple(params or ())))
+            cur = MagicMock()
+            cur.fetchone = lambda: {"id": 11, "username": _EMAIL, "email": _EMAIL}
+            return cur
+        if "from email_verifications" in s:
+            from platform_app.security import hash_email_code
+            self.sql.append((s, tuple(params or ())))
+            cur = MagicMock()
+            cur.fetchone = lambda: {"id": 3, "code_hash": hash_email_code("123456")}
+            return cur
+        if s.startswith("update email_verifications") or s.startswith("update registration_allowlist"):
+            self.sql.append((s, tuple(params or ())))
+            cur = MagicMock()
+            cur.fetchone = lambda: {"id": 3, "email_norm": _EMAIL}
+            cur.rowcount = 1
+            return cur
+        return super().execute(sql, params)
+
+    def created_user(self) -> bool:
+        return any(q.startswith("insert into users") for q, _ in self.sql)
+
+
+def _passwordless_patches(db):
+    return [
+        patch.object(auth, "connect", return_value=db),
+        patch.object(auth, "init_db"),
+        patch.object(auth, "_check_rate_limit"),
+        patch.object(auth, "_verify_locked", return_value=False),
+        patch.object(auth, "_record_login_fail"),
+        patch.object(auth, "_record_login_success"),
+        patch.object(auth, "_record_verify_fail"),
+        patch.object(auth, "_issue_session", return_value="tok"),
+    ]
+
+
+def _run_magic(db):
+    import contextlib
+    with contextlib.ExitStack() as st:
+        for p in _passwordless_patches(db):
+            st.enter_context(p)
+        return auth.login_via_magic_token(_EMAIL, ip="1.2.3.4", magic_token="mt")
+
+
+def _run_passwordless(db):
+    import contextlib
+    with contextlib.ExitStack() as st:
+        for p in _passwordless_patches(db):
+            st.enter_context(p)
+        return auth.verify_passwordless_and_login(_EMAIL, "123456", ip="1.2.3.4")
+
+
+class TestPasswordlessNewAccountFollowsGate(unittest.TestCase):
+    """魔法链接 / 免密验证码新建账号也要过注册闸(巡检第二轮整合审查)。
+
+    关闭注册后,密码注册与 Apple 新建账号都拒,可 login_via_magic_token /
+    verify_passwordless_and_login 在「账号不存在」分支只查白名单、不读注册模式:30 天内没用过的
+    内测魔法链接照样建号登录。同一个邮箱走密码注册被拒、点邀请邮件却能进来。
+    已有账号的登录不受注册模式影响。
+    """
+
+    RUNNERS = (("magic", _run_magic), ("passwordless", _run_passwordless))
+
+    def test_closed_rejects_new_account(self):
+        for label, run in self.RUNNERS:
+            with self.subTest(path=label):
+                db = _PasswordlessDb({"mode": "closed"}, allowlist={_EMAIL})
+                with self.assertRaisesRegex(ValueError, "关闭"):
+                    run(db)
+                self.assertFalse(db.created_user(), "关闭注册时不该建号")
+
+    def test_closed_still_logs_in_existing_account(self):
+        for label, run in self.RUNNERS:
+            with self.subTest(path=label):
+                db = _PasswordlessDb({"mode": "closed"}, allowlist={_EMAIL},
+                                     existing_user={"id": 7, "username": "old", "email": _EMAIL})
+                out = run(db)
+                self.assertEqual(out["user_id"], 7)
+                self.assertFalse(db.created_user())
+
+    def test_open_and_invite_allowlisted_email_creates_account(self):
+        for mode in ("open", "invite", "allowlist"):
+            for label, run in self.RUNNERS:
+                with self.subTest(mode=mode, path=label):
+                    db = _PasswordlessDb({"mode": mode}, allowlist={_EMAIL})
+                    out = run(db)
+                    self.assertEqual(out["user_id"], 11)
+                    self.assertTrue(db.created_user())
+
+    def test_not_allowlisted_still_rejected(self):
+        for label, run in self.RUNNERS:
+            with self.subTest(path=label):
+                db = _PasswordlessDb({"mode": "open"})
+                with self.assertRaisesRegex(ValueError, "白名单"):
+                    run(db)
+                self.assertFalse(db.created_user())
+
+
 class TestAppleGate(unittest.TestCase):
     def test_open_allows(self):
         auth._assert_registration_allowed(_Db({"mode": "open"}), _EMAIL)
@@ -238,6 +350,101 @@ class TestConfirmConsumesOnlyReservedCode(unittest.TestCase):
 
     def test_no_code_no_consume(self):
         self.assertEqual(self._confirm(None), [])
+
+
+_USED_AT = "2026-09-01T00:00:00+00:00"
+
+
+def _invite_row_visible(sql: str, row: dict) -> bool:
+    """按 SQL 里写了的「未使用」谓词过滤一行码(只认 used_by / used_at 两列的 is null)。"""
+    import re as _re
+    for col in ("used_by", "used_at"):
+        if _re.search(rf"\b(?:ic\.)?{col} is null\b", sql) and row.get(col) is not None:
+            return False
+    return True
+
+
+class _InviteDb(_Db):
+    """invite_codes 按行存状态:{code: {used_by, used_at}}。"""
+
+    def __init__(self, cfg, *, rows, **kw):
+        super().__init__(cfg, **kw)
+        self.rows = rows
+
+    def execute(self, sql, params=None):
+        s = " ".join(sql.split()).lower()
+        if "invite_codes" in s:
+            self.sql.append((s, tuple(params or ())))
+            code = (params or (None,))[-1] if s.startswith("update") else (params or (None,))[0]
+            row = self.rows.get(code)
+            hit = row is not None and _invite_row_visible(s, row)
+            cur = MagicMock()
+            cur.fetchone = lambda: ({"x": 1} if hit else None)
+            cur.rowcount = 1 if hit else 0
+            return cur
+        return super().execute(sql, params)
+
+
+class TestInviteCodeUsedJudgedByUsedAt(unittest.TestCase):
+    """用过的码,账号被硬删后不能再用(巡检第二轮整合审查)。
+
+    invite_codes.used_by 外键 on delete set null:用户 A 用码 X 注册,之后注销、cron 硬删 users 行,
+    X 的 used_by 变回 NULL,used_at 还在。注册闸与 confirm 的原子预占都只看 used_by is null,
+    单次码就能再用一次;管理页按 used_at 显示「已使用」、不给删除,与后端判定对不上。
+    """
+
+    ORPHANED = {"used_by": None, "used_at": _USED_AT}   # 注册者已被硬删
+    FRESH = {"used_by": None, "used_at": None}
+
+    def test_gate_rejects_code_of_deleted_user(self):
+        db = _InviteDb({"mode": "invite"}, rows={_GOOD_CODE: dict(self.ORPHANED)})
+        with self.assertRaisesRegex(ValueError, "邀请码无效或已使用"):
+            _register(db, invite_code=_GOOD_CODE)
+
+    def test_gate_still_accepts_fresh_code(self):
+        db = _InviteDb({"mode": "invite"}, rows={_GOOD_CODE: dict(self.FRESH)})
+        _out, pending = _register(db, invite_code=_GOOD_CODE)
+        self.assertEqual(pending["invite_code"], _GOOD_CODE)
+
+    def _confirm_with(self, row):
+        from platform_app.security import hash_email_code
+        db = _InviteDb({"mode": "invite"}, rows={_GOOD_CODE: row})
+        base = db.execute
+
+        def _exec(sql, params=None):
+            s = " ".join(sql.split()).lower()
+            cur = MagicMock()
+            if "from email_verifications" in s:
+                cur.fetchone.return_value = {"id": 9, "code_hash": hash_email_code("123456")}
+                return cur
+            if "insert into users" in s:
+                cur.fetchone.return_value = {"id": 5, "username": "newbie"}
+                return cur
+            if s.startswith("update email_verifications"):
+                return cur
+            return base(sql, params)
+
+        db.execute = _exec
+        pending = auth._encode_pending_register({
+            "username": "newbie", "password_hash": "h", "display_name": "newbie",
+            "birthday": "1990-01-01", "terms_accepted": True, "age_confirmed": True,
+            "invite_code": _GOOD_CODE, "allow_admin": False,
+        })
+        with patch.object(auth, "connect", return_value=db), \
+             patch.object(auth, "init_db"), \
+             patch.object(auth, "_verify_locked", return_value=False), \
+             patch.object(auth, "_clear_verify_fail"), \
+             patch.object(auth, "_issue_session", return_value="tok"), \
+             patch.object(auth, "_pending_store_get", return_value=pending):
+            return auth.confirm_email_verification(_EMAIL, "123456")
+
+    def test_confirm_reservation_refuses_code_of_deleted_user(self):
+        with self.assertRaisesRegex(ValueError, "邀请码已被使用"):
+            self._confirm_with(dict(self.ORPHANED))
+
+    def test_confirm_reservation_takes_fresh_code(self):
+        user, _tok = self._confirm_with(dict(self.FRESH))
+        self.assertEqual(user["id"], 5)
 
 
 class TestLoginSchemaFollowsMode(unittest.TestCase):
