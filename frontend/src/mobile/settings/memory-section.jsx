@@ -9,8 +9,9 @@ import { SetGroup, MSlider, Toggle, usePrefSave } from './shared.jsx';
 function MemorySection() {
   const { t } = useTranslation();
   const save = usePrefSave('memory');
-  const [recallDepth, setRecallDepth] = useState(6);
-  const [summaryWindow, setSummaryWindow] = useState(8);
+  // 初值 = 后端 MemorySettings 的默认值(守卫 test_memory_settings_display_defaults.py)
+  const [recallDepth, setRecallDepth] = useState(5);
+  const [summaryWindow, setSummaryWindow] = useState(10);
   const [tokenBudget, setTokenBudget] = useState(800);
   const [autoArchive, setAutoArchive] = useState(50);
   const [pinnedMax, setPinnedMax] = useState(20);

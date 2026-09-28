@@ -46,8 +46,9 @@ struct PreferencesView: View {
 // MARK: 记忆
 struct MemoryView: View {
     @EnvironmentObject var store: AppStore
-    @State private var recall = 6.0
-    @State private var summary = 8.0
+    // 初值和读取回退值 = 后端 MemorySettings 的默认值(守卫 test_memory_settings_display_defaults.py)
+    @State private var recall = 5.0
+    @State private var summary = 10.0
     @State private var budget = 800.0
     @State private var archive = 50.0
     @State private var pinnedMax = 20.0
@@ -77,8 +78,8 @@ struct MemoryView: View {
         if store.demo { loaded = true; return }
         guard let p = try? await store.api.profile(base: store.serverURL) else { loaded = true; return }
         let pr = p.prefs
-        recall = readDbl(pr, ["memory.recall_depth", "settings.召回深度"], 6)
-        summary = readDbl(pr, ["memory.summary_window", "settings.摘要窗口"], 8)
+        recall = readDbl(pr, ["memory.recall_depth", "settings.召回深度"], 5)
+        summary = readDbl(pr, ["memory.summary_window", "settings.摘要窗口"], 10)
         budget = readDbl(pr, ["memory.token_budget"], 800)
         archive = readDbl(pr, ["memory.auto_archive_after_turns"], 50)
         pinnedMax = readDbl(pr, ["memory.pinned_max", "settings.固定记忆上限"], 20)
