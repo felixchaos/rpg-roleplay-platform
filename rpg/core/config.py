@@ -152,16 +152,22 @@ def is_server_mode() -> bool:
 def deployment_mode_normalized() -> str:
     """归一化后的部署模式:strip + lower,空值兜底 "local"。
 
-    散落在 app.py / core.startup 的 _deployment_mode() 统一委托本函数。
+    只用于展示(app.py 的启动横幅与 /api/state 的 app.deployment,与开源线同值)。
+    **别拿它做放宽类判定**:空串兜底成 local 是 fail-open。安全相关的「是不是本地」
+    直接用 deployment_mode().strip().lower() in LOCAL_MODES(空串不算本地),
+    或 effective_auth_required()。core.startup 的 Origin/CORS 放宽即如此。
     """
     return deployment_mode().strip().lower() or "local"
 
 
 def is_local_deployment_mode(mode: str | None = None) -> bool:
-    """给定模式是否属于本地/自托管集合;mode 为 None 时自查当前部署模式。"""
+    """给定模式是否属于本地/自托管集合;mode 为 None 时自查当前部署模式。
+
+    自查时不走 deployment_mode_normalized() 的 local 兜底:空串按未知模式 → False(fail-closed)。
+    """
     if mode is None:
-        mode = deployment_mode_normalized()
-    return mode in LOCAL_MODES
+        mode = deployment_mode()
+    return mode.strip().lower() in LOCAL_MODES
 
 
 def effective_auth_required() -> bool:

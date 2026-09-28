@@ -43,7 +43,7 @@ Python FastAPI 后端逐包/逐模块职责。给 AI 协作者:找「某功能�
 - `core/text.py` — 文本工具权威缝:`slugify`(URL/目录/文件名安全化,保留中文,`fallback` 参数化)/ `normalize_for_fp`(指纹归一化,去标点空白只留文字数字)。散落的 `_slugify`/`_normalize_for_fp` 统一委托此处。
 - `core/clock.py` — 时间戳权威缝:`now_iso()`(本地时间、秒级 ISO 8601)。散落的 `datetime.now().isoformat(timespec="seconds")` 统一走它。
 - `core/vecmath.py` — 向量数学权威缝:`cosine(a, b)`(余弦相似度,零向量返回 0.0)。散落的 `ingest/filters.py`/`extract/resolve.py` 各自的 `_cosine` 统一委托此处(本地名保留)。
-- `core/config.py` / `feature_flags.py` — 配置与 flag。`deployment_mode_normalized`/`is_local_deployment_mode`/`LOCAL_MODES`(部署模式权威缝,散落的 `{"local","desktop","self_hosted","self-hosted"}` 判定统一引用)。`security.py`、`text_gates.py`(露骨内容门控)、`channel_fallback.py`、`request_cache.py`、`startup.py`、`version.py`、`vertex_sa.py`、`logging.py`。
+- `core/config.py` / `feature_flags.py` — 配置与 flag。`deployment_mode_normalized`/`is_local_deployment_mode`/`LOCAL_MODES`(部署模式权威缝,散落的 `{"local","desktop","self_hosted","self-hosted"}` 判定统一引用;`deployment_mode_normalized` 把空串兜底成 local,只能用于展示,放宽类判定用 `is_local_deployment_mode()` 或 `effective_auth_required()`,空串一律按 server)。`security.py`、`text_gates.py`(露骨内容门控)、`channel_fallback.py`、`request_cache.py`、`startup.py`、`version.py`、`vertex_sa.py`、`logging.py`。
 
 ## 平台层(platform_app/)
 
