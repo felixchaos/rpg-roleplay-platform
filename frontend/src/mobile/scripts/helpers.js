@@ -1,6 +1,11 @@
 /* MobileScripts 纯工具 / 常量 —— 从 pages/MobileScripts.jsx 拆出,逐字节不变。 */
 
 import i18n from '../../i18n';
+import {
+  ACTIVE_IMPORT_STATUSES,
+  IMPORT_TERMINAL_STATUSES,
+  scriptPlayBlockKind,
+} from '../../lib/script-play-gate.js';
 
 /* ─── 小工具 ─────────────────────────────────────── */
 const fmtWan = (w) => {
@@ -11,8 +16,8 @@ const fmtWan = (w) => {
 };
 const fmtN = (n) => (n == null ? '—' : Number(n).toLocaleString());
 
-const ACTIVE_STATUSES = new Set(['queued', 'pending', 'running', 'processing', 'importing', 'started']);
-const TERMINAL_STATUSES = new Set(['done', 'done_with_errors', 'partial', 'failed', 'cancelled']);
+const ACTIVE_STATUSES = ACTIVE_IMPORT_STATUSES;
+const TERMINAL_STATUSES = IMPORT_TERMINAL_STATUSES;
 const getSplitRules = () => [
   { id: 'auto',       label: i18n.t('mobile.scripts.split_rule.auto') },
   { id: 'corpus',     label: i18n.t('mobile.scripts.split_rule.corpus') },
@@ -23,17 +28,12 @@ const getSplitRules = () => [
   { id: 'custom',     label: i18n.t('mobile.scripts.split_rule.custom') },
 ];
 
+// 判定在 lib/script-play-gate.js(web / 手机四处共用),这里只翻文案。readiness.missing 不参与拦截:
+// fork 剧本没有切片、空白剧本没有切片和锚点,后端照样能开局。这道闸只管开新档,继续已有存档不受它影响。
 function isPlayBlocked(s) {
-  if (!s) return '';
-  const status = String(
-    s.import_status || s.job_status || s.active_job?.status || s.readiness?.active_job?.status || ''
-  ).toLowerCase();
-  if (status && ACTIVE_STATUSES.has(status) && !TERMINAL_STATUSES.has(status)) return i18n.t('mobile.scripts.play_block.importing');
-  const missing = Array.isArray(s.readiness?.missing) ? s.readiness.missing : [];
-  const BLOCKING = new Set(['chunks', 'anchors']);
-  const blocked = missing.filter(k => BLOCKING.has(k));
-  if (blocked.length) return i18n.t('mobile.scripts.play_block.missing_data', { items: blocked.join(', ') });
-  if (Number(s.chapter_count || 0) <= 0) return i18n.t('mobile.scripts.play_block.no_chapters');
+  const kind = scriptPlayBlockKind(s);
+  if (kind === 'importing') return i18n.t('mobile.scripts.play_block.importing');
+  if (kind === 'no_chapters') return i18n.t('mobile.scripts.play_block.no_chapters');
   return '';
 }
 

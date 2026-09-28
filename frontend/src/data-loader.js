@@ -286,8 +286,9 @@ window.__normalizeSave = function (s) { return normalizeSave(s); };
 // 后端字段整行透传,再覆盖展示用的派生字段(标题兜底、相对时间等)。以前是白名单:只留 id/title/…/owner_id,
 // 其余字段全塞进 _raw —— 读顶层字段的消费方全部静默拿到 undefined,同一个根因先后坑了:
 // owner_id(作者改不了自己的剧本)、review_status(已复核的剧本点发布仍恒提示先去复核)、
-// sharing_mode / current_pin_*(引用状态和「解除引用」永远不显示)、readiness(列表「状态」列恒为「—」,
-// 未就绪剧本的开局拦截形同虚设)、cover_image_url / head_commit_id / forked_from_script_id。
+// sharing_mode / current_pin_*(引用状态和「解除引用」永远不显示)、readiness(列表「状态」列恒为「—」)、
+// cover_image_url / head_commit_id / forked_from_script_id。readiness 只用来展示,不参与开局拦截
+// (开局闸见 lib/script-play-gate.js)。
 // 新字段不必再到这里登记;要改展示口径的字段才在下面覆盖。原始行仍放在 _raw(updated_at 等被覆盖的原值从这里取)。
 function normalizeScript(s) {
   return {

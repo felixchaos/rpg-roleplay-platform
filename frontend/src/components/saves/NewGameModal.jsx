@@ -25,10 +25,10 @@ import CSColumnLayout from '@cloudscape-design/components/column-layout';
 import CSAlert from '@cloudscape-design/components/alert';
 import { BirthpointStep } from './BirthpointStep.jsx';
 import { IdentityStep } from './IdentityStep.jsx';
+import { ACTIVE_IMPORT_STATUSES, IMPORT_TERMINAL_STATUSES, scriptPlayBlockKind } from '../../lib/script-play-gate.js';
 
-const NEWGAME_ACTIVE_IMPORT_STATUSES = new Set(["queued", "pending", "running", "processing", "importing", "started"]);
-const NEWGAME_IMPORT_TERMINAL_STATUSES = new Set(["done", "done_with_errors", "partial", "failed", "cancelled"]);
-const NEWGAME_BLOCKING_READINESS_KEYS = new Set(["chunks", "anchors"]);
+const NEWGAME_ACTIVE_IMPORT_STATUSES = ACTIVE_IMPORT_STATUSES;
+const NEWGAME_IMPORT_TERMINAL_STATUSES = IMPORT_TERMINAL_STATUSES;
 
 function newGameReadinessLabel(key, t) {
   return t(`scripts.my.readiness_label_${key}`, { defaultValue: key });
@@ -46,26 +46,12 @@ function newGameActiveJobBlockReason(payload, t) {
   return "";
 }
 
+// 判定在 lib/script-play-gate.js(四端共用),这里只翻文案。readiness.missing 不参与拦截:
+// fork 剧本没有切片、空白剧本没有切片和锚点,后端照样能开局。
 function newGameScriptBlockReason(script, t) {
-  if (!script) return "";
-  const status = String(
-    script.import_status
-    || script.job_status
-    || script.active_job?.status
-    || script.readiness?.active_job?.status
-    || ""
-  ).trim().toLowerCase();
-  if (status && NEWGAME_ACTIVE_IMPORT_STATUSES.has(status) && !NEWGAME_IMPORT_TERMINAL_STATUSES.has(status)) {
-    return t('saves.new_game.script_not_ready_importing');
-  }
-  const missing = Array.isArray(script.readiness?.missing) ? script.readiness.missing : [];
-  const blocking = missing.filter((key) => NEWGAME_BLOCKING_READINESS_KEYS.has(key));
-  if (blocking.length > 0) {
-    return t('saves.new_game.script_not_ready_missing', {
-      items: blocking.map((key) => newGameReadinessLabel(key, t)).join('、'),
-    });
-  }
-  if (Number(script.chapter_count || 0) <= 0) {
+  const kind = scriptPlayBlockKind(script);
+  if (kind === 'importing') return t('saves.new_game.script_not_ready_importing');
+  if (kind === 'no_chapters') {
     return t('saves.new_game.script_not_ready_missing', { items: newGameReadinessLabel('chunks', t) });
   }
   return "";
@@ -642,4 +628,4 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   return createPortal(node, document.body);
 }
 
-export { NewGameModal };
+export { NewGameModal, newGameScriptBlockReason };

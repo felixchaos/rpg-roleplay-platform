@@ -13,7 +13,7 @@ import { ScriptsImportView } from './ScriptsImport.jsx';
 import { ScriptsLibraryView } from './ScriptsLibraryView.jsx';
 import { ChaptersModal } from './ChaptersModal.jsx';
 import { OverridesModal } from './OverridesModal.jsx';
-import { scriptPlayBlockReason, activeJobPlayBlockReason } from './shared.js';
+import { scriptPlayBlockReason, activeJobPlayBlockReason, playDropdownState } from './shared.js';
 import CSHeader from '@cloudscape-design/components/header';
 import CSTable from '@cloudscape-design/components/table';
 import CSContainer from '@cloudscape-design/components/container';
@@ -417,15 +417,11 @@ function ScriptsListView() {
           const block = scriptPlayBlockReason(s, t);
           // 反馈#3:列表「开始」也改下拉——选存档继续 / 开新游戏,不再一键直进后台
           const svs = platSaves.filter((x) => x.script_id === s.id);
+          // 开局闸只拦「开新游戏」,已有存档照样能从这里继续
+          const dd = playDropdownState({ saves: svs, block, t });
           return (
-            <CSButtonDropdown variant="normal" expandToViewport disabled={busyId === s.id || !!block}
-              items={[
-                ...(svs.length ? [{
-                  text: t('scripts.my.play_continue_group'),
-                  items: svs.map((sv) => ({ id: 'continue:' + sv.id, text: sv.title || ('#' + sv.id), iconName: 'caret-right-filled' })),
-                }] : []),
-                { id: 'new', text: t('scripts.my.play_new_game'), iconName: 'add-plus' },
-              ]}
+            <CSButtonDropdown variant="normal" expandToViewport disabled={busyId === s.id || dd.disabled}
+              items={dd.items}
               onItemClick={({ detail }) => {
                 if (detail.id === 'new') { onNewGame(s); return; }
                 if (typeof detail.id === 'string' && detail.id.startsWith('continue:')) {
@@ -433,7 +429,7 @@ function ScriptsListView() {
                   if (sv) onContinueSave(sv);
                 }
               }}
-            >{block ? t('scripts.my.play_blocked') : t('scripts.my.play')}</CSButtonDropdown>
+            >{dd.disabled ? t('scripts.my.play_blocked') : t('scripts.my.play')}</CSButtonDropdown>
           );
         } },
       ]}

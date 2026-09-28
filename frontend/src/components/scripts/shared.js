@@ -1,9 +1,11 @@
 /* scripts 页公共常量与纯工具(从 pages/scripts.jsx 拆出,零行为变化)。
    play-block 判定 / 导入状态集 / 分章规则表 —— 被 ScriptsList / ScriptsImport / ScriptDetail 共用。 */
 
-const IMPORT_JOB_TERMINAL_STATUSES = new Set(["done", "done_with_errors", "partial", "failed", "cancelled"]);
-const ACTIVE_IMPORT_STATUSES = new Set(["queued", "pending", "running", "processing", "importing", "started"]);
-const PLAY_BLOCKING_READINESS_KEYS = new Set(["chunks", "anchors"]);
+import {
+  ACTIVE_IMPORT_STATUSES,
+  IMPORT_TERMINAL_STATUSES as IMPORT_JOB_TERMINAL_STATUSES,
+  scriptPlayBlockKind,
+} from '../../lib/script-play-gate.js';
 
 function readinessLabel(key, t) {
   return t(`scripts.my.readiness_label_${key}`, { defaultValue: key });
@@ -21,27 +23,25 @@ function activeJobPlayBlockReason(payload, t) {
   return "";
 }
 
+// 判定在 lib/script-play-gate.js(四端共用),这里只翻文案。readiness.missing 不参与拦截,见那边的注释。
 function scriptPlayBlockReason(script, t) {
-  if (!script) return "";
-  const status = String(
-    script.import_status
-    || script.job_status
-    || script.active_job?.status
-    || script.readiness?.active_job?.status
-    || ""
-  ).trim().toLowerCase();
-  if (status && ACTIVE_IMPORT_STATUSES.has(status) && !IMPORT_JOB_TERMINAL_STATUSES.has(status)) {
-    return t('scripts.my.play_block_importing');
-  }
-  const missing = Array.isArray(script.readiness?.missing) ? script.readiness.missing : [];
-  const blocking = missing.filter((key) => PLAY_BLOCKING_READINESS_KEYS.has(key));
-  if (blocking.length > 0) {
-    return t('scripts.my.play_block_missing', { items: blocking.map((key) => readinessLabel(key, t)).join('、') });
-  }
-  if (Number(script.chapter_count || 0) <= 0) {
-    return t('scripts.my.play_block_missing', { items: readinessLabel('chunks', t) });
-  }
+  const kind = scriptPlayBlockKind(script);
+  if (kind === 'importing') return t('scripts.my.play_block_importing');
+  if (kind === 'no_chapters') return t('scripts.my.play_block_missing', { items: readinessLabel('chunks', t) });
   return "";
+}
+
+// 列表行和详情页的「开始」下拉:开局闸只拦「开新游戏」,已有存档的「继续」永远可点。
+// 没有存档又被拦时,整个下拉禁用(里面只剩一个不能点的「开新游戏」)。
+function playDropdownState({ saves = [], block = "", t }) {
+  const items = [
+    ...(saves.length ? [{
+      text: t('scripts.my.play_continue_group'),
+      items: saves.map((sv) => ({ id: 'continue:' + sv.id, text: sv.title || ('#' + sv.id), iconName: 'caret-right-filled' })),
+    }] : []),
+    { id: 'new', text: t('scripts.my.play_new_game'), iconName: 'add-plus', disabled: !!block, disabledReason: block || undefined },
+  ];
+  return { items, disabled: !!block && saves.length === 0 };
 }
 
 const SPLIT_RULES = [
@@ -54,4 +54,4 @@ const SPLIT_RULES = [
   { id: "custom",     labelKey: "scripts.import.rule_custom" },
 ];
 
-export { scriptPlayBlockReason, activeJobPlayBlockReason, SPLIT_RULES, IMPORT_JOB_TERMINAL_STATUSES };
+export { scriptPlayBlockReason, activeJobPlayBlockReason, playDropdownState, SPLIT_RULES, IMPORT_JOB_TERMINAL_STATUSES };

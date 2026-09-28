@@ -5376,7 +5376,6 @@
       },
       "play_block": {
         "importing": "正在导入中，请稍候",
-        "missing_data": "缺少必要数据：{{items}}",
         "no_chapters": "章节数据缺失，请先完成导入"
       },
       "op_failed": "操作失败",
@@ -6228,7 +6227,6 @@
       },
       "script_block": {
         "importing": "剧本正在导入,请稍后",
-        "missing": "剧本缺少: {{keys}}",
         "no_chapters": "剧本章节尚未就绪",
         "importing_retry": "剧本正在导入,请稍后重试"
       },

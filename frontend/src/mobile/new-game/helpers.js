@@ -1,6 +1,7 @@
 /* new-game/helpers.js — MobileNewGame 向导的常量 & 工具。
    从 pages/MobileNewGame.jsx 纯机械搬出(区块逐字节等价,DOM/视觉/行为零变化)。 */
 import i18n from '../../i18n';
+import { ACTIVE_IMPORT_STATUSES, IMPORT_TERMINAL_STATUSES, scriptPlayBlockKind } from '../../lib/script-play-gate.js';
 
 /* ================================================================
    常量 & 工具
@@ -57,33 +58,24 @@ const STEPS = [
 
 const TOTAL_STEPS = STEPS.length;
 
-const NEWGAME_ACTIVE_IMPORT_STATUSES = new Set(['queued', 'pending', 'running', 'processing', 'importing', 'started']);
-const NEWGAME_IMPORT_TERMINAL_STATUSES = new Set(['done', 'done_with_errors', 'partial', 'failed', 'cancelled']);
-const NEWGAME_BLOCKING_READINESS_KEYS = new Set(['chunks', 'anchors']);
+const NEWGAME_ACTIVE_IMPORT_STATUSES = ACTIVE_IMPORT_STATUSES;
+const NEWGAME_IMPORT_TERMINAL_STATUSES = IMPORT_TERMINAL_STATUSES;
 
 // 出生点 sentinel:剧本有出生点锚点数据时,「从故事开头开始」也必须是用户主动选中的一项
 // (而非未选择的静默默认),对齐桌面 saves.jsx 的强制必填语义。提交时转换为 null。
 const BIRTHPOINT_FROM_START = '__from_start__';
 const isFromStartBirthpoint = (bp) => !!bp && bp.anchor_id === BIRTHPOINT_FROM_START;
 
+// 判定在 lib/script-play-gate.js(web / 手机四处共用),这里只翻文案。readiness.missing 不参与拦截。
 function scriptBlockReason(script) {
-  if (!script) return '';
-  const status = String(
-    script.import_status || script.job_status ||
-    script.active_job?.status || script.readiness?.active_job?.status || ''
-  ).trim().toLowerCase();
-  if (status && NEWGAME_ACTIVE_IMPORT_STATUSES.has(status) && !NEWGAME_IMPORT_TERMINAL_STATUSES.has(status)) {
-    return i18n.t('mobile.new_game.script_block.importing');
-  }
-  const missing = Array.isArray(script.readiness?.missing) ? script.readiness.missing : [];
-  const blocking = missing.filter(k => NEWGAME_BLOCKING_READINESS_KEYS.has(k));
-  if (blocking.length > 0) return i18n.t('mobile.new_game.script_block.missing', { keys: blocking.join(', ') });
-  if (Number(script.chapter_count || 0) <= 0) return i18n.t('mobile.new_game.script_block.no_chapters');
+  const kind = scriptPlayBlockKind(script);
+  if (kind === 'importing') return i18n.t('mobile.new_game.script_block.importing');
+  if (kind === 'no_chapters') return i18n.t('mobile.new_game.script_block.no_chapters');
   return '';
 }
 
 export {
   ALLOWED_SOURCES, ORIGIN_OPTIONS, STEPS, TOTAL_STEPS,
-  NEWGAME_ACTIVE_IMPORT_STATUSES, NEWGAME_IMPORT_TERMINAL_STATUSES, NEWGAME_BLOCKING_READINESS_KEYS,
+  NEWGAME_ACTIVE_IMPORT_STATUSES, NEWGAME_IMPORT_TERMINAL_STATUSES,
   BIRTHPOINT_FROM_START, isFromStartBirthpoint, scriptBlockReason,
 };

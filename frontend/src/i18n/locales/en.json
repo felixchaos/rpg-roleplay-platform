@@ -5379,7 +5379,6 @@
       },
       "play_block": {
         "importing": "Import in progress, please wait",
-        "missing_data": "Missing required data: {{items}}",
         "no_chapters": "Chapter data missing — complete the import first"
       },
       "op_failed": "Operation failed",
@@ -6231,7 +6230,6 @@
       },
       "script_block": {
         "importing": "Script is importing, please wait",
-        "missing": "Script is missing: {{keys}}",
         "no_chapters": "Script chapters are not ready yet",
         "importing_retry": "Script is still importing, please try again later"
       },

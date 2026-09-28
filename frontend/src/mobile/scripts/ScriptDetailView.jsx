@@ -30,10 +30,12 @@ function ScriptDetailView({ script, saves, embedStatus, currentUserId, onBack, o
   const savesCount = scriptSaves.length;
   const isOwner = currentUserId && script?.owner_id === currentUserId;
 
+  // 开局闸只拦开新档:已有存档时「继续游戏」不受它影响(导入/重建中也能回到旧存档)。
+  const playDisabled = !!playBlock && savesCount === 0;
   const onPlay = async () => {
-    if (playBlock) { nav.toast(playBlock, 'accent', 'warn'); return; }
     const sv = scriptSaves[0];
     if (sv) { nav.openGame?.(sv); return; }
+    if (playBlock) { nav.toast(playBlock, 'accent', 'warn'); return; }
     nav.push?.('new-game', { scriptId: script.id });   // 无存档 → 进新游戏向导(锁定本剧本)
   };
 
@@ -264,9 +266,9 @@ function ScriptDetailView({ script, saves, embedStatus, currentUserId, onBack, o
 
               {/* 主操作区 */}
               <div style={{ display: 'grid', gap: 9, marginTop: 22 }}>
-                <button className="pl-btn-primary" onClick={onPlay} disabled={!!playBlock}>
+                <button className="pl-btn-primary" onClick={onPlay} disabled={playDisabled}>
                   <Icon name="play" size={18} />
-                  {playBlock ? t('mobile.scripts.detail.play_blocked') : scriptSaves.length > 0 ? t('mobile.scripts.detail.continue_game', { count: scriptSaves.length }) : t('mobile.scripts.detail.start_game')}
+                  {scriptSaves.length > 0 ? t('mobile.scripts.detail.continue_game', { count: scriptSaves.length }) : playBlock ? t('mobile.scripts.detail.play_blocked') : t('mobile.scripts.detail.start_game')}
                 </button>
                 {scriptSaves.length > 0 && (
                   <button className="pl-btn-ghost" onClick={onNewGame}>

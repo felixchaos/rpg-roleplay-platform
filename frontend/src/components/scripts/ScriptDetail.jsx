@@ -18,7 +18,7 @@ import { ModuleStatusCard } from '../ModuleStatusCard.jsx';
 import { ModuleMatrixOverview } from '../ModuleMatrixOverview.jsx';
 import { RebuildJobBanner } from '../RebuildJobBanner.jsx';
 import { RebuildEstimateModal } from '../RebuildEstimateModal.jsx';
-import { scriptPlayBlockReason } from './shared.js';
+import { scriptPlayBlockReason, playDropdownState } from './shared.js';
 import { VersionHistoryDrawer } from './VersionHistoryDrawer.jsx';
 import { SharingModeSelector } from './SharingModeSelector.jsx';
 import { CoverFrame } from './CoverFrame.jsx';
@@ -294,6 +294,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
   // hook 自己拉 /modules-status,在 active rebuild job 时禁用其他卡按钮 + 顶部 banner 实时进度.
   const rb = useScriptRebuild(s.id);
   const playBlock = scriptPlayBlockReason(s, t);
+  const playDd = playDropdownState({ saves: scriptSaves, block: playBlock, t });
 
   // 默认提示词:用剧本简介(描述故事内容,适合作画面参考),而非标题(标题不是画面描述词)。
   // 无简介则留空,由 MediaStudio 的占位示例引导用户自己写。
@@ -329,18 +330,9 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
               <CSButton iconName="gen-ai" onClick={() => setCoverStudioOpen(true)}>{t('scripts.page.change_cover')}</CSButton>
             )}
             {/* 反馈#3:开始游戏改下拉——可选继续某个存档 / 开新游戏,不再有存档就直接进后台 */}
-            <CSButtonDropdown variant="primary" expandToViewport disabled={!!playBlock}
-              items={[
-                ...(scriptSaves.length ? [{
-                  text: t('scripts.my.play_continue_group'),
-                  items: scriptSaves.map((sv) => ({
-                    id: 'continue:' + sv.id,
-                    text: sv.title || ('#' + sv.id),
-                    iconName: 'caret-right-filled',
-                  })),
-                }] : []),
-                { id: 'new', text: t('scripts.my.play_new_game'), iconName: 'add-plus' },
-              ]}
+            {/* 开局闸只拦「开新游戏」,已有存档照样能从这里继续 */}
+            <CSButtonDropdown variant="primary" expandToViewport disabled={playDd.disabled}
+              items={playDd.items}
               onItemClick={({ detail }) => {
                 if (detail.id === 'new') { onNewGame && onNewGame(s); return; }
                 if (typeof detail.id === 'string' && detail.id.startsWith('continue:')) {
