@@ -113,3 +113,48 @@ def test_frontend_validates_by_id(path):
     src = (ROOT / path).read_text(encoding="utf-8")
     assert "mcp.validate({ name" not in src, "校验又按 name 发了,后端只认 id"
     assert "server_id" in src
+
+
+# ── 编辑表单 → 后端(巡检第二轮整合审查)────────────────────────────────────
+# 后端输出只有 display_name 没有 name,命令落库成 command + args。两端编辑表单以前按 name || id
+# 取名(中文名服务器显示成 mcp-<哈希>,保存时把原名覆盖成 id)、命令框只回填 command 且不带 args
+# (npx 服务器 400,python3 -m pkg 被存成裸 python3)。现在两端都经 lib/mcp-form.js:
+# 名字读 display_name;命令框回填整行,没改就原样带回 command + args,改过就发整行由这里重拆。
+
+@pytest.mark.parametrize("line", [
+    "npx @modelcontextprotocol/server-filesystem /data",
+    "python3 -m my_mcp --root /data",
+])
+def test_edit_form_body_round_trips(line):
+    stored = _normalize_mcp_server({"name": "文件系统", "transport": "stdio", "command": line, "enabled": True})
+    assert "name" not in stored, "后端开始输出 name 了,前端 mcpDisplayName 的取名顺序要跟着核对"
+    edit = {"id": stored["id"], "server_id": stored["id"], "name": stored["display_name"],
+            "transport": "stdio", "enabled": True, "url": "",
+            "command": stored["command"], "args": stored["args"]}
+    assert _normalize_mcp_server(edit) == stored
+    # 命令框改过:只发整行
+    whole = {k: v for k, v in edit.items() if k != "args"}
+    whole["command"] = " ".join([stored["command"], *stored["args"]])
+    assert _normalize_mcp_server(whole) == stored
+
+
+def test_old_edit_body_lost_args():
+    """改前的编辑请求体:名字 = id、命令只有 command。npx 直接 400,python3 被存成裸命令。"""
+    npx = _normalize_mcp_server({"name": "文件系统", "command": "npx @modelcontextprotocol/server-filesystem /data"})
+    with pytest.raises(ValueError):
+        _normalize_mcp_server({"id": npx["id"], "name": npx["id"], "command": npx["command"]})
+    py = _normalize_mcp_server({"name": "py", "command": "python3 -m my_mcp"})
+    assert _normalize_mcp_server({"id": py["id"], "name": py["id"], "command": py["command"]})["args"] == []
+
+
+@pytest.mark.parametrize("path", [
+    "frontend/src/components/platform/CapPages.jsx",
+    "frontend/src/mobile/caps/McpSection.jsx",
+])
+def test_frontend_edit_uses_shared_form_helpers(path):
+    """孪生奇偶:两端的列表取名 / 编辑回填 / 提交都走 lib/mcp-form.js,别再各写一份。"""
+    src = (ROOT / path).read_text(encoding="utf-8")
+    for fn in ("mcpDisplayName(", "mcpCommandLine(", "mcpStdioFields("):
+        assert fn in src, f"{path} 没用 {fn[:-1]}"
+    helper = (ROOT / "frontend/src/lib/mcp-form.js").read_text(encoding="utf-8")
+    assert "display_name" in helper

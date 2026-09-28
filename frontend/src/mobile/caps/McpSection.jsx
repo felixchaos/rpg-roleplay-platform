@@ -5,6 +5,7 @@ import { Icon } from '../icons.jsx';
 import { Sheet } from '../Sheet.jsx';
 import { Toggle, StatusPill, MField, EmptyState } from './shared.jsx';
 import { validateNewMcpServer } from '../../lib/mcp-validate.js';
+import { mcpDisplayName, mcpCommandLine, mcpStdioFields } from '../../lib/mcp-form.js';
 
 /* ──────────────────────────────────────────────────────────────────
    MCP
@@ -36,7 +37,8 @@ function McpSection({ toast }) {
         const isRunning = isOn && (runSet.has(s.id) || runSet.has(s.server_id) || runSet.has(s.name));
         return {
           id: s.id || s.server_id || s.name,
-          name: s.name || s.id,
+          // 名字只在 display_name(后端不输出 name);按 name || id 取会把中文名服务器显示成 mcp-<哈希>。
+          name: mcpDisplayName(s),
           desc: s.description || (s.transport === 'http' ? `HTTP · ${s.url || s.endpoint || '—'}` : `stdio · ${s.command || '—'}`),
           tag: s.transport || (s.url || s.endpoint ? 'http' : 'stdio'),
           on: isOn,
@@ -93,7 +95,8 @@ function McpSection({ toast }) {
     setForm({
       name: it.name,
       transport: it.tag || 'stdio',
-      command: raw.command || raw.url || raw.endpoint || '',
+      // 命令与参数分开落库(command + args),回填成一整行;只填 command 会让参数在保存时丢掉。
+      command: mcpCommandLine(raw) || raw.url || raw.endpoint || '',
       env: Object.entries(raw.env || {}).map(([k, v]) => `${k}=${v}`).join('\n'),
     });
     setEditTarget(it);
@@ -115,11 +118,18 @@ function McpSection({ toast }) {
       const body = {
         name: form.name,
         transport: form.transport,
-        enabled: true,
+        // 编辑不改启停状态(与网页一致);以前恒发 true,停用的服务器一编辑就被悄悄打开。
+        enabled: editTarget ? !!editTarget.on : true,
         ...(editTarget ? { id: editTarget.id, server_id: editTarget.id } : {}),
       };
-      if (form.transport === 'http') body.url = form.command;
-      else body.command = form.command;
+      if (form.transport === 'http') {
+        body.url = form.command;
+        // 手机表单没有 Headers 栏:编辑时带回原值,保存不把它清掉。
+        const rawHeaders = editTarget && editTarget._raw && editTarget._raw.headers;
+        if (rawHeaders && Object.keys(rawHeaders).length) body.headers = rawHeaders;
+      } else {
+        Object.assign(body, mcpStdioFields(form.command, editTarget && editTarget._raw));
+      }
       if (Object.keys(envObj).length) body.env = envObj;
       const saved = await window.api.mcp.upsert(body);
       if (editTarget) {

@@ -8,6 +8,7 @@ import {
 } from './shared.jsx';
 import { copyText } from '../../lib/clipboard.js';
 import { validateNewMcpServer, mcpLaunchable } from '../../lib/mcp-validate.js';
+import { mcpDisplayName, mcpCommandLine, mcpStdioFields } from '../../lib/mcp-form.js';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSBox from '@cloudscape-design/components/box';
 import CSButton from '@cloudscape-design/components/button';
@@ -56,7 +57,8 @@ function CapPage({ kind }) {
             const isOn = !!s.enabled;
             const isRunning = isOn && (runSet.has(s.id) || runSet.has(s.server_id) || runSet.has(s.name));
             return {
-              id: s.id || s.server_id || s.name, name: s.name || s.id,
+              // 名字只在 display_name(后端不输出 name);按 name || id 取会把中文名服务器显示成 mcp-<哈希>。
+              id: s.id || s.server_id || s.name, name: mcpDisplayName(s),
               desc: s.description || (s.transport === "http" ? `HTTP · ${s.url || s.endpoint || "—"}` : `stdio · ${s.command || "—"}`),
               tag: s.transport || (s.url || s.endpoint ? "http" : "stdio"),
               on: isOn,
@@ -306,7 +308,8 @@ function CapCard({ id, name, desc, tag, on, status, kind, onChanged, _raw }) {
   React.useEffect(() => { if (logOpen) loadLog(); }, [logOpen, loadLog]);
   const editFields = kind === "mcp" ? (() => {
     const rawTransport = (_raw || {}).transport || tag || "stdio";
-    const rawCommand = (_raw || {}).command || "";
+    // 命令与参数分开落库(command + args),回填成一整行;只填 command 会让参数在保存时丢掉。
+    const rawCommand = mcpCommandLine(_raw);
     const rawEnv = (() => { const e = (_raw || {}).env || {}; return Object.keys(e).length ? Object.entries(e).map(([k,v]) => `${k}=${v}`).join("\n") : ""; })();
     const rawUrl = (_raw || {}).url || "";
     const rawHeaders = (() => { const h = (_raw || {}).headers || {}; return Object.keys(h).length ? JSON.stringify(h, null, 2) : ""; })();
@@ -376,7 +379,7 @@ function CapCard({ id, name, desc, tag, on, status, kind, onChanged, _raw }) {
                 body.command = "";
                 try { body.headers = vals.headers ? JSON.parse(vals.headers) : {}; } catch (_) { body.headers = {}; }
               } else {
-                body.command = vals.command || "";
+                Object.assign(body, mcpStdioFields(vals.command, _raw));
                 body.url = "";
               }
               if (Object.keys(envObj).length) body.env = envObj;
