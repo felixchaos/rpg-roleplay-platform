@@ -525,12 +525,21 @@ def _remote_sync_blocking(api_user: dict[str, Any], user_id: int, body: Any) -> 
     # 写每用户 overlay(绝不写全局)
     user_models.replace_synced_models(user_id, api_id, synced_models)
     saved = load_catalog_for_user(user_id)
+    # 响应的 models 必须是**落库后**该用户在这个供应商下的实际清单:设置页(web / 手机)拿它
+    # 整个替换模型列表。以前回的是这次从供应商拉到的原始清单 —— enabled 写死 true(落库却沿用
+    # 了用户的隐藏设置,于是隐藏过的模型每次打开设置页又显示成启用)、不带 synced 标记(前端据它
+    # 把启停 / 可见性 / 删除路由到按用户的端点)、不含手填模型(一打开设置页就从列表消失)。
+    listed: list[dict[str, Any]] = []
+    try:
+        listed = list(user_models.load_overlay(user_id).get(api_id) or [])
+    except Exception:
+        listed = []
     return json_response({
         "ok": True,
         "api_id": api_id,
         "synced": len(synced_models),
         "remote_total": len(remote.get("models") or []),
-        "models": synced_models,
+        "models": listed or [{**m, "synced": True} for m in synced_models],
         "catalog": saved,
     })
 

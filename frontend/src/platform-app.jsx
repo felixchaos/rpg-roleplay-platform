@@ -46,6 +46,7 @@ import FileLibrary from './components/FileLibrary.jsx';
 import { credApiIdSet } from './components/catalog-helpers.js';
 import { createToastChannel } from './toast.jsx';
 import { lsGet, lsSet } from './lib/storage.js';
+import { buildCreateSavePayload } from './lib/save-create-payload.js';
 // Cloudscape shell(AWS 控制台架构 + 暖色主题)
 import CSTopNavigation from '@cloudscape-design/components/top-navigation';
 import CSAppLayout from '@cloudscape-design/components/app-layout';
@@ -502,19 +503,9 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
     // 早先三处调用(scripts.jsx:1358 / saves.jsx:890 / platform-app.jsx:4166)都假设它存在,
     // 但没有任何地方注册 → 用户在 scripts 页弹 NewGameModal 创建时炸 not a function。
     window.__createAndEnterSave = async (payload) => {
-      const created = await window.api.saves.create({
-        title: payload.title || ('新存档 · ' + new Date().toLocaleString()),
-        script_id: payload.script_id,
-        character_id: payload.character_id || null,
-        character_kind: payload.character_kind || null,
-        npc_id: payload.npc_id || null,
-        new_card: payload.new_card || null,
-        birthpoint: payload.birthpoint || null,
-        identity: payload.identity || null,
-        identity_known: payload.identity_known ?? null,
-        story_intent: payload.story_intent || null,
-        player_origin: payload.player_origin || null,
-      });
+      const created = await window.api.saves.create(buildCreateSavePayload(payload, {
+        defaultTitle: '新存档 · ' + new Date().toLocaleString(),
+      }));
       if (created && created.ok === false) {
         throw new Error(created.error || created.detail || '后端拒绝创建');
       }

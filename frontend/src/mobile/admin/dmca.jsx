@@ -80,11 +80,13 @@ function SectionDmcaTakedowns({ nav }) {
                   </div>
                   {item.status === 'open' && (
                     <div style={{ display: 'flex', borderTop: '1px solid var(--line-soft)' }}>
-                      {['grant', 'reject'].map((action, i) => (
+                      {/* action 必须是后端认的 takedown | reject(与桌面管理页一致);以前「批准下架」
+                          发的是 'grant',后端恒 400,手机上根本批不了下架。 */}
+                      {['takedown', 'reject'].map((action, i) => (
                         <button key={action}
-                          style={{ flex: 1, padding: '9px 4px', fontSize: 12, color: action === 'grant' ? 'var(--ok)' : 'var(--danger)', borderRight: i === 0 ? '1px solid var(--line-soft)' : 'none' }}
+                          style={{ flex: 1, padding: '9px 4px', fontSize: 12, color: action === 'takedown' ? 'var(--ok)' : 'var(--danger)', borderRight: i === 0 ? '1px solid var(--line-soft)' : 'none' }}
                           onClick={() => setActionSheet({ item, action })}>
-                          {action === 'grant' ? t('mobile.admin.dmca.grant_btn') : t('mobile.admin.dmca.reject_btn')}
+                          {action === 'takedown' ? t('mobile.admin.dmca.grant_btn') : t('mobile.admin.dmca.reject_btn')}
                         </button>
                       ))}
                     </div>
@@ -98,7 +100,7 @@ function SectionDmcaTakedowns({ nav }) {
 
       {actionSheet && (
         <InputSheet
-          title={actionSheet.action === 'grant' ? t('mobile.admin.dmca.grant_sheet_title') : t('mobile.admin.dmca.reject_sheet_title')}
+          title={actionSheet.action === 'takedown' ? t('mobile.admin.dmca.grant_sheet_title') : t('mobile.admin.dmca.reject_sheet_title')}
           fields={[{ key: 'reason', label: t('mobile.admin.dmca.reason_label'), multiline: true, placeholder: t('mobile.admin.dmca.reason_placeholder') }]}
           busy={actionBusy}
           onConfirm={doAction}

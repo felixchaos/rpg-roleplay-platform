@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { Icon } from '../icons.jsx';
 import { normalizeProviderId, credentialToCatalogId, catalogToCredentialId } from '../../components/catalog-helpers.js';
 import { Toggle } from './shared.jsx';
+import { useReactiveUser } from '../../platform-app.jsx';
+import { setModelEnabled, isAdminOnlyModelEdit } from '../../lib/model-overlay-write.js';
 
 const normId = normalizeProviderId;
 const credId = catalogToCredentialId;
@@ -116,6 +118,8 @@ function ModelsSection({ nav, onBack }) {
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
   const autoSynced = useRef(new Set());
+  const user = useReactiveUser();
+  const isAdmin = !!(user && user.role === 'admin');
 
   const mapModel = useCallback((m) => ({
     id: m.real_name || m.id,
@@ -123,6 +127,8 @@ function ModelsSection({ nav, onBack }) {
     real_name: m.real_name || m.id,
     enabled: m.enabled !== false,
     visible: m.hidden !== true,
+    // 用户自己的模型(同步来的 / 手填的):启停走按用户的端点(见 lib/model-overlay-write.js)
+    synced: m.synced === true,
     capabilities: m.capabilities || {},
     health: m.health || 'untested',
     health_latency_ms: m.health_latency_ms,
@@ -223,11 +229,12 @@ function ModelsSection({ nav, onBack }) {
           const prev = !!m?.enabled;
           setApis(arr => arr.map(a => a.id===selectedApi.id ? { ...a, models: a.models.map(x => x.id===mId ? { ...x, enabled:!x.enabled } : x) } : a));
           try {
-            await window.api.models.upsertModel({ api_id: selectedApi.id, real_name: mId, enabled: !prev });
+            // 自己的模型走按用户的端点,内置目录模型只有管理员能改;以前一律打管理员专用的
+            // 全局端点,普通用户开关一个自己同步来的模型也 403。
+            await setModelEnabled(window.api, { apiId: selectedApi.id, model: m || { id: mId }, enabled: !prev, isAdmin });
           } catch (e) {
-            // POST /api/models/model 是 admin-only,非 admin 部署模式 403 → 回滚乐观翻转并提示。
             setApis(arr => arr.map(a => a.id===selectedApi.id ? { ...a, models: a.models.map(x => x.id===mId ? { ...x, enabled: prev } : x) } : a));
-            nav.toast(e?.status===403 ? t('mobile.settings.models.admin_only') : t('mobile.settings.models.save_failed', { msg: e?.message||'' }), 'danger', 'warn');
+            nav.toast((isAdminOnlyModelEdit(e) || e?.status===403) ? t('mobile.settings.models.admin_only') : t('mobile.settings.models.save_failed', { msg: e?.message||'' }), 'danger', 'warn');
           }
         }}
         onDeleteKey={async () => {

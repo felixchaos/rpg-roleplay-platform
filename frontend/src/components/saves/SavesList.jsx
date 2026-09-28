@@ -12,6 +12,7 @@ import {
 } from '../../ui/kit.jsx';
 import { NewGameModal } from './NewGame.jsx';
 import { formatBytesTier } from '../../lib/format-bytes.js';
+import { buildCreateSavePayload } from '../../lib/save-create-payload.js';
 import CSHeader from '@cloudscape-design/components/header';
 import CSTable from '@cloudscape-design/components/table';
 import CSContainer from '@cloudscape-design/components/container';
@@ -354,16 +355,12 @@ function SavesListView() {
 
   const onCreate = async (vals) => {
     try {
-      const created = await window.api.saves.create({
-        title: vals.title || (t('saves.page.default_save_title') + ' · ' + new Date().toLocaleString()),
-        script_id: vals.script_id || (scripts[0] && scripts[0].id),
-        character_id: vals.character_id || null,
-        character_kind: vals.character_kind || null,
-        npc_id: vals.npc_id || null,
-        new_card: vals.new_card || null,
-        birthpoint: vals.birthpoint || null,
-        identity: vals.identity || null,
-      });
+      // 与平台壳 __createAndEnterSave 共用同一份字段表:以前这里手抄的白名单漏了
+      // story_intent / player_origin / identity_known,从存档页新建会静默丢掉玩家的选择。
+      const created = await window.api.saves.create(buildCreateSavePayload(vals, {
+        defaultTitle: t('saves.page.default_save_title') + ' · ' + new Date().toLocaleString(),
+        fallbackScriptId: scripts[0] && scripts[0].id,
+      }));
       if (created && created.ok === false) {
         throw new Error(created.error || created.detail || t('saves.page.err_backend_rejected_create'));
       }

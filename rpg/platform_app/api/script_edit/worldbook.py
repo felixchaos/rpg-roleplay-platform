@@ -15,6 +15,17 @@ from ._shared import _require_owner, _write_commit, router
 
 # ─── worldbook CRUD ───────────────────────────────────────────────────────────
 
+def _reveal_chapter(value: Any) -> int:
+    """first_revealed_chapter 入参 → 列值(not null default 0,0 = 开局即可见)。
+
+    剧本编辑器的 front-matter 把它列为可写字段,清空那一格发来的是空串 → 按 0;负数钳到 0;
+    非整数抛 ValueError,由调用方转 400。
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return 0
+    return max(0, int(value))
+
+
 @router.put("/api/scripts/{script_id}/worldbook/{entry_id}")
 async def api_worldbook_update(
     request: Request, script_id: int, entry_id: int, user=Depends(require_user)
@@ -23,8 +34,10 @@ async def api_worldbook_update(
 
     body: {title?, content?, priority?, enabled?, tags?, keys?, regex_keys?,
            character_filter?, scene_filter?, token_budget?, sticky_turns?,
-           cooldown_turns?, probability?, insertion_position?}
+           cooldown_turns?, probability?, insertion_position?, first_revealed_chapter?}
     （keys/regex_keys/character_filter/scene_filter 为 jsonb 字符串数组列）
+    first_revealed_chapter:剧本编辑器 front-matter 的可写字段(检索防剧透门槛)。以前这里不认,
+    只改它 → 400「无可更新字段」,连同别的一起改 → 被静默丢掉。
     """
     try:
         body = await request.json()
@@ -35,7 +48,8 @@ async def api_worldbook_update(
         "id, title, content, priority, enabled, metadata, "
         "keys, regex_keys, character_filter, scene_filter, "
         # probability 是 numeric → psycopg 读出 Decimal,JSON 不可序列化 → 必须 ::float8 转浮点
-        "token_budget, sticky_turns, cooldown_turns, probability::float8 as probability, insertion_position"
+        "token_budget, sticky_turns, cooldown_turns, probability::float8 as probability, insertion_position, "
+        "first_revealed_chapter"
     )
 
     with connect() as db:
@@ -62,6 +76,14 @@ async def api_worldbook_update(
             if col in body:
                 sets.append(f"{col}=%s")
                 args.append(int(body[col]))
+        if "first_revealed_chapter" in body:
+            try:
+                reveal = _reveal_chapter(body["first_revealed_chapter"])
+            except (TypeError, ValueError):
+                return json_response(
+                    {"ok": False, "error": "first_revealed_chapter 必须是整数(章节号)"}, status_code=400)
+            sets.append("first_revealed_chapter=%s")
+            args.append(reveal)
         if "probability" in body:
             sets.append("probability=%s")
             args.append(float(body["probability"]))
@@ -130,7 +152,7 @@ async def api_worldbook_add(
 
     body: {title, content, priority?, enabled?, tags?, keys?, regex_keys?,
            character_filter?, scene_filter?, token_budget?, sticky_turns?,
-           cooldown_turns?, probability?, insertion_position?}
+           cooldown_turns?, probability?, insertion_position?, first_revealed_chapter?}
     （keys/regex_keys/character_filter/scene_filter 为 jsonb 字符串数组列）
     """
     try:
@@ -142,6 +164,11 @@ async def api_worldbook_add(
     content = str(body.get("content") or "")
     if not title:
         return json_response({"ok": False, "error": "缺少 title"}, status_code=400)
+    try:
+        reveal_chapter = _reveal_chapter(body.get("first_revealed_chapter"))
+    except (TypeError, ValueError):
+        return json_response(
+            {"ok": False, "error": "first_revealed_chapter 必须是整数(章节号)"}, status_code=400)
 
     def _strlist(v: Any) -> list[str]:
         return [str(x) for x in v] if isinstance(v, list) else []
@@ -169,12 +196,14 @@ async def api_worldbook_add(
             INSERT INTO worldbook_entries
               (book_id, script_id, title, content, priority, enabled, metadata,
                keys, regex_keys, character_filter, scene_filter,
-               token_budget, sticky_turns, cooldown_turns, probability, insertion_position)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               token_budget, sticky_turns, cooldown_turns, probability, insertion_position,
+               first_revealed_chapter)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, title, content, priority, enabled, metadata,
                       keys, regex_keys, character_filter, scene_filter,
                       token_budget, sticky_turns, cooldown_turns,
-                      probability::float8 as probability, insertion_position
+                      probability::float8 as probability, insertion_position,
+                      first_revealed_chapter
             """,
             (
                 book_id, script_id, title, content,
@@ -190,6 +219,7 @@ async def api_worldbook_add(
                 int(body.get("cooldown_turns") or 0),
                 float(body["probability"]) if body.get("probability") is not None else 100.0,
                 str(body.get("insertion_position") or "worldbook"),
+                reveal_chapter,
             ),
         ).fetchone()
         after = dict(new_row)

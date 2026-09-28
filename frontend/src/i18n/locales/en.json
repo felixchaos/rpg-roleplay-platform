@@ -105,7 +105,9 @@
       "delete_key_fail": "Delete failed",
       "detail_add_model": "Add model",
       "add_model_ok": "Model added (visible only to you)",
-      "add_model_fail": "Failed to add model"
+      "add_model_fail": "Failed to add model",
+      "builtin_admin_only": "This is a built-in platform model; only admins can disable or delete it",
+      "model_update_fail": "Model setting was not saved"
     },
     "add_model": {
       "title": "Configure a new model",

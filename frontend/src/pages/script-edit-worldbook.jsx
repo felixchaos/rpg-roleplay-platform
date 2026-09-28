@@ -44,6 +44,14 @@ function inferSubtype(entry) {
   return 'detail';
 }
 
+/* 条目标签:后端存在 metadata.tags(列表行没有顶层 tags);本地刚保存过的行才有顶层 tags。
+   以前只读顶层 → 已有标签永远显示为空,且任何一次保存都回写 tags:[] 把它们清掉。 */
+function entryTags(e) {
+  if (Array.isArray(e?.tags)) return [...e.tags];
+  if (Array.isArray(e?.metadata?.tags)) return [...e.metadata.tags];
+  return [];
+}
+
 /* 深拷贝一个 entry 用于编辑 */
 function cloneEntry(e) {
   return {
@@ -52,7 +60,7 @@ function cloneEntry(e) {
     content: e?.content || e?.text || e?.description || e?.value || '',
     priority: e?.priority ?? 50,
     enabled: e?.enabled !== false,
-    tags: Array.isArray(e?.tags) ? [...e.tags] : [],
+    tags: entryTags(e),
     metadata: e?.metadata || {},
   };
 }
@@ -197,7 +205,7 @@ export function WorldbookEditorView({ script }) {
       content: item.content || item.text || item.description || item.value || '',
       priority: item.priority ?? 50,
       enabled: item.enabled !== false,
-      tags: item.tags || [],
+      tags: entryTags(item),
     };
     if (field === 'title') body.title = newValue;
     if (field === 'priority') body.priority = Number(newValue) || 0;
@@ -229,7 +237,9 @@ export function WorldbookEditorView({ script }) {
         });
         window.__apiToast?.(t('scripts.edit.worldbook.toast_created'), { kind: 'ok' });
         setReloadTick(x => x + 1);
-        const newId = r?.id ?? r?.entry_id ?? null;
+        // 后端回 {ok, entry:{id,…}}:以前读 r.id / r.entry_id(都不存在)→ 草稿 id 成 null,
+        // 接着再改再存就打 PUT /worldbook/null(422),删除同样落空。
+        const newId = r?.entry?.id ?? r?.id ?? r?.entry_id ?? null;
         setIsNew(false);
         setSelectedId(newId);
         setDraft(d => d ? { ...d, id: newId } : d);

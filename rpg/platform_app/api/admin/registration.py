@@ -102,7 +102,17 @@ async def admin_create_invite_codes(
     ip = _client_ip(request)
 
     count = max(1, min(20, int(body.get("count", 1))))
-    expires_in_days = body.get("expires_in_days")
+    # 有效天数:管理后台两端(web 下拉 / 手机输入)实际发的是 expires_days,老名字 expires_in_days
+    # 也认。以前只读后者 → 管理员选了「7 天」,生成的码照样永不过期。非正数/非整数 = 不设到期。
+    raw_days = body.get("expires_days")
+    if raw_days in (None, ""):
+        raw_days = body.get("expires_in_days")
+    try:
+        expires_in_days = int(raw_days) if raw_days not in (None, "") else None
+    except (TypeError, ValueError):
+        expires_in_days = None
+    if expires_in_days is not None and expires_in_days <= 0:
+        expires_in_days = None
     note = body.get("note", "")
 
     alphabet = string.ascii_uppercase + string.digits

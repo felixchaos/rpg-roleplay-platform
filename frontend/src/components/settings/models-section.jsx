@@ -15,6 +15,7 @@ import {
 import { ApiDetailPanel, ApiModelsList, ModelNameCell, HealthDot } from './model-list.jsx';
 import { AddModelModal, EditApiModal, VisibilityModal, ValidateModal } from './model-modals.jsx';
 import { ProviderCard, ProviderConfigSection } from './provider-config.jsx';
+import { setModelEnabled, removeModel, isAdminOnlyModelEdit } from '../../lib/model-overlay-write.js';
 import CSContainer from '@cloudscape-design/components/container';
 import CSHeader from '@cloudscape-design/components/header';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
@@ -201,16 +202,23 @@ function ModelsSection() {
       await window.api.models.upsertApi({ api_id: id, enabled: newEnabled });
     } catch (_) {}
   };
+  // 单个模型启停:自己的模型(synced)走按用户的端点,内置目录模型只有管理员能改(见
+  // lib/model-overlay-write.js)。以前一律打管理员专用的全局端点,普通用户 403 被吞、开关是摆设。
+  const setOneModelEnabled = (apiId, mId, enabled) => setApis(arr => arr.map(a => a.id === apiId
+    ? { ...a, models: a.models.map(m => m.id === mId ? { ...m, enabled, visible: enabled } : m) }
+    : a));
   const toggleModel = async (apiId, mId) => {
     const api = apis.find(a => a.id === apiId);
     const m = api?.models.find(m => m.id === mId);
     const wasEnabled = m?.enabled ?? true;
-    setApis(arr => arr.map(a => a.id === apiId
-      ? { ...a, models: a.models.map(m => m.id === mId ? { ...m, enabled: !wasEnabled } : m) }
-      : a));
+    setOneModelEnabled(apiId, mId, !wasEnabled);
     try {
-      await window.api.models.upsertModel({ api_id: apiId, real_name: mId, enabled: !wasEnabled });
-    } catch (_) {}
+      await setModelEnabled(window.api, { apiId, model: m || { id: mId }, enabled: !wasEnabled, isAdmin: isAdminUser });
+    } catch (e) {
+      setOneModelEnabled(apiId, mId, wasEnabled);
+      window.__apiToast?.(isAdminOnlyModelEdit(e) ? t('settings.models.builtin_admin_only') : t('settings.models.model_update_fail'),
+        { kind: isAdminOnlyModelEdit(e) ? 'warn' : 'danger', detail: isAdminOnlyModelEdit(e) ? '' : (e?.message || '') });
+    }
   };
   const renameModel = async (apiId, mId, display) => {
     setApis(arr => arr.map(a => a.id === apiId
@@ -260,12 +268,23 @@ function ModelsSection() {
     }
   };
   const removeModels = async (apiId, ids) => {
-    setApis(arr => arr.map(a => a.id === apiId
-      ? { ...a, models: a.models.filter(m => !ids.includes(m.id)) }
-      : a));
-    await Promise.all(ids.map(id =>
-      window.api.models.deleteModel({ api_id: apiId, real_name: id }).catch(() => {})
+    const api = apis.find(a => a.id === apiId);
+    const targets = (api?.models || []).filter(m => ids.includes(m.id));
+    // 只从列表里拿掉真删成功的;删不掉的(普通用户碰内置模型 / 请求失败)留在原位并提示,
+    // 不再乐观删掉、刷新又冒出来。
+    const results = await Promise.all(targets.map(m =>
+      removeModel(window.api, { apiId, model: m, isAdmin: isAdminUser })
+        .then(() => ({ id: m.id, ok: true }), (e) => ({ id: m.id, ok: false, adminOnly: isAdminOnlyModelEdit(e) }))
     ));
+    const removed = results.filter(r => r.ok).map(r => r.id);
+    setApis(arr => arr.map(a => a.id === apiId
+      ? { ...a, models: a.models.filter(m => !removed.includes(m.id)) }
+      : a));
+    const failed = results.filter(r => !r.ok);
+    if (failed.length) {
+      window.__apiToast?.(failed.some(r => r.adminOnly) ? t('settings.models.builtin_admin_only') : t('settings.models.model_update_fail'),
+        { kind: 'warn', detail: failed.map(r => r.id).join(', ') });
+    }
   };
   const toggleExpand = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
 
