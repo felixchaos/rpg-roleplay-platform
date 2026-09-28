@@ -62,29 +62,65 @@ check_postgres() {
   return 1
 }
 
-# Postgres 进程在 ≠ 业务库已建好。check_postgres 只看端口在听,
-# 真正的初始化(建库 / 写 rpg/.env / 跑 migration)是 ./scripts/setup.sh 干的。
-# 没跑过 setup.sh 就直接 dev.sh start 的话,后端会回退到默认库 rpg_platform、
-# 连不上、然后在 psycopg 重试里挂 300s。这里提前判定并给出明确指引。
+# Postgres 进程在 ≠ 业务库已建好。check_postgres 只看端口在听。
+# 后端取连接串的顺序是 DATABASE_URL → POSTGRES_URL → RPG_DATABASE_URL → 默认库
+# (platform_app/db/connection.py),每个键可以来自 rpg/.env、仓库根 .env 或 shell 环境变量
+# (app.py 两个 .env 都加载,rpg/.env 最后加载、优先)。这里按同样的顺序找:
+#   · 配了但连不上 → 后端会在 psycopg 重试里挂 300s,提前拦下并给出指引;
+#   · 哪里都没配   → 后端用默认库,这里只提示、不拦(不跑 setup.sh、直接用默认库的开发机很常见)。
+DEFAULT_DATABASE_URL="postgresql:///rpg_platform"
+
+# 读 .env 里的一个键:容忍 export 前缀、首尾引号、CRLF;同键多次出现取最后一次(与 python-dotenv 一致)。
+_dotenv_get() {
+  [ -f "$1" ] || return 0
+  grep -E "^[[:space:]]*(export[[:space:]]+)?$2=" "$1" 2>/dev/null | tail -1 \
+    | sed -E "s/^[[:space:]]*(export[[:space:]]+)?$2=//" | tr -d '\r' \
+    | sed -e 's/^["'\'']//' -e 's/["'\'']$//'
+}
+
+# 连接串里的密码不回显到终端。
+_redact_url() {
+  printf '%s' "$1" | sed -E 's#(://[^:/@]*):[^@]*@#\1:***@#'
+}
+
+# 结果写进 DB_SRC / DB_KEY / DB_URL;哪里都没配时返回 1。
+_resolve_db_url() {
+  DB_SRC=""; DB_KEY=""; DB_URL=""
+  local key val
+  for key in DATABASE_URL POSTGRES_URL RPG_DATABASE_URL; do
+    val="$(_dotenv_get "$RPG_DIR/.env" "$key")"
+    if [ -n "$val" ]; then DB_SRC="rpg/.env"; DB_KEY="$key"; DB_URL="$val"; return 0; fi
+    val="$(_dotenv_get "$ROOT/.env" "$key")"
+    if [ -n "$val" ]; then DB_SRC="仓库根 .env"; DB_KEY="$key"; DB_URL="$val"; return 0; fi
+    val="$(printenv "$key" 2>/dev/null || true)"
+    if [ -n "$val" ]; then DB_SRC="环境变量"; DB_KEY="$key"; DB_URL="$val"; return 0; fi
+  done
+  return 1
+}
+
 check_db() {
-  if [ ! -f "$RPG_DIR/.env" ]; then
-    echo "  $(_bad) 还没初始化(缺 rpg/.env)— 先跑一次:  ./scripts/setup.sh"
-    return 1
+  local configured=1
+  if ! _resolve_db_url; then
+    configured=0
+    DB_SRC="默认"; DB_KEY="DATABASE_URL"; DB_URL="$DEFAULT_DATABASE_URL"
+    echo "  $(_warn) 没配 DATABASE_URL(rpg/.env、仓库根 .env、环境变量里都没有)— 后端将用默认库 $DB_URL"
   fi
-  local url; url="$(grep -E '^DATABASE_URL=' "$RPG_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' | sed -e 's/^["'\'']//' -e 's/["'\'']$//')"
-  if [ -z "$url" ]; then
-    echo "  $(_bad) rpg/.env 里没有 DATABASE_URL — 先跑:  ./scripts/setup.sh"
-    return 1
+  local shown; shown="$(_redact_url "$DB_URL")"
+  if ! command -v psql >/dev/null 2>&1; then
+    echo "  $(_warn) 没装 psql,跳过数据库连通性检查($DB_SRC: $shown)"
+    return 0
   fi
-  if command -v psql >/dev/null 2>&1; then
-    if ! psql "$url" -tAc 'SELECT 1' >/dev/null 2>&1; then
-      echo "  $(_bad) 连不上数据库(库可能还没建)— 先跑:  ./scripts/setup.sh"
-      echo "      DATABASE_URL=$url"
-      return 1
-    fi
+  if psql "$DB_URL" -tAc 'SELECT 1' >/dev/null 2>&1; then
+    echo "  $(_ok) 数据库可连($DB_SRC: $shown)"
+    return 0
   fi
-  echo "  $(_ok) 数据库可连"
-  return 0
+  if [ "$configured" = "0" ]; then
+    echo "  $(_warn) 默认库连不上 — 新环境先跑一次 ./scripts/setup.sh,或在 rpg/.env 里配 DATABASE_URL"
+    return 0
+  fi
+  echo "  $(_bad) 连不上数据库(库可能还没建)— 先跑:  ./scripts/setup.sh"
+  echo "      $DB_KEY=$shown(来自 $DB_SRC)"
+  return 1
 }
 
 check_backend() {
