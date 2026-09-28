@@ -23,6 +23,14 @@ from psycopg.types.json import Jsonb
 from .db import connect, init_db
 from .user_credentials import normalize_api_id
 
+# user_model_entries.source 的取值(migration 99 加列,默认 'synced'):
+#   synced  —— 远端同步来的,下次同步整份覆盖;
+#   renamed —— 同步来的但用户改过显示名:仍跟随同步的增删,只是显示名沿用用户起的;
+#   manual  —— 用户手填的,同步时保留(provider 没有 /models 接口时的唯一途径)。
+SOURCE_SYNCED = "synced"
+SOURCE_RENAMED = "renamed"
+SOURCE_MANUAL = "manual"
+
 
 def _norm_model(m: dict[str, Any]) -> dict[str, Any] | None:
     real = str(m.get("real_name") or m.get("id") or "").strip()
@@ -60,12 +68,18 @@ def replace_synced_models(user_id: int, api_id: str, models: list[dict[str, Any]
     with connect() as db:
         # 保留用户已设的可见性:re-sync 前读旧 enabled-by-model,新清单里**沿用**用户的选择
         # (否则每次同步都把用户隐藏的模型重新打开 → 用户「启用 provider 但只留几个模型」永远无效)。
+        # 显示名同理:用户改过名的同步模型(source='renamed')沿用他起的名字,不被远端名字冲掉
+        # (设置页一打开就自动同步,不保留的话改名刷新即失效)。
         prev: dict[str, bool] = {}
+        renamed: dict[str, str] = {}
         for er in db.execute(
-            "select model_id, enabled from user_model_entries where user_id = %s and api_id = %s",
+            "select model_id, enabled, display_name, source from user_model_entries "
+            "where user_id = %s and api_id = %s",
             (int(user_id), canonical),
         ).fetchall() or []:
             prev[er["model_id"]] = bool(er["enabled"])
+            if (er.get("source") or "") == SOURCE_RENAMED and er.get("display_name"):
+                renamed[er["model_id"]] = er["display_name"]
         # 覆盖语义:先清该 (user, api_id) 旧 overlay,再写新清单。
         # ⚠️ 只清 source='synced' —— 用户**手填**的模型(source='manual')必须留下。
         # 有的 provider 没有 /models 接口(火山方舟 Agent Plan 订阅套餐恒 404),模型只能手填;
@@ -78,23 +92,24 @@ def replace_synced_models(user_id: int, api_id: str, models: list[dict[str, Any]
         for r in rows:
             # 旧的若被用户隐藏(enabled=false)则保留隐藏;新模型沿用同步默认(通常 true)。
             keep_enabled = prev.get(r["id"], r["enabled"])
+            was_renamed = r["id"] in renamed
             db.execute(
                 """
                 insert into user_model_entries
-                  (user_id, api_id, model_id, real_name, display_name, enabled, capabilities)
-                values (%s, %s, %s, %s, %s, %s, %s)
+                  (user_id, api_id, model_id, real_name, display_name, enabled, capabilities, source)
+                values (%s, %s, %s, %s, %s, %s, %s, %s)
                 on conflict (user_id, api_id, model_id) do update set
                   real_name = excluded.real_name,
-                  display_name = excluded.display_name,
                   enabled = excluded.enabled,
                   capabilities = excluded.capabilities,
                   updated_at = now()
-                  -- source 不动:同名模型若已被用户手填过,保持 'manual',
-                  -- 免得同步一次就把它降级成可被下次同步清掉的 'synced'。
+                  -- 走到 conflict 的只有 source='manual' 的行(其余上面已删):显示名是用户自己填的,
+                  -- 不拿远端名字覆盖;source 也不动,免得同步一次就把它降级成可被下次同步清掉的 'synced'。
                 """,
                 (
                     int(user_id), canonical, r["id"], r["real_name"],
-                    r["display_name"], keep_enabled, Jsonb(r["capabilities"]),
+                    renamed.get(r["id"], r["display_name"]), keep_enabled, Jsonb(r["capabilities"]),
+                    SOURCE_RENAMED if was_renamed else SOURCE_SYNCED,
                 ),
             )
     return len(rows)
@@ -175,6 +190,31 @@ def set_overlay_model_enabled(user_id: int, api_id: str, model: str, enabled: bo
             "where user_id = %s and api_id = %s and (model_id = %s or real_name = %s) "
             "returning model_id",
             (bool(enabled), int(user_id), canonical, str(model), str(model)),
+        ).fetchall()
+    return len(rows or [])
+
+
+def set_overlay_model_display_name(user_id: int, api_id: str, model: str, display_name: str) -> int:
+    """改该用户 overlay 里某个模型的显示名(只动他自己的,不碰全局目录)。
+
+    同步来的行改名后标 source='renamed',下次同步沿用这个名字(见 replace_synced_models);
+    手填的行(source='manual')本来就不被同步覆盖,source 保持不变。
+    Returns: 受影响行数(0 = 该模型不在用户 overlay 里)。
+    """
+    name = str(display_name or "").strip()
+    if not user_id or not model or not name:
+        return 0
+    canonical = normalize_api_id(api_id) or (api_id or "").strip()
+    if not canonical:
+        return 0
+    init_db()
+    with connect() as db:
+        rows = db.execute(
+            "update user_model_entries set display_name = %s, "
+            "source = case when source = %s then source else %s end, updated_at = now() "
+            "where user_id = %s and api_id = %s and (model_id = %s or real_name = %s) "
+            "returning model_id",
+            (name[:200], SOURCE_MANUAL, SOURCE_RENAMED, int(user_id), canonical, str(model), str(model)),
         ).fetchall()
     return len(rows or [])
 

@@ -800,13 +800,23 @@ def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) 
 # ══════════════════════════════════════════════════════════════════════
 #  本地 catalog vs 远端 diff
 # ══════════════════════════════════════════════════════════════════════
-def diff_catalog(api_id: str, user_id: int | None = None) -> dict[str, Any]:
-    """对比本地 catalog 和远端真实可用模型，返回 missing / extra / matching。"""
+def diff_catalog(api_id: str, user_id: int | None = None, *, user_view: bool = False) -> dict[str, Any]:
+    """对比本地清单和远端真实可用模型，返回 local_only / remote_only / matching。
+
+    user_view=False(管理员):本地 = 全局目录,用于维护平台内置目录。
+    user_view=True(普通用户):本地 = 该用户自己看到的清单(全局目录 + 他的 overlay)。普通用户
+    改不了全局目录,拿全局目录比出来的「新增 / 下线」对他既不真实也无从操作 —— 设置页一打开就
+    自动同步,远端模型早已在他自己的清单里,旧实现却每次都报「新增 N 个」,点「全部添加」全 403。
+    全局目录里没有的 provider(用户自建中转站)只存在于用户视图,两种模式都退到用户视图比。
+    """
     remote = list_remote_models(api_id, user_id=user_id)
     if not remote["ok"]:
         return {"ok": False, "error": remote.get("error"), "api_id": api_id}
-    from model_registry import find_api, load_model_catalog
-    api = find_api(load_model_catalog(), api_id)
+    import model_registry as _mr
+    catalog = _mr.load_model_catalog()
+    api = None if user_view else _mr.find_api(catalog, api_id)
+    if api is None and user_id:
+        api = _mr.find_api(_mr.apply_user_overlay(catalog, user_id), api_id)
     if not api:
         return {"ok": False, "error": f"api_id 不存在: {api_id}"}
 
@@ -816,6 +826,7 @@ def diff_catalog(api_id: str, user_id: int | None = None) -> dict[str, Any]:
     return {
         "ok": True,
         "api_id": api_id,
+        "base": "user" if user_view else "catalog",
         "local_only": sorted(local_ids - remote_ids),   # catalog 里有但远端没有（可能下线）
         "remote_only": sorted(remote_ids - local_ids),  # 远端有但 catalog 没注册
         "matching": sorted(local_ids & remote_ids),

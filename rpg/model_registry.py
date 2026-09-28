@@ -512,12 +512,17 @@ def upsert_model(api_id: str, model_data: dict[str, Any]) -> dict[str, Any]:
     if not model_id:
         raise ValueError("模型 id 不能为空")
     model = find_model(api, model_id)
+    prev = model or {}
+    # 补丁语义:请求里没给的字段沿用已有条目(新条目才用默认值)。以前 display_name / enabled
+    # 缺省时直接取 real_name / True —— 管理员只改启停会把策展的显示名重置成 real_name,
+    # 只改显示名会把停用的模型重新启用(设置页的启停开关和改名各只发一个字段)。
+    real_name = str(model_data.get("real_name") or prev.get("real_name") or model_id).strip()
     normalized = {
         "id": model_id,
-        "real_name": str(model_data.get("real_name") or model_id).strip(),
-        "display_name": str(model_data.get("display_name") or model_data.get("real_name") or model_id).strip(),
-        "enabled": bool(model_data.get("enabled", True)),
-        "capabilities": list(model_data.get("capabilities") or (model or {}).get("capabilities") or ["text", "streaming"]),
+        "real_name": real_name,
+        "display_name": str(model_data.get("display_name") or prev.get("display_name") or real_name).strip(),
+        "enabled": bool(model_data["enabled"]) if "enabled" in model_data else bool(prev.get("enabled", True)),
+        "capabilities": list(model_data.get("capabilities") or prev.get("capabilities") or ["text", "streaming"]),
     }
     if model:
         model.clear()

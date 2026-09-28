@@ -556,8 +556,11 @@ async def api_models_diff(
     if blocked:
         return blocked
     import model_probe
+    # 普通用户改不了全局目录 → 拿他自己看到的清单比(见 diff_catalog 的 user_view)。
+    user_view = bool(api_user) and api_user.get("role") != "admin"
     return json_response(await asyncio.to_thread(
         model_probe.diff_catalog, api_id, user_id=api_user["id"] if api_user else None,
+        user_view=user_view,
     ))
 
 

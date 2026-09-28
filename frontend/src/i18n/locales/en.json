@@ -106,8 +106,9 @@
       "detail_add_model": "Add model",
       "add_model_ok": "Model added (visible only to you)",
       "add_model_fail": "Failed to add model",
-      "builtin_admin_only": "This is a built-in platform model; only admins can disable or delete it",
-      "model_update_fail": "Model setting was not saved"
+      "builtin_admin_only": "This is a built-in platform model; only admins can disable, delete or rename it",
+      "model_update_fail": "Model setting was not saved",
+      "provider_toggle_fail": "Provider switch was not saved"
     },
     "add_model": {
       "title": "Configure a new model",
@@ -189,7 +190,10 @@
       "unreachable": "Unreachable",
       "remote_missing": "Not on remote",
       "in_sync": "Local list matches remote — no changes needed.",
-      "delete_btn": "Delete {{count}}"
+      "delete_btn": "Delete {{count}}",
+      "base_catalog": "Compared against: the built-in platform catalog (shared by everyone)",
+      "base_user": "Compared against: your own model list",
+      "resync": "Re-sync into my list"
     },
     "model_list": {
       "search_placeholder": "Search {{count}} models · Name / ID / Capability",

@@ -29,7 +29,6 @@ function ProviderConfigSection() {
   const [saving, setSaving] = useStatePL({});
   const [agentPlatformJson, setAgentPlatformJson] = useStatePL(null);
   const [agentPlatformError, setAgentPlatformError] = useStatePL("");
-  const [alibabaMode, setAlibabaMode] = useStatePL("openai_compat");
 
   // 读当前凭据:挂载时一次;保存失败后再读一次(请求超时 ≠ 没存上,以后端为准)。
   const aliveRef = React.useRef(true);
@@ -132,11 +131,9 @@ function ProviderConfigSection() {
               isSaving={isSaving}
               agentPlatformJson={agentPlatformJson}
               agentPlatformError={agentPlatformError}
-              alibabaMode={alibabaMode}
               onSaveKey={saveKey}
               onAgentPlatformFile={handleAgentPlatformFile}
               onSaveAgentPlatform={saveAgentPlatform}
-              onAlibabaMode={(v) => { setAlibabaMode(v); window.api.models.upsertApi({ api_id: "dashscope", kind: "openai_compat", base_url: v === "openai_compat" ? "https://dashscope.aliyuncs.com/compatible-mode/v1" : "https://dashscope.aliyuncs.com/api/v1" }).catch(() => {}); }}
             />
           );
         })}
@@ -145,7 +142,7 @@ function ProviderConfigSection() {
   );
 }
 
-function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPlatformError, alibabaMode, onSaveKey, onAgentPlatformFile, onSaveAgentPlatform, onAlibabaMode }) {
+function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPlatformError, onSaveKey, onAgentPlatformFile, onSaveAgentPlatform }) {
   const { t } = useTranslation();
   const [keyVal, setKeyVal] = useStatePL("");
   const [baseVal, setBaseVal] = useStatePL(cred.base_url || p.defaultBase || "");
@@ -202,7 +199,10 @@ function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPla
     );
   }
 
-  // 阿里 DashScope 带 mode toggle
+  // 阿里 DashScope。以前这里有「OpenAI-compat / Native DashScope」模式切换,切换打的是管理员专用的
+  // 全局目录端点(普通用户 403 被吞;管理员切到 Native 会把全平台 DashScope 的地址改成原生
+  // /api/v1,而后端对它只有 OpenAI 兼容适配 → 所有人的 DashScope 对话全挂)。后端只支持兼容模式,
+  // 切换已下线;需要中转地址的用户在「编辑供应商」里填自己的 Base URL。
   if (p.special === "alibaba_qwen") {
     return (
       <CSContainer>
@@ -213,15 +213,6 @@ function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPla
               <CSBox color="text-body-secondary" fontSize="body-s">{p.noteKey ? t(p.noteKey) : p.note}</CSBox>
             </div>
             {cred.has_key && <CSStatusIndicator type="success">{t('settings.providers.configured')}</CSStatusIndicator>}
-          </CSSpaceBetween>
-          <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
-            <div className="seg" style={{display: "flex"}}>
-              <button className={alibabaMode === "openai_compat" ? "active" : ""} onClick={() => onAlibabaMode("openai_compat")}>OpenAI-compat</button>
-              <button className={alibabaMode === "native" ? "active" : ""} onClick={() => onAlibabaMode("native")}>Native DashScope</button>
-            </div>
-            <CSBox color="text-status-inactive" fontSize="body-s">
-              <span className="mono">{alibabaMode === "openai_compat" ? "/compatible-mode/v1" : "/api/v1"}</span>
-            </CSBox>
           </CSSpaceBetween>
           <CSSpaceBetween direction="horizontal" size="xs" alignItems="flex-end">
             <CSFormField label={t('settings.edit_api.api_key')} stretch>

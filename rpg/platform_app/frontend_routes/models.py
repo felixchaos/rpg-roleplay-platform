@@ -2,7 +2,7 @@
 
 原单文件「MODELS supplements」段逐端点搬运,零行为变化:
 /api/models/visibility(admin 全局)/ /api/me/models/visibility(每用户 overlay)/
-/api/models/validate(凭据探测)。
+/api/me/models/display-name(每用户改显示名)/ /api/models/validate(凭据探测)。
 """
 from __future__ import annotations
 
@@ -71,6 +71,28 @@ async def api_me_models_visibility(request: Request):
     n = set_overlay_model_enabled(user["id"], api_id, model, bool(visible))
     if not n:
         return _bad("该模型不在你的同步清单里(只能隐藏你自己同步来的模型)", status=404)
+    return json_response({"ok": True, "updated": n})
+
+
+@router.post("/api/me/models/display-name")
+async def api_me_models_display_name(request: Request):
+    """每用户:改**自己** overlay 里某个模型的显示名(同步来的 / 手填的都行)。
+
+    与 /api/models/model(admin、写全局目录)分开:普通用户改名以前打的是那个,403 被吞,
+    界面改了刷新又变回来。同步来的模型改名后,下次同步沿用用户起的名字。
+    body: {api_id, model(=model_id 或 real_name), display_name}
+    """
+    user = require_user(request)
+    body = await request.json() or {}
+    api_id = body.get("api_id") or body.get("api")
+    model = body.get("model") or body.get("real_name") or body.get("model_id")
+    display = str(body.get("display_name") or body.get("display") or "").strip()
+    if not api_id or not model or not display:
+        return _bad("缺少参数:api_id / model / display_name 必填")
+    from platform_app.user_models import set_overlay_model_display_name
+    n = set_overlay_model_display_name(user["id"], api_id, str(model), display)
+    if not n:
+        return _bad("该模型不在你的模型清单里(平台内置目录的模型只有管理员能改名)", status=404)
     return json_response({"ok": True, "updated": n})
 
 

@@ -461,6 +461,32 @@ def stored_base_url_override(user_id: int, api_id: str) -> str:
     return str((row or {}).get("base_url_override") or "")
 
 
+def set_credential_enabled(user_id: int, api_id: str, enabled: bool) -> dict[str, Any]:
+    """只切换该用户某条凭据的启用态(设置 → 模型页的供应商总开关)。
+
+    停用 = resolve_api_key 取不到 key(见下方 `not row.get("enabled")`),这个供应商对该用户
+    不可用;密钥、地址、代理、auth_mode 一律不动,重新打开即恢复。以前开关打的是管理员专用的
+    全局目录端点:普通用户 403 被吞,管理员则把整个平台的该供应商关掉了。
+    没有这条凭据 → ValueError(前端提示先填 Key)。
+    """
+    init_db()
+    canonical = normalize_api_id(api_id)
+    if not canonical:
+        raise ValueError("api_id 不能为空")
+    with connect() as db:
+        row = db.execute(
+            """
+            update user_api_credentials set enabled = %s, updated_at = now()
+             where user_id = %s and api_id = any(%s)
+            returning id, user_id, api_id, base_url_override, enabled, auth_mode, updated_at
+            """,
+            (bool(enabled), user_id, _credential_aliases(canonical)),
+        ).fetchone()
+    if not row:
+        raise ValueError("尚未配置该供应商的 API Key，请先填写 Key")
+    return {"ok": True, **(expose(row) or {})}
+
+
 def delete_credential(user_id: int, api_id: str) -> dict[str, Any]:
     init_db()
     canonical = normalize_api_id(api_id)

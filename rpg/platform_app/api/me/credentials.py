@@ -109,6 +109,27 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
         return value_error_response(exc)
 
 
+@router.post("/api/me/credentials/enabled")
+async def api_set_credential_enabled(request: Request, user=Depends(require_user)):
+    """设置 → 模型页的供应商总开关:只切换**当前用户**这条凭据的启用态。
+
+    body: {api_id, enabled: bool}。不是全局目录的 /api/models/api(管理员专用,关的是全平台)。
+    """
+    body = await request.json() or {}
+    from ... import user_credentials
+    if "enabled" not in body:
+        return json_response({"ok": False, "error": "缺少 enabled"}, status_code=400)
+    try:
+        result = await asyncio.to_thread(
+            user_credentials.set_credential_enabled,
+            user["id"], str(body.get("api_id") or ""), bool(body.get("enabled")),
+        )
+    except ValueError as exc:
+        return value_error_response(exc)
+    _reset_embed_breaker(user["id"])
+    return json_response(result)
+
+
 @router.post("/api/me/credentials/delete")
 async def api_delete_credential(request: Request, user=Depends(require_user)):
     body = await request.json()

@@ -203,8 +203,9 @@
       "detail_add_model": "添加模型",
       "add_model_ok": "模型已添加(仅你自己可见)",
       "add_model_fail": "模型添加失败",
-      "builtin_admin_only": "这是平台内置的模型,只有管理员能停用或删除",
-      "model_update_fail": "模型设置没有保存成功"
+      "builtin_admin_only": "这是平台内置的模型,只有管理员能停用、删除或改名",
+      "model_update_fail": "模型设置没有保存成功",
+      "provider_toggle_fail": "供应商开关没有保存成功"
     },
     "add_model": {
       "title": "配置一个新模型",
@@ -286,7 +287,10 @@
       "unreachable": "不可达",
       "remote_missing": "远端无",
       "in_sync": "本地列表与远端一致，无需变更。",
-      "delete_btn": "删除 {{count}} 个"
+      "delete_btn": "删除 {{count}} 个",
+      "base_catalog": "对比对象:平台内置模型目录(所有人共用)",
+      "base_user": "对比对象:你自己的模型清单",
+      "resync": "重新同步到我的清单"
     },
     "model_list": {
       "search_placeholder": "搜索 {{count}} 个模型 · 名称 / ID / 能力",

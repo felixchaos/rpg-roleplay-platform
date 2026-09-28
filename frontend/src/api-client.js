@@ -992,6 +992,8 @@
       set: (body) => POST(`${API_PREFIX}/me/credentials`, body, { signal: timeoutSignal(_CRED_SAVE_TIMEOUT_MS) })
         .then(_emitCredsUpdated, _emitCredsUpdatedOnUnknown),
       remove: (body) => POST(`${API_PREFIX}/me/credentials/delete`, body).then(_emitCredsUpdated),
+      // 设置 → 模型页的供应商总开关:只切**自己**这条凭据的启用态(不是全局目录的 models.upsertApi)。
+      setEnabled: (body) => POST(`${API_PREFIX}/me/credentials/enabled`, body).then(_emitCredsUpdated),
       test: (q) => GET(`${API_PREFIX}/me/credentials/test`, q, { signal: timeoutSignal(_PROBE_TIMEOUT_MS) }),
     },
 
@@ -1014,6 +1016,8 @@
       //    普通用户会撞「需要管理员权限」,写成功了还会让所有人看见你的私人模型。
       meUpsertModel: (body) => POST(`${API_PREFIX}/me/models/model`, body),
       meDeleteModel: (body) => POST(`${API_PREFIX}/me/models/model/delete`, body),
+      // 改自己 overlay 里模型的显示名(内置目录模型的改名是管理员的 upsertModel)。
+      meRenameModel: (body) => POST(`${API_PREFIX}/me/models/display-name`, body),
       // 以下几个都会真的去连供应商(拉 /models 或发一条最小请求),超时见 _PROBE_TIMEOUT_MS。
       validate: (body) => POST(`${API_PREFIX}/models/validate`, body, { signal: timeoutSignal(_PROBE_TIMEOUT_MS) }),
       remote: (q) => GET(`${API_PREFIX}/models/remote`, q, { signal: timeoutSignal(_PROBE_TIMEOUT_MS) }),

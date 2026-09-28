@@ -15,7 +15,7 @@ import {
 import { ApiDetailPanel, ApiModelsList, ModelNameCell, HealthDot } from './model-list.jsx';
 import { AddModelModal, EditApiModal, VisibilityModal, ValidateModal } from './model-modals.jsx';
 import { ProviderCard, ProviderConfigSection } from './provider-config.jsx';
-import { setModelEnabled, removeModel, removeTargetsFor, isAdminOnlyModelEdit } from '../../lib/model-overlay-write.js';
+import { setModelEnabled, removeModel, renameModel as renameModelWrite, removeTargetsFor, isAdminOnlyModelEdit } from '../../lib/model-overlay-write.js';
 import CSContainer from '@cloudscape-design/components/container';
 import CSHeader from '@cloudscape-design/components/header';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
@@ -194,13 +194,20 @@ function ModelsSection() {
     })();
   }, [useMock, loadConfiguredApis]);
 
+  // 供应商总开关 = 用户自己这条凭据的启用态(列表里 enabled 就是从 credentials.list 读的)。
+  // 以前写的是管理员专用的全局目录(models.upsertApi):普通用户 403 被吞、刷新就回弹,
+  // 管理员一点则把全平台的这个供应商关了。失败回滚并提示。
   const toggleApi = async (id) => {
     const api = apis.find(a => a.id === id);
-    const newEnabled = !api?.enabled;
-    setApis(arr => arr.map(a => a.id === id ? { ...a, enabled: newEnabled } : a));
+    const wasEnabled = api?.enabled !== false;
+    setApis(arr => arr.map(a => a.id === id ? { ...a, enabled: !wasEnabled } : a));
+    if (useMock) return;
     try {
-      await window.api.models.upsertApi({ api_id: id, enabled: newEnabled });
-    } catch (_) {}
+      await window.api.credentials.setEnabled({ api_id: api?.credential_id || credentialApiIdForCatalog(id), enabled: !wasEnabled });
+    } catch (e) {
+      setApis(arr => arr.map(a => a.id === id ? { ...a, enabled: wasEnabled } : a));
+      window.__apiToast?.(t('settings.models.provider_toggle_fail'), { kind: 'danger', detail: e?.message || '' });
+    }
   };
   // 单个模型启停:自己的模型(synced)走按用户的端点,内置目录模型只有管理员能改(见
   // lib/model-overlay-write.js)。以前一律打管理员专用的全局端点,普通用户 403 被吞、开关是摆设。
@@ -222,11 +229,24 @@ function ModelsSection() {
         { kind: isAdminOnlyModelEdit(e) ? 'warn' : 'danger', detail: isAdminOnlyModelEdit(e) ? '' : (e?.message || '') });
     }
   };
+  // 改显示名:按归属路由(见 lib/model-overlay-write.js)。以前一律打管理员端点,普通用户 403
+  // 被吞,名字改了刷新又变回来。失败回滚成原名并提示。
+  const setOneModelDisplay = (apiId, mId, display) => setApis(arr => arr.map(a => a.id === apiId
+    ? { ...a, models: a.models.map(m => m.id === mId ? { ...m, display } : m) }
+    : a));
   const renameModel = async (apiId, mId, display) => {
-    setApis(arr => arr.map(a => a.id === apiId
-      ? { ...a, models: a.models.map(m => m.id === mId ? { ...m, display } : m) }
-      : a));
-    try { await window.api.models.upsertModel({ api_id: apiId, real_name: mId, display_name: display }); } catch (_) {}
+    const api = apis.find(a => a.id === apiId);
+    const m = api?.models.find(x => x.id === mId);
+    const prev = m?.display;
+    setOneModelDisplay(apiId, mId, display);
+    if (useMock) return;
+    try {
+      await renameModelWrite(window.api, { apiId, model: m || { id: mId }, display, isAdmin: isAdminUser });
+    } catch (e) {
+      setOneModelDisplay(apiId, mId, prev);
+      window.__apiToast?.(isAdminOnlyModelEdit(e) ? t('settings.models.builtin_admin_only') : t('settings.models.model_update_fail'),
+        { kind: isAdminOnlyModelEdit(e) ? 'warn' : 'danger', detail: isAdminOnlyModelEdit(e) ? '' : (e?.message || '') });
+    }
   };
   const setModelVisibility = async (apiId, ids) => {
     const api = apis.find(a => a.id === apiId);
@@ -565,6 +585,8 @@ function ModelsSection() {
       <ValidateModal
         open={!!validateApi}
         api={apis.find(a => a.id === validateApi)}
+        isAdminUser={isAdminUser}
+        onSyncRemote={() => syncRemoteModels(apis.find(a => a.id === validateApi), { silent: false })}
         onClose={() => setValidateApi(null)}
         onConfirm={(toRemove) => { removeModels(validateApi, toRemove); setValidateApi(null); }}
       />

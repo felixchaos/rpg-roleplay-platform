@@ -61,7 +61,6 @@ export function InlineProviderConfig({ capability = 'llm', defaultApiId = '', on
   const [providerId, setProviderId] = useState(initialId);
   const [creds, setCreds] = useState({});
   const [saving, setSaving] = useState(false);
-  const [alibabaMode, setAlibabaMode] = useState('openai_compat');  // DashScope mode toggle
 
   // 读当前凭据(用于 ProviderCard 显示「已配置」/已存 base_url):挂载时读一次,随广播刷新,
   // 保存失败后也再读一次(见 onSaveKey)。
@@ -139,18 +138,7 @@ export function InlineProviderConfig({ capability = 'llm', defaultApiId = '', on
         provider={provider}
         cred={creds[provider.id] || {}}
         isSaving={saving}
-        alibabaMode={alibabaMode}
         onSaveKey={onSaveKey}
-        onAlibabaMode={(v) => {
-          setAlibabaMode(v);
-          window.api.models.upsertApi({
-            api_id: 'dashscope',
-            kind: 'openai_compat',
-            base_url: v === 'openai_compat'
-              ? 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-              : 'https://dashscope.aliyuncs.com/api/v1',
-          }).catch(() => {});
-        }}
       />
     </CSSpaceBetween>
   );

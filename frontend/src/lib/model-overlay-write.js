@@ -4,9 +4,10 @@
 // 走 /api/me/models/*(任何用户可改,只动自己的);平台内置目录里的模型是全局的,
 // /api/models/model(/delete) 只有管理员能写。
 //
-// 以前「启停开关」「校验后删除」一律打全局端点:普通用户 403 被 catch 吞掉,列表乐观翻转、
-// 刷新又变回来;管理员则把自己的私人模型写进全局目录(所有人可见)—— v1.76.0「添加模型」
+// 以前「启停开关」「校验后删除」「改显示名」一律打全局端点:普通用户 403 被 catch 吞掉,列表乐观
+// 改了、刷新又变回来;管理员则把自己的私人模型写进全局目录(所有人可见)—— v1.76.0「添加模型」
 // 那次翻车的孪生。这里统一路由,普通用户改内置模型直接抛可识别的错误,不发注定 403 的请求。
+// (供应商总开关不是模型级操作:它切的是用户自己凭据的启用态,走 credentials.setEnabled。)
 
 const ADMIN_ONLY = 'admin_only_model_edit';
 
@@ -29,6 +30,16 @@ export async function setModelEnabled(api, { apiId, model, enabled, isAdmin }) {
   }
   if (!isAdmin) throw adminOnlyError();
   return api.models.upsertModel({ api_id: apiId, real_name: modelKey(model), enabled: !!enabled });
+}
+
+// 改显示名。用户自己的模型写他的 overlay(同步来的改名后,下次同步沿用这个名字);内置目录模型
+// 只有管理员能改,且只发 display_name —— 后端 upsert_model 是补丁语义,不会顺手动启停。
+export async function renameModel(api, { apiId, model, display, isAdmin }) {
+  if (isOwnModel(model)) {
+    return api.models.meRenameModel({ api_id: apiId, model: modelKey(model), display_name: display });
+  }
+  if (!isAdmin) throw adminOnlyError();
+  return api.models.upsertModel({ api_id: apiId, real_name: modelKey(model), display_name: display });
 }
 
 export async function removeModel(api, { apiId, model, isAdmin }) {
